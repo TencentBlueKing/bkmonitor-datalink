@@ -10,9 +10,11 @@
 package contract
 
 import (
+	"bytes"
 	"math"
 	"sort"
 	"strconv"
+	"sync"
 	"unicode/utf16"
 	"unicode/utf8"
 )
@@ -55,7 +57,15 @@ import (
 // agreement look identical from outside, and a switch that quietly stopped
 // doing anything would still report zero divergence.
 func canonicalStreamV2(dst, src []byte) (out []byte, ok bool) {
-	stream := canonicalStream{src: src}
+	stream := canonicalStreamPool.Get().(*canonicalStream)
+	stream.src, stream.pos = src, 0
+	// Returned in every path. The buffers it carries are the point of the pool
+	// and none of them alias the result: keys and values are copied into dst
+	// as they are emitted, and the decoded scratch is copied by the escaper.
+	defer func() {
+		stream.src = nil
+		canonicalStreamPool.Put(stream)
+	}()
 	stream.skipSpace()
 	dst, ok = stream.value(dst, 0)
 	if !ok {
@@ -75,10 +85,31 @@ const canonicalStreamMaxDepth = 512
 type canonicalStream struct {
 	src []byte
 	pos int
-	// scratch holds one decoded string at a time. Object keys have to be
-	// compared and sorted by their decoded value, so they are kept separately.
+	// scratch holds one decoded string value at a time. Keys do not use it:
+	// they have to outlive each other to be sorted, so they go in the level
+	// arena below.
 	scratch []byte
+	// levels is one working set per nesting depth, reused across sibling
+	// objects and across calls. Parsing is depth first, so at any moment only
+	// one object per depth is being built and the sets cannot collide.
+	//
+	// Indexed rather than held by pointer on purpose: a nested call can grow
+	// this slice, which would leave a held pointer addressing the old array.
+	levels []canonicalLevel
 }
+
+// canonicalLevel is the working set for one object: its members, an arena
+// holding their decoded keys end to end, and a buffer holding their
+// canonicalised values end to end.
+type canonicalLevel struct {
+	members []canonicalMember
+	keys    []byte
+	values  []byte
+}
+
+// canonicalStreamPool keeps those working sets alive between calls. Without it
+// every call rebuilds them from nothing, and this runs once per series.
+var canonicalStreamPool = sync.Pool{New: func() any { return new(canonicalStream) }}
 
 func (s *canonicalStream) skipSpace() {
 	for s.pos < len(s.src) {
@@ -221,13 +252,19 @@ func (s *canonicalStream) array(dst []byte, depth int) ([]byte, bool) {
 	}
 }
 
-// canonicalMember is one object entry, held as its decoded key plus the span of
-// its already-canonical value inside a per-object buffer. Keys are compared and
-// ordered after decoding, so that a key written as an escape and the same key
-// written literally are one key, both for duplicate detection and for sorting.
+// canonicalMember is one object entry, held as spans rather than values: the
+// key inside the level's key arena, the canonical value inside its value
+// buffer. Spans rather than a string because the previous shape allocated
+// twice for every key, once turning the decoded bytes into a string and once
+// turning that string back into bytes to emit it, and keys are the term that
+// scales with the map-heavy records this actually runs on.
+//
+// Keys are still compared and ordered after decoding, so a key written as an
+// escape and the same key written literally remain one key, for duplicate
+// detection and for sorting alike.
 type canonicalMember struct {
-	key        string
-	start, end int
+	keyStart, keyEnd int
+	valStart, valEnd int
 }
 
 func (s *canonicalStream) object(dst []byte, depth int) ([]byte, bool) {
@@ -237,34 +274,49 @@ func (s *canonicalStream) object(dst []byte, depth int) ([]byte, bool) {
 		s.pos++
 		return append(dst, '{', '}'), true
 	}
-	var members []canonicalMember
+	for depth >= len(s.levels) {
+		s.levels = append(s.levels, canonicalLevel{})
+	}
+	// Taken into locals and written back at the end. They may be reallocated
+	// by append, and a nested call may reallocate s.levels itself, so nothing
+	// here may hold a pointer into either across the recursion.
+	members := s.levels[depth].members[:0]
+	keys := s.levels[depth].keys[:0]
 	// Values are canonicalised into one buffer for this object as they are
 	// parsed, and copied out in key order afterwards. The alternative, decoding
 	// the whole subtree into Go values so it can be re-encoded sorted, is what
 	// this file exists to remove.
-	var values []byte
+	values := s.levels[depth].values[:0]
+	defer func() {
+		s.levels[depth].members = members
+		s.levels[depth].keys = keys
+		s.levels[depth].values = values
+	}()
 	for {
 		s.skipSpace()
 		if s.pos >= len(s.src) || s.src[s.pos] != '"' {
 			return nil, false
 		}
-		decoded, ok := s.str()
+		keyStart := len(keys)
+		var ok bool
+		keys, ok = s.strInto(keys)
 		if !ok {
 			return nil, false
 		}
-		key := string(decoded)
+		keyEnd := len(keys)
 		s.skipSpace()
 		if s.pos >= len(s.src) || s.src[s.pos] != ':' {
 			return nil, false
 		}
 		s.pos++
 		s.skipSpace()
-		start := len(values)
+		valStart := len(values)
 		values, ok = s.value(values, depth+1)
 		if !ok {
 			return nil, false
 		}
-		members = append(members, canonicalMember{key: key, start: start, end: len(values)})
+		members = append(members, canonicalMember{
+			keyStart: keyStart, keyEnd: keyEnd, valStart: valStart, valEnd: len(values)})
 		s.skipSpace()
 		if s.pos >= len(s.src) {
 			return nil, false
@@ -280,18 +332,21 @@ func (s *canonicalStream) object(dst []byte, depth int) ([]byte, bool) {
 		}
 		break
 	}
-	sort.Slice(members, func(i, j int) bool { return members[i].key < members[j].key })
+	key := func(m canonicalMember) []byte { return keys[m.keyStart:m.keyEnd] }
+	sort.Slice(members, func(i, j int) bool {
+		return bytes.Compare(key(members[i]), key(members[j])) < 0
+	})
 	dst = append(dst, '{')
 	for index, member := range members {
 		if index > 0 {
-			if member.key == members[index-1].key {
+			if bytes.Equal(key(member), key(members[index-1])) {
 				return nil, false // duplicate field; the established path names it
 			}
 			dst = append(dst, ',')
 		}
-		dst = appendCanonicalStringV2(dst, []byte(member.key))
+		dst = appendCanonicalStringV2(dst, key(member))
 		dst = append(dst, ':')
-		dst = append(dst, values[member.start:member.end]...)
+		dst = append(dst, values[member.valStart:member.valEnd]...)
 	}
 	return append(dst, '}'), true
 }
@@ -300,8 +355,17 @@ func (s *canonicalStream) object(dst []byte, depth int) ([]byte, bool) {
 // returns it. The result is only valid until the next call, which is why an
 // object key is copied before the next member is read.
 func (s *canonicalStream) str() ([]byte, bool) {
+	out, ok := s.strInto(s.scratch[:0])
+	s.scratch = out
+	return out, ok
+}
+
+// strInto decodes the string at the current position by appending to dst. Keys
+// pass their level's arena so that every key of one object stays readable at
+// once, which sorting requires; values pass the shared scratch, which only has
+// to survive until it is emitted.
+func (s *canonicalStream) strInto(dst []byte) ([]byte, bool) {
 	s.pos++ // consume opening quote
-	s.scratch = s.scratch[:0]
 	for {
 		if s.pos >= len(s.src) {
 			return nil, false
@@ -310,7 +374,7 @@ func (s *canonicalStream) str() ([]byte, bool) {
 		switch {
 		case c == '"':
 			s.pos++
-			return s.scratch, true
+			return dst, true
 		case c == '\\':
 			s.pos++
 			if s.pos >= len(s.src) {
@@ -318,22 +382,22 @@ func (s *canonicalStream) str() ([]byte, bool) {
 			}
 			switch s.src[s.pos] {
 			case '"', '\\', '/':
-				s.scratch = append(s.scratch, s.src[s.pos])
+				dst = append(dst, s.src[s.pos])
 				s.pos++
 			case 'b':
-				s.scratch = append(s.scratch, '\b')
+				dst = append(dst, '\b')
 				s.pos++
 			case 'f':
-				s.scratch = append(s.scratch, '\f')
+				dst = append(dst, '\f')
 				s.pos++
 			case 'n':
-				s.scratch = append(s.scratch, '\n')
+				dst = append(dst, '\n')
 				s.pos++
 			case 'r':
-				s.scratch = append(s.scratch, '\r')
+				dst = append(dst, '\r')
 				s.pos++
 			case 't':
-				s.scratch = append(s.scratch, '\t')
+				dst = append(dst, '\t')
 				s.pos++
 			case 'u':
 				unit, ok := decodeJSONHexQuad(s.src, s.pos+1)
@@ -358,17 +422,17 @@ func (s *canonicalStream) str() ([]byte, bool) {
 						return nil, false
 					}
 					s.pos += 6
-					s.scratch = utf8.AppendRune(s.scratch, combined)
+					dst = utf8.AppendRune(dst, combined)
 					continue
 				}
-				s.scratch = utf8.AppendRune(s.scratch, rune(unit))
+				dst = utf8.AppendRune(dst, rune(unit))
 			default:
 				return nil, false
 			}
 		case c < 0x20:
 			return nil, false // a raw control character is not valid inside a JSON string
 		default:
-			s.scratch = append(s.scratch, c)
+			dst = append(dst, c)
 			s.pos++
 		}
 	}

@@ -6,7 +6,6 @@
 package execution
 
 import (
-	"errors"
 	"reflect"
 	"sort"
 
@@ -78,7 +77,7 @@ func expectedLevelOutcomeIdentities(input InternalExecution, plan DuePlan) (map[
 			for index := 0; index < binding.View.Len(); index++ {
 				record, ok := binding.View.Record(index)
 				if !ok {
-					return nil, errors.New("alarmd execution: selected PRIMARY record is missing")
+					return nil, resultContractViolation(codeOutcomePrimaryRecordMissing, "selected PRIMARY record is missing")
 				}
 				add(SeriesIdentityDigest(record.DimensionIdentityDigest()), RecordAnchor{
 					RecordID: record.RecordID(), SourceTime: record.SourceTime(),
@@ -119,10 +118,10 @@ func validateLevelOutcomes(
 			Plan: outcome.Plan, LevelID: outcome.LevelID, SeriesIdentityDigest: outcome.SeriesIdentityDigest, Record: outcome.Record,
 		}
 		if _, ok := wanted[identity]; !ok {
-			return errors.New("alarmd execution: Level outcome does not belong to a selected Plan record Level")
+			return resultContractViolation(codeOutcomeNotASelectedLevel, "Level outcome does not belong to a selected Plan record Level")
 		}
 		if _, duplicate := seen[identity]; duplicate {
-			return errors.New("alarmd execution: duplicate Level outcome")
+			return resultContractViolation(codeOutcomeDuplicate, "duplicate Level outcome")
 		}
 		if err := validateLevelOutcome(input, plan, result.Disposition, outcome, result.StateResults, states, gaps); err != nil {
 			return err
@@ -130,7 +129,7 @@ func validateLevelOutcomes(
 		seen[identity] = outcome
 	}
 	if len(seen) != len(wanted) {
-		return errors.New("alarmd execution: every selected Plan record Level requires one outcome")
+		return resultContractViolation(codeOutcomeMissingForLevel, "every selected Plan record Level requires one outcome")
 	}
 	if err := validateStateOutcomes(input, plan, result, states, seen); err != nil {
 		return err
@@ -149,7 +148,7 @@ func validateLevelOutcome(
 ) error {
 	if outcome.Plan != plan.Identity || !compiledPlanHasLevel(plan.CompiledPlan, outcome.LevelID) ||
 		outcome.SeriesIdentityDigest == "" {
-		return errors.New("alarmd execution: incomplete Level outcome identity")
+		return resultContractViolation(codeOutcomeIdentityIncomplete, "incomplete Level outcome identity")
 	}
 	if err := outcome.Record.Validate(); err != nil {
 		return err
@@ -170,7 +169,7 @@ func validateLevelOutcome(
 			return err
 		}
 	default:
-		return errors.New("alarmd execution: invalid Level outcome")
+		return resultContractViolation(codeOutcomeKindInvalid, "invalid Level outcome")
 	}
 	stateIdentity := StateKeyIdentity{Plan: plan.Identity, StateGeneration: plan.StateGeneration, SeriesIdentityDigest: outcome.SeriesIdentityDigest}
 	constrained := false
@@ -178,12 +177,12 @@ func validateLevelOutcome(
 		switch view.Status {
 		case StateRetryableIO:
 			if outcome.Outcome != LevelOutcomeUnknown || outcome.ReasonCode != view.ReasonCode {
-				return errors.New("alarmd execution: retryable State series requires matching UNKNOWN Level outcome")
+				return resultContractViolation(codeOutcomeRetryableSeriesNotUnknown, "retryable State series requires matching UNKNOWN Level outcome")
 			}
 			constrained = true
 		case StateDeterministicInvalid:
 			if outcome.Outcome != LevelOutcomeTerminal || outcome.ReasonCode != view.ReasonCode {
-				return errors.New("alarmd execution: invalid State series requires matching TERMINAL Level outcome")
+				return resultContractViolation(codeOutcomeInvalidSeriesNotTerminal, "invalid State series requires matching TERMINAL Level outcome")
 			}
 			constrained = true
 		}
@@ -193,12 +192,12 @@ func validateLevelOutcome(
 		switch outcome.Outcome {
 		case LevelOutcomeNormal, LevelOutcomeRecovery:
 			if !loadedSeriesWarmingCompleted(outcome, plan, stateResults, states, gaps) {
-				return errors.New("alarmd execution: active Runtime State or Plan gap guard forbids NORMAL and RECOVERY")
+				return resultContractViolation(codeOutcomeBusinessUnderActiveGuard, "active Runtime State or Plan gap guard forbids NORMAL and RECOVERY")
 			}
 		case LevelOutcomeUnknown:
 			if !loadedSeriesWarmingCompleted(outcome, plan, stateResults, states, gaps) {
 				if _, ok := guardReasons[outcome.ReasonCode]; !ok && disposition != PlanRetryPending {
-					return errors.New("alarmd execution: UNKNOWN Level outcome does not preserve its active guard reason")
+					return resultContractViolation(codeOutcomeUnknownDropsGuardReason, "UNKNOWN Level outcome does not preserve its active guard reason")
 				}
 				constrained = true
 			}
@@ -211,11 +210,11 @@ func validateLevelOutcome(
 	constrained = constrained || localized
 	effective, found := findEffectiveTimeFact(input, plan.Identity, outcome.LevelID, outcome.SeriesIdentityDigest)
 	if !found {
-		return errors.New("alarmd execution: Level outcome lacks its EffectiveTime fact")
+		return resultContractViolation(codeOutcomeEffectiveTimeFactMissing, "Level outcome lacks its EffectiveTime fact")
 	}
 	if effective.Fact.Status() == strategy.EffectiveTimeUnknown && !constrained {
 		if outcome.Outcome != LevelOutcomeUnknown || outcome.ReasonCode != ReasonCode(contract.ReasonEffectiveTimeUnknown) {
-			return errors.New("alarmd execution: UNKNOWN EffectiveTime requires matching UNKNOWN Level outcome")
+			return resultContractViolation(codeOutcomeEffectiveTimeUnknownMissed, "UNKNOWN EffectiveTime requires matching UNKNOWN Level outcome")
 		}
 	}
 	affected := affectedBindings(input, plan.Identity, outcome.LevelID)
@@ -225,10 +224,10 @@ func validateLevelOutcome(
 		case CompletenessUnavailable:
 			if binding.Disposition == AccessTerminal {
 				if outcome.Outcome != LevelOutcomeTerminal {
-					return errors.New("alarmd execution: terminal dependency requires TERMINAL Level outcome")
+					return resultContractViolation(codeOutcomeTerminalDependencyMissed, "terminal dependency requires TERMINAL Level outcome")
 				}
 			} else if outcome.Outcome != LevelOutcomeUnknown && outcome.Outcome != LevelOutcomeTerminal {
-				return errors.New("alarmd execution: unavailable dependency cannot produce a business Level outcome")
+				return resultContractViolation(codeOutcomeUnavailableDependencyBusine, "unavailable dependency cannot produce a business Level outcome")
 			}
 		case CompletenessPartial:
 			partial[binding.RequirementID] = binding
@@ -236,38 +235,38 @@ func validateLevelOutcome(
 	}
 	if len(partial) == 0 {
 		if len(outcome.PartialProofs) != 0 {
-			return errors.New("alarmd execution: FULL Level outcome must not carry PARTIAL proof receipts")
+			return resultContractViolation(codeProofOnFullOutcome, "FULL Level outcome must not carry PARTIAL proof receipts")
 		}
 		return nil
 	}
 	if outcome.Outcome != LevelOutcomeAbnormal {
 		if outcome.Outcome == LevelOutcomeNormal || outcome.Outcome == LevelOutcomeRecovery {
-			return errors.New("alarmd execution: PARTIAL input cannot produce NORMAL or RECOVERY")
+			return resultContractViolation(codeOutcomePartialNotBusinessClear, "PARTIAL input cannot produce NORMAL or RECOVERY")
 		}
 		if len(outcome.PartialProofs) != 0 {
-			return errors.New("alarmd execution: non-ABNORMAL PARTIAL outcome must not carry proof receipts")
+			return resultContractViolation(codeProofOnNonAbnormalPartial, "non-ABNORMAL PARTIAL outcome must not carry proof receipts")
 		}
 		return nil
 	}
 	capability, ok := partialCapability(plan, outcome.LevelID)
 	if !ok || capability.Policy != PartialProvableAbnormalOnly || capability.Proof == nil {
-		return errors.New("alarmd execution: PARTIAL ABNORMAL Level lacks a registered proof capability")
+		return resultContractViolation(codeProofCapabilityMissing, "PARTIAL ABNORMAL Level lacks a registered proof capability")
 	}
 	proofs := make(map[RequirementID]PartialDecisionProof, len(outcome.PartialProofs))
 	for _, proof := range outcome.PartialProofs {
 		if _, duplicate := proofs[proof.RequirementID]; duplicate {
-			return errors.New("alarmd execution: duplicate PARTIAL proof receipt")
+			return resultContractViolation(codeProofDuplicate, "duplicate PARTIAL proof receipt")
 		}
 		binding, found := partial[proof.RequirementID]
 		if !found || proof.DatasetName != binding.DatasetName || binding.PartialEvidence == nil ||
 			proof.EvidenceDigest != binding.PartialEvidence.EvidenceDigest || proof.Result != PartialProofProvenAbnormal ||
 			proof.Proof != *capability.Proof || !partialEvidenceSupports(capability, binding.PartialEvidence) {
-			return errors.New("alarmd execution: PARTIAL proof receipt does not close its compiled evidence")
+			return resultContractViolation(codeProofDoesNotCloseEvidence, "PARTIAL proof receipt does not close its compiled evidence")
 		}
 		proofs[proof.RequirementID] = proof
 	}
 	if len(proofs) != len(partial) {
-		return errors.New("alarmd execution: every PARTIAL input affecting ABNORMAL requires one proof receipt")
+		return resultContractViolation(codeProofMissingForPartialInput, "every PARTIAL input affecting ABNORMAL requires one proof receipt")
 	}
 	return nil
 }
@@ -280,7 +279,7 @@ func validateStateHistoryReplacements(
 	for _, state := range stateResults {
 		loaded, found := states.Find(state.Mutation.Identity)
 		if !found {
-			return errors.New("alarmd execution: State mutation lacks its loaded view")
+			return resultContractViolation(codeStateLoadedViewMissing, "State mutation lacks its loaded view")
 		}
 		if err := validateStateHistoryReplacement(loaded.History, state.Mutation, stateRetentionPoints(plan)); err != nil {
 			return err
@@ -408,19 +407,19 @@ func validateLocalizedInputOutcome(input InternalExecution, plan PlanIdentity, o
 	}
 	if len(terminalReasons) != 0 {
 		if outcome.Outcome != LevelOutcomeTerminal {
-			return false, errors.New("alarmd execution: localized terminal input requires TERMINAL Level outcome")
+			return false, resultContractViolation(codeLocalizedTerminalNotTerminal, "localized terminal input requires TERMINAL Level outcome")
 		}
 		if _, ok := terminalReasons[outcome.ReasonCode]; !ok {
-			return false, errors.New("alarmd execution: localized terminal reason differs from Level outcome")
+			return false, resultContractViolation(codeLocalizedTerminalReasonDiffers, "localized terminal reason differs from Level outcome")
 		}
 		return true, nil
 	}
 	if len(qualityReasons) != 0 {
 		if outcome.Outcome != LevelOutcomeUnknown {
-			return false, errors.New("alarmd execution: localized quality fact requires UNKNOWN Level outcome")
+			return false, resultContractViolation(codeLocalizedQualityNotUnknown, "localized quality fact requires UNKNOWN Level outcome")
 		}
 		if _, ok := qualityReasons[outcome.ReasonCode]; !ok {
-			return false, errors.New("alarmd execution: localized quality reason differs from Level outcome")
+			return false, resultContractViolation(codeLocalizedQualityReasonDiffers, "localized quality reason differs from Level outcome")
 		}
 		return true, nil
 	}
@@ -482,7 +481,7 @@ func validateStateOutcomes(
 				}
 			}
 			if !foundBusiness && !foundGuardedNonBusiness {
-				return errors.New("alarmd execution: State mutation anchor has neither a business outcome nor an exact durable guard")
+				return resultContractViolation(codeStateAnchorUnjustified, "State mutation anchor has neither a business outcome nor an exact durable guard")
 			}
 		}
 		for _, point := range state.Mutation.Points {
@@ -496,7 +495,7 @@ func validateStateOutcomes(
 					SeriesIdentityDigest: state.Mutation.Identity.SeriesIdentityDigest, Record: anchor,
 				}]
 				if !ok {
-					return errors.New("alarmd execution: State Level fact lacks a matching Level outcome")
+					return resultContractViolation(codeStateFactOutcomeMissing, "State Level fact lacks a matching Level outcome")
 				}
 				effectiveStatus := ""
 				if effective, found := findEffectiveTimeFact(input, outcome.Plan, outcome.LevelID, outcome.SeriesIdentityDigest); found {
@@ -507,14 +506,14 @@ func validateStateOutcomes(
 						fact.Result, outcome, state.Mutation, effectiveStatus, stateInputAllowsAdvance(input, outcome),
 					) &&
 					!stateFactCarriedFromLoadedHistory(loaded.History, anchor, fact, outcome) {
-					return errors.New("alarmd execution: State Level fact contradicts its Level outcome")
+					return resultContractViolation(codeStateFactContradictsOutcome, "State Level fact contradicts its Level outcome")
 				}
 				identity := levelOutcomeIdentity{
 					Plan: state.Mutation.Identity.Plan, LevelID: fact.LevelID,
 					SeriesIdentityDigest: state.Mutation.Identity.SeriesIdentityDigest, Record: anchor,
 				}
 				if _, duplicate := facts[identity]; duplicate {
-					return errors.New("alarmd execution: duplicate State fact for one Level outcome")
+					return resultContractViolation(codeStateFactDuplicate, "duplicate State fact for one Level outcome")
 				}
 				facts[identity] = fact.Result
 			}
@@ -526,7 +525,7 @@ func validateStateOutcomes(
 					continue
 				}
 				if level.HistoryCompleteness != HistoryWarming && level.HistoryCompleteness != HistoryGapped {
-					return errors.New("alarmd execution: PARTIAL ABNORMAL State must preserve recovery warming/gap provenance")
+					return resultContractViolation(codeStatePartialAbnormalDropsProven, "PARTIAL ABNORMAL State must preserve recovery warming/gap provenance")
 				}
 			}
 		}
@@ -537,7 +536,7 @@ func validateStateOutcomes(
 		}
 		fact, ok := facts[identity]
 		if !ok || !levelFactMatchesOutcome(fact, outcome.Outcome) {
-			return errors.New("alarmd execution: successful Level outcome lacks its State fact")
+			return resultContractViolation(codeStateFactMissingForOutcome, "successful Level outcome lacks its State fact")
 		}
 	}
 	return nil
@@ -561,7 +560,7 @@ func stateRetentionPoints(plan DuePlan) uint32 {
 // affected anchors. Retention may evict only the oldest points.
 func validateStateHistoryReplacement(loaded []StateHistoryPoint, mutation StateMutation, retention uint32) error {
 	if retention == 0 {
-		return errors.New("alarmd execution: State history replacement lacks a retention bound")
+		return resultContractViolation(codeHistoryRetentionBoundMissing, "State history replacement lacks a retention bound")
 	}
 	affected := make(map[RecordAnchor]struct{}, len(mutation.AffectedRecords))
 	for _, anchor := range mutation.AffectedRecords {
@@ -583,12 +582,12 @@ func validateStateHistoryReplacement(loaded []StateHistoryPoint, mutation StateM
 		anchor := RecordAnchor{RecordID: point.RecordID, SourceTime: point.SourceTime}
 		if loadedPoint, ok := loadedPoints[anchor]; ok {
 			if !reflect.DeepEqual(loadedPoint, point) {
-				return errors.New("alarmd execution: State history replacement changes a loaded point")
+				return resultContractViolation(codeHistoryLoadedPointChanged, "State history replacement changes a loaded point")
 			}
 			continue
 		}
 		if _, current := affected[anchor]; !current {
-			return errors.New("alarmd execution: State history replacement changes or invents a loaded point")
+			return resultContractViolation(codeHistoryLoadedPointInvented, "State history replacement changes or invents a loaded point")
 		}
 	}
 	expectedAnchors := make([]RecordAnchor, 0, len(allAnchors))
@@ -605,12 +604,12 @@ func validateStateHistoryReplacement(loaded []StateHistoryPoint, mutation StateM
 		expectedAnchors = expectedAnchors[len(expectedAnchors)-int(retention):]
 	}
 	if len(expectedAnchors) != len(mutation.Points) {
-		return errors.New("alarmd execution: State history replacement is not the complete bounded snapshot")
+		return resultContractViolation(codeHistorySnapshotIncomplete, "State history replacement is not the complete bounded snapshot")
 	}
 	for index, point := range mutation.Points {
 		anchor := RecordAnchor{RecordID: point.RecordID, SourceTime: point.SourceTime}
 		if anchor != expectedAnchors[index] {
-			return errors.New("alarmd execution: State history replacement is not the complete bounded snapshot")
+			return resultContractViolation(codeHistorySnapshotIncomplete, "State history replacement is not the complete bounded snapshot")
 		}
 	}
 	return nil
@@ -733,7 +732,7 @@ func validateDegradedGuardCoverage(
 				binding, found := partialBinding(input, outcome, proof.RequirementID)
 				if !found || !preEventMarkerCovers(preEventMarkers, loadedMarkers, binding, outcome) ||
 					!finalMarkerCovers(finalMarkers, binding, outcome) {
-					return errors.New("alarmd execution: PARTIAL ABNORMAL lacks its final Plan/Level gap guard")
+					return resultContractViolation(codeGuardMissingForPartialAbnormal, "PARTIAL ABNORMAL lacks its final Plan/Level gap guard")
 				}
 			}
 			continue
@@ -741,12 +740,12 @@ func validateDegradedGuardCoverage(
 		if finalStateGuardsOutcome(finalStates, outcome) || finalGapGuardsOutcome(finalMarkers, outcome) {
 			continue
 		}
-		return errors.New("alarmd execution: degraded Level outcome lacks an exact durable guard")
+		return resultContractViolation(codeGuardMissingForDegradedOutcome, "degraded Level outcome lacks an exact durable guard")
 	}
 	if obligations == 0 &&
 		(result.Disposition == PlanUnavailable || result.Disposition == PlanReadinessGap || result.Disposition == PlanTerminal) &&
 		!hasFinalPlanGap(finalMarkers) {
-		return errors.New("alarmd execution: degraded plan completion requires a durable pre-event gap guard")
+		return resultContractViolation(codeGuardMissingPreEvent, "degraded plan completion requires a durable pre-event gap guard")
 	}
 	return nil
 }
@@ -943,7 +942,7 @@ func validateEventOutcomes(input InternalExecution, result PlanEvaluationResult,
 	for identity, outcome := range outcomes {
 		effective, found := findEffectiveTimeFact(input, identity.Plan, identity.LevelID, identity.SeriesIdentityDigest)
 		if !found {
-			return errors.New("alarmd execution: TriggerEvent validation lacks EffectiveTime fact")
+			return resultContractViolation(codeEventEffectiveTimeFactMissing, "TriggerEvent validation lacks EffectiveTime fact")
 		}
 		if effective.Fact.Status() != strategy.EffectiveTimeActive {
 			continue
@@ -966,10 +965,10 @@ func validateEventOutcomes(input InternalExecution, result PlanEvaluationResult,
 				Record: RecordAnchor{RecordID: event.RecordRef.RecordID, SourceTime: event.RecordRef.SourceTime},
 			}
 			if _, duplicate := actualEvents[record]; duplicate {
-				return errors.New("alarmd execution: duplicate TriggerEvent for one Plan series record")
+				return resultContractViolation(codeEventDuplicate, "duplicate TriggerEvent for one Plan series record")
 			}
 			if expectedEvents[record] == "" || event.EventKind != expectedEvents[record] {
-				return errors.New("alarmd execution: TriggerEvent kind does not match Level outcomes")
+				return resultContractViolation(codeEventKindMismatch, "TriggerEvent kind does not match Level outcomes")
 			}
 			actualEvents[record] = struct{}{}
 			seen := make(map[uint32]struct{}, len(event.LevelResults))
@@ -983,7 +982,7 @@ func validateEventOutcomes(input InternalExecution, result PlanEvaluationResult,
 				)
 				if !ok || !effectiveFound || string(outcome.Outcome) != level.Result ||
 					level.DetectEvidence.EffectiveTimeStatus != string(effective.Fact.Status()) {
-					return errors.New("alarmd execution: TriggerEvent Level result contradicts Level outcome decomposition")
+					return resultContractViolation(codeEventLevelResultContradicts, "TriggerEvent Level result contradicts Level outcome decomposition")
 				}
 				seen[level.LevelID] = struct{}{}
 			}
@@ -994,18 +993,18 @@ func validateEventOutcomes(input InternalExecution, result PlanEvaluationResult,
 					effective.Fact.Status() == strategy.EffectiveTimeActive &&
 					(outcome.Outcome == LevelOutcomeNormal || outcome.Outcome == LevelOutcomeAbnormal || outcome.Outcome == LevelOutcomeRecovery) {
 					if _, ok := seen[identity.LevelID]; !ok {
-						return errors.New("alarmd execution: TriggerEvent omitted a successful sibling Level outcome")
+						return resultContractViolation(codeEventOmitsSiblingOutcome, "TriggerEvent omitted a successful sibling Level outcome")
 					}
 				}
 			}
 		}
 	}
 	if len(actualEvents) != len(expectedEvents) {
-		return errors.New("alarmd execution: ABNORMAL or RECOVERY Level outcomes require exactly one TriggerEvent envelope")
+		return resultContractViolation(codeEventEnvelopeCountInvalid, "ABNORMAL or RECOVERY Level outcomes require exactly one TriggerEvent envelope")
 	}
 	for record := range expectedEvents {
 		if _, found := actualEvents[record]; !found {
-			return errors.New("alarmd execution: missing TriggerEvent for business Level outcome")
+			return resultContractViolation(codeEventMissingForBusinessOutcome, "missing TriggerEvent for business Level outcome")
 		}
 	}
 	return nil

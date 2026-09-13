@@ -327,6 +327,11 @@ func openProductionPhaseTwoBundleWithDependencies(
 					Samples: stats.DeltaAudit.Samples, Agreed: stats.DeltaAudit.Agreed,
 					OverNamed: stats.DeltaAudit.OverNamed, Missed: stats.DeltaAudit.Missed,
 				}},
+			{Object: "catalog_index", Hits: stats.Index.Hits, Misses: stats.Index.Misses,
+				Audit: &metric.ControlCacheAudit{
+					Samples: stats.IndexAudit.Samples, Agreed: stats.IndexAudit.Agreed,
+					OverNamed: stats.IndexAudit.OverNamed, Missed: stats.IndexAudit.Missed,
+				}},
 			{Object: "timeline", Hits: stats.Timeline.Hits, Misses: stats.Timeline.Misses,
 				Refreshes: stats.Timeline.Refreshes, Evictions: occupancy.Evictions,
 				Occupancy: &metric.ControlCacheOccupancy{

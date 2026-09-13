@@ -63,7 +63,8 @@ type phaseTwoMetrics struct {
 	assignmentIndexStaleRounds      *loadedGauge
 	assignmentIndexWrites           *prometheus.CounterVec
 	assignmentIndexReads            *prometheus.CounterVec
-	assignmentIndexShadow           *prometheus.CounterVec
+	assignmentIndexConfirm          *prometheus.CounterVec
+	assignmentRecordReads           *prometheus.CounterVec
 	scheduleCursorAdvances          *prometheus.CounterVec
 	activationHeldQueryGroups       *loadedGauge
 	activationHeldAgeSecondsMax     *loadedGauge
@@ -251,7 +252,8 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	metrics.assignmentIndexStaleRounds = newLoadedGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "assignment_index_stale_rounds", Help: "Consecutive reconcile rounds in which this worker read the same Assignment index round number. Healthy values are zero and one: the Leader writes once per reconcile interval and workers read on their own interval of the same length, so a reader that runs just before the writer sees the previous round once. Two or more means the index has stopped advancing, which reads exactly like an unchanged fleet otherwise. Per worker; aggregate with max."})
 	metrics.assignmentIndexWrites = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "assignment_index_write_total", Help: "Assignment index rounds the Control Leader attempted, by result."}, []string{"result"})
 	metrics.assignmentIndexReads = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "assignment_index_read_total", Help: "Assignment index reads by this worker, by result: fresh (round advanced), stale (same round), missing (no index or no set), invalid (unreadable)."}, []string{"result"})
-	metrics.assignmentIndexShadow = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "assignment_index_shadow_total", Help: "Shadow comparison of the index-derived candidate set with the record-derived set, by result: agreed, transient (records changed this round, the index may lag one round), disagreed (records unchanged and the sets differ), skipped (no usable index)."}, []string{"result"})
+	metrics.assignmentIndexConfirm = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "assignment_index_confirm_total", Help: "Changes a worker took from the Assignment index and confirmed against the Assignment records, by outcome: opened (a candidate the record confirmed), rejected (a candidate the record refused), released (a held Query Group the record confirmed gone), retained (a held Query Group the index dropped but the record still assigns here). The record always wins; rejected and retained measure how often the index was behind it."}, []string{"result"})
+	metrics.assignmentRecordReads = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "assignment_record_read_total", Help: "Assignment records this worker read to learn what it owns, by path: index (only the changes the index named) or full (every record of the population, when no usable index was there). The index exists to keep the index path near zero in a quiet round."}, []string{"path"})
 	metrics.scheduleCursorAdvances = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "schedule_cursor_advance_total", Help: "Attempts to move a Progress cursor that points into a pruned part of the Schedule timeline to the earliest retained Slot, by outcome: applied, conflict, stale_owner, retryable, failed. Each applied advance records the skipped span as a gap."}, []string{"result"})
 	metrics.undrainedDrainingQueryGroups = newLoadedGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "undrained_draining_query_groups", Help: "Replicated per-Pod view of retired Query Groups still requiring ownership until their retirement boundary is drained; aggregate replicas with max, not sum."})
 	metrics.activationHeldQueryGroups = newLoadedGauge(prometheus.GaugeOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "activation_held_query_groups", Help: "Query Groups the publication brings back from retirement that have not drained and were held out of the activation, which went ahead for everyone else. Reported by the Control Leader on every activation attempt and on every reconcile of a publication that still holds some, so it follows the held set down to zero; a value that does not fall is a retirement that is not draining."})
@@ -319,7 +321,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.queryFailures,
 		m.objectCatalogObjects, m.objectCatalogRedis, m.objectCatalogManifestBytes, m.objectReads, m.stateGenerationSkew,
 		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
-		m.undrainedDrainingQueryGroups, m.drainingCursorPrunedQueryGroups, m.rebalancePlannedMoves, m.assignmentIndexStaleRounds, m.assignmentIndexWrites, m.assignmentIndexReads, m.assignmentIndexShadow, m.scheduleCursorAdvances, m.activationHeldQueryGroups, m.activationHeldAgeSecondsMax,
+		m.undrainedDrainingQueryGroups, m.drainingCursorPrunedQueryGroups, m.rebalancePlannedMoves, m.assignmentIndexStaleRounds, m.assignmentIndexWrites, m.assignmentIndexReads, m.assignmentIndexConfirm, m.assignmentRecordReads, m.scheduleCursorAdvances, m.activationHeldQueryGroups, m.activationHeldAgeSecondsMax,
 		m.algorithmEvaluations, m.algorithmInputs,
 	}...), append(append(m.redisCalls.collectors(), m.dueIndex.collectors()...),
 		m.controlCache, m.redisPool, m.canonicalEncoding, m.legacyPodCache,
@@ -375,8 +377,22 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 			m.assignmentIndexWrites.WithLabelValues(result).Inc()
 		case observability.StageAssignmentIndexRead:
 			m.assignmentIndexReads.WithLabelValues(facts.Result).Inc()
-			m.assignmentIndexShadow.WithLabelValues(facts.Shadow).Inc()
 			m.assignmentIndexStaleRounds.Set(float64(facts.StaleRounds))
+			for label, count := range map[string]int{
+				observability.AssignmentIndexOpened: facts.Opened, observability.AssignmentIndexRejected: facts.Rejected,
+				observability.AssignmentIndexReleased: facts.Released, observability.AssignmentIndexRetained: facts.Retained,
+			} {
+				if count > 0 {
+					m.assignmentIndexConfirm.WithLabelValues(label).Add(float64(count))
+				}
+			}
+			if facts.Reads > 0 {
+				path := "index"
+				if facts.FullRead {
+					path = "full"
+				}
+				m.assignmentRecordReads.WithLabelValues(path).Add(float64(facts.Reads))
+			}
 		}
 	}
 	if facts := observation.CursorAdvance; facts != nil {

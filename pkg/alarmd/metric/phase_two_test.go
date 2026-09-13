@@ -534,28 +534,43 @@ func TestPhaseTwoObserveOnlyGaugesEmitNoSeriesUntilFirstObservation(t *testing.T
 	}
 }
 
-// Index reads count by result and shadow class, the stale-round gauge
-// follows the latest read, and writes count by success or failure.
+// Index reads count by result, confirmations count by outcome, record reads
+// count by path, the stale-round gauge follows the latest read, and writes
+// count by success or failure.
 func TestPhaseTwoAssignmentIndexMetricsFollowObservations(t *testing.T) {
 	recorder := NewRecorder(BuildInfo{})
 	recorder.Observe(context.Background(), observability.Observation{
 		Component: observability.ComponentOwnership, Stage: observability.StageAssignmentIndexRead,
 		Result: observability.ResultSuccess, Operation: observability.OperationLoad,
-		AssignmentIndex: &observability.AssignmentIndexFacts{Result: observability.AssignmentIndexStale, StaleRounds: 4, Shadow: observability.AssignmentIndexShadowAgreed},
+		AssignmentIndex: &observability.AssignmentIndexFacts{Result: observability.AssignmentIndexStale, StaleRounds: 4, Opened: 2, Released: 1, Reads: 3},
+	})
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentOwnership, Stage: observability.StageAssignmentIndexRead,
+		Result: observability.ResultSuccess, Operation: observability.OperationLoad,
+		AssignmentIndex: &observability.AssignmentIndexFacts{Result: observability.AssignmentIndexMissing, Reads: 900, FullRead: true},
 	})
 	recorder.Observe(context.Background(), observability.Observation{
 		Component: observability.ComponentOwnership, Stage: observability.StageAssignmentIndexWritten,
 		Result: observability.ResultFailed, Operation: observability.OperationWrite,
 		AssignmentIndex: &observability.AssignmentIndexFacts{Workers: 2},
 	})
-	if got := testutil.ToFloat64(recorder.phaseTwo.assignmentIndexStaleRounds); got != 4 {
-		t.Fatalf("assignment_index_stale_rounds = %v, want 4", got)
+	if got := testutil.ToFloat64(recorder.phaseTwo.assignmentIndexStaleRounds); got != 0 {
+		t.Fatalf("assignment_index_stale_rounds = %v, want the latest read's 0", got)
 	}
 	if got := testutil.ToFloat64(recorder.phaseTwo.assignmentIndexReads.WithLabelValues(observability.AssignmentIndexStale)); got != 1 {
 		t.Fatalf("assignment_index_read_total{stale} = %v, want 1", got)
 	}
-	if got := testutil.ToFloat64(recorder.phaseTwo.assignmentIndexShadow.WithLabelValues(observability.AssignmentIndexShadowAgreed)); got != 1 {
-		t.Fatalf("assignment_index_shadow_total{agreed} = %v, want 1", got)
+	if got := testutil.ToFloat64(recorder.phaseTwo.assignmentIndexConfirm.WithLabelValues(observability.AssignmentIndexOpened)); got != 2 {
+		t.Fatalf("assignment_index_confirm_total{opened} = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(recorder.phaseTwo.assignmentIndexConfirm.WithLabelValues(observability.AssignmentIndexReleased)); got != 1 {
+		t.Fatalf("assignment_index_confirm_total{released} = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(recorder.phaseTwo.assignmentRecordReads.WithLabelValues("index")); got != 3 {
+		t.Fatalf("assignment_record_read_total{index} = %v, want 3", got)
+	}
+	if got := testutil.ToFloat64(recorder.phaseTwo.assignmentRecordReads.WithLabelValues("full")); got != 900 {
+		t.Fatalf("assignment_record_read_total{full} = %v, want 900", got)
 	}
 	if got := testutil.ToFloat64(recorder.phaseTwo.assignmentIndexWrites.WithLabelValues("failed")); got != 1 {
 		t.Fatalf("assignment_index_write_total{failed} = %v, want 1", got)

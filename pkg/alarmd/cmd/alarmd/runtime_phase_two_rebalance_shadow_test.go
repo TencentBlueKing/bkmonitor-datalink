@@ -28,6 +28,7 @@ type rebalanceOwnershipStore struct {
 	listCalls   int
 	published   int
 
+	reads            int
 	indexRounds      [][]ownership.AssignedSetWrite
 	indexMissingOnce []string
 	indexErr         error
@@ -44,6 +45,7 @@ func (store *rebalanceOwnershipStore) ListReadyWorkers(context.Context, time.Tim
 }
 
 func (store *rebalanceOwnershipStore) ReadAssignment(_ context.Context, queryGroup execution.QueryGroupIdentity) (ownership.AssignmentRecord, error) {
+	store.reads++
 	record, ok := store.assignments[queryGroup]
 	if !ok {
 		return ownership.AssignmentRecord{}, ownership.ErrAssignmentAbsent

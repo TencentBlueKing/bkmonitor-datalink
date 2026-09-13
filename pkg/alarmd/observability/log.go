@@ -255,8 +255,12 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			slog.Bool("assignment_index_set_read", facts.SetRead),
 			slog.Int("assignment_index_candidates", facts.Candidates),
 			slog.Int("assignment_index_assigned", facts.Assigned),
-			slog.String("assignment_index_shadow", facts.Shadow),
-			slog.Int("assignment_index_difference", facts.Difference),
+			slog.Int("assignment_index_opened", facts.Opened),
+			slog.Int("assignment_index_rejected", facts.Rejected),
+			slog.Int("assignment_index_released", facts.Released),
+			slog.Int("assignment_index_retained", facts.Retained),
+			slog.Int("assignment_index_reads", facts.Reads),
+			slog.Bool("assignment_index_full_read", facts.FullRead),
 		)
 	}
 	if facts := observation.CursorAdvance; facts != nil {

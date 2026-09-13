@@ -225,74 +225,102 @@ func sortWrites(writes []ownership.AssignedSetWrite) {
 	}
 }
 
-// A worker shadows the index beside the per-record read: it reads the index
-// every round, its own set only when the index says the set changed, and
-// classifies the comparison; the returned set still comes from the records.
-func TestProductionPhaseTwoOwnershipShadowsTheAssignmentIndexAgainstTheRecords(t *testing.T) {
+// A worker answers from the index: it reads the index every round, its own
+// set only when the index says the set changed, confirms every candidate it
+// does not yet hold against its record before returning it, and confirms
+// every held Query Group the index dropped against its record before
+// releasing it. The record wins whenever the two disagree. Without a usable
+// index every record is read, as before the index existed.
+func TestProductionPhaseTwoOwnershipAnswersFromTheAssignmentIndexAndConfirmsChangesAgainstRecords(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	groups := []execution.QueryGroupIdentity{"query-group-1", "query-group-2", "query-group-3"}
 	store := newIndexStore(now, groups)
 	production, observations := newIndexOwnershipHarness(t, now, store)
-	read := func() *observability.AssignmentIndexFacts {
+	read := func(population []execution.QueryGroupIdentity) ([]execution.QueryGroupIdentity, *observability.AssignmentIndexFacts, observability.Result) {
 		t.Helper()
-		assigned, err := production.AssignedQueryGroups(context.Background(), groups)
-		if err != nil || !reflect.DeepEqual(assigned, groups) {
-			t.Fatalf("AssignedQueryGroups() = %v, %v; want the records' set", assigned, err)
+		store.reads = 0
+		assigned, err := production.AssignedQueryGroups(context.Background(), population)
+		if err != nil {
+			t.Fatalf("AssignedQueryGroups() error = %v", err)
 		}
 		reads := indexObservations(*observations, observability.StageAssignmentIndexRead)
-		return reads[len(reads)-1].AssignmentIndex
+		last := reads[len(reads)-1]
+		return assigned, last.AssignmentIndex, last.Result
 	}
-	want := func(t *testing.T, got *observability.AssignmentIndexFacts, result string, stale int, setRead bool, candidates int, shadow string, difference int) {
+	type want struct {
+		assigned                                       []execution.QueryGroupIdentity
+		result                                         string
+		setRead, fullRead                              bool
+		candidates, opened, rejected, released, retain int
+		reads                                          int
+	}
+	check := func(t *testing.T, step string, assigned []execution.QueryGroupIdentity, facts *observability.AssignmentIndexFacts, w want) {
 		t.Helper()
-		if got == nil || got.Result != result || got.StaleRounds != stale || got.SetRead != setRead || got.Candidates != candidates ||
-			got.Shadow != shadow || got.Difference != difference || got.Assigned != 3 {
-			t.Fatalf("index read facts = %+v, want result=%s stale=%d set_read=%v candidates=%d shadow=%s difference=%d",
-				got, result, stale, setRead, candidates, shadow, difference)
+		if !reflect.DeepEqual(assigned, w.assigned) || facts == nil || facts.Result != w.result || facts.SetRead != w.setRead ||
+			facts.FullRead != w.fullRead || facts.Candidates != w.candidates || facts.Opened != w.opened || facts.Rejected != w.rejected ||
+			facts.Released != w.released || facts.Retained != w.retain || facts.Reads != w.reads || store.reads != w.reads {
+			t.Fatalf("%s: assigned=%v facts=%+v store reads=%d, want %+v", step, assigned, facts, store.reads, w)
 		}
 	}
-	// No index yet: nothing to compare, nothing counted against it.
-	want(t, read(), observability.AssignmentIndexMissing, 0, false, 0, observability.AssignmentIndexShadowSkipped, 0)
+	setIndex := func(round uint64, setRound *uint64, set []execution.QueryGroupIdentity) {
+		if store.index == nil {
+			store.index = &ownership.AssignmentIndex{ControlEpoch: 1, SetRounds: map[string]uint64{"worker-2": 1}}
+		}
+		store.index.Round = round
+		if setRound == nil {
+			delete(store.index.SetRounds, "worker-1")
+		} else {
+			store.index.SetRounds["worker-1"] = *setRound
+			store.sets["worker-1"] = ownership.AssignedSet{WorkerID: "worker-1", Round: *setRound, QueryGroups: set}
+		}
+	}
+	round := func(value uint64) *uint64 { return &value }
 
-	store.index = &ownership.AssignmentIndex{Round: 7, ControlEpoch: 1, SetRounds: map[string]uint64{"worker-1": 7, "worker-2": 7}}
-	store.sets["worker-1"] = ownership.AssignedSet{WorkerID: "worker-1", Round: 7, QueryGroups: append(groups[:3:3], "query-group-elsewhere")}
-	want(t, read(), observability.AssignmentIndexFresh, 0, true, 3, observability.AssignmentIndexShadowAgreed, 0)
-	// Same round again: stale, and the cached set is used without a read.
-	want(t, read(), observability.AssignmentIndexStale, 1, false, 3, observability.AssignmentIndexShadowAgreed, 0)
-	want(t, read(), observability.AssignmentIndexStale, 2, false, 3, observability.AssignmentIndexShadowAgreed, 0)
-	// The round advances but this worker's set did not: fresh, no set read.
-	store.index.Round = 8
-	want(t, read(), observability.AssignmentIndexFresh, 0, false, 3, observability.AssignmentIndexShadowAgreed, 0)
-	// The set changed while the records did not: read again, and the
-	// difference counts against the index.
-	store.index.Round, store.index.SetRounds["worker-1"] = 9, 9
-	store.sets["worker-1"] = ownership.AssignedSet{WorkerID: "worker-1", Round: 9, QueryGroups: groups[:2]}
-	want(t, read(), observability.AssignmentIndexFresh, 0, true, 2, observability.AssignmentIndexShadowDisagreed, 1)
-	// A set older than the round the index names is not trusted.
-	store.index.Round, store.index.SetRounds["worker-1"] = 10, 10
-	want(t, read(), observability.AssignmentIndexInvalid, 0, true, 0, observability.AssignmentIndexShadowSkipped, 0)
-	// The index no longer names this worker: an empty candidate set, and the
-	// records changing this round make the difference transient.
-	delete(store.index.SetRounds, "worker-1")
-	store.index.Round = 11
-	delete(store.assignments, "query-group-3")
-	shortened := groups[:2]
-	assigned, err := production.AssignedQueryGroups(context.Background(), groups)
-	if err != nil || !reflect.DeepEqual(assigned, shortened) {
-		t.Fatalf("AssignedQueryGroups() after a record left = %v, %v", assigned, err)
-	}
-	reads := indexObservations(*observations, observability.StageAssignmentIndexRead)
-	last := reads[len(reads)-1].AssignmentIndex
-	if last.Result != observability.AssignmentIndexFresh || last.Candidates != 0 || last.Assigned != 2 ||
-		last.Shadow != observability.AssignmentIndexShadowTransient || last.Difference != 2 {
-		t.Fatalf("index read facts after the records changed = %+v, want an unnamed worker with a transient difference of 2", last)
-	}
-	// A read that fails is reported as such.
+	// No index yet: every record is read, and the held set is built from it.
+	assigned, facts, _ := read(groups)
+	check(t, "no index", assigned, facts, want{assigned: groups, result: observability.AssignmentIndexMissing, fullRead: true, reads: 3})
+	// The index names what is already held: nothing is read.
+	setIndex(7, round(7), groups)
+	assigned, facts, _ = read(groups)
+	check(t, "index matches held", assigned, facts, want{assigned: groups, result: observability.AssignmentIndexFresh, setRead: true, candidates: 3})
+	assigned, facts, _ = read(groups)
+	check(t, "same round", assigned, facts, want{assigned: groups, result: observability.AssignmentIndexStale, candidates: 3})
+	// A Query Group moves away and the index follows: released after one read.
+	moved := store.assignments["query-group-3"]
+	moved.DesiredWorkerID = "worker-2"
+	store.assignments["query-group-3"] = moved
+	setIndex(8, round(8), groups[:2])
+	assigned, facts, _ = read(groups)
+	check(t, "released", assigned, facts, want{assigned: groups[:2], result: observability.AssignmentIndexFresh, setRead: true, candidates: 2, released: 1, reads: 1})
+	// The index names a Query Group whose record says otherwise: rejected,
+	// not returned, and read again next round because it is still named.
+	setIndex(9, round(9), groups)
+	assigned, facts, _ = read(groups)
+	check(t, "rejected", assigned, facts, want{assigned: groups[:2], result: observability.AssignmentIndexFresh, setRead: true, candidates: 3, rejected: 1, reads: 1})
+	assigned, facts, _ = read(groups)
+	check(t, "rejected again", assigned, facts, want{assigned: groups[:2], result: observability.AssignmentIndexStale, candidates: 3, rejected: 1, reads: 1})
+	// The record comes back: opened after one read, with no set read since
+	// the index did not change the set.
+	moved.DesiredWorkerID = "worker-1"
+	store.assignments["query-group-3"] = moved
+	setIndex(10, round(9), groups)
+	assigned, facts, _ = read(groups)
+	check(t, "opened", assigned, facts, want{assigned: groups, result: observability.AssignmentIndexFresh, candidates: 3, opened: 1, reads: 1})
+	// The index drops a Query Group the record still assigns here: retained.
+	setIndex(11, round(11), groups[:2])
+	assigned, facts, _ = read(groups)
+	check(t, "retained", assigned, facts, want{assigned: groups, result: observability.AssignmentIndexFresh, setRead: true, candidates: 2, retain: 1, reads: 1})
+	// The index no longer names this worker at all: every held Query Group
+	// is confirmed against its record, and a Query Group that left the
+	// population is released without a read.
+	setIndex(12, nil, nil)
+	assigned, facts, _ = read(groups[:2])
+	check(t, "unnamed and shrunk population", assigned, facts, want{assigned: groups[:2], result: observability.AssignmentIndexFresh, released: 1, retain: 2, reads: 2})
+	// A failing index read falls back to reading every record and is reported.
 	store.indexErr = errors.New("registry unavailable")
-	if _, err := production.AssignedQueryGroups(context.Background(), groups); err != nil {
-		t.Fatalf("AssignedQueryGroups() with a failing index read error = %v, want the records to still answer", err)
-	}
-	reads = indexObservations(*observations, observability.StageAssignmentIndexRead)
-	if reads[len(reads)-1].Result != observability.ResultFailed || reads[len(reads)-1].AssignmentIndex.Result != observability.AssignmentIndexInvalid {
-		t.Fatalf("failed index read observed as %+v", reads[len(reads)-1])
+	assigned, facts, result := read(groups[:2])
+	check(t, "failed index read", assigned, facts, want{assigned: groups[:2], result: observability.AssignmentIndexInvalid, fullRead: true, reads: 2})
+	if result != observability.ResultFailed {
+		t.Fatalf("failed index read observed as %s", result)
 	}
 }

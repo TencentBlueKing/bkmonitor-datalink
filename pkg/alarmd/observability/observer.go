@@ -504,10 +504,14 @@ func normalizeRebalanceFacts(facts *RebalanceFacts) *RebalanceFacts {
 // AssignmentIndexFacts describes one Assignment index round: written by
 // the Control Leader (Round, ControlEpoch, Workers, Rewritten, Missing) or
 // read by a worker (Round, Result, StaleRounds, SetRead, Candidates,
-// Assigned, Shadow, Difference). The index is an accelerator, so the read
-// side reports what the index would have yielded next to what the records
-// gave; Shadow classifies the comparison and Difference is the size of the
-// symmetric difference.
+// Assigned and the confirmation counts). The index only names candidates,
+// so the read side also reports what the records said about every change
+// it took from the index: Opened, a candidate the record confirmed;
+// Rejected, a candidate the record refused; Released, a held Query Group
+// the record confirmed gone; Retained, a held Query Group the index dropped
+// but the record still assigns here. Reads is the number of records read
+// to decide, the count the index exists to shrink; FullRead marks a round
+// that read every record because no usable index was there.
 type AssignmentIndexFacts struct {
 	Round        uint64 `json:"round"`
 	ControlEpoch uint64 `json:"control_epoch,omitempty"`
@@ -519,22 +523,30 @@ type AssignmentIndexFacts struct {
 	SetRead      bool   `json:"set_read,omitempty"`
 	Candidates   int    `json:"candidates"`
 	Assigned     int    `json:"assigned"`
-	Shadow       string `json:"shadow,omitempty"`
-	Difference   int    `json:"difference"`
+	Opened       int    `json:"opened"`
+	Rejected     int    `json:"rejected"`
+	Released     int    `json:"released"`
+	Retained     int    `json:"retained"`
+	Reads        int    `json:"reads"`
+	FullRead     bool   `json:"full_read,omitempty"`
 }
 
-// Closed vocabularies of the index read side; anything else normalizes to
+// Closed vocabulary of the index read result; anything else normalizes to
 // the value that says "do not trust this read".
 const (
 	AssignmentIndexFresh   = "fresh"
 	AssignmentIndexStale   = "stale"
 	AssignmentIndexMissing = "missing"
 	AssignmentIndexInvalid = "invalid"
+)
 
-	AssignmentIndexShadowAgreed    = "agreed"
-	AssignmentIndexShadowTransient = "transient"
-	AssignmentIndexShadowDisagreed = "disagreed"
-	AssignmentIndexShadowSkipped   = "skipped"
+// Confirmation outcomes of the index read side, the labels of
+// assignment_index_confirm_total.
+const (
+	AssignmentIndexOpened   = "opened"
+	AssignmentIndexRejected = "rejected"
+	AssignmentIndexReleased = "released"
+	AssignmentIndexRetained = "retained"
 )
 
 func normalizeAssignmentIndexFacts(facts *AssignmentIndexFacts) *AssignmentIndexFacts {
@@ -544,7 +556,8 @@ func normalizeAssignmentIndexFacts(facts *AssignmentIndexFacts) *AssignmentIndex
 	normalized := *facts
 	for _, count := range []*int{
 		&normalized.Workers, &normalized.Rewritten, &normalized.Missing, &normalized.StaleRounds,
-		&normalized.Candidates, &normalized.Assigned, &normalized.Difference,
+		&normalized.Candidates, &normalized.Assigned, &normalized.Opened, &normalized.Rejected,
+		&normalized.Released, &normalized.Retained, &normalized.Reads,
 	} {
 		if *count < 0 {
 			*count = 0
@@ -554,11 +567,6 @@ func normalizeAssignmentIndexFacts(facts *AssignmentIndexFacts) *AssignmentIndex
 	case "", AssignmentIndexFresh, AssignmentIndexStale, AssignmentIndexMissing, AssignmentIndexInvalid:
 	default:
 		normalized.Result = AssignmentIndexInvalid
-	}
-	switch normalized.Shadow {
-	case "", AssignmentIndexShadowAgreed, AssignmentIndexShadowTransient, AssignmentIndexShadowDisagreed, AssignmentIndexShadowSkipped:
-	default:
-		normalized.Shadow = AssignmentIndexShadowSkipped
 	}
 	return &normalized
 }

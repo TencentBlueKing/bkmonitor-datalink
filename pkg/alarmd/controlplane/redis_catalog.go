@@ -113,6 +113,7 @@ type RedisCatalogRepository struct {
 	snapshotFlights            snapshotReadFlights
 	activationCache            parsedActivationCache
 	objectCatalog              objectCatalogState
+	catalogIndex               catalogIndex
 	objectCache                *objectReadCache
 	objectFlights              objectReadFlights
 	controlCache               *controlReadCache
@@ -540,6 +541,12 @@ func (repository *RedisCatalogRepository) PublishCatalogIfCurrent(
 	snapshot := PublishedSnapshot{SchemaVersion: snapshotSchemaVersion,
 		Publication: SnapshotPublicationRef{SnapshotRevision: catalog.SnapshotRevision, PublicationEpoch: uint64(epoch)},
 		QueryGroups: append([]QueryGroup(nil), catalog.QueryGroups...)}
+	// The Leader that published this catalog knows its content: fill the
+	// catalog index from it so no activation of this publication reads the
+	// objects back.
+	if entries, err := indexFromCatalog(catalog); err == nil {
+		repository.catalogIndex.replace(catalog.SnapshotRevision, entries)
+	}
 	return snapshot, created == 1, nil
 }
 

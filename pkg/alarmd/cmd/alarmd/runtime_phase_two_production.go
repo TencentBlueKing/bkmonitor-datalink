@@ -1369,154 +1369,84 @@ func (runtime *productionPhaseTwoOwnership) publishAssignmentIndex(
 
 // assignmentIndexReader is a worker's memory of the Assignment index: the
 // last round it saw and for how many consecutive rounds that number stayed
-// put, its own candidate set with the round it was read at, and the record
-// set of the previous round. It exists so an unchanged round costs one small
-// read and none of the population.
+// put, its own candidate set with the round it was read at, and the set of
+// Query Groups it holds as confirmed against the records. It exists so an
+// unchanged round costs one small read and none of the population.
 type assignmentIndexReader struct {
-	mu           sync.Mutex
-	lastRound    uint64
-	staleRounds  int
-	haveSet      bool
-	setRound     uint64
-	candidates   map[execution.QueryGroupIdentity]struct{}
-	haveAssigned bool
-	lastAssigned map[execution.QueryGroupIdentity]struct{}
+	mu          sync.Mutex
+	lastRound   uint64
+	staleRounds int
+	haveSet     bool
+	setRound    uint64
+	candidates  map[execution.QueryGroupIdentity]struct{}
+	owned       map[execution.QueryGroupIdentity]struct{}
 }
 
-// shadowAssignmentIndex reads the Assignment index the way a worker will
-// once it replaces the per-record read, and compares the candidate set it
-// yields with the set the records gave this round. It only counts; the
-// records still decide. A round in which the record set itself changed is
-// classified transient, because the index may lawfully lag it by one
-// round; a difference in a round where the records did not change is the
-// index being wrong. Candidates outside the population this worker was
-// given are ignored, so a lagging population view is not counted against
-// the index.
-func (runtime *productionPhaseTwoOwnership) shadowAssignmentIndex(
+// readAssignmentIndex reads the index once and this worker's set only when
+// the index says the set changed, reporting the read in facts. It returns
+// whether the candidate set is usable this round; when it is not, the
+// result in facts says why, and the error, if any, is the store failure
+// behind an invalid read.
+func (runtime *productionPhaseTwoOwnership) readAssignmentIndex(
 	ctx context.Context,
-	population []execution.QueryGroupIdentity,
-	assigned []execution.QueryGroupIdentity,
-) {
-	reader := &runtime.indexReader
-	reader.mu.Lock()
-	defer reader.mu.Unlock()
-	facts := &observability.AssignmentIndexFacts{Assigned: len(assigned), Shadow: observability.AssignmentIndexShadowSkipped}
-	var result observability.Result = observability.ResultSuccess
+	reader *assignmentIndexReader,
+	facts *observability.AssignmentIndexFacts,
+) (bool, error) {
 	index, err := runtime.dependencies.Store.ReadAssignmentIndex(ctx)
-	usable := false
 	switch {
 	case errors.Is(err, ownership.ErrAssignmentIndexAbsent):
-		facts.Result = observability.AssignmentIndexMissing
-		err = nil
+		facts.Result, facts.StaleRounds = observability.AssignmentIndexMissing, reader.staleRounds
+		return false, nil
 	case err != nil:
-		facts.Result = observability.AssignmentIndexInvalid
-		result = observability.ResultFailed
-	default:
-		usable = true
-		facts.Round, facts.ControlEpoch = index.Round, index.ControlEpoch
-		if index.Round == reader.lastRound {
-			reader.staleRounds++
-			facts.Result = observability.AssignmentIndexStale
-		} else {
-			reader.lastRound, reader.staleRounds = index.Round, 0
-			facts.Result = observability.AssignmentIndexFresh
-		}
+		facts.Result, facts.StaleRounds = observability.AssignmentIndexInvalid, reader.staleRounds
+		return false, err
+	}
+	facts.Round, facts.ControlEpoch = index.Round, index.ControlEpoch
+	if index.Round == reader.lastRound {
+		reader.staleRounds++
+		facts.Result = observability.AssignmentIndexStale
+	} else {
+		reader.lastRound, reader.staleRounds = index.Round, 0
+		facts.Result = observability.AssignmentIndexFresh
 	}
 	facts.StaleRounds = reader.staleRounds
-	if usable {
-		setRound, named := index.SetRounds[runtime.dependencies.WorkerID]
+	setRound, named := index.SetRounds[runtime.dependencies.WorkerID]
+	switch {
+	case !named:
+		reader.candidates, reader.setRound, reader.haveSet = map[execution.QueryGroupIdentity]struct{}{}, 0, true
+	case !reader.haveSet || setRound != reader.setRound:
+		facts.SetRead = true
+		set, setErr := runtime.dependencies.Store.ReadAssignedSet(ctx, runtime.dependencies.WorkerID)
 		switch {
-		case !named:
-			reader.candidates, reader.setRound, reader.haveSet = map[execution.QueryGroupIdentity]struct{}{}, 0, true
-		case !reader.haveSet || setRound != reader.setRound:
-			facts.SetRead = true
-			set, setErr := runtime.dependencies.Store.ReadAssignedSet(ctx, runtime.dependencies.WorkerID)
-			switch {
-			case errors.Is(setErr, ownership.ErrAssignedSetAbsent):
-				reader.haveSet, usable = false, false
-				facts.Result = observability.AssignmentIndexMissing
-			case setErr != nil:
-				reader.haveSet, usable = false, false
-				facts.Result, result, err = observability.AssignmentIndexInvalid, observability.ResultFailed, setErr
-			case set.Round < setRound:
-				reader.haveSet, usable = false, false
-				facts.Result = observability.AssignmentIndexInvalid
-			default:
-				candidates := make(map[execution.QueryGroupIdentity]struct{}, len(set.QueryGroups))
-				for _, queryGroup := range set.QueryGroups {
-					candidates[queryGroup] = struct{}{}
-				}
-				reader.candidates, reader.setRound, reader.haveSet = candidates, set.Round, true
-			}
-		}
-	}
-	current := make(map[execution.QueryGroupIdentity]struct{}, len(assigned))
-	for _, queryGroup := range assigned {
-		current[queryGroup] = struct{}{}
-	}
-	if usable && reader.haveSet {
-		known := make(map[execution.QueryGroupIdentity]struct{}, len(population))
-		for _, queryGroup := range population {
-			known[queryGroup] = struct{}{}
-		}
-		difference := 0
-		for queryGroup := range reader.candidates {
-			if _, inPopulation := known[queryGroup]; !inPopulation {
-				continue
-			}
-			facts.Candidates++
-			if _, owned := current[queryGroup]; !owned {
-				difference++
-			}
-		}
-		for queryGroup := range current {
-			if _, candidate := reader.candidates[queryGroup]; !candidate {
-				difference++
-			}
-		}
-		facts.Difference = difference
-		switch {
-		case difference == 0:
-			facts.Shadow = observability.AssignmentIndexShadowAgreed
-		case !reader.haveAssigned || !sameQueryGroupSet(reader.lastAssigned, current):
-			facts.Shadow = observability.AssignmentIndexShadowTransient
+		case errors.Is(setErr, ownership.ErrAssignedSetAbsent):
+			reader.haveSet, facts.Result = false, observability.AssignmentIndexMissing
+			return false, nil
+		case setErr != nil:
+			reader.haveSet, facts.Result = false, observability.AssignmentIndexInvalid
+			return false, setErr
+		case set.Round < setRound:
+			reader.haveSet, facts.Result = false, observability.AssignmentIndexInvalid
+			return false, nil
 		default:
-			facts.Shadow = observability.AssignmentIndexShadowDisagreed
+			candidates := make(map[execution.QueryGroupIdentity]struct{}, len(set.QueryGroups))
+			for _, queryGroup := range set.QueryGroups {
+				candidates[queryGroup] = struct{}{}
+			}
+			reader.candidates, reader.setRound, reader.haveSet = candidates, set.Round, true
 		}
 	}
-	reader.lastAssigned, reader.haveAssigned = current, true
-	observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
-		Component: observability.ComponentOwnership, Stage: observability.StageAssignmentIndexRead,
-		Result: result, Operation: observability.OperationLoad, Err: err, AssignmentIndex: facts,
-	})
+	return true, nil
 }
 
-func sameQueryGroupSet(left, right map[execution.QueryGroupIdentity]struct{}) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for queryGroup := range left {
-		if _, ok := right[queryGroup]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func (runtime *productionPhaseTwoOwnership) AssignedQueryGroups(
+// readAllAssignments is the path from before the index existed: one record
+// per Query Group of the population. It stays the fallback for a round
+// without a usable index.
+func (runtime *productionPhaseTwoOwnership) readAllAssignments(
 	ctx context.Context,
-	queryGroups []execution.QueryGroupIdentity,
+	ordered []execution.QueryGroupIdentity,
 ) ([]execution.QueryGroupIdentity, error) {
-	if runtime == nil {
-		return nil, errors.New("phase-two production Assignment reader is not initialized")
-	}
-	ordered := append([]execution.QueryGroupIdentity(nil), queryGroups...)
-	sort.Slice(ordered, func(left, right int) bool { return ordered[left] < ordered[right] })
 	assigned := make([]execution.QueryGroupIdentity, 0, len(ordered))
-	for index, queryGroup := range ordered {
-		if queryGroup == "" || (index > 0 && ordered[index-1] == queryGroup) {
-			return nil, newPhaseTwoInvariantError("phase-two production Assignment read contains an invalid Query Group set")
-		}
+	for _, queryGroup := range ordered {
 		record, err := runtime.dependencies.Store.ReadAssignment(ctx, queryGroup)
 		if errors.Is(err, ownership.ErrAssignmentAbsent) {
 			continue
@@ -1531,17 +1461,130 @@ func (runtime *productionPhaseTwoOwnership) AssignedQueryGroups(
 			assigned = append(assigned, queryGroup)
 		}
 	}
-	runtime.shadowAssignmentIndex(ctx, ordered, assigned)
 	return assigned, nil
 }
 
-// MaintainControlLeader renews the Control Leader authority every interval.
-// A failure to reach the Ownership Store is retried inside the interval and
-// again on the following ticks for as long as the authority is still inside
-// its TTL; the authority is kept meanwhile because every Assignment publish
-// re-validates the leader fence in the store. The authority is cleared and
-// the error returned only when the store answers that the fence is stale,
-// when the TTL has run out, on an invariant error or on cancellation.
+// AssignedQueryGroups answers which of the given Query Groups this worker
+// is the desired owner of. It reads the Assignment index once per round and
+// its own set only when the index says the set changed; the index only
+// names candidates. A candidate this worker does not yet hold is confirmed
+// against its Assignment record before it is returned, and a held Query
+// Group the index no longer names is confirmed released against its record
+// before it is dropped; a record that disagrees with the index wins. So the
+// index decides how many records are read, never what is returned, and an
+// unchanged round reads none. Without a usable index every record is read,
+// as before the index existed, and the held set is rebuilt from that read.
+func (runtime *productionPhaseTwoOwnership) AssignedQueryGroups(
+	ctx context.Context,
+	queryGroups []execution.QueryGroupIdentity,
+) ([]execution.QueryGroupIdentity, error) {
+	if runtime == nil {
+		return nil, errors.New("phase-two production Assignment reader is not initialized")
+	}
+	ordered := append([]execution.QueryGroupIdentity(nil), queryGroups...)
+	sort.Slice(ordered, func(left, right int) bool { return ordered[left] < ordered[right] })
+	for index, queryGroup := range ordered {
+		if queryGroup == "" || (index > 0 && ordered[index-1] == queryGroup) {
+			return nil, newPhaseTwoInvariantError("phase-two production Assignment read contains an invalid Query Group set")
+		}
+	}
+	reader := &runtime.indexReader
+	reader.mu.Lock()
+	defer reader.mu.Unlock()
+	facts := &observability.AssignmentIndexFacts{}
+	usable, readErr := runtime.readAssignmentIndex(ctx, reader, facts)
+	var result observability.Result = observability.ResultSuccess
+	if readErr != nil {
+		result = observability.ResultFailed
+	}
+	if !usable {
+		assigned, err := runtime.readAllAssignments(ctx, ordered)
+		if err != nil {
+			return nil, err
+		}
+		owned := make(map[execution.QueryGroupIdentity]struct{}, len(assigned))
+		for _, queryGroup := range assigned {
+			owned[queryGroup] = struct{}{}
+		}
+		reader.owned = owned
+		facts.Assigned, facts.Reads, facts.FullRead = len(assigned), len(ordered), true
+		observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
+			Component: observability.ComponentOwnership, Stage: observability.StageAssignmentIndexRead,
+			Result: result, Operation: observability.OperationLoad, Err: readErr, AssignmentIndex: facts,
+		})
+		return assigned, nil
+	}
+	population := make(map[execution.QueryGroupIdentity]struct{}, len(ordered))
+	for _, queryGroup := range ordered {
+		population[queryGroup] = struct{}{}
+	}
+	next := make(map[execution.QueryGroupIdentity]struct{}, len(reader.candidates))
+	confirm := func(queryGroup execution.QueryGroupIdentity) (bool, error) {
+		facts.Reads++
+		record, err := runtime.dependencies.Store.ReadAssignment(ctx, queryGroup)
+		switch {
+		case errors.Is(err, ownership.ErrAssignmentAbsent):
+			return false, nil
+		case err != nil:
+			return false, err
+		case record.QueryGroup != queryGroup:
+			return false, newPhaseTwoInvariantError("phase-two production Assignment identity mismatch")
+		}
+		return record.DesiredWorkerID == runtime.dependencies.WorkerID, nil
+	}
+	for queryGroup := range reader.candidates {
+		if _, inPopulation := population[queryGroup]; !inPopulation {
+			continue
+		}
+		facts.Candidates++
+		if _, held := reader.owned[queryGroup]; held {
+			next[queryGroup] = struct{}{}
+			continue
+		}
+		mine, err := confirm(queryGroup)
+		if err != nil {
+			return nil, err
+		}
+		if mine {
+			next[queryGroup] = struct{}{}
+			facts.Opened++
+		} else {
+			facts.Rejected++
+		}
+	}
+	for queryGroup := range reader.owned {
+		if _, kept := next[queryGroup]; kept {
+			continue
+		}
+		if _, inPopulation := population[queryGroup]; !inPopulation {
+			facts.Released++
+			continue
+		}
+		mine, err := confirm(queryGroup)
+		if err != nil {
+			return nil, err
+		}
+		if mine {
+			next[queryGroup] = struct{}{}
+			facts.Retained++
+		} else {
+			facts.Released++
+		}
+	}
+	reader.owned = next
+	assigned := make([]execution.QueryGroupIdentity, 0, len(next))
+	for queryGroup := range next {
+		assigned = append(assigned, queryGroup)
+	}
+	sort.Slice(assigned, func(left, right int) bool { return assigned[left] < assigned[right] })
+	facts.Assigned = len(assigned)
+	observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
+		Component: observability.ComponentOwnership, Stage: observability.StageAssignmentIndexRead,
+		Result: result, Operation: observability.OperationLoad, AssignmentIndex: facts,
+	})
+	return assigned, nil
+}
+
 func (runtime *productionPhaseTwoOwnership) MaintainControlLeader(
 	ctx context.Context,
 	interval time.Duration,

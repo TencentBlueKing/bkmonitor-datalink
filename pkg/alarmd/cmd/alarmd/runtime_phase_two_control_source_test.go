@@ -246,3 +246,49 @@ func TestControlSourceStateWhenTheLeaseCannotBeAcquired(t *testing.T) {
 		t.Fatalf("facts after the store answers = %+v, want follower with no absence", facts)
 	}
 }
+
+// Whether a good catalog ever came from a successful refresh is the
+// persisted fact alone. On a rolling restart every new pod starts as a
+// follower, reads the last good activation and is healthy on it; when it
+// then becomes the leader and its rounds fail, it has never refreshed
+// successfully and no process under this store has either -- and it must
+// say never_succeeded, so that the verdict measures from its own degraded
+// time rather than waiting on a persisted success that does not exist. On
+// the first deployment of this instrument the leader said degraded_last_good
+// for exactly this reason and CONTROL_SOURCE_STALE never fired.
+func TestControlSourceModeIgnoresThisProcessOwnHealthyLoads(t *testing.T) {
+	cause := &controlplane.SourceRefreshFailure{Exit: controlplane.SourceRefreshExitBuildCatalog, Err: errors.New("conflicting query revisions")}
+	control := &fakePhaseTwoControl{queryGroups: []execution.QueryGroupIdentity{"query-group-1"},
+		refreshResults: []phaseTwoControlRefreshResult{degradedBy(cause), degradedBy(cause), degradedBy(cause)}}
+	owner := &fakePhaseTwoOwnership{assigned: []execution.QueryGroupIdentity{"query-group-1"}, runner: newFakePhaseTwoQueryGroup(), follower: true}
+	fixture := newControlSourceFixture(t, control, owner)
+	fixture.start()
+	if stats := fixture.bundle.controlSourceStats(); stats.Role != observability.ControlSourceRoleFollower || stats.Mode != observability.ControlSourceModeHealthy {
+		t.Fatalf("stats as a follower = %+v, want follower/healthy", stats)
+	}
+	// The old leader is gone; this pod acquires the lease and its rounds
+	// fail from the first.
+	owner.mu.Lock()
+	owner.follower = false
+	owner.mu.Unlock()
+	fixture.clock = fixture.clock.Add(time.Minute)
+	fixture.tick()
+	stats := fixture.bundle.controlSourceStats()
+	facts := fixture.bundle.controlSourceFleetFacts()
+	if stats.Role != observability.ControlSourceRoleLeader || stats.Mode != observability.ControlSourceModeNeverSucceeded ||
+		facts.Mode != "never_succeeded" || facts.LastFailureExit != "build_catalog" || facts.StaleBeyondBound {
+		t.Fatalf("stats after becoming the leader = %+v, facts %+v; want leader/never_succeeded inside the bound", stats, facts)
+	}
+	fixture.clock = fixture.clock.Add(controlplane.SourceStalenessBound + time.Second)
+	fixture.tick()
+	if facts := fixture.bundle.controlSourceFleetFacts(); !facts.StaleBeyondBound {
+		t.Fatalf("facts past the bound = %+v, want stale from this process's own degraded time", facts)
+	}
+	// A persisted success appearing (another process refreshed, or this one
+	// eventually does) is what turns never_succeeded into degraded_last_good.
+	control.successAt = fixture.clock.Add(-time.Second)
+	fixture.tick()
+	if stats := fixture.bundle.controlSourceStats(); stats.Mode != observability.ControlSourceModeDegradedLastGood {
+		t.Fatalf("stats with a persisted success = %+v, want degraded_last_good", stats)
+	}
+}

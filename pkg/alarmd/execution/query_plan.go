@@ -248,6 +248,17 @@ func BuildQueryPlanFacts(facts QueryPlanFacts) (QueryPlanFacts, error) {
 			}
 		}
 	}
+	// The domain and the formula behind this digest are frozen. The revision
+	// is persisted with every published Plan, and Validate re-derives it and
+	// refuses a Plan whose persisted revision differs; Validate is asserted
+	// when a worker reads a frozen Plan, when the runtime-executable Catalog
+	// is built, and when frozen DataRequirements are checked. Changing the
+	// digest therefore fails every published Plan at the moment a new
+	// binary reads it, fleet-wide, and the Plans a Catalog build retains
+	// from the last good publication would meet freshly compiled ones under
+	// different revisions. A change here is a Catalog generation migration:
+	// re-derive retained facts, accept both generations while a release
+	// rolls, rebuild the DataRequirement templates keyed by the revision.
 	digest, err := contract.DeriveCanonicalDigestV2("alarmd-query-plan-facts-v1", facts)
 	if err != nil {
 		return QueryPlanFacts{}, fmt.Errorf("alarmd execution: derive query revision: %w", err)

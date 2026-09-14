@@ -779,6 +779,11 @@ type SourceRefreshFacts struct {
 	// reporting process's clock, and means nothing when not present.
 	ChangeSignalPresent    bool
 	ChangeSignalAgeSeconds int64
+	// RetainedStaleRevisions is how many last-good Plans the round's Catalog
+	// refused to retain because their persisted revision no longer derives
+	// from their facts; non-zero only across a change of the revision
+	// formula, when it is the whole population of retained Plans.
+	RetainedStaleRevisions int
 }
 
 // SourceReadMode and SourceReadReason mirror the control plane's vocabulary

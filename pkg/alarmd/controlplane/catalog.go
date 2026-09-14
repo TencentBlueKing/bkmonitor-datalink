@@ -119,6 +119,10 @@ type Catalog struct {
 	SnapshotRevision execution.SnapshotRevision
 	QueryGroups      []QueryGroup
 	Dispositions     []ObjectDisposition
+	// RetainedStaleRevisions counts the last-good Plans this build did not
+	// retain because their persisted revision no longer derives from their
+	// facts. Zero on every build until the revision formula changes.
+	RetainedStaleRevisions int
 }
 
 func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
@@ -160,9 +164,27 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 		group.Plans = append(group.Plans, plan)
 		return nil
 	}
+	// ReasonLastGoodRevisionStale is the disposition of a last-good Plan that
+	// could not be retained: its facts were persisted with the revision the
+	// publishing process computed, and the current formula computes another.
+	// Within one formula that cannot happen (revision is a pure function of
+	// facts); across a change of the formula it happens to every retained
+	// Plan at once, and each would then meet a freshly compiled sibling in
+	// its group under a different revision -- the conflict addPlan refuses,
+	// which used to fail the whole Catalog. That is the wrong blast radius
+	// for a strategy whose document cannot currently be compiled: it leaves
+	// the Catalog, named, until its document compiles again, and the other
+	// strategies keep evaluating.
+	const reasonLastGoodRevisionStale = "LAST_GOOD_REVISION_STALE"
 	retainLastGood := func(sourceID string) (bool, error) {
 		entry, ok := lastGood[sourceID]
 		if !ok {
+			return false, nil
+		}
+		if err := entry.facts.Validate(); err != nil {
+			catalog.Dispositions = append(catalog.Dispositions, ObjectDisposition{SourceID: sourceID, Scope: "PLAN",
+				Disposition: DispositionConfigRejected, Reason: reasonLastGoodRevisionStale})
+			catalog.RetainedStaleRevisions++
 			return false, nil
 		}
 		if err := addPlan(entry.facts, entry.plan); err != nil {

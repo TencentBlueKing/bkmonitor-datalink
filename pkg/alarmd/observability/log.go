@@ -292,6 +292,9 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			slog.Int("source_compiled_strategies", facts.CompiledStrategies),
 			slog.Int("source_reused_strategies", facts.ReusedStrategies),
 		)
+		if facts.RetainedStaleRevisions > 0 {
+			attributes = append(attributes, slog.Int("source_retained_stale_revisions", facts.RetainedStaleRevisions))
+		}
 		if facts.ReadMode != "" {
 			attributes = append(attributes,
 				slog.String("source_read_mode", string(facts.ReadMode)),

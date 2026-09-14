@@ -77,6 +77,7 @@ type phaseTwoMetrics struct {
 	openAlertGate                   *prometheus.CounterVec
 	openAlertSet                    *openAlertSetCollector
 	controlSourceRounds             *prometheus.CounterVec
+	controlSourceRetainedStale      prometheus.Counter
 	controlSource                   *controlSourceCollector
 	redisCalls                      redisCallMetrics
 	controlCache                    *controlCacheCollector
@@ -392,6 +393,14 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 		metrics.controlSourceRounds.WithLabelValues(observability.ControlSourceRoundFailed, string(exit))
 	}
 	metrics.controlSource = newControlSourceCollector()
+	metrics.controlSourceRetainedStale = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "control_source_retained_stale_revisions_total",
+		Help: "Last-good Plans a Catalog build refused to retain because their persisted query revision no longer " +
+			"derives from their facts. Within one revision formula this is zero by construction; it rises, for every " +
+			"retained Plan at once, when a release changes the formula, and each such Plan leaves the Catalog under " +
+			"the disposition LAST_GOOD_REVISION_STALE until its document compiles again, instead of the whole " +
+			"Catalog failing to build as it did before.",
+	})
 	metrics.seriesAdmission = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "series_admission_total",
 		Help: "Access-path admission decisions by filter, outcome and bounded reason.",
@@ -465,7 +474,8 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.undrainedDrainingQueryGroups, m.drainingCursorPrunedQueryGroups, m.rebalancePlannedMoves, m.assignmentIndexStaleRounds, m.assignmentIndexWrites, m.assignmentIndexReads, m.assignmentIndexConfirm, m.assignmentRecordReads, m.scheduleCursorAdvances, m.activationHeldQueryGroups, m.activationHeldAgeSecondsMax,
 		m.algorithmEvaluations, m.algorithmInputs, m.recoveryHeld, m.recoveryPastLevelWithoutRecov, m.openAlertGate,
 	}...), append(append(m.redisCalls.collectors(), m.dueIndex.collectors()...),
-		m.controlCache, m.openAlertSet, m.controlSourceRounds, m.controlSource, m.redisPool, m.canonicalEncoding, m.legacyPodCache,
+		m.controlCache, m.openAlertSet, m.controlSourceRounds, m.controlSource, m.controlSourceRetainedStale,
+		m.redisPool, m.canonicalEncoding, m.legacyPodCache,
 		m.seriesAdmission, m.cmdbIndexHosts, m.hostDisableMonitorStates, m.cmdbIndexAge, m.cmdbIndexDegraded)...)
 }
 
@@ -480,6 +490,9 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 	m.observeSlotTiming(observation)
 	if facts := observation.SourceRefresh; facts != nil {
 		m.sourceRefreshes.WithLabelValues(string(facts.Status)).Inc()
+		if facts.RetainedStaleRevisions > 0 {
+			m.controlSourceRetainedStale.Add(float64(facts.RetainedStaleRevisions))
+		}
 		if facts.CompiledStrategies > 0 {
 			m.sourceCompiles.WithLabelValues("compiled").Add(float64(facts.CompiledStrategies))
 		}

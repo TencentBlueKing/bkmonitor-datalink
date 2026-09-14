@@ -429,6 +429,7 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 	expected["bkmonitor_alarmd_control_source_refresh_total"] = "variableLabels: {outcome,exit}"
 	expected["bkmonitor_alarmd_control_source_mode"] = "variableLabels: {role,mode}"
 	expected["bkmonitor_alarmd_control_source_last_success_age_seconds"] = "variableLabels: {}"
+	expected["bkmonitor_alarmd_control_source_retained_stale_revisions_total"] = "variableLabels: {}"
 
 	descriptions := make(chan string)
 	go func() {
@@ -858,6 +859,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	bounds[fqName("control_source_refresh_total")] = len(controlplane.SourceRefreshExits)
 	bounds[fqName("control_source_mode")] = len(observability.ControlSourceRoles) * len(observability.ControlSourceModes)
 	bounds[fqName("control_source_last_success_age_seconds")] = 1
+	bounds[fqName("control_source_retained_stale_revisions_total")] = 1
 	for _, name := range []string{
 		"messages", "records", "plans", "levels", "events", "bytes", "keys", "state_bytes",
 	} {

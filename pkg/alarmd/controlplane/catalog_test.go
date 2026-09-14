@@ -520,3 +520,81 @@ func queryFactsFor(t *testing.T, business, space string) execution.QueryPlanFact
 	}
 	return facts
 }
+
+// A last-good Plan whose persisted revision no longer derives from its facts
+// is what every retained Plan becomes the day the revision formula changes.
+// It used to be added to its group under the old revision and, next to a
+// freshly compiled sibling under the new one, fail the whole build -- the
+// one-bad-datum blast radius this Catalog was down for a day with. Now it is
+// not retained: it leaves the Catalog under a named disposition, is counted,
+// and the strategies that compile keep evaluating. A retained Plan whose
+// revision still derives is retained exactly as before.
+func TestBuildCatalogDoesNotRetainALastGoodPlanWhoseRevisionNoLongerDerives(t *testing.T) {
+	payload, err := os.ReadFile("testdata/two_threshold_strategies.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var documents []json.RawMessage
+	if err := json.Unmarshal(payload, &documents); err != nil {
+		t.Fatal(err)
+	}
+	identity := controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}
+	both := []controlplane.SourceStrategy{
+		{SourceID: "1001", Document: documents[0], Identity: identity},
+		{SourceID: "1002", Document: documents[1], Identity: identity},
+	}
+	previous, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{
+		Strategies: both, Planner: &recordingPlanner{facts: queryFacts(t)},
+	})
+	if err != nil || len(previous.QueryGroups) != 1 || len(previous.QueryGroups[0].Plans) != 2 {
+		t.Fatalf("previous catalog = %+v, %v; want both strategies in one group", previous, err)
+	}
+	// The second strategy's document is unreadable this round, so its
+	// last-good Plan is what the build would retain.
+	sourceIncomplete := controlplane.ObjectDisposition{SourceID: "1002", Scope: "STRATEGY",
+		Disposition: controlplane.DispositionSourceIncomplete, Reason: "SOURCE_READ_INCOMPLETE"}
+	thisRound := []controlplane.SourceStrategy{both[0], {SourceID: "1002", Identity: identity, SourceDisposition: &sourceIncomplete}}
+	build := func(lastGood *controlplane.PublishedSnapshot) controlplane.Catalog {
+		t.Helper()
+		catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{
+			Strategies: thisRound, Planner: &recordingPlanner{facts: queryFacts(t)}, LastGood: lastGood,
+		})
+		if err != nil {
+			t.Fatalf("BuildCatalog() error = %v", err)
+		}
+		return catalog
+	}
+	intact := &controlplane.PublishedSnapshot{
+		Publication: controlplane.SnapshotPublicationRef{SnapshotRevision: previous.SnapshotRevision, PublicationEpoch: 1},
+		QueryGroups: previous.QueryGroups,
+	}
+	catalog := build(intact)
+	if got := catalogStrategyIDs(catalog); !reflect.DeepEqual(got, []string{"1001", "1002"}) || catalog.RetainedStaleRevisions != 0 {
+		t.Fatalf("with an intact last good: plans %v, stale %d; want both retained", got, catalog.RetainedStaleRevisions)
+	}
+	// The same last good as a process under another revision formula would
+	// read it: the facts are what they were, the persisted revision is not
+	// what the current formula derives from them.
+	staleGroups := append([]controlplane.QueryGroup(nil), previous.QueryGroups...)
+	staleGroups[0].QueryPlan.QueryRevision = execution.QueryRevision(strings.Repeat("0", 64))
+	stale := &controlplane.PublishedSnapshot{Publication: intact.Publication, QueryGroups: staleGroups}
+	catalog = build(stale)
+	if got := catalogStrategyIDs(catalog); !reflect.DeepEqual(got, []string{"1001"}) || catalog.RetainedStaleRevisions != 1 {
+		t.Fatalf("with a stale last good: plans %v, stale %d; want only the compiled strategy", got, catalog.RetainedStaleRevisions)
+	}
+	var named []controlplane.ObjectDisposition
+	for _, disposition := range catalog.Dispositions {
+		if disposition.SourceID == "1002" && disposition.Scope == "PLAN" {
+			named = append(named, disposition)
+		}
+	}
+	if len(named) != 1 || named[0].Disposition != controlplane.DispositionConfigRejected || named[0].Reason != "LAST_GOOD_REVISION_STALE" {
+		t.Fatalf("dispositions for the dropped Plan = %+v, want LAST_GOOD_REVISION_STALE", named)
+	}
+	// The one revision-conflict assertion that remains is for the same
+	// formula, and the stale Plan no longer reaches it: a freshly compiled
+	// sibling in the same group builds beside the drop, not against it.
+	if len(catalog.QueryGroups) != 1 || catalog.QueryGroups[0].QueryPlan.QueryRevision != previous.QueryGroups[0].QueryPlan.QueryRevision {
+		t.Fatalf("groups = %+v, want the compiled strategy's group under the current revision", catalog.QueryGroups)
+	}
+}

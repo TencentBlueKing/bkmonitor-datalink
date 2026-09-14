@@ -277,8 +277,10 @@ func TestPublishedPlanFieldsAreEachPlacedInOneDigest(t *testing.T) {
 	}
 	placements := map[reflect.Type]placement{
 		reflect.TypeOf(controlplane.Catalog{}): {
-			split:   []string{"QueryGroups"},
-			neither: []string{"ObservationID", "SnapshotRevision", "Dispositions"},
+			split: []string{"QueryGroups"},
+			// RetainedStaleRevisions is a build count reported on the round;
+			// nothing persists or digests it.
+			neither: []string{"ObservationID", "SnapshotRevision", "Dispositions", "RetainedStaleRevisions"},
 		},
 		reflect.TypeOf(controlplane.QueryGroup{}): {
 			execution: []string{"Identity", "QueryPlan", "MembershipDigest", "ScheduleRevision"},

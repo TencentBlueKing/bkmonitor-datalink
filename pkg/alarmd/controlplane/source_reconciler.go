@@ -96,6 +96,10 @@ type SourceRefreshResult struct {
 	// that skips forever and a source that never changes look the same.
 	ChangeSignalPresent    bool
 	ChangeSignalAgeSeconds int64
+	// RetainedStaleRevisions is how many last-good Plans this round's
+	// Catalog did not retain because their persisted revision no longer
+	// derives from their facts. See BuildCatalog.
+	RetainedStaleRevisions int
 }
 
 // sourceRoundMemory is what this reconciler last read from the source, kept
@@ -214,11 +218,13 @@ func (reconciler *SourceReconciler) Refresh(
 	// copied into each return. A round that fails leaves its observation
 	// unsettled, so the next round reads the source again.
 	cycle, read, err := reconciler.observe(ctx, source)
+	retainedStaleRevisions := 0
 	defer func() {
 		if err != nil {
 			reconciler.unsettle()
 			return
 		}
+		result.RetainedStaleRevisions = retainedStaleRevisions
 		result.CompiledStrategies, result.ReusedStrategies = reconciler.candidates.Stats()
 		result.ReadMode, result.ReadReason, result.StrategiesRead = read.mode, read.reason, read.strategies
 		result.ChangeSignalPresent, result.ChangeSignalAgeSeconds = read.signalPresent, read.signalAgeSeconds
@@ -246,6 +252,7 @@ func (reconciler *SourceReconciler) Refresh(
 	if err != nil {
 		return SourceRefreshResult{}, exitAt(SourceRefreshExitBuildCatalog, err)
 	}
+	retainedStaleRevisions = catalog.RetainedStaleRevisions
 	catalog, err = retainRuntimeExecutableCatalog(ctx, catalog, current, reconciler.compiler, reconciler.stateSemantics)
 	if err != nil {
 		return SourceRefreshResult{}, exitAt(SourceRefreshExitRetainExecutable, err)

@@ -36,10 +36,6 @@ type controlSourceState struct {
 	// known is set by the first control result this process applied, so
 	// that before it there is no mode to report rather than a made-up one.
 	known bool
-	// succeededOnce records that this process saw a healthy control result.
-	// It is one of the two facts that tell degraded_last_good from
-	// never_succeeded; the other is the persisted success below.
-	succeededOnce bool
 	// degradedSince is when the current degraded episode of this process
 	// began; zero while healthy. This process only: a restart resets it,
 	// which is why the verdict reads it only where no persisted success
@@ -109,7 +105,6 @@ func (bundle *phaseTwoWorkerBundle) noteControlRoundLocked(result phaseTwoContro
 			state.lastFailure = text
 		}
 	case phaseTwoControlHealthy:
-		state.succeededOnce = true
 		state.degradedSince = time.Time{}
 		state.lastFailureExit = ""
 		state.lastFailure = ""
@@ -160,10 +155,17 @@ func (bundle *phaseTwoWorkerBundle) controlSourceView() controlSourceView {
 	if view.role == "" {
 		view.role = observability.ControlSourceRoleUnacquired
 	}
+	// Whether a good catalog ever came from a successful refresh is the
+	// persisted fact alone. This process having applied a healthy control
+	// result says nothing about it: a follower's activation read and a
+	// leader's initial read both succeed on the last good publication with
+	// no refresh having succeeded, which is exactly the deployment this
+	// mode has to name, and on a rolling restart every new pod starts as
+	// that follower before it becomes the leader whose rounds fail.
 	switch {
 	case !degraded:
 		view.mode = observability.ControlSourceModeHealthy
-	case state.succeededOnce || !state.persistedSuccessAt.IsZero():
+	case !state.persistedSuccessAt.IsZero():
 		view.mode = observability.ControlSourceModeDegradedLastGood
 	default:
 		view.mode = observability.ControlSourceModeNeverSucceeded

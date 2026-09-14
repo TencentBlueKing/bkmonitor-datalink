@@ -760,6 +760,7 @@ func sourceRefreshIdentity(
 		ReadReason:          observability.SourceReadReason(result.ReadReason),
 		StrategiesRead:      result.StrategiesRead,
 		ChangeSignalPresent: result.ChangeSignalPresent, ChangeSignalAgeSeconds: result.ChangeSignalAgeSeconds,
+		RetainedStaleRevisions: result.RetainedStaleRevisions,
 	}
 }
 

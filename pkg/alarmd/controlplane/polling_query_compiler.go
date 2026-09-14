@@ -30,11 +30,17 @@ func pollingQueryDelay(source PrimaryQuerySource, configs []legacyQueryConfig, i
 	return (delay + interval - 1) / interval * interval, nil
 }
 
+// pollingSourceSupported answers whether a query config's data source can be
+// compiled at all. The set it reads is SupportedSourceSemantics, which is
+// also what the Catalog composition reports Query Groups under: one list, so
+// a source that starts compiling cannot go unnamed in the composition, and a
+// source named there cannot be one nothing compiles.
 func pollingSourceSupported(c legacyQueryConfig) bool {
-	switch c.DataSourceLabel + "/" + c.DataTypeLabel {
-	case "bk_monitor/time_series", "custom/time_series", "prometheus/time_series", "bk_data/time_series",
-		"bk_log_search/time_series", "bk_log_search/log", "bk_monitor/log", "custom/event", "bk_fta/event":
-		return true
+	semantics := c.DataSourceLabel + "/" + c.DataTypeLabel
+	for _, supported := range SupportedSourceSemantics {
+		if semantics == supported {
+			return true
+		}
 	}
 	return false
 }

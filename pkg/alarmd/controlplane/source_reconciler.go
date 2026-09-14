@@ -100,6 +100,13 @@ type SourceRefreshResult struct {
 	// Catalog did not retain because their persisted revision no longer
 	// derives from their facts. See BuildCatalog.
 	RetainedStaleRevisions int
+	// Composition is what the Catalog this round built is made of: Query
+	// Groups and Plans by the data sources they query, and source objects by
+	// disposition. Set on every round that got as far as a complete Catalog,
+	// under any status -- a round that publishes nothing because nothing
+	// changed composed the same Catalog as the one before it, and a reader
+	// asking which data sources are running needs an answer then too.
+	Composition CatalogComposition
 }
 
 // sourceRoundMemory is what this reconciler last read from the source, kept
@@ -219,12 +226,14 @@ func (reconciler *SourceReconciler) Refresh(
 	// unsettled, so the next round reads the source again.
 	cycle, read, err := reconciler.observe(ctx, source)
 	retainedStaleRevisions := 0
+	var composition CatalogComposition
 	defer func() {
 		if err != nil {
 			reconciler.unsettle()
 			return
 		}
 		result.RetainedStaleRevisions = retainedStaleRevisions
+		result.Composition = composition
 		result.CompiledStrategies, result.ReusedStrategies = reconciler.candidates.Stats()
 		result.ReadMode, result.ReadReason, result.StrategiesRead = read.mode, read.reason, read.strategies
 		result.ChangeSignalPresent, result.ChangeSignalAgeSeconds = read.signalPresent, read.signalAgeSeconds
@@ -267,6 +276,7 @@ func (reconciler *SourceReconciler) Refresh(
 		}
 	}
 	catalog.ObservationID = observationID
+	composition = ComposeCatalog(catalog)
 	// The active revision remains the execution authority even when latest points
 	// at a stranded candidate. Restore its occurrence directly; requiring two
 	// identical source observations here can leave the active Snapshot expired

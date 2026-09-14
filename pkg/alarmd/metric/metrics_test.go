@@ -430,6 +430,9 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 	expected["bkmonitor_alarmd_control_source_mode"] = "variableLabels: {role,mode}"
 	expected["bkmonitor_alarmd_control_source_last_success_age_seconds"] = "variableLabels: {}"
 	expected["bkmonitor_alarmd_control_source_retained_stale_revisions_total"] = "variableLabels: {}"
+	expected["bkmonitor_alarmd_catalog_query_groups"] = "variableLabels: {source_semantics}"
+	expected["bkmonitor_alarmd_catalog_plans"] = "variableLabels: {source_semantics}"
+	expected["bkmonitor_alarmd_catalog_objects"] = "variableLabels: {disposition}"
 
 	descriptions := make(chan string)
 	go func() {
@@ -860,6 +863,14 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	bounds[fqName("control_source_mode")] = len(observability.ControlSourceRoles) * len(observability.ControlSourceModes)
 	bounds[fqName("control_source_last_success_age_seconds")] = 1
 	bounds[fqName("control_source_retained_stale_revisions_total")] = 1
+	// The supported data sources, plus other for one the compiler started
+	// accepting without being named, plus mixed for a Query Group that reads
+	// several. Bounded by that list and not by any strategy document, which
+	// is why the label is the source and not the combination.
+	bounds[fqName("catalog_query_groups")] = len(controlplane.SupportedSourceSemantics) + 2
+	bounds[fqName("catalog_plans")] = len(controlplane.SupportedSourceSemantics) + 2
+	// Every disposition, plus other for one added without being listed.
+	bounds[fqName("catalog_objects")] = len(controlplane.CatalogDispositions) + 1
 	for _, name := range []string{
 		"messages", "records", "plans", "levels", "events", "bytes", "keys", "state_bytes",
 	} {

@@ -514,6 +514,18 @@ func (runtime *productionPhaseTwoControl) refresh(
 			ReasonCode: observability.ReasonContractRetryable, Err: fmt.Errorf("phase-two mark source refresh success: %w", markErr),
 		})
 	}
+	// What this round's Catalog is made of rides out on every return that
+	// reports a healthy round. Stamping it once here rather than at each
+	// return is what keeps the two from drifting: refresh has seven healthy
+	// returns, and a reader asking which data sources are running must not
+	// get an answer that depends on which one the round took.
+	composition := result.Composition
+	defer func() {
+		if refreshErr != nil || refreshResult.Status != phaseTwoControlHealthy {
+			return
+		}
+		refreshResult.Composition = &composition
+	}()
 	sourceRefresh := sourceRefreshIdentity(result, result.Publication)
 	defer func() {
 		observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{

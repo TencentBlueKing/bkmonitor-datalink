@@ -292,6 +292,12 @@ type phaseTwoControlRefreshResult struct {
 	SourceKind            observability.SourceKind
 	ReasonCode            observability.ReasonCode
 	Cause                 error
+	// Composition is what the Catalog the round built is made of, when the
+	// round built one. Absent on a degraded round and on an activation load,
+	// neither of which composed a Catalog: the process then keeps the
+	// composition it last had rather than reporting an empty one, because
+	// empty and "the Catalog has nothing in it" are not the same answer.
+	Composition *controlplane.CatalogComposition
 }
 
 type phaseTwoControlRuntime interface {
@@ -576,6 +582,7 @@ func newPhaseTwoWorkerBundle(dependencies phaseTwoWorkerBundleDependencies) (*ph
 	if dependencies.Recorder != nil {
 		dependencies.Recorder.SetOwnedQueryGroups(0)
 		dependencies.Recorder.SetControlSourceSource(bundle.controlSourceStats)
+		dependencies.Recorder.SetCatalogCompositionSource(bundle.catalogComposition)
 	}
 	return bundle, nil
 }

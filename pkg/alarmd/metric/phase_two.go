@@ -92,6 +92,9 @@ type phaseTwoMetrics struct {
 	cmdbIndexAge                    *prometheus.GaugeVec
 	cmdbIndexDegraded               *prometheus.GaugeVec
 	dueIndex                        dueIndexMetrics
+	// catalogComposition reports what the Catalog the leader last built is
+	// made of; see catalog_composition.go.
+	catalogComposition *catalogCompositionCollector
 }
 
 var activeQGSetDurationBuckets = []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 30}
@@ -402,6 +405,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			"changes either, and each such Plan leaves the Catalog under its disposition until its document " +
 			"compiles again, instead of the whole Catalog failing to build as it did before.",
 	})
+	metrics.catalogComposition = newCatalogCompositionCollector()
 	metrics.seriesAdmission = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "series_admission_total",
 		Help: "Access-path admission decisions by filter, outcome and bounded reason.",
@@ -477,7 +481,8 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 	}...), append(append(m.redisCalls.collectors(), m.dueIndex.collectors()...),
 		m.controlCache, m.openAlertSet, m.controlSourceRounds, m.controlSource, m.controlSourceRetainedStale,
 		m.redisPool, m.canonicalEncoding, m.legacyPodCache,
-		m.seriesAdmission, m.cmdbIndexHosts, m.hostDisableMonitorStates, m.cmdbIndexAge, m.cmdbIndexDegraded)...)
+		m.seriesAdmission, m.cmdbIndexHosts, m.hostDisableMonitorStates, m.cmdbIndexAge, m.cmdbIndexDegraded,
+		m.catalogComposition)...)
 }
 
 func (m phaseTwoMetrics) observe(observation observability.Observation) {

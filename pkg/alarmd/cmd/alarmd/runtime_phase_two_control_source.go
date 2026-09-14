@@ -46,6 +46,12 @@ type controlSourceState struct {
 	// line that does not scroll away, cleared when a round succeeds.
 	lastFailureExit string
 	lastFailure     string
+	// composition is what the Catalog this process last saw built is made
+	// of. Kept from the last round that built one: a degraded round and an
+	// activation load compose nothing, and reporting empty then would read
+	// as "no data source has any Query Group", which is a different and
+	// much more alarming statement than "nothing new was built".
+	composition *controlplane.CatalogComposition
 	// persistedSuccessAt is the last successful read of the persisted time
 	// of the last successful refresh round, by any process; zero when none
 	// is known. Read on every refresh tick by every replica, so the age it
@@ -108,6 +114,9 @@ func (bundle *phaseTwoWorkerBundle) noteControlRoundLocked(result phaseTwoContro
 		state.degradedSince = time.Time{}
 		state.lastFailureExit = ""
 		state.lastFailure = ""
+	}
+	if result.Composition != nil {
+		state.composition = result.Composition
 	}
 }
 
@@ -198,6 +207,17 @@ func (view controlSourceView) leaderAbsentBeyondBound() bool {
 func (bundle *phaseTwoWorkerBundle) controlSourceStats() metric.ControlSourceStats {
 	view := bundle.controlSourceView()
 	return metric.ControlSourceStats{Known: view.known, Role: view.role, Mode: view.mode, LastSuccessAt: view.lastSuccessAt}
+}
+
+// catalogComposition is the last Catalog composition this process built, for
+// the collector to render. Nil on a process that has not built one, which
+// every replica but the leader is: only the leader refreshes, so only the
+// leader answers this, and the collector emits nothing rather than zeros
+// that would read as an empty Catalog.
+func (bundle *phaseTwoWorkerBundle) catalogComposition() *controlplane.CatalogComposition {
+	bundle.mu.RLock()
+	defer bundle.mu.RUnlock()
+	return bundle.controlSource.composition
 }
 
 // controlSourceFleetFacts is what the fleet snapshot publishes. The ages

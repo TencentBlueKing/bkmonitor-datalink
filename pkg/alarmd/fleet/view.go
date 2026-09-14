@@ -297,8 +297,17 @@ func (coverage *HistoryCoverage) Starved() bool {
 		coverage.EmptyRounds > coverage.WorstRequired
 }
 
-// Persistent reports a window that has stayed short for longer than filling it
-// could possibly take.
+// Persistent reports that some window has been short on every round for longer
+// than filling one could possibly take.
+//
+// "Some window", not "the same window", and the difference is not a nicety.
+// ShortRounds increments on any round where Short > 0, and there is no series
+// identity at this layer, so a strategy whose series churn -- a different one
+// warming every round -- drives it up for ever with no single window ever being
+// persistently short. Short and Levels are what keep that readable: one short
+// window out of nine hundred is a series inside a strategy, and every window
+// short is an object nobody can detect. Both reach this predicate, so whatever
+// renders it has to carry the share as well, or the two are one sentence.
 //
 // The threshold is the window's own requirement rather than a number chosen
 // here. A window needing N points is full after N rounds of data; still short

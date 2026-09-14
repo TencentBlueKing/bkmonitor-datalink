@@ -95,6 +95,17 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		anomaly("qg-window-complete", func(item *fleet.Anomaly) {
 			item.Coverage = &fleet.HistoryCoverage{Levels: 3}
 		}),
+		// One short window among many. Same verdict as qg-window-never and a
+		// completely different amount of broken -- one series inside a strategy
+		// against a strategy that cannot be detected at all. Every number the
+		// row used to render is identical between the two, because the worst
+		// pair is by construction one window and the rounds counter does not
+		// say how many windows earned it.
+		anomaly("qg-window-lopsided", func(item *fleet.Anomaly) {
+			item.Cause, item.CauseReason = "LEVEL_OUTCOME_UNKNOWN", "HISTORY_WARMING"
+			item.Coverage = &fleet.HistoryCoverage{Levels: 999, Short: 1,
+				WorstValid: 2, WorstRequired: 14, ShortRounds: 40}
+		}),
 		// The two rows a live page showed side by side. The GAPPED one carried
 		// the churning-series wording because the row note read coverage and
 		// never the reason -- the same defect as the summary count, in a
@@ -469,6 +480,13 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		{"qg-window-starved", "取不到数据", "持续缺点"},
 		{"qg-window-filling", "窗口在填", "持续缺点"},
 		{"qg-window-complete", "检测窗口完整", "短"},
+		// How many windows the note is about. These two reach the same verdict
+		// from 1-of-999 and 2-of-3, and until the share was rendered every
+		// number on both rows was the same. Pinned on both rows and with each
+		// forbidding the other's share, so a share that is printed but constant
+		// does not pass.
+		{"qg-window-lopsided", "999 个窗口里 1 个", "3 个窗口里"},
+		{"qg-window-never", "3 个窗口里 2 个", "999"},
 		{"qg-skipped", "没被检测", "持续缺点"},
 		// The wording changed with the classification: CONFIG_DRIFT is no longer
 		// told to the reader as a strategy being edited, because the predicate

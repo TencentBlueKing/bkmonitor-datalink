@@ -27,6 +27,7 @@ type phaseTwoMetrics struct {
 	lastProgress                    *prometheus.GaugeVec
 	capacity                        *prometheus.CounterVec
 	stateWriteReuse                 *prometheus.CounterVec
+	stateWriteChange                *prometheus.CounterVec
 	sourceObservations              *prometheus.CounterVec
 	sourceRefreshes                 *prometheus.CounterVec
 	sourceCompiles                  *prometheus.CounterVec
@@ -171,8 +172,23 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 				"means the classifier never ran rather than that nothing was reusable. stored says what was " +
 				"held when the comparison was made, because a series that keeps recovering and one that " +
 				"never leaves history warming are both steady and both pay a write every round, but reach " +
-				"it through different branches; averaged together the rate describes neither.",
+				"it through different branches; averaged together the rate describes neither. The population is " +
+				"State mutations admitted for writing, one per mutation per round, and not Redis commands: " +
+				"a storage-layer retry reissues a command without a new admission, and a request with " +
+				"repeated keys leaves the pipeline for the sequential path. So a saving estimated by " +
+				"multiplying a rate from here by a Redis command total mixes two populations. The " +
+				"conversion is not assumed to be one: it is this family's sum over a window against the " +
+				"pipelined evalsha count over the same window, and it has to be measured before it is used.",
 		}, []string{"class", "stored"}),
+		stateWriteChange: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "state_write_change_reason_total",
+			Help: "For State writes whose stored decision state differed, which field differed first, in a " +
+				"fixed comparison order. The class alone cannot be acted on: changed covers a decision that " +
+				"really moved, which would end the case for skipping the write, and a field that should never " +
+				"have counted as part of the decision, which would mean the predicate is wrong rather than " +
+				"the idea, and those point at opposite actions. Counts are first differences, not how many " +
+				"fields differ, so they are read as a breakdown of the changed class and nowhere else.",
+		}, []string{"reason", "stored"}),
 		sourceObservations: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "source_observation_total",
 			Help: "Phase-two source health episode transitions by bounded source, result and reason class.",
@@ -394,6 +410,11 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			metrics.stateWriteReuse.WithLabelValues(string(class), string(stored))
 		}
 	}
+	for _, reason := range observability.AllStateWriteChangeReasons() {
+		for _, stored := range observability.AllStateWriteReuseStored() {
+			metrics.stateWriteChange.WithLabelValues(string(reason), string(stored))
+		}
+	}
 	return metrics
 }
 
@@ -404,7 +425,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.queryCooldown,
 		m.slotReadiness.slack, m.slotReadiness.boundary,
 		m.slotTiming,
-		m.work, m.busy, m.lastProgress, m.capacity, m.stateWriteReuse, m.sourceObservations, m.sourceRefreshes, m.sourceCompiles,
+		m.work, m.busy, m.lastProgress, m.capacity, m.stateWriteReuse, m.stateWriteChange, m.sourceObservations, m.sourceRefreshes, m.sourceCompiles,
 		m.sourceReads, m.sourceStrategiesRead, m.sourceChangeSignalAge,
 		m.activationFailures, m.unmappedSeverity,
 		m.ownedQueryGroups, m.ownershipTransitions,
@@ -591,6 +612,9 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 	if facts := observation.StateWriteReuse; facts != nil && !facts.Empty() {
 		for key, count := range facts.Counts {
 			m.stateWriteReuse.WithLabelValues(string(key.Class), string(key.Stored)).Add(float64(count))
+		}
+		for key, count := range facts.ChangeReasons {
+			m.stateWriteChange.WithLabelValues(string(key.Reason), string(key.Stored)).Add(float64(count))
 		}
 	}
 	if observation.Component == observability.ComponentResource && observation.CapacityBudget != "" {

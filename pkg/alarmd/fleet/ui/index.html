@@ -1570,7 +1570,12 @@ function attributionLine(summary, perReplica, column) {
       + ' 个是持续缺点：缺点已经持续到超过窗口宽度，不是"还没攒够"'
       + (settled === external ? '——这一批全是这种' : '')
       + '。影响是异常照常报、恢复判不了，所以这类告警不会自己恢复；'
-      + '成因要看策略的聚合维度和它实际的序列才能确认，常见的是维度里有不断变化的东西让序列活不过窗口';
+      + '成因要看策略的聚合维度和它实际的序列才能确认，常见的是维度里有不断变化的东西让序列活不过窗口'
+      // This counts objects, and an object is not a unit of impact here. One
+      // short window out of hundreds and every window short both land in this
+      // number, and they are not the same amount of broken.
+      + '。这里数的是对象：一个对象里有多少个窗口缺点，看行内那条注释的窗口占比，'
+      + '占比很小的只是其中个别序列受影响';
   }
   if (!ours) {
     return '这些里没有一个是 alarmd 自己的问题（容量或架构）——' + external
@@ -2703,6 +2708,41 @@ function windowIsStarved(windowCoverage) {
          windowCoverage.empty_rounds > windowCoverage.worst_required;
 }
 
+// How much of the object a window note is about.
+//
+// Levels and Short are counted per window and have been on every row since the
+// coverage facts were added, and no note rendered either of them. So an object
+// with one short window out of nine hundred and ninety-nine read
+// character-for-character the same as an object whose every window was short --
+// and those two need opposite responses. The first is one series inside a
+// strategy; the second is the object not being detectable at all.
+//
+// Without it the worst pair is the only number on the row, and the worst pair
+// is by construction the single worst window. Reading it as the object's state
+// is reading a maximum as an average.
+function coverageShare(windowCoverage, count) {
+  var total = windowCoverage.levels || 0;
+  if (!total || !count) return '';
+  return total + ' 个窗口里 ' + count + ' 个';
+}
+
+// The two things about these counts that the headline cannot carry and a reader
+// will otherwise assume wrong.
+//
+// The second one is the more important. shortRounds increments on any round
+// where at least one window was short, so a strategy whose series churn -- a
+// different one warming every round -- drives it up for ever without any single
+// window ever being persistently short. At this layer there is no series
+// identity to tell those apart, and saying so is cheaper and more honest than a
+// verdict that quietly assumes one of them.
+function coverageScopeNote(windowCoverage) {
+  return '口径：一个窗口 = 一条序列的一个级别（一轮里补算多个时间点时，每个时间点各算一次）。'
+    + '本轮汇总了 ' + (windowCoverage.levels || 0) + ' 个，其中 '
+    + (windowCoverage.short || 0) + ' 个没取满。\n'
+    + '“已连续 N 轮”是指每一轮都至少有一个窗口短，不保证每轮短的是同一个：'
+    + '这一层没有序列身份，分不出是同一条序列一直缺，还是每轮换一条新序列在暖机。';
+}
+
 function coverageNote(anomaly) {
   // The by-design column holds more than one thing, so the row has to say
   // which. A column that reads "nothing to do here" and cannot say why is the
@@ -2775,8 +2815,10 @@ function coverageNote(anomaly) {
   if (windowIsStarved(windowCoverage)) {
     return {
       settled: false,
-      text: '取不到数据：窗口里一个点都没有，已连续 ' + windowCoverage.empty_rounds + ' 轮',
-      title: '窗口需要 ' + windowCoverage.worst_required + ' 个点，实际一个都没取到，而且已经连续 '
+      text: '取不到数据：' + coverageShare(windowCoverage, windowCoverage.empty)
+        + '一个点都没有，已连续 ' + windowCoverage.empty_rounds + ' 轮',
+      title: coverageScopeNote(windowCoverage) + '\n\n'
+        + '窗口需要 ' + windowCoverage.worst_required + ' 个点，实际一个都没取到，而且已经连续 '
         + windowCoverage.empty_rounds + ' 轮如此。\n\n'
         + '窗口里最新的那个位置就是当前正在判定的这条记录，所以它本该是有效的——除非这一轮检测对该级别'
         + '返回了 UNAVAILABLE 或 ERROR，或者根本没有数据到达。\n\n'
@@ -2801,9 +2843,10 @@ function coverageNote(anomaly) {
     var intermittent = windowCoverage.short_rounds > windowCoverage.worst_required;
     return {
       settled: false,
-      text: (intermittent ? '数据断断续续：' : '数据刚断：') + '最差 ' + got + ' 点，已连续 '
+      text: (intermittent ? '数据断断续续：' : '数据刚断：')
+        + coverageShare(windowCoverage, windowCoverage.short) + '有洞，最差 ' + got + ' 点，已连续 '
         + windowCoverage.short_rounds + ' 轮',
-      title: intermittent
+      title: coverageScopeNote(windowCoverage) + '\n\n' + (intermittent
         ? '窗口里有点，但点和点之间有洞，而且已经这样连续 ' + windowCoverage.short_rounds
           + ' 轮——超过了窗口本身的宽度 ' + windowCoverage.worst_required + ' 轮。\n\n'
           + '这一点是判定性的：一条数据停掉的序列只能在最后一个点还留在窗口里的那几轮报 GAPPED，'
@@ -2814,14 +2857,16 @@ function coverageNote(anomaly) {
           + ' 轮，所以现在还分不出是两种里的哪一种：\n\n'
           + '一是数据刚停，那么再过几轮最后一个点滑出窗口，这里会转成 HISTORY_WARMING；\n'
           + '二是数据还在来只是有洞，那么它会一直停在 GAPPED。\n\n'
-          + '再看几轮就知道了。'
+          + '再看几轮就知道了。')
     };
   }
   if (!windowNeverFills(windowCoverage)) {
     return {
       settled: false,
-      text: '窗口在填：最差 ' + got + ' 点，已连续 ' + windowCoverage.short_rounds + ' 轮',
-      title: '需要 ' + windowCoverage.worst_required + ' 个点才能判定，目前最差的那个窗口只有 '
+      text: '窗口在填：' + coverageShare(windowCoverage, windowCoverage.short)
+        + '没取满，最差 ' + got + ' 点，已连续 ' + windowCoverage.short_rounds + ' 轮',
+      title: coverageScopeNote(windowCoverage) + '\n\n'
+        + '需要 ' + windowCoverage.worst_required + ' 个点才能判定，目前最差的那个窗口只有 '
         + windowCoverage.worst_valid + ' 个。还没短过 ' + windowCoverage.worst_required
         + ' 轮以上，正常补齐的速度也就是这样，先不用管'
     };
@@ -2840,13 +2885,24 @@ function coverageNote(anomaly) {
   // and check.
   return {
     settled: true,
-    text: '持续缺点：需要 ' + windowCoverage.worst_required + ' 个连续点，当前最少 '
+    text: '持续缺点：' + coverageShare(windowCoverage, windowCoverage.short) + '取不满，需要 '
+      + windowCoverage.worst_required + ' 个连续点，当前最少 '
       + windowCoverage.worst_valid + ' 个，已连续 ' + windowCoverage.short_rounds + ' 轮',
-    title: '现象：需要 ' + windowCoverage.worst_required + ' 个连续点才能判定，最差的那个窗口只取到 '
+    title: coverageScopeNote(windowCoverage) + '\n\n'
+      + '现象：需要 ' + windowCoverage.worst_required + ' 个连续点才能判定，最差的那个窗口只取到 '
       + windowCoverage.worst_valid + ' 个，已经连续 ' + windowCoverage.short_rounds
       + ' 轮如此——超过了填满它所需的 ' + windowCoverage.worst_required + ' 轮，所以不是"还没攒够"。\n\n'
-      + '影响：异常照常报得出来（异常判定在完整性闸门之前）；恢复判不了（恢复判定在闸门之后），'
-      + '所以这类告警不会自己恢复，要靠告警侧的机制关闭。\n\n'
+      // Scoped on purpose. The impact belongs to the short windows, not to the
+      // object: an object with one short window out of many has one series that
+      // cannot clear, and saying "这类告警不会自己恢复" without the share reads as
+      // the whole strategy being stuck.
+      + '影响：落在这 ' + windowCoverage.short + ' 个窗口对应的序列上——它们的异常照常报得出来'
+      + '（异常判定在完整性闸门之前），恢复判不了（恢复判定在闸门之后），'
+      + '所以这部分告警不会自己恢复，要靠告警侧的机制关闭。'
+      + (windowCoverage.levels > windowCoverage.short
+          ? '另外 ' + (windowCoverage.levels - windowCoverage.short) + ' 个窗口这一轮是取满的。'
+          : '这一轮所有窗口都没取满。')
+      + '\n\n'
       + '下一步：常见成因是策略的聚合维度里有不断变化的东西（网卡、pod 名、容器名、任务名），'
       + '每个序列只活几分钟、短于窗口跨度；也可能是数据本身在缺。'
       + '这两种要看这条策略的聚合维度和它实际的序列才能分清，页面到这里为止。\n\n'

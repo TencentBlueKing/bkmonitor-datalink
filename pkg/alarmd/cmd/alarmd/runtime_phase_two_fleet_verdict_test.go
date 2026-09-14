@@ -186,3 +186,43 @@ func TestFleetVerdictLeavesUnclassifiedFailuresOut(t *testing.T) {
 		t.Fatalf("failure total = %d, want only the classified one", total)
 	}
 }
+
+// The columns have to survive the trip from the view to the export, or the
+// identity they exist for is computed over zeroes.
+//
+// The collector test checks that whatever the verdict carries is exported; it
+// cannot see a verdict built from the wrong fields. That gap is the same one
+// the anomaly count had: the ends were checked and the transit between them
+// was not, and a column reported as zero looks exactly like a column that is
+// empty.
+func TestTheVerdictCarriesEveryColumnOfTheSplit(t *testing.T) {
+	at := time.Unix(1_700_000_000, 0)
+	verdict := fleetVerdictOf(fleet.View{
+		Health: fleet.HealthDegraded, Covered: 979, Determined: 979, Unknown: 0,
+		// Adds up to Determined, the way Aggregate computes it by subtraction.
+		// A fixture that does not add up cannot check the identity it is here
+		// for -- it fails on its own arithmetic instead.
+		Healthy: 837, AnomaliesTotal: 90, DemotedTotal: 33,
+		UndecidableTotal: 12, ByDesignTotal: 7,
+	}, at)
+
+	for name, got := range map[string]int{
+		"healthy": verdict.Healthy, "anomalous": verdict.Anomalous, "demoted": verdict.Demoted,
+		"undecidable": verdict.Undecidable, "by_design": verdict.ByDesign,
+	} {
+		if got == 0 {
+			t.Errorf("verdict reports 0 for %q, which the view says is not empty: a column lost in "+
+				"transit reads exactly like a column with nothing in it", name)
+		}
+	}
+	if verdict.Healthy != 837 || verdict.Anomalous != 90 || verdict.Demoted != 33 ||
+		verdict.Undecidable != 12 || verdict.ByDesign != 7 {
+		t.Fatalf("verdict columns = %d/%d/%d/%d/%d, want 837/90/33/12/7",
+			verdict.Healthy, verdict.Anomalous, verdict.Demoted, verdict.Undecidable, verdict.ByDesign)
+	}
+	sum := verdict.Healthy + verdict.Anomalous + verdict.Demoted + verdict.Undecidable +
+		verdict.ByDesign + verdict.Unknown
+	if sum != verdict.Determined {
+		t.Fatalf("columns sum to %d, want determined %d", sum, verdict.Determined)
+	}
+}

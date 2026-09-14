@@ -43,6 +43,25 @@ type FleetVerdict struct {
 	Covered    int
 	Determined int
 	Unknown    int
+	// Healthy, Anomalous, Demoted, Undecidable and ByDesign are the columns
+	// that partition Determined, exported so the split can be checked from the
+	// outside instead of only read off a page.
+	//
+	// The reason they are here is an attribution that had to be retracted: a
+	// release that moved objects out of the anomaly column was credited with a
+	// drop of twenty-two, and the next release, which touched none of that
+	// code, showed a similar drop at the same age. The anomaly count alone
+	// drifts with the deployment, so a before-and-after on it cannot attribute
+	// anything.
+	//
+	// With the columns beside it the claim becomes an identity checkable in
+	// one window on one pod: anomalies down N and the receiving column up N.
+	// Drift moves both sides and leaves the difference alone.
+	Healthy     int
+	Anomalous   int
+	Demoted     int
+	Undecidable int
+	ByDesign    int
 	// Stalled counts objects whose rounds stopped finishing altogether. It is
 	// the one number here that never resolves on its own.
 	Stalled   int
@@ -88,7 +107,15 @@ func newFleetCollector(source FleetVerdictSource) *fleetCollector {
 			"Deployment-wide judgment as alarmd itself decides it; alert on this rather than recomputing it.",
 			[]string{"health_state"}),
 		objects: descriptor("fleet_objects",
-			"Objects by coverage state. Covered minus determined is counted into unknown. "+
+			"Objects by coverage state, and by which column of the split they are in: healthy, "+
+				"anomalous, demoted, undecidable and by_design partition determined, so a change that "+
+				"moves objects between columns shows as one falling and another rising by the same "+
+				"amount in the same scrape. That difference is what attributes such a change; the "+
+				"anomaly count on its own drifts with the deployment and attributes nothing. "+
+				"While a rollout is in progress the column states under-count, because a replica on "+
+				"an older build does not publish them and its objects stay in anomalous -- compare "+
+				"columns within one pod and one build, never across a rollout. "+
+				"Objects by coverage state. Covered minus determined is counted into unknown. "+
 				"A non-zero unknown does NOT mean something is broken -- a replica that just restarted owns "+
 				"objects it cannot yet speak for -- it means the question cannot be answered, which is why "+
 				"unknown is never folded into healthy. The expected state is absent when the denominator "+
@@ -162,6 +189,15 @@ func (c *fleetCollector) Collect(metrics chan<- prometheus.Metric) {
 	metrics <- prometheus.MustNewConstMetric(c.objects, prometheus.GaugeValue, float64(verdict.Covered), "covered")
 	metrics <- prometheus.MustNewConstMetric(c.objects, prometheus.GaugeValue, float64(verdict.Determined), "determined")
 	metrics <- prometheus.MustNewConstMetric(c.objects, prometheus.GaugeValue, float64(verdict.Unknown), "unknown")
+	// The columns. Emitted as zero when a column is empty, which is a real
+	// measurement: this build always knows the answer. A build that did not
+	// have these columns emitted no series at all, which is the distinction
+	// that matters to whoever reads a gap in the data.
+	metrics <- prometheus.MustNewConstMetric(c.objects, prometheus.GaugeValue, float64(verdict.Healthy), "healthy")
+	metrics <- prometheus.MustNewConstMetric(c.objects, prometheus.GaugeValue, float64(verdict.Anomalous), "anomalous")
+	metrics <- prometheus.MustNewConstMetric(c.objects, prometheus.GaugeValue, float64(verdict.Demoted), "demoted")
+	metrics <- prometheus.MustNewConstMetric(c.objects, prometheus.GaugeValue, float64(verdict.Undecidable), "undecidable")
+	metrics <- prometheus.MustNewConstMetric(c.objects, prometheus.GaugeValue, float64(verdict.ByDesign), "by_design")
 	metrics <- prometheus.MustNewConstMetric(c.stalled, prometheus.GaugeValue, float64(verdict.Stalled))
 	for _, count := range verdict.Anomalies {
 		if count.Value == "" {

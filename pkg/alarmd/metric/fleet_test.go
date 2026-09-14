@@ -130,3 +130,63 @@ func TestFleetVerdictExportsTheWorkerAcknowledgementByState(t *testing.T) {
 		}
 	}
 }
+
+// The columns that partition determined, exported so a change that moves
+// objects between them can be attributed from outside.
+//
+// This exists because an attribution had to be retracted. A release that moved
+// objects out of the anomaly column was credited with a drop of twenty-two,
+// and the next release, which touched none of that code, showed a similar drop
+// at the same age on a different generation. The anomaly count drifts with the
+// deployment, so a before-and-after on it says nothing about a change.
+//
+// The identity the columns make possible is checked here the way a reader
+// would check it: the columns add up to determined, and moving an object from
+// one to another leaves that sum alone.
+func TestTheColumnsThatPartitionDeterminedAreExported(t *testing.T) {
+	before := FleetVerdict{
+		Health: "DEGRADED", Covered: 979, Determined: 979, Unknown: 0,
+		Healthy: 844, Anomalous: 90, Demoted: 33, Undecidable: 12, ByDesign: 0,
+	}
+	gathered := gatherFleet(t, before)
+	objects := gathered["bkmonitor_alarmd_fleet_objects"]
+	for state, want := range map[string]float64{
+		"healthy": 844, "anomalous": 90, "demoted": 33, "undecidable": 12, "by_design": 0,
+	} {
+		got, sent := objects[state]
+		if !sent {
+			t.Fatalf("fleet_objects has no %q series; the split cannot be checked from outside, "+
+				"and a before-and-after on the anomaly count alone attributes nothing", state)
+		}
+		if got != want {
+			t.Errorf("fleet_objects{state=%q} = %v, want %v", state, got, want)
+		}
+	}
+	// by_design is zero here and is still sent. Zero is a measurement this
+	// build can always make; a build without the column sent no series at all,
+	// and that absence is what a reader needs to be able to tell apart.
+	sum := objects["healthy"] + objects["anomalous"] + objects["demoted"] +
+		objects["undecidable"] + objects["by_design"]
+	if sum != objects["determined"] {
+		t.Fatalf("columns sum to %v, want determined %v: the identity a reader would use to "+
+			"attribute a change does not hold", sum, objects["determined"])
+	}
+
+	// Moving objects between columns is exactly what a classification change
+	// does, and it is what the identity has to survive: one column falls, the
+	// other rises, the sum is untouched. A drift in the deployment moves both
+	// sides, so the difference is the part that carries the attribution.
+	after := before
+	after.Anomalous -= 6
+	after.ByDesign += 6
+	moved := gatherFleet(t, after)["bkmonitor_alarmd_fleet_objects"]
+	if moved["anomalous"] != objects["anomalous"]-6 || moved["by_design"] != objects["by_design"]+6 {
+		t.Fatalf("a move between columns did not show as one falling and the other rising: %v", moved)
+	}
+	movedSum := moved["healthy"] + moved["anomalous"] + moved["demoted"] +
+		moved["undecidable"] + moved["by_design"]
+	if movedSum != sum {
+		t.Fatalf("the sum changed across a move between columns: %v then %v -- an object was "+
+			"created or lost, which is the one thing the identity must rule out", sum, movedSum)
+	}
+}

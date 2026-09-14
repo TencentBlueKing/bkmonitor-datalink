@@ -461,6 +461,8 @@ func fleetVerdictOf(view fleet.View, at time.Time) metric.FleetVerdict {
 	verdict := metric.FleetVerdict{
 		Health: string(view.Health), Expected: view.Expected,
 		Covered: view.Covered, Determined: view.Determined, Unknown: view.Unknown,
+		Healthy: view.Healthy, Anomalous: view.AnomaliesTotal, Demoted: view.DemotedTotal,
+		Undecidable: view.UndecidableTotal, ByDesign: view.ByDesignTotal,
 	}
 	// Counted by closed label, never by object: a per-object series would put the
 	// Query Group identity into a label and break the cardinality budget that

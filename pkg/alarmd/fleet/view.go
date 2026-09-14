@@ -276,6 +276,23 @@ type HistoryCoverage struct {
 	// be short for an hour and empty only for the last two rounds, and those
 	// last two are the ones that mean the data stopped.
 	EmptyRounds uint32 `json:"empty_rounds"`
+	// Guarded is how many of these windows reported a completeness that was not
+	// computed this round.
+	//
+	// A Level whose persisted state says WARMING or GAPPED forces that verdict
+	// onto every evaluation until the loaded history already forms a full window
+	// at the last processed record; a Plan gap record does the same. The counts
+	// beside it stay live. So the reason a row shows can be older than the
+	// numbers under it, and a window that has already refilled keeps reporting
+	// what it said before it did -- Short can be zero on a row whose reason says
+	// the window is gapped, which is the page stating two opposite things about
+	// one object in one line.
+	//
+	// This is not a defect in the guard. Releasing it early would let a Level
+	// decide recovery off a window that is complete only because the missing
+	// positions aged out. It is a defect in reporting the held verdict as though
+	// it were this round's finding.
+	Guarded uint32 `json:"guarded,omitempty"`
 }
 
 // Starved reports a window that has held no points at all for longer than

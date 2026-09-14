@@ -2805,7 +2805,30 @@ function coverageScopeNote(windowCoverage) {
     + '本轮汇总了 ' + (windowCoverage.levels || 0) + ' 个，其中 '
     + (windowCoverage.short || 0) + ' 个没取满。\n'
     + '“已连续 N 轮”是指每一轮都至少有一个窗口短，不保证每轮短的是同一个：'
-    + '这一层没有序列身份，分不出是同一条序列一直缺，还是每轮换一条新序列在暖机。';
+    + '这一层没有序列身份，分不出是同一条序列一直缺，还是每轮换一条新序列在暖机。'
+    + heldVerdictNote(windowCoverage);
+}
+
+// Whether the reason on this row was decided this round.
+//
+// A Level whose persisted state says WARMING or GAPPED forces that verdict onto
+// every evaluation until the loaded history already forms a full window at the
+// last processed record; a Plan gap record forces it the same way. While that
+// holds, the freshly computed verdict is discarded -- but the point counts are
+// still computed from the window at this record.
+//
+// So the reason and the numbers under it can be from two different moments, and
+// this row can say "窗口有洞" over counts that show it full. The page has to be
+// able to say which half is this round's, or a condition that has already
+// passed reads exactly like one that is still happening.
+function heldVerdictNote(windowCoverage) {
+  var held = windowCoverage.guarded || 0;
+  if (!held) return '';
+  var total = windowCoverage.levels || 0;
+  return '\n这一轮有 ' + held + '/' + total + ' 个窗口报的不是本轮算出来的结果，'
+    + '而是上一轮的判定还在生效：某个级别一旦判成缺点，就会一直压住后面的判定，'
+    + '直到上一次处理的那个时刻的窗口也补满为止。所以上面这个原因可能描述的是已经过去的情况，'
+    + '而点数是此刻的。';
 }
 
 function coverageNote(anomaly) {
@@ -2870,6 +2893,22 @@ function coverageNote(anomaly) {
   var windowCoverage = anomaly.coverage;
   if (!windowCoverage || !windowCoverage.levels) return null;
   if (!windowCoverage.short) {
+    // A complete window under a reason that says it is not complete.
+    //
+    // This is the sharpest form of the held verdict and it renders on a live
+    // row: the object sits in a column because its reason says the window is
+    // gapped, and every count on the same row says the window filled. Said
+    // first, because a reader who sees 检测窗口完整 beside HISTORY_GAPPED can
+    // only conclude the page is broken.
+    if (windowCoverage.guarded) {
+      return {settled: false,
+              text: '窗口已经补满，但本轮判定仍沿用上一轮（' + windowCoverage.guarded
+                + '/' + windowCoverage.levels + ' 个窗口）',
+              title: '本轮 ' + windowCoverage.levels + ' 个窗口都取满了所需点数，'
+                + '所以左边那个原因描述的不是此刻的窗口。' + heldVerdictNote(windowCoverage) + '\n\n'
+                + '下一步：不用按这个原因去查数据。再跑一到两轮，压制解除后这一条会自己变；'
+                + '如果跑了很多轮还停在这里，那要查的是判定为什么没被解除，不是数据。'};
+    }
     // Worth saying. "Every window was complete" and "no window was looked at"
     // both show nothing here otherwise, and they are opposite statements.
     return {settled: false, text: '检测窗口完整',

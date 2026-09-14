@@ -101,6 +101,24 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		// row used to render is identical between the two, because the worst
 		// pair is by construction one window and the rounds counter does not
 		// say how many windows earned it.
+		// A window that is complete under a reason that says it is not.
+		//
+		// The reason is held over: a Level judged WARMING or GAPPED forces that
+		// verdict onto every later evaluation until the window is full at the
+		// last processed record, while the counts beside it stay live. This row
+		// used to render 检测窗口完整 next to a cause of HISTORY_GAPPED -- the
+		// page stating both halves of a contradiction and marking neither.
+		anomaly("qg-window-held-complete", func(item *fleet.Anomaly) {
+			item.Cause, item.CauseReason = "LEVEL_OUTCOME_UNKNOWN", "HISTORY_GAPPED"
+			item.Coverage = &fleet.HistoryCoverage{Levels: 3, Guarded: 3}
+		}),
+		// Held over and still short: the conclusion about the counts stands, the
+		// reason under it may not.
+		anomaly("qg-window-held-short", func(item *fleet.Anomaly) {
+			item.Cause, item.CauseReason = "LEVEL_OUTCOME_UNKNOWN", "HISTORY_WARMING"
+			item.Coverage = &fleet.HistoryCoverage{Levels: 4, Short: 2, Guarded: 1,
+				WorstValid: 2, WorstRequired: 14, ShortRounds: 40}
+		}),
 		anomaly("qg-window-lopsided", func(item *fleet.Anomaly) {
 			item.Cause, item.CauseReason = "LEVEL_OUTCOME_UNKNOWN", "HISTORY_WARMING"
 			item.Coverage = &fleet.HistoryCoverage{Levels: 999, Short: 1,
@@ -510,6 +528,10 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		// does not pass.
 		{"qg-window-lopsided", "999 个窗口里 1 个", "3 个窗口里"},
 		{"qg-window-never", "3 个窗口里 2 个", "999"},
+		// A complete window under a reason that says it is gapped. Saying
+		// 检测窗口完整 here is the page agreeing with the counts and silently
+		// disagreeing with the reason printed beside them on the same row.
+		{"qg-window-held-complete", "窗口已经补满", "检测窗口完整"},
 		{"qg-skipped", "没被检测", "持续缺点"},
 		// The wording changed with the classification: CONFIG_DRIFT is no longer
 		// told to the reader as a strategy being edited, because the predicate
@@ -585,6 +607,16 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			"健康且没有覆盖缺口时不能还说证据不全"},
 		{"VAR degraded why ::", "存在 alarmd 自己该负责的异常", "",
 			"DEGRADED 要说清是 alarmd 自己的异常，否则和数据源问题分不开"},
+
+		// What releases a held verdict, on both kinds of row that can carry one.
+		// Without it the reader cannot tell "去查数据" from "再等一轮"，而这两个
+		// 是相反的动作。
+		{"HELD qg-window-held-complete ::", "3/3 个窗口报的不是本轮算出来的结果", "",
+			"补满的窗口配着说它有洞的原因，必须说清哪一半是这一轮的"},
+		{"HELD qg-window-held-complete ::", "再跑一到两轮", "",
+			"这一条的下一步是等压制解除，不是去查数据"},
+		{"HELD qg-window-held-short ::", "1/4 个窗口报的不是本轮算出来的结果", "",
+			"仍然短的行里，对点数的结论成立而它下面那个原因未必成立"},
 	} {
 		line := lineStarting(text, want.prefix)
 		if line == "" {
@@ -768,6 +800,12 @@ for (const row of data.anomalies) {
   try { note = ctx.coverageNote(row); }
   catch (e) { console.error('coverageNote threw on ' + row.query_group + ': ' + e.message); failed++; continue; }
   console.log('NOTE ' + row.query_group + ' :: ' + (note ? note.text : '(none)'));
+  // The tooltip too, for rows carrying a held verdict. The headline cannot fit
+  // what releases the hold, and that is the part that says whether to go and
+  // look at the data or wait a round -- opposite actions off one row.
+  if (note && row.coverage && row.coverage.guarded) {
+    console.log('HELD ' + row.query_group + ' :: ' + note.title.replace(/\n/g, ' '));
+  }
 }
 
 // What the "whose problem is this" line says on each column. Three of the four

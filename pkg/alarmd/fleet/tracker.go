@@ -492,6 +492,7 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 				Levels: facts.Levels, Short: facts.Short, Empty: facts.Empty,
 				WorstValid: facts.WorstValid, WorstRequired: facts.WorstRequired,
 				ShortRounds: state.shortRounds, EmptyRounds: state.emptyRounds,
+				Guarded: facts.Guarded,
 			}
 		}
 	case blockedOutcome(runOutcome):

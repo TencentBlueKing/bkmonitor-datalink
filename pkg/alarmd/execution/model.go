@@ -1522,16 +1522,41 @@ type HistoryCoverage struct {
 	// is indistinguishable from a series that simply churns, and the page
 	// would describe a dead metric as working as designed.
 	Empty uint32
+	// Guarded is how many of these windows reported a completeness that was not
+	// computed from the window this round.
+	//
+	// A Level whose persisted state says WARMING or GAPPED keeps forcing that
+	// verdict onto the evaluation until the loaded history already forms a full
+	// window at the *last processed* record; a Plan gap record forces it the
+	// same way. While a guard is in force the freshly computed verdict is
+	// discarded and the held one is reported -- but the position counts beside
+	// it are the live ones, computed from the window at this record.
+	//
+	// So the reason code and the numbers under it can be from two different
+	// moments, and a window that has already refilled goes on reporting the
+	// verdict it had when it had not. Without this count nothing downstream can
+	// tell "this is what the window says now" from "this is what it said, and
+	// it has not been allowed to say anything else yet" -- which is the
+	// difference between a condition to act on and a condition that has passed.
+	Guarded uint32
 }
 
 // Observe folds one Level summary in. Zero required points means the window
 // declined to judge, which is not the same as a window that was judged and
 // found complete, so it is not counted at all.
-func (coverage *HistoryCoverage) Observe(validPositions, requiredPositions uint32) {
+//
+// guarded says the completeness reported for this window was held over from a
+// guard rather than computed from the window now. It is counted for every
+// window, short or not: a guarded window whose live counts are complete is the
+// clearest case of a stale verdict and the one a reader most needs to see.
+func (coverage *HistoryCoverage) Observe(validPositions, requiredPositions uint32, guarded bool) {
 	if coverage == nil || requiredPositions == 0 {
 		return
 	}
 	coverage.Levels++
+	if guarded {
+		coverage.Guarded++
+	}
 	if validPositions >= requiredPositions {
 		return
 	}
@@ -1552,6 +1577,7 @@ func (coverage *HistoryCoverage) Merge(other HistoryCoverage) {
 	coverage.Levels += other.Levels
 	coverage.Short += other.Short
 	coverage.Empty += other.Empty
+	coverage.Guarded += other.Guarded
 	if other.Short > 0 && other.WorstRequired-other.WorstValid > coverage.WorstRequired-coverage.WorstValid {
 		coverage.WorstValid, coverage.WorstRequired = other.WorstValid, other.WorstRequired
 	}

@@ -126,4 +126,53 @@ func TestEvaluationReportsHowShortTheDetectionWindowWas(t *testing.T) {
 	if complete.Short != 0 {
 		t.Fatalf("short = %d on a window the record fills, want 0", complete.Short)
 	}
+	if complete.Guarded != 0 {
+		t.Fatalf("guarded = %d on a window decided from the window itself, want 0", complete.Guarded)
+	}
+}
+
+// A Level reporting a verdict it is no longer allowed to revise.
+//
+// Persisted WARMING or GAPPED is forced onto every later evaluation until the
+// loaded history already forms a full window at the *last processed* record --
+// not at the record being evaluated. So a window that filled this round keeps
+// reporting the older verdict, while the position counts published beside it
+// are computed from the window now.
+//
+// The two halves then disagree on the page, in the direction that costs work: a
+// row says the window is short and the counts on the same row say it is full,
+// and whoever reads it goes to look at data that is arriving correctly. The
+// guard is right to hold -- releasing it would let recovery be decided off a
+// window that is complete only because the missing positions aged out -- so
+// what has to change is that the held verdict is reported as though it were
+// this round's finding.
+func TestEvaluationSaysWhenAWindowVerdictWasNotDecidedThisRound(t *testing.T) {
+	record := []contract.CanonicalRecordV2{{RecordID: strings.Repeat("f", 64), SourceTime: 300, BusinessID: "2",
+		DimensionIdentity: contract.DimensionIdentityV2{Digest: strings.Repeat("c", 64)},
+		Values:            map[string]json.RawMessage{"value": json.RawMessage(`10`)},
+		Dimensions:        map[string]json.RawMessage{}, ReceivedTime: 300}}
+
+	// A one-point window, which this record fills by itself, under a persisted
+	// WARMING whose own last processed moment has nothing in it. The guard
+	// cannot converge there, so it holds over a window that is complete here.
+	request := requestFixtureForPlan(t, compiledWindow(t, 1, 1), record, nil)
+	request.State.Items[0].Levels[0].HistoryCompleteness = execution.HistoryWarming
+	request.State.Items[0].Levels[0].LastProcessedEventTime = 60
+
+	result, err := newEvaluator(t).Evaluate(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+	coverage := result.Plans[0].HistoryCoverage
+	if coverage.Levels != 1 {
+		t.Fatalf("levels = %d, want the one window summarised", coverage.Levels)
+	}
+	if coverage.Short != 0 {
+		t.Fatalf("short = %d, want 0: the record fills this window, and that is the point -- the "+
+			"counts say complete while the reported verdict says otherwise", coverage.Short)
+	}
+	if coverage.Guarded != 1 {
+		t.Fatalf("guarded = %d, want 1: the verdict came from the persisted guard, not from this "+
+			"window, and nothing downstream can tell unless this says so", coverage.Guarded)
+	}
 }

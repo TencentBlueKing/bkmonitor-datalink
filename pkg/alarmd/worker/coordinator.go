@@ -1650,13 +1650,7 @@ func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx contex
 		reason = observability.ReasonNone
 	}
 	defer func() { _ = recover() }()
-	var coverageFacts *observability.HistoryCoverageFacts
-	if coverage.Levels > 0 {
-		coverageFacts = &observability.HistoryCoverageFacts{
-			Levels: coverage.Levels, Short: coverage.Short, Empty: coverage.Empty,
-			WorstValid: coverage.WorstValid, WorstRequired: coverage.WorstRequired,
-		}
-	}
+	coverageFacts := historyCoverageFacts(coverage)
 	coordinator.ports.Observer.Observe(ctx, observability.Observation{
 		Component: observability.ComponentProgress, Stage: observability.StageProgressCommitted,
 		Operation: observability.Operation(operation), Direction: observability.DirectionInternal,
@@ -1664,6 +1658,31 @@ func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx contex
 		ProgressCompletionCause: cause, ProgressCompletionReason: causeReason,
 		HistoryCoverage: coverageFacts,
 	})
+}
+
+// historyCoverageFacts carries the Slot's window counts onto the observation.
+//
+// A named function rather than a literal inside the observer call, because this
+// is a hand-written copy between two structs that have to hold the same numbers,
+// and this codebase's most frequent defect by a wide margin is exactly that: a
+// field that is computed where the decision is made, used there, and dropped on
+// one of the handoffs on the way out. Inline, nothing could execute this
+// translation on its own, so a field added to one side and forgotten on the
+// other was invisible -- the page would render a deployment it could not have
+// observed, with nothing on it disagreeing.
+//
+// Levels == 0 yields nil on purpose. A Slot that summarised no window at all and
+// a Slot whose windows were all complete both report zero short, and they are
+// opposite statements; absence is how the first one stays sayable.
+func historyCoverageFacts(coverage execution.HistoryCoverage) *observability.HistoryCoverageFacts {
+	if coverage.Levels == 0 {
+		return nil
+	}
+	return &observability.HistoryCoverageFacts{
+		Levels: coverage.Levels, Short: coverage.Short, Empty: coverage.Empty,
+		WorstValid: coverage.WorstValid, WorstRequired: coverage.WorstRequired,
+		Guarded: coverage.Guarded,
+	}
 }
 
 // configDriftCompletion builds the completion of a Slot whose activations moved

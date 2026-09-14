@@ -1111,10 +1111,10 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 
 		for _, storageRange := range storageRanges {
 			query := q.BuildMetadataQuery(ctx, tsDB, allConditions)
-			query.SourceConditions = sourceConditions.MetaDataAllConditions()
 			if query == nil {
 				continue
 			}
+			query.SourceConditions = sourceConditions.MetaDataAllConditions()
 
 			query.Aggregates = aggregates.Copy()
 			query.Timezone = qp.Timezone

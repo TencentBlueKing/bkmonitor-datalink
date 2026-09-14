@@ -10,9 +10,10 @@ import (
 // LegacyOutputContext is internal frozen configuration for the local Python
 // protocol adapter. It is never part of the native TriggerEvent wire.
 type LegacyOutputContext struct {
-	Strategy        json.RawMessage `json:"strategy"`
-	DimensionFields []string        `json:"dimension_fields"`
-	ItemID          string          `json:"item_id"`
+	DynamicDimensions bool            `json:"dynamic_dimensions,omitempty"`
+	Strategy          json.RawMessage `json:"strategy"`
+	DimensionFields   []string        `json:"dimension_fields"`
+	ItemID            string          `json:"item_id"`
 }
 
 type LegacyEventContext struct {
@@ -24,10 +25,11 @@ type LegacyEventContext struct {
 // accessor exposes writable backing storage; the strategy is copied only when
 // the converter adds a distinct configuration to a batch request.
 type FrozenLegacyOutput struct {
-	strategy        string
-	key             string
-	dimensionFields []string
-	itemID          string
+	dynamicDimensions bool
+	strategy          string
+	key               string
+	dimensionFields   []string
+	itemID            string
 }
 
 func FreezeLegacyOutput(c *LegacyOutputContext) *FrozenLegacyOutput {
@@ -35,14 +37,15 @@ func FreezeLegacyOutput(c *LegacyOutputContext) *FrozenLegacyOutput {
 		return nil
 	}
 	digest := sha256.Sum256(c.Strategy)
-	return &FrozenLegacyOutput{strategy: string(c.Strategy), key: hex.EncodeToString(digest[:]), dimensionFields: append([]string{}, c.DimensionFields...), itemID: c.ItemID}
+	return &FrozenLegacyOutput{dynamicDimensions: c.DynamicDimensions, strategy: string(c.Strategy), key: hex.EncodeToString(digest[:]), dimensionFields: append([]string{}, c.DimensionFields...), itemID: c.ItemID}
 }
 func (c *FrozenLegacyOutput) StrategyJSON() json.RawMessage { return json.RawMessage(c.strategy) }
 func (c *FrozenLegacyOutput) StrategyKey() string           { return c.key }
 func (c *FrozenLegacyOutput) DimensionFields() []string {
 	return append([]string{}, c.dimensionFields...)
 }
-func (c *FrozenLegacyOutput) ItemID() string { return c.itemID }
+func (c *FrozenLegacyOutput) DynamicDimensions() bool { return c.dynamicDimensions }
+func (c *FrozenLegacyOutput) ItemID() string          { return c.itemID }
 func (c *FrozenLegacyOutput) SizeBytes() int {
 	size := len(c.strategy) + len(c.key) + len(c.itemID) + len(c.dimensionFields)*16
 	for _, field := range c.dimensionFields {

@@ -142,11 +142,17 @@ func (client *Client) Execute(ctx context.Context, attempt execution.QueryAttemp
 	if err != nil {
 		return execution.ProviderCompletion{}, err
 	}
-	encoded, err := json.Marshal(body)
+	var payload any = body
+	path := "/query/ts"
+	if query := attempt.Spec.PlanFacts.PromQL; query != nil {
+		path += "/promql"
+		payload = map[string]any{"promql": query.Expression, "match": query.Match, "bk_biz_ids": []string{attempt.Spec.PlanFacts.BusinessID}, "start": body.StartTime, "end": body.EndTime, "step": body.Step, "timezone": body.Timezone}
+	}
+	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return execution.ProviderCompletion{}, fmt.Errorf("alarmd access uq: encode request: %w", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.endpoint+"/query/ts", bytes.NewReader(encoded))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.endpoint+path, bytes.NewReader(encoded))
 	if err != nil {
 		return execution.ProviderCompletion{}, fmt.Errorf("alarmd access uq: build request: %w", err)
 	}
@@ -335,7 +341,7 @@ func buildRequest(spec execution.PhysicalQuerySpec) (request, error) {
 			return request{}, err
 		}
 		queries = append(queries, queryClause{
-			DataSource: source.DataSource, TableID: source.TableID, FieldName: source.FieldName,
+			FieldSemantics: source.FieldSemantics, DataSource: source.DataSource, TableID: source.TableID, FieldName: source.FieldName,
 			Driver: source.Driver, TimeField: source.TimeField, IsRegexp: source.IsRegexp,
 			ReferenceName: source.ReferenceName, Functions: functions, TimeAggregation: timeAggregation,
 			Dimensions: append([]string(nil), source.Dimensions...),
@@ -344,7 +350,7 @@ func buildRequest(spec execution.PhysicalQuerySpec) (request, error) {
 			KeepColumns: append([]string(nil), source.KeepColumns...), QueryString: source.QueryString,
 		})
 	}
-	return request{QueryList: queries, MetricMerge: spec.PlanFacts.MetricMerge,
+	return request{TSDBMap: spec.PlanFacts.TSDBMap, QueryList: queries, MetricMerge: spec.PlanFacts.MetricMerge,
 		StartTime: strconv.FormatInt(spec.ProviderRange.Start, 10), EndTime: strconv.FormatInt(spec.ProviderRange.End, 10),
 		Step: durationString(spec.PlanFacts.StepMillis), SpaceUID: spec.PlanFacts.SpaceScope,
 		DownSampleRange: string(spec.PlanFacts.DownSampleRange), Timezone: spec.PlanFacts.Timezone,
@@ -669,12 +675,25 @@ func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderRes
 	dimensions := make(map[string]json.RawMessage, len(source.GroupKeys))
 	for index, key := range source.GroupKeys {
 		key = stripTableSuffix(key)
+		if alias, ok := spec.PlanFacts.Normalization.DimensionAliases[key]; ok {
+			key = alias
+		}
+		if _, exists := dimensions[key]; exists {
+			return execution.ProviderSeriesBatch{}, 0, errors.New("alarmd access uq: duplicate normalized group key")
+		}
 		encoded, _ := json.Marshal(source.GroupValues[index])
 		dimensions[key] = encoded
 	}
 	var nullIdentityFields uint64
 	identityFields := make([]contract.DimensionFieldV2, 0, len(spec.PlanFacts.Normalization.DatasetContract.IdentityFields))
-	for _, name := range spec.PlanFacts.Normalization.DatasetContract.IdentityFields {
+	names := spec.PlanFacts.Normalization.DatasetContract.IdentityFields
+	if spec.PlanFacts.Normalization.DatasetContract.DynamicDimensions {
+		names = make([]string, 0, len(dimensions))
+		for name := range dimensions {
+			names = append(names, name)
+		}
+	}
+	for _, name := range names {
 		value, ok := dimensions[name]
 		if !ok {
 			value = nullDimension

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
 
@@ -44,6 +45,7 @@ type PhaseTwoRuntimeFilterConfig struct {
 }
 
 type PhaseTwoLegacyQueryRuntimeConfig struct {
+	FTAEventStorage       *execution.QueryStorage     `yaml:"fta_event_storage"`
 	AccessBKData          *bool                       `yaml:"access_bk_data"`
 	BKDataCMDBLevelTables []string                    `yaml:"bkdata_cmdb_level_tables"`
 	SystemDiskFilter      PhaseTwoRuntimeFilterConfig `yaml:"system_disk_filter"`

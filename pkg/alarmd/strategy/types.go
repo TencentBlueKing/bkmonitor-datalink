@@ -520,7 +520,7 @@ func (p *CompiledPlan) OutputIdentity() *contract.MonitorOutputIdentity {
 	if p == nil || p.outputIdentity == nil {
 		return nil
 	}
-	return &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, p.outputIdentity.DimensionFields...)}
+	return &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, p.outputIdentity.DimensionFields...), DynamicDimensions: p.outputIdentity.DynamicDimensions}
 }
 
 // PublishesCompatibleProtocol reports whether this Plan's events go out as the

@@ -58,6 +58,7 @@ type LegacyRuntimeFilterFact struct {
 // present in a cached strategy document. A nil slice or pointer means that the
 // fact was not observed; an explicitly empty slice is a valid observed value.
 type LegacyQueryRuntimeFacts struct {
+	FTAEventStorage       *execution.QueryStorage
 	AccessBKData          *bool
 	BKDataCMDBLevelTables []string
 	SystemDiskFilter      LegacyRuntimeFilterFact
@@ -67,6 +68,10 @@ type LegacyQueryRuntimeFacts struct {
 func NewLegacyPrimaryQueryCompiler(providerRoute execution.ProviderRouteRef, timezone string, runtimeFacts LegacyQueryRuntimeFacts) (*LegacyPrimaryQueryCompiler, error) {
 	if providerRoute == "" || timezone == "" {
 		return nil, errors.New("alarmd controlplane: provider route and timezone are required")
+	}
+	if runtimeFacts.FTAEventStorage != nil {
+		storage := *runtimeFacts.FTAEventStorage
+		runtimeFacts.FTAEventStorage = &storage
 	}
 	runtimeFacts.BKDataCMDBLevelTables = cloneStringsPreservingNil(runtimeFacts.BKDataCMDBLevelTables)
 	runtimeFacts.SystemDiskFilter.Values = cloneStringsPreservingNil(runtimeFacts.SystemDiskFilter.Values)
@@ -86,6 +91,8 @@ func cloneStringsPreservingNil(values []string) []string {
 }
 
 type legacyQueryConfig struct {
+	PromQL          string            `json:"promql"`
+	CustomEventName string            `json:"custom_event_name"`
 	DataSourceLabel string            `json:"data_source_label"`
 	DataTypeLabel   string            `json:"data_type_label"`
 	MetricID        string            `json:"metric_id"`
@@ -140,7 +147,7 @@ func (compiler *LegacyPrimaryQueryCompiler) CompilePrimaryQuery(_ context.Contex
 		if err != nil {
 			return execution.QueryPlanFacts{}, queryConfigRejected("QUERY_CONFIG_INVALID", err)
 		}
-		if config.DataSourceLabel != "bk_monitor" || config.DataTypeLabel != "time_series" {
+		if !pollingSourceSupported(config) {
 			return execution.QueryPlanFacts{}, queryUnsupported("QUERY_SOURCE_NOT_MIGRATED", nil)
 		}
 		config.AggDimensions = canonicalDimensionStrings(config.AggDimensions)
@@ -150,15 +157,40 @@ func (compiler *LegacyPrimaryQueryCompiler) CompilePrimaryQuery(_ context.Contex
 		configs = append(configs, config)
 	}
 
+	if len(configs) == 1 && configs[0].DataSourceLabel == "prometheus" {
+		return compiler.compilePromQL(source, configs[0])
+	}
 	queryList := make([]execution.QueryClause, 0, len(configs))
+	storages := map[string][]execution.QueryStorage{}
+	aliases := map[string]string{}
+	sourceSemantics := make([]string, 0, len(configs))
 	identitySet := make(map[string]struct{})
 	stepSeconds := int64(0)
 	for _, config := range configs {
-		clauses, err := compiler.compileLegacyQueryConfig(config)
+		if config.DataSourceLabel == "prometheus" {
+			return execution.QueryPlanFacts{}, queryUnsupported("QUERY_MIXED_PROMQL_NOT_MIGRATED", nil)
+		}
+		if config.DataSourceLabel == "bk_data" && len(strings.TrimSpace(source.Expression)) <= 1 {
+			return execution.QueryPlanFacts{}, queryUnsupported("QUERY_BK_DATA_DIRECT_NOT_MIGRATED", nil)
+		}
+		clauses, err := compiler.compilePollingQueryConfig(config, source.Identity.BusinessID)
 		if err != nil {
 			return execution.QueryPlanFacts{}, err
 		}
 		queryList = append(queryList, clauses...)
+		sourceSemantics = append(sourceSemantics, config.DataSourceLabel+"/"+config.DataTypeLabel)
+		for _, clause := range clauses {
+			if clause.FieldSemantics != "" {
+				storages[clause.ReferenceName] = []execution.QueryStorage{*compiler.runtimeFacts.FTAEventStorage}
+			}
+		}
+		if config.DataSourceLabel == "custom" && config.DataTypeLabel == "event" || config.DataSourceLabel == "bk_monitor" && config.DataTypeLabel == "log" {
+			for _, field := range config.AggDimensions {
+				if monitorEventField(field) != field {
+					aliases[monitorEventField(field)] = field
+				}
+			}
+		}
 		for _, dimension := range config.AggDimensions {
 			if dimension != "" {
 				identitySet[dimension] = struct{}{}
@@ -195,7 +227,17 @@ func (compiler *LegacyPrimaryQueryCompiler) CompilePrimaryQuery(_ context.Contex
 	if err != nil {
 		return execution.QueryPlanFacts{}, queryConfigRejected("QUERY_NORMALIZATION_INVALID", err)
 	}
+	delay, err := pollingQueryDelay(source, configs, stepSeconds)
+	if err != nil {
+		return execution.QueryPlanFacts{}, err
+	}
+	normalization.DimensionAliases = aliases
+	normalization, err = freezePollingNormalization(normalization, sourceSemantics)
+	if err != nil {
+		return execution.QueryPlanFacts{}, err
+	}
 	facts, err := execution.BuildQueryPlanFacts(execution.QueryPlanFacts{
+		SourceSemantics: sourceSemantics, TSDBMap: storages, QueryDelaySeconds: delay,
 		Provider:         execution.ProviderUQ,
 		ProviderRouteRef: compiler.providerRoute,
 		TenantID:         source.Identity.TenantID,

@@ -1,20 +1,25 @@
 package uq
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+)
 
 type request struct {
-	QueryList       []queryClause `json:"query_list"`
-	MetricMerge     string        `json:"metric_merge"`
-	StartTime       string        `json:"start_time"`
-	EndTime         string        `json:"end_time"`
-	Step            string        `json:"step"`
-	SpaceUID        string        `json:"space_uid"`
-	DownSampleRange string        `json:"down_sample_range"`
-	Timezone        string        `json:"timezone"`
-	NotTimeAlign    bool          `json:"not_time_align"`
+	TSDBMap         map[string][]execution.QueryStorage `json:"tsdb_map,omitempty"`
+	QueryList       []queryClause                       `json:"query_list"`
+	MetricMerge     string                              `json:"metric_merge"`
+	StartTime       string                              `json:"start_time"`
+	EndTime         string                              `json:"end_time"`
+	Step            string                              `json:"step"`
+	SpaceUID        string                              `json:"space_uid"`
+	DownSampleRange string                              `json:"down_sample_range"`
+	Timezone        string                              `json:"timezone"`
+	NotTimeAlign    bool                                `json:"not_time_align"`
 }
 
 type queryClause struct {
+	FieldSemantics  string          `json:"field_semantics,omitempty"`
 	DataSource      string          `json:"data_source,omitempty"`
 	TableID         string          `json:"table_id,omitempty"`
 	FieldName       string          `json:"field_name,omitempty"`

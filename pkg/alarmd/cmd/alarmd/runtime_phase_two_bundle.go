@@ -750,7 +750,8 @@ func openProductionPhaseTwoBundleWithDependencies(
 		targetFlow.SetSink(diagnostics.Record)
 	}
 	fleetAPI, err := fleet.NewHandler(fleetService, windowStore, external.Now, stallAfter,
-		fleetRangeProvider(queryClient, cfg.PhaseTwo.Access.SelfMetricsSpaceUID), diagnostics)
+		fleetRangeProvider(queryClient, cfg.PhaseTwo.Access.SelfMetricsSpaceUID), diagnostics,
+		cfg.PhaseTwo.Access.MonitorWebBaseURL)
 	if err != nil {
 		return nil, err
 	}

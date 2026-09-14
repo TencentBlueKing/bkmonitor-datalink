@@ -172,6 +172,17 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 				"anomalies_total": 16, "filtered": false,
 				"summary": map[string]any{"partial": false}}},
 		},
+		// A console that is configured, one that is not, and a reference with
+		// no business id -- the console needs one to resolve the space, so a
+		// link without it lands on an error page.
+		"strategy_link_cases": []map[string]any{
+			{"name": "configured", "base": "https://monitor.example",
+				"strategy": fleet.StrategyRef{StrategyID: "1854", BusinessID: "7"}},
+			{"name": "nobiz", "base": "https://monitor.example",
+				"strategy": fleet.StrategyRef{StrategyID: "1854"}},
+			{"name": "unconfigured", "base": "",
+				"strategy": fleet.StrategyRef{StrategyID: "1854", BusinessID: "7"}},
+		},
 		// A 24-hour window and a 15-minute one. The first ends at the same
 		// wall-clock time it started, which is what made it render empty.
 		"range_cases": []map[string]any{
@@ -325,6 +336,28 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		if strings.Contains(line, want.mustNotSay) {
 			t.Errorf("column %s renders %q, which says %q -- that is the other column's claim",
 				want.column, line, want.mustNotSay)
+		}
+	}
+
+	// A link is rendered only when the environment said where its console is and
+	// the reference carries everything that console needs. A wrong link sends a
+	// reader to an error page and costs more than no link at all.
+	for _, want := range []struct{ name, says, mustNotSay string }{
+		{"configured", "https://monitor.example?bizId=7#/strategy-config/detail/1854", ""},
+		{"nobiz", "(none)", "http"},
+		{"unconfigured", "(none)", "http"},
+	} {
+		line := lineStarting(text, "LINK "+want.name+" ::")
+		if line == "" {
+			t.Errorf("strategyLink rendered nothing for the %s case", want.name)
+			continue
+		}
+		if !strings.Contains(line, want.says) {
+			t.Errorf("strategyLink %s renders %q, want %q", want.name, line, want.says)
+		}
+		if want.mustNotSay != "" && strings.Contains(line, want.mustNotSay) {
+			t.Errorf("strategyLink %s renders %q, which is a link it cannot know is right",
+				want.name, line)
 		}
 	}
 
@@ -589,6 +622,18 @@ for (const column of ['anomalies', 'demoted', 'undecidable', 'by_design']) {
 // The impact line -- the only thing on the page that answers "what is affected"
 // rather than "how many objects".
 console.log('IMPACT :: ' + textOf(store['impact']));
+
+// The strategy link, in the three states it has: configured and complete,
+// configured but the reference carries no business id, and not configured at
+// all. A wrong link is worse than none, so two of the three must render none.
+for (const c of data.strategy_link_cases || []) {
+  ctx.consoleBase = c.base;
+  let href;
+  try { href = ctx.strategyLink(c.strategy); }
+  catch (e) { console.error('strategyLink threw on ' + c.name + ': ' + e.message); failed++; continue; }
+  console.log('LINK ' + c.name + ' :: ' + (href || '(none)'));
+}
+ctx.consoleBase = '';
 
 // The window label, on a range whose two ends are the same wall-clock time on
 // two different days -- which is every 24-hour window, and rendered as a range

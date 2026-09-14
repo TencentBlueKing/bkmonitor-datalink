@@ -143,6 +143,19 @@ type HealthResponse struct {
 	// could see HEALTHY beside 58 demoted objects and still not know which
 	// alerts are not being raised or how many businesses that touches.
 	Impact Impact `json:"impact"`
+	// StrategyLinkBase turns the strategy references in the object list into
+	// links to the strategy itself.
+	//
+	// The page's drill-down stopped at its own table: clicking a strategy
+	// filtered the list by it, which is the one thing a reader who has already
+	// found it does not need. Handing the id to the next person meant copying a
+	// number into a search box, and "找策略和数据源的人" is not a handover.
+	//
+	// Sent as the origin only. The path is the product's own route and is built
+	// in the page, so an environment configures one value and nothing about how
+	// the page is put together. Empty when nobody configured one, and the
+	// references then render as the plain labels they always were.
+	StrategyLinkBase string `json:"strategy_link_base,omitempty"`
 	// DemotedDue and the three flow counts are the check on demotion, which is
 	// the one mechanism here that makes a deployment look better by removing
 	// objects from the denominator.
@@ -607,6 +620,7 @@ func NewHandler(
 	stallAfter time.Duration,
 	series RangeProvider,
 	diagnostics *DiagnosticStore,
+	strategyLinkBase string,
 ) (http.Handler, error) {
 	if service == nil {
 		return nil, errors.New("alarmd fleet: handler requires a service")
@@ -638,10 +652,11 @@ func NewHandler(
 			Determined: view.Determined, Unknown: view.Unknown, Healthy: view.Healthy,
 			AnomaliesTotal: view.AnomaliesTotal, DemotedTotal: view.DemotedTotal,
 			UndecidableTotal: view.UndecidableTotal, ByDesignTotal: view.ByDesignTotal,
-			Ours:         OursCount(view.Anomalies),
-			Unattributed: UnattributedCount(view.Anomalies),
-			Impact:       ImpactOf(view),
-			DemotedDue:   view.DemotedDue, DemotedDueOldestSeconds: view.DemotedDueOldestSeconds,
+			Ours:             OursCount(view.Anomalies),
+			Unattributed:     UnattributedCount(view.Anomalies),
+			Impact:           ImpactOf(view),
+			StrategyLinkBase: strategyLinkBase,
+			DemotedDue:       view.DemotedDue, DemotedDueOldestSeconds: view.DemotedDueOldestSeconds,
 			DemotionEntries:    view.DemotionEntries,
 			DemotionExtensions: view.DemotionExtensions, DemotionExits: view.DemotionExits,
 			LastDemotionExit: view.LastDemotionExit,

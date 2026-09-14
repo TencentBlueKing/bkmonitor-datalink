@@ -206,7 +206,7 @@ func diagnosticsTestHandler(t *testing.T, store *DiagnosticStore) http.Handler {
 	snapshots[1].TotalAnomalies = 1
 	service := mustService(t, stubExpectations{expectation: Expectation{QueryGroups: 2, Known: true}},
 		stubRegistry{replicas: []string{"pod-a", "pod-b"}}, stubSnapshots{snapshots: snapshots})
-	handler, err := NewHandler(service, nil, func() time.Time { return now }, 0, nil, store)
+	handler, err := NewHandler(service, nil, func() time.Time { return now }, 0, nil, store, "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -63,6 +63,7 @@ h1{font-size:15px;margin:0 0 2px}
 .impact b{font-variant-numeric:tabular-nums}
 .impact .act{color:var(--text);font-weight:600}
 .impact .quiet{color:var(--muted);font-size:11px}
+.tag.open{text-decoration:none;color:var(--accent);border-color:var(--accent)}
 /* Mechanism, statistical basis and design rationale go behind this.
    Every panel opened with several of them at once, so a reader had to
    hold four conditions in mind to explain one number, and the sentence
@@ -609,6 +610,10 @@ function renderDeployment(deployment) {
         + '所以还说不清是不是 alarmd 自己的问题，判定停在 UNKNOWN。'
         + '每个对象再跑完一轮就重新有成因，会自己清');
     }
+    // Held before the object list renders, because the rows read it. It arrives
+    // on the verdict response, which is fetched first and refreshed on the same
+    // timer, so a console configured after a restart appears without a reload.
+    consoleBase = deployment.strategy_link_base || '';
     renderImpact(deployment.impact);
     // The equation is printed with its own arithmetic rather than asserted in
     // prose. A reader who can only be told the columns partition the objects has
@@ -862,6 +867,26 @@ function renderImpact(impact) {
   }
 }
 
+// Where this environment's monitor console lives, if anybody said.
+//
+// Held from the verdict response rather than built into the page: the host is
+// environment-specific and alarmd cannot derive it, so it is configured once
+// and the route below -- which belongs to the product, not to any one
+// environment -- stays in code.
+var consoleBase = '';
+
+// A link to the strategy itself, or nothing.
+//
+// Nothing is the right answer in two cases and they are both ordinary: no
+// console was configured, and a reference that carries no business id -- the
+// console needs one to resolve the space, and a link without it lands on an
+// error page. A tag that is not a link is what this row showed before.
+function strategyLink(s) {
+  if (!consoleBase || !s || !s.strategy_id || !s.business_id) { return ''; }
+  return consoleBase + '?bizId=' + encodeURIComponent(s.business_id)
+    + '#/strategy-config/detail/' + encodeURIComponent(s.strategy_id);
+}
+
 // One row of the object table.
 //
 // Named rather than inline in the loop so that something can call it. It is
@@ -991,13 +1016,30 @@ function anomalyRow(anomaly) {
       var span = document.createElement('span');
       span.className = 'tag';
       span.style.cursor = 'pointer';
-      span.title = '按这个策略过滤';
+      span.title = '按这个策略过滤这张表';
       span.textContent = s.business_id ? (s.strategy_id + ' / 业务 ' + s.business_id) : s.strategy_id;
       span.addEventListener('click', function () {
         document.getElementById('fStrategy').value = s.strategy_id;
         applyFilters();
       });
       td.appendChild(span);
+      // Where the drill-down used to stop. Clicking the strategy filtered this
+      // table by it, which is the one thing a reader who has already found it
+      // does not need; handing the id to whoever configured it meant copying a
+      // number into a search box. The link is only rendered when this
+      // environment configured where its console lives -- the page has no
+      // business guessing that, and a wrong link is worse than none.
+      var open = strategyLink(s);
+      if (open) {
+        var a = document.createElement('a');
+        a.className = 'tag open';
+        a.href = open;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        a.textContent = '打开策略 ↗';
+        a.title = '在监控页面里打开策略 ' + s.strategy_id;
+        td.appendChild(a);
+      }
     });
     // "未观察到" alone reads as "this object has no strategies", which would
     // make the row unactionable and also untrue. A blocked round never got a

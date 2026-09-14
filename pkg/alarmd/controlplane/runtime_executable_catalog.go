@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"sort"
 
@@ -59,7 +60,10 @@ func retainRuntimeExecutableCatalog(
 			group = &QueryGroup{Identity: identity, QueryPlan: facts}
 			groups[identity] = group
 		} else if group.QueryPlan.QueryRevision != facts.QueryRevision {
-			return errors.New("alarmd controlplane: runtime executable Query Group has conflicting query revisions")
+			// The same assertion as in BuildCatalog, on the executable part
+			// of the Catalog, and named the same way for the same reason.
+			return fmt.Errorf("alarmd controlplane: runtime executable Query Group has conflicting query "+
+				"revisions: group %s holds %s and %s", identity, group.QueryPlan.QueryRevision, facts.QueryRevision)
 		}
 		group.Plans = append(group.Plans, plan)
 		return nil

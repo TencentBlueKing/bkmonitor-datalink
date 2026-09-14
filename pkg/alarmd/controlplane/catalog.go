@@ -148,7 +148,14 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 			group = &QueryGroup{Identity: identity, QueryPlan: facts}
 			groups[identity] = group
 		} else if group.QueryPlan.QueryRevision != facts.QueryRevision {
-			return errors.New("alarmd controlplane: one query group has conflicting query revisions")
+			// Unreachable while the identity reads every query fact: equal
+			// identities mean equal facts mean equal revisions. It is kept
+			// as the assertion of that, and it names the group and both
+			// revisions, because the last time it fired the message said
+			// only that it had, and finding out which group cost three
+			// releases of a Catalog that was never rebuilt.
+			return fmt.Errorf("alarmd controlplane: one query group has conflicting query revisions: "+
+				"group %s holds %s and %s", identity, group.QueryPlan.QueryRevision, facts.QueryRevision)
 		}
 		group.Plans = append(group.Plans, plan)
 		return nil
@@ -647,27 +654,6 @@ func validateQueryIdentity(identity SourceIdentity, facts execution.QueryPlanFac
 		return errors.New("alarmd controlplane: query plan identity differs from control facts")
 	}
 	return nil
-}
-
-func deriveQueryGroupIdentity(facts execution.QueryPlanFacts) (execution.QueryGroupIdentity, error) {
-	digest, err := contract.DeriveCanonicalDigestV2("alarmd-query-group-identity-v1", struct {
-		Provider      execution.ProviderKind             `json:"provider"`
-		Route         execution.ProviderRouteRef         `json:"route"`
-		Tenant        string                             `json:"tenant"`
-		Business      string                             `json:"business"`
-		Space         string                             `json:"space"`
-		QueryList     []execution.QueryClause            `json:"query_list"`
-		MetricMerge   string                             `json:"metric_merge"`
-		StepMillis    int64                              `json:"step_millis"`
-		Alignment     int64                              `json:"alignment_millis"`
-		DownSample    execution.DownSampleRange          `json:"down_sample_range"`
-		Timezone      string                             `json:"timezone"`
-		NotTimeAlign  bool                               `json:"not_time_align"`
-		Normalization execution.DatasetNormalizationSpec `json:"normalization"`
-	}{facts.Provider, facts.ProviderRouteRef, facts.TenantID, facts.BusinessID, facts.SpaceScope,
-		facts.QueryList, facts.MetricMerge, facts.StepMillis, facts.AlignmentMillis, facts.DownSampleRange,
-		facts.Timezone, facts.NotTimeAlign, facts.Normalization})
-	return execution.QueryGroupIdentity(digest), err
 }
 
 func lessPlanIdentity(left, right execution.PlanIdentity) bool {

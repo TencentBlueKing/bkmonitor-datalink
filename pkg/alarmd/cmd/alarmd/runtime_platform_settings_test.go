@@ -11,12 +11,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
 // A deployment that renders no distribution gets the copy it had before the
@@ -60,5 +64,105 @@ func TestPlatformSettingsWithoutADistributionAreTheDeploymentLayer(t *testing.T)
 	platformSettingsRefresher(cache, hostStatus, recorder)(context.Background())
 	if got := len(hostStatus.States()); got != 7 {
 		t.Fatalf("states in force after a refresh without a source = %d, want 7", got)
+	}
+}
+
+// fakePlatformSource is the platform's distribution as a test states it.
+type fakePlatformSource struct {
+	publication platformsettings.Publication
+}
+
+func (source *fakePlatformSource) Read(context.Context, []platformsettings.Field) (platformsettings.Publication, error) {
+	return source.publication, nil
+}
+
+func publishedPlatformSettings(revision string, values map[platformsettings.Field]string) platformsettings.Publication {
+	publication := platformsettings.Publication{Published: true, Revision: revision, Values: map[platformsettings.Field]json.RawMessage{}}
+	for field, value := range values {
+		publication.Values[field] = json.RawMessage(value)
+	}
+	return publication
+}
+
+func diskFilterOf(t *testing.T, catalog controlplane.Catalog) []string {
+	t.Helper()
+	if len(catalog.QueryGroups) != 1 {
+		t.Fatalf("catalog groups = %d, dispositions %+v", len(catalog.QueryGroups), catalog.Dispositions)
+	}
+	for _, field := range catalog.QueryGroups[0].QueryPlan.QueryList[0].Conditions.Fields {
+		if field.Field != "device_type" {
+			continue
+		}
+		values := make([]string, 0, len(field.Values))
+		for _, value := range field.Values {
+			values = append(values, value.StringValue)
+		}
+		return values
+	}
+	t.Fatalf("query carries no device_type condition: %+v", catalog.QueryGroups[0].QueryPlan.QueryList[0].Conditions)
+	return nil
+}
+
+// A setting the platform publishes reaches the compiled plans through the
+// copy: the round after the copy refreshed compiles by the new value, and
+// the round before it compiled by the old one. Nothing is rebuilt or
+// restarted in between; the compiler reads the copy when each round opens.
+func TestPlatformSettingsChangeReachesThePlansOnTheNextRound(t *testing.T) {
+	ctx := context.Background()
+	cfg := validGoAccessRuntimeConfig()
+	source := &fakePlatformSource{publication: publishedPlatformSettings("r1", map[platformsettings.Field]string{
+		platformsettings.FieldFileSystemTypeIgnore: `["iso9660","tmpfs","udf"]`,
+	})}
+	now := time.Unix(1_700_000_000, 0)
+	cache, err := platformsettings.New(platformsettings.Options{
+		Source: source, Deployment: cfg.PhaseTwo.PlatformSettings.Layer(), Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache.Refresh(ctx)
+	planner, err := newPlatformBoundPlanner(cfg, cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	strategies := []controlplane.SourceStrategy{{
+		SourceID: "301", Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: strconv.Itoa(controlledG4SyntheticBusinessID), SpaceScope: controlledG4SyntheticSpaceUID},
+		Document: controlledG4StrategyDocument(t, 301, strategy.DetectorKindThreshold, "in_use", "system.disk", []string{"mount_point"},
+			[]any{map[string]any{"method": "gte", "threshold": 90}}),
+	}}
+	candidates := controlplane.NewCandidateCache()
+	before, err := controlplane.BuildCatalog(ctx, controlplane.BuildRequest{Strategies: strategies, Planner: planner, Cache: candidates})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := diskFilterOf(t, before); !reflect.DeepEqual(got, []string{"iso9660", "tmpfs", "udf"}) {
+		t.Fatalf("disk filter before the change = %v", got)
+	}
+	// The platform publishes another list; the copy has not read it yet, so
+	// the next round still compiles by the old one.
+	source.publication = publishedPlatformSettings("r2", map[platformsettings.Field]string{
+		platformsettings.FieldFileSystemTypeIgnore: `["tmpfs"]`,
+	})
+	unchanged, err := controlplane.BuildCatalog(ctx, controlplane.BuildRequest{Strategies: strategies, Planner: planner, Cache: candidates})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compiled, reused := candidates.Stats(); compiled != 0 || reused != 1 || unchanged.SnapshotRevision != before.SnapshotRevision {
+		t.Fatalf("before the copy refreshed: compiled=%d reused=%d revision moved=%t, want the old plan reused",
+			compiled, reused, unchanged.SnapshotRevision != before.SnapshotRevision)
+	}
+	cache.Refresh(ctx)
+	after, err := controlplane.BuildCatalog(ctx, controlplane.BuildRequest{Strategies: strategies, Planner: planner, Cache: candidates})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compiled, reused := candidates.Stats(); compiled != 1 || reused != 0 {
+		t.Fatalf("after the copy refreshed: compiled=%d reused=%d, want the strategy compiled again", compiled, reused)
+	}
+	if got := diskFilterOf(t, after); !reflect.DeepEqual(got, []string{"tmpfs"}) {
+		t.Fatalf("disk filter after the change = %v, want the published list", got)
+	}
+	if after.SnapshotRevision == before.SnapshotRevision {
+		t.Fatal("a plan compiled by another setting must move the Catalog revision")
 	}
 }

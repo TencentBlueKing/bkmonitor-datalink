@@ -47,6 +47,7 @@ type LegacyPrimaryQueryCompiler struct {
 	providerRoute execution.ProviderRouteRef
 	timezone      string
 	runtimeFacts  LegacyQueryRuntimeFacts
+	identity      string
 }
 
 type LegacyRuntimeFilterFact struct {
@@ -80,7 +81,86 @@ func NewLegacyPrimaryQueryCompiler(providerRoute execution.ProviderRouteRef, tim
 		accessBKData := *runtimeFacts.AccessBKData
 		runtimeFacts.AccessBKData = &accessBKData
 	}
-	return &LegacyPrimaryQueryCompiler{providerRoute: providerRoute, timezone: timezone, runtimeFacts: runtimeFacts}, nil
+	identity, err := contract.DeriveCanonicalDigestV2(legacyCompilerClosureDomain, legacyCompilerClosure{
+		ProviderRoute: providerRoute, Timezone: timezone, RuntimeFacts: runtimeFacts,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &LegacyPrimaryQueryCompiler{providerRoute: providerRoute, timezone: timezone, runtimeFacts: runtimeFacts, identity: identity}, nil
+}
+
+// legacyCompilerClosureDomain names the digest of everything a legacy
+// compiler closes over besides the strategy document and the wire protocol.
+// The digest lives in one process's CandidateCache and nowhere else: it is
+// never persisted and nothing compares it across processes or builds, so
+// changing what it covers costs one full compile round, not a migration.
+const legacyCompilerClosureDomain = "alarmd-legacy-compiler-closure-v1"
+
+type legacyCompilerClosure struct {
+	ProviderRoute execution.ProviderRouteRef
+	Timezone      string
+	RuntimeFacts  LegacyQueryRuntimeFacts
+}
+
+// Identity is the digest of what this compiler closes over. Two compilers
+// with the same identity produce the same plan from the same document
+// under the same protocol, which is what lets a round reuse what an
+// earlier round compiled.
+func (compiler *LegacyPrimaryQueryCompiler) Identity() string {
+	if compiler == nil {
+		return ""
+	}
+	return compiler.identity
+}
+
+// SettingsBoundLegacyCompiler is the legacy compiler over runtime facts that
+// can change while the process runs: the platform's settings, which the
+// deployment used to state and the platform now publishes. A round takes one
+// compiler frozen over the facts as they are when the round opens, so every
+// strategy in a Catalog is compiled by the same facts; a change of facts
+// between rounds is a change of the compiler's identity, which empties the
+// candidate cache and recompiles every strategy under the new facts.
+//
+// Outside a round it compiles nothing: a caller that wants a plan takes the
+// round's compiler from CompilerForRound, so a plan can never be compiled by
+// facts that no round froze.
+type SettingsBoundLegacyCompiler struct {
+	providerRoute execution.ProviderRouteRef
+	timezone      string
+	facts         func() LegacyQueryRuntimeFacts
+}
+
+func NewSettingsBoundLegacyCompiler(providerRoute execution.ProviderRouteRef, timezone string, facts func() LegacyQueryRuntimeFacts) (*SettingsBoundLegacyCompiler, error) {
+	if facts == nil {
+		return nil, errors.New("alarmd controlplane: a settings-bound compiler needs its facts source")
+	}
+	// The first round's compiler is built here as well, so a provider route
+	// or timezone the constructor refuses is refused at assembly rather than
+	// on the first refresh.
+	if _, err := NewLegacyPrimaryQueryCompiler(providerRoute, timezone, facts()); err != nil {
+		return nil, err
+	}
+	return &SettingsBoundLegacyCompiler{providerRoute: providerRoute, timezone: timezone, facts: facts}, nil
+}
+
+// CompilerForRound freezes the facts as they are now into one compiler and
+// reports its identity.
+func (bound *SettingsBoundLegacyCompiler) CompilerForRound() (PrimaryQueryCompiler, string, error) {
+	if bound == nil || bound.facts == nil {
+		return nil, "", errors.New("alarmd controlplane: settings-bound compiler is not assembled")
+	}
+	compiler, err := NewLegacyPrimaryQueryCompiler(bound.providerRoute, bound.timezone, bound.facts())
+	if err != nil {
+		return nil, "", err
+	}
+	return compiler, compiler.Identity(), nil
+}
+
+var errCompileOutsideRound = errors.New("alarmd controlplane: a settings-bound compiler compiles only inside a round; take the round's compiler from CompilerForRound")
+
+func (*SettingsBoundLegacyCompiler) CompilePrimaryQuery(context.Context, PrimaryQuerySource) (execution.QueryPlanFacts, error) {
+	return execution.QueryPlanFacts{}, errCompileOutsideRound
 }
 
 func cloneStringsPreservingNil(values []string) []string {

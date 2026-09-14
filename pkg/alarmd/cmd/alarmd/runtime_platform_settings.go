@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/admission"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
@@ -72,6 +74,20 @@ func legacyQueryRuntimeFacts(cfg config.Config, settings platformsettings.Settin
 		facts.FTAEventStorage = &copied
 	}
 	return facts
+}
+
+// newPlatformBoundPlanner is the legacy query compiler over the platform
+// settings copy: each control round freezes the facts as the copy answers
+// them when the round opens, and compiles every strategy by them.
+func newPlatformBoundPlanner(cfg config.Config, settings *platformsettings.Cache) (*controlplane.SettingsBoundLegacyCompiler, error) {
+	if settings == nil {
+		return nil, errors.New("alarmd: the platform settings copy is required to compile by")
+	}
+	return controlplane.NewSettingsBoundLegacyCompiler(
+		execution.ProviderRouteRef(cfg.PhaseTwo.Control.ProviderRoute),
+		cfg.PhaseTwo.Control.Timezone,
+		func() controlplane.LegacyQueryRuntimeFacts { return legacyQueryRuntimeFacts(cfg, settings.Current()) },
+	)
 }
 
 // dynamicHostStatusFilter is the host status filter with the states the

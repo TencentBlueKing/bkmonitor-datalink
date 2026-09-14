@@ -305,11 +305,11 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
-	planner, err := controlplane.NewLegacyPrimaryQueryCompiler(
-		execution.ProviderRouteRef(cfg.PhaseTwo.Control.ProviderRoute),
-		cfg.PhaseTwo.Control.Timezone,
-		legacyQueryRuntimeFacts(cfg, platformSettings.Current()),
-	)
+	// The compiler reads the copy when each control round opens, so a
+	// setting the platform changes reaches the plans on the next round:
+	// every strategy recompiles under it and the cutover carries the new
+	// Catalog out. Within a round the facts are frozen.
+	planner, err := newPlatformBoundPlanner(cfg, platformSettings)
 	if err != nil {
 		return nil, err
 	}

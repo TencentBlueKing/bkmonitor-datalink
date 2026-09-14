@@ -51,6 +51,18 @@ type PrimaryQueryCompiler interface {
 	CompilePrimaryQuery(context.Context, PrimaryQuerySource) (execution.QueryPlanFacts, error)
 }
 
+// RoundScopedCompiler is a compiler that closes over facts which can change
+// between rounds. CompilerForRound freezes them into the compiler the round
+// uses for every strategy, and names what it froze: the identity is part of
+// what the CandidateCache keys reuse on, next to the wire protocol, so a
+// candidate compiled under other facts is not handed to this round. A
+// compiler whose closure is fixed for the process life need not implement
+// it; its identity is the binary.
+type RoundScopedCompiler interface {
+	PrimaryQueryCompiler
+	CompilerForRound() (PrimaryQueryCompiler, string, error)
+}
+
 type AlgorithmDependencyQueryCompiler interface {
 	CompileAlgorithmDependencyQuery(context.Context, PrimaryQuerySource, string) (execution.QueryPlanFacts, error)
 }
@@ -129,7 +141,11 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 	if request.Planner == nil || request.Strategies == nil {
 		return Catalog{}, errors.New("alarmd controlplane: incomplete catalog build request")
 	}
-	request.Cache.beginRound(request.OutputProtocol)
+	planner, compilerIdentity, err := compilerForRound(request.Planner)
+	if err != nil {
+		return Catalog{}, err
+	}
+	request.Cache.beginRound(request.OutputProtocol, compilerIdentity)
 	observationID, err := deriveObservationID(request.Strategies)
 	if err != nil {
 		return Catalog{}, err
@@ -224,7 +240,7 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 			catalog.Dispositions = append(catalog.Dispositions, disposition)
 			continue
 		}
-		candidate, err := request.Cache.build(ctx, request.Planner, source, request.OutputProtocol)
+		candidate, err := request.Cache.build(ctx, planner, source, request.OutputProtocol)
 		if err != nil {
 			if len(candidate.dispositions) > 0 {
 				catalog.Dispositions = append(catalog.Dispositions, candidate.dispositions...)
@@ -307,6 +323,24 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 	return catalog, nil
 }
 
+// compilerForRound resolves the compiler the round compiles with. A
+// round-scoped compiler hands out one frozen over its facts as they are now;
+// any other compiler is its own round compiler with an empty identity.
+func compilerForRound(planner PrimaryQueryCompiler) (PrimaryQueryCompiler, string, error) {
+	scoped, ok := planner.(RoundScopedCompiler)
+	if !ok {
+		return planner, "", nil
+	}
+	compiler, identity, err := scoped.CompilerForRound()
+	if err != nil {
+		return nil, "", err
+	}
+	if compiler == nil {
+		return nil, "", errors.New("alarmd controlplane: round-scoped compiler handed out no compiler")
+	}
+	return compiler, identity, nil
+}
+
 // CandidateCache keeps what buildCandidate produced for each source document
 // across rounds, keyed by the source facts digest.
 //
@@ -317,7 +351,7 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 // one leader has. The digest already decides the observation id, so a
 // strategy whose digest is unchanged is by definition the same input to the
 // compiler, and the compiler is a pure function of that input, the wire
-// protocol and the binary.
+// protocol, what the compiler closes over (its identity) and the binary.
 //
 // What is cached is the compiler's output before the retention pass. That
 // pass takes a copy of the Plan, replaces its slices with fresh ones before
@@ -336,6 +370,7 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 type CandidateCache struct {
 	mu       sync.Mutex
 	protocol string
+	compiler string
 	entries  map[string]cachedCandidate
 	seen     map[string]struct{}
 	compiled int
@@ -351,19 +386,24 @@ func NewCandidateCache() *CandidateCache {
 	return &CandidateCache{entries: make(map[string]cachedCandidate)}
 }
 
-// beginRound opens the round's bookkeeping. The wire protocol is part of
-// what the compiler closes over, so a change of protocol empties the cache
-// rather than keying entries by it: the protocol is set once at assembly and
-// a second value here means a misconfiguration worth paying one full round.
-func (cache *CandidateCache) beginRound(protocol string) {
+// beginRound opens the round's bookkeeping. The wire protocol and the
+// compiler's identity are part of what the compiler closes over, so a change
+// of either empties the cache rather than keying entries by them. The
+// protocol is set once at assembly and a second value here means a
+// misconfiguration worth paying one full round; the compiler identity
+// changes when the platform changes a setting the plans are compiled by,
+// and the full round is exactly what that change asks for: every strategy
+// recompiled under the new setting, so every plan's revision moves and the
+// cutover carries the new Catalog out.
+func (cache *CandidateCache) beginRound(protocol, compiler string) {
 	if cache == nil {
 		return
 	}
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	if cache.protocol != protocol {
+	if cache.protocol != protocol || cache.compiler != compiler {
 		cache.entries = make(map[string]cachedCandidate)
-		cache.protocol = protocol
+		cache.protocol, cache.compiler = protocol, compiler
 	}
 	cache.seen = make(map[string]struct{}, len(cache.entries))
 	cache.compiled, cache.reused = 0, 0

@@ -83,7 +83,7 @@ func newFleetCollector(source FleetVerdictSource) *fleetCollector {
 	}
 	return &fleetCollector{
 		source:        source,
-		queryCooldown: descriptor("fleet_query_cooldown_objects", "Visible objects isolated by external source_backend query cooldown, including expired permits awaiting a real query. Lower bound when the anomaly list is truncated or fleet coverage is incomplete.", nil),
+		queryCooldown: descriptor("fleet_query_cooldown_objects", "Visible objects isolated by external source_backend query cooldown, including expired permits awaiting a real query; demoted objects are counted, since holding a cooldown is what demotes an object. Lower bound when the anomaly or demoted list is truncated or fleet coverage is incomplete.", nil),
 		health: descriptor("fleet_health",
 			"Deployment-wide judgment as alarmd itself decides it; alert on this rather than recomputing it.",
 			[]string{"health_state"}),

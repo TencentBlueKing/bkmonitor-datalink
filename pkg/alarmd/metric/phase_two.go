@@ -77,6 +77,7 @@ type phaseTwoMetrics struct {
 	openAlertSet                    *openAlertSetCollector
 	redisCalls                      redisCallMetrics
 	controlCache                    *controlCacheCollector
+	dispatchRotation                *dispatchRotationCollector
 	legacyPodCache                  *prometheus.CounterVec
 	redisPool                       *redisPoolCollector
 	canonicalEncoding               *canonicalEncodingCollector
@@ -230,6 +231,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	metrics.dueIndex = newDueIndexMetrics()
 	metrics.redisCalls = newRedisCallMetrics()
 	metrics.controlCache = newControlCacheCollector()
+	metrics.dispatchRotation = newDispatchRotationCollector()
 	metrics.legacyPodCache = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_pod_cache_total", Help: "Existing Python Pod cache reads by bounded result."}, []string{"result"})
 	metrics.redisPool = newRedisPoolCollector()
 	metrics.canonicalEncoding = newCanonicalEncodingCollector()
@@ -439,7 +441,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.undrainedDrainingQueryGroups, m.drainingCursorPrunedQueryGroups, m.rebalancePlannedMoves, m.assignmentIndexStaleRounds, m.assignmentIndexWrites, m.assignmentIndexReads, m.assignmentIndexConfirm, m.assignmentRecordReads, m.scheduleCursorAdvances, m.activationHeldQueryGroups, m.activationHeldAgeSecondsMax,
 		m.algorithmEvaluations, m.algorithmInputs, m.recoveryHeld, m.recoveryPastLevelWithoutRecov, m.openAlertGate,
 	}...), append(append(m.redisCalls.collectors(), m.dueIndex.collectors()...),
-		m.controlCache, m.openAlertSet, m.redisPool, m.canonicalEncoding, m.legacyPodCache,
+		m.controlCache, m.dispatchRotation, m.openAlertSet, m.redisPool, m.canonicalEncoding, m.legacyPodCache,
 		m.seriesAdmission, m.cmdbIndexHosts, m.hostDisableMonitorStates, m.cmdbIndexAge, m.cmdbIndexDegraded)...)
 }
 

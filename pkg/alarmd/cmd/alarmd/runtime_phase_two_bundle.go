@@ -806,6 +806,26 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
+	// The walk's counts, from the same published facts the verdict page reads.
+	//
+	// None of them were on /metrics, so the one signal that says this replica
+	// stopped covering its objects -- truncated climbing while completed does
+	// not -- could not be alerted on, and the only count that answers "was
+	// anything turned away for lack of a place" could be read only by a person
+	// opening a page. Bound to rotationFacts rather than counted a second time
+	// here, so the metric and the page cannot disagree about one walk.
+	recorder.SetDispatchRotationSource(func() *metric.DispatchRotationCounts {
+		facts := bundle.rotationFacts()
+		if facts == nil {
+			return nil
+		}
+		return &metric.DispatchRotationCounts{
+			Completed: facts.Completed, Truncated: facts.Truncated,
+			Offered: facts.Offered, Queued: facts.Queued,
+			DeferredQueueFull: facts.DeferredQueueFull,
+			DeferredNotBetter: facts.DeferredNotBetter,
+		}
+	})
 	// Bound after the bundle exists: the snapshot reports what this replica
 	// currently owns, which only the bundle knows.
 	publisher = fleetPublisher{

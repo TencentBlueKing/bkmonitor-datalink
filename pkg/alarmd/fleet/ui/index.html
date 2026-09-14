@@ -2134,9 +2134,29 @@ function renderCapacity(cap, gaps) {
   // sets two numbers and the program derives every ceiling below them, and
   // saying it again on each card is what pushed the measurement to the end.
   var ceilingText = '上限 ' + permitCeiling + ' 个（' + cap.replicas + ' 副本各 ' + cap.permit_budget + '）';
+  // "没有查询在排队。" was a statement about the deployment made from one
+  // instant, and both halves of why that is wrong are already written down --
+  // one in the Go type beside this field, one in the shape of the workload.
+  //
+  // The field's own comment: a caller admitted immediately never appears here,
+  // so zero says the budget was not the constraint at this instant and says
+  // nothing about whether it has room.
+  //
+  // And the instant is not drawn from a flat distribution. Objects come due on
+  // their evaluation period, so the queues fill and drain on that cycle; a
+  // reading taken at one point in it is a phase, not a level. Sampled every 60
+  // seconds against a 60-second cycle, every sample lands in the same phase and
+  // a quantity that reaches its ceiling once a minute reads as a constant low
+  // number -- which is the most confident-looking way to be wrong.
+  //
+  // So the zero case says what it is and points at the number that does answer
+  // the question, instead of answering it wrongly.
   var queueText = cap.waiting > 0
     ? '另有 ' + cap.waiting + ' 个在排队等位子。'
-    : '没有查询在排队。';
+    : '此刻没有查询在排队——这是一次取样，不是"队列一直是空的"：'
+      + '立即拿到位子的调用不会出现在这个数里，而且对象是按各自周期成批到期的，'
+      + '队列跟着这个周期涨落。'
+      + (held ? '要判断位子够不够，看前面那个平均值。' : '要判断位子够不够，等平均值出来再看。');
   cell('同时在跑的查询',
     cap.permits_held + ' / ' + permitCeiling,
     (held

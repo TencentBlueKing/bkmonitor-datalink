@@ -292,7 +292,11 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			"established this round, level_recovering a Level reading NORMAL with a triggering window " +
 			"still inside its recovery span. The Level results still reach the state; only the envelope " +
 			"waits for a later round. Read against algorithm_evaluation_total{result=\"recovery\"}: the " +
-			"ratio is the price of asking every Level.",
+			"ratio is the price of asking every Level. This counts hold events, not alerts: a record held " +
+			"once and then released and a record held every minute for a week read alike here, and the " +
+			"ratio does not separate them either. It says whether the gate is reached and how often, " +
+			"never whether some alert is stuck open; a Level whose history stays gapped is the shape that " +
+			"holds forever, and only the object page or the state itself can show one.",
 	}, []string{"cause"})
 	for _, cause := range []observability.RecoveryGateCause{observability.RecoveryGateLevelUnavailable, observability.RecoveryGateLevelRecovering} {
 		metrics.recoveryHeld.WithLabelValues(string(cause))

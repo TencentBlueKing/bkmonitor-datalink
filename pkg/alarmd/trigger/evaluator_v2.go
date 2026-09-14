@@ -81,7 +81,7 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 		result.Completion = CompletionSuppressed
 	}
 	if result.RecordResult == contract.LevelResultRecovery {
-		result.RecoveryGate = recoveryGateV2(levels, result.LevelOutcomes)
+		result.RecoveryGate = recoveryGateV2(result.LevelOutcomes)
 	}
 	if result.RecordResult == contract.LevelResultAbnormal ||
 		(result.RecordResult == contract.LevelResultRecovery && !result.RecoveryGate.Held) {
@@ -266,8 +266,12 @@ func evaluateLevelV2(
 	eligibility StateEligibilityV2,
 ) (LevelOutcomeV2, contract.LevelResultV1, error) {
 	definition := level.Definition()
+	// RecoveryEnabled is set here, before any return, so that every outcome
+	// carries it: the suppressed and unavailable paths leave before the
+	// recovery plan is otherwise consulted.
 	outcome := LevelOutcomeV2{
 		LevelID: definition.LevelID, LevelCode: definition.LevelCode, Priority: definition.Priority,
+		RecoveryEnabled:    level.Recovery().Enabled,
 		TriggerFingerprint: level.Fingerprints().Trigger, StateDisposition: eligibility.StateDisposition(),
 	}
 	validFact := fact.Result == DetectionAnomalous || fact.Result == DetectionNormal
@@ -511,10 +515,16 @@ func multiplyUint32ToInt64(left, right uint32) (int64, bool) {
 // disabled can never say RECOVERY at all, so a hold on it would be
 // permanent; it is passed and counted, not consulted. Neither exception is
 // an approximation to tighten later: each closes a permanent hold.
-func recoveryGateV2(levels []strategy.CompiledLevel, outcomes []LevelOutcomeV2) RecoveryGateV2 {
+//
+// Whether a Level's recovery is enabled is read off the outcome itself,
+// which evaluateLevelV2 sets before any of its returns. Reading it off the
+// compiled Levels by position would hold only as long as the outcome loop
+// appends exactly once per Level; a skipped Level would silently line the
+// next one up against the wrong recovery plan, and nothing would fail.
+func recoveryGateV2(outcomes []LevelOutcomeV2) RecoveryGateV2 {
 	gate := RecoveryGateV2{}
 	passedWithoutRecovery := false
-	for index, outcome := range outcomes {
+	for _, outcome := range outcomes {
 		switch {
 		case outcome.UnavailableReason != "":
 			if !gate.Held {
@@ -523,7 +533,7 @@ func recoveryGateV2(levels []strategy.CompiledLevel, outcomes []LevelOutcomeV2) 
 		case outcome.SuppressedReason != "":
 			// Suppressed by effective time: not consulted, see above.
 		case outcome.Result == contract.LevelResultNormal:
-			if levels[index].Recovery().Enabled {
+			if outcome.RecoveryEnabled {
 				if !gate.Held {
 					gate = RecoveryGateV2{Held: true, Cause: RecoveryHeldLevelRecovering, LevelID: outcome.LevelID}
 				}

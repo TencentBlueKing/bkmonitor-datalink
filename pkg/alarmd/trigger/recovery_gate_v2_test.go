@@ -165,6 +165,38 @@ func TestRecoveryEnvelopeIsNotHeldOnASuppressedLevel(t *testing.T) {
 	}
 }
 
+// The gate reads whether a Level's recovery is enabled off the outcome, so
+// every outcome has to carry it, including the ones decided before the
+// recovery plan is otherwise looked at: a Level suppressed by its effective
+// time and a Level whose detect fact is unavailable both return early. If
+// either path left the flag unset, the gate would read a Level with recovery
+// as one without, and nothing else would notice.
+func TestEveryLevelOutcomeCarriesItsRecoveryFlag(t *testing.T) {
+	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(1, 20, 1, 1, 1, staticUptimeV2()), levelWithoutRecoveryV2(5, 1, 1, 1)})
+	levels := plan.Levels()
+	source := int64(64800)
+	facts := effectiveFactsV2(t, plan, source, func(string) (*time.Location, error) { return time.UTC, nil })
+	result, err := EvaluateV2(requestV2(t, plan, source,
+		[]DetectionFact{factV2(levels[0], DetectionNormal), unavailableFactV2(levels[1], contract.ReasonRequiredValueMissing)},
+		[]LevelHistory{
+			{LevelID: 1, View: pointHistory{step: 60, points: map[int64]bool{source: false}}},
+			{LevelID: 5, View: pointHistory{step: 60, points: map[int64]bool{source: false}}},
+		}, facts))
+	if err != nil {
+		t.Fatalf("EvaluateV2() error = %v", err)
+	}
+	suppressed, unavailable := result.LevelOutcomes[0], result.LevelOutcomes[1]
+	if suppressed.SuppressedReason == "" || unavailable.UnavailableReason == "" {
+		t.Fatalf("fixture did not take the early paths: %+v / %+v", suppressed, unavailable)
+	}
+	if !suppressed.RecoveryEnabled {
+		t.Fatal("the suppressed Level, whose recovery is enabled, returned an outcome saying it is not")
+	}
+	if unavailable.RecoveryEnabled {
+		t.Fatal("the unavailable Level, whose recovery is disabled, returned an outcome saying it is enabled")
+	}
+}
+
 // An abnormal Level decides the record before the gate is consulted: the
 // envelope is ABNORMAL as before, and the gate says nothing.
 func TestRecoveryGateDoesNotTouchAnAbnormalRecord(t *testing.T) {

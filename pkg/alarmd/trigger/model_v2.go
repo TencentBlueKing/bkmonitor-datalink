@@ -162,9 +162,14 @@ type EvaluationRequestV2 struct {
 }
 
 type LevelOutcomeV2 struct {
-	LevelID             uint32
-	LevelCode           string
-	Priority            uint32
+	LevelID   uint32
+	LevelCode string
+	Priority  uint32
+	// RecoveryEnabled is whether the Level's recovery plan is enabled. It is
+	// set on every outcome, whichever way the Level was decided, so the
+	// recovery gate reads it off the outcome and never has to line outcomes
+	// up against the compiled Levels by position.
+	RecoveryEnabled     bool
 	Result              string
 	SuppressedReason    string
 	UnavailableReason   string

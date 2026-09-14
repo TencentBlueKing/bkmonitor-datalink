@@ -1291,6 +1291,18 @@ const (
 	PlanRetryPending    PlanDisposition = "RETRY_PENDING"
 )
 
+// RecoveryGateCounts says what became of this Plan's records whose evaluated
+// Levels agreed on RECOVERY. A held record wrote its Level results to the
+// state but produced no envelope this round, because a sibling Level had not
+// agreed: its state was unknown, or its recovery span still held a
+// triggering window. A record sent past a Level without recovery produced its
+// envelope; that Level can never say RECOVERY and is not consulted.
+type RecoveryGateCounts struct {
+	HeldLevelUnavailable         uint64
+	HeldLevelRecovering          uint64
+	SentPastLevelWithoutRecovery uint64
+}
+
 type PlanEvaluationResult struct {
 	Plan              PlanIdentity
 	Disposition       PlanDisposition
@@ -1299,6 +1311,7 @@ type PlanEvaluationResult struct {
 	GuardBeforeEvents []PlanGapMutation
 	StateResults      []StateEvaluation
 	GuardAfterState   []PlanGapMutation
+	RecoveryGate      RecoveryGateCounts
 }
 
 type EvaluationResult struct {

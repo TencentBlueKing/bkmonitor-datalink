@@ -833,6 +833,31 @@ type AlgorithmEvaluationFact struct {
 	Provenance            AlgorithmProvenance       `json:"provenance,omitempty"`
 }
 
+// RecoveryGateCause is why a record whose Levels agreed on RECOVERY did not
+// send its envelope, or the one shape it was sent past. The set is closed: it
+// is a metric label.
+type RecoveryGateCause string
+
+const (
+	// RecoveryGateLevelUnavailable held the envelope: a Level's state could
+	// not be established this round.
+	RecoveryGateLevelUnavailable RecoveryGateCause = "level_unavailable"
+	// RecoveryGateLevelRecovering held the envelope: a Level read NORMAL with
+	// recovery enabled, so a window inside its recovery span still triggers.
+	RecoveryGateLevelRecovering RecoveryGateCause = "level_recovering"
+	// RecoveryGateLevelWithoutRecovery did not hold: the envelope was sent
+	// past a NORMAL Level whose recovery is disabled and which therefore can
+	// never say RECOVERY. Counted so the shape's existence can be read.
+	RecoveryGateLevelWithoutRecovery RecoveryGateCause = "level_without_recovery"
+)
+
+// RecoveryGateFact counts, for one evaluation, the records the gate decided
+// under one cause.
+type RecoveryGateFact struct {
+	Cause   RecoveryGateCause `json:"cause"`
+	Records uint64            `json:"records"`
+}
+
 type AlgorithmInputFact struct {
 	SourceAlgorithmFamily AlgorithmFamily          `json:"source_algorithm_family"`
 	DetectorKind          AlgorithmDetectorKind    `json:"detector_kind"`
@@ -929,6 +954,7 @@ type Observation struct {
 	ActivationFailure        *ActivationFailureFacts
 	AlgorithmEvaluations     []AlgorithmEvaluationFact
 	AlgorithmInputs          []AlgorithmInputFact
+	RecoveryGates            []RecoveryGateFact
 	normalized               bool
 	stageReasonBucket        bool
 }
@@ -1024,6 +1050,7 @@ func NormalizeObservation(observation Observation) Observation {
 		observation.Component, observation.Stage, observation.ActivationFailure,
 	)
 	observation.AlgorithmEvaluations, observation.AlgorithmInputs = normalizeAlgorithmFacts(observation)
+	observation.RecoveryGates = normalizeRecoveryGateFacts(observation)
 	observation.Counts = normalizeCounts(observation.Counts)
 	observation.normalized = true
 	return observation
@@ -1144,6 +1171,30 @@ func AllSourceRefreshStatuses() []SourceRefreshStatus {
 	return []SourceRefreshStatus{
 		SourceRefreshPending, SourceRefreshPublished, SourceRefreshUnchanged, SourceRefreshConflict,
 	}
+}
+
+// normalizeRecoveryGateFacts keeps the gate facts of a completed evaluation
+// whose cause is in the closed set and that count something. The set is
+// produced by this process, so a cause outside it is a defect, and it is
+// dropped the way an unknown algorithm result is.
+func normalizeRecoveryGateFacts(observation Observation) []RecoveryGateFact {
+	if observation.Component != ComponentEvaluation || observation.Stage != StageEvaluationCompleted {
+		return nil
+	}
+	facts := make([]RecoveryGateFact, 0, len(observation.RecoveryGates))
+	for _, fact := range observation.RecoveryGates {
+		if fact.Records == 0 {
+			continue
+		}
+		switch fact.Cause {
+		case RecoveryGateLevelUnavailable, RecoveryGateLevelRecovering, RecoveryGateLevelWithoutRecovery:
+			facts = append(facts, fact)
+		}
+	}
+	if len(facts) == 0 {
+		return nil
+	}
+	return facts
 }
 
 func normalizeAlgorithmFacts(observation Observation) ([]AlgorithmEvaluationFact, []AlgorithmInputFact) {

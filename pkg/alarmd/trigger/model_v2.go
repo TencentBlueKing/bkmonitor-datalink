@@ -186,10 +186,41 @@ type EvaluationCountsV2 struct {
 	Events      uint64
 }
 
+// The causes a RECOVERY envelope is held for. The set is closed: a metric
+// label is made of it.
+const (
+	// RecoveryHeldLevelUnavailable: a Level could not be evaluated at all, so
+	// whether it is still in alarm is unknown.
+	RecoveryHeldLevelUnavailable = "level_unavailable"
+	// RecoveryHeldLevelRecovering: a Level read NORMAL with recovery enabled,
+	// which means a window inside its recovery span still meets its trigger.
+	RecoveryHeldLevelRecovering = "level_recovering"
+)
+
+// RecoveryGateV2 is what became of a record whose evaluated Levels agreed on
+// RECOVERY. The envelope that record would produce resolves the alert on its
+// series at the consumer, whatever Level that alert stands at, so every Level
+// has to have had its say: a Level whose state is unknown, or whose recovery
+// span still holds a triggering window, has not agreed and holds the envelope.
+// The Level results themselves are unaffected and still reach the state.
+type RecoveryGateV2 struct {
+	Held bool
+	// Cause and LevelID name the first Level that held the envelope.
+	Cause   string
+	LevelID uint32
+	// PassedLevelWithoutRecovery reports an envelope sent past a NORMAL Level
+	// whose recovery is disabled. Such a Level can never say RECOVERY, so it is
+	// not asked; the count says whether that shape exists in a deployment.
+	PassedLevelWithoutRecovery bool
+}
+
 type EvaluationResultV2 struct {
 	Completion    string
 	RecordResult  string
 	LevelOutcomes []LevelOutcomeV2
 	TriggerEvent  *contract.TriggerEventV1
 	Counts        EvaluationCountsV2
+	// RecoveryGate is set only when RecordResult is RECOVERY. A held gate
+	// leaves TriggerEvent nil while RecordResult stays RECOVERY.
+	RecoveryGate RecoveryGateV2
 }

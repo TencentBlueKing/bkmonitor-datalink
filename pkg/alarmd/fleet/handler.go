@@ -163,11 +163,21 @@ type HealthResponse struct {
 	// DemotedDueOldestSeconds is how long the most overdue object has waited
 	// past its own retry deadline. The count alone reads the same whether the
 	// retry path is working or stopped; this is what separates them.
-	DemotedDueOldestSeconds int       `json:"demoted_due_oldest_seconds,omitempty"`
-	DemotionEntries         int       `json:"demotion_entries"`
-	DemotionExtensions      int       `json:"demotion_extensions"`
-	DemotionExits           int       `json:"demotion_exits"`
-	LastDemotionExit        time.Time `json:"last_demotion_exit,omitempty"`
+	DemotedDueOldestSeconds int `json:"demoted_due_oldest_seconds,omitempty"`
+	DemotionEntries         int `json:"demotion_entries"`
+	DemotionExtensions      int `json:"demotion_extensions"`
+	DemotionExits           int `json:"demotion_exits"`
+	// A pointer because omitempty does nothing for a struct: a zero time.Time
+	// still serialises, as "0001-01-01T00:00:00Z", and that string is truthy in
+	// the page. The page guards this field by truthiness, so a zero would render
+	// 最近一次出池 as a date in the year 1 -- the guard written to catch "no exit
+	// recorded" passing the one value it exists to catch.
+	//
+	// The tracker writes the count and the timestamp on adjacent lines, so the
+	// deployment cannot reach that state today. The guard should not depend on
+	// an invariant kept in a different file, and a fixture should not be able to
+	// express a deployment that cannot exist.
+	LastDemotionExit *time.Time `json:"last_demotion_exit,omitempty"`
 	// PublishedVersion and Workers are the acknowledgement view: which
 	// Activation the control plane published and how many counted replicas
 	// have applied it. Per-replica versions are on PerReplica.
@@ -296,6 +306,19 @@ type Summary struct {
 	// and cannot clear itself. Leaving them in the general pile means every
 	// reader re-investigates the same objects and reaches the same conclusion.
 	WindowNeverFills int `json:"window_never_fills"`
+}
+
+// momentOrNil drops a zero time rather than sending it.
+//
+// encoding/json's omitempty has no effect on a struct, so a zero time.Time goes
+// out as "0001-01-01T00:00:00Z" -- a string, and therefore true, to any reader
+// that checks whether the field is there. Absence has to be its own value or
+// every such check silently passes on the case it was written for.
+func momentOrNil(when time.Time) *time.Time {
+	if when.IsZero() {
+		return nil
+	}
+	return &when
 }
 
 // Onset splits the list by how long ago each object went wrong.
@@ -659,7 +682,7 @@ func NewHandler(
 			DemotedDue:       view.DemotedDue, DemotedDueOldestSeconds: view.DemotedDueOldestSeconds,
 			DemotionEntries:    view.DemotionEntries,
 			DemotionExtensions: view.DemotionExtensions, DemotionExits: view.DemotionExits,
-			LastDemotionExit: view.LastDemotionExit,
+			LastDemotionExit: momentOrNil(view.LastDemotionExit),
 			Coverage:         view.Coverage, PerReplica: view.PerReplica,
 			PublishedVersion: view.PublishedVersion, Workers: view.Workers,
 			Overdue: view.Overdue, Dispatch: view.Dispatch,

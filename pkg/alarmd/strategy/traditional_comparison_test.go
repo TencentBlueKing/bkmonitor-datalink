@@ -33,6 +33,29 @@ func TestTraditionalComparisonCompilerContracts(t *testing.T) {
 			if compiled.Config.TraditionalComparison == nil {
 				t.Fatal("missing config")
 			}
+			t.Run("source delay shifts all windows", func(t *testing.T) {
+				var wire map[string]any
+				if err := json.Unmarshal(raw.Config, &wire); err != nil {
+					t.Fatal(err)
+				}
+				requirements := wire["requirements"].([]any)
+				for _, requirement := range requirements {
+					window := requirement.(map[string]any)["relative_window"].(map[string]any)
+					window["start_offset_seconds"] = window["start_offset_seconds"].(float64) - 60
+					window["end_offset_seconds"] = window["end_offset_seconds"].(float64) - 60
+				}
+				shifted := raw
+				shifted.Config, _ = json.Marshal(wire)
+				if _, err := compiler.Compile(context.Background(), ctx, shifted); err != nil {
+					t.Fatalf("aligned delayed history rejected: %v", err)
+				}
+				window := requirements[1].(map[string]any)["relative_window"].(map[string]any)
+				window["end_offset_seconds"] = window["end_offset_seconds"].(float64) + 60
+				shifted.Config, _ = json.Marshal(wire)
+				if _, err := compiler.Compile(context.Background(), ctx, shifted); err == nil {
+					t.Fatal("misaligned delayed history accepted")
+				}
+			})
 			if tc.kind == DetectorKindAdvancedRingRatio && len(compiled.InputRequirements) != 2 {
 				t.Fatal("continuous history was fanned out")
 			}

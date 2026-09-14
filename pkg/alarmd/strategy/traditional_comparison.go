@@ -300,7 +300,8 @@ func (compiler traditionalComparisonCompiler) Compile(_ context.Context, ctx Alg
 			points[i] = AlgorithmNamedInputPoint{Name: TraditionalHistoryName(offset), OffsetSeconds: offset}
 		}
 		interval := int64(ctx.ExecutionSemantics.AggregationInterval)
-		if r.Role != AlgorithmInputDependency || r.DatasetName != name || r.LogicalQueryRef != requirements[0].LogicalQueryRef || r.RelativeWindow.StartOffsetSeconds != -(group[len(group)-1]+interval) || r.RelativeWindow.EndOffsetSeconds != -group[0] || r.ReadinessClass != AlgorithmReadinessFinalizedRequired || r.StepMillis != requirements[0].StepMillis || r.AlignmentMillis != requirements[0].AlignmentMillis || !equalAlgorithmProjection(r.InputProjection, wire.InputProjection) || !equalAlgorithmOffsets(r.PointOffsetsSeconds, group) || !equalNamedPoints(r.NamedPoints, points) {
+		anchor := requirements[0].RelativeWindow.EndOffsetSeconds
+		if r.Role != AlgorithmInputDependency || r.DatasetName != name || r.LogicalQueryRef != requirements[0].LogicalQueryRef || r.RelativeWindow.StartOffsetSeconds != anchor-(group[len(group)-1]+interval) || r.RelativeWindow.EndOffsetSeconds != anchor-group[0] || r.ReadinessClass != AlgorithmReadinessFinalizedRequired || r.StepMillis != requirements[0].StepMillis || r.AlignmentMillis != requirements[0].AlignmentMillis || !equalAlgorithmProjection(r.InputProjection, wire.InputProjection) || !equalAlgorithmOffsets(r.PointOffsetsSeconds, group) || !equalNamedPoints(r.NamedPoints, points) {
 			return AlgorithmCompileResult{}, configErrorf("invalid exact history requirement")
 		}
 	}

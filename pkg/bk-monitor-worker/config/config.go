@@ -234,6 +234,9 @@ var (
 
 	// SchemaProviderType schema provider type: static, redis, or empty
 	SchemaProviderType string
+
+	// RelationDataID enables an additional APM relation/flow destination. Zero disables it.
+	RelationDataID uint
 )
 
 func initVariables() {
@@ -391,6 +394,8 @@ func initVariables() {
 	ESClusterMetricReportBlackList = GetValue("taskConfig.logSearch.metric.reportBlackList", []int{}, viper.GetIntSlice)
 
 	BigResourceTaskQueueName = GetValue("taskConfig.common.queues.bigResource", "big-resource")
+
+	RelationDataID = GetValue("taskConfig.relationDataID", uint(0), viper.GetUint)
 
 	// SchemaProvider 配置
 	SchemaProviderType = GetValue("schemaProvider.type", "static")

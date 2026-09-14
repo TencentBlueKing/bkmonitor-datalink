@@ -106,11 +106,14 @@ func (p *PrometheusWriter) WriteBatch(ctx context.Context, token string, writeRe
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 256))
-	if resp.StatusCode >= 500 && resp.StatusCode < 600 {
-		return fmt.Errorf("[PromRemoteWrite] remote write returned HTTP status %v; err = %w: %s", resp.Status, err, body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("[PromRemoteWrite] remote write returned HTTP status %s: %s", resp.Status, body)
+	}
+	if err != nil {
+		return fmt.Errorf("[PromRemoteWrite] read response: %w", err)
 	}
 
-	p.logger.Infof("[RemoteWrite] push %d series to host: %s (Headers: %+v))", len(writeReq.Timeseries), p.url, p.headers)
+	p.logger.Infof("[RemoteWrite] push %d series to host: %s", len(writeReq.Timeseries), p.url)
 
 	return nil
 }

@@ -376,6 +376,8 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_schedule_timeline_bytes_max":                  "variableLabels: {}",
 		"bkmonitor_alarmd_schedule_timeline_bytes":                      "variableLabels: {}",
 		"bkmonitor_alarmd_schedule_segments_pruned_total":               "variableLabels: {}",
+		"bkmonitor_alarmd_dispatch_rotation_total":                      "variableLabels: {result}",
+		"bkmonitor_alarmd_dispatch_walk_total":                          "variableLabels: {result}",
 		"bkmonitor_alarmd_schedule_prune_skipped_total":                 "variableLabels: {reason}",
 		"bkmonitor_alarmd_schedule_cutover_query_groups_total":          "variableLabels: {decision}",
 		"bkmonitor_alarmd_schedule_cutover_timelines_read":              "variableLabels: {}",
@@ -796,11 +798,17 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("schedule_timeline_bytes_max"):                  1,
 		fqName("schedule_timeline_bytes"):                      histogramSeries(1, len(scheduleTimelineBytesBuckets)),
 		fqName("schedule_segments_pruned_total"):               1,
-		fqName("schedule_prune_skipped_total"):                 len(observability.SchedulePruneSkipReasons),
-		fqName("schedule_cutover_query_groups_total"):          len(observability.ScheduleCutoverDecisions),
-		fqName("schedule_cutover_timelines_read"):              1,
-		fqName("query_failure_total"):                          len(observability.QueryFailureStages) * len(observability.QueryFailureCategories),
-		fqName("schedule_cutover_duration_seconds"):            histogramSeries(2, len(activeQGSetDurationBuckets)),
+		// Two fixed results each, and the two are separate metrics on purpose:
+		// rotations and object-turns are different populations counted at
+		// different rates, and one metric holding both invites a ratio between
+		// a numerator and a denominator that do not describe the same thing.
+		fqName("dispatch_rotation_total"):             2,
+		fqName("dispatch_walk_total"):                 4,
+		fqName("schedule_prune_skipped_total"):        len(observability.SchedulePruneSkipReasons),
+		fqName("schedule_cutover_query_groups_total"): len(observability.ScheduleCutoverDecisions),
+		fqName("schedule_cutover_timelines_read"):     1,
+		fqName("query_failure_total"):                 len(observability.QueryFailureStages) * len(observability.QueryFailureCategories),
+		fqName("schedule_cutover_duration_seconds"):   histogramSeries(2, len(activeQGSetDurationBuckets)),
 		// Two operations (write, renew) by three outcomes (written, present,
 		// missing); two operations by two results for the duration.
 		fqName("object_catalog_objects_total"): 2 * 3,

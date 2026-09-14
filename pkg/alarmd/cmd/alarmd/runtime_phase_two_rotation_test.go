@@ -99,38 +99,71 @@ func TestRotationIsVisibleWhileTheWalkIsStuckAndNeverCompletes(t *testing.T) {
 // A recovery queue that is full of objects all due sooner than this one.
 //
 // The dispatcher's own comment calls this "a decision, not a lack of room", and
-// it is counted in the same total as a ready queue with no places. They need
-// opposite responses -- one is answered by more room and the other is not -- so
-// a page that reports only the total can offer only one remedy, and on a
-// deployment where this branch dominates that remedy does nothing.
+// it lands in the same total as a ready queue with no places. They need opposite
+// responses -- one is answered by more room and the other is not -- so a page
+// reporting only the total can offer only one remedy, and where this branch
+// dominates that remedy does nothing.
+//
+// The state has to be built rather than configured. Since the recovery queue's
+// capacity became max(the configured value, the owned count), and the queue
+// holds at most one entry per owned object, its occupancy can only reach its
+// capacity while the owned set has just shrunk and the stale entries have not
+// been dropped yet. That transient is what this constructs: three objects
+// parked, one taken away, a new one arriving before the cleanup.
+//
+// An earlier version of this test set a small capacity and let the queue
+// overflow. That state stopped existing when the capacity rule changed, and the
+// test's own guard -- nothing was turned away, so the branch was not reached --
+// is what said so. The right answer to a state someone else legitimately
+// removed is to rebuild the state or retire the test, never to relax the
+// assertion until it passes again.
 func TestRotationSeparatesAQueueWithNoRoomFromOneHoldingSoonerWork(t *testing.T) {
 	at := time.Now()
-	// Every object has a ready time, so all of them go to the recovery queue,
-	// and it holds one. The two that arrive after it are not due sooner than
-	// what it already holds, so they are turned away by the ordering.
-	dispatcher := walkDispatcher(4, 1, map[execution.QueryGroupIdentity]time.Time{
+	// The configured recovery capacity equals the owned count, so the queue
+	// reaches its bound under either sizing rule -- a fixed capacity, or the
+	// larger of that and the owned set. The branch under test is about the
+	// ordering once the queue is at its bound, and pinning it to one sizing rule
+	// would make this fail the next time that rule is corrected rather than the
+	// next time the ordering is.
+	dispatcher := walkDispatcher(8, 3, map[execution.QueryGroupIdentity]time.Time{
 		"query-group-a": at.Add(time.Second),
 		"query-group-b": at.Add(2 * time.Second),
 		"query-group-c": at.Add(3 * time.Second),
 	})
 	runners, revision := dispatcher.bundle.snapshotScheduledRunners()
 	dispatcher.fillQueues(runners, revision)
+	if queued := dispatcher.bundle.rotationFacts().Queued; queued != 3 {
+		t.Fatalf("queued=%d, want the three parked objects in the recovery queue before the set "+
+			"changes; without them the branch under test is not reachable", queued)
+	}
+
+	// The owned set shrinks and grows in one step, and the entries the removed
+	// object left behind are deliberately not dropped -- dropStaleQueued is the
+	// cleanup this transient is defined as being before.
+	dispatcher.bundle.mu.Lock()
+	dispatcher.bundle.removeRunnerLocked("query-group-c")
+	delete(dispatcher.bundle.assigned, "query-group-c")
+	dispatcher.bundle.setRunnerLocked("query-group-d",
+		&phaseTwoQueryGroupLifecycle{runner: walkRunner{readyAt: at.Add(9 * time.Second)}})
+	dispatcher.bundle.assigned["query-group-d"] = struct{}{}
+	dispatcher.bundle.mu.Unlock()
+
+	changed, changedRevision := dispatcher.bundle.snapshotScheduledRunners()
+	dispatcher.fillQueues(changed, changedRevision)
 
 	facts := dispatcher.bundle.rotationFacts()
 	if facts == nil {
 		t.Fatal("the walk published nothing")
 	}
-	if facts.Deferred == 0 {
-		t.Fatal("nothing was turned away, so this walk did not reach the branch under test")
-	}
-	if facts.DeferredNotBetter != facts.Deferred {
-		t.Fatalf("deferred_not_better=%d of deferred=%d, want every turn-away attributed to the "+
-			"ordering rather than to a lack of room -- the ready queue here has three free places",
-			facts.DeferredNotBetter, facts.Deferred)
+	if facts.DeferredNotBetter == 0 {
+		t.Fatalf("deferred_not_better=0, so this walk did not reach the branch under test: the new "+
+			"object is due after everything the recovery queue already holds, and the queue is at "+
+			"its capacity because the owned set shrank under it (facts=%+v)", facts)
 	}
 	if facts.DeferredQueueFull != 0 {
-		t.Fatalf("deferred_queue_full=%d, want none: reporting these as a full queue is what sends "+
-			"a reader to grow a queue that is not the constraint", facts.DeferredQueueFull)
+		t.Fatalf("deferred_queue_full=%d, want none: the ready queue has eight places, and "+
+			"reporting these as a full queue is what sends a reader to grow a queue that is not "+
+			"the constraint", facts.DeferredQueueFull)
 	}
 }
 

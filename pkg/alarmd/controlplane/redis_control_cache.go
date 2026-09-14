@@ -155,22 +155,56 @@ func (cache *controlReadCache) enterLocked(version string) {
 	}
 }
 
+// advanceOutcome is what advance did with the cache.
+type advanceOutcome int
+
+const (
+	// advanceUnchanged: another reader had already moved the cache to this header.
+	advanceUnchanged advanceOutcome = iota
+	// advanceApplied: the cache crossed to the header keeping every timeline
+	// the delta did not name; dropped and kept say which.
+	advanceApplied
+	// advanceCold: nothing was cached, so the cache simply entered the header.
+	advanceCold
+	// advanceReset: the cache held a header the delta does not reach from, so
+	// every timeline was dropped.
+	advanceReset
+)
+
 // advance moves the cache to a new header keeping every timeline except the
 // ones the activation changed. The activation entry always goes: the header
-// changed because the activation record did. It reports whether the cache
-// was actually moved, so a caller that raced another can tell, and the
-// record revisions of the timelines it dropped and kept, for the audit.
+// changed because the activation record did. It reports what it did, so a
+// caller that raced another can tell, and the record revisions of the
+// timelines it dropped and kept, for the audit.
+//
+// A delta speaks for one revision: the timelines the activation that wrote
+// revision r changed since r-1. Keeping timelines across a header change is
+// therefore sound only when the cache held r-1. A cache that held an older
+// revision, because this Worker did not read the header while the revisions
+// between went by, is reset instead: the deltas of the revisions it never
+// saw are not in hand, and applying the last one alone would keep every
+// timeline the skipped ones rewrote and mark it current. Nothing else
+// expires a cached timeline, so that was the one way this cache could serve
+// stale content with no bound on how long; a reset costs what every header
+// change cost before deltas. A header without a revision, or one behind the
+// cached revision, is treated the same way.
 func (cache *controlReadCache) advance(
 	version string, changed []execution.QueryGroupIdentity,
-) (moved bool, dropped, kept map[execution.QueryGroupIdentity]uint64) {
+) (outcome advanceOutcome, dropped, kept map[execution.QueryGroupIdentity]uint64) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	if cache.version == version {
-		return false, nil, nil
+		return advanceUnchanged, nil, nil
 	}
 	if cache.version == "" {
 		cache.resetLocked(version)
-		return true, nil, nil
+		return advanceCold, nil, nil
+	}
+	held, heldKnown := activationHeaderRevision(cache.version)
+	next, nextKnown := activationHeaderRevision(version)
+	if !heldKnown || !nextKnown || next != held+1 {
+		cache.resetLocked(version)
+		return advanceReset, nil, nil
 	}
 	cache.version = version
 	cache.activation = nil
@@ -190,7 +224,7 @@ func (cache *controlReadCache) advance(
 	for queryGroup, element := range cache.timelines {
 		kept[queryGroup] = element.Value.(*cachedTimeline).timeline.RecordRevision
 	}
-	return true, dropped, kept
+	return advanceApplied, dropped, kept
 }
 
 // deltaAuditEvery is how often a header change crossed by delta is audited
@@ -365,8 +399,13 @@ type ControlReadCacheStats struct {
 	Timeline   ControlReadCacheObjectStats
 	Version    ControlReadCacheObjectStats
 	// Delta counts header changes: Hits crossed one keeping the timelines the
-	// activation did not change, Misses dropped every cached timeline.
-	Delta      ControlReadCacheObjectStats
+	// activation did not change, Misses dropped every cached timeline because
+	// no usable delta was found.
+	Delta ControlReadCacheObjectStats
+	// DeltaSkips counts header changes that dropped every cached timeline
+	// because the Worker had not seen the revision before the one it found,
+	// so the delta in hand could not speak for the whole gap.
+	DeltaSkips uint64
 	DeltaAudit ControlDeltaAuditStats
 	// Index counts catalog index entries reused (Hits) and read from the
 	// object catalog (Misses).
@@ -411,6 +450,12 @@ type controlReadCounters struct {
 	// the timelines the activation's delta did not name, misses dropped every
 	// timeline because no usable delta was found or it said full.
 	delta controlReadObjectCounters
+	// deltaSkips counts header changes that dropped every timeline because
+	// the cache held a revision the delta does not reach from: this Worker
+	// did not read the header while a revision went by. Each one is a
+	// Worker that fell more than one publication behind, which is worth
+	// seeing on its own; it is neither a hit nor a delta-less miss.
+	deltaSkips atomic.Uint64
 	// audit counts the sampled reconciliations of a delta against what the
 	// timelines actually did; see auditDelta.
 	audit deltaAuditCounters
@@ -448,6 +493,7 @@ func (repository *RedisCatalogRepository) ControlReadCacheStats() ControlReadCac
 		Timeline:   repository.controlReads.timeline.snapshot(),
 		Version:    repository.controlReads.version.snapshot(),
 		Delta:      repository.controlReads.delta.snapshot(),
+		DeltaSkips: repository.controlReads.deltaSkips.Load(),
 		DeltaAudit: ControlDeltaAuditStats{
 			Samples: repository.controlReads.audit.samples.Load(), Agreed: repository.controlReads.audit.agreed.Load(),
 			OverNamed: repository.controlReads.audit.overNamed.Load(), Missed: repository.controlReads.audit.missed.Load(),
@@ -514,11 +560,13 @@ func (repository *RedisCatalogRepository) adoptControlVersion(ctx context.Contex
 	if ok {
 		delta, present, err := repository.loadActivationDelta(ctx, revision)
 		if err == nil && present && !delta.Full {
-			moved, dropped, kept := repository.controlCache.advance(version.header, delta.QueryGroups)
-			if moved {
+			switch outcome, dropped, kept := repository.controlCache.advance(version.header, delta.QueryGroups); outcome {
+			case advanceApplied, advanceCold:
 				if crossings := counters.hits.Add(1); crossings%deltaAuditEvery == 0 && (len(dropped) > 0 || len(kept) > 0) {
 					repository.auditDelta(ctx, dropped, kept)
 				}
+			case advanceReset:
+				repository.controlReads.deltaSkips.Add(1)
 			}
 			return
 		}

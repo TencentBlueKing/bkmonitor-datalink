@@ -320,7 +320,10 @@ func openProductionPhaseTwoBundleWithDependencies(
 		counts := []metric.ControlCacheCounts{
 			{Object: "version", Hits: stats.Version.Hits, Misses: stats.Version.Misses, Refreshes: stats.Version.Refreshes},
 			{Object: "activation", Hits: stats.Activation.Hits, Misses: stats.Activation.Misses, Refreshes: stats.Activation.Refreshes},
-			{Object: "activation_delta", Hits: stats.Delta.Hits, Misses: stats.Delta.Misses,
+			// A skipped revision is reported as a clear: the cache dropped
+			// everything because a Worker fell more than one publication
+			// behind, which the delta design assumes does not happen.
+			{Object: "activation_delta", Hits: stats.Delta.Hits, Misses: stats.Delta.Misses, Clears: stats.DeltaSkips,
 				Audit: &metric.ControlCacheAudit{
 					Samples: stats.DeltaAudit.Samples, Agreed: stats.DeltaAudit.Agreed,
 					OverNamed: stats.DeltaAudit.OverNamed, Missed: stats.DeltaAudit.Missed,

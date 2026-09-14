@@ -87,8 +87,9 @@ func newControlCacheCollector() *controlCacheCollector {
 			"Control plane read cache outcomes by cached object and result. An evict is an entry "+
 				"dropped to stay inside the byte budget; evictions rising while refreshes stay at zero "+
 				"means the budget cannot hold the working set, not that the control plane changed. A clear "+
-				"is the whole cache dropped at once, which only the key segment memos do: any clear at all "+
-				"means a population outgrew a bound its own design assumes it stays inside. A share is a "+
+				"is the whole cache dropped at once: for the key segment memos a population outgrew a bound "+
+				"its own design assumes it stays inside, and for the activation delta a Worker found a header "+
+				"more than one revision past the one it held, so the delta could not speak for the gap. A share is a "+
 				"miss or refresh served from a complete read another caller of this process already had "+
 				"in flight, so bodies actually read are miss plus refresh minus share.",
 			[]string{"object", "result"}, nil,

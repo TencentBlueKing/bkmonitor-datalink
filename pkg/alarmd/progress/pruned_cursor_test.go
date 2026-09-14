@@ -36,7 +36,13 @@ func TestSkipPrunedRangeMovesTheCursorAndRestoresContinuity(t *testing.T) {
 	}
 	skipped := loaded.Progress
 	wantGap := &execution.ProgressGapSummary{Kind: execution.CompletionGapSkipped,
-		ReasonCode: execution.ReasonCode(contract.ReasonSchedulePruned), FirstSlot: 120, LastSlot: 120, Count: 1}
+		ReasonCode: execution.ReasonCode(contract.ReasonSchedulePruned), FirstSlot: 120, LastSlot: 120,
+		// Uncounted rather than one. Count means Slots in every other gap, so a
+		// 1 here was an unknown number of never-evaluated Slots reported as the
+		// smallest non-zero amount of them -- and read as that by anything
+		// adding these up. Where the cursor landed is carried instead, so the
+		// extent is stated without the population being invented.
+		Uncounted: true, ResumedAt: 600}
 	if skipped.NextSlot != 600 || skipped.LastFullSlot != 0 || skipped.LastCompletionKind != execution.CompletionGapSkipped ||
 		skipped.CurrentOrRecentGap == nil || *skipped.CurrentOrRecentGap != *wantGap || skipped.UnfinishedSlot != nil {
 		t.Fatalf("progress after skip = %+v, want cursor 600 with the pruned gap %+v", skipped, wantGap)
@@ -124,7 +130,13 @@ func TestSkipPrunedRangeDiscardsASlotInFlightInsideThePrunedSpan(t *testing.T) {
 		t.Fatalf("LoadProgress() = (%+v, %v)", loaded, err)
 	}
 	wantGap := &execution.ProgressGapSummary{Kind: execution.CompletionGapSkipped,
-		ReasonCode: execution.ReasonCode(contract.ReasonSchedulePruned), FirstSlot: 120, LastSlot: 120, Count: 1}
+		ReasonCode: execution.ReasonCode(contract.ReasonSchedulePruned), FirstSlot: 120, LastSlot: 120,
+		// Uncounted rather than one. Count means Slots in every other gap, so a
+		// 1 here was an unknown number of never-evaluated Slots reported as the
+		// smallest non-zero amount of them -- and read as that by anything
+		// adding these up. Where the cursor landed is carried instead, so the
+		// extent is stated without the population being invented.
+		Uncounted: true, ResumedAt: 600}
 	if got := loaded.Progress; got.NextSlot != 600 || got.UnfinishedSlot != nil || got.UnfinishedRange != nil || got.LastFullSlot != 0 ||
 		got.CurrentOrRecentGap == nil || *got.CurrentOrRecentGap != *wantGap {
 		t.Fatalf("progress after skip = %+v, want cursor 600, nothing in flight and the pruned gap %+v", got, wantGap)

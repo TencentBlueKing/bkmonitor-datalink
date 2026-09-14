@@ -11,6 +11,7 @@ package elasticsearch
 
 import (
 	"context"
+	stdjson "encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -36,7 +37,8 @@ type item struct {
 type items []item
 
 type aggFormat struct {
-	ctx context.Context
+	strict bool
+	ctx    context.Context
 
 	aggInfoList aggInfoList
 
@@ -120,13 +122,104 @@ func (a *aggFormat) setMetricValue(v *float64) {
 // 例如该查询 sum(count_over_time(metric[1m])) by (dim-1, dim-2) 的聚合层级为：dim-1, dim-2, time range, count
 func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 	if data == nil {
+		if a.strict {
+			return fmt.Errorf("missing FTA aggregation data")
+		}
 		return nil
 	}
 
 	idx--
 	if idx >= 0 {
+		if a.strict {
+			var name string
+			bucketed, valued := false, false
+			switch info := a.aggInfoList[idx].(type) {
+			case KeyedTagAgg:
+				name = info.Name
+			case TimeAgg:
+				name, bucketed = info.Name, true
+			case TermAgg:
+				name, bucketed = info.Name, true
+			case ValueAgg:
+				name, valued = info.Name, true
+			}
+			if name != "" {
+				raw, ok := data[name]
+				if !ok || string(raw) == "null" {
+					return fmt.Errorf("missing FTA aggregation %q", name)
+				}
+				if valued {
+					var object map[string]stdjson.RawMessage
+					if err := json.Unmarshal(raw, &object); err != nil {
+						return err
+					}
+					if _, ok := object["value"]; !ok {
+						return fmt.Errorf("missing FTA metric value %q", name)
+					}
+				}
+				if bucketed {
+					var object map[string]stdjson.RawMessage
+					if err := json.Unmarshal(raw, &object); err != nil {
+						return err
+					}
+					buckets, ok := object["buckets"]
+					if !ok || string(buckets) == "null" {
+						return fmt.Errorf("missing FTA buckets %q", name)
+					}
+					var entries []map[string]stdjson.RawMessage
+					if err := json.Unmarshal(buckets, &entries); err != nil {
+						return err
+					}
+					for _, entry := range entries {
+						if key, ok := entry["key"]; !ok || string(key) == "null" {
+							return fmt.Errorf("missing FTA bucket key %q", name)
+						}
+					}
+
+				}
+			}
+		}
 		switch info := a.aggInfoList[idx].(type) {
+		case KeyedTagAgg:
+			nested, ok := data.Nested(info.Name)
+			if !ok {
+				return fmt.Errorf("missing FTA keyed tag aggregation %q", info.Name)
+			}
+			filter, ok := nested.Aggregations.Filter("key")
+			if !ok {
+				return fmt.Errorf("missing FTA keyed tag aggregation %q", info.Name)
+			}
+			if err := validateFTATermsCompleteness(filter.Aggregations["value"]); err != nil {
+				return fmt.Errorf("FTA tag aggregation %q: %w", info.Name, err)
+			}
+			values, ok := filter.Aggregations.Range("value")
+			if !ok || values.Buckets == nil {
+				return fmt.Errorf("missing FTA keyed tag aggregation %q", info.Name)
+			}
+			for _, bucket := range values.Buckets {
+				key, ok := bucket.Aggregations["key"]
+				if !ok {
+					return fmt.Errorf("missing FTA tag bucket key")
+				}
+				var value string
+				if err := json.Unmarshal(key, &value); err != nil {
+					value = string(key)
+				}
+				a.addLabel(info.Name, value)
+				if reverse, ok := bucket.Aggregations.ReverseNested("_reverse"); ok {
+					if err := a.ts(idx, reverse.Aggregations); err != nil {
+						return err
+					}
+				} else {
+					return fmt.Errorf("missing FTA reverse_nested aggregation")
+				}
+			}
 		case TermAgg:
+			if a.strict {
+				if err := validateFTATermsCompleteness(data[info.Name]); err != nil {
+					return fmt.Errorf("FTA terms aggregation %q: %w", info.Name, err)
+				}
+			}
 			if bucketRangeItems, ok := data.Range(info.Name); ok {
 				if len(bucketRangeItems.Buckets) == 0 {
 					return nil

@@ -599,6 +599,10 @@ type TimeField struct {
 }
 
 type Query struct {
+	// FieldSemantics selects a versioned physical field schema.
+	FieldSemantics string `json:"field_semantics,omitempty"`
+	// SourceConditions keeps intrinsic source filters outside the user's bool group.
+	SourceConditions *Conditions `json:"source_conditions,omitempty"`
 	// DataSource 暂不使用
 	DataSource string `json:"data_source,omitempty" swaggerignore:"true"`
 	// TableID 数据实体ID，容器指标可以为空
@@ -882,6 +886,23 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 
 // ToQueryMetric 通过 spaceUid 转换成可查询结构体
 func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs) (*metadata.QueryMetric, error) {
+	var sourceConditions AllConditions
+	if q.SourceConditions != nil {
+		if q.FieldSemantics != metadata.FTAEventTagsV1 {
+			return nil, fmt.Errorf("source_conditions requires FTA field semantics")
+		}
+		var sourceErr error
+		sourceConditions, sourceErr = q.SourceConditions.AnalysisConditions()
+		if sourceErr != nil {
+			return nil, sourceErr
+		}
+	}
+	if q.FieldSemantics != "" && q.FieldSemantics != metadata.FTAEventTagsV1 {
+		return nil, fmt.Errorf("unsupported field_semantics %q", q.FieldSemantics)
+	}
+	if q.FieldSemantics != "" && q.DataSource == BkData {
+		return nil, fmt.Errorf("field_semantics requires elasticsearch storage")
+	}
 	var (
 		referenceName = q.ReferenceName
 		metricName    = q.FieldName
@@ -1091,8 +1112,12 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 		for _, storageRange := range storageRanges {
 			query := q.BuildMetadataQuery(ctx, tsDB, allConditions)
 			if query == nil {
+				if q.FieldSemantics != "" {
+					return nil, fmt.Errorf("field_semantics query could not be built")
+				}
 				continue
 			}
+			query.SourceConditions = sourceConditions.MetaDataAllConditions()
 
 			query.Aggregates = aggregates.Copy()
 			query.Timezone = qp.Timezone
@@ -1194,6 +1219,15 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 				}
 			}
 
+			if query.FieldSemantics != "" && query.StorageType != metadata.ElasticsearchStorageType {
+				return nil, fmt.Errorf("field_semantics requires elasticsearch storage")
+			}
+			if query.FieldSemantics != "" {
+				if query.IsElasticsearchIndexPrefixMissing() {
+					return nil, fmt.Errorf("field_semantics requires an Elasticsearch index")
+				}
+				query.FieldSemanticsExecution = &metadata.FieldSemanticsExecution{}
+			}
 			metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
 
 			// 判断是否跳过合并操作
@@ -1231,6 +1265,9 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	}
 
 	span.Set("query_metric_length", len(queryMetric.QueryList))
+	if q.FieldSemantics != "" && len(queryMetric.QueryList) == 0 {
+		return nil, fmt.Errorf("field_semantics query has no storage routes")
+	}
 
 	return queryMetric, nil
 }
@@ -1453,6 +1490,10 @@ func (q *Query) BuildMetadataQuery(
 
 	// 合并查询以及空间过滤条件到 condition 里面
 	allCondition = MergeConditionField(queryConditions, filterConditions)
+	if q.FieldSemantics == metadata.FTAEventTagsV1 {
+		allCondition = queryConditions
+		query.RoutingConditions = AllConditions(filterConditions).MetaDataAllConditions()
+	}
 
 	if len(queryConditions) > 1 || len(filterConditions) > 1 {
 		query.IsHasOr = true
@@ -1480,6 +1521,7 @@ func (q *Query) BuildMetadataQuery(
 	query.TimeField = tsDB.TimeField
 	query.NeedAddTime = tsDB.NeedAddTime
 	query.SourceType = tsDB.SourceType
+	query.FieldSemantics = q.FieldSemantics
 
 	query.AllConditions = allCondition.MetaDataAllConditions()
 	query.Condition = whereList.String()

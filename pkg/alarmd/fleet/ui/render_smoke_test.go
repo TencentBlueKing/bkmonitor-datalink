@@ -208,6 +208,20 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			Health: "HEALTHY", Covered: 979, Determined: 979, Unknown: 0, Healthy: 844,
 			AnomaliesTotal: 86, DemotedTotal: 33, UndecidableTotal: 12, ByDesignTotal: 4,
 			DemotedDue: 2, DemotionEntries: 40, DemotionExits: 7, PerReplica: replicas,
+			// Capacity, which this check had never executed: the fixture carried
+			// no capacity, so renderCapacity returned at its first guard and the
+			// busiest computed panel on the page was covered by nothing. A null
+			// dereference in it reached a live deployment.
+			Capacity: &fleet.CapacityView{
+				Replicas: 2, PermitsHeld: 3, PermitBudget: 16, PermitSeconds: 1200.5,
+				Waiting: 0, QueueBudget: 256,
+				MemoryUsed: 3 << 30, MemoryLimit: 16 << 30, MemorySource: "pod_limit",
+				MemoryLimitKnown: true, ThrottledKnown: true, ThrottledSeconds: 0.0017,
+				CPUSeconds: 4820.25, CPUCores: 8, CPUSource: "container CPU limit",
+				Budgets:    map[string]uint64{"events": 65536, "series": 524288},
+				Rejections: map[string]uint64{},
+				Pulled:     &fleet.SeriesPull{Series: 900000, Records: 900000},
+			},
 			// The line that answers "what is affected". Its columns are
 			// truncated and some of its objects name no strategy, because both
 			// are true on the deployment this page is read on and both change
@@ -337,6 +351,19 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			t.Errorf("column %s renders %q, which says %q -- that is the other column's claim",
 				want.column, line, want.mustNotSay)
 		}
+	}
+
+	// What the capacity panel says when a refresh arrives before any counter has
+	// moved. Not throwing is checked by the harness; this checks it says the
+	// right thing, because the branch that threw was the one meant to explain
+	// exactly this state.
+	capacity := lineStarting(text, "CAPACITY ::")
+	if capacity == "" {
+		t.Error("the capacity panel rendered nothing; the busiest computed panel on the page is " +
+			"covered by nothing again")
+	} else if !strings.Contains(capacity, "这两次读取之间没有新的拉取") {
+		t.Errorf("after a refresh with the counters unmoved the capacity panel does not explain "+
+			"why there is no average:\n%s", capacity)
 	}
 
 	// A link is rendered only when the environment said where its console is and
@@ -548,7 +575,21 @@ const document = {getElementById: id => store[id] || (store[id] = el('div')), cr
   createTextNode: t => { const n = el('#text'); n.textContent = t; return n; },
   createElementNS: () => el('svg'), querySelector: () => el('div'), querySelectorAll: () => [],
   addEventListener: () => {}, body: el('body'), documentElement: el('html'), readyState: 'complete'};
-const ctx = {document, console, JSON, Date, Math, Object, Array, String, Number, Boolean, RegExp,
+// A clock the harness advances on purpose.
+//
+// Every cumulative figure in the capacity panel becomes a rate from two reads,
+// and which branch runs depends entirely on how far apart those reads are:
+// zero apart gives no rate at all, far enough apart with the counter unmoved
+// gives a rate of zero. Those are different code paths and only the second one
+// has ever thrown. Left on the real clock, three renders inside one millisecond
+// take the first path and the check passes without executing the branch it was
+// written for -- which is what happened when this was first written.
+let clockMs = Date.UTC(2026, 8, 14, 10, 0, 0);
+class FakeDate extends Date {
+  constructor(...args) { if (args.length === 0) { super(clockMs); } else { super(...args); } }
+  static now() { return clockMs; }
+}
+const ctx = {document, console, JSON, Date: FakeDate, Math, Object, Array, String, Number, Boolean, RegExp,
   Error, Promise, isFinite, isNaN, parseInt, parseFloat, encodeURIComponent, decodeURIComponent,
   setInterval: () => 0, clearInterval: () => {}, setTimeout: () => 0, clearTimeout: () => {},
   fetch: () => new Promise(() => {}),
@@ -578,6 +619,14 @@ const calls = [
   ['renderRollup', () => ctx.renderRollup(data.summary, data.page.total)],
   ['renderReplicas', () => ctx.renderReplicas(data.per_replica)],
   ['renderCoverage', () => ctx.renderCoverage(data.coverage)],
+  // Twice, with the counters unmoved between the two.
+  //
+  // Every cumulative figure in this panel becomes a rate from two reads, so one
+  // call only ever exercises the "no previous read" path -- which is why a
+  // divide-by-a-null-rate shipped. A second call with identical counters is
+  // what a fast refresh is: the counter has not moved, the rate is zero, and
+  // the code that divides by it runs.
+
   ['continuityLine', () => ctx.continuityLine(data.per_replica)],
   ['attributionLine', () => ctx.attributionLine(data.summary, data.per_replica)],
   ['onsetLine', () => ctx.onsetLine(data.summary.onset, data.page.total)],
@@ -618,6 +667,19 @@ for (const column of ['anomalies', 'demoted', 'undecidable', 'by_design']) {
   catch (e) { console.error('attributionLine threw on ' + column + ': ' + e.message); failed++; continue; }
   console.log('WHOSE ' + column + ' :: ' + line);
 }
+
+// The capacity panel on a refresh that arrives after a real interval with the
+// counters unmoved -- which is what "clicked refresh too fast" produces once
+// the page has been open a while: the interval is real, nothing was pulled in
+// it, and the rate is zero rather than absent.
+//
+// renderDeployment above already took the first read. The clock is advanced so
+// the second one has an interval to divide by; without that the rate is absent
+// instead of zero and the branch that threw never runs.
+clockMs += 30000;
+try { ctx.renderCapacity(data.health.capacity, []); }
+catch (e) { console.error('renderCapacity (refresh, counters unmoved): ' + e.constructor.name + ': ' + e.message); failed++; }
+console.log('CAPACITY :: ' + textOf(store['capCards']));
 
 // The impact line -- the only thing on the page that answers "what is affected"
 // rather than "how many objects".

@@ -2004,7 +2004,20 @@ function renderCapacity(cap, gaps) {
       pullHint = '全部副本相加，两次读取才算得出，约 30 秒后出现';
     } else if (!rate.points) {
       pullHint = '数据点速率要两次读取才算得出';
-    } else if (pointsPerSeries !== null && Math.abs(pointsPerSeries - 1) < 0.005) {
+    } else if (pointsPerSeries === null) {
+      // The series rate is zero: nothing was pulled between these two reads, so
+      // there is no average to take. Two refreshes a second apart land here
+      // routinely -- the counter has not moved -- and this branch used to fall
+      // through to the last one, which divides by it. That threw
+      // "Cannot read properties of null (reading 'toFixed')" and took the whole
+      // capacity panel and the verdict above it down with it, because one throw
+      // inside this renderer fails both.
+      //
+      // The guard for exactly this null is two lines below, on the branch that
+      // does not need it; whoever wrote it saw the case and guarded the wrong
+      // branch.
+      pullHint = '这两次读取之间没有新的拉取，算不出平均每条多少个点——刷新太快时是正常的，隔一个采集周期再看';
+    } else if (Math.abs(pointsPerSeries - 1) < 0.005) {
       pullHint = '这些时序里一共 ' + rate.points.rate.toFixed(0)
         + ' 个数据点/秒——和条数一样，也就是这段时间每条时序只取了 1 个点，没有谁在拉历史窗口';
     } else {

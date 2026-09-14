@@ -338,9 +338,10 @@ func (compiler *LegacyPrimaryQueryCompiler) compileFTAQuery(c legacyQueryConfig,
 	if c.AggInterval == 0 {
 		c.AggInterval = 60
 	}
-	// The Python FTA datasource floors seconds to whole minutes before bucketing.
-	c.AggInterval = c.AggInterval / 60 * 60
-	if c.AggInterval == 0 {
+	// Python floors this to minutes, but the polling Plan also uses the
+	// configured interval for its schedule and point offsets. A non-integral
+	// minute would require distinct bucket and evaluation steps.
+	if c.AggInterval < 60 || c.AggInterval%60 != 0 {
 		return nil, queryConfigRejected("QUERY_FTA_INTERVAL_INVALID", nil)
 	}
 	if c.AlertName == "" {

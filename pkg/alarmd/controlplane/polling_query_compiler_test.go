@@ -135,6 +135,32 @@ func TestFTATypedRangeBoundsBeforeStringWire(t *testing.T) {
 	}
 }
 
+func TestFTARejectsMismatchedMinuteBuckets(t *testing.T) {
+	route := execution.QueryStorage{TableID: "events", StorageID: "17", StorageType: "elasticsearch", DB: "bkfta_event_*_read", Measurement: "__default__", TimeField: execution.QueryTimeField{Name: "time", Type: "date", Unit: "millisecond"}}
+	planner, _ := NewLegacyPrimaryQueryCompiler("uq", "UTC", LegacyQueryRuntimeFacts{FTAEventStorage: &route})
+	for _, interval := range []int64{30, 90, 120, 0} {
+		config, _ := json.Marshal(map[string]any{"data_source_label": "bk_fta", "data_type_label": "event", "alert_name": "CPUHigh", "agg_interval": interval})
+		facts, err := planner.CompilePrimaryQuery(context.Background(), pollingTestSource(string(config)))
+		if interval == 30 || interval == 90 {
+			var failure *QueryPlanCompileError
+			if !errors.As(err, &failure) || failure.Reason != "QUERY_FTA_INTERVAL_INVALID" {
+				t.Fatalf("interval=%d error=%v", interval, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantStep, wantWindow := int64(120000), "120s"
+		if interval == 0 {
+			wantStep, wantWindow = 60000, "60s"
+		}
+		if facts.StepMillis != wantStep || facts.QueryList[0].TimeAggregation.Window != wantWindow {
+			t.Fatalf("interval=%d facts=%+v", interval, facts)
+		}
+	}
+}
+
 func TestLogSearchQueryString(t *testing.T) {
 	for raw, want := range map[string]string{"timeout": "*timeout*", "   ": "*", "a &amp;&amp; b": "a && b", "field:value": "field:value", "foo AND bar": "foo AND bar"} {
 		if got := logSearchQueryString(raw); got != want {

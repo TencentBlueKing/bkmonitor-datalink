@@ -1462,6 +1462,34 @@
       },
       "source": "bkmonitor/bkmonitor/data_source/data_source/__init__.py:CustomEventDataSource.__init__",
       "stage": "source_intrinsic_filters"
+    },
+    {
+      "expected": [
+        0,
+        1.234568,
+        -1.234568,
+        1.234568,
+        0,
+        42,
+        0.0,
+        2e-06
+      ],
+      "id": "data-record-numeric-rounding",
+      "input": {
+        "precision": 6,
+        "values": [
+          0,
+          1.23456789,
+          -1.23456789,
+          "1.23456789",
+          "0",
+          "42",
+          5e-07,
+          1.5e-06
+        ]
+      },
+      "source": "bkmonitor/alarm_backends/service/access/data/records.py:DataRecord._convert",
+      "stage": "data_record_numeric_conversion"
     }
   ],
   "limitations": [
@@ -1473,11 +1501,13 @@
   "schema_version": 1,
   "source_revision": "a40283a11e8b9a89a147851939cbbe90958df4e9",
   "source_sha256": {
+    "bkmonitor/alarm_backends/service/access/data/records.py": "467299c84441a7f8cdd29cf14a35356a2ce796c5c16a208ee89488845b459bae",
     "bkmonitor/bkmonitor/data_source/backends/elastic_search/compiler.py": "c4b89d164f4fff9dbaf4e7e123bcd352d7cfe5770c2a98fbb9f7f891c13569a8",
     "bkmonitor/bkmonitor/data_source/backends/fta_event/compiler.py": "da75a5b5e7af7b948bd1b0bb01b4a05d37470edb215e2f4dabffbe2205c95c17",
     "bkmonitor/bkmonitor/data_source/data_source/__init__.py": "90cd1c305d08df0c8776f7e86c4fb7f9c7e8d11c2dc09dec1a3c8d7c575f52db",
     "bkmonitor/bkmonitor/data_source/unify_query/functions.py": "92b7f45fa4fdedc359ff708a3272108fe68a1fcfef618dc8f857f5df9ee4991e",
     "bkmonitor/bkmonitor/data_source/unify_query/query.py": "64c7e6676da464a8b99290441004134ef939478d225be12910743857d56e37d4",
+    "bkmonitor/bkmonitor/utils/common_utils.py": "9ee688a795a055a3899ec261aa216dfd5755b5f60ac3b08d7c37c62815216aa1",
     "bkmonitor/constants/alert.py": "5d73aad5600d66f15c52388fc36f6e42221808c803839e8e8f71425d7e2a1a59",
     "bkmonitor/constants/data_source.py": "5e9ed5509a1323e5185980c0eaaa44b6ce4d47bb340f2dec8ac5f1e3e696eb1e",
     "bkmonitor/constants/event.py": "fba0920f1cdf619bed2b665b029f874809f0ad69a08471b9adc5ce373874b2a2"

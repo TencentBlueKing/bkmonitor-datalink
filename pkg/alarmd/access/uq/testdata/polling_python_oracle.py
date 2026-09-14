@@ -385,6 +385,30 @@ def main():
             obj.filter_dict,
         )
 
+    function("bkmonitor/bkmonitor/utils/common_utils.py", "number_format")
+    record_class = cls(
+        "bkmonitor/alarm_backends/service/access/data/records.py",
+        "DataRecord",
+        ["_convert"],
+    )
+    env["settings"].POINT_PRECISION = 6
+    numeric_values = [
+        0,
+        1.23456789,
+        -1.23456789,
+        "1.23456789",
+        "0",
+        "42",
+        0.0000005,
+        0.0000015,
+    ]
+    add(
+        "data-record-numeric-rounding",
+        "data_record_numeric_conversion",
+        "bkmonitor/alarm_backends/service/access/data/records.py:DataRecord._convert",
+        dict(values=numeric_values, precision=6),
+        [record_class()._convert(value) for value in numeric_values],
+    )
     payload = dict(
         schema_version=1,
         source_revision=SOURCE_REVISION,

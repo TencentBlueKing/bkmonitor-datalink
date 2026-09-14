@@ -107,6 +107,16 @@ func ProjectMonitorTarget(dimensions map[string]json.RawMessage, identity Monito
 	return targetType, target, data, nil
 }
 
+// MonitorDedupeMD5Version names the algorithm below. The fingerprint is a
+// derived value this process computes and the alert consumer stores, and the
+// open alert set the consumer publishes is read back by equality against it
+// (see OpenAlertSet). Changing the algorithm without changing this name would
+// make every stored fingerprint miss, which that gate cannot tell from "no
+// open alert" -- it would close the gate silently. The consumer echoes the
+// version it stores under; a reader that finds another version treats the
+// set as unavailable rather than as empty. Bump it with the algorithm.
+const MonitorDedupeMD5Version = "monitor-dedupe-md5-v1"
+
 func MonitorDedupeMD5(strategyID, businessID string, dimensions map[string]json.RawMessage, identity MonitorOutputIdentity) (string, error) {
 	targetType, target, data, err := ProjectMonitorTarget(dimensions, identity)
 	if err != nil {

@@ -464,6 +464,18 @@ func fleetVerdictOf(view fleet.View, at time.Time) metric.FleetVerdict {
 			failures.add(fleet.MetricFailureCategory(anomaly.Failure.Category), 0)
 		}
 	}
+	// An object holding a query cooldown is in the demoted list, not the
+	// anomaly list: the tracker places every object in exactly one of the two,
+	// and the cooldown is what decides which. Walking the anomaly list alone
+	// therefore read zero from any tracker of this build while the object page
+	// listed dozens of demoted objects. Both lists are walked, and the
+	// evidence is still required: a demoted object without a cooldown would be
+	// a defect in the tracker, not a cooldown object.
+	for _, demoted := range view.Demoted {
+		if demoted.QueryCooldown != nil {
+			cooldown++
+		}
+	}
 	verdict.Anomalies = kinds.counts()
 	if view.Covered > 0 {
 		verdict.QueryCooldown = &cooldown

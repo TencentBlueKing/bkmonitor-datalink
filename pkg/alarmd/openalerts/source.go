@@ -74,6 +74,13 @@ func (source *RedisSource) Read(ctx context.Context, keys []StrategyKey) (Public
 			publication.Heartbeat = &heartbeat
 		}
 	}
+	// Without a readable heartbeat the sets are not the consumer's word and
+	// the cache will not use them, so they are not read: on a deployment
+	// where the publisher does not exist yet this is the difference between
+	// one command per cycle and one per tracked strategy.
+	if publication.Heartbeat == nil {
+		return publication, nil
+	}
 	for start := 0; start < len(keys); start += source.batch {
 		end := start + source.batch
 		if end > len(keys) {

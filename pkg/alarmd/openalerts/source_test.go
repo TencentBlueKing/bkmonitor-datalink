@@ -48,6 +48,18 @@ func TestRedisSourceReadsTheContractKeys(t *testing.T) {
 	if err != nil || publication.Heartbeat != nil || publication.HeartbeatErr != nil || len(publication.Sets) != 0 {
 		t.Fatalf("empty store: %+v, %v; want nil heartbeat, no error, no sets", publication, err)
 	}
+	// A set present without a heartbeat is not read: it is not the
+	// consumer's word without one, and the cache would not use it.
+	if err := client.SAdd(ctx, SetKey(keyB), "orphan").Err(); err != nil {
+		t.Fatal(err)
+	}
+	publication, err = source.Read(ctx, keys)
+	if err != nil || len(publication.Sets) != 0 {
+		t.Fatalf("sets without a heartbeat = %v, want none read", publication.Sets)
+	}
+	if err := client.Del(ctx, SetKey(keyB)).Err(); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := client.HSet(ctx, HeartbeatKey, HeartbeatPublishedAt, "1700000000", HeartbeatCycleSeconds, "60").Err(); err != nil {
 		t.Fatal(err)

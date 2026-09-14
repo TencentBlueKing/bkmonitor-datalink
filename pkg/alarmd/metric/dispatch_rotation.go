@@ -71,13 +71,20 @@ func newDispatchRotationCollector() *dispatchRotationCollector {
 				"queue being full of objects all due sooner than this one, which is an ordering and not "+
 				"a lack of room -- more room changes nothing. Summing the two hides the only difference "+
 				"that decides whether there is anything to do. "+
-				"Both deferred results are expected to read zero, and zero is the success case here "+
-				"rather than a counter nobody wired: the ready queue is sized above what a walk places "+
-				"in it, and the recovery queue's capacity is at least the number of objects this Worker "+
-				"owns while holding at most one entry per object, so it can only reach its bound during "+
-				"the moment after the owned set shrinks and before the stale entries are dropped. A "+
-				"non-zero value means the owned set just changed, or one of those two sizings was "+
-				"altered -- not that something finally started being counted.",
+				"The two are expected to behave differently, and neither zero means the same thing. "+
+				"deferred_not_better is not a measure of queue pressure at all -- it is an invariant "+
+				"guard, and reading it as a load signal will send whoever does that looking for a load "+
+				"explanation that does not exist. The recovery queue's capacity is at least the number "+
+				"of objects this Worker owns, it holds at most one entry per object, and the one caller "+
+				"that fills it drops the stale entries immediately before doing so, so its occupancy "+
+				"cannot reach its capacity. Zero means that chain holds. Non-zero means exactly one "+
+				"thing: either the stale entries were not dropped before the queue was filled, or the "+
+				"capacity floor was changed -- somebody edited one of those two places. "+
+				"deferred_queue_full has no such bound. The ready queue's capacity is derived from the "+
+				"CPU budget while what fills it is the owned count, and the two are unrelated, so a "+
+				"Worker owning more objects than that capacity reaches it every tick and the walk stops "+
+				"there each time. Read it as a rate over a window rather than as a total: on a cumulative "+
+				"counter, \"ever non-zero\" is true for ever once it happens once.",
 			[]string{"result"}, nil,
 		),
 	}

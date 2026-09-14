@@ -213,6 +213,11 @@ type FlightCoordinator struct {
 	permitSequence         uint64
 	observer               observability.Observer
 	inflightByOp           map[execution.Operation]int
+	// permitAcquires counts callers that asked for a query permit and
+	// permitQueued those that did not get one immediately. Cumulative, because
+	// the state they describe begins and ends between two reads of any gauge.
+	permitAcquires uint64
+	permitQueued   uint64
 	// permitSecondsByOp accumulates how long permits were actually held.
 	//
 	// The inflight counts above are an instantaneous reading, and an
@@ -271,6 +276,21 @@ type QueryPermitOccupancy struct {
 	// deployment's configuration to know what the occupancy is out of.
 	Budget         int
 	RecoveryBudget int
+	// Acquires and Queued are cumulative: how many callers asked for a permit,
+	// and how many of those did not get one immediately and had to wait.
+	//
+	// Neither gauge above can answer whether the budget is the constraint. The
+	// budget filling and a caller queueing behind it happens and resolves inside
+	// one sampling interval, so Waiting reads zero at almost every instant it is
+	// read, and Inflight reads whatever phase the read lands in. A reader with
+	// only those two concludes there is headroom on a deployment where most
+	// queries wait -- and the conclusion is drawn from instruments that cannot
+	// see the state being ruled out.
+	//
+	// Counted at the same point, over the same population, so Queued/Acquires is
+	// a share and not a ratio between two different things.
+	Acquires uint64
+	Queued   uint64
 }
 
 // QueryPermitOccupancySource reports live occupancy.
@@ -293,6 +313,7 @@ func (coordinator *FlightCoordinator) QueryPermitOccupancy() QueryPermitOccupanc
 	for operation, seconds := range coordinator.permitSecondsByOp {
 		occupancy.HeldSeconds[operation] = seconds
 	}
+	occupancy.Acquires, occupancy.Queued = coordinator.permitAcquires, coordinator.permitQueued
 	// Permits still held have not been added to the total yet, so a query that
 	// ran for the whole window would otherwise contribute nothing to it -- and a
 	// permanently stuck permit, the one most worth seeing, would contribute

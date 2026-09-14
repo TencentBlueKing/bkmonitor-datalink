@@ -31,11 +31,26 @@ type Capacity struct {
 	// Waiting is callers queued for a permit. Non-zero means the budget is the
 	// constraint right now; zero does not mean it has room to spare, because a
 	// caller admitted immediately never appears here.
-	Waiting      int    `json:"waiting"`
-	QueueBudget  int    `json:"queue_budget"`
-	MemoryUsed   uint64 `json:"memory_used_bytes,omitempty"`
-	MemoryLimit  uint64 `json:"memory_limit_bytes,omitempty"`
-	MemorySource string `json:"memory_source,omitempty"`
+	Waiting     int `json:"waiting"`
+	QueueBudget int `json:"queue_budget"`
+	// PermitAcquires and PermitWaits are cumulative: callers that asked for a
+	// query permit, and those that did not get one immediately.
+	//
+	// They are here because neither number above can answer whether the budget
+	// is the constraint. A caller queueing behind a full budget and then being
+	// granted happens inside one read interval, so Waiting is zero at almost
+	// every instant anyone looks, and PermitsHeld reports whichever phase of the
+	// evaluation cycle the read landed in. A reader with only those two concludes
+	// there is headroom on a deployment where most queries wait -- a conclusion
+	// drawn from instruments that cannot see the state being ruled out.
+	//
+	// Counted at one point over one population, so waits over acquires is a
+	// share rather than a ratio between two different things.
+	PermitAcquires uint64 `json:"permit_acquires"`
+	PermitWaits    uint64 `json:"permit_waits"`
+	MemoryUsed     uint64 `json:"memory_used_bytes,omitempty"`
+	MemoryLimit    uint64 `json:"memory_limit_bytes,omitempty"`
+	MemorySource   string `json:"memory_source,omitempty"`
 	// MemoryLimitHits and MemoryOOMKills are the container's own account of
 	// having reached the memory limit, as opposed to a ratio somebody has to
 	// judge. The operator set the limit; these say whether the process ran into
@@ -165,12 +180,20 @@ func (rotation *Rotation) fold(other Rotation) {
 // replica derives them from the same container shape, and a replica that
 // disagrees is reported rather than averaged away.
 type CapacityView struct {
-	Replicas         int               `json:"replicas"`
-	PermitsHeld      int               `json:"permits_held"`
-	PermitBudget     int               `json:"permit_budget"`
-	PermitSeconds    float64           `json:"permit_seconds"`
-	Waiting          int               `json:"waiting"`
-	QueueBudget      int               `json:"queue_budget"`
+	Replicas      int     `json:"replicas"`
+	PermitsHeld   int     `json:"permits_held"`
+	PermitBudget  int     `json:"permit_budget"`
+	PermitSeconds float64 `json:"permit_seconds"`
+	Waiting       int     `json:"waiting"`
+	QueueBudget   int     `json:"queue_budget"`
+	// PermitAcquires and PermitWaits are the only pair here that can answer
+	// whether the permit budget is the constraint. PermitsHeld and Waiting are
+	// instants, and a caller queueing behind a full budget and then being
+	// granted begins and ends between two reads -- so Waiting is zero at almost
+	// every moment anyone looks, and a page ruling out saturation from it is
+	// ruling it out with an instrument that cannot see it.
+	PermitAcquires   uint64            `json:"permit_acquires"`
+	PermitWaits      uint64            `json:"permit_waits"`
 	MemoryUsed       uint64            `json:"memory_used_bytes,omitempty"`
 	MemoryLimit      uint64            `json:"memory_limit_bytes,omitempty"`
 	MemorySource     string            `json:"memory_source,omitempty"`
@@ -209,6 +232,8 @@ func aggregateCapacity(view *View, snapshots []Snapshot) {
 		capacity.PermitsHeld += facts.PermitsHeld
 		capacity.PermitSeconds += facts.PermitSeconds
 		capacity.Waiting += facts.Waiting
+		capacity.PermitAcquires += facts.PermitAcquires
+		capacity.PermitWaits += facts.PermitWaits
 		capacity.MemoryUsed += facts.MemoryUsed
 		capacity.ThrottledSeconds += facts.ThrottledSeconds
 		capacity.CPUSeconds += facts.CPUSeconds

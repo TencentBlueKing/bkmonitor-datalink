@@ -2151,12 +2151,35 @@ function renderCapacity(cap, gaps) {
   //
   // So the zero case says what it is and points at the number that does answer
   // the question, instead of answering it wrongly.
-  var queueText = cap.waiting > 0
-    ? '另有 ' + cap.waiting + ' 个在排队等位子。'
-    : '此刻没有查询在排队——这是一次取样，不是"队列一直是空的"：'
-      + '立即拿到位子的调用不会出现在这个数里，而且对象是按各自周期成批到期的，'
-      + '队列跟着这个周期涨落。'
-      + (held ? '要判断位子够不够，看前面那个平均值。' : '要判断位子够不够，等平均值出来再看。');
+  // The question this cell is opened for is "are there enough places", and
+  // until now nothing on it could answer that.
+  //
+  // permits_held and waiting are both instants. A caller queueing behind a full
+  // budget and then being granted begins and ends between two reads, so waiting
+  // is zero at almost every moment anyone looks and permits_held reports
+  // whichever phase of the evaluation cycle the read landed in. Ruling out
+  // saturation from those two is ruling it out with instruments that cannot see
+  // it, and a live panel did exactly that: "没有查询在排队" on a deployment
+  // where most queries wait.
+  //
+  // permit_waits over permit_acquires is cumulative and counted at one point
+  // over one population, so it survives the cycle and is a share rather than a
+  // ratio between two different things.
+  var asked = cap.permit_acquires || 0;
+  var waited = cap.permit_waits || 0;
+  var queueText;
+  if (asked) {
+    var share = Math.round((waited / asked) * 100);
+    queueText = waited
+      ? '启动至今 ' + asked + ' 次取位子里有 ' + waited + ' 次（' + share + '%）没能立刻拿到、排过队'
+        + (share >= 50 ? '——位子是约束，这一项支持扩容。' : '。')
+      : '启动至今 ' + asked + ' 次取位子全部立刻拿到，没有一次排过队——位子不是约束。';
+  } else {
+    queueText = '启动至今还没有查询取过位子，够不够无从谈起。';
+  }
+  if (cap.waiting > 0) {
+    queueText = '此刻另有 ' + cap.waiting + ' 个在排队等位子。' + queueText;
+  }
   cell('同时在跑的查询',
     cap.permits_held + ' / ' + permitCeiling,
     (held

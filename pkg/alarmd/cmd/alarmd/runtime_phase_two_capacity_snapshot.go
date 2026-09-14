@@ -69,7 +69,8 @@ func capacitySnapshotSource(
 		usage := config.ReadContainerUsage()
 		capacity := &fleet.Capacity{
 			PermitsHeld: held, PermitBudget: occupancy.Budget, PermitSeconds: seconds,
-			Waiting:     occupancy.Waiting["normal"] + occupancy.Waiting["recovery"],
+			Waiting:        occupancy.Waiting["normal"] + occupancy.Waiting["recovery"],
+			PermitAcquires: occupancy.Acquires, PermitWaits: occupancy.Queued,
 			QueueBudget: facts.Capacity.ReadyQueue + facts.Capacity.RecoveryQueue,
 			// The limit and where it was read from travel together: a limit
 			// found outside a container is a fallback, and presenting it as the

@@ -1653,7 +1653,7 @@ func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx contex
 	var coverageFacts *observability.HistoryCoverageFacts
 	if coverage.Levels > 0 {
 		coverageFacts = &observability.HistoryCoverageFacts{
-			Levels: coverage.Levels, Short: coverage.Short,
+			Levels: coverage.Levels, Short: coverage.Short, Empty: coverage.Empty,
 			WorstValid: coverage.WorstValid, WorstRequired: coverage.WorstRequired,
 		}
 	}

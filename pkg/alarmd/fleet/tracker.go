@@ -177,6 +177,11 @@ type queryGroupState struct {
 	// only part that separates a window that is filling from one that never
 	// will.
 	shortRounds uint32
+	// emptyRounds counts consecutive rounds whose windows held nothing at all.
+	// Separate from shortRounds because a window can be short for an hour and
+	// empty only for the last two, and those last two are the ones that say
+	// the data stopped rather than that the series churns.
+	emptyRounds uint32
 	// sawSomethingWrong records that at least one round of the current run went
 	// wrong in a way that is not merely "recovery could not be decided".
 	//
@@ -400,12 +405,17 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		} else {
 			state.shortRounds++
 		}
+		if facts := observation.HistoryCoverage; facts == nil || facts.Empty == 0 {
+			state.emptyRounds = 0
+		} else {
+			state.emptyRounds++
+		}
 		state.coverage = nil
 		if facts := observation.HistoryCoverage; facts != nil {
 			state.coverage = &HistoryCoverage{
-				Levels: facts.Levels, Short: facts.Short,
+				Levels: facts.Levels, Short: facts.Short, Empty: facts.Empty,
 				WorstValid: facts.WorstValid, WorstRequired: facts.WorstRequired,
-				ShortRounds: state.shortRounds,
+				ShortRounds: state.shortRounds, EmptyRounds: state.emptyRounds,
 			}
 		}
 	case blockedOutcome(runOutcome):
@@ -469,6 +479,7 @@ func (tracker *Tracker) resetRun(state *queryGroupState) {
 	state.causeReason = ""
 	state.coverage = nil
 	state.shortRounds = 0
+	state.emptyRounds = 0
 	state.sawSomethingWrong = false
 	state.degradedRuns = 0
 	state.blockedRuns = 0
@@ -558,8 +569,12 @@ func columnOf(state *queryGroupState) string {
 	if state.queryCooldown != nil {
 		return ColumnDemoted
 	}
+	// A starved window is not a window with nothing to decide on -- it is a
+	// series producing nothing usable, which is a question for someone. It
+	// reports the same reason as the normal case, so the reason alone cannot
+	// keep it out of the column that says "nothing to do here".
 	if !state.sawSomethingWrong && state.currentKind == KindDegradedRun &&
-		undecidableReason(state.causeReason) {
+		undecidableReason(state.causeReason) && !state.coverage.Starved() {
 		return ColumnUndecidable
 	}
 	return ColumnAnomalies

@@ -95,6 +95,11 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		anomaly("qg-window-complete", func(item *fleet.Anomaly) {
 			item.Coverage = &fleet.HistoryCoverage{Levels: 3}
 		}),
+		anomaly("qg-window-starved", func(item *fleet.Anomaly) {
+			item.Cause, item.CauseReason = "LEVEL_OUTCOME_UNKNOWN", "HISTORY_WARMING"
+			item.Coverage = &fleet.HistoryCoverage{Levels: 3, Short: 2, Empty: 2,
+				WorstRequired: 14, ShortRounds: 40, EmptyRounds: 40}
+		}),
 	}
 	fleet.Attribute(rows)
 	// The barest row the API can send: every omitempty field absent. It goes in
@@ -189,11 +194,17 @@ func windowNeverFillsCases() []map[string]any {
 		{Levels: 3, Short: 1, WorstValid: 8, WorstRequired: 9, ShortRounds: 10},
 		{Levels: 3, Short: 2, WorstValid: 2, WorstRequired: 14, ShortRounds: 40},
 		{Levels: 3, Short: 1, ShortRounds: 40},
+		// Empty windows. Without these the two copies of the rule agree on
+		// every case whatever either of them says about Empty, so the whole
+		// comparison would pass over a page that had not been updated at all.
+		{Levels: 3, Short: 1, Empty: 1, WorstRequired: 14, ShortRounds: 40, EmptyRounds: 40},
+		{Levels: 3, Short: 1, Empty: 1, WorstRequired: 14, ShortRounds: 40, EmptyRounds: 2},
+		{Levels: 3, Short: 2, Empty: 1, WorstValid: 2, WorstRequired: 14, ShortRounds: 40, EmptyRounds: 40},
 	}
 	cases := make([]map[string]any, 0, len(subjects))
 	for _, subject := range subjects {
 		cases = append(cases, map[string]any{
-			"coverage": subject, "persistent": subject.Persistent(),
+			"coverage": subject, "persistent": subject.Persistent(), "starved": subject.Starved(),
 		})
 	}
 	return cases
@@ -278,13 +289,22 @@ if (cases.length === 0) {
 } else {
   let disagreed = 0;
   for (const c of cases) {
-    let page;
-    try { page = ctx.windowNeverFills(c.coverage); }
-    catch (e) { console.error('windowNeverFills threw: ' + e.message); failed++; break; }
+    let page, starved;
+    try { page = ctx.windowNeverFills(c.coverage); starved = ctx.windowIsStarved(c.coverage); }
+    catch (e) { console.error('rule threw: ' + e.message); failed++; break; }
     if (!!page !== !!c.persistent) {
       disagreed++;
       console.error('windowNeverFills disagrees with Persistent on ' + JSON.stringify(c.coverage) +
         ': page ' + !!page + ', Go ' + !!c.persistent);
+    }
+    if (!!starved !== !!c.starved) {
+      disagreed++;
+      console.error('windowIsStarved disagrees with Starved on ' + JSON.stringify(c.coverage) +
+        ': page ' + !!starved + ', Go ' + !!c.starved);
+    }
+    if (page && starved) {
+      disagreed++;
+      console.error('a window is reported as both never-filling and starved: ' + JSON.stringify(c.coverage));
     }
   }
   if (disagreed) { failed++; }

@@ -213,6 +213,10 @@ type HistoryCoverage struct {
 	// windows were summarised, and how many held fewer points than required.
 	Levels uint32 `json:"levels"`
 	Short  uint32 `json:"short"`
+	// Empty is how many of the short windows held no valid position at all.
+	// It is the difference between "not alive long enough yet" and "nothing is
+	// arriving", which report the same reason and need opposite responses.
+	Empty uint32 `json:"empty"`
 	// WorstValid and WorstRequired are one window's pair -- the worst one --
 	// never a minimum of one field beside a maximum of the other.
 	WorstValid    uint32 `json:"worst_valid"`
@@ -224,6 +228,30 @@ type HistoryCoverage struct {
 	// tell a filling window from a permanently short one; both are short. Only
 	// the sequence separates them, and a filling window converges.
 	ShortRounds uint32 `json:"short_rounds"`
+	// EmptyRounds is the same count for windows holding nothing at all. It is
+	// tracked separately rather than inferred from ShortRounds: a window can
+	// be short for an hour and empty only for the last two rounds, and those
+	// last two are the ones that mean the data stopped.
+	EmptyRounds uint32 `json:"empty_rounds"`
+}
+
+// Starved reports a window that has held no points at all for longer than
+// filling it could take.
+//
+// This is not a strategy whose series churn. The newest position in a window
+// is the record currently being evaluated, so it is valid unless detection
+// returned UNAVAILABLE or ERROR for that Level -- a window with nothing in it
+// means records are arriving and producing nothing this Level can use, or
+// nothing is arriving at all.
+//
+// It is the terminal state of a series whose data stopped. As the last real
+// point slides out, the verdict runs FULL, then GAPPED for as many rounds as
+// the window is wide, then WARMING for ever. Both ends of that sequence report
+// HISTORY_WARMING, and without this the second one would be filed as a
+// strategy working exactly as configured.
+func (coverage *HistoryCoverage) Starved() bool {
+	return coverage != nil && coverage.Empty > 0 && coverage.WorstRequired > 0 &&
+		coverage.EmptyRounds > coverage.WorstRequired
 }
 
 // Persistent reports a window that has stayed short for longer than filling it
@@ -240,8 +268,13 @@ type HistoryCoverage struct {
 // needs to -- the error is towards calling a stuck object "still filling",
 // which is the direction that does not make a false accusation.
 func (coverage *HistoryCoverage) Persistent() bool {
+	// Empty windows are excluded and are not a milder case of this. A window
+	// with some points is a series being read that has not lived long enough;
+	// a window with none is a series producing nothing usable, which is what a
+	// dead metric looks like from here. Folding the second into the first put
+	// "working as designed, nothing to do" on a metric that had stopped.
 	return coverage != nil && coverage.Short > 0 && coverage.WorstRequired > 0 &&
-		coverage.ShortRounds > coverage.WorstRequired
+		coverage.Empty == 0 && coverage.ShortRounds > coverage.WorstRequired
 }
 
 // Anomaly is one object that is not making progress as expected.

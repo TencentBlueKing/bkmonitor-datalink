@@ -429,8 +429,12 @@ func coverageCompletion(queryGroup string, levels, short, valid, required uint32
 	observation := completion(queryGroup, "COMPLETED_WITH_UNAVAILABLE", "8930")
 	observation.ProgressCompletionCause = "LEVEL_OUTCOME_UNKNOWN"
 	observation.ProgressCompletionReason = "HISTORY_WARMING"
+	empty := uint32(0)
+	if valid == 0 && short > 0 {
+		empty = short
+	}
 	observation.HistoryCoverage = &observability.HistoryCoverageFacts{
-		Levels: levels, Short: short, WorstValid: valid, WorstRequired: required,
+		Levels: levels, Short: short, Empty: empty, WorstValid: valid, WorstRequired: required,
 	}
 	return observation
 }
@@ -644,5 +648,89 @@ func TestABlockedRunIsNotMistakenForAWindowWithNothingToDecide(t *testing.T) {
 	}
 	if got := tracker.Anomalies(); len(got) != 1 {
 		t.Fatalf("anomalies = %+v, want the object still counted against the deployment", got)
+	}
+}
+
+// A window holding nothing at all is not the normal condition. It is where a
+// series whose data stopped ends up -- FULL, then GAPPED while the last real
+// point is in the window, then WARMING for ever once it slides out -- and both
+// ends of that report HISTORY_WARMING. Filed with the churning strategies it
+// would read as "working as designed", on a metric that had died.
+func TestAWindowHoldingNothingIsNotTheNormalCondition(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	// Long enough to pass the threshold: more rounds than the window is wide.
+	for round := 0; round < 20; round++ {
+		tracker.Observe(context.Background(), coverageCompletion("qg-starved", 3, 1, 0, 14))
+	}
+	if got := tracker.Undecidable(); len(got) != 0 {
+		t.Fatalf("undecidable = %+v, want none: a window with no points at all is not a strategy "+
+			"whose series churn, it is one producing nothing usable", got)
+	}
+	anomalies := tracker.Anomalies()
+	if len(anomalies) != 1 || anomalies[0].Coverage == nil {
+		t.Fatalf("anomalies = %+v, want the starved object listed with its coverage", anomalies)
+	}
+	coverage := anomalies[0].Coverage
+	if !coverage.Starved() {
+		t.Errorf("coverage = %+v, want Starved()", *coverage)
+	}
+	if coverage.Persistent() {
+		t.Errorf("coverage = %+v, want not Persistent(): the two are different situations and an "+
+			"object must not be described as both", *coverage)
+	}
+}
+
+// The two run lengths are counted apart. A window can be short for an hour and
+// empty only for the last couple of rounds, and those last two are the ones
+// that say the data stopped rather than that the series churns.
+func TestEmptyRoundsAreCountedApartFromShortRounds(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	for round := 0; round < 20; round++ {
+		tracker.Observe(context.Background(), coverageCompletion("qg-mixed", 3, 1, 2, 14))
+	}
+	listed := tracker.Undecidable()
+	if len(listed) != 1 || listed[0].Coverage == nil {
+		t.Fatalf("undecidable = %+v, want the churning object", listed)
+	}
+	if got := listed[0].Coverage.EmptyRounds; got != 0 {
+		t.Fatalf("empty rounds = %d on windows that held points, want 0", got)
+	}
+	// Now the data stops. Short rounds keep climbing; empty rounds start.
+	tracker.Observe(context.Background(), coverageCompletion("qg-mixed", 3, 1, 0, 14))
+	tracker.Observe(context.Background(), coverageCompletion("qg-mixed", 3, 1, 0, 14))
+	found := append(tracker.Undecidable(), tracker.Anomalies()...)
+	if len(found) != 1 || found[0].Coverage == nil {
+		t.Fatalf("object listed %d times, want exactly one column", len(found))
+	}
+	coverage := found[0].Coverage
+	if coverage.ShortRounds != 22 {
+		t.Errorf("short rounds = %d, want 22: the short run did not break", coverage.ShortRounds)
+	}
+	if coverage.EmptyRounds != 2 {
+		t.Errorf("empty rounds = %d, want 2: only the rounds since the data stopped", coverage.EmptyRounds)
+	}
+	// Two empty rounds against a fourteen-point window is not yet enough to
+	// call it starved -- the threshold is the window's own requirement, the
+	// same rule the churning case uses.
+	if coverage.Starved() {
+		t.Errorf("coverage = %+v, want not yet Starved() after only 2 empty rounds", *coverage)
+	}
+
+	// And a round that holds points again ends the empty run. Without this one
+	// bad round would condemn an object for the life of the process, and the
+	// count would only ever rise -- which is the same defect as a short run
+	// that never ends, in the column that says someone has to look.
+	tracker.Observe(context.Background(), coverageCompletion("qg-mixed", 3, 1, 2, 14))
+	found = append(tracker.Undecidable(), tracker.Anomalies()...)
+	if len(found) != 1 || found[0].Coverage == nil {
+		t.Fatalf("object listed %d times, want exactly one column", len(found))
+	}
+	if got := found[0].Coverage.EmptyRounds; got != 0 {
+		t.Fatalf("empty rounds = %d after a round that held points, want the run ended", got)
+	}
+	if got := found[0].Coverage.ShortRounds; got != 23 {
+		t.Fatalf("short rounds = %d, want 23: the short run is still unbroken", got)
 	}
 }

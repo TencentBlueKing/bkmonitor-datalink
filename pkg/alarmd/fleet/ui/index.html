@@ -2213,7 +2213,21 @@ function missingCauseText(anomaly) {
 // shape this whole page exists to stop producing.
 function windowNeverFills(windowCoverage) {
   return !!windowCoverage && windowCoverage.short > 0 && windowCoverage.worst_required > 0 &&
+         windowCoverage.empty === 0 &&
          windowCoverage.short_rounds > windowCoverage.worst_required;
+}
+
+// A window holding nothing at all, for longer than filling it could take.
+//
+// Not a milder version of the above and not a normal condition. The newest
+// position in a window is the record being evaluated right now, so an empty
+// window means records are producing nothing this level can use, or nothing is
+// arriving. It is also where a series whose data stopped ends up: FULL, then
+// GAPPED while the last real point is still in the window, then WARMING for
+// ever once it slides out. Both ends report HISTORY_WARMING.
+function windowIsStarved(windowCoverage) {
+  return !!windowCoverage && windowCoverage.empty > 0 && windowCoverage.worst_required > 0 &&
+         windowCoverage.empty_rounds > windowCoverage.worst_required;
 }
 
 function coverageNote(anomaly) {
@@ -2227,6 +2241,19 @@ function coverageNote(anomaly) {
               + ' 个窗口都取满了所需点数，这一条的成因不在数据覆盖上'};
   }
   var got = windowCoverage.worst_valid + '/' + windowCoverage.worst_required;
+  if (windowIsStarved(windowCoverage)) {
+    return {
+      settled: false,
+      text: '取不到数据：窗口里一个点都没有，已连续 ' + windowCoverage.empty_rounds + ' 轮',
+      title: '窗口需要 ' + windowCoverage.worst_required + ' 个点，实际一个都没取到，而且已经连续 '
+        + windowCoverage.empty_rounds + ' 轮如此。\n\n'
+        + '窗口里最新的那个位置就是当前正在判定的这条记录，所以它本该是有效的——除非这一轮检测对该级别'
+        + '返回了 UNAVAILABLE 或 ERROR，或者根本没有数据到达。\n\n'
+        + '这也是一条序列数据停掉之后的终点：先是完整，然后在最后一个点还留在窗口里的那几轮判 GAPPED，'
+        + '等它滑出窗口就永远是这个状态。两头报的都是 HISTORY_WARMING。\n\n'
+        + '这一条不是"策略配置如此"，需要查：指标是不是没了、值是不是取不出来、采集是不是断了。'
+    };
+  }
   if (!windowNeverFills(windowCoverage)) {
     return {
       settled: false,
@@ -2243,6 +2270,7 @@ function coverageNote(anomaly) {
       + windowCoverage.worst_valid + ' 个，而且已经这样连续 ' + windowCoverage.short_rounds
       + ' 轮——超过了填满它所需的 ' + windowCoverage.worst_required
       + ' 轮，说明点不是"还没来"，是不会来。\n\n'
+      + '（窗口里是有点的，只是攒不够连续的——一个点都没有是另一回事，那一类会单独标"取不到数据"。）\n\n'
       + '常见原因是策略的聚合维度里有会不断变化的东西（网卡、pod 名、容器名、任务名）：'
       + '每个序列只活几分钟，短于窗口跨度，物理上凑不出连续点。\n\n'
       + '这不是 alarmd 的容量或架构问题，扩容改不了。异常仍然报得出来（异常判定在完整性闸门之前），'

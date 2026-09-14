@@ -368,3 +368,72 @@ func TestWindowSummaryReportsWhatItJudgedTheCountAgainst(t *testing.T) {
 		t.Fatalf("required positions = %d with a defaulted requirement, want %d", got, required)
 	}
 }
+
+// A series whose data stops does not stay GAPPED. It runs FULL, then GAPPED
+// while its last real point is still inside the window, then WARMING for ever
+// once that point slides out -- because with no valid position at all, every
+// missing one counts as missing before the first, which is the WARMING arm.
+//
+// This is why a short window cannot be read as "the series has not lived long
+// enough": it is also where a dead series ends up, and the two report the same
+// verdict for ever. The count of empty windows is what separates them, and
+// this test is the evidence that the second case exists at all.
+func TestASeriesWhoseDataStopsEndsUpWarmingNotGapped(t *testing.T) {
+	const required = 5
+	const interval = time.Minute
+	fingerprint := strings.Repeat("d", 64)
+	requirement := NewLevelRequirement(
+		execution.StateRetentionRequirement{LevelID: 1, RetentionPoints: required, EvaluationInterval: interval},
+		fingerprint, required,
+	)
+	window, err := NewWindow([]LevelRequirement{requirement})
+	if err != nil {
+		t.Fatalf("NewWindow() error = %v", err)
+	}
+	const base = int64(1_700_000_000)
+	step := int64(interval / time.Second)
+	points := make([]StatePoint, required)
+	for index := range points {
+		points[index] = StatePoint{
+			RecordID:   fmt.Sprintf("%064d", index),
+			SourceTime: base + int64(index)*step,
+			Levels:     []PointLevelFact{{LevelID: 1, DetectFingerprint: fingerprint, Result: LevelFactNormal}},
+		}
+	}
+	if _, err = window.Apply(points); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	view, ok := window.History(1)
+	if !ok {
+		t.Fatal("Level history is missing")
+	}
+	last := base + int64(required-1)*step
+
+	if got := view.Summarize(last, required).Completeness; got != HistoryFull {
+		t.Fatalf("completeness at the last point = %q, want FULL", got)
+	}
+	// While the last real point is still inside the window.
+	for silent := int64(1); silent < required; silent++ {
+		summary := view.Summarize(last+silent*step, required)
+		if summary.Completeness != HistoryGapped {
+			t.Errorf("%d minutes of silence: completeness = %q, want GAPPED while the last point "+
+				"is still in the window", silent, summary.Completeness)
+		}
+		if summary.ValidPositions == 0 {
+			t.Errorf("%d minutes of silence: valid positions = 0 while still GAPPED", silent)
+		}
+	}
+	// And once it has slid out.
+	for silent := int64(required); silent <= required+2; silent++ {
+		summary := view.Summarize(last+silent*step, required)
+		if summary.Completeness != HistoryWarming {
+			t.Errorf("%d minutes of silence: completeness = %q, want WARMING once the last point "+
+				"has left the window", silent, summary.Completeness)
+		}
+		if summary.ValidPositions != 0 {
+			t.Errorf("%d minutes of silence: valid positions = %d, want 0 -- that zero is the only "+
+				"thing separating this from a series that has not lived long enough",
+				silent, summary.ValidPositions)
+		}
+	}
+}

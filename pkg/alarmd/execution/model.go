@@ -1506,6 +1506,22 @@ type HistoryCoverage struct {
 	// reported.
 	WorstValid    uint32
 	WorstRequired uint32
+	// Empty is how many of the short windows held no valid position at all.
+	//
+	// It is counted apart from Short because zero is not a small number here,
+	// it is a different situation. A window with some points is a series that
+	// is being read and has not been alive long enough; a window with none is
+	// a series whose current record produced nothing this Level could use --
+	// the newest position is always the record being evaluated, so it is valid
+	// unless detection returned UNAVAILABLE or ERROR for that Level.
+	//
+	// Kept because both report HISTORY_WARMING and the second is the terminal
+	// state of a series whose data stopped: as the last real point slides out
+	// of the window the verdict goes FULL, GAPPED for as many rounds as the
+	// window is wide, then WARMING for ever. Without this count that ending
+	// is indistinguishable from a series that simply churns, and the page
+	// would describe a dead metric as working as designed.
+	Empty uint32
 }
 
 // Observe folds one Level summary in. Zero required points means the window
@@ -1520,6 +1536,9 @@ func (coverage *HistoryCoverage) Observe(validPositions, requiredPositions uint3
 		return
 	}
 	coverage.Short++
+	if validPositions == 0 {
+		coverage.Empty++
+	}
 	if requiredPositions-validPositions > coverage.WorstRequired-coverage.WorstValid {
 		coverage.WorstValid, coverage.WorstRequired = validPositions, requiredPositions
 	}
@@ -1532,6 +1551,7 @@ func (coverage *HistoryCoverage) Merge(other HistoryCoverage) {
 	}
 	coverage.Levels += other.Levels
 	coverage.Short += other.Short
+	coverage.Empty += other.Empty
 	if other.Short > 0 && other.WorstRequired-other.WorstValid > coverage.WorstRequired-coverage.WorstValid {
 		coverage.WorstValid, coverage.WorstRequired = other.WorstValid, other.WorstRequired
 	}

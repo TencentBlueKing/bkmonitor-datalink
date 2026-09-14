@@ -572,7 +572,18 @@ func TestTheSettledNeverFillingWindowsAreCountedWithoutLeavingExternal(t *testin
 	// An external object with no coverage at all must not be swept in. It is
 	// external for a different reason and has not been answered.
 	timedOut := Anomaly{QueryGroup: "qg-timeout", Kind: KindDegradedRun, CauseReason: "QUERY_TIMEOUT"}
-	anomalies := []Anomaly{filling, never, timedOut}
+	// The case a live deployment actually showed. Coverage is reported for
+	// every object, so a GAPPED object whose windows have been short for a
+	// while satisfies Persistent() exactly as a churning one does. Counting it
+	// told the reader "this series does not live long enough to fill its
+	// window" about data that arrived and then had holes -- a different
+	// situation, a different fix, and one that sends them nowhere.
+	//
+	// Seven were counted on that page while only two carried the reason.
+	gapped := Anomaly{QueryGroup: "qg-gapped", Kind: KindDegradedRun,
+		CauseReason: "HISTORY_GAPPED",
+		Coverage:    &HistoryCoverage{Levels: 2, Short: 1, WorstValid: 3, WorstRequired: 9, ShortRounds: 40}}
+	anomalies := []Anomaly{filling, never, timedOut, gapped}
 	Attribute(anomalies)
 	for _, anomaly := range anomalies {
 		if anomaly.Attribution != AttributionExternal {
@@ -581,16 +592,21 @@ func TestTheSettledNeverFillingWindowsAreCountedWithoutLeavingExternal(t *testin
 		}
 	}
 	summary := summarize(anomalies, now)
-	if summary.External != 3 {
-		t.Errorf("external = %d, want all 3: the settled ones are a subset, not a fourth column",
+	if summary.External != 4 {
+		t.Errorf("external = %d, want all 4: the settled ones are a subset, not a fourth column",
 			summary.External)
+	}
+	if !gapped.Coverage.Persistent() {
+		t.Fatal("the GAPPED fixture no longer satisfies Persistent(), so this test no longer " +
+			"checks that the reason is what keeps it out of the count")
 	}
 	if summary.Ours != 0 {
 		t.Errorf("ours = %d, want 0: a strategy whose series churn is not a capacity or design fault",
 			summary.Ours)
 	}
 	if summary.WindowNeverFills != 1 {
-		t.Errorf("window_never_fills = %d, want exactly the one that has been short for longer "+
-			"than filling it could take", summary.WindowNeverFills)
+		t.Errorf("window_never_fills = %d, want exactly the one that both carries the reason and "+
+			"has been short for longer than filling it could take -- the GAPPED object satisfies "+
+			"the counts and must not be described by this wording", summary.WindowNeverFills)
 	}
 }

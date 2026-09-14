@@ -29,6 +29,13 @@ type HistoryCoverageFacts struct {
 	// first is how a stalled run comes to look healthy.
 	Levels uint32 `json:"levels"`
 	Short  uint32 `json:"short"`
+	// Empty is how many of those held no valid position at all. Separate from
+	// Short because zero points and few points are different situations that
+	// report the same reason: few points is a series not yet old enough, no
+	// points is a series whose record produced nothing usable -- which is what
+	// a series whose data has stopped looks like once its last real point has
+	// slid out of the window.
+	Empty uint32 `json:"empty"`
 	// WorstValid and WorstRequired are the pair belonging to the single worst
 	// window -- the one with the largest shortfall -- and never a minimum over
 	// one field beside a maximum over the other. Combined independently they
@@ -58,11 +65,17 @@ func normalizeHistoryCoverageFacts(facts *HistoryCoverageFacts) *HistoryCoverage
 	// so the pair is not describing one run and nothing derived from it can be
 	// trusted. Clamping would keep a plausible-looking number; dropping the
 	// facts leaves the absence visible.
-	if copied.Levels == 0 || copied.Short > copied.Levels {
+	if copied.Levels == 0 || copied.Short > copied.Levels || copied.Empty > copied.Short {
 		return nil
 	}
 	if copied.Short == 0 {
-		copied.WorstValid, copied.WorstRequired = 0, 0
+		copied.WorstValid, copied.WorstRequired, copied.Empty = 0, 0, 0
+	}
+	// An empty window is one whose worst valid count is zero by construction.
+	// A pair saying otherwise did not come from counting the same windows, so
+	// the count is not describing this run.
+	if copied.Empty > 0 && copied.WorstValid != 0 {
+		return nil
 	}
 	if copied.WorstValid >= copied.WorstRequired {
 		// Nothing was actually short in the pair, whatever Short says. Keeping

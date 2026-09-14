@@ -322,7 +322,16 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 			// A subset of External, never a fourth column. It is external for
 			// the same reason the rest are; what it adds is that this one has
 			// stopped being a question.
-			if anomaly.Coverage.Persistent() {
+			//
+			// Gated on the reason as well as the counts. Persistent() reads
+			// coverage alone, and coverage is reported for every object -- so
+			// without this the count claimed any object whose windows had been
+			// short for a while, and on a live deployment it claimed seven
+			// while only two carried the reason it names. The other five were
+			// HISTORY_GAPPED: data that arrived and then had holes, told back
+			// to the reader as "this series does not live long enough to fill
+			// its window", which is a different thing and sends them nowhere.
+			if undecidableReason(anomaly.CauseReason) && anomaly.Coverage.Persistent() {
 				neverFills++
 			}
 		case AttributionUnknown:

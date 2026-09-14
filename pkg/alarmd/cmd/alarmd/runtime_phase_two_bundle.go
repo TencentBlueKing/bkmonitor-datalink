@@ -931,23 +931,56 @@ func phaseTwoSnapshotMinimumRetention(cfg config.Config, queryDeadlineOffset tim
 		cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration() + phaseTwoPostRecoveryTerminalDelay(cfg)
 }
 
+// phaseTwoCatalogRetentionValidator refuses a Catalog the deployment cannot
+// keep long enough to serve the recovery contract. It refuses on two
+// unrelated conditions, and it used to report both with the same sentence.
+//
+// That sentence is what a refused round leaves behind: the round publishes
+// nothing, the deployment keeps the last good Catalog, and the only account
+// of why is this text. One of the conditions is a single strategy whose
+// completion offset does not clear the downstream reserve; the other is the
+// deployment's own Catalog TTL being shorter than the retention its longest
+// plan needs. They are fixed by different people in different places, and
+// telling them apart from the outside was not possible.
+//
+// So each refusal now says which condition, with the numbers that decided
+// it and, for the per-plan one, which plan. It still wraps
+// ErrSnapshotRetentionInsufficient, which is what the callers match on.
 func phaseTwoCatalogRetentionValidator(cfg config.Config) func(controlplane.Catalog) error {
 	return func(catalog controlplane.Catalog) error {
+		reserve := cfg.PhaseTwo.Access.DownstreamExecutionReserve.Duration()
 		var maximumOffset time.Duration
+		var maximumPlan execution.PlanIdentity
 		for _, group := range catalog.QueryGroups {
 			for _, plan := range group.Plans {
-				offset := time.Duration(plan.ScheduleSpec.CompletionOffsetSeconds())*time.Second -
-					cfg.PhaseTwo.Access.DownstreamExecutionReserve.Duration()
+				completion := time.Duration(plan.ScheduleSpec.CompletionOffsetSeconds()) * time.Second
+				offset := completion - reserve
 				if offset <= 0 {
-					return scheduler.ErrSnapshotRetentionInsufficient
+					// One plan, and the Catalog is refused for every
+					// strategy in it. Naming the plan is the difference
+					// between changing one strategy and searching for it.
+					return fmt.Errorf("%w: the plan of strategy %s in business %s completes %s after its "+
+						"Evaluation Time, which does not clear the %s downstream execution reserve",
+						scheduler.ErrSnapshotRetentionInsufficient, plan.Identity.StrategyID,
+						plan.Identity.BusinessID, completion, reserve)
 				}
 				if offset > maximumOffset {
-					maximumOffset = offset
+					maximumOffset, maximumPlan = offset, plan.Identity
 				}
 			}
 		}
-		if cfg.PhaseTwo.Control.CatalogTTL.Duration() < phaseTwoSnapshotMinimumRetention(cfg, maximumOffset) {
-			return scheduler.ErrSnapshotRetentionInsufficient
+		required := phaseTwoSnapshotMinimumRetention(cfg, maximumOffset)
+		if cfg.PhaseTwo.Control.CatalogTTL.Duration() < required {
+			// The deployment's own setting, not any one strategy: the
+			// longest plan in the Catalog decides how long a Snapshot has
+			// to be kept, and the configured TTL is shorter than that.
+			return fmt.Errorf("%w: Catalog TTL %s is shorter than the %s this Catalog needs "+
+				"(publication delay allowance %s + %s past the Evaluation Time, from the plan of strategy %s "+
+				"in business %s + max replay age %s + post-recovery terminal delay %s)",
+				scheduler.ErrSnapshotRetentionInsufficient, cfg.PhaseTwo.Control.CatalogTTL.Duration(), required,
+				phaseTwoPublicationDelayAllowance(cfg), maximumOffset, maximumPlan.StrategyID,
+				maximumPlan.BusinessID, cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration(),
+				phaseTwoPostRecoveryTerminalDelay(cfg))
 		}
 		return nil
 	}

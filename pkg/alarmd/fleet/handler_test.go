@@ -594,3 +594,63 @@ func topOf(field any) []any {
 	top, _ := group["top"].([]any)
 	return top
 }
+
+// The verdict panel has to carry the numbers the verdict is decided on.
+//
+// A live deployment read UNKNOWN with every number on that panel at zero: no
+// coverage gaps, unknown-state zero, and all five columns adding up to the
+// expected total. The verdict was UNKNOWN because some anomalies carried no
+// cause -- a per-object hole, decided by a count that had no field on this
+// response at all. There was nothing on the page a reader could use to reach
+// the right conclusion, or to tell the page was not simply wrong.
+func TestHealthEndpointCarriesTheNumbersItsVerdictIsDecidedOn(t *testing.T) {
+	// Two objects that went wrong, one of which was restored without its
+	// cause. That one, and nothing else, makes the verdict UNKNOWN.
+	restored := anomaly("qg-restored")
+	restored.Kind = KindDegradedRun
+	restored.SinceFrom = SinceRestoredLastFull
+	external := anomaly("qg-external")
+	external.Kind = KindDegradedRun
+	external.CauseReason = "QUERY_TIMEOUT"
+
+	snapshots := healthySnapshots()
+	snapshots[1].Anomalies = []Anomaly{restored, external}
+	snapshots[1].TotalAnomalies = 2
+
+	service := mustService(t,
+		stubExpectations{expectation: Expectation{QueryGroups: 949, Known: true}},
+		stubRegistry{replicas: replicas()},
+		stubSnapshots{snapshots: snapshots},
+	)
+	handler, err := NewHandler(service, nil, func() time.Time { return now }, 0, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, body := get(t, handler, "/api/health")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d", status)
+	}
+	if body["health"] != string(HealthUnknown) {
+		t.Fatalf("health = %v, want UNKNOWN: one anomaly carries no cause", body["health"])
+	}
+	if gaps, _ := body["gaps"].([]any); len(gaps) != 0 {
+		t.Fatalf("gaps = %v, want none -- this test is about the other way into UNKNOWN, and with "+
+			"a gap present it would pass without checking it", gaps)
+	}
+	if body["unknown"].(float64) != 0 {
+		t.Fatalf("unknown = %v, want 0: the state column is a different question and a reader who "+
+			"sees it non-zero has an explanation already", body["unknown"])
+	}
+	value, sent := body["unattributed"]
+	if !sent {
+		t.Fatal("the health response does not carry unattributed: the verdict is decided on it, " +
+			"and with every other number at zero the page can say nothing about why")
+	}
+	if value.(float64) != 1 {
+		t.Fatalf("unattributed = %v, want the one object whose cause was not recorded", value)
+	}
+	if body["ours"].(float64) != 0 {
+		t.Fatalf("ours = %v, want 0 -- that is what makes the verdict UNKNOWN rather than DEGRADED",
+			body["ours"])
+	}
+}

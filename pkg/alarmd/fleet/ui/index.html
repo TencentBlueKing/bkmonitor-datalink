@@ -144,6 +144,11 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
         <div class="k" id="undecidableHint">检测窗口没攒够点，恢复无从判起——正常现象，不是故障</div></div>
       <div class="cell hl"><div class="k">状态未知</div><div class="v" id="unknown">–</div>
         <div class="k">没人能替它说话，不算正常</div></div>
+      <div class="cell hl" id="unattributedCell" hidden>
+        <div class="k">成因没保留</div>
+        <div class="v" id="unattributed">–</div>
+        <div class="k" id="unattributedHint"></div>
+      </div>
       <div class="cell hl" id="overdueCell" hidden>
         <div class="k">没被调度 (overdue)</div>
         <div class="v" id="overdue">–</div>
@@ -483,6 +488,21 @@ function renderDeployment(deployment) {
     text('ownBad', deployment.anomalies_total);
     text('demoted', deployment.demoted_total);
     text('undecidable', deployment.undecidable_total || 0);
+    // The number the verdict is actually decided on when there are no coverage
+    // gaps, and it had no field on this response at all. A deployment reading
+    // UNKNOWN with every other number at zero gave a reader nothing to go on.
+    //
+    // Not part of the column arithmetic below: these objects are already
+    // counted in "没归到后端". This says how many of that column cannot yet be
+    // said to be anyone's, which is a different question from how many exist.
+    var unattributed = deployment.unattributed || 0;
+    show('unattributedCell', !!unattributed);
+    if (unattributed) {
+      text('unattributed', unattributed);
+      text('unattributedHint', '重启后从记录里恢复的：记录留了"这一轮没跑成"，没留为什么。'
+        + '所以还说不清是不是 alarmd 自己的问题，判定停在 UNKNOWN。'
+        + '每个对象再跑完一轮就重新有成因，会自己清');
+    }
     // The equation is printed with its own arithmetic rather than asserted in
     // prose. A reader who can only be told the columns partition the objects has
     // no way to notice the day they stop doing so.
@@ -573,9 +593,23 @@ function renderDeployment(deployment) {
       }
     }
     var gaps = deployment.gaps || [];
+    // UNKNOWN has two ways in and the wording used to describe only one.
+    //
+    // The first is a coverage gap, and the footer under this panel explains
+    // that one. The second is an object whose cause was never recorded -- a
+    // per-object hole rather than a per-replica one, and it decides the
+    // verdict exactly the same way. A live deployment read UNKNOWN with no
+    // gaps, unknown-state zero and every column adding up, and this line told
+    // the reader "证据齐全" underneath it: the page asserting the opposite of
+    // its own badge, with nothing on it that could settle the argument.
     text('why', gaps.length
       ? '证据不全：' + (GAP_MEANING[gaps[0].kind] || gaps[0].kind) +
         (gaps.length > 1 ? '，另有 ' + (gaps.length - 1) + ' 项' : '')
+      : (h === 'UNKNOWN' && unattributed
+          ? '证据不全：有 ' + unattributed + ' 个对象没留下成因（重启后从记录里恢复的，'
+            + '记录只保留了结果不保留原因），所以说不清它们是不是 alarmd 自己的问题。'
+            + '这不是覆盖缺口——上面的"状态未知"是另一回事，那一栏数的是没人能替它说话的对象。'
+            + '这类会自己清：每个对象再跑完一轮就重新有成因了'
       // The verdict follows only the objects capacity or design could have
       // prevented, so the wording has to say that -- otherwise HEALTHY beside a
       // list of ninety-nine objects reads as the page contradicting itself.
@@ -583,7 +617,7 @@ function renderDeployment(deployment) {
           ? '证据齐全，存在 alarmd 自己该负责的异常（容量或架构）'
           : (deployment.anomalies_total > 0
               ? '证据齐全，alarmd 自己没有异常；列表里那些是数据源/策略配置的问题，要另外的人处理'
-              : '证据齐全，无异常对象')));
+              : '证据齐全，无异常对象'))));
     var ul = document.getElementById('gaps');
     ul.textContent = '';
     gaps.forEach(function (g) {
@@ -2252,6 +2286,38 @@ function coverageNote(anomaly) {
         + '这也是一条序列数据停掉之后的终点：先是完整，然后在最后一个点还留在窗口里的那几轮判 GAPPED，'
         + '等它滑出窗口就永远是这个状态。两头报的都是 HISTORY_WARMING。\n\n'
         + '这一条不是"策略配置如此"，需要查：指标是不是没了、值是不是取不出来、采集是不是断了。'
+    };
+  }
+  // A gapped window is a different statement from a short one and the counts
+  // alone cannot tell them apart, because coverage is reported for every
+  // object whatever its reason. A live page put "窗口永远填不满" -- the wording
+  // for a series that does not live long enough -- on a HISTORY_GAPPED row,
+  // which is data that arrived and then had holes. Different situation,
+  // different fix, and the reader is sent nowhere.
+  if (anomaly.cause_reason === 'HISTORY_GAPPED') {
+    // How long it has been gapped is decisive, and nothing else here is.
+    //
+    // A series whose data stops can only hold GAPPED while its last real point
+    // is still inside the window -- fewer rounds than the window is wide, then
+    // it turns WARMING for ever. So a gap sustained past that is not a series
+    // that stopped: it is data still arriving, with holes in it.
+    var intermittent = windowCoverage.short_rounds > windowCoverage.worst_required;
+    return {
+      settled: false,
+      text: (intermittent ? '数据断断续续：' : '数据刚断：') + '最差 ' + got + ' 点，已连续 '
+        + windowCoverage.short_rounds + ' 轮',
+      title: intermittent
+        ? '窗口里有点，但点和点之间有洞，而且已经这样连续 ' + windowCoverage.short_rounds
+          + ' 轮——超过了窗口本身的宽度 ' + windowCoverage.worst_required + ' 轮。\n\n'
+          + '这一点是判定性的：一条数据停掉的序列只能在最后一个点还留在窗口里的那几轮报 GAPPED，'
+          + '之后就转成 HISTORY_WARMING 了。撑过窗口宽度还在 GAPPED，说明数据一直在来，只是有洞。\n\n'
+          + '要查的是采集侧为什么间歇性丢点：抓取超时、目标 flapping、上游写入被拒。'
+          + '不是"序列活得太短"——那是另一类，标的是"窗口永远填不满"。'
+        : '窗口里有点，但点和点之间有洞。还没撑过窗口宽度 ' + windowCoverage.worst_required
+          + ' 轮，所以现在还分不出是两种里的哪一种：\n\n'
+          + '一是数据刚停，那么再过几轮最后一个点滑出窗口，这里会转成 HISTORY_WARMING；\n'
+          + '二是数据还在来只是有洞，那么它会一直停在 GAPPED。\n\n'
+          + '再看几轮就知道了。'
     };
   }
   if (!windowNeverFills(windowCoverage)) {

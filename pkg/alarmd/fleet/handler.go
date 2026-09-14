@@ -114,6 +114,21 @@ type HealthResponse struct {
 	// the anomaly count -- and therefore reported here, because a column that
 	// makes the anomaly count smaller has to be visible next to it.
 	UndecidableTotal int `json:"undecidable_total"`
+	// Ours and Unattributed are the two numbers the verdict is actually
+	// decided on, and they were not on this response at all.
+	//
+	// A live deployment read UNKNOWN with every number on the verdict panel at
+	// zero -- no coverage gaps, unknown-state zero, all five columns adding up
+	// to the expected total -- and nothing on the page could say why. The
+	// verdict was UNKNOWN because some anomalies carried no cause, which is a
+	// different "unknown" from the state column beside it and had no field of
+	// its own. A reader could reach no conclusion except that the page was
+	// wrong.
+	//
+	// They come from the same settled view as Health, so the number and the
+	// verdict cannot be from different reads.
+	Ours         int `json:"ours"`
+	Unattributed int `json:"unattributed"`
 	// DemotedDue and the three flow counts are the check on demotion, which is
 	// the one mechanism here that makes a deployment look better by removing
 	// objects from the denominator.
@@ -572,6 +587,8 @@ func NewHandler(
 			Determined: view.Determined, Unknown: view.Unknown, Healthy: view.Healthy,
 			AnomaliesTotal: view.AnomaliesTotal, DemotedTotal: view.DemotedTotal,
 			UndecidableTotal: view.UndecidableTotal,
+			Ours:             OursCount(view.Anomalies),
+			Unattributed:     UnattributedCount(view.Anomalies),
 			DemotedDue:       view.DemotedDue, DemotionEntries: view.DemotionEntries,
 			DemotionExtensions: view.DemotionExtensions, DemotionExits: view.DemotionExits,
 			LastDemotionExit: view.LastDemotionExit,

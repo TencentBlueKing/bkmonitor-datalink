@@ -95,6 +95,20 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		anomaly("qg-window-complete", func(item *fleet.Anomaly) {
 			item.Coverage = &fleet.HistoryCoverage{Levels: 3}
 		}),
+		// The two rows a live page showed side by side. The GAPPED one carried
+		// the churning-series wording because the row note read coverage and
+		// never the reason -- the same defect as the summary count, in a
+		// second place, and this fixture is what executes it.
+		anomaly("qg-gapped-intermittent", func(item *fleet.Anomaly) {
+			item.Cause, item.CauseReason = "LEVEL_OUTCOME_UNKNOWN", "HISTORY_GAPPED"
+			item.Coverage = &fleet.HistoryCoverage{Levels: 1, Short: 1,
+				WorstValid: 5, WorstRequired: 9, ShortRounds: 29}
+		}),
+		anomaly("qg-gapped-fresh", func(item *fleet.Anomaly) {
+			item.Cause, item.CauseReason = "LEVEL_OUTCOME_UNKNOWN", "HISTORY_GAPPED"
+			item.Coverage = &fleet.HistoryCoverage{Levels: 1, Short: 1,
+				WorstValid: 5, WorstRequired: 9, ShortRounds: 3}
+		}),
 		anomaly("qg-window-starved", func(item *fleet.Anomaly) {
 			item.Cause, item.CauseReason = "LEVEL_OUTCOME_UNKNOWN", "HISTORY_WARMING"
 			item.Coverage = &fleet.HistoryCoverage{Levels: 3, Short: 2, Empty: 2,
@@ -175,6 +189,39 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	if !strings.Contains(text, "windowNeverFills agreed on") {
 		t.Errorf("the page's windowNeverFills was never run against the Go rule; the two copies "+
 			"are unchecked:\n%s", text)
+	}
+
+	// What each row would actually say. Executing the render proves only that
+	// it does not throw, and a live page rendered a HISTORY_GAPPED row with
+	// the wording for a series too short-lived to fill its window -- a
+	// different situation with a different fix, rendered without complaint.
+	for _, want := range []struct{ object, says, mustNotSay string }{
+		{"qg-gapped-intermittent", "数据断断续续", "窗口永远填不满"},
+		{"qg-gapped-fresh", "数据刚断", "窗口永远填不满"},
+		{"qg-window-never", "窗口永远填不满", "数据断断续续"},
+		{"qg-window-starved", "取不到数据", "窗口永远填不满"},
+		{"qg-window-filling", "窗口在填", "窗口永远填不满"},
+		{"qg-window-complete", "检测窗口完整", "短"},
+	} {
+		line := ""
+		for _, candidate := range strings.Split(text, "\n") {
+			if strings.HasPrefix(candidate, "NOTE "+want.object+" ::") {
+				line = candidate
+				break
+			}
+		}
+		if line == "" {
+			t.Errorf("no note was rendered for %s; the row carries coverage, so the check that "+
+				"its wording matches its reason never ran", want.object)
+			continue
+		}
+		if !strings.Contains(line, want.says) {
+			t.Errorf("%s renders %q, want it to say %q", want.object, line, want.says)
+		}
+		if strings.Contains(line, want.mustNotSay) {
+			t.Errorf("%s renders %q, which says %q -- that is a different situation with a "+
+				"different fix, and it sends the reader nowhere", want.object, line, want.mustNotSay)
+		}
 	}
 }
 
@@ -282,6 +329,18 @@ for (const [name, fn] of calls) {
 // field renamed on one side makes the page read undefined, the comparison
 // false, and every permanently short window render as "still filling" -- with
 // no error anywhere. Only running both can see it.
+// The note each row would actually render, emitted for the Go side to check.
+// Executing anomalyRow only proves the page does not throw; the wording is
+// what a reader acts on, and a row can render the wrong explanation
+// perfectly happily.
+for (const row of data.anomalies) {
+  if (!row.coverage) continue;
+  let note;
+  try { note = ctx.coverageNote(row); }
+  catch (e) { console.error('coverageNote threw on ' + row.query_group + ': ' + e.message); failed++; continue; }
+  console.log('NOTE ' + row.query_group + ' :: ' + (note ? note.text : '(none)'));
+}
+
 const cases = data.window_never_fills_cases || [];
 if (cases.length === 0) {
   console.error('no windowNeverFills cases were sent; the comparison would pass vacuously');

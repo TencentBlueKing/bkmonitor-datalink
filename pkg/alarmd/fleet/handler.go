@@ -299,6 +299,25 @@ type Onset struct {
 	// the ordering between its rows carries no information at all -- which is
 	// exactly the case the first page reads as a ranking.
 	OldestSince time.Time `json:"oldest_since,omitempty"`
+	// NewestFrom and OldestFrom say where those two timestamps came from, and
+	// they are the difference between a moment and a bound.
+	//
+	// Without them the line over the table converted one into the other. A
+	// filtered list of objects whose rows said, in the provenance column, that
+	// the moment they went wrong was never recorded was summarised as "最新的一
+	// 个是 2 小时 2 分前开始的" -- the roll-up asserting as a fact the one thing
+	// every row underneath it had been careful not to claim.
+	//
+	// This is the shape that keeps recurring here: the field that discriminates
+	// exists per row, is used per row, and is dropped on the way up.
+	NewestFrom SinceSource `json:"newest_from,omitempty"`
+	OldestFrom SinceSource `json:"oldest_from,omitempty"`
+	// Bounded counts the rows in this list whose start is a bound rather than a
+	// measurement, so the three buckets above can be read for how much of them
+	// is knowable. A population that is mostly restored puts most of its rows in
+	// whichever bucket the restart lands in, which says when the replica came
+	// up and nothing about when anything went wrong.
+	Bounded int `json:"bounded"`
 }
 
 func summarize(anomalies []Anomaly, at time.Time) Summary {
@@ -331,9 +350,17 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 			}
 			if onset.NewestSince.IsZero() || anomaly.Since.After(onset.NewestSince) {
 				onset.NewestSince = anomaly.Since
+				onset.NewestFrom = anomaly.SinceFrom
 			}
 			if onset.OldestSince.IsZero() || anomaly.Since.Before(onset.OldestSince) {
 				onset.OldestSince = anomaly.Since
+				onset.OldestFrom = anomaly.SinceFrom
+			}
+			// Carried up with the timestamps rather than left on the rows. The
+			// sentence above the table read the newest of these back as a
+			// moment, on rows whose own column said it is not one.
+			if anomaly.SinceFrom.Bounded() {
+				onset.Bounded++
 			}
 		}
 		switch anomaly.Attribution {

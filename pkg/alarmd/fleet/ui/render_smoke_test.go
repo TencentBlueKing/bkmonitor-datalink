@@ -159,6 +159,30 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			WindowNeverFills: 1,
 		},
 		"window_never_fills_cases": windowNeverFillsCases(),
+		// A filter narrowing the list, a replica that could not publish it, and
+		// both at once. The first used to be reported as the second.
+		"page_tail_cases": []map[string]any{
+			{"name": "filtered", "total": 1, "objects": map[string]any{
+				"anomalies_total": 16, "filtered": true,
+				"summary": map[string]any{"partial": false}}},
+			{"name": "truncated", "total": 50, "objects": map[string]any{
+				"anomalies_total": 900, "filtered": false,
+				"summary": map[string]any{"partial": true}}},
+			{"name": "plain", "total": 16, "objects": map[string]any{
+				"anomalies_total": 16, "filtered": false,
+				"summary": map[string]any{"partial": false}}},
+		},
+		// A population restored at a rollout: every start time is a bound, and
+		// the sentence over it used to name the newest as a moment.
+		"onset_cases": []map[string]any{
+			{"name": "bounded", "total": 5, "onset": fleet.Onset{
+				LastHour: 5, NewestSince: at.Add(-2 * time.Hour), OldestSince: at.Add(-2 * time.Hour),
+				NewestFrom: fleet.SinceRestoredLastFull, OldestFrom: fleet.SinceRestoredLastFull,
+				Bounded: 5}},
+			{"name": "measured", "total": 5, "onset": fleet.Onset{
+				LastHour: 5, NewestSince: at.Add(-2 * time.Hour), OldestSince: at.Add(-3 * time.Hour),
+				NewestFrom: fleet.SinceSnapshotContinuity, OldestFrom: fleet.SinceSnapshotContinuity}},
+		},
 		"health": fleet.HealthResponse{
 			// The columns add up to Covered on purpose: the page prints that
 			// equation and it is the only thing a reader has that says the
@@ -255,6 +279,55 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		}
 	}
 
+	// A filter is not a truncated snapshot. Filtering to one strategy -- the
+	// ordinary way to use this page -- announced that the replica had failed to
+	// publish its list, over an answer that was complete.
+	for _, want := range []struct{ name, says, mustNotSay string }{
+		{"filtered", "已按条件过滤掉 15 条", "没能发布完整清单"},
+		{"truncated", "没能发布完整清单", "已按条件过滤"},
+		{"plain", "", "条"},
+	} {
+		line := lineStarting(text, "TAIL "+want.name+" ::")
+		if line == "" {
+			t.Errorf("pageTail rendered nothing for the %s case", want.name)
+			continue
+		}
+		if want.says != "" && !strings.Contains(line, want.says) {
+			t.Errorf("pageTail %s renders %q, want it to say %q", want.name, line, want.says)
+		}
+		if strings.Contains(line, want.mustNotSay) {
+			t.Errorf("pageTail %s renders %q, which says %q -- a different fact about the same "+
+				"two numbers", want.name, line, want.mustNotSay)
+		}
+	}
+
+	// A bound is not a moment. Every row in the bounded case says in its own
+	// provenance column that the moment it went wrong was never recorded, and
+	// the sentence above them announced one anyway.
+	for _, want := range []struct{ name, says, mustNotSay string }{
+		{"bounded", "那是个界不是时刻", "前开始的"},
+		{"measured", "前开始的", "那是个界不是时刻"},
+	} {
+		line := lineStarting(text, "ONSET "+want.name+" ::")
+		if line == "" {
+			t.Errorf("onsetLine rendered nothing for the %s case", want.name)
+			continue
+		}
+		if !strings.Contains(line, want.says) {
+			t.Errorf("onsetLine %s renders %q, want it to say %q", want.name, line, want.says)
+		}
+		if strings.Contains(line, want.mustNotSay) {
+			t.Errorf("onsetLine %s renders %q, which says %q", want.name, line, want.mustNotSay)
+		}
+	}
+	// Two ends that are both bounds are not two moments; after a restart both
+	// are the restart, and the sentence would report the whole deployment as
+	// having gone wrong simultaneously.
+	if line := lineStarting(text, "ONSET bounded ::"); strings.Contains(line, "同时开始的") {
+		t.Errorf("onsetLine bounded renders %q: it read a difference between two bounds as a "+
+			"difference between two moments", line)
+	}
+
 	// What each row would actually say. Executing the render proves only that
 	// it does not throw, and a live page rendered a HISTORY_GAPPED row with
 	// the wording for a series too short-lived to fill its window -- a
@@ -290,6 +363,18 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 				"different fix, and it sends the reader nowhere", want.object, line, want.mustNotSay)
 		}
 	}
+}
+
+// lineStarting returns the harness line with this prefix, or "" if the render
+// emitted none -- which is itself a result, and a different one from a line
+// that came out empty.
+func lineStarting(text, prefix string) string {
+	for _, candidate := range strings.Split(text, "\n") {
+		if strings.HasPrefix(candidate, prefix) {
+			return candidate
+		}
+	}
+	return ""
 }
 
 // windowNeverFillsCases is the table both copies of the rule are run over: the
@@ -422,6 +507,25 @@ for (const column of ['anomalies', 'demoted', 'undecidable', 'by_design']) {
   try { line = ctx.attributionLine(data.summary, data.per_replica, column); }
   catch (e) { console.error('attributionLine threw on ' + column + ': ' + e.message); failed++; continue; }
   console.log('WHOSE ' + column + ' :: ' + line);
+}
+
+// The count line, on the three states it has to tell apart. A filter narrowing
+// the list is not a replica failing to publish it, and this used to report the
+// second whenever the first happened.
+for (const c of data.page_tail_cases || []) {
+  let tail;
+  try { tail = ctx.pageTail(c.objects, c.total); }
+  catch (e) { console.error('pageTail threw on ' + c.name + ': ' + e.message); failed++; continue; }
+  console.log('TAIL ' + c.name + ' :: ' + tail);
+}
+
+// The onset sentence, on a population whose start times are bounds. It used to
+// read the newest of them back as a moment.
+for (const c of data.onset_cases || []) {
+  let line;
+  try { line = ctx.onsetLine(c.onset, c.total); }
+  catch (e) { console.error('onsetLine threw on ' + c.name + ': ' + e.message); failed++; continue; }
+  console.log('ONSET ' + c.name + ' :: ' + line);
 }
 
 const cases = data.window_never_fills_cases || [];

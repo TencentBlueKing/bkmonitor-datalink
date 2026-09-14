@@ -806,6 +806,34 @@ function anomalyRow(anomaly) {
   return tr;
 }
 
+// What the count line says beyond "共 N 条".
+//
+// Truncation is what the replica could not publish; a filter is what the reader
+// asked to leave out. Those are opposite facts about the same two numbers, and
+// this compared the column's deployment-wide total against the post-filter
+// total -- so filtering to one strategy, the ordinary way to use this page,
+// announced "副本实际有 16 条，快照已截断，此处只能翻到 1 条" over a complete
+// answer. A reader cannot tell a warning that fires during normal use from a
+// real one, so once it has fired wrongly, neither gets read again.
+//
+// The server already decides truncation, from those two numbers before any
+// filter is applied: summary.partial. Its answer is used rather than a worse
+// one re-derived here.
+//
+// A named function rather than inline, so the case that broke is reachable from
+// a test without a fetch.
+function pageTail(objects, total) {
+  var real = objects.anomalies_total;
+  if (objects.summary && objects.summary.partial) {
+    return '（副本没能发布完整清单，这一栏实际有 ' + real + ' 条，'
+      + (objects.filtered ? '过滤是在这份不完整的清单上做的，数不准' : '此处只能翻到 ' + total + ' 条') + '）';
+  }
+  if (objects.filtered && real !== undefined && real > total) {
+    return '（这一栏全部 ' + real + ' 条，已按条件过滤掉 ' + (real - total) + ' 条）';
+  }
+  return '';
+}
+
 function loadObjects() {
   return api('objects?' + query()).then(function (objects) {
     show('objErr', false);
@@ -885,11 +913,7 @@ function loadObjects() {
       ? '当前过滤条件下没有异常对象。' : '当前没有异常对象。';
     show('objEmpty', rows.length === 0 && total === 0);
     var shown = rows.length ? '第 ' + (offset + 1) + '–' + (offset + rows.length) + ' 条' : '无';
-    var real = objects.anomalies_total;
-    text('pageInfo', shown + '，共 ' + total + ' 条' +
-      (real !== undefined && real > total
-        ? '（副本实际有 ' + real + ' 条，快照已截断，此处只能翻到 ' + total + ' 条）'
-        : ''));
+    text('pageInfo', shown + '，共 ' + total + ' 条' + pageTail(objects, total));
     document.getElementById('prev').disabled = offset <= 0;
     document.getElementById('next').disabled = offset + LIMIT >= total;
   }).catch(function (e) { fail('objErr', e); });
@@ -1051,7 +1075,8 @@ function renderReplicas(rows) {
     // build -- and that is not the same as "just started", so it says so.
     var up = cell(replica.uptime_seconds ? duration(new Date(Date.now() - replica.uptime_seconds * 1000).toISOString()) : '未上报');
     if (replica.uptime_seconds && replica.uptime_seconds < 1800) { up.className = 'stuck'; }
-    up.title = '这个副本上报的所有"已持续"都不会超过这个数——刚重启时页面上的时长量的是进程年龄';
+    up.title = '这个副本上报的"已持续"里，起算来源是本进程接手的那些（带 ≥ 的）不会超过这个数——'
+      + '刚重启时它们量的是进程年龄。起算点来自持久化状态或冷却记录的行不受这个数约束，会更老。';
     var cap = replica.capacity;
     cell(cap ? bytes(cap.memory_used_bytes) + ' / ' + bytes(cap.memory_limit_bytes) : '—');
     cell(cap && cap.cpu_cores ? (cap.cpu_seconds !== undefined ? '上限 ' + cap.cpu_cores + ' 核' : '—') : '—');
@@ -1080,14 +1105,37 @@ function onsetLine(onset, total) {
   if (onset.older) { parts.push('超过 1 天的 ' + onset.older + ' 个'); }
   if (!parts.length) return '';
   var line = parts.join('，');
+  if (onset.bounded) {
+    // Said before the numbers, not after. These three buckets are counted off
+    // each row's start time, and a bounded start is not one -- a population
+    // restored at a rollout lands wholesale in whichever bucket the restart
+    // falls in, which says when the replica came up and nothing about when
+    // anything went wrong.
+    line = (onset.bounded === total
+      ? '（这些行的起算点全部是上下界，不是真正变坏的时刻，下面的分桶只能当粗读）'
+      : '（其中 ' + onset.bounded + ' 行的起算点是上下界不是真正变坏的时刻，分桶会偏）')
+      + line;
+  }
   if (onset.newest_since) {
-    line += '；最新的一个是 ' + duration(onset.newest_since) + '前开始的';
+    // The provenance travels with the timestamp now. This used to say "最新的
+    // 一个是 X 前开始的" whatever the row said, and on a restored row the row
+    // says in the next column that the moment it started was never recorded --
+    // the roll-up asserting exactly what the row refused to.
+    line += SINCE_BOUND[onset.newest_from]
+      ? '；起算点最新的一个在 ' + duration(onset.newest_since) + '前，'
+        + '但那是个界不是时刻（' + (SINCE_SOURCE[onset.newest_from] || onset.newest_from) + '）'
+      : '；最新的一个是 ' + duration(onset.newest_since) + '前开始的';
   }
   // Two ends minutes apart is one event, and then the row order carries no
   // information at all -- which is exactly what a duration-sorted first page
   // reads as. Said once here rather than left for a reader to notice by
   // comparing the top and bottom of a list they cannot see at once.
-  if (onset.newest_since && onset.oldest_since) {
+  // Only when both ends are measured. "它们是同时开始的" is a claim about two
+  // moments, and a difference between two bounds is not a difference between
+  // two moments -- after a restart both ends are the restart, and the sentence
+  // would announce that every object in the deployment started together.
+  if (onset.newest_since && onset.oldest_since
+      && !SINCE_BOUND[onset.newest_from] && !SINCE_BOUND[onset.oldest_from]) {
     var spreadMinutes = (new Date(onset.newest_since).getTime()
       - new Date(onset.oldest_since).getTime()) / 60000;
     if (isFinite(spreadMinutes) && spreadMinutes >= 0 && spreadMinutes < 10 && total > 1) {
@@ -1353,10 +1401,24 @@ function continuityLine(perReplica) {
   }
   var ceiling = uptimeCeiling(perReplica);
   if (ceiling && ceiling.seconds < 3 * 3600) {
-    parts.push('最年轻的副本只运行了 '
+    // Scoped to the rows it actually bounds.
+    //
+    // It used to claim every duration below was capped by the youngest
+    // replica's age, and the table directly under it showed ≤ 2 小时 2 分 next
+    // to a 1 小时 34 分 ceiling, and ≤ 15 小时 49 分 in the demoted pool. Both
+    // rows were right. Only starts this process set are capped by how long this
+    // process has been up; a start read back from persisted state or from a
+    // cooldown record predates the process and is older on purpose.
+    //
+    // A ceiling that is visibly violated three lines below it does not merely
+    // fail to help -- it costs the reader their trust in the numbers that are
+    // correct.
+    parts.push('最年轻的副本 ' + shortReplica(ceiling.replica) + ' 只运行了 '
       + duration(new Date(Date.now() - ceiling.seconds * 1000).toISOString())
-      + '，所以下面的"已持续"最多只能到这个数——不是问题只存在了这么久'
-      + (ceiling.all ? '' : '（有副本没上报运行时长，这个上限可能更松）'));
+      + '。"起算来源"是本进程接手的那些行（带 ≥ 的）量的是进程看了多久、不是坏了多久，'
+      + '不会超过它所在那个副本的运行时长；其余行的起算点来自持久化状态或冷却记录，'
+      + '比任何副本都老都是正常的，下面出现更长的数不是矛盾'
+      + (ceiling.all ? '' : '。还有副本没上报运行时长'));
   }
   return parts.join('；') + (parts.length ? '。' : '');
 }

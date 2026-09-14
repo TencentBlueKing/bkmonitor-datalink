@@ -63,6 +63,38 @@ var RestoredSinceSources = []SinceSource{
 	SinceRestoredAtRestart,
 }
 
+// BoundedSinceSources are the provenances whose timestamp is a bound rather
+// than a measurement: the object started before this, or after it, and the
+// duration rendered beside it is not how long anything has been going on.
+//
+// It is a different set from RestoredSinceSources and has to be, which is why
+// it is written out rather than derived from it. A pre-existing object was not
+// restored from anything -- this process simply started with it already wrong --
+// and its duration is a lower bound all the same.
+//
+// The list exists because the roll-up above the table had no notion of it. Each
+// row states its own direction, and then a sentence over them read the largest
+// of those numbers back as a moment: "最新的一个是 2 小时 2 分前开始的", on a
+// population whose rows say in the next column that the moment it started was
+// never recorded. The bound is per row, and a summary that drops it re-asserts
+// as fact the one thing the row was careful not to claim.
+var BoundedSinceSources = []SinceSource{
+	SinceProcessStart,
+	SinceRestoredAtRestart,
+	SinceRestoredLastFull,
+	SinceRefusedFuture,
+}
+
+// Bounded reports whether this provenance gives a bound instead of a start.
+func (source SinceSource) Bounded() bool {
+	for _, bounded := range BoundedSinceSources {
+		if source == bounded {
+			return true
+		}
+	}
+	return false
+}
+
 // MetricKind maps an anomaly kind onto the closed label set.
 func MetricKind(kind string) string {
 	for _, known := range AnomalyKinds {

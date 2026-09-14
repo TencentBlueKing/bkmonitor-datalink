@@ -209,3 +209,51 @@ func TestEveryObjectFallsInExactlyOneOnsetBucket(t *testing.T) {
 		t.Errorf("oldest_since = %s, want %s", onset.OldestSince, at.Add(-25*time.Hour))
 	}
 }
+
+// The roll-up over the table names a moment, and the rows underneath it say in
+// their own provenance column that the moment was never recorded.
+//
+// Every row carries where its start time came from and whether that is a start
+// at all. Rolled up, all of it was dropped: a filtered list whose single row
+// read "上次完整跑完的时刻；真正变坏的时刻没保留" was summarised as "2 小时 2 分
+// 前开始的" -- the summary asserting as fact exactly what the row refused to.
+//
+// Same shape as the coverage counts, the required positions and the reason on
+// the settled count before it: the field that discriminates exists per row, is
+// used per row, and is dropped in transit.
+func TestOnsetCarriesWhereItsTimestampsCameFrom(t *testing.T) {
+	snapshots := healthySnapshots()
+	// The newest is a bound read back after a restart; the oldest was watched.
+	restored := anomaly("qg-restored")
+	restored.Since = now.Add(-2 * time.Hour)
+	restored.SinceFrom = SinceRestoredLastFull
+	watched := anomaly("qg-watched")
+	watched.Since = now.Add(-30 * time.Hour)
+	watched.SinceFrom = SinceSnapshotContinuity
+	preexisting := anomaly("qg-preexisting")
+	preexisting.Since = now.Add(-3 * time.Hour)
+	preexisting.SinceFrom = SinceProcessStart
+	snapshots[1].Anomalies = []Anomaly{restored, watched, preexisting}
+	snapshots[1].TotalAnomalies = 3
+	handler := handlerWith(t, snapshots, Expectation{QueryGroups: 949, Known: true}, replicas())
+
+	_, body := get(t, handler, "/api/objects")
+	summary, _ := body["summary"].(map[string]any)
+	onset, _ := summary["onset"].(map[string]any)
+	if onset == nil {
+		t.Fatal("no onset in the summary")
+	}
+	if got, _ := onset["newest_from"].(string); got != string(SinceRestoredLastFull) {
+		t.Errorf("newest_from = %q, want %q -- without it the page reads the newest bound"+
+			" back as the moment the population started", got, SinceRestoredLastFull)
+	}
+	if got, _ := onset["oldest_from"].(string); got != string(SinceSnapshotContinuity) {
+		t.Errorf("oldest_from = %q, want %q", got, SinceSnapshotContinuity)
+	}
+	// Two of the three: restored-last-full and process-start. The watched one is
+	// a measurement and must not be counted, or the qualifier would appear over
+	// every list and stop being read.
+	if got, _ := onset["bounded"].(float64); got != 2 {
+		t.Errorf("bounded = %v, want 2", got)
+	}
+}

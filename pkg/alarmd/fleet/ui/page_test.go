@@ -370,6 +370,42 @@ func TestThePageAgreesOnWhichProvenancesMeanRestored(t *testing.T) {
 	}
 }
 
+// The page puts the bound direction on the duration itself, from its own copy
+// of which provenances are bounds. Getting it wrong in either direction states
+// something false about a number a reader is about to act on: a missing entry
+// renders a bound as a measurement, a spurious one renders a measured duration
+// as an approximation.
+//
+// The same list now decides whether the sentence above the table may name a
+// moment, so a drift here is no longer confined to one cell.
+func TestThePageAgreesOnWhichProvenancesAreBounds(t *testing.T) {
+	body := string(page)
+	block := regexp.MustCompile(`var SINCE_BOUND = \{([^}]*)\}`).FindStringSubmatch(body)
+	if block == nil {
+		t.Fatal("the page no longer declares SINCE_BOUND: every bound renders as a measurement")
+	}
+	listed := map[string]bool{}
+	for _, match := range regexp.MustCompile(`([A-Z_]+):\s*'`).FindAllStringSubmatch(block[1], -1) {
+		listed[match[1]] = true
+	}
+	if len(fleet.BoundedSinceSources) == 0 {
+		t.Fatal("no bounded provenances declared; the check would pass vacuously")
+	}
+	declared := map[string]bool{}
+	for _, source := range fleet.BoundedSinceSources {
+		declared[string(source)] = true
+		if !listed[string(source)] {
+			t.Errorf("%q gives a bound and the page renders it as a measured duration", source)
+		}
+	}
+	for source := range listed {
+		if !declared[source] {
+			t.Errorf("the page marks %q as a bound and fleet does not: a measured duration renders "+
+				"as an approximation", source)
+		}
+	}
+}
+
 // The page suppresses the result word on records that carry only a duration,
 // and it held its own copy of which stages those are. A copy is the arrangement
 // that goes stale: a third timing call would emit a stage the page does not

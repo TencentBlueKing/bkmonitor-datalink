@@ -28,6 +28,33 @@ import (
 // That is also the stronger reading semantics: every read in one operation now
 // observes the same control version, instead of some reads landing before a
 // cutover and some after it.
+//
+// Joining a read another caller already has in flight is excluded for the same
+// reason, and is written down because it is a second mechanism the paragraph
+// above does not name. It looks unlike caching - the value is at most one round
+// trip old rather than one operation old - but the guarantee it breaks is the
+// one stated above: an operation that joins a flight started before it began
+// never reads the header live, and runs its whole length on a header that could
+// predate a cutover. One round trip of staleness is not the argument; reading
+// live once per operation is.
+//
+// Restricting joins to flights that started after the joining operation did
+// would keep the guarantee, and buys almost nothing: the reads worth joining
+// are the ones a dispatch burst issues, and there every operation starts within
+// a few milliseconds of every other, so whichever one opens the flight, the
+// rest began before it and none may join.
+//
+// The tests do not settle this either way. The plan gap recovery tests
+// demonstrate the cross-operation case; an in-flight join is a state they have
+// no way to construct, so they stay green through it. That is the whole reason
+// this paragraph exists rather than a test.
+//
+// The cost of not having this written down is one implementation: it was built
+// once, against the measured 156,780 header reads a Worker owning a thousand
+// Query Groups takes in fifty minutes - one per dispatched round, 99% of every
+// control cache miss the process takes - and reverted unreleased after this
+// comment was read. The reads are real and so is their cost. The header is not
+// where it can be taken back.
 type controlVersionScopeKey struct{}
 
 type controlVersionScope struct {

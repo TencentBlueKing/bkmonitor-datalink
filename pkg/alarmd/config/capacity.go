@@ -201,6 +201,25 @@ type DerivedScheduler struct {
 // opposite directions, which is why it is written here rather than left to be
 // re-derived.
 //
+// Which of those actually holds the slots is a separate question from whether
+// they can, and it was answered by looking rather than by reasoning: a
+// goroutine profile taken while the bound was saturated, against one taken
+// while it was not. Of 128 slots held, 86 were inside a Redis round trip, 27
+// in the query, 4 in the readiness sleep and 3 waiting for a permit. The
+// readiness sleep is the idle shape, not the busy one - it held 28 of 28 slots
+// in the unsaturated profile and 4 of 128 in the saturated one - and the
+// turn-aways cost at most 71 ms each, which is about one slot's worth across
+// the whole fleet. Both were proposed as the slot holder before the profile
+// was taken, from counters, and both were wrong. The two profiles are single
+// instants on one replica and one generation, so read them for direction and
+// not as a distribution; the round trip counts behind them are a distribution,
+// and they say about 28 Redis round trips per execution at roughly 6 ms each.
+//
+// The consequence for anyone widening this bound: the slots are not full of
+// work waiting on the permit gate below, so widening the gate above it moves
+// nothing. Sizing here is downstream of how many Redis round trips one
+// execution takes.
+//
 // What the bound has not yet cost, measured in the same window: mean permit
 // wait 72 ms, p99 under a second, not one wait above five seconds; zero
 // admission and zero budget query failures; and a completion rate inside the

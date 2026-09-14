@@ -14,6 +14,17 @@ import (
 
 var ErrLegacySourceIncomplete = errors.New("alarmd controlplane: legacy Redis source incomplete")
 
+// ErrActiveStrategyIDInvalid marks an active set refused because one element
+// is not a canonical positive integer. It wraps ErrLegacySourceIncomplete,
+// which is what every caller already checks; the extra identity is for the
+// reader who has to find out which element, and the error text names it.
+var ErrActiveStrategyIDInvalid = errors.New("alarmd controlplane: active strategy identity is not a canonical positive integer")
+
+// invalidActiveStrategyIDText bounds how much of a refused element the error
+// repeats. The element comes from the store and could be anything; the
+// reader needs enough to find it, not all of it.
+const invalidActiveStrategyIDText = 64
+
 type legacyRedisCommands interface {
 	Get(context.Context, string) *redis.StringCmd
 	MGet(context.Context, ...string) *redis.SliceCmd
@@ -60,7 +71,11 @@ func (source *LegacyRedisStrategySource) ActiveStrategyIDs(ctx context.Context) 
 		text := string(rawID)
 		id, err := strconv.ParseUint(text, 10, 64)
 		if err != nil || id == 0 || strconv.FormatUint(id, 10) != text {
-			return nil, fmt.Errorf("%w: active strategy identity is not a canonical positive integer", ErrLegacySourceIncomplete)
+			if len(text) > invalidActiveStrategyIDText {
+				text = text[:invalidActiveStrategyIDText] + "..."
+			}
+			return nil, fmt.Errorf("%w: %w: element %d of %d is %q",
+				ErrLegacySourceIncomplete, ErrActiveStrategyIDInvalid, len(ids), len(rawIDs), text)
 		}
 		ids = append(ids, strconv.FormatUint(id, 10))
 	}

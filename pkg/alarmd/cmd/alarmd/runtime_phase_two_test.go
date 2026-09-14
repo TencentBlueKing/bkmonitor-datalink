@@ -2224,6 +2224,17 @@ type fakePhaseTwoControl struct {
 	versionTag   string
 	versionKnown bool
 	versionErr   error
+	// The persisted time of the last successful source refresh. Zero means
+	// none is known, which is what a bundle that says nothing about it gets.
+	successAt  time.Time
+	successErr error
+}
+
+func (control *fakePhaseTwoControl) SourceRefreshSuccessAt(context.Context) (time.Time, bool, error) {
+	if control.successErr != nil {
+		return time.Time{}, false, control.successErr
+	}
+	return control.successAt, !control.successAt.IsZero(), nil
 }
 
 type signalingPhaseTwoControl struct {
@@ -2316,7 +2327,7 @@ type fakePhaseTwoOwnership struct {
 	published     int
 	closeCalls    int
 	// failSite injects failErr into the next failRemaining calls of one store
-	// method ("publish", "assigned" or "open"); a negative count never recovers.
+	// method ("publish", "assigned", "open" or "acquire"); a negative count never recovers.
 	failSite      string
 	failErr       error
 	failRemaining int
@@ -2360,6 +2371,9 @@ func (owner *signalingPhaseTwoOwnership) AssignedQueryGroups(
 func (owner *fakePhaseTwoOwnership) TryAcquireControlLeader(context.Context, time.Time, time.Duration) (bool, error) {
 	owner.mu.Lock()
 	defer owner.mu.Unlock()
+	if err := owner.consumeFailureLocked("acquire"); err != nil {
+		return false, err
+	}
 	if owner.follower {
 		return false, nil
 	}

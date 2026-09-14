@@ -835,6 +835,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 		staleAfter:    stallAfter,
 		restoreBudget: fleetRestoreBudgetPerPublish,
 		openAlerts:    openAlertSetFactsSource(openAlertCopy, external.Now),
+		controlSource: bundle.controlSourceFleetFacts,
 	}
 	// The heartbeat reports the same acknowledgement and occupancy the fleet
 	// snapshot publishes, from the same sources.

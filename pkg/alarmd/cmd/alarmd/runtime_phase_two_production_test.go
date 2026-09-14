@@ -1755,6 +1755,20 @@ type fakeProductionCatalogRepository struct {
 	versionTag     string
 	versionKnown   bool
 	versionErr     error
+	successMarks   []time.Time
+	successMarkErr error
+}
+
+func (repository *fakeProductionCatalogRepository) MarkSourceRefreshSuccess(_ context.Context, at time.Time) error {
+	repository.successMarks = append(repository.successMarks, at)
+	return repository.successMarkErr
+}
+
+func (repository *fakeProductionCatalogRepository) LoadSourceRefreshSuccess(context.Context) (time.Time, bool, error) {
+	if len(repository.successMarks) == 0 {
+		return time.Time{}, false, nil
+	}
+	return repository.successMarks[len(repository.successMarks)-1], true, nil
 }
 
 func (repository *fakeProductionCatalogRepository) RenewCurrentActivationObjects(context.Context) error {
@@ -2853,4 +2867,94 @@ func observedStages(observations []observability.Observation) []observability.St
 		stages[index] = observation.Stage
 	}
 	return stages
+}
+
+// Every refresh round is reported, and a failed one with where it stopped
+// and what it said; the time of a succeeded round is persisted. Before this
+// a failed round produced no observation of its own: the bundle reported the
+// transition into the degraded state once, and a source that failed every
+// round for hours was one increment and one line.
+func TestProductionPhaseTwoControlReportsEveryRoundAndPersistsSuccess(t *testing.T) {
+	publication := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-current", PublicationEpoch: 2}
+	failure := &controlplane.SourceRefreshFailure{Exit: controlplane.SourceRefreshExitActiveSetInvalidID,
+		Err: errors.New("active strategy identity is not a canonical positive integer: element 3 of 979 is \"x\"")}
+	reconciler := &fakeSourceReconciler{
+		results: []controlplane.SourceRefreshResult{{}, {}, {Status: controlplane.SourceRefreshUnchanged, Observation: "observation-current", Publication: publication}},
+		errs:    []error{failure, failure, nil},
+	}
+	repository := &fakeProductionCatalogRepository{activation: controlplane.ActivationState{
+		RecordRevision: 2, Current: publication,
+	}, snapshot: controlplane.PublishedSnapshot{Publication: publication,
+		QueryGroups: []controlplane.QueryGroup{{Identity: "query-group-healthy"}}}}
+	activator := &fakeInitialScheduleActivator{state: repository.activation}
+	var observations []observability.Observation
+	now := time.Unix(1_700_000_000, 0)
+	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
+		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: reconciler,
+		Activator: activator, Repository: repository, Schedules: &fakeScheduleProjection{},
+		Progress: &fakeProductionProgressReader{}, Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+			observations = append(observations, observation)
+		}),
+		RefreshInterval: time.Second, Wait: func(context.Context, time.Duration) error { return nil },
+		Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 2; index++ {
+		result, err := control.Refresh(context.Background())
+		if err != nil || result.Status != phaseTwoControlDegradedLastGood || !errors.Is(result.Cause, failure) {
+			t.Fatalf("failed Refresh(%d)=(%#v,%v), want last good with the cause", index, result, err)
+		}
+	}
+	if len(repository.successMarks) != 0 {
+		t.Fatalf("success marks after two failed rounds = %v, want none", repository.successMarks)
+	}
+	result, err := control.Refresh(context.Background())
+	if err != nil || result.Status != phaseTwoControlHealthy {
+		t.Fatalf("succeeded Refresh()=(%#v,%v)", result, err)
+	}
+	if len(repository.successMarks) != 1 || !repository.successMarks[0].Equal(now) {
+		t.Fatalf("success marks after a succeeded round = %v, want the round's time", repository.successMarks)
+	}
+	var rounds []observability.ControlSourceRoundFacts
+	for _, observation := range observations {
+		if observation.ControlSourceRound == nil {
+			continue
+		}
+		if observation.Component != observability.ComponentControlPlane || observation.Stage != observability.StageSnapshotRefreshed {
+			t.Fatalf("round fact on %s/%s", observation.Component, observation.Stage)
+		}
+		if observation.ControlSourceRound.Outcome == observability.ControlSourceRoundFailed &&
+			(observation.Result != observability.ResultFailed || !errors.Is(observation.Err, failure)) {
+			t.Fatalf("failed round observation = %#v, want the failure as its error", observation)
+		}
+		rounds = append(rounds, *observation.ControlSourceRound)
+	}
+	want := []observability.ControlSourceRoundFacts{
+		{Outcome: observability.ControlSourceRoundFailed, Exit: "active_set_invalid_id"},
+		{Outcome: observability.ControlSourceRoundFailed, Exit: "active_set_invalid_id"},
+		{Outcome: observability.ControlSourceRoundSucceeded, Exit: "none"},
+	}
+	if !reflect.DeepEqual(rounds, want) {
+		t.Fatalf("round facts = %+v, want %+v", rounds, want)
+	}
+	// A mark that cannot be written does not turn the round into a failure;
+	// it is reported on its own, and the previous mark stands.
+	reconciler.results = append(reconciler.results, controlplane.SourceRefreshResult{Status: controlplane.SourceRefreshUnchanged, Observation: "observation-current", Publication: publication})
+	reconciler.errs = append(reconciler.errs, nil)
+	repository.successMarkErr = errors.New("store down")
+	before := len(observations)
+	if result, err := control.Refresh(context.Background()); err != nil || result.Status != phaseTwoControlHealthy {
+		t.Fatalf("Refresh() with the mark write failing = (%#v, %v), want healthy", result, err)
+	}
+	reported := false
+	for _, observation := range observations[before:] {
+		if observation.Result == observability.ResultFailed && observation.Err != nil && errors.Is(observation.Err, repository.successMarkErr) {
+			reported = true
+		}
+	}
+	if !reported {
+		t.Fatal("the failed mark write was not reported")
+	}
 }

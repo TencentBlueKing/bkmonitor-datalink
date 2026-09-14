@@ -346,6 +346,12 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			}
 		}
 	}
+	if facts := observation.ControlSourceRound; facts != nil {
+		attributes = append(attributes,
+			slog.String("control_source_outcome", facts.Outcome),
+			slog.String("control_source_exit", facts.Exit),
+		)
+	}
 	if len(observation.AlgorithmEvaluations) > 0 {
 		attributes = append(attributes, slog.Any("algorithm_evaluations", observation.AlgorithmEvaluations))
 	}

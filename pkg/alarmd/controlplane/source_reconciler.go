@@ -229,11 +229,11 @@ func (reconciler *SourceReconciler) Refresh(
 	}
 	observationID, err := deriveObservationID(cycle.strategies)
 	if err != nil {
-		return SourceRefreshResult{}, err
+		return SourceRefreshResult{}, exitAt(SourceRefreshExitObservationID, err)
 	}
 	current, audit, err := reconciler.loadCurrent(ctx)
 	if err != nil {
-		return SourceRefreshResult{}, err
+		return SourceRefreshResult{}, exitAt(SourceRefreshExitLastGood, err)
 	}
 	var previousDispositions []ObjectDisposition
 	if audit != nil {
@@ -244,18 +244,19 @@ func (reconciler *SourceReconciler) Refresh(
 		OutputProtocol: reconciler.outputProtocol, Cache: reconciler.candidates,
 	})
 	if err != nil {
-		return SourceRefreshResult{}, err
+		return SourceRefreshResult{}, exitAt(SourceRefreshExitBuildCatalog, err)
 	}
 	catalog, err = retainRuntimeExecutableCatalog(ctx, catalog, current, reconciler.compiler, reconciler.stateSemantics)
 	if err != nil {
-		return SourceRefreshResult{}, err
+		return SourceRefreshResult{}, exitAt(SourceRefreshExitRetainExecutable, err)
 	}
 	if catalog.ObservationID != observationID {
-		return SourceRefreshResult{}, errors.New("alarmd controlplane: source observation changed while building Catalog")
+		return SourceRefreshResult{}, exitAt(SourceRefreshExitObservationChanged,
+			errors.New("alarmd controlplane: source observation changed while building Catalog"))
 	}
 	if reconciler.validateCatalog != nil {
 		if err := reconciler.validateCatalog(catalog); err != nil {
-			return SourceRefreshResult{}, err
+			return SourceRefreshResult{}, exitAt(SourceRefreshExitValidateCatalog, err)
 		}
 	}
 	catalog.ObservationID = observationID
@@ -268,16 +269,16 @@ func (reconciler *SourceReconciler) Refresh(
 		return reconciler.publish(ctx, current, catalog, SourceRefreshUnchanged)
 	}
 	if activationErr != nil && !errors.Is(activationErr, ErrActivationUnavailable) {
-		return SourceRefreshResult{}, activationErr
+		return SourceRefreshResult{}, exitAt(SourceRefreshExitActivation, activationErr)
 	}
 	confirmationKey, err := sourceCandidateConfirmationKey(catalog.ObservationID, catalog.SnapshotRevision, catalog.Dispositions)
 	if err != nil {
-		return SourceRefreshResult{}, err
+		return SourceRefreshResult{}, exitAt(SourceRefreshExitConfirmation, err)
 	}
 	if audit != nil {
 		currentKey, err := sourceCandidateConfirmationKey(audit.ObservationID, audit.Publication.SnapshotRevision, audit.Dispositions)
 		if err != nil {
-			return SourceRefreshResult{}, err
+			return SourceRefreshResult{}, exitAt(SourceRefreshExitConfirmation, err)
 		}
 		if currentKey == confirmationKey {
 			return reconciler.publish(ctx, current, catalog, SourceRefreshUnchanged)
@@ -286,14 +287,14 @@ func (reconciler *SourceReconciler) Refresh(
 
 	pending, err := reconciler.loadPending(ctx)
 	if err != nil && !errors.Is(err, redis.Nil) {
-		return SourceRefreshResult{}, err
+		return SourceRefreshResult{}, exitAt(SourceRefreshExitCandidate, err)
 	}
 	if err == nil && pending.ConfirmationKey == confirmationKey {
 		return reconciler.publish(ctx, current, catalog, SourceRefreshPublished)
 	}
 	if err := reconciler.savePending(ctx, persistedSourceCandidate{SchemaVersion: sourceCandidateSchemaVersion,
 		ConfirmationKey: confirmationKey, ObservationID: catalog.ObservationID, SnapshotRevision: string(catalog.SnapshotRevision)}); err != nil {
-		return SourceRefreshResult{}, err
+		return SourceRefreshResult{}, exitAt(SourceRefreshExitCandidate, err)
 	}
 	pendingResult := SourceRefreshResult{Status: SourceRefreshPendingConfirmation, Observation: catalog.ObservationID}
 	if current != nil {
@@ -320,7 +321,7 @@ func (reconciler *SourceReconciler) observe(ctx context.Context, source Strategy
 	if signalled, ok := source.(ChangeSignalSource); ok {
 		read, err := signalled.ChangeSignal(ctx)
 		if err != nil {
-			return observedCycle{}, sourceRead{}, err
+			return observedCycle{}, sourceRead{}, exitAt(SourceRefreshExitChangeSignal, err)
 		}
 		signal = read
 	}
@@ -368,11 +369,7 @@ func (reconciler *SourceReconciler) fullReadReason(
 	case signal.Value != memory.signal.Value:
 		return SourceReadChanged, nil
 	}
-	ids, err := source.ActiveStrategyIDs(ctx)
-	if err != nil {
-		return "", err
-	}
-	ids, err = canonicalActiveSet(ids)
+	ids, err := readActiveSet(ctx, source)
 	if err != nil {
 		return "", err
 	}
@@ -398,17 +395,17 @@ func (reconciler *SourceReconciler) publish(
 	if activationErr == nil && activation.Current.SnapshotRevision == catalog.SnapshotRevision {
 		snapshot, _, loadErr := reconciler.publisher.restoreIfActivationCurrent(ctx, activation, catalog)
 		if loadErr != nil {
-			return SourceRefreshResult{}, loadErr
+			return SourceRefreshResult{}, exitAt(SourceRefreshExitPublish, loadErr)
 		}
 		reconciler.rememberLastGood(snapshot.Publication, catalog)
 		if clearErr := reconciler.clearPending(ctx); clearErr != nil {
-			return SourceRefreshResult{}, clearErr
+			return SourceRefreshResult{}, exitAt(SourceRefreshExitCandidate, clearErr)
 		}
 		return SourceRefreshResult{Status: status, Observation: catalog.ObservationID,
 			Publication: snapshot.Publication}, nil
 	}
 	if activationErr != nil && !errors.Is(activationErr, ErrActivationUnavailable) {
-		return SourceRefreshResult{}, activationErr
+		return SourceRefreshResult{}, exitAt(SourceRefreshExitActivation, activationErr)
 	}
 	expected := SnapshotPublicationRef{}
 	if current != nil {
@@ -421,19 +418,19 @@ func (reconciler *SourceReconciler) publish(
 	if errors.Is(err, ErrPublicationConflict) {
 		winner, loadErr := reconciler.repository.LoadLatestPublication(ctx)
 		if loadErr != nil {
-			return SourceRefreshResult{}, loadErr
+			return SourceRefreshResult{}, exitAt(SourceRefreshExitPublish, loadErr)
 		}
 		if clearErr := reconciler.clearPending(ctx); clearErr != nil {
-			return SourceRefreshResult{}, clearErr
+			return SourceRefreshResult{}, exitAt(SourceRefreshExitCandidate, clearErr)
 		}
 		return SourceRefreshResult{Status: SourceRefreshPublicationConflict,
 			Observation: catalog.ObservationID, Publication: winner}, nil
 	}
 	if err != nil {
-		return SourceRefreshResult{}, err
+		return SourceRefreshResult{}, exitAt(SourceRefreshExitPublish, err)
 	}
 	if err := reconciler.clearPending(ctx); err != nil {
-		return SourceRefreshResult{}, err
+		return SourceRefreshResult{}, exitAt(SourceRefreshExitCandidate, err)
 	}
 	return SourceRefreshResult{Status: status, Observation: catalog.ObservationID, Publication: snapshot.Publication}, nil
 }

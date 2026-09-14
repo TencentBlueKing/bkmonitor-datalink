@@ -335,6 +335,11 @@ type productionCatalogRepository interface {
 	LoadActiveQueryGroupSet(context.Context, controlplane.ActiveQueryGroupSetRef) ([]execution.QueryGroupIdentity, error)
 	RenewCurrentActivationObjects(context.Context) error
 	LoadPublishedContent(context.Context, controlplane.SnapshotPublicationRef) (controlplane.PublishedContent, error)
+	// MarkSourceRefreshSuccess and LoadSourceRefreshSuccess keep the time of
+	// the last refresh round that succeeded as a persisted fact, so that its
+	// age survives the process that wrote it.
+	MarkSourceRefreshSuccess(context.Context, time.Time) error
+	LoadSourceRefreshSuccess(context.Context) (time.Time, bool, error)
 }
 
 type productionScheduleProjection interface {
@@ -430,6 +435,16 @@ func (runtime *productionPhaseTwoControl) LoadActive(
 	return phaseTwoControlRefreshResult{QueryGroups: queryGroups, Status: phaseTwoControlHealthy}, err
 }
 
+// SourceRefreshSuccessAt reads the persisted time of the last successful
+// refresh round under this store, by any process. The second result is
+// false when no round is known to have succeeded.
+func (runtime *productionPhaseTwoControl) SourceRefreshSuccessAt(ctx context.Context) (time.Time, bool, error) {
+	if runtime == nil || runtime.dependencies.Repository == nil {
+		return time.Time{}, false, errors.New("phase-two production Control repository is not initialized")
+	}
+	return runtime.dependencies.Repository.LoadSourceRefreshSuccess(ctx)
+}
+
 // ControlVersion serves the activation header for the due index. It reads live
 // every time: a caller polling for change has to see the current value, and a
 // cached one would answer "nothing has changed" for as long as the cache lasts.
@@ -467,17 +482,46 @@ func (runtime *productionPhaseTwoControl) refresh(
 		if errors.Is(err, controlplane.ErrSnapshotUnavailable) {
 			sourceKind = observability.SourceKindCompiledSnapshot
 		}
+		// Every failed round is reported, with where it stopped and what it
+		// said. The transition into the degraded state is reported once by
+		// the bundle, which is right for a transition and blind to an
+		// episode: a source failing every round for hours was one line and
+		// one increment, and the line had scrolled out of reach. The log
+		// limiter bounds these lines per window; the metric counts them all.
+		observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
+			Component: observability.ComponentControlPlane, Stage: observability.StageSnapshotRefreshed,
+			Result: observability.ResultFailed, Direction: observability.DirectionInternal,
+			ReasonCode: observability.ReasonContractRetryable, Err: err, SourceKind: sourceKind,
+			ControlSourceRound: &observability.ControlSourceRoundFacts{
+				Outcome: observability.ControlSourceRoundFailed, Exit: string(controlplane.SourceRefreshExitOf(err)),
+			},
+		})
 		result, fallbackErr := runtime.keepLastGood(ctx, sourceKind, err)
 		return result, false, fallbackErr
 	}
 	if !knownSourceRefreshStatus(result.Status) {
 		return phaseTwoControlRefreshResult{}, false, errors.New("phase-two source refresh returned an invalid status")
 	}
+	// A round that returned, under any status, is a success of the source
+	// refresh, and its time is persisted: the age of the last success is
+	// then a difference between that fact and the clock, which survives this
+	// process. A write that fails leaves the previous mark standing, so the
+	// age reads too old rather than too young, and the failure is reported.
+	if markErr := runtime.dependencies.Repository.MarkSourceRefreshSuccess(ctx, runtime.dependencies.Now()); markErr != nil {
+		observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
+			Component: observability.ComponentControlPlane, Stage: observability.StageSnapshotRefreshed,
+			Result: observability.ResultFailed, Direction: observability.DirectionInternal,
+			ReasonCode: observability.ReasonContractRetryable, Err: fmt.Errorf("phase-two mark source refresh success: %w", markErr),
+		})
+	}
 	sourceRefresh := sourceRefreshIdentity(result, result.Publication)
 	defer func() {
 		observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
 			Component: observability.ComponentControlPlane, Stage: observability.StageSnapshotRefreshed,
 			Result: observability.ResultSuccess, SourceRefresh: sourceRefresh,
+			ControlSourceRound: &observability.ControlSourceRoundFacts{
+				Outcome: observability.ControlSourceRoundSucceeded, Exit: string(controlplane.SourceRefreshExitNone),
+			},
 		})
 	}()
 	if result.Status == controlplane.SourceRefreshPendingConfirmation {

@@ -22,6 +22,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
@@ -425,6 +426,9 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 	expected["bkmonitor_alarmd_open_alert_set_entries"] = "variableLabels: {kind}"
 	expected["bkmonitor_alarmd_open_alert_set_tracked_strategies"] = "variableLabels: {}"
 	expected["bkmonitor_alarmd_open_alert_set_evictions_total"] = "variableLabels: {}"
+	expected["bkmonitor_alarmd_control_source_refresh_total"] = "variableLabels: {outcome,exit}"
+	expected["bkmonitor_alarmd_control_source_mode"] = "variableLabels: {role,mode}"
+	expected["bkmonitor_alarmd_control_source_last_success_age_seconds"] = "variableLabels: {}"
 
 	descriptions := make(chan string)
 	go func() {
@@ -851,6 +855,9 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	bounds[fqName("open_alert_set_entries")] = 3
 	bounds[fqName("open_alert_set_tracked_strategies")] = 1
 	bounds[fqName("open_alert_set_evictions_total")] = 1
+	bounds[fqName("control_source_refresh_total")] = len(controlplane.SourceRefreshExits)
+	bounds[fqName("control_source_mode")] = len(observability.ControlSourceRoles) * len(observability.ControlSourceModes)
+	bounds[fqName("control_source_last_success_age_seconds")] = 1
 	for _, name := range []string{
 		"messages", "records", "plans", "levels", "events", "bytes", "keys", "state_bytes",
 	} {

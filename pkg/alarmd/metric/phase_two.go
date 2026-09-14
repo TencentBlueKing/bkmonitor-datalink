@@ -12,6 +12,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
@@ -75,6 +76,8 @@ type phaseTwoMetrics struct {
 	recoveryPastLevelWithoutRecov   prometheus.Counter
 	openAlertGate                   *prometheus.CounterVec
 	openAlertSet                    *openAlertSetCollector
+	controlSourceRounds             *prometheus.CounterVec
+	controlSource                   *controlSourceCollector
 	redisCalls                      redisCallMetrics
 	controlCache                    *controlCacheCollector
 	legacyPodCache                  *prometheus.CounterVec
@@ -366,6 +369,29 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 		metrics.openAlertGate.WithLabelValues(string(outcome))
 	}
 	metrics.openAlertSet = newOpenAlertSetCollector()
+	metrics.controlSourceRounds = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "control_source_refresh_total",
+		Help: "Refresh rounds of the control plane's strategy source on this process, every round, by outcome " +
+			"and, for a failed round, the exit it stopped at. Counted on the round, not on the transition into " +
+			"an episode: the transition counter records one increment for an episode of any length, so a source " +
+			"failing every round for hours was one increment there and is one increment per round here. " +
+			"outcome succeeded carries exit none. A failed round's exit names the step: change_signal, " +
+			"active_set_read (the store refused the read), active_set_missing (no set published), " +
+			"active_set_invalid_id and active_set_duplicate (one element refuses the whole set, every round, " +
+			"until the publisher fixes it -- the shape a store outage does not have), documents, " +
+			"observation_unstable (the set moved under the read; clears itself), and the steps after the read " +
+			"(observation_id, last_good, build_catalog, retain_executable, observation_changed, validate_catalog, " +
+			"activation, confirmation, candidate, publish); other is an error no step claimed. The cause's text " +
+			"is in the log line of the same round. Only the leader runs rounds: a flat zero on a follower is normal.",
+	}, []string{"outcome", "exit"})
+	metrics.controlSourceRounds.WithLabelValues(observability.ControlSourceRoundSucceeded, string(controlplane.SourceRefreshExitNone))
+	for _, exit := range controlplane.SourceRefreshExits {
+		if exit == controlplane.SourceRefreshExitNone {
+			continue
+		}
+		metrics.controlSourceRounds.WithLabelValues(observability.ControlSourceRoundFailed, string(exit))
+	}
+	metrics.controlSource = newControlSourceCollector()
 	metrics.seriesAdmission = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "series_admission_total",
 		Help: "Access-path admission decisions by filter, outcome and bounded reason.",
@@ -439,7 +465,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.undrainedDrainingQueryGroups, m.drainingCursorPrunedQueryGroups, m.rebalancePlannedMoves, m.assignmentIndexStaleRounds, m.assignmentIndexWrites, m.assignmentIndexReads, m.assignmentIndexConfirm, m.assignmentRecordReads, m.scheduleCursorAdvances, m.activationHeldQueryGroups, m.activationHeldAgeSecondsMax,
 		m.algorithmEvaluations, m.algorithmInputs, m.recoveryHeld, m.recoveryPastLevelWithoutRecov, m.openAlertGate,
 	}...), append(append(m.redisCalls.collectors(), m.dueIndex.collectors()...),
-		m.controlCache, m.openAlertSet, m.redisPool, m.canonicalEncoding, m.legacyPodCache,
+		m.controlCache, m.openAlertSet, m.controlSourceRounds, m.controlSource, m.redisPool, m.canonicalEncoding, m.legacyPodCache,
 		m.seriesAdmission, m.cmdbIndexHosts, m.hostDisableMonitorStates, m.cmdbIndexAge, m.cmdbIndexDegraded)...)
 }
 
@@ -584,6 +610,9 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 	}
 	for _, fact := range observation.OpenAlertGates {
 		m.openAlertGate.WithLabelValues(string(fact.Outcome)).Add(float64(fact.Records))
+	}
+	if facts := observation.ControlSourceRound; facts != nil {
+		m.controlSourceRounds.WithLabelValues(facts.Outcome, controlSourceRoundExit(facts)).Inc()
 	}
 	for _, fact := range observation.AlgorithmInputs {
 		m.algorithmInputs.WithLabelValues(

@@ -830,6 +830,72 @@ func ValidSourceReadOutcome(mode SourceReadMode, reason SourceReadReason) bool {
 // ActivationFailureFacts carries fixed classification, bounded counts and a
 // bounded diagnostic sample. Query Group identity is logged only for
 // reactivation/not_drained and never becomes a metric label.
+// ControlSourceRole is what this process is to the control plane's source
+// refresh. Only the leader refreshes; a follower reads what the leader
+// published; unacquired means the process could not find out either way --
+// the acquisition failed or has not happened. follower and unacquired are
+// opposite situations for whoever is looking ("someone else is doing it"
+// and "nobody may be doing it"), and they were one boolean until a
+// deployment sat for hours with no way to tell which it was in.
+type ControlSourceRole string
+
+const (
+	ControlSourceRoleLeader     ControlSourceRole = "leader"
+	ControlSourceRoleFollower   ControlSourceRole = "follower"
+	ControlSourceRoleUnacquired ControlSourceRole = "unacquired"
+)
+
+// ControlSourceRoles is the closed set, for a reader that pre-creates a
+// series per role.
+var ControlSourceRoles = []ControlSourceRole{ControlSourceRoleLeader, ControlSourceRoleFollower, ControlSourceRoleUnacquired}
+
+// ControlSourceMode is the state of this process's control refresh right
+// now, as opposed to a transition into it. healthy: the last round
+// succeeded. degraded_last_good: the last round failed and the process runs
+// on the last good catalog, of which there is one somewhere -- this process
+// or one before it under the same store succeeded once. never_succeeded: the
+// last round failed and no round is known to have ever succeeded under this
+// store, which is the state a deployment is in from its first minute when
+// the source is broken from the first minute, and the one a transition
+// counter cannot show at all.
+type ControlSourceMode string
+
+const (
+	ControlSourceModeHealthy          ControlSourceMode = "healthy"
+	ControlSourceModeDegradedLastGood ControlSourceMode = "degraded_last_good"
+	ControlSourceModeNeverSucceeded   ControlSourceMode = "never_succeeded"
+)
+
+// ControlSourceModes is the closed set.
+var ControlSourceModes = []ControlSourceMode{
+	ControlSourceModeHealthy, ControlSourceModeDegradedLastGood, ControlSourceModeNeverSucceeded,
+}
+
+// ControlSourceRoundFacts is one refresh round of the control plane's
+// source, reported on every round whether it succeeded or failed. A failed
+// round names its exit, which the metric counts under a closed set; the
+// cause travels in the observation's Err. The transition observation that
+// already exists reports the first failure of an episode and nothing after,
+// so an episode that never ends is one increment and one line: this fact is
+// what makes the rounds after it count.
+type ControlSourceRoundFacts struct {
+	// Outcome is succeeded or failed.
+	Outcome string
+	// Exit is none for a succeeded round and where the round stopped for a
+	// failed one; a failed round with no exit reads as other.
+	Exit string
+}
+
+const (
+	ControlSourceRoundSucceeded = "succeeded"
+	ControlSourceRoundFailed    = "failed"
+	// ControlSourceExitNone and ControlSourceExitOther are the two exits this
+	// package has to know: the one a succeeded round carries, and the one a
+	// failed round that named none is given.
+	ControlSourceExitNone  = "none"
+	ControlSourceExitOther = "other"
+)
+
 type ActivationFailureFacts struct {
 	Stage                                ActivationFailureStage
 	Class                                ActivationFailureClass
@@ -1031,6 +1097,7 @@ type Observation struct {
 	AlgorithmInputs       []AlgorithmInputFact
 	RecoveryGates         []RecoveryGateFact
 	OpenAlertGates        []OpenAlertGateFact
+	ControlSourceRound    *ControlSourceRoundFacts
 	normalized            bool
 	stageReasonBucket     bool
 }
@@ -1129,6 +1196,7 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.AlgorithmEvaluations, observation.AlgorithmInputs = normalizeAlgorithmFacts(observation)
 	observation.RecoveryGates = normalizeRecoveryGateFacts(observation)
 	observation.OpenAlertGates = normalizeOpenAlertGateFacts(observation)
+	observation.ControlSourceRound = normalizeControlSourceRoundFacts(observation)
 	observation.Counts = normalizeCounts(observation.Counts)
 	observation.normalized = true
 	return observation
@@ -1277,6 +1345,28 @@ func normalizeRecoveryGateFacts(observation Observation) []RecoveryGateFact {
 
 // normalizeOpenAlertGateFacts is normalizeRecoveryGateFacts for the second
 // gate: same stage, same closed set, same treatment of a value outside it.
+// normalizeControlSourceRoundFacts keeps a round fact only where a round is
+// reported, and makes the exit agree with the outcome: a succeeded round has
+// none, a failed round has what it named or other.
+func normalizeControlSourceRoundFacts(observation Observation) *ControlSourceRoundFacts {
+	facts := observation.ControlSourceRound
+	if facts == nil || observation.Component != ComponentControlPlane || observation.Stage != StageSnapshotRefreshed {
+		return nil
+	}
+	normalized := *facts
+	switch normalized.Outcome {
+	case ControlSourceRoundSucceeded:
+		normalized.Exit = ControlSourceExitNone
+	case ControlSourceRoundFailed:
+		if normalized.Exit == "" || normalized.Exit == ControlSourceExitNone {
+			normalized.Exit = ControlSourceExitOther
+		}
+	default:
+		return nil
+	}
+	return &normalized
+}
+
 func normalizeOpenAlertGateFacts(observation Observation) []OpenAlertGateFact {
 	if observation.Component != ComponentEvaluation || observation.Stage != StageEvaluationCompleted {
 		return nil

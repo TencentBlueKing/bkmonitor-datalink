@@ -467,6 +467,42 @@ type Snapshot struct {
 	// alert set, which gates RECOVERY envelopes. Absent on a build without the
 	// gate, which is a different answer from a copy that is fine.
 	OpenAlertSet *OpenAlertSetFacts `json:"open_alert_set,omitempty"`
+	// ControlSource is the state of this replica's control source refresh:
+	// its role in it, the state the refresh is in, and how long since any
+	// process last refreshed the source successfully. Absent on a build
+	// before this fact existed, which is a different answer from a source
+	// that is fine.
+	ControlSource *ControlSourceFacts `json:"control_source,omitempty"`
+}
+
+// ControlSourceFacts is what a replica says about the control plane's
+// strategy source refresh. Role is leader, follower or unacquired; Mode is
+// healthy, degraded_last_good or never_succeeded. StaleBeyondBound is the
+// one fact the verdict reads: no round has succeeded for longer than the
+// staleness the design accepts, measured from the persisted time of the
+// last success, or, where no success was ever recorded, from how long this
+// process has been failing -- a source broken from the first minute has no
+// persisted success to measure from, and it is the case that most needs
+// the verdict. LeaderAbsentBeyondBound is the other: this process could not
+// acquire the lease and does not know who holds it, for longer than the
+// bound, which is a deployment nobody may be refreshing.
+type ControlSourceFacts struct {
+	Role                    string `json:"role"`
+	Mode                    string `json:"mode"`
+	StaleBeyondBound        bool   `json:"stale_beyond_bound"`
+	LeaderAbsentBeyondBound bool   `json:"leader_absent_beyond_bound"`
+	// LastSuccessAgeSeconds is how long since the last successful refresh
+	// round under this store, by any process. Absent until one is known.
+	LastSuccessAgeSeconds *float64 `json:"last_success_age_seconds,omitempty"`
+	// DegradedSecondsThisProcess is how long this process has been failing
+	// its rounds. This process only: a restart resets it, which is why the
+	// verdict does not read it where a persisted success exists.
+	DegradedSecondsThisProcess *float64 `json:"degraded_seconds_this_process,omitempty"`
+	// LastFailureExit and LastFailure are where the last failed round
+	// stopped and what it said. The log line of that round says the same,
+	// once per limiter window; this is the copy that does not scroll away.
+	LastFailureExit string `json:"last_failure_exit,omitempty"`
+	LastFailure     string `json:"last_failure,omitempty"`
 }
 
 // OpenAlertSetFacts is what a replica says about its copy of the consumer's
@@ -496,6 +532,18 @@ const (
 	// knowledge is an alert that stays open past its due, and nothing on the
 	// object list shows that.
 	DegradationOpenAlertSetStale DegradationKind = "OPEN_ALERT_SET_STALE"
+	// DegradationControlSourceStale: no refresh round of the control plane's
+	// strategy source has succeeded for longer than the staleness bound. The
+	// deployment executes the last good catalog and every strategy saved
+	// since is not in it; nothing on the object list shows that, because the
+	// objects it does list keep running as before. On a running deployment
+	// this went unseen for three releases behind a HEALTHY verdict.
+	DegradationControlSourceStale DegradationKind = "CONTROL_SOURCE_STALE"
+	// DegradationControlLeaderAbsent: a replica has been unable to acquire
+	// the control leader lease, and unable to learn who holds it, for longer
+	// than the staleness bound. A deployment in which nobody refreshes reads
+	// on every refresh counter exactly like one in which somebody else does.
+	DegradationControlLeaderAbsent DegradationKind = "CONTROL_LEADER_ABSENT"
 )
 
 // Degradation is one replica-level reason the deployment is degraded.
@@ -807,6 +855,14 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		}
 		if snapshot.OpenAlertSet != nil && snapshot.OpenAlertSet.StaleBeyondBound {
 			view.Degradations = append(view.Degradations, Degradation{Kind: DegradationOpenAlertSetStale, Replica: replica})
+		}
+		if snapshot.ControlSource != nil {
+			if snapshot.ControlSource.StaleBeyondBound {
+				view.Degradations = append(view.Degradations, Degradation{Kind: DegradationControlSourceStale, Replica: replica})
+			}
+			if snapshot.ControlSource.LeaderAbsentBeyondBound {
+				view.Degradations = append(view.Degradations, Degradation{Kind: DegradationControlLeaderAbsent, Replica: replica})
+			}
 		}
 		perReplica := ReplicaView{
 			Replica: replica, Owned: snapshot.Owned, Determined: snapshot.Determined,

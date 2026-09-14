@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"time"
 
@@ -10,6 +11,11 @@ import (
 )
 
 var ErrObservationUnstable = errors.New("alarmd controlplane: source observation unstable")
+
+// ErrActiveSetNotCanonical marks an active set refused because it lists an
+// identity twice or lists an empty one. Like the invalid identity, one
+// element refuses the whole set, and every round the same way.
+var ErrActiveSetNotCanonical = errors.New("alarmd controlplane: invalid active strategy set")
 
 type StrategySource interface {
 	ActiveStrategyIDs(context.Context) ([]string, error)
@@ -84,36 +90,28 @@ type observedCycle struct {
 }
 
 func observeCycle(ctx context.Context, source StrategySource) (observedCycle, error) {
-	before, err := source.ActiveStrategyIDs(ctx)
-	if err != nil {
-		return observedCycle{}, err
-	}
-	before, err = canonicalActiveSet(before)
+	before, err := readActiveSet(ctx, source)
 	if err != nil {
 		return observedCycle{}, err
 	}
 	strategies, err := source.Strategies(ctx, before)
 	if err != nil {
-		return observedCycle{}, err
+		return observedCycle{}, exitAt(SourceRefreshExitDocuments, err)
 	}
-	after, err := source.ActiveStrategyIDs(ctx)
-	if err != nil {
-		return observedCycle{}, err
-	}
-	after, err = canonicalActiveSet(after)
+	after, err := readActiveSet(ctx, source)
 	if err != nil {
 		return observedCycle{}, err
 	}
 	if !equalStrings(before, after) || len(strategies) != len(before) {
-		return observedCycle{}, ErrObservationUnstable
+		return observedCycle{}, exitAt(SourceRefreshExitObservationUnstable, ErrObservationUnstable)
 	}
 	byID := make(map[string]SourceStrategy, len(strategies))
 	for _, strategy := range strategies {
 		if !validObservedStrategy(strategy) {
-			return observedCycle{}, ErrObservationUnstable
+			return observedCycle{}, exitAt(SourceRefreshExitObservationUnstable, ErrObservationUnstable)
 		}
 		if _, duplicate := byID[strategy.SourceID]; duplicate {
-			return observedCycle{}, ErrObservationUnstable
+			return observedCycle{}, exitAt(SourceRefreshExitObservationUnstable, ErrObservationUnstable)
 		}
 		byID[strategy.SourceID] = strategy
 	}
@@ -122,17 +120,31 @@ func observeCycle(ctx context.Context, source StrategySource) (observedCycle, er
 	for _, id := range before {
 		strategy, ok := byID[id]
 		if !ok {
-			return observedCycle{}, ErrObservationUnstable
+			return observedCycle{}, exitAt(SourceRefreshExitObservationUnstable, ErrObservationUnstable)
 		}
 		digest, err := sourceFactsDigest(strategy)
 		if err != nil {
-			return observedCycle{}, ErrObservationUnstable
+			return observedCycle{}, exitAt(SourceRefreshExitObservationUnstable, ErrObservationUnstable)
 		}
 		strategy.digest = digest
 		ordered = append(ordered, strategy)
 		digests = append(digests, digest)
 	}
 	return observedCycle{ids: before, digests: digests, strategies: ordered}, nil
+}
+
+// readActiveSet reads the active set and makes it canonical, claiming the
+// exit for whichever of the two refused it.
+func readActiveSet(ctx context.Context, source StrategySource) ([]string, error) {
+	ids, err := source.ActiveStrategyIDs(ctx)
+	if err != nil {
+		return nil, exitAt(activeSetExit(err), err)
+	}
+	ids, err = canonicalActiveSet(ids)
+	if err != nil {
+		return nil, exitAt(SourceRefreshExitActiveSetDuplicate, err)
+	}
+	return ids, nil
 }
 
 func validObservedStrategy(strategy SourceStrategy) bool {
@@ -169,7 +181,7 @@ func canonicalActiveSet(ids []string) ([]string, error) {
 	sort.Strings(result)
 	for index, id := range result {
 		if id == "" || (index > 0 && result[index-1] == id) {
-			return nil, errors.New("alarmd controlplane: invalid active strategy set")
+			return nil, fmt.Errorf("%w: element %q at %d of %d", ErrActiveSetNotCanonical, id, index, len(result))
 		}
 	}
 	return result, nil

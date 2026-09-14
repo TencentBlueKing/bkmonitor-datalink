@@ -304,6 +304,11 @@ type phaseTwoControlRuntime interface {
 	// is as untrustworthy as a failed read: with no header nothing downstream is
 	// anchored to a published version.
 	ControlVersion(context.Context) (string, bool, error)
+	// SourceRefreshSuccessAt reads the persisted time of the last refresh
+	// round that succeeded under this store, by any process; false when none
+	// is known to have. Every replica reads it, so the age it yields does not
+	// depend on which process is the leader or on how long any has run.
+	SourceRefreshSuccessAt(context.Context) (time.Time, bool, error)
 	Close() error
 }
 
@@ -400,6 +405,10 @@ type phaseTwoWorkerBundle struct {
 	controlSourceKind     observability.SourceKind
 	controlReason         observability.ReasonCode
 	lastControlRecoveryAt time.Time
+	// controlSource is the state of the control source refresh as this
+	// process reports it, read at scrape and at publish rather than on a
+	// transition. See runtime_phase_two_control_source.go.
+	controlSource controlSourceState
 	// rotation is the dispatcher's own view of whether it is still getting
 	// round everything it owns, published once per rotation rather than read
 	// out of the walk.
@@ -566,6 +575,7 @@ func newPhaseTwoWorkerBundle(dependencies phaseTwoWorkerBundleDependencies) (*ph
 		runners:  make(map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle)}
 	if dependencies.Recorder != nil {
 		dependencies.Recorder.SetOwnedQueryGroups(0)
+		dependencies.Recorder.SetControlSourceSource(bundle.controlSourceStats)
 	}
 	return bundle, nil
 }
@@ -616,9 +626,10 @@ func (bundle *phaseTwoWorkerBundle) Start(ctx context.Context) error {
 		if err := bundle.applyControlRefresh(ctx, controlResult); err != nil {
 			return err
 		}
-	} else {
-		bundle.setControlQueryGroups(queryGroups)
+	} else if err := bundle.applyFollowerControlLoad(ctx, controlResult); err != nil {
+		return err
 	}
+	bundle.readPersistedSourceSuccess(ctx)
 	if err := bundle.register(ctx, ownership.WorkerReady); err != nil {
 		return err
 	}
@@ -1702,6 +1713,7 @@ func (bundle *phaseTwoWorkerBundle) tryAcquireControlLeader(ctx context.Context)
 	leader, err := bundle.dependencies.Ownership.TryAcquireControlLeader(
 		ctx, bundle.dependencies.Now(), bundle.dependencies.Config.PhaseTwo.Ownership.ControlLeaderTTL.Duration(),
 	)
+	bundle.noteControlRole(leader, err)
 	if err != nil || !leader {
 		return leader, err
 	}
@@ -1719,6 +1731,7 @@ func (bundle *phaseTwoWorkerBundle) startControlMaintenance() {
 	controlCtx, cancel := context.WithCancel(bundle.maintenanceCtx)
 	bundle.controlLeader = true
 	bundle.controlRunning = true
+	bundle.setControlRoleLocked(observability.ControlSourceRoleLeader)
 	bundle.controlEpoch++
 	controlEpoch := bundle.controlEpoch
 	bundle.cancelControl = cancel
@@ -2150,9 +2163,13 @@ func (bundle *phaseTwoWorkerBundle) refreshAndReconcile(ctx context.Context, ref
 			result, err = bundle.dependencies.Control.LoadActive(ctx)
 			queryGroups = result.QueryGroups
 			if err == nil {
-				bundle.setControlQueryGroups(queryGroups)
+				err = bundle.applyFollowerControlLoad(ctx, result)
 			}
 		}
+		// Every replica reads the persisted success time on the refresh
+		// tick, whatever its role and however the tick went: the age it
+		// yields has to keep rising on a replica whose own rounds stopped.
+		bundle.readPersistedSourceSuccess(ctx)
 	} else {
 		bundle.mu.RLock()
 		queryGroups = append([]execution.QueryGroupIdentity(nil), bundle.queryGroups...)
@@ -2204,6 +2221,27 @@ func (bundle *phaseTwoWorkerBundle) setControlQueryGroups(queryGroups []executio
 	bundle.mu.Unlock()
 }
 
+// applyFollowerControlLoad takes a healthy activation read on a follower. A
+// follower that was degraded because the activation was unreadable is
+// recovered by the read succeeding again, through the same transition a
+// leader reports; before this it stayed degraded until it became leader and
+// refreshed, which on a deployment whose leader never changes is forever.
+// A follower that was not degraded takes the Query Groups and records the
+// round without reporting anything, as before.
+func (bundle *phaseTwoWorkerBundle) applyFollowerControlLoad(ctx context.Context, result phaseTwoControlRefreshResult) error {
+	bundle.mu.RLock()
+	degraded := bundle.controlDegraded
+	bundle.mu.RUnlock()
+	if degraded {
+		return bundle.applyControlRefresh(ctx, result)
+	}
+	bundle.mu.Lock()
+	bundle.queryGroups = append(bundle.queryGroups[:0], result.QueryGroups...)
+	bundle.noteControlRoundLocked(result)
+	bundle.mu.Unlock()
+	return nil
+}
+
 func (bundle *phaseTwoWorkerBundle) applyControlRefresh(
 	ctx context.Context,
 	result phaseTwoControlRefreshResult,
@@ -2223,6 +2261,7 @@ func (bundle *phaseTwoWorkerBundle) applyControlRefresh(
 	var transitionCause error
 	bundle.mu.Lock()
 	bundle.queryGroups = append(bundle.queryGroups[:0], result.QueryGroups...)
+	bundle.noteControlRoundLocked(result)
 	switch result.Status {
 	case phaseTwoControlDegradedLastGood:
 		if !bundle.controlDegraded {
@@ -2267,6 +2306,7 @@ func (bundle *phaseTwoWorkerBundle) applyControlRefresh(
 func (bundle *phaseTwoWorkerBundle) markControlFollower(err error) {
 	bundle.mu.Lock()
 	bundle.controlLeader = false
+	bundle.setControlRoleLocked(observability.ControlSourceRoleFollower)
 	if bundle.cancelControl != nil {
 		bundle.cancelControl()
 	}

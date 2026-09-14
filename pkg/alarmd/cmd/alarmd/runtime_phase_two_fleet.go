@@ -196,6 +196,10 @@ type fleetPublisher struct {
 	// carries no facts, which the aggregate keeps apart from a copy that is
 	// fine.
 	openAlerts func() *fleet.OpenAlertSetFacts
+	// controlSource reports the state of this replica's control source
+	// refresh. Nil on a bundle that has none, and the snapshot then carries
+	// no facts.
+	controlSource func() *fleet.ControlSourceFacts
 }
 
 // fleetOverdueWakeCeiling bounds how many parked objects one publish carries.
@@ -351,6 +355,9 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	snapshot.TotalDemoted = len(demoted)
 	if publisher.openAlerts != nil {
 		snapshot.OpenAlertSet = publisher.openAlerts()
+	}
+	if publisher.controlSource != nil {
+		snapshot.ControlSource = publisher.controlSource()
 	}
 	// And the objects whose rounds end without a basis to decide recovery.
 	// Beside the anomalies for a different reason than the pool: not "this is

@@ -188,9 +188,10 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       <br><b>判定看的不是整栏</b>：「没跑成待查」是待处理清单，里面既有 alarmd 自己的，也有数据源没答、
       策略配置写不了的。只有归到 alarmd 的那部分进判定——整栏进判定的话，别人家的故障面越大 alarmd 看着越差，
       而这个数一直不为零的信号等于没有信号。
-      <br><b>降级池不参与判定</b>：后端持续查不到的对象已知不是 alarmd 的问题，留在判定里只会让后端故障面越大、
-      alarmd 看着越差。代价是这是个<b>把对象移出分母</b>的机制，所以池必须有出口——
-      “出过降级池”那一栏就是用来看出口还在不在的：<b>只进不出说明出池路径坏了</b>，而这时池子大小看起来和后端还没好完全一样。
+      <br><b>降级池不参与判定</b>：后端持续查不到的对象不计入判定。代价是这是个<b>把对象移出分母</b>的机制，
+      所以池必须有出口，“出过降级池”那一栏就是用来看出口的。<b>只进不出有两种可能</b>：出池路径坏了，
+      或者后端确实一直没恢复——这两种在池子大小上看起来一样。要分清看“冷却到期未重试”：
+      那是冷却已经到期、本该再查一次却没查的对象，它不为零才指向出池路径本身。
       <br><b>未知怎么来</b>：未知 = 应有 − 已知状态。它同时包含“没有副本认领”和“认领了但还说不出结论”两种。
       只要未知不为零，判定就停在 UNKNOWN——<b>不知道不等于健康</b>。
     </p>
@@ -561,8 +562,8 @@ function renderDeployment(deployment) {
     // to decide it on. Counting them as faults made a permanent, expected
     // condition the biggest number on the page.
     text('undecidableHint', (deployment.undecidable_total || 0)
-      ? '检测窗口没攒够点，恢复无从判起——异常照常报，恢复判不了；正常现象，不计入部署健康判定。'
-        + '窗口能不能攒满取决于策略：序列比窗口活得久就会攒满，活不过窗口就永远攒不满，两种都是策略配置的正常结果'
+      ? '检测窗口数据不足，当前无法确认告警恢复。异常检测不受影响，恢复判定受影响。'
+        + '短暂缺点会自己补齐；持续缺点要查数据连续性和策略窗口。不计入部署健康判定。'
       : '当前没有这种对象');
     // Worded as finished business, because that is what it is: the change was
     // already made on purpose and the next round runs under it. The column is
@@ -682,7 +683,7 @@ function anomalyRow(anomaly) {
     var WHO = {EXTERNAL: '数据源/策略', UNKNOWN: '还看不出', OURS: 'alarmd',
                MISSING: '没带归属'};
     var WHY_WHO = {
-      EXTERNAL: '扩容或改架构都不会让它变好——要找策略配置或数据源的人',
+      EXTERNAL: '按分类，这一类不归在扩容或改架构能解决的一侧——要找策略配置或数据源的人',
       UNKNOWN: '这一条是重启后从记录里恢复的，成因没有被持久化——等它跑完下一轮才知道是谁的',
       OURS: '容量或架构能避免的，判定就看这一类；报了成因但没人归类过的也算在这里，宁可多看一眼',
       MISSING: '这一行没有带归属字段，是缺陷，请上报——不要当成 alarmd 的问题读'
@@ -847,19 +848,35 @@ function loadObjects() {
     var byDesign = served === 'by_design';
     var TITLES = {demoted: '策略本身不可用（降级池）', undecidable: '判不了恢复',
                   by_design: '按配置不处理', anomalies: '没跑成待查'};
+    // Each column says what is happening, what it costs, and what to do --
+    // in that order, and the mechanism goes in the expandable note below.
+    //
+    // These were written as arguments for the classification: "这些不是故障",
+    // "两边都是对的行为", "没有人需要做什么". That answers a question the reader
+    // did not ask, and leaves theirs -- 功能受影响了吗、要不要处理、下一步做什么
+    // -- to be assembled out of a paragraph. Conforming to the design and being
+    // a business risk are not exclusive, and "正常现象" was being used as if
+    // they were.
+    //
+    // The key for the by-design column was "transitional" while the column is
+    // served as "by_design", so this map never matched it and it fell through
+    // to the anomaly text below -- the 按配置不处理 list has been describing
+    // itself as the to-do list. The keys are checked against the Go constants
+    // now.
     var BASIS = {
-      demoted: '这些对象的后端持续查不到，已被降级、不再反复查询，也不计入部署健康判定。列在这里是因为“不算我们的问题”是一个需要能被核对的说法——每条都带着它最近一次失败在哪。',
-      // Stated as a normal condition and as a limit, not as a fault. These
-      // rounds read the data correctly and still raise anomalies; what they
-      // cannot do is conclude that something returned to normal, because that
-      // conclusion needs a complete window and there is not one.
-      undecidable: '这些不是故障。检测窗口没攒够算法要的点数，所以“恢复”这件事无从判起——异常照常报得出来，恢复判不了。'
-        + '窗口能不能攒满取决于策略：序列比窗口活得久，窗口过几轮就满了；序列活不过窗口跨度（聚合维度里有网卡、pod 名这类一直在变的东西），就永远攒不满。'
-        + '两种都是策略配置下的正常结果，扩容和改 alarmd 都不影响。每条的“下一层原因”里写着它是哪一种。',
-      transitional: '这些不是问题。策略在这一轮跑到一半被改了、停用了或换了归属，'
-        + '旧配置算出来的结果不该落地，所以这一轮作废，下一轮按新配置重跑——两边都是对的行为。'
-        + '其中一部分连这一轮都不会重跑：那是策略正要重新暖机的情况，这一轮即使跑了也判不出结论，'
-        + '所以直接让它过去。无论哪种，都没有人需要做什么。',
+      demoted: '后端连续查询失败，已降级、暂停反复查询。'
+        + '影响：这些策略当前不产生检测结果，异常和恢复都不报。'
+        + '下一步：看每条的“后端症状”定位数据源；冷却到期后会自动重试，'
+        + '上面“冷却到期未重试”不为零才说明重试路径本身有问题。'
+        + '这一栏不计入部署健康判定——列出来是为了让这个说法能被核对。',
+      undecidable: '检测窗口数据不足，当前无法确认告警恢复。'
+        + '影响：异常检测不受影响，恢复判定受影响——该报的异常照常报，但报出来之后不会自动恢复。'
+        + '下一步：短暂缺点会自己补齐，继续观察即可；持续缺点要查数据连续性和策略的检测窗口，'
+        + '每条的“下一层原因”里标了是哪一种。这一栏不计入部署健康判定。',
+      by_design: '策略在这一轮跑到一半被改了、停用了或换了归属，这一轮的结果按配置作废。'
+        + '影响：这一轮没有检测结果；除正在重新暖机的那部分外，下一轮按新配置重跑。'
+        + '下一步：不需要处理。但如果你并不知道有人在改这条策略，那要确认的是这次变更本身。'
+        + '这一栏不计入部署健康判定。',
       // The column is "did not succeed, and is not any of the settled cases",
       // which is not the same claim as "alarmd did not run these properly".
       // This said the second one, three panels below a cell saying the first,
@@ -867,11 +884,22 @@ function loadObjects() {
       // than being this column.
       anomalies: '这一栏是待处理清单：这一轮没跑成，而且不属于其它任何一类已经有结论的情况'
         + '（后端持续查不到的、判不了恢复的、按配置不处理的，各在自己那一栏）。'
-        + '栏里还要再分一次：“谁的问题”那一列归到 alarmd 的才决定上面的判定，'
-        + '其余是数据源没答或策略配置写不了，要找别的人。'
+        + '影响：这些对象这一轮没有检测结果。'
+        + '下一步：看“谁的问题”那一列——归到 alarmd 的才决定上面的判定，也是要自己处理的；'
+        + '其余是数据源没答或策略配置写不了，要找对应的人。'
     };
-    text('listTitle', TITLES[served] || TITLES.anomalies);
-    text('listBasis', BASIS[served] || BASIS.anomalies);
+    if (!BASIS[served] || !TITLES[served]) {
+      // Loudly, in the panel. A column served under a key this page has no
+      // wording for used to render the anomaly column's description over it,
+      // which reads as a statement about these objects and is false about
+      // every one of them.
+      text('listTitle', served);
+      text('listBasis', '这一栏（' + served + '）在页面上没有对应的说明文案，这是缺陷，请上报。'
+        + '下面的行是对的，标题和说明不要据此理解。');
+    } else {
+      text('listTitle', TITLES[served]);
+      text('listBasis', BASIS[served]);
+    }
     document.getElementById('colOwn').className = (pool || undecidable || byDesign) ? '' : 'primary';
     document.getElementById('colDemoted').className = pool ? 'primary' : '';
     document.getElementById('colUndecidable').className = undecidable ? 'primary' : '';
@@ -1287,11 +1315,14 @@ function attributionLine(summary, perReplica, column) {
   var settled = summary.window_never_fills || 0;
   var settledTail = '';
   if (settled) {
+    // Says what was measured, then what it costs, then where to look. It used
+    // to say "已经查清了：序列活得比检测窗口短" -- the rounds counter shows the
+    // points are not merely late, and shows nothing about why.
     settledTail = '。这 ' + external + ' 个里有 ' + settled
-      + ' 个已经查清了：序列活得比检测窗口短，窗口永远填不满'
-      + (settled === external ? '——也就是这一批全是这种，没有还需要查的' : '')
-      + '。这类异常报得出来但不会自己恢复，是设计如此，'
-      + '要它变化只能改策略的聚合维度或缩短窗口';
+      + ' 个是持续缺点：缺点已经持续到超过窗口宽度，不是"还没攒够"'
+      + (settled === external ? '——这一批全是这种' : '')
+      + '。影响是异常照常报、恢复判不了，所以这类告警不会自己恢复；'
+      + '成因要看策略的聚合维度和它实际的序列才能确认，常见的是维度里有不断变化的东西让序列活不过窗口';
   }
   if (!ours) {
     return '这些里没有一个是 alarmd 自己的问题（容量或架构）——' + external
@@ -2516,19 +2547,33 @@ function coverageNote(anomaly) {
         + ' 轮以上，正常补齐的速度也就是这样，先不用管'
     };
   }
+  // What is measured and what is inferred, kept apart.
+  //
+  // This used to lead with "窗口永远填不满" and name the cause: a series too
+  // short-lived to fill its window. The rounds counter is evidence that the
+  // points are not merely late -- it has been short for longer than filling
+  // would take -- and it is not evidence of why. A page that states the likely
+  // cause as the finding sends whoever reads it to change a strategy's
+  // dimensions when the answer may be that the data stopped arriving.
+  //
+  // So the headline is the measurement, the effect is stated next because it is
+  // what decides whether to act, and the cause is offered as the thing to go
+  // and check.
   return {
     settled: true,
-    text: '窗口永远填不满：最差 ' + got + ' 点，已连续 ' + windowCoverage.short_rounds + ' 轮',
-    title: '需要 ' + windowCoverage.worst_required + ' 个连续点才能判定，但最差的窗口只取到 '
-      + windowCoverage.worst_valid + ' 个，而且已经这样连续 ' + windowCoverage.short_rounds
-      + ' 轮——超过了填满它所需的 ' + windowCoverage.worst_required
-      + ' 轮，说明点不是"还没来"，是不会来。\n\n'
-      + '（窗口里是有点的，只是攒不够连续的——一个点都没有是另一回事，那一类会单独标"取不到数据"。）\n\n'
-      + '常见原因是策略的聚合维度里有会不断变化的东西（网卡、pod 名、容器名、任务名）：'
-      + '每个序列只活几分钟，短于窗口跨度，物理上凑不出连续点。\n\n'
-      + '这不是 alarmd 的容量或架构问题，扩容改不了。异常仍然报得出来（异常判定在完整性闸门之前），'
-      + '但恢复判定在闸门之后，所以这类告警不会自己恢复——按设计如此，需要由告警侧的机制来关闭。\n\n'
-      + '要它变化只能改策略：把会变化的维度从聚合里去掉，或缩短检测窗口。'
+    text: '持续缺点：需要 ' + windowCoverage.worst_required + ' 个连续点，当前最少 '
+      + windowCoverage.worst_valid + ' 个，已连续 ' + windowCoverage.short_rounds + ' 轮',
+    title: '现象：需要 ' + windowCoverage.worst_required + ' 个连续点才能判定，最差的那个窗口只取到 '
+      + windowCoverage.worst_valid + ' 个，已经连续 ' + windowCoverage.short_rounds
+      + ' 轮如此——超过了填满它所需的 ' + windowCoverage.worst_required + ' 轮，所以不是"还没攒够"。\n\n'
+      + '影响：异常照常报得出来（异常判定在完整性闸门之前）；恢复判不了（恢复判定在闸门之后），'
+      + '所以这类告警不会自己恢复，要靠告警侧的机制关闭。\n\n'
+      + '下一步：常见成因是策略的聚合维度里有不断变化的东西（网卡、pod 名、容器名、任务名），'
+      + '每个序列只活几分钟、短于窗口跨度；也可能是数据本身在缺。'
+      + '这两种要看这条策略的聚合维度和它实际的序列才能分清，页面到这里为止。\n\n'
+      + '（窗口里是有点的，只是攒不够连续的。一个点都没有是另一回事，那一类单独标"取不到数据"。）\n\n'
+      + '如果确认是序列寿命短：把会变化的维度从聚合里去掉，或缩短检测窗口。'
+      + '这一类按分类不归在扩容或改架构能解决的那一侧。'
   };
 }
 

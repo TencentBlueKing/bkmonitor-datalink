@@ -651,11 +651,9 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	// a reader could hold a pool from one moment beside anomalies from another
 	// and find objects in both, or in neither.
 	column := request.URL.Query().Get("column")
-	if column != "" && column != ColumnAnomalies && column != ColumnDemoted &&
-		column != ColumnUndecidable && column != ColumnByDesign {
+	if column != "" && !knownColumn(column) {
 		writeJSON(response, http.StatusBadRequest, map[string]string{
-			"error": "column must be " + ColumnAnomalies + ", " + ColumnDemoted + ", " +
-				ColumnUndecidable + " or " + ColumnByDesign})
+			"error": "column must be one of " + strings.Join(ObjectColumns, ", ")})
 		return
 	}
 	if column == "" {

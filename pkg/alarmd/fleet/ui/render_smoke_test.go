@@ -332,14 +332,19 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	// it does not throw, and a live page rendered a HISTORY_GAPPED row with
 	// the wording for a series too short-lived to fill its window -- a
 	// different situation with a different fix, rendered without complaint.
+	//
+	// The wording these pin changed once, deliberately: the sustained-shortfall
+	// note used to lead with "窗口永远填不满" and name the cause. What is pinned
+	// is the property -- each row says its own situation and does not carry
+	// another's -- and that property is why the strings are here at all.
 	for _, want := range []struct{ object, says, mustNotSay string }{
-		{"qg-gapped-intermittent", "数据断断续续", "窗口永远填不满"},
-		{"qg-gapped-fresh", "数据刚断", "窗口永远填不满"},
-		{"qg-window-never", "窗口永远填不满", "数据断断续续"},
-		{"qg-window-starved", "取不到数据", "窗口永远填不满"},
-		{"qg-window-filling", "窗口在填", "窗口永远填不满"},
+		{"qg-gapped-intermittent", "数据断断续续", "持续缺点"},
+		{"qg-gapped-fresh", "数据刚断", "持续缺点"},
+		{"qg-window-never", "持续缺点", "数据断断续续"},
+		{"qg-window-starved", "取不到数据", "持续缺点"},
+		{"qg-window-filling", "窗口在填", "持续缺点"},
 		{"qg-window-complete", "检测窗口完整", "短"},
-		{"qg-skipped", "没被检测", "窗口永远填不满"},
+		{"qg-skipped", "没被检测", "持续缺点"},
 		{"qg-drift", "策略正在被改", "不在生效时段"},
 		{"qg-offhours", "不在生效时段", "策略正在被改"},
 	} {

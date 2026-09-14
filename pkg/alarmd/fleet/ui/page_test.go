@@ -167,6 +167,41 @@ func TestThePageHasWordingForEveryAnomalyKind(t *testing.T) {
 	}
 }
 
+// Every column the route serves has to have wording of its own.
+//
+// The page does not render blank for one it has no entry for: both lookups fall
+// through to the anomaly column's, so the heading and the description of the
+// to-do list appear over a list of objects that are explicitly not on it. The
+// by-design column shipped that way -- the map was keyed "transitional" from an
+// earlier name of the column, and nothing here could see it.
+func TestEveryServedColumnHasItsOwnHeadingAndDescription(t *testing.T) {
+	body := string(page)
+	if len(fleet.ObjectColumns) == 0 {
+		t.Fatal("no object columns declared; the check would pass vacuously")
+	}
+	// Closed at the first "};", not at a newline before one. TITLES ends on the
+	// same line as its last entry, so a pattern requiring the newline ran past
+	// it and swallowed BASIS as well -- and then a column missing from TITLES
+	// was found in BASIS and reported as present. The check covered one map
+	// twice and the other not at all, which a mutation on TITLES survived.
+	for _, block := range []struct{ name, pattern string }{
+		{"TITLES", `var TITLES = \{([\s\S]*?)\};`},
+		{"BASIS", `var BASIS = \{([\s\S]*?)\};`},
+	} {
+		found := regexp.MustCompile(block.pattern).FindStringSubmatch(body)
+		if found == nil {
+			t.Fatalf("the page no longer declares %s: every column renders another column's wording",
+				block.name)
+		}
+		for _, column := range fleet.ObjectColumns {
+			if !strings.Contains(found[1], column+":") {
+				t.Errorf("%s has no entry for column %q: the list falls through to the anomaly "+
+					"column's wording, which is false about every object in it", block.name, column)
+			}
+		}
+	}
+}
+
 // One column, one name.
 //
 // This column was called three different things in five places: 没归到后端 on

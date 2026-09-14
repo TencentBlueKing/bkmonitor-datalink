@@ -161,6 +161,32 @@ const (
 	ColumnByDesign = "by_design"
 )
 
+// ObjectColumns is every column the object route will serve.
+//
+// It is a list rather than four constants the handler repeats because the page
+// keys its headings and its descriptions off these strings, and a column the
+// page has no entry for does not render blank -- it falls through to another
+// column's wording. That is what happened to by_design: the page's map was
+// keyed "transitional" from an earlier name, so the 按配置不处理 list described
+// itself as the to-do list, which is false about every object in it and was
+// invisible to every check here.
+var ObjectColumns = []string{
+	ColumnAnomalies,
+	ColumnDemoted,
+	ColumnUndecidable,
+	ColumnByDesign,
+}
+
+// knownColumn reports whether the object route will serve this column.
+func knownColumn(column string) bool {
+	for _, known := range ObjectColumns {
+		if column == known {
+			return true
+		}
+	}
+	return false
+}
+
 // The two ends of the list. Both are legitimate readings of the same
 // population, and which one the first page shows decides what an operator sees
 // during an incident.

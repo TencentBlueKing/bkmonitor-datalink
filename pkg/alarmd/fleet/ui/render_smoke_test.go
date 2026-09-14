@@ -104,8 +104,13 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	rows = append(rows, fleet.Anomaly{QueryGroup: "qg-bare", Replica: "r-1", Kind: "DEGRADED_RUN"})
 
 	replicas := []fleet.ReplicaView{
-		{Replica: "bk-monitor-alarmd-trigger-5bdb679ddf-abcde", Owned: 452, Healthy: 400,
-			Anomalies: 33, Demoted: 19, AgeSeconds: 3, UptimeSeconds: 7200, Ours: 5, External: 26},
+		{Replica: "bk-monitor-alarmd-trigger-5bdb679ddf-abcde", Owned: 452, Healthy: 388,
+			Anomalies: 33, Demoted: 19, Undecidable: 12, AgeSeconds: 3, UptimeSeconds: 7200,
+			Ours: 5, External: 26},
+		// One replica reporting no undecidable objects, so the render is
+		// executed on both a present and an absent count. A fixture where every
+		// row carries every field cannot catch a read on one that is sometimes
+		// missing, which is half of what a render throws on.
 		{Replica: "bk-monitor-alarmd-trigger-5bdb679ddf-fghij", Owned: 527, Healthy: 460,
 			Anomalies: 53, Demoted: 14, AgeSeconds: 4, UptimeSeconds: 300, Ours: 8, External: 41},
 	}
@@ -124,7 +129,12 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			WindowNeverFills: 1,
 		},
 		"window_never_fills_cases": windowNeverFillsCases(),
-		"per_replica":              replicas,
+		"health": fleet.HealthResponse{
+			Health: "HEALTHY", Covered: 979, Determined: 979, Unknown: 0, Healthy: 848,
+			AnomaliesTotal: 86, DemotedTotal: 33, UndecidableTotal: 12,
+			DemotedDue: 2, DemotionEntries: 40, DemotionExits: 7, PerReplica: replicas,
+		},
+		"per_replica": replicas,
 		"coverage": fleet.Disagreement{Comparable: true, HeldNotExpected: []string{"qg-blocked"},
 			HeldNotExpectedTotal: 12},
 		"page": map[string]int{"offset": 0, "limit": 50, "total": len(rows)},
@@ -243,6 +253,7 @@ try {
 
 const calls = [
   ['anomalyRow (every row shape)', () => data.anomalies.forEach(r => ctx.anomalyRow(r))],
+  ['renderDeployment', () => ctx.renderDeployment(data.health)],
   ['renderSummary', () => ctx.renderSummary(data.summary, data.page.total)],
   ['renderRollup', () => ctx.renderRollup(data.summary, data.page.total)],
   ['renderReplicas', () => ctx.renderReplicas(data.per_replica)],

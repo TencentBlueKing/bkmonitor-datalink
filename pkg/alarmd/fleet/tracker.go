@@ -177,7 +177,46 @@ type queryGroupState struct {
 	// only part that separates a window that is filling from one that never
 	// will.
 	shortRounds uint32
-	lastFailure *FailureRef
+	// sawSomethingWrong records that at least one round of the current run went
+	// wrong in a way that is not merely "recovery could not be decided".
+	//
+	// Judged over the whole run rather than off the latest round, because the
+	// two give opposite answers and only one is honest. An object that failed
+	// for an hour and then reported one warming round would, on the
+	// latest-round reading, leave the anomaly column and be described as
+	// normal, taking the hour with it.
+	//
+	// Stated in the negative deliberately. The positive form ("every round was
+	// undecidable") has to be true for a state nothing has happened to yet,
+	// which is not what a zero value gives, and every path that creates or
+	// resets a state would have to remember to set it. This form starts
+	// correct at zero and only ever rises.
+	sawSomethingWrong bool
+	lastFailure       *FailureRef
+}
+
+// undecidableReason is a completion reason that means the detection window
+// could not decide recovery, rather than that anything went wrong.
+//
+// HISTORY_WARMING says the window does not hold the points the algorithm needs
+// yet. That is not a failure of anything: the data that exists is being read
+// correctly, the anomalous branch is settled before the completeness gate and
+// still fires, and what cannot be settled is recovery -- because deciding
+// "this has gone back to normal" requires a complete window and there is not
+// one.
+//
+// Whether the window ever fills is a property of the strategy, not of this
+// deployment. A series younger than its window fills it shortly. A series
+// whose lifetime is shorter than the window never does, and that too is the
+// strategy working as configured. Both are normal; both mean the same thing,
+// which is that recovery has no basis to be decided on.
+//
+// HISTORY_GAPPED is deliberately not here. It also blocks the gate, but it
+// says the data arrived, stopped, and came back -- a hole in a stream that was
+// flowing, which is a question about the data rather than about how long the
+// series lives. Folding it in would answer that question by assumption.
+func undecidableReason(reason string) bool {
+	return reason == "HISTORY_WARMING"
 }
 
 // Tracker turns the observation stream into the anomaly list a replica
@@ -342,6 +381,11 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		// A degraded completion is still a round that ended and moved the
 		// cursor, which is exactly what a stalled object cannot do.
 		state.failingSince = time.Time{}
+		// One round that was more than undecidable settles the whole run, and
+		// no later round takes it back.
+		if !undecidableReason(observation.ProgressCompletionReason) {
+			state.sawSomethingWrong = true
+		}
 		state.degradedRuns++
 		state.currentKind = KindDegradedRun
 		state.reasonCode = completion
@@ -370,6 +414,9 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		state.blockedRuns++
 		state.currentKind = KindBlockedRun
 		state.reasonCode = runOutcome
+		// A round that never reached the window is not a window declining to
+		// decide. It is a round that did not happen.
+		state.sawSomethingWrong = true
 	case failedExecution(executeOutcome):
 		state.determined = true
 		if state.failingSince.IsZero() {
@@ -378,6 +425,7 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		state.degradedRuns++
 		state.currentKind = KindDegradedRun
 		state.reasonCode = executeOutcome
+		state.sawSomethingWrong = true
 	default:
 		// Rounds that neither completed nor were blocked -- not due, deferred,
 		// still running, cancelled -- say nothing about whether the group is
@@ -421,6 +469,7 @@ func (tracker *Tracker) resetRun(state *queryGroupState) {
 	state.causeReason = ""
 	state.coverage = nil
 	state.shortRounds = 0
+	state.sawSomethingWrong = false
 	state.degradedRuns = 0
 	state.blockedRuns = 0
 	state.inAnomalyRun = false
@@ -438,11 +487,32 @@ func (tracker *Tracker) resetRun(state *queryGroupState) {
 // their backend is the thing that is not answering and counting them as this
 // deployment's anomalies makes a bigger pool read as a sicker deployment -- the
 // exact inversion that makes the health number useless during a backend outage.
-// Every object lands in exactly one of the two, which is what lets the counts
-// add up against Determined; TestTheFourColumnsAccountForEveryObject is what
-// keeps that true rather than this sentence.
+// Every object lands in exactly one column, which is what lets the counts add
+// up against Determined; TestEveryColumnAccountsForEveryObject is what keeps
+// that true rather than this sentence.
 func (tracker *Tracker) Anomalies() []Anomaly {
-	return tracker.listed(false)
+	return tracker.listed(ColumnAnomalies)
+}
+
+// Undecidable returns the objects whose rounds end without deciding recovery,
+// and where nothing else has gone wrong.
+//
+// These are not anomalies and are published apart from them. The detection
+// window does not hold the points the algorithm needs, so recovery has nothing
+// to be decided on -- but the data that exists is read correctly, an anomalous
+// result is still settled and still fires, and neither capacity nor any change
+// to this deployment alters any of it.
+//
+// How long the window stays that way is a property of the strategy. A series
+// younger than its window fills it shortly; a series whose lifetime is shorter
+// than its window never does. Both are the strategy working as configured, and
+// the split between them rides on each row so a reader can see which.
+//
+// Counting them as anomalies made a normal, permanent condition read as a
+// standing fault, and it was the largest single population in the list: every
+// reader worked through the same rows and reached the same non-conclusion.
+func (tracker *Tracker) Undecidable() []Anomaly {
+	return tracker.listed(ColumnUndecidable)
 }
 
 // Demoted returns the query groups held back because their backend kept
@@ -453,7 +523,7 @@ func (tracker *Tracker) Anomalies() []Anomaly {
 // A pool whose members explain nothing is indistinguishable from a pool that
 // swallowed a real failure.
 func (tracker *Tracker) Demoted() []Anomaly {
-	return tracker.listed(true)
+	return tracker.listed(ColumnDemoted)
 }
 
 // DemotionFlow reports how many objects have entered and left the pool since
@@ -475,7 +545,27 @@ func (tracker *Tracker) DemotionFlow() (entries, extensions, exits int, lastExit
 	return tracker.demotionEntries, tracker.demotionExtensions, tracker.demotionExits, tracker.lastDemotionExit
 }
 
-func (tracker *Tracker) listed(demoted bool) []Anomaly {
+// columnOf decides which of the three lists an object belongs to. Exactly one,
+// which is what lets Healthy be a subtraction rather than its own walk.
+//
+// The order is the precedence, and it is not arbitrary. The pool comes first:
+// an object can be both over threshold and held back, and attributing it to
+// this deployment while its backend is the thing not answering is the reading
+// the demotion split exists to prevent. Undecidable comes next and only claims
+// a run in which nothing else went wrong, so anything genuinely failing falls
+// through to the anomaly column even while its latest round says warming.
+func columnOf(state *queryGroupState) string {
+	if state.queryCooldown != nil {
+		return ColumnDemoted
+	}
+	if !state.sawSomethingWrong && state.currentKind == KindDegradedRun &&
+		undecidableReason(state.causeReason) {
+		return ColumnUndecidable
+	}
+	return ColumnAnomalies
+}
+
+func (tracker *Tracker) listed(column string) []Anomaly {
 	tracker.mu.Lock()
 	defer tracker.mu.Unlock()
 
@@ -486,13 +576,7 @@ func (tracker *Tracker) listed(demoted bool) []Anomaly {
 		if !over && state.queryCooldown == nil && !(state.cooldownExposed && state.inAnomalyRun) {
 			continue
 		}
-		// The pool decides the column, ahead of the threshold. An object can be
-		// both over threshold and held back, and attributing it to this
-		// deployment while its backend is the thing not answering is the reading
-		// the split exists to prevent. An object that has left the pool and has
-		// not yet completed a healthy round comes back here rather than counting
-		// as healthy: leaving the pool is not evidence of recovery.
-		if (state.queryCooldown != nil) != demoted {
+		if columnOf(state) != column {
 			continue
 		}
 		anomaly := Anomaly{

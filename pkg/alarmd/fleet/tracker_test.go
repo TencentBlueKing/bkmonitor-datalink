@@ -445,11 +445,14 @@ func TestAnomalyCarriesHowShortTheDetectionWindowWas(t *testing.T) {
 	for round := 0; round < DefaultDegradedRounds; round++ {
 		tracker.Observe(context.Background(), coverageCompletion("qg-short", 3, 1, 2, 14))
 	}
-	anomalies := tracker.Anomalies()
-	if len(anomalies) != 1 || anomalies[0].Coverage == nil {
-		t.Fatalf("anomalies = %+v, want the window coverage carried through", anomalies)
+	// Read from the undecidable column, not the anomaly one: a window that
+	// cannot decide recovery is not a fault, and it stopped being listed as an
+	// anomaly when that became the classification.
+	listed := tracker.Undecidable()
+	if len(listed) != 1 || listed[0].Coverage == nil {
+		t.Fatalf("undecidable = %+v, want the window coverage carried through", listed)
 	}
-	got := *anomalies[0].Coverage
+	got := *listed[0].Coverage
 	if got.Levels != 3 || got.Short != 1 || got.WorstValid != 2 || got.WorstRequired != 14 {
 		t.Fatalf("coverage = %+v, want the counts as observed", got)
 	}
@@ -464,22 +467,22 @@ func TestShortWindowRoundsAccumulateAcrossRoundsAndStopWhenOneFills(t *testing.T
 	for round := 0; round < DefaultDegradedRounds+4; round++ {
 		tracker.Observe(context.Background(), coverageCompletion("qg-short", 3, 1, 2, 14))
 	}
-	anomalies := tracker.Anomalies()
-	if len(anomalies) != 1 || anomalies[0].Coverage == nil {
-		t.Fatalf("anomalies = %+v, want one anomaly carrying coverage", anomalies)
+	listed := tracker.Undecidable()
+	if len(listed) != 1 || listed[0].Coverage == nil {
+		t.Fatalf("undecidable = %+v, want one object carrying coverage", listed)
 	}
-	if got := anomalies[0].Coverage.ShortRounds; got != uint32(DefaultDegradedRounds+4) {
+	if got := listed[0].Coverage.ShortRounds; got != uint32(DefaultDegradedRounds+4) {
 		t.Fatalf("short rounds = %d, want one per observed round (%d)", got, DefaultDegradedRounds+4)
 	}
 	// A round whose windows were all complete ends the run. Without this the
 	// count only ever rises, and an object that had one bad patch months ago
 	// is permanently labelled as one that can never converge.
 	tracker.Observe(context.Background(), coverageCompletion("qg-short", 3, 0, 0, 0))
-	anomalies = tracker.Anomalies()
-	if len(anomalies) != 1 || anomalies[0].Coverage == nil {
-		t.Fatalf("anomalies = %+v, want the object still listed", anomalies)
+	listed = tracker.Undecidable()
+	if len(listed) != 1 || listed[0].Coverage == nil {
+		t.Fatalf("undecidable = %+v, want the object still listed", listed)
 	}
-	if got := anomalies[0].Coverage.ShortRounds; got != 0 {
+	if got := listed[0].Coverage.ShortRounds; got != 0 {
 		t.Fatalf("short rounds = %d after a complete window, want the run ended", got)
 	}
 }
@@ -501,14 +504,17 @@ func TestARoundWithoutCoverageEndsTheShortRun(t *testing.T) {
 	plain := completion("qg-short", "COMPLETED_WITH_UNAVAILABLE", "8930")
 	plain.ProgressCompletionCause = "LEVEL_OUTCOME_UNKNOWN"
 	tracker.Observe(context.Background(), plain)
-	anomalies := tracker.Anomalies()
-	if len(anomalies) != 1 {
-		t.Fatalf("anomalies = %+v, want the object still listed", anomalies)
+	// A degraded round with no reason at all is not an undecidable one, so the
+	// object is back in the anomaly column -- which is itself the run-level
+	// rule working: one round that was more than undecidable settles the run.
+	listed := tracker.Anomalies()
+	if len(listed) != 1 {
+		t.Fatalf("anomalies = %+v, want the object still listed", listed)
 	}
-	if anomalies[0].Coverage != nil {
+	if listed[0].Coverage != nil {
 		t.Fatalf("coverage = %+v, want none carried from an earlier round: a shortfall left over "+
 			"from a round that is no longer on display reads as describing the one that is",
-			*anomalies[0].Coverage)
+			*listed[0].Coverage)
 	}
 }
 
@@ -538,5 +544,105 @@ func TestPersistentSeparatesAFillingWindowFromOneThatNeverFills(t *testing.T) {
 		if got := subject.coverage.Persistent(); got != subject.want {
 			t.Errorf("%s: Persistent() = %v, want %v", subject.name, got, subject.want)
 		}
+	}
+}
+
+// A window that cannot decide recovery is not a fault. The data that is there
+// is read correctly, an anomalous result is still settled before the
+// completeness gate and still fires; what has no basis is the decision that
+// something went back to normal. Counting that as an anomaly described a
+// normal condition as a standing defect.
+func TestAWindowThatCannotDecideRecoveryIsNotAnAnomaly(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		tracker.Observe(context.Background(), coverageCompletion("qg-warming", 3, 1, 2, 14))
+	}
+	if got := tracker.Anomalies(); len(got) != 0 {
+		t.Fatalf("anomalies = %+v, want none: a window with nothing to decide on is not a fault", got)
+	}
+	undecidable := tracker.Undecidable()
+	if len(undecidable) != 1 || undecidable[0].QueryGroup != "qg-warming" {
+		t.Fatalf("undecidable = %+v, want the one object", undecidable)
+	}
+	// It has to be in exactly one column, or the healthy count -- which is a
+	// subtraction over all of them -- silently loses an object per round.
+	if got := tracker.Demoted(); len(got) != 0 {
+		t.Fatalf("demoted = %+v, want none", got)
+	}
+}
+
+// The run decides the column, not the latest round. Judged off the last round,
+// an object that failed for an hour and then reported one warming round would
+// move out of the anomaly column and be described as normal, taking the hour
+// with it -- and it would look entirely reasonable on the page.
+func TestOneRoundOfWarmingDoesNotExcuseARunThatWasAlreadyFailing(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	failing := completion("qg-mixed", "COMPLETED_WITH_UNAVAILABLE", "8930")
+	failing.ProgressCompletionCause = "LEVEL_OUTCOME_UNKNOWN"
+	failing.ProgressCompletionReason = "STATE_FACT_CONTRADICTS_OUTCOME"
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		tracker.Observe(context.Background(), failing)
+	}
+	if got := tracker.Anomalies(); len(got) != 1 {
+		t.Fatalf("anomalies = %+v, want the failing object listed before the warming round", got)
+	}
+	tracker.Observe(context.Background(), coverageCompletion("qg-mixed", 3, 1, 2, 14))
+	if got := tracker.Undecidable(); len(got) != 0 {
+		t.Fatalf("undecidable = %+v, want none: one warming round does not make an hour of "+
+			"failures a normal condition", got)
+	}
+	anomalies := tracker.Anomalies()
+	if len(anomalies) != 1 {
+		t.Fatalf("anomalies = %+v, want the object still counted against the deployment", anomalies)
+	}
+	// And a healthy round does clear it, so the flag is not a one-way trap that
+	// keeps an object out of the undecidable column for the life of the process.
+	tracker.Observe(context.Background(), completion("qg-mixed", HealthyCompletions[0], "8930"))
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		tracker.Observe(context.Background(), coverageCompletion("qg-mixed", 3, 1, 2, 14))
+	}
+	if got := tracker.Undecidable(); len(got) != 1 {
+		t.Fatalf("undecidable = %+v, want the object once a healthy round started a new run", got)
+	}
+	if got := tracker.Anomalies(); len(got) != 0 {
+		t.Fatalf("anomalies = %+v, want none after the new run", got)
+	}
+}
+
+// Blocked rounds never reached the window at all, so they are not a window
+// declining to decide. Without this they would fall into the undecidable
+// column by default -- their cause reason is empty, which is not
+// HISTORY_WARMING, but the flag that keeps them out has to be set by something
+// and the blocked path does not go through the completion branch.
+func TestABlockedRunIsNotMistakenForAWindowWithNothingToDecide(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	for round := 0; round < DefaultBlockedRounds; round++ {
+		tracker.Observe(context.Background(), runOutcome("qg-blocked", "source_blocked"))
+	}
+	if got := tracker.Undecidable(); len(got) != 0 {
+		t.Fatalf("undecidable = %+v, want none: a round that never ran is not a window with "+
+			"nothing to decide", got)
+	}
+	if got := tracker.Anomalies(); len(got) != 1 {
+		t.Fatalf("anomalies = %+v, want the blocked object", got)
+	}
+	// The sequence that actually needs the blocked branch to mark the run.
+	// While the kind is still BLOCKED_RUN the column is decided by the kind
+	// alone, so the mark looks redundant -- it stops looking redundant the
+	// moment a warming round follows, because from then on the kind says
+	// DEGRADED_RUN and the reason says warming, and nothing else remembers
+	// that this run began with rounds that never ran at all.
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		tracker.Observe(context.Background(), coverageCompletion("qg-blocked", 3, 1, 2, 14))
+	}
+	if got := tracker.Undecidable(); len(got) != 0 {
+		t.Fatalf("undecidable = %+v, want none: this run began with rounds that never reached "+
+			"the window, and a later warming round does not turn it into a normal condition", got)
+	}
+	if got := tracker.Anomalies(); len(got) != 1 {
+		t.Fatalf("anomalies = %+v, want the object still counted against the deployment", got)
 	}
 }

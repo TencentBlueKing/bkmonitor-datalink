@@ -117,7 +117,8 @@ const (
 	SinceRefusedFuture SinceSource = "REFUSED_FUTURE"
 )
 
-// The two columns the object list can be about. An object is in exactly one.
+// The columns the object list can be about. An object is in exactly one, which
+// is what lets the healthy count be a subtraction instead of its own walk.
 const (
 	// ColumnAnomalies is what this deployment's own execution is failing at.
 	ColumnAnomalies = "anomalies"
@@ -126,6 +127,21 @@ const (
 	// the whole reason they have to be listable: a mechanism that removes
 	// objects from the denominator has to show which ones.
 	ColumnDemoted = "demoted"
+	// ColumnUndecidable is what completes every round without being able to
+	// decide recovery, and where nothing else has gone wrong.
+	//
+	// Not a milder anomaly -- a different kind of statement. The others say
+	// something is failing. This one says the detection window does not hold
+	// the points the algorithm needs, so there is no basis on which to decide
+	// that anything has gone back to normal. The data that is there is read
+	// correctly, an anomalous result is still settled ahead of the
+	// completeness gate and still fires, and no amount of capacity changes any
+	// of it.
+	//
+	// It is listable for the same reason demotion is: it takes objects out of
+	// the anomaly count, and anything that shrinks that count has to be able
+	// to show exactly which objects it took.
+	ColumnUndecidable = "undecidable"
 )
 
 // The two ends of the list. Both are legitimate readings of the same
@@ -349,6 +365,17 @@ type Snapshot struct {
 	// deployment is failing at, Demoted is what it has stopped asking for.
 	Demoted      []Anomaly `json:"demoted"`
 	TotalDemoted int       `json:"total_demoted"`
+	// Undecidable are the objects whose rounds end without a basis to decide
+	// recovery, with nothing else wrong. Beside the anomalies rather than in
+	// them, because the statement is different in kind: not "this is failing"
+	// but "there is nothing here to decide recovery on".
+	//
+	// A replica running an older build sends neither field. Its objects of
+	// this kind stay in Anomalies, which is what they did before this column
+	// existed -- the aggregate keeps adding up and the deployment reads
+	// slightly worse than it is until every replica is on the new build.
+	Undecidable      []Anomaly `json:"undecidable,omitempty"`
+	TotalUndecidable int       `json:"total_undecidable,omitempty"`
 	// DemotionEntries and DemotionExits are cumulative since this replica
 	// started. The pair is the check on the pool: demotion removes objects from
 	// the health denominator, so a pool with entries and no exits is a mechanism
@@ -461,14 +488,15 @@ type Disagreement struct {
 type ReplicaView struct {
 	Replica string `json:"replica"`
 	Owned   int    `json:"owned"`
-	// Determined, Anomalies and Demoted partition Owned the same way the
-	// deployment columns partition Expected, so a replica row adds up on its own
-	// and a reader can see which replica breaks the sum.
-	Determined int `json:"determined"`
-	Anomalies  int `json:"anomalies"`
-	Demoted    int `json:"demoted"`
-	Healthy    int `json:"healthy"`
-	Unknown    int `json:"unknown"`
+	// Determined, Anomalies, Demoted and Undecidable partition Owned the same
+	// way the deployment columns partition Expected, so a replica row adds up
+	// on its own and a reader can see which replica breaks the sum.
+	Determined  int `json:"determined"`
+	Anomalies   int `json:"anomalies"`
+	Demoted     int `json:"demoted"`
+	Undecidable int `json:"undecidable"`
+	Healthy     int `json:"healthy"`
+	Unknown     int `json:"unknown"`
 	// AgeSeconds is how old this replica's snapshot was at the moment of the
 	// read. A replica publishing late is reporting about a past it has not
 	// updated, and that is invisible in any of the numbers above.
@@ -541,11 +569,18 @@ type View struct {
 	// all. See DispatchSuppression: its absence, not its value, is the answer.
 	Dispatch  *DispatchSuppression `json:"dispatch,omitempty"`
 	Anomalies []Anomaly            `json:"anomalies"`
-	// Healthy is Determined minus the two listed columns. It is computed here
+	// Healthy is Determined minus the listed columns. It is computed here
 	// rather than left to the page because it is the column a reader trusts
 	// most, and a page that derives it by subtraction can be made to show a
 	// healthy count that nothing produced.
 	Healthy int `json:"healthy"`
+	// Undecidable are the objects that complete every round without a basis to
+	// decide recovery, and where nothing else is wrong. They are a normal
+	// condition, not a milder fault, and they are out of the anomaly count for
+	// that reason -- listed here because anything that shrinks that count has
+	// to show which objects it took out of it.
+	Undecidable      []Anomaly `json:"undecidable"`
+	UndecidableTotal int       `json:"undecidable_total"`
 	// Demoted are objects whose backend kept answering unavailable. They are
 	// out of the health verdict on purpose -- that is what demotion is for --
 	// which is exactly why the flow numbers below travel with them.
@@ -602,7 +637,8 @@ type View struct {
 // coverage of nothing.
 func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas []string, now time.Time, freshness time.Duration) View {
 	view := View{Health: HealthHealthy, Anomalies: []Anomaly{}, Demoted: []Anomaly{},
-		Replicas: []string{}, PerReplica: []ReplicaView{}}
+		Undecidable: []Anomaly{},
+		Replicas:    []string{}, PerReplica: []ReplicaView{}}
 	ownedByReplica := make([]string, 0, len(expectedReplicas))
 	// The snapshots this view is willing to speak for. Every other number below
 	// is built from these and not from the argument, because the argument
@@ -650,6 +686,8 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		view.Anomalies = append(view.Anomalies, snapshot.Anomalies...)
 		view.DemotedTotal += snapshot.TotalDemoted
 		view.Demoted = append(view.Demoted, snapshot.Demoted...)
+		view.UndecidableTotal += snapshot.TotalUndecidable
+		view.Undecidable = append(view.Undecidable, snapshot.Undecidable...)
 		view.DemotionEntries += snapshot.DemotionEntries
 		view.DemotionExtensions += snapshot.DemotionExtensions
 		view.DemotionExits += snapshot.DemotionExits
@@ -662,7 +700,8 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		perReplica := ReplicaView{
 			Replica: replica, Owned: snapshot.Owned, Determined: snapshot.Determined,
 			Anomalies: snapshot.TotalAnomalies, Demoted: snapshot.TotalDemoted,
-			AgeSeconds: now.Sub(snapshot.TakenAt).Seconds(),
+			Undecidable: snapshot.TotalUndecidable,
+			AgeSeconds:  now.Sub(snapshot.TakenAt).Seconds(),
 			// Left at zero when the replica did not publish a start time, which
 			// an older build will not. Zero has to read as "not reported" rather
 			// than "started just now", so the page checks before using it.
@@ -690,18 +729,19 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		if perReplica.Unknown < 0 {
 			perReplica.Unknown = 0
 		}
-		perReplica.Healthy = snapshot.Determined - snapshot.TotalAnomalies - snapshot.TotalDemoted
+		perReplica.Healthy = snapshot.Determined - snapshot.TotalAnomalies -
+			snapshot.TotalDemoted - snapshot.TotalUndecidable
 		if perReplica.Healthy < 0 {
 			perReplica.Healthy = 0
 		}
 		view.PerReplica = append(view.PerReplica, perReplica)
 	}
 	// Determined is what the replicas can speak for, and every object they can
-	// speak for is in exactly one of the three. Subtracting rather than counting
+	// speak for is in exactly one of the four. Subtracting rather than counting
 	// healthy objects directly is deliberate: a healthy count built by its own
 	// walk can drift from the lists beside it, and the drift shows up as a
 	// column that adds up to slightly more than the deployment has.
-	view.Healthy = view.Determined - view.AnomaliesTotal - view.DemotedTotal
+	view.Healthy = view.Determined - view.AnomaliesTotal - view.DemotedTotal - view.UndecidableTotal
 	if view.Healthy < 0 {
 		// The three columns claim more objects than the replicas said they can
 		// speak for. Something is being counted twice, so no column can be

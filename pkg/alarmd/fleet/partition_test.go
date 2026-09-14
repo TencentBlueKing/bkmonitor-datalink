@@ -20,6 +20,14 @@ import (
 // partitionTracker drives a tracker into a known partition: some objects healthy,
 // some failing on this deployment's own execution, some held in the pool.
 func partitionTracker(t *testing.T, at time.Time, healthy, failing, pooled int) *Tracker {
+	return partitionTrackerWith(t, at, healthy, failing, pooled, 0)
+}
+
+// partitionTrackerWith adds the fourth column: objects whose rounds end with no
+// basis to decide recovery. They are not a fault and not in the pool, so if the
+// arithmetic does not name them they simply vanish from it -- which is the one
+// way a partition breaks without any column looking wrong.
+func partitionTrackerWith(t *testing.T, at time.Time, healthy, failing, pooled, undecidable int) *Tracker {
 	t.Helper()
 	tracker := NewTracker(nil, "replica-a", func() time.Time { return at })
 	observe := func(queryGroup string, observation observability.Observation) {
@@ -44,6 +52,16 @@ func partitionTracker(t *testing.T, at time.Time, healthy, failing, pooled int) 
 			Event: "entered", Until: at.Add(time.Minute), LastQueryAt: at, Failures: 3,
 		}})
 	}
+	for index := 0; index < undecidable; index++ {
+		name := qgName("undecidable", index)
+		for round := 0; round < DefaultDegradedRounds; round++ {
+			observe(name, observability.Observation{
+				ProgressCompletionKind:   "COMPLETED_WITH_UNAVAILABLE",
+				ProgressCompletionCause:  "LEVEL_OUTCOME_UNKNOWN",
+				ProgressCompletionReason: "HISTORY_WARMING",
+			})
+		}
+	}
 	return tracker
 }
 
@@ -52,29 +70,33 @@ func qgName(prefix string, index int) string {
 }
 
 // The whole point of splitting the pool out is that the columns partition the
-// objects: every object a replica can speak for lands in exactly one, and the
-// three add up to what it said it could speak for.
+// objects: every object a replica can speak for lands in exactly one, and they
+// add up to what it said it could speak for.
 //
 // Without this, the split is an arrangement of lists that happens to look right
 // on the page today. The equation is what makes "the rest is real problems"
 // a statement rather than a hope.
-func TestTheFourColumnsAccountForEveryObject(t *testing.T) {
+func TestEveryColumnAccountsForEveryObject(t *testing.T) {
 	at := time.Date(2026, 9, 11, 14, 0, 0, 0, time.UTC)
-	tracker := partitionTracker(t, at, 40, 7, 5)
+	tracker := partitionTrackerWith(t, at, 40, 7, 5, 3)
 
 	anomalies := tracker.Anomalies()
 	demoted := tracker.Demoted()
+	undecidable := tracker.Undecidable()
 	determined := tracker.Determined()
 
-	view := Aggregate(Expectation{Known: true, QueryGroups: 52}, []Snapshot{{
-		Replica: "replica-a", TakenAt: at, Owned: 52, Determined: determined,
+	view := Aggregate(Expectation{Known: true, QueryGroups: 55}, []Snapshot{{
+		Replica: "replica-a", TakenAt: at, Owned: 55, Determined: determined,
 		Anomalies: anomalies, TotalAnomalies: len(anomalies),
 		Demoted: demoted, TotalDemoted: len(demoted),
+		Undecidable: undecidable, TotalUndecidable: len(undecidable),
 	}}, []string{"replica-a"}, at, time.Minute)
 
-	if got := view.Healthy + view.AnomaliesTotal + view.DemotedTotal + view.Unknown; got != *view.Expected {
-		t.Errorf("healthy %d + anomalies %d + demoted %d + unknown %d = %d, want the expected %d",
-			view.Healthy, view.AnomaliesTotal, view.DemotedTotal, view.Unknown, got, *view.Expected)
+	got := view.Healthy + view.AnomaliesTotal + view.DemotedTotal + view.UndecidableTotal + view.Unknown
+	if got != *view.Expected {
+		t.Errorf("healthy %d + anomalies %d + demoted %d + undecidable %d + unknown %d = %d, want the expected %d",
+			view.Healthy, view.AnomaliesTotal, view.DemotedTotal, view.UndecidableTotal,
+			view.Unknown, got, *view.Expected)
 	}
 	if view.AnomaliesTotal != 7 {
 		t.Errorf("anomalies = %d, want the 7 this deployment is failing on", view.AnomaliesTotal)
@@ -82,8 +104,47 @@ func TestTheFourColumnsAccountForEveryObject(t *testing.T) {
 	if view.DemotedTotal != 5 {
 		t.Errorf("demoted = %d, want the 5 held back", view.DemotedTotal)
 	}
+	if view.UndecidableTotal != 3 {
+		t.Errorf("undecidable = %d, want the 3 with no basis to decide recovery", view.UndecidableTotal)
+	}
 	if view.Healthy != 40 {
 		t.Errorf("healthy = %d, want 40", view.Healthy)
+	}
+	// Per replica as well as in total. The deployment sum can be right while a
+	// replica row is wrong, and the replica row is what a reader drills into.
+	if len(view.PerReplica) != 1 {
+		t.Fatalf("per-replica rows = %d, want 1", len(view.PerReplica))
+	}
+	row := view.PerReplica[0]
+	if sum := row.Healthy + row.Anomalies + row.Demoted + row.Undecidable + row.Unknown; sum != row.Owned {
+		t.Errorf("replica row: healthy %d + anomalies %d + demoted %d + undecidable %d + unknown %d = %d, want owned %d",
+			row.Healthy, row.Anomalies, row.Demoted, row.Undecidable, row.Unknown, sum, row.Owned)
+	}
+}
+
+// A deployment whose only non-healthy objects have nothing to decide recovery
+// on is a healthy deployment. Before the split those objects were anomalies,
+// so a strategy aggregating on a churning dimension made alarmd itself read as
+// degraded -- permanently, and with no action that would ever clear it.
+func TestObjectsWithNothingToDecideDoNotMakeTheDeploymentLookSicker(t *testing.T) {
+	at := time.Date(2026, 9, 11, 14, 0, 0, 0, time.UTC)
+	for _, undecidable := range []int{1, 50} {
+		tracker := partitionTrackerWith(t, at, 40, 0, 0, undecidable)
+		listed := tracker.Undecidable()
+		if len(listed) != undecidable {
+			t.Fatalf("undecidable = %d, want %d for this case to say anything", len(listed), undecidable)
+		}
+		view := Aggregate(Expectation{Known: true, QueryGroups: 40 + undecidable}, []Snapshot{{
+			Replica: "replica-a", TakenAt: at, Owned: 40 + undecidable, Determined: tracker.Determined(),
+			Anomalies: tracker.Anomalies(), Undecidable: listed, TotalUndecidable: len(listed),
+		}}, []string{"replica-a"}, at, time.Minute)
+		if view.Health != HealthHealthy {
+			t.Errorf("with %d objects having nothing to decide and nothing failing, health = %q, want %q (gaps: %+v)",
+				undecidable, view.Health, HealthHealthy, view.Gaps)
+		}
+		if view.AnomaliesTotal != 0 {
+			t.Errorf("anomalies = %d, want none: nothing here is failing", view.AnomaliesTotal)
+		}
 	}
 }
 

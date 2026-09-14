@@ -101,13 +101,19 @@ type HealthResponse struct {
 	Covered    int    `json:"covered"`
 	Determined int    `json:"determined"`
 	Unknown    int    `json:"unknown"`
-	// Healthy, AnomaliesTotal, DemotedTotal and Unknown partition the expected
-	// set. The page prints their sum against Expected, so all four have to come
-	// from this one read: computed from two reads they could disagree for
-	// reasons that have nothing to do with the deployment.
+	// Healthy, AnomaliesTotal, DemotedTotal, UndecidableTotal and Unknown
+	// partition the expected set. The page prints their sum against Expected,
+	// so all of them have to come from this one read: computed from two reads
+	// they could disagree for reasons that have nothing to do with the
+	// deployment.
 	Healthy        int `json:"healthy"`
 	AnomaliesTotal int `json:"anomalies_total"`
 	DemotedTotal   int `json:"demoted_total"`
+	// UndecidableTotal is the objects completing every round with no basis to
+	// decide recovery, and nothing else wrong. A normal condition, held out of
+	// the anomaly count -- and therefore reported here, because a column that
+	// makes the anomaly count smaller has to be visible next to it.
+	UndecidableTotal int `json:"undecidable_total"`
 	// DemotedDue and the three flow counts are the check on demotion, which is
 	// the one mechanism here that makes a deployment look better by removing
 	// objects from the denominator.
@@ -556,7 +562,8 @@ func NewHandler(
 			Health: view.Health, Expected: view.Expected, Covered: view.Covered,
 			Determined: view.Determined, Unknown: view.Unknown, Healthy: view.Healthy,
 			AnomaliesTotal: view.AnomaliesTotal, DemotedTotal: view.DemotedTotal,
-			DemotedDue: view.DemotedDue, DemotionEntries: view.DemotionEntries,
+			UndecidableTotal: view.UndecidableTotal,
+			DemotedDue:       view.DemotedDue, DemotionEntries: view.DemotionEntries,
 			DemotionExtensions: view.DemotionExtensions, DemotionExits: view.DemotionExits,
 			LastDemotionExit: view.LastDemotionExit,
 			Coverage:         view.Coverage, PerReplica: view.PerReplica,
@@ -580,9 +587,9 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	// a reader could hold a pool from one moment beside anomalies from another
 	// and find objects in both, or in neither.
 	column := request.URL.Query().Get("column")
-	if column != "" && column != ColumnAnomalies && column != ColumnDemoted {
-		writeJSON(response, http.StatusBadRequest,
-			map[string]string{"error": "column must be " + ColumnAnomalies + " or " + ColumnDemoted})
+	if column != "" && column != ColumnAnomalies && column != ColumnDemoted && column != ColumnUndecidable {
+		writeJSON(response, http.StatusBadRequest, map[string]string{
+			"error": "column must be " + ColumnAnomalies + ", " + ColumnDemoted + " or " + ColumnUndecidable})
 		return
 	}
 	if column == "" {
@@ -602,13 +609,17 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 		order = OrderOldest
 	}
 	view := service.View(request.Context())
-	if column == ColumnDemoted {
+	switch column {
+	case ColumnDemoted:
 		// The demoted list takes the anomaly list's place for the rest of this
 		// request. The deployment-wide counts on the view are untouched, so the
 		// response still carries both totals and a reader paging the pool can
 		// still see how many objects are not in it.
 		view.Anomalies = view.Demoted
 		view.AnomaliesTotal = view.DemotedTotal
+	case ColumnUndecidable:
+		view.Anomalies = view.Undecidable
+		view.AnomaliesTotal = view.UndecidableTotal
 	}
 	// Marked before filtering so a filtered response reports the same flag for the
 	// same object as an unfiltered one, and counted here so the deployment-wide

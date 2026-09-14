@@ -131,7 +131,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       <span id="health" class="badge b-UNKNOWN">…</span>
       <span id="why" class="why"></span>
     </div>
-    <p class="basis" id="splitBasis">每个对象只落一栏，四栏相加等于应有总数。</p>
+    <p class="basis" id="splitBasis">每个对象只落一栏，各栏相加等于应有总数。</p>
     <div class="grid">
       <div class="cell"><div class="k">正常</div><div class="v" id="healthy">–</div>
         <div class="k">跑完了，结果完整</div></div>
@@ -140,6 +140,8 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
           要看每条的"下一层原因"</div></div>
       <div class="cell"><div class="k">策略本身不可用</div><div class="v" id="demoted">–</div>
         <div class="k" id="demotedHint">后端持续查不到，已降级不再反复查</div></div>
+      <div class="cell"><div class="k">判不了恢复</div><div class="v" id="undecidable">–</div>
+        <div class="k" id="undecidableHint">检测窗口没攒够点，恢复无从判起——正常现象，不是故障</div></div>
       <div class="cell hl"><div class="k">状态未知</div><div class="v" id="unknown">–</div>
         <div class="k">没人能替它说话，不算正常</div></div>
       <div class="cell hl" id="overdueCell" hidden>
@@ -207,7 +209,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       对象归谁每次再平衡都会变，劈分会在什么都没发生的情况下移动。</p>
     <table>
       <thead><tr>
-        <th>副本</th><th>持有</th><th>正常</th><th>自身异常</th><th>其中 alarmd 的</th><th>降级池</th><th>状态未知</th>
+        <th>副本</th><th>持有</th><th>正常</th><th>自身异常</th><th>其中 alarmd 的</th><th>降级池</th><th>判不了恢复</th><th>状态未知</th>
         <th>快照新鲜度</th><th>已运行</th><th>内存</th><th>CPU</th><th>同时在跑</th>
       </tr></thead>
       <tbody id="repRows"></tbody>
@@ -230,6 +232,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
     <div class="filters">
       <button id="colOwn" class="primary">自身异常</button>
       <button id="colDemoted">策略本身不可用（降级池）</button>
+      <button id="colUndecidable">判不了恢复</button>
       <button id="ordOldest" class="primary">坏得最久的在前</button>
       <button id="ordNewest">刚开始坏的在前</button>
       <input id="fReplica" list="replicaList" placeholder="副本" size="10">
@@ -451,7 +454,22 @@ var SINCE_BOUND = {
 };
 
 function loadHealth() {
-  return api('health').then(function (deployment) {
+  // Called rather than passed by reference. The check that every page function
+  // has a call site reads call syntax, and a bare reference is invisible to it
+  // -- so passing it here would let this renderer be deleted from every call
+  // path with nothing failing.
+  return api('health').then(function (deployment) { renderDeployment(deployment); })
+    .catch(function (e) { fail('healthErr', e); fail('capErr', e); });
+}
+
+// The whole health panel, top to bottom.
+//
+// Named rather than left inline in the fetch callback for the reason
+// anomalyRow was: inline, nothing can call it, so nothing can execute it, and
+// a ReferenceError anywhere in here replaces the deployment verdict -- the
+// most-read thing on the page -- with an error banner while every static
+// check stays green. That has already shipped once from the object table.
+function renderDeployment(deployment) {
     show('healthErr', false);
     var h = deployment.health || 'UNKNOWN';
     var badge = document.getElementById('health');
@@ -464,14 +482,16 @@ function loadHealth() {
     text('healthy', deployment.healthy);
     text('ownBad', deployment.anomalies_total);
     text('demoted', deployment.demoted_total);
+    text('undecidable', deployment.undecidable_total || 0);
     // The equation is printed with its own arithmetic rather than asserted in
     // prose. A reader who can only be told the columns partition the objects has
     // no way to notice the day they stop doing so.
-    var parts = [deployment.healthy, deployment.anomalies_total, deployment.demoted_total, deployment.unknown];
+    var parts = [deployment.healthy, deployment.anomalies_total, deployment.demoted_total,
+                 deployment.undecidable_total || 0, deployment.unknown];
     var sum = parts.reduce(function (a, b) { return a + (b || 0); }, 0);
     var total = (deployment.expected === null || deployment.expected === undefined) ? deployment.covered : deployment.expected;
     text('splitBasis', '每个对象只落一栏：' + parts.join(' + ') + ' = ' + sum +
-      (sum === total ? '，等于应有的 ' + total : '，但应有的是 ' + total + ' —— 对不上，先别信这四个数'));
+      (sum === total ? '，等于应有的 ' + total : '，但应有的是 ' + total + ' —— 对不上，先别信这几个数'));
     // Demotion is the one mechanism here that makes a deployment look better by
     // removing objects from the denominator, so the pool never gets to report
     // only its size. A pool with members and no exits is a way out that has
@@ -507,6 +527,15 @@ function loadHealth() {
     text('demotedHint', deployment.demoted_total
       ? '后端持续查不到，已降级不再反复查；不计入部署健康判定'
       : '当前没有对象被降级');
+    // Worded as a normal condition, because it is one. These objects read data
+    // correctly and still raise anomalies; what they cannot do is decide that
+    // something went back to normal, because the window has no complete history
+    // to decide it on. Counting them as faults made a permanent, expected
+    // condition the biggest number on the page.
+    text('undecidableHint', (deployment.undecidable_total || 0)
+      ? '检测窗口没攒够点，恢复无从判起——异常照常报，恢复判不了；正常现象，不计入部署健康判定。'
+        + '窗口能不能攒满取决于策略：序列比窗口活得久就会攒满，活不过窗口就永远攒不满，两种都是策略配置的正常结果'
+      : '当前没有这种对象');
     // Shown only where something actually holds wake times. A zero here on a
     // deployment that holds none would report "nothing is being missed" for one
     // where nothing is watching, which is the failure this whole cell is for.
@@ -574,7 +603,6 @@ function loadHealth() {
     // the page show a verdict from one moment beside occupancy from another.
     show('capErr', false);
     renderCapacity(deployment.capacity, gaps);
-  }).catch(function (e) { fail('healthErr', e); fail('capErr', e); });
 }
 
 // One row of the object table.
@@ -728,12 +756,24 @@ function loadObjects() {
     // the two columns mean opposite things about whose fault the objects are.
     var served = objects.column || 'anomalies';
     var pool = served === 'demoted';
-    text('listTitle', pool ? '策略本身不可用（降级池）' : '自身异常对象');
-    text('listBasis', pool
-      ? '这些对象的后端持续查不到，已被降级、不再反复查询，也不计入部署健康判定。列在这里是因为“不算我们的问题”是一个需要能被核对的说法——每条都带着它最近一次失败在哪。'
-      : 'alarmd 自己没有把这些对象跑好，是需要处理的真问题。后端查不到而被降级的对象不在这里，在另一栏。');
-    document.getElementById('colOwn').className = pool ? '' : 'primary';
+    var undecidable = served === 'undecidable';
+    var TITLES = {demoted: '策略本身不可用（降级池）', undecidable: '判不了恢复', anomalies: '自身异常对象'};
+    var BASIS = {
+      demoted: '这些对象的后端持续查不到，已被降级、不再反复查询，也不计入部署健康判定。列在这里是因为“不算我们的问题”是一个需要能被核对的说法——每条都带着它最近一次失败在哪。',
+      // Stated as a normal condition and as a limit, not as a fault. These
+      // rounds read the data correctly and still raise anomalies; what they
+      // cannot do is conclude that something returned to normal, because that
+      // conclusion needs a complete window and there is not one.
+      undecidable: '这些不是故障。检测窗口没攒够算法要的点数，所以“恢复”这件事无从判起——异常照常报得出来，恢复判不了。'
+        + '窗口能不能攒满取决于策略：序列比窗口活得久，窗口过几轮就满了；序列活不过窗口跨度（聚合维度里有网卡、pod 名这类一直在变的东西），就永远攒不满。'
+        + '两种都是策略配置下的正常结果，扩容和改 alarmd 都不影响。每条的“下一层原因”里写着它是哪一种。',
+      anomalies: 'alarmd 自己没有把这些对象跑好，是需要处理的真问题。后端查不到而被降级的、以及判不了恢复的对象都不在这里，各在自己那一栏。'
+    };
+    text('listTitle', TITLES[served] || TITLES.anomalies);
+    text('listBasis', BASIS[served] || BASIS.anomalies);
+    document.getElementById('colOwn').className = (pool || undecidable) ? '' : 'primary';
     document.getElementById('colDemoted').className = pool ? 'primary' : '';
+    document.getElementById('colUndecidable').className = undecidable ? 'primary' : '';
     // Read off the response, never from what was asked for: the buttons and the
     // wording under them have to describe the rows that actually came back.
     var served_order = objects.order || 'oldest';
@@ -918,6 +958,12 @@ function renderReplicas(rows) {
       + '两个副本之间的劈分会在什么都没发生的情况下移动。'
       + (replica.unattributed ? '\n另有 ' + replica.unattributed + ' 个暂时看不出是谁的' : '');
     cell(replica.demoted);
+    // Its own column on the replica row, not folded into healthy. The row has
+    // to add up on its own -- that is what lets a reader see which replica
+    // breaks the sum rather than only that the deployment does.
+    var repUndecidable = cell(replica.undecidable || 0);
+    repUndecidable.title = '检测窗口没攒够点，恢复判不了。正常现象，不计入判定，也不算在正常里——'
+      + '每个对象只落一栏，这一行几个数相加等于"持有"。';
     cell(replica.unknown);
     // A replica publishing late describes a past it has not updated, and that
     // is invisible in every other number on this row.
@@ -2301,6 +2347,7 @@ function showColumn(next) {
 }
 document.getElementById('colOwn').addEventListener('click', function () { showColumn('anomalies'); });
 document.getElementById('colDemoted').addEventListener('click', function () { showColumn('demoted'); });
+document.getElementById('colUndecidable').addEventListener('click', function () { showColumn('undecidable'); });
 
 // Same reset as showColumn, for the same reason: offset 60 of oldest-first and
 // offset 60 of newest-first are different objects, and carrying it over lands

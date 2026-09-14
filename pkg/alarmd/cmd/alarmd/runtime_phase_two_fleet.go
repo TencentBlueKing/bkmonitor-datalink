@@ -344,6 +344,14 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	// wrong direction for the number people escalate on.
 	snapshot.Demoted = demoted
 	snapshot.TotalDemoted = len(demoted)
+	// And the objects whose rounds end without a basis to decide recovery.
+	// Beside the anomalies for a different reason than the pool: not "this is
+	// somebody else's fault" but "this is not a fault". Counting them as
+	// anomalies described a normal condition as a standing defect, and on a
+	// running deployment they were the largest population in the list.
+	undecidable := publisher.tracker.Undecidable()
+	snapshot.Undecidable = undecidable
+	snapshot.TotalUndecidable = len(undecidable)
 	snapshot.DemotionEntries, snapshot.DemotionExtensions, snapshot.DemotionExits,
 		snapshot.LastDemotionExit = publisher.tracker.DemotionFlow()
 	if publisher.capacity != nil {

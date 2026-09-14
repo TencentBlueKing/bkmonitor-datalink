@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
@@ -57,19 +56,19 @@ func TestCatalogRetentionValidatorSaysWhichRefusalItIs(t *testing.T) {
 		}
 	})
 
-	t.Run("the deployment's TTL is shorter than the Catalog needs", func(t *testing.T) {
+	t.Run("a plan is evaluated less often than the retention covers", func(t *testing.T) {
 		cfg := validGoAccessRuntimeConfig()
-		catalog := retentionTestCatalog("4712", 60)
-		if err := phaseTwoCatalogRetentionValidator(cfg)(catalog); err != nil {
-			t.Fatalf("the fixture must pass before the TTL is shortened: %v", err)
+		supported := int64(phaseTwoMaxSupportedEvaluationInterval / time.Second)
+		// The cadence the deployment actually ran into was one day, which the
+		// retention now covers exactly; this is the next Plan along.
+		if err := phaseTwoCatalogRetentionValidator(cfg)(retentionTestCatalog("4712", supported)); err != nil {
+			t.Fatalf("a plan at the supported cadence must fit: %v", err)
 		}
-		offset := 60*time.Second - cfg.PhaseTwo.Access.DownstreamExecutionReserve.Duration()
-		cfg.PhaseTwo.Control.CatalogTTL = config.Duration(phaseTwoSnapshotMinimumRetention(cfg, offset) - time.Millisecond)
-		err := phaseTwoCatalogRetentionValidator(cfg)(catalog)
+		err := phaseTwoCatalogRetentionValidator(cfg)(retentionTestCatalog("4713", supported+60))
 		if !errors.Is(err, scheduler.ErrSnapshotRetentionInsufficient) {
 			t.Fatalf("error=%v, want it to still match the sentinel every caller tests for", err)
 		}
-		for _, want := range []string{"Catalog TTL", "4712", "publication delay allowance"} {
+		for _, want := range []string{"Catalog retention", "4713", "publication delay allowance", "evaluation cadences up to"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Fatalf("error %q does not name %q", err, want)
 			}
@@ -78,4 +77,22 @@ func TestCatalogRetentionValidatorSaysWhichRefusalItIs(t *testing.T) {
 			t.Fatalf("error %q reads as the per-plan refusal, which is the other one", err)
 		}
 	})
+}
+
+// The retention a deployment keeps has to cover the longest cadence it
+// says it supports. It was a 24 hour constant, and one strategy evaluated
+// once a day needed thirteen minutes more than that -- so every Catalog
+// build was refused, for every strategy, while the deployment ran on the
+// last good Catalog and reported healthy.
+func TestCatalogRetentionCoversTheLongestSupportedCadence(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	daily := phaseTwoMaxSupportedEvaluationInterval - cfg.PhaseTwo.Access.DownstreamExecutionReserve.Duration()
+	required := phaseTwoSnapshotMinimumRetention(cfg, daily)
+	if got := phaseTwoCatalogRetention(cfg); got < required {
+		t.Fatalf("retention %s is shorter than the %s a plan at the supported cadence needs", got, required)
+	}
+	if phaseTwoCatalogRetention(cfg) < cfg.PhaseTwo.Control.CatalogTTL.Duration() {
+		t.Fatalf("retention %s is under the configured floor %s",
+			phaseTwoCatalogRetention(cfg), cfg.PhaseTwo.Control.CatalogTTL.Duration())
+	}
 }

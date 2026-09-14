@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -691,8 +690,16 @@ func TestPhaseTwoCatalogRetentionValidatorIncludesCandidateScheduleOffset(t *tes
 	if err := validator(catalog); err != nil {
 		t.Fatalf("validator(default) error=%v", err)
 	}
-	cfg.PhaseTwo.Control.CatalogTTL = config.Duration(phaseTwoSnapshotMinimumRetention(cfg, 55*time.Second) - time.Millisecond)
-	if err := phaseTwoCatalogRetentionValidator(cfg)(catalog); !errors.Is(err, scheduler.ErrSnapshotRetentionInsufficient) {
+	// The retention is derived from the longest cadence the deployment
+	// supports, so shortening the configured floor no longer shortens it;
+	// the way to need more retention than there is, is a Plan evaluated less
+	// often than that bound. The property under test is unchanged: the
+	// candidate's own schedule offset decides whether the Catalog fits.
+	beyond := controlplane.Catalog{QueryGroups: []controlplane.QueryGroup{{Plans: []controlplane.FrozenPlan{{
+		ScheduleSpec: execution.ScheduleSpec{
+			EvaluationIntervalSeconds: int64(phaseTwoMaxSupportedEvaluationInterval/time.Second) + 60, Timezone: "UTC"},
+	}}}}}
+	if err := validator(beyond); !errors.Is(err, scheduler.ErrSnapshotRetentionInsufficient) {
 		t.Fatalf("validator(insufficient) error=%v", err)
 	}
 }

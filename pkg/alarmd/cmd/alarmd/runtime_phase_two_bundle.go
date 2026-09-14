@@ -273,7 +273,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 		return nil, err
 	}
 	repository, err := controlplane.NewRedisCatalogRepository(
-		runtimeClient, productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog"), cfg.PhaseTwo.Control.CatalogTTL.Duration(),
+		runtimeClient, productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "catalog"), phaseTwoCatalogRetention(cfg),
 	)
 	if err != nil {
 		return nil, err
@@ -359,7 +359,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 		}
 		return counts
 	})
-	if cfg.PhaseTwo.Control.CatalogTTL.Duration() < phaseTwoSnapshotMinimumRetention(cfg, 0) {
+	if phaseTwoCatalogRetention(cfg) < phaseTwoSnapshotMinimumRetention(cfg, 0) {
 		return nil, scheduler.ErrSnapshotRetentionInsufficient
 	}
 	reconciler, err := controlplane.NewSourceReconciler(repository, compiler, strategySemantics,
@@ -662,7 +662,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 		Observer: observer, Reconcile: assignmentReconciler, Flights: flights, RecoveryLimits: recoveryLimits,
 		PostRecoveryTerminalDelay: retention.TerminalDelay,
 		QueryDeadlineReserve:      retention.QueryReserve,
-		SnapshotRetention:         cfg.PhaseTwo.Control.CatalogTTL.Duration(),
+		SnapshotRetention:         phaseTwoCatalogRetention(cfg),
 		PublicationDelayAllowance: phaseTwoPublicationDelayAllowance(cfg),
 	})
 	if err != nil {
@@ -926,6 +926,32 @@ func phaseTwoPublicationDelayAllowance(cfg config.Config) time.Duration {
 	return cfg.PhaseTwo.Ownership.ControlLeaderTTL.Duration() + 2*cfg.PhaseTwo.Control.RefreshInterval.Duration()
 }
 
+// phaseTwoMaxSupportedEvaluationInterval is the longest evaluation cadence a
+// Plan may have and still be served. It is stated rather than discovered
+// because it decides how long a published Catalog has to be kept: a Plan
+// evaluated once a day is still owed its Snapshot a day later, so a
+// deployment that keeps Catalogs for a day cannot serve one.
+//
+// A day is the cadence the platform's own strategies reach. It is not a
+// limit anybody configures; it is the number the retention is derived from,
+// and a Plan beyond it is refused with this bound named.
+const phaseTwoMaxSupportedEvaluationInterval = 24 * time.Hour
+
+// phaseTwoCatalogRetention is how long published Catalogs are kept: long
+// enough for the longest cadence the deployment supports, never shorter than
+// the configured floor.
+//
+// It is derived and not configured because the number is not an opinion.
+// It was a 24 hour constant, and a single strategy evaluated once a day
+// needed 24h13m -- thirteen minutes more than the constant -- so every
+// Catalog build was refused, for every strategy, and the deployment ran on
+// the last good Catalog while reporting healthy. A constant chosen to clear
+// today's longest strategy would be the same defect waiting for tomorrow's.
+func phaseTwoCatalogRetention(cfg config.Config) time.Duration {
+	supported := phaseTwoMaxSupportedEvaluationInterval - cfg.PhaseTwo.Access.DownstreamExecutionReserve.Duration()
+	return maxDuration(cfg.PhaseTwo.Control.CatalogTTL.Duration(), phaseTwoSnapshotMinimumRetention(cfg, supported))
+}
+
 func phaseTwoSnapshotMinimumRetention(cfg config.Config, queryDeadlineOffset time.Duration) time.Duration {
 	return phaseTwoPublicationDelayAllowance(cfg) + queryDeadlineOffset +
 		cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration() + phaseTwoPostRecoveryTerminalDelay(cfg)
@@ -970,17 +996,19 @@ func phaseTwoCatalogRetentionValidator(cfg config.Config) func(controlplane.Cata
 			}
 		}
 		required := phaseTwoSnapshotMinimumRetention(cfg, maximumOffset)
-		if cfg.PhaseTwo.Control.CatalogTTL.Duration() < required {
+		retention := phaseTwoCatalogRetention(cfg)
+		if retention < required {
 			// The deployment's own setting, not any one strategy: the
 			// longest plan in the Catalog decides how long a Snapshot has
 			// to be kept, and the configured TTL is shorter than that.
-			return fmt.Errorf("%w: Catalog TTL %s is shorter than the %s this Catalog needs "+
+			return fmt.Errorf("%w: Catalog retention %s is shorter than the %s this Catalog needs "+
 				"(publication delay allowance %s + %s past the Evaluation Time, from the plan of strategy %s "+
-				"in business %s + max replay age %s + post-recovery terminal delay %s)",
-				scheduler.ErrSnapshotRetentionInsufficient, cfg.PhaseTwo.Control.CatalogTTL.Duration(), required,
+				"in business %s + max replay age %s + post-recovery terminal delay %s). Retention covers "+
+				"evaluation cadences up to %s; that plan is evaluated less often than that",
+				scheduler.ErrSnapshotRetentionInsufficient, retention, required,
 				phaseTwoPublicationDelayAllowance(cfg), maximumOffset, maximumPlan.StrategyID,
 				maximumPlan.BusinessID, cfg.PhaseTwo.Scheduler.MaxReplayAge.Duration(),
-				phaseTwoPostRecoveryTerminalDelay(cfg))
+				phaseTwoPostRecoveryTerminalDelay(cfg), phaseTwoMaxSupportedEvaluationInterval)
 		}
 		return nil
 	}

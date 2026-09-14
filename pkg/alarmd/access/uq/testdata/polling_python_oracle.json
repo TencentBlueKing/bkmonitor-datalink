@@ -1,0 +1,1485 @@
+{
+  "cases": [
+    {
+      "expected": [
+        {
+          "conditions": {
+            "condition_list": [],
+            "field_list": [
+              {
+                "field_name": "host",
+                "op": "contains",
+                "value": [
+                  "node-a",
+                  "node-b"
+                ]
+              }
+            ]
+          },
+          "dimensions": [
+            "host"
+          ],
+          "driver": "influxdb",
+          "field_name": "value",
+          "function": [
+            {
+              "dimensions": [
+                "host"
+              ],
+              "method": "sum"
+            }
+          ],
+          "keep_columns": [
+            "_time",
+            "a",
+            "host"
+          ],
+          "offset": "",
+          "offset_forward": false,
+          "reference_name": "a",
+          "table_id": "example.metric",
+          "time_aggregation": {
+            "function": "count_over_time",
+            "window": "60s"
+          },
+          "time_field": "time"
+        }
+      ],
+      "id": "bk_monitor-count",
+      "input": {
+        "data_label": "",
+        "data_source_label": "bk_monitor",
+        "filter_dict": {
+          "host__eq": [
+            "node-a",
+            "node-b"
+          ]
+        },
+        "group_by": [
+          "host"
+        ],
+        "interval": 60,
+        "metrics": [
+          {
+            "alias": "A",
+            "field": "value",
+            "method": "COUNT"
+          }
+        ],
+        "table": "Example.Metric",
+        "time_field": "time",
+        "time_offset": 0,
+        "time_shift": "",
+        "where": []
+      },
+      "source": "bkmonitor/bkmonitor/data_source/data_source/__init__.py:TimeSeriesDataSource.to_unify_query_config",
+      "stage": "uq_query_config"
+    },
+    {
+      "expected": [
+        {
+          "conditions": {
+            "condition_list": [],
+            "field_list": [
+              {
+                "field_name": "host",
+                "op": "contains",
+                "value": [
+                  "node-a",
+                  "node-b"
+                ]
+              }
+            ]
+          },
+          "dimensions": [
+            "host"
+          ],
+          "driver": "influxdb",
+          "field_name": "value",
+          "function": [
+            {
+              "dimensions": [
+                "host"
+              ],
+              "method": "mean"
+            }
+          ],
+          "keep_columns": [
+            "_time",
+            "a",
+            "host"
+          ],
+          "offset": "",
+          "offset_forward": false,
+          "reference_name": "a",
+          "table_id": "example.metric",
+          "time_aggregation": {
+            "function": "avg_over_time",
+            "window": "60s"
+          },
+          "time_field": "time"
+        }
+      ],
+      "id": "bk_monitor-avg",
+      "input": {
+        "data_label": "",
+        "data_source_label": "bk_monitor",
+        "filter_dict": {
+          "host__eq": [
+            "node-a",
+            "node-b"
+          ]
+        },
+        "group_by": [
+          "host"
+        ],
+        "interval": 60,
+        "metrics": [
+          {
+            "alias": "A",
+            "field": "value",
+            "method": "AVG"
+          }
+        ],
+        "table": "Example.Metric",
+        "time_field": "time",
+        "time_offset": 0,
+        "time_shift": "",
+        "where": []
+      },
+      "source": "bkmonitor/bkmonitor/data_source/data_source/__init__.py:TimeSeriesDataSource.to_unify_query_config",
+      "stage": "uq_query_config"
+    },
+    {
+      "expected": [
+        {
+          "conditions": {
+            "condition_list": [],
+            "field_list": [
+              {
+                "field_name": "host",
+                "op": "contains",
+                "value": [
+                  "node-a",
+                  "node-b"
+                ]
+              }
+            ]
+          },
+          "dimensions": [
+            "host"
+          ],
+          "driver": "influxdb",
+          "field_name": "value",
+          "function": [
+            {
+              "dimensions": [
+                "host"
+              ],
+              "method": "sum"
+            }
+          ],
+          "keep_columns": [
+            "_time",
+            "a",
+            "host"
+          ],
+          "offset": "",
+          "offset_forward": false,
+          "reference_name": "a",
+          "table_id": "example.metric",
+          "time_aggregation": {
+            "function": "sum_over_time",
+            "window": "60s"
+          },
+          "time_field": "time"
+        }
+      ],
+      "id": "bk_monitor-sum",
+      "input": {
+        "data_label": "",
+        "data_source_label": "bk_monitor",
+        "filter_dict": {
+          "host__eq": [
+            "node-a",
+            "node-b"
+          ]
+        },
+        "group_by": [
+          "host"
+        ],
+        "interval": 60,
+        "metrics": [
+          {
+            "alias": "A",
+            "field": "value",
+            "method": "SUM"
+          }
+        ],
+        "table": "Example.Metric",
+        "time_field": "time",
+        "time_offset": 0,
+        "time_shift": "",
+        "where": []
+      },
+      "source": "bkmonitor/bkmonitor/data_source/data_source/__init__.py:TimeSeriesDataSource.to_unify_query_config",
+      "stage": "uq_query_config"
+    },
+    {
+      "expected": [
+        {
+          "conditions": {
+            "condition_list": [],
+            "field_list": [
+              {
+                "field_name": "host",
+                "op": "contains",
+                "value": [
+                  "node-a",
+                  "node-b"
+                ]
+              }
+            ]
+          },
+          "dimensions": [
+            "host"
+          ],
+          "driver": "influxdb",
+          "field_name": "value",
+          "function": [
+            {
+              "dimensions": [
+                "host"
+              ],
+              "method": "sum"
+            }
+          ],
+          "keep_columns": [
+            "_time",
+            "a",
+            "host"
+          ],
+          "offset": "",
+          "offset_forward": false,
+          "reference_name": "a",
+          "table_id": "example.metric",
+          "time_aggregation": {
+            "function": "count_over_time",
+            "window": "60s"
+          },
+          "time_field": "time"
+        }
+      ],
+      "id": "custom-count",
+      "input": {
+        "data_label": "",
+        "data_source_label": "custom",
+        "filter_dict": {
+          "host__eq": [
+            "node-a",
+            "node-b"
+          ]
+        },
+        "group_by": [
+          "host"
+        ],
+        "interval": 60,
+        "metrics": [
+          {
+            "alias": "A",
+            "field": "value",
+            "method": "COUNT"
+          }
+        ],
+        "table": "Example.Metric",
+        "time_field": "time",
+        "time_offset": 0,
+        "time_shift": "",
+        "where": []
+      },
+      "source": "bkmonitor/bkmonitor/data_source/data_source/__init__.py:TimeSeriesDataSource.to_unify_query_config",
+      "stage": "uq_query_config"
+    },
+    {
+      "expected": [
+        {
+          "conditions": {
+            "condition_list": [],
+            "field_list": [
+              {
+                "field_name": "host",
+                "op": "contains",
+                "value": [
+                  "node-a",
+                  "node-b"
+                ]
+              }
+            ]
+          },
+          "dimensions": [
+            "host"
+          ],
+          "driver": "influxdb",
+          "field_name": "value",
+          "function": [
+            {
+              "dimensions": [
+                "host"
+              ],
+              "method": "mean"
+            }
+          ],
+          "keep_columns": [
+            "_time",
+            "a",
+            "host"
+          ],
+          "offset": "",
+          "offset_forward": false,
+          "reference_name": "a",
+          "table_id": "example.metric",
+          "time_aggregation": {
+            "function": "avg_over_time",
+            "window": "60s"
+          },
+          "time_field": "time"
+        }
+      ],
+      "id": "custom-avg",
+      "input": {
+        "data_label": "",
+        "data_source_label": "custom",
+        "filter_dict": {
+          "host__eq": [
+            "node-a",
+            "node-b"
+          ]
+        },
+        "group_by": [
+          "host"
+        ],
+        "interval": 60,
+        "metrics": [
+          {
+            "alias": "A",
+            "field": "value",
+            "method": "AVG"
+          }
+        ],
+        "table": "Example.Metric",
+        "time_field": "time",
+        "time_offset": 0,
+        "time_shift": "",
+        "where": []
+      },
+      "source": "bkmonitor/bkmonitor/data_source/data_source/__init__.py:TimeSeriesDataSource.to_unify_query_config",
+      "stage": "uq_query_config"
+    },
+    {
+      "expected": [
+        {
+          "conditions": {
+            "condition_list": [],
+            "field_list": [
+              {
+                "field_name": "host",
+                "op": "contains",
+                "value": [
+                  "node-a",
+                  "node-b"
+                ]
+              }
+            ]
+          },
+          "dimensions": [
+            "host"
+          ],
+          "driver": "influxdb",
+          "field_name": "value",
+          "function": [
+            {
+              "dimensions": [
+                "host"
+              ],
+              "method": "sum"
+            }
+          ],
+          "keep_columns": [
+            "_time",
+            "a",
+            "host"
+          ],
+          "offset": "",
+          "offset_forward": false,
+          "reference_name": "a",
+          "table_id": "example.metric",
+          "time_aggregation": {
+            "function": "sum_over_time",
+            "window": "60s"
+          },
+          "time_field": "time"
+        }
+      ],
+      "id": "custom-sum",
+      "input": {
+        "data_label": "",
+        "data_source_label": "custom",
+        "filter_dict": {
+          "host__eq": [
+            "node-a",
+            "node-b"
+          ]
+        },
+        "group_by": [
+          "host"
+        ],
+        "interval": 60,
+        "metrics": [
+          {
+            "alias": "A",
+            "field": "value",
+            "method": "SUM"
+          }
+        ],
+        "table": "Example.Metric",
+        "time_field": "time",
+        "time_offset": 0,
+        "time_shift": "",
+        "where": []
+      },
+      "source": "bkmonitor/bkmonitor/data_source/data_source/__init__.py:TimeSeriesDataSource.to_unify_query_config",
+      "stage": "uq_query_config"
+    },
+    {
+      "expected": [
+        {
+          "conditions": {
+            "condition_list": [],
+            "field_list": []
+          },
+          "data_source": "bklog",
+          "dimensions": [
+            "host"
+          ],
+          "driver": "influxdb",
+          "field_name": "_index",
+          "function": [
+            {
+              "dimensions": [
+                "host"
+              ],
+              "method": "sum"
+            }
+          ],
+          "keep_columns": [],
+          "order_by": [],
+          "query_string": "error",
+          "reference_name": "a",
+          "table_id": "bklog_index_set_7",
+          "time_aggregation": {
+            "function": "count_over_time",
+            "window": "60s"
+          },
+          "time_field": "time"
+        }
+      ],
+      "id": "bk_log_search-log-aligned-True",
+      "input": {
+        "conditions": {
+          "condition_list": [],
+          "field_list": []
+        },
+        "data_source": "bklog",
+        "functions": [],
+        "group_by": [
+          "host"
+        ],
+        "interval": 60,
+        "is_time_agg": true,
+        "metrics": [
+          {
+            "alias": "A",
+            "field": "_index",
+            "method": "COUNT"
+          }
+        ],
+        "query_string": "error",
+        "source_label": "bk_log_search",
+        "table_id": "bklog_index_set_7",
+        "time_alignment": true,
+        "time_field": "time",
+        "type_label": "log"
+      },
+      "source": "bkmonitor/bkmonitor/data_source/data_source/__init__.py:BaseBkMonitorLogDataSource.to_unify_query_config",
+      "stage": "uq_query_config"
+    },
+    {
+      "expected": [
+        {
+          "conditions": {
+            "condition_list": [],
+            "field_list": []
+          },
+          "data_source": "bklog",
+          "dimensions": [
+            "host"
+          ],
+          "driver": "influxdb",
+          "field_name": "_index",
+          "function": [
+            {
+              "dimensions": [
+                "host"
+              ],
+              "method": "count",
+              "window": "60s"
+            }
+          ],
+          "keep_columns": [],
+          "order_by": [],
+          "query_string": "error",
+          "reference_name": "a",
+          "table_id": "bklog_index_set_7",
+          "time_aggregation": {},
+          "time_field": "time"
+        }
+      ],
+      "id": "bk_log_search-log-aligned-False",
+      "input": {
+        "conditions": {
+          "condition_list": [],
+          "field_list": []
+        },
+        "data_source": "bklog",
+        "functions": [],
+        "group_by": [
+          "host"
+        ],
+        "interval": 60,
+        "is_time_agg": true,
+        "metrics": [
+          {
+            "alias": "A",
+            "field": "_index",
+            "method": "COUNT"
+          }
+        ],
+        "query_string": "error",
+        "source_label": "bk_log_search",
+        "table_id": "bklog_index_set_7",
+        "time_alignment": false,
+        "time_field": "time",
+        "type_label": "log"
+      },
+      "source": "bkmonitor/bkmonitor/data_source/data_source/__init__.py:BaseBkMonitorLogDataSource.to_unify_query_config",
+      "stage": "uq_query_config"
+    },
+    {
+      "expected": [
+        {
+          "conditions": {
+            "condition_list": [],
+            "field_list": []
+          },
+          "data_source": "bklog",
+          "dimensions": [
+            "host"
+          ],
+          "driver": "influxdb",
+          "field_name": "_index",
+          "function": [
+            {
+              "dimensions": [
+                "host"
+              ],
+              "method": "sum"
+            }
+          ],
+          "keep_columns": [],
+          "order_by": [],
+          "query_string": "error",
+          "reference_name": "a",
+          "table_id": "bklog_index_set_7",
+          "time_aggregation": {
+            "function": "count_over_time",
+            "window": "60s"
+          },
+          "time_field": "time"
+        }
+      ],
+      "id": "bk_log_search-time_series-aligned-True",
+      "input": {
+        "conditions": {
+          "condition_list": [],
+          "field_list": []
+        },
+        "data_source": "bklog",
+        "functions": [],
+        "group_by": [
+          "host"
+        ],
+        "interval": 60,
+        "is_time_agg": true,
+        "metrics": [
+          {
+            "alias": "A",
+            "field": "_index",
+            "method": "COUNT"
+          }
+        ],
+        "query_string": "error",
+        "source_label": "bk_log_search",
+        "table_id": "bklog_index_set_7",
+        "time_alignment": true,
+        "time_field": "time",
+        "type_label": "time_series"
+      },
+      "source": "bkmonitor/bkmonitor/data_source/data_source/__init__.py:BaseBkMonitorLogDataSource.to_unify_query_config",
+      "stage": "uq_query_config"
+    },
+    {
+      "expected": [
+        {
+          "conditions": {
+            "condition_list": [],
+            "field_list": []
+          },
+          "data_source": "bklog",
+          "dimensions": [
+            "host"
+          ],
+          "driver": "influxdb",
+          "field_name": "_index",
+          "function": [
+            {
+              "dimensions": [
+                "host"
+              ],
+              "method": "count",
+              "window": "60s"
+            }
+          ],
+          "keep_columns": [],
+          "order_by": [],
+          "query_string": "error",
+          "reference_name": "a",
+          "table_id": "bklog_index_set_7",
+          "time_aggregation": {},
+          "time_field": "time"
+        }
+      ],
+      "id": "bk_log_search-time_series-aligned-False",
+      "input": {
+        "conditions": {
+          "condition_list": [],
+          "field_list": []
+        },
+        "data_source": "bklog",
+        "functions": [],
+        "group_by": [
+          "host"
+        ],
+        "interval": 60,
+        "is_time_agg": true,
+        "metrics": [
+          {
+            "alias": "A",
+            "field": "_index",
+            "method": "COUNT"
+          }
+        ],
+        "query_string": "error",
+        "source_label": "bk_log_search",
+        "table_id": "bklog_index_set_7",
+        "time_alignment": false,
+        "time_field": "time",
+        "type_label": "time_series"
+      },
+      "source": "bkmonitor/bkmonitor/data_source/data_source/__init__.py:BaseBkMonitorLogDataSource.to_unify_query_config",
+      "stage": "uq_query_config"
+    },
+    {
+      "expected": [
+        {
+          "conditions": {
+            "condition_list": [],
+            "field_list": []
+          },
+          "data_source": "bkapm",
+          "dimensions": [
+            "host"
+          ],
+          "driver": "influxdb",
+          "field_name": "_index",
+          "function": [
+            {
+              "dimensions": [
+                "host"
+              ],
+              "method": "sum"
+            }
+          ],
+          "keep_columns": [],
+          "order_by": [],
+          "query_string": "error",
+          "reference_name": "a",
+          "table_id": "events.__default__",
+          "time_aggregation": {
+            "function": "count_over_time",
+            "window": "60s"
+          },
+          "time_field": "time"
+        }
+      ],
+      "id": "bk_monitor-log-aligned-True",
+      "input": {
+        "conditions": {
+          "condition_list": [],
+          "field_list": []
+        },
+        "data_source": "bkapm",
+        "functions": [],
+        "group_by": [
+          "host"
+        ],
+        "interval": 60,
+        "is_time_agg": true,
+        "metrics": [
+          {
+            "alias": "A",
+            "field": "_index",
+            "method": "COUNT"
+          }
+        ],
+        "query_string": "error",
+        "source_label": "bk_monitor",
+        "table_id": "events.__default__",
+        "time_alignment": true,
+        "time_field": "time",
+        "type_label": "log"
+      },
+      "source": "bkmonitor/bkmonitor/data_source/data_source/__init__.py:BaseBkMonitorLogDataSource.to_unify_query_config",
+      "stage": "uq_query_config"
+    },
+    {
+      "expected": [
+        {
+          "conditions": {
+            "condition_list": [],
+            "field_list": []
+          },
+          "data_source": "bkapm",
+          "dimensions": [
+            "host"
+          ],
+          "driver": "influxdb",
+          "field_name": "_index",
+          "function": [
+            {
+              "dimensions": [
+                "host"
+              ],
+              "method": "count",
+              "window": "60s"
+            }
+          ],
+          "keep_columns": [],
+          "order_by": [],
+          "query_string": "error",
+          "reference_name": "a",
+          "table_id": "events.__default__",
+          "time_aggregation": {},
+          "time_field": "time"
+        }
+      ],
+      "id": "bk_monitor-log-aligned-False",
+      "input": {
+        "conditions": {
+          "condition_list": [],
+          "field_list": []
+        },
+        "data_source": "bkapm",
+        "functions": [],
+        "group_by": [
+          "host"
+        ],
+        "interval": 60,
+        "is_time_agg": true,
+        "metrics": [
+          {
+            "alias": "A",
+            "field": "_index",
+            "method": "COUNT"
+          }
+        ],
+        "query_string": "error",
+        "source_label": "bk_monitor",
+        "table_id": "events.__default__",
+        "time_alignment": false,
+        "time_field": "time",
+        "type_label": "log"
+      },
+      "source": "bkmonitor/bkmonitor/data_source/data_source/__init__.py:BaseBkMonitorLogDataSource.to_unify_query_config",
+      "stage": "uq_query_config"
+    },
+    {
+      "expected": [
+        {
+          "conditions": {
+            "condition_list": [],
+            "field_list": []
+          },
+          "data_source": "bkapm",
+          "dimensions": [
+            "host"
+          ],
+          "driver": "influxdb",
+          "field_name": "_index",
+          "function": [
+            {
+              "dimensions": [
+                "host"
+              ],
+              "method": "sum"
+            }
+          ],
+          "keep_columns": [],
+          "order_by": [],
+          "query_string": "error",
+          "reference_name": "a",
+          "table_id": "custom_events.__default__",
+          "time_aggregation": {
+            "function": "count_over_time",
+            "window": "60s"
+          },
+          "time_field": "time"
+        }
+      ],
+      "id": "custom-event-aligned-True",
+      "input": {
+        "conditions": {
+          "condition_list": [],
+          "field_list": []
+        },
+        "data_source": "bkapm",
+        "functions": [],
+        "group_by": [
+          "host"
+        ],
+        "interval": 60,
+        "is_time_agg": true,
+        "metrics": [
+          {
+            "alias": "A",
+            "field": "_index",
+            "method": "COUNT"
+          }
+        ],
+        "query_string": "error",
+        "source_label": "custom",
+        "table_id": "custom_events.__default__",
+        "time_alignment": true,
+        "time_field": "time",
+        "type_label": "event"
+      },
+      "source": "bkmonitor/bkmonitor/data_source/data_source/__init__.py:BaseBkMonitorLogDataSource.to_unify_query_config",
+      "stage": "uq_query_config"
+    },
+    {
+      "expected": [
+        {
+          "conditions": {
+            "condition_list": [],
+            "field_list": []
+          },
+          "data_source": "bkapm",
+          "dimensions": [
+            "host"
+          ],
+          "driver": "influxdb",
+          "field_name": "_index",
+          "function": [
+            {
+              "dimensions": [
+                "host"
+              ],
+              "method": "count",
+              "window": "60s"
+            }
+          ],
+          "keep_columns": [],
+          "order_by": [],
+          "query_string": "error",
+          "reference_name": "a",
+          "table_id": "custom_events.__default__",
+          "time_aggregation": {},
+          "time_field": "time"
+        }
+      ],
+      "id": "custom-event-aligned-False",
+      "input": {
+        "conditions": {
+          "condition_list": [],
+          "field_list": []
+        },
+        "data_source": "bkapm",
+        "functions": [],
+        "group_by": [
+          "host"
+        ],
+        "interval": 60,
+        "is_time_agg": true,
+        "metrics": [
+          {
+            "alias": "A",
+            "field": "_index",
+            "method": "COUNT"
+          }
+        ],
+        "query_string": "error",
+        "source_label": "custom",
+        "table_id": "custom_events.__default__",
+        "time_alignment": false,
+        "time_field": "time",
+        "type_label": "event"
+      },
+      "source": "bkmonitor/bkmonitor/data_source/data_source/__init__.py:BaseBkMonitorLogDataSource.to_unify_query_config",
+      "stage": "uq_query_config"
+    },
+    {
+      "expected": {
+        "aligned_end_ms": 1725000120000,
+        "request": {
+          "bk_biz_ids": [
+            2
+          ],
+          "end": 1725000120,
+          "match": "{host='node-a',zone='east'}",
+          "promql": "sum(rate(requests_total[5m]))",
+          "start": 1725000000,
+          "step": "60s",
+          "timezone": "Asia/Shanghai"
+        }
+      },
+      "id": "promql-request",
+      "input": {
+        "bk_biz_id": 2,
+        "end_ms": 1725000123000,
+        "filter_dict": {
+          "host": "node-a",
+          "ignored_list": [
+            "x"
+          ],
+          "nested": {
+            "zone": "east"
+          }
+        },
+        "interval": 60,
+        "promql": "sum(rate(requests_total[5m]))",
+        "start_ms": 1725000011000
+      },
+      "source": "bkmonitor/bkmonitor/data_source/data_source/__init__.py:PrometheusTimeSeriesDataSource._execute_promql",
+      "stage": "promql_api_request"
+    },
+    {
+      "expected": [
+        {
+          "_result_": 0,
+          "_time_": 1725000000000.0,
+          "host": "node-a",
+          "zone": null
+        },
+        {
+          "_result_": null,
+          "_time_": 1725000060000.0,
+          "host": "node-a",
+          "zone": null
+        }
+      ],
+      "id": "uq-result-instant-False",
+      "input": {
+        "end_time_ms": 1725000120000,
+        "params": {
+          "instant": false
+        },
+        "response": {
+          "series": [
+            {
+              "columns": [
+                "_time",
+                "_value"
+              ],
+              "group_keys": [
+                "host_table0",
+                "zone"
+              ],
+              "group_values": [
+                "node-a"
+              ],
+              "types": [
+                "time",
+                "double"
+              ],
+              "values": [
+                [
+                  1725000000,
+                  0
+                ],
+                [
+                  1725000060,
+                  null
+                ],
+                [
+                  1725000120,
+                  1.23456789
+                ]
+              ]
+            }
+          ]
+        }
+      },
+      "source": "bkmonitor/bkmonitor/data_source/unify_query/query.py:UnifyQuery.process_unify_query_data",
+      "stage": "uq_result_records"
+    },
+    {
+      "expected": [
+        {
+          "_result_": 0,
+          "_time_": 1725000000000.0,
+          "host": "node-a",
+          "zone": null
+        },
+        {
+          "_result_": null,
+          "_time_": 1725000060000.0,
+          "host": "node-a",
+          "zone": null
+        },
+        {
+          "_result_": 1.23456789,
+          "_time_": 1725000120000.0,
+          "host": "node-a",
+          "zone": null
+        }
+      ],
+      "id": "uq-result-instant-True",
+      "input": {
+        "end_time_ms": 1725000120000,
+        "params": {
+          "instant": true
+        },
+        "response": {
+          "series": [
+            {
+              "columns": [
+                "_time",
+                "_value"
+              ],
+              "group_keys": [
+                "host_table0",
+                "zone"
+              ],
+              "group_values": [
+                "node-a"
+              ],
+              "types": [
+                "time",
+                "double"
+              ],
+              "values": [
+                [
+                  1725000000,
+                  0
+                ],
+                [
+                  1725000060,
+                  null
+                ],
+                [
+                  1725000120,
+                  1.23456789
+                ]
+              ]
+            }
+          ]
+        }
+      },
+      "source": "bkmonitor/bkmonitor/data_source/unify_query/query.py:UnifyQuery.process_unify_query_data",
+      "stage": "uq_result_records"
+    },
+    {
+      "expected": {
+        "nested": {
+          "path": "tags",
+          "query": {
+            "bool": {
+              "must": [
+                {
+                  "term": {
+                    "tags.key": "service"
+                  }
+                },
+                {
+                  "terms": {
+                    "tags.value.raw": [
+                      "api"
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "id": "fta-filter-tags.service",
+      "input": {
+        "field": "tags.service",
+        "operate": "terms",
+        "value": [
+          "api"
+        ]
+      },
+      "source": "bkmonitor/bkmonitor/data_source/backends/fta_event/compiler.py:SQLCompiler._convert_tag_query",
+      "stage": "fta_filter_dsl"
+    },
+    {
+      "expected": {
+        "terms": {
+          "alert_name.raw": [
+            "latency"
+          ]
+        }
+      },
+      "id": "fta-filter-alert_name.raw",
+      "input": {
+        "field": "alert_name.raw",
+        "operate": "terms",
+        "value": [
+          "latency"
+        ]
+      },
+      "source": "bkmonitor/bkmonitor/data_source/backends/fta_event/compiler.py:SQLCompiler._convert_tag_query",
+      "stage": "fta_filter_dsl"
+    },
+    {
+      "expected": {
+        "range": {
+          "time": {
+            "gte": 1725000000,
+            "lt": 1725000060
+          }
+        }
+      },
+      "id": "fta-filter-time",
+      "input": {
+        "field": "time",
+        "operate": "range",
+        "value": {
+          "gte": 1725000000123,
+          "lt": 1725000060999
+        }
+      },
+      "source": "bkmonitor/bkmonitor/data_source/backends/fta_event/compiler.py:SQLCompiler._convert_tag_query",
+      "stage": "fta_filter_dsl"
+    },
+    {
+      "expected": {
+        "tags.service": {
+          "aggs": {
+            "key": {
+              "aggs": {
+                "value": {
+                  "aggs": {
+                    "_reverse": {
+                      "aggs": {
+                        "time": {
+                          "aggs": {
+                            "a": {
+                              "value_count": {
+                                "field": "_index"
+                              }
+                            }
+                          },
+                          "date_histogram": {
+                            "field": "time",
+                            "interval": "1m"
+                          }
+                        }
+                      },
+                      "reverse_nested": {}
+                    }
+                  },
+                  "terms": {
+                    "field": "tags.value.raw",
+                    "size": 1440
+                  }
+                }
+              },
+              "filter": {
+                "term": {
+                  "tags.key": "service"
+                }
+              }
+            }
+          },
+          "nested": {
+            "path": "tags"
+          }
+        }
+      },
+      "id": "fta-aggregation-1",
+      "input": {
+        "dimensions": [
+          "tags.service"
+        ],
+        "interval_minutes": 1,
+        "select_fields": [
+          {
+            "agg_method": "count",
+            "metric_alias": "a",
+            "metric_field": "_index"
+          }
+        ]
+      },
+      "source": "bkmonitor/bkmonitor/data_source/backends/fta_event/compiler.py:SQLCompiler._get_aggregations",
+      "stage": "fta_aggregation_dsl"
+    },
+    {
+      "expected": {
+        "alert_name": {
+          "aggs": {
+            "tags.service": {
+              "aggs": {
+                "key": {
+                  "aggs": {
+                    "value": {
+                      "aggs": {
+                        "_reverse": {
+                          "aggs": {
+                            "bk_biz_id": {
+                              "aggs": {
+                                "time": {
+                                  "aggs": {
+                                    "a": {
+                                      "value_count": {
+                                        "field": "_index"
+                                      }
+                                    }
+                                  },
+                                  "date_histogram": {
+                                    "field": "time",
+                                    "interval": "1m"
+                                  }
+                                }
+                              },
+                              "terms": {
+                                "field": "bk_biz_id",
+                                "size": 1440
+                              }
+                            }
+                          },
+                          "reverse_nested": {}
+                        }
+                      },
+                      "terms": {
+                        "field": "tags.value.raw",
+                        "size": 1440
+                      }
+                    }
+                  },
+                  "filter": {
+                    "term": {
+                      "tags.key": "service"
+                    }
+                  }
+                }
+              },
+              "nested": {
+                "path": "tags"
+              }
+            }
+          },
+          "terms": {
+            "field": "alert_name.raw",
+            "size": 1440
+          }
+        }
+      },
+      "id": "fta-aggregation-3",
+      "input": {
+        "dimensions": [
+          "bk_biz_id",
+          "tags.service",
+          "alert_name"
+        ],
+        "interval_minutes": 1,
+        "select_fields": [
+          {
+            "agg_method": "count",
+            "metric_alias": "a",
+            "metric_field": "_index"
+          }
+        ]
+      },
+      "source": "bkmonitor/bkmonitor/data_source/backends/fta_event/compiler.py:SQLCompiler._get_aggregations",
+      "stage": "fta_aggregation_dsl"
+    },
+    {
+      "expected": {
+        "filter_dict": {
+          "alert_name.raw": "latency",
+          "bk_biz_id": 2,
+          "status": "ABNORMAL"
+        },
+        "group_by": [
+          "tags.service"
+        ],
+        "interval_minutes": 2,
+        "metrics": [
+          {
+            "alias": "a",
+            "field": "_index",
+            "method": "COUNT"
+          }
+        ]
+      },
+      "id": "fta-intrinsic-latency",
+      "input": {
+        "bk_biz_id": 2,
+        "group_by": [
+          "tags.service"
+        ],
+        "interval": 120,
+        "metrics": [
+          {
+            "alias": "a",
+            "field": "latency",
+            "method": "COUNT"
+          }
+        ],
+        "where": []
+      },
+      "source": "bkmonitor/bkmonitor/data_source/data_source/__init__.py:BkFtaEventDataSource.__init__",
+      "stage": "source_intrinsic_filters"
+    },
+    {
+      "expected": {
+        "filter_dict": {
+          "bk_biz_id": 2,
+          "plugin_id__neq": "bkmonitor",
+          "status": "ABNORMAL"
+        },
+        "group_by": [
+          "tags.service"
+        ],
+        "interval_minutes": 2,
+        "metrics": [
+          {
+            "alias": "a",
+            "field": "_index",
+            "method": "COUNT"
+          }
+        ]
+      },
+      "id": "fta-intrinsic-__ALL_EVENT_PLUGIN__",
+      "input": {
+        "bk_biz_id": 2,
+        "group_by": [
+          "tags.service"
+        ],
+        "interval": 120,
+        "metrics": [
+          {
+            "alias": "a",
+            "field": "__ALL_EVENT_PLUGIN__",
+            "method": "COUNT"
+          }
+        ],
+        "where": []
+      },
+      "source": "bkmonitor/bkmonitor/data_source/data_source/__init__.py:BkFtaEventDataSource.__init__",
+      "stage": "source_intrinsic_filters"
+    },
+    {
+      "expected": {
+        "filter_dict": {
+          "bk_biz_id": 2,
+          "plugin_id": "example",
+          "status": "ABNORMAL"
+        },
+        "group_by": [
+          "tags.service"
+        ],
+        "interval_minutes": 2,
+        "metrics": [
+          {
+            "alias": "a",
+            "field": "_index",
+            "method": "COUNT"
+          }
+        ]
+      },
+      "id": "fta-intrinsic-__EVENT_PLUGIN__example",
+      "input": {
+        "bk_biz_id": 2,
+        "group_by": [
+          "tags.service"
+        ],
+        "interval": 120,
+        "metrics": [
+          {
+            "alias": "a",
+            "field": "__EVENT_PLUGIN__example",
+            "method": "COUNT"
+          }
+        ],
+        "where": []
+      },
+      "source": "bkmonitor/bkmonitor/data_source/data_source/__init__.py:BkFtaEventDataSource.__init__",
+      "stage": "source_intrinsic_filters"
+    },
+    {
+      "expected": {
+        "event_type__neq": "recovery"
+      },
+      "id": "custom-event-intrinsic-all",
+      "input": {
+        "custom_event_name": "",
+        "metadata_route": "uq"
+      },
+      "source": "bkmonitor/bkmonitor/data_source/data_source/__init__.py:CustomEventDataSource.__init__",
+      "stage": "source_intrinsic_filters"
+    },
+    {
+      "expected": {
+        "event_name": "deploy",
+        "event_type__neq": "recovery"
+      },
+      "id": "custom-event-intrinsic-deploy",
+      "input": {
+        "custom_event_name": "deploy",
+        "metadata_route": "uq"
+      },
+      "source": "bkmonitor/bkmonitor/data_source/data_source/__init__.py:CustomEventDataSource.__init__",
+      "stage": "source_intrinsic_filters"
+    }
+  ],
+  "limitations": [
+    "Stage-specific fixtures, not full strategy-to-wire proof",
+    "No source initialization, metadata, routing, auth or SQL/ES transport execution",
+    "No configured query functions or percentile aggregations",
+    "Numeric epoch only; timestamp parser is a harness stand-in"
+  ],
+  "schema_version": 1,
+  "source_revision": "a40283a11e8b9a89a147851939cbbe90958df4e9",
+  "source_sha256": {
+    "bkmonitor/bkmonitor/data_source/backends/elastic_search/compiler.py": "c4b89d164f4fff9dbaf4e7e123bcd352d7cfe5770c2a98fbb9f7f891c13569a8",
+    "bkmonitor/bkmonitor/data_source/backends/fta_event/compiler.py": "da75a5b5e7af7b948bd1b0bb01b4a05d37470edb215e2f4dabffbe2205c95c17",
+    "bkmonitor/bkmonitor/data_source/data_source/__init__.py": "90cd1c305d08df0c8776f7e86c4fb7f9c7e8d11c2dc09dec1a3c8d7c575f52db",
+    "bkmonitor/bkmonitor/data_source/unify_query/functions.py": "92b7f45fa4fdedc359ff708a3272108fe68a1fcfef618dc8f857f5df9ee4991e",
+    "bkmonitor/bkmonitor/data_source/unify_query/query.py": "64c7e6676da464a8b99290441004134ef939478d225be12910743857d56e37d4",
+    "bkmonitor/constants/alert.py": "5d73aad5600d66f15c52388fc36f6e42221808c803839e8e8f71425d7e2a1a59",
+    "bkmonitor/constants/data_source.py": "5e9ed5509a1323e5185980c0eaaa44b6ce4d47bb340f2dec8ac5f1e3e696eb1e",
+    "bkmonitor/constants/event.py": "fba0920f1cdf619bed2b665b029f874809f0ad69a08471b9adc5ce373874b2a2"
+  }
+}

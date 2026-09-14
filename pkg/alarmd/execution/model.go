@@ -1400,14 +1400,14 @@ type RecoveryGateCounts struct {
 // produced their envelope. The two held kinds produced none: the consumer
 // holds no open alert on the series, or the series identity it keys alerts
 // by could not be built. NotConfigured is a caller that passed no set, the
-// behaviour before the gate existed. LegacyProtocol is a Plan whose
-// protocol carries no RECOVERY message, so the set was not asked.
+// behaviour before the gate existed. ProtocolNotGated is a Plan that does
+// not publish the alert consumer's protocol, so the set was not asked.
 type OpenAlertGateCounts struct {
 	Passed                 uint64
 	HeldNoOpenAlert        uint64
 	HeldFingerprintUnknown uint64
 	NotConfigured          uint64
-	LegacyProtocol         uint64
+	ProtocolNotGated       uint64
 }
 
 type PlanEvaluationResult struct {

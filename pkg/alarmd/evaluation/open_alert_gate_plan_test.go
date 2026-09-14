@@ -35,7 +35,7 @@ func (set openAlertSetStub) Contains(tenantID, strategyID, fingerprint string) b
 func TestEvaluatorGatesARecoveryEnvelopeOnTheOpenAlertSet(t *testing.T) {
 	identity := contract.MonitorOutputIdentity{DimensionFields: []string{"host"}}
 	native := func(p *contract.EvaluationPlanV2) {
-		p.WireFormat = contract.WireFormatTriggerEvent
+		p.WireFormat = contract.WireFormatStandardRawEvent
 		p.StrategyRef.SnapshotRevision = 7
 		p.StrategyIR.StrategyRef.SnapshotRevision = 7
 		p.OutputIdentity = &identity
@@ -60,8 +60,8 @@ func TestEvaluatorGatesARecoveryEnvelopeOnTheOpenAlertSet(t *testing.T) {
 			wantCounts: execution.OpenAlertGateCounts{HeldNoOpenAlert: 1}, wantEnvelopes: 0, wantHeld: true},
 		{name: "no set passed: the envelope goes and the wiring gap is counted", shape: native, set: nil,
 			wantCounts: execution.OpenAlertGateCounts{NotConfigured: 1}, wantEnvelopes: 1},
-		{name: "a compatibility-protocol Plan: the set is not asked", shape: nil, set: openAlertSetStub{},
-			wantCounts: execution.OpenAlertGateCounts{LegacyProtocol: 1}, wantEnvelopes: 1},
+		{name: "a Plan off the consumer's protocol: the set is not asked", shape: nil, set: openAlertSetStub{},
+			wantCounts: execution.OpenAlertGateCounts{ProtocolNotGated: 1}, wantEnvelopes: 1},
 	} {
 		t.Run(arm.name, func(t *testing.T) {
 			plan := compiledTwoLevelsShaped(t, "50", "50", arm.shape)

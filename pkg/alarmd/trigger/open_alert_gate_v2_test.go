@@ -34,7 +34,7 @@ func (set *openAlertSetFixture) Contains(tenantID, strategyID, fingerprint strin
 func nativePlanV2(t *testing.T, levels []contract.LevelIRV2, identity *contract.MonitorOutputIdentity) *strategy.CompiledPlan {
 	t.Helper()
 	return compilePlanV2WithOutput(t, levels, func(p *contract.EvaluationPlanV2) {
-		p.WireFormat = contract.WireFormatTriggerEvent
+		p.WireFormat = contract.WireFormatStandardRawEvent
 		p.StrategyRef.SnapshotRevision = 7
 		p.StrategyIR.StrategyRef.SnapshotRevision = 7
 		p.OutputIdentity = identity
@@ -99,10 +99,24 @@ func TestRecoveryEnvelopeGoesOnlyToAnOpenAlert(t *testing.T) {
 			envelope: true, asked: 0,
 		},
 		{
-			name:     "a Plan on the compatibility protocol has no RECOVERY message: the set is not asked",
+			name:     "a Plan on the compatibility protocol: the set is not asked",
 			plan:     func(t *testing.T) *strategy.CompiledPlan { return compilePlanV2(t, recovered) },
 			set:      func(t *testing.T) *openAlertSetFixture { return &openAlertSetFixture{} },
-			wantGate: RecoveryGateV2{OpenAlertGate: OpenAlertGateLegacyProtocol},
+			wantGate: RecoveryGateV2{OpenAlertGate: OpenAlertGateProtocolNotGated},
+			envelope: true, asked: 0,
+		},
+		{
+			name: "a Plan on alarmd's own decision event, identity and all: not the consumer's protocol, the set is not asked",
+			plan: func(t *testing.T) *strategy.CompiledPlan {
+				return compilePlanV2WithOutput(t, recovered, func(p *contract.EvaluationPlanV2) {
+					p.WireFormat = contract.WireFormatTriggerEvent
+					p.StrategyRef.SnapshotRevision = 7
+					p.StrategyIR.StrategyRef.SnapshotRevision = 7
+					p.OutputIdentity = identity
+				})
+			},
+			set:      func(t *testing.T) *openAlertSetFixture { return &openAlertSetFixture{} },
+			wantGate: RecoveryGateV2{OpenAlertGate: OpenAlertGateProtocolNotGated},
 			envelope: true, asked: 0,
 		},
 	}

@@ -225,8 +225,8 @@ const (
 
 // The outcomes of the second recovery gate, the open alert set. The set is
 // closed: a metric label is made of it. Each is reachable in production:
-// the first four from a native Plan against a set, the last from a Plan on
-// the compatibility protocol, which has no RECOVERY message at all.
+// the first four from a Plan on the alert consumer's protocol against a
+// set, the last from a Plan on any other protocol.
 const (
 	// OpenAlertGatePassed: the consumer holds an open alert; the envelope goes.
 	OpenAlertGatePassed = "passed"
@@ -238,10 +238,13 @@ const (
 	// as it did before the gate existed. A production worker always passes a
 	// set, so this outcome counting there is the wiring having come apart.
 	OpenAlertGateNotConfigured = "not_configured"
-	// OpenAlertGateLegacyProtocol: the Plan publishes the compatibility
-	// protocol, which carries anomalies only; its RECOVERY envelope is
-	// dropped at the sink whatever the set says, so the set is not asked.
-	OpenAlertGateLegacyProtocol = "legacy_protocol"
+	// OpenAlertGateProtocolNotGated: the Plan does not publish the alert
+	// consumer's protocol, so the consumer's open alert set has nothing to
+	// say about its envelope. The compatibility protocol carries anomalies
+	// only and drops the RECOVERY envelope at the sink; alarmd's own decision
+	// event has no consumer that keeps an open alert set. The set is not
+	// asked.
+	OpenAlertGateProtocolNotGated = "protocol_not_gated"
 )
 
 // RecoveryGateV2 is what became of a record whose evaluated Levels agreed on

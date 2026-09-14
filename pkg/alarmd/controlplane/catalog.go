@@ -578,6 +578,19 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 		return candidate, errors.New("OUTPUT_PROTOCOL_REQUIRES_STRATEGY_REVISION")
 	}
 	plan.WireFormat = format
+	// The alert consumer keys alerts by a fingerprint built from the output
+	// identity; its sink refuses an envelope without one, and refuses the
+	// whole batch with it. The identity is set with the revision above and
+	// the protocol requires the revision, so this cannot fire on this path;
+	// it pins the pairing where both halves are decided, so that a change
+	// to either shows up here and not as a Slot that can never write.
+	if format == contract.WireFormatStandardRawEvent && plan.OutputIdentity == nil {
+		candidate.dispositions = append(candidate.dispositions, ObjectDisposition{
+			SourceID: source.SourceID, Scope: "PLAN", Disposition: DispositionConfigRejected,
+			Reason: "OUTPUT_PROTOCOL_REQUIRES_OUTPUT_IDENTITY",
+		})
+		return candidate, errors.New("OUTPUT_PROTOCOL_REQUIRES_OUTPUT_IDENTITY")
+	}
 	if format == contract.WireFormatPythonCompatible {
 		plan.LegacyOutput = &contract.LegacyOutputContext{DynamicDimensions: facts.Normalization.DatasetContract.DynamicDimensions, Strategy: append(json.RawMessage(nil), source.Document...), DimensionFields: append([]string{}, facts.Normalization.DatasetContract.IdentityFields...), ItemID: strconv.FormatInt(item.ID, 10)}
 	}

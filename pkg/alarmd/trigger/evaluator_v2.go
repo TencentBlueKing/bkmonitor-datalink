@@ -564,24 +564,30 @@ func recoveryGateV2(outcomes []LevelOutcomeV2) RecoveryGateV2 {
 // series recovered, which the Level results and the first gate have already
 // decided.
 //
-// Two shapes do not ask the set. A Plan on the compatibility protocol has no
-// RECOVERY message, its envelope is dropped at the sink, so holding it here
-// would change nothing on the wire and everything in the counts. A caller
-// that passed no set has no gate; that is the state before the gate existed
-// and is named as such, so a worker that stops passing the set shows up as
-// a count rather than as recoveries quietly going out again.
+// Two shapes do not ask the set. A Plan that does not publish the alert
+// consumer's protocol is not gated: the set is that consumer's, and the
+// other protocols either carry no RECOVERY message (the sink drops it) or
+// go to no consumer that keeps an open alert set. A caller that passed no
+// set has no gate; that is the state before the gate existed and is named
+// as such, so a worker that stops passing the set shows up as a count
+// rather than as recoveries quietly going out again.
 //
 // A fingerprint that could not be built is a third state, held and named.
-// Reading it as "not a member" would hold every recovery of such a Plan for
-// as long as the Plan exists, and nothing would distinguish that from a
-// consumer that holds no alerts on it.
+// On the consumer's protocol it is unreachable by construction: the control
+// plane sets the output identity with the frozen revision the protocol
+// requires, and admission refuses the pairing that would leave it out. If
+// it happened anyway, the choice here is between holding this Plan's
+// recoveries and passing an envelope the sink cannot convert -- which fails
+// the whole batch and with it every series in the Slot. Holding costs one
+// Plan; it is counted, and it is not read as "not a member", which would
+// look exactly like a consumer that holds no alerts on it.
 //
 // The gate does not pass the record past a Level without recovery: that
 // report is about an envelope that was sent, and here none is.
 func openAlertGateV2(gate RecoveryGateV2, request EvaluationRequestV2, strategyID, dedupeMD5 string) RecoveryGateV2 {
 	switch {
-	case request.Plan.PublishesCompatibleProtocol():
-		gate.OpenAlertGate = OpenAlertGateLegacyProtocol
+	case request.Plan.WireFormat() != contract.WireFormatStandardRawEvent:
+		gate.OpenAlertGate = OpenAlertGateProtocolNotGated
 	case request.OpenAlerts == nil:
 		gate.OpenAlertGate = OpenAlertGateNotConfigured
 	case dedupeMD5 == "":

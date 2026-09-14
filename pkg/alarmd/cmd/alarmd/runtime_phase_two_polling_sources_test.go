@@ -16,6 +16,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -29,9 +30,9 @@ func TestProductionPollingSources(t *testing.T) {
 	for _, source := range []struct{ label, kind string }{
 		{"custom", "time_series"}, {"prometheus", "time_series"},
 		{"bk_log_search", "time_series"}, {"bk_log_search", "log"},
-		{"bk_monitor", "log"}, {"custom", "event"},
+		{"bk_monitor", "log"}, {"custom", "event"}, {"bk_fta", "event"},
 	} {
-		for _, second := range []string{"normal", "unavailable"} {
+		for _, second := range []string{"normal", "unavailable", "partial"} {
 			t.Run(source.label+"/"+source.kind+"/"+second, func(t *testing.T) {
 				address, client := startPhaseTwoRedis(t)
 				ctx := context.Background()
@@ -54,6 +55,12 @@ func TestProductionPollingSources(t *testing.T) {
 				}
 				if source.kind == "event" {
 					query["custom_event_name"], query["result_table_id"] = "synthetic-event", "system_event"
+				}
+				dimension := "host"
+				if source.label == "bk_fta" {
+					dimension = "tags.host"
+					query["agg_dimension"] = []string{dimension}
+					query["metric_field"] = "__ALL_EVENT_PLUGIN__"
 				}
 				body, err := json.Marshal(document)
 				if err != nil {
@@ -80,6 +87,12 @@ func TestProductionPollingSources(t *testing.T) {
 						return nil, err
 					}
 					endKey := "end_time"
+					if source.label == "bk_fta" {
+						clauses, ok := payload["query_list"].([]any)
+						if !ok || len(clauses) != 1 || clauses[0].(map[string]any)["field_semantics"] != "fta_event_tags/v1" || payload["tsdb_map"] == nil {
+							return nil, fmt.Errorf("FTA missing ES route or keyed tag semantics: %v", payload)
+						}
+					}
 					if source.label == "prometheus" {
 						if !strings.HasSuffix(request.URL.Path, "/promql") || payload["promql"] != query["promql"] {
 							return nil, fmt.Errorf("PromQL did not use native transport")
@@ -101,15 +114,21 @@ func TestProductionPollingSources(t *testing.T) {
 					// Two dynamic series expose loss of PromQL identity even when
 					// an otherwise successful single-series test would pass.
 					for _, host := range []string{"synthetic-a", "synthetic-b"} {
-						series = append(series, map[string]any{"name": "_result0", "columns": []string{"_time", "_result"}, "types": []string{"int64", "float64"}, "group_keys": []string{"host"}, "group_values": []string{host}, "values": []any{[]any{(end - 1) * 1000, value}}})
+						series = append(series, map[string]any{"name": "_result0", "columns": []string{"_time", "_result"}, "types": []string{"int64", "float64"}, "group_keys": []string{dimension}, "group_values": []string{host}, "values": []any{[]any{(end - 1) * 1000, value}}})
 					}
 					var buf bytes.Buffer
-					if err := json.NewEncoder(&buf).Encode(map[string]any{"series": series, "status": nil, "trace_id": "polling-test", "is_partial": false}); err != nil {
+					if err := json.NewEncoder(&buf).Encode(map[string]any{"series": series, "status": nil, "trace_id": "polling-test", "is_partial": second == "partial" && clock.Load() > base+1}); err != nil {
 						return nil, err
 					}
 					return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(&buf), Request: request}, nil
 				})}
 				cfg := controlledG4RuntimeConfig(address, "http://controlled-uq", "alarmd-polling-controlled")
+				if source.label == "bk_fta" {
+					cfg.PhaseTwo.Control.LegacyQueryRuntime.FTAEventStorage = &execution.QueryStorage{
+						TableID: "fta.event", StorageID: "1", StorageType: "elasticsearch", DB: "bkfta_event_*_read", Measurement: "__default__",
+						TimeField: execution.QueryTimeField{Name: "time", Type: "long", Unit: "s"},
+					}
+				}
 				events := &recordingPhaseTwoEventSink{}
 				bundle, err := openProductionPhaseTwoBundleWithDependencies(ctx, cfg, metric.NewRecorder(metric.BuildInfo{}), observability.Discard(observability.ComponentRuntime), newPhaseTwoApplicationHealth(),
 					func(client redis.Cmdable, prefix string) (controlplane.StrategySource, error) {
@@ -142,7 +161,7 @@ func TestProductionPollingSources(t *testing.T) {
 				}
 				written := events.snapshot()
 				want := 4
-				if second == "unavailable" {
+				if second != "normal" {
 					want = 2
 				}
 				mu.Lock()
@@ -150,7 +169,7 @@ func TestProductionPollingSources(t *testing.T) {
 				queried := calls
 				mu.Unlock()
 				if len(written) != want || queried == 0 || len(bundle.queryGroups) != 1 {
-					t.Fatalf("events=%v calls=%d groups=%d observations=%+v", controlledEventKinds(written), queried, len(bundle.queryGroups), seen)
+					t.Fatalf("events=%v calls=%d groups=%d stages=%v", controlledEventKinds(written), queried, len(bundle.queryGroups), observedStages(seen))
 				}
 				for i, event := range written {
 					expected := contract.TriggerEventAbnormal

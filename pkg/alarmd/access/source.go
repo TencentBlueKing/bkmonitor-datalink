@@ -619,7 +619,7 @@ func prepare(
 				return PreparedExecution{}, errors.New("alarmd access: frozen consumer schedule unavailable")
 			}
 			readyAt, err := frozenConsumerReadyAt(
-				contractRef, requirement, window, schedule, minReadyDelay, allowExhaustedRecoveryBudget,
+				contractRef, requirement, window, schedule, minReadyDelay, facts.QueryDelaySeconds, allowExhaustedRecoveryBudget,
 			)
 			if err != nil {
 				return PreparedExecution{}, err
@@ -687,6 +687,7 @@ func frozenConsumerReadyAt(
 	window execution.QueryWindow,
 	schedule execution.ScheduleSpec,
 	configuredDelay time.Duration,
+	sourceDelaySeconds int64,
 	allowExhaustedRecoveryBudget bool,
 ) (int64, error) {
 	if int64(contractRef.Slot.EvaluationTime) > math.MaxInt64/1000 {
@@ -699,6 +700,9 @@ func frozenConsumerReadyAt(
 	} else if !allowExhaustedRecoveryBudget && schedule.EvaluationIntervalSeconds == 30 && readyDelay > thirtySecondReadyDelay {
 		readyDelay = thirtySecondReadyDelay
 	}
+	// Source delay selects an older data window; it must not move the
+	// scheduler's global readiness boundary earlier by the same amount.
+	window.End += sourceDelaySeconds
 	return frozenRequirementReadyAt(requirement, window, readyDelay)
 }
 

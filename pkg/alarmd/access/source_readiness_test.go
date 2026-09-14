@@ -34,6 +34,39 @@ func TestPrepareUsesBuiltInReadinessProfileForThirtySecondPlan(t *testing.T) {
 	}
 }
 
+func TestDelayedSourcePreservesReadinessAndQueriesOlderWindow(t *testing.T) {
+	ref, frozen := frozenExecution(t)
+	facts := frozen.QueryFacts[frozen.Requirements[0].LogicalQueryRef]
+	facts.QueryDelaySeconds = 60
+	facts.QueryRevision = ""
+	facts, err := execution.BuildQueryPlanFacts(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queryRef := execution.LogicalQueryRef(facts.QueryRevision)
+	frozen.QueryFacts = map[execution.LogicalQueryRef]execution.QueryPlanFacts{queryRef: facts}
+	frozen.Requirements[0].LogicalQueryRef = queryRef
+	frozen.Requirements[0].RelativeWindow.StartOffsetSeconds -= 60
+	frozen.Requirements[0].RelativeWindow.EndOffsetSeconds -= 60
+	ref.QueryRevision = facts.QueryRevision
+	ref = bindFrozenDueDigest(t, ref, frozen)
+	prepared, err := Prepare(ref, frozen, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prepared.Queries) != 1 {
+		t.Fatalf("queries=%d", len(prepared.Queries))
+	}
+	query := prepared.Queries[0]
+	evaluation := int64(ref.Slot.EvaluationTime)
+	if query.ReadyAtUnixMilli != evaluation*1000+10000 {
+		t.Fatalf("source delay moved global readiness: %d", query.ReadyAtUnixMilli)
+	}
+	if query.Spec.ProviderRange.Start != evaluation-120 || query.Spec.ProviderRange.End != evaluation-60 {
+		t.Fatalf("source delay did not move query window: %+v", query.Spec.ProviderRange)
+	}
+}
+
 func TestPrepareReadinessProfilePreservesLongIntervalAndRecoveryBudget(t *testing.T) {
 	for _, test := range []struct {
 		name      string

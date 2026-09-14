@@ -142,8 +142,8 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
         <div class="k" id="demotedHint">后端持续查不到，已降级不再反复查</div></div>
       <div class="cell"><div class="k">判不了恢复</div><div class="v" id="undecidable">–</div>
         <div class="k" id="undecidableHint">检测窗口没攒够点，恢复无从判起——正常现象，不是故障</div></div>
-      <div class="cell"><div class="k">变更中</div><div class="v" id="transitional">–</div>
-        <div class="k" id="transitionalHint">这一轮被一次已经在做的变更打断，下一轮按新配置重跑——没有人需要做什么</div></div>
+      <div class="cell"><div class="k">按配置不处理</div><div class="v" id="byDesign">–</div>
+        <div class="k" id="byDesignHint">配置就是这么写的：策略正在被改，或者现在不在它的生效时段——没有人需要做什么</div></div>
       <div class="cell hl"><div class="k">状态未知</div><div class="v" id="unknown">–</div>
         <div class="k">没人能替它说话，不算正常</div></div>
       <div class="cell hl" id="unattributedCell" hidden>
@@ -216,7 +216,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       对象归谁每次再平衡都会变，劈分会在什么都没发生的情况下移动。</p>
     <table>
       <thead><tr>
-        <th>副本</th><th>持有</th><th>正常</th><th>自身异常</th><th>其中 alarmd 的</th><th>降级池</th><th>判不了恢复</th><th>变更中</th><th>状态未知</th>
+        <th>副本</th><th>持有</th><th>正常</th><th>自身异常</th><th>其中 alarmd 的</th><th>降级池</th><th>判不了恢复</th><th>按配置不处理</th><th>状态未知</th>
         <th>快照新鲜度</th><th>已运行</th><th>内存</th><th>CPU</th><th>同时在跑</th>
       </tr></thead>
       <tbody id="repRows"></tbody>
@@ -240,7 +240,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       <button id="colOwn" class="primary">自身异常</button>
       <button id="colDemoted">策略本身不可用（降级池）</button>
       <button id="colUndecidable">判不了恢复</button>
-      <button id="colTransitional">变更中</button>
+      <button id="colByDesign">按配置不处理</button>
       <button id="ordOldest" class="primary">坏得最久的在前</button>
       <button id="ordNewest">刚开始坏的在前</button>
       <input id="fReplica" list="replicaList" placeholder="副本" size="10">
@@ -491,7 +491,7 @@ function renderDeployment(deployment) {
     text('ownBad', deployment.anomalies_total);
     text('demoted', deployment.demoted_total);
     text('undecidable', deployment.undecidable_total || 0);
-    text('transitional', deployment.transitional_total || 0);
+    text('byDesign', deployment.by_design_total || 0);
     // The number the verdict is actually decided on when there are no coverage
     // gaps, and it had no field on this response at all. A deployment reading
     // UNKNOWN with every other number at zero gave a reader nothing to go on.
@@ -511,7 +511,7 @@ function renderDeployment(deployment) {
     // prose. A reader who can only be told the columns partition the objects has
     // no way to notice the day they stop doing so.
     var parts = [deployment.healthy, deployment.anomalies_total, deployment.demoted_total,
-                 deployment.undecidable_total || 0, deployment.transitional_total || 0,
+                 deployment.undecidable_total || 0, deployment.by_design_total || 0,
                  deployment.unknown];
     var sum = parts.reduce(function (a, b) { return a + (b || 0); }, 0);
     var total = (deployment.expected === null || deployment.expected === undefined) ? deployment.covered : deployment.expected;
@@ -565,7 +565,7 @@ function renderDeployment(deployment) {
     // already made on purpose and the next round runs under it. The column is
     // deliberately narrow -- one reason on the list -- so that it does not
     // become the place things go to stop being looked at.
-    text('transitionalHint', (deployment.transitional_total || 0)
+    text('byDesignHint', (deployment.by_design_total || 0)
       ? '策略在这一轮跑到一半被改了/停用了/换了归属。旧配置算出来的结果不该落地，所以这一轮作废，'
         + '下一轮按新配置重跑。两边都是对的行为，没有人需要做什么，也不计入部署健康判定'
       : '当前没有这种对象');
@@ -804,9 +804,9 @@ function loadObjects() {
     var served = objects.column || 'anomalies';
     var pool = served === 'demoted';
     var undecidable = served === 'undecidable';
-    var transitional = served === 'transitional';
+    var byDesign = served === 'by_design';
     var TITLES = {demoted: '策略本身不可用（降级池）', undecidable: '判不了恢复',
-                  transitional: '变更中', anomalies: '自身异常对象'};
+                  by_design: '按配置不处理', anomalies: '自身异常对象'};
     var BASIS = {
       demoted: '这些对象的后端持续查不到，已被降级、不再反复查询，也不计入部署健康判定。列在这里是因为“不算我们的问题”是一个需要能被核对的说法——每条都带着它最近一次失败在哪。',
       // Stated as a normal condition and as a limit, not as a fault. These
@@ -825,10 +825,10 @@ function loadObjects() {
     };
     text('listTitle', TITLES[served] || TITLES.anomalies);
     text('listBasis', BASIS[served] || BASIS.anomalies);
-    document.getElementById('colOwn').className = (pool || undecidable || transitional) ? '' : 'primary';
+    document.getElementById('colOwn').className = (pool || undecidable || byDesign) ? '' : 'primary';
     document.getElementById('colDemoted').className = pool ? 'primary' : '';
     document.getElementById('colUndecidable').className = undecidable ? 'primary' : '';
-    document.getElementById('colTransitional').className = transitional ? 'primary' : '';
+    document.getElementById('colByDesign').className = byDesign ? 'primary' : '';
     // Read off the response, never from what was asked for: the buttons and the
     // wording under them have to describe the rows that actually came back.
     var served_order = objects.order || 'oldest';
@@ -1019,8 +1019,8 @@ function renderReplicas(rows) {
     var repUndecidable = cell(replica.undecidable || 0);
     repUndecidable.title = '检测窗口没攒够点，恢复判不了。正常现象，不计入判定，也不算在正常里——'
       + '每个对象只落一栏，这一行几个数相加等于"持有"。';
-    var repTransitional = cell(replica.transitional || 0);
-    repTransitional.title = '这一轮被一次已经在做的变更打断，下一轮按新配置重跑。不计入判定，也不算在正常里——'
+    var repByDesign = cell(replica.by_design || 0);
+    repByDesign.title = '配置就是这么写的，不用处理。不计入判定，也不算在正常里——'
       + '每个对象只落一栏，这一行几个数相加等于"持有"。';
     cell(replica.unknown);
     // A replica publishing late describes a past it has not updated, and that
@@ -2289,6 +2289,46 @@ function windowIsStarved(windowCoverage) {
 }
 
 function coverageNote(anomaly) {
+  // The by-design column holds more than one thing, so the row has to say
+  // which. A column that reads "nothing to do here" and cannot say why is the
+  // shape this whole split exists to avoid.
+  if (anomaly.cause_reason === 'CONFIG_DRIFT') {
+    return {
+      settled: true,
+      text: '策略正在被改，这一轮作废',
+      title: '这一轮跑到一半，策略被编辑、停用或换了归属。旧配置算出来的结果不该落地，所以这一轮作废，'
+        + '下一轮按新配置重跑——两边都是对的行为。\n\n'
+        + '其中一部分连这一轮都不会重跑：策略正要重新暖机的情况，这一轮即使跑了也判不出结论，'
+        + '所以直接让它过去。无论哪种，都没有人需要做什么。'
+    };
+  }
+  if (anomaly.cause_reason === 'EFFECTIVE_TIME_INACTIVE') {
+    return {
+      settled: true,
+      text: '不在生效时段，本来就不该跑',
+      title: '策略自己的生效时段/日历说现在不运行，这一轮就是按这个被抑制的。配置写的就是这样。\n\n'
+        + '这是常驻状态不是过渡状态——只在工作时段生效的策略，每天有十几个小时在这里。\n\n'
+        + '如果你预期它现在应该在跑，那要查的是它的生效时段或日历配得对不对，'
+        + '不是 alarmd。另外："生效时段算不出来"（时区或日历没加载）是另一回事，那个算故障，还在异常栏里。'
+    };
+  }
+  if (anomaly.cause_reason === 'GAP_SKIPPED') {
+    // Not a coverage note at all -- the window was never evaluated. Said here
+    // because this is the cell a reader looks at, and "GAP_SKIPPED" alone
+    // reads like one more kind of missing data rather than like minutes that
+    // were deliberately given up on.
+    return {
+      settled: false,
+      text: '这段时间没被检测：轮次落后太多，已放弃',
+      title: '这一轮没能在期限内跑完，落后超过了允许重放的范围（超过 3 个周期，或超过 10 分钟），'
+        + '于是游标直接跳到当前，那段时间的数据从来没有被检测过。\n\n'
+        + '两个限制产出的是同一个码，所以这里说不出是哪一个触发的。能确定的是：'
+        + '"不再尝试"这个决定是在 alarmd 这边做的。\n\n'
+        + '后端持续查不到导致的落后不在这一栏——那种对象会先进降级池，那一栏在这一栏之前判。'
+        + '留在这里的，是连续多轮都在落后、而后端又没差到被降级的对象。\n\n'
+        + '要查的是为什么跟不上：是不是这批对象的查询特别慢、是不是换主后追不上、是不是资源不够。'
+    };
+  }
   var windowCoverage = anomaly.coverage;
   if (!windowCoverage || !windowCoverage.levels) return null;
   if (!windowCoverage.short) {
@@ -2318,23 +2358,6 @@ function coverageNote(anomaly) {
   // for a series that does not live long enough -- on a HISTORY_GAPPED row,
   // which is data that arrived and then had holes. Different situation,
   // different fix, and the reader is sent nowhere.
-  if (anomaly.cause_reason === 'GAP_SKIPPED') {
-    // Not a coverage note at all -- the window was never evaluated. Said here
-    // because this is the cell a reader looks at, and "GAP_SKIPPED" alone
-    // reads like one more kind of missing data rather than like minutes that
-    // were deliberately given up on.
-    return {
-      settled: false,
-      text: '这段时间没被检测：轮次落后太多，已放弃',
-      title: '这一轮没能在期限内跑完，落后超过了允许重放的范围（超过 3 个周期，或超过 10 分钟），'
-        + '于是游标直接跳到当前，那段时间的数据从来没有被检测过。\n\n'
-        + '两个限制产出的是同一个码，所以这里说不出是哪一个触发的。能确定的是：'
-        + '"不再尝试"这个决定是在 alarmd 这边做的。\n\n'
-        + '后端持续查不到导致的落后不在这一栏——那种对象会先进降级池，那一栏在这一栏之前判。'
-        + '留在这里的，是连续多轮都在落后、而后端又没差到被降级的对象。\n\n'
-        + '要查的是为什么跟不上：是不是这批对象的查询特别慢、是不是换主后追不上、是不是资源不够。'
-    };
-  }
   if (anomaly.cause_reason === 'HISTORY_GAPPED') {
     // How long it has been gapped is decisive, and nothing else here is.
     //
@@ -2483,7 +2506,7 @@ function showColumn(next) {
 document.getElementById('colOwn').addEventListener('click', function () { showColumn('anomalies'); });
 document.getElementById('colDemoted').addEventListener('click', function () { showColumn('demoted'); });
 document.getElementById('colUndecidable').addEventListener('click', function () { showColumn('undecidable'); });
-document.getElementById('colTransitional').addEventListener('click', function () { showColumn('transitional'); });
+document.getElementById('colByDesign').addEventListener('click', function () { showColumn('by_design'); });
 
 // Same reset as showColumn, for the same reason: offset 60 of oldest-first and
 // offset 60 of newest-first are different objects, and carrying it over lands

@@ -154,8 +154,8 @@ func (store *RedisStore) Publish(ctx context.Context, snapshot Snapshot) error {
 	if snapshot.TotalUndecidable < len(snapshot.Undecidable) {
 		snapshot.TotalUndecidable = len(snapshot.Undecidable)
 	}
-	if snapshot.TotalTransitional < len(snapshot.Transitional) {
-		snapshot.TotalTransitional = len(snapshot.Transitional)
+	if snapshot.TotalByDesign < len(snapshot.ByDesign) {
+		snapshot.TotalByDesign = len(snapshot.ByDesign)
 	}
 	// Each column gets the budget, rather than the two sharing one. Sharing would
 	// let a long pool shorten the anomaly list, which is the reading this package
@@ -169,7 +169,7 @@ func (store *RedisStore) Publish(ctx context.Context, snapshot Snapshot) error {
 	snapshot.Anomalies = withinAnomalyBudget(snapshot.Anomalies, store.maxAnomalyBytes)
 	snapshot.Demoted = withinAnomalyBudget(snapshot.Demoted, store.maxAnomalyBytes)
 	snapshot.Undecidable = withinAnomalyBudget(snapshot.Undecidable, store.maxAnomalyBytes)
-	snapshot.Transitional = withinAnomalyBudget(snapshot.Transitional, store.maxAnomalyBytes)
+	snapshot.ByDesign = withinAnomalyBudget(snapshot.ByDesign, store.maxAnomalyBytes)
 	payload, err := json.Marshal(snapshot)
 	if err != nil {
 		return fmt.Errorf("alarmd fleet: encode snapshot: %w", err)

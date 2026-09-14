@@ -224,15 +224,15 @@ func undecidableReason(reason string) bool {
 	return reason == "HISTORY_WARMING"
 }
 
-// transitionalReasons are rounds interrupted by a change that was already
-// being made deliberately. The next round runs under the new state; nobody
-// acts on these.
+// byDesignReasons are rounds that ended without a business result because the
+// configuration says so. Nobody acts on these: the configuration is already
+// what somebody meant it to be.
 //
-// One entry, and each entry carries why it is here, because a list with a
-// vague rule grows until the column means nothing. A reason not on this list
-// stays in the anomaly column -- the direction that keeps something visible
-// rather than the one that hides it.
-var transitionalReasons = map[string]bool{
+// Every entry carries why it is here, because a list with a vague rule grows
+// until the column means nothing. A reason not on this list stays in the
+// anomaly column -- the direction that keeps something visible rather than
+// the one that hides it.
+var byDesignReasons = map[string]bool{
 	// The strategy was edited, deactivated or reassigned while a round was in
 	// flight. Both halves are correct: results computed under the old
 	// configuration must not land, so they are refused, and the next round
@@ -247,17 +247,36 @@ var transitionalReasons = map[string]bool{
 	// anything either way: the plan is entering forced warming, so the rounds
 	// after it cannot conclude yet either.
 	"CONFIG_DRIFT": true,
+
+	// The strategy is outside its own active window: its uptime schedule or
+	// calendar says not to run now, and the round was suppressed for exactly
+	// that reason.
+	//
+	// This is the configuration doing what it was written to do, and it is a
+	// standing state rather than a passing one -- a strategy that only runs in
+	// business hours is in it sixteen hours a day. A suppressed round is
+	// completed as COMPLETED_WITH_UNAVAILABLE, the same kind a real failure
+	// gets, so the completion alone cannot tell them apart; after three
+	// consecutive rounds the object would be listed as something for somebody
+	// to work through, every night, for ever.
+	//
+	// EFFECTIVE_TIME_UNKNOWN is deliberately not here. That one says the
+	// schedule could not be resolved at all -- a timezone or calendar that did
+	// not load -- so nobody can say whether the strategy should be running.
+	// That is a fault, and it looks identical on the page unless the two are
+	// kept apart.
+	"EFFECTIVE_TIME_INACTIVE": true,
 }
 
-func transitionalReason(reason string) bool {
-	return transitionalReasons[reason]
+func byDesignReason(reason string) bool {
+	return byDesignReasons[reason]
 }
 
 // noActionReason is every reason that has a column of its own because nobody
 // acts on it. It exists so the run-level flag is written against the union
 // rather than against whichever column happens to be tested first.
 func noActionReason(reason string) bool {
-	return undecidableReason(reason) || transitionalReason(reason)
+	return undecidableReason(reason) || byDesignReason(reason)
 }
 
 // Tracker turns the observation stream into the anomaly list a replica
@@ -575,8 +594,8 @@ func (tracker *Tracker) Undecidable() []Anomaly {
 // They are published apart from the anomalies because the anomaly column is
 // meant to be the list somebody works through, and a round that was
 // interrupted by an edit somebody already made is finished business.
-func (tracker *Tracker) Transitional() []Anomaly {
-	return tracker.listed(ColumnTransitional)
+func (tracker *Tracker) ByDesign() []Anomaly {
+	return tracker.listed(ColumnByDesign)
 }
 
 // Demoted returns the query groups held back because their backend kept
@@ -634,8 +653,8 @@ func columnOf(state *queryGroupState) string {
 	// the latest round, a run that had been failing for an hour would leave the
 	// anomaly column the moment somebody edited the strategy.
 	if !state.sawSomethingWrong && state.currentKind == KindDegradedRun &&
-		transitionalReason(state.causeReason) {
-		return ColumnTransitional
+		byDesignReason(state.causeReason) {
+		return ColumnByDesign
 	}
 	return ColumnAnomalies
 }

@@ -648,7 +648,7 @@ func TestAbandoningAWindowOfTimeCountsAgainstThisDeployment(t *testing.T) {
 // "nobody acts on this", and a window nobody evaluated is the opposite.
 func TestASkippedWindowIsNotFiledAsRequiringNoAction(t *testing.T) {
 	for _, reason := range []string{"GAP_SKIPPED"} {
-		if transitionalReasons[reason] {
+		if byDesignReasons[reason] {
 			t.Errorf("%q is filed as a change already being made; minutes nobody detected on are "+
 				"not finished business", reason)
 		}

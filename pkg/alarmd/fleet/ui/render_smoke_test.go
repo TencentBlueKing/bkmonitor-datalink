@@ -104,6 +104,12 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			item.Coverage = &fleet.HistoryCoverage{Levels: 1, Short: 1,
 				WorstValid: 5, WorstRequired: 9, ShortRounds: 29}
 		}),
+		anomaly("qg-drift", func(item *fleet.Anomaly) {
+			item.Cause, item.CauseReason = "CONFIG_DRIFT", "CONFIG_DRIFT"
+		}),
+		anomaly("qg-offhours", func(item *fleet.Anomaly) {
+			item.Cause, item.CauseReason = "LEVEL_OUTCOME_UNKNOWN", "EFFECTIVE_TIME_INACTIVE"
+		}),
 		anomaly("qg-skipped", func(item *fleet.Anomaly) {
 			item.Cause, item.CauseReason = "LEVEL_OUTCOME_UNKNOWN", "GAP_SKIPPED"
 			item.Coverage = &fleet.HistoryCoverage{Levels: 1, Short: 1,
@@ -129,7 +135,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 
 	replicas := []fleet.ReplicaView{
 		{Replica: "bk-monitor-alarmd-trigger-5bdb679ddf-abcde", Owned: 452, Healthy: 384,
-			Anomalies: 33, Demoted: 19, Undecidable: 12, Transitional: 4, AgeSeconds: 3,
+			Anomalies: 33, Demoted: 19, Undecidable: 12, ByDesign: 4, AgeSeconds: 3,
 			UptimeSeconds: 7200, Ours: 5, External: 26},
 		// One replica reporting no undecidable objects, so the render is
 		// executed on both a present and an absent count. A fixture where every
@@ -159,7 +165,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			// split is complete. A fixture that does not add up cannot tell a
 			// page that dropped a column from one that is fine.
 			Health: "HEALTHY", Covered: 979, Determined: 979, Unknown: 0, Healthy: 844,
-			AnomaliesTotal: 86, DemotedTotal: 33, UndecidableTotal: 12, TransitionalTotal: 4,
+			AnomaliesTotal: 86, DemotedTotal: 33, UndecidableTotal: 12, ByDesignTotal: 4,
 			DemotedDue: 2, DemotionEntries: 40, DemotionExits: 7, PerReplica: replicas,
 		},
 		"per_replica": replicas,
@@ -231,6 +237,8 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		{"qg-window-filling", "窗口在填", "窗口永远填不满"},
 		{"qg-window-complete", "检测窗口完整", "短"},
 		{"qg-skipped", "没被检测", "窗口永远填不满"},
+		{"qg-drift", "策略正在被改", "不在生效时段"},
+		{"qg-offhours", "不在生效时段", "策略正在被改"},
 	} {
 		line := ""
 		for _, candidate := range strings.Split(text, "\n") {
@@ -240,8 +248,8 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			}
 		}
 		if line == "" {
-			t.Errorf("no note was rendered for %s; the row carries coverage, so the check that "+
-				"its wording matches its reason never ran", want.object)
+			t.Errorf("no note was rendered for %s, so the check that its wording matches its "+
+				"reason never ran", want.object)
 			continue
 		}
 		if !strings.Contains(line, want.says) {
@@ -365,7 +373,10 @@ console.log('SPLIT ' + (store['splitBasis'] ? store['splitBasis'].textContent : 
 // what a reader acts on, and a row can render the wrong explanation
 // perfectly happily.
 for (const row of data.anomalies) {
-  if (!row.coverage) continue;
+  // Every row, not only the ones carrying coverage. The note is decided by the
+  // reason first and the counts second, so a filter on coverage skips exactly
+  // the rows whose wording comes from the reason alone -- and the check then
+  // reports "no note rendered" for a row that renders one perfectly well.
   let note;
   try { note = ctx.coverageNote(row); }
   catch (e) { console.error('coverageNote threw on ' + row.query_group + ': ' + e.message); failed++; continue; }

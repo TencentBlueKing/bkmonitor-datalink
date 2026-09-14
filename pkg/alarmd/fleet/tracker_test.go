@@ -752,9 +752,9 @@ func TestARoundInterruptedByAChangeAlreadyMadeIsNotAnAnomaly(t *testing.T) {
 	if got := tracker.Anomalies(); len(got) != 0 {
 		t.Fatalf("anomalies = %+v, want none: the change was already made deliberately", got)
 	}
-	listed := tracker.Transitional()
+	listed := tracker.ByDesign()
 	if len(listed) != 1 || listed[0].QueryGroup != "qg-drift" {
-		t.Fatalf("transitional = %+v, want the one object", listed)
+		t.Fatalf("by-design = %+v, want the one object", listed)
 	}
 	// Exactly one column, or the healthy count -- a subtraction over all of
 	// them -- loses an object per round.
@@ -785,8 +785,8 @@ func TestOneNoActionReasonDoesNotMarkTheRunForTheOtherColumn(t *testing.T) {
 	if got := tracker.Anomalies(); len(got) != 0 {
 		t.Fatalf("anomalies = %+v, want none: neither round was a fault", got)
 	}
-	if got := tracker.Transitional(); len(got) != 1 {
-		t.Fatalf("transitional = %+v, want the object, filed by its latest reason", got)
+	if got := tracker.ByDesign(); len(got) != 1 {
+		t.Fatalf("by-design = %+v, want the object, filed by its latest reason", got)
 	}
 
 	// And a genuine failure in the run still wins, in either order.
@@ -799,8 +799,8 @@ func TestOneNoActionReasonDoesNotMarkTheRunForTheOtherColumn(t *testing.T) {
 	driftMixed := drift
 	driftMixed.Trace.QueryGroupKey = "qg-mixed"
 	tracker.Observe(context.Background(), driftMixed)
-	if got := tracker.Transitional(); len(got) != 1 {
-		t.Fatalf("transitional = %+v, want only qg-both: an edit does not excuse a run that was "+
+	if got := tracker.ByDesign(); len(got) != 1 {
+		t.Fatalf("by-design = %+v, want only qg-both: an edit does not excuse a run that was "+
 			"already failing", got)
 	}
 	anomalies := tracker.Anomalies()
@@ -812,13 +812,13 @@ func TestOneNoActionReasonDoesNotMarkTheRunForTheOtherColumn(t *testing.T) {
 // The list is what the column means, so it is pinned. A column defined as
 // "the rest" becomes the next place things go to stop being looked at, which
 // is the failure the whole split exists to end.
-func TestTheTransitionalColumnHoldsOnlyDeclaredReasons(t *testing.T) {
-	if len(transitionalReasons) == 0 {
-		t.Fatal("no transitional reasons declared; the column would be empty and the check vacuous")
+func TestTheByDesignColumnHoldsOnlyDeclaredReasons(t *testing.T) {
+	if len(byDesignReasons) == 0 {
+		t.Fatal("no by-design reasons declared; the column would be empty and the check vacuous")
 	}
-	for reason := range transitionalReasons {
+	for reason := range byDesignReasons {
 		if !externalReasons[reason] {
-			t.Errorf("%q is transitional but not external: an object nobody acts on must not be "+
+			t.Errorf("%q is by-design but not external: an object nobody acts on must not be "+
 				"counted against this deployment if it ever falls back to the anomaly column", reason)
 		}
 		if undecidableReason(reason) {
@@ -832,8 +832,55 @@ func TestTheTransitionalColumnHoldsOnlyDeclaredReasons(t *testing.T) {
 	// someone works through.
 	for _, reason := range []string{"REDIS_UNAVAILABLE", "PROVIDER_UNAVAILABLE", "RESOURCE_HARD_STOP",
 		"QUERY_NOT_READY", "KAFKA_UNAVAILABLE"} {
-		if transitionalReasons[reason] {
+		if byDesignReasons[reason] {
 			t.Errorf("%q is filed as needing no action; retryable is not the same as harmless", reason)
 		}
+	}
+}
+
+// A strategy outside its own active window is the configuration doing what it
+// was written to do, and it is a standing state rather than a passing one: a
+// strategy that runs only in business hours is in it sixteen hours a day.
+//
+// The suppressed round completes as COMPLETED_WITH_UNAVAILABLE, the same kind
+// a real failure gets, so nothing but the reason separates them. Left in the
+// anomaly column it would put a working strategy on the list somebody works
+// through, every night, for ever.
+func TestAStrategyOutsideItsActiveWindowIsNotOnTheToDoList(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	inactive := completion("qg-offhours", "COMPLETED_WITH_UNAVAILABLE", "8930")
+	inactive.ProgressCompletionCause = "LEVEL_OUTCOME_UNKNOWN"
+	inactive.ProgressCompletionReason = "EFFECTIVE_TIME_INACTIVE"
+	// Far more rounds than the listing threshold: this is a state an object
+	// sits in for hours, not one it passes through.
+	for round := 0; round < DefaultDegradedRounds*20; round++ {
+		tracker.Observe(context.Background(), inactive)
+	}
+	if got := tracker.Anomalies(); len(got) != 0 {
+		t.Fatalf("anomalies = %+v, want none: the strategy is configured not to run now", got)
+	}
+	if got := tracker.ByDesign(); len(got) != 1 {
+		t.Fatalf("by-design = %+v, want the one object", got)
+	}
+}
+
+// The schedule failing to resolve is a fault and must not ride along with it.
+// Nobody can say whether the strategy should be running, which is the opposite
+// of knowing it should not.
+func TestAnUnresolvableScheduleIsStillAFault(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	unknown := completion("qg-badtz", "COMPLETED_WITH_UNAVAILABLE", "8930")
+	unknown.ProgressCompletionCause = "LEVEL_OUTCOME_UNKNOWN"
+	unknown.ProgressCompletionReason = "EFFECTIVE_TIME_UNKNOWN"
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		tracker.Observe(context.Background(), unknown)
+	}
+	if got := tracker.ByDesign(); len(got) != 0 {
+		t.Fatalf("by-design = %+v, want none: an unresolved schedule is not a schedule saying no", got)
+	}
+	if got := tracker.Anomalies(); len(got) != 1 {
+		t.Fatalf("anomalies = %+v, want the object still on the list", got)
 	}
 }

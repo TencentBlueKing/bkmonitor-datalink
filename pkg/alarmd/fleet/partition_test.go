@@ -35,7 +35,7 @@ func partitionTrackerWith(t *testing.T, at time.Time, healthy, failing, pooled, 
 // already being made on purpose. Every column has an arm here because the
 // partition is only meaningful if each one is populated -- a column left at
 // zero in the fixture is a column the arithmetic is not actually checked over.
-func partitionTrackerFull(t *testing.T, at time.Time, healthy, failing, pooled, undecidable, transitional int) *Tracker {
+func partitionTrackerFull(t *testing.T, at time.Time, healthy, failing, pooled, undecidable, byDesign int) *Tracker {
 	t.Helper()
 	tracker := NewTracker(nil, "replica-a", func() time.Time { return at })
 	observe := func(queryGroup string, observation observability.Observation) {
@@ -70,8 +70,8 @@ func partitionTrackerFull(t *testing.T, at time.Time, healthy, failing, pooled, 
 			})
 		}
 	}
-	for index := 0; index < transitional; index++ {
-		name := qgName("transitional", index)
+	for index := 0; index < byDesign; index++ {
+		name := qgName("bydesign", index)
 		for round := 0; round < DefaultDegradedRounds; round++ {
 			observe(name, observability.Observation{
 				ProgressCompletionKind:   "COMPLETED_WITH_UNAVAILABLE",
@@ -101,7 +101,7 @@ func TestEveryColumnAccountsForEveryObject(t *testing.T) {
 	anomalies := tracker.Anomalies()
 	demoted := tracker.Demoted()
 	undecidable := tracker.Undecidable()
-	transitional := tracker.Transitional()
+	byDesign := tracker.ByDesign()
 	determined := tracker.Determined()
 
 	view := Aggregate(Expectation{Known: true, QueryGroups: 57}, []Snapshot{{
@@ -109,19 +109,19 @@ func TestEveryColumnAccountsForEveryObject(t *testing.T) {
 		Anomalies: anomalies, TotalAnomalies: len(anomalies),
 		Demoted: demoted, TotalDemoted: len(demoted),
 		Undecidable: undecidable, TotalUndecidable: len(undecidable),
-		Transitional: transitional, TotalTransitional: len(transitional),
+		ByDesign: byDesign, TotalByDesign: len(byDesign),
 	}}, []string{"replica-a"}, at, time.Minute)
 
 	got := view.Healthy + view.AnomaliesTotal + view.DemotedTotal + view.UndecidableTotal +
-		view.TransitionalTotal + view.Unknown
+		view.ByDesignTotal + view.Unknown
 	if got != *view.Expected {
-		t.Errorf("healthy %d + anomalies %d + demoted %d + undecidable %d + transitional %d + unknown %d = %d, "+
+		t.Errorf("healthy %d + anomalies %d + demoted %d + undecidable %d + by-design %d + unknown %d = %d, "+
 			"want the expected %d", view.Healthy, view.AnomaliesTotal, view.DemotedTotal,
-			view.UndecidableTotal, view.TransitionalTotal, view.Unknown, got, *view.Expected)
+			view.UndecidableTotal, view.ByDesignTotal, view.Unknown, got, *view.Expected)
 	}
-	if view.TransitionalTotal != 2 {
-		t.Errorf("transitional = %d, want the 2 interrupted by a change already being made",
-			view.TransitionalTotal)
+	if view.ByDesignTotal != 2 {
+		t.Errorf("by-design = %d, want the 2 the configuration says nobody acts on",
+			view.ByDesignTotal)
 	}
 	if view.AnomaliesTotal != 7 {
 		t.Errorf("anomalies = %d, want the 7 this deployment is failing on", view.AnomaliesTotal)
@@ -141,11 +141,11 @@ func TestEveryColumnAccountsForEveryObject(t *testing.T) {
 		t.Fatalf("per-replica rows = %d, want 1", len(view.PerReplica))
 	}
 	row := view.PerReplica[0]
-	sum := row.Healthy + row.Anomalies + row.Demoted + row.Undecidable + row.Transitional + row.Unknown
+	sum := row.Healthy + row.Anomalies + row.Demoted + row.Undecidable + row.ByDesign + row.Unknown
 	if sum != row.Owned {
-		t.Errorf("replica row: healthy %d + anomalies %d + demoted %d + undecidable %d + transitional %d + "+
+		t.Errorf("replica row: healthy %d + anomalies %d + demoted %d + undecidable %d + by-design %d + "+
 			"unknown %d = %d, want owned %d", row.Healthy, row.Anomalies, row.Demoted,
-			row.Undecidable, row.Transitional, row.Unknown, sum, row.Owned)
+			row.Undecidable, row.ByDesign, row.Unknown, sum, row.Owned)
 	}
 }
 

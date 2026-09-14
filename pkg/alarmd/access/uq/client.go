@@ -142,11 +142,17 @@ func (client *Client) Execute(ctx context.Context, attempt execution.QueryAttemp
 	if err != nil {
 		return execution.ProviderCompletion{}, err
 	}
-	encoded, err := json.Marshal(body)
+	var payload any = body
+	path := "/query/ts"
+	if query := attempt.Spec.PlanFacts.PromQL; query != nil {
+		path += "/promql"
+		payload = map[string]any{"promql": query.Expression, "match": query.Match, "bk_biz_ids": []string{attempt.Spec.PlanFacts.BusinessID}, "start": body.StartTime, "end": body.EndTime, "step": body.Step, "timezone": body.Timezone}
+	}
+	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return execution.ProviderCompletion{}, fmt.Errorf("alarmd access uq: encode request: %w", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.endpoint+"/query/ts", bytes.NewReader(encoded))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.endpoint+path, bytes.NewReader(encoded))
 	if err != nil {
 		return execution.ProviderCompletion{}, fmt.Errorf("alarmd access uq: build request: %w", err)
 	}
@@ -305,50 +311,66 @@ func buildRequest(spec execution.PhysicalQuerySpec) (request, error) {
 		if err != nil {
 			return request{}, err
 		}
-		fields := make([]conditionField, 0, len(source.Conditions.Fields))
-		for _, field := range source.Conditions.Fields {
-			wildcard, err := parseQueryBool("is_wildcard", field.Wildcard)
+		queryConditions, err := mapConditions(source.Conditions)
+		if err != nil {
+			return request{}, err
+		}
+		var sourceConditions *conditions
+		if source.SourceConditions != nil {
+			mapped, err := mapConditions(*source.SourceConditions)
 			if err != nil {
 				return request{}, err
 			}
-			prefix, err := parseQueryBool("is_prefix", field.Prefix)
-			if err != nil {
-				return request{}, err
-			}
-			suffix, err := parseQueryBool("is_suffix", field.Suffix)
-			if err != nil {
-				return request{}, err
-			}
-			values := make([]string, 0, len(field.Values))
-			for _, value := range field.Values {
-				text, scalarErr := scalarText(value)
-				if scalarErr != nil {
-					return request{}, scalarErr
-				}
-				values = append(values, text)
-			}
-			fields = append(fields, conditionField{Field: field.Field, Operator: field.Operator, Values: values,
-				Wildcard: wildcard, Prefix: prefix, Suffix: suffix})
+			sourceConditions = &mapped
 		}
 		offsetForward, err := parseQueryBool("offset_forward", source.OffsetForward)
 		if err != nil {
 			return request{}, err
 		}
 		queries = append(queries, queryClause{
-			DataSource: source.DataSource, TableID: source.TableID, FieldName: source.FieldName,
+			FieldSemantics: source.FieldSemantics, DataSource: source.DataSource, TableID: source.TableID, FieldName: source.FieldName,
 			Driver: source.Driver, TimeField: source.TimeField, IsRegexp: source.IsRegexp,
 			ReferenceName: source.ReferenceName, Functions: functions, TimeAggregation: timeAggregation,
 			Dimensions: append([]string(nil), source.Dimensions...),
-			Conditions: conditions{Fields: fields, Connectors: append([]string(nil), source.Conditions.Connectors...)},
-			Offset:     source.Offset, OffsetForward: offsetForward,
+			Conditions: queryConditions, SourceConditions: sourceConditions,
+			Offset: source.Offset, OffsetForward: offsetForward,
 			KeepColumns: append([]string(nil), source.KeepColumns...), QueryString: source.QueryString,
 		})
 	}
-	return request{QueryList: queries, MetricMerge: spec.PlanFacts.MetricMerge,
+	return request{TSDBMap: spec.PlanFacts.TSDBMap, QueryList: queries, MetricMerge: spec.PlanFacts.MetricMerge,
 		StartTime: strconv.FormatInt(spec.ProviderRange.Start, 10), EndTime: strconv.FormatInt(spec.ProviderRange.End, 10),
 		Step: durationString(spec.PlanFacts.StepMillis), SpaceUID: spec.PlanFacts.SpaceScope,
 		DownSampleRange: string(spec.PlanFacts.DownSampleRange), Timezone: spec.PlanFacts.Timezone,
 		NotTimeAlign: spec.PlanFacts.NotTimeAlign}, nil
+}
+
+func mapConditions(source execution.QueryConditions) (conditions, error) {
+	fields := make([]conditionField, 0, len(source.Fields))
+	for _, field := range source.Fields {
+		wildcard, err := parseQueryBool("is_wildcard", field.Wildcard)
+		if err != nil {
+			return conditions{}, err
+		}
+		prefix, err := parseQueryBool("is_prefix", field.Prefix)
+		if err != nil {
+			return conditions{}, err
+		}
+		suffix, err := parseQueryBool("is_suffix", field.Suffix)
+		if err != nil {
+			return conditions{}, err
+		}
+		values := make([]string, 0, len(field.Values))
+		for _, value := range field.Values {
+			text, scalarErr := scalarText(value)
+			if scalarErr != nil {
+				return conditions{}, scalarErr
+			}
+			values = append(values, text)
+		}
+		fields = append(fields, conditionField{Field: field.Field, Operator: field.Operator, Values: values,
+			Wildcard: wildcard, Prefix: prefix, Suffix: suffix})
+	}
+	return conditions{Fields: fields, Connectors: append([]string(nil), source.Connectors...)}, nil
 }
 
 func parseQueryBool(field, value string) (bool, error) {
@@ -663,18 +685,43 @@ var nullDimension = json.RawMessage("null")
 // where None is the value in both cases. Series that carry the field keep
 // their previous identity unchanged.
 func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderResultRef, source responseSeries, receivedAt int64) (execution.ProviderSeriesBatch, uint64, error) {
-	if len(source.Columns) == 0 || len(source.Columns) != len(source.Types) || len(source.GroupKeys) != len(source.GroupValues) {
+	if len(source.Columns) == 0 || len(source.Columns) != len(source.Types) || (spec.PlanFacts.Normalization.Version != "uq-polling-normalization-v1" && len(source.GroupKeys) != len(source.GroupValues)) {
 		return execution.ProviderSeriesBatch{}, 0, errors.New("alarmd access uq: invalid series schema")
 	}
 	dimensions := make(map[string]json.RawMessage, len(source.GroupKeys))
 	for index, key := range source.GroupKeys {
 		key = stripTableSuffix(key)
-		encoded, _ := json.Marshal(source.GroupValues[index])
+		if alias, ok := spec.PlanFacts.Normalization.DimensionAliases[key]; ok {
+			key = alias
+		}
+		if _, exists := dimensions[key]; exists {
+			return execution.ProviderSeriesBatch{}, 0, errors.New("alarmd access uq: duplicate normalized group key")
+		}
+		encoded := nullDimension
+		if index < len(source.GroupValues) {
+			encoded = source.GroupValues[index]
+		}
+		var scalar any
+		if err := json.Unmarshal(encoded, &scalar); err != nil {
+			return execution.ProviderSeriesBatch{}, 0, err
+		}
+		switch scalar.(type) {
+		case nil, string, float64, bool:
+		default:
+			return execution.ProviderSeriesBatch{}, 0, errors.New("alarmd access uq: nonscalar group value")
+		}
 		dimensions[key] = encoded
 	}
 	var nullIdentityFields uint64
 	identityFields := make([]contract.DimensionFieldV2, 0, len(spec.PlanFacts.Normalization.DatasetContract.IdentityFields))
-	for _, name := range spec.PlanFacts.Normalization.DatasetContract.IdentityFields {
+	names := spec.PlanFacts.Normalization.DatasetContract.IdentityFields
+	if spec.PlanFacts.Normalization.DatasetContract.DynamicDimensions {
+		names = make([]string, 0, len(dimensions))
+		for name := range dimensions {
+			names = append(names, name)
+		}
+	}
+	for _, name := range names {
 		value, ok := dimensions[name]
 		if !ok {
 			value = nullDimension

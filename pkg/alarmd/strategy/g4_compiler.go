@@ -19,10 +19,11 @@ type g4AlgorithmInputsV1 struct {
 }
 
 type simpleRingRatioConfigV1 struct {
-	Floor           *json.Number                `json:"floor"`
-	Ceil            *json.Number                `json:"ceil"`
-	InputProjection AlgorithmInputProjection    `json:"input_projection"`
-	Requirements    []AlgorithmInputRequirement `json:"requirements"`
+	MissingHistoryAsZero bool                        `json:"missing_history_as_zero,omitempty"`
+	Floor                *json.Number                `json:"floor"`
+	Ceil                 *json.Number                `json:"ceil"`
+	InputProjection      AlgorithmInputProjection    `json:"input_projection"`
+	Requirements         []AlgorithmInputRequirement `json:"requirements"`
 }
 
 type simpleRingRatioAlgorithmCompiler struct{}
@@ -62,8 +63,9 @@ func (simpleRingRatioAlgorithmCompiler) Compile(_ context.Context, compileContex
 		return AlgorithmCompileResult{}, configErrorf("SimpleRingRatio config: floor or ceil is required")
 	}
 	normalized := &SimpleRingRatioConfig{
-		ValueField:      config.InputProjection.ValueFields[0],
-		FloorConfigured: floorConfigured, FloorEnabled: floorEnabled, FloorDecimal: floor,
+		MissingHistoryAsZero: config.MissingHistoryAsZero,
+		ValueField:           config.InputProjection.ValueFields[0],
+		FloorConfigured:      floorConfigured, FloorEnabled: floorEnabled, FloorDecimal: floor,
 		CeilConfigured: ceilConfigured, CeilEnabled: ceilEnabled, CeilDecimal: ceil,
 	}
 	return g4CompileResult(

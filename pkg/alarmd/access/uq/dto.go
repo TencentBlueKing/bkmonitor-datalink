@@ -1,35 +1,41 @@
 package uq
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+)
 
 type request struct {
-	QueryList       []queryClause `json:"query_list"`
-	MetricMerge     string        `json:"metric_merge"`
-	StartTime       string        `json:"start_time"`
-	EndTime         string        `json:"end_time"`
-	Step            string        `json:"step"`
-	SpaceUID        string        `json:"space_uid"`
-	DownSampleRange string        `json:"down_sample_range"`
-	Timezone        string        `json:"timezone"`
-	NotTimeAlign    bool          `json:"not_time_align"`
+	TSDBMap         map[string][]execution.QueryStorage `json:"tsdb_map,omitempty"`
+	QueryList       []queryClause                       `json:"query_list"`
+	MetricMerge     string                              `json:"metric_merge"`
+	StartTime       string                              `json:"start_time"`
+	EndTime         string                              `json:"end_time"`
+	Step            string                              `json:"step"`
+	SpaceUID        string                              `json:"space_uid"`
+	DownSampleRange string                              `json:"down_sample_range"`
+	Timezone        string                              `json:"timezone"`
+	NotTimeAlign    bool                                `json:"not_time_align"`
 }
 
 type queryClause struct {
-	DataSource      string          `json:"data_source,omitempty"`
-	TableID         string          `json:"table_id,omitempty"`
-	FieldName       string          `json:"field_name,omitempty"`
-	Driver          string          `json:"driver"`
-	TimeField       string          `json:"time_field"`
-	IsRegexp        bool            `json:"is_regexp"`
-	ReferenceName   string          `json:"reference_name,omitempty"`
-	Functions       []queryFunction `json:"function"`
-	TimeAggregation timeAggregation `json:"time_aggregation"`
-	Dimensions      []string        `json:"dimensions,omitempty"`
-	Conditions      conditions      `json:"conditions,omitempty"`
-	Offset          string          `json:"offset,omitempty"`
-	OffsetForward   bool            `json:"offset_forward,omitempty"`
-	KeepColumns     []string        `json:"keep_columns,omitempty"`
-	QueryString     string          `json:"query_string"`
+	SourceConditions *conditions     `json:"source_conditions,omitempty"`
+	FieldSemantics   string          `json:"field_semantics,omitempty"`
+	DataSource       string          `json:"data_source,omitempty"`
+	TableID          string          `json:"table_id,omitempty"`
+	FieldName        string          `json:"field_name,omitempty"`
+	Driver           string          `json:"driver"`
+	TimeField        string          `json:"time_field"`
+	IsRegexp         bool            `json:"is_regexp"`
+	ReferenceName    string          `json:"reference_name,omitempty"`
+	Functions        []queryFunction `json:"function"`
+	TimeAggregation  timeAggregation `json:"time_aggregation"`
+	Dimensions       []string        `json:"dimensions,omitempty"`
+	Conditions       conditions      `json:"conditions,omitempty"`
+	Offset           string          `json:"offset,omitempty"`
+	OffsetForward    bool            `json:"offset_forward,omitempty"`
+	KeepColumns      []string        `json:"keep_columns,omitempty"`
+	QueryString      string          `json:"query_string"`
 }
 
 type timeAggregation struct {
@@ -77,6 +83,6 @@ type responseSeries struct {
 	Columns     []string            `json:"columns"`
 	Types       []string            `json:"types"`
 	GroupKeys   []string            `json:"group_keys"`
-	GroupValues []string            `json:"group_values"`
+	GroupValues []json.RawMessage   `json:"group_values"`
 	Values      [][]json.RawMessage `json:"values"`
 }

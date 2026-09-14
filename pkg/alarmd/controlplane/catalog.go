@@ -36,14 +36,15 @@ type SourceStrategy struct {
 }
 
 type PrimaryQuerySource struct {
-	Identity       SourceIdentity
-	StrategyID     string
-	ItemID         string
-	QueryMD5       string
-	Expression     string
-	IdentityFields []string
-	Functions      []json.RawMessage
-	QueryConfigs   []json.RawMessage
+	TimeDelaySeconds int64
+	Identity         SourceIdentity
+	StrategyID       string
+	ItemID           string
+	QueryMD5         string
+	Expression       string
+	IdentityFields   []string
+	Functions        []json.RawMessage
+	QueryConfigs     []json.RawMessage
 }
 
 type PrimaryQueryCompiler interface {
@@ -516,7 +517,7 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 	}
 	querySource := PrimaryQuerySource{
 		Identity: source.Identity, StrategyID: source.SourceID, ItemID: strconv.FormatInt(item.ID, 10),
-		QueryMD5: item.QueryMD5, Expression: primaryExpression, IdentityFields: identityFields,
+		TimeDelaySeconds: item.TimeDelay, QueryMD5: item.QueryMD5, Expression: primaryExpression, IdentityFields: identityFields,
 		Functions: functions, QueryConfigs: append([]json.RawMessage(nil), item.QueryConfigs...),
 	}
 	facts, err := planner.CompilePrimaryQuery(ctx, querySource)
@@ -531,6 +532,12 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 		return candidate, err
 	}
 	compiledInputs := compiledPlanInputs{primary: facts}
+	for _, raw := range item.QueryConfigs {
+		q, _ := decodeLegacyQueryConfig(raw)
+		if q.DataTypeLabel == "log" || q.DataTypeLabel == "event" {
+			compiledInputs.missingHistoryAsZero = true
+		}
+	}
 	if itemHasAlgorithm(item, strategy.DetectorKindOsRestart) {
 		dependencyCompiler, ok := planner.(AlgorithmDependencyQueryCompiler)
 		if !ok {
@@ -572,7 +579,7 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 	}
 	plan.WireFormat = format
 	if format == contract.WireFormatPythonCompatible {
-		plan.LegacyOutput = &contract.LegacyOutputContext{Strategy: append(json.RawMessage(nil), source.Document...), DimensionFields: append([]string{}, facts.Normalization.DatasetContract.IdentityFields...), ItemID: strconv.FormatInt(item.ID, 10)}
+		plan.LegacyOutput = &contract.LegacyOutputContext{DynamicDimensions: facts.Normalization.DatasetContract.DynamicDimensions, Strategy: append(json.RawMessage(nil), source.Document...), DimensionFields: append([]string{}, facts.Normalization.DatasetContract.IdentityFields...), ItemID: strconv.FormatInt(item.ID, 10)}
 	}
 	revision, err := contract.DeriveCanonicalDigestV2("alarmd-plan-semantics-v1", plan)
 	if err != nil {
@@ -672,6 +679,7 @@ type legacyStrategy struct {
 	Detects          []legacyDetect  `json:"detects"`
 }
 type legacyItem struct {
+	TimeDelay    int64             `json:"time_delay"`
 	ID           int64             `json:"id"`
 	QueryMD5     string            `json:"query_md5"`
 	Expression   string            `json:"expression"`
@@ -733,11 +741,12 @@ func decodeLegacyStrategy(document json.RawMessage) (legacyStrategy, error) {
 }
 
 type compiledPlanInputs struct {
-	primary          execution.QueryPlanFacts
-	osRestartHistory *execution.QueryPlanFacts
-	requirements     []execution.DataRequirementTemplate
-	queryPlans       map[execution.LogicalQueryRef]execution.QueryPlanFacts
-	seenRequirements map[execution.RequirementID]struct{}
+	missingHistoryAsZero bool
+	primary              execution.QueryPlanFacts
+	osRestartHistory     *execution.QueryPlanFacts
+	requirements         []execution.DataRequirementTemplate
+	queryPlans           map[execution.LogicalQueryRef]execution.QueryPlanFacts
+	seenRequirements     map[execution.RequirementID]struct{}
 }
 
 // frozenSubjectFacts freezes the strategy facts the subject projection reads
@@ -807,7 +816,7 @@ func compilePlan(
 	if itemHasAlgorithm(item, strategy.DetectorKindProcPort) {
 		dimensionFields = []string{"bind_ip", "listen", "nonlisten", "not_accurate_listen", "protocol"}
 	}
-	projection := contract.InputProjectionV2{ValueFields: []string{"value"}, DimensionFields: dimensionFields, BusinessIdentityField: "bk_biz_id", MultiValueAlignment: "SINGLE_VALUE", DataUnit: item.Unit, MissingValuePolicy: contract.MissingValuePolicyRequired}
+	projection := contract.InputProjectionV2{DynamicDimensions: dataset.DynamicDimensions, ValueFields: []string{"value"}, DimensionFields: dimensionFields, BusinessIdentityField: "bk_biz_id", MultiValueAlignment: "SINGLE_VALUE", DataUnit: item.Unit, MissingValuePolicy: contract.MissingValuePolicyRequired}
 	detectByLevel := make(map[uint32]legacyDetect, len(source.Detects))
 	duplicateDetect := make(map[uint32]struct{})
 	for _, detect := range source.Detects {
@@ -842,7 +851,7 @@ func compilePlan(
 			dispositions = append(dispositions, ObjectDisposition{SourceID: sourceID, Scope: "LEVEL", LevelID: levelID, Disposition: DispositionConfigRejected, Reason: "TRIGGER_CONFIG_MISSING"})
 			continue
 		}
-		levelInputs := compiledPlanInputs{primary: inputs.primary, osRestartHistory: inputs.osRestartHistory}
+		levelInputs := compiledPlanInputs{missingHistoryAsZero: inputs.missingHistoryAsZero, primary: inputs.primary, osRestartHistory: inputs.osRestartHistory}
 		compiledAlgorithms := make([]contract.AlgorithmIRV2, 0, len(rawAlgorithms[levelID]))
 		invalid := false
 		for _, raw := range rawAlgorithms[levelID] {
@@ -909,7 +918,7 @@ func compilePlan(
 	plan := contract.EvaluationPlanV2{PlanID: strategyID, StrategyRef: ref, InputProjection: projection, SourceCompatibility: &contract.SourceCompatibilityV2{ItemID: strconv.FormatInt(item.ID, 10)}, StrategyIR: ir}
 	plan.TargetScope = targetScope
 	if ref.SnapshotRevision > 0 {
-		plan.OutputIdentity = &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, dataset.IdentityFields...)}
+		plan.OutputIdentity = &contract.MonitorOutputIdentity{DynamicDimensions: dataset.DynamicDimensions, DimensionFields: append([]string{}, dataset.IdentityFields...)}
 		plan.SubjectFacts = frozenSubjectFacts(source, item)
 	}
 	scheduleSpec := execution.ScheduleSpec{EvaluationIntervalSeconds: interval, Alignment: 0, Timezone: "UTC"}
@@ -974,7 +983,7 @@ func compileAlgorithmConfig(
 			}
 			dependency, err := execution.BuildDataRequirementTemplate(execution.DataRequirementTemplate{
 				DatasetName: execution.DatasetName(name), Role: execution.InputRoleAlgorithmDependency, ConsumerLevelID: levelID, LogicalQueryRef: execution.LogicalQueryRef(inputs.primary.QueryRevision),
-				RelativeWindow: execution.RelativeQueryWindow{StartOffsetSeconds: -(group[len(group)-1] + interval), EndOffsetSeconds: -group[0], HalfOpen: true}, StepMillis: inputs.primary.StepMillis, AlignmentMillis: inputs.primary.AlignmentMillis,
+				RelativeWindow: execution.RelativeQueryWindow{StartOffsetSeconds: -inputs.primary.QueryDelaySeconds - (group[len(group)-1] + interval), EndOffsetSeconds: -inputs.primary.QueryDelaySeconds - group[0], HalfOpen: true}, StepMillis: inputs.primary.StepMillis, AlignmentMillis: inputs.primary.AlignmentMillis,
 				ResultWindowPolicy: execution.ResultWindowExactHalfOpen, ReadinessClass: execution.ReadinessFinalizedRequired, InputProjection: inputProjection, PointOffsetsSeconds: group, NamedPoints: points,
 			})
 			if err != nil {
@@ -1017,7 +1026,7 @@ func compileAlgorithmConfig(
 		if err := json.Unmarshal(raw.Config, &sourceConfig); err != nil {
 			return nil, err
 		}
-		for key, value := range map[string]any{"data_unit": unit, "algorithm_unit": raw.UnitPrefix, "precision": 6, "input_projection": algorithmProjection, "requirements": algorithmRequirements} {
+		for key, value := range map[string]any{"data_unit": unit, "algorithm_unit": raw.UnitPrefix, "precision": 6, "missing_history_as_zero": inputs.missingHistoryAsZero, "input_projection": algorithmProjection, "requirements": algorithmRequirements} {
 			sourceConfig[key], err = json.Marshal(value)
 			if err != nil {
 				return nil, err
@@ -1034,11 +1043,12 @@ func compileAlgorithmConfig(
 			return nil, errors.New("alarmd controlplane: invalid SimpleRingRatio config")
 		}
 		return json.Marshal(struct {
-			Floor           json.RawMessage                      `json:"floor"`
-			Ceil            json.RawMessage                      `json:"ceil"`
-			InputProjection strategy.AlgorithmInputProjection    `json:"input_projection"`
-			Requirements    []strategy.AlgorithmInputRequirement `json:"requirements"`
-		}{sourceConfig.Floor, sourceConfig.Ceil, algorithmProjection, algorithmRequirements})
+			MissingHistoryAsZero bool                                 `json:"missing_history_as_zero"`
+			Floor                json.RawMessage                      `json:"floor"`
+			Ceil                 json.RawMessage                      `json:"ceil"`
+			InputProjection      strategy.AlgorithmInputProjection    `json:"input_projection"`
+			Requirements         []strategy.AlgorithmInputRequirement `json:"requirements"`
+		}{inputs.missingHistoryAsZero, sourceConfig.Floor, sourceConfig.Ceil, algorithmProjection, algorithmRequirements})
 	}
 	if raw.Type == SourceAlgorithmTypePingUnreachable {
 		if !emptyAlgorithmConfig(raw.Config) {
@@ -1124,7 +1134,7 @@ func (inputs *compiledPlanInputs) buildRequirements(
 	primary, err := execution.BuildDataRequirementTemplate(execution.DataRequirementTemplate{
 		DatasetName: "primary", Role: execution.InputRolePrimary, ConsumerLevelID: levelID,
 		LogicalQueryRef: primaryRef,
-		RelativeWindow:  execution.RelativeQueryWindow{StartOffsetSeconds: -interval, EndOffsetSeconds: 0, HalfOpen: true},
+		RelativeWindow:  execution.RelativeQueryWindow{StartOffsetSeconds: -inputs.primary.QueryDelaySeconds - interval, EndOffsetSeconds: -inputs.primary.QueryDelaySeconds, HalfOpen: true},
 		StepMillis:      inputs.primary.StepMillis, AlignmentMillis: inputs.primary.AlignmentMillis,
 		ResultWindowPolicy: execution.ResultWindowExactHalfOpen, ReadinessClass: execution.ReadinessEager,
 		InputProjection: projection,
@@ -1141,7 +1151,7 @@ func (inputs *compiledPlanInputs) buildRequirements(
 		dependency, err := execution.BuildDataRequirementTemplate(execution.DataRequirementTemplate{
 			DatasetName: "previous", Role: execution.InputRoleAlgorithmDependency, ConsumerLevelID: levelID,
 			LogicalQueryRef: primaryRef,
-			RelativeWindow:  execution.RelativeQueryWindow{StartOffsetSeconds: -2 * interval, EndOffsetSeconds: -interval, HalfOpen: true},
+			RelativeWindow:  execution.RelativeQueryWindow{StartOffsetSeconds: -inputs.primary.QueryDelaySeconds - 2*interval, EndOffsetSeconds: -inputs.primary.QueryDelaySeconds - interval, HalfOpen: true},
 			StepMillis:      inputs.primary.StepMillis, AlignmentMillis: inputs.primary.AlignmentMillis,
 			ResultWindowPolicy: execution.ResultWindowExactHalfOpen, ReadinessClass: execution.ReadinessFinalizedRequired,
 			InputProjection: projection, PointOffsetsSeconds: []int64{interval},
@@ -1160,7 +1170,7 @@ func (inputs *compiledPlanInputs) buildRequirements(
 		dependency, err := execution.BuildDataRequirementTemplate(execution.DataRequirementTemplate{
 			DatasetName: "uptime_history", Role: execution.InputRoleAlgorithmDependency, ConsumerLevelID: levelID,
 			LogicalQueryRef: historyRef,
-			RelativeWindow:  execution.RelativeQueryWindow{StartOffsetSeconds: -(1500 + interval), EndOffsetSeconds: 0, HalfOpen: true},
+			RelativeWindow:  execution.RelativeQueryWindow{StartOffsetSeconds: -inputs.primary.QueryDelaySeconds - (1500 + interval), EndOffsetSeconds: -inputs.primary.QueryDelaySeconds, HalfOpen: true},
 			StepMillis:      inputs.osRestartHistory.StepMillis, AlignmentMillis: inputs.osRestartHistory.AlignmentMillis,
 			ResultWindowPolicy: execution.ResultWindowExactHalfOpen, ReadinessClass: execution.ReadinessFinalizedRequired,
 			InputProjection: projection, PointOffsetsSeconds: []int64{interval, 600, 1500},

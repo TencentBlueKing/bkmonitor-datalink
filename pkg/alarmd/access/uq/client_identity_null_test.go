@@ -38,8 +38,12 @@ func identityAttempt(t *testing.T, fields ...string) execution.QueryAttempt {
 }
 
 func identityTestSeries(groupKeys, groupValues []string) responseSeries {
+	values := make([]json.RawMessage, len(groupValues))
+	for i, value := range groupValues {
+		values[i], _ = json.Marshal(value)
+	}
 	return responseSeries{Name: "_result0", Columns: []string{"_time", "_result"}, Types: []string{"int64", "float64"},
-		GroupKeys: groupKeys, GroupValues: groupValues,
+		GroupKeys: groupKeys, GroupValues: values,
 		Values: [][]json.RawMessage{{json.RawMessage(`1700123456789`), json.RawMessage(`12.5`)}}}
 }
 

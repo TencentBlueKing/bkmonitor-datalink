@@ -237,7 +237,7 @@ func TestLegacyPrimaryQueryCompilerReturnsTypedUnsupportedFact(t *testing.T) {
 	_, err = planner.CompilePrimaryQuery(context.Background(), controlplane.PrimaryQuerySource{
 		Identity:   controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"},
 		StrategyID: "14", ItemID: "3", QueryMD5: "query-3", Expression: "a",
-		QueryConfigs: []json.RawMessage{json.RawMessage(`{"data_source_label":"prometheus","data_type_label":"time_series","promql":"up","agg_interval":60,"agg_dimension":["instance"]}`)},
+		QueryConfigs: []json.RawMessage{json.RawMessage(`{"data_source_label":"bk_apm","data_type_label":"time_series","promql":"up","agg_interval":60,"agg_dimension":["instance"]}`)},
 	})
 	if err == nil {
 		t.Fatal("unsupported provider shape must be explicit")
@@ -253,7 +253,7 @@ func TestBuildCatalogPreservesTypedQueryCompilerDisposition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	document := json.RawMessage(`{"id":14,"bk_biz_id":2,"update_time":1,"items":[{"id":3,"query_md5":"query-3","expression":"a","functions":[],"query_configs":[{"data_source_label":"prometheus","data_type_label":"time_series","promql":"up","agg_interval":60,"agg_dimension":["instance"]}],"algorithms":[{"level":1,"type":"Threshold","config":[{"method":"gt","threshold":0}]}]}],"detects":[{"level":1,"trigger_config":{"count":1,"check_window":1}}]}`)
+	document := json.RawMessage(`{"id":14,"bk_biz_id":2,"update_time":1,"items":[{"id":3,"query_md5":"query-3","expression":"a","functions":[],"query_configs":[{"data_source_label":"bk_apm","data_type_label":"time_series","promql":"up","agg_interval":60,"agg_dimension":["instance"]}],"algorithms":[{"level":1,"type":"Threshold","config":[{"method":"gt","threshold":0}]}]}],"detects":[{"level":1,"trigger_config":{"count":1,"check_window":1}}]}`)
 	catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{Planner: planner, Strategies: []controlplane.SourceStrategy{{
 		SourceID: "14", Document: document,
 		Identity: controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"},

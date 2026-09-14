@@ -139,7 +139,7 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 	}
 	terminals := make([]Terminal, 0)
 	if request.Plan.OutputIdentity != nil {
-		compiled.outputIdentity = &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, request.Plan.OutputIdentity.DimensionFields...)}
+		compiled.outputIdentity = &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, request.Plan.OutputIdentity.DimensionFields...), DynamicDimensions: request.Plan.OutputIdentity.DynamicDimensions}
 	}
 	compiled.wireFormat = request.Plan.WireFormat
 	if request.Plan.SubjectFacts != nil {
@@ -205,7 +205,7 @@ func (c *PlanCompiler) validatePlan(request CompileRequest) *Terminal {
 	if plan.LegacyOutput != nil && !plan.PublishesCompatibleProtocol() {
 		return &Terminal{ReasonCode: contract.ReasonPlanInvalid, FieldPath: "legacy_output"}
 	}
-	if plan.OutputIdentity != nil && plan.OutputIdentity.DimensionFields == nil {
+	if plan.OutputIdentity != nil && (plan.OutputIdentity.DimensionFields == nil || plan.OutputIdentity.DynamicDimensions != request.DatasetContract.DynamicDimensions) {
 		return &Terminal{ReasonCode: contract.ReasonPlanInvalid, FieldPath: "output_identity.dimension_fields"}
 	}
 	strategy := plan.StrategyIR
@@ -232,6 +232,7 @@ func (c *PlanCompiler) validatePlan(request CompileRequest) *Terminal {
 	projection := plan.InputProjection
 	if projection.MissingValuePolicy != contract.MissingValuePolicyRequired || projection.MultiValueAlignment != "SINGLE_VALUE" ||
 		len(projection.ValueFields) == 0 || !sortedUnique(projection.ValueFields, false) || !sortedUnique(projection.DimensionFields, true) ||
+		projection.DynamicDimensions != request.DatasetContract.DynamicDimensions ||
 		projection.BusinessIdentityField != "bk_biz_id" || !sortedUnique(request.DatasetContract.IdentityFields, false) {
 		return &Terminal{ReasonCode: contract.ReasonProjectionInvalid, FieldPath: "input_projection"}
 	}
@@ -740,7 +741,7 @@ func cloneProjection(projection contract.InputProjectionV2) contract.InputProjec
 func equalProjection(left, right contract.InputProjectionV2) bool {
 	return left.BusinessIdentityField == right.BusinessIdentityField && left.MultiValueAlignment == right.MultiValueAlignment &&
 		left.DataUnit == right.DataUnit && left.MissingValuePolicy == right.MissingValuePolicy &&
-		equalStrings(left.ValueFields, right.ValueFields) && equalStrings(left.DimensionFields, right.DimensionFields)
+		left.DynamicDimensions == right.DynamicDimensions && equalStrings(left.ValueFields, right.ValueFields) && equalStrings(left.DimensionFields, right.DimensionFields)
 }
 
 func equalStrings(left, right []string) bool {

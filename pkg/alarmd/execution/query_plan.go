@@ -49,21 +49,47 @@ type QueryConditions struct {
 }
 
 type QueryClause struct {
-	DataSource      string
-	Driver          string
-	TableID         string
-	FieldName       string
-	TimeField       string
-	IsRegexp        bool
-	ReferenceName   string
-	Functions       []QueryFunction
-	TimeAggregation QueryFunction
-	Dimensions      []string
-	Conditions      QueryConditions
-	Offset          string
-	OffsetForward   string
-	KeepColumns     []string
-	QueryString     string
+	SourceConditions *QueryConditions `json:"SourceConditions,omitempty"`
+	FieldSemantics   string           `json:"FieldSemantics,omitempty"`
+	DataSource       string
+	Driver           string
+	TableID          string
+	FieldName        string
+	TimeField        string
+	IsRegexp         bool
+	ReferenceName    string
+	Functions        []QueryFunction
+	TimeAggregation  QueryFunction
+	Dimensions       []string
+	Conditions       QueryConditions
+	Offset           string
+	OffsetForward    string
+	KeepColumns      []string
+	QueryString      string
+}
+
+// PromQLQuery preserves the independent UQ PromQL endpoint contract.
+type PromQLQuery struct {
+	Expression string
+	Match      string
+}
+
+type QueryTimeField struct {
+	Name string `json:"name" yaml:"name"`
+	Type string `json:"type" yaml:"type"`
+	Unit string `json:"unit" yaml:"unit"`
+}
+
+// QueryStorage carries registered routing facts, never storage credentials.
+type QueryStorage struct {
+	TableID     string         `json:"table_id" yaml:"table_id"`
+	StorageID   string         `json:"storage_id" yaml:"storage_id"`
+	StorageType string         `json:"storage_type" yaml:"storage_type"`
+	DB          string         `json:"db" yaml:"db"`
+	Measurement string         `json:"measurement" yaml:"measurement"`
+	NeedAddTime bool           `json:"need_add_time" yaml:"need_add_time"`
+	TimeField   QueryTimeField `json:"time_field" yaml:"time_field"`
+	SourceType  string         `json:"source_type" yaml:"source_type"`
 }
 
 type TimeUnit string
@@ -83,6 +109,7 @@ const (
 )
 
 type DatasetNormalizationSpec struct {
+	DimensionAliases        map[string]string `json:"DimensionAliases,omitempty"`
 	DatasetContract         contract.DatasetContractV2
 	SourceTimeUnit          TimeUnit
 	CanonicalSourceTimeUnit TimeUnit
@@ -95,6 +122,9 @@ type DatasetNormalizationSpec struct {
 }
 
 func (spec DatasetNormalizationSpec) Validate() error {
+	if spec.DatasetContract.DynamicDimensions && len(spec.DatasetContract.IdentityFields) != 0 {
+		return errors.New("alarmd execution: dynamic identity cannot declare fixed fields")
+	}
 	if spec.DatasetContract.SchemaDigest == "" || spec.DatasetContract.NormalizationDigest == "" ||
 		spec.DatasetContract.IdentityFields == nil || spec.DatasetContract.SourceTimeField == "" ||
 		spec.DatasetContract.ReceivedTimeField == "" || spec.SourceTimeUnit != TimeUnitMillisecond ||
@@ -117,20 +147,24 @@ func (spec DatasetNormalizationSpec) NormalizeSourceTime(sourceMillis int64) (in
 }
 
 type QueryPlanFacts struct {
-	QueryRevision    QueryRevision
-	Provider         ProviderKind
-	ProviderRouteRef ProviderRouteRef
-	TenantID         string
-	BusinessID       string
-	SpaceScope       string
-	QueryList        []QueryClause
-	MetricMerge      string
-	StepMillis       int64
-	AlignmentMillis  int64
-	DownSampleRange  DownSampleRange
-	Timezone         string
-	NotTimeAlign     bool
-	Normalization    DatasetNormalizationSpec
+	QueryDelaySeconds int64    `json:"QueryDelaySeconds,omitempty"`
+	SourceSemantics   []string `json:"SourceSemantics,omitempty"`
+	QueryRevision     QueryRevision
+	Provider          ProviderKind
+	ProviderRouteRef  ProviderRouteRef
+	TenantID          string
+	BusinessID        string
+	SpaceScope        string
+	QueryList         []QueryClause
+	PromQL            *PromQLQuery              `json:"PromQL,omitempty"`
+	TSDBMap           map[string][]QueryStorage `json:"TSDBMap,omitempty"`
+	MetricMerge       string
+	StepMillis        int64
+	AlignmentMillis   int64
+	DownSampleRange   DownSampleRange
+	Timezone          string
+	NotTimeAlign      bool
+	Normalization     DatasetNormalizationSpec
 }
 
 func BuildQueryPlanFacts(facts QueryPlanFacts) (QueryPlanFacts, error) {
@@ -138,14 +172,32 @@ func BuildQueryPlanFacts(facts QueryPlanFacts) (QueryPlanFacts, error) {
 		return QueryPlanFacts{}, errors.New("alarmd execution: QueryPlanFacts builder owns query revision")
 	}
 	if facts.Provider != ProviderUQ || facts.ProviderRouteRef == "" || facts.TenantID == "" ||
-		facts.BusinessID == "" || facts.SpaceScope == "" || len(facts.QueryList) == 0 ||
-		facts.MetricMerge == "" || facts.StepMillis <= 0 || facts.AlignmentMillis <= 0 {
+		facts.BusinessID == "" || facts.SpaceScope == "" || facts.StepMillis <= 0 || facts.AlignmentMillis <= 0 {
 		return QueryPlanFacts{}, errors.New("alarmd execution: incomplete query plan facts")
+	}
+	if facts.QueryDelaySeconds < 0 {
+		return QueryPlanFacts{}, errors.New("alarmd execution: invalid query delay")
+	}
+	if facts.PromQL != nil {
+		if facts.PromQL.Expression == "" || len(facts.QueryList) != 0 || facts.MetricMerge != "" || len(facts.TSDBMap) != 0 || !facts.Normalization.DatasetContract.DynamicDimensions {
+			return QueryPlanFacts{}, errors.New("alarmd execution: invalid independent PromQL facts")
+		}
+	} else if len(facts.QueryList) == 0 || facts.MetricMerge == "" {
+		return QueryPlanFacts{}, errors.New("alarmd execution: structured query facts are required")
 	}
 	if err := facts.Normalization.Validate(); err != nil {
 		return QueryPlanFacts{}, err
 	}
 	for _, clause := range facts.QueryList {
+		if clause.SourceConditions != nil && clause.FieldSemantics != "fta_event_tags/v1" {
+			return QueryPlanFacts{}, errors.New("alarmd execution: source conditions require FTA semantics")
+		}
+		if clause.FieldSemantics != "" && clause.FieldSemantics != "fta_event_tags/v1" {
+			return QueryPlanFacts{}, errors.New("alarmd execution: unsupported query field semantics")
+		}
+		if clause.FieldSemantics != "" && len(facts.TSDBMap[clause.ReferenceName]) == 0 {
+			return QueryPlanFacts{}, errors.New("alarmd execution: field semantics require registered ES routing")
+		}
 		if clause.Driver == "" || clause.TimeField == "" {
 			return QueryPlanFacts{}, errors.New("alarmd execution: incomplete query clause")
 		}
@@ -160,14 +212,39 @@ func BuildQueryPlanFacts(facts QueryPlanFacts) (QueryPlanFacts, error) {
 				return QueryPlanFacts{}, err
 			}
 		}
-		for _, condition := range clause.Conditions.Fields {
-			if condition.Field == "" || condition.Operator == "" || len(condition.Values) == 0 {
-				return QueryPlanFacts{}, errors.New("alarmd execution: incomplete typed query condition")
+		conditionGroups := []QueryConditions{clause.Conditions}
+		if clause.SourceConditions != nil {
+			conditionGroups = append(conditionGroups, *clause.SourceConditions)
+		}
+		for _, group := range conditionGroups {
+			if len(group.Connectors) != 0 && len(group.Connectors)+1 != len(group.Fields) {
+				return QueryPlanFacts{}, errors.New("alarmd execution: invalid source condition connectors")
 			}
-			for _, value := range condition.Values {
-				if err := value.Validate(); err != nil {
-					return QueryPlanFacts{}, err
+			for _, condition := range group.Fields {
+				if condition.Field == "" || condition.Operator == "" || len(condition.Values) == 0 {
+					return QueryPlanFacts{}, errors.New("alarmd execution: incomplete typed query condition")
 				}
+				for _, value := range condition.Values {
+					if err := value.Validate(); err != nil {
+						return QueryPlanFacts{}, err
+					}
+				}
+			}
+		}
+	}
+	for reference, storages := range facts.TSDBMap {
+		found := false
+		for _, clause := range facts.QueryList {
+			if clause.ReferenceName == reference {
+				found = true
+			}
+		}
+		if !found || len(storages) == 0 {
+			return QueryPlanFacts{}, errors.New("alarmd execution: unbound storage routing")
+		}
+		for _, storage := range storages {
+			if storage.StorageID == "" || storage.StorageType != "elasticsearch" || storage.DB == "" || storage.TableID == "" || storage.Measurement == "" || storage.TimeField.Name == "" || storage.TimeField.Type == "" || !validQueryTimeField(storage.TimeField) {
+				return QueryPlanFacts{}, errors.New("alarmd execution: incomplete ES storage routing")
 			}
 		}
 	}
@@ -252,4 +329,15 @@ func (facts QueryPlanFacts) WithMetricMerge(metricMerge string) (QueryPlanFacts,
 	facts.QueryRevision = ""
 	facts.MetricMerge = metricMerge
 	return BuildQueryPlanFacts(facts)
+}
+
+func validQueryTimeField(field QueryTimeField) bool {
+	if field.Type != "date" && field.Type != "long" {
+		return false
+	}
+	switch field.Unit {
+	case "second", "millisecond", "microsecond", "nanosecond":
+		return true
+	}
+	return false
 }

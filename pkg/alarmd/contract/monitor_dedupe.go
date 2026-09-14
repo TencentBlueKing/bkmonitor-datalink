@@ -12,7 +12,8 @@ import (
 // MonitorOutputIdentity freezes the source record's identity fields, not the
 // algorithm's projected value fields. It does not affect runtime state identity.
 type MonitorOutputIdentity struct {
-	DimensionFields []string `json:"dimension_fields"`
+	DynamicDimensions bool     `json:"dynamic_dimensions,omitempty"`
+	DimensionFields   []string `json:"dimension_fields"`
 }
 
 // MonitorDedupeMD5 projects MonitorEventAdapter.extract_target and Event's
@@ -31,6 +32,11 @@ type MonitorOutputIdentity struct {
 // rather than the identity.
 func ProjectMonitorTarget(dimensions map[string]json.RawMessage, identity MonitorOutputIdentity) (string, json.RawMessage, map[string]json.RawMessage, error) {
 	agg := make(map[string]bool, len(identity.DimensionFields))
+	if identity.DynamicDimensions {
+		for field := range dimensions {
+			agg[field] = true
+		}
+	}
 	for _, field := range identity.DimensionFields {
 		agg[field] = true
 	}

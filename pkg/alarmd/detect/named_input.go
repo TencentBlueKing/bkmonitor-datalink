@@ -68,12 +68,19 @@ func (simpleRingRatioDetector) Evaluate(
 	if err != nil {
 		return namedTerminal(contract.ReasonRecordInvalid)
 	}
-	if !found {
+	if !found && !config.MissingHistoryAsZero {
 		return namedUnavailable(contract.ReasonHistoryGapped)
 	}
-	previous, _, err := numericRecordValue(previousRecord, config.ValueField)
-	if err != nil {
-		return namedTerminal(contract.ReasonRecordInvalid)
+	previous := 0.0
+	if found {
+		if value, exists := previousRecord.Value(config.ValueField); !exists || string(value) != "null" {
+			previous, _, err = numericRecordValue(previousRecord, config.ValueField)
+			if err != nil {
+				return namedTerminal(contract.ReasonRecordInvalid)
+			}
+		} else if !config.MissingHistoryAsZero {
+			return namedTerminal(contract.ReasonRecordInvalid)
+		}
 	}
 	floor, err := configuredPercent(config.FloorEnabled, config.FloorDecimal)
 	if err != nil {

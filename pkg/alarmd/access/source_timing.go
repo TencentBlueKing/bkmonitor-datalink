@@ -36,7 +36,7 @@ func (source *Source) observeQueryTiming(ctx context.Context, request execution.
 					if spec.CompletionOffsetSeconds() != observability.ShortPeriodCompletionOffsetSeconds {
 						continue
 					}
-					ready, err := frozenConsumerReadyAt(request.Contract, requirement, requirement.AbsoluteWindow(request.Contract.Slot.EvaluationTime), spec, source.config.MinReadyDelay, request.Operation != execution.OperationNormal)
+					ready, err := frozenConsumerReadyAt(request.Contract, requirement, requirement.AbsoluteWindow(request.Contract.Slot.EvaluationTime), spec, source.config.MinReadyDelay, query.Spec.PlanFacts.QueryDelaySeconds, request.Operation != execution.OperationNormal)
 					if err != nil {
 						continue
 					}

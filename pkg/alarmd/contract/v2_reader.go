@@ -636,7 +636,7 @@ func validateEnvelopeNestedShapeV2(object map[string]json.RawMessage, allowUnkno
 		{"query_group", object["query_group"], []string{"key", "query_md5", "query_revision", "evaluation_time"}, nil},
 		{"source_window", object["source_window"], []string{"from_time", "until_time"}, nil},
 		{"query_result", object["query_result"], []string{"completeness"}, []string{"reason_code"}},
-		{"dataset_contract", object["dataset_contract"], []string{"schema_digest", "normalization_digest", "identity_fields", "source_time_field", "received_time_field"}, []string{"collection_time_field"}},
+		{"dataset_contract", object["dataset_contract"], []string{"schema_digest", "normalization_digest", "identity_fields", "source_time_field", "received_time_field"}, []string{"collection_time_field", "dynamic_dimensions"}},
 		{"plan_set", object["plan_set"], []string{"plan_set_digest", "plan_count", "evaluation_plans"}, nil},
 	}
 	for _, shape := range shapes {
@@ -719,7 +719,7 @@ func validatePlanWireShapeV2(raw json.RawMessage, index int, allowUnknown bool) 
 	if _, err := validateStrategyRefWireV2(object["strategy_ref"], path+".strategy_ref", allowUnknown); err != nil {
 		return framing(ReasonMalformedJSON, path+".strategy_ref", err.Error())
 	}
-	if _, err := validatePrevalidatedJSONObjectFieldsV2(object["input_projection"], path+".input_projection", []string{"value_fields", "dimension_fields", "business_identity_field", "multi_value_alignment", "data_unit", "missing_value_policy"}, nil, allowUnknown); err != nil {
+	if _, err := validatePrevalidatedJSONObjectFieldsV2(object["input_projection"], path+".input_projection", []string{"value_fields", "dimension_fields", "business_identity_field", "multi_value_alignment", "data_unit", "missing_value_policy"}, []string{"dynamic_dimensions"}, allowUnknown); err != nil {
 		return framing(ReasonMalformedJSON, path+".input_projection", err.Error())
 	}
 	if source, ok := object["source_compatibility"]; ok {
@@ -728,7 +728,7 @@ func validatePlanWireShapeV2(raw json.RawMessage, index int, allowUnknown bool) 
 		}
 	}
 	if identity, ok := object["output_identity"]; ok {
-		if _, err := validatePrevalidatedJSONObjectFieldsV2(identity, path+".output_identity", []string{"dimension_fields"}, nil, false); err != nil {
+		if _, err := validatePrevalidatedJSONObjectFieldsV2(identity, path+".output_identity", []string{"dimension_fields"}, []string{"dynamic_dimensions"}, false); err != nil {
 			return err
 		}
 		var typed MonitorOutputIdentity
@@ -746,7 +746,7 @@ func validatePlanWireShapeV2(raw json.RawMessage, index int, allowUnknown bool) 
 		}
 	}
 	if legacy, ok := object["legacy_output"]; ok {
-		if _, err := validatePrevalidatedJSONObjectFieldsV2(legacy, path+".legacy_output", []string{"strategy", "dimension_fields", "item_id"}, nil, false); err != nil {
+		if _, err := validatePrevalidatedJSONObjectFieldsV2(legacy, path+".legacy_output", []string{"strategy", "dimension_fields", "item_id"}, []string{"dynamic_dimensions"}, false); err != nil {
 			return err
 		}
 		var typed LegacyOutputContext
@@ -788,7 +788,7 @@ func validateStrategyIRWireShapeV2(raw json.RawMessage, path string) error {
 	if err != nil {
 		return framing(ReasonMalformedJSON, path+".execution_semantics", err.Error())
 	}
-	if _, err := validatePrevalidatedJSONObjectFieldsV2(base["input_projection"], path+".input_projection", []string{"value_fields", "dimension_fields", "business_identity_field", "multi_value_alignment", "data_unit", "missing_value_policy"}, nil, allowUnknown); err != nil {
+	if _, err := validatePrevalidatedJSONObjectFieldsV2(base["input_projection"], path+".input_projection", []string{"value_fields", "dimension_fields", "business_identity_field", "multi_value_alignment", "data_unit", "missing_value_policy"}, []string{"dynamic_dimensions"}, allowUnknown); err != nil {
 		return framing(ReasonMalformedJSON, path+".input_projection", err.Error())
 	}
 	var levels []json.RawMessage
@@ -1199,11 +1199,18 @@ func validateCanonicalRecordV2(
 			}
 		}
 	}
-	if dataset == nil || len(record.DimensionIdentity.Fields) != len(dataset.IdentityFields) {
+	if dataset == nil {
+		return ReasonRecordIdentityConflict
+	}
+	if dataset.DynamicDimensions {
+		if len(dataset.IdentityFields) != 0 || len(record.DimensionIdentity.Fields) != len(record.Dimensions) {
+			return ReasonRecordIdentityConflict
+		}
+	} else if len(record.DimensionIdentity.Fields) != len(dataset.IdentityFields) {
 		return ReasonRecordIdentityConflict
 	}
 	for index, identityField := range record.DimensionIdentity.Fields {
-		if identityField.Name != dataset.IdentityFields[index] {
+		if !dataset.DynamicDimensions && identityField.Name != dataset.IdentityFields[index] {
 			return ReasonRecordIdentityConflict
 		}
 		dimensionValue, exists := record.Dimensions[identityField.Name]

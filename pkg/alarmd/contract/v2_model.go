@@ -150,6 +150,7 @@ type QueryResultV2 struct {
 }
 
 type DatasetContractV2 struct {
+	DynamicDimensions   bool     `json:"dynamic_dimensions,omitempty"`
 	SchemaDigest        string   `json:"schema_digest"`
 	NormalizationDigest string   `json:"normalization_digest"`
 	IdentityFields      []string `json:"identity_fields"`
@@ -159,6 +160,7 @@ type DatasetContractV2 struct {
 }
 
 type InputProjectionV2 struct {
+	DynamicDimensions     bool     `json:"dynamic_dimensions,omitempty"`
 	ValueFields           []string `json:"value_fields"`
 	DimensionFields       []string `json:"dimension_fields"`
 	BusinessIdentityField string   `json:"business_identity_field"`

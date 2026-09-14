@@ -171,8 +171,15 @@ func convertEvent(ctx context.Context, event contract.TriggerEventV1, frozen pre
 			return Event{}, fmt.Errorf("invalid actual anomaly timestamps")
 		}
 	}
+	dimensionFields := metadata.DimensionFields()
+	if metadata.DynamicDimensions() {
+		for field := range event.RecordRef.Dimensions {
+			dimensionFields = append(dimensionFields, field)
+		}
+		sort.Strings(dimensionFields)
+	}
 	identity := map[string]json.RawMessage{}
-	for _, field := range metadata.DimensionFields() {
+	for _, field := range dimensionFields {
 		value, ok := event.RecordRef.Dimensions[field]
 		if !ok {
 			value = json.RawMessage("null")
@@ -198,7 +205,7 @@ func convertEvent(ctx context.Context, event contract.TriggerEventV1, frozen pre
 		return Event{}, err
 	}
 	description := fmt.Sprintf("alarmd %s: %s / %s, level=%s, value=%s", event.EventKind, s.Name, itemName, level, valueText)
-	projection, err := frozen.target.Project(ctx, TargetScope{TenantID: event.TenantID, BusinessID: s.BusinessID}, event.RecordRef.Dimensions, metadata.DimensionFields(), pods)
+	projection, err := frozen.target.Project(ctx, TargetScope{TenantID: event.TenantID, BusinessID: s.BusinessID}, event.RecordRef.Dimensions, dimensionFields, pods)
 	if err != nil {
 		return Event{}, err
 	}
@@ -231,11 +238,11 @@ func convertEvent(ctx context.Context, event contract.TriggerEventV1, frozen pre
 	if _, ok := projection.Dimensions["__NO_DATA_DIMENSION__"]; ok {
 		name = "[无数据] " + name
 	}
-	dedupe, err := contract.MonitorDedupeMD5(event.PlanRef.StrategyID, event.BusinessID, event.RecordRef.Dimensions, contract.MonitorOutputIdentity{DimensionFields: metadata.DimensionFields()})
+	dedupe, err := contract.MonitorDedupeMD5(event.PlanRef.StrategyID, event.BusinessID, event.RecordRef.Dimensions, contract.MonitorOutputIdentity{DimensionFields: dimensionFields})
 	if err != nil {
 		return Event{}, err
 	}
-	data := map[string]any{"record_id": md5 + "." + strconv.FormatInt(event.RecordRef.SourceTime, 10), "time": event.RecordRef.SourceTime, "dimensions": event.RecordRef.Dimensions, "dimension_fields": metadata.DimensionFields(), "value": value, "values": event.Observed.Values}
+	data := map[string]any{"record_id": md5 + "." + strconv.FormatInt(event.RecordRef.SourceTime, 10), "time": event.RecordRef.SourceTime, "dimensions": event.RecordRef.Dimensions, "dimension_fields": dimensionFields, "value": value, "values": event.Observed.Values}
 	payload := map[string]any{
 		"event_id": anomalyID(event.RecordRef.SourceTime), "plugin_id": pluginID, "strategy_id": s.ID, "alert_name": name, "description": description, "severity": event.PrimaryLevelID, "tags": tags, "target_type": projection.Type, "target": projection.Target, "status": status, "metric": frozen.metrics, "category": s.Scenario, "data_type": s.Items[0].Queries[0].DataType, "dedupe_keys": dedupeKeys, "time": event.RecordRef.SourceTime, "anomaly_time": anomalyTime, "bk_ingest_time": now, "bk_clean_time": now, "bk_biz_id": s.BusinessID, "bk_tenant_id": event.TenantID,
 		"extra_info": map[string]any{"additional_dimensions": additional, "origin_alarm": map[string]any{"trigger_time": now, "data": data, "trigger": map[string]any{"level": level, "anomaly_ids": anomalyIDs}, "anomaly": map[string]any{level: map[string]any{"anomaly_id": anomalyID(event.RecordRef.SourceTime), "anomaly_message": description}}, "dimension_translation": map[string]any{}, "strategy_snapshot_key": frozen.snapshot, "alarmd_event_id": event.EventID}},

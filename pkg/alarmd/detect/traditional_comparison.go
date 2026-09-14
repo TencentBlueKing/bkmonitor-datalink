@@ -68,12 +68,26 @@ func (d traditionalComparisonDetector) Evaluate(_ context.Context, algorithm str
 			if err != nil {
 				return namedTerminal(contract.ReasonRecordInvalid)
 			}
-			// Python's history loader only publishes truthy metric values. FULL empty
-			// history remains missing; the currently admitted source is time_series.
+			// Python's history loader only publishes truthy metric values.
 			if value != 0 {
 				v := value
 				history[offset] = &v
 			}
+		}
+	}
+	// LOG/EVENT defaults apply only after all required queries are trusted.
+	// A failed or partial query must never become a synthetic zero.
+	if c.MissingHistoryAsZero {
+		zero := 0.0
+		for _, r := range algorithm.InputRequirements() {
+			for _, offset := range r.PointOffsetsSeconds {
+				if history[offset] == nil {
+					history[offset] = &zero
+				}
+			}
+		}
+		if history[0] == nil {
+			history[0] = &zero
 		}
 	}
 	status := evaluateTraditionalComparison(d.kind, c, current, history)

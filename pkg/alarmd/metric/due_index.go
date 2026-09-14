@@ -39,7 +39,7 @@ type dueIndexMetrics struct {
 	horizon        prometheus.Histogram
 	skipped        *prometheus.CounterVec
 	crowdedOut     *prometheus.CounterVec
-	auditOvershoot *prometheus.Histogram
+	auditOvershoot *prometheus.HistogramVec
 }
 
 // The horizon is how far ahead a bound sits. The buckets are the evaluation
@@ -185,7 +185,7 @@ func newDueIndexMetrics() dueIndexMetrics {
 func (m dueIndexMetrics) collectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		m.entries, m.predictions, m.recomputes, m.versionChecks, m.horizon, m.skipped, m.crowdedOut,
-		*m.auditOvershoot,
+		m.auditOvershoot,
 	}
 }
 
@@ -305,28 +305,41 @@ func (r *Recorder) RecordDispatchCrowdedOut(holder string) {
 // numerator and a denominator drawn from different populations. Putting the
 // sampled quantity under a separate name is the only version of that warning a
 // reader cannot skip.
-func newDueIndexAuditOvershoot() *prometheus.Histogram {
-	histogram := prometheus.NewHistogram(prometheus.HistogramOpts{
+func newDueIndexAuditOvershoot() *prometheus.HistogramVec {
+	histogram := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: metricNamespace, Subsystem: metricSubsystem,
 		Name: "due_index_audit_overshoot_seconds",
-		Help: "How much longer the due index would have held back a Query Group that the round then " +
-			"found due, over the audited dispatches only -- one Query Group per generation, never the " +
-			"whole population, which is why this is not a cell on due_index_prediction_total. " +
-			"The count of those violations cannot say why they happen: a bound reaching minutes past " +
-			"an object that is already due and a clock crossing the boundary between the prediction " +
-			"and the verdict produce the same tally and need opposite responses. Read against the " +
-			"duration of one walk over the owned set, not against zero -- mass below one walk is the " +
-			"boundary being crossed in flight, mass well above it is the bound being late by that " +
-			"much, which is the correctness defect the index's own file names. Resolution is one " +
-			"second, because the bound is stored and compared as a whole second.",
+		Help: "The due index's own bound minus the instant it was consulted, for an audited dispatch " +
+			"the index predicted was not due and the round then found due. It measures how much " +
+			"longer the index intended to hold that object back. It is NOT how late the Slot ran: " +
+			"the Slot's evaluation time is not read here and does not enter this number. " +
+			"Over the audited dispatches only -- one Query Group per generation, never the whole " +
+			"population -- which is why this is not a cell on due_index_prediction_total, whose four " +
+			"cells mix that sample with the full population. Observed on the violation alone, so its " +
+			"count is the same population as that counter's not_due/due cell. " +
+			"Read against the duration of one walk over the owned set rather than against zero: mass " +
+			"below one walk is the boundary being crossed between the prediction and the verdict, and " +
+			"mass well above it means the bound reached that far past an object that was already due, " +
+			"which is the failure the index's own file calls a correctness defect. Resolution is one " +
+			"second, because the bound is stored and compared as a whole second. " +
+			"cooldown says the object was in query cooldown when the bound was recorded. Cooldown is " +
+			"a deliberate backing-off, so those observations are a suppression working as intended " +
+			"being counted as a wrong prediction, and the two must be read apart.",
 		Buckets: append([]float64(nil), dueIndexAuditOvershootBuckets...),
-	})
-	return &histogram
+	}, []string{"cooldown"})
+	// Both label values pre-created. A histogram that has never observed
+	// anything and one whose population is entirely on the other side of the
+	// label look identical when the series is simply absent, and the second is
+	// a result.
+	for _, cooldown := range []string{"true", "false"} {
+		histogram.WithLabelValues(cooldown)
+	}
+	return histogram
 }
 
 // RecordDueIndexAuditOvershoot observes one audited dispatch that the index
 // predicted was not due and the round found due.
-func (r *Recorder) RecordDueIndexAuditOvershoot(heldFor time.Duration) {
+func (r *Recorder) RecordDueIndexAuditOvershoot(heldFor time.Duration, cooldown bool) {
 	if r == nil || r.phaseTwo.dueIndex.auditOvershoot == nil {
 		return
 	}
@@ -334,5 +347,9 @@ func (r *Recorder) RecordDueIndexAuditOvershoot(heldFor time.Duration) {
 	if seconds < 0 {
 		seconds = 0
 	}
-	(*r.phaseTwo.dueIndex.auditOvershoot).Observe(seconds)
+	label := "false"
+	if cooldown {
+		label = "true"
+	}
+	r.phaseTwo.dueIndex.auditOvershoot.WithLabelValues(label).Observe(seconds)
 }

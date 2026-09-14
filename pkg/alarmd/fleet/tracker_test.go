@@ -962,3 +962,60 @@ func TestConfigDriftStaysOnTheToDoListBecauseItIsNotEvidenceOfAChange(t *testing
 		t.Errorf("demoted = %+v, want none", got)
 	}
 }
+
+// A span of Slots nothing ever evaluated reaches the page.
+//
+// It could not before. The event is not a round -- it carries no completion and
+// no outcome -- so the tracker returned before looking at it, and the most
+// complete form of "detection did not happen" was the one thing on this
+// deployment with nothing on screen. Every other signal about those objects
+// reports them healthy, and reports correctly: they resume immediately and the
+// Slots inside the span are simply gone.
+func TestAnObjectThatLostASpanOfSlotsIsVisibleEvenThoughItIsRunningFine(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+
+	advance := observability.Observation{
+		Component: observability.ComponentScheduler, Stage: observability.StageScheduleCursorAdvanced,
+		Trace:  observability.TraceFields{QueryGroupKey: "qg-pruned"},
+		Result: observability.ResultSuccess,
+		CursorAdvance: &observability.CursorAdvanceFacts{
+			From: 120, To: 5520, Status: observability.CursorAdvanceApplied, InFlightSlot: 180},
+	}
+	tracker.Observe(context.Background(), advance)
+
+	skips := tracker.PrunedSkips()
+	skip, ok := skips["qg-pruned"]
+	if !ok {
+		t.Fatalf("pruned skips = %+v, want the object that lost a span; without it the loss has "+
+			"nowhere on the page to be said at all", skips)
+	}
+	if skip.From != 120 || skip.To != 5520 || skip.DiscardedSlot != 180 {
+		t.Fatalf("skip = %+v, want the span and the Slot that was discarded with it", skip)
+	}
+	if got := skip.Spanning(); got != 90*time.Minute {
+		t.Fatalf("span = %v, want 90m: the length is the only size available, because how many "+
+			"Slots are inside it is exactly what the pruned segments took away", got)
+	}
+
+	// A round arriving afterwards must not clear it. The object recovers at
+	// once, which is the whole difficulty -- if the loss were cleared by the
+	// next healthy round it would be visible for less time than it takes to
+	// look at the page.
+	tracker.Observe(context.Background(), completion("qg-pruned", "FULL_COMPLETED", "8930"))
+	if _, ok := tracker.PrunedSkips()["qg-pruned"]; !ok {
+		t.Fatal("a healthy round cleared the lost span; the object being fine now is not the same " +
+			"as the span having been evaluated, and it never will be")
+	}
+
+	// A skip that was refused changed nothing, so it is not a loss.
+	refused := advance
+	refused.Trace.QueryGroupKey = "qg-refused"
+	refused.CursorAdvance = &observability.CursorAdvanceFacts{
+		From: 120, To: 5520, Status: observability.CursorAdvanceConflict, Refusal: "CAS_CONFLICT"}
+	tracker.Observe(context.Background(), refused)
+	if _, ok := tracker.PrunedSkips()["qg-refused"]; ok {
+		t.Fatal("a refused skip was reported as a lost span; nothing was skipped, and reporting it " +
+			"would put objects on that line that lost nothing")
+	}
+}

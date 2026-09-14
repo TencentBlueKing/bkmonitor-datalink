@@ -127,6 +127,12 @@ func failedExecution(outcome string) bool {
 }
 
 type queryGroupState struct {
+	// prunedSkip is the last span of Slots this object never had evaluated
+	// because its cursor was moved past a pruned part of the timeline. It
+	// outlives the rounds around it on purpose: the object recovers immediately
+	// and every later round looks healthy, while the detection inside the span
+	// never happened and cannot be made to happen.
+	prunedSkip    *PrunedSkip
 	queryCooldown *observability.QueryCooldownFacts
 	// Once cooldown exposes a failure, keep that evidence visible until a real healthy completion.
 	cooldownExposed bool
@@ -383,7 +389,14 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 	// reports that separately -- but it is the only place the pipeline says why
 	// the round went wrong, so it is let through to be remembered.
 	failure := observation.QueryFailure
-	if trace.StrategyID == "" && completion == "" && runOutcome == "" && executeOutcome == "" && failure == nil && observation.QueryCooldown == nil {
+	// A cursor moved past a pruned part of the timeline carries none of the
+	// above: it is not a round, so it has no completion and no outcome. It was
+	// therefore dropped here, which is why the most complete form of "detection
+	// did not happen" -- a span of Slots that were never evaluated and never
+	// will be -- was the one thing on this deployment with nothing on screen.
+	cursorAdvance := observation.CursorAdvance
+	if trace.StrategyID == "" && completion == "" && runOutcome == "" && executeOutcome == "" &&
+		failure == nil && observation.QueryCooldown == nil && cursorAdvance == nil {
 		return
 	}
 
@@ -396,6 +409,22 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		tracker.groups[queryGroup] = state
 	}
 	at := tracker.now()
+	// Recorded before anything else, because it is not a round and none of the
+	// round bookkeeping below applies to it. The object is very likely running
+	// normally now -- what happened is in its past and is permanent, which is
+	// exactly why nothing that describes the current round can carry it.
+	if cursorAdvance != nil {
+		if cursorAdvance.Status == observability.CursorAdvanceApplied {
+			state.prunedSkip = &PrunedSkip{
+				From: cursorAdvance.From, To: cursorAdvance.To, At: at,
+				DiscardedSlot: cursorAdvance.InFlightSlot,
+			}
+		}
+		if completion == "" && runOutcome == "" && executeOutcome == "" && failure == nil &&
+			observation.QueryCooldown == nil {
+			return
+		}
+	}
 	// Captured before this round is folded in: by the time the run-start block
 	// runs, this round has already made the object determined, and the question
 	// is whether anything came before it.
@@ -820,4 +849,27 @@ func sortStrategies(strategies []StrategyRef) {
 			strategies[inner-1], strategies[inner] = right, left
 		}
 	}
+}
+
+// PrunedSkips is every object this replica has seen lose a span of Slots to a
+// pruned timeline, keyed by Query Group.
+//
+// Kept for the life of the process rather than cleared when the object next
+// runs. Clearing on a healthy round would remove it immediately -- the object
+// resumes at once, which is the whole difficulty: every signal about the
+// current round correctly says it is fine, and the span it lost stays lost.
+func (tracker *Tracker) PrunedSkips() map[string]PrunedSkip {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	var skips map[string]PrunedSkip
+	for queryGroup, state := range tracker.groups {
+		if state.prunedSkip == nil {
+			continue
+		}
+		if skips == nil {
+			skips = make(map[string]PrunedSkip, 4)
+		}
+		skips[queryGroup] = *state.prunedSkip
+	}
+	return skips
 }

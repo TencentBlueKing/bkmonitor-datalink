@@ -1492,7 +1492,19 @@ func (dispatcher *phaseTwoRunnerDispatcher) recordDueBound(result phaseTwoSchedu
 	// while the round was in flight produce the same tally and need opposite
 	// responses.
 	if !scheduled.predictedDue && actuallyDue {
-		dispatcher.bundle.dependencies.Recorder.RecordDueIndexAuditOvershoot(scheduled.predictedHeldFor)
+		// Split by whether this round was in query cooldown. Cooldown is a
+		// deliberate backing-off from a backend that keeps failing, and a
+		// cooldown round returns without advancing the cursor -- so the Slot
+		// stays due and the prediction is recorded as wrong. Those are a
+		// suppression working as intended counted as an index defect, and
+		// reading them together puts the two on one curve.
+		//
+		// Taken from the bound this round returned rather than from the index
+		// entry: the entry is about to be rewritten from this same bound, and
+		// reading it back would be reading this value through one more step
+		// that can drift.
+		dispatcher.bundle.dependencies.Recorder.RecordDueIndexAuditOvershoot(
+			scheduled.predictedHeldFor, bound.QueryCooldown)
 	}
 }
 

@@ -264,3 +264,31 @@ func TestCoverageInconsistentGapSaysBothNumbers(t *testing.T) {
 		t.Fatalf("detail %q does not say Covered is a sum, so the difference reads as objects left over", detail)
 	}
 }
+
+// The lost spans survive the trip from one replica's snapshot to the
+// deployment's view, and two replicas reporting the same object report it once.
+//
+// This is the handoff, and every count that has gone missing on this page went
+// missing at one. A span dropped here arrives as no span at all, which reads as
+// "nothing was ever skipped" -- the reassuring answer, and the one the page
+// gave for the whole time the event could not reach it.
+func TestALostSpanSurvivesTheAggregateAndIsNotCountedTwice(t *testing.T) {
+	snapshots := healthySnapshots()
+	if len(snapshots) < 2 {
+		t.Fatalf("this check needs two replicas, got %d", len(snapshots))
+	}
+	older := PrunedSkip{From: 120, To: 3720, At: now.Add(-time.Hour)}
+	newer := PrunedSkip{From: 120, To: 5520, At: now.Add(-time.Minute)}
+	snapshots[0].PrunedSkips = map[string]PrunedSkip{"qg-pruned": older}
+	snapshots[1].PrunedSkips = map[string]PrunedSkip{"qg-pruned": newer, "qg-other": older}
+
+	view := Aggregate(Expectation{QueryGroups: 949, Known: true}, snapshots, replicas(), now, freshness)
+	if len(view.PrunedSkips) != 2 {
+		t.Fatalf("pruned skips = %+v, want one entry per object: keyed by anything else, an object "+
+			"two replicas both saw skipped is reported twice", view.PrunedSkips)
+	}
+	// The more recent loss is the one a reader needs; the first one is history.
+	if got := view.PrunedSkips["qg-pruned"]; got.To != newer.To {
+		t.Fatalf("qg-pruned span = %+v, want the most recent loss %+v", got, newer)
+	}
+}

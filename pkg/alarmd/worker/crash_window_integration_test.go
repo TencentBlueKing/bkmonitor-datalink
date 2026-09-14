@@ -110,7 +110,7 @@ func TestG3ACrashWindowChild(t *testing.T) {
 	trace := make([]string, 0, len(fullTrace))
 	fixturePorts := &recordingPorts{trace: &trace, ready: true}
 	stage := os.Getenv(g3aChildStage)
-	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{
+	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{OpenAlerts: fixturePorts,
 		Finalization: fixturePorts, Activation: fixturePorts,
 		Query: fixturePorts, Sequencer: fixturePorts, Evaluator: fixturePorts,
 		Admission: admitter, GapGuard: fixturePorts,

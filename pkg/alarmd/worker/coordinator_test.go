@@ -1007,7 +1007,7 @@ func buildFixtureWithBudget(
 	t.Helper()
 	trace := make([]string, 0, len(fullTrace))
 	ports := &recordingPorts{trace: &trace, ready: ready, failStage: failStage}
-	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{
+	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{OpenAlerts: ports,
 		Finalization: ports, Activation: ports,
 		Query: ports, Sequencer: ports, Evaluator: ports, Admission: ports, GapGuard: ports,
 		Events: ports, State: ports, Progress: ports,
@@ -1079,6 +1079,10 @@ func (ports *recordingPorts) LoadActivations(
 }
 
 type recordingPorts struct {
+	openAlerts                      map[string]bool
+	trackedPlans                    []execution.PlanIdentity
+	acknowledged                    []contract.TriggerEventV1
+	openAlertCalls                  []string
 	trace                           *[]string
 	ready                           bool
 	failStage                       string
@@ -1553,6 +1557,32 @@ func (ports *recordingPorts) ApplyGap(_ context.Context, request execution.GapGu
 		}
 	}
 	return execution.GapGuardApplyResult{Items: items}, ports.fail(stage)
+}
+
+// The recording ports double as the open alert copy: membership from a
+// fixed set, and every call kept on its own list, so a test can see what
+// the worker told the copy and after which store call. They stay out of
+// the side-effect trace: that trace pins the order of the stores, and the
+// copy is told about a store call, it is not one.
+func (ports *recordingPorts) Contains(tenantID, strategyID, fingerprint string) bool {
+	return ports.openAlerts[tenantID+"/"+strategyID+"/"+fingerprint]
+}
+
+func (ports *recordingPorts) TrackPlans(plans []execution.PlanIdentity) {
+	ports.trackedPlans = append(ports.trackedPlans, plans...)
+	ports.openAlertCalls = append(ports.openAlertCalls, "track after "+ports.lastTrace())
+}
+
+func (ports *recordingPorts) Acknowledged(events []contract.TriggerEventV1) {
+	ports.acknowledged = append(ports.acknowledged, events...)
+	ports.openAlertCalls = append(ports.openAlertCalls, "ack after "+ports.lastTrace())
+}
+
+func (ports *recordingPorts) lastTrace() string {
+	if ports.trace == nil || len(*ports.trace) == 0 {
+		return ""
+	}
+	return (*ports.trace)[len(*ports.trace)-1]
 }
 
 func (ports *recordingPorts) WriteBatch(_ context.Context, events []contract.TriggerEventV1) error {

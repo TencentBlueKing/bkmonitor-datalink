@@ -1134,6 +1134,13 @@ func (stream *streamedExecution) evaluateLoadedSeries(ctx context.Context, entry
 		return fmt.Errorf("alarmd worker: bind series EffectiveTime facts: %w", err)
 	}
 	request := execution.EvaluationRequest{Header: evaluationHeader, Inputs: inputs, State: loaded, Gaps: stream.gaps}
+	// Told before the evaluation, so the strategy is in the copy's next read
+	// even if no record of this round asks about it. The constructor requires
+	// the port; the guard is for tests that build the struct.
+	if openAlerts := stream.coordinator.ports.OpenAlerts; openAlerts != nil {
+		openAlerts.TrackPlans([]execution.PlanIdentity{due.Identity})
+		request.OpenAlerts = openAlerts
+	}
 	started := time.Now()
 	evaluated, err := stream.coordinator.ports.Evaluator.Evaluate(ctx, request)
 	if err != nil {
@@ -1195,9 +1202,31 @@ func (stream *streamedExecution) observeEvaluationCompleted(
 		Duration: time.Since(started), Counts: observability.Counts{Records: evaluationRecordCount(inputs)},
 		Trace:                observability.TraceFields{StrategyID: due.Identity.StrategyID, BusinessID: due.Identity.BusinessID, DimensionIdentityDigest: string(series)},
 		AlgorithmEvaluations: evaluations, AlgorithmInputs: namedInputs,
-		RecoveryGates: recoveryGateFacts(due, evaluated),
+		RecoveryGates: recoveryGateFacts(due, evaluated), OpenAlertGates: openAlertGateFacts(due, evaluated),
 	}
 	stream.coordinator.ports.Observer.Observe(ctx, observation)
+}
+
+// openAlertGateFacts carries what the second recovery gate did with the
+// Plan's RECOVERY records, one fact per outcome that counted something.
+func openAlertGateFacts(due execution.DuePlan, evaluated execution.EvaluationResult) []observability.OpenAlertGateFact {
+	if len(evaluated.Plans) != 1 || evaluated.Plans[0].Plan != due.Identity {
+		return nil
+	}
+	gate := evaluated.Plans[0].OpenAlertGate
+	var facts []observability.OpenAlertGateFact
+	for _, fact := range []observability.OpenAlertGateFact{
+		{Outcome: observability.OpenAlertGatePassed, Records: gate.Passed},
+		{Outcome: observability.OpenAlertGateHeldNoOpenAlert, Records: gate.HeldNoOpenAlert},
+		{Outcome: observability.OpenAlertGateHeldFingerprintUnknown, Records: gate.HeldFingerprintUnknown},
+		{Outcome: observability.OpenAlertGateNotConfigured, Records: gate.NotConfigured},
+		{Outcome: observability.OpenAlertGateLegacyProtocol, Records: gate.LegacyProtocol},
+	} {
+		if fact.Records > 0 {
+			facts = append(facts, fact)
+		}
+	}
+	return facts
 }
 
 // recoveryGateFacts carries what became of the Plan's RECOVERY envelopes:

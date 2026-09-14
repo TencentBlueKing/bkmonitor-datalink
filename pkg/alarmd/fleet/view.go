@@ -407,6 +407,45 @@ type Snapshot struct {
 	// by, as its record revision. Zero means the replica did not report it,
 	// which the aggregate keeps apart from any lag.
 	AppliedActivationRecordRevision uint64 `json:"applied_activation_record_revision,omitempty"`
+	// OpenAlertSet is the state of this replica's copy of the consumer's open
+	// alert set, which gates RECOVERY envelopes. Absent on a build without the
+	// gate, which is a different answer from a copy that is fine.
+	OpenAlertSet *OpenAlertSetFacts `json:"open_alert_set,omitempty"`
+}
+
+// OpenAlertSetFacts is what a replica says about its copy of the consumer's
+// open alert set. Mode is one of never_loaded, authoritative and
+// self_maintained. StaleBeyondBound is the one fact the verdict reads: the
+// copy had the consumer's publication and has been without it for longer
+// than the staleness bound, so the gate has been working from the replica's
+// own knowledge past the exposure it was designed for. A copy that never
+// loaded is not stale -- the publisher may not be deployed -- and the mode
+// says so without degrading anything.
+type OpenAlertSetFacts struct {
+	Mode             string `json:"mode"`
+	StaleBeyondBound bool   `json:"stale_beyond_bound"`
+	// AuthoritativeAgeSeconds is how long ago the last publication was read.
+	// Absent until there has been one; a zero here would read as "just now".
+	AuthoritativeAgeSeconds *float64 `json:"authoritative_age_seconds,omitempty"`
+}
+
+// DegradationKind names a replica-level condition that degrades the verdict
+// without being an anomaly on any one object. Closed set.
+type DegradationKind string
+
+const (
+	// DegradationOpenAlertSetStale: the replica's copy of the consumer's open
+	// alert set has been without the consumer's publication for longer than
+	// the staleness bound. Every recovery it holds meanwhile on its own
+	// knowledge is an alert that stays open past its due, and nothing on the
+	// object list shows that.
+	DegradationOpenAlertSetStale DegradationKind = "OPEN_ALERT_SET_STALE"
+)
+
+// Degradation is one replica-level reason the deployment is degraded.
+type Degradation struct {
+	Kind    DegradationKind `json:"kind"`
+	Replica string          `json:"replica"`
 }
 
 // Truncated reports whether the replica had more anomalies than it published.
@@ -551,6 +590,10 @@ type View struct {
 	Determined int   `json:"determined"`
 	Unknown    int   `json:"unknown"`
 	Gaps       []Gap `json:"gaps,omitempty"`
+	// Degradations are replica-level conditions that make the verdict
+	// DEGRADED on their own, beside the anomalies: what is wrong is a replica's
+	// standing, not any object it evaluates.
+	Degradations []Degradation `json:"degradations,omitempty"`
 	// AnomaliesTotal is how many anomalies the replicas actually had, which is
 	// larger than the returned list whenever a snapshot was truncated. Reporting
 	// the returned length as the total would understate an incident by exactly
@@ -696,6 +739,9 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		}
 		if snapshot.Truncated() {
 			view.Gaps = append(view.Gaps, Gap{Kind: GapListTruncated, Replica: replica})
+		}
+		if snapshot.OpenAlertSet != nil && snapshot.OpenAlertSet.StaleBeyondBound {
+			view.Degradations = append(view.Degradations, Degradation{Kind: DegradationOpenAlertSetStale, Replica: replica})
 		}
 		perReplica := ReplicaView{
 			Replica: replica, Owned: snapshot.Owned, Determined: snapshot.Determined,
@@ -887,6 +933,12 @@ func Settle(view *View) {
 	switch {
 	case len(view.Gaps) > 0:
 		view.Health = HealthUnknown
+	// A replica's standing degrades the verdict the way its objects do, and
+	// before the object list is consulted: a copy of the open alert set that
+	// has been on its own past its bound is a fault the object list cannot
+	// show, because every alert it keeps open looks like one still due.
+	case len(view.Degradations) > 0:
+		view.Health = HealthDegraded
 	case OursCount(view.Anomalies) > 0:
 		view.Health = HealthDegraded
 	// An object whose cause was never recorded is missing evidence about a real

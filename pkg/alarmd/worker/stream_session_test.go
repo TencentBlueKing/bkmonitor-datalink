@@ -346,7 +346,7 @@ func newCompletionOnlyFixture(
 	})
 	trace := make([]string, 0)
 	ports := &recordingPorts{trace: &trace, ready: true}
-	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{
+	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{OpenAlerts: ports,
 		Finalization: ports, Activation: ports,
 		Query:     completionOnlyQuerySource{trace: &trace, header: header, completion: completion},
 		Sequencer: ports, Evaluator: ports, Admission: ports, GapGuard: ports,

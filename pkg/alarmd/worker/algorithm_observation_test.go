@@ -335,7 +335,7 @@ func workerAlgorithmObservationCoordinator(
 	}
 	trace := make([]string, 0)
 	ports := &recordingPorts{trace: &trace, ready: true}
-	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{
+	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{OpenAlerts: ports,
 		Finalization: ports, Activation: ports, Query: ports, Sequencer: ports, Evaluator: evaluator,
 		Admission: ports, GapGuard: ports, Events: ports, State: ports, Progress: ports,
 		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {

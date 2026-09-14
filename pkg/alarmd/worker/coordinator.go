@@ -38,6 +38,10 @@ type Ports struct {
 	State        execution.StateStore
 	Progress     execution.ProgressStore
 	Observer     execution.Observer
+	// OpenAlerts is required: a worker that evaluates without it sends every
+	// RECOVERY envelope, and the trigger counts that as not_configured, which
+	// on a production worker is the wiring having come apart.
+	OpenAlerts execution.OpenAlertCopy
 }
 
 type SlotExecutionCoordinator struct {
@@ -89,7 +93,8 @@ func (*activationProtectionRequiredError) Error() string {
 func NewSlotExecutionCoordinator(ports Ports, budget ProvisionalBudget) (*SlotExecutionCoordinator, error) {
 	if ports.Finalization == nil || ports.Activation == nil || ports.Query == nil || ports.Sequencer == nil ||
 		ports.Evaluator == nil || ports.Admission == nil || ports.GapGuard == nil ||
-		ports.Events == nil || ports.State == nil || ports.Progress == nil || ports.Observer == nil {
+		ports.Events == nil || ports.State == nil || ports.Progress == nil || ports.Observer == nil ||
+		ports.OpenAlerts == nil {
 		return nil, errors.New("alarmd worker: all C0 execution ports are required")
 	}
 	if budget.MaxSeries == 0 || budget.MaxRetainedBytes == 0 || budget.MaxStateMutations == 0 ||
@@ -1215,6 +1220,12 @@ func (coordinator *SlotExecutionCoordinator) writeEvents(
 		"", reason, observability.Counts{Events: int64(len(events))}, err)
 	if err != nil {
 		return fmt.Errorf("alarmd worker: acknowledge events: %w", err)
+	}
+	// Only after the ACK: a batch the sink did not take opened nothing at
+	// the consumer, and the copy must not say it did. The constructor
+	// requires the port; the guard is for tests that build the struct.
+	if coordinator.ports.OpenAlerts != nil {
+		coordinator.ports.OpenAlerts.Acknowledged(events)
 	}
 	return nil
 }

@@ -65,6 +65,18 @@ type EventSink interface {
 	WriteBatch(context.Context, []contract.TriggerEventV1) error
 }
 
+// OpenAlertCopy is the process copy of the alert consumer's open alert set,
+// as the worker drives it: the trigger asks it through contract.OpenAlertSet
+// on every evaluation, the worker tells it which Plans are about to be
+// evaluated so their strategies are in its next read, and tells it which
+// envelopes the sink took so it can keep itself current while the
+// consumer's publication is unavailable.
+type OpenAlertCopy interface {
+	contract.OpenAlertSet
+	TrackPlans([]PlanIdentity)
+	Acknowledged([]contract.TriggerEventV1)
+}
+
 type StateStore interface {
 	LoadRuntime(context.Context, StatePreflightRequest) (StatePreflightResult, error)
 	AdmitRuntime(context.Context, StateApplyRequest) (StateAdmissionResult, error)

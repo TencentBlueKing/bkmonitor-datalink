@@ -722,7 +722,7 @@ func newQueryFreeFixture(t *testing.T, activations []execution.PlanActivationRes
 		activations:     activations,
 		markers:         make(map[execution.PlanGapIdentity]execution.GapGuardSnapshot),
 	}
-	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{
+	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{OpenAlerts: ports,
 		Finalization: ports, Activation: ports,
 		Query: ports, Sequencer: ports, Evaluator: ports, Admission: ports, GapGuard: ports,
 		Events: ports, State: ports, Progress: ports,

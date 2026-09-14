@@ -886,6 +886,45 @@ type RecoveryGateFact struct {
 	Records uint64            `json:"records"`
 }
 
+// OpenAlertGateOutcome is what the second recovery gate, the consumer's
+// open alert set, did with a RECOVERY record every Level had agreed on. The
+// set is closed: it is a metric label. A record is counted here or under a
+// RecoveryGateCause, never both.
+type OpenAlertGateOutcome string
+
+const (
+	// OpenAlertGatePassed: the consumer holds an open alert; the envelope went.
+	OpenAlertGatePassed OpenAlertGateOutcome = "passed"
+	// OpenAlertGateHeldNoOpenAlert: the consumer holds no alert on the series;
+	// nothing to resolve, no envelope.
+	OpenAlertGateHeldNoOpenAlert OpenAlertGateOutcome = "held_no_open_alert"
+	// OpenAlertGateHeldFingerprintUnknown: the series identity the consumer
+	// keys alerts by could not be built; held and named rather than read as
+	// absent.
+	OpenAlertGateHeldFingerprintUnknown OpenAlertGateOutcome = "held_fingerprint_unknown"
+	// OpenAlertGateNotConfigured: the evaluation ran without a set; the
+	// envelope went as before the gate existed. On a production worker this
+	// counting is the wiring having come apart.
+	OpenAlertGateNotConfigured OpenAlertGateOutcome = "not_configured"
+	// OpenAlertGateLegacyProtocol: the Plan's protocol has no RECOVERY
+	// message; the set was not asked.
+	OpenAlertGateLegacyProtocol OpenAlertGateOutcome = "legacy_protocol"
+)
+
+// OpenAlertGateOutcomes lists every outcome, for the metric that pre-creates
+// them all.
+var OpenAlertGateOutcomes = []OpenAlertGateOutcome{
+	OpenAlertGatePassed, OpenAlertGateHeldNoOpenAlert, OpenAlertGateHeldFingerprintUnknown,
+	OpenAlertGateNotConfigured, OpenAlertGateLegacyProtocol,
+}
+
+// OpenAlertGateFact counts, for one evaluation, the records the second gate
+// decided under one outcome.
+type OpenAlertGateFact struct {
+	Outcome OpenAlertGateOutcome `json:"outcome"`
+	Records uint64               `json:"records"`
+}
+
 type AlgorithmInputFact struct {
 	SourceAlgorithmFamily AlgorithmFamily          `json:"source_algorithm_family"`
 	DetectorKind          AlgorithmDetectorKind    `json:"detector_kind"`
@@ -991,6 +1030,7 @@ type Observation struct {
 	AlgorithmEvaluations  []AlgorithmEvaluationFact
 	AlgorithmInputs       []AlgorithmInputFact
 	RecoveryGates         []RecoveryGateFact
+	OpenAlertGates        []OpenAlertGateFact
 	normalized            bool
 	stageReasonBucket     bool
 }
@@ -1088,6 +1128,7 @@ func NormalizeObservation(observation Observation) Observation {
 	)
 	observation.AlgorithmEvaluations, observation.AlgorithmInputs = normalizeAlgorithmFacts(observation)
 	observation.RecoveryGates = normalizeRecoveryGateFacts(observation)
+	observation.OpenAlertGates = normalizeOpenAlertGateFacts(observation)
 	observation.Counts = normalizeCounts(observation.Counts)
 	observation.normalized = true
 	return observation
@@ -1225,6 +1266,29 @@ func normalizeRecoveryGateFacts(observation Observation) []RecoveryGateFact {
 		}
 		switch fact.Cause {
 		case RecoveryGateLevelUnavailable, RecoveryGateLevelRecovering, RecoveryGateLevelWithoutRecovery:
+			facts = append(facts, fact)
+		}
+	}
+	if len(facts) == 0 {
+		return nil
+	}
+	return facts
+}
+
+// normalizeOpenAlertGateFacts is normalizeRecoveryGateFacts for the second
+// gate: same stage, same closed set, same treatment of a value outside it.
+func normalizeOpenAlertGateFacts(observation Observation) []OpenAlertGateFact {
+	if observation.Component != ComponentEvaluation || observation.Stage != StageEvaluationCompleted {
+		return nil
+	}
+	facts := make([]OpenAlertGateFact, 0, len(observation.OpenAlertGates))
+	for _, fact := range observation.OpenAlertGates {
+		if fact.Records == 0 {
+			continue
+		}
+		switch fact.Outcome {
+		case OpenAlertGatePassed, OpenAlertGateHeldNoOpenAlert, OpenAlertGateHeldFingerprintUnknown,
+			OpenAlertGateNotConfigured, OpenAlertGateLegacyProtocol:
 			facts = append(facts, fact)
 		}
 	}

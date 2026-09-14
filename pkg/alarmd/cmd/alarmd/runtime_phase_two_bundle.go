@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access"
 	accessuq "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access/uq"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/detect"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/evaluation"
@@ -30,6 +31,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
@@ -608,10 +610,25 @@ func openProductionPhaseTwoBundleWithDependencies(
 	if err != nil {
 		return nil, err
 	}
+	// The copy of the consumer's open alert set reads the publisher's keys
+	// from the same Redis the runtime objects live in; the publisher is
+	// another service, and it getting that connection is a deployment item.
+	// Not a configuration key: the policy for an unavailable publication is
+	// a ruling recorded in the openalerts package, not an operator setting.
+	openAlertSource, err := openalerts.NewRedisSource(runtimeClient)
+	if err != nil {
+		return nil, err
+	}
+	openAlertCopy, err := openalerts.New(openalerts.Options{Source: openAlertSource, Now: external.Now})
+	if err != nil {
+		return nil, err
+	}
+	recorder.SetOpenAlertSetSource(openAlertCopy.Stats)
 	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{
 		Finalization: frozen, Activation: repository, Query: querySource, Sequencer: sequencer,
 		Evaluator: evaluatorPort, Admission: admitter, GapGuard: executionStore, Events: eventsPort,
 		State: executionStore, Progress: progressStore, Observer: observer,
+		OpenAlerts: openAlertCopyPort{cache: openAlertCopy},
 	}, worker.ProvisionalBudget{
 		MaxSeries: cfg.PhaseTwo.Coordinator.MaxSeries, MaxRetainedBytes: cfg.PhaseTwo.Coordinator.MaxRetainedBytes,
 		MaxStateMutations: cfg.PhaseTwo.Coordinator.MaxStateMutations, MaxEvents: cfg.PhaseTwo.Coordinator.MaxEvents,
@@ -758,8 +775,9 @@ func openProductionPhaseTwoBundleWithDependencies(
 	bundle, err := newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
 		Config: cfg, Health: health, Control: control, Ownership: productionOwnership,
 		Recorder: recorder, Observer: observer, TargetFlow: targetFlow, Now: external.Now,
-		FleetAPI:     fleetAPI,
-		PublishFleet: func(ctx context.Context) { publisher.publishOnce(ctx) },
+		FleetAPI:          fleetAPI,
+		PublishFleet:      func(ctx context.Context) { publisher.publishOnce(ctx) },
+		RefreshOpenAlerts: openAlertCopy.Refresh,
 		ApplyObservationWindows: observationWindowApplier{
 			store: windowStore, flow: targetFlow, now: external.Now,
 			observe: observationWindowObserver(observer),
@@ -816,6 +834,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 		restore:       progressRestoreSource(progressStore),
 		staleAfter:    stallAfter,
 		restoreBudget: fleetRestoreBudgetPerPublish,
+		openAlerts:    openAlertSetFactsSource(openAlertCopy, external.Now),
 	}
 	// The heartbeat reports the same acknowledgement and occupancy the fleet
 	// snapshot publishes, from the same sources.
@@ -941,6 +960,41 @@ func maxDuration(values ...time.Duration) time.Duration {
 		}
 	}
 	return maximum
+}
+
+// openAlertCopyPort adapts the process copy to the worker's port: the
+// worker speaks in Plan identities, the copy in strategy keys.
+type openAlertCopyPort struct{ cache *openalerts.Cache }
+
+func (port openAlertCopyPort) Contains(tenantID, strategyID, fingerprint string) bool {
+	return port.cache.Contains(tenantID, strategyID, fingerprint)
+}
+
+func (port openAlertCopyPort) TrackPlans(plans []execution.PlanIdentity) {
+	keys := make([]openalerts.StrategyKey, 0, len(plans))
+	for _, plan := range plans {
+		keys = append(keys, openalerts.StrategyKey{TenantID: plan.TenantID, StrategyID: plan.StrategyID})
+	}
+	port.cache.Track(keys...)
+}
+
+func (port openAlertCopyPort) Acknowledged(events []contract.TriggerEventV1) {
+	port.cache.Acknowledged(events)
+}
+
+// openAlertSetFactsSource is what this replica publishes about its copy. The
+// age is absent until there has been an authoritative read: a zero would
+// read as "just now" on a copy that never loaded.
+func openAlertSetFactsSource(cache *openalerts.Cache, now func() time.Time) func() *fleet.OpenAlertSetFacts {
+	return func() *fleet.OpenAlertSetFacts {
+		stats := cache.Stats()
+		facts := &fleet.OpenAlertSetFacts{Mode: string(stats.Mode), StaleBeyondBound: cache.StaleBeyondBound()}
+		if !stats.LoadedAt.IsZero() {
+			age := now().Sub(stats.LoadedAt).Seconds()
+			facts.AuthoritativeAgeSeconds = &age
+		}
+		return facts
+	}
 }
 
 func productionPhaseTwoPrefix(prefix, component string) string {

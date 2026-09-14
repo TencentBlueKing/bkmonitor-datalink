@@ -28,6 +28,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
@@ -348,6 +349,9 @@ type phaseTwoWorkerBundleDependencies struct {
 	Observer   observability.Observer
 	TargetFlow *observability.TargetFlow
 	// FleetAPI serves the object facts once this runtime is open, and
+	// RefreshOpenAlerts reads the consumer's open alert publication into the
+	// process copy; run once at start and then on its own cadence.
+	RefreshOpenAlerts func(context.Context)
 	// PublishFleet writes this replica's contribution to them.
 	FleetAPI     http.Handler
 	PublishFleet func(context.Context)
@@ -1634,6 +1638,31 @@ func (bundle *phaseTwoWorkerBundle) startMaintenance() {
 	if bundle.dependencies.PublishFleet != nil {
 		bundle.maintenanceWG.Add(1)
 		go bundle.publishFleetSnapshots()
+	}
+	if bundle.dependencies.RefreshOpenAlerts != nil {
+		bundle.maintenanceWG.Add(1)
+		go bundle.refreshOpenAlerts()
+	}
+}
+
+// refreshOpenAlerts keeps the process copy of the consumer's open alert set
+// current. The first read is immediate rather than a cycle away, so the
+// first evaluations after a start are not answered from an empty copy when
+// the publication is there to read. A read that fails is the copy's own
+// state to report (it goes self-maintained and says why); nothing here
+// retries or stops the pipeline over it.
+func (bundle *phaseTwoWorkerBundle) refreshOpenAlerts() {
+	defer bundle.maintenanceWG.Done()
+	bundle.dependencies.RefreshOpenAlerts(bundle.maintenanceCtx)
+	ticker := time.NewTicker(openalerts.RefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-bundle.maintenanceCtx.Done():
+			return
+		case <-ticker.C:
+			bundle.dependencies.RefreshOpenAlerts(bundle.maintenanceCtx)
+		}
 	}
 }
 

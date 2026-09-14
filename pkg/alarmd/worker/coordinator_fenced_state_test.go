@@ -45,7 +45,7 @@ func newFencedFixture(t *testing.T, staleFence bool) (fixture, *fencedStatePorts
 	observer := observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 		observations = append(observations, observability.NormalizeObservation(observation))
 	})
-	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{
+	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{OpenAlerts: ports,
 		Finalization: ports, Activation: ports,
 		Query: ports, Sequencer: ports, Evaluator: ports, Admission: ports, GapGuard: ports,
 		Events: ports, State: fenced, Progress: ports,

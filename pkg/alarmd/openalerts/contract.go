@@ -72,6 +72,11 @@ const (
 	// copy (the copy subtracts on send, not on confirmation). Widening it is
 	// not fewer alerts; it is a longer exposure for that class of held alert.
 	StalenessCycles = 3
+	// RefreshInterval is how often the reader polls the publication. The
+	// publisher states its own cycle in the heartbeat; the reader polls at the
+	// minute the design names as the bound on discovering a change, and the
+	// heartbeat's cycle decides freshness, not this.
+	RefreshInterval = time.Minute
 	// LocalRetentionCycles is how many cycles a fingerprint this process sent
 	// stays in the copy after an authoritative publication that does not carry
 	// it: long enough for the publisher's lag, no longer, or the copy would

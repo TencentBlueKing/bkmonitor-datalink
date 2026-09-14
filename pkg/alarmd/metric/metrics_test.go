@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 )
 
 func TestRecorderUsesPrivateRegistries(t *testing.T) {
@@ -414,6 +415,15 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 	expected["bkmonitor_alarmd_algorithm_input_total"] = "variableLabels: {algorithm_family,input_name,dependency_point,result}"
 	expected["bkmonitor_alarmd_trigger_recovery_held_total"] = "variableLabels: {cause}"
 	expected["bkmonitor_alarmd_trigger_recovery_past_level_without_recovery_total"] = "variableLabels: {}"
+	expected["bkmonitor_alarmd_trigger_open_alert_gate_total"] = "variableLabels: {outcome}"
+	expected["bkmonitor_alarmd_open_alert_set_mode"] = "variableLabels: {mode}"
+	expected["bkmonitor_alarmd_open_alert_set_authoritative_age_seconds"] = "variableLabels: {}"
+	expected["bkmonitor_alarmd_open_alert_set_unavailable_total"] = "variableLabels: {reason}"
+	expected["bkmonitor_alarmd_open_alert_set_refresh_total"] = "variableLabels: {result}"
+	expected["bkmonitor_alarmd_open_alert_set_lookup_total"] = "variableLabels: {answer}"
+	expected["bkmonitor_alarmd_open_alert_set_entries"] = "variableLabels: {kind}"
+	expected["bkmonitor_alarmd_open_alert_set_tracked_strategies"] = "variableLabels: {}"
+	expected["bkmonitor_alarmd_open_alert_set_evictions_total"] = "variableLabels: {}"
 
 	descriptions := make(chan string)
 	go func() {
@@ -830,6 +840,15 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	bounds[fqName("algorithm_input_total")] = 160
 	bounds[fqName("trigger_recovery_held_total")] = 2
 	bounds[fqName("trigger_recovery_past_level_without_recovery_total")] = 1
+	bounds[fqName("trigger_open_alert_gate_total")] = len(observability.OpenAlertGateOutcomes)
+	bounds[fqName("open_alert_set_mode")] = len(openalerts.Modes)
+	bounds[fqName("open_alert_set_authoritative_age_seconds")] = 1
+	bounds[fqName("open_alert_set_unavailable_total")] = len(openalerts.UnavailableReasons)
+	bounds[fqName("open_alert_set_refresh_total")] = 2
+	bounds[fqName("open_alert_set_lookup_total")] = len(openalerts.Answers)
+	bounds[fqName("open_alert_set_entries")] = 3
+	bounds[fqName("open_alert_set_tracked_strategies")] = 1
+	bounds[fqName("open_alert_set_evictions_total")] = 1
 	for _, name := range []string{
 		"messages", "records", "plans", "levels", "events", "bytes", "keys", "state_bytes",
 	} {

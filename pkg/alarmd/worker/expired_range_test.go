@@ -115,7 +115,7 @@ func testRangeTailGuardCommitConflict(t *testing.T, distance bool) {
 	initialRaw := append([]byte(nil), control.raw...)
 	newCoordinator := func(s *progress.Store) *worker.SlotExecutionCoordinator {
 		ports := fixture.ports
-		c, err := worker.NewSlotExecutionCoordinator(worker.Ports{Finalization: ports, Activation: ports, Query: ports, Sequencer: ports, Evaluator: ports, Admission: ports, GapGuard: ports, Events: ports, State: ports, Progress: s, Observer: observability.ObserverFunc(func(context.Context, observability.Observation) {})}, worker.ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10})
+		c, err := worker.NewSlotExecutionCoordinator(worker.Ports{OpenAlerts: ports, Finalization: ports, Activation: ports, Query: ports, Sequencer: ports, Evaluator: ports, Admission: ports, GapGuard: ports, Events: ports, State: ports, Progress: s, Observer: observability.ObserverFunc(func(context.Context, observability.Observation) {})}, worker.ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10})
 		if err != nil {
 			t.Fatal(err)
 		}

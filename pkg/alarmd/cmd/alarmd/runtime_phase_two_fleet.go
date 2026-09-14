@@ -191,6 +191,11 @@ type fleetPublisher struct {
 	// restoreAttempts is scoped to current ownership. The maximum also marks
 	// successful reads (including missing/stale history) as finished.
 	restoreAttempts map[execution.QueryGroupIdentity]int
+	// openAlerts reports the state of this replica's copy of the consumer's
+	// open alert set. Nil on a build without the gate, and the snapshot then
+	// carries no facts, which the aggregate keeps apart from a copy that is
+	// fine.
+	openAlerts func() *fleet.OpenAlertSetFacts
 }
 
 // fleetOverdueWakeCeiling bounds how many parked objects one publish carries.
@@ -344,6 +349,9 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	// wrong direction for the number people escalate on.
 	snapshot.Demoted = demoted
 	snapshot.TotalDemoted = len(demoted)
+	if publisher.openAlerts != nil {
+		snapshot.OpenAlertSet = publisher.openAlerts()
+	}
 	// And the objects whose rounds end without a basis to decide recovery.
 	// Beside the anomalies for a different reason than the pool: not "this is
 	// somebody else's fault" but "this is not a fault". Counting them as

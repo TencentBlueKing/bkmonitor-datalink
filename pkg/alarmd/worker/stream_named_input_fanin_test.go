@@ -281,7 +281,7 @@ func workerG4CoordinatorWithObserver(
 	recorder := &recordingEvaluator{inner: inner}
 	trace := make([]string, 0)
 	ports := &recordingPorts{trace: &trace, ready: true}
-	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{
+	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{OpenAlerts: ports,
 		Finalization: ports, Activation: ports, Query: ports, Sequencer: ports, Evaluator: recorder,
 		Admission: ports, GapGuard: ports, Events: ports, State: ports, Progress: ports,
 		Observer: observer,

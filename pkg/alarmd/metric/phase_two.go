@@ -72,6 +72,8 @@ type phaseTwoMetrics struct {
 	algorithmEvaluations            *prometheus.CounterVec
 	recoveryHeld                    *prometheus.CounterVec
 	recoveryPastLevelWithoutRecov   prometheus.Counter
+	openAlertGate                   *prometheus.CounterVec
+	openAlertSet                    *openAlertSetCollector
 	redisCalls                      redisCallMetrics
 	controlCache                    *controlCacheCollector
 	legacyPodCache                  *prometheus.CounterVec
@@ -324,6 +326,28 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			"never say RECOVERY, so it is not consulted rather than holding the envelope forever. Long at " +
 			"zero means no strategy in this deployment pairs a Level with recovery and one without.",
 	})
+	// The second recovery gate: once every Level has agreed, does the consumer
+	// hold an open alert on the series at all. Every outcome is pre-created so
+	// a zero reads as "never happened", and not_configured in particular has
+	// to be readable at zero: on a production worker it is the wiring having
+	// come apart, and an absent series would hide exactly that.
+	metrics.openAlertGate = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "trigger_open_alert_gate_total",
+		Help: "RECOVERY records every Level had agreed on, by what the consumer's open alert set decided: " +
+			"passed (an open alert on the series; the envelope went), held_no_open_alert (none; nothing to " +
+			"resolve, no envelope), held_fingerprint_unknown (the series identity the consumer keys alerts by " +
+			"could not be built; held and named rather than read as absent), not_configured (the evaluation ran " +
+			"without a set; the envelope went as before the gate -- on a production worker this is a wiring " +
+			"fault), legacy_protocol (the Plan's protocol carries no RECOVERY message; the set was not asked). " +
+			"Counted apart from trigger_recovery_held_total: a record is counted by one gate only. Like that " +
+			"counter this counts records per evaluation, not alerts. Which of passed and held_no_open_alert " +
+			"dominates says nothing on its own; read it against open_alert_set_mode, because in " +
+			"self_maintained mode the set is this process's own knowledge.",
+	}, []string{"outcome"})
+	for _, outcome := range observability.OpenAlertGateOutcomes {
+		metrics.openAlertGate.WithLabelValues(string(outcome))
+	}
+	metrics.openAlertSet = newOpenAlertSetCollector()
 	metrics.seriesAdmission = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "series_admission_total",
 		Help: "Access-path admission decisions by filter, outcome and bounded reason.",
@@ -390,9 +414,9 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.objectCatalogObjects, m.objectCatalogRedis, m.objectCatalogManifestBytes, m.objectReads, m.stateGenerationSkew,
 		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
 		m.undrainedDrainingQueryGroups, m.drainingCursorPrunedQueryGroups, m.rebalancePlannedMoves, m.assignmentIndexStaleRounds, m.assignmentIndexWrites, m.assignmentIndexReads, m.assignmentIndexConfirm, m.assignmentRecordReads, m.scheduleCursorAdvances, m.activationHeldQueryGroups, m.activationHeldAgeSecondsMax,
-		m.algorithmEvaluations, m.algorithmInputs, m.recoveryHeld, m.recoveryPastLevelWithoutRecov,
+		m.algorithmEvaluations, m.algorithmInputs, m.recoveryHeld, m.recoveryPastLevelWithoutRecov, m.openAlertGate,
 	}...), append(append(m.redisCalls.collectors(), m.dueIndex.collectors()...),
-		m.controlCache, m.redisPool, m.canonicalEncoding, m.legacyPodCache,
+		m.controlCache, m.openAlertSet, m.redisPool, m.canonicalEncoding, m.legacyPodCache,
 		m.seriesAdmission, m.cmdbIndexHosts, m.hostDisableMonitorStates, m.cmdbIndexAge, m.cmdbIndexDegraded)...)
 }
 
@@ -534,6 +558,9 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 		case observability.RecoveryGateLevelWithoutRecovery:
 			m.recoveryPastLevelWithoutRecov.Add(float64(fact.Records))
 		}
+	}
+	for _, fact := range observation.OpenAlertGates {
+		m.openAlertGate.WithLabelValues(string(fact.Outcome)).Add(float64(fact.Records))
 	}
 	for _, fact := range observation.AlgorithmInputs {
 		m.algorithmInputs.WithLabelValues(

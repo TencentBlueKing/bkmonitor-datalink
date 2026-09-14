@@ -26,6 +26,7 @@ type phaseTwoMetrics struct {
 	busy                            *prometheus.CounterVec
 	lastProgress                    *prometheus.GaugeVec
 	capacity                        *prometheus.CounterVec
+	stateWriteReuse                 *prometheus.CounterVec
 	sourceObservations              *prometheus.CounterVec
 	sourceRefreshes                 *prometheus.CounterVec
 	sourceCompiles                  *prometheus.CounterVec
@@ -154,6 +155,22 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "capacity_transition_total",
 			Help: "Process-wide phase-two capacity admission outcomes by fixed budget kind.",
 		}, []string{"budget", "result"}),
+		stateWriteReuse: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "state_write_reuse_total",
+			Help: "Runtime State mutations admitted for writing, by how much of what the write carries was " +
+				"already stored. Nothing is skipped: this measures what a skip could save before the write " +
+				"path changes. identical is the whole blob reproduced; decision_stable is the Level state " +
+				"and series guard unchanged while the history window moved, which is where a steady series " +
+				"is expected because that window carries a record id and source time that advance every " +
+				"round; changed is a moved Level state; unobserved is a key with nothing stored yet, kept " +
+				"apart so a starting worker's warm-up does not depress the others. Read the classes " +
+				"separately: identical and decision_stable are what two different changes could save and do " +
+				"not add up. Their sum is the admitted population, so every class zero with a zero sum " +
+				"means the classifier never ran rather than that nothing was reusable. stored says what was " +
+				"held when the comparison was made, because a series that keeps recovering and one that " +
+				"never leaves history warming are both steady and both pay a write every round, but reach " +
+				"it through different branches; averaged together the rate describes neither.",
+		}, []string{"class", "stored"}),
 		sourceObservations: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "source_observation_total",
 			Help: "Phase-two source health episode transitions by bounded source, result and reason class.",
@@ -339,6 +356,18 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "cmdb_host_index_degraded",
 		Help: "Whether the CMDB index is unusable for filtering, by bounded reason.",
 	}, []string{"reason"})
+	// Publish every class from the first scrape, at zero. A class created only
+	// on its first increment is absent until then, and absent and zero read the
+	// same way off a graph while meaning opposite things: one says the
+	// classifier never ran, the other that it ran and found none. This reading
+	// is expected to contain a genuine zero -- identical should stay there while
+	// the history window travels with the decision state -- so that distinction
+	// is the measurement.
+	for _, class := range observability.AllStateWriteReuseClasses() {
+		for _, stored := range observability.AllStateWriteReuseStored() {
+			metrics.stateWriteReuse.WithLabelValues(string(class), string(stored))
+		}
+	}
 	return metrics
 }
 
@@ -349,7 +378,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.queryCooldown,
 		m.slotReadiness.slack, m.slotReadiness.boundary,
 		m.slotTiming,
-		m.work, m.busy, m.lastProgress, m.capacity, m.sourceObservations, m.sourceRefreshes, m.sourceCompiles,
+		m.work, m.busy, m.lastProgress, m.capacity, m.stateWriteReuse, m.sourceObservations, m.sourceRefreshes, m.sourceCompiles,
 		m.sourceReads, m.sourceStrategiesRead, m.sourceChangeSignalAge,
 		m.activationFailures, m.unmappedSeverity,
 		m.ownedQueryGroups, m.ownershipTransitions,
@@ -529,6 +558,11 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 		m.ownershipTransitions.WithLabelValues(
 			string(observation.Stage), string(observation.Result), string(reasonClass),
 		).Inc()
+	}
+	if facts := observation.StateWriteReuse; facts != nil && !facts.Empty() {
+		for key, count := range facts.Counts {
+			m.stateWriteReuse.WithLabelValues(string(key.Class), string(key.Stored)).Add(float64(count))
+		}
 	}
 	if observation.Component == observability.ComponentResource && observation.CapacityBudget != "" {
 		result := "other"

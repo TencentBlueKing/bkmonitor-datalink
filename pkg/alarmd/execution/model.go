@@ -1230,6 +1230,92 @@ func ClassifyStateMutation(view RuntimeStateView, mutation StateMutation) StateP
 	}
 }
 
+// StateWriteReuse says how much of what a mutation is about to write is
+// already stored. It answers one question against production traffic before
+// any write path changes: how often does a steady series write bytes that
+// reproduce what Redis already holds.
+//
+// This is the predicate a skip would consult, not a restatement of its
+// reasoning. A hit rate measured with a look-alike describes the look-alike,
+// so when a write path starts skipping it must call this same function.
+type StateWriteReuse string
+
+const (
+	// StateWriteReuseUnobserved is the answer while nothing is stored to
+	// compare against. A worker that has just started witnesses no digest, so
+	// every round would otherwise classify as changed and read as "never
+	// reusable". Keeping it as its own class holds the warm-up out of the
+	// rate instead of depressing it, and lets a reader tell "not comparable
+	// yet" from "compared and different".
+	StateWriteReuseUnobserved StateWriteReuse = "unobserved"
+	// StateWriteReuseIdentical means the whole blob reproduces what is stored.
+	StateWriteReuseIdentical StateWriteReuse = "identical"
+	// StateWriteReuseDecisionStable means every Level state and the series
+	// guard are unchanged while the rest of the blob moved. Both steady states
+	// a deployment spends its rounds in land here -- a series that keeps
+	// recovering and one that never leaves history warming -- rather than in
+	// identical, because the history window carries a RecordID and SourceTime
+	// that advance every round.
+	StateWriteReuseDecisionStable StateWriteReuse = "decision_stable"
+	// StateWriteReuseChanged means a Level state or the series guard moved.
+	StateWriteReuseChanged StateWriteReuse = "changed"
+)
+
+// ClassifyStateWriteReuse compares a mutation against the state the preflight
+// witnessed for the same key. It reports only what the comparison supports and
+// never that a write may be skipped: the two are not the same claim while the
+// stored window is the only source of the retention history.
+func ClassifyStateWriteReuse(view RuntimeStateView, mutation StateMutation) StateWriteReuse {
+	if view.PersistedMutationDigest == "" {
+		return StateWriteReuseUnobserved
+	}
+	if view.PersistedMutationDigest == mutation.MutationDigest {
+		return StateWriteReuseIdentical
+	}
+	if decisionStateUnchanged(view, mutation) {
+		return StateWriteReuseDecisionStable
+	}
+	return StateWriteReuseChanged
+}
+
+// decisionStateUnchanged compares every field of the persisted Level state and
+// the series guard. It compares fields rather than a digest because there is
+// no digest over this subset: adding one would be a second construction of the
+// same fact, and the two could disagree.
+func decisionStateUnchanged(view RuntimeStateView, mutation StateMutation) bool {
+	if len(view.Levels) != len(mutation.Levels) {
+		return false
+	}
+	for _, level := range mutation.Levels {
+		stored, found := findPersistedLevel(view.Levels, level.LevelID)
+		if !found ||
+			stored.LevelStateCompatibility != level.LevelStateCompatibility ||
+			stored.HistoryCompleteness != level.HistoryCompleteness ||
+			stored.GapReasonCode != level.GapReasonCode ||
+			stored.WarmupRequirementRef != level.WarmupRequirementRef ||
+			stored.LastProcessedEventTime != level.LastProcessedEventTime {
+			return false
+		}
+	}
+	return seriesGuardUnchanged(view.SeriesGuard, mutation.SeriesGuard)
+}
+
+func findPersistedLevel(levels []RuntimeLevelStateView, id uint32) (RuntimeLevelStateView, bool) {
+	for _, level := range levels {
+		if level.LevelID == id {
+			return level, true
+		}
+	}
+	return RuntimeLevelStateView{}, false
+}
+
+func seriesGuardUnchanged(stored, next *StateGuardFact) bool {
+	if stored == nil || next == nil {
+		return stored == nil && next == nil
+	}
+	return *stored == *next
+}
+
 type GapMutationKind string
 
 const (

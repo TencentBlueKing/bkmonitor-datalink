@@ -974,6 +974,7 @@ type Observation struct {
 	SlotReadiness         *SlotReadinessFacts
 	ShortPeriodCompletion *ShortPeriodCompletionFacts
 	StateApplyChunk       *StateApplyChunkFacts
+	StateWriteReuse       *StateWriteReuseFacts
 	ActiveQGSet           *ActiveQGSetFacts
 	ScheduleCutover       *ScheduleCutoverFacts
 	ObjectCatalog         *ObjectCatalogFacts

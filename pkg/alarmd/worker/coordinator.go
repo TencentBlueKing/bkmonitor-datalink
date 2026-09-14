@@ -838,6 +838,12 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 		sort.Slice(stateResults, func(left, right int) bool {
 			return lessStateIdentity(stateResults[left].Mutation.Identity, stateResults[right].Mutation.Identity)
 		})
+		// How much of what each admitted write carries is already stored. This
+		// changes nothing: every mutation below is written exactly as before.
+		// It is here rather than beside the write because this is where the
+		// witnessed view and the mutation are both in hand, and the question
+		// only has meaning for mutations that are actually about to be written.
+		var writeReuse observability.StateWriteReuseFacts
 		for _, stateResult := range stateResults {
 			statePosition, found := stateIndex[stateResult.Mutation.Identity]
 			if !found {
@@ -848,6 +854,10 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 			disposition := execution.ClassifyStateMutation(view, stateResult.Mutation)
 			switch disposition {
 			case execution.StateProceed:
+				writeReuse.Add(
+					observability.StateWriteReuseClass(execution.ClassifyStateWriteReuse(view, stateResult.Mutation)),
+					storedStateLabel(view.Status),
+				)
 				coordinator.observe(ctx, observability.ComponentState, observability.StageMutationCompared, request.Operation, started, observability.ResultSuccess, observability.ReasonNone, nil)
 				mutations = append(mutations, stateResult.Mutation)
 				eventsByState[stateResult.Mutation.Identity] = append([]contract.TriggerEventV1(nil), stateResult.Events...)
@@ -868,6 +878,16 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 				coordinator.observe(ctx, observability.ComponentState, observability.StageMutationCompared, request.Operation, started, "", "", err)
 				return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: %w", err)
 			}
+		}
+
+		if !writeReuse.Empty() {
+			facts := writeReuse
+			coordinator.emitObservation(ctx, observability.Observation{
+				Component: observability.ComponentState, Stage: observability.StageMutationCompared,
+				Result: observability.ResultSuccess, Operation: observability.Operation(request.Operation),
+				Direction: observability.DirectionInternal, ReasonCode: observability.ReasonNone,
+				StateWriteReuse: &facts,
+			})
 		}
 
 		if len(mutations) > 0 {
@@ -1676,4 +1696,24 @@ func configDriftCompletion(
 		Contract: contractRef, Kind: kind, Primary: primary,
 		Result: observability.ResultDegraded, ReasonCode: execution.ReasonCode(contract.ReasonConfigDrift),
 	}, cause
+}
+
+// storedStateLabel names the stored state a write-reuse comparison was made
+// against. The two steady states a deployment actually spends its rounds in --
+// a series that keeps recovering and one that never leaves history warming --
+// are both written every round and are separated here, because a single rate
+// over both describes neither.
+func storedStateLabel(status execution.StateLoadStatus) observability.StateWriteReuseStored {
+	switch status {
+	case execution.StateFoundReady:
+		return observability.StateWriteReuseStoredReady
+	case execution.StateFoundWarming:
+		return observability.StateWriteReuseStoredWarming
+	case execution.StateFoundGapped:
+		return observability.StateWriteReuseStoredGapped
+	case execution.StateMissingWarming:
+		return observability.StateWriteReuseStoredMissing
+	default:
+		return observability.StateWriteReuseStoredOther
+	}
 }

@@ -323,6 +323,11 @@ func TestSlotExecutionCoordinatorOrdersRequiredSideEffects(t *testing.T) {
 		observability.StageQueryCompleted,
 		observability.StageSideEffectAdmission,
 		observability.StageMutationCompared,
+		// Two compares: one per mutation, then one carrying the Plan's
+		// write-reuse counts. What this test pins is the order the side effects
+		// are committed in, and that is unchanged -- the second compare sits
+		// inside the same compare phase and writes nothing.
+		observability.StageMutationCompared,
 		observability.StageSideEffectAdmission,
 		observability.StageStateAdmission,
 		observability.StageEventACKed,

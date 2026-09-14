@@ -58,6 +58,11 @@ h1{font-size:15px;margin:0 0 2px}
 .gaps li{border-left:3px solid var(--warn);padding:4px 8px;margin-top:6px;background:rgba(194,129,26,.08);font-size:12px}
 .gaps .kind{font-weight:600}
 .verdict .why{max-width:70ch;line-height:1.45}
+.impact{margin:0 0 12px;line-height:1.6;max-width:78ch}
+.impact .lead{font-size:13px}
+.impact b{font-variant-numeric:tabular-nums}
+.impact .act{color:var(--text);font-weight:600}
+.impact .quiet{color:var(--muted);font-size:11px}
 table{width:100%;border-collapse:collapse;font-size:12px}
 th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 th{color:var(--muted);font-weight:600;white-space:nowrap}
@@ -126,12 +131,16 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
 
   <section class="panel">
     <h2>部署判定</h2>
-    <p class="basis">时间口径：本次请求时刻的聚合快照，非时间窗聚合。</p>
     <div class="verdict">
       <span id="health" class="badge b-UNKNOWN">…</span>
       <span id="why" class="why"></span>
     </div>
-    <p class="basis" id="splitBasis">每个对象只落一栏，各栏相加等于应有总数。</p>
+    <!-- The badge answers "is alarmd well". Nobody opens this page to ask that:
+         they ask whether alerting is working, what is affected and whether to
+         act. Those are different claims and the page was making only the first
+         while reading as though it made both. -->
+    <div id="impact" class="impact"></div>
+    <p class="basis">时间口径：本次请求时刻的聚合快照，非时间窗聚合。<span id="splitBasis"></span></p>
     <div class="grid">
       <div class="cell"><div class="k">正常</div><div class="v" id="healthy">–</div>
         <div class="k">跑完了，结果完整</div></div>
@@ -511,6 +520,7 @@ function renderDeployment(deployment) {
         + '所以还说不清是不是 alarmd 自己的问题，判定停在 UNKNOWN。'
         + '每个对象再跑完一轮就重新有成因，会自己清');
     }
+    renderImpact(deployment.impact);
     // The equation is printed with its own arithmetic rather than asserted in
     // prose. A reader who can only be told the columns partition the objects has
     // no way to notice the day they stop doing so.
@@ -654,6 +664,103 @@ function renderDeployment(deployment) {
     // the page show a verdict from one moment beside occupancy from another.
     show('capErr', false);
     renderCapacity(deployment.capacity, gaps);
+}
+
+// What the verdict costs, in the unit the work is done in.
+//
+// The badge and every cell under it count objects, which are alarmd's own
+// identities. A reader cannot look one up, cannot mention one to whoever
+// configured the strategy, and cannot tell from a count of them whether this is
+// one misconfiguration or fifty. So HEALTHY could sit above 58 demoted objects
+// with nothing on the page saying which alerts are not being raised.
+//
+// Three questions, in the order they get asked: 哪些策略拿不到检测结果、哪些只是
+// 不能自动恢复、要不要现在处理。
+// Normalised at the boundary, so every read of an API field happens on one
+// identifier the field check can be pointed at -- and so a column the response
+// omits renders zeros instead of throwing on a property of undefined.
+function columnImpact(columnFacts) {
+  columnFacts = columnFacts || {};
+  return {objects: columnFacts.objects || 0, strategies: columnFacts.strategies || 0,
+          businesses: columnFacts.businesses || 0, partial: !!columnFacts.partial};
+}
+
+function renderImpact(impact) {
+  var host = document.getElementById('impact');
+  host.textContent = '';
+  if (!impact) { return; }
+  function add(node) { host.appendChild(node); return node; }
+  function line(cls) {
+    var div = document.createElement('div');
+    if (cls) { div.className = cls; }
+    return add(div);
+  }
+  function strong(parent, value) {
+    var b = document.createElement('b');
+    b.textContent = value;
+    parent.appendChild(b);
+    return b;
+  }
+  // Detection is lost for as long as the condition lasts: a demoted object is
+  // not being queried at all, and an object in the to-do column did not produce
+  // a result this round. By-design rounds are excluded -- one round was voided
+  // and the next runs under the new configuration.
+  // The union of the two columns, taken from the response rather than added up
+  // here: a strategy with objects in both is one strategy, and adding overstates
+  // the very number a reader would act on -- by most when the deployment is at
+  // its worst. The two are still named, because they go to different people.
+  var blind = columnImpact(impact.blind);
+  var demoted = columnImpact(impact.demoted), pending = columnImpact(impact.anomalies);
+  var blindStrategies = blind.strategies;
+  var lead = line('lead');
+  if (blindStrategies) {
+    lead.appendChild(document.createTextNode('当前有 '));
+    strong(lead, blindStrategies);
+    lead.appendChild(document.createTextNode(' 条策略拿不到检测结果'));
+    if (blind.businesses) {
+      lead.appendChild(document.createTextNode('（涉及 ' + blind.businesses + ' 个业务）'));
+    }
+    lead.appendChild(document.createTextNode('：后端查不到 ' + demoted.strategies
+      + ' 条，没跑成待查 ' + pending.strategies + ' 条'
+      + (demoted.strategies + pending.strategies > blindStrategies
+          ? '，两边有重合的策略' : '') + '。'));
+  } else {
+    lead.appendChild(document.createTextNode('当前没有策略因为 alarmd 这一侧拿不到检测结果。'));
+  }
+  var undecided = columnImpact(impact.undecidable);
+  if (undecided.strategies) {
+    var rec = line('lead');
+    rec.appendChild(document.createTextNode('另有 '));
+    strong(rec, undecided.strategies);
+    rec.appendChild(document.createTextNode(' 条策略能报异常、但当前无法确认恢复'
+      + '——这些告警报出来之后不会自动关闭。'));
+  }
+  // Whether to act, and by whom. This is the only sentence here that asks
+  // somebody to do something, so it is the only one set apart.
+  var ours = columnImpact(impact.ours);
+  var act = line('act');
+  if (ours.strategies) {
+    act.textContent = '需要 alarmd 这边处理的：' + ours.strategies + ' 条策略（'
+      + ours.objects + ' 个对象）。其余要找策略配置或数据源的人。';
+  } else if (blindStrategies || undecided.strategies) {
+    act.textContent = '这些当前都不指向 alarmd 自己，要找策略配置或数据源的人。';
+  } else {
+    act.textContent = '当前没有需要处理的。';
+  }
+  // What these counts cannot cover. Said here rather than left to be inferred:
+  // a strategy count off a truncated list is a lower bound in the same shape as
+  // an exact one, on the line a reader uses to decide whether to act tonight.
+  var caveats = [];
+  if (blind.partial || undecided.partial) {
+    caveats.push('有副本没能发布完整清单，上面的策略数是下界');
+  }
+  if (impact.no_strategies) {
+    caveats.push('有 ' + impact.no_strategies + ' 个对象没带策略信息'
+      + '（这一轮没取到 Slot，策略是从 Slot 上读的），它们影响到哪些策略这里说不出');
+  }
+  if (caveats.length) {
+    line('quiet').textContent = '（' + caveats.join('；') + '）';
+  }
 }
 
 // One row of the object table.

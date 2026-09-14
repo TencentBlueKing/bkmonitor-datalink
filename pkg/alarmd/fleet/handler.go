@@ -134,6 +134,15 @@ type HealthResponse struct {
 	// verdict cannot be from different reads.
 	Ours         int `json:"ours"`
 	Unattributed int `json:"unattributed"`
+	// Impact is the same population in the unit the work is done in.
+	//
+	// Every other number on this response counts objects, which are this
+	// deployment's own identities -- an operator cannot look one up, cannot
+	// mention one to whoever configured the strategy, and cannot tell from a
+	// count of them whether this is one misconfiguration or fifty. A reader
+	// could see HEALTHY beside 58 demoted objects and still not know which
+	// alerts are not being raised or how many businesses that touches.
+	Impact Impact `json:"impact"`
 	// DemotedDue and the three flow counts are the check on demotion, which is
 	// the one mechanism here that makes a deployment look better by removing
 	// objects from the denominator.
@@ -627,6 +636,7 @@ func NewHandler(
 			UndecidableTotal: view.UndecidableTotal, ByDesignTotal: view.ByDesignTotal,
 			Ours:         OursCount(view.Anomalies),
 			Unattributed: UnattributedCount(view.Anomalies),
+			Impact:       ImpactOf(view),
 			DemotedDue:   view.DemotedDue, DemotionEntries: view.DemotionEntries,
 			DemotionExtensions: view.DemotionExtensions, DemotionExits: view.DemotionExits,
 			LastDemotionExit: view.LastDemotionExit,

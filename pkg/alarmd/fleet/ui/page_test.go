@@ -260,6 +260,15 @@ func TestEveryVerdictFieldThePageReadsExistsInTheAPI(t *testing.T) {
 	assertFieldsExist(t, "deployment", reflect.TypeOf(fleet.HealthResponse{}))
 }
 
+// The impact line is the only thing on the page that answers "what is affected"
+// rather than "how many objects", so a field misspelled there renders a zero
+// that reads as "nothing is affected" -- which is the one wrong answer that
+// makes a reader close the page.
+func TestEveryImpactFieldThePageReadsExistsInTheAPI(t *testing.T) {
+	assertFieldsExist(t, "impact", reflect.TypeOf(fleet.Impact{}))
+	assertFieldsExist(t, "columnFacts", reflect.TypeOf(fleet.ColumnImpact{}))
+}
+
 // The object list is the response the whole table is built from, and it was the
 // one this check could not be pointed at: the page read it into a variable
 // named d, which three unrelated responses also used, so every field of those

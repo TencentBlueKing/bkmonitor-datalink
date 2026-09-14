@@ -191,6 +191,21 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			Health: "HEALTHY", Covered: 979, Determined: 979, Unknown: 0, Healthy: 844,
 			AnomaliesTotal: 86, DemotedTotal: 33, UndecidableTotal: 12, ByDesignTotal: 4,
 			DemotedDue: 2, DemotionEntries: 40, DemotionExits: 7, PerReplica: replicas,
+			// The line that answers "what is affected". Its columns are
+			// truncated and some of its objects name no strategy, because both
+			// are true on the deployment this page is read on and both change
+			// what the counts may be said to mean.
+			Impact: fleet.Impact{
+				Anomalies:   fleet.ColumnImpact{Objects: 86, Strategies: 70, Businesses: 9, Partial: true},
+				Ours:        fleet.ColumnImpact{Objects: 5, Strategies: 4, Businesses: 2, Partial: true},
+				Demoted:     fleet.ColumnImpact{Objects: 33, Strategies: 31, Businesses: 6},
+				Undecidable: fleet.ColumnImpact{Objects: 12, Strategies: 12, Businesses: 3},
+				ByDesign:    fleet.ColumnImpact{Objects: 4, Strategies: 4, Businesses: 1},
+				// Fewer than 31 + 70: a strategy with objects in both columns is
+				// one strategy, which is why this is a field and not a sum.
+				Blind:        fleet.ColumnImpact{Objects: 119, Strategies: 95, Businesses: 11, Partial: true},
+				NoStrategies: 7,
+			},
 		},
 		"per_replica": replicas,
 		"coverage": fleet.Disagreement{Comparable: true, HeldNotExpected: []string{"qg-blocked"},
@@ -224,6 +239,34 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	// throw before reporting on the real ones.
 	if !strings.Contains(text, "negative control threw") {
 		t.Errorf("the harness did not prove it can fail; its clean result is worthless:\n%s", text)
+	}
+	// The one line on the page that answers "what is affected". A reader who
+	// gets no answer here has to assemble it out of five object counts, which is
+	// what they were doing.
+	impactLine := lineStarting(text, "IMPACT ::")
+	if impactLine == "" {
+		t.Error("the impact line rendered nothing: the page answers how many objects and never " +
+			"which alerts")
+	}
+	for _, want := range []string{
+		// The union of the two columns. 31 + 70 is 101, and the fixture's union
+		// is 95 because a strategy with objects in both is one strategy.
+		"95 条策略拿不到检测结果",
+		"11 个业务",
+		// Whether to act, and by whom.
+		"需要 alarmd 这边处理的：4 条策略",
+		// What the counts cannot cover. Both are true of a live deployment and
+		// both change what the numbers may be taken to mean.
+		"是下界",
+		"没带策略信息",
+	} {
+		if !strings.Contains(impactLine, want) {
+			t.Errorf("the impact line does not say %q:\n%s", want, impactLine)
+		}
+	}
+	if strings.Contains(impactLine, "101 条策略") {
+		t.Errorf("the impact line added the two columns instead of taking their union, which "+
+			"overstates the number a reader acts on:\n%s", impactLine)
 	}
 	if !strings.Contains(text, "windowNeverFills agreed on") {
 		t.Errorf("the page's windowNeverFills was never run against the Go rule; the two copies "+
@@ -438,6 +481,13 @@ function el(tag) {
   n.focus = () => {}; n.click = () => {};
   return n;
 }
+// The full rendered text of a node, children included. A node's textContent
+// here is only what was assigned to it directly, and every line the impact
+// block builds is assembled out of appended children.
+function textOf(node) {
+  if (!node) { return ''; }
+  return (node._t || '') + (node.children || []).map(textOf).join('');
+}
 const store = {};
 const document = {getElementById: id => store[id] || (store[id] = el('div')), createElement: el,
   createTextNode: t => { const n = el('#text'); n.textContent = t; return n; },
@@ -513,6 +563,10 @@ for (const column of ['anomalies', 'demoted', 'undecidable', 'by_design']) {
   catch (e) { console.error('attributionLine threw on ' + column + ': ' + e.message); failed++; continue; }
   console.log('WHOSE ' + column + ' :: ' + line);
 }
+
+// The impact line -- the only thing on the page that answers "what is affected"
+// rather than "how many objects".
+console.log('IMPACT :: ' + textOf(store['impact']));
 
 // The count line, on the three states it has to tell apart. A filter narrowing
 // the list is not a replica failing to publish it, and this used to report the

@@ -641,13 +641,13 @@ function loadObjects() {
       // answer existed and we lost it, it comes back next round" -- and the row
       // has to say which. On a live read 8 of 63 degraded objects were in the
       // second case, all of them restored, thirteen minutes after a rollout.
-      cell(missingCauseText(a) || causeText(anomaly.cause));
+      cell(missingCauseText(anomaly) || causeText(anomaly.cause));
       // The cause stops one level short of the answer. LEVEL_OUTCOME_UNKNOWN is
       // required by contract to carry a reason of either the coverage class --
       // the data does not reach this window, which is nobody here's doing -- or
       // the retryable class, which clears on its own. Showing the cause alone
       // made 61 of 62 objects one indistinguishable population.
-      var reason = cell(anomaly.cause_reason || missingCauseText(a) || '—');
+      var reason = cell(anomaly.cause_reason || missingCauseText(anomaly) || '—');
       if (anomaly.cause_reason) { reason.title = anomaly.cause_reason; }
       // The symptom was only in the summary line, so a reader could see that 53
       // of 55 hit one thing and still not tell which one this row is. It is the

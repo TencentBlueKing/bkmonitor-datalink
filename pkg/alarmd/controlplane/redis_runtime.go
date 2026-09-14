@@ -1869,10 +1869,25 @@ func (runtime *RedisCatalogRuntime) NextSlotAfter(
 	completed execution.EvaluationTime,
 ) (execution.EvaluationTime, error) {
 	segment, err := runtime.readPersistedSegment(ctx, queryGroup, completed)
+	containsCompletion := true
+	if errors.Is(err, ErrScheduleUnavailable) {
+		// No Segment holds the anchor. That is the timeline's doing, not the
+		// Worker's: a retirement closes the open Segment at the activation's
+		// own second, and a Slot begun on it in that same second, then
+		// abandoned by the return, leaves its time in the hole between the
+		// closed Segment and the reactivated one; a pruned prefix leaves an
+		// old anchor before the first retained Segment the same way. The
+		// Slots between the anchor and the next Segment never existed on the
+		// timeline, so the continuation is that Segment's first Slot, the way
+		// a retired Segment's end continues into its successor. Refusing
+		// here instead failed every BeginSlot of the Query Group with the
+		// same error for as long as the anchor stood, and nothing moved it.
+		segment, err = runtime.readPersistedSegmentAfter(ctx, queryGroup, completed)
+		containsCompletion = false
+	}
 	if err != nil {
 		return 0, err
 	}
-	containsCompletion := true
 	for {
 		var next execution.EvaluationTime
 		var ok bool
@@ -1904,6 +1919,29 @@ func (runtime *RedisCatalogRuntime) NextSlotAfter(
 		segment = successor
 		containsCompletion = false
 	}
+}
+
+// readPersistedSegmentAfter returns the earliest Segment that starts after
+// evaluationTime, for an anchor no Segment holds. Segments are kept in time
+// order, so the first one past the anchor is the continuation.
+func (runtime *RedisCatalogRuntime) readPersistedSegmentAfter(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	evaluationTime execution.EvaluationTime,
+) (persistedScheduleSegment, error) {
+	if runtime == nil || runtime.repository == nil || evaluationTime <= 0 {
+		return persistedScheduleSegment{}, errors.New("alarmd controlplane: valid Catalog runtime and EvaluationTime are required")
+	}
+	timeline, err := runtime.repository.loadScheduleTimeline(ctx, queryGroup)
+	if err != nil {
+		return persistedScheduleSegment{}, err
+	}
+	for _, segment := range timeline.Segments {
+		if segment.Schedule.Segment.Start > evaluationTime {
+			return segment, nil
+		}
+	}
+	return persistedScheduleSegment{}, ErrScheduleUnavailable
 }
 
 func (runtime *RedisCatalogRuntime) readPersistedSuccessor(

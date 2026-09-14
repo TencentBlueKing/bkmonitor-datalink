@@ -690,7 +690,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			if agg != nil {
 				reverse.SubAggregation(name, agg)
 			}
-			terms := elastic.NewTermsAggregation().Field("tags.value.raw").Size(1440).
+			terms := elastic.NewTermsAggregation().Field("tags.value.raw").Size(1440).ShowTermDocCountError(true).
 				SubAggregation("_reverse", reverse)
 			if f.size > 0 {
 				terms.Size(f.size)
@@ -860,6 +860,9 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				field += ".raw"
 			}
 			curAgg := elastic.NewTermsAggregation().Field(field)
+			if f.fieldSemantics == metadata.FTAEventTagsV1 {
+				curAgg.ShowTermDocCountError(true)
+			}
 			fieldType := f.GetFieldType(info.Name)
 			if f.fieldSemantics == "" && (fieldType == "" || fieldType == Text || fieldType == KeyWord) {
 				curAgg = curAgg.Missing(" ")

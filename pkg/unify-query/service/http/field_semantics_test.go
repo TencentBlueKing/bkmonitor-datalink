@@ -60,12 +60,17 @@ func TestFTAAlarmdWireHandlerAcknowledgement(t *testing.T) {
 		name, flags, aggregations string
 		wantACK                   bool
 	}{
-		{"data", ``, `"tags.host":{"key":{"value":{"buckets":[{"key":"host-1","_reverse":{"time":{"buckets":[{"key":1789369260000,"doc_count":2,"_value":{"value":2}}]}}}]}}}`, true},
-		{"empty", ``, `"tags.host":{"key":{"value":{"buckets":[]}}}`, true},
-		{"timedout", `"timed_out":true,`, `"tags.host":{"key":{"value":{"buckets":[]}}}`, false},
-		{"terminated", `"terminated_early":true,`, `"tags.host":{"key":{"value":{"buckets":[]}}}`, false},
-		{"shardfailed", `"_shards":{"total":2,"successful":1,"failed":1},`, `"tags.host":{"key":{"value":{"buckets":[]}}}`, false},
+		{"data", ``, `"tags.host":{"key":{"value":{"sum_other_doc_count":0,"doc_count_error_upper_bound":0,"buckets":[{"key":"host-1","doc_count_error_upper_bound":0,"_reverse":{"time":{"buckets":[{"key":1789369260000,"doc_count":2,"_value":{"value":2}}]}}}]}}}`, true},
+		{"empty", ``, `"tags.host":{"key":{"value":{"sum_other_doc_count":0,"doc_count_error_upper_bound":0,"buckets":[]}}}`, true},
+		{"timedout", `"timed_out":true,`, `"tags.host":{"key":{"value":{"sum_other_doc_count":0,"doc_count_error_upper_bound":0,"buckets":[]}}}`, false},
+		{"terminated", `"terminated_early":true,`, `"tags.host":{"key":{"value":{"sum_other_doc_count":0,"doc_count_error_upper_bound":0,"buckets":[]}}}`, false},
+		{"shardfailed", `"_shards":{"total":2,"successful":1,"failed":1},`, `"tags.host":{"key":{"value":{"sum_other_doc_count":0,"doc_count_error_upper_bound":0,"buckets":[]}}}`, false},
 		{"malformed", ``, ``, false},
+		{"truncated", ``, `"tags.host":{"key":{"value":{"sum_other_doc_count":7,"doc_count_error_upper_bound":0,"buckets":[{"key":"host-1","doc_count_error_upper_bound":0,"_reverse":{"time":{"buckets":[{"key":1789369260000,"doc_count":2,"_value":{"value":2}}]}}}]}}}`, false},
+		{"count_error", ``, `"tags.host":{"key":{"value":{"sum_other_doc_count":0,"doc_count_error_upper_bound":3,"buckets":[]}}}`, false},
+		{"unknown_error", ``, `"tags.host":{"key":{"value":{"sum_other_doc_count":0,"doc_count_error_upper_bound":-1,"buckets":[]}}}`, false},
+		{"missing_completeness", ``, `"tags.host":{"key":{"value":{"buckets":[]}}}`, false},
+		{"bucket_error", ``, `"tags.host":{"key":{"value":{"sum_other_doc_count":0,"doc_count_error_upper_bound":0,"buckets":[{"key":"host-1","doc_count_error_upper_bound":2,"_reverse":{"time":{"buckets":[{"key":1789369260000,"doc_count":2,"_value":{"value":2}}]}}}]}}}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
@@ -79,6 +84,7 @@ func TestFTAAlarmdWireHandlerAcknowledgement(t *testing.T) {
 				require.Contains(t, string(dsl), `"nested"`)
 				require.Contains(t, string(dsl), `"tags.key":"host"`)
 				require.Contains(t, string(dsl), `"status"`)
+				require.Contains(t, string(dsl), `"show_term_doc_count_error":true`)
 				return httpmock.NewStringResponse(200, `{`+tc.flags+`"aggregations":{`+tc.aggregations+`}}`), nil
 			})
 			rec := httptest.NewRecorder()
@@ -103,6 +109,7 @@ func TestFTAAlarmdWireHandlerAcknowledgement(t *testing.T) {
 				}
 			} else {
 				require.Empty(t, rec.Header().Get(fieldSemanticsHeader), rec.Body.String())
+				require.NotContains(t, rec.Body.String(), `"is_partial":false`, "incomplete results cannot appear complete")
 			}
 		})
 	}

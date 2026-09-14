@@ -61,7 +61,7 @@ func TestFTAKeyedTagCrossGrouping(t *testing.T) {
 	  "aggregations": {"key": {
 	    "filter": {"term": {"tags.key": "team"}},
 	    "aggregations": {"value": {
-	      "terms": {"field": "tags.value.raw", "size": 1440},
+	      "terms": {"field": "tags.value.raw", "size": 1440, "show_term_doc_count_error": true},
 	      "aggregations": {"_reverse": {
 	        "reverse_nested": {},
 	        "aggregations": {"tags.env": {
@@ -69,7 +69,7 @@ func TestFTAKeyedTagCrossGrouping(t *testing.T) {
 	          "aggregations": {"key": {
 	            "filter": {"term": {"tags.key": "env"}},
 	            "aggregations": {"value": {
-	              "terms": {"field": "tags.value.raw", "size": 1440},
+	              "terms": {"field": "tags.value.raw", "size": 1440, "show_term_doc_count_error": true},
 	              "aggregations": {"_reverse": {
 	                "reverse_nested": {},
 	                "aggregations": {"_value": {"value_count": {"field": "_index"}}}
@@ -82,7 +82,7 @@ func TestFTAKeyedTagCrossGrouping(t *testing.T) {
 	  }}
 	}`, string(b))
 	var response elastic.SearchResult
-	require.NoError(t, json.Unmarshal([]byte(`{"aggregations":{"tags.team":{"doc_count":9,"key":{"doc_count":3,"value":{"buckets":[{"key":"prod","doc_count":2,"_reverse":{"doc_count":2,"tags.env":{"doc_count":4,"key":{"doc_count":2,"value":{"buckets":[{"key":"prod","doc_count":1,"_reverse":{"doc_count":1,"_value":{"value":1}}},{"key":"dev","doc_count":1,"_reverse":{"doc_count":1,"_value":{"value":1}}}]}}}}},{"key":"empty","doc_count":1,"_reverse":{"doc_count":1,"tags.env":{"doc_count":1,"key":{"doc_count":0,"value":{"buckets":[]}}}}}]}}}}}`), &response))
+	require.NoError(t, json.Unmarshal([]byte(`{"aggregations":{"tags.team":{"doc_count":9,"key":{"doc_count":3,"value":{"sum_other_doc_count":0,"doc_count_error_upper_bound":0,"buckets":[{"key":"prod","doc_count_error_upper_bound":0,"doc_count":2,"_reverse":{"doc_count":2,"tags.env":{"doc_count":4,"key":{"doc_count":2,"value":{"sum_other_doc_count":0,"doc_count_error_upper_bound":0,"buckets":[{"key":"prod","doc_count_error_upper_bound":0,"doc_count":1,"_reverse":{"doc_count":1,"_value":{"value":1}}},{"key":"dev","doc_count_error_upper_bound":0,"doc_count":1,"_reverse":{"doc_count":1,"_value":{"value":1}}}]}}}}},{"key":"empty","doc_count_error_upper_bound":0,"doc_count":1,"_reverse":{"doc_count":1,"tags.env":{"doc_count":1,"key":{"doc_count":0,"value":{"sum_other_doc_count":0,"doc_count_error_upper_bound":0,"buckets":[]}}}}}]}}}}}`), &response))
 	result, err := f.AggDataFormat(response.Aggregations, nil)
 	require.NoError(t, err)
 	require.Len(t, result.Timeseries, 2)
@@ -170,7 +170,7 @@ func TestFTANormalDimensionKeepsLogicalName(t *testing.T) {
 	require.NoError(t, err)
 	b, err := json.Marshal(s)
 	require.NoError(t, err)
-	require.JSONEq(t, `{"terms":{"field":"alert_name.raw","size":1440},"aggregations":{"_value":{"value_count":{"field":"_index"}}}}`, string(b))
+	require.JSONEq(t, `{"terms":{"field":"alert_name.raw","size":1440,"show_term_doc_count_error":true},"aggregations":{"_value":{"value_count":{"field":"_index"}}}}`, string(b))
 }
 
 func TestFTASourceFiltersPreserveUserShould(t *testing.T) {
@@ -236,8 +236,8 @@ func TestFTARejectsMalformedAggregations(t *testing.T) {
 	for _, body := range []string{
 		`{}`, `{"tags.env":{}}`, `{"tags.env":{"key":{}}}`,
 		`{"tags.env":{"key":{"value":{}}}}`,
-		`{"tags.env":{"key":{"value":{"buckets":[{"key":"prod"}]}}}}`,
-		`{"tags.env":{"key":{"value":{"buckets":[{"key":"prod","_reverse":{}}]}}}}`,
+		`{"tags.env":{"key":{"value":{"sum_other_doc_count":0,"doc_count_error_upper_bound":0,"buckets":[{"key":"prod","doc_count_error_upper_bound":0}]}}}}`,
+		`{"tags.env":{"key":{"value":{"sum_other_doc_count":0,"doc_count_error_upper_bound":0,"buckets":[{"key":"prod","doc_count_error_upper_bound":0,"_reverse":{}}]}}}}`,
 	} {
 		var data elastic.Aggregations
 		require.NoError(t, json.Unmarshal([]byte(body), &data))
@@ -245,7 +245,7 @@ func TestFTARejectsMalformedAggregations(t *testing.T) {
 		require.Error(t, err, body)
 	}
 	var data elastic.Aggregations
-	require.NoError(t, json.Unmarshal([]byte(`{"tags.env":{"key":{"value":{"buckets":[]}}}}`), &data))
+	require.NoError(t, json.Unmarshal([]byte(`{"tags.env":{"key":{"value":{"sum_other_doc_count":0,"doc_count_error_upper_bound":0,"buckets":[]}}}}`), &data))
 	result, err := f.AggDataFormat(data, nil)
 	require.NoError(t, err)
 	require.Empty(t, result.Timeseries)

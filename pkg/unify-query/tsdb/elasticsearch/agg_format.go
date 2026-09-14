@@ -189,6 +189,9 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 			if !ok {
 				return fmt.Errorf("missing FTA keyed tag aggregation %q", info.Name)
 			}
+			if err := validateFTATermsCompleteness(filter.Aggregations["value"]); err != nil {
+				return fmt.Errorf("FTA tag aggregation %q: %w", info.Name, err)
+			}
 			values, ok := filter.Aggregations.Range("value")
 			if !ok || values.Buckets == nil {
 				return fmt.Errorf("missing FTA keyed tag aggregation %q", info.Name)
@@ -212,6 +215,11 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 				}
 			}
 		case TermAgg:
+			if a.strict {
+				if err := validateFTATermsCompleteness(data[info.Name]); err != nil {
+					return fmt.Errorf("FTA terms aggregation %q: %w", info.Name, err)
+				}
+			}
 			if bucketRangeItems, ok := data.Range(info.Name); ok {
 				if len(bucketRangeItems.Buckets) == 0 {
 					return nil

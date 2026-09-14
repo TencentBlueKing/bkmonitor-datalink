@@ -352,6 +352,36 @@ func TestDrainingQueryGroupLogCarriesBoundedDiagnosticFacts(t *testing.T) {
 	}
 }
 
+// A rebalance plan's moves reach the log one by one, so a plan can be
+// checked against the Assignments by hand; the shadow still publishes none.
+func TestRebalancePlanLogNamesEveryMove(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := NewBoundedLogPolicy(limiter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+		Component: ComponentOwnership, Stage: StageRebalancePlanned, Result: ResultSuccess, Operation: OperationLoad,
+		Rebalance: &RebalanceFacts{ReadyWorkers: 2, Assigned: 3, Target: 1, MostOwned: 3, LeastOwned: 0, Batch: 1, PlannedMoves: 1,
+			Owned: []RebalanceOwnedSample{{WorkerID: "worker-1", Owned: 3}, {WorkerID: "worker-2", Owned: 0}},
+			Moves: []RebalanceMoveSample{{QueryGroup: "query-group-1", From: "worker-1", To: "worker-2"}}},
+	})
+	for _, want := range []string{
+		`"rebalance_planned_moves":1`, `"rebalance_moves_truncated":false`,
+		`"rebalance_moves":[{"query_group":"query-group-1","from":"worker-1","to":"worker-2"}]`,
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("rebalance log %s does not contain %s", output.String(), want)
+		}
+	}
+}
+
 func TestObservationLoggerUsesBoundedEnvelope(t *testing.T) {
 	t.Parallel()
 

@@ -150,6 +150,9 @@ func TestProductionPhaseTwoOwnershipReportsARebalancePlanWithoutPublishingIt(t *
 		want := &observability.RebalanceFacts{
 			ReadyWorkers: 2, Assigned: 3, Target: 1, MostOwned: 3, LeastOwned: 0, Batch: 1, PlannedMoves: 1,
 			Owned: []observability.RebalanceOwnedSample{{WorkerID: "worker-1", Owned: 3}, {WorkerID: "worker-2", Owned: 0}},
+			// The one move is named: the first Query Group by identity, from
+			// the worker that owns everything to the one that owns nothing.
+			Moves: []observability.RebalanceMoveSample{{QueryGroup: "query-group-1", From: "worker-1", To: "worker-2"}},
 		}
 		if !reflect.DeepEqual(reports[0].Rebalance, want) {
 			t.Fatalf("rebalance facts = %+v, want %+v", reports[0].Rebalance, want)

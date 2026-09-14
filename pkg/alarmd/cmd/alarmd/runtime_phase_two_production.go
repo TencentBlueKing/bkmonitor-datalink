@@ -1245,8 +1245,9 @@ func (runtime *productionPhaseTwoOwnership) PublishAssignments(
 // planRebalance reports what one rebalance round would move given the
 // desired owners this round just reconciled and the ready set it reconciled
 // them against, so the plan and the round agree on who is ready. It only
-// computes: the plan is observed for the shadow period and nothing
-// publishes its moves, so the reconcile above stays the only writer of
+// computes: the plan is observed for the shadow period, moves named one by
+// one so that a plan can be checked against the Assignments by hand, and
+// nothing publishes them, so the reconcile above stays the only writer of
 // Assignments.
 func (runtime *productionPhaseTwoOwnership) planRebalance(
 	ctx context.Context,
@@ -1266,6 +1267,9 @@ func (runtime *productionPhaseTwoOwnership) planRebalance(
 	sort.Strings(workerIDs)
 	for _, workerID := range workerIDs {
 		facts.Owned = append(facts.Owned, observability.RebalanceOwnedSample{WorkerID: workerID, Owned: plan.Owned[workerID]})
+	}
+	for _, move := range plan.Moves {
+		facts.Moves = append(facts.Moves, observability.RebalanceMoveSample{QueryGroup: string(move.QueryGroup), From: move.From, To: move.To})
 	}
 	observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
 		Component: observability.ComponentOwnership, Stage: observability.StageRebalancePlanned,

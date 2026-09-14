@@ -1261,43 +1261,90 @@ const (
 	StateWriteReuseChanged StateWriteReuse = "changed"
 )
 
+// StateWriteChangeReason names the first field a comparison found different.
+// A class alone cannot be acted on: "changed" covers both a decision that truly
+// moved, which would end the case for skipping the write, and a field that
+// should never have been counted as part of the decision, which would mean the
+// predicate is wrong rather than the idea. Those two point at opposite actions
+// and are indistinguishable without the field name.
+type StateWriteChangeReason string
+
+const (
+	StateWriteChangeNone          StateWriteChangeReason = "none"
+	StateWriteChangeLevelCount    StateWriteChangeReason = "level_count"
+	StateWriteChangeLevelMissing  StateWriteChangeReason = "level_missing"
+	StateWriteChangeCompatibility StateWriteChangeReason = "level_compatibility"
+	StateWriteChangeCompleteness  StateWriteChangeReason = "history_completeness"
+	StateWriteChangeGapReason     StateWriteChangeReason = "gap_reason"
+	StateWriteChangeWarmupRef     StateWriteChangeReason = "warmup_ref"
+	StateWriteChangeProcessedTime StateWriteChangeReason = "processed_time"
+	StateWriteChangeSeriesGuard   StateWriteChangeReason = "series_guard"
+	StateWriteChangeReasonOther   StateWriteChangeReason = "other"
+)
+
+// AllStateWriteChangeReasons is the complete bounded set, "other" included.
+func AllStateWriteChangeReasons() []StateWriteChangeReason {
+	return []StateWriteChangeReason{
+		StateWriteChangeNone, StateWriteChangeLevelCount, StateWriteChangeLevelMissing,
+		StateWriteChangeCompatibility, StateWriteChangeCompleteness, StateWriteChangeGapReason,
+		StateWriteChangeWarmupRef, StateWriteChangeProcessedTime, StateWriteChangeSeriesGuard,
+		StateWriteChangeReasonOther,
+	}
+}
+
 // ClassifyStateWriteReuse compares a mutation against the state the preflight
 // witnessed for the same key. It reports only what the comparison supports and
 // never that a write may be skipped: the two are not the same claim while the
 // stored window is the only source of the retention history.
-func ClassifyStateWriteReuse(view RuntimeStateView, mutation StateMutation) StateWriteReuse {
+//
+// The reason is the first field found different, in a fixed order, and is
+// meaningful only when the class is changed.
+func ClassifyStateWriteReuse(view RuntimeStateView, mutation StateMutation) (StateWriteReuse, StateWriteChangeReason) {
 	if view.PersistedMutationDigest == "" {
-		return StateWriteReuseUnobserved
+		return StateWriteReuseUnobserved, StateWriteChangeNone
 	}
 	if view.PersistedMutationDigest == mutation.MutationDigest {
-		return StateWriteReuseIdentical
+		return StateWriteReuseIdentical, StateWriteChangeNone
 	}
-	if decisionStateUnchanged(view, mutation) {
-		return StateWriteReuseDecisionStable
+	if reason := decisionStateChange(view, mutation); reason != StateWriteChangeNone {
+		return StateWriteReuseChanged, reason
 	}
-	return StateWriteReuseChanged
+	return StateWriteReuseDecisionStable, StateWriteChangeNone
 }
 
-// decisionStateUnchanged compares every field of the persisted Level state and
-// the series guard. It compares fields rather than a digest because there is
-// no digest over this subset: adding one would be a second construction of the
-// same fact, and the two could disagree.
-func decisionStateUnchanged(view RuntimeStateView, mutation StateMutation) bool {
+// decisionStateChange names the first difference between the persisted Level
+// state and the one about to be written, or none. It compares fields rather
+// than a digest because there is no digest over this subset: adding one would
+// be a second construction of the same fact, and the two could disagree.
+//
+// The field order is fixed so that the reported reason is reproducible. A
+// mutation differing in several fields reports the first in this order, which
+// means the counts are "first difference", not "how many differ".
+func decisionStateChange(view RuntimeStateView, mutation StateMutation) StateWriteChangeReason {
 	if len(view.Levels) != len(mutation.Levels) {
-		return false
+		return StateWriteChangeLevelCount
 	}
 	for _, level := range mutation.Levels {
 		stored, found := findPersistedLevel(view.Levels, level.LevelID)
-		if !found ||
-			stored.LevelStateCompatibility != level.LevelStateCompatibility ||
-			stored.HistoryCompleteness != level.HistoryCompleteness ||
-			stored.GapReasonCode != level.GapReasonCode ||
-			stored.WarmupRequirementRef != level.WarmupRequirementRef ||
-			stored.LastProcessedEventTime != level.LastProcessedEventTime {
-			return false
+		switch {
+		case !found:
+			return StateWriteChangeLevelMissing
+		case stored.LevelStateCompatibility != level.LevelStateCompatibility:
+			return StateWriteChangeCompatibility
+		case stored.HistoryCompleteness != level.HistoryCompleteness:
+			return StateWriteChangeCompleteness
+		case stored.GapReasonCode != level.GapReasonCode:
+			return StateWriteChangeGapReason
+		case stored.WarmupRequirementRef != level.WarmupRequirementRef:
+			return StateWriteChangeWarmupRef
+		case stored.LastProcessedEventTime != level.LastProcessedEventTime:
+			return StateWriteChangeProcessedTime
 		}
 	}
-	return seriesGuardUnchanged(view.SeriesGuard, mutation.SeriesGuard)
+	if !seriesGuardUnchanged(view.SeriesGuard, mutation.SeriesGuard) {
+		return StateWriteChangeSeriesGuard
+	}
+	return StateWriteChangeNone
 }
 
 func findPersistedLevel(levels []RuntimeLevelStateView, id uint32) (RuntimeLevelStateView, bool) {

@@ -14,16 +14,18 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// heapSiteBallast keeps what retainHeapSiteBallast allocated alive across the
-// profile read; a local would be dead before the collector runs.
+// heapSiteBallast keeps what the ballast functions allocated alive across the
+// profile read; a local would be dead before the collector runs. The tests
+// append to it themselves, so that the ballast functions allocate exactly
+// one object each and their sites can be checked for exactly one.
 var heapSiteBallast [][]byte
 
-func retainHeapSiteBallast(size int) {
+func retainHeapSiteBallast(size int) []byte {
 	block := make([]byte, size)
 	for index := 0; index < len(block); index += 4096 {
 		block[index] = 1
 	}
-	heapSiteBallast = append(heapSiteBallast, block)
+	return block
 }
 
 func gatherHeapSites(t *testing.T, collector prometheus.Collector) map[string]map[string]float64 {
@@ -60,7 +62,7 @@ func gatherHeapSites(t *testing.T, collector prometheus.Collector) map[string]ma
 // both totals it is read against must be at least that large.
 func TestHeapSitesChargeAPlantedRetentionToTheFunctionThatAllocatedIt(t *testing.T) {
 	const size = 64 << 20
-	retainHeapSiteBallast(size)
+	heapSiteBallast = append(heapSiteBallast, retainHeapSiteBallast(size))
 	t.Cleanup(func() { heapSiteBallast = nil })
 	runtime.GC()
 
@@ -88,6 +90,46 @@ func TestHeapSitesChargeAPlantedRetentionToTheFunctionThatAllocatedIt(t *testing
 	}
 	if records := gathered["bkmonitor_alarmd_heap_inuse_profile_records"][""]; records < 1 {
 		t.Fatalf("profile records %.0f", records)
+	}
+}
+
+// retainHeapSiteReplacement is the second holder of the planted oscillation:
+// what it allocates is live now, and what retainHeapSiteBallast allocated
+// before it is dead.
+func retainHeapSiteReplacement(size int) []byte {
+	block := make([]byte, size)
+	for index := 0; index < len(block); index += 4096 {
+		block[index] = 2
+	}
+	return block
+}
+
+// The instrument must describe the heap as it is, not as it was two
+// collections ago. The oscillation the reference deployment showed is
+// planted: sixty-four megabytes retained and collected, then dropped and
+// replaced by sixty-four megabytes from another function with no collection
+// in between. An instrument that does not force a collection reports the
+// dead ballast and misses the live replacement; this one reports the
+// replacement, and its two totals agree.
+func TestHeapSitesDescribeThePresentHeapNotTheProfileOfTwoCollectionsAgo(t *testing.T) {
+	const size = 64 << 20
+	heapSiteBallast = append(heapSiteBallast, retainHeapSiteBallast(size))
+	t.Cleanup(func() { heapSiteBallast = nil })
+	runtime.GC()
+	heapSiteBallast = []([]byte){retainHeapSiteReplacement(size)}
+
+	gathered := gatherHeapSites(t, newHeapSiteCollector(time.Now))
+	sites := gathered["bkmonitor_alarmd_heap_inuse_site_bytes"]
+	if got := sites["metric.retainHeapSiteReplacement"]; got < size || got > size*1.1 {
+		t.Fatalf("the live replacement was charged %.0f bytes, want about %d; sites: %v", got, size, sites)
+	}
+	if dead := sites["metric.retainHeapSiteBallast"]; dead >= size/2 {
+		t.Fatalf("the dropped ballast is still charged %.0f bytes", dead)
+	}
+	profiled := gathered["bkmonitor_alarmd_heap_inuse_profiled_bytes"][""]
+	live := gathered["bkmonitor_alarmd_heap_inuse_live_bytes"][""]
+	if ratio := profiled / live; ratio < 0.8 || ratio > 1.25 {
+		t.Fatalf("profiled %.0f over live %.0f = %.2f, want the two totals to describe the same cycle", profiled, live, ratio)
 	}
 }
 

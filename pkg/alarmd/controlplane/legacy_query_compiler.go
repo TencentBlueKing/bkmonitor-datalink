@@ -91,6 +91,8 @@ func cloneStringsPreservingNil(values []string) []string {
 }
 
 type legacyQueryConfig struct {
+	AlertName       string            `json:"alert_name"`
+	IndexSetID      json.RawMessage   `json:"index_set_id"`
 	PromQL          string            `json:"promql"`
 	CustomEventName string            `json:"custom_event_name"`
 	DataSourceLabel string            `json:"data_source_label"`
@@ -171,7 +173,7 @@ func (compiler *LegacyPrimaryQueryCompiler) CompilePrimaryQuery(_ context.Contex
 			return execution.QueryPlanFacts{}, queryUnsupported("QUERY_MIXED_PROMQL_NOT_MIGRATED", nil)
 		}
 		if config.DataSourceLabel == "bk_data" && len(strings.TrimSpace(source.Expression)) <= 1 {
-			return execution.QueryPlanFacts{}, queryUnsupported("QUERY_BK_DATA_DIRECT_NOT_MIGRATED", nil)
+			return execution.QueryPlanFacts{}, queryUnsupported("QUERY_BK_DATA_LOCAL_TIME_NOT_MIGRATED", nil)
 		}
 		clauses, err := compiler.compilePollingQueryConfig(config, source.Identity.BusinessID)
 		if err != nil {
@@ -231,10 +233,20 @@ func (compiler *LegacyPrimaryQueryCompiler) CompilePrimaryQuery(_ context.Contex
 	if err != nil {
 		return execution.QueryPlanFacts{}, err
 	}
-	normalization.DimensionAliases = aliases
-	normalization, err = freezePollingNormalization(normalization, sourceSemantics)
-	if err != nil {
-		return execution.QueryPlanFacts{}, err
+	legacyOnly := true
+	for _, label := range sourceSemantics {
+		if label != "bk_monitor/time_series" {
+			legacyOnly = false
+		}
+	}
+	if legacyOnly {
+		sourceSemantics = nil
+	} else {
+		normalization.DimensionAliases = aliases
+		normalization, err = freezePollingNormalization(normalization, sourceSemantics)
+		if err != nil {
+			return execution.QueryPlanFacts{}, err
+		}
 	}
 	facts, err := execution.BuildQueryPlanFacts(execution.QueryPlanFacts{
 		SourceSemantics: sourceSemantics, TSDBMap: storages, QueryDelaySeconds: delay,

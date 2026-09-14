@@ -3,6 +3,9 @@ package controlplane
 import (
 	"encoding/json"
 	"fmt"
+	"html"
+	"math/big"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,6 +40,7 @@ func pollingSourceSupported(c legacyQueryConfig) bool {
 }
 
 func freezePollingNormalization(n execution.DatasetNormalizationSpec, sources []string) (execution.DatasetNormalizationSpec, error) {
+	n.Version = "uq-polling-normalization-v1"
 	// Source-specific field mapping and dynamic identity are part of the frozen
 	// dataset identity, even when two providers happen to emit identical clauses.
 	digest, err := contract.DeriveCanonicalDigestV2("alarmd-polling-normalization-v1", struct {
@@ -160,8 +164,19 @@ func (compiler *LegacyPrimaryQueryCompiler) compilePollingQueryConfig(c legacyQu
 	c.Values = nil
 	c.DataLabel = ""
 	if c.DataSourceLabel == "bk_log_search" {
-		c.ResultTableID = "bklog_index_set_" + c.ResultTableID
-		if strings.Contains(c.QueryString, "__dist_05") {
+		indexSet, err := pythonStringScalar(c.IndexSetID)
+		if err != nil || indexSet == "" || indexSet == "None" {
+			return nil, queryConfigRejected("QUERY_LOG_INDEX_SET_MISSING", err)
+		}
+		c.ResultTableID = "bklog_index_set_" + indexSet
+		c.QueryString = logSearchQueryString(c.QueryString)
+		clustered := strings.Contains(c.QueryString, "__dist_05")
+		for _, condition := range c.AggConditions {
+			if strings.HasPrefix(condition.Key, "__dist") {
+				clustered = true
+			}
+		}
+		if clustered {
 			c.ResultTableID += "_clustered"
 		}
 		if c.TimeField == "" {
@@ -181,7 +196,7 @@ func (compiler *LegacyPrimaryQueryCompiler) compilePollingQueryConfig(c legacyQu
 				c.AggConditions = append(c.AggConditions, scalarCondition("event_name", "eq", c.CustomEventName))
 			}
 			// Constructor-injected recovery filtering is a dimensions field.
-			c.AggConditions = append(c.AggConditions, scalarCondition("dimensions.event_type", "neq", "RECOVERY"))
+			c.AggConditions = append(c.AggConditions, scalarCondition("dimensions.event_type", "neq", "recovery"))
 		} else {
 			c.MetricField = "event.count"
 			if strings.EqualFold(c.AggMethod, "COUNT") {
@@ -216,6 +231,14 @@ func (compiler *LegacyPrimaryQueryCompiler) compilePollingQueryConfig(c legacyQu
 			clauses[i].DataSource = "bklog"
 		}
 		method := strings.ToLower(c.AggMethod)
+		if len(clauses[i].Functions) > 0 {
+			switch method {
+			case "avg":
+				clauses[i].Functions[0].Method = "avg"
+			case "distinct":
+				clauses[i].Functions[0].Method = "cardinality"
+			}
+		}
 		if strings.HasPrefix(method, "cp") && len(clauses[i].Functions) > 0 {
 			percent, err := strconv.Atoi(strings.TrimPrefix(method, "cp"))
 			if err != nil {
@@ -239,7 +262,7 @@ func compileLogConditions(source []legacyCondition) (execution.QueryConditions, 
 	if err != nil {
 		return result, err
 	}
-	mapping := map[string]string{"reg": "req", "nreg": "nreq", "neq": "ne", "exists": "existed", "nexists": "nexisted", "include": "contains", "exclude": "ncontains"}
+	mapping := map[string]string{"reg": "req", "regexp": "req", "is one of": "eq", "is not one of": "ne", "contains match phrase": "contains", "not contains match phrase": "ncontains", "=": "eq", "!=": "ne", "is": "eq", "is not": "ne", ">": "gt", ">=": "gte", "<": "lt", "<=": "lte", "nreg": "nreq", "neq": "ne", "exists": "existed", "nexists": "nexisted", "include": "contains", "exclude": "ncontains"}
 	for i, original := range source {
 		result.Fields[i].Operator = original.Method
 		if op := mapping[original.Method]; op != "" {
@@ -249,11 +272,69 @@ func compileLogConditions(source []legacyCondition) (execution.QueryConditions, 
 	return result, nil
 }
 
+func compileFTAConditions(source []legacyCondition) (execution.QueryConditions, error) {
+	normalized := append([]legacyCondition(nil), source...)
+	for i, condition := range normalized {
+		if condition.Method != "gt" && condition.Method != "gte" && condition.Method != "lt" && condition.Method != "lte" {
+			continue
+		}
+		var values []any
+		decoder := json.NewDecoder(strings.NewReader(string(condition.Value)))
+		decoder.UseNumber()
+		if err := decoder.Decode(&values); err != nil || len(values) == 0 {
+			return execution.QueryConditions{}, fmt.Errorf("FTA range requires nonempty scalar list")
+		}
+		bound := values[0]
+		for _, candidate := range values[1:] {
+			var comparison int
+			switch left := bound.(type) {
+			case json.Number:
+				right, ok := candidate.(json.Number)
+				if !ok {
+					return execution.QueryConditions{}, fmt.Errorf("FTA range mixes incomparable scalar types")
+				}
+				l, ok := new(big.Rat).SetString(left.String())
+				if !ok {
+					return execution.QueryConditions{}, fmt.Errorf("FTA numeric bound invalid")
+				}
+				r, ok := new(big.Rat).SetString(right.String())
+				if !ok {
+					return execution.QueryConditions{}, fmt.Errorf("FTA numeric bound invalid")
+				}
+				comparison = l.Cmp(r)
+			case string:
+				right, ok := candidate.(string)
+				if !ok {
+					return execution.QueryConditions{}, fmt.Errorf("FTA range mixes incomparable scalar types")
+				}
+				comparison = strings.Compare(left, right)
+			default:
+				return execution.QueryConditions{}, fmt.Errorf("FTA range bound must be numeric or string")
+			}
+			if (strings.HasPrefix(condition.Method, "gt") && comparison < 0) || (strings.HasPrefix(condition.Method, "lt") && comparison > 0) {
+				bound = candidate
+			}
+		}
+		if number, ok := bound.(json.Number); ok && condition.Key == "time" && !strings.ContainsAny(number.String(), ".eE") {
+			text := number.String()
+			if len(text) > 10 {
+				text = text[:10]
+			}
+			bound = json.Number(text)
+		}
+		normalized[i].Value, _ = json.Marshal([]any{bound})
+	}
+	return compileLogConditions(normalized)
+}
+
 func (compiler *LegacyPrimaryQueryCompiler) compileFTAQuery(c legacyQueryConfig, business string) ([]execution.QueryClause, error) {
 	if compiler.runtimeFacts.FTAEventStorage == nil {
 		return nil, querySourceIncomplete("QUERY_FTA_EVENT_STORAGE_FACT_MISSING", nil)
 	}
 	storage := compiler.runtimeFacts.FTAEventStorage
+	if storage.TimeField.Name != "time" || storage.TimeField.Type != "date" || storage.TimeField.Unit != "millisecond" {
+		return nil, querySourceIncomplete("QUERY_FTA_EVENT_STORAGE_INVALID", nil)
+	}
 	if c.AggInterval == 0 {
 		c.AggInterval = 60
 	}
@@ -262,12 +343,15 @@ func (compiler *LegacyPrimaryQueryCompiler) compileFTAQuery(c legacyQueryConfig,
 	if c.AggInterval == 0 {
 		return nil, queryConfigRejected("QUERY_FTA_INTERVAL_INVALID", nil)
 	}
-	userConditions, err := compileLogConditions(c.AggConditions)
+	if c.AlertName == "" {
+		return nil, queryConfigRejected("QUERY_FTA_ALERT_NAME_MISSING", nil)
+	}
+	userConditions, err := compileFTAConditions(c.AggConditions)
 	if err != nil {
 		return nil, err
 	}
 	c.AggConditions = nil
-	name := c.MetricField
+	name := c.AlertName
 	c.MetricField, c.AggMethod, c.TimeField, c.ResultTableID = "_index", "COUNT", storage.TimeField.Name, storage.TableID
 	if c.Alias == "" {
 		c.Alias = "_index"
@@ -300,4 +384,17 @@ func (compiler *LegacyPrimaryQueryCompiler) compileFTAQuery(c legacyQueryConfig,
 		clauses[i].KeepColumns = nil
 	}
 	return clauses, nil
+}
+
+var logSearchSpecial = regexp.MustCompile(`[-+=&|><!(){}\[\]^"~*?:/]|AND|OR|TO|NOT`)
+
+func logSearchQueryString(raw string) string {
+	value := html.UnescapeString(raw)
+	if strings.TrimSpace(value) == "" {
+		return "*"
+	}
+	if !logSearchSpecial.MatchString(value) {
+		return "*" + value + "*"
+	}
+	return value
 }

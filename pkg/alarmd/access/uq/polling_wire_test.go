@@ -83,4 +83,34 @@ func TestPollingFTAWireKeepsIntrinsicFilterSeparate(t *testing.T) {
 	if clause["field_semantics"] != "fta_event_tags/v1" || clause["source_conditions"] == nil || len(body.QueryList[0].Conditions.Fields) != 1 || body.QueryList[0].SourceConditions.Fields[0].Field != "status" {
 		t.Fatalf("wire=%s", wire)
 	}
+	facts.QueryRevision = ""
+	facts.TSDBMap["a"][0].TimeField.Unit = "s"
+	if _, err := execution.BuildQueryPlanFacts(facts); err == nil {
+		t.Fatal("noncanonical ES time unit accepted")
+	}
+}
+
+func TestPollingMissingGroupValuesBindExplicitNull(t *testing.T) {
+	attempt := validAttempt(t)
+	attempt.Spec.PlanFacts.Normalization.Version = "uq-polling-normalization-v1"
+	attempt.Spec.PlanFacts.Normalization.DatasetContract.IdentityFields = []string{"host", "zone"}
+	source := identityTestSeries([]string{"host", "zone"}, []string{"node-a"})
+	batch, _, err := normalizeSeries(attempt.Spec, "result", source, 1_700_123_500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, _ := batch.Dataset.Record(0)
+	if string(record.Dimensions()["zone"]) != "null" || len(record.DimensionIdentity().Fields) != 2 {
+		t.Fatalf("record=%+v", record)
+	}
+	explicit := source
+	explicit.GroupValues = append(explicit.GroupValues, json.RawMessage("null"))
+	other, _, err := normalizeSeries(attempt.Spec, "result", explicit, 1_700_123_500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherRecord, _ := other.Dataset.Record(0)
+	if record.DimensionIdentityDigest() != otherRecord.DimensionIdentityDigest() {
+		t.Fatal("missing group value differs from explicit null")
+	}
 }

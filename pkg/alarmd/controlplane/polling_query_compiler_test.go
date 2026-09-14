@@ -21,7 +21,7 @@ func TestPollingSourceQuerySemantics(t *testing.T) {
 		delay                                                          int64
 	}{
 		{"custom", `{"data_source_label":"custom","data_type_label":"time_series","result_table_id":"Custom.Metric","metric_field":"value","alias":"a","agg_method":"AVG","agg_interval":60,"agg_dimension":["host"]}`, "custom.metric", "value", "", "host", "avg_over_time", 0},
-		{"log-count", `{"data_source_label":"bk_log_search","data_type_label":"log","result_table_id":"7","agg_method":"COUNT","alias":"a","agg_interval":45,"agg_dimension":["host"]}`, "bklog_index_set_7", "_index", "bklog", "host", "count_over_time", 90},
+		{"log-count", `{"data_source_label":"bk_log_search","data_type_label":"log","index_set_id":7,"agg_method":"COUNT","alias":"a","agg_interval":45,"agg_dimension":["host"]}`, "bklog_index_set_7", "_index", "bklog", "host", "count_over_time", 90},
 		{"monitor-event-count", `{"data_source_label":"bk_monitor","data_type_label":"log","result_table_id":"system.event","agg_method":"COUNT","agg_interval":60,"agg_dimension":["host"]}`, "system.event.__default__", "event.count", "bkapm", "dimensions.host", "sum_over_time", 0},
 		{"custom-event", `{"data_source_label":"custom","data_type_label":"event","result_table_id":"k8s_event","custom_event_name":"PodError","agg_interval":60,"agg_dimension":["namespace"]}`, "k8s_event", "_index", "bkapm", "dimensions.namespace", "count_over_time", 0},
 	} {
@@ -73,7 +73,7 @@ func TestPollingFTASourceConditionsRemainSeparate(t *testing.T) {
 	storage := execution.QueryStorage{TableID: "fta.events", StorageID: "17", StorageType: "elasticsearch", DB: "bkfta_event_*_read", Measurement: "__default__", TimeField: execution.QueryTimeField{Name: "time", Type: "date", Unit: "millisecond"}, SourceType: "event"}
 	planner, _ := NewLegacyPrimaryQueryCompiler("uq", "UTC", LegacyQueryRuntimeFacts{FTAEventStorage: &storage})
 	storage.DB = "mutated"
-	source := pollingTestSource(`{"data_source_label":"bk_fta","data_type_label":"event","metric_field":"__EVENT_PLUGIN__zabbix","alias":"a","agg_interval":60,"agg_dimension":["tags.env"],"agg_condition":[{"key":"tags.env","method":"include","value":["prod"]}]}`)
+	source := pollingTestSource(`{"data_source_label":"bk_fta","data_type_label":"event","alert_name":"__EVENT_PLUGIN__zabbix","alias":"a","agg_interval":60,"agg_dimension":["tags.env"],"agg_condition":[{"key":"tags.env","method":"include","value":["prod"]}]}`)
 	facts, err := planner.CompilePrimaryQuery(context.Background(), source)
 	if err != nil {
 		t.Fatal(err)
@@ -94,6 +94,12 @@ func TestPollingFTASourceConditionsRemainSeparate(t *testing.T) {
 	if !errors.As(err, &failure) || failure.Disposition != DispositionSourceIncomplete {
 		t.Fatalf("missing route=%v", err)
 	}
+	storage.TimeField.Unit = "second"
+	invalid, _ := NewLegacyPrimaryQueryCompiler("uq", "UTC", LegacyQueryRuntimeFacts{FTAEventStorage: &storage})
+	_, err = invalid.CompilePrimaryQuery(context.Background(), source)
+	if !errors.As(err, &failure) || failure.Reason != "QUERY_FTA_EVENT_STORAGE_INVALID" {
+		t.Fatalf("wrong ES bucket units=%v", err)
+	}
 }
 
 func TestPollingBKDataDirectBoundary(t *testing.T) {
@@ -109,5 +115,39 @@ func TestPollingBKDataDirectBoundary(t *testing.T) {
 	}
 	if facts.QueryList[0].TimeField != "dtEventTimeStamp" {
 		t.Fatalf("query=%+v", facts.QueryList)
+	}
+}
+
+func TestFTATypedRangeBoundsBeforeStringWire(t *testing.T) {
+	conditions, err := compileFTAConditions([]legacyCondition{
+		{Key: "tags.x", Method: "gt", Value: json.RawMessage(`[2,10]`)},
+		{Key: "tags.x", Method: "lt", Value: json.RawMessage(`[2,10]`)},
+		{Key: "time", Method: "gte", Value: json.RawMessage(`[1700000000000]`)},
+		{Key: "tags.x", Method: "gt", Value: json.RawMessage(`["2","10"]`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, want := range []string{"10", "2", "1700000000", "2"} {
+		if conditions.Fields[i].Values[0].StringValue != want {
+			t.Fatalf("field %d=%+v want %s", i, conditions.Fields[i], want)
+		}
+	}
+}
+
+func TestLogSearchQueryString(t *testing.T) {
+	for raw, want := range map[string]string{"timeout": "*timeout*", "   ": "*", "a &amp;&amp; b": "a && b", "field:value": "field:value", "foo AND bar": "foo AND bar"} {
+		if got := logSearchQueryString(raw); got != want {
+			t.Errorf("%q => %q want %q", raw, got, want)
+		}
+	}
+	planner, _ := NewLegacyPrimaryQueryCompiler("uq", "UTC", LegacyQueryRuntimeFacts{})
+	source := pollingTestSource(`{"data_source_label":"bk_log_search","data_type_label":"time_series","index_set_id":7,"result_table_id":"unused","agg_interval":60,"agg_condition":[{"key":"__dist_01","method":"eq","value":["a"]}]}`)
+	facts, err := planner.CompilePrimaryQuery(context.Background(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facts.QueryList[0].TableID != "bklog_index_set_7_clustered" {
+		t.Fatalf("query=%+v", facts.QueryList[0])
 	}
 }

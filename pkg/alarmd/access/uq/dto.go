@@ -83,6 +83,6 @@ type responseSeries struct {
 	Columns     []string            `json:"columns"`
 	Types       []string            `json:"types"`
 	GroupKeys   []string            `json:"group_keys"`
-	GroupValues []string            `json:"group_values"`
+	GroupValues []json.RawMessage   `json:"group_values"`
 	Values      [][]json.RawMessage `json:"values"`
 }

@@ -294,8 +294,13 @@ func phaseTwoLegacyQueryRuntimeFacts(
 		value := *runtime.AccessBKData
 		accessBKData = &value
 	}
+	var storage *execution.QueryStorage
+	if runtime.FTAEventStorage != nil {
+		copy := *runtime.FTAEventStorage
+		storage = &copy
+	}
 	return controlplane.LegacyQueryRuntimeFacts{
-		FTAEventStorage:       runtime.FTAEventStorage,
+		FTAEventStorage:       storage,
 		AccessBKData:          accessBKData,
 		BKDataCMDBLevelTables: append([]string{}, runtime.BKDataCMDBLevelTables...),
 		SystemDiskFilter: controlplane.LegacyRuntimeFilterFact{

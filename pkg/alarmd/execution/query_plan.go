@@ -243,7 +243,7 @@ func BuildQueryPlanFacts(facts QueryPlanFacts) (QueryPlanFacts, error) {
 			return QueryPlanFacts{}, errors.New("alarmd execution: unbound storage routing")
 		}
 		for _, storage := range storages {
-			if storage.StorageID == "" || storage.StorageType != "elasticsearch" || storage.DB == "" || storage.TableID == "" || storage.Measurement == "" || storage.TimeField.Name == "" || storage.TimeField.Type == "" || storage.TimeField.Unit == "" {
+			if storage.StorageID == "" || storage.StorageType != "elasticsearch" || storage.DB == "" || storage.TableID == "" || storage.Measurement == "" || storage.TimeField.Name == "" || storage.TimeField.Type == "" || !validQueryTimeField(storage.TimeField) {
 				return QueryPlanFacts{}, errors.New("alarmd execution: incomplete ES storage routing")
 			}
 		}
@@ -329,4 +329,15 @@ func (facts QueryPlanFacts) WithMetricMerge(metricMerge string) (QueryPlanFacts,
 	facts.QueryRevision = ""
 	facts.MetricMerge = metricMerge
 	return BuildQueryPlanFacts(facts)
+}
+
+func validQueryTimeField(field QueryTimeField) bool {
+	if field.Type != "date" && field.Type != "long" {
+		return false
+	}
+	switch field.Unit {
+	case "second", "millisecond", "microsecond", "nanosecond":
+		return true
+	}
+	return false
 }

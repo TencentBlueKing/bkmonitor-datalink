@@ -685,7 +685,7 @@ var nullDimension = json.RawMessage("null")
 // where None is the value in both cases. Series that carry the field keep
 // their previous identity unchanged.
 func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderResultRef, source responseSeries, receivedAt int64) (execution.ProviderSeriesBatch, uint64, error) {
-	if len(source.Columns) == 0 || len(source.Columns) != len(source.Types) || len(source.GroupKeys) != len(source.GroupValues) {
+	if len(source.Columns) == 0 || len(source.Columns) != len(source.Types) || (spec.PlanFacts.Normalization.Version != "uq-polling-normalization-v1" && len(source.GroupKeys) != len(source.GroupValues)) {
 		return execution.ProviderSeriesBatch{}, 0, errors.New("alarmd access uq: invalid series schema")
 	}
 	dimensions := make(map[string]json.RawMessage, len(source.GroupKeys))
@@ -697,7 +697,19 @@ func normalizeSeries(spec execution.PhysicalQuerySpec, ref execution.ProviderRes
 		if _, exists := dimensions[key]; exists {
 			return execution.ProviderSeriesBatch{}, 0, errors.New("alarmd access uq: duplicate normalized group key")
 		}
-		encoded, _ := json.Marshal(source.GroupValues[index])
+		encoded := nullDimension
+		if index < len(source.GroupValues) {
+			encoded = source.GroupValues[index]
+		}
+		var scalar any
+		if err := json.Unmarshal(encoded, &scalar); err != nil {
+			return execution.ProviderSeriesBatch{}, 0, err
+		}
+		switch scalar.(type) {
+		case nil, string, float64, bool:
+		default:
+			return execution.ProviderSeriesBatch{}, 0, errors.New("alarmd access uq: nonscalar group value")
+		}
 		dimensions[key] = encoded
 	}
 	var nullIdentityFields uint64

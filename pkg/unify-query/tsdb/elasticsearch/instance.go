@@ -543,7 +543,14 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 	}
 
 	if sr == nil || sr.Aggregations == nil {
+		if qo.query.FieldSemantics != "" {
+			return storage.ErrSeriesSet(fmt.Errorf("field_semantics query returned no aggregations"))
+		}
 		return storage.EmptySeriesSet()
+	}
+
+	if qo.query.FieldSemantics != "" && (sr.TimedOut || sr.TerminatedEarly || (sr.Shards != nil && sr.Shards.Failed > 0)) {
+		return storage.ErrSeriesSet(fmt.Errorf("field_semantics requires a complete Elasticsearch response"))
 	}
 
 	// 如果是非时间聚合计算，则无需进行指标名的拼接作用
@@ -553,6 +560,7 @@ func (i *Instance) queryWithAgg(ctx context.Context, qo *queryOption, fact *Form
 	}
 
 	span.Set("time-series-length", len(qr.Timeseries))
+	qo.query.FieldSemanticsExecution.Complete()
 
 	return remote.FromQueryResult(true, qr)
 }
@@ -837,6 +845,9 @@ func (i *Instance) QuerySeriesSet(
 			"字段查询异常: %v",
 			err,
 		).Warn(ctx)
+		if query.FieldSemantics != "" {
+			return storage.ErrSeriesSet(err)
+		}
 		return storage.EmptySeriesSet()
 	}
 	qo.physicalIndexes = physicalIndexes
@@ -880,6 +891,7 @@ func newSeriesFormatFactory(
 	return NewFormatFactory(ctx).
 		WithFieldSemantics(query.FieldSemantics).
 		WithSourceConditions(query.SourceConditions).
+		WithRoutingConditions(query.RoutingConditions).
 		WithTransform(func(s string) string {
 			// 别名替换
 			ns := s

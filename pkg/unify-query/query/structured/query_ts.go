@@ -1112,6 +1112,9 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 		for _, storageRange := range storageRanges {
 			query := q.BuildMetadataQuery(ctx, tsDB, allConditions)
 			if query == nil {
+				if q.FieldSemantics != "" {
+					return nil, fmt.Errorf("field_semantics query could not be built")
+				}
 				continue
 			}
 			query.SourceConditions = sourceConditions.MetaDataAllConditions()
@@ -1219,6 +1222,12 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 			if query.FieldSemantics != "" && query.StorageType != metadata.ElasticsearchStorageType {
 				return nil, fmt.Errorf("field_semantics requires elasticsearch storage")
 			}
+			if query.FieldSemantics != "" {
+				if query.IsElasticsearchIndexPrefixMissing() {
+					return nil, fmt.Errorf("field_semantics requires an Elasticsearch index")
+				}
+				query.FieldSemanticsExecution = &metadata.FieldSemanticsExecution{}
+			}
 			metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
 
 			// 判断是否跳过合并操作
@@ -1256,6 +1265,9 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	}
 
 	span.Set("query_metric_length", len(queryMetric.QueryList))
+	if q.FieldSemantics != "" && len(queryMetric.QueryList) == 0 {
+		return nil, fmt.Errorf("field_semantics query has no storage routes")
+	}
 
 	return queryMetric, nil
 }
@@ -1478,6 +1490,10 @@ func (q *Query) BuildMetadataQuery(
 
 	// 合并查询以及空间过滤条件到 condition 里面
 	allCondition = MergeConditionField(queryConditions, filterConditions)
+	if q.FieldSemantics == metadata.FTAEventTagsV1 {
+		allCondition = queryConditions
+		query.RoutingConditions = AllConditions(filterConditions).MetaDataAllConditions()
+	}
 
 	if len(queryConditions) > 1 || len(filterConditions) > 1 {
 		query.IsHasOr = true

@@ -153,9 +153,10 @@ type NestedAgg struct {
 type aggInfoList []any
 
 type FormatFactory struct {
-	fieldSemantics   string
-	sourceConditions metadata.AllConditions
-	ctx              context.Context
+	fieldSemantics    string
+	sourceConditions  metadata.AllConditions
+	routingConditions metadata.AllConditions
+	ctx               context.Context
 
 	valueField string
 	timeField  metadata.TimeField
@@ -540,6 +541,7 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *pr
 	}()
 
 	af := &aggFormat{
+		strict:         f.fieldSemantics != "",
 		aggInfoList:    f.aggInfoList,
 		items:          make(items, 0),
 		promDataFormat: f.encode,
@@ -1057,14 +1059,19 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 		if err != nil {
 			return nil, err
 		}
-		if len(f.sourceConditions) == 0 {
+		if len(f.sourceConditions) == 0 && len(f.routingConditions) == 0 {
 			return user, nil
 		}
-		source, err := f.ftaQuery(f.sourceConditions)
-		if err != nil {
-			return nil, err
+		combined := elastic.NewBoolQuery()
+		for _, conditions := range []metadata.AllConditions{f.sourceConditions, f.routingConditions} {
+			filter, err := f.ftaQuery(conditions)
+			if err != nil {
+				return nil, err
+			}
+			if filter != nil {
+				combined.Filter(filter)
+			}
 		}
-		combined := elastic.NewBoolQuery().Filter(source)
 		if user != nil {
 			combined.Filter(user)
 		}

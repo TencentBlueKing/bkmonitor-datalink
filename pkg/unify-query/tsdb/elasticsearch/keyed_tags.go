@@ -24,6 +24,11 @@ func (f *FormatFactory) WithSourceConditions(conditions metadata.AllConditions) 
 	return f
 }
 
+func (f *FormatFactory) WithRoutingConditions(conditions metadata.AllConditions) *FormatFactory {
+	f.routingConditions = conditions
+	return f
+}
+
 func (f *FormatFactory) isKeyedTag(name string) bool {
 	return f.fieldSemantics == metadata.FTAEventTagsV1 && strings.HasPrefix(name, "tags.")
 }
@@ -97,13 +102,8 @@ func ftaFieldQueries(name string, con metadata.ConditionField) ([]elastic.Query,
 		if len(values) == 0 {
 			return nil, "", fmt.Errorf("FTA range condition requires a value")
 		}
-		bound := values[0]
-		for _, value := range values[1:] {
-			if (con.Operator == structured.ConditionGt || con.Operator == structured.ConditionGte) && value > bound || (con.Operator == structured.ConditionLt || con.Operator == structured.ConditionLte) && value < bound {
-				bound = value
-			}
-		}
-		values = []string{bound}
+		// Keep every bound: Elasticsearch applies the mapped field's ordering,
+		// which can be numeric rather than the string ordering of this wire.
 	}
 	queries := make([]elastic.Query, 0, len(con.Value))
 	for _, value := range values {

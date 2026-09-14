@@ -49,22 +49,23 @@ type QueryConditions struct {
 }
 
 type QueryClause struct {
-	FieldSemantics  string `json:"FieldSemantics,omitempty"`
-	DataSource      string
-	Driver          string
-	TableID         string
-	FieldName       string
-	TimeField       string
-	IsRegexp        bool
-	ReferenceName   string
-	Functions       []QueryFunction
-	TimeAggregation QueryFunction
-	Dimensions      []string
-	Conditions      QueryConditions
-	Offset          string
-	OffsetForward   string
-	KeepColumns     []string
-	QueryString     string
+	SourceConditions *QueryConditions `json:"SourceConditions,omitempty"`
+	FieldSemantics   string           `json:"FieldSemantics,omitempty"`
+	DataSource       string
+	Driver           string
+	TableID          string
+	FieldName        string
+	TimeField        string
+	IsRegexp         bool
+	ReferenceName    string
+	Functions        []QueryFunction
+	TimeAggregation  QueryFunction
+	Dimensions       []string
+	Conditions       QueryConditions
+	Offset           string
+	OffsetForward    string
+	KeepColumns      []string
+	QueryString      string
 }
 
 // PromQLQuery preserves the independent UQ PromQL endpoint contract.
@@ -188,6 +189,9 @@ func BuildQueryPlanFacts(facts QueryPlanFacts) (QueryPlanFacts, error) {
 		return QueryPlanFacts{}, err
 	}
 	for _, clause := range facts.QueryList {
+		if clause.SourceConditions != nil && clause.FieldSemantics != "fta_event_tags/v1" {
+			return QueryPlanFacts{}, errors.New("alarmd execution: source conditions require FTA semantics")
+		}
 		if clause.FieldSemantics != "" && clause.FieldSemantics != "fta_event_tags/v1" {
 			return QueryPlanFacts{}, errors.New("alarmd execution: unsupported query field semantics")
 		}
@@ -208,13 +212,22 @@ func BuildQueryPlanFacts(facts QueryPlanFacts) (QueryPlanFacts, error) {
 				return QueryPlanFacts{}, err
 			}
 		}
-		for _, condition := range clause.Conditions.Fields {
-			if condition.Field == "" || condition.Operator == "" || len(condition.Values) == 0 {
-				return QueryPlanFacts{}, errors.New("alarmd execution: incomplete typed query condition")
+		conditionGroups := []QueryConditions{clause.Conditions}
+		if clause.SourceConditions != nil {
+			conditionGroups = append(conditionGroups, *clause.SourceConditions)
+		}
+		for _, group := range conditionGroups {
+			if len(group.Connectors) != 0 && len(group.Connectors)+1 != len(group.Fields) {
+				return QueryPlanFacts{}, errors.New("alarmd execution: invalid source condition connectors")
 			}
-			for _, value := range condition.Values {
-				if err := value.Validate(); err != nil {
-					return QueryPlanFacts{}, err
+			for _, condition := range group.Fields {
+				if condition.Field == "" || condition.Operator == "" || len(condition.Values) == 0 {
+					return QueryPlanFacts{}, errors.New("alarmd execution: incomplete typed query condition")
+				}
+				for _, value := range condition.Values {
+					if err := value.Validate(); err != nil {
+						return QueryPlanFacts{}, err
+					}
 				}
 			}
 		}

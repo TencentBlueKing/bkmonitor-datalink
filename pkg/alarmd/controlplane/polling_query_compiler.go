@@ -146,12 +146,19 @@ func (compiler *LegacyPrimaryQueryCompiler) compilePollingQueryConfig(c legacyQu
 		if c.DataSourceLabel == "bk_data" && c.TimeField == "" {
 			c.TimeField = "dtEventTimeStamp"
 		}
-		return compiler.compileLegacyQueryConfig(c)
+		clauses, err := compiler.compileLegacyQueryConfig(c)
+		if c.DataSourceLabel == "bk_data" {
+			for i := range clauses {
+				clauses[i].DataSource = "bkdata"
+			}
+		}
+		return clauses, err
 	}
 	if c.AggInterval == 0 {
 		c.AggInterval = 60
 	}
 	c.Values = nil
+	c.DataLabel = ""
 	if c.DataSourceLabel == "bk_log_search" {
 		c.ResultTableID = "bklog_index_set_" + c.ResultTableID
 		if strings.Contains(c.QueryString, "__dist_05") {
@@ -255,6 +262,11 @@ func (compiler *LegacyPrimaryQueryCompiler) compileFTAQuery(c legacyQueryConfig,
 	if c.AggInterval == 0 {
 		return nil, queryConfigRejected("QUERY_FTA_INTERVAL_INVALID", nil)
 	}
+	userConditions, err := compileLogConditions(c.AggConditions)
+	if err != nil {
+		return nil, err
+	}
+	c.AggConditions = nil
 	name := c.MetricField
 	c.MetricField, c.AggMethod, c.TimeField, c.ResultTableID = "_index", "COUNT", storage.TimeField.Name, storage.TableID
 	if c.Alias == "" {
@@ -283,7 +295,8 @@ func (compiler *LegacyPrimaryQueryCompiler) compileFTAQuery(c legacyQueryConfig,
 	for i := range clauses {
 		clauses[i].Driver = "influxdb"
 		clauses[i].FieldSemantics = "fta_event_tags/v1"
-		clauses[i].Conditions = conditions
+		clauses[i].SourceConditions = &conditions
+		clauses[i].Conditions = userConditions
 		clauses[i].KeepColumns = nil
 	}
 	return clauses, nil

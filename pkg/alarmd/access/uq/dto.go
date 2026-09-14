@@ -19,22 +19,23 @@ type request struct {
 }
 
 type queryClause struct {
-	FieldSemantics  string          `json:"field_semantics,omitempty"`
-	DataSource      string          `json:"data_source,omitempty"`
-	TableID         string          `json:"table_id,omitempty"`
-	FieldName       string          `json:"field_name,omitempty"`
-	Driver          string          `json:"driver"`
-	TimeField       string          `json:"time_field"`
-	IsRegexp        bool            `json:"is_regexp"`
-	ReferenceName   string          `json:"reference_name,omitempty"`
-	Functions       []queryFunction `json:"function"`
-	TimeAggregation timeAggregation `json:"time_aggregation"`
-	Dimensions      []string        `json:"dimensions,omitempty"`
-	Conditions      conditions      `json:"conditions,omitempty"`
-	Offset          string          `json:"offset,omitempty"`
-	OffsetForward   bool            `json:"offset_forward,omitempty"`
-	KeepColumns     []string        `json:"keep_columns,omitempty"`
-	QueryString     string          `json:"query_string"`
+	SourceConditions *conditions     `json:"source_conditions,omitempty"`
+	FieldSemantics   string          `json:"field_semantics,omitempty"`
+	DataSource       string          `json:"data_source,omitempty"`
+	TableID          string          `json:"table_id,omitempty"`
+	FieldName        string          `json:"field_name,omitempty"`
+	Driver           string          `json:"driver"`
+	TimeField        string          `json:"time_field"`
+	IsRegexp         bool            `json:"is_regexp"`
+	ReferenceName    string          `json:"reference_name,omitempty"`
+	Functions        []queryFunction `json:"function"`
+	TimeAggregation  timeAggregation `json:"time_aggregation"`
+	Dimensions       []string        `json:"dimensions,omitempty"`
+	Conditions       conditions      `json:"conditions,omitempty"`
+	Offset           string          `json:"offset,omitempty"`
+	OffsetForward    bool            `json:"offset_forward,omitempty"`
+	KeepColumns      []string        `json:"keep_columns,omitempty"`
+	QueryString      string          `json:"query_string"`
 }
 
 type timeAggregation struct {

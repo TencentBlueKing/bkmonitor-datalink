@@ -311,30 +311,17 @@ func buildRequest(spec execution.PhysicalQuerySpec) (request, error) {
 		if err != nil {
 			return request{}, err
 		}
-		fields := make([]conditionField, 0, len(source.Conditions.Fields))
-		for _, field := range source.Conditions.Fields {
-			wildcard, err := parseQueryBool("is_wildcard", field.Wildcard)
+		queryConditions, err := mapConditions(source.Conditions)
+		if err != nil {
+			return request{}, err
+		}
+		var sourceConditions *conditions
+		if source.SourceConditions != nil {
+			mapped, err := mapConditions(*source.SourceConditions)
 			if err != nil {
 				return request{}, err
 			}
-			prefix, err := parseQueryBool("is_prefix", field.Prefix)
-			if err != nil {
-				return request{}, err
-			}
-			suffix, err := parseQueryBool("is_suffix", field.Suffix)
-			if err != nil {
-				return request{}, err
-			}
-			values := make([]string, 0, len(field.Values))
-			for _, value := range field.Values {
-				text, scalarErr := scalarText(value)
-				if scalarErr != nil {
-					return request{}, scalarErr
-				}
-				values = append(values, text)
-			}
-			fields = append(fields, conditionField{Field: field.Field, Operator: field.Operator, Values: values,
-				Wildcard: wildcard, Prefix: prefix, Suffix: suffix})
+			sourceConditions = &mapped
 		}
 		offsetForward, err := parseQueryBool("offset_forward", source.OffsetForward)
 		if err != nil {
@@ -345,8 +332,8 @@ func buildRequest(spec execution.PhysicalQuerySpec) (request, error) {
 			Driver: source.Driver, TimeField: source.TimeField, IsRegexp: source.IsRegexp,
 			ReferenceName: source.ReferenceName, Functions: functions, TimeAggregation: timeAggregation,
 			Dimensions: append([]string(nil), source.Dimensions...),
-			Conditions: conditions{Fields: fields, Connectors: append([]string(nil), source.Conditions.Connectors...)},
-			Offset:     source.Offset, OffsetForward: offsetForward,
+			Conditions: queryConditions, SourceConditions: sourceConditions,
+			Offset: source.Offset, OffsetForward: offsetForward,
 			KeepColumns: append([]string(nil), source.KeepColumns...), QueryString: source.QueryString,
 		})
 	}
@@ -355,6 +342,35 @@ func buildRequest(spec execution.PhysicalQuerySpec) (request, error) {
 		Step: durationString(spec.PlanFacts.StepMillis), SpaceUID: spec.PlanFacts.SpaceScope,
 		DownSampleRange: string(spec.PlanFacts.DownSampleRange), Timezone: spec.PlanFacts.Timezone,
 		NotTimeAlign: spec.PlanFacts.NotTimeAlign}, nil
+}
+
+func mapConditions(source execution.QueryConditions) (conditions, error) {
+	fields := make([]conditionField, 0, len(source.Fields))
+	for _, field := range source.Fields {
+		wildcard, err := parseQueryBool("is_wildcard", field.Wildcard)
+		if err != nil {
+			return conditions{}, err
+		}
+		prefix, err := parseQueryBool("is_prefix", field.Prefix)
+		if err != nil {
+			return conditions{}, err
+		}
+		suffix, err := parseQueryBool("is_suffix", field.Suffix)
+		if err != nil {
+			return conditions{}, err
+		}
+		values := make([]string, 0, len(field.Values))
+		for _, value := range field.Values {
+			text, scalarErr := scalarText(value)
+			if scalarErr != nil {
+				return conditions{}, scalarErr
+			}
+			values = append(values, text)
+		}
+		fields = append(fields, conditionField{Field: field.Field, Operator: field.Operator, Values: values,
+			Wildcard: wildcard, Prefix: prefix, Suffix: suffix})
+	}
+	return conditions{Fields: fields, Connectors: append([]string(nil), source.Connectors...)}, nil
 }
 
 func parseQueryBool(field, value string) (bool, error) {

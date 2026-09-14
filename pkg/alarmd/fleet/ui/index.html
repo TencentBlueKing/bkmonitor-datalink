@@ -456,6 +456,22 @@ function duration(sinceIso) {
   return Math.floor(h / 24) + ' 天 ' + (h % 24) + ' 小时';
 }
 
+// An elapsed count of seconds, in a unit that can express it.
+//
+// duration() floors to whole minutes, which is right for an anomaly that has
+// been standing for hours and wrong for anything measured against a retry
+// cadence: it prints "0 分钟" for every value under sixty seconds, and "0" is
+// also what a reader sees when there is nothing to report at all. Those are
+// opposite facts and they rendered the same.
+function elapsedLabel(totalSeconds) {
+  var s = Math.round(totalSeconds || 0);
+  if (s < 90) return s + ' 秒';
+  var m = Math.floor(s / 60);
+  if (m < 60) return m + ' 分 ' + (s % 60) + ' 秒';
+  var h = Math.floor(m / 60);
+  return h + ' 小时 ' + (m % 60) + ' 分';
+}
+
 // A pod name is prefix + deployment hash + a short suffix; only the suffix
 // differs between replicas of one rollout.
 function shortReplica(name) {
@@ -606,8 +622,25 @@ function renderDeployment(deployment) {
     show('unattributedCell', !!unattributed);
     if (unattributed) {
       text('unattributed', unattributed);
-      text('unattributedHint', '重启后从记录里恢复的：记录留了"这一轮没跑成"，没留为什么。'
-        + '所以还说不清是不是 alarmd 自己的问题，判定停在 UNKNOWN。'
+      // Two things this said flatly and is only sometimes true.
+      //
+      // "判定停在 UNKNOWN" is the unattributed path to UNKNOWN, and it is not
+      // the only one: a coverage gap decides the verdict first and the banner
+      // then names the gap. A live page showed this cell claiming the verdict
+      // while the banner above it attributed the verdict to something else --
+      // one screen, two causes, and no way to tell which.
+      //
+      // And this cell is not a seventh column. These objects are already inside
+      // 没跑成待查; the cell sits in the same grid as the six that partition, so
+      // it has to say so or the eight cards read as eight columns against an
+      // equation with six terms in it.
+      var decidesVerdict = h === 'UNKNOWN' && !(deployment.gaps || []).length;
+      text('unattributedHint', '重启后从记录里恢复的：记录留了"这一轮没跑成"，没留为什么，'
+        + '所以还说不清是不是 alarmd 自己的问题。'
+        + (decidesVerdict
+            ? '本次判定就是停在这里。'
+            : '本次判定不是停在这里——原因见上面的"证据不全"那一句。')
+        + '已经计入左边的"没跑成待查"，不另占一栏。'
         + '每个对象再跑完一轮就重新有成因，会自己清');
     }
     // Held before the object list renders, because the rows read it. It arrives
@@ -623,8 +656,19 @@ function renderDeployment(deployment) {
                  deployment.unknown];
     var sum = parts.reduce(function (a, b) { return a + (b || 0); }, 0);
     var total = (deployment.expected === null || deployment.expected === undefined) ? deployment.covered : deployment.expected;
+    // Which cards are in the equation, named rather than left to be inferred
+    // from the order they happen to be laid out in. The grid holds eight cards
+    // and this sum has six terms; the two that are not in it are cross-cuts of
+    // 没跑成待查, so a reader adding all eight gets a number larger than the
+    // deployment and no way to find out why.
+    var crossCuts = [];
+    if (unattributed) crossCuts.push('成因没保留');
+    if (deployment.overdue || deployment.dispatch) crossCuts.push('没被调度');
     text('splitBasis', '每个对象只落一栏：' + parts.join(' + ') + ' = ' + sum +
-      (sum === total ? '，等于应有的 ' + total : '，但应有的是 ' + total + ' —— 对不上，先别信这几个数'));
+      (sum === total ? '，等于应有的 ' + total : '，但应有的是 ' + total + ' —— 对不上，先别信这几个数')
+      + (crossCuts.length
+          ? '。' + crossCuts.join('、') + '是横切计数，已经含在上面六栏里，不参与这个等式'
+          : ''));
     // Demotion is the one mechanism here that makes a deployment look better by
     // removing objects from the denominator, so the pool never gets to report
     // only its size. A pool with members and no exits is a way out that has
@@ -655,12 +699,26 @@ function renderDeployment(deployment) {
       // objects fall due continuously, so a steady handful is what both look
       // like from outside. How long the worst one has waited is what separates
       // them, and it is the question this panel exists to answer.
-      var overdue = deployment.demoted_due_oldest_seconds || 0;
+      // Rendered in seconds, and the reading rule kept as a rule.
+      //
+      // This went through duration(), which floors to whole minutes, so every
+      // value under a minute printed "0 分钟" -- the same text a reader gets for
+      // nothing at all, on a line whose own next clause says tens of seconds is
+      // the normal range. A live page showed "6 个已到期，最久的一个已经过期 0
+      // 分钟". The dispatch overdue cell below has always printed this same kind
+      // of quantity in seconds; only this one did not.
+      //
+      // And the closing clause was appended whenever the number existed, so a
+      // 40-second overdue was followed by "这个数远大于一个检测周期，才说明出池
+      // 路径本身有问题". It is a rule for reading the number and it read as a
+      // verdict about it. There is no per-object period on this response, so the
+      // comparison belongs to the reader and has to be phrased as theirs.
+      var demotedOverdue = deployment.demoted_due_oldest_seconds || 0;
       flow.push('其中 ' + deployment.demoted_due + ' 个的冷却时间已经到了还没被重试'
-        + (overdue
-            ? '，最久的一个已经过期 ' + duration(new Date(Date.now() - overdue * 1000).toISOString())
-              + '——重试是按对象自己的周期发起的，正常只会过期几十秒到几分钟；'
-              + '这个数远大于一个检测周期，才说明出池路径本身有问题'
+        + (demotedOverdue
+            ? '，最久的一个过期 ' + elapsedLabel(demotedOverdue)
+              + '——重试按对象自己的周期发起，过期几十秒到几分钟是正常的；'
+              + '要超过这些对象自己的一个检测周期，才说明出池路径本身有问题'
             : ''));
     }
     flow.push('计数从本次进程启动起算，重启归零');
@@ -706,7 +764,14 @@ function renderDeployment(deployment) {
       } else {
         // A truncated count is a floor, and writing it as a plain number would
         // state the sample as the total.
-        var parked = '当前有 ' + (deployment.dispatch.parked || 0) + ' 个对象被到期索引拦下，没到点、本来就不该跑';
+        // Two clocks, said out loud. This one is "right now"; the six columns
+        // above are each object's most recent finished round. On a live page
+        // that read 正常 1667 beside 拦下 1993, and a reader with no way to know
+        // they are measured at different instants can only conclude one of them
+        // is wrong.
+        var parked = '当前有 ' + (deployment.dispatch.parked || 0)
+          + ' 个对象被到期索引拦下，没到点、本来就不该跑'
+          + '（这是此刻的调度状态；上面六栏说的是每个对象最近跑完的那一轮，两组数不是同一个时刻的，别相加）';
         if (overdue.truncated) {
           // "≥ 0" is every number, so it tells nobody anything, and the old
           // wording then branched on the count alone and reassured off it --

@@ -155,6 +155,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		{Replica: "bk-monitor-alarmd-trigger-5bdb679ddf-fghij", Owned: 527, Healthy: 460,
 			Anomalies: 53, Demoted: 14, AgeSeconds: 4, UptimeSeconds: 300, Ours: 8, External: 41},
 	}
+	lastExit := at.Add(-2 * time.Minute)
 	fixture := map[string]any{
 		"anomalies": rows,
 		"summary": fleet.Summary{
@@ -216,9 +217,31 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			// equation and it is the only thing a reader has that says the
 			// split is complete. A fixture that does not add up cannot tell a
 			// page that dropped a column from one that is fine.
-			Health: "HEALTHY", Covered: 979, Determined: 979, Unknown: 0, Healthy: 844,
+			Health: "UNKNOWN", Covered: 979, Determined: 979, Unknown: 0, Healthy: 844,
 			AnomaliesTotal: 86, DemotedTotal: 33, UndecidableTotal: 12, ByDesignTotal: 4,
 			DemotedDue: 2, DemotionEntries: 40, DemotionExits: 7, PerReplica: replicas,
+			// The tracker writes the exit count and the exit time on adjacent
+			// lines, so a deployment with exits always has this. Without it here
+			// the fixture described a deployment that cannot exist -- and the page
+			// rendered it as 最近一次出池 in the year 1, because omitempty does
+			// nothing for a struct and the zero time is truthy.
+			LastDemotionExit: &lastExit,
+			// Sub-minute, because that is the range this line claims is normal
+			// and the range its renderer could not express: it floored to whole
+			// minutes and printed "0 分钟", which is also what it prints when
+			// there is nothing overdue at all. The fixture carried no value here
+			// at all before, so the clause never ran and the defect shipped.
+			DemotedDueOldestSeconds: 40,
+			// Unattributed beside a coverage gap. This cell used to claim the
+			// verdict unconditionally, and with a gap present the banner above it
+			// names a different cause -- one screen, two answers.
+			Unattributed: 8,
+			Gaps:         []fleet.Gap{{Kind: fleet.GapUndetermined}},
+			// Nothing overdue, with the dispatch suppression that makes that zero
+			// mean something. This is the branch a healthy deployment renders and
+			// the one nobody had ever executed.
+			Overdue:  &fleet.OverdueFacts{Total: 0},
+			Dispatch: &fleet.DispatchSuppression{Parked: 1993, Skipped: map[string]uint64{}},
 			// Capacity, which this check had never executed: the fixture carried
 			// no capacity, so renderCapacity returned at its first guard and the
 			// busiest computed panel on the page was covered by nothing. A null
@@ -516,6 +539,65 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 				"different fix, and it sends the reader nowhere", want.object, line, want.mustNotSay)
 		}
 	}
+
+	// Sentences that pair a number with a conclusion about that number. Every
+	// one of these shipped to a live page stating something the same screen
+	// contradicted, and none of them was executed by any check: the fixture
+	// carried no value for the branch, so the branch never ran.
+	for _, want := range []struct{ prefix, says, mustNotSay, because string }{
+		{"POOL ::", "40 秒", "0 分钟",
+			"过期不足一分钟时向下取整，印出的 0 分钟正是没有对象过期时的那句话"},
+		{"POOL ::", "要超过这些对象自己的一个检测周期", "这个数远大于一个检测周期",
+			"读数规则被当成对这个数的判定，40 秒的过期后面跟着出池路径有问题"},
+		{"UNATTR gap ::", "本次判定不是停在这里", "本次判定就是停在这里",
+			"有覆盖缺口时判定由缺口决定，这一栏却声称判定停在自己身上"},
+		{"UNATTR gap ::", "已经计入", "",
+			"这一栏和分栏等式在同一片网格里，等式只有六项而卡片有八张"},
+		{"SPLIT", "横切计数", "",
+			"横切的两张卡片不在等式里，页面要说出来，否则读的人会把八张卡片相加"},
+		{"PARKED ::", "别相加", "",
+			"此刻被拦下的数和六栏的最近一轮结果不是同一个时刻"},
+
+		// The same panel in the states one fixture cannot be in at once. Each of
+		// these is a branch that renders a sentence, and a branch that never ran
+		// is a sentence nothing has read.
+		{"VAR nogap unattr ::", "本次判定就是停在这里", "本次判定不是停在这里",
+			"没有覆盖缺口时判定确实停在这一栏，两种情况必须分别说对"},
+		{"VAR pool-stuck pool ::", "40 秒", "0 分钟",
+			"这正是线上那一组数：进过很多、一个没出来、还在重试，而过期不足一分钟"},
+		{"VAR pool-stuck pool ::", "一个都没出来过", "",
+			"有成员无出口的池子要说出来，它的占用读起来和后端还没好一模一样"},
+		{"VAR pool-dead pool ::", "既没出来过也没被重试过", "还在被重试",
+			"没有重试的池子是出池路径停了，和后端没好是两回事"},
+		{"VAR pool-empty pool ::", "本次进程还没有对象进过降级池", "一个都没出来过",
+			"空池子不能和有成员的池子说同一句话"},
+		{"VAR pool-exited pool ::", "最近一次出池", "",
+			"出过池要给出最近一次的时间，否则只有计数无法判断出口是否还活着"},
+		{"VAR overdue-present overdue ::", "最久的 900 秒", "",
+			"这个量在这一栏一直是按秒印的，降级池那一栏却按分钟取整"},
+		{"VAR overdue-truncated overdue ::", "不是 0，是不知道", "",
+			"截断后的计数是下界，印成 0 会被读成没有对象漏掉"},
+		{"VAR dispatch-off overdue ::", "结构上只可能是 0", "",
+			"到期索引没启用时这里不能读成没有对象漏掉"},
+		{"VAR expected-mismatch split ::", "对不上，先别信这几个数", "等于应有的",
+			"分栏之和与应有对不上时必须自己说出来，这是读者唯一能发现分栏漏了一类的途径"},
+		{"VAR healthy why ::", "证据齐全", "证据不全",
+			"健康且没有覆盖缺口时不能还说证据不全"},
+		{"VAR degraded why ::", "存在 alarmd 自己该负责的异常", "",
+			"DEGRADED 要说清是 alarmd 自己的异常，否则和数据源问题分不开"},
+	} {
+		line := lineStarting(text, want.prefix)
+		if line == "" {
+			t.Errorf("no %s line was rendered, so the check on its wording never ran", want.prefix)
+			continue
+		}
+		if !strings.Contains(line, want.says) {
+			t.Errorf("%s renders %q, want it to say %q -- %s", want.prefix, line, want.says, want.because)
+		}
+		if want.mustNotSay != "" && strings.Contains(line, want.mustNotSay) {
+			t.Errorf("%s renders %q, which says %q -- %s", want.prefix, line, want.mustNotSay, want.because)
+		}
+	}
 }
 
 // lineStarting returns the harness line with this prefix, or "" if the render
@@ -665,6 +747,14 @@ for (const [name, fn] of calls) {
 // no error anywhere. Only running both can see it.
 console.log('SPLIT ' + (store['splitBasis'] ? store['splitBasis'].textContent : '(not rendered)'));
 
+// Three sentences a reader acts on that no check executed. Each of them is
+// assembled from a count plus a conclusion about that count, and each of them
+// shipped saying something the same screen contradicted.
+console.log('POOL :: ' + (store['poolFlowHint'] ? store['poolFlowHint'].textContent : '(not rendered)'));
+console.log('UNATTR gap :: ' + (store['unattributedHint'] ? store['unattributedHint'].textContent : '(not rendered)'));
+console.log('WHY gap :: ' + (store['why'] ? store['why'].textContent : '(not rendered)'));
+console.log('PARKED :: ' + (store['overdueHint'] ? store['overdueHint'].textContent : '(not rendered)'));
+
 // The note each row would actually render, emitted for the Go side to check.
 // Executing anomalyRow only proves the page does not throw; the wording is
 // what a reader acts on, and a row can render the wrong explanation
@@ -707,6 +797,69 @@ console.log('CAPACITY :: ' + textOf(store['capCards']));
 // The impact line -- the only thing on the page that answers "what is affected"
 // rather than "how many objects".
 console.log('IMPACT :: ' + textOf(store['impact']));
+
+// The same panel in the other states a deployment is actually in.
+//
+// One fixture renders one branch of each sentence here, and every sentence on
+// this panel is a count plus a conclusion about that count. Four of them
+// shipped to a live page saying something that page contradicted, and all four
+// were unexecuted for the same reason: the single fixture left the field at
+// zero, so the branch never ran and nothing ever read the wording.
+//
+// The overrides are JSON field names on purpose. A Go-side rename that the page
+// does not follow shows up here as a branch that stops rendering.
+const variants = {
+  // Nothing took the verdict first, so the unattributed cell is the answer.
+  'nogap': {gaps: []},
+  // The live state this panel exists for: a pool with members, no exits, and
+  // retries still happening. The fixture's own pool has exits, so this branch
+  // had never run.
+  // No exits clears the exit time with it. The two are written together, so a
+  // variant that zeroed one and kept the other would describe a deployment the
+  // tracker cannot produce -- and a check run against an impossible state
+  // proves nothing about the page.
+  'pool-stuck': {demotion_entries: 309, demotion_exits: 0, demotion_extensions: 40,
+                 demoted_due: 6, demoted_due_oldest_seconds: 40, last_demotion_exit: null},
+  // Members, no exits, and nothing retrying either -- the way out has stopped.
+  'pool-dead': {demotion_entries: 309, demotion_exits: 0, demotion_extensions: 0,
+                demoted_due: 0, last_demotion_exit: null},
+  'pool-empty': {demotion_entries: 0, demotion_exits: 0, demoted_due: 0, last_demotion_exit: null},
+  'pool-exited': {demotion_entries: 40, demotion_exits: 7, demoted_due: 0},
+  // An overdue that is minutes old rather than seconds, so the two renderers of
+  // this same quantity can be compared.
+  'overdue-present': {overdue: {total: 3, oldest_seconds: 900}},
+  'overdue-truncated': {overdue: {total: 0, truncated: true}},
+  // No dispatch suppression at all: a zero that cannot mean anything yet.
+  'dispatch-off': {dispatch: null},
+  // A denominator that disagrees with the columns. The page has a sentence for
+  // this and nothing had ever produced it.
+  'expected-mismatch': {expected: 2075},
+  'healthy': {health: 'HEALTHY', gaps: [], unattributed: 0},
+  'degraded': {health: 'DEGRADED', gaps: [], unattributed: 0},
+};
+const variantCells = ['why', 'poolFlowHint', 'unattributedHint', 'splitBasis', 'overdueHint'];
+for (const [name, override] of Object.entries(variants)) {
+  // Cleared first. A cell whose branch does not run this time keeps whatever
+  // the previous render wrote, and the emitted line would then report the
+  // previous variant's wording as this one's -- the check reading a stale value
+  // and calling it a result.
+  for (const id of variantCells) { document.getElementById(id).textContent = ''; }
+  let view;
+  try {
+    view = Object.assign({}, data.health, override);
+    ctx.renderDeployment(view);
+  } catch (e) {
+    console.error('renderDeployment (' + name + '): ' + e.constructor.name + ': ' + e.message);
+    failed++;
+    continue;
+  }
+  for (const [label, id] of [['why', 'why'], ['pool', 'poolFlowHint'],
+                             ['unattr', 'unattributedHint'], ['split', 'splitBasis'],
+                             ['overdue', 'overdueHint']]) {
+    const said = store[id] ? store[id].textContent : '';
+    console.log('VAR ' + name + ' ' + label + ' :: ' + (said || '(not rendered)'));
+  }
+}
 
 // The strategy link, in the three states it has: configured and complete,
 // configured but the reference carries no business id, and not configured at

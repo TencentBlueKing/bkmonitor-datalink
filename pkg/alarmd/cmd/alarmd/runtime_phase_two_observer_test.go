@@ -43,24 +43,42 @@ func TestPhaseTwoRuntimeObserverKeepsOneLinePerReasonAndQueryGroup(t *testing.T)
 	}
 	ctxA := observability.ContextWithTraceFields(context.Background(), observability.TraceFields{QueryGroupKey: "query-group-a"})
 	ctxB := observability.ContextWithTraceFields(context.Background(), observability.TraceFields{QueryGroupKey: "query-group-b"})
-	observer.Observe(ctxA, failed("query-group-a"))
-	observer.Observe(ctxA, failed("query-group-a"))
+	// Spend the whole of group A's budget and one more, so A is being
+	// suppressed when B speaks.
+	//
+	// Written against the budget rather than against the number 1. What this
+	// check is for is the scoping -- one noisy Query Group must not hide every
+	// other one, which is the whole difference from the phase-one limiter below
+	// -- and pinning "two lines" demonstrated that only while the budget
+	// happened to be one line per window. Opening the budget up for the
+	// development phase made this fail without anything about the scoping
+	// changing.
+	for round := 0; round <= phaseTwoDiagnosticLogMaxEvents; round++ {
+		observer.Observe(ctxA, failed("query-group-a"))
+	}
 	observer.Observe(ctxB, failed("query-group-b"))
-	observer.Observe(ctxA, failed("query-group-a"))
 
 	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("lines=%d, want one line per (reason, query group) within the window: %s", len(lines), output.String())
+	if len(lines) != phaseTwoDiagnosticLogMaxEvents+1 {
+		t.Fatalf("lines=%d, want %d: A's budget spent, the extra A suppressed, and B still admitted",
+			len(lines), phaseTwoDiagnosticLogMaxEvents+1)
 	}
-	for index, want := range []string{"query-group-a", "query-group-b"} {
-		var event map[string]any
-		if err := json.Unmarshal([]byte(lines[index]), &event); err != nil {
-			t.Fatal(err)
-		}
-		if event["query_group_key"] != want || event["failure_code"] != "DUPLICATE_COMPLETION_BINDING" ||
-			event["error"] != "alarmd worker: duplicate completion binding" {
-			t.Fatalf("line %d=%v, want coordinates, failure code and error text for %s", index, event, want)
-		}
+	// The last line has to be B's. If the two shared a bucket, B would have been
+	// suppressed behind A and the run would end on an A line.
+	var last map[string]any
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &last); err != nil {
+		t.Fatal(err)
+	}
+	if last["query_group_key"] != "query-group-b" {
+		t.Fatalf("last line is %v, want query-group-b: a noisy Query Group is hiding another's diagnostics", last)
+	}
+	var first map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &first); err != nil {
+		t.Fatal(err)
+	}
+	if first["query_group_key"] != "query-group-a" || first["failure_code"] != "DUPLICATE_COMPLETION_BINDING" ||
+		first["error"] != "alarmd worker: duplicate completion binding" {
+		t.Fatalf("line 0=%v, want coordinates, failure code and error text for query-group-a", first)
 	}
 	// The phase-one constructor keeps its per-reason budget: the second Query
 	// Group is hidden behind the first within the same window.

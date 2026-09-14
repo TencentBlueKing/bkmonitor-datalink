@@ -233,20 +233,35 @@ func undecidableReason(reason string) bool {
 // anomaly column -- the direction that keeps something visible rather than
 // the one that hides it.
 var byDesignReasons = map[string]bool{
-	// The strategy was edited, deactivated or reassigned while a round was in
-	// flight. Both halves are correct: results computed under the old
-	// configuration must not land, so they are refused, and the next round
-	// runs under the new one.
+	// CONFIG_DRIFT was here and is not any more.
 	//
-	// Two outcomes, and neither needs anyone. Activations that changed under
-	// the Slot make it retry, so that Slot is evaluated again. An activation
-	// that requires forced warming instead consumes this Slot and completes
-	// query-free -- deliberately, because retrying it would rewrite the
-	// warming marker at the same ApplyVersion and conflict on every attempt
-	// until the Slot aged out. The Slot lost there could not have decided
-	// anything either way: the plan is entering forced warming, so the rounds
-	// after it cannot conclude yet either.
-	"CONFIG_DRIFT": true,
+	// It was filed as a passing event -- a strategy edited mid-round, the next
+	// round runs under the new configuration, nobody acts. That story cannot be
+	// true of anything in this column: an object reaches any column only after
+	// DefaultDegradedRounds consecutive degraded rounds, so every object filed
+	// here had been reporting CONFIG_DRIFT for at least three rounds in a row.
+	// The column was structurally incapable of holding the one-round event its
+	// own wording described.
+	//
+	// The predicate says the same thing. CONFIG_DRIFT is what the admitter
+	// returns when IsPlanActive is false, and that is false in two unrelated
+	// cases: the plan is not in the activation set at all -- an edit, a
+	// deactivation, a reassignment -- or the plan is current and
+	// Selected.StateApplyEpoch does not equal the epoch this round froze. Only
+	// the first is a configuration change. The second is two views of the same
+	// live plan failing to line up, and nothing about it clears on its own.
+	//
+	// A live read settled it: an object executing its slot thirty seconds after
+	// that slot's time returned CONFIG_DRIFT, committed progress, moved to the
+	// next slot, and did it again -- with query, schedule and snapshot revisions
+	// identical across the runs, so no configuration had changed. Every one of
+	// those slots was voided, and this page filed the object under "没有人需要
+	// 做什么".
+	//
+	// That is the worst thing this page can do: an object that will never
+	// evaluate again, shown as requiring nothing. It goes back on the to-do
+	// list until the code can say which of the two cases it is -- the field
+	// that separates them is computed in IsPlanActive and published nowhere.
 
 	// The strategy is outside its own active window: its uptime schedule or
 	// calendar says not to run now, and the round was suppressed for exactly

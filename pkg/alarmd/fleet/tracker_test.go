@@ -735,17 +735,21 @@ func TestEmptyRoundsAreCountedApartFromShortRounds(t *testing.T) {
 	}
 }
 
-// A round interrupted by a change already being made on purpose is not a
-// fault. The strategy was edited, deactivated or reassigned mid-round; results
-// computed under the old configuration must not land, so the round is refused
-// and the next one runs under the new configuration. Both halves are correct
-// and nobody acts on it.
-func TestARoundInterruptedByAChangeAlreadyMadeIsNotAnAnomaly(t *testing.T) {
+// A round suppressed by the strategy's own effective-time window is not a
+// fault. The configuration says not to run now, and the round was suppressed
+// for exactly that reason -- a standing state, not a passing one.
+//
+// This test used to be written against CONFIG_DRIFT, on the belief that it
+// meant a strategy edited mid-round. It cannot mean that here: an object
+// reaches any column only after DefaultDegradedRounds consecutive degraded
+// rounds, as this test's own loop shows, so nothing that clears in one round
+// can ever appear. CONFIG_DRIFT has its own test below.
+func TestARoundSuppressedByItsOwnScheduleIsNotAnAnomaly(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
 	drift := completion("qg-drift", "COMPLETED_WITH_UNAVAILABLE", "8930")
-	drift.ProgressCompletionCause = "CONFIG_DRIFT"
-	drift.ProgressCompletionReason = "CONFIG_DRIFT"
+	drift.ProgressCompletionCause = "LEVEL_OUTCOME_UNKNOWN"
+	drift.ProgressCompletionReason = "EFFECTIVE_TIME_INACTIVE"
 	for round := 0; round < DefaultDegradedRounds; round++ {
 		tracker.Observe(context.Background(), drift)
 	}
@@ -759,7 +763,7 @@ func TestARoundInterruptedByAChangeAlreadyMadeIsNotAnAnomaly(t *testing.T) {
 	// Exactly one column, or the healthy count -- a subtraction over all of
 	// them -- loses an object per round.
 	if got := tracker.Undecidable(); len(got) != 0 {
-		t.Fatalf("undecidable = %+v, want none: a config edit is not a window with nothing to decide", got)
+		t.Fatalf("undecidable = %+v, want none: a suppressed round is not a window with nothing to decide", got)
 	}
 	if got := tracker.Demoted(); len(got) != 0 {
 		t.Fatalf("demoted = %+v, want none", got)
@@ -774,10 +778,10 @@ func TestOneNoActionReasonDoesNotMarkTheRunForTheOtherColumn(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
 	drift := completion("qg-both", "COMPLETED_WITH_UNAVAILABLE", "8930")
-	drift.ProgressCompletionCause = "CONFIG_DRIFT"
-	drift.ProgressCompletionReason = "CONFIG_DRIFT"
+	drift.ProgressCompletionCause = "LEVEL_OUTCOME_UNKNOWN"
+	drift.ProgressCompletionReason = "EFFECTIVE_TIME_INACTIVE"
 
-	// Warming rounds first, then the edit lands.
+	// Warming rounds first, then the suppressed round lands.
 	for round := 0; round < DefaultDegradedRounds; round++ {
 		tracker.Observe(context.Background(), coverageCompletion("qg-both", 3, 1, 2, 14))
 	}
@@ -882,5 +886,48 @@ func TestAnUnresolvableScheduleIsStillAFault(t *testing.T) {
 	}
 	if got := tracker.Anomalies(); len(got) != 1 {
 		t.Fatalf("anomalies = %+v, want the object still on the list", got)
+	}
+}
+
+// CONFIG_DRIFT is not evidence that anybody changed anything, so an object
+// reporting it stays on the to-do list.
+//
+// It was filed as a passing event: a strategy edited mid-round, next round runs
+// under the new configuration, nobody acts. The column it was filed in cannot
+// hold a passing event -- an object reaches any column only after
+// DefaultDegradedRounds consecutive degraded rounds, which this loop is -- so
+// everything filed there had already been reporting it for at least three
+// rounds in a row while the page said to ignore it.
+//
+// The predicate agrees. CONFIG_DRIFT is what the side-effect admitter returns
+// when IsPlanActive is false, and that is false in two unrelated cases: the
+// plan is absent from the activation set (an edit), or the plan is current and
+// its StateApplyEpoch does not equal the one this round froze (not an edit, and
+// nothing about it clears on its own). A live object returned it on slot after
+// slot with query, schedule and snapshot revisions identical across the runs.
+func TestConfigDriftStaysOnTheToDoListBecauseItIsNotEvidenceOfAChange(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	drift := completion("qg-drift", "COMPLETED_WITH_UNAVAILABLE", "8930")
+	drift.ProgressCompletionCause = "CONFIG_DRIFT"
+	drift.ProgressCompletionReason = "CONFIG_DRIFT"
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		tracker.Observe(context.Background(), drift)
+	}
+	if got := tracker.ByDesign(); len(got) != 0 {
+		t.Errorf("by-design = %+v, want none: filing it here tells a reader an object that may "+
+			"never evaluate again needs nothing", got)
+	}
+	listed := tracker.Anomalies()
+	if len(listed) != 1 || listed[0].QueryGroup != "qg-drift" {
+		t.Fatalf("anomalies = %+v, want the one object", listed)
+	}
+	// Exactly one column, or the healthy count -- a subtraction over all of
+	// them -- loses an object per round.
+	if got := tracker.Undecidable(); len(got) != 0 {
+		t.Errorf("undecidable = %+v, want none", got)
+	}
+	if got := tracker.Demoted(); len(got) != 0 {
+		t.Errorf("demoted = %+v, want none", got)
 	}
 }

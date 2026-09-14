@@ -470,7 +470,12 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		{"qg-window-filling", "窗口在填", "持续缺点"},
 		{"qg-window-complete", "检测窗口完整", "短"},
 		{"qg-skipped", "没被检测", "持续缺点"},
-		{"qg-drift", "策略正在被改", "不在生效时段"},
+		// The wording changed with the classification: CONFIG_DRIFT is no longer
+		// told to the reader as a strategy being edited, because the predicate
+		// behind it is also false when a live plan's StateApplyEpoch does not
+		// match the round's. What is still pinned is that this row and the
+		// off-hours row below say different things.
+		{"qg-drift", "计划激活没对上", "不在生效时段"},
 		{"qg-offhours", "不在生效时段", "策略正在被改"},
 	} {
 		line := ""

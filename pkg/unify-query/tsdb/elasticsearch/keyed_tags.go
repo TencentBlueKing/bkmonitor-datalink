@@ -19,6 +19,11 @@ func (f *FormatFactory) WithFieldSemantics(semantics string) *FormatFactory {
 	return f
 }
 
+func (f *FormatFactory) WithSourceConditions(conditions metadata.AllConditions) *FormatFactory {
+	f.sourceConditions = conditions
+	return f
+}
+
 func (f *FormatFactory) isKeyedTag(name string) bool {
 	return f.fieldSemantics == metadata.FTAEventTagsV1 && strings.HasPrefix(name, "tags.")
 }

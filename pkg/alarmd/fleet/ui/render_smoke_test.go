@@ -159,6 +159,47 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			WindowNeverFills: 1,
 		},
 		"window_never_fills_cases": windowNeverFillsCases(),
+		// A filter narrowing the list, a replica that could not publish it, and
+		// both at once. The first used to be reported as the second.
+		"page_tail_cases": []map[string]any{
+			{"name": "filtered", "total": 1, "objects": map[string]any{
+				"anomalies_total": 16, "filtered": true,
+				"summary": map[string]any{"partial": false}}},
+			{"name": "truncated", "total": 50, "objects": map[string]any{
+				"anomalies_total": 900, "filtered": false,
+				"summary": map[string]any{"partial": true}}},
+			{"name": "plain", "total": 16, "objects": map[string]any{
+				"anomalies_total": 16, "filtered": false,
+				"summary": map[string]any{"partial": false}}},
+		},
+		// A console that is configured, one that is not, and a reference with
+		// no business id -- the console needs one to resolve the space, so a
+		// link without it lands on an error page.
+		"strategy_link_cases": []map[string]any{
+			{"name": "configured", "base": "https://monitor.example",
+				"strategy": fleet.StrategyRef{StrategyID: "1854", BusinessID: "7"}},
+			{"name": "nobiz", "base": "https://monitor.example",
+				"strategy": fleet.StrategyRef{StrategyID: "1854"}},
+			{"name": "unconfigured", "base": "",
+				"strategy": fleet.StrategyRef{StrategyID: "1854", BusinessID: "7"}},
+		},
+		// A 24-hour window and a 15-minute one. The first ends at the same
+		// wall-clock time it started, which is what made it render empty.
+		"range_cases": []map[string]any{
+			{"name": "day", "start": at.Add(-24 * time.Hour).UnixMilli(), "end": at.UnixMilli()},
+			{"name": "short", "start": at.Add(-15 * time.Minute).UnixMilli(), "end": at.UnixMilli()},
+		},
+		// A population restored at a rollout: every start time is a bound, and
+		// the sentence over it used to name the newest as a moment.
+		"onset_cases": []map[string]any{
+			{"name": "bounded", "total": 5, "onset": fleet.Onset{
+				LastHour: 5, NewestSince: at.Add(-2 * time.Hour), OldestSince: at.Add(-2 * time.Hour),
+				NewestFrom: fleet.SinceRestoredLastFull, OldestFrom: fleet.SinceRestoredLastFull,
+				Bounded: 5}},
+			{"name": "measured", "total": 5, "onset": fleet.Onset{
+				LastHour: 5, NewestSince: at.Add(-2 * time.Hour), OldestSince: at.Add(-3 * time.Hour),
+				NewestFrom: fleet.SinceSnapshotContinuity, OldestFrom: fleet.SinceSnapshotContinuity}},
+		},
 		"health": fleet.HealthResponse{
 			// The columns add up to Covered on purpose: the page prints that
 			// equation and it is the only thing a reader has that says the
@@ -167,6 +208,21 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			Health: "HEALTHY", Covered: 979, Determined: 979, Unknown: 0, Healthy: 844,
 			AnomaliesTotal: 86, DemotedTotal: 33, UndecidableTotal: 12, ByDesignTotal: 4,
 			DemotedDue: 2, DemotionEntries: 40, DemotionExits: 7, PerReplica: replicas,
+			// The line that answers "what is affected". Its columns are
+			// truncated and some of its objects name no strategy, because both
+			// are true on the deployment this page is read on and both change
+			// what the counts may be said to mean.
+			Impact: fleet.Impact{
+				Anomalies:   fleet.ColumnImpact{Objects: 86, Strategies: 70, Businesses: 9, Partial: true},
+				Ours:        fleet.ColumnImpact{Objects: 5, Strategies: 4, Businesses: 2, Partial: true},
+				Demoted:     fleet.ColumnImpact{Objects: 33, Strategies: 31, Businesses: 6},
+				Undecidable: fleet.ColumnImpact{Objects: 12, Strategies: 12, Businesses: 3},
+				ByDesign:    fleet.ColumnImpact{Objects: 4, Strategies: 4, Businesses: 1},
+				// Fewer than 31 + 70: a strategy with objects in both columns is
+				// one strategy, which is why this is a field and not a sum.
+				Blind:        fleet.ColumnImpact{Objects: 119, Strategies: 95, Businesses: 11, Partial: true},
+				NoStrategies: 7,
+			},
 		},
 		"per_replica": replicas,
 		"coverage": fleet.Disagreement{Comparable: true, HeldNotExpected: []string{"qg-blocked"},
@@ -201,6 +257,34 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	if !strings.Contains(text, "negative control threw") {
 		t.Errorf("the harness did not prove it can fail; its clean result is worthless:\n%s", text)
 	}
+	// The one line on the page that answers "what is affected". A reader who
+	// gets no answer here has to assemble it out of five object counts, which is
+	// what they were doing.
+	impactLine := lineStarting(text, "IMPACT ::")
+	if impactLine == "" {
+		t.Error("the impact line rendered nothing: the page answers how many objects and never " +
+			"which alerts")
+	}
+	for _, want := range []string{
+		// The union of the two columns. 31 + 70 is 101, and the fixture's union
+		// is 95 because a strategy with objects in both is one strategy.
+		"95 条策略拿不到检测结果",
+		"11 个业务",
+		// Whether to act, and by whom.
+		"需要 alarmd 这边处理的：4 条策略",
+		// What the counts cannot cover. Both are true of a live deployment and
+		// both change what the numbers may be taken to mean.
+		"是下界",
+		"没带策略信息",
+	} {
+		if !strings.Contains(impactLine, want) {
+			t.Errorf("the impact line does not say %q:\n%s", want, impactLine)
+		}
+	}
+	if strings.Contains(impactLine, "101 条策略") {
+		t.Errorf("the impact line added the two columns instead of taking their union, which "+
+			"overstates the number a reader acts on:\n%s", impactLine)
+	}
 	if !strings.Contains(text, "windowNeverFills agreed on") {
 		t.Errorf("the page's windowNeverFills was never run against the Go rule; the two copies "+
 			"are unchecked:\n%s", text)
@@ -225,18 +309,140 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			"so a page that drops one is the only way this fails)", equation)
 	}
 
+	// Only one column decides the verdict, and the line that says so was printed
+	// on all four. A reader paging the demoted pool was told, of objects the
+	// page had just finished excluding from the judgment, that alarmd is
+	// answerable for them and that the judgment follows the count.
+	for _, want := range []struct{ column, says, mustNotSay string }{
+		{"anomalies", "判定就看这个数", "整栏不进部署判定"},
+		{"demoted", "整栏不进部署判定", "判定就看这个数"},
+		{"undecidable", "整栏不进部署判定", "判定就看这个数"},
+		{"by_design", "整栏不进部署判定", "判定就看这个数"},
+	} {
+		line := ""
+		for _, candidate := range strings.Split(text, "\n") {
+			if strings.HasPrefix(candidate, "WHOSE "+want.column+" ::") {
+				line = candidate
+				break
+			}
+		}
+		if line == "" {
+			t.Errorf("no attribution line was rendered for column %s", want.column)
+			continue
+		}
+		if !strings.Contains(line, want.says) {
+			t.Errorf("column %s renders %q, want it to say %q", want.column, line, want.says)
+		}
+		if strings.Contains(line, want.mustNotSay) {
+			t.Errorf("column %s renders %q, which says %q -- that is the other column's claim",
+				want.column, line, want.mustNotSay)
+		}
+	}
+
+	// A link is rendered only when the environment said where its console is and
+	// the reference carries everything that console needs. A wrong link sends a
+	// reader to an error page and costs more than no link at all.
+	for _, want := range []struct{ name, says, mustNotSay string }{
+		{"configured", "https://monitor.example?bizId=7#/strategy-config/detail/1854", ""},
+		{"nobiz", "(none)", "http"},
+		{"unconfigured", "(none)", "http"},
+	} {
+		line := lineStarting(text, "LINK "+want.name+" ::")
+		if line == "" {
+			t.Errorf("strategyLink rendered nothing for the %s case", want.name)
+			continue
+		}
+		if !strings.Contains(line, want.says) {
+			t.Errorf("strategyLink %s renders %q, want %q", want.name, line, want.says)
+		}
+		if want.mustNotSay != "" && strings.Contains(line, want.mustNotSay) {
+			t.Errorf("strategyLink %s renders %q, which is a link it cannot know is right",
+				want.name, line)
+		}
+	}
+
+	// A 24-hour window starts and ends at the same wall-clock time, and a
+	// time-only label printed it as a range of zero length over a chart that
+	// visibly covered a day.
+	if line := lineStarting(text, "RANGE day ::"); line == "" {
+		t.Error("rangeLabel rendered nothing for the 24-hour window")
+	} else {
+		ends := strings.SplitN(strings.TrimPrefix(line, "RANGE day :: "), " – ", 2)
+		if len(ends) != 2 || ends[0] == ends[1] {
+			t.Errorf("the 24-hour window renders %q: both ends read the same, so the label says "+
+				"the window has no length", line)
+		}
+	}
+	if line := lineStarting(text, "RANGE short ::"); line == "" {
+		t.Error("rangeLabel rendered nothing for the short window")
+	}
+
+	// A filter is not a truncated snapshot. Filtering to one strategy -- the
+	// ordinary way to use this page -- announced that the replica had failed to
+	// publish its list, over an answer that was complete.
+	for _, want := range []struct{ name, says, mustNotSay string }{
+		{"filtered", "已按条件过滤掉 15 条", "没能发布完整清单"},
+		{"truncated", "没能发布完整清单", "已按条件过滤"},
+		{"plain", "", "条"},
+	} {
+		line := lineStarting(text, "TAIL "+want.name+" ::")
+		if line == "" {
+			t.Errorf("pageTail rendered nothing for the %s case", want.name)
+			continue
+		}
+		if want.says != "" && !strings.Contains(line, want.says) {
+			t.Errorf("pageTail %s renders %q, want it to say %q", want.name, line, want.says)
+		}
+		if strings.Contains(line, want.mustNotSay) {
+			t.Errorf("pageTail %s renders %q, which says %q -- a different fact about the same "+
+				"two numbers", want.name, line, want.mustNotSay)
+		}
+	}
+
+	// A bound is not a moment. Every row in the bounded case says in its own
+	// provenance column that the moment it went wrong was never recorded, and
+	// the sentence above them announced one anyway.
+	for _, want := range []struct{ name, says, mustNotSay string }{
+		{"bounded", "那是个界不是时刻", "前开始的"},
+		{"measured", "前开始的", "那是个界不是时刻"},
+	} {
+		line := lineStarting(text, "ONSET "+want.name+" ::")
+		if line == "" {
+			t.Errorf("onsetLine rendered nothing for the %s case", want.name)
+			continue
+		}
+		if !strings.Contains(line, want.says) {
+			t.Errorf("onsetLine %s renders %q, want it to say %q", want.name, line, want.says)
+		}
+		if strings.Contains(line, want.mustNotSay) {
+			t.Errorf("onsetLine %s renders %q, which says %q", want.name, line, want.mustNotSay)
+		}
+	}
+	// Two ends that are both bounds are not two moments; after a restart both
+	// are the restart, and the sentence would report the whole deployment as
+	// having gone wrong simultaneously.
+	if line := lineStarting(text, "ONSET bounded ::"); strings.Contains(line, "同时开始的") {
+		t.Errorf("onsetLine bounded renders %q: it read a difference between two bounds as a "+
+			"difference between two moments", line)
+	}
+
 	// What each row would actually say. Executing the render proves only that
 	// it does not throw, and a live page rendered a HISTORY_GAPPED row with
 	// the wording for a series too short-lived to fill its window -- a
 	// different situation with a different fix, rendered without complaint.
+	//
+	// The wording these pin changed once, deliberately: the sustained-shortfall
+	// note used to lead with "窗口永远填不满" and name the cause. What is pinned
+	// is the property -- each row says its own situation and does not carry
+	// another's -- and that property is why the strings are here at all.
 	for _, want := range []struct{ object, says, mustNotSay string }{
-		{"qg-gapped-intermittent", "数据断断续续", "窗口永远填不满"},
-		{"qg-gapped-fresh", "数据刚断", "窗口永远填不满"},
-		{"qg-window-never", "窗口永远填不满", "数据断断续续"},
-		{"qg-window-starved", "取不到数据", "窗口永远填不满"},
-		{"qg-window-filling", "窗口在填", "窗口永远填不满"},
+		{"qg-gapped-intermittent", "数据断断续续", "持续缺点"},
+		{"qg-gapped-fresh", "数据刚断", "持续缺点"},
+		{"qg-window-never", "持续缺点", "数据断断续续"},
+		{"qg-window-starved", "取不到数据", "持续缺点"},
+		{"qg-window-filling", "窗口在填", "持续缺点"},
 		{"qg-window-complete", "检测窗口完整", "短"},
-		{"qg-skipped", "没被检测", "窗口永远填不满"},
+		{"qg-skipped", "没被检测", "持续缺点"},
 		{"qg-drift", "策略正在被改", "不在生效时段"},
 		{"qg-offhours", "不在生效时段", "策略正在被改"},
 	} {
@@ -260,6 +466,18 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 				"different fix, and it sends the reader nowhere", want.object, line, want.mustNotSay)
 		}
 	}
+}
+
+// lineStarting returns the harness line with this prefix, or "" if the render
+// emitted none -- which is itself a result, and a different one from a line
+// that came out empty.
+func lineStarting(text, prefix string) string {
+	for _, candidate := range strings.Split(text, "\n") {
+		if strings.HasPrefix(candidate, prefix) {
+			return candidate
+		}
+	}
+	return ""
 }
 
 // windowNeverFillsCases is the table both copies of the rule are run over: the
@@ -317,6 +535,13 @@ function el(tag) {
   n.classList = {add(){}, remove(){}, toggle(){}, contains(){return false;}};
   n.focus = () => {}; n.click = () => {};
   return n;
+}
+// The full rendered text of a node, children included. A node's textContent
+// here is only what was assigned to it directly, and every line the impact
+// block builds is assembled out of appended children.
+function textOf(node) {
+  if (!node) { return ''; }
+  return (node._t || '') + (node.children || []).map(textOf).join('');
 }
 const store = {};
 const document = {getElementById: id => store[id] || (store[id] = el('div')), createElement: el,
@@ -381,6 +606,62 @@ for (const row of data.anomalies) {
   try { note = ctx.coverageNote(row); }
   catch (e) { console.error('coverageNote threw on ' + row.query_group + ': ' + e.message); failed++; continue; }
   console.log('NOTE ' + row.query_group + ' :: ' + (note ? note.text : '(none)'));
+}
+
+// What the "whose problem is this" line says on each column. Three of the four
+// columns are held out of the verdict, and this sentence used to tell a reader
+// the opposite on all three -- served the demoted pool it said "判定就看这个数"
+// under a heading explaining that the pool does not reach the judgment at all.
+for (const column of ['anomalies', 'demoted', 'undecidable', 'by_design']) {
+  let line;
+  try { line = ctx.attributionLine(data.summary, data.per_replica, column); }
+  catch (e) { console.error('attributionLine threw on ' + column + ': ' + e.message); failed++; continue; }
+  console.log('WHOSE ' + column + ' :: ' + line);
+}
+
+// The impact line -- the only thing on the page that answers "what is affected"
+// rather than "how many objects".
+console.log('IMPACT :: ' + textOf(store['impact']));
+
+// The strategy link, in the three states it has: configured and complete,
+// configured but the reference carries no business id, and not configured at
+// all. A wrong link is worse than none, so two of the three must render none.
+for (const c of data.strategy_link_cases || []) {
+  ctx.consoleBase = c.base;
+  let href;
+  try { href = ctx.strategyLink(c.strategy); }
+  catch (e) { console.error('strategyLink threw on ' + c.name + ': ' + e.message); failed++; continue; }
+  console.log('LINK ' + c.name + ' :: ' + (href || '(none)'));
+}
+ctx.consoleBase = '';
+
+// The window label, on a range whose two ends are the same wall-clock time on
+// two different days -- which is every 24-hour window, and rendered as a range
+// of zero length.
+for (const c of data.range_cases || []) {
+  let label;
+  try { label = ctx.rangeLabel(c.start, c.end); }
+  catch (e) { console.error('rangeLabel threw on ' + c.name + ': ' + e.message); failed++; continue; }
+  console.log('RANGE ' + c.name + ' :: ' + label);
+}
+
+// The count line, on the three states it has to tell apart. A filter narrowing
+// the list is not a replica failing to publish it, and this used to report the
+// second whenever the first happened.
+for (const c of data.page_tail_cases || []) {
+  let tail;
+  try { tail = ctx.pageTail(c.objects, c.total); }
+  catch (e) { console.error('pageTail threw on ' + c.name + ': ' + e.message); failed++; continue; }
+  console.log('TAIL ' + c.name + ' :: ' + tail);
+}
+
+// The onset sentence, on a population whose start times are bounds. It used to
+// read the newest of them back as a moment.
+for (const c of data.onset_cases || []) {
+  let line;
+  try { line = ctx.onsetLine(c.onset, c.total); }
+  catch (e) { console.error('onsetLine threw on ' + c.name + ': ' + e.message); failed++; continue; }
+  console.log('ONSET ' + c.name + ' :: ' + line);
 }
 
 const cases = data.window_never_fills_cases || [];

@@ -74,10 +74,11 @@ type ListResponse struct {
 	// of against a number someone remembers.
 	StallAfterSeconds int `json:"stall_after_seconds,omitempty"`
 	// StalledTotal counts stalled objects across the whole deployment, whatever
-	// the filter. The filtered count belongs in Summary with everything else,
-	// but this one number must survive a filter: it is the objects that will not
-	// recover on their own, and a filter that hides them reads as "nothing to
-	// do here".
+	// the filter and whichever column is being served. The filtered count
+	// belongs in Summary with everything else, but this one number must survive
+	// both: it is the objects that will not recover on their own, and anything
+	// that hides them -- a filter, or a reader having switched columns -- reads
+	// as "nothing to do here".
 	StalledTotal int  `json:"stalled_total"`
 	Page         Page `json:"page"`
 }
@@ -133,14 +134,40 @@ type HealthResponse struct {
 	// verdict cannot be from different reads.
 	Ours         int `json:"ours"`
 	Unattributed int `json:"unattributed"`
+	// Impact is the same population in the unit the work is done in.
+	//
+	// Every other number on this response counts objects, which are this
+	// deployment's own identities -- an operator cannot look one up, cannot
+	// mention one to whoever configured the strategy, and cannot tell from a
+	// count of them whether this is one misconfiguration or fifty. A reader
+	// could see HEALTHY beside 58 demoted objects and still not know which
+	// alerts are not being raised or how many businesses that touches.
+	Impact Impact `json:"impact"`
+	// StrategyLinkBase turns the strategy references in the object list into
+	// links to the strategy itself.
+	//
+	// The page's drill-down stopped at its own table: clicking a strategy
+	// filtered the list by it, which is the one thing a reader who has already
+	// found it does not need. Handing the id to the next person meant copying a
+	// number into a search box, and "找策略和数据源的人" is not a handover.
+	//
+	// Sent as the origin only. The path is the product's own route and is built
+	// in the page, so an environment configures one value and nothing about how
+	// the page is put together. Empty when nobody configured one, and the
+	// references then render as the plain labels they always were.
+	StrategyLinkBase string `json:"strategy_link_base,omitempty"`
 	// DemotedDue and the three flow counts are the check on demotion, which is
 	// the one mechanism here that makes a deployment look better by removing
 	// objects from the denominator.
-	DemotedDue         int       `json:"demoted_due"`
-	DemotionEntries    int       `json:"demotion_entries"`
-	DemotionExtensions int       `json:"demotion_extensions"`
-	DemotionExits      int       `json:"demotion_exits"`
-	LastDemotionExit   time.Time `json:"last_demotion_exit,omitempty"`
+	DemotedDue int `json:"demoted_due"`
+	// DemotedDueOldestSeconds is how long the most overdue object has waited
+	// past its own retry deadline. The count alone reads the same whether the
+	// retry path is working or stopped; this is what separates them.
+	DemotedDueOldestSeconds int       `json:"demoted_due_oldest_seconds,omitempty"`
+	DemotionEntries         int       `json:"demotion_entries"`
+	DemotionExtensions      int       `json:"demotion_extensions"`
+	DemotionExits           int       `json:"demotion_exits"`
+	LastDemotionExit        time.Time `json:"last_demotion_exit,omitempty"`
 	// PublishedVersion and Workers are the acknowledgement view: which
 	// Activation the control plane published and how many counted replicas
 	// have applied it. Per-replica versions are on PerReplica.
@@ -298,6 +325,25 @@ type Onset struct {
 	// the ordering between its rows carries no information at all -- which is
 	// exactly the case the first page reads as a ranking.
 	OldestSince time.Time `json:"oldest_since,omitempty"`
+	// NewestFrom and OldestFrom say where those two timestamps came from, and
+	// they are the difference between a moment and a bound.
+	//
+	// Without them the line over the table converted one into the other. A
+	// filtered list of objects whose rows said, in the provenance column, that
+	// the moment they went wrong was never recorded was summarised as "最新的一
+	// 个是 2 小时 2 分前开始的" -- the roll-up asserting as a fact the one thing
+	// every row underneath it had been careful not to claim.
+	//
+	// This is the shape that keeps recurring here: the field that discriminates
+	// exists per row, is used per row, and is dropped on the way up.
+	NewestFrom SinceSource `json:"newest_from,omitempty"`
+	OldestFrom SinceSource `json:"oldest_from,omitempty"`
+	// Bounded counts the rows in this list whose start is a bound rather than a
+	// measurement, so the three buckets above can be read for how much of them
+	// is knowable. A population that is mostly restored puts most of its rows in
+	// whichever bucket the restart lands in, which says when the replica came
+	// up and nothing about when anything went wrong.
+	Bounded int `json:"bounded"`
 }
 
 func summarize(anomalies []Anomaly, at time.Time) Summary {
@@ -330,9 +376,17 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 			}
 			if onset.NewestSince.IsZero() || anomaly.Since.After(onset.NewestSince) {
 				onset.NewestSince = anomaly.Since
+				onset.NewestFrom = anomaly.SinceFrom
 			}
 			if onset.OldestSince.IsZero() || anomaly.Since.Before(onset.OldestSince) {
 				onset.OldestSince = anomaly.Since
+				onset.OldestFrom = anomaly.SinceFrom
+			}
+			// Carried up with the timestamps rather than left on the rows. The
+			// sentence above the table read the newest of these back as a
+			// moment, on rows whose own column said it is not one.
+			if anomaly.SinceFrom.Bounded() {
+				onset.Bounded++
 			}
 		}
 		switch anomaly.Attribution {
@@ -353,13 +407,19 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 			if undecidableReason(anomaly.CauseReason) && anomaly.Coverage.Persistent() {
 				neverFills++
 			}
-		case AttributionUnknown:
-			unattributed++
-		default:
+		case AttributionOurs:
 			ours++
 			if anomaly.Unclassified {
 				oursUnclassified++
 			}
+		default:
+			// AttributionUnknown, and anything that arrived without the field
+			// set. Ours is named above rather than left as the default because
+			// an unset field was landing in it: the demoted, undecidable and
+			// by-design columns were served with attribution never filled, so
+			// this line reported every one of their objects as the
+			// deployment's own -- under a heading saying they are not.
+			unattributed++
 		}
 		kinds[anomaly.Kind]++
 		if anomaly.ReasonCode != "" {
@@ -560,6 +620,7 @@ func NewHandler(
 	stallAfter time.Duration,
 	series RangeProvider,
 	diagnostics *DiagnosticStore,
+	strategyLinkBase string,
 ) (http.Handler, error) {
 	if service == nil {
 		return nil, errors.New("alarmd fleet: handler requires a service")
@@ -591,9 +652,12 @@ func NewHandler(
 			Determined: view.Determined, Unknown: view.Unknown, Healthy: view.Healthy,
 			AnomaliesTotal: view.AnomaliesTotal, DemotedTotal: view.DemotedTotal,
 			UndecidableTotal: view.UndecidableTotal, ByDesignTotal: view.ByDesignTotal,
-			Ours:         OursCount(view.Anomalies),
-			Unattributed: UnattributedCount(view.Anomalies),
-			DemotedDue:   view.DemotedDue, DemotionEntries: view.DemotionEntries,
+			Ours:             OursCount(view.Anomalies),
+			Unattributed:     UnattributedCount(view.Anomalies),
+			Impact:           ImpactOf(view),
+			StrategyLinkBase: strategyLinkBase,
+			DemotedDue:       view.DemotedDue, DemotedDueOldestSeconds: view.DemotedDueOldestSeconds,
+			DemotionEntries:    view.DemotionEntries,
 			DemotionExtensions: view.DemotionExtensions, DemotionExits: view.DemotionExits,
 			LastDemotionExit: view.LastDemotionExit,
 			Coverage:         view.Coverage, PerReplica: view.PerReplica,
@@ -617,11 +681,9 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	// a reader could hold a pool from one moment beside anomalies from another
 	// and find objects in both, or in neither.
 	column := request.URL.Query().Get("column")
-	if column != "" && column != ColumnAnomalies && column != ColumnDemoted &&
-		column != ColumnUndecidable && column != ColumnByDesign {
+	if column != "" && !knownColumn(column) {
 		writeJSON(response, http.StatusBadRequest, map[string]string{
-			"error": "column must be " + ColumnAnomalies + ", " + ColumnDemoted + ", " +
-				ColumnUndecidable + " or " + ColumnByDesign})
+			"error": "column must be one of " + strings.Join(ObjectColumns, ", ")})
 		return
 	}
 	if column == "" {
@@ -641,12 +703,42 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 		order = OrderOldest
 	}
 	view := service.View(request.Context())
+	// Marked before filtering so a filtered response reports the same flag for the
+	// same object as an unfiltered one, and on every column rather than only the
+	// one being served: an object that has stopped ending rounds is stuck whether
+	// or not this request happens to be about its column.
+	columns := [][]Anomaly{view.Anomalies, view.Demoted, view.Undecidable, view.ByDesign}
+	for _, list := range columns {
+		MarkStalled(list, now(), stallAfter)
+	}
+	// Stalling can only move an object towards ours, so the verdict is decided
+	// again with that known. Deciding it once, before the marking, would call a
+	// deployment with nothing but stuck objects healthy.
+	//
+	// Decided here, before a column is served, and always on the anomaly list.
+	// It used to run after the swap below, so asking for the demoted pool
+	// recomputed the deployment's verdict and its per-replica breakdown over the
+	// pool instead -- and the response carries both. Which list a reader is
+	// paging cannot be allowed to change what the deployment's health is.
+	Settle(&view)
+	// Counted over every column for the same reason it survives a filter: these
+	// are the objects that will not recover on their own, and a number that
+	// shrinks because of what the reader is currently looking at reads as "there
+	// is nothing to do here".
+	stalledTotal := 0
+	for _, list := range columns {
+		for _, anomaly := range list {
+			if anomaly.Stalled {
+				stalledTotal++
+			}
+		}
+	}
+	// Serving a column replaces the rows this request is about, and nothing
+	// else. The deployment-wide counts on the view are untouched, so the
+	// response still carries every total and a reader paging one column can see
+	// how many objects are not in it.
 	switch column {
 	case ColumnDemoted:
-		// The demoted list takes the anomaly list's place for the rest of this
-		// request. The deployment-wide counts on the view are untouched, so the
-		// response still carries both totals and a reader paging the pool can
-		// still see how many objects are not in it.
 		view.Anomalies = view.Demoted
 		view.AnomaliesTotal = view.DemotedTotal
 	case ColumnUndecidable:
@@ -656,26 +748,12 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 		view.Anomalies = view.ByDesign
 		view.AnomaliesTotal = view.ByDesignTotal
 	}
-	// Marked before filtering so a filtered response reports the same flag for the
-	// same object as an unfiltered one, and counted here so the deployment-wide
-	// total survives whatever filter follows.
-	MarkStalled(view.Anomalies, now(), stallAfter)
-	// Stalling can only move an object towards ours, so the verdict is decided
-	// again with that known. Deciding it once, before the marking, would call a
-	// deployment with nothing but stuck objects healthy.
-	Settle(&view)
 	// A replica publishes at most what fits its byte budget, so on a bad enough
 	// deployment the list this summary counts is already a sample. The counts
 	// stay useful for "which of these is it", and stop being usable as a
 	// distribution -- and nothing in the summary said so, leaving that to a
 	// reader who thought to compare two other fields.
 	summaryPartial := view.AnomaliesTotal > len(view.Anomalies)
-	stalledTotal := 0
-	for _, anomaly := range view.Anomalies {
-		if anomaly.Stalled {
-			stalledTotal++
-		}
-	}
 	replica := request.URL.Query().Get("replica")
 	if replica != "" {
 		// A name that belongs to no replica has to be refused rather than

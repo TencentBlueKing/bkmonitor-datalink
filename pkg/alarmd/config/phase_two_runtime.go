@@ -104,6 +104,21 @@ type PhaseTwoAccessConfig struct {
 	// environment still gets the judgment and the object list with no
 	// configuration at all.
 	SelfMetricsSpaceUID string `yaml:"self_metrics_space_uid"`
+	// MonitorWebBaseURL is where this environment's monitor SaaS is served, and
+	// it turns the object page's strategy references into links.
+	//
+	// alarmd cannot derive it for the same reason it cannot derive the space
+	// above: which host serves the console is decided outside this process. It
+	// is the origin only -- the path a strategy lives at is the product's own
+	// route and is built in code, so an environment configures one value and
+	// nothing about the page's structure.
+	//
+	// Optional, and it buys exactly one thing: a reader who has found the
+	// strategy causing an anomaly can open it instead of copying an id into a
+	// search box. Empty means the references render as they did before, as
+	// plain labels, so a new environment still gets every other part of the page
+	// with no configuration at all.
+	MonitorWebBaseURL string `yaml:"monitor_web_base_url"`
 	// HostDisableMonitorStates mirrors the platform's HOST_DISABLE_MONITOR_STATES
 	// global config: a host whose CMDB bk_state contains any of these is not
 	// monitored, and Python's access chain drops its records before they can

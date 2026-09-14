@@ -161,6 +161,32 @@ const (
 	ColumnByDesign = "by_design"
 )
 
+// ObjectColumns is every column the object route will serve.
+//
+// It is a list rather than four constants the handler repeats because the page
+// keys its headings and its descriptions off these strings, and a column the
+// page has no entry for does not render blank -- it falls through to another
+// column's wording. That is what happened to by_design: the page's map was
+// keyed "transitional" from an earlier name, so the 按配置不处理 list described
+// itself as the to-do list, which is false about every object in it and was
+// invisible to every check here.
+var ObjectColumns = []string{
+	ColumnAnomalies,
+	ColumnDemoted,
+	ColumnUndecidable,
+	ColumnByDesign,
+}
+
+// knownColumn reports whether the object route will serve this column.
+func knownColumn(column string) bool {
+	for _, known := range ObjectColumns {
+		if column == known {
+			return true
+		}
+	}
+	return false
+}
+
 // The two ends of the list. Both are legitimate readings of the same
 // population, and which one the first page shows decides what an operator sees
 // during an incident.
@@ -767,6 +793,19 @@ type View struct {
 	// defensible one today, and a number invented now would be obeyed later as
 	// though it had been measured.
 	DemotedDue int `json:"demoted_due"`
+	// DemotedDueOldestSeconds is how long the most overdue of them has been
+	// waiting past its own deadline.
+	//
+	// The count alone cannot be read. Objects fall due continuously, so a steady
+	// handful of them is what a working retry path looks like from the outside,
+	// and so is a path that stopped days ago -- the two differ only in how long
+	// any one object has been sitting there. A reader asking "是不是出口坏了"
+	// gets no answer from the count and a decisive one from this.
+	//
+	// Still no threshold, for the reason above: what counts as too long is the
+	// deployment's own number. What changes is that the question is now
+	// answerable from one read instead of two.
+	DemotedDueOldestSeconds int `json:"demoted_due_oldest_seconds,omitempty"`
 	// Coverage says which kind of disagreement the counts have, when the sets
 	// were available to compare. Absent when no replica published its set.
 	Coverage *Disagreement `json:"coverage,omitempty"`
@@ -998,14 +1037,41 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 
 	sortAnomalies(view.Anomalies)
 	sortAnomalies(view.Demoted)
+	sortAnomalies(view.Undecidable)
+	sortAnomalies(view.ByDesign)
 	for _, demoted := range view.Demoted {
 		if demoted.QueryCooldown != nil && !demoted.QueryCooldown.Until.IsZero() &&
 			demoted.QueryCooldown.Until.Before(now) {
 			view.DemotedDue++
+			// How long the worst one has waited, not how many are waiting.
+			// Objects fall due continuously, so a steady count is what both a
+			// working retry path and a stopped one look like.
+			if overdue := int(now.Sub(demoted.QueryCooldown.Until).Seconds()); overdue > view.DemotedDueOldestSeconds {
+				view.DemotedDueOldestSeconds = overdue
+			}
 		}
 	}
 
+	// Every column, not only the one the verdict is decided on.
+	//
+	// Attribution was filled for the anomaly list alone, and the objects route
+	// serves whichever column was asked for through the same field. The other
+	// three arrived with the field empty -- and both readers of it, the summary
+	// counts here and the page's own cell, treated empty as OURS. A live
+	// deployment therefore labelled all 58 demoted objects and all 18
+	// undecidable ones "alarmd 自己该负责的", directly under a paragraph saying
+	// that column is held out of the health verdict. The page contradicted
+	// itself on the one question it exists to answer.
+	//
+	// Filling the field is the fix rather than teaching the two readers to skip
+	// these columns: the question "would capacity or a different design have
+	// prevented this" is a real question about a demoted object, and the column
+	// it sits in does not answer it. What the column decides is whether the
+	// object bears on the verdict; who could have prevented it is decided here.
 	Attribute(view.Anomalies)
+	Attribute(view.Demoted)
+	Attribute(view.Undecidable)
+	Attribute(view.ByDesign)
 	Settle(&view)
 	return view
 }
@@ -1042,10 +1108,17 @@ func Settle(view *View) {
 		switch anomaly.Attribution {
 		case AttributionExternal:
 			replica.External++
-		case AttributionUnknown:
-			replica.Unattributed++
-		default:
+		case AttributionOurs:
 			replica.Ours++
+		default:
+			// Ours is named rather than left as the default, and an empty
+			// attribution lands here with AttributionUnknown instead.
+			//
+			// An unset field is not a verdict. It used to fall through to Ours,
+			// which is the difference between "nobody classified this" and "this
+			// is the deployment's fault" -- and the second is what decides the
+			// badge at the top of the page.
+			replica.Unattributed++
 		}
 	}
 

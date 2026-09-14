@@ -167,6 +167,88 @@ func TestThePageHasWordingForEveryAnomalyKind(t *testing.T) {
 	}
 }
 
+// Every column the route serves has to have wording of its own.
+//
+// The page does not render blank for one it has no entry for: both lookups fall
+// through to the anomaly column's, so the heading and the description of the
+// to-do list appear over a list of objects that are explicitly not on it. The
+// by-design column shipped that way -- the map was keyed "transitional" from an
+// earlier name of the column, and nothing here could see it.
+func TestEveryServedColumnHasItsOwnHeadingAndDescription(t *testing.T) {
+	body := string(page)
+	if len(fleet.ObjectColumns) == 0 {
+		t.Fatal("no object columns declared; the check would pass vacuously")
+	}
+	// Closed at the first "};", not at a newline before one. TITLES ends on the
+	// same line as its last entry, so a pattern requiring the newline ran past
+	// it and swallowed BASIS as well -- and then a column missing from TITLES
+	// was found in BASIS and reported as present. The check covered one map
+	// twice and the other not at all, which a mutation on TITLES survived.
+	for _, block := range []struct{ name, pattern string }{
+		{"TITLES", `var TITLES = \{([\s\S]*?)\};`},
+		{"BASIS", `var BASIS = \{([\s\S]*?)\};`},
+	} {
+		found := regexp.MustCompile(block.pattern).FindStringSubmatch(body)
+		if found == nil {
+			t.Fatalf("the page no longer declares %s: every column renders another column's wording",
+				block.name)
+		}
+		for _, column := range fleet.ObjectColumns {
+			if !strings.Contains(found[1], column+":") {
+				t.Errorf("%s has no entry for column %q: the list falls through to the anomaly "+
+					"column's wording, which is false about every object in it", block.name, column)
+			}
+		}
+	}
+}
+
+// One column, one name.
+//
+// This column was called three different things in five places: 没归到后端 on
+// the verdict panel, 自身异常 in the replica table, on the list button and in
+// the verdict rule, and 自身异常对象 as the list heading. A reader has no way to
+// know those are one number, and they are -- so the replica table and the
+// verdict panel read as two separate problems of the same size.
+//
+// Worse than the names, the two of them made opposite claims: the verdict cell
+// said "不等于就是 alarmd 的问题" and the heading over the same objects said
+// "alarmd 自己没有把这些对象跑好". Only the first is true; whose problem it is
+// gets decided one level down, inside the column.
+//
+// Checked at each anchor rather than by counting occurrences, because a count
+// stays green while one of the sites still says something else.
+func TestTheAnomalyColumnIsCalledOneThingEverywhere(t *testing.T) {
+	body := string(page)
+	const name = "没跑成待查"
+	// Names this column used to go by. They are retired rather than allowed as
+	// synonyms: a synonym is what made the two panels unreadable together.
+	for _, retired := range []string{"没归到后端", "自身异常"} {
+		if strings.Contains(body, retired) {
+			t.Errorf("the page still calls the anomaly column %q somewhere; it has to be %q everywhere,"+
+				" or two panels showing one number read as two problems", retired, name)
+		}
+	}
+	// Every place a reader meets the column. The anchor is something stable on
+	// the same source line as the label.
+	for _, anchor := range []struct{ what, marker string }{
+		{"verdict panel cell", `id="ownBad"`},
+		{"replica table header", `<th>其中 alarmd 的</th>`},
+		{"object list button", `id="colOwn"`},
+		{"object list heading", `anomalies: '`},
+	} {
+		found := false
+		for _, line := range strings.Split(body, "\n") {
+			if strings.Contains(line, anchor.marker) && strings.Contains(line, name) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("the %s (%s) does not carry the name %q", anchor.what, anchor.marker, name)
+		}
+	}
+}
+
 // The verdict route was the one response this check could not cover, because it
 // answered with a map and a map has no fields to reflect over. That is where it
 // went wrong: four columns were added to the view and to the page in one change,
@@ -176,6 +258,15 @@ func TestThePageHasWordingForEveryAnomalyKind(t *testing.T) {
 // It answers with a type now, so this is the same check as the other two.
 func TestEveryVerdictFieldThePageReadsExistsInTheAPI(t *testing.T) {
 	assertFieldsExist(t, "deployment", reflect.TypeOf(fleet.HealthResponse{}))
+}
+
+// The impact line is the only thing on the page that answers "what is affected"
+// rather than "how many objects", so a field misspelled there renders a zero
+// that reads as "nothing is affected" -- which is the one wrong answer that
+// makes a reader close the page.
+func TestEveryImpactFieldThePageReadsExistsInTheAPI(t *testing.T) {
+	assertFieldsExist(t, "impact", reflect.TypeOf(fleet.Impact{}))
+	assertFieldsExist(t, "columnFacts", reflect.TypeOf(fleet.ColumnImpact{}))
 }
 
 // The object list is the response the whole table is built from, and it was the
@@ -319,6 +410,42 @@ func TestThePageAgreesOnWhichProvenancesMeanRestored(t *testing.T) {
 		if !declared[source] {
 			t.Errorf("the page calls %q a restored provenance and fleet does not: it would tell a "+
 				"reader a watched object's cause was lost", source)
+		}
+	}
+}
+
+// The page puts the bound direction on the duration itself, from its own copy
+// of which provenances are bounds. Getting it wrong in either direction states
+// something false about a number a reader is about to act on: a missing entry
+// renders a bound as a measurement, a spurious one renders a measured duration
+// as an approximation.
+//
+// The same list now decides whether the sentence above the table may name a
+// moment, so a drift here is no longer confined to one cell.
+func TestThePageAgreesOnWhichProvenancesAreBounds(t *testing.T) {
+	body := string(page)
+	block := regexp.MustCompile(`var SINCE_BOUND = \{([^}]*)\}`).FindStringSubmatch(body)
+	if block == nil {
+		t.Fatal("the page no longer declares SINCE_BOUND: every bound renders as a measurement")
+	}
+	listed := map[string]bool{}
+	for _, match := range regexp.MustCompile(`([A-Z_]+):\s*'`).FindAllStringSubmatch(block[1], -1) {
+		listed[match[1]] = true
+	}
+	if len(fleet.BoundedSinceSources) == 0 {
+		t.Fatal("no bounded provenances declared; the check would pass vacuously")
+	}
+	declared := map[string]bool{}
+	for _, source := range fleet.BoundedSinceSources {
+		declared[string(source)] = true
+		if !listed[string(source)] {
+			t.Errorf("%q gives a bound and the page renders it as a measured duration", source)
+		}
+	}
+	for source := range listed {
+		if !declared[source] {
+			t.Errorf("the page marks %q as a bound and fleet does not: a measured duration renders "+
+				"as an approximation", source)
 		}
 	}
 }

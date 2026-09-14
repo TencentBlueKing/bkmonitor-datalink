@@ -417,7 +417,7 @@ func TestDueIndexFailsOpenWhenTheHeaderCannotBeRead(t *testing.T) {
 	dispatcher.beginGeneration()
 	dispatcher.dueIndex.Record("query-group-a", lifecycle, dispatcher.dueIndex.versionEpoch, seedBound, clock.at)
 	dispatcher.beginGeneration()
-	if due, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); due {
+	if due, _, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); due {
 		t.Fatal("a stable header dropped a bound that is still ten minutes away")
 	}
 	if got := counterValue(t, recorder, "bkmonitor_alarmd_due_index_version_check_total",
@@ -429,7 +429,7 @@ func TestDueIndexFailsOpenWhenTheHeaderCannotBeRead(t *testing.T) {
 	// A header that cannot be read drops it.
 	dispatcher.controlVersion.Store(&phaseTwoControlVersionSample{known: false})
 	dispatcher.beginGeneration()
-	if due, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); !due {
+	if due, _, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); !due {
 		t.Fatal("an unreadable header left the Query Group parked on a bound it cannot vouch for")
 	}
 	if got := counterValue(t, recorder, "bkmonitor_alarmd_due_index_recomputed_total",
@@ -471,10 +471,10 @@ func TestDueIndexPublicationDropsScheduleBoundsAndKeepsBackoff(t *testing.T) {
 	dispatcher.controlVersion.Store(&phaseTwoControlVersionSample{tag: "publication-2", known: true})
 	dispatcher.beginGeneration()
 
-	if due, _, _ := dispatcher.dueIndex.Predict("query-group-scheduled", scheduled, clock.at); !due {
+	if due, _, _, _ := dispatcher.dueIndex.Predict("query-group-scheduled", scheduled, clock.at); !due {
 		t.Fatal("a publication left a schedule bound standing, so a Slot it brought forward would wait")
 	}
-	if due, _, _ := dispatcher.dueIndex.Predict("query-group-backoff", backoff, clock.at); due {
+	if due, _, _, _ := dispatcher.dueIndex.Predict("query-group-backoff", backoff, clock.at); due {
 		t.Fatal("a publication cancelled a Runner's own backoff, which it says nothing about")
 	}
 	if got := counterValue(t, recorder, "bkmonitor_alarmd_due_index_recomputed_total",
@@ -505,7 +505,7 @@ func TestDueIndexDropsBoundsWrittenUnderASupersededPublication(t *testing.T) {
 	dispatcher.controlVersion.Store(&phaseTwoControlVersionSample{tag: "publication-1", known: true})
 	dispatcher.beginGeneration()
 	lifecycle := dispatcher.bundle.runners["query-group-a"]
-	_, _, epoch := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at)
+	_, _, epoch, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at)
 
 	// The publication lands while the round is still out.
 	dispatcher.controlVersion.Store(&phaseTwoControlVersionSample{tag: "publication-2", known: true})
@@ -513,7 +513,7 @@ func TestDueIndexDropsBoundsWrittenUnderASupersededPublication(t *testing.T) {
 
 	dispatcher.dueIndex.Record("query-group-a", lifecycle, epoch,
 		scheduler.RunnerDueBound{NotDueUntilUnix: clock.at.Unix() + 300, IntervalSeconds: 60}, clock.at)
-	if due, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); !due {
+	if due, _, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); !due {
 		t.Fatal("a bound read under a superseded publication was accepted")
 	}
 }
@@ -543,7 +543,7 @@ func TestDueIndexDropsEntriesForAReplacedLifecycle(t *testing.T) {
 	if dispatcher.dueIndex.Len() != 0 {
 		t.Fatal("the bound written for the previous lifecycle survived the takeover")
 	}
-	if due, _, _ := dispatcher.dueIndex.Predict("query-group-a", replacement, clock.at); !due {
+	if due, _, _, _ := dispatcher.dueIndex.Predict("query-group-a", replacement, clock.at); !due {
 		t.Fatal("a Query Group with no bound of its own was not treated as due")
 	}
 	if got := counterValue(t, recorder, "bkmonitor_alarmd_due_index_recomputed_total",
@@ -572,11 +572,11 @@ func TestDueIndexBoundsTheRetiredRecheck(t *testing.T) {
 	dispatcher.dueIndex.Record("query-group-a", lifecycle, dispatcher.dueIndex.versionEpoch,
 		scheduler.RunnerDueBound{Retired: true, Verdict: scheduler.DueVerdictNotDue}, clock.at)
 
-	if due, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle,
+	if due, _, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle,
 		clock.at.Add(time.Duration(dueIndexRetiredRecheckSeconds-1)*time.Second)); due {
 		t.Fatal("a retired Query Group was rechecked before its recheck was due")
 	}
-	if due, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle,
+	if due, _, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle,
 		clock.at.Add(time.Duration(dueIndexRetiredRecheckSeconds)*time.Second)); !due {
 		t.Fatalf("a retired Query Group was not rechecked after %d seconds, so a revoked "+
 			"retirement would never resume", dueIndexRetiredRecheckSeconds)
@@ -612,7 +612,7 @@ func TestDueIndexNeverHoldsBackBacklog(t *testing.T) {
 	dispatcher.dueIndex.Record("query-group-a", lifecycle, dispatcher.dueIndex.versionEpoch,
 		scheduler.RunnerDueBound{Verdict: scheduler.DueVerdictDue, Executed: true, IntervalSeconds: 60}, clock.at)
 
-	if due, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); !due {
+	if due, _, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); !due {
 		t.Fatal("a Query Group that just executed a backlog Slot was parked")
 	}
 }
@@ -634,7 +634,7 @@ func TestDueIndexMaturedDeferralJoinsTheRecoveryQueue(t *testing.T) {
 	dispatcher.dueIndex.Record("query-group-a", lifecycle, dispatcher.dueIndex.versionEpoch,
 		scheduler.RunnerDueBound{NotDueUntilUnix: 990, Deferred: true, IntervalSeconds: 60}, clock.at)
 
-	if due, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); !due {
+	if due, _, _, _ := dispatcher.dueIndex.Predict("query-group-a", lifecycle, clock.at); !due {
 		t.Fatal("a deferral whose instant has passed was still treated as parked")
 	}
 	runners, revision := dispatcher.bundle.snapshotScheduledRunners()
@@ -704,7 +704,7 @@ func TestDueIndexClearingLosesNothingButWork(t *testing.T) {
 		t.Fatal("clearing left bounds behind")
 	}
 	for queryGroup, lifecycle := range dispatcher.bundle.runners {
-		if due, _, _ := dispatcher.dueIndex.Predict(queryGroup, lifecycle, clock.at); !due {
+		if due, _, _, _ := dispatcher.dueIndex.Predict(queryGroup, lifecycle, clock.at); !due {
 			t.Fatalf("%s was still parked after the index was cleared", queryGroup)
 		}
 	}

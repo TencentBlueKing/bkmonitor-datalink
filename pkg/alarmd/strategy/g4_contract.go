@@ -109,13 +109,14 @@ func cloneAlgorithmInputRequirements(source []AlgorithmInputRequirement) []Algor
 }
 
 type SimpleRingRatioConfig struct {
-	ValueField      string `json:"value_field"`
-	FloorConfigured bool   `json:"floor_configured"`
-	FloorEnabled    bool   `json:"floor_enabled"`
-	FloorDecimal    string `json:"floor_decimal"`
-	CeilConfigured  bool   `json:"ceil_configured"`
-	CeilEnabled     bool   `json:"ceil_enabled"`
-	CeilDecimal     string `json:"ceil_decimal"`
+	MissingHistoryAsZero bool   `json:"missing_history_as_zero,omitempty"`
+	ValueField           string `json:"value_field"`
+	FloorConfigured      bool   `json:"floor_configured"`
+	FloorEnabled         bool   `json:"floor_enabled"`
+	FloorDecimal         string `json:"floor_decimal"`
+	CeilConfigured       bool   `json:"ceil_configured"`
+	CeilEnabled          bool   `json:"ceil_enabled"`
+	CeilDecimal          string `json:"ceil_decimal"`
 }
 
 type OsRestartConfig struct {

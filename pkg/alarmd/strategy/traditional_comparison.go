@@ -47,14 +47,15 @@ type TraditionalComparisonParameters struct {
 
 type TraditionalComparisonConfig struct {
 	TraditionalComparisonParameters
-	ValueField          string                   `json:"value_field"`
-	DataUnit            string                   `json:"data_unit"`
-	AlgorithmUnit       string                   `json:"algorithm_unit"`
-	Precision           int                      `json:"precision"`
-	AggregationInterval int64                    `json:"aggregation_interval"`
-	DataConversion      ComparisonUnitConversion `json:"data_conversion"`
-	AlgorithmConversion ComparisonUnitConversion `json:"algorithm_conversion"`
-	ThresholdConversion ComparisonUnitConversion `json:"threshold_conversion"`
+	ValueField           string                   `json:"value_field"`
+	DataUnit             string                   `json:"data_unit"`
+	AlgorithmUnit        string                   `json:"algorithm_unit"`
+	Precision            int                      `json:"precision"`
+	MissingHistoryAsZero bool                     `json:"missing_history_as_zero,omitempty"`
+	AggregationInterval  int64                    `json:"aggregation_interval"`
+	DataConversion       ComparisonUnitConversion `json:"data_conversion"`
+	AlgorithmConversion  ComparisonUnitConversion `json:"algorithm_conversion"`
+	ThresholdConversion  ComparisonUnitConversion `json:"threshold_conversion"`
 }
 
 // ComparisonUnitConversion freezes the multiplication order as well as the
@@ -224,11 +225,12 @@ func (c traditionalComparisonCompiler) Capability() AlgorithmCapability {
 func (compiler traditionalComparisonCompiler) Compile(_ context.Context, ctx AlgorithmCompileContext, raw contract.AlgorithmIRV2) (AlgorithmCompileResult, error) {
 	var wire struct {
 		TraditionalComparisonParameters
-		DataUnit        string                      `json:"data_unit"`
-		AlgorithmUnit   string                      `json:"algorithm_unit"`
-		Precision       int                         `json:"precision"`
-		InputProjection AlgorithmInputProjection    `json:"input_projection"`
-		Requirements    []AlgorithmInputRequirement `json:"requirements"`
+		DataUnit             string                      `json:"data_unit"`
+		AlgorithmUnit        string                      `json:"algorithm_unit"`
+		Precision            int                         `json:"precision"`
+		MissingHistoryAsZero bool                        `json:"missing_history_as_zero,omitempty"`
+		InputProjection      AlgorithmInputProjection    `json:"input_projection"`
+		Requirements         []AlgorithmInputRequirement `json:"requirements"`
 	}
 	if err := decodeStrict(raw.Config, &wire); err != nil {
 		return AlgorithmCompileResult{}, configErrorf("traditional comparison: %v", err)
@@ -355,5 +357,6 @@ func (compiler traditionalComparisonCompiler) Compile(_ context.Context, ctx Alg
 		}
 	}
 	config := &TraditionalComparisonConfig{TraditionalComparisonParameters: params, ValueField: wire.InputProjection.ValueFields[0], DataUnit: wire.DataUnit, AlgorithmUnit: wire.AlgorithmUnit, Precision: wire.Precision, AggregationInterval: int64(ctx.ExecutionSemantics.AggregationInterval), DataConversion: dataConversion, AlgorithmConversion: algorithmConversion, ThresholdConversion: thresholdConversion}
+	config.MissingHistoryAsZero = wire.MissingHistoryAsZero
 	return g4CompileResult(compiledAlgorithmConfig{TraditionalComparison: config}, wire.InputProjection, requirements, "traditional-comparison-compiler-v1", "python-ordered-history-v1", len(offsets)+1), nil
 }

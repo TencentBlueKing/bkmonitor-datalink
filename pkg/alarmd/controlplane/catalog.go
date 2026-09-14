@@ -120,8 +120,8 @@ type Catalog struct {
 	QueryGroups      []QueryGroup
 	Dispositions     []ObjectDisposition
 	// RetainedStaleRevisions counts the last-good Plans this build did not
-	// retain because their persisted revision no longer derives from their
-	// facts. Zero on every build until the revision formula changes.
+	// retain because their persisted facts no longer hold under this binary,
+	// under either refusal. Zero on every build within one release.
 	RetainedStaleRevisions int
 }
 
@@ -164,26 +164,36 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 		group.Plans = append(group.Plans, plan)
 		return nil
 	}
-	// ReasonLastGoodRevisionStale is the disposition of a last-good Plan that
-	// could not be retained: its facts were persisted with the revision the
-	// publishing process computed, and the current formula computes another.
-	// Within one formula that cannot happen (revision is a pure function of
-	// facts); across a change of the formula it happens to every retained
-	// Plan at once, and each would then meet a freshly compiled sibling in
-	// its group under a different revision -- the conflict addPlan refuses,
-	// which used to fail the whole Catalog. That is the wrong blast radius
-	// for a strategy whose document cannot currently be compiled: it leaves
-	// the Catalog, named, until its document compiles again, and the other
-	// strategies keep evaluating.
-	const reasonLastGoodRevisionStale = "LAST_GOOD_REVISION_STALE"
+	// A last-good Plan is retained only when its persisted facts still hold
+	// under this binary. Two things can have changed since they were
+	// published, and they are told apart because the label is what the
+	// reader acts on:
+	//
+	// LAST_GOOD_REVISION_STALE: the facts are valid but the current formula
+	// derives another revision from them. Within one formula that cannot
+	// happen (the revision is a pure function of the facts); across a change
+	// of the formula it happens to every retained Plan at once, and each
+	// would then meet a freshly compiled sibling in its group under a
+	// different revision -- the conflict addPlan refuses.
+	//
+	// LAST_GOOD_FACTS_INVALID: the facts no longer pass the rules
+	// BuildQueryPlanFacts applies -- a validation tightened since they were
+	// published, with the formula untouched. Calling that a stale revision
+	// would send the reader to the wrong change.
+	//
+	// Either way the Plan is not retained: added under an old revision it
+	// used to fail the whole Catalog, which is the wrong blast radius for a
+	// strategy whose document cannot currently be compiled. It leaves the
+	// Catalog, named and counted, until its document compiles again, and
+	// the other strategies keep evaluating.
 	retainLastGood := func(sourceID string) (bool, error) {
 		entry, ok := lastGood[sourceID]
 		if !ok {
 			return false, nil
 		}
-		if err := entry.facts.Validate(); err != nil {
+		if reason := lastGoodRefusal(entry.facts); reason != "" {
 			catalog.Dispositions = append(catalog.Dispositions, ObjectDisposition{SourceID: sourceID, Scope: "PLAN",
-				Disposition: DispositionConfigRejected, Reason: reasonLastGoodRevisionStale})
+				Disposition: DispositionConfigRejected, Reason: reason})
 			catalog.RetainedStaleRevisions++
 			return false, nil
 		}
@@ -445,6 +455,30 @@ func indexLastGoodPlans(snapshot *PublishedSnapshot) map[string]lastGoodPlan {
 		}
 	}
 	return result
+}
+
+// lastGoodRefusal says why a last-good Plan's persisted facts cannot be
+// retained under this binary, or nothing when they can. The two refusals
+// are told apart by re-deriving the facts: rules that no longer accept them
+// are one thing, a formula that derives another revision from accepted
+// facts is the other.
+const (
+	reasonLastGoodRevisionStale = "LAST_GOOD_REVISION_STALE"
+	reasonLastGoodFactsInvalid  = "LAST_GOOD_FACTS_INVALID"
+)
+
+func lastGoodRefusal(facts execution.QueryPlanFacts) string {
+	persisted := facts.QueryRevision
+	facts.QueryRevision = ""
+	rebuilt, err := execution.BuildQueryPlanFacts(facts)
+	switch {
+	case err != nil:
+		return reasonLastGoodFactsInvalid
+	case persisted == "" || rebuilt.QueryRevision != persisted:
+		return reasonLastGoodRevisionStale
+	default:
+		return ""
+	}
 }
 
 func indexPendingRemoval(dispositions []ObjectDisposition) map[string]struct{} {

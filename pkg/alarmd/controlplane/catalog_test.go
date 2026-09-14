@@ -597,4 +597,20 @@ func TestBuildCatalogDoesNotRetainALastGoodPlanWhoseRevisionNoLongerDerives(t *t
 	if len(catalog.QueryGroups) != 1 || catalog.QueryGroups[0].QueryPlan.QueryRevision != previous.QueryGroups[0].QueryPlan.QueryRevision {
 		t.Fatalf("groups = %+v, want the compiled strategy's group under the current revision", catalog.QueryGroups)
 	}
+	// Facts the current rules no longer accept, formula untouched: the same
+	// drop under the other name, so the reader is sent to the validation
+	// that changed and not to a formula that did not.
+	invalidGroups := append([]controlplane.QueryGroup(nil), previous.QueryGroups...)
+	invalidGroups[0].QueryPlan.StepMillis = 0
+	catalog = build(&controlplane.PublishedSnapshot{Publication: intact.Publication, QueryGroups: invalidGroups})
+	named = nil
+	for _, disposition := range catalog.Dispositions {
+		if disposition.SourceID == "1002" && disposition.Scope == "PLAN" {
+			named = append(named, disposition)
+		}
+	}
+	if got := catalogStrategyIDs(catalog); !reflect.DeepEqual(got, []string{"1001"}) || catalog.RetainedStaleRevisions != 1 ||
+		len(named) != 1 || named[0].Reason != "LAST_GOOD_FACTS_INVALID" {
+		t.Fatalf("with facts the rules refuse: plans %v, stale %d, dispositions %+v; want LAST_GOOD_FACTS_INVALID", got, catalog.RetainedStaleRevisions, named)
+	}
 }

@@ -395,11 +395,12 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	metrics.controlSource = newControlSourceCollector()
 	metrics.controlSourceRetainedStale = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "control_source_retained_stale_revisions_total",
-		Help: "Last-good Plans a Catalog build refused to retain because their persisted query revision no longer " +
-			"derives from their facts. Within one revision formula this is zero by construction; it rises, for every " +
-			"retained Plan at once, when a release changes the formula, and each such Plan leaves the Catalog under " +
-			"the disposition LAST_GOOD_REVISION_STALE until its document compiles again, instead of the whole " +
-			"Catalog failing to build as it did before.",
+		Help: "Last-good Plans a Catalog build refused to retain because their persisted facts no longer hold under " +
+			"this binary: the current formula derives another revision from them (disposition " +
+			"LAST_GOOD_REVISION_STALE) or the current rules no longer accept them (LAST_GOOD_FACTS_INVALID). Within " +
+			"one release this is zero by construction; it rises, for every retained Plan at once, when a release " +
+			"changes either, and each such Plan leaves the Catalog under its disposition until its document " +
+			"compiles again, instead of the whole Catalog failing to build as it did before.",
 	})
 	metrics.seriesAdmission = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "series_admission_total",

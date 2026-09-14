@@ -153,7 +153,8 @@ type NestedAgg struct {
 type aggInfoList []any
 
 type FormatFactory struct {
-	ctx context.Context
+	fieldSemantics string
+	ctx            context.Context
 
 	valueField string
 	timeField  metadata.TimeField
@@ -463,6 +464,10 @@ func (f *FormatFactory) timeAgg(name string, window time.Duration, timezoneOffse
 }
 
 func (f *FormatFactory) termAgg(name string, isFirst bool) {
+	if f.isKeyedTag(name) {
+		f.aggInfoList = append(f.aggInfoList, KeyedTagAgg{Name: name})
+		return
+	}
 	info := TermAgg{
 		Name: name,
 	}
@@ -677,6 +682,20 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 
 	for _, aggInfo := range f.aggInfoList {
 		switch info := aggInfo.(type) {
+		case KeyedTagAgg:
+			reverse := elastic.NewReverseNestedAggregation()
+			if agg != nil {
+				reverse.SubAggregation(name, agg)
+			}
+			terms := elastic.NewTermsAggregation().Field("tags.value.raw").Size(1440).
+				SubAggregation("_reverse", reverse)
+			if f.size > 0 {
+				terms.Size(f.size)
+			}
+			agg = elastic.NewNestedAggregation().Path("tags").SubAggregation("key",
+				elastic.NewFilterAggregation().Filter(elastic.NewTermQuery("tags.key", strings.TrimPrefix(info.Name, "tags."))).
+					SubAggregation("value", terms))
+			name = info.Name
 		case ValueAgg:
 			switch info.FuncType {
 			case Min:
@@ -833,9 +852,13 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			name = info.Name
 		case TermAgg:
 			curName := info.Name
-			curAgg := elastic.NewTermsAggregation().Field(info.Name)
+			field := info.Name
+			if f.fieldSemantics == metadata.FTAEventTagsV1 && field == "alert_name" {
+				field += ".raw"
+			}
+			curAgg := elastic.NewTermsAggregation().Field(field)
 			fieldType := f.GetFieldType(info.Name)
-			if fieldType == "" || fieldType == Text || fieldType == KeyWord {
+			if f.fieldSemantics == "" && (fieldType == "" || fieldType == Text || fieldType == KeyWord) {
 				curAgg = curAgg.Missing(" ")
 			}
 
@@ -843,7 +866,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				curAgg = curAgg.Size(f.size)
 			}
 			fieldLabelValues, ok := f.labelMap[info.Name]
-			if ok && len(fieldLabelValues) > 0 {
+			if f.fieldSemantics == "" && ok && len(fieldLabelValues) > 0 {
 				var filteredFieldLabelValues []any
 				for _, labelMapValue := range fieldLabelValues {
 					// 只有为非空的值并且操作符为等于时才添加到include子句
@@ -877,6 +900,9 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 }
 
 func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.Aggregation, error) {
+	if f.fieldSemantics != "" && f.fieldSemantics != metadata.FTAEventTagsV1 {
+		return "", nil, fmt.Errorf("unsupported field_semantics %q", f.fieldSemantics)
+	}
 	if len(aggregates) == 0 {
 		err := errors.New("aggregate_method_list is empty")
 		return "", nil, err
@@ -1019,6 +1045,12 @@ func negativeLookaheadQuery(field string, regexp elastic.Query) elastic.Query {
 
 // Query 把 ts 的 conditions 转换成 es 查询
 func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Query, error) {
+	if f.fieldSemantics != "" {
+		if f.fieldSemantics != metadata.FTAEventTagsV1 {
+			return nil, fmt.Errorf("unsupported field_semantics %q", f.fieldSemantics)
+		}
+		return f.ftaQuery(allConditions)
+	}
 	bootQueries := make([]elastic.Query, 0)
 	orQuery := make([]elastic.Query, 0, len(allConditions))
 

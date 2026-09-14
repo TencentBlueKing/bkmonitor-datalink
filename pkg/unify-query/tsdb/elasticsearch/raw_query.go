@@ -222,6 +222,7 @@ func newRawFormatFactory(
 	}
 
 	return NewFormatFactory(ctx).
+		WithFieldSemantics(rawQuery.FieldSemantics).
 		WithTransform(func(s string) string {
 			if s == "" {
 				return ""

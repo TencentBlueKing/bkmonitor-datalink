@@ -11,6 +11,7 @@ package influxdb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -45,6 +46,19 @@ type TestSuite struct {
 	client    goRedis.UniversalClient
 	router    *SpaceTsDbRouter
 	miniRedis *miniredis.Miniredis
+}
+
+type partialLoadRouter struct {
+	routerInfluxdb.Router
+}
+
+func (r *partialLoadRouter) IterGenericKeyResult(_ context.Context, _ string, _ int64, genericCh chan routerInfluxdb.GenericKV) {
+	genericCh <- routerInfluxdb.GenericKV{
+		Key: "partial_route_should_not_be_written",
+		Val: &routerInfluxdb.ResultTableDetail{DB: "test_db", Measurement: "test_measurement"},
+	}
+	genericCh <- routerInfluxdb.GenericKV{Err: errors.New("redis scan interrupted")}
+	close(genericCh)
 }
 
 func (s *TestSuite) SetupTest() {
@@ -220,13 +234,21 @@ func (s *TestSuite) TestLoadRouterCanceledCountsFailure() {
 	cancel()
 
 	err := s.router.LoadRouter(ctx, routerInfluxdb.ResultTableDetailKey, true)
-	s.Require().NoError(err)
+	s.Require().ErrorIs(err, context.Canceled)
 
 	failureAfter := getRedisRouterLoadMetricValue(routerInfluxdb.ResultTableDetailKey, metric.RedisRouterLoadResultFailure)
 	successAfter := getRedisRouterLoadMetricValue(routerInfluxdb.ResultTableDetailKey, metric.RedisRouterLoadResultSuccess)
 
 	s.Equal(failureBefore+1, failureAfter, "canceled load should increment failure counter")
 	s.Equal(successBefore, successAfter, "canceled load should not increment success counter")
+}
+
+func (s *TestSuite) TestLoadRouterDoesNotPersistPartialData() {
+	s.router.router = &partialLoadRouter{Router: s.router.router}
+
+	err := s.router.LoadRouter(s.ctx, routerInfluxdb.ResultTableDetailKey, true)
+	s.Require().ErrorContains(err, "redis scan interrupted")
+	s.Nil(s.router.GetResultTable(s.ctx, "partial_route_should_not_be_written", true))
 }
 
 func (s *TestSuite) TestMultiTenantSupport() {

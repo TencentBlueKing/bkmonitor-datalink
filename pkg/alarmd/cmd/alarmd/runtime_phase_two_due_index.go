@@ -213,21 +213,40 @@ func (index *phaseTwoDueIndex) Clear() {
 // No entry, or an entry belonging to a lifecycle this is not, means due: a
 // Query Group this replica has just taken over has never been evaluated here,
 // and the only honest answer is to go and find out.
+// heldFor is how much longer this bound would keep the Query Group back, and it
+// is the whole discriminator when the round then finds the object due after all.
+//
+// The index holding back an object that is already due is the failure its own
+// file calls a correctness defect, and the count of those alone cannot separate
+// it from the clock simply crossing the boundary between the prediction and the
+// verdict -- two things that need opposite responses and produce the same
+// tally. How far the bound reaches past the moment it was consulted is what
+// separates them: shorter than one walk over the owned set and the boundary was
+// crossed in flight; much longer and the bound is late by that much.
+//
+// Zero when the object is due, because there is nothing being held back.
 func (index *phaseTwoDueIndex) Predict(
 	queryGroup execution.QueryGroupIdentity,
 	lifecycle *phaseTwoQueryGroupLifecycle,
 	now time.Time,
-) (due bool, deferred bool, epoch uint64) {
+) (due bool, deferred bool, epoch uint64, heldFor time.Duration) {
 	if index == nil {
-		return true, false, 0
+		return true, false, 0, 0
 	}
 	index.mu.Lock()
 	defer index.mu.Unlock()
 	entry, ok := index.entries[queryGroup]
 	if !ok || entry.lifecycle != lifecycle {
-		return true, false, index.versionEpoch
+		return true, false, index.versionEpoch, 0
 	}
-	return entry.dueAtUnix <= now.Unix(), entry.deferred, index.versionEpoch
+	if entry.dueAtUnix <= now.Unix() {
+		return true, entry.deferred, index.versionEpoch, 0
+	}
+	// Seconds, because that is the resolution the comparison above is made at:
+	// the bound is stored as a whole second and compared against a whole second,
+	// so anything finer here would be precision this decision does not have.
+	return false, entry.deferred, index.versionEpoch,
+		time.Duration(entry.dueAtUnix-now.Unix()) * time.Second
 }
 
 // Record rewrites the bound for one Query Group from the round that has just

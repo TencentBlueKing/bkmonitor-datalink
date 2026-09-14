@@ -23,10 +23,10 @@ func TestQueryCooldownIndexInvalidatesWithoutClearingRetry(t *testing.T) {
 	index.mu.Lock()
 	index.expireScheduleBoundsLocked(at.Unix())
 	index.mu.Unlock()
-	if due, _, _ := index.Predict("query", query, at); !due {
+	if due, _, _, _ := index.Predict("query", query, at); !due {
 		t.Fatal("publication did not revalidate query cooldown")
 	}
-	if due, _, _ := index.Predict("retry", retry, at); due {
+	if due, _, _, _ := index.Predict("retry", retry, at); due {
 		t.Fatal("publication cleared execution retry")
 	}
 }

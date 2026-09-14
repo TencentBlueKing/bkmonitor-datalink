@@ -378,6 +378,7 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_schedule_segments_pruned_total":               "variableLabels: {}",
 		"bkmonitor_alarmd_dispatch_rotation_total":                      "variableLabels: {result}",
 		"bkmonitor_alarmd_dispatch_walk_total":                          "variableLabels: {result}",
+		"bkmonitor_alarmd_due_index_audit_overshoot_seconds":            "variableLabels: {}",
 		"bkmonitor_alarmd_schedule_prune_skipped_total":                 "variableLabels: {reason}",
 		"bkmonitor_alarmd_schedule_cutover_query_groups_total":          "variableLabels: {decision}",
 		"bkmonitor_alarmd_schedule_cutover_timelines_read":              "variableLabels: {}",
@@ -802,8 +803,12 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		// rotations and object-turns are different populations counted at
 		// different rates, and one metric holding both invites a ratio between
 		// a numerator and a denominator that do not describe the same thing.
-		fqName("dispatch_rotation_total"):             2,
-		fqName("dispatch_walk_total"):                 4,
+		fqName("dispatch_rotation_total"): 2,
+		fqName("dispatch_walk_total"):     4,
+		// Audited dispatches only -- one Query Group per generation -- which is
+		// why it is its own metric and not a cell on due_index_prediction_total,
+		// whose four cells mix a sampled population with a full one.
+		fqName("due_index_audit_overshoot_seconds"):   histogramSeries(1, len(dueIndexAuditOvershootBuckets)),
 		fqName("schedule_prune_skipped_total"):        len(observability.SchedulePruneSkipReasons),
 		fqName("schedule_cutover_query_groups_total"): len(observability.ScheduleCutoverDecisions),
 		fqName("schedule_cutover_timelines_read"):     1,

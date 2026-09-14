@@ -453,6 +453,12 @@ type phaseTwoScheduledRunner struct {
 	// second time would be checking the answer against itself.
 	predictedDue bool
 	dueEpoch     uint64
+	// predictedHeldFor is how much longer the index's bound would have kept this
+	// Query Group back at the moment it was consulted. It is only meaningful
+	// beside a prediction of not-due, and it is what separates a bound that is
+	// late from a clock that crossed the boundary between the prediction and the
+	// verdict -- two situations the count of violations alone reports the same.
+	predictedHeldFor time.Duration
 }
 
 type phaseTwoScheduledResult struct {
@@ -1150,7 +1156,7 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 		// and the comparison against what the round actually finds is a
 		// comparison of the real decision rather than a re-derivation of it.
 		var parkedOnBackoff bool
-		scheduled.predictedDue, parkedOnBackoff, scheduled.dueEpoch =
+		scheduled.predictedDue, parkedOnBackoff, scheduled.dueEpoch, scheduled.predictedHeldFor =
 			dispatcher.dueIndex.Predict(scheduled.queryGroup, scheduled.lifecycle, now)
 		if !scheduled.predictedDue && (parkedOnBackoff || !dispatcher.claimAuditDispatch(scheduled.queryGroup)) {
 			// Neither queue. A parked Query Group in the ready queue would be
@@ -1478,8 +1484,16 @@ func (dispatcher *phaseTwoRunnerDispatcher) recordDueBound(result phaseTwoSchedu
 	if bound.Verdict == scheduler.DueVerdictUnknown {
 		return
 	}
-	dispatcher.bundle.dependencies.Recorder.RecordDueIndexPrediction(
-		scheduled.predictedDue, bound.Verdict == scheduler.DueVerdictDue)
+	actuallyDue := bound.Verdict == scheduler.DueVerdictDue
+	dispatcher.bundle.dependencies.Recorder.RecordDueIndexPrediction(scheduled.predictedDue, actuallyDue)
+	// Only the violation, and only its magnitude. The count of these has been
+	// readable for a while and cannot answer why: a bound that reaches minutes
+	// past an object that is already due and a clock that crossed the boundary
+	// while the round was in flight produce the same tally and need opposite
+	// responses.
+	if !scheduled.predictedDue && actuallyDue {
+		dispatcher.bundle.dependencies.Recorder.RecordDueIndexAuditOvershoot(scheduled.predictedHeldFor)
+	}
 }
 
 func (dispatcher *phaseTwoRunnerDispatcher) sortDelayed() {

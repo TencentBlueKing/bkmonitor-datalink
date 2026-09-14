@@ -5,7 +5,11 @@
 
 package metric
 
-import "github.com/prometheus/client_golang/prometheus"
+import (
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+)
 
 // The due index predicts, for each owned Query Group, the second before which
 // asking the Slot source cannot produce work. These metrics exist to say
@@ -28,13 +32,14 @@ import "github.com/prometheus/client_golang/prometheus"
 // fail-open series sits beside the count of checks that actually ran. Without
 // the companion, "no violations" and "no comparisons" are the same reading.
 type dueIndexMetrics struct {
-	entries       prometheus.Gauge
-	predictions   *prometheus.CounterVec
-	recomputes    *prometheus.CounterVec
-	versionChecks *prometheus.CounterVec
-	horizon       prometheus.Histogram
-	skipped       *prometheus.CounterVec
-	crowdedOut    *prometheus.CounterVec
+	entries        prometheus.Gauge
+	predictions    *prometheus.CounterVec
+	recomputes     *prometheus.CounterVec
+	versionChecks  *prometheus.CounterVec
+	horizon        prometheus.Histogram
+	skipped        *prometheus.CounterVec
+	crowdedOut     *prometheus.CounterVec
+	auditOvershoot *prometheus.Histogram
 }
 
 // The horizon is how far ahead a bound sits. The buckets are the evaluation
@@ -94,6 +99,14 @@ var dispatchSkipReasons = []string{"not_due", "backoff", "query_cooldown"}
 //	        Look at capacity, not at round duration.
 var dispatchCrowdedOutHolders = []string{"active", "queued"}
 
+// dueIndexAuditOvershootBuckets span a fraction of one walk over the owned set
+// up to a full minute. The reading is against the walk's own duration, not
+// against zero: the prediction is taken when the object is offered a place and
+// the verdict is reached after the round runs, so a bound that was correct when
+// it was read can be crossed in between. Comparing against zero reports every
+// one of those as a defect.
+var dueIndexAuditOvershootBuckets = []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5, 15, 30, 60}
+
 func newDueIndexMetrics() dueIndexMetrics {
 	metrics := dueIndexMetrics{
 		entries: prometheus.NewGauge(prometheus.GaugeOpts{
@@ -142,6 +155,7 @@ func newDueIndexMetrics() dueIndexMetrics {
 				"and back once per evaluation cadence, so a scrape interval that divides that cadence " +
 				"samples one phase and reports it as a level.",
 		}, []string{"by"}),
+		auditOvershoot: newDueIndexAuditOvershoot(),
 		horizon: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "due_index_horizon_seconds",
 			Help:    "How far ahead of now a newly written due index bound sits.",
@@ -171,6 +185,7 @@ func newDueIndexMetrics() dueIndexMetrics {
 func (m dueIndexMetrics) collectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		m.entries, m.predictions, m.recomputes, m.versionChecks, m.horizon, m.skipped, m.crowdedOut,
+		*m.auditOvershoot,
 	}
 }
 
@@ -276,4 +291,48 @@ func (r *Recorder) RecordDispatchCrowdedOut(holder string) {
 			return
 		}
 	}
+}
+
+// newDueIndexAuditOvershoot builds the one measurement that can say why the due
+// index held back an object that was already due.
+//
+// The name carries "audit" because the population is not every dispatch. A
+// Query Group predicted not due is only dispatched when it wins the per-
+// generation audit claim, so every observation here comes from that sample --
+// while due_index_prediction_total's prediction=due rows come from the whole
+// population. Two of that counter's four cells are sampled and two are not, and
+// nothing in its name or its HELP says so; a share computed across them is a
+// numerator and a denominator drawn from different populations. Putting the
+// sampled quantity under a separate name is the only version of that warning a
+// reader cannot skip.
+func newDueIndexAuditOvershoot() *prometheus.Histogram {
+	histogram := prometheus.NewHistogram(prometheus.HistogramOpts{
+		Namespace: metricNamespace, Subsystem: metricSubsystem,
+		Name: "due_index_audit_overshoot_seconds",
+		Help: "How much longer the due index would have held back a Query Group that the round then " +
+			"found due, over the audited dispatches only -- one Query Group per generation, never the " +
+			"whole population, which is why this is not a cell on due_index_prediction_total. " +
+			"The count of those violations cannot say why they happen: a bound reaching minutes past " +
+			"an object that is already due and a clock crossing the boundary between the prediction " +
+			"and the verdict produce the same tally and need opposite responses. Read against the " +
+			"duration of one walk over the owned set, not against zero -- mass below one walk is the " +
+			"boundary being crossed in flight, mass well above it is the bound being late by that " +
+			"much, which is the correctness defect the index's own file names. Resolution is one " +
+			"second, because the bound is stored and compared as a whole second.",
+		Buckets: append([]float64(nil), dueIndexAuditOvershootBuckets...),
+	})
+	return &histogram
+}
+
+// RecordDueIndexAuditOvershoot observes one audited dispatch that the index
+// predicted was not due and the round found due.
+func (r *Recorder) RecordDueIndexAuditOvershoot(heldFor time.Duration) {
+	if r == nil || r.phaseTwo.dueIndex.auditOvershoot == nil {
+		return
+	}
+	seconds := heldFor.Seconds()
+	if seconds < 0 {
+		seconds = 0
+	}
+	(*r.phaseTwo.dueIndex.auditOvershoot).Observe(seconds)
 }

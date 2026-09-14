@@ -133,10 +133,14 @@ func newDueIndexMetrics() dueIndexMetrics {
 				"own previous round still executing. by=queued is the object sitting in a queue, and on a " +
 				"settled deployment that is mostly the recovery queue holding objects parked on their own " +
 				"next ready instant - after a readiness deferral that instant is when the data becomes " +
-				"readable, so those objects are waiting on purpose. Measured over a settled window, " +
-				"by=queued ran at 459 per second against a recovery queue holding about 540 objects and a " +
-				"rotation completing about 0.85 times a second: the rate is the parked population times " +
-				"the rotation rate and says nothing about capacity. Read by=active for contention.",
+				"readable, so those objects are waiting on purpose, and this counter rising says the " +
+				"rotation passed them, not that anything is wrong. Measured directly over two one-minute " +
+				"windows: a rotation offers every owned Query Group exactly once (77,307 offers over 73 " +
+				"rotations against 1,059 owned) and by=queued was 425 to 439 of each rotation's offers, " +
+				"against 37 for by=active. Read by=active for contention. Do not pair this with a scraped " +
+				"queue depth to check the arithmetic: the recovery queue swings from about 20 to its bound " +
+				"and back once per evaluation cadence, so a scrape interval that divides that cadence " +
+				"samples one phase and reports it as a level.",
 		}, []string{"by"}),
 		horizon: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "due_index_horizon_seconds",

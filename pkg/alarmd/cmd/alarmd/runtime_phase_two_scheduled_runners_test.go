@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -153,6 +154,45 @@ func queuedNames(queue []phaseTwoQueuedRunner) []execution.QueryGroupIdentity {
 		names = append(names, queued.scheduled.queryGroup)
 	}
 	return names
+}
+
+// TestRecoveryQueueHoldsEveryOwnedQueryGroup pins the bound the derived number
+// cannot state: the recovery queue holds Query Groups parked on their own next
+// ready instant, and every Query Group this Worker owns can be parked at once,
+// so a capacity below the owned set turns objects away for no reason.
+//
+// The derived capacity comes from the CPU budget and the owned count comes from
+// the control plane; the two are unrelated, and in production they land at 1024
+// against 1,059 owned, with the queue observed sitting on 1024 exactly.
+//
+// The Query Group turned away here is the latest-ready one, which reads as a
+// deliberate ordering decision. It is - but the decision only exists because the
+// queue is too small, which is what this test states: give it room for the owned
+// set and nobody is ordered out.
+func TestRecoveryQueueHoldsEveryOwnedQueryGroup(t *testing.T) {
+	readyAt := time.Now().Add(time.Hour)
+	owned := map[execution.QueryGroupIdentity]time.Time{}
+	for index := range 6 {
+		// Later names are later-ready, so a too-small queue turns away the ones
+		// at the end rather than failing on whichever the map iterates first.
+		owned[execution.QueryGroupIdentity(fmt.Sprintf("query-group-%d", index))] = readyAt.Add(time.Duration(index) * time.Minute)
+	}
+	// Two below the owned set, the same shape production is in.
+	dispatcher := walkDispatcher(16, 4, owned)
+	runners, revision := dispatcher.bundle.snapshotScheduledRunners()
+
+	dispatcher.fillQueues(runners, revision)
+
+	if got := len(dispatcher.delayed); got != len(owned) {
+		t.Fatalf("recovery queue holds %d of %d owned Query Groups (%v): a place is a reference and "+
+			"every owned Query Group can be parked at once", got, len(owned), queuedNames(dispatcher.delayed))
+	}
+	if dispatcher.rotation.deferred != 0 {
+		t.Fatalf("deferred = %d, want 0: nothing was turned away for lack of room", dispatcher.rotation.deferred)
+	}
+	if dispatcher.walked != len(runners) {
+		t.Fatalf("the walk finished after %d of %d Query Groups", dispatcher.walked, len(runners))
+	}
 }
 
 // TestFillQueuesDefersTheWalkWhileTheReadyQueueIsFull pins the trade-off the

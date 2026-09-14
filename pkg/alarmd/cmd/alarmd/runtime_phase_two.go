@@ -1173,8 +1173,51 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 		}
 		readyAt := scheduled.lifecycle.runner.NextReadyAt()
 		queued := phaseTwoQueuedRunner{scheduled: scheduled, readyAt: readyAt}
+		// The recovery queue may not turn a Query Group away while it holds fewer
+		// entries than this Worker owns.
+		//
+		// Its capacity is derived from the CPU budget - query permits times a
+		// depth per permit - and what fills it is the owned Query Group count,
+		// which that derivation knows nothing about. On an 8 CPU container it
+		// lands at 1024 while a Worker owns 1,059, so the queue cannot hold the
+		// set it exists to hold, and the shortfall is whatever the arithmetic
+		// happened to produce.
+		//
+		// It is not hypothetical. Sampled every 7 seconds - so the readings are
+		// not locked to the 60 second evaluation cadence the way a 15 or 60
+		// second interval is - the recovery queue fills to 991, 997, 1007 and
+		// 1024 once per cycle, the bound exactly, and the queue-full counter
+		// advances while it is there. The container is at 16% of its CPU and a
+		// third of its memory throughout.
+		//
+		// A place is a reference and one Query Group can hold at most one, so the
+		// owned set is the natural bound, at about 80 bytes an entry. The derived
+		// number stays as the floor rather than being replaced: it is what the
+		// permit budget wants kept fed.
+		//
+		// The turn-away this removes is written as a decision - this Query Group
+		// is not earlier than the one it would displace, so it does not belong in
+		// the queue at all - and that is true, but the decision only has to be
+		// made because the queue cannot hold everyone. A queue that fits the
+		// owned set never displaces anyone, so the ordering question does not
+		// arise and the O(n) scan that answers it never runs.
+		//
+		// The ready queue keeps its derived bound. It is sized at 32 per permit
+		// so that it is never the binding side of its pair with ActiveExecutions,
+		// and production agrees: it peaks at 164 against 1024 while the recovery
+		// queue sits on its bound. Raising a bound nothing is reaching would be a
+		// change with no reading behind it, and it would retire the walk-stop
+		// behaviour that only a full ready queue reaches.
+		//
+		// This does not scale by itself. sortDelayed re-sorts the whole recovery
+		// queue on every pass of the dispatcher loop; at this size it does not
+		// appear anywhere in a 60 second CPU profile, and at a Worker owning tens
+		// of thousands it would. The queue becoming the owned set is what makes
+		// that the next thing to measure, not a reason to keep it too small.
+		limits := dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler
+		recoveryCapacity := max(limits.RecoveryQueueCapacity, len(runners))
 		if readyAt.IsZero() {
-			if len(dispatcher.normal) >= dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.ReadyQueueCapacity {
+			if len(dispatcher.normal) >= limits.ReadyQueueCapacity {
 				// The walk stops here rather than scanning past this Query Group
 				// for one the recovery queue could still take. Scanning past it
 				// would read the whole owned set again on every pass for as long
@@ -1190,7 +1233,7 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 			}
 			dispatcher.normal = append(dispatcher.normal, queued)
 		} else {
-			if len(dispatcher.delayed) >= dispatcher.bundle.dependencies.Config.PhaseTwo.Scheduler.RecoveryQueueCapacity {
+			if len(dispatcher.delayed) >= recoveryCapacity {
 				latest := dispatcher.latestDelayedIndex()
 				if latest < 0 || !delayedBefore(queued, dispatcher.delayed[latest]) {
 					// Not better than the Query Group it would displace, so it

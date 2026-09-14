@@ -225,6 +225,36 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			"so a page that drops one is the only way this fails)", equation)
 	}
 
+	// Only one column decides the verdict, and the line that says so was printed
+	// on all four. A reader paging the demoted pool was told, of objects the
+	// page had just finished excluding from the judgment, that alarmd is
+	// answerable for them and that the judgment follows the count.
+	for _, want := range []struct{ column, says, mustNotSay string }{
+		{"anomalies", "判定就看这个数", "整栏不进部署判定"},
+		{"demoted", "整栏不进部署判定", "判定就看这个数"},
+		{"undecidable", "整栏不进部署判定", "判定就看这个数"},
+		{"by_design", "整栏不进部署判定", "判定就看这个数"},
+	} {
+		line := ""
+		for _, candidate := range strings.Split(text, "\n") {
+			if strings.HasPrefix(candidate, "WHOSE "+want.column+" ::") {
+				line = candidate
+				break
+			}
+		}
+		if line == "" {
+			t.Errorf("no attribution line was rendered for column %s", want.column)
+			continue
+		}
+		if !strings.Contains(line, want.says) {
+			t.Errorf("column %s renders %q, want it to say %q", want.column, line, want.says)
+		}
+		if strings.Contains(line, want.mustNotSay) {
+			t.Errorf("column %s renders %q, which says %q -- that is the other column's claim",
+				want.column, line, want.mustNotSay)
+		}
+	}
+
 	// What each row would actually say. Executing the render proves only that
 	// it does not throw, and a live page rendered a HISTORY_GAPPED row with
 	// the wording for a series too short-lived to fill its window -- a
@@ -381,6 +411,17 @@ for (const row of data.anomalies) {
   try { note = ctx.coverageNote(row); }
   catch (e) { console.error('coverageNote threw on ' + row.query_group + ': ' + e.message); failed++; continue; }
   console.log('NOTE ' + row.query_group + ' :: ' + (note ? note.text : '(none)'));
+}
+
+// What the "whose problem is this" line says on each column. Three of the four
+// columns are held out of the verdict, and this sentence used to tell a reader
+// the opposite on all three -- served the demoted pool it said "判定就看这个数"
+// under a heading explaining that the pool does not reach the judgment at all.
+for (const column of ['anomalies', 'demoted', 'undecidable', 'by_design']) {
+  let line;
+  try { line = ctx.attributionLine(data.summary, data.per_replica, column); }
+  catch (e) { console.error('attributionLine threw on ' + column + ': ' + e.message); failed++; continue; }
+  console.log('WHOSE ' + column + ' :: ' + line);
 }
 
 const cases = data.window_never_fills_cases || [];

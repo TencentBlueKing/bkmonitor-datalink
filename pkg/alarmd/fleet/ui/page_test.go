@@ -167,6 +167,53 @@ func TestThePageHasWordingForEveryAnomalyKind(t *testing.T) {
 	}
 }
 
+// One column, one name.
+//
+// This column was called three different things in five places: 没归到后端 on
+// the verdict panel, 自身异常 in the replica table, on the list button and in
+// the verdict rule, and 自身异常对象 as the list heading. A reader has no way to
+// know those are one number, and they are -- so the replica table and the
+// verdict panel read as two separate problems of the same size.
+//
+// Worse than the names, the two of them made opposite claims: the verdict cell
+// said "不等于就是 alarmd 的问题" and the heading over the same objects said
+// "alarmd 自己没有把这些对象跑好". Only the first is true; whose problem it is
+// gets decided one level down, inside the column.
+//
+// Checked at each anchor rather than by counting occurrences, because a count
+// stays green while one of the sites still says something else.
+func TestTheAnomalyColumnIsCalledOneThingEverywhere(t *testing.T) {
+	body := string(page)
+	const name = "没跑成待查"
+	// Names this column used to go by. They are retired rather than allowed as
+	// synonyms: a synonym is what made the two panels unreadable together.
+	for _, retired := range []string{"没归到后端", "自身异常"} {
+		if strings.Contains(body, retired) {
+			t.Errorf("the page still calls the anomaly column %q somewhere; it has to be %q everywhere,"+
+				" or two panels showing one number read as two problems", retired, name)
+		}
+	}
+	// Every place a reader meets the column. The anchor is something stable on
+	// the same source line as the label.
+	for _, anchor := range []struct{ what, marker string }{
+		{"verdict panel cell", `id="ownBad"`},
+		{"replica table header", `<th>其中 alarmd 的</th>`},
+		{"object list button", `id="colOwn"`},
+		{"object list heading", `anomalies: '`},
+	} {
+		found := false
+		for _, line := range strings.Split(body, "\n") {
+			if strings.Contains(line, anchor.marker) && strings.Contains(line, name) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("the %s (%s) does not carry the name %q", anchor.what, anchor.marker, name)
+		}
+	}
+}
+
 // The verdict route was the one response this check could not cover, because it
 // answered with a map and a map has no fields to reflect over. That is where it
 // went wrong: four columns were added to the view and to the page in one change,

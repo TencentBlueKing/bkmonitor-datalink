@@ -942,6 +942,8 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 
 	sortAnomalies(view.Anomalies)
 	sortAnomalies(view.Demoted)
+	sortAnomalies(view.Undecidable)
+	sortAnomalies(view.ByDesign)
 	for _, demoted := range view.Demoted {
 		if demoted.QueryCooldown != nil && !demoted.QueryCooldown.Until.IsZero() &&
 			demoted.QueryCooldown.Until.Before(now) {
@@ -949,7 +951,26 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		}
 	}
 
+	// Every column, not only the one the verdict is decided on.
+	//
+	// Attribution was filled for the anomaly list alone, and the objects route
+	// serves whichever column was asked for through the same field. The other
+	// three arrived with the field empty -- and both readers of it, the summary
+	// counts here and the page's own cell, treated empty as OURS. A live
+	// deployment therefore labelled all 58 demoted objects and all 18
+	// undecidable ones "alarmd 自己该负责的", directly under a paragraph saying
+	// that column is held out of the health verdict. The page contradicted
+	// itself on the one question it exists to answer.
+	//
+	// Filling the field is the fix rather than teaching the two readers to skip
+	// these columns: the question "would capacity or a different design have
+	// prevented this" is a real question about a demoted object, and the column
+	// it sits in does not answer it. What the column decides is whether the
+	// object bears on the verdict; who could have prevented it is decided here.
 	Attribute(view.Anomalies)
+	Attribute(view.Demoted)
+	Attribute(view.Undecidable)
+	Attribute(view.ByDesign)
 	Settle(&view)
 	return view
 }
@@ -986,10 +1007,17 @@ func Settle(view *View) {
 		switch anomaly.Attribution {
 		case AttributionExternal:
 			replica.External++
-		case AttributionUnknown:
-			replica.Unattributed++
-		default:
+		case AttributionOurs:
 			replica.Ours++
+		default:
+			// Ours is named rather than left as the default, and an empty
+			// attribution lands here with AttributionUnknown instead.
+			//
+			// An unset field is not a verdict. It used to fall through to Ours,
+			// which is the difference between "nobody classified this" and "this
+			// is the deployment's fault" -- and the second is what decides the
+			// badge at the top of the page.
+			replica.Unattributed++
 		}
 	}
 

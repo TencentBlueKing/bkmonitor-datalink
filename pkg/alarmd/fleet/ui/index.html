@@ -135,9 +135,9 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
     <div class="grid">
       <div class="cell"><div class="k">正常</div><div class="v" id="healthy">–</div>
         <div class="k">跑完了，结果完整</div></div>
-      <div class="cell hl"><div class="k">没归到后端</div><div class="v" id="ownBad">–</div>
-        <div class="k">这一轮没跑成，而且没有证据说是后端造成的——不等于就是 alarmd 的问题，
-          要看每条的"下一层原因"</div></div>
+      <div class="cell hl"><div class="k">没跑成待查</div><div class="v" id="ownBad">–</div>
+        <div class="k">这一轮没跑成，而且不属于右边任何一类已经有结论的情况。
+          <b>不等于就是 alarmd 的问题</b>——栏里还要再分一次，只有归到 alarmd 的那部分才决定上面的判定</div></div>
       <div class="cell"><div class="k">策略本身不可用</div><div class="v" id="demoted">–</div>
         <div class="k" id="demotedHint">后端持续查不到，已降级不再反复查</div></div>
       <div class="cell"><div class="k">判不了恢复</div><div class="v" id="undecidable">–</div>
@@ -183,8 +183,11 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
     <div class="err" id="healthErr" hidden></div>
     <p class="note">
       <b>判定规则</b>：证据不全 → <span class="s b-UNKNOWN">UNKNOWN</span>；
-      证据齐全且有<b>自身异常</b> → <span class="s b-DEGRADED">DEGRADED</span>；
-      证据齐全且无自身异常 → <span class="s b-HEALTHY">HEALTHY</span>。
+      证据齐全且<b>「没跑成待查」里有归到 alarmd 的</b> → <span class="s b-DEGRADED">DEGRADED</span>；
+      证据齐全且一个都没有 → <span class="s b-HEALTHY">HEALTHY</span>。
+      <br><b>判定看的不是整栏</b>：「没跑成待查」是待处理清单，里面既有 alarmd 自己的，也有数据源没答、
+      策略配置写不了的。只有归到 alarmd 的那部分进判定——整栏进判定的话，别人家的故障面越大 alarmd 看着越差，
+      而这个数一直不为零的信号等于没有信号。
       <br><b>降级池不参与判定</b>：后端持续查不到的对象已知不是 alarmd 的问题，留在判定里只会让后端故障面越大、
       alarmd 看着越差。代价是这是个<b>把对象移出分母</b>的机制，所以池必须有出口——
       “出过降级池”那一栏就是用来看出口还在不在的：<b>只进不出说明出池路径坏了</b>，而这时池子大小看起来和后端还没好完全一样。
@@ -216,7 +219,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       对象归谁每次再平衡都会变，劈分会在什么都没发生的情况下移动。</p>
     <table>
       <thead><tr>
-        <th>副本</th><th>持有</th><th>正常</th><th>自身异常</th><th>其中 alarmd 的</th><th>降级池</th><th>判不了恢复</th><th>按配置不处理</th><th>状态未知</th>
+        <th>副本</th><th>持有</th><th>正常</th><th>没跑成待查</th><th>其中 alarmd 的</th><th>降级池</th><th>判不了恢复</th><th>按配置不处理</th><th>状态未知</th>
         <th>快照新鲜度</th><th>已运行</th><th>内存</th><th>CPU</th><th>同时在跑</th>
       </tr></thead>
       <tbody id="repRows"></tbody>
@@ -237,7 +240,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
     <p class="basis" id="listBasis"></p>
     <p class="basis" id="stallNote" hidden></p>
     <div class="filters">
-      <button id="colOwn" class="primary">自身异常</button>
+      <button id="colOwn" class="primary">没跑成待查</button>
       <button id="colDemoted">策略本身不可用（降级池）</button>
       <button id="colUndecidable">判不了恢复</button>
       <button id="colByDesign">按配置不处理</button>
@@ -497,7 +500,7 @@ function renderDeployment(deployment) {
     // UNKNOWN with every other number at zero gave a reader nothing to go on.
     //
     // Not part of the column arithmetic below: these objects are already
-    // counted in "没归到后端". This says how many of that column cannot yet be
+    // counted in "没跑成待查". This says how many of that column cannot yet be
     // said to be anyone's, which is a different question from how many exist.
     var unattributed = deployment.unattributed || 0;
     show('unattributedCell', !!unattributed);
@@ -676,13 +679,22 @@ function anomalyRow(anomaly) {
     // The same field the verdict reads. Deriving it again here from the
     // reason code would be a second copy of the rule, and the two would agree
     // until the day one of them was updated.
-    var WHO = {EXTERNAL: '数据源/策略', UNKNOWN: '还看不出', OURS: 'alarmd'};
+    var WHO = {EXTERNAL: '数据源/策略', UNKNOWN: '还看不出', OURS: 'alarmd',
+               MISSING: '没带归属'};
     var WHY_WHO = {
       EXTERNAL: '扩容或改架构都不会让它变好——要找策略配置或数据源的人',
       UNKNOWN: '这一条是重启后从记录里恢复的，成因没有被持久化——等它跑完下一轮才知道是谁的',
-      OURS: '容量或架构能避免的，判定就看这一类；报了成因但没人归类过的也算在这里，宁可多看一眼'
+      OURS: '容量或架构能避免的，判定就看这一类；报了成因但没人归类过的也算在这里，宁可多看一眼',
+      MISSING: '这一行没有带归属字段，是缺陷，请上报——不要当成 alarmd 的问题读'
     };
-    var side = anomaly.attribution || 'OURS';
+    // An absent field is not a verdict. This defaulted to OURS, and the three
+    // columns whose rows never had attribution filled were served through it:
+    // every row of 降级池 and 判不了恢复 read "alarmd", directly under a
+    // heading saying those objects are not alarmd's. The server fills the
+    // field on all four columns now, so a blank here means whatever produced
+    // the row is broken, and the cell says that instead of picking the most
+    // consequential value on the page.
+    var side = anomaly.attribution || 'MISSING';
     var who = cell((WHO[side] || side) + (anomaly.unclassified ? '？' : ''));
     if (side === 'OURS') { who.className = 'stuck'; }
     who.title = (WHY_WHO[side] || '')
@@ -806,7 +818,7 @@ function loadObjects() {
     var undecidable = served === 'undecidable';
     var byDesign = served === 'by_design';
     var TITLES = {demoted: '策略本身不可用（降级池）', undecidable: '判不了恢复',
-                  by_design: '按配置不处理', anomalies: '自身异常对象'};
+                  by_design: '按配置不处理', anomalies: '没跑成待查'};
     var BASIS = {
       demoted: '这些对象的后端持续查不到，已被降级、不再反复查询，也不计入部署健康判定。列在这里是因为“不算我们的问题”是一个需要能被核对的说法——每条都带着它最近一次失败在哪。',
       // Stated as a normal condition and as a limit, not as a fault. These
@@ -820,8 +832,15 @@ function loadObjects() {
         + '旧配置算出来的结果不该落地，所以这一轮作废，下一轮按新配置重跑——两边都是对的行为。'
         + '其中一部分连这一轮都不会重跑：那是策略正要重新暖机的情况，这一轮即使跑了也判不出结论，'
         + '所以直接让它过去。无论哪种，都没有人需要做什么。',
-      anomalies: 'alarmd 自己没有把这些对象跑好，是需要处理的真问题。后端查不到而被降级的、判不了恢复的、'
-        + '以及正在变更中的对象都不在这里，各在自己那一栏。'
+      // The column is "did not succeed, and is not any of the settled cases",
+      // which is not the same claim as "alarmd did not run these properly".
+      // This said the second one, three panels below a cell saying the first,
+      // and the split that decides the verdict sits inside this column rather
+      // than being this column.
+      anomalies: '这一栏是待处理清单：这一轮没跑成，而且不属于其它任何一类已经有结论的情况'
+        + '（后端持续查不到的、判不了恢复的、按配置不处理的，各在自己那一栏）。'
+        + '栏里还要再分一次：“谁的问题”那一列归到 alarmd 的才决定上面的判定，'
+        + '其余是数据源没答或策略配置写不了，要找别的人。'
     };
     text('listTitle', TITLES[served] || TITLES.anomalies);
     text('listBasis', BASIS[served] || BASIS.anomalies);
@@ -849,7 +868,7 @@ function loadObjects() {
     text('churn', churnLine(churn, rows.length, total));
     currentPerReplica = objects.per_replica || [];
     text('ceiling', continuityLine(objects.per_replica));
-    renderSummary(objects.summary, total);
+    renderSummary(objects.summary, total, served);
     renderStallNote(objects.stall_after_seconds, objects.summary && objects.summary.stalled,
       objects.stalled_total, objects.filtered);
     var list = document.getElementById('replicaList');
@@ -1143,7 +1162,49 @@ function youngDeployment(perReplica) {
   return known.some(function (replica) { return replica.uptime_seconds < 900; });
 }
 
-function attributionLine(summary, perReplica) {
+// Which columns the verdict is decided on. Only one is, and the sentence below
+// used to claim it in all four: served the demoted pool, it said "alarmd 自己该
+// 负责的有 58 个（判定就看这个数）" three lines under a paragraph explaining that
+// this column is held out of the verdict entirely.
+//
+// The counts were also wrong there -- attribution was never filled on that
+// column, see the server -- but the wording would have been wrong even with
+// right numbers, so it is fixed here too rather than left to the counts.
+function decidesVerdict(column) {
+  return (column || 'anomalies') === 'anomalies';
+}
+
+// The same split, for a column the verdict does not follow.
+//
+// It still has to be said. "这一栏不算 alarmd 的问题" is a claim somebody has to
+// be able to check, and the check is whether the objects in there really are
+// somebody else's. What it must not do is carry the sentence saying this number
+// decides the badge.
+function offColumnAttributionLine(summary, column) {
+  var ours = summary.ours || 0;
+  var external = summary.external || 0;
+  var unknown = summary.unattributed || 0;
+  if (!ours && !external && !unknown) return '';
+  var parts = ['这一栏整栏不进部署判定'];
+  if (external) { parts.push(external + ' 个成因指向数据源或策略配置'); }
+  if (unknown) {
+    parts.push(unknown + ' 个成因没保留（重启后从记录恢复的，跑完下一轮才知道）');
+  }
+  if (ours) {
+    // Reported rather than folded in with the rest. An object lands in one of
+    // these columns by how its round ended, not by whose problem it is, so a
+    // backend-demoted object whose cause was in fact ours is a shape this
+    // classification allows -- and nothing else on the page would show it.
+    // It does not move the badge, because the column is out of the verdict.
+    // It is still ours.
+    parts.push(ours + ' 个成因既不指向后端也不指向配置，按规则算在 alarmd 这一侧'
+      + '（不影响上面的判定——整栏都不进判定；但这几个确实是我们的事，值得看一眼）');
+  }
+  return parts.join('；');
+}
+
+function attributionLine(summary, perReplica, column) {
+  if (!decidesVerdict(column)) { return offColumnAttributionLine(summary, column); }
   var ours = summary.ours || 0;
   var external = summary.external || 0;
   var unknown = summary.unattributed || 0;
@@ -1304,10 +1365,10 @@ function continuityLine(perReplica) {
 // long the replicas have been up.
 var currentPerReplica = [];
 
-function renderRollup(summary, total) {
+function renderRollup(summary, total, column) {
   if (!summary || !total) { text('rollup', ''); return; }
   var parts = ['这 ' + total + ' 个对象背后是 ' + (summary.strategies || 0) + ' 条策略'];
-  var split = attributionLine(summary, currentPerReplica);
+  var split = attributionLine(summary, currentPerReplica, column);
   if (split) parts.unshift(split);
   var onset = onsetLine(summary.onset, total);
   if (onset) parts.unshift(onset);
@@ -1320,8 +1381,8 @@ function renderRollup(summary, total) {
   text('rollup', parts.join('；') + '。');
 }
 
-function renderSummary(summary, total) {
-  renderRollup(summary, total);
+function renderSummary(summary, total, column) {
+  renderRollup(summary, total, column);
   var host = document.getElementById('summary');
   host.textContent = '';
   if (!summary || !total) return;

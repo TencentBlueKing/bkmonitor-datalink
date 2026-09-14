@@ -74,10 +74,11 @@ type ListResponse struct {
 	// of against a number someone remembers.
 	StallAfterSeconds int `json:"stall_after_seconds,omitempty"`
 	// StalledTotal counts stalled objects across the whole deployment, whatever
-	// the filter. The filtered count belongs in Summary with everything else,
-	// but this one number must survive a filter: it is the objects that will not
-	// recover on their own, and a filter that hides them reads as "nothing to
-	// do here".
+	// the filter and whichever column is being served. The filtered count
+	// belongs in Summary with everything else, but this one number must survive
+	// both: it is the objects that will not recover on their own, and anything
+	// that hides them -- a filter, or a reader having switched columns -- reads
+	// as "nothing to do here".
 	StalledTotal int  `json:"stalled_total"`
 	Page         Page `json:"page"`
 }
@@ -353,13 +354,19 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 			if undecidableReason(anomaly.CauseReason) && anomaly.Coverage.Persistent() {
 				neverFills++
 			}
-		case AttributionUnknown:
-			unattributed++
-		default:
+		case AttributionOurs:
 			ours++
 			if anomaly.Unclassified {
 				oursUnclassified++
 			}
+		default:
+			// AttributionUnknown, and anything that arrived without the field
+			// set. Ours is named above rather than left as the default because
+			// an unset field was landing in it: the demoted, undecidable and
+			// by-design columns were served with attribution never filled, so
+			// this line reported every one of their objects as the
+			// deployment's own -- under a heading saying they are not.
+			unattributed++
 		}
 		kinds[anomaly.Kind]++
 		if anomaly.ReasonCode != "" {
@@ -641,12 +648,42 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 		order = OrderOldest
 	}
 	view := service.View(request.Context())
+	// Marked before filtering so a filtered response reports the same flag for the
+	// same object as an unfiltered one, and on every column rather than only the
+	// one being served: an object that has stopped ending rounds is stuck whether
+	// or not this request happens to be about its column.
+	columns := [][]Anomaly{view.Anomalies, view.Demoted, view.Undecidable, view.ByDesign}
+	for _, list := range columns {
+		MarkStalled(list, now(), stallAfter)
+	}
+	// Stalling can only move an object towards ours, so the verdict is decided
+	// again with that known. Deciding it once, before the marking, would call a
+	// deployment with nothing but stuck objects healthy.
+	//
+	// Decided here, before a column is served, and always on the anomaly list.
+	// It used to run after the swap below, so asking for the demoted pool
+	// recomputed the deployment's verdict and its per-replica breakdown over the
+	// pool instead -- and the response carries both. Which list a reader is
+	// paging cannot be allowed to change what the deployment's health is.
+	Settle(&view)
+	// Counted over every column for the same reason it survives a filter: these
+	// are the objects that will not recover on their own, and a number that
+	// shrinks because of what the reader is currently looking at reads as "there
+	// is nothing to do here".
+	stalledTotal := 0
+	for _, list := range columns {
+		for _, anomaly := range list {
+			if anomaly.Stalled {
+				stalledTotal++
+			}
+		}
+	}
+	// Serving a column replaces the rows this request is about, and nothing
+	// else. The deployment-wide counts on the view are untouched, so the
+	// response still carries every total and a reader paging one column can see
+	// how many objects are not in it.
 	switch column {
 	case ColumnDemoted:
-		// The demoted list takes the anomaly list's place for the rest of this
-		// request. The deployment-wide counts on the view are untouched, so the
-		// response still carries both totals and a reader paging the pool can
-		// still see how many objects are not in it.
 		view.Anomalies = view.Demoted
 		view.AnomaliesTotal = view.DemotedTotal
 	case ColumnUndecidable:
@@ -656,26 +693,12 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 		view.Anomalies = view.ByDesign
 		view.AnomaliesTotal = view.ByDesignTotal
 	}
-	// Marked before filtering so a filtered response reports the same flag for the
-	// same object as an unfiltered one, and counted here so the deployment-wide
-	// total survives whatever filter follows.
-	MarkStalled(view.Anomalies, now(), stallAfter)
-	// Stalling can only move an object towards ours, so the verdict is decided
-	// again with that known. Deciding it once, before the marking, would call a
-	// deployment with nothing but stuck objects healthy.
-	Settle(&view)
 	// A replica publishes at most what fits its byte budget, so on a bad enough
 	// deployment the list this summary counts is already a sample. The counts
 	// stay useful for "which of these is it", and stop being usable as a
 	// distribution -- and nothing in the summary said so, leaving that to a
 	// reader who thought to compare two other fields.
 	summaryPartial := view.AnomaliesTotal > len(view.Anomalies)
-	stalledTotal := 0
-	for _, anomaly := range view.Anomalies {
-		if anomaly.Stalled {
-			stalledTotal++
-		}
-	}
 	replica := request.URL.Query().Get("replica")
 	if replica != "" {
 		// A name that belongs to no replica has to be refused rather than

@@ -1701,7 +1701,7 @@ func (runtime *productionPhaseTwoOwnership) OpenQueryGroup(
 		return nil, err
 	}
 	source, err := scheduler.NewProductionSlotSource(
-		queryGroup, runtime.dependencies.WorkerID, runtime.dependencies.Store, session,
+		queryGroup, runtime.dependencies.WorkerID, session,
 		runtime.dependencies.Catalog, runtime.dependencies.Progress, runtime.dependencies.Now,
 		scheduler.WithRecoveryLimits(runtime.dependencies.RecoveryLimits),
 		scheduler.WithPostRecoveryTerminalDelay(runtime.dependencies.PostRecoveryTerminalDelay),

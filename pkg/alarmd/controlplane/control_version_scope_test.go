@@ -14,21 +14,51 @@ import (
 	"github.com/go-redis/redis/v8"
 )
 
-// Only the header GET is exercised, so embedding the interface is enough: any
-// other call would panic and thereby prove the test reached code it should not.
+// Only the one version read is exercised, so embedding the interface is enough:
+// any other call would panic and thereby prove the test reached code it should
+// not. That guard did its job when the read became a pipeline - the fake
+// answered a plain GET and nothing else, so the change could not pass silently.
+//
+// reads counts round trips, which is what these tests are about. The version
+// read now carries the activation's length alongside the header, so one round
+// trip answers two commands; counting commands instead would report two for a
+// read that costs one.
 type countingHeaderClient struct {
 	redis.Cmdable
-	header string
-	reads  int
-	err    error
+	header     string
+	activation string
+	reads      int
+	err        error
 }
 
-func (client *countingHeaderClient) Get(context.Context, string) *redis.StringCmd {
-	client.reads++
-	if client.err != nil {
-		return redis.NewStringResult("", client.err)
+type headerPipeline struct {
+	redis.Pipeliner
+	client *countingHeaderClient
+}
+
+func (pipe *headerPipeline) Get(context.Context, string) *redis.StringCmd {
+	if pipe.client.err != nil {
+		return redis.NewStringResult("", pipe.client.err)
 	}
-	return redis.NewStringResult(client.header, nil)
+	return redis.NewStringResult(pipe.client.header, nil)
+}
+
+func (pipe *headerPipeline) StrLen(context.Context, string) *redis.IntCmd {
+	if pipe.client.err != nil {
+		return redis.NewIntResult(0, pipe.client.err)
+	}
+	return redis.NewIntResult(int64(len(pipe.client.activation)), nil)
+}
+
+func (client *countingHeaderClient) Pipelined(
+	_ context.Context,
+	fn func(redis.Pipeliner) error,
+) ([]redis.Cmder, error) {
+	client.reads++
+	if err := fn(&headerPipeline{client: client}); err != nil {
+		return nil, err
+	}
+	return nil, client.err
 }
 
 func newScopeRepository(t *testing.T, client *countingHeaderClient) *RedisCatalogRepository {
@@ -41,7 +71,7 @@ func newScopeRepository(t *testing.T, client *countingHeaderClient) *RedisCatalo
 }
 
 func TestControlVersionScopeReadsHeaderOncePerOperation(t *testing.T) {
-	client := &countingHeaderClient{header: "v1"}
+	client := &countingHeaderClient{header: "v1", activation: "{}"}
 	repository := newScopeRepository(t, client)
 	ctx := WithControlVersionScope(context.Background())
 	for i := 0; i < 10; i++ {
@@ -65,7 +95,7 @@ func TestControlVersionScopeReadsHeaderOncePerOperation(t *testing.T) {
 // The whole point of scoping rather than caching: a new operation must observe
 // a cutover, because Segment closure is decided by seeing the header change.
 func TestControlVersionScopeObservesCutoverInTheNextOperation(t *testing.T) {
-	client := &countingHeaderClient{header: "v1"}
+	client := &countingHeaderClient{header: "v1", activation: "{}"}
 	repository := newScopeRepository(t, client)
 	first, err := repository.readControlVersion(WithControlVersionScope(context.Background()))
 	if err != nil {
@@ -82,7 +112,7 @@ func TestControlVersionScopeObservesCutoverInTheNextOperation(t *testing.T) {
 }
 
 func TestControlVersionScopeAbsentKeepsEveryReadLive(t *testing.T) {
-	client := &countingHeaderClient{header: "v1"}
+	client := &countingHeaderClient{header: "v1", activation: "{}"}
 	repository := newScopeRepository(t, client)
 	for i := 0; i < 5; i++ {
 		if _, err := repository.readControlVersion(context.Background()); err != nil {
@@ -97,7 +127,7 @@ func TestControlVersionScopeAbsentKeepsEveryReadLive(t *testing.T) {
 // Nesting must not narrow an outer scope, or an inner call would start reading
 // the header again and undo the saving.
 func TestControlVersionScopeNestingIsIdempotent(t *testing.T) {
-	client := &countingHeaderClient{header: "v1"}
+	client := &countingHeaderClient{header: "v1", activation: "{}"}
 	repository := newScopeRepository(t, client)
 	outer := WithControlVersionScope(context.Background())
 	inner := WithControlVersionScope(outer)
@@ -115,7 +145,7 @@ func TestControlVersionScopeNestingIsIdempotent(t *testing.T) {
 // A failed read is not remembered, so the next call in the same operation
 // retries instead of inheriting the failure.
 func TestControlVersionScopeDoesNotRememberFailures(t *testing.T) {
-	client := &countingHeaderClient{header: "v1", err: errors.New("redis unavailable")}
+	client := &countingHeaderClient{header: "v1", activation: "{}", err: errors.New("redis unavailable")}
 	repository := newScopeRepository(t, client)
 	ctx := WithControlVersionScope(context.Background())
 	if _, err := repository.readControlVersion(ctx); err == nil {

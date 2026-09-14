@@ -71,6 +71,9 @@ func TestControlReadCacheVersionChangeEvictsEverything(t *testing.T) {
 	if got, ok := cache.lookupActivation("v1", 10); !ok || got != entry {
 		t.Fatal("activation lookup under its version missed")
 	}
+	// A cached entry is not served for another persisted length. No writer here
+	// can produce that state - header and payload move together - but a payload
+	// deleted or evicted out of band can, and then the header still stands.
 	if _, ok := cache.lookupActivation("v1", 11); ok {
 		t.Fatal("activation with another persisted length was served")
 	}

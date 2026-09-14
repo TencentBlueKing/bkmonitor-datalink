@@ -17,6 +17,7 @@ type scopeRedis struct {
 	redis.Cmdable
 	values               map[string]string
 	gets, mgets, strlens int
+	roundTrips           int
 	getError             error
 }
 
@@ -38,6 +39,30 @@ func (c *scopeRedis) StrLen(ctx context.Context, k string) *redis.IntCmd {
 		return redis.NewIntResult(0, c.getError)
 	}
 	return redis.NewIntResult(int64(len(c.values[k])), ctx.Err())
+}
+
+// scopePipeline lets a batch reach the same values and the same per-command
+// counters. roundTrips counts batches: the version read sends GET and STRLEN
+// together, so it costs one.
+type scopePipeline struct {
+	redis.Pipeliner
+	client *scopeRedis
+}
+
+func (pipe *scopePipeline) Get(ctx context.Context, k string) *redis.StringCmd {
+	return pipe.client.Get(ctx, k)
+}
+
+func (pipe *scopePipeline) StrLen(ctx context.Context, k string) *redis.IntCmd {
+	return pipe.client.StrLen(ctx, k)
+}
+
+func (c *scopeRedis) Pipelined(_ context.Context, fn func(redis.Pipeliner) error) ([]redis.Cmder, error) {
+	c.roundTrips++
+	if err := fn(&scopePipeline{client: c}); err != nil {
+		return nil, err
+	}
+	return nil, c.getError
 }
 
 func (c *scopeRedis) HGet(ctx context.Context, k, field string) *redis.StringCmd {

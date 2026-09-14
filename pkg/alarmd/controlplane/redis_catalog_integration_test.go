@@ -159,7 +159,17 @@ func (hook *oneCommandErrorHook) BeforeProcess(ctx context.Context, cmd redis.Cm
 
 func (*oneCommandErrorHook) AfterProcess(context.Context, redis.Cmder) error { return nil }
 
-func (*oneCommandErrorHook) BeforeProcessPipeline(ctx context.Context, _ []redis.Cmder) (context.Context, error) {
+// A batch is injected into exactly as a single command is. Leaving this empty
+// meant an injection point silently stopped injecting the moment the code under
+// it started batching - the read still happened, the error did not, and the
+// test reported whichever later command matched instead. Returning the error
+// here aborts the batch, which is what a failing round trip does.
+func (hook *oneCommandErrorHook) BeforeProcessPipeline(ctx context.Context, cmds []redis.Cmder) (context.Context, error) {
+	for _, cmd := range cmds {
+		if _, err := hook.BeforeProcess(ctx, cmd); err != nil {
+			return ctx, err
+		}
+	}
 	return ctx, nil
 }
 

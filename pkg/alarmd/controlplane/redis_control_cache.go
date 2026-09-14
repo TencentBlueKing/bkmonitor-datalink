@@ -94,6 +94,11 @@ func cachedTimelineBytes(payloadLen int) int {
 type controlVersion struct {
 	header string
 	known  bool
+	// activationLen is the stored activation's length at the instant the header
+	// was read. It travels with the header because the activation cache needs
+	// both to decide a hit, and because a length read at another instant is a
+	// weaker answer than one read with it.
+	activationLen int64
 }
 
 type cachedActivation struct {
@@ -271,6 +276,19 @@ func (repository *RedisCatalogRepository) auditDelta(ctx context.Context, droppe
 	}
 }
 
+// lookupActivation is keyed on the header and the stored payload's length.
+//
+// The length is not redundant with the header, which is what a first attempt at
+// removing it assumed. Header and payload are written together, by one script,
+// under a CAS on the header, and the revision the header carries advances by
+// one on every write - so no writer here can change the payload without the
+// header. But the header is what a reader holds; a payload that is deleted or
+// evicted out of band leaves the header standing, and a cache keyed on the
+// header alone would serve that payload for as long as no publication moved.
+// Both cases are covered by tests, which is how the assumption was caught.
+//
+// What changed instead is where the length comes from: fetchControlVersion now
+// reads it in the same round trip as the header, so a lookup costs nothing.
 func (cache *controlReadCache) lookupActivation(version string, payloadLen int64) (*parsedActivation, bool) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
@@ -519,15 +537,44 @@ func (repository *RedisCatalogRepository) ConfigureControlTimelineCache(maxEntri
 // and timeline read starts with. An absent header leaves caching disabled for
 // that read; the caller then follows the uncached path. Callers go through
 // readControlVersion, which reuses the value inside one operation.
+//
+// It reads the activation's stored length alongside the header, in one round
+// trip, because the activation cache needs both to answer a lookup and the two
+// used to be fetched separately: the header here, and a STRLEN inside every
+// activation lookup. That second read was 25,720 round trips in a measured
+// 283-second window against 16,062 of these, and 25,717 of them were on the
+// cache-hit path - the cache was paying a full round trip to report a hit. The
+// pipeline makes it free and makes the pair describe one instant, where before
+// a length read after a header read could straddle a publication.
+//
+// Reading the length here rather than where it is used costs the polling path,
+// which wants the header alone, one extra command inside a round trip it was
+// already making. That is the cheaper side of the trade by two orders of
+// magnitude, and it keeps one code path rather than two that can drift.
 func (repository *RedisCatalogRepository) fetchControlVersion(ctx context.Context) (controlVersion, error) {
-	header, err := repository.client.Get(ctx, repository.activationHeaderKey()).Result()
+	var header *redis.StringCmd
+	var length *redis.IntCmd
+	// Pipelined reports the first command error; each command is asked for its
+	// own outcome below, so a missing header is told from a transport failure.
+	if _, err := repository.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		header = pipe.Get(ctx, repository.activationHeaderKey())
+		length = pipe.StrLen(ctx, repository.activationKey())
+		return nil
+	}); err != nil && !errors.Is(err, redis.Nil) {
+		return controlVersion{}, activationDependencyIO(err)
+	}
+	text, err := header.Result()
 	if errors.Is(err, redis.Nil) {
 		return controlVersion{}, nil
 	}
 	if err != nil {
 		return controlVersion{}, activationDependencyIO(err)
 	}
-	return controlVersion{header: header, known: header != ""}, nil
+	size, err := length.Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return controlVersion{}, activationDependencyIO(err)
+	}
+	return controlVersion{header: text, known: text != "", activationLen: size}, nil
 }
 
 func (repository *RedisCatalogRepository) clearActivationCaches() {
@@ -599,16 +646,15 @@ func (repository *RedisCatalogRepository) loadParsedActivationAt(ctx context.Con
 	hadActivation := repository.controlCache.hasActivation()
 	repository.adoptControlVersion(ctx, version)
 	if version.known {
-		size, err := repository.client.StrLen(ctx, repository.activationKey()).Result()
-		if err != nil {
-			repository.clearActivationCaches()
-			return nil, activationDependencyIO(err)
-		}
-		if size == 0 {
+		// The length came back with the header, in that round trip. Zero is an
+		// activation that is not there - deleted, evicted, never written - and
+		// it is answered before any cached copy is consulted, so a cache cannot
+		// outlive the object it caches.
+		if version.activationLen == 0 {
 			repository.clearActivationCaches()
 			return nil, ErrActivationUnavailable
 		}
-		if entry, ok := repository.controlCache.lookupActivation(version.header, size); ok {
+		if entry, ok := repository.controlCache.lookupActivation(version.header, version.activationLen); ok {
 			counters.hits.Add(1)
 			return entry, nil
 		}

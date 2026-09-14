@@ -13,7 +13,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
 )
 
@@ -29,7 +28,6 @@ func TestProductionSlotSourceProjectionFollowsTerminalDelayConfiguration(t *test
 		t.Helper()
 		catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
 		source, err := NewProductionSlotSource("query-group-1", "worker-1",
-			&fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3)}},
 			&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(epoch)}}, catalog,
 			&fakeProgressReader{result: missingProgress(), catalog: catalog}, func() time.Time { return at },
 			WithRecoveryLimits(testRecoveryLimits()), WithPostRecoveryTerminalDelay(terminalDelay), WithQueryDeadlineReserve(5*time.Second))

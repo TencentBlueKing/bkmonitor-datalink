@@ -14,7 +14,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 )
 
 type advancingProgressReader struct {
@@ -32,7 +31,6 @@ func (reader *advancingProgressReader) SkipPrunedRange(_ context.Context, reques
 func prunedCursorSource(t *testing.T, catalog *fakeSlotCatalog, reader ScheduleProgressReader, at time.Time, observer observability.Observer) *ProductionSlotSource {
 	t.Helper()
 	source, err := NewProductionSlotSource("query-group-1", "worker-1",
-		&fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3)}},
 		&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog, reader,
 		func() time.Time { return at }, WithRecoveryLimits(testRecoveryLimits()), WithPostRecoveryTerminalDelay(time.Minute),
 		WithQueryDeadlineReserve(5*time.Second), WithObserver(observer))

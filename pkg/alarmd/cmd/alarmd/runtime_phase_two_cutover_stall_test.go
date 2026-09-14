@@ -452,7 +452,7 @@ func (probe cutoverStallProbe) run(
 	t.Helper()
 	dependencies := production.dependencies
 	source, err := scheduler.NewProductionSlotSource(
-		queryGroup, dependencies.WorkerID, dependencies.Store, session, probe.catalog, probe.progress, now,
+		queryGroup, dependencies.WorkerID, session, probe.catalog, probe.progress, now,
 		scheduler.WithRecoveryLimits(dependencies.RecoveryLimits),
 		scheduler.WithPostRecoveryTerminalDelay(dependencies.PostRecoveryTerminalDelay),
 		scheduler.WithQueryDeadlineReserve(dependencies.QueryDeadlineReserve),

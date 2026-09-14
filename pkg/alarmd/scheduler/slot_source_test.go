@@ -280,7 +280,6 @@ func TestProductionSlotSourceReloadsContinuousNextSlotAfterInflightCutover(t *te
 		t.Fatalf("progress.NewStore() error = %v", err)
 	}
 	source := mustProductionSlotSource(t,
-		&fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3)}},
 		&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog, store, time.Unix(200, 0))
 
 	oldSlot, due, _, err := source.Next(context.Background(), "query-group-1")
@@ -419,7 +418,6 @@ func TestProductionSlotSourceTimelineSuccessorCanBeginUnfinishedProgress(t *test
 		t.Fatalf("progress.NewStore() error = %v", err)
 	}
 	source := mustProductionSlotSource(t,
-		&fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3)}},
 		&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog, store, time.Unix(200, 0))
 
 	oldSlot, due, _, err := source.Next(context.Background(), "query-group-1")
@@ -570,9 +568,10 @@ func TestProductionSlotSourceRestartFreezesSameContract(t *testing.T) {
 func TestProductionSlotSourceRechecksOwnershipAfterFreeze(t *testing.T) {
 	schedule := schedulerSchedule(t, 60, 60, nil, "snapshot-1", 1)
 	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
-	assignments := &fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3), testAssignment("worker-1", 4)}}
-	source := mustProductionSlotSource(t, assignments, &sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}},
-		catalog, &fakeProgressReader{result: missingProgress(), catalog: catalog}, time.Unix(200, 0))
+	source := mustProductionSlotSource(t, &sequenceOwnerSession{
+		fences:  []execution.OwnerFence{testFence(7)},
+		records: []ownership.AssignmentRecord{testAssignment("worker-1", 3), testAssignment("worker-1", 4)},
+	}, catalog, &fakeProgressReader{result: missingProgress(), catalog: catalog}, time.Unix(200, 0))
 
 	if _, _, _, err := source.Next(context.Background(), "query-group-1"); !errors.Is(err, ErrSlotOwnershipChanged) {
 		t.Fatalf("Next() error = %v, want ErrSlotOwnershipChanged", err)
@@ -763,7 +762,7 @@ func newProductionSlotSourceForTest(
 ) *ProductionSlotSource {
 	t.Helper()
 	reader := &fakeProgressReader{result: load, catalog: catalog}
-	return mustProductionSlotSource(t, &fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3)}},
+	return mustProductionSlotSource(t,
 		&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog, reader, at)
 }
 
@@ -777,7 +776,6 @@ func newProductionSlotSourceWithRecoveryForTest(
 	t.Helper()
 	reader := &fakeProgressReader{result: load, catalog: catalog}
 	source, err := NewProductionSlotSource("query-group-1", "worker-1",
-		&fakeAssignmentReader{records: []ownership.AssignmentRecord{testAssignment("worker-1", 3)}},
 		&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog, reader,
 		func() time.Time { return at }, WithRecoveryLimits(limits), WithPostRecoveryTerminalDelay(time.Minute), WithQueryDeadlineReserve(5*time.Second))
 	if err != nil {
@@ -788,14 +786,13 @@ func newProductionSlotSourceWithRecoveryForTest(
 
 func mustProductionSlotSource(
 	t *testing.T,
-	assignments AssignmentReader,
 	session OwnerSession,
 	catalog SlotCatalogReader,
 	progress ScheduleProgressReader,
 	at time.Time,
 ) *ProductionSlotSource {
 	t.Helper()
-	source, err := NewProductionSlotSource("query-group-1", "worker-1", assignments, session, catalog, progress, func() time.Time { return at },
+	source, err := NewProductionSlotSource("query-group-1", "worker-1", session, catalog, progress, func() time.Time { return at },
 		WithRecoveryLimits(testRecoveryLimits()), WithPostRecoveryTerminalDelay(time.Minute), WithQueryDeadlineReserve(5*time.Second))
 	if err != nil {
 		t.Fatalf("NewProductionSlotSource() error = %v", err)
@@ -803,44 +800,45 @@ func mustProductionSlotSource(
 	return source
 }
 
-type fakeAssignmentReader struct {
+// sequenceOwnerSession hands out one ownership reading per call, walking both
+// sequences together and holding the last entry once a sequence runs out.
+//
+// It carries the Assignment records as well as the fences because the
+// SlotSource now takes both from one reading. There was a separate
+// fakeAssignmentReader feeding the source's own Assignment read; that read is
+// gone, and splitting the two sequences across two fakes would let them drift
+// apart in a way production cannot - one script run answers both.
+//
+// One step per call is what the ownership recheck tests count: the second
+// reading of a Slot decision has to be able to differ from the first.
+type sequenceOwnerSession struct {
+	fences  []execution.OwnerFence
 	records []ownership.AssignmentRecord
 	reads   int
 }
 
-func (reader *fakeAssignmentReader) ReadAssignment(context.Context, execution.QueryGroupIdentity) (ownership.AssignmentRecord, error) {
-	index := reader.reads
-	if index >= len(reader.records) {
-		index = len(reader.records) - 1
+func (session *sequenceOwnerSession) step() (execution.OwnerFence, ownership.AssignmentRecord) {
+	index := session.reads
+	session.reads++
+	fenceIndex := min(index, len(session.fences)-1)
+	record := testAssignment("worker-1", 3)
+	if len(session.records) > 0 {
+		record = session.records[min(index, len(session.records)-1)]
 	}
-	reader.reads++
-	return reader.records[index], nil
-}
-
-type sequenceOwnerSession struct {
-	fences []execution.OwnerFence
-	reads  int
+	return session.fences[fenceIndex], record
 }
 
 func (session *sequenceOwnerSession) ValidateCurrent(context.Context, time.Time) (execution.OwnerFence, error) {
-	index := session.reads
-	if index >= len(session.fences) {
-		index = len(session.fences) - 1
-	}
-	session.reads++
-	return session.fences[index], nil
+	fence, _ := session.step()
+	return fence, nil
 }
 
-// This fake feeds a SlotSource directly, without a Runner in front of it, so it
-// carries no Assignment facts to hand forward and the source keeps reading the
-// Assignment itself. Consuming a fence from the sequence here would move the
-// sequence the ownership recheck tests depend on.
 func (session *sequenceOwnerSession) ValidateCurrentWithAssignment(
-	ctx context.Context,
-	at time.Time,
+	context.Context,
+	time.Time,
 ) (execution.OwnerFence, ownership.AssignmentRecord, error) {
-	fence, err := session.ValidateCurrent(ctx, at)
-	return fence, ownership.AssignmentRecord{}, err
+	fence, record := session.step()
+	return fence, record, nil
 }
 
 type fakeSlotCatalog struct {

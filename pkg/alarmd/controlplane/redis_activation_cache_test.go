@@ -23,6 +23,9 @@ type keyedReadClient struct {
 	err     error
 	gets    map[string]int
 	strlens map[string]int
+	// roundTrips counts batches, which is what the header-plus-length read
+	// costs. The per-key maps still count commands.
+	roundTrips int
 }
 
 func newKeyedReadClient() *keyedReadClient {
@@ -57,6 +60,40 @@ func (c *keyedReadClient) strlenCount(key string) int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.strlens[key]
+}
+
+// keyedPipeline runs a batch against the same keyed store, so the per-key
+// counters keep counting commands while roundTrips counts batches. The version
+// read sends its two commands in one batch, and the tests below still want to
+// see both commands - what they must not do is report two round trips for it.
+type keyedPipeline struct {
+	redis.Pipeliner
+	client *keyedReadClient
+}
+
+func (pipe *keyedPipeline) Get(ctx context.Context, key string) *redis.StringCmd {
+	return pipe.client.Get(ctx, key)
+}
+
+func (pipe *keyedPipeline) StrLen(ctx context.Context, key string) *redis.IntCmd {
+	return pipe.client.StrLen(ctx, key)
+}
+
+func (c *keyedReadClient) Pipelined(_ context.Context, fn func(redis.Pipeliner) error) ([]redis.Cmder, error) {
+	c.mu.Lock()
+	c.roundTrips++
+	err := c.err
+	c.mu.Unlock()
+	if runErr := fn(&keyedPipeline{client: c}); runErr != nil {
+		return nil, runErr
+	}
+	return nil, err
+}
+
+func (c *keyedReadClient) roundTripCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.roundTrips
 }
 
 func (c *keyedReadClient) Get(ctx context.Context, key string) *redis.StringCmd {
@@ -272,8 +309,18 @@ func TestActivationVersionCacheDisabledWithoutHeader(t *testing.T) {
 	if got := c.getCount(r.activationKey()); got != 3 {
 		t.Fatalf("without a header every read must fetch the body: reads=%d, want 3", got)
 	}
-	if got := c.strlenCount(r.activationKey()); got != 0 {
-		t.Fatalf("without a header no length probe is needed: strlen=%d", got)
+	// The length command rides along in the version read's round trip and is
+	// unused here, because without a header nothing is cached. It is not made
+	// conditional: deciding whether to send it would mean knowing the header
+	// first, which is the second round trip this read exists to avoid. The state
+	// it is wasted in is bootstrap or a lost header, where every read is already
+	// fetching a whole activation body.
+	//
+	// What must not grow is round trips, which is what the assertion covers:
+	// three reads, three round trips for the version, whether or not a header is
+	// there.
+	if got := c.roundTripCount(); got != 3 {
+		t.Fatalf("without a header the version read cost %d round trips, want one per read (3)", got)
 	}
 	c.del(r.activationKey())
 	if _, err := r.LoadActivation(ctx); !errors.Is(err, ErrActivationUnavailable) {

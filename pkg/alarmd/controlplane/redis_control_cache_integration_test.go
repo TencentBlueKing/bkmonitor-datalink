@@ -19,9 +19,10 @@ import (
 // the reply bytes that actually crossed the wire, so tests can prove which
 // bodies were transferred rather than which calls were made.
 type controlReadCountingHook struct {
-	mu     sync.Mutex
-	counts map[string]int
-	bytes  map[string]int
+	mu      sync.Mutex
+	counts  map[string]int
+	bytes   map[string]int
+	batches int
 }
 
 func newControlReadCountingHook() *controlReadCountingHook {
@@ -101,18 +102,46 @@ func (hook *controlReadCountingHook) AfterProcess(_ context.Context, cmd redis.C
 	return nil
 }
 
-func (*controlReadCountingHook) BeforeProcessPipeline(ctx context.Context, _ []redis.Cmder) (context.Context, error) {
+// The pipeline hooks used to do nothing, which made every command sent in a
+// batch invisible to these counts. That is fine only while nothing on the read
+// path batches; the version read now sends its header GET and activation STRLEN
+// together, and a hook that ignores batches would have reported those commands
+// as having stopped rather than as having been merged.
+//
+// Commands are counted the same either way, so the per-command assertions below
+// mean what they always meant. batches is the separate fact: it says how many
+// round trips those commands cost.
+func (hook *controlReadCountingHook) BeforeProcessPipeline(ctx context.Context, cmds []redis.Cmder) (context.Context, error) {
+	hook.mu.Lock()
+	hook.batches++
+	for _, cmd := range cmds {
+		name, object := controlObjectOfCommand(cmd)
+		hook.counts[name+" "+object]++
+	}
+	hook.mu.Unlock()
 	return ctx, nil
 }
 
-func (*controlReadCountingHook) AfterProcessPipeline(context.Context, []redis.Cmder) error {
+func (hook *controlReadCountingHook) AfterProcessPipeline(ctx context.Context, cmds []redis.Cmder) error {
+	for _, cmd := range cmds {
+		if err := hook.AfterProcess(ctx, cmd); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func (hook *controlReadCountingHook) batchCount() int {
+	hook.mu.Lock()
+	defer hook.mu.Unlock()
+	return hook.batches
 }
 
 func (hook *controlReadCountingHook) reset() {
 	hook.mu.Lock()
 	hook.counts = map[string]int{}
 	hook.bytes = map[string]int{}
+	hook.batches = 0
 	hook.mu.Unlock()
 }
 
@@ -256,6 +285,13 @@ func TestControlReadCacheReadsActivationAndTimelineOncePerHeader(t *testing.T) {
 	}
 	if got := hook.count("strlen", "activation"); got != authorizations {
 		t.Fatalf("activation length probes=%d, want one per authorization (%d)", got, authorizations)
+	}
+	// The two probes above are one round trip, not two. This is the assertion
+	// the command counts cannot make: they were already both being sent, and
+	// what changed is that they now travel together.
+	if got := hook.batchCount(); got != authorizations {
+		t.Fatalf("version read batches=%d, want one per authorization (%d): the header and the "+
+			"activation length have to travel in one round trip", got, authorizations)
 	}
 	if got := hook.objectBytes("activation"); got != int(activationLen) {
 		t.Fatalf("activation bytes transferred=%d, want one body (%d)", got, activationLen)

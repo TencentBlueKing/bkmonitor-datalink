@@ -29,7 +29,6 @@ type countingOwnershipStore struct {
 
 	commands           int
 	fenceChecks        int
-	assignmentReads    int
 	mergedFenceChecks  int
 	acquireCalls       int
 	renewCalls         int
@@ -88,17 +87,12 @@ func (store *countingOwnershipStore) Release(_ context.Context, _ execution.Owne
 	return nil
 }
 
-func (store *countingOwnershipStore) ReadAssignment(
-	_ context.Context,
-	queryGroup execution.QueryGroupIdentity,
-) (ownership.AssignmentRecord, error) {
-	store.commands++
-	store.assignmentReads++
-	if queryGroup != store.fence.QueryGroup {
-		store.unexpectedIdentity = queryGroup
-	}
-	return store.assignment, nil
-}
+// There was a ReadAssignment method here, and an assignmentReads counter the
+// tests below asserted was zero. Nothing can call it any more - the SlotSource
+// no longer holds an Assignment reader at all - so the assertion had become
+// one no change could make fail, which reads as coverage and is not. What the
+// tests count instead is total store commands, which stays falsifiable: any
+// path that goes back to two readings makes it rise.
 
 // idleRunnerFixture builds the production Runner over the production SlotSource
 // for a Query Group whose first Slot is still in the future, which is the
@@ -114,7 +108,7 @@ func idleRunnerFixture(t *testing.T, at time.Time) (*Runner, *countingOwnershipS
 	if err != nil {
 		t.Fatalf("OpenSession() error = %v", err)
 	}
-	source := mustProductionSlotSource(t, store, session, catalog,
+	source := mustProductionSlotSource(t, session, catalog,
 		&fakeProgressReader{result: missingProgress(), catalog: catalog}, at)
 	flights := NewFlightCoordinator()
 	observed := &[]observability.Observation{}
@@ -149,11 +143,52 @@ func TestRunnerIdleAttemptSpendsOneOwnershipRoundTrip(t *testing.T) {
 		t.Fatalf("observed = %+v, want one source_not_due return", *observed)
 	}
 	if store.commands != 1 {
-		t.Fatalf("ownership commands = %d (fence checks %d, merged fence checks %d, assignment reads %d), want 1",
-			store.commands, store.fenceChecks, store.mergedFenceChecks, store.assignmentReads)
+		t.Fatalf("ownership commands = %d (fence checks %d, merged fence checks %d), want 1",
+			store.commands, store.fenceChecks, store.mergedFenceChecks)
 	}
-	if store.assignmentReads != 0 {
-		t.Fatalf("separate assignment reads = %d, want 0: the fence check already returned the record", store.assignmentReads)
+}
+
+// TestDueSlotDecisionSpendsOneRoundTripPerOwnershipReading covers the other
+// half of the mix, and the half that carries the load: a Slot that is due takes
+// several fresh ownership readings, one after each piece of real elapsed work,
+// and none of them may be answered from a cache. What they may not do is cost
+// two round trips each.
+//
+// The assertion is that every store command this decision sent was the merged
+// script run. It stays falsifiable in the direction that matters: a path that
+// goes back to reading the Assignment separately raises commands above
+// mergedFenceChecks, and one that drops the Assignment check entirely leaves
+// fenceChecks non-zero.
+func TestDueSlotDecisionSpendsOneRoundTripPerOwnershipReading(t *testing.T) {
+	at := time.Unix(200, 0)
+	schedule := schedulerSchedule(t, 60, 60, nil, "snapshot-1", 1)
+	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
+	store := &countingOwnershipStore{
+		fence: testFence(7), deadline: at.Add(time.Minute), assignment: testAssignment("worker-1", 3),
+	}
+	session, err := ownership.OpenSession(context.Background(), store, "query-group-1", "worker-1", at, time.Minute)
+	if err != nil {
+		t.Fatalf("OpenSession() error = %v", err)
+	}
+	source := mustProductionSlotSource(t, session, catalog,
+		&fakeProgressReader{result: missingProgress(), catalog: catalog}, at)
+	// Opening the Query Group is not what one decision costs.
+	store.commands = 0
+
+	_, due, _, err := source.Next(context.Background(), "query-group-1")
+	if err != nil || !due {
+		t.Fatalf("Next() due=%v error=%v, want one due Slot", due, err)
+	}
+	if store.mergedFenceChecks == 0 {
+		t.Fatal("a due Slot decision took no ownership reading at all")
+	}
+	if store.commands != store.mergedFenceChecks {
+		t.Fatalf("ownership commands = %d against %d merged fence checks (split fence checks %d): "+
+			"every ownership reading on this path has to be one round trip",
+			store.commands, store.mergedFenceChecks, store.fenceChecks)
+	}
+	if store.fenceChecks != 0 {
+		t.Fatalf("split fence checks = %d, want 0: a fence checked without its Assignment is the weaker answer", store.fenceChecks)
 	}
 }
 

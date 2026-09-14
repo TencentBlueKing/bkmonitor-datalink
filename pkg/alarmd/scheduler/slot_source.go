@@ -157,9 +157,14 @@ func classifySlotFreezeFailure(err error) error {
 	}
 }
 
-type AssignmentReader interface {
-	ReadAssignment(context.Context, execution.QueryGroupIdentity) (ownership.AssignmentRecord, error)
-}
+// There was an AssignmentReader interface here, and a ProductionSlotSource
+// field holding one, so the source could read the Assignment record on its own.
+// Nothing needs it any more: the fence check returns that record, and the one
+// caller that used the separate read now takes both facts from the one script
+// run. The interface is gone rather than left unused, because a dependency that
+// only ever serves the slower path is how the slower path comes back - the
+// LeaseStore comment on CheckFenceWithAssignment names the same hazard and
+// keeps the merged call on the interface for the same reason.
 
 type SlotCatalogReader interface {
 	ReadInitialFrozenSchedule(context.Context, execution.QueryGroupIdentity) (execution.FrozenQueryGroupSchedule, error)
@@ -188,7 +193,6 @@ type ProductionSlotSource struct {
 	expiredRangeEnabled       bool
 	queryGroup                execution.QueryGroupIdentity
 	workerID                  string
-	assignments               AssignmentReader
 	session                   OwnerSession
 	catalog                   SlotCatalogReader
 	progress                  ScheduleProgressReader
@@ -258,17 +262,16 @@ func WithSnapshotRetention(retention, publicationDelayAllowance time.Duration) P
 func NewProductionSlotSource(
 	queryGroup execution.QueryGroupIdentity,
 	workerID string,
-	assignments AssignmentReader,
 	session OwnerSession,
 	catalog SlotCatalogReader,
 	progress ScheduleProgressReader,
 	now func() time.Time,
 	options ...ProductionSlotSourceOption,
 ) (*ProductionSlotSource, error) {
-	if queryGroup == "" || workerID == "" || assignments == nil || session == nil || catalog == nil || progress == nil || now == nil {
+	if queryGroup == "" || workerID == "" || session == nil || catalog == nil || progress == nil || now == nil {
 		return nil, errors.New("alarmd scheduler: complete production SlotSource dependencies are required")
 	}
-	source := &ProductionSlotSource{queryGroup: queryGroup, workerID: workerID, assignments: assignments,
+	source := &ProductionSlotSource{queryGroup: queryGroup, workerID: workerID,
 		session: session, catalog: catalog, progress: progress, now: now}
 	for _, option := range options {
 		if option == nil {
@@ -1004,21 +1007,34 @@ func (source *ProductionSlotSource) initialOwnership(
 	return source.currentOwnership(ctx, at)
 }
 
+// currentOwnership takes one fresh reading of the two facts a Slot decision
+// acts on. It is one store round trip, not two, because the fence check has to
+// read the Assignment's desired worker to answer at all - so the record comes
+// back with the verdict for the cost of one HMGET instead of one HGET.
+//
+// This is not a cache and does not weaken the rule above it. Every call here
+// still goes to the store and still describes the instant it was made; what
+// changed is that the two facts now describe the SAME instant, which two round
+// trips cannot promise - the Control Leader can publish a new Assignment
+// between them, and the old order would then judge a new Assignment against a
+// fence checked before it existed.
+//
+// The order it replaces read the Assignment first, so that a Query Group this
+// worker no longer owns cost one round trip to discover rather than two. That
+// traded the common case for the rare one, and production says how rare: over
+// one 283-second window a Worker sent 87,523 Assignment HGETALLs against
+// 93,291 fence scripts, so essentially no call stopped after the first read and
+// the saving was never taken. The merged call costs one round trip in both
+// cases, so the trade is gone rather than reversed.
 func (source *ProductionSlotSource) currentOwnership(
 	ctx context.Context,
 	at time.Time,
 ) (ownership.AssignmentRecord, execution.OwnerFence, error) {
-	assignment, err := source.assignments.ReadAssignment(ctx, source.queryGroup)
+	fence, assignment, err := source.session.ValidateCurrentWithAssignment(ctx, at)
 	if err != nil {
 		return ownership.AssignmentRecord{}, execution.OwnerFence{}, err
 	}
-	// The Assignment is judged before the fence is read so a Query Group this
-	// worker no longer owns costs one round trip to discover, not two.
 	if err := source.acceptAssignment(assignment); err != nil {
-		return ownership.AssignmentRecord{}, execution.OwnerFence{}, err
-	}
-	fence, err := source.session.ValidateCurrent(ctx, at)
-	if err != nil {
 		return ownership.AssignmentRecord{}, execution.OwnerFence{}, err
 	}
 	if err := source.acceptFence(fence); err != nil {

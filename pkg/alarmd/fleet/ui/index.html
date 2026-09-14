@@ -573,6 +573,136 @@ function loadHealth() {
   }).catch(function (e) { fail('healthErr', e); fail('capErr', e); });
 }
 
+// One row of the object table.
+//
+// Named rather than inline in the loop so that something can call it. It is
+// the busiest code on the page -- every cell of every row -- and it was
+// unreachable by any check: a ReferenceError in here renders the whole table
+// as an error banner, and the static checks pass on a page that throws.
+// That shipped.
+function anomalyRow(anomaly) {
+    var tr = document.createElement('tr');
+    function cell(t, cls) {
+      var td = document.createElement('td');
+      if (cls) td.className = cls;
+      td.textContent = t;
+      tr.appendChild(td);
+      return td;
+    }
+    var qg = cell(anomaly.query_group.slice(0, 12) + '…', 'mono qg');
+    qg.title = anomaly.query_group + '（点击复制）';
+    qg.addEventListener('click', function () {
+      document.getElementById('qg').value = anomaly.query_group;
+    });
+    // The same field the verdict reads. Deriving it again here from the
+    // reason code would be a second copy of the rule, and the two would agree
+    // until the day one of them was updated.
+    var WHO = {EXTERNAL: '数据源/策略', UNKNOWN: '还看不出', OURS: 'alarmd'};
+    var WHY_WHO = {
+      EXTERNAL: '扩容或改架构都不会让它变好——要找策略配置或数据源的人',
+      UNKNOWN: '这一条是重启后从记录里恢复的，成因没有被持久化——等它跑完下一轮才知道是谁的',
+      OURS: '容量或架构能避免的，判定就看这一类；报了成因但没人归类过的也算在这里，宁可多看一眼'
+    };
+    var side = anomaly.attribution || 'OURS';
+    var who = cell((WHO[side] || side) + (anomaly.unclassified ? '？' : ''));
+    if (side === 'OURS') { who.className = 'stuck'; }
+    who.title = (WHY_WHO[side] || '')
+      + (anomaly.unclassified
+          ? '\n没有规则匹配到它，是按保守默认算进 alarmd 这一侧的——可能确实是我们的，也可能只是还没人给它归类'
+          : '');
+    cell(kindText(anomaly.kind));
+    cell(anomaly.reason_code || '—');
+    // The completion kind alone folds four conditions together, and they call
+    // for opposite responses. Without this column the list reads as hundreds
+    // of equally urgent objects, which is the same as reading as none.
+    // A blank cause reads as "there is no cause", and on a restored object
+    // that is false: the cause was never persisted. Those two say opposite
+    // things to a reader -- one is "nothing to chase", the other is "the
+    // answer existed and we lost it, it comes back next round" -- and the row
+    // has to say which. On a live read 8 of 63 degraded objects were in the
+    // second case, all of them restored, thirteen minutes after a rollout.
+    cell(missingCauseText(anomaly) || causeText(anomaly.cause));
+    // The cause stops one level short of the answer. LEVEL_OUTCOME_UNKNOWN is
+    // required by contract to carry a reason of either the coverage class --
+    // the data does not reach this window, which is nobody here's doing -- or
+    // the retryable class, which clears on its own. Showing the cause alone
+    // made 61 of 62 objects one indistinguishable population.
+    var reason = cell(anomaly.cause_reason || missingCauseText(anomaly) || '—');
+    if (anomaly.cause_reason) { reason.title = anomaly.cause_reason; }
+    // The symptom was only in the summary line, so a reader could see that 53
+    // of 55 hit one thing and still not tell which one this row is. It is the
+    // only cell on the row that says what to do about it.
+    var symptom = cell(symptomText((anomaly.failure || {}).detail));
+    if (anomaly.failure && anomaly.failure.detail) { symptom.title = anomaly.failure.detail; }
+    // The completion kind says a round ended badly; this says what went wrong.
+    // Both are shown because they answer different questions.
+    var f = anomaly.failure;
+    var fcell = cell(f ? (FAILURE_CATEGORY[f.category] || f.category) : '—');
+    if (f) {
+      fcell.title = ['阶段 ' + f.stage, '分类 ' + f.category, f.code ? '代码 ' + f.code : '']
+        .filter(Boolean).join('\n');
+    }
+    if (anomaly.query_cooldown) {
+      var cooldown = document.createElement('div');
+      cooldown.textContent = new Date(anomaly.query_cooldown.until).getTime() <= Date.now()
+        ? '查询冷却：已到允许查询时间，等待真实查询恢复'
+        : '查询冷却至 ' + new Date(anomaly.query_cooldown.until).toLocaleString();
+      cooldown.title = '最近真实查询：' + new Date(anomaly.query_cooldown.last_query_at).toLocaleString()
+        + '；连续失败：' + (anomaly.query_cooldown.failures >= 32 ? '至少 ' : '') + anomaly.query_cooldown.failures;
+      fcell.appendChild(cooldown);
+    }
+    // A long duration alone does not say whether the object is recovering
+    // slowly or has stopped entirely; this chip is the only thing on the row
+    // that separates the two. The row's duration is how long the object has
+    // been anomalous; how long its rounds have not ended is a different,
+    // usually shorter, clock, and the chip carries that one.
+    var held = cell((SINCE_BOUND[anomaly.since_from] || '') + duration(anomaly.since));
+    if (SINCE_BOUND[anomaly.since_from]) {
+      held.title = SINCE_SOURCE[anomaly.since_from] || anomaly.since_from;
+    }
+    if (anomaly.stalled) {
+      var chip = document.createElement('span');
+      chip.className = 'stuck';
+      chip.textContent = '自锁';
+      chip.title = '已连续 ' + duration(anomaly.failing_since)
+        + ' 没有一轮结束，超过了本部署终结一个跑不完 Slot 的时限。它不会自己恢复。';
+      held.appendChild(chip);
+      tr.className = 'stuckrow';
+    }
+    cell(SINCE_SOURCE[anomaly.since_from] || anomaly.since_from || '—');
+    // The full pod name is the same on every row of a single replica's run and
+    // is the widest column in the table. Only the part that distinguishes one
+    // replica from another is shown; the rest is one hover away.
+    var rep = cell(shortReplica(anomaly.replica), 'mono');
+    rep.title = anomaly.replica;
+    var td = document.createElement('td');
+    var strategies = dedupeStrategies(anomaly.strategies);
+    strategies.forEach(function (s) {
+      var span = document.createElement('span');
+      span.className = 'tag';
+      span.style.cursor = 'pointer';
+      span.title = '按这个策略过滤';
+      span.textContent = s.business_id ? (s.strategy_id + ' / 业务 ' + s.business_id) : s.strategy_id;
+      span.addEventListener('click', function () {
+        document.getElementById('fStrategy').value = s.strategy_id;
+        applyFilters();
+      });
+      td.appendChild(span);
+    });
+    // "未观察到" alone reads as "this object has no strategies", which would
+    // make the row unactionable and also untrue. A blocked round never got a
+    // Slot, and the strategy references come off the Slot -- so for this kind
+    // the cell is empty by construction, every time, and saying which of the
+    // two it is decides whether the reader goes looking for a strategy.
+    if (!strategies.length) {
+      td.textContent = anomaly.kind === 'BLOCKED_RUN'
+        ? '未观察到（这一轮没取到 Slot，策略是从 Slot 上读的）'
+        : '未观察到';
+    }
+    tr.appendChild(td);
+  return tr;
+}
+
 function loadObjects() {
   return api('objects?' + query()).then(function (objects) {
     show('objErr', false);
@@ -600,128 +730,7 @@ function loadObjects() {
     total = (objects.page && objects.page.total) || 0;
     var tb = document.getElementById('rows');
     tb.textContent = '';
-    rows.forEach(function (anomaly) {
-      var tr = document.createElement('tr');
-      function cell(t, cls) {
-        var td = document.createElement('td');
-        if (cls) td.className = cls;
-        td.textContent = t;
-        tr.appendChild(td);
-        return td;
-      }
-      var qg = cell(anomaly.query_group.slice(0, 12) + '…', 'mono qg');
-      qg.title = anomaly.query_group + '（点击复制）';
-      qg.addEventListener('click', function () {
-        document.getElementById('qg').value = anomaly.query_group;
-      });
-      // The same field the verdict reads. Deriving it again here from the
-      // reason code would be a second copy of the rule, and the two would agree
-      // until the day one of them was updated.
-      var WHO = {EXTERNAL: '数据源/策略', UNKNOWN: '还看不出', OURS: 'alarmd'};
-      var WHY_WHO = {
-        EXTERNAL: '扩容或改架构都不会让它变好——要找策略配置或数据源的人',
-        UNKNOWN: '这一条是重启后从记录里恢复的，成因没有被持久化——等它跑完下一轮才知道是谁的',
-        OURS: '容量或架构能避免的，判定就看这一类；报了成因但没人归类过的也算在这里，宁可多看一眼'
-      };
-      var side = anomaly.attribution || 'OURS';
-      var who = cell((WHO[side] || side) + (anomaly.unclassified ? '？' : ''));
-      if (side === 'OURS') { who.className = 'stuck'; }
-      who.title = (WHY_WHO[side] || '')
-        + (anomaly.unclassified
-            ? '\n没有规则匹配到它，是按保守默认算进 alarmd 这一侧的——可能确实是我们的，也可能只是还没人给它归类'
-            : '');
-      cell(kindText(anomaly.kind));
-      cell(anomaly.reason_code || '—');
-      // The completion kind alone folds four conditions together, and they call
-      // for opposite responses. Without this column the list reads as hundreds
-      // of equally urgent objects, which is the same as reading as none.
-      // A blank cause reads as "there is no cause", and on a restored object
-      // that is false: the cause was never persisted. Those two say opposite
-      // things to a reader -- one is "nothing to chase", the other is "the
-      // answer existed and we lost it, it comes back next round" -- and the row
-      // has to say which. On a live read 8 of 63 degraded objects were in the
-      // second case, all of them restored, thirteen minutes after a rollout.
-      cell(missingCauseText(anomaly) || causeText(anomaly.cause));
-      // The cause stops one level short of the answer. LEVEL_OUTCOME_UNKNOWN is
-      // required by contract to carry a reason of either the coverage class --
-      // the data does not reach this window, which is nobody here's doing -- or
-      // the retryable class, which clears on its own. Showing the cause alone
-      // made 61 of 62 objects one indistinguishable population.
-      var reason = cell(anomaly.cause_reason || missingCauseText(anomaly) || '—');
-      if (anomaly.cause_reason) { reason.title = anomaly.cause_reason; }
-      // The symptom was only in the summary line, so a reader could see that 53
-      // of 55 hit one thing and still not tell which one this row is. It is the
-      // only cell on the row that says what to do about it.
-      var symptom = cell(symptomText((anomaly.failure || {}).detail));
-      if (anomaly.failure && anomaly.failure.detail) { symptom.title = anomaly.failure.detail; }
-      // The completion kind says a round ended badly; this says what went wrong.
-      // Both are shown because they answer different questions.
-      var f = anomaly.failure;
-      var fcell = cell(f ? (FAILURE_CATEGORY[f.category] || f.category) : '—');
-      if (f) {
-        fcell.title = ['阶段 ' + f.stage, '分类 ' + f.category, f.code ? '代码 ' + f.code : '']
-          .filter(Boolean).join('\n');
-      }
-      if (anomaly.query_cooldown) {
-        var cooldown = document.createElement('div');
-        cooldown.textContent = new Date(anomaly.query_cooldown.until).getTime() <= Date.now()
-          ? '查询冷却：已到允许查询时间，等待真实查询恢复'
-          : '查询冷却至 ' + new Date(anomaly.query_cooldown.until).toLocaleString();
-        cooldown.title = '最近真实查询：' + new Date(anomaly.query_cooldown.last_query_at).toLocaleString()
-          + '；连续失败：' + (anomaly.query_cooldown.failures >= 32 ? '至少 ' : '') + anomaly.query_cooldown.failures;
-        fcell.appendChild(cooldown);
-      }
-      // A long duration alone does not say whether the object is recovering
-      // slowly or has stopped entirely; this chip is the only thing on the row
-      // that separates the two. The row's duration is how long the object has
-      // been anomalous; how long its rounds have not ended is a different,
-      // usually shorter, clock, and the chip carries that one.
-      var held = cell((SINCE_BOUND[anomaly.since_from] || '') + duration(anomaly.since));
-      if (SINCE_BOUND[anomaly.since_from]) {
-        held.title = SINCE_SOURCE[anomaly.since_from] || anomaly.since_from;
-      }
-      if (anomaly.stalled) {
-        var chip = document.createElement('span');
-        chip.className = 'stuck';
-        chip.textContent = '自锁';
-        chip.title = '已连续 ' + duration(anomaly.failing_since)
-          + ' 没有一轮结束，超过了本部署终结一个跑不完 Slot 的时限。它不会自己恢复。';
-        held.appendChild(chip);
-        tr.className = 'stuckrow';
-      }
-      cell(SINCE_SOURCE[anomaly.since_from] || anomaly.since_from || '—');
-      // The full pod name is the same on every row of a single replica's run and
-      // is the widest column in the table. Only the part that distinguishes one
-      // replica from another is shown; the rest is one hover away.
-      var rep = cell(shortReplica(anomaly.replica), 'mono');
-      rep.title = anomaly.replica;
-      var td = document.createElement('td');
-      var strategies = dedupeStrategies(anomaly.strategies);
-      strategies.forEach(function (s) {
-        var span = document.createElement('span');
-        span.className = 'tag';
-        span.style.cursor = 'pointer';
-        span.title = '按这个策略过滤';
-        span.textContent = s.business_id ? (s.strategy_id + ' / 业务 ' + s.business_id) : s.strategy_id;
-        span.addEventListener('click', function () {
-          document.getElementById('fStrategy').value = s.strategy_id;
-          applyFilters();
-        });
-        td.appendChild(span);
-      });
-      // "未观察到" alone reads as "this object has no strategies", which would
-      // make the row unactionable and also untrue. A blocked round never got a
-      // Slot, and the strategy references come off the Slot -- so for this kind
-      // the cell is empty by construction, every time, and saying which of the
-      // two it is decides whether the reader goes looking for a strategy.
-      if (!strategies.length) {
-        td.textContent = anomaly.kind === 'BLOCKED_RUN'
-          ? '未观察到（这一轮没取到 Slot，策略是从 Slot 上读的）'
-          : '未观察到';
-      }
-      tr.appendChild(td);
-      tb.appendChild(tr);
-    });
+    rows.forEach(function (anomaly) { tb.appendChild(anomalyRow(anomaly)); });
     // Keyed by column and filter, so switching lists does not report the other
     // list's objects as having vanished.
     var churn = churnSince(served + '|' + query(),

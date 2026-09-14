@@ -73,6 +73,8 @@ const (
 	codeEventOmitsSiblingOutcome           = "EVENT_OMITS_SIBLING_OUTCOME"
 	codeEventEnvelopeCountInvalid          = "EVENT_ENVELOPE_COUNT_INVALID"
 	codeEventMissingForBusinessOutcome     = "EVENT_MISSING_FOR_BUSINESS_OUTCOME"
+	codeEventHeldOnNonRecoveryOutcome      = "EVENT_HELD_ON_NON_RECOVERY_OUTCOME"
+	codeEventHeldDisagreesAcrossLevels     = "EVENT_HELD_DISAGREES_ACROSS_LEVELS"
 )
 
 // resultContractCodes is the closed vocabulary, in the order the rules appear.
@@ -96,6 +98,7 @@ var resultContractCodes = []string{
 	codeEventEffectiveTimeFactMissing, codeEventDuplicate, codeEventKindMismatch,
 	codeEventLevelResultContradicts, codeEventOmitsSiblingOutcome,
 	codeEventEnvelopeCountInvalid, codeEventMissingForBusinessOutcome,
+	codeEventHeldOnNonRecoveryOutcome, codeEventHeldDisagreesAcrossLevels,
 }
 
 // ResultContractCodes returns the closed vocabulary of result contract refusal

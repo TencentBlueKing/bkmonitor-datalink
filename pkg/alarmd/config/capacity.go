@@ -260,6 +260,25 @@ type DerivedScheduler struct {
 // and that is when raising it is worth discussing". Until then, raising it
 // buys more executions parked on the same permits, against a heap already
 // running at two thirds of GOMEMLIMIT.
+//
+// As written that criterion fires forever after a single event, because all
+// three are cumulative counters and a cumulative counter has no window. It has
+// since read non-zero - nine admission timeouts on one replica - while a 2,504
+// pod-second settled window on the same deployment saw none of them advance at
+// all. Nine events in a process lifetime and nine events a minute are the same
+// reading on a lifetime counter, and only one of them is the bound taking
+// throughput. So the criterion is a rate over a window that excludes the first
+// few minutes after start, not a comparison against zero.
+//
+// The quantity that does say something today is on the same metric and is not
+// a failure at all: worker_query_admission_total{result="started"} counts
+// acquisitions that found no free permit and had to queue. Over that settled
+// window it ran at 10.3 a second against 18.3 successful normal admissions, so
+// 56% of queries waited for a permit - with the container at 16% of its CPU,
+// and a mean wait of 72 ms. Waiting is not failing and the permit budget is
+// there to bound what this process asks of the downstream rather than what it
+// asks of itself, so that number is a question for whoever owns the
+// downstream's capacity, not an argument for changing this table.
 func DeriveScheduler(inputs CapacityInputs) DerivedScheduler {
 	cpu := max(inputs.CPUBudget, 1)
 	permits := cpu * queryPermitsPerCPU

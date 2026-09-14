@@ -233,7 +233,16 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 		}, []string{"transition", "result", "reason_class"}),
 		queryAdmission: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "worker_query_admission_total",
-			Help: "Process-wide physical query permit admission outcomes by fixed operation and result.",
+			Help: "Process-wide physical query permit admission outcomes by fixed operation and result. " +
+				"started is not one of the outcomes and does not partition with them: it is recorded only " +
+				"when the acquisition found no free permit and had to join the waiter queue, and the same " +
+				"acquisition records its real outcome afterwards. So started over success is the share of " +
+				"queries that waited for a permit rather than a failure rate - measured over a settled " +
+				"window it is 10.3 against 18.3 a second, which is 56% of normal admissions waiting while " +
+				"the container sits at 16% of its CPU. Adding started to the other results double counts " +
+				"every query that waited. timeout and failed are the ones that cost a query: timeout is a " +
+				"deadline reached while waiting, failed is the waiter queue itself being full or recovery " +
+				"permits being off.",
 		}, []string{"operation", "result"}),
 	}
 	metrics.dueIndex = newDueIndexMetrics()

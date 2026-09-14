@@ -381,15 +381,17 @@ func (cache *controlReadCache) timelineOccupancy() ControlTimelineCacheOccupancy
 // the object after a small version probe without reading its body; misses read
 // the body because nothing was cached for the observed version; refreshes read
 // the body because a cached copy no longer matched the observed version, epoch
-// or length. Shared counts the misses and refreshes that took the body from a
-// complete read another caller of this process already had in flight instead
-// of reading it again, so bodies actually read are misses plus refreshes minus
-// shared. Only the snapshot object shares reads today.
+// or length.
+//
+// There was a Shared field here, and a comment claiming "only the snapshot
+// object shares reads today". Nothing in this package ever incremented it and
+// there is no snapshot object in the wiring: no caller of this process shares
+// an in-flight read with another, so bodies actually read are misses plus
+// refreshes, with nothing subtracted.
 type ControlReadCacheObjectStats struct {
 	Hits      uint64
 	Misses    uint64
 	Refreshes uint64
-	Shared    uint64
 }
 
 // ControlReadCacheStats is the low-cardinality view intended for a counter
@@ -432,13 +434,11 @@ type controlReadObjectCounters struct {
 	hits      atomic.Uint64
 	misses    atomic.Uint64
 	refreshes atomic.Uint64
-	shared    atomic.Uint64
 }
 
 func (counters *controlReadObjectCounters) snapshot() ControlReadCacheObjectStats {
 	return ControlReadCacheObjectStats{
 		Hits: counters.hits.Load(), Misses: counters.misses.Load(), Refreshes: counters.refreshes.Load(),
-		Shared: counters.shared.Load(),
 	}
 }
 

@@ -23,12 +23,21 @@ type ControlCacheCounts struct {
 	Hits      uint64
 	Misses    uint64
 	Refreshes uint64
-	// Shared is a miss or refresh that took the body from a complete read
-	// another caller of this process already had in flight. It is what says
-	// the coalescing works: bodies actually read are misses plus refreshes
-	// minus shared, and a follower whose workers all miss a new revision at
-	// once should show shared climbing with misses while reads stay at one.
-	Shared    uint64
+	// There was a Shared field here, published as result="share" and described
+	// by this comment and the metric's HELP as the count of misses served from
+	// a read another caller already had in flight. No code ever incremented it.
+	// It read zero on every object for the life of the metric, and the only
+	// test that exercised the label fed the collector an object name --
+	// "snapshot" -- that the production wiring does not emit, so the test was
+	// green and the mechanism did not exist.
+	//
+	// A result label nothing can produce is worse than a missing one. Someone
+	// reading zero concludes the coalescing is wired but never hitting and goes
+	// to fix that, which is a whole implementation before anything contradicts
+	// them -- and for the version header the contradiction is that coalescing
+	// across operations is forbidden, not merely absent: the header is how a
+	// publication cutover is observed, so serving it from an earlier read
+	// misses the cutover. See controlplane/control_version_scope.go.
 	Evictions uint64
 	// Clears is an all-or-nothing drop, which is a different fact from an
 	// eviction: an evicting cache is working inside its budget, while a clearing
@@ -89,9 +98,7 @@ func newControlCacheCollector() *controlCacheCollector {
 				"means the budget cannot hold the working set, not that the control plane changed. A clear "+
 				"is the whole cache dropped at once: for the key segment memos a population outgrew a bound "+
 				"its own design assumes it stays inside, and for the activation delta a Worker found a header "+
-				"more than one revision past the one it held, so the delta could not speak for the gap. A share is a "+
-				"miss or refresh served from a complete read another caller of this process already had "+
-				"in flight, so bodies actually read are miss plus refresh minus share.",
+				"more than one revision past the one it held, so the delta could not speak for the gap.",
 			[]string{"object", "result"}, nil,
 		),
 		entries: descriptor("control_cache_entries",
@@ -150,7 +157,6 @@ func (c *controlCacheCollector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Hits), counts.Object, "hit")
 		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Misses), counts.Object, "miss")
 		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Refreshes), counts.Object, "refresh")
-		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Shared), counts.Object, "share")
 		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Evictions), counts.Object, "evict")
 		ch <- prometheus.MustNewConstMetric(c.desc, prometheus.CounterValue, float64(counts.Clears), counts.Object, "clear")
 		if audit := counts.Audit; audit != nil {

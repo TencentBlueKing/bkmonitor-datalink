@@ -186,3 +186,77 @@ func (recorder *permitFactRecorder) peakNormalInflight() int {
 	}
 	return peak
 }
+
+// Whether a caller had to wait for a permit is counted, because nothing that
+// can be read afterwards can tell.
+//
+// Waiting is an instant and a caller queueing behind a full budget then being
+// granted begins and ends between two reads of it, so a page ruling out
+// saturation from that gauge rules it out with an instrument that cannot see
+// the state. The pair counted here survives the resolution: acquires is every
+// caller that asked, queued the ones that did not get a permit at once, and
+// both are incremented at the same point over the same population so their
+// ratio is a share rather than two different things divided.
+func TestQueryPermitOccupancyCountsWhoHadToWait(t *testing.T) {
+	clock := newMutableClock(time.Unix(300, 0))
+	flights, err := NewFlightCoordinatorWithRecovery(testRecoveryLimits(), clock.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	deadline := clock.Now().Add(time.Minute)
+
+	// The budget here is two, so the first two are admitted at once.
+	held := make([]*QueryPermit, 0, 2)
+	for _, queryGroup := range []string{"a", "b"} {
+		permit, err := flights.AcquireQueryPermit(ctx,
+			execution.SlotIdentity{QueryGroup: execution.QueryGroupIdentity(queryGroup), EvaluationTime: 60},
+			execution.OperationNormal, deadline)
+		if err != nil {
+			t.Fatal(err)
+		}
+		held = append(held, permit)
+	}
+	if occupancy := flights.QueryPermitOccupancy(); occupancy.Acquires != 2 || occupancy.Queued != 0 {
+		t.Fatalf("acquires=%d queued=%d after two immediate grants, want 2 and 0: a caller admitted "+
+			"at once must not read as one that waited", occupancy.Acquires, occupancy.Queued)
+	}
+
+	// The third finds the budget full and has to queue. It is released by the
+	// first permit going back, so the wait resolves -- which is exactly the
+	// shape no gauge can catch: by the time anything reads Waiting it is zero
+	// again.
+	granted := make(chan error, 1)
+	go func() {
+		permit, err := flights.AcquireQueryPermit(ctx,
+			execution.SlotIdentity{QueryGroup: "c", EvaluationTime: 60}, execution.OperationNormal, deadline)
+		if permit != nil {
+			permit.Release()
+		}
+		granted <- err
+	}()
+	// Wait for the third caller to be queued before freeing a permit, so the
+	// test is not racing the goroutine into an immediate grant.
+	deadlineAt := time.Now().Add(2 * time.Second)
+	for flights.QueryPermitOccupancy().Acquires < 3 {
+		if time.Now().After(deadlineAt) {
+			t.Fatal("the third caller never reached the permit queue, so the branch under test did not run")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	held[0].Release()
+	if err := <-granted; err != nil {
+		t.Fatalf("the queued caller never got a permit: %v", err)
+	}
+	held[1].Release()
+
+	occupancy := flights.QueryPermitOccupancy()
+	if occupancy.Acquires != 3 {
+		t.Fatalf("acquires=%d, want every caller that asked counted, including the one that waited",
+			occupancy.Acquires)
+	}
+	if occupancy.Queued != 1 {
+		t.Fatalf("queued=%d, want the one caller that found the budget full; without it the page "+
+			"can only read Waiting, which is zero again by the time anyone looks", occupancy.Queued)
+	}
+}

@@ -267,6 +267,11 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			Capacity: &fleet.CapacityView{
 				Replicas: 2, PermitsHeld: 3, PermitBudget: 16, PermitSeconds: 1200.5,
 				Waiting: 0, QueueBudget: 256,
+				// The shape a live deployment is in: nothing queued at this
+				// instant, and most queries having waited at some point. The two
+				// gauges alone read as headroom, which is what this fixture is
+				// here to stop the page concluding.
+				PermitAcquires: 40000, PermitWaits: 22400,
 				MemoryUsed: 3 << 30, MemoryLimit: 16 << 30, MemorySource: "pod_limit",
 				MemoryLimitKnown: true, ThrottledKnown: true, ThrottledSeconds: 0.0017,
 				CPUSeconds: 4820.25, CPUCores: 8, CPUSource: "container CPU limit",
@@ -637,6 +642,18 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			"两种都有时先给出该看的那个数，不是只给总数"},
 		{"ROT unsplit ::", "副本没有报告是哪一种原因", "扩队列有用",
 			"副本没报告成因时说不出该不该处理，猜一个比不说更糟"},
+
+		// Whether there are enough places, answered with an instrument that can
+		// see the answer. The two gauges cannot: a caller queueing behind a full
+		// budget begins and ends between two reads.
+		{"PERMIT mostly-waited ::", "56%", "没有查询在排队",
+			"多数查询等过位子时不能因为此刻队列空就说没有排队"},
+		{"PERMIT mostly-waited ::", "位子是约束", "",
+			"占比过半要直接给出结论，不能让运维自己算"},
+		{"PERMIT never-waited ::", "没有一次排过队", "位子是约束",
+			"一次都没等过才是真的有余量，这一支要和上一支说相反的话"},
+		{"PERMIT nothing-asked ::", "无从谈起", "不是约束",
+			"零次取位子里零次等待不是有余量，是什么都没量到"},
 	} {
 		line := lineStarting(text, want.prefix)
 		if line == "" {
@@ -859,6 +876,20 @@ console.log('CAPACITY :: ' + textOf(store['capCards']));
 // are all due sooner, which the dispatcher itself calls a decision rather than a
 // lack of room. Which one dominates decides whether there is anything to do, so
 // each shape has to be rendered and read.
+const permitShapes = {
+  'mostly-waited': {permit_acquires: 40000, permit_waits: 22400, waiting: 0},
+  'never-waited': {permit_acquires: 40000, permit_waits: 0, waiting: 0},
+  // A replica that has not run a query yet. Zero waits out of zero asks is not
+  // "there is room", it is nothing measured.
+  'nothing-asked': {permit_acquires: 0, permit_waits: 0, waiting: 0},
+};
+for (const [name, override] of Object.entries(permitShapes)) {
+  store['capCards'].textContent = '';
+  try { ctx.renderCapacity(Object.assign({}, data.health.capacity, override), []); }
+  catch (e) { console.error('renderCapacity (' + name + '): ' + e.message); failed++; continue; }
+  console.log('PERMIT ' + name + ' :: ' + textOf(store['capCards']));
+}
+
 const rotations = {
   'mixed': {deferred: 512, deferred_queue_full: 12, deferred_not_better: 500},
   'only-not-better': {deferred: 500, deferred_queue_full: 0, deferred_not_better: 500},

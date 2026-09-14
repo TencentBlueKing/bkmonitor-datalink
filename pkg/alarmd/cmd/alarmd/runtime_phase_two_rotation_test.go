@@ -10,6 +10,8 @@
 package main
 
 import (
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,50 +98,40 @@ func TestRotationIsVisibleWhileTheWalkIsStuckAndNeverCompletes(t *testing.T) {
 	}
 }
 
-// A recovery queue that is full of objects all due sooner than this one.
+// The recovery queue cannot turn an object away, and the counter that would
+// say so is live.
 //
-// The dispatcher's own comment calls this "a decision, not a lack of room", and
-// it lands in the same total as a ready queue with no places. They need opposite
-// responses -- one is answered by more room and the other is not -- so a page
-// reporting only the total can offer only one remedy, and where this branch
-// dominates that remedy does nothing.
+// Two things have to be true together and neither is worth much alone. The
+// queue's capacity is at least the number of objects this Worker owns and it
+// holds at most one entry per object, and the single caller that fills it drops
+// the stale entries immediately beforehand -- so its occupancy cannot reach its
+// capacity, and deferred_not_better cannot move. That makes it an invariant
+// guard rather than a measure of queue pressure: zero says the chain holds,
+// non-zero says somebody changed the drop or the capacity floor.
 //
-// The state has to be built rather than configured. Since the recovery queue's
-// capacity became max(the configured value, the owned count), and the queue
-// holds at most one entry per owned object, its occupancy can only reach its
-// capacity while the owned set has just shrunk and the stale entries have not
-// been dropped yet. That transient is what this constructs: three objects
-// parked, one taken away, a new one arriving before the cleanup.
+// An earlier version of this test drove the branch by calling fillQueues
+// without the drop, and read the result as a transient that production reaches.
+// It does not: there is one call site and the drop is the line above it. That
+// test was constructing a state the deployment cannot be in -- the same defect
+// as a check that feeds a collector an object name the wiring never emits,
+// which is a thing this codebase has already had to delete once.
 //
-// An earlier version of this test set a small capacity and let the queue
-// overflow. That state stopped existing when the capacity rule changed, and the
-// test's own guard -- nothing was turned away, so the branch was not reached --
-// is what said so. The right answer to a state someone else legitimately
-// removed is to rebuild the state or retire the test, never to relax the
-// assertion until it passes again.
-func TestRotationSeparatesAQueueWithNoRoomFromOneHoldingSoonerWork(t *testing.T) {
+// So the production order is what is asserted, and the bypass is kept only to
+// prove the counter is not dead. A guard whose zero could also mean "nothing
+// would ever increment this" says nothing at all.
+func TestTheRecoveryQueueCannotTurnAnythingAwayWhileTheStaleEntriesAreDropped(t *testing.T) {
 	at := time.Now()
-	// The configured recovery capacity equals the owned count, so the queue
-	// reaches its bound under either sizing rule -- a fixed capacity, or the
-	// larger of that and the owned set. The branch under test is about the
-	// ordering once the queue is at its bound, and pinning it to one sizing rule
-	// would make this fail the next time that rule is corrected rather than the
-	// next time the ordering is.
 	dispatcher := walkDispatcher(8, 3, map[execution.QueryGroupIdentity]time.Time{
 		"query-group-a": at.Add(time.Second),
 		"query-group-b": at.Add(2 * time.Second),
 		"query-group-c": at.Add(3 * time.Second),
 	})
 	runners, revision := dispatcher.bundle.snapshotScheduledRunners()
+	dispatcher.dropStaleQueued(revision)
 	dispatcher.fillQueues(runners, revision)
-	if queued := dispatcher.bundle.rotationFacts().Queued; queued != 3 {
-		t.Fatalf("queued=%d, want the three parked objects in the recovery queue before the set "+
-			"changes; without them the branch under test is not reachable", queued)
-	}
 
-	// The owned set shrinks and grows in one step, and the entries the removed
-	// object left behind are deliberately not dropped -- dropStaleQueued is the
-	// cleanup this transient is defined as being before.
+	// The owned set shrinks and grows in one step -- the moment that looks like
+	// it should overflow the queue, and the one the drop exists to clear.
 	dispatcher.bundle.mu.Lock()
 	dispatcher.bundle.removeRunnerLocked("query-group-c")
 	delete(dispatcher.bundle.assigned, "query-group-c")
@@ -149,21 +141,46 @@ func TestRotationSeparatesAQueueWithNoRoomFromOneHoldingSoonerWork(t *testing.T)
 	dispatcher.bundle.mu.Unlock()
 
 	changed, changedRevision := dispatcher.bundle.snapshotScheduledRunners()
+	dispatcher.dropStaleQueued(changedRevision)
 	dispatcher.fillQueues(changed, changedRevision)
 
 	facts := dispatcher.bundle.rotationFacts()
 	if facts == nil {
 		t.Fatal("the walk published nothing")
 	}
-	if facts.DeferredNotBetter == 0 {
-		t.Fatalf("deferred_not_better=0, so this walk did not reach the branch under test: the new "+
-			"object is due after everything the recovery queue already holds, and the queue is at "+
-			"its capacity because the owned set shrank under it (facts=%+v)", facts)
+	if facts.DeferredNotBetter != 0 {
+		t.Fatalf("deferred_not_better=%d in the order the deployment actually runs in; the stale "+
+			"entries are dropped immediately before the queue is filled, so its occupancy cannot "+
+			"reach its capacity -- a non-zero here means that drop or the capacity floor changed, "+
+			"not that load rose (facts=%+v)", facts.DeferredNotBetter, facts)
 	}
-	if facts.DeferredQueueFull != 0 {
-		t.Fatalf("deferred_queue_full=%d, want none: the ready queue has eight places, and "+
-			"reporting these as a full queue is what sends a reader to grow a queue that is not "+
-			"the constraint", facts.DeferredQueueFull)
+
+	// And the counter is live. Without this, the zero above would also be what a
+	// counter nothing can ever increment looks like, and the guard would be
+	// indistinguishable from a dead label -- which is the thing this page has
+	// been clearing out all along.
+	bypass := walkDispatcher(8, 3, map[execution.QueryGroupIdentity]time.Time{
+		"query-group-a": at.Add(time.Second),
+		"query-group-b": at.Add(2 * time.Second),
+		"query-group-c": at.Add(3 * time.Second),
+	})
+	first, firstRevision := bypass.bundle.snapshotScheduledRunners()
+	bypass.fillQueues(first, firstRevision)
+	bypass.bundle.mu.Lock()
+	bypass.bundle.removeRunnerLocked("query-group-c")
+	delete(bypass.bundle.assigned, "query-group-c")
+	bypass.bundle.setRunnerLocked("query-group-d",
+		&phaseTwoQueryGroupLifecycle{runner: walkRunner{readyAt: at.Add(9 * time.Second)}})
+	bypass.bundle.assigned["query-group-d"] = struct{}{}
+	bypass.bundle.mu.Unlock()
+	second, secondRevision := bypass.bundle.snapshotScheduledRunners()
+	// Deliberately without dropStaleQueued: this is the broken order the guard
+	// exists to catch, not a state the deployment reaches.
+	bypass.fillQueues(second, secondRevision)
+
+	if bypassed := bypass.bundle.rotationFacts(); bypassed.DeferredNotBetter == 0 {
+		t.Fatalf("skipping the drop turned nothing away, so the guard above is asserting zero on a "+
+			"counter that may simply never move (facts=%+v)", bypassed)
 	}
 }
 
@@ -272,5 +289,47 @@ func TestRotationReportsNothingBeforeAWalkHasRun(t *testing.T) {
 	})
 	if facts := dispatcher.bundle.rotationFacts(); facts != nil {
 		t.Fatalf("a replica that has not walked yet reported %+v, want no rotation at all", facts)
+	}
+}
+
+// The stale entries are dropped immediately before the queues are filled, in
+// the one place that fills them.
+//
+// This is the first half of the invariant the recovery queue's guard rests on,
+// and it is a fact about the order of two statements -- which no test that
+// calls those statements itself can check, because it supplies the order. So it
+// is read off the source.
+//
+// A source-level check is the weaker kind and is used here because the stronger
+// kind is not available: driving run() would need the whole bundle, and a test
+// that calls dropStaleQueued and fillQueues in sequence proves only that the
+// test can call them in sequence. Removing the drop from run() is a mutation
+// nothing else here would catch; in production the counter would catch it,
+// which is exactly what the counter is for.
+func TestTheStaleEntriesAreDroppedImmediatelyBeforeTheQueuesAreFilled(t *testing.T) {
+	source, err := os.ReadFile("runtime_phase_two.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(source), "\n")
+	fills := 0
+	for index, line := range lines {
+		if !strings.Contains(line, "dispatcher.fillQueues(") {
+			continue
+		}
+		fills++
+		if index == 0 || !strings.Contains(lines[index-1], "dispatcher.dropStaleQueued(") {
+			previous := ""
+			if index > 0 {
+				previous = strings.TrimSpace(lines[index-1])
+			}
+			t.Errorf("line %d fills the queues after %q; the recovery queue's occupancy can only stay "+
+				"below its capacity while the stale entries are dropped first, and deferred_not_better "+
+				"is published as an invariant guard on exactly that", index+1, previous)
+		}
+	}
+	if fills != 1 {
+		t.Errorf("fillQueues is called from %d places; the invariant is stated about one caller, and "+
+			"a second one would need its own ordering checked", fills)
 	}
 }

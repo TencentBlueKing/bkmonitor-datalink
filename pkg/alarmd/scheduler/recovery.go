@@ -284,6 +284,13 @@ func (coordinator *FlightCoordinator) acquireProcessQueryPermit(
 	*queue = append(*queue, waiter)
 	coordinator.dispatchQueryPermitsLocked()
 	queued := coordinator.waiterQueuedLocked(waiter, recovery)
+	// Counted here, where both facts are known at once: this caller asked, and
+	// this caller did or did not have to wait. Anything downstream reading the
+	// two gauges instead sees the moment after it resolved.
+	coordinator.permitAcquires++
+	if queued {
+		coordinator.permitQueued++
+	}
 	snapshot := coordinator.queryPermitSnapshotLocked()
 	coordinator.mu.Unlock()
 	if queued {

@@ -28,7 +28,7 @@ import (
 // and UQ formatter tests separately verify the request/ES semantics.
 func TestProductionPollingSources(t *testing.T) {
 	for _, source := range []struct{ label, kind string }{
-		{"custom", "time_series"}, {"prometheus", "time_series"},
+		{"custom", "time_series"}, {"prometheus", "time_series"}, {"bk_data", "time_series"},
 		{"bk_log_search", "time_series"}, {"bk_log_search", "log"},
 		{"bk_monitor", "log"}, {"custom", "event"}, {"bk_fta", "event"},
 	} {
@@ -43,6 +43,9 @@ func TestProductionPollingSources(t *testing.T) {
 				item := document["items"].([]any)[0].(map[string]any)
 				query := item["query_configs"].([]any)[0].(map[string]any)
 				query["data_source_label"], query["data_type_label"] = source.label, source.kind
+				if source.label == "bk_data" {
+					item["expression"] = "a * 1"
+				}
 				if source.label == "prometheus" {
 					query["promql"] = "sum by (host) (synthetic_usage)"
 					delete(query, "agg_dimension")

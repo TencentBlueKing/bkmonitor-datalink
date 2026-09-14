@@ -552,3 +552,45 @@ func TestEveryResultContractCodeIsClassified(t *testing.T) {
 		}
 	}
 }
+
+// The settled class is the only part of this list with an answer nobody needs
+// to work again. Objects whose series do not live long enough to fill the
+// detection window are external for the same reason the rest of External is,
+// and unlike the rest they will read exactly the same tomorrow: there is
+// nothing to investigate and no change to alarmd that affects them.
+//
+// Counted, so the page can say so once instead of every reader rediscovering
+// it. A subset of External and never a fourth column -- the four-way split is
+// what the verdict reads, and a fifth number in it would change the verdict.
+func TestTheSettledNeverFillingWindowsAreCountedWithoutLeavingExternal(t *testing.T) {
+	filling := Anomaly{QueryGroup: "qg-filling", Kind: KindDegradedRun,
+		CauseReason: "HISTORY_WARMING",
+		Coverage:    &HistoryCoverage{Levels: 2, Short: 1, WorstValid: 8, WorstRequired: 9, ShortRounds: 3}}
+	never := Anomaly{QueryGroup: "qg-never", Kind: KindDegradedRun,
+		CauseReason: "HISTORY_WARMING",
+		Coverage:    &HistoryCoverage{Levels: 2, Short: 2, WorstValid: 2, WorstRequired: 14, ShortRounds: 40}}
+	// An external object with no coverage at all must not be swept in. It is
+	// external for a different reason and has not been answered.
+	timedOut := Anomaly{QueryGroup: "qg-timeout", Kind: KindDegradedRun, CauseReason: "QUERY_TIMEOUT"}
+	anomalies := []Anomaly{filling, never, timedOut}
+	Attribute(anomalies)
+	for _, anomaly := range anomalies {
+		if anomaly.Attribution != AttributionExternal {
+			t.Fatalf("%s = %q, want all three external for this test to say anything",
+				anomaly.QueryGroup, anomaly.Attribution)
+		}
+	}
+	summary := summarize(anomalies, now)
+	if summary.External != 3 {
+		t.Errorf("external = %d, want all 3: the settled ones are a subset, not a fourth column",
+			summary.External)
+	}
+	if summary.Ours != 0 {
+		t.Errorf("ours = %d, want 0: a strategy whose series churn is not a capacity or design fault",
+			summary.Ours)
+	}
+	if summary.WindowNeverFills != 1 {
+		t.Errorf("window_never_fills = %d, want exactly the one that has been short for longer "+
+			"than filling it could take", summary.WindowNeverFills)
+	}
+}

@@ -226,6 +226,32 @@ func TestEveryAnomalyFieldThePageReadsExistsInTheAPI(t *testing.T) {
 	assertFieldsExist(t, "anomaly", reflect.TypeOf(fleet.Anomaly{}))
 }
 
+// The coverage counts are read under their own local name so this check can
+// exist at all. Read through a one-letter local they would be unreachable by
+// any static check, and a misspelling among them is silent in the worst
+// possible way: worst_required reads as undefined, the comparison against it
+// is false, and every permanently short window renders as "still filling" --
+// the exact verdict the field was added to overturn.
+func TestEveryWindowCoverageFieldThePageReadsExistsInTheAPI(t *testing.T) {
+	assertFieldsExist(t, "windowCoverage", reflect.TypeOf(fleet.HistoryCoverage{}))
+}
+
+// The page decides "this window will never fill" itself rather than reading a
+// server-computed flag, so a reader can check the conclusion against the
+// numbers printed beside it. That duplication is deliberate, and it is also
+// exactly how two copies of one rule drift apart.
+//
+// This only checks the page still has the function. Whether it decides the
+// same thing fleet.HistoryCoverage.Persistent decides is checked by running
+// both, in render_smoke_test.go -- a Go reimplementation of the rule compared
+// against the Go original would agree with itself no matter what the page did.
+func TestThePageStillDecidesWhetherAWindowCanEverFill(t *testing.T) {
+	if !regexp.MustCompile(`function windowNeverFills\(windowCoverage\) \{`).Match(page) {
+		t.Fatal("the page no longer declares windowNeverFills: every short window renders the same " +
+			"way again, which is the state this field was added to end")
+	}
+}
+
 // One level further down, and the level a reader trusts instead of paging: the
 // onset line says how much of the list started recently. A misspelled bucket
 // reads as undefined, the guard in front of it is false, and the line simply

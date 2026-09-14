@@ -312,3 +312,59 @@ func TestRuntimeApplyRequiresPlanRetention(t *testing.T) {
 		t.Fatalf("ApplyRuntime() with an unusable retention error = %v, want a request error", err)
 	}
 }
+
+// The completeness verdict is not readable on its own. WARMING says the window
+// is short and stops; whether it is short by one point, which the next round
+// fixes, or short by twelve because the series does not live long enough to
+// ever fill it, is the whole question -- and the two produce the identical
+// verdict on every round, for ever.
+//
+// Summarize is the only place that holds both numbers. It used to return one.
+func TestWindowSummaryReportsWhatItJudgedTheCountAgainst(t *testing.T) {
+	const (
+		required = 9
+		interval = time.Minute
+	)
+	fingerprint := strings.Repeat("b", 64)
+	requirement := NewLevelRequirement(
+		execution.StateRetentionRequirement{LevelID: 1, RetentionPoints: required, EvaluationInterval: interval},
+		fingerprint, required,
+	)
+	window, err := NewWindow([]LevelRequirement{requirement})
+	if err != nil {
+		t.Fatalf("NewWindow() error = %v", err)
+	}
+	const latest = int64(1_700_000_000)
+	// Two points against a nine-point requirement: the shape of a series whose
+	// lifetime is shorter than the window it is being judged in.
+	points := []StatePoint{
+		{RecordID: fmt.Sprintf("%064d", 1), SourceTime: latest - int64(interval/time.Second),
+			Levels: []PointLevelFact{{LevelID: 1, DetectFingerprint: fingerprint, Result: LevelFactNormal}}},
+		{RecordID: fmt.Sprintf("%064d", 2), SourceTime: latest,
+			Levels: []PointLevelFact{{LevelID: 1, DetectFingerprint: fingerprint, Result: LevelFactNormal}}},
+	}
+	if _, err = window.Apply(points); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	view, ok := window.History(1)
+	if !ok {
+		t.Fatal("Level history is missing")
+	}
+	summary := view.Summarize(latest, required)
+	if summary.Completeness != HistoryWarming {
+		t.Fatalf("completeness = %q, want the fixture to be short", summary.Completeness)
+	}
+	if summary.ValidPositions != 2 {
+		t.Fatalf("valid positions = %d, want 2", summary.ValidPositions)
+	}
+	if summary.RequiredPositions != required {
+		t.Fatalf("required positions = %d, want %d: without it the shortfall cannot be computed "+
+			"anywhere downstream, and every short window reads the same",
+			summary.RequiredPositions, required)
+	}
+	// And when the caller passes nothing, the requirement the Level carries is
+	// what was actually used -- so that is what has to be reported, not zero.
+	if got := view.Summarize(latest, 0).RequiredPositions; got != required {
+		t.Fatalf("required positions = %d with a defaulted requirement, want %d", got, required)
+	}
+}

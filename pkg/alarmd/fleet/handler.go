@@ -233,6 +233,17 @@ type Summary struct {
 	// build emits, and it is the only signal for that: no test here can cover an
 	// open input.
 	OursUnclassified int `json:"ours_unclassified"`
+	// WindowNeverFills is how many of External are there because their series
+	// do not live long enough to fill the detection window, and have been that
+	// way for longer than filling it could take.
+	//
+	// Counted separately from the rest of External because it is the only part
+	// of this list with a settled answer. The others are open questions someone
+	// still has to look into; these are working exactly as designed, will read
+	// the same way tomorrow, and the design says an alert on them can be raised
+	// and cannot clear itself. Leaving them in the general pile means every
+	// reader re-investigates the same objects and reaches the same conclusion.
+	WindowNeverFills int `json:"window_never_fills"`
 }
 
 // Onset splits the list by how long ago each object went wrong.
@@ -276,6 +287,7 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 	replicas := map[string]int{}
 	stalled := 0
 	ours, external, unattributed, oursUnclassified := 0, 0, 0, 0
+	neverFills := 0
 	onset := Onset{}
 	for _, anomaly := range anomalies {
 		if anomaly.Stalled {
@@ -301,6 +313,12 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 		switch anomaly.Attribution {
 		case AttributionExternal:
 			external++
+			// A subset of External, never a fourth column. It is external for
+			// the same reason the rest are; what it adds is that this one has
+			// stopped being a question.
+			if anomaly.Coverage.Persistent() {
+				neverFills++
+			}
 		case AttributionUnknown:
 			unattributed++
 		default:
@@ -348,7 +366,7 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 		ByBusiness: rank(businesses), Strategies: len(strategies),
 		ByReplica: rank(replicas), Stalled: stalled, Onset: onset,
 		Ours: ours, External: external, Unattributed: unattributed,
-		OursUnclassified: oursUnclassified,
+		OursUnclassified: oursUnclassified, WindowNeverFills: neverFills,
 	}
 }
 

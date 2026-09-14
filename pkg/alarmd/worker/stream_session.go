@@ -417,6 +417,11 @@ func appendProvisional(target *execution.EvaluationResult, next execution.Evalua
 		}
 		plan.LevelOutcomes = append(plan.LevelOutcomes, nextPlan.LevelOutcomes...)
 		plan.StateResults = append(plan.StateResults, nextPlan.StateResults...)
+		// Counts, so they accumulate across the series of one Slot rather than
+		// being replaced by the last one merged. A Slot's window coverage is
+		// the whole Slot's, and reporting only the final series would make a
+		// query group of five hundred series look like a query group of one.
+		plan.HistoryCoverage.Merge(nextPlan.HistoryCoverage)
 		plan.GuardBeforeEvents = appendUniqueGapMutations(plan.GuardBeforeEvents, nextPlan.GuardBeforeEvents)
 		plan.GuardAfterState = appendUniqueGapMutations(plan.GuardAfterState, nextPlan.GuardAfterState)
 	}

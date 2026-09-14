@@ -172,6 +172,62 @@ type FailureRef struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+// HistoryCoverage is how far short of the required detection window this
+// object's series were, and for how many consecutive rounds.
+//
+// It exists to separate two things that report HISTORY_WARMING identically on
+// every round and need opposite responses:
+//
+//   - A window that is filling. A series a round or two old is short by a
+//     point or two, and the next few rounds finish it. Nobody needs to do
+//     anything.
+//   - A window that will never fill. When a series lives for less time than
+//     the window spans -- a network device that exists as long as one pod, a
+//     container name that is never reused -- most of the window is missing on
+//     every round, for ever. An alert on such an object can be raised, because
+//     the anomalous branch is decided before the completeness gate; it can
+//     never clear on its own, because recovery is decided behind it.
+//
+// The second is not a defect in this deployment and not a capacity problem.
+// It is a strategy whose series identity contains something that churns, and
+// what it needs is a change to the strategy, not to alarmd. But a reader
+// cannot reach that conclusion from a label both cases share.
+type HistoryCoverage struct {
+	// Levels and Short are the counts from the last round: how many Level
+	// windows were summarised, and how many held fewer points than required.
+	Levels uint32 `json:"levels"`
+	Short  uint32 `json:"short"`
+	// WorstValid and WorstRequired are one window's pair -- the worst one --
+	// never a minimum of one field beside a maximum of the other.
+	WorstValid    uint32 `json:"worst_valid"`
+	WorstRequired uint32 `json:"worst_required"`
+	// ShortRounds is how many consecutive rounds have reported a short window,
+	// counted by this process and therefore no older than it.
+	//
+	// This is the field that makes the distinction possible. One round cannot
+	// tell a filling window from a permanently short one; both are short. Only
+	// the sequence separates them, and a filling window converges.
+	ShortRounds uint32 `json:"short_rounds"`
+}
+
+// Persistent reports a window that has stayed short for longer than filling it
+// could possibly take.
+//
+// The threshold is the window's own requirement rather than a number chosen
+// here. A window needing N points is full after N rounds of data; still short
+// after more than N rounds means the data is not arriving, and no additional
+// waiting changes that. Nothing to configure, and nothing that has to be
+// retuned when a strategy changes its window.
+//
+// It assumes one round advances the window by at most one position. Where a
+// round covers more, the window fills sooner and this waits longer than it
+// needs to -- the error is towards calling a stuck object "still filling",
+// which is the direction that does not make a false accusation.
+func (coverage *HistoryCoverage) Persistent() bool {
+	return coverage != nil && coverage.Short > 0 && coverage.WorstRequired > 0 &&
+		coverage.ShortRounds > coverage.WorstRequired
+}
+
 // Anomaly is one object that is not making progress as expected.
 type Anomaly struct {
 	QueryCooldown *observability.QueryCooldownFacts `json:"query_cooldown,omitempty"`
@@ -188,9 +244,16 @@ type Anomaly struct {
 	// class -- the data does not reach this window, nobody here did anything
 	// wrong -- or the retryable class, which clears on its own. Neither is what
 	// the column heading claims, and the cause alone cannot tell them apart.
-	CauseReason string      `json:"cause_reason,omitempty"`
-	Since       time.Time   `json:"since"`
-	SinceFrom   SinceSource `json:"since_from"`
+	CauseReason string `json:"cause_reason,omitempty"`
+	// Coverage is how short the detection windows were, when the reason was
+	// about the window. It is here because HISTORY_WARMING describes two
+	// situations that need opposite responses and reads identically in both:
+	// a window a round or two from converging, and a window whose series do
+	// not live long enough to ever fill it. Only the shortfall separates them,
+	// and it used to be discarded in state/window.go.
+	Coverage  *HistoryCoverage `json:"coverage,omitempty"`
+	Since     time.Time        `json:"since"`
+	SinceFrom SinceSource      `json:"since_from"`
 	// Attribution says whether capacity or design could have prevented this.
 	// Only the ones where it could decide the verdict; the rest are real work
 	// for someone else. Filled in by Attribute rather than by the tracker, so

@@ -1,0 +1,73 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2017-2025 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package observability
+
+// HistoryCoverageFacts is how much of the detection window arrived, against
+// how much the algorithm asked for, summed over the series evaluated in one
+// run.
+//
+// It carries counts and not a verdict. Whether "short on every round for
+// ever" means anything is a question about the strategy, and the answer
+// depends on how long its series live -- something this package cannot know
+// and must not guess. What it can do is stop throwing away the two numbers
+// that let a reader decide.
+type HistoryCoverageFacts struct {
+	// Levels is how many Level windows were summarised, Short how many of
+	// those held fewer valid positions than they required.
+	//
+	// Short == 0 with Levels > 0 says every window was complete. That is a
+	// different statement from Levels == 0, which says no window was
+	// summarised at all -- a run that failed before evaluation, or one whose
+	// series were all held back. Reporting the second as though it were the
+	// first is how a stalled run comes to look healthy.
+	Levels uint32 `json:"levels"`
+	Short  uint32 `json:"short"`
+	// WorstValid and WorstRequired are the pair belonging to the single worst
+	// window -- the one with the largest shortfall -- and never a minimum over
+	// one field beside a maximum over the other. Combined independently they
+	// would describe a window no series reported, and a reader deciding
+	// whether a strategy can ever converge would be acting on a number that
+	// does not exist.
+	WorstValid    uint32 `json:"worst_valid"`
+	WorstRequired uint32 `json:"worst_required"`
+}
+
+// Shortfall is how many points the worst window was missing. Zero when
+// nothing was short, which is why callers must read Short to tell "nothing
+// was short" from "nothing was measured".
+func (facts HistoryCoverageFacts) Shortfall() uint32 {
+	if facts.Short == 0 || facts.WorstRequired <= facts.WorstValid {
+		return 0
+	}
+	return facts.WorstRequired - facts.WorstValid
+}
+
+func normalizeHistoryCoverageFacts(facts *HistoryCoverageFacts) *HistoryCoverageFacts {
+	if facts == nil {
+		return nil
+	}
+	copied := *facts
+	// A Short above Levels cannot have come from counting the same windows,
+	// so the pair is not describing one run and nothing derived from it can be
+	// trusted. Clamping would keep a plausible-looking number; dropping the
+	// facts leaves the absence visible.
+	if copied.Levels == 0 || copied.Short > copied.Levels {
+		return nil
+	}
+	if copied.Short == 0 {
+		copied.WorstValid, copied.WorstRequired = 0, 0
+	}
+	if copied.WorstValid >= copied.WorstRequired {
+		// Nothing was actually short in the pair, whatever Short says. Keeping
+		// the counts and clearing the pair is the honest half-answer.
+		copied.WorstValid, copied.WorstRequired = 0, 0
+	}
+	return &copied
+}

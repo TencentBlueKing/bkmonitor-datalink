@@ -109,12 +109,17 @@ type DetectionEvidence struct {
 }
 
 type HistorySummary struct {
-	Completeness   string
-	WindowStart    int64
-	WindowEnd      int64
-	ValidPositions uint32
-	AnomalyCount   uint32
-	AnomalyDigest  [32]byte
+	Completeness string
+	WindowStart  int64
+	WindowEnd    int64
+	// ValidPositions and RequiredPositions travel together because neither
+	// answers anything alone: the shortfall is the whole signal, and a reader
+	// given only the verdict cannot separate a window that is one point away
+	// from converging from one that has never been close.
+	ValidPositions    uint32
+	RequiredPositions uint32
+	AnomalyCount      uint32
+	AnomalyDigest     [32]byte
 }
 
 type HistoryView interface {

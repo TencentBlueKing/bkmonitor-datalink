@@ -421,3 +421,122 @@ func TestAnomalyCarriesWhichConditionCausedTheUnavailableCompletion(t *testing.T
 		t.Fatalf("a new run inherited the previous run's cause: %+v", got)
 	}
 }
+
+// coverageCompletion is a degraded completion carrying window coverage, which
+// is the only combination that reaches the tracker's coverage path: a healthy
+// completion resets the run before the counts are read.
+func coverageCompletion(queryGroup string, levels, short, valid, required uint32) observability.Observation {
+	observation := completion(queryGroup, "COMPLETED_WITH_UNAVAILABLE", "8930")
+	observation.ProgressCompletionCause = "LEVEL_OUTCOME_UNKNOWN"
+	observation.ProgressCompletionReason = "HISTORY_WARMING"
+	observation.HistoryCoverage = &observability.HistoryCoverageFacts{
+		Levels: levels, Short: short, WorstValid: valid, WorstRequired: required,
+	}
+	return observation
+}
+
+// HISTORY_WARMING describes two situations that need opposite responses and
+// reads identically in both. The counts that separate them were computed in
+// state/window.go and discarded there, so every consumer downstream -- metrics,
+// diagnostics, this page -- had one label and no way to act on it.
+func TestAnomalyCarriesHowShortTheDetectionWindowWas(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		tracker.Observe(context.Background(), coverageCompletion("qg-short", 3, 1, 2, 14))
+	}
+	anomalies := tracker.Anomalies()
+	if len(anomalies) != 1 || anomalies[0].Coverage == nil {
+		t.Fatalf("anomalies = %+v, want the window coverage carried through", anomalies)
+	}
+	got := *anomalies[0].Coverage
+	if got.Levels != 3 || got.Short != 1 || got.WorstValid != 2 || got.WorstRequired != 14 {
+		t.Fatalf("coverage = %+v, want the counts as observed", got)
+	}
+}
+
+// The run length is the one part of the coverage a single observation cannot
+// supply, and it is the whole basis of the distinction: one round cannot tell a
+// window that is filling from one that never will, because both are short.
+func TestShortWindowRoundsAccumulateAcrossRoundsAndStopWhenOneFills(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	for round := 0; round < DefaultDegradedRounds+4; round++ {
+		tracker.Observe(context.Background(), coverageCompletion("qg-short", 3, 1, 2, 14))
+	}
+	anomalies := tracker.Anomalies()
+	if len(anomalies) != 1 || anomalies[0].Coverage == nil {
+		t.Fatalf("anomalies = %+v, want one anomaly carrying coverage", anomalies)
+	}
+	if got := anomalies[0].Coverage.ShortRounds; got != uint32(DefaultDegradedRounds+4) {
+		t.Fatalf("short rounds = %d, want one per observed round (%d)", got, DefaultDegradedRounds+4)
+	}
+	// A round whose windows were all complete ends the run. Without this the
+	// count only ever rises, and an object that had one bad patch months ago
+	// is permanently labelled as one that can never converge.
+	tracker.Observe(context.Background(), coverageCompletion("qg-short", 3, 0, 0, 0))
+	anomalies = tracker.Anomalies()
+	if len(anomalies) != 1 || anomalies[0].Coverage == nil {
+		t.Fatalf("anomalies = %+v, want the object still listed", anomalies)
+	}
+	if got := anomalies[0].Coverage.ShortRounds; got != 0 {
+		t.Fatalf("short rounds = %d after a complete window, want the run ended", got)
+	}
+}
+
+// A round that carries no coverage at all is not a round that reported a
+// complete window -- it is a round nobody measured. Counting it as complete
+// would reset the run every time an object went through a path that does not
+// summarise windows, and the count would never reach the threshold.
+//
+// It resets anyway, deliberately: a run has to be consecutive to mean
+// "consecutively short", and a gap in the evidence is not consecutive. The
+// test pins that choice so a later reading of it is a decision, not a drift.
+func TestARoundWithoutCoverageEndsTheShortRun(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	for round := 0; round < DefaultDegradedRounds+4; round++ {
+		tracker.Observe(context.Background(), coverageCompletion("qg-short", 3, 1, 2, 14))
+	}
+	plain := completion("qg-short", "COMPLETED_WITH_UNAVAILABLE", "8930")
+	plain.ProgressCompletionCause = "LEVEL_OUTCOME_UNKNOWN"
+	tracker.Observe(context.Background(), plain)
+	anomalies := tracker.Anomalies()
+	if len(anomalies) != 1 {
+		t.Fatalf("anomalies = %+v, want the object still listed", anomalies)
+	}
+	if anomalies[0].Coverage != nil {
+		t.Fatalf("coverage = %+v, want none carried from an earlier round: a shortfall left over "+
+			"from a round that is no longer on display reads as describing the one that is",
+			*anomalies[0].Coverage)
+	}
+}
+
+// Persistent is the rule the verdict and the page both read. Each branch is
+// pinned, including the two that are false for different reasons: a table of
+// only true cases passes against a rule that returns true always.
+func TestPersistentSeparatesAFillingWindowFromOneThatNeverFills(t *testing.T) {
+	cases := []struct {
+		name     string
+		coverage *HistoryCoverage
+		want     bool
+	}{
+		{"nil", nil, false},
+		{"nothing short", &HistoryCoverage{Levels: 3}, false},
+		{"short for fewer rounds than it needs points",
+			&HistoryCoverage{Levels: 3, Short: 1, WorstValid: 8, WorstRequired: 9, ShortRounds: 2}, false},
+		{"short for exactly as many rounds as it needs points",
+			&HistoryCoverage{Levels: 3, Short: 1, WorstValid: 8, WorstRequired: 9, ShortRounds: 9}, false},
+		{"short for one round longer than it needs points",
+			&HistoryCoverage{Levels: 3, Short: 1, WorstValid: 8, WorstRequired: 9, ShortRounds: 10}, true},
+		{"short by most of a long window for a long time",
+			&HistoryCoverage{Levels: 3, Short: 2, WorstValid: 2, WorstRequired: 14, ShortRounds: 40}, true},
+		{"short with no requirement recorded",
+			&HistoryCoverage{Levels: 3, Short: 1, ShortRounds: 40}, false},
+	}
+	for _, subject := range cases {
+		if got := subject.coverage.Persistent(); got != subject.want {
+			t.Errorf("%s: Persistent() = %v, want %v", subject.name, got, subject.want)
+		}
+	}
+}

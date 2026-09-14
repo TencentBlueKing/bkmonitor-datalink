@@ -943,48 +943,55 @@ type Observation struct {
 	// population -- on a running deployment, 61 of 62 objects sharing a label
 	// that could not say whose problem they were.
 	ProgressCompletionReason string
-	Dispatcher               *DispatcherFacts
-	PermitWait               *PermitWaitFacts
-	ExpiredRange             *ExpiredRangeFacts
-	Component                Component
-	Stage                    Stage
-	Result                   Result
-	Operation                Operation
-	Direction                Direction
-	ReasonCode               ReasonCode
-	Duration                 time.Duration
-	Counts                   Counts
-	Trace                    TraceFields
-	Err                      error
-	CapacityBudget           CapacityBudget
-	CapacityRejection        *CapacityRejectionFacts
-	SourceKind               SourceKind
-	QueryPermit              *QueryPermitFacts
-	RuntimeConfig            *RuntimeConfigFacts
-	QueryFailure             *QueryFailureFacts
-	QueryStatus              []QueryStatusFacts
-	QueryTiming              *QueryTimingFacts
-	SlotReadiness            *SlotReadinessFacts
-	ShortPeriodCompletion    *ShortPeriodCompletionFacts
-	StateApplyChunk          *StateApplyChunkFacts
-	ActiveQGSet              *ActiveQGSetFacts
-	ScheduleCutover          *ScheduleCutoverFacts
-	ObjectCatalog            *ObjectCatalogFacts
-	ObjectRead               *ObjectReadFacts
-	StateGenerationSkew      *StateGenerationSkewFacts
-	ActivationHold           *ActivationHoldFacts
-	LegacyMigration          *LegacyQGMigrationFacts
-	DrainingQG               *DrainingQGFacts
-	Rebalance                *RebalanceFacts
-	AssignmentIndex          *AssignmentIndexFacts
-	CursorAdvance            *CursorAdvanceFacts
-	SourceRefresh            *SourceRefreshFacts
-	ActivationFailure        *ActivationFailureFacts
-	AlgorithmEvaluations     []AlgorithmEvaluationFact
-	AlgorithmInputs          []AlgorithmInputFact
-	RecoveryGates            []RecoveryGateFact
-	normalized               bool
-	stageReasonBucket        bool
+	// HistoryCoverage says how far short of the required window the series in
+	// this run actually were. HISTORY_WARMING alone cannot tell a series two
+	// rounds into its life, which converges by itself, from a series whose
+	// lifetime is shorter than the window, which is short on every round for
+	// ever and by design will never produce a recovery. Both report the same
+	// reason on every round, so without the counts the two are one population.
+	HistoryCoverage       *HistoryCoverageFacts
+	Dispatcher            *DispatcherFacts
+	PermitWait            *PermitWaitFacts
+	ExpiredRange          *ExpiredRangeFacts
+	Component             Component
+	Stage                 Stage
+	Result                Result
+	Operation             Operation
+	Direction             Direction
+	ReasonCode            ReasonCode
+	Duration              time.Duration
+	Counts                Counts
+	Trace                 TraceFields
+	Err                   error
+	CapacityBudget        CapacityBudget
+	CapacityRejection     *CapacityRejectionFacts
+	SourceKind            SourceKind
+	QueryPermit           *QueryPermitFacts
+	RuntimeConfig         *RuntimeConfigFacts
+	QueryFailure          *QueryFailureFacts
+	QueryStatus           []QueryStatusFacts
+	QueryTiming           *QueryTimingFacts
+	SlotReadiness         *SlotReadinessFacts
+	ShortPeriodCompletion *ShortPeriodCompletionFacts
+	StateApplyChunk       *StateApplyChunkFacts
+	ActiveQGSet           *ActiveQGSetFacts
+	ScheduleCutover       *ScheduleCutoverFacts
+	ObjectCatalog         *ObjectCatalogFacts
+	ObjectRead            *ObjectReadFacts
+	StateGenerationSkew   *StateGenerationSkewFacts
+	ActivationHold        *ActivationHoldFacts
+	LegacyMigration       *LegacyQGMigrationFacts
+	DrainingQG            *DrainingQGFacts
+	Rebalance             *RebalanceFacts
+	AssignmentIndex       *AssignmentIndexFacts
+	CursorAdvance         *CursorAdvanceFacts
+	SourceRefresh         *SourceRefreshFacts
+	ActivationFailure     *ActivationFailureFacts
+	AlgorithmEvaluations  []AlgorithmEvaluationFact
+	AlgorithmInputs       []AlgorithmInputFact
+	RecoveryGates         []RecoveryGateFact
+	normalized            bool
+	stageReasonBucket     bool
 }
 
 type Observer interface {
@@ -1047,6 +1054,7 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.CapacityBudget = NormalizeCapacityBudget(observation.CapacityBudget)
 	observation.CapacityRejection = normalizeCapacityRejection(observation)
 	observation.QueryCooldown = normalizeQueryCooldownFacts(observation.QueryCooldown)
+	observation.HistoryCoverage = normalizeHistoryCoverageFacts(observation.HistoryCoverage)
 	observation.QueryPermit = normalizeQueryPermitFacts(observation.QueryPermit)
 	observation.QueryTiming = normalizeTimingFacts(observation)
 	observation.ShortPeriodCompletion = normalizeShortPeriodCompletion(observation)

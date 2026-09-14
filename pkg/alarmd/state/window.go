@@ -84,8 +84,18 @@ type WindowSummary struct {
 	WindowStart    int64
 	WindowEnd      int64
 	ValidPositions uint32
-	AnomalyCount   uint32
-	AnomalyDigest  [32]byte
+	// RequiredPositions is the count ValidPositions was judged against. It is
+	// returned because the verdict alone cannot be read: WARMING says the
+	// window is short without saying by how much, and 8 of 9 points is a
+	// series that will converge on the next round while 2 of 9 is a series
+	// whose lifetime is shorter than the window and never will.
+	//
+	// Both readings produce the same WARMING on every round, so a reader
+	// holding only the verdict cannot tell a startup from a steady state, and
+	// the second one is not a startup at all.
+	RequiredPositions uint32
+	AnomalyCount      uint32
+	AnomalyDigest     [32]byte
 }
 
 type HistoryView struct {
@@ -329,7 +339,7 @@ func (view HistoryView) SummarizeContext(ctx context.Context, endTime int64, req
 		requiredPositions = view.requirement.RequiredPoints
 	}
 	interval := int64(view.requirement.EvaluationInterval / time.Second)
-	summary = WindowSummary{Completeness: HistoryWarming, WindowEnd: endTime}
+	summary = WindowSummary{Completeness: HistoryWarming, WindowEnd: endTime, RequiredPositions: requiredPositions}
 	if requiredPositions == 0 || requiredPositions > view.requirement.RetentionPoints || interval <= 0 || endTime < 0 ||
 		uint64(requiredPositions-1) > uint64(math.MaxInt64/interval) {
 		return summary

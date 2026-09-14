@@ -1312,6 +1312,74 @@ type PlanEvaluationResult struct {
 	StateResults      []StateEvaluation
 	GuardAfterState   []PlanGapMutation
 	RecoveryGate      RecoveryGateCounts
+	// HistoryCoverage is observation only. It lives here and nowhere else: a
+	// second copy on the enclosing result would be one more pair of numbers
+	// that have to agree about the same evaluation, and the first time they
+	// disagreed the page would describe a window that was never summarised.
+	// Validate does not check it -- nothing decides anything from it, and a
+	// sound decision must not be rejected over a wrong count beside it.
+	HistoryCoverage HistoryCoverage
+}
+
+// HistoryCoverage is how far the detection window fell short of the points the
+// algorithm asked for.
+//
+// It exists because HISTORY_WARMING is two unrelated situations wearing one
+// label. A series two rounds into its life is short by a point or two and
+// converges on its own. A series whose lifetime is shorter than the window --
+// a network device that lives as long as one pod, a container name that never
+// repeats -- is short by most of the window on every round, for ever. The
+// verdict is character-for-character identical; only the shortfall separates
+// them, and the shortfall never left the window code.
+//
+// Observation only, and deliberately not on any persisted structure. It is
+// recomputed from the live window every round, so a stored copy would be a
+// derived value that a later reader could assert equal to a freshly computed
+// one -- an assertion the next change to the window arithmetic breaks for
+// every series at once, on the first rollout that carries it.
+type HistoryCoverage struct {
+	// Levels is how many Level summaries were counted; Short how many of those
+	// had fewer valid positions than they required. Short == 0 with Levels > 0
+	// is a window that was complete, which is a different thing from a window
+	// nobody looked at.
+	Levels uint32
+	Short  uint32
+	// WorstValid and WorstRequired are one Level's pair -- the Level with the
+	// largest shortfall -- and not a minimum over one field beside a maximum
+	// over the other. Taken independently they describe a Level that may not
+	// exist, and the number a reader would act on would be one no series ever
+	// reported.
+	WorstValid    uint32
+	WorstRequired uint32
+}
+
+// Observe folds one Level summary in. Zero required points means the window
+// declined to judge, which is not the same as a window that was judged and
+// found complete, so it is not counted at all.
+func (coverage *HistoryCoverage) Observe(validPositions, requiredPositions uint32) {
+	if coverage == nil || requiredPositions == 0 {
+		return
+	}
+	coverage.Levels++
+	if validPositions >= requiredPositions {
+		return
+	}
+	coverage.Short++
+	if requiredPositions-validPositions > coverage.WorstRequired-coverage.WorstValid {
+		coverage.WorstValid, coverage.WorstRequired = validPositions, requiredPositions
+	}
+}
+
+// Merge folds another coverage in, keeping the worse of the two pairs whole.
+func (coverage *HistoryCoverage) Merge(other HistoryCoverage) {
+	if coverage == nil || other.Levels == 0 {
+		return
+	}
+	coverage.Levels += other.Levels
+	coverage.Short += other.Short
+	if other.Short > 0 && other.WorstRequired-other.WorstValid > coverage.WorstRequired-coverage.WorstValid {
+		coverage.WorstValid, coverage.WorstRequired = other.WorstValid, other.WorstRequired
+	}
 }
 
 type EvaluationResult struct {
@@ -2341,6 +2409,17 @@ func deriveCompletion(input InternalExecution, result EvaluationResult) (Complet
 type CompletionAttribution struct {
 	Cause  CompletionCause
 	Reason ReasonCode
+	// Coverage is the evidence the reason was derived from, and it travels
+	// here for exactly the reason the reason travels beside the cause: a label
+	// that leaves without the numbers behind it arrives somewhere that cannot
+	// check it. HISTORY_WARMING has been doing that since it was written --
+	// identical on a window one point from converging and on a window that
+	// will never converge, with the count that separates them discarded two
+	// layers upstream.
+	//
+	// Zero when the Slot did not summarise any window, which is not the same
+	// as a Slot whose windows were all complete.
+	Coverage HistoryCoverage
 }
 
 // DeriveCompletionDetail adds the reason that belongs to the reported cause.

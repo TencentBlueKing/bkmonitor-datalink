@@ -167,6 +167,16 @@ type queryGroupState struct {
 	// causeReason is the cause's own reason, which is where the answer to
 	// "whose problem is this" actually lives.
 	causeReason string
+	// coverage is the evidence behind causeReason when that reason is about
+	// the detection window. It is kept beside the reason and cleared with it,
+	// because a shortfall left over from an earlier round would be read as
+	// describing the reason currently on display.
+	coverage *HistoryCoverage
+	// shortRounds counts consecutive rounds whose windows were short. It is
+	// the one part of the coverage a single observation cannot carry, and the
+	// only part that separates a window that is filling from one that never
+	// will.
+	shortRounds uint32
 	lastFailure *FailureRef
 }
 
@@ -337,6 +347,23 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		state.reasonCode = completion
 		state.cause = observation.ProgressCompletionCause
 		state.causeReason = observation.ProgressCompletionReason
+		// Counted before the coverage is replaced, because the run length is
+		// the only thing here that one round cannot supply. A round that
+		// reports a complete window ends the run: a window that filled once
+		// was filling, whatever it does next.
+		if facts := observation.HistoryCoverage; facts == nil || facts.Short == 0 {
+			state.shortRounds = 0
+		} else {
+			state.shortRounds++
+		}
+		state.coverage = nil
+		if facts := observation.HistoryCoverage; facts != nil {
+			state.coverage = &HistoryCoverage{
+				Levels: facts.Levels, Short: facts.Short,
+				WorstValid: facts.WorstValid, WorstRequired: facts.WorstRequired,
+				ShortRounds: state.shortRounds,
+			}
+		}
 	case blockedOutcome(runOutcome):
 		state.determined = true
 		state.failingSince = time.Time{}
@@ -392,6 +419,8 @@ func (tracker *Tracker) resetRun(state *queryGroupState) {
 	state.cooldownExposed = false
 	state.cause = ""
 	state.causeReason = ""
+	state.coverage = nil
+	state.shortRounds = 0
 	state.degradedRuns = 0
 	state.blockedRuns = 0
 	state.inAnomalyRun = false
@@ -471,6 +500,7 @@ func (tracker *Tracker) listed(demoted bool) []Anomaly {
 			QueryCooldown: state.queryCooldown,
 			Kind:          state.currentKind,
 			ReasonCode:    state.reasonCode, Cause: state.cause, CauseReason: state.causeReason,
+			Coverage:     state.coverage,
 			Since:        state.runStartedAt,
 			SinceFrom:    state.sinceFrom,
 			FailingSince: state.failingSince,

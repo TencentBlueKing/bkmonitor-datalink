@@ -115,7 +115,8 @@ type recordResult struct {
 	state    *execution.StateEvaluation
 	// gate is what became of a RECOVERY record's envelope; zero for every
 	// other record.
-	gate trigger.RecoveryGateV2
+	gate     trigger.RecoveryGateV2
+	coverage execution.HistoryCoverage
 }
 
 // countRecoveryGate adds one record's gate to the Plan's counts. A held
@@ -179,6 +180,12 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 	// outcome under it must preserve its reason.
 	durableGuardReasons := make(map[uint32]execution.ReasonCode, len(levels))
 	effective := make([]trigger.LevelEffectiveTimeFact, len(levels))
+	// Observation only. Summarize is the one place that knows both how much of
+	// the window arrived and how much was asked for, and until now it kept both
+	// and published neither -- which is why a permanently short window and a
+	// window two rounds from converging were indistinguishable everywhere
+	// downstream.
+	var coverage execution.HistoryCoverage
 	for i, l := range levels {
 		h, _ := window.History(l.Definition().LevelID)
 		completeness := ""
@@ -204,6 +211,7 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 		histories[i] = trigger.LevelHistory{LevelID: l.Definition().LevelID, View: historyView{HistoryView: h, completeness: completeness}}
 		summary := histories[i].View.Summarize(record.SourceTime(), l.RequiredDetectHistoryPoints())
 		historyCompleteness[l.Definition().LevelID] = execution.HistoryCompleteness(summary.Completeness)
+		coverage.Observe(summary.ValidPositions, summary.RequiredPositions)
 		fact, found := effectiveFact(request.Header, due.Identity, l.Definition().LevelID, series)
 		if !found {
 			return recordResult{}, errors.New("alarmd evaluation: EffectiveTime fact missing")
@@ -304,7 +312,7 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 	if tr.TriggerEvent != nil {
 		events = []contract.TriggerEventV1{*tr.TriggerEvent}
 	}
-	result := recordResult{outcomes: outcomes, gate: tr.RecoveryGate}
+	result := recordResult{outcomes: outcomes, gate: tr.RecoveryGate, coverage: coverage}
 	if advance || len(missingInputGuards) > 0 {
 		mutation, err := buildMutation(request, due, record, view, facts, tr.LevelOutcomes, historyCompleteness, durableGuardReasons, missingInputGuards)
 		if err != nil {
@@ -406,6 +414,7 @@ func (e *Evaluator) evaluateSeries(
 		}
 		result.LevelOutcomes = append(result.LevelOutcomes, one.outcomes...)
 		countRecoveryGate(&result.RecoveryGate, one.gate)
+		result.HistoryCoverage.Merge(one.coverage)
 		if one.state != nil {
 			view = applyProvisional(view, one.state.Mutation)
 			final = one.state
@@ -586,7 +595,9 @@ func (h historyView) Summarize(t int64, n uint32) trigger.HistorySummary {
 	if c == "" {
 		c = string(s.Completeness)
 	}
-	return trigger.HistorySummary{Completeness: c, WindowStart: s.WindowStart, WindowEnd: s.WindowEnd, ValidPositions: s.ValidPositions, AnomalyCount: s.AnomalyCount, AnomalyDigest: s.AnomalyDigest}
+	return trigger.HistorySummary{Completeness: c, WindowStart: s.WindowStart, WindowEnd: s.WindowEnd,
+		ValidPositions: s.ValidPositions, RequiredPositions: s.RequiredPositions,
+		AnomalyCount: s.AnomalyCount, AnomalyDigest: s.AnomalyDigest}
 }
 func levelState(v execution.RuntimeStateView, id uint32) (execution.RuntimeLevelStateView, bool) {
 	for _, l := range v.Levels {

@@ -70,3 +70,60 @@ func TestReEvaluatingAStoredRecordDoesNotBreakItsOwnHistory(t *testing.T) {
 		t.Fatal("no state mutation was produced, the shape was not exercised")
 	}
 }
+
+// Summarize is the one place that holds both how much of the window arrived and
+// how much was asked for. It had held both and published neither since it was
+// written, which is why HISTORY_WARMING reached every consumer -- metrics,
+// diagnostics, the deployment page -- as a bare label that a reader could not
+// act on: a window one point from converging and a window that can never
+// converge produce the identical word on every round.
+//
+// Driven through Evaluate rather than by calling Summarize directly, because
+// the defect was never in Summarize. It was in the wiring between it and
+// everything downstream, and a check that calls the source function tests the
+// half that was already fine.
+func TestEvaluationReportsHowShortTheDetectionWindowWas(t *testing.T) {
+	// Window size 2 against a single record: one valid position of the two the
+	// level requires, which is the shape of a series younger than its window.
+	plan := compiledWindow(t, 2, 1)
+	record := []contract.CanonicalRecordV2{{RecordID: strings.Repeat("f", 64), SourceTime: 300, BusinessID: "2",
+		DimensionIdentity: contract.DimensionIdentityV2{Digest: strings.Repeat("c", 64)},
+		Values:            map[string]json.RawMessage{"value": json.RawMessage(`10`)},
+		Dimensions:        map[string]json.RawMessage{}, ReceivedTime: 300}}
+
+	request := requestFixtureForPlan(t, plan, record, nil)
+	result, err := newEvaluator(t).Evaluate(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+	if len(result.Plans) != 1 {
+		t.Fatalf("plans = %d, want 1", len(result.Plans))
+	}
+	short := result.Plans[0].HistoryCoverage
+	if short.Levels == 0 {
+		t.Fatal("no window was counted: a Slot that summarised nothing and a Slot whose windows " +
+			"were all complete both report zero short, and they are opposite statements")
+	}
+	if short.Short != 1 {
+		t.Fatalf("short = %d, want the one incomplete window counted", short.Short)
+	}
+	if short.WorstValid != 1 || short.WorstRequired != 2 {
+		t.Fatalf("worst pair = %d/%d, want 1/2 -- the shortfall is the whole signal and it has to "+
+			"travel as one window's pair", short.WorstValid, short.WorstRequired)
+	}
+
+	// And the complete case, which must not read as "nothing measured". A
+	// single-point window that the record itself fills.
+	full := requestFixtureForPlan(t, compiledWindow(t, 1, 1), record, nil)
+	filled, err := newEvaluator(t).Evaluate(context.Background(), full)
+	if err != nil {
+		t.Fatalf("Evaluate() on a complete window error = %v", err)
+	}
+	complete := filled.Plans[0].HistoryCoverage
+	if complete.Levels == 0 {
+		t.Fatal("a complete window was not counted at all")
+	}
+	if complete.Short != 0 {
+		t.Fatalf("short = %d on a window the record fills, want 0", complete.Short)
+	}
+}

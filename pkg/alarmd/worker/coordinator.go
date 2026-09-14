@@ -950,6 +950,9 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	// fold into a Progress gap summary; changing that is a separate decision
 	// about a durable structure.
 	var attribution execution.CompletionAttribution
+	for _, plan := range evaluated.Plans {
+		attribution.Coverage.Merge(plan.HistoryCoverage)
+	}
 	if len(changedPlans) > 0 {
 		var cause execution.CompletionCause
 		completion, cause = configDriftCompletion(request.Contract, &primary)
@@ -971,6 +974,11 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 		// traversal was about to say is now about a completion that did not
 		// happen. deriveCompletion reports no cause for TERMINAL for the same
 		// reason; the override has to follow it or the two disagree here.
+		//
+		// The coverage goes with it. The windows really were summarised and
+		// the counts are not wrong, but they would arrive as the evidence for
+		// a reason no longer being reported, and evidence with no claim beside
+		// it gets read as whatever the reader came expecting.
 		attribution = execution.CompletionAttribution{}
 	}
 	if len(changedPlans) > 0 {
@@ -1080,7 +1088,7 @@ func (coordinator *SlotExecutionCoordinator) commitProgress(
 		}
 	})
 	coordinator.observeCommittedProgress(ctx, request.Operation, started, observationResult, observationReason,
-		string(completion.Kind), string(completionCause.Cause), string(completionCause.Reason))
+		string(completion.Kind), string(completionCause.Cause), string(completionCause.Reason), completionCause.Coverage)
 	return execution.SlotExecutionResult{Completed: true, CompletionKind: completion.Kind, Result: completion.Result, ReasonCode: completion.ReasonCode}, nil
 }
 
@@ -1604,16 +1612,24 @@ func indexStatePreflight(result execution.StatePreflightResult) map[execution.St
 }
 
 // Called only after this invocation received and validated ProgressCommitted.
-func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx context.Context, operation execution.Operation, started time.Time, result observability.Result, reason observability.ReasonCode, kind, cause, causeReason string) {
+func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx context.Context, operation execution.Operation, started time.Time, result observability.Result, reason observability.ReasonCode, kind, cause, causeReason string, coverage execution.HistoryCoverage) {
 	if reason == "" {
 		reason = observability.ReasonNone
 	}
 	defer func() { _ = recover() }()
+	var coverageFacts *observability.HistoryCoverageFacts
+	if coverage.Levels > 0 {
+		coverageFacts = &observability.HistoryCoverageFacts{
+			Levels: coverage.Levels, Short: coverage.Short,
+			WorstValid: coverage.WorstValid, WorstRequired: coverage.WorstRequired,
+		}
+	}
 	coordinator.ports.Observer.Observe(ctx, observability.Observation{
 		Component: observability.ComponentProgress, Stage: observability.StageProgressCommitted,
 		Operation: observability.Operation(operation), Direction: observability.DirectionInternal,
 		Result: result, ReasonCode: reason, Duration: time.Since(started), ProgressCompletionKind: kind,
 		ProgressCompletionCause: cause, ProgressCompletionReason: causeReason,
+		HistoryCoverage: coverageFacts,
 	})
 }
 

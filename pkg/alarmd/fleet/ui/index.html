@@ -82,6 +82,10 @@ input{font:inherit;padding:4px 8px;border:1px solid var(--line);border-radius:4p
 .stuck{display:inline-block;margin-left:6px;padding:0 5px;border-radius:3px;font-size:10px;
   background:rgba(192,57,43,.14);color:var(--bad);border:1px solid rgba(192,57,43,.35)}
 tr.stuckrow td{background:rgba(192,57,43,.05)}
+/* Deliberately not an alarm colour. This marks a row whose answer is settled
+   and whose answer is "working as designed" -- painting it like a fault is
+   what sent readers back to investigate it again. */
+.settled{color:var(--muted);font-size:11px;margin-top:2px}
 .sgroup.stuckg b{color:var(--bad)}
 .trend{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
 .tcard{border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:var(--panel)}
@@ -629,6 +633,18 @@ function anomalyRow(anomaly) {
     // made 61 of 62 objects one indistinguishable population.
     var reason = cell(anomaly.cause_reason || missingCauseText(anomaly) || '—');
     if (anomaly.cause_reason) { reason.title = anomaly.cause_reason; }
+    // HISTORY_WARMING is two different situations under one label, and the
+    // reason cell alone cannot say which: a window that is filling reads
+    // exactly like a window that will never fill. The counts behind it used to
+    // stop in state/window.go and never reach any output at all.
+    var coverageSaid = coverageNote(anomaly);
+    if (coverageSaid) {
+      var note = document.createElement('div');
+      note.className = coverageSaid.settled ? 'settled' : '';
+      note.textContent = coverageSaid.text;
+      note.title = coverageSaid.title;
+      reason.appendChild(note);
+    }
     // The symptom was only in the summary line, so a reader could see that 53
     // of 55 hit one thing and still not tell which one this row is. It is the
     // only cell on the row that says what to do about it.
@@ -1049,12 +1065,28 @@ function attributionLine(summary, perReplica) {
     tail += '。（刚重启不久，还没跑几轮——"没有兜底进来的"此刻说明不了分类表是全的，'
       + '新失败类型要等轮次跑起来才会出现）';
   }
+  // Called out of External because it is the only part of this list with a
+  // settled answer. Everything else here is a question somebody still has to
+  // work; these are objects whose series do not live long enough to fill the
+  // detection window, will read the same tomorrow, and have nothing left to
+  // investigate. Left in the general pile, every reader re-investigates the
+  // same rows and arrives where the last one did.
+  var settled = summary.window_never_fills || 0;
+  var settledTail = '';
+  if (settled) {
+    settledTail = '。这 ' + external + ' 个里有 ' + settled
+      + ' 个已经查清了：序列活得比检测窗口短，窗口永远填不满'
+      + (settled === external ? '——也就是这一批全是这种，没有还需要查的' : '')
+      + '。这类异常报得出来但不会自己恢复，是设计如此，'
+      + '要它变化只能改策略的聚合维度或缩短窗口';
+  }
   if (!ours) {
     return '这些里没有一个是 alarmd 自己的问题（容量或架构）——' + external
-      + ' 个都是数据源没答或策略配置的事，要找策略和数据源的人' + tail;
+      + ' 个都是数据源没答或策略配置的事，要找策略和数据源的人' + settledTail + tail;
   }
   return 'alarmd 自己该负责的有 ' + ours + ' 个（容量或架构，判定就看这个数）；'
-    + '另外 ' + external + ' 个是数据源没答或策略配置的事，不由扩容或改架构解决' + tail;
+    + '另外 ' + external + ' 个是数据源没答或策略配置的事，不由扩容或改架构解决'
+    + settledTail + tail;
 }
 
 // What changed since the last refresh, by identity rather than by count.
@@ -2120,6 +2152,57 @@ function missingCauseText(anomaly) {
   if (anomaly.cause || anomaly.cause_reason) return '';
   if (!RESTORED_SOURCES[anomaly.since_from]) return '';
   return '成因没保留——这一条是重启后从记录里恢复的，等它跑完下一轮才会有';
+}
+
+// The rule that separates a window still filling from one that never will, in
+// the same terms as the Go side: a window needing N points is full after N
+// rounds of data, so still short after more than N rounds means the data is
+// not coming. No threshold to pick and nothing to retune when a strategy
+// changes its window.
+//
+// It is duplicated here rather than read off a server-computed flag for one
+// reason only: the page has to be able to show the numbers and the conclusion
+// together, and a reader who disagrees with the conclusion has to be able to
+// check it against the same numbers. A boolean with the counts hidden is the
+// shape this whole page exists to stop producing.
+function windowNeverFills(windowCoverage) {
+  return !!windowCoverage && windowCoverage.short > 0 && windowCoverage.worst_required > 0 &&
+         windowCoverage.short_rounds > windowCoverage.worst_required;
+}
+
+function coverageNote(anomaly) {
+  var windowCoverage = anomaly.coverage;
+  if (!windowCoverage || !windowCoverage.levels) return null;
+  if (!windowCoverage.short) {
+    // Worth saying. "Every window was complete" and "no window was looked at"
+    // both show nothing here otherwise, and they are opposite statements.
+    return {settled: false, text: '检测窗口完整',
+            title: '本轮 ' + windowCoverage.levels
+              + ' 个窗口都取满了所需点数，这一条的成因不在数据覆盖上'};
+  }
+  var got = windowCoverage.worst_valid + '/' + windowCoverage.worst_required;
+  if (!windowNeverFills(windowCoverage)) {
+    return {
+      settled: false,
+      text: '窗口在填：最差 ' + got + ' 点，已连续 ' + windowCoverage.short_rounds + ' 轮',
+      title: '需要 ' + windowCoverage.worst_required + ' 个点才能判定，目前最差的那个窗口只有 '
+        + windowCoverage.worst_valid + ' 个。还没短过 ' + windowCoverage.worst_required
+        + ' 轮以上，正常补齐的速度也就是这样，先不用管'
+    };
+  }
+  return {
+    settled: true,
+    text: '窗口永远填不满：最差 ' + got + ' 点，已连续 ' + windowCoverage.short_rounds + ' 轮',
+    title: '需要 ' + windowCoverage.worst_required + ' 个连续点才能判定，但最差的窗口只取到 '
+      + windowCoverage.worst_valid + ' 个，而且已经这样连续 ' + windowCoverage.short_rounds
+      + ' 轮——超过了填满它所需的 ' + windowCoverage.worst_required
+      + ' 轮，说明点不是"还没来"，是不会来。\n\n'
+      + '常见原因是策略的聚合维度里有会不断变化的东西（网卡、pod 名、容器名、任务名）：'
+      + '每个序列只活几分钟，短于窗口跨度，物理上凑不出连续点。\n\n'
+      + '这不是 alarmd 的容量或架构问题，扩容改不了。异常仍然报得出来（异常判定在完整性闸门之前），'
+      + '但恢复判定在闸门之后，所以这类告警不会自己恢复——按设计如此，需要由告警侧的机制来关闭。\n\n'
+      + '要它变化只能改策略：把会变化的维度从聚合里去掉，或缩短检测窗口。'
+  };
 }
 
 function loadWindows() {

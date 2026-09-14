@@ -696,7 +696,8 @@ func (view triggerHistoryView) Summarize(endTime int64, requiredPositions uint32
 	summary := view.view.Summarize(endTime, requiredPositions)
 	return trigger.HistorySummary{
 		Completeness: string(summary.Completeness), WindowStart: summary.WindowStart, WindowEnd: summary.WindowEnd,
-		ValidPositions: summary.ValidPositions, AnomalyCount: summary.AnomalyCount, AnomalyDigest: summary.AnomalyDigest,
+		ValidPositions: summary.ValidPositions, RequiredPositions: summary.RequiredPositions,
+		AnomalyCount: summary.AnomalyCount, AnomalyDigest: summary.AnomalyDigest,
 	}
 }
 

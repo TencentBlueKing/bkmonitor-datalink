@@ -116,3 +116,42 @@ func BenchmarkStatePreflightIndex(b *testing.B) {
 		})
 	}
 }
+
+// A Slot's window coverage belongs to the whole Slot. Replacing it with each
+// series merged rather than accumulating would make a query group of five
+// hundred series report the counts of whichever one happened to be evaluated
+// last -- and it would keep looking sensible, because one series' counts are a
+// perfectly plausible set of numbers.
+func TestSlotWindowCoverageAccumulatesAcrossSeriesRatherThanBeingReplaced(t *testing.T) {
+	co := &SlotExecutionCoordinator{budget: sideEffectTestBudget("state")}
+	stream := &streamedExecution{coordinator: co}
+	defer stream.releaseProvisional()
+
+	first := sideEffectTestResult("gap", "qg")
+	first.Plans[0].HistoryCoverage = execution.HistoryCoverage{
+		Levels: 2, Short: 1, WorstValid: 8, WorstRequired: 9}
+	if err := stream.mergeProvisional(context.Background(), first, 0); err != nil {
+		t.Fatal(err)
+	}
+	// A worse window arriving second. It has to win the pair and it has to
+	// carry both halves of it: a smallest-valid taken independently of a
+	// largest-required describes a window no series reported.
+	next := sideEffectTestResult("gap", "qg")
+	next.Plans[0].HistoryCoverage = execution.HistoryCoverage{
+		Levels: 3, Short: 2, WorstValid: 2, WorstRequired: 14}
+	if err := stream.mergeProvisional(context.Background(), next, 0); err != nil {
+		t.Fatal(err)
+	}
+	// And a complete one arriving third, which must not clear what came before.
+	last := sideEffectTestResult("gap", "qg")
+	last.Plans[0].HistoryCoverage = execution.HistoryCoverage{Levels: 4}
+	if err := stream.mergeProvisional(context.Background(), last, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	got := stream.evaluated.Plans[0].HistoryCoverage
+	want := execution.HistoryCoverage{Levels: 9, Short: 3, WorstValid: 2, WorstRequired: 14}
+	if got != want {
+		t.Fatalf("slot coverage = %+v, want %+v", got, want)
+	}
+}

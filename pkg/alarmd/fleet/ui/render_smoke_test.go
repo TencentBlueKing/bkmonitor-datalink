@@ -82,6 +82,19 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			item.QueryCooldown = &observability.QueryCooldownFacts{
 				Until: at.Add(time.Hour), LastQueryAt: at.Add(-time.Minute), Failures: 5}
 		}),
+		anomaly("qg-window-filling", func(item *fleet.Anomaly) {
+			item.Cause, item.CauseReason = "LEVEL_OUTCOME_UNKNOWN", "HISTORY_WARMING"
+			item.Coverage = &fleet.HistoryCoverage{Levels: 3, Short: 1,
+				WorstValid: 8, WorstRequired: 9, ShortRounds: 2}
+		}),
+		anomaly("qg-window-never", func(item *fleet.Anomaly) {
+			item.Cause, item.CauseReason = "LEVEL_OUTCOME_UNKNOWN", "HISTORY_WARMING"
+			item.Coverage = &fleet.HistoryCoverage{Levels: 3, Short: 2,
+				WorstValid: 2, WorstRequired: 14, ShortRounds: 40}
+		}),
+		anomaly("qg-window-complete", func(item *fleet.Anomaly) {
+			item.Coverage = &fleet.HistoryCoverage{Levels: 3}
+		}),
 	}
 	fleet.Attribute(rows)
 	// The barest row the API can send: every omitempty field absent. It goes in
@@ -108,8 +121,10 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			Strategies: 7, Ours: 3, External: 4, Unattributed: 1, OursUnclassified: 1,
 			Onset: fleet.Onset{LastHour: 2, LastDay: 3, Older: 3,
 				NewestSince: at.Add(-time.Minute), OldestSince: at.Add(-40 * time.Hour)},
+			WindowNeverFills: 1,
 		},
-		"per_replica": replicas,
+		"window_never_fills_cases": windowNeverFillsCases(),
+		"per_replica":              replicas,
 		"coverage": fleet.Disagreement{Comparable: true, HeldNotExpected: []string{"qg-blocked"},
 			HeldNotExpectedTotal: 12},
 		"page": map[string]int{"offset": 0, "limit": 50, "total": len(rows)},
@@ -142,12 +157,45 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	if !strings.Contains(text, "negative control threw") {
 		t.Errorf("the harness did not prove it can fail; its clean result is worthless:\n%s", text)
 	}
+	if !strings.Contains(text, "windowNeverFills agreed on") {
+		t.Errorf("the page's windowNeverFills was never run against the Go rule; the two copies "+
+			"are unchecked:\n%s", text)
+	}
+}
+
+// windowNeverFillsCases is the table both copies of the rule are run over: the
+// Go verdict travels with each case so the harness compares against it rather
+// than against a second Go expression, which would agree with the first
+// whatever the page did.
+//
+// Every branch of Persistent appears, including the two that are false for
+// different reasons -- nothing short, and short with no requirement recorded.
+// A table of only true cases passes against a rule that returns true always.
+func windowNeverFillsCases() []map[string]any {
+	subjects := []fleet.HistoryCoverage{
+		{Levels: 3},
+		{Levels: 3, Short: 1, WorstValid: 8, WorstRequired: 9, ShortRounds: 2},
+		{Levels: 3, Short: 1, WorstValid: 8, WorstRequired: 9, ShortRounds: 9},
+		{Levels: 3, Short: 1, WorstValid: 8, WorstRequired: 9, ShortRounds: 10},
+		{Levels: 3, Short: 2, WorstValid: 2, WorstRequired: 14, ShortRounds: 40},
+		{Levels: 3, Short: 1, ShortRounds: 40},
+	}
+	cases := make([]map[string]any, 0, len(subjects))
+	for _, subject := range subjects {
+		cases = append(cases, map[string]any{
+			"coverage": subject, "persistent": subject.Persistent(),
+		})
+	}
+	return cases
 }
 
 // smokeHarness stubs just enough DOM for the render functions and calls them.
 // It is deliberately small: a fuller emulator would be a second implementation
 // to maintain, and the failure being caught here needs nothing more than a real
 // call stack.
+// It also runs the one rule the page deliberately duplicates -- "can this
+// window ever fill" -- against the verdicts the Go side computed, so the two
+// copies are checked by execution rather than by a substring.
 const smokeHarness = `
 const fs = require('fs'), vm = require('vm'), path = require('path');
 const dir = process.argv[2];
@@ -206,6 +254,30 @@ const calls = [
 let failed = 0;
 for (const [name, fn] of calls) {
   try { fn(); } catch (e) { failed++; console.error(name + ': ' + e.constructor.name + ': ' + e.message); }
+}
+
+// The page's own copy of the rule, run against the verdicts Go computed. A
+// field renamed on one side makes the page read undefined, the comparison
+// false, and every permanently short window render as "still filling" -- with
+// no error anywhere. Only running both can see it.
+const cases = data.window_never_fills_cases || [];
+if (cases.length === 0) {
+  console.error('no windowNeverFills cases were sent; the comparison would pass vacuously');
+  failed++;
+} else {
+  let disagreed = 0;
+  for (const c of cases) {
+    let page;
+    try { page = ctx.windowNeverFills(c.coverage); }
+    catch (e) { console.error('windowNeverFills threw: ' + e.message); failed++; break; }
+    if (!!page !== !!c.persistent) {
+      disagreed++;
+      console.error('windowNeverFills disagrees with Persistent on ' + JSON.stringify(c.coverage) +
+        ': page ' + !!page + ', Go ' + !!c.persistent);
+    }
+  }
+  if (disagreed) { failed++; }
+  else { console.log('windowNeverFills agreed on ' + cases.length + ' cases'); }
 }
 process.exit(failed ? 1 : 0);
 `

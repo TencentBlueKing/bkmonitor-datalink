@@ -123,12 +123,21 @@ func (c KafkaConfig) outputCoordinates(output KafkaOutputConfig) enginekafka.Dec
 	}
 }
 
+// DefaultStatePrefix is alarmd's own key space for its runtime state (catalog,
+// ownership, state, fleet, progress). The g2 and v1 segments are the program's
+// schema generation, which rises with the code when the persisted shape
+// changes; a deployment has no reason to state it, and one that does must
+// state this value.
+const DefaultStatePrefix = "alarmd:phase2:g2:runtime:v1"
+
 type RedisConfig struct {
 	RedisConnectionConfig `yaml:",inline"`
-	StatePrefix           string   `yaml:"state_prefix"`
-	MinTTL                Duration `yaml:"min_ttl"`
-	MaxTTL                Duration `yaml:"max_ttl"`
-	RestartMargin         Duration `yaml:"restart_margin"`
+	// StatePrefix defaults to DefaultStatePrefix; it is a program fact, not
+	// an environment choice.
+	StatePrefix   string   `yaml:"state_prefix"`
+	MinTTL        Duration `yaml:"min_ttl"`
+	MaxTTL        Duration `yaml:"max_ttl"`
+	RestartMargin Duration `yaml:"restart_margin"`
 }
 
 // PlatformCacheConfig names the platform's own caches that alarmd reads. They
@@ -219,7 +228,8 @@ func Default() Config {
 			RedisConnectionConfig: RedisConnectionConfig{Mode: RedisModeStandalone,
 				DialTimeout: Duration(3 * time.Second), ReadTimeout: Duration(3 * time.Second),
 				WriteTimeout: Duration(3 * time.Second), PoolSize: 0},
-			MinTTL: Duration(time.Minute), MaxTTL: Duration(30 * 24 * time.Hour), RestartMargin: Duration(10 * time.Minute),
+			StatePrefix: DefaultStatePrefix,
+			MinTTL:      Duration(time.Minute), MaxTTL: Duration(30 * 24 * time.Hour), RestartMargin: Duration(10 * time.Minute),
 		},
 		Limits: defaultLimits(),
 		DependencyRetry: DependencyRetryConfig{

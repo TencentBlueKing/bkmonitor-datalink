@@ -8,16 +8,18 @@ import (
 )
 
 func TestExpiredRangeProfileTracksResolvedFlagOnly(t *testing.T) {
+	// Range finalization is on by default; the switch is the rollback path,
+	// so the profile is read with it off as the change.
 	cfg := config.Default()
-	disabled, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
+	enabled, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if disabled.Capacity.ExpiredRangeEnabled {
-		t.Fatal("default range enabled")
+	if !enabled.Capacity.ExpiredRangeEnabled {
+		t.Fatal("default range disabled")
 	}
-	cfg.PhaseTwo.Scheduler.ExpiredRangeEnabled = true
-	enabled, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
+	cfg.PhaseTwo.Scheduler.ExpiredRangeEnabled = false
+	disabled, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,6 +39,6 @@ func TestExpiredRangeProfileTracksResolvedFlagOnly(t *testing.T) {
 	}
 	enabled.Capacity.ExpiredRangeEnabled = false
 	if enabled.Capacity != disabled.Capacity {
-		t.Fatal("enabling changed unrelated resource capacity")
+		t.Fatal("the switch changed unrelated resource capacity")
 	}
 }

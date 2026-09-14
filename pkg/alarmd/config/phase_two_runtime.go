@@ -28,9 +28,18 @@ type PhaseTwoWorkerConfig struct {
 	RegistrationRenewInterval Duration
 }
 
+// DefaultTimezone is the platform's evaluation timezone, the constant Python
+// runs under (TIME_ZONE); DefaultQuerySource is the product name unify-query
+// sees on every request. Both are program facts a deployment need not state.
+const (
+	DefaultTimezone    = "Asia/Shanghai"
+	DefaultQuerySource = "alarmd"
+)
+
 type PhaseTwoControlConfig struct {
-	StrategyCachePrefix        string `yaml:"strategy_cache_prefix"`
-	ProviderRoute              string `yaml:"provider_route"`
+	StrategyCachePrefix string `yaml:"strategy_cache_prefix"`
+	ProviderRoute       string `yaml:"provider_route"`
+	// Timezone defaults to DefaultTimezone.
 	Timezone                   string `yaml:"timezone"`
 	RefreshInterval            Duration
 	ReconcileInterval          Duration
@@ -157,7 +166,8 @@ func (config PhaseTwoSchedulerConfig) RecoveryLimits() scheduler.RecoveryLimits 
 }
 
 type PhaseTwoAccessConfig struct {
-	UQEndpoint  string `yaml:"uq_endpoint"`
+	UQEndpoint string `yaml:"uq_endpoint"`
+	// QuerySource defaults to DefaultQuerySource.
 	QuerySource string `yaml:"query_source"`
 	// SelfMetricsSpaceUID is where this deployment's own metrics can be read
 	// back from. alarmd cannot derive it: which space its scraped metrics land
@@ -385,7 +395,11 @@ func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
 			RegistrationTTL: Duration(60 * time.Second), RegistrationRenewInterval: Duration(10 * time.Second),
 		},
 		Control: PhaseTwoControlConfig{
-			ProviderRoute:   "unify-query-primary",
+			ProviderRoute: "unify-query-primary",
+			// The platform evaluates in one timezone; Python's TIME_ZONE is
+			// this constant, and the per-business timezone it can layer on
+			// top is a design item alarmd does not carry yet.
+			Timezone:        DefaultTimezone,
 			RefreshInterval: Duration(30 * time.Second), ReconcileInterval: Duration(5 * time.Second),
 			CatalogTTL: Duration(24 * time.Hour), LegacyMigrationMaxScanKeys: 50000,
 			LegacyMigrationTimeout: Duration(30 * time.Second),
@@ -399,12 +413,19 @@ func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
 		// only place that knows the chunked Store apply budget they are held
 		// against.
 		Scheduler: PhaseTwoSchedulerConfig{
+			// Expired-range finalization is the product's behaviour; the key
+			// stays as the rollback switch decision-002 keeps for a version
+			// that cannot read the range proof.
+			ExpiredRangeEnabled: true,
 			TickInterval:        Duration(time.Second),
 			MaxQueuedItemsPerQG: 16, MaxReplaySlots: 3, MaxReplayAge: Duration(10 * time.Minute),
 			RetryMinDelay: Duration(time.Second), RetryMaxDelay: Duration(30 * time.Second),
 			QueryUnavailableCooldown: true,
 		},
 		Access: PhaseTwoAccessConfig{
+			// The query source is the product's name on every unify-query
+			// request; it is not something a deployment picks.
+			QuerySource:   DefaultQuerySource,
 			MinReadyDelay: Duration(30 * time.Second), DownstreamExecutionReserve: Duration(5 * time.Second),
 		},
 		PlatformSettings: PhaseTwoPlatformSettingsConfig{RedisKeyPrefix: platformsettings.DefaultKeyPrefix},

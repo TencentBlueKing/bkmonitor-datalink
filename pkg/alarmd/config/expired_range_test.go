@@ -12,7 +12,7 @@ func TestExpiredRangeStrictLoadDefaultAndExplicit(t *testing.T) {
 		name, value string
 		want        bool
 	}{
-		{"omitted", "", false}, {"disabled", "false", false}, {"enabled", "true", true},
+		{"omitted", "", true}, {"disabled", "false", false}, {"enabled", "true", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			text := validGoAccessRuntimeConfigYAML("range-worker")
@@ -28,8 +28,10 @@ func TestExpiredRangeStrictLoadDefaultAndExplicit(t *testing.T) {
 			}
 		})
 	}
-	if Default().PhaseTwo.Scheduler.ExpiredRangeEnabled {
-		t.Fatal("product default enables range creation")
+	// Range finalization is the product's behaviour; the key is kept as the
+	// rollback switch (decision-002), which "disabled" above exercises.
+	if !Default().PhaseTwo.Scheduler.ExpiredRangeEnabled {
+		t.Fatal("product default disables range creation")
 	}
 }
 

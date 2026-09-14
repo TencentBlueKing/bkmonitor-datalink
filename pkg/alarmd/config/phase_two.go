@@ -100,11 +100,18 @@ func (c Config) PhaseOneCompatibilityRuntimeConfig() (Config, error) {
 	if err := compatibility.Validate(); err != nil {
 		return Config{}, err
 	}
+	// The state prefix has a default now, so "unstated" is the default
+	// value rather than the empty string; the compatibility coordinates
+	// replace it as they always did.
+	statePrefix := c.Redis.StatePrefix
+	if statePrefix == DefaultStatePrefix {
+		statePrefix = ""
+	}
 	for name, values := range map[string][2]string{
 		"kafka.input_topic":    {c.Kafka.InputTopic, compatibility.InputTopic},
 		"kafka.group_id":       {c.Kafka.GroupID, compatibility.ConsumerGroup},
 		"kafka.initial_offset": {c.Kafka.InitialOffset, compatibility.InitialOffset},
-		"redis.state_prefix":   {c.Redis.StatePrefix, compatibility.StatePrefix},
+		"redis.state_prefix":   {statePrefix, compatibility.StatePrefix},
 	} {
 		if values[0] != "" && values[0] != values[1] {
 			return Config{}, fmt.Errorf("%s conflicts with explicit phase-one compatibility coordinates", name)

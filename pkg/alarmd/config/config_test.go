@@ -119,8 +119,13 @@ func TestDefaultRequiresExplicitEnvironmentCoordinates(t *testing.T) {
 	if cfg.Kafka.TriggerEvent.MaxMessageBytes <= 0 || cfg.Kafka.MessageReceipt.MaxMessageBytes <= 0 {
 		t.Fatal("default output byte budgets must be positive")
 	}
-	if cfg.Redis.Address != "" || cfg.Redis.StatePrefix != "" || len(cfg.Kafka.Brokers) != 0 {
+	if cfg.Redis.Address != "" || len(cfg.Kafka.Brokers) != 0 {
 		t.Fatal("environment Kafka and Redis coordinates must not have defaults")
+	}
+	// The state prefix is not an environment coordinate: it is the program's
+	// own key space and schema generation, so it has the program's default.
+	if cfg.Redis.StatePrefix != DefaultStatePrefix {
+		t.Fatalf("default state prefix = %q, want the program's %q", cfg.Redis.StatePrefix, DefaultStatePrefix)
 	}
 	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "broker") {
 		t.Fatalf("default configuration error = %v, want missing Kafka broker", err)

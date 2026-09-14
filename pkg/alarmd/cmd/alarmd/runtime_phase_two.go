@@ -1202,12 +1202,39 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 		// owned set never displaces anyone, so the ordering question does not
 		// arise and the O(n) scan that answers it never runs.
 		//
-		// The ready queue keeps its derived bound. It is sized at 32 per permit
-		// so that it is never the binding side of its pair with ActiveExecutions,
-		// and production agrees: it peaks at 164 against 1024 while the recovery
-		// queue sits on its bound. Raising a bound nothing is reaching would be a
-		// change with no reading behind it, and it would retire the walk-stop
-		// behaviour that only a full ready queue reaches.
+		// The ready queue has the same defect and does not have the same fix
+		// applied. This is a known open item, written here rather than in a list
+		// because this is the line that would change.
+		//
+		// It was first left alone on the argument that it is sized never to be
+		// the binding side of its pair with ActiveExecutions, and that
+		// production agreed: scheduler_ready_runners peaked at 164 against 1024.
+		// That argument was made from a gauge and the gauge cannot see this one.
+		// The queue fills and the walk stops inside a single sampling interval,
+		// so every sample reads zero - including every sample taken at an
+		// interval chosen specifically not to divide the evaluation cadence.
+		//
+		// The counter sees it, and the two replicas make the control for each
+		// other. On the one owning 1,146 Query Groups the ready queue's turn-away
+		// advances once per evaluation cadence, in steps of 57 to 82, and does
+		// not decay: 155, 212, 266, 325, 407 over seven minutes. On the one
+		// owning 929 it is zero for the whole window. The split is the capacity,
+		// 1024, exactly.
+		//
+		// A full ready queue is also the harsher of the two, because the walk
+		// stops rather than moving on: every Query Group behind that one goes
+		// unoffered for the rest of the pass, including ones the recovery queue
+		// had room for. What bounds the harm is that one dispatch frees one place
+		// and the walk resumes inside the same generation.
+		//
+		// The fix is the same floor. What it costs is not in this file: raising
+		// the bound to the owned set makes a full ready queue unreachable outside
+		// the same shrinking-owned-set transient, and five existing tests reach
+		// it by configuring a capacity below the owned set. They are testing walk
+		// mechanics, not capacity, so they would all have to construct that
+		// transient instead. That is a real cost and a coordination one - three
+		// of those tests are the ones that just rebuilt around the recovery
+		// queue's version of this - so it is sequenced rather than taken here.
 		//
 		// This does not scale by itself. sortDelayed re-sorts the whole recovery
 		// queue on every pass of the dispatcher loop; at this size it does not

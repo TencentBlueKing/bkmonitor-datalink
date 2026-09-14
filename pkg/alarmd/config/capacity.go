@@ -220,6 +220,33 @@ type DerivedScheduler struct {
 // nothing. Sizing here is downstream of how many Redis round trips one
 // execution takes.
 //
+// A later run on a different generation put call sites on that. Sixty goroutine
+// profiles at a fixed cadence, split by how full the bound was at the moment
+// each was taken, give this at saturation, per profile, of 128 slots:
+//
+//	25.0  waiting on this execution's own queries to return
+//	23.5  inside one of those queries
+//	21.5  reading the activation header
+//	14.0  probing the activation's length
+//	13.5  waiting for a query permit
+//	11.5  loading state          10.0  checking an ownership fence
+//	 8.0  reading a control key   5.5  writing state
+//
+// Redis is 77.5 of the 128. The two activation reads are 35.5 of that, and they
+// were the same fact fetched twice; they are one round trip now. What remains
+// is not reducible by merging: the header is read live once per operation by an
+// invariant, and the rest are single round trips already.
+//
+// The resource readings taken in the same window: CPU 1.28 of 8 cores, no
+// meaningful cgroup throttling, zero connection pool timeouts, heap under a
+// third of the container. So this bound is derived from CPU while what holds
+// its slots is network wait, and the two have no relation. That is the shape of
+// the sizing problem, not an argument for a particular number: raising the
+// bound raises how many goroutines may be blocked on Redis at once, which is
+// safe for CPU and not obviously safe for the heap each parked execution holds.
+// Deriving it from the right quantity needs the per-call-site occupancy above
+// as a metric rather than as a profile somebody took by hand.
+//
 // What the bound has not yet cost, measured in the same window: mean permit
 // wait 72 ms, p99 under a second, not one wait above five seconds; zero
 // admission and zero budget query failures; and a completion rate inside the

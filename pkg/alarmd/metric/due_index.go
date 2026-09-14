@@ -127,7 +127,16 @@ func newDueIndexMetrics() dueIndexMetrics {
 				"Counted once per rotation pass, not once per delayed round: the rotation reaches every " +
 				"owned Query Group in well under a second, so a single execution in flight for ten " +
 				"seconds raises this ten times. Divide by the rotation rate before reading it as a rate " +
-				"of lost work; read as-is it is the fraction of passes that found the object busy.",
+				"of lost work; read as-is it is the fraction of passes that found the object busy. " +
+				"Neither label means a queue was full. A Query Group turned away because a queue had no " +
+				"room is a rotation deferral and is counted there, not here. by=active is the object's " +
+				"own previous round still executing. by=queued is the object sitting in a queue, and on a " +
+				"settled deployment that is mostly the recovery queue holding objects parked on their own " +
+				"next ready instant - after a readiness deferral that instant is when the data becomes " +
+				"readable, so those objects are waiting on purpose. Measured over a settled window, " +
+				"by=queued ran at 459 per second against a recovery queue holding about 540 objects and a " +
+				"rotation completing about 0.85 times a second: the rate is the parked population times " +
+				"the rotation rate and says nothing about capacity. Read by=active for contention.",
 		}, []string{"by"}),
 		horizon: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "due_index_horizon_seconds",

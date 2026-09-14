@@ -183,3 +183,39 @@ func TestFTASourceFiltersPreserveUserShould(t *testing.T) {
 	_, err = f.WithFieldSemantics("").Query(nil)
 	require.ErrorContains(t, err, "source_conditions requires")
 }
+
+func TestFTAEventDateUsesSecondsForQueryAndMillisecondsForBuckets(t *testing.T) {
+	metadata.InitMetadata()
+	// EventDocument accepts epoch_second dates; Elasticsearch date histogram
+	// keys are nevertheless milliseconds. TimeField.Unit describes bucket
+	// normalization, while WithQuery's unit controls the request range format.
+	start, end := time.Unix(1700000040, 0), time.Unix(1700000100, 0)
+	f := newSeriesFormatFactory(context.Background(), &metadata.Query{
+		FieldSemantics: metadata.FTAEventTagsV1, Field: "_index",
+		TimeField: metadata.TimeField{Name: "time", Type: "date", Unit: "millisecond"},
+	}, nil, start, end, "second", 1440)
+	rangeQuery, err := f.RangeQuery()
+	require.NoError(t, err)
+	source, err := rangeQuery.Source()
+	require.NoError(t, err)
+	encoded, err := json.Marshal(source)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"range":{"time":{"from":1700000040,"to":1700000100,"include_lower":true,"include_upper":true,"format":"epoch_second"}}}`, string(encoded))
+	name, aggregation, err := f.EsAgg(metadata.Aggregates{{Name: Count, Window: time.Minute}})
+	require.NoError(t, err)
+	require.Equal(t, "time", name)
+	source, err = aggregation.Source()
+	require.NoError(t, err)
+	encoded, err = json.Marshal(source)
+	require.NoError(t, err)
+	// "1m" is the formatter's canonical spelling of the requested 60 seconds.
+	require.JSONEq(t, `{"date_histogram":{"field":"time","interval":"1m","min_doc_count":0,"extended_bounds":{"min":1700000040000,"max":1700000100000}},"aggregations":{"_value":{"value_count":{"field":"_index"}}}}`, string(encoded))
+	var response elastic.SearchResult
+	require.NoError(t, json.Unmarshal([]byte(`{"aggregations":{"time":{"buckets":[{"key":1700000040000,"doc_count":2,"_value":{"value":2}}]}}}`), &response))
+	result, err := f.AggDataFormat(response.Aggregations, nil)
+	require.NoError(t, err)
+	require.Len(t, result.Timeseries, 1)
+	require.Len(t, result.Timeseries[0].Samples, 1)
+	require.Equal(t, int64(1700000040000), result.Timeseries[0].Samples[0].Timestamp)
+	require.Equal(t, float64(2), result.Timeseries[0].Samples[0].Value)
+}

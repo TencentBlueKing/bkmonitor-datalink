@@ -102,11 +102,21 @@ func TestPollingFTASourceConditionsRemainSeparate(t *testing.T) {
 	}
 }
 
-func TestPollingBKDataDirectBoundary(t *testing.T) {
+func TestPollingBKDataLocalTimeBoundary(t *testing.T) {
 	planner, _ := NewLegacyPrimaryQueryCompiler("uq", "UTC", LegacyQueryRuntimeFacts{})
 	source := pollingTestSource(`{"data_source_label":"bk_data","data_type_label":"time_series","result_table_id":"2_metric","metric_field":"value","alias":"a","agg_method":"AVG","agg_interval":60}`)
-	if _, err := planner.CompilePrimaryQuery(context.Background(), source); err == nil {
-		t.Fatal("direct BKSQL accepted")
+	for _, functions := range []string{`[]`, `[{"id":"abs","params":[]}]`} {
+		var query map[string]json.RawMessage
+		if err := json.Unmarshal(source.QueryConfigs[0], &query); err != nil {
+			t.Fatal(err)
+		}
+		query["functions"] = json.RawMessage(functions)
+		source.QueryConfigs[0], _ = json.Marshal(query)
+		_, err := planner.CompilePrimaryQuery(context.Background(), source)
+		var failure *QueryPlanCompileError
+		if !errors.As(err, &failure) || failure.Disposition != DispositionUnsupported || failure.Reason != "QUERY_BK_DATA_LOCAL_TIME_NOT_MIGRATED" {
+			t.Fatalf("functions=%s localTime boundary=%v", functions, err)
+		}
 	}
 	source.Expression = "a + 1"
 	facts, err := planner.CompilePrimaryQuery(context.Background(), source)

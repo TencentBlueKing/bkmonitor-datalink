@@ -2318,6 +2318,23 @@ function coverageNote(anomaly) {
   // for a series that does not live long enough -- on a HISTORY_GAPPED row,
   // which is data that arrived and then had holes. Different situation,
   // different fix, and the reader is sent nowhere.
+  if (anomaly.cause_reason === 'GAP_SKIPPED') {
+    // Not a coverage note at all -- the window was never evaluated. Said here
+    // because this is the cell a reader looks at, and "GAP_SKIPPED" alone
+    // reads like one more kind of missing data rather than like minutes that
+    // were deliberately given up on.
+    return {
+      settled: false,
+      text: '这段时间没被检测：轮次落后太多，已放弃',
+      title: '这一轮没能在期限内跑完，落后超过了允许重放的范围（超过 3 个周期，或超过 10 分钟），'
+        + '于是游标直接跳到当前，那段时间的数据从来没有被检测过。\n\n'
+        + '两个限制产出的是同一个码，所以这里说不出是哪一个触发的。能确定的是：'
+        + '"不再尝试"这个决定是在 alarmd 这边做的。\n\n'
+        + '后端持续查不到导致的落后不在这一栏——那种对象会先进降级池，那一栏在这一栏之前判。'
+        + '留在这里的，是连续多轮都在落后、而后端又没差到被降级的对象。\n\n'
+        + '要查的是为什么跟不上：是不是这批对象的查询特别慢、是不是换主后追不上、是不是资源不够。'
+    };
+  }
   if (anomaly.cause_reason === 'HISTORY_GAPPED') {
     // How long it has been gapped is decisive, and nothing else here is.
     //

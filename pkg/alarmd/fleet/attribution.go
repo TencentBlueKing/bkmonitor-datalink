@@ -78,7 +78,6 @@ var externalReasons = map[string]bool{
 	// this deployment changes that.
 	"HISTORY_GAPPED":  true,
 	"HISTORY_WARMING": true,
-	"GAP_SKIPPED":     true,
 	"QUERY_NOT_READY": true,
 
 	// The backend was asked correctly and did not answer, or answered that the
@@ -135,6 +134,30 @@ var ourReasons = map[string]bool{
 	"READINESS_BUDGET_INVALID":   true,
 	"RECORD_TOO_LARGE":           true,
 	"RESOURCE_HARD_STOP":         true,
+
+	// This deployment abandoned a window of time rather than evaluate it.
+	//
+	// The Slot fell further behind than the replay limits allow -- more slots
+	// than MaxReplaySlots, or older than MaxReplayAge -- so the cursor jumps
+	// forward and those minutes are never detected on. Both limits produce
+	// this one code, so it cannot say which; what it always says is that the
+	// decision to stop trying was made here.
+	//
+	// It sat under "the data does not reach the window the algorithm needs,
+	// nothing about this deployment changes that", which is wrong twice over.
+	// Capacity is exactly what changes it -- falling behind is what capacity
+	// means -- and the sentence sent "we skipped fifty minutes of detection"
+	// to whoever owns the strategy, who can do nothing about it. Filed
+	// externally it reached nobody.
+	//
+	// An external cause can certainly provoke it: a backend that stops
+	// answering leaves rounds unfinished until the cursor expires. That does
+	// not make the outcome external, by this table's own rule -- and the case
+	// where a backend is the problem has a column of its own, checked before
+	// this one. What is left here is an object that kept falling behind for
+	// DefaultDegradedRounds consecutive rounds without its backend being bad
+	// enough to demote it.
+	"GAP_SKIPPED": true,
 
 	// Our own stores and infrastructure.
 	"REDIS_UNAVAILABLE":        true,

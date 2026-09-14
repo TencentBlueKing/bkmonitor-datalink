@@ -104,6 +104,11 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			item.Coverage = &fleet.HistoryCoverage{Levels: 1, Short: 1,
 				WorstValid: 5, WorstRequired: 9, ShortRounds: 29}
 		}),
+		anomaly("qg-skipped", func(item *fleet.Anomaly) {
+			item.Cause, item.CauseReason = "LEVEL_OUTCOME_UNKNOWN", "GAP_SKIPPED"
+			item.Coverage = &fleet.HistoryCoverage{Levels: 1, Short: 1,
+				WorstValid: 4, WorstRequired: 9, ShortRounds: 6}
+		}),
 		anomaly("qg-gapped-fresh", func(item *fleet.Anomaly) {
 			item.Cause, item.CauseReason = "LEVEL_OUTCOME_UNKNOWN", "HISTORY_GAPPED"
 			item.Coverage = &fleet.HistoryCoverage{Levels: 1, Short: 1,
@@ -225,6 +230,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		{"qg-window-starved", "取不到数据", "窗口永远填不满"},
 		{"qg-window-filling", "窗口在填", "窗口永远填不满"},
 		{"qg-window-complete", "检测窗口完整", "短"},
+		{"qg-skipped", "没被检测", "窗口永远填不满"},
 	} {
 		line := ""
 		for _, candidate := range strings.Split(text, "\n") {

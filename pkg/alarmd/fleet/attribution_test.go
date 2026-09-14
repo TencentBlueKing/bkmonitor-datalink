@@ -610,3 +610,55 @@ func TestTheSettledNeverFillingWindowsAreCountedWithoutLeavingExternal(t *testin
 			"the counts and must not be described by this wording", summary.WindowNeverFills)
 	}
 }
+
+// Abandoning a window of time is this deployment's own decision, whatever
+// provoked it.
+//
+// The Slot fell further behind than the replay limits allow, so the cursor
+// jumped forward and those minutes were never detected on. It was filed as
+// external, under "the data does not reach the window the algorithm needs,
+// nothing about this deployment changes that" -- wrong twice. Capacity is
+// exactly what changes it, and the wording sent "we skipped detection" to
+// whoever owns the strategy, who can do nothing about it.
+//
+// The backend-caused case is not this one: an object whose backend keeps
+// failing is demoted, and that column is decided before this one.
+func TestAbandoningAWindowOfTimeCountsAgainstThisDeployment(t *testing.T) {
+	skipped := []Anomaly{{QueryGroup: "qg-skipped", Kind: KindDegradedRun, CauseReason: "GAP_SKIPPED"}}
+	Attribute(skipped)
+	if skipped[0].Attribution != AttributionOurs {
+		t.Fatalf("attribution = %q, want %q: nobody outside alarmd can act on a window alarmd "+
+			"decided not to evaluate", skipped[0].Attribution, AttributionOurs)
+	}
+	// By a rule, not by the fall-through. The fall-through is the safe default
+	// for codes nobody has classified, and it is counted separately precisely
+	// so it can be read as "the table has fallen behind" -- which this is not.
+	if skipped[0].Unclassified {
+		t.Error("GAP_SKIPPED reaches ours by the fall-through; it has a rule and should match it, " +
+			"or it inflates the number that says the table needs updating")
+	}
+	summary := summarize(skipped, now)
+	if summary.Ours != 1 || summary.External != 0 || summary.OursUnclassified != 0 {
+		t.Errorf("summary ours=%d external=%d unclassified=%d, want 1/0/0",
+			summary.Ours, summary.External, summary.OursUnclassified)
+	}
+}
+
+// The columns that are not faults must not claim it. Each of those says
+// "nobody acts on this", and a window nobody evaluated is the opposite.
+func TestASkippedWindowIsNotFiledAsRequiringNoAction(t *testing.T) {
+	for _, reason := range []string{"GAP_SKIPPED"} {
+		if transitionalReasons[reason] {
+			t.Errorf("%q is filed as a change already being made; minutes nobody detected on are "+
+				"not finished business", reason)
+		}
+		if undecidableReason(reason) {
+			t.Errorf("%q is filed as a window with nothing to decide; the window was never "+
+				"evaluated at all, which is a different statement", reason)
+		}
+		if externalReasons[reason] {
+			t.Errorf("%q is still external; it would go to whoever owns the strategy, who cannot "+
+				"make this deployment keep up", reason)
+		}
+	}
+}

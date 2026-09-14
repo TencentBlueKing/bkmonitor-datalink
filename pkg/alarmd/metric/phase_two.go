@@ -169,7 +169,13 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 				"means the classifier never ran rather than that nothing was reusable. stored says what was " +
 				"held when the comparison was made, because a series that keeps recovering and one that " +
 				"never leaves history warming are both steady and both pay a write every round, but reach " +
-				"it through different branches; averaged together the rate describes neither.",
+				"it through different branches; averaged together the rate describes neither. The population is " +
+				"State mutations admitted for writing, one per mutation per round, and not Redis commands: " +
+				"a storage-layer retry reissues a command without a new admission, and a request with " +
+				"repeated keys leaves the pipeline for the sequential path. So a saving estimated by " +
+				"multiplying a rate from here by a Redis command total mixes two populations. The " +
+				"conversion is not assumed to be one: it is this family's sum over a window against the " +
+				"pipelined evalsha count over the same window, and it has to be measured before it is used.",
 		}, []string{"class", "stored"}),
 		sourceObservations: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "source_observation_total",

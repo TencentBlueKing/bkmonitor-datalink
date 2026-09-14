@@ -926,7 +926,7 @@ func (source *ProductionSlotSource) advancePrunedCursor(
 	}
 	resumed := execution.ScheduleProgress{
 		Identity: request.Identity, NextSlot: earliest, LastCompletionKind: execution.CompletionGapSkipped,
-		CurrentOrRecentGap: execution.PrunedSkipGap(progress.NextSlot),
+		CurrentOrRecentGap: execution.PrunedSkipGap(progress.NextSlot, earliest),
 	}
 	return resumed, true, nil
 }

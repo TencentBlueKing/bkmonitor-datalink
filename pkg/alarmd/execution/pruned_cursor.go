@@ -42,8 +42,8 @@ type ProgressSkipResult struct {
 // timeline still holds. The skipped span is recorded as a gap of kind
 // GAP_SKIPPED with reason SCHEDULE_PRUNED, bounded by the old cursor; its
 // Slot count is unknown because the segments that would have counted them
-// are gone, so the gap carries a count of one skip and the span in time is
-// ResumeAt minus ExpectedNextSlot.
+// are gone, so the gap is recorded as uncounted and carries where the cursor
+// resumed instead of a number.
 type ProgressSkipPrunedRequest struct {
 	Identity         ProgressIdentity
 	OwnerFence       OwnerFence
@@ -65,11 +65,35 @@ func (request ProgressSkipPrunedRequest) Validate() error {
 	return nil
 }
 
-// PrunedSkipGap is the gap summary a pruned skip from cursor records.
-func PrunedSkipGap(cursor EvaluationTime) *ProgressGapSummary {
+// PrunedSkipGap is the gap summary a pruned skip from cursor to resumeAt
+// records.
+//
+// Two things this has to say and one it must not. The span is real and known:
+// every Slot from the old cursor up to the one the timeline still holds went
+// unevaluated and will not be revisited. How many Slots that is, is not known
+// and cannot become known -- the segments that would have counted them are the
+// segments that were pruned.
+//
+// So Count is zero with Uncounted set, rather than one. Count means Slots in
+// every other gap, and a 1 here was read as one Slot by everything that adds
+// these up or compares them: an unknown number of object-windows that were
+// never detected, reported as the smallest non-zero amount of them.
+//
+// resumeAt is carried as its own field rather than as LastSlot. It is not a
+// Slot that was skipped -- it is the first one the timeline still holds and the
+// Progress will evaluate it -- so putting it in LastSlot would both break the
+// bound every other gap keeps (the last skipped Slot precedes the next one) and
+// name a skipped Slot that was not skipped. Recorded separately, the extent is
+// stated without the population being invented: the first skipped Slot is
+// known, where the cursor landed is known, and how many lie between them is
+// exactly what the pruned segments took with them.
+func PrunedSkipGap(cursor, resumeAt EvaluationTime) *ProgressGapSummary {
+	if resumeAt < cursor {
+		resumeAt = cursor
+	}
 	return &ProgressGapSummary{
 		Kind: CompletionGapSkipped, ReasonCode: ReasonCode(contract.ReasonSchedulePruned),
-		FirstSlot: cursor, LastSlot: cursor, Count: 1,
+		FirstSlot: cursor, LastSlot: cursor, ResumedAt: resumeAt, Uncounted: true,
 	}
 }
 

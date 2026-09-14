@@ -2982,11 +2982,40 @@ func (result ProgressLoadResult) Validate(identity ProgressIdentity) error {
 }
 
 type ProgressGapSummary struct {
-	Kind        CompletionKind
-	ReasonCode  ReasonCode
-	FirstSlot   EvaluationTime
-	LastSlot    EvaluationTime
-	Count       uint32
+	Kind       CompletionKind
+	ReasonCode ReasonCode
+	FirstSlot  EvaluationTime
+	LastSlot   EvaluationTime
+	// Count is how many Slots the gap spans, folded one per Slot as consecutive
+	// completions of the same kind arrive.
+	//
+	// It is zero, and Uncounted true, for the one gap whose Slots cannot be
+	// counted: a cursor moved past a pruned part of the Schedule timeline skips
+	// the Slots that were in the pruned segments, and those segments are the
+	// only thing that could have said how many. The span in time is still known
+	// -- FirstSlot to LastSlot -- so the gap is not shapeless, only uncounted.
+	//
+	// It used to carry 1 there, meaning "one skip event". Count means Slots
+	// everywhere else, so any reader adding these up, or comparing one gap
+	// against another, read an unknown number of never-evaluated Slots as one.
+	// A quantity that stands for "unknown" inside a field whose other values are
+	// counts is read as a count by everything that does not know better, and
+	// nothing in the type said which this was.
+	Count uint32
+	// Uncounted says Count could not be established, as opposed to being zero.
+	// Absent it, a reader has no way to tell a gap of no Slots from a gap whose
+	// Slots nobody can name -- and the second is the more serious of the two.
+	Uncounted bool
+	// ResumedAt is where the cursor jumped to, for an uncounted gap only. It is
+	// not a Slot that was skipped and so cannot be LastSlot: it is the first one
+	// the timeline still holds, and the Progress will evaluate it.
+	//
+	// It is here because without it the only two Slot times on the summary are
+	// both the old cursor, and a span whose ends are equal reads as a single
+	// instant -- indistinguishable from a gap of one Slot, which is exactly the
+	// reading Count used to give as well. With it, the extent is stated even
+	// though the population inside it cannot be.
+	ResumedAt   EvaluationTime
 	NextProbeAt *int64
 }
 
@@ -3033,7 +3062,15 @@ func (progress ScheduleProgress) Validate() error {
 	} else if err := requireReasonClass(gap.ReasonCode, contract.ReasonClassCoverage); err != nil {
 		return err
 	}
-	if gap.FirstSlot <= 0 || gap.LastSlot < gap.FirstSlot || gap.LastSlot >= progress.NextSlot || gap.Count == 0 ||
+	// Counted and uncounted are the two shapes, and a summary has to be exactly
+	// one of them. A count of zero without Uncounted is a gap that spans no
+	// Slots, which the span above has just said is not the case; a count beside
+	// Uncounted is a number claiming to be what the segments that could have
+	// produced it no longer exist to say.
+	if (gap.Count == 0) != gap.Uncounted {
+		return errors.New("alarmd execution: Progress gap summary must either count its Slots or say it cannot")
+	}
+	if gap.FirstSlot <= 0 || gap.LastSlot < gap.FirstSlot || gap.LastSlot >= progress.NextSlot ||
 		(gap.NextProbeAt != nil && *gap.NextProbeAt <= 0) {
 		return errors.New("alarmd execution: invalid bounded Progress gap summary")
 	}

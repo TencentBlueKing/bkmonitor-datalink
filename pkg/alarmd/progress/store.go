@@ -607,7 +607,7 @@ func (store *Store) SkipPrunedRange(ctx context.Context, request execution.Progr
 	}
 	next := execution.ScheduleProgress{
 		Identity: request.Identity, NextSlot: request.ResumeAt, LastCompletionKind: execution.CompletionGapSkipped,
-		CurrentOrRecentGap: execution.PrunedSkipGap(request.ExpectedNextSlot),
+		CurrentOrRecentGap: execution.PrunedSkipGap(request.ExpectedNextSlot, request.ResumeAt),
 	}
 	encoded, err := encode(next)
 	if err != nil {

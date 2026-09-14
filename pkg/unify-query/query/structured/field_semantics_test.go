@@ -55,3 +55,15 @@ func TestQuerySourceConditions(t *testing.T) {
 	_, err = q.ToQueryMetric(ctx, "bkcc__2", nil)
 	require.ErrorContains(t, err, "source_conditions requires")
 }
+
+func TestQuerySourceConditionsInvalidOffsetDoesNotPanic(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	metadata.GetQueryParams(ctx).SetTime(time.Unix(1000, 0), time.Unix(1000, 0), time.Unix(2000, 0), time.Minute, "s", "UTC")
+	for _, semantics := range []string{"", metadata.FTAEventTagsV1} {
+		q := Query{FieldSemantics: semantics, TableID: "fta.event", FieldName: "time", ReferenceName: "a", Offset: "invalid"}
+		metric, err := q.ToQueryMetric(ctx, "bkcc__2", TsDBs{{TableID: "fta.event", StorageID: "1", StorageType: metadata.ElasticsearchStorageType, DB: "bkfta_event_*_read", Measurement: "__default__"}})
+		require.NoError(t, err)
+		require.Empty(t, metric.QueryList)
+	}
+}

@@ -61,3 +61,33 @@ func TestQueryCooldownMetadataDoesNotDetermineHealth(t *testing.T) {
 		}
 	}
 }
+
+// How long the most overdue pooled object has waited, not how many are waiting.
+//
+// Objects fall due continuously, so a steady count of them is what a working
+// retry path looks like from the outside -- and so is a path that stopped days
+// ago. The two differ only in how long any one object has been sitting there,
+// and the page's pool panel had no way to tell a reader which it was looking at.
+func TestThePoolReportsHowOverdueItsWorstObjectIs(t *testing.T) {
+	snapshots := healthySnapshots()
+	recent := anomaly("qg-just-due")
+	recent.QueryCooldown = &observability.QueryCooldownFacts{
+		Event: "entered", Until: now.Add(-30 * time.Second), LastQueryAt: now.Add(-5 * time.Minute)}
+	stuck := anomaly("qg-long-due")
+	stuck.QueryCooldown = &observability.QueryCooldownFacts{
+		Event: "entered", Until: now.Add(-6 * time.Hour), LastQueryAt: now.Add(-7 * time.Hour)}
+	waiting := anomaly("qg-not-due")
+	waiting.QueryCooldown = &observability.QueryCooldownFacts{
+		Event: "entered", Until: now.Add(time.Hour), LastQueryAt: now.Add(-time.Minute)}
+	snapshots[1].Demoted = []Anomaly{recent, stuck, waiting}
+	snapshots[1].TotalDemoted = 3
+
+	view := Aggregate(Expectation{QueryGroups: 949, Known: true}, snapshots, replicas(), now, freshness)
+	if view.DemotedDue != 2 {
+		t.Fatalf("demoted_due = %d, want 2", view.DemotedDue)
+	}
+	if got := time.Duration(view.DemotedDueOldestSeconds) * time.Second; got != 6*time.Hour {
+		t.Errorf("oldest overdue = %s, want 6h: the count alone cannot tell a retry path that is"+
+			" working from one that stopped", got)
+	}
+}

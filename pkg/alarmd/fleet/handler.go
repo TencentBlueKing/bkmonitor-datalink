@@ -146,11 +146,15 @@ type HealthResponse struct {
 	// DemotedDue and the three flow counts are the check on demotion, which is
 	// the one mechanism here that makes a deployment look better by removing
 	// objects from the denominator.
-	DemotedDue         int       `json:"demoted_due"`
-	DemotionEntries    int       `json:"demotion_entries"`
-	DemotionExtensions int       `json:"demotion_extensions"`
-	DemotionExits      int       `json:"demotion_exits"`
-	LastDemotionExit   time.Time `json:"last_demotion_exit,omitempty"`
+	DemotedDue int `json:"demoted_due"`
+	// DemotedDueOldestSeconds is how long the most overdue object has waited
+	// past its own retry deadline. The count alone reads the same whether the
+	// retry path is working or stopped; this is what separates them.
+	DemotedDueOldestSeconds int       `json:"demoted_due_oldest_seconds,omitempty"`
+	DemotionEntries         int       `json:"demotion_entries"`
+	DemotionExtensions      int       `json:"demotion_extensions"`
+	DemotionExits           int       `json:"demotion_exits"`
+	LastDemotionExit        time.Time `json:"last_demotion_exit,omitempty"`
 	// PublishedVersion and Workers are the acknowledgement view: which
 	// Activation the control plane published and how many counted replicas
 	// have applied it. Per-replica versions are on PerReplica.
@@ -637,7 +641,8 @@ func NewHandler(
 			Ours:         OursCount(view.Anomalies),
 			Unattributed: UnattributedCount(view.Anomalies),
 			Impact:       ImpactOf(view),
-			DemotedDue:   view.DemotedDue, DemotionEntries: view.DemotionEntries,
+			DemotedDue:   view.DemotedDue, DemotedDueOldestSeconds: view.DemotedDueOldestSeconds,
+			DemotionEntries:    view.DemotionEntries,
 			DemotionExtensions: view.DemotionExtensions, DemotionExits: view.DemotionExits,
 			LastDemotionExit: view.LastDemotionExit,
 			Coverage:         view.Coverage, PerReplica: view.PerReplica,

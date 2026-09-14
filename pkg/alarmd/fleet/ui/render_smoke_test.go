@@ -172,6 +172,12 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 				"anomalies_total": 16, "filtered": false,
 				"summary": map[string]any{"partial": false}}},
 		},
+		// A 24-hour window and a 15-minute one. The first ends at the same
+		// wall-clock time it started, which is what made it render empty.
+		"range_cases": []map[string]any{
+			{"name": "day", "start": at.Add(-24 * time.Hour).UnixMilli(), "end": at.UnixMilli()},
+			{"name": "short", "start": at.Add(-15 * time.Minute).UnixMilli(), "end": at.UnixMilli()},
+		},
 		// A population restored at a rollout: every start time is a bound, and
 		// the sentence over it used to name the newest as a moment.
 		"onset_cases": []map[string]any{
@@ -320,6 +326,22 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			t.Errorf("column %s renders %q, which says %q -- that is the other column's claim",
 				want.column, line, want.mustNotSay)
 		}
+	}
+
+	// A 24-hour window starts and ends at the same wall-clock time, and a
+	// time-only label printed it as a range of zero length over a chart that
+	// visibly covered a day.
+	if line := lineStarting(text, "RANGE day ::"); line == "" {
+		t.Error("rangeLabel rendered nothing for the 24-hour window")
+	} else {
+		ends := strings.SplitN(strings.TrimPrefix(line, "RANGE day :: "), " – ", 2)
+		if len(ends) != 2 || ends[0] == ends[1] {
+			t.Errorf("the 24-hour window renders %q: both ends read the same, so the label says "+
+				"the window has no length", line)
+		}
+	}
+	if line := lineStarting(text, "RANGE short ::"); line == "" {
+		t.Error("rangeLabel rendered nothing for the short window")
 	}
 
 	// A filter is not a truncated snapshot. Filtering to one strategy -- the
@@ -567,6 +589,16 @@ for (const column of ['anomalies', 'demoted', 'undecidable', 'by_design']) {
 // The impact line -- the only thing on the page that answers "what is affected"
 // rather than "how many objects".
 console.log('IMPACT :: ' + textOf(store['impact']));
+
+// The window label, on a range whose two ends are the same wall-clock time on
+// two different days -- which is every 24-hour window, and rendered as a range
+// of zero length.
+for (const c of data.range_cases || []) {
+  let label;
+  try { label = ctx.rangeLabel(c.start, c.end); }
+  catch (e) { console.error('rangeLabel threw on ' + c.name + ': ' + e.message); failed++; continue; }
+  console.log('RANGE ' + c.name + ' :: ' + label);
+}
 
 // The count line, on the three states it has to tell apart. A filter narrowing
 // the list is not a replica failing to publish it, and this used to report the

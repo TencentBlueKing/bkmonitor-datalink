@@ -745,6 +745,19 @@ type View struct {
 	// defensible one today, and a number invented now would be obeyed later as
 	// though it had been measured.
 	DemotedDue int `json:"demoted_due"`
+	// DemotedDueOldestSeconds is how long the most overdue of them has been
+	// waiting past its own deadline.
+	//
+	// The count alone cannot be read. Objects fall due continuously, so a steady
+	// handful of them is what a working retry path looks like from the outside,
+	// and so is a path that stopped days ago -- the two differ only in how long
+	// any one object has been sitting there. A reader asking "是不是出口坏了"
+	// gets no answer from the count and a decisive one from this.
+	//
+	// Still no threshold, for the reason above: what counts as too long is the
+	// deployment's own number. What changes is that the question is now
+	// answerable from one read instead of two.
+	DemotedDueOldestSeconds int `json:"demoted_due_oldest_seconds,omitempty"`
 	// Coverage says which kind of disagreement the counts have, when the sets
 	// were available to compare. Absent when no replica published its set.
 	Coverage *Disagreement `json:"coverage,omitempty"`
@@ -974,6 +987,12 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		if demoted.QueryCooldown != nil && !demoted.QueryCooldown.Until.IsZero() &&
 			demoted.QueryCooldown.Until.Before(now) {
 			view.DemotedDue++
+			// How long the worst one has waited, not how many are waiting.
+			// Objects fall due continuously, so a steady count is what both a
+			// working retry path and a stopped one look like.
+			if overdue := int(now.Sub(demoted.QueryCooldown.Until).Seconds()); overdue > view.DemotedDueOldestSeconds {
+				view.DemotedDueOldestSeconds = overdue
+			}
 		}
 	}
 

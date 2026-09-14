@@ -530,6 +530,39 @@ var SINCE_BOUND = {
   REFUSED_FUTURE: '? '
 };
 
+// A moment, with the date shown as soon as it is not today.
+//
+// A time-only stamp reads as "today at that time" whatever day it is, which is
+// exactly wrong for the two places it was used: the last demotion exit is the
+// number that says whether the pool still drains, and a stamp from three days
+// ago rendered as this afternoon.
+function momentLabel(at) {
+  var when = new Date(at);
+  if (isNaN(when.getTime())) { return '—'; }
+  var today = new Date();
+  if (when.toDateString() === today.toDateString()) { return when.toLocaleTimeString(); }
+  return when.toLocaleDateString(undefined, {month: 'numeric', day: 'numeric'})
+    + ' ' + when.toLocaleTimeString();
+}
+
+// A range, with the date shown as soon as its two ends are on different days.
+//
+// The 24-hour trend window starts and ends at the same wall-clock time on two
+// different days, so a time-only label rendered it as "17:02:35 – 17:02:35":
+// a window of zero length, printed over a chart that visibly covers a day.
+function rangeLabel(startAt, endAt) {
+  var start = new Date(startAt), end = new Date(endAt);
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) { return '—'; }
+  if (start.toDateString() === end.toDateString()) {
+    return start.toLocaleTimeString() + ' – ' + end.toLocaleTimeString();
+  }
+  function dated(when) {
+    return when.toLocaleDateString(undefined, {month: 'numeric', day: 'numeric'})
+      + ' ' + when.toLocaleTimeString();
+  }
+  return dated(start) + ' – ' + dated(end);
+}
+
 function loadHealth() {
   // Called rather than passed by reference. The check that every page function
   // has a call site reads call syntax, and a bare reference is invisible to it
@@ -609,11 +642,21 @@ function renderDeployment(deployment) {
     } else {
       flow.push('进过 ' + entries + ' 个，出来过 ' + exits + ' 个');
       if (deployment.last_demotion_exit) {
-        flow.push('最近一次出池 ' + new Date(deployment.last_demotion_exit).toLocaleTimeString());
+        flow.push('最近一次出池 ' + momentLabel(deployment.last_demotion_exit));
       }
     }
     if (deployment.demoted_due) {
-      flow.push('其中 ' + deployment.demoted_due + ' 个的冷却时间已经到了还没被重试');
+      // The count alone reads the same whether the retry path works or stopped:
+      // objects fall due continuously, so a steady handful is what both look
+      // like from outside. How long the worst one has waited is what separates
+      // them, and it is the question this panel exists to answer.
+      var overdue = deployment.demoted_due_oldest_seconds || 0;
+      flow.push('其中 ' + deployment.demoted_due + ' 个的冷却时间已经到了还没被重试'
+        + (overdue
+            ? '，最久的一个已经过期 ' + duration(new Date(Date.now() - overdue * 1000).toISOString())
+              + '——重试是按对象自己的周期发起的，正常只会过期几十秒到几分钟；'
+              + '这个数远大于一个检测周期，才说明出池路径本身有问题'
+            : ''));
     }
     flow.push('计数从本次进程启动起算，重启归零');
     text('poolFlowHint', flow.join('；'));
@@ -3019,8 +3062,7 @@ function loadTrend() {
     });
     var span = document.createElement('span');
     span.className = 'range';
-    span.textContent = '窗口 ' + new Date(d.start).toLocaleTimeString() +
-      ' – ' + new Date(d.end).toLocaleTimeString() + '，每点 ' + d.step_seconds + ' 秒';
+    span.textContent = '窗口 ' + rangeLabel(d.start, d.end) + '，每点 ' + d.step_seconds + ' 秒';
     pick.appendChild(span);
 
     var host = document.getElementById('trend');

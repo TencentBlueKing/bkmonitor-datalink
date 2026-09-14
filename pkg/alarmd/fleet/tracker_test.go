@@ -462,6 +462,37 @@ func TestAnomalyCarriesHowShortTheDetectionWindowWas(t *testing.T) {
 	}
 }
 
+// Whether the reason was decided this round travels with the counts.
+//
+// A Level judged WARMING or GAPPED forces that verdict onto every later
+// evaluation until the window is full at the last processed record, while the
+// counts beside it stay live. So a row can say the window is gapped over counts
+// that say it filled, and only this field says which half is this round's.
+//
+// It is checked at this hop specifically. The field is decided in the evaluator,
+// folded into the Slot's coverage, published on the observation and read here --
+// four handoffs, and a value dropped at any one of them leaves a page that is
+// wrong in a way nothing else on it contradicts. That is the shape this codebase
+// keeps producing: the discriminating field exists where the decision is made
+// and does not survive the trip.
+func TestAnomalyCarriesWhetherTheWindowVerdictWasDecidedThisRound(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		observation := coverageCompletion("qg-held", 4, 2, 2, 14)
+		observation.HistoryCoverage.Guarded = 3
+		tracker.Observe(context.Background(), observation)
+	}
+	listed := tracker.Undecidable()
+	if len(listed) != 1 || listed[0].Coverage == nil {
+		t.Fatalf("undecidable = %+v, want one object carrying coverage", listed)
+	}
+	if got := listed[0].Coverage.Guarded; got != 3 {
+		t.Fatalf("guarded = %d, want 3: without it the page cannot tell a window that is short now "+
+			"from one reporting a verdict it is no longer allowed to revise", got)
+	}
+}
+
 // The run length is the one part of the coverage a single observation cannot
 // supply, and it is the whole basis of the distinction: one round cannot tell a
 // window that is filling from one that never will, because both are short.

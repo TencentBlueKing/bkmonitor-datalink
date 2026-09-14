@@ -44,6 +44,18 @@ type HistoryCoverageFacts struct {
 	// does not exist.
 	WorstValid    uint32 `json:"worst_valid"`
 	WorstRequired uint32 `json:"worst_required"`
+	// Guarded is how many of these windows reported a completeness held over
+	// from a guard rather than computed from the window this round.
+	//
+	// While a Level's persisted state or a Plan gap record forces WARMING or
+	// GAPPED, the freshly computed verdict is discarded and the held one is
+	// reported -- and the position counts beside it are still the live ones. So
+	// the reason and the numbers under it can be from two different moments, and
+	// a window that has already refilled keeps reporting the verdict it had
+	// before it did. Whoever reads the reason has to be able to tell "this is
+	// what the window says now" from "this is what it said, and nothing else has
+	// been allowed through yet".
+	Guarded uint32 `json:"guarded,omitempty"`
 }
 
 // Shortfall is how many points the worst window was missing. Zero when
@@ -65,7 +77,12 @@ func normalizeHistoryCoverageFacts(facts *HistoryCoverageFacts) *HistoryCoverage
 	// so the pair is not describing one run and nothing derived from it can be
 	// trusted. Clamping would keep a plausible-looking number; dropping the
 	// facts leaves the absence visible.
-	if copied.Levels == 0 || copied.Short > copied.Levels || copied.Empty > copied.Short {
+	// Guarded is counted over the same windows as Levels, short or not, so it
+	// cannot exceed them either. Checked here with the rest rather than clamped:
+	// a count that could not have come from these windows makes every number
+	// beside it suspect, and a plausible-looking clamp hides that.
+	if copied.Levels == 0 || copied.Short > copied.Levels || copied.Empty > copied.Short ||
+		copied.Guarded > copied.Levels {
 		return nil
 	}
 	if copied.Short == 0 {

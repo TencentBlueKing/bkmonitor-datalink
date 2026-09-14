@@ -229,7 +229,12 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 		histories[i] = trigger.LevelHistory{LevelID: l.Definition().LevelID, View: historyView{HistoryView: h, completeness: completeness}}
 		summary := histories[i].View.Summarize(record.SourceTime(), l.RequiredDetectHistoryPoints())
 		historyCompleteness[l.Definition().LevelID] = execution.HistoryCompleteness(summary.Completeness)
-		coverage.Observe(summary.ValidPositions, summary.RequiredPositions)
+		// completeness is non-empty exactly when a guard is forcing this Level's
+		// verdict, so the same variable that decides what gets reported also says
+		// whether it was decided now. It is the only place that knows: by the
+		// time the summary is returned the forced value and the computed one are
+		// the same field.
+		coverage.Observe(summary.ValidPositions, summary.RequiredPositions, completeness != "")
 		fact, found := effectiveFact(request.Header, due.Identity, l.Definition().LevelID, series)
 		if !found {
 			return recordResult{}, errors.New("alarmd evaluation: EffectiveTime fact missing")

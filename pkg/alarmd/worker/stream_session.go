@@ -1190,8 +1190,30 @@ func (stream *streamedExecution) observeEvaluationCompleted(
 		Duration: time.Since(started), Counts: observability.Counts{Records: evaluationRecordCount(inputs)},
 		Trace:                observability.TraceFields{StrategyID: due.Identity.StrategyID, BusinessID: due.Identity.BusinessID, DimensionIdentityDigest: string(series)},
 		AlgorithmEvaluations: evaluations, AlgorithmInputs: namedInputs,
+		RecoveryGates: recoveryGateFacts(due, evaluated),
 	}
 	stream.coordinator.ports.Observer.Observe(ctx, observation)
+}
+
+// recoveryGateFacts carries what became of the Plan's RECOVERY envelopes:
+// how many records were held, by cause, and how many were sent past a Level
+// without recovery. Zero counts are left out; the observer drops them anyway.
+func recoveryGateFacts(due execution.DuePlan, evaluated execution.EvaluationResult) []observability.RecoveryGateFact {
+	if len(evaluated.Plans) != 1 || evaluated.Plans[0].Plan != due.Identity {
+		return nil
+	}
+	gate := evaluated.Plans[0].RecoveryGate
+	var facts []observability.RecoveryGateFact
+	for _, fact := range []observability.RecoveryGateFact{
+		{Cause: observability.RecoveryGateLevelUnavailable, Records: gate.HeldLevelUnavailable},
+		{Cause: observability.RecoveryGateLevelRecovering, Records: gate.HeldLevelRecovering},
+		{Cause: observability.RecoveryGateLevelWithoutRecovery, Records: gate.SentPastLevelWithoutRecovery},
+	} {
+		if fact.Records > 0 {
+			facts = append(facts, fact)
+		}
+	}
+	return facts
 }
 
 func (stream *streamedExecution) observeCompletionOnlyPlan(

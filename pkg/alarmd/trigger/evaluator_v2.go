@@ -80,7 +80,11 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 	default:
 		result.Completion = CompletionSuppressed
 	}
-	if result.RecordResult == contract.LevelResultAbnormal || result.RecordResult == contract.LevelResultRecovery {
+	if result.RecordResult == contract.LevelResultRecovery {
+		result.RecoveryGate = recoveryGateV2(result.LevelOutcomes)
+	}
+	if result.RecordResult == contract.LevelResultAbnormal ||
+		(result.RecordResult == contract.LevelResultRecovery && !result.RecoveryGate.Held) {
 		if uint32(len(levelResults)) > request.Limits.MaxLevelResultsPerEvent {
 			return EvaluationResultV2{}, invariantV2("admit event Level results", 0, errors.New("compiled result exceeds admitted limit"))
 		}
@@ -262,8 +266,12 @@ func evaluateLevelV2(
 	eligibility StateEligibilityV2,
 ) (LevelOutcomeV2, contract.LevelResultV1, error) {
 	definition := level.Definition()
+	// RecoveryEnabled is set here, before any return, so that every outcome
+	// carries it: the suppressed and unavailable paths leave before the
+	// recovery plan is otherwise consulted.
 	outcome := LevelOutcomeV2{
 		LevelID: definition.LevelID, LevelCode: definition.LevelCode, Priority: definition.Priority,
+		RecoveryEnabled:    level.Recovery().Enabled,
 		TriggerFingerprint: level.Fingerprints().Trigger, StateDisposition: eligibility.StateDisposition(),
 	}
 	validFact := fact.Result == DetectionAnomalous || fact.Result == DetectionNormal
@@ -480,6 +488,64 @@ func multiplyUint32ToInt64(left, right uint32) (int64, bool) {
 		return 0, false
 	}
 	return int64(value), true
+}
+
+// recoveryGateV2 decides whether a record whose evaluated Levels agreed on
+// RECOVERY may send its envelope. The consumer keeps one alert per series and
+// resolves it on any RECOVERY envelope without looking at the Level, so the
+// envelope may only go once no Level could still be holding that alert open.
+// The reference implementation asks the same of the alert's own Level: its
+// recovery span must hold no triggering window, and a Level without a check
+// result does not recover. This process does not know which Level the alert
+// stands at, so it asks it of every Level, which is stricter than the
+// reference and never resolves earlier than it.
+//
+// A Level whose state is unknown (its detect fact unavailable, its history
+// warming or gapped, its effective time unknown) holds the envelope. A Level
+// that read NORMAL with recovery enabled holds it too: with recovery enabled,
+// NORMAL is exactly "a window inside the recovery span still meets the
+// trigger", which the reference reads as "still triggering, no recovery".
+//
+// Two shapes must not hold it, because they can last indefinitely and a hold
+// on them is an alert that never resolves on its own. A Level suppressed by
+// its effective time can stay suppressed for as long as its schedule says;
+// holding on it would keep every strategy with a part-time Level in alarm
+// until that Level comes back on. The reference resolves such an alert after
+// a fixed no-data tolerance instead. A NORMAL Level whose recovery is
+// disabled can never say RECOVERY at all, so a hold on it would be
+// permanent; it is passed and counted, not consulted. Neither exception is
+// an approximation to tighten later: each closes a permanent hold.
+//
+// Whether a Level's recovery is enabled is read off the outcome itself,
+// which evaluateLevelV2 sets before any of its returns. Reading it off the
+// compiled Levels by position would hold only as long as the outcome loop
+// appends exactly once per Level; a skipped Level would silently line the
+// next one up against the wrong recovery plan, and nothing would fail.
+func recoveryGateV2(outcomes []LevelOutcomeV2) RecoveryGateV2 {
+	gate := RecoveryGateV2{}
+	passedWithoutRecovery := false
+	for _, outcome := range outcomes {
+		switch {
+		case outcome.UnavailableReason != "":
+			if !gate.Held {
+				gate = RecoveryGateV2{Held: true, Cause: RecoveryHeldLevelUnavailable, LevelID: outcome.LevelID}
+			}
+		case outcome.SuppressedReason != "":
+			// Suppressed by effective time: not consulted, see above.
+		case outcome.Result == contract.LevelResultNormal:
+			if outcome.RecoveryEnabled {
+				if !gate.Held {
+					gate = RecoveryGateV2{Held: true, Cause: RecoveryHeldLevelRecovering, LevelID: outcome.LevelID}
+				}
+			} else {
+				passedWithoutRecovery = true
+			}
+		}
+	}
+	if !gate.Held {
+		gate.PassedLevelWithoutRecovery = passedWithoutRecovery
+	}
+	return gate
 }
 
 func aggregateRecordResultV2(results []contract.LevelResultV1) string {

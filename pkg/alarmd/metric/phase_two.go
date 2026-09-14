@@ -69,6 +69,8 @@ type phaseTwoMetrics struct {
 	activationHeldQueryGroups       *loadedGauge
 	activationHeldAgeSecondsMax     *loadedGauge
 	algorithmEvaluations            *prometheus.CounterVec
+	recoveryHeld                    *prometheus.CounterVec
+	recoveryPastLevelWithoutRecov   prometheus.Counter
 	redisCalls                      redisCallMetrics
 	controlCache                    *controlCacheCollector
 	legacyPodCache                  *prometheus.CounterVec
@@ -279,6 +281,32 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "algorithm_input_total",
 		Help: "Named algorithm input completion by fixed source family, input, dependency point and result.",
 	}, []string{"algorithm_family", "input_name", "dependency_point", "result"})
+	// A RECOVERY envelope resolves the alert on its series at the consumer
+	// whatever Level the alert stands at, so it goes only once every Level has
+	// agreed. The two causes a Level withholds agreement for are the label; a
+	// zero for either must be readable as "never held", so both are created.
+	metrics.recoveryHeld = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "trigger_recovery_held_total",
+		Help: "Records whose evaluated Levels agreed on RECOVERY but whose envelope was held because " +
+			"another Level had not agreed: level_unavailable is a Level whose state could not be " +
+			"established this round, level_recovering a Level reading NORMAL with a triggering window " +
+			"still inside its recovery span. The Level results still reach the state; only the envelope " +
+			"waits for a later round. Read against algorithm_evaluation_total{result=\"recovery\"}: the " +
+			"ratio is the price of asking every Level. This counts hold events, not alerts: a record held " +
+			"once and then released and a record held every minute for a week read alike here, and the " +
+			"ratio does not separate them either. It says whether the gate is reached and how often, " +
+			"never whether some alert is stuck open; a Level whose history stays gapped is the shape that " +
+			"holds forever, and only the object page or the state itself can show one.",
+	}, []string{"cause"})
+	for _, cause := range []observability.RecoveryGateCause{observability.RecoveryGateLevelUnavailable, observability.RecoveryGateLevelRecovering} {
+		metrics.recoveryHeld.WithLabelValues(string(cause))
+	}
+	metrics.recoveryPastLevelWithoutRecov = prometheus.NewCounter(prometheus.CounterOpts{
+		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "trigger_recovery_past_level_without_recovery_total",
+		Help: "RECOVERY envelopes sent past a NORMAL Level whose recovery is disabled. Such a Level can " +
+			"never say RECOVERY, so it is not consulted rather than holding the envelope forever. Long at " +
+			"zero means no strategy in this deployment pairs a Level with recovery and one without.",
+	})
 	metrics.seriesAdmission = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "series_admission_total",
 		Help: "Access-path admission decisions by filter, outcome and bounded reason.",
@@ -333,7 +361,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.objectCatalogObjects, m.objectCatalogRedis, m.objectCatalogManifestBytes, m.objectReads, m.stateGenerationSkew,
 		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
 		m.undrainedDrainingQueryGroups, m.drainingCursorPrunedQueryGroups, m.rebalancePlannedMoves, m.assignmentIndexStaleRounds, m.assignmentIndexWrites, m.assignmentIndexReads, m.assignmentIndexConfirm, m.assignmentRecordReads, m.scheduleCursorAdvances, m.activationHeldQueryGroups, m.activationHeldAgeSecondsMax,
-		m.algorithmEvaluations, m.algorithmInputs,
+		m.algorithmEvaluations, m.algorithmInputs, m.recoveryHeld, m.recoveryPastLevelWithoutRecov,
 	}...), append(append(m.redisCalls.collectors(), m.dueIndex.collectors()...),
 		m.controlCache, m.redisPool, m.canonicalEncoding, m.legacyPodCache,
 		m.seriesAdmission, m.cmdbIndexHosts, m.hostDisableMonitorStates, m.cmdbIndexAge, m.cmdbIndexDegraded)...)
@@ -469,6 +497,14 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 		m.algorithmEvaluations.WithLabelValues(
 			string(fact.SourceAlgorithmFamily), string(fact.Result),
 		).Inc()
+	}
+	for _, fact := range observation.RecoveryGates {
+		switch fact.Cause {
+		case observability.RecoveryGateLevelUnavailable, observability.RecoveryGateLevelRecovering:
+			m.recoveryHeld.WithLabelValues(string(fact.Cause)).Add(float64(fact.Records))
+		case observability.RecoveryGateLevelWithoutRecovery:
+			m.recoveryPastLevelWithoutRecov.Add(float64(fact.Records))
+		}
 	}
 	for _, fact := range observation.AlgorithmInputs {
 		m.algorithmInputs.WithLabelValues(

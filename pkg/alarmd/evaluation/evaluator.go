@@ -113,6 +113,23 @@ func planGapRecoveryMutation(
 type recordResult struct {
 	outcomes []execution.LevelOutcome
 	state    *execution.StateEvaluation
+	// gate is what became of a RECOVERY record's envelope; zero for every
+	// other record.
+	gate trigger.RecoveryGateV2
+}
+
+// countRecoveryGate adds one record's gate to the Plan's counts. A held
+// record counts under its cause; a record sent past a Level without recovery
+// counts on its own; every other record adds nothing.
+func countRecoveryGate(counts *execution.RecoveryGateCounts, gate trigger.RecoveryGateV2) {
+	switch {
+	case gate.Held && gate.Cause == trigger.RecoveryHeldLevelUnavailable:
+		counts.HeldLevelUnavailable++
+	case gate.Held && gate.Cause == trigger.RecoveryHeldLevelRecovering:
+		counts.HeldLevelRecovering++
+	case !gate.Held && gate.PassedLevelWithoutRecovery:
+		counts.SentPastLevelWithoutRecovery++
+	}
 }
 
 type recordDetector func() ([]detect.LevelFact, []detect.ProjectedValue, error)
@@ -283,7 +300,7 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 	if tr.TriggerEvent != nil {
 		events = []contract.TriggerEventV1{*tr.TriggerEvent}
 	}
-	result := recordResult{outcomes: outcomes}
+	result := recordResult{outcomes: outcomes, gate: tr.RecoveryGate}
 	if advance || len(missingInputGuards) > 0 {
 		mutation, err := buildMutation(request, due, record, view, facts, tr.LevelOutcomes, historyCompleteness, durableGuardReasons, missingInputGuards)
 		if err != nil {
@@ -384,6 +401,7 @@ func (e *Evaluator) evaluateSeries(
 			return execution.PlanEvaluationResult{}, runErr
 		}
 		result.LevelOutcomes = append(result.LevelOutcomes, one.outcomes...)
+		countRecoveryGate(&result.RecoveryGate, one.gate)
 		if one.state != nil {
 			view = applyProvisional(view, one.state.Mutation)
 			final = one.state

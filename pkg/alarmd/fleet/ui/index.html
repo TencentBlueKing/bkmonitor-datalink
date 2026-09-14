@@ -63,6 +63,17 @@ h1{font-size:15px;margin:0 0 2px}
 .impact b{font-variant-numeric:tabular-nums}
 .impact .act{color:var(--text);font-weight:600}
 .impact .quiet{color:var(--muted);font-size:11px}
+/* Mechanism, statistical basis and design rationale go behind this.
+   Every panel opened with several of them at once, so a reader had to
+   hold four conditions in mind to explain one number, and the sentence
+   saying what to do was in the middle of them. */
+details.more{margin:4px 0 10px}
+details.more>summary{cursor:pointer;color:var(--muted);font-size:11px;list-style:none}
+details.more>summary::-webkit-details-marker{display:none}
+details.more>summary::before{content:'\25B8 ';display:inline-block;transition:transform .1s}
+details.more[open]>summary::before{transform:rotate(90deg)}
+details.more>summary:hover{color:var(--text)}
+details.more .note,details.more .basis{margin-top:6px}
 table{width:100%;border-collapse:collapse;font-size:12px}
 th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 th{color:var(--muted);font-weight:600;white-space:nowrap}
@@ -117,10 +128,22 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
 <div class="wrap">
   <h1>alarmd 对象与判定</h1>
   <div class="sub">
-    对象清单与判定不经时序库，直接读控制面与各副本快照。
+    这个页面看的是<b>按策略把时序数据判成异常或恢复、并把结果发出去</b>这一段。
+    <b>发出去之后的收敛、通知、送达不在这里</b>——这一段正常，不等于告警已经送到人手上。
     <span id="stamp"></span>
     <span id="age" class="age"></span>
   </div>
+  <details class="more">
+    <summary>“对象”是什么，为什么对象数和策略数对不上</summary>
+    <p class="basis">
+      一个<b>对象</b>是一次查询：alarmd 把查询内容完全相同的策略合并成一次查询来执行，
+      所以<b>多条策略可能共用一个对象</b>，一条策略也可能因为有多个查询而落在多个对象上。
+      这就是为什么页面上“54 个对象”会关联到“70 条策略”——两个数不该相等。
+      下面的表按对象列，因为执行是按对象发生的；<b>要找人处理得看“关联策略”那一列</b>，
+      顶部的“业务影响”已经把同一批对象换算成了策略数和业务数。
+      对象标识是那次查询的指纹，本身不可读，也无法在监控 SaaS 上按它查到东西。
+    </p>
+  </details>
   <div class="form">
     <span>自动刷新：每</span>
     <input id="every" type="number" min="5" step="5" size="3">
@@ -154,7 +177,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       <div class="cell"><div class="k">按配置不处理</div><div class="v" id="byDesign">–</div>
         <div class="k" id="byDesignHint">配置就是这么写的：策略正在被改，或者现在不在它的生效时段——没有人需要做什么</div></div>
       <div class="cell hl"><div class="k">状态未知</div><div class="v" id="unknown">–</div>
-        <div class="k">没人能替它说话，不算正常</div></div>
+        <div class="k">没有副本能报告它的状态。不知道不等于正常</div></div>
       <div class="cell hl" id="unattributedCell" hidden>
         <div class="k">成因没保留</div>
         <div class="v" id="unattributed">–</div>
@@ -190,6 +213,8 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       <p class="basis" id="coverIds"></p>
     </div>
     <div class="err" id="healthErr" hidden></div>
+    <details class="more">
+    <summary>判定规则、降级池为什么不计入、未知怎么来</summary>
     <p class="note">
       <b>判定规则</b>：证据不全 → <span class="s b-UNKNOWN">UNKNOWN</span>；
       证据齐全且<b>「没跑成待查」里有归到 alarmd 的</b> → <span class="s b-DEGRADED">DEGRADED</span>；
@@ -204,16 +229,21 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       <br><b>未知怎么来</b>：未知 = 应有 − 已知状态。它同时包含“没有副本认领”和“认领了但还说不出结论”两种。
       只要未知不为零，判定就停在 UNKNOWN——<b>不知道不等于健康</b>。
     </p>
+    </details>
   </section>
 
   <section class="panel">
     <h2>容量</h2>
-    <p class="basis">
-      时间口径：与上面的判定同一次读取，来自各副本快照，不经时序库。
-      占用和上限都是各副本相加，两边同一个口径才能比。每个上限后面都写了每副本多少、几个副本。
-      运维只设了两个数——容器的 CPU limit 和内存 limit；下面所有许可、队列、体量预算都是程序按这两个数算出来的，不是可以单独调的旋钮。
-      这里只报测到的数，不替你判断够不够。
-    </p>
+    <p class="basis">各副本当前的占用与上限。<b>这里只报测到的数，不替你判断够不够。</b></p>
+    <details class="more">
+      <summary>时间口径与这些上限是怎么来的</summary>
+      <p class="basis">
+        与上面的判定同一次读取，来自各副本快照，不经时序库。
+        占用和上限都是各副本相加，两边同一个口径才能比；每个上限后面写了每副本多少、几个副本。
+        运维只设了两个数——容器的 CPU limit 和内存 limit；下面所有许可、队列、体量预算都是程序按这两个数算出来的，
+        不是可以单独调的旋钮。
+      </p>
+    </details>
     <div id="capErr" class="err" hidden></div>
     <div class="empty" id="capEmpty" hidden>本次读取没有副本上报容量。</div>
     <div class="grid" id="capCards"></div>
@@ -222,11 +252,16 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
 
   <section class="panel" id="replicaPanel" hidden>
     <h2>按副本下钻</h2>
-    <p class="basis">部署总数回答"这个部署好不好"，回答不了"是不是某一个副本在扛"。
-      同样是七十个异常，均摊和全压在一个副本上要做的事不一样。点某一行可以把下面的对象列表限定到那个副本。
-      <b>两个副本持有的对象数往往不一样</b>（一次实测 452 对 527），所以计数后面都带了占比——
-      裸计数会把持有量的差异算进"谁更差"里。<b>"其中 alarmd 的"这一列要按"有没有副本大于 0"看，不要拿两个副本互相比</b>：
-      对象归谁每次再平衡都会变，劈分会在什么都没发生的情况下移动。</p>
+    <p class="basis">同样是七十个异常，均摊和全压在一个副本上要做的事不一样。<b>点某一行可以把下面的对象列表限定到那个副本。</b></p>
+    <details class="more">
+      <summary>怎么读这张表（为什么带占比、哪一列不能横向比）</summary>
+      <p class="basis">
+        部署总数回答“这个部署好不好”，回答不了“是不是某一个副本在扛”。
+        <b>两个副本持有的对象数往往不一样</b>，所以计数后面都带了占比——裸计数会把持有量的差异算进“谁更差”里。
+        <b>“其中 alarmd 的”这一列要按“有没有副本大于 0”看，不要拿两个副本互相比</b>：
+        对象归谁每次再平衡都会变，劈分会在什么都没发生的情况下移动。
+      </p>
+    </details>
     <table>
       <thead><tr>
         <th>副本</th><th>持有</th><th>正常</th><th>没跑成待查</th><th>其中 alarmd 的</th><th>降级池</th><th>判不了恢复</th><th>按配置不处理</th><th>状态未知</th>
@@ -238,7 +273,15 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
 
   <section class="panel" id="trendPanel" hidden>
     <h2>趋势</h2>
-    <p class="basis">曲线读的是 alarmd 自己的指标，表达式写死在服务端，和判定用的是同一批数字。<b>但它和上面的判定不是同一种读</b>：判定是此刻直读控制面，曲线是经采集、降采样的历史，最右端总比判定旧一个采集周期以上。<b>卡片上的数是最后一个采样点，不是当前值；最低/最高是所选窗口内的，不是历史极值。</b></p>
+    <p class="basis"><b>卡片上的数是最后一个采样点，不是当前值；最低/最高是所选窗口内的，不是历史极值。</b></p>
+    <details class="more">
+      <summary>这些曲线和上面的判定不是同一种读</summary>
+      <p class="basis">
+        曲线读的是 alarmd 自己的指标，表达式写死在服务端，和判定用的是同一批数字。
+        但判定是此刻直读控制面，曲线是经采集、降采样的历史，最右端总比判定旧一个采集周期以上，
+        两者对不上一点是正常的。
+      </p>
+    </details>
     <div class="wpick" id="wpick"></div>
     <div id="trendErr" class="err" hidden></div>
     <div class="trend" id="trend"></div>
@@ -246,16 +289,24 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
 
   <section class="panel">
     <h2 id="listTitle">异常对象</h2>
-    <p class="basis" id="orderBasis"></p>
     <p class="basis" id="listBasis"></p>
     <p class="basis" id="stallNote" hidden></p>
+    <details class="more">
+      <summary>排序与时长口径</summary>
+      <p class="basis" id="orderBasis"></p>
+      <p class="basis">
+        持续时长按每条自身的起算点算，见“起算来源”那一列。那一列有六种取值，含义不同：
+        有的是本进程看着它开始出问题的时刻（是测量），有的是上下界（列表里带 ≥ 或 ≤ 的），
+        <b>不能直接互相比大小</b>。
+      </p>
+    </details>
     <div class="filters">
       <button id="colOwn" class="primary">没跑成待查</button>
       <button id="colDemoted">策略本身不可用（降级池）</button>
       <button id="colUndecidable">判不了恢复</button>
       <button id="colByDesign">按配置不处理</button>
-      <button id="ordOldest" class="primary">坏得最久的在前</button>
-      <button id="ordNewest">刚开始坏的在前</button>
+      <button id="ordOldest" class="primary">持续最久的在前</button>
+      <button id="ordNewest">最近开始的在前</button>
       <input id="fReplica" list="replicaList" placeholder="副本" size="10">
       <datalist id="replicaList"></datalist>
       <input id="fStrategy" placeholder="策略 ID" size="9">
@@ -288,9 +339,19 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
   <section class="panel">
     <h2>观察窗口</h2>
     <p class="basis">
-      时间口径：窗口按自身到期时刻失效，最长 <span id="maxTtl">–</span> 分钟；
-      同时最多 <span id="maxOpen">–</span> 个对象。
+      对某一个对象记录接下来每一轮的详细过程，用来回答“这一轮到底发生了什么”。
+      <b>适合已经定位到具体对象、但从上面的表里看不出原因的情况</b>；上面的表已经说清楚的，不需要开窗。
     </p>
+    <details class="more">
+      <summary>能看到什么、有什么限制</summary>
+      <p class="basis">
+        看到的是每一轮各阶段的耗时与结果、查询发出与返回了什么、判定为什么是这个结论。
+        <b>开窗只改变“记录什么”，不改变“执行什么”</b>——不会影响检测结果，也不会改任何配置。
+        <b>开窗那一刻起就在记录，不必等到期</b>，点“查看记录”即可看到已经产生的内容。
+        窗口按自身到期时刻失效，最长 <span id="maxTtl">–</span> 分钟；同时最多 <span id="maxOpen">–</span> 个对象。
+        它消耗共享诊断预算并自动过期；装不下时会被截断并按次上报，不会静默生效。
+      </p>
+    </details>
     <div id="winErr" class="err" hidden></div>
     <table>
       <thead><tr><th>对象</th><th>开启人</th><th>开启于</th><th>到期</th><th>操作</th></tr></thead>
@@ -309,16 +370,11 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       <pre id="recBody" class="rec" hidden></pre>
     </div>
     <div class="form">
-      <input class="qgin" id="qg" placeholder="对象标识（64 位十六进制），可从上表复制" spellcheck="false">
+      <input class="qgin" id="qg" placeholder="对象标识：点上面对象列表里的“对象”那一列会自动填进来" spellcheck="false">
       <input id="by" placeholder="开启人" size="12">
       <input id="ttl" type="number" min="1" value="15" size="4"> <span class="basis" style="margin:0">分钟</span>
       <button class="primary" id="open">开启观察</button>
     </div>
-    <p class="note">
-      开窗只改变“记录什么”，不改变“执行什么”。<b>开窗那一刻起就在记录，不必等到期</b>——
-      点“查看记录”即可看到已经产生的内容。它消耗共享诊断预算并自动过期；
-      装不下时会被截断并按次上报，不会静默生效。
-    </p>
   </section>
 </div>
 
@@ -635,7 +691,7 @@ function renderDeployment(deployment) {
       : (h === 'UNKNOWN' && unattributed
           ? '证据不全：有 ' + unattributed + ' 个对象没留下成因（重启后从记录里恢复的，'
             + '记录只保留了结果不保留原因），所以说不清它们是不是 alarmd 自己的问题。'
-            + '这不是覆盖缺口——上面的"状态未知"是另一回事，那一栏数的是没人能替它说话的对象。'
+            + '这不是覆盖缺口——上面的"状态未知"是另一回事，那一栏数的是没有副本能报告其状态的对象。'
             + '这类会自己清：每个对象再跑完一轮就重新有成因了'
       // The verdict follows only the objects capacity or design could have
       // prevented, so the wording has to say that -- otherwise HEALTHY beside a
@@ -643,7 +699,7 @@ function renderDeployment(deployment) {
       : (h === 'DEGRADED'
           ? '证据齐全，存在 alarmd 自己该负责的异常（容量或架构）'
           : (deployment.anomalies_total > 0
-              ? '证据齐全，alarmd 自己没有异常；列表里那些是数据源/策略配置的问题，要另外的人处理'
+              ? '证据齐全，alarmd 自己没有异常；列表里那些是数据源或策略配置的问题，由对应负责人处理'
               : '证据齐全，无异常对象'))));
     var ul = document.getElementById('gaps');
     ul.textContent = '';
@@ -1017,8 +1073,8 @@ function loadObjects() {
     document.getElementById('ordOldest').className = served_order === 'newest' ? '' : 'primary';
     document.getElementById('ordNewest').className = served_order === 'newest' ? 'primary' : '';
     text('orderBasis', served_order === 'newest'
-      ? '刚开始坏的在最前，因此第一页就是最近发生的一批。时间口径：持续时长按每条自身的起算点，见“起算来源”列——那一列有三种，含义不同，不能直接互相比大小。'
-      : '坏得最久的在最前，因此第一页是陈年的一批；刚开始坏的排在最后，要看正在发生的事请切到“刚开始坏的在前”。时间口径：持续时长按每条自身的起算点，见“起算来源”列——那一列有三种，含义不同，不能直接互相比大小。');
+      ? '最近开始的排在最前，第一页就是刚发生的一批。'
+      : '持续最久的排在最前，第一页是长期未恢复的一批；刚开始的排在最后，要看正在发生的事切到“最近开始的在前”。');
     var rows = objects.anomalies || [];
     total = (objects.page && objects.page.total) || 0;
     var tb = document.getElementById('rows');

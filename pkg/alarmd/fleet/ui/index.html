@@ -176,7 +176,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       <div class="cell"><div class="k">判不了恢复</div><div class="v" id="undecidable">–</div>
         <div class="k" id="undecidableHint">检测窗口没攒够点，恢复无从判起——正常现象，不是故障</div></div>
       <div class="cell"><div class="k">按配置不处理</div><div class="v" id="byDesign">–</div>
-        <div class="k" id="byDesignHint">配置就是这么写的：策略正在被改，或者现在不在它的生效时段——没有人需要做什么</div></div>
+        <div class="k" id="byDesignHint">策略自己的生效时段说现在不该跑——这是常驻状态，不是过渡状态</div></div>
       <div class="cell hl"><div class="k">状态未知</div><div class="v" id="unknown">–</div>
         <div class="k">没有副本能报告它的状态。不知道不等于正常</div></div>
       <div class="cell hl" id="unattributedCell" hidden>
@@ -684,8 +684,8 @@ function renderDeployment(deployment) {
     // deliberately narrow -- one reason on the list -- so that it does not
     // become the place things go to stop being looked at.
     text('byDesignHint', (deployment.by_design_total || 0)
-      ? '策略在这一轮跑到一半被改了/停用了/换了归属。旧配置算出来的结果不该落地，所以这一轮作废，'
-        + '下一轮按新配置重跑。两边都是对的行为，没有人需要做什么，也不计入部署健康判定'
+      ? '策略自己的生效时段/日历说现在不该跑。这是常驻状态不是过渡状态——只在工作时段生效的策略，'
+        + '每天有十几个小时在这里。不计入部署健康判定'
       : '当前没有这种对象');
     // Shown only where something actually holds wake times. A zero here on a
     // deployment that holds none would report "nothing is being missed" for one
@@ -1121,9 +1121,9 @@ function loadObjects() {
         + '影响：异常检测不受影响，恢复判定受影响——该报的异常照常报，但报出来之后不会自动恢复。'
         + '下一步：短暂缺点会自己补齐，继续观察即可；持续缺点要查数据连续性和策略的检测窗口，'
         + '每条的“下一层原因”里标了是哪一种。这一栏不计入部署健康判定。',
-      by_design: '策略在这一轮跑到一半被改了、停用了或换了归属，这一轮的结果按配置作废。'
-        + '影响：这一轮没有检测结果；除正在重新暖机的那部分外，下一轮按新配置重跑。'
-        + '下一步：不需要处理。但如果你并不知道有人在改这条策略，那要确认的是这次变更本身。'
+      by_design: '策略自己的生效时段或日历说现在不该跑，这一轮就是按这个被抑制的。'
+        + '影响：这些策略在非生效时段不产生检测结果，这是配置写的。'
+        + '下一步：不需要处理。如果你预期它现在应该在跑，要查的是它的生效时段/日历配得对不对。'
         + '这一栏不计入部署健康判定。',
       // The column is "did not succeed, and is not any of the settled cases",
       // which is not the same claim as "alarmd did not run these properly".
@@ -2708,13 +2708,31 @@ function coverageNote(anomaly) {
   // which. A column that reads "nothing to do here" and cannot say why is the
   // shape this whole split exists to avoid.
   if (anomaly.cause_reason === 'CONFIG_DRIFT') {
+    // States what the code checked, not what a reader might assume caused it.
+    //
+    // This said "策略正在被改，这一轮作废，没有人需要做什么". The check behind
+    // the code is IsPlanActive, and it is false in two unrelated cases: the
+    // plan is not in the activation set (an edit -- that story), or the plan is
+    // current and its StateApplyEpoch does not match the one this round froze
+    // (not an edit, and it does not clear on its own). The page cannot tell
+    // which, because the field that separates them is published nowhere.
+    //
+    // A live object returned this on slot after slot with query, schedule and
+    // snapshot revisions identical across the runs -- so nothing had been
+    // edited, and every one of those slots was voided while the page said to
+    // ignore it.
     return {
-      settled: true,
-      text: '策略正在被改，这一轮作废',
-      title: '这一轮跑到一半，策略被编辑、停用或换了归属。旧配置算出来的结果不该落地，所以这一轮作废，'
-        + '下一轮按新配置重跑——两边都是对的行为。\n\n'
-        + '其中一部分连这一轮都不会重跑：策略正要重新暖机的情况，这一轮即使跑了也判不出结论，'
-        + '所以直接让它过去。无论哪种，都没有人需要做什么。'
+      settled: false,
+      text: '这一轮的计划激活没对上，本轮作废',
+      title: '这一轮要落地时，计划的激活状态和本轮冻结的对不上，所以这一轮的结果不落地。\n\n'
+        + '两种情况会产生同一个码，页面分不出是哪一种：\n'
+        + '一是策略确实被编辑、停用或换了归属——那么下一轮按新配置重跑，不用管；\n'
+        + '二是策略还在、还是当前版本，只是激活的 StateApplyEpoch 和本轮冻结的那个不相等——'
+        + '这一种不会自己好，每一轮都会作废。\n\n'
+        + '判别方法：看这一条的“已持续”。真的改配置只影响一两轮；'
+        + '它能出现在这张表上就说明已经连续三轮以上了，持续越久越像第二种。\n\n'
+        + '要确认是哪一种，对比相邻几轮的 query/schedule/snapshot 版本号：版本号不变而这个码一直在，'
+        + '就不是配置变更。'
     };
   }
   if (anomaly.cause_reason === 'EFFECTIVE_TIME_INACTIVE') {

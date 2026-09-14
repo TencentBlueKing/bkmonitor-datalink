@@ -2054,14 +2054,32 @@ func (channels productionRecoveryChannels) AcquireQueryPermit(ctx context.Contex
 	return channels.channels.AcquireQueryPermit(ctx, slot, operation, deadline)
 }
 
-// Phase-two diagnostic log budget: one line per minute per (reason or stage,
-// Query Group) bucket, with at most phaseTwoDiagnosticLogMaxScopes live scope
-// buckets. Suppressed lines are counted and reported on the next admitted line
-// of the same bucket.
+// Phase-two diagnostic log budget: per (reason or stage, Query Group) bucket,
+// with at most phaseTwoDiagnosticLogMaxScopes live scope buckets. Suppressed
+// lines are counted and reported on the next admitted line of the same bucket.
+//
+// Opened up for the development phase. At one line per minute per bucket and
+// 4096 scopes against 2075 objects, a live read dropped 78 lines for every line
+// it kept -- 186,966 evicted in 19 seconds on one replica at its worst. The
+// eviction count rides on the emitted lines, so the only way to learn how much
+// was lost is to read the log, which is the thing being lost.
+//
+// That is the wrong trade while the system is still being built: what these
+// logs are for right now is finding out what alarmd actually does, and a
+// budget tuned for a steady production stream answers that question with a
+// sample whose bias is the very repetition being investigated.
+//
+// MaxScopes covers the fleet with room for several concurrent reasons per
+// object, so scope eviction -- the part that loses lines without any per-bucket
+// summary -- stops being the binding constraint.
+//
+// Exit condition: this goes back to a production budget when the system is
+// stable enough that the repeated lines are noise rather than the subject.
+// Until then a dropped line costs more than a written one.
 const (
 	phaseTwoDiagnosticLogWindow    = time.Minute
-	phaseTwoDiagnosticLogMaxEvents = 1
-	phaseTwoDiagnosticLogMaxScopes = 4096
+	phaseTwoDiagnosticLogMaxEvents = 600
+	phaseTwoDiagnosticLogMaxScopes = 65536
 )
 
 // newPhaseTwoRuntimeObserver mirrors newPhaseOneRuntimeObserver but uses the

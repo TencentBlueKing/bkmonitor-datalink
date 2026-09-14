@@ -70,13 +70,17 @@ func partitionTrackerFull(t *testing.T, at time.Time, healthy, failing, pooled, 
 			})
 		}
 	}
+	// The by-design column is built from the reason that is genuinely a standing
+	// configured state. It used to be built from CONFIG_DRIFT, which is not one:
+	// the column admits nothing until DefaultDegradedRounds consecutive rounds,
+	// and CONFIG_DRIFT was documented there as a single interrupted round.
 	for index := 0; index < byDesign; index++ {
 		name := qgName("bydesign", index)
 		for round := 0; round < DefaultDegradedRounds; round++ {
 			observe(name, observability.Observation{
 				ProgressCompletionKind:   "COMPLETED_WITH_UNAVAILABLE",
-				ProgressCompletionCause:  "CONFIG_DRIFT",
-				ProgressCompletionReason: "CONFIG_DRIFT",
+				ProgressCompletionCause:  "LEVEL_OUTCOME_UNKNOWN",
+				ProgressCompletionReason: "EFFECTIVE_TIME_INACTIVE",
 			})
 		}
 	}

@@ -32,7 +32,7 @@ func TestEvaluateSeriesProducesOneAbnormalAndRecoveryForNamedInputs(t *testing.T
 		"previous": {g4Record(39, `100`, nil)},
 	})
 	abnormal, err := newEvaluator(t).evaluateSeries(context.Background(), abnormalRequest.Header,
-		[]execution.SeriesEvaluationInputRequest{abnormalInput}, abnormalRequest.State, abnormalRequest.Gaps)
+		[]execution.SeriesEvaluationInputRequest{abnormalInput}, abnormalRequest.State, abnormalRequest.Gaps, nil)
 	if err != nil {
 		t.Fatalf("evaluateSeries(abnormal) error = %v", err)
 	}
@@ -49,7 +49,7 @@ func TestEvaluateSeriesProducesOneAbnormalAndRecoveryForNamedInputs(t *testing.T
 		"previous": {g4Record(39, `100`, nil)},
 	})
 	recovery, err := newEvaluator(t).evaluateSeries(context.Background(), recoveryRequest.Header,
-		[]execution.SeriesEvaluationInputRequest{recoveryInput}, recoveryRequest.State, recoveryRequest.Gaps)
+		[]execution.SeriesEvaluationInputRequest{recoveryInput}, recoveryRequest.State, recoveryRequest.Gaps, nil)
 	if err != nil {
 		t.Fatalf("evaluateSeries(recovery) error = %v", err)
 	}
@@ -66,7 +66,7 @@ func TestEvaluateSeriesKeepsMissingHistoryLocalWithDurableGap(t *testing.T) {
 	input := g4Input(t, request, map[string][]contract.CanonicalRecordV2{"primary": {g4Record(99, `80`, nil)}})
 
 	result, err := newEvaluator(t).evaluateSeries(context.Background(), request.Header,
-		[]execution.SeriesEvaluationInputRequest{input}, request.State, request.Gaps)
+		[]execution.SeriesEvaluationInputRequest{input}, request.State, request.Gaps, nil)
 	if err != nil {
 		t.Fatalf("missing previous must be a Level-local outcome: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestEvaluateSeriesSupportsThresholdPrimaryOnlyAndProcPortDimensions(t *test
 	thresholdRequest := requestFixture(t, json.RawMessage(`80`), nil)
 	thresholdInput := primaryOnlyInput(thresholdRequest, g4Record(99, `80`, nil))
 	threshold, err := newEvaluator(t).evaluateSeries(context.Background(), thresholdRequest.Header,
-		[]execution.SeriesEvaluationInputRequest{thresholdInput}, thresholdRequest.State, thresholdRequest.Gaps)
+		[]execution.SeriesEvaluationInputRequest{thresholdInput}, thresholdRequest.State, thresholdRequest.Gaps, nil)
 	if err != nil {
 		t.Fatalf("Threshold primary-only evaluateSeries() error = %v", err)
 	}
@@ -199,7 +199,7 @@ func TestEvaluateSeriesSupportsThresholdPrimaryOnlyAndProcPortDimensions(t *test
 	procRequest := requestFixtureForPlan(t, procPlan, []contract.CanonicalRecordV2{procRecord}, nil)
 	procInput := g4Input(t, procRequest, map[string][]contract.CanonicalRecordV2{"primary": {procRecord}})
 	proc, err := newEvaluator(t).evaluateSeries(context.Background(), procRequest.Header,
-		[]execution.SeriesEvaluationInputRequest{procInput}, procRequest.State, procRequest.Gaps)
+		[]execution.SeriesEvaluationInputRequest{procInput}, procRequest.State, procRequest.Gaps, nil)
 	if err != nil {
 		t.Fatalf("ProcPort evaluateSeries() error = %v", err)
 	}
@@ -212,11 +212,11 @@ func TestEvaluateSeriesRejectsNonExactLevelCoverWithoutAffectingSibling(t *testi
 	request := requestFixture(t, json.RawMessage(`80`), nil)
 	input := primaryOnlyInput(request, g4Record(99, `80`, nil))
 	if _, err := newEvaluator(t).evaluateSeries(context.Background(), request.Header,
-		[]execution.SeriesEvaluationInputRequest{input, input}, request.State, request.Gaps); err == nil {
+		[]execution.SeriesEvaluationInputRequest{input, input}, request.State, request.Gaps, nil); err == nil {
 		t.Fatal("duplicate Level input must fail closed")
 	}
 	if _, err := newEvaluator(t).evaluateSeries(context.Background(), request.Header,
-		[]execution.SeriesEvaluationInputRequest{input}, request.State, request.Gaps); err != nil {
+		[]execution.SeriesEvaluationInputRequest{input}, request.State, request.Gaps, nil); err != nil {
 		t.Fatalf("healthy sibling could not continue after local contract rejection: %v", err)
 	}
 	mutations := []struct {
@@ -235,7 +235,7 @@ func TestEvaluateSeriesRejectsNonExactLevelCoverWithoutAffectingSibling(t *testi
 			invalid := input
 			test.mutate(&invalid)
 			if _, err := newEvaluator(t).evaluateSeries(context.Background(), request.Header,
-				[]execution.SeriesEvaluationInputRequest{invalid}, request.State, request.Gaps); err == nil {
+				[]execution.SeriesEvaluationInputRequest{invalid}, request.State, request.Gaps, nil); err == nil {
 				t.Fatal("invalid Plan/series/contract binding must fail closed")
 			}
 		})

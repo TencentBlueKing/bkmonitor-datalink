@@ -164,6 +164,12 @@ type EvaluationRequestV2 struct {
 	ExecutionID        string
 	LateAccepted       bool
 	Limits             EvaluationLimitsV2
+	// OpenAlerts is the consumer's open alert set for the second recovery
+	// gate. Nil means the caller has no such gate, which is a different
+	// thing from a set that could not be loaded: the latter is a set that
+	// answers from what this process sent, and is never nil. The two are
+	// told apart in the gate outcome, not folded into one another.
+	OpenAlerts contract.OpenAlertSet
 }
 
 type LevelOutcomeV2 struct {
@@ -205,6 +211,37 @@ const (
 	// RecoveryHeldLevelRecovering: a Level read NORMAL with recovery enabled,
 	// which means a window inside its recovery span still meets its trigger.
 	RecoveryHeldLevelRecovering = "level_recovering"
+	// RecoveryHeldNoOpenAlert: every Level agreed, and the consumer holds no
+	// open alert on the series, so there is nothing for the envelope to
+	// resolve. This is the second gate's cause; it is counted apart from the
+	// two above, which are about Levels.
+	RecoveryHeldNoOpenAlert = "no_open_alert"
+	// RecoveryHeldFingerprintUnknown: the series identity the consumer keys
+	// alerts by could not be built, so membership cannot be asked. Not "not a
+	// member": an unknown read as absent would hold this Plan's recoveries
+	// for good and leave no trace.
+	RecoveryHeldFingerprintUnknown = "fingerprint_unknown"
+)
+
+// The outcomes of the second recovery gate, the open alert set. The set is
+// closed: a metric label is made of it. Each is reachable in production:
+// the first four from a native Plan against a set, the last from a Plan on
+// the compatibility protocol, which has no RECOVERY message at all.
+const (
+	// OpenAlertGatePassed: the consumer holds an open alert; the envelope goes.
+	OpenAlertGatePassed = "passed"
+	// OpenAlertGateHeldNoOpenAlert: see RecoveryHeldNoOpenAlert.
+	OpenAlertGateHeldNoOpenAlert = "held_no_open_alert"
+	// OpenAlertGateHeldFingerprintUnknown: see RecoveryHeldFingerprintUnknown.
+	OpenAlertGateHeldFingerprintUnknown = "held_fingerprint_unknown"
+	// OpenAlertGateNotConfigured: the caller passed no set. The envelope goes
+	// as it did before the gate existed. A production worker always passes a
+	// set, so this outcome counting there is the wiring having come apart.
+	OpenAlertGateNotConfigured = "not_configured"
+	// OpenAlertGateLegacyProtocol: the Plan publishes the compatibility
+	// protocol, which carries anomalies only; its RECOVERY envelope is
+	// dropped at the sink whatever the set says, so the set is not asked.
+	OpenAlertGateLegacyProtocol = "legacy_protocol"
 )
 
 // RecoveryGateV2 is what became of a record whose evaluated Levels agreed on
@@ -222,6 +259,10 @@ type RecoveryGateV2 struct {
 	// whose recovery is disabled. Such a Level can never say RECOVERY, so it is
 	// not asked; the count says whether that shape exists in a deployment.
 	PassedLevelWithoutRecovery bool
+	// OpenAlertGate is the second gate's outcome, one of the OpenAlertGate*
+	// values. It is empty when the first gate held, because the second was
+	// then not asked: a record is counted by at most one of the two.
+	OpenAlertGate string
 }
 
 type EvaluationResultV2 struct {
@@ -231,6 +272,7 @@ type EvaluationResultV2 struct {
 	TriggerEvent  *contract.TriggerEventV1
 	Counts        EvaluationCountsV2
 	// RecoveryGate is set only when RecordResult is RECOVERY. A held gate
-	// leaves TriggerEvent nil while RecordResult stays RECOVERY.
+	// leaves TriggerEvent nil while RecordResult stays RECOVERY. Held is the
+	// union of both gates; Cause says which.
 	RecoveryGate RecoveryGateV2
 }

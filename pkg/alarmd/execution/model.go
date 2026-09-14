@@ -1185,6 +1185,10 @@ type EvaluationRequest struct {
 	Inputs []SeriesEvaluationInputRequest
 	State  StatePreflightResult
 	Gaps   GapLoadResult
+	// OpenAlerts is the consumer's open alert set the second recovery gate
+	// asks. The worker passes it on every request; nil is a caller with no
+	// gate and is counted as such, see OpenAlertGateCounts.NotConfigured.
+	OpenAlerts contract.OpenAlertSet
 }
 
 type StateMutation struct {
@@ -1389,6 +1393,23 @@ type RecoveryGateCounts struct {
 	SentPastLevelWithoutRecovery uint64
 }
 
+// OpenAlertGateCounts are, per Plan evaluation, what the second recovery
+// gate did with the RECOVERY records every Level had agreed on. A record is
+// counted here or in RecoveryGateCounts, never both: a Level that holds the
+// envelope is asked first, and the set is then not asked. Passed records
+// produced their envelope. The two held kinds produced none: the consumer
+// holds no open alert on the series, or the series identity it keys alerts
+// by could not be built. NotConfigured is a caller that passed no set, the
+// behaviour before the gate existed. LegacyProtocol is a Plan whose
+// protocol carries no RECOVERY message, so the set was not asked.
+type OpenAlertGateCounts struct {
+	Passed                 uint64
+	HeldNoOpenAlert        uint64
+	HeldFingerprintUnknown uint64
+	NotConfigured          uint64
+	LegacyProtocol         uint64
+}
+
 type PlanEvaluationResult struct {
 	Plan              PlanIdentity
 	Disposition       PlanDisposition
@@ -1398,6 +1419,7 @@ type PlanEvaluationResult struct {
 	StateResults      []StateEvaluation
 	GuardAfterState   []PlanGapMutation
 	RecoveryGate      RecoveryGateCounts
+	OpenAlertGate     OpenAlertGateCounts
 	// HistoryCoverage is observation only. It lives here and nowhere else: a
 	// second copy on the enclosing result would be one more pair of numbers
 	// that have to agree about the same evaluation, and the first time they

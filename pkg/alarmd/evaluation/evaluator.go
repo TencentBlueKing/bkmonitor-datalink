@@ -37,7 +37,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, request execution.EvaluationRe
 	if e == nil || len(request.Inputs) == 0 || e.limits.MaxPlans < 1 {
 		return execution.EvaluationResult{}, errors.New("alarmd evaluation: invalid or over-budget request")
 	}
-	plan, err := e.evaluateSeries(ctx, request.Header, request.Inputs, request.State, request.Gaps)
+	plan, err := e.evaluateSeries(ctx, request.Header, request.Inputs, request.State, request.Gaps, request.OpenAlerts)
 	if err != nil {
 		return execution.EvaluationResult{}, err
 	}
@@ -130,6 +130,24 @@ func countRecoveryGate(counts *execution.RecoveryGateCounts, gate trigger.Recove
 		counts.HeldLevelRecovering++
 	case !gate.Held && gate.PassedLevelWithoutRecovery:
 		counts.SentPastLevelWithoutRecovery++
+	}
+}
+
+// countOpenAlertGate adds one record's second-gate outcome to the Plan's
+// counts. The outcome is empty for every record the second gate was not
+// asked about: an ABNORMAL record, and a RECOVERY record a Level held.
+func countOpenAlertGate(counts *execution.OpenAlertGateCounts, gate trigger.RecoveryGateV2) {
+	switch gate.OpenAlertGate {
+	case trigger.OpenAlertGatePassed:
+		counts.Passed++
+	case trigger.OpenAlertGateHeldNoOpenAlert:
+		counts.HeldNoOpenAlert++
+	case trigger.OpenAlertGateHeldFingerprintUnknown:
+		counts.HeldFingerprintUnknown++
+	case trigger.OpenAlertGateNotConfigured:
+		counts.NotConfigured++
+	case trigger.OpenAlertGateLegacyProtocol:
+		counts.LegacyProtocol++
 	}
 }
 
@@ -239,7 +257,7 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 	for i, v := range projected {
 		tvalues[i] = trigger.ProjectedValue{CanonicalDecimal: v.CanonicalDecimal, Available: v.Available, ReasonCode: v.ReasonCode}
 	}
-	tr, err := trigger.EvaluateV2(trigger.EvaluationRequestV2{TenantID: due.Identity.TenantID, BusinessID: due.Identity.BusinessID, Plan: due.CompiledPlan, Record: trigger.DetectionRecord{RecordID: record.RecordID(), SourceTime: record.SourceTime(), ProjectedValues: tvalues, LevelFacts: tfacts}, RecordRef: contract.TriggerRecordRefV1{RecordID: record.RecordID(), SourceTime: record.SourceTime(), DimensionIdentityDigest: string(series), Dimensions: record.Dimensions()}, Observed: contract.TriggerObservedV1{Values: record.Values()}, Histories: histories, EffectiveTimeFacts: effective, EvaluationTime: int64(request.Header.Contract.Slot.EvaluationTime), ExecutionID: request.Header.ExecutionID, Limits: e.limits.Trigger})
+	tr, err := trigger.EvaluateV2(trigger.EvaluationRequestV2{TenantID: due.Identity.TenantID, BusinessID: due.Identity.BusinessID, Plan: due.CompiledPlan, Record: trigger.DetectionRecord{RecordID: record.RecordID(), SourceTime: record.SourceTime(), ProjectedValues: tvalues, LevelFacts: tfacts}, RecordRef: contract.TriggerRecordRefV1{RecordID: record.RecordID(), SourceTime: record.SourceTime(), DimensionIdentityDigest: string(series), Dimensions: record.Dimensions()}, Observed: contract.TriggerObservedV1{Values: record.Values()}, Histories: histories, EffectiveTimeFacts: effective, EvaluationTime: int64(request.Header.Contract.Slot.EvaluationTime), ExecutionID: request.Header.ExecutionID, Limits: e.limits.Trigger, OpenAlerts: request.OpenAlerts})
 	if err != nil {
 		return recordResult{}, err
 	}
@@ -331,6 +349,7 @@ func (e *Evaluator) evaluateSeries(
 	inputs []execution.SeriesEvaluationInputRequest,
 	stateResult execution.StatePreflightResult,
 	gaps execution.GapLoadResult,
+	openAlerts contract.OpenAlertSet,
 ) (execution.PlanEvaluationResult, error) {
 	if e == nil || len(inputs) == 0 {
 		return execution.PlanEvaluationResult{}, errors.New("alarmd evaluation: named inputs are required")
@@ -399,7 +418,7 @@ func (e *Evaluator) evaluateSeries(
 	// The record evaluator judges a Level's inputs by the same bindings the
 	// result contract will, so the series' named inputs travel with the
 	// request rather than only its header.
-	legacy := execution.EvaluationRequest{Header: header, Inputs: inputs, State: stateResult, Gaps: gaps}
+	legacy := execution.EvaluationRequest{Header: header, Inputs: inputs, State: stateResult, Gaps: gaps, OpenAlerts: openAlerts}
 	result := execution.PlanEvaluationResult{Plan: due.Identity, Disposition: execution.PlanDecided, ReasonCode: observability.ReasonNone}
 	var final *execution.StateEvaluation
 	var events []contract.TriggerEventV1
@@ -414,6 +433,7 @@ func (e *Evaluator) evaluateSeries(
 		}
 		result.LevelOutcomes = append(result.LevelOutcomes, one.outcomes...)
 		countRecoveryGate(&result.RecoveryGate, one.gate)
+		countOpenAlertGate(&result.OpenAlertGate, one.gate)
 		result.HistoryCoverage.Merge(one.coverage)
 		if one.state != nil {
 			view = applyProvisional(view, one.state.Mutation)

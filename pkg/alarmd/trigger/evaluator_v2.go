@@ -107,6 +107,12 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 				}
 			}
 		}
+		if result.RecordResult == contract.LevelResultRecovery {
+			result.RecoveryGate = openAlertGateV2(result.RecoveryGate, request, ref.StrategyID, dedupeMD5)
+			if result.RecoveryGate.Held {
+				return result, nil
+			}
+		}
 		event, err := contract.BuildTriggerEventV1(contract.TriggerEventBuildInputV1{
 			StrategyRef: snapshotRef,
 			DedupeMD5:   dedupeMD5,
@@ -544,6 +550,46 @@ func recoveryGateV2(outcomes []LevelOutcomeV2) RecoveryGateV2 {
 	}
 	if !gate.Held {
 		gate.PassedLevelWithoutRecovery = passedWithoutRecovery
+	}
+	return gate
+}
+
+// openAlertGateV2 is the second gate on a RECOVERY envelope, asked only once
+// the first has let the record through: does the consumer hold an open alert
+// on this series at all? The consumer resolves whatever alert it holds on a
+// RECOVERY envelope and closes the envelope as an orphan when it holds none,
+// and a healthy series says RECOVERY every cycle, so without this gate the
+// orphans outnumber the real resolutions by the ratio of healthy series to
+// open alerts. The set answers membership only; it does not say whether the
+// series recovered, which the Level results and the first gate have already
+// decided.
+//
+// Two shapes do not ask the set. A Plan on the compatibility protocol has no
+// RECOVERY message, its envelope is dropped at the sink, so holding it here
+// would change nothing on the wire and everything in the counts. A caller
+// that passed no set has no gate; that is the state before the gate existed
+// and is named as such, so a worker that stops passing the set shows up as
+// a count rather than as recoveries quietly going out again.
+//
+// A fingerprint that could not be built is a third state, held and named.
+// Reading it as "not a member" would hold every recovery of such a Plan for
+// as long as the Plan exists, and nothing would distinguish that from a
+// consumer that holds no alerts on it.
+//
+// The gate does not pass the record past a Level without recovery: that
+// report is about an envelope that was sent, and here none is.
+func openAlertGateV2(gate RecoveryGateV2, request EvaluationRequestV2, strategyID, dedupeMD5 string) RecoveryGateV2 {
+	switch {
+	case request.Plan.PublishesCompatibleProtocol():
+		gate.OpenAlertGate = OpenAlertGateLegacyProtocol
+	case request.OpenAlerts == nil:
+		gate.OpenAlertGate = OpenAlertGateNotConfigured
+	case dedupeMD5 == "":
+		gate = RecoveryGateV2{Held: true, Cause: RecoveryHeldFingerprintUnknown, OpenAlertGate: OpenAlertGateHeldFingerprintUnknown}
+	case !request.OpenAlerts.Contains(request.TenantID, strategyID, dedupeMD5):
+		gate = RecoveryGateV2{Held: true, Cause: RecoveryHeldNoOpenAlert, OpenAlertGate: OpenAlertGateHeldNoOpenAlert}
+	default:
+		gate.OpenAlertGate = OpenAlertGatePassed
 	}
 	return gate
 }

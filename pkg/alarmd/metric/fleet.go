@@ -88,6 +88,7 @@ type fleetCollector struct {
 
 	health     *prometheus.Desc
 	objects    *prometheus.Desc
+	partition  *prometheus.Desc
 	anomalies  *prometheus.Desc
 	anomalyAge *prometheus.Desc
 	stalled    *prometheus.Desc
@@ -106,16 +107,26 @@ func newFleetCollector(source FleetVerdictSource) *fleetCollector {
 		health: descriptor("fleet_health",
 			"Deployment-wide judgment as alarmd itself decides it; alert on this rather than recomputing it.",
 			[]string{"health_state"}),
+		partition: descriptor("fleet_partition_objects",
+			"Objects by which column of the split they are in. Unlike fleet_objects these DO add up: "+
+				"healthy, anomalous, demoted, undecidable, by_design and unknown partition the "+
+				"deployment, every object is in exactly one, and their sum is covered. That is what "+
+				"the family is for -- a change that moves objects between columns shows as one "+
+				"falling and another rising by the same amount in the same scrape, and drift moves "+
+				"both sides and leaves the difference alone. A before-and-after on the anomaly count "+
+				"alone attributes nothing, which is why this exists. "+
+				"It is a separate family from fleet_objects precisely because these add up and those "+
+				"do not: summing a family where some members overlap and others partition gives a "+
+				"number that looks plausible and means nothing. "+
+				"While a rollout is in progress these under-count: a replica on an older build does "+
+				"not publish the columns and its objects stay in anomalous. Compare within one pod "+
+				"and one build, never across a rollout -- an attribution made across one had to be "+
+				"retracted, which is the reason this family was added.",
+			[]string{"column"}),
 		objects: descriptor("fleet_objects",
-			"Objects by coverage state, and by which column of the split they are in: healthy, "+
-				"anomalous, demoted, undecidable and by_design partition determined, so a change that "+
-				"moves objects between columns shows as one falling and another rising by the same "+
-				"amount in the same scrape. That difference is what attributes such a change; the "+
-				"anomaly count on its own drifts with the deployment and attributes nothing. "+
-				"While a rollout is in progress the column states under-count, because a replica on "+
-				"an older build does not publish them and its objects stay in anomalous -- compare "+
-				"columns within one pod and one build, never across a rollout. "+
-				"Objects by coverage state. Covered minus determined is counted into unknown. "+
+			"Objects by coverage state. These overlap and MUST NOT be summed: determined is part of "+
+				"covered, unknown is covered minus determined. For counts that partition the "+
+				"deployment use fleet_partition_objects. "+
 				"A non-zero unknown does NOT mean something is broken -- a replica that just restarted owns "+
 				"objects it cannot yet speak for -- it means the question cannot be answered, which is why "+
 				"unknown is never folded into healthy. The expected state is absent when the denominator "+
@@ -165,6 +176,7 @@ func (c *fleetCollector) Describe(descriptions chan<- *prometheus.Desc) {
 	descriptions <- c.queryCooldown
 	descriptions <- c.health
 	descriptions <- c.objects
+	descriptions <- c.partition
 	descriptions <- c.anomalies
 	descriptions <- c.anomalyAge
 	descriptions <- c.stalled
@@ -189,15 +201,21 @@ func (c *fleetCollector) Collect(metrics chan<- prometheus.Metric) {
 	metrics <- prometheus.MustNewConstMetric(c.objects, prometheus.GaugeValue, float64(verdict.Covered), "covered")
 	metrics <- prometheus.MustNewConstMetric(c.objects, prometheus.GaugeValue, float64(verdict.Determined), "determined")
 	metrics <- prometheus.MustNewConstMetric(c.objects, prometheus.GaugeValue, float64(verdict.Unknown), "unknown")
-	// The columns. Emitted as zero when a column is empty, which is a real
-	// measurement: this build always knows the answer. A build that did not
-	// have these columns emitted no series at all, which is the distinction
-	// that matters to whoever reads a gap in the data.
-	metrics <- prometheus.MustNewConstMetric(c.objects, prometheus.GaugeValue, float64(verdict.Healthy), "healthy")
-	metrics <- prometheus.MustNewConstMetric(c.objects, prometheus.GaugeValue, float64(verdict.Anomalous), "anomalous")
-	metrics <- prometheus.MustNewConstMetric(c.objects, prometheus.GaugeValue, float64(verdict.Demoted), "demoted")
-	metrics <- prometheus.MustNewConstMetric(c.objects, prometheus.GaugeValue, float64(verdict.Undecidable), "undecidable")
-	metrics <- prometheus.MustNewConstMetric(c.objects, prometheus.GaugeValue, float64(verdict.ByDesign), "by_design")
+	// The columns, in their own family. Emitted as zero when a column is empty,
+	// which is a real measurement: this build always knows the answer. A build
+	// that did not have these columns emitted no series at all, and that
+	// absence is the distinction that matters to whoever reads a gap.
+	//
+	// Unknown is repeated here from fleet_objects rather than left out. It is
+	// part of this partition -- objects nobody can speak for are still objects
+	// -- and a family that adds up only after the reader remembers to fetch
+	// one member from somewhere else does not add up.
+	for column, count := range map[string]int{
+		"healthy": verdict.Healthy, "anomalous": verdict.Anomalous, "demoted": verdict.Demoted,
+		"undecidable": verdict.Undecidable, "by_design": verdict.ByDesign, "unknown": verdict.Unknown,
+	} {
+		metrics <- prometheus.MustNewConstMetric(c.partition, prometheus.GaugeValue, float64(count), column)
+	}
 	metrics <- prometheus.MustNewConstMetric(c.stalled, prometheus.GaugeValue, float64(verdict.Stalled))
 	for _, count := range verdict.Anomalies {
 		if count.Value == "" {

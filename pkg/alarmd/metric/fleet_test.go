@@ -149,9 +149,10 @@ func TestTheColumnsThatPartitionDeterminedAreExported(t *testing.T) {
 		Healthy: 844, Anomalous: 90, Demoted: 33, Undecidable: 12, ByDesign: 0,
 	}
 	gathered := gatherFleet(t, before)
-	objects := gathered["bkmonitor_alarmd_fleet_objects"]
+	objects := gathered["bkmonitor_alarmd_fleet_partition_objects"]
 	for state, want := range map[string]float64{
 		"healthy": 844, "anomalous": 90, "demoted": 33, "undecidable": 12, "by_design": 0,
+		"unknown": 0,
 	} {
 		got, sent := objects[state]
 		if !sent {
@@ -165,11 +166,24 @@ func TestTheColumnsThatPartitionDeterminedAreExported(t *testing.T) {
 	// by_design is zero here and is still sent. Zero is a measurement this
 	// build can always make; a build without the column sent no series at all,
 	// and that absence is what a reader needs to be able to tell apart.
-	sum := objects["healthy"] + objects["anomalous"] + objects["demoted"] +
-		objects["undecidable"] + objects["by_design"]
-	if sum != objects["determined"] {
-		t.Fatalf("columns sum to %v, want determined %v: the identity a reader would use to "+
-			"attribute a change does not hold", sum, objects["determined"])
+	sum := 0.0
+	for _, count := range objects {
+		sum += count
+	}
+	if sum != float64(before.Covered) {
+		t.Fatalf("columns sum to %v, want covered %v: the identity a reader would use to "+
+			"attribute a change does not hold", sum, before.Covered)
+	}
+	// And the two families are kept apart, because one adds up and the other
+	// does not: fleet_objects holds overlapping coverage states, so a reader
+	// who sums the family gets a plausible number that means nothing. Mixing
+	// them under one name is how that happens.
+	coverage := gathered["bkmonitor_alarmd_fleet_objects"]
+	for _, column := range []string{"healthy", "anomalous", "demoted", "undecidable", "by_design"} {
+		if _, leaked := coverage[column]; leaked {
+			t.Errorf("fleet_objects carries the %q column; that family's states overlap, and a "+
+				"family where some members partition and others overlap sums to nonsense", column)
+		}
 	}
 
 	// Moving objects between columns is exactly what a classification change
@@ -179,12 +193,14 @@ func TestTheColumnsThatPartitionDeterminedAreExported(t *testing.T) {
 	after := before
 	after.Anomalous -= 6
 	after.ByDesign += 6
-	moved := gatherFleet(t, after)["bkmonitor_alarmd_fleet_objects"]
+	moved := gatherFleet(t, after)["bkmonitor_alarmd_fleet_partition_objects"]
 	if moved["anomalous"] != objects["anomalous"]-6 || moved["by_design"] != objects["by_design"]+6 {
 		t.Fatalf("a move between columns did not show as one falling and the other rising: %v", moved)
 	}
-	movedSum := moved["healthy"] + moved["anomalous"] + moved["demoted"] +
-		moved["undecidable"] + moved["by_design"]
+	movedSum := 0.0
+	for _, count := range moved {
+		movedSum += count
+	}
 	if movedSum != sum {
 		t.Fatalf("the sum changed across a move between columns: %v then %v -- an object was "+
 			"created or lost, which is the one thing the identity must rule out", sum, movedSum)

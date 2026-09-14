@@ -2215,12 +2215,6 @@ func (bundle *phaseTwoWorkerBundle) refreshAndReconcile(ctx context.Context, ref
 	return nil
 }
 
-func (bundle *phaseTwoWorkerBundle) setControlQueryGroups(queryGroups []execution.QueryGroupIdentity) {
-	bundle.mu.Lock()
-	bundle.queryGroups = append(bundle.queryGroups[:0], queryGroups...)
-	bundle.mu.Unlock()
-}
-
 // applyFollowerControlLoad takes a healthy activation read on a follower. A
 // follower that was degraded because the activation was unreadable is
 // recovered by the read succeeding again, through the same transition a

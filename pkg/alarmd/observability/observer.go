@@ -827,9 +827,6 @@ func ValidSourceReadOutcome(mode SourceReadMode, reason SourceReadReason) bool {
 	return false
 }
 
-// ActivationFailureFacts carries fixed classification, bounded counts and a
-// bounded diagnostic sample. Query Group identity is logged only for
-// reactivation/not_drained and never becomes a metric label.
 // ControlSourceRole is what this process is to the control plane's source
 // refresh. Only the leader refreshes; a follower reads what the leader
 // published; unacquired means the process could not find out either way --
@@ -896,6 +893,9 @@ const (
 	ControlSourceExitOther = "other"
 )
 
+// ActivationFailureFacts carries fixed classification, bounded counts and a
+// bounded diagnostic sample. Query Group identity is logged only for
+// reactivation/not_drained and never becomes a metric label.
 type ActivationFailureFacts struct {
 	Stage                                ActivationFailureStage
 	Class                                ActivationFailureClass
@@ -1343,8 +1343,6 @@ func normalizeRecoveryGateFacts(observation Observation) []RecoveryGateFact {
 	return facts
 }
 
-// normalizeOpenAlertGateFacts is normalizeRecoveryGateFacts for the second
-// gate: same stage, same closed set, same treatment of a value outside it.
 // normalizeControlSourceRoundFacts keeps a round fact only where a round is
 // reported, and makes the exit agree with the outcome: a succeeded round has
 // none, a failed round has what it named or other.
@@ -1367,6 +1365,8 @@ func normalizeControlSourceRoundFacts(observation Observation) *ControlSourceRou
 	return &normalized
 }
 
+// normalizeOpenAlertGateFacts is normalizeRecoveryGateFacts for the second
+// gate: same stage, same closed set, same treatment of a value outside it.
 func normalizeOpenAlertGateFacts(observation Observation) []OpenAlertGateFact {
 	if observation.Component != ComponentEvaluation || observation.Stage != StageEvaluationCompleted {
 		return nil

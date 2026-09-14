@@ -126,6 +126,35 @@ func (a *aggFormat) ts(idx int, data elastic.Aggregations) error {
 	idx--
 	if idx >= 0 {
 		switch info := a.aggInfoList[idx].(type) {
+		case KeyedTagAgg:
+			nested, ok := data.Nested(info.Name)
+			if !ok {
+				return nil
+			}
+			filter, ok := nested.Aggregations.Filter("key")
+			if !ok {
+				return nil
+			}
+			values, ok := filter.Aggregations.Range("value")
+			if !ok {
+				return nil
+			}
+			for _, bucket := range values.Buckets {
+				key, ok := bucket.Aggregations["key"]
+				if !ok {
+					continue
+				}
+				var value string
+				if err := json.Unmarshal(key, &value); err != nil {
+					value = string(key)
+				}
+				a.addLabel(info.Name, value)
+				if reverse, ok := bucket.Aggregations.ReverseNested("_reverse"); ok {
+					if err := a.ts(idx, reverse.Aggregations); err != nil {
+						return err
+					}
+				}
+			}
 		case TermAgg:
 			if bucketRangeItems, ok := data.Range(info.Name); ok {
 				if len(bucketRangeItems.Buckets) == 0 {

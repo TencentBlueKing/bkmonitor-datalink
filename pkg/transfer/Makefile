@@ -7,7 +7,7 @@ MODULE = transfer
 SHELL = bash
 GO ?= go
 PKG = github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer
-BUILDTAGS ?= bbolt elasticsearch_v5 elasticsearch_v6 elasticsearch_v7
+BUILDTAGS ?= bbolt elasticsearch_v5 elasticsearch_v6 elasticsearch_v7 elasticsearch_v8
 JSON_LIB ?= jsonsonic
 
 # 可继承自顶层 Makefile

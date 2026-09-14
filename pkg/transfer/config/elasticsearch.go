@@ -9,6 +9,12 @@
 
 package config
 
+const (
+	elasticsearchIndexSettingsKey = "index_settings"
+	elasticsearchIndexModeKey     = "index.mode"
+	elasticsearchLogsDBMode       = "logsdb"
+)
+
 // ElasticSearchMetaClusterInfo :
 type ElasticSearchMetaClusterInfo struct {
 	*SimpleMetaClusterInfo
@@ -36,6 +42,22 @@ func (c *ElasticSearchMetaClusterInfo) GetVersion() string {
 // SetVersion :
 func (c *ElasticSearchMetaClusterInfo) SetVersion(val string) {
 	c.StorageConfigHelper.Set("version", val)
+}
+
+// IsLogsDB checks the effective index mode carried by the current shipper.
+func (c *ElasticSearchMetaClusterInfo) IsLogsDB() bool {
+	value, ok := c.StorageConfigHelper.Get(elasticsearchIndexSettingsKey)
+	if !ok {
+		return false
+	}
+
+	settings, ok := value.(map[string]interface{})
+	if !ok {
+		return false
+	}
+
+	mode, ok := settings[elasticsearchIndexModeKey].(string)
+	return ok && mode == elasticsearchLogsDBMode
 }
 
 // GetTarget :

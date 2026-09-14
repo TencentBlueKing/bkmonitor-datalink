@@ -11,6 +11,7 @@ package pipeline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
@@ -243,11 +244,20 @@ func (b *BulkBackendAdapter) flushWithRetries(buffer []interface{}) int {
 	ctx := b.context
 	flushRetries := b.flushRetries
 	interval := b.flushInterval / time.Duration(flushRetries)
+	maxCount := 0
 	for i := 0; i <= flushRetries; i++ {
 		n, err := b.handler.Flush(ctx, buffer)
+		if n > maxCount {
+			maxCount = n
+		}
 		if err == nil {
 			logging.Debugf("backend %v flushed %d results", b, n)
 			return n
+		}
+		var retryable interface{ Retryable() bool }
+		if errors.As(err, &retryable) && !retryable.Retryable() {
+			logging.Errorf("backend %v will not retry %d results because of error %v", b, n, err)
+			return maxCount
 		}
 
 		if i < flushRetries {
@@ -262,7 +272,7 @@ func (b *BulkBackendAdapter) flushWithRetries(buffer []interface{}) int {
 		}
 	}
 
-	return 0
+	return maxCount
 }
 
 func (b *BulkBackendAdapter) flush() {
@@ -391,7 +401,9 @@ func (b *BulkBackendAdapter) Push(d define.Payload, killChan chan<- error) {
 		}
 
 		t := d.GetTime()
-		b.ObserveRecvDelta(t.Sub(at).Seconds())
+		if !at.IsZero() {
+			b.ObserveRecvDelta(t.Sub(at).Seconds())
+		}
 		b.ObserveProcessElapsed(time.Since(t).Seconds())
 
 		select {

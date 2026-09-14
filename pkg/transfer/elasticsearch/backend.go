@@ -13,8 +13,11 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	stdErrors "errors"
 	"fmt"
 	"io"
+	"net/http"
+	"strings"
 	"time"
 
 	version "github.com/hashicorp/go-version"
@@ -29,6 +32,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/transfer/utils"
 )
 
+const maxBulkFailureDetails = 10
+
 // BulkHandler :
 type BulkHandler struct {
 	pipeline.BaseBulkHandler
@@ -38,6 +43,43 @@ type BulkHandler struct {
 	writer        BulkWriter
 	indexRender   IndexRenderFn
 	transformers  map[string]etl.TransformFn
+	isLogsDB      bool
+}
+
+type retryableFlushError struct {
+	err       error
+	retryable bool
+}
+
+func (e *retryableFlushError) Error() string {
+	return e.err.Error()
+}
+
+func (e *retryableFlushError) Unwrap() error {
+	return e.err
+}
+
+func (e *retryableFlushError) Retryable() bool {
+	return e.retryable
+}
+
+func newRetryableFlushError(err error, retryable bool) error {
+	if err == nil {
+		return nil
+	}
+	return &retryableFlushError{err: err, retryable: retryable}
+}
+
+func shouldRetryFlushError(err error) bool {
+	var retryable interface{ Retryable() bool }
+	if stdErrors.As(err, &retryable) {
+		return retryable.Retryable()
+	}
+	return true
+}
+
+func isTransientHTTPStatus(status int) bool {
+	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= http.StatusInternalServerError
 }
 
 func (b *BulkHandler) makeRecordID(values map[string]interface{}) string {
@@ -51,6 +93,10 @@ func (b *BulkHandler) makeRecordID(values map[string]interface{}) string {
 }
 
 func (b *BulkHandler) asRecord(etlRecord *define.ETLRecord) (*Record, error) {
+	if etlRecord.Time == nil {
+		return nil, errors.Wrapf(define.ErrValue, "record time is empty")
+	}
+
 	values := make(map[string]interface{}, len(etlRecord.Metrics)+len(etlRecord.Dimensions)+1)
 	for key, value := range etlRecord.Metrics {
 		values[key] = value
@@ -58,9 +104,8 @@ func (b *BulkHandler) asRecord(etlRecord *define.ETLRecord) (*Record, error) {
 	for key, value := range etlRecord.Dimensions {
 		values[key] = value
 	}
-	if etlRecord.Time != nil {
-		values[define.TimeFieldName] = utils.ParseTimeStamp(*etlRecord.Time)
-	}
+	eventTime := utils.ParseTimeStamp(*etlRecord.Time)
+	values[define.TimeFieldName] = eventTime
 
 	for name, transformer := range b.transformers {
 		value, ok := values[name]
@@ -78,6 +123,9 @@ func (b *BulkHandler) asRecord(etlRecord *define.ETLRecord) (*Record, error) {
 	record := NewRecord(values)
 	record.SetID(b.makeRecordID(values))
 	record.SetType(b.resultTable.ResultTable)
+	if b.isLogsDB {
+		values["@timestamp"] = eventTime.UnixMilli()
+	}
 
 	return record, nil
 }
@@ -91,73 +139,112 @@ func (b *BulkHandler) Handle(ctx context.Context, payload define.Payload, killCh
 		return nil, time.Time{}, false
 	}
 
+	if etlRecord.Time == nil {
+		logging.Errorf("backend %v record time is empty", b)
+		return &etlRecord, time.Time{}, true
+	}
+
 	return &etlRecord, utils.ParseTimeStamp(*etlRecord.Time), true
 }
 
 func (b *BulkHandler) flush(ctx context.Context, index string, records Records) (count int, err error) {
 	logging.Debugf("backend %v flush %d records", b, len(records))
 
-	errs := utils.NewMultiErrors()
 	response, err := b.writer.Write(ctx, index, records)
-
-	var e error
-	var result []byte
-	if response != nil {
+	if response != nil && response.Body != nil {
 		defer func() {
 			logging.WarnIf("close response error", response.Body.Close())
 		}()
-		result, e = io.ReadAll(response.Body)
-		errs.Add(e)
 	}
 
-	switch {
-	case err != nil:
+	if err != nil {
 		logging.Warnf("backend %v flush error %v", b, err)
-		errs.Add(errors.Wrapf(err, "%v write failed", b))
+		return 0, newRetryableFlushError(errors.Wrapf(err, "%v write failed", b), true)
+	}
+	if response == nil {
+		return 0, newRetryableFlushError(errors.Wrapf(define.ErrDisaster, "elasticsearch response is nil"), true)
+	}
+	if response.Body == nil {
+		return 0, newRetryableFlushError(errors.Wrapf(define.ErrDisaster, "elasticsearch response body is nil"), true)
+	}
 
-	case response == nil:
-		errs.Add(errors.Wrapf(define.ErrDisaster, "response is nil"))
+	result, err := io.ReadAll(response.Body)
+	if err != nil {
+		return 0, newRetryableFlushError(errors.Wrapf(err, "backend %v read elasticsearch response failed", b), true)
+	}
+	if response.IsError() {
+		logging.Errorf("backend %v flush failed with HTTP %d: %s", b, response.StatusCode, result)
+		return 0, newRetryableFlushError(
+			errors.Wrapf(define.ErrOperationForbidden, "elasticsearch response %d: %s", response.StatusCode, result),
+			isTransientHTTPStatus(response.StatusCode),
+		)
+	}
 
-	case response.IsSysError():
-		logging.Errorf("backend %v flush failed because server error %s", b, result)
-		errs.Add(errors.Wrapf(define.ErrOperationForbidden, "response %d, %s", response.StatusCode, result))
+	logging.Debugf("backend %v write response status code %d", b, response.StatusCode)
+	var writeResult ESWriteResult
+	if err := json.Unmarshal(result, &writeResult); err != nil {
+		logging.Errorf("backend %v parse elasticsearch response error %v from %s", b, err, result)
+		return 0, newRetryableFlushError(errors.Wrapf(err, "backend %v parse elasticsearch response failed", b), true)
+	}
+	if len(writeResult.Items) != len(records) {
+		return 0, newRetryableFlushError(
+			errors.Errorf("backend %v elasticsearch bulk response item count mismatch: got %d, want %d", b, len(writeResult.Items), len(records)),
+			true,
+		)
+	}
 
-	default:
-		logging.Debugf("backend %v write response status code %d", b, response.StatusCode)
-		var writeResult ESWriteResult
-		if err := json.Unmarshal(result, &writeResult); err != nil {
-			logging.Errorf("backend %v parse elasticsearch response error %v from %s, skipped", b, err, result)
-			break
+	failureCount := 0
+	failureDetails := make([]string, 0, maxBulkFailureDetails)
+	retryable := false
+	for _, item := range writeResult.Items {
+		index := item.Index
+		if index.Status >= http.StatusOK && index.Status < http.StatusMultipleChoices && index.Error == nil {
+			count++
+			continue
 		}
 
-		if writeResult.Errors {
-			msg := fmt.Sprintf("backend %v write %d documents to elasticsearch failed, response: %s", b, writeResult.Took, result)
-			logging.MinuteErrorSampling(b.String(), msg)
-			var total int
-			for _, item := range writeResult.Items {
-				index := item.Index
-				if index.Error != nil {
-					total++
-					cause := index.Error.CausedBy
-					logging.Warnf("backend %v write %v to %v error %v:%v", b, index.ID, index.Index, cause.Type, cause.Reason)
-				}
+		failureCount++
+		if index.Error != nil {
+			cause := index.Error.CausedBy
+			logging.Warnf("backend %v write %v to %v status %d error %v:%v", b, index.ID, index.Index, index.Status, cause.Type, cause.Reason)
+			if len(failureDetails) < maxBulkFailureDetails {
+				failureDetails = append(failureDetails, fmt.Sprintf("id=%s status=%d type=%s reason=%s", index.ID, index.Status, index.Error.Type, index.Error.Reason))
 			}
-			MonitorESBackendPartialWrite.WithLabelValues(b.resultTable.ResultTable).Add(float64(total))
 		} else {
-			count = len(writeResult.Items)
-			if count != len(records) {
-				logging.Warnf("backend %v write %d documents to elasticsearch with ack %d, please check why data lost, response: %s", b, len(records), count, string(result))
+			logging.Warnf("backend %v write %v to %v failed with status %d", b, index.ID, index.Index, index.Status)
+			if len(failureDetails) < maxBulkFailureDetails {
+				failureDetails = append(failureDetails, fmt.Sprintf("id=%s status=%d", index.ID, index.Status))
 			}
+		}
+		if index.Status == 0 || isTransientHTTPStatus(index.Status) {
+			retryable = true
 		}
 	}
 
-	return count, errs.AsError()
+	if failureCount > 0 || writeResult.Errors {
+		if failureCount == 0 {
+			retryable = true
+		}
+		MonitorESBackendPartialWrite.WithLabelValues(b.resultTable.ResultTable).Add(float64(failureCount))
+		msg := fmt.Sprintf("backend %v elasticsearch bulk write partially failed: %d succeeded, %d failed", b, count, failureCount)
+		if len(failureDetails) > 0 {
+			msg = fmt.Sprintf("%s: %s", msg, strings.Join(failureDetails, "; "))
+			if failureCount > len(failureDetails) {
+				msg = fmt.Sprintf("%s; %d more failures", msg, failureCount-len(failureDetails))
+			}
+		}
+		logging.MinuteErrorSampling(b.String(), msg)
+		return count, newRetryableFlushError(errors.New(msg), retryable)
+	}
+
+	return count, nil
 }
 
 // Flush :
 func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count int, err error) {
 	lastIndex := ""
 	errs := utils.NewMultiErrors()
+	retryable := false
 	records := make(Records, 0, len(results))
 	for _, value := range results {
 		payload := value.(*define.ETLRecord)
@@ -179,10 +266,13 @@ func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count i
 
 		// 处理跨时间间隔
 		if index != lastIndex && lastIndex != "" {
-			cnt, err := b.flush(ctx, index, records)
+			cnt, err := b.flush(ctx, lastIndex, records)
 			records = records[:0]
 			count += cnt
 			errs.Add(err)
+			if err != nil && shouldRetryFlushError(err) {
+				retryable = true
+			}
 		}
 		lastIndex = index
 		records = append(records, record)
@@ -192,9 +282,12 @@ func (b *BulkHandler) Flush(ctx context.Context, results []interface{}) (count i
 		cnt, err := b.flush(ctx, lastIndex, records)
 		count += cnt
 		errs.Add(err)
+		if err != nil && shouldRetryFlushError(err) {
+			retryable = true
+		}
 	}
 
-	return count, errs.AsError()
+	return count, newRetryableFlushError(errs.AsError(), retryable)
 }
 
 // Close :
@@ -252,6 +345,7 @@ func NewBulkHandler(cluster *config.ElasticSearchMetaClusterInfo, table *config.
 		uniqueField:   uniqueFields,
 		indexRender:   indexRender,
 		transformers:  transformers,
+		isLogsDB:      cluster.IsLogsDB(),
 	}
 	return handler, nil
 }

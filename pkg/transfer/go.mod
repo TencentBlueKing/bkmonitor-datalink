@@ -15,6 +15,7 @@ require (
 	github.com/elastic/go-elasticsearch/v5 v5.6.1
 	github.com/elastic/go-elasticsearch/v6 v6.8.2
 	github.com/elastic/go-elasticsearch/v7 v7.3.0
+	github.com/elastic/go-elasticsearch/v8 v8.11.0
 	github.com/emirpasic/gods v1.12.0
 	github.com/go-redis/redis v6.15.1+incompatible
 	github.com/go-redis/redis/v8 v8.8.3
@@ -65,6 +66,7 @@ require (
 	github.com/eapache/go-resiliency v1.3.0 // indirect
 	github.com/eapache/go-xerial-snappy v0.0.0-20180814174437-776d5712da21 // indirect
 	github.com/eapache/queue v1.1.0 // indirect
+	github.com/elastic/elastic-transport-go/v8 v8.3.0 // indirect
 	github.com/envoyproxy/go-control-plane v0.8.0 // indirect
 	github.com/fsnotify/fsnotify v1.4.9 // indirect
 	github.com/go-ole/go-ole v1.2.4 // indirect

@@ -72,6 +72,25 @@ func TestTheOvershootIsObservedOnlyWhenTheIndexWasWrong(t *testing.T) {
 	})
 	dispatcher.bundle.mu.Unlock()
 
+	observedOn := func(cooldown string) uint64 {
+		families, err := recorder.Gatherer().Gather()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, family := range families {
+			if family.GetName() != "bkmonitor_alarmd_due_index_audit_overshoot_seconds" {
+				continue
+			}
+			for _, series := range family.Metric {
+				for _, pair := range series.Label {
+					if pair.GetName() == "cooldown" && pair.GetValue() == cooldown {
+						return series.GetHistogram().GetSampleCount()
+					}
+				}
+			}
+		}
+		return 0
+	}
 	observed := func() uint64 {
 		families, err := recorder.Gatherer().Gather()
 		if err != nil {
@@ -108,5 +127,33 @@ func TestTheOvershootIsObservedOnlyWhenTheIndexWasWrong(t *testing.T) {
 	dispatcher.recordDueBound(phaseTwoScheduledResult{scheduled: scheduled, ran: true})
 	if got := observed(); got != 1 {
 		t.Fatalf("observed %d samples for the one violation, want 1", got)
+	}
+	if got := observedOn("false"); got != 1 {
+		t.Fatalf("the violation landed on cooldown=%q, want false: this round was not backing off",
+			"true")
+	}
+
+	// A round that was in query cooldown. It returns without advancing the
+	// cursor, so the Slot stays due and the prediction is recorded as wrong --
+	// a suppression working exactly as intended, counted as an index defect.
+	// On one curve with the rest it inflates the defect rate by however large
+	// the cooldown population is, and nothing on the metric would say so.
+	dispatcher.bundle.mu.Lock()
+	dispatcher.bundle.setRunnerLocked("query-group-a", &phaseTwoQueryGroupLifecycle{
+		runner: walkRunner{bound: scheduler.RunnerDueBound{
+			Verdict: scheduler.DueVerdictDue, QueryCooldown: true}},
+	})
+	dispatcher.bundle.mu.Unlock()
+	cooled, _ := dispatcher.bundle.snapshotScheduledRunners()
+	chilled := cooled[0]
+	chilled.predictedDue, chilled.predictedHeldFor = false, 90*time.Second
+	dispatcher.recordDueBound(phaseTwoScheduledResult{scheduled: chilled, ran: true})
+
+	if got := observedOn("true"); got != 1 {
+		t.Fatalf("cooldown=true has %d samples, want the cooldown round there; taken from anywhere "+
+			"but this round's bound it lands beside the real defects", got)
+	}
+	if got := observedOn("false"); got != 1 {
+		t.Fatalf("cooldown=false has %d samples, want the earlier one only", got)
 	}
 }

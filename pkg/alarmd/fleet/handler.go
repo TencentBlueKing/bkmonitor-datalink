@@ -178,6 +178,15 @@ type HealthResponse struct {
 	// an invariant kept in a different file, and a fixture should not be able to
 	// express a deployment that cannot exist.
 	LastDemotionExit *time.Time `json:"last_demotion_exit,omitempty"`
+	// PrunedSkips are the objects that lost a span of Slots to a pruned
+	// timeline. They are in no column and in no total on this response, because
+	// they belong to none: the objects are running now.
+	//
+	// A list rather than a count. The count alone cannot be acted on -- what a
+	// reader needs is which objects and how long a span each lost, and the
+	// spans differ by orders of magnitude between a cursor that fell a minute
+	// behind and one that fell a day behind.
+	PrunedSkips []PrunedSkipRef `json:"pruned_skips,omitempty"`
 	// PublishedVersion and Workers are the acknowledgement view: which
 	// Activation the control plane published and how many counted replicas
 	// have applied it. Per-replica versions are on PerReplica.
@@ -683,6 +692,7 @@ func NewHandler(
 			DemotionEntries:    view.DemotionEntries,
 			DemotionExtensions: view.DemotionExtensions, DemotionExits: view.DemotionExits,
 			LastDemotionExit: momentOrNil(view.LastDemotionExit),
+			PrunedSkips:      prunedSkipList(view.PrunedSkips),
 			Coverage:         view.Coverage, PerReplica: view.PerReplica,
 			PublishedVersion: view.PublishedVersion, Workers: view.Workers,
 			Overdue: view.Overdue, Dispatch: view.Dispatch,
@@ -1092,4 +1102,38 @@ func objectRecords(request *http.Request, queryGroup string, store *DiagnosticSt
 		return nil, &health, "diagnostic records are unavailable"
 	}
 	return records, &health, ""
+}
+
+// PrunedSkipRef is one object's lost span, as the page receives it.
+type PrunedSkipRef struct {
+	QueryGroup string `json:"query_group"`
+	// SpanSeconds is how long the span covers. The number of Slots inside it is
+	// not reported because it is not knowable: the segments that would have
+	// counted them are the segments that were pruned. A count would have to be
+	// invented, and an invented one reads exactly like a measured one.
+	SpanSeconds   int64     `json:"span_seconds"`
+	At            time.Time `json:"at"`
+	DiscardedSlot int64     `json:"discarded_slot,omitempty"`
+}
+
+// prunedSkipList orders the lost spans longest first, because the length of the
+// span is how much detection was lost and is the only thing here that ranks.
+func prunedSkipList(skips map[string]PrunedSkip) []PrunedSkipRef {
+	if len(skips) == 0 {
+		return nil
+	}
+	list := make([]PrunedSkipRef, 0, len(skips))
+	for queryGroup, skip := range skips {
+		list = append(list, PrunedSkipRef{
+			QueryGroup: queryGroup, SpanSeconds: int64(skip.Spanning() / time.Second),
+			At: skip.At, DiscardedSlot: skip.DiscardedSlot,
+		})
+	}
+	sort.Slice(list, func(left, right int) bool {
+		if list[left].SpanSeconds != list[right].SpanSeconds {
+			return list[left].SpanSeconds > list[right].SpanSeconds
+		}
+		return list[left].QueryGroup < list[right].QueryGroup
+	})
+	return list
 }

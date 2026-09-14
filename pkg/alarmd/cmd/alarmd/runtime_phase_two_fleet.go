@@ -379,6 +379,9 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	snapshot.TotalByDesign = len(byDesign)
 	snapshot.DemotionEntries, snapshot.DemotionExtensions, snapshot.DemotionExits,
 		snapshot.LastDemotionExit = publisher.tracker.DemotionFlow()
+	// The spans nothing ever evaluated. Not folded into any column: those
+	// objects are running normally now, and the loss is in their past.
+	snapshot.PrunedSkips = publisher.tracker.PrunedSkips()
 	if publisher.capacity != nil {
 		snapshot.Capacity = publisher.capacity()
 	}

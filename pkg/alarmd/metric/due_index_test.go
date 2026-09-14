@@ -12,6 +12,8 @@ package metric
 import (
 	"testing"
 	"time"
+
+	dto "github.com/prometheus/client_model/go"
 )
 
 // The overshoot lands in the bucket its magnitude belongs to, and the two
@@ -25,8 +27,8 @@ import (
 func TestTheOvershootSeparatesALateBoundFromACrossedBoundary(t *testing.T) {
 	recorder := NewRecorder(BuildInfo{})
 	// Inside one walk over the owned set, and far outside it.
-	recorder.RecordDueIndexAuditOvershoot(200 * time.Millisecond)
-	recorder.RecordDueIndexAuditOvershoot(45 * time.Second)
+	recorder.RecordDueIndexAuditOvershoot(200*time.Millisecond, false)
+	recorder.RecordDueIndexAuditOvershoot(45*time.Second, false)
 
 	families, err := recorder.registry.Gather()
 	if err != nil {
@@ -40,6 +42,12 @@ func TestTheOvershootSeparatesALateBoundFromACrossedBoundary(t *testing.T) {
 		}
 		cumulative = map[float64]uint64{}
 		for _, series := range family.Metric {
+			// Only the series these samples were recorded on. The other label
+			// value is pre-created and empty, and folding it in would hide a
+			// sample landing on the wrong side of the label.
+			if !seriesHasLabel(series, "cooldown", "false") {
+				continue
+			}
 			count = series.GetHistogram().GetSampleCount()
 			for _, bucket := range series.GetHistogram().GetBucket() {
 				cumulative[bucket.GetUpperBound()] = bucket.GetCumulativeCount()
@@ -74,7 +82,7 @@ func TestTheOvershootSeparatesALateBoundFromACrossedBoundary(t *testing.T) {
 // bucket and silently change the count the buckets are read against.
 func TestAnOvershootThatAlreadyPassedIsRecordedAsNone(t *testing.T) {
 	recorder := NewRecorder(BuildInfo{})
-	recorder.RecordDueIndexAuditOvershoot(-5 * time.Second)
+	recorder.RecordDueIndexAuditOvershoot(-5*time.Second, false)
 
 	families, err := recorder.registry.Gather()
 	if err != nil {
@@ -85,10 +93,66 @@ func TestAnOvershootThatAlreadyPassedIsRecordedAsNone(t *testing.T) {
 			continue
 		}
 		for _, series := range family.Metric {
+			if !seriesHasLabel(series, "cooldown", "false") {
+				continue
+			}
 			if sum := series.GetHistogram().GetSampleSum(); sum != 0 {
 				t.Fatalf("sample sum = %v, want 0: a negative overshoot is the bound having passed, "+
 					"not a measurement, and it would drag the sum below every bucket", sum)
 			}
 		}
+	}
+}
+
+func seriesHasLabel(series *dto.Metric, name, value string) bool {
+	for _, pair := range series.Label {
+		if pair.GetName() == name {
+			return pair.GetValue() == value
+		}
+	}
+	return false
+}
+
+// Cooldown observations land on their own series.
+//
+// A cooldown round is a deliberate backing-off from a backend that keeps
+// failing, and it returns without advancing the cursor, so the Slot stays due
+// and the prediction is recorded as wrong. Those are a suppression working as
+// intended counted as an index defect. On one curve with the rest they inflate
+// the defect rate by however large the cooldown population happens to be, and
+// nothing on the metric would say so.
+//
+// Both label values are pre-created, because a population that is entirely on
+// one side of the label and one that has never observed anything look identical
+// when the other series is simply absent -- and "none of these are cooldown" is
+// a result.
+func TestCooldownObservationsAreReadableApartFromIndexDefects(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	recorder.RecordDueIndexAuditOvershoot(90*time.Second, true)
+	recorder.RecordDueIndexAuditOvershoot(2*time.Second, false)
+
+	families, err := recorder.registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]uint64{}
+	for _, family := range families {
+		if family.GetName() != "bkmonitor_alarmd_due_index_audit_overshoot_seconds" {
+			continue
+		}
+		for _, series := range family.Metric {
+			for _, pair := range series.Label {
+				if pair.GetName() == "cooldown" {
+					counts[pair.GetValue()] = series.GetHistogram().GetSampleCount()
+				}
+			}
+		}
+	}
+	if len(counts) != 2 {
+		t.Fatalf("published %d cooldown series, want both pre-created: an absent series and an "+
+			"empty one are the same thing to a reader, and \"none were cooldown\" is a result", len(counts))
+	}
+	if counts["true"] != 1 || counts["false"] != 1 {
+		t.Fatalf("cooldown split = %v, want one on each side", counts)
 	}
 }

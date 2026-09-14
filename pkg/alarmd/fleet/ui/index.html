@@ -201,6 +201,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       </div>
     </div>
     <ul class="gaps" id="gaps"></ul>
+    <p class="basis" id="prunedSkips" hidden></p>
     <div id="coverWrap" hidden>
       <p class="basis" id="coverBasis"></p>
       <div class="grid">
@@ -788,6 +789,7 @@ function renderDeployment(deployment) {
         }
       }
     }
+    renderPrunedSkips(deployment.pruned_skips || []);
     var gaps = deployment.gaps || [];
     // UNKNOWN has two ways in and the wording used to describe only one.
     //
@@ -2873,6 +2875,40 @@ function coverageShare(windowCoverage, count) {
 // window ever being persistently short. At this layer there is no series
 // identity to tell those apart, and saying so is cheaper and more honest than a
 // verdict that quietly assumes one of them.
+// Spans of Slots nothing ever evaluated.
+//
+// This is the most complete form of "detection did not happen" the deployment
+// produces, and it had nothing on the page at all. A degraded round was
+// attempted; a demoted object is being retried; an overdue object is late.
+// These Slots were never evaluated, will not be revisited, and the object went
+// straight back to running normally -- so every column, every total and every
+// per-round signal correctly reports it as fine. There was no place where the
+// loss could be said, which is why it needed one of its own rather than a seat
+// in a column.
+//
+// The length of the span is what ranks, and it is the only size available: how
+// many Slots are inside it cannot be known, because the parts of the timeline
+// that would have counted them are the parts that were removed. The page says
+// that rather than printing a number that would read as measured.
+function renderPrunedSkips(skips) {
+  show('prunedSkips', skips.length > 0);
+  if (!skips.length) return;
+  var longest = skips[0];
+  var parts = ['有 ' + skips.length + ' 个对象存在一段"从来没有被检测过"的时间'
+    + '——它们的游标曾经指向已经被裁掉的时间线，被移到了时间线还留着的最早一个时间点。'
+    + '那一段里的时间点没有被评估过，也不会补跑。'];
+  parts.push('最长的一段是 ' + shortId(longest.query_group) + '，跨度 '
+    + elapsedLabel(longest.span_seconds) + '，发生在 ' + momentLabel(longest.at));
+  if (longest.discarded_slot) {
+    parts.push('其中有一个时间点当时正在跑，被一起丢掉了');
+  }
+  parts.push('跨度里有多少个时间点无法得知：能数它们的那部分时间线正是被裁掉的那部分。'
+    + '所以这里只给时间跨度，不给个数——给个数就会被当成数出来的');
+  parts.push('这些对象现在通常是正常的，上面每一栏都会这么报，而且都没报错。'
+    + '要处理的不是它们此刻的状态，是那一段没有告警覆盖的时间');
+  text('prunedSkips', parts.join('；') + '。');
+}
+
 function coverageScopeNote(windowCoverage) {
   return '口径：一个窗口 = 一条序列的一个级别（一轮里补算多个时间点时，每个时间点各算一次）。'
     + '本轮汇总了 ' + (windowCoverage.levels || 0) + ' 个，其中 '

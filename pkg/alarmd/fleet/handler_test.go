@@ -654,3 +654,40 @@ func TestHealthEndpointCarriesTheNumbersItsVerdictIsDecidedOn(t *testing.T) {
 			body["ours"])
 	}
 }
+
+// The lost spans reach the response, longest first, with a span and no Slot
+// count.
+//
+// Dropped anywhere on the way here they arrive as nothing, and nothing is the
+// reading that says no object ever lost a span -- which is what the page said
+// for as long as the event could not reach it at all.
+func TestHealthResponseCarriesTheSpansNothingEverEvaluated(t *testing.T) {
+	snapshots := healthySnapshots()
+	snapshots[0].PrunedSkips = map[string]PrunedSkip{
+		"qg-short": {From: 120, To: 300, At: now.Add(-time.Hour)},
+		"qg-long":  {From: 120, To: 5520, At: now.Add(-time.Minute), DiscardedSlot: 180},
+	}
+	handler := handlerWith(t, snapshots, Expectation{QueryGroups: 2, Known: true}, []string{"pod-a", "pod-b"})
+
+	body := requestJSON(t, handler, "/api/health")
+	listed, ok := body["pruned_skips"].([]any)
+	if !ok || len(listed) != 2 {
+		t.Fatalf("health response carried %v for pruned_skips, want both lost spans; absent, the "+
+			"page can only say nothing was ever skipped", body["pruned_skips"])
+	}
+	first, _ := listed[0].(map[string]any)
+	if first["query_group"] != "qg-long" {
+		t.Fatalf("first entry is %v, want the longest span first: the length is how much detection "+
+			"was lost and the only thing here that ranks", first["query_group"])
+	}
+	if first["span_seconds"].(float64) != 5400 {
+		t.Fatalf("span = %v, want 5400 seconds", first["span_seconds"])
+	}
+	// No Slot count, at any depth. The number is not knowable and an invented
+	// one reads exactly like a measured one.
+	for _, field := range []string{"count", "slots", "slot_count"} {
+		if _, present := first[field]; present {
+			t.Fatalf("the response carries %q for a span whose Slots cannot be counted: %v", field, first)
+		}
+	}
+}

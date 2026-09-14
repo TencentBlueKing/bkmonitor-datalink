@@ -495,6 +495,12 @@ type Snapshot struct {
 	// Zero means it has not seen one, which is not the same as "none left
 	// recently" and must not be rendered as a duration.
 	LastDemotionExit time.Time `json:"last_demotion_exit,omitempty"`
+	// PrunedSkips are the objects that have a span of Slots nothing ever
+	// evaluated. Published as their own list because they belong to no column:
+	// the object is not failing now and is not being held back, and every signal
+	// about its current round says so correctly. What happened is in its past
+	// and is permanent.
+	PrunedSkips map[string]PrunedSkip `json:"pruned_skips,omitempty"`
 	// Capacity is how close this replica is to its own limits. Absent on a
 	// replica that does not report it, which is why the aggregate counts the
 	// replicas it actually heard from rather than assuming every one answered.
@@ -823,10 +829,15 @@ type View struct {
 	// counted replicas. Exits is the one that matters: demotion takes objects
 	// out of the denominator, so a pool that fills and never drains is a
 	// mechanism for making a deployment look well, and only this number says so.
-	DemotionEntries    int       `json:"demotion_entries"`
-	DemotionExtensions int       `json:"demotion_extensions"`
-	DemotionExits      int       `json:"demotion_exits"`
-	LastDemotionExit   time.Time `json:"last_demotion_exit,omitempty"`
+	// PrunedSkips are objects with a span of Slots nothing ever evaluated,
+	// keyed by Query Group. In no column and in no total: the objects are
+	// running now and every signal about their current round says so, which is
+	// exactly why this needs somewhere of its own to be said.
+	PrunedSkips        map[string]PrunedSkip `json:"pruned_skips,omitempty"`
+	DemotionEntries    int                   `json:"demotion_entries"`
+	DemotionExtensions int                   `json:"demotion_extensions"`
+	DemotionExits      int                   `json:"demotion_exits"`
+	LastDemotionExit   time.Time             `json:"last_demotion_exit,omitempty"`
 	// DemotedDue counts pooled objects whose own cooldown window has already
 	// elapsed at the moment of this read: they are due to be tried again and are
 	// still in the pool.
@@ -939,6 +950,17 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		view.DemotionEntries += snapshot.DemotionEntries
 		view.DemotionExtensions += snapshot.DemotionExtensions
 		view.DemotionExits += snapshot.DemotionExits
+		for queryGroup, skip := range snapshot.PrunedSkips {
+			if view.PrunedSkips == nil {
+				view.PrunedSkips = make(map[string]PrunedSkip, len(snapshot.PrunedSkips))
+			}
+			// Keyed by object, so two replicas that both saw the same object
+			// skipped report it once. The later one wins: the span a reader
+			// needs to see is the most recent loss, not the first.
+			if existing, seen := view.PrunedSkips[queryGroup]; !seen || skip.At.After(existing.At) {
+				view.PrunedSkips[queryGroup] = skip
+			}
+		}
 		if snapshot.LastDemotionExit.After(view.LastDemotionExit) {
 			view.LastDemotionExit = snapshot.LastDemotionExit
 		}
@@ -1356,4 +1378,44 @@ func shortReplicaName(replica string) string {
 		return replica[index+1:]
 	}
 	return replica
+}
+
+// PrunedSkip is a span of Slots one object never had evaluated, because its
+// Progress cursor pointed into a part of the Schedule timeline that had been
+// pruned and was moved to the earliest Slot the timeline still holds.
+//
+// It is the most complete form of "detection did not happen" this deployment
+// produces. A degraded round was attempted and failed; a demoted object is
+// being held back and will be retried; an overdue object is late. This is
+// none of those: the Slots in the span were never evaluated, will not be
+// revisited, and the object went straight back to running normally -- so every
+// signal that describes the current round reports it as healthy, correctly.
+//
+// It had no way to reach this page at all. The event is not a round, so it
+// carries no completion and no outcome, and the tracker dropped it before
+// looking. The one thing on the deployment that cannot be recovered was the one
+// thing with nothing on screen.
+type PrunedSkip struct {
+	// From is the cursor that was skipped from and To where it landed. How many
+	// Slots lie between them is not knowable: the segments that would have
+	// counted them are the segments that were pruned. The span in time is what
+	// can be told, and it is told rather than a count being invented.
+	From int64 `json:"from"`
+	To   int64 `json:"to"`
+	// At is when this replica applied the skip, so a reader can tell one that
+	// happened during the last rollout from one happening now.
+	At time.Time `json:"at"`
+	// DiscardedSlot is the Slot that was in flight when the skip was applied and
+	// was discarded with the span, or zero. It is the one Slot in the span that
+	// can be named, and it was being worked on when it was dropped.
+	DiscardedSlot int64 `json:"discarded_slot,omitempty"`
+}
+
+// Spanning is how long the skipped span covers. It is a duration rather than a
+// Slot count on purpose -- see PrunedSkip.From.
+func (skip PrunedSkip) Spanning() time.Duration {
+	if skip.To <= skip.From {
+		return 0
+	}
+	return time.Duration(skip.To-skip.From) * time.Second
 }

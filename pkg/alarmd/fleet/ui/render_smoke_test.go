@@ -255,6 +255,14 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			// names a different cause -- one screen, two answers.
 			Unattributed: 8,
 			Gaps:         []fleet.Gap{{Kind: fleet.GapUndetermined}},
+			// Spans nothing ever evaluated. In no column and in no total, which
+			// is the whole difficulty -- the objects are running now and every
+			// other number on the panel says so, correctly.
+			PrunedSkips: []fleet.PrunedSkipRef{
+				{QueryGroup: "qg-pruned-long", SpanSeconds: 5400, At: at.Add(-20 * time.Minute),
+					DiscardedSlot: at.Add(-90 * time.Minute).Unix()},
+				{QueryGroup: "qg-pruned-short", SpanSeconds: 180, At: at.Add(-time.Hour)},
+			},
 			// Nothing overdue, with the dispatch suppression that makes that zero
 			// mean something. This is the branch a healthy deployment renders and
 			// the one nobody had ever executed.
@@ -594,6 +602,17 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		{"PARKED ::", "别相加", "",
 			"此刻被拦下的数和六栏的最近一轮结果不是同一个时刻"},
 
+		// The one loss with nothing on the page before this. It belongs to no
+		// column, so it needed a line of its own or it could not be said at all.
+		{"PRUNED ::", "从来没有被检测过", "",
+			"这一段的时间点没有被评估过也不会补跑，页面上必须说得出来"},
+		{"PRUNED ::", "1 小时 30 分", "",
+			"最长的那一段要给出跨度，它是唯一能排序的量"},
+		{"PRUNED ::", "无法得知", "",
+			"跨度里有多少个时间点数不出来，给个数会被当成数出来的"},
+		{"PRUNED ::", "上面每一栏都会这么报", "",
+			"这些对象此刻正常，不说清就会被当成页面自相矛盾"},
+
 		// The same panel in the states one fixture cannot be in at once. Each of
 		// these is a branch that renders a sentence, and a branch that never ran
 		// is a sentence nothing has read.
@@ -823,6 +842,7 @@ console.log('POOL :: ' + (store['poolFlowHint'] ? store['poolFlowHint'].textCont
 console.log('UNATTR gap :: ' + (store['unattributedHint'] ? store['unattributedHint'].textContent : '(not rendered)'));
 console.log('WHY gap :: ' + (store['why'] ? store['why'].textContent : '(not rendered)'));
 console.log('PARKED :: ' + (store['overdueHint'] ? store['overdueHint'].textContent : '(not rendered)'));
+console.log('PRUNED :: ' + (store['prunedSkips'] ? store['prunedSkips'].textContent : '(not rendered)'));
 
 // The note each row would actually render, emitted for the Go side to check.
 // Executing anomalyRow only proves the page does not throw; the wording is

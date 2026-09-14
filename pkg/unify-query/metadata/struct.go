@@ -136,9 +136,10 @@ type Aggregates []Aggregate
 
 // Query 查询扩展信息，为后面查询提供定位
 type Query struct {
-	FieldSemantics string `json:"field_semantics,omitempty"`
-	SourceType     string `json:"source_type,omitempty"`
-	Password       string `json:"password,omitempty"` // 查询鉴权
+	FieldSemantics   string        `json:"field_semantics,omitempty"`
+	SourceConditions AllConditions `json:"source_conditions,omitempty"`
+	SourceType       string        `json:"source_type,omitempty"`
+	Password         string        `json:"password,omitempty"` // 查询鉴权
 
 	ClusterID string `json:"cluster_id,omitempty"` // 存储 ID
 

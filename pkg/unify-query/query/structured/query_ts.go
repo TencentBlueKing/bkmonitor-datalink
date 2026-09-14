@@ -412,6 +412,8 @@ type TimeField struct {
 type Query struct {
 	// FieldSemantics selects a versioned physical field schema.
 	FieldSemantics string `json:"field_semantics,omitempty"`
+	// SourceConditions keeps intrinsic source filters outside the user's bool group.
+	SourceConditions *Conditions `json:"source_conditions,omitempty"`
 	// DataSource 暂不使用
 	DataSource string `json:"data_source,omitempty" swaggerignore:"true"`
 	// TableID 数据实体ID，容器指标可以为空
@@ -693,6 +695,17 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 
 // ToQueryMetric 通过 spaceUid 转换成可查询结构体
 func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs) (*metadata.QueryMetric, error) {
+	var sourceConditions AllConditions
+	if q.SourceConditions != nil {
+		if q.FieldSemantics != metadata.FTAEventTagsV1 {
+			return nil, fmt.Errorf("source_conditions requires FTA field semantics")
+		}
+		var sourceErr error
+		sourceConditions, sourceErr = q.SourceConditions.AnalysisConditions()
+		if sourceErr != nil {
+			return nil, sourceErr
+		}
+	}
 	if q.FieldSemantics != "" && q.FieldSemantics != metadata.FTAEventTagsV1 {
 		return nil, fmt.Errorf("unsupported field_semantics %q", q.FieldSemantics)
 	}
@@ -886,6 +899,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 
 		for _, storageRange := range storageRanges {
 			query := q.BuildMetadataQuery(ctx, tsDB, allConditions)
+			query.SourceConditions = sourceConditions.MetaDataAllConditions()
 			if query == nil {
 				continue
 			}

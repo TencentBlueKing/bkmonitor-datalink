@@ -153,8 +153,9 @@ type NestedAgg struct {
 type aggInfoList []any
 
 type FormatFactory struct {
-	fieldSemantics string
-	ctx            context.Context
+	fieldSemantics   string
+	sourceConditions metadata.AllConditions
+	ctx              context.Context
 
 	valueField string
 	timeField  metadata.TimeField
@@ -1045,11 +1046,29 @@ func negativeLookaheadQuery(field string, regexp elastic.Query) elastic.Query {
 
 // Query 把 ts 的 conditions 转换成 es 查询
 func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Query, error) {
+	if len(f.sourceConditions) > 0 && f.fieldSemantics != metadata.FTAEventTagsV1 {
+		return nil, fmt.Errorf("source_conditions requires FTA field semantics")
+	}
 	if f.fieldSemantics != "" {
 		if f.fieldSemantics != metadata.FTAEventTagsV1 {
 			return nil, fmt.Errorf("unsupported field_semantics %q", f.fieldSemantics)
 		}
-		return f.ftaQuery(allConditions)
+		user, err := f.ftaQuery(allConditions)
+		if err != nil {
+			return nil, err
+		}
+		if len(f.sourceConditions) == 0 {
+			return user, nil
+		}
+		source, err := f.ftaQuery(f.sourceConditions)
+		if err != nil {
+			return nil, err
+		}
+		combined := elastic.NewBoolQuery().Filter(source)
+		if user != nil {
+			combined.Filter(user)
+		}
+		return combined, nil
 	}
 	bootQueries := make([]elastic.Query, 0)
 	orQuery := make([]elastic.Query, 0, len(allConditions))

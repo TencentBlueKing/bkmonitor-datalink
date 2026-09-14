@@ -854,6 +854,7 @@ func newSeriesFormatFactory(
 
 	return NewFormatFactory(ctx).
 		WithFieldSemantics(query.FieldSemantics).
+		WithSourceConditions(query.SourceConditions).
 		WithTransform(func(s string) string {
 			// 别名替换
 			ns := s

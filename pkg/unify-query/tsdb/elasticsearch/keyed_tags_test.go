@@ -164,3 +164,22 @@ func TestFTANormalDimensionKeepsLogicalName(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `{"terms":{"field":"alert_name.raw","size":1440},"aggregations":{"_value":{"value_count":{"field":"_index"}}}}`, string(b))
 }
+
+func TestFTASourceFiltersPreserveUserShould(t *testing.T) {
+	metadata.InitMetadata()
+	f := tagFactory().WithSourceConditions(metadata.AllConditions{{{DimensionName: "status", Operator: "eq", Value: []string{"ABNORMAL"}}}})
+	q, err := f.Query(metadata.AllConditions{{{DimensionName: "tags.env", Operator: "contains", Value: []string{"prod"}}}})
+	require.NoError(t, err)
+	s, err := q.Source()
+	require.NoError(t, err)
+	filters := s.(map[string]interface{})["bool"].(map[string]interface{})["filter"].([]interface{})
+	require.Len(t, filters, 2)
+	userOuter := filters[1].(map[string]interface{})["bool"].(map[string]interface{})
+	userInner := userOuter["should"].(map[string]interface{})["bool"].(map[string]interface{})
+	// A should-only bool requires a match. Moving status into this group
+	// would turn include into an optional clause and admit unrelated events.
+	require.Contains(t, userInner, "should")
+	require.NotContains(t, userInner, "must")
+	_, err = f.WithFieldSemantics("").Query(nil)
+	require.ErrorContains(t, err, "source_conditions requires")
+}

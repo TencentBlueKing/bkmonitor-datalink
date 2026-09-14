@@ -273,6 +273,15 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 				Budgets:    map[string]uint64{"events": 65536, "series": 524288},
 				Rejections: map[string]uint64{},
 				Pulled:     &fleet.SeriesPull{Series: 900000, Records: 900000},
+				// The rotation, which the fixture did not carry, so the two cells
+				// that read it were never rendered by anything. One of them told a
+				// reader to grow a queue for a number that is mostly a branch more
+				// room cannot change.
+				Rotation: &fleet.Rotation{
+					Completed: 2069, Truncated: 4, Offered: 100000, Queued: 90000,
+					Deferred: 512, DeferredQueueFull: 12, DeferredNotBetter: 500,
+					LastSeconds: 0.86,
+				},
 			},
 			// The line that answers "what is affected". Its columns are
 			// truncated and some of its objects name no strategy, because both
@@ -617,6 +626,17 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			"这一条的下一步是等压制解除，不是去查数据"},
 		{"HELD qg-window-held-short ::", "1/4 个窗口报的不是本轮算出来的结果", "",
 			"仍然短的行里，对点数的结论成立而它下面那个原因未必成立"},
+
+		// 被挡回 by cause. The old wording named one remedy -- grow the queue --
+		// for a number that is mostly the branch more room cannot change.
+		{"ROT only-not-better ::", "扩队列不会改变这个数", "扩队列有用",
+			"全是排序结果时不能让人去扩队列"},
+		{"ROT only-queue-full ::", "这一种扩队列有用", "扩队列不会改变这个数",
+			"全是没位置时扩队列确实有用，而且轮转会就地停下"},
+		{"ROT mixed ::", "就绪队列没位置 12 次", "",
+			"两种都有时先给出该看的那个数，不是只给总数"},
+		{"ROT unsplit ::", "副本没有报告是哪一种原因", "扩队列有用",
+			"副本没报告成因时说不出该不该处理，猜一个比不说更糟"},
 	} {
 		line := lineStarting(text, want.prefix)
 		if line == "" {
@@ -831,6 +851,30 @@ clockMs += 30000;
 try { ctx.renderCapacity(data.health.capacity, []); }
 catch (e) { console.error('renderCapacity (refresh, counters unmoved): ' + e.constructor.name + ': ' + e.message); failed++; }
 console.log('CAPACITY :: ' + textOf(store['capCards']));
+
+// The same panel over the rotation shapes a deployment is actually in.
+//
+// 被挡回 is one number produced by two branches with opposite answers: a ready
+// queue with no room, which more room fixes, and a recovery queue whose objects
+// are all due sooner, which the dispatcher itself calls a decision rather than a
+// lack of room. Which one dominates decides whether there is anything to do, so
+// each shape has to be rendered and read.
+const rotations = {
+  'mixed': {deferred: 512, deferred_queue_full: 12, deferred_not_better: 500},
+  'only-not-better': {deferred: 500, deferred_queue_full: 0, deferred_not_better: 500},
+  'only-queue-full': {deferred: 12, deferred_queue_full: 12, deferred_not_better: 0},
+  // A replica that has not been upgraded past the split. Saying nothing about
+  // the cause is right; saying the old sentence would be a guess.
+  'unsplit': {deferred: 512, deferred_queue_full: 0, deferred_not_better: 0},
+};
+for (const [name, rotation] of Object.entries(rotations)) {
+  store['capCards'].textContent = '';
+  const capacity = Object.assign({}, data.health.capacity,
+    {rotation: Object.assign({}, data.health.capacity.rotation, rotation)});
+  try { ctx.renderCapacity(capacity, []); }
+  catch (e) { console.error('renderCapacity (' + name + '): ' + e.message); failed++; continue; }
+  console.log('ROT ' + name + ' :: ' + textOf(store['capCards']));
+}
 
 // The impact line -- the only thing on the page that answers "what is affected"
 // rather than "how many objects".

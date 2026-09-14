@@ -564,6 +564,23 @@ type phaseTwoRotationFacts struct {
 	offered  uint64
 	queued   uint64
 	deferred uint64
+	// deferredQueueFull and deferredNotBetter split that total by which of the
+	// two branches produced it, because they are different conditions with
+	// different answers and one number cannot carry both.
+	//
+	// queueFull is the ready queue having no place: the walk stops there, so
+	// everything behind this Query Group is unoffered this pass too, and more
+	// room would change it.
+	//
+	// notBetter is the recovery queue being full of Query Groups that are all
+	// due sooner than this one. The code's own comment at that branch says it:
+	// "a decision, not a lack of room". More room does not change it, and a
+	// deployment where it dominates is not short of queue.
+	//
+	// Summed into one count, the page told a reader to grow a queue for a
+	// number that is mostly the second.
+	deferredQueueFull uint64
+	deferredNotBetter uint64
 	// lastSeconds is how long the most recent completed rotation took. It is
 	// the number an alert on "the deployment stopped covering its objects"
 	// needs, and until now nothing measured it.
@@ -1168,6 +1185,7 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 				// and the walk resumes from here within the same generation.
 				dispatcher.bundle.dependencies.TargetFlow.Record("queue_skipped", string(scheduled.queryGroup), observability.TargetFlowFacts{Decision: "normal_queue_full"})
 				dispatcher.rotation.deferred++
+				dispatcher.rotation.deferredQueueFull++
 				return
 			}
 			dispatcher.normal = append(dispatcher.normal, queued)
@@ -1180,6 +1198,7 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 					// not a lack of room, and the walk moves on.
 					dispatcher.bundle.dependencies.TargetFlow.Record("queue_skipped", string(scheduled.queryGroup), observability.TargetFlowFacts{Decision: "delayed_queue_full", ReadyAtMS: diagnosticTimeMS(readyAt)})
 					dispatcher.rotation.deferred++
+					dispatcher.rotation.deferredNotBetter++
 					advance()
 					continue
 				}
@@ -1256,12 +1275,24 @@ func (bundle *phaseTwoWorkerBundle) rotationFacts() *fleet.Rotation {
 // publishRotation copies the counts out for readers. It runs at most once per
 // rotation, so it is nowhere near the per-object path.
 func (dispatcher *phaseTwoRunnerDispatcher) publishRotation() {
-	facts := dispatcher.rotation
-	dispatcher.bundle.rotation.Store(&fleet.Rotation{
+	dispatcher.bundle.rotation.Store(rotationView(dispatcher.rotation))
+}
+
+// rotationView carries the walk's counts onto the view the page reads.
+//
+// Named and lifted out of the store call for the reason the worker's coverage
+// handoff is a named function: it is a hand-written copy between two structs
+// that have to hold the same numbers, and a count added on one side and
+// forgotten on the other reaches the page as a zero -- which reads as "this
+// never happened" rather than "nobody carried it". Inline, nothing could
+// execute the translation on its own, so nothing could see the gap.
+func rotationView(facts phaseTwoRotationFacts) *fleet.Rotation {
+	return &fleet.Rotation{
 		Completed: facts.completed, Truncated: facts.truncated,
 		Offered: facts.offered, Queued: facts.queued, Deferred: facts.deferred,
+		DeferredQueueFull: facts.deferredQueueFull, DeferredNotBetter: facts.deferredNotBetter,
 		LastSeconds: facts.lastSeconds,
-	})
+	}
 }
 
 func (dispatcher *phaseTwoRunnerDispatcher) markDispatched(

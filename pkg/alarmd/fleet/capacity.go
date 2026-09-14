@@ -110,10 +110,52 @@ type Rotation struct {
 	Offered  uint64 `json:"offered"`
 	Queued   uint64 `json:"queued"`
 	Deferred uint64 `json:"deferred"`
+	// DeferredQueueFull and DeferredNotBetter split that total by the branch
+	// that produced it. They are different conditions with opposite answers,
+	// and the page was telling a reader to grow a queue for a number that is
+	// mostly the one more room cannot change.
+	//
+	// QueueFull is the ready queue having no place. The walk stops there, so
+	// every object behind this one goes unoffered on the same pass -- which is
+	// also what drives Truncated -- and more room does change it.
+	//
+	// NotBetter is the recovery queue being full of objects all due sooner than
+	// this one. The dispatcher's own comment at that branch calls it "a
+	// decision, not a lack of room": the queue is doing its job, and this object
+	// is genuinely next in line rather than starved.
+	DeferredQueueFull uint64 `json:"deferred_queue_full"`
+	DeferredNotBetter uint64 `json:"deferred_not_better"`
 	// LastSeconds is how long the most recent completed rotation took. It is an
 	// instant, not an average: a rotation either finished or it did not, and
 	// averaging the two would describe neither.
 	LastSeconds float64 `json:"last_seconds"`
+}
+
+// fold adds one replica's rotation into the deployment's.
+//
+// A named method rather than a run of assignments inside the aggregation loop,
+// for the reason the worker's coverage handoff is a named function: this is a
+// hand-written field-by-field copy, and a count added to the struct and
+// forgotten here arrives on the page as a zero -- indistinguishable from a
+// deployment where it never happened. Named, it can be executed on its own and
+// checked field by field without anyone writing the list a second time.
+//
+// Counts add. LastSeconds does not: it is one rotation's duration, and summing
+// two replicas' would report a rotation neither of them ran.
+func (rotation *Rotation) fold(other Rotation) {
+	if rotation == nil {
+		return
+	}
+	rotation.Completed += other.Completed
+	rotation.Truncated += other.Truncated
+	rotation.Offered += other.Offered
+	rotation.Queued += other.Queued
+	rotation.Deferred += other.Deferred
+	rotation.DeferredQueueFull += other.DeferredQueueFull
+	rotation.DeferredNotBetter += other.DeferredNotBetter
+	if other.LastSeconds > rotation.LastSeconds {
+		rotation.LastSeconds = other.LastSeconds
+	}
 }
 
 // CapacityView is the deployment's capacity as the page receives it.
@@ -235,14 +277,7 @@ func aggregateCapacity(view *View, snapshots []Snapshot) {
 			if capacity.Rotation == nil {
 				capacity.Rotation = &Rotation{}
 			}
-			capacity.Rotation.Completed += facts.Rotation.Completed
-			capacity.Rotation.Truncated += facts.Rotation.Truncated
-			capacity.Rotation.Offered += facts.Rotation.Offered
-			capacity.Rotation.Queued += facts.Rotation.Queued
-			capacity.Rotation.Deferred += facts.Rotation.Deferred
-			if facts.Rotation.LastSeconds > capacity.Rotation.LastSeconds {
-				capacity.Rotation.LastSeconds = facts.Rotation.LastSeconds
-			}
+			capacity.Rotation.fold(*facts.Rotation)
 		}
 	}
 	if capacity.Replicas == 0 {

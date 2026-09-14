@@ -2162,9 +2162,39 @@ function renderCapacity(cap, gaps) {
     cell('轮转被打断', rot.truncated + ' 次',
       '走完 ' + rot.completed + ' 圈；打断在涨而走完不动 = 已经不再覆盖全部对象', true);
   }
+  // Two branches, opposite answers, one number.
+  //
+  // This said "同一个对象每被满队列挡回一次记一次" and left a reader with one
+  // remedy: grow the queue. Only one of the two branches behind the count is a
+  // queue with no room. The other is the recovery queue being full of objects
+  // all due sooner than this one -- the dispatcher's own comment calls it "a
+  // decision, not a lack of room" -- and more room does not change it at all.
+  //
+  // Which one dominates decides whether there is anything to do, so the cell
+  // leads with the split and the total is the thing said second.
   if (rot && rot.deferred) {
-    cell('被挡回', rot.deferred + ' 次',
-      '同一个对象每被满队列挡回一次记一次——反复挡回才是问题，偶尔挡回只是跑得晚', true);
+    var full = rot.deferred_queue_full || 0;
+    var notBetter = rot.deferred_not_better || 0;
+    var detail;
+    if (!full && !notBetter) {
+      // An older replica that does not publish the split. Saying nothing about
+      // the cause is correct here; saying the old sentence would be a guess.
+      detail = '副本没有报告是哪一种原因，所以这里说不出该不该处理。'
+        + '两种原因分别是：就绪队列没位置（队列会被扩就有用），'
+        + '和恢复队列里的对象都比它更早到期（这是排序结果，扩队列没用）。';
+    } else if (!full) {
+      detail = '全部 ' + notBetter + ' 次都是"恢复队列里的对象都比它更早到期"——'
+        + '这是排队顺序的结果，不是没位置，扩队列不会改变这个数。'
+        + '这一栏在涨不代表跑不过来。';
+    } else if (!notBetter) {
+      detail = '全部 ' + full + ' 次都是就绪队列没位置。队列满时这一轮轮转就停在这里，'
+        + '排在它后面的对象这一轮也没被轮到（所以"轮转被打断"会同步涨）。这一种扩队列有用。';
+    } else {
+      detail = '就绪队列没位置 ' + full + ' 次（这一种扩队列有用，而且队列满时轮转就地停下，'
+        + '后面的对象这一轮也没轮到）；恢复队列里都比它更早到期 ' + notBetter
+        + ' 次（这是排队顺序，扩队列没用）。先看第一个数。';
+    }
+    cell('被挡回', rot.deferred + ' 次', detail, !!full);
   }
 
   var rejected = 0, worst = '';

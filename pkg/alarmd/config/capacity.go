@@ -175,6 +175,45 @@ type DerivedScheduler struct {
 // while cutting the parked pile-up from a measured 452 to 128. It also stays
 // far below ReadyQueueCapacity, which is 32 per permit, so the queue is never
 // the binding side of the pair.
+//
+// The premise above no longer describes production. Every figure in it was
+// measured on a Worker owning 461 Query Groups; on 2026-09-14 a Worker owns
+// 1,027 to 1,048, because a Catalog that had been failing to recompile for
+// days was repaired and the fleet went from 979 Query Groups to 2,075 in one
+// step. The derivation was not re-run, so the 128 here is a bound sized for
+// less than half the load it now gates. Anyone changing this number should
+// start from that, not from the arithmetic above.
+//
+// Measured at the doubled load, on both replicas, over a settled window of
+// 1,113 seconds: ActiveExecutions peaks at 127 of 128. It does so in 17 of
+// 96 samples, and in 11 of those 17 the query permits were NOT exhausted -
+// 9 to 29 of the 32 sat free - while ready runners queued behind the bound,
+// up to 798 of them. The clearest single reading is 126 outstanding with 3
+// permits held and 798 runners waiting.
+//
+// So saturating this bound is not the same event as saturating the permit
+// budget, and the two do not imply each other. A dispatch slot is held for
+// the whole of RunOne; a query permit is held only across the query. Anything
+// an execution does outside that - the readiness sleep before the permit is
+// acquired, the turn-away that returns before one is ever asked for, whatever
+// follows its release - occupies a slot while holding nothing. Both of the
+// people who reasoned about this in review reached the wrong bound first, in
+// opposite directions, which is why it is written here rather than left to be
+// re-derived.
+//
+// What the bound has not yet cost, measured in the same window: mean permit
+// wait 72 ms, p99 under a second, not one wait above five seconds; zero
+// admission and zero budget query failures; and a completion rate inside the
+// saturated samples, 18.3/s, that is indistinguishable from the rate outside
+// them, 18.8/s. A bound that is reached without slowing anything down is
+// still just a bound.
+//
+// That is the criterion for raising it, and it has to be read in both
+// directions: not "these three are zero so there is nothing wrong", but "any
+// one of them turning non-zero means the bound has begun taking throughput,
+// and that is when raising it is worth discussing". Until then, raising it
+// buys more executions parked on the same permits, against a heap already
+// running at two thirds of GOMEMLIMIT.
 func DeriveScheduler(inputs CapacityInputs) DerivedScheduler {
 	cpu := max(inputs.CPUBudget, 1)
 	permits := cpu * queryPermitsPerCPU

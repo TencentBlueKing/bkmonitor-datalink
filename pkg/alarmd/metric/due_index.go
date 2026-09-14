@@ -123,7 +123,11 @@ func newDueIndexMetrics() dueIndexMetrics {
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "dispatch_crowded_out_total",
 			Help: "Turns a Query Group lost because the dispatcher still held it from a previous round, " +
 				"by what held it. These are not skips: the object was due and the pipeline took its turn, " +
-				"so a deployment starving this way reads zero on every dispatch_skipped_total reason.",
+				"so a deployment starving this way reads zero on every dispatch_skipped_total reason. " +
+				"Counted once per rotation pass, not once per delayed round: the rotation reaches every " +
+				"owned Query Group in well under a second, so a single execution in flight for ten " +
+				"seconds raises this ten times. Divide by the rotation rate before reading it as a rate " +
+				"of lost work; read as-is it is the fraction of passes that found the object busy.",
 		}, []string{"by"}),
 		horizon: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "due_index_horizon_seconds",

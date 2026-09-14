@@ -47,6 +47,14 @@ type LevelOutcome struct {
 	Outcome              LevelOutcomeKind
 	ReasonCode           ReasonCode
 	PartialProofs        []PartialDecisionProof
+	// EnvelopeHeld marks a RECOVERY outcome whose record's RECOVERY envelope
+	// the trigger held back, because a sibling Level had not agreed: its
+	// state was unknown, or its recovery span still held a triggering
+	// window. The outcome is a fact about this Level and still reaches the
+	// state; the envelope is a statement about the whole series' alert and
+	// waits for a later round. The result contract expects no TriggerEvent
+	// for such a record, and only for such a record.
+	EnvelopeHeld bool
 }
 
 type levelOutcomeIdentity struct {
@@ -973,6 +981,12 @@ func validateEventOutcomes(input InternalExecution, result PlanEvaluationResult,
 		Record RecordAnchor
 	}
 	expectedEvents := make(map[recordIdentity]string)
+	// A record whose RECOVERY envelope the trigger held expects no event.
+	// The hold is a statement about the record, so it has to be the same on
+	// every RECOVERY outcome of that record, and it cannot coexist with an
+	// ABNORMAL outcome there: an abnormal Level decides the record before
+	// the gate is consulted, so a hold beside it is a contradiction.
+	held := make(map[recordIdentity]bool)
 	for identity, outcome := range outcomes {
 		effective, found := findEffectiveTimeFact(input, identity.Plan, identity.LevelID, identity.SeriesIdentityDigest)
 		if !found {
@@ -982,14 +996,30 @@ func validateEventOutcomes(input InternalExecution, result PlanEvaluationResult,
 			continue
 		}
 		record := recordIdentity{Series: identity.SeriesIdentityDigest, Record: identity.Record}
+		if outcome.EnvelopeHeld && outcome.Outcome != LevelOutcomeRecovery {
+			return resultContractViolation(codeEventHeldOnNonRecoveryOutcome, "a held envelope is a property of RECOVERY outcomes only")
+		}
 		switch outcome.Outcome {
 		case LevelOutcomeAbnormal:
 			expectedEvents[record] = contract.TriggerEventAbnormal
 		case LevelOutcomeRecovery:
+			if previous, seen := held[record]; seen && previous != outcome.EnvelopeHeld {
+				return resultContractViolation(codeEventHeldDisagreesAcrossLevels, "RECOVERY outcomes of one record disagree on whether its envelope was held")
+			}
+			held[record] = outcome.EnvelopeHeld
 			if expectedEvents[record] == "" {
 				expectedEvents[record] = contract.TriggerEventRecovery
 			}
 		}
+	}
+	for record, wasHeld := range held {
+		if !wasHeld {
+			continue
+		}
+		if expectedEvents[record] == contract.TriggerEventAbnormal {
+			return resultContractViolation(codeEventHeldOnNonRecoveryOutcome, "a held envelope cannot stand beside an ABNORMAL outcome of the same record")
+		}
+		delete(expectedEvents, record)
 	}
 	actualEvents := make(map[recordIdentity]struct{})
 	for _, state := range result.StateResults {

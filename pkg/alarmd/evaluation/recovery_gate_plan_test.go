@@ -74,11 +74,102 @@ func TestEvaluatorCountsAHeldRecoveryEnvelopeOnThePlan(t *testing.T) {
 			if got := len(plan0.StateResults[0].Events); got != arm.wantEnvelopes {
 				t.Fatalf("envelopes=%d want %d", got, arm.wantEnvelopes)
 			}
+			// The hold travels on the RECOVERY outcome and nowhere else, because
+			// the result contract, which the Worker runs on this very result,
+			// expects one envelope per record with a business outcome unless
+			// the record says its envelope was held. The first build with the
+			// gate did not say so, and the contract refused every held record.
+			if plan0.LevelOutcomes[0].EnvelopeHeld != arm.siblingWarm || plan0.LevelOutcomes[1].EnvelopeHeld {
+				t.Fatalf("EnvelopeHeld = (%t, %t), want (%t, false)", plan0.LevelOutcomes[0].EnvelopeHeld, plan0.LevelOutcomes[1].EnvelopeHeld, arm.siblingWarm)
+			}
+			if err := result.Validate(req); err != nil {
+				t.Fatalf("the result contract refused the evaluator's own result: %v", err)
+			}
 		})
 	}
 }
 
+// The hold is a property of the record, stated on each of its RECOVERY
+// outcomes. The contract pins that in both directions on a real two-Level
+// result: a record held on every RECOVERY outcome is accepted without its
+// envelope, a record held on one RECOVERY outcome and not the other is
+// refused, and a hold beside an ABNORMAL outcome of the same record is
+// refused. A partial hold let through would be a record with some of its
+// envelope sent and some not, which is worse than either whole answer.
+func TestResultContractPinsTheHoldAcrossLevels(t *testing.T) {
+	recovered := func(t *testing.T) (execution.EvaluationResult, execution.EvaluationRequest) {
+		t.Helper()
+		plan := compiledTwoLevels(t)
+		history := []execution.StateHistoryPoint{{RecordID: strings.Repeat("a", 64), SourceTime: 40, Levels: []execution.StateLevelFact{
+			{LevelID: 5, DetectFingerprint: plan.Levels()[0].Fingerprints().Detect, Result: execution.LevelFactAnomalous},
+			{LevelID: 6, DetectFingerprint: plan.Levels()[1].Fingerprints().Detect, Result: execution.LevelFactAnomalous},
+		}}}
+		req := requestFixtureTwoLevels(t, plan, json.RawMessage(`10`), history)
+		result, err := newEvaluator(t).Evaluate(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Evaluate()=%v", err)
+		}
+		outcomes := result.Plans[0].LevelOutcomes
+		if len(outcomes) != 2 || outcomes[0].Outcome != execution.LevelOutcomeRecovery || outcomes[1].Outcome != execution.LevelOutcomeRecovery ||
+			len(result.Plans[0].StateResults) != 1 || len(result.Plans[0].StateResults[0].Events) != 1 {
+			t.Fatalf("fixture did not recover both Levels with one envelope: %+v", result.Plans[0])
+		}
+		return result, req
+	}
+
+	t.Run("held on every RECOVERY outcome and without its envelope is accepted", func(t *testing.T) {
+		result, req := recovered(t)
+		result.Plans[0].LevelOutcomes[0].EnvelopeHeld = true
+		result.Plans[0].LevelOutcomes[1].EnvelopeHeld = true
+		result.Plans[0].StateResults[0].Events = nil
+		if err := result.Validate(req); err != nil {
+			t.Fatalf("a record held on both RECOVERY outcomes was refused: %v", err)
+		}
+	})
+
+	t.Run("held on one RECOVERY outcome and not the other is refused", func(t *testing.T) {
+		result, req := recovered(t)
+		result.Plans[0].LevelOutcomes[1].EnvelopeHeld = true
+		result.Plans[0].StateResults[0].Events = nil
+		if err := result.Validate(req); err == nil || !strings.Contains(err.Error(), "disagree on whether its envelope was held") {
+			t.Fatalf("a partial hold must be refused, got %v", err)
+		}
+	})
+
+	t.Run("a hold beside an ABNORMAL outcome of the same record is refused", func(t *testing.T) {
+		// Level 6 triggers at 5 while Level 5 recovers at 50: the record is
+		// ABNORMAL with one RECOVERY sibling, and the gate is never consulted.
+		plan := compiledTwoLevelsWithThresholds(t, "50", "5")
+		history := []execution.StateHistoryPoint{{RecordID: strings.Repeat("a", 64), SourceTime: 40, Levels: []execution.StateLevelFact{
+			{LevelID: 5, DetectFingerprint: plan.Levels()[0].Fingerprints().Detect, Result: execution.LevelFactAnomalous},
+			{LevelID: 6, DetectFingerprint: plan.Levels()[1].Fingerprints().Detect, Result: execution.LevelFactAnomalous},
+		}}}
+		req := requestFixtureTwoLevels(t, plan, json.RawMessage(`10`), history)
+		result, err := newEvaluator(t).Evaluate(context.Background(), req)
+		if err != nil {
+			t.Fatalf("Evaluate()=%v", err)
+		}
+		outcomes := result.Plans[0].LevelOutcomes
+		if outcomes[0].Outcome != execution.LevelOutcomeRecovery || outcomes[1].Outcome != execution.LevelOutcomeAbnormal || outcomes[0].EnvelopeHeld {
+			t.Fatalf("fixture did not produce RECOVERY beside ABNORMAL with no hold: %+v", outcomes)
+		}
+		if err := result.Validate(req); err != nil {
+			t.Fatalf("the evaluator's own ABNORMAL result was refused: %v", err)
+		}
+		result.Plans[0].LevelOutcomes[0].EnvelopeHeld = true
+		if err := result.Validate(req); err == nil || !strings.Contains(err.Error(), "cannot stand beside an ABNORMAL outcome") {
+			t.Fatalf("a hold beside an ABNORMAL outcome must be refused, got %v", err)
+		}
+	})
+}
+
 func compiledTwoLevels(t *testing.T) *strategy.CompiledPlan {
+	return compiledTwoLevelsWithThresholds(t, "50", "50")
+}
+
+// compiledTwoLevelsWithThresholds compiles Levels 5 and 6 with their own
+// Threshold values, so a record can put the two Levels in different states.
+func compiledTwoLevelsWithThresholds(t *testing.T, threshold5, threshold6 string) *strategy.CompiledPlan {
 	t.Helper()
 	c, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), strategy.Limits{MaxPlanBytes: 1 << 20, MaxLevelsPerPlan: 16, MaxAlgorithmsPerLevel: 8, MaxGroupsPerAlgorithm: 16, MaxConditionsPerAlgorithm: 64, MaxASTNodesPerLevel: 256, MaxTriggerWindowSize: 16, MaxRecoveryConsecutiveWindows: 16, MaxRequiredHistoryPoints: 32, MaxTriggerComputeCost: 1 << 20, MaxCompiledPlanBytes: 1 << 20, MaxCacheEntries: 16, MaxCacheBytes: 1 << 20, NegativeCacheTTL: time.Minute, BudgetRevision: "test"})
 	if err != nil {
@@ -86,10 +177,10 @@ func compiledTwoLevels(t *testing.T) *strategy.CompiledPlan {
 	}
 	ref := contract.StrategyRefV2{TenantID: "tenant", StrategyID: "7", Revision: "r1"}
 	projection := contract.InputProjectionV2{ValueFields: []string{"value"}, DimensionFields: []string{"host"}, BusinessIdentityField: "bk_biz_id", MultiValueAlignment: "SINGLE_VALUE", DataUnit: "percent", MissingValuePolicy: contract.MissingValuePolicyRequired}
-	level := func(id, priority uint32) contract.LevelIRV2 {
-		return contract.LevelIRV2{Definition: contract.LevelDefinitionV2{LevelID: id, Priority: priority}, Connector: contract.LevelConnectorAND, DetectPlan: contract.DetectPlanV2{Algorithms: []contract.AlgorithmIRV2{{Type: "Threshold", Version: 1, Config: json.RawMessage(`{"value_field":"value","data_unit":"percent","threshold_unit_prefix":"","precision":{"decimal_places":6,"rounding":"HALF_EVEN"},"groups":[{"conditions":[{"operator":"GTE","threshold_decimal":"50"}]}]}`)}}}, TriggerPlan: contract.TypedPlanV1{Type: "N_OF_M", Version: 1, Config: json.RawMessage(`{"window_size":1,"required_anomalies":1,"step_seconds":60}`)}, RecoveryPlan: contract.TypedPlanV1{Type: "CONTINUOUS_TRIGGER_MISS", Version: 1, Config: json.RawMessage(`{"enabled":true,"consecutive_windows":1}`)}}
+	level := func(id, priority uint32, threshold string) contract.LevelIRV2 {
+		return contract.LevelIRV2{Definition: contract.LevelDefinitionV2{LevelID: id, Priority: priority}, Connector: contract.LevelConnectorAND, DetectPlan: contract.DetectPlanV2{Algorithms: []contract.AlgorithmIRV2{{Type: "Threshold", Version: 1, Config: json.RawMessage(`{"value_field":"value","data_unit":"percent","threshold_unit_prefix":"","precision":{"decimal_places":6,"rounding":"HALF_EVEN"},"groups":[{"conditions":[{"operator":"GTE","threshold_decimal":"` + threshold + `"}]}]}`)}}}, TriggerPlan: contract.TypedPlanV1{Type: "N_OF_M", Version: 1, Config: json.RawMessage(`{"window_size":1,"required_anomalies":1,"step_seconds":60}`)}, RecoveryPlan: contract.TypedPlanV1{Type: "CONTINUOUS_TRIGGER_MISS", Version: 1, Config: json.RawMessage(`{"enabled":true,"consecutive_windows":1}`)}}
 	}
-	p := contract.EvaluationPlanV2{PlanID: "7", StrategyRef: ref, InputProjection: projection, StrategyIR: contract.StrategyIRV2{Schema: contract.Schema{Name: contract.StrategyIRSchemaV2, Major: 2}, StrategyRef: ref, InputProjection: projection, ExecutionSemantics: contract.ExecutionSemanticsV2{EvaluationScope: contract.EvaluationScopeSeries, QueryWindow: 300, AggregationInterval: 60, EvaluationInterval: 60, LatenessTolerance: 120}, Levels: []contract.LevelIRV2{level(5, 1), level(6, 2)}}}
+	p := contract.EvaluationPlanV2{PlanID: "7", StrategyRef: ref, InputProjection: projection, StrategyIR: contract.StrategyIRV2{Schema: contract.Schema{Name: contract.StrategyIRSchemaV2, Major: 2}, StrategyRef: ref, InputProjection: projection, ExecutionSemantics: contract.ExecutionSemanticsV2{EvaluationScope: contract.EvaluationScopeSeries, QueryWindow: 300, AggregationInterval: 60, EvaluationInterval: 60, LatenessTolerance: 120}, Levels: []contract.LevelIRV2{level(5, 1, threshold5), level(6, 2, threshold6)}}}
 	r, err := c.Compile(context.Background(), strategy.CompileRequest{Plan: p, DatasetContract: contract.DatasetContractV2{SchemaDigest: strings.Repeat("1", 64), NormalizationDigest: strings.Repeat("2", 64), IdentityFields: []string{"host"}, SourceTimeField: "time", ReceivedTimeField: "received_time"}, StateSemantics: strategy.StateSemantics{StateSchemaVersion: "s", CodecSemanticsVersion: "c", IdentitySchemaDigest: strings.Repeat("3", 64), SourceTimeSemanticsVersion: "t", HistoryCellSemanticsVersion: "h"}})
 	if err != nil {
 		t.Fatal(err)

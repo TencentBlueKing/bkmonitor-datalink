@@ -88,3 +88,48 @@ func TestNextSlotAfterAnAnchorInARetirementHoleContinuesAtTheNextSegment(t *test
 		t.Fatalf("NextSlotAfter past a retired timeline = %v, want schedule unavailable", err)
 	}
 }
+
+// The same condition, no Segment holding the anchor, has a second cause: the
+// anchor's Segment was pruned. The continuation is the same, the first
+// retained Segment's first Slot, and this is deliberate rather than a
+// by-product: the Slots between a pruned anchor and the first retained
+// Segment can never be read again, so there is nothing else to continue at.
+// It is also bounded on purpose. An anchor is only consulted when the cursor
+// has to be re-derived, and the Slot this returns can lie below a cursor
+// that had already moved past it; BeginSlot then refuses the requested Slot
+// as a conflict rather than beginning it. That shape is refused today too,
+// only with a different word, and is left as it is here: this change adds a
+// continuation where the timeline has one, it does not decide which of two
+// disagreeing facts about the past to believe.
+func TestNextSlotAfterAnAnchorBeforeThePrunedPrefixContinuesAtTheFirstRetainedSegment(t *testing.T) {
+	harness := newPruneHarness(t, &pruneRetention)
+	compiler, semantics := runtimePlanCompiler(t)
+	runtime, err := controlplane.NewRedisCatalogRuntime(harness.repository, compiler, semantics, 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Twelve one-minute Segments; by 780 s the first, [60,120), is past its
+	// keep-until and Progress has moved past it, so the cutover prunes it.
+	queryGroup := harness.publishAndActivate(t, 80, 60)
+	harness.setProgress(queryGroup, 60)
+	for index := 1; index < 12; index++ {
+		harness.setProgress(queryGroup, execution.EvaluationTime(60+60*index))
+		harness.publishAndActivate(t, 80+index, int64(60+60*index))
+	}
+	harness.setProgress(queryGroup, 720)
+	harness.publishAndActivate(t, 200, 780)
+	shape := harness.timeline(t, queryGroup)
+	if len(shape.segments) == 0 || shape.segments[0].Start != 120 {
+		t.Fatalf("fixture did not prune the first Segment: %+v", shape.segments)
+	}
+
+	for _, anchor := range []execution.EvaluationTime{30, 60, 119} {
+		next, err := runtime.NextSlotAfter(harness.ctx, queryGroup, anchor)
+		if err != nil {
+			t.Fatalf("NextSlotAfter(anchor %d, before the pruned prefix) = %v, want the first retained Segment's first Slot 120", anchor, err)
+		}
+		if next != 120 {
+			t.Fatalf("NextSlotAfter(anchor %d, before the pruned prefix) = %d, want 120", anchor, next)
+		}
+	}
+}

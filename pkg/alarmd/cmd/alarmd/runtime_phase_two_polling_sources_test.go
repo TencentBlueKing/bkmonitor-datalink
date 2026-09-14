@@ -52,6 +52,7 @@ func TestProductionPollingSources(t *testing.T) {
 				}
 				if source.label == "bk_log_search" {
 					query["index_set_id"], query["time_field"] = 71, "dtEventTimeStamp"
+					delete(query, "result_table_id")
 				}
 				if source.kind == "event" || source.kind == "log" {
 					query["agg_method"] = "COUNT"
@@ -63,7 +64,8 @@ func TestProductionPollingSources(t *testing.T) {
 				if source.label == "bk_fta" {
 					dimension = "tags.host"
 					query["agg_dimension"] = []string{dimension}
-					query["metric_field"] = "__ALL_EVENT_PLUGIN__"
+					delete(query, "metric_field")
+					query["alert_name"] = "__ALL_EVENT_PLUGIN__"
 				}
 				body, err := json.Marshal(document)
 				if err != nil {
@@ -90,10 +92,30 @@ func TestProductionPollingSources(t *testing.T) {
 						return nil, err
 					}
 					endKey := "end_time"
+					if source.label == "bk_log_search" {
+						clauses, ok := payload["query_list"].([]any)
+						if !ok || len(clauses) != 1 || clauses[0].(map[string]any)["table_id"] != "bklog_index_set_71" {
+							return nil, fmt.Errorf("log query did not use index_set_id: %v", payload)
+						}
+					}
 					if source.label == "bk_fta" {
 						clauses, ok := payload["query_list"].([]any)
 						if !ok || len(clauses) != 1 || clauses[0].(map[string]any)["field_semantics"] != "fta_event_tags/v1" || payload["tsdb_map"] == nil {
 							return nil, fmt.Errorf("FTA missing ES route or keyed tag semantics: %v", payload)
+						}
+						sourceFilter, ok := clauses[0].(map[string]any)["source_conditions"].(map[string]any)
+						if !ok {
+							return nil, fmt.Errorf("FTA missing independent source filter")
+						}
+						pluginFilter := false
+						for _, raw := range sourceFilter["field_list"].([]any) {
+							field := raw.(map[string]any)
+							if field["field_name"] == "plugin_id" && field["op"] == "ne" && fmt.Sprint(field["value"]) == "[bkmonitor]" {
+								pluginFilter = true
+							}
+						}
+						if !pluginFilter {
+							return nil, fmt.Errorf("FTA alert_name did not filter event plugins: %v", sourceFilter)
 						}
 					}
 					if source.label == "prometheus" {
@@ -116,8 +138,8 @@ func TestProductionPollingSources(t *testing.T) {
 					series := []any{}
 					// Two dynamic series expose loss of PromQL identity even when
 					// an otherwise successful single-series test would pass.
-					for _, host := range []string{"synthetic-a", "synthetic-b"} {
-						series = append(series, map[string]any{"name": "_result0", "columns": []string{"_time", "_result"}, "types": []string{"int64", "float64"}, "group_keys": []string{dimension}, "group_values": []string{host}, "values": []any{[]any{(end - 1) * 1000, value}}})
+					for index, host := range []string{"synthetic-a", "synthetic-b"} {
+						series = append(series, map[string]any{"name": fmt.Sprintf("series%d", index), "columns": []string{"_time", "_value"}, "types": []string{"float", "float"}, "group_keys": []string{dimension}, "group_values": []string{host}, "values": []any{[]any{(end - 1) * 1000, value}}})
 					}
 					var buf bytes.Buffer
 					if err := json.NewEncoder(&buf).Encode(map[string]any{"series": series, "status": nil, "trace_id": "polling-test", "is_partial": second == "partial" && clock.Load() > base+1}); err != nil {
@@ -129,7 +151,7 @@ func TestProductionPollingSources(t *testing.T) {
 				if source.label == "bk_fta" {
 					cfg.PhaseTwo.Control.LegacyQueryRuntime.FTAEventStorage = &execution.QueryStorage{
 						TableID: "fta.event", StorageID: "1", StorageType: "elasticsearch", DB: "bkfta_event_*_read", Measurement: "__default__",
-						TimeField: execution.QueryTimeField{Name: "time", Type: "long", Unit: "s"},
+						TimeField: execution.QueryTimeField{Name: "time", Type: "date", Unit: "millisecond"},
 					}
 				}
 				events := &recordingPhaseTwoEventSink{}

@@ -80,6 +80,58 @@ func TestRotationIsVisibleWhileTheWalkIsStuckAndNeverCompletes(t *testing.T) {
 	if facts.Queued != 1 {
 		t.Fatalf("queued=%d, want the one Query Group that got a place", facts.Queued)
 	}
+	// Which of the two branches produced those turn-aways, because they have
+	// opposite answers and the page had one sentence for both. Here the ready
+	// queue genuinely has no room, so more room would change it -- and a page
+	// that cannot say so sends a reader to grow a queue on the days the number
+	// is the other branch.
+	if facts.DeferredQueueFull != facts.Deferred {
+		t.Fatalf("deferred_queue_full=%d of deferred=%d, want every turn-away attributed to the "+
+			"full ready queue, which is the only branch this walk can reach",
+			facts.DeferredQueueFull, facts.Deferred)
+	}
+	if facts.DeferredNotBetter != 0 {
+		t.Fatalf("deferred_not_better=%d, want none: nothing here was turned away for being due "+
+			"later than what the recovery queue already holds", facts.DeferredNotBetter)
+	}
+}
+
+// A recovery queue that is full of objects all due sooner than this one.
+//
+// The dispatcher's own comment calls this "a decision, not a lack of room", and
+// it is counted in the same total as a ready queue with no places. They need
+// opposite responses -- one is answered by more room and the other is not -- so
+// a page that reports only the total can offer only one remedy, and on a
+// deployment where this branch dominates that remedy does nothing.
+func TestRotationSeparatesAQueueWithNoRoomFromOneHoldingSoonerWork(t *testing.T) {
+	at := time.Now()
+	// Every object has a ready time, so all of them go to the recovery queue,
+	// and it holds one. The two that arrive after it are not due sooner than
+	// what it already holds, so they are turned away by the ordering.
+	dispatcher := walkDispatcher(4, 1, map[execution.QueryGroupIdentity]time.Time{
+		"query-group-a": at.Add(time.Second),
+		"query-group-b": at.Add(2 * time.Second),
+		"query-group-c": at.Add(3 * time.Second),
+	})
+	runners, revision := dispatcher.bundle.snapshotScheduledRunners()
+	dispatcher.fillQueues(runners, revision)
+
+	facts := dispatcher.bundle.rotationFacts()
+	if facts == nil {
+		t.Fatal("the walk published nothing")
+	}
+	if facts.Deferred == 0 {
+		t.Fatal("nothing was turned away, so this walk did not reach the branch under test")
+	}
+	if facts.DeferredNotBetter != facts.Deferred {
+		t.Fatalf("deferred_not_better=%d of deferred=%d, want every turn-away attributed to the "+
+			"ordering rather than to a lack of room -- the ready queue here has three free places",
+			facts.DeferredNotBetter, facts.Deferred)
+	}
+	if facts.DeferredQueueFull != 0 {
+		t.Fatalf("deferred_queue_full=%d, want none: reporting these as a full queue is what sends "+
+			"a reader to grow a queue that is not the constraint", facts.DeferredQueueFull)
+	}
 }
 
 // A generation replaced before its walk finished did not cover the owned set.

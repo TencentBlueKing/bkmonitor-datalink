@@ -200,6 +200,9 @@ type fleetPublisher struct {
 	// refresh. Nil on a bundle that has none, and the snapshot then carries
 	// no facts.
 	controlSource func() *fleet.ControlSourceFacts
+	// platformSettings reports the state of this replica's copy of the
+	// platform's settings. Nil on a bundle that has none.
+	platformSettings func() *fleet.PlatformSettingsFacts
 }
 
 // fleetOverdueWakeCeiling bounds how many parked objects one publish carries.
@@ -358,6 +361,9 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	}
 	if publisher.controlSource != nil {
 		snapshot.ControlSource = publisher.controlSource()
+	}
+	if publisher.platformSettings != nil {
+		snapshot.PlatformSettings = publisher.platformSettings()
 	}
 	// And the objects whose rounds end without a basis to decide recovery.
 	// Beside the anomalies for a different reason than the pool: not "this is

@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/shadow"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
@@ -1979,26 +1980,26 @@ func (fakePrimaryQueryCompiler) CompilePrimaryQuery(
 	return execution.QueryPlanFacts{}, nil
 }
 
-func TestPhaseTwoLegacyQueryRuntimeFactsPreserveExplicitConfiguration(t *testing.T) {
+// The compiler's runtime facts are the platform settings as the copy
+// answers them, with the two device filters' field names as the platform's
+// constants and the network filter's value list constant too; nothing the
+// copy hands out is aliased into the facts.
+func TestLegacyQueryRuntimeFactsComeFromThePlatformSettings(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
-	accessBKData := true
-	cfg.PhaseTwo.Control.LegacyQueryRuntime.AccessBKData = &accessBKData
-	cfg.PhaseTwo.Control.LegacyQueryRuntime.BKDataCMDBLevelTables = []string{"system.cpu_cmdb_level"}
-	cfg.PhaseTwo.Control.LegacyQueryRuntime.SystemDiskFilter.Values = []string{"iso9660", "tmpfs"}
-	cfg.PhaseTwo.Control.LegacyQueryRuntime.SystemNetworkFilter.Values = []string{}
-
-	facts := phaseTwoLegacyQueryRuntimeFacts(cfg.PhaseTwo.Control.LegacyQueryRuntime)
+	settings := platformsettings.Settings{IsAccessBKData: true, BKDataCMDBLevelTables: []string{"system.cpu_cmdb_level"},
+		FileSystemTypeIgnore: []string{"iso9660", "tmpfs"}, HostDisableMonitorStates: []string{"备用机"}}
+	facts := legacyQueryRuntimeFacts(cfg, settings)
 	if facts.AccessBKData == nil || !*facts.AccessBKData ||
 		!reflect.DeepEqual(facts.BKDataCMDBLevelTables, []string{"system.cpu_cmdb_level"}) ||
 		facts.SystemDiskFilter.FieldName != "device_type" ||
 		!reflect.DeepEqual(facts.SystemDiskFilter.Values, []string{"iso9660", "tmpfs"}) ||
-		facts.SystemNetworkFilter.FieldName != "device_name" || facts.SystemNetworkFilter.Values == nil || len(facts.SystemNetworkFilter.Values) != 0 {
-		t.Fatalf("legacy query runtime facts = %+v, want exact explicit configuration", facts)
+		facts.SystemNetworkFilter.FieldName != "device_name" || !reflect.DeepEqual(facts.SystemNetworkFilter.Values, []string{"lo"}) {
+		t.Fatalf("legacy query runtime facts = %+v, want the settings under the platform's constants", facts)
 	}
-	cfg.PhaseTwo.Control.LegacyQueryRuntime.BKDataCMDBLevelTables[0] = "mutated"
-	cfg.PhaseTwo.Control.LegacyQueryRuntime.SystemDiskFilter.Values[0] = "mutated"
+	settings.BKDataCMDBLevelTables[0] = "mutated"
+	settings.FileSystemTypeIgnore[0] = "mutated"
 	if facts.BKDataCMDBLevelTables[0] != "system.cpu_cmdb_level" || facts.SystemDiskFilter.Values[0] != "iso9660" {
-		t.Fatalf("legacy query runtime facts retained mutable config slices: %+v", facts)
+		t.Fatalf("legacy query runtime facts alias the settings' slices: %+v", facts)
 	}
 }
 

@@ -266,9 +266,6 @@ phase_two:
       system_disk_filter:
         field_name: device_type
         values: []
-      system_network_filter:
-        field_name: device_name
-        values: []
   access:
     uq_endpoint: http://unify-query.service
     query_source: alarmd

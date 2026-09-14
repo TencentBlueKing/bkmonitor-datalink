@@ -44,6 +44,13 @@ type RuntimeStorageFacts struct {
 	PlatformKeyPrefix   string `json:"platform_key_prefix"`
 	StrategyCachePrefix string `json:"strategy_cache_prefix"`
 	OwnStorePrefix      string `json:"own_store_prefix"`
+	// DynamicConfig is where the platform's dynamic configuration is read
+	// from, or not_configured when the deployment renders no distribution;
+	// PlatformSettingsKeyPrefix is the platform prefix its keys hang off.
+	// Preflight evidence: a deployment that meant to read the platform and
+	// renders nothing reads as not_configured here before it runs.
+	DynamicConfig             string `json:"dynamic_config"`
+	PlatformSettingsKeyPrefix string `json:"platform_settings_key_prefix"`
 }
 
 type RuntimeCapacityFacts struct {

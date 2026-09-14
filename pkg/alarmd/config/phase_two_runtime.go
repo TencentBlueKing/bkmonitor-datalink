@@ -16,6 +16,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
 
@@ -45,12 +46,75 @@ type PhaseTwoRuntimeFilterConfig struct {
 }
 
 type PhaseTwoLegacyQueryRuntimeConfig struct {
-	FTAEventStorage       *execution.QueryStorage     `yaml:"fta_event_storage"`
+	FTAEventStorage *execution.QueryStorage `yaml:"fta_event_storage"`
+	// Deprecated: the four keys below are the platform's own settings and
+	// live under phase_two.platform_settings, which the platform's dynamic
+	// configuration distribution overrides at run time. They are still
+	// accepted here for one release: a value given here is carried into the
+	// new group, a value given in both places must agree, and the network
+	// filter, which the platform has never made a setting, must be the
+	// constant it always was. Remove once no deployment states them.
 	AccessBKData          *bool                       `yaml:"access_bk_data"`
 	BKDataCMDBLevelTables []string                    `yaml:"bkdata_cmdb_level_tables"`
 	SystemDiskFilter      PhaseTwoRuntimeFilterConfig `yaml:"system_disk_filter"`
 	SystemNetworkFilter   PhaseTwoRuntimeFilterConfig `yaml:"system_network_filter"`
 }
+
+// PhaseTwoPlatformSettingsConfig is alarmd's deployment layer of the
+// platform's settings and where it reads the platform's own layer from.
+//
+// The four values are the platform's global settings; the platform
+// distributes its database's word on them through Redis under its dynamic
+// configuration protocol, and alarmd reads that distribution at run time.
+// What is stated here is the layer beneath it: the protocol's own fallback
+// reaches a deployment's YAML when the database says nothing or says the
+// code default, and this group is alarmd's YAML. A deployment whose values
+// differ from the platform's code defaults states them here exactly as it
+// did before the distribution existed; the distribution then overrides them
+// when the platform's page does.
+//
+// RedisKeyPrefix is the platform's common.redis_key_prefix, rendered by the
+// chart from the platform's own setting; the connection the distribution is
+// read from is platform_cache.dynamic_config, rendered the same way. Neither
+// is a value an operator knows better than the platform does.
+type PhaseTwoPlatformSettingsConfig struct {
+	RedisKeyPrefix           string    `yaml:"redis_key_prefix"`
+	HostDisableMonitorStates *[]string `yaml:"host_disable_monitor_states,omitempty"`
+	IsAccessBKData           *bool     `yaml:"is_access_bk_data,omitempty"`
+	BKDataCMDBLevelTables    *[]string `yaml:"bkdata_cmdb_level_tables,omitempty"`
+	FileSystemTypeIgnore     *[]string `yaml:"file_system_type_ignore,omitempty"`
+}
+
+// Layer is the deployment layer as the platformsettings copy resolves it.
+func (c PhaseTwoPlatformSettingsConfig) Layer() platformsettings.Layer {
+	layer := platformsettings.Layer{IsAccessBKData: c.IsAccessBKData}
+	if c.HostDisableMonitorStates != nil {
+		values := append([]string{}, *c.HostDisableMonitorStates...)
+		layer.HostDisableMonitorStates = &values
+	}
+	if c.BKDataCMDBLevelTables != nil {
+		values := append([]string{}, *c.BKDataCMDBLevelTables...)
+		layer.BKDataCMDBLevelTables = &values
+	}
+	if c.FileSystemTypeIgnore != nil {
+		values := append([]string{}, *c.FileSystemTypeIgnore...)
+		layer.FileSystemTypeIgnore = &values
+	}
+	return layer
+}
+
+// The two device filters the legacy query compiler applies. The disk
+// filter's field is a constant of the platform and its values are the
+// platform setting file_system_type_ignore; the network filter is a
+// constant of the platform in both, and has never been a setting.
+const (
+	SystemDiskFilterField     = "device_type"
+	SystemNetworkFilterField  = "device_name"
+	systemNetworkFilterIgnore = "lo"
+)
+
+// SystemNetworkFilterValues is the network filter's constant value list.
+func SystemNetworkFilterValues() []string { return []string{systemNetworkFilterIgnore} }
 
 type PhaseTwoOwnershipConfig struct {
 	ControlLeaderTTL           Duration
@@ -131,9 +195,10 @@ type PhaseTwoAccessConfig struct {
 	// had before it existed; it never falls back to the default, because a
 	// wrong list silently changes which alerts are produced.
 	//
-	// This is a transcription with a stated exit: once the control plane syncs
-	// platform settings periodically, the value comes from there and this key
-	// is removed.
+	// Deprecated: the exit stated above has arrived. The value lives under
+	// phase_two.platform_settings.host_disable_monitor_states and the
+	// platform's distribution overrides it at run time; a value given here
+	// is carried there for one release, and must agree with one given there.
 	HostDisableMonitorStates   []string `yaml:"host_disable_monitor_states"`
 	MinReadyDelay              Duration
 	DownstreamExecutionReserve Duration
@@ -299,15 +364,16 @@ func (c PhaseTwoCanonicalConfig) SelectedMode() string { return c.mode() }
 
 type PhaseTwoRuntimeConfig struct {
 	// Empty disables final Shadow evidence; the file is the frozen Epoch manifest.
-	ShadowManifestPath string                    `yaml:"shadow_manifest_path,omitempty"`
-	Worker             PhaseTwoWorkerConfig      `yaml:"worker"`
-	Control            PhaseTwoControlConfig     `yaml:"control"`
-	Output             PhaseTwoOutputConfig      `yaml:"output"`
-	Ownership          PhaseTwoOwnershipConfig   `yaml:"-"`
-	Scheduler          PhaseTwoSchedulerConfig   `yaml:"scheduler"`
-	Access             PhaseTwoAccessConfig      `yaml:"access"`
-	Coordinator        PhaseTwoCoordinatorConfig `yaml:"-"`
-	Canonical          PhaseTwoCanonicalConfig   `yaml:"canonical"`
+	ShadowManifestPath string                         `yaml:"shadow_manifest_path,omitempty"`
+	Worker             PhaseTwoWorkerConfig           `yaml:"worker"`
+	Control            PhaseTwoControlConfig          `yaml:"control"`
+	Output             PhaseTwoOutputConfig           `yaml:"output"`
+	Ownership          PhaseTwoOwnershipConfig        `yaml:"-"`
+	Scheduler          PhaseTwoSchedulerConfig        `yaml:"scheduler"`
+	Access             PhaseTwoAccessConfig           `yaml:"access"`
+	Coordinator        PhaseTwoCoordinatorConfig      `yaml:"-"`
+	Canonical          PhaseTwoCanonicalConfig        `yaml:"canonical"`
+	PlatformSettings   PhaseTwoPlatformSettingsConfig `yaml:"platform_settings"`
 }
 
 func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
@@ -341,7 +407,81 @@ func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
 		Access: PhaseTwoAccessConfig{
 			MinReadyDelay: Duration(30 * time.Second), DownstreamExecutionReserve: Duration(5 * time.Second),
 		},
+		PlatformSettings: PhaseTwoPlatformSettingsConfig{RedisKeyPrefix: platformsettings.DefaultKeyPrefix},
 	}
+}
+
+// migratePlatformSettings carries the deprecated keys into the new group.
+// A value stated in both places must agree: a deployment that says two
+// things about one setting is not one that can be read either way. The
+// constants are checked rather than ignored, so that a deployment which
+// changed one expecting an effect is told there is none.
+func (c *PhaseTwoRuntimeConfig) migratePlatformSettings() error {
+	group := &c.PlatformSettings
+	legacy := &c.Control.LegacyQueryRuntime
+	if states := c.Access.HostDisableMonitorStates; len(states) > 0 {
+		if err := carryList("access.host_disable_monitor_states", states, &group.HostDisableMonitorStates); err != nil {
+			return err
+		}
+	}
+	if legacy.AccessBKData != nil {
+		if group.IsAccessBKData != nil && *group.IsAccessBKData != *legacy.AccessBKData {
+			return errors.New("phase_two control legacy_query_runtime.access_bk_data and platform_settings.is_access_bk_data disagree")
+		}
+		value := *legacy.AccessBKData
+		group.IsAccessBKData = &value
+	}
+	if legacy.BKDataCMDBLevelTables != nil {
+		if err := carryList("control.legacy_query_runtime.bkdata_cmdb_level_tables", legacy.BKDataCMDBLevelTables, &group.BKDataCMDBLevelTables); err != nil {
+			return err
+		}
+	}
+	if legacy.SystemDiskFilter.FieldName != "" && legacy.SystemDiskFilter.FieldName != SystemDiskFilterField {
+		return fmt.Errorf("phase_two control legacy_query_runtime.system_disk_filter.field_name is the constant %q", SystemDiskFilterField)
+	}
+	if legacy.SystemDiskFilter.Values != nil {
+		if err := carryList("control.legacy_query_runtime.system_disk_filter.values", legacy.SystemDiskFilter.Values, &group.FileSystemTypeIgnore); err != nil {
+			return err
+		}
+	}
+	network := legacy.SystemNetworkFilter
+	if (network.FieldName != "" && network.FieldName != SystemNetworkFilterField) ||
+		(network.Values != nil && !equalStringLists(network.Values, SystemNetworkFilterValues())) {
+		return fmt.Errorf("phase_two control legacy_query_runtime.system_network_filter is the constant %s=%v and not a setting",
+			SystemNetworkFilterField, SystemNetworkFilterValues())
+	}
+	// One source from here on: the deprecated keys are read, carried, and
+	// then hold nothing a later reader could take for the value in force.
+	c.Access.HostDisableMonitorStates = nil
+	legacy.AccessBKData = nil
+	legacy.BKDataCMDBLevelTables = nil
+	legacy.SystemDiskFilter = PhaseTwoRuntimeFilterConfig{}
+	legacy.SystemNetworkFilter = PhaseTwoRuntimeFilterConfig{}
+	return nil
+}
+
+func carryList(oldKey string, values []string, into **[]string) error {
+	if *into != nil {
+		if !equalStringLists(**into, values) {
+			return fmt.Errorf("phase_two %s and its platform_settings key disagree", oldKey)
+		}
+		return nil
+	}
+	copied := append([]string{}, values...)
+	*into = &copied
+	return nil
+}
+
+func equalStringLists(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Config) resolvePhaseTwoWorkerIDFromEnvironment() {
@@ -382,11 +522,17 @@ func (c PhaseTwoRuntimeConfig) validate() error {
 	if _, err := time.LoadLocation(c.Control.Timezone); err != nil {
 		return errors.New("phase_two control timezone is invalid")
 	}
-	legacy := c.Control.LegacyQueryRuntime
-	if legacy.AccessBKData == nil || !canonicalTextList(legacy.BKDataCMDBLevelTables) ||
-		!canonicalText(legacy.SystemDiskFilter.FieldName) || !canonicalTextList(legacy.SystemDiskFilter.Values) ||
-		!canonicalText(legacy.SystemNetworkFilter.FieldName) || !canonicalTextList(legacy.SystemNetworkFilter.Values) {
-		return errors.New("phase_two control legacy query runtime facts must be explicit")
+	if err := platformsettings.ValidateKeyPrefix(c.PlatformSettings.RedisKeyPrefix); err != nil {
+		return fmt.Errorf("phase_two platform_settings.redis_key_prefix: %w", err)
+	}
+	for name, list := range map[string]*[]string{
+		"host_disable_monitor_states": c.PlatformSettings.HostDisableMonitorStates,
+		"bkdata_cmdb_level_tables":    c.PlatformSettings.BKDataCMDBLevelTables,
+		"file_system_type_ignore":     c.PlatformSettings.FileSystemTypeIgnore,
+	} {
+		if list != nil && !canonicalTextList(*list) {
+			return fmt.Errorf("phase_two platform_settings.%s must be canonical text", name)
+		}
 	}
 	if c.Control.RefreshInterval.Duration() <= 0 || c.Control.ReconcileInterval.Duration() <= 0 ||
 		c.Control.CatalogTTL.Duration() <= c.Control.RefreshInterval.Duration() ||

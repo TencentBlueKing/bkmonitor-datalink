@@ -30,6 +30,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
@@ -363,6 +364,10 @@ type phaseTwoWorkerBundleDependencies struct {
 	// RefreshOpenAlerts reads the consumer's open alert publication into the
 	// process copy; run once at start and then on its own cadence.
 	RefreshOpenAlerts func(context.Context)
+	// RefreshPlatformSettings reads the platform's dynamic configuration
+	// into the process copy and brings what evaluates by it up to date; run
+	// once at start and then once a minute.
+	RefreshPlatformSettings func(context.Context)
 	// PublishFleet writes this replica's contribution to them.
 	FleetAPI     http.Handler
 	PublishFleet func(context.Context)
@@ -1660,6 +1665,28 @@ func (bundle *phaseTwoWorkerBundle) startMaintenance() {
 	if bundle.dependencies.RefreshOpenAlerts != nil {
 		bundle.maintenanceWG.Add(1)
 		go bundle.refreshOpenAlerts()
+	}
+	if bundle.dependencies.RefreshPlatformSettings != nil {
+		bundle.maintenanceWG.Add(1)
+		go bundle.refreshPlatformSettings()
+	}
+}
+
+// refreshPlatformSettings keeps the process copy of the platform's settings
+// current, once a minute. The copy was read once at assembly; this is the
+// cadence the platform's changes reach evaluation at. A read that fails is
+// the copy's own state to report; nothing here retries or stops anything.
+func (bundle *phaseTwoWorkerBundle) refreshPlatformSettings() {
+	defer bundle.maintenanceWG.Done()
+	ticker := time.NewTicker(platformsettings.RefreshInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-bundle.maintenanceCtx.Done():
+			return
+		case <-ticker.C:
+			bundle.dependencies.RefreshPlatformSettings(bundle.maintenanceCtx)
+		}
 	}
 }
 

@@ -93,3 +93,36 @@ func TestControlSourceFactsEncodeAbsentAgesAsAbsent(t *testing.T) {
 		}
 	}
 }
+
+// A copy of the platform's settings that has been without the platform's
+// publication past the bound degrades the verdict by itself; the other
+// states, including a deployment that renders no source, degrade nothing.
+func TestAStalePlatformSettingsCopyDegradesTheVerdictOnItsOwn(t *testing.T) {
+	for _, arm := range []struct {
+		name  string
+		facts *PlatformSettingsFacts
+		want  Health
+	}{
+		{name: "no facts (a build before them)", facts: nil, want: HealthHealthy},
+		{name: "not configured", facts: &PlatformSettingsFacts{Mode: "not_configured"}, want: HealthHealthy},
+		{name: "never loaded", facts: &PlatformSettingsFacts{Mode: "never_loaded"}, want: HealthHealthy},
+		{name: "stale inside the bound", facts: &PlatformSettingsFacts{Mode: "stale", LastUnavailable: "connection refused"}, want: HealthHealthy},
+		{name: "stale past the bound", facts: &PlatformSettingsFacts{Mode: "stale", StaleBeyondBound: true}, want: HealthDegraded},
+	} {
+		t.Run(arm.name, func(t *testing.T) {
+			snapshots := healthySnapshots()
+			snapshots[1].PlatformSettings = arm.facts
+			view := Aggregate(Expectation{QueryGroups: 949, Known: true}, snapshots, replicas(), now, freshness)
+			if view.Health != arm.want {
+				t.Fatalf("health = %s, want %s (degradations %+v)", view.Health, arm.want, view.Degradations)
+			}
+			if arm.want == HealthDegraded {
+				if len(view.Degradations) != 1 || view.Degradations[0] != (Degradation{Kind: DegradationPlatformSettingsStale, Replica: "pod-b"}) {
+					t.Fatalf("degradations = %+v, want the stale copy named with its replica", view.Degradations)
+				}
+			} else if len(view.Degradations) != 0 {
+				t.Fatalf("degradations = %+v, want none", view.Degradations)
+			}
+		})
+	}
+}

@@ -247,6 +247,35 @@ func openProductionPhaseTwoBundleWithDependencies(
 			}
 		}()
 	}
+	// The platform's dynamic configuration is a fourth location, rendered or
+	// absent: absent means the deployment has no distribution to read and the
+	// settings copy says so, rather than reading some other instance as
+	// "nothing published".
+	var dynamicConfigClient redis.UniversalClient
+	dynamicConfigClientOwned := false
+	dynamicConfigConnection, dynamicConfigConfigured := cfg.DynamicConfigRedis()
+	if dynamicConfigConfigured {
+		switch {
+		case reflect.DeepEqual(dynamicConfigConnection, sourceConnection):
+			dynamicConfigClient = controlClient
+		case reflect.DeepEqual(dynamicConfigConnection, runtimeConnection):
+			dynamicConfigClient = runtimeClient
+		case reflect.DeepEqual(dynamicConfigConnection, cmdbConnection):
+			dynamicConfigClient = cmdbClient
+		default:
+			opened, err := openProductionRedisWithHook(ctx, dynamicConfigConnection, recorder.RedisHook("dynamic_config"))
+			if err != nil {
+				return nil, err
+			}
+			dynamicConfigClient = opened
+			dynamicConfigClientOwned = true
+			defer func() {
+				if resultErr != nil {
+					resultErr = errors.Join(resultErr, opened.Close())
+				}
+			}()
+		}
+	}
 	// Report each pool by its role. Where two roles resolve to one connection
 	// there is a single client, and reporting it twice would double count the
 	// same connections.
@@ -258,8 +287,20 @@ func openProductionPhaseTwoBundleWithDependencies(
 		if cmdbClientOwned {
 			counts = append(counts, redisPoolCounts("cmdb", cmdbConnection.PoolSize, cmdbClient))
 		}
+		if dynamicConfigClientOwned {
+			counts = append(counts, redisPoolCounts("dynamic_config", dynamicConfigConnection.PoolSize, dynamicConfigClient))
+		}
 		return counts
 	})
+	// The platform's settings this process evaluates by, read once here so the
+	// compiler and the admission filters start on the platform's word where
+	// there is one, then kept current by the runtime once a minute.
+	platformSettings, err := buildPlatformSettings(ctx, cfg, dynamicConfigClient, external.Now)
+	if err != nil {
+		return nil, err
+	}
+	recorder.SetPlatformSettingsSource(platformSettings.Stats)
+	hostStatus := newDynamicHostStatusFilter(platformSettings.Current().HostDisableMonitorStates)
 	strategySource, err := newStrategySource(controlClient, cfg.PhaseTwo.Control.StrategyCachePrefix)
 	if err != nil {
 		return nil, err
@@ -267,7 +308,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	planner, err := controlplane.NewLegacyPrimaryQueryCompiler(
 		execution.ProviderRouteRef(cfg.PhaseTwo.Control.ProviderRoute),
 		cfg.PhaseTwo.Control.Timezone,
-		phaseTwoLegacyQueryRuntimeFacts(cfg.PhaseTwo.Control.LegacyQueryRuntime),
+		legacyQueryRuntimeFacts(cfg, platformSettings.Current()),
 	)
 	if err != nil {
 		return nil, err
@@ -465,7 +506,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	// A series is evaluated for a strategy only inside that strategy's
 	// monitoring target. The facts it is decided on come from the platform's
 	// CMDB host cache, on the database this client already uses.
-	seriesAdmission, cmdbIndex, err := buildSeriesAdmission(ctx, cfg, cmdbClient, recorder)
+	seriesAdmission, cmdbIndex, err := buildSeriesAdmission(ctx, cfg, cmdbClient, recorder, hostStatus)
 	if err != nil {
 		return nil, err
 	}
@@ -776,9 +817,10 @@ func openProductionPhaseTwoBundleWithDependencies(
 	bundle, err := newPhaseTwoWorkerBundle(phaseTwoWorkerBundleDependencies{
 		Config: cfg, Health: health, Control: control, Ownership: productionOwnership,
 		Recorder: recorder, Observer: observer, TargetFlow: targetFlow, Now: external.Now,
-		FleetAPI:          fleetAPI,
-		PublishFleet:      func(ctx context.Context) { publisher.publishOnce(ctx) },
-		RefreshOpenAlerts: openAlertCopy.Refresh,
+		FleetAPI:                fleetAPI,
+		PublishFleet:            func(ctx context.Context) { publisher.publishOnce(ctx) },
+		RefreshOpenAlerts:       openAlertCopy.Refresh,
+		RefreshPlatformSettings: platformSettingsRefresher(platformSettings, hostStatus, recorder),
 		ApplyObservationWindows: observationWindowApplier{
 			store: windowStore, flow: targetFlow, now: external.Now,
 			observe: observationWindowObserver(observer),
@@ -831,12 +873,13 @@ func openProductionPhaseTwoBundleWithDependencies(
 		// Whether anything can be parked at all, from the same bundle. The
 		// overdue count above is only readable next to this: on a build that
 		// suppresses nothing it can only be zero.
-		dispatch:      bundle.dispatchSuppressionFacts,
-		restore:       progressRestoreSource(progressStore),
-		staleAfter:    stallAfter,
-		restoreBudget: fleetRestoreBudgetPerPublish,
-		openAlerts:    openAlertSetFactsSource(openAlertCopy, external.Now),
-		controlSource: bundle.controlSourceFleetFacts,
+		dispatch:         bundle.dispatchSuppressionFacts,
+		restore:          progressRestoreSource(progressStore),
+		staleAfter:       stallAfter,
+		restoreBudget:    fleetRestoreBudgetPerPublish,
+		openAlerts:       openAlertSetFactsSource(openAlertCopy, external.Now),
+		controlSource:    bundle.controlSourceFleetFacts,
+		platformSettings: platformSettingsFactsSource(platformSettings, external.Now),
 	}
 	// The heartbeat reports the same acknowledgement and occupancy the fleet
 	// snapshot publishes, from the same sources.

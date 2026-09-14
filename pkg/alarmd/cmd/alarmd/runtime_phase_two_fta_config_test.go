@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"gopkg.in/yaml.v3"
 )
 
@@ -32,7 +33,7 @@ func TestFTAStorageRoutingYAMLAndFrozenRuntimeFacts(t *testing.T) {
 	if route == nil || route.StorageID != "17" || route.TimeField.Unit != "millisecond" || route.DB != "bkfta_event_*_read" || route.TimeField.Name != "time" {
 		t.Fatalf("route=%+v", route)
 	}
-	facts := phaseTwoLegacyQueryRuntimeFacts(cfg.PhaseTwo.Control.LegacyQueryRuntime)
+	facts := legacyQueryRuntimeFacts(cfg, platformsettings.CodeDefaults())
 	route.DB = "mutated"
 	if facts.FTAEventStorage == route || facts.FTAEventStorage.DB != "bkfta_event_*_read" {
 		t.Fatal("runtime facts retain mutable config pointer")

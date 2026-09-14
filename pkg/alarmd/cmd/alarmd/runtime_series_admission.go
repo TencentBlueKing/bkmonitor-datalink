@@ -47,6 +47,7 @@ func buildSeriesAdmission(
 	cfg config.Config,
 	client redis.Cmdable,
 	recorder *metric.Recorder,
+	hostStatus *dynamicHostStatusFilter,
 ) (*admission.Chain, *cmdbcache.Store, error) {
 	// The platform states its key prefix once and both of its caches hang off
 	// it, so the CMDB cache key comes from that one spelling.
@@ -72,7 +73,7 @@ func buildSeriesAdmission(
 	}
 	publishCMDBIndexHealth(recorder, store)
 
-	filters := seriesAdmissionFilters(cfg)
+	filters := seriesAdmissionFilters(hostStatus)
 	recorder.SetHostDisableMonitorStates(hostDisableMonitorStateCount(filters))
 	chain := admission.NewChain(
 		[]admission.Fuller{admission.IdentityFuller{}, cmdbcache.NewHostTopologyFuller(store)},
@@ -109,19 +110,19 @@ func publishCMDBIndexHealth(recorder *metric.Recorder, store *cmdbcache.Store) {
 	)
 }
 
-// seriesAdmissionFilters is the access-path filter chain a configuration asks
-// for, in Python's order: the monitoring target decides whether the series
-// belongs to the strategy at all, then the host's operational state decides
-// whether it may alert.
+// seriesAdmissionFilters is the access-path filter chain, in Python's order:
+// the monitoring target decides whether the series belongs to the strategy
+// at all, then the host's operational state decides whether it may alert.
 //
-// The host status filter is installed only when the deployment states the
-// platform's disabled states. It is deliberately not defaulted to the value
-// shipped in Python's settings: that value is a global config an operator can
-// change, this environment's differs from the default, and a filter running on
-// a wrong list changes which alerts are produced with nothing to show for it.
-func seriesAdmissionFilters(cfg config.Config) []admission.Filter {
+// The host status filter decides on the states the platform settings copy
+// answers: the platform's publication where there is one, the deployment's
+// own layer beneath it, the platform's code default beneath that -- the
+// same resolution the platform's own consumers apply, so the list in force
+// here is the list in force there. It follows the copy when the platform
+// changes it, through the filter's own swap, without a restart.
+func seriesAdmissionFilters(hostStatus *dynamicHostStatusFilter) []admission.Filter {
 	filters := []admission.Filter{admission.TargetScopeFilter{}}
-	if hostStatus, installed := admission.NewHostStatusFilter(cfg.PhaseTwo.Access.HostDisableMonitorStates); installed {
+	if hostStatus != nil {
 		filters = append(filters, hostStatus)
 	}
 	return filters
@@ -133,7 +134,7 @@ func seriesAdmissionFilters(cfg config.Config) []admission.Filter {
 // the one in force.
 func hostDisableMonitorStateCount(filters []admission.Filter) int {
 	for _, filter := range filters {
-		if hostStatus, ok := filter.(*admission.HostStatusFilter); ok {
+		if hostStatus, ok := filter.(interface{ States() []string }); ok && filter.Name() == "host_status" {
 			return len(hostStatus.States())
 		}
 	}

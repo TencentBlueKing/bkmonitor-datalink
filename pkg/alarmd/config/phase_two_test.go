@@ -146,15 +146,16 @@ func TestGoAccessRequiresCompletePhaseTwoProductionCoordinates(t *testing.T) {
 		"downstream reserve":     func(cfg *Config) { cfg.PhaseTwo.Access.DownstreamExecutionReserve = 0 },
 		"provider route":         func(cfg *Config) { cfg.PhaseTwo.Control.ProviderRoute = "" },
 		"timezone":               func(cfg *Config) { cfg.PhaseTwo.Control.Timezone = "" },
-		"access bkdata fact":     func(cfg *Config) { cfg.PhaseTwo.Control.LegacyQueryRuntime.AccessBKData = nil },
-		"cmdb level tables fact": func(cfg *Config) {
-			cfg.PhaseTwo.Control.LegacyQueryRuntime.BKDataCMDBLevelTables = nil
+		// The four platform settings are no longer required to be explicit:
+		// they have the platform's code defaults beneath them and its
+		// distribution above. What is validated is the group's own shape.
+		"platform settings prefix": func(cfg *Config) { cfg.PhaseTwo.PlatformSettings.RedisKeyPrefix = "" },
+		"platform settings prefix braces": func(cfg *Config) {
+			cfg.PhaseTwo.PlatformSettings.RedisKeyPrefix = "bk{tenant}:"
 		},
-		"system disk filter fact": func(cfg *Config) {
-			cfg.PhaseTwo.Control.LegacyQueryRuntime.SystemDiskFilter.Values = nil
-		},
-		"system network filter fact": func(cfg *Config) {
-			cfg.PhaseTwo.Control.LegacyQueryRuntime.SystemNetworkFilter.Values = nil
+		"platform settings non-canonical list": func(cfg *Config) {
+			states := []string{" 备用机"}
+			cfg.PhaseTwo.PlatformSettings.HostDisableMonitorStates = &states
 		},
 		"registration cadence": func(cfg *Config) {
 			cfg.PhaseTwo.Worker.RegistrationRenewInterval = cfg.PhaseTwo.Worker.RegistrationTTL
@@ -322,9 +323,6 @@ phase_two:
       bkdata_cmdb_level_tables: []
       system_disk_filter:
         field_name: device_type
-        values: []
-      system_network_filter:
-        field_name: device_name
         values: []
   access:
     uq_endpoint: http://unify-query.service

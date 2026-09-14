@@ -150,6 +150,9 @@ func phaseTwoRuntimeProfile(cfg config.Config, cpuSource string, procs int) (obs
 			PlatformKeyPrefix:   cfg.PlatformKeyPrefix(),
 			StrategyCachePrefix: cfg.PhaseTwo.Control.StrategyCachePrefix,
 			OwnStorePrefix:      cfg.Redis.StatePrefix,
+
+			DynamicConfig:             dynamicConfigDestination(cfg),
+			PlatformSettingsKeyPrefix: cfg.PhaseTwo.PlatformSettings.RedisKeyPrefix,
 		},
 	}
 	// Digest the exact logged safe values, with the digest field still empty.
@@ -196,4 +199,14 @@ func phaseTwoRuntimeCapacity(cfg config.Config, inputs config.CapacityInputs) ob
 		OutputMessageBytes: cfg.Kafka.TriggerEvent.MaxMessageBytes,
 		UQBodyBytes:        uq.MaxBodyBytes, UQSeriesBytes: uq.MaxSeriesBytes, UQSeries: uq.MaxSeries, UQRecords: uq.MaxRecords,
 	}
+}
+
+// dynamicConfigDestination names the distribution's instance, or the fact
+// that the deployment renders none.
+func dynamicConfigDestination(cfg config.Config) string {
+	connection, configured := cfg.DynamicConfigRedis()
+	if !configured {
+		return "not_configured"
+	}
+	return connection.Destination()
 }

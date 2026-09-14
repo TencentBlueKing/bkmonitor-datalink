@@ -508,6 +508,27 @@ type Snapshot struct {
 	// before this fact existed, which is a different answer from a source
 	// that is fine.
 	ControlSource *ControlSourceFacts `json:"control_source,omitempty"`
+	// PlatformSettings is the state of this replica's copy of the platform's
+	// settings it evaluates by. Absent on a build before it existed.
+	PlatformSettings *PlatformSettingsFacts `json:"platform_settings,omitempty"`
+}
+
+// PlatformSettingsFacts is what a replica says about its copy of the
+// platform's settings. Mode is not_configured, never_loaded, authoritative
+// or stale. StaleBeyondBound is the one fact the verdict reads: the copy
+// had a publication and has been without one for longer than the bound, so
+// it evaluates by settings the platform may since have changed. A copy that
+// never loaded, or was never given a source, is not stale.
+type PlatformSettingsFacts struct {
+	Mode             string `json:"mode"`
+	StaleBeyondBound bool   `json:"stale_beyond_bound"`
+	// AuthoritativeAgeSeconds is how long ago the last publication was read.
+	// Absent until there has been one.
+	AuthoritativeAgeSeconds *float64 `json:"authoritative_age_seconds,omitempty"`
+	// LastUnavailable is why the last read yielded no publication, kept
+	// beside the mode because a decode error names the field and the value
+	// and nothing else does.
+	LastUnavailable string `json:"last_unavailable,omitempty"`
 }
 
 // ControlSourceFacts is what a replica says about the control plane's
@@ -579,6 +600,12 @@ const (
 	// than the staleness bound. A deployment in which nobody refreshes reads
 	// on every refresh counter exactly like one in which somebody else does.
 	DegradationControlLeaderAbsent DegradationKind = "CONTROL_LEADER_ABSENT"
+	// DegradationPlatformSettingsStale: the replica's copy of the platform's
+	// settings has been without the platform's publication for longer than
+	// the staleness bound. Every evaluation meanwhile applies host states, a
+	// computing-platform switch or a disk filter the platform may have
+	// changed, and nothing on the object list shows that.
+	DegradationPlatformSettingsStale DegradationKind = "PLATFORM_SETTINGS_STALE"
 )
 
 // Degradation is one replica-level reason the deployment is degraded.
@@ -903,6 +930,9 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		}
 		if snapshot.OpenAlertSet != nil && snapshot.OpenAlertSet.StaleBeyondBound {
 			view.Degradations = append(view.Degradations, Degradation{Kind: DegradationOpenAlertSetStale, Replica: replica})
+		}
+		if snapshot.PlatformSettings != nil && snapshot.PlatformSettings.StaleBeyondBound {
+			view.Degradations = append(view.Degradations, Degradation{Kind: DegradationPlatformSettingsStale, Replica: replica})
 		}
 		if snapshot.ControlSource != nil {
 			if snapshot.ControlSource.StaleBeyondBound {

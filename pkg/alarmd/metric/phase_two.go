@@ -79,6 +79,7 @@ type phaseTwoMetrics struct {
 	controlSourceRounds             *prometheus.CounterVec
 	controlSourceRetainedStale      prometheus.Counter
 	controlSource                   *controlSourceCollector
+	platformSettings                *platformSettingsCollector
 	redisCalls                      redisCallMetrics
 	controlCache                    *controlCacheCollector
 	legacyPodCache                  *prometheus.CounterVec
@@ -396,6 +397,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 		metrics.controlSourceRounds.WithLabelValues(observability.ControlSourceRoundFailed, string(exit))
 	}
 	metrics.controlSource = newControlSourceCollector()
+	metrics.platformSettings = newPlatformSettingsCollector()
 	metrics.controlSourceRetainedStale = prometheus.NewCounter(prometheus.CounterOpts{
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "control_source_retained_stale_revisions_total",
 		Help: "Last-good Plans a Catalog build refused to retain because their persisted facts no longer hold under " +
@@ -479,7 +481,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.undrainedDrainingQueryGroups, m.drainingCursorPrunedQueryGroups, m.rebalancePlannedMoves, m.assignmentIndexStaleRounds, m.assignmentIndexWrites, m.assignmentIndexReads, m.assignmentIndexConfirm, m.assignmentRecordReads, m.scheduleCursorAdvances, m.activationHeldQueryGroups, m.activationHeldAgeSecondsMax,
 		m.algorithmEvaluations, m.algorithmInputs, m.recoveryHeld, m.recoveryPastLevelWithoutRecov, m.openAlertGate,
 	}...), append(append(m.redisCalls.collectors(), m.dueIndex.collectors()...),
-		m.controlCache, m.openAlertSet, m.controlSourceRounds, m.controlSource, m.controlSourceRetainedStale,
+		m.controlCache, m.openAlertSet, m.controlSourceRounds, m.controlSource, m.controlSourceRetainedStale, m.platformSettings,
 		m.redisPool, m.canonicalEncoding, m.legacyPodCache,
 		m.seriesAdmission, m.cmdbIndexHosts, m.hostDisableMonitorStates, m.cmdbIndexAge, m.cmdbIndexDegraded,
 		m.catalogComposition)...)

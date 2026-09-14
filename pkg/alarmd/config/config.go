@@ -148,6 +148,14 @@ type PlatformCacheConfig struct {
 	// CMDB is where the platform writes the host cache the target filter and
 	// the host status filter decide on.
 	CMDB *RedisConnectionConfig `yaml:"cmdb,omitempty"`
+	// DynamicConfig is where the platform distributes its dynamic
+	// configuration: the instance and logical database of the platform's
+	// default Redis, rendered by the chart from the platform's own setting.
+	// Unlike the two above it has no fallback: absent means the deployment
+	// renders no distribution (the publisher is not deployed), and the
+	// platform settings copy says not_configured rather than reading the
+	// wrong instance as "nothing published".
+	DynamicConfig *RedisConnectionConfig `yaml:"dynamic_config,omitempty"`
 }
 
 type DependencyRetryConfig struct {
@@ -356,6 +364,15 @@ func (c Config) CMDBCacheRedis() RedisConnectionConfig {
 	return c.Redis.Connection()
 }
 
+// DynamicConfigRedis is where the platform distributes its dynamic
+// configuration, and whether the deployment renders it at all.
+func (c Config) DynamicConfigRedis() (RedisConnectionConfig, bool) {
+	if c.PlatformCache.DynamicConfig == nil {
+		return RedisConnectionConfig{}, false
+	}
+	return c.PlatformCache.DynamicConfig.clone(), true
+}
+
 // resolvePlatformCacheRedis writes down which connection each platform cache
 // actually resolved to, rather than leaving it to be worked out again at every
 // call site. The resolved configuration is what a release check reads and what
@@ -365,8 +382,11 @@ func (c *Config) resolvePlatformCacheRedis() {
 	if c == nil || c.Input.Mode != InputModeGoAccess {
 		return
 	}
-	for _, cache := range []**RedisConnectionConfig{&c.PlatformCache.Strategy, &c.PlatformCache.CMDB} {
+	for _, cache := range []**RedisConnectionConfig{&c.PlatformCache.Strategy, &c.PlatformCache.CMDB, &c.PlatformCache.DynamicConfig} {
 		if *cache == nil {
+			if cache == &c.PlatformCache.DynamicConfig {
+				continue
+			}
 			resolved := c.Redis.Connection()
 			*cache = &resolved
 			continue
@@ -515,6 +535,9 @@ func Load(path string) (Config, error) {
 	cfg.resolveCompatibilityServiceTimeouts()
 	cfg.resolveCompatibilityPodCache()
 	cfg.resolvePhaseTwoWorkerIDFromEnvironment()
+	if err := cfg.PhaseTwo.migratePlatformSettings(); err != nil {
+		return Config{}, err
+	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}

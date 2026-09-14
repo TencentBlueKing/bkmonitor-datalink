@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -285,34 +284,6 @@ func (acquirer productionQueryPermitAcquirer) AcquireQueryPermit(
 }
 
 var _ access.QueryPermitAcquirer = productionQueryPermitAcquirer{}
-
-func phaseTwoLegacyQueryRuntimeFacts(
-	runtime config.PhaseTwoLegacyQueryRuntimeConfig,
-) controlplane.LegacyQueryRuntimeFacts {
-	var accessBKData *bool
-	if runtime.AccessBKData != nil {
-		value := *runtime.AccessBKData
-		accessBKData = &value
-	}
-	var storage *execution.QueryStorage
-	if runtime.FTAEventStorage != nil {
-		copy := *runtime.FTAEventStorage
-		storage = &copy
-	}
-	return controlplane.LegacyQueryRuntimeFacts{
-		FTAEventStorage:       storage,
-		AccessBKData:          accessBKData,
-		BKDataCMDBLevelTables: append([]string{}, runtime.BKDataCMDBLevelTables...),
-		SystemDiskFilter: controlplane.LegacyRuntimeFilterFact{
-			FieldName: runtime.SystemDiskFilter.FieldName,
-			Values:    append([]string{}, runtime.SystemDiskFilter.Values...),
-		},
-		SystemNetworkFilter: controlplane.LegacyRuntimeFilterFact{
-			FieldName: runtime.SystemNetworkFilter.FieldName,
-			Values:    append([]string{}, runtime.SystemNetworkFilter.Values...),
-		},
-	}
-}
 
 type productionSourceReconciler interface {
 	Refresh(

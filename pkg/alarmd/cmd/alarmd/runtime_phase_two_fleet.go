@@ -360,6 +360,10 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	undecidable := publisher.tracker.Undecidable()
 	snapshot.Undecidable = undecidable
 	snapshot.TotalUndecidable = len(undecidable)
+	// And the rounds interrupted by a change already being made on purpose.
+	transitional := publisher.tracker.Transitional()
+	snapshot.Transitional = transitional
+	snapshot.TotalTransitional = len(transitional)
 	snapshot.DemotionEntries, snapshot.DemotionExtensions, snapshot.DemotionExits,
 		snapshot.LastDemotionExit = publisher.tracker.DemotionFlow()
 	if publisher.capacity != nil {

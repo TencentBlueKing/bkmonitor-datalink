@@ -123,9 +123,9 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	rows = append(rows, fleet.Anomaly{QueryGroup: "qg-bare", Replica: "r-1", Kind: "DEGRADED_RUN"})
 
 	replicas := []fleet.ReplicaView{
-		{Replica: "bk-monitor-alarmd-trigger-5bdb679ddf-abcde", Owned: 452, Healthy: 388,
-			Anomalies: 33, Demoted: 19, Undecidable: 12, AgeSeconds: 3, UptimeSeconds: 7200,
-			Ours: 5, External: 26},
+		{Replica: "bk-monitor-alarmd-trigger-5bdb679ddf-abcde", Owned: 452, Healthy: 384,
+			Anomalies: 33, Demoted: 19, Undecidable: 12, Transitional: 4, AgeSeconds: 3,
+			UptimeSeconds: 7200, Ours: 5, External: 26},
 		// One replica reporting no undecidable objects, so the render is
 		// executed on both a present and an absent count. A fixture where every
 		// row carries every field cannot catch a read on one that is sometimes
@@ -149,8 +149,12 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		},
 		"window_never_fills_cases": windowNeverFillsCases(),
 		"health": fleet.HealthResponse{
-			Health: "HEALTHY", Covered: 979, Determined: 979, Unknown: 0, Healthy: 848,
-			AnomaliesTotal: 86, DemotedTotal: 33, UndecidableTotal: 12,
+			// The columns add up to Covered on purpose: the page prints that
+			// equation and it is the only thing a reader has that says the
+			// split is complete. A fixture that does not add up cannot tell a
+			// page that dropped a column from one that is fine.
+			Health: "HEALTHY", Covered: 979, Determined: 979, Unknown: 0, Healthy: 844,
+			AnomaliesTotal: 86, DemotedTotal: 33, UndecidableTotal: 12, TransitionalTotal: 4,
 			DemotedDue: 2, DemotionEntries: 40, DemotionExits: 7, PerReplica: replicas,
 		},
 		"per_replica": replicas,
@@ -189,6 +193,25 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	if !strings.Contains(text, "windowNeverFills agreed on") {
 		t.Errorf("the page's windowNeverFills was never run against the Go rule; the two copies "+
 			"are unchecked:\n%s", text)
+	}
+
+	// The partition equation the page prints under the verdict. It is the only
+	// statement on the page that says every object is accounted for, and a
+	// column left out of it makes the sum quietly wrong while every cell above
+	// still shows a plausible number.
+	equation := ""
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "SPLIT ") {
+			equation = line
+			break
+		}
+	}
+	if equation == "" {
+		t.Error("the page rendered no partition line; nothing on it says the columns account for " +
+			"every object")
+	} else if !strings.Contains(equation, "等于应有的") {
+		t.Errorf("the partition line does not add up: %s\n(the fixture's columns sum to Covered, "+
+			"so a page that drops one is the only way this fails)", equation)
 	}
 
 	// What each row would actually say. Executing the render proves only that
@@ -329,6 +352,8 @@ for (const [name, fn] of calls) {
 // field renamed on one side makes the page read undefined, the comparison
 // false, and every permanently short window render as "still filling" -- with
 // no error anywhere. Only running both can see it.
+console.log('SPLIT ' + (store['splitBasis'] ? store['splitBasis'].textContent : '(not rendered)'));
+
 // The note each row would actually render, emitted for the Go side to check.
 // Executing anomalyRow only proves the page does not throw; the wording is
 // what a reader acts on, and a row can render the wrong explanation

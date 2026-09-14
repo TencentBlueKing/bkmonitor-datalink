@@ -734,3 +734,106 @@ func TestEmptyRoundsAreCountedApartFromShortRounds(t *testing.T) {
 		t.Fatalf("short rounds = %d, want 23: the short run is still unbroken", got)
 	}
 }
+
+// A round interrupted by a change already being made on purpose is not a
+// fault. The strategy was edited, deactivated or reassigned mid-round; results
+// computed under the old configuration must not land, so the round is refused
+// and the next one runs under the new configuration. Both halves are correct
+// and nobody acts on it.
+func TestARoundInterruptedByAChangeAlreadyMadeIsNotAnAnomaly(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	drift := completion("qg-drift", "COMPLETED_WITH_UNAVAILABLE", "8930")
+	drift.ProgressCompletionCause = "CONFIG_DRIFT"
+	drift.ProgressCompletionReason = "CONFIG_DRIFT"
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		tracker.Observe(context.Background(), drift)
+	}
+	if got := tracker.Anomalies(); len(got) != 0 {
+		t.Fatalf("anomalies = %+v, want none: the change was already made deliberately", got)
+	}
+	listed := tracker.Transitional()
+	if len(listed) != 1 || listed[0].QueryGroup != "qg-drift" {
+		t.Fatalf("transitional = %+v, want the one object", listed)
+	}
+	// Exactly one column, or the healthy count -- a subtraction over all of
+	// them -- loses an object per round.
+	if got := tracker.Undecidable(); len(got) != 0 {
+		t.Fatalf("undecidable = %+v, want none: a config edit is not a window with nothing to decide", got)
+	}
+	if got := tracker.Demoted(); len(got) != 0 {
+		t.Fatalf("demoted = %+v, want none", got)
+	}
+}
+
+// The run-level flag has to be written against every no-action reason, not
+// against whichever column is tested first. Written against one, a run
+// interrupted by a config edit gets marked as having gone wrong and is filed
+// as a fault -- and equally a warming run followed by an edit would be.
+func TestOneNoActionReasonDoesNotMarkTheRunForTheOtherColumn(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	drift := completion("qg-both", "COMPLETED_WITH_UNAVAILABLE", "8930")
+	drift.ProgressCompletionCause = "CONFIG_DRIFT"
+	drift.ProgressCompletionReason = "CONFIG_DRIFT"
+
+	// Warming rounds first, then the edit lands.
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		tracker.Observe(context.Background(), coverageCompletion("qg-both", 3, 1, 2, 14))
+	}
+	tracker.Observe(context.Background(), drift)
+	if got := tracker.Anomalies(); len(got) != 0 {
+		t.Fatalf("anomalies = %+v, want none: neither round was a fault", got)
+	}
+	if got := tracker.Transitional(); len(got) != 1 {
+		t.Fatalf("transitional = %+v, want the object, filed by its latest reason", got)
+	}
+
+	// And a genuine failure in the run still wins, in either order.
+	failing := completion("qg-mixed", "COMPLETED_WITH_UNAVAILABLE", "8930")
+	failing.ProgressCompletionCause = "LEVEL_OUTCOME_UNKNOWN"
+	failing.ProgressCompletionReason = "STATE_FACT_CONTRADICTS_OUTCOME"
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		tracker.Observe(context.Background(), failing)
+	}
+	driftMixed := drift
+	driftMixed.Trace.QueryGroupKey = "qg-mixed"
+	tracker.Observe(context.Background(), driftMixed)
+	if got := tracker.Transitional(); len(got) != 1 {
+		t.Fatalf("transitional = %+v, want only qg-both: an edit does not excuse a run that was "+
+			"already failing", got)
+	}
+	anomalies := tracker.Anomalies()
+	if len(anomalies) != 1 || anomalies[0].QueryGroup != "qg-mixed" {
+		t.Fatalf("anomalies = %+v, want the failing object still counted", anomalies)
+	}
+}
+
+// The list is what the column means, so it is pinned. A column defined as
+// "the rest" becomes the next place things go to stop being looked at, which
+// is the failure the whole split exists to end.
+func TestTheTransitionalColumnHoldsOnlyDeclaredReasons(t *testing.T) {
+	if len(transitionalReasons) == 0 {
+		t.Fatal("no transitional reasons declared; the column would be empty and the check vacuous")
+	}
+	for reason := range transitionalReasons {
+		if !externalReasons[reason] {
+			t.Errorf("%q is transitional but not external: an object nobody acts on must not be "+
+				"counted against this deployment if it ever falls back to the anomaly column", reason)
+		}
+		if undecidableReason(reason) {
+			t.Errorf("%q is on two column lists; an object would be claimed by whichever is tested first", reason)
+		}
+	}
+	// Reasons that are retryable are emphatically not on it. "Retrying may
+	// help" is a different statement from "nothing is wrong", and the
+	// contract's RETRYABLE class holds REDIS_UNAVAILABLE and
+	// PROVIDER_UNAVAILABLE -- real failures that would vanish from the list
+	// someone works through.
+	for _, reason := range []string{"REDIS_UNAVAILABLE", "PROVIDER_UNAVAILABLE", "RESOURCE_HARD_STOP",
+		"QUERY_NOT_READY", "KAFKA_UNAVAILABLE"} {
+		if transitionalReasons[reason] {
+			t.Errorf("%q is filed as needing no action; retryable is not the same as harmless", reason)
+		}
+	}
+}

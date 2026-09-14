@@ -142,6 +142,23 @@ const (
 	// the anomaly count, and anything that shrinks that count has to be able
 	// to show exactly which objects it took.
 	ColumnUndecidable = "undecidable"
+	// ColumnTransitional is a round interrupted by a change that was already
+	// being made on purpose, where the next round runs under the new state and
+	// nobody has to do anything.
+	//
+	// Narrow deliberately. A column whose meaning is "the rest" becomes the
+	// next place things go to stop being looked at, which is the failure the
+	// whole split exists to end -- so membership is a declared list with a
+	// reason per entry, and anything not on it stays an anomaly. The safe
+	// direction here is to leave something in the anomaly column, never to
+	// move it out.
+	//
+	// The contract's own RETRYABLE reason class looks like the obvious basis
+	// and is not: it holds REDIS_UNAVAILABLE, PROVIDER_UNAVAILABLE and
+	// RESOURCE_HARD_STOP. "Retrying may help" is a different statement from
+	// "nothing is wrong", and CONFIG_DRIFT is not even in that class -- it is
+	// COVERAGE.
+	ColumnTransitional = "transitional"
 )
 
 // The two ends of the list. Both are legitimate readings of the same
@@ -409,6 +426,12 @@ type Snapshot struct {
 	// slightly worse than it is until every replica is on the new build.
 	Undecidable      []Anomaly `json:"undecidable,omitempty"`
 	TotalUndecidable int       `json:"total_undecidable,omitempty"`
+	// Transitional are rounds interrupted by a change already being made on
+	// purpose. Same rolling-upgrade terms as the column above: an older
+	// replica sends neither field and its objects of this kind stay in
+	// Anomalies, which is what they did before this column existed.
+	Transitional      []Anomaly `json:"transitional,omitempty"`
+	TotalTransitional int       `json:"total_transitional,omitempty"`
 	// DemotionEntries and DemotionExits are cumulative since this replica
 	// started. The pair is the check on the pool: demotion removes objects from
 	// the health denominator, so a pool with entries and no exits is a mechanism
@@ -563,12 +586,13 @@ type ReplicaView struct {
 	// Determined, Anomalies, Demoted and Undecidable partition Owned the same
 	// way the deployment columns partition Expected, so a replica row adds up
 	// on its own and a reader can see which replica breaks the sum.
-	Determined  int `json:"determined"`
-	Anomalies   int `json:"anomalies"`
-	Demoted     int `json:"demoted"`
-	Undecidable int `json:"undecidable"`
-	Healthy     int `json:"healthy"`
-	Unknown     int `json:"unknown"`
+	Determined   int `json:"determined"`
+	Anomalies    int `json:"anomalies"`
+	Demoted      int `json:"demoted"`
+	Undecidable  int `json:"undecidable"`
+	Transitional int `json:"transitional"`
+	Healthy      int `json:"healthy"`
+	Unknown      int `json:"unknown"`
 	// AgeSeconds is how old this replica's snapshot was at the moment of the
 	// read. A replica publishing late is reporting about a past it has not
 	// updated, and that is invisible in any of the numbers above.
@@ -657,6 +681,12 @@ type View struct {
 	// to show which objects it took out of it.
 	Undecidable      []Anomaly `json:"undecidable"`
 	UndecidableTotal int       `json:"undecidable_total"`
+	// Transitional are rounds interrupted by a change already being made. Out
+	// of the anomaly count because nobody acts on them, and listed here for
+	// the same reason every other such column is: whatever makes that count
+	// smaller has to show which objects it took.
+	Transitional      []Anomaly `json:"transitional"`
+	TransitionalTotal int       `json:"transitional_total"`
 	// Demoted are objects whose backend kept answering unavailable. They are
 	// out of the health verdict on purpose -- that is what demotion is for --
 	// which is exactly why the flow numbers below travel with them.
@@ -713,8 +743,8 @@ type View struct {
 // coverage of nothing.
 func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas []string, now time.Time, freshness time.Duration) View {
 	view := View{Health: HealthHealthy, Anomalies: []Anomaly{}, Demoted: []Anomaly{},
-		Undecidable: []Anomaly{},
-		Replicas:    []string{}, PerReplica: []ReplicaView{}}
+		Undecidable: []Anomaly{}, Transitional: []Anomaly{},
+		Replicas: []string{}, PerReplica: []ReplicaView{}}
 	ownedByReplica := make([]string, 0, len(expectedReplicas))
 	// The snapshots this view is willing to speak for. Every other number below
 	// is built from these and not from the argument, because the argument
@@ -764,6 +794,8 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		view.Demoted = append(view.Demoted, snapshot.Demoted...)
 		view.UndecidableTotal += snapshot.TotalUndecidable
 		view.Undecidable = append(view.Undecidable, snapshot.Undecidable...)
+		view.TransitionalTotal += snapshot.TotalTransitional
+		view.Transitional = append(view.Transitional, snapshot.Transitional...)
 		view.DemotionEntries += snapshot.DemotionEntries
 		view.DemotionExtensions += snapshot.DemotionExtensions
 		view.DemotionExits += snapshot.DemotionExits
@@ -779,8 +811,8 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		perReplica := ReplicaView{
 			Replica: replica, Owned: snapshot.Owned, Determined: snapshot.Determined,
 			Anomalies: snapshot.TotalAnomalies, Demoted: snapshot.TotalDemoted,
-			Undecidable: snapshot.TotalUndecidable,
-			AgeSeconds:  now.Sub(snapshot.TakenAt).Seconds(),
+			Undecidable: snapshot.TotalUndecidable, Transitional: snapshot.TotalTransitional,
+			AgeSeconds: now.Sub(snapshot.TakenAt).Seconds(),
 			// Left at zero when the replica did not publish a start time, which
 			// an older build will not. Zero has to read as "not reported" rather
 			// than "started just now", so the page checks before using it.
@@ -809,7 +841,7 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 			perReplica.Unknown = 0
 		}
 		perReplica.Healthy = snapshot.Determined - snapshot.TotalAnomalies -
-			snapshot.TotalDemoted - snapshot.TotalUndecidable
+			snapshot.TotalDemoted - snapshot.TotalUndecidable - snapshot.TotalTransitional
 		if perReplica.Healthy < 0 {
 			perReplica.Healthy = 0
 		}
@@ -820,7 +852,8 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 	// healthy objects directly is deliberate: a healthy count built by its own
 	// walk can drift from the lists beside it, and the drift shows up as a
 	// column that adds up to slightly more than the deployment has.
-	view.Healthy = view.Determined - view.AnomaliesTotal - view.DemotedTotal - view.UndecidableTotal
+	view.Healthy = view.Determined - view.AnomaliesTotal - view.DemotedTotal -
+		view.UndecidableTotal - view.TransitionalTotal
 	if view.Healthy < 0 {
 		// The three columns claim more objects than the replicas said they can
 		// speak for. Something is being counted twice, so no column can be

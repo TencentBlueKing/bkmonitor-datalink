@@ -114,6 +114,10 @@ type HealthResponse struct {
 	// the anomaly count -- and therefore reported here, because a column that
 	// makes the anomaly count smaller has to be visible next to it.
 	UndecidableTotal int `json:"undecidable_total"`
+	// TransitionalTotal is the rounds interrupted by a change already being
+	// made on purpose. Reported for the same reason as the column above: it
+	// makes the anomaly count smaller, so it has to be visible beside it.
+	TransitionalTotal int `json:"transitional_total"`
 	// Ours and Unattributed are the two numbers the verdict is actually
 	// decided on, and they were not on this response at all.
 	//
@@ -586,10 +590,10 @@ func NewHandler(
 			Health: view.Health, Expected: view.Expected, Covered: view.Covered,
 			Determined: view.Determined, Unknown: view.Unknown, Healthy: view.Healthy,
 			AnomaliesTotal: view.AnomaliesTotal, DemotedTotal: view.DemotedTotal,
-			UndecidableTotal: view.UndecidableTotal,
-			Ours:             OursCount(view.Anomalies),
-			Unattributed:     UnattributedCount(view.Anomalies),
-			DemotedDue:       view.DemotedDue, DemotionEntries: view.DemotionEntries,
+			UndecidableTotal: view.UndecidableTotal, TransitionalTotal: view.TransitionalTotal,
+			Ours:         OursCount(view.Anomalies),
+			Unattributed: UnattributedCount(view.Anomalies),
+			DemotedDue:   view.DemotedDue, DemotionEntries: view.DemotionEntries,
 			DemotionExtensions: view.DemotionExtensions, DemotionExits: view.DemotionExits,
 			LastDemotionExit: view.LastDemotionExit,
 			Coverage:         view.Coverage, PerReplica: view.PerReplica,
@@ -613,9 +617,11 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	// a reader could hold a pool from one moment beside anomalies from another
 	// and find objects in both, or in neither.
 	column := request.URL.Query().Get("column")
-	if column != "" && column != ColumnAnomalies && column != ColumnDemoted && column != ColumnUndecidable {
+	if column != "" && column != ColumnAnomalies && column != ColumnDemoted &&
+		column != ColumnUndecidable && column != ColumnTransitional {
 		writeJSON(response, http.StatusBadRequest, map[string]string{
-			"error": "column must be " + ColumnAnomalies + ", " + ColumnDemoted + " or " + ColumnUndecidable})
+			"error": "column must be " + ColumnAnomalies + ", " + ColumnDemoted + ", " +
+				ColumnUndecidable + " or " + ColumnTransitional})
 		return
 	}
 	if column == "" {
@@ -646,6 +652,9 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	case ColumnUndecidable:
 		view.Anomalies = view.Undecidable
 		view.AnomaliesTotal = view.UndecidableTotal
+	case ColumnTransitional:
+		view.Anomalies = view.Transitional
+		view.AnomaliesTotal = view.TransitionalTotal
 	}
 	// Marked before filtering so a filtered response reports the same flag for the
 	// same object as an unfiltered one, and counted here so the deployment-wide

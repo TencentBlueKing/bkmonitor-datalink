@@ -28,6 +28,14 @@ func partitionTracker(t *testing.T, at time.Time, healthy, failing, pooled int) 
 // arithmetic does not name them they simply vanish from it -- which is the one
 // way a partition breaks without any column looking wrong.
 func partitionTrackerWith(t *testing.T, at time.Time, healthy, failing, pooled, undecidable int) *Tracker {
+	return partitionTrackerFull(t, at, healthy, failing, pooled, undecidable, 0)
+}
+
+// partitionTrackerFull adds the last column: rounds interrupted by a change
+// already being made on purpose. Every column has an arm here because the
+// partition is only meaningful if each one is populated -- a column left at
+// zero in the fixture is a column the arithmetic is not actually checked over.
+func partitionTrackerFull(t *testing.T, at time.Time, healthy, failing, pooled, undecidable, transitional int) *Tracker {
 	t.Helper()
 	tracker := NewTracker(nil, "replica-a", func() time.Time { return at })
 	observe := func(queryGroup string, observation observability.Observation) {
@@ -62,6 +70,16 @@ func partitionTrackerWith(t *testing.T, at time.Time, healthy, failing, pooled, 
 			})
 		}
 	}
+	for index := 0; index < transitional; index++ {
+		name := qgName("transitional", index)
+		for round := 0; round < DefaultDegradedRounds; round++ {
+			observe(name, observability.Observation{
+				ProgressCompletionKind:   "COMPLETED_WITH_UNAVAILABLE",
+				ProgressCompletionCause:  "CONFIG_DRIFT",
+				ProgressCompletionReason: "CONFIG_DRIFT",
+			})
+		}
+	}
 	return tracker
 }
 
@@ -78,25 +96,32 @@ func qgName(prefix string, index int) string {
 // a statement rather than a hope.
 func TestEveryColumnAccountsForEveryObject(t *testing.T) {
 	at := time.Date(2026, 9, 11, 14, 0, 0, 0, time.UTC)
-	tracker := partitionTrackerWith(t, at, 40, 7, 5, 3)
+	tracker := partitionTrackerFull(t, at, 40, 7, 5, 3, 2)
 
 	anomalies := tracker.Anomalies()
 	demoted := tracker.Demoted()
 	undecidable := tracker.Undecidable()
+	transitional := tracker.Transitional()
 	determined := tracker.Determined()
 
-	view := Aggregate(Expectation{Known: true, QueryGroups: 55}, []Snapshot{{
-		Replica: "replica-a", TakenAt: at, Owned: 55, Determined: determined,
+	view := Aggregate(Expectation{Known: true, QueryGroups: 57}, []Snapshot{{
+		Replica: "replica-a", TakenAt: at, Owned: 57, Determined: determined,
 		Anomalies: anomalies, TotalAnomalies: len(anomalies),
 		Demoted: demoted, TotalDemoted: len(demoted),
 		Undecidable: undecidable, TotalUndecidable: len(undecidable),
+		Transitional: transitional, TotalTransitional: len(transitional),
 	}}, []string{"replica-a"}, at, time.Minute)
 
-	got := view.Healthy + view.AnomaliesTotal + view.DemotedTotal + view.UndecidableTotal + view.Unknown
+	got := view.Healthy + view.AnomaliesTotal + view.DemotedTotal + view.UndecidableTotal +
+		view.TransitionalTotal + view.Unknown
 	if got != *view.Expected {
-		t.Errorf("healthy %d + anomalies %d + demoted %d + undecidable %d + unknown %d = %d, want the expected %d",
-			view.Healthy, view.AnomaliesTotal, view.DemotedTotal, view.UndecidableTotal,
-			view.Unknown, got, *view.Expected)
+		t.Errorf("healthy %d + anomalies %d + demoted %d + undecidable %d + transitional %d + unknown %d = %d, "+
+			"want the expected %d", view.Healthy, view.AnomaliesTotal, view.DemotedTotal,
+			view.UndecidableTotal, view.TransitionalTotal, view.Unknown, got, *view.Expected)
+	}
+	if view.TransitionalTotal != 2 {
+		t.Errorf("transitional = %d, want the 2 interrupted by a change already being made",
+			view.TransitionalTotal)
 	}
 	if view.AnomaliesTotal != 7 {
 		t.Errorf("anomalies = %d, want the 7 this deployment is failing on", view.AnomaliesTotal)
@@ -116,9 +141,11 @@ func TestEveryColumnAccountsForEveryObject(t *testing.T) {
 		t.Fatalf("per-replica rows = %d, want 1", len(view.PerReplica))
 	}
 	row := view.PerReplica[0]
-	if sum := row.Healthy + row.Anomalies + row.Demoted + row.Undecidable + row.Unknown; sum != row.Owned {
-		t.Errorf("replica row: healthy %d + anomalies %d + demoted %d + undecidable %d + unknown %d = %d, want owned %d",
-			row.Healthy, row.Anomalies, row.Demoted, row.Undecidable, row.Unknown, sum, row.Owned)
+	sum := row.Healthy + row.Anomalies + row.Demoted + row.Undecidable + row.Transitional + row.Unknown
+	if sum != row.Owned {
+		t.Errorf("replica row: healthy %d + anomalies %d + demoted %d + undecidable %d + transitional %d + "+
+			"unknown %d = %d, want owned %d", row.Healthy, row.Anomalies, row.Demoted,
+			row.Undecidable, row.Transitional, row.Unknown, sum, row.Owned)
 	}
 }
 

@@ -224,6 +224,42 @@ func undecidableReason(reason string) bool {
 	return reason == "HISTORY_WARMING"
 }
 
+// transitionalReasons are rounds interrupted by a change that was already
+// being made deliberately. The next round runs under the new state; nobody
+// acts on these.
+//
+// One entry, and each entry carries why it is here, because a list with a
+// vague rule grows until the column means nothing. A reason not on this list
+// stays in the anomaly column -- the direction that keeps something visible
+// rather than the one that hides it.
+var transitionalReasons = map[string]bool{
+	// The strategy was edited, deactivated or reassigned while a round was in
+	// flight. Both halves are correct: results computed under the old
+	// configuration must not land, so they are refused, and the next round
+	// runs under the new one.
+	//
+	// Two outcomes, and neither needs anyone. Activations that changed under
+	// the Slot make it retry, so that Slot is evaluated again. An activation
+	// that requires forced warming instead consumes this Slot and completes
+	// query-free -- deliberately, because retrying it would rewrite the
+	// warming marker at the same ApplyVersion and conflict on every attempt
+	// until the Slot aged out. The Slot lost there could not have decided
+	// anything either way: the plan is entering forced warming, so the rounds
+	// after it cannot conclude yet either.
+	"CONFIG_DRIFT": true,
+}
+
+func transitionalReason(reason string) bool {
+	return transitionalReasons[reason]
+}
+
+// noActionReason is every reason that has a column of its own because nobody
+// acts on it. It exists so the run-level flag is written against the union
+// rather than against whichever column happens to be tested first.
+func noActionReason(reason string) bool {
+	return undecidableReason(reason) || transitionalReason(reason)
+}
+
 // Tracker turns the observation stream into the anomaly list a replica
 // publishes. It reads what the replica already emits rather than issuing its
 // own reads, so producing the list costs no extra dependency traffic.
@@ -386,9 +422,15 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		// A degraded completion is still a round that ended and moved the
 		// cursor, which is exactly what a stalled object cannot do.
 		state.failingSince = time.Time{}
-		// One round that was more than undecidable settles the whole run, and
-		// no later round takes it back.
-		if !undecidableReason(observation.ProgressCompletionReason) {
+		// One round that was more than a no-action reason settles the whole
+		// run, and no later round takes it back.
+		//
+		// "No action" is the union of every reason that has its own column,
+		// not just the one checked first. Written against a single column it
+		// would mark the run for the others -- so an object interrupted by a
+		// config edit would be filed as a fault, which is the shape of bug
+		// this flag exists to prevent, pointing the other way.
+		if !noActionReason(observation.ProgressCompletionReason) {
 			state.sawSomethingWrong = true
 		}
 		state.degradedRuns++
@@ -526,6 +568,17 @@ func (tracker *Tracker) Undecidable() []Anomaly {
 	return tracker.listed(ColumnUndecidable)
 }
 
+// Transitional returns the objects whose round was interrupted by a change
+// already being made on purpose.
+//
+// Not a fault and not a limitation: the next round runs under the new state.
+// They are published apart from the anomalies because the anomaly column is
+// meant to be the list somebody works through, and a round that was
+// interrupted by an edit somebody already made is finished business.
+func (tracker *Tracker) Transitional() []Anomaly {
+	return tracker.listed(ColumnTransitional)
+}
+
 // Demoted returns the query groups held back because their backend kept
 // answering unavailable.
 //
@@ -576,6 +629,13 @@ func columnOf(state *queryGroupState) string {
 	if !state.sawSomethingWrong && state.currentKind == KindDegradedRun &&
 		undecidableReason(state.causeReason) && !state.coverage.Starved() {
 		return ColumnUndecidable
+	}
+	// Same run-level guard as the column above, for the same reason: judged off
+	// the latest round, a run that had been failing for an hour would leave the
+	// anomaly column the moment somebody edited the strategy.
+	if !state.sawSomethingWrong && state.currentKind == KindDegradedRun &&
+		transitionalReason(state.causeReason) {
+		return ColumnTransitional
 	}
 	return ColumnAnomalies
 }

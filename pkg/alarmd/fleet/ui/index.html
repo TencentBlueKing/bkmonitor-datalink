@@ -142,6 +142,8 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
         <div class="k" id="demotedHint">后端持续查不到，已降级不再反复查</div></div>
       <div class="cell"><div class="k">判不了恢复</div><div class="v" id="undecidable">–</div>
         <div class="k" id="undecidableHint">检测窗口没攒够点，恢复无从判起——正常现象，不是故障</div></div>
+      <div class="cell"><div class="k">变更中</div><div class="v" id="transitional">–</div>
+        <div class="k" id="transitionalHint">这一轮被一次已经在做的变更打断，下一轮按新配置重跑——没有人需要做什么</div></div>
       <div class="cell hl"><div class="k">状态未知</div><div class="v" id="unknown">–</div>
         <div class="k">没人能替它说话，不算正常</div></div>
       <div class="cell hl" id="unattributedCell" hidden>
@@ -214,7 +216,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       对象归谁每次再平衡都会变，劈分会在什么都没发生的情况下移动。</p>
     <table>
       <thead><tr>
-        <th>副本</th><th>持有</th><th>正常</th><th>自身异常</th><th>其中 alarmd 的</th><th>降级池</th><th>判不了恢复</th><th>状态未知</th>
+        <th>副本</th><th>持有</th><th>正常</th><th>自身异常</th><th>其中 alarmd 的</th><th>降级池</th><th>判不了恢复</th><th>变更中</th><th>状态未知</th>
         <th>快照新鲜度</th><th>已运行</th><th>内存</th><th>CPU</th><th>同时在跑</th>
       </tr></thead>
       <tbody id="repRows"></tbody>
@@ -238,6 +240,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       <button id="colOwn" class="primary">自身异常</button>
       <button id="colDemoted">策略本身不可用（降级池）</button>
       <button id="colUndecidable">判不了恢复</button>
+      <button id="colTransitional">变更中</button>
       <button id="ordOldest" class="primary">坏得最久的在前</button>
       <button id="ordNewest">刚开始坏的在前</button>
       <input id="fReplica" list="replicaList" placeholder="副本" size="10">
@@ -488,6 +491,7 @@ function renderDeployment(deployment) {
     text('ownBad', deployment.anomalies_total);
     text('demoted', deployment.demoted_total);
     text('undecidable', deployment.undecidable_total || 0);
+    text('transitional', deployment.transitional_total || 0);
     // The number the verdict is actually decided on when there are no coverage
     // gaps, and it had no field on this response at all. A deployment reading
     // UNKNOWN with every other number at zero gave a reader nothing to go on.
@@ -507,7 +511,8 @@ function renderDeployment(deployment) {
     // prose. A reader who can only be told the columns partition the objects has
     // no way to notice the day they stop doing so.
     var parts = [deployment.healthy, deployment.anomalies_total, deployment.demoted_total,
-                 deployment.undecidable_total || 0, deployment.unknown];
+                 deployment.undecidable_total || 0, deployment.transitional_total || 0,
+                 deployment.unknown];
     var sum = parts.reduce(function (a, b) { return a + (b || 0); }, 0);
     var total = (deployment.expected === null || deployment.expected === undefined) ? deployment.covered : deployment.expected;
     text('splitBasis', '每个对象只落一栏：' + parts.join(' + ') + ' = ' + sum +
@@ -555,6 +560,14 @@ function renderDeployment(deployment) {
     text('undecidableHint', (deployment.undecidable_total || 0)
       ? '检测窗口没攒够点，恢复无从判起——异常照常报，恢复判不了；正常现象，不计入部署健康判定。'
         + '窗口能不能攒满取决于策略：序列比窗口活得久就会攒满，活不过窗口就永远攒不满，两种都是策略配置的正常结果'
+      : '当前没有这种对象');
+    // Worded as finished business, because that is what it is: the change was
+    // already made on purpose and the next round runs under it. The column is
+    // deliberately narrow -- one reason on the list -- so that it does not
+    // become the place things go to stop being looked at.
+    text('transitionalHint', (deployment.transitional_total || 0)
+      ? '策略在这一轮跑到一半被改了/停用了/换了归属。旧配置算出来的结果不该落地，所以这一轮作废，'
+        + '下一轮按新配置重跑。两边都是对的行为，没有人需要做什么，也不计入部署健康判定'
       : '当前没有这种对象');
     // Shown only where something actually holds wake times. A zero here on a
     // deployment that holds none would report "nothing is being missed" for one
@@ -791,7 +804,9 @@ function loadObjects() {
     var served = objects.column || 'anomalies';
     var pool = served === 'demoted';
     var undecidable = served === 'undecidable';
-    var TITLES = {demoted: '策略本身不可用（降级池）', undecidable: '判不了恢复', anomalies: '自身异常对象'};
+    var transitional = served === 'transitional';
+    var TITLES = {demoted: '策略本身不可用（降级池）', undecidable: '判不了恢复',
+                  transitional: '变更中', anomalies: '自身异常对象'};
     var BASIS = {
       demoted: '这些对象的后端持续查不到，已被降级、不再反复查询，也不计入部署健康判定。列在这里是因为“不算我们的问题”是一个需要能被核对的说法——每条都带着它最近一次失败在哪。',
       // Stated as a normal condition and as a limit, not as a fault. These
@@ -801,13 +816,19 @@ function loadObjects() {
       undecidable: '这些不是故障。检测窗口没攒够算法要的点数，所以“恢复”这件事无从判起——异常照常报得出来，恢复判不了。'
         + '窗口能不能攒满取决于策略：序列比窗口活得久，窗口过几轮就满了；序列活不过窗口跨度（聚合维度里有网卡、pod 名这类一直在变的东西），就永远攒不满。'
         + '两种都是策略配置下的正常结果，扩容和改 alarmd 都不影响。每条的“下一层原因”里写着它是哪一种。',
-      anomalies: 'alarmd 自己没有把这些对象跑好，是需要处理的真问题。后端查不到而被降级的、以及判不了恢复的对象都不在这里，各在自己那一栏。'
+      transitional: '这些不是问题。策略在这一轮跑到一半被改了、停用了或换了归属，'
+        + '旧配置算出来的结果不该落地，所以这一轮作废，下一轮按新配置重跑——两边都是对的行为。'
+        + '其中一部分连这一轮都不会重跑：那是策略正要重新暖机的情况，这一轮即使跑了也判不出结论，'
+        + '所以直接让它过去。无论哪种，都没有人需要做什么。',
+      anomalies: 'alarmd 自己没有把这些对象跑好，是需要处理的真问题。后端查不到而被降级的、判不了恢复的、'
+        + '以及正在变更中的对象都不在这里，各在自己那一栏。'
     };
     text('listTitle', TITLES[served] || TITLES.anomalies);
     text('listBasis', BASIS[served] || BASIS.anomalies);
-    document.getElementById('colOwn').className = (pool || undecidable) ? '' : 'primary';
+    document.getElementById('colOwn').className = (pool || undecidable || transitional) ? '' : 'primary';
     document.getElementById('colDemoted').className = pool ? 'primary' : '';
     document.getElementById('colUndecidable').className = undecidable ? 'primary' : '';
+    document.getElementById('colTransitional').className = transitional ? 'primary' : '';
     // Read off the response, never from what was asked for: the buttons and the
     // wording under them have to describe the rows that actually came back.
     var served_order = objects.order || 'oldest';
@@ -997,6 +1018,9 @@ function renderReplicas(rows) {
     // breaks the sum rather than only that the deployment does.
     var repUndecidable = cell(replica.undecidable || 0);
     repUndecidable.title = '检测窗口没攒够点，恢复判不了。正常现象，不计入判定，也不算在正常里——'
+      + '每个对象只落一栏，这一行几个数相加等于"持有"。';
+    var repTransitional = cell(replica.transitional || 0);
+    repTransitional.title = '这一轮被一次已经在做的变更打断，下一轮按新配置重跑。不计入判定，也不算在正常里——'
       + '每个对象只落一栏，这一行几个数相加等于"持有"。';
     cell(replica.unknown);
     // A replica publishing late describes a past it has not updated, and that
@@ -2442,6 +2466,7 @@ function showColumn(next) {
 document.getElementById('colOwn').addEventListener('click', function () { showColumn('anomalies'); });
 document.getElementById('colDemoted').addEventListener('click', function () { showColumn('demoted'); });
 document.getElementById('colUndecidable').addEventListener('click', function () { showColumn('undecidable'); });
+document.getElementById('colTransitional').addEventListener('click', function () { showColumn('transitional'); });
 
 // Same reset as showColumn, for the same reason: offset 60 of oldest-first and
 // offset 60 of newest-first are different objects, and carrying it over lands

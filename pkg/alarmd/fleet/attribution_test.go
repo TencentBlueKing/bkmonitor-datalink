@@ -112,7 +112,8 @@ func TestEverySituationAnswersWhoOwnsItAndWhetherItHeals(t *testing.T) {
 		SituationBackendUnavailable, SituationBackendCooldown, SituationSeriesDataMissing, SituationDataIntermittent,
 		SituationSeriesChurning, SituationPlanUnevaluable, SituationPlanTooLarge,
 		SituationSeriesYoung, SituationSeriesRenewed, SituationVerdictHeld, SituationDataJustGapped, SituationOffHours,
-		SituationWindowEmpty, SituationSeriesMixed, SituationConfigDrift, SituationEffectiveTimeUnknown,
+		SituationQueryRejected, SituationWindowEmpty, SituationSeriesMixed, SituationConfigDrift,
+		SituationEffectiveTimeUnknown,
 		SituationRestoredWithoutCause,
 	}
 	if len(declared) != len(situationAnswers) {

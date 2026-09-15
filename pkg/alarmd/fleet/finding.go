@@ -9,6 +9,13 @@
 
 package fleet
 
+import (
+	"strings"
+
+	// Aliased: a test helper in this package is named execution.
+	routedetail "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+)
+
 // A Finding is the one thing the page needs about an object, decided here.
 //
 // The page has four questions -- does anyone have to act, on which objects
@@ -107,6 +114,7 @@ const (
 	SituationOffHours       Situation = "OFF_HOURS"
 
 	// Undetermined.
+	SituationQueryRejected        Situation = "QUERY_REJECTED"
 	SituationWindowEmpty          Situation = "WINDOW_EMPTY"
 	SituationSeriesMixed          Situation = "SERIES_MIXED"
 	SituationConfigDrift          Situation = "CONFIG_DRIFT"
@@ -165,6 +173,7 @@ var situationAnswers = map[Situation]struct {
 	SituationDataJustGapped: {OwnerNobody, HealingUnknown, WhereNowhere},
 	SituationOffHours:       {OwnerNobody, HealsOnItsOwn, WhereNowhere},
 
+	SituationQueryRejected:        {OwnerUndetermined, WillNotHeal, WhereStrategy},
 	SituationWindowEmpty:          {OwnerUndetermined, HealingUnknown, WhereStrategy},
 	SituationSeriesMixed:          {OwnerUndetermined, HealingUnknown, WhereStrategy},
 	SituationConfigDrift:          {OwnerUndetermined, HealingUnknown, WhereStrategy},
@@ -222,6 +231,9 @@ func findingOf(anomaly Anomaly) Finding {
 		return finding(SituationNeverReached, 0)
 	}
 	if anomaly.Kind == KindQueryCooldown {
+		if queryRejected(anomaly.Failure) {
+			return finding(SituationQueryRejected, 0)
+		}
 		return finding(SituationBackendCooldown, 0)
 	}
 	// The coverage-bearing reasons are decided on the coverage, because the
@@ -240,6 +252,9 @@ func findingOf(anomaly Anomaly) Finding {
 			continue
 		}
 		if situation, known := codeSituations[code]; known {
+			if situation == SituationBackendUnavailable && queryRejected(anomaly.Failure) {
+				return finding(SituationQueryRejected, 0)
+			}
 			return finding(situation, 0)
 		}
 	}
@@ -247,6 +262,30 @@ func findingOf(anomaly Anomaly) Finding {
 		return finding(SituationRestoredWithoutCause, 0)
 	}
 	return finding(SituationUnclassified, 0)
+}
+
+// queryRejected reports a backend that answered and refused, as opposed to one
+// that did not answer.
+//
+// The two share every code -- QUERY_UNAVAILABLE, the cooldown pool -- and are
+// different people's problems. A timeout or a 5xx is the backend; a query the
+// backend read and rejected is the query: either this deployment built or
+// routed it wrongly for that source, or the strategy names a table or field
+// that does not exist. A live deployment held 350 objects in the cooldown pool
+// on exactly this, every one of them filed as the backend's, while the backend
+// was answering every request with a status saying the field did not exist.
+//
+// Which of the two it is, is not decided here, because nothing on the anomaly
+// decides it; what is decided is that it is not the backend being down, so it
+// does not go to the data owner. The detail grammar is the emitter's: a
+// response status the provider returned, or an HTTP 4xx.
+func queryRejected(failure *FailureRef) bool {
+	if failure == nil {
+		return false
+	}
+	detail := failure.Detail
+	return strings.HasPrefix(detail, routedetail.RouteDetailKindResponse+"="+routedetail.ResponseFailureStatusPrefix) ||
+		strings.HasPrefix(detail, routedetail.RouteDetailKindHTTPStatus+"=4")
 }
 
 // windowSituation is the six-way split of HISTORY_WARMING and the three-way

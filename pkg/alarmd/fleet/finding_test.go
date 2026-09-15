@@ -177,6 +177,54 @@ func TestCodesTheCatalogFilesTogetherShareAnOwner(t *testing.T) {
 	}
 }
 
+// A backend that refused the query is not a backend that did not answer.
+//
+// Both arrive as QUERY_UNAVAILABLE and both put an object in the cooldown pool,
+// and the page filed all of them as the data owner's. A live deployment held
+// 350 objects there on a status saying the field did not exist -- the query
+// was being read and rejected every round, which is either this deployment's
+// routing or the strategy's reference, and in neither case the backend's
+// availability. The detail is the only thing on the row that separates them,
+// and it was being rendered as a symptom without deciding anything.
+func TestARejectedQueryIsNotFiledAsTheBackendsAvailability(t *testing.T) {
+	cooldown := func(detail string) Anomaly {
+		return Anomaly{Kind: KindQueryCooldown, CauseReason: "QUERY_UNAVAILABLE",
+			Failure: &FailureRef{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: detail}}
+	}
+	degraded := func(detail string) Anomaly {
+		return Anomaly{Kind: KindDegradedRun, CauseReason: "QUERY_UNAVAILABLE",
+			Failure: &FailureRef{Stage: "provider", Category: "source_backend", Code: "QUERY_UNAVAILABLE", Detail: detail}}
+	}
+	for _, testCase := range []struct {
+		name    string
+		anomaly Anomaly
+		want    Situation
+		owner   Owner
+	}{
+		// The provider answered with a status code: it read the query and
+		// refused it.
+		{"cooldown on a provider status", cooldown("response=status_space_table_id_field_is_not_exists"),
+			SituationQueryRejected, OwnerUndetermined},
+		{"degraded on a provider status", degraded("response=status_space_table_id_field_is_not_exists"),
+			SituationQueryRejected, OwnerUndetermined},
+		// An HTTP 4xx is the same statement in the transport's vocabulary.
+		{"cooldown on a 4xx", cooldown("http_status=400"), SituationQueryRejected, OwnerUndetermined},
+		// A timeout or a 5xx is the backend not answering: the data's.
+		{"cooldown on a timeout", cooldown("transport=timeout"), SituationBackendCooldown, OwnerData},
+		{"degraded on a 503", degraded("http_status=503"), SituationBackendUnavailable, OwnerData},
+		// No detail at all: nothing says it was refused, so the coarse reading.
+		{"cooldown without detail", Anomaly{Kind: KindQueryCooldown, CauseReason: "QUERY_UNAVAILABLE"},
+			SituationBackendCooldown, OwnerData},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := findingOf(testCase.anomaly)
+			if got.Situation != testCase.want || got.Owner != testCase.owner {
+				t.Errorf("finding = %s/%s, want %s/%s", got.Situation, got.Owner, testCase.want, testCase.owner)
+			}
+		})
+	}
+}
+
 // Stalled and never-reached are decided before any code is read.
 //
 // A stalled object's last code is usually the external thing that happened

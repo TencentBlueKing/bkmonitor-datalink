@@ -593,6 +593,7 @@ var SITUATION = {
   VERDICT_HELD:         {what: '窗口已补满，判定还沿用上一轮', impact: '无', next: '不用管，一两轮后自己变'},
   DATA_JUST_GAPPED:     {what: '数据刚出现洞', impact: '暂时判不了恢复', next: '再看几轮'},
   OFF_HOURS:            {what: '不在生效时段', impact: '按配置不检测', next: '不用管'},
+  QUERY_REJECTED:       {what: '后端拒绝了查询本身', impact: '这一轮没检测，每轮都会被拒', next: '不是后端挂：查是 alarmd 的路由或查询构造，还是策略引用了不存在的表或字段'},
   WINDOW_EMPTY:         {what: '窗口一个点都没有', impact: '异常照报，恢复判不了', next: '先确认是指标停了还是算法判不了'},
   SERIES_MIXED:         {what: '一部分是新序列，一部分一直在', impact: '异常照报，恢复判不了', next: '先查一直在的那几条'},
   CONFIG_DRIFT:         {what: '计划激活没对上，本轮作废', impact: '这一轮没检测', next: '看已持续：一两轮是改配置，长期是激活对不上'},

@@ -11,11 +11,13 @@ package bksql_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -25,6 +27,53 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sql_expr"
 )
+
+func TestQueryFactory_SearchAfterValues(t *testing.T) {
+	query := &metadata.Query{
+		Field: "gseIndex",
+		Orders: metadata.Orders{
+			{Name: sql_expr.FieldTime, Ast: false},
+			{Name: "level", Ast: false},
+			{Name: sql_expr.FieldValue, Ast: true},
+		},
+	}
+	factory := bksql.NewQueryFactory(metadata.InitHashID(context.Background()), query)
+
+	values, err := factory.SearchAfterValues(map[string]any{
+		sql_expr.TimeStamp: json.Number("1745234704000"),
+		"level":            "info",
+		sql_expr.Value:     json.Number("4281730"),
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, []any{json.Number("1745234704000"), "info", json.Number("4281730")}, values)
+
+	values, err = factory.SearchAfterValues(map[string]any{
+		sql_expr.TimeStamp: json.Number("1745234704000"),
+		"level":            nil,
+		sql_expr.Value:     json.Number("4281730"),
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, []any{json.Number("1745234704000"), nil, json.Number("4281730")}, values)
+
+	_, err = factory.SearchAfterValues(map[string]any{
+		sql_expr.TimeStamp: json.Number("1745234704000"),
+		"level":            "info",
+	})
+	assert.EqualError(t, err, "search_after order field _value is missing from query result")
+}
+
+func TestQueryFactory_SearchAfterRejectsFrom(t *testing.T) {
+	query := &metadata.Query{
+		From:          1,
+		IsSearchAfter: true,
+		Orders: metadata.Orders{
+			{Name: "dtEventTimeStamp", Ast: false},
+		},
+	}
+
+	_, err := bksql.NewQueryFactory(metadata.InitHashID(context.Background()), query).SQL()
+	assert.EqualError(t, err, "from cannot be combined with is_search_after")
+}
 
 func TestNewSqlFactory(t *testing.T) {
 	start := time.Unix(1741795260, 0)
@@ -889,4 +938,61 @@ func TestFormatDataToQueryResult_ValueParsing(t *testing.T) {
 			assert.Equal(t, c.expected, actual)
 		})
 	}
+}
+
+func TestFormatDataToQueryResultDynamicLabelsIncreaseSeriesRowsRatio(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	start := time.Unix(1776758700, 0)
+	end := start.Add(5 * time.Minute)
+
+	format := func(dynamic bool) *prompb.QueryResult {
+		t.Helper()
+		query := &metadata.Query{
+			DataSource:  "bkdata",
+			StorageType: metadata.BkSqlStorageType,
+			TableID:     "2_cdn_flow",
+			DB:          "2_cdn_flow",
+			Field:       "metric_value2",
+		}
+		factory := bksql.NewQueryFactory(ctx, query).WithRangeTime(start, end)
+		_, err := factory.SQL()
+		require.NoError(t, err)
+
+		rows := make([]map[string]any, 0, 5)
+		for i := 0; i < 5; i++ {
+			labelValue := "stable"
+			if dynamic {
+				labelValue = fmt.Sprintf("minute-%d", i)
+			}
+			rows = append(rows, map[string]any{
+				"_timestamp_": start.Add(time.Duration(i) * time.Minute).UnixMilli(),
+				"_value_":     float64(i),
+				"data_time":   labelValue,
+			})
+		}
+		result, err := factory.FormatDataToQueryResult(ctx, rows)
+		require.NoError(t, err)
+		return result
+	}
+
+	stable := format(false)
+	dynamic := format(true)
+	require.Len(t, stable.Timeseries, 1)
+	require.Len(t, dynamic.Timeseries, 5)
+
+	countPointsAndLabelBytes := func(result *prompb.QueryResult) (int, int) {
+		var points, labelBytes int
+		for _, series := range result.Timeseries {
+			points += len(series.Samples)
+			for _, label := range series.Labels {
+				labelBytes += len(label.Name) + len(label.Value)
+			}
+		}
+		return points, labelBytes
+	}
+	stablePoints, stableLabelBytes := countPointsAndLabelBytes(stable)
+	dynamicPoints, dynamicLabelBytes := countPointsAndLabelBytes(dynamic)
+	require.Equal(t, 5, stablePoints)
+	require.Equal(t, 5, dynamicPoints)
+	require.Greater(t, dynamicLabelBytes, stableLabelBytes)
 }

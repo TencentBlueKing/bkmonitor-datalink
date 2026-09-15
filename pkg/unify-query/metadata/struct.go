@@ -134,12 +134,26 @@ type OffSetInfo struct {
 
 type Aggregates []Aggregate
 
+// QueryCostProfile describes structural query properties used for observation.
+// It must not be used as an environment-independent admission policy.
+type QueryCostProfile struct {
+	SelectAllCandidate bool
+	RangeFunction      bool
+	StepLessThanWindow bool
+	ASTBranchCount     int
+	SQLPushdown        bool
+	Window             time.Duration
+	Step               time.Duration
+}
+
 // Query 查询扩展信息，为后面查询提供定位
 type Query struct {
-	FieldSemantics   string        `json:"field_semantics,omitempty"`
-	SourceConditions AllConditions `json:"source_conditions,omitempty"`
-	SourceType       string        `json:"source_type,omitempty"`
-	Password         string        `json:"password,omitempty"` // 查询鉴权
+	FieldSemanticsExecution *FieldSemanticsExecution `json:"-"`
+	RoutingConditions       AllConditions            `json:"routing_conditions,omitempty"`
+	FieldSemantics          string                   `json:"field_semantics,omitempty"`
+	SourceConditions        AllConditions            `json:"source_conditions,omitempty"`
+	SourceType              string                   `json:"source_type,omitempty"`
+	Password                string                   `json:"password,omitempty"` // 查询鉴权
 
 	ClusterID string `json:"cluster_id,omitempty"` // 存储 ID
 
@@ -178,6 +192,8 @@ type Query struct {
 
 	Aggregates Aggregates `json:"aggregates,omitempty"` // 聚合方法列表，从内到外排序
 
+	CostProfile QueryCostProfile `json:"-"`
+
 	Condition string `json:"condition,omitempty"` // 过滤条件
 
 	// Vm 过滤条件
@@ -210,6 +226,7 @@ type Query struct {
 	Size   int      `json:"size,omitempty"`
 
 	Scroll            string             `json:"scroll,omitempty"`
+	IsSearchAfter     bool               `json:"is_search_after,omitempty"`
 	ResultTableOption *ResultTableOption `json:"result_table_option,omitempty"`
 
 	Orders      Orders    `json:"orders,omitempty"`

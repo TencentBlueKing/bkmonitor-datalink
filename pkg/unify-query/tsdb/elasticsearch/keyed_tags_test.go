@@ -61,7 +61,7 @@ func TestFTAKeyedTagCrossGrouping(t *testing.T) {
 	  "aggregations": {"key": {
 	    "filter": {"term": {"tags.key": "team"}},
 	    "aggregations": {"value": {
-	      "terms": {"field": "tags.value.raw", "size": 1440},
+	      "terms": {"field": "tags.value.raw", "size": 1440, "show_term_doc_count_error": true},
 	      "aggregations": {"_reverse": {
 	        "reverse_nested": {},
 	        "aggregations": {"tags.env": {
@@ -69,7 +69,7 @@ func TestFTAKeyedTagCrossGrouping(t *testing.T) {
 	          "aggregations": {"key": {
 	            "filter": {"term": {"tags.key": "env"}},
 	            "aggregations": {"value": {
-	              "terms": {"field": "tags.value.raw", "size": 1440},
+	              "terms": {"field": "tags.value.raw", "size": 1440, "show_term_doc_count_error": true},
 	              "aggregations": {"_reverse": {
 	                "reverse_nested": {},
 	                "aggregations": {"_value": {"value_count": {"field": "_index"}}}
@@ -82,7 +82,7 @@ func TestFTAKeyedTagCrossGrouping(t *testing.T) {
 	  }}
 	}`, string(b))
 	var response elastic.SearchResult
-	require.NoError(t, json.Unmarshal([]byte(`{"aggregations":{"tags.team":{"doc_count":9,"key":{"doc_count":3,"value":{"buckets":[{"key":"prod","doc_count":2,"_reverse":{"doc_count":2,"tags.env":{"doc_count":4,"key":{"doc_count":2,"value":{"buckets":[{"key":"prod","doc_count":1,"_reverse":{"doc_count":1,"_value":{"value":1}}},{"key":"dev","doc_count":1,"_reverse":{"doc_count":1,"_value":{"value":1}}}]}}}}},{"key":"empty","doc_count":1,"_reverse":{"doc_count":1,"tags.env":{"doc_count":1,"key":{"doc_count":0,"value":{"buckets":[]}}}}}]}}}}}`), &response))
+	require.NoError(t, json.Unmarshal([]byte(`{"aggregations":{"tags.team":{"doc_count":9,"key":{"doc_count":3,"value":{"sum_other_doc_count":0,"doc_count_error_upper_bound":0,"buckets":[{"key":"prod","doc_count_error_upper_bound":0,"doc_count":2,"_reverse":{"doc_count":2,"tags.env":{"doc_count":4,"key":{"doc_count":2,"value":{"sum_other_doc_count":0,"doc_count_error_upper_bound":0,"buckets":[{"key":"prod","doc_count_error_upper_bound":0,"doc_count":1,"_reverse":{"doc_count":1,"_value":{"value":1}}},{"key":"dev","doc_count_error_upper_bound":0,"doc_count":1,"_reverse":{"doc_count":1,"_value":{"value":1}}}]}}}}},{"key":"empty","doc_count_error_upper_bound":0,"doc_count":1,"_reverse":{"doc_count":1,"tags.env":{"doc_count":1,"key":{"doc_count":0,"value":{"sum_other_doc_count":0,"doc_count_error_upper_bound":0,"buckets":[]}}}}}]}}}}}`), &response))
 	result, err := f.AggDataFormat(response.Aggregations, nil)
 	require.NoError(t, err)
 	require.Len(t, result.Timeseries, 2)
@@ -116,8 +116,16 @@ func TestFTAFieldOperatorsAndBoolCompatibility(t *testing.T) {
 			queries, occurrence, err := ftaFieldQueries("tags.env", metadata.ConditionField{Operator: tc.op, Value: []string{"a", "z"}})
 			require.NoError(t, err)
 			require.Equal(t, tc.occurrence, occurrence)
-			require.Len(t, queries, 1)
-			s, err := queries[0].Source()
+			index := 0
+			if tc.op == "gt" || tc.op == "gte" || tc.op == "lt" || tc.op == "lte" {
+				require.Len(t, queries, 2)
+				if tc.op == "gt" || tc.op == "gte" {
+					index = 1
+				}
+			} else {
+				require.Len(t, queries, 1)
+			}
+			s, err := queries[index].Source()
 			require.NoError(t, err)
 			b, err := json.Marshal(s)
 			require.NoError(t, err)
@@ -162,19 +170,19 @@ func TestFTANormalDimensionKeepsLogicalName(t *testing.T) {
 	require.NoError(t, err)
 	b, err := json.Marshal(s)
 	require.NoError(t, err)
-	require.JSONEq(t, `{"terms":{"field":"alert_name.raw","size":1440},"aggregations":{"_value":{"value_count":{"field":"_index"}}}}`, string(b))
+	require.JSONEq(t, `{"terms":{"field":"alert_name.raw","size":1440,"show_term_doc_count_error":true},"aggregations":{"_value":{"value_count":{"field":"_index"}}}}`, string(b))
 }
 
 func TestFTASourceFiltersPreserveUserShould(t *testing.T) {
 	metadata.InitMetadata()
-	f := tagFactory().WithSourceConditions(metadata.AllConditions{{{DimensionName: "status", Operator: "eq", Value: []string{"ABNORMAL"}}}})
+	f := tagFactory().WithSourceConditions(metadata.AllConditions{{{DimensionName: "status", Operator: "eq", Value: []string{"ABNORMAL"}}}}).WithRoutingConditions(metadata.AllConditions{{{DimensionName: "bk_biz_id", Operator: "eq", Value: []string{"2"}}}})
 	q, err := f.Query(metadata.AllConditions{{{DimensionName: "tags.env", Operator: "contains", Value: []string{"prod"}}}})
 	require.NoError(t, err)
 	s, err := q.Source()
 	require.NoError(t, err)
 	filters := s.(map[string]interface{})["bool"].(map[string]interface{})["filter"].([]interface{})
-	require.Len(t, filters, 2)
-	userOuter := filters[1].(map[string]interface{})["bool"].(map[string]interface{})
+	require.Len(t, filters, 3)
+	userOuter := filters[2].(map[string]interface{})["bool"].(map[string]interface{})
 	userInner := userOuter["should"].(map[string]interface{})["bool"].(map[string]interface{})
 	// A should-only bool requires a match. Moving status into this group
 	// would turn include into an optional clause and admit unrelated events.
@@ -218,4 +226,58 @@ func TestFTAEventDateUsesSecondsForQueryAndMillisecondsForBuckets(t *testing.T) 
 	require.Len(t, result.Timeseries[0].Samples, 1)
 	require.Equal(t, int64(1700000040000), result.Timeseries[0].Samples[0].Timestamp)
 	require.Equal(t, float64(2), result.Timeseries[0].Samples[0].Value)
+}
+
+func TestFTARejectsMalformedAggregations(t *testing.T) {
+	metadata.InitMetadata()
+	f := tagFactory()
+	_, _, err := f.EsAgg(metadata.Aggregates{{Name: Count, Dimensions: []string{"tags.env"}}})
+	require.NoError(t, err)
+	for _, body := range []string{
+		`{}`, `{"tags.env":{}}`, `{"tags.env":{"key":{}}}`,
+		`{"tags.env":{"key":{"value":{}}}}`,
+		`{"tags.env":{"key":{"value":{"sum_other_doc_count":0,"doc_count_error_upper_bound":0,"buckets":[{"key":"prod","doc_count_error_upper_bound":0}]}}}}`,
+		`{"tags.env":{"key":{"value":{"sum_other_doc_count":0,"doc_count_error_upper_bound":0,"buckets":[{"key":"prod","doc_count_error_upper_bound":0,"_reverse":{}}]}}}}`,
+	} {
+		var data elastic.Aggregations
+		require.NoError(t, json.Unmarshal([]byte(body), &data))
+		_, err := f.AggDataFormat(data, nil)
+		require.Error(t, err, body)
+	}
+	var data elastic.Aggregations
+	require.NoError(t, json.Unmarshal([]byte(`{"tags.env":{"key":{"value":{"sum_other_doc_count":0,"doc_count_error_upper_bound":0,"buckets":[]}}}}`), &data))
+	result, err := f.AggDataFormat(data, nil)
+	require.NoError(t, err)
+	require.Empty(t, result.Timeseries)
+}
+
+func TestFTARangeKeepsAllBounds(t *testing.T) {
+	for _, field := range []string{"severity", "tags.rank"} {
+		queries, occurrence, err := ftaFieldQueries(field, metadata.ConditionField{Operator: "gte", Value: []string{"9", "10"}})
+		require.NoError(t, err)
+		require.Equal(t, "must", occurrence)
+		require.Len(t, queries, 2)
+		for idx, bound := range []string{"9", "10"} {
+			source, err := queries[idx].Source()
+			require.NoError(t, err)
+			encoded, err := json.Marshal(source)
+			require.NoError(t, err)
+			require.Contains(t, string(encoded), `"from":"`+bound+`"`)
+		}
+		_, _, err = ftaFieldQueries(field, metadata.ConditionField{Operator: "gte"})
+		require.Error(t, err)
+	}
+}
+
+func TestFTATimeAndMetricStructureRequired(t *testing.T) {
+	metadata.InitMetadata()
+	f := tagFactory()
+	_, _, err := f.EsAgg(metadata.Aggregates{{Name: Count, Window: time.Minute}})
+	require.NoError(t, err)
+	for _, body := range []string{`{}`, `{"time":{}}`, `{"time":{"buckets":[{}]}}`, `{"time":{"buckets":[{"key":1000}]}}`, `{"time":{"buckets":[{"key":1000,"_value":{}}]}}`} {
+		var data elastic.Aggregations
+		require.NoError(t, json.Unmarshal([]byte(body), &data))
+		_, err := f.AggDataFormat(data, nil)
+		require.Error(t, err, body)
+	}
 }

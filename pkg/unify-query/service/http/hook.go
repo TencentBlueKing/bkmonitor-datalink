@@ -30,6 +30,10 @@ var warnQueryRawESBatchConfig = func(field, reason string) {
 	)
 }
 
+var warnNamedOutputConfig = func(path string) {
+	log.Warnf(context.Background(), "invalid named outputs config, using safe default: field=%s", path)
+}
+
 // setDefaultConfig
 func setDefaultConfig() {
 	viper.SetDefault(IPAddressConfigPath, "127.0.0.1")
@@ -90,6 +94,12 @@ func setDefaultConfig() {
 	viper.SetDefault(SegmentedMinInterval, "5m")
 
 	viper.SetDefault(QueryMaxRoutingConfigPath, 4)
+	viper.SetDefault(NamedOutputsMaxOutputsConfigPath, 4)
+	viper.SetDefault(NamedOutputsTimeoutConfigPath, "30s")
+	viper.SetDefault(NamedOutputsMaxSeriesConfigPath, 10000)
+	viper.SetDefault(NamedOutputsMaxPointsConfigPath, 1000000)
+	viper.SetDefault(NamedOutputsMaxCacheBytesConfigPath, 64*1024*1024)
+	viper.SetDefault(NamedOutputsMaxResponseBytesConfigPath, 16*1024*1024)
 
 	viper.SetDefault(ClusterMetricQueryPrefixConfigPath, "bkmonitor")
 	viper.SetDefault(ClusterMetricQueryTimeoutConfigPath, "30s")
@@ -168,6 +178,42 @@ func loadQueryRawESBatchSettings() {
 	queryRawESBatchSettingsSnapshot.Store(settings)
 }
 
+func loadNamedOutputSettings() {
+	defaults := defaultNamedOutputSettings()
+	settings := defaults
+	if value := viper.GetInt(NamedOutputsMaxOutputsConfigPath); value > 0 {
+		settings.MaxOutputs = value
+	} else {
+		warnNamedOutputConfig(NamedOutputsMaxOutputsConfigPath)
+	}
+	if value := viper.GetDuration(NamedOutputsTimeoutConfigPath); value > 0 {
+		settings.Timeout = value
+	} else {
+		warnNamedOutputConfig(NamedOutputsTimeoutConfigPath)
+	}
+	if value := viper.GetInt(NamedOutputsMaxSeriesConfigPath); value > 0 {
+		settings.MaxSeries = value
+	} else {
+		warnNamedOutputConfig(NamedOutputsMaxSeriesConfigPath)
+	}
+	if value := viper.GetInt(NamedOutputsMaxPointsConfigPath); value > 0 {
+		settings.MaxPoints = value
+	} else {
+		warnNamedOutputConfig(NamedOutputsMaxPointsConfigPath)
+	}
+	if value := viper.GetInt64(NamedOutputsMaxCacheBytesConfigPath); value > 0 {
+		settings.MaxCacheBytes = value
+	} else {
+		warnNamedOutputConfig(NamedOutputsMaxCacheBytesConfigPath)
+	}
+	if value := viper.GetInt(NamedOutputsMaxResponseBytesConfigPath); value > 0 {
+		settings.MaxResponseBytes = value
+	} else {
+		warnNamedOutputConfig(NamedOutputsMaxResponseBytesConfigPath)
+	}
+	namedOutputSettingsSnapshot.Store(&settings)
+}
+
 // LoadConfig
 func LoadConfig() {
 	TestV = viper.GetBool(AlignInfluxdbResultConfigPath)
@@ -197,11 +243,14 @@ func LoadConfig() {
 	JwtEnabled = viper.GetBool(JwtEnabledConfigPath)
 
 	loadQueryRawESBatchSettings()
+	loadNamedOutputSettings()
 }
 
 // init
 func init() {
 	queryRawESBatchSettingsSnapshot.Store(defaultQueryRawESBatchSettings())
+	settings := defaultNamedOutputSettings()
+	namedOutputSettingsSnapshot.Store(&settings)
 
 	if err := eventbus.EventBus.Subscribe(eventbus.EventSignalConfigPreParse, setDefaultConfig); err != nil {
 		fmt.Printf(

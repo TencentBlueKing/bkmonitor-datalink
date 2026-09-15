@@ -25,9 +25,15 @@ const (
 	SlowQueryThresholdConfigPath  = "http.slow_query_threshold"
 	DefaultQueryListLimitPath     = "http.default_query_list_limit"
 
-	QueryMaxRoutingConfigPath      = "http.query.max_routing"
-	QueryContentTypeConfigPath     = "http.query.content_type"
-	QueryContentEncodingConfigPath = "http.query.content_encoding"
+	QueryMaxRoutingConfigPath              = "http.query.max_routing"
+	QueryContentTypeConfigPath             = "http.query.content_type"
+	QueryContentEncodingConfigPath         = "http.query.content_encoding"
+	NamedOutputsMaxOutputsConfigPath       = "http.query.named_outputs.max_outputs"
+	NamedOutputsTimeoutConfigPath          = "http.query.named_outputs.timeout"
+	NamedOutputsMaxSeriesConfigPath        = "http.query.named_outputs.max_series"
+	NamedOutputsMaxPointsConfigPath        = "http.query.named_outputs.max_points"
+	NamedOutputsMaxCacheBytesConfigPath    = "http.query.named_outputs.max_cache_bytes"
+	NamedOutputsMaxResponseBytesConfigPath = "http.query.named_outputs.max_response_bytes"
 
 	// 服务配置
 	EnablePrometheusConfigPath = "http.prometheus.enable"
@@ -128,6 +134,7 @@ var (
 	ScrollSliceLimit         int
 
 	queryRawESBatchSettingsSnapshot atomic.Pointer[queryRawESBatchSettings]
+	namedOutputSettingsSnapshot     atomic.Pointer[namedOutputSettings]
 )
 
 func defaultQueryRawESBatchSettings() *queryRawESBatchSettings {

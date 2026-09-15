@@ -417,6 +417,9 @@ func (sp *queryPromQLExpr) queryTs() (*QueryTs, error) {
 	if end > start {
 		metricMerge = append(metricMerge, sp.promqlByte[start:end]...)
 	}
+	for _, query := range queryList {
+		query.ASTBranchCount = len(queryList)
+	}
 
 	ret := &QueryTs{
 		QueryList:   queryList,

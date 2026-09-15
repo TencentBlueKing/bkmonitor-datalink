@@ -31,6 +31,7 @@ type PreparedFieldMetadata struct {
 	indexes         []string
 	physicalIndexes []string
 	fieldMap        metadata.FieldsMap
+	indexFields     *collapseIndexMetadata
 	connectionKey   RawBatchConnectionKey
 	reuseIdentity   [sha256.Size]byte
 	complete        bool
@@ -93,7 +94,7 @@ func (i *Instance) PrepareRawFieldMetadata(
 	if err != nil {
 		return nil, err
 	}
-	fieldMap, physicalIndexes, err := i.fieldMapWithPhysicalIndexes(ctx, query.FieldAlias, indexes...)
+	fieldMap, physicalIndexes, indexFields, err := i.fieldMapWithIndexFields(ctx, query.FieldAlias, indexes...)
 	if err != nil {
 		return nil, metadata.NewMessage(
 			metadata.MsgQueryES,
@@ -106,6 +107,7 @@ func (i *Instance) PrepareRawFieldMetadata(
 		indexes:         append([]string(nil), indexes...),
 		physicalIndexes: append([]string(nil), physicalIndexes...),
 		fieldMap:        cloneFieldsMap(fieldMap),
+		indexFields:     indexFields,
 		connectionKey:   i.RawBatchConnectionKey(ctx),
 		reuseIdentity:   reuseIdentity,
 		complete:        true,
@@ -170,6 +172,9 @@ func (i *Instance) PrepareRawQuery(
 	if err != nil {
 		return nil, err
 	}
+	if err := filterCollapseIndexes(qo, fieldMetadata.indexFields, fact.Collapse(rawQuery.Collapse), source); err != nil {
+		return nil, err
+	}
 	body, err := marshalSearchSource(source)
 	if err != nil {
 		return nil, err
@@ -224,6 +229,7 @@ func newRawFormatFactory(
 	return NewFormatFactory(ctx).
 		WithFieldSemantics(rawQuery.FieldSemantics).
 		WithSourceConditions(rawQuery.SourceConditions).
+		WithRoutingConditions(rawQuery.RoutingConditions).
 		WithTransform(func(s string) string {
 			if s == "" {
 				return ""
@@ -274,6 +280,7 @@ func clonePreparedFieldMetadata(source *PreparedFieldMetadata) *PreparedFieldMet
 		indexes:         append([]string(nil), source.indexes...),
 		physicalIndexes: append([]string(nil), source.physicalIndexes...),
 		fieldMap:        cloneFieldsMap(source.fieldMap),
+		indexFields:     cloneCollapseIndexMetadata(source.indexFields),
 		connectionKey:   source.connectionKey,
 		reuseIdentity:   source.reuseIdentity,
 		complete:        source.complete,

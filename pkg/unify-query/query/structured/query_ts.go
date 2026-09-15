@@ -12,6 +12,7 @@ package structured
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -37,7 +38,19 @@ import (
 const (
 	// Error messages
 	ErrUnknownOperatorMsg = "unknown operator: %s"
+
+	NamedOutputsV1 = "named_outputs/v1"
 )
+
+var outputReferencePattern = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+
+// QueryOutput 声明 named_outputs/v1 中的一个命名输出。
+type QueryOutput struct {
+	// ReferenceName 输出引用名，在同一 output_list 中必须唯一。
+	ReferenceName string `json:"reference_name" example:"A"`
+	// Expression 输出表达式；非 legacy 输出仅允许 query reference identity 表达式。
+	Expression string `json:"expression" example:"A"`
+}
 
 type QueryTs struct {
 	// TsDBMap 查询路由匹配中的 tsDB 列表 key:reference_name
@@ -48,6 +61,12 @@ type QueryTs struct {
 	QueryList []*Query `json:"query_list,omitempty"`
 	// MetricMerge 表达式：支持所有PromQL语法
 	MetricMerge string `json:"metric_merge,omitempty" example:"a"`
+	// ResponseContract 显式选择命名多输出响应契约；为空时保持旧单输出行为。
+	ResponseContract string `json:"response_contract,omitempty" example:"named_outputs/v1" enums:"named_outputs/v1"`
+	// LegacyOutputRef 指向与 MetricMerge 等价的输出，供旧服务兼容降级。
+	LegacyOutputRef string `json:"legacy_output_ref,omitempty" example:"C"`
+	// OutputList 按请求顺序声明命名输出。
+	OutputList []QueryOutput `json:"output_list,omitempty"`
 	// OrderBy 排序字段列表，按顺序排序，负数代表倒序, ["_time", "-_time"]
 	OrderBy OrderBy `json:"order_by,omitempty"`
 	// ResultColumns 指定保留返回字段值
@@ -82,7 +101,7 @@ type QueryTs struct {
 	// 增加公共限制
 	// Limit 点数限制数量
 	Limit int `json:"limit,omitempty" example:"0"`
-	// From 翻页开启数字
+	// From 翻页开启数字，不能与 IsSearchAfter 同时使用
 	From int `json:"from,omitempty" example:"0"`
 
 	// Scroll 是否启用 Scroll 查询
@@ -91,7 +110,7 @@ type QueryTs struct {
 	SliceMax int `json:"slice_max,omitempty"`
 	// IsMultiFrom 是否启用 MultiFrom 查询
 	IsMultiFrom bool `json:"is_multi_from,omitempty"`
-	// IsSearchAfter 是否启用 SearchAfter 查询
+	// IsSearchAfter 是否启用 SearchAfter 查询。仅用于 /query/raw 原始查询：Elasticsearch 使用原生游标，Doris 使用 keyset pagination（支持 NULL 游标值）；不能与 from 或 scroll 同时使用。
 	IsSearchAfter bool `json:"is_search_after,omitempty"`
 	// ClearCache 是否强制清理已存在的缓存会话
 	ClearCache bool `json:"clear_cache,omitempty"`
@@ -112,6 +131,79 @@ type QueryTs struct {
 
 	// AddDimensions 额外添加的聚合维度，会与每个 function.dimensions 合并
 	AddDimensions []string `json:"add_dimensions,omitempty"`
+}
+
+// ValidateNamedOutputs 在任何路由和存储 I/O 前校验命名多输出契约。
+func (q *QueryTs) ValidateNamedOutputs(maxOutputs int) error {
+	if q.ResponseContract == "" {
+		if len(q.OutputList) == 0 && q.LegacyOutputRef == "" {
+			return nil
+		}
+		return fmt.Errorf("response_contract is required when named output fields are present")
+	}
+	if q.ResponseContract != NamedOutputsV1 {
+		return fmt.Errorf("unsupported response_contract: %s", q.ResponseContract)
+	}
+	if strings.TrimSpace(q.MetricMerge) == "" {
+		return fmt.Errorf("metric_merge is required")
+	}
+	if strings.TrimSpace(q.LegacyOutputRef) == "" {
+		return fmt.Errorf("legacy_output_ref is required")
+	}
+	if len(q.OutputList) == 0 || len(q.OutputList) > maxOutputs {
+		return fmt.Errorf("output_list length must be between 1 and %d", maxOutputs)
+	}
+
+	queryReferences := make(map[string]struct{}, len(q.QueryList))
+	for _, query := range q.QueryList {
+		if query == nil {
+			return fmt.Errorf("query_list contains nil query")
+		}
+		queryReferences[query.ReferenceName] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(q.OutputList))
+	legacyFound := false
+	for _, output := range q.OutputList {
+		if !outputReferencePattern.MatchString(output.ReferenceName) {
+			return fmt.Errorf("invalid output reference: %s", output.ReferenceName)
+		}
+		if _, ok := seen[output.ReferenceName]; ok {
+			return fmt.Errorf("duplicate output reference: %s", output.ReferenceName)
+		}
+		seen[output.ReferenceName] = struct{}{}
+		legacyFound = legacyFound || output.ReferenceName == q.LegacyOutputRef
+	}
+	if !legacyFound {
+		return fmt.Errorf("legacy_output_ref %s is missing from output_list", q.LegacyOutputRef)
+	}
+
+	metricMerge, err := parser.ParseExpr(q.MetricMerge)
+	if err != nil {
+		return fmt.Errorf("metric_merge expression is invalid: %w", err)
+	}
+	for _, output := range q.OutputList {
+		expr, parseErr := parser.ParseExpr(output.Expression)
+		if parseErr != nil {
+			return fmt.Errorf("output %s expression is invalid: %w", output.ReferenceName, parseErr)
+		}
+		if output.ReferenceName == q.LegacyOutputRef {
+			if expr.String() != metricMerge.String() {
+				return fmt.Errorf("legacy output expression must be equivalent to metric_merge")
+			}
+			continue
+		}
+
+		selector, ok := expr.(*parser.VectorSelector)
+		if !ok || selector.Name == "" || len(selector.LabelMatchers) != 1 ||
+			selector.OriginalOffset != 0 || selector.Offset != 0 ||
+			selector.Timestamp != nil || selector.StartOrEnd != 0 {
+			return fmt.Errorf("output %s must be a query reference identity expression", output.ReferenceName)
+		}
+		if _, ok = queryReferences[selector.Name]; !ok {
+			return fmt.Errorf("output %s identity expression must reference query reference", output.ReferenceName)
+		}
+	}
+	return nil
 }
 
 // StepParse 解析step
@@ -174,8 +266,12 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		return nil, err
 	}
 
+	astBranchCount := queryASTBranchCount(q.MetricMerge, len(q.QueryList))
 	queryReference := make(metadata.QueryReference)
 	for _, query := range q.QueryList {
+		if query.ASTBranchCount == 0 {
+			query.ASTBranchCount = astBranchCount
+		}
 		// 兼容 SaaS 命名（bk_data / bk_log_search / bk_apm）-> 内部命名（bkdata / bklog / bkapm）
 		query.DataSource = normalizeDataSource(query.DataSource)
 
@@ -209,7 +305,6 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		if q.ResultTableOptions != nil {
 			query.ResultTableOptions = q.ResultTableOptions
 		}
-
 		if q.Scroll != "" {
 			query.Scroll = q.Scroll
 			q.IsMultiFrom = false
@@ -253,6 +348,24 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 
 	metadata.SetQueryReference(ctx, queryReference)
 	return queryReference, nil
+}
+
+func queryASTBranchCount(expression string, fallback int) int {
+	expr, err := parser.ParseExpr(expression)
+	if err != nil {
+		return fallback
+	}
+	count := 0
+	parser.Inspect(expr, func(node parser.Node, _ []parser.Node) error {
+		if _, ok := node.(*parser.VectorSelector); ok {
+			count++
+		}
+		return nil
+	})
+	if count == 0 {
+		return fallback
+	}
+	return count
 }
 
 func (q *QueryTs) ToQueryClusterMetric(ctx context.Context) (*metadata.QueryClusterMetric, error) {
@@ -353,14 +466,34 @@ func (q *QueryTs) ToPromExpr(
 	ctx context.Context,
 	promExprOpt *PromExprOption,
 ) (parser.Expr, error) {
+	return q.toPromExpr(ctx, q.MetricMerge, promExprOpt, false)
+}
+
+func (q *QueryTs) ToPromExprFor(
+	ctx context.Context,
+	expression string,
+	promExprOpt *PromExprOption,
+) (parser.Expr, error) {
+	return q.toPromExpr(ctx, expression, promExprOpt, true)
+}
+
+func (q *QueryTs) toPromExpr(
+	ctx context.Context,
+	expression string,
+	promExprOpt *PromExprOption,
+	copyInputs bool,
+) (parser.Expr, error) {
 	var (
 		err     error
 		result  parser.Expr
 		expr    parser.Expr
 		exprMap = make(map[string]*PromExpr, len(q.QueryList))
 	)
+	if copyInputs {
+		promExprOpt = clonePromExprOption(promExprOpt)
+	}
 
-	if q.MetricMerge == "" {
+	if expression == "" {
 		return nil, metadata.NewMessage(
 			metadata.MsgParserUnifyQuery,
 			"表达式配置不能为空",
@@ -368,16 +501,23 @@ func (q *QueryTs) ToPromExpr(
 	}
 
 	// 先解析表达式
-	if result, err = parser.ParseExpr(q.MetricMerge); err != nil {
+	if result, err = parser.ParseExpr(expression); err != nil {
 		return nil, metadata.NewMessage(
 			metadata.MsgParserUnifyQuery,
 			"表达式 %s 解析失败",
-			q.MetricMerge,
+			expression,
 		).Error(ctx, err)
 	}
 
 	// 获取指标查询的表达式
-	for _, query := range q.QueryList {
+	for _, sourceQuery := range q.QueryList {
+		if sourceQuery == nil {
+			return nil, fmt.Errorf("query_list contains nil query")
+		}
+		query := sourceQuery
+		if copyInputs {
+			query = cloneQueryForPromExpr(sourceQuery)
+		}
 		if query.Step == "" {
 			query.Step = q.Step
 		}
@@ -401,6 +541,55 @@ func (q *QueryTs) ToPromExpr(
 	}
 
 	return result, nil
+}
+
+func cloneQueryForPromExpr(source *Query) *Query {
+	query := *source
+	query.AggregateMethodList = append(AggregateMethodList(nil), source.AggregateMethodList...)
+	for index := range query.AggregateMethodList {
+		method := &query.AggregateMethodList[index]
+		method.Dimensions = append(Dimensions(nil), method.Dimensions...)
+		method.VArgsList = append([]any(nil), method.VArgsList...)
+		if method.ArgsList != nil {
+			method.ArgsList = make(Args, len(source.AggregateMethodList[index].ArgsList))
+			for key, value := range source.AggregateMethodList[index].ArgsList {
+				method.ArgsList[key] = value
+			}
+		}
+	}
+	query.TimeAggregation.VargsList = append([]any(nil), source.TimeAggregation.VargsList...)
+	return &query
+}
+
+func clonePromExprOption(source *PromExprOption) *PromExprOption {
+	if source == nil {
+		return nil
+	}
+	option := &PromExprOption{
+		ReferenceNameMetric:         make(map[string]string, len(source.ReferenceNameMetric)),
+		ReferenceNameLabelMatcher:   make(map[string][]*labels.Matcher, len(source.ReferenceNameLabelMatcher)),
+		FunctionReplace:             make(map[string]string, len(source.FunctionReplace)),
+		IgnoreTimeAggregationEnable: source.IgnoreTimeAggregationEnable,
+	}
+	for key, value := range source.ReferenceNameMetric {
+		option.ReferenceNameMetric[key] = value
+	}
+	for key, matchers := range source.ReferenceNameLabelMatcher {
+		clonedMatchers := make([]*labels.Matcher, 0, len(matchers))
+		for _, matcher := range matchers {
+			if matcher == nil {
+				clonedMatchers = append(clonedMatchers, nil)
+				continue
+			}
+			copyOfMatcher := *matcher
+			clonedMatchers = append(clonedMatchers, &copyOfMatcher)
+		}
+		option.ReferenceNameLabelMatcher[key] = clonedMatchers
+	}
+	for key, value := range source.FunctionReplace {
+		option.FunctionReplace[key] = value
+	}
+	return option
 }
 
 type TimeField struct {
@@ -462,6 +651,8 @@ type Query struct {
 	TableIDConditions AllConditions `json:"table_id_conditions,omitempty"`
 	// KeepColumns 保留字段
 	KeepColumns KeepColumns `json:"keep_columns,omitempty" swaggerignore:"true"`
+	// ASTBranchCount records the selector branch count for observation only.
+	ASTBranchCount int `json:"-" swaggerignore:"true"`
 
 	// AlignInfluxdbResult 保留字段，无需配置，是否对齐influxdb的结果,该判断基于promql和influxdb查询原理的差异
 	AlignInfluxdbResult bool `json:"-"`
@@ -800,6 +991,26 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 			).Error(ctx, nil)
 		}
 
+		costProfile := metadata.QueryCostProfile{
+			SelectAllCandidate: len(aggregates) == 0 && len(q.KeepColumns) == 0 && q.SQL == "",
+			ASTBranchCount:     q.ASTBranchCount,
+			SQLPushdown:        q.IsDomSampled,
+		}
+		if costProfile.ASTBranchCount == 0 {
+			costProfile.ASTBranchCount = 1
+		}
+		costProfile.RangeFunction, costProfile.Window, costProfile.Step = q.queryCostRangeProfile()
+		costProfile.StepLessThanWindow = costProfile.Window > 0 &&
+			costProfile.Step > 0 &&
+			costProfile.Step < costProfile.Window
+		span.Set("query-cost.select-all-candidate", costProfile.SelectAllCandidate)
+		span.Set("query-cost.range-function", costProfile.RangeFunction)
+		span.Set("query-cost.step-less-than-window", costProfile.StepLessThanWindow)
+		span.Set("query-cost.ast-branches", costProfile.ASTBranchCount)
+		span.Set("query-cost.sql-pushdown", costProfile.SQLPushdown)
+		span.Set("query-cost.window", costProfile.Window)
+		span.Set("query-cost.step", costProfile.Step)
+
 		query := &metadata.Query{
 			StorageType:   metadata.BkSqlStorageType,
 			TableID:       string(tableID),
@@ -809,6 +1020,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 			Field:         q.FieldName,
 			Aggregates:    aggregates,
 			AllConditions: allConditions.MetaDataAllConditions(),
+			CostProfile:   costProfile,
 		}
 
 		query.SQL = q.SQL
@@ -900,6 +1112,9 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 		for _, storageRange := range storageRanges {
 			query := q.BuildMetadataQuery(ctx, tsDB, allConditions)
 			if query == nil {
+				if q.FieldSemantics != "" {
+					return nil, fmt.Errorf("field_semantics query could not be built")
+				}
 				continue
 			}
 			query.SourceConditions = sourceConditions.MetaDataAllConditions()
@@ -1007,6 +1222,12 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 			if query.FieldSemantics != "" && query.StorageType != metadata.ElasticsearchStorageType {
 				return nil, fmt.Errorf("field_semantics requires elasticsearch storage")
 			}
+			if query.FieldSemantics != "" {
+				if query.IsElasticsearchIndexPrefixMissing() {
+					return nil, fmt.Errorf("field_semantics requires an Elasticsearch index")
+				}
+				query.FieldSemanticsExecution = &metadata.FieldSemanticsExecution{}
+			}
 			metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
 
 			// 判断是否跳过合并操作
@@ -1044,8 +1265,86 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	}
 
 	span.Set("query_metric_length", len(queryMetric.QueryList))
+	if q.FieldSemantics != "" && len(queryMetric.QueryList) == 0 {
+		return nil, fmt.Errorf("field_semantics query has no storage routes")
+	}
 
 	return queryMetric, nil
+}
+
+func (q *Query) queryCostRangeProfile() (hasRangeFunction bool, window, step time.Duration) {
+	topLevelStep := queryCostDuration(q.Step)
+	if topLevelStep <= 0 {
+		topLevelStep = promql.GetDefaultStep()
+	}
+	step = topLevelStep
+
+	type rangeCandidate struct {
+		function   string
+		window     Window
+		isSubQuery bool
+		step       string
+	}
+	candidates := make([]rangeCandidate, 0, len(q.AggregateMethodList)+1)
+	candidates = append(candidates, rangeCandidate{
+		function:   q.TimeAggregation.Function,
+		window:     q.TimeAggregation.Window,
+		isSubQuery: q.TimeAggregation.IsSubQuery,
+		step:       q.TimeAggregation.Step,
+	})
+	for _, aggregate := range q.AggregateMethodList {
+		candidates = append(candidates, rangeCandidate{
+			function:   aggregate.Method,
+			window:     aggregate.Window,
+			isSubQuery: aggregate.IsSubQuery,
+			step:       aggregate.Step,
+		})
+	}
+
+	bestDensity := float64(-1)
+	enclosingStep := topLevelStep
+	// Range candidates are stored from inner to outer. Walk them backwards so
+	// an enclosing subquery step is applied to every range function inside it.
+	for i := len(candidates) - 1; i >= 0; i-- {
+		candidate := candidates[i]
+		if candidate.function == "" || candidate.window == "" {
+			continue
+		}
+		hasRangeFunction = true
+		parsedWindow := queryCostDuration(string(candidate.window))
+		if parsedWindow <= 0 {
+			continue
+		}
+		candidateStep := enclosingStep
+		if candidate.isSubQuery {
+			if candidate.step == "" || candidate.step == "0s" {
+				candidateStep = promql.GetDefaultStep()
+			} else {
+				candidateStep = queryCostDuration(candidate.step)
+			}
+		}
+		if candidateStep <= 0 {
+			continue
+		}
+		density := float64(parsedWindow) / float64(candidateStep)
+		if density > bestDensity {
+			bestDensity = density
+			window = parsedWindow
+			step = candidateStep
+		}
+		if candidate.isSubQuery {
+			enclosingStep = candidateStep
+		}
+	}
+	return hasRangeFunction, window, step
+}
+
+func queryCostDuration(value string) time.Duration {
+	duration, err := model.ParseDuration(value)
+	if err != nil {
+		return 0
+	}
+	return time.Duration(duration)
 }
 
 func (q *Query) BuildMetadataQuery(
@@ -1191,6 +1490,10 @@ func (q *Query) BuildMetadataQuery(
 
 	// 合并查询以及空间过滤条件到 condition 里面
 	allCondition = MergeConditionField(queryConditions, filterConditions)
+	if q.FieldSemantics == metadata.FTAEventTagsV1 {
+		allCondition = queryConditions
+		query.RoutingConditions = AllConditions(filterConditions).MetaDataAllConditions()
+	}
 
 	if len(queryConditions) > 1 || len(filterConditions) > 1 {
 		query.IsHasOr = true

@@ -11,6 +11,9 @@ package prometheus
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -36,10 +39,13 @@ const (
 type QueryRangeStorage struct {
 	QueryMaxRouting int
 	Timeout         time.Duration
+	SelectorCache   *SelectorCache
 }
 
 func (s *QueryRangeStorage) Querier(ctx context.Context, min, max int64) (storage.Querier, error) {
-	return NewQuerier(ctx, time.Unix(min, 0), time.Unix(max, 0), s.QueryMaxRouting, s.Timeout), nil
+	querier := NewQuerier(ctx, time.Unix(min, 0), time.Unix(max, 0), s.QueryMaxRouting, s.Timeout)
+	querier.selectorCache = s.SelectorCache
+	return querier, nil
 }
 
 func NewQuerier(ctx context.Context, min, max time.Time, maxRouting int, timeout time.Duration) *Querier {
@@ -53,11 +59,12 @@ func NewQuerier(ctx context.Context, min, max time.Time, maxRouting int, timeout
 }
 
 type Querier struct {
-	ctx        context.Context
-	min        time.Time
-	max        time.Time
-	maxRouting int
-	timeout    time.Duration
+	ctx           context.Context
+	min           time.Time
+	max           time.Time
+	maxRouting    int
+	timeout       time.Duration
+	selectorCache *SelectorCache
 }
 
 // checkCtxDone
@@ -283,7 +290,16 @@ func (q *Querier) Select(_ bool, hints *storage.SelectHints, matchers ...*labels
 			return
 		}
 
-		promise <- q.selectFn(hints, matchers...)
+		if q.selectorCache == nil {
+			promise <- q.selectFn(hints, matchers...)
+			return
+		}
+		key := q.selectorKey(hints, matchers...)
+		promise <- q.selectorCache.GetOrLoad(q.ctx, key, func(selectorCtx context.Context) storage.SeriesSet {
+			selectorQuerier := *q
+			selectorQuerier.ctx = selectorCtx
+			return selectorQuerier.selectFn(hints, matchers...)
+		})
 	}()
 
 	return &lazySeriesSet{
@@ -303,6 +319,66 @@ func (q *Querier) Select(_ bool, hints *storage.SelectHints, matchers ...*labels
 		},
 		set: nil,
 	}
+}
+
+func (q *Querier) selectorKey(hints *storage.SelectHints, matchers ...*labels.Matcher) string {
+	matcherValues := make([]string, 0, len(matchers))
+	referenceName := ""
+	for _, matcher := range matchers {
+		matcherValues = append(matcherValues, matcher.String())
+		if matcher.Name == labels.MetricName {
+			referenceName = matcher.Value
+		}
+	}
+	sort.Strings(matcherValues)
+
+	grouping := make([]string, 0)
+	if hints != nil {
+		grouping = append(grouping, hints.Grouping...)
+		sort.Strings(grouping)
+	}
+	routeQueries := metadata.GetQueryReference(q.ctx)[referenceName]
+	routeDigest := make([]string, 0)
+	for _, queryMetric := range routeQueries {
+		if queryMetric == nil {
+			continue
+		}
+		for _, routeQuery := range queryMetric.QueryList {
+			if routeQuery == nil {
+				continue
+			}
+			encoded, _ := json.Marshal(routeQuery)
+			routeDigest = append(routeDigest, routeQuery.StorageUUID()+"|"+string(encoded))
+		}
+	}
+	sort.Strings(routeDigest)
+	params := metadata.GetQueryParams(q.ctx)
+	payload := struct {
+		ReferenceName string
+		Matchers      []string
+		Hints         *storage.SelectHints
+		Grouping      []string
+		Min           int64
+		Max           int64
+		Start         int64
+		End           int64
+		Step          int64
+		Routes        []string
+	}{
+		ReferenceName: referenceName,
+		Matchers:      matcherValues,
+		Hints:         hints,
+		Grouping:      grouping,
+		Min:           q.min.UnixNano(),
+		Max:           q.max.UnixNano(),
+		Start:         params.Start.UnixNano(),
+		End:           params.End.UnixNano(),
+		Step:          params.Step.Nanoseconds(),
+		Routes:        routeDigest,
+	}
+	encoded, _ := json.Marshal(payload)
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
 }
 
 // LabelValues 返回可能的标签(维度)值。

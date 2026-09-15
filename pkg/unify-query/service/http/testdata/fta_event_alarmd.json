@@ -1,0 +1,87 @@
+{
+  "down_sample_range": "",
+  "end_time": "1789369320",
+  "metric_merge": "a",
+  "not_time_align": false,
+  "query_list": [
+    {
+      "conditions": {},
+      "dimensions": [
+        "tags.host"
+      ],
+      "driver": "influxdb",
+      "field_name": "_index",
+      "field_semantics": "fta_event_tags/v1",
+      "function": [
+        {
+          "dimensions": [
+            "tags.host"
+          ],
+          "method": "sum",
+          "position": 0
+        }
+      ],
+      "is_regexp": false,
+      "query_string": "",
+      "reference_name": "a",
+      "source_conditions": {
+        "condition_list": [
+          "and",
+          "and"
+        ],
+        "field_list": [
+          {
+            "field_name": "status",
+            "op": "eq",
+            "value": [
+              "ABNORMAL"
+            ]
+          },
+          {
+            "field_name": "bk_biz_id",
+            "op": "eq",
+            "value": [
+              "900001"
+            ]
+          },
+          {
+            "field_name": "plugin_id",
+            "op": "ne",
+            "value": [
+              "bkmonitor"
+            ]
+          }
+        ]
+      },
+      "table_id": "fta.event",
+      "time_aggregation": {
+        "function": "count_over_time",
+        "position": 0,
+        "window": "60s"
+      },
+      "time_field": "time"
+    }
+  ],
+  "space_uid": "bkcc__900001",
+  "start_time": "1789369260",
+  "step": "60s",
+  "timezone": "Asia/Shanghai",
+  "tsdb_map": {
+    "a": [
+      {
+        "db": "bkfta_event_*_read",
+        "measurement": "__default__",
+        "need_add_time": false,
+        "source_type": "",
+        "storage_id": "1",
+        "storage_type": "elasticsearch",
+        "table_id": "fta.event",
+        "time_field": {
+          "name": "time",
+          "type": "date",
+          "unit": "millisecond"
+        }
+      }
+    ]
+  }
+}

@@ -73,6 +73,5 @@ type sonicDecoderWrapper struct {
 }
 
 func (d *sonicDecoderWrapper) UseNumber() {
-	// sonic 的 Decoder 不支持 UseNumber，使用配置控制
-	// 这里保持空实现，因为 sonic 默认使用 Number 类型
+	d.Decoder.UseNumber()
 }

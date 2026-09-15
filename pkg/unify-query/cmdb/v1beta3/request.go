@@ -1,0 +1,99 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package v1beta3
+
+import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
+
+// QueryRequest 关联查询请求
+type QueryRequest struct {
+	SpaceUID                 string             `json:"space_uid,omitempty"`                  // 空间 UID（bkcc__<biz> 形式），用于定位 binding
+	Timestamp                int64              `json:"timestamp"`                            // 查询时间点（毫秒时间戳）
+	SourceType               ResourceType       `json:"source_type"`                          // 源资源类型
+	SourceInfo               map[string]string  `json:"source_info"`                          // 源资源过滤条件
+	SourceExpandInfo         map[string]string  `json:"source_expand_info,omitempty"`         // 源资源扩展过滤条件
+	TargetType               ResourceType       `json:"target_type,omitempty"`                // 目标资源类型（可选，用于定向查询）
+	TargetTypeExplicit       bool               `json:"-"`                                    // target_type 是否由调用方显式传入
+	TargetInfoShow           bool               `json:"target_info_show,omitempty"`           // 是否展示目标资源扩展信息
+	PathResource             []ResourceType     `json:"path_resource,omitempty"`              // 路径约束资源类型
+	MaxHops                  int                `json:"max_hops,omitempty"`                   // 最大跳数（默认2，范围1-5）
+	AllowedRelationTypes     []RelationCategory `json:"allowed_relation_types,omitempty"`     // 允许的关系类别
+	DynamicRelationDirection TraversalDirection `json:"dynamic_relation_direction,omitempty"` // 动态关系方向（默认both）
+	LookBackDelta            int64              `json:"look_back_delta,omitempty"`            // 回溯时间窗口（毫秒，默认86400000）
+	LookBackDeltaSet         bool               `json:"-"`                                    // look_back_delta 是否由调用方显式传入
+	Limit                    int                `json:"limit,omitempty"`                      // 返回的Root数量限制（默认100）
+	LegacyCompatibility      bool               `json:"-"`                                    // 是否使用旧 Relation API 兼容语义
+	DisableRootLimit         bool               `json:"-"`                                    // 是否取消 root LIMIT（仅供兼容路由使用）
+}
+
+// Normalize 规范化请求参数，填充默认值
+func (r *QueryRequest) Normalize() {
+	if r.MaxHops <= 0 {
+		r.MaxHops = DefaultMaxHops
+	}
+	if r.MaxHops > MaxAllowedHops {
+		r.MaxHops = MaxAllowedHops
+	}
+	if r.Limit <= 0 && !r.DisableRootLimit {
+		r.Limit = DefaultLimit
+	}
+	if !r.LookBackDeltaSet && r.LookBackDelta <= 0 {
+		r.LookBackDelta = DefaultLookBackDelta
+	}
+	if r.DynamicRelationDirection == "" {
+		r.DynamicRelationDirection = DirectionBoth
+	}
+	// 如果 target 为空，则使用 source 作为 target，用于 info 数据展示
+	if r.TargetType == "" {
+		r.TargetType = r.SourceType
+	}
+	if len(r.AllowedRelationTypes) == 0 {
+		if r.LegacyCompatibility {
+			r.AllowedRelationTypes = []RelationCategory{RelationCategoryStatic}
+		} else {
+			r.AllowedRelationTypes = []RelationCategory{RelationCategoryStatic, RelationCategoryDynamic}
+		}
+	}
+}
+
+// SchemaNamespace returns the ResourceDefinition / RelationDefinition namespace used by v1beta3 schema lookup.
+func (r *QueryRequest) SchemaNamespace() string {
+	if r == nil || r.SpaceUID == "" {
+		return relation.NamespaceAll
+	}
+	return r.SpaceUID
+}
+
+// GetQueryRange 获取查询时间范围
+func (r *QueryRequest) GetQueryRange() (start, end int64) {
+	end = r.Timestamp
+	start = r.Timestamp - r.LookBackDelta
+	if start < 0 {
+		start = 0
+	}
+	return start, end
+}
+
+// GetSourceResourceID 获取源资源ID
+func (r *QueryRequest) GetSourceResourceID() string {
+	return GenerateResourceID(r.SourceType, r.SourceInfo)
+}
+
+// IsRelationCategoryAllowed 检查关系类别是否允许
+func (r *QueryRequest) IsRelationCategoryAllowed(category RelationCategory) bool {
+	if len(r.AllowedRelationTypes) == 0 {
+		return true // 默认允许所有
+	}
+	for _, allowed := range r.AllowedRelationTypes {
+		if allowed == category {
+			return true
+		}
+	}
+	return false
+}

@@ -33,6 +33,7 @@ type catalogCompositionCollector struct {
 	queryGroups *prometheus.Desc
 	plans       *prometheus.Desc
 	objects     *prometheus.Desc
+	inertPlans  *prometheus.Desc
 }
 
 func newCatalogCompositionCollector() *catalogCompositionCollector {
@@ -63,6 +64,14 @@ func newCatalogCompositionCollector() *catalogCompositionCollector {
 				"listing here, which lands under other so the partition keeps adding up. ACCEPTED became "+
 				"Plans; the rest did not, and the object page says which strategies. Reported by the "+
 				"leader only.", "disposition"),
+		inertPlans: descriptor("catalog_inert_plans",
+			"Plans in the Catalog the leader last built whose schedule cannot hold the wait their data "+
+				"needs to land: their readiness boundary falls past their own completion deadline, so every "+
+				"round binds every consumer unavailable and the Plan detects nothing, forever. They are "+
+				"ACCEPTED and scheduled and execute, and nothing else says so -- the per-round "+
+				"unavailability is indistinguishable from any other, which is why this exists. It is a "+
+				"subset of catalog_plans, not a partition of it, and a steady zero is the expected reading. "+
+				"Reported by the leader only."),
 	}
 }
 
@@ -70,6 +79,7 @@ func (c *catalogCompositionCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.queryGroups
 	ch <- c.plans
 	ch <- c.objects
+	ch <- c.inertPlans
 }
 
 func (c *catalogCompositionCollector) Collect(ch chan<- prometheus.Metric) {
@@ -92,6 +102,7 @@ func (c *catalogCompositionCollector) Collect(ch chan<- prometheus.Metric) {
 	for disposition, count := range composition.Objects {
 		ch <- prometheus.MustNewConstMetric(c.objects, prometheus.GaugeValue, float64(count), string(disposition))
 	}
+	ch <- prometheus.MustNewConstMetric(c.inertPlans, prometheus.GaugeValue, float64(composition.InertPlans))
 }
 
 // SetCatalogCompositionSource binds the process's last built Catalog

@@ -146,3 +146,27 @@ func TestComposeCatalogPartitionsAndPreCreatesEverySupportedSource(t *testing.T)
 		t.Fatalf("REMOVED=%d, want a pre-created zero", composition.Objects[DispositionRemoved])
 	}
 }
+
+// A Plan whose schedule cannot hold the settling wait is counted. Nothing
+// else reports it: it is ACCEPTED, it is scheduled, it executes, and its
+// consumers are bound unavailable every round, which reads the same as any
+// other unavailability. Until this count existed the residual was visible
+// only from the unit test that pinned it, never from a running deployment.
+func TestComposeCatalogCountsPlansWhoseScheduleCannotHoldTheSettlingWait(t *testing.T) {
+	plan := func(interval int64) FrozenPlan {
+		return FrozenPlan{ScheduleSpec: execution.DeriveScheduleSpec(interval)}
+	}
+	composition := ComposeCatalog(Catalog{QueryGroups: []QueryGroup{{
+		Plans: []FrozenPlan{plan(60), plan(30), plan(15), plan(10), plan(20), plan(5), plan(1)},
+	}}})
+	// 5 and 1 are shorter than the wait their data needs; 20 now fits, and
+	// 10 and 15 carry the explicit thirty-second deadline.
+	if composition.InertPlans != 2 {
+		t.Fatalf("inert Plans=%d, want the two below the settling wait", composition.InertPlans)
+	}
+	if healthy := ComposeCatalog(Catalog{QueryGroups: []QueryGroup{{
+		Plans: []FrozenPlan{plan(60), plan(300)},
+	}}}); healthy.InertPlans != 0 {
+		t.Fatalf("inert Plans=%d on a Catalog of ordinary periods, want 0", healthy.InertPlans)
+	}
+}

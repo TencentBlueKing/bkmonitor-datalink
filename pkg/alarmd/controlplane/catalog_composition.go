@@ -69,6 +69,19 @@ type CatalogComposition struct {
 	// Objects counts source objects by disposition -- also a partition, over
 	// the objects the round recorded a disposition for.
 	Objects map[Disposition]int
+	// InertPlans counts the Plans whose schedule cannot hold the wait their
+	// data needs to land. Such a Plan is ACCEPTED, is scheduled, and executes
+	// -- and every round every one of its consumers is bound unavailable,
+	// because its readiness boundary lands past its own deadline. It detects
+	// nothing, forever, and says nothing while doing it: the per-round
+	// unavailability is indistinguishable from any other unavailability, and
+	// the disposition reads as a Plan that works.
+	//
+	// It is counted rather than refused because refusing it is a decision
+	// about how many Slots may overlap, not about this inequality. Counting
+	// it is what makes the residual readable from outside instead of only
+	// from the test that pins it.
+	InertPlans int
 }
 
 // SourceSemanticsLabel is the partition key for one Query Group's query: the
@@ -128,6 +141,11 @@ func ComposeCatalog(catalog Catalog) CatalogComposition {
 		label := SourceSemanticsLabel(group.QueryPlan.SourceSemantics)
 		composition.QueryGroups[label]++
 		composition.Plans[label] += len(group.Plans)
+		for _, plan := range group.Plans {
+			if !plan.ScheduleSpec.AffordsSettlingWait() {
+				composition.InertPlans++
+			}
+		}
 	}
 	for _, disposition := range catalog.Dispositions {
 		kind := disposition.Disposition

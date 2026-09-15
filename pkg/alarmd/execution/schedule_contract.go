@@ -77,6 +77,45 @@ func (spec ScheduleSpec) completionDeadlineUnixMilli(at EvaluationTime) (int64, 
 	return spec.CompletionDeadlineUnixMilli(at)
 }
 
+// MinimumSettlingWaitSeconds is the shortest wait this product has ever
+// treated as enough for data to land: it is Python's ACCESS_DATA_TIME_DELAY,
+// which that side adds to every strategy's lookback whatever the period.
+const MinimumSettlingWaitSeconds = 10
+
+// MinimumCompletionBudgetSeconds is the smallest completion budget on which a
+// Slot can do anything at all: the settling wait, plus the downstream
+// execution reserve the deployment holds back from every query deadline.
+//
+// A Slot given less is not slow, it is inert. Its readiness boundary lands
+// past its own deadline, every consumer fails that comparison on every round
+// and is bound unavailable -- so the strategy compiles, schedules, executes,
+// and detects nothing, forever, with no failure anywhere to read.
+const MinimumCompletionBudgetSeconds = MinimumSettlingWaitSeconds + 5
+
+// AffordsSettlingWait reports whether a schedule's completion budget leaves
+// room for the data to settle before the window is read. An interval that
+// does not is inert, and access keeps that fact readable rather than acting
+// on a window whose data has not landed.
+func (spec ScheduleSpec) AffordsSettlingWait() bool {
+	return spec.CompletionOffsetSeconds() > MinimumCompletionBudgetSeconds
+}
+
+// DeriveScheduleSpec is the one place an evaluation interval becomes a
+// schedule. The completion budget and the settling wait are two halves of one
+// inequality, and they were derived in two packages that did not read each
+// other: the compiler set the budget from the interval, access set the wait
+// by listing the interval values it had in mind. Every interval on neither
+// list produced a Slot whose wait outlasted its budget -- and the strategy
+// serializer accepts any of them, since it validates agg_interval only as a
+// non-negative integer, with no tier list behind it.
+func DeriveScheduleSpec(intervalSeconds int64) ScheduleSpec {
+	spec := ScheduleSpec{EvaluationIntervalSeconds: intervalSeconds, Alignment: 0, Timezone: "UTC"}
+	if intervalSeconds == 10 || intervalSeconds == 15 {
+		spec.CompletionDeadlineOffsetSeconds = 30
+	}
+	return spec
+}
+
 // CompletionOffsetSeconds preserves the meaning of pre-offset frozen schedules.
 func (spec ScheduleSpec) CompletionOffsetSeconds() int64 {
 	if spec.CompletionDeadlineOffsetSeconds != 0 {

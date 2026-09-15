@@ -1016,10 +1016,7 @@ func compilePlan(
 		plan.OutputIdentity = &contract.MonitorOutputIdentity{DynamicDimensions: dataset.DynamicDimensions, DimensionFields: append([]string{}, dataset.IdentityFields...)}
 		plan.SubjectFacts = frozenSubjectFacts(source, item)
 	}
-	scheduleSpec := execution.ScheduleSpec{EvaluationIntervalSeconds: interval, Alignment: 0, Timezone: "UTC"}
-	if interval == 10 || interval == 15 {
-		scheduleSpec.CompletionDeadlineOffsetSeconds = 30
-	}
+	scheduleSpec := execution.DeriveScheduleSpec(interval)
 	schedule, err := execution.DerivePlanScheduleRevision(scheduleSpec)
 	return plan, scheduleSpec, schedule, dispositions, err
 }

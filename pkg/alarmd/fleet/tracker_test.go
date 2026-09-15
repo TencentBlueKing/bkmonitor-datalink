@@ -922,9 +922,9 @@ func TestTheByDesignColumnHoldsOnlyDeclaredReasons(t *testing.T) {
 		t.Fatal("no by-design reasons declared; the column would be empty and the check vacuous")
 	}
 	for reason := range byDesignReasons {
-		if !externalReasons[reason] {
-			t.Errorf("%q is by-design but not external: an object nobody acts on must not be "+
-				"counted against this deployment if it ever falls back to the anomaly column", reason)
+		if situation, mapped := codeSituations[reason]; !mapped || finding(situation, 0).Owner == OwnerAlarmd {
+			t.Errorf("%q is by-design and would count against this deployment: an object nobody "+
+				"acts on must not be ours if it ever falls back to the anomaly column", reason)
 		}
 		if undecidableReason(reason) {
 			t.Errorf("%q is on two column lists; an object would be claimed by whichever is tested first", reason)

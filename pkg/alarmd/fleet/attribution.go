@@ -52,295 +52,23 @@ const (
 	AttributionUnknown Attribution = "UNKNOWN"
 )
 
-// externalReasons are the reason codes that are not evidence against this
-// deployment. Everything in the catalogue that is not listed here counts
-// against it -- see attributionOf for why that is the safe direction.
-//
-// The question that decides a row is "would capacity or a different design
-// have prevented this", never "what set it off". Those come apart constantly
-// and only the first one is the split this table exists to make.
-//
-// A code describing something this deployment did wrong while reacting to an
-// external event belongs on our side, however plainly external the trigger
-// was: an upstream being unavailable is not ours, and writing a
-// self-contradictory state in response to it is. The other reading -- that a
-// visible external trigger makes the outcome external -- would let any defect
-// out of this column as soon as somebody found the thing that provoked it, and
-// almost every defect has one.
-//
-// Symmetrically, a code is not ours merely because our process emitted it.
-// Every code here was emitted by this process; that is what makes "who
-// emitted it" useless as the question and "who can fix it" the one that works.
-//
-// Grouped by who acts on it, because that is what the split is for.
-var externalReasons = map[string]bool{
-	// The data does not reach the window the algorithm needs. Nothing about
-	// this deployment changes that.
-	"HISTORY_GAPPED":  true,
-	"HISTORY_WARMING": true,
-	"QUERY_NOT_READY": true,
-
-	// The backend was asked correctly and did not answer, or answered that the
-	// thing being asked for does not exist.
-	"QUERY_TIMEOUT":        true,
-	"QUERY_UNAVAILABLE":    true,
-	"QUERY_PARTIAL":        true,
-	"PROVIDER_UNAVAILABLE": true,
-	"LATE_OUT_OF_WINDOW":   true,
-
-	// The strategy's own configuration, or a change to it. CONFIG_DRIFT is the
-	// strategy being edited between two reads of one round -- correct behaviour
-	// on both sides, and it clears itself.
-	"CONFIG_DRIFT":            true,
-	"EFFECTIVE_TIME_INACTIVE": true,
-	"EFFECTIVE_TIME_UNKNOWN":  true,
-
-	// The definition handed to this deployment cannot be evaluated as written.
-	// Someone has to change the strategy, or this build has to grow support --
-	// neither is a capacity or design fault in the running deployment.
-	"ALGORITHM_UNSUPPORTED":                 true,
-	"MULTIPLE_EVALUATION_UNITS_UNSUPPORTED": true,
-	"REQUIRED_FEATURE_UNSUPPORTED":          true,
-	"SCHEMA_MAJOR_UNSUPPORTED":              true,
-	"PLAN_INVALID":                          true,
-	"PLAN_DUPLICATE_LEVEL_ID":               true,
-	"PLAN_SET_CONFLICT":                     true,
-	"LEVEL_INVALID":                         true,
-	"SELECTOR_INVALID":                      true,
-	"SELECTOR_ORDINAL_INVALID":              true,
-	"REQUIRED_VALUE_MISSING":                true,
-	"REQUIRED_VALUE_TYPE_MISMATCH":          true,
-	"REQUIRED_VALUE_NORMALIZATION_FAILED":   true,
-	"TIME_INVALID":                          true,
-	"TENANT_INVALID":                        true,
-	"MALFORMED_JSON":                        true,
-	"PAYLOAD_DIGEST_MISMATCH":               true,
-	"RECORD_INVALID":                        true,
-	"RECORD_IDENTITY_CONFLICT":              true,
-}
-
-// ourReasons are the codes that do count against the deployment. Listed rather
-// than left to the default so that a code added to the catalogue fails the
-// completeness test instead of quietly picking a side.
-var ourReasons = map[string]bool{
-	// Budgets: this deployment ran out of something it allocates itself.
-	"EXECUTION_BUDGET_EXHAUSTED": true,
-	"SLOT_BUDGET_EXCEEDED":       true,
-	"LEVEL_BUDGET_EXCEEDED":      true,
-	"PLAN_BUDGET_EXCEEDED":       true,
-	"STATE_BUDGET_EXCEEDED":      true,
-	"VALIDATION_BUDGET_EXCEEDED": true,
-	"MESSAGE_BUDGET_EXCEEDED":    true,
-	"READINESS_BUDGET_INVALID":   true,
-	"RECORD_TOO_LARGE":           true,
-	"RESOURCE_HARD_STOP":         true,
-
-	// This deployment abandoned a window of time rather than evaluate it.
-	//
-	// The Slot fell further behind than the replay limits allow -- more slots
-	// than MaxReplaySlots, or older than MaxReplayAge -- so the cursor jumps
-	// forward and those minutes are never detected on. Both limits produce
-	// this one code, so it cannot say which; what it always says is that the
-	// decision to stop trying was made here.
-	//
-	// It sat under "the data does not reach the window the algorithm needs,
-	// nothing about this deployment changes that", which is wrong twice over.
-	// Capacity is exactly what changes it -- falling behind is what capacity
-	// means -- and the sentence sent "we skipped fifty minutes of detection"
-	// to whoever owns the strategy, who can do nothing about it. Filed
-	// externally it reached nobody.
-	//
-	// An external cause can certainly provoke it: a backend that stops
-	// answering leaves rounds unfinished until the cursor expires. That does
-	// not make the outcome external, by this table's own rule -- and the case
-	// where a backend is the problem has a column of its own, checked before
-	// this one. What is left here is an object that kept falling behind for
-	// DefaultDegradedRounds consecutive rounds without its backend being bad
-	// enough to demote it.
-	"GAP_SKIPPED": true,
-
-	// Our own stores and infrastructure.
-	"REDIS_UNAVAILABLE":        true,
-	"KAFKA_UNAVAILABLE":        true,
-	"STATE_CORRUPT":            true,
-	"STATE_WRITE_RETRYABLE":    true,
-	"STATE_SCHEMA_UNSUPPORTED": true,
-	"PROJECTION_INVALID":       true,
-	"PROGRESS_BEGIN_FAILED":    true,
-	"PROGRESS_BEGIN_REJECTED":  true,
-	"OUTPUT_ACK_UNKNOWN":       true,
-	"AUDIT_DROP":               true,
-
-	// Our control plane did not give the runner something to run. A live read
-	// found twelve objects here whose strategies had been retired days
-	// earlier: the disposition was known inside the system and never reached
-	// the runner, so it retried a dead object every thirty seconds for forty
-	// hours. That is a design gap in this deployment, not the strategy's doing.
-	"BLOCKED_EXACT_SET_UNAVAILABLE": true,
-	"SLOT_SOURCE_RETRY":             true,
-	// The Progress cursor of those same objects pointed into a part of the
-	// timeline this control plane had already pruned, so no read could ever
-	// find the Slot it asked for. The gap this records is the deployment
-	// moving its own cursor past what it pruned before the runner got there;
-	// the strategy did nothing to cause it.
-	"SCHEDULE_PRUNED": true,
-
-	// The tracker's own outcome words, which is what actually reaches the page
-	// in reason_code -- the contract codes above sit one layer further in and
-	// never appear there. The twelve retired-strategy objects were being caught
-	// by the fall-through for exactly this reason: the rule written for them
-	// names BLOCKED_EXACT_SET_UNAVAILABLE and the field says "source_blocked".
-	//
-	// Found by the count of fall-throughs on its first live read, which is what
-	// that count is for.
-	//
-	// The words themselves are folded in from BlockedOutcomes in init rather
-	// than retyped here. A retyped copy is what caused this in the first place.
-	"SNAPSHOT_UNAVAILABLE":   true,
-	"SNAPSHOT_RETRY_PENDING": true,
-	"ACTIVATION_READ_FAILED": true,
-}
-
-// uninformativeReasons are values that appear in these fields and say nothing
-// about which side an object is on.
-//
-// Nothing reads this at runtime, and that is correct rather than an oversight:
-// a word listed here is in neither classification map, so the search skips it
-// either way. Checking it in the loop as well was dead code that read as a
-// guard -- the invariant it appeared to enforce is enforced by the disjointness
-// test instead, where it is real.
-//
-// What it is for is making "decided" three-valued for the completeness check:
-// classified as ours, classified as external, or deliberately carrying no
-// attribution information. Without the third value every completion kind would
-// have to be filed on one side or the other, and both would be wrong.
-//
-// A completion kind says a round ended with something unavailable, and an
-// execution outcome says a round failed; both are true of either side. They are
-// listed rather than left to fall through because the two are different: a code
-// that carries no attribution information should let the other fields answer,
-// while a code nobody has classified should count against the deployment and be
-// reported as unclassified. Folding them together would fill the fall-through
-// count with words that will never be classifiable, and a count full of noise
-// stops being read.
-var uninformativeReasons = map[string]bool{
-	// A completion kind that is not healthy. The healthy ones are added from
-	// HealthyCompletions in init; this is the one the page sees most.
-	"COMPLETED_WITH_UNAVAILABLE": true,
-}
-
-// The tracker's vocabularies are folded in here rather than retyped, because a
-// retyped copy is what put the retired-strategy objects on the fall-through
-// path in the first place: the rule named a contract code and the field carried
-// an outcome word.
-func init() {
-	for _, outcome := range BlockedOutcomes {
-		ourReasons[outcome] = true
-	}
-	for _, refusal := range ResultContractRefusals {
-		ourReasons[refusal] = true
-	}
-	for _, outcome := range FailedExecutions {
-		uninformativeReasons[outcome] = true
-	}
-	for _, kind := range HealthyCompletions {
-		uninformativeReasons[kind] = true
-	}
-}
-
 // attributionOf decides which side one anomaly falls on.
 //
-// The order is deliberate: the strongest evidence about this deployment is
-// checked first, because an object that has stopped progressing is ours
-// whatever its last reason code said. A stalled object's last recorded reason
-// is often the external thing that happened before it got stuck.
-// attributedByRule reports whether a rule decided this, rather than the
-// fall-through.
+// It is the finding's reading, not a second decision. The code tables that
+// used to live here -- externalReasons, ourReasons, the outcome vocabularies
+// folded in at init -- now live in finding.go as codeSituations, where each
+// code maps to a situation and each situation to an owner. Keeping a copy here
+// would be two classifications of one object, and the first live read of the
+// page found exactly that: the verdict called an object external while the
+// row beside it said nobody could tell.
 //
-// The two are different confidence levels and the difference is what goes
-// stale. attributionOf reads four sources and only one of them -- the reason
-// catalogue -- is a closed list this package can check itself against; a
-// failure code is open by construction, and a release can add a whole
-// vocabulary that reaches here without touching the catalogue at all.
-//
-// Checked against a batch of 47 rejection codes due in the next release: the
-// completeness test stays green while every one of them falls through, because
-// they arrive in a different vocabulary than the one it iterates. A guard
-// anchored to one closed list cannot cover an open input, so the fall-through
-// is counted and shown instead of being silently absorbed.
-func attributedByRule(anomaly Anomaly) bool {
-	failureCode := ""
-	if anomaly.Failure != nil {
-		failureCode = anomaly.Failure.Code
-	}
-	for _, code := range []string{
-		anomaly.CauseReason, string(anomaly.Cause), failureCode, anomaly.ReasonCode,
-	} {
-		if code != "" && (externalReasons[code] || ourReasons[code]) {
-			return true
-		}
-	}
-	// The two rules that do not read a code at all still decide by a rule.
-	return anomaly.Stalled || anomaly.Kind == KindOverdueWake
-}
-
+// The safe default is preserved through the table. A code nothing maps
+// reaches SituationUnclassified, which is ALARMD's, which is OURS: a failure
+// mode nobody has classified is one this build has just started producing,
+// and defaulting it to "not our problem" would let it arrive as a HEALTHY
+// verdict.
 func attributionOf(anomaly Anomaly) Attribution {
-	// Rounds have stopped ending. Nothing outside this deployment can produce
-	// that, and nothing outside it will end them.
-	if anomaly.Stalled {
-		return AttributionOurs
-	}
-	// Never reached at all. Whatever the object would have done, not getting to
-	// it is this deployment's.
-	if anomaly.Kind == KindOverdueWake {
-		return AttributionOurs
-	}
-	// Most specific first. The failure record classifies what went wrong and
-	// sits ahead of the run outcome, which used to be the other way round: an
-	// object whose execution failed on a backend timeout reports reason_code
-	// "error" and failure code QUERY_TIMEOUT, and checking the outcome word
-	// first would have decided it before the specific code was ever read.
-	failureCode := ""
-	if anomaly.Failure != nil {
-		failureCode = anomaly.Failure.Code
-	}
-	for _, code := range []string{
-		anomaly.CauseReason, string(anomaly.Cause), failureCode, anomaly.ReasonCode,
-	} {
-		if code == "" {
-			continue
-		}
-		if externalReasons[code] {
-			return AttributionExternal
-		}
-		if ourReasons[code] {
-			return AttributionOurs
-		}
-	}
-	// Nothing said which side this is. Two very different cases reach here.
-	//
-	// An object rebuilt from persisted state has no cause because the cause was
-	// never written down, not because there is nothing to say -- this process
-	// has not seen it fail yet. Reporting that as a fault of the deployment
-	// would make every rollout look like a regression for a few minutes.
-	// Only the restored case. An object this process watched fail and recorded
-	// nothing about is a different thing: the evidence was not missing, it was
-	// never produced, and that is this deployment's own observability failing.
-	// Merging the two would let a real hole in what we record hide behind the
-	// same word as a known persistence gap.
-	if restoredWithoutEvidence(anomaly) {
-		return AttributionUnknown
-	}
-	// Otherwise something was reported and nobody has classified it. That counts
-	// against the deployment, and that is the whole point of choosing a default
-	// rather than leaving one.
-	//
-	// The other direction is the dangerous one: a failure mode nobody has
-	// classified yet is exactly the kind this deployment has just started
-	// producing, and defaulting it to "not our problem" would let a new fault
-	// arrive as a HEALTHY verdict. Defaulting it to ours costs a look at
-	// something that turns out to be external; the reverse costs the signal.
-	return AttributionOurs
+	return attributionFromFinding(findingOf(anomaly))
 }
 
 // restoredWithoutEvidence reports an object rebuilt from a record that does not
@@ -383,11 +111,17 @@ func UnattributedCount(anomalies []Anomaly) int {
 // read this field, neither re-derives it.
 func Attribute(anomalies []Anomaly) {
 	for index := range anomalies {
-		anomalies[index].Attribution = attributionOf(anomalies[index])
+		// The finding is decided first and the attribution read off it. Before
+		// this the two were decided separately -- attribution from the code
+		// tables here, the situation from the counts on the page -- and an
+		// object could be external for the verdict while the page told the
+		// reader it was undetermined, or the reverse. One decision, two
+		// readings.
+		anomalies[index].Finding = findingOf(anomalies[index])
+		anomalies[index].Attribution = attributionFromFinding(anomalies[index].Finding)
 		// Recorded per object rather than derived twice, so the page and the
 		// counts cannot disagree about which of these was actually decided.
-		anomalies[index].Unclassified = anomalies[index].Attribution == AttributionOurs &&
-			!attributedByRule(anomalies[index])
+		anomalies[index].Unclassified = anomalies[index].Finding.Situation == SituationUnclassified
 	}
 }
 

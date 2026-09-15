@@ -303,7 +303,8 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       </p>
     </details>
     <div class="filters">
-      <button id="colOwn" class="primary">没跑成待查</button>
+      <button id="colAction" class="primary">需要我处理</button>
+      <button id="colOwn">没跑成待查</button>
       <button id="colDemoted">策略本身不可用（降级池）</button>
       <button id="colUndecidable">判不了恢复</button>
       <button id="colByDesign">按配置不处理</button>
@@ -317,6 +318,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       <button id="clear">清除</button>
       <span class="applied" id="applied"></span>
     </div>
+    <p class="basis" id="governance"></p>
     <div id="objErr" class="err" hidden></div>
     <p class="basis" id="rollup"></p>
     <p class="basis" id="churn"></p>
@@ -324,8 +326,7 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
     <div class="summary" id="summary"></div>
     <table>
       <thead><tr>
-        <th>对象</th><th>谁的问题</th><th>种类</th><th>最近原因</th><th>是什么情况</th><th>下一层原因</th><th>后端症状</th><th>失败在哪</th><th>已持续</th>
-        <th>起算来源</th><th>副本</th><th>关联策略</th>
+        <th>对象</th><th>谁的</th><th>发生了什么</th><th>影响</th><th>下一步</th><th>已持续</th><th>去哪</th><th></th>
       </tr></thead>
       <tbody id="rows"></tbody>
     </table>
@@ -396,11 +397,14 @@ var total = 0;
 // Filters are sent to the server rather than applied to the page: the list is
 // paged, so narrowing on screen would only narrow the twenty rows that happen
 // to be loaded.
-var filters = { replica: '', strategy: '', business: '' };
+var filters = { replica: '', strategy: '', business: '', owner: '' };
 // Which of the two columns the table is about. Sent with every request rather
 // than filtered on the page, for the same reason the filters are: the list is
 // paged, and a page cannot separate two lists it only holds twenty rows of.
-var column = 'anomalies';
+// The to-do list is the default. It is what the page opens on because it is
+// the reader's first question, and every other column is a way of looking at
+// what is not on it.
+var column = 'action_required';
 // Which end of the list the first page is. Sorted on the server for the same
 // reason the filters are applied there: reordering twenty loaded rows would
 // reorder the page, not the list, and page two would continue the other order.
@@ -547,6 +551,101 @@ var SINCE_BOUND = {
   RESTORED_LAST_FULL: '≤ ',
   REFUSED_FUTURE: '? '
 };
+
+// Who has to act. Keyed by the server's Owner values; a completeness test
+// holds this to the Go list.
+var OWNER = {ALARMD: 'alarmd', DATA: '数据侧', STRATEGY: '策略侧', NOBODY: '不用处理',
+             UNDETERMINED: '待确认'};
+
+// What each situation is, what it costs, and what to do -- one entry per
+// server Situation, looked up and never inferred.
+//
+// This table is the whole of what the page decides about a row. Before it,
+// the row was assembled from a reason code and eleven counts by two hundred
+// lines of conditions, and every one of the twenty-two defects this page has
+// had was one of those conditions reading the counts wrong. Now the server
+// decides the situation from the evidence and this says the words. Adding a
+// situation means adding a line here, and the test that walks the Go list
+// fails until it is added.
+//
+// {n} is the one number the server sends with the situation: rounds left, or
+// rounds held.
+var SITUATION = {
+  STALLED:              {what: '轮次卡住不结束', impact: '这个对象没有任何检测结果', next: '不会自己恢复，看执行细节'},
+  NEVER_REACHED:        {what: '到期了没被执行', impact: '这一轮没检测', next: '查为什么没轮到它'},
+  BUDGET_EXCEEDED:      {what: '超出 alarmd 自己的预算', impact: '这一轮没检测', next: '查是哪个预算、量大了还是预算小了'},
+  DETECTION_ABANDONED:  {what: '落后太多，放弃了一段时间', impact: '那段时间没检测，不补', next: '查为什么跟不上'},
+  TIMELINE_PRUNED:      {what: '游标指向已裁掉的时间线', impact: '那段时间没检测，不补，个数无法得知', next: '查保留期和落后原因'},
+  ROUND_BLOCKED:        {what: '这一轮没拿到要跑的东西', impact: '这一轮没检测', next: '查控制面为什么没给'},
+  DEPENDENCY_DOWN:      {what: 'alarmd 自己的依赖没答', impact: '这一轮没检测', next: '查 Redis / Kafka / 快照'},
+  STATE_DEFECT:         {what: '持久化的状态读不回来', impact: '这一轮没检测，重试也一样', next: '查状态数据'},
+  CONTRACT_REFUSED:     {what: '产出的结果不符合契约', impact: '这一轮结果作废', next: 'alarmd 缺陷，上报'},
+  UNCLASSIFIED:         {what: '出现了没归过类的失败', impact: '这一轮没检测', next: '先归类'},
+  BACKEND_UNAVAILABLE:  {what: '查询后端没答', impact: '这一轮没检测', next: '查后端和查询链路'},
+  BACKEND_COOLDOWN:     {what: '后端连续失败，已降级', impact: '冷却期内不检测', next: '查后端；到期自动重试'},
+  SERIES_DATA_MISSING:  {what: '序列一直在，数据缺点', impact: '异常照报，恢复判不了', next: '查采集和查询偏移'},
+  DATA_INTERMITTENT:    {what: '数据断断续续', impact: '异常照报，恢复判不了', next: '先看查询偏移够不够'},
+  SERIES_CHURNING:      {what: '序列在不断换', impact: '异常照报，恢复判不了，告警不会自己关', next: '去掉会变的聚合维度，或缩短窗口'},
+  PLAN_UNEVALUABLE:     {what: '策略定义无法按写的执行', impact: '不检测', next: '改策略'},
+  SERIES_YOUNG:         {what: '序列还年轻，窗口在填', impact: '暂时判不了恢复', next: '不用管，还差 {n} 轮'},
+  SERIES_RENEWED:       {what: '序列刚重新建号或刚出现', impact: '暂时判不了恢复', next: '再看 {n} 轮'},
+  VERDICT_HELD:         {what: '窗口已补满，判定还沿用上一轮', impact: '无', next: '不用管，一两轮后自己变'},
+  DATA_JUST_GAPPED:     {what: '数据刚出现洞', impact: '暂时判不了恢复', next: '再看几轮'},
+  OFF_HOURS:            {what: '不在生效时段', impact: '按配置不检测', next: '不用管'},
+  WINDOW_EMPTY:         {what: '窗口一个点都没有', impact: '异常照报，恢复判不了', next: '先确认是指标停了还是算法判不了'},
+  SERIES_MIXED:         {what: '一部分是新序列，一部分一直在', impact: '异常照报，恢复判不了', next: '先查一直在的那几条'},
+  CONFIG_DRIFT:         {what: '计划激活没对上，本轮作废', impact: '这一轮没检测', next: '看已持续：一两轮是改配置，长期是激活对不上'},
+  EFFECTIVE_TIME_UNKNOWN: {what: '生效时段算不出来', impact: '这一轮没检测', next: '查时区和日历'},
+  RESTORED_WITHOUT_CAUSE: {what: '重启后恢复的，成因没保留', impact: '不明', next: '等下一轮'}
+};
+
+function situationWords(finding) {
+  var words = SITUATION[(finding || {}).situation];
+  if (!words) {
+    // Loudly. A situation this table has no words for is a defect, and
+    // rendering it as a blank would read as "nothing here".
+    return {what: '（页面没有这个处境的文案：' + ((finding || {}).situation || '空') + '，请上报）',
+            impact: '—', next: '—'};
+  }
+  var n = String((finding && finding.rounds) || 0);
+  return {what: words.what, impact: words.impact, next: words.next.replace('{n}', n)};
+}
+
+// The governance line: every object in the deployment, counted by who has to
+// act, each count opening that owner's objects.
+//
+// The to-do count leads. The others are not this reader's work but are real
+// work, and a count they can open is what stops "not mine" from meaning
+// "nobody's".
+function renderGovernance(actionRequired, byOwner, served) {
+  var el = document.getElementById('governance');
+  el.textContent = '';
+  var head = document.createElement('b');
+  head.textContent = '需要你处理：' + (actionRequired || 0) + ' 个';
+  el.appendChild(head);
+  el.appendChild(document.createTextNode('（alarmd 自己的 + 待确认的）。其余按归属：'));
+  var counts = {};
+  ((byOwner || {}).top || []).forEach(function (c) { counts[c.value] = c.count; });
+  ['DATA', 'STRATEGY', 'NOBODY'].forEach(function (owner, index) {
+    var n = counts[owner] || 0;
+    var a = document.createElement('a');
+    a.href = '#';
+    a.textContent = OWNER[owner] + ' ' + n;
+    a.title = '打开' + OWNER[owner] + '的对象清单（跨所有栏）';
+    a.addEventListener('click', function (event) {
+      event.preventDefault();
+      filters.owner = owner;
+      // Owner cuts across columns; the to-do column already excludes these
+      // owners, so opening one of them switches to the full anomaly list.
+      if (column === 'action_required') { column = 'anomalies'; }
+      offset = 0;
+      loadObjects();
+    });
+    if (index) el.appendChild(document.createTextNode(' · '));
+    el.appendChild(a);
+  });
+  el.appendChild(document.createTextNode('。数据侧和策略侧的告警不会自己关：异常照报、恢复判不了。'));
+}
 
 // A moment, with the date shown as soon as it is not today.
 //
@@ -975,89 +1074,28 @@ function anomalyRow(anomaly) {
     qg.addEventListener('click', function () {
       document.getElementById('qg').value = anomaly.query_group;
     });
-    // The same field the verdict reads. Deriving it again here from the
-    // reason code would be a second copy of the rule, and the two would agree
-    // until the day one of them was updated.
-    var WHO = {EXTERNAL: '数据源/策略', UNKNOWN: '还看不出', OURS: 'alarmd',
-               MISSING: '没带归属'};
-    var WHY_WHO = {
-      EXTERNAL: '按分类，这一类不归在扩容或改架构能解决的一侧——要找策略配置或数据源的人',
-      UNKNOWN: '这一条是重启后从记录里恢复的，成因没有被持久化——等它跑完下一轮才知道是谁的',
-      OURS: '容量或架构能避免的，判定就看这一类；报了成因但没人归类过的也算在这里，宁可多看一眼',
-      MISSING: '这一行没有带归属字段，是缺陷，请上报——不要当成 alarmd 的问题读'
-    };
-    // An absent field is not a verdict. This defaulted to OURS, and the three
-    // columns whose rows never had attribution filled were served through it:
-    // every row of 降级池 and 判不了恢复 read "alarmd", directly under a
-    // heading saying those objects are not alarmd's. The server fills the
-    // field on all four columns now, so a blank here means whatever produced
-    // the row is broken, and the cell says that instead of picking the most
-    // consequential value on the page.
-    var side = anomaly.attribution || 'MISSING';
-    var who = cell((WHO[side] || side) + (anomaly.unclassified ? '？' : ''));
-    if (side === 'OURS') { who.className = 'stuck'; }
-    who.title = (WHY_WHO[side] || '')
-      + (anomaly.unclassified
-          ? '\n没有规则匹配到它，是按保守默认算进 alarmd 这一侧的——可能确实是我们的，也可能只是还没人给它归类'
-          : '');
-    cell(kindText(anomaly.kind));
-    cell(anomaly.reason_code || '—');
-    // The completion kind alone folds four conditions together, and they call
-    // for opposite responses. Without this column the list reads as hundreds
-    // of equally urgent objects, which is the same as reading as none.
-    // A blank cause reads as "there is no cause", and on a restored object
-    // that is false: the cause was never persisted. Those two say opposite
-    // things to a reader -- one is "nothing to chase", the other is "the
-    // answer existed and we lost it, it comes back next round" -- and the row
-    // has to say which. On a live read 8 of 63 degraded objects were in the
-    // second case, all of them restored, thirteen minutes after a rollout.
-    cell(missingCauseText(anomaly) || causeText(anomaly.cause));
-    // The cause stops one level short of the answer. LEVEL_OUTCOME_UNKNOWN is
-    // required by contract to carry a reason of either the coverage class --
-    // the data does not reach this window, which is nobody here's doing -- or
-    // the retryable class, which clears on its own. Showing the cause alone
-    // made 61 of 62 objects one indistinguishable population.
-    var reason = cell(anomaly.cause_reason || missingCauseText(anomaly) || '—');
-    if (anomaly.cause_reason) { reason.title = anomaly.cause_reason; }
-    // HISTORY_WARMING is two different situations under one label, and the
-    // reason cell alone cannot say which: a window that is filling reads
-    // exactly like a window that will never fill. The counts behind it used to
-    // stop in state/window.go and never reach any output at all.
-    var coverageSaid = coverageNote(anomaly);
-    if (coverageSaid) {
-      var note = document.createElement('div');
-      note.className = coverageSaid.settled ? 'settled' : '';
-      note.textContent = coverageSaid.text;
-      note.title = coverageSaid.title;
-      reason.appendChild(note);
+    // The four answers, read off the server's finding and never re-derived
+    // here. A row that decided anything itself would be the second copy of a
+    // rule, and the two copies agree until the day one of them is updated.
+    var finding = anomaly.finding || {};
+    var words = situationWords(finding);
+    var who = cell(OWNER[finding.owner] || (finding.owner ? finding.owner : '（没带归属，缺陷，请上报）'));
+    if (finding.owner === 'ALARMD') { who.className = 'stuck'; }
+    if (finding.owner === 'UNDETERMINED') {
+      who.title = '证据分不出是谁的。留在这里等确认，不直接交给策略方或数据源';
     }
-    // The symptom was only in the summary line, so a reader could see that 53
-    // of 55 hit one thing and still not tell which one this row is. It is the
-    // only cell on the row that says what to do about it.
-    var symptom = cell(symptomText((anomaly.failure || {}).detail));
-    if (anomaly.failure && anomaly.failure.detail) { symptom.title = anomaly.failure.detail; }
-    // The completion kind says a round ended badly; this says what went wrong.
-    // Both are shown because they answer different questions.
-    var f = anomaly.failure;
-    var fcell = cell(f ? (FAILURE_CATEGORY[f.category] || f.category) : '—');
-    if (f) {
-      fcell.title = ['阶段 ' + f.stage, '分类 ' + f.category, f.code ? '代码 ' + f.code : '']
-        .filter(Boolean).join('\n');
+    if (anomaly.unclassified) {
+      who.textContent += '？';
+      who.title = '没有规则匹配到它，按保守默认算进 alarmd 这一侧——可能确实是我们的，也可能只是还没人归类';
     }
-    if (anomaly.query_cooldown) {
-      var cooldown = document.createElement('div');
-      cooldown.textContent = new Date(anomaly.query_cooldown.until).getTime() <= Date.now()
-        ? '查询冷却：已到允许查询时间，等待真实查询恢复'
-        : '查询冷却至 ' + new Date(anomaly.query_cooldown.until).toLocaleString();
-      cooldown.title = '最近真实查询：' + new Date(anomaly.query_cooldown.last_query_at).toLocaleString()
-        + '；连续失败：' + (anomaly.query_cooldown.failures >= 32 ? '至少 ' : '') + anomaly.query_cooldown.failures;
-      fcell.appendChild(cooldown);
-    }
-    // A long duration alone does not say whether the object is recovering
-    // slowly or has stopped entirely; this chip is the only thing on the row
-    // that separates the two. The row's duration is how long the object has
-    // been anomalous; how long its rounds have not ended is a different,
-    // usually shorter, clock, and the chip carries that one.
+    var what = cell(words.what);
+    what.title = finding.situation || '';
+    cell(words.impact);
+    var next = cell(words.next);
+    if (finding.self_healing === 'WONT') { next.title = '不会自己好转'; }
+    else if (finding.self_healing === 'WILL') { next.title = '会自己好转'; }
+    // How long. The bound prefix is the one thing on the row that says whether
+    // this number is a measurement or a limit, and it stays.
     var held = cell((SINCE_BOUND[anomaly.since_from] || '') + duration(anomaly.since));
     if (SINCE_BOUND[anomaly.since_from]) {
       held.title = SINCE_SOURCE[anomaly.since_from] || anomaly.since_from;
@@ -1071,12 +1109,8 @@ function anomalyRow(anomaly) {
       held.appendChild(chip);
       tr.className = 'stuckrow';
     }
-    cell(SINCE_SOURCE[anomaly.since_from] || anomaly.since_from || '—');
-    // The full pod name is the same on every row of a single replica's run and
-    // is the widest column in the table. Only the part that distinguishes one
-    // replica from another is shown; the rest is one hover away.
-    var rep = cell(shortReplica(anomaly.replica), 'mono');
-    rep.title = anomaly.replica;
+    // Where to go: the strategy links, when the finding says the strategy is
+    // where the work is; the object detail otherwise.
     var td = document.createElement('td');
     var strategies = dedupeStrategies(anomaly.strategies);
     strategies.forEach(function (s) {
@@ -1090,12 +1124,6 @@ function anomalyRow(anomaly) {
         applyFilters();
       });
       td.appendChild(span);
-      // Where the drill-down used to stop. Clicking the strategy filtered this
-      // table by it, which is the one thing a reader who has already found it
-      // does not need; handing the id to whoever configured it meant copying a
-      // number into a search box. The link is only rendered when this
-      // environment configured where its console lives -- the page has no
-      // business guessing that, and a wrong link is worse than none.
       var open = strategyLink(s);
       if (open) {
         var a = document.createElement('a');
@@ -1108,17 +1136,54 @@ function anomalyRow(anomaly) {
         td.appendChild(a);
       }
     });
-    // "未观察到" alone reads as "this object has no strategies", which would
-    // make the row unactionable and also untrue. A blocked round never got a
-    // Slot, and the strategy references come off the Slot -- so for this kind
-    // the cell is empty by construction, every time, and saying which of the
-    // two it is decides whether the reader goes looking for a strategy.
     if (!strategies.length) {
       td.textContent = anomaly.kind === 'BLOCKED_RUN'
         ? '未观察到（这一轮没取到 Slot，策略是从 Slot 上读的）'
         : '未观察到';
     }
     tr.appendChild(td);
+    // Everything the row used to print, one click away. These are the
+    // evidence and the mechanism; they answer "why do you say that", which is
+    // the fifth question, asked after the four above and not instead of them.
+    var more = document.createElement('td');
+    var details = document.createElement('details');
+    var toggle = document.createElement('summary');
+    toggle.textContent = '▸';
+    toggle.title = '判据、原因码、后端症状、起算来源、副本';
+    details.appendChild(toggle);
+    function line(k, v, title) {
+      if (!v || v === '—') return;
+      var div = document.createElement('div');
+      var b = document.createElement('b');
+      b.textContent = k + '：';
+      div.appendChild(b);
+      div.appendChild(document.createTextNode(v));
+      if (title) div.title = title;
+      details.appendChild(div);
+    }
+    line('种类', kindText(anomaly.kind));
+    line('结果码', anomaly.reason_code);
+    line('成因', missingCauseText(anomaly) || causeText(anomaly.cause));
+    line('下一层原因', anomaly.cause_reason || missingCauseText(anomaly));
+    var coverageSaid = coverageNote(anomaly);
+    if (coverageSaid) { line('判据', coverageSaid.text, coverageSaid.title); }
+    var f = anomaly.failure;
+    if (f) {
+      line('后端症状', symptomText(f.detail), f.detail);
+      line('失败在哪', FAILURE_CATEGORY[f.category] || f.category,
+        ['阶段 ' + f.stage, '分类 ' + f.category, f.code ? '代码 ' + f.code : ''].filter(Boolean).join('\n'));
+    }
+    if (anomaly.query_cooldown) {
+      line('查询冷却', new Date(anomaly.query_cooldown.until).getTime() <= Date.now()
+        ? '已到允许查询时间，等待真实查询恢复'
+        : '至 ' + new Date(anomaly.query_cooldown.until).toLocaleString(),
+        '最近真实查询：' + new Date(anomaly.query_cooldown.last_query_at).toLocaleString()
+        + '；连续失败：' + (anomaly.query_cooldown.failures >= 32 ? '至少 ' : '') + anomaly.query_cooldown.failures);
+    }
+    line('起算来源', SINCE_SOURCE[anomaly.since_from] || anomaly.since_from);
+    line('副本', shortReplica(anomaly.replica), anomaly.replica);
+    more.appendChild(details);
+    tr.appendChild(more);
   return tr;
 }
 
@@ -1161,8 +1226,10 @@ function loadObjects() {
     var pool = served === 'demoted';
     var undecidable = served === 'undecidable';
     var byDesign = served === 'by_design';
+    var action = served === 'action_required';
     var TITLES = {demoted: '策略本身不可用（降级池）', undecidable: '判不了恢复',
-                  by_design: '按配置不处理', anomalies: '没跑成待查'};
+                  by_design: '按配置不处理', anomalies: '没跑成待查',
+                  action_required: '需要我处理'};
     // Each column says what is happening, what it costs, and what to do --
     // in that order, and the mechanism goes in the expandable note below.
     //
@@ -1179,6 +1246,13 @@ function loadObjects() {
     // itself as the to-do list. The keys are checked against the Go constants
     // now.
     var BASIS = {
+      // The to-do list. Drawn from every other column: what this deployment
+      // has to act on, plus what nobody can yet say who owns. The rest is
+      // counted in the governance line above and opens from there.
+      action_required: '这一栏是要你处理的：alarmd 自己的问题，加上证据还分不出是谁的。'
+        + '按紧急程度排：alarmd 的在前、不会自愈的在前、持续最久的在前。'
+        + '每条说三件事——发生了什么、影响什么、下一步做什么；判据和细节点开那一行的 ▸。'
+        + '数据侧、策略侧、不用处理的，不在这里，在上面那行运营治理里按归属计数，点数字打开。',
       demoted: '后端连续查询失败，已降级、暂停反复查询。'
         + '影响：这些策略当前不产生检测结果，异常和恢复都不报。'
         + '下一步：看每条的“后端症状”定位数据源；冷却到期后会自动重试，'
@@ -1215,7 +1289,8 @@ function loadObjects() {
       text('listTitle', TITLES[served]);
       text('listBasis', BASIS[served]);
     }
-    document.getElementById('colOwn').className = (pool || undecidable || byDesign) ? '' : 'primary';
+    document.getElementById('colAction').className = action ? 'primary' : '';
+    document.getElementById('colOwn').className = (pool || undecidable || byDesign || action) ? '' : 'primary';
     document.getElementById('colDemoted').className = pool ? 'primary' : '';
     document.getElementById('colUndecidable').className = undecidable ? 'primary' : '';
     document.getElementById('colByDesign').className = byDesign ? 'primary' : '';
@@ -1240,6 +1315,7 @@ function loadObjects() {
     currentPerReplica = objects.per_replica || [];
     text('ceiling', continuityLine(objects.per_replica));
     renderSummary(objects.summary, total, served);
+    renderGovernance(objects.action_required_total, objects.by_owner_total, served);
     renderStallNote(objects.stall_after_seconds, objects.summary && objects.summary.stalled,
       objects.stalled_total, objects.filtered);
     var list = document.getElementById('replicaList');
@@ -1251,7 +1327,7 @@ function loadObjects() {
     });
     // An empty table means something different once a filter is on, and the rows
     // alone cannot say which case this is.
-    text('applied', objects.filtered ? '已按条件过滤' : '');
+    text('applied', objects.filtered ? '已按条件过滤' + (filters.owner ? '（归属：' + (OWNER[filters.owner] || filters.owner) + '）' : '') : '');
     document.getElementById('objEmpty').textContent = objects.filtered
       ? '当前过滤条件下没有异常对象。' : '当前没有异常对象。';
     show('objEmpty', rows.length === 0 && total === 0);
@@ -3328,6 +3404,7 @@ function showColumn(next) {
   offset = 0;
   loadObjects();
 }
+document.getElementById('colAction').addEventListener('click', function () { showColumn('action_required'); });
 document.getElementById('colOwn').addEventListener('click', function () { showColumn('anomalies'); });
 document.getElementById('colDemoted').addEventListener('click', function () { showColumn('demoted'); });
 document.getElementById('colUndecidable').addEventListener('click', function () { showColumn('undecidable'); });
@@ -3349,6 +3426,7 @@ document.getElementById('clear').addEventListener('click', function () {
   ['fReplica', 'fStrategy', 'fBusiness'].forEach(function (id) {
     document.getElementById(id).value = '';
   });
+  filters.owner = '';
   applyFilters();
 });
 ['fReplica', 'fStrategy', 'fBusiness'].forEach(function (id) {

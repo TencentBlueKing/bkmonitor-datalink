@@ -1539,6 +1539,44 @@ type HistoryCoverage struct {
 	// it has not been allowed to say anything else yet" -- which is the
 	// difference between a condition to act on and a condition that has passed.
 	Guarded uint32
+	// Fresh is how many of these windows belong to a series that had no
+	// persisted runtime state when this round loaded it, and ShortFresh how
+	// many of the *short* ones do. They are two counts because they have two
+	// denominators: Fresh is out of Levels, ShortFresh out of Short, and a
+	// share taken across the pair would be a ratio whose top and bottom
+	// describe different populations.
+	//
+	// This is the one fact that separates the two situations a short window
+	// reports identically, and it is the separation the shortfall alone cannot
+	// make however many rounds it is watched:
+	//
+	//   - A series whose identity churns -- a pod name, a container, a task id
+	//     in the aggregation dimensions -- is a *different* series every few
+	//     rounds. Each one is genuinely new, each one starts its window from
+	//     nothing, and none of them ever lives long enough to fill it. The
+	//     strategy's dimensions are what has to change; alarmd is doing exactly
+	//     what it was asked.
+	//   - A series that has been evaluated for hours and is still short is not
+	//     new and never was. Its window is short because its data is missing.
+	//     Nothing about the strategy's dimensions will change that.
+	//
+	// Both report HISTORY_WARMING on every round, both keep the shortfall
+	// counter climbing for ever, and until now the layer that publishes them
+	// held no series identity at all -- so the page had to say, in as many
+	// words, that it could not tell which. The identity does not have to be
+	// published to answer it: whether this round *loaded state* for the series
+	// is already decided before the window is summarised, and one bit of it is
+	// all the question needs.
+	//
+	// Two things it does not say, which whoever reads it has to know. A change
+	// of StateGeneration re-keys every series at once, so the round after a
+	// strategy edit reports every window fresh without anything having churned;
+	// only a run of such rounds means churn. And state has a lifetime, so a
+	// series that stopped being evaluated for long enough comes back counted as
+	// fresh -- which is true of it in the only sense used here (no history was
+	// loaded) but is not the series being new.
+	Fresh      uint32
+	ShortFresh uint32
 }
 
 // Observe folds one Level summary in. Zero required points means the window
@@ -1549,7 +1587,12 @@ type HistoryCoverage struct {
 // guard rather than computed from the window now. It is counted for every
 // window, short or not: a guarded window whose live counts are complete is the
 // clearest case of a stale verdict and the one a reader most needs to see.
-func (coverage *HistoryCoverage) Observe(validPositions, requiredPositions uint32, guarded bool) {
+//
+// fresh says no runtime state was loaded for this window's series this round.
+// It is counted twice on purpose, once against every window and once against
+// the short ones, because the question it answers is about the short ones and
+// the base rate is what says whether the answer means anything.
+func (coverage *HistoryCoverage) Observe(validPositions, requiredPositions uint32, guarded, fresh bool) {
 	if coverage == nil || requiredPositions == 0 {
 		return
 	}
@@ -1557,10 +1600,16 @@ func (coverage *HistoryCoverage) Observe(validPositions, requiredPositions uint3
 	if guarded {
 		coverage.Guarded++
 	}
+	if fresh {
+		coverage.Fresh++
+	}
 	if validPositions >= requiredPositions {
 		return
 	}
 	coverage.Short++
+	if fresh {
+		coverage.ShortFresh++
+	}
 	if validPositions == 0 {
 		coverage.Empty++
 	}
@@ -1578,6 +1627,8 @@ func (coverage *HistoryCoverage) Merge(other HistoryCoverage) {
 	coverage.Short += other.Short
 	coverage.Empty += other.Empty
 	coverage.Guarded += other.Guarded
+	coverage.Fresh += other.Fresh
+	coverage.ShortFresh += other.ShortFresh
 	if other.Short > 0 && other.WorstRequired-other.WorstValid > coverage.WorstRequired-coverage.WorstValid {
 		coverage.WorstValid, coverage.WorstRequired = other.WorstValid, other.WorstRequired
 	}

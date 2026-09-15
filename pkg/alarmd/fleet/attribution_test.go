@@ -609,6 +609,67 @@ func TestTheSettledNeverFillingWindowsAreCountedWithoutLeavingExternal(t *testin
 			"has been short for longer than filling it could take -- the GAPPED object satisfies "+
 			"the counts and must not be described by this wording", summary.WindowNeverFills)
 	}
+	// None of these fixtures say anything about series identity, so none of
+	// them can be called churn. The page used to name churn as the likely cause
+	// of every object in the count above, which is a guess pointed at a
+	// population that also contains series whose data is simply missing.
+	if summary.WindowSeriesChurn != 0 {
+		t.Errorf("window_series_churn = %d, want 0: no fixture here reports a single fresh window, "+
+			"and claiming churn without that is the guess this count exists to replace",
+			summary.WindowSeriesChurn)
+	}
+}
+
+// Which half of "this window will never fill" an object is, and who it goes to.
+//
+// Persistent() is true of two situations with different owners. A strategy whose
+// aggregation dimensions churn gets a new set of series every few rounds, none
+// of which lives long enough to fill anything -- that one needs the strategy
+// edited. Long-lived series whose data is missing produce the identical counts
+// and need someone to go find the data. Editing a strategy's dimensions because
+// the page suggested it, when the dimensions were never the problem, is the
+// specific cost of holding them in one number.
+func TestChurningWindowsAreCountedApartFromOnesWhoseDataIsMissing(t *testing.T) {
+	// Every short window belongs to a series with no loaded history, and has
+	// for longer than filling one takes.
+	churning := Anomaly{QueryGroup: "qg-churn", Kind: KindDegradedRun,
+		CauseReason: "HISTORY_WARMING",
+		Coverage: &HistoryCoverage{Levels: 9, Short: 4, WorstValid: 2, WorstRequired: 9, ShortRounds: 40,
+			Fresh: 4, ShortFresh: 4, FreshRounds: 40}}
+	// Identical shortfall, identical run, and every short window belongs to a
+	// series this round loaded history for.
+	starving := Anomaly{QueryGroup: "qg-missing", Kind: KindDegradedRun,
+		CauseReason: "HISTORY_WARMING",
+		Coverage: &HistoryCoverage{Levels: 9, Short: 4, WorstValid: 2, WorstRequired: 9, ShortRounds: 40,
+			Fresh: 0, ShortFresh: 0, FreshRounds: 0}}
+	// All fresh, but not yet for longer than filling a window takes -- which is
+	// what the round after a StateGeneration change looks like, because an edit
+	// re-keys every series at once and they all load nothing.
+	rekeyed := Anomaly{QueryGroup: "qg-rekeyed", Kind: KindDegradedRun,
+		CauseReason: "HISTORY_WARMING",
+		Coverage: &HistoryCoverage{Levels: 9, Short: 4, WorstValid: 2, WorstRequired: 9, ShortRounds: 40,
+			Fresh: 9, ShortFresh: 4, FreshRounds: 1}}
+	anomalies := []Anomaly{churning, starving, rekeyed}
+	Attribute(anomalies)
+	summary := summarize(anomalies, now)
+
+	if summary.WindowNeverFills != 3 {
+		t.Fatalf("window_never_fills = %d, want all 3: they have the same shortfall over the same "+
+			"run, which is the point -- nothing but the fresh counts separates them",
+			summary.WindowNeverFills)
+	}
+	if summary.WindowSeriesChurn != 1 {
+		t.Errorf("window_series_churn = %d, want 1: only the first has every short window on a "+
+			"series with no history for longer than a window takes to fill", summary.WindowSeriesChurn)
+	}
+	if !starving.Coverage.Persistent() || starving.Coverage.Churning() {
+		t.Errorf("the object whose series all load history reads as %+v: it is still a window that "+
+			"will not fill, and it is not churn", *starving.Coverage)
+	}
+	if rekeyed.Coverage.Churning() {
+		t.Errorf("a single round of every-series-fresh read as churn: that is also what the round "+
+			"after a strategy edit looks like, and the run is the only thing that tells them apart")
+	}
 }
 
 // Abandoning a window of time is this deployment's own decision, whatever

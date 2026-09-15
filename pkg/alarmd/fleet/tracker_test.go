@@ -493,6 +493,76 @@ func TestAnomalyCarriesWhetherTheWindowVerdictWasDecidedThisRound(t *testing.T) 
 	}
 }
 
+// Whether the short windows belong to series nobody has seen before, and for
+// how many rounds running.
+//
+// This is the half of "窗口永远填不满" that says who owns it. Every short window
+// belonging to a series with no loaded history, round after round, is a strategy
+// whose aggregation dimensions churn -- a new set of series each time, none
+// living long enough to fill anything. The same shortfall over series that do
+// load history is data that is missing. Different people, identical counts
+// everywhere else, and the page said so in as many words until this crossed.
+//
+// The run is what makes it mean anything, and it is also why the counter has to
+// live here: a StateGeneration change re-keys every series at once, so the round
+// after a strategy edit reports every window fresh with nothing having churned.
+// One round of it is that; a run longer than the window is not.
+func TestFreshSeriesRoundsAccumulateAndEndOnAShortWindowThatHadHistory(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	for round := 0; round < DefaultDegradedRounds+4; round++ {
+		observation := coverageCompletion("qg-churn", 3, 2, 1, 4)
+		observation.HistoryCoverage.Fresh = 2
+		observation.HistoryCoverage.ShortFresh = 2
+		tracker.Observe(context.Background(), observation)
+	}
+	listed := tracker.Undecidable()
+	if len(listed) != 1 || listed[0].Coverage == nil {
+		t.Fatalf("undecidable = %+v, want one object carrying coverage", listed)
+	}
+	coverage := *listed[0].Coverage
+	if coverage.Fresh != 2 || coverage.ShortFresh != 2 {
+		t.Fatalf("fresh = %d/%d, want 2 and 2 as observed: computed in the evaluator, folded into "+
+			"the Slot, published on the observation and read here -- dropped at any hop and the page "+
+			"states one of two opposite situations for both", coverage.Fresh, coverage.ShortFresh)
+	}
+	if coverage.FreshRounds != uint32(DefaultDegradedRounds+4) {
+		t.Fatalf("fresh rounds = %d, want one per round (%d)", coverage.FreshRounds, DefaultDegradedRounds+4)
+	}
+	if !coverage.Churning() {
+		t.Fatalf("Churning() false on %+v: every short window was a series with no history, for "+
+			"longer than filling one takes", coverage)
+	}
+
+	// One short window that did load history ends the run, even though the rest
+	// of the round is unchanged. "Every", not "any": this counter is what sends
+	// a reader to edit a strategy, and a round where some long-lived series is
+	// also short is a round where churn is not the whole story.
+	mixed := coverageCompletion("qg-churn", 3, 2, 1, 4)
+	mixed.HistoryCoverage.Fresh = 1
+	mixed.HistoryCoverage.ShortFresh = 1
+	tracker.Observe(context.Background(), mixed)
+	listed = tracker.Undecidable()
+	if len(listed) != 1 || listed[0].Coverage == nil {
+		t.Fatalf("undecidable = %+v, want the object still listed", listed)
+	}
+	if got := listed[0].Coverage.FreshRounds; got != 0 {
+		t.Fatalf("fresh rounds = %d after a round with a short window that had history, want the "+
+			"run ended", got)
+	}
+	if listed[0].Coverage.Churning() {
+		t.Fatalf("Churning() true on %+v: this round's short windows were not all new series",
+			*listed[0].Coverage)
+	}
+	// And the shortfall itself is untouched -- the object is still short, and
+	// still not going to fill. Only the claim about *why* went away.
+	if !listed[0].Coverage.Persistent() {
+		t.Fatalf("Persistent() false on %+v: the window is still short and has been for longer "+
+			"than filling takes; which of the two causes it is does not change that",
+			*listed[0].Coverage)
+	}
+}
+
 // The run length is the one part of the coverage a single observation cannot
 // supply, and it is the whole basis of the distinction: one round cannot tell a
 // window that is filling from one that never will, because both are short.

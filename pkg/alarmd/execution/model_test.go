@@ -19,10 +19,10 @@ import "testing"
 // so it is checked here rather than left uncovered.
 func TestHistoryCoverageCountsEmptyWindowsApartFromShortOnes(t *testing.T) {
 	var coverage HistoryCoverage
-	coverage.Observe(8, 9, false)  // short, has points
-	coverage.Observe(0, 14, false) // short, has none
-	coverage.Observe(5, 5, true)   // complete, and reporting a held verdict
-	coverage.Observe(3, 0, true)   // the window declined to judge: not counted at all
+	coverage.Observe(8, 9, false, true)   // short, has points, and a series never seen before
+	coverage.Observe(0, 14, false, false) // short, has none, and a series with history
+	coverage.Observe(5, 5, true, true)    // complete, reporting a held verdict, series never seen before
+	coverage.Observe(3, 0, true, true)    // the window declined to judge: not counted at all
 
 	if coverage.Levels != 3 {
 		t.Errorf("levels = %d, want 3: a window that declined to judge is not a window that was judged",
@@ -48,11 +48,32 @@ func TestHistoryCoverageCountsEmptyWindowsApartFromShortOnes(t *testing.T) {
 			"window that was never judged cannot have been judged by a guard either", coverage.Guarded)
 	}
 
+	// Fresh is counted over every window and ShortFresh only over the short
+	// ones, and they are the two halves of the question this exists to answer.
+	// Folded into one count, an object whose every window is fresh because it
+	// has just started would read exactly like one whose series are replaced
+	// faster than a window can fill.
+	if coverage.Fresh != 2 {
+		t.Errorf("fresh = %d, want 2: counted over every window that was judged, short or not, and "+
+			"never over the one that declined to judge", coverage.Fresh)
+	}
+	if coverage.ShortFresh != 1 {
+		t.Errorf("short fresh = %d, want 1: only one of the two short windows had no history, and "+
+			"reading the other one as fresh sends a reader to edit a strategy whose series are fine",
+			coverage.ShortFresh)
+	}
+
 	// And the merge carries it, or a Slot's empty windows vanish above the
 	// first series that had one.
 	var slot HistoryCoverage
 	slot.Merge(coverage)
-	slot.Merge(HistoryCoverage{Levels: 2, Short: 1, Empty: 1, WorstValid: 0, WorstRequired: 5, Guarded: 2})
+	slot.Merge(HistoryCoverage{Levels: 2, Short: 1, Empty: 1, WorstValid: 0, WorstRequired: 5, Guarded: 2,
+		Fresh: 2, ShortFresh: 1})
+	if slot.Fresh != 4 || slot.ShortFresh != 2 {
+		t.Errorf("merged fresh = %d/%d, want 4 and 2: a Slot's series are folded one at a time, and a "+
+			"count that does not accumulate reports the last series instead of the Slot",
+			slot.Fresh, slot.ShortFresh)
+	}
 	if slot.Guarded != 3 {
 		t.Errorf("merged guarded = %d, want 3: a Slot's held verdicts have to accumulate like the "+
 			"rest, or they vanish above the first series that had none", slot.Guarded)

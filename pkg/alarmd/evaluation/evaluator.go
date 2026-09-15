@@ -204,6 +204,16 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 	// window two rounds from converging were indistinguishable everywhere
 	// downstream.
 	var coverage execution.HistoryCoverage
+	// Whether this round found any persisted history for this series, decided
+	// once for the record rather than per Level because it is a property of the
+	// state key and every Level of one record shares it.
+	//
+	// It is the only thing in reach that can tell a series whose identity churns
+	// from a series whose data is missing. Both hold short windows for ever and
+	// report the same completeness every round; the first is new each time it
+	// appears and the second is not. Reading it here costs nothing -- the load
+	// already happened, and its outcome is on the view being evaluated.
+	fresh := view.Status == execution.StateMissingWarming
 	for i, l := range levels {
 		h, _ := window.History(l.Definition().LevelID)
 		completeness := ""
@@ -234,7 +244,7 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 		// whether it was decided now. It is the only place that knows: by the
 		// time the summary is returned the forced value and the computed one are
 		// the same field.
-		coverage.Observe(summary.ValidPositions, summary.RequiredPositions, completeness != "")
+		coverage.Observe(summary.ValidPositions, summary.RequiredPositions, completeness != "", fresh)
 		fact, found := effectiveFact(request.Header, due.Identity, l.Definition().LevelID, series)
 		if !found {
 			return recordResult{}, errors.New("alarmd evaluation: EffectiveTime fact missing")

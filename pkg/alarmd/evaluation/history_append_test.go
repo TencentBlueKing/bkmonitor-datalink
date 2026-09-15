@@ -131,6 +131,66 @@ func TestEvaluationReportsHowShortTheDetectionWindowWas(t *testing.T) {
 	}
 }
 
+// The one fact that says whether a short window is a strategy problem.
+//
+// A window that stays short for ever is two unrelated situations. A strategy
+// whose aggregation dimensions contain something that changes -- a pod name, a
+// container, a task id -- gets a *different* series every few rounds; each is
+// genuinely new, starts its window from nothing, and is replaced before it can
+// fill. A series whose data is missing has been evaluated for hours and is
+// short because the points are not there. The first needs the strategy edited,
+// the second needs someone to go find the data, and every count published about
+// them was identical: same completeness, same shortfall, same rounds counter
+// climbing for ever.
+//
+// Whether this round loaded any history for the series separates them, it is
+// decided before the window is summarised, and it was being dropped one line
+// later. Driven through Evaluate, because the wiring is the part that was
+// missing; Observe itself was always able to count it.
+func TestEvaluationSaysWhetherAShortWindowsSeriesWasEverSeenBefore(t *testing.T) {
+	record := []contract.CanonicalRecordV2{{RecordID: strings.Repeat("f", 64), SourceTime: 300, BusinessID: "2",
+		DimensionIdentity: contract.DimensionIdentityV2{Digest: strings.Repeat("c", 64)},
+		Values:            map[string]json.RawMessage{"value": json.RawMessage(`10`)},
+		Dimensions:        map[string]json.RawMessage{}, ReceivedTime: 300}}
+
+	// Same short window twice -- one point of the two required -- and the only
+	// difference is whether the state load found anything.
+	known := requestFixtureForPlan(t, compiledWindow(t, 2, 1), record, nil)
+	seenBefore, err := newEvaluator(t).Evaluate(context.Background(), known)
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+	settled := seenBefore.Plans[0].HistoryCoverage
+	if settled.Short != 1 {
+		t.Fatalf("short = %d, want the one incomplete window", settled.Short)
+	}
+	if settled.Fresh != 0 || settled.ShortFresh != 0 {
+		t.Fatalf("fresh = %d/%d on a series whose state was found, want 0 and 0: counting a known "+
+			"series as new is what sends a reader to edit a strategy whose dimensions are fine",
+			settled.Fresh, settled.ShortFresh)
+	}
+
+	fresh := requestFixtureForPlan(t, compiledWindow(t, 2, 1), record, nil)
+	fresh.State.Items[0].Status = execution.StateMissingWarming
+	neverSeen, err := newEvaluator(t).Evaluate(context.Background(), fresh)
+	if err != nil {
+		t.Fatalf("Evaluate() on a series with no persisted state error = %v", err)
+	}
+	churning := neverSeen.Plans[0].HistoryCoverage
+	if churning.Short != settled.Short || churning.Levels != settled.Levels {
+		t.Fatalf("the two runs summarised differently (%+v vs %+v); they are meant to differ in one "+
+			"field only, or this proves nothing about that field", churning, settled)
+	}
+	if churning.Fresh != 1 {
+		t.Fatalf("fresh = %d, want 1: no state was loaded for this series, and nothing downstream "+
+			"can tell a churning strategy from missing data unless this crosses", churning.Fresh)
+	}
+	if churning.ShortFresh != 1 {
+		t.Fatalf("short fresh = %d, want 1: the short window is the one the question is about, and "+
+			"its own count is what carries the answer", churning.ShortFresh)
+	}
+}
+
 // A Level reporting a verdict it is no longer allowed to revise.
 //
 // Persisted WARMING or GAPPED is forced onto every later evaluation until the

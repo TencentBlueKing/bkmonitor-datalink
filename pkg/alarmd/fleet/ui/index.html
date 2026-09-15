@@ -1628,6 +1628,7 @@ function attributionLine(summary, perReplica, column) {
   // investigate. Left in the general pile, every reader re-investigates the
   // same rows and arrives where the last one did.
   var settled = summary.window_never_fills || 0;
+  var churn = summary.window_series_churn || 0;
   var settledTail = '';
   if (settled) {
     // Says what was measured, then what it costs, then where to look. It used
@@ -1637,7 +1638,20 @@ function attributionLine(summary, perReplica, column) {
       + ' 个是持续缺点：缺点已经持续到超过窗口宽度，不是"还没攒够"'
       + (settled === external ? '——这一批全是这种' : '')
       + '。影响是异常照常报、恢复判不了，所以这类告警不会自己恢复；'
-      + '成因要看策略的聚合维度和它实际的序列才能确认，常见的是维度里有不断变化的东西让序列活不过窗口'
+      // Was a guess: "常见的是维度里有不断变化的东西让序列活不过窗口". It named
+      // one of the two causes as the likely one for a population that contains
+      // both, and sent whoever read it to edit aggregation dimensions on
+      // strategies whose dimensions were fine. Now it reports the split.
+      + (churn
+          ? '其中 ' + churn + ' 个是序列在不断换，要改的是聚合维度；'
+            + (settled > churn
+                ? '另外 ' + (settled - churn) + ' 个的序列一直都在，是数据在缺，别动维度'
+                : '这一批全是这种')
+          // Not "所以这些的序列一直都在". The churn count requires every short
+          // window of an object to be a series with no loaded history; an object
+          // whose short windows are a mix fails that and is not counted here.
+          // Zero means no object met it, which is not the same statement.
+          : '没有一个是"每一轮换一批序列"，别按这个去改聚合维度；每条行内会说它是新序列还是一直都在')
       // This counts objects, and an object is not a unit of impact here. One
       // short window out of hundreds and every window short both land in this
       // number, and they are not the same amount of broken.
@@ -2872,9 +2886,9 @@ function coverageShare(windowCoverage, count) {
 // The second one is the more important. shortRounds increments on any round
 // where at least one window was short, so a strategy whose series churn -- a
 // different one warming every round -- drives it up for ever without any single
-// window ever being persistently short. At this layer there is no series
-// identity to tell those apart, and saying so is cheaper and more honest than a
-// verdict that quietly assumes one of them.
+// window ever being persistently short. Which of the two a row is, is answered
+// separately by freshSeriesNote, off whether this round loaded any history for
+// the series; shortRounds itself stays silent on it rather than assuming one.
 // Spans of Slots nothing ever evaluated.
 //
 // This is the most complete form of "detection did not happen" the deployment
@@ -2913,8 +2927,9 @@ function coverageScopeNote(windowCoverage) {
   return '口径：一个窗口 = 一条序列的一个级别（一轮里补算多个时间点时，每个时间点各算一次）。'
     + '本轮汇总了 ' + (windowCoverage.levels || 0) + ' 个，其中 '
     + (windowCoverage.short || 0) + ' 个没取满。\n'
-    + '“已连续 N 轮”是指每一轮都至少有一个窗口短，不保证每轮短的是同一个：'
-    + '这一层没有序列身份，分不出是同一条序列一直缺，还是每轮换一条新序列在暖机。'
+    + '“已连续 N 轮”是指每一轮都至少有一个窗口短，不保证每轮短的是同一个。'
+    + '同一条序列一直缺，和每轮换一条新序列在暖机，是靠"这一轮有没有为它读到历史状态"分开的：'
+    + '读到了就是之前就在的序列，读不到就是这一轮第一次见。'
     + heldVerdictNote(windowCoverage);
 }
 
@@ -2938,6 +2953,78 @@ function heldVerdictNote(windowCoverage) {
     + '而是上一轮的判定还在生效：某个级别一旦判成缺点，就会一直压住后面的判定，'
     + '直到上一次处理的那个时刻的窗口也补满为止。所以上面这个原因可能描述的是已经过去的情况，'
     + '而点数是此刻的。';
+}
+
+// Whether the short windows belong to series that keep being replaced.
+//
+// Same rule as the Go side and for the same reason as windowNeverFills: the
+// page has to put the conclusion next to the numbers it came from. Every short
+// window this round had no loaded history, and that has held for longer than
+// filling a window takes -- so these are not young series, they are a new set
+// of series each time.
+//
+// Built on windowNeverFills rather than beside it, exactly as the Go side is
+// built on Persistent. This is a half of that verdict, never a third state, and
+// two predicates meant to nest but spelled separately drift at the first edit --
+// into a row that says the series churn over a note that says the window is
+// still filling.
+function windowSeriesChurn(windowCoverage) {
+  return windowNeverFills(windowCoverage) &&
+         (windowCoverage.short_fresh || 0) === windowCoverage.short &&
+         (windowCoverage.fresh_rounds || 0) > windowCoverage.worst_required;
+}
+
+// The half of "窗口填不满" that says which of the two causes it is.
+//
+// The page used to end this row with "这两种要看这条策略的聚合维度和它实际的序列
+// 才能分清，页面到这里为止" -- and that was accurate, because nothing published
+// here carried any trace of series identity. It does now: not the identity, only
+// whether this round loaded any history for it, which is all the question needs.
+//
+// A series whose identity churns is new every time it appears, so every short
+// window is one nothing was loaded for. A series whose data is missing has been
+// evaluated for hours and loads history on every round. Those need opposite
+// responses -- edit the strategy, or go find the data -- and they were one
+// sentence.
+//
+// subsetOf names the smaller population the caller's headline is about, when the
+// caller is talking about the empty windows rather than the short ones. Empty
+// windows are a subset of short ones, so "none of the short ones were fresh"
+// carries down to them and so does "all of them were"; the mixed case does not,
+// and it says so instead of picking.
+function freshSeriesNote(windowCoverage, subsetOf) {
+  var short = windowCoverage.short || 0;
+  if (!short) return '';
+  var fresh = windowCoverage.short_fresh || 0;
+  var rounds = windowCoverage.fresh_rounds || 0;
+  var caveat = '\n\n（"新"在这里的意思是：这一轮没有为这条序列读到任何历史状态。'
+    + '策略被改动会让所有序列同时重新建号，那之后的一轮里每条都算新的，'
+    + '所以单看一轮说明不了什么；连续很多轮才说明问题。'
+    + '另外长时间没被评估的序列状态会过期，回来时也算新的。）';
+  if (fresh === 0) {
+    return '\n\n这 ' + short + ' 个没取满的窗口，没有一个是新序列——它们的历史状态都读到了，'
+      + '说明这些序列之前就在，不是"活不过窗口"那一类。'
+      + (subsetOf ? '（' + subsetOf + '是这 ' + short + ' 个里的一部分，所以这句对它们同样成立。）' : '')
+      + '要查的是这些序列的数据为什么在缺，不是策略的聚合维度。' + caveat;
+  }
+  if (fresh === short) {
+    return '\n\n这 ' + short + ' 个没取满的窗口，全部属于这一轮才第一次见到的序列'
+      + (rounds ? '，并且已经连续 ' + rounds + ' 轮都是这样' : '')
+      + '。'
+      + (subsetOf ? '（' + subsetOf + '是这 ' + short + ' 个里的一部分，所以这句对它们同样成立。）' : '')
+      + (rounds > (windowCoverage.worst_required || 0)
+          ? '这已经超过了填满一个窗口所需的 ' + windowCoverage.worst_required
+            + ' 轮，所以不是"序列还年轻"，是每一轮的序列都换了一批：'
+            + '策略的聚合维度里有会变的东西（pod 名、容器名、网卡、任务号）。'
+            + '要改的是策略，不是 alarmd，也不是数据。'
+          : '还没连续超过窗口宽度 ' + (windowCoverage.worst_required || 0)
+            + ' 轮，现在还分不出是序列在换还是这批序列刚出现，再看几轮。')
+      + caveat;
+  }
+  return '\n\n这 ' + short + ' 个没取满的窗口里，' + fresh + ' 个属于这一轮才第一次见到的序列，'
+    + '另外 ' + (short - fresh) + ' 个属于之前就在的序列——两类同时存在。'
+    + (subsetOf ? '（' + subsetOf + '是这 ' + short + ' 个里的一部分，落在哪一类这里分不出。）' : '')
+    + '先按后面那 ' + (short - fresh) + ' 个查数据：它们不是"活不过窗口"能解释的。' + caveat;
 }
 
 function coverageNote(anomaly) {
@@ -3038,6 +3125,7 @@ function coverageNote(anomaly) {
         + '这也是一条序列数据停掉之后的终点：先是完整，然后在最后一个点还留在窗口里的那几轮判 GAPPED，'
         + '等它滑出窗口就永远是这个状态。两头报的都是 HISTORY_WARMING。\n\n'
         + '这一条不是"策略配置如此"，需要查：指标是不是没了、值是不是取不出来、采集是不是断了。'
+        + freshSeriesNote(windowCoverage, '一个点都没有的那些窗口')
     };
   }
   // A gapped window is a different statement from a short one and the counts
@@ -3065,12 +3153,16 @@ function coverageNote(anomaly) {
           + '这一点是判定性的：一条数据停掉的序列只能在最后一个点还留在窗口里的那几轮报 GAPPED，'
           + '之后就转成 HISTORY_WARMING 了。撑过窗口宽度还在 GAPPED，说明数据一直在来，只是有洞。\n\n'
           + '要查的是采集侧为什么间歇性丢点：抓取超时、目标 flapping、上游写入被拒。'
-          + '不是"序列活得太短"——那是另一类，标的是"窗口永远填不满"。'
+          + '不是"序列活得太短"——那是另一类，标的是"窗口永远填不满"。\n\n'
+          + '一个必须知道的前提：每一轮只查一个周期的数据，右端是"本轮时刻 − 策略配的查询偏移"，'
+          + '这个区间再也不会被查第二次。所以数据晚到超过这个偏移，在这里就是永久丢点，'
+          + '和"根本没有这个点"长得一模一样，后来补上来也不会被看见。'
+          + '如果这些洞是同一时刻大家一起缺，先看这条策略的查询偏移够不够。'
         : '窗口里有点，但点和点之间有洞。还没撑过窗口宽度 ' + windowCoverage.worst_required
           + ' 轮，所以现在还分不出是两种里的哪一种：\n\n'
           + '一是数据刚停，那么再过几轮最后一个点滑出窗口，这里会转成 HISTORY_WARMING；\n'
           + '二是数据还在来只是有洞，那么它会一直停在 GAPPED。\n\n'
-          + '再看几轮就知道了。')
+          + '再看几轮就知道了。') + freshSeriesNote(windowCoverage)
     };
   }
   if (!windowNeverFills(windowCoverage)) {
@@ -3082,6 +3174,7 @@ function coverageNote(anomaly) {
         + '需要 ' + windowCoverage.worst_required + ' 个点才能判定，目前最差的那个窗口只有 '
         + windowCoverage.worst_valid + ' 个。还没短过 ' + windowCoverage.worst_required
         + ' 轮以上，正常补齐的速度也就是这样，先不用管'
+        + freshSeriesNote(windowCoverage)
     };
   }
   // What is measured and what is inferred, kept apart.
@@ -3096,11 +3189,20 @@ function coverageNote(anomaly) {
   // So the headline is the measurement, the effect is stated next because it is
   // what decides whether to act, and the cause is offered as the thing to go
   // and check.
+  // The headline now says which of the two it is, when the counts can say it.
+  //
+  // "持续缺点" describes the shape and was all this row could honestly claim
+  // while no series identity reached this layer. Churn is a different finding
+  // with a different owner -- the strategy's dimensions, not the data -- and it
+  // was being left for the reader to guess at from a hint in the tooltip.
+  var churning = windowSeriesChurn(windowCoverage);
   return {
     settled: true,
-    text: '持续缺点：' + coverageShare(windowCoverage, windowCoverage.short) + '取不满，需要 '
+    text: (churning ? '序列在不断换：' : '持续缺点：')
+      + coverageShare(windowCoverage, windowCoverage.short) + '取不满，需要 '
       + windowCoverage.worst_required + ' 个连续点，当前最少 '
-      + windowCoverage.worst_valid + ' 个，已连续 ' + windowCoverage.short_rounds + ' 轮',
+      + windowCoverage.worst_valid + ' 个，已连续 ' + windowCoverage.short_rounds + ' 轮'
+      + (churning ? '（每一轮都是新序列）' : ''),
     title: coverageScopeNote(windowCoverage) + '\n\n'
       + '现象：需要 ' + windowCoverage.worst_required + ' 个连续点才能判定，最差的那个窗口只取到 '
       + windowCoverage.worst_valid + ' 个，已经连续 ' + windowCoverage.short_rounds
@@ -3115,13 +3217,20 @@ function coverageNote(anomaly) {
       + (windowCoverage.levels > windowCoverage.short
           ? '另外 ' + (windowCoverage.levels - windowCoverage.short) + ' 个窗口这一轮是取满的。'
           : '这一轮所有窗口都没取满。')
+      + freshSeriesNote(windowCoverage)
       + '\n\n'
-      + '下一步：常见成因是策略的聚合维度里有不断变化的东西（网卡、pod 名、容器名、任务名），'
-      + '每个序列只活几分钟、短于窗口跨度；也可能是数据本身在缺。'
-      + '这两种要看这条策略的聚合维度和它实际的序列才能分清，页面到这里为止。\n\n'
-      + '（窗口里是有点的，只是攒不够连续的。一个点都没有是另一回事，那一类单独标"取不到数据"。）\n\n'
-      + '如果确认是序列寿命短：把会变化的维度从聚合里去掉，或缩短检测窗口。'
-      + '这一类按分类不归在扩容或改架构能解决的那一侧。'
+      + (churning
+          ? '下一步：把会变化的那个维度从这条策略的聚合里去掉，或者把检测窗口缩短到序列活得过的长度。'
+            + '这一类按分类不归在扩容或改架构能解决的那一侧，也不用去查数据——数据没有问题，'
+            + '是每一轮要判的序列都不是上一轮那批。'
+          : (windowCoverage.short_fresh || 0) === windowCoverage.short
+            ? '下一步：先等。现在每一轮的序列都是新的，但还没连续够窗口宽度，'
+              + '既可能是这批序列刚出现，也可能是维度在抖；再看几轮，这一条会自己说清楚。'
+            : '下一步：按上面那句去查对应的序列，不要先动策略的聚合维度。'
+              + '维度里有会变的东西（网卡、pod 名、容器名、任务名）确实会造成同样的现象，'
+              + '但那一种的特征是每一轮的序列都是新的，这一条不是。')
+      + '\n\n'
+      + '（窗口里是有点的，只是攒不够连续的。一个点都没有是另一回事，那一类单独标"取不到数据"。）'
   };
 }
 

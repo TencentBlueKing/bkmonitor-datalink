@@ -20,6 +20,7 @@ type phaseTwoMetrics struct {
 	workflow                        workflowMetrics
 	shortPeriod                     shortPeriodMetrics
 	queryStatus                     queryStatusMetrics
+	queryUnavailable                queryUnavailableMetrics
 	queryCooldown                   *prometheus.CounterVec
 	slotReadiness                   slotReadinessMetrics
 	slotTiming                      *prometheus.HistogramVec
@@ -255,6 +256,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	metrics.canonicalEncoding = newCanonicalEncodingCollector()
 	metrics.shortPeriod = newShortPeriodMetrics()
 	metrics.queryStatus = newQueryStatusMetrics()
+	metrics.queryUnavailable = newQueryUnavailableMetrics()
 	metrics.queryCooldown = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "query_cooldown_events_total", Help: "External source_backend query cooldown transitions and failed real probes by bounded event."}, []string{"event"})
 	metrics.slotReadiness = newSlotReadinessMetrics()
 	metrics.slotTiming = newSlotTimingMetrics()
@@ -492,6 +494,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 	return append(append(m.workflow.collectors(), []prometheus.Collector{
 		m.shortPeriod.completed, m.shortPeriod.duration, m.shortPeriod.lag,
 		m.queryStatus.responses,
+		m.queryUnavailable.attributions,
 		m.queryCooldown,
 		m.slotReadiness.slack, m.slotReadiness.boundary,
 		m.slotTiming,
@@ -520,6 +523,7 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 	m.workflow.observe(observation)
 	m.shortPeriod.observe(observation)
 	m.queryStatus.observe(observation)
+	m.queryUnavailable.observe(observation)
 	if facts := observation.QueryCooldown; facts != nil {
 		m.queryCooldown.WithLabelValues(facts.Event).Inc()
 	}

@@ -33,10 +33,8 @@ elif a[:2] == ['image', 'inspect']:
     if a[-1] not in images: sys.exit(1)
     print('linux/amd64' if a[3] == '{{.Os}}/{{.Architecture}}' else images[a[-1]])
 elif a[:1] == ['run']:
-    binary = 'alarmd-comparator' if '--entrypoint' in a else 'alarmd'
-    schema = 'comparison-audit-batch/1.0' if binary == 'alarmd-comparator' else os.environ['FAKE_SCHEMA']
     commit = '0'*40 if os.environ.get('BAD_VERSION') else '1'*40
-    print(f"{binary} version={os.environ['PACKAGE_VERSION']} commit={commit} schema_version={schema}")
+    print(f"alarmd version={os.environ['FAKE_EXPECTED_VERSION']} commit={commit} schema_version={os.environ['FAKE_SCHEMA']}")
 elif a[:1] == ['tag']: images[a[2]] = images[a[1]]
 elif a[:1] == ['push']:
     if os.environ.get('FAIL_PUSH'): sys.exit(1)
@@ -45,6 +43,19 @@ elif a[:1] == ['ps']:
 elif a[:2] == ['image', 'rm']: images.pop(a[-1], None)
 else: raise RuntimeError(a)
 p.write_text(json.dumps(images))
+"""
+# rev-parse HEAD 固定返回 REVISION；tag 只认 FAKE_TAGS（JSON：tag 名 -> 提交）里登记过的。
+FAKE_GIT = r"""#!/usr/bin/env python3
+import json, os, sys
+a = sys.argv[1:]
+while a and a[0] in ('-C',): a = a[2:]
+if a == ['rev-parse', 'HEAD']: print('1' * 40)
+elif a[:3] == ['rev-parse', '--verify', '--quiet'] and a[3].startswith('refs/tags/') and a[3].endswith('^{commit}'):
+    tags = json.loads(os.environ.get('FAKE_TAGS', '{}'))
+    name = a[3][len('refs/tags/'):-len('^{commit}')]
+    if name not in tags: sys.exit(1)
+    print(tags[name])
+else: raise RuntimeError(a)
 """
 
 
@@ -65,13 +76,11 @@ class ReleaseTest(unittest.TestCase):
         major_minor = self.version_line[: self.version_line.rindex(".")]
         binary = self.root / "bin"
         binary.mkdir()
-        for name, content in [
-            ("docker", FAKE_DOCKER),
-            ("git", '#!/bin/sh\nprintf "%s\\n" ' + REVISION + "\n"),
-        ]:
+        for name, content in [("docker", FAKE_DOCKER), ("git", FAKE_GIT)]:
             file = binary / name
             file.write_text(content)
             file.chmod(0o755)
+        self.major_minor = major_minor
         self.env = dict(
             os.environ,
             PATH=str(binary) + ":" + os.environ["PATH"],
@@ -80,6 +89,8 @@ class ReleaseTest(unittest.TestCase):
             RELEASE_ID="test-123",
             TARGET_ARCH="amd64",
             PACKAGE_VERSION=f"{major_minor}.0-ci.123",
+            # 假镜像 --version 报的版本：默认与 PACKAGE_VERSION 相同，按 tag 发布的用例单独给
+            FAKE_EXPECTED_VERSION=f"{major_minor}.0-ci.123",
             IMAGE_REPOSITORY="registry.example/project/images",
             REGISTRY_USER="test",
             REGISTRY_PASSWORD="test-token",
@@ -110,13 +121,39 @@ class ReleaseTest(unittest.TestCase):
         self.assertEqual(list(self.images()), ["unrelated:keep"])
         self.assertFalse(self.state.exists())
 
-    def test_build_verifies_both_binaries_report_the_build(self):
+    def test_build_verifies_the_binary_reports_the_build(self):
         self.run_script("build")
         calls = [json.loads(line) for line in (self.root / "calls").read_text().splitlines()]
         runs = [c for c in calls if c[:1] == ["run"]]
-        self.assertEqual(len(runs), 2)
-        self.assertIn("--entrypoint", runs[1])
-        self.assertTrue(all(c[-1] == "--version" for c in runs))
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0][-1], "--version")
+
+    def test_source_tag_is_the_only_version_coordinate(self):
+        # 按 tag 发布：只给 SOURCE_TAG，镜像 tag 就是去掉 pkg/alarmd/v 的那段，HEAD 必须是 tag 指向的提交
+        tag = f"pkg/alarmd/v{self.major_minor}.4503"
+        env = dict(SOURCE_TAG=tag, PACKAGE_VERSION="", FAKE_EXPECTED_VERSION=f"{self.major_minor}.4503")
+        self.run_script("build", FAKE_TAGS=json.dumps({tag: REVISION}), **env)
+        self.run_script("push", FAKE_TAGS=json.dumps({tag: REVISION}), **env)
+        self.assertIn(f"registry.example/project/images/alarmd:{self.major_minor}.4503", self.images())
+
+    def test_source_tag_that_disagrees_with_the_checkout_is_refused(self):
+        tag = f"pkg/alarmd/v{self.major_minor}.4503"
+        cases = [
+            # tag 指向别的提交
+            dict(SOURCE_TAG=tag, PACKAGE_VERSION="", FAKE_TAGS=json.dumps({tag: "2" * 40})),
+            # 本地仓根本没有这个 tag：检出步骤没带上它
+            dict(SOURCE_TAG=tag, PACKAGE_VERSION="", FAKE_TAGS="{}"),
+            # 另填了一个不同的 PACKAGE_VERSION：两个版本坐标
+            dict(SOURCE_TAG=tag, PACKAGE_VERSION=f"{self.major_minor}.4504", FAKE_TAGS=json.dumps({tag: REVISION})),
+            # 不是本模块的 tag 形式
+            dict(SOURCE_TAG=f"v{self.major_minor}.4503", PACKAGE_VERSION=""),
+            dict(SOURCE_TAG=f"pkg/linkd/v{self.major_minor}.4503", PACKAGE_VERSION=""),
+            dict(SOURCE_TAG="pkg/alarmd/v", PACKAGE_VERSION=""),
+        ]
+        for case in cases:
+            result = self.run_script("build", success=False, FAKE_EXPECTED_VERSION=f"{self.major_minor}.4503", **case)
+            self.assertIn("ERROR", result.stderr, case)
+        self.assertEqual(self.images(), {})
 
     def test_partial_build_cannot_push_and_is_cleaned(self):
         self.run_script("build", success=False, FAIL_BUILD="1")

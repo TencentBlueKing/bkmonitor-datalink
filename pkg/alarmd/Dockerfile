@@ -9,8 +9,10 @@
 
 # Build from pkg/alarmd:
 #   docker buildx build --build-arg VERSION=<version> --build-arg GIT_COMMIT=<sha> -t alarmd:<tag> .
-# The image carries both binaries under /data/bkmonitor, the same layout the
-# in-house release pipeline produces, so one chart serves either image.
+# The binary lives under /data/bkmonitor, the same layout the in-house release
+# pipeline produces, so one chart serves either image. The runtime stage only
+# copies files: no shell or useradd is needed there, so RUNTIME_IMAGE can be any
+# base, including a distroless one.
 
 ARG GO_IMAGE=golang:1.26.7
 ARG RUNTIME_IMAGE=tencentos/tencentos4-minimal
@@ -36,29 +38,23 @@ ARG GIT_COMMIT=unknown
 ARG TARGETOS
 ARG TARGETARCH
 # The ldflags mirror pkg/alarmd/Makefile: main.version, main.commit and the
-# schema version each binary speaks. The schema versions are the same ones the
-# Makefile injects; keep the two in step.
+# schema version the binary speaks. The directories are created here so the
+# runtime stage does not need a shell.
 RUN --mount=type=cache,target=/root/.cache/go-build \
-    GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
-    go build -trimpath \
-      -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${GIT_COMMIT} -X main.schemaVersion=$(cat SCHEMA_VERSION)" \
-      -o /out/alarmd ./cmd/alarmd \
+    mkdir -p /out/data/bkmonitor /out/etc/alarmd \
  && GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
     go build -trimpath \
-      -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${GIT_COMMIT} -X main.schemaVersion=comparison-audit-batch/1.0" \
-      -o /out/alarmd-comparator ./cmd/alarmd-comparator
+      -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${GIT_COMMIT} -X main.schemaVersion=$(cat SCHEMA_VERSION)" \
+      -o /out/data/bkmonitor/alarmd ./cmd/alarmd
 
 FROM ${RUNTIME_IMAGE}
 
-RUN mkdir -p /data/bkmonitor /etc/alarmd \
-    && groupadd -r -g 65532 alarmd \
-    && useradd -r -u 65532 -g alarmd -s /bin/false -d /data/bkmonitor alarmd \
-    && chown -R alarmd:alarmd /data/bkmonitor /etc/alarmd
+# /etc/alarmd is where the chart mounts alarmd.yaml; /data/bkmonitor holds the
+# binary. Both are owned by the unprivileged uid the process runs as.
+COPY --from=builder --chown=65532:65532 /out/data/bkmonitor /data/bkmonitor
+COPY --from=builder --chown=65532:65532 /out/etc/alarmd /etc/alarmd
 
 WORKDIR /data/bkmonitor
-
-COPY --from=builder --chown=65532:65532 --chmod=0755 /out/alarmd /data/bkmonitor/alarmd
-COPY --from=builder --chown=65532:65532 --chmod=0755 /out/alarmd-comparator /data/bkmonitor/alarmd-comparator
 
 ARG VERSION=dev
 ARG GIT_COMMIT=unknown

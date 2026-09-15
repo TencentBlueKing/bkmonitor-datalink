@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # alarmd 的 CI 发布脚本：原生 Linux amd64/arm64 构建，build → push，finally 里 cleanup。
 # 契约与 pkg/linkd/scripts/ci-release.sh 相同，流水线可以照 linkd 的接。
+# 版本来源二选一：按 tag 发布时只给 SOURCE_TAG（pkg/alarmd/v<版本>，镜像 tag 就是 <版本>，
+# 且 HEAD 必须是该 tag 指向的提交）；不按 tag 发布时给 PACKAGE_VERSION。
 # alarmd 没有 chart 子命令：它的 chart 是鲸眼 chart 的一个模块（charts/kingeye/templates/custom/alarmd），
 # 不从本仓打包。
 set -euo pipefail
@@ -31,7 +33,16 @@ cleanup() {
 }
 if [[ $command == cleanup ]]; then cleanup; exit 0; fi
 
-: "${PACKAGE_VERSION:?设置 SemVer 版本，例如 0.2.0-ci.123}"
+# SOURCE_TAG 是源码仓的 tag 名（组件构建流水线 ADD_TAG 打的 pkg/alarmd/v<版本>），镜像版本就取 <版本>，
+# 不另填：一次发布只有一个版本坐标。
+tag_prefix=pkg/alarmd/v
+if [[ -n ${SOURCE_TAG:-} ]]; then
+    [[ $SOURCE_TAG == "$tag_prefix"?* && $SOURCE_TAG != *[[:space:]]* ]] || fail "SOURCE_TAG 必须是 ${tag_prefix}<版本> 形式：$SOURCE_TAG"
+    tag_version=${SOURCE_TAG#"$tag_prefix"}
+    : "${PACKAGE_VERSION:=$tag_version}"
+    [[ $PACKAGE_VERSION == "$tag_version" ]] || fail "PACKAGE_VERSION $PACKAGE_VERSION 与 SOURCE_TAG $SOURCE_TAG 不一致"
+fi
+: "${PACKAGE_VERSION:?设置 SemVer 版本（例如 0.2.0-ci.123），或按 tag 发布时设置 SOURCE_TAG}"
 # 同时满足 SemVer 和 Docker tag；不接受 v 前缀及 +build 元数据。
 [[ ${#PACKAGE_VERSION} -le 128 && $PACKAGE_VERSION =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]] || fail '非法 PACKAGE_VERSION'
 if [[ $PACKAGE_VERSION == *-* ]]; then
@@ -55,6 +66,11 @@ export DOCKER_CONFIG="$state/docker-config"
 mkdir -p "$DOCKER_CONFIG"
 revision=$(git -C "$module" rev-parse HEAD)
 [[ $revision =~ ^[0-9a-f]{40}$ ]] || fail '无法读取 Git SHA'
+if [[ -n ${SOURCE_TAG:-} ]]; then
+    # 镜像里 --version 报的 commit 必须就是 tag 指向的提交；tag 不在本地仓说明检出没带上它，不猜。
+    tag_commit=$(git -C "$module" rev-parse --verify --quiet "refs/tags/$SOURCE_TAG^{commit}") || fail "本地仓没有 tag ${SOURCE_TAG}：检出步骤没有带上它"
+    [[ $tag_commit == "$revision" ]] || fail "HEAD $revision 不是 tag $SOURCE_TAG 指向的提交 $tag_commit"
+fi
 if [[ -f $state/revision ]]; then
     [[ $(cat "$state/revision") == "$revision" && $(cat "$state/version") == "$PACKAGE_VERSION" ]] || fail '工作区或版本在构建后发生变化'
 else
@@ -98,9 +114,6 @@ build)
     actual=$(docker run --rm --network none "$ref" --version)
     expected="alarmd version=$PACKAGE_VERSION commit=$revision schema_version=$schema"
     [[ $actual == "$expected" ]] || fail "alarmd 版本元数据不匹配：$actual"
-    actual=$(docker run --rm --network none --entrypoint /data/bkmonitor/alarmd-comparator "$ref" --version)
-    expected="alarmd-comparator version=$PACKAGE_VERSION commit=$revision schema_version=comparison-audit-batch/1.0"
-    [[ $actual == "$expected" ]] || fail "alarmd-comparator 版本元数据不匹配：$actual"
     touch "$state/built"
     printf '::set-output name=revision::%s\n' "$revision"
     ;;

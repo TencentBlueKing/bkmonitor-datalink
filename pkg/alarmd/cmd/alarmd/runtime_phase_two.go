@@ -1208,6 +1208,16 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 		// owned set never displaces anyone, so the ordering question does not
 		// arise and the O(n) scan that answers it never runs.
 		//
+		// What that also does, and what was not said when it was made: the branch
+		// below becomes unreachable rather than rare, by the same argument spelled
+		// out for the ready queue further down. Its counter is therefore an
+		// invariant guard and not a measure of queue pressure. Non-zero has
+		// exactly two meanings - dropStaleQueued did not run before this walk, or
+		// this floor was removed - and both are defects in this file rather than
+		// load. A metric whose zero is structural needs to say so; "zero is the
+		// success case" is the weaker statement and invites someone to go looking
+		// for the load that would make it move.
+		//
 		// The ready queue has the same defect and does not have the same fix
 		// applied. This is a known open item, written here rather than in a list
 		// because this is the line that would change.
@@ -1233,14 +1243,37 @@ func (dispatcher *phaseTwoRunnerDispatcher) fillQueues(runners []phaseTwoSchedul
 		// had room for. What bounds the harm is that one dispatch frees one place
 		// and the walk resumes inside the same generation.
 		//
-		// The fix is the same floor. What it costs is not in this file: raising
-		// the bound to the owned set makes a full ready queue unreachable outside
-		// the same shrinking-owned-set transient, and five existing tests reach
-		// it by configuring a capacity below the owned set. They are testing walk
-		// mechanics, not capacity, so they would all have to construct that
-		// transient instead. That is a real cost and a coordination one - three
-		// of those tests are the ones that just rebuilt around the recovery
-		// queue's version of this - so it is sequenced rather than taken here.
+		// The same floor is NOT the fix here, which is worth stating because it
+		// is the obvious next move and it was proposed before anyone checked what
+		// it costs.
+		//
+		// The walk is driven as dropStaleQueued then fillQueues, and
+		// dropStaleQueued removes every queued entry that is no longer a current
+		// scheduled runner. So len(normal) <= len(runners) always holds, and a
+		// floor at len(runners) makes this branch require that every owned Query
+		// Group is already queued - at which point the Query Group being
+		// considered is queued too and the crowded-out branch above catches it
+		// first. The branch becomes unreachable, not rare. Driven through that
+		// real order, including across an owned-set shrink, the walk completes
+		// every pass and all three deferral counters stay at zero.
+		//
+		// Unreachable here does not mean one dead branch. A full ready queue is
+		// the only reason this walk ever stops, so removing it also retires
+		// rotation.truncated, the cross-pass walk carry-over, the publish-on-the-
+		// way-out that exists because a stuck walk never publishes, and both
+		// deferral counters. That is a subsystem, against a measured 0.508 turn-
+		// aways a second that are self-correcting inside the generation - one
+		// dispatch frees one place and the walk resumes - with truncated at zero
+		// throughout, meaning every rotation still covered every owned object.
+		//
+		// The change that would remove the measured harm without any of that is
+		// smaller and is not this: stop returning here and keep walking, without
+		// consuming this Query Group's turn, so the objects behind it still get
+		// offered - including the ones the recovery queue has room for, which is
+		// the actual cost of stopping. The comment below argues against scanning
+		// past on the grounds that it re-reads the owned set every pass; that is
+		// a cost argument, and the cost has since been measured at nothing - this
+		// walk does not appear anywhere in a 60 second CPU profile.
 		//
 		// This does not scale by itself. sortDelayed re-sorts the whole recovery
 		// queue on every pass of the dispatcher loop; at this size it does not

@@ -340,11 +340,42 @@ func (view HistoryView) SummarizeContext(ctx context.Context, endTime int64, req
 	}
 	interval := int64(view.requirement.EvaluationInterval / time.Second)
 	summary = WindowSummary{Completeness: HistoryWarming, WindowEnd: endTime, RequiredPositions: requiredPositions}
+	// Both refusals below report exactly what a window that was walked and found
+	// empty reports: HISTORY_WARMING, no valid position. Downstream that is
+	// counted as an empty window and the page renders empty windows as data that
+	// stopped arriving -- go and check the metric, check collection.
+	//
+	// For one of these conditions that would be the wrong answer in the most
+	// expensive direction. Being asked for more positions than the Level retains
+	// is a configuration the store can never satisfy: it does not resolve, no
+	// amount of looking at the data helps, and the wording sends the reader
+	// somewhere with nothing to find. A permanent fault dressed as a transient
+	// symptom outlives every other kind.
+	//
+	// None of these can currently be reached, and the guarantees are not local:
+	// Align rejects a requirement whose retention is below its requirement, whose
+	// interval is not a positive whole number of seconds, or whose horizon would
+	// overflow -- so a window that exists satisfies all of that already; the
+	// compiler builds RetentionPoints and RequiredDetectHistoryPoints from one
+	// variable, making them equal rather than merely ordered; and both callers
+	// pass that same number as the argument compared here. requiredPositions is
+	// normalised above, so the zero case cannot arrive either.
+	//
+	// Kept rather than deleted because a summary is not the right place to
+	// discover a broken requirement, and removing them would make the next caller
+	// that skips Align walk off the end of the window instead. What is not kept
+	// is the assumption: state/window_refusal_test.go and the evaluation package's
+	// counterpart fail if any of those three guarantees moves, rather than letting
+	// a dead branch quietly become a live one that misnames what it found.
 	if requiredPositions == 0 || requiredPositions > view.requirement.RetentionPoints || interval <= 0 || endTime < 0 ||
 		uint64(requiredPositions-1) > uint64(math.MaxInt64/interval) {
 		return summary
 	}
 	offset := int64(requiredPositions-1) * interval
+	// The window would reach back past the epoch, which needs a record stamped
+	// within its own span of 1970. Unreachable for the same practical reason the
+	// rest are, and unlike them it is a record problem rather than a
+	// configuration one, so it would not want the same wording either.
 	if offset > endTime {
 		summary.WindowStart = 0
 		return summary

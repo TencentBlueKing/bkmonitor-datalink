@@ -79,8 +79,15 @@ type ListResponse struct {
 	// both: it is the objects that will not recover on their own, and anything
 	// that hides them -- a filter, or a reader having switched columns -- reads
 	// as "nothing to do here".
-	StalledTotal int  `json:"stalled_total"`
-	Page         Page `json:"page"`
+	StalledTotal int `json:"stalled_total"`
+	// ActionRequiredTotal and ByOwnerTotal are the deployment-wide versions of
+	// the summary's action_required and by_owner: counted over every column
+	// before any filter, so the number the page leads with is the same
+	// whichever list the reader is looking at. The summary's are the same
+	// counts over the rows this request is about.
+	ActionRequiredTotal int          `json:"action_required_total"`
+	ByOwnerTotal        Distribution `json:"by_owner_total"`
+	Page                Page         `json:"page"`
 }
 
 // HealthResponse is what the verdict route answers with.
@@ -328,6 +335,22 @@ type Summary struct {
 	// likely cause of all of them, which is an unmeasured guess pointed at a
 	// population that contains both.
 	WindowSeriesChurn int `json:"window_series_churn"`
+	// ActionRequired is how many of these someone here has to act on: this
+	// deployment's own, plus the ones nobody can yet say who owns. It is the
+	// number the page leads with, and the list it opens is the to-do list.
+	//
+	// Undetermined is counted in rather than out. The page used to hand every
+	// coverage reason to the strategy owner on the strength of the code alone,
+	// and half of them were not the strategy's; what cannot be confirmed stays
+	// where someone will confirm it.
+	ActionRequired int `json:"action_required"`
+	// ByOwner counts every object in this list by who has to act on it, and
+	// BySituation by what the evidence decided. Both are complete
+	// partitions of the list -- every object is in exactly one bucket of each
+	// -- so the page can render the governance area as a set of counts that
+	// add up to the list, each opening the objects it counts.
+	ByOwner     Distribution `json:"by_owner"`
+	BySituation Distribution `json:"by_situation"`
 }
 
 // momentOrNil drops a zero time rather than sending it.
@@ -398,6 +421,9 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 	codes := map[string]int{}
 	details := map[string]int{}
 	causeReasons := map[string]int{}
+	owners := map[string]int{}
+	situations := map[string]int{}
+	actionRequired := 0
 	businesses := map[string]int{}
 	strategies := map[StrategyRef]struct{}{}
 	replicas := map[string]int{}
@@ -493,6 +519,11 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 		if anomaly.CauseReason != "" {
 			causeReasons[anomaly.CauseReason]++
 		}
+		owners[string(anomaly.Finding.Owner)]++
+		situations[string(anomaly.Finding.Situation)]++
+		if anomaly.Finding.ActionRequired() {
+			actionRequired++
+		}
 		replicas[anomaly.Replica]++
 		// Counted per object, not per reference: one object naming the same
 		// business twice must not make that business look twice as affected.
@@ -518,6 +549,7 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 		Ours: ours, External: external, Unattributed: unattributed,
 		OursUnclassified: oursUnclassified, WindowNeverFills: neverFills,
 		WindowSeriesChurn: seriesChurn,
+		ActionRequired:    actionRequired, ByOwner: rank(owners), BySituation: rank(situations),
 	}
 }
 
@@ -784,17 +816,38 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	// shrinks because of what the reader is currently looking at reads as "there
 	// is nothing to do here".
 	stalledTotal := 0
+	actionRequiredTotal := 0
+	byOwnerTotal := map[string]int{}
 	for _, list := range columns {
 		for _, anomaly := range list {
 			if anomaly.Stalled {
 				stalledTotal++
 			}
+			if anomaly.Finding.ActionRequired() {
+				actionRequiredTotal++
+			}
+			byOwnerTotal[string(anomaly.Finding.Owner)]++
 		}
 	}
 	// Serving a column replaces the rows this request is about, and nothing
 	// else. The deployment-wide counts on the view are untouched, so the
 	// response still carries every total and a reader paging one column can see
 	// how many objects are not in it.
+	// A replica publishes at most what fits its byte budget, so on a bad enough
+	// deployment the list this summary counts is already a sample. The counts
+	// stay useful for "which of these is it", and stop being usable as a
+	// distribution -- and nothing in the summary said so, leaving that to a
+	// reader who thought to compare two other fields.
+	//
+	// Decided per column before the swap, because the to-do column is drawn
+	// from all four and is a sample if any of them is.
+	truncated := map[string]bool{
+		ColumnAnomalies:   view.AnomaliesTotal > len(view.Anomalies),
+		ColumnDemoted:     view.DemotedTotal > len(view.Demoted),
+		ColumnUndecidable: view.UndecidableTotal > len(view.Undecidable),
+		ColumnByDesign:    view.ByDesignTotal > len(view.ByDesign),
+	}
+	summaryPartial := truncated[column]
 	switch column {
 	case ColumnDemoted:
 		view.Anomalies = view.Demoted
@@ -805,13 +858,15 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	case ColumnByDesign:
 		view.Anomalies = view.ByDesign
 		view.AnomaliesTotal = view.ByDesignTotal
+	case ColumnActionRequired:
+		// The total is the count of what is listed, not a replica-reported
+		// figure: no replica counts this column, because no replica decides
+		// findings. Whether that count is itself a sample is what partial says.
+		view.Anomalies = ActionRequired(columns...)
+		view.AnomaliesTotal = len(view.Anomalies)
+		summaryPartial = truncated[ColumnAnomalies] || truncated[ColumnDemoted] ||
+			truncated[ColumnUndecidable] || truncated[ColumnByDesign]
 	}
-	// A replica publishes at most what fits its byte budget, so on a bad enough
-	// deployment the list this summary counts is already a sample. The counts
-	// stay useful for "which of these is it", and stop being usable as a
-	// distribution -- and nothing in the summary said so, leaving that to a
-	// reader who thought to compare two other fields.
-	summaryPartial := view.AnomaliesTotal > len(view.Anomalies)
 	replica := request.URL.Query().Get("replica")
 	if replica != "" {
 		// A name that belongs to no replica has to be refused rather than
@@ -839,6 +894,18 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	if business != "" {
 		view.Anomalies = filterByBusiness(view.Anomalies, business)
 	}
+	// Owner narrows any column to the objects one party has to act on. It is
+	// what the governance counts open: a reader clicking "数据侧 12" gets those
+	// twelve, from the same list the count was taken over.
+	owner := request.URL.Query().Get("owner")
+	if owner != "" {
+		if !knownOwner(owner) {
+			writeJSON(response, http.StatusBadRequest,
+				map[string]string{"error": "owner must be one of " + strings.Join(ownerNames(), ", ")})
+			return
+		}
+		view.Anomalies = filterByOwner(view.Anomalies, Owner(owner))
+	}
 	total := len(view.Anomalies)
 	// Counted over the whole list this request is about, before it is cut into a
 	// page. A reader's first question is whether a long list is one problem or
@@ -855,11 +922,12 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	writeJSON(response, http.StatusOK, ListResponse{
 		Summary: summary,
 		View:    view, Replica: replica, Strategy: strategy, Business: business, Column: column,
-		Applied:           replica != "" || strategy != "" || business != "",
-		StallAfterSeconds: int(stallAfter / time.Second),
-		StalledTotal:      stalledTotal,
-		Order:             order,
-		Page:              Page{Offset: offset, Limit: limit, Total: total},
+		Applied:             replica != "" || strategy != "" || business != "" || owner != "",
+		StallAfterSeconds:   int(stallAfter / time.Second),
+		StalledTotal:        stalledTotal,
+		ActionRequiredTotal: actionRequiredTotal, ByOwnerTotal: rank(byOwnerTotal),
+		Order: order,
+		Page:  Page{Offset: offset, Limit: limit, Total: total},
 	})
 }
 

@@ -167,6 +167,67 @@ func TestThePageHasWordingForEveryAnomalyKind(t *testing.T) {
 	}
 }
 
+// Every situation the server can decide has words on the page, and so does
+// every owner.
+//
+// The page's SITUATION table is the whole of what it decides about a row now:
+// the server picks the situation from the evidence and the page looks up the
+// three sentences. A situation with no entry renders as a loud placeholder
+// rather than a blank -- but a placeholder on a live row is still a row a
+// reader cannot act on, and this is what keeps that from shipping. Adding a
+// situation in Go without adding its words here fails here.
+func TestThePageHasWordingForEverySituationAndOwner(t *testing.T) {
+	body := string(page)
+	for _, block := range []struct {
+		name, pattern string
+		values        []string
+	}{
+		{"SITUATION", `var SITUATION = \{([\s\S]*?)\};`, situationNames()},
+		{"OWNER", `var OWNER = \{([\s\S]*?)\};`, ownerNames()},
+	} {
+		found := regexp.MustCompile(block.pattern).FindStringSubmatch(body)
+		if found == nil {
+			t.Fatalf("the page no longer declares %s", block.name)
+		}
+		if len(block.values) == 0 {
+			t.Fatalf("no %s values declared in Go; the check would pass vacuously", block.name)
+		}
+		for _, value := range block.values {
+			if !regexp.MustCompile(`\b` + value + `:`).MatchString(found[1]) {
+				t.Errorf("%s has no entry for %q: the row would render a placeholder where the "+
+					"reader expects to be told what happened", block.name, value)
+			}
+		}
+		// And nothing on the page that Go cannot send, which would be words
+		// kept alive for a situation nothing decides.
+		declared := map[string]bool{}
+		for _, value := range block.values {
+			declared[value] = true
+		}
+		for _, match := range regexp.MustCompile(`(?m)^\s*([A-Z_]+):`).FindAllStringSubmatch(found[1], -1) {
+			if !declared[match[1]] {
+				t.Errorf("%s has an entry for %q, which the server never sends", block.name, match[1])
+			}
+		}
+	}
+}
+
+func situationNames() []string {
+	names := make([]string, 0)
+	for _, situation := range fleet.Situations() {
+		names = append(names, string(situation))
+	}
+	return names
+}
+
+func ownerNames() []string {
+	names := make([]string, 0)
+	for _, owner := range fleet.Owners {
+		names = append(names, string(owner))
+	}
+	return names
+}
+
 // Every column the route serves has to have wording of its own.
 //
 // The page does not render blank for one it has no entry for: both lookups fall

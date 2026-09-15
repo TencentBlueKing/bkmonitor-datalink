@@ -293,8 +293,7 @@ func TestLoadPhaseTwoWorkerIdentityRejectsNonCanonicalDeploymentEnvironment(t *t
 }
 
 func validGoAccessRuntimeConfigYAML(workerID string) string {
-	return fmt.Sprintf(`mode: shadow
-input:
+	return fmt.Sprintf(`input:
   mode: go_access
 http:
   listen: 127.0.0.1:8080

@@ -107,9 +107,6 @@ func TestPhaseTwoRuntimePrefixCannotOverlapCanonicalStrategyCache(t *testing.T) 
 func TestDefaultRequiresExplicitEnvironmentCoordinates(t *testing.T) {
 	cfg := Default()
 
-	if cfg.Mode != ModeShadow {
-		t.Fatalf("default mode = %q, want %q", cfg.Mode, ModeShadow)
-	}
 	if cfg.Input.Mode != InputModeGoAccess || cfg.Input.PhaseOneKafka != nil {
 		t.Fatalf("default input = %+v, want Go Access without compatibility coordinates", cfg.Input)
 	}
@@ -304,9 +301,9 @@ func TestLoadRejectsLegacyAndPhaseTwoFields(t *testing.T) {
 			contents: strings.Replace(validRuntimeConfig(), "  trigger_event:\n", "  output_topic: legacy-output\n  trigger_event:\n", 1),
 			field:    "output_topic",
 		},
-		"worker shards": {contents: "mode: shadow\nworker_shards: 4\n", field: "worker_shards"},
-		"owner epoch":   {contents: "mode: shadow\nowner_epoch: 1\n", field: "owner_epoch"},
-		"state CAS":     {contents: "mode: shadow\nstate_cas: true\n", field: "state_cas"},
+		"worker shards": {contents: "worker_shards: 4\n", field: "worker_shards"},
+		"owner epoch":   {contents: "owner_epoch: 1\n", field: "owner_epoch"},
+		"state CAS":     {contents: "state_cas: true\n", field: "state_cas"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Load(writeConfig(t, testCase.contents))
@@ -382,12 +379,15 @@ func TestValidateRejectsInvalidRedisAndRuntimeBudgets(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsModesThatCanProduceAuthoritativeOutput(t *testing.T) {
-	for _, mode := range []string{"owner", "unknown"} {
+// The top-level mode key is retired: shadow was its only value and the
+// process never behaved differently for it. A deployment that still writes it
+// is told so at load rather than having the key silently ignored.
+func TestLoadRejectsRetiredModeKey(t *testing.T) {
+	for _, mode := range []string{"shadow", "owner"} {
 		t.Run(mode, func(t *testing.T) {
 			_, err := Load(writeConfig(t, "mode: "+mode+"\n"))
 			if err == nil || !strings.Contains(err.Error(), "mode") {
-				t.Fatalf("Load() error = %v, want unsafe mode rejection", err)
+				t.Fatalf("Load() error = %v, want retired key rejection", err)
 			}
 		})
 	}
@@ -395,11 +395,11 @@ func TestLoadRejectsModesThatCanProduceAuthoritativeOutput(t *testing.T) {
 
 func TestLoadRejectsInvalidHTTPAndTimeout(t *testing.T) {
 	tests := map[string]string{
-		"listen":         "mode: shadow\nhttp:\n  listen: invalid\n",
-		"empty host":     "mode: shadow\nhttp:\n  listen: :8080\n",
-		"zero port":      "mode: shadow\nhttp:\n  listen: 127.0.0.1:0\n",
-		"port too large": "mode: shadow\nhttp:\n  listen: 127.0.0.1:65536\n",
-		"timeout":        "mode: shadow\nshutdown_timeout: 0s\n",
+		"listen":         "http:\n  listen: invalid\n",
+		"empty host":     "http:\n  listen: :8080\n",
+		"zero port":      "http:\n  listen: 127.0.0.1:0\n",
+		"port too large": "http:\n  listen: 127.0.0.1:65536\n",
+		"timeout":        "shutdown_timeout: 0s\n",
 	}
 
 	for name, contents := range tests {
@@ -503,8 +503,7 @@ func writeConfig(t *testing.T, contents string) string {
 }
 
 func validRuntimeConfig() string {
-	return `mode: shadow
-input:
+	return `input:
   mode: phase_one_kafka_compatibility
   phase_one_kafka:
     input_topic: alarmd-v2-input
@@ -718,8 +717,7 @@ func TestAnUnstatedPlatformCacheResolvesToTheTopLevelConnection(t *testing.T) {
 }
 
 func platformCacheConfigContents(platformCache string) string {
-	return `mode: shadow
-input:
+	return `input:
   mode: go_access
 http:
   listen: 127.0.0.1:8080

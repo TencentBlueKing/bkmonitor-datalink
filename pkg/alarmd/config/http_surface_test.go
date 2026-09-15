@@ -30,28 +30,6 @@ func TestDefaultSeparatesTheDiagnosticsSurface(t *testing.T) {
 	}
 }
 
-// alarmd and the comparator can run side by side with default configuration.
-// Any two of their four default addresses colliding turns that into a hard
-// startup failure, which is the regression the 6060/6061 choice fixed.
-func TestDefaultAddressesOfBothBinariesDoNotCollide(t *testing.T) {
-	addresses := map[string]string{
-		"alarmd listen":         Default().HTTP.Listen,
-		"alarmd diagnostics":    Default().HTTP.DiagnosticsListen,
-		"comparator listen":     DefaultComparator().HTTP.Listen,
-		"comparator diagnostic": DefaultComparator().HTTP.DiagnosticsListen,
-	}
-	for leftName, left := range addresses {
-		for rightName, right := range addresses {
-			if leftName >= rightName {
-				continue
-			}
-			if listenAddressesCollide(left, right) {
-				t.Fatalf("%s (%s) collides with %s (%s)", leftName, left, rightName, right)
-			}
-		}
-	}
-}
-
 func TestDiagnosticsListenValidation(t *testing.T) {
 	cases := []struct {
 		name    string

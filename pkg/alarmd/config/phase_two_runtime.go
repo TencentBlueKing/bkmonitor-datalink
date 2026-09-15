@@ -373,17 +373,15 @@ func (c PhaseTwoCanonicalConfig) Stride() uint64 {
 func (c PhaseTwoCanonicalConfig) SelectedMode() string { return c.mode() }
 
 type PhaseTwoRuntimeConfig struct {
-	// Empty disables final Shadow evidence; the file is the frozen Epoch manifest.
-	ShadowManifestPath string                         `yaml:"shadow_manifest_path,omitempty"`
-	Worker             PhaseTwoWorkerConfig           `yaml:"worker"`
-	Control            PhaseTwoControlConfig          `yaml:"control"`
-	Output             PhaseTwoOutputConfig           `yaml:"output"`
-	Ownership          PhaseTwoOwnershipConfig        `yaml:"-"`
-	Scheduler          PhaseTwoSchedulerConfig        `yaml:"scheduler"`
-	Access             PhaseTwoAccessConfig           `yaml:"access"`
-	Coordinator        PhaseTwoCoordinatorConfig      `yaml:"-"`
-	Canonical          PhaseTwoCanonicalConfig        `yaml:"canonical"`
-	PlatformSettings   PhaseTwoPlatformSettingsConfig `yaml:"platform_settings"`
+	Worker           PhaseTwoWorkerConfig           `yaml:"worker"`
+	Control          PhaseTwoControlConfig          `yaml:"control"`
+	Output           PhaseTwoOutputConfig           `yaml:"output"`
+	Ownership        PhaseTwoOwnershipConfig        `yaml:"-"`
+	Scheduler        PhaseTwoSchedulerConfig        `yaml:"scheduler"`
+	Access           PhaseTwoAccessConfig           `yaml:"access"`
+	Coordinator      PhaseTwoCoordinatorConfig      `yaml:"-"`
+	Canonical        PhaseTwoCanonicalConfig        `yaml:"canonical"`
+	PlatformSettings PhaseTwoPlatformSettingsConfig `yaml:"platform_settings"`
 }
 
 func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {

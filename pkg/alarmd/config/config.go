@@ -28,8 +28,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 )
 
-const ModeShadow = "shadow"
-
 type Duration time.Duration
 
 func (d *Duration) UnmarshalText(text []byte) error {
@@ -187,7 +185,6 @@ type EvaluationRunnerConfig struct {
 }
 
 type Config struct {
-	Mode             string                 `yaml:"mode"`
 	Input            PhaseTwoInputConfig    `yaml:"input"`
 	HTTP             HTTPConfig             `yaml:"http"`
 	Kafka            KafkaConfig            `yaml:"kafka"`
@@ -209,13 +206,11 @@ type Config struct {
 func Default() Config {
 	runner := coordinator.DefaultConcurrentRunnerLimits()
 	cfg := Config{
-		Mode:  ModeShadow,
 		Input: DefaultPhaseTwoInput(),
 		HTTP: HTTPConfig{
 			Listen: "127.0.0.1:8080",
-			// 6060 rather than 8081: the comparator's query surface already
-			// defaults to 8081, and two binaries started locally with defaults
-			// would now fail to start instead of merely sharing a mux.
+			// The pprof convention; kept off the query port so the two
+			// surfaces never share a mux.
 			DiagnosticsListen: "127.0.0.1:6060",
 		},
 		Kafka: KafkaConfig{
@@ -275,13 +270,18 @@ func (c Config) chunkedStateApplyBudget() uint64 {
 	return uint64(c.Limits.Store.MaxKeysPerBatch) * execution.StateApplyMaxChunks
 }
 
-// DeploymentProfile is the Worker's Ownership compatibility identity: Workers
+// deploymentProfile is the Worker's Ownership compatibility identity: Workers
 // registered under different profiles never take over one another's Query
-// Groups. The shape that decides it is the run mode, so it is derived from
-// Mode rather than configured beside it - two independent fields could be set
-// to disagreeing values, and nothing in the process would notice.
+// Groups. It is persisted in every Worker registration, so the literal stays
+// what deployed Workers already wrote (it was the value of the retired
+// top-level mode key). It is not configurable: a deployment cannot opt out of
+// the takeover fence, and changing the value is the production-ownership
+// switch, which is a rollout of its own.
+const deploymentProfile = "shadow"
+
+// DeploymentProfile reports the persisted Ownership compatibility identity.
 func (c Config) DeploymentProfile() string {
-	return c.Mode
+	return deploymentProfile
 }
 
 // AdmittedQueryConcurrency is the number of queries the scheduler may have in
@@ -630,10 +630,6 @@ func normalizeListenHost(host string) string {
 }
 
 func (c Config) validateCommon() error {
-	if c.Mode != ModeShadow {
-		return fmt.Errorf("mode %q is not allowed before production ownership is implemented", c.Mode)
-	}
-
 	if err := validateListenAddress("http listen", c.HTTP.Listen); err != nil {
 		return err
 	}

@@ -11,7 +11,6 @@ package metric
 
 import (
 	"context"
-	"math"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -48,10 +47,6 @@ func TestUnknownLabelValuesCollapseToOther(t *testing.T) {
 	recorder := NewRecorder(BuildInfo{})
 	sensitive := "strategy-123 invalid URL https://internal.invalid"
 
-	recorder.RecordProcess(Stage(sensitive), Mode(sensitive), Status(sensitive), ErrorCode(sensitive), time.Second)
-	recorder.RecordRecords(Stage(sensitive), Mode(sensitive), Direction(sensitive), RecordType(sensitive), 1)
-	recorder.RecordPipelineLatency(Stage(sensitive), Stage(sensitive), Mode(sensitive), time.Second)
-	recorder.RecordShadowCompare(Component(sensitive), CompareResult(sensitive))
 	recorder.Observe(context.Background(), observability.Observation{
 		Component: observability.Component(sensitive),
 		Stage:     observability.Stage(sensitive),
@@ -67,16 +62,6 @@ func TestUnknownLabelValuesCollapseToOther(t *testing.T) {
 	}
 	if !strings.Contains(got, `_other`) {
 		t.Fatalf("unknown labels were not collapsed to _other:\n%s", got)
-	}
-}
-
-func TestRecordRecordsRejectsNonFiniteCounts(t *testing.T) {
-	recorder := NewRecorder(BuildInfo{})
-	recorder.RecordRecords(StageTrigger, ModeShadow, DirectionInput, RecordDetectionOutcome, math.NaN())
-	recorder.RecordRecords(StageTrigger, ModeShadow, DirectionInput, RecordDetectionOutcome, math.Inf(1))
-
-	if got := scrape(t, recorder); strings.Contains(got, "bkmonitor_alarmd_records_total") {
-		t.Fatalf("non-finite record count created a time series:\n%s", got)
 	}
 }
 
@@ -154,10 +139,6 @@ func TestObservationCountsRemainSeparatedByStageDirectionAndResult(t *testing.T)
 
 func TestMetricNamesAndLabelsMatchApprovedContract(t *testing.T) {
 	recorder := NewRecorder(BuildInfo{})
-	recorder.RecordProcess(StageTrigger, ModeShadow, StatusSuccess, ErrorNone, time.Second)
-	recorder.RecordRecords(StageTrigger, ModeShadow, DirectionInput, RecordDetectionOutcome, 2)
-	recorder.RecordPipelineLatency(StageDetect, StageTrigger, ModeShadow, time.Second)
-	recorder.RecordShadowCompare(ComponentTrigger, CompareMatch)
 	recorder.Observe(context.Background(), observability.Observation{
 		Component:  observability.ComponentTrigger,
 		Stage:      observability.StageTriggerCompleted,
@@ -170,18 +151,9 @@ func TestMetricNamesAndLabelsMatchApprovedContract(t *testing.T) {
 	got := scrape(t, recorder)
 	wants := []string{
 		"bkmonitor_alarmd_build_info",
-		"bkmonitor_alarmd_process_duration_seconds_bucket",
-		"bkmonitor_alarmd_process_total",
-		"bkmonitor_alarmd_records_total",
-		"bkmonitor_alarmd_pipeline_latency_seconds_bucket",
-		"bkmonitor_alarmd_shadow_compare_total",
 		"bkmonitor_alarmd_observation_total",
 		"bkmonitor_alarmd_operation_total",
 		"bkmonitor_alarmd_observation_duration_seconds_bucket",
-		`error_code="none"`,
-		`record_type="detection_outcome"`,
-		`from_stage="detect"`,
-		`to_stage="trigger"`,
 	}
 	for _, want := range wants {
 		if !strings.Contains(got, want) {
@@ -191,12 +163,6 @@ func TestMetricNamesAndLabelsMatchApprovedContract(t *testing.T) {
 }
 
 func TestHistogramBucketsMatchPythonCompatibleContract(t *testing.T) {
-	if got, want := processDurationBuckets, []float64{0.005, 0.01, 0.05, 0.1, 0.5, 1, 2.5, 5, 7.5, 10, 30}; !equalFloats(got, want) {
-		t.Fatalf("process duration buckets = %v, want %v", got, want)
-	}
-	if got, want := pipelineLatencyBuckets, []float64{1, 2, 3, 5, 10, 15, 20, 30, 60, 180, 300}; !equalFloats(got, want) {
-		t.Fatalf("pipeline latency buckets = %v, want %v", got, want)
-	}
 	if got, want := observationDurationBuckets, []float64{0.005, 0.01, 0.05, 0.1, 1, 30}; !equalFloats(got, want) {
 		t.Fatalf("observation duration buckets = %v, want %v", got, want)
 	}
@@ -237,9 +203,7 @@ func TestCustomMetricFamilySeriesDevelopmentLimits(t *testing.T) {
 	}
 
 	for family, want := range map[string]int{
-		"bkmonitor_alarmd_process_duration_seconds":     126,
-		"bkmonitor_alarmd_pipeline_latency_seconds":     84,
-		"bkmonitor_alarmd_observation_duration_seconds": 3150,
+		"bkmonitor_alarmd_observation_duration_seconds": 2970,
 	} {
 		if got := bounds[family]; got != want {
 			t.Errorf("histogram family %s theoretical maximum = %d, want buckets/+Inf/sum/count total %d", family, got, want)
@@ -284,11 +248,6 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 	}
 	expected := map[string]string{
 		"bkmonitor_alarmd_build_info":                                   "variableLabels: {version,commit,schema_version}",
-		"bkmonitor_alarmd_process_duration_seconds":                     "variableLabels: {stage,mode}",
-		"bkmonitor_alarmd_process_total":                                "variableLabels: {stage,mode,status,error_code}",
-		"bkmonitor_alarmd_records_total":                                "variableLabels: {stage,mode,direction,record_type}",
-		"bkmonitor_alarmd_pipeline_latency_seconds":                     "variableLabels: {from_stage,to_stage,mode}",
-		"bkmonitor_alarmd_shadow_compare_total":                         "variableLabels: {component,result}",
 		"bkmonitor_alarmd_observation_total":                            "variableLabels: {component,stage,result,reason_code}",
 		"bkmonitor_alarmd_operation_total":                              "variableLabels: {operation,result,reason_code}",
 		"bkmonitor_alarmd_observation_duration_seconds":                 "variableLabels: {component,stage,result}",
@@ -571,30 +530,6 @@ func populateAllCustomLabelCombinations(recorder *Recorder) {
 	for reason := range cmdbIndexReasons {
 		recorder.SetCMDBHostIndex(1, 1, 1, reason != "none", reason)
 	}
-	for _, stage := range allStages {
-		for _, mode := range allModes {
-			for _, status := range allStatuses {
-				for _, code := range allErrors {
-					recorder.RecordProcess(stage, mode, status, code, time.Second)
-				}
-			}
-			for _, direction := range allDirections {
-				for _, recordType := range allRecordTypes {
-					recorder.RecordRecords(stage, mode, direction, recordType, 1)
-				}
-			}
-		}
-	}
-	for _, edge := range allEdges {
-		for _, mode := range allModes {
-			recorder.RecordPipelineLatency(edge[0], edge[1], mode, time.Second)
-		}
-	}
-	for _, component := range allComponents {
-		for _, result := range allCompareResults {
-			recorder.RecordShadowCompare(component, result)
-		}
-	}
 	for _, pair := range observability.AllMetricComponentStages() {
 		for _, result := range observability.AllResults() {
 			for _, reason := range observability.AllReasons(pair.Component) {
@@ -685,12 +620,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		len(observability.AllResults())
 
 	bounds := map[string]int{
-		fqName("build_info"):               1,
-		fqName("process_duration_seconds"): histogramSeries(len(allStages)*len(allModes), len(processDurationBuckets)),
-		fqName("process_total"):            len(allStages) * len(allModes) * len(allStatuses) * len(allErrors),
-		fqName("records_total"):            len(allStages) * len(allModes) * len(allDirections) * len(allRecordTypes),
-		fqName("pipeline_latency_seconds"): histogramSeries(len(allEdges)*len(allModes), len(pipelineLatencyBuckets)),
-		fqName("shadow_compare_total"):     len(allComponents) * len(allCompareResults),
+		fqName("build_info"): 1,
 
 		fqName("observation_total"): observationTotal,
 		fqName("operation_total"): len(observability.AllMetricOperations()) *

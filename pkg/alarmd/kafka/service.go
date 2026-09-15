@@ -471,9 +471,7 @@ func (s *Service) handleGroupError(err error) {
 		return
 	}
 	var consumerError *sarama.ConsumerError
-	if errors.As(err, &consumerError) &&
-		(errors.Is(consumerError.Err, sarama.ErrOffsetOutOfRange) ||
-			errors.Is(consumerError.Err, errComparatorSymbolicInitialOffset)) {
+	if errors.As(err, &consumerError) && errors.Is(consumerError.Err, sarama.ErrOffsetOutOfRange) {
 		s.offsetReset.Store(true)
 		s.cancelCurrentCycle()
 		return

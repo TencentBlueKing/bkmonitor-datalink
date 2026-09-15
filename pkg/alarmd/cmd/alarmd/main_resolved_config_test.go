@@ -83,11 +83,10 @@ func TestCheckConfigReportsSettingsTheFileNeverMentions(t *testing.T) {
 	}
 }
 
-// The Ownership compatibility identity is the run mode. Keeping a second
-// field for it let a deployment declare shadow in one place and something
-// else in the other, with nothing in the process to notice; the field is
-// gone, so a values file still carrying it fails loudly instead.
-func TestDeploymentProfileIsTheModeAndIsNoLongerConfigurable(t *testing.T) {
+// The Ownership compatibility identity is not configurable: a values file
+// carrying the retired worker field fails loudly, and the value every process
+// registers is the one deployed Workers already persisted.
+func TestDeploymentProfileIsNotConfigurable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "alarmd.yaml")
 	contents := strings.Replace(
 		validGoAccessApplicationYAML(),
@@ -110,8 +109,10 @@ func TestDeploymentProfileIsTheModeAndIsNoLongerConfigurable(t *testing.T) {
 		t.Fatalf("rejection does not name the retired field: %q", stderr.String())
 	}
 
-	cfg := validGoAccessRuntimeConfig()
-	if cfg.DeploymentProfile() != cfg.Mode {
-		t.Fatalf("deployment profile %q must be the run mode %q", cfg.DeploymentProfile(), cfg.Mode)
+	// "shadow" is what every deployed Worker wrote into its registration when
+	// the profile was derived from the retired mode key; a different literal
+	// here would fence new Workers off from the Query Groups the old ones own.
+	if got := validGoAccessRuntimeConfig().DeploymentProfile(); got != "shadow" {
+		t.Fatalf("deployment profile = %q, want the persisted identity \"shadow\"", got)
 	}
 }

@@ -32,22 +32,6 @@ type expiredRangeBundleFixture struct {
 	events         *recordingPhaseTwoEventSink
 }
 
-func TestExpiredRangeBypassesOrdinaryReceipt(t *testing.T) {
-	request := execution.SlotExecutionRequest{ExpiredRange: &execution.ExpiredRangeProjectionV1{}}
-	called := false
-	w := phaseTwoShadowExecutor{emitter: &phaseTwoFinalEmitter{}, next: slotExecutorFunc(func(ctx context.Context, r execution.SlotExecutionRequest) (execution.SlotExecutionResult, error) {
-		called = true
-		if ctx.Value(phaseTwoShadowExecutionKey{}) != nil || r.ExpiredRange != request.ExpiredRange {
-			t.Fatal("range acquired ordinary Slot evidence context")
-		}
-		return execution.SlotExecutionResult{Completed: true}, nil
-	})}
-	result, err := w.Execute(context.Background(), request)
-	if err != nil || !result.Completed || !called {
-		t.Fatal(result, err, called)
-	}
-}
-
 func TestExpiredRangeSharesF2WithHealthyFull(t *testing.T) {
 	testExpiredRangeSharesF2WithHealthyFull(t, false)
 }

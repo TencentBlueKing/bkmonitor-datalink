@@ -196,8 +196,7 @@ func TestRunDefaultGoAccessDoesNotConstructPhaseOneBundle(t *testing.T) {
 }
 
 func validApplicationYAML() string {
-	return `mode: shadow
-input:
+	return `input:
   mode: phase_one_kafka_compatibility
   phase_one_kafka:
     input_topic: alarmd-shadow-input-v2
@@ -232,8 +231,7 @@ redis:
 }
 
 func validGoAccessApplicationYAML() string {
-	return `mode: shadow
-http:
+	return `http:
   listen: 127.0.0.1:8080
 shutdown_timeout: 1s
 kafka:

@@ -222,9 +222,8 @@ func TestResolvedRuntimeFactsCarryTheDerivedTimelineCacheBudget(t *testing.T) {
 // where the process is gone and only this record survives.
 //
 // The digest over this table moves when the table gains a field. That is safe
-// here only because nothing freezes it: the one place that asserts equality is
-// the shadow epoch manifest at runtime_phase_two_shadow.go, and no deployment
-// sets shadow_manifest_path. This test pins the reasoning next to the field so
+// only while nothing outside the process freezes it and asserts equality
+// later; nothing does today. This test pins the reasoning next to the field so
 // the next person to add one checks the same thing rather than the tests.
 func TestRuntimeProfileNamesTheCanonicalEncoder(t *testing.T) {
 	cfg := config.Default()

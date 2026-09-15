@@ -22,7 +22,6 @@ import (
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/shadow"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
@@ -311,7 +310,6 @@ func runControlledG4Golden(
 		}
 		t.Fatalf("controlled TriggerEvent kinds=%v algorithm facts=%+v input facts=%+v stages=%v, want ABNORMAL then RECOVERY", controlledEventKinds(written), facts, inputFacts, stages)
 	}
-	var episode shadow.Episode
 	for index, event := range written {
 		if len(snapshotRevision) > 0 {
 			payload, err := contract.EncodeTriggerEventV1(&event)
@@ -329,22 +327,6 @@ func runControlledG4Golden(
 			if decoded.DedupeMD5 == "" || (index > 0 && decoded.DedupeMD5 != written[0].DedupeMD5) {
 				t.Fatalf("abnormal/recovery lost stable series identity: %s", payload)
 			}
-		}
-		projection, err := shadow.ProjectTriggerEventV1(shadow.ChainGo, event)
-		if err != nil {
-			t.Fatalf("ProjectTriggerEventV1(event %d): %v", index, err)
-		}
-		var transition shadow.EpisodeTransition
-		episode, transition, err = shadow.ApplyMatchedEvent(episode, projection)
-		if err != nil {
-			t.Fatalf("ApplyMatchedEvent(event %d): %v", index, err)
-		}
-		want := shadow.EpisodeOpened
-		if index == 1 {
-			want = shadow.EpisodeClosed
-		}
-		if transition != want {
-			t.Fatalf("controlled Golden transition[%d]=%s, want %s", index, transition, want)
 		}
 	}
 

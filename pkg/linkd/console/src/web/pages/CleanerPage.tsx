@@ -256,7 +256,7 @@ export function CleanerPage() {
         })}
       </div>
 
-      {sources.length === 0 && !runtime.isLoading && (
+      {sources.length === 0 && !runtime.isLoading && !runtime.isError && (
         <div className="warning-banner">当前配置没有 EventSource。</div>
       )}
 

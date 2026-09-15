@@ -317,6 +317,9 @@ event_sources:
       - name: second
         type: kafka
         config: {brokers: [kafka:9092], topic: second-topic}
+      - name: kac-alarm
+        type: kac
+        config: {brokers: [kafka:9092], topic: kac-alarm-topic}
       - name: active
         type: active-alert-by-strategy
         config:
@@ -332,6 +335,7 @@ event_sources:
       expect(config.eventSources?.[0].kafkaHooks?.map((h) => h.name)).toEqual([
         "first",
         "second",
+        "kac-alarm",
       ]);
       expect(JSON.stringify(redactedConfig(config))).not.toContain(
         "hook-private",

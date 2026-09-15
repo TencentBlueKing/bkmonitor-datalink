@@ -41,13 +41,3 @@ func aggregateStatus(results []ProcessorResult) domain.EnrichStatus {
 	}
 	return domain.EnrichStatusPartial
 }
-
-func aggregateEntries(entries []ProcessorEntry) domain.EnrichStatus {
-	results := make([]ProcessorResult, 0, len(entries))
-	for _, entry := range entries {
-		for _, envelope := range entry {
-			results = append(results, ProcessorResult{Status: envelope.Status})
-		}
-	}
-	return aggregateStatus(results)
-}

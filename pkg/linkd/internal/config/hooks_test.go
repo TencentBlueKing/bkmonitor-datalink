@@ -66,6 +66,22 @@ func TestHookValidation(t *testing.T) {
 	}
 }
 
+func TestKACHookUsesKafkaParametersAndRejectsRedisParameters(t *testing.T) {
+	hook := HookConfig{Name: "kac", Type: HookTypeKAC, Config: HookParameters{
+		Brokers: []string{"kafka:9092"}, Topic: "kac-alerts",
+	}}
+	if err := ValidateHooks([]HookConfig{hook}); err != nil {
+		t.Fatal(err)
+	}
+	if hook.WithDefaults().Config.MaxMessageBytes != 1<<20 {
+		t.Fatal("KAC hook default message size missing")
+	}
+	hook.Config.Redis = &RedisConfig{Address: "redis:6379"}
+	if err := ValidateHooks([]HookConfig{hook}); err == nil {
+		t.Fatal("KAC hook accepted Redis parameters")
+	}
+}
+
 func TestHookJSONYAMLRoundTripAndRedaction(t *testing.T) {
 	first := strategyConfig()
 	first.Config.Redis = &RedisConfig{Mode: RedisModeSentinel, Password: "redis-private", Sentinel: &RedisSentinelConfig{MasterName: "main", Addresses: []string{"sentinel:26379"}, Password: "sentinel-private"}}

@@ -58,7 +58,7 @@ func (Resource) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proces
 		}}}, nil
 	}
 	query, queryDiagnostics := resourceInstanceQuery(*strategy.ObjectModelCode, dimensions)
-	if len(queryDiagnostics) != 0 && len(query.Filters) == 0 {
+	if len(queryDiagnostics) != 0 && query.InstanceID == "" && len(query.AttributeFilters) == 0 {
 		value, err := resourceContextValue(scope, models.ResourceValues{})
 		if err != nil {
 			return enrich.ProcessorResult{}, err
@@ -132,8 +132,8 @@ func resourceInstanceQuery(modelCode string, dimensions domain.DimensionMap) (en
 			continue
 		}
 		return enrich.InstanceQuery{
-			ModelCode: modelCode,
-			Filters:   map[string]any{rules.FieldCWObjectModelInstID: rules.ScalarIdentity(value)},
+			ModelCode:  modelCode,
+			InstanceID: rules.ScalarIdentity(value),
 		}, nil
 	}
 	if modelCode == rules.HostModelCode {
@@ -148,9 +148,9 @@ func resourceInstanceQuery(modelCode string, dimensions domain.DimensionMap) (en
 			}
 			return enrich.InstanceQuery{
 					ModelCode: modelCode,
-					Filters: map[string]any{
-						rules.FieldBKHostInnerIP: ip,
-						rules.FieldBKCloudID:     cloudID,
+					AttributeFilters: []enrich.InstanceAttributeFilter{
+						{Field: rules.FieldBKHostInnerIP, Type: enrich.InstanceAttributeKeyword, Value: ip},
+						{Field: rules.FieldBKCloudID, Type: enrich.InstanceAttributeLong, Value: cloudID},
 					},
 				}, []enrich.Diagnostic{{Code: enrich.DiagnosticCodeMissingField, Fields: dimensionPaths(
 					rules.FieldBKInstID, rules.FieldBKHostID, rules.FieldBKTargetHostID,
@@ -176,14 +176,17 @@ func resourceContextValue(scope *enrich.Scope, values models.ResourceValues) (do
 }
 
 func resourceValues(instance enrich.Instance, fallbackBizID int64) models.ResourceValues {
-	fields := instance.Fields
+	fields := mergeInstanceFields(instance.Fields, instance.Attributes)
 	values := models.ResourceValues{ModelID: instance.ModelCode, ModelInstID: instance.InstanceID}
 	values.BKObjID, _ = rules.FirstField(fields, rules.FieldBKObjID)
-	if value, exists := rules.FirstField(fields, rules.FieldObjectModelName, rules.FieldBKObjName); exists {
+	if value, exists := rules.FirstField(fields, rules.FieldModelName, rules.FieldObjectModelName, rules.FieldBKObjName); exists {
 		values.ModelName = fmt.Sprint(value)
 	}
 	values.BKInstID, _ = rules.FirstField(fields, rules.FieldBKInstID, rules.FieldBKHostID)
 	values.BKBizID, _ = rules.FirstField(fields, rules.FieldBKBizID)
+	if values.BKBizID == nil {
+		values.BKBizID = firstBusinessID(fields["bk_biz_ids"])
+	}
 	if values.BKBizID == nil {
 		values.BKBizID = fallbackBizID
 	}
@@ -206,4 +209,35 @@ func resourceValues(instance enrich.Instance, fallbackBizID int64) models.Resour
 	values.DynamicGroupID = []string{}
 	values.CWLabels = []string{}
 	return values
+}
+
+// firstBusinessID 仅在统一实例具有唯一业务归属时提供 bk_biz_id；多业务归属继续使用来源业务兜底。
+func firstBusinessID(value any) any {
+	switch values := value.(type) {
+	case []any:
+		if len(values) == 1 {
+			return values[0]
+		}
+	case []int64:
+		if len(values) == 1 {
+			return values[0]
+		}
+	case []int:
+		if len(values) == 1 {
+			return values[0]
+		}
+	}
+	return nil
+}
+
+// mergeInstanceFields 让统一实例根字段保持优先级，并补入 attributes 中的来源属性。
+func mergeInstanceFields(root, attributes map[string]any) map[string]any {
+	fields := make(map[string]any, len(root)+len(attributes))
+	for key, value := range attributes {
+		fields[key] = value
+	}
+	for key, value := range root {
+		fields[key] = value
+	}
+	return fields
 }

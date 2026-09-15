@@ -24,7 +24,7 @@ func (c *Config) resolveKafkaTLSPaths(baseDir string) error {
 	for i := range c.EventSources {
 		for j := range c.EventSources[i].Hooks {
 			hook := &c.EventSources[i].Hooks[j]
-			if hook.Type != HookTypeKafka {
+			if hook.Type != HookTypeKafka && hook.Type != HookTypeKAC {
 				continue
 			}
 			resolved, err := hook.Config.Security.ResolvePaths(baseDir)

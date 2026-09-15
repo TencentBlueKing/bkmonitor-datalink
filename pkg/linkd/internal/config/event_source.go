@@ -10,6 +10,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -23,6 +24,7 @@ const (
 	FingerprintModeField  = "field"
 	FingerprintModeFields = "fields"
 	CleanerTypeStandard   = "standard"
+	oneModelInstanceIndex = "kingeye_all_instance"
 )
 
 // EventSource 是一个全局唯一、供进程调度和事件标准化使用的事件源定义。
@@ -67,10 +69,9 @@ type EnrichMySQLDataSource struct {
 
 // EnrichElasticsearchDataSource 定义 Enrich 使用的 Elasticsearch 只读连接。
 type EnrichElasticsearchDataSource struct {
-	Addresses   []string               `yaml:"addresses" json:"addresses"`
-	IndexPrefix string                 `yaml:"index_prefix" json:"index_prefix"`
-	APIKey      string                 `yaml:"api_key,omitempty" json:"api_key,omitempty"`
-	BasicAuth   *EnrichBasicAuthSource `yaml:"basic_auth,omitempty" json:"basic_auth,omitempty"`
+	Addresses []string               `yaml:"addresses" json:"addresses"`
+	APIKey    string                 `yaml:"api_key,omitempty" json:"api_key,omitempty"`
+	BasicAuth *EnrichBasicAuthSource `yaml:"basic_auth,omitempty" json:"basic_auth,omitempty"`
 }
 
 // EnrichBasicAuthSource 定义 Enrich Elasticsearch 的 Basic Auth 凭据。
@@ -81,7 +82,10 @@ type EnrichBasicAuthSource struct {
 
 func (c EnrichConfig) clone() EnrichConfig {
 	cloned := c
-	cloned.Processors = append([]EnrichProcessorConfig(nil), c.Processors...)
+	cloned.Processors = make([]EnrichProcessorConfig, len(c.Processors))
+	for index, processor := range c.Processors {
+		cloned.Processors[index] = processor.clone()
+	}
 	if c.DataSources != nil {
 		dataSources := c.DataSources.clone()
 		cloned.DataSources = &dataSources
@@ -160,7 +164,7 @@ func (c EnrichElasticsearchDataSource) validate() error {
 		basicAuth = &BasicAuthConfig{Username: c.BasicAuth.Username, Password: c.BasicAuth.Password}
 	}
 	return (ElasticsearchConfig{
-		Addresses: c.Addresses, IndexPrefix: c.IndexPrefix,
+		Addresses: c.Addresses, IndexPrefix: oneModelInstanceIndex,
 		APIKey: c.APIKey, BasicAuth: basicAuth,
 	}).Validate()
 }
@@ -170,6 +174,12 @@ func (c EnrichConfig) validate() error {
 	for index, processor := range c.Processors {
 		if strings.TrimSpace(processor.Type) == "" {
 			return fmt.Errorf("enrich.processors[%d].type is required", index)
+		}
+		if err := processor.validate(); err != nil {
+			return fmt.Errorf("enrich.processors[%d]: %w", index, err)
+		}
+		if processor.Type != "strategy" && len(processor.Config) != 0 {
+			return fmt.Errorf("enrich.processors[%d].config is not supported by processor %q", index, processor.Type)
 		}
 		if previous, exists := seenProcessors[processor.Type]; exists {
 			return fmt.Errorf("enrich.processors[%d].type duplicates enrich.processors[%d]: %q", index, previous, processor.Type)
@@ -223,9 +233,59 @@ func (c EnrichConfig) SelectDataSources() (EnrichDataSources, error) {
 	return selected, nil
 }
 
-// EnrichProcessorConfig 通过稳定注册名选择丰富处理器。
+// EnrichProcessorConfig 通过稳定注册名选择丰富处理器，并保存该处理器独占的配置。
+// Config 必须是最多 64 KiB 的 JSON-compatible object；具体字段由对应 Processor 校验。
 type EnrichProcessorConfig struct {
-	Type string `yaml:"type" json:"type"`
+	Type   string         `yaml:"type" json:"type"`
+	Config map[string]any `yaml:"config,omitempty" json:"config,omitempty"`
+}
+
+func (c EnrichProcessorConfig) clone() EnrichProcessorConfig {
+	cloned := c
+	cloned.Config = cloneProcessorConfigMap(c.Config)
+	return cloned
+}
+
+func cloneProcessorConfigMap(source map[string]any) map[string]any {
+	if source == nil {
+		return nil
+	}
+	cloned := make(map[string]any, len(source))
+	for key, value := range source {
+		cloned[key] = cloneProcessorConfigValue(value)
+	}
+	return cloned
+}
+
+func cloneProcessorConfigValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return cloneProcessorConfigMap(typed)
+	case []any:
+		cloned := make([]any, len(typed))
+		for index, item := range typed {
+			cloned[index] = cloneProcessorConfigValue(item)
+		}
+		return cloned
+	default:
+		return value
+	}
+}
+
+func (c EnrichProcessorConfig) validate() error {
+	for key := range c.Config {
+		if strings.TrimSpace(key) == "" {
+			return fmt.Errorf("config key must not be empty")
+		}
+	}
+	data, err := json.Marshal(c.Config)
+	if err != nil {
+		return fmt.Errorf("config must be JSON compatible: %w", err)
+	}
+	if len(data) > 64*1024 {
+		return fmt.Errorf("config must not exceed 65536 bytes")
+	}
+	return nil
 }
 
 // CleanerConfig 选择一个进程内注册的来源 Cleaner。

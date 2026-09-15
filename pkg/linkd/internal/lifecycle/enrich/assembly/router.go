@@ -42,7 +42,7 @@ func NewRouter(sources []config.EventSource, dataSources enrich.Sources, options
 		}
 		chainProcessors := make([]enrich.Processor, 0, len(source.Enrich.Processors))
 		for processorIndex, processorConfig := range source.Enrich.Processors {
-			processor, err := newProcessor(processorConfig.Type)
+			processor, err := newProcessor(processorConfig)
 			if err != nil {
 				return nil, fmt.Errorf("event_sources[%d].enrich.processors[%d]: %w", sourceIndex, processorIndex, err)
 			}
@@ -87,10 +87,10 @@ func (r *Router) Enrich(ctx context.Context, input lifecycle.EnrichInput) (lifec
 	return enricher.Enrich(ctx, input)
 }
 
-func newProcessor(name string) (enrich.Processor, error) {
-	switch name {
+func newProcessor(config config.EnrichProcessorConfig) (enrich.Processor, error) {
+	switch config.Type {
 	case rules.StrategyProcessor:
-		return processors.Strategy{}, nil
+		return processors.NewStrategy(config.Config)
 	case rules.ResourceProcessor:
 		return processors.Resource{}, nil
 	case rules.DisplayProcessor:
@@ -100,6 +100,6 @@ func newProcessor(name string) (enrich.Processor, error) {
 	case rules.SourceProcessor:
 		return processors.EventSource{}, nil
 	default:
-		return nil, fmt.Errorf("processor type is not registered: %q", name)
+		return nil, fmt.Errorf("processor type is not registered: %q", config.Type)
 	}
 }

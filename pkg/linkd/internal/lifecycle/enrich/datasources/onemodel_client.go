@@ -16,20 +16,22 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
+	"unicode/utf8"
 
 	"linkd/internal/lifecycle/enrich"
 )
 
-const maxOneModelResponseBytes = 1 << 20
+const (
+	maxOneModelResponseBytes = 1 << 20
+	oneModelInstanceIndex    = "kingeye_all_instance"
+)
 
 var _ enrich.OneModelReader = (*OneModelClient)(nil)
 
-// OneModelClientConfig 注入 OneModel Elasticsearch 的只读传输和 CMDB 实例索引。
+// OneModelClientConfig 注入 OneModel Elasticsearch 的只读传输。
 type OneModelClientConfig struct {
 	Transport ElasticsearchTransport
-	CMDBIndex string
 }
 
 // ElasticsearchTransport 是 OneModelClient 使用的最小 ES 传输端口。
@@ -37,10 +39,9 @@ type ElasticsearchTransport interface {
 	Perform(request *http.Request) (*http.Response, error)
 }
 
-// OneModelClient 按 OneModel 当前模型路由和扁平字段协议读取实例文档。
+// OneModelClient 按 OneModel 统一实例契约读取 kingeye_all_instance。
 type OneModelClient struct {
 	transport ElasticsearchTransport
-	cmdbIndex string
 }
 
 // NewOneModelClient 创建统一实例查询 Client；Transport 的生命周期由装配层管理。
@@ -48,14 +49,11 @@ func NewOneModelClient(config OneModelClientConfig) (*OneModelClient, error) {
 	if config.Transport == nil {
 		return nil, fmt.Errorf("create onemodel client: transport must not be nil")
 	}
-	if err := validateIndexName(config.CMDBIndex); err != nil {
-		return nil, fmt.Errorf("create onemodel client: cmdb index: %w", err)
-	}
-	return &OneModelClient{transport: config.Transport, cmdbIndex: config.CMDBIndex}, nil
+	return &OneModelClient{transport: config.Transport}, nil
 }
 
-// FindInstance 按租户、模型及扁平属性精确匹配第一条实例。
-// 返回前会再次校验文档租户和模型，避免错误 alias 或路由造成跨边界数据泄漏。
+// FindInstance 按租户、模型、实例身份及类型化属性精确匹配第一条统一实例。
+// 返回前会再次校验文档租户、模型、实例和 entity_uid，避免错误 alias 造成跨边界数据泄漏。
 func (c *OneModelClient) FindInstance(
 	ctx context.Context,
 	tenantID string,
@@ -67,6 +65,17 @@ func (c *OneModelClient) FindInstance(
 	if tenantID == "" || query.ModelCode == "" {
 		return enrich.Instance{}, false, fmt.Errorf("find onemodel instance: tenant ID and model code are required")
 	}
+	if err := validateOneModelIdentity("model code", query.ModelCode, 128); err != nil {
+		return enrich.Instance{}, false, fmt.Errorf("find onemodel instance: %w", err)
+	}
+	if query.InstanceID != "" {
+		if err := validateOneModelIdentity("instance ID", query.InstanceID, 1024); err != nil {
+			return enrich.Instance{}, false, fmt.Errorf("find onemodel instance: %w", err)
+		}
+	}
+	if query.InstanceID == "" && len(query.AttributeFilters) == 0 {
+		return enrich.Instance{}, false, fmt.Errorf("find onemodel instance: instance ID or attribute filters are required")
+	}
 	request, err := c.buildFindInstanceRequest(ctx, tenantID, query)
 	if err != nil {
 		return enrich.Instance{}, false, fmt.Errorf("find onemodel instance: %w", err)
@@ -77,7 +86,7 @@ func (c *OneModelClient) FindInstance(
 	}
 	defer func() { _ = response.Body.Close() }()
 
-	instance, found, err := parseFindInstanceResponse(response, tenantID, query.ModelCode)
+	instance, found, err := parseFindInstanceResponse(response, tenantID, query)
 	if err != nil {
 		return enrich.Instance{}, false, fmt.Errorf("find onemodel instance: %w", err)
 	}
@@ -89,20 +98,20 @@ func (c *OneModelClient) buildFindInstanceRequest(
 	tenantID string,
 	query enrich.InstanceQuery,
 ) (*http.Request, error) {
-	index, err := c.indexForModel(query.ModelCode)
-	if err != nil {
-		return nil, err
-	}
-	filters := make([]any, 0, len(query.Filters)+2)
+	filters := make([]any, 0, len(query.AttributeFilters)+3)
 	filters = append(filters,
 		map[string]any{"term": map[string]any{"bk_tenant_id": tenantID}},
-		map[string]any{"term": map[string]any{"cw_object_model_code": query.ModelCode}},
+		map[string]any{"term": map[string]any{"model_id": query.ModelCode}},
 	)
-	for field, value := range query.Filters {
-		if err := validateFieldName(field); err != nil {
-			return nil, fmt.Errorf("filter field: %w", err)
+	if query.InstanceID != "" {
+		filters = append(filters, map[string]any{"term": map[string]any{"model_inst_id": query.InstanceID}})
+	}
+	for _, filter := range query.AttributeFilters {
+		clause, err := oneModelAttributeFilter(filter)
+		if err != nil {
+			return nil, err
 		}
-		filters = append(filters, map[string]any{"term": map[string]any{field: value}})
+		filters = append(filters, clause)
 	}
 	body, err := json.Marshal(map[string]any{
 		"size":             1,
@@ -112,7 +121,7 @@ func (c *OneModelClient) buildFindInstanceRequest(
 	if err != nil {
 		return nil, fmt.Errorf("encode query: %w", err)
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "/"+url.PathEscape(index)+"/_search", bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "/"+oneModelInstanceIndex+"/_search", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
@@ -121,10 +130,32 @@ func (c *OneModelClient) buildFindInstanceRequest(
 	return request, nil
 }
 
+func oneModelAttributeFilter(filter enrich.InstanceAttributeFilter) (map[string]any, error) {
+	if err := validateFieldName(filter.Field); err != nil {
+		return nil, fmt.Errorf("attribute filter field: %w", err)
+	}
+	slots := map[enrich.InstanceAttributeType]string{
+		enrich.InstanceAttributeKeyword: "keyword_values", enrich.InstanceAttributeLong: "long_values",
+		enrich.InstanceAttributeDouble: "double_values", enrich.InstanceAttributeBoolean: "boolean_values",
+		enrich.InstanceAttributeDatetime: "datetime_values", enrich.InstanceAttributeIP: "ip_values",
+	}
+	slot := slots[filter.Type]
+	if slot == "" {
+		return nil, fmt.Errorf("attribute filter %q has invalid type %q", filter.Field, filter.Type)
+	}
+	return map[string]any{"nested": map[string]any{
+		"path": "attribute_values", "score_mode": "none",
+		"query": map[string]any{"bool": map[string]any{"filter": []any{
+			map[string]any{"term": map[string]any{"attribute_values.field_name": filter.Field}},
+			map[string]any{"term": map[string]any{"attribute_values." + slot: filter.Value}},
+		}}},
+	}}, nil
+}
+
 func parseFindInstanceResponse(
 	response *http.Response,
 	tenantID string,
-	modelCode string,
+	query enrich.InstanceQuery,
 ) (enrich.Instance, bool, error) {
 	limited := io.LimitReader(response.Body, maxOneModelResponseBytes+1)
 	data, err := io.ReadAll(limited)
@@ -160,51 +191,57 @@ func parseFindInstanceResponse(
 	if len(result.Hits.Hits) == 0 {
 		return enrich.Instance{}, false, nil
 	}
-	return parseInstanceSource(result.Hits.Hits[0].Source, tenantID, modelCode)
+	return parseInstanceSource(result.Hits.Hits[0].Source, tenantID, query)
 }
 
-func parseInstanceSource(source map[string]any, tenantID, modelCode string) (enrich.Instance, bool, error) {
-	if source["bk_tenant_id"] != tenantID || source["cw_object_model_code"] != modelCode {
+func parseInstanceSource(source map[string]any, tenantID string, query enrich.InstanceQuery) (enrich.Instance, bool, error) {
+	if source["bk_tenant_id"] != tenantID || source["model_id"] != query.ModelCode {
 		return enrich.Instance{}, false, fmt.Errorf("%w: response identity does not match query", enrich.ErrInvalidDataSourceResponse)
 	}
-	instanceID, ok := source["cw_object_model_inst_id"].(string)
+	instanceID, ok := source["model_inst_id"].(string)
 	if !ok || instanceID == "" {
 		return enrich.Instance{}, false, fmt.Errorf("%w: response has invalid instance identity", enrich.ErrInvalidDataSourceResponse)
 	}
-	return enrich.Instance{TenantID: tenantID, ModelCode: modelCode, InstanceID: instanceID, Fields: source}, true, nil
+	if query.InstanceID != "" && instanceID != query.InstanceID {
+		return enrich.Instance{}, false, fmt.Errorf("%w: response instance identity does not match query", enrich.ErrInvalidDataSourceResponse)
+	}
+	entityUID, ok := source["entity_uid"].(string)
+	if !ok || entityUID != query.ModelCode+"|"+instanceID {
+		return enrich.Instance{}, false, fmt.Errorf("%w: response has inconsistent entity identity", enrich.ErrInvalidDataSourceResponse)
+	}
+	attributes, ok := source["attributes"].(map[string]any)
+	if !ok {
+		return enrich.Instance{}, false, fmt.Errorf("%w: response attributes must be an object", enrich.ErrInvalidDataSourceResponse)
+	}
+	return enrich.Instance{
+		TenantID: tenantID, ModelCode: query.ModelCode, InstanceID: instanceID,
+		Fields: source, Attributes: attributes,
+	}, true, nil
 }
 
-func (c *OneModelClient) indexForModel(modelCode string) (string, error) {
-	indexes := map[string]string{
-		"cw-K8s_Cluster": "kingeye_k8s_cluster", "cw-K8s_Namespace": "kingeye_k8s_namespace",
-		"cw-K8s_Node": "kingeye_k8s_node", "cw-K8s_Service": "kingeye_k8s_service",
-		"cw-K8s_Workload": "kingeye_k8s_workload", "cw-K8s_Pod": "kingeye_k8s_pod",
-		"cw-K8s_Container": "kingeye_k8s_container", "cw-K8s_PersistentVolume": "kingeye_k8s_pv",
-		"cw-K8s_PersistentVolumeClaim": "kingeye_k8s_pvc", "cw-application": "kingeye_apm_application",
-		"cw-service": "kingeye_apm_service", "cw-service_instance": "kingeye_apm_service_instance",
-		"cw-apm_endpoint": "kingeye_apm_endpoint", "cw-apm_component": "kingeye_apm_component_node",
+func validateOneModelIdentity(name, value string, maxBytes int) error {
+	if !utf8.ValidString(value) || len([]byte(value)) > maxBytes {
+		return fmt.Errorf("%s is invalid", name)
 	}
-	index := indexes[modelCode]
-	if index == "" {
-		if strings.HasPrefix(modelCode, "cw-Cloud") || strings.HasPrefix(modelCode, "Cloud") {
-			index = "kingeye_cloud_instance"
-		} else {
-			index = c.cmdbIndex
+	for _, char := range value {
+		if char < ' ' || char == '\u007f' {
+			return fmt.Errorf("%s is invalid", name)
 		}
 	}
-	return index, validateIndexName(index)
-}
-
-func validateIndexName(value string) error {
-	if value == "" || strings.ContainsAny(value, `/\\?#, *<>|\"`) || value == "." || value == ".." {
-		return fmt.Errorf("invalid index %q", value)
+	if name == "model code" && strings.ContainsRune(value, '|') {
+		return fmt.Errorf("%s contains the entity identity separator", name)
 	}
 	return nil
 }
 
 func validateFieldName(value string) error {
-	if value == "" || strings.HasPrefix(value, "_") || strings.ContainsAny(value, "*?,# ") || value == "bk_tenant_id" || value == "cw_object_model_code" {
-		return fmt.Errorf("invalid or reserved field %q", value)
+	if value == "" || strings.HasPrefix(value, "_") || strings.ContainsAny(value, ".*?,# ") {
+		return fmt.Errorf("invalid field %q", value)
 	}
-	return nil
+	switch value {
+	case "bk_tenant_id", "model_id", "model_inst_id", "entity_uid", "attributes", "attribute_values":
+		return fmt.Errorf("reserved field %q", value)
+	default:
+		return nil
+	}
 }

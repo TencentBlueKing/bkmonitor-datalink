@@ -16,10 +16,11 @@ import (
 	"fmt"
 	"time"
 
-	"gorm.io/datatypes"
-	"gorm.io/gorm"
 	"linkd/internal/lifecycle/enrich"
 	"linkd/internal/lifecycle/enrich/models"
+
+	"gorm.io/datatypes"
+	"gorm.io/gorm"
 )
 
 var (
@@ -85,6 +86,7 @@ func (c *CWStrategyClient) GetByBKStrategyID(ctx context.Context, tenantID strin
 	return c.take(
 		c.db.WithContext(ctx).
 			Where("bk_tenant_id = ?", tenantID).
+			Where("active = ?", 1).
 			Where(datatypes.JSONQuery("status").Equals(bkStrategyID, "bk_strategy_id")),
 		tenantID,
 		bkStrategyID,

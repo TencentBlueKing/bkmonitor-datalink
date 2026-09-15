@@ -29,6 +29,7 @@ const (
 
 const (
 	DependencyKingeyeStrategy = "kingeye_strategy"
+	DependencyBusiness        = "business"
 	DependencyMetricLibrary   = "metric_library"
 	DependencyOneModel        = "onemodel"
 	DependencyAlarmSource     = "alarm_source"
@@ -47,6 +48,7 @@ const (
 
 const (
 	FieldIP                  = "ip"
+	FieldModelName           = "model_name"
 	FieldBKObjID             = "bk_obj_id"
 	FieldBKInstID            = "bk_inst_id"
 	FieldBKHostID            = "bk_host_id"

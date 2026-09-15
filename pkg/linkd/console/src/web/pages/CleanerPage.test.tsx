@@ -37,6 +37,29 @@ afterEach(() => {
 });
 
 describe("CleanerPage", () => {
+  it("does not report an empty EventSource configuration when runtime loading fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).includes("/runtime/cleaner")) {
+          return new Response(
+            JSON.stringify({
+              error: {
+                message: "数据源查询失败，请检查本机连接配置和服务状态。",
+              },
+            }),
+            { status: 502 },
+          );
+        }
+        return response({ panels: [] });
+      }),
+    );
+    renderPage();
+
+    expect(await screen.findByText(/Cleaner 当前状态加载失败/)).toBeVisible();
+    expect(screen.queryByText("当前配置没有 EventSource。")).toBeNull();
+  });
+
   it("separates the processing flow from a dedicated Kafka queue panel", async () => {
     stubCleanerAPI();
     renderPage();

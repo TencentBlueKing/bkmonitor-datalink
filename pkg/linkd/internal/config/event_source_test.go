@@ -10,11 +10,14 @@
 package config
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
 
 	"linkd/internal/kafkaclient"
+
+	"go.yaml.in/yaml/v3"
 )
 
 func TestSeverityConfig(t *testing.T) {
@@ -35,6 +38,50 @@ func TestSeverityConfig(t *testing.T) {
 		if err := test.Validate(); err == nil {
 			t.Fatalf("Validate(%#v) unexpectedly succeeded", test)
 		}
+	}
+}
+
+func TestEnrichProcessorConfigJSONYAMLRoundTrip(t *testing.T) {
+	for _, codec := range []struct {
+		name      string
+		marshal   func(any) ([]byte, error)
+		unmarshal func([]byte, any) error
+	}{{"json", json.Marshal, json.Unmarshal}, {"yaml", yaml.Marshal, yaml.Unmarshal}} {
+		t.Run(codec.name, func(t *testing.T) {
+			source := validEventSource()
+			source.Enrich.Processors = []EnrichProcessorConfig{{
+				Type: "strategy", Config: map[string]any{"web_saas_module_url": "https://example.com/kingeye/"},
+			}}
+			data, err := codec.marshal(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var restored EventSource
+			if err := codec.unmarshal(data, &restored); err != nil {
+				t.Fatal(err)
+			}
+			if got := restored.Enrich.Processors[0].Config["web_saas_module_url"]; got != "https://example.com/kingeye/" {
+				t.Fatalf("processor config=%#v", restored.Enrich.Processors[0].Config)
+			}
+		})
+	}
+}
+
+func TestEnrichProcessorConfigCloneDoesNotShareConfig(t *testing.T) {
+	source := validEventSource()
+	source.Enrich.Processors = []EnrichProcessorConfig{{
+		Type: "strategy",
+		Config: map[string]any{
+			"web_saas_module_url": "https://example.com/kingeye/",
+			"nested":              map[string]any{"enabled": true},
+		},
+	}}
+	cloned := source.WithDefaults()
+	cloned.Enrich.Processors[0].Config["web_saas_module_url"] = "https://changed.example.com/"
+	cloned.Enrich.Processors[0].Config["nested"].(map[string]any)["enabled"] = false
+	if source.Enrich.Processors[0].Config["web_saas_module_url"] != "https://example.com/kingeye/" ||
+		source.Enrich.Processors[0].Config["nested"].(map[string]any)["enabled"] != true {
+		t.Fatalf("processor config clone shares state: %#v", source.Enrich.Processors[0].Config)
 	}
 }
 
@@ -75,6 +122,16 @@ func TestEventSourceDefaultsAndValidation(t *testing.T) {
 	emptyProcessor.Enrich.Processors = []EnrichProcessorConfig{{}}
 	if err := ValidateEventSources([]EventSource{emptyProcessor}, SeverityConfig{}); err == nil || !strings.Contains(err.Error(), "type is required") {
 		t.Fatalf("empty enrich processor error = %v", err)
+	}
+	unsupportedProcessorConfig := source
+	unsupportedProcessorConfig.Enrich.Processors = []EnrichProcessorConfig{{Type: "display", Config: map[string]any{"key": "value"}}}
+	if err := ValidateEventSources([]EventSource{unsupportedProcessorConfig}, SeverityConfig{}); err == nil || !strings.Contains(err.Error(), "not supported") {
+		t.Fatalf("unsupported enrich processor config error = %v", err)
+	}
+	badProcessorConfig := source
+	badProcessorConfig.Enrich.Processors = []EnrichProcessorConfig{{Type: "strategy", Config: map[string]any{"": "value"}}}
+	if err := ValidateEventSources([]EventSource{badProcessorConfig}, SeverityConfig{}); err == nil || !strings.Contains(err.Error(), "config key") {
+		t.Fatalf("invalid enrich processor config error = %v", err)
 	}
 }
 
@@ -139,6 +196,19 @@ func TestEventSourceCloneAndRedaction(t *testing.T) {
 	}
 }
 
+func TestEnrichRejectsLegacyOneModelIndexPrefix(t *testing.T) {
+	t.Parallel()
+	var dataSource EnrichDataSources
+	decoder := yaml.NewDecoder(strings.NewReader(`elasticsearch:
+  addresses: [http://onemodel.example.com:9200]
+  index_prefix: bk_monitor_base_
+`))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&dataSource); err == nil {
+		t.Fatal("legacy enrich elasticsearch index_prefix was accepted")
+	}
+}
+
 func TestEnrichSelectsOnlyProcessorDependencies(t *testing.T) {
 	t.Parallel()
 	enrich := EnrichConfig{
@@ -178,7 +248,7 @@ func TestEnrichPreservesOmittedSecrets(t *testing.T) {
 func validEnrichDataSources() *EnrichDataSources {
 	return &EnrichDataSources{
 		MySQL:         &EnrichMySQLDataSource{Address: "mysql.example.com:3306", Database: "kingeye", Username: "reader", Password: "secret"},
-		Elasticsearch: &EnrichElasticsearchDataSource{Addresses: []string{"http://onemodel.example.com:9200"}, IndexPrefix: "bk_monitor_base_"},
+		Elasticsearch: &EnrichElasticsearchDataSource{Addresses: []string{"http://onemodel.example.com:9200"}},
 	}
 }
 

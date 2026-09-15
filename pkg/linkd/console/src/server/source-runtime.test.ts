@@ -45,6 +45,15 @@ const records = [
           type: "kafka",
           config: { brokers: ["out:9092"], topic: "alerts", security },
         },
+        {
+          name: "kac-output",
+          type: "kac",
+          config: {
+            brokers: ["kac:9092"],
+            topic: "kac-alarms",
+            security,
+          },
+        },
       ],
     },
   },
@@ -60,6 +69,11 @@ it("loads complete input and output credentials only on the server", async () =>
   expect(sources[0].kafkaHooks?.[0].connection.security.sasl?.password).toBe(
     "private-kafka-password",
   );
+  expect(sources[0].kafkaHooks?.map((hook) => hook.name)).toEqual([
+    "output",
+    "kac-output",
+  ]);
+  expect(sources[0].kafkaHooks?.[1].connection.topic).toBe("kac-alarms");
   expect(fetcher).toHaveBeenCalledWith(
     expect.stringContaining("include_secrets=true"),
     expect.objectContaining({

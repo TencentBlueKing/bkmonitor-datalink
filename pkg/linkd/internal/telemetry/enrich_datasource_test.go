@@ -27,12 +27,16 @@ func TestObserveEnrichSourcesPreservesResults(t *testing.T) {
 	wantErr := errors.New("reader failed")
 	sources := runtime.ObserveEnrichSources(enrich.Sources{
 		CWStrategy:  testCWStrategyReader{err: wantErr},
+		Business:    testBusinessReader{},
 		Metric:      testMetricReader{},
 		AlarmSource: testAlarmSourceReader{},
 		OneModel:    testOneModelReader{},
 	})
 	if _, found, err := sources.CWStrategy.GetByBKStrategyID(context.Background(), "tenant", 1); found || !errors.Is(err, wantErr) {
 		t.Fatalf("cw strategy found=%t err=%v", found, err)
+	}
+	if isGlobal, found, err := sources.Business.IsGlobalBusiness(context.Background(), "tenant", 1); !isGlobal || !found || err != nil {
+		t.Fatalf("business is_global=%t found=%t err=%v", isGlobal, found, err)
 	}
 	if _, found, err := sources.Metric.FindMetricLibrary(context.Background(), models.MetricLibraryQuery{}); found || err != nil {
 		t.Fatalf("metric found=%t err=%v", found, err)
@@ -69,6 +73,12 @@ type testCWStrategyReader struct{ err error }
 
 func (r testCWStrategyReader) GetByBKStrategyID(context.Context, string, int64) (models.CWStrategy, bool, error) {
 	return models.CWStrategy{}, false, r.err
+}
+
+type testBusinessReader struct{}
+
+func (testBusinessReader) IsGlobalBusiness(context.Context, string, int64) (bool, bool, error) {
+	return true, true, nil
 }
 
 type testMetricReader struct{}

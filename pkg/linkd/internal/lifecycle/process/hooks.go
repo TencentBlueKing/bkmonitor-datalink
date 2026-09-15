@@ -17,6 +17,7 @@ import (
 
 	"linkd/internal/config"
 	"linkd/internal/lifecycle"
+	"linkd/internal/lifecycle/kachook"
 	"linkd/internal/lifecycle/kafkahook"
 	"linkd/internal/lifecycle/strategyhook"
 	"linkd/internal/redisclient"
@@ -61,6 +62,16 @@ func assembleHooks(configs []config.HookConfig, runtime *telemetry.Runtime, fact
 
 func openHook(spec config.HookConfig) (lifecycle.FinalHook, func() error, error) {
 	switch spec.Type {
+	case config.HookTypeKAC:
+		brokers, topic, clientID, maxMessageBytes, security := spec.KafkaParameters()
+		hook, err := kachook.New(kachook.Config{
+			Brokers: brokers, Topic: topic, ClientID: clientID,
+			MaxMessageBytes: maxMessageBytes, Security: security,
+		}, spec.Name)
+		if err != nil {
+			return nil, nil, err
+		}
+		return hook, func() error { hook.Close(); return nil }, nil
 	case config.HookTypeKafka:
 		hook, err := kafkahook.New(spec.KafkaConfig())
 		if err != nil {

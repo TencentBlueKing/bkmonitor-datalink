@@ -63,7 +63,7 @@ func TestSourceConfigurationSecrets(t *testing.T) {
 	const testOneModelSecret = "private-" + "onemodel-secret"
 	spec := config.EventSource{EventSourceID: "source", Enrich: config.EnrichConfig{DataSources: &config.EnrichDataSources{
 		MySQL:         &config.EnrichMySQLDataSource{Address: "mysql:3306", Database: "kingeye", Username: "reader", Password: testMySQLPassword},
-		Elasticsearch: &config.EnrichElasticsearchDataSource{Addresses: []string{"http://onemodel:9200"}, IndexPrefix: "bk_monitor_base_", APIKey: testOneModelSecret},
+		Elasticsearch: &config.EnrichElasticsearchDataSource{Addresses: []string{"http://onemodel:9200"}, APIKey: testOneModelSecret},
 	}}, Storage: config.EventSourceStorageConfig{Type: "kafka", Kafka: config.KafkaStorageConfig{Brokers: []string{"kafka:9092"}, Topic: "raw", ConsumerGroup: "cleaner", Security: kafkaclient.SecurityConfig{Protocol: "sasl_plaintext", SASL: &kafkaclient.SASLConfig{Mechanism: "plain", Username: "reader", Password: "private-kafka-secret"}}}}}
 	record := eventsource.Record{ID: "source", Spec: spec, Pending: &eventsource.Release{ID: "source", Spec: spec}}
 	api := (&API{Sources: eventsource.New(configurationDocuments{record}, config.SeverityConfig{}), Config: config.DispatchConfig{APIToken: "admin", WorkerToken: "worker"}}).Handler()

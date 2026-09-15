@@ -25,6 +25,8 @@ import (
 )
 
 const (
+	// HookTypeKAC 注册 KAC Alarm 兼容 Kafka 输出。
+	HookTypeKAC = "kac"
 	// HookTypeKafka 注册完整 Alert V1 Kafka 输出。
 	HookTypeKafka = "kafka"
 	// HookTypeActiveAlertByStrategy 注册按策略维护活跃 fingerprint 的 Redis 输出。
@@ -124,7 +126,7 @@ func (h HookConfig) clone() HookConfig {
 func (h HookConfig) WithDefaults() HookConfig {
 	h = h.clone()
 	switch h.Type {
-	case HookTypeKafka:
+	case HookTypeKafka, HookTypeKAC:
 		if h.Config.MaxMessageBytes == 0 {
 			h.Config.MaxMessageBytes = 1 << 20
 		}
@@ -152,7 +154,13 @@ func (h HookConfig) Redacted() HookConfig {
 	return h
 }
 
-// KafkaConfig 构造 Kafka 插件运行时参数；调用方须先验证插件类型。
+// KafkaParameters 返回 Kafka 传输参数；Kafka V1 与 KAC Hook 共用配置形状。
+func (h HookConfig) KafkaParameters() (brokers []string, topic, clientID string, maxMessageBytes int, security kafkaclient.SecurityConfig) {
+	c := h.WithDefaults().Config
+	return c.Brokers, c.Topic, c.ClientID, c.MaxMessageBytes, c.Security
+}
+
+// KafkaConfig 构造 Kafka V1 插件运行时参数；调用方须先验证插件类型。
 func (h HookConfig) KafkaConfig() kafkahook.Config {
 	c := h.WithDefaults().Config
 	return kafkahook.Config{Brokers: c.Brokers, Topic: c.Topic, ClientID: c.ClientID, MaxMessageBytes: c.MaxMessageBytes, Security: c.Security}
@@ -179,9 +187,9 @@ func ValidateHooks(hooks []HookConfig) error {
 func (h HookConfig) validate() error {
 	c := h.WithDefaults().Config
 	switch h.Type {
-	case HookTypeKafka:
+	case HookTypeKafka, HookTypeKAC:
 		if c.Redis != nil || c.KeyPrefix != "" || c.TimeoutMilliseconds != nil {
-			return fmt.Errorf("kafka does not accept redis index parameters")
+			return fmt.Errorf("%s does not accept redis index parameters", h.Type)
 		}
 		return h.KafkaConfig().Validate()
 	case HookTypeActiveAlertByStrategy:

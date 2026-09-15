@@ -24,6 +24,7 @@ import (
 	"linkd/internal/lifecycle/enrich"
 	"linkd/internal/lifecycle/enrich/datasources"
 	"linkd/internal/lifecycle/enrich/models"
+	"linkd/internal/lifecycle/enrich/processors"
 	"linkd/internal/store/memory"
 )
 
@@ -185,6 +186,21 @@ func TestRouterReportsEnrichChainKind(t *testing.T) {
 	}
 }
 
+func TestRouterPassesProcessorConfigToStrategy(t *testing.T) {
+	t.Parallel()
+	processor, err := newProcessor(config.EnrichProcessorConfig{
+		Type:   "strategy",
+		Config: map[string]any{"web_saas_module_url": "https://example.com/kingeye/"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	strategy, ok := processor.(processors.Strategy)
+	if !ok || strategy.WebSaaSModuleURL() != "https://example.com/kingeye/" {
+		t.Fatalf("processor=%#v", processor)
+	}
+}
+
 func TestRouterRejectsUnknownSourceAndProcessor(t *testing.T) {
 	t.Parallel()
 	router, err := NewRouter([]config.EventSource{{EventSourceID: "known"}}, enrich.Sources{})
@@ -238,7 +254,7 @@ func baseCollectEventSource() config.EventSource {
 func testEnrichDataSources() *config.EnrichDataSources {
 	return &config.EnrichDataSources{
 		MySQL:         &config.EnrichMySQLDataSource{Address: "mysql.example.com:3306", Database: "kingeye", Username: "reader"},
-		Elasticsearch: &config.EnrichElasticsearchDataSource{Addresses: []string{"http://onemodel.example.com:9200"}, IndexPrefix: "bk_monitor_base_"},
+		Elasticsearch: &config.EnrichElasticsearchDataSource{Addresses: []string{"http://onemodel.example.com:9200"}},
 	}
 }
 
@@ -370,17 +386,18 @@ func (baseCollectOneModel) FindInstance(
 	if err := ctx.Err(); err != nil {
 		return enrich.Instance{}, false, err
 	}
-	if tenantID != datasources.SampleTenantID || query.ModelCode != "cw-Host" ||
-		query.Filters["cw_object_model_inst_id"] != "101" {
+	if tenantID != datasources.SampleTenantID || query.ModelCode != "cw-Host" || query.InstanceID != "101" {
 		return enrich.Instance{}, false, nil
 	}
 	return enrich.Instance{
 		TenantID: tenantID, ModelCode: query.ModelCode, InstanceID: "101",
 		Fields: map[string]any{
-			"bk_tenant_id": tenantID, "cw_object_model_code": query.ModelCode,
-			"cw_object_model_inst_id": "101", "bk_obj_id": "host", "bk_host_id": int64(101),
-			"bk_biz_id": int64(2), "bk_biz_name": "业务 2", "bk_host_innerip": "10.0.0.1",
-			"bk_cloud_id": int64(0), "bk_cloud_name": "默认区域",
+			"bk_tenant_id": tenantID, "model_id": query.ModelCode,
+			"model_inst_id": "101", "entity_uid": query.ModelCode + "|101", "bk_biz_ids": []int64{2},
+		},
+		Attributes: map[string]any{
+			"bk_obj_id": "host", "bk_host_id": int64(101), "bk_biz_id": int64(2), "bk_biz_name": "业务 2",
+			"bk_host_innerip": "10.0.0.1", "bk_cloud_id": int64(0), "bk_cloud_name": "默认区域",
 		},
 	}, true, nil
 }
@@ -426,20 +443,26 @@ func (sampleOneModel) FindInstance(
 	if err := ctx.Err(); err != nil {
 		return enrich.Instance{}, false, err
 	}
-	if tenantID != datasources.SampleTenantID || query.ModelCode != "cw-Host" || query.Filters["cw_object_model_inst_id"] != "101" {
+	if tenantID != datasources.SampleTenantID || query.ModelCode != "cw-Host" || query.InstanceID != "101" {
 		return enrich.Instance{}, false, nil
 	}
 	return enrich.Instance{
 		TenantID: tenantID, ModelCode: query.ModelCode, InstanceID: "101",
 		Fields: map[string]any{
-			"bk_tenant_id": tenantID, "cw_object_model_code": query.ModelCode,
-			"cw_object_model_inst_id": "101", "bk_obj_id": "host", "bk_host_id": int64(101),
-			"bk_biz_id": datasources.SampleBizID,
+			"bk_tenant_id": tenantID, "model_id": query.ModelCode,
+			"model_inst_id": "101", "entity_uid": query.ModelCode + "|101", "bk_biz_ids": []int64{2},
+		},
+		Attributes: map[string]any{
+			"bk_obj_id": "host", "bk_host_id": int64(101), "bk_biz_id": datasources.SampleBizID,
 		},
 	}, true, nil
 }
 
 type panicSources struct{}
+
+func (panicSources) IsGlobalBusiness(context.Context, string, int64) (bool, bool, error) {
+	panic("data source called")
+}
 
 func (panicSources) GetByBKStrategyID(context.Context, string, int64) (models.CWStrategy, bool, error) {
 	panic("data source called")
@@ -458,7 +481,7 @@ func (panicSources) FindInstance(context.Context, string, enrich.InstanceQuery) 
 }
 
 func (p panicSources) Sources() enrich.Sources {
-	return enrich.Sources{CWStrategy: p, Metric: p, OneModel: p, AlarmSource: p}
+	return enrich.Sources{CWStrategy: p, Business: p, Metric: p, OneModel: p, AlarmSource: p}
 }
 
 func baseCollectAlert(source string) domain.Alert {

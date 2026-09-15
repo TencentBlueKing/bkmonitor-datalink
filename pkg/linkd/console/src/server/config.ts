@@ -166,6 +166,23 @@ const hookSchema = z.discriminatedUnion("type", [
   z
     .object({
       name: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/),
+      type: z.literal("kac"),
+      config: kafkaConfigSchema
+        .omit({ consumer_group: true })
+        .extend({
+          max_message_bytes: z
+            .number()
+            .int()
+            .positive()
+            .max(2147483647)
+            .optional(),
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      name: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/),
       type: z.literal("active-alert-by-strategy"),
       config: z
         .object({
@@ -847,7 +864,7 @@ export function normalizeEventSources(
     enabled: source.enabled,
     cleanerType: source.cleaner.type,
     kafkaHooks: source.hooks
-      .filter((h) => h.type === "kafka")
+      .filter((h) => h.type === "kafka" || h.type === "kac")
       .map((h) => ({
         name: h.name,
         connection: normalizeKafka(h.config, configDir),

@@ -45,7 +45,17 @@ func (Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Process
 		return failedDependency(rules.DependencyKingeyeStrategy), nil
 	}
 	projection, err := strategy.StrategyItemProjection()
-	if err != nil || projection.BKBizID != ids.BizID {
+	if err != nil {
+		return failedDependency(rules.DependencyKingeyeStrategy), nil
+	}
+	businessMatches, err := strategyBusinessMatches(ctx, scope, projection.BKBizID, ids.BizID)
+	if contextErr := ctx.Err(); contextErr != nil {
+		return enrich.ProcessorResult{}, contextErr
+	}
+	if err != nil {
+		return failedDependency(rules.DependencyBusiness), nil
+	}
+	if !businessMatches {
 		return failedDependency(rules.DependencyKingeyeStrategy), nil
 	}
 	objectName := cleanDisplayObject(alert, strategy, scope.Context().Resource.Values)

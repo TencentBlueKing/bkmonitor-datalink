@@ -168,7 +168,6 @@ func TestLoadEventSources(t *testing.T) {
           password: secret
         elasticsearch:
           addresses: [http://onemodel.example.com:9200]
-          index_prefix: bk_monitor_base_
       processors:
         - type: strategy
         - type: resource

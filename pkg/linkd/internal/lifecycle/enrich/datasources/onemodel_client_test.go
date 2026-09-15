@@ -24,62 +24,122 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) Perform(request *http.Request) (*http.Response, error) { return fn(request) }
 
-func TestOneModelClientFindInstance(t *testing.T) {
+func TestOneModelClientFindInstanceByIdentity(t *testing.T) {
 	t.Parallel()
 	var gotPath string
-	var gotBody string
+	var gotBody []byte
 	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		gotPath = request.URL.Path
 		data, err := io.ReadAll(request.Body)
 		if err != nil {
 			t.Fatal(err)
 		}
-		gotBody = string(data)
+		gotBody = data
 		return &http.Response{
 			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(strings.NewReader(`{"hits":{"hits":[{"_source":{"bk_tenant_id":"tenant-a","cw_object_model_code":"cw-Host","cw_object_model_inst_id":"101","bk_host_id":101}}]}}`)),
+			Body: io.NopCloser(strings.NewReader(`{"hits":{"hits":[{"_source":{
+				"bk_tenant_id":"system","model_id":"cw-Host","model_inst_id":"167","entity_uid":"cw-Host|167",
+				"source":"cmdb","display_name":"10.10.28.10","bk_biz_ids":[2],
+				"attributes":{"bk_host_id":167,"bk_host_name":"linux-28-10","bk_biz_id":2,"bk_biz_name":"蓝鲸-修改后2"},
+				"attribute_values":[{"field_name":"bk_host_id","long_values":[167]}]
+			}}]}}`)),
 		}, nil
 	})
-	client, err := NewOneModelClient(OneModelClientConfig{Transport: transport, CMDBIndex: "bk_monitor_base_cmdb_instance"})
+	client, err := NewOneModelClient(OneModelClientConfig{Transport: transport})
 	if err != nil {
 		t.Fatal(err)
 	}
-	instance, found, err := client.FindInstance(context.Background(), "tenant-a", enrich.InstanceQuery{
-		ModelCode: "cw-Host", Filters: map[string]any{"cw_object_model_inst_id": float64(101)},
+	instance, found, err := client.FindInstance(context.Background(), "system", enrich.InstanceQuery{
+		ModelCode: rulesHostModel, InstanceID: "167",
 	})
-	if err != nil || !found || instance.InstanceID != "101" {
+	if err != nil || !found || instance.InstanceID != "167" || instance.Attributes["bk_host_name"] != "linux-28-10" {
 		t.Fatalf("FindInstance()=%#v,%v,%v", instance, found, err)
 	}
-	if gotPath != "/bk_monitor_base_cmdb_instance/_search" {
+	if gotPath != "/kingeye_all_instance/_search" {
 		t.Fatalf("path=%q", gotPath)
 	}
-	for _, value := range []string{"tenant-a", "cw-Host", "cw_object_model_inst_id"} {
-		if !bytes.Contains([]byte(gotBody), []byte(value)) {
+	for _, value := range []string{"system", "cw-Host", "model_id", "model_inst_id", "167"} {
+		if !bytes.Contains(gotBody, []byte(value)) {
+			t.Fatalf("body=%s missing %q", gotBody, value)
+		}
+	}
+	for _, legacy := range []string{"cw_object_model_code", "cw_object_model_inst_id"} {
+		if bytes.Contains(gotBody, []byte(legacy)) {
+			t.Fatalf("body=%s contains legacy field %q", gotBody, legacy)
+		}
+	}
+}
+
+func TestOneModelClientRejectsUnboundedAndInvalidAttributeQueries(t *testing.T) {
+	t.Parallel()
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("invalid query reached transport")
+		return nil, nil
+	})
+	client, err := NewOneModelClient(OneModelClientConfig{Transport: transport})
+	if err != nil {
+		t.Fatal(err)
+	}
+	queries := []enrich.InstanceQuery{
+		{ModelCode: rulesHostModel},
+		{ModelCode: rulesHostModel, AttributeFilters: []enrich.InstanceAttributeFilter{{Field: "attributes.bk_host_id", Type: enrich.InstanceAttributeLong, Value: 167}}},
+		{ModelCode: rulesHostModel, AttributeFilters: []enrich.InstanceAttributeFilter{{Field: "bk_host_id", Type: "unknown", Value: 167}}},
+	}
+	for _, query := range queries {
+		if _, _, err := client.FindInstance(context.Background(), "system", query); err == nil {
+			t.Fatalf("query=%#v was accepted", query)
+		}
+	}
+}
+
+func TestOneModelClientBuildsNestedAttributeFilters(t *testing.T) {
+	t.Parallel()
+	var gotBody []byte
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		gotBody, _ = io.ReadAll(request.Body)
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"hits":{"hits":[]}}`))}, nil
+	})
+	client, err := NewOneModelClient(OneModelClientConfig{Transport: transport})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = client.FindInstance(context.Background(), "system", enrich.InstanceQuery{
+		ModelCode: rulesHostModel,
+		AttributeFilters: []enrich.InstanceAttributeFilter{
+			{Field: "bk_host_innerip", Type: enrich.InstanceAttributeKeyword, Value: "10.10.28.10"},
+			{Field: "bk_cloud_id", Type: enrich.InstanceAttributeLong, Value: float64(0)},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"nested", "attribute_values", "bk_host_innerip", "keyword_values", "bk_cloud_id", "long_values"} {
+		if !bytes.Contains(gotBody, []byte(value)) {
 			t.Fatalf("body=%s missing %q", gotBody, value)
 		}
 	}
 }
 
-func TestOneModelClientRoutesK8sAndRejectsCrossTenantResponse(t *testing.T) {
+func TestOneModelClientRejectsInvalidResponseIdentity(t *testing.T) {
 	t.Parallel()
-	var gotPath string
-	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		gotPath = request.URL.Path
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(strings.NewReader(`{"hits":{"hits":[{"_source":{"bk_tenant_id":"tenant-b","cw_object_model_code":"cw-K8s_Cluster","cw_object_model_inst_id":"c1"}}]}}`)),
-		}, nil
-	})
-	client, err := NewOneModelClient(OneModelClientConfig{Transport: transport, CMDBIndex: "cmdb_instance"})
-	if err != nil {
-		t.Fatal(err)
+	cases := []string{
+		`{"bk_tenant_id":"tenant-b","model_id":"cw-Host","model_inst_id":"167","entity_uid":"cw-Host|167","attributes":{}}`,
+		`{"bk_tenant_id":"tenant-a","model_id":"cw-Disk","model_inst_id":"167","entity_uid":"cw-Disk|167","attributes":{}}`,
+		`{"bk_tenant_id":"tenant-a","model_id":"cw-Host","model_inst_id":"168","entity_uid":"cw-Host|168","attributes":{}}`,
+		`{"bk_tenant_id":"tenant-a","model_id":"cw-Host","model_inst_id":"167","entity_uid":"cw-Disk|167","attributes":{}}`,
 	}
-	_, _, err = client.FindInstance(context.Background(), "tenant-a", enrich.InstanceQuery{ModelCode: "cw-K8s_Cluster"})
-	if err == nil || !strings.Contains(err.Error(), "identity does not match") {
-		t.Fatalf("FindInstance() error=%v", err)
-	}
-	if gotPath != "/kingeye_k8s_cluster/_search" {
-		t.Fatalf("path=%q", gotPath)
+	for _, source := range cases {
+		transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"hits":{"hits":[{"_source":` + source + `}]}}`))}, nil
+		})
+		client, err := NewOneModelClient(OneModelClientConfig{Transport: transport})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, err = client.FindInstance(context.Background(), "tenant-a", enrich.InstanceQuery{ModelCode: rulesHostModel, InstanceID: "167"})
+		if err == nil || !strings.Contains(err.Error(), "identity") {
+			t.Fatalf("source=%s error=%v", source, err)
+		}
 	}
 }
 
@@ -88,11 +148,11 @@ func TestOneModelClientReturnsMissing(t *testing.T) {
 	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"hits":{"hits":[]}}`))}, nil
 	})
-	client, err := NewOneModelClient(OneModelClientConfig{Transport: transport, CMDBIndex: "cmdb_instance"})
+	client, err := NewOneModelClient(OneModelClientConfig{Transport: transport})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, found, err := client.FindInstance(context.Background(), "tenant-a", enrich.InstanceQuery{ModelCode: "cw-Host"})
+	_, found, err := client.FindInstance(context.Background(), "tenant-a", enrich.InstanceQuery{ModelCode: rulesHostModel, InstanceID: "missing"})
 	if err != nil || found {
 		t.Fatalf("FindInstance() found=%v error=%v", found, err)
 	}
@@ -101,10 +161,12 @@ func TestOneModelClientReturnsMissing(t *testing.T) {
 func TestOneModelRejectsPartialSearch(t *testing.T) {
 	for _, body := range []string{`{"timed_out":true,"hits":{"hits":[]}}`, `{"_shards":{"failed":1},"hits":{"hits":[]}}`} {
 		response := &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}
-		_, found, err := parseFindInstanceResponse(response, "tenant-a", "host")
+		_, found, err := parseFindInstanceResponse(response, "tenant-a", enrich.InstanceQuery{ModelCode: rulesHostModel, InstanceID: "167"})
 		_ = response.Body.Close()
 		if found || err == nil {
 			t.Fatalf("found=%t error=%v", found, err)
 		}
 	}
 }
+
+const rulesHostModel = "cw-Host"

@@ -69,7 +69,17 @@ func (Metric) Process(ctx context.Context, scope *enrich.Scope) (enrich.Processo
 		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyKingeyeStrategy)
 	}
 	projection, err := strategy.StrategyItemProjection()
-	if err != nil || projection.BKBizID != ids.BizID {
+	if err != nil {
+		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyKingeyeStrategy)
+	}
+	businessMatches, err := strategyBusinessMatches(ctx, scope, projection.BKBizID, ids.BizID)
+	if contextErr := ctx.Err(); contextErr != nil {
+		return enrich.ProcessorResult{}, contextErr
+	}
+	if err != nil {
+		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyBusiness)
+	}
+	if !businessMatches {
 		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyKingeyeStrategy)
 	}
 	query := projection.QueryConfigs[0]
@@ -469,10 +479,10 @@ func cleanItem(
 	projection models.StrategyItemProjection,
 	query models.StrategyQueryConfig,
 ) (string, error) {
-	if strategy.Spec.AliasName != "" {
-		// 别名优先
-		return strategy.Spec.AliasName, nil
-	}
+	// if strategy.Spec.AliasName != "" {
+	// 	// 别名优先
+	// 	return strategy.Spec.AliasName, nil
+	// }
 	if strategy.Spec.StrategyItem != nil && len(strategy.Spec.StrategyItem.QueryConfigs) != 0 ||
 		strategy.ObjectModelCode == nil || *strategy.ObjectModelCode == "" {
 		// 基于数据或多指标

@@ -23,6 +23,7 @@ import (
 
 const (
 	enrichDataSourceCWStrategy    = "cw_strategy"
+	enrichDataSourceBusiness      = "business"
 	enrichDataSourceMetricLibrary = "metric_library"
 	enrichDataSourceAlarmSource   = "alarm_source"
 	enrichDataSourceOneModel      = "onemodel"
@@ -35,6 +36,9 @@ func (r *Runtime) ObserveEnrichSources(sources enrich.Sources) enrich.Sources {
 	}
 	if sources.CWStrategy != nil {
 		sources.CWStrategy = &observedCWStrategyReader{next: sources.CWStrategy, metrics: r.metrics}
+	}
+	if sources.Business != nil {
+		sources.Business = &observedBusinessReader{next: sources.Business, metrics: r.metrics}
 	}
 	if sources.Metric != nil {
 		sources.Metric = &observedMetricReader{next: sources.Metric, metrics: r.metrics}
@@ -85,6 +89,18 @@ func (r *observedCWStrategyReader) GetByBKStrategyID(ctx context.Context, tenant
 	value, found, err := r.next.GetByBKStrategyID(ctx, tenantID, strategyID)
 	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceCWStrategy, "get_by_bk_strategy_id", startedAt, found, err)
 	return value, found, err
+}
+
+type observedBusinessReader struct {
+	next    enrich.BusinessReader
+	metrics *instruments
+}
+
+func (r *observedBusinessReader) IsGlobalBusiness(ctx context.Context, tenantID string, bizID int64) (bool, bool, error) {
+	startedAt := time.Now()
+	isGlobal, found, err := r.next.IsGlobalBusiness(ctx, tenantID, bizID)
+	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceBusiness, "is_global_business", startedAt, found, err)
+	return isGlobal, found, err
 }
 
 type observedMetricReader struct {

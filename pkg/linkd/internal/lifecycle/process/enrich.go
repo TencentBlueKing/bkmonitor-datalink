@@ -90,7 +90,6 @@ func openEnrichRuntime(
 		runtime.transport = transport
 		client, err := datasources.NewOneModelClient(datasources.OneModelClientConfig{
 			Transport: transport,
-			CMDBIndex: oneModelConfig.IndexPrefix + "cmdb_instance",
 		})
 		if err != nil {
 			_ = runtime.Close()

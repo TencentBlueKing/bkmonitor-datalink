@@ -22,24 +22,47 @@ import (
 // ErrInvalidDataSourceResponse 表示外部请求成功后返回的数据违反 Reader 契约。
 var ErrInvalidDataSourceResponse = errors.New("invalid enrich datasource response")
 
-// InstanceQuery 描述 OneModel 实例存储的一次单实例查询。
-// Filters 使用 ES 文档的扁平字段名；Client 会强制追加租户和模型过滤。
-type InstanceQuery struct {
-	ModelCode string
-	Filters   map[string]any
+// InstanceAttributeType 是 OneModel attribute_values 使用的固定类型槽。
+type InstanceAttributeType string
+
+const (
+	InstanceAttributeKeyword  InstanceAttributeType = "keyword"
+	InstanceAttributeLong     InstanceAttributeType = "long"
+	InstanceAttributeDouble   InstanceAttributeType = "double"
+	InstanceAttributeBoolean  InstanceAttributeType = "boolean"
+	InstanceAttributeDatetime InstanceAttributeType = "datetime"
+	InstanceAttributeIP       InstanceAttributeType = "ip"
+)
+
+// InstanceAttributeFilter 描述一个已由调用方确定类型的 OneModel 动态属性过滤条件。
+type InstanceAttributeFilter struct {
+	Field string
+	Type  InstanceAttributeType
+	Value any
 }
 
-// Instance 是 OneModel 实例存储返回的扁平文档。
+// InstanceQuery 描述 OneModel 实例存储的一次单实例查询。
+// InstanceID 使用根字段 model_inst_id；AttributeFilters 使用 nested attribute_values。
+type InstanceQuery struct {
+	ModelCode        string
+	InstanceID       string
+	AttributeFilters []InstanceAttributeFilter
+}
+
+// Instance 是 OneModel 实例存储返回的统一实例文档。
+// Fields 保存根字段，Attributes 保存来源原始属性；业务消费方按根字段优先合并读取。
 type Instance struct {
 	TenantID   string
 	ModelCode  string
 	InstanceID string
 	Fields     map[string]any
+	Attributes map[string]any
 }
 
 // Sources 聚合 Enrichment 使用的窄只读数据源。
 type Sources struct {
 	CWStrategy  CWStrategyReader
+	Business    BusinessReader
 	Metric      MetricReader
 	OneModel    OneModelReader
 	AlarmSource AlarmSourceReader
@@ -48,6 +71,11 @@ type Sources struct {
 // CWStrategyReader 按全租户唯一的关联 ID 读取鲸眼声明式策略。
 type CWStrategyReader interface {
 	GetByBKStrategyID(ctx context.Context, tenantID string, bkStrategyID int64) (models.CWStrategy, bool, error)
+}
+
+// BusinessReader 读取租户内 BKCC 业务空间的全局属性。
+type BusinessReader interface {
+	IsGlobalBusiness(ctx context.Context, tenantID string, bizID int64) (bool, bool, error)
 }
 
 // MetricReader 只读取 Kingeye MonitorMetricLibrary；MonitorMetric 表已经废弃。
@@ -60,7 +88,7 @@ type AlarmSourceReader interface {
 	GetAlarmSourceName(ctx context.Context, tenantID, sourceID string) (string, bool, error)
 }
 
-// OneModelReader 按显式租户、模型和业务字段读取统一实例存储。
+// OneModelReader 按显式租户、模型、实例身份或类型化属性读取统一实例存储。
 type OneModelReader interface {
 	FindInstance(ctx context.Context, tenantID string, query InstanceQuery) (Instance, bool, error)
 }
@@ -69,6 +97,12 @@ type strategyResult struct {
 	value models.CWStrategy
 	found bool
 	err   error
+}
+
+type businessResult struct {
+	isGlobal bool
+	found    bool
+	err      error
 }
 
 type alarmSourceResult struct {
@@ -91,6 +125,8 @@ type Scope struct {
 
 	strategyOnce    sync.Once
 	strategy        strategyResult
+	businessOnce    sync.Once
+	business        businessResult
 	alarmSourceOnce sync.Once
 	alarmSource     alarmSourceResult
 	instanceOnce    sync.Once
@@ -129,6 +165,22 @@ func (s *Scope) CWStrategyByBKStrategyID(ctx context.Context, strategyID int64) 
 		s.strategy.value, s.strategy.found, s.strategy.err = s.sources.CWStrategy.GetByBKStrategyID(ctx, s.alert.BKTenantID, strategyID)
 	})
 	return s.strategy.value, s.strategy.found, s.strategy.err
+}
+
+// IsGlobalBusiness 惰性读取策略所属 BKCC 业务是否为全局业务。
+func (s *Scope) IsGlobalBusiness(ctx context.Context, bizID int64) (bool, bool, error) {
+	s.businessOnce.Do(func() {
+		if s.sources.Business == nil {
+			s.business.err = fmt.Errorf("business reader is unavailable")
+			return
+		}
+		s.business.isGlobal, s.business.found, s.business.err = s.sources.Business.IsGlobalBusiness(
+			ctx,
+			s.alert.BKTenantID,
+			bizID,
+		)
+	})
+	return s.business.isGlobal, s.business.found, s.business.err
 }
 
 // MetricLibrary 惰性读取并复用本次调用的指标库结果。

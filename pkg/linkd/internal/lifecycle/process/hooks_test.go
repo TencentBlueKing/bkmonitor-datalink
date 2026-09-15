@@ -54,6 +54,22 @@ func TestSourceHookAssemblyAndClose(t *testing.T) {
 	}
 }
 
+func TestOpenHookSupportsKAC(t *testing.T) {
+	spec := config.HookConfig{Name: "kac-main", Type: config.HookTypeKAC, Config: config.HookParameters{
+		Brokers: []string{"127.0.0.1:1"}, Topic: "kac-alerts",
+	}}
+	hook, closeHook, err := openHook(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hook == nil || closeHook == nil {
+		t.Fatal("KAC hook runtime is incomplete")
+	}
+	if err := closeHook(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestHookAssemblyFailureClosesEarlierInstances(t *testing.T) {
 	specs := []config.HookConfig{}
 	for _, name := range []string{"first", "second", "third"} {

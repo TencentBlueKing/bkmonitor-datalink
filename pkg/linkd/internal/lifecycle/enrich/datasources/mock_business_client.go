@@ -9,22 +9,18 @@
 
 package datasources
 
-import "linkd/internal/lifecycle/enrich"
+import "context"
 
-const (
-	SampleTenantID              = "tenant-1"
-	SampleStrategyID      int64 = 123
-	SampleStrategyVersion int64 = 1
-	SampleBizID           int64 = 2
-)
+// MockBusinessClient 提供开发期固定业务空间属性。
+type MockBusinessClient struct{}
 
-// Mock 提供人工构造、按租户和查询身份严格匹配的 BASE_COLLECT 固定依赖数据。
-type Mock struct{}
-
-// Sources 返回共享相同固定样例的窄读取接口集合。
-func (*Mock) Sources() enrich.Sources {
-	return enrich.Sources{
-		CWStrategy: &MockCWStrategyClient{},
-		Business:   MockBusinessClient{},
+// IsGlobalBusiness 返回固定样例业务的非全局属性。
+func (MockBusinessClient) IsGlobalBusiness(ctx context.Context, tenantID string, bizID int64) (bool, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, false, err
 	}
+	if tenantID != SampleTenantID || bizID != SampleBizID {
+		return false, false, nil
+	}
+	return false, true, nil
 }

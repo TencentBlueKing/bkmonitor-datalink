@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	elasticsearch "github.com/elastic/go-elasticsearch/v8"
+	"github.com/elastic/go-elasticsearch/v8/esapi"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
@@ -32,6 +33,17 @@ type ESClient struct {
 	// 控制并发数
 	tokenChan chan int
 	client    *elasticsearch.Client
+}
+
+func readResponse(result *esapi.Response) ([]byte, error) {
+	if result == nil {
+		return nil, fmt.Errorf("elasticsearch returned a nil response")
+	}
+	if result.Body == nil {
+		return nil, fmt.Errorf("elasticsearch returned a response without body")
+	}
+	defer result.Body.Close()
+	return io.ReadAll(result.Body)
 }
 
 var NewClient = func(info *ESInfo) (Client, error) {
@@ -74,9 +86,7 @@ func (c *ESClient) Search(ctx context.Context, body string, indexNames ...string
 		log.Errorf(ctx, "search index:%v,body:%s failed for:%s", indexNames, body, err)
 		return "", err
 	}
-	defer result.Body.Close()
-
-	res, err := io.ReadAll(result.Body)
+	res, err := readResponse(result)
 	if err != nil {
 		return "", err
 	}
@@ -99,9 +109,15 @@ func (c *ESClient) Aliases() (string, error) {
 		log.Errorf(context.TODO(), "cat aliases failed for:%s", err)
 		return "", err
 	}
-	res, err := io.ReadAll(result.Body)
+	res, err := readResponse(result)
+	if err != nil {
+		return "", err
+	}
+	if result.IsError() {
+		return "", fmt.Errorf("es cat aliases failed: status=%s body=%s", result.Status(), res)
+	}
 	log.Debugf(context.TODO(), "cat aliases get result:%s", res)
-	return string(res), err
+	return string(res), nil
 }
 
 // AliasWithIndex 通过 index 获取 alias。
@@ -117,9 +133,15 @@ func (c *ESClient) AliasWithIndex(index string) (string, error) {
 		log.Errorf(context.TODO(), "cat aliases with index:%s, failed for:%s", index, err)
 		return "", err
 	}
-	res, err := io.ReadAll(result.Body)
+	res, err := readResponse(result)
+	if err != nil {
+		return "", err
+	}
+	if result.IsError() {
+		return "", fmt.Errorf("es get alias with index:%s failed: status=%s body=%s", index, result.Status(), res)
+	}
 	log.Debugf(context.TODO(), "cat aliases with index:%s, get result:%s", index, res)
-	return string(res), err
+	return string(res), nil
 }
 
 // Indices 获取 indices 信息
@@ -134,7 +156,13 @@ func (c *ESClient) Indices() (string, error) {
 		log.Errorf(context.TODO(), "cat indices failed for:%s", err)
 		return "", err
 	}
-	res, err := io.ReadAll(result.Body)
+	res, err := readResponse(result)
+	if err != nil {
+		return "", err
+	}
+	if result.IsError() {
+		return "", fmt.Errorf("es cat indices failed: status=%s body=%s", result.Status(), res)
+	}
 	log.Debugf(context.TODO(), "cat indices get result:%s", res)
-	return string(res), err
+	return string(res), nil
 }

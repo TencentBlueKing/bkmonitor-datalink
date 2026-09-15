@@ -167,6 +167,20 @@ func TestCodesTheCatalogFilesTogetherShareAnOwner(t *testing.T) {
 			t.Errorf("%s is filed UNSUPPORTED and this table makes it %s's", entry.code, entry.owner)
 		}
 	}
+	// And CONFIG_REJECTED is the strategy's for the same reason: the definition
+	// is wrong as written. The agreement check is satisfied by a whole group
+	// being wrong together, and the first version of this anchored only one of
+	// the two groups -- so the four config-rejected codes moved to alarmd's as a
+	// block passed it.
+	for _, entry := range byDisposition[controlplane.DispositionConfigRejected] {
+		if entry.owner != OwnerStrategy {
+			t.Errorf("%s is filed CONFIG_REJECTED and this table makes it %s's", entry.code, entry.owner)
+		}
+	}
+	if len(byDisposition[controlplane.DispositionConfigRejected]) == 0 ||
+		len(byDisposition[controlplane.DispositionUnsupported]) == 0 {
+		t.Fatal("one of the two anchored dispositions has no codes; its anchor would pass vacuously")
+	}
 	// The run-time budgets stay this deployment's. Moving the whole budget
 	// bucket to the strategy would have satisfied everything above and been
 	// wrong.

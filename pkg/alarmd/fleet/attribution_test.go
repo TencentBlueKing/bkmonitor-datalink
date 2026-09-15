@@ -110,7 +110,7 @@ func TestEverySituationAnswersWhoOwnsItAndWhetherItHeals(t *testing.T) {
 		SituationTimelinePruned, SituationRoundBlocked, SituationDependencyDown, SituationStateDefect,
 		SituationContractRefused, SituationUnclassified,
 		SituationBackendUnavailable, SituationBackendCooldown, SituationSeriesDataMissing, SituationDataIntermittent,
-		SituationSeriesChurning, SituationPlanUnevaluable,
+		SituationSeriesChurning, SituationPlanUnevaluable, SituationPlanTooLarge,
 		SituationSeriesYoung, SituationSeriesRenewed, SituationVerdictHeld, SituationDataJustGapped, SituationOffHours,
 		SituationWindowEmpty, SituationSeriesMixed, SituationConfigDrift, SituationEffectiveTimeUnknown,
 		SituationRestoredWithoutCause,

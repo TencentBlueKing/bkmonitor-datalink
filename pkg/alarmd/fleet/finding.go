@@ -97,6 +97,7 @@ const (
 	// The strategy's.
 	SituationSeriesChurning  Situation = "SERIES_CHURNING"
 	SituationPlanUnevaluable Situation = "PLAN_UNEVALUABLE"
+	SituationPlanTooLarge    Situation = "PLAN_TOO_LARGE"
 
 	// Nobody's.
 	SituationSeriesYoung    Situation = "SERIES_YOUNG"
@@ -156,6 +157,7 @@ var situationAnswers = map[Situation]struct {
 
 	SituationSeriesChurning:  {OwnerStrategy, WillNotHeal, WhereStrategy},
 	SituationPlanUnevaluable: {OwnerStrategy, WillNotHeal, WhereStrategy},
+	SituationPlanTooLarge:    {OwnerStrategy, WillNotHeal, WhereStrategy},
 
 	SituationSeriesYoung:    {OwnerNobody, HealsOnItsOwn, WhereNowhere},
 	SituationSeriesRenewed:  {OwnerNobody, HealingUnknown, WhereNowhere},
@@ -348,12 +350,33 @@ var codeSituations = map[string]Situation{
 	"PROGRESS_BEGIN_FAILED":         SituationRoundBlocked,
 	"PROGRESS_BEGIN_REJECTED":       SituationRoundBlocked,
 
-	// Budgets this deployment allocates itself.
+	// Budgets this deployment allocates itself, at run time.
 	"EXECUTION_BUDGET_EXHAUSTED": SituationBudgetExceeded,
 	"SLOT_BUDGET_EXCEEDED":       SituationBudgetExceeded,
-	"LEVEL_BUDGET_EXCEEDED":      SituationBudgetExceeded,
-	"PLAN_BUDGET_EXCEEDED":       SituationBudgetExceeded,
 	"STATE_BUDGET_EXCEEDED":      SituationBudgetExceeded,
+
+	// Budgets the strategy compiler applies to a definition. These two codes
+	// sat with the run-time budgets above, which sent whoever read them to
+	// look for an alarmd budget to raise. On the runtime this page observes
+	// there is none: the fleet tracker is fed by phase two only, and in phase
+	// two these codes have exactly one producer, strategy/compiler.go, which
+	// emits them when a definition does not fit within the compile limits --
+	// too many levels, algorithms, conditions, AST nodes, or a trigger window
+	// beyond the cap. The control plane's catalog already files them beside
+	// ALGORITHM_UNSUPPORTED as one disposition (controlplane/
+	// runtime_executable_catalog.go, terminalDisposition), and this table
+	// had split that one disposition across two owners.
+	//
+	// They are not merged into PLAN_UNEVALUABLE because the next step differs:
+	// an unsupported algorithm needs a different algorithm or a build that
+	// supports it; a plan over budget needs to be made smaller.
+	//
+	// Phase one has a run-time producer for PLAN_BUDGET_EXCEEDED as well
+	// (detect/admitPlans), and on that runtime this reading would be wrong.
+	// Nothing on the anomaly says which runtime produced the code, so this
+	// table does not try to serve both; it serves the one that feeds it.
+	"PLAN_BUDGET_EXCEEDED":       SituationPlanTooLarge,
+	"LEVEL_BUDGET_EXCEEDED":      SituationPlanTooLarge,
 	"VALIDATION_BUDGET_EXCEEDED": SituationBudgetExceeded,
 	"MESSAGE_BUDGET_EXCEEDED":    SituationBudgetExceeded,
 	"READINESS_BUDGET_INVALID":   SituationBudgetExceeded,

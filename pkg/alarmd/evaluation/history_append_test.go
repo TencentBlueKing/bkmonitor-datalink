@@ -131,6 +131,56 @@ func TestEvaluationReportsHowShortTheDetectionWindowWas(t *testing.T) {
 	}
 }
 
+// The number a window is asked for never exceeds what the state keeps for it.
+//
+// Summarize gives up before walking anything when it is asked for more
+// positions than the Level retains, and returns the same shape as a window that
+// was walked and found empty -- which is counted as an empty window and rendered
+// as 取不到数据, sending a reader to look for a metric that stopped. The real
+// condition would be a configuration the store can never satisfy: permanent,
+// and invisible behind wording for something transient.
+//
+// It cannot currently happen, and this is the half of the reason that lives
+// here. strategy/compiler.go builds RetentionPoints and RequiredDetectHistoryPoints
+// from one variable so they are equal rather than merely ordered, and this is
+// the call site that hands that same RequiredDetectHistoryPoints to Summarize as
+// the argument it gets compared against. Run over the compiler's real output, so
+// a change to how either number is derived fails here rather than turning a dead
+// branch into a live one three files away.
+//
+// The state package pins the other half: that Align refuses to build a window
+// for any requirement the refusal would otherwise catch.
+func TestNoWindowIsAskedForMorePositionsThanTheStateRetains(t *testing.T) {
+	for _, shape := range []struct{ windowSize, requiredAnomalies uint32 }{
+		{1, 1}, {2, 1}, {9, 3}, {16, 16},
+	} {
+		plan := compiledWindow(t, shape.windowSize, shape.requiredAnomalies)
+		requirements, err := planLevelRequirements(plan)
+		if err != nil {
+			t.Fatalf("planLevelRequirements on a %d/%d window: %v", shape.windowSize,
+				shape.requiredAnomalies, err)
+		}
+		levels := plan.Levels()
+		if len(requirements) != len(levels) {
+			t.Fatalf("requirements = %d for %d levels", len(requirements), len(levels))
+		}
+		for index, level := range levels {
+			asked := level.RequiredDetectHistoryPoints()
+			retained := requirements[index].RetentionPoints
+			if asked == 0 {
+				t.Errorf("level %d asks for no positions at all, which Align would have rejected "+
+					"when the window was built", level.Definition().LevelID)
+			}
+			if retained < asked {
+				t.Errorf("level %d is asked for %d positions and retains %d: Summarize refuses to "+
+					"walk that window and reports it as one that held no points, which the page "+
+					"renders as data that stopped arriving rather than as a window the store can "+
+					"never fill", level.Definition().LevelID, asked, retained)
+			}
+		}
+	}
+}
+
 // The one fact that says whether a short window is a strategy problem.
 //
 // A window that stays short for ever is two unrelated situations. A strategy

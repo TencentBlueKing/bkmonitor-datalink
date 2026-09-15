@@ -13,6 +13,9 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 )
 
 // One reason code, six situations, five owners -- decided on the counts.
@@ -95,39 +98,78 @@ func TestAWindowReasonIsDecidedOnItsCountsNotItsCode(t *testing.T) {
 }
 
 // What the control plane files as one disposition, this table must not split
-// across two owners.
+// across two owners -- checked against the control plane, over every code.
 //
-// controlplane/runtime_executable_catalog.go files ALGORITHM_UNSUPPORTED,
-// PLAN_BUDGET_EXCEEDED and LEVEL_BUDGET_EXCEEDED together as
-// DispositionUnsupported: the definition cannot be run as written. The first
-// version of this table put the two budget codes with the run-time budgets and
-// sent the reader to look for an alarmd budget to raise -- on the runtime that
-// feeds this page there is none, those codes come only from the compiler, and
-// the reader would have arrived at two guards that cannot fire.
+// The first version of this named three codes and pinned their owner. That
+// held the fleet side and nothing else: a fourth code added to the catalog's
+// UNSUPPORTED case and mapped here to alarmd's passed it, and a code moved out
+// of that case with this table unchanged passed it too, while the comment
+// above it promised the opposite. The relationship was enumerated in two
+// packages and guarded in one, which is the shape of the defect it was written
+// for, one layer up.
 //
-// The catalog is not imported here (it would be a cycle), so the three codes
-// are named. If the catalog's grouping changes, this fails on the code that
-// moved, which is the moment to decide whether the owner moves with it.
+// So this walks the whole reason catalogue instead. For every code the
+// compiler can return as a terminal, the catalog says which disposition it is
+// and this table says who owns an object carrying it; within one disposition
+// the owners have to agree. A new code needs no one to remember this list.
+//
+// What it guards, exactly: that a reader is never sent to two different owners
+// for one disposition. It does not guard the catalog's own assignment of codes
+// to dispositions -- a code moved between two dispositions whose codes all
+// resolve to the same owner passes here, and should, because nothing the
+// reader is told has changed. The first run of this found PROJECTION_INVALID
+// filed with the state defects while the catalog files it as a config
+// rejection; the three-code list before it could not have.
 func TestCodesTheCatalogFilesTogetherShareAnOwner(t *testing.T) {
-	unsupported := []string{"ALGORITHM_UNSUPPORTED", "PLAN_BUDGET_EXCEEDED", "LEVEL_BUDGET_EXCEEDED"}
-	for _, code := range unsupported {
-		situation, mapped := codeSituations[code]
+	type reading struct {
+		code  string
+		owner Owner
+		where Where
+	}
+	byDisposition := map[controlplane.Disposition][]reading{}
+	for _, definition := range contract.ReasonCatalogV2() {
+		disposition, filed := controlplane.CompilerTerminalDisposition(definition.Code)
+		if !filed {
+			continue
+		}
+		situation, mapped := codeSituations[definition.Code]
 		if !mapped {
-			t.Errorf("%s reaches no situation", code)
+			t.Errorf("%s is a compiler terminal the catalog files as %s and this table maps to "+
+				"nothing", definition.Code, disposition)
 			continue
 		}
 		got := finding(situation, 0)
-		if got.Owner != OwnerStrategy {
-			t.Errorf("%s is %s's: the control plane files it with ALGORITHM_UNSUPPORTED as a "+
-				"definition that cannot run as written, and on this runtime it has no producer "+
-				"but the compiler", code, got.Owner)
-		}
-		if got.Where != WhereStrategy {
-			t.Errorf("%s sends the reader to %q, want the strategy", code, got.Where)
+		byDisposition[disposition] = append(byDisposition[disposition],
+			reading{code: definition.Code, owner: got.Owner, where: got.Where})
+	}
+	if len(byDisposition) < 2 {
+		t.Fatalf("only %d dispositions found across the catalogue; the comparison would be "+
+			"vacuous", len(byDisposition))
+	}
+	for disposition, readings := range byDisposition {
+		first := readings[0]
+		for _, other := range readings[1:] {
+			if other.owner != first.owner || other.where != first.where {
+				t.Errorf("the catalog files %s and %s together as %s; this table sends one to %s/%q "+
+					"and the other to %s/%q -- a reader is sent to two different people for one "+
+					"disposition", first.code, other.code, disposition,
+					first.owner, first.where, other.owner, other.where)
+			}
 		}
 	}
-	// And the run-time budgets stay this deployment's. Moving the whole bucket
-	// would have been the easy fix and the wrong one.
+	// And UNSUPPORTED in particular is the strategy's. The catalog's word for it
+	// is "this definition cannot run as written in this build", which no
+	// deployment budget changes; it is here as a named anchor so that the
+	// agreement above cannot be satisfied by every code in the group being
+	// wrong the same way.
+	for _, entry := range byDisposition[controlplane.DispositionUnsupported] {
+		if entry.owner != OwnerStrategy {
+			t.Errorf("%s is filed UNSUPPORTED and this table makes it %s's", entry.code, entry.owner)
+		}
+	}
+	// The run-time budgets stay this deployment's. Moving the whole budget
+	// bucket to the strategy would have satisfied everything above and been
+	// wrong.
 	for _, code := range []string{"EXECUTION_BUDGET_EXHAUSTED", "SLOT_BUDGET_EXCEEDED", "STATE_BUDGET_EXCEEDED"} {
 		if got := finding(codeSituations[code], 0).Owner; got != OwnerAlarmd {
 			t.Errorf("%s is %s's, want this deployment's: it is a budget allocated at run time", code, got)

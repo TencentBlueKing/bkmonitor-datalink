@@ -202,6 +202,14 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	lastExit := at.Add(-2 * time.Minute)
 	fixture := map[string]any{
 		"anomalies": rows,
+		// The deployment-wide counts the governance line reads. Three owners
+		// with objects and one without, so the line renders a zero as well as
+		// counts -- a zero that reads as "nothing for this owner" is the value
+		// a reader most needs to see printed rather than absent.
+		"action_required_total": 5,
+		"by_owner_total": fleet.Distribution{Top: []fleet.Count{
+			{Value: "ALARMD", Count: 3}, {Value: "UNDETERMINED", Count: 2},
+			{Value: "STRATEGY", Count: 1}, {Value: "DATA", Count: 4}}, Distinct: 4},
 		"summary": fleet.Summary{
 			ByKind:   fleet.Distribution{Top: []fleet.Count{{Value: "DEGRADED_RUN", Count: 7}}, Distinct: 1},
 			ByReason: fleet.Distribution{Top: []fleet.Count{{Value: "COMPLETED_WITH_UNAVAILABLE", Count: 7}}, Distinct: 1},
@@ -421,6 +429,37 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	} else if !strings.Contains(equation, "等于应有的") {
 		t.Errorf("the partition line does not add up: %s\n(the fixture's columns sum to Covered, "+
 			"so a page that drops one is the only way this fails)", equation)
+	}
+
+	// The four answers each row leads with. Same fixtures as the NOTE table:
+	// the two rows that were identical in every count but the fresh ones must
+	// now answer with different owners and different next steps, and the
+	// undetermined one must say so rather than pick.
+	for _, want := range []struct{ object, who, what, next string }{
+		{"qg-window-churn", "策略侧", "序列在不断换", "去掉会变的聚合维度"},
+		{"qg-window-stale-data", "数据侧", "序列一直在，数据缺点", "查采集和查询偏移"},
+		{"qg-window-rekeyed", "不用处理", "序列刚重新建号", "再看 8 轮"},
+		{"qg-window-starved", "待确认", "窗口一个点都没有", "先确认是指标停了还是算法判不了"},
+		{"qg-window-filling", "不用处理", "序列还年轻", "还差 1 轮"},
+		{"qg-gapped-intermittent", "数据侧", "数据断断续续", "查询偏移"},
+		{"qg-skipped", "alarmd", "放弃了一段时间", "查为什么跟不上"},
+		{"qg-drift", "待确认", "计划激活没对上", "看已持续"},
+		{"qg-offhours", "不用处理", "不在生效时段", "不用管"},
+	} {
+		line := lineStarting(text, "ROW "+want.object+" ::")
+		if line == "" {
+			t.Errorf("no row was rendered for %s", want.object)
+			continue
+		}
+		for _, part := range []string{want.who, want.what, want.next} {
+			if !strings.Contains(line, part) {
+				t.Errorf("%s renders %q, want it to say %q", want.object, line, part)
+			}
+		}
+	}
+	governance := lineStarting(text, "GOVERNANCE ::")
+	if !strings.Contains(governance, "需要你处理：") || !strings.Contains(governance, "策略侧") {
+		t.Errorf("governance line = %q, want the to-do count and the per-owner counts", governance)
 	}
 
 	// Only one column decides the verdict, and the line that says so was printed
@@ -870,6 +909,7 @@ const calls = [
   ['anomalyRow (every row shape)', () => data.anomalies.forEach(r => ctx.anomalyRow(r))],
   ['renderDeployment', () => ctx.renderDeployment(data.health)],
   ['renderSummary', () => ctx.renderSummary(data.summary, data.page.total)],
+  ['renderGovernance', () => ctx.renderGovernance(data.action_required_total, data.by_owner_total, 'action_required')],
   ['renderRollup', () => ctx.renderRollup(data.summary, data.page.total)],
   ['renderReplicas', () => ctx.renderReplicas(data.per_replica)],
   ['renderCoverage', () => ctx.renderCoverage(data.coverage)],
@@ -918,6 +958,13 @@ for (const row of data.anomalies) {
   try { note = ctx.coverageNote(row); }
   catch (e) { console.error('coverageNote threw on ' + row.query_group + ': ' + e.message); failed++; continue; }
   console.log('NOTE ' + row.query_group + ' :: ' + (note ? note.text : '(none)'));
+  // The four answers the row leads with, read off the rendered cells. This is
+  // what a reader acts on now; the note above is one click further in.
+  let tr;
+  try { tr = ctx.anomalyRow(row); }
+  catch (e) { console.error('anomalyRow threw on ' + row.query_group + ': ' + e.message); failed++; continue; }
+  const cells = tr.children.map(textOf);
+  console.log('ROW ' + row.query_group + ' :: ' + cells.slice(1, 5).join(' | '));
   // The tooltip too, for rows carrying a held verdict. The headline cannot fit
   // what releases the hold, and that is the part that says whether to go and
   // look at the data or wait a round -- opposite actions off one row.
@@ -949,6 +996,7 @@ clockMs += 30000;
 try { ctx.renderCapacity(data.health.capacity, []); }
 catch (e) { console.error('renderCapacity (refresh, counters unmoved): ' + e.constructor.name + ': ' + e.message); failed++; }
 console.log('CAPACITY :: ' + textOf(store['capCards']));
+console.log('GOVERNANCE :: ' + textOf(store['governance']));
 
 // The same panel over the rotation shapes a deployment is actually in.
 //

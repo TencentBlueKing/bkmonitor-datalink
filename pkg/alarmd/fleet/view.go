@@ -159,6 +159,14 @@ const (
 	// "nothing is wrong", and CONFIG_DRIFT is not even in that class -- it is
 	// COVERAGE.
 	ColumnByDesign = "by_design"
+	// ColumnActionRequired is the to-do list: every object, from every column
+	// above, that this deployment has to act on or that nobody can yet say who
+	// owns. It cuts across the other four on purpose. Those partition objects
+	// by what happened to them; this one answers the reader's first question,
+	// which is whether anyone here has to do anything -- and an object in the
+	// demoted pool with a stalled round is on it, while an object in the
+	// anomaly column whose series churn is not.
+	ColumnActionRequired = "action_required"
 )
 
 // ObjectColumns is every column the object route will serve.
@@ -175,6 +183,7 @@ var ObjectColumns = []string{
 	ColumnDemoted,
 	ColumnUndecidable,
 	ColumnByDesign,
+	ColumnActionRequired,
 }
 
 // knownColumn reports whether the object route will serve this column.
@@ -446,6 +455,12 @@ type Anomaly struct {
 	// for someone else. Filled in by Attribute rather than by the tracker, so
 	// the page and the verdict read one field instead of each deriving it.
 	Attribution Attribution `json:"attribution,omitempty"`
+	// Finding is the four answers the page renders: who has to act, whether it
+	// heals on its own, where to go, and which situation decided those. Decided
+	// in one place from the evidence, so the page renders and does not infer.
+	// Attribution is derived from it, which is what keeps the verdict and the
+	// to-do list from classifying one object two ways.
+	Finding Finding `json:"finding"`
 	// Unclassified says this object is counted against the deployment because
 	// no rule matched, not because a rule said so. A release that adds a
 	// vocabulary of failure codes puts every one of them here until somebody

@@ -73,6 +73,7 @@ type phaseTwoMetrics struct {
 	activationHeldAgeSecondsMax     *loadedGauge
 	algorithmEvaluations            *prometheus.CounterVec
 	recoveryHeld                    *prometheus.CounterVec
+	levelAbnormal                   *prometheus.CounterVec
 	recoveryPastLevelWithoutRecov   prometheus.Counter
 	openAlertGate                   *prometheus.CounterVec
 	openAlertSet                    *openAlertSetCollector
@@ -339,6 +340,22 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	// whatever Level the alert stands at, so it goes only once every Level has
 	// agreed. The two causes a Level withholds agreement for are the label; a
 	// zero for either must be readable as "never held", so both are created.
+	metrics.levelAbnormal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "level_abnormal_total",
+		Help: "Level verdicts of ABNORMAL, by whether the detection window they were reached on was " +
+			"full. The trigger decides ABNORMAL before it reads completeness, and the output contract " +
+			"pins that order: WARMING and GAPPED history permit only monotonic ABNORMAL. Under N-of-M " +
+			"that is sound -- anomalies counted across a hole are a lower bound, so an incomplete window " +
+			"never over-fires -- but an alert opened on one cannot close until the window is FULL again, " +
+			"and a window that stays short holds it open for ever. window=incomplete is how much alerting " +
+			"rides on that; read it against window=full, never alone, because zero of zero and zero of " +
+			"ten thousand are different readings. Both series exist from start so zero is a reading. " +
+			"This is the number a decision to discard state on leaving the degraded pool is judged " +
+			"against: after such a change the incomplete cell should stop moving.",
+	}, []string{"window"})
+	for _, window := range []string{"full", "incomplete"} {
+		metrics.levelAbnormal.WithLabelValues(window)
+	}
 	metrics.recoveryHeld = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "trigger_recovery_held_total",
 		Help: "Records whose evaluated Levels agreed on RECOVERY but whose envelope was held because " +
@@ -490,7 +507,7 @@ func (m phaseTwoMetrics) collectors() []prometheus.Collector {
 		m.objectCatalogObjects, m.objectCatalogRedis, m.objectCatalogManifestBytes, m.objectReads, m.stateGenerationSkew,
 		m.legacyMigration, m.legacyMigrationScan, m.legacyMigrationTime,
 		m.undrainedDrainingQueryGroups, m.drainingCursorPrunedQueryGroups, m.rebalancePlannedMoves, m.assignmentIndexStaleRounds, m.assignmentIndexWrites, m.assignmentIndexReads, m.assignmentIndexConfirm, m.assignmentRecordReads, m.scheduleCursorAdvances, m.activationHeldQueryGroups, m.activationHeldAgeSecondsMax,
-		m.algorithmEvaluations, m.algorithmInputs, m.recoveryHeld, m.recoveryPastLevelWithoutRecov, m.openAlertGate,
+		m.algorithmEvaluations, m.algorithmInputs, m.levelAbnormal, m.recoveryHeld, m.recoveryPastLevelWithoutRecov, m.openAlertGate,
 	}...), append(append(m.redisCalls.collectors(), m.dueIndex.collectors()...),
 		m.controlCache, m.dispatchRotation, m.openAlertSet, m.controlSourceRounds, m.controlSource,
 		m.controlSourceRetainedStale, m.platformSettings,
@@ -632,6 +649,10 @@ func (m phaseTwoMetrics) observe(observation observability.Observation) {
 		m.algorithmEvaluations.WithLabelValues(
 			string(fact.SourceAlgorithmFamily), string(fact.Result),
 		).Inc()
+	}
+	if facts := observation.HistoryCoverage; facts != nil && facts.Abnormal > 0 {
+		m.levelAbnormal.WithLabelValues("full").Add(float64(facts.Abnormal - facts.AbnormalOnIncomplete))
+		m.levelAbnormal.WithLabelValues("incomplete").Add(float64(facts.AbnormalOnIncomplete))
 	}
 	for _, fact := range observation.RecoveryGates {
 		switch fact.Cause {

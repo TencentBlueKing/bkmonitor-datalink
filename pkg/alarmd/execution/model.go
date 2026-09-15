@@ -1577,6 +1577,24 @@ type HistoryCoverage struct {
 	// loaded) but is not the series being new.
 	Fresh      uint32
 	ShortFresh uint32
+	// Abnormal is how many Level verdicts in this run were ABNORMAL, and
+	// AbnormalOnIncomplete how many of those were reached on a window that was
+	// not FULL.
+	//
+	// The trigger decides ABNORMAL before it consults completeness, and the
+	// output contract pins that order: WARMING and GAPPED history "permit only
+	// monotonic ABNORMAL". Under N-of-M that is sound -- anomalies counted
+	// across a hole are a lower bound, so the verdict never over-fires -- but
+	// the alert it opens cannot close until the window is FULL again, and a
+	// window that stays short keeps it open for ever. How much alerting rides
+	// on incomplete windows was, until this pair, a claim about the code and
+	// not a reading; it is the number a decision to reset state on leaving the
+	// degraded pool would be judged against, before and after.
+	//
+	// Two counts, not a ratio: a ratio of zero over zero and of zero over ten
+	// thousand are different readings, and only the pair keeps them apart.
+	Abnormal             uint32
+	AbnormalOnIncomplete uint32
 }
 
 // Observe folds one Level summary in. Zero required points means the window
@@ -1629,6 +1647,8 @@ func (coverage *HistoryCoverage) Merge(other HistoryCoverage) {
 	coverage.Guarded += other.Guarded
 	coverage.Fresh += other.Fresh
 	coverage.ShortFresh += other.ShortFresh
+	coverage.Abnormal += other.Abnormal
+	coverage.AbnormalOnIncomplete += other.AbnormalOnIncomplete
 	if other.Short > 0 && other.WorstRequired-other.WorstValid > coverage.WorstRequired-coverage.WorstValid {
 		coverage.WorstValid, coverage.WorstRequired = other.WorstValid, other.WorstRequired
 	}

@@ -340,6 +340,16 @@ func (e *Evaluator) evaluateRecordWith(ctx context.Context, request execution.Ev
 		if outcome.StateDisposition == trigger.StateAdvance {
 			advance = true
 		}
+		// The verdict and the window it was reached on, side by side. The
+		// trigger does not carry completeness on an ABNORMAL outcome -- it
+		// decides that result before it reads the summary -- so it is taken
+		// from the map this function filled when it summarised the Level.
+		if outcome.Result == contract.LevelResultAbnormal {
+			coverage.Abnormal++
+			if historyCompleteness[outcome.LevelID] != execution.HistoryFull {
+				coverage.AbnormalOnIncomplete++
+			}
+		}
 	}
 	var events []contract.TriggerEventV1
 	if tr.TriggerEvent != nil {

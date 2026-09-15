@@ -254,53 +254,26 @@ func (c PhaseTwoOutputConfig) protocol() string {
 }
 
 // PhaseTwoCanonicalConfig selects how the shared canonical encoder runs. It
-// exists because the replacement of that encoder has to be rolled out in
-// stages that a deployment chooses, not that the program can decide for
-// itself: only the operator of a given cluster knows whether its digests have
-// already been proven to match on that cluster's own traffic.
+// existed to roll the replacement of that encoder out in stages a deployment
+// chose, because only the operator of a cluster knew whether the new form had
+// been proven on that cluster's own traffic.
 //
-// Everything else about the encoder stays derived. There is no tuning here,
-// only a position in the rollout and how much of the traffic the comparison
-// covers.
+// That proof is in: both directions were compared on production traffic, over
+// a hundred million calls, with zero divergence in all three classes and the
+// covered call-site count flat. The comparison has done its job, so the
+// default is the single-pass encoder with nothing comparing, and the keys
+// below are the way back and the way to compare again, not a position a new
+// deployment has to choose.
 //
-// Retirement, stated here because a temporary switch with no written exit
-// condition is a permanent one. Both keys come out, together with the
-// established encoder and the mode machinery behind them, once all four hold:
+// Retirement: the keys, the established encoder and the mode machinery come
+// out together once the single-pass default has been through one release
+// without a rollback. A comparison a deployment wants after that is a
+// one-off measurement with a dense stride, not a standing guard.
 //
-//	every deployment has run stream_shadow and reported zero divergence
-//	  in all three classes over a window that covered its own call sites;
-//	the covered call-site count has stopped rising on each of them;
-//	the branches that production never sends have been written down as a
-//	  conclusion, so that a coverage figure short of the offline corpus is
-//	  known to be "will never arrive" rather than "has not arrived yet";
-//	the terminal mode has been the default for one release without a rollback.
-//
-// The two keys do not retire together, so their conditions are not written
-// together either. shadow_sample_stride can go as soon as its deployment wants
-// the terminal rate: the default beneath it already is that rate. mode cannot
-// go until the default beneath it has been changed, and that change reaches
-// every deployment at once -- so it waits on the first condition above being
-// true everywhere, not just here.
-//
-// Whichever goes first: check on the day, not from memory, that nothing else
-// was relying on the default it falls back to. Removing a key is what makes
-// that default live, so the blast radius has to be read when it changes rather
-// than recalled from when it was written.
-//
-// The terminal mode is stream_shadow at the derived stride, not stream. The
-// single-pass form answers and the established one keeps checking a sparse
-// sample of it, forever. Stopping at stream would trade a guard that costs
-// about a thousandth of the canonical path for the sentence "it was verified
-// once" -- and the thing it guards is every future change to this package,
-// not the one change that has already been proven.
-//
-// Until then the answer to "does the operator know better than the program"
-// is still no for what the encoder should do, and yes only for when a given
-// cluster is ready to move -- which is the whole and only reason these exist.
+// Everything else about the encoder stays derived. There is no tuning here.
 type PhaseTwoCanonicalConfig struct {
 	// Mode is one of established, shadow, stream_shadow, stream. Empty means
-	// established, which is what every deployment runs until its own shadow
-	// evidence says otherwise.
+	// stream: the proven single-pass encoder, nothing comparing.
 	Mode string `yaml:"mode,omitempty"`
 	// ShadowSampleStride compares one call in every stride. Running both forms
 	// on all traffic doubles the work the replacement exists to remove, so a
@@ -324,33 +297,22 @@ type PhaseTwoCanonicalConfig struct {
 // The thing sparse sampling cannot do is a census -- stride 64 missed six call
 // site types that stride 1 found -- and a census is not what this is for.
 //
-// A transient window that wants dense sampling says so explicitly; this is the
-// value a deployment gets when it says nothing, which after the two rollout
-// keys retire is every deployment.
+// A window that wants dense sampling says so explicitly; this is the value a
+// comparing mode gets when it names no stride.
 const defaultCanonicalShadowStride = 1024
 
-// The default mode is deliberately still the established encoder, and it is
-// deliberately NOT the terminal one, which makes this pair of defaults
-// asymmetric: defaultCanonicalShadowStride below already describes the
-// terminal rate, this does not describe the terminal mode.
-//
-// Read them together and it is natural to assume both describe the end state.
-// They do not, and acting on that assumption is not hypothetical: an
-// instruction to "remove the two rollout keys" was issued on exactly that
-// reading. Carried out, it would have returned the reference deployment to
-// the established encoder with no error and no alert -- an action named "enter
-// the terminal state" whose effect is to return to the start.
-//
-// What it takes to move this: shadow evidence from each deployment, not from
-// the reference one. The first retirement condition says every deployment, and
-// at least one has not run its own shadow yet. Changing this default is what
-// makes the new encoder answer in an environment that never proved it there.
+// The default is the single-pass encoder with nothing comparing. It was the
+// established encoder until every deployment had proven the new form on its
+// own traffic, and briefly the comparing form after that; the comparison is
+// concluded, so a deployment that says nothing pays for one encoder. The
+// established form stays selectable as the way back until the mechanism
+// retires.
 //
 // Deployments are named by role rather than by environment: this file is
 // public.
 func (c PhaseTwoCanonicalConfig) mode() string {
 	if c.Mode == "" {
-		return contract.CanonicalModeEstablished
+		return contract.CanonicalModeStream
 	}
 	return c.Mode
 }
@@ -373,17 +335,15 @@ func (c PhaseTwoCanonicalConfig) Stride() uint64 {
 func (c PhaseTwoCanonicalConfig) SelectedMode() string { return c.mode() }
 
 type PhaseTwoRuntimeConfig struct {
-	// Empty disables final Shadow evidence; the file is the frozen Epoch manifest.
-	ShadowManifestPath string                         `yaml:"shadow_manifest_path,omitempty"`
-	Worker             PhaseTwoWorkerConfig           `yaml:"worker"`
-	Control            PhaseTwoControlConfig          `yaml:"control"`
-	Output             PhaseTwoOutputConfig           `yaml:"output"`
-	Ownership          PhaseTwoOwnershipConfig        `yaml:"-"`
-	Scheduler          PhaseTwoSchedulerConfig        `yaml:"scheduler"`
-	Access             PhaseTwoAccessConfig           `yaml:"access"`
-	Coordinator        PhaseTwoCoordinatorConfig      `yaml:"-"`
-	Canonical          PhaseTwoCanonicalConfig        `yaml:"canonical"`
-	PlatformSettings   PhaseTwoPlatformSettingsConfig `yaml:"platform_settings"`
+	Worker           PhaseTwoWorkerConfig           `yaml:"worker"`
+	Control          PhaseTwoControlConfig          `yaml:"control"`
+	Output           PhaseTwoOutputConfig           `yaml:"output"`
+	Ownership        PhaseTwoOwnershipConfig        `yaml:"-"`
+	Scheduler        PhaseTwoSchedulerConfig        `yaml:"scheduler"`
+	Access           PhaseTwoAccessConfig           `yaml:"access"`
+	Coordinator      PhaseTwoCoordinatorConfig      `yaml:"-"`
+	Canonical        PhaseTwoCanonicalConfig        `yaml:"canonical"`
+	PlatformSettings PhaseTwoPlatformSettingsConfig `yaml:"platform_settings"`
 }
 
 func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {

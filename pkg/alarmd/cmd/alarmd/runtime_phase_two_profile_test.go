@@ -222,9 +222,8 @@ func TestResolvedRuntimeFactsCarryTheDerivedTimelineCacheBudget(t *testing.T) {
 // where the process is gone and only this record survives.
 //
 // The digest over this table moves when the table gains a field. That is safe
-// here only because nothing freezes it: the one place that asserts equality is
-// the shadow epoch manifest at runtime_phase_two_shadow.go, and no deployment
-// sets shadow_manifest_path. This test pins the reasoning next to the field so
+// only while nothing outside the process freezes it and asserts equality
+// later; nothing does today. This test pins the reasoning next to the field so
 // the next person to add one checks the same thing rather than the tests.
 func TestRuntimeProfileNamesTheCanonicalEncoder(t *testing.T) {
 	cfg := config.Default()
@@ -232,8 +231,8 @@ func TestRuntimeProfileNamesTheCanonicalEncoder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if facts.Capacity.CanonicalEncoding != contract.CanonicalModeEstablished {
-		t.Fatalf("default deployment should preflight as the established encoder, got %q",
+	if facts.Capacity.CanonicalEncoding != contract.CanonicalModeStream {
+		t.Fatalf("default deployment should preflight as the single-pass encoder, got %q",
 			facts.Capacity.CanonicalEncoding)
 	}
 	if facts.Capacity.CanonicalShadowStride != 0 {
@@ -241,18 +240,19 @@ func TestRuntimeProfileNamesTheCanonicalEncoder(t *testing.T) {
 			facts.Capacity.CanonicalShadowStride)
 	}
 
-	cfg.PhaseTwo.Canonical.Mode = contract.CanonicalModeStreamShadow
-	shadowed, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
+	cfg.PhaseTwo.Canonical.Mode = contract.CanonicalModeEstablished
+	established, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if shadowed.Capacity.CanonicalEncoding != contract.CanonicalModeStreamShadow {
-		t.Fatalf("preflight did not follow the selected mode, got %q", shadowed.Capacity.CanonicalEncoding)
+	if established.Capacity.CanonicalEncoding != contract.CanonicalModeEstablished {
+		t.Fatalf("preflight did not follow the selected mode, got %q", established.Capacity.CanonicalEncoding)
 	}
-	if shadowed.Capacity.CanonicalShadowStride == 0 {
-		t.Fatal("a comparing mode preflighted with no sampling at all")
+	if established.Capacity.CanonicalShadowStride != 0 {
+		t.Fatalf("nothing compares in the established mode, so nothing should be sampling; got %d",
+			established.Capacity.CanonicalShadowStride)
 	}
-	if shadowed.Digest == facts.Digest {
+	if established.Digest == facts.Digest {
 		t.Fatal("two deployments running different encoders share a runtime config digest")
 	}
 }

@@ -49,7 +49,7 @@ func TestLoggerWritesFixedEventFields(t *testing.T) {
 func TestDiscardLoggerAcceptsEvents(t *testing.T) {
 	t.Parallel()
 
-	Discard(ComponentComparator).Error(StageFatal, ResultFailed, 0, 0)
+	Discard(ComponentTrigger).Error(StageFatal, ResultFailed, 0, 0)
 }
 
 func TestLoggingObserverWritesExactAlgorithmReasonAndProvenanceWithoutPayload(t *testing.T) {

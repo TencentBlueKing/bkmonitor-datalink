@@ -11,13 +11,18 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
-func TestCanonicalModeDefaultsToTheEstablishedForm(t *testing.T) {
+// A deployment that says nothing gets the proven single-pass encoder and pays
+// for no comparison. The way back stays a key until the mechanism retires.
+func TestCanonicalModeDefaultsToTheSinglePassEncoder(t *testing.T) {
 	cfg := Default().PhaseTwo.Canonical
-	if cfg.SelectedMode() != contract.CanonicalModeEstablished {
-		t.Fatalf("a deployment that says nothing must keep the established encoder, got %q", cfg.SelectedMode())
+	if cfg.SelectedMode() != contract.CanonicalModeStream {
+		t.Fatalf("a deployment that says nothing must run the single-pass encoder, got %q", cfg.SelectedMode())
 	}
 	if cfg.Stride() != 0 {
-		t.Fatalf("no comparison is running, so nothing should be paying for one; stride %d", cfg.Stride())
+		t.Fatalf("nothing compares by default, so nothing should be sampling; stride %d", cfg.Stride())
+	}
+	if (PhaseTwoCanonicalConfig{Mode: contract.CanonicalModeEstablished}).SelectedMode() != contract.CanonicalModeEstablished {
+		t.Fatal("the established encoder must stay selectable as the way back")
 	}
 }
 

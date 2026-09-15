@@ -117,14 +117,9 @@ const (
 	StageCoverageCompleted      = "coverage_completed"
 	StageCoverageGap            = "coverage_gap"
 	StageReceiptQueued          = "receipt_queued"
-	StageFinalEvidenceQueued    = "final_evidence_queued"
-	StageFinalEvidenceACKed     = "final_evidence_acked"
-	StageFinalEvidenceDropped   = "final_evidence_dropped"
 	StageResourceSoft           = "resource_soft"
 	StageResourceHard           = "resource_hard"
 	StageResourceResumed        = "resource_resumed"
-	StageComparisonCompleted    = "comparison_completed"
-	StageComparisonAuditACKed   = "comparison_audit_acked"
 	StagePythonSource           = "source"
 	StagePythonBuilt            = "built"
 	StagePythonEnqueued         = "enqueued"
@@ -1960,7 +1955,6 @@ var metricComponentStages = []ComponentStage{
 	{ComponentCoverage, StageReceiptQueued},
 	{ComponentResource, StageResourceSoft}, {ComponentResource, StageResourceHard},
 	{ComponentResource, StageResourceResumed},
-	{ComponentComparator, StageComparisonCompleted}, {ComponentComparator, StageComparisonAuditACKed},
 	{ComponentPythonProducer, StagePythonSource}, {ComponentPythonProducer, StagePythonBuilt},
 	{ComponentPythonProducer, StagePythonEnqueued}, {ComponentPythonProducer, StagePythonPublished},
 	{ComponentPythonProducer, StagePythonACKed}, {ComponentPythonProducer, StagePythonDropped},
@@ -1969,9 +1963,6 @@ var metricComponentStages = []ComponentStage{
 
 var phaseTwoComponentStages = []ComponentStage{
 	{ComponentRuntime, StageLegacyPodCache},
-	{ComponentCoverage, StageFinalEvidenceQueued},
-	{ComponentCoverage, StageFinalEvidenceACKed},
-	{ComponentCoverage, StageFinalEvidenceDropped},
 	{ComponentControlPlane, StageSnapshotRefreshed}, {ComponentControlPlane, StageSnapshotUnavailable},
 	{ComponentControlPlane, StageActivationFailed},
 	{ComponentControlPlane, StageActiveQGSet}, {ComponentControlPlane, StageLegacyQGMigration},

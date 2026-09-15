@@ -22,19 +22,15 @@ import (
 )
 
 const (
-	ComponentTrigger    = "trigger"
-	ComponentComparator = "comparator"
+	ComponentTrigger = "trigger"
 
-	StageStartup         = "startup"
-	StageDetect          = "detect"
-	StageFatal           = "fatal"
-	StageShutdown        = "shutdown"
-	StageDecisionACK     = "go_decision_ack"
-	StageComparisonACK   = "comparison_audit_ack"
-	StageCapacityDrop    = "capacity_drop"
-	StageCoverageRelease = "coverage_release"
-	StageCoverageReset   = "coverage_reset"
-	StageOffsetReset     = "offset_reset"
+	StageStartup      = "startup"
+	StageDetect       = "detect"
+	StageFatal        = "fatal"
+	StageShutdown     = "shutdown"
+	StageDecisionACK  = "go_decision_ack"
+	StageCapacityDrop = "capacity_drop"
+	StageOffsetReset  = "offset_reset"
 
 	ResultStarted     = "started"
 	ResultBrokerACK   = "broker_ack"

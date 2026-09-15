@@ -12,7 +12,6 @@ package kafka
 import (
 	"context"
 	"errors"
-	"fmt"
 	"reflect"
 	"sync"
 	"sync/atomic"
@@ -378,34 +377,6 @@ func TestServiceDoesNotRetryAuthorizationOrLocalOffsetRepairFailure(t *testing.T
 				t.Fatalf("repair calls = %d, Consume calls = %d, fatal = %v", repairCalls.Load(), group.consumeCalls.Load(), service.FatalError())
 			}
 		})
-	}
-}
-
-func TestServiceRetriesRepairWhenClaimFallsBackToSymbolicOffset(t *testing.T) {
-	t.Parallel()
-
-	service := newTestService(
-		t,
-		newFakeConsumerGroup(nil),
-		&fakeServiceClient{},
-		noopProcessorFactory(),
-		fakeSyncOffsetCommitter{},
-		time.Second,
-	)
-	cycleCancelled := make(chan struct{})
-	service.setCycleCancel(func() { close(cycleCancelled) })
-	service.handleGroupError(&sarama.ConsumerError{
-		Topic: "detect-input", Partition: 0,
-		Err: fmt.Errorf("claim setup: %w", errComparatorSymbolicInitialOffset),
-	})
-
-	select {
-	case <-cycleCancelled:
-	case <-time.After(time.Second):
-		t.Fatal("symbolic offset fallback did not restart the consume cycle")
-	}
-	if !service.offsetReset.Load() || service.firstFatal() != nil {
-		t.Fatalf("offsetReset=%v fatal=%v, want recoverable retry", service.offsetReset.Load(), service.firstFatal())
 	}
 }
 

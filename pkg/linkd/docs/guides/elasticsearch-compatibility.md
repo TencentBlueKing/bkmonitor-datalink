@@ -46,12 +46,13 @@ sh scripts/test-elasticsearch-compatibility.sh \
 ```
 
 脚本必须在 Linkd 仓库中执行，使用现有 Go、Node 24 和 Console node_modules。
-测试创建独立前缀/部署作用域的临时索引与模板，并清理自身创建的资源；普通 `make check`
+测试创建独立前缀/部署作用域的临时索引并清理自身创建的资源；OneModel 统一实例测试只读取
+`LINKD_TEST_ONEMODEL_TENANT_ID/MODEL_ID/INSTANCE_ID` 显式指定的既有实例，省略这些变量时跳过。普通 `make check`
 不会隐式连接本机 ES。真实版本测试覆盖：
 
 - Repository 单条与合批契约、实时读取、幂等/CAS、事件投影、Alert 归档、多页事件扫描；
 - EventSource Record/Release 初始化、创建冲突、CAS、列表与缺失对象；
-- OneModel 扁平查询及租户隔离；
+- OneModel 统一实例 alias 的根身份查询、`attributes` 响应解析及租户隔离；
 - Console 三种实体的跨索引/多分片 PIT 分页、1ns 时间差、详情、统计与空结果。
 
 真实协议契约测试不等于 Kafka→Cleaner→Lifecycle 的完整部署 E2E，也不覆盖真实集群故障、

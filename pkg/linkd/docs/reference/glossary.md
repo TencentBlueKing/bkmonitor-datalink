@@ -33,13 +33,14 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | log（丰富分组） | 丰富结果中的日志专用信息，包含日志主题、检索语句和关联信息；日志指标与日志关键字共用适用字段，加工后的告警文案仍属于展示分组 |
 | apm（丰富分组） | 丰富结果中的 APM 专用信息，包含应用标识、名称、别名，以及服务、实例、接口和对端名称；派生模型与实例标识仍属于资源分组 |
 | k8s（丰富分组） | 丰富结果中的 K8s 专用信息，包含集群、命名空间、服务、工作负载、Pod、容器和节点上下文；集群标识保留 bcs_cluster_id 命名，资源所属业务与派生模型实例标识仍属于资源分组 |
-| OneModel 实例存储 | Kingeye 当前 OneModel 查询能力所使用的统一实例数据来源；本次 K8s 实例定位、集群名称及 Namespace 业务归属均对齐该来源，当前接入选择 Elasticsearch；该能力本身不等同于固定后端或已存在的跨进程接口 |
+| OneModel 实例存储 | Kingeye 当前统一实例来源；Elasticsearch 逻辑入口固定为 `kingeye_all_instance` alias，实例根身份为 `bk_tenant_id/model_id/model_inst_id/entity_uid`，来源原始属性位于 `attributes`，可检索动态属性位于 nested `attribute_values` |
 | strategy（丰富分组） | 丰富结果中的策略补充信息，包含 bk_strategy_id、monitor_template_id、strategy_config_id 三种独立身份，以及展示名称、跳转链接和鲸眼配置数据源；monitor_template_id 沿用旧 clean_strategy_id 的模板名称/策略名称回退行为 |
 | source（丰富分组） | 丰富结果中的来源补充信息，保存 Alert.EventSourceID 对应的 source_id、从 alarm_collect_alarmsource 查询的 source_name，以及承载来源事件标识的 meta_info；不替代 Linkd 的 EventSourceID |
 | meta_info（丰富字段） | 迁移后承载 Event.SourceEventID 中的来源事件标识，保存到 enrich.source.meta_info；旧实现使用内部转换对象 ID，本次已确认调整其取值来源 |
 | metric（丰富分组） | 丰富结果中的指标补充信息，包含监控项展示名称、按原分类解释的指标名称、单位及本次告警观测数据的查询参数；指标名称不统一定义为指标 ID，多个丰富分类共用该分组 |
 | 来源策略身份 | Event.Labels 中 `strategy_id` 与 `strategy_version`；前者关联鲸眼声明式策略，后者记录来源声明的策略版本并原样进入 enrich.strategy，不用于运行时回查蓝鲸策略表 |
-| 鲸眼策略配置 | 鲸眼侧与监控平台策略关联的声明式配置；Linkd 按 `bk_tenant_id + status.bk_strategy_id` 查询并复核身份，分类、展示和指标查询配置统一读取其 `spec` |
+| 鲸眼策略配置 | 鲸眼侧与监控平台策略关联的声明式配置；Linkd 按 `bk_tenant_id + status.bk_strategy_id + active = 1` 查询并复核身份，分类、展示和指标查询配置统一读取其 `spec` |
+| 全局业务 | `metadata_space` 中租户、`space_type_id = bkcc` 和业务 ID 对应且 `is_global = 1` 的业务空间；该业务下的策略可匹配同租户任意来源业务 |
 | 鲸眼声明式策略查询投影 | `core_v1alpha1_strategy.spec.strategy_item` 中的聚合、表达式和 `query_configs`；供 Strategy、Display 与 Metric 在单次 Enrich 内共享，替代运行时读取 `alarm_strategy_v2` 和 `alarm_strategy_history` |
 | 指标查询参数 | 丰富结果中用于查询本次告警对应观测数据的参数；当前由鲸眼声明式策略 `spec.strategy_item.query_configs` 与 Event.Dimensions 构造，不回查蓝鲸策略当前表或历史表 |
 | 维度条件文本（where_condition） | 按旧过滤和拼接规则从工作维度生成的条件文本，保存到 enrich.metric.where_condition；生成过程不修改 Event 的来源维度 |

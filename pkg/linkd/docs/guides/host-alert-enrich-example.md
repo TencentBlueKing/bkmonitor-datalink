@@ -184,6 +184,8 @@ event_sources:
     enrich:
       processors:
         - type: strategy
+          config:
+            web_saas_module_url: https://kingeye.example.com/
         - type: resource
         - type: display
         - type: metric
@@ -302,23 +304,21 @@ object_model_code = cw-Host
 
 ```go
 enrich.InstanceQuery{
-    ModelCode: "cw-Host",
-    Filters: map[string]any{
-        "cw_object_model_inst_id": "101",
-    },
+    ModelCode:  "cw-Host",
+    InstanceID: "101",
 }
 ```
 
-数值维度 `101` 通过 `ScalarIdentity` 转换为稳定字符串 `"101"`，与 OneModel `cw_object_model_inst_id` 的文本身份一致。
+数值维度 `101` 通过 `ScalarIdentity` 转换为稳定字符串 `"101"`，并查询 OneModel 根字段 `model_inst_id`。
 
-主机实例 ID 缺失时，地址回退查询使用：
+主机实例 ID 缺失时，地址回退查询使用 `attribute_values` 的类型化投影：
 
 ```go
 enrich.InstanceQuery{
     ModelCode: "cw-Host",
-    Filters: map[string]any{
-        "bk_host_innerip": "10.0.0.1",
-        "bk_cloud_id":     float64(0),
+    AttributeFilters: []enrich.InstanceAttributeFilter{
+        {Field: "bk_host_innerip", Type: enrich.InstanceAttributeKeyword, Value: "10.0.0.1"},
+        {Field: "bk_cloud_id", Type: enrich.InstanceAttributeLong, Value: float64(0)},
     },
 }
 ```
@@ -395,24 +395,33 @@ bk_biz_id = 2
 
 ### 6.3 OneModel 主机实例
 
-索引中的文档至少提供：
+统一实例 alias `kingeye_all_instance` 中的文档至少提供：
 
 ```json
 {
   "bk_tenant_id": "tenant-1",
-  "cw_object_model_code": "cw-Host",
-  "cw_object_model_inst_id": "101",
-  "bk_obj_id": "host",
-  "bk_host_id": 101,
-  "bk_biz_id": 2,
-  "bk_biz_name": "业务 2",
-  "bk_host_innerip": "10.0.0.1",
-  "bk_cloud_id": 0,
-  "bk_cloud_name": "默认区域"
+  "model_id": "cw-Host",
+  "model_inst_id": "101",
+  "entity_uid": "cw-Host|101",
+  "bk_biz_ids": [2],
+  "attributes": {
+    "bk_obj_id": "host",
+    "bk_host_id": 101,
+    "bk_biz_id": 2,
+    "bk_biz_name": "业务 2",
+    "bk_host_innerip": "10.0.0.1",
+    "bk_cloud_id": 0,
+    "bk_cloud_name": "默认区域"
+  },
+  "attribute_values": [
+    {"field_name": "bk_host_id", "long_values": [101]},
+    {"field_name": "bk_host_innerip", "keyword_values": ["10.0.0.1"]},
+    {"field_name": "bk_cloud_id", "long_values": [0]}
+  ]
 }
 ```
 
-OneModel Client 会在查询中强制追加 `bk_tenant_id` 和 `cw_object_model_code`，并在返回后再次校验租户、模型和实例身份。
+OneModel Client 会在查询中强制追加 `bk_tenant_id` 和 `model_id`，按 `model_inst_id` 或 nested `attribute_values` 查询，并在返回后复核租户、模型、实例和 `entity_uid`。Resource Processor 合并读取根字段与 `attributes`。
 
 ### 6.4 指标库
 

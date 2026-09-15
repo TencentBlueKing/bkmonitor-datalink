@@ -41,8 +41,8 @@ EventSource 不负责 Alert 状态裁决、Event/Alert 持久化实现或 Lifecy
 当前文件配置要求每条 EventSource 都提供 storage，包括 disabled 来源。相同标准化 brokers、topic 和
 consumer_group 的 subscription 不允许在两个 EventSource 中重复，避免同一消费责任被重复装配。
 
-`enrich.datasources` 以物理连接为复用边界：`mysql` 由策略、告警源和指标 Reader 共用同一连接池，
-`elasticsearch` 由 OneModel 等索引 Reader 共用同一 Transport。它们与 Processor Chain 使用同一发布版本。
+`enrich.datasources` 以物理连接为复用边界：`mysql` 由策略、业务空间、告警源和指标 Reader 共用同一连接池，
+`elasticsearch` 由 OneModel Reader 复用同一 Transport 并固定查询 `kingeye_all_instance` alias。它们与 Processor Chain 使用同一发布版本。
 来源发布会校验依赖完整性，Lifecycle worker 只为当前 Chain 选择并建立连接，来源任务退出时关闭连接。
 配置变化进入执行摘要并触发对应来源任务换代。管理接口默认对 MySQL 密码、Elasticsearch API Key 和
 Basic Auth 密码脱敏。

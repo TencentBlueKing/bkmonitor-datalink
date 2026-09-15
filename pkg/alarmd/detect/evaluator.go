@@ -195,6 +195,13 @@ func admitPlans(ctx context.Context, plans []boundPlan, limits ExecutionLimits) 
 			return nil, err
 		}
 		groups := groupSelectedRecords(records)
+		// These two refine the record budget checked above, and both refine a
+		// quantity that cannot exceed it: len(groups) <= len(records) <=
+		// SelectedCount(). Each can therefore only fire when its budget is
+		// strictly below MaxSelectedRecordsPerPlan, and the shipped defaults
+		// set all three to the same number, which makes both unreachable
+		// rather than rare. Before reading either branch as a live guard, read
+		// the note on the Detect defaults in config/v2_limits.go.
 		if uint64(len(groups)) > limits.MaxSeriesPerPlan {
 			return nil, planBudgetExceeded(planID, "series_per_plan", limits.MaxSeriesPerPlan, uint64(len(groups)))
 		}

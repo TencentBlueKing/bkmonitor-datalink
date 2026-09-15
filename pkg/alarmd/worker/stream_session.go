@@ -1896,13 +1896,13 @@ func requiredFullSlots(plan *strategy.CompiledPlan) uint32 {
 	return required
 }
 
+// physicalFailureReason picks the code an unavailable physical completion
+// carries; the walk and the fallback live in execution.AttributeUnavailable.
+// Where the code came from is counted by providerUnavailableFacts when the
+// completion is observed, not bound here.
 func physicalFailureReason(facts execution.ProviderRouteFacts) execution.ReasonCode {
-	for index := len(facts.Attempts) - 1; index >= 0; index-- {
-		if facts.Attempts[index].ReasonCode != "" {
-			return facts.Attempts[index].ReasonCode
-		}
-	}
-	return execution.ReasonCode(contract.ReasonQueryUnavailable)
+	code, _ := execution.AttributeUnavailable(facts, execution.ReasonCode(contract.ReasonQueryUnavailable))
+	return code
 }
 
 func provisionalResult(result execution.EvaluationResult) (observability.Result, execution.ReasonCode) {

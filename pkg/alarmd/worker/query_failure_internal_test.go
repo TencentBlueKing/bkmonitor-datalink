@@ -87,6 +87,50 @@ func TestProviderFailureFactsProjectLastFailedAttempt(t *testing.T) {
 	}
 }
 
+// Every UNAVAILABLE physical query reports where its code came from, one entry
+// each: a Query Group with several Plans that reported only its first would
+// undercount the counter by however many Plans share the group. The FULL
+// query beside them contributes nothing, and a completion with no unavailable
+// query yields nil so healthy completions carry no facts.
+func TestProviderUnavailableFactsCountEveryUnavailablePhysicalQuery(t *testing.T) {
+	full := execution.PhysicalQueryCompletion{Completeness: execution.CompletenessFull}
+	named := execution.PhysicalQueryCompletion{
+		Completeness: execution.CompletenessUnavailable,
+		RouteFacts: execution.ProviderRouteFacts{Attempts: []execution.RouteAttemptFact{
+			{AttemptNo: 1, Result: execution.RouteAttemptFailed, ReasonCode: execution.ReasonCode(contract.ReasonQueryTimeout)},
+		}},
+	}
+	unclassified := execution.PhysicalQueryCompletion{
+		Completeness: execution.CompletenessUnavailable,
+		RouteFacts:   execution.ProviderRouteFacts{Attempts: []execution.RouteAttemptFact{{AttemptNo: 1, Result: execution.RouteAttemptFailed}}},
+	}
+	neverSent := execution.PhysicalQueryCompletion{Completeness: execution.CompletenessUnavailable}
+	facts := providerUnavailableFacts(execution.QueryExecutionCompletion{PhysicalQueries: []execution.PhysicalQueryCompletion{full, named, unclassified, neverSent, neverSent}})
+	want := []string{
+		observability.QueryUnavailableFromAttempt, observability.QueryUnavailableNoAttemptReason,
+		observability.QueryUnavailableNoAttempts, observability.QueryUnavailableNoAttempts,
+	}
+	if len(facts) != len(want) {
+		t.Fatalf("facts=%+v, want one entry per unavailable physical query: %v", facts, want)
+	}
+	for index, entry := range facts {
+		if entry.Attribution != want[index] {
+			t.Fatalf("entry %d = %q, want %q", index, entry.Attribution, want[index])
+		}
+	}
+	if healthy := providerUnavailableFacts(execution.QueryExecutionCompletion{PhysicalQueries: []execution.PhysicalQueryCompletion{full}}); healthy != nil {
+		t.Fatalf("a completion without unavailable queries produced facts: %+v", healthy)
+	}
+	// The code the binding carries is unchanged by the attribution: the last
+	// classified attempt names it, else the fallback.
+	if code := physicalFailureReason(named.RouteFacts); code != execution.ReasonCode(contract.ReasonQueryTimeout) {
+		t.Fatalf("named code = %s", code)
+	}
+	if code := physicalFailureReason(neverSent.RouteFacts); code != execution.ReasonCode(contract.ReasonQueryUnavailable) {
+		t.Fatalf("fallback code = %s", code)
+	}
+}
+
 // A Plan whose incomplete named inputs of one gap scope carry different
 // completion reasons is refused under its own name, with both reasons: the
 // code goes to the counter's category, the pair to the bounded detail, and

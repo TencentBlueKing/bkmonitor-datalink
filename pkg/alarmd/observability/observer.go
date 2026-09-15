@@ -1080,6 +1080,7 @@ type Observation struct {
 	RuntimeConfig         *RuntimeConfigFacts
 	QueryFailure          *QueryFailureFacts
 	QueryStatus           []QueryStatusFacts
+	QueryUnavailable      []QueryUnavailableFacts
 	QueryTiming           *QueryTimingFacts
 	SlotReadiness         *SlotReadinessFacts
 	ShortPeriodCompletion *ShortPeriodCompletionFacts
@@ -1174,6 +1175,7 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.StateApplyChunk = normalizeStateApplyChunk(observation)
 	observation.QueryFailure = normalizeQueryFailure(observation.Component, observation.Stage, observation.QueryFailure)
 	observation.QueryStatus = normalizeQueryStatus(observation.Component, observation.Stage, observation.QueryStatus)
+	observation.QueryUnavailable = normalizeQueryUnavailable(observation.Component, observation.Stage, observation.QueryUnavailable)
 	observation.SlotReadiness = normalizeSlotReadiness(observation.SlotReadiness)
 	if observation.RuntimeConfig != nil {
 		if observation.Component != ComponentRuntime || observation.Stage != StageConfigLoaded {

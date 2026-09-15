@@ -994,13 +994,13 @@ func completionBindings(query PlannedQuery, completion execution.ProviderComplet
 	return bindings
 }
 
+// providerFailureReason picks the code an unavailable completion carries. The
+// walk and the fallback live in execution.AttributeUnavailable, which also
+// says where the code came from; this caller binds the code only, the
+// attribution is counted where the completion is observed.
 func providerFailureReason(facts execution.ProviderRouteFacts) execution.ReasonCode {
-	for index := len(facts.Attempts) - 1; index >= 0; index-- {
-		if facts.Attempts[index].ReasonCode != "" {
-			return facts.Attempts[index].ReasonCode
-		}
-	}
-	return execution.ReasonCode(contract.ReasonQueryUnavailable)
+	code, _ := execution.AttributeUnavailable(facts, execution.ReasonCode(contract.ReasonQueryUnavailable))
+	return code
 }
 
 func waitContext(ctx context.Context, delay time.Duration) error {

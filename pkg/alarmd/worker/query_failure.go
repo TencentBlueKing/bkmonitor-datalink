@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
@@ -154,6 +155,7 @@ func (coordinator *SlotExecutionCoordinator) observeQueryCompleted(
 		Operation: observability.Operation(operation), Direction: observability.DirectionInternal,
 		ReasonCode: reason, Duration: time.Since(started),
 		QueryFailure: facts, QueryStatus: providerStatusFacts(completion),
+		QueryUnavailable: providerUnavailableFacts(completion),
 	}
 	defer func() { _ = recover() }()
 	coordinator.ports.Observer.Observe(ctx, observation)
@@ -181,6 +183,29 @@ func providerStatusFacts(completion execution.QueryExecutionCompletion) []observ
 			outcome = observability.QueryStatusOutcomeAllowed
 		}
 		facts = append(facts, observability.QueryStatusFacts{Code: status.Code, Outcome: outcome})
+	}
+	return facts
+}
+
+// providerUnavailableFacts projects every UNAVAILABLE physical query onto
+// where its reason code came from: named by an attempt, guessed because no
+// attempt named one, or produced with no attempt at all. One entry per
+// physical query for the same reason providerStatusFacts takes every one: this
+// feeds a counter, and a Query Group with several Plans that reported only its
+// first would undercount by however many Plans share the group.
+//
+// This is the reading that tells "the provider was unavailable" apart from
+// "nothing was ever sent": hundreds of objects held out of detection under
+// QUERY_UNAVAILABLE with no HTTP error and no timeout anywhere could not be
+// told apart from outside before it existed.
+func providerUnavailableFacts(completion execution.QueryExecutionCompletion) []observability.QueryUnavailableFacts {
+	var facts []observability.QueryUnavailableFacts
+	for _, item := range completion.PhysicalQueries {
+		if item.Completeness != execution.CompletenessUnavailable {
+			continue
+		}
+		_, attribution := execution.AttributeUnavailable(item.RouteFacts, execution.ReasonCode(contract.ReasonQueryUnavailable))
+		facts = append(facts, observability.QueryUnavailableFacts{Attribution: string(attribution)})
 	}
 	return facts
 }

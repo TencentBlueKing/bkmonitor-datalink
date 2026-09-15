@@ -132,10 +132,6 @@ func (r *Recorder) recordMessageReceiptDelivery(outcome string, count uint64) {
 	r.receipts.delivery.WithLabelValues(outcome).Add(float64(count))
 }
 
-func receiptCustomSeries() int {
-	return len(receiptStatuses) + len(receiptBusinessFields) + 3
-}
-
 func knownReceiptStatus(status string) bool {
 	return status == contract.ReceiptStatusCompleted || status == contract.ReceiptStatusCompletedWithTerminal ||
 		status == contract.ReceiptStatusRejected

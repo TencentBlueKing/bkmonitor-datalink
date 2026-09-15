@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -53,6 +54,9 @@ type serviceRuntime interface {
 
 type httpRuntime interface {
 	Run(context.Context, string, time.Duration) error
+	// SetAPI installs the observability API once the runtime that produces the
+	// object facts is open. The listener starts before that runtime does.
+	SetAPI(http.Handler)
 }
 
 type redisRuntime interface {
@@ -110,7 +114,9 @@ func (runtime *unavailableReceiptRuntime) Shutdown(context.Context) enginekafka.
 type applicationDependencies struct {
 	logger     *observability.Logger
 	openBundle func(context.Context, config.Config, *metric.Recorder, *observability.Logger) (*applicationBundle, error)
-	newHTTP    func(*metric.Recorder, observability.HealthSource) (httpRuntime, error)
+	// The diagnostics address is passed in rather than read from a package
+	// global so a caller can serve no diagnostics at all.
+	newHTTP func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error)
 }
 
 type applicationComponentFactories struct {
@@ -337,9 +343,10 @@ func runApplication(ctx context.Context, cfg config.Config, recorder *metric.Rec
 	eventLogger.Info(
 		observability.StageStartup, observability.ResultStarted, 0, 0,
 		slog.Int("consumer_buffer_bytes_per_partition", enginekafka.MaxConsumerBytesPerPartition()),
+		slog.String("diagnostics_listen", cfg.HTTP.DiagnosticsFact()),
 	)
 	health := newApplicationHealth()
-	server, err := dependencies.newHTTP(recorder, health)
+	server, err := dependencies.newHTTP(recorder, health, cfg.HTTP.DiagnosticsListen)
 	if err != nil {
 		eventLogger.Error(observability.StageStartup, observability.ResultFailed, 0, time.Since(started), slog.String("reason", "http"))
 		return err

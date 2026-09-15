@@ -42,6 +42,7 @@ type ExecutionMetadata struct {
 }
 
 type DatasetContractView struct {
+	dynamicDimensions   bool
 	schemaDigest        string
 	normalizationDigest string
 	identityFields      []string
@@ -52,7 +53,7 @@ type DatasetContractView struct {
 
 func newDatasetContractView(source contract.DatasetContractV2) DatasetContractView {
 	return DatasetContractView{
-		schemaDigest: source.SchemaDigest, normalizationDigest: source.NormalizationDigest,
+		dynamicDimensions: source.DynamicDimensions, schemaDigest: source.SchemaDigest, normalizationDigest: source.NormalizationDigest,
 		identityFields: append([]string(nil), source.IdentityFields...), sourceTimeField: source.SourceTimeField,
 		collectionTimeField: source.CollectionTimeField, receivedTimeField: source.ReceivedTimeField,
 	}
@@ -68,7 +69,7 @@ func (view DatasetContractView) CollectionTimeField() string { return view.colle
 func (view DatasetContractView) ReceivedTimeField() string   { return view.receivedTimeField }
 func (view DatasetContractView) Snapshot() contract.DatasetContractV2 {
 	return contract.DatasetContractV2{
-		SchemaDigest: view.schemaDigest, NormalizationDigest: view.normalizationDigest,
+		DynamicDimensions: view.dynamicDimensions, SchemaDigest: view.schemaDigest, NormalizationDigest: view.normalizationDigest,
 		IdentityFields: append([]string(nil), view.identityFields...), SourceTimeField: view.sourceTimeField,
 		CollectionTimeField: view.collectionTimeField, ReceivedTimeField: view.receivedTimeField,
 	}

@@ -116,7 +116,13 @@ type ReceiptDropCounts struct {
 	CloseFailed     uint64
 }
 
+type CoverageReceiptCounts struct {
+	Enqueued, Acked, Dropped      uint64
+	PendingMessages, PendingBytes int
+}
+
 type ReceiptDrainResult struct {
+	Coverage        CoverageReceiptCounts
 	Status          ReceiptDrainStatus
 	Enqueued        uint64
 	Acked           uint64
@@ -127,7 +133,8 @@ type ReceiptDrainResult struct {
 }
 
 type queuedReceipt struct {
-	payload []byte
+	coverage bool
+	payload  []byte
 }
 
 // ReceiptPublisher is a best-effort audit output. TryEnqueue never waits for a
@@ -144,6 +151,7 @@ type ReceiptPublisher struct {
 	pendingBytes    int
 	enqueued        uint64
 	acked           uint64
+	coverage        CoverageReceiptCounts
 	drops           ReceiptDropCounts
 	firstErr        error
 	abandoned       bool
@@ -234,31 +242,94 @@ func (publisher *ReceiptPublisher) TryEnqueue(receipt *contract.MessageReceiptV1
 	}
 	publisher.diagnostics.ObserveValidated(receipt)
 
+	return publisher.enqueuePayload(payload)
+}
+
+// TryEnqueueFinalEvidence reuses the same bounded queue and ACK lifecycle.
+func (publisher *ReceiptPublisher) TryEnqueueFinalEvidence(evidence *contract.FinalResultEvidenceV1, maxBytes int) bool {
+	if publisher == nil || publisher.core == nil {
+		return false
+	}
+	payload, err := contract.EncodeFinalResultEvidenceV1(evidence, maxBytes)
+	if err != nil {
+		publisher.mu.Lock()
+		publisher.drops.EncodeFailed++
+		publisher.recordError(err)
+		publisher.mu.Unlock()
+		publisher.diagnostics.drop(ReceiptDropEncodeFailed, 1)
+		return false
+	}
+	return publisher.enqueuePayload(payload)
+}
+
+// TryEnqueueEncodedFinalEvidence accepts only the official codec's immutable
+// value, never caller-supplied unvalidated wire. Queue ownership is a byte copy.
+func (publisher *ReceiptPublisher) TryEnqueueEncodedFinalEvidence(evidence contract.EncodedFinalResultV1) bool {
+	if publisher == nil || publisher.core == nil {
+		return false
+	}
+	payload := evidence.CopyBytes()
+	if len(payload) == 0 {
+		publisher.mu.Lock()
+		publisher.drops.EncodeFailed++
+		publisher.mu.Unlock()
+		publisher.diagnostics.drop(ReceiptDropEncodeFailed, 1)
+		return false
+	}
+	return publisher.enqueuePayload(payload)
+}
+
+func (publisher *ReceiptPublisher) enqueuePayload(payload []byte) bool {
+	return publisher.enqueuePayloadKind(payload, false)
+}
+func (publisher *ReceiptPublisher) enqueuePayloadKind(payload []byte, coverage bool) bool {
 	publisher.mu.Lock()
 	if !publisher.accepting {
 		publisher.drops.Closed++
+		if coverage {
+			publisher.coverage.Dropped++
+		}
 		publisher.mu.Unlock()
-		publisher.diagnostics.drop(ReceiptDropClosed, 1)
+		if !coverage {
+			publisher.diagnostics.drop(ReceiptDropClosed, 1)
+		}
 		return false
 	}
 	if publisher.pendingMessages >= publisher.limits.MaxQueuedMessages {
 		publisher.drops.QueueMessages++
+		if coverage {
+			publisher.coverage.Dropped++
+		}
 		publisher.mu.Unlock()
-		publisher.diagnostics.drop(ReceiptDropQueueMessages, 1)
+		if !coverage {
+			publisher.diagnostics.drop(ReceiptDropQueueMessages, 1)
+		}
 		return false
 	}
 	if len(payload) > publisher.limits.MaxQueuedBytes-publisher.pendingBytes {
 		publisher.drops.QueueBytes++
+		if coverage {
+			publisher.coverage.Dropped++
+		}
 		publisher.mu.Unlock()
-		publisher.diagnostics.drop(ReceiptDropQueueBytes, 1)
+		if !coverage {
+			publisher.diagnostics.drop(ReceiptDropQueueBytes, 1)
+		}
 		return false
 	}
 	publisher.pendingMessages++
 	publisher.pendingBytes += len(payload)
 	publisher.enqueued++
-	publisher.queue <- queuedReceipt{payload: payload}
+	if coverage {
+		publisher.coverage.Enqueued++
+		publisher.coverage.PendingMessages++
+		publisher.coverage.PendingBytes += len(payload)
+	}
+	publisher.queue <- queuedReceipt{payload: payload, coverage: coverage}
 	publisher.mu.Unlock()
-	publisher.diagnostics.queued(1)
+	if !coverage {
+		publisher.diagnostics.queued(1)
+	}
 	return true
 }
 
@@ -289,20 +360,34 @@ func (publisher *ReceiptPublisher) finish(item queuedReceipt, err error) {
 	publisher.mu.Lock()
 	publisher.pendingMessages--
 	publisher.pendingBytes -= len(item.payload)
+	if item.coverage {
+		publisher.coverage.PendingMessages--
+		publisher.coverage.PendingBytes -= len(item.payload)
+	}
 	if publisher.abandoned {
 		publisher.mu.Unlock()
 		return
 	}
 	if err != nil {
 		publisher.drops.BrokerACKFailed++
+		if item.coverage {
+			publisher.coverage.Dropped++
+		}
 		publisher.recordError(err)
 		publisher.mu.Unlock()
-		publisher.diagnostics.drop(ReceiptDropBrokerACKFailed, 1)
+		if !item.coverage {
+			publisher.diagnostics.drop(ReceiptDropBrokerACKFailed, 1)
+		}
 		return
 	}
 	publisher.acked++
+	if item.coverage {
+		publisher.coverage.Acked++
+	}
 	publisher.mu.Unlock()
-	publisher.diagnostics.acked(1)
+	if !item.coverage {
+		publisher.diagnostics.acked(1)
+	}
 }
 
 func (publisher *ReceiptPublisher) shutdownWithin(ctx context.Context) ReceiptDrainResult {
@@ -335,6 +420,7 @@ func (publisher *ReceiptPublisher) shutdownWithin(ctx context.Context) ReceiptDr
 		publisher.abandoned = true
 		timedOut := publisher.pendingMessages
 		publisher.drops.ShutdownTimeout += uint64(timedOut)
+		publisher.coverage.Dropped += uint64(publisher.coverage.PendingMessages)
 		publisher.recordError(ctx.Err())
 		result := publisher.snapshotLocked()
 		publisher.mu.Unlock()
@@ -348,6 +434,7 @@ func (publisher *ReceiptPublisher) shutdownWithin(ctx context.Context) ReceiptDr
 
 func (publisher *ReceiptPublisher) snapshotLocked() ReceiptDrainResult {
 	return ReceiptDrainResult{
+		Coverage: publisher.coverage,
 		Enqueued: publisher.enqueued, Acked: publisher.acked,
 		PendingMessages: publisher.pendingMessages, PendingBytes: publisher.pendingBytes,
 		Drops: publisher.drops, Err: publisher.firstErr,
@@ -362,4 +449,49 @@ func (publisher *ReceiptPublisher) recordError(err error) {
 
 func hasReceiptDrops(drops ReceiptDropCounts) bool {
 	return drops != (ReceiptDropCounts{})
+}
+
+// TryEnqueueBusinessAbnormal shares outstanding bytes/count and broker ACKs
+// with the existing immutable final publisher; no second transport or queue.
+func (publisher *ReceiptPublisher) TryEnqueueBusinessAbnormal(e contract.EncodedBusinessAbnormalV1) bool {
+	if publisher == nil || publisher.core == nil {
+		return false
+	}
+	payload := e.CopyBytes()
+	if len(payload) == 0 {
+		publisher.mu.Lock()
+		publisher.drops.EncodeFailed++
+		publisher.mu.Unlock()
+		publisher.diagnostics.drop(ReceiptDropEncodeFailed, 1)
+		return false
+	}
+	return publisher.enqueuePayload(payload)
+}
+
+// TryEnqueueCoverageReceipt reuses the same queue and outstanding resource
+// reservation. Typed delivery counts do not masquerade as final Event metrics.
+func (p *ReceiptPublisher) TryEnqueueCoverageReceipt(e contract.EncodedGoCoverageV1) bool {
+	if p == nil || p.core == nil {
+		return false
+	}
+	wire := e.CopyBytes()
+	if len(wire) == 0 {
+		p.mu.Lock()
+		p.drops.EncodeFailed++
+		p.coverage.Dropped++
+		p.mu.Unlock()
+		return false
+	}
+	return p.enqueuePayloadKind(wire, true)
+}
+
+// Snapshot is a locked read of actual queue/ACK state. It does not close a
+// validation Epoch or assert that an in-flight Receipt will be acknowledged.
+func (p *ReceiptPublisher) Snapshot() ReceiptDrainResult {
+	if p == nil {
+		return ReceiptDrainResult{Status: ReceiptDrainFailed}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.snapshotLocked()
 }

@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -66,7 +67,7 @@ func TestRunApplicationParentCancellationDrainsBundleAndHTTP(t *testing.T) {
 		openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) (*applicationBundle, error) {
 			return bundle, nil
 		},
-		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
+		newHTTP: func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error) {
 			return &fakeHTTPRuntime{run: func(ctx context.Context, _ string, _ time.Duration) error {
 				close(httpStarted)
 				<-ctx.Done()
@@ -100,7 +101,7 @@ func TestRunApplicationUnexpectedHTTPStopIsFatal(t *testing.T) {
 		openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) (*applicationBundle, error) {
 			return bundle, nil
 		},
-		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
+		newHTTP: func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error) {
 			return &fakeHTTPRuntime{run: func(context.Context, string, time.Duration) error { return nil }}, nil
 		},
 	}
@@ -120,7 +121,7 @@ func TestRunApplicationHTTPInitializationFailureDoesNotOpenBundle(t *testing.T) 
 			opened = true
 			return nil, errors.New("must not open")
 		},
-		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
+		newHTTP: func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error) {
 			return nil, want
 		},
 	}
@@ -142,12 +143,14 @@ func TestRunApplicationFatalStartsOneShutdownDeadline(t *testing.T) {
 	want := errors.New("consumer fatal")
 	serviceStarted := make(chan struct{})
 	httpStarted := make(chan struct{})
+	shutdownObserved := make(chan time.Time, 1)
 	releaseService := make(chan struct{})
 	service := newFakeServiceRuntime()
 	service.fatalErr = want
 	service.run = func(ctx context.Context) error {
 		close(serviceStarted)
 		<-ctx.Done()
+		shutdownObserved <- time.Now()
 		<-releaseService
 		return want
 	}
@@ -164,7 +167,7 @@ func TestRunApplicationFatalStartsOneShutdownDeadline(t *testing.T) {
 		openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) (*applicationBundle, error) {
 			return bundle, nil
 		},
-		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
+		newHTTP: func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error) {
 			return &fakeHTTPRuntime{run: func(ctx context.Context, _ string, _ time.Duration) error {
 				close(httpStarted)
 				<-ctx.Done()
@@ -183,15 +186,18 @@ func TestRunApplicationFatalStartsOneShutdownDeadline(t *testing.T) {
 			t.Fatal("runtime component did not start")
 		}
 	}
-	fatalAt := time.Now()
 	close(service.fatalSignal)
-	time.AfterFunc(50*time.Millisecond, func() { close(releaseService) })
+	shutdownObservedAt := <-shutdownObserved
+	// Keep the service blocked after cancellation so an implementation that
+	// resets the shared deadline after waiting cannot pass on clock granularity.
+	time.Sleep(10 * time.Millisecond)
+	close(releaseService)
 	if err := <-done; !errors.Is(err, want) {
 		t.Fatalf("runApplication() error = %v, want %v", err, want)
 	}
-	latest := fatalAt.Add(cfg.ShutdownTimeout.Duration() + 20*time.Millisecond)
+	latest := shutdownObservedAt.Add(cfg.ShutdownTimeout.Duration())
 	if eventDeadline.IsZero() || eventDeadline.After(latest) {
-		t.Fatalf("event shutdown deadline = %s, want deadline fixed when fatal was observed", eventDeadline)
+		t.Fatalf("event shutdown deadline = %s, want deadline fixed before service cancellation at %s", eventDeadline, shutdownObservedAt)
 	}
 }
 
@@ -215,7 +221,7 @@ func TestRunApplicationLogsFatalWithoutErrorBody(t *testing.T) {
 		openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) (*applicationBundle, error) {
 			return bundle, nil
 		},
-		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
+		newHTTP: func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error) {
 			return &fakeHTTPRuntime{run: func(ctx context.Context, _ string, _ time.Duration) error {
 				close(httpStarted)
 				<-ctx.Done()
@@ -282,7 +288,7 @@ func TestRunApplicationShutdownDeadlineStillAttemptsOutputsAndRedis(t *testing.T
 		openBundle: func(context.Context, config.Config, *metric.Recorder, *observability.Logger) (*applicationBundle, error) {
 			return bundle, nil
 		},
-		newHTTP: func(*metric.Recorder, observability.HealthSource) (httpRuntime, error) {
+		newHTTP: func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error) {
 			return &fakeHTTPRuntime{run: func(ctx context.Context, _ string, _ time.Duration) error {
 				<-ctx.Done()
 				return nil
@@ -315,6 +321,13 @@ func TestRunApplicationShutdownDeadlineStillAttemptsOutputsAndRedis(t *testing.T
 
 func validApplicationConfig() config.Config {
 	cfg := config.Default()
+	cfg.Input = config.PhaseTwoInputConfig{
+		Mode: config.InputModePhaseOneKafkaCompatibility,
+		PhaseOneKafka: &config.PhaseOneKafkaCompatibilityConfig{
+			InputTopic: "alarmd-shadow-input-v2", ConsumerGroup: "alarmd-shadow-v2",
+			InitialOffset: "oldest", StatePrefix: "alarmd-shadow",
+		},
+	}
 	cfg.Kafka.Brokers = []string{"127.0.0.1:9092"}
 	cfg.Kafka.InputTopic = "alarmd-shadow-input-v2"
 	cfg.Kafka.TriggerEvent.Topic = "alarmd-shadow-trigger-event-v1"
@@ -367,8 +380,11 @@ func (service *fakeServiceRuntime) LifecycleSnapshot() lifecycle.Snapshot {
 
 type fakeHTTPRuntime struct {
 	run func(context.Context, string, time.Duration) error
+	api http.Handler
 }
 
 func (runtime *fakeHTTPRuntime) Run(ctx context.Context, address string, timeout time.Duration) error {
 	return runtime.run(ctx, address, timeout)
 }
+
+func (runtime *fakeHTTPRuntime) SetAPI(handler http.Handler) { runtime.api = handler }

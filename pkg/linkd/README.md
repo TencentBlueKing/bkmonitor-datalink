@@ -23,7 +23,7 @@ MQ delivery
   → Mailbox Signal + fingerprint lease
   → Elasticsearch Recent Alert 缓存优先裁决
   → Alert 创建/更新/升级/抑制/终态
-  → AlertLog + Kafka V1 Alert change
+  → AlertLog + EventSource hooks（Kafka V1 / KAC Alarm / Redis 活跃策略索引）
 ```
 
 - Event action 仅 `triggered | resolved | closed`。

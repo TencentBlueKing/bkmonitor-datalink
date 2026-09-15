@@ -75,7 +75,7 @@ RawEventMessage MQ
   -> Redis Mailbox + lifecycle signal
   -> lifecycle attempt
   -> Alert / AlertLog
-  -> EventSource.hooks（Kafka Alert V1 / Redis 活跃策略索引）
+  -> EventSource.hooks（Kafka Alert V1 / KAC Alarm / Redis 活跃策略索引）
 ```
 
 消息生产与消费、Redis Mailbox Signal 之间使用独立 root span 与 Span Link；同进程同步子操作使用 child span。Broker 重投产生新的处理 trace，并通过稳定 `record_id/event_id/alert_id/cause_id` 关联。

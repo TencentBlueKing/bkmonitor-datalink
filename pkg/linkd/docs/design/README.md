@@ -3,6 +3,7 @@
 | 文档                                                             | 定位                                                   |
 | ---------------------------------------------------------------- | ------------------------------------------------------ |
 | [define.md](define.md)                                           | Event、EventProcessing、Alert、AlertLog 的权威数据模型 |
+| [kac-alarm-hook.md](kac-alarm-hook.md)                           | KAC Alarm 兼容 Hook、字段映射与可靠性边界           |
 | [architecture.md](architecture.md)                               | 处理链路、模块边界和可靠性边界                         |
 | [deployment.md](deployment.md)                                   | All-in-one 与三进程部署拓扑、职责和演进边界            |
 | [core-storage-contract.md](core-storage-contract.md)             | Repository、处理元数据、CAS 与物理资源                 |

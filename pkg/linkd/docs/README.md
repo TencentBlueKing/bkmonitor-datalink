@@ -22,6 +22,10 @@ Kubernetes 部署入口：[Helm 部署与 worker 分组](guides/helm.md)。
 
 ## 当前文档与归档
 
+KAC 告警中心输出实现与边界见 [KAC Alarm Hook 设计](design/kac-alarm-hook.md)：保留通用 Kafka Alert V1，
+`type: kac` 完成 KAC Alarm 兼容转换和 Kafka 投递；本地 PM2/Docker 链路已验证，目标 KAC 消费与持久化
+仍待联调。
+
 EventSource 管理与部分全局配置动态化独立演进：
 
 - [EventSource 动态配置](design/event-source-dynamic-configuration.md)：来源独立管理、主动拉取/API 修改、版本与 Flow 生效，已接入实现。

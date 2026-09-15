@@ -148,7 +148,9 @@ FinalHook 在 Alert 真实变化后按当前任务 Release 的 `EventSource.hook
 
 插件客户端归来源任务所有，发布切换排空旧任务后关闭旧客户端，部分装配失败释放已创建客户端。
 Kafka 插件保持 [Kafka Alert V1](../reference/contracts/alert-output.md) 协议及 message ID 不变。
-配置方法见[来源 hooks](../guides/configuration.md#eventsource-hooks)。
+KAC 插件把相同 Alert 快照转换为 KAC `alarm_collect_topic` 扁平消息；`alarm_id/event_id` 均为
+`linkd-` 加 AlertID，等级、`Asia/Shanghai` 时区和 `source_name=鲸眼监控` 固定在适配器内。
+实现与配置见 [KAC Alarm Hook](../design/kac-alarm-hook.md) 和[来源 hooks](../guides/configuration.md#eventsource-hooks)。
 
 `active-alert-by-strategy` 独立配置 Redis，执行规则如下：
 

@@ -293,6 +293,70 @@ type HistoryCoverage struct {
 	// positions aged out. It is a defect in reporting the held verdict as though
 	// it were this round's finding.
 	Guarded uint32 `json:"guarded,omitempty"`
+	// Fresh is how many windows this round belonged to a series with no
+	// persisted state, and ShortFresh how many of the short ones did.
+	//
+	// The comment above this type says the second case -- a series whose
+	// identity churns -- is a strategy problem rather than an alarmd one, and
+	// that a reader cannot reach that conclusion from a label both cases share.
+	// This pair is the evidence for it, and it is the first thing published here
+	// that carries any trace of series identity. Not the identity itself: only
+	// whether this round had ever seen this one before, which is the whole of
+	// what the question needs.
+	//
+	// Kept as two counts against two denominators. ShortFresh belongs to Short
+	// and Fresh to Levels, and an object where every window is fresh because it
+	// just started is a different statement from one where only the short
+	// windows are.
+	Fresh      uint32 `json:"fresh,omitempty"`
+	ShortFresh uint32 `json:"short_fresh,omitempty"`
+	// FreshRounds is how many consecutive rounds every short window belonged to
+	// a series with no loaded history.
+	//
+	// The predicate is "every one", not "at least one", and it resets on a
+	// single short window that had history. That is deliberately the strict
+	// direction: this counter is what sends a reader to change a strategy's
+	// aggregation dimensions, and the cost of claiming churn that is not there
+	// is an operator editing a working strategy. A round where some long-lived
+	// series is also short is a round where churn is not the whole story, and
+	// this says so by going back to zero.
+	//
+	// The run is what makes it mean anything. One round of it follows every
+	// StateGeneration change -- an edit re-keys every series at once, so they
+	// all load nothing and all look new -- and that round is indistinguishable
+	// from churn. A run longer than the window is wide is not.
+	FreshRounds uint32 `json:"fresh_rounds,omitempty"`
+}
+
+// Churning reports series that have never survived long enough to be seen
+// twice, for longer than filling a window takes.
+//
+// This is the case the type comment calls a strategy problem: the aggregation
+// dimensions contain something that changes -- a pod, a container, a task id --
+// so each series is new, starts from nothing, and is replaced before it can
+// fill. No amount of capacity or waiting changes it, and the fix is in the
+// strategy.
+//
+// It is a half of Persistent and is built on it rather than beside it.
+// Persistent says the window has been short for longer than filling takes;
+// that is true of churn and equally true of a long-lived series whose data has
+// holes, and those need opposite responses. This adds which.
+//
+// Written as Persistent plus a condition, not as a parallel predicate with the
+// same clauses copied. Two predicates that are meant to nest but are spelled
+// separately drift apart at the first edit to either, and the drift shows up as
+// an object reported as churning while the page also says its window is still
+// filling -- a reader told to edit a strategy whose series are merely young.
+// Persistent's exclusion of empty windows comes along with it, which is correct
+// here too: a window with nothing in it is Starved's case and is answered there.
+//
+// The bound is the window's own requirement for the same reason Persistent uses
+// it: a window needing N points is filled by N rounds of data, so a series that
+// has never once been seen with history across more than N rounds is not one
+// that is merely young.
+func (coverage *HistoryCoverage) Churning() bool {
+	return coverage.Persistent() && coverage.ShortFresh == coverage.Short &&
+		coverage.FreshRounds > coverage.WorstRequired
 }
 
 // Starved reports a window that has held no points at all for longer than
@@ -318,13 +382,18 @@ func (coverage *HistoryCoverage) Starved() bool {
 // than filling one could possibly take.
 //
 // "Some window", not "the same window", and the difference is not a nicety.
-// ShortRounds increments on any round where Short > 0, and there is no series
-// identity at this layer, so a strategy whose series churn -- a different one
-// warming every round -- drives it up for ever with no single window ever being
-// persistently short. Short and Levels are what keep that readable: one short
-// window out of nine hundred is a series inside a strategy, and every window
-// short is an object nobody can detect. Both reach this predicate, so whatever
-// renders it has to carry the share as well, or the two are one sentence.
+// ShortRounds increments on any round where Short > 0, so a strategy whose
+// series churn -- a different one warming every round -- drives it up for ever
+// with no single window ever being persistently short. Short and Levels are what
+// keep that readable: one short window out of nine hundred is a series inside a
+// strategy, and every window short is an object nobody can detect. Both reach
+// this predicate, so whatever renders it has to carry the share as well, or the
+// two are one sentence.
+//
+// Which of the two it is, is Churning's question and not this one. This
+// predicate deliberately stays true of both: it says the shortfall is not going
+// to resolve itself, which is what decides whether anyone has to look, and it
+// says nothing about who should.
 //
 // The threshold is the window's own requirement rather than a number chosen
 // here. A window needing N points is full after N rounds of data; still short

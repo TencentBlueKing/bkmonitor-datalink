@@ -56,6 +56,27 @@ type HistoryCoverageFacts struct {
 	// what the window says now" from "this is what it said, and nothing else has
 	// been allowed through yet".
 	Guarded uint32 `json:"guarded,omitempty"`
+	// Fresh is how many of these windows belong to a series for which no
+	// persisted state was loaded this round, and ShortFresh how many of the
+	// short ones do.
+	//
+	// They are the difference between a strategy whose series identity churns
+	// and a series whose data has holes, and nothing else published here can
+	// tell those apart: both hold a short window on every round, for ever, and
+	// report the same completeness while doing it. The first is a different
+	// series each time -- new, with nothing loaded -- and the second is the same
+	// one that has been evaluated for hours.
+	//
+	// Two counts rather than one share, because the denominators differ: Fresh
+	// is out of Levels and ShortFresh out of Short. Reading ShortFresh against
+	// Levels would be a fraction of two populations, which is the shape that
+	// produces a number no window ever reported.
+	//
+	// A round following a StateGeneration change reports every window fresh
+	// without anything having churned, so a single round of this says nothing;
+	// only a run of them does.
+	Fresh      uint32 `json:"fresh,omitempty"`
+	ShortFresh uint32 `json:"short_fresh,omitempty"`
 }
 
 // Shortfall is how many points the worst window was missing. Zero when
@@ -81,8 +102,16 @@ func normalizeHistoryCoverageFacts(facts *HistoryCoverageFacts) *HistoryCoverage
 	// cannot exceed them either. Checked here with the rest rather than clamped:
 	// a count that could not have come from these windows makes every number
 	// beside it suspect, and a plausible-looking clamp hides that.
+	// Fresh is counted over the same windows as Levels and ShortFresh over the
+	// same windows as Short, and every short fresh window is also a fresh one --
+	// so all three bounds hold by construction, and a pair that breaks one did
+	// not come from counting these windows. Checked rather than clamped for the
+	// same reason as the rest: this is the count a reader uses to decide whether
+	// a strategy's dimensions are at fault, and a clamped one would still look
+	// like an answer.
 	if copied.Levels == 0 || copied.Short > copied.Levels || copied.Empty > copied.Short ||
-		copied.Guarded > copied.Levels {
+		copied.Guarded > copied.Levels || copied.Fresh > copied.Levels ||
+		copied.ShortFresh > copied.Short || copied.ShortFresh > copied.Fresh {
 		return nil
 	}
 	if copied.Short == 0 {

@@ -315,6 +315,19 @@ type Summary struct {
 	// and cannot clear itself. Leaving them in the general pile means every
 	// reader re-investigates the same objects and reaches the same conclusion.
 	WindowNeverFills int `json:"window_never_fills"`
+	// WindowSeriesChurn is how many of WindowNeverFills are there because the
+	// series themselves keep being replaced -- every short window this round
+	// belonged to a series with no loaded history, and that has held for longer
+	// than filling a window takes.
+	//
+	// A strict subset of WindowNeverFills and never shown beside it as a peer.
+	// The rest of that count are long-lived series whose data is missing, and
+	// the two are different work for different people: this half is a strategy
+	// whose aggregation dimensions contain something that changes, the other
+	// half is data that is not arriving. The page used to name the first as the
+	// likely cause of all of them, which is an unmeasured guess pointed at a
+	// population that contains both.
+	WindowSeriesChurn int `json:"window_series_churn"`
 }
 
 // momentOrNil drops a zero time rather than sending it.
@@ -391,6 +404,7 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 	stalled := 0
 	ours, external, unattributed, oursUnclassified := 0, 0, 0, 0
 	neverFills := 0
+	seriesChurn := 0
 	onset := Onset{}
 	for _, anomaly := range anomalies {
 		if anomaly.Stalled {
@@ -438,6 +452,16 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 			// its window", which is a different thing and sends them nowhere.
 			if undecidableReason(anomaly.CauseReason) && anomaly.Coverage.Persistent() {
 				neverFills++
+				// A subset of a subset, and the only one of these with a named
+				// owner. Persistent() says the shortfall will not resolve; it is
+				// equally true of a strategy whose series identity churns and of
+				// long-lived series whose data is missing, and the two are sent
+				// to different people. Counting them together is how a summary
+				// comes to recommend editing aggregation dimensions for objects
+				// whose dimensions are fine.
+				if anomaly.Coverage.Churning() {
+					seriesChurn++
+				}
 			}
 		case AttributionOurs:
 			ours++
@@ -493,6 +517,7 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 		ByReplica: rank(replicas), Stalled: stalled, Onset: onset,
 		Ours: ours, External: external, Unattributed: unattributed,
 		OursUnclassified: oursUnclassified, WindowNeverFills: neverFills,
+		WindowSeriesChurn: seriesChurn,
 	}
 }
 

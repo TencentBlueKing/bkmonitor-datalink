@@ -1682,6 +1682,7 @@ func historyCoverageFacts(coverage execution.HistoryCoverage) *observability.His
 		Levels: coverage.Levels, Short: coverage.Short, Empty: coverage.Empty,
 		WorstValid: coverage.WorstValid, WorstRequired: coverage.WorstRequired,
 		Guarded: coverage.Guarded,
+		Fresh:   coverage.Fresh, ShortFresh: coverage.ShortFresh,
 	}
 }
 

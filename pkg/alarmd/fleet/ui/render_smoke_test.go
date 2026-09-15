@@ -119,6 +119,32 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			item.Coverage = &fleet.HistoryCoverage{Levels: 4, Short: 2, Guarded: 1,
 				WorstValid: 2, WorstRequired: 14, ShortRounds: 40}
 		}),
+		// The two halves of "this window will never fill", identical in every
+		// count that was ever published about them: same shortfall, same run,
+		// same reason, same completeness. The page named the first as the likely
+		// cause of both and sent whoever read the second to edit a strategy
+		// whose aggregation dimensions were never the problem.
+		anomaly("qg-window-churn", func(item *fleet.Anomaly) {
+			item.Cause, item.CauseReason = "LEVEL_OUTCOME_UNKNOWN", "HISTORY_WARMING"
+			item.Coverage = &fleet.HistoryCoverage{Levels: 9, Short: 4,
+				WorstValid: 2, WorstRequired: 9, ShortRounds: 40,
+				Fresh: 4, ShortFresh: 4, FreshRounds: 40}
+		}),
+		anomaly("qg-window-stale-data", func(item *fleet.Anomaly) {
+			item.Cause, item.CauseReason = "LEVEL_OUTCOME_UNKNOWN", "HISTORY_WARMING"
+			item.Coverage = &fleet.HistoryCoverage{Levels: 9, Short: 4,
+				WorstValid: 2, WorstRequired: 9, ShortRounds: 40}
+		}),
+		// Every short window fresh for a single round, which is what the round
+		// after a strategy edit looks like: a StateGeneration change re-keys
+		// every series at once and they all load nothing. Reported as churn it
+		// would accuse a strategy of the edit that was just made to it.
+		anomaly("qg-window-rekeyed", func(item *fleet.Anomaly) {
+			item.Cause, item.CauseReason = "LEVEL_OUTCOME_UNKNOWN", "HISTORY_WARMING"
+			item.Coverage = &fleet.HistoryCoverage{Levels: 9, Short: 4,
+				WorstValid: 2, WorstRequired: 9, ShortRounds: 40,
+				Fresh: 9, ShortFresh: 4, FreshRounds: 1}
+		}),
 		anomaly("qg-window-lopsided", func(item *fleet.Anomaly) {
 			item.Cause, item.CauseReason = "LEVEL_OUTCOME_UNKNOWN", "HISTORY_WARMING"
 			item.Coverage = &fleet.HistoryCoverage{Levels: 999, Short: 1,
@@ -186,7 +212,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			Strategies: 7, Ours: 3, External: 4, Unattributed: 1, OursUnclassified: 1,
 			Onset: fleet.Onset{LastHour: 2, LastDay: 3, Older: 3,
 				NewestSince: at.Add(-time.Minute), OldestSince: at.Add(-40 * time.Hour)},
-			WindowNeverFills: 1,
+			WindowNeverFills: 3, WindowSeriesChurn: 1,
 		},
 		"window_never_fills_cases": windowNeverFillsCases(),
 		// A filter narrowing the list, a replica that could not publish it, and
@@ -406,6 +432,13 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		{"demoted", "整栏不进部署判定", "判定就看这个数"},
 		{"undecidable", "整栏不进部署判定", "判定就看这个数"},
 		{"by_design", "整栏不进部署判定", "判定就看这个数"},
+		// The settled objects split into two halves with different owners, and
+		// this sentence used to name one of them as the likely cause of all of
+		// them. The fixture has three never-filling objects of which one is
+		// churn, so a line that reports the whole count as churn -- or that
+		// stops reading the count at all -- says something the summary does not.
+		{"anomalies", "其中 1 个是序列在不断换", "常见的是维度里"},
+		{"anomalies", "另外 2 个的序列一直都在", "这一批全是这种"},
 	} {
 		line := ""
 		for _, candidate := range strings.Split(text, "\n") {
@@ -554,6 +587,14 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		// 检测窗口完整 here is the page agreeing with the counts and silently
 		// disagreeing with the reason printed beside them on the same row.
 		{"qg-window-held-complete", "窗口已经补满", "检测窗口完整"},
+		// The two halves of a never-filling window, and each must not carry the
+		// other's wording. Every count on these two rows is the same except the
+		// fresh ones, so a row that reads them and prints the same sentence for
+		// both is the defect this whole pair exists to catch.
+		{"qg-window-churn", "序列在不断换", "持续缺点"},
+		{"qg-window-stale-data", "持续缺点", "序列在不断换"},
+		// One round of every-series-fresh is a strategy edit, not churn.
+		{"qg-window-rekeyed", "持续缺点", "序列在不断换"},
 		{"qg-skipped", "没被检测", "持续缺点"},
 		// The wording changed with the classification: CONFIG_DRIFT is no longer
 		// told to the reader as a strategy being edited, because the predicate
@@ -722,11 +763,31 @@ func windowNeverFillsCases() []map[string]any {
 		{Levels: 3, Short: 1, Empty: 1, WorstRequired: 14, ShortRounds: 40, EmptyRounds: 40},
 		{Levels: 3, Short: 1, Empty: 1, WorstRequired: 14, ShortRounds: 40, EmptyRounds: 2},
 		{Levels: 3, Short: 2, Empty: 1, WorstValid: 2, WorstRequired: 14, ShortRounds: 40, EmptyRounds: 40},
+		// Fresh series. Every branch of Churning, including the three that are
+		// false for different reasons: every short window fresh but not for long
+		// enough (the round after a StateGeneration change looks exactly like
+		// this), a mix where one short window did load history, and none fresh
+		// at all. Without the false cases the comparison passes against a page
+		// rule that answers true whenever anything is fresh.
+		{Levels: 9, Short: 4, WorstValid: 2, WorstRequired: 9, ShortRounds: 40,
+			Fresh: 4, ShortFresh: 4, FreshRounds: 40},
+		{Levels: 9, Short: 4, WorstValid: 2, WorstRequired: 9, ShortRounds: 40,
+			Fresh: 9, ShortFresh: 4, FreshRounds: 1},
+		{Levels: 9, Short: 4, WorstValid: 2, WorstRequired: 9, ShortRounds: 40,
+			Fresh: 3, ShortFresh: 3, FreshRounds: 40},
+		{Levels: 9, Short: 4, WorstValid: 2, WorstRequired: 9, ShortRounds: 40},
+		// Fresh and short for a long run, but still filling by the shortfall
+		// rule. Churn must not be claimed here: it is a half of never-filling,
+		// and on its own it would send a reader to edit a strategy whose series
+		// are only young.
+		{Levels: 9, Short: 4, WorstValid: 8, WorstRequired: 9, ShortRounds: 2,
+			Fresh: 4, ShortFresh: 4, FreshRounds: 40},
 	}
 	cases := make([]map[string]any, 0, len(subjects))
 	for _, subject := range subjects {
 		cases = append(cases, map[string]any{
 			"coverage": subject, "persistent": subject.Persistent(), "starved": subject.Starved(),
+			"churning": subject.Churning(),
 		})
 	}
 	return cases
@@ -1042,9 +1103,26 @@ if (cases.length === 0) {
 } else {
   let disagreed = 0;
   for (const c of cases) {
-    let page, starved;
-    try { page = ctx.windowNeverFills(c.coverage); starved = ctx.windowIsStarved(c.coverage); }
+    let page, starved, churn;
+    try {
+      page = ctx.windowNeverFills(c.coverage);
+      starved = ctx.windowIsStarved(c.coverage);
+      churn = ctx.windowSeriesChurn(c.coverage);
+    }
     catch (e) { console.error('rule threw: ' + e.message); failed++; break; }
+    if (!!churn !== !!c.churning) {
+      disagreed++;
+      console.error('windowSeriesChurn disagrees with Churning on ' + JSON.stringify(c.coverage) +
+        ': page ' + !!churn + ', Go ' + !!c.churning);
+    }
+    // Churn is a half of never-filling, never a third state beside it. A page
+    // that reported churn on a window still filling would tell a reader to
+    // edit a strategy whose series are merely young.
+    if (churn && !page) {
+      disagreed++;
+      console.error('a window is reported as churning without being one that never fills: ' +
+        JSON.stringify(c.coverage));
+    }
     if (!!page !== !!c.persistent) {
       disagreed++;
       console.error('windowNeverFills disagrees with Persistent on ' + JSON.stringify(c.coverage) +

@@ -188,6 +188,12 @@ type queryGroupState struct {
 	// empty only for the last two, and those last two are the ones that say
 	// the data stopped rather than that the series churns.
 	emptyRounds uint32
+	// freshRounds counts consecutive rounds where every short window belonged
+	// to a series this round had no history for. It is what separates a
+	// strategy whose series identity churns from one whose long-lived series
+	// are missing data -- the two conditions that drive shortRounds up for ever
+	// and read identically at every other layer.
+	freshRounds uint32
 	// sawSomethingWrong records that at least one round of the current run went
 	// wrong in a way that is not merely "recovery could not be decided".
 	//
@@ -515,6 +521,19 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 		} else {
 			state.emptyRounds++
 		}
+		// Every short window belonged to a series with no loaded history, or
+		// the run ends. "Every", not "any": one short window that did have
+		// history is a round where churn is not the whole story, and this
+		// counter is the one that sends a reader to edit a strategy.
+		//
+		// A round with nothing short also ends it, for the same reason it ends
+		// shortRounds -- a window that filled once was filling.
+		if facts := observation.HistoryCoverage; facts == nil || facts.Short == 0 ||
+			facts.ShortFresh != facts.Short {
+			state.freshRounds = 0
+		} else {
+			state.freshRounds++
+		}
 		state.coverage = nil
 		if facts := observation.HistoryCoverage; facts != nil {
 			state.coverage = &HistoryCoverage{
@@ -522,6 +541,7 @@ func (tracker *Tracker) Observe(ctx context.Context, observation observability.O
 				WorstValid: facts.WorstValid, WorstRequired: facts.WorstRequired,
 				ShortRounds: state.shortRounds, EmptyRounds: state.emptyRounds,
 				Guarded: facts.Guarded,
+				Fresh:   facts.Fresh, ShortFresh: facts.ShortFresh, FreshRounds: state.freshRounds,
 			}
 		}
 	case blockedOutcome(runOutcome):

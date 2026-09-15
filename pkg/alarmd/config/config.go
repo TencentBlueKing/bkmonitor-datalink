@@ -508,12 +508,6 @@ func Load(path string) (Config, error) {
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
-	if cfg.Input.Mode == InputModePhaseOneKafkaCompatibility {
-		cfg, err = cfg.PhaseOneCompatibilityRuntimeConfig()
-		if err != nil {
-			return Config{}, err
-		}
-	}
 	return cfg, nil
 }
 
@@ -525,18 +519,7 @@ func (c Config) Validate() error {
 		return fmt.Errorf("input configuration: %w", err)
 	}
 
-	switch c.Input.Mode {
-	case InputModeGoAccess:
-		return c.validateGoAccessRuntime()
-	case InputModePhaseOneKafkaCompatibility:
-		runtimeConfig, err := c.PhaseOneCompatibilityRuntimeConfig()
-		if err != nil {
-			return err
-		}
-		return runtimeConfig.validatePhaseOneRuntime()
-	default:
-		return fmt.Errorf("input configuration: phase-two input mode %q is not supported", c.Input.Mode)
-	}
+	return c.validateGoAccessRuntime()
 }
 
 func validateListenAddress(field, address string) error {
@@ -679,40 +662,6 @@ func (c Config) validateGoAccessRuntime() error {
 	}
 	if c.Limits.Trigger.MaxEvidenceBytesPerEvent > c.Kafka.TriggerEvent.MaxMessageBytes {
 		return errors.New("trigger_event max_message_bytes cannot admit maximum trigger evidence")
-	}
-	return nil
-}
-
-func (c Config) validatePhaseOneRuntime() error {
-	if c.Redis.Mode != RedisModeStandalone {
-		return errors.New("phase-one Kafka compatibility requires standalone Redis")
-	}
-	if err := c.Kafka.ConsumerCoordinates().Validate(); err != nil {
-		return fmt.Errorf("consumer configuration: %w", err)
-	}
-	if c.Kafka.TriggerEvent.Topic == c.Kafka.MessageReceipt.Topic {
-		return errors.New("kafka trigger_event and message_receipt topics must differ")
-	}
-	if err := c.Kafka.TriggerEventCoordinates().Validate(); err != nil {
-		return fmt.Errorf("trigger event configuration: %w", err)
-	}
-	if err := c.Kafka.MessageReceiptCoordinates().Validate(); err != nil {
-		return fmt.Errorf("message receipt configuration: %w", err)
-	}
-	if err := c.validateSharedRuntime(); err != nil {
-		return err
-	}
-	if c.Limits.Reader.MaxEnvelopeBytes > enginekafka.MaxConsumerRecordBytes() {
-		return errors.New("limits.reader.max_envelope_bytes exceeds Kafka consumer record fetch budget")
-	}
-	if c.Limits.Trigger.MaxEvidenceBytesPerEvent > c.Kafka.TriggerEvent.MaxMessageBytes {
-		return errors.New("trigger_event max_message_bytes cannot admit maximum trigger evidence")
-	}
-	if c.ReceiptQueue.MaxQueuedMessages <= 0 || c.ReceiptQueue.MaxQueuedBytes <= 0 {
-		return errors.New("receipt_queue budgets must be positive")
-	}
-	if c.ReceiptQueue.MaxQueuedBytes < c.Kafka.MessageReceipt.MaxMessageBytes {
-		return errors.New("receipt_queue max_queued_bytes cannot admit one maximum message receipt")
 	}
 	return nil
 }

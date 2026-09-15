@@ -44,7 +44,7 @@ func TestDiagnosticsListenValidation(t *testing.T) {
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			cfg := validConfigObject()
+			cfg := validGoAccessConfigObject()
 			cfg.HTTP.DiagnosticsListen = testCase.address
 			err := cfg.Validate()
 			if testCase.wantErr == "" {
@@ -81,7 +81,7 @@ func TestDiagnosticsListenMustNotCollideWithQuerySurface(t *testing.T) {
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			cfg := validConfigObject()
+			cfg := validGoAccessConfigObject()
 			cfg.HTTP.Listen = testCase.listen
 			cfg.HTTP.DiagnosticsListen = testCase.diagnosis
 			err := cfg.Validate()

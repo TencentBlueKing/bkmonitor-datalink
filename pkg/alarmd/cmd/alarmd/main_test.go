@@ -40,7 +40,7 @@ func TestRunPrintsVersionWithoutLoadingConfiguration(t *testing.T) {
 
 func TestRunChecksConfigurationWithoutStartingApplication(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "alarmd.yaml")
-	if err := os.WriteFile(path, []byte(validApplicationYAML()), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(validGoAccessApplicationYAML()), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 	want := errors.New("application must not start")
@@ -67,7 +67,7 @@ func TestRunChecksConfigurationWithoutStartingApplication(t *testing.T) {
 
 func TestRunCheckConfigurationRejectsUnknownField(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "alarmd.yaml")
-	contents := validApplicationYAML() + "unknown_field: true\n"
+	contents := validGoAccessApplicationYAML() + "unknown_field: true\n"
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -124,41 +124,6 @@ func TestRunRejectsUnknownFlag(t *testing.T) {
 	if stderr.Len() == 0 {
 		t.Fatal("run() did not report flag error")
 	}
-}
-
-func validApplicationYAML() string {
-	return `input:
-  mode: phase_one_kafka_compatibility
-  phase_one_kafka:
-    input_topic: alarmd-shadow-input-v2
-    consumer_group: alarmd-shadow-v2
-    initial_offset: oldest
-    state_prefix: alarmd-shadow
-http:
-  listen: 127.0.0.1:8080
-shutdown_timeout: 1s
-kafka:
-  brokers:
-    - 127.0.0.1:9092
-  trigger_event:
-    topic: alarmd-shadow-trigger-event-v1
-    max_message_bytes: 524288
-  message_receipt:
-    topic: alarmd-shadow-message-receipt-v1
-    max_message_bytes: 524288
-  allowed_output_topics:
-    - alarmd-shadow-trigger-event-v1
-    - alarmd-shadow-message-receipt-v1
-    - alarmd_0bkmonitor_backend_event
-  legacy_adapter:
-    topic: alarmd_0bkmonitor_backend_event
-    snapshot_prefix: alarmd-compatibility-test
-    service_redis:
-      mode: standalone
-      address: 127.0.0.1:6379
-redis:
-  address: 127.0.0.1:6379
-`
 }
 
 func validGoAccessApplicationYAML() string {

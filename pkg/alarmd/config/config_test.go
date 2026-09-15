@@ -270,16 +270,8 @@ func TestLoadBuildsPhaseOneCoordinatesAndModuleOptions(t *testing.T) {
 		cfg.CodecLimits().MaxEncodedBytes != 600000 || cfg.StoreLimits().MaxWrittenBytes != 65<<20 {
 		t.Fatal("phase-one YAML limit overrides were not preserved")
 	}
-	if retry := cfg.DependencyRetryOptions(); retry.MinDelay != 125*time.Millisecond || retry.MaxDelay != 3*time.Second {
-		t.Fatalf("dependency retry = %+v", retry)
-	}
 	if queue := cfg.ReceiptPublisherLimits(); queue.MaxQueuedMessages != 2000 || queue.MaxQueuedBytes != 8<<20 {
 		t.Fatalf("receipt queue = %+v", queue)
-	}
-	if runner := cfg.EvaluationRunnerLimits(); runner.PreparationWorkers != 3 || runner.StatefulWorkers != 6 ||
-		runner.MaxInflightMessages != 24 || runner.MaxInflightBytes != 12<<20 ||
-		runner.MaxRuntimeKeysPerMessage != 7000 || runner.MaxPendingKeyRefs != 84_000 {
-		t.Fatalf("evaluation runner limits = %+v", runner)
 	}
 
 	codec, err := state.NewCodec(cfg.CodecLimits())
@@ -352,20 +344,9 @@ func TestValidateRejectsInvalidRedisAndRuntimeBudgets(t *testing.T) {
 		"compiler levels exceed trigger event": func(cfg *Config) {
 			cfg.Limits.Trigger.MaxLevelResultsPerEvent = uint32(cfg.Limits.Compiler.MaxLevelsPerPlan - 1)
 		},
-		"zero codec budget": func(cfg *Config) { cfg.Limits.Codec.MaxLevels = 0 },
-		"zero store budget": func(cfg *Config) { cfg.Limits.Store.MaxKeysPerBatch = 0 },
-		"reversed retry": func(cfg *Config) {
-			cfg.DependencyRetry.MaxDelay = cfg.DependencyRetry.MinDelay - 1
-		},
-		"zero receipt queue":      func(cfg *Config) { cfg.ReceiptQueue.MaxQueuedMessages = 0 },
-		"zero evaluation workers": func(cfg *Config) { cfg.EvaluationRunner.MaxStatefulWorkers = 0 },
-		"runtime keys cannot admit maximum reader message": func(cfg *Config) {
-			cfg.EvaluationRunner.MaxRuntimeKeysPerMessage =
-				cfg.Limits.Reader.MaxPlansPerMessage*cfg.Limits.Reader.MaxRecordsPerMessage - 1
-		},
-		"inflight bytes cannot admit maximum reader envelope": func(cfg *Config) {
-			cfg.EvaluationRunner.MaxInflightBytes = cfg.Limits.Reader.MaxEnvelopeBytes - 1
-		},
+		"zero codec budget":  func(cfg *Config) { cfg.Limits.Codec.MaxLevels = 0 },
+		"zero store budget":  func(cfg *Config) { cfg.Limits.Store.MaxKeysPerBatch = 0 },
+		"zero receipt queue": func(cfg *Config) { cfg.ReceiptQueue.MaxQueuedMessages = 0 },
 	}
 
 	for name, mutate := range tests {
@@ -544,19 +525,9 @@ redis:
   min_ttl: 1m
   max_ttl: 24h
   restart_margin: 5m
-dependency_retry:
-  min_delay: 125ms
-  max_delay: 3s
 receipt_queue:
   max_queued_messages: 2000
   max_queued_bytes: 8388608
-evaluation_runner:
-  max_preparation_workers: 3
-  max_stateful_workers: 6
-  max_inflight_messages: 24
-  max_inflight_bytes: 12582912
-  max_runtime_keys_per_message: 7000
-  max_pending_key_refs: 84000
 limits:
   reader:
     max_records_per_message: 321

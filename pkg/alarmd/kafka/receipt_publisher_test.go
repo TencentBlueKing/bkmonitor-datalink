@@ -20,10 +20,14 @@ import (
 	"github.com/Shopify/sarama"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
-	alarmdcoordinator "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/coordinator"
 )
 
-var _ alarmdcoordinator.ReceiptPublisher = (*ReceiptPublisher)(nil)
+// The compile-time assertion here used to pin ReceiptPublisher against the
+// phase-one consumer interface it had to satisfy. That consumer went with the
+// phase-one runtime; the publisher stayed, because phase two opens it through
+// OpenReceiptPublisherWithDiagnostics. There is no second implementation left
+// to keep in step, so the assertion was dropped rather than re-pointed at an
+// interface declared solely to give it something to check.
 
 func TestReceiptPublisherTryEnqueueIsBoundedAndPublishesOfficialWire(t *testing.T) {
 	t.Parallel()

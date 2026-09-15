@@ -22,7 +22,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/coordinator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
@@ -165,37 +164,21 @@ type PlatformCacheConfig struct {
 	DynamicConfig *RedisConnectionConfig `yaml:"dynamic_config,omitempty"`
 }
 
-type DependencyRetryConfig struct {
-	MinDelay Duration `yaml:"min_delay"`
-	MaxDelay Duration `yaml:"max_delay"`
-}
-
 type ReceiptQueueConfig struct {
 	MaxQueuedMessages int `yaml:"max_queued_messages"`
 	MaxQueuedBytes    int `yaml:"max_queued_bytes"`
 }
 
-type EvaluationRunnerConfig struct {
-	MaxPreparationWorkers    int `yaml:"max_preparation_workers"`
-	MaxStatefulWorkers       int `yaml:"max_stateful_workers"`
-	MaxInflightMessages      int `yaml:"max_inflight_messages"`
-	MaxInflightBytes         int `yaml:"max_inflight_bytes"`
-	MaxRuntimeKeysPerMessage int `yaml:"max_runtime_keys_per_message"`
-	MaxPendingKeyRefs        int `yaml:"max_pending_key_refs"`
-}
-
 type Config struct {
-	Input            PhaseTwoInputConfig    `yaml:"input"`
-	HTTP             HTTPConfig             `yaml:"http"`
-	Kafka            KafkaConfig            `yaml:"kafka"`
-	Redis            RedisConfig            `yaml:"redis"`
-	PlatformCache    PlatformCacheConfig    `yaml:"platform_cache"`
-	Limits           LimitsConfig           `yaml:"limits"`
-	DependencyRetry  DependencyRetryConfig  `yaml:"dependency_retry"`
-	ReceiptQueue     ReceiptQueueConfig     `yaml:"receipt_queue"`
-	EvaluationRunner EvaluationRunnerConfig `yaml:"evaluation_runner"`
-	PhaseTwo         PhaseTwoRuntimeConfig  `yaml:"phase_two"`
-	ShutdownTimeout  Duration               `yaml:"shutdown_timeout"`
+	Input           PhaseTwoInputConfig   `yaml:"input"`
+	HTTP            HTTPConfig            `yaml:"http"`
+	Kafka           KafkaConfig           `yaml:"kafka"`
+	Redis           RedisConfig           `yaml:"redis"`
+	PlatformCache   PlatformCacheConfig   `yaml:"platform_cache"`
+	Limits          LimitsConfig          `yaml:"limits"`
+	ReceiptQueue    ReceiptQueueConfig    `yaml:"receipt_queue"`
+	PhaseTwo        PhaseTwoRuntimeConfig `yaml:"phase_two"`
+	ShutdownTimeout Duration              `yaml:"shutdown_timeout"`
 }
 
 // Default is the product configuration, and it is the same on every machine:
@@ -204,7 +187,6 @@ type Config struct {
 // Reading the machine here would make a build agent's core count part of the
 // product default and every test's expectations a property of its host.
 func Default() Config {
-	runner := coordinator.DefaultConcurrentRunnerLimits()
 	cfg := Config{
 		Input: DefaultPhaseTwoInput(),
 		HTTP: HTTPConfig{
@@ -226,16 +208,8 @@ func Default() Config {
 			StatePrefix: DefaultStatePrefix,
 			MinTTL:      Duration(time.Minute), MaxTTL: Duration(30 * 24 * time.Hour), RestartMargin: Duration(10 * time.Minute),
 		},
-		Limits: defaultLimits(),
-		DependencyRetry: DependencyRetryConfig{
-			MinDelay: Duration(100 * time.Millisecond), MaxDelay: Duration(5 * time.Second),
-		},
-		ReceiptQueue: ReceiptQueueConfig{MaxQueuedMessages: 4096, MaxQueuedBytes: 16 << 20},
-		EvaluationRunner: EvaluationRunnerConfig{
-			MaxPreparationWorkers: runner.PreparationWorkers, MaxStatefulWorkers: runner.StatefulWorkers,
-			MaxInflightMessages: runner.MaxInflightMessages, MaxInflightBytes: runner.MaxInflightBytes,
-			MaxRuntimeKeysPerMessage: runner.MaxRuntimeKeysPerMessage, MaxPendingKeyRefs: runner.MaxPendingKeyRefs,
-		},
+		Limits:          defaultLimits(),
+		ReceiptQueue:    ReceiptQueueConfig{MaxQueuedMessages: 4096, MaxQueuedBytes: 16 << 20},
 		PhaseTwo:        defaultPhaseTwoRuntime(),
 		ShutdownTimeout: Duration(10 * time.Second),
 	}
@@ -490,26 +464,9 @@ func (c Config) StateStoreOptions(codec *state.Codec, router state.StorageRouter
 	}
 }
 
-func (c Config) DependencyRetryOptions() coordinator.DependencyRetryConfig {
-	return coordinator.DependencyRetryConfig{
-		MinDelay: c.DependencyRetry.MinDelay.Duration(), MaxDelay: c.DependencyRetry.MaxDelay.Duration(),
-	}
-}
-
 func (c Config) ReceiptPublisherLimits() enginekafka.ReceiptPublisherLimits {
 	return enginekafka.ReceiptPublisherLimits{
 		MaxQueuedMessages: c.ReceiptQueue.MaxQueuedMessages, MaxQueuedBytes: c.ReceiptQueue.MaxQueuedBytes,
-	}
-}
-
-func (c Config) EvaluationRunnerLimits() coordinator.ConcurrentRunnerLimits {
-	return coordinator.ConcurrentRunnerLimits{
-		PreparationWorkers:       c.EvaluationRunner.MaxPreparationWorkers,
-		StatefulWorkers:          c.EvaluationRunner.MaxStatefulWorkers,
-		MaxInflightMessages:      c.EvaluationRunner.MaxInflightMessages,
-		MaxInflightBytes:         c.EvaluationRunner.MaxInflightBytes,
-		MaxRuntimeKeysPerMessage: c.EvaluationRunner.MaxRuntimeKeysPerMessage,
-		MaxPendingKeyRefs:        c.EvaluationRunner.MaxPendingKeyRefs,
 	}
 }
 
@@ -766,22 +723,6 @@ func (c Config) validateSharedRuntime() error {
 	}
 	if err := c.Limits.validate(); err != nil {
 		return err
-	}
-	if c.DependencyRetry.MinDelay.Duration() <= 0 || c.DependencyRetry.MaxDelay.Duration() < c.DependencyRetry.MinDelay.Duration() {
-		return errors.New("dependency_retry delay range is invalid")
-	}
-	if c.EvaluationRunner.MaxPreparationWorkers <= 0 || c.EvaluationRunner.MaxStatefulWorkers <= 0 ||
-		c.EvaluationRunner.MaxInflightMessages <= 0 || c.EvaluationRunner.MaxInflightBytes <= 0 ||
-		c.EvaluationRunner.MaxRuntimeKeysPerMessage <= 0 || c.EvaluationRunner.MaxPendingKeyRefs <= 0 ||
-		c.EvaluationRunner.MaxRuntimeKeysPerMessage > c.EvaluationRunner.MaxPendingKeyRefs {
-		return errors.New("evaluation_runner budgets must be positive and internally consistent")
-	}
-	if c.EvaluationRunner.MaxRuntimeKeysPerMessage/c.Limits.Reader.MaxPlansPerMessage <
-		c.Limits.Reader.MaxRecordsPerMessage {
-		return errors.New("evaluation_runner max_runtime_keys_per_message cannot admit one maximum reader message")
-	}
-	if c.EvaluationRunner.MaxInflightBytes < c.Limits.Reader.MaxEnvelopeBytes {
-		return errors.New("evaluation_runner max_inflight_bytes cannot admit one maximum reader envelope")
 	}
 	return nil
 }

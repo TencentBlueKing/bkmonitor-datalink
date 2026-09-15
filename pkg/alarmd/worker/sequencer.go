@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/coordinator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
@@ -24,7 +23,7 @@ import (
 // execution in a Worker process so maxReservations remains a real process
 // bound rather than a per-claim or per-call bound.
 type KeyedSideEffectSequencer struct {
-	gate      *coordinator.OrderedKeyGate
+	gate      *OrderedKeyGate
 	admission chan struct{}
 
 	registerMu sync.Mutex
@@ -41,7 +40,7 @@ func NewKeyedSideEffectSequencer(maxReservations int) (*KeyedSideEffectSequencer
 		return nil, errors.New("alarmd worker: positive side-effect sequencer capacity is required")
 	}
 	return &KeyedSideEffectSequencer{
-		gate:      coordinator.NewOrderedKeyGate(),
+		gate:      NewOrderedKeyGate(),
 		admission: make(chan struct{}, maxReservations),
 	}, nil
 }
@@ -93,11 +92,11 @@ func (sequencer *KeyedSideEffectSequencer) Sequence(
 	return run(ctx)
 }
 
-func runtimeKeys(scope execution.SequencingScope) ([]coordinator.RuntimeKey, error) {
+func runtimeKeys(scope execution.SequencingScope) ([]RuntimeKey, error) {
 	if scope.Slot.QueryGroup == "" || scope.Slot.EvaluationTime <= 0 {
 		return nil, errors.New("alarmd worker: complete side-effect sequencing Slot is required")
 	}
-	keys := make([]coordinator.RuntimeKey, 0, len(scope.StateKeys)+len(scope.GapKeys))
+	keys := make([]RuntimeKey, 0, len(scope.StateKeys)+len(scope.GapKeys))
 	for _, identity := range scope.StateKeys {
 		if err := identity.Plan.Validate(); err != nil {
 			return nil, fmt.Errorf("alarmd worker: invalid side-effect state Plan: %w", err)
@@ -105,7 +104,7 @@ func runtimeKeys(scope execution.SequencingScope) ([]coordinator.RuntimeKey, err
 		if identity.StateGeneration == "" || identity.SeriesIdentityDigest == "" {
 			return nil, errors.New("alarmd worker: complete side-effect state identity is required")
 		}
-		keys = append(keys, coordinator.RuntimeKey{
+		keys = append(keys, RuntimeKey{
 			TenantID:                identity.Plan.TenantID,
 			BusinessID:              identity.Plan.BusinessID,
 			StrategyID:              identity.Plan.StrategyID,
@@ -120,7 +119,7 @@ func runtimeKeys(scope execution.SequencingScope) ([]coordinator.RuntimeKey, err
 		if identity.StateGeneration == "" {
 			return nil, errors.New("alarmd worker: complete side-effect gap identity is required")
 		}
-		keys = append(keys, coordinator.RuntimeKey{
+		keys = append(keys, RuntimeKey{
 			TenantID:               identity.Plan.TenantID,
 			BusinessID:             identity.Plan.BusinessID,
 			StrategyID:             identity.Plan.StrategyID,

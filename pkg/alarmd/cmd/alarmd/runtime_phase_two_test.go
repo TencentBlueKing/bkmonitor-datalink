@@ -71,15 +71,10 @@ func TestNewPhaseTwoApplicationAcceptsOnlyGoAccess(t *testing.T) {
 		t.Fatalf("new phase-two application health = %+v", snapshot)
 	}
 
-	compatibility := goAccess
-	compatibility.Input = config.PhaseTwoInputConfig{
-		Mode: config.InputModePhaseOneKafkaCompatibility,
-		PhaseOneKafka: &config.PhaseOneKafkaCompatibilityConfig{
-			InputTopic: "alarmd-input", ConsumerGroup: "alarmd", InitialOffset: "oldest", StatePrefix: "alarmd",
-		},
-	}
-	if _, err := newPhaseTwoApplication(compatibility); err == nil {
-		t.Fatal("newPhaseTwoApplication() accepted phase-one compatibility mode")
+	unsupported := goAccess
+	unsupported.Input = config.PhaseTwoInputConfig{Mode: config.InputMode("kafka_compatibility")}
+	if _, err := newPhaseTwoApplication(unsupported); err == nil {
+		t.Fatal("newPhaseTwoApplication() accepted an input mode that is not go_access")
 	}
 }
 

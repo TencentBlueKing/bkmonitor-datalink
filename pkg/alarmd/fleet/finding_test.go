@@ -255,54 +255,50 @@ func TestStalledAndNeverReachedAreDecidedBeforeTheCode(t *testing.T) {
 	}
 }
 
-// The to-do list is drawn from every column and holds exactly the objects
-// someone here has to act on, in the order they should be acted on.
-func TestTheToDoListCrossesColumnsAndOrdersByUrgency(t *testing.T) {
+// The rows a check opens come from every column and are ordered by what
+// decides whether to act first.
+func TestUnderCheckCrossesColumnsAndOrdersByUrgency(t *testing.T) {
 	at := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
-	mk := func(id string, finding Finding, since time.Time) Anomaly {
-		return Anomaly{QueryGroup: id, Finding: finding, Since: since}
+	mk := func(id string, situation Situation, since time.Time) Anomaly {
+		item := Anomaly{QueryGroup: id, Replica: "pod-a", Since: since, Finding: finding(situation, 0)}
+		check, under := checkOf(item)
+		if under {
+			item.Finding.Check = check
+		}
+		return item
 	}
-	// Every pair that the order has to separate is here with the wrong
-	// tiebreak pointing the other way: the oldest object is nobody's, the
-	// oldest of ours might heal while a newer one will not, and the oldest
-	// undetermined one will heal on its own. A fixture where age and urgency
-	// agree passes against an ordering that only reads age.
+	// The same check in three columns, with the age tiebreak pointing the wrong
+	// way in one pair (a stalled object that is ours and newer sorts before an
+	// undetermined one that is older, within one check every row shares the
+	// owner, so age decides) -- and objects under other checks in every column,
+	// which must not be listed.
 	anomalies := []Anomaly{
-		mk("churn", finding(SituationSeriesChurning, 0), at.Add(-3*time.Hour)),
-		mk("stalled-new", finding(SituationStalled, 0), at.Add(-time.Minute)),
-		mk("never-reached-old", finding(SituationNeverReached, 0), at.Add(-7*time.Hour)),
+		mk("stalled-new", SituationStalled, at.Add(-time.Minute)),
+		mk("churn", SituationSeriesChurning, at.Add(-3*time.Hour)),
 	}
 	demoted := []Anomaly{
-		mk("cooldown", finding(SituationBackendCooldown, 0), at.Add(-time.Hour)),
-		mk("stalled-old", finding(SituationStalled, 0), at.Add(-2*time.Hour)),
+		mk("stalled-old", SituationStalled, at.Add(-2*time.Hour)),
+		mk("cooldown", SituationBackendCooldown, at.Add(-time.Hour)),
 	}
 	undecidable := []Anomaly{
-		mk("empty", finding(SituationWindowEmpty, 0), at.Add(-4*time.Hour)),
-		mk("young", finding(SituationSeriesYoung, 0), at.Add(-5*time.Hour)),
-		mk("restored-old", finding(SituationRestoredWithoutCause, 0), at.Add(-8*time.Hour)),
+		mk("stalled-older", SituationStalled, at.Add(-4*time.Hour)),
+		mk("young", SituationSeriesYoung, at.Add(-5*time.Hour)),
 	}
-	byDesign := []Anomaly{
-		mk("drift", finding(SituationConfigDrift, 0), at.Add(-time.Hour)),
-		mk("offhours", finding(SituationOffHours, 0), at.Add(-6*time.Hour)),
-	}
-	got := ActionRequired(anomalies, demoted, undecidable, byDesign)
-	// Ours before undetermined; will-not-heal before might before will; then
-	// oldest first.
-	want := []string{"stalled-old", "stalled-new", "never-reached-old", "empty", "drift", "restored-old"}
+	got := UnderCheck(CheckRoundsStalled, "", anomalies, demoted, undecidable)
+	want := []string{"stalled-older", "stalled-old", "stalled-new"}
 	if len(got) != len(want) {
-		t.Fatalf("to-do = %d objects, want %d: %+v", len(got), len(want), names(got))
+		t.Fatalf("under ROUNDS_STALLED = %v, want %v", names(got), want)
 	}
 	for index, id := range want {
 		if got[index].QueryGroup != id {
-			t.Errorf("to-do[%d] = %s, want %s (full order %v)", index, got[index].QueryGroup, id, names(got))
+			t.Errorf("under[%d] = %s, want %s (full order %v)", index, got[index].QueryGroup, id, names(got))
 		}
 	}
-	// Churn, cooldown, young and off-hours are somebody's or nobody's and
-	// must not be on it. The list is what "do I have to do anything" reads.
-	for _, entry := range got {
-		if entry.Finding.Owner != OwnerAlarmd && entry.Finding.Owner != OwnerUndetermined {
-			t.Errorf("%s is on the to-do list with owner %s", entry.QueryGroup, entry.Finding.Owner)
-		}
+	// A group narrows to one fold and nothing else.
+	demoted[0].Finding.Group = "pod-b"
+	if got := UnderCheck(CheckRoundsStalled, "pod-b", anomalies, demoted, undecidable); len(got) != 1 ||
+		got[0].QueryGroup != "stalled-old" {
+		t.Errorf("under ROUNDS_STALLED group pod-b = %v, want [stalled-old]", names(got))
 	}
 }
 
@@ -314,9 +310,9 @@ func names(anomalies []Anomaly) []string {
 	return list
 }
 
-// The route serves the to-do column and the owner filter, and the summary
-// counts partition the list.
-func TestTheObjectRouteServesTheToDoListAndTheOwnerFilter(t *testing.T) {
+// The route serves the first screen -- the checks -- and the rows under one
+// check, from every column, with a total that is the check's own.
+func TestTheObjectRouteServesChecksAndTheRowsUnderOne(t *testing.T) {
 	snapshots := columnSnapshots()
 	ours := anomaly("qg-ours")
 	ours.Kind = KindDegradedRun
@@ -330,93 +326,97 @@ func TestTheObjectRouteServesTheToDoListAndTheOwnerFilter(t *testing.T) {
 	snapshots[1].TotalAnomalies = 2
 	handler := handlerWith(t, snapshots, Expectation{QueryGroups: 949, Known: true}, replicas())
 
-	// The to-do column: ours, plus the undetermined ones from the other
-	// columns (the fixture's by-design CONFIG_DRIFT and undecidable
-	// HISTORY_WARMING without counts), and not the churn or the demoted
-	// backend.
-	status, body := get(t, handler, "/api/objects?column="+ColumnActionRequired)
+	// The checks are on every response, whichever rows it carries, and each
+	// names its owner and its objects. The fixture's columns hold: a
+	// dependency of ours, a churning strategy, a demoted backend on
+	// QUERY_UNAVAILABLE, a HISTORY_WARMING without counts (undecided), and a
+	// CONFIG_DRIFT (unresolved).
+	status, body := get(t, handler, "/api/objects")
 	if status != http.StatusOK {
 		t.Fatalf("status = %d: %v", status, body)
 	}
-	rows, _ := body["anomalies"].([]any)
-	got := map[string]string{}
-	for _, entry := range rows {
-		row, _ := entry.(map[string]any)
-		finding, _ := row["finding"].(map[string]any)
-		owner, _ := finding["owner"].(string)
-		id, _ := row["query_group"].(string)
-		got[id] = owner
+	checks, _ := body["checks"].([]any)
+	got := map[string]map[string]any{}
+	order := []string{}
+	for _, entry := range checks {
+		report, _ := entry.(map[string]any)
+		code, _ := report["code"].(string)
+		got[code] = report
+		order = append(order, code)
 	}
-	if got["qg-ours"] != string(OwnerAlarmd) {
-		t.Errorf("qg-ours on the to-do list as %q, want %s", got["qg-ours"], OwnerAlarmd)
+	for code, want := range map[string]struct {
+		owner   Owner
+		objects int
+	}{
+		string(CheckDependencyDown):      {OwnerAlarmd, 1},
+		string(CheckSeriesChurning):      {OwnerStrategy, 1},
+		string(CheckBackendNotAnswering): {OwnerData, 1},
+		string(CheckWindowUndecided):     {OwnerUndetermined, 1},
+		string(CheckConfigUnresolved):    {OwnerUndetermined, 1},
+	} {
+		report := got[code]
+		if report == nil {
+			t.Errorf("no check %s on the response; checks = %v", code, order)
+			continue
+		}
+		if owner, _ := report["owner"].(string); owner != string(want.owner) {
+			t.Errorf("check %s owner = %q, want %s", code, owner, want.owner)
+		}
+		if objects, _ := report["objects"].(float64); int(objects) != want.objects {
+			t.Errorf("check %s objects = %v, want %d", code, objects, want.objects)
+		}
 	}
-	if got["qg-by-design"] != string(OwnerUndetermined) || got["qg-undecidable"] != string(OwnerUndetermined) {
-		t.Errorf("undetermined objects from other columns = %v, want both on the list as UNDETERMINED", got)
+	// Ours first, then undetermined, then the rest -- the order the reader acts in.
+	rank := map[string]int{}
+	for index, code := range order {
+		rank[code] = index
 	}
-	if _, listed := got["qg-churn"]; listed {
-		t.Error("qg-churn is on the to-do list: it is the strategy's, and listing it is the page " +
-			"handing the reader work that is not theirs")
-	}
-	if _, listed := got["qg-demoted"]; listed {
-		t.Error("qg-demoted is on the to-do list: the backend's")
-	}
-	summary, _ := body["summary"].(map[string]any)
-	if required, _ := summary["action_required"].(float64); int(required) != len(rows) {
-		t.Errorf("summary action_required = %v over a to-do list of %d", required, len(rows))
-	}
-
-	// The owner filter on the anomaly column narrows to that owner's.
-	_, body = get(t, handler, "/api/objects?owner="+string(OwnerStrategy))
-	rows, _ = body["anomalies"].([]any)
-	if len(rows) != 1 {
-		t.Fatalf("owner=STRATEGY on the anomaly column: %d rows, want the one churning object", len(rows))
-	}
-	if row, _ := rows[0].(map[string]any); row["query_group"] != "qg-churn" {
-		t.Errorf("owner=STRATEGY returned %v", row["query_group"])
-	}
-	// And the counts partition the unfiltered list.
-	_, body = get(t, handler, "/api/objects")
-	summary, _ = body["summary"].(map[string]any)
-	byOwner, _ := summary["by_owner"].(map[string]any)
-	top, _ := byOwner["top"].([]any)
-	total := 0.0
-	for _, entry := range top {
-		count, _ := entry.(map[string]any)
-		n, _ := count["count"].(float64)
-		total += n
-	}
-	if int(total) != 2 {
-		t.Errorf("by_owner sums to %v over 2 objects: the governance counts must partition the list, "+
-			"or a count that opens a list opens a different one", total)
+	if rank[string(CheckDependencyDown)] > rank[string(CheckWindowUndecided)] ||
+		rank[string(CheckWindowUndecided)] > rank[string(CheckSeriesChurning)] ||
+		rank[string(CheckWindowUndecided)] > rank[string(CheckBackendNotAnswering)] {
+		t.Errorf("checks are ordered %v, want this deployment's own before undetermined before the others", order)
 	}
 
-	// An owner tab is column=all with the owner on the request, and its total
-	// is how many that owner has -- not how many the list held before the
-	// owner was chosen. A live page showed "这一栏全部 350 条，已按条件过滤掉
-	// 350 条" over an owner who simply had none there, with the filter flag
-	// set as though the reader had asked for a narrowing.
-	status, body = get(t, handler, "/api/objects?column="+ColumnAll+"&owner="+string(OwnerData))
+	// Opening a check lists its objects from whichever column they sit in, and
+	// the total is the check's count: not the column's, and not "filtered".
+	status, body = get(t, handler, "/api/objects?check="+string(CheckWindowUndecided))
 	if status != http.StatusOK {
-		t.Fatalf("column=all owner=DATA: status = %d: %v", status, body)
+		t.Fatalf("check=WINDOW_UNDECIDED: status = %d: %v", status, body)
 	}
-	rows, _ = body["anomalies"].([]any)
+	rows, _ := body["anomalies"].([]any)
 	if len(rows) != 1 {
-		t.Fatalf("column=all owner=DATA: %d rows, want the one demoted object on a timeout", len(rows))
+		t.Fatalf("check=WINDOW_UNDECIDED: %d rows, want the one undecidable object", len(rows))
 	}
-	if total, _ := body["anomalies_total"].(float64); int(total) != len(rows) {
-		t.Errorf("anomalies_total = %v over %d rows for an owner tab: the total has to be the "+
-			"owner's count, or the page reports the rest as filtered out", total, len(rows))
+	if row, _ := rows[0].(map[string]any); row["query_group"] != "qg-undecidable" {
+		t.Errorf("check=WINDOW_UNDECIDED returned %v", row["query_group"])
+	}
+	if total, _ := body["anomalies_total"].(float64); int(total) != 1 {
+		t.Errorf("anomalies_total = %v for a check of one object: the total has to be the check's "+
+			"count, or the page reports the rest as filtered out", total)
 	}
 	if filtered, _ := body["filtered"].(bool); filtered {
-		t.Error("an owner tab reports filtered=true: the owner is the tab, not a narrowing the " +
-			"reader asked for")
+		t.Error("opening a check reports filtered=true: the check is a line the reader opened, not a " +
+			"narrowing they asked for")
+	}
+	if echoed, _ := body["check"].(string); echoed != string(CheckWindowUndecided) {
+		t.Errorf("the response echoes check=%q, want %s", echoed, CheckWindowUndecided)
+	}
+	// A group within it narrows to that fold. The undecided object names
+	// strategy 8930, so that is its group.
+	_, body = get(t, handler, "/api/objects?check="+string(CheckWindowUndecided)+"&group=8930")
+	if rows, _ := body["anomalies"].([]any); len(rows) != 1 {
+		t.Errorf("check=WINDOW_UNDECIDED group=8930: %d rows, want 1", len(rows))
+	}
+	_, body = get(t, handler, "/api/objects?check="+string(CheckWindowUndecided)+"&group=nobody")
+	if rows, _ := body["anomalies"].([]any); len(rows) != 0 {
+		t.Errorf("check=WINDOW_UNDECIDED group=nobody: %d rows, want 0", len(rows))
 	}
 
-	// An owner nobody declared is refused, not defaulted: a typo that silently
+	// A check nobody declared is refused, not defaulted: a typo that silently
 	// matched nothing would return an empty list under a heading that says
-	// "nothing for this owner".
-	status, _ = get(t, handler, "/api/objects?owner=NOBODY_IN_PARTICULAR")
+	// "nothing under this check".
+	status, _ = get(t, handler, "/api/objects?check=NOTHING_IN_PARTICULAR")
 	if status != http.StatusBadRequest {
-		t.Errorf("unknown owner: status = %d, want 400", status)
+		t.Errorf("unknown check: status = %d, want 400", status)
 	}
 }

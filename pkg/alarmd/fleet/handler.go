@@ -80,14 +80,18 @@ type ListResponse struct {
 	// that hides them -- a filter, or a reader having switched columns -- reads
 	// as "nothing to do here".
 	StalledTotal int `json:"stalled_total"`
-	// ActionRequiredTotal and ByOwnerTotal are the deployment-wide versions of
-	// the summary's action_required and by_owner: counted over every column
-	// before any filter, so the number the page leads with is the same
-	// whichever list the reader is looking at. The summary's are the same
-	// counts over the rows this request is about.
-	ActionRequiredTotal int          `json:"action_required_total"`
-	ByOwnerTotal        Distribution `json:"by_owner_total"`
-	Page                Page         `json:"page"`
+	// Checks is the first screen: every check with objects under it, across
+	// every column, before any filter. It is on this response rather than the
+	// verdict's so that the counts and the rows a check opens come from one
+	// read of the view.
+	Checks []CheckReport `json:"checks"`
+	// Check and Group echo which line and which fold the rows are, when the
+	// request asked for one. Echoed rather than inferred from the request, like
+	// Column: the rows of one check under another's heading read as that
+	// check's.
+	Check Check  `json:"check,omitempty"`
+	Group string `json:"group,omitempty"`
+	Page  Page   `json:"page"`
 }
 
 // HealthResponse is what the verdict route answers with.
@@ -335,22 +339,6 @@ type Summary struct {
 	// likely cause of all of them, which is an unmeasured guess pointed at a
 	// population that contains both.
 	WindowSeriesChurn int `json:"window_series_churn"`
-	// ActionRequired is how many of these someone here has to act on: this
-	// deployment's own, plus the ones nobody can yet say who owns. It is the
-	// number the page leads with, and the list it opens is the to-do list.
-	//
-	// Undetermined is counted in rather than out. The page used to hand every
-	// coverage reason to the strategy owner on the strength of the code alone,
-	// and half of them were not the strategy's; what cannot be confirmed stays
-	// where someone will confirm it.
-	ActionRequired int `json:"action_required"`
-	// ByOwner counts every object in this list by who has to act on it, and
-	// BySituation by what the evidence decided. Both are complete
-	// partitions of the list -- every object is in exactly one bucket of each
-	// -- so the page can render the governance area as a set of counts that
-	// add up to the list, each opening the objects it counts.
-	ByOwner     Distribution `json:"by_owner"`
-	BySituation Distribution `json:"by_situation"`
 }
 
 // momentOrNil drops a zero time rather than sending it.
@@ -421,9 +409,6 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 	codes := map[string]int{}
 	details := map[string]int{}
 	causeReasons := map[string]int{}
-	owners := map[string]int{}
-	situations := map[string]int{}
-	actionRequired := 0
 	businesses := map[string]int{}
 	strategies := map[StrategyRef]struct{}{}
 	replicas := map[string]int{}
@@ -519,11 +504,6 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 		if anomaly.CauseReason != "" {
 			causeReasons[anomaly.CauseReason]++
 		}
-		owners[string(anomaly.Finding.Owner)]++
-		situations[string(anomaly.Finding.Situation)]++
-		if anomaly.Finding.ActionRequired() {
-			actionRequired++
-		}
 		replicas[anomaly.Replica]++
 		// Counted per object, not per reference: one object naming the same
 		// business twice must not make that business look twice as affected.
@@ -549,7 +529,6 @@ func summarize(anomalies []Anomaly, at time.Time) Summary {
 		Ours: ours, External: external, Unattributed: unattributed,
 		OursUnclassified: oursUnclassified, WindowNeverFills: neverFills,
 		WindowSeriesChurn: seriesChurn,
-		ActionRequired:    actionRequired, ByOwner: rank(owners), BySituation: rank(situations),
 	}
 }
 
@@ -585,10 +564,12 @@ func MarkStalled(anomalies []Anomaly, at time.Time, stallAfter time.Duration) {
 			// progressing, and nothing outside this deployment stops rounds from
 			// ending or will start them again. The last code is usually the
 			// external thing that happened just before it got stuck, so leaving
-			// the attribution alone would file a stalled object under someone
+			// the finding alone would file a stalled object under someone
 			// else's work -- and stalling is the one condition here that never
-			// clears on its own.
-			anomalies[index].Attribution = AttributionOurs
+			// clears on its own. The whole finding is decided again, not the
+			// attribution alone: rewriting one field left the other three
+			// saying the backend's, and the page reads those.
+			attribute(&anomalies[index])
 		}
 	}
 }
@@ -816,17 +797,11 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	// shrinks because of what the reader is currently looking at reads as "there
 	// is nothing to do here".
 	stalledTotal := 0
-	actionRequiredTotal := 0
-	byOwnerTotal := map[string]int{}
 	for _, list := range columns {
 		for _, anomaly := range list {
 			if anomaly.Stalled {
 				stalledTotal++
 			}
-			if anomaly.Finding.ActionRequired() {
-				actionRequiredTotal++
-			}
-			byOwnerTotal[string(anomaly.Finding.Owner)]++
 		}
 	}
 	// Serving a column replaces the rows this request is about, and nothing
@@ -839,38 +814,48 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	// distribution -- and nothing in the summary said so, leaving that to a
 	// reader who thought to compare two other fields.
 	//
-	// Decided per column before the swap, because the to-do column is drawn
-	// from all four and is a sample if any of them is.
+	// Decided per column before the swap, because a check is drawn from all
+	// four and is a sample if any of them is.
 	truncated := map[string]bool{
 		ColumnAnomalies:   view.AnomaliesTotal > len(view.Anomalies),
 		ColumnDemoted:     view.DemotedTotal > len(view.Demoted),
 		ColumnUndecidable: view.UndecidableTotal > len(view.Undecidable),
 		ColumnByDesign:    view.ByDesignTotal > len(view.ByDesign),
 	}
+	// The first screen, from every column before any of them is swapped in as
+	// the rows. Counted here so the line a reader clicks and the rows it opens
+	// come from one read of the view.
+	checks := ReportChecks(columns, truncated, &view)
 	summaryPartial := truncated[column]
-	switch column {
-	case ColumnDemoted:
+	// A check is a line on the first screen, and the rows it opens come from
+	// every column: the check decides membership, not the column. Its total is
+	// how many objects it holds, and a group within it narrows to one fold. This
+	// is navigation, not a filter -- the response does not say a filter was
+	// applied, because the reader did not ask for a narrowing of anything; they
+	// opened a line.
+	check := Check(request.URL.Query().Get("check"))
+	group := request.URL.Query().Get("group")
+	switch {
+	case check != "":
+		if !knownCheck(string(check)) {
+			writeJSON(response, http.StatusBadRequest,
+				map[string]string{"error": "check must be one of " + strings.Join(checkNames(), ", ")})
+			return
+		}
+		view.Anomalies = UnderCheck(check, group, columns...)
+		view.AnomaliesTotal = len(view.Anomalies)
+		summaryPartial = truncated[ColumnAnomalies] || truncated[ColumnDemoted] ||
+			truncated[ColumnUndecidable] || truncated[ColumnByDesign]
+		column = ""
+	case column == ColumnDemoted:
 		view.Anomalies = view.Demoted
 		view.AnomaliesTotal = view.DemotedTotal
-	case ColumnUndecidable:
+	case column == ColumnUndecidable:
 		view.Anomalies = view.Undecidable
 		view.AnomaliesTotal = view.UndecidableTotal
-	case ColumnByDesign:
+	case column == ColumnByDesign:
 		view.Anomalies = view.ByDesign
 		view.AnomaliesTotal = view.ByDesignTotal
-	case ColumnActionRequired:
-		// The total is the count of what is listed, not a replica-reported
-		// figure: no replica counts this column, because no replica decides
-		// findings. Whether that count is itself a sample is what partial says.
-		view.Anomalies = ActionRequired(columns...)
-		view.AnomaliesTotal = len(view.Anomalies)
-		summaryPartial = truncated[ColumnAnomalies] || truncated[ColumnDemoted] ||
-			truncated[ColumnUndecidable] || truncated[ColumnByDesign]
-	case ColumnAll:
-		view.Anomalies = Everything(columns...)
-		view.AnomaliesTotal = len(view.Anomalies)
-		summaryPartial = truncated[ColumnAnomalies] || truncated[ColumnDemoted] ||
-			truncated[ColumnUndecidable] || truncated[ColumnByDesign]
 	}
 	replica := request.URL.Query().Get("replica")
 	if replica != "" {
@@ -899,24 +884,6 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	if business != "" {
 		view.Anomalies = filterByBusiness(view.Anomalies, business)
 	}
-	// Owner narrows any column to the objects one party has to act on. It is
-	// what the governance counts open: a reader clicking "数据侧 12" gets those
-	// twelve, from the same list the count was taken over.
-	owner := request.URL.Query().Get("owner")
-	if owner != "" {
-		if !knownOwner(owner) {
-			writeJSON(response, http.StatusBadRequest,
-				map[string]string{"error": "owner must be one of " + strings.Join(ownerNames(), ", ")})
-			return
-		}
-		view.Anomalies = filterByOwner(view.Anomalies, Owner(owner))
-		// Owner is a tab, not a filter: the list it opens is "this owner's
-		// objects", and its total is how many there are, not how many the
-		// column held before the owner was chosen. Reported the other way, the
-		// page says "350 objects, 350 filtered out" over an owner who simply
-		// has none in this column.
-		view.AnomaliesTotal = len(view.Anomalies)
-	}
 	total := len(view.Anomalies)
 	// Counted over the whole list this request is about, before it is cut into a
 	// page. A reader's first question is whether a long list is one problem or
@@ -933,10 +900,10 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	writeJSON(response, http.StatusOK, ListResponse{
 		Summary: summary,
 		View:    view, Replica: replica, Strategy: strategy, Business: business, Column: column,
-		Applied:             replica != "" || strategy != "" || business != "",
-		StallAfterSeconds:   int(stallAfter / time.Second),
-		StalledTotal:        stalledTotal,
-		ActionRequiredTotal: actionRequiredTotal, ByOwnerTotal: rank(byOwnerTotal),
+		Applied:           replica != "" || strategy != "" || business != "",
+		StallAfterSeconds: int(stallAfter / time.Second),
+		StalledTotal:      stalledTotal,
+		Checks:            checks, Check: check, Group: group,
 		Order: order,
 		Page:  Page{Offset: offset, Limit: limit, Total: total},
 	})

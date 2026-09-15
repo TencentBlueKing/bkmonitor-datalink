@@ -159,38 +159,21 @@ const (
 	// "nothing is wrong", and CONFIG_DRIFT is not even in that class -- it is
 	// COVERAGE.
 	ColumnByDesign = "by_design"
-	// ColumnActionRequired is the to-do list: every object, from every column
-	// above, that this deployment has to act on or that nobody can yet say who
-	// owns. It cuts across the other four on purpose. Those partition objects
-	// by what happened to them; this one answers the reader's first question,
-	// which is whether anyone here has to do anything -- and an object in the
-	// demoted pool with a stalled round is on it, while an object in the
-	// anomaly column whose series churn is not.
-	ColumnActionRequired = "action_required"
-	// ColumnAll is every object from every column above, one list. It exists
-	// for the page's owner tabs: "the data owner's objects" is a question
-	// across columns, and asking it column by column gave the reader two
-	// navigation axes for one list, which is how an owner filter came to be
-	// left on while switching columns and empty out a column of 350.
-	ColumnAll = "all"
 )
 
 // ObjectColumns is every column the object route will serve.
 //
-// It is a list rather than four constants the handler repeats because the page
-// keys its headings and its descriptions off these strings, and a column the
-// page has no entry for does not render blank -- it falls through to another
-// column's wording. That is what happened to by_design: the page's map was
-// keyed "transitional" from an earlier name, so the 按配置不处理 list described
-// itself as the to-do list, which is false about every object in it and was
-// invisible to every check here.
+// The columns partition the objects by what happened to them and are what the
+// health equation is written on. They are an API of the route, not the page's
+// navigation: the page opens objects by check (see check.go), which cuts across
+// all four, and a page that navigated by both had two axes over one list --
+// which is how an owner filter came to be left on while switching columns and
+// emptied a column of 350.
 var ObjectColumns = []string{
 	ColumnAnomalies,
 	ColumnDemoted,
 	ColumnUndecidable,
 	ColumnByDesign,
-	ColumnActionRequired,
-	ColumnAll,
 }
 
 // knownColumn reports whether the object route will serve this column.

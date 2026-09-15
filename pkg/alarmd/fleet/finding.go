@@ -123,6 +123,14 @@ const (
 )
 
 // Finding is what the page renders for one object.
+//
+// Check and Group say which line of the first screen the object is under and
+// which fold within it; Schedule and Result are two of the four dimensions the
+// object's row shows (the other two, how long and the window counts, are on
+// the anomaly already). Situation, Owner, SelfHealing and Where are the older
+// shape -- one word per combination of those dimensions -- and are on their
+// way out: the check is decided from the situation for now, and the situation
+// goes once every check is decided from the dimensions directly.
 type Finding struct {
 	Situation   Situation   `json:"situation"`
 	Owner       Owner       `json:"owner"`
@@ -132,7 +140,11 @@ type Finding struct {
 	// situation that heals, how many more rounds; for one that will not, how
 	// many consecutive rounds it has held. Zero when the situation has no
 	// meaningful count.
-	Rounds uint32 `json:"rounds,omitempty"`
+	Rounds   uint32   `json:"rounds,omitempty"`
+	Check    Check    `json:"check,omitempty"`
+	Group    string   `json:"group,omitempty"`
+	Schedule Schedule `json:"schedule,omitempty"`
+	Result   Result   `json:"result,omitempty"`
 }
 
 // situationAnswers is the table. Every Situation appears exactly once, and a
@@ -503,69 +515,15 @@ func attributionFromFinding(finding Finding) Attribution {
 	}
 }
 
-// Owners lists every owner, for the filter's error message and the page's
-// completeness check.
+// Owners lists every owner, for the page's completeness check.
 var Owners = []Owner{OwnerAlarmd, OwnerData, OwnerStrategy, OwnerNobody, OwnerUndetermined}
 
-func knownOwner(name string) bool {
-	for _, owner := range Owners {
-		if string(owner) == name {
-			return true
-		}
-	}
-	return false
-}
-
-func ownerNames() []string {
-	names := make([]string, len(Owners))
-	for index, owner := range Owners {
-		names[index] = string(owner)
-	}
-	return names
-}
-
-func filterByOwner(anomalies []Anomaly, owner Owner) []Anomaly {
-	kept := make([]Anomaly, 0, len(anomalies))
-	for _, anomaly := range anomalies {
-		if anomaly.Finding.Owner == owner {
-			kept = append(kept, anomaly)
-		}
-	}
-	return kept
-}
-
-// ActionRequired is the to-do list drawn from every column: what this
-// deployment has to act on, and what nobody can yet say who owns.
-//
-// Ordered by what decides whether to act first. This deployment's own before
-// undetermined; within each, what will not heal before what might before what
-// will; and within that, the oldest first, because an object that has been in
-// this state for a day has been costing whatever it costs for a day. The
-// ordering is here rather than on the page so that page two continues page
-// one, and so the page cannot sort by a rule the count was not taken under.
-func ActionRequired(columns ...[]Anomaly) []Anomaly {
-	list := []Anomaly{}
-	for _, column := range columns {
-		for _, anomaly := range column {
-			if anomaly.Finding.ActionRequired() {
-				list = append(list, anomaly)
-			}
-		}
-	}
-	sortByUrgency(list)
-	return list
-}
-
-// Everything is every object from every column, one list, in the columns'
-// own order. The caller orders it.
-func Everything(columns ...[]Anomaly) []Anomaly {
-	list := []Anomaly{}
-	for _, column := range columns {
-		list = append(list, column...)
-	}
-	return list
-}
-
+// sortByUrgency orders a list by what decides whether to act first: this
+// deployment's own before undetermined; within each, what will not heal
+// before what might before what will; and within that, the oldest first,
+// because an object that has been in this state for a day has been costing
+// whatever it costs for a day. The ordering is here rather than on the page so
+// that page two continues page one.
 func sortByUrgency(list []Anomaly) {
 	rankOwner := func(owner Owner) int {
 		if owner == OwnerAlarmd {

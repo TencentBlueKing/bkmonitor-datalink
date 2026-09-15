@@ -193,6 +193,13 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		}),
 	}
 	fleet.Attribute(rows)
+	// The first screen, folded from the same rows by the same Go code the route
+	// uses, so the sentences the page renders are checked against counts that
+	// cannot drift from what the server sends. Three objects nobody can speak
+	// for and a stale replica, so the observation-gap line has both a fold with
+	// objects and one without.
+	checks := fleet.ReportChecks([][]fleet.Anomaly{rows}, nil,
+		&fleet.View{Unknown: 3, Gaps: []fleet.Gap{{Kind: fleet.GapSnapshotStale, Replica: "pod-b"}}})
 	// The barest row the API can send: every omitempty field absent. It goes in
 	// after Attribute so it keeps its empty attribution, because a fixture where
 	// every row has every field cannot catch a property read on a field that is
@@ -213,14 +220,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	lastExit := at.Add(-2 * time.Minute)
 	fixture := map[string]any{
 		"anomalies": rows,
-		// The deployment-wide counts the governance line reads. Three owners
-		// with objects and one without, so the line renders a zero as well as
-		// counts -- a zero that reads as "nothing for this owner" is the value
-		// a reader most needs to see printed rather than absent.
-		"action_required_total": 5,
-		"by_owner_total": fleet.Distribution{Top: []fleet.Count{
-			{Value: "ALARMD", Count: 3}, {Value: "UNDETERMINED", Count: 2},
-			{Value: "STRATEGY", Count: 1}, {Value: "DATA", Count: 4}}, Distinct: 4},
+		"checks":    checks,
 		"summary": fleet.Summary{
 			ByKind:   fleet.Distribution{Top: []fleet.Count{{Value: "DEGRADED_RUN", Count: 7}}, Distinct: 1},
 			ByReason: fleet.Distribution{Top: []fleet.Count{{Value: "COMPLETED_WITH_UNAVAILABLE", Count: 7}}, Distinct: 1},
@@ -233,7 +233,6 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 				NewestSince: at.Add(-time.Minute), OldestSince: at.Add(-40 * time.Hour)},
 			WindowNeverFills: 3, WindowSeriesChurn: 1,
 		},
-		"window_never_fills_cases": windowNeverFillsCases(),
 		// A filter narrowing the list, a replica that could not publish it, and
 		// both at once. The first used to be reported as the second.
 		"page_tail_cases": []map[string]any{
@@ -263,17 +262,6 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		"range_cases": []map[string]any{
 			{"name": "day", "start": at.Add(-24 * time.Hour).UnixMilli(), "end": at.UnixMilli()},
 			{"name": "short", "start": at.Add(-15 * time.Minute).UnixMilli(), "end": at.UnixMilli()},
-		},
-		// A population restored at a rollout: every start time is a bound, and
-		// the sentence over it used to name the newest as a moment.
-		"onset_cases": []map[string]any{
-			{"name": "bounded", "total": 5, "onset": fleet.Onset{
-				LastHour: 5, NewestSince: at.Add(-2 * time.Hour), OldestSince: at.Add(-2 * time.Hour),
-				NewestFrom: fleet.SinceRestoredLastFull, OldestFrom: fleet.SinceRestoredLastFull,
-				Bounded: 5}},
-			{"name": "measured", "total": 5, "onset": fleet.Onset{
-				LastHour: 5, NewestSince: at.Add(-2 * time.Hour), OldestSince: at.Add(-3 * time.Hour),
-				NewestFrom: fleet.SinceSnapshotContinuity, OldestFrom: fleet.SinceSnapshotContinuity}},
 		},
 		"health": fleet.HealthResponse{
 			// The columns add up to Covered on purpose: the page prints that
@@ -418,10 +406,6 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		t.Errorf("the impact line added the two columns instead of taking their union, which "+
 			"overstates the number a reader acts on:\n%s", impactLine)
 	}
-	if !strings.Contains(text, "windowNeverFills agreed on") {
-		t.Errorf("the page's windowNeverFills was never run against the Go rule; the two copies "+
-			"are unchecked:\n%s", text)
-	}
 
 	// The partition equation the page prints under the verdict. It is the only
 	// statement on the page that says every object is accounted for, and a
@@ -442,84 +426,75 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			"so a page that drops one is the only way this fails)", equation)
 	}
 
-	// The four answers each row leads with. Same fixtures as the NOTE table:
-	// the two rows that were identical in every count but the fresh ones must
-	// now answer with different owners and different next steps, and the
-	// undetermined one must say so rather than pick.
-	for _, want := range []struct{ object, who, what, next string }{
-		{"qg-window-churn", "策略侧", "序列在不断换", "去掉会变的聚合维度"},
-		{"qg-window-stale-data", "数据侧", "序列一直在，数据缺点", "查采集和查询偏移"},
-		{"qg-window-rekeyed", "不用处理", "序列刚重新建号", "再看 8 轮"},
-		{"qg-window-starved", "待确认", "窗口一个点都没有", "先确认是指标停了还是算法判不了"},
-		{"qg-window-filling", "不用处理", "序列还年轻", "还差 1 轮"},
-		{"qg-gapped-intermittent", "数据侧", "数据断断续续", "查询偏移"},
-		{"qg-skipped", "alarmd", "放弃了一段时间", "查为什么跟不上"},
-		{"qg-drift", "待确认", "计划激活没对上", "看已持续"},
-		{"qg-offhours", "不用处理", "不在生效时段", "不用管"},
-		// One pool, one code, two owners -- decided on the detail.
-		{"qg-cooldown", "数据侧", "后端连续失败", "查后端"},
-		{"qg-rejected", "待确认", "后端拒绝了查询本身", "不是后端挂"},
+	// The first screen. Checks this reader acts on, in one sentence each with
+	// the counts substituted; the ones already somebody else's under the fold.
+	// The fixture has one stalled object, two refused queries (one in the
+	// cooldown pool, one not), a backend timing out, a churning strategy, and
+	// four objects nobody can speak for: three the view holds undetermined and
+	// one restored without its cause, under three folds with the stale replica.
+	todo := lineStarting(text, "CHECKS ::")
+	for _, want := range []string{"1 个对象的轮次不再结束", "alarmd", "后端拒绝了 2 个对象的查询", "待确认",
+		"1 个对象因 alarmd 自己的容量限制放弃了检测", "4 个对象现在说不出结论（3 种原因）"} {
+		if !strings.Contains(todo, want) {
+			t.Errorf("the checks do not say %q:\n%s", want, todo)
+		}
+	}
+	for _, mustNot := range []string{"数据侧", "策略侧", "查询后端没有应答"} {
+		if strings.Contains(todo, mustNot) {
+			t.Errorf("the to-do checks say %q: that is somebody else's confirmed work, and it belongs "+
+				"under the governance fold, not on the reader's list:\n%s", mustNot, todo)
+		}
+	}
+	governance := lineStarting(text, "GOV ::")
+	for _, want := range []string{"查询后端没有应答，1 个对象受影响", "数据侧", "序列活不过检测窗口", "策略侧",
+		"老序列在缺点"} {
+		if !strings.Contains(governance, want) {
+			t.Errorf("the governance fold does not say %q:\n%s", want, governance)
+		}
+	}
+	brief := lineStarting(text, "BRIEF ::")
+	for _, want := range []string{"执行情况：没有对象到期没跑", "需要处理：", "类问题，影响", "观测完整性：1 处覆盖缺口"} {
+		if !strings.Contains(brief, want) {
+			t.Errorf("the brief does not say %q:\n%s", want, brief)
+		}
+	}
+	// Opening a check lists its folds with their counts; a fold with no objects
+	// says so rather than offering an empty table.
+	groups := lineStarting(text, "GROUPS ::")
+	for _, want := range []string{"UNDETERMINED · 3 个对象", "RESTORED_WITHOUT_CAUSE · 1 个对象",
+		"SNAPSHOT_STALE · 副本级缺口，没有可列的对象"} {
+		if !strings.Contains(groups, want) {
+			t.Errorf("the groups of OBSERVATION_GAP do not say %q:\n%s", want, groups)
+		}
+	}
+
+	// The four dimensions on each row, as values. No sentence on the row
+	// decides anything; the row says what the object is doing, how its last
+	// round ended, since when, and what its windows hold.
+	for _, want := range []struct{ object, now, result, window string }{
+		{"qg-stalled", "轮次不结束", "完成 · COMPLETED_WITH_UNAVAILABLE", "—"},
+		{"qg-cooldown", "冷却中", "失败 · QUERY_UNAVAILABLE", "—"},
+		{"qg-rejected", "冷却中", "被拒绝 · QUERY_UNAVAILABLE", "—"},
+		{"qg-blocked", "在跑", "失败 · source_blocked", "—"},
+		{"qg-offhours", "生效时段外", "完成 · EFFECTIVE_TIME_INACTIVE", "—"},
+		{"qg-window-churn", "在跑", "完成 · HISTORY_WARMING", "9 个窗口 · 短 4 · 空 0 · 新 4 · 连续 40 轮"},
+		{"qg-window-starved", "在跑", "完成 · HISTORY_WARMING", "3 个窗口 · 短 2 · 空 2 · 新 0 · 连续 40 轮"},
+		{"qg-plain", "在跑", "完成 · COMPLETED_WITH_UNAVAILABLE", "—"},
 	} {
 		line := lineStarting(text, "ROW "+want.object+" ::")
 		if line == "" {
 			t.Errorf("no row was rendered for %s", want.object)
 			continue
 		}
-		for _, part := range []string{want.who, want.what, want.next} {
-			if !strings.Contains(line, part) {
-				t.Errorf("%s renders %q, want it to say %q", want.object, line, part)
-			}
-		}
-	}
-	tabs := lineStarting(text, "TABS ::")
-	for _, want := range []string{"需要我处理 5", "数据侧 4", "策略侧 1", "不用处理 0"} {
-		if !strings.Contains(tabs, want) {
-			t.Errorf("tabs = %q, want %q on them: the count on the tab is the number of rows it opens",
-				tabs, want)
-		}
-	}
-	if got := lineStarting(text, "TAB DATA ::"); !strings.Contains(got, "column=all owner=DATA") {
-		t.Errorf("after choosing the data tab: %q, want column=all owner=DATA", got)
-	}
-	if got := lineStarting(text, "TAB TODO ::"); !strings.Contains(got, "column=action_required owner=(none)") {
-		t.Errorf("after returning to the to-do tab: %q, want the owner dropped -- an owner left on "+
-			"across a tab switch is what emptied a column of 350", got)
-	}
-
-	// Only one column decides the verdict, and the line that says so was printed
-	// on all four. A reader paging the demoted pool was told, of objects the
-	// page had just finished excluding from the judgment, that alarmd is
-	// answerable for them and that the judgment follows the count.
-	for _, want := range []struct{ column, says, mustNotSay string }{
-		{"anomalies", "判定就看这个数", "整栏不进部署判定"},
-		{"demoted", "整栏不进部署判定", "判定就看这个数"},
-		{"undecidable", "整栏不进部署判定", "判定就看这个数"},
-		{"by_design", "整栏不进部署判定", "判定就看这个数"},
-		// The settled objects split into two halves with different owners, and
-		// this sentence used to name one of them as the likely cause of all of
-		// them. The fixture has three never-filling objects of which one is
-		// churn, so a line that reports the whole count as churn -- or that
-		// stops reading the count at all -- says something the summary does not.
-		{"anomalies", "其中 1 个是序列在不断换", "常见的是维度里"},
-		{"anomalies", "另外 2 个的序列一直都在", "这一批全是这种"},
-	} {
-		line := ""
-		for _, candidate := range strings.Split(text, "\n") {
-			if strings.HasPrefix(candidate, "WHOSE "+want.column+" ::") {
-				line = candidate
-				break
-			}
-		}
-		if line == "" {
-			t.Errorf("no attribution line was rendered for column %s", want.column)
+		cells := strings.Split(strings.TrimPrefix(line, "ROW "+want.object+" :: "), " | ")
+		if len(cells) < 4 {
+			t.Errorf("%s renders %d cells, want at least 4: %q", want.object, len(cells), line)
 			continue
 		}
-		if !strings.Contains(line, want.says) {
-			t.Errorf("column %s renders %q, want it to say %q", want.column, line, want.says)
-		}
-		if strings.Contains(line, want.mustNotSay) {
-			t.Errorf("column %s renders %q, which says %q -- that is the other column's claim",
-				want.column, line, want.mustNotSay)
+		for index, part := range []string{want.now, want.result, "", want.window} {
+			if part != "" && cells[index] != part {
+				t.Errorf("%s cell %d = %q, want %q", want.object, index, cells[index], part)
+			}
 		}
 	}
 
@@ -596,98 +571,6 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		}
 	}
 
-	// A bound is not a moment. Every row in the bounded case says in its own
-	// provenance column that the moment it went wrong was never recorded, and
-	// the sentence above them announced one anyway.
-	for _, want := range []struct{ name, says, mustNotSay string }{
-		{"bounded", "那是个界不是时刻", "前开始的"},
-		{"measured", "前开始的", "那是个界不是时刻"},
-	} {
-		line := lineStarting(text, "ONSET "+want.name+" ::")
-		if line == "" {
-			t.Errorf("onsetLine rendered nothing for the %s case", want.name)
-			continue
-		}
-		if !strings.Contains(line, want.says) {
-			t.Errorf("onsetLine %s renders %q, want it to say %q", want.name, line, want.says)
-		}
-		if strings.Contains(line, want.mustNotSay) {
-			t.Errorf("onsetLine %s renders %q, which says %q", want.name, line, want.mustNotSay)
-		}
-	}
-	// Two ends that are both bounds are not two moments; after a restart both
-	// are the restart, and the sentence would report the whole deployment as
-	// having gone wrong simultaneously.
-	if line := lineStarting(text, "ONSET bounded ::"); strings.Contains(line, "同时开始的") {
-		t.Errorf("onsetLine bounded renders %q: it read a difference between two bounds as a "+
-			"difference between two moments", line)
-	}
-
-	// What each row would actually say. Executing the render proves only that
-	// it does not throw, and a live page rendered a HISTORY_GAPPED row with
-	// the wording for a series too short-lived to fill its window -- a
-	// different situation with a different fix, rendered without complaint.
-	//
-	// The wording these pin changed once, deliberately: the sustained-shortfall
-	// note used to lead with "窗口永远填不满" and name the cause. What is pinned
-	// is the property -- each row says its own situation and does not carry
-	// another's -- and that property is why the strings are here at all.
-	for _, want := range []struct{ object, says, mustNotSay string }{
-		{"qg-gapped-intermittent", "数据断断续续", "持续缺点"},
-		{"qg-gapped-fresh", "数据刚断", "持续缺点"},
-		{"qg-window-never", "持续缺点", "数据断断续续"},
-		{"qg-window-starved", "取不到数据", "持续缺点"},
-		{"qg-window-filling", "窗口在填", "持续缺点"},
-		{"qg-window-complete", "检测窗口完整", "短"},
-		// How many windows the note is about. These two reach the same verdict
-		// from 1-of-999 and 2-of-3, and until the share was rendered every
-		// number on both rows was the same. Pinned on both rows and with each
-		// forbidding the other's share, so a share that is printed but constant
-		// does not pass.
-		{"qg-window-lopsided", "999 个窗口里 1 个", "3 个窗口里"},
-		{"qg-window-never", "3 个窗口里 2 个", "999"},
-		// A complete window under a reason that says it is gapped. Saying
-		// 检测窗口完整 here is the page agreeing with the counts and silently
-		// disagreeing with the reason printed beside them on the same row.
-		{"qg-window-held-complete", "窗口已经补满", "检测窗口完整"},
-		// The two halves of a never-filling window, and each must not carry the
-		// other's wording. Every count on these two rows is the same except the
-		// fresh ones, so a row that reads them and prints the same sentence for
-		// both is the defect this whole pair exists to catch.
-		{"qg-window-churn", "序列在不断换", "持续缺点"},
-		{"qg-window-stale-data", "持续缺点", "序列在不断换"},
-		// One round of every-series-fresh is a strategy edit, not churn.
-		{"qg-window-rekeyed", "持续缺点", "序列在不断换"},
-		{"qg-skipped", "没被检测", "持续缺点"},
-		// The wording changed with the classification: CONFIG_DRIFT is no longer
-		// told to the reader as a strategy being edited, because the predicate
-		// behind it is also false when a live plan's StateApplyEpoch does not
-		// match the round's. What is still pinned is that this row and the
-		// off-hours row below say different things.
-		{"qg-drift", "计划激活没对上", "不在生效时段"},
-		{"qg-offhours", "不在生效时段", "策略正在被改"},
-	} {
-		line := ""
-		for _, candidate := range strings.Split(text, "\n") {
-			if strings.HasPrefix(candidate, "NOTE "+want.object+" ::") {
-				line = candidate
-				break
-			}
-		}
-		if line == "" {
-			t.Errorf("no note was rendered for %s, so the check that its wording matches its "+
-				"reason never ran", want.object)
-			continue
-		}
-		if !strings.Contains(line, want.says) {
-			t.Errorf("%s renders %q, want it to say %q", want.object, line, want.says)
-		}
-		if strings.Contains(line, want.mustNotSay) {
-			t.Errorf("%s renders %q, which says %q -- that is a different situation with a "+
-				"different fix, and it sends the reader nowhere", want.object, line, want.mustNotSay)
-		}
-	}
-
 	// Sentences that pair a number with a conclusion about that number. Every
 	// one of these shipped to a live page stating something the same screen
 	// contradicted, and none of them was executed by any check: the fixture
@@ -744,16 +627,13 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			"健康且没有覆盖缺口时不能还说证据不全"},
 		{"VAR degraded why ::", "存在 alarmd 自己该负责的异常", "",
 			"DEGRADED 要说清是 alarmd 自己的异常，否则和数据源问题分不开"},
-
-		// What releases a held verdict, on both kinds of row that can carry one.
-		// Without it the reader cannot tell "去查数据" from "再等一轮"，而这两个
-		// 是相反的动作。
-		{"HELD qg-window-held-complete ::", "3/3 个窗口报的不是本轮算出来的结果", "",
-			"补满的窗口配着说它有洞的原因，必须说清哪一半是这一轮的"},
-		{"HELD qg-window-held-complete ::", "再跑一到两轮", "",
-			"这一条的下一步是等压制解除，不是去查数据"},
-		{"HELD qg-window-held-short ::", "1/4 个窗口报的不是本轮算出来的结果", "",
-			"仍然短的行里，对点数的结论成立而它下面那个原因未必成立"},
+		// The first sentence of the brief, in the states the overdue cell has.
+		{"VAR overdue-present brief ::", "3 个对象到期没跑，最久 900 秒", "",
+			"有到期没跑的对象时第一句要给出个数和最久多少秒"},
+		{"VAR overdue-truncated brief ::", "数不出来", "没有对象到期没跑",
+			"截断时不能说没有"},
+		{"VAR dispatch-off brief ::", "说不出是否按时", "没有对象到期没跑",
+			"到期索引没启用时不能说按时"},
 
 		// 被挡回 by cause. The old wording named one remedy -- grow the queue --
 		// for a number that is mostly the branch more room cannot change.
@@ -802,58 +682,6 @@ func lineStarting(text, prefix string) string {
 		}
 	}
 	return ""
-}
-
-// windowNeverFillsCases is the table both copies of the rule are run over: the
-// Go verdict travels with each case so the harness compares against it rather
-// than against a second Go expression, which would agree with the first
-// whatever the page did.
-//
-// Every branch of Persistent appears, including the two that are false for
-// different reasons -- nothing short, and short with no requirement recorded.
-// A table of only true cases passes against a rule that returns true always.
-func windowNeverFillsCases() []map[string]any {
-	subjects := []fleet.HistoryCoverage{
-		{Levels: 3},
-		{Levels: 3, Short: 1, WorstValid: 8, WorstRequired: 9, ShortRounds: 2},
-		{Levels: 3, Short: 1, WorstValid: 8, WorstRequired: 9, ShortRounds: 9},
-		{Levels: 3, Short: 1, WorstValid: 8, WorstRequired: 9, ShortRounds: 10},
-		{Levels: 3, Short: 2, WorstValid: 2, WorstRequired: 14, ShortRounds: 40},
-		{Levels: 3, Short: 1, ShortRounds: 40},
-		// Empty windows. Without these the two copies of the rule agree on
-		// every case whatever either of them says about Empty, so the whole
-		// comparison would pass over a page that had not been updated at all.
-		{Levels: 3, Short: 1, Empty: 1, WorstRequired: 14, ShortRounds: 40, EmptyRounds: 40},
-		{Levels: 3, Short: 1, Empty: 1, WorstRequired: 14, ShortRounds: 40, EmptyRounds: 2},
-		{Levels: 3, Short: 2, Empty: 1, WorstValid: 2, WorstRequired: 14, ShortRounds: 40, EmptyRounds: 40},
-		// Fresh series. Every branch of Churning, including the three that are
-		// false for different reasons: every short window fresh but not for long
-		// enough (the round after a StateGeneration change looks exactly like
-		// this), a mix where one short window did load history, and none fresh
-		// at all. Without the false cases the comparison passes against a page
-		// rule that answers true whenever anything is fresh.
-		{Levels: 9, Short: 4, WorstValid: 2, WorstRequired: 9, ShortRounds: 40,
-			Fresh: 4, ShortFresh: 4, FreshRounds: 40},
-		{Levels: 9, Short: 4, WorstValid: 2, WorstRequired: 9, ShortRounds: 40,
-			Fresh: 9, ShortFresh: 4, FreshRounds: 1},
-		{Levels: 9, Short: 4, WorstValid: 2, WorstRequired: 9, ShortRounds: 40,
-			Fresh: 3, ShortFresh: 3, FreshRounds: 40},
-		{Levels: 9, Short: 4, WorstValid: 2, WorstRequired: 9, ShortRounds: 40},
-		// Fresh and short for a long run, but still filling by the shortfall
-		// rule. Churn must not be claimed here: it is a half of never-filling,
-		// and on its own it would send a reader to edit a strategy whose series
-		// are only young.
-		{Levels: 9, Short: 4, WorstValid: 8, WorstRequired: 9, ShortRounds: 2,
-			Fresh: 4, ShortFresh: 4, FreshRounds: 40},
-	}
-	cases := make([]map[string]any, 0, len(subjects))
-	for _, subject := range subjects {
-		cases = append(cases, map[string]any{
-			"coverage": subject, "persistent": subject.Persistent(), "starved": subject.Starved(),
-			"churning": subject.Churning(),
-		})
-	}
-	return cases
 }
 
 // smokeHarness stubs just enough DOM for the render functions and calls them.
@@ -924,30 +752,17 @@ catch (e) { console.error('the page did not even load: ' + e.constructor.name + 
 
 // Prove the harness can fail before trusting that it did not.
 try {
-  vm.runInContext('anomalyRow(undefinedRowVariable)', ctx);
+  vm.runInContext('objectRow(undefinedRowVariable)', ctx);
   console.error('negative control did not throw; a clean result here would mean nothing');
   process.exit(1);
 } catch (e) { console.log('negative control threw ' + e.constructor.name); }
 
 const calls = [
-  ['anomalyRow (every row shape)', () => data.anomalies.forEach(r => ctx.anomalyRow(r))],
+  ['objectRow (every row shape)', () => data.anomalies.forEach(r => ctx.objectRow(r))],
   ['renderDeployment', () => ctx.renderDeployment(data.health)],
-  ['renderSummary', () => ctx.renderSummary(data.summary, data.page.total)],
-  ['renderTabs', () => ctx.renderTabs(data.action_required_total, data.by_owner_total, 'action_required')],
-  ['renderRollup', () => ctx.renderRollup(data.summary, data.page.total)],
+  ['renderChecks', () => ctx.renderChecks(data.checks)],
   ['renderReplicas', () => ctx.renderReplicas(data.per_replica)],
   ['renderCoverage', () => ctx.renderCoverage(data.coverage)],
-  // Twice, with the counters unmoved between the two.
-  //
-  // Every cumulative figure in this panel becomes a rate from two reads, so one
-  // call only ever exercises the "no previous read" path -- which is why a
-  // divide-by-a-null-rate shipped. A second call with identical counters is
-  // what a fast refresh is: the counter has not moved, the rate is zero, and
-  // the code that divides by it runs.
-
-  ['continuityLine', () => ctx.continuityLine(data.per_replica)],
-  ['attributionLine', () => ctx.attributionLine(data.summary, data.per_replica)],
-  ['onsetLine', () => ctx.onsetLine(data.summary.onset, data.page.total)],
 ];
 let failed = 0;
 for (const [name, fn] of calls) {
@@ -969,43 +784,23 @@ console.log('WHY gap :: ' + (store['why'] ? store['why'].textContent : '(not ren
 console.log('PARKED :: ' + (store['overdueHint'] ? store['overdueHint'].textContent : '(not rendered)'));
 console.log('PRUNED :: ' + (store['prunedSkips'] ? store['prunedSkips'].textContent : '(not rendered)'));
 
-// The note each row would actually render, emitted for the Go side to check.
-// Executing anomalyRow only proves the page does not throw; the wording is
-// what a reader acts on, and a row can render the wrong explanation
-// perfectly happily.
+// The first screen and the fold under it, as rendered.
+console.log('CHECKS :: ' + textOf(store['checkRows']));
+console.log('GOV :: ' + textOf(store['govRows']));
+console.log('BRIEF :: ' + ['briefSchedule', 'briefTodo', 'briefBlind'].map(id => textOf(store[id])).join(' | '));
+// Opening a line renders its folds.
+ctx.openCheck = 'OBSERVATION_GAP';
+ctx.renderChecks(data.checks);
+console.log('GROUPS :: ' + textOf(store['groups']));
+ctx.openCheck = '';
+
+// The four dimensions each row shows, read off the rendered cells.
 for (const row of data.anomalies) {
-  // Every row, not only the ones carrying coverage. The note is decided by the
-  // reason first and the counts second, so a filter on coverage skips exactly
-  // the rows whose wording comes from the reason alone -- and the check then
-  // reports "no note rendered" for a row that renders one perfectly well.
-  let note;
-  try { note = ctx.coverageNote(row); }
-  catch (e) { console.error('coverageNote threw on ' + row.query_group + ': ' + e.message); failed++; continue; }
-  console.log('NOTE ' + row.query_group + ' :: ' + (note ? note.text : '(none)'));
-  // The four answers the row leads with, read off the rendered cells. This is
-  // what a reader acts on now; the note above is one click further in.
   let tr;
-  try { tr = ctx.anomalyRow(row); }
-  catch (e) { console.error('anomalyRow threw on ' + row.query_group + ': ' + e.message); failed++; continue; }
+  try { tr = ctx.objectRow(row); }
+  catch (e) { console.error('objectRow threw on ' + row.query_group + ': ' + e.message); failed++; continue; }
   const cells = tr.children.map(textOf);
   console.log('ROW ' + row.query_group + ' :: ' + cells.slice(1, 5).join(' | '));
-  // The tooltip too, for rows carrying a held verdict. The headline cannot fit
-  // what releases the hold, and that is the part that says whether to go and
-  // look at the data or wait a round -- opposite actions off one row.
-  if (note && row.coverage && row.coverage.guarded) {
-    console.log('HELD ' + row.query_group + ' :: ' + note.title.replace(/\n/g, ' '));
-  }
-}
-
-// What the "whose problem is this" line says on each column. Three of the four
-// columns are held out of the verdict, and this sentence used to tell a reader
-// the opposite on all three -- served the demoted pool it said "判定就看这个数"
-// under a heading explaining that the pool does not reach the judgment at all.
-for (const column of ['anomalies', 'demoted', 'undecidable', 'by_design']) {
-  let line;
-  try { line = ctx.attributionLine(data.summary, data.per_replica, column); }
-  catch (e) { console.error('attributionLine threw on ' + column + ': ' + e.message); failed++; continue; }
-  console.log('WHOSE ' + column + ' :: ' + line);
 }
 
 // The capacity panel on a refresh that arrives after a real interval with the
@@ -1020,14 +815,6 @@ clockMs += 30000;
 try { ctx.renderCapacity(data.health.capacity, []); }
 catch (e) { console.error('renderCapacity (refresh, counters unmoved): ' + e.constructor.name + ': ' + e.message); failed++; }
 console.log('CAPACITY :: ' + textOf(store['capCards']));
-console.log('TABS :: ' + textOf(store['ownerTabs']));
-// Switching to an owner tab is a column and an owner together; switching back
-// drops the owner. An owner left on across a switch is the interaction that
-// emptied a column of 350 on a live page.
-ctx.showTab('DATA');
-console.log('TAB DATA :: column=' + ctx.column + ' owner=' + ctx.filters.owner);
-ctx.showTab('action_required');
-console.log('TAB TODO :: column=' + ctx.column + ' owner=' + (ctx.filters.owner || '(none)'));
 
 // The same panel over the rotation shapes a deployment is actually in.
 //
@@ -1110,7 +897,7 @@ const variants = {
   'healthy': {health: 'HEALTHY', gaps: [], unattributed: 0},
   'degraded': {health: 'DEGRADED', gaps: [], unattributed: 0},
 };
-const variantCells = ['why', 'poolFlowHint', 'unattributedHint', 'splitBasis', 'overdueHint'];
+const variantCells = ['why', 'poolFlowHint', 'unattributedHint', 'splitBasis', 'overdueHint', 'briefSchedule'];
 for (const [name, override] of Object.entries(variants)) {
   // Cleared first. A cell whose branch does not run this time keeps whatever
   // the previous render wrote, and the emitted line would then report the
@@ -1128,7 +915,7 @@ for (const [name, override] of Object.entries(variants)) {
   }
   for (const [label, id] of [['why', 'why'], ['pool', 'poolFlowHint'],
                              ['unattr', 'unattributedHint'], ['split', 'splitBasis'],
-                             ['overdue', 'overdueHint']]) {
+                             ['overdue', 'overdueHint'], ['brief', 'briefSchedule']]) {
     const said = store[id] ? store[id].textContent : '';
     console.log('VAR ' + name + ' ' + label + ' :: ' + (said || '(not rendered)'));
   }
@@ -1166,59 +953,5 @@ for (const c of data.page_tail_cases || []) {
   console.log('TAIL ' + c.name + ' :: ' + tail);
 }
 
-// The onset sentence, on a population whose start times are bounds. It used to
-// read the newest of them back as a moment.
-for (const c of data.onset_cases || []) {
-  let line;
-  try { line = ctx.onsetLine(c.onset, c.total); }
-  catch (e) { console.error('onsetLine threw on ' + c.name + ': ' + e.message); failed++; continue; }
-  console.log('ONSET ' + c.name + ' :: ' + line);
-}
-
-const cases = data.window_never_fills_cases || [];
-if (cases.length === 0) {
-  console.error('no windowNeverFills cases were sent; the comparison would pass vacuously');
-  failed++;
-} else {
-  let disagreed = 0;
-  for (const c of cases) {
-    let page, starved, churn;
-    try {
-      page = ctx.windowNeverFills(c.coverage);
-      starved = ctx.windowIsStarved(c.coverage);
-      churn = ctx.windowSeriesChurn(c.coverage);
-    }
-    catch (e) { console.error('rule threw: ' + e.message); failed++; break; }
-    if (!!churn !== !!c.churning) {
-      disagreed++;
-      console.error('windowSeriesChurn disagrees with Churning on ' + JSON.stringify(c.coverage) +
-        ': page ' + !!churn + ', Go ' + !!c.churning);
-    }
-    // Churn is a half of never-filling, never a third state beside it. A page
-    // that reported churn on a window still filling would tell a reader to
-    // edit a strategy whose series are merely young.
-    if (churn && !page) {
-      disagreed++;
-      console.error('a window is reported as churning without being one that never fills: ' +
-        JSON.stringify(c.coverage));
-    }
-    if (!!page !== !!c.persistent) {
-      disagreed++;
-      console.error('windowNeverFills disagrees with Persistent on ' + JSON.stringify(c.coverage) +
-        ': page ' + !!page + ', Go ' + !!c.persistent);
-    }
-    if (!!starved !== !!c.starved) {
-      disagreed++;
-      console.error('windowIsStarved disagrees with Starved on ' + JSON.stringify(c.coverage) +
-        ': page ' + !!starved + ', Go ' + !!c.starved);
-    }
-    if (page && starved) {
-      disagreed++;
-      console.error('a window is reported as both never-filling and starved: ' + JSON.stringify(c.coverage));
-    }
-  }
-  if (disagreed) { failed++; }
-  else { console.log('windowNeverFills agreed on ' + cases.length + ' cases'); }
-}
 process.exit(failed ? 1 : 0);
 `

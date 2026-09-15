@@ -437,6 +437,7 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 	expected["bkmonitor_alarmd_catalog_query_groups"] = "variableLabels: {source_semantics}"
 	expected["bkmonitor_alarmd_catalog_plans"] = "variableLabels: {source_semantics}"
 	expected["bkmonitor_alarmd_catalog_objects"] = "variableLabels: {disposition}"
+	expected["bkmonitor_alarmd_catalog_inert_plans"] = "variableLabels: {}"
 	expected["bkmonitor_alarmd_platform_settings_mode"] = "variableLabels: {mode}"
 	expected["bkmonitor_alarmd_platform_settings_authoritative_age_seconds"] = "variableLabels: {}"
 	expected["bkmonitor_alarmd_platform_settings_refresh_total"] = "variableLabels: {result}"
@@ -890,6 +891,11 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	bounds[fqName("catalog_plans")] = len(controlplane.SupportedSourceSemantics) + 2
 	// Every disposition, plus other for one added without being listed.
 	bounds[fqName("catalog_objects")] = len(controlplane.CatalogDispositions) + 1
+	// One series: a count, unlabelled. It stays unlabelled on purpose -- the
+	// interval would be the natural label and it is user input, so labelling
+	// it would put an open set on a family whose whole job is to be a steady
+	// zero someone can alarm on.
+	bounds[fqName("catalog_inert_plans")] = 1
 	bounds[fqName("platform_settings_mode")] = len(platformsettings.Modes)
 	bounds[fqName("platform_settings_authoritative_age_seconds")] = 1
 	bounds[fqName("platform_settings_refresh_total")] = 2

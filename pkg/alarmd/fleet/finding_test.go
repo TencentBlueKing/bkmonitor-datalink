@@ -94,6 +94,47 @@ func TestAWindowReasonIsDecidedOnItsCountsNotItsCode(t *testing.T) {
 	}
 }
 
+// What the control plane files as one disposition, this table must not split
+// across two owners.
+//
+// controlplane/runtime_executable_catalog.go files ALGORITHM_UNSUPPORTED,
+// PLAN_BUDGET_EXCEEDED and LEVEL_BUDGET_EXCEEDED together as
+// DispositionUnsupported: the definition cannot be run as written. The first
+// version of this table put the two budget codes with the run-time budgets and
+// sent the reader to look for an alarmd budget to raise -- on the runtime that
+// feeds this page there is none, those codes come only from the compiler, and
+// the reader would have arrived at two guards that cannot fire.
+//
+// The catalog is not imported here (it would be a cycle), so the three codes
+// are named. If the catalog's grouping changes, this fails on the code that
+// moved, which is the moment to decide whether the owner moves with it.
+func TestCodesTheCatalogFilesTogetherShareAnOwner(t *testing.T) {
+	unsupported := []string{"ALGORITHM_UNSUPPORTED", "PLAN_BUDGET_EXCEEDED", "LEVEL_BUDGET_EXCEEDED"}
+	for _, code := range unsupported {
+		situation, mapped := codeSituations[code]
+		if !mapped {
+			t.Errorf("%s reaches no situation", code)
+			continue
+		}
+		got := finding(situation, 0)
+		if got.Owner != OwnerStrategy {
+			t.Errorf("%s is %s's: the control plane files it with ALGORITHM_UNSUPPORTED as a "+
+				"definition that cannot run as written, and on this runtime it has no producer "+
+				"but the compiler", code, got.Owner)
+		}
+		if got.Where != WhereStrategy {
+			t.Errorf("%s sends the reader to %q, want the strategy", code, got.Where)
+		}
+	}
+	// And the run-time budgets stay this deployment's. Moving the whole bucket
+	// would have been the easy fix and the wrong one.
+	for _, code := range []string{"EXECUTION_BUDGET_EXHAUSTED", "SLOT_BUDGET_EXCEEDED", "STATE_BUDGET_EXCEEDED"} {
+		if got := finding(codeSituations[code], 0).Owner; got != OwnerAlarmd {
+			t.Errorf("%s is %s's, want this deployment's: it is a budget allocated at run time", code, got)
+		}
+	}
+}
+
 // Stalled and never-reached are decided before any code is read.
 //
 // A stalled object's last code is usually the external thing that happened

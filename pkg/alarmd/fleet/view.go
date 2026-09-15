@@ -167,6 +167,12 @@ const (
 	// demoted pool with a stalled round is on it, while an object in the
 	// anomaly column whose series churn is not.
 	ColumnActionRequired = "action_required"
+	// ColumnAll is every object from every column above, one list. It exists
+	// for the page's owner tabs: "the data owner's objects" is a question
+	// across columns, and asking it column by column gave the reader two
+	// navigation axes for one list, which is how an owner filter came to be
+	// left on while switching columns and empty out a column of 350.
+	ColumnAll = "all"
 )
 
 // ObjectColumns is every column the object route will serve.
@@ -184,6 +190,7 @@ var ObjectColumns = []string{
 	ColumnUndecidable,
 	ColumnByDesign,
 	ColumnActionRequired,
+	ColumnAll,
 }
 
 // knownColumn reports whether the object route will serve this column.

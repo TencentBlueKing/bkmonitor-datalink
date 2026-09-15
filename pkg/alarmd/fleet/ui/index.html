@@ -291,23 +291,9 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
 
   <section class="panel">
     <h2 id="listTitle">异常对象</h2>
+    <div class="filters" id="ownerTabs"></div>
     <p class="basis" id="listBasis"></p>
-    <p class="basis" id="stallNote" hidden></p>
-    <details class="more">
-      <summary>排序与时长口径</summary>
-      <p class="basis" id="orderBasis"></p>
-      <p class="basis">
-        持续时长按每条自身的起算点算，见“起算来源”那一列。那一列有六种取值，含义不同：
-        有的是本进程看着它开始出问题的时刻（是测量），有的是上下界（列表里带 ≥ 或 ≤ 的），
-        <b>不能直接互相比大小</b>。
-      </p>
-    </details>
     <div class="filters">
-      <button id="colAction" class="primary">需要我处理</button>
-      <button id="colOwn">没跑成待查</button>
-      <button id="colDemoted">策略本身不可用（降级池）</button>
-      <button id="colUndecidable">判不了恢复</button>
-      <button id="colByDesign">按配置不处理</button>
       <button id="ordOldest" class="primary">持续最久的在前</button>
       <button id="ordNewest">最近开始的在前</button>
       <input id="fReplica" list="replicaList" placeholder="副本" size="10">
@@ -318,12 +304,20 @@ tr.stuckrow td{background:rgba(192,57,43,.05)}
       <button id="clear">清除</button>
       <span class="applied" id="applied"></span>
     </div>
-    <p class="basis" id="governance"></p>
     <div id="objErr" class="err" hidden></div>
-    <p class="basis" id="rollup"></p>
-    <p class="basis" id="churn"></p>
-    <p class="basis" id="ceiling"></p>
-    <div class="summary" id="summary"></div>
+    <details class="more">
+      <summary>统计与口径</summary>
+      <p class="basis" id="stallNote" hidden></p>
+      <p class="basis" id="orderBasis"></p>
+      <p class="basis">
+        持续时长按每条自身的起算点算（展开行里的“起算来源”）。有的是本进程看着它开始出问题的时刻（是测量），
+        有的是上下界（带 ≥ 或 ≤ 的），<b>不能直接互相比大小</b>。
+      </p>
+      <p class="basis" id="rollup"></p>
+      <p class="basis" id="churn"></p>
+      <p class="basis" id="ceiling"></p>
+      <div class="summary" id="summary"></div>
+    </details>
     <table>
       <thead><tr>
         <th>对象</th><th>谁的</th><th>发生了什么</th><th>影响</th><th>下一步</th><th>已持续</th><th>去哪</th><th></th>
@@ -401,9 +395,12 @@ var filters = { replica: '', strategy: '', business: '', owner: '' };
 // Which of the two columns the table is about. Sent with every request rather
 // than filtered on the page, for the same reason the filters are: the list is
 // paged, and a page cannot separate two lists it only holds twenty rows of.
-// The to-do list is the default. It is what the page opens on because it is
-// the reader's first question, and every other column is a way of looking at
-// what is not on it.
+// One navigation axis: who has to act. The to-do tab is column=action_required;
+// the three owner tabs are column=all with the owner on the request. The
+// tracker's own columns -- what happened to the object -- are still served by
+// the API and still partition the health equation, but they are not navigation
+// any more. Two axes over one list is how an owner filter came to be left on
+// while switching columns, and a column of 350 rendered as empty.
 var column = 'action_required';
 // Which end of the list the first page is. Sorted on the server for the same
 // reason the filters are applied there: reordering twenty loaded rows would
@@ -613,40 +610,42 @@ function situationWords(finding) {
   return {what: words.what, impact: words.impact, next: words.next.replace('{n}', n)};
 }
 
-// The governance line: every object in the deployment, counted by who has to
-// act, each count opening that owner's objects.
+// The tabs: who has to act, with how many. One row, one axis.
 //
-// The to-do count leads. The others are not this reader's work but are real
-// work, and a count they can open is what stops "not mine" from meaning
-// "nobody's".
-function renderGovernance(actionRequired, byOwner, served) {
-  var el = document.getElementById('governance');
+// The to-do tab leads. The other three are not this reader's work but are
+// real work, and a tab with a count is what stops "not mine" from meaning
+// "nobody's". Counts are deployment-wide, from the same read as the rows, so
+// the number on the tab is the number of rows the tab opens.
+function renderTabs(actionRequired, byOwner, current) {
+  var el = document.getElementById('ownerTabs');
   el.textContent = '';
-  var head = document.createElement('b');
-  head.textContent = '需要你处理：' + (actionRequired || 0) + ' 个';
-  el.appendChild(head);
-  el.appendChild(document.createTextNode('（alarmd 自己的 + 待确认的）。其余按归属：'));
   var counts = {};
   ((byOwner || {}).top || []).forEach(function (c) { counts[c.value] = c.count; });
-  ['DATA', 'STRATEGY', 'NOBODY'].forEach(function (owner, index) {
-    var n = counts[owner] || 0;
-    var a = document.createElement('a');
-    a.href = '#';
-    a.textContent = OWNER[owner] + ' ' + n;
-    a.title = '打开' + OWNER[owner] + '的对象清单（跨所有栏）';
-    a.addEventListener('click', function (event) {
-      event.preventDefault();
-      filters.owner = owner;
-      // Owner cuts across columns; the to-do column already excludes these
-      // owners, so opening one of them switches to the full anomaly list.
-      if (column === 'action_required') { column = 'anomalies'; }
-      offset = 0;
-      loadObjects();
-    });
-    if (index) el.appendChild(document.createTextNode(' · '));
-    el.appendChild(a);
+  [
+    {key: 'action_required', label: '需要我处理', n: actionRequired || 0},
+    {key: 'DATA', label: OWNER.DATA, n: counts.DATA || 0},
+    {key: 'STRATEGY', label: OWNER.STRATEGY, n: counts.STRATEGY || 0},
+    {key: 'NOBODY', label: OWNER.NOBODY, n: counts.NOBODY || 0}
+  ].forEach(function (t) {
+    var b = document.createElement('button');
+    b.className = t.key === current ? 'primary' : '';
+    b.textContent = t.label + ' ' + t.n;
+    b.addEventListener('click', function () { showTab(t.key); });
+    el.appendChild(b);
   });
-  el.appendChild(document.createTextNode('。数据侧和策略侧的告警不会自己关：异常照报、恢复判不了。'));
+}
+
+// A tab is a column and, for the owner tabs, an owner. Switching tabs resets
+// the page offset for the same reason switching columns did: the offset
+// belongs to the list that produced it.
+function showTab(key) {
+  var nextColumn = key === 'action_required' ? 'action_required' : 'all';
+  var nextOwner = key === 'action_required' ? '' : key;
+  if (column === nextColumn && filters.owner === nextOwner) return;
+  column = nextColumn;
+  filters.owner = nextOwner;
+  offset = 0;
+  loadObjects();
 }
 
 // A moment, with the date shown as soon as it is not today.
@@ -1225,13 +1224,14 @@ function loadObjects() {
     // previous column's heading over the new column's rows for one refresh, and
     // the two columns mean opposite things about whose fault the objects are.
     var served = objects.column || 'anomalies';
-    var pool = served === 'demoted';
-    var undecidable = served === 'undecidable';
-    var byDesign = served === 'by_design';
-    var action = served === 'action_required';
-    var TITLES = {demoted: '策略本身不可用（降级池）', undecidable: '判不了恢复',
-                  by_design: '按配置不处理', anomalies: '没跑成待查',
-                  action_required: '需要我处理'};
+    // The heading and the sentence under it are keyed by what came back and,
+    // for the all-column, by which owner tab asked. One sentence each: what
+    // this list is and what it is not. The mechanism is in the expand.
+    var tab = served === 'all' ? (filters.owner || 'all') : served;
+    var TITLES = {action_required: '需要我处理', DATA: '数据侧', STRATEGY: '策略侧', NOBODY: '不用处理',
+                  all: '全部对象', UNDETERMINED: '待确认', ALARMD: 'alarmd',
+                  demoted: '策略本身不可用（降级池）', undecidable: '判不了恢复',
+                  by_design: '按配置不处理', anomalies: '没跑成待查'};
     // Each column says what is happening, what it costs, and what to do --
     // in that order, and the mechanism goes in the expandable note below.
     //
@@ -1248,13 +1248,13 @@ function loadObjects() {
     // itself as the to-do list. The keys are checked against the Go constants
     // now.
     var BASIS = {
-      // The to-do list. Drawn from every other column: what this deployment
-      // has to act on, plus what nobody can yet say who owns. The rest is
-      // counted in the governance line above and opens from there.
-      action_required: '这一栏是要你处理的：alarmd 自己的问题，加上证据还分不出是谁的。'
-        + '按紧急程度排：alarmd 的在前、不会自愈的在前、持续最久的在前。'
-        + '每条说三件事——发生了什么、影响什么、下一步做什么；判据和细节点开那一行的 ▸。'
-        + '数据侧、策略侧、不用处理的，不在这里，在上面那行运营治理里按归属计数，点数字打开。',
+      action_required: 'alarmd 自己的问题，加上证据还分不出是谁的。alarmd 的在前、不会自愈的在前、持续最久的在前。',
+      DATA: '数据没来或后端没答。alarmd 和策略都没错；这些对象上的告警不会自己关。',
+      STRATEGY: '策略自己的定义要改。这些对象上的告警不会自己关。',
+      NOBODY: '按设计如此，会自己好或本来就不该跑。不用处理。',
+      UNDETERMINED: '证据分不出是谁的，留在这里等确认。',
+      ALARMD: '容量或架构能避免的，决定部署判定。',
+      all: '所有栏的全部对象。',
       demoted: '后端连续查询失败，已降级、暂停反复查询。'
         + '影响：这些策略当前不产生检测结果，异常和恢复都不报。'
         + '下一步：看每条的“后端症状”定位数据源；冷却到期后会自动重试，'
@@ -1279,23 +1279,19 @@ function loadObjects() {
         + '下一步：看“谁的问题”那一列——归到 alarmd 的才决定上面的判定，也是要自己处理的；'
         + '其余是数据源没答或策略配置写不了，要找对应的人。'
     };
-    if (!BASIS[served] || !TITLES[served]) {
+    if (!BASIS[tab] || !TITLES[tab]) {
       // Loudly, in the panel. A column served under a key this page has no
       // wording for used to render the anomaly column's description over it,
       // which reads as a statement about these objects and is false about
       // every one of them.
-      text('listTitle', served);
-      text('listBasis', '这一栏（' + served + '）在页面上没有对应的说明文案，这是缺陷，请上报。'
+      text('listTitle', tab);
+      text('listBasis', '这一栏（' + tab + '）在页面上没有对应的说明文案，这是缺陷，请上报。'
         + '下面的行是对的，标题和说明不要据此理解。');
     } else {
-      text('listTitle', TITLES[served]);
-      text('listBasis', BASIS[served]);
+      text('listTitle', TITLES[tab]);
+      text('listBasis', BASIS[tab]);
     }
-    document.getElementById('colAction').className = action ? 'primary' : '';
-    document.getElementById('colOwn').className = (pool || undecidable || byDesign || action) ? '' : 'primary';
-    document.getElementById('colDemoted').className = pool ? 'primary' : '';
-    document.getElementById('colUndecidable').className = undecidable ? 'primary' : '';
-    document.getElementById('colByDesign').className = byDesign ? 'primary' : '';
+    renderTabs(objects.action_required_total, objects.by_owner_total, tab);
     // Read off the response, never from what was asked for: the buttons and the
     // wording under them have to describe the rows that actually came back.
     var served_order = objects.order || 'oldest';
@@ -1317,7 +1313,6 @@ function loadObjects() {
     currentPerReplica = objects.per_replica || [];
     text('ceiling', continuityLine(objects.per_replica));
     renderSummary(objects.summary, total, served);
-    renderGovernance(objects.action_required_total, objects.by_owner_total, served);
     renderStallNote(objects.stall_after_seconds, objects.summary && objects.summary.stalled,
       objects.stalled_total, objects.filtered);
     var list = document.getElementById('replicaList');
@@ -1329,9 +1324,9 @@ function loadObjects() {
     });
     // An empty table means something different once a filter is on, and the rows
     // alone cannot say which case this is.
-    text('applied', objects.filtered ? '已按条件过滤' + (filters.owner ? '（归属：' + (OWNER[filters.owner] || filters.owner) + '）' : '') : '');
+    text('applied', objects.filtered ? '已按条件过滤' : '');
     document.getElementById('objEmpty').textContent = objects.filtered
-      ? '当前过滤条件下没有异常对象。' : '当前没有异常对象。';
+      ? '当前过滤条件下没有对象。' : '这一类现在没有对象。';
     show('objEmpty', rows.length === 0 && total === 0);
     var shown = rows.length ? '第 ' + (offset + 1) + '–' + (offset + rows.length) + ' 条' : '无';
     text('pageInfo', shown + '，共 ' + total + ' 条' + pageTail(objects, total));
@@ -3397,22 +3392,8 @@ document.getElementById('recRaw').addEventListener('click', function () {
   this.textContent = showing ? '收起原文' : '看原文';
 });
 
-function showColumn(next) {
-  if (column === next) return;
-  column = next;
-  // The offset belongs to the list that produced it. Carrying it across means
-  // asking the pool for page four of a list that has one page, and getting an
-  // empty table that reads as "nothing is demoted".
-  offset = 0;
-  loadObjects();
-}
-document.getElementById('colAction').addEventListener('click', function () { showColumn('action_required'); });
-document.getElementById('colOwn').addEventListener('click', function () { showColumn('anomalies'); });
-document.getElementById('colDemoted').addEventListener('click', function () { showColumn('demoted'); });
-document.getElementById('colUndecidable').addEventListener('click', function () { showColumn('undecidable'); });
-document.getElementById('colByDesign').addEventListener('click', function () { showColumn('by_design'); });
 
-// Same reset as showColumn, for the same reason: offset 60 of oldest-first and
+// The offset belongs to the list that produced it, for the same reason: offset 60 of oldest-first and
 // offset 60 of newest-first are different objects, and carrying it over lands
 // the reader in the middle of a list they asked to see the start of.
 function showOrder(next) {
@@ -3428,7 +3409,6 @@ document.getElementById('clear').addEventListener('click', function () {
   ['fReplica', 'fStrategy', 'fBusiness'].forEach(function (id) {
     document.getElementById(id).value = '';
   });
-  filters.owner = '';
   applyFilters();
 });
 ['fReplica', 'fStrategy', 'fBusiness'].forEach(function (id) {

@@ -291,10 +291,12 @@ func TestTheAnomalyColumnIsCalledOneThingEverywhere(t *testing.T) {
 	}
 	// Every place a reader meets the column. The anchor is something stable on
 	// the same source line as the label.
+	// The object list no longer has a button for this column: navigation is by
+	// owner now, and the column is one of the API's, not the page's. Its name
+	// still appears wherever the column itself does.
 	for _, anchor := range []struct{ what, marker string }{
 		{"verdict panel cell", `id="ownBad"`},
 		{"replica table header", `<th>其中 alarmd 的</th>`},
-		{"object list button", `id="colOwn"`},
 		{"object list heading", `anomalies: '`},
 	} {
 		found := false

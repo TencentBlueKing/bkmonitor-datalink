@@ -866,6 +866,11 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 		view.AnomaliesTotal = len(view.Anomalies)
 		summaryPartial = truncated[ColumnAnomalies] || truncated[ColumnDemoted] ||
 			truncated[ColumnUndecidable] || truncated[ColumnByDesign]
+	case ColumnAll:
+		view.Anomalies = Everything(columns...)
+		view.AnomaliesTotal = len(view.Anomalies)
+		summaryPartial = truncated[ColumnAnomalies] || truncated[ColumnDemoted] ||
+			truncated[ColumnUndecidable] || truncated[ColumnByDesign]
 	}
 	replica := request.URL.Query().Get("replica")
 	if replica != "" {
@@ -905,6 +910,12 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 			return
 		}
 		view.Anomalies = filterByOwner(view.Anomalies, Owner(owner))
+		// Owner is a tab, not a filter: the list it opens is "this owner's
+		// objects", and its total is how many there are, not how many the
+		// column held before the owner was chosen. Reported the other way, the
+		// page says "350 objects, 350 filtered out" over an owner who simply
+		// has none in this column.
+		view.AnomaliesTotal = len(view.Anomalies)
 	}
 	total := len(view.Anomalies)
 	// Counted over the whole list this request is about, before it is cut into a
@@ -922,7 +933,7 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	writeJSON(response, http.StatusOK, ListResponse{
 		Summary: summary,
 		View:    view, Replica: replica, Strategy: strategy, Business: business, Column: column,
-		Applied:             replica != "" || strategy != "" || business != "" || owner != "",
+		Applied:             replica != "" || strategy != "" || business != "",
 		StallAfterSeconds:   int(stallAfter / time.Second),
 		StalledTotal:        stalledTotal,
 		ActionRequiredTotal: actionRequiredTotal, ByOwnerTotal: rank(byOwnerTotal),

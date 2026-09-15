@@ -556,6 +556,16 @@ func ActionRequired(columns ...[]Anomaly) []Anomaly {
 	return list
 }
 
+// Everything is every object from every column, one list, in the columns'
+// own order. The caller orders it.
+func Everything(columns ...[]Anomaly) []Anomaly {
+	list := []Anomaly{}
+	for _, column := range columns {
+		list = append(list, column...)
+	}
+	return list
+}
+
 func sortByUrgency(list []Anomaly) {
 	rankOwner := func(owner Owner) int {
 		if owner == OwnerAlarmd {

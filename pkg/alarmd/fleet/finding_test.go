@@ -390,6 +390,28 @@ func TestTheObjectRouteServesTheToDoListAndTheOwnerFilter(t *testing.T) {
 			"or a count that opens a list opens a different one", total)
 	}
 
+	// An owner tab is column=all with the owner on the request, and its total
+	// is how many that owner has -- not how many the list held before the
+	// owner was chosen. A live page showed "这一栏全部 350 条，已按条件过滤掉
+	// 350 条" over an owner who simply had none there, with the filter flag
+	// set as though the reader had asked for a narrowing.
+	status, body = get(t, handler, "/api/objects?column="+ColumnAll+"&owner="+string(OwnerData))
+	if status != http.StatusOK {
+		t.Fatalf("column=all owner=DATA: status = %d: %v", status, body)
+	}
+	rows, _ = body["anomalies"].([]any)
+	if len(rows) != 1 {
+		t.Fatalf("column=all owner=DATA: %d rows, want the one demoted object on a timeout", len(rows))
+	}
+	if total, _ := body["anomalies_total"].(float64); int(total) != len(rows) {
+		t.Errorf("anomalies_total = %v over %d rows for an owner tab: the total has to be the "+
+			"owner's count, or the page reports the rest as filtered out", total, len(rows))
+	}
+	if filtered, _ := body["filtered"].(bool); filtered {
+		t.Error("an owner tab reports filtered=true: the owner is the tab, not a narrowing the " +
+			"reader asked for")
+	}
+
 	// An owner nobody declared is refused, not defaulted: a typo that silently
 	// matched nothing would return an empty list under a heading that says
 	// "nothing for this owner".

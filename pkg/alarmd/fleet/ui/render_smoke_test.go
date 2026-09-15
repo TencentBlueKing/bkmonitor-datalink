@@ -471,9 +471,19 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			}
 		}
 	}
-	governance := lineStarting(text, "GOVERNANCE ::")
-	if !strings.Contains(governance, "需要你处理：") || !strings.Contains(governance, "策略侧") {
-		t.Errorf("governance line = %q, want the to-do count and the per-owner counts", governance)
+	tabs := lineStarting(text, "TABS ::")
+	for _, want := range []string{"需要我处理 5", "数据侧 4", "策略侧 1", "不用处理 0"} {
+		if !strings.Contains(tabs, want) {
+			t.Errorf("tabs = %q, want %q on them: the count on the tab is the number of rows it opens",
+				tabs, want)
+		}
+	}
+	if got := lineStarting(text, "TAB DATA ::"); !strings.Contains(got, "column=all owner=DATA") {
+		t.Errorf("after choosing the data tab: %q, want column=all owner=DATA", got)
+	}
+	if got := lineStarting(text, "TAB TODO ::"); !strings.Contains(got, "column=action_required owner=(none)") {
+		t.Errorf("after returning to the to-do tab: %q, want the owner dropped -- an owner left on "+
+			"across a tab switch is what emptied a column of 350", got)
 	}
 
 	// Only one column decides the verdict, and the line that says so was printed
@@ -923,7 +933,7 @@ const calls = [
   ['anomalyRow (every row shape)', () => data.anomalies.forEach(r => ctx.anomalyRow(r))],
   ['renderDeployment', () => ctx.renderDeployment(data.health)],
   ['renderSummary', () => ctx.renderSummary(data.summary, data.page.total)],
-  ['renderGovernance', () => ctx.renderGovernance(data.action_required_total, data.by_owner_total, 'action_required')],
+  ['renderTabs', () => ctx.renderTabs(data.action_required_total, data.by_owner_total, 'action_required')],
   ['renderRollup', () => ctx.renderRollup(data.summary, data.page.total)],
   ['renderReplicas', () => ctx.renderReplicas(data.per_replica)],
   ['renderCoverage', () => ctx.renderCoverage(data.coverage)],
@@ -1010,7 +1020,14 @@ clockMs += 30000;
 try { ctx.renderCapacity(data.health.capacity, []); }
 catch (e) { console.error('renderCapacity (refresh, counters unmoved): ' + e.constructor.name + ': ' + e.message); failed++; }
 console.log('CAPACITY :: ' + textOf(store['capCards']));
-console.log('GOVERNANCE :: ' + textOf(store['governance']));
+console.log('TABS :: ' + textOf(store['ownerTabs']));
+// Switching to an owner tab is a column and an owner together; switching back
+// drops the owner. An owner left on across a switch is the interaction that
+// emptied a column of 350 on a live page.
+ctx.showTab('DATA');
+console.log('TAB DATA :: column=' + ctx.column + ' owner=' + ctx.filters.owner);
+ctx.showTab('action_required');
+console.log('TAB TODO :: column=' + ctx.column + ' owner=' + (ctx.filters.owner || '(none)'));
 
 // The same panel over the rotation shapes a deployment is actually in.
 //

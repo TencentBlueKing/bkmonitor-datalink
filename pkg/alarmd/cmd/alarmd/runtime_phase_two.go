@@ -32,6 +32,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
+	httpservice "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/service/http"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
@@ -83,7 +84,7 @@ type phaseTwoApplicationDependencies struct {
 }
 
 type runtimeModeDependencies struct {
-	phaseOne applicationDependencies
+	logger   *observability.Logger
 	phaseTwo phaseTwoApplicationDependencies
 }
 
@@ -92,7 +93,7 @@ func defaultPhaseTwoApplicationDependencies() phaseTwoApplicationDependencies {
 		configureCPU: configurePhaseTwoCPU,
 		run:          runPhaseTwoApplication, openBundle: openProductionPhaseTwoBundle,
 		newHTTP: func(recorder *metric.Recorder, source observability.HealthSource, diagnosticsAddress string) (httpRuntime, error) {
-			return defaultApplicationDependencies(nil).newHTTP(recorder, source, diagnosticsAddress)
+			return httpservice.NewWithHealth(recorder, source, httpservice.WithDiagnosticsAddress(diagnosticsAddress))
 		},
 	}
 }
@@ -2678,4 +2679,51 @@ func (dispatcher *phaseTwoRunnerDispatcher) observeOccupancy(ctx context.Context
 // occupancy, and would serialise every Runner behind one observer call.
 func (dispatcher *phaseTwoRunnerDispatcher) changeExecuting(delta int) {
 	dispatcher.executing.Add(int64(delta))
+}
+
+// httpRuntime is the diagnostics and metrics listener. It is an interface so a
+// test can run the application without binding a port.
+type httpRuntime interface {
+	Run(context.Context, string, time.Duration) error
+	// SetAPI installs the observability API once the runtime that produces the
+	// object facts is open. The listener starts before that runtime does.
+	SetAPI(http.Handler)
+}
+
+// waitRuntimeComponent waits for one component's shutdown to report, up to the
+// shared deadline. A component that has not reported by then is not waited for
+// again: the deadline is the whole shutdown's, not each component's.
+func waitRuntimeComponent(done <-chan error, deadline time.Time) error {
+	wait := time.Until(deadline)
+	if wait <= 0 {
+		select {
+		case err := <-done:
+			return err
+		default:
+			return ErrApplicationShutdownTimeout
+		}
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		return err
+	case <-timer.C:
+		return ErrApplicationShutdownTimeout
+	}
+}
+
+var (
+	ErrApplicationShutdownTimeout = errors.New("alarmd runtime: shutdown timeout")
+	errHTTPServiceStopped         = errors.New("alarmd runtime: HTTP service stopped unexpectedly")
+)
+
+// normalizeRuntimeShutdownError drops the cancellation the shutdown itself
+// caused and keeps every other stop as an error, so a component that stopped
+// on its own before shutdown began is not reported as a clean exit.
+func normalizeRuntimeShutdownError(err error, stoppedBeforeShutdown bool) error {
+	if err == nil || (errors.Is(err, context.Canceled) && !stoppedBeforeShutdown) {
+		return nil
+	}
+	return fmt.Errorf("runtime component: %w", err)
 }

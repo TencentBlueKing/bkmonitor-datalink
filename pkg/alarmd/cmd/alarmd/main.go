@@ -22,7 +22,6 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
-	httpservice "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/service/http"
 )
 
 var (
@@ -52,17 +51,8 @@ func main() {
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	eventLogger := observability.New(observability.ComponentTrigger, stderr)
-	return runWithDependencies(ctx, args, stdout, stderr, defaultApplicationDependencies(eventLogger))
-}
-
-func runWithDependencies(
-	ctx context.Context,
-	args []string,
-	stdout, stderr io.Writer,
-	dependencies applicationDependencies,
-) int {
 	return runWithRuntimeModeDependencies(ctx, args, stdout, stderr, runtimeModeDependencies{
-		phaseOne: dependencies,
+		logger:   eventLogger,
 		phaseTwo: defaultPhaseTwoApplicationDependencies(),
 	})
 }
@@ -133,14 +123,7 @@ func runWithRuntimeModeDependencies(
 		if dependencies.phaseTwo.run == nil {
 			runErr = errPhaseTwoWorkerBundleNotAssembled
 		} else {
-			runErr = dependencies.phaseTwo.run(ctx, cfg, recorder, dependencies.phaseOne.logger)
-		}
-	case config.InputModePhaseOneKafkaCompatibility:
-		runtimeConfig, err := cfg.PhaseOneCompatibilityRuntimeConfig()
-		if err != nil {
-			runErr = err
-		} else {
-			runErr = runApplication(ctx, runtimeConfig, recorder, dependencies.phaseOne)
+			runErr = dependencies.phaseTwo.run(ctx, cfg, recorder, dependencies.logger)
 		}
 	default:
 		runErr = fmt.Errorf("unsupported input mode %q", cfg.Input.Mode)
@@ -150,14 +133,4 @@ func runWithRuntimeModeDependencies(
 		return 1
 	}
 	return 0
-}
-
-func defaultApplicationDependencies(eventLogger *observability.Logger) applicationDependencies {
-	return applicationDependencies{
-		logger:     eventLogger,
-		openBundle: openApplicationBundle,
-		newHTTP: func(recorder *metric.Recorder, source observability.HealthSource, diagnosticsAddress string) (httpRuntime, error) {
-			return httpservice.NewWithHealth(recorder, source, httpservice.WithDiagnosticsAddress(diagnosticsAddress))
-		},
-	}
 }

@@ -80,16 +80,11 @@ func TestPhaseTwoRuntimeObserverKeepsOneLinePerReasonAndQueryGroup(t *testing.T)
 		first["error"] != "alarmd worker: duplicate completion binding" {
 		t.Fatalf("line 0=%v, want coordinates, failure code and error text for query-group-a", first)
 	}
-	// The phase-one constructor keeps its per-reason budget: the second Query
-	// Group is hidden behind the first within the same window.
-	var phaseOne bytes.Buffer
-	legacy, err := newPhaseOneRuntimeObserver(metric.NewRecorder(metric.BuildInfo{}), observability.New("alarmd", &phaseOne))
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacy.Observe(ctxA, failed("query-group-a"))
-	legacy.Observe(ctxB, failed("query-group-b"))
-	if got := len(strings.Split(strings.TrimSpace(phaseOne.String()), "\n")); got != 1 {
-		t.Fatalf("phase-one behaviour changed: lines=%d", got)
-	}
+	// This assertion used to end by running the phase-one observer on the same
+	// two Query Groups and showing it emitted one line where this one emits
+	// two. That contrast went when the phase-one runtime was retired, so the
+	// property it demonstrated is stated here instead rather than left to a
+	// comparison that no longer has a second side: the budget is per Query
+	// Group, not per reason code, and a Query Group spending its own budget
+	// must not consume anyone else's.
 }

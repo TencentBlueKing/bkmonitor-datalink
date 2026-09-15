@@ -18,13 +18,11 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
-
-	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 )
 
 func TestDefaultPhaseTwoInputUsesGoAccessWithoutPhaseOneCoordinates(t *testing.T) {
 	cfg := DefaultPhaseTwoInput()
-	if cfg.Mode != InputModeGoAccess || cfg.PhaseOneKafka != nil {
+	if cfg.Mode != InputModeGoAccess {
 		t.Fatalf("default phase-two input = %+v", cfg)
 	}
 	if err := cfg.Validate(); err != nil {
@@ -327,52 +325,6 @@ phase_two:
     uq_endpoint: http://unify-query.service
     query_source: alarmd
 `, workerID)
-}
-
-func TestPhaseTwoInputRequiresExplicitIsolatedPhaseOneCompatibility(t *testing.T) {
-	compatibility := PhaseOneKafkaCompatibilityConfig{
-		InputTopic: "alarmd-detect-input-shadow-v2", ConsumerGroup: "alarmd-shadow-v2",
-		InitialOffset: enginekafka.InitialOffsetLatest, StatePrefix: "alarmd-shadow-v2",
-	}
-	for name, cfg := range map[string]PhaseTwoInputConfig{
-		"go access with compatibility coordinates": {
-			Mode: InputModeGoAccess, PhaseOneKafka: &compatibility,
-		},
-		"compatibility without coordinates": {Mode: InputModePhaseOneKafkaCompatibility},
-		"unknown mode":                      {Mode: "kafka"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if err := cfg.Validate(); err == nil {
-				t.Fatalf("Validate() accepted %+v", cfg)
-			}
-		})
-	}
-
-	cfg := PhaseTwoInputConfig{Mode: InputModePhaseOneKafkaCompatibility, PhaseOneKafka: &compatibility}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() rejected explicit compatibility: %v", err)
-	}
-}
-
-func TestPhaseOneCompatibilityRejectsIncompleteOrNonCanonicalIdentity(t *testing.T) {
-	valid := PhaseOneKafkaCompatibilityConfig{
-		InputTopic: "alarmd-detect-input-shadow-v2", ConsumerGroup: "alarmd-shadow-v2",
-		InitialOffset: enginekafka.InitialOffsetOldest, StatePrefix: "alarmd-shadow-v2",
-	}
-	for name, mutate := range map[string]func(*PhaseOneKafkaCompatibilityConfig){
-		"input topic":    func(cfg *PhaseOneKafkaCompatibilityConfig) { cfg.InputTopic = " input" },
-		"consumer group": func(cfg *PhaseOneKafkaCompatibilityConfig) { cfg.ConsumerGroup = "" },
-		"initial offset": func(cfg *PhaseOneKafkaCompatibilityConfig) { cfg.InitialOffset = "earliest" },
-		"state prefix":   func(cfg *PhaseOneKafkaCompatibilityConfig) { cfg.StatePrefix = "state " },
-	} {
-		t.Run(name, func(t *testing.T) {
-			cfg := valid
-			mutate(&cfg)
-			if err := cfg.Validate(); err == nil {
-				t.Fatalf("Validate() accepted %+v", cfg)
-			}
-		})
-	}
 }
 
 func TestPhaseOneAssetPoliciesFreezeReuseCompatibilityAndExit(t *testing.T) {

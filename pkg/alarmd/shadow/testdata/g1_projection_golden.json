@@ -1,0 +1,80 @@
+[
+  {
+    "name": "go extra sibling remains diagnostic",
+    "python": {
+      "chain": "PYTHON",
+      "native_event_id": "python-event-a",
+      "native_semantic_digest": "python-digest-a",
+      "subject": {"tenant_id": "default", "business_id": "2", "strategy_id": "1001", "dimension_identity_digest": "dimension-a", "source_time": 100},
+      "event_kind": "ABNORMAL",
+      "primary_level_id": 1,
+      "levels": [{"level_id": 1, "priority": 1, "result": "ABNORMAL"}]
+    },
+    "go": {
+      "chain": "GO",
+      "native_event_id": "go-event-a",
+      "native_semantic_digest": "go-digest-a",
+      "subject": {"tenant_id": "default", "business_id": "2", "strategy_id": "1001", "dimension_identity_digest": "dimension-a", "source_time": 100},
+      "event_kind": "ABNORMAL",
+      "primary_level_id": 1,
+      "levels": [
+        {"level_id": 1, "priority": 1, "result": "ABNORMAL"},
+        {"level_id": 5, "priority": 5, "result": "NORMAL"}
+      ]
+    },
+    "want_verdict": "MATCH",
+    "want_reason": "",
+    "want_go_siblings": 1,
+    "want_primary_level_id": 1
+  },
+  {
+    "name": "same point different primary is one primary level diff",
+    "python": {
+      "chain": "PYTHON",
+      "native_event_id": "python-event-b",
+      "native_semantic_digest": "python-digest-b",
+      "subject": {"tenant_id": "default", "business_id": "2", "strategy_id": "1001", "dimension_identity_digest": "dimension-b", "source_time": 200},
+      "event_kind": "ABNORMAL",
+      "primary_level_id": 1,
+      "levels": [{"level_id": 1, "priority": 1, "result": "ABNORMAL"}]
+    },
+    "go": {
+      "chain": "GO",
+      "native_event_id": "go-event-b",
+      "native_semantic_digest": "go-digest-b",
+      "subject": {"tenant_id": "default", "business_id": "2", "strategy_id": "1001", "dimension_identity_digest": "dimension-b", "source_time": 200},
+      "event_kind": "ABNORMAL",
+      "primary_level_id": 5,
+      "levels": [{"level_id": 5, "priority": 1, "result": "ABNORMAL"}]
+    },
+    "want_verdict": "HARD_DIFF",
+    "want_reason": "PRIMARY_LEVEL_DIFF",
+    "want_go_siblings": 0,
+    "want_primary_level_id": 5
+  },
+  {
+    "name": "chain native identities do not participate in comparison",
+    "python": {
+      "chain": "PYTHON",
+      "native_event_id": "python-native-id",
+      "native_semantic_digest": "python-native-digest",
+      "subject": {"tenant_id": "default", "business_id": "2", "strategy_id": "1001", "dimension_identity_digest": "dimension-c", "source_time": 300},
+      "event_kind": "ABNORMAL",
+      "primary_level_id": 5,
+      "levels": [{"level_id": 5, "priority": 1, "result": "ABNORMAL"}]
+    },
+    "go": {
+      "chain": "GO",
+      "native_event_id": "go-native-id",
+      "native_semantic_digest": "go-native-digest",
+      "subject": {"tenant_id": "default", "business_id": "2", "strategy_id": "1001", "dimension_identity_digest": "dimension-c", "source_time": 300},
+      "event_kind": "ABNORMAL",
+      "primary_level_id": 5,
+      "levels": [{"level_id": 5, "priority": 1, "result": "ABNORMAL"}]
+    },
+    "want_verdict": "MATCH",
+    "want_reason": "",
+    "want_go_siblings": 0,
+    "want_primary_level_id": 5
+  }
+]

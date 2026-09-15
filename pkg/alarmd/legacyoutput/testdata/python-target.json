@@ -1,0 +1,724 @@
+[
+  {
+    "name": "host",
+    "strategy": {
+      "bk_biz_id": 2,
+      "labels": [],
+      "items": [
+        {
+          "query_configs": [
+            {
+              "agg_dimension": [
+                "bk_target_ip",
+                "bk_cloud_id"
+              ],
+              "data_type_label": "time_series",
+              "data_source_label": "bk_monitor",
+              "result_table_id": ""
+            }
+          ]
+        }
+      ]
+    },
+    "dimensions": {
+      "bk_target_ip": "192.0.2.1",
+      "bk_cloud_id": 0
+    },
+    "dimension_fields": [
+      "bk_target_ip",
+      "bk_cloud_id"
+    ],
+    "pod_metadata": null,
+    "expected": {
+      "type": "HOST",
+      "target": "192.0.2.1|0",
+      "dimensions": {},
+      "additional_dimensions": {}
+    }
+  },
+  {
+    "name": "service",
+    "strategy": {
+      "bk_biz_id": 2,
+      "labels": [],
+      "items": [
+        {
+          "query_configs": [
+            {
+              "agg_dimension": [
+                "bk_service_instance_id"
+              ],
+              "data_type_label": "time_series",
+              "data_source_label": "bk_monitor",
+              "result_table_id": ""
+            }
+          ]
+        }
+      ]
+    },
+    "dimensions": {
+      "bk_service_instance_id": 42
+    },
+    "dimension_fields": [
+      "bk_service_instance_id"
+    ],
+    "pod_metadata": null,
+    "expected": {
+      "type": "SERVICE",
+      "target": 42,
+      "dimensions": {},
+      "additional_dimensions": {}
+    }
+  },
+  {
+    "name": "topo",
+    "strategy": {
+      "bk_biz_id": 2,
+      "labels": [],
+      "items": [
+        {
+          "query_configs": [
+            {
+              "agg_dimension": [
+                "bk_obj_id",
+                "bk_inst_id"
+              ],
+              "data_type_label": "time_series",
+              "data_source_label": "bk_monitor",
+              "result_table_id": ""
+            }
+          ]
+        }
+      ]
+    },
+    "dimensions": {
+      "bk_obj_id": "set",
+      "bk_inst_id": 7
+    },
+    "dimension_fields": [
+      "bk_obj_id",
+      "bk_inst_id"
+    ],
+    "pod_metadata": null,
+    "expected": {
+      "type": "TOPO",
+      "target": "set|7",
+      "dimensions": {},
+      "additional_dimensions": {}
+    }
+  },
+  {
+    "name": "pod_miss_namespace",
+    "strategy": {
+      "bk_biz_id": 2,
+      "labels": [],
+      "items": [
+        {
+          "query_configs": [
+            {
+              "agg_dimension": [
+                "bcs_cluster_id",
+                "namespace",
+                "pod"
+              ],
+              "data_type_label": "time_series",
+              "data_source_label": "bk_monitor",
+              "result_table_id": ""
+            }
+          ]
+        }
+      ]
+    },
+    "dimensions": {
+      "bcs_cluster_id": "cluster",
+      "namespace": "ns",
+      "pod": "pod"
+    },
+    "dimension_fields": [
+      "bcs_cluster_id",
+      "namespace",
+      "pod"
+    ],
+    "pod_metadata": null,
+    "expected": {
+      "type": "K8S-POD",
+      "target": "pod",
+      "dimensions": {
+        "bcs_cluster_id": "cluster",
+        "namespace": "ns",
+        "pod": "pod"
+      },
+      "additional_dimensions": {}
+    }
+  },
+  {
+    "name": "pod_miss_no_namespace",
+    "strategy": {
+      "bk_biz_id": 2,
+      "labels": [],
+      "items": [
+        {
+          "query_configs": [
+            {
+              "agg_dimension": [
+                "bcs_cluster_id",
+                "pod_name"
+              ],
+              "data_type_label": "time_series",
+              "data_source_label": "bk_monitor",
+              "result_table_id": ""
+            }
+          ]
+        }
+      ]
+    },
+    "dimensions": {
+      "bcs_cluster_id": "cluster",
+      "pod_name": "pod"
+    },
+    "dimension_fields": [
+      "bcs_cluster_id",
+      "pod_name"
+    ],
+    "pod_metadata": null,
+    "expected": {
+      "type": "",
+      "target": null,
+      "dimensions": {
+        "bcs_cluster_id": "cluster",
+        "pod_name": "pod"
+      },
+      "additional_dimensions": {}
+    }
+  },
+  {
+    "name": "pod_miss_null_namespace",
+    "strategy": {
+      "bk_biz_id": 2,
+      "labels": [],
+      "items": [
+        {
+          "query_configs": [
+            {
+              "agg_dimension": [
+                "bcs_cluster_id",
+                "namespace",
+                "pod"
+              ],
+              "data_type_label": "time_series",
+              "data_source_label": "bk_monitor",
+              "result_table_id": ""
+            }
+          ]
+        }
+      ]
+    },
+    "dimensions": {
+      "bcs_cluster_id": "cluster",
+      "namespace": null,
+      "pod": "pod"
+    },
+    "dimension_fields": [
+      "bcs_cluster_id",
+      "namespace",
+      "pod"
+    ],
+    "pod_metadata": null,
+    "expected": {
+      "type": "",
+      "target": null,
+      "dimensions": {
+        "bcs_cluster_id": "cluster",
+        "namespace": null,
+        "pod": "pod"
+      },
+      "additional_dimensions": {}
+    }
+  },
+  {
+    "name": "pod_hit_no_namespace",
+    "strategy": {
+      "bk_biz_id": 2,
+      "labels": [],
+      "items": [
+        {
+          "query_configs": [
+            {
+              "agg_dimension": [
+                "bcs_cluster_id",
+                "pod"
+              ],
+              "data_type_label": "time_series",
+              "data_source_label": "bk_monitor",
+              "result_table_id": ""
+            }
+          ]
+        }
+      ]
+    },
+    "dimensions": {
+      "bcs_cluster_id": "cluster",
+      "pod": "pod"
+    },
+    "dimension_fields": [
+      "bcs_cluster_id",
+      "pod"
+    ],
+    "pod_metadata": {
+      "namespace": "ns",
+      "workload_type": "Deployment",
+      "workload_name": "web"
+    },
+    "expected": {
+      "type": "K8S-POD",
+      "target": "pod",
+      "dimensions": {
+        "bcs_cluster_id": "cluster",
+        "pod": "pod"
+      },
+      "additional_dimensions": {
+        "workload_kind": "Deployment",
+        "workload_name": "web",
+        "namespace": "ns"
+      }
+    }
+  },
+  {
+    "name": "pod_hit_existing_null",
+    "strategy": {
+      "bk_biz_id": 2,
+      "labels": [],
+      "items": [
+        {
+          "query_configs": [
+            {
+              "agg_dimension": [
+                "bcs_cluster_id",
+                "pod",
+                "namespace",
+                "workload_kind"
+              ],
+              "data_type_label": "time_series",
+              "data_source_label": "bk_monitor",
+              "result_table_id": ""
+            }
+          ]
+        }
+      ]
+    },
+    "dimensions": {
+      "bcs_cluster_id": "cluster",
+      "pod": "pod",
+      "namespace": null,
+      "workload_kind": null,
+      "__additional_dimensions": {
+        "old": "x"
+      }
+    },
+    "dimension_fields": [
+      "bcs_cluster_id",
+      "pod",
+      "namespace",
+      "workload_kind"
+    ],
+    "pod_metadata": {
+      "namespace": "ns",
+      "workload_type": "Deployment",
+      "workload_name": "web"
+    },
+    "expected": {
+      "type": "K8S-POD",
+      "target": "pod",
+      "dimensions": {
+        "bcs_cluster_id": "cluster",
+        "pod": "pod",
+        "namespace": null,
+        "workload_kind": null
+      },
+      "additional_dimensions": {
+        "workload_name": "web"
+      }
+    }
+  },
+  {
+    "name": "workload",
+    "strategy": {
+      "bk_biz_id": 2,
+      "labels": [],
+      "items": [
+        {
+          "query_configs": [
+            {
+              "agg_dimension": [
+                "bcs_cluster_id",
+                "namespace",
+                "workload_kind",
+                "workload_name"
+              ],
+              "data_type_label": "time_series",
+              "data_source_label": "bk_monitor",
+              "result_table_id": ""
+            }
+          ]
+        }
+      ]
+    },
+    "dimensions": {
+      "bcs_cluster_id": "cluster",
+      "namespace": "ns",
+      "workload_kind": "Deployment",
+      "workload_name": "web"
+    },
+    "dimension_fields": [
+      "bcs_cluster_id",
+      "namespace",
+      "workload_kind",
+      "workload_name"
+    ],
+    "pod_metadata": null,
+    "expected": {
+      "type": "K8S-WORKLOAD",
+      "target": "Deployment:web",
+      "dimensions": {
+        "bcs_cluster_id": "cluster",
+        "namespace": "ns",
+        "workload_kind": "Deployment",
+        "workload_name": "web"
+      },
+      "additional_dimensions": {}
+    }
+  },
+  {
+    "name": "workload_no_namespace",
+    "strategy": {
+      "bk_biz_id": 2,
+      "labels": [],
+      "items": [
+        {
+          "query_configs": [
+            {
+              "agg_dimension": [
+                "bcs_cluster_id",
+                "workload_kind",
+                "workload_name",
+                "node"
+              ],
+              "data_type_label": "time_series",
+              "data_source_label": "bk_monitor",
+              "result_table_id": ""
+            }
+          ]
+        }
+      ]
+    },
+    "dimensions": {
+      "bcs_cluster_id": "cluster",
+      "workload_kind": "Deployment",
+      "workload_name": "web",
+      "node": "node"
+    },
+    "dimension_fields": [
+      "bcs_cluster_id",
+      "workload_kind",
+      "workload_name",
+      "node"
+    ],
+    "pod_metadata": null,
+    "expected": {
+      "type": "",
+      "target": null,
+      "dimensions": {
+        "bcs_cluster_id": "cluster",
+        "workload_kind": "Deployment",
+        "workload_name": "web",
+        "node": "node"
+      },
+      "additional_dimensions": {}
+    }
+  },
+  {
+    "name": "node_no_namespace",
+    "strategy": {
+      "bk_biz_id": 2,
+      "labels": [],
+      "items": [
+        {
+          "query_configs": [
+            {
+              "agg_dimension": [
+                "bcs_cluster_id",
+                "node_name"
+              ],
+              "data_type_label": "time_series",
+              "data_source_label": "bk_monitor",
+              "result_table_id": ""
+            }
+          ]
+        }
+      ]
+    },
+    "dimensions": {
+      "bcs_cluster_id": "cluster",
+      "node_name": "node"
+    },
+    "dimension_fields": [
+      "bcs_cluster_id",
+      "node_name"
+    ],
+    "pod_metadata": null,
+    "expected": {
+      "type": "K8S-NODE",
+      "target": "node",
+      "dimensions": {
+        "bcs_cluster_id": "cluster",
+        "node_name": "node"
+      },
+      "additional_dimensions": {}
+    }
+  },
+  {
+    "name": "k8s_service",
+    "strategy": {
+      "bk_biz_id": 2,
+      "labels": [],
+      "items": [
+        {
+          "query_configs": [
+            {
+              "agg_dimension": [
+                "bcs_cluster_id",
+                "namespace",
+                "service_name"
+              ],
+              "data_type_label": "time_series",
+              "data_source_label": "bk_monitor",
+              "result_table_id": ""
+            }
+          ]
+        }
+      ]
+    },
+    "dimensions": {
+      "bcs_cluster_id": "cluster",
+      "namespace": "",
+      "service_name": "svc"
+    },
+    "dimension_fields": [
+      "bcs_cluster_id",
+      "namespace",
+      "service_name"
+    ],
+    "pod_metadata": null,
+    "expected": {
+      "type": "K8S-SERVICE",
+      "target": "svc",
+      "dimensions": {
+        "bcs_cluster_id": "cluster",
+        "namespace": "",
+        "service_name": "svc"
+      },
+      "additional_dimensions": {}
+    }
+  },
+  {
+    "name": "apm_dimensions",
+    "strategy": {
+      "bk_biz_id": 2,
+      "labels": [],
+      "items": [
+        {
+          "query_configs": [
+            {
+              "agg_dimension": [
+                "app_name",
+                "service_name"
+              ],
+              "data_type_label": "time_series",
+              "data_source_label": "bk_monitor",
+              "result_table_id": ""
+            }
+          ]
+        }
+      ]
+    },
+    "dimensions": {
+      "app_name": "app",
+      "service_name": "svc",
+      "__additional_dimensions": {
+        "old": "x"
+      }
+    },
+    "dimension_fields": [
+      "app_name",
+      "service_name"
+    ],
+    "pod_metadata": null,
+    "expected": {
+      "type": "APM-SERVICE",
+      "target": "app:svc",
+      "dimensions": {
+        "app_name": "app",
+        "service_name": "svc"
+      },
+      "additional_dimensions": {}
+    }
+  },
+  {
+    "name": "apm_labels",
+    "strategy": {
+      "bk_biz_id": 2,
+      "labels": [
+        "APM-APP(app)",
+        "APM-SERVICE(svc)"
+      ],
+      "items": [
+        {
+          "query_configs": [
+            {
+              "agg_dimension": [
+                "host"
+              ],
+              "data_type_label": "time_series",
+              "data_source_label": "bk_monitor",
+              "result_table_id": ""
+            }
+          ]
+        }
+      ]
+    },
+    "dimensions": {
+      "host": "a"
+    },
+    "dimension_fields": [
+      "host"
+    ],
+    "pod_metadata": null,
+    "expected": {
+      "type": "APM-SERVICE",
+      "target": "app:svc",
+      "dimensions": {
+        "host": "a"
+      },
+      "additional_dimensions": {
+        "app_name": "app",
+        "service_name": "svc"
+      }
+    }
+  },
+  {
+    "name": "apm_table",
+    "strategy": {
+      "bk_biz_id": 2,
+      "labels": [],
+      "items": [
+        {
+          "query_configs": [
+            {
+              "agg_dimension": [
+                "service_name"
+              ],
+              "data_type_label": "time_series",
+              "data_source_label": "bk_monitor",
+              "result_table_id": "space_2_bkapm_metric_app.__default__"
+            }
+          ]
+        }
+      ]
+    },
+    "dimensions": {
+      "service_name": "svc"
+    },
+    "dimension_fields": [
+      "service_name"
+    ],
+    "pod_metadata": null,
+    "expected": {
+      "type": "APM-SERVICE",
+      "target": "app:svc",
+      "dimensions": {
+        "service_name": "svc"
+      },
+      "additional_dimensions": {
+        "app_name": "app"
+      }
+    }
+  },
+  {
+    "name": "apm_empty_dimension_label_fallback",
+    "strategy": {
+      "bk_biz_id": 2,
+      "labels": [
+        "APM-APP(app)"
+      ],
+      "items": [
+        {
+          "query_configs": [
+            {
+              "agg_dimension": [
+                "app_name",
+                "service_name"
+              ],
+              "data_type_label": "time_series",
+              "data_source_label": "bk_monitor",
+              "result_table_id": ""
+            }
+          ]
+        }
+      ]
+    },
+    "dimensions": {
+      "app_name": "",
+      "service_name": "svc"
+    },
+    "dimension_fields": [
+      "app_name",
+      "service_name"
+    ],
+    "pod_metadata": null,
+    "expected": {
+      "type": "APM-SERVICE",
+      "target": "app:svc",
+      "dimensions": {
+        "app_name": "",
+        "service_name": "svc"
+      },
+      "additional_dimensions": {}
+    }
+  },
+  {
+    "name": "apm_missing_service",
+    "strategy": {
+      "bk_biz_id": 2,
+      "labels": [],
+      "items": [
+        {
+          "query_configs": [
+            {
+              "agg_dimension": [
+                "app_name"
+              ],
+              "data_type_label": "time_series",
+              "data_source_label": "bk_monitor",
+              "result_table_id": ""
+            }
+          ]
+        }
+      ]
+    },
+    "dimensions": {
+      "app_name": "app"
+    },
+    "dimension_fields": [
+      "app_name"
+    ],
+    "pod_metadata": null,
+    "expected": {
+      "type": "",
+      "target": null,
+      "dimensions": {
+        "app_name": "app"
+      },
+      "additional_dimensions": {}
+    }
+  }
+]

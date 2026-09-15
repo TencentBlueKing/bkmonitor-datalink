@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -79,13 +80,43 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 	default:
 		result.Completion = CompletionSuppressed
 	}
-	if result.RecordResult == contract.LevelResultAbnormal || result.RecordResult == contract.LevelResultRecovery {
+	if result.RecordResult == contract.LevelResultRecovery {
+		result.RecoveryGate = recoveryGateV2(result.LevelOutcomes)
+	}
+	if result.RecordResult == contract.LevelResultAbnormal ||
+		(result.RecordResult == contract.LevelResultRecovery && !result.RecoveryGate.Held) {
 		if uint32(len(levelResults)) > request.Limits.MaxLevelResultsPerEvent {
 			return EvaluationResultV2{}, invariantV2("admit event Level results", 0, errors.New("compiled result exceeds admitted limit"))
 		}
 		fingerprints := request.Plan.Fingerprints()
+		var snapshotRef *contract.StrategySnapshotRef
+		var dedupeMD5 string
+		ref := request.Plan.StrategyRef()
+		if ref.SnapshotRevision > 0 {
+			strategyID, strategyErr := strconv.ParseInt(ref.StrategyID, 10, 64)
+			businessID, businessErr := strconv.ParseInt(request.BusinessID, 10, 64)
+			if strategyErr != nil || businessErr != nil || ref.TenantID != request.TenantID {
+				return EvaluationResultV2{}, invariantV2("build strategy snapshot reference", 0, errors.New("invalid frozen strategy identity"))
+			}
+			snapshotRef = &contract.StrategySnapshotRef{TenantID: ref.TenantID, BusinessID: businessID, StrategyID: strategyID, Revision: ref.SnapshotRevision}
+			if identity := request.Plan.OutputIdentity(); identity != nil {
+				var err error
+				dedupeMD5, err = contract.MonitorDedupeMD5(ref.StrategyID, request.BusinessID, request.RecordRef.Dimensions, *identity)
+				if err != nil {
+					return EvaluationResultV2{}, invariantV2("build monitor dedupe identity", 0, err)
+				}
+			}
+		}
+		if result.RecordResult == contract.LevelResultRecovery {
+			result.RecoveryGate = openAlertGateV2(result.RecoveryGate, request, ref.StrategyID, dedupeMD5)
+			if result.RecoveryGate.Held {
+				return result, nil
+			}
+		}
 		event, err := contract.BuildTriggerEventV1(contract.TriggerEventBuildInputV1{
-			EventKind: result.RecordResult, TenantID: request.TenantID, BusinessID: request.BusinessID,
+			StrategyRef: snapshotRef,
+			DedupeMD5:   dedupeMD5,
+			EventKind:   result.RecordResult, TenantID: request.TenantID, BusinessID: request.BusinessID,
 			PlanRef: request.Plan.PlanRef(), RecordRef: request.RecordRef, Observed: request.Observed,
 			LevelResults: levelResults, EvaluationTime: request.EvaluationTime,
 			DetectPlanFingerprint: fingerprints.Detect, TriggerStateFingerprint: fingerprints.Trigger,
@@ -95,6 +126,46 @@ func EvaluateV2(request EvaluationRequestV2) (EvaluationResultV2, error) {
 			return EvaluationResultV2{}, invariantV2("build TriggerEvent", 0, err)
 		}
 		result.TriggerEvent = event
+		// The compatibility context is attached whenever the Plan publishes that
+		// protocol. Before the format was stated, the only Plans that did were
+		// the ones with no frozen revision, so the two conditions were the same
+		// one; a forced compatibility choice makes them different, and reading
+		// the revision here would leave those Plans without the context their
+		// conversion needs.
+		if legacy := request.Plan.LegacyOutput(); legacy != nil && request.Plan.PublishesCompatibleProtocol() {
+			var timestamps []int64
+			for _, outcome := range event.LevelResults {
+				if outcome.LevelID != event.PrimaryLevelID {
+					continue
+				}
+				for _, history := range request.Histories {
+					if history.LevelID != event.PrimaryLevelID {
+						continue
+					}
+					iterator, ok := history.View.(interface {
+						ForEachAnomaly(int64, int64, func(int64) bool)
+					})
+					if !ok {
+						return EvaluationResultV2{}, invariantV2("legacy anomaly history", event.PrimaryLevelID, errors.New("history cannot expose actual anomaly timestamps"))
+					}
+					iterator.ForEachAnomaly(outcome.DecisionWindow.Trigger.WindowStart, request.RecordRef.SourceTime, func(ts int64) bool { timestamps = append(timestamps, ts); return true })
+				}
+				if len(timestamps) != int(outcome.DecisionWindow.Trigger.ObservedAnomalies) {
+					return EvaluationResultV2{}, invariantV2("legacy anomaly history", event.PrimaryLevelID, errors.New("actual anomaly timestamps disagree with trigger evidence"))
+				}
+			}
+			event.LegacyOutput = &contract.LegacyEventContext{Configuration: legacy, AnomalyTimestamps: append([]int64{}, timestamps...)}
+		}
+		event.WireFormat = request.Plan.WireFormat()
+		if identity := request.Plan.OutputIdentity(); identity != nil {
+			subject, remaining, subjectErr := contract.ProjectMonitorSubject(
+				request.RecordRef.Dimensions, *identity, request.Plan.SubjectFacts(),
+			)
+			if subjectErr != nil {
+				return EvaluationResultV2{}, invariantV2("project event subject", 0, subjectErr)
+			}
+			event.Subject = &contract.MonitorSubjectContext{Subject: subject, Dimensions: remaining}
+		}
 		result.Counts.Events = 1
 	}
 	return result, nil
@@ -201,8 +272,12 @@ func evaluateLevelV2(
 	eligibility StateEligibilityV2,
 ) (LevelOutcomeV2, contract.LevelResultV1, error) {
 	definition := level.Definition()
+	// RecoveryEnabled is set here, before any return, so that every outcome
+	// carries it: the suppressed and unavailable paths leave before the
+	// recovery plan is otherwise consulted.
 	outcome := LevelOutcomeV2{
 		LevelID: definition.LevelID, LevelCode: definition.LevelCode, Priority: definition.Priority,
+		RecoveryEnabled:    level.Recovery().Enabled,
 		TriggerFingerprint: level.Fingerprints().Trigger, StateDisposition: eligibility.StateDisposition(),
 	}
 	validFact := fact.Result == DetectionAnomalous || fact.Result == DetectionNormal
@@ -237,6 +312,7 @@ func evaluateLevelV2(
 		return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("calculate Trigger window", definition.LevelID, errors.New("window time overflow"))
 	}
 	observedAnomalies := history.CountAnomalies(triggerStart, request.Record.SourceTime)
+	anomalyBeginTime, _ := history.FirstAnomaly(triggerStart, request.Record.SourceTime)
 	if observedAnomalies > triggerPlan.WindowSize {
 		return LevelOutcomeV2{}, contract.LevelResultV1{}, invariantV2("count Trigger anomalies", definition.LevelID, errors.New("anomaly count exceeds window positions"))
 	}
@@ -279,6 +355,7 @@ func evaluateLevelV2(
 		Trigger: contract.TriggerWindowEvidenceV1{
 			WindowStart: triggerStart, WindowEnd: request.Record.SourceTime, WindowSize: triggerPlan.WindowSize,
 			RequiredAnomalies: triggerPlan.RequiredAnomalies, ObservedAnomalies: observedAnomalies,
+			AnomalyBeginTime: anomalyBeginTime,
 		},
 		Recovery: contract.RecoveryWindowEvidenceV1{
 			Enabled: recoveryPlan.Enabled, RequiredConsecutiveWindows: recoveryPlan.ConsecutiveWindows,
@@ -417,6 +494,110 @@ func multiplyUint32ToInt64(left, right uint32) (int64, bool) {
 		return 0, false
 	}
 	return int64(value), true
+}
+
+// recoveryGateV2 decides whether a record whose evaluated Levels agreed on
+// RECOVERY may send its envelope. The consumer keeps one alert per series and
+// resolves it on any RECOVERY envelope without looking at the Level, so the
+// envelope may only go once no Level could still be holding that alert open.
+// The reference implementation asks the same of the alert's own Level: its
+// recovery span must hold no triggering window, and a Level without a check
+// result does not recover. This process does not know which Level the alert
+// stands at, so it asks it of every Level, which is stricter than the
+// reference and never resolves earlier than it.
+//
+// A Level whose state is unknown (its detect fact unavailable, its history
+// warming or gapped, its effective time unknown) holds the envelope. A Level
+// that read NORMAL with recovery enabled holds it too: with recovery enabled,
+// NORMAL is exactly "a window inside the recovery span still meets the
+// trigger", which the reference reads as "still triggering, no recovery".
+//
+// Two shapes must not hold it, because they can last indefinitely and a hold
+// on them is an alert that never resolves on its own. A Level suppressed by
+// its effective time can stay suppressed for as long as its schedule says;
+// holding on it would keep every strategy with a part-time Level in alarm
+// until that Level comes back on. The reference resolves such an alert after
+// a fixed no-data tolerance instead. A NORMAL Level whose recovery is
+// disabled can never say RECOVERY at all, so a hold on it would be
+// permanent; it is passed and counted, not consulted. Neither exception is
+// an approximation to tighten later: each closes a permanent hold.
+//
+// Whether a Level's recovery is enabled is read off the outcome itself,
+// which evaluateLevelV2 sets before any of its returns. Reading it off the
+// compiled Levels by position would hold only as long as the outcome loop
+// appends exactly once per Level; a skipped Level would silently line the
+// next one up against the wrong recovery plan, and nothing would fail.
+func recoveryGateV2(outcomes []LevelOutcomeV2) RecoveryGateV2 {
+	gate := RecoveryGateV2{}
+	passedWithoutRecovery := false
+	for _, outcome := range outcomes {
+		switch {
+		case outcome.UnavailableReason != "":
+			if !gate.Held {
+				gate = RecoveryGateV2{Held: true, Cause: RecoveryHeldLevelUnavailable, LevelID: outcome.LevelID}
+			}
+		case outcome.SuppressedReason != "":
+			// Suppressed by effective time: not consulted, see above.
+		case outcome.Result == contract.LevelResultNormal:
+			if outcome.RecoveryEnabled {
+				if !gate.Held {
+					gate = RecoveryGateV2{Held: true, Cause: RecoveryHeldLevelRecovering, LevelID: outcome.LevelID}
+				}
+			} else {
+				passedWithoutRecovery = true
+			}
+		}
+	}
+	if !gate.Held {
+		gate.PassedLevelWithoutRecovery = passedWithoutRecovery
+	}
+	return gate
+}
+
+// openAlertGateV2 is the second gate on a RECOVERY envelope, asked only once
+// the first has let the record through: does the consumer hold an open alert
+// on this series at all? The consumer resolves whatever alert it holds on a
+// RECOVERY envelope and closes the envelope as an orphan when it holds none,
+// and a healthy series says RECOVERY every cycle, so without this gate the
+// orphans outnumber the real resolutions by the ratio of healthy series to
+// open alerts. The set answers membership only; it does not say whether the
+// series recovered, which the Level results and the first gate have already
+// decided.
+//
+// Two shapes do not ask the set. A Plan that does not publish the alert
+// consumer's protocol is not gated: the set is that consumer's, and the
+// other protocols either carry no RECOVERY message (the sink drops it) or
+// go to no consumer that keeps an open alert set. A caller that passed no
+// set has no gate; that is the state before the gate existed and is named
+// as such, so a worker that stops passing the set shows up as a count
+// rather than as recoveries quietly going out again.
+//
+// A fingerprint that could not be built is a third state, held and named.
+// On the consumer's protocol it is unreachable by construction: the control
+// plane sets the output identity with the frozen revision the protocol
+// requires, and admission refuses the pairing that would leave it out. If
+// it happened anyway, the choice here is between holding this Plan's
+// recoveries and passing an envelope the sink cannot convert -- which fails
+// the whole batch and with it every series in the Slot. Holding costs one
+// Plan; it is counted, and it is not read as "not a member", which would
+// look exactly like a consumer that holds no alerts on it.
+//
+// The gate does not pass the record past a Level without recovery: that
+// report is about an envelope that was sent, and here none is.
+func openAlertGateV2(gate RecoveryGateV2, request EvaluationRequestV2, strategyID, dedupeMD5 string) RecoveryGateV2 {
+	switch {
+	case request.Plan.WireFormat() != contract.WireFormatStandardRawEvent:
+		gate.OpenAlertGate = OpenAlertGateProtocolNotGated
+	case request.OpenAlerts == nil:
+		gate.OpenAlertGate = OpenAlertGateNotConfigured
+	case dedupeMD5 == "":
+		gate = RecoveryGateV2{Held: true, Cause: RecoveryHeldFingerprintUnknown, OpenAlertGate: OpenAlertGateHeldFingerprintUnknown}
+	case !request.OpenAlerts.Contains(request.TenantID, strategyID, dedupeMD5):
+		gate = RecoveryGateV2{Held: true, Cause: RecoveryHeldNoOpenAlert, OpenAlertGate: OpenAlertGateHeldNoOpenAlert}
+	default:
+		gate.OpenAlertGate = OpenAlertGatePassed
+	}
+	return gate
 }
 
 func aggregateRecordResultV2(results []contract.LevelResultV1) string {

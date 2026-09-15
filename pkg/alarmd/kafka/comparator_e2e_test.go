@@ -47,7 +47,7 @@ func TestComparatorKafkaEndToEnd(t *testing.T) {
 
 	sink, err := OpenComparisonAuditSink(ComparisonAuditSinkConfig{
 		Brokers: []string{broker}, InputTopics: topics, OutputTopic: auditTopic,
-		AllowedOutputTopics: []string{auditTopic}, ClientID: prefix + "-audit", BrokerVersion: "2.1.0",
+		ClientID: prefix + "-audit", BrokerVersion: "2.1.0",
 	})
 	if err != nil {
 		t.Fatalf("OpenComparisonAuditSink() error = %v", err)

@@ -213,6 +213,7 @@ func runComparatorApplicationWithLogger(
 		observability.StageStartup, observability.ResultStarted, 0, 0,
 		slog.Int("max_entries", configuration.Kafka.MaxEntries),
 		slog.Int("consumer_buffer_bytes_per_partition", enginekafka.MaxConsumerBytesPerPartition()),
+		slog.String("diagnostics_listen", configuration.HTTP.DiagnosticsFact()),
 	)
 	startupFailed := func(reason string) {
 		eventLogger.Error(
@@ -251,7 +252,12 @@ func runComparatorApplicationWithLogger(
 		deadline := time.Now().Add(configuration.ShutdownTimeout.Duration())
 		return errors.Join(service.Close(), shutdownComparatorSink(sink, deadline))
 	}
-	server, err := httpservice.NewWithLifecycle(recorder, service)
+	// The comparator shares HTTPConfig with alarmd, so its diagnostics address
+	// has to be wired too. Leaving it unwired would both drop pprof here and
+	// turn diagnostics_listen into a key that parses and is then ignored.
+	server, err := httpservice.NewWithLifecycle(
+		recorder, service, httpservice.WithDiagnosticsAddress(configuration.HTTP.DiagnosticsListen),
+	)
 	if err != nil {
 		startupFailed("http")
 		deadline := time.Now().Add(configuration.ShutdownTimeout.Duration())

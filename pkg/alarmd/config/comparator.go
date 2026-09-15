@@ -13,9 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"os"
-	"strconv"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -24,11 +22,13 @@ import (
 )
 
 type ComparatorKafkaConfig struct {
-	Brokers                  []string `yaml:"brokers"`
-	DetectInputTopic         string   `yaml:"detect_input_topic"`
-	GoDecisionTopic          string   `yaml:"go_decision_topic"`
-	PythonDecisionTopic      string   `yaml:"python_decision_topic"`
-	AuditOutputTopic         string   `yaml:"audit_output_topic"`
+	Brokers             []string `yaml:"brokers"`
+	DetectInputTopic    string   `yaml:"detect_input_topic"`
+	GoDecisionTopic     string   `yaml:"go_decision_topic"`
+	PythonDecisionTopic string   `yaml:"python_decision_topic"`
+	AuditOutputTopic    string   `yaml:"audit_output_topic"`
+	// Deprecated: accepted and ignored, for the reason on
+	// KafkaConfig.AllowedOutputTopics.
 	AllowedAuditOutputTopics []string `yaml:"allowed_audit_output_topics"`
 	GroupID                  string   `yaml:"group_id"`
 	ClientID                 string   `yaml:"client_id"`
@@ -57,12 +57,11 @@ func (c ComparatorKafkaConfig) ServiceCoordinates() enginekafka.ComparatorServic
 
 func (c ComparatorKafkaConfig) AuditSinkCoordinates() enginekafka.ComparisonAuditSinkConfig {
 	return enginekafka.ComparisonAuditSinkConfig{
-		Brokers:             append([]string(nil), c.Brokers...),
-		InputTopics:         c.ServiceCoordinates().Topics(),
-		OutputTopic:         c.AuditOutputTopic,
-		AllowedOutputTopics: append([]string(nil), c.AllowedAuditOutputTopics...),
-		ClientID:            c.ClientID,
-		BrokerVersion:       c.BrokerVersion,
+		Brokers:       append([]string(nil), c.Brokers...),
+		InputTopics:   c.ServiceCoordinates().Topics(),
+		OutputTopic:   c.AuditOutputTopic,
+		ClientID:      c.ClientID,
+		BrokerVersion: c.BrokerVersion,
 	}
 }
 
@@ -76,7 +75,7 @@ type ComparatorConfig struct {
 func DefaultComparator() ComparatorConfig {
 	return ComparatorConfig{
 		Mode:            ModeShadow,
-		HTTP:            HTTPConfig{Listen: "127.0.0.1:8081"},
+		HTTP:            HTTPConfig{Listen: "127.0.0.1:8081", DiagnosticsListen: "127.0.0.1:6061"},
 		ShutdownTimeout: Duration(10 * time.Second),
 	}
 }
@@ -113,16 +112,19 @@ func (c ComparatorConfig) Validate() error {
 	if c.Mode != ModeShadow {
 		return fmt.Errorf("mode %q is not allowed before production ownership is implemented", c.Mode)
 	}
-	host, port, err := net.SplitHostPort(c.HTTP.Listen)
-	if err != nil {
-		return fmt.Errorf("http listen %q: %w", c.HTTP.Listen, err)
+	if err := validateListenAddress("http listen", c.HTTP.Listen); err != nil {
+		return err
 	}
-	if host == "" {
-		return fmt.Errorf("http listen %q has empty host", c.HTTP.Listen)
-	}
-	portNumber, err := strconv.Atoi(port)
-	if err != nil || portNumber <= 0 || portNumber > 65535 {
-		return fmt.Errorf("http listen %q has invalid port", c.HTTP.Listen)
+	if c.HTTP.DiagnosticsListen != "" {
+		if err := validateListenAddress("http diagnostics_listen", c.HTTP.DiagnosticsListen); err != nil {
+			return err
+		}
+		if listenAddressesCollide(c.HTTP.Listen, c.HTTP.DiagnosticsListen) {
+			return fmt.Errorf(
+				"http diagnostics_listen %q must differ from http listen %q",
+				c.HTTP.DiagnosticsListen, c.HTTP.Listen,
+			)
+		}
 	}
 	if c.ShutdownTimeout.Duration() <= 0 {
 		return errors.New("shutdown_timeout must be positive")

@@ -69,6 +69,70 @@ func TestWindowLogLimiterEnforcesCapacityConcurrently(t *testing.T) {
 	}
 }
 
+func TestWindowLogLimiterSerializesClockWithAdmission(t *testing.T) {
+	t.Parallel()
+
+	start := time.Unix(1_000, 0)
+	observation := Observation{ReasonCode: ReasonRSS, Result: ResultFailed}
+	var limiter *WindowLogLimiter
+	var calls atomic.Int64
+	var allowed atomic.Int64
+	clock := func() time.Time {
+		call := calls.Add(1)
+		captured := start.Add(time.Duration(call) * time.Nanosecond)
+		// If the clock runs outside the critical section, deterministically
+		// let a later caller finish admission before returning this timestamp.
+		// TryLock avoids timing assumptions and cannot unlock another caller.
+		if call == 1 && limiter.mu.TryLock() {
+			limiter.mu.Unlock()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				if limiter.Allow(observation) {
+					allowed.Add(1)
+				}
+			}()
+			<-done
+		}
+		return captured
+	}
+	var err error
+	limiter, err = newWindowLogLimiter(WindowLogLimiterConfig{Window: time.Minute, MaxEvents: 1}, clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if limiter.Allow(observation) {
+			allowed.Add(1)
+		}
+	}
+	if got := allowed.Load(); got != 1 {
+		t.Fatalf("allowed events = %d, want 1; all timestamps are within one minute", got)
+	}
+}
+
+func TestWindowLogLimiterPreservesWindowAndClockRollback(t *testing.T) {
+	t.Parallel()
+
+	now := time.Unix(1_000, 0)
+	limiter, err := newWindowLogLimiter(WindowLogLimiterConfig{Window: time.Minute, MaxEvents: 1}, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation := Observation{ReasonCode: ReasonRSS, Result: ResultFailed}
+	if !limiter.Allow(observation) || limiter.Allow(observation) {
+		t.Fatal("initial window capacity changed")
+	}
+	now = now.Add(time.Minute)
+	if !limiter.Allow(observation) || limiter.Allow(observation) {
+		t.Fatal("window expiry did not reset capacity")
+	}
+	now = now.Add(-time.Second)
+	if !limiter.Allow(observation) || limiter.Allow(observation) {
+		t.Fatal("actual clock rollback did not reset capacity")
+	}
+}
+
 func TestWindowLogLimiterIsolatesReasonAndNoneStageBuckets(t *testing.T) {
 	t.Parallel()
 

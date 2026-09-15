@@ -1,0 +1,85 @@
+{
+  "bk_biz_id": 2,
+  "detects": [
+    {
+      "connector": "and",
+      "level": 1,
+      "priority": 1,
+      "trigger_config": {
+        "check_window": 1,
+        "count": 1
+      }
+    }
+  ],
+  "id": 103,
+  "items": [
+    {
+      "algorithms": [
+        {
+          "level": 1,
+          "type": "Threshold",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": 80
+              }
+            ]
+          ]
+        }
+      ],
+      "expression": "a / b * 100",
+      "id": 1,
+      "query_configs": [
+        {
+          "agg_dimension": [
+            "host"
+          ],
+          "agg_interval": 60,
+          "agg_method": "AVG",
+          "alias": "a",
+          "data_source_label": "bk_monitor",
+          "data_type_label": "time_series",
+          "metric_field": "usage",
+          "metric_id": "bk_monitor.system.cpu.usage",
+          "result_table_id": "system.cpu",
+          "unit": "",
+          "agg_condition": [],
+          "functions": [
+            {
+              "id": "rate",
+              "params": [
+                {
+                  "id": "window",
+                  "value": "2m"
+                }
+              ]
+            },
+            {
+              "id": "abs",
+              "params": []
+            }
+          ]
+        },
+        {
+          "agg_dimension": [
+            "host"
+          ],
+          "agg_interval": 60,
+          "agg_method": "MAX",
+          "alias": "b",
+          "data_source_label": "bk_monitor",
+          "data_type_label": "time_series",
+          "metric_field": "total",
+          "metric_id": "bk_monitor.system.cpu.usage",
+          "result_table_id": "system.cpu",
+          "unit": "",
+          "agg_condition": []
+        }
+      ],
+      "query_md5": "query-md5",
+      "unit": ""
+    }
+  ],
+  "update_time": 1
+}

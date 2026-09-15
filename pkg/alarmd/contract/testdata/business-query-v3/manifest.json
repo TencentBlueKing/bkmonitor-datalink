@@ -1,0 +1,1 @@
+{"max_bytes": 524288, "max_records": 5, "partitions": [{"end": 1, "partition": 0, "start": 0}], "strategy_ids": [5101], "timeout_seconds": 1, "topic": "python-native"}

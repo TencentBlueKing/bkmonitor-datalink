@@ -107,6 +107,39 @@ func defaultLimits() LimitsConfig {
 			MaxCacheEntries: 4096, MaxCacheBytes: 64 << 20, NegativeCacheTTL: Duration(time.Minute),
 			BudgetRevision: "phase-one-default-v1",
 		},
+		// Two of these seven reach only the phase-one runtime, and two of the
+		// three below bound quantities that are ordered by construction. Both
+		// facts are easy to miss from here, and both were missed: the 500 on
+		// max_series_per_plan was raised as a bound that might be throttling
+		// the phase-two deployment, and it is not a bound that deployment can
+		// reach at all.
+		//
+		// Who reads what. MaxSelectedRecordsPerPlan and MaxSeriesPerPlan reach
+		// production only through Config.DetectLimits(), whose one production
+		// caller is the phase-one runtime. The phase-two runtime reads exactly
+		// two fields of this struct - MaxPlans and MaxRecordsPerSeries - and
+		// reaches for them directly; it never calls DetectLimits(). So nothing
+		// on the phase-two path reads MaxSeriesPerPlan, and raising or lowering
+		// it changes nothing there. The series bound phase two does enforce is
+		// PhaseTwo.Coordinator.MaxSeries, derived from the memory limit
+		// (measured 524,288 on the deployment on 2026-09-14, against this 500).
+		//
+		// Why equal values make two of them dead. admitPlans checks
+		// selected_records_per_plan first, then series_per_plan, then
+		// records_per_series, and the three quantities satisfy
+		// len(groups) <= len(records) <= SelectedCount() by construction.
+		// A refinement can therefore only fire when its budget is strictly
+		// below the record budget. At 500/500/500 neither can: not rarely,
+		// never. Their branches, reason strings and isolation path are
+		// unreachable in every deployment that takes these defaults.
+		//
+		// This is deliberate for now - the record budget is the only shape
+		// policy anyone has evidence for - but it means the two refinements
+		// are not protecting anything, so do not read them as headroom. If a
+		// real shape limit is ever wanted, set it strictly below the record
+		// budget; if not, the honest move is to delete the two branches rather
+		// than leave guards that cannot fire. detect's budget reachability
+		// test pins both directions so a change here cannot pass unnoticed.
 		Detect: DetectLimitsConfig{
 			MaxPlans: 16, MaxSelectedRecordsPerPlan: 500, MaxSeriesPerPlan: 500, MaxRecordsPerSeries: 500,
 			MaxLevelFacts: 64000, MaxPredicateEvaluations: 512000, MaxResultBytes: 16 << 20,

@@ -344,7 +344,7 @@ func TestRunApplicationRetriesStartupDependencyWhileHTTPStaysNotReady(t *testing
 			}
 			return bundle, nil
 		},
-		newHTTP: func(_ *metric.Recorder, source observability.HealthSource) (httpRuntime, error) {
+		newHTTP: func(_ *metric.Recorder, source observability.HealthSource, _ string) (httpRuntime, error) {
 			if snapshot := source.HealthSnapshot(); snapshot.Ready || snapshot.State != observability.HealthStarting {
 				t.Fatalf("startup health = %+v, want starting and not ready", snapshot)
 			}

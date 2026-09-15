@@ -1,0 +1,177 @@
+{
+  "plan": {
+    "input_projection": {
+      "business_identity_field": "bk_biz_id",
+      "data_unit": "percent",
+      "dimension_fields": [
+        "host"
+      ],
+      "missing_value_policy": "REQUIRED_VALUE",
+      "multi_value_alignment": "SINGLE_VALUE",
+      "value_fields": [
+        "value"
+      ]
+    },
+    "plan_id": "1001",
+    "strategy_ir": {
+      "execution_semantics": {
+        "aggregation_interval": 60,
+        "evaluation_interval": 60,
+        "evaluation_scope": "SERIES",
+        "lateness_tolerance": 120,
+        "query_window": 300
+      },
+      "input_projection": {
+        "business_identity_field": "bk_biz_id",
+        "data_unit": "percent",
+        "dimension_fields": [
+          "host"
+        ],
+        "missing_value_policy": "REQUIRED_VALUE",
+        "multi_value_alignment": "SINGLE_VALUE",
+        "value_fields": [
+          "value"
+        ]
+      },
+      "levels": [
+        {
+          "connector": "AND",
+          "definition": {
+            "level_id": 1,
+            "priority": 20
+          },
+          "detect_plan": {
+            "algorithms": [
+              {
+                "config": {
+                  "data_unit": "percent",
+                  "groups": [
+                    {
+                      "conditions": [
+                        {
+                          "operator": "GT",
+                          "threshold_decimal": "50"
+                        }
+                      ]
+                    }
+                  ],
+                  "precision": {
+                    "decimal_places": 6,
+                    "rounding": "HALF_EVEN"
+                  },
+                  "threshold_unit_prefix": "",
+                  "value_field": "value"
+                },
+                "type": "Threshold",
+                "version": 1
+              }
+            ]
+          },
+          "recovery_plan": {
+            "config": {
+              "consecutive_windows": 1,
+              "enabled": true
+            },
+            "type": "CONTINUOUS_TRIGGER_MISS",
+            "version": 1
+          },
+          "trigger_plan": {
+            "config": {
+              "required_anomalies": 1,
+              "step_seconds": 60,
+              "window_size": 1
+            },
+            "type": "N_OF_M",
+            "version": 1
+          }
+        },
+        {
+          "connector": "AND",
+          "definition": {
+            "level_id": 5,
+            "priority": 1
+          },
+          "detect_plan": {
+            "algorithms": [
+              {
+                "config": {
+                  "data_unit": "percent",
+                  "groups": [
+                    {
+                      "conditions": [
+                        {
+                          "operator": "GT",
+                          "threshold_decimal": "50"
+                        }
+                      ]
+                    }
+                  ],
+                  "precision": {
+                    "decimal_places": 6,
+                    "rounding": "HALF_EVEN"
+                  },
+                  "threshold_unit_prefix": "",
+                  "value_field": "value"
+                },
+                "type": "Threshold",
+                "version": 1
+              }
+            ]
+          },
+          "recovery_plan": {
+            "config": {
+              "consecutive_windows": 1,
+              "enabled": true
+            },
+            "type": "CONTINUOUS_TRIGGER_MISS",
+            "version": 1
+          },
+          "trigger_plan": {
+            "config": {
+              "required_anomalies": 1,
+              "step_seconds": 60,
+              "window_size": 1
+            },
+            "type": "N_OF_M",
+            "version": 1
+          }
+        }
+      ],
+      "required_features": [],
+      "schema": {
+        "major": 2,
+        "minor": 0,
+        "name": "alarmd-strategy-ir"
+      },
+      "strategy_ref": {
+        "revision": "strategy-r1",
+        "strategy_id": "1001",
+        "tenant_id": "default"
+      }
+    },
+    "strategy_ref": {
+      "revision": "strategy-r1",
+      "strategy_id": "1001",
+      "tenant_id": "default"
+    }
+  },
+  "query_config": {
+    "data_source_label": "bk_monitor",
+    "data_type_label": "time_series",
+    "metric_field": "CPUUsage",
+    "alias": "a",
+    "agg_method": "AVG",
+    "agg_interval": 60,
+    "agg_dimension": [
+      "host"
+    ],
+    "agg_condition": [],
+    "result_table_id": "",
+    "functions": []
+  },
+  "schedule": {
+    "evaluation_interval": 60,
+    "alignment": 0,
+    "timezone": "UTC"
+  }
+}

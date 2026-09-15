@@ -24,12 +24,11 @@ func TestComparisonAuditProducerCoordinatesKeepAuditTopicIsolated(t *testing.T) 
 	t.Parallel()
 
 	coordinates := ComparisonAuditSinkConfig{
-		Brokers:             []string{"127.0.0.1:9092"},
-		InputTopics:         []string{"trigger-input", "go-decision", "python-decision"},
-		OutputTopic:         "comparison-audit",
-		AllowedOutputTopics: []string{"comparison-audit"},
-		ClientID:            "alarmd-comparator",
-		BrokerVersion:       "2.6.0",
+		Brokers:       []string{"127.0.0.1:9092"},
+		InputTopics:   []string{"trigger-input", "go-decision", "python-decision"},
+		OutputTopic:   "comparison-audit",
+		ClientID:      "alarmd-comparator",
+		BrokerVersion: "2.6.0",
 	}
 	config, err := NewComparisonAuditProducerConfig(coordinates)
 	if err != nil {
@@ -40,7 +39,7 @@ func TestComparisonAuditProducerCoordinatesKeepAuditTopicIsolated(t *testing.T) 
 	}
 
 	coordinates.OutputTopic = "python-decision"
-	coordinates.AllowedOutputTopics = []string{"python-decision"}
+	coordinates.OutputTopic = "python-decision"
 	if _, err := NewComparisonAuditProducerConfig(coordinates); err == nil {
 		t.Fatal("NewComparisonAuditProducerConfig() accepted an input topic as output")
 	}

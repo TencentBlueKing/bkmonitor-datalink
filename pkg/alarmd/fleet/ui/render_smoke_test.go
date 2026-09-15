@@ -81,6 +81,17 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			item.Kind = "QUERY_COOLDOWN"
 			item.QueryCooldown = &observability.QueryCooldownFacts{
 				Until: at.Add(time.Hour), LastQueryAt: at.Add(-time.Minute), Failures: 5}
+			item.Failure = &fleet.FailureRef{Stage: "provider", Category: "source_backend",
+				Code: "QUERY_UNAVAILABLE", Detail: "transport=timeout"}
+		}),
+		// Same pool, same code, and the backend answered: it read the query and
+		// refused it. A live deployment held 350 of these filed as the backend's.
+		anomaly("qg-rejected", func(item *fleet.Anomaly) {
+			item.Kind = "QUERY_COOLDOWN"
+			item.QueryCooldown = &observability.QueryCooldownFacts{
+				Until: at.Add(time.Hour), LastQueryAt: at.Add(-time.Minute), Failures: 40}
+			item.Failure = &fleet.FailureRef{Stage: "provider", Category: "source_backend",
+				Code: "QUERY_UNAVAILABLE", Detail: "response=status_space_table_id_field_is_not_exists"}
 		}),
 		anomaly("qg-window-filling", func(item *fleet.Anomaly) {
 			item.Cause, item.CauseReason = "LEVEL_OUTCOME_UNKNOWN", "HISTORY_WARMING"
@@ -445,6 +456,9 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		{"qg-skipped", "alarmd", "放弃了一段时间", "查为什么跟不上"},
 		{"qg-drift", "待确认", "计划激活没对上", "看已持续"},
 		{"qg-offhours", "不用处理", "不在生效时段", "不用管"},
+		// One pool, one code, two owners -- decided on the detail.
+		{"qg-cooldown", "数据侧", "后端连续失败", "查后端"},
+		{"qg-rejected", "待确认", "后端拒绝了查询本身", "不是后端挂"},
 	} {
 		line := lineStarting(text, "ROW "+want.object+" ::")
 		if line == "" {

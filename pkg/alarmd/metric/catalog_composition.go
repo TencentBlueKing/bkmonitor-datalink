@@ -71,7 +71,9 @@ func newCatalogCompositionCollector() *catalogCompositionCollector {
 				"ACCEPTED and scheduled and execute, and nothing else says so -- the per-round "+
 				"unavailability is indistinguishable from any other, which is why this exists. It is a "+
 				"subset of catalog_plans, not a partition of it, and a steady zero is the expected reading. "+
-				"Reported by the leader only."),
+				"Read it against sum(catalog_plans): a family whose expected value is zero cannot tell "+
+				"'no Plan is inert' from 'nothing checked', and that sum is what says the check ran, "+
+				"because the same loop over the same Plans produces both. Reported by the leader only."),
 	}
 }
 

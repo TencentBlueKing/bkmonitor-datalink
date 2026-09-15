@@ -667,7 +667,7 @@ func TestChurningWindowsAreCountedApartFromOnesWhoseDataIsMissing(t *testing.T) 
 			"will not fill, and it is not churn", *starving.Coverage)
 	}
 	if rekeyed.Coverage.Churning() {
-		t.Errorf("a single round of every-series-fresh read as churn: that is also what the round "+
+		t.Errorf("a single round of every-series-fresh read as churn: that is also what the round " +
 			"after a strategy edit looks like, and the run is the only thing that tells them apart")
 	}
 }

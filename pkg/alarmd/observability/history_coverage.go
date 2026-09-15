@@ -77,6 +77,13 @@ type HistoryCoverageFacts struct {
 	// only a run of them does.
 	Fresh      uint32 `json:"fresh,omitempty"`
 	ShortFresh uint32 `json:"short_fresh,omitempty"`
+	// Abnormal is how many Level verdicts were ABNORMAL, AbnormalOnIncomplete
+	// how many of those were reached on a window that was not FULL. The
+	// trigger decides ABNORMAL before reading completeness and the output
+	// contract permits exactly that on WARMING and GAPPED history; this pair
+	// is how much alerting actually rides on it.
+	Abnormal             uint32 `json:"abnormal,omitempty"`
+	AbnormalOnIncomplete uint32 `json:"abnormal_on_incomplete,omitempty"`
 }
 
 // Shortfall is how many points the worst window was missing. Zero when

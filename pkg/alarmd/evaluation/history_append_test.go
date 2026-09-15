@@ -286,3 +286,42 @@ func TestEvaluationSaysWhenAWindowVerdictWasNotDecidedThisRound(t *testing.T) {
 			"window, and nothing downstream can tell unless this says so", coverage.Guarded)
 	}
 }
+
+// An ABNORMAL verdict is counted with the window it was reached on. The
+// trigger decides ABNORMAL before it reads completeness and the output
+// contract permits exactly that on WARMING and GAPPED history, so the alert
+// such a verdict opens cannot close until the window is FULL. How much
+// alerting rides on incomplete windows was a claim about the code; this pair
+// makes it a reading, and it is the reading a change to that contract would
+// be judged against.
+func TestEvaluationCountsAbnormalVerdictsWithTheWindowTheyWereReachedOn(t *testing.T) {
+	anomalous := func(value string) []contract.CanonicalRecordV2 {
+		return []contract.CanonicalRecordV2{{RecordID: strings.Repeat("f", 64), SourceTime: 300, BusinessID: "2",
+			DimensionIdentity: contract.DimensionIdentityV2{Digest: strings.Repeat("c", 64)},
+			Values:            map[string]json.RawMessage{"value": json.RawMessage(value)},
+			Dimensions:        map[string]json.RawMessage{}, ReceivedTime: 300}}
+	}
+	evaluate := func(windowSize uint32, value string) execution.HistoryCoverage {
+		t.Helper()
+		result, err := newEvaluator(t).Evaluate(context.Background(), requestFixtureForPlan(t, compiledWindow(t, windowSize, 1), anomalous(value), nil))
+		if err != nil {
+			t.Fatalf("Evaluate() error = %v", err)
+		}
+		return result.Plans[0].HistoryCoverage
+	}
+
+	// One anomalous record against a two-position window: ABNORMAL, and the
+	// window is WARMING -- the monotonic case the contract allows.
+	if got := evaluate(2, `90`); got.Abnormal != 1 || got.AbnormalOnIncomplete != 1 {
+		t.Fatalf("abnormal/incomplete = %d/%d on a WARMING window, want 1/1", got.Abnormal, got.AbnormalOnIncomplete)
+	}
+	// The same record fills a one-position window: ABNORMAL on FULL.
+	if got := evaluate(1, `90`); got.Abnormal != 1 || got.AbnormalOnIncomplete != 0 {
+		t.Fatalf("abnormal/incomplete = %d/%d on a FULL window, want 1/0", got.Abnormal, got.AbnormalOnIncomplete)
+	}
+	// A record under the threshold on a short window is unavailable, not
+	// ABNORMAL, and must not be counted as either cell.
+	if got := evaluate(2, `10`); got.Abnormal != 0 || got.AbnormalOnIncomplete != 0 {
+		t.Fatalf("abnormal/incomplete = %d/%d on a normal record, want 0/0", got.Abnormal, got.AbnormalOnIncomplete)
+	}
+}

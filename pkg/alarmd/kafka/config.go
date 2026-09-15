@@ -57,7 +57,6 @@ type Config struct {
 	ClientID      string
 	BrokerVersion string
 	InitialOffset string
-	Diagnostics   ConsumerDiagnostics
 }
 
 func (c Config) Validate() error {

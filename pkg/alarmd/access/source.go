@@ -18,7 +18,34 @@ import (
 
 var ErrFrozenQueryPlanUnavailable = errors.New("alarmd access: frozen QueryPlanFacts unavailable")
 
-const thirtySecondReadyDelay = 10 * time.Second
+// minimumSettlingWait is the shortest wait this product has ever treated as
+// enough for data to land: it is Python's ACCESS_DATA_TIME_DELAY, which that
+// side adds to every strategy's lookback whatever the period. A Slot falls
+// back to it when its completion budget cannot afford the deployment's
+// configured wait.
+//
+// It replaces a constant named thirtySecondReadyDelay whose value was ten
+// seconds and which was applied by listing the interval values that needed
+// it. The name said thirty, the value was ten, and the list had a hole.
+const minimumSettlingWait = execution.MinimumSettlingWaitSeconds * time.Second
+
+// settlingWaitWithinBudget reports how long after its query window closes a
+// Slot waits before reading it. The configured wait is what the deployment
+// says the data needs, and it is taken only while the Slot's completion
+// budget can still afford the downstream execution reserve on top of it.
+//
+// A wait that outlasts its own budget does not delay the read, it cancels it:
+// the consumer fails the readiness comparison at every round and is bound as
+// unavailable forever. That is what intervals of 16 to 35 seconds did, and
+// the strategy serializer accepts any of them -- it validates agg_interval
+// only as a non-negative integer, with no tier list behind it.
+func settlingWaitWithinBudget(schedule execution.ScheduleSpec, configured, reserve time.Duration) time.Duration {
+	budget := time.Duration(schedule.CompletionOffsetSeconds()) * time.Second
+	if configured+reserve < budget {
+		return configured
+	}
+	return minimumSettlingWait
+}
 
 type ReadinessDeferredError struct{ readyAt time.Time }
 
@@ -619,7 +646,9 @@ func prepare(
 				return PreparedExecution{}, errors.New("alarmd access: frozen consumer schedule unavailable")
 			}
 			readyAt, err := frozenConsumerReadyAt(
-				contractRef, requirement, window, schedule, minReadyDelay, facts.QueryDelaySeconds, allowExhaustedRecoveryBudget,
+				contractRef, requirement, window, schedule, minReadyDelay,
+				time.Duration(consumer.DownstreamExecutionReserveMilliSec)*time.Millisecond,
+				facts.QueryDelaySeconds, allowExhaustedRecoveryBudget,
 			)
 			if err != nil {
 				return PreparedExecution{}, err
@@ -687,6 +716,7 @@ func frozenConsumerReadyAt(
 	window execution.QueryWindow,
 	schedule execution.ScheduleSpec,
 	configuredDelay time.Duration,
+	reserve time.Duration,
 	sourceDelaySeconds int64,
 	allowExhaustedRecoveryBudget bool,
 ) (int64, error) {
@@ -694,11 +724,8 @@ func frozenConsumerReadyAt(
 		return 0, errors.New("alarmd access: evaluation time exceeds readiness range")
 	}
 	readyDelay := configuredDelay
-	short := (schedule.EvaluationIntervalSeconds == 10 || schedule.EvaluationIntervalSeconds == 15) && schedule.CompletionDeadlineOffsetSeconds == 30
-	if !allowExhaustedRecoveryBudget && short {
-		readyDelay = thirtySecondReadyDelay
-	} else if !allowExhaustedRecoveryBudget && schedule.EvaluationIntervalSeconds == 30 && readyDelay > thirtySecondReadyDelay {
-		readyDelay = thirtySecondReadyDelay
+	if !allowExhaustedRecoveryBudget {
+		readyDelay = settlingWaitWithinBudget(schedule, configuredDelay, reserve)
 	}
 	// Source delay selects an older data window; it must not move the
 	// scheduler's global readiness boundary earlier by the same amount.

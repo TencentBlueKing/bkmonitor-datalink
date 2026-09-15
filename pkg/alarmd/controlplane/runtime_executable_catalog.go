@@ -532,14 +532,29 @@ func refreshQueryGroupDigests(group *QueryGroup) error {
 	return nil
 }
 
-func terminalDisposition(sourceID, scope string, terminal strategy.Terminal) (ObjectDisposition, error) {
-	var disposition Disposition
-	switch terminal.ReasonCode {
+// CompilerTerminalDisposition is how the catalog files a compiler terminal: the
+// codes that mean "this definition cannot run as written in this build" and the
+// codes that mean "this definition is wrong". Exported as the one place that
+// grouping is written down, so that the fleet page's own reading of the same
+// codes -- who has to act on an object carrying one -- can be checked against
+// it by a test that walks the whole reason catalogue, rather than by a list
+// somebody keeps in step by hand.
+//
+// ok is false for a code the compiler does not produce as a terminal.
+func CompilerTerminalDisposition(reasonCode string) (Disposition, bool) {
+	switch reasonCode {
 	case contract.ReasonAlgorithmUnsupported, contract.ReasonPlanBudgetExceeded, contract.ReasonLevelBudgetExceeded:
-		disposition = DispositionUnsupported
+		return DispositionUnsupported, true
 	case contract.ReasonPlanInvalid, contract.ReasonPlanDuplicateLevelID, contract.ReasonProjectionInvalid, contract.ReasonLevelInvalid:
-		disposition = DispositionConfigRejected
+		return DispositionConfigRejected, true
 	default:
+		return "", false
+	}
+}
+
+func terminalDisposition(sourceID, scope string, terminal strategy.Terminal) (ObjectDisposition, error) {
+	disposition, known := CompilerTerminalDisposition(terminal.ReasonCode)
+	if !known {
 		return ObjectDisposition{}, errors.New("alarmd controlplane: runtime compiler returned an unclassified terminal reason")
 	}
 	return ObjectDisposition{SourceID: sourceID, Scope: scope, LevelID: terminal.LevelID,

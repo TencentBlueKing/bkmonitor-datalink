@@ -338,7 +338,6 @@ var codeSituations = map[string]Situation{
 	// reads the same bytes.
 	"STATE_CORRUPT":            SituationStateDefect,
 	"STATE_SCHEMA_UNSUPPORTED": SituationStateDefect,
-	"PROJECTION_INVALID":       SituationStateDefect,
 	"AUDIT_DROP":               SituationStateDefect,
 
 	// The control plane did not give the runner something to run. A live read
@@ -407,19 +406,26 @@ var codeSituations = map[string]Situation{
 	"SCHEMA_MAJOR_UNSUPPORTED":              SituationPlanUnevaluable,
 	"PLAN_INVALID":                          SituationPlanUnevaluable,
 	"PLAN_DUPLICATE_LEVEL_ID":               SituationPlanUnevaluable,
-	"PLAN_SET_CONFLICT":                     SituationPlanUnevaluable,
-	"LEVEL_INVALID":                         SituationPlanUnevaluable,
-	"SELECTOR_INVALID":                      SituationPlanUnevaluable,
-	"SELECTOR_ORDINAL_INVALID":              SituationPlanUnevaluable,
-	"REQUIRED_VALUE_MISSING":                SituationPlanUnevaluable,
-	"REQUIRED_VALUE_TYPE_MISMATCH":          SituationPlanUnevaluable,
-	"REQUIRED_VALUE_NORMALIZATION_FAILED":   SituationPlanUnevaluable,
-	"TIME_INVALID":                          SituationPlanUnevaluable,
-	"TENANT_INVALID":                        SituationPlanUnevaluable,
-	"MALFORMED_JSON":                        SituationPlanUnevaluable,
-	"PAYLOAD_DIGEST_MISMATCH":               SituationPlanUnevaluable,
-	"RECORD_INVALID":                        SituationPlanUnevaluable,
-	"RECORD_IDENTITY_CONFLICT":              SituationPlanUnevaluable,
+	// The definition's input projection, not this deployment's state
+	// projection. It sat with the state defects, inherited from the table
+	// before this one, and the whole-catalogue check against the control
+	// plane's grouping is what found it: the compiler emits it for a plan
+	// whose input_projection is invalid, and the catalog files it as
+	// CONFIG_REJECTED beside PLAN_INVALID.
+	"PROJECTION_INVALID":                  SituationPlanUnevaluable,
+	"PLAN_SET_CONFLICT":                   SituationPlanUnevaluable,
+	"LEVEL_INVALID":                       SituationPlanUnevaluable,
+	"SELECTOR_INVALID":                    SituationPlanUnevaluable,
+	"SELECTOR_ORDINAL_INVALID":            SituationPlanUnevaluable,
+	"REQUIRED_VALUE_MISSING":              SituationPlanUnevaluable,
+	"REQUIRED_VALUE_TYPE_MISMATCH":        SituationPlanUnevaluable,
+	"REQUIRED_VALUE_NORMALIZATION_FAILED": SituationPlanUnevaluable,
+	"TIME_INVALID":                        SituationPlanUnevaluable,
+	"TENANT_INVALID":                      SituationPlanUnevaluable,
+	"MALFORMED_JSON":                      SituationPlanUnevaluable,
+	"PAYLOAD_DIGEST_MISMATCH":             SituationPlanUnevaluable,
+	"RECORD_INVALID":                      SituationPlanUnevaluable,
+	"RECORD_IDENTITY_CONFLICT":            SituationPlanUnevaluable,
 }
 
 // The tracker's own vocabularies fold in the same way attribution's do: an

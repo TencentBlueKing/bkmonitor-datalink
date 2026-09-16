@@ -51,7 +51,13 @@ func New(config Config, name string) (*Hook, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create KAC alarm hook options: %w", err)
 	}
-	options = append(options, kgo.RequiredAcks(kgo.AllISRAcks()), kgo.ProducerBatchMaxBytes(int32(config.MaxMessageBytes))) //nolint:gosec // 配置已限制为 MaxInt32。
+	options = append(
+		options,
+		kgo.RequiredAcks(kgo.AllISRAcks()),
+		// KAC 当前接收链路按未压缩 Kafka record 联调，首版固定关闭 producer batch 压缩。
+		kgo.ProducerBatchCompression(kgo.NoCompression()),
+		kgo.ProducerBatchMaxBytes(int32(config.MaxMessageBytes)), //nolint:gosec // 配置已限制为 MaxInt32。
+	)
 	client, err := kgo.NewClient(options...)
 	if err != nil {
 		return nil, fmt.Errorf("create KAC alarm hook client: %w", err)

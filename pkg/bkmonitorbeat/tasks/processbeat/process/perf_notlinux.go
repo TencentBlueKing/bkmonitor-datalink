@@ -11,8 +11,17 @@
 
 package process
 
-import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+import (
+	"github.com/elastic/gosigar"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+)
 
 func (p *procPerfMgr) getOneMetaData(pid int32) (define.ProcStat, error) {
 	return p.getOneMetaDataByGopsutil(pid)
+}
+
+func (p *procPerfMgr) mem(pid int32) (gosigar.ProcMem, error) {
+	g := gosigar.ProcMem{}
+	return g, g.Get(int(pid))
 }

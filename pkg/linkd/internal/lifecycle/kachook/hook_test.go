@@ -37,8 +37,11 @@ func TestHookEmitsKACAlarmRecord(t *testing.T) {
 	if err := json.Unmarshal(record.Value, &message); err != nil {
 		t.Fatal(err)
 	}
-	if message.AlarmID != "linkd-alert-1" || message.EventID != "linkd-alert-1" {
+	if message.AlarmID == message.EventID || message.EventID != "linkd-alert-1" {
 		t.Fatalf("message=%+v", message)
+	}
+	if message.AlarmID != kacAlarmID(input) {
+		t.Fatalf("alarm_id=%q want=%q", message.AlarmID, kacAlarmID(input))
 	}
 	again, err := hook.Execute(context.Background(), input)
 	if err != nil || again.MessageID != result.MessageID {

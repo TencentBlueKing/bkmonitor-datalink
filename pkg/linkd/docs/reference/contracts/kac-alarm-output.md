@@ -6,8 +6,8 @@
 
 固定规则：
 
-- `alarm_id = "linkd-" + Alert.AlertID`；
-- `event_id = "linkd-" + Alert.AlertID`；
+- `alarm_id = "linkd-" + UUIDv5(tenant, AlertID, UpdateAt, outcome)`，同一快照重试保持稳定；
+- `event_id = "linkd-" + Alert.AlertID`，用于关联同一 Alert 的活动与终态消息；
 - Kafka key 使用 `event_id`；
 - `active/recovered/closed` 分别映射为 `firing/resolved/close`；
 - `critical/warning/info` 分别映射为 `fatal/warning/remind`；
@@ -16,6 +16,6 @@
 - `bk_tenant_id` 显式进入消息；
 - Log、APM、K8s 和云平台场景扩展字段首版按约定默认值输出。
 
-活动消息省略 `close_time` 和 `close_reason`，终态消息携带这两个字段。Hook 等待 Kafka all-ISR ACK；
-Alert、Kafka 和 AlertLog 之间没有事务，重复执行使用稳定 `message_id` 审计，KAC 接收方的重复处理能力
+活动消息省略 `close_time` 和 `close_reason`，终态消息携带这两个字段。KAC 当前 URL 路由仅接受字母、数字、下划线和连字符，UUID 形式的 `alarm_id` 用作临时兼容；`event_id` 保留 Linkd Alert 身份以维持生命周期关联。Hook 等待 Kafka all-ISR ACK；
+Alert、Kafka 和 AlertLog 之间没有事务，重复执行使用稳定 `alarm_id` 和 `message_id` 收敛，KAC 接收方的重复处理能力
 需要在目标环境验证。

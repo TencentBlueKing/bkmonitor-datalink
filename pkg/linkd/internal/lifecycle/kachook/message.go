@@ -16,6 +16,8 @@ import (
 	"linkd/internal/lifecycle"
 	"linkd/internal/lifecycle/enrich"
 	"linkd/internal/lifecycle/enrich/models"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -135,9 +137,9 @@ func convertMessage(input lifecycle.FinalHookInput) (Message, error) {
 	if err != nil {
 		return Message{}, err
 	}
-	identity := identityPrefix + input.Alert.AlertID
+	eventIdentity := identityPrefix + input.Alert.AlertID
 	message := Message{
-		AlarmID: identity, EventID: identity,
+		AlarmID: kacAlarmID(input), EventID: eventIdentity,
 		SourceID: input.Alert.EventSourceID, SourceName: sourceName,
 		Item: firstNonEmpty(values.metric.DisplayName, values.strategy.StrategyName), MetricName: values.metric.MetricName,
 		Name: firstNonEmpty(values.display.Title, input.Alert.Title), Content: firstNonEmpty(values.display.Content, input.Alert.Content),
@@ -171,6 +173,17 @@ func convertMessage(input lifecycle.FinalHookInput) (Message, error) {
 		return Message{}, fmt.Errorf("KAC alarm content is required")
 	}
 	return message, nil
+}
+
+// kacAlarmID 为每个 Alert 快照生成 KAC 路由可接受的稳定 UUID。
+// 受限于 KAC 页面 URL 对告警 ID 的严格限制（不允许出现 "."），因此首版复用 alarm_callback 的生成逻辑。
+// event_id 继续承载 Linkd Alert 身份，用于关联 firing 与终态消息；alarm_id 仅作为本次 KAC 记录身份。
+func kacAlarmID(input lifecycle.FinalHookInput) string {
+	name := digestStrings(
+		"linkd:kac-alarm", input.Alert.BKTenantID, input.Alert.AlertID,
+		input.Alert.UpdateAt.UTC().Format(time.RFC3339Nano), string(input.Outcome),
+	)
+	return identityPrefix + uuid.NewSHA1(uuid.NameSpaceURL, []byte(name)).String()
 }
 
 func decodeEnrich(object domain.JSONObject) (enrichValues, error) {

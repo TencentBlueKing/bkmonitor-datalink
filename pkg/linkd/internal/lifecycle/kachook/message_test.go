@@ -7,8 +7,11 @@ package kachook
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"linkd/internal/domain"
 	"linkd/internal/lifecycle"
@@ -24,7 +27,13 @@ func TestConvertMessageMapsAlertAndEnrichToKACAlarm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if message.AlarmID != "linkd-alert-1" || message.EventID != "linkd-alert-1" || message.SourceName != "鲸眼监控" {
+	if !strings.HasPrefix(message.AlarmID, identityPrefix) {
+		t.Fatalf("alarm_id=%q", message.AlarmID)
+	}
+	if _, err := uuid.Parse(strings.TrimPrefix(message.AlarmID, identityPrefix)); err != nil {
+		t.Fatalf("alarm_id UUID=%q err=%v", message.AlarmID, err)
+	}
+	if message.EventID != "linkd-alert-1" || message.SourceName != "鲸眼监控" {
 		t.Fatalf("identity/source=%+v", message)
 	}
 	if message.Action != "firing" || message.Level != "warning" || message.AlarmTime != "2026-09-01 08:00:00" {
@@ -45,6 +54,41 @@ func TestConvertMessageMapsAlertAndEnrichToKACAlarm(t *testing.T) {
 	}
 	if message.CloseTime != nil || message.CloseReason != nil {
 		t.Fatalf("active close fields=%+v", message)
+	}
+}
+
+func TestKACAlarmIDIsStableAndRouteSafe(t *testing.T) {
+	input := lifecycle.FinalHookInput{
+		Cause: lifecycle.AlertChangeCause{Type: lifecycle.AlertChangeCauseSourceEvent, ID: "event-1"},
+		Alert: testAlert(), Outcome: lifecycle.OutcomeAlertCreated,
+	}
+	input.Alert.AlertID = "20260916025458.system.built_in_bk.be67ab93620037e7"
+
+	first, err := convertMessage(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := convertMessage(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.AlarmID != second.AlarmID {
+		t.Fatalf("alarm_id changed across retry: first=%q second=%q", first.AlarmID, second.AlarmID)
+	}
+	if strings.Contains(first.AlarmID, ".") {
+		t.Fatalf("alarm_id contains route-unsafe dot: %q", first.AlarmID)
+	}
+	changed := input
+	changed.Alert.UpdateAt = input.Alert.UpdateAt.Add(time.Nanosecond)
+	third, err := convertMessage(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.AlarmID == first.AlarmID {
+		t.Fatalf("different snapshots share alarm_id: %q", first.AlarmID)
+	}
+	if first.EventID != identityPrefix+input.Alert.AlertID || third.EventID != first.EventID {
+		t.Fatalf("event identity changed: first=%q third=%q", first.EventID, third.EventID)
 	}
 }
 

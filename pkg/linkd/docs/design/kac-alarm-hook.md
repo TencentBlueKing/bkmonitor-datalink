@@ -109,7 +109,7 @@ KAC `AlarmEvent` ES 模型已声明 `bk_tenant_id`，见
 
 ```json
 {
-  "alarm_id": "linkd-20260901000002.tenant-1.built_in_bk.a1b2c3d4e5f60708",
+  "alarm_id": "linkd-123e4567-e89b-52d3-a456-426614174000",
   "source_id": "built_in_bk",
   "source_name": "鲸眼监控",
   "item": "CPU 使用率",
@@ -164,10 +164,14 @@ KAC `AlarmEvent` ES 模型已声明 `bk_tenant_id`，见
 
 ### 4.2 身份、动作与时间
 
+临时兼容说明：KAC 详情及相关 URL 路由当前使用 `[\w-]` 形式的路径参数约束，Linkd AlertID 中的句点无法匹配。
+KAC Hook 因此将 `alarm_id` 改写为带 `linkd-` 前缀的稳定 UUID；`event_id` 继续保留 Linkd AlertID，
+用于 KAC 按事件关联 firing 与 resolved/close。KAC 路由放宽后可再评估是否恢复直接使用 Linkd AlertID。
+
 | KAC 字段/Record 属性 | 建议规则 | 理由 |
 | --- | --- | --- |
 | `event_id` | `"linkd-" + Alert.AlertID` | 同一 Alert 的 firing/resolved/close 使用同一稳定关联身份；前缀标识 Linkd 来源；KAC 按 event_id 查找待终结活动告警 |
-| `alarm_id` | `"linkd-" + Alert.AlertID` | 同一 Linkd Alert 与 KAC Alarm 共用稳定核心身份，重试保持不变；前缀标识 Linkd 来源 |
+| `alarm_id` | `"linkd-" + UUIDv5(tenant, AlertID, UpdateAt, outcome)` | 生成 KAC URL 路由可接受的记录身份；同一快照重试稳定，不同生命周期快照可区分 |
 | Hook `message_id` | `"linkd-" + SHA-256(tenant, hook name, AlertID, UpdateAt, outcome)` | 每次快照调用身份稳定且可区分；AlertLog 使用该值审计 |
 | Kafka key | UTF-8 `event_id` 原值 | 与 KAC 现有 producer 一致；同一 Alert 生命周期进入同一 partition |
 | Record value | 单个 KAC Alarm JSON object | 与当前消费者逐 record 解码方式一致 |
@@ -232,7 +236,7 @@ KAC converter 先调用 `enrich.DecodePayload(Alert.Enrich)`，再按 Processor 
 
 | KAC 字段 | Linkd 来源 | 转换和缺失行为 |
 | --- | --- | --- |
-| `alarm_id` | `Alert.AlertID` | 增加 `linkd-` 前缀，必填 |
+| `alarm_id` | `Alert.BKTenantID + Alert.AlertID + Alert.UpdateAt + outcome` | 生成稳定 UUID 并增加 `linkd-` 前缀，必填 |
 | `event_id` | `Alert.AlertID` | 增加 `linkd-` 前缀，必填 |
 | `bk_tenant_id` | `Alert.BKTenantID` | 原样，必填 |
 | `source_id` | `source.source_id` → `Alert.EventSourceID` | 字符串，运行语义必填 |
@@ -461,7 +465,7 @@ Hook 顺序由来源配置决定。等级升级继续沿用 Lifecycle 的“旧 
 - `FinalHook` 的既有语义会把普通 KAC 转换或发送错误记录为 `hook_failed`，并继续后续 Hook 与 Event 终态 CAS；
 - 已完成的 Alert 状态以及本次 Event 成功处理不会因普通 KAC Hook 失败回滚；当前没有独立失败补偿队列；
 - Kafka 成功后进程在 Event CAS 前退出，Lifecycle 重试可能再次发送同一 record；
-- `alarm_id` 和 Kafka key 在同一 Alert 生命周期内稳定，`message_id` 在相同快照重试中稳定；
+- `alarm_id` 在同一 Alert 快照重试中稳定，Kafka key 在同一 Alert 生命周期内稳定，`message_id` 在相同快照重试中稳定；
 - KAC 当前消费者和存储没有完整的 message_id 去重契约，联调必须验证相同 `alarm_id` 重投的实际结果；
 - 每次 KAC Hook 调用的转换、编码、超限或 producer 错误形成该实例的 `hook_failed` AlertLog，随后继续执行后续 Hook；
 - 父 Context 取消遵循现有 Lifecycle 语义，停止当前及后续 Hook，并保留 Mailbox 队首用于恢复；
@@ -526,7 +530,7 @@ Kafka 可达或 KAC consumer 已接管 Topic。
 
 - `KACAlarmV1`：全部字段、空值、标量转文本、JSON-in-string 和场景扩展默认值；
 - 动作：active/recovered/closed，等级升级的旧 close 与新 firing；
-- 身份：`alarm_id/event_id` 均为 `linkd-` 加 AlertID；相同快照 message_id 稳定，不同 update/outcome/hook 实例可区分；
+- 身份：`alarm_id` 为 `linkd-` 加稳定 UUID，`event_id` 为 `linkd-` 加 AlertID；相同快照的两者及 message_id 均稳定，不同 update/outcome/hook 实例可区分；
 - 等级：固定三项映射、未知 Linkd Severity 失败；
 - 时间：UTC 到固定 `Asia/Shanghai`、秒级截断、终态缺少 EndAt；
 - Enrich：succeeded/partial/failed/skipped、缺 Processor、非法类型、重复 Processor；
@@ -569,7 +573,7 @@ KAC Schema 当前只表达最低约束。契约测试还要启动或调用 KAC `
 
 - 与 KAC 所有者确认目标部署 commit、Topic 和认证；
 - 用真实 KAC Schema 与消费者测试冻结 KAC Alarm V1 fixture；
-- 确认 `event_id="linkd-" + Linkd AlertID`、`alarm_id="linkd-" + Linkd AlertID` 和同级 update 发送策略；
+- 确认 `event_id="linkd-" + Linkd AlertID`、`alarm_id="linkd-" + stable UUID` 和同级 update 发送策略；
 - 确认多集群/多模块 ID 的文本格式。
 
 ### 阶段 2：实现纯转换器
@@ -618,7 +622,7 @@ python3 scripts/publish_host_alert.py \
 
 实际从 `linkd-pm2-kac-alarms` 消费到一条 KAC JSON，验证结果：
 
-- Kafka key、`alarm_id`、`event_id` 三者相同并带 `linkd-` 前缀；
+- Kafka key 与 `event_id` 相同并带 `linkd-` 前缀；当时验证版本的 `alarm_id` 与二者相同，当前临时适配已将其改为 `linkd-` 加稳定 UUID，待重新联调；
 - `source_name=鲸眼监控`、`action=firing`、`level=warning`；
 - UTC `08:09:00` 转换为 `Asia/Shanghai` 的 `16:09:00`；
 - `log_theme_id=0`、`apm_app_id=0`，K8s/云平台字符串扩展字段为空；

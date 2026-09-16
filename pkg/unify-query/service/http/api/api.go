@@ -283,12 +283,12 @@ func HandlerAPIRelationV1Beta3MultiResource(c *gin.Context) {
 
 			timestamp := cast.ToString(qry.Timestamp)
 			// v1beta3 默认 HTTP 协议对齐旧 VM relation：底层走 SurrealDB，但响应仍返回 legacy path 字段。
-			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, queryErr = model.QueryResourceMatcher(
+			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, queryErr = model.QueryResourceMatcherWithMaxHops(
 				queryCtx,
 				qry.LookBackDelta, user.SpaceUID, timestamp,
 				qry.TargetType, qry.SourceType,
 				qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow,
-				qry.PathResource,
+				qry.PathResource, qry.MaxHops,
 			)
 			if queryErr != nil {
 				d.Message = queryErr.Error()
@@ -411,12 +411,12 @@ func HandlerAPIRelationV1Beta3MultiResourceRange(c *gin.Context) {
 			startTs := cast.ToString(qry.StartTs)
 			endTs := cast.ToString(qry.EndTs)
 			// range 保持 VM 兼容响应，target_list 的窗口语义在 v1beta3 model 内部对齐。
-			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, queryErr = model.QueryResourceMatcherRange(
+			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, queryErr = model.QueryResourceMatcherRangeWithMaxHops(
 				queryCtx,
 				qry.LookBackDelta, user.SpaceUID, qry.Step, startTs, endTs,
 				qry.TargetType, qry.SourceType,
 				qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow,
-				qry.PathResource,
+				qry.PathResource, qry.MaxHops,
 			)
 			if queryErr != nil {
 				d.Message = queryErr.Error()

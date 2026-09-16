@@ -113,7 +113,6 @@ const (
 const (
 	FieldPeriodStart = "period_start"
 	FieldPeriodEnd   = "period_end"
-	FieldReferenceID = "reference_id"
 )
 
 const (
@@ -186,16 +185,4 @@ func GenerateResourceID(resourceType ResourceType, labels map[string]string) str
 	}
 
 	return fmt.Sprintf("%s:⟨%s⟩", resourceType, strings.Join(pairs, ","))
-}
-
-func GetLivenessRecordTableName(resourceType ResourceType) string {
-	return string(resourceType) + "_liveness_record"
-}
-
-func GetRelationLivenessRecordTableName(relationType RelationType) string {
-	return string(relationType) + "_liveness_record"
-}
-
-func GetLivenessIDField(resourceType ResourceType) string {
-	return FieldReferenceID
 }

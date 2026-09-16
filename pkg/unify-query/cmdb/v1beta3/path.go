@@ -91,16 +91,6 @@ func NewPathFinder(opts ...PathFinderOption) *PathFinder {
 
 // FindAllPaths 查找从 source 到 target 的所有路径
 func (pf *PathFinder) FindAllPaths(source, target ResourceType, pathResource []ResourceType) ([]resourcePath, error) {
-	if source == target && len(pathResource) == 0 {
-		// 显式 source==target 优先解释为“查真实自关联边”；
-		// 只有 schema 中完全没有自关联时，才回退成单节点信息展示路径。
-		paths := pf.findSelfRelationPaths(source)
-		if len(paths) > 0 {
-			return paths, nil
-		}
-		return []resourcePath{{Steps: []resourcePathStep{{ResourceType: string(source)}}}}, nil
-	}
-
 	pathConstraint, directOnly := normalizePathResource(source, target, pathResource)
 	var results []resourcePath
 	visited := make(map[ResourceType]bool)
@@ -119,25 +109,6 @@ func (pf *PathFinder) FindAllPaths(source, target ResourceType, pathResource []R
 	return results, nil
 }
 
-func (pf *PathFinder) findSelfRelationPaths(resourceType ResourceType) []resourcePath {
-	var results []resourcePath
-	for _, rel := range pf.getRelationsForType(resourceType) {
-		if rel.TargetType != resourceType {
-			continue
-		}
-		results = append(results, resourcePath{Steps: []resourcePathStep{
-			{ResourceType: string(resourceType)},
-			{
-				ResourceType: string(resourceType),
-				RelationType: string(rel.Schema.RelationType),
-				Category:     string(rel.Schema.Category),
-				Direction:    string(rel.Direction),
-			},
-		}})
-	}
-	return results
-}
-
 func normalizePathResource(source, target ResourceType, pathResource []ResourceType) ([]ResourceType, bool) {
 	if len(pathResource) == 0 {
 		return nil, false
@@ -146,6 +117,11 @@ func normalizePathResource(source, target ResourceType, pathResource []ResourceT
 	pathConstraint := make([]ResourceType, 0, len(pathResource))
 	hasDirectOnlyConstraint := false
 	hasFullEndpointConstraint := len(pathResource) >= 2 && pathResource[0] == source && pathResource[len(pathResource)-1] == target
+	// Preserve complete multi-hop paths, including repeated endpoint types.
+	// Dropping every occurrence of pod would turn pod -> pod -> pod into direct-only.
+	if hasFullEndpointConstraint && len(pathResource) > 2 {
+		return pathResource, false
+	}
 	for _, resourceType := range pathResource {
 		if resourceType == "" {
 			// 旧 VM 客户端用空字符串表达“只允许 source->target 直连”。
@@ -193,6 +169,8 @@ func (pf *PathFinder) dfs(
 			copy(pathCopy, currentPath)
 			*results = append(*results, resourcePath{Steps: pathCopy})
 		}
+	}
+	if len(currentPath) == pf.maxHops+1 {
 		return
 	}
 
@@ -201,9 +179,7 @@ func (pf *PathFinder) dfs(
 	for _, rel := range relations {
 		nextType := rel.TargetType
 		wasVisited := visited[nextType]
-		// nextType == target 时允许“访问已访问过的终点”来保留
-		// source -> ... -> target 这种显式闭环；递归开头会在命中 target 后直接 return，
-		// 因此不会继续从 target 扩散成无限环路。
+		// 允许再次到达目标类型，例如 pod -> pod -> pod；maxHops 限制展开深度。
 		if wasVisited && nextType != target {
 			continue
 		}

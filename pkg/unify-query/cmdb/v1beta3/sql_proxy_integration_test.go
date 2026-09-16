@@ -75,11 +75,7 @@ func TestSurrealQLSQLProxyIntegration(t *testing.T) {
 				Limit:              1,
 			},
 			stepMs: 2000,
-			wantSQL: `LET $timestamp = 1782558879000;
-LET $look_back_delta = 2000;
-LET $start = 1782558877;
-LET $end = 1782558879;
-LET $start_ms = 1782558877000;
+			wantSQL: `LET $start_ms = 1782558877000;
 LET $end_ms = 1782558879000;
 
 SELECT {
@@ -150,11 +146,7 @@ LIMIT 1;`,
 				Limit:              1,
 			},
 			stepMs: 2000,
-			wantSQL: `LET $timestamp = 1782558879000;
-LET $look_back_delta = 2000;
-LET $start = 1782558877;
-LET $end = 1782558879;
-LET $start_ms = 1782558877000;
+			wantSQL: `LET $start_ms = 1782558877000;
 LET $end_ms = 1782558879000;
 
 SELECT {

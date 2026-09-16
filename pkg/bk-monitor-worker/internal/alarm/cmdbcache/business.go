@@ -61,7 +61,8 @@ func getBusinessList(ctx context.Context, bkTenantId string) ([]map[string]any, 
 	bizList := make([]map[string]any, 0)
 	cmdbApi := getCmdbApi(bkTenantId)
 	// 并发请求获取业务列表
-	result, err := api.BatchApiRequest(
+	result, err := BatchApiRequest(
+		ctx,
 		cmdbApiPageSize,
 		// 获取总数
 		func(resp any) (int, error) {
@@ -134,7 +135,7 @@ func getBusinessAttribute(ctx context.Context, tenantId string) ([]cmdb.SearchOb
 
 	// 获取业务对象字段说明
 	var attrResult cmdb.SearchObjectAttributeResp
-	_, err := cmdbApi.SearchObjectAttribute().SetContext(ctx).SetBody(map[string]any{"bk_obj_id": "biz"}).SetResult(&attrResult).Request()
+	err := DoRequest(ctx, cmdbApi.SearchObjectAttribute().SetContext(ctx).SetBody(map[string]any{"bk_obj_id": "biz"}), &attrResult)
 	err = api.HandleApiResultError(attrResult.ApiCommonRespMeta, err, "search object attribute failed")
 	if err != nil {
 		return nil, err
@@ -254,9 +255,12 @@ func (m *BusinessCacheManager) RefreshGlobal(ctx context.Context) error {
 	}
 
 	// 更新缓存过期时间
-	if err := m.RedisClient.Expire(ctx, key, m.Expire).Err(); err != nil {
+	result, err := m.RedisClient.Expire(ctx, key, m.Expire).Result()
+	if err != nil {
+		logger.Errorf("set business cache expire failed, key: %s, result: %t, err: %v", key, result, err)
 		return errors.Wrap(err, "set business cache expire time failed")
 	}
+	logger.Infof("set business cache expire finished, key: %s, result: %t", key, result)
 
 	return nil
 }

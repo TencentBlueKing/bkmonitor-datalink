@@ -19,7 +19,6 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/api/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -67,9 +66,9 @@ func getDynamicGroupTypeFields(dynamicGroupType string) string {
 
 // getDynamicGroup 获取动态分组
 func getDynamicGroupRelatedIds(ctx context.Context, bkTenantId string, bizID int, dynamicGroupID string, dynamicGroupType string) ([]int, error) {
-	cmdbApi, err := api.GetCmdbApi(bkTenantId)
-	if err != nil {
-		return nil, errors.Wrapf(err, "GetCmdbApi failed, bkTenantId: %s", bkTenantId)
+	cmdbApi := getCmdbApi(bkTenantId)
+	if cmdbApi == nil {
+		return nil, errors.Errorf("get cmdb api failed, bkTenantId: %s", bkTenantId)
 	}
 
 	// 根据动态分组类型获取对应的资源ID字段
@@ -79,7 +78,8 @@ func getDynamicGroupRelatedIds(ctx context.Context, bkTenantId string, bizID int
 	}
 
 	// 获取动态分组下的资源列表
-	result, err := api.BatchApiRequest(
+	result, err := BatchApiRequest(
+		ctx,
 		cmdbApiPageSize,
 		func(resp any) (int, error) {
 			var result cmdb.ExecuteDynamicGroupResp
@@ -124,12 +124,13 @@ func getDynamicGroupRelatedIds(ctx context.Context, bkTenantId string, bizID int
 
 // getDynamicGroupList 获取动态分组列表
 func getDynamicGroupList(ctx context.Context, bkTenantId string, bizID int) (map[string]map[string]any, error) {
-	cmdbApi, err := api.GetCmdbApi(bkTenantId)
-	if err != nil {
-		return nil, errors.Wrapf(err, "GetCmdbApi failed, bkTenantId: %s", bkTenantId)
+	cmdbApi := getCmdbApi(bkTenantId)
+	if cmdbApi == nil {
+		return nil, errors.Errorf("get cmdb api failed, bkTenantId: %s", bkTenantId)
 	}
 
-	result, err := api.BatchApiRequest(
+	result, err := BatchApiRequest(
+		ctx,
 		cmdbApiPageSize,
 		func(resp any) (int, error) {
 			var result cmdb.SearchDynamicGroupResp

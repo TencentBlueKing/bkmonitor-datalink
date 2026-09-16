@@ -22,7 +22,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/coordinator"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
@@ -165,37 +164,21 @@ type PlatformCacheConfig struct {
 	DynamicConfig *RedisConnectionConfig `yaml:"dynamic_config,omitempty"`
 }
 
-type DependencyRetryConfig struct {
-	MinDelay Duration `yaml:"min_delay"`
-	MaxDelay Duration `yaml:"max_delay"`
-}
-
 type ReceiptQueueConfig struct {
 	MaxQueuedMessages int `yaml:"max_queued_messages"`
 	MaxQueuedBytes    int `yaml:"max_queued_bytes"`
 }
 
-type EvaluationRunnerConfig struct {
-	MaxPreparationWorkers    int `yaml:"max_preparation_workers"`
-	MaxStatefulWorkers       int `yaml:"max_stateful_workers"`
-	MaxInflightMessages      int `yaml:"max_inflight_messages"`
-	MaxInflightBytes         int `yaml:"max_inflight_bytes"`
-	MaxRuntimeKeysPerMessage int `yaml:"max_runtime_keys_per_message"`
-	MaxPendingKeyRefs        int `yaml:"max_pending_key_refs"`
-}
-
 type Config struct {
-	Input            PhaseTwoInputConfig    `yaml:"input"`
-	HTTP             HTTPConfig             `yaml:"http"`
-	Kafka            KafkaConfig            `yaml:"kafka"`
-	Redis            RedisConfig            `yaml:"redis"`
-	PlatformCache    PlatformCacheConfig    `yaml:"platform_cache"`
-	Limits           LimitsConfig           `yaml:"limits"`
-	DependencyRetry  DependencyRetryConfig  `yaml:"dependency_retry"`
-	ReceiptQueue     ReceiptQueueConfig     `yaml:"receipt_queue"`
-	EvaluationRunner EvaluationRunnerConfig `yaml:"evaluation_runner"`
-	PhaseTwo         PhaseTwoRuntimeConfig  `yaml:"phase_two"`
-	ShutdownTimeout  Duration               `yaml:"shutdown_timeout"`
+	Input           PhaseTwoInputConfig   `yaml:"input"`
+	HTTP            HTTPConfig            `yaml:"http"`
+	Kafka           KafkaConfig           `yaml:"kafka"`
+	Redis           RedisConfig           `yaml:"redis"`
+	PlatformCache   PlatformCacheConfig   `yaml:"platform_cache"`
+	Limits          LimitsConfig          `yaml:"limits"`
+	ReceiptQueue    ReceiptQueueConfig    `yaml:"receipt_queue"`
+	PhaseTwo        PhaseTwoRuntimeConfig `yaml:"phase_two"`
+	ShutdownTimeout Duration              `yaml:"shutdown_timeout"`
 }
 
 // Default is the product configuration, and it is the same on every machine:
@@ -204,7 +187,6 @@ type Config struct {
 // Reading the machine here would make a build agent's core count part of the
 // product default and every test's expectations a property of its host.
 func Default() Config {
-	runner := coordinator.DefaultConcurrentRunnerLimits()
 	cfg := Config{
 		Input: DefaultPhaseTwoInput(),
 		HTTP: HTTPConfig{
@@ -226,16 +208,8 @@ func Default() Config {
 			StatePrefix: DefaultStatePrefix,
 			MinTTL:      Duration(time.Minute), MaxTTL: Duration(30 * 24 * time.Hour), RestartMargin: Duration(10 * time.Minute),
 		},
-		Limits: defaultLimits(),
-		DependencyRetry: DependencyRetryConfig{
-			MinDelay: Duration(100 * time.Millisecond), MaxDelay: Duration(5 * time.Second),
-		},
-		ReceiptQueue: ReceiptQueueConfig{MaxQueuedMessages: 4096, MaxQueuedBytes: 16 << 20},
-		EvaluationRunner: EvaluationRunnerConfig{
-			MaxPreparationWorkers: runner.PreparationWorkers, MaxStatefulWorkers: runner.StatefulWorkers,
-			MaxInflightMessages: runner.MaxInflightMessages, MaxInflightBytes: runner.MaxInflightBytes,
-			MaxRuntimeKeysPerMessage: runner.MaxRuntimeKeysPerMessage, MaxPendingKeyRefs: runner.MaxPendingKeyRefs,
-		},
+		Limits:          defaultLimits(),
+		ReceiptQueue:    ReceiptQueueConfig{MaxQueuedMessages: 4096, MaxQueuedBytes: 16 << 20},
 		PhaseTwo:        defaultPhaseTwoRuntime(),
 		ShutdownTimeout: Duration(10 * time.Second),
 	}
@@ -490,26 +464,9 @@ func (c Config) StateStoreOptions(codec *state.Codec, router state.StorageRouter
 	}
 }
 
-func (c Config) DependencyRetryOptions() coordinator.DependencyRetryConfig {
-	return coordinator.DependencyRetryConfig{
-		MinDelay: c.DependencyRetry.MinDelay.Duration(), MaxDelay: c.DependencyRetry.MaxDelay.Duration(),
-	}
-}
-
 func (c Config) ReceiptPublisherLimits() enginekafka.ReceiptPublisherLimits {
 	return enginekafka.ReceiptPublisherLimits{
 		MaxQueuedMessages: c.ReceiptQueue.MaxQueuedMessages, MaxQueuedBytes: c.ReceiptQueue.MaxQueuedBytes,
-	}
-}
-
-func (c Config) EvaluationRunnerLimits() coordinator.ConcurrentRunnerLimits {
-	return coordinator.ConcurrentRunnerLimits{
-		PreparationWorkers:       c.EvaluationRunner.MaxPreparationWorkers,
-		StatefulWorkers:          c.EvaluationRunner.MaxStatefulWorkers,
-		MaxInflightMessages:      c.EvaluationRunner.MaxInflightMessages,
-		MaxInflightBytes:         c.EvaluationRunner.MaxInflightBytes,
-		MaxRuntimeKeysPerMessage: c.EvaluationRunner.MaxRuntimeKeysPerMessage,
-		MaxPendingKeyRefs:        c.EvaluationRunner.MaxPendingKeyRefs,
 	}
 }
 
@@ -551,12 +508,6 @@ func Load(path string) (Config, error) {
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
-	if cfg.Input.Mode == InputModePhaseOneKafkaCompatibility {
-		cfg, err = cfg.PhaseOneCompatibilityRuntimeConfig()
-		if err != nil {
-			return Config{}, err
-		}
-	}
 	return cfg, nil
 }
 
@@ -568,18 +519,7 @@ func (c Config) Validate() error {
 		return fmt.Errorf("input configuration: %w", err)
 	}
 
-	switch c.Input.Mode {
-	case InputModeGoAccess:
-		return c.validateGoAccessRuntime()
-	case InputModePhaseOneKafkaCompatibility:
-		runtimeConfig, err := c.PhaseOneCompatibilityRuntimeConfig()
-		if err != nil {
-			return err
-		}
-		return runtimeConfig.validatePhaseOneRuntime()
-	default:
-		return fmt.Errorf("input configuration: phase-two input mode %q is not supported", c.Input.Mode)
-	}
+	return c.validateGoAccessRuntime()
 }
 
 func validateListenAddress(field, address string) error {
@@ -726,62 +666,12 @@ func (c Config) validateGoAccessRuntime() error {
 	return nil
 }
 
-func (c Config) validatePhaseOneRuntime() error {
-	if c.Redis.Mode != RedisModeStandalone {
-		return errors.New("phase-one Kafka compatibility requires standalone Redis")
-	}
-	if err := c.Kafka.ConsumerCoordinates().Validate(); err != nil {
-		return fmt.Errorf("consumer configuration: %w", err)
-	}
-	if c.Kafka.TriggerEvent.Topic == c.Kafka.MessageReceipt.Topic {
-		return errors.New("kafka trigger_event and message_receipt topics must differ")
-	}
-	if err := c.Kafka.TriggerEventCoordinates().Validate(); err != nil {
-		return fmt.Errorf("trigger event configuration: %w", err)
-	}
-	if err := c.Kafka.MessageReceiptCoordinates().Validate(); err != nil {
-		return fmt.Errorf("message receipt configuration: %w", err)
-	}
-	if err := c.validateSharedRuntime(); err != nil {
-		return err
-	}
-	if c.Limits.Reader.MaxEnvelopeBytes > enginekafka.MaxConsumerRecordBytes() {
-		return errors.New("limits.reader.max_envelope_bytes exceeds Kafka consumer record fetch budget")
-	}
-	if c.Limits.Trigger.MaxEvidenceBytesPerEvent > c.Kafka.TriggerEvent.MaxMessageBytes {
-		return errors.New("trigger_event max_message_bytes cannot admit maximum trigger evidence")
-	}
-	if c.ReceiptQueue.MaxQueuedMessages <= 0 || c.ReceiptQueue.MaxQueuedBytes <= 0 {
-		return errors.New("receipt_queue budgets must be positive")
-	}
-	if c.ReceiptQueue.MaxQueuedBytes < c.Kafka.MessageReceipt.MaxMessageBytes {
-		return errors.New("receipt_queue max_queued_bytes cannot admit one maximum message receipt")
-	}
-	return nil
-}
-
 func (c Config) validateSharedRuntime() error {
 	if err := c.validateRedis(); err != nil {
 		return err
 	}
 	if err := c.Limits.validate(); err != nil {
 		return err
-	}
-	if c.DependencyRetry.MinDelay.Duration() <= 0 || c.DependencyRetry.MaxDelay.Duration() < c.DependencyRetry.MinDelay.Duration() {
-		return errors.New("dependency_retry delay range is invalid")
-	}
-	if c.EvaluationRunner.MaxPreparationWorkers <= 0 || c.EvaluationRunner.MaxStatefulWorkers <= 0 ||
-		c.EvaluationRunner.MaxInflightMessages <= 0 || c.EvaluationRunner.MaxInflightBytes <= 0 ||
-		c.EvaluationRunner.MaxRuntimeKeysPerMessage <= 0 || c.EvaluationRunner.MaxPendingKeyRefs <= 0 ||
-		c.EvaluationRunner.MaxRuntimeKeysPerMessage > c.EvaluationRunner.MaxPendingKeyRefs {
-		return errors.New("evaluation_runner budgets must be positive and internally consistent")
-	}
-	if c.EvaluationRunner.MaxRuntimeKeysPerMessage/c.Limits.Reader.MaxPlansPerMessage <
-		c.Limits.Reader.MaxRecordsPerMessage {
-		return errors.New("evaluation_runner max_runtime_keys_per_message cannot admit one maximum reader message")
-	}
-	if c.EvaluationRunner.MaxInflightBytes < c.Limits.Reader.MaxEnvelopeBytes {
-		return errors.New("evaluation_runner max_inflight_bytes cannot admit one maximum reader envelope")
 	}
 	return nil
 }

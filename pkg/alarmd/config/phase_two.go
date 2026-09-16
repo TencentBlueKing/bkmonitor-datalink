@@ -18,8 +18,6 @@ import (
 	"strings"
 
 	"github.com/Shopify/sarama"
-
-	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 )
 
 // InputMode selects the only active input source for one phase-two worker.
@@ -27,44 +25,13 @@ import (
 // State, Progress or Event contracts.
 type InputMode string
 
-const (
-	InputModeGoAccess                   InputMode = "go_access"
-	InputModePhaseOneKafkaCompatibility InputMode = "phase_one_kafka_compatibility"
-)
+const InputModeGoAccess InputMode = "go_access"
 
-// PhaseOneKafkaCompatibilityConfig names the phase-one input identities that
-// may be used only by the explicit compatibility mode. It does not make those
-// identities part of the phase-two Slot, State, Progress or Event contracts.
-type PhaseOneKafkaCompatibilityConfig struct {
-	InputTopic    string `yaml:"input_topic"`
-	ConsumerGroup string `yaml:"consumer_group"`
-	InitialOffset string `yaml:"initial_offset"`
-	StatePrefix   string `yaml:"state_prefix"`
-}
-
-func (c PhaseOneKafkaCompatibilityConfig) Validate() error {
-	for name, value := range map[string]string{
-		"input_topic": c.InputTopic, "consumer_group": c.ConsumerGroup, "state_prefix": c.StatePrefix,
-	} {
-		if value == "" || strings.TrimSpace(value) != value {
-			return fmt.Errorf("phase-one Kafka compatibility %s must be non-empty canonical text", name)
-		}
-	}
-	if c.InitialOffset != enginekafka.InitialOffsetOldest && c.InitialOffset != enginekafka.InitialOffsetLatest {
-		return fmt.Errorf(
-			"phase-one Kafka compatibility initial_offset must be %q or %q",
-			enginekafka.InitialOffsetOldest, enginekafka.InitialOffsetLatest,
-		)
-	}
-	return nil
-}
-
-// PhaseTwoInputConfig is the input-selection schema. Go Access is the default.
-// Supplying phase-one coordinates while Go Access is selected is an error
-// rather than an implicit fallback to the old consumer path.
+// PhaseTwoInputConfig is the input-selection schema. Go Access is the only
+// mode, and the default; the field stays so that a deployment naming a mode
+// this build does not have is refused by name rather than ignored.
 type PhaseTwoInputConfig struct {
-	Mode          InputMode                         `yaml:"mode"`
-	PhaseOneKafka *PhaseOneKafkaCompatibilityConfig `yaml:"phase_one_kafka,omitempty"`
+	Mode InputMode `yaml:"mode"`
 }
 
 func DefaultPhaseTwoInput() PhaseTwoInputConfig {
@@ -72,58 +39,10 @@ func DefaultPhaseTwoInput() PhaseTwoInputConfig {
 }
 
 func (c PhaseTwoInputConfig) Validate() error {
-	switch c.Mode {
-	case InputModeGoAccess:
-		if c.PhaseOneKafka != nil {
-			return errors.New("phase-two Go Access cannot be enabled with phase-one Kafka compatibility")
-		}
-		return nil
-	case InputModePhaseOneKafkaCompatibility:
-		if c.PhaseOneKafka == nil {
-			return errors.New("phase-one Kafka compatibility requires explicit coordinates")
-		}
-		return c.PhaseOneKafka.Validate()
-	default:
+	if c.Mode != InputModeGoAccess {
 		return fmt.Errorf("phase-two input mode %q is not supported", c.Mode)
 	}
-}
-
-// PhaseOneCompatibilityRuntimeConfig maps the explicitly isolated
-// compatibility coordinates into the phase-one runtime fields. The default Go
-// Access path never calls this conversion and therefore cannot silently fall
-// back to the phase-one consumer.
-func (c Config) PhaseOneCompatibilityRuntimeConfig() (Config, error) {
-	if c.Input.Mode != InputModePhaseOneKafkaCompatibility || c.Input.PhaseOneKafka == nil {
-		return Config{}, errors.New("phase-one runtime requires explicit Kafka compatibility mode")
-	}
-	compatibility := *c.Input.PhaseOneKafka
-	if err := compatibility.Validate(); err != nil {
-		return Config{}, err
-	}
-	// The state prefix has a default now, so "unstated" is the default
-	// value rather than the empty string; the compatibility coordinates
-	// replace it as they always did.
-	statePrefix := c.Redis.StatePrefix
-	if statePrefix == DefaultStatePrefix {
-		statePrefix = ""
-	}
-	for name, values := range map[string][2]string{
-		"kafka.input_topic":    {c.Kafka.InputTopic, compatibility.InputTopic},
-		"kafka.group_id":       {c.Kafka.GroupID, compatibility.ConsumerGroup},
-		"kafka.initial_offset": {c.Kafka.InitialOffset, compatibility.InitialOffset},
-		"redis.state_prefix":   {statePrefix, compatibility.StatePrefix},
-	} {
-		if values[0] != "" && values[0] != values[1] {
-			return Config{}, fmt.Errorf("%s conflicts with explicit phase-one compatibility coordinates", name)
-		}
-	}
-
-	runtimeConfig := c
-	runtimeConfig.Kafka.InputTopic = compatibility.InputTopic
-	runtimeConfig.Kafka.GroupID = compatibility.ConsumerGroup
-	runtimeConfig.Kafka.InitialOffset = compatibility.InitialOffset
-	runtimeConfig.Redis.StatePrefix = compatibility.StatePrefix
-	return runtimeConfig, nil
+	return nil
 }
 
 var phaseTwoKafkaTopicNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)

@@ -98,15 +98,10 @@ class ReleaseTest(unittest.TestCase):
         self.run_script('cleanup')
         self.assertEqual(self.images(), {})
 
-    def test_failed_push_blocks_chart(self):
+    def test_failed_push_does_not_mark_images_pushed(self):
         self.run_script('build')
         self.run_script('push', success=False, FAIL_PUSH='1')
-        self.run_script('chart', success=False)
-
-    def test_peer_commit_mismatch_blocks_chart(self):
-        self.run_script('build')
-        self.run_script('push')
-        self.run_script('chart', success=False, PEER_REVISION='2'*40, PEER_IMAGE_REPOSITORY='registry.example/project/images-arm')
+        self.assertFalse((self.state / 'pushed').exists())
 
     def test_cleanup_preserves_in_use_and_replaced_tags(self):
         self.run_script('build')

@@ -19,15 +19,15 @@
       "result_table_id": "system.cpu",
       "metric_field": "usage",
       "alias": "a",
-      "functions": []
+      "functions": [],
+      "unit": "percent"
     }],
     "algorithms": [{
       "level": 1,
       "type": "Threshold",
       "unit_prefix": "",
       "config": [[{"method": "gte", "threshold": 80}]]
-    }],
-    "unit": "percent"
+    }]
   }],
   "detects": [{
     "level": 1,

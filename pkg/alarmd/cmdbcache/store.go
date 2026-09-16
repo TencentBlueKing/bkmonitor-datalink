@@ -80,6 +80,28 @@ func (store *Store) Current() *Index {
 	return store.index
 }
 
+// HostIndexResolved reports whether this store can answer about hosts at all.
+//
+// It is the same judgement Health makes, read for a different question. Health
+// says how this process is doing; this says whether a caller may act on the
+// answers it gets, and the two states where it may not are the ones Health
+// already names as never_loaded and index_empty: with no index every host is
+// "not held", and with an empty one so is every host, which is
+// indistinguishable from a target whose hosts have all gone.
+//
+// A stale index resolves. It holds hosts and answers about them, and the
+// answers being a refresh interval old is a lag this deployment lives with;
+// refusing to act on them would stop every host-scoped decision for the length
+// of a CMDB hiccup, which is the larger harm.
+func (store *Store) HostIndexResolved() bool {
+	if store == nil {
+		return false
+	}
+	store.mutex.RLock()
+	defer store.mutex.RUnlock()
+	return store.index != nil && store.index.Hosts() > 0
+}
+
 // Refresh rebuilds the index once. A failed refresh leaves the previous index
 // in place and is recorded; it is not an error the caller has to handle to keep
 // running.

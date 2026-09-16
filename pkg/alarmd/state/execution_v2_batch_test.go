@@ -47,6 +47,17 @@ func (backend *pipelineMemoryBackend) MGet(ctx context.Context, keys []string) (
 	return values, err
 }
 
+func (backend *pipelineMemoryBackend) RenewIfBelow(
+	_ context.Context, key string, ttl, threshold time.Duration,
+) (bool, error) {
+	_ = threshold
+	if _, exists := backend.values[key]; !exists {
+		return false, nil
+	}
+	_ = ttl
+	return true, nil
+}
+
 func (backend *pipelineMemoryBackend) CompareAndSet(ctx context.Context, key string, expected []byte, missing bool, value []byte, ttl time.Duration) (bool, error) {
 	backend.casCalls++
 	return backend.casMemoryBackend.CompareAndSet(ctx, key, expected, missing, value, ttl)

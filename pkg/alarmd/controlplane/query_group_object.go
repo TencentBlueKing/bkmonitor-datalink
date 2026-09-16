@@ -62,12 +62,17 @@ type QueryGroupPlanObject struct {
 	PlanID               string                                                 `json:"plan_id"`
 	// Strategy is the source identity only. The revision and the Python
 	// snapshot revision that StrategyRefV2 also carries are output context.
-	Strategy           contract.StrategyRefV2          `json:"strategy"`
-	InputProjection    contract.InputProjectionV2      `json:"input_projection"`
-	OutputIdentity     *contract.MonitorOutputIdentity `json:"output_identity,omitempty"`
-	TargetScope        *contract.TargetScopeV2         `json:"target_scope,omitempty"`
-	StrategyIR         contract.StrategyIRV2           `json:"strategy_ir"`
-	TerminalReasonCode string                          `json:"terminal_reason_code,omitempty"`
+	Strategy        contract.StrategyRefV2          `json:"strategy"`
+	InputProjection contract.InputProjectionV2      `json:"input_projection"`
+	OutputIdentity  *contract.MonitorOutputIdentity `json:"output_identity,omitempty"`
+	TargetScope     *contract.TargetScopeV2         `json:"target_scope,omitempty"`
+	// NoData is execution content: absence is judged while the Slot runs, and
+	// Continuous is the trigger window the synthetic series is read with. It is
+	// omitted when the item does not detect no-data, which keeps the digest of
+	// every Plan that does not off this field - see the placement test.
+	NoData             *contract.NoDataConfigV1 `json:"no_data,omitempty"`
+	StrategyIR         contract.StrategyIRV2    `json:"strategy_ir"`
+	TerminalReasonCode string                   `json:"terminal_reason_code,omitempty"`
 }
 
 // OutputContextObject is what event rendering reads for one Plan: the source
@@ -114,7 +119,7 @@ func buildQueryGroupPlanObject(plan FrozenPlan) QueryGroupPlanObject {
 		RequirementTemplates: plan.RequirementTemplates, QueryPlans: plan.QueryPlans,
 		PlanID: plan.Plan.PlanID, Strategy: strategyIdentity(plan.Plan.StrategyRef),
 		InputProjection: plan.Plan.InputProjection, OutputIdentity: plan.Plan.OutputIdentity,
-		TargetScope: plan.Plan.TargetScope, StrategyIR: strategyIR,
+		TargetScope: plan.Plan.TargetScope, NoData: plan.Plan.NoData, StrategyIR: strategyIR,
 		TerminalReasonCode: plan.Plan.TerminalReasonCode,
 	}
 }

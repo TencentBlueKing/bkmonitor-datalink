@@ -74,6 +74,23 @@ end
 return 1
 `
 
+// renewIfBelowScript extends a key's life only when it is running out.
+//
+// PTTL answers -2 for a key that does not exist and -1 for one that exists with
+// no expiry. The first returns early. The second needs no branch of its own:
+// the threshold is never negative, so -1 is always below it and the key is
+// renewed - which is what a key that never expires needs, that being the state
+// this exists to end. A clause spelling that out would be implied by the
+// comparison below it, and a condition no test can be written against is a
+// condition that rots quietly.
+const renewIfBelowScript = `
+local remaining = redis.call('PTTL', KEYS[1])
+if remaining == -2 then return 0 end
+if remaining >= tonumber(ARGV[2]) then return 0 end
+redis.call('PEXPIRE', KEYS[1], ARGV[1])
+return 1
+`
+
 // compareAndSetByDigestScript is the batched form of compareAndSetScript. The
 // caller proves it saw the current value by sending the SHA-1 of the preflight
 // bytes instead of the bytes themselves, so one pipeline round trip carries
@@ -289,6 +306,37 @@ func (backend *RedisBackend) CompareAndSet(
 		missing = "1"
 	}
 	result, err := backend.client.Eval(ctx, compareAndSetScript, []string{key}, missing, expected, value, ttl.Milliseconds()).Int()
+	if err != nil {
+		return false, err
+	}
+	return result == 1, nil
+}
+
+// RenewIfBelow extends a key's life when less than threshold remains, and does
+// nothing otherwise.
+//
+// One script rather than a PTTL followed by a PEXPIRE, so the condition is
+// evaluated where the answer lives: two round trips would decide on a remaining
+// life that is already stale by the time the second one arrives, and would
+// spend a round trip on every key rather than on the few that need one.
+//
+// A key with no expiry at all is renewed. That is not a special case bolted on:
+// a key that will never expire is exactly the state this mechanism exists to
+// end, and keys written before it existed are in it. They acquire a life the
+// first time they are loaded, so the ones still in use repair themselves and
+// only the ones nothing loads any more are left for a one-off sweep.
+//
+// A missing key is left alone and reported as not renewed. Creating it here
+// would write a key with no value, which every reader would then classify as
+// corrupt state.
+func (backend *RedisBackend) RenewIfBelow(
+	ctx context.Context, key string, ttl, threshold time.Duration,
+) (bool, error) {
+	if backend == nil || backend.client == nil || key == "" || ttl <= 0 || threshold < 0 || threshold > ttl {
+		return false, fmt.Errorf("state: invalid Redis lifetime renewal")
+	}
+	result, err := backend.client.Eval(ctx, renewIfBelowScript, []string{key},
+		ttl.Milliseconds(), threshold.Milliseconds()).Int()
 	if err != nil {
 		return false, err
 	}

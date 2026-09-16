@@ -32,7 +32,7 @@ const (
 // is silent -- a kind the page has no word for renders as whichever word the
 // fallback happens to be, which reads as an ordinary row of a familiar kind.
 // That is worse than showing the raw name, so the page is checked against this.
-var AnomalyKinds = []string{KindDegradedRun, KindBlockedRun, KindOverdueWake, KindQueryCooldown}
+var AnomalyKinds = []string{KindDegradedRun, KindBlockedRun, KindOverdueWake, KindQueryCooldown, KindSkippedSpan, KindNoData}
 
 // SinceSources is the closed set of start-time provenances this build produces.
 //

@@ -34,10 +34,21 @@ type Ports struct {
 	Evaluator    execution.Evaluator
 	Admission    execution.SideEffectAdmitter
 	GapGuard     execution.GapGuardStore
-	Events       execution.EventSink
-	State        execution.StateStore
-	Progress     execution.ProgressStore
-	Observer     execution.Observer
+	// NoData is required, like every other port here. A worker without it would
+	// evaluate every Plan's thresholds and none of their absence, and the only
+	// sign would be no-data alerts that never fire - which is indistinguishable
+	// from nothing being absent.
+	NoData execution.PlanNoDataStore
+	// Hosts resolves which business a host belongs to, which decides both what
+	// a no-data roster expects and which of its groups have left. Required for
+	// the same reason: without it every declared host would read as unknown, so
+	// every static target would expect nothing and no absence would ever be
+	// reported - a silence that looks exactly like health.
+	Hosts    execution.HostBusiness
+	Events   execution.EventSink
+	State    execution.StateStore
+	Progress execution.ProgressStore
+	Observer execution.Observer
 	// OpenAlerts is required: a worker that evaluates without it sends every
 	// RECOVERY envelope, and the trigger counts that as not_configured, which
 	// on a production worker is the wiring having come apart.
@@ -92,7 +103,7 @@ func (*activationProtectionRequiredError) Error() string {
 
 func NewSlotExecutionCoordinator(ports Ports, budget ProvisionalBudget) (*SlotExecutionCoordinator, error) {
 	if ports.Finalization == nil || ports.Activation == nil || ports.Query == nil || ports.Sequencer == nil ||
-		ports.Evaluator == nil || ports.Admission == nil || ports.GapGuard == nil ||
+		ports.Evaluator == nil || ports.Admission == nil || ports.GapGuard == nil || ports.NoData == nil || ports.Hosts == nil ||
 		ports.Events == nil || ports.State == nil || ports.Progress == nil || ports.Observer == nil ||
 		ports.OpenAlerts == nil {
 		return nil, errors.New("alarmd worker: all C0 execution ports are required")
@@ -159,6 +170,12 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 		Identity:   execution.ProgressIdentity{QueryGroup: request.Contract.Slot.QueryGroup},
 		OwnerFence: request.OwnerFence, Projection: request.UnfinishedProjection(),
 	})
+	// Timed whichever way it went. A BeginSlot that fails says so; one that
+	// simply took twenty seconds used to say nothing at all, and an attempt
+	// stuck here is indistinguishable from one stuck anywhere else between
+	// slot_started and slot_completed.
+	observability.ObserveSlotWait(ctx, coordinator.ports.Observer, observability.SlotWaitProgressBegin,
+		observability.Operation(request.Operation), beginStarted, time.Now)
 	if err != nil {
 		return coordinator.progressBeginFailure(ctx, request, beginStarted, err), nil
 	}
@@ -172,7 +189,14 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 		}
 		return activationRetry(reason), nil
 	}
+	finalizationStarted := time.Now()
 	finalization, err := coordinator.ports.Finalization.ResolveFinalization(ctx, request)
+	// This step reads the frozen Plan, and so the Segment's content objects.
+	// It is where the twenty-two second silence in the production evidence
+	// falls: after the frozen Plan was generated and before access planned a
+	// query, with no line on either side of it.
+	observability.ObserveSlotWait(ctx, coordinator.ports.Observer, observability.SlotWaitFinalization,
+		observability.Operation(request.Operation), finalizationStarted, time.Now)
 	if err != nil {
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: resolve finalization: %w", err)
 	}
@@ -231,7 +255,8 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 	err = coordinator.ports.Sequencer.Sequence(ctx, sequencingScope(stream.header, stream.stateItems, stream.gapItems), func(sequenceCtx context.Context) error {
 		var executeErr error
 		result, executeErr = coordinator.finalizePreparedWithGaps(
-			sequenceCtx, request, stream.header, stream.bindings, stream.state, stream.gaps, stream.evaluated, stream.queryEvidence.availability(),
+			sequenceCtx, request, stream.header, stream.bindings, stream.state, stream.gaps, stream.evaluated,
+			stream.noDataMutations, stream.queryEvidence.availability(),
 		)
 		return executeErr
 	})
@@ -280,7 +305,21 @@ func (coordinator *SlotExecutionCoordinator) executeQueryFreeFinalization(
 			request,
 			finalization.ReasonCode,
 			guardFacts,
-			finalization.Mode == execution.FinalizationSnapshotUnavailable,
+			// Both query-free modes may reuse protection that is already
+			// sufficient. Gating this on the mode made a Slot with a marker
+			// from an earlier streaming attempt unfinishable: a GAP_SKIPPED
+			// finalization compared the two digests, found them different --
+			// legitimately, because a streaming attempt and a query-free
+			// finalization write different content for the same Slot -- and
+			// refused, on every round, for as long as the marker stood.
+			//
+			// The mode was never what made reuse safe. queryFreeGapAlreadyProtects
+			// is, and it checks sufficiency directly: same Plan, same
+			// generation, same ApplyVersion, same schedule revision, a
+			// Plan-wide scope that is gapped with nothing observed against it
+			// and the same RequiredFullSlots. It is deliberately not relaxed
+			// here -- the gate above it is what moves.
+			true,
 		); err != nil {
 			return err
 		}
@@ -317,7 +356,10 @@ func (coordinator *SlotExecutionCoordinator) executeQueryFreeFinalization(
 			request,
 			finalization.ReasonCode,
 			*changedActivations,
-			finalization.Mode == execution.FinalizationSnapshotUnavailable,
+			// The same, for the activations that changed underneath this
+			// round. Reuse is decided by whether the protection is sufficient,
+			// not by which query-free mode asked.
+			true,
 		); err != nil {
 			return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: protect changed query-free activation: %w", err)
 		}
@@ -616,7 +658,7 @@ func (coordinator *SlotExecutionCoordinator) ensureActivatedPlanGaps(
 				if reuseSufficientQueryFreeProtection && queryFreeGapAlreadyProtects(marker, item, plan) {
 					continue
 				}
-				return false, errors.New("alarmd worker: activated Plan gap marker conflicts with the Slot")
+				return false, newGapGuardConflict(marker, item, mutation, reason, plan)
 			}
 		}
 		if err := owner.retainGapMutation(ctx, mutation); err != nil {
@@ -767,7 +809,8 @@ func (coordinator *SlotExecutionCoordinator) finalizePrepared(
 	evaluated execution.EvaluationResult,
 ) (execution.SlotExecutionResult, error) {
 	return coordinator.finalizePreparedWithGaps(
-		ctx, request, header, bindings, loadedState, execution.GapLoadResult{}, evaluated, execution.QueryAvailabilityUnknown,
+		ctx, request, header, bindings, loadedState, execution.GapLoadResult{}, evaluated, nil,
+		execution.QueryAvailabilityUnknown,
 	)
 }
 
@@ -779,6 +822,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	loadedState execution.StatePreflightResult,
 	loadedGaps execution.GapLoadResult,
 	evaluated execution.EvaluationResult,
+	noDataMemory []execution.PlanNoDataMutation,
 	queryAvailability execution.QueryAvailability,
 ) (execution.SlotExecutionResult, error) {
 	var err error
@@ -961,6 +1005,13 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 		if planResult.Disposition == execution.PlanRetryPending && retryPendingReason == "" {
 			retryPendingReason = planResult.ReasonCode
 		}
+	}
+	// After every Plan's state and gap, inside the same sequenced scope. The
+	// memory only changes what the next round reports as a duration and which
+	// groups it expects, never whether this round fired - so it follows the
+	// writes that do decide that, rather than racing them.
+	if err := coordinator.applyNoDataMemory(ctx, request, noDataMemory); err != nil {
+		return execution.SlotExecutionResult{}, err
 	}
 	if retryPendingReason != "" {
 		return execution.SlotExecutionResult{
@@ -1684,6 +1735,7 @@ func historyCoverageFacts(coverage execution.HistoryCoverage) *observability.His
 		Guarded: coverage.Guarded,
 		Fresh:   coverage.Fresh, ShortFresh: coverage.ShortFresh,
 		Abnormal: coverage.Abnormal, AbnormalOnIncomplete: coverage.AbnormalOnIncomplete,
+		Unusable: coverage.Unusable, UnusableReason: coverage.UnusableReason,
 	}
 }
 

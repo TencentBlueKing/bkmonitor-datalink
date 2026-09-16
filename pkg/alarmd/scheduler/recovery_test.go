@@ -133,6 +133,7 @@ func TestRunnerStopsRetryWhenFrozenSlotExceedsReplayEligibility(t *testing.T) {
 	clock.Advance(limits.RetryMaxDelay)
 	source.slot.Recovery = SlotRecoveryFacts{
 		Disposition: ReplayExpired,
+		Reason:      ReplayExpiredByDistance,
 		Distance:    limits.MaxReplaySlots + 1,
 		Age:         limits.MaxReplayAge - time.Second,
 	}

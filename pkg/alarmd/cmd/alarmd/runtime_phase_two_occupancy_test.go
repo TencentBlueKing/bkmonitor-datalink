@@ -109,7 +109,7 @@ func TestPhaseTwoDispatcherLoopPublishesLiveOccupancy(t *testing.T) {
 	dispatcher, scheduled := occupancyDispatcher(observer)
 	dispatcher.normal = append(dispatcher.normal, phaseTwoQueuedRunner{scheduled: scheduled})
 	dispatcher.observeOccupancy(context.Background())
-	dispatcher.markDispatched(scheduled, false, false)
+	dispatcher.markDispatched(scheduled, false, -1, false)
 	dispatcher.changeExecuting(1)
 	dispatcher.observeOccupancy(context.Background())
 	dispatcher.changeExecuting(-1)

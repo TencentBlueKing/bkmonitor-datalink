@@ -32,7 +32,7 @@ func prunedCursorSource(t *testing.T, catalog *fakeSlotCatalog, reader ScheduleP
 	t.Helper()
 	source, err := NewProductionSlotSource("query-group-1", "worker-1",
 		&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog, reader,
-		func() time.Time { return at }, WithRecoveryLimits(testRecoveryLimits()), WithPostRecoveryTerminalDelay(time.Minute),
+		func() time.Time { return at }, WithRecoveryLimits(testRecoveryLimits()), WithSettlingWait(30*time.Second), WithPostRecoveryTerminalDelay(time.Minute),
 		WithQueryDeadlineReserve(5*time.Second), WithObserver(observer))
 	if err != nil {
 		t.Fatal(err)

@@ -86,7 +86,7 @@ func TestBindAlwaysEffectiveTimeFactsUsesExactSelectedSeriesPlanAndLevelTargets(
 		effectiveTimeStateItem(plans[1].Identity, "e"),
 	}
 
-	bound, err := bindAlwaysEffectiveTimeFacts(header, stateItems, prepared)
+	bound, err := bindAlwaysEffectiveTimeFacts(header, stateItems, prepared, execution.SeriesKindReal)
 	if err != nil {
 		t.Fatalf("bindAlwaysEffectiveTimeFacts() error = %v", err)
 	}
@@ -109,7 +109,7 @@ func TestBindAlwaysEffectiveTimeFactsDoesNotAccumulateAcrossBatches(t *testing.T
 
 	first, err := bindAlwaysEffectiveTimeFacts(header, []execution.StatePreflightItem{
 		effectiveTimeStateItem(plans[0].Identity, "c"),
-	}, prepared)
+	}, prepared, execution.SeriesKindReal)
 	if err != nil {
 		t.Fatalf("bind first batch: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestBindAlwaysEffectiveTimeFactsDoesNotAccumulateAcrossBatches(t *testing.T
 
 	second, err := bindAlwaysEffectiveTimeFacts(first, []execution.StatePreflightItem{
 		effectiveTimeStateItem(plans[1].Identity, "e"),
-	}, prepared)
+	}, prepared, execution.SeriesKindReal)
 	if err != nil {
 		t.Fatalf("bind second batch: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestBindAlwaysEffectiveTimeFactsReplacesEmptyAndRepeatedOldFacts(t *testing
 			candidate.EffectiveTimeFacts = test.old
 			bound, err := bindAlwaysEffectiveTimeFacts(candidate, []execution.StatePreflightItem{
 				effectiveTimeStateItem(plans[0].Identity, "c"),
-			}, prepared)
+			}, prepared, execution.SeriesKindReal)
 			if err != nil {
 				t.Fatalf("bindAlwaysEffectiveTimeFacts() error = %v", err)
 			}

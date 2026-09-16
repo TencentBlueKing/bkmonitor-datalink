@@ -51,7 +51,11 @@ func TestProductionBundleReportsFleetSnapshotPublishOutcome(t *testing.T) {
 
 	var mu sync.Mutex
 	var observations []observability.Observation
-	recorder := metric.NewRecorder(metric.BuildInfo{})
+	// The build the recorder puts on build_info is what the snapshot must
+	// carry: the two are the same process and must not be able to name
+	// different builds.
+	build := metric.BuildInfo{Version: "0.2.9999", Commit: "0123456789abcdef", SchemaVersion: "v3"}
+	recorder := metric.NewRecorder(build)
 	bundle, err := openProductionPhaseTwoBundleWithDependencies(
 		ctx, cfg, recorder,
 		observability.Discard(observability.ComponentRuntime), newPhaseTwoApplicationHealth(),
@@ -103,6 +107,20 @@ func TestProductionBundleReportsFleetSnapshotPublishOutcome(t *testing.T) {
 	assertFleetPublishResult(t, &mu, &observations, observability.ResultResumed)
 	if got := fleetPublishSeries(t, recorder, string(observability.ResultResumed)); got != 1 {
 		t.Fatalf("resumed publish metric = %v, want 1", got)
+	}
+	// Read back through the store the page reads, not off the publisher: the
+	// crossing being pinned is recorder -> bundle -> Redis -> aggregate.
+	store, err := fleet.NewRedisStore(client, productionPhaseTwoPrefix(cfg.Redis.StatePrefix, "fleet"), 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	published, err := store.Load(ctx, []string{cfg.PhaseTwo.Worker.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := fleet.BuildFacts{Version: build.Version, Commit: build.Commit, SchemaVersion: build.SchemaVersion}
+	if len(published) != 1 || published[0].Build == nil || *published[0].Build != want {
+		t.Fatalf("published snapshot build = %+v, want %+v: the page must name the same build as build_info", published, want)
 	}
 
 	// A steady state reports nothing: an outage lasting an hour is one fact,

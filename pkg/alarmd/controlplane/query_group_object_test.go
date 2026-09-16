@@ -24,9 +24,8 @@ func objectStrategyDocument(t *testing.T, edit func(document map[string]any)) js
 	t.Helper()
 	const base = `{"id":1001,"bk_biz_id":2,"update_time":1725000000,"name":"cpu usage","labels":["ops"],
 		"items":[{"id":11,"query_md5":"shared-query-md5","expression":"a","functions":[],
-			"query_configs":[{"data_source_label":"bk_monitor","data_type_label":"time_series","agg_method":"avg","agg_interval":60,"agg_dimension":["host"],"agg_condition":[],"result_table_id":"system.cpu","metric_field":"usage","alias":"a","functions":[]}],
-			"algorithms":[{"level":1,"type":"Threshold","unit_prefix":"","config":[[{"method":"gte","threshold":80}]]}],
-			"unit":"percent"}],
+			"query_configs":[{"data_source_label":"bk_monitor","data_type_label":"time_series","agg_method":"avg","agg_interval":60,"agg_dimension":["host"],"agg_condition":[],"result_table_id":"system.cpu","metric_field":"usage","alias":"a","functions":[],"unit":"percent"}],
+			"algorithms":[{"level":1,"type":"Threshold","unit_prefix":"","config":[[{"method":"gte","threshold":80}]]}]}],
 		"detects":[{"level":1,"connector":"and","trigger_config":{"count":1,"check_window":1},"recovery_config":{"check_window":1}}]}`
 	var document map[string]any
 	if err := json.Unmarshal([]byte(base), &document); err != nil {
@@ -188,7 +187,12 @@ func TestQueryGroupObjectDigestMovesWhenExecutionChanges(t *testing.T) {
 		{name: "target", edit: func(document map[string]any) {
 			objectFirstItem(document)["target"] = []any{[]any{map[string]any{"field": "bk_target_ip", "method": "eq", "value": []any{map[string]any{"bk_target_ip": "192.0.2.10"}}}}}
 		}},
-		{name: "unit", edit: func(document map[string]any) { objectFirstItem(document)["unit"] = "" }},
+		// The unit lives on the query config, which is where the strategy cache
+		// puts it and where Python's Item.unit reads it from. A fixture that
+		// carried it on the item exercised a key the platform never writes.
+		{name: "unit", edit: func(document map[string]any) {
+			objectFirstItem(document)["query_configs"].([]any)[0].(map[string]any)["unit"] = ""
+		}},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -294,9 +298,15 @@ func TestPublishedPlanFieldsAreEachPlacedInOneDigest(t *testing.T) {
 			neither: []string{"PlanRevision"},
 		},
 		reflect.TypeOf(contract.EvaluationPlanV2{}): {
-			execution: []string{"plan_id", "input_projection", "output_identity", "target_scope", "terminal_reason_code"},
-			context:   []string{"source_compatibility", "subject_facts", "legacy_output", "wire_format"},
-			split:     []string{"strategy_ref", "strategy_ir"},
+			// no_data is execution: absence is judged while the Slot runs, and
+			// Continuous is the window the synthetic series is read with. The
+			// level it also carries is read at output, but a fact is placed
+			// where it is decided, not everywhere it is read.
+			execution: []string{
+				"plan_id", "input_projection", "output_identity", "target_scope", "no_data", "terminal_reason_code",
+			},
+			context: []string{"source_compatibility", "subject_facts", "legacy_output", "wire_format"},
+			split:   []string{"strategy_ref", "strategy_ir"},
 		},
 		reflect.TypeOf(contract.StrategyIRV2{}): {
 			execution: []string{"schema", "required_features", "execution_semantics", "input_projection", "levels"},

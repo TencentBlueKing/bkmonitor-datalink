@@ -73,7 +73,8 @@ func (activator *InitialScheduleActivator) Ensure(
 	if err != nil {
 		return ActivationState{}, err
 	}
-	records, segments, err := compilePublishedGroups(ctx, activator.compiler, activator.stateSemantics, publication, groups, boundary)
+	records, segments, err := compilePublishedGroups(ctx, activator.compiler, activator.stateSemantics, publication, groups,
+		published.content.Groups, boundary)
 	if err != nil {
 		return ActivationState{}, err
 	}
@@ -95,6 +96,7 @@ func compilePublishedActivation(
 	compiler RuntimePlanCompiler,
 	stateSemantics strategy.StateSemantics,
 	snapshot PublishedSnapshot,
+	named map[execution.QueryGroupIdentity]ContentEntry,
 	boundary execution.EvaluationTime,
 ) ([]PlanActivationRecord, []execution.ScheduleSegmentFact, error) {
 	records := make([]PlanActivationRecord, 0)
@@ -130,7 +132,7 @@ func compilePublishedActivation(
 					ScheduleRevision: plan.ScheduleRevision, RequiredFullSlots: requiredFullSlots}}
 			records = append(records, PlanActivationRecord{Fact: fact, Publication: snapshot.Publication})
 		}
-		segment, err := scheduleSegmentForGroup(snapshot.Publication, group, boundary)
+		segment, err := scheduleSegmentForGroup(snapshot.Publication, group, boundary, named[group.Identity])
 		if err != nil {
 			return nil, nil, err
 		}

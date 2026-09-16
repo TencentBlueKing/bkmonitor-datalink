@@ -497,6 +497,65 @@ type CompiledPlan struct {
 	resourceEstimate    ResourceEstimate
 	datasetDigest       string
 	targetScope         *contract.TargetScopeV2
+	noData              *contract.NoDataConfigV1
+	noDataLevel         *CompiledLevel
+}
+
+// NoData is the strategy's no-data configuration, frozen with the Plan. Nil
+// means the strategy does not detect no-data; enablement is the presence of the
+// section rather than a field inside it.
+func (p *CompiledPlan) NoData() *contract.NoDataConfigV1 {
+	if p == nil {
+		return nil
+	}
+	return p.noData
+}
+
+// NoDataLevel is the level the synthetic no-data series are evaluated against,
+// compiled from the no_data configuration by the same compiler that compiles a
+// declared level. Nil means the Plan detects no no-data.
+//
+// It is deliberately not in Levels(). A caller iterating the strategy's levels
+// is asking what the operator configured, and this is not one of those; a
+// caller evaluating a no-data series asks for it by name.
+func (p *CompiledPlan) NoDataLevel() *CompiledLevel {
+	if p == nil {
+		return nil
+	}
+	return p.noDataLevel
+}
+
+// NoDataView is this Plan seen as a synthetic no-data series sees it: the same
+// Plan in every respect except that its levels are the one no-data level.
+//
+// It exists because "which levels is this Plan judged against" turned out to be
+// asked in fifteen places across four packages - the evaluator, the detector,
+// the trigger and the execution contract's own validators - and every one of
+// them asks the same way, by calling Levels(). Threading a level set through
+// all fifteen would have left the sixteenth, added later by someone with no
+// reason to know the rule; answering the existing question differently leaves
+// nothing to thread and nothing to forget.
+//
+// Everything else is shared with the Plan it came from, deliberately: the plan
+// ref, the fingerprints, the state compatibility hash. A synthetic series is
+// this Plan's series, and its runtime state is told apart by the series digest
+// - its dimensions carry the no-data tag - not by pretending to be a different
+// Plan.
+//
+// The view is read-only, and it is safe because a CompiledPlan is: the copy is
+// shallow, so it shares every reference the Plan holds, and nothing on this type
+// mutates. A setter added here later would reach through the view into the Plan
+// it came from - and through every other view of it.
+//
+// Nil when the Plan detects no no-data, which is the caller asking for a view
+// of something that is not there.
+func (p *CompiledPlan) NoDataView() *CompiledPlan {
+	if p == nil || p.noDataLevel == nil {
+		return nil
+	}
+	view := *p
+	view.levels = []CompiledLevel{*p.noDataLevel}
+	return &view
 }
 
 // TargetScope is the strategy's monitoring target, frozen with the Plan. Nil

@@ -102,7 +102,7 @@ func TestCoordinatorRequiresTheOpenAlertCopy(t *testing.T) {
 	ports, evaluator, _ := workerG4Coordinator(t)
 	_, err := worker.NewSlotExecutionCoordinator(worker.Ports{
 		Finalization: ports, Activation: ports, Query: ports, Sequencer: ports, Evaluator: evaluator,
-		Admission: ports, GapGuard: ports, Events: ports, State: ports, Progress: ports,
+		Admission: ports, GapGuard: ports, NoData: worker.SharedNoDataStore, Hosts: worker.SharedHostBusiness, Events: ports, State: ports, Progress: ports,
 		Observer: observability.ObserverFunc(func(context.Context, observability.Observation) {}),
 	}, worker.ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10})
 	if err == nil {

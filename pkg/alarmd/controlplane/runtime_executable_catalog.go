@@ -558,7 +558,7 @@ func terminalDisposition(sourceID, scope string, terminal strategy.Terminal) (Ob
 		return ObjectDisposition{}, errors.New("alarmd controlplane: runtime compiler returned an unclassified terminal reason")
 	}
 	return ObjectDisposition{SourceID: sourceID, Scope: scope, LevelID: terminal.LevelID,
-		Disposition: disposition, Reason: terminal.ReasonCode}, nil
+		Disposition: disposition, Reason: terminal.ReasonCode, FieldPath: terminal.FieldPath}, nil
 }
 
 func withoutAcceptedPlanDisposition(dispositions []ObjectDisposition, sourceID string) []ObjectDisposition {

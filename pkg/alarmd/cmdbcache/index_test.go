@@ -395,3 +395,72 @@ func TestAnEmptyHostCacheIsNotAFleetWithNoHosts(t *testing.T) {
 		t.Fatalf("health = %+v, want the empty cache reported as degraded", health)
 	}
 }
+
+// Whether a caller may act on the answers is its own question, and the two
+// states where it may not are the two Health already names.
+//
+// A lookup cannot carry this. "Not held" is the right answer about one host --
+// one CMDB has never heard of is not expected -- and it is the answer this
+// store gives about every host when there is no index, which a caller reads as
+// a target that resolved to nobody. That reading is legitimate for a real
+// empty target, so nothing downstream can tell the two apart afterwards.
+//
+// A stale index resolves. It holds hosts and answers about them; refusing to
+// act on it would stop every host-scoped decision for the length of a CMDB
+// hiccup, which is the larger harm and not the one this is for.
+func TestHostIndexResolvedFollowsWhetherThereIsAnIndexToAnswerFrom(t *testing.T) {
+	clock := time.Unix(1700000000, 0).UTC()
+	cold, err := NewStore(stubLoader{}, StoreOptions{
+		RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, Now: func() time.Time { return clock },
+	})
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	if cold.HostIndexResolved() {
+		t.Fatal("a store that has never loaded reported that it can resolve hosts; every lookup it " +
+			"answers is 'not held', which is what a target with no hosts left looks like")
+	}
+	if (*Store)(nil).HostIndexResolved() {
+		t.Fatal("a nil store reported that it can resolve hosts")
+	}
+
+	empty, err := NewStore(stubLoader{index: newIndexBuilder(clock).index}, StoreOptions{
+		RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, Now: func() time.Time { return clock },
+	})
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	if err := empty.Refresh(context.Background()); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if empty.HostIndexResolved() {
+		t.Fatal("an index holding no host reported that it can resolve hosts; Health already calls " +
+			"that state degraded because it is never a real one here")
+	}
+
+	builder := newIndexBuilder(clock)
+	builder.addFields([]string{"10.0.0.1|0", multiModuleHost})
+	loaded, err := NewStore(stubLoader{index: builder.index}, StoreOptions{
+		RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, Now: func() time.Time { return clock },
+	})
+	if err != nil {
+		t.Fatalf("new store: %v", err)
+	}
+	if err := loaded.Refresh(context.Background()); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if !loaded.HostIndexResolved() {
+		t.Fatal("an index holding hosts reported that it cannot resolve them")
+	}
+
+	// And it stays resolved when the index goes stale: the answers are old,
+	// not absent.
+	clock = clock.Add(11 * time.Minute)
+	if health := loaded.Health(); !health.Degraded || health.DegradedReason != "index_stale" {
+		t.Fatalf("fixture: health = %+v, want the stale state this asserts against", health)
+	}
+	if !loaded.HostIndexResolved() {
+		t.Fatal("a stale index reported that it cannot resolve hosts; that would stop every " +
+			"host-scoped decision for the length of a CMDB hiccup")
+	}
+}

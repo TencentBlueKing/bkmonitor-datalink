@@ -61,8 +61,17 @@ func TestAStaleControlSourceDegradesTheVerdictOnItsOwn(t *testing.T) {
 				t.Fatalf("degradations = %+v, want kinds %v", view.Degradations, arm.kinds)
 			}
 			for index, kind := range arm.kinds {
-				if view.Degradations[index] != (Degradation{Kind: kind, Replica: "pod-a"}) {
-					t.Fatalf("degradation %d = %+v, want %s on pod-a", index, view.Degradations[index], kind)
+				got := view.Degradations[index]
+				if got.Kind != kind || got.Replica != "pod-a" {
+					t.Fatalf("degradation %d = %+v, want %s on pod-a", index, got, kind)
+				}
+				// The stale source's standing carries where its last round
+				// stopped and what it said, as the replica has them -- a
+				// follower reading persisted staleness has neither -- so the
+				// line can name the failure and not only the bound.
+				if kind == DegradationControlSourceStale && (got.Stage != arm.facts.LastFailureExit || got.Text != arm.facts.LastFailure) {
+					t.Fatalf("degradation %d = %+v, want the source's last failure exit %q and text %q on it",
+						index, got, arm.facts.LastFailureExit, arm.facts.LastFailure)
 				}
 			}
 			if len(view.Anomalies) != 0 {

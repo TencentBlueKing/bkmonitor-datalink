@@ -46,8 +46,10 @@ const (
 	// TargetScopeTopoNode covers host_topo_node and service_topo_node: both
 	// are matched against the topology nodes a record belongs to.
 	TargetScopeTopoNode TargetScopeField = "TOPO_NODE"
-	// TargetScopeHost covers ip / bk_target_ip and dynamic groups of hosts,
-	// which Python also reduces to host identities.
+	// TargetScopeHost covers ip / bk_target_ip. A dynamic group of hosts also
+	// reduces to host identities in Python, and used to be named here as if it
+	// did so on this side too; the compiler refuses that target shape outright,
+	// so no scope this package holds was ever built from one.
 	TargetScopeHost TargetScopeField = "HOST"
 	// TargetScopeServiceInstance covers service_instance_id.
 	TargetScopeServiceInstance TargetScopeField = "SERVICE_INSTANCE"

@@ -249,22 +249,163 @@ func TestSlotExecutionCoordinatorKeepsExistingGapWritePaths(t *testing.T) {
 	}
 }
 
-func TestSlotExecutionCoordinatorDoesNotReuseGapForGapSkipped(t *testing.T) {
+// Reuse of an existing gap marker is decided by whether it already protects
+// the Slot, not by which query-free mode is asking.
+//
+// It used to be decided by the mode, and that made a Slot unfinishable. A
+// streaming attempt writes a marker for grid point T -- say QUERY_UNAVAILABLE,
+// because its query came back empty. The owner changes. The next owner reaches
+// T past its replay window and finalizes it query-free as GAP_SKIPPED. Same
+// Slot, same ApplyVersion, and legitimately different content: the two paths
+// record different reasons for the same protection. The idempotence check
+// compares the digests, finds them different, and refuses -- and refuses again
+// on every round after, because the marker does not go away and neither does
+// the Slot.
+//
+// The invariant that check enforces ("same ApplyVersion implies same
+// MutationDigest") holds inside one write path. Across two it is simply not
+// true, and the question worth asking is the other one: is the protection
+// already sufficient. queryFreeGapAlreadyProtects answers exactly that, and it
+// is unchanged here -- what moves is the gate in front of it.
+func TestQueryFreeGapReuseFollowsSufficiencyAndNotTheMode(t *testing.T) {
+	for _, mode := range []struct {
+		name         string
+		finalization execution.FinalizationMode
+		reason       string
+	}{
+		{name: "gap skipped", finalization: execution.FinalizationGapSkipped, reason: contract.ReasonGapSkipped},
+		{name: "snapshot unavailable", finalization: execution.FinalizationSnapshotUnavailable, reason: contract.ReasonSnapshotUnavailable},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			// Sufficient: an earlier attempt's marker, written for a different
+			// reason, protecting the same Plan to the same depth.
+			t.Run("an earlier attempt's marker already protects the Slot", func(t *testing.T) {
+				fixture, selected := queryFreeFixtureWithMode(t, mode.finalization, mode.reason)
+				seedQueryFreeMarker(t, fixture, selected, execution.ReasonCode(contract.ReasonQueryUnavailable),
+					selected.RequiredFullSlots)
+
+				result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+				if err != nil || !result.Completed {
+					t.Fatalf("Execute() result=%+v error=%v, want the Slot finalized on the protection that "+
+						"is already there. A Slot refused here is refused on every later round too: the "+
+						"marker stays, the Slot stays, and the Query Group stops advancing", result, err)
+				}
+				if fixture.ports.progressCalls != 1 {
+					t.Fatalf("progress commits = %d, want the Slot's progress committed", fixture.ports.progressCalls)
+				}
+				if fixture.ports.applyCalls != 0 || len(fixture.ports.mutations) != 0 {
+					t.Fatalf("apply=%d mutations=%d, want the existing protection reused rather than rewritten",
+						fixture.ports.applyCalls, len(fixture.ports.mutations))
+				}
+			})
+
+			// Insufficient: the same shape, protecting fewer Slots than this
+			// Plan now requires. The predicate is what refuses it, and it is
+			// deliberately not relaxed.
+			t.Run("a marker that protects less than the Plan requires is still refused", func(t *testing.T) {
+				fixture, selected := queryFreeFixtureWithMode(t, mode.finalization, mode.reason)
+				seedQueryFreeMarker(t, fixture, selected, execution.ReasonCode(contract.ReasonQueryUnavailable),
+					selected.RequiredFullSlots-1)
+
+				result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+				if err == nil || result.Completed || fixture.ports.progressCalls != 0 {
+					t.Fatalf("Execute() result=%+v error=%v progress=%d, want the Slot refused: the marker "+
+						"protects %d full Slots and the Plan requires %d", result, err,
+						fixture.ports.progressCalls, selected.RequiredFullSlots-1, selected.RequiredFullSlots)
+				}
+
+				// And the refusal says what it compared.
+				var conflict *worker.GapGuardConflictError
+				if !errors.As(err, &conflict) {
+					t.Fatalf("Execute() error = %v, want a %T", err, conflict)
+				}
+				if !errors.Is(err, worker.ErrGapGuardConflict) {
+					t.Fatalf("Execute() error = %v, does not unwrap to the conflict sentinel", err)
+				}
+				if got, ok := worker.GapGuardConflictReason(err); !ok || string(got) != contract.ReasonGapGuardConflict {
+					t.Fatalf("reason = %q (ok=%t), want %s rather than an unclassified internal error",
+						got, ok, contract.ReasonGapGuardConflict)
+				}
+				if conflict.Persisted.RequiredFullSlots != selected.RequiredFullSlots-1 ||
+					conflict.Proposed.RequiredFullSlots != selected.RequiredFullSlots {
+					t.Fatalf("compared values = persisted %+v proposed %+v, want the two RequiredFullSlots "+
+						"that differ. A refusal that names neither side leaves the reader with two facts "+
+						"they cannot see", conflict.Persisted, conflict.Proposed)
+				}
+				if conflict.Plan != selected.Identity || conflict.StateGeneration != selected.StateGeneration {
+					t.Fatalf("conflict names plan %+v generation %q, want %+v and %q",
+						conflict.Plan, conflict.StateGeneration, selected.Identity, selected.StateGeneration)
+				}
+			})
+
+			// The same question again on the other side of the round. When the
+			// activation moves between the guard read and the progress read,
+			// the changed Plans are protected in a second pass -- which asked
+			// the mode too, and so refused the same way, for the same Slot,
+			// with nothing on any page saying which of the two passes it was.
+			t.Run("the activation changes underneath the round", func(t *testing.T) {
+				before := activePlanResult("state-v2", 2)
+				after := activePlanResult("state-v3", 3)
+				fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{before, after})
+				fixture.ports.finalization.Mode = mode.finalization
+				fixture.ports.finalization.ReasonCode = execution.ReasonCode(mode.reason)
+				seedQueryFreeMarker(t, fixture, before.Facts[0].Selected,
+					execution.ReasonCode(contract.ReasonQueryUnavailable), before.Facts[0].Selected.RequiredFullSlots)
+				changed := after.Facts[0].Selected
+				changedMarker := queryFreeGapMarker(t, changed,
+					applyVersionForActivatedPlan(t, slotRequest(execution.OperationReplay), changed),
+					changed.ScheduleRevision, []execution.GapScopeState{{
+						Scope: execution.GapScope{}, Status: execution.GapStatusGapped,
+						ReasonCode:        execution.ReasonCode(contract.ReasonQueryUnavailable),
+						RequiredFullSlots: changed.RequiredFullSlots,
+					}})
+				fixture.ports.markers[changedMarker.Identity] = changedMarker
+
+				result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
+				if err != nil {
+					t.Fatalf("Execute() error = %v, want the changed activation protected by what already "+
+						"protects it. The Slot is retried for config drift either way; an error here stops "+
+						"the Query Group instead", err)
+				}
+				if result.Completed || result.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) {
+					t.Fatalf("Execute() result = %+v, want a config drift retry", result)
+				}
+				if fixture.ports.applyCalls != 0 || len(fixture.ports.mutations) != 0 {
+					t.Fatalf("apply=%d mutations=%d, want the existing protection reused",
+						fixture.ports.applyCalls, len(fixture.ports.mutations))
+				}
+			})
+		})
+	}
+}
+
+func queryFreeFixtureWithMode(
+	t *testing.T,
+	mode execution.FinalizationMode,
+	reason string,
+) (queryFreeFixture, execution.ActivatedPlan) {
+	t.Helper()
 	activation := activePlanResult("state-v2", 2)
 	fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{activation})
-	selected := activation.Facts[0].Selected
-	marker := queryFreeGapMarker(t, selected, currentQueryFreeApplyVersion(t), selected.ScheduleRevision, []execution.GapScopeState{{
-		Scope: execution.GapScope{}, Status: execution.GapStatusGapped,
-		ReasonCode: execution.ReasonCode(contract.ReasonConfigDrift), RequiredFullSlots: 3,
-	}})
-	fixture.ports.markers[marker.Identity] = marker
-	fixture.ports.finalization.Mode = execution.FinalizationGapSkipped
-	fixture.ports.finalization.ReasonCode = execution.ReasonCode(contract.ReasonGapSkipped)
+	fixture.ports.finalization.Mode = mode
+	fixture.ports.finalization.ReasonCode = execution.ReasonCode(reason)
+	return fixture, activation.Facts[0].Selected
+}
 
-	result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
-	if err == nil || result.Completed || fixture.ports.progressCalls != 0 {
-		t.Fatalf("Execute() result=%+v error=%v progress=%d", result, err, fixture.ports.progressCalls)
-	}
+func seedQueryFreeMarker(
+	t *testing.T,
+	fixture queryFreeFixture,
+	selected execution.ActivatedPlan,
+	reason execution.ReasonCode,
+	requiredFullSlots uint32,
+) {
+	t.Helper()
+	marker := queryFreeGapMarker(t, selected, currentQueryFreeApplyVersion(t), selected.ScheduleRevision,
+		[]execution.GapScopeState{{
+			Scope: execution.GapScope{}, Status: execution.GapStatusGapped,
+			ReasonCode: reason, RequiredFullSlots: requiredFullSlots,
+		}})
+	fixture.ports.markers[marker.Identity] = marker
 }
 
 func TestSlotExecutionCoordinatorHandlesMixedAndFullyReusedQueryFreePlans(t *testing.T) {
@@ -724,7 +865,7 @@ func newQueryFreeFixture(t *testing.T, activations []execution.PlanActivationRes
 	}
 	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{OpenAlerts: ports,
 		Finalization: ports, Activation: ports,
-		Query: ports, Sequencer: ports, Evaluator: ports, Admission: ports, GapGuard: ports,
+		Query: ports, Sequencer: ports, Evaluator: ports, Admission: ports, GapGuard: ports, NoData: worker.SharedNoDataStore, Hosts: worker.SharedHostBusiness,
 		Events: ports, State: ports, Progress: ports,
 		Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 			observations = append(observations, observability.NormalizeObservation(observation))

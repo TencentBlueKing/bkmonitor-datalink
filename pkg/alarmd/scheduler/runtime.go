@@ -364,6 +364,12 @@ type Runner struct {
 	sourceNextAt   time.Time
 	dueBound       RunnerDueBound
 	queryCooldown  queryCooldownState
+	// nextDeadline is the query deadline of the Slot this Runner froze and did
+	// not complete -- deferred for readiness, refused admission, or failed and
+	// backing off -- so a dispatcher can order it against the others by when
+	// its work stops being worth doing. Zero once the Slot completes or the
+	// source says nothing is due.
+	nextDeadline time.Time
 }
 
 // DueVerdict is what one round was able to say about whether its Query Group
@@ -491,6 +497,31 @@ func NewRunner(
 		return nil, errors.New("alarmd scheduler: complete Runner dependencies are required")
 	}
 	return &Runner{queryGroup: queryGroup, session: session, source: source, executor: executor, flights: flights, now: now}, nil
+}
+
+// NextDeadline reports when the next Slot this Runner would run stops being
+// worth running: the frozen Slot's query deadline when one is held, else a
+// bound derived from the schedule -- the next due second plus the shortest
+// interval due there, which for every cohort is at or before the true
+// deadline and orders the cohorts the same way. Zero when nothing is known,
+// which a dispatcher orders after everything that is.
+//
+// It is read at the same point NextReadyAt is: a dispatcher deciding what to
+// run next needs both, and a Slot that is ready first but expires last is
+// exactly the case the two answers have to be read together for.
+func (runner *Runner) NextDeadline() time.Time {
+	if runner == nil {
+		return time.Time{}
+	}
+	if !runner.nextDeadline.IsZero() {
+		return runner.nextDeadline
+	}
+	bound := runner.dueBound
+	if bound.Verdict == DueVerdictNotDue && !bound.Deferred && !bound.Retired &&
+		bound.NotDueUntilUnix > 0 && bound.IntervalSeconds > 0 {
+		return time.Unix(bound.NotDueUntilUnix+bound.IntervalSeconds, 0)
+	}
+	return time.Time{}
 }
 
 // NextReadyAt reports when the Runner can make its next QG-local attempt.
@@ -653,6 +684,7 @@ func (runner *Runner) runOneTracked(
 		}
 		if err == nil && !due {
 			runner.attempt = nil
+			runner.nextDeadline = time.Time{}
 		}
 		return execution.SlotExecutionResult{}, false, err
 	}
@@ -661,6 +693,9 @@ func (runner *Runner) runOneTracked(
 	if err := slot.Validate(runner.queryGroup); err != nil {
 		return execution.SlotExecutionResult{}, false, err
 	}
+	// Held from here until the Slot completes: every return below that
+	// leaves the Slot unfinished leaves this Runner due for the same Slot.
+	runner.nextDeadline = time.UnixMilli(slot.EarliestQueryDeadlineUnixMilli)
 	// The authoritative Slot supplies the maintenance deadline and configuration.
 	// Do not hide this gate in NextReadyAt: publication must be able to recheck it,
 	// and expired finalization must remain runnable without a query.
@@ -723,6 +758,7 @@ func (runner *Runner) runOneTracked(
 		}
 	}
 	if err == nil {
+		runner.nextDeadline = time.Time{}
 		runner.recordResult(slot, result, runner.now())
 		runner.recordQueryAvailability(ctx, slot, result, sourceFacts.IntervalSeconds)
 	}

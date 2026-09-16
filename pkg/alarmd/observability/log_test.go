@@ -285,3 +285,49 @@ func TestSeriesTraceDoesNotExpandEvaluationLogBudget(t *testing.T) {
 		t.Fatalf("unexpected payload: %#v", event)
 	}
 }
+
+// The activation_failed line's reason_code is the classification itself,
+// stage/class, verbatim -- the same word the fleet page groups the failure
+// on. It carried contract_retryable, which the normaliser folds to _other, so
+// the field people grep said nothing while the two beside it said
+// schedule_conflict. Every pair of the two closed lists survives.
+func TestActivationFailureReasonSurvivesNormalisationAndIsLogged(t *testing.T) {
+	t.Parallel()
+
+	for _, stage := range AllActivationFailureStages() {
+		for _, class := range AllActivationFailureClasses() {
+			reason := ActivationFailureReason(stage, class)
+			if got := NormalizeReason(reason, ResultDegraded); got != reason {
+				t.Fatalf("NormalizeReason(%q) = %q, want it kept", reason, got)
+			}
+		}
+	}
+	if got := NormalizeReason("schedule_cutover/made_up", ResultDegraded); got != ReasonOther {
+		t.Fatalf("a class outside the list normalised to %q, want _other", got)
+	}
+
+	var output bytes.Buffer
+	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := NewBoundedLogPolicy(limiter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+		Component: ComponentControlPlane, Stage: StageActivationFailed, Result: ResultDegraded,
+		ReasonCode: ActivationFailureReason(ActivationFailureStageScheduleCutover, ActivationFailureClassScheduleConflict),
+		ActivationFailure: &ActivationFailureFacts{
+			Stage: ActivationFailureStageScheduleCutover, Class: ActivationFailureClassScheduleConflict,
+		},
+		Err: errors.New("alarmd controlplane: schedule activation conflict"),
+	})
+	var event map[string]any
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("decode activation failure log: %v; log=%s", err, output.String())
+	}
+	if event["reason_code"] != "schedule_cutover/schedule_conflict" {
+		t.Fatalf("reason_code = %#v, want schedule_cutover/schedule_conflict; event=%#v", event["reason_code"], event)
+	}
+}

@@ -67,43 +67,74 @@ func TestDelayedSourcePreservesReadinessAndQueriesOlderWindow(t *testing.T) {
 	}
 }
 
-func TestPrepareReadinessProfilePreservesLongIntervalAndRecoveryBudget(t *testing.T) {
-	for _, test := range []struct {
-		name      string
-		interval  time.Duration
-		recovery  bool
-		wantDelay time.Duration
-	}{
-		{name: "normal-long-interval", interval: time.Minute, wantDelay: 30 * time.Second},
-		{name: "recovery-thirty-second-interval", interval: 30 * time.Second, recovery: true, wantDelay: 30 * time.Second},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			contractRef, frozen := frozenExecution(t)
-			evaluationMillis := int64(contractRef.Slot.EvaluationTime) * 1000
-			frozen.DuePlans[0].ScheduleSpec = execution.ScheduleSpec{
-				EvaluationIntervalSeconds: int64(test.interval / time.Second),
-				Timezone:                  "UTC",
-			}
-			frozen.DuePlans[0].CompletionDeadlineUnixMilli = evaluationMillis + test.interval.Milliseconds()
-			frozen.Requirements[0].Consumers[0].ConsumerDeadlineUnixMilli = frozen.DuePlans[0].CompletionDeadlineUnixMilli
-			contractRef = bindFrozenDueDigest(t, contractRef, frozen)
+// One Slot has one readiness boundary, whichever operation is asking.
+//
+// A recovery operation used to get the configured wait with the budget check
+// skipped, on the reasoning that a replay is late already so it may as well be
+// careful. On a ten-second Slot that reasoning is fatal: the replay is told to
+// wait until the thirtieth second, and by the thirtieth second the Slot is four
+// grid points behind -- past the replay distance -- so it is skipped. The wait
+// meant to protect the read consumed the only window the read had, and every
+// ten-second strategy that missed a live deadline lost that round, for ever,
+// with no failure anywhere to read.
+//
+// Written as the equality rather than as two expected numbers: the numbers are
+// the schedule's business and change with it, while "the same instant for
+// every operation" is the property that must not change again. The long
+// interval is here because it is the case where the configured wait is taken
+// in full, so a change that simply clamped everything to the minimum would
+// still be caught.
+func TestReadinessIsTheSameInstantForEveryOperation(t *testing.T) {
+	for _, interval := range []time.Duration{10 * time.Second, 15 * time.Second, 30 * time.Second, time.Minute} {
+		t.Run(interval.String(), func(t *testing.T) {
+			readyAt := func(recovery bool) int64 {
+				t.Helper()
+				contractRef, frozen := frozenExecution(t)
+				evaluationMillis := int64(contractRef.Slot.EvaluationTime) * 1000
+				spec := execution.DeriveScheduleSpec(int64(interval / time.Second))
+				spec.Timezone = "UTC"
+				frozen.DuePlans[0].ScheduleSpec = spec
+				frozen.DuePlans[0].CompletionDeadlineUnixMilli = evaluationMillis + spec.CompletionOffsetSeconds()*1000
+				frozen.Requirements[0].Consumers[0].ConsumerDeadlineUnixMilli = frozen.DuePlans[0].CompletionDeadlineUnixMilli
+				contractRef = bindFrozenDueDigest(t, contractRef, frozen)
 
-			prepared, err := prepare(contractRef, frozen, 30*time.Second, test.recovery)
-			if err != nil {
-				t.Fatalf("prepare() error=%v", err)
+				prepared, err := prepare(contractRef, frozen, 30*time.Second, recovery)
+				if err != nil {
+					t.Fatalf("prepare(recovery=%t) error=%v", recovery, err)
+				}
+				if len(prepared.Queries) != 1 {
+					t.Fatalf("queries=%d, want 1", len(prepared.Queries))
+				}
+				if len(prepared.Queries[0].ReadinessInvalidRequirements) != 0 {
+					t.Fatalf("readiness-invalid requirements=%+v", prepared.Queries[0].ReadinessInvalidRequirements)
+				}
+				return prepared.Queries[0].ReadyAtUnixMilli - evaluationMillis
 			}
-			if len(prepared.Queries) != 1 {
-				t.Fatalf("queries=%d, want 1", len(prepared.Queries))
+			normal, recovered := readyAt(false), readyAt(true)
+			if normal != recovered {
+				t.Fatalf("interval=%s: normal reads at T+%s and a recovery at T+%s. A replay held past "+
+					"its own replay distance is dispatched, made to wait, and then skipped for having "+
+					"waited -- every round, for every Slot of this period that misses its live deadline",
+					interval, time.Duration(normal)*time.Millisecond, time.Duration(recovered)*time.Millisecond)
 			}
-			wantReadyAt := evaluationMillis + test.wantDelay.Milliseconds()
-			if prepared.Queries[0].ReadyAtUnixMilli != wantReadyAt {
-				t.Fatalf("ready_at=%d, want unchanged delay boundary %d", prepared.Queries[0].ReadyAtUnixMilli, wantReadyAt)
-			}
-			if len(prepared.Queries[0].ReadinessInvalidRequirements) != 0 {
-				t.Fatalf("readiness-invalid requirements=%+v", prepared.Queries[0].ReadinessInvalidRequirements)
+			// The wait is still the schedule's own, not one value for everyone.
+			want := settlingWaitWithinBudget(execution.DeriveScheduleSpec(int64(interval/time.Second)), 30*time.Second,
+				time.Duration(frozenExecutionReserveMilli(t))*time.Millisecond)
+			if time.Duration(normal)*time.Millisecond != want {
+				t.Fatalf("interval=%s reads at T+%s, want the schedule's settling wait %s",
+					interval, time.Duration(normal)*time.Millisecond, want)
 			}
 		})
 	}
+}
+
+// frozenExecutionReserveMilli is the downstream execution reserve the shared
+// fixture gives its consumer, read from the fixture rather than repeated, so
+// the test above states the rule instead of a number copied out of it.
+func frozenExecutionReserveMilli(t *testing.T) int64 {
+	t.Helper()
+	_, frozen := frozenExecution(t)
+	return frozen.Requirements[0].Consumers[0].DownstreamExecutionReserveMilliSec
 }
 
 func TestSourceReadinessBudgetInvalidIsPlanLocalForSubThirtySecondPlans(t *testing.T) {

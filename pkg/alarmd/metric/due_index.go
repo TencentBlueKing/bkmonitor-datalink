@@ -39,6 +39,7 @@ type dueIndexMetrics struct {
 	horizon        prometheus.Histogram
 	skipped        *prometheus.CounterVec
 	crowdedOut     *prometheus.CounterVec
+	turnaways      *prometheus.CounterVec
 	auditOvershoot *prometheus.HistogramVec
 }
 
@@ -132,6 +133,18 @@ func newDueIndexMetrics() dueIndexMetrics {
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "dispatch_skipped_total",
 			Help: "Dispatches the due index held back, by why the Query Group was not worth dispatching.",
 		}, []string{"reason"}),
+		turnaways: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "dispatch_queue_turnaways_total",
+			Help: "Query Groups a dispatcher queue turned away, by what happened and by the cohort of the " +
+				"Query Group's shortest due interval. normal_queue_full is an arrival the full ready queue " +
+				"held back, the walk resuming from it once a dispatch frees a place; normal_queue_evicted " +
+				"is the entry expiring last that a full ready queue gave up for an arrival expiring " +
+				"earlier; delayed_not_better and delayed_evicted are the same two on the recovery queue, " +
+				"ordered by readiness. Queues order by deadline, so the short cohorts should never be the " +
+				"ones held back or evicted: a 10s or 15s series rising here is the ordering not being " +
+				"applied. This is not dispatch_crowded_out_total, which counts an object still busy from " +
+				"its previous round.",
+		}, []string{"outcome", "cohort"}),
 		crowdedOut: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "dispatch_crowded_out_total",
 			Help: "Turns a Query Group lost because the dispatcher still held it from a previous round, " +
@@ -176,6 +189,11 @@ func newDueIndexMetrics() dueIndexMetrics {
 	for _, reason := range dispatchSkipReasons {
 		metrics.skipped.WithLabelValues(reason)
 	}
+	for _, outcome := range dispatchTurnawayOutcomes {
+		for _, cohort := range dispatchTurnawayCohorts {
+			metrics.turnaways.WithLabelValues(outcome, cohort)
+		}
+	}
 	for _, holder := range dispatchCrowdedOutHolders {
 		metrics.crowdedOut.WithLabelValues(holder)
 	}
@@ -184,7 +202,7 @@ func newDueIndexMetrics() dueIndexMetrics {
 
 func (m dueIndexMetrics) collectors() []prometheus.Collector {
 	return []prometheus.Collector{
-		m.entries, m.predictions, m.recomputes, m.versionChecks, m.horizon, m.skipped, m.crowdedOut,
+		m.entries, m.predictions, m.recomputes, m.versionChecks, m.horizon, m.skipped, m.crowdedOut, m.turnaways,
 		m.auditOvershoot,
 	}
 }
@@ -274,6 +292,23 @@ func (r *Recorder) RecordDispatchSkipped(reason string) {
 			return
 		}
 	}
+}
+
+// dispatchTurnawayOutcomes and dispatchTurnawayCohorts are the closed label
+// sets of dispatch_queue_turnaways_total; every series is created at
+// construction so a zero is a zero and not an absent series.
+var (
+	dispatchTurnawayOutcomes = []string{"normal_queue_full", "normal_queue_evicted", "delayed_not_better", "delayed_evicted"}
+	dispatchTurnawayCohorts  = []string{"10s", "15s", "30s", "other", "unknown"}
+)
+
+// RecordDispatchTurnaway counts one Query Group a dispatcher queue turned
+// away, at the branch that turned it away.
+func (r *Recorder) RecordDispatchTurnaway(outcome, cohort string) {
+	if r == nil || !knownLabel(dispatchTurnawayOutcomes, outcome) || !knownLabel(dispatchTurnawayCohorts, cohort) {
+		return
+	}
+	r.phaseTwo.dueIndex.turnaways.WithLabelValues(outcome, cohort).Inc()
 }
 
 // RecordDispatchCrowdedOut counts one turn the dispatcher took away from a

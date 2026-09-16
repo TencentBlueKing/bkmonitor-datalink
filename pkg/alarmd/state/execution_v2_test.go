@@ -21,6 +21,21 @@ type casMemoryBackend struct {
 	values   map[string][]byte
 	conflict bool
 	reads    int
+	// remaining models what PTTL would answer, in the same encoding: absent
+	// from the map means the key exists with no expiry, which is what a key
+	// written before lifetimes existed looks like.
+	remaining map[string]time.Duration
+	renewals  []renewalCall
+	// writeTTLs is the lifetime each write asked for, so a test can tell a key
+	// written with one from a key written to live forever.
+	writeTTLs map[string]time.Duration
+}
+
+type renewalCall struct {
+	Key       string
+	TTL       time.Duration
+	Threshold time.Duration
+	Renewed   bool
 }
 
 func (backend *casMemoryBackend) MGet(_ context.Context, keys []string) ([][]byte, error) {
@@ -30,6 +45,26 @@ func (backend *casMemoryBackend) MGet(_ context.Context, keys []string) ([][]byt
 		result[i] = append([]byte(nil), backend.values[key]...)
 	}
 	return result, nil
+}
+
+func (backend *casMemoryBackend) RenewIfBelow(
+	_ context.Context, key string, ttl, threshold time.Duration,
+) (bool, error) {
+	call := renewalCall{Key: key, TTL: ttl, Threshold: threshold}
+	if _, exists := backend.values[key]; exists {
+		// The script's rule, restated here rather than assumed: a key with no
+		// expiry is renewed, and one with time left above the threshold is not.
+		left, hasExpiry := backend.remaining[key]
+		if !hasExpiry || left < threshold {
+			call.Renewed = true
+			if backend.remaining == nil {
+				backend.remaining = make(map[string]time.Duration)
+			}
+			backend.remaining[key] = ttl
+		}
+	}
+	backend.renewals = append(backend.renewals, call)
+	return call.Renewed, nil
 }
 
 func TestIncrementalGapLoadStopsBeforeNextReadOnRejectionAndCancel(t *testing.T) {
@@ -59,7 +94,7 @@ func TestIncrementalGapLoadStopsBeforeNextReadOnRejectionAndCancel(t *testing.T)
 	}
 }
 func (*casMemoryBackend) SetMany(context.Context, []BackendWrite) error { return nil }
-func (backend *casMemoryBackend) CompareAndSet(_ context.Context, key string, expected []byte, missing bool, value []byte, _ time.Duration) (bool, error) {
+func (backend *casMemoryBackend) CompareAndSet(_ context.Context, key string, expected []byte, missing bool, value []byte, ttl time.Duration) (bool, error) {
 	if backend.conflict {
 		return false, nil
 	}
@@ -68,6 +103,10 @@ func (backend *casMemoryBackend) CompareAndSet(_ context.Context, key string, ex
 		return false, nil
 	}
 	backend.values[key] = append([]byte(nil), value...)
+	if backend.writeTTLs == nil {
+		backend.writeTTLs = make(map[string]time.Duration)
+	}
+	backend.writeTTLs[key] = ttl
 	return true, nil
 }
 

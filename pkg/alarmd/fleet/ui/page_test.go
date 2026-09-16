@@ -211,12 +211,115 @@ func TestThePageHasWordingForEveryCheckOwnerScheduleAndResult(t *testing.T) {
 			}
 		}
 	}
-	// And the table is the size the design says: the first screen is sixteen
-	// lines at most, and a seventeenth sentence here is a seventeenth check.
+	// And the table is the size the design says: the first screen is
+	// twenty lines at most, and a twenty-first sentence here is a
+	// twenty-first check.
 	entries := regexp.MustCompile(`(?m)^  [A-Z_]+:`).FindAllString(
 		regexp.MustCompile(`var CHECK = \{([\s\S]*?)\};`).FindStringSubmatch(body)[1], -1)
-	if len(entries) != 16 {
-		t.Errorf("CHECK has %d sentences, want 16", len(entries))
+	if len(entries) != 20 {
+		t.Errorf("CHECK has %d sentences, want 20", len(entries))
+	}
+	// The page's list of standings is the Go side's: a standing the page
+	// does not know is a line it files under "no objects, nothing up" and
+	// never shows.
+	standing := regexp.MustCompile(`function isStanding\(report\) \{[\s\S]*?return ([^;]*);`).FindStringSubmatch(body)
+	if standing == nil {
+		t.Fatal("the page has no isStanding")
+	}
+	for _, check := range fleet.Checks() {
+		named := strings.Contains(standing[1], "'"+string(check)+"'")
+		if named != check.Standing() {
+			t.Errorf("isStanding names %s = %v, the Go side says %v", check, named, check.Standing())
+		}
+	}
+	// And what to do about each, one per check and none for a check that
+	// does not exist: a line without a next step is the reader asking "so
+	// what do I do", which is the question the line exists to answer.
+	// Three tables past the sentence -- where the evidence is, what to do,
+	// what counts as recovered -- each one per check and none for a check
+	// that does not exist. A line missing any of the three is a reader
+	// asking the question that entry exists to answer.
+	for _, table := range []string{"EVIDENCE", "NEXT", "RECOVERY"} {
+		found := regexp.MustCompile(`var ` + table + ` = \{([\s\S]*?)\};`).FindStringSubmatch(body)
+		if found == nil {
+			t.Fatalf("the page has no %s table", table)
+		}
+		entries := map[string]bool{}
+		for _, entry := range regexp.MustCompile(`(?m)^  ([A-Z_]+):`).FindAllStringSubmatch(found[1], -1) {
+			entries[entry[1]] = true
+		}
+		for _, name := range checkNames() {
+			if !entries[name] {
+				t.Errorf("%s has no entry for %s: the line would say what happened and not this", table, name)
+			}
+		}
+		for name := range entries {
+			if !containsString(checkNames(), name) {
+				t.Errorf("%s has an entry for %s, which the server never sends", table, name)
+			}
+		}
+	}
+	// The replica-level standings have words too, one per kind the Go side
+	// can produce, and none the Go side cannot.
+	kinds := map[string]bool{}
+	for _, kind := range fleet.DegradationKinds {
+		kinds[string(kind)] = true
+	}
+	table := regexp.MustCompile(`var DEGRADATION = \{([\s\S]*?)\};`).FindStringSubmatch(body)
+	if table == nil {
+		t.Fatal("the page has no DEGRADATION wording table")
+	}
+	worded := map[string]bool{}
+	for _, entry := range regexp.MustCompile(`(?m)^  ([A-Z_]+):`).FindAllStringSubmatch(table[1], -1) {
+		worded[entry[1]] = true
+		if !kinds[entry[1]] {
+			t.Errorf("DEGRADATION has words for %s, which the server never sends", entry[1])
+		}
+	}
+	for kind := range kinds {
+		if !worded[kind] {
+			t.Errorf("DEGRADATION has no words for %s: the standing would render as its code", kind)
+		}
+	}
+	// And what a retained record is a record of: one entry per kind the Go
+	// side decides, none it does not, each naming the window it is decided
+	// on rather than assuming ten minutes.
+	losses := map[string]bool{}
+	for _, loss := range fleet.Losses {
+		losses[string(loss)] = true
+	}
+	lossTable := regexp.MustCompile(`var LOSS = \{([\s\S]*?)\};`).FindStringSubmatch(body)
+	if lossTable == nil {
+		t.Fatal("the page has no LOSS wording table")
+	}
+	lossWorded := map[string]bool{}
+	for _, entry := range regexp.MustCompile(`(?m)^  ([A-Z_]+): '([^']*)'`).FindAllStringSubmatch(lossTable[1], -1) {
+		lossWorded[entry[1]] = true
+		if !losses[entry[1]] {
+			t.Errorf("LOSS has words for %s, which the server never sends", entry[1])
+		}
+		// Each kind decided on a bound names it: the window for the two
+		// decided by age, the grace for the restart's.
+		switch entry[1] {
+		case string(fleet.LossOngoing), string(fleet.LossHistorical):
+			if !strings.Contains(entry[2], "{w}") {
+				t.Errorf("LOSS %s does not name the window it is decided on: %q", entry[1], entry[2])
+			}
+		case string(fleet.LossAfterRestart):
+			if !strings.Contains(entry[2], "{g}") {
+				t.Errorf("LOSS %s does not name the grace it is decided on: %q", entry[1], entry[2])
+			}
+		}
+	}
+	for loss := range losses {
+		if !lossWorded[loss] {
+			t.Errorf("LOSS has no words for %s: the record would render as its code", loss)
+		}
+	}
+	for _, field := range []string{"recent_window_seconds", "restart_grace_seconds"} {
+		if !strings.Contains(body, field) {
+			t.Errorf("the page does not read %s: the bound would be assumed rather than read", field)
+		}
 	}
 }
 
@@ -264,6 +367,28 @@ func TestThePageDoesNotInferASituationFromTheCounts(t *testing.T) {
 			t.Errorf("the page declares %q again: the page renders what the server decided and does not "+
 				"decide anything from the counts", retired)
 		}
+	}
+}
+
+// The queue verdict is read from the census, never from the wait share alone.
+//
+// The share said "支持扩容" at 50%, and a live deployment showed it at 58% with
+// three quarters of its CPU idle and nothing overdue. Whether queueing costs
+// anything is a question about deadlines; the census answers it and the share
+// cannot. A threshold on the share is the defect coming back.
+func TestTheQueueVerdictIsReadFromTheCensusNotTheWaitShare(t *testing.T) {
+	body := string(page)
+	if regexp.MustCompile(`share\s*>=?\s*\d`).MatchString(body) {
+		t.Error("the page compares the wait share against a number again: the verdict on queueing " +
+			"comes from the census (queueVerdict), the share is a measurement")
+	}
+	if !strings.Contains(body, "+ queueVerdict(census)") {
+		t.Error("the queue sentence does not read its verdict from queueVerdict(census)")
+	}
+	// Both readers of the census -- the first sentence and the queue verdict --
+	// go through one standing, so they cannot disagree about keeping up.
+	if strings.Count(body, "scheduleStanding(census)") < 2 {
+		t.Error("scheduleSentence and queueVerdict do not both read scheduleStanding(census)")
 	}
 }
 
@@ -389,6 +514,16 @@ func TestEveryAnomalyFieldThePageReadsExistsInTheAPI(t *testing.T) {
 // the exact verdict the field was added to overturn.
 func TestEveryWindowCoverageFieldThePageReadsExistsInTheAPI(t *testing.T) {
 	assertFieldsExist(t, "windowCoverage", reflect.TypeOf(fleet.HistoryCoverage{}))
+}
+
+// The schedule census, the wake facts on a row, and the retained span are read
+// under their own local names for the same reason: a misspelled field there
+// renders the first sentence of the page with a rate of undefined, or a row's
+// cycle position as a blank.
+func TestEveryScheduleFieldThePageReadsExistsInTheAPI(t *testing.T) {
+	assertFieldsExist(t, "census", reflect.TypeOf(fleet.ScheduleCensus{}))
+	assertFieldsExist(t, "wake", reflect.TypeOf(fleet.WakeFacts{}))
+	assertFieldsExist(t, "skip", reflect.TypeOf(fleet.SkippedSpan{}))
 }
 
 // Anomaly kinds had this check and start-time provenances did not, although the
@@ -584,4 +719,62 @@ func assertFieldsExist(t *testing.T, object string, response reflect.Type) {
 				object, match[1], response.Name())
 		}
 	}
+}
+
+func containsString(list []string, want string) bool {
+	for _, item := range list {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
+
+// The operating judgment is four closed states and a closed list of limits,
+// decided by the server; the page has words for every one and for none the
+// server never sends. A state without words would render as its code on the
+// line a reader opens the capacity panel with.
+func TestThePageHasWordingForEveryLoadState(t *testing.T) {
+	body := string(page)
+	tables := []struct {
+		name   string
+		values []string
+	}{
+		{"ON_TIME", stringsOf(fleet.OnTimeStates)},
+		{"BACKLOG", stringsOf(fleet.BacklogStates)},
+		{"LOSS_STATE", stringsOf(fleet.LossStates)},
+		{"BOTTLENECK", stringsOf(fleet.Bottlenecks)},
+		{"LOAD_LIMIT", stringsOf(fleet.LoadLimits)},
+		// And the one shape every failure is read in.
+		{"STAGE", stringsOf(fleet.Stages)},
+		{"DEPENDENCY", stringsOf(fleet.Dependencies)},
+		{"FAILURE_CLASS", stringsOf(fleet.Classes)},
+		{"EFFECT", stringsOf(fleet.Effects)},
+	}
+	for _, table := range tables {
+		found := regexp.MustCompile(`var ` + table.name + ` = \{([\s\S]*?)\};`).FindStringSubmatch(body)
+		if found == nil {
+			t.Fatalf("the page has no %s wording table", table.name)
+		}
+		worded := map[string]bool{}
+		for _, entry := range regexp.MustCompile(`(?m)^  ([A-Z_]+):`).FindAllStringSubmatch(found[1], -1) {
+			worded[entry[1]] = true
+			if !containsString(table.values, entry[1]) {
+				t.Errorf("%s has words for %s, which the server never sends", table.name, entry[1])
+			}
+		}
+		for _, value := range table.values {
+			if !worded[value] {
+				t.Errorf("%s has no words for %s: the judgment would render as its code", table.name, value)
+			}
+		}
+	}
+}
+
+func stringsOf[T ~string](values []T) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		out = append(out, string(value))
+	}
+	return out
 }

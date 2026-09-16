@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/nodata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
@@ -124,6 +126,13 @@ type ObjectDisposition struct {
 	LevelID     uint32
 	Disposition Disposition
 	Reason      string
+	// FieldPath is where in the strategy document the refusal happened, as the
+	// compiler reported it. The compiler has always known; it was dropped on
+	// the way out, and a reader was left with a reason word for a document of
+	// a few hundred keys. One deployment's 327 LEVEL_INVALID strategies all
+	// came from the same field, and finding out which took compiling the
+	// documents again offline. Empty when the refusal is not about a field.
+	FieldPath string
 }
 
 type Catalog struct {
@@ -711,6 +720,29 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 	return candidate, nil
 }
 
+// itemUnit is the item's data unit, derived the way Python derives it: the
+// first non-empty unit among the item's query configs.
+//
+// Python builds the same value with list(set(...))[0] over the non-empty ones,
+// which is unordered when the configs disagree. This takes the first in the
+// stored order instead, so one document always compiles to one Plan. The
+// disagreement itself is not refused here -- Python does not refuse it, and a
+// new refusal would take strategies out that run today.
+func itemUnit(item legacyItem) string {
+	for _, raw := range item.QueryConfigs {
+		var config struct {
+			Unit string `json:"unit"`
+		}
+		if err := json.Unmarshal(raw, &config); err != nil {
+			continue
+		}
+		if config.Unit != "" {
+			return config.Unit
+		}
+	}
+	return ""
+}
+
 func primaryQueryContract(item legacyItem) (string, []string) {
 	expression := item.Expression
 	if itemHasAlgorithm(item, strategy.DetectorKindOsRestart) {
@@ -781,12 +813,210 @@ type legacyItem struct {
 	Functions    []json.RawMessage `json:"functions"`
 	QueryConfigs []json.RawMessage `json:"query_configs"`
 	Algorithms   []legacyAlgorithm `json:"algorithms"`
-	Unit         string            `json:"unit"`
+	// Unit is deliberately absent from this struct. The strategy cache has no
+	// unit on an item: Python's Item.unit is a derived property that walks
+	// query_configs and takes the first non-empty one, so reading a "unit" key
+	// here found nothing on every strategy the platform stores. Every
+	// threshold algorithm configured with a unit prefix then compiled against
+	// an empty data unit, failed to find the prefix in the identity unit's
+	// suffix table, and took the whole level out as LEVEL_INVALID. A full
+	// reading of one deployment put 327 strategies -- 11.5% of all of them --
+	// behind that one missing key, none of them evaluating at all, and the
+	// only symptom was a count of withheld objects that named no field.
+	//
+	// Read it with itemUnit.
 	// Target is the strategy's monitoring scope. It was silently ignored here
 	// until 2026-09-09, which is how alarmd came to alert on hosts outside
 	// every scoped strategy's target while Python filtered them out.
 	Target [][]legacyTargetCondition `json:"target"`
+	// NoDataConfig is the item's no-data setting. A pointer so that "the
+	// strategy cache carried no section" is distinguishable from "it carried
+	// one with everything at zero"; the two mean different things and the
+	// second is a malformed entry rather than a disabled item.
+	NoDataConfig json.RawMessage `json:"no_data_config"`
 }
+
+// legacyNoDataConfig is the no_data_config the strategy cache stores.
+//
+// The whole section is raw, and every field inside it is raw again, because the
+// type it arrives in is open at every position: the SaaS serializer stores
+// no_data_config as a bare DictField with no field-level validation, and the
+// backend reads it with int(), a truthiness test and a list comprehension, none
+// of which care what JSON type the value had.
+//
+// The reason to be raw is not tolerance for its own sake. A narrower Go type
+// here does not disable no-data when it meets a shape it did not expect - it
+// fails Decode for the whole strategy document, and the item's threshold
+// detection stops with it, under an error naming a field the vanished strategy
+// had nothing to do with. Typing the numbers alone was not enough: "is_enabled":
+// "true" and "agg_dimension": [1] kept the old blast radius until this became
+// raw too. Every shape problem now lands on NO_DATA_CONFIG_INVALID, which names
+// the item and leaves the rest of the catalogue alone.
+type legacyNoDataConfig struct {
+	IsEnabled    json.RawMessage   `json:"is_enabled"`
+	Continuous   json.RawMessage   `json:"continuous"`
+	AggDimension []json.RawMessage `json:"agg_dimension"`
+	Level        json.RawMessage   `json:"level"`
+}
+
+// legacyNoDataEnabled reads is_enabled the way the backend's truthiness test
+// does: a JSON true, a non-zero number, or a non-empty string that is not one
+// of Python's falsey spellings. A shape it cannot read is an error rather than
+// a silent "off", because "off" here is a strategy that stops detecting no-data
+// without saying so.
+func legacyNoDataEnabled(raw json.RawMessage) (bool, error) {
+	text := strings.TrimSpace(string(raw))
+	switch text {
+	case "", "null", "false", "0", `""`:
+		return false, nil
+	case "true":
+		return true, nil
+	}
+	if unquoted, err := strconv.Unquote(text); err == nil {
+		// Python's `if no_data_config.get("is_enabled")` is true for any
+		// non-empty string, "false" included. Following that literally is the
+		// point: this reads a store the backend also reads.
+		return strings.TrimSpace(unquoted) != "", nil
+	}
+	if number, err := json.Number(text).Float64(); err == nil {
+		return number != 0, nil
+	}
+	return false, fmt.Errorf("no_data_config is_enabled %s is not a value this can read", text)
+}
+
+// legacyNoDataDimension reads one agg_dimension entry. The backend puts these
+// straight into a set and compares them against dimension names, which are
+// strings; a number there is a name no series can carry, and saying so by item
+// is better than losing the strategy to a decode error.
+func legacyNoDataDimension(raw json.RawMessage) (string, error) {
+	text := strings.TrimSpace(string(raw))
+	if unquoted, err := strconv.Unquote(text); err == nil {
+		return unquoted, nil
+	}
+	return "", fmt.Errorf("no_data_config agg_dimension entry %s is not a dimension name", text)
+}
+
+// legacyNoDataNumber reads one of that section's numbers the way the backend's
+// int() does: a JSON number is truncated toward zero, a string is parsed as an
+// integer and refused if it is not one. int("5.9") raises in Python, so "5.9"
+// is refused here, while int(5.9) is 5 and 5.9 is 5 here.
+func legacyNoDataNumber(field string, raw json.RawMessage) (uint32, bool, error) {
+	text := strings.TrimSpace(string(raw))
+	if text == "" || text == "null" {
+		return 0, false, nil
+	}
+	if quoted, err := strconv.Unquote(text); err == nil {
+		text = strings.TrimSpace(quoted)
+		if text == "" {
+			return 0, false, nil
+		}
+	}
+	value := json.Number(text)
+	if parsed, err := value.Int64(); err == nil {
+		if parsed < 0 || parsed > math.MaxUint32 {
+			return 0, false, fmt.Errorf("no_data_config %s %s is outside the supported range", field, text)
+		}
+		return uint32(parsed), true, nil
+	}
+	// A float reaches here because Int64 refuses the fraction. Python truncates
+	// it; a quoted float is a different thing and Python raises on it, but the
+	// decoder has already erased the quotes, so both arrive the same way and
+	// both are truncated. The difference costs nothing a validated value would
+	// notice: it admits "5.9" where Python raises, and the alternative is
+	// refusing 5.9 where Python detects on 5.
+	parsed, err := value.Float64()
+	if err != nil || math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+		return 0, false, fmt.Errorf("no_data_config %s %q is not a number", field, text)
+	}
+	truncated := math.Trunc(parsed)
+	if truncated < 0 || truncated > math.MaxUint32 {
+		return 0, false, fmt.Errorf("no_data_config %s %s is outside the supported range", field, text)
+	}
+	return uint32(truncated), true, nil
+}
+
+// defaultNoDataLevel is the backend's read-side default for a level the item
+// omits: mixins/nodata.py reads .get("level", NO_DATA_LEVEL). continuous has no
+// counterpart here on purpose - the same dict literal that defaults level
+// subscripts continuous, so an item omitting it detects nothing rather than
+// detecting on a default.
+const defaultNoDataLevel uint32 = 2
+
+// noDataRosterUnsupported names the combination of target shape and no-data
+// dimensions this build cannot derive an expected set for, or "" when it can.
+//
+// It asks the derivation rather than repeating it. The Slot builds the roster
+// from the same two frozen facts, and the point of refusing here is that the
+// Slot never has to - which only holds while both reach the same verdict. A
+// second predicate that agrees today is a predicate that can drift tomorrow,
+// and the drift is silent in both directions: a Plan that errors every round,
+// or a Plan that quietly expects nothing.
+func noDataRosterUnsupported(scope *contract.TargetScopeV2, config *contract.NoDataConfigV1) string {
+	if config == nil {
+		return ""
+	}
+	if _, err := nodata.ClassifyRoster(scope, config.AggDimension); err != nil {
+		var unsupported *nodata.RosterUnsupportedError
+		if errors.As(err, &unsupported) {
+			return unsupported.Reason
+		}
+		return err.Error()
+	}
+	return ""
+}
+
+// frozenNoDataConfig returns the section to freeze on the Plan, or nil when the
+// item does not detect no-data. An item that is enabled but whose setting
+// cannot be validated is an error rather than a silent disable: the strategy
+// asked for the detection, and dropping it quietly is the failure mode that
+// looks like nothing happened.
+func frozenNoDataConfig(item legacyItem) (*contract.NoDataConfigV1, error) {
+	raw := strings.TrimSpace(string(item.NoDataConfig))
+	if raw == "" || raw == "null" {
+		return nil, nil
+	}
+	var source legacyNoDataConfig
+	if err := json.Unmarshal(item.NoDataConfig, &source); err != nil {
+		return nil, fmt.Errorf("alarmd controlplane: item %d no_data_config: %w", item.ID, err)
+	}
+	enabled, err := legacyNoDataEnabled(source.IsEnabled)
+	if err != nil {
+		return nil, fmt.Errorf("alarmd controlplane: item %d %w", item.ID, err)
+	}
+	if !enabled {
+		return nil, nil
+	}
+	dimensions := make([]string, 0, len(source.AggDimension))
+	for _, entry := range source.AggDimension {
+		dimension, err := legacyNoDataDimension(entry)
+		if err != nil {
+			return nil, fmt.Errorf("alarmd controlplane: item %d %w", item.ID, err)
+		}
+		dimensions = append(dimensions, dimension)
+	}
+	config := &contract.NoDataConfigV1{AggDimension: dimensions, Level: defaultNoDataLevel}
+	// Continuous stays zero when the item omits it, and Validate refuses that.
+	// See defaultNoDataLevel for why this one is not defaulted.
+	continuous, stated, err := legacyNoDataNumber("continuous", source.Continuous)
+	if err != nil {
+		return nil, fmt.Errorf("alarmd controlplane: item %d %w", item.ID, err)
+	}
+	if stated {
+		config.Continuous = continuous
+	}
+	level, stated, err := legacyNoDataNumber("level", source.Level)
+	if err != nil {
+		return nil, fmt.Errorf("alarmd controlplane: item %d %w", item.ID, err)
+	}
+	if stated {
+		config.Level = level
+	}
+	if err := config.Validate(); err != nil {
+		return nil, fmt.Errorf("alarmd controlplane: item %d no_data_config: %w", item.ID, err)
+	}
+	return config, nil
+}
+
 type legacyAlgorithm struct {
 	Level      uint32          `json:"level"`
 	Type       string          `json:"type"`
@@ -907,11 +1137,12 @@ func compilePlan(
 			return contract.EvaluationPlanV2{}, execution.ScheduleSpec{}, "", nil, errors.New("alarmd controlplane: invalid strategy_revision")
 		}
 	}
+	unit := itemUnit(item)
 	dimensionFields := append([]string(nil), dataset.IdentityFields...)
 	if itemHasAlgorithm(item, strategy.DetectorKindProcPort) {
 		dimensionFields = []string{"bind_ip", "listen", "nonlisten", "not_accurate_listen", "protocol"}
 	}
-	projection := contract.InputProjectionV2{DynamicDimensions: dataset.DynamicDimensions, ValueFields: []string{"value"}, DimensionFields: dimensionFields, BusinessIdentityField: "bk_biz_id", MultiValueAlignment: "SINGLE_VALUE", DataUnit: item.Unit, MissingValuePolicy: contract.MissingValuePolicyRequired}
+	projection := contract.InputProjectionV2{DynamicDimensions: dataset.DynamicDimensions, ValueFields: []string{"value"}, DimensionFields: dimensionFields, BusinessIdentityField: "bk_biz_id", MultiValueAlignment: "SINGLE_VALUE", DataUnit: unit, MissingValuePolicy: contract.MissingValuePolicyRequired}
 	detectByLevel := make(map[uint32]legacyDetect, len(source.Detects))
 	duplicateDetect := make(map[uint32]struct{})
 	for _, detect := range source.Detects {
@@ -960,7 +1191,7 @@ func compilePlan(
 				invalid = true
 				break
 			}
-			config, err := compileAlgorithmConfig(raw, item.Unit, levelID, projection, dataset.IdentityFields, interval, &levelInputs)
+			config, err := compileAlgorithmConfig(raw, unit, levelID, projection, dataset.IdentityFields, interval, &levelInputs)
 			if err != nil {
 				reason := "ALGORITHM_CONFIG_INVALID"
 				if raw.Type == strategy.DetectorKindThreshold {
@@ -1012,6 +1243,39 @@ func compilePlan(
 	ir := contract.StrategyIRV2{Schema: contract.Schema{Name: contract.StrategyIRSchemaV2, Major: 2, Minor: 0}, RequiredFeatures: []string{}, StrategyRef: ref, ExecutionSemantics: semantics, InputProjection: projection, Levels: levels}
 	plan := contract.EvaluationPlanV2{PlanID: strategyID, StrategyRef: ref, InputProjection: projection, SourceCompatibility: &contract.SourceCompatibilityV2{ItemID: strconv.FormatInt(item.ID, 10)}, StrategyIR: ir}
 	plan.TargetScope = targetScope
+	noData, err := frozenNoDataConfig(item)
+	if err != nil {
+		// Named rather than left to the generic rejection: an operator reading
+		// PLAN_INVALID against a strategy whose thresholds are fine has nothing
+		// to act on, and the whole Plan is withheld here - alarmd keeps one Plan
+		// per item and does not run half of it, where the backend would have
+		// gone on detecting thresholds while its nodata trigger raised.
+		dispositions = append(dispositions, ObjectDisposition{
+			SourceID: sourceID, Scope: "PLAN", Disposition: DispositionConfigRejected,
+			Reason: "NO_DATA_CONFIG_INVALID",
+		})
+		return contract.EvaluationPlanV2{}, execution.ScheduleSpec{}, "", dispositions, err
+	}
+	plan.NoData = noData
+	if reason := noDataRosterUnsupported(targetScope, noData); reason != "" {
+		// Refused where it is decided rather than every round. The expected set
+		// is a function of the target's shape and the no-data dimensions, both
+		// frozen here, so a Slot would reach the same answer with no new
+		// information - and reaching it there would mean a Plan that runs while
+		// detecting no absence at all, which reads as a working strategy.
+		//
+		// The whole Plan is withheld, thresholds included, which is the same
+		// trade NO_DATA_CONFIG_INVALID makes and is visible the same way: the
+		// withheld metric counts it under this reason, so what it costs is a
+		// number rather than an argument. On the deployment this was written
+		// against that number is one strategy.
+		dispositions = append(dispositions, ObjectDisposition{
+			SourceID: sourceID, Scope: "PLAN", Disposition: DispositionUnsupported,
+			Reason: "NO_DATA_ROSTER_UNSUPPORTED",
+		})
+		return contract.EvaluationPlanV2{}, execution.ScheduleSpec{}, "", dispositions,
+			fmt.Errorf("alarmd controlplane: item %d no-data roster: %s", item.ID, reason)
+	}
 	if ref.SnapshotRevision > 0 {
 		plan.OutputIdentity = &contract.MonitorOutputIdentity{DynamicDimensions: dataset.DynamicDimensions, DimensionFields: append([]string{}, dataset.IdentityFields...)}
 		plan.SubjectFacts = frozenSubjectFacts(source, item)

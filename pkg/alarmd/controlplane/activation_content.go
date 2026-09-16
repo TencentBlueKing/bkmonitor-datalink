@@ -164,9 +164,9 @@ func (repository *RedisCatalogRepository) loadQueryGroupObjectsCached(
 	missing := make([]ManifestQueryGroup, 0, len(batch))
 	for _, entry := range batch {
 		if value, ok := repository.objectCache.lookup(repository.queryGroupObjectKey(entry.ObjectDigest)); ok {
-			if object, ok := value.(QueryGroupObject); ok {
+			if stored, ok := value.(storedQueryGroupObject); ok {
 				repository.observeObjectRead(ctx, objectReadKindQueryGroup, objectReadHit)
-				objects[entry.ObjectDigest] = object
+				objects[entry.ObjectDigest] = stored.object
 				continue
 			}
 		}
@@ -276,10 +276,12 @@ func compilePublishedGroups(
 	stateSemantics strategy.StateSemantics,
 	publication SnapshotPublicationRef,
 	groups []QueryGroup,
+	named map[execution.QueryGroupIdentity]ContentEntry,
 	boundary execution.EvaluationTime,
 ) ([]PlanActivationRecord, []execution.ScheduleSegmentFact, error) {
 	return compilePublishedActivation(ctx, compiler, stateSemantics,
-		PublishedSnapshot{SchemaVersion: snapshotSchemaVersion, Publication: publication, QueryGroups: groups}, boundary)
+		PublishedSnapshot{SchemaVersion: snapshotSchemaVersion, Publication: publication, QueryGroups: groups},
+		named, boundary)
 }
 
 // carriedActivationRecords picks, for an activation of next over previous,

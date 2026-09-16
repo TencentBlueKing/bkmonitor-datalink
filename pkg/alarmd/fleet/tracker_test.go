@@ -11,8 +11,12 @@ package fleet
 
 import (
 	"context"
+	"errors"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
@@ -922,7 +926,7 @@ func TestTheByDesignColumnHoldsOnlyDeclaredReasons(t *testing.T) {
 		t.Fatal("no by-design reasons declared; the column would be empty and the check vacuous")
 	}
 	for reason := range byDesignReasons {
-		if situation, mapped := codeSituations[reason]; !mapped || finding(situation, 0).Owner == OwnerAlarmd {
+		if verdict, mapped := codeChecks[reason]; !mapped || (!verdict.normal && checkAnswers[verdict.check].Owner == OwnerAlarmd) {
 			t.Errorf("%q is by-design and would count against this deployment: an object nobody "+
 				"acts on must not be ours if it ever falls back to the anomaly column", reason)
 		}
@@ -1087,5 +1091,553 @@ func TestAnObjectThatLostASpanOfSlotsIsVisibleEvenThoughItIsRunningFine(t *testi
 	if _, ok := tracker.PrunedSkips()["qg-refused"]; ok {
 		t.Fatal("a refused skip was reported as a lost span; nothing was skipped, and reporting it " +
 			"would put objects on that line that lost nothing")
+	}
+}
+
+// A run of GAP_SKIPPED completions is retained as one span with its Slots, and
+// the rounds that follow do not clear it. A later skip after a normal round
+// starts a new span rather than extending the old one.
+func TestGapSkipsAreRetainedPastTheRoundsThatFollow(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	skip := func(slot int64) {
+		ctx := observability.ContextWithTraceFields(context.Background(),
+			observability.TraceFields{QueryGroupKey: "qg-skip", EvaluationTime: slot})
+		tracker.Observe(ctx, observability.Observation{ProgressCompletionKind: "GAP_SKIPPED"})
+	}
+	skip(100)
+	skip(160)
+	skip(220)
+	tracker.Observe(context.Background(), completion("qg-skip", "FULL_COMPLETED", "8930"))
+	tracker.Observe(context.Background(), completion("qg-skip", "FULL_COMPLETED", "8930"))
+	skips := tracker.GapSkips()
+	got, retained := skips["qg-skip"]
+	if !retained || got.FirstSlot != 100 || got.LastSlot != 220 || got.Slots != 3 || got.Replica != "pod-a" {
+		t.Fatalf("gap skips = %+v, want one span 100..220 of 3 Slots on pod-a retained past two normal rounds", skips)
+	}
+	if len(tracker.Anomalies()) != 0 {
+		t.Errorf("the object is listed as an anomaly after two normal rounds: the record has to be the "+
+			"retained span, not the anomaly list: %+v", tracker.Anomalies())
+	}
+	skip(400)
+	if got := tracker.GapSkips()["qg-skip"]; got.FirstSlot != 400 || got.Slots != 1 {
+		t.Errorf("a skip after a normal round = %+v, want a new span starting at 400", got)
+	}
+	// An object with no skips has no record.
+	tracker.Observe(context.Background(), completion("qg-fine", "FULL_COMPLETED", "8930"))
+	if _, present := tracker.GapSkips()["qg-fine"]; present {
+		t.Error("an object that never skipped has a skip record")
+	}
+}
+
+// An object whose query returns no records for the degraded-rounds threshold,
+// after having returned some, is listed as no-data: healthy for the equation,
+// the data side's to look at. One that never returned records is not -- a
+// source that only speaks when something happens looks the same until it
+// speaks -- and a round with records ends the run.
+func TestNoDataIsListedOnlyAfterDataStopped(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	empty := func(queryGroup string) {
+		tracker.Observe(context.Background(), completion(queryGroup, "FULL_EMPTY_COMPLETED", "8930"))
+	}
+	// Never had data: not listed however long it stays empty.
+	for round := 0; round < DefaultDegradedRounds+2; round++ {
+		empty("qg-silent-by-nature")
+	}
+	// Had data, then stopped.
+	tracker.Observe(context.Background(), completion("qg-stopped", "FULL_COMPLETED", "8930"))
+	at.at = at.at.Add(time.Minute)
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		empty("qg-stopped")
+	}
+	// Had data, empty for one round short of the threshold.
+	tracker.Observe(context.Background(), completion("qg-blip", "FULL_COMPLETED", "8930"))
+	for round := 0; round < DefaultDegradedRounds-1; round++ {
+		empty("qg-blip")
+	}
+	listed := tracker.NoData()
+	if len(listed) != 1 || listed[0].QueryGroup != "qg-stopped" {
+		t.Fatalf("no-data = %+v, want only qg-stopped", listed)
+	}
+	if listed[0].Kind != KindNoData || listed[0].ReasonCode != "FULL_EMPTY_COMPLETED" ||
+		!listed[0].Since.Equal(now.Add(time.Minute)) || listed[0].SinceFrom != SinceSnapshotContinuity {
+		t.Errorf("no-data row = %+v, want kind NO_DATA since the first empty round", listed[0])
+	}
+	if len(listed[0].Strategies) != 1 {
+		t.Errorf("no-data row carries %d strategies, want the one the object serves", len(listed[0].Strategies))
+	}
+	// Under no column: the equation counts it as healthy.
+	if len(tracker.Anomalies())+len(tracker.Undecidable())+len(tracker.ByDesign())+len(tracker.Demoted()) != 0 {
+		t.Error("a no-data object is in a column of the health equation")
+	}
+	// Records coming back end the run.
+	tracker.Observe(context.Background(), completion("qg-stopped", "FULL_COMPLETED", "8930"))
+	if len(tracker.NoData()) != 0 {
+		t.Errorf("no-data = %+v after records returned, want none", tracker.NoData())
+	}
+	// A degraded round with records ends it too: the query answered with
+	// something, and that something is what the degraded row is about.
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		empty("qg-stopped")
+	}
+	tracker.Observe(context.Background(), completion("qg-stopped", "COMPLETED_WITH_UNAVAILABLE", "8930"))
+	if len(tracker.NoData()) != 0 {
+		t.Errorf("no-data = %+v after a degraded round with records, want none", tracker.NoData())
+	}
+}
+
+// Every window count the observation carries reaches the row's coverage. The
+// same handoff check the worker has, at the other end of the wire: the tracker
+// copies field by field, and a field it forgets is computed, published and
+// never rendered -- which is how the reason a record could not be used was
+// dropped while its count crossed.
+//
+// The row-only counts (ShortRounds, EmptyRounds, FreshRounds) are the tracker's
+// own and have no counterpart on the observation; they are named here so the
+// check fails on any other field it cannot find.
+func TestEveryPublishedWindowCountReachesTheRow(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	facts := observability.HistoryCoverageFacts{}
+	source := reflect.ValueOf(&facts).Elem()
+	for i := 0; i < source.NumField(); i++ {
+		field := source.Field(i)
+		switch field.Kind() {
+		case reflect.Uint32:
+			field.SetUint(uint64(90 + i))
+		case reflect.String:
+			field.SetString("REASON_" + source.Type().Field(i).Name)
+		default:
+			t.Fatalf("%s is neither a uint32 nor a string; decide how it crosses", source.Type().Field(i).Name)
+		}
+	}
+	facts.Levels = 200
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		observation := completion("qg-coverage", "COMPLETED_WITH_UNAVAILABLE", "8930")
+		copied := facts
+		observation.HistoryCoverage = &copied
+		observation.ProgressCompletionCause, observation.ProgressCompletionReason = "LEVEL_OUTCOME_UNKNOWN", "HISTORY_WARMING"
+		tracker.Observe(context.Background(), observation)
+	}
+	rows := tracker.Undecidable()
+	if len(rows) != 1 || rows[0].Coverage == nil {
+		t.Fatalf("rows = %+v, want one undecidable object carrying coverage", rows)
+	}
+	published := reflect.ValueOf(rows[0].Coverage).Elem()
+	// The run counters and the round-over-round progress are the tracker's
+	// own: one round cannot supply them.
+	rowOnly := map[string]bool{"ShortRounds": true, "EmptyRounds": true, "FreshRounds": true, "HeldFullRounds": true,
+		"PreviousWorstValid": true, "PreviousKnown": true, "NoProgressRounds": true}
+	for i := 0; i < published.NumField(); i++ {
+		name := published.Type().Field(i).Name
+		if rowOnly[name] {
+			continue
+		}
+		want := source.FieldByName(name)
+		if !want.IsValid() {
+			t.Errorf("HistoryCoverage.%s on the row has no counterpart on the observation: nothing can fill it", name)
+			continue
+		}
+		if !reflect.DeepEqual(published.Field(i).Interface(), want.Interface()) {
+			t.Errorf("%s reached the row as %v, want %v: the tracker's copy dropped or crossed it", name,
+				published.Field(i).Interface(), want.Interface())
+		}
+	}
+	for i := 0; i < source.NumField(); i++ {
+		name := source.Type().Field(i).Name
+		if !published.FieldByName(name).IsValid() {
+			t.Errorf("the observation's %s has no field on the row: published and never rendered", name)
+		}
+	}
+}
+
+// The object's own clock: since when it has been saying its current reason,
+// and for how many rounds. It is not the anomaly's start -- an object degraded
+// for an hour under one reason and then for two rounds under another has been
+// anomalous for an hour and saying the new reason for two rounds -- and unlike
+// Kubernetes' lastTransitionTime it resets when only the reason changes.
+func TestTheReasonClockResetsWhenTheReasonChangesNotWhenTheRoundRepeats(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	degraded := func(reason string) {
+		observation := completion("qg-clock", "COMPLETED_WITH_UNAVAILABLE", "8930")
+		observation.ProgressCompletionCause, observation.ProgressCompletionReason = "LEVEL_OUTCOME_UNKNOWN", reason
+		tracker.Observe(context.Background(), observation)
+		at.at = at.at.Add(time.Minute)
+	}
+	for round := 0; round < 5; round++ {
+		degraded("QUERY_TIMEOUT")
+	}
+	rows := tracker.Anomalies()
+	if len(rows) != 1 || rows[0].Consecutive != 5 || !rows[0].ReasonSince.Equal(now) || !rows[0].Since.Equal(now) {
+		t.Fatalf("after five rounds of one reason: %+v, want consecutive 5 since the first round", rows)
+	}
+	degraded("HISTORY_WARMING")
+	degraded("HISTORY_WARMING")
+	rows = tracker.Anomalies()
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if rows[0].Consecutive != 2 || !rows[0].ReasonSince.Equal(now.Add(5*time.Minute)) {
+		t.Errorf("after the reason changed: consecutive %d since %v, want 2 since the sixth round", rows[0].Consecutive, rows[0].ReasonSince)
+	}
+	if !rows[0].Since.Equal(now) {
+		t.Errorf("the anomaly's own start moved to %v; it has been anomalous since the first round", rows[0].Since)
+	}
+	// The same completion under a different failure code is a different reason
+	// for a failed execution, and a blocked round is its own.
+	for round := 0; round < 3; round++ {
+		tracker.Observe(context.Background(), runOutcome("qg-blocked", "source_blocked"))
+	}
+	if blocked := tracker.Anomalies(); len(blocked) != 2 {
+		t.Fatalf("rows = %v", names(blocked))
+	}
+	for _, row := range tracker.Anomalies() {
+		if row.QueryGroup == "qg-blocked" && row.Consecutive != 3 {
+			t.Errorf("blocked object consecutive = %d, want 3", row.Consecutive)
+		}
+	}
+}
+
+// A failed round's own error travels to the row: the words, the Slot, and
+// how many rounds in a row have failed on that Slot. Two objects stuck on a
+// gap-guard conflict were located from raw logs and source while the page
+// said only which two; the row now says what the round said.
+func TestTheLastErrorTravelsToTheRowWithItsSlotAndAttempts(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	fail := func(slot int64, text string) {
+		tracker.Observe(context.Background(), observability.Observation{
+			ExecuteOutcome: "error", Err: errors.New(text),
+			Trace: observability.TraceFields{QueryGroupKey: "qg-stuck", EvaluationTime: slot},
+		})
+	}
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		fail(1_700_000_000, "alarmd state: gap guard conflict: expected 41 got 43")
+	}
+	anomalies := tracker.Anomalies()
+	if len(anomalies) != 1 || anomalies[0].LastError == nil {
+		t.Fatalf("anomalies = %+v, want the failing object with its last error", anomalies)
+	}
+	last := anomalies[0].LastError
+	if last.Text != "alarmd state: gap guard conflict: expected 41 got 43" || last.EvaluationTime != 1_700_000_000 ||
+		last.Attempts != DefaultDegradedRounds || last.Type != "*errors.errorString" || !last.At.Equal(now) {
+		t.Fatalf("last error = %+v, want the words, the Slot, %d attempts on it, the type and the time", last, DefaultDegradedRounds)
+	}
+	// A failure on a new Slot is a new failure: the count starts over.
+	fail(1_700_000_060, "alarmd state: gap guard conflict: expected 42 got 43")
+	if last := tracker.Anomalies()[0].LastError; last.Attempts != 1 || last.EvaluationTime != 1_700_000_060 {
+		t.Fatalf("after a failure on the next Slot: %+v, want attempts back to 1 on the new Slot", last)
+	}
+	// Bounded: an error that quotes a body is cut, not carried whole, and cut
+	// on a rune boundary -- a byte cut leaves half a character, which the
+	// JSON encoder turns into U+FFFD.
+	fail(1_700_000_060, strings.Repeat("x", 600))
+	if last := tracker.Anomalies()[0].LastError; len(last.Text) != lastErrorTextLimit+3 || !strings.HasSuffix(last.Text, "...") {
+		t.Fatalf("a long error text is %d bytes, want %d plus an ellipsis", len(last.Text), lastErrorTextLimit)
+	}
+	fail(1_700_000_060, strings.Repeat("x", lastErrorTextLimit-1)+"中文")
+	if last := tracker.Anomalies()[0].LastError; !utf8.ValidString(last.Text) || !strings.HasSuffix(last.Text, "x...") {
+		t.Fatalf("a text cut inside a character: %q", last.Text)
+	}
+	// One failed round emits its error more than once on the way to the
+	// terminal observation: the query, the commit, then slot_completed with
+	// the same error. Only the terminal one counts, or one round reads as
+	// three attempts.
+	tracker.Observe(context.Background(), completion("qg-stuck", "FULL_COMPLETED", "8930"))
+	for round := 0; round < 3; round++ {
+		// As the emitters send them: the query's carries its failure facts,
+		// the commit's names the strategy from the context; either is enough
+		// for the tracker to read the observation at all.
+		tracker.Observe(context.Background(), observability.Observation{
+			Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted,
+			Result:       observability.Result(observability.ResultFailed),
+			Err:          errors.New("alarmd state: gap guard conflict: expected 41 got 43"),
+			QueryFailure: &observability.QueryFailureFacts{Stage: "execute", Category: "completion_contract", Code: "GAP_GUARD_CONFLICT"},
+			Trace:        observability.TraceFields{QueryGroupKey: "qg-stuck", EvaluationTime: 1_700_000_180},
+		})
+		tracker.Observe(context.Background(), observability.Observation{
+			Component: observability.ComponentProgress, Stage: observability.StageProgressCommitted,
+			Result: observability.Result(observability.ResultFailed),
+			Err:    errors.New("alarmd state: gap guard conflict: expected 41 got 43"),
+			Trace:  observability.TraceFields{QueryGroupKey: "qg-stuck", StrategyID: "8930", EvaluationTime: 1_700_000_180},
+		})
+		fail(1_700_000_180, "alarmd state: gap guard conflict: expected 41 got 43")
+	}
+	if last := tracker.Anomalies()[0].LastError; last == nil || last.Attempts != 3 {
+		t.Fatalf("three rounds each carrying the error on three observations = %+v, want attempts 3, not 9", last)
+	}
+	// A healthy round ends the run and the error with it.
+	tracker.Observe(context.Background(), completion("qg-stuck", "FULL_COMPLETED", "8930"))
+	if len(tracker.Anomalies()) != 0 {
+		t.Fatalf("still anomalous after a healthy round: %+v", tracker.Anomalies())
+	}
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		tracker.Observe(context.Background(), observability.Observation{ExecuteOutcome: "error",
+			Trace: observability.TraceFields{QueryGroupKey: "qg-stuck", EvaluationTime: 1_700_000_120}})
+	}
+	if last := tracker.Anomalies()[0].LastError; last != nil {
+		t.Fatalf("an error from before the healthy round is still on the row: %+v", last)
+	}
+}
+
+// A CONFIG_DRIFT under a history guard on rounds whose snapshot, query and
+// schedule revisions have not moved is the guard's carried trigger, and
+// must not put the object on the configuration line; a CONFIG_DRIFT on a
+// round where one of the three did move is a drift and must. The first is
+// the only shape a carried reason can take -- a drift by definition moves a
+// revision -- so this is the assertion only the carrying branch satisfies.
+func TestACarriedConfigDriftIsNotAConfigLineButARealOneIs(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	round := func(queryGroup, snapshot, query, schedule string) {
+		// The frozen trace on the round's start, then its completion under a
+		// guard: coverage held, CONFIG_DRIFT carried as the reason.
+		tracker.Observe(context.Background(), observability.Observation{
+			Component: observability.ComponentScheduler, Stage: observability.StageSlotStarted,
+			Result: observability.Result(observability.ResultStarted),
+			Trace: observability.TraceFields{QueryGroupKey: queryGroup, StrategyID: "1074", BusinessID: "7",
+				SnapshotRevision: snapshot, QueryRevision: query, ScheduleRevision: schedule, EvaluationTime: 1_700_000_000},
+		})
+		observation := completion(queryGroup, "COMPLETED_WITH_PARTIAL_GAP", "1074")
+		observation.ProgressCompletionCause, observation.ProgressCompletionReason = "LEVEL_OUTCOME_UNKNOWN", "CONFIG_DRIFT"
+		observation.HistoryCoverage = &observability.HistoryCoverageFacts{Levels: 3, Short: 1, Guarded: 3, WorstValid: 5, WorstRequired: 9}
+		tracker.Observe(context.Background(), observation)
+	}
+	for i := 0; i < DefaultDegradedRounds+1; i++ {
+		round("qg-1074", "snap-a", "query-a", "schedule-a")
+	}
+	rows := tracker.Anomalies()
+	if len(rows) != 1 || rows[0].ConfigChanged {
+		t.Fatalf("rows = %+v, want one row with no revision change across its rounds", rows)
+	}
+	Attribute(rows, now)
+	if rows[0].Finding.Check == CheckConfigUnresolved || rows[0].Finding.Check != CheckWindowUndecided {
+		t.Fatalf("carried CONFIG_DRIFT with unchanged revisions is under %q, want the undecided window, never the configuration line",
+			rows[0].Finding.Check)
+	}
+	if rows[0].Finding.Group != "保护未解除（最初触发 CONFIG_DRIFT）" {
+		t.Fatalf("fold = %q, want the guard named with its trigger", rows[0].Finding.Group)
+	}
+
+	// The counterexample: one revision moves. That round's CONFIG_DRIFT is a
+	// drift, and the configuration line is where it goes.
+	round("qg-1074", "snap-a", "query-b", "schedule-a")
+	rows = tracker.Anomalies()
+	if len(rows) != 1 || !rows[0].ConfigChanged {
+		t.Fatalf("rows = %+v, want the row to say its revisions moved", rows)
+	}
+	Attribute(rows, now)
+	if rows[0].Finding.Check != CheckConfigUnresolved {
+		t.Fatalf("CONFIG_DRIFT on a round whose query revision moved is under %q, want the configuration line", rows[0].Finding.Check)
+	}
+	// And the round after, on the new revisions with nothing moving again:
+	// carried once more.
+	round("qg-1074", "snap-a", "query-b", "schedule-a")
+	rows = tracker.Anomalies()
+	Attribute(rows, now)
+	if rows[0].ConfigChanged || rows[0].Finding.Check != CheckWindowUndecided {
+		t.Fatalf("the round after the change: changed=%v check=%q, want unchanged and back under the window", rows[0].ConfigChanged, rows[0].Finding.Check)
+	}
+}
+
+// The round a guard converges on is not a line, on the real path: the window
+// has been short under the guard for dozens of rounds, the reason clock reads
+// dozens because the completion/reason pair never changed, and then the
+// window fills. That round is the guard releasing. The next round still
+// held over a full window is a guard that should have released. The first
+// version judged this on the reason clock and called the converging round
+// overdue.
+func TestTheConvergingRoundIsNotALineOnTheRealPath(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	round := func(short uint32) {
+		tracker.Observe(context.Background(), observability.Observation{
+			Component: observability.ComponentScheduler, Stage: observability.StageSlotStarted,
+			Result: observability.Result(observability.ResultStarted),
+			Trace: observability.TraceFields{QueryGroupKey: "qg-1074", StrategyID: "1074", BusinessID: "7",
+				SnapshotRevision: "snap-a", QueryRevision: "query-a", ScheduleRevision: "schedule-a", EvaluationTime: 1_700_000_000},
+		})
+		observation := completion("qg-1074", "COMPLETED_WITH_PARTIAL_GAP", "1074")
+		observation.ProgressCompletionCause, observation.ProgressCompletionReason = "LEVEL_OUTCOME_UNKNOWN", "CONFIG_DRIFT"
+		observation.HistoryCoverage = &observability.HistoryCoverageFacts{Levels: 3, Short: short, Guarded: 3, WorstValid: 9 - short, WorstRequired: 9}
+		tracker.Observe(context.Background(), observation)
+	}
+	classify := func() Anomaly {
+		rows := tracker.Anomalies()
+		if len(rows) != 1 {
+			t.Fatalf("rows = %+v, want one", rows)
+		}
+		Attribute(rows, now)
+		return rows[0]
+	}
+	for i := 0; i < 30; i++ {
+		round(1)
+	}
+	short := classify()
+	if short.Consecutive < 3 || short.Finding.Check != CheckWindowUndecided || short.Finding.Group != "保护未解除（最初触发 CONFIG_DRIFT）" {
+		t.Fatalf("after thirty short rounds: consecutive=%d check=%q group=%q", short.Consecutive, short.Finding.Check, short.Finding.Group)
+	}
+	// The window fills. The reason clock still reads thirty-one; the
+	// held-full counter reads one; not a line.
+	round(0)
+	converging := classify()
+	if converging.Consecutive < 30 || converging.Coverage.HeldFullRounds != 1 || converging.Finding.Check != "" {
+		t.Fatalf("the converging round: consecutive=%d held_full=%d check=%q, want no line with the reason clock still high",
+			converging.Consecutive, converging.Coverage.HeldFullRounds, converging.Finding.Check)
+	}
+	// Still held over a full window on the next round: overdue to release.
+	round(0)
+	overdue := classify()
+	if overdue.Coverage.HeldFullRounds != 2 || overdue.Finding.Check != CheckWindowUndecided ||
+		overdue.Finding.Group != "保护未解除且窗口已满（最初触发 CONFIG_DRIFT）" {
+		t.Fatalf("the round after: held_full=%d check=%q group=%q", overdue.Coverage.HeldFullRounds, overdue.Finding.Check, overdue.Finding.Group)
+	}
+	// A short round again ends the full run.
+	round(1)
+	if again := classify(); again.Coverage.HeldFullRounds != 0 || again.Finding.Group != "保护未解除（最初触发 CONFIG_DRIFT）" {
+		t.Fatalf("a short round after: held_full=%d group=%q, want the counter back to zero", again.Coverage.HeldFullRounds, again.Finding.Group)
+	}
+}
+
+// A skip carries the last step before it, when that step was this Slot's: a
+// live object waited for data, retried after its frozen deadline, was
+// refused admission (QUERY_PERMIT_DEADLINE) and then skipped -- "错过查询截止
+// 时间", a different conversation from a Slot that fell past the replay
+// bound with nothing tried, and from a budget rejection. A failure from
+// another Slot is not this skip's.
+func TestASkipCarriesTheLastStepBeforeItWhenItWasThisSlots(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	slot := int64(1_700_000_000)
+	// The admission refusal on this Slot, then the skip of this Slot.
+	tracker.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted,
+		Result:       observability.Result(observability.ResultFailed),
+		QueryFailure: &observability.QueryFailureFacts{Stage: "execute", Category: "admission", Code: "QUERY_PERMIT_DEADLINE"},
+		Trace:        observability.TraceFields{QueryGroupKey: "qg-late", StrategyID: "8721", EvaluationTime: slot},
+	})
+	tracker.Observe(context.Background(), observability.Observation{ProgressCompletionKind: "GAP_SKIPPED",
+		Trace: observability.TraceFields{QueryGroupKey: "qg-late", StrategyID: "8721", EvaluationTime: slot}})
+	skip := tracker.GapSkips()["qg-late"]
+	if skip.Reason != "QUERY_PERMIT_DEADLINE" || skip.ReasonCategory != "admission" {
+		t.Fatalf("skip = %+v, want the admission refusal of this Slot as its last step", skip)
+	}
+	// A later Slot skipped with nothing tried on it: the earlier failure is
+	// not this skip's, and the record says nothing was tried.
+	tracker.Observe(context.Background(), observability.Observation{ProgressCompletionKind: "FULL_COMPLETED",
+		Trace: observability.TraceFields{QueryGroupKey: "qg-late", StrategyID: "8721", EvaluationTime: slot + 10}})
+	tracker.Observe(context.Background(), observability.Observation{ProgressCompletionKind: "GAP_SKIPPED",
+		Trace: observability.TraceFields{QueryGroupKey: "qg-late", StrategyID: "8721", EvaluationTime: slot + 20}})
+	if skip := tracker.GapSkips()["qg-late"]; skip.Reason != "" || skip.FirstSlot != slot+20 {
+		t.Fatalf("a skip with nothing tried on its Slot = %+v, want no reason on a new record", skip)
+	}
+}
+
+// The window's progress is the tracker's to say: the worst level's valid
+// count against the previous round's, and how many rounds it has not
+// risen. 7/24 then 8/24 is filling; 0/5 for three rounds is not; a round
+// with nothing short ends the comparison.
+func TestTheWindowSaysWhetherItIsFilling(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	short := func(valid uint32) {
+		observation := completion("qg-window", "COMPLETED_WITH_UNAVAILABLE", "11802")
+		observation.ProgressCompletionCause, observation.ProgressCompletionReason = "LEVEL_OUTCOME_UNKNOWN", "HISTORY_WARMING"
+		observation.HistoryCoverage = &observability.HistoryCoverageFacts{Levels: 3, Short: 1, WorstValid: valid, WorstRequired: 24}
+		tracker.Observe(context.Background(), observation)
+	}
+	row := func() *HistoryCoverage {
+		for _, list := range [][]Anomaly{tracker.Undecidable(), tracker.Anomalies()} {
+			for _, item := range list {
+				if item.QueryGroup == "qg-window" {
+					return item.Coverage
+				}
+			}
+		}
+		t.Fatal("the object is on no list")
+		return nil
+	}
+	// Listed from the third degraded round; by then two rounds have not
+	// moved the window.
+	short(7)
+	short(7)
+	short(7)
+	if coverage := row(); coverage == nil || !coverage.PreviousKnown || coverage.PreviousWorstValid != 7 || coverage.NoProgressRounds != 2 {
+		t.Fatalf("after three rounds at 7: %+v, want previous 7 known and two rounds without progress", coverage)
+	}
+	short(8)
+	if coverage := row(); coverage.PreviousWorstValid != 7 || coverage.NoProgressRounds != 0 || coverage.WorstValid != 8 {
+		t.Fatalf("after 7 then 8: %+v, want previous 7, progress made, no rounds without", coverage)
+	}
+	short(8)
+	short(8)
+	if coverage := row(); coverage.NoProgressRounds != 2 {
+		t.Fatalf("after 8, 8, 8: %+v, want two rounds without progress", coverage)
+	}
+	// The first short round after a full one has no previous to compare;
+	// the run restarts, so it takes three rounds to be listed again, and by
+	// the third the comparison has two rounds behind it.
+	tracker.Observe(context.Background(), completion("qg-window", "FULL_COMPLETED", "11802"))
+	short(3)
+	short(4)
+	short(5)
+	if coverage := row(); !coverage.PreviousKnown || coverage.PreviousWorstValid != 4 || coverage.NoProgressRounds != 0 {
+		t.Fatalf("after a full round then 3, 4, 5: %+v, want previous 4 and progress every round", coverage)
+	}
+}
+
+// A failure of this deployment's own making -- a contract or evaluation
+// error -- stays on the row until a healthy completion, beside the finding
+// the column decided: a pool object filed under the refusal that also hit an
+// aggregation conflict is listed under DEFECT as well, by that conflict, and
+// the refusal line still has it. A backend failure is not internal.
+func TestAnInternalFailureIsASecondFactUnderDefect(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	observe := func(o observability.Observation) {
+		o.Trace.QueryGroupKey, o.Trace.StrategyID = "qg-8326", "8326"
+		tracker.Observe(context.Background(), o)
+	}
+	observe(observability.Observation{QueryFailure: &observability.QueryFailureFacts{Stage: "execute", Category: "completion_contract",
+		Code: "GAP_SCOPE_REASON_CONFLICT", Detail: "input_a=QUERY_UNAVAILABLE input_b=QUERY_TIMEOUT"}})
+	observe(observability.Observation{ProgressCompletionKind: "COMPLETED_WITH_UNAVAILABLE", ProgressCompletionCause: "query_failed"})
+	observe(observability.Observation{QueryFailure: &observability.QueryFailureFacts{Stage: "provider", Category: "source_backend",
+		Code: "QUERY_UNAVAILABLE", Detail: "http_status=400"}})
+	observe(observability.Observation{QueryCooldown: &observability.QueryCooldownFacts{Event: "entered", Until: now.Add(time.Minute), LastQueryAt: now, Failures: 3}})
+	rows := tracker.Demoted()
+	Attribute(rows, now)
+	if len(rows) != 1 || rows[0].Finding.Check != CheckQueryRefused || rows[0].Internal == nil || rows[0].Internal.Code != "GAP_SCOPE_REASON_CONFLICT" {
+		t.Fatalf("pool row = %+v, want it under the refusal with the conflict kept as its internal failure", rows)
+	}
+	view := &View{Demoted: rows}
+	reports := ReportChecks([][]Anomaly{nil, rows, nil, nil}, nil, view, now)
+	byCode := map[Check]CheckReport{}
+	for _, report := range reports {
+		byCode[report.Code] = report
+	}
+	if byCode[CheckQueryRefused].Current != 1 || byCode[CheckDefect].Current != 1 ||
+		len(byCode[CheckDefect].Groups) != 1 || byCode[CheckDefect].Groups[0].Key != "GAP_SCOPE_REASON_CONFLICT" {
+		t.Fatalf("reports = %+v, want the object on the refusal line and on DEFECT folded on the conflict", reports)
+	}
+	if listed := UnderCheck(CheckDefect, "GAP_SCOPE_REASON_CONFLICT", view, now); len(listed) != 1 || listed[0].QueryGroup != "qg-8326" {
+		t.Fatalf("under DEFECT/GAP_SCOPE_REASON_CONFLICT = %v, want the pool object", names(listed))
+	}
+	// A healthy completion clears it: the next run, failing on the backend
+	// alone, is listed without the old conflict beside it.
+	observe(observability.Observation{QueryCooldown: &observability.QueryCooldownFacts{Event: "recovered"}})
+	observe(observability.Observation{ProgressCompletionKind: "FULL_COMPLETED"})
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		observe(observability.Observation{QueryFailure: &observability.QueryFailureFacts{Stage: "provider", Category: "source_backend",
+			Code: "QUERY_UNAVAILABLE", Detail: "transport=timeout"}})
+		observe(observability.Observation{ProgressCompletionKind: "COMPLETED_WITH_UNAVAILABLE", ProgressCompletionCause: "query_failed"})
+	}
+	listed := tracker.Anomalies()
+	if len(listed) != 1 || listed[0].QueryGroup != "qg-8326" {
+		t.Fatalf("after the next failing run the object is not listed: %+v", listed)
+	}
+	if listed[0].Internal != nil {
+		t.Fatalf("after a healthy completion the row still carries %+v", listed[0].Internal)
 	}
 }

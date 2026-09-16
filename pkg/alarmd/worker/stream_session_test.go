@@ -349,7 +349,7 @@ func newCompletionOnlyFixture(
 	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{OpenAlerts: ports,
 		Finalization: ports, Activation: ports,
 		Query:     completionOnlyQuerySource{trace: &trace, header: header, completion: completion},
-		Sequencer: ports, Evaluator: ports, Admission: ports, GapGuard: ports,
+		Sequencer: ports, Evaluator: ports, Admission: ports, GapGuard: ports, NoData: worker.SharedNoDataStore, Hosts: worker.SharedHostBusiness,
 		Events: ports, State: ports, Progress: ports, Observer: observer,
 	}, worker.ProvisionalBudget{
 		MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10,

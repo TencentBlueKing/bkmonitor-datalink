@@ -9,6 +9,8 @@
 
 package fleet
 
+import "time"
+
 // The verdict panel answers "is alarmd well" and nothing else, and that is not
 // the question an operator opens it with.
 //
@@ -64,6 +66,17 @@ type Impact struct {
 	// them overstates exactly the number a reader would act on, and overstates
 	// it most when the deployment is worst.
 	Blind ColumnImpact `json:"blind"`
+	// Alarmd, Undetermined, Strategy and Data cut every column by who acts,
+	// from each object's line, plus the objects losing rounds now on the
+	// record lines. Three parts and not two, because "not confirmed as this
+	// deployment's" and "confirmed as somebody else's" are different
+	// statements: the page said the rest were the strategy's or the data's
+	// people while the lines under it still read 待确认. Undetermined is the
+	// part a reader must not hand over -- and must not close as fine.
+	Alarmd       ColumnImpact `json:"alarmd"`
+	Undetermined ColumnImpact `json:"undetermined"`
+	Strategy     ColumnImpact `json:"strategy"`
+	Data         ColumnImpact `json:"data"`
 	// NoStrategies is how many objects across all columns named no strategy at
 	// all, so the strategy counts above can be read for how much of the
 	// population they cover.
@@ -115,7 +128,7 @@ func impactOf(total int, lists ...[]Anomaly) (ColumnImpact, int) {
 // because a strategy count has no other source -- and the difference between
 // the two is reported as Partial rather than hidden, since the deployment bad
 // enough to truncate is the one being read during an incident.
-func ImpactOf(view View) Impact {
+func ImpactOf(view View, now time.Time) Impact {
 	impact := Impact{}
 	var unnamed int
 	impact.Anomalies, unnamed = impactOf(view.AnomaliesTotal, view.Anomalies)
@@ -143,5 +156,44 @@ func ImpactOf(view View) Impact {
 	// that list was cut -- the same limit as the column it sits in, and it has
 	// to say so for the same reason.
 	impact.Ours.Partial = impact.Anomalies.Partial
+
+	// By who acts, over every column from each object's line, and the
+	// objects losing rounds now from the records. Every part is a lower
+	// bound when any column was cut: a line draws from all four.
+	byOwner := map[Owner][]Anomaly{}
+	for _, column := range [][]Anomaly{view.Anomalies, view.Demoted, view.Undecidable, view.ByDesign, view.NoData} {
+		for _, anomaly := range column {
+			if anomaly.Finding.Check == "" {
+				continue
+			}
+			owner := checkAnswers[anomaly.Finding.Check].Owner
+			byOwner[owner] = append(byOwner[owner], anomaly)
+		}
+	}
+	rows, _ := skippedRows(&view, map[string]struct{}{}, now)
+	for _, row := range rows {
+		if row.Loss == LossOngoing || row.Loss == LossAfterRestart {
+			byOwner[OwnerAlarmd] = append(byOwner[OwnerAlarmd], row)
+		}
+	}
+	partial := impact.Anomalies.Partial || impact.Demoted.Partial || impact.Undecidable.Partial || impact.ByDesign.Partial
+	part := func(owner Owner) ColumnImpact {
+		list := byOwner[owner]
+		column, _ := impactOf(len(distinctObjects(list)), list)
+		column.Partial = partial
+		return column
+	}
+	impact.Alarmd, impact.Undetermined = part(OwnerAlarmd), part(OwnerUndetermined)
+	impact.Strategy, impact.Data = part(OwnerStrategy), part(OwnerData)
 	return impact
+}
+
+// distinctObjects is the set of objects in a list: an object under two
+// lines of one owner is one object.
+func distinctObjects(list []Anomaly) map[string]struct{} {
+	set := map[string]struct{}{}
+	for _, anomaly := range list {
+		set[anomaly.QueryGroup] = struct{}{}
+	}
+	return set
 }

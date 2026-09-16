@@ -230,6 +230,26 @@ type FailureRef struct {
 	Detail string `json:"detail,omitempty"`
 }
 
+// LastError is the last error a round of this object returned.
+//
+// Text is the error's own words, sanitised and bounded by the same limit the
+// control source's failure text is; Type is the Go type that carried it,
+// which is what tells a wrapped contract failure from a transport error when
+// the words do not. EvaluationTime is the Slot the round was on, and
+// Attempts how many rounds in a row have failed on that same Slot -- a round
+// that keeps failing on one Slot is stuck, a round that fails on each new
+// Slot is unlucky, and the count is the difference.
+type LastError struct {
+	Text           string    `json:"text"`
+	Type           string    `json:"type,omitempty"`
+	EvaluationTime int64     `json:"evaluation_time,omitempty"`
+	At             time.Time `json:"at"`
+	Attempts       int       `json:"attempts"`
+	// Operation is the dependency operation the failing round reported,
+	// when it reported one: the query, the commit, the state write.
+	Operation string `json:"operation,omitempty"`
+}
+
 // HistoryCoverage is how far short of the required detection window this
 // object's series were, and for how many consecutive rounds.
 //
@@ -309,6 +329,23 @@ type HistoryCoverage struct {
 	// windows are.
 	Fresh      uint32 `json:"fresh,omitempty"`
 	ShortFresh uint32 `json:"short_fresh,omitempty"`
+	// Unusable is how many windows' latest record the detection could not use
+	// (UNAVAILABLE or ERROR), and UnusableReason why, from the first of them.
+	// An empty window is made of these: the record arrived and was unusable,
+	// every round. So a starved window is not "no data" -- the data is there
+	// -- and the reason says whether the strategy names a field the records do
+	// not carry, the value has the wrong shape, or an algorithm declined it.
+	Unusable       uint32 `json:"unusable,omitempty"`
+	UnusableReason string `json:"unusable_reason,omitempty"`
+	// Abnormal is how many Level verdicts in the last round were ABNORMAL and
+	// AbnormalOnIncomplete how many of those were reached on a window that was
+	// not full. The trigger decides ABNORMAL before it reads completeness, so
+	// an alert can open on a window that will never fill -- and then never
+	// close. The pair says whether that is happening on this object, which is
+	// the difference between "recovery cannot be decided" as a footnote and as
+	// an alert somebody is looking at.
+	Abnormal             uint32 `json:"abnormal,omitempty"`
+	AbnormalOnIncomplete uint32 `json:"abnormal_on_incomplete,omitempty"`
 	// FreshRounds is how many consecutive rounds every short window belonged to
 	// a series with no loaded history.
 	//
@@ -325,6 +362,23 @@ type HistoryCoverage struct {
 	// all load nothing and all look new -- and that round is indistinguishable
 	// from churn. A run longer than the window is wide is not.
 	FreshRounds uint32 `json:"fresh_rounds,omitempty"`
+	// HeldFullRounds is how many rounds in a row the windows have been full
+	// while a guard still held them. The guard converges on the first full
+	// record, so one such round is the guard releasing and two is a guard
+	// that should have released. It has its own counter because no other
+	// clock on the row can tell the two apart: the reason clock runs on the
+	// completion/reason pair, which does not change when a short window
+	// fills, so on the round a guard should converge it already reads as
+	// many rounds as the window was short for.
+	HeldFullRounds uint32 `json:"held_full_rounds,omitempty"`
+	// PreviousWorstValid is the worst level's valid count the round before,
+	// when there was one (PreviousKnown); NoProgressRounds is how many
+	// consecutive rounds that count has not risen. Together they say whether
+	// the window is filling -- the one fact that makes "等窗口填满" advice
+	// rather than hope.
+	PreviousWorstValid uint32 `json:"previous_worst_valid,omitempty"`
+	PreviousKnown      bool   `json:"previous_known,omitempty"`
+	NoProgressRounds   uint32 `json:"no_progress_rounds,omitempty"`
 }
 
 // Churning reports series that have never survived long enough to be seen
@@ -440,16 +494,38 @@ type Anomaly struct {
 	Coverage  *HistoryCoverage `json:"coverage,omitempty"`
 	Since     time.Time        `json:"since"`
 	SinceFrom SinceSource      `json:"since_from"`
+	// Wake is where the object is in its cycle, from the due index, attached
+	// by the publisher. Absent on a replica with no index; Known false when
+	// the index has no entry, which means no round has returned since that
+	// replica took the object over.
+	Wake *WakeFacts `json:"wake,omitempty"`
+	// Skip is the span of Slots never evaluated, on a row of KindSkippedSpan
+	// -- and on an object row whose object also holds a record, so the row
+	// says what the object lost while under its line. Slots is zero when the
+	// count is not knowable (a pruned timeline). Loss says what the record
+	// is a record of, decided at read time from the object's column and the
+	// record's age; empty on a row with no record.
+	Skip *SkippedSpan `json:"skip,omitempty"`
+	Loss Loss         `json:"loss,omitempty"`
+	// DemotedSince is when the object entered the demoted pool, on a row in
+	// it; zero elsewhere, and on rows from a publisher that predates it.
+	DemotedSince time.Time `json:"demoted_since,omitempty"`
+	// Internal is the last failure of this deployment's own making in the
+	// current run -- a contract or evaluation error -- kept beside the
+	// finding the column decided. The line is the column's; this is the
+	// second fact, and the row is listed under DEFECT for it as well.
+	Internal *FailureRef `json:"internal_failure,omitempty"`
 	// Attribution says whether capacity or design could have prevented this.
 	// Only the ones where it could decide the verdict; the rest are real work
 	// for someone else. Filled in by Attribute rather than by the tracker, so
 	// the page and the verdict read one field instead of each deriving it.
 	Attribution Attribution `json:"attribution,omitempty"`
-	// Finding is the four answers the page renders: who has to act, whether it
-	// heals on its own, where to go, and which situation decided those. Decided
-	// in one place from the evidence, so the page renders and does not infer.
-	// Attribution is derived from it, which is what keeps the verdict and the
-	// to-do list from classifying one object two ways.
+	// Finding is what the page renders: which line of the first screen the
+	// object is under and which fold, who acts on it, and where the object is
+	// in its cycle and how its last round ended. Decided in one place from the
+	// evidence, so the page renders and does not infer. Attribution is derived
+	// from it, which is what keeps the verdict and the first screen from
+	// classifying one object two ways.
 	Finding Finding `json:"finding"`
 	// Unclassified says this object is counted against the deployment because
 	// no rule matched, not because a rule said so. A release that adds a
@@ -467,9 +543,44 @@ type Anomaly struct {
 	// omitzero tag: the release pipeline builds with Go 1.23, whose encoder
 	// does not know that option and would print a zero time on every object
 	// whose rounds are ending normally.
-	FailingSince time.Time   `json:"failing_since"`
-	Replica      string      `json:"replica"`
-	Failure      *FailureRef `json:"failure,omitempty"`
+	FailingSince time.Time `json:"failing_since"`
+	// ReasonSince is when the object's current result and reason first held,
+	// and Consecutive how many rounds in a row they have. It is the third of
+	// the three clocks a row shows -- what it is doing now, since when it has
+	// been anomalous at all, since when it has been saying this -- and the one
+	// that says whether a reason is settled or just arrived. Left off the wire
+	// while zero, like FailingSince, by MarshalJSON.
+	ReasonSince time.Time   `json:"reason_since"`
+	Consecutive int         `json:"consecutive,omitempty"`
+	Replica     string      `json:"replica"`
+	Failure     *FailureRef `json:"failure,omitempty"`
+	// LastError is the last round that returned an error, verbatim: what it
+	// said, which Slot it was on, and how many rounds in a row that same Slot
+	// has failed. The classification above answers "what kind"; this answers
+	// "what exactly", which is what a reader needed a diagnostic window and
+	// one more failure to learn. Two objects stuck on a gap-guard conflict
+	// were located from raw logs and source while the page said only which
+	// two.
+	LastError *LastError `json:"last_error,omitempty"`
+	// LastHealthyAt is when this process last saw the object complete
+	// healthily; zero when it never has, which a restored row is. It
+	// survives the run resets everything else about a run goes through,
+	// because it is the one positive fact a recovery is judged on: a
+	// failure that left the window is not a recovery, a success after the
+	// failure is. Left off the wire while zero, by MarshalJSON.
+	LastHealthyAt time.Time `json:"last_healthy_at"`
+	// Blocked is the row's failure read in the one shape every failure is
+	// read in -- step, dependency, class, effect -- decided beside the
+	// finding from the same evidence. Absent on a row that records no
+	// failure.
+	Blocked *Blocked `json:"blocked,omitempty"`
+	// ConfigChanged says the object's snapshot, query or schedule revision
+	// differs between its last two completed rounds: the configuration it
+	// runs under actually changed. It is the one fact that tells a
+	// CONFIG_DRIFT this round from a CONFIG_DRIFT a history guard has been
+	// carrying since a change rounds ago -- a drift by definition moves a
+	// revision, and a carried reason moves none.
+	ConfigChanged bool `json:"config_changed,omitempty"`
 	// Stalled says the rounds have been failing to finish for longer than the
 	// deployment's own budget for terminating an unfinishable Slot. The
 	// distinction it draws is the one that decides whether anyone has to act: a
@@ -493,10 +604,18 @@ func (anomaly Anomaly) MarshalJSON() ([]byte, error) {
 	type wire Anomaly
 	encoded := struct {
 		wire
-		FailingSince *time.Time `json:"failing_since,omitempty"`
+		FailingSince  *time.Time `json:"failing_since,omitempty"`
+		ReasonSince   *time.Time `json:"reason_since,omitempty"`
+		LastHealthyAt *time.Time `json:"last_healthy_at,omitempty"`
 	}{wire: wire(anomaly)}
 	if !anomaly.FailingSince.IsZero() {
 		encoded.FailingSince = &anomaly.FailingSince
+	}
+	if !anomaly.ReasonSince.IsZero() {
+		encoded.ReasonSince = &anomaly.ReasonSince
+	}
+	if !anomaly.LastHealthyAt.IsZero() {
+		encoded.LastHealthyAt = &anomaly.LastHealthyAt
 	}
 	return json.Marshal(encoded)
 }
@@ -531,10 +650,17 @@ type Snapshot struct {
 	// same duration, and a scheduled comparison that turned out to be measuring
 	// a rollout. The per-row provenance says which durations are bounds; this
 	// says what they are bounded by.
-	StartedAt      time.Time `json:"started_at,omitempty"`
-	Determined     int       `json:"determined"`
-	Anomalies      []Anomaly `json:"anomalies"`
-	TotalAnomalies int       `json:"total_anomalies"`
+	StartedAt time.Time `json:"started_at,omitempty"`
+	// Build is the version, commit and schema this replica's process was built
+	// from -- the same three facts as its build_info series. On the snapshot
+	// because the page reads the replicas' combined numbers, and the first
+	// question about any number that looks wrong after a release is which
+	// build produced it. Absent on a build before this field existed, which the
+	// aggregate keeps apart from any version.
+	Build          *BuildFacts `json:"build,omitempty"`
+	Determined     int         `json:"determined"`
+	Anomalies      []Anomaly   `json:"anomalies"`
+	TotalAnomalies int         `json:"total_anomalies"`
 	// Demoted are the objects held back because their backend kept answering
 	// unavailable. They are published apart from Anomalies, not folded into
 	// them, because they answer a different question: Anomalies is what this
@@ -575,6 +701,13 @@ type Snapshot struct {
 	// about its current round says so correctly. What happened is in its past
 	// and is permanent.
 	PrunedSkips map[string]PrunedSkip `json:"pruned_skips,omitempty"`
+	// GapSkips are the objects that skipped a run of Slots past the replay
+	// window, retained for the same reason.
+	GapSkips map[string]SkippedSpan `json:"gap_skips,omitempty"`
+	// NoData is the objects whose query has returned no records for a run of
+	// rounds after having returned some. In no column -- their rounds complete
+	// -- and listed so the data side's line can name them.
+	NoData []Anomaly `json:"no_data,omitempty"`
 	// Capacity is how close this replica is to its own limits. Absent on a
 	// replica that does not report it, which is why the aggregate counts the
 	// replicas it actually heard from rather than assuming every one answered.
@@ -583,6 +716,10 @@ type Snapshot struct {
 	// Absent means the replica has nothing holding wake times, which is a
 	// different answer from "nothing is overdue" and must not be shown as one.
 	Overdue *OverdueFacts `json:"overdue,omitempty"`
+	// Schedule is where this replica's owned objects are in their cycles and
+	// how its rounds have been finishing. Absent for the same reason Overdue
+	// can be: no due index, no census.
+	Schedule *ScheduleCensus `json:"schedule,omitempty"`
 	// Suppression is present only on a build whose dispatcher actually holds
 	// objects back. Absent, the overdue count above is structurally zero and
 	// must not be read as "nothing is overdue".
@@ -608,6 +745,111 @@ type Snapshot struct {
 	// PlatformSettings is the state of this replica's copy of the platform's
 	// settings it evaluates by. Absent on a build before it existed.
 	PlatformSettings *PlatformSettingsFacts `json:"platform_settings,omitempty"`
+	// Activation is the standing of bringing the fleet's activation to the
+	// current publication, as the control leader reports it. Absent on every
+	// replica that has not attempted it, which is every follower, and on a
+	// build before this fact existed.
+	Activation *ActivationFacts `json:"activation,omitempty"`
+	// Rebalance is the control leader's last rebalance planning round: how
+	// the ready replicas hold the assigned objects and what the round would
+	// move. Absent on every follower and on a build before this fact existed.
+	Rebalance *RebalanceFacts `json:"rebalance,omitempty"`
+}
+
+// RebalanceFacts is one rebalance planning round on the control leader, as
+// the scheduler computed it. The fleet reads it for one fact: whether the
+// scheduler's own tolerance says the split is uneven, which is PlannedMoves
+// above zero. The page had the counts -- two replicas holding 2370 and 0 --
+// and no sentence, because no number on it was the scheduler's judgement of
+// those counts.
+//
+// MostOwnedBy and LeastOwnedBy are the pair the round would move between,
+// named only when it would move something. Shadow is written where the
+// decision not to publish the moves lives, so the page reads what the build
+// does rather than what a page constant says it does.
+type RebalanceFacts struct {
+	PlannedAt    time.Time `json:"planned_at"`
+	ReadyWorkers int       `json:"ready_workers"`
+	Assigned     int       `json:"assigned"`
+	Target       int       `json:"target"`
+	MostOwned    int       `json:"most_owned"`
+	LeastOwned   int       `json:"least_owned"`
+	MostOwnedBy  string    `json:"most_owned_by,omitempty"`
+	LeastOwnedBy string    `json:"least_owned_by,omitempty"`
+	Batch        int       `json:"batch"`
+	PlannedMoves int       `json:"planned_moves"`
+	// StopSpreadPercent is the scheduler's tolerance: no move is planned
+	// while the most and least loaded ready replica are within this share of
+	// the even target. Carried so the recovery criterion is the scheduler's
+	// number and not one the page keeps.
+	StopSpreadPercent int `json:"stop_spread_percent"`
+	// Shadow is true while the round only computes and nothing publishes the
+	// moves; a plan is then a measurement, not an action in progress.
+	Shadow bool `json:"shadow"`
+	// PublishedMoves is how many of the planned moves this round wrote as
+	// Assignments; Conflicts how many the store refused because the record
+	// had moved under the round. Paused says the round wrote none because
+	// the ready set changed within the stabilisation window, and
+	// PausedForSeconds how much of that window was left.
+	PublishedMoves   int     `json:"published_moves"`
+	Conflicts        int     `json:"conflicts,omitempty"`
+	Paused           bool    `json:"paused,omitempty"`
+	PausedForSeconds float64 `json:"paused_for_seconds,omitempty"`
+}
+
+// Skewed is the one reading the fleet takes: the scheduler would move
+// something, so by its own tolerance the split is uneven.
+func (facts *RebalanceFacts) Skewed() bool {
+	return facts != nil && facts.PlannedMoves > 0
+}
+
+// ActivationFacts is what the control leader says about the activation --
+// the content the fleet executes -- against the publication the source last
+// produced. Behind is Published != Applied: the fleet is executing content
+// that is not the current publication. BehindBeyondBound is the one fact the
+// verdict reads: it has been so for longer than the staleness the design
+// accepts for the source itself.
+//
+// The source's own clock cannot see this. A source that publishes every
+// round while the activation fails to follow it reads fresh there; on a
+// running deployment that hid a fleet executing a half-day-old publication
+// behind a verdict that named nothing.
+type ActivationFacts struct {
+	Applied        string `json:"applied"`
+	AppliedEpoch   uint64 `json:"applied_epoch,omitempty"`
+	Published      string `json:"published"`
+	PublishedEpoch uint64 `json:"published_epoch,omitempty"`
+	// Behind is Published != Applied after the last attempt.
+	Behind            bool `json:"behind"`
+	BehindBeyondBound bool `json:"behind_beyond_bound"`
+	// ConsecutiveFailures is how many attempts in a row have failed; zero
+	// after a success.
+	ConsecutiveFailures int `json:"consecutive_failures"`
+	// LastSuccessAgeSeconds is how long since this process last brought the
+	// activation to the publication; absent until it has once.
+	// FailingSecondsThisProcess is how long the current run of failures has
+	// lasted; absent while succeeding. Both this process only: a leader
+	// change resets them, which is why the row says which replica speaks.
+	LastSuccessAgeSeconds     *float64 `json:"last_success_age_seconds,omitempty"`
+	FailingSecondsThisProcess *float64 `json:"failing_seconds_this_process,omitempty"`
+	// FailureStage and FailureClass are the bounded classification of the
+	// last failed attempt -- the same words as the activation_failed log
+	// line -- and LastFailure its text, bounded. Empty after a success.
+	FailureStage string `json:"failure_stage,omitempty"`
+	FailureClass string `json:"failure_class,omitempty"`
+	LastFailure  string `json:"last_failure,omitempty"`
+}
+
+// Reason is the classification as one word, for grouping: the same word the
+// activation_failed log line carries as reason_code, from the same function,
+// so the line and the page cannot name a failure differently. "unclassified"
+// when the failure carried none.
+func (facts ActivationFacts) Reason() string {
+	if facts.FailureStage == "" && facts.FailureClass == "" {
+		return "unclassified"
+	}
+	return string(observability.ActivationFailureReason(
+		observability.ActivationFailureStage(facts.FailureStage), observability.ActivationFailureClass(facts.FailureClass)))
 }
 
 // PlatformSettingsFacts is what a replica says about its copy of the
@@ -703,12 +945,35 @@ const (
 	// computing-platform switch or a disk filter the platform may have
 	// changed, and nothing on the object list shows that.
 	DegradationPlatformSettingsStale DegradationKind = "PLATFORM_SETTINGS_STALE"
+	// DegradationActivationBehind: the control leader has been unable to
+	// bring the activation to the current publication for longer than the
+	// staleness bound, so the fleet executes content that is no longer what
+	// the source published -- every strategy change since is not in it. The
+	// source clock cannot see this: the source published every round. On a
+	// running deployment this went unseen for half a day, with the failure
+	// text sitting on every snapshot and nothing reading it.
+	DegradationActivationBehind DegradationKind = "ACTIVATION_BEHIND"
 )
+
+// DegradationKinds is the closed set, for the page's wording table and the
+// check that folds them.
+var DegradationKinds = []DegradationKind{
+	DegradationActivationBehind, DegradationControlSourceStale, DegradationControlLeaderAbsent,
+	DegradationOpenAlertSetStale, DegradationPlatformSettingsStale,
+}
 
 // Degradation is one replica-level reason the deployment is degraded.
 type Degradation struct {
 	Kind    DegradationKind `json:"kind"`
 	Replica string          `json:"replica"`
+	// Stage and Text are what the replica's own facts say about the failure
+	// behind the standing, where it has them: for a stale control source,
+	// where the last refresh round stopped and what it said. A standing read
+	// as its kind alone sent a reader to the previous incident's cause; the
+	// round that fails at catalogue validation is a different failure from
+	// the one that failed at activation, and the facts say which.
+	Stage string `json:"stage,omitempty"`
+	Text  string `json:"text,omitempty"`
 }
 
 // Truncated reports whether the replica had more anomalies than it published.
@@ -808,6 +1073,11 @@ type ReplicaView struct {
 	// is what every duration this replica reports is bounded by. Zero means the
 	// replica did not publish it, which is not the same as "just started".
 	UptimeSeconds float64 `json:"uptime_seconds,omitempty"`
+	// StartedAt is when the process started, as the replica published it;
+	// zero when it did not. A retained record made within minutes of it is
+	// the restart's catch-up, a mechanism with a name, and the records are
+	// read against it.
+	StartedAt time.Time `json:"started_at,omitempty"`
 	// The same three-way split the verdict is decided on, per replica.
 	//
 	// Anomalies alone cannot answer "which replica is unwell". A live read had
@@ -829,6 +1099,31 @@ type ReplicaView struct {
 	// between it and the deployment's PublishedVersion, two persisted
 	// versions; it is never derived from when the report was made.
 	AckedVersion *uint64 `json:"acked_version,omitempty"`
+	// Build is what this replica reported running. Absent when it reported
+	// none, which the page says rather than filling in.
+	Build *BuildFacts `json:"build,omitempty"`
+}
+
+// BuildFacts is one process's build: the three labels of its build_info
+// series, as fields.
+type BuildFacts struct {
+	Version       string `json:"version"`
+	Commit        string `json:"commit"`
+	SchemaVersion string `json:"schema_version"`
+}
+
+// BuildGroup is one distinct build and the counted replicas running it.
+//
+// The deployment's numbers are the replicas' numbers added up, and adding up
+// two builds gives a number neither build produced. Ceph's `ceph versions`
+// answers the same question the same way -- by build, listing who runs each
+// -- so a reader sees one line when the deployment agrees with itself and two
+// when a rollout is in progress or stuck. A replica that reported no build is
+// its own group with an empty Build, never folded into a version it may not
+// be running.
+type BuildGroup struct {
+	Build    BuildFacts `json:"build"`
+	Replicas []string   `json:"replicas"`
 }
 
 // WorkerAcknowledgement partitions the replicas the view counted by whether
@@ -872,6 +1167,11 @@ type View struct {
 	// paged or truncated, because "how many objects are not being evaluated" is
 	// the one number that must not depend on how much of the list fitted.
 	Overdue *OverdueFacts `json:"overdue,omitempty"`
+	// Schedule is the deployment's census: how many objects are waiting,
+	// late, overdue or never yet evaluated, and how many rounds finished on
+	// time in the last hour and the last six. It is the sentence "is the
+	// deployment keeping up", and it is absent when no replica has an index.
+	Schedule *ScheduleCensus `json:"schedule,omitempty"`
 	// Suppression says whether anything in this deployment can be parked at
 	// all. See DispatchSuppression: its absence, not its value, is the answer.
 	Dispatch  *DispatchSuppression `json:"dispatch,omitempty"`
@@ -907,11 +1207,13 @@ type View struct {
 	// keyed by Query Group. In no column and in no total: the objects are
 	// running now and every signal about their current round says so, which is
 	// exactly why this needs somewhere of its own to be said.
-	PrunedSkips        map[string]PrunedSkip `json:"pruned_skips,omitempty"`
-	DemotionEntries    int                   `json:"demotion_entries"`
-	DemotionExtensions int                   `json:"demotion_extensions"`
-	DemotionExits      int                   `json:"demotion_exits"`
-	LastDemotionExit   time.Time             `json:"last_demotion_exit,omitempty"`
+	PrunedSkips        map[string]PrunedSkip  `json:"pruned_skips,omitempty"`
+	GapSkips           map[string]SkippedSpan `json:"gap_skips,omitempty"`
+	NoData             []Anomaly              `json:"no_data,omitempty"`
+	DemotionEntries    int                    `json:"demotion_entries"`
+	DemotionExtensions int                    `json:"demotion_extensions"`
+	DemotionExits      int                    `json:"demotion_exits"`
+	LastDemotionExit   time.Time              `json:"last_demotion_exit,omitempty"`
 	// DemotedDue counts pooled objects whose own cooldown window has already
 	// elapsed at the moment of this read: they are due to be tried again and are
 	// still in the pool.
@@ -957,6 +1259,21 @@ type View struct {
 	// against; absent when it could not be read.
 	PublishedVersion uint64                `json:"published_version,omitempty"`
 	Workers          WorkerAcknowledgement `json:"workers"`
+	// Builds is the distinct builds the counted replicas run, most replicas
+	// first. One entry is a deployment that agrees with itself; more is a
+	// rollout, finished or not, and every total above is then a mix.
+	Builds []BuildGroup `json:"builds"`
+	// Activation is the control leader's standing on bringing the fleet's
+	// activation to the current publication, and ActivationReplica which
+	// replica said so. Absent when no counted replica has attempted it.
+	Activation        *ActivationFacts `json:"activation,omitempty"`
+	ActivationReplica string           `json:"activation_replica,omitempty"`
+	// Rebalance is the newest rebalance planning round any counted replica
+	// published, and RebalanceReplica which one. Newest rather than "the one
+	// that has it": a replica that stopped being the leader keeps its last
+	// plan, and after a leader change two replicas carry one each.
+	Rebalance        *RebalanceFacts `json:"rebalance,omitempty"`
+	RebalanceReplica string          `json:"rebalance_replica,omitempty"`
 }
 
 // Aggregate folds the published snapshots into one view.
@@ -969,7 +1286,7 @@ type View struct {
 func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas []string, now time.Time, freshness time.Duration) View {
 	view := View{Health: HealthHealthy, Anomalies: []Anomaly{}, Demoted: []Anomaly{},
 		Undecidable: []Anomaly{}, ByDesign: []Anomaly{},
-		Replicas: []string{}, PerReplica: []ReplicaView{}}
+		Replicas: []string{}, PerReplica: []ReplicaView{}, Builds: []BuildGroup{}}
 	ownedByReplica := make([]string, 0, len(expectedReplicas))
 	// The snapshots this view is willing to speak for. Every other number below
 	// is built from these and not from the argument, because the argument
@@ -1035,6 +1352,15 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 				view.PrunedSkips[queryGroup] = skip
 			}
 		}
+		for queryGroup, skip := range snapshot.GapSkips {
+			if view.GapSkips == nil {
+				view.GapSkips = make(map[string]SkippedSpan, len(snapshot.GapSkips))
+			}
+			if existing, seen := view.GapSkips[queryGroup]; !seen || skip.At.After(existing.At) {
+				view.GapSkips[queryGroup] = skip
+			}
+		}
+		view.NoData = append(view.NoData, snapshot.NoData...)
 		if snapshot.LastDemotionExit.After(view.LastDemotionExit) {
 			view.LastDemotionExit = snapshot.LastDemotionExit
 		}
@@ -1049,11 +1375,27 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		}
 		if snapshot.ControlSource != nil {
 			if snapshot.ControlSource.StaleBeyondBound {
-				view.Degradations = append(view.Degradations, Degradation{Kind: DegradationControlSourceStale, Replica: replica})
+				view.Degradations = append(view.Degradations, Degradation{Kind: DegradationControlSourceStale, Replica: replica,
+					Stage: snapshot.ControlSource.LastFailureExit, Text: snapshot.ControlSource.LastFailure})
 			}
 			if snapshot.ControlSource.LeaderAbsentBeyondBound {
 				view.Degradations = append(view.Degradations, Degradation{Kind: DegradationControlLeaderAbsent, Replica: replica})
 			}
+		}
+		if snapshot.Activation != nil {
+			// The leader's standing is the deployment's: only one replica
+			// attempts activation, and what it reports is what every replica
+			// executes. Kept whole, not summarised, so the page can say which
+			// publication is running and which one is not.
+			view.Activation = snapshot.Activation
+			view.ActivationReplica = replica
+			if snapshot.Activation.BehindBeyondBound {
+				view.Degradations = append(view.Degradations, Degradation{Kind: DegradationActivationBehind, Replica: replica})
+			}
+		}
+		if snapshot.Rebalance != nil && (view.Rebalance == nil || snapshot.Rebalance.PlannedAt.After(view.Rebalance.PlannedAt)) {
+			facts := *snapshot.Rebalance
+			view.Rebalance, view.RebalanceReplica = &facts, replica
 		}
 		perReplica := ReplicaView{
 			Replica: replica, Owned: snapshot.Owned, Determined: snapshot.Determined,
@@ -1063,9 +1405,11 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 			// Left at zero when the replica did not publish a start time, which
 			// an older build will not. Zero has to read as "not reported" rather
 			// than "started just now", so the page checks before using it.
-			UptimeSeconds: uptimeSeconds(snapshot.StartedAt, now),
-			Truncated:     snapshot.Truncated(), Capacity: snapshot.Capacity,
+			UptimeSeconds: uptimeSeconds(snapshot.StartedAt, now), StartedAt: snapshot.StartedAt,
+			Truncated: snapshot.Truncated(), Capacity: snapshot.Capacity,
+			Build: snapshot.Build,
 		}
+		view.Builds = addToBuildGroup(view.Builds, snapshot.Build, replica)
 		view.Workers.Ready++
 		switch {
 		case snapshot.AppliedActivationRecordRevision == 0 || expectation.ActivationRecordRevision == 0:
@@ -1136,6 +1480,7 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 	// Same snapshots, same reason: a stale replica's idea of what it has not
 	// picked up describes a moment that has passed.
 	aggregateOverdue(&view, counted)
+	aggregateSchedule(&view, counted)
 	aggregateDispatchSuppression(&view, counted)
 
 	// Owning an object is not knowing about it. A replica that has just restarted
@@ -1220,12 +1565,45 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 	// prevented this" is a real question about a demoted object, and the column
 	// it sits in does not answer it. What the column decides is whether the
 	// object bears on the verdict; who could have prevented it is decided here.
-	Attribute(view.Anomalies)
-	Attribute(view.Demoted)
-	Attribute(view.Undecidable)
-	Attribute(view.ByDesign)
+	Attribute(view.Anomalies, now)
+	Attribute(view.Demoted, now)
+	Attribute(view.Undecidable, now)
+	Attribute(view.ByDesign, now)
+	Attribute(view.NoData, now)
 	Settle(&view)
+	sortBuildGroups(view.Builds)
 	return view
+}
+
+// addToBuildGroup files a counted replica under the build it reported. A nil
+// build is filed under the empty BuildFacts, so replicas on a build that did
+// not publish one are counted together and apart from every version.
+func addToBuildGroup(groups []BuildGroup, build *BuildFacts, replica string) []BuildGroup {
+	facts := BuildFacts{}
+	if build != nil {
+		facts = *build
+	}
+	for index := range groups {
+		if groups[index].Build == facts {
+			groups[index].Replicas = append(groups[index].Replicas, replica)
+			return groups
+		}
+	}
+	return append(groups, BuildGroup{Build: facts, Replicas: []string{replica}})
+}
+
+// sortBuildGroups puts the build most replicas run first, then orders by
+// version so two reads of an evenly split deployment list the same way.
+func sortBuildGroups(groups []BuildGroup) {
+	sort.SliceStable(groups, func(i, j int) bool {
+		if len(groups[i].Replicas) != len(groups[j].Replicas) {
+			return len(groups[i].Replicas) > len(groups[j].Replicas)
+		}
+		if groups[i].Build.Version != groups[j].Build.Version {
+			return groups[i].Build.Version > groups[j].Build.Version
+		}
+		return groups[i].Build.Commit < groups[j].Build.Commit
+	})
 }
 
 // Settle sets the verdict, and the per-replica breakdown of what it is about,
@@ -1483,6 +1861,42 @@ type PrunedSkip struct {
 	// was discarded with the span, or zero. It is the one Slot in the span that
 	// can be named, and it was being worked on when it was dropped.
 	DiscardedSlot int64 `json:"discarded_slot,omitempty"`
+	// Replica is the replica that applied the skip, so the record can be folded
+	// with the rest of that replica's lines.
+	Replica string `json:"replica,omitempty"`
+	// Strategies and IntervalSeconds, as on SkippedSpan.
+	Strategies      []StrategyRef `json:"strategies,omitempty"`
+	IntervalSeconds int64         `json:"interval_seconds,omitempty"`
+}
+
+// SkippedSpan is a run of Slots one object skipped because they had fallen
+// past the replay window: this deployment giving up on work it could not
+// catch up. Unlike a pruned span the Slots are countable -- each skip is a
+// completion of its own -- so the count is given.
+type SkippedSpan struct {
+	FirstSlot int64 `json:"first_slot"`
+	LastSlot  int64 `json:"last_slot"`
+	Slots     int   `json:"slots"`
+	// At is when the last skip in the run happened.
+	At      time.Time `json:"at"`
+	Replica string    `json:"replica,omitempty"`
+	// Strategies is what the object evaluates, as the publisher knew it. A
+	// retained record without them rendered as a row with an empty strategy
+	// column, and a row nobody can trace to a strategy is a row nobody can
+	// act on.
+	Strategies []StrategyRef `json:"strategies,omitempty"`
+	// Reason and ReasonCategory are the last failure observed on the skipped
+	// Slot before it was given up, when there was one: a permit deadline
+	// missed, a budget rejection. Empty when the skip followed no failure of
+	// that Slot's (the Slot fell past the replay bound with nothing tried).
+	Reason         string `json:"reason,omitempty"`
+	ReasonCategory string `json:"reason_category,omitempty"`
+	// IntervalSeconds is the object's evaluation period, from the due index
+	// as the publisher knew it; zero when the index had no entry. A loss in
+	// progress on a ten-second object is the scheduler's replay bound, a
+	// mechanism with a name; the row says the period so a reader does not
+	// have to look the strategy up to know which conversation this is.
+	IntervalSeconds int64 `json:"interval_seconds,omitempty"`
 }
 
 // Spanning is how long the skipped span covers. It is a duration rather than a

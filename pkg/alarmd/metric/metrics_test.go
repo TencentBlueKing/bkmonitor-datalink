@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/nodata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
@@ -203,7 +204,7 @@ func TestCustomMetricFamilySeriesDevelopmentLimits(t *testing.T) {
 	}
 
 	for family, want := range map[string]int{
-		"bkmonitor_alarmd_observation_duration_seconds": 2970,
+		"bkmonitor_alarmd_observation_duration_seconds": 2880,
 	} {
 		if got := bounds[family]; got != want {
 			t.Errorf("histogram family %s theoretical maximum = %d, want buckets/+Inf/sum/count total %d", family, got, want)
@@ -259,9 +260,6 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_observed_bytes_total":                         "variableLabels: {stage,direction,result}",
 		"bkmonitor_alarmd_observed_keys_total":                          "variableLabels: {stage,direction,result}",
 		"bkmonitor_alarmd_observed_state_bytes_total":                   "variableLabels: {stage,direction,result}",
-		"bkmonitor_alarmd_message_receipt_status_total":                 "variableLabels: {status}",
-		"bkmonitor_alarmd_message_receipt_business_total":               "variableLabels: {field}",
-		"bkmonitor_alarmd_message_receipt_delivery_total":               "variableLabels: {outcome}",
 		"bkmonitor_alarmd_worker_work_total":                            "variableLabels: {work_kind}",
 		"bkmonitor_alarmd_worker_busy_seconds_total":                    "variableLabels: {stage}",
 		"bkmonitor_alarmd_last_progress_timestamp_seconds":              "variableLabels: {kind}",
@@ -361,8 +359,17 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_undrained_draining_query_groups":              "variableLabels: {}",
 		"bkmonitor_alarmd_draining_cursor_pruned_query_groups":          "variableLabels: {}",
 		"bkmonitor_alarmd_rebalance_planned_moves":                      "variableLabels: {}",
+		"bkmonitor_alarmd_rebalance_gap":                                "variableLabels: {}",
+		"bkmonitor_alarmd_dispatch_queue_turnaways_total":               "variableLabels: {outcome,cohort}",
+		"bkmonitor_alarmd_assignment_moves_total":                       "variableLabels: {reason}",
+		"bkmonitor_alarmd_rebalance_paused_total":                       "variableLabels: {reason}",
 		"bkmonitor_alarmd_assignment_index_stale_rounds":                "variableLabels: {}",
 		"bkmonitor_alarmd_assignment_index_write_total":                 "variableLabels: {result}",
+		"bkmonitor_alarmd_control_facts_read_total":                     "variableLabels: {fact}",
+		"bkmonitor_alarmd_control_facts_unavailable_total":              "variableLabels: {fact,reason}",
+		"bkmonitor_alarmd_control_facts_rebuilt_total":                  "variableLabels: {fact}",
+		"bkmonitor_alarmd_control_health_facts_total":                   "variableLabels: {status}",
+		"bkmonitor_alarmd_control_health_invalid_total":                 "variableLabels: {field}",
 		"bkmonitor_alarmd_assignment_index_read_total":                  "variableLabels: {result}",
 		"bkmonitor_alarmd_assignment_index_confirm_total":               "variableLabels: {result}",
 		"bkmonitor_alarmd_assignment_record_read_total":                 "variableLabels: {path}",
@@ -397,6 +404,17 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 	expected["bkmonitor_alarmd_catalog_query_groups"] = "variableLabels: {source_semantics}"
 	expected["bkmonitor_alarmd_catalog_plans"] = "variableLabels: {source_semantics}"
 	expected["bkmonitor_alarmd_catalog_objects"] = "variableLabels: {disposition}"
+	expected["bkmonitor_alarmd_catalog_withheld_objects"] = "variableLabels: {disposition,reason}"
+	expected["bkmonitor_alarmd_catalog_no_data_plans"] = "variableLabels: {source}"
+	expected["bkmonitor_alarmd_worker_no_data_slot_plans_total"] = "variableLabels: {outcome}"
+	expected["bkmonitor_alarmd_worker_no_data_plans_seen_total"] = "variableLabels: {}"
+	expected["bkmonitor_alarmd_no_data_plans_by_hop_total"] = "variableLabels: {hop}"
+	expected["bkmonitor_alarmd_segment_content_freshness_total"] = "variableLabels: {state}"
+	expected["bkmonitor_alarmd_schedule_cutover_total"] = "variableLabels: {result,reason}"
+	expected["bkmonitor_alarmd_replay_expired_total"] = "variableLabels: {reason}"
+	expected["bkmonitor_alarmd_slot_wait_duration_seconds"] = "variableLabels: {wait}"
+	expected["bkmonitor_alarmd_control_source_withheld_lines_total"] = "variableLabels: {result}"
+	expected["bkmonitor_alarmd_state_renewal_gate_resets_total"] = "variableLabels: {}"
 	expected["bkmonitor_alarmd_catalog_inert_plans"] = "variableLabels: {}"
 	expected["bkmonitor_alarmd_level_abnormal_total"] = "variableLabels: {window}"
 	expected["bkmonitor_alarmd_platform_settings_mode"] = "variableLabels: {mode}"
@@ -630,10 +648,6 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 			len(observationDurationBuckets),
 		),
 
-		fqName("message_receipt_status_total"):   len(receiptStatuses),
-		fqName("message_receipt_business_total"): len(receiptBusinessFields),
-		fqName("message_receipt_delivery_total"): 3,
-
 		fqName("worker_work_total"):                     len(phaseTwoWorkKinds),
 		fqName("worker_busy_seconds_total"):             len(phaseTwoBusyStages),
 		fqName("last_progress_timestamp_seconds"):       len(phaseTwoProgressKinds),
@@ -771,11 +785,22 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("undrained_draining_query_groups"):             1,
 		fqName("draining_cursor_pruned_query_groups"):         1,
 		fqName("rebalance_planned_moves"):                     1,
+		fqName("rebalance_gap"):                               1,
+		fqName("dispatch_queue_turnaways_total"):              len(dispatchTurnawayOutcomes) * len(dispatchTurnawayCohorts),
+		fqName("assignment_moves_total"):                      1,
+		fqName("rebalance_paused_total"):                      1,
 		fqName("assignment_index_stale_rounds"):               1,
 		fqName("assignment_index_write_total"):                2,
-		fqName("assignment_index_read_total"):                 4,
-		fqName("assignment_index_confirm_total"):              4,
-		fqName("assignment_record_read_total"):                2,
+		// Closed label sets, every series created at construction; see
+		// control_facts.go.
+		fqName("control_facts_read_total"):        len(controlFactNames),
+		fqName("control_facts_unavailable_total"): len(controlFactNames) * len(controlFactUnavailableReasons),
+		fqName("control_facts_rebuilt_total"):     len(controlFactNames),
+		fqName("control_health_facts_total"):      len(controlHealthStatuses),
+		fqName("control_health_invalid_total"):    len(controlHealthInvalidFields),
+		fqName("assignment_index_read_total"):     4,
+		fqName("assignment_index_confirm_total"):  4,
+		fqName("assignment_record_read_total"):    2,
 		// Four outcomes without a refusal, plus a conflict for each refusal
 		// OTHER included, all created at construction.
 		fqName("schedule_cursor_advance_total"):   len(observability.CursorAdvanceStatuses) - 1 + len(observability.CursorRefusals),
@@ -825,6 +850,49 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	bounds[fqName("catalog_plans")] = len(controlplane.SupportedSourceSemantics) + 2
 	// Every disposition, plus other for one added without being listed.
 	bounds[fqName("catalog_objects")] = len(controlplane.CatalogDispositions) + 1
+	// Every disposition but ACCEPTED, which is not withheld, against every
+	// reason this package can attach. The reason half is not a list to keep in
+	// step: controlplane's own test counts the reason-shaped literals in its
+	// source and fails when they pass the headroom this number is built from,
+	// so the bound is wrong only if that test is also red.
+	bounds[fqName("catalog_withheld_objects")] = len(controlplane.CatalogDispositions) * catalogReasonHeadroom
+	// Every source an accepted no-data Plan can declare. There is no other
+	// bucket: a source outside the list cannot be produced, because the same
+	// list is what the classification returns.
+	bounds[fqName("catalog_no_data_plans")] = len(controlplane.NoDataRosterSources)
+	// The four outcomes a no-data Plan can land on, and no more: the label is
+	// filled from the same list the evaluation publishes, and all four are
+	// created at startup so a zero on the one that never resolves on its own
+	// can be told from a label nothing ever wrote.
+	bounds[fqName("worker_no_data_slot_plans_total")] = len(nodata.SlotOutcomes)
+	// One series: a count, unlabelled. Its whole job is to be read against
+	// the outcome family, which carries the breakdown.
+	bounds[fqName("worker_no_data_plans_seen_total")] = 1
+	// One per hop between the leader's Catalog and the Slot, and no more:
+	// the label is written only from the list observability publishes.
+	bounds[fqName("no_data_plans_by_hop_total")] = len(observability.NoDataHops)
+	// One per state a Segment can be in against the latest publication, and
+	// no more: the label is written only from the list controlplane publishes.
+	bounds[fqName("segment_content_freshness_total")] = len(controlplane.SegmentContentStates)
+	// Every reason under failure, and one success. Success carries no reason
+	// because there is nothing to explain; the label is empty there.
+	bounds[fqName("schedule_cutover_total")] = len(controlplane.CutoverReasons) + 1
+	// One per reason a replay can be given up on, and no more: the label is
+	// written only from the list observability publishes, and the scheduler's
+	// typed constants are held to that list by a test of its own.
+	bounds[fqName("replay_expired_total")] = len(observability.ReplayExpiryReasons)
+	// One series per blocking wait a Slot attempt can be in, and no more: the
+	// label is written only from the list observability publishes, and the
+	// three call sites pass those constants.
+	bounds[fqName("slot_wait_duration_seconds")] = histogramSeries(len(observability.SlotWaits), len(slotWaitBuckets))
+	// Named or dropped, and no third thing: each changed object goes to one
+	// of the two, both are created at startup, and the label is written only
+	// from the two constants this package owns.
+	bounds[fqName("control_source_withheld_lines_total")] = len(sourceWithheldLineResults)
+	// One series: a count, unlabelled. There is nothing to break it down by --
+	// the process either remembers the key lives it is being asked about or it
+	// does not, and the whole reading is that the number never moves.
+	bounds[fqName("state_renewal_gate_resets_total")] = 1
 	// One series: a count, unlabelled. It stays unlabelled on purpose -- the
 	// interval would be the natural label and it is user input, so labelling
 	// it would put an open set on a family whose whole job is to be a steady
@@ -893,3 +961,9 @@ func countCustomSeriesByFamily(t *testing.T, recorder *Recorder) map[string]int 
 	}
 	return counts
 }
+
+// catalogReasonHeadroom is the reason half of catalog_withheld_objects's
+// cardinality bound. It is the same number controlplane's own scan holds its
+// source to, repeated here rather than exported because exporting a test's
+// constant would make it look like a value the package promises.
+const catalogReasonHeadroom = 120

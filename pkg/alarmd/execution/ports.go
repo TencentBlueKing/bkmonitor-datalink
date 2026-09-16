@@ -58,6 +58,40 @@ type GapGuardStore interface {
 	ApplyGap(context.Context, GapGuardApplyRequest) (GapGuardApplyResult, error)
 }
 
+// HostBusiness answers which business the CMDB index holds a host under.
+//
+// One host per call rather than a batch, because the index is an in-process
+// snapshot and the call is a map read: a batch interface would suggest a round
+// trip that is not there and would need its own partial-answer semantics for a
+// failure that cannot happen.
+//
+// The three answers are distinct and the caller needs all three. A host CMDB
+// holds under this business is expected; one it holds under another has left,
+// which is what stops a departed host being reported absent forever; and one it
+// does not hold is neither - not expected, and not something that left.
+type HostBusiness interface {
+	// LookupHostBusiness returns the business the host identity belongs to, and
+	// false when the index does not hold it. The identity is "address|cloud".
+	LookupHostBusiness(identity string) (string, bool)
+	// HostIndexResolved reports whether this process holds an index it can
+	// answer from at all.
+	//
+	// It is separate from the lookup because the lookup cannot carry it. "Not
+	// held" is the safe answer for one host -- a host nobody has heard of is
+	// not expected -- but the same answer given to every host, because no
+	// index has been built, is not an answer about hosts at all, and a caller
+	// that cannot tell the two apart reads a cold index as a target that
+	// resolved to nobody. It is a method rather than a field on the answer so
+	// that a caller asking about a whole target asks once.
+	HostIndexResolved() bool
+}
+
+// PlanNoDataStore holds what each Plan remembers about absence between Slots.
+type PlanNoDataStore interface {
+	LoadNoData(context.Context, NoDataLoadRequest) (NoDataLoadResult, error)
+	ApplyNoData(context.Context, NoDataApplyRequest) (NoDataApplyResult, error)
+}
+
 type EventSink interface {
 	// WriteBatch returns nil only after the whole batch has received its
 	// broker ACK. A non-nil error means that ACK is unknown; callers must not

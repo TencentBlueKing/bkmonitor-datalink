@@ -84,7 +84,7 @@ func convergeDriftedSlot(t *testing.T, completeness execution.Completeness) (exe
 	coordinator := &SlotExecutionCoordinator{
 		budget: ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10},
 		ports: Ports{
-			Activation: ports, Sequencer: ports, Admission: ports, GapGuard: ports,
+			Activation: ports, Sequencer: ports, Admission: ports, GapGuard: ports, NoData: SharedNoDataStore, Hosts: SharedHostBusiness,
 			Events: ports, State: ports, Progress: ports,
 			Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 				if observation.Stage == observability.StageProgressCommitted {

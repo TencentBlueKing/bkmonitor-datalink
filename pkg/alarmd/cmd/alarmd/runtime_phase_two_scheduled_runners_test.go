@@ -233,7 +233,7 @@ func TestFillQueuesDefersTheWalkWhileTheReadyQueueIsFull(t *testing.T) {
 	// One dispatch frees one place. The Query Group turned away takes it in the
 	// same generation - it never spent its turn - and the walk then reaches the
 	// Query Group behind it, which the recovery queue takes.
-	dispatcher.markDispatched(dispatcher.normal[0].scheduled, false, false)
+	dispatcher.markDispatched(dispatcher.normal[0].scheduled, false, -1, false)
 	dispatcher.fillQueues(runners, revision)
 	if got := queuedNames(dispatcher.normal); len(got) != 1 || got[0] != "query-group-b" {
 		t.Fatalf("ready queue holds %v, want query-group-b alone", got)
@@ -277,7 +277,7 @@ func TestReturningRunnerDoesNotTakeThePlaceTheWalkHasNotReached(t *testing.T) {
 	// The first Query Group is dispatched, so one place is free, and a scheduler
 	// tick opens the next generation while it is still running.
 	first := dispatcher.normal[0].scheduled
-	dispatcher.markDispatched(first, false, false)
+	dispatcher.markDispatched(first, false, -1, false)
 	dispatcher.beginGeneration()
 
 	// It now returns. Its turn in the previous generation was spent, so it is
@@ -328,7 +328,7 @@ func TestOneShotRunKeepsTheReturningRunnerOutOfTheQueueToo(t *testing.T) {
 	}
 
 	first := dispatcher.normal[0].scheduled
-	dispatcher.markDispatched(first, false, false)
+	dispatcher.markDispatched(first, false, -1, false)
 	dispatcher.handleResult(context.Background(), phaseTwoScheduledResult{scheduled: first, attempted: true}, true)
 	if got := queuedNames(dispatcher.normal); len(got) != 1 || got[0] != "query-group-b" {
 		t.Fatalf("ready queue holds %v after the Runner returned, want query-group-b alone", got)

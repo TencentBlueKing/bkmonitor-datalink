@@ -40,7 +40,7 @@ func TestFinalizePreparedPreservesStableSiblingReceiptsDuringForceWarmingActivat
 	}
 	ports := &activationSiblingPorts{contract: contractRef, changedPlan: changedPlan, stablePlan: stablePlan}
 	coordinator := &SlotExecutionCoordinator{budget: ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10}, ports: Ports{
-		Activation: ports, Sequencer: ports, Admission: ports, GapGuard: ports, Events: ports, State: ports, Progress: ports,
+		Activation: ports, Sequencer: ports, Admission: ports, GapGuard: ports, NoData: SharedNoDataStore, Hosts: SharedHostBusiness, Events: ports, State: ports, Progress: ports,
 		Observer: observability.ObserverFunc(func(context.Context, observability.Observation) {}),
 	}}
 	header := execution.InternalExecutionHeader{Contract: contractRef, DuePlans: duePlans}

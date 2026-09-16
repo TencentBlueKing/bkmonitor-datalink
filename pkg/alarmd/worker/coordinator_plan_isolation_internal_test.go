@@ -146,7 +146,7 @@ func newPlanIsolationFixture(t *testing.T, eventErr error) *planIsolationFixture
 	fixture.ports = ports
 	fixture.observations = make([]observability.Observation, 0, 8)
 	fixture.coordinator = &SlotExecutionCoordinator{ports: Ports{
-		Activation: ports, Sequencer: ports, Admission: ports, GapGuard: ports, Events: ports, State: ports, Progress: ports,
+		Activation: ports, Sequencer: ports, Admission: ports, GapGuard: ports, NoData: SharedNoDataStore, Hosts: SharedHostBusiness, Events: ports, State: ports, Progress: ports,
 		Observer: observability.ObserverFunc(func(ctx context.Context, observation observability.Observation) {
 			observation.Trace = observability.TraceFieldsFromContext(ctx)
 			fixture.observations = append(fixture.observations, observability.NormalizeObservation(observation))

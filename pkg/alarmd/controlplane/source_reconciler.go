@@ -106,6 +106,10 @@ type SourceRefreshResult struct {
 	// under any status -- a round that publishes nothing because nothing
 	// changed composed the same Catalog as the one before it, and a reader
 	// asking which data sources are running needs an answer then too.
+	// Withheld names the objects whose disposition changed this round, so a
+	// reader can ask which strategy is held back rather than only how many.
+	// Empty on a round where nothing changed, which is the steady state.
+	Withheld    WithheldReport
 	Composition CatalogComposition
 }
 
@@ -139,7 +143,7 @@ type SourceReconciler struct {
 	publisher       *SnapshotPublisher
 	compiler        RuntimePlanCompiler
 	stateSemantics  strategy.StateSemantics
-	validateCatalog func(Catalog) error
+	validateCatalog CatalogAdmission
 	outputProtocol  string
 	// candidates carries the compiler's output from one round to the next,
 	// so a round compiles only the documents that changed. It lives on the
@@ -154,6 +158,20 @@ type SourceReconciler struct {
 	// the object catalog after a restart; the whole snapshot body is no
 	// longer read for it.
 	lastGood *PublishedSnapshot
+	// namedWithheld is the withheld objects this process has already written
+	// out, so a round reports only what changed since it last said something.
+	//
+	// Process memory, deliberately, and not the published audit. The audit
+	// records what a leader published; it says nothing about what was written
+	// where an operator can read it, and the two came apart on the very
+	// release that added these lines -- the audit was already in Redis,
+	// published by leaders that had no such lines to write, so the first
+	// leader that could write them found nothing to report and said nothing
+	// at all. An operator arriving after a failover would have counts and no
+	// names, which is the gap these lines exist to close. Nil on a process
+	// that has said nothing, which is what makes its first round name
+	// everything without needing a flag to say so.
+	namedWithheld []ObjectDisposition
 }
 
 // ConfigureClock sets the clock the reconciler paces its periodic full reads
@@ -188,11 +206,27 @@ func (reconciler *SourceReconciler) ConfigureOutputProtocol(protocol string) err
 	}
 }
 
+// CatalogAdmission is the deployment's say over a Catalog the compiler built.
+//
+// It returns the Catalog to publish, which is how a deployment withholds the
+// Plans it cannot serve while publishing the rest. Returning an error refuses
+// the whole round instead, and is for conditions that are genuinely about the
+// Catalog rather than about any Plan in it.
+//
+// The distinction is the point. This hook used to be able only to refuse, and
+// the one condition production gave it -- a Plan needing longer Snapshot
+// retention than the deployment keeps -- is a property of one Plan. A single
+// strategy asking for sixty hours stopped every other strategy in the
+// deployment from being published at all, on every round, for as long as it
+// existed; the fleet went stale, no cutover was attempted, and the account of
+// why was one sentence naming a strategy nobody had changed.
+type CatalogAdmission func(Catalog) (Catalog, error)
+
 func NewSourceReconciler(
 	repository *RedisCatalogRepository,
 	compiler RuntimePlanCompiler,
 	stateSemantics strategy.StateSemantics,
-	validators ...func(Catalog) error,
+	validators ...CatalogAdmission,
 ) (*SourceReconciler, error) {
 	if compiler == nil || !validStateSemantics(stateSemantics) || len(validators) > 1 ||
 		(len(validators) == 1 && validators[0] == nil) {
@@ -202,7 +236,7 @@ func NewSourceReconciler(
 	if err != nil {
 		return nil, err
 	}
-	var validateCatalog func(Catalog) error
+	var validateCatalog CatalogAdmission
 	if len(validators) == 1 {
 		validateCatalog = validators[0]
 	}
@@ -227,6 +261,7 @@ func (reconciler *SourceReconciler) Refresh(
 	cycle, read, err := reconciler.observe(ctx, source)
 	retainedStaleRevisions := 0
 	var composition CatalogComposition
+	var withheld WithheldReport
 	defer func() {
 		if err != nil {
 			reconciler.unsettle()
@@ -234,6 +269,7 @@ func (reconciler *SourceReconciler) Refresh(
 		}
 		result.RetainedStaleRevisions = retainedStaleRevisions
 		result.Composition = composition
+		result.Withheld = withheld
 		result.CompiledStrategies, result.ReusedStrategies = reconciler.candidates.Stats()
 		result.ReadMode, result.ReadReason, result.StrategiesRead = read.mode, read.reason, read.strategies
 		result.ChangeSignalPresent, result.ChangeSignalAgeSeconds = read.signalPresent, read.signalAgeSeconds
@@ -271,12 +307,29 @@ func (reconciler *SourceReconciler) Refresh(
 			errors.New("alarmd controlplane: source observation changed while building Catalog"))
 	}
 	if reconciler.validateCatalog != nil {
-		if err := reconciler.validateCatalog(catalog); err != nil {
+		admitted, err := reconciler.validateCatalog(catalog)
+		if err != nil {
+			return SourceRefreshResult{}, exitAt(SourceRefreshExitValidateCatalog, err)
+		}
+		catalog = admitted
+		// The revision names the content, so content the deployment withheld
+		// has to be named by a different one. Publishing the admitted Catalog
+		// under the revision the built one derived is refused at the write --
+		// correctly, because the two would disagree about what that revision
+		// contains, and everything downstream reads content by revision.
+		catalog.SnapshotRevision, err = deriveSnapshotRevision(catalog.QueryGroups)
+		if err != nil {
 			return SourceRefreshResult{}, exitAt(SourceRefreshExitValidateCatalog, err)
 		}
 	}
 	catalog.ObservationID = observationID
 	composition = ComposeCatalog(catalog)
+	// Named against what this process has already named, not against the
+	// stored audit: see namedWithheld. The counts in the composition and these
+	// lines come from one pass over one list, so the page and the log cannot
+	// disagree about how many.
+	withheld = ChangedWithheld(composition.WithheldObjects, reconciler.namedWithheld)
+	reconciler.namedWithheld = RememberNamed(reconciler.namedWithheld, composition.WithheldObjects, withheld.Lines)
 	// The active revision remains the execution authority even when latest points
 	// at a stranded candidate. Restore its occurrence directly; requiring two
 	// identical source observations here can leave the active Snapshot expired

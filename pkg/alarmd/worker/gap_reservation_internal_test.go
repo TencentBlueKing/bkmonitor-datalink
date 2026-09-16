@@ -38,7 +38,7 @@ func (*reservationGapStore) ApplyGap(context.Context, execution.GapGuardApplyReq
 
 func gapReservationFixture() (*SlotExecutionCoordinator, *reservationGapStore, execution.GapLoadRequest) {
 	store := &reservationGapStore{}
-	coordinator := &SlotExecutionCoordinator{budget: sideEffectTestBudget("gap"), ports: Ports{GapGuard: store,
+	coordinator := &SlotExecutionCoordinator{budget: sideEffectTestBudget("gap"), ports: Ports{GapGuard: store, NoData: SharedNoDataStore, Hosts: SharedHostBusiness,
 		Observer: observability.ObserverFunc(func(context.Context, observability.Observation) {})}}
 	request := execution.GapLoadRequest{Items: []execution.PlanGapLoadItem{{Identity: execution.PlanGapIdentity{
 		Plan: execution.PlanIdentity{TenantID: "tenant", BusinessID: "1", StrategyID: "1"}, StateGeneration: "generation"}}}}

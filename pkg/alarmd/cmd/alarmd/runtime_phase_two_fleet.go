@@ -142,8 +142,12 @@ type fleetPublisher struct {
 	// startedAt is this process's start, captured once. It bounds every
 	// duration this replica reports: a run it watched begin cannot predate it.
 	startedAt time.Time
-	owned     func() []execution.QueryGroupIdentity
-	now       func() time.Time
+	// build is what this process was built from, the same facts as its
+	// build_info series. Published on every snapshot so the page can say which
+	// build each replica's numbers came from.
+	build fleet.BuildFacts
+	owned func() []execution.QueryGroupIdentity
+	now   func() time.Time
 	// observe reports each publish outcome. A failure is retried on the next
 	// tick rather than propagated: the snapshot is diagnostics, and diagnostics
 	// must not be able to stop the pipeline whose facts they describe.
@@ -175,6 +179,10 @@ type fleetPublisher struct {
 	// snapshot then carries no overdue facts at all -- which is a different
 	// answer from "none are overdue" and has to stay one.
 	overdue fleet.OverdueWakeSource
+	// schedule is the same due index, asked where every owned object is in its
+	// cycle and how the rounds have been finishing. Nil with overdue, and the
+	// snapshot then carries no census and no wake facts on its rows.
+	schedule fleet.ScheduleSource
 	// strategies names the strategies behind a Query Group, so an overdue
 	// object arrives in the list identified the way every other anomaly is. A
 	// row nobody can trace back to a strategy is a row nobody can act on.
@@ -200,6 +208,16 @@ type fleetPublisher struct {
 	// refresh. Nil on a bundle that has none, and the snapshot then carries
 	// no facts.
 	controlSource func() *fleet.ControlSourceFacts
+	// activation reports the control leader's standing on bringing the
+	// fleet's activation to the current publication. Nil on a replica that
+	// has not attempted it, which is every follower; the aggregate then
+	// takes the one replica that has.
+	activation func() *fleet.ActivationFacts
+	// rebalance reports the control leader's latest rebalance planning
+	// round: how the ready replicas hold the objects and what the round
+	// would move. Nil on a follower; the aggregate takes the newest round
+	// any replica published.
+	rebalance func() *fleet.RebalanceFacts
 	// platformSettings reports the state of this replica's copy of the
 	// platform's settings. Nil on a bundle that has none.
 	platformSettings func() *fleet.PlatformSettingsFacts
@@ -283,6 +301,24 @@ func (publisher *fleetPublisher) publishOnce(ctx context.Context) {
 	}
 }
 
+// fleetBuildFacts carries the recorder's build to the snapshot field by field,
+// so the two types can differ in package without differing in content.
+func fleetBuildFacts(build metric.BuildInfo) fleet.BuildFacts {
+	return fleet.BuildFacts{Version: build.Version, Commit: build.Commit, SchemaVersion: build.SchemaVersion}
+}
+
+// buildFacts is the build this publisher was given, or nil when it was given
+// none: the aggregate keeps "did not report" apart from any version, and a
+// publisher that never learned its build must not publish an empty one as if
+// it were a version.
+func (publisher *fleetPublisher) buildFacts() *fleet.BuildFacts {
+	if publisher.build == (fleet.BuildFacts{}) {
+		return nil
+	}
+	build := publisher.build
+	return &build
+}
+
 // snapshot is what this replica has to say about itself right now. It is built
 // separately from being published so the two can fail independently: what the
 // replica states and whether the statement reached the store are different
@@ -335,6 +371,7 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 		Replica:   publisher.replica,
 		TakenAt:   at,
 		StartedAt: publisher.startedAt,
+		Build:     publisher.buildFacts(),
 		Owned:     len(owned),
 		// Read after Forget, so it counts only objects this replica still owns.
 		// The difference between the two is what the replica owns but cannot
@@ -365,6 +402,12 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	if publisher.platformSettings != nil {
 		snapshot.PlatformSettings = publisher.platformSettings()
 	}
+	if publisher.activation != nil {
+		snapshot.Activation = publisher.activation()
+	}
+	if publisher.rebalance != nil {
+		snapshot.Rebalance = publisher.rebalance()
+	}
 	// And the objects whose rounds end without a basis to decide recovery.
 	// Beside the anomalies for a different reason than the pool: not "this is
 	// somebody else's fault" but "this is not a fault". Counting them as
@@ -382,6 +425,46 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	// The spans nothing ever evaluated. Not folded into any column: those
 	// objects are running normally now, and the loss is in their past.
 	snapshot.PrunedSkips = publisher.tracker.PrunedSkips()
+	snapshot.GapSkips = publisher.tracker.GapSkips()
+	// The strategies behind each retained record, so a row built from it can
+	// be traced to something a reader can act on.
+	if publisher.strategies != nil {
+		for queryGroup, skip := range snapshot.PrunedSkips {
+			skip.Strategies = publisher.strategies(queryGroup)
+			snapshot.PrunedSkips[queryGroup] = skip
+		}
+		for queryGroup, skip := range snapshot.GapSkips {
+			skip.Strategies = publisher.strategies(queryGroup)
+			snapshot.GapSkips[queryGroup] = skip
+		}
+	}
+	// And the objects whose data stopped: rounds completing, nothing coming
+	// back. In no column, and on the data side's line.
+	snapshot.NoData = publisher.tracker.NoData()
+	// Where every listed object is in its cycle, and the census over all of
+	// them. From the same index and the same instant as the overdue facts, so
+	// the row and the sentence above it cannot read two clocks.
+	if publisher.schedule != nil {
+		census := publisher.schedule.Census(at, len(owned))
+		snapshot.Schedule = &census
+		for _, column := range [][]fleet.Anomaly{snapshot.Anomalies, snapshot.Demoted, snapshot.Undecidable, snapshot.ByDesign, snapshot.NoData} {
+			for index := range column {
+				wake := publisher.schedule.WakeOf(column[index].QueryGroup)
+				column[index].Wake = &wake
+			}
+		}
+		// And the period behind each retained record, from the same index: a
+		// loss in progress on a ten-second object is one mechanism, on a
+		// five-minute object another, and the record alone cannot say which.
+		for queryGroup, skip := range snapshot.GapSkips {
+			skip.IntervalSeconds = publisher.schedule.WakeOf(queryGroup).IntervalSeconds
+			snapshot.GapSkips[queryGroup] = skip
+		}
+		for queryGroup, skip := range snapshot.PrunedSkips {
+			skip.IntervalSeconds = publisher.schedule.WakeOf(queryGroup).IntervalSeconds
+			snapshot.PrunedSkips[queryGroup] = skip
+		}
+	}
 	if publisher.capacity != nil {
 		snapshot.Capacity = publisher.capacity()
 	}
@@ -465,10 +548,10 @@ func fleetVerdictSource(
 		defer cancel()
 		at := now()
 		view := service.View(ctx)
-		fleet.MarkStalled(view.Anomalies, at, stallAfter)
-		// Same as the HTTP path: stalling can only move an object towards
-		// ours, so the verdict is decided again once it is known.
-		fleet.Settle(&view)
+		// The same call the HTTP path makes, so the two never mark or settle
+		// differently: it used to mark stalling on the anomaly list alone
+		// while the page marked every column.
+		fleet.Decide(&view, at, stallAfter)
 		return fleetVerdictOf(view, at)
 	}
 }
@@ -530,6 +613,26 @@ func fleetVerdictOf(view fleet.View, at time.Time) metric.FleetVerdict {
 		gaps.add(fleet.MetricGapKind(gap.Kind), 0)
 	}
 	verdict.Gaps = gaps.counts()
+
+	// The first screen's lines, by the same call the page makes, and the
+	// whole closed table rather than the lines that are up: a line that is
+	// down is exported at zero. Absent would read the same as a build
+	// without the family, and an alert on "this line is up" needs to see it
+	// go down.
+	lines := map[fleet.Check]int{}
+	for _, report := range fleet.Report(&view, at).Checks {
+		lines[report.Code] = report.LineCount()
+	}
+	for _, code := range fleet.Checks() {
+		verdict.Checks = append(verdict.Checks, metric.FleetCount{Value: string(code), Count: lines[code]})
+	}
+	replicas := map[fleet.DegradationKind]int{}
+	for _, degradation := range view.Degradations {
+		replicas[degradation.Kind]++
+	}
+	for _, kind := range fleet.DegradationKinds {
+		verdict.Degradations = append(verdict.Degradations, metric.FleetCount{Value: string(kind), Count: replicas[kind]})
+	}
 	return verdict
 }
 

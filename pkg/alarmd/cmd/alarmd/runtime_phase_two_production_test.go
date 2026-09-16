@@ -656,26 +656,32 @@ func TestPhaseTwoSnapshotMinimumRetentionUsesExistingRecoveryAndOwnershipParamet
 	}
 }
 
-func TestPhaseTwoCatalogRetentionValidatorIncludesCandidateScheduleOffset(t *testing.T) {
+func TestPhaseTwoCatalogRetentionAdmissionUsesTheCandidatesOwnScheduleOffset(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	catalog := controlplane.Catalog{QueryGroups: []controlplane.QueryGroup{{Plans: []controlplane.FrozenPlan{{
 		ScheduleSpec: execution.ScheduleSpec{EvaluationIntervalSeconds: 60, Timezone: "UTC"},
 	}}}}}
-	validator := phaseTwoCatalogRetentionValidator(cfg)
-	if err := validator(catalog); err != nil {
-		t.Fatalf("validator(default) error=%v", err)
+	admitted, err := phaseTwoCatalogRetentionAdmission(cfg)(catalog)
+	if err != nil || len(admitted.QueryGroups) != 1 {
+		t.Fatalf("admission(default) = (%+v, %v), want the Plan kept", admitted.QueryGroups, err)
 	}
 	// The retention is derived from the longest cadence the deployment
 	// supports, so shortening the configured floor no longer shortens it;
 	// the way to need more retention than there is, is a Plan evaluated less
 	// often than that bound. The property under test is unchanged: the
-	// candidate's own schedule offset decides whether the Catalog fits.
+	// candidate's own schedule offset decides whether it fits -- only the
+	// consequence moved, from refusing the Catalog to withholding the Plan.
 	beyond := controlplane.Catalog{QueryGroups: []controlplane.QueryGroup{{Plans: []controlplane.FrozenPlan{{
 		ScheduleSpec: execution.ScheduleSpec{
 			EvaluationIntervalSeconds: int64(phaseTwoMaxSupportedEvaluationInterval/time.Second) + 60, Timezone: "UTC"},
 	}}}}}
-	if err := validator(beyond); !errors.Is(err, scheduler.ErrSnapshotRetentionInsufficient) {
-		t.Fatalf("validator(insufficient) error=%v", err)
+	admitted, err = phaseTwoCatalogRetentionAdmission(cfg)(beyond)
+	if err != nil {
+		t.Fatalf("admission(beyond) error = %v, want the Plan withheld rather than the round refused", err)
+	}
+	if len(admitted.QueryGroups) != 0 || len(admitted.Dispositions) != 1 {
+		t.Fatalf("admission(beyond) = groups %+v dispositions %+v, want the Plan withheld",
+			admitted.QueryGroups, admitted.Dispositions)
 	}
 }
 
@@ -1676,10 +1682,24 @@ func TestProductionPhaseTwoControlKeepsLastGoodAcrossFailedCutoverAndRecovery(t 
 		!reflect.DeepEqual(degraded.QueryGroups, []execution.QueryGroupIdentity{"query-group-healthy"}) {
 		t.Fatalf("degraded Refresh()=(%#v,%v)", degraded, err)
 	}
+	// The round says what it tried and where the activation is left: the
+	// candidate it could not reach, the current publication the fleet keeps
+	// executing, and the bounded classification. This is the fact the fleet
+	// standing is kept from; the source clock alone reads this round as a
+	// success, because the source did publish.
+	if degraded.Activation == nil || degraded.Activation.Published != candidate || degraded.Activation.Applied != current ||
+		degraded.Activation.Failure == nil || degraded.Activation.Failure.Class != controlplane.ActivationFailureClassScheduleConflict ||
+		!errors.Is(degraded.Activation.Cause, controlplane.ErrScheduleConflict) {
+		t.Fatalf("degraded round's activation outcome = %+v, want published=candidate applied=current with the schedule conflict", degraded.Activation)
+	}
 	healthy, err := control.Refresh(context.Background())
 	if err != nil || healthy.Status != phaseTwoControlHealthy ||
 		!reflect.DeepEqual(healthy.QueryGroups, []execution.QueryGroupIdentity{"query-group-healthy"}) {
 		t.Fatalf("healthy Refresh()=(%#v,%v)", healthy, err)
+	}
+	if healthy.Activation == nil || healthy.Activation.Published != candidate || healthy.Activation.Applied != candidate ||
+		healthy.Activation.Cause != nil {
+		t.Fatalf("recovered round's activation outcome = %+v, want published=applied=candidate and no cause", healthy.Activation)
 	}
 	if activator.calls != 2 {
 		t.Fatalf("activation calls=%d, want 2", activator.calls)
@@ -1695,6 +1715,12 @@ func TestProductionPhaseTwoControlKeepsLastGoodAcrossFailedCutoverAndRecovery(t 
 		failures[0].ActivationFailure.Class != observability.ActivationFailureClassScheduleConflict ||
 		!errors.Is(failures[0].Err, controlplane.ErrScheduleConflict) {
 		t.Fatalf("activation failure observations=%#v", failures)
+	}
+	// The reason on the line is the classification, verbatim: what the fleet
+	// page groups CUTOVER_FAILING on, so the two name the failure alike. It
+	// used to be contract_retryable, which normalises to _other.
+	if failures[0].ReasonCode != "schedule_cutover/schedule_conflict" {
+		t.Fatalf("activation_failed reason_code = %q, want schedule_cutover/schedule_conflict", failures[0].ReasonCode)
 	}
 }
 
@@ -2025,7 +2051,7 @@ func TestProductionPhaseTwoOwnershipUsesAssignmentAndLeaseBeforeRunner(t *testin
 		ControlLeaderTTL: time.Minute, Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 			observations = append(observations, observation)
 		}), Reconcile: reconciler, Flights: flights, RecoveryLimits: limits, PostRecoveryTerminalDelay: time.Minute, QueryDeadlineReserve: 5 * time.Second,
-		SnapshotRetention: time.Hour, PublicationDelayAllowance: time.Minute,
+		SnapshotRetention: time.Hour, PublicationDelayAllowance: time.Minute, SettlingWait: 30 * time.Second, LeaseTTL: 30 * time.Second, ReconcileInterval: 5 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("newProductionPhaseTwoOwnership() error = %v", err)
@@ -2112,7 +2138,7 @@ func TestProductionPhaseTwoOwnershipFollowerReadsAssignmentWithoutPublishing(t *
 		Progress: unavailableScheduleProgress{}, Executor: rejectingSlotExecutor{}, Now: func() time.Time { return now },
 		ControlLeaderTTL: time.Minute, Observer: observability.NopObserver{}, Reconcile: reconciler,
 		Flights: flights, RecoveryLimits: limits, PostRecoveryTerminalDelay: time.Minute, QueryDeadlineReserve: 5 * time.Second,
-		SnapshotRetention: time.Hour, PublicationDelayAllowance: time.Minute,
+		SnapshotRetention: time.Hour, PublicationDelayAllowance: time.Minute, SettlingWait: 30 * time.Second, LeaseTTL: 30 * time.Second, ReconcileInterval: 5 * time.Second,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2648,7 +2674,7 @@ func newRenewalTestFixture(t *testing.T) renewalTestFixture {
 			observations = append(observations, observation)
 			mu.Unlock()
 		}), Reconcile: reconciler, Flights: flights, RecoveryLimits: limits, PostRecoveryTerminalDelay: time.Minute,
-		QueryDeadlineReserve: 5 * time.Second, SnapshotRetention: time.Hour, PublicationDelayAllowance: time.Minute,
+		QueryDeadlineReserve: 5 * time.Second, SnapshotRetention: time.Hour, PublicationDelayAllowance: time.Minute, SettlingWait: 30 * time.Second, LeaseTTL: 30 * time.Second, ReconcileInterval: 5 * time.Second,
 	})
 	if err != nil {
 		t.Fatalf("newProductionPhaseTwoOwnership() error = %v", err)

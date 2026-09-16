@@ -168,10 +168,15 @@ func (source *ProductionSlotSource) resumeExpiredRange(ctx context.Context, p ex
 		KeepUntilUnixMilli:             p.Last.KeepUntilUnixMilli,
 		Dispatch:                       SlotDispatchContext{Operation: execution.OperationNormal, OwnerFence: current, AssignmentGeneration: assignment.AssignmentGeneration},
 		ExpectedNextSlot:               p.First.Contract.Slot.EvaluationTime,
-		Recovery:                       SlotRecoveryFacts{Disposition: ReplayExpired, Distance: 1},
+		Recovery:                       SlotRecoveryFacts{Disposition: ReplayExpired, Reason: ReplayExpiredRange, Distance: 1},
 	}
 	if err := slot.Validate(source.queryGroup); err != nil {
 		return FrozenSlot{}, false, err
 	}
+	// Counted here and not where the range was first classified: this is a
+	// projection persisted by an earlier round, and resuming it is the only
+	// event this process sees. The classification that created it was counted
+	// by whichever process made it, which may no longer exist.
+	source.observeReplayExpiry(ctx, p.First.Contract.Slot.EvaluationTime, slot.Recovery)
 	return slot, true, nil
 }

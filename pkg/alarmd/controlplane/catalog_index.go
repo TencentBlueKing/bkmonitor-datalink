@@ -367,7 +367,13 @@ func (repository *RedisCatalogRepository) loadQueryGroupObjects(
 			return nil, fmt.Errorf("%w: not a Query Group object of this contract", ErrCatalogObjectCorrupt)
 		}
 		repository.observeObjectRead(ctx, objectReadKindQueryGroup, objectReadMiss)
-		repository.objectCache.store(repository.queryGroupObjectKey(entry.ObjectDigest), object, len(payload))
+		// Cached in the same shape the single-object path caches, because both
+		// write this key. Storing a bare object here and a decorated one there
+		// made the cache hold two types under one key, which the reader only
+		// finds out about by panicking on whichever it did not expect.
+		repository.objectCache.store(repository.queryGroupObjectKey(entry.ObjectDigest), storedQueryGroupObject{
+			object: object, noDataOccurrences: noDataOccurrencesIn(payload),
+		}, len(payload))
 		objects[entry.ObjectDigest] = object
 	}
 	return objects, nil

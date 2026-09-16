@@ -85,6 +85,9 @@ type ListResponse struct {
 	// verdict's so that the counts and the rows a check opens come from one
 	// read of the view.
 	Checks []CheckReport `json:"checks"`
+	// Todo is the first screen's arithmetic: lines to act on, distinct
+	// objects under them now, and the record of past loss apart from both.
+	Todo Todo `json:"todo"`
 	// Check and Group echo which line and which fold the rows are, when the
 	// request asked for one. Echoed rather than inferred from the request, like
 	// Column: the rows of one check under another's heading read as that
@@ -203,6 +206,31 @@ type HealthResponse struct {
 	// have applied it. Per-replica versions are on PerReplica.
 	PublishedVersion uint64                `json:"published_version,omitempty"`
 	Workers          WorkerAcknowledgement `json:"workers"`
+	// Builds is which build each counted replica runs, grouped. The first
+	// thing to establish about any reading is what produced it; before this
+	// field that meant a PromQL query against build_info for each pod.
+	Builds []BuildGroup `json:"builds"`
+	// Degradations are the replica-level standings the verdict was decided
+	// on, and Activation the control leader's standing on the publication
+	// the fleet executes. Both decided the verdict before they were on this
+	// response: a DEGRADED badge whose only sentence named the object list,
+	// over a deployment that had executed a stale publication for half a
+	// day. Present and empty when there are none, so a reader can tell "no
+	// standing degrades this deployment" from "this build has no such field".
+	Degradations []Degradation    `json:"degradations"`
+	Activation   *ActivationFacts `json:"activation"`
+	// Load is the operating judgment the capacity panel opens with: on
+	// time, backlog, loss, bottleneck, with the numbers each was read from
+	// and the limits it holds under. Decided here, once, from the same view
+	// the numbers under it come from.
+	Load              Load   `json:"load"`
+	ActivationReplica string `json:"activation_replica,omitempty"`
+	// Rebalance is the leader's latest rebalance planning round, whole, and
+	// RebalanceReplica which leader. On the verdict route because the
+	// replica table under it shows the counts the round judged, and the
+	// judgement has to be beside them.
+	Rebalance        *RebalanceFacts `json:"rebalance,omitempty"`
+	RebalanceReplica string          `json:"rebalance_replica,omitempty"`
 	// Overdue rides here rather than only in the list because the list can be
 	// paged or truncated, and "how many objects are not being evaluated" must
 	// not depend on how much of the list fitted.
@@ -219,7 +247,12 @@ type HealthResponse struct {
 	// above is unreadable: a build that suppresses nothing reports the same zero
 	// as one where every object is being reached on time.
 	Dispatch *DispatchSuppression `json:"dispatch"`
-	Gaps     []Gap                `json:"gaps"`
+	// Schedule is the census the first sentence of the page is built from:
+	// waiting, late, overdue, never yet evaluated, and the on-time rates over
+	// two windows. Absent when no replica has a due index, and the page then
+	// says it cannot tell rather than saying "on time".
+	Schedule *ScheduleCensus `json:"schedule"`
+	Gaps     []Gap           `json:"gaps"`
 	// Capacity rides on the verdict rather than getting an endpoint of its own:
 	// the two are answers from one read, and splitting them would let a page
 	// show a verdict from one moment beside occupancy from another.
@@ -569,7 +602,7 @@ func MarkStalled(anomalies []Anomaly, at time.Time, stallAfter time.Duration) {
 			// clears on its own. The whole finding is decided again, not the
 			// attribution alone: rewriting one field left the other three
 			// saying the backend's, and the page reads those.
-			attribute(&anomalies[index])
+			attribute(&anomalies[index], at)
 		}
 	}
 }
@@ -724,7 +757,7 @@ func NewHandler(
 			UndecidableTotal: view.UndecidableTotal, ByDesignTotal: view.ByDesignTotal,
 			Ours:             OursCount(view.Anomalies),
 			Unattributed:     UnattributedCount(view.Anomalies),
-			Impact:           ImpactOf(view),
+			Impact:           ImpactOf(view, now()),
 			StrategyLinkBase: strategyLinkBase,
 			DemotedDue:       view.DemotedDue, DemotedDueOldestSeconds: view.DemotedDueOldestSeconds,
 			DemotionEntries:    view.DemotionEntries,
@@ -732,12 +765,25 @@ func NewHandler(
 			LastDemotionExit: momentOrNil(view.LastDemotionExit),
 			PrunedSkips:      prunedSkipList(view.PrunedSkips),
 			Coverage:         view.Coverage, PerReplica: view.PerReplica,
-			PublishedVersion: view.PublishedVersion, Workers: view.Workers,
-			Overdue: view.Overdue, Dispatch: view.Dispatch,
+			PublishedVersion: view.PublishedVersion, Workers: view.Workers, Builds: view.Builds,
+			Degradations: degradationList(view.Degradations),
+			Activation:   view.Activation, ActivationReplica: view.ActivationReplica,
+			Rebalance: view.Rebalance, RebalanceReplica: view.RebalanceReplica,
+			Overdue: view.Overdue, Dispatch: view.Dispatch, Schedule: view.Schedule,
 			Gaps: view.Gaps, Capacity: view.Capacity,
+			Load: LoadOf(&view, now()),
 		})
 	})
 	return mux, nil
+}
+
+// degradationList is the view's degradations as an empty list rather than
+// null: the page iterates it, and null and [] are two different statements.
+func degradationList(degradations []Degradation) []Degradation {
+	if degradations == nil {
+		return []Degradation{}
+	}
+	return degradations
 }
 
 func listObjects(response http.ResponseWriter, request *http.Request, service *Service,
@@ -774,24 +820,20 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 		order = OrderOldest
 	}
 	view := service.View(request.Context())
-	// Marked before filtering so a filtered response reports the same flag for the
-	// same object as an unfiltered one, and on every column rather than only the
-	// one being served: an object that has stopped ending rounds is stuck whether
-	// or not this request happens to be about its column.
-	columns := [][]Anomaly{view.Anomalies, view.Demoted, view.Undecidable, view.ByDesign}
-	for _, list := range columns {
-		MarkStalled(list, now(), stallAfter)
-	}
-	// Stalling can only move an object towards ours, so the verdict is decided
-	// again with that known. Deciding it once, before the marking, would call a
-	// deployment with nothing but stuck objects healthy.
-	//
-	// Decided here, before a column is served, and always on the anomaly list.
-	// It used to run after the swap below, so asking for the demoted pool
-	// recomputed the deployment's verdict and its per-replica breakdown over the
-	// pool instead -- and the response carries both. Which list a reader is
-	// paging cannot be allowed to change what the deployment's health is.
-	Settle(&view)
+	// Marked and settled before filtering, so a filtered response reports the
+	// same flag for the same object as an unfiltered one, and before a column
+	// is served, always on the anomaly list. Settling used to run after the
+	// swap below, so asking for the demoted pool recomputed the deployment's
+	// verdict and its per-replica breakdown over the pool instead -- and the
+	// response carries both. Which list a reader is paging cannot be allowed
+	// to change what the deployment's health is.
+	Decide(&view, now(), stallAfter)
+	// The first screen, from every column before any of them is swapped in as
+	// the rows. Drawn here so the line a reader clicks and the rows it opens
+	// come from one read of the view -- and by the same call the metric
+	// collector makes, so the line and the series agree.
+	screen := Report(&view, now())
+	columns, truncated, checks, todo := screen.Columns, screen.Truncated, screen.Checks, screen.Todo
 	// Counted over every column for the same reason it survives a filter: these
 	// are the objects that will not recover on their own, and a number that
 	// shrinks because of what the reader is currently looking at reads as "there
@@ -807,25 +849,10 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 	// Serving a column replaces the rows this request is about, and nothing
 	// else. The deployment-wide counts on the view are untouched, so the
 	// response still carries every total and a reader paging one column can see
-	// how many objects are not in it.
-	// A replica publishes at most what fits its byte budget, so on a bad enough
-	// deployment the list this summary counts is already a sample. The counts
-	// stay useful for "which of these is it", and stop being usable as a
-	// distribution -- and nothing in the summary said so, leaving that to a
-	// reader who thought to compare two other fields.
-	//
-	// Decided per column before the swap, because a check is drawn from all
-	// four and is a sample if any of them is.
-	truncated := map[string]bool{
-		ColumnAnomalies:   view.AnomaliesTotal > len(view.Anomalies),
-		ColumnDemoted:     view.DemotedTotal > len(view.Demoted),
-		ColumnUndecidable: view.UndecidableTotal > len(view.Undecidable),
-		ColumnByDesign:    view.ByDesignTotal > len(view.ByDesign),
-	}
-	// The first screen, from every column before any of them is swapped in as
-	// the rows. Counted here so the line a reader clicks and the rows it opens
-	// come from one read of the view.
-	checks := ReportChecks(columns, truncated, &view)
+	// how many objects are not in it. On a bad enough deployment the list this
+	// summary counts is already a sample; the counts stay useful for "which of
+	// these is it" and stop being usable as a distribution, and the response
+	// says so rather than leaving it to a reader comparing two other fields.
 	summaryPartial := truncated[column]
 	// A check is a line on the first screen, and the rows it opens come from
 	// every column: the check decides membership, not the column. Its total is
@@ -842,7 +869,7 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 				map[string]string{"error": "check must be one of " + strings.Join(checkNames(), ", ")})
 			return
 		}
-		view.Anomalies = UnderCheck(check, group, columns...)
+		view.Anomalies = UnderCheck(check, group, &view, now())
 		view.AnomaliesTotal = len(view.Anomalies)
 		summaryPartial = truncated[ColumnAnomalies] || truncated[ColumnDemoted] ||
 			truncated[ColumnUndecidable] || truncated[ColumnByDesign]
@@ -897,13 +924,24 @@ func listObjects(response http.ResponseWriter, request *http.Request, service *S
 		SortAnomaliesNewestFirst(view.Anomalies)
 	}
 	view.Anomalies = pageOf(view.Anomalies, offset, limit)
+	// The rows this request is not about are not sent. The served column is
+	// paged; the other three, the no-data list and the retained records
+	// were shipped whole under it on every response -- measured at 2074
+	// objects with 350 in the pool: 177 KB of demoted rows and 41 KB of
+	// records under a 50-row page, on a request the page makes every
+	// thirty seconds for the lines and the arithmetic alone. The totals,
+	// the lines and the arithmetic were all counted above from the whole
+	// view and stay; a reader who wants the rows of another column asks
+	// for that column, and gets them paged.
+	view.Demoted, view.Undecidable, view.ByDesign, view.NoData = []Anomaly{}, []Anomaly{}, []Anomaly{}, []Anomaly{}
+	view.GapSkips, view.PrunedSkips = map[string]SkippedSpan{}, map[string]PrunedSkip{}
 	writeJSON(response, http.StatusOK, ListResponse{
 		Summary: summary,
 		View:    view, Replica: replica, Strategy: strategy, Business: business, Column: column,
 		Applied:           replica != "" || strategy != "" || business != "",
 		StallAfterSeconds: int(stallAfter / time.Second),
 		StalledTotal:      stalledTotal,
-		Checks:            checks, Check: check, Group: group,
+		Checks:            checks, Check: check, Group: group, Todo: todo,
 		Order: order,
 		Page:  Page{Offset: offset, Limit: limit, Total: total},
 	})

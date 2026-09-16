@@ -34,16 +34,21 @@ func TestEveryWindowCountReachesTheObservation(t *testing.T) {
 	// Distinct non-zero values so a translation that copies the wrong source
 	// field fails rather than passing on a coincidence. Levels is largest
 	// because Short, Empty and Guarded are counted over the same windows.
+	// The one string, the reason the first unusable Level gave, crosses as
+	// itself: it is a code the page shows, not a count.
 	source := execution.HistoryCoverage{}
 	value := reflect.ValueOf(&source).Elem()
 	for i := 0; i < value.NumField(); i++ {
 		field := value.Field(i)
-		if field.Kind() != reflect.Uint32 {
-			t.Fatalf("%s is not a uint32; this check assumes every coverage count is one, and a "+
-				"field of another kind needs a decision about how it crosses, not a silent skip",
-				value.Type().Field(i).Name)
+		switch field.Kind() {
+		case reflect.Uint32:
+			field.SetUint(uint64(90 + i))
+		case reflect.String:
+			field.SetString("REASON_" + value.Type().Field(i).Name)
+		default:
+			t.Fatalf("%s is neither a uint32 nor a string; a field of another kind needs a decision "+
+				"about how it crosses, not a silent skip", value.Type().Field(i).Name)
 		}
-		field.SetUint(uint64(90 + i))
 	}
 	source.Levels = 200
 
@@ -61,9 +66,9 @@ func TestEveryWindowCountReachesTheObservation(t *testing.T) {
 				"computed during evaluation and never leaves the worker", name)
 			continue
 		}
-		if got.Uint() != value.Field(i).Uint() {
-			t.Errorf("%s crossed as %d, want %d -- the count on the page would not be the count "+
-				"the evaluation made", name, got.Uint(), value.Field(i).Uint())
+		if !reflect.DeepEqual(got.Interface(), value.Field(i).Interface()) {
+			t.Errorf("%s crossed as %v, want %v -- the value on the page would not be the value "+
+				"the evaluation made", name, got.Interface(), value.Field(i).Interface())
 		}
 	}
 }

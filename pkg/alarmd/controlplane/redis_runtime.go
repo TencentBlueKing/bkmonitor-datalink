@@ -278,13 +278,13 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	progress ScheduleActivationProgressReader,
 ) (err error) {
 	if repository == nil || repository.client == nil || boundary <= 0 {
-		return errors.New("alarmd controlplane: publication schedule activation is required")
+		return fmt.Errorf("%w: publication schedule activation is required", ErrCutoverRequest)
 	}
 	if err := validateActivationTransition(expected, next); err != nil {
 		return err
 	}
 	if expected.RecordRevision == 0 {
-		return errors.New("alarmd controlplane: publication schedule activation requires an existing activation")
+		return fmt.Errorf("%w: publication schedule activation requires an existing activation", ErrCutoverRequest)
 	}
 	previous, err := repository.LoadActivation(ctx)
 	if err != nil {
@@ -295,7 +295,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	}
 	if next.Pending != nil || next.Current.PublicationEpoch <= previous.Current.PublicationEpoch ||
 		next.Current.SnapshotRevision == previous.Current.SnapshotRevision {
-		return errors.New("alarmd controlplane: publication activation must advance to one new current publication")
+		return fmt.Errorf("%w: publication activation must advance to one new current publication", ErrCutoverRequest)
 	}
 	published, err := repository.loadPublishedGroups(ctx, next.Current)
 	if err != nil {
@@ -334,7 +334,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		return err
 	}
 	if !sameDrainingProjection(wantedDraining, next.Draining) {
-		return errors.New("alarmd controlplane: publication activation has an invalid draining projection")
+		return fmt.Errorf("%w: publication activation has an invalid draining projection", ErrCutoverRequest)
 	}
 
 	// next.Plans arrives as a candidate record for every Plan of the new
@@ -390,6 +390,9 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	// and a cutover must not quietly drop it.
 	coveredPrevious := make(map[execution.PlanIdentity]struct{}, len(carried))
 	for _, queryGroup := range oldIdentities {
+		// Recorded before anything can fail on it: the cutover returns at its
+		// first failure, so this names the one that stopped it.
+		cutover.failedAt(queryGroup)
 		oldGroup := oldGroups[queryGroup]
 		newGroup, remains := newGroups[queryGroup]
 		if remains && !readAll {
@@ -401,7 +404,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 				for _, plan := range newGroup.Plans {
 					record, ok := carried[plan.Identity]
 					if !ok {
-						return errors.New("alarmd controlplane: a kept Query Group has a Plan without a current activation record")
+						return fmt.Errorf("%w: a kept Query Group has a Plan without a current activation record", ErrActivationRecordMissing)
 					}
 					plans = append(plans, record)
 				}
@@ -416,24 +419,43 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		cutover.read++
 		last := len(timeline.Segments) - 1
 		if last < 0 || timeline.RetiredAt != nil {
-			return ErrScheduleConflict
+			return scheduleConflict(CutoverReasonTimelineMissing, queryGroup,
+				fmt.Sprintf("segments=%d retired_at=%v", len(timeline.Segments), timeline.RetiredAt))
 		}
 		open := timeline.Segments[last]
 		if open.Schedule.Segment.End != nil || open.Schedule.Segment.Start >= boundary {
-			return ErrScheduleConflict
+			end := "open"
+			if open.Schedule.Segment.End != nil {
+				end = fmt.Sprintf("%d", *open.Schedule.Segment.End)
+			}
+			return scheduleConflict(CutoverReasonOpenSegmentClosed, queryGroup,
+				fmt.Sprintf("open_start=%d open_end=%s boundary=%d",
+					open.Schedule.Segment.Start, end, boundary))
 		}
 		// A source that names the content must agree with the Segment; a
 		// Segment that disagrees was changed outside this path. A Segment
 		// written before Segments named their content is compared on the
 		// revisions the old source carries instead.
+		// A source that names the content must agree with the Segment; a
+		// Segment that disagrees was changed outside this path, and this path
+		// does not repair it. Segments already carrying a name nobody
+		// published are cleaned up once, deliberately, by the repair
+		// subcommand -- not by a self-healing branch that would have to stay
+		// in the code forever for a state that cannot be produced any more.
 		if oldDigest, named := previousContent.digests[queryGroup]; named && open.Schedule.Segment.ObjectDigest != "" &&
 			open.Schedule.Segment.ObjectDigest != oldDigest {
-			return ErrScheduleConflict
+			return scheduleConflict(CutoverReasonOpenDigestMismatch, queryGroup,
+				fmt.Sprintf("open_digest=%s activation_digest=%s published_digest=%s content_source=%s",
+					open.Schedule.Segment.ObjectDigest, oldDigest, newContent[queryGroup].digest,
+					previousContent.source))
 		}
 		if open.Schedule.Segment.ObjectDigest == "" && oldGroup.QueryPlan.QueryRevision != "" &&
 			(open.Schedule.Segment.QueryRevision != oldGroup.QueryPlan.QueryRevision ||
 				open.Schedule.Segment.ScheduleRevision != oldGroup.ScheduleRevision) {
-			return ErrScheduleConflict
+			return scheduleConflict(CutoverReasonLegacyRevisionMismatch, queryGroup,
+				fmt.Sprintf("open_query_revision=%s want=%s open_schedule_revision=%s want=%s",
+					open.Schedule.Segment.QueryRevision, oldGroup.QueryPlan.QueryRevision,
+					open.Schedule.Segment.ScheduleRevision, oldGroup.ScheduleRevision))
 		}
 		if err := validateOpenSegmentActivation(previous, open); err != nil {
 			return err
@@ -481,7 +503,8 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		timeline.Segments[last].Schedule = closed
 		timeline.RecordRevision++
 		if remains {
-			segment, err := scheduleSegmentForGroup(published.content.Publication, newGroup, boundary)
+			segment, err := scheduleSegmentForGroup(published.content.Publication, newGroup, boundary,
+				published.content.Groups[queryGroup])
 			if err != nil {
 				return err
 			}
@@ -514,7 +537,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		updates = append(updates, scheduleTimelineUpdate{expected: raw, next: timeline})
 	}
 	if readAll && len(coveredPrevious) != len(carried) {
-		return fmt.Errorf("%w: current activation names Plans no open Segment carries", ErrSnapshotUnavailable)
+		return fmt.Errorf("%w: current activation names Plans no open Segment carries", ErrActivationRecordMissing)
 	}
 	newIdentities := make([]execution.QueryGroupIdentity, 0, len(activeGroups))
 	for identity := range activeGroups {
@@ -524,7 +547,8 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	}
 	sort.Slice(newIdentities, func(i, j int) bool { return newIdentities[i] < newIdentities[j] })
 	for _, queryGroup := range newIdentities {
-		opened, err := repository.openQueryGroupTimeline(ctx, published.content.Publication, newGroups[queryGroup], boundary, candidate, now, cutover)
+		opened, err := repository.openQueryGroupTimeline(ctx, published.content.Publication, newGroups[queryGroup],
+			published.content.Groups[queryGroup], boundary, candidate, now, cutover)
 		if err != nil {
 			return err
 		}
@@ -580,12 +604,13 @@ func (repository *RedisCatalogRepository) openQueryGroupTimeline(
 	ctx context.Context,
 	publication SnapshotPublicationRef,
 	group QueryGroup,
+	named ContentEntry,
 	boundary execution.EvaluationTime,
 	candidate ActivationState,
 	now time.Time,
 	cutover *cutoverFacts,
 ) (openedQueryGroupTimeline, error) {
-	segment, err := scheduleSegmentForGroup(publication, group, boundary)
+	segment, err := scheduleSegmentForGroup(publication, group, boundary, named)
 	if err != nil {
 		return openedQueryGroupTimeline{}, err
 	}
@@ -740,7 +765,8 @@ func (repository *RedisCatalogRepository) CompareAndSetHeldReactivation(
 	candidates := make([]pruneCandidate, 0, len(identities))
 	plans := append([]PlanActivationRecord(nil), previous.Plans...)
 	for _, identity := range identities {
-		opened, err := repository.openQueryGroupTimeline(ctx, previous.Current, groups[identity], boundary, next, now, cutover)
+		opened, err := repository.openQueryGroupTimeline(ctx, previous.Current, groups[identity],
+			published.content.Groups[identity], boundary, next, now, cutover)
 		if err != nil {
 			return err
 		}
@@ -1182,19 +1208,41 @@ func scheduleSegmentForGroup(
 	publication SnapshotPublicationRef,
 	group QueryGroup,
 	start execution.EvaluationTime,
+	named ContentEntry,
 ) (execution.ScheduleSegmentFact, error) {
-	objectDigest, err := DeriveQueryGroupObjectDigest(group)
-	if err != nil {
+	// The names come from the publication's manifest; they are not derived
+	// again here.
+	//
+	// They used to be, from the group this function is handed -- and that group
+	// has been through the object store and back, while the manifest's names
+	// were computed from the Catalog the leader built. Two derivations of one
+	// name, and they agree only for as long as assembly returns exactly what
+	// was published. When assembly dropped a field, every Segment cut from an
+	// assembled group named an object the manifest did not, the cutover refused
+	// the mismatch on every later round, and the fleet stopped taking up
+	// published content for eleven hours with every other signal healthy.
+	//
+	// Copying makes that class impossible rather than unlikely: the manifest is
+	// what a publication is called, the assembled group is only what it
+	// contains, and a field lost in assembly can no longer change a name.
+	if named.Digest == "" {
+		return execution.ScheduleSegmentFact{}, fmt.Errorf(
+			"%w: the publication names no object for Query Group %s", ErrCutoverRequest, group.Identity)
+	}
+	// And the content is checked against the names before either is written.
+	//
+	// Copying stops assembly from changing a name. It does not stop assembly
+	// from changing the content, and a Segment naming one object while
+	// carrying another is the same fault wearing the other mask. Recomputing
+	// here is the only place both are in hand at once, so it is where they are
+	// compared -- and a disagreement is refused rather than written, because
+	// what follows would put a Segment on the store that says one thing and
+	// executes another.
+	if err := verifySegmentContent(group, named); err != nil {
 		return execution.ScheduleSegmentFact{}, err
 	}
-	refs := make([]execution.OutputContextRef, 0, len(group.Plans))
-	for _, plan := range group.Plans {
-		digest, err := DeriveOutputContextDigest(plan)
-		if err != nil {
-			return execution.ScheduleSegmentFact{}, err
-		}
-		refs = append(refs, execution.OutputContextRef{Plan: plan.Identity, Digest: digest})
-	}
+	objectDigest := named.Digest
+	refs := append([]execution.OutputContextRef(nil), named.Refs...)
 	sort.Slice(refs, func(i, j int) bool { return lessPlanIdentity(refs[i].Plan, refs[j].Plan) })
 	return execution.ScheduleSegmentFact{
 		Publication: execution.SnapshotPublicationRef{SnapshotRevision: publication.SnapshotRevision,
@@ -2007,6 +2055,17 @@ func (runtime *RedisCatalogRuntime) FreezeSlotContract(
 		planByID[plan.Identity] = plan
 	}
 	duePlans := make([]execution.DuePlan, 0, len(request.DuePlans))
+	// What the object store handed this worker back for the Segment it is
+	// executing, before any of it is compiled. Counted over the assembled
+	// group rather than the due set, because a Plan can be dropped by either
+	// and the point of the two counts is to say which.
+	assembled := 0
+	for _, plan := range group.Plans {
+		if plan.Plan.NoData != nil {
+			assembled++
+		}
+	}
+	frozen := 0
 	for _, dueRef := range request.DuePlans {
 		plan, ok := planByID[dueRef.Identity]
 		record, active := activationByPlan[dueRef.Identity]
@@ -2037,10 +2096,35 @@ func (runtime *RedisCatalogRuntime) FreezeSlotContract(
 		for _, level := range compiled.Levels() {
 			capabilities = append(capabilities, execution.LevelPartialCapability{LevelID: level.Definition().LevelID, Policy: execution.PartialRequiresFull})
 		}
+		if compiled.NoData() != nil {
+			frozen++
+		}
 		duePlans = append(duePlans, execution.DuePlan{Identity: plan.Identity, CompiledPlan: compiled,
 			StateGeneration: record.Fact.Selected.StateGeneration, StateApplyEpoch: record.Fact.Selected.StateApplyEpoch,
 			ScheduleRevision: plan.ScheduleRevision, ScheduleSpec: plan.ScheduleSpec,
 			CompletionDeadlineUnixMilli: deadline, PartialCapabilities: capabilities})
+	}
+	// Whether this Segment still names what the control plane publishes. Not
+	// part of the no-data hops: it is the same question one level up, asked of
+	// the whole execution content rather than one field of it.
+	runtime.repository.observeSegmentContentFreshness(ctx, schedule.Segment)
+	// Both hops, reported on every Slot whether either is any or none. The
+	// leader's published count and these two are read in order: the first that
+	// reads zero while the one before it does not is where the section is lost.
+	for hop, plans := range map[string]int{
+		observability.NoDataHopAssembled: assembled,
+		observability.NoDataHopFrozen:    frozen,
+	} {
+		runtime.repository.observe(ctx, observability.Observation{
+			Component: observability.ComponentControlPlane, Stage: observability.StageFrozenPlanGeneration,
+			Result: observability.ResultSuccess,
+			Trace: observability.TraceFields{
+				QueryGroupKey:    string(request.QueryGroup),
+				EvaluationTime:   int64(request.EvaluationTime),
+				SnapshotRevision: string(schedule.Segment.Publication.SnapshotRevision),
+			},
+			NoDataCensus: &observability.NoDataCensusFacts{Hop: hop, Plans: plans},
+		})
 	}
 	requirements, err := runtime.slotRequirements(group, duePlans, planByID)
 	if err != nil {

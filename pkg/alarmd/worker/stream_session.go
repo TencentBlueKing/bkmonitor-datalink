@@ -12,6 +12,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/nodata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
@@ -34,16 +35,25 @@ type streamedExecution struct {
 	bindings       []execution.NamedInputBinding
 	stateItems     []execution.StatePreflightItem
 	gapItems       []execution.PlanGapLoadItem
+	noDataItems    []execution.PlanNoDataLoadItem
 	state          execution.StatePreflightResult
 	gaps           execution.GapLoadResult
-	effective      map[execution.ConsumerRef]strategy.EffectiveTimeFact
-	evaluated      execution.EvaluationResult
-	delivered      []execution.SeriesDelivery
-	series         uint64
-	retained       uint64
-	effects        effectCounts
-	gapFacts       uint64
-	began          bool
+	noData         execution.NoDataLoadResult
+	noDataHosts    map[execution.PlanNoDataIdentity]nodata.HostResolution
+	noDataOutcomes []nodata.SlotOutcome
+	// noDataPlansSeen is how many of this Slot's Plans detect no-data,
+	// counted where they are found rather than where they are judged.
+	noDataPlansSeen      int
+	noDataStateMutations uint64
+	noDataMutations      []execution.PlanNoDataMutation
+	effective            map[execution.ConsumerRef]strategy.EffectiveTimeFact
+	evaluated            execution.EvaluationResult
+	delivered            []execution.SeriesDelivery
+	series               uint64
+	retained             uint64
+	effects              effectCounts
+	gapFacts             uint64
+	began                bool
 }
 
 type streamedInputKey struct {
@@ -365,6 +375,35 @@ func (stream *streamedExecution) validateSeriesBatch(batch execution.SeriesExecu
 	return series, nil
 }
 
+// noDataPreflightForHeader is the load list for the Plans that detect no-data,
+// and only those.
+//
+// A Plan without the section has no memory to read and never will, so asking
+// for it would be one Redis read per Slot per Plan for an answer that is always
+// "nothing there" - and it would put those Plans into the load result, where a
+// reader counting no-data Plans would find every Plan in the deployment.
+func noDataPreflightForHeader(header execution.InternalExecutionHeader) ([]execution.PlanNoDataLoadItem, error) {
+	items := make([]execution.PlanNoDataLoadItem, 0, len(header.DuePlans))
+	for _, due := range header.DuePlans {
+		if due.CompiledPlan.NoData() == nil {
+			continue
+		}
+		version, err := execution.BuildApplyVersion(header.Contract, due.StateApplyEpoch)
+		if err != nil {
+			return nil, err
+		}
+		retention, err := execution.DeriveStateRetentionRequirement(due.CompiledPlan)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, execution.PlanNoDataLoadItem{
+			Identity:     execution.PlanNoDataIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration},
+			ApplyVersion: version, ScheduleRevision: due.ScheduleRevision, Retention: retention,
+		})
+	}
+	return items, nil
+}
+
 func gapPreflightForHeader(header execution.InternalExecutionHeader) ([]execution.PlanGapLoadItem, error) {
 	items := make([]execution.PlanGapLoadItem, 0, len(header.DuePlans))
 	for _, due := range header.DuePlans {
@@ -600,6 +639,9 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 	if err := stream.loadGaps(ctx); err != nil {
 		return err
 	}
+	if err := stream.loadNoDataMemory(ctx); err != nil {
+		return err
+	}
 	if err := stream.evaluateSeries(ctx, completion, preparedSeriesEvaluations); err != nil {
 		var exceeded *provisionalBudgetExceededError
 		if errors.As(err, &exceeded) && exceeded.slot {
@@ -666,6 +708,13 @@ func (stream *streamedExecution) evaluateSeries(
 	if err := flush(); err != nil {
 		return err
 	}
+	// Absence is decided after the Slot's own series, because which groups
+	// reported is the evidence it is decided from. The synthetic series it
+	// produces then go through the same batch as everything above.
+	if err := stream.evaluateNoData(ctx, preparedSeriesEvaluations, batchLimit); err != nil {
+		return err
+	}
+	stream.observeNoDataOutcomes(ctx)
 	if len(stream.evaluated.Plans) == 0 {
 		return stream.completeWithoutSeries(ctx, completion)
 	}
@@ -756,6 +805,97 @@ func (stream *streamedExecution) loadGaps(ctx context.Context) error {
 	result, reason := summarizeGapLoad(stream.gaps)
 	stream.coordinator.observeWithCounts(ctx, observability.ComponentState, observability.StageGapLoaded,
 		stream.request.Operation, started, result, reason, observability.Counts{Keys: int64(len(stream.gaps.Items))}, nil)
+	return nil
+}
+
+// loadNoDataMemory reads what each no-data Plan remembers, beside the gap load
+// and at the same point in the Slot.
+//
+// Here rather than later because the memory is evidence the evaluation needs,
+// not a detail of writing it back: a Slot that reached its series before
+// knowing what it remembered would have to either decide absence without the
+// clocks or go back to the store mid-evaluation, and the second is what makes a
+// retried Slot stop being a function of its evidence.
+func (stream *streamedExecution) loadNoDataMemory(ctx context.Context) error {
+	items, err := noDataPreflightForHeader(stream.header)
+	if err != nil {
+		return err
+	}
+	stream.noDataItems = items
+	if len(items) == 0 {
+		// No Plan in this Slot detects no-data. Nothing to read, and an empty
+		// request is refused by the store rather than answered with nothing.
+		stream.noData = execution.NoDataLoadResult{}
+		return nil
+	}
+	var targetBytes uint64
+	for _, item := range items {
+		targetBytes += retainedObjectBytes(item)
+	}
+	if err := stream.retainTargetBytes(ctx, len(items), targetBytes); err != nil {
+		return err
+	}
+	request := execution.NoDataLoadRequest{Contract: stream.header.Contract, Items: items}
+	started := time.Now()
+	stream.noData, err = stream.coordinator.ports.NoData.LoadNoData(ctx, request)
+	if err == nil {
+		err = execution.ValidateNoDataLoad(request, stream.noData)
+	}
+	if err != nil {
+		stream.coordinator.observe(ctx, observability.ComponentState, observability.StageGapLoaded,
+			stream.request.Operation, started, "", "", err)
+		return fmt.Errorf("alarmd worker: no-data memory preflight: %w", err)
+	}
+	stream.coordinator.observeWithCounts(ctx, observability.ComponentState, observability.StageGapLoaded,
+		stream.request.Operation, started, observability.ResultSuccess, observability.ReasonNone,
+		observability.Counts{Keys: int64(len(stream.noData.Items))}, nil)
+	return stream.resolveNoDataRosterHosts()
+}
+
+// resolveNoDataRosterHosts asks the CMDB index about every host each no-data
+// Plan's roster will consult, once the memory is in hand.
+//
+// After the memory rather than before it, because a history roster's hosts are
+// the ones this Plan remembers: the candidates cannot be known until the record
+// has been read. It is the same reason the memory is loaded here at all - it is
+// evidence, and the evidence has to be complete before anything is judged.
+//
+// A Plan whose roster cannot be derived is left out rather than failing the
+// Slot. The catalog withholds such a Plan, so reaching one here means the two
+// derivations disagree, which the evaluation refuses on its own and says which
+// Plan it was; failing the whole Slot would take every other Plan down with it.
+func (stream *streamedExecution) resolveNoDataRosterHosts() error {
+	if len(stream.noData.Items) == 0 {
+		return nil
+	}
+	stream.noDataHosts = make(map[execution.PlanNoDataIdentity]nodata.HostResolution, len(stream.noData.Items))
+	for _, due := range stream.header.DuePlans {
+		config := due.CompiledPlan.NoData()
+		if config == nil {
+			continue
+		}
+		identity := execution.PlanNoDataIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration}
+		snapshot, found := stream.noData.Find(identity)
+		if !found {
+			continue
+		}
+		memory := make(map[string]nodata.GroupMemory, len(snapshot.Groups))
+		for _, group := range snapshot.Groups {
+			memory[group.GroupKey] = nodata.GroupMemory{
+				LastSeen: group.LastSeen, FirstAbsent: group.FirstAbsent,
+			}
+		}
+		candidates, err := nodata.HostCandidates(nodata.RosterRequest{
+			AggDimension: config.AggDimension,
+			Scope:        due.CompiledPlan.TargetScope(),
+			Memory:       memory,
+		})
+		if err != nil {
+			continue
+		}
+		stream.noDataHosts[identity] = resolveNoDataHosts(
+			stream.coordinator.ports.Hosts, due.Identity.BusinessID, candidates)
+	}
 	return nil
 }
 
@@ -1019,6 +1159,16 @@ type completedSeries struct {
 	item   execution.StatePreflightItem
 }
 
+// kind is what this series is, read off its inputs rather than stored twice.
+// Every input of one series carries the same kind - the evaluator refuses a set
+// that does not - so the first one answers for all of them.
+func (entry completedSeries) kind() execution.SeriesKind {
+	if len(entry.inputs) == 0 {
+		return execution.SeriesKindReal
+	}
+	return entry.inputs[0].Kind
+}
+
 // statePreflightBatchLimit is the shared batch bound clamped to the per-Slot
 // State mutation cap, which stays at or below the store's per-call limit.
 func (stream *streamedExecution) statePreflightBatchLimit() int {
@@ -1129,7 +1279,7 @@ func (stream *streamedExecution) evaluateLoadedSeries(ctx context.Context, entry
 	due, series, inputs := entry.due, entry.series, entry.inputs
 	stateItems := []execution.StatePreflightItem{entry.item}
 	loaded := execution.StatePreflightResult{Items: []execution.RuntimeStateView{view}}
-	evaluationHeader, err := bindAlwaysEffectiveTimeFacts(stream.header, stateItems, stream.effective)
+	evaluationHeader, err := bindAlwaysEffectiveTimeFacts(stream.header, stateItems, stream.effective, entry.kind())
 	if err != nil {
 		return fmt.Errorf("alarmd worker: bind series EffectiveTime facts: %w", err)
 	}

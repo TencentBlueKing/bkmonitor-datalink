@@ -84,6 +84,13 @@ type HistoryCoverageFacts struct {
 	// is how much alerting actually rides on it.
 	Abnormal             uint32 `json:"abnormal,omitempty"`
 	AbnormalOnIncomplete uint32 `json:"abnormal_on_incomplete,omitempty"`
+	// Unusable is how many Levels could not use this round's record -- the
+	// detection returned UNAVAILABLE or ERROR for it -- and UnusableReason the
+	// first such Level's reason code. An empty window is made of exactly these
+	// rounds: a record that arrives and cannot be used. A record that does not
+	// arrive is never evaluated and never reaches a window at all.
+	Unusable       uint32 `json:"unusable,omitempty"`
+	UnusableReason string `json:"unusable_reason,omitempty"`
 }
 
 // Shortfall is how many points the worst window was missing. Zero when
@@ -118,7 +125,13 @@ func normalizeHistoryCoverageFacts(facts *HistoryCoverageFacts) *HistoryCoverage
 	// like an answer.
 	if copied.Levels == 0 || copied.Short > copied.Levels || copied.Empty > copied.Short ||
 		copied.Guarded > copied.Levels || copied.Fresh > copied.Levels ||
-		copied.ShortFresh > copied.Short || copied.ShortFresh > copied.Fresh {
+		copied.ShortFresh > copied.Short || copied.ShortFresh > copied.Fresh ||
+		copied.Unusable > copied.Levels {
+		return nil
+	}
+	// A reason with no unusable Level, or unusable Levels with no reason, did
+	// not come from the evaluator: it records the first reason as it counts.
+	if (copied.Unusable == 0) != (copied.UnusableReason == "") {
 		return nil
 	}
 	if copied.Short == 0 {

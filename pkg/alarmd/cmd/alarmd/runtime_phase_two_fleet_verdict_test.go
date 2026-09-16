@@ -226,3 +226,100 @@ func TestTheVerdictCarriesEveryColumnOfTheSplit(t *testing.T) {
 		t.Fatalf("columns sum to %d, want determined %d", sum, verdict.Determined)
 	}
 }
+
+// The whole closed table is exported, a line that is down at zero: an alert
+// on "this line is up" needs to see it go down, and a series that is absent
+// reads the same as a build that never had the family. Order is the table's,
+// so two scrapes of an unchanged deployment export the same series in the
+// same order.
+func TestEveryCheckLineAndDegradationKindIsExportedEvenWhenDown(t *testing.T) {
+	at := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
+	verdict := fleetVerdictOf(fleet.View{Health: fleet.HealthHealthy}, at)
+
+	codes := fleet.Checks()
+	if len(verdict.Checks) != len(codes) {
+		t.Fatalf("checks exported = %d, want every one of the %d codes", len(verdict.Checks), len(codes))
+	}
+	for index, code := range codes {
+		if verdict.Checks[index].Value != string(code) || verdict.Checks[index].Count != 0 {
+			t.Fatalf("checks[%d] = %+v, want %s at zero", index, verdict.Checks[index], code)
+		}
+	}
+	if len(verdict.Degradations) != len(fleet.DegradationKinds) {
+		t.Fatalf("degradations exported = %d, want every one of the %d kinds", len(verdict.Degradations), len(fleet.DegradationKinds))
+	}
+	for index, kind := range fleet.DegradationKinds {
+		if verdict.Degradations[index].Value != string(kind) || verdict.Degradations[index].Count != 0 {
+			t.Fatalf("degradations[%d] = %+v, want %s at zero", index, verdict.Degradations[index], kind)
+		}
+	}
+}
+
+// A fleet executing a stale publication was a first line on the page and no
+// series anywhere; fleet_health could not say what it was degraded on. The
+// standing reaches the export under its own code, with the count its line
+// prints, and the kind it degrades on is a series of its own -- and the
+// numbers are the page's, from the same first screen.
+func TestAStandingReachesTheExportUnderItsOwnCode(t *testing.T) {
+	at := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
+	view := fleet.View{
+		Health: fleet.HealthDegraded,
+		Activation: &fleet.ActivationFacts{Behind: true, BehindBeyondBound: true, ConsecutiveFailures: 120,
+			FailureStage: "schedule_cutover", FailureClass: "schedule_conflict"},
+		ActivationReplica: "pod-a",
+		Degradations: []fleet.Degradation{
+			{Kind: fleet.DegradationActivationBehind, Replica: "pod-a"},
+			{Kind: fleet.DegradationOpenAlertSetStale, Replica: "pod-a"},
+			{Kind: fleet.DegradationOpenAlertSetStale, Replica: "pod-b"},
+		},
+		// And the third standing: the leader's round would move objects
+		// between the two replicas, so the series carries two.
+		Rebalance: &fleet.RebalanceFacts{PlannedAt: at, ReadyWorkers: 2, Assigned: 2370, Target: 1185, MostOwned: 2370,
+			MostOwnedBy: "pod-a", LeastOwnedBy: "pod-b", Batch: 23, PlannedMoves: 23, StopSpreadPercent: 5, Shadow: true},
+		RebalanceReplica: "pod-a",
+		Anomalies: []fleet.Anomaly{
+			{QueryGroup: "parked", Kind: fleet.KindOverdueWake, ReasonCode: fleet.ReasonWakeMissed, Since: at.Add(-9 * time.Minute)},
+		},
+		// A record of past loss under DETECTION_ABANDONED: on the page's
+		// history fold, not a current line, so not on the series.
+		GapSkips: map[string]fleet.SkippedSpan{"lost": {At: at.Add(-50 * time.Minute), Replica: "pod-b"}},
+	}
+	// Aggregate attributes every row before the view leaves it; the fixture
+	// skips Aggregate, so it does the same.
+	fleet.Attribute(view.Anomalies, at)
+	fleet.Decide(&view, at, time.Hour)
+
+	verdict := fleetVerdictOf(view, at)
+
+	for code, want := range map[string]int{
+		string(fleet.CheckCutoverFailing):     1,
+		string(fleet.CheckReplicaDegraded):    2,
+		string(fleet.CheckOwnershipSkewed):    2,
+		string(fleet.CheckSlotsOverdue):       1,
+		string(fleet.CheckDetectionAbandoned): 0,
+	} {
+		if got := countOf(verdict.Checks, code).Count; got != want {
+			t.Errorf("fleet_checks{code=%s} = %d, want %d", code, got, want)
+		}
+	}
+	for kind, want := range map[string]int{
+		string(fleet.DegradationActivationBehind):    1,
+		string(fleet.DegradationOpenAlertSetStale):   2,
+		string(fleet.DegradationControlLeaderAbsent): 0,
+	} {
+		if got := countOf(verdict.Degradations, kind).Count; got != want {
+			t.Errorf("fleet_degradations{kind=%s} = %d, want %d", kind, got, want)
+		}
+	}
+	// The identity the family exists for: every series is the count the
+	// page's line prints, from the same screen.
+	page := map[string]int{}
+	for _, report := range fleet.Report(&view, at).Checks {
+		page[string(report.Code)] = report.LineCount()
+	}
+	for _, count := range verdict.Checks {
+		if count.Count != page[count.Value] {
+			t.Errorf("fleet_checks{code=%s} = %d, page line prints %d", count.Value, count.Count, page[count.Value])
+		}
+	}
+}

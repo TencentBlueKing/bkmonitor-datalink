@@ -325,3 +325,41 @@ func TestEvaluationCountsAbnormalVerdictsWithTheWindowTheyWereReachedOn(t *testi
 		t.Fatalf("abnormal/incomplete = %d/%d on a normal record, want 0/0", got.Abnormal, got.AbnormalOnIncomplete)
 	}
 }
+
+// A record the detection cannot use -- here one with no value under the field
+// the strategy names -- goes into the window with no valid bit, and the
+// coverage says so and says why. Before this crossed, such a window read as an
+// empty one and an empty one read as data not arriving; the record did arrive,
+// and the reason is the difference between a strategy naming a field the
+// records do not carry and a source that stopped sending.
+func TestEvaluationSaysWhichLevelsCouldNotUseTheRecordAndWhy(t *testing.T) {
+	missing := []contract.CanonicalRecordV2{{RecordID: strings.Repeat("f", 64), SourceTime: 300, BusinessID: "2",
+		DimensionIdentity: contract.DimensionIdentityV2{Digest: strings.Repeat("c", 64)},
+		Values:            map[string]json.RawMessage{"other": json.RawMessage(`10`)},
+		Dimensions:        map[string]json.RawMessage{}, ReceivedTime: 300}}
+	result, err := newEvaluator(t).Evaluate(context.Background(), requestFixtureForPlan(t, compiledWindow(t, 1, 1), missing, nil))
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+	coverage := result.Plans[0].HistoryCoverage
+	if coverage.Levels != 1 || coverage.Empty != 1 {
+		t.Fatalf("levels/empty = %d/%d, want 1/1: the one window holds a point with no valid bit", coverage.Levels, coverage.Empty)
+	}
+	if coverage.Unusable != 1 || coverage.UnusableReason != contract.ReasonRequiredValueMissing {
+		t.Fatalf("unusable = %d (%q), want 1 with %s: the record arrived and the detection could not use it, "+
+			"and that -- not absent data -- is what the empty window is made of", coverage.Unusable, coverage.UnusableReason,
+			contract.ReasonRequiredValueMissing)
+	}
+	// A record the detection can use carries neither.
+	usable := []contract.CanonicalRecordV2{{RecordID: strings.Repeat("f", 64), SourceTime: 300, BusinessID: "2",
+		DimensionIdentity: contract.DimensionIdentityV2{Digest: strings.Repeat("c", 64)},
+		Values:            map[string]json.RawMessage{"value": json.RawMessage(`10`)},
+		Dimensions:        map[string]json.RawMessage{}, ReceivedTime: 300}}
+	result, err = newEvaluator(t).Evaluate(context.Background(), requestFixtureForPlan(t, compiledWindow(t, 1, 1), usable, nil))
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+	if got := result.Plans[0].HistoryCoverage; got.Unusable != 0 || got.UnusableReason != "" {
+		t.Fatalf("a usable record reports unusable = %d (%q)", got.Unusable, got.UnusableReason)
+	}
+}

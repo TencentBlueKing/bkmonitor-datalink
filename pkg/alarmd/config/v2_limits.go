@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/detect"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/trigger"
@@ -51,14 +50,13 @@ type CompilerLimitsConfig struct {
 	BudgetRevision            string   `yaml:"budget_revision"`
 }
 
+// DetectLimitsConfig is what the phase-two runtime still reads by name. The
+// five other budgets it once held - selected records, series and records per
+// Plan's refinements, level facts, predicate evaluations and result bytes -
+// went with the batch evaluation that was their only reader.
 type DetectLimitsConfig struct {
-	MaxPlans                  uint64 `yaml:"max_plans"`
-	MaxSelectedRecordsPerPlan uint64 `yaml:"max_selected_records_per_plan"`
-	MaxSeriesPerPlan          uint64 `yaml:"max_series_per_plan"`
-	MaxRecordsPerSeries       uint64 `yaml:"max_records_per_series"`
-	MaxLevelFacts             uint64 `yaml:"max_level_facts"`
-	MaxPredicateEvaluations   uint64 `yaml:"max_predicate_evaluations"`
-	MaxResultBytes            uint64 `yaml:"max_result_bytes"`
+	MaxPlans            uint64 `yaml:"max_plans"`
+	MaxRecordsPerSeries uint64 `yaml:"max_records_per_series"`
 }
 
 type TriggerLimitsConfig struct {
@@ -107,43 +105,21 @@ func defaultLimits() LimitsConfig {
 			MaxCacheEntries: 4096, MaxCacheBytes: 64 << 20, NegativeCacheTTL: Duration(time.Minute),
 			BudgetRevision: "phase-one-default-v1",
 		},
-		// Two of these seven reach only the phase-one runtime, and two of the
-		// three below bound quantities that are ordered by construction. Both
-		// facts are easy to miss from here, and both were missed: the 500 on
-		// max_series_per_plan was raised as a bound that might be throttling
-		// the phase-two deployment, and it is not a bound that deployment can
-		// reach at all.
+		// Five of the seven budgets that used to live here went with the batch
+		// evaluation that read them. What is left is what the phase-two runtime
+		// reaches for by name: MaxPlans and MaxRecordsPerSeries.
 		//
-		// Who reads what. MaxSelectedRecordsPerPlan and MaxSeriesPerPlan reach
-		// production only through Config.DetectLimits(), whose one production
-		// caller is the phase-one runtime. The phase-two runtime reads exactly
-		// two fields of this struct - MaxPlans and MaxRecordsPerSeries - and
-		// reaches for them directly; it never calls DetectLimits(). So nothing
-		// on the phase-two path reads MaxSeriesPerPlan, and raising or lowering
-		// it changes nothing there. The series bound phase two does enforce is
-		// PhaseTwo.Coordinator.MaxSeries, derived from the memory limit
-		// (measured 524,288 on the deployment on 2026-09-14, against this 500).
-		//
-		// Why equal values make two of them dead. admitPlans checks
-		// selected_records_per_plan first, then series_per_plan, then
-		// records_per_series, and the three quantities satisfy
-		// len(groups) <= len(records) <= SelectedCount() by construction.
-		// A refinement can therefore only fire when its budget is strictly
-		// below the record budget. At 500/500/500 neither can: not rarely,
-		// never. Their branches, reason strings and isolation path are
-		// unreachable in every deployment that takes these defaults.
-		//
-		// This is deliberate for now - the record budget is the only shape
-		// policy anyone has evidence for - but it means the two refinements
-		// are not protecting anything, so do not read them as headroom. If a
-		// real shape limit is ever wanted, set it strictly below the record
-		// budget; if not, the honest move is to delete the two branches rather
-		// than leave guards that cannot fire. detect's budget reachability
-		// test pins both directions so a change here cannot pass unnoticed.
-		Detect: DetectLimitsConfig{
-			MaxPlans: 16, MaxSelectedRecordsPerPlan: 500, MaxSeriesPerPlan: 500, MaxRecordsPerSeries: 500,
-			MaxLevelFacts: 64000, MaxPredicateEvaluations: 512000, MaxResultBytes: 16 << 20,
-		},
+		// The two that are gone are worth a sentence, because one of them was
+		// raised as a bound that might be throttling throughput. It could not
+		// be: max_series_per_plan reached production only through a converter
+		// whose one caller was the phase-one runtime, and on the path that runs
+		// it was never read at all. The series bound this deployment does
+		// enforce is PhaseTwo.Coordinator.MaxSeries, derived from the memory
+		// limit and measured at 524,288 against that 500. Two of the three were
+		// additionally unreachable by construction, their budgets being equal to
+		// a larger quantity checked before them - which is why no setting of
+		// them would have changed anything either.
+		Detect: DetectLimitsConfig{MaxPlans: 16, MaxRecordsPerSeries: 500},
 		Trigger: TriggerLimitsConfig{
 			MaxLevels: 8, MaxTriggerWindowSize: 2048, MaxRecoveryConsecutiveWindows: 2048,
 			MaxRequiredHistoryPoints: 4096, MaxLevelResultsPerEvent: 8,
@@ -180,16 +156,6 @@ func (c Config) CompilerLimits() strategy.Limits {
 		MaxCompiledPlanBytes:          v.MaxCompiledPlanBytes,
 		MaxCacheEntries:               v.MaxCacheEntries, MaxCacheBytes: v.MaxCacheBytes,
 		NegativeCacheTTL: v.NegativeCacheTTL.Duration(), BudgetRevision: v.BudgetRevision,
-	}
-}
-
-func (c Config) DetectLimits() detect.ExecutionLimits {
-	v := c.Limits.Detect
-	return detect.ExecutionLimits{
-		MaxPlans: v.MaxPlans, MaxSelectedRecordsPerPlan: v.MaxSelectedRecordsPerPlan,
-		MaxSeriesPerPlan: v.MaxSeriesPerPlan, MaxRecordsPerSeries: v.MaxRecordsPerSeries,
-		MaxLevelFacts: v.MaxLevelFacts, MaxPredicateEvaluations: v.MaxPredicateEvaluations,
-		MaxResultBytes: v.MaxResultBytes,
 	}
 }
 
@@ -232,9 +198,7 @@ func (c LimitsConfig) validate() error {
 		return errors.New("limits.compiler budgets must be positive and budget_revision canonical")
 	}
 	detectLimits := c.Detect
-	if detectLimits.MaxPlans == 0 || detectLimits.MaxSelectedRecordsPerPlan == 0 || detectLimits.MaxSeriesPerPlan == 0 ||
-		detectLimits.MaxRecordsPerSeries == 0 || detectLimits.MaxLevelFacts == 0 || detectLimits.MaxPredicateEvaluations == 0 ||
-		detectLimits.MaxResultBytes == 0 {
+	if detectLimits.MaxPlans == 0 || detectLimits.MaxRecordsPerSeries == 0 {
 		return errors.New("limits.detect budgets must be positive")
 	}
 	triggerLimits := c.Trigger

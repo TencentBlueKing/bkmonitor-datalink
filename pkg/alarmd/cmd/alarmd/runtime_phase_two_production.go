@@ -19,11 +19,13 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/worker"
 )
 
 type productionFrozenCatalog interface {
@@ -321,14 +323,20 @@ type productionScheduleProjection interface {
 }
 
 type productionPhaseTwoControlDependencies struct {
-	Source          controlplane.StrategySource
-	Planner         controlplane.PrimaryQueryCompiler
-	Reconciler      productionSourceReconciler
-	Activator       productionInitialScheduleActivator
-	Repository      productionCatalogRepository
-	Schedules       productionScheduleProjection
-	Progress        productionPhaseTwoProgressReader
-	Observer        observability.Observer
+	Source     controlplane.StrategySource
+	Planner    controlplane.PrimaryQueryCompiler
+	Reconciler productionSourceReconciler
+	Activator  productionInitialScheduleActivator
+	Repository productionCatalogRepository
+	Schedules  productionScheduleProjection
+	Progress   productionPhaseTwoProgressReader
+	Observer   observability.Observer
+	// Recorder counts the control-plane reads this runtime makes. It is
+	// counted here, where the read returns, rather than from the result the
+	// caller applies: a round that finds the activation missing and then
+	// rebuilds it returns a healthy result, so a count taken from the result
+	// would be absent in exactly the case worth seeing. Nil records nothing.
+	Recorder        *metric.Recorder
 	RefreshInterval time.Duration
 	Wait            func(context.Context, time.Duration) error
 	Close           func() error
@@ -345,6 +353,14 @@ type productionPhaseTwoControl struct {
 	dependencies  productionPhaseTwoControlDependencies
 	renewMu       sync.Mutex
 	renewDegraded bool
+}
+
+func (runtime *productionPhaseTwoControl) recordControlFactRead(fact string) {
+	runtime.dependencies.Recorder.RecordControlFactRead(fact)
+}
+
+func (runtime *productionPhaseTwoControl) recordControlFactUnavailable(fact, reason string) {
+	runtime.dependencies.Recorder.RecordControlFactUnavailable(fact, reason)
 }
 
 func newProductionPhaseTwoControl(
@@ -374,7 +390,7 @@ func (runtime *productionPhaseTwoControl) InitialRefresh(
 	for {
 		result, pending, err := runtime.refresh(ctx)
 		if err != nil || !pending {
-			return result, err
+			return completeControlResult(result, err)
 		}
 		if err := runtime.dependencies.Wait(ctx, runtime.dependencies.RefreshInterval); err != nil {
 			return phaseTwoControlRefreshResult{}, err
@@ -389,8 +405,32 @@ func (runtime *productionPhaseTwoControl) Refresh(
 		return phaseTwoControlRefreshResult{}, errors.New("phase-two production Control is not initialized")
 	}
 	result, _, err := runtime.refresh(ctx)
-	return result, err
+	return completeControlResult(result, err)
 }
+
+// completeControlResult refuses the one shape this runtime must never hand
+// back: a zero-valued result with no error.
+//
+// The caller decides what to do from the health fact in the result, and it
+// only looks at the result when the error is nil. A round that returns
+// neither is telling it nothing while claiming to have succeeded, which it
+// reads as a fact it cannot act on -- and answering that by ending the
+// process was how one unreadable activation took a Control Leader down four
+// times on 2026-09-16. Every path through refresh now names its outcome; this
+// is the guard that keeps the next one from forgetting to, and it turns the
+// omission into a retried round rather than an exit.
+func completeControlResult(
+	result phaseTwoControlRefreshResult,
+	err error,
+) (phaseTwoControlRefreshResult, error) {
+	if err != nil || result.Status != "" {
+		return result, err
+	}
+	return phaseTwoControlRefreshResult{}, errIncompleteControlResult
+}
+
+var errIncompleteControlResult = errors.New(
+	"phase-two Control round returned no health fact and no error")
 
 func (runtime *productionPhaseTwoControl) LoadActive(
 	ctx context.Context,
@@ -400,8 +440,14 @@ func (runtime *productionPhaseTwoControl) LoadActive(
 	}
 	state, err := runtime.dependencies.Repository.LoadActivation(ctx)
 	if err != nil {
+		reason := "read_failed"
+		if errors.Is(err, controlplane.ErrActivationUnavailable) {
+			reason = "missing"
+		}
+		runtime.recordControlFactUnavailable("activation", reason)
 		return phaseTwoControlRefreshResult{}, err
 	}
+	runtime.recordControlFactRead("activation")
 	queryGroups, err := runtime.loadActiveQueryGroups(ctx, state)
 	return phaseTwoControlRefreshResult{QueryGroups: queryGroups, Status: phaseTwoControlHealthy}, err
 }
@@ -467,7 +513,7 @@ func (runtime *productionPhaseTwoControl) refresh(
 				Outcome: observability.ControlSourceRoundFailed, Exit: string(controlplane.SourceRefreshExitOf(err)),
 			},
 		})
-		result, fallbackErr := runtime.keepLastGood(ctx, sourceKind, err)
+		result, _, fallbackErr := runtime.keepLastGood(ctx, sourceKind, err)
 		return result, false, fallbackErr
 	}
 	if !knownSourceRefreshStatus(result.Status) {
@@ -492,11 +538,30 @@ func (runtime *productionPhaseTwoControl) refresh(
 	// get an answer that depends on which one the round took.
 	composition := result.Composition
 	defer func() {
-		if refreshErr != nil || refreshResult.Status != phaseTwoControlHealthy {
-			return
-		}
-		refreshResult.Composition = &composition
+		// Delivered whenever this round composed a Catalog, not only when the
+		// round ended healthy.
+		//
+		// The gauges say what the Catalog the leader last built is made of.
+		// The leader builds one on every round that reads its source; whether
+		// the fleet was then activated onto it is a different fact, and
+		// activation_failed and the activation standing already report that.
+		// Gating the composition on a healthy round meant a process whose
+		// activation never succeeded published no composition at all, ever --
+		// so the one state where somebody most needs to see the partition, a
+		// cutover refusing every round, is precisely the state in which it
+		// disappears. It did, for five leader generations.
+		//
+		// A composed Catalog is told from an absent one by its maps: ComposeCatalog
+		// pre-creates every partition it publishes, so a round that did not get
+		// that far leaves them nil rather than empty, and nothing is delivered.
+		refreshResult.Composition = publishedComposition(refreshErr, composition, refreshResult.Status)
 	}()
+	// Which strategies are behind the counts, once per change. Written here
+	// rather than at each return for the same reason the composition is: the
+	// lines and the counts come from one pass over one list, and a reader who
+	// sees a count move must be able to find the line that moved it whichever
+	// return the round took.
+	observeWithheldObjects(ctx, runtime.dependencies.Observer, result.Withheld)
 	sourceRefresh := sourceRefreshIdentity(result, result.Publication)
 	defer func() {
 		observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
@@ -509,11 +574,44 @@ func (runtime *productionPhaseTwoControl) refresh(
 	}()
 	if result.Status == controlplane.SourceRefreshPendingConfirmation {
 		state, err := runtime.dependencies.Repository.LoadActivation(ctx)
+		activationMissing := false
 		if errors.Is(err, controlplane.ErrActivationUnavailable) {
-			return phaseTwoControlRefreshResult{}, true, nil
-		}
-		if err != nil {
+			// The activation record is gone. The store answered; there is
+			// nothing there -- a Redis reload that came back without the key,
+			// which is what happened on 2026-09-16.
+			//
+			// Falling through with the zero state is what repairs it: the
+			// branch below finds the publication this round named and no
+			// activation on it, and activating is idempotent -- it is the same
+			// call that establishes the first activation of a fresh
+			// deployment. The Control Leader is the only process that can do
+			// this, so returning early here left the one replica able to write
+			// the record deciding not to, once a round, for as long as it went
+			// on.
+			//
+			// Returning early also returned the zero result with a nil error,
+			// which the caller read as a health fact it could not act on and
+			// answered by ending the process. Whatever this round can say, it
+			// says as a complete fact below.
+			runtime.recordControlFactUnavailable("activation", "missing")
+			activationMissing = true
+			if result.Latest == (controlplane.SnapshotPublicationRef{}) {
+				// Nothing has been published yet, so there is nothing to
+				// activate. This is a fresh deployment whose candidate still
+				// needs its second observation, and it is the case pending
+				// exists for: InitialRefresh waits, and a running process
+				// keeps the facts it already has.
+				return phaseTwoControlRefreshResult{
+					Status: phaseTwoControlDegradedLastGood, QueryGroupsRetained: true,
+					SourceKind: observability.SourceKindCompiledSnapshot,
+					ReasonCode: observability.ReasonCode(contract.ReasonActivationMissing), Cause: err,
+				}, true, nil
+			}
+		} else if err != nil {
+			runtime.recordControlFactUnavailable("activation", "read_failed")
 			return phaseTwoControlRefreshResult{}, false, err
+		} else {
+			runtime.recordControlFactRead("activation")
 		}
 		// A publication an earlier round published and never activated (the
 		// process stopped between the two) is still the one the fleet should
@@ -536,9 +634,20 @@ func (runtime *productionPhaseTwoControl) refresh(
 			sourceRefresh.ActivatedRevision = string(activated.Current.SnapshotRevision)
 			sourceRefresh.ActivatedEpoch = activated.Current.PublicationEpoch
 			sourceRefresh.ActivationCaughtUp = true
-			runtime.enrichSourceRefreshCounts(ctx, sourceRefresh, state, nil, activated, sourceRefreshCurrentCount(activated, queryGroups))
+			var previousErr error
+			if activationMissing {
+				// There was no previous activation to difference against: the
+				// counts say every Query Group was added, and the round is
+				// named as a rebuild in the log and in its own counter, so a
+				// store that lost the record is told from a lagging one.
+				previousErr = controlplane.ErrActivationUnavailable
+				sourceRefresh.ActivationRebuilt = true
+				runtime.dependencies.Recorder.RecordControlFactRebuilt("activation")
+			}
+			runtime.enrichSourceRefreshCounts(ctx, sourceRefresh, state, previousErr, activated, sourceRefreshCurrentCount(activated, queryGroups))
 			return phaseTwoControlRefreshResult{
 				QueryGroups: queryGroups, Status: phaseTwoControlHealthy, SourceRefreshObserved: true,
+				Activation: &phaseTwoActivationOutcome{Published: result.Latest, Applied: activated.Current},
 			}, false, nil
 		}
 		queryGroups, err := runtime.loadActiveQueryGroups(ctx, state)
@@ -602,6 +711,9 @@ func (runtime *productionPhaseTwoControl) refresh(
 	runtime.enrichSourceRefreshCounts(ctx, sourceRefresh, previous, previousErr, state, currentCount)
 	return phaseTwoControlRefreshResult{
 		QueryGroups: queryGroups, Status: phaseTwoControlHealthy, SourceRefreshObserved: true,
+		// A round that found the source unchanged still brought the activation
+		// to it (Ensure is idempotent), so it is a success of the same kind.
+		Activation: &phaseTwoActivationOutcome{Published: result.Publication, Applied: state.Current},
 	}, false, nil
 }
 
@@ -621,7 +733,10 @@ func (runtime *productionPhaseTwoControl) activate(
 	if err == nil {
 		return state, phaseTwoActivationFallback{}, true
 	}
+	outcome := &phaseTwoActivationOutcome{Published: publication, Cause: err}
 	if failure, ok := controlplane.ActivationFailureFromError(err); ok {
+		copied := failure
+		outcome.Failure = &copied
 		var samples []string
 		samplesTruncated := false
 		if failure.Class == controlplane.ActivationFailureClassNotDrained {
@@ -632,12 +747,17 @@ func (runtime *productionPhaseTwoControl) activate(
 			samplesTruncated = failure.ReappearedQueryGroupSamplesTruncated
 		}
 		observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
-			Component:  observability.ComponentControlPlane,
-			Stage:      observability.StageActivationFailed,
-			Result:     observability.ResultDegraded,
-			Operation:  observability.OperationTransition,
-			Direction:  observability.DirectionInternal,
-			ReasonCode: observability.ReasonContractRetryable,
+			Component: observability.ComponentControlPlane,
+			Stage:     observability.StageActivationFailed,
+			Result:    observability.ResultDegraded,
+			Operation: observability.OperationTransition,
+			Direction: observability.DirectionInternal,
+			// The classification, as the reason: the same word the fleet
+			// page groups the failure on. contract_retryable here was folded
+			// to _other by the normaliser, and the field people grep said
+			// nothing while the two beside it said schedule_conflict.
+			ReasonCode: observability.ActivationFailureReason(
+				observability.ActivationFailureStage(failure.Stage), observability.ActivationFailureClass(failure.Class)),
 			ActivationFailure: &observability.ActivationFailureFacts{
 				Stage:                                observability.ActivationFailureStage(failure.Stage),
 				Class:                                observability.ActivationFailureClass(failure.Class),
@@ -650,7 +770,13 @@ func (runtime *productionPhaseTwoControl) activate(
 			Err: err,
 		})
 	}
-	fallback, fallbackErr := runtime.keepLastGood(ctx, observability.SourceKindCompiledSnapshot, err)
+	fallback, lastGood, fallbackErr := runtime.keepLastGood(ctx, observability.SourceKindCompiledSnapshot, err)
+	// The last good activation keepLastGood answered with is what the fleet
+	// keeps executing; the outcome names it beside the publication it could
+	// not reach, so the standing can say both. Zero when even that could not
+	// be read, which the standing keeps apart from "on the last good one".
+	outcome.Applied = lastGood.Current
+	fallback.Activation = outcome
 	return controlplane.ActivationState{}, phaseTwoActivationFallback{result: fallback, err: fallbackErr}, false
 }
 
@@ -799,21 +925,24 @@ func (runtime *productionPhaseTwoControl) observeCurrentObjectRenewal(ctx contex
 	}
 }
 
+// The activation it answered with travels back as the second result, so a
+// caller that failed to move the activation can say which publication the
+// fleet is therefore still executing.
 func (runtime *productionPhaseTwoControl) keepLastGood(
 	ctx context.Context,
 	sourceKind observability.SourceKind,
 	cause error,
-) (phaseTwoControlRefreshResult, error) {
+) (phaseTwoControlRefreshResult, controlplane.ActivationState, error) {
 	reason := observability.ReasonContractRetryable
 	if errors.Is(cause, controlplane.ErrPublicationOccurrenceCollision) {
 		reason = observability.ReasonContractDeterministic
 	}
 	state, err := runtime.dependencies.Repository.LoadActivation(ctx)
 	if errors.Is(err, controlplane.ErrActivationUnavailable) {
-		return phaseTwoControlRefreshResult{}, cause
+		return phaseTwoControlRefreshResult{}, controlplane.ActivationState{}, cause
 	}
 	if err != nil {
-		return phaseTwoControlRefreshResult{}, errors.Join(cause, err)
+		return phaseTwoControlRefreshResult{}, controlplane.ActivationState{}, errors.Join(cause, err)
 	}
 	queryGroups, err := runtime.loadActiveQueryGroups(ctx, state)
 	if err != nil {
@@ -821,14 +950,14 @@ func (runtime *productionPhaseTwoControl) keepLastGood(
 			return phaseTwoControlRefreshResult{
 				Status: phaseTwoControlDegradedLastGood, SourceKind: sourceKind,
 				ReasonCode: reason, Cause: cause,
-			}, nil
+			}, state, nil
 		}
-		return phaseTwoControlRefreshResult{}, errors.Join(cause, err)
+		return phaseTwoControlRefreshResult{}, controlplane.ActivationState{}, errors.Join(cause, err)
 	}
 	return phaseTwoControlRefreshResult{
 		QueryGroups: queryGroups, Status: phaseTwoControlDegradedLastGood, SourceKind: sourceKind,
 		ReasonCode: reason, Cause: cause,
-	}, nil
+	}, state, nil
 }
 
 func (runtime *productionPhaseTwoControl) loadActiveQueryGroups(
@@ -1170,6 +1299,19 @@ type productionPhaseTwoOwnershipDependencies struct {
 	QueryDeadlineReserve      time.Duration
 	SnapshotRetention         time.Duration
 	PublicationDelayAllowance time.Duration
+	// SettlingWait is access's MinReadyDelay, given to the slot source so it
+	// can tell a replay it could dispatch from one it could only dispatch and
+	// then abandon. The two were derived in two packages that did not read each
+	// other, and a wait longer than the replay window was the result.
+	SettlingWait time.Duration
+	// LeaseTTL and ReconcileInterval set how long the rebalance writer waits
+	// after the ready set changed before it moves anything: a lease TTL for
+	// the leases a departed worker still holds to lapse, plus two rounds for
+	// the reconcile to have re-placed what it released. Moving during a
+	// rolling update would hand Query Groups to a replica about to be
+	// terminated; moving after it settles is one convergence.
+	LeaseTTL          time.Duration
+	ReconcileInterval time.Duration
 }
 
 type productionPhaseTwoOwnership struct {
@@ -1186,6 +1328,25 @@ type productionPhaseTwoOwnership struct {
 	indexEpoch   uint64
 	indexDigests map[string][sha256.Size]byte
 	indexReader  assignmentIndexReader
+
+	// lastRebalance is the plan the latest round computed, kept for the
+	// fleet snapshot this replica publishes. Nil until this process has
+	// planned a round, which only a Leader does.
+	lastRebalance *fleet.RebalanceFacts
+
+	// readySet is the ready set the last round reconciled against and when
+	// it last changed, remembered under the fence epoch it was observed in;
+	// a new Leader starts a fresh memory and so waits out one window before
+	// it moves anything.
+	readyEpoch     uint64
+	readySet       map[string]struct{}
+	readyChangedAt time.Time
+}
+
+// rebalanceStabilisation is how long the ready set must have been unchanged
+// before a round publishes the moves it planned.
+func (runtime *productionPhaseTwoOwnership) rebalanceStabilisation() time.Duration {
+	return runtime.dependencies.LeaseTTL + 2*runtime.dependencies.ReconcileInterval
 }
 
 func newProductionPhaseTwoOwnership(
@@ -1198,8 +1359,12 @@ func newProductionPhaseTwoOwnership(
 		return nil, errors.New("phase-two production ownership dependencies are incomplete")
 	}
 	if dependencies.PostRecoveryTerminalDelay <= 0 || dependencies.QueryDeadlineReserve <= 0 ||
-		dependencies.SnapshotRetention <= 0 || dependencies.PublicationDelayAllowance <= 0 {
+		dependencies.SnapshotRetention <= 0 || dependencies.PublicationDelayAllowance <= 0 ||
+		dependencies.SettlingWait <= 0 {
 		return nil, errors.New("phase-two post-recovery terminal delay is required")
+	}
+	if dependencies.LeaseTTL <= 0 || dependencies.ReconcileInterval <= 0 {
+		return nil, errors.New("phase-two rebalance stabilisation inputs are required")
 	}
 	return &productionPhaseTwoOwnership{
 		dependencies: dependencies, reconciler: dependencies.Reconcile, flights: dependencies.Flights,
@@ -1261,6 +1426,7 @@ func (runtime *productionPhaseTwoOwnership) PublishAssignments(
 		return err
 	}
 	owners := make(map[execution.QueryGroupIdentity]string, len(ordered))
+	records := make(map[execution.QueryGroupIdentity]ownership.AssignmentRecord, len(ordered))
 	for _, queryGroup := range ordered {
 		record, err := runtime.reconciler.ReconcileWith(ctx, authority, queryGroup, workers, at)
 		if err != nil {
@@ -1270,29 +1436,143 @@ func (runtime *productionPhaseTwoOwnership) PublishAssignments(
 			return err
 		}
 		owners[queryGroup] = record.DesiredWorkerID
+		records[queryGroup] = record
 	}
-	runtime.planRebalance(ctx, owners, workers, at)
+	// Placement first, correction second, both under this round's ready
+	// set: rendezvous only decides where a Query Group with no eligible
+	// holder goes, and the holder it picks is sticky, so a replica that
+	// comes back after a crash or a rollout owns nothing until this moves
+	// its share to it. The index is written from the owners after the moves,
+	// so a worker reads the round's final answer.
+	plan := runtime.reconciler.PlanRebalance(owners, workers, at)
+	outcome, err := runtime.publishRebalance(ctx, authority, plan, records, workers, at)
+	for _, move := range outcome.applied {
+		owners[move.QueryGroup] = move.To
+	}
+	runtime.observeRebalance(ctx, plan, outcome, at)
+	if err != nil {
+		return err
+	}
 	runtime.publishAssignmentIndex(ctx, authority, owners, workers, at)
 	return nil
 }
 
-// planRebalance reports what one rebalance round would move given the
-// desired owners this round just reconciled and the ready set it reconciled
-// them against, so the plan and the round agree on who is ready. It only
-// computes: the plan is observed for the shadow period, moves named one by
-// one so that a plan can be checked against the Assignments by hand, and
-// nothing publishes them, so the reconcile above stays the only writer of
-// Assignments.
-func (runtime *productionPhaseTwoOwnership) planRebalance(
+// rebalanceOutcome is what one round did with the plan it computed.
+type rebalanceOutcome struct {
+	applied   []scheduler.RebalanceMove
+	conflicts int
+	paused    bool
+	pausedFor time.Duration
+}
+
+// publishRebalance publishes the moves of one plan as Assignment decisions
+// under this round's authority, unless the ready set changed within the
+// stabilisation window, in which case the round only reports the plan.
+//
+// Each move names the record revision the reconcile just read, so a record
+// another writer moved in between is refused by the store and skipped, not
+// overwritten; the next round plans over what is actually there. A stale
+// fence ends the round, as it ends the reconcile. The old holder is not
+// asked: its next renewal is refused with NOT_DESIRED and its in-flight
+// commit by the fence, and the new holder resumes the Query Group from its
+// Progress, which is the same handover a rendezvous re-placement makes.
+func (runtime *productionPhaseTwoOwnership) publishRebalance(
 	ctx context.Context,
-	owners map[execution.QueryGroupIdentity]string,
+	authority ownership.PublicationAuthority,
+	plan scheduler.RebalancePlan,
+	records map[execution.QueryGroupIdentity]ownership.AssignmentRecord,
 	workers []ownership.WorkerRegistration,
 	at time.Time,
+) (rebalanceOutcome, error) {
+	outcome := rebalanceOutcome{}
+	stable, remaining := runtime.observeReadySet(authority, workers, at)
+	if len(plan.Moves) == 0 {
+		return outcome, nil
+	}
+	if !stable {
+		outcome.paused, outcome.pausedFor = true, remaining
+		return outcome, nil
+	}
+	for _, move := range plan.Moves {
+		record, known := records[move.QueryGroup]
+		if !known || record.DesiredWorkerID != move.From {
+			// The plan was computed from these records; a move over a Query
+			// Group they do not hold as the planner saw it is a defect in the
+			// planner, and skipping it is the safe reading.
+			outcome.conflicts++
+			continue
+		}
+		_, err := runtime.dependencies.Store.PublishAssignment(ctx, authority, ownership.AssignmentDecision{
+			QueryGroup: move.QueryGroup, DesiredWorkerID: move.To, ExpectedRecordRevision: record.RecordRevision,
+			PlacementReason: ownership.PlacementRebalance, DecidedAt: at,
+		})
+		switch {
+		case errors.Is(err, ownership.ErrAssignmentConflict):
+			outcome.conflicts++
+			continue
+		case errors.Is(err, ownership.ErrStaleFence):
+			runtime.clearControlAuthority(authority)
+			return outcome, err
+		case err != nil:
+			return outcome, err
+		}
+		outcome.applied = append(outcome.applied, move)
+	}
+	return outcome, nil
+}
+
+// observeReadySet remembers the ready set this round reconciled against and
+// reports whether it has been unchanged for the stabilisation window, and
+// if not, for how much longer the writer waits. The memory belongs to the
+// fence epoch: a new Leader starts from this round.
+func (runtime *productionPhaseTwoOwnership) observeReadySet(
+	authority ownership.PublicationAuthority,
+	workers []ownership.WorkerRegistration,
+	at time.Time,
+) (bool, time.Duration) {
+	ready := make(map[string]struct{}, len(workers))
+	for _, worker := range workers {
+		if worker.Validate() != nil || worker.AssignmentReadiness != ownership.WorkerReady || !worker.ExpiresAt.After(at) {
+			continue
+		}
+		ready[worker.WorkerID] = struct{}{}
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	changed := runtime.readySet == nil || runtime.readyEpoch != authority.Fence.OwnerEpoch || len(ready) != len(runtime.readySet)
+	if !changed {
+		for workerID := range ready {
+			if _, known := runtime.readySet[workerID]; !known {
+				changed = true
+				break
+			}
+		}
+	}
+	if changed {
+		runtime.readyEpoch, runtime.readySet, runtime.readyChangedAt = authority.Fence.OwnerEpoch, ready, at
+	}
+	elapsed := at.Sub(runtime.readyChangedAt)
+	if window := runtime.rebalanceStabilisation(); elapsed < window {
+		return false, window - elapsed
+	}
+	return true, 0
+}
+
+// observeRebalance reports one rebalance round: the plan, moves named one by
+// one so the plan can be checked against the Assignments by hand, and what
+// the round did with it -- published, paused for the ready set to settle,
+// or refused by the store for some of them.
+func (runtime *productionPhaseTwoOwnership) observeRebalance(
+	ctx context.Context,
+	plan scheduler.RebalancePlan,
+	outcome rebalanceOutcome,
+	at time.Time,
 ) {
-	plan := runtime.reconciler.PlanRebalance(owners, workers, at)
 	facts := &observability.RebalanceFacts{
 		ReadyWorkers: plan.ReadyWorkers, Assigned: plan.Assigned, Target: plan.Target,
 		MostOwned: plan.MostOwned, LeastOwned: plan.LeastOwned, Batch: plan.Batch, PlannedMoves: len(plan.Moves),
+		PublishedMoves: len(outcome.applied), Conflicts: outcome.conflicts,
+		Paused: outcome.paused, PausedForSeconds: outcome.pausedFor.Seconds(),
 	}
 	workerIDs := make([]string, 0, len(plan.Owned))
 	for workerID := range plan.Owned {
@@ -1309,6 +1589,40 @@ func (runtime *productionPhaseTwoOwnership) planRebalance(
 		Component: observability.ComponentOwnership, Stage: observability.StageRebalancePlanned,
 		Result: observability.ResultSuccess, Operation: observability.OperationLoad, Rebalance: facts,
 	})
+	// The same round for the fleet snapshot. Shadow is false here because
+	// this is the round that publishes the moves; what it did with them is
+	// beside the plan, so the page can say "moving" or "waiting for the
+	// ready set to settle" rather than "would move".
+	published := &fleet.RebalanceFacts{
+		PlannedAt: at, ReadyWorkers: plan.ReadyWorkers, Assigned: plan.Assigned, Target: plan.Target,
+		MostOwned: plan.MostOwned, LeastOwned: plan.LeastOwned, Batch: plan.Batch, PlannedMoves: len(plan.Moves),
+		StopSpreadPercent: scheduler.RebalanceStopSpreadPercent, Shadow: false,
+		PublishedMoves: len(outcome.applied), Conflicts: outcome.conflicts,
+		Paused: outcome.paused, PausedForSeconds: outcome.pausedFor.Seconds(),
+	}
+	if len(plan.Moves) > 0 {
+		// The pair the round chose, from the round's own first move rather
+		// than a second walk over the counts with its own tie rule.
+		published.MostOwnedBy, published.LeastOwnedBy = plan.Moves[0].From, plan.Moves[0].To
+	}
+	runtime.mu.Lock()
+	runtime.lastRebalance = published
+	runtime.mu.Unlock()
+}
+
+// LastRebalance is the plan the latest round on this process computed, for
+// the fleet snapshot; nil on a process that has never been the Leader.
+func (runtime *productionPhaseTwoOwnership) LastRebalance() *fleet.RebalanceFacts {
+	if runtime == nil {
+		return nil
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if runtime.lastRebalance == nil {
+		return nil
+	}
+	facts := *runtime.lastRebalance
+	return &facts
 }
 
 // publishAssignmentIndex writes the per-worker Assignment index for the
@@ -1350,7 +1664,12 @@ func (runtime *productionPhaseTwoOwnership) publishAssignmentIndex(
 		runtime.indexDigests = map[string][sha256.Size]byte{}
 	}
 	for _, workerID := range workerIDs {
-		digest := ownership.AssignedSetDigest(byWorker[workerID])
+		// Ordered before it is written: the digest sorts for itself, but the
+		// set is persisted as given, and a set gathered from a map is in a
+		// different order on every round.
+		set := byWorker[workerID]
+		sort.Slice(set, func(left, right int) bool { return set[left] < set[right] })
+		digest := ownership.AssignedSetDigest(set)
 		digests[workerID] = digest
 		previous, known := runtime.indexDigests[workerID]
 		writes = append(writes, ownership.AssignedSetWrite{
@@ -1706,6 +2025,7 @@ func (runtime *productionPhaseTwoOwnership) OpenQueryGroup(
 		scheduler.WithRecoveryLimits(runtime.dependencies.RecoveryLimits),
 		scheduler.WithPostRecoveryTerminalDelay(runtime.dependencies.PostRecoveryTerminalDelay),
 		scheduler.WithQueryDeadlineReserve(runtime.dependencies.QueryDeadlineReserve),
+		scheduler.WithSettlingWait(runtime.dependencies.SettlingWait),
 		scheduler.WithSnapshotRetention(runtime.dependencies.SnapshotRetention, runtime.dependencies.PublicationDelayAllowance),
 		scheduler.WithExpiredRangeCreation(runtime.dependencies.ExpiredRangeEnabled),
 		scheduler.WithObserver(runtime.dependencies.Observer),
@@ -1842,6 +2162,13 @@ func (executor observedProductionSlotExecutor) Execute(
 			reason = observability.ReasonInternalUnknown
 			if errors.Is(err, access.ErrFrozenQueryPlanUnavailable) {
 				reason = observability.ReasonContractDeterministic
+			}
+			// A gap guard conflict is a classifiable refusal, and it repeats on
+			// every round for the same Query Group. internal_unknown is where a
+			// site that looked at a failure and could not name it puts things;
+			// this one has a name and carries the two values it compared.
+			if conflict, named := worker.GapGuardConflictReason(err); named {
+				reason = observability.ReasonCode(conflict)
 			}
 		}
 	} else if observedResult == "" {
@@ -2071,4 +2398,21 @@ func newPhaseTwoRuntimeObserver(recorder *metric.Recorder, logger *observability
 		return nil, err
 	}
 	return observability.Multi(recorder, observability.NewLoggingObserver(logger, policy)), nil
+}
+
+// publishedComposition is what a round hands the catalog gauges.
+//
+// A composed Catalog is told from an absent one by its maps: ComposeCatalog
+// pre-creates every partition it publishes, so a round that did not get that
+// far leaves them nil rather than empty. That matters because an absent
+// composition and one full of zeros read the same on a scrape.
+func publishedComposition(
+	refreshErr error,
+	composition controlplane.CatalogComposition,
+	_ phaseTwoControlRefreshStatus,
+) *controlplane.CatalogComposition {
+	if refreshErr != nil || composition.Objects == nil {
+		return nil
+	}
+	return &composition
 }

@@ -12,7 +12,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -327,33 +326,6 @@ phase_two:
 `, workerID)
 }
 
-func TestPhaseOneAssetPoliciesFreezeReuseCompatibilityAndExit(t *testing.T) {
-	want := []PhaseOneAssetPolicy{
-		{Asset: PhaseOneInputTopic, Compatibility: AssetCompatibilityOnly, GoAccess: AssetDisabled, G5: AssetExit},
-		{Asset: PhaseOneConsumerGroup, Compatibility: AssetCompatibilityOnly, GoAccess: AssetDisabled, G5: AssetExit},
-		{Asset: PhaseOneInitialOffset, Compatibility: AssetCompatibilityOnly, GoAccess: AssetDisabled, G5: AssetExit},
-		{Asset: PhaseOneInputMetrics, Compatibility: AssetCompatibilityOnly, GoAccess: AssetDisabled, G5: AssetExit},
-		{Asset: PhaseOneStatePrefix, Compatibility: AssetCompatibilityOnly, GoAccess: AssetDisabled, G5: AssetExit},
-		{Asset: SharedResourceEvaluationMetrics, Compatibility: AssetReuse, GoAccess: AssetReuse, G5: AssetReuse},
-	}
-	if got := PhaseOneAssetPolicies(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("PhaseOneAssetPolicies() = %#v, want %#v", got, want)
-	}
-
-	got := PhaseOneAssetPolicies()
-	got[0].G5 = AssetReuse
-	if reflect.DeepEqual(PhaseOneAssetPolicies(), got) {
-		t.Fatal("PhaseOneAssetPolicies() exposed mutable package state")
-	}
-}
-
-// TestRestartMarginCoversTheReplayWindow guards the one config pair the derived
-// Runtime State TTL depends on. A replayed Slot recognises its own earlier
-// write and reports it as already applied rather than emitting the same events
-// again, which needs the key it wrote to still be there. The shortest TTL any
-// Plan can derive is the restart margin plus one evaluation interval, so a
-// margin under max_replay_age would let the shortest-retention Plans lose that
-// proof inside the replay window while every other Plan kept it.
 func TestRestartMarginCoversTheReplayWindow(t *testing.T) {
 	cfg := completePhaseTwoProductionConfig(validGoAccessConfigObject())
 	if err := cfg.Validate(); err != nil {

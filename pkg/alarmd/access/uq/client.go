@@ -146,7 +146,16 @@ func (client *Client) Execute(ctx context.Context, attempt execution.QueryAttemp
 	path := "/query/ts"
 	if query := attempt.Spec.PlanFacts.PromQL; query != nil {
 		path += "/promql"
-		payload = map[string]any{"promql": query.Expression, "match": query.Match, "bk_biz_ids": []string{attempt.Spec.PlanFacts.BusinessID}, "start": body.StartTime, "end": body.EndTime, "step": body.Step, "timezone": body.Timezone}
+		// No bk_biz_ids in the body. The scope travels in the space header,
+		// which is the only thing the provider resolves it from; bk_biz_ids in
+		// a promql body is something else entirely -- the provider appends
+		// bk_biz_id IN (ids) to the expression's conditions, and a metric that
+		// carries no bk_biz_id label then answers 200 with no series and no
+		// status. Custom-reported and bkbase metrics carry none, so every
+		// promql strategy over them read as "no data" on every round, and the
+		// backend (which pops bk_biz_ids out of the body before sending) saw
+		// the data the whole time.
+		payload = map[string]any{"promql": query.Expression, "match": query.Match, "start": body.StartTime, "end": body.EndTime, "step": body.Step, "timezone": body.Timezone}
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {

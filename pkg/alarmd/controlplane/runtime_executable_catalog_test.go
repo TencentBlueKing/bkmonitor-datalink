@@ -99,7 +99,7 @@ func TestRetainRuntimeExecutableCatalogBindsStateCompatibilityToSnapshot(t *test
 	if _, _, err := compilePublishedActivation(context.Background(), compiler, changedSemantics, PublishedSnapshot{
 		Publication: SnapshotPublicationRef{SnapshotRevision: tampered.SnapshotRevision, PublicationEpoch: 1},
 		QueryGroups: tampered.QueryGroups,
-	}, 60); err == nil {
+	}, publishedNamesForTest(t, tampered.QueryGroups), 60); err == nil {
 		t.Fatal("activation accepted a frozen state generation that differs from the compiler")
 	}
 }
@@ -836,4 +836,29 @@ func assertRuntimeClosure(
 			t.Fatalf("QueryPlans missing %q: %+v", queryRef, plan.QueryPlans)
 		}
 	}
+}
+
+// publishedNamesForTest stands in for the manifest a real publication writes:
+// the names a Segment copies rather than derives. A test that builds a
+// publication by hand has to supply them, because the code no longer computes
+// a second set of its own.
+func publishedNamesForTest(t *testing.T, groups []QueryGroup) map[execution.QueryGroupIdentity]ContentEntry {
+	t.Helper()
+	named := make(map[execution.QueryGroupIdentity]ContentEntry, len(groups))
+	for _, group := range groups {
+		digest, err := DeriveQueryGroupObjectDigest(group)
+		if err != nil {
+			t.Fatal(err)
+		}
+		refs := make([]execution.OutputContextRef, 0, len(group.Plans))
+		for _, plan := range group.Plans {
+			contextDigest, err := DeriveOutputContextDigest(plan)
+			if err != nil {
+				t.Fatal(err)
+			}
+			refs = append(refs, execution.OutputContextRef{Plan: plan.Identity, Digest: contextDigest})
+		}
+		named[group.Identity] = ContentEntry{Digest: digest, Refs: refs}
+	}
+	return named
 }

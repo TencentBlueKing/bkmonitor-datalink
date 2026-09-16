@@ -32,8 +32,13 @@ func TestPollingPromQLWireAndDynamicSeries(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Error(err)
 		}
-		if r.URL.Path != "/query/ts/promql" || body["promql"] != "up" || body["query_list"] != nil || body["start"] == nil || body["bk_biz_ids"] == nil {
+		// bk_biz_ids must be absent: the provider turns it into a bk_biz_id
+		// label condition, which a custom-reported metric never matches.
+		if r.URL.Path != "/query/ts/promql" || body["promql"] != "up" || body["query_list"] != nil || body["start"] == nil || body["bk_biz_ids"] != nil {
 			t.Errorf("path=%s body=%v", r.URL.Path, body)
+		}
+		if r.Header.Get(headerSpace) == "" {
+			t.Errorf("space header missing: the scope has to travel there once it no longer travels in the body")
 		}
 		_, _ = w.Write([]byte(`{"series":[{"name":"a","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["pod"],"group_values":["one"],"values":[[1700123456789,1]]},{"name":"b","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["pod"],"group_values":["two"],"values":[[1700123456789,2]]}],"is_partial":false}`))
 	}))

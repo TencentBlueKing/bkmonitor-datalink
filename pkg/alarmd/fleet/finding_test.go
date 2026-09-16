@@ -18,13 +18,14 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 )
 
-// One reason code, six situations, five owners -- decided on the counts.
+// One reason code, several lines, several owners -- decided on the counts.
 //
-// Every row here carries HISTORY_WARNING or HISTORY_GAPPED and nothing else
+// Every row here carries HISTORY_WARMING or HISTORY_GAPPED and nothing else
 // that a code table could read, so the only thing separating them is the
 // coverage. The page used to send all of them to the strategy owner on the
 // strength of the code; this is the table that says where each one actually
-// goes, and it is the table a reader should be able to check a row against.
+// goes -- which line, or none -- and it is the table a reader should be able
+// to check a row against.
 func TestAWindowReasonIsDecidedOnItsCountsNotItsCode(t *testing.T) {
 	warming := func(coverage HistoryCoverage) Anomaly {
 		return Anomaly{QueryGroup: "qg", Kind: KindDegradedRun, Cause: "LEVEL_OUTCOME_UNKNOWN",
@@ -37,61 +38,60 @@ func TestAWindowReasonIsDecidedOnItsCountsNotItsCode(t *testing.T) {
 	for _, testCase := range []struct {
 		name    string
 		anomaly Anomaly
-		want    Situation
+		check   Check // empty: under no line
 		owner   Owner
 	}{
 		// A window still filling: nobody's, heals.
 		{"young", warming(HistoryCoverage{Levels: 3, Short: 1, WorstValid: 7, WorstRequired: 9, ShortRounds: 2}),
-			SituationSeriesYoung, OwnerNobody},
+			"", OwnerNobody},
 		// Every short window a new series, for longer than a window takes to
 		// fill: the strategy's dimensions.
 		{"churning", warming(HistoryCoverage{Levels: 9, Short: 4, WorstValid: 2, WorstRequired: 9,
 			ShortRounds: 40, Fresh: 4, ShortFresh: 4, FreshRounds: 40}),
-			SituationSeriesChurning, OwnerStrategy},
+			CheckSeriesChurning, OwnerStrategy},
 		// Same shortfall, same run, every short window a series with history:
 		// the data.
 		{"data missing", warming(HistoryCoverage{Levels: 9, Short: 4, WorstValid: 2, WorstRequired: 9,
 			ShortRounds: 40}),
-			SituationSeriesDataMissing, OwnerData},
+			CheckSeriesDataMissing, OwnerUndetermined},
 		// Some fresh, some not: cannot be handed to either.
 		{"mixed", warming(HistoryCoverage{Levels: 9, Short: 4, WorstValid: 2, WorstRequired: 9,
 			ShortRounds: 40, Fresh: 2, ShortFresh: 2, FreshRounds: 0}),
-			SituationSeriesMixed, OwnerUndetermined},
+			CheckWindowUndecided, OwnerUndetermined},
 		// Every short window fresh, for one round: a strategy edit looks like
 		// this. Wait.
 		{"renewed", warming(HistoryCoverage{Levels: 9, Short: 4, WorstValid: 2, WorstRequired: 9,
 			ShortRounds: 40, Fresh: 9, ShortFresh: 4, FreshRounds: 1}),
-			SituationSeriesRenewed, OwnerNobody},
-		// Nothing in the window at all, sustained. No record arriving and a
-		// record whose detection produced nothing look identical here and have
-		// different owners, so this stays on the list.
+			"", OwnerNobody},
+		// Nothing in the window at all, sustained: every round's record arrived
+		// and could not be used. Whose that is, the counts do not say.
 		{"empty", warming(HistoryCoverage{Levels: 3, Short: 2, Empty: 2, WorstRequired: 14,
-			ShortRounds: 40, EmptyRounds: 40}),
-			SituationWindowEmpty, OwnerUndetermined},
+			ShortRounds: 40, EmptyRounds: 40, Unusable: 2, UnusableReason: "REQUIRED_VALUE_MISSING"}),
+			CheckWindowUndecided, OwnerUndetermined},
 		// Complete under a reason that says otherwise: the verdict is held
 		// over and releases itself.
-		{"held", gapped(HistoryCoverage{Levels: 3, Guarded: 3}),
-			SituationVerdictHeld, OwnerNobody},
+		{"held", gapped(HistoryCoverage{Levels: 3, Guarded: 3}), "", OwnerNobody},
 		// Holes, sustained past the window: data arriving with holes in it.
 		{"intermittent", gapped(HistoryCoverage{Levels: 1, Short: 1, WorstValid: 5, WorstRequired: 9,
 			ShortRounds: 29}),
-			SituationDataIntermittent, OwnerData},
+			CheckSeriesDataMissing, OwnerUndetermined},
 		// Holes, not yet past the window: could be data that just stopped.
 		{"just gapped", gapped(HistoryCoverage{Levels: 1, Short: 1, WorstValid: 5, WorstRequired: 9,
 			ShortRounds: 3}),
-			SituationDataJustGapped, OwnerNobody},
+			"", OwnerNobody},
 		// The reason without any counts -- an older replica -- falls back to
 		// the coarse reading, which stays undetermined rather than guessing.
 		{"no counts", Anomaly{Kind: KindDegradedRun, CauseReason: "HISTORY_WARMING"},
-			SituationWindowEmpty, OwnerUndetermined},
+			CheckWindowUndecided, OwnerUndetermined},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			got := findingOf(testCase.anomaly)
-			if got.Situation != testCase.want {
-				t.Errorf("situation = %s, want %s", got.Situation, testCase.want)
+			list := []Anomaly{testCase.anomaly}
+			Attribute(list, now)
+			if list[0].Finding.Check != testCase.check {
+				t.Errorf("check = %q, want %q", list[0].Finding.Check, testCase.check)
 			}
-			if got.Owner != testCase.owner {
-				t.Errorf("owner = %s, want %s", got.Owner, testCase.owner)
+			if list[0].Finding.Owner != testCase.owner {
+				t.Errorf("owner = %s, want %s", list[0].Finding.Owner, testCase.owner)
 			}
 		})
 	}
@@ -124,7 +124,6 @@ func TestCodesTheCatalogFilesTogetherShareAnOwner(t *testing.T) {
 	type reading struct {
 		code  string
 		owner Owner
-		where Where
 	}
 	byDisposition := map[controlplane.Disposition][]reading{}
 	for _, definition := range contract.ReasonCatalogV2() {
@@ -132,15 +131,14 @@ func TestCodesTheCatalogFilesTogetherShareAnOwner(t *testing.T) {
 		if !filed {
 			continue
 		}
-		situation, mapped := codeSituations[definition.Code]
-		if !mapped {
+		verdict, mapped := codeChecks[definition.Code]
+		if !mapped || verdict.normal {
 			t.Errorf("%s is a compiler terminal the catalog files as %s and this table maps to "+
-				"nothing", definition.Code, disposition)
+				"no line", definition.Code, disposition)
 			continue
 		}
-		got := finding(situation, 0)
 		byDisposition[disposition] = append(byDisposition[disposition],
-			reading{code: definition.Code, owner: got.Owner, where: got.Where})
+			reading{code: definition.Code, owner: checkAnswers[verdict.check].Owner})
 	}
 	if len(byDisposition) < 2 {
 		t.Fatalf("only %d dispositions found across the catalogue; the comparison would be "+
@@ -149,11 +147,10 @@ func TestCodesTheCatalogFilesTogetherShareAnOwner(t *testing.T) {
 	for disposition, readings := range byDisposition {
 		first := readings[0]
 		for _, other := range readings[1:] {
-			if other.owner != first.owner || other.where != first.where {
-				t.Errorf("the catalog files %s and %s together as %s; this table sends one to %s/%q "+
-					"and the other to %s/%q -- a reader is sent to two different people for one "+
-					"disposition", first.code, other.code, disposition,
-					first.owner, first.where, other.owner, other.where)
+			if other.owner != first.owner {
+				t.Errorf("the catalog files %s and %s together as %s; this table sends one to %s "+
+					"and the other to %s -- a reader is sent to two different people for one "+
+					"disposition", first.code, other.code, disposition, first.owner, other.owner)
 			}
 		}
 	}
@@ -185,7 +182,7 @@ func TestCodesTheCatalogFilesTogetherShareAnOwner(t *testing.T) {
 	// bucket to the strategy would have satisfied everything above and been
 	// wrong.
 	for _, code := range []string{"EXECUTION_BUDGET_EXHAUSTED", "SLOT_BUDGET_EXCEEDED", "STATE_BUDGET_EXCEEDED"} {
-		if got := finding(codeSituations[code], 0).Owner; got != OwnerAlarmd {
+		if got := checkAnswers[codeChecks[code].check].Owner; got != OwnerAlarmd {
 			t.Errorf("%s is %s's, want this deployment's: it is a budget allocated at run time", code, got)
 		}
 	}
@@ -212,79 +209,82 @@ func TestARejectedQueryIsNotFiledAsTheBackendsAvailability(t *testing.T) {
 	for _, testCase := range []struct {
 		name    string
 		anomaly Anomaly
-		want    Situation
+		check   Check
 		owner   Owner
 	}{
-		// The provider answered with a status code: it read the query and
-		// refused it.
-		{"cooldown on a provider status", cooldown("response=status_space_table_id_field_is_not_exists"),
-			SituationQueryRejected, OwnerUndetermined},
-		{"degraded on a provider status", degraded("response=status_space_table_id_field_is_not_exists"),
-			SituationQueryRejected, OwnerUndetermined},
-		// An HTTP 4xx is the same statement in the transport's vocabulary.
-		{"cooldown on a 4xx", cooldown("http_status=400"), SituationQueryRejected, OwnerUndetermined},
+		// The provider answered with a status that names what is missing: it
+		// read the strategy's table or field and said it is not there. That
+		// is the strategy's, confirmed by the backend itself -- the pool card
+		// already called these strategies unusable, and the line under it
+		// said 待确认 of the same objects.
+		{"cooldown on a provider status naming a missing target", cooldown("response=status_space_table_id_field_is_not_exists"),
+			CheckQueryTargetMissing, OwnerStrategy},
+		{"degraded on a provider status naming a missing target", degraded("response=status_space_table_id_field_is_not_exists"),
+			CheckQueryTargetMissing, OwnerStrategy},
+		{"cooldown on a not-found status", cooldown("response=status_table_not_found"), CheckQueryTargetMissing, OwnerStrategy},
+		// A status this build has no reading of stays on this side of the
+		// page: refused, by whom is not decided.
+		{"cooldown on an unknown provider status", cooldown("response=status_other"), CheckQueryRefused, OwnerUndetermined},
+		// An HTTP 4xx is the same statement in the transport's vocabulary,
+		// and names nothing.
+		{"cooldown on a 4xx", cooldown("http_status=400"), CheckQueryRefused, OwnerUndetermined},
 		// A timeout or a 5xx is the backend not answering: the data's.
-		{"cooldown on a timeout", cooldown("transport=timeout"), SituationBackendCooldown, OwnerData},
-		{"degraded on a 503", degraded("http_status=503"), SituationBackendUnavailable, OwnerData},
+		{"cooldown on a timeout", cooldown("transport=timeout"), CheckBackendNotAnswering, OwnerUndetermined},
+		{"degraded on a 503", degraded("http_status=503"), CheckBackendNotAnswering, OwnerUndetermined},
 		// No detail at all: nothing says it was refused, so the coarse reading.
 		{"cooldown without detail", Anomaly{Kind: KindQueryCooldown, CauseReason: "QUERY_UNAVAILABLE"},
-			SituationBackendCooldown, OwnerData},
+			CheckBackendNotAnswering, OwnerUndetermined},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			got := findingOf(testCase.anomaly)
-			if got.Situation != testCase.want || got.Owner != testCase.owner {
-				t.Errorf("finding = %s/%s, want %s/%s", got.Situation, got.Owner, testCase.want, testCase.owner)
+			list := []Anomaly{testCase.anomaly}
+			Attribute(list, now)
+			if got := list[0].Finding; got.Check != testCase.check || got.Owner != testCase.owner {
+				t.Errorf("finding = %s/%s, want %s/%s", got.Check, got.Owner, testCase.check, testCase.owner)
 			}
 		})
 	}
 }
 
-// Stalled and never-reached are decided before any code is read.
+// Stalled and a missed turn are decided before any code is read.
 //
 // A stalled object's last code is usually the external thing that happened
 // just before it got stuck, and reading that first would hand a deployment's
 // own stuck round to the data owner.
-func TestStalledAndNeverReachedAreDecidedBeforeTheCode(t *testing.T) {
-	stalled := Anomaly{Kind: KindDegradedRun, CauseReason: "QUERY_TIMEOUT", Stalled: true}
-	if got := findingOf(stalled); got.Situation != SituationStalled || got.Owner != OwnerAlarmd {
-		t.Errorf("stalled with an external last code = %+v, want STALLED/ALARMD", got)
+func TestStalledAndMissedTurnsAreDecidedBeforeTheCode(t *testing.T) {
+	stalled := []Anomaly{{Kind: KindDegradedRun, CauseReason: "QUERY_TIMEOUT", Stalled: true}}
+	Attribute(stalled, now)
+	if got := stalled[0].Finding; got.Check != CheckRoundsStalled || got.Owner != OwnerAlarmd {
+		t.Errorf("stalled with an external last code = %+v, want ROUNDS_STALLED/ALARMD", got)
 	}
-	never := Anomaly{Kind: KindOverdueWake, ReasonCode: "HISTORY_WARMING"}
-	if got := findingOf(never); got.Situation != SituationNeverReached || got.Owner != OwnerAlarmd {
-		t.Errorf("never reached = %+v, want NEVER_REACHED/ALARMD", got)
+	never := []Anomaly{{Kind: KindOverdueWake, ReasonCode: "HISTORY_WARMING"}}
+	Attribute(never, now)
+	if got := never[0].Finding; got.Check != CheckSlotsOverdue || got.Owner != OwnerAlarmd {
+		t.Errorf("overdue wake = %+v, want SLOTS_OVERDUE/ALARMD", got)
 	}
 }
 
-// The rows a check opens come from every column and are ordered by what
-// decides whether to act first.
-func TestUnderCheckCrossesColumnsAndOrdersByUrgency(t *testing.T) {
+// The rows a check opens come from every column, oldest first.
+func TestUnderCheckCrossesColumnsAndListsOldestFirst(t *testing.T) {
 	at := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
-	mk := func(id string, situation Situation, since time.Time) Anomaly {
-		item := Anomaly{QueryGroup: id, Replica: "pod-a", Since: since, Finding: finding(situation, 0)}
-		check, under := checkOf(item)
-		if under {
-			item.Finding.Check = check
-		}
-		return item
+	mk := func(id string, check Check, since time.Time) Anomaly {
+		return Anomaly{QueryGroup: id, Replica: "pod-a", Since: since, Finding: Finding{Check: check}}
 	}
-	// The same check in three columns, with the age tiebreak pointing the wrong
-	// way in one pair (a stalled object that is ours and newer sorts before an
-	// undetermined one that is older, within one check every row shares the
-	// owner, so age decides) -- and objects under other checks in every column,
-	// which must not be listed.
+	// The same check in three columns, oldest first within it, and objects
+	// under other checks (or none) in every column, which must not be listed.
 	anomalies := []Anomaly{
-		mk("stalled-new", SituationStalled, at.Add(-time.Minute)),
-		mk("churn", SituationSeriesChurning, at.Add(-3*time.Hour)),
+		mk("stalled-new", CheckRoundsStalled, at.Add(-time.Minute)),
+		mk("churn", CheckSeriesChurning, at.Add(-3*time.Hour)),
 	}
 	demoted := []Anomaly{
-		mk("stalled-old", SituationStalled, at.Add(-2*time.Hour)),
-		mk("cooldown", SituationBackendCooldown, at.Add(-time.Hour)),
+		mk("stalled-old", CheckRoundsStalled, at.Add(-2*time.Hour)),
+		mk("cooldown", CheckBackendNotAnswering, at.Add(-time.Hour)),
 	}
 	undecidable := []Anomaly{
-		mk("stalled-older", SituationStalled, at.Add(-4*time.Hour)),
-		mk("young", SituationSeriesYoung, at.Add(-5*time.Hour)),
+		mk("stalled-older", CheckRoundsStalled, at.Add(-4*time.Hour)),
+		mk("young", "", at.Add(-5*time.Hour)),
 	}
-	got := UnderCheck(CheckRoundsStalled, "", anomalies, demoted, undecidable)
+	view := &View{Anomalies: anomalies, Demoted: demoted, Undecidable: undecidable}
+	got := UnderCheck(CheckRoundsStalled, "", view, now)
 	want := []string{"stalled-older", "stalled-old", "stalled-new"}
 	if len(got) != len(want) {
 		t.Fatalf("under ROUNDS_STALLED = %v, want %v", names(got), want)
@@ -296,7 +296,7 @@ func TestUnderCheckCrossesColumnsAndOrdersByUrgency(t *testing.T) {
 	}
 	// A group narrows to one fold and nothing else.
 	demoted[0].Finding.Group = "pod-b"
-	if got := UnderCheck(CheckRoundsStalled, "pod-b", anomalies, demoted, undecidable); len(got) != 1 ||
+	if got := UnderCheck(CheckRoundsStalled, "pod-b", view, now); len(got) != 1 ||
 		got[0].QueryGroup != "stalled-old" {
 		t.Errorf("under ROUNDS_STALLED group pod-b = %v, want [stalled-old]", names(got))
 	}
@@ -350,7 +350,7 @@ func TestTheObjectRouteServesChecksAndTheRowsUnderOne(t *testing.T) {
 	}{
 		string(CheckDependencyDown):      {OwnerAlarmd, 1},
 		string(CheckSeriesChurning):      {OwnerStrategy, 1},
-		string(CheckBackendNotAnswering): {OwnerData, 1},
+		string(CheckBackendNotAnswering): {OwnerUndetermined, 1},
 		string(CheckWindowUndecided):     {OwnerUndetermined, 1},
 		string(CheckConfigUnresolved):    {OwnerUndetermined, 1},
 	} {
@@ -401,11 +401,12 @@ func TestTheObjectRouteServesChecksAndTheRowsUnderOne(t *testing.T) {
 	if echoed, _ := body["check"].(string); echoed != string(CheckWindowUndecided) {
 		t.Errorf("the response echoes check=%q, want %s", echoed, CheckWindowUndecided)
 	}
-	// A group within it narrows to that fold. The undecided object names
-	// strategy 8930, so that is its group.
-	_, body = get(t, handler, "/api/objects?check="+string(CheckWindowUndecided)+"&group=8930")
+	// A group within it narrows to that fold. The undecided object carries a
+	// HISTORY_WARMING with no window counts at all, so its fold is the one
+	// that says so.
+	_, body = get(t, handler, "/api/objects?check="+string(CheckWindowUndecided)+"&group="+causeNoCounts)
 	if rows, _ := body["anomalies"].([]any); len(rows) != 1 {
-		t.Errorf("check=WINDOW_UNDECIDED group=8930: %d rows, want 1", len(rows))
+		t.Errorf("check=WINDOW_UNDECIDED group=%s: %d rows, want 1", causeNoCounts, len(rows))
 	}
 	_, body = get(t, handler, "/api/objects?check="+string(CheckWindowUndecided)+"&group=nobody")
 	if rows, _ := body["anomalies"].([]any); len(rows) != 0 {
@@ -418,5 +419,69 @@ func TestTheObjectRouteServesChecksAndTheRowsUnderOne(t *testing.T) {
 	status, _ = get(t, handler, "/api/objects?check=NOTHING_IN_PARTICULAR")
 	if status != http.StatusBadRequest {
 		t.Errorf("unknown check: status = %d, want 400", status)
+	}
+}
+
+// A reason carried by a durable history guard is the guard's trigger, not
+// this round's event. Six strategies sat under "配置状态说不清" for hours with
+// CONFIG_DRIFT on every round: the guard had been established on a
+// configuration change once, nothing had changed since, and two of them
+// recovered with snapshot, query and schedule revisions identical before and
+// after. The row's question is why the guard has not released, which is a
+// window question, folded on the trigger and on whether the live window is
+// still short or already full.
+func TestAReasonHeldByAGuardIsAWindowQuestionNotAConfigOne(t *testing.T) {
+	// consecutive is the reason clock, which the window filling does not
+	// restart: on the round a guard converges it already reads the rounds
+	// the window was short for. heldFull is the counter that does restart.
+	held := func(short, guarded uint32, heldFull uint32) Anomaly {
+		return Anomaly{Kind: KindDegradedRun, Cause: "LEVEL_OUTCOME_UNKNOWN", CauseReason: "CONFIG_DRIFT",
+			Consecutive: 29,
+			Coverage: &HistoryCoverage{Levels: 3, Short: short, Guarded: guarded, WorstValid: 5, WorstRequired: 9,
+				ShortRounds: 29, HeldFullRounds: heldFull}}
+	}
+	for name, testCase := range map[string]struct {
+		anomaly Anomaly
+		check   Check
+		group   string
+	}{
+		// The live window is still short under the guard: the guard is
+		// doing its job, and the row says what it is waiting on.
+		"held and short": {held(1, 3, 0), CheckWindowUndecided, "保护未解除（最初触发 CONFIG_DRIFT）"},
+		// The live window is full and the guard has held for more than one
+		// round: the guard converges on the first full record, so this is a
+		// guard that should have released.
+		"held and full for two rounds": {held(0, 3, 2), CheckWindowUndecided, "保护未解除且窗口已满（最初触发 CONFIG_DRIFT）"},
+		// Full for one round only -- with the reason clock at 29, as it is on
+		// the real path: the round the guard converges on. Not a line.
+		"held and full for one round": {held(0, 3, 1), "", ""},
+		// No guard: CONFIG_DRIFT is this round's own finding and reads as
+		// the configuration question it is.
+		"not held": {Anomaly{Kind: KindDegradedRun, Cause: "CONFIG_DRIFT", CauseReason: "CONFIG_DRIFT",
+			Coverage: &HistoryCoverage{Levels: 3}}, CheckConfigUnresolved, "1854"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			item := testCase.anomaly
+			item.Strategies = []StrategyRef{{StrategyID: "1854", BusinessID: "7"}}
+			list := []Anomaly{item}
+			Attribute(list, now)
+			if list[0].Finding.Check != testCase.check {
+				t.Fatalf("check = %q, want %q", list[0].Finding.Check, testCase.check)
+			}
+			if testCase.check != "" && list[0].Finding.Group != testCase.group {
+				t.Fatalf("group = %q, want %q", list[0].Finding.Group, testCase.group)
+			}
+			if testCase.check != "" && list[0].Finding.Owner != checkAnswers[testCase.check].Owner {
+				t.Fatalf("owner = %s, want the check's", list[0].Finding.Owner)
+			}
+		})
+	}
+	// A guard under a window word of its own keeps reading the window: the
+	// held-complete row of the render fixture is a normal value, as before.
+	windowWord := []Anomaly{{Kind: KindDegradedRun, Cause: "LEVEL_OUTCOME_UNKNOWN", CauseReason: "HISTORY_GAPPED",
+		Consecutive: 5, Coverage: &HistoryCoverage{Levels: 3, Guarded: 3}}}
+	Attribute(windowWord, now)
+	if windowWord[0].Finding.Check != "" {
+		t.Fatalf("a guard under HISTORY_GAPPED with a full window = %q, want no line (held, as before)", windowWord[0].Finding.Check)
 	}
 }

@@ -112,7 +112,7 @@ func TestDefaultRequiresExplicitEnvironmentCoordinates(t *testing.T) {
 	if cfg.HTTP.Listen == "" || cfg.ShutdownTimeout.Duration() <= 0 {
 		t.Fatal("default local HTTP and shutdown budgets must be usable")
 	}
-	if cfg.Kafka.TriggerEvent.MaxMessageBytes <= 0 || cfg.Kafka.MessageReceipt.MaxMessageBytes <= 0 {
+	if cfg.Kafka.TriggerEvent.MaxMessageBytes <= 0 {
 		t.Fatal("default output byte budgets must be positive")
 	}
 	if cfg.Redis.Address != "" || len(cfg.Kafka.Brokers) != 0 {
@@ -134,15 +134,11 @@ func TestDefaultRequiresExplicitEnvironmentCoordinates(t *testing.T) {
 // back into use without an assertion noticing.
 func TestValidConfigurationLeavesConsumerKafkaFieldsEmpty(t *testing.T) {
 	cfg := validGoAccessConfigObject()
-	cfg.Kafka.MessageReceipt.MaxMessageBytes = 0
-	cfg.ReceiptQueue.MaxQueuedMessages = 0
-	cfg.ReceiptQueue.MaxQueuedBytes = 0
 
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() error = %v", err)
 	}
-	if cfg.Kafka.InputTopic != "" || cfg.Kafka.GroupID != "" || cfg.Kafka.InitialOffset != "" ||
-		cfg.Kafka.MessageReceipt.Topic != "" {
+	if cfg.Kafka.InputTopic != "" || cfg.Kafka.GroupID != "" || cfg.Kafka.InitialOffset != "" {
 		t.Fatalf("a valid configuration carries consumer-side Kafka assets: %+v", cfg.Kafka)
 	}
 }
@@ -198,7 +194,6 @@ func TestLoadRejectsLegacyAndPhaseTwoFields(t *testing.T) {
 
 func TestLoadRejectsUnsafeKafkaTopicTopology(t *testing.T) {
 	tests := map[string]func(*Config){
-		"same output topics":       func(cfg *Config) { cfg.Kafka.MessageReceipt.Topic = cfg.Kafka.TriggerEvent.Topic },
 		"zero trigger event bytes": func(cfg *Config) { cfg.Kafka.TriggerEvent.MaxMessageBytes = 0 },
 	}
 

@@ -91,3 +91,33 @@ func TestThePoolReportsHowOverdueItsWorstObjectIs(t *testing.T) {
 			" working from one that stopped", got)
 	}
 }
+
+// A pooled row says when it entered the pool: the first entered or extended
+// event with no cooldown standing, kept across extensions, cleared on the
+// way out. The anomaly's onset is earlier -- the failures that put it there
+// come first -- and a retained record between the two is not the
+// cooldown's doing.
+func TestAPooledRowSaysWhenItEnteredThePool(t *testing.T) {
+	at := time.Unix(1000, 0)
+	tracker := NewTracker(nil, "replica", func() time.Time { return at })
+	observe := func(o observability.Observation) {
+		o.Trace.QueryGroupKey = "qg"
+		tracker.Observe(context.Background(), o)
+	}
+	observe(observability.Observation{QueryFailure: &observability.QueryFailureFacts{Stage: "execute", Category: "source_backend", Code: "NO_TABLE"}})
+	observe(observability.Observation{ProgressCompletionKind: "COMPLETED_WITH_UNAVAILABLE", ProgressCompletionCause: "query_failed"})
+	at = at.Add(5 * time.Minute)
+	observe(observability.Observation{QueryCooldown: &observability.QueryCooldownFacts{Event: "entered", Until: at.Add(time.Minute), LastQueryAt: at, Failures: 3}})
+	entered := at
+	at = at.Add(10 * time.Minute)
+	observe(observability.Observation{QueryCooldown: &observability.QueryCooldownFacts{Event: "extended", Until: at.Add(time.Minute), LastQueryAt: at, Failures: 4}})
+	rows := tracker.Demoted()
+	if len(rows) != 1 || !rows[0].DemotedSince.Equal(entered) || !rows[0].Since.Before(entered) {
+		t.Fatalf("pooled row = %+v, want demoted_since at the entry (%v), after the anomaly's onset", rows, entered)
+	}
+	observe(observability.Observation{RunOutcome: "query_cooldown"})
+	observe(observability.Observation{QueryCooldown: &observability.QueryCooldownFacts{Event: "recovered"}})
+	if rows := tracker.Anomalies(); len(rows) != 1 || !rows[0].DemotedSince.IsZero() {
+		t.Fatalf("out of the pool the row still carries demoted_since: %+v", rows)
+	}
+}

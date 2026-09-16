@@ -27,12 +27,16 @@ var ErrFrozenQueryPlanUnavailable = errors.New("alarmd access: frozen QueryPlanF
 // It replaces a constant named thirtySecondReadyDelay whose value was ten
 // seconds and which was applied by listing the interval values that needed
 // it. The name said thirty, the value was ten, and the list had a hole.
-const minimumSettlingWait = execution.MinimumSettlingWaitSeconds * time.Second
+const minimumSettlingWait = execution.MinimumSettlingWait
 
 // settlingWaitWithinBudget reports how long after its query window closes a
-// Slot waits before reading it. The configured wait is what the deployment
-// says the data needs, and it is taken only while the Slot's completion
-// budget can still afford the downstream execution reserve on top of it.
+// Slot waits before reading it, for the schedule one of its Plans carries.
+//
+// The rule itself is execution.SettlingWaitWithinQueryBudget, shared with the
+// scheduler, which needs the same answer to decide whether a replay can still
+// be read before its distance runs out. This function is the translation of a
+// Plan's schedule into that rule's terms: the query budget is the completion
+// offset less the downstream execution reserve.
 //
 // A wait that outlasts its own budget does not delay the read, it cancels it:
 // the consumer fails the readiness comparison at every round and is bound as
@@ -40,11 +44,8 @@ const minimumSettlingWait = execution.MinimumSettlingWaitSeconds * time.Second
 // the strategy serializer accepts any of them -- it validates agg_interval
 // only as a non-negative integer, with no tier list behind it.
 func settlingWaitWithinBudget(schedule execution.ScheduleSpec, configured, reserve time.Duration) time.Duration {
-	budget := time.Duration(schedule.CompletionOffsetSeconds()) * time.Second
-	if configured+reserve < budget {
-		return configured
-	}
-	return minimumSettlingWait
+	budget := time.Duration(schedule.CompletionOffsetSeconds())*time.Second - reserve
+	return execution.SettlingWaitWithinQueryBudget(budget, configured)
 }
 
 type ReadinessDeferredError struct{ readyAt time.Time }
@@ -587,6 +588,15 @@ func Prepare(contractRef execution.FrozenExecutionContractRef, frozen FrozenPlan
 	return prepare(contractRef, frozen, minReadyDelay, false)
 }
 
+// prepare plans one Slot's physical queries.
+//
+// allowExhaustedRecoveryBudget means one thing: a recovery operation runs
+// against the recovery deadline rather than the Slot's own, so a consumer
+// whose frozen deadline has already passed is still planned instead of being
+// set aside as readiness-invalid. It used to mean a second thing as well --
+// that the readiness boundary itself was computed differently -- and that
+// second meaning made a ten-second replay wait past the point where it could
+// still run. Readiness is now the same instant for every operation.
 func prepare(
 	contractRef execution.FrozenExecutionContractRef,
 	frozen FrozenPlan,
@@ -648,7 +658,7 @@ func prepare(
 			readyAt, err := frozenConsumerReadyAt(
 				contractRef, requirement, window, schedule, minReadyDelay,
 				time.Duration(consumer.DownstreamExecutionReserveMilliSec)*time.Millisecond,
-				facts.QueryDelaySeconds, allowExhaustedRecoveryBudget,
+				facts.QueryDelaySeconds,
 			)
 			if err != nil {
 				return PreparedExecution{}, err
@@ -710,6 +720,19 @@ func prepare(
 	return PreparedExecution{Header: header, Queries: queries}, nil
 }
 
+// frozenConsumerReadyAt is when this consumer's window may be read. It is the
+// same instant whichever operation is asking.
+//
+// A recovery operation used to be given the configured wait unclamped, on the
+// reasoning that a replay is already late so it may as well be careful. On a
+// ten-second Slot that reasoning killed the replay: the clamped wait was ten
+// seconds and the configured one thirty, and by the thirtieth second the Slot
+// was four grid points behind -- past the replay distance, skipped. The wait
+// meant to protect the read is what consumed the only window the read had.
+//
+// There is also nothing the later read gains from it. The settling wait exists
+// so the data has landed; the normal path judges ten seconds enough for this
+// Slot, and a replay reads the same window later still.
 func frozenConsumerReadyAt(
 	contractRef execution.FrozenExecutionContractRef,
 	requirement execution.DataRequirement,
@@ -718,19 +741,14 @@ func frozenConsumerReadyAt(
 	configuredDelay time.Duration,
 	reserve time.Duration,
 	sourceDelaySeconds int64,
-	allowExhaustedRecoveryBudget bool,
 ) (int64, error) {
 	if int64(contractRef.Slot.EvaluationTime) > math.MaxInt64/1000 {
 		return 0, errors.New("alarmd access: evaluation time exceeds readiness range")
 	}
-	readyDelay := configuredDelay
-	if !allowExhaustedRecoveryBudget {
-		readyDelay = settlingWaitWithinBudget(schedule, configuredDelay, reserve)
-	}
 	// Source delay selects an older data window; it must not move the
 	// scheduler's global readiness boundary earlier by the same amount.
 	window.End += sourceDelaySeconds
-	return frozenRequirementReadyAt(requirement, window, readyDelay)
+	return frozenRequirementReadyAt(requirement, window, settlingWaitWithinBudget(schedule, configuredDelay, reserve))
 }
 
 func frozenSchedules(frozen FrozenPlan) (map[execution.PlanIdentity]execution.ScheduleSpec, error) {

@@ -183,9 +183,7 @@ func TestOSRestartNamedInputPreservesPythonMissingPointSemantics(t *testing.T) {
 func TestNamedInputPathKeepsThresholdAndPingMappingOnCanonicalDetector(t *testing.T) {
 	thresholdPlan := fixturePlan("1001", []contract.LevelIRV2{fixtureLevel(5, 1, contract.LevelConnectorAND,
 		fixtureThresholdAlgorithm("GTE", "50", "percent", ""))})
-	_, executions, _ := fixtureExecutions(t, fixtureEnvelope(t, []contract.EvaluationPlanV2{thresholdPlan},
-		[]fixtureRecord{{host: "host-a", sourceTime: 600, value: json.RawMessage(`80`)}}, contract.QueryCompletenessFull))
-	plan := executions[0].Plan
+	plan := compileFixturePlan(t, thresholdPlan)
 	primaryRecord := namedRecord(t, 600, `80`, nil)
 	dataset := execution.NewDataset([]contract.CanonicalRecordV2{primaryRecord})
 	view, _ := execution.NewDatasetView(dataset, []uint32{0})

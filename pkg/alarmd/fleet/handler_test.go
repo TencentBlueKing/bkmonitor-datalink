@@ -389,6 +389,36 @@ func TestListFlagsObjectsWhoseRoundsStoppedFinishing(t *testing.T) {
 	}
 }
 
+// Stalling is marked on every column before the first screen is drawn, so an
+// object in the demoted pool that stopped ending rounds is on the
+// ROUNDS_STALLED line and counted in the summary whichever column the
+// request serves -- and the line is the same one the metric exports.
+func TestAStalledObjectInTheDemotedPoolIsOnTheLine(t *testing.T) {
+	snapshots := healthySnapshots()
+	snapshots[1].Demoted = []Anomaly{agedAnomaly("demoted-stuck", "error", 2*time.Hour)}
+	snapshots[1].TotalDemoted = 1
+
+	status, body := get(t, handlerWithStallBudget(t, snapshots, 10*time.Minute), "/api/objects")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d", status)
+	}
+	var stalledLine map[string]any
+	for _, entry := range body["checks"].([]any) {
+		report := entry.(map[string]any)
+		if report["code"] == string(CheckRoundsStalled) {
+			stalledLine = report
+		}
+	}
+	if stalledLine == nil || stalledLine["current"].(float64) != 1 {
+		t.Fatalf("ROUNDS_STALLED line = %v, want the demoted object on it", stalledLine)
+	}
+	// The served column is the anomaly list, which is empty; the deployment
+	// count is across every column.
+	if body["stalled_total"].(float64) != 1 {
+		t.Fatalf("stalled_total = %v, want the demoted object counted", body["stalled_total"])
+	}
+}
+
 // A deployment that wired no budget has no basis for the claim, and a flag
 // asserted without one would label every long-running failure as unrecoverable.
 func TestListWithoutAStallBudgetFlagsNothing(t *testing.T) {
@@ -473,6 +503,160 @@ func TestHealthResponseCarriesCapacityWhenReplicasReportIt(t *testing.T) {
 	}
 	if capacity["permit_budget"].(float64) != 32 {
 		t.Fatalf("a per-replica ceiling was summed: %v", capacity["permit_budget"])
+	}
+}
+
+// The verdict response names the build each counted replica runs. It is the
+// first thing to establish about any number on the page after a release, and
+// before this field it took a PromQL query per pod.
+func TestHealthResponseCarriesTheBuildsTheReplicasRun(t *testing.T) {
+	snapshots := healthySnapshots()
+	newer := BuildFacts{Version: "0.2.4506", Commit: "62ee924d", SchemaVersion: "v3"}
+	older := BuildFacts{Version: "0.2.4505", Commit: "4f338bf3", SchemaVersion: "v3"}
+	snapshots[0].Build = &newer
+	snapshots[1].Build = &older
+	handler := handlerWith(t, snapshots, Expectation{QueryGroups: 2, Known: true}, []string{"pod-a", "pod-b"})
+
+	body := requestJSON(t, handler, "/api/health")
+	builds, ok := body["builds"].([]any)
+	if !ok || len(builds) != 2 {
+		t.Fatalf("health response carried builds %v, want two groups, one per build", body["builds"])
+	}
+	versions := map[string]int{}
+	for _, entry := range builds {
+		group := entry.(map[string]any)
+		versions[group["build"].(map[string]any)["version"].(string)] = len(group["replicas"].([]any))
+	}
+	if versions["0.2.4506"] != 1 || versions["0.2.4505"] != 1 {
+		t.Fatalf("builds = %v, want one replica under each version", versions)
+	}
+	// And per replica, where the row that shows it reads it.
+	for _, entry := range body["per_replica"].([]any) {
+		replica := entry.(map[string]any)
+		if replica["build"] == nil {
+			t.Fatalf("replica %v carries no build on the verdict response", replica["replica"])
+		}
+	}
+}
+
+// The verdict response names the standings it was decided on and the
+// leader's activation. Both decided DEGRADED before they were on this
+// response, and the page's one sentence then named the object list.
+func TestHealthResponseCarriesTheStandingsTheVerdictIsDecidedOn(t *testing.T) {
+	snapshots := healthySnapshots()
+	snapshots[0].Activation = &ActivationFacts{Applied: "bdc6ffcb", Published: "e7a1b2c3", Behind: true,
+		BehindBeyondBound: true, ConsecutiveFailures: 120, FailureStage: "schedule_cutover", FailureClass: "schedule_conflict"}
+	handler := handlerWith(t, snapshots, Expectation{QueryGroups: 949, Known: true}, []string{"pod-a", "pod-b"})
+
+	body := requestJSON(t, handler, "/api/health")
+	if body["health"] != "DEGRADED" {
+		t.Fatalf("health = %v, want DEGRADED from the standing alone", body["health"])
+	}
+	degradations, ok := body["degradations"].([]any)
+	if !ok || len(degradations) != 1 || degradations[0].(map[string]any)["kind"] != "ACTIVATION_BEHIND" {
+		t.Fatalf("degradations = %v, want the one ACTIVATION_BEHIND", body["degradations"])
+	}
+	activation, ok := body["activation"].(map[string]any)
+	if !ok || activation["applied"] != "bdc6ffcb" || activation["published"] != "e7a1b2c3" || activation["behind_beyond_bound"] != true {
+		t.Fatalf("activation = %v, want the leader's facts whole", body["activation"])
+	}
+	if body["activation_replica"] != "pod-a" {
+		t.Fatalf("activation_replica = %v, want pod-a", body["activation_replica"])
+	}
+
+	// Nothing degrading: an empty list and an explicit null, both present, so
+	// "no standing" and "this build has no such field" read differently.
+	plain := requestJSON(t, handlerWith(t, healthySnapshots(), Expectation{QueryGroups: 949, Known: true}, []string{"pod-a", "pod-b"}), "/api/health")
+	if list, present := plain["degradations"].([]any); !present || len(list) != 0 {
+		t.Fatalf("degradations with none = %v, want []", plain["degradations"])
+	}
+	if value, present := plain["activation"]; !present || value != nil {
+		t.Fatalf("activation with no attempt = present=%v value=%v, want explicit null", present, value)
+	}
+}
+
+// The leader's rebalance round reaches both routes: the verdict route,
+// whole and beside the replica table whose counts it judged, and the
+// objects route as the third standing with the round on the line. The
+// split does not degrade the verdict -- it is a line to act on, not a bound
+// passed -- and a follower-only deployment carries none.
+func TestBothRoutesCarryTheOwnershipSplit(t *testing.T) {
+	snapshots := healthySnapshots()
+	snapshots[0].Rebalance = &RebalanceFacts{PlannedAt: now.Add(-10 * time.Second), ReadyWorkers: 2, Assigned: 949, Target: 474,
+		MostOwned: 949, LeastOwned: 0, MostOwnedBy: "pod-a", LeastOwnedBy: "pod-b", Batch: 9, PlannedMoves: 9, StopSpreadPercent: 5, Shadow: true}
+	handler := handlerWith(t, snapshots, Expectation{QueryGroups: 949, Known: true}, []string{"pod-a", "pod-b"})
+
+	body := requestJSON(t, handler, "/api/health")
+	if body["health"] != "HEALTHY" {
+		t.Fatalf("health = %v, want HEALTHY: the split is a line, not a degradation", body["health"])
+	}
+	rebalance, ok := body["rebalance"].(map[string]any)
+	if !ok || rebalance["planned_moves"] != 9.0 || rebalance["most_owned_by"] != "pod-a" || rebalance["shadow"] != true ||
+		rebalance["stop_spread_percent"] != 5.0 || body["rebalance_replica"] != "pod-a" {
+		t.Fatalf("rebalance = %v from %v, want the leader's round whole", body["rebalance"], body["rebalance_replica"])
+	}
+	load := body["load"].(map[string]any)
+	bottleneck := load["bottleneck"].(map[string]any)
+	if skew, ok := bottleneck["skew"].(map[string]any); !ok || skew["most_owned"] != 949.0 {
+		t.Fatalf("load.bottleneck.skew = %v, want the round on the reading", bottleneck["skew"])
+	}
+
+	_, objects := get(t, handler, "/api/objects?limit=1")
+	var line map[string]any
+	for _, check := range objects["checks"].([]any) {
+		if check.(map[string]any)["code"] == string(CheckOwnershipSkewed) {
+			line = check.(map[string]any)
+		}
+	}
+	if line == nil || line["owner"] != string(OwnerAlarmd) || line["replica"] != "pod-a" {
+		t.Fatalf("objects checks carry no OWNERSHIP_SKEWED line of ours from pod-a: %v", objects["checks"])
+	}
+	if round, ok := line["rebalance"].(map[string]any); !ok || round["planned_moves"] != 9.0 || round["least_owned_by"] != "pod-b" {
+		t.Fatalf("OWNERSHIP_SKEWED line = %v, want the round on it", line)
+	}
+	groups := line["groups"].([]any)
+	if len(groups) != 1 || groups[0].(map[string]any)["key"] != "pod-a" {
+		t.Fatalf("OWNERSHIP_SKEWED groups = %v, want one on the loaded replica", groups)
+	}
+	if replicas := groups[0].(map[string]any)["replicas"].([]any); len(replicas) != 2 || replicas[0] != "pod-a" || replicas[1] != "pod-b" {
+		t.Fatalf("OWNERSHIP_SKEWED group replicas = %v, want the pair", groups[0])
+	}
+	todo := objects["todo"].(map[string]any)
+	if todo["checks"] != 1.0 || todo["objects"] != 0.0 {
+		t.Fatalf("todo = %v, want the split as one line of ours over no objects", todo)
+	}
+
+	// No replica planned a round: absent on the verdict route, no line on
+	// the objects route.
+	plain := handlerWith(t, healthySnapshots(), Expectation{QueryGroups: 949, Known: true}, []string{"pod-a", "pod-b"})
+	if value, present := requestJSON(t, plain, "/api/health")["rebalance"]; present && value != nil {
+		t.Fatalf("rebalance with no round = %v, want absent", value)
+	}
+	_, none := get(t, plain, "/api/objects?limit=1")
+	for _, check := range none["checks"].([]any) {
+		if check.(map[string]any)["code"] == string(CheckOwnershipSkewed) {
+			t.Fatalf("a deployment with no round has the split line: %v", check)
+		}
+	}
+}
+
+// The objects response carries the first screen's arithmetic, computed once
+// on the server: the page adding lines up counted past records as work and
+// an object under two lines twice.
+func TestObjectsResponseCarriesTheTodoArithmetic(t *testing.T) {
+	handler := handlerWith(t, snapshotsWithAnomalies(3), Expectation{QueryGroups: 949, Known: true}, replicas())
+	_, body := get(t, handler, "/api/objects?limit=1")
+	todo, ok := body["todo"].(map[string]any)
+	if !ok {
+		t.Fatalf("objects response carries no todo: %v", body)
+	}
+	if todo["checks"].(float64) < 1 || todo["objects"].(float64) != 3 {
+		t.Fatalf("todo = %v, want at least one line and the 3 distinct anomalous objects", todo)
+	}
+	for _, field := range []string{"retained", "retained_last_hour", "governance", "governance_objects"} {
+		if _, present := todo[field]; !present {
+			t.Fatalf("todo is missing %q, which the first screen reads: %v", field, todo)
+		}
 	}
 }
 
@@ -689,5 +873,146 @@ func TestHealthResponseCarriesTheSpansNothingEverEvaluated(t *testing.T) {
 		if _, present := first[field]; present {
 			t.Fatalf("the response carries %q for a span whose Slots cannot be counted: %v", field, first)
 		}
+	}
+}
+
+// On the route: a demoted object's record rides on its refusal line as that
+// line's consequence, a loss in progress is current on the record line and
+// on the to-do arithmetic, a stopped loss is the record, and the window all
+// of it was decided on travels with the numbers -- so the page prints what
+// the server decided, and neither reads "曾经漏检、不用处理" over a loss
+// still happening or "容量限制" over a refusal.
+func TestTheRouteTellsTheThreeKindsOfLossApart(t *testing.T) {
+	snapshots := healthySnapshots()
+	refused := anomaly("qg-refused")
+	refused.Kind = KindQueryCooldown
+	refused.Failure = &FailureRef{Code: "QUERY_UNAVAILABLE", Detail: "response=status_space_table_id_field_is_not_exists"}
+	snapshots[1].Demoted = []Anomaly{refused}
+	snapshots[1].TotalDemoted = 1
+	snapshots[1].GapSkips = map[string]SkippedSpan{
+		"qg-refused": {FirstSlot: 1, LastSlot: 3, Slots: 3, At: now.Add(-2 * time.Minute), Replica: "pod-b"},
+		"qg-losing":  {FirstSlot: 1, LastSlot: 3, Slots: 3, At: now.Add(-3 * time.Minute), Replica: "pod-b"},
+		"qg-stopped": {FirstSlot: 1, LastSlot: 3, Slots: 3, At: now.Add(-time.Hour), Replica: "pod-b"},
+	}
+	handler := handlerWith(t, snapshots, Expectation{QueryGroups: 949, Known: true}, replicas())
+
+	status, body := get(t, handler, "/api/objects")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d: %v", status, body)
+	}
+	byCode := map[string]map[string]any{}
+	for _, entry := range body["checks"].([]any) {
+		report := entry.(map[string]any)
+		byCode[report["code"].(string)] = report
+	}
+	target := byCode[string(CheckQueryTargetMissing)]
+	consequence, _ := target["consequence"].(map[string]any)
+	if consequence == nil || consequence["skipped"].(float64) != 1 || consequence["skipped_recent"].(float64) != 1 {
+		t.Fatalf("QUERY_TARGET_MISSING = %v, want its consequence: 1 skipped, 1 within the window", target)
+	}
+	abandoned := byCode[string(CheckDetectionAbandoned)]
+	if abandoned["current"].(float64) != 1 || abandoned["retained"].(float64) != 1 || abandoned["group_by"] != string(GroupByLoss) {
+		t.Fatalf("DETECTION_ABANDONED = %v, want 1 current, 1 retained, folded on loss", abandoned)
+	}
+	todo := body["todo"].(map[string]any)
+	for field, want := range map[string]float64{
+		"checks": 1, "objects": 1, "undetermined": 0, "undetermined_objects": 0,
+		"ongoing": 1, "while_demoted": 1, "while_demoted_recent": 1, "retained": 1,
+		"recent_window_seconds": RecentSkipWindow.Seconds(), "governance": 1, "governance_objects": 1,
+	} {
+		if got, _ := todo[field].(float64); got != want {
+			t.Errorf("todo.%s = %v, want %v (todo = %v)", field, todo[field], want, todo)
+		}
+	}
+	// Opening the refusal line: the object's row carries its record and what
+	// it is; opening the record line by kind lists the one in progress.
+	_, rows := get(t, handler, "/api/objects?check="+string(CheckQueryTargetMissing))
+	row := rows["anomalies"].([]any)[0].(map[string]any)
+	if row["skip"] == nil || row["loss"] != string(LossWhileDemoted) {
+		t.Fatalf("the refused object's row = %v, want its record and WHILE_DEMOTED", row)
+	}
+	_, ongoing := get(t, handler, "/api/objects?check="+string(CheckDetectionAbandoned)+"&group="+string(LossOngoing))
+	if list := ongoing["anomalies"].([]any); len(list) != 1 || list[0].(map[string]any)["query_group"] != "qg-losing" {
+		t.Fatalf("under DETECTION_ABANDONED/ONGOING = %v, want the one object losing rounds now", list)
+	}
+}
+
+// The health route carries the operating judgment, decided from the same
+// view as the numbers under it, with the limit that nothing estimates
+// headroom always on it.
+func TestTheHealthRouteCarriesTheOperatingJudgment(t *testing.T) {
+	snapshots := healthySnapshots()
+	earlier := 2
+	snapshots[0].Schedule = &ScheduleCensus{Overdue: 5, Completed1h: 100, OnTime1h: 80, Completed6h: 600, OnTime6h: 590,
+		OverdueAgo: &earlier, OverdueAgoSeconds: 3000}
+	snapshots[1].Schedule = &ScheduleCensus{Overdue: 4, Completed1h: 100, OnTime1h: 80, Completed6h: 600, OnTime6h: 590,
+		OverdueAgo: &earlier, OverdueAgoSeconds: 3600}
+	snapshots[0].Capacity = &Capacity{PermitAcquires: 1000, PermitWaits: 800}
+	status, body := get(t, handlerWith(t, snapshots, Expectation{QueryGroups: 949, Known: true}, replicas()), "/api/health")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d: %v", status, body)
+	}
+	load, _ := body["load"].(map[string]any)
+	if load == nil {
+		t.Fatalf("health carries no load: %v", body)
+	}
+	onTime := load["on_time"].(map[string]any)
+	backlog := load["backlog"].(map[string]any)
+	if onTime["state"] != string(OnTimeFallingBehind) || onTime["overdue"].(float64) != 9 {
+		t.Errorf("on_time = %v, want FALLING_BEHIND over 9 overdue (80%% this hour against 98%% over six)", onTime)
+	}
+	if backlog["state"] != string(BacklogGrowing) || backlog["earlier"].(float64) != 4 || backlog["span_seconds"].(float64) != 3000 {
+		t.Errorf("backlog = %v, want GROWING: 9 now against 4 over the shorter span of 3000 s", backlog)
+	}
+	limits := map[string]bool{}
+	for _, limit := range load["limits"].([]any) {
+		limits[limit.(string)] = true
+	}
+	if !limits[string(LimitNoHeadroomEstimate)] || !limits[string(LimitTrendSpan)] {
+		t.Errorf("limits = %v, want no headroom estimate and the short trend span", load["limits"])
+	}
+}
+
+// The list response sends the rows it is about and not the others: the
+// served column paged, the other columns and the retained records empty,
+// with every total, line and count still taken from the whole view. They
+// used to ride along whole on every refresh -- 177 KB of demoted rows under
+// a 50-row page at the size of the deployment this page is read on -- on a
+// request the page makes for the lines alone.
+func TestTheListResponseSendsOnlyTheRowsItIsAbout(t *testing.T) {
+	snapshots := columnSnapshots()
+	snapshots[1].GapSkips = map[string]SkippedSpan{
+		"qg-stopped": {FirstSlot: 1, LastSlot: 3, Slots: 3, At: now.Add(-time.Hour), Replica: "pod-b"}}
+	handler := handlerWith(t, snapshots, Expectation{QueryGroups: 949, Known: true}, replicas())
+
+	_, body := get(t, handler, "/api/objects?limit=1")
+	for _, column := range []string{"demoted", "undecidable", "by_design", "no_data"} {
+		if rows, _ := body[column].([]any); len(rows) != 0 {
+			t.Errorf("%s carries %d rows on the anomaly page, want none", column, len(rows))
+		}
+	}
+	for _, records := range []string{"gap_skips", "pruned_skips"} {
+		if entries, _ := body[records].(map[string]any); len(entries) != 0 {
+			t.Errorf("%s carries %d records on the anomaly page, want none", records, len(entries))
+		}
+	}
+	if body["demoted_total"].(float64) != 1 || body["undecidable_total"].(float64) != 1 || body["by_design_total"].(float64) != 1 {
+		t.Errorf("totals = demoted %v / undecidable %v / by_design %v, want 1 each: counted from the whole view, not the rows sent",
+			body["demoted_total"], body["undecidable_total"], body["by_design_total"])
+	}
+	// The pool asked for: its rows in anomalies, and the demoted list still
+	// not repeated beside them.
+	_, pool := get(t, handler, "/api/objects?column=demoted")
+	if rows, _ := pool["anomalies"].([]any); len(rows) != 1 {
+		t.Errorf("column=demoted serves %d rows, want the pool's one", len(rows))
+	}
+	if rows, _ := pool["demoted"].([]any); len(rows) != 0 {
+		t.Errorf("column=demoted repeats %d rows under demoted, want none", len(rows))
+	}
+	// The record line still opens to its record rows: they were drawn from
+	// the view before the response was trimmed.
+	_, record := get(t, handler, "/api/objects?check="+string(CheckDetectionAbandoned))
+	if rows, _ := record["anomalies"].([]any); len(rows) != 1 || rows[0].(map[string]any)["query_group"] != "qg-stopped" {
+		t.Errorf("check=DETECTION_ABANDONED serves %v, want the one retained record as a row", rows)
 	}
 }

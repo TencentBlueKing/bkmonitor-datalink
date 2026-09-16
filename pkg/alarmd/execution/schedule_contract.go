@@ -82,6 +82,38 @@ func (spec ScheduleSpec) completionDeadlineUnixMilli(at EvaluationTime) (int64, 
 // which that side adds to every strategy's lookback whatever the period.
 const MinimumSettlingWaitSeconds = 10
 
+// MinimumSettlingWait is that wait as a duration.
+const MinimumSettlingWait = MinimumSettlingWaitSeconds * time.Second
+
+// SettlingWaitWithinQueryBudget reports how long after its window closes a
+// Slot waits before reading it. The configured wait is what the deployment
+// says the data needs, and it is taken only while the Slot has longer than
+// that between its evaluation time and the deadline its query must meet.
+//
+// A wait that outlasts its own budget does not delay the read, it cancels it:
+// the readiness boundary lands past the deadline, so every consumer fails that
+// comparison on every round and is bound unavailable.
+//
+// It lives here because two packages ask the same question about one Slot and
+// must get one answer. access asks it to decide when to read; the scheduler
+// asks it to decide whether a replay can still be read before its distance
+// runs out. Those two derivations were written separately, and a wait longer
+// than the scheduler's replay window was the result: every 10-second Slot that
+// missed its live deadline was told to wait until an instant at which it was
+// already too far behind to run, so it was skipped -- the system requiring the
+// wait and then abandoning the Slot for having waited.
+//
+// Both callers express their input as this budget: access as the Plan's
+// completion offset less the downstream execution reserve, the scheduler as
+// the query deadline it already holds less the evaluation time. The reserve
+// cancels, which is why the budget rather than the schedule is the argument.
+func SettlingWaitWithinQueryBudget(queryBudget, configured time.Duration) time.Duration {
+	if configured < queryBudget {
+		return configured
+	}
+	return MinimumSettlingWait
+}
+
 // MinimumCompletionBudgetSeconds is the smallest completion budget on which a
 // Slot can do anything at all: the settling wait, plus the downstream
 // execution reserve the deployment holds back from every query deadline.

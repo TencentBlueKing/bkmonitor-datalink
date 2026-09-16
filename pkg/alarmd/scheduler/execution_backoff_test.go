@@ -200,7 +200,7 @@ func TestRunnerKeepsBackoffForExpiredReplaySlot(t *testing.T) {
 	clock := newMutableClock(time.Unix(200, 0))
 	limits := testRecoveryLimits()
 	slot := frozenSlot("query-group-1")
-	slot.Recovery = SlotRecoveryFacts{Disposition: ReplayExpired, Distance: limits.MaxReplaySlots + 1, Age: limits.MaxReplayAge - time.Second}
+	slot.Recovery = SlotRecoveryFacts{Disposition: ReplayExpired, Reason: ReplayExpiredByDistance, Distance: limits.MaxReplaySlots + 1, Age: limits.MaxReplayAge - time.Second}
 	flights, err := NewFlightCoordinatorWithRecovery(limits, clock.Now)
 	if err != nil {
 		t.Fatal(err)

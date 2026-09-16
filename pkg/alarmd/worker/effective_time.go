@@ -41,7 +41,12 @@ func prepareAlwaysEffectiveTimeFactsWithProvider(
 		if due.CompiledPlan == nil {
 			return nil, errors.New("alarmd worker: EffectiveTime target references an unknown Plan")
 		}
-		for _, level := range due.CompiledPlan.Levels() {
+		// Every level this Plan could be judged on this Slot, which is the
+		// declared ones and, when it detects no-data, that level too. This is a
+		// union rather than a choice: both kinds of series may arrive in the
+		// same Slot and each needs its own fact. Which levels a given series is
+		// judged against is decided elsewhere, once.
+		for _, level := range levelsNeedingEffectiveTime(due) {
 			requirement := level.EffectiveTimeRequirement()
 			if requirement.Kind() != strategy.EffectiveTimeAlways {
 				return nil, errors.New("alarmd worker: non-ALWAYS EffectiveTime requires a resolved series fact")
@@ -81,10 +86,21 @@ func prepareAlwaysEffectiveTimeFactsWithProvider(
 // bindAlwaysEffectiveTimeFacts binds the facts prepared once per Slot only
 // after Access has supplied real series identities. The returned header is
 // scoped to one EvaluationRequest; the static header remains series-agnostic.
+// levelsNeedingEffectiveTime is every level a Plan could be judged on in one
+// Slot: the declared ones, plus the no-data level when it has one.
+func levelsNeedingEffectiveTime(due execution.DuePlan) []strategy.CompiledLevel {
+	levels := due.CompiledPlan.Levels()
+	if noData := due.CompiledPlan.NoDataLevel(); noData != nil {
+		levels = append(levels, *noData)
+	}
+	return levels
+}
+
 func bindAlwaysEffectiveTimeFacts(
 	header execution.InternalExecutionHeader,
 	stateItems []execution.StatePreflightItem,
 	prepared map[execution.ConsumerRef]strategy.EffectiveTimeFact,
+	kind execution.SeriesKind,
 ) (execution.InternalExecutionHeader, error) {
 	// Scanned rather than indexed: this binds one series at a time, so a map of
 	// every due Plan would be built and thrown away once per series, while the
@@ -103,6 +119,13 @@ func bindAlwaysEffectiveTimeFacts(
 		due, ok := findDuePlan(item.Identity.Plan)
 		if !ok || due.CompiledPlan == nil {
 			return execution.InternalExecutionHeader{}, errors.New("alarmd worker: EffectiveTime target references an unknown Plan")
+		}
+		// The Plan as this kind of series sees it. Binding the declared levels
+		// for a synthetic series would carry facts for levels it is not judged
+		// against and none for the level it is.
+		due, err := execution.PlanViewFor(due, kind)
+		if err != nil {
+			return execution.InternalExecutionHeader{}, err
 		}
 		for _, level := range due.CompiledPlan.Levels() {
 			target := alwaysEffectiveTimeTarget{

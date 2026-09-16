@@ -30,7 +30,7 @@ func TestProductionSlotSourceProjectionFollowsTerminalDelayConfiguration(t *test
 		source, err := NewProductionSlotSource("query-group-1", "worker-1",
 			&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(epoch)}}, catalog,
 			&fakeProgressReader{result: missingProgress(), catalog: catalog}, func() time.Time { return at },
-			WithRecoveryLimits(testRecoveryLimits()), WithPostRecoveryTerminalDelay(terminalDelay), WithQueryDeadlineReserve(5*time.Second))
+			WithRecoveryLimits(testRecoveryLimits()), WithSettlingWait(30*time.Second), WithPostRecoveryTerminalDelay(terminalDelay), WithQueryDeadlineReserve(5*time.Second))
 		if err != nil {
 			t.Fatal(err)
 		}

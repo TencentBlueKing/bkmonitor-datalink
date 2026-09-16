@@ -343,6 +343,15 @@ type PlanGapIdentity struct {
 	StateGeneration StateGeneration
 }
 
+// PlanNoDataIdentity names one Plan's no-data memory. It is keyed the same way
+// a gap is: by Plan and by the generation of the execution content, so a Plan
+// whose content moves starts its absence clocks fresh rather than inheriting
+// timestamps decided against a roster that no longer means the same thing.
+type PlanNoDataIdentity struct {
+	Plan            PlanIdentity
+	StateGeneration StateGeneration
+}
+
 type ApplyVersion struct {
 	StateApplyEpoch StateApplyEpoch
 	EvaluationTime  EvaluationTime
@@ -389,6 +398,22 @@ type PlanGapLoadItem struct {
 	Identity         PlanGapIdentity
 	ApplyVersion     ApplyVersion
 	ScheduleRevision PlanScheduleRevision
+	// Retention is the Plan's own state retention, which is what the key's
+	// lifetime is derived from. These keys name a state generation, so a Plan
+	// whose execution content changes leaves the old one behind; its life has to
+	// outlast the window it describes and no longer.
+	//
+	// Empty means the caller has no Plan-specific need and takes the floor. The
+	// floor is the safe direction: a key that lives too long is a byte of waste,
+	// and one that expires too early restarts a clock that was still running.
+	Retention []StateRetentionRequirement
+}
+
+type PlanNoDataLoadItem struct {
+	Identity         PlanNoDataIdentity
+	ApplyVersion     ApplyVersion
+	ScheduleRevision PlanScheduleRevision
+	Retention        []StateRetentionRequirement
 }
 
 // InternalExecution is retained as an execution-package validation aggregate.
@@ -402,6 +427,37 @@ type InternalExecution struct {
 	EffectiveTimeFacts []BoundEffectiveTimeFact
 	StatePreflight     []StatePreflightItem
 	GapPreflight       []PlanGapLoadItem
+	// FullPlans is, per due Plan, the Plan before any view was chosen for the
+	// series being validated. DuePlans carries the view -- what this series'
+	// inputs and state are judged against -- and this carries what the Plan
+	// as a whole has, which is what a Plan-scoped record such as a gap guard
+	// is validated against. Absent (nil) when no view was chosen; readers fall
+	// back to the due Plan itself.
+	FullPlans map[PlanIdentity]*strategy.CompiledPlan
+}
+
+// fullPlanOf is the Plan as a whole for a due Plan that may be a view of it.
+func (input InternalExecution) fullPlanOf(plan DuePlan) *strategy.CompiledPlan {
+	if full, found := input.FullPlans[plan.Identity]; found && full != nil {
+		return full
+	}
+	return plan.CompiledPlan
+}
+
+// planOwnsLevel says whether a level belongs to the Plan as a whole: one of the
+// strategy's declared levels, or the Plan's no-data level. It is the question
+// a Plan-scoped record asks -- a gap guard protects the Plan, and a scope it
+// names on either kind of level is loaded for every series' round, real or
+// synthetic -- as opposed to the question an input or a state mutation asks,
+// which is answered by the view (compiledPlanHasLevel on DuePlan.CompiledPlan).
+func planOwnsLevel(plan *strategy.CompiledPlan, levelID uint32) bool {
+	if compiledPlanHasLevel(plan, levelID) {
+		return true
+	}
+	if level := plan.NoDataLevel(); level != nil && level.Definition().LevelID == levelID {
+		return true
+	}
+	return false
 }
 
 func (input InternalExecution) Validate(expected FrozenExecutionContractRef) error {
@@ -1412,6 +1468,39 @@ type PlanGapMutation struct {
 	Scopes                 []GapScopeMutation
 }
 
+// NoDataGroupMemory is what a Plan remembers about one no-data group between
+// Slots: when it was last seen with data, and when it was first called absent.
+//
+// Both are timestamps, and the absence of any third field is load-bearing. The
+// duration a no-data event reports is derived from these two, so a build that
+// did not run for some rounds - upgraded, rolled back, out of budget - derives
+// the same duration as one that ran every round. A field counting rounds would
+// be wrong by exactly the rounds nobody ran, and wrong in the quiet direction:
+// it would under-report an outage that was running the whole time. There is a
+// test that fails when a field is added here, so that adding one is a decision
+// rather than an oversight.
+type NoDataGroupMemory struct {
+	GroupKey    string `json:"group_key"`
+	LastSeen    int64  `json:"last_seen,omitempty"`
+	FirstAbsent int64  `json:"first_absent,omitempty"`
+}
+
+// PlanNoDataMutation replaces one Plan's whole no-data memory.
+type PlanNoDataMutation struct {
+	Identity               PlanNoDataIdentity
+	SchemaVersion          NoDataMemorySchema
+	ExpectedMarkerRevision uint64
+	ApplyVersion           ApplyVersion
+	ScheduleRevision       PlanScheduleRevision
+	// RosterVersion names the derivation the expected set came from. It is in
+	// the digest because the same group timestamps decided against a different
+	// roster are a different memory, and a reader comparing two records has no
+	// other way to tell.
+	RosterVersion  string
+	MutationDigest MutationDigest
+	Groups         []NoDataGroupMemory
+}
+
 type StateEvaluation struct {
 	Mutation StateMutation
 	Events   []contract.TriggerEventV1
@@ -1595,6 +1684,33 @@ type HistoryCoverage struct {
 	// thousand are different readings, and only the pair keeps them apart.
 	Abnormal             uint32
 	AbnormalOnIncomplete uint32
+	// Unusable is how many Levels could not use this round's record at all:
+	// the detection returned UNAVAILABLE or ERROR for it, so the point went
+	// into the window with no valid bit. UnusableReason is the first such
+	// Level's reason code -- REQUIRED_VALUE_MISSING, a type mismatch, a
+	// detector's declared refusal -- which is the one fact that says why.
+	//
+	// This is what an empty window is made of. A record that never arrives is
+	// never evaluated, so it never reaches the window; an empty window is a
+	// record that did arrive and could not be used, every round, and until this
+	// was carried the two read the same and the empty ones were filed as the
+	// data's.
+	Unusable       uint32
+	UnusableReason string
+}
+
+// ObserveUnusable records one Level whose detection could not use this
+// round's record, with the reason the detection gave. The first reason is
+// kept: it is the one to show, and a record that fails several Levels for
+// several reasons is rare enough that one is the right amount to carry.
+func (coverage *HistoryCoverage) ObserveUnusable(reason string) {
+	if coverage == nil {
+		return
+	}
+	coverage.Unusable++
+	if coverage.UnusableReason == "" {
+		coverage.UnusableReason = reason
+	}
 }
 
 // Observe folds one Level summary in. Zero required points means the window
@@ -1649,6 +1765,10 @@ func (coverage *HistoryCoverage) Merge(other HistoryCoverage) {
 	coverage.ShortFresh += other.ShortFresh
 	coverage.Abnormal += other.Abnormal
 	coverage.AbnormalOnIncomplete += other.AbnormalOnIncomplete
+	coverage.Unusable += other.Unusable
+	if coverage.UnusableReason == "" {
+		coverage.UnusableReason = other.UnusableReason
+	}
 	if other.Short > 0 && other.WorstRequired-other.WorstValid > coverage.WorstRequired-coverage.WorstValid {
 		coverage.WorstValid, coverage.WorstRequired = other.WorstValid, other.WorstRequired
 	}
@@ -1677,10 +1797,28 @@ func buildEvaluationInternalExecution(request EvaluationRequest) (InternalExecut
 			break
 		}
 	}
-	if !found || due.CompiledPlan == nil || len(request.Inputs) != len(due.CompiledPlan.Levels()) {
+	if !found || due.CompiledPlan == nil {
 		return InternalExecution{}, errors.New("alarmd execution: evaluation inputs do not exactly cover one due Plan")
 	}
-	input := InternalExecution{Contract: request.Header.Contract, DuePlans: []DuePlan{due}}
+	// The Plan the inputs are judged against is the view for this kind of
+	// series -- the same choice the evaluator made when it produced the result
+	// being validated. A synthetic no-data series carries one input for the
+	// no-data level; measuring it against the strategy's declared levels read
+	// as "inputs do not cover the Plan" on every no-data round in production,
+	// and the state its evaluation wrote read as a Level contract the Plan did
+	// not have. The full Plan is kept beside the view: a gap guard belongs to
+	// the Plan, not to one view of it, and is validated against every level
+	// the Plan has (see planOwnsLevel).
+	full := due.CompiledPlan
+	due, err := PlanViewFor(due, first.Kind)
+	if err != nil {
+		return InternalExecution{}, err
+	}
+	if len(request.Inputs) != len(due.CompiledPlan.Levels()) {
+		return InternalExecution{}, errors.New("alarmd execution: evaluation inputs do not exactly cover one due Plan")
+	}
+	input := InternalExecution{Contract: request.Header.Contract, DuePlans: []DuePlan{due},
+		FullPlans: map[PlanIdentity]*strategy.CompiledPlan{due.Identity: full}}
 	for index, level := range due.CompiledPlan.Levels() {
 		current := request.Inputs[index]
 		if current.Contract != request.Header.Contract || current.Consumer.Plan != due.Identity || !current.Consumer.HasLevel ||
@@ -1813,7 +1951,7 @@ func (result EvaluationResult) Validate(request EvaluationRequest) error {
 		if planResult.Disposition == PlanDecided && (len(localTerminalReasons) != 0 || len(localUnknownReasons) != 0) {
 			return errors.New("alarmd execution: localized terminal or unknown outcome requires degraded Plan disposition")
 		}
-		if err := validateLoadedGapLevels(plan, request.Gaps); err != nil {
+		if err := validateLoadedGapLevels(input.fullPlanOf(plan), plan.Identity, request.Gaps); err != nil {
 			return err
 		}
 		switch planResult.Disposition {
@@ -2280,13 +2418,13 @@ func validateLoadedStateContracts(plan DuePlan, states StatePreflightResult, lev
 	return nil
 }
 
-func validateLoadedGapLevels(plan DuePlan, gaps GapLoadResult) error {
+func validateLoadedGapLevels(full *strategy.CompiledPlan, identity PlanIdentity, gaps GapLoadResult) error {
 	for _, item := range gaps.Items {
-		if item.Identity.Plan != plan.Identity {
+		if item.Identity.Plan != identity {
 			continue
 		}
 		for _, scope := range item.Scopes {
-			if scope.Scope.HasLevel && !compiledPlanHasLevel(plan.CompiledPlan, scope.Scope.LevelID) {
+			if scope.Scope.HasLevel && !planOwnsLevel(full, scope.Scope.LevelID) {
 				return errors.New("alarmd execution: persisted gap references an unknown compiled Level")
 			}
 		}
@@ -2323,7 +2461,7 @@ func validatePlanGapMutation(
 		if err := validateOptionalLevel(scope.Scope.LevelID, scope.Scope.HasLevel); err != nil {
 			return err
 		}
-		if scope.Scope.HasLevel && !compiledPlanHasLevel(plan.CompiledPlan, scope.Scope.LevelID) {
+		if scope.Scope.HasLevel && !planOwnsLevel(input.fullPlanOf(plan), scope.Scope.LevelID) {
 			return errors.New("alarmd execution: gap mutation references an unknown compiled Level")
 		}
 		if _, duplicate := seen[scope.Scope]; duplicate {

@@ -206,3 +206,37 @@ func TestTheColumnsThatPartitionDeterminedAreExported(t *testing.T) {
 			"created or lost, which is the one thing the identity must rule out", sum, movedSum)
 	}
 }
+
+// A line that is down is a series at zero, not a series that is gone: the
+// producer fills the whole closed table and the collector must not drop the
+// zeros, or "this line went down" and "this build has no such family" read
+// the same to the rule watching it.
+func TestCheckLinesAndDegradationKindsAreExportedAtZero(t *testing.T) {
+	gathered := gatherFleet(t, FleetVerdict{
+		Health: "DEGRADED",
+		Checks: []FleetCount{
+			{Value: "CUTOVER_FAILING", Count: 1}, {Value: "REPLICA_DEGRADED", Count: 0},
+			{Value: "SLOTS_OVERDUE", Count: 14}, {Value: "DETECTION_ABANDONED", Count: 0},
+		},
+		Degradations: []FleetCount{
+			{Value: "ACTIVATION_BEHIND", Count: 1}, {Value: "OPEN_ALERT_SET_STALE", Count: 0},
+		},
+	})
+
+	checks := gathered["bkmonitor_alarmd_fleet_checks"]
+	for code, want := range map[string]float64{
+		"CUTOVER_FAILING": 1, "REPLICA_DEGRADED": 0, "SLOTS_OVERDUE": 14, "DETECTION_ABANDONED": 0,
+	} {
+		got, present := checks[code]
+		if !present || got != want {
+			t.Errorf("fleet_checks{code=%s} = %v (present=%v), want %v as a series", code, got, present, want)
+		}
+	}
+	degradations := gathered["bkmonitor_alarmd_fleet_degradations"]
+	for kind, want := range map[string]float64{"ACTIVATION_BEHIND": 1, "OPEN_ALERT_SET_STALE": 0} {
+		got, present := degradations[kind]
+		if !present || got != want {
+			t.Errorf("fleet_degradations{kind=%s} = %v (present=%v), want %v as a series", kind, got, present, want)
+		}
+	}
+}

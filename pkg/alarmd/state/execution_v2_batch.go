@@ -355,7 +355,10 @@ func (store *ExecutionStore) applyRuntime(
 			}
 			casBackend, ok := target.Backend.(CompareAndSetBackend)
 			if !ok {
-				item.Status, item.ReasonCode = execution.StateApplyRetryable, execution.ReasonCode(contract.ReasonRedisUnavailable)
+				// The routed backend cannot do what this write needs, which is
+				// wiring rather than weather: retrying reaches the same backend.
+				item.Status = execution.StateApplyDeterministicInvalid
+				item.ReasonCode = execution.ReasonCode(contract.ReasonBackendCapabilityMissing)
 				result.Items[index] = item
 				continue
 			}

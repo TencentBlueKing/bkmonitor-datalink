@@ -27,18 +27,6 @@ type MessageFramingError struct {
 	Message    string
 }
 
-// RejectedReceiptIdentityV2 contains the complete identity required to emit a
-// REJECTED MessageReceipt without inventing business counts. It is available
-// only when the bounded JSON framing and every Receipt identity field remain
-// independently trustworthy.
-type RejectedReceiptIdentityV2 struct {
-	ExecutionID   string
-	MessageID     string
-	PayloadDigest string
-	PlanSetDigest string
-	SourceWindow  SourceWindowV2
-}
-
 func (e *MessageFramingError) Error() string {
 	if e.FieldPath == "" {
 		return fmt.Sprintf("alarmd contract framing: %s: %s", e.ReasonCode, e.Message)
@@ -213,67 +201,6 @@ func deriveDimensionIdentityDigestPrevalidatedV2(tenantID, businessID string, fi
 	)
 }
 
-// ReadRejectedReceiptIdentityV2 performs a bounded second pass used only after
-// a deterministic message framing failure. It deliberately does not accept a
-// supplied digest: both digests are recomputed from the duplicate-free JSON so
-// a PAYLOAD_DIGEST_MISMATCH can still produce trustworthy audit identity.
-func ReadRejectedReceiptIdentityV2(payload []byte, limits ReaderLimitsV2) (*RejectedReceiptIdentityV2, error) {
-	if err := validateReaderLimitsV2(limits); err != nil {
-		return nil, err
-	}
-	if len(payload) == 0 || len(payload) > limits.MaxEnvelopeBytes || !utf8.Valid(payload) ||
-		bytes.HasPrefix(payload, []byte{0xef, 0xbb, 0xbf}) {
-		return nil, errors.New("alarmd contract: rejected Receipt identity is unavailable")
-	}
-	if err := validateJSONBudgetsV2(payload, limits.MaxContractDepth, limits.MaxStringBytes); err != nil {
-		return nil, err
-	}
-	if err := validateJSONSurrogateEscapes(payload); err != nil {
-		return nil, err
-	}
-	if err := rejectDuplicateJSONFields(payload); err != nil {
-		return nil, err
-	}
-	required := []string{"execution_id", "message_id", "source_window", "plan_set", "payload_digest"}
-	object, err := validatePrevalidatedJSONObjectFieldsV2(payload, "execution_envelope", required, nil, true)
-	if err != nil {
-		return nil, err
-	}
-	identity := &RejectedReceiptIdentityV2{}
-	if err := decodePrevalidatedJSONV2(object["execution_id"], &identity.ExecutionID); err != nil ||
-		!isOpaqueASCII(identity.ExecutionID) {
-		return nil, errors.New("alarmd contract: rejected Receipt execution identity is unavailable")
-	}
-	if err := decodePrevalidatedJSONV2(object["message_id"], &identity.MessageID); err != nil ||
-		!isOpaqueASCII(identity.MessageID) {
-		return nil, errors.New("alarmd contract: rejected Receipt message identity is unavailable")
-	}
-	if _, err := validatePrevalidatedJSONObjectFieldsV2(
-		object["source_window"], "execution_envelope.source_window", []string{"from_time", "until_time"}, nil, false,
-	); err != nil {
-		return nil, errors.New("alarmd contract: rejected Receipt source window is unavailable")
-	}
-	if err := decodePrevalidatedJSONV2(object["source_window"], &identity.SourceWindow); err != nil ||
-		identity.SourceWindow.FromTime < 0 || identity.SourceWindow.UntilTime < identity.SourceWindow.FromTime {
-		return nil, errors.New("alarmd contract: rejected Receipt source window is unavailable")
-	}
-	identity.PlanSetDigest, err = digestPrevalidatedJSONObjectWithoutV2(
-		"execution_envelope.plan_set.plan_set_digest", "plan-set-v2", object["plan_set"], "plan_set_digest",
-	)
-	if err != nil {
-		return nil, err
-	}
-	identity.PayloadDigest, err = digestPrevalidatedJSONObjectWithoutV2(
-		"execution_envelope.payload_digest", "execution-envelope-payload-v2", payload, "payload_digest",
-	)
-	if err != nil {
-		return nil, err
-	}
-	return identity, nil
-}
-
-// ReadExecutionEnvelopeV2 establishes message framing first, then reports
-// bounded Plan/Level/record issues without promoting them to message failure.
 func ReadExecutionEnvelopeV2(payload []byte, limits ReaderLimitsV2) (*FramedExecutionEnvelopeV2, []ValidationIssue, error) {
 	if err := validateReaderLimitsV2(limits); err != nil {
 		return nil, nil, framing(ReasonMessageBudgetExceeded, "reader_limits", err.Error())

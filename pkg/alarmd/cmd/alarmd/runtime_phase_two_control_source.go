@@ -118,6 +118,7 @@ func (bundle *phaseTwoWorkerBundle) noteControlRoundLocked(result phaseTwoContro
 	if result.Composition != nil {
 		state.composition = result.Composition
 	}
+	bundle.noteActivationLocked(result.Activation)
 }
 
 // readPersistedSourceSuccess refreshes the process's copy of the persisted

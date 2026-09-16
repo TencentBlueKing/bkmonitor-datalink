@@ -388,7 +388,7 @@ func drainQueues(t *testing.T, dispatcher *phaseTwoRunnerDispatcher) {
 			queue = dispatcher.delayed
 		}
 		scheduled := queue[0].scheduled
-		dispatcher.markDispatched(scheduled, delayed, delayed)
+		dispatcher.markDispatched(scheduled, delayed, 0, delayed)
 		dispatcher.handleResult(context.Background(),
 			phaseTwoScheduledResult{scheduled: scheduled, ran: true, attempted: true}, true)
 	}
@@ -648,7 +648,7 @@ func TestDueIndexMaturedDeferralJoinsTheRecoveryQueue(t *testing.T) {
 	if dispatcher.delayed[0].readyAt.After(now) {
 		t.Fatal("the matured deferral is not selectable, so the alternation cannot reach it")
 	}
-	dispatcher.markDispatched(dispatcher.delayed[0].scheduled, true, true)
+	dispatcher.markDispatched(dispatcher.delayed[0].scheduled, true, 0, true)
 	if dispatcher.preferDelayed {
 		t.Fatal("dispatching from the recovery queue did not hand the next turn to the ready queue")
 	}

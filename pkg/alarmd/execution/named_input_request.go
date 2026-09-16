@@ -22,10 +22,36 @@ import (
 // SeriesEvaluationInputRequest is the side-effect-free, series-local input to
 // one compiled Level. Frozen static facts remain in the shared header; this
 // request carries only the named immutable views consumed by Evaluation.
+// SeriesKind says what kind of series an evaluation input carries, which is
+// what decides the levels its Plan is evaluated against.
+//
+// It is a property of how the input was built, not of what arrived in it. A
+// real series is evaluated against every level the strategy declares; a
+// synthetic no-data series is evaluated against the no-data level and only
+// that, because it carries one point that is an answer rather than a
+// measurement and no data at all for the declared levels.
+//
+// Deciding it from the inputs instead - "these look like a no-data group" -
+// would make the set of levels a Plan is judged against depend on what turned
+// up that round, which is the one thing it must never depend on.
+type SeriesKind string
+
+const (
+	// SeriesKindReal is a series the query produced. It is the zero value, so
+	// an input built without saying is read as real; a synthetic series
+	// mislabelled that way is then refused rather than misjudged, because the
+	// level it names is not among the declared ones.
+	SeriesKindReal SeriesKind = ""
+	// SeriesKindNoData is a synthetic absence series.
+	SeriesKindNoData SeriesKind = "NO_DATA"
+)
+
 type SeriesEvaluationInputRequest struct {
 	Contract       FrozenExecutionContractRef
 	Consumer       ConsumerRef
 	SeriesIdentity SeriesIdentityDigest
+	// Kind decides which levels this input is evaluated against. See SeriesKind.
+	Kind           SeriesKind
 	RequirementIDs []RequirementID
 	Inputs         []NamedInputBinding
 }

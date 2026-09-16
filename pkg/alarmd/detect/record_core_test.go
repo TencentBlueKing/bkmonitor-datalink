@@ -1,46 +1,11 @@
 package detect
 
 import (
-	"context"
 	"encoding/json"
-	"reflect"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
-
-func TestPreparedRecordCoreMatchesPhaseOnePlanView(t *testing.T) {
-	algorithms := []contract.AlgorithmIRV2{
-		fixtureThresholdAlgorithmFor("value", "GTE", "50", "percent", ""), fixtureThresholdAlgorithmFor("value", "GTE", "80", "percent", ""),
-	}
-	for _, connector := range []string{contract.LevelConnectorAND, contract.LevelConnectorOR} {
-		plan := fixturePlan("1001", []contract.LevelIRV2{
-			fixtureLevel(5, 1, connector, algorithms...),
-			fixtureLevel(9, 2, contract.LevelConnectorAND, fixtureThresholdAlgorithmFor("value", "GTE", "60", "percent", "")),
-		})
-		envelope := fixtureEnvelope(t, []contract.EvaluationPlanV2{plan}, []fixtureRecord{{host: "host", sourceTime: 100, value: json.RawMessage(`70`)}}, contract.QueryCompletenessFull)
-		input, executions, digest := fixtureExecutions(t, envelope)
-		evaluator := newTestEvaluator(t)
-		phaseOne, err := evaluator.Evaluate(context.Background(), EvaluateRequest{Completeness: input.Execution().Completeness, DatasetContractDigest: digest, Plans: executions, Limits: generousLimits()})
-		if err != nil {
-			t.Fatalf("phase-one Evaluate() error = %v", err)
-		}
-		prepared, err := evaluator.PreparePlan(executions[0].Plan)
-		if err != nil {
-			t.Fatalf("PreparePlan() error = %v", err)
-		}
-		facts, values, _, err := evaluator.EvaluatePreparedRecord(context.Background(), prepared, recordValueMap{"value": json.RawMessage(`70`)})
-		if err != nil {
-			t.Fatalf("EvaluatePreparedRecord() error = %v", err)
-		}
-		got := RecordDetection{ProjectedValues: values, LevelFacts: facts}
-		want := phaseOne.Series[0].Records[0]
-		want.RecordOrdinal, want.RecordID, want.SourceTime = 0, "", 0
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("prepared result = %#v, phase-one = %#v", got, want)
-		}
-	}
-}
 
 func TestPreparedRecordCoreKeepsNormalizationFailuresUnavailable(t *testing.T) {
 	for name, value := range map[string]json.RawMessage{"absent": nil, "null": json.RawMessage(`null`), "type": json.RawMessage(`"70"`), "overflow": json.RawMessage(`1e100`)} {

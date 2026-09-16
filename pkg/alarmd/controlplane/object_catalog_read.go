@@ -6,12 +6,14 @@
 package controlplane
 
 import (
+	"bytes"
 	"container/list"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/go-redis/redis/v8"
 
@@ -169,11 +171,18 @@ func (repository *RedisCatalogRepository) loadObject(
 	}
 	flights.mu.Unlock()
 	if joined {
+		// Timed, because this wait has no deadline of its own and produces no
+		// error when it is long: the joiner waits for whatever the leader is
+		// doing, and if the leader is slow every joiner is silently slow with
+		// it.
+		waited := time.Now()
 		select {
 		case <-flight.done:
 		case <-ctx.Done():
+			observability.ObserveSlotWait(ctx, repository.observer, observability.SlotWaitObjectShare, "", waited, time.Now)
 			return nil, ctx.Err()
 		}
+		observability.ObserveSlotWait(ctx, repository.observer, observability.SlotWaitObjectShare, "", waited, time.Now)
 		if flight.err == nil {
 			repository.observeObjectRead(ctx, kind, objectReadShare)
 		}
@@ -217,8 +226,50 @@ func (repository *RedisCatalogRepository) readObject(
 	return value, len(payload), nil
 }
 
+// storedQueryGroupObject is a decoded Query Group object together with what its
+// stored bytes said before anything decoded them.
+//
+// The two travel together because the cache returns a decoded object without
+// going near the bytes again, and the question they answer is precisely
+// whether the two agree: a section present in the bytes and absent after
+// decoding is a decoding fault, and absent in both is the wrong object. A byte
+// count taken only where the decode runs would answer neither -- this worker
+// serves four hundred thousand cached reads for every fifty that fetch.
+type storedQueryGroupObject struct {
+	object QueryGroupObject
+	// noDataOccurrences is how many times the stored bytes name the no-data
+	// section. It counts occurrences of the key rather than parsing, because
+	// parsing is the step under suspicion.
+	noDataOccurrences int
+}
+
+// noDataOccurrencesIn is how many times a stored Query Group object names the
+// no-data section.
+//
+// One definition, because two paths decode this object into the same cache and
+// whichever gets there first supplies the number. Computed in both, the two
+// could drift and the reading would depend on which path loaded the object -
+// and a test exercising one of them would say nothing about the other.
+//
+// It counts the key rather than parsing, because parsing is the step under
+// suspicion: the whole point of this number is to be read against what parsing
+// produced.
+func noDataOccurrencesIn(payload []byte) int {
+	return bytes.Count(payload, []byte(`"no_data":`))
+}
+
 // LoadQueryGroupObject reads the execution content stored under digest.
 func (repository *RedisCatalogRepository) LoadQueryGroupObject(ctx context.Context, digest execution.ObjectDigest) (QueryGroupObject, error) {
+	stored, err := repository.loadStoredQueryGroupObject(ctx, digest)
+	if err != nil {
+		return QueryGroupObject{}, err
+	}
+	return stored.object, nil
+}
+
+func (repository *RedisCatalogRepository) loadStoredQueryGroupObject(
+	ctx context.Context, digest execution.ObjectDigest,
+) (storedQueryGroupObject, error) {
 	value, err := repository.loadObject(ctx, objectReadKindQueryGroup, repository.queryGroupObjectKey(digest), queryGroupObjectContractVersion, string(digest),
 		func(payload []byte) (any, error) {
 			var object QueryGroupObject
@@ -228,12 +279,14 @@ func (repository *RedisCatalogRepository) LoadQueryGroupObject(ctx context.Conte
 			if object.ContractVersion != queryGroupObjectContractVersion || object.Identity == "" {
 				return nil, errors.New("not a Query Group object of this contract")
 			}
-			return object, nil
+			return storedQueryGroupObject{
+				object: object, noDataOccurrences: noDataOccurrencesIn(payload),
+			}, nil
 		})
 	if err != nil {
-		return QueryGroupObject{}, err
+		return storedQueryGroupObject{}, err
 	}
-	return value.(QueryGroupObject), nil
+	return value.(storedQueryGroupObject), nil
 }
 
 // LoadOutputContext reads the rendering context stored under digest.
@@ -282,6 +335,7 @@ func AssembleQueryGroup(object QueryGroupObject, contexts map[execution.PlanIden
 				PlanID: plan.PlanID, StrategyRef: context.StrategyRef, InputProjection: plan.InputProjection,
 				SourceCompatibility: context.SourceCompatibility, OutputIdentity: plan.OutputIdentity,
 				SubjectFacts: context.SubjectFacts, LegacyOutput: context.LegacyOutput, TargetScope: plan.TargetScope,
+				NoData:     plan.NoData,
 				StrategyIR: strategyIR, WireFormat: context.WireFormat, TerminalReasonCode: plan.TerminalReasonCode,
 			},
 			StateGeneration: plan.StateGeneration, ScheduleSpec: plan.ScheduleSpec, ScheduleRevision: plan.ScheduleRevision,
@@ -330,7 +384,8 @@ func (repository *RedisCatalogRepository) LoadSegmentQueryGroup(
 // reason the content path cannot serve this Segment. An empty reason with an
 // error is an I/O failure the caller must return rather than work around.
 func (repository *RedisCatalogRepository) loadSegmentQueryGroupByContent(ctx context.Context, segment execution.ScheduleSegmentFact) (QueryGroup, string, error) {
-	object, err := repository.LoadQueryGroupObject(ctx, segment.ObjectDigest)
+	stored, err := repository.loadStoredQueryGroupObject(ctx, segment.ObjectDigest)
+	object := stored.object
 	switch {
 	case errors.Is(err, ErrCatalogObjectUnavailable):
 		return QueryGroup{}, segmentReadObjectMissing, err
@@ -363,5 +418,34 @@ func (repository *RedisCatalogRepository) loadSegmentQueryGroupByContent(ctx con
 	if err != nil {
 		return QueryGroup{}, segmentReadObjectMismatch, err
 	}
+	repository.observeAssembledBytes(ctx, segment, stored.noDataOccurrences)
 	return group, "", nil
+}
+
+// observeAssembledBytes reports what the stored bytes of the Segment's object
+// said about no-data, beside the digest that named them and the publication the
+// Segment belongs to.
+//
+// Three of these numbers only mean something together. The count says whether
+// the section is in the bytes at all; the digest says which object those bytes
+// are; and the revision says which publication the Segment thinks it is
+// executing. Read against the decoded count at the same hop, they separate a
+// decoding fault from a Segment pointing at an object that never had the
+// section -- two failures that produce the same zero at every later hop and
+// have now been argued about for three releases.
+func (repository *RedisCatalogRepository) observeAssembledBytes(
+	ctx context.Context, segment execution.ScheduleSegmentFact, occurrences int,
+) {
+	repository.observe(ctx, observability.Observation{
+		Component: observability.ComponentControlPlane, Stage: observability.StageFrozenPlanGeneration,
+		Result: observability.ResultSuccess,
+		Trace: observability.TraceFields{
+			QueryGroupKey:    string(segment.QueryGroup),
+			SnapshotRevision: string(segment.Publication.SnapshotRevision),
+			RecordID:         string(segment.ObjectDigest),
+		},
+		NoDataCensus: &observability.NoDataCensusFacts{
+			Hop: observability.NoDataHopAssembledBytes, Plans: occurrences,
+		},
+	})
 }

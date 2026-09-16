@@ -76,6 +76,22 @@ type FleetVerdict struct {
 	// applied the Activation the control plane published: acked, lagging or
 	// unknown. Their sum is the counted replicas.
 	Workers []FleetCount
+	// Checks is the first screen's closed check table, one entry per code,
+	// carrying the count its line prints: objects currently under an object
+	// check, replicas under one of the two deployment standings. Every code
+	// is present, zero for a line that is down, so that a series at zero and
+	// a series that is absent mean two different things -- a clear line, and
+	// a build that did not have this family.
+	//
+	// It exists because the verdict alone cannot say what it is degraded on.
+	// A deployment with anomalous objects reads DEGRADED whether or not a
+	// standing is up, and a fleet executing a stale publication for half a
+	// day was a first line on the page and no series anywhere.
+	Checks []FleetCount
+	// Degradations counts the replicas under each closed degradation kind,
+	// every kind present and zero when none is. Any non-zero kind decides the
+	// verdict DEGRADED before the object list is consulted.
+	Degradations []FleetCount
 }
 
 // FleetVerdictSource returns the current judgment. Reading it costs one control
@@ -86,15 +102,17 @@ type fleetCollector struct {
 	source        FleetVerdictSource
 	queryCooldown *prometheus.Desc
 
-	health     *prometheus.Desc
-	objects    *prometheus.Desc
-	partition  *prometheus.Desc
-	anomalies  *prometheus.Desc
-	anomalyAge *prometheus.Desc
-	stalled    *prometheus.Desc
-	gaps       *prometheus.Desc
-	failures   *prometheus.Desc
-	workers    *prometheus.Desc
+	health       *prometheus.Desc
+	objects      *prometheus.Desc
+	partition    *prometheus.Desc
+	anomalies    *prometheus.Desc
+	anomalyAge   *prometheus.Desc
+	stalled      *prometheus.Desc
+	gaps         *prometheus.Desc
+	failures     *prometheus.Desc
+	workers      *prometheus.Desc
+	checks       *prometheus.Desc
+	degradations *prometheus.Desc
 }
 
 func newFleetCollector(source FleetVerdictSource) *fleetCollector {
@@ -168,6 +186,24 @@ func newFleetCollector(source FleetVerdictSource) *fleetCollector {
 				"classification are absent here, so this total can be lower than fleet_anomalies -- the "+
 				"difference is objects nobody can yet say anything about, not objects that are fine.",
 			[]string{"category"}),
+		checks: descriptor("fleet_checks",
+			"The first screen's check lines, by closed code, carrying the count each line prints: objects "+
+				"currently under an object check, replicas under one of the two deployment standings "+
+				"(CUTOVER_FAILING, REPLICA_DEGRADED), which have no objects. Every code is emitted, zero when "+
+				"the line is down, so > 0 is exactly 'this line is on the first screen' and an absent series "+
+				"is a build without this family, not a clear line. Records of past loss retained under "+
+				"DETECTION_ABANDONED and TIMELINE_PRUNED are not current and are not counted; the JSON todo "+
+				"carries those. Written by every replica from the same shared snapshots, each read at that "+
+				"replica's own scrape instant: a code that changes from round to round can differ between "+
+				"replicas within one scrape interval, and for those the comparison is within one replica over "+
+				"time. Aggregate with max, not sum.",
+			[]string{"code"}),
+		degradations: descriptor("fleet_degradations",
+			"Replicas under each closed degradation kind. Any non-zero kind decides fleet_health DEGRADED "+
+				"before the object list is consulted, and fleet_health cannot say which: a deployment with "+
+				"anomalous objects reads DEGRADED whether or not a standing is up. Every kind is emitted, zero "+
+				"when no replica is under it. Aggregate with max.",
+			[]string{"kind"}),
 	}
 }
 
@@ -182,6 +218,8 @@ func (c *fleetCollector) Describe(descriptions chan<- *prometheus.Desc) {
 	descriptions <- c.stalled
 	descriptions <- c.gaps
 	descriptions <- c.failures
+	descriptions <- c.checks
+	descriptions <- c.degradations
 }
 
 func (c *fleetCollector) Collect(metrics chan<- prometheus.Metric) {
@@ -243,6 +281,20 @@ func (c *fleetCollector) Collect(metrics chan<- prometheus.Metric) {
 			continue
 		}
 		metrics <- prometheus.MustNewConstMetric(c.workers, prometheus.GaugeValue, float64(count.Count), count.Value)
+	}
+	// Zero is emitted as zero for both: the producer fills the whole closed
+	// table, and a line that is down has to read as down, not as gone.
+	for _, count := range verdict.Checks {
+		if count.Value == "" {
+			continue
+		}
+		metrics <- prometheus.MustNewConstMetric(c.checks, prometheus.GaugeValue, float64(count.Count), count.Value)
+	}
+	for _, count := range verdict.Degradations {
+		if count.Value == "" {
+			continue
+		}
+		metrics <- prometheus.MustNewConstMetric(c.degradations, prometheus.GaugeValue, float64(count.Count), count.Value)
 	}
 }
 

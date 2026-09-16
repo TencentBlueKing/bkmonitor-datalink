@@ -178,6 +178,21 @@ func convertEvent(ctx context.Context, event contract.TriggerEventV1, frozen pre
 		}
 		sort.Strings(dimensionFields)
 	}
+	// A no-data point's identity is its group's dimensions plus the tag, which
+	// is what makes it a different object from the threshold anomaly on the
+	// same series -- on both sides. The tag is on the record already; it was
+	// the field list that did not have it, so the dimensions md5 was hashed
+	// from the item's identity fields alone and matched nothing the backend
+	// ever wrote. Nothing downstream would have called that an error: every
+	// round would simply have looked like a fresh anomaly that never closes.
+	//
+	// The same list decides dimension_fields on the wire, so both follow from
+	// the one correction.
+	_, noData := event.RecordRef.Dimensions[contract.NoDataDimensionTag]
+	if noData && !containsField(dimensionFields, contract.NoDataDimensionTag) {
+		dimensionFields = append(append([]string(nil), dimensionFields...), contract.NoDataDimensionTag)
+		sort.Strings(dimensionFields)
+	}
 	identity := map[string]json.RawMessage{}
 	for _, field := range dimensionFields {
 		value, ok := event.RecordRef.Dimensions[field]
@@ -200,11 +215,22 @@ func convertEvent(ctx context.Context, event contract.TriggerEventV1, frozen pre
 		anomalyIDs = append(anomalyIDs, anomalyID(ts))
 	}
 	value := event.Observed.Values["value"]
-	valueText, err := contract.PythonScalarText(value)
-	if err != nil {
-		return Event{}, err
+	var description string
+	if noData {
+		// A no-data point has no observed value, and the backend writes none:
+		// its NO_DATA_VALUE is None. Reading one here is what made every
+		// synthetic record fail conversion -- the point carries its detected
+		// value under its own name, and taking that for the observed value
+		// would put a 1 on an alert that says there is no data.
+		value = nil
+		description = noDataMessage(itemName, event.Observed.Values[contract.NoDataPeriodFactField])
+	} else {
+		valueText, err := contract.PythonScalarText(value)
+		if err != nil {
+			return Event{}, err
+		}
+		description = fmt.Sprintf("alarmd %s: %s / %s, level=%s, value=%s", event.EventKind, s.Name, itemName, level, valueText)
 	}
-	description := fmt.Sprintf("alarmd %s: %s / %s, level=%s, value=%s", event.EventKind, s.Name, itemName, level, valueText)
 	projection, err := frozen.target.Project(ctx, TargetScope{TenantID: event.TenantID, BusinessID: s.BusinessID}, event.RecordRef.Dimensions, dimensionFields, pods)
 	if err != nil {
 		return Event{}, err
@@ -242,7 +268,19 @@ func convertEvent(ctx context.Context, event contract.TriggerEventV1, frozen pre
 	if err != nil {
 		return Event{}, err
 	}
-	data := map[string]any{"record_id": md5 + "." + strconv.FormatInt(event.RecordRef.SourceTime, 10), "time": event.RecordRef.SourceTime, "dimensions": event.RecordRef.Dimensions, "dimension_fields": dimensionFields, "value": value, "values": event.Observed.Values}
+	observed := event.Observed.Values
+	if noData {
+		// The shape the backend writes for a point that does not exist: the
+		// period it was checked for, and a null where the value would be. The
+		// key is "loads" in the backend and is kept as it is -- a reader
+		// comparing the two protocols matches on the name, and a better name
+		// here would be a difference to explain rather than one to find.
+		observed = map[string]json.RawMessage{
+			"timestamp": json.RawMessage(strconv.FormatInt(event.RecordRef.SourceTime, 10)),
+			"loads":     json.RawMessage("null"),
+		}
+	}
+	data := map[string]any{"record_id": md5 + "." + strconv.FormatInt(event.RecordRef.SourceTime, 10), "time": event.RecordRef.SourceTime, "dimensions": event.RecordRef.Dimensions, "dimension_fields": dimensionFields, "value": value, "values": observed}
 	payload := map[string]any{
 		"event_id": anomalyID(event.RecordRef.SourceTime), "plugin_id": pluginID, "strategy_id": s.ID, "alert_name": name, "description": description, "severity": event.PrimaryLevelID, "tags": tags, "target_type": projection.Type, "target": projection.Target, "status": status, "metric": frozen.metrics, "category": s.Scenario, "data_type": s.Items[0].Queries[0].DataType, "dedupe_keys": dedupeKeys, "time": event.RecordRef.SourceTime, "anomaly_time": anomalyTime, "bk_ingest_time": now, "bk_clean_time": now, "bk_biz_id": s.BusinessID, "bk_tenant_id": event.TenantID,
 		"extra_info": map[string]any{"additional_dimensions": additional, "origin_alarm": map[string]any{"trigger_time": now, "data": data, "trigger": map[string]any{"level": level, "anomaly_ids": anomalyIDs}, "anomaly": map[string]any{level: map[string]any{"anomaly_id": anomalyID(event.RecordRef.SourceTime), "anomaly_message": description}}, "dimension_translation": map[string]any{}, "strategy_snapshot_key": frozen.snapshot, "alarmd_event_id": event.EventID}},
@@ -252,4 +290,33 @@ func convertEvent(ctx context.Context, event contract.TriggerEventV1, frozen pre
 		return Event{}, err
 	}
 	return Event{EventID: event.EventID, Payload: raw, DedupeMD5: dedupe}, nil
+}
+
+func containsField(fields []string, name string) bool {
+	for _, field := range fields {
+		if field == name {
+			return true
+		}
+	}
+	return false
+}
+
+// noDataMessage is the alert text for a group that has stopped reporting.
+//
+// The wording is the backend's, so the two protocols say the same thing about
+// the same silence. What is deliberately not said is the backend's second
+// clause, "and the data is N periods late": there it is derived from the last
+// data point's own timestamp against the round that noticed, and here a Slot is
+// evaluated only after its readiness, so a point that arrived inside that
+// window is not late. The wait alarmd already did is exactly the lateness the
+// backend would be reporting, and printing it would name a condition this
+// system does not have.
+func noDataMessage(itemName string, periods json.RawMessage) string {
+	count := int64(1)
+	if len(periods) != 0 {
+		if parsed, err := strconv.ParseInt(string(periods), 10, 64); err == nil && parsed > 0 {
+			count = parsed
+		}
+	}
+	return fmt.Sprintf("当前指标(%s)已经有%d个周期无数据上报", itemName, count)
 }

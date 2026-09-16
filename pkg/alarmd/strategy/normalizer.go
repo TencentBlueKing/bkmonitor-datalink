@@ -115,8 +115,13 @@ func parseDecimalRationalMatch(value string, matches []string, allowExponent boo
 }
 
 type unitSpec struct {
-	unitID        string
-	targetUnit    string
+	unitID     string
+	targetUnit string
+	// identity marks a unit that carries no scale of its own -- a bare number,
+	// a temperature, a count. Python converts nothing for these, so a
+	// threshold prefix configured against one has no effect there, and a
+	// strategy that carries one is a strategy that runs.
+	identity      bool
 	suffixes      []string
 	defaultIndex  int
 	factorsToBase []int64
@@ -132,7 +137,13 @@ func compileUnitNormalizer(dataUnit, thresholdPrefix string) (NumericNormalizerS
 		return NumericNormalizerSpec{}, 0, false
 	}
 	thresholdMultiplier := int64(1)
-	if thresholdPrefix != "" {
+	// A prefix on a unit that has no scale is not an error, it is nothing.
+	// Refusing it took the whole level out as LEVEL_INVALID -- for a strategy
+	// the other implementation runs, and whose threshold it compares
+	// unconverted. Every unit that does have a scale still has to recognise
+	// the prefix: there the prefix changes the number, and an unrecognised one
+	// would mean comparing against a threshold nobody meant.
+	if thresholdPrefix != "" && !spec.identity {
 		index := -1
 		for candidate, suffix := range spec.suffixes {
 			if suffix == thresholdPrefix {
@@ -163,7 +174,7 @@ func compileUnitNormalizer(dataUnit, thresholdPrefix string) (NumericNormalizerS
 func unitSpecFor(unitID string) (unitSpec, bool) {
 	identity := map[string]struct{}{"": {}, "none": {}, "short": {}, "celsius": {}, "fahrenheit": {}, "kelvin": {}}
 	if _, ok := identity[unitID]; ok {
-		return unitSpec{unitID: unitID, targetUnit: unitID, suffixes: []string{""}, factorsToBase: []int64{1}}, true
+		return unitSpec{unitID: unitID, targetUnit: unitID, identity: true, suffixes: []string{""}, factorsToBase: []int64{1}}, true
 	}
 	if unitID == "percent" || unitID == "percentunit" {
 		defaultIndex := 0

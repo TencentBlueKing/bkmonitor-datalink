@@ -137,6 +137,14 @@ func (l *LoggingObserver) Observe(ctx context.Context, observation Observation) 
 		switch observation.Stage {
 		case StageRunnerReturned, StageDispatcherSnapshot, StageQueryPermitWait, StageExpiredRangeReturned:
 			return
+		case StageSlotWait:
+			// Every wait is measured; only a slow one is written down. The
+			// ordinary case is thousands a second of a few milliseconds each,
+			// answers no question anyone asks, and would push out the lines
+			// that do.
+			if observation.Duration < SlowSlotWait {
+				return
+			}
 		}
 	}
 	if l == nil || l.logger == nil || l.logger.next == nil || l.policy == nil {
@@ -200,6 +208,65 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 	if observation.RuntimeConfig != nil {
 		attributes = append(attributes, slog.Any("runtime_config", observation.RuntimeConfig))
 	}
+	if facts := observation.SourceWithheld; facts != nil {
+		attributes = append(attributes,
+			slog.String("withheld_disposition", facts.Disposition),
+			slog.String("withheld_reason", facts.Reason),
+		)
+		if facts.Field != "" {
+			attributes = append(attributes, slog.String("withheld_field", facts.Field))
+		}
+		if facts.Dropped > 0 {
+			attributes = append(attributes, slog.Int("withheld_dropped", facts.Dropped))
+		}
+	}
+	if facts := observation.NoDataCensus; facts != nil {
+		// Written even when it is none, which is the whole reason it is here.
+		// Somebody looking for why no-data detection reported nothing greps
+		// this stage and finds no line at all, and no line means either "this
+		// worker has no such Plan" or "it had them and none reached a
+		// decision". The zero is the answer to that question.
+		attributes = append(attributes, slog.Int("no_data_plans", facts.Plans))
+	}
+	if facts := observation.ScheduleCutover; facts != nil && facts.Result != "success" {
+		// Both, and on every failure. A cutover that says only that it failed
+		// leaves a reader with a whole population to search and no cause; these
+		// two are the difference between that and one line to act on.
+		attributes = append(attributes,
+			slog.String("cutover_reason", facts.Reason),
+			slog.String("cutover_query_group", facts.QueryGroup),
+		)
+	}
+	if facts := observation.SlotWait; facts != nil {
+		// Reached only for a wait past the threshold, which is the attempt
+		// that has something to explain.
+		attributes = append(attributes, slog.String("slot_wait", facts.Wait))
+	}
+	if facts := observation.ReplayExpiry; facts != nil {
+		// The reason on every expiry, and the two compared instants on the one
+		// that reports a defect. A Slot that says only that it was skipped
+		// leaves the reader unable to tell a worker that fell behind from a
+		// readiness rule that will skip every Slot of that period for ever.
+		attributes = append(attributes,
+			slog.String("replay_expiry_reason", facts.Reason),
+			slog.Uint64("replay_distance", uint64(facts.Distance)),
+		)
+		if facts.DistanceBoundaryUnixMilli != 0 {
+			attributes = append(attributes,
+				slog.Int64("replay_ready_at", facts.ReadyAtUnixMilli),
+				slog.Int64("replay_distance_boundary", facts.DistanceBoundaryUnixMilli),
+			)
+		}
+	}
+	if facts := observation.SegmentContent; facts != nil {
+		attributes = append(attributes, slog.String("segment_content", facts.State))
+	}
+	if facts := observation.NoDataSlot; facts != nil {
+		attributes = append(attributes,
+			slog.String("no_data_outcome", facts.Outcome),
+			slog.Int("no_data_outcome_plans", facts.Plans),
+		)
+	}
 	if facts := observation.StateGenerationSkew; facts != nil {
 		attributes = append(attributes,
 			slog.String("state_generation_skew_kind", facts.Kind),
@@ -235,6 +302,10 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			slog.Int("rebalance_least_owned", facts.LeastOwned),
 			slog.Int("rebalance_batch", facts.Batch),
 			slog.Int("rebalance_planned_moves", facts.PlannedMoves),
+			slog.Int("rebalance_published_moves", facts.PublishedMoves),
+			slog.Int("rebalance_conflicts", facts.Conflicts),
+			slog.Bool("rebalance_paused", facts.Paused),
+			slog.Float64("rebalance_paused_for_seconds", facts.PausedForSeconds),
 			slog.Bool("rebalance_owned_truncated", facts.Truncated),
 			slog.Any("rebalance_owned", facts.Owned),
 			slog.Bool("rebalance_moves_truncated", facts.MovesTruncated),
@@ -313,6 +384,9 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 		}
 		if facts.ActivationCaughtUp {
 			attributes = append(attributes, slog.Bool("activation_caught_up", true))
+		}
+		if facts.ActivationRebuilt {
+			attributes = append(attributes, slog.Bool("activation_rebuilt", true))
 		}
 		if facts.ActiveQueryGroupsKnown {
 			attributes = append(attributes, slog.Int("active_query_groups", facts.ActiveQueryGroups))
@@ -544,6 +618,23 @@ func mandatoryLogStage(stage Stage) bool {
 		return true
 	case StageSnapshotRefreshed, StageSnapshotUnavailable, StageAssignmentAcquired, StageAssignmentLost,
 		StageTakeoverStarted, StageTakeoverCompleted:
+		return true
+	case StageSourceWithheld:
+		// Outside the repeated-line budget, and it has to be. That budget is
+		// per (reason, query group), and a withheld source has no query group -
+		// it never became a Plan - so every line of a round would share one
+		// bucket and roughly half of a full compile would be merged into a
+		// suppressed count. The half that vanished is the half someone is
+		// looking for: these lines exist because a strategy that is not running
+		// cannot be asked about any other way here.
+		//
+		// What keeps the volume bounded is upstream instead: after its first
+		// round a process reports only the objects whose disposition changed,
+		// so the steady state is no lines at all. The first round of each
+		// process is one burst, measured at 1,249 lines on this deployment
+		// and about 48 times that on the largest, once per leader election -
+		// and that burst is itself capped, with what did not fit counted
+		// rather than dropped in silence. See WithheldLineBudget.
 		return true
 	default:
 		return false

@@ -111,8 +111,13 @@ func startCutoverFixture(t *testing.T, configure func(*config.Config)) *cutoverS
 	ctx := context.Background()
 	installCutoverStallStrategies(t, ctx, redisClient, "system.mem", 1725000000)
 
+	// Rounded up, not down. The query deadline this fixture's clock derives is
+	// handed to the HTTP client as an absolute instant, and that client
+	// compares it against the real clock -- so a base rounded down sits up to a
+	// minute in the real past and the query can time out before it is sent.
+	// It fails on some runs and not others, which is worse than always.
 	base := time.Now().Unix()
-	base -= base % 60
+	base += 60 - base%60
 	fixture := &cutoverStallFixture{t: t, redisClient: redisClient, base: base, clock: &atomic.Int64{}, uqCalls: &atomic.Int64{}}
 	fixture.clock.Store(base * 1000)
 	fixture.now = func() time.Time { return time.UnixMilli(fixture.clock.Load()) }
@@ -454,6 +459,7 @@ func (probe cutoverStallProbe) run(
 	source, err := scheduler.NewProductionSlotSource(
 		queryGroup, dependencies.WorkerID, session, probe.catalog, probe.progress, now,
 		scheduler.WithRecoveryLimits(dependencies.RecoveryLimits),
+		scheduler.WithSettlingWait(dependencies.SettlingWait),
 		scheduler.WithPostRecoveryTerminalDelay(dependencies.PostRecoveryTerminalDelay),
 		scheduler.WithQueryDeadlineReserve(dependencies.QueryDeadlineReserve),
 		scheduler.WithSnapshotRetention(dependencies.SnapshotRetention, dependencies.PublicationDelayAllowance),

@@ -34,8 +34,8 @@ import (
 // whether it belongs there. This is what makes adding a reason code a moment
 // where somebody answers the question.
 func TestEveryReasonCodeIsAttributedToOneSideOrTheOther(t *testing.T) {
-	// Every word the tracker can write into reason_code has to reach a
-	// situation, except the ones that carry no information of their own -- the
+	// Every word the tracker can write into reason_code has to reach a line,
+	// except the ones that carry no information of their own -- the
 	// healthy completions, which never reach attribution, and the failed
 	// execution outcomes, whose failure code says what happened. Falling through
 	// is for codes nobody has looked at yet, not for the vocabulary this package
@@ -46,8 +46,8 @@ func TestEveryReasonCodeIsAttributedToOneSideOrTheOther(t *testing.T) {
 	}
 	for _, vocabulary := range [][]string{BlockedOutcomes, ResultContractRefusals} {
 		for _, word := range vocabulary {
-			if _, decided := codeSituations[word]; !decided {
-				t.Errorf("the tracker writes %q into reason_code and no situation is mapped to "+
+			if _, decided := codeChecks[word]; !decided {
+				t.Errorf("the tracker writes %q into reason_code and no line is mapped to "+
 					"it: it would reach the page as unclassified", word)
 			}
 		}
@@ -60,15 +60,15 @@ func TestEveryReasonCodeIsAttributedToOneSideOrTheOther(t *testing.T) {
 		if uninformative[definition.Code] {
 			continue
 		}
-		situation, decided := codeSituations[definition.Code]
+		verdict, decided := codeChecks[definition.Code]
 		if !decided {
-			t.Errorf("%s is in the reason catalogue and maps to no situation: it would count "+
+			t.Errorf("%s is in the reason catalogue and maps to no line: it would count "+
 				"against this deployment by default, which may be right, but nobody said so",
 				definition.Code)
 			continue
 		}
-		if _, answered := situationAnswers[situation]; !answered {
-			t.Errorf("%s maps to situation %s, which the table does not answer", definition.Code, situation)
+		if _, answered := checkAnswers[verdict.check]; !verdict.normal && !answered {
+			t.Errorf("%s maps to check %s, which the table does not answer", definition.Code, verdict.check)
 		}
 	}
 	// And nothing in the code table that no vocabulary declares, which would be
@@ -89,59 +89,9 @@ func TestEveryReasonCodeIsAttributedToOneSideOrTheOther(t *testing.T) {
 			known[word] = true
 		}
 	}
-	for code := range codeSituations {
+	for code := range codeChecks {
 		if !known[code] {
-			t.Errorf("codeSituations maps %q, which no catalogue or vocabulary declares", code)
-		}
-	}
-}
-
-// Every situation answers the three questions, and every constant is in the
-// table.
-//
-// The table is what makes adding a situation a moment where somebody answers
-// who owns it and whether it heals. A constant declared and not answered would
-// render as whatever the page does with an unknown value, and the fallback in
-// finding() would quietly file it as ours -- right for the verdict, wrong for
-// the reader, and invisible.
-func TestEverySituationAnswersWhoOwnsItAndWhetherItHeals(t *testing.T) {
-	declared := []Situation{
-		SituationStalled, SituationNeverReached, SituationBudgetExceeded, SituationDetectionAbandoned,
-		SituationTimelinePruned, SituationRoundBlocked, SituationDependencyDown, SituationStateDefect,
-		SituationContractRefused, SituationUnclassified,
-		SituationBackendUnavailable, SituationBackendCooldown, SituationSeriesDataMissing, SituationDataIntermittent,
-		SituationSeriesChurning, SituationPlanUnevaluable, SituationPlanTooLarge,
-		SituationSeriesYoung, SituationSeriesRenewed, SituationVerdictHeld, SituationDataJustGapped, SituationOffHours,
-		SituationQueryRejected, SituationWindowEmpty, SituationSeriesMixed, SituationConfigDrift,
-		SituationEffectiveTimeUnknown,
-		SituationRestoredWithoutCause,
-	}
-	if len(declared) != len(situationAnswers) {
-		t.Errorf("%d situations declared, %d answered: a situation on one side and not the other "+
-			"is either unreachable or unanswerable", len(declared), len(situationAnswers))
-	}
-	for _, situation := range declared {
-		answers, answered := situationAnswers[situation]
-		if !answered {
-			t.Errorf("%s is declared and the table does not answer it", situation)
-			continue
-		}
-		if answers.Owner == "" || answers.SelfHealing == "" {
-			t.Errorf("%s is answered with an empty owner or self-healing", situation)
-		}
-		// Nobody's problems must not need a link, and everybody else's must
-		// have somewhere to go. A row that says "go fix this" with nowhere to
-		// click is the page handing the work back.
-		if answers.Owner != OwnerNobody && answers.Where == WhereNowhere {
-			t.Errorf("%s is %s's and carries no link", situation, answers.Owner)
-		}
-	}
-	// The constructor is the only way to a Finding, and it must not invent an
-	// owner the table did not give.
-	for _, situation := range Situations() {
-		got := finding(situation, 0)
-		if got.Situation != situation || got.Owner != situationAnswers[situation].Owner {
-			t.Errorf("finding(%s) = %+v, want the table's answer", situation, got)
+			t.Errorf("codeChecks maps %q, which no catalogue or vocabulary declares", code)
 		}
 	}
 }
@@ -217,7 +167,7 @@ func TestAStalledObjectIsOursEvenWhenItsLastReasonWasExternal(t *testing.T) {
 		Cause: "LEVEL_OUTCOME_UNKNOWN", CauseReason: "QUERY_TIMEOUT",
 		FailingSince: at.Add(-2 * time.Hour),
 	}}
-	Attribute(anomalies)
+	Attribute(anomalies, now)
 	if anomalies[0].Attribution != AttributionExternal {
 		t.Fatalf("before the stall is marked this object reads as %q; the test no longer "+
 			"exercises the upgrade it exists for", anomalies[0].Attribution)
@@ -247,7 +197,7 @@ func TestARestoredObjectWithNoRecordedCauseIsNotHeldAgainstTheDeployment(t *test
 		QueryGroup: "qg-restored", Kind: KindDegradedRun,
 		ReasonCode: "COMPLETED_WITH_UNAVAILABLE", SinceFrom: SinceRestoredLastFull,
 	}
-	Attribute([]Anomaly{restored})
+	Attribute([]Anomaly{restored}, now)
 	if got := attributionOf(restored); got != AttributionUnknown {
 		t.Errorf("a restored object with no recorded cause reports %q, want %q: it would make "+
 			"every rollout read as a regression", got, AttributionUnknown)
@@ -342,7 +292,7 @@ func TestObjectsHeldAgainstUsByTheDefaultAloneAreCountedApart(t *testing.T) {
 	fellThrough := Anomaly{QueryGroup: "qg-new", Kind: KindDegradedRun,
 		CauseReason: "A_FAILURE_MODE_NOBODY_HAS_CLASSIFIED_YET"}
 	anomalies := []Anomaly{byRule, fellThrough}
-	Attribute(anomalies)
+	Attribute(anomalies, now)
 
 	for _, anomaly := range anomalies {
 		if anomaly.Attribution != AttributionOurs {
@@ -377,7 +327,7 @@ func TestTheRulesThatReadNoCodeAreStillRules(t *testing.T) {
 		{QueryGroup: "qg-missed", Kind: KindOverdueWake},
 	}
 	MarkStalled(anomalies, at, time.Hour)
-	Attribute(anomalies)
+	Attribute(anomalies, now)
 	MarkStalled(anomalies, at, time.Hour)
 	for _, anomaly := range anomalies {
 		if anomaly.Attribution != AttributionOurs {
@@ -492,9 +442,9 @@ func TestSettleIsSafeToRunTwiceTheWayTheHandlerRunsIt(t *testing.T) {
 func TestABlockedObjectIsClassifiedByTheWordItsFieldActuallyCarries(t *testing.T) {
 	blocked := Anomaly{QueryGroup: "qg-retired", Kind: KindBlockedRun,
 		ReasonCode: "source_blocked"}
-	Attribute([]Anomaly{blocked})
+	Attribute([]Anomaly{blocked}, now)
 	anomalies := []Anomaly{blocked}
-	Attribute(anomalies)
+	Attribute(anomalies, now)
 	if anomalies[0].Attribution != AttributionOurs {
 		t.Errorf("attribution = %q, want %q", anomalies[0].Attribution, AttributionOurs)
 	}
@@ -525,28 +475,26 @@ func TestTheSpecificFailureCodeBeatsTheCoarseOutcomeWord(t *testing.T) {
 	}
 }
 
-// A code maps to one situation, and a situation belongs to one owner.
+// A code maps to one line, and a line belongs to one owner.
 //
 // This is what replaced the three disjoint sets. A code in two sets would read
-// differently depending on which check ran first; a code mapped to two
-// situations cannot happen in a map, and a situation with two owners cannot
-// happen in the table -- so what remains to check is that every code the table
-// names reaches an answered situation, and that the uninformative words are
-// not in the table at all. A tracker outcome word like "error" carries no
-// information of its own and must fall through to the failure code beside it;
-// mapping it would decide every failed execution the same way whatever the
-// failure said.
-func TestUninformativeOutcomeWordsAreNotMappedToASituation(t *testing.T) {
+// differently depending on which check ran first; a code mapped to two lines
+// cannot happen in a map, and a line with two owners cannot happen in the
+// table -- so what remains to check is that the uninformative words are not in
+// the table at all. A tracker outcome word like "error" carries no information
+// of its own and must fall through to the failure code beside it; mapping it
+// would decide every failed execution the same way whatever the failure said.
+func TestUninformativeOutcomeWordsAreNotMappedToALine(t *testing.T) {
 	for _, word := range append(append([]string(nil), HealthyCompletions...), FailedExecutions...) {
-		if situation, mapped := codeSituations[word]; mapped {
+		if verdict, mapped := codeChecks[word]; mapped {
 			t.Errorf("%q carries no information of its own and is mapped to %s: every round "+
 				"ending with that word would be decided the same way regardless of what its "+
-				"failure code says", word, situation)
+				"failure code says", word, verdict.check)
 		}
 	}
-	if _, mapped := codeSituations["COMPLETED_WITH_UNAVAILABLE"]; mapped {
+	if _, mapped := codeChecks["COMPLETED_WITH_UNAVAILABLE"]; mapped {
 		t.Error("COMPLETED_WITH_UNAVAILABLE is a completion kind, not a cause, and must not " +
-			"decide a situation")
+			"decide a line")
 	}
 }
 
@@ -594,7 +542,7 @@ func TestEveryResultContractCodeIsClassified(t *testing.T) {
 	}
 	for _, code := range codes {
 		graded := []Anomaly{{Kind: KindDegradedRun, CauseReason: code}}
-		Attribute(graded)
+		Attribute(graded, now)
 		if graded[0].Unclassified {
 			t.Errorf("%s reaches attribution and no rule matches it: it counts against the deployment "+
 				"by the fall-through, which is the safe direction but is nobody's decision", code)
@@ -633,7 +581,7 @@ func TestTheSettledNeverFillingWindowsAreCountedWithoutLeavingExternal(t *testin
 		CauseReason: "HISTORY_GAPPED",
 		Coverage:    &HistoryCoverage{Levels: 2, Short: 1, WorstValid: 3, WorstRequired: 9, ShortRounds: 40}}
 	anomalies := []Anomaly{filling, never, timedOut, gapped}
-	Attribute(anomalies)
+	Attribute(anomalies, now)
 	for _, anomaly := range anomalies {
 		if anomaly.Attribution != AttributionExternal {
 			t.Fatalf("%s = %q, want all three external for this test to say anything",
@@ -699,7 +647,7 @@ func TestChurningWindowsAreCountedApartFromOnesWhoseDataIsMissing(t *testing.T) 
 		Coverage: &HistoryCoverage{Levels: 9, Short: 4, WorstValid: 2, WorstRequired: 9, ShortRounds: 40,
 			Fresh: 9, ShortFresh: 4, FreshRounds: 1}}
 	anomalies := []Anomaly{churning, starving, rekeyed}
-	Attribute(anomalies)
+	Attribute(anomalies, now)
 	summary := summarize(anomalies, now)
 
 	if summary.WindowNeverFills != 3 {
@@ -735,7 +683,7 @@ func TestChurningWindowsAreCountedApartFromOnesWhoseDataIsMissing(t *testing.T) 
 // failing is demoted, and that column is decided before this one.
 func TestAbandoningAWindowOfTimeCountsAgainstThisDeployment(t *testing.T) {
 	skipped := []Anomaly{{QueryGroup: "qg-skipped", Kind: KindDegradedRun, CauseReason: "GAP_SKIPPED"}}
-	Attribute(skipped)
+	Attribute(skipped, now)
 	if skipped[0].Attribution != AttributionOurs {
 		t.Fatalf("attribution = %q, want %q: nobody outside alarmd can act on a window alarmd "+
 			"decided not to evaluate", skipped[0].Attribution, AttributionOurs)
@@ -766,7 +714,7 @@ func TestASkippedWindowIsNotFiledAsRequiringNoAction(t *testing.T) {
 			t.Errorf("%q is filed as a window with nothing to decide; the window was never "+
 				"evaluated at all, which is a different statement", reason)
 		}
-		if got := finding(codeSituations[reason], 0).Owner; got != OwnerAlarmd {
+		if got := checkAnswers[codeChecks[reason].check].Owner; got != OwnerAlarmd {
 			t.Errorf("%q is %s's; it would go to whoever owns the strategy, who cannot "+
 				"make this deployment keep up", reason, got)
 		}

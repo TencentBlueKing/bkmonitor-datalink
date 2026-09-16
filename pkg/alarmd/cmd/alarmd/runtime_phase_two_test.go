@@ -30,6 +30,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/worker"
 )
 
 func TestPhaseTwoApplicationHealthUsesWorkerReadinessWithoutKafkaInputState(t *testing.T) {
@@ -1320,7 +1321,7 @@ func TestPhaseTwoWorkerBundleAcquiresControlLeaderBeforeInitialRefresh(t *testin
 	_ = bundle.Shutdown(context.Background())
 }
 
-func TestPhaseTwoWorkerBundleStartsReadyDegradedWhenInitialSnapshotIsUnavailableAndRecovers(t *testing.T) {
+func TestPhaseTwoWorkerBundleStartsNotReadyWhenInitialSnapshotIsUnavailableAndRecovers(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	queryGroup := execution.QueryGroupIdentity("query-group-1")
 	health := newPhaseTwoApplicationHealth()
@@ -1338,8 +1339,8 @@ func TestPhaseTwoWorkerBundleStartsReadyDegradedWhenInitialSnapshotIsUnavailable
 		t.Fatalf("Start(snapshot unavailable) error = %v", err)
 	}
 	defer func() { _ = bundle.Shutdown(context.Background()) }()
-	if snapshot := health.HealthSnapshot(); snapshot.State != observability.HealthDegraded || !snapshot.Ready {
-		t.Fatalf("initial unavailable health=%+v, want ready degraded", snapshot)
+	if snapshot := health.HealthSnapshot(); snapshot.State != observability.HealthNotReady || snapshot.Ready {
+		t.Fatalf("initial unavailable health=%+v, want not ready until a round names the Query Groups", snapshot)
 	}
 	if owner.publishAssignmentCount() != 0 || len(bundle.runners) != 0 {
 		t.Fatalf("initial unavailable published/runners=%d/%d, want 0/0", owner.publishAssignmentCount(), len(bundle.runners))
@@ -1358,7 +1359,7 @@ func TestPhaseTwoWorkerBundleStartsReadyDegradedWhenInitialSnapshotIsUnavailable
 	}
 }
 
-func TestPhaseTwoWorkerBundleFollowerStartsReadyDegradedWhenActiveSnapshotIsUnavailable(t *testing.T) {
+func TestPhaseTwoWorkerBundleFollowerStartsNotReadyWhenActiveSnapshotIsUnavailable(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	health := newPhaseTwoApplicationHealth()
 	control := &fakePhaseTwoControl{loadActiveErr: controlplane.ErrSnapshotUnavailable}
@@ -1369,24 +1370,15 @@ func TestPhaseTwoWorkerBundleFollowerStartsReadyDegradedWhenActiveSnapshotIsUnav
 		t.Fatalf("Start(follower snapshot unavailable) error = %v", err)
 	}
 	defer func() { _ = bundle.Shutdown(context.Background()) }()
-	if snapshot := health.HealthSnapshot(); snapshot.State != observability.HealthDegraded || !snapshot.Ready {
-		t.Fatalf("follower unavailable health=%+v, want ready degraded", snapshot)
+	// Not ready rather than ready-degraded: a replica that has never read the
+	// control facts cannot be placed onto, and must not answer a rollout's
+	// readiness probe as if it could.
+	if snapshot := health.HealthSnapshot(); snapshot.State != observability.HealthNotReady || snapshot.Ready {
+		t.Fatalf("follower unavailable health=%+v, want not ready", snapshot)
 	}
 	if owner.publishAssignmentCount() != 0 || len(bundle.runners) != 0 {
 		t.Fatalf("follower unavailable published/runners=%d/%d, want 0/0", owner.publishAssignmentCount(), len(bundle.runners))
 	}
-}
-
-func TestPhaseTwoWorkerBundleStillRejectsNonSnapshotInitialControlFailure(t *testing.T) {
-	cfg := validGoAccessRuntimeConfig()
-	want := errors.New("invalid initial control facts")
-	control := &fakePhaseTwoControl{beforeInitialRefresh: func() error { return want }}
-	bundle := mustPhaseTwoWorkerBundle(t, cfg, newPhaseTwoApplicationHealth(), control, &fakePhaseTwoOwnership{})
-
-	if err := bundle.Start(context.Background()); !errors.Is(err, want) {
-		t.Fatalf("Start(non-snapshot failure) error = %v, want %v", err, want)
-	}
-	_ = bundle.Shutdown(context.Background())
 }
 
 func TestPhaseTwoWorkerBundleKeepsHealthyQueryGroupAcrossSnapshotUnavailableRefresh(t *testing.T) {
@@ -1597,7 +1589,15 @@ func TestPhaseTwoWorkerBundleQueryFreeGapConflictDoesNotStopSiblingOrWorker(t *t
 	queryGroups := []execution.QueryGroupIdentity{"query-free-gap-conflict", "healthy-sibling"}
 	control := &fakePhaseTwoControl{queryGroups: queryGroups}
 	failed := newFakePhaseTwoQueryGroup()
-	failed.runErr = errors.New("finalize query-free Slot: activated Plan gap marker conflicts with the Slot")
+	// The real refusal, not a sentence that resembles one. Its sibling test
+	// below already uses the real error for the same reason: a stand-in that
+	// only looks right stops looking right the moment the thing it stands for
+	// changes, and nothing says so.
+	failed.runErr = fmt.Errorf("alarmd worker: finalize query-free Slot: %w", &worker.GapGuardConflictError{
+		Plan:      execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "1001"},
+		Persisted: worker.GapGuardProtection{Kind: "FOUND", RequiredFullSlots: 2},
+		Proposed:  worker.GapGuardProtection{Kind: "STRENGTHEN", RequiredFullSlots: 3},
+	})
 	healthy := newFakePhaseTwoQueryGroup()
 	healthy.runResult = execution.SlotExecutionResult{Completed: true, Result: observability.ResultSuccess}
 	owner := &fakePhaseTwoOwnership{assigned: queryGroups, runners: map[execution.QueryGroupIdentity]phaseTwoQueryGroupRuntime{
@@ -2494,8 +2494,17 @@ type fakePhaseTwoQueryGroup struct {
 type callbackPhaseTwoQueryGroup struct {
 	run             func(context.Context) (execution.SlotExecutionResult, bool, error)
 	nextReadyAt     func() time.Time
+	nextDeadline    func() time.Time
+	dueBound        func() scheduler.RunnerDueBound
 	operation       execution.Operation
 	beforeAdmission func(execution.Operation)
+}
+
+func (runner *callbackPhaseTwoQueryGroup) NextDeadline() time.Time {
+	if runner.nextDeadline == nil {
+		return time.Time{}
+	}
+	return runner.nextDeadline()
 }
 
 func (runner *callbackPhaseTwoQueryGroup) RunOne(ctx context.Context) (execution.SlotExecutionResult, bool, error) {
@@ -2530,7 +2539,10 @@ func (runner *callbackPhaseTwoQueryGroup) NextReadyAt() time.Time {
 }
 
 func (runner *callbackPhaseTwoQueryGroup) DueBound() scheduler.RunnerDueBound {
-	return scheduler.RunnerDueBound{}
+	if runner.dueBound == nil {
+		return scheduler.RunnerDueBound{}
+	}
+	return runner.dueBound()
 }
 
 func (*callbackPhaseTwoQueryGroup) MaintainLease(ctx context.Context, _, _ time.Duration) error {

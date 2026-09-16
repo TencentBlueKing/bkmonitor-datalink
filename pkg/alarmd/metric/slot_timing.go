@@ -5,6 +5,36 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// newSlotWaitMetrics counts and times the blocking waits inside one Slot
+// attempt.
+//
+// It answers a question nothing else could: a Slot attempt that is stuck
+// reports no failure, because nothing failed -- so the only readable fact was
+// the gap between two timestamps, and a gap cannot say which of the several
+// things it could have been waiting on it was. The buckets run out to a minute
+// because the case worth catching is the one that outlasts the Slot itself.
+var slotWaitBuckets = []float64{0.001, 0.01, 0.1, 1, 5, 10, 30, 60}
+
+func newSlotWaitMetrics() *prometheus.HistogramVec {
+	return prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "slot_wait_duration_seconds",
+		Help: "Blocking waits inside one Slot attempt, by which wait. progress_begin is the fenced " +
+			"Progress write that opens the Slot; finalization is deciding whether the Slot needs a " +
+			"query, which reads the frozen Plan and the Segment's content objects; object_share is " +
+			"waiting on another goroutine's in-flight read of the same catalog object, which has no " +
+			"deadline of its own and reports no error however long it takes. An attempt that sits " +
+			"between slot_started and slot_completed with nothing in between is in one of these.",
+		Buckets: slotWaitBuckets,
+	}, []string{"wait"})
+}
+
+func (m phaseTwoMetrics) observeSlotWait(o observability.Observation) {
+	if o.SlotWait == nil || o.Duration < 0 {
+		return
+	}
+	m.slotWait.WithLabelValues(o.SlotWait.Wait).Observe(o.Duration.Seconds())
+}
+
 func newSlotTimingMetrics() *prometheus.HistogramVec {
 	return prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "slot_operation_duration_seconds",

@@ -520,14 +520,15 @@ func TestSourceReconcilerReturnsPublicationConflictWinner(t *testing.T) {
 	winnerCatalog := validCatalog(t, 81)
 	var winner controlplane.PublishedSnapshot
 	raceArmed := false
-	reconciler, err := controlplane.NewSourceReconciler(repository, compiler, stateSemantics, func(controlplane.Catalog) error {
-		if !raceArmed || winner.Publication != (controlplane.SnapshotPublicationRef{}) {
-			return nil
-		}
-		var publishErr error
-		winner, _, publishErr = repository.PublishCatalog(ctx, winnerCatalog)
-		return publishErr
-	})
+	reconciler, err := controlplane.NewSourceReconciler(repository, compiler, stateSemantics,
+		func(catalog controlplane.Catalog) (controlplane.Catalog, error) {
+			if !raceArmed || winner.Publication != (controlplane.SnapshotPublicationRef{}) {
+				return catalog, nil
+			}
+			var publishErr error
+			winner, _, publishErr = repository.PublishCatalog(ctx, winnerCatalog)
+			return catalog, publishErr
+		})
 	if err != nil {
 		t.Fatal(err)
 	}

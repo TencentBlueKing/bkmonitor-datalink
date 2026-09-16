@@ -51,7 +51,7 @@ func newPreviousFormulaLeader(t *testing.T, fixture *cutoverStallFixture) *previ
 		SourceTimeSemanticsVersion:  runtimeSemantics.SourceTimeSemanticsVersion,
 		HistoryCellSemanticsVersion: runtimeSemantics.HistoryCellSemanticsVersion,
 	}
-	reconciler, err := controlplane.NewSourceReconciler(fixture.repository, compiler, semantics, phaseTwoCatalogRetentionValidator(fixture.cfg))
+	reconciler, err := controlplane.NewSourceReconciler(fixture.repository, compiler, semantics, phaseTwoCatalogRetentionAdmission(fixture.cfg))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -170,7 +170,8 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 	if err != nil {
 		return ActivationState{}, err
 	}
-	compiled, _, err := compilePublishedGroups(ctx, reconciler.compiler, reconciler.stateSemantics, publication, changed, boundary)
+	compiled, _, err := compilePublishedGroups(ctx, reconciler.compiler, reconciler.stateSemantics, publication, changed,
+		published.content.Groups, boundary)
 	if err != nil {
 		return ActivationState{}, err
 	}
@@ -370,7 +371,8 @@ func (reconciler *ScheduleActivationReconciler) reactivateHeld(
 	if err != nil {
 		return ActivationState{}, err
 	}
-	compiled, _, err := compilePublishedGroups(ctx, reconciler.compiler, reconciler.stateSemantics, previous.Current, changed, boundary)
+	compiled, _, err := compilePublishedGroups(ctx, reconciler.compiler, reconciler.stateSemantics, previous.Current, changed,
+		published.content.Groups, boundary)
 	if err != nil {
 		return ActivationState{}, err
 	}

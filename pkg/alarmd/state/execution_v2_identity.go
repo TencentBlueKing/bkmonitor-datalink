@@ -46,6 +46,16 @@ func PlanGapKeyV2(prefix string, identity execution.PlanGapIdentity) (string, er
 	return executionKey(prefix, "gap", identity.Plan, identity.StateGeneration, ""), nil
 }
 
+// PlanNoDataKeyV2 names one Plan's no-data memory. Same shape and same level as
+// a gap marker, with its own segment: both are one record per Plan per state
+// generation, and neither is per series.
+func PlanNoDataKeyV2(prefix string, identity execution.PlanNoDataIdentity) (string, error) {
+	if err := validatePlanIdentity(prefix, identity.Plan, identity.StateGeneration); err != nil {
+		return "", err
+	}
+	return executionKey(prefix, "nodata", identity.Plan, identity.StateGeneration, ""), nil
+}
+
 func validatePlanIdentity(prefix string, plan execution.PlanIdentity, generation execution.StateGeneration) error {
 	if strings.TrimSpace(prefix) == "" || len(prefix) > 64 || strings.ContainsAny(prefix, "{} \t\r\n") {
 		return identityError("valid key prefix is required")

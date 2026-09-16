@@ -777,7 +777,7 @@ func newProductionSlotSourceWithRecoveryForTest(
 	reader := &fakeProgressReader{result: load, catalog: catalog}
 	source, err := NewProductionSlotSource("query-group-1", "worker-1",
 		&sequenceOwnerSession{fences: []execution.OwnerFence{testFence(7)}}, catalog, reader,
-		func() time.Time { return at }, WithRecoveryLimits(limits), WithPostRecoveryTerminalDelay(time.Minute), WithQueryDeadlineReserve(5*time.Second))
+		func() time.Time { return at }, WithRecoveryLimits(limits), WithSettlingWait(30*time.Second), WithPostRecoveryTerminalDelay(time.Minute), WithQueryDeadlineReserve(5*time.Second))
 	if err != nil {
 		t.Fatalf("NewProductionSlotSource() error = %v", err)
 	}
@@ -793,7 +793,7 @@ func mustProductionSlotSource(
 ) *ProductionSlotSource {
 	t.Helper()
 	source, err := NewProductionSlotSource("query-group-1", "worker-1", session, catalog, progress, func() time.Time { return at },
-		WithRecoveryLimits(testRecoveryLimits()), WithPostRecoveryTerminalDelay(time.Minute), WithQueryDeadlineReserve(5*time.Second))
+		WithRecoveryLimits(testRecoveryLimits()), WithSettlingWait(30*time.Second), WithPostRecoveryTerminalDelay(time.Minute), WithQueryDeadlineReserve(5*time.Second))
 	if err != nil {
 		t.Fatalf("NewProductionSlotSource() error = %v", err)
 	}

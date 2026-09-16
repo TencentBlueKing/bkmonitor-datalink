@@ -47,7 +47,7 @@ func newFencedFixture(t *testing.T, staleFence bool) (fixture, *fencedStatePorts
 	})
 	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{OpenAlerts: ports,
 		Finalization: ports, Activation: ports,
-		Query: ports, Sequencer: ports, Evaluator: ports, Admission: ports, GapGuard: ports,
+		Query: ports, Sequencer: ports, Evaluator: ports, Admission: ports, GapGuard: ports, NoData: worker.SharedNoDataStore, Hosts: worker.SharedHostBusiness,
 		Events: ports, State: fenced, Progress: ports,
 		Observer: observer,
 	}, worker.ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10})

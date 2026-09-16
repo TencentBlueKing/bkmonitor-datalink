@@ -84,6 +84,8 @@ const (
 	StageRunnerCompleted        = "runner_completed"
 	StageSlotSourceCompleted    = "slot_source_completed"
 	StageScheduleCursorAdvanced = "schedule_cursor_advanced"
+	StageReplayExpired          = "replay_expired"
+	StageSlotWait               = "slot_wait"
 	StageQueryAdmission         = "query_admission"
 	StageRestartRecovered       = "restart_recovered"
 	StageFleetSnapshotPublish   = "fleet_snapshot_publish"
@@ -101,6 +103,8 @@ const (
 	StageSlotReadinessArrival   = "slot_readiness_arrival"
 	StageStatePreflight         = "state_preflight"
 	StageGapLoaded              = "gap_loaded"
+	StageNoDataDecided          = "no_data_decided"
+	StageSourceWithheld         = "source_withheld"
 	StageEvaluationCompleted    = "evaluation_completed"
 	StageSideEffectAdmission    = "side_effect_admission"
 	StageStateAdmission         = "state_admission"
@@ -116,7 +120,6 @@ const (
 	StageOutputACKed            = "output_acked"
 	StageCoverageCompleted      = "coverage_completed"
 	StageCoverageGap            = "coverage_gap"
-	StageReceiptQueued          = "receipt_queued"
 	StageResourceSoft           = "resource_soft"
 	StageResourceHard           = "resource_hard"
 	StageResourceResumed        = "resource_resumed"
@@ -309,6 +312,115 @@ type Counts struct {
 	StateBytes int64
 }
 
+// NoDataSlotFacts is what happened to one Plan's no-data detection in one Slot.
+//
+// Outcome is the whole point. A Plan that detects no-data lands on exactly one
+// outcome every Slot, and the three that are not EVALUATED are different kinds
+// of "did not judge" that look identical once the round is over: a query that
+// did not cover the period, a Slot that could not carry the work, a memory this
+// build cannot read. Folding them together loses the one that never resolves
+// on its own.
+type NoDataSlotFacts struct {
+	Outcome string
+	// Plans is how many Plans landed on that outcome, so one observation can
+	// carry a whole Slot rather than one per Plan.
+	Plans int
+}
+
+// NoDataCensusFacts is how many Plans this Slot had that detect no-data, before
+// anything was decided about them.
+//
+// It exists because every other no-data signal is conditional on a Plan getting
+// far enough to land on an outcome, and the failure that has now hidden three
+// times running is a Plan never getting there at all: nothing is judged, so
+// nothing is counted, so every outcome reads as a computed zero and no line is
+// written. This is counted in the same pass that produces the outcomes and is
+// reported on every Slot including the ones with none, so the two can be read
+// against each other -- they must agree, and a census above the outcomes is a
+// Plan that was dropped between being seen and being judged.
+type NoDataCensusFacts struct {
+	// Hop is where along the way from the leader's Catalog to the worker's
+	// Slot this count was taken. Every hop reports one, so the first one that
+	// reads zero is where the Plans stop existing.
+	//
+	// Three releases were spent proving from the call graph that each hop
+	// carries the section, and production read zero every time. A count per
+	// hop replaces the argument with a number.
+	Hop   string
+	Plans int
+}
+
+// The hops a no-data Plan passes on its way from the leader's Catalog to being
+// judged in a Slot. Each is counted where the Plans are in hand, and reported
+// whether or not there are any.
+const (
+	// NoDataHopPublished is the count decoded back out of the bytes the leader
+	// just wrote. It is taken from the payload rather than the struct it was
+	// built from, because what a later process reads is the payload.
+	NoDataHopPublished = "published"
+	// NoDataHopAssembledBytes is how many times the Segment's stored object
+	// names the no-data section, counted in the bytes before anything decodes
+	// them. Beside NoDataHopAssembled it separates a decoding fault from a
+	// Segment naming an object that never carried the section: the two produce
+	// the same zero everywhere downstream.
+	NoDataHopAssembledBytes = "assembled_bytes"
+	// NoDataHopAssembled is what a worker got back from the object store for
+	// the Segment it is executing, after decoding.
+	NoDataHopAssembled = "assembled"
+	// NoDataHopFrozen is what survived compilation into the Slot's due set.
+	NoDataHopFrozen = "frozen"
+	// NoDataHopDue is what the no-data round found when it walked that due set.
+	NoDataHopDue = "due"
+)
+
+// NoDataHops is every hop, for a reader to bound the family by and for the
+// metric to create each label at startup: a hop that reports nothing and a hop
+// that reports zero are the whole difference this family exists to show.
+var NoDataHops = []string{
+	NoDataHopPublished, NoDataHopAssembledBytes, NoDataHopAssembled, NoDataHopFrozen, NoDataHopDue,
+}
+
+// SegmentContentFacts says whether the Segment a Slot executes names the object
+// the latest publication names for its Query Group.
+//
+// A Segment carries the object digest it was cut with, and a publication that
+// changes execution content writes new objects and leaves the old ones in
+// place. A fleet whose Segments are not recut keeps executing the old content
+// with every other signal healthy -- the objects load, the digests verify, the
+// Plans compile, the Slots pass -- and the only symptom is that a change made
+// in the source never takes effect.
+type SegmentContentFacts struct {
+	State string
+}
+
+// SourceWithheldFacts is what one withheld object has to say that nothing else
+// already carries.
+//
+// It is three fields because the rest already have a home: the strategy, the
+// business, the snapshot, the level and the scope are all TraceFields, and
+// putting them here too would be the same fact in two places under two names.
+// What is left is the pair that says what happened and why, plus how much of
+// the round did not fit.
+//
+// Reason is here rather than in ReasonCode because a control-plane observation
+// only keeps its reason string when it carries a source kind and the reason is
+// one of the source classes; these are neither, so ReasonCode would fold every
+// one of them to _other and the line would say a refusal happened without
+// saying which.
+type SourceWithheldFacts struct {
+	Disposition string
+	Reason      string
+	// Field is where in the strategy document the refusal happened. The reason
+	// alone names a class; a document has a few hundred keys, and which one it
+	// was is the difference between a line an operator can act on and one they
+	// have to reproduce offline. Empty when the refusal is not about a field.
+	Field string
+	// Dropped is how many further objects the round could not fit into its
+	// line budget, reported on the last line of the round. A report that was
+	// cut without saying so reads as a complete one.
+	Dropped int
+}
+
 type QueryPermitFacts struct {
 	QueueKind        QueryQueueKind
 	Admission        bool
@@ -336,7 +448,16 @@ type ActiveQGSetFacts struct {
 // that were left unpruned because their Progress could not be read, by
 // reason; those timelines keep growing until a later cutover reads it.
 type ScheduleCutoverFacts struct {
-	Result           string
+	Result string
+	// Reason names why a failed cutover failed, from the control plane's
+	// bounded list. Empty on success. Without it a cutover that has been
+	// failing every round says only that it failed, which is what let one
+	// fail about twice a minute for eleven hours while the fleet quietly
+	// stopped picking up published changes.
+	Reason string
+	// QueryGroup is the one the cutover was working on when it stopped, so a
+	// reader has somewhere to look rather than a whole population.
+	QueryGroup       string
 	Timelines        int
 	PayloadBytes     int
 	MaxTimelineBytes int
@@ -359,6 +480,70 @@ type ScheduleCutoverFacts struct {
 // ScheduleCutoverDecisions is the closed vocabulary of what a publication
 // cutover does with one Query Group.
 var ScheduleCutoverDecisions = []string{"kept", "revised", "cut", "legacy_cut", "retired", "added"}
+
+// ReplayExpiryFacts describe one Slot the scheduler gave up replaying.
+//
+// The reason is the point of them. A Slot too old for the replay window and a
+// Slot whose own readiness rule holds it past that window look identical from
+// outside -- both end as a skipped grid point with no failure anywhere -- and
+// they need opposite responses: the first is a worker that fell behind, the
+// second is two settings that disagree and will skip every Slot of that period
+// for as long as they do.
+//
+// ReadyAtUnixMilli and DistanceBoundaryUnixMilli are the two instants the
+// third reason compared, and are zero for the others.
+type ReplayExpiryFacts struct {
+	Reason                    string
+	Distance                  uint32
+	AgeSeconds                float64
+	ReadyAtUnixMilli          int64
+	DistanceBoundaryUnixMilli int64
+}
+
+// SlotWaitFacts is one blocking wait inside a Slot attempt, named and timed.
+//
+// A Slot attempt that is stuck is the one state the whole pipeline cannot
+// describe. Every failure reports itself; waiting reports nothing, so an
+// attempt that sat for twenty-two seconds between beginning and issuing its
+// query left no line at all -- not an error, not a slow duration, nothing. The
+// only readable fact was the silence between two timestamps, and silence
+// cannot say which of the several things it could have been waiting on it was.
+//
+// One fact per wait, always measured and always counted; only the slow ones
+// spend log quota, because a three-millisecond wait answers no question and
+// there are thousands of them a second.
+type SlotWaitFacts struct {
+	// Wait is one of SlotWaits.
+	Wait string
+}
+
+// SlotWaits is the closed vocabulary of the blocking waits inside one Slot
+// attempt, in the order an attempt meets them.
+const (
+	// SlotWaitProgressBegin is the fenced Progress write that opens the Slot.
+	SlotWaitProgressBegin = "progress_begin"
+	// SlotWaitFinalization is deciding whether this Slot needs a query at all,
+	// which reads the frozen Plan and so the Segment's content objects.
+	SlotWaitFinalization = "finalization"
+	// SlotWaitObjectShare is waiting on another goroutine's in-flight read of
+	// the same catalog object. This one has no timeout of its own and no error
+	// when it is slow: the joiner waits for whatever the leader is doing.
+	SlotWaitObjectShare = "object_share"
+)
+
+var SlotWaits = []string{SlotWaitProgressBegin, SlotWaitFinalization, SlotWaitObjectShare}
+
+// SlowSlotWait is the threshold above which a wait is worth a log line. It is
+// one settling wait: a wait that outlasts the time the product allows for data
+// to land is long enough to be the answer to "why did this Slot take so long".
+const SlowSlotWait = 10 * time.Second
+
+// ReplayExpiryReasons is the closed vocabulary of why a replay expired. The
+// scheduler's typed constants are held to this list by a test rather than by
+// hand, so a new reason cannot arrive without a series to count it.
+var ReplayExpiryReasons = []string{
+	"REPLAY_AGE_EXCEEDED", "REPLAY_DISTANCE_EXCEEDED", "REPLAY_WAIT_EXCEEDS_DISTANCE", "REPLAY_RANGE_EXPIRED",
+}
 
 // ObjectCatalogFacts describe one write or renewal of the content-addressed
 // Query Group objects, output contexts and the manifest that names them for
@@ -388,7 +573,7 @@ type ObjectReadFacts struct {
 // ObjectReadKinds and ObjectReadResults are the closed vocabularies of
 // ObjectReadFacts; a value outside them is reported as "other".
 var (
-	ObjectReadKinds   = []string{"query_group", "output_context", "segment"}
+	ObjectReadKinds   = []string{"query_group", "output_context", "segment", "manifest"}
 	ObjectReadResults = []string{"hit", "miss", "share", "missing", "invalid", "object", "legacy_segment", "segment_without_ref", "object_missing", "object_invalid", "object_mismatch"}
 )
 
@@ -491,6 +676,15 @@ type RebalanceFacts struct {
 	// MovesTruncated says the moves were cut at MaxRebalanceMoveSamples;
 	// PlannedMoves still counts them all.
 	MovesTruncated bool `json:"moves_truncated"`
+	// PublishedMoves is how many of the planned moves the round wrote as
+	// Assignments, Conflicts how many the store refused because the record
+	// had moved under the round. Paused says the round wrote none because
+	// the ready set changed within the stabilisation window, PausedForSeconds
+	// how much of the window was left.
+	PublishedMoves   int     `json:"published_moves"`
+	Conflicts        int     `json:"conflicts"`
+	Paused           bool    `json:"paused"`
+	PausedForSeconds float64 `json:"paused_for_seconds"`
 }
 
 func normalizeRebalanceFacts(facts *RebalanceFacts) *RebalanceFacts {
@@ -500,7 +694,7 @@ func normalizeRebalanceFacts(facts *RebalanceFacts) *RebalanceFacts {
 	normalized := *facts
 	for _, count := range []*int{
 		&normalized.ReadyWorkers, &normalized.Assigned, &normalized.Target, &normalized.MostOwned,
-		&normalized.LeastOwned, &normalized.Batch, &normalized.PlannedMoves,
+		&normalized.LeastOwned, &normalized.Batch, &normalized.PlannedMoves, &normalized.PublishedMoves, &normalized.Conflicts,
 	} {
 		if *count < 0 {
 			*count = 0
@@ -742,6 +936,12 @@ type SourceRefreshFacts struct {
 	// activation to the publication an earlier round had published and not
 	// activated. The counts below then describe that move.
 	ActivationCaughtUp bool
+	// ActivationRebuilt marks a caught-up round that found no activation
+	// record at all and established one from the published Catalog, as a
+	// first activation does. Catching up moves an activation; rebuilding
+	// writes one where the store had none, which is what a store that came
+	// back without its keys leaves behind, and the two must not read alike.
+	ActivationRebuilt bool
 	// ActiveQueryGroups is a size, not a change. The counts below are a change,
 	// and the two are kept apart because a round that publishes nothing has no
 	// previous set to difference against: reporting a difference there can only
@@ -1072,6 +1272,10 @@ type Observation struct {
 	CapacityRejection     *CapacityRejectionFacts
 	SourceKind            SourceKind
 	QueryPermit           *QueryPermitFacts
+	NoDataSlot            *NoDataSlotFacts
+	SourceWithheld        *SourceWithheldFacts
+	NoDataCensus          *NoDataCensusFacts
+	SegmentContent        *SegmentContentFacts
 	RuntimeConfig         *RuntimeConfigFacts
 	QueryFailure          *QueryFailureFacts
 	QueryStatus           []QueryStatusFacts
@@ -1083,6 +1287,8 @@ type Observation struct {
 	StateWriteReuse       *StateWriteReuseFacts
 	ActiveQGSet           *ActiveQGSetFacts
 	ScheduleCutover       *ScheduleCutoverFacts
+	ReplayExpiry          *ReplayExpiryFacts
+	SlotWait              *SlotWaitFacts
 	ObjectCatalog         *ObjectCatalogFacts
 	ObjectRead            *ObjectReadFacts
 	StateGenerationSkew   *StateGenerationSkewFacts
@@ -1165,6 +1371,10 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.QueryCooldown = normalizeQueryCooldownFacts(observation.QueryCooldown)
 	observation.HistoryCoverage = normalizeHistoryCoverageFacts(observation.HistoryCoverage)
 	observation.QueryPermit = normalizeQueryPermitFacts(observation.QueryPermit)
+	observation.NoDataSlot = normalizeNoDataSlotFacts(observation.NoDataSlot)
+	observation.SourceWithheld = normalizeSourceWithheldFacts(observation.SourceWithheld)
+	observation.NoDataCensus = normalizeNoDataCensusFacts(observation.NoDataCensus)
+	observation.SegmentContent = normalizeSegmentContentFacts(observation.SegmentContent)
 	observation.QueryTiming = normalizeTimingFacts(observation)
 	observation.ShortPeriodCompletion = normalizeShortPeriodCompletion(observation)
 	observation.StateApplyChunk = normalizeStateApplyChunk(observation)
@@ -1271,6 +1481,32 @@ func AllActivationFailureStages() []ActivationFailureStage {
 func AllActivationFailureClasses() []ActivationFailureClass {
 	return append([]ActivationFailureClass(nil), allActivationFailureClasses...)
 }
+
+// ActivationFailureReason is the reason code an activation failure is
+// reported under: stage/class, one word from two closed lists. It is the
+// same word the fleet page groups CUTOVER_FAILING on, so the log line and
+// the first screen name a failure identically.
+//
+// The activation_failed line used to carry contract_retryable here, which
+// the normaliser folds to _other; the classification the line already had
+// in its own fields was not on the field people grep. A running deployment
+// logged two such lines a minute for half a day, each saying reason_code
+// _other beside activation_failure_class schedule_conflict.
+func ActivationFailureReason(stage ActivationFailureStage, class ActivationFailureClass) ReasonCode {
+	return ReasonCode(string(stage) + "/" + string(class))
+}
+
+// activationFailureReasons is the closed product of the two lists, so the
+// normaliser can keep every one verbatim and fold anything else.
+var activationFailureReasons = func() []ReasonCode {
+	reasons := make([]ReasonCode, 0, len(allActivationFailureStages)*len(allActivationFailureClasses))
+	for _, stage := range allActivationFailureStages {
+		for _, class := range allActivationFailureClasses {
+			reasons = append(reasons, ActivationFailureReason(stage, class))
+		}
+	}
+	return reasons
+}()
 
 func normalizeSourceRefreshFacts(component Component, stage Stage, facts *SourceRefreshFacts) *SourceRefreshFacts {
 	if facts == nil || component != ComponentControlPlane || stage != StageSnapshotRefreshed ||
@@ -1691,6 +1927,66 @@ func normalizeLegacyQGMigrationFacts(facts *LegacyQGMigrationFacts) *LegacyQGMig
 	return &normalized
 }
 
+// normalizeSourceWithheldFacts drops a record that does not say what happened.
+// A reason with no disposition is half a sentence, and the half it is missing
+// is the one that says whether the object is running.
+func normalizeSourceWithheldFacts(facts *SourceWithheldFacts) *SourceWithheldFacts {
+	if facts == nil || facts.Disposition == "" {
+		return nil
+	}
+	normalized := *facts
+	if normalized.Dropped < 0 {
+		normalized.Dropped = 0
+	}
+	return &normalized
+}
+
+// normalizeSegmentContentFacts drops facts that name no state. A state this
+// build does not know is kept rather than blanked: the label is bounded by the
+// list the control plane publishes, and a state added at its site and not in
+// that list must show as a new label rather than join another one.
+func normalizeSegmentContentFacts(facts *SegmentContentFacts) *SegmentContentFacts {
+	if facts == nil || facts.State == "" {
+		return nil
+	}
+	normalized := *facts
+	return &normalized
+}
+
+// normalizeNoDataCensusFacts clamps a negative count. A census of none is kept:
+// zero Plans that detect no-data is the reading this exists to make visible,
+// and dropping it would make the Slot that has none look like the Slot that
+// never counted.
+func normalizeNoDataCensusFacts(facts *NoDataCensusFacts) *NoDataCensusFacts {
+	if facts == nil {
+		return nil
+	}
+	normalized := *facts
+	if normalized.Plans < 0 {
+		normalized.Plans = 0
+	}
+	// A hop this build does not name is kept rather than blanked, the same way
+	// an unknown outcome is: the label is bounded by the list above, and a hop
+	// added at its site and not in the list must show as a new label rather
+	// than silently join another one.
+	return &normalized
+}
+
+// normalizeNoDataSlotFacts drops facts that name no outcome and clamps a
+// negative count. An outcome this build does not know is kept rather than
+// blanked: the label is bounded by the list the evaluation publishes, and a
+// name that got here without being on it is worth seeing.
+func normalizeNoDataSlotFacts(facts *NoDataSlotFacts) *NoDataSlotFacts {
+	if facts == nil || facts.Outcome == "" {
+		return nil
+	}
+	normalized := *facts
+	if normalized.Plans < 0 {
+		normalized.Plans = 0
+	}
+	return &normalized
+}
+
 func normalizeQueryPermitFacts(facts *QueryPermitFacts) *QueryPermitFacts {
 	if facts == nil {
 		return nil
@@ -1811,6 +2107,9 @@ func NormalizeReason(reason ReasonCode, result Result) ReasonCode {
 		return reason
 	}
 	if _, ok := contractObservationReasonSet[string(reason)]; ok {
+		return reason
+	}
+	if _, ok := activationFailureReasonSet[reason]; ok {
 		return reason
 	}
 	return ReasonOther
@@ -1952,7 +2251,6 @@ var metricComponentStages = []ComponentStage{
 	{ComponentTrigger, StageTriggerCompleted},
 	{ComponentOutput, StageOutputACKed},
 	{ComponentCoverage, StageCoverageCompleted}, {ComponentCoverage, StageCoverageGap},
-	{ComponentCoverage, StageReceiptQueued},
 	{ComponentResource, StageResourceSoft}, {ComponentResource, StageResourceHard},
 	{ComponentResource, StageResourceResumed},
 	{ComponentPythonProducer, StagePythonSource}, {ComponentPythonProducer, StagePythonBuilt},
@@ -1978,12 +2276,15 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentScheduler, StageQueryCooldown}, {ComponentScheduler, StageRunnerReturned}, {ComponentScheduler, StageDispatcherSnapshot}, {ComponentScheduler, StageQueryPermitWait},
 	{ComponentScheduler, StageExpiredRangeReturned},
 	{ComponentScheduler, StageRunnerCompleted}, {ComponentScheduler, StageSlotSourceCompleted},
-	{ComponentScheduler, StageScheduleCursorAdvanced},
+	{ComponentScheduler, StageScheduleCursorAdvanced}, {ComponentScheduler, StageReplayExpired},
+	{ComponentScheduler, StageSlotWait},
 	{ComponentAccess, StageQueryCompleted},
 	{ComponentAccess, StageQueryBudgetResolved},
 	{ComponentAccess, StageSlotReadinessArrival},
 	{ComponentEvaluation, StageEvaluationCompleted},
 	{ComponentState, StageStatePreflight}, {ComponentState, StageGapLoaded},
+	{ComponentEvaluation, StageNoDataDecided},
+	{ComponentControlPlane, StageSourceWithheld},
 	{ComponentState, StageSideEffectAdmission}, {ComponentState, StageGapGuardCommitted},
 	{ComponentState, StageMutationCompared}, {ComponentState, StageStateAdmission},
 	{ComponentState, StageStateApplied},
@@ -2037,7 +2338,7 @@ func joinReasons(groups ...[]ReasonCode) []ReasonCode {
 var allCommonReasons = joinReasons(unclassifiedReasons, contractClassReasons, []ReasonCode{ReasonOther})
 var allResourceReasons = joinReasons(
 	unclassifiedReasons, resourceOnlyReasons, contractClassReasons, []ReasonCode{ReasonOther})
-var allLogReasons = joinReasons(unclassifiedReasons, resourceOnlyReasons, []ReasonCode{ReasonOther})
+var allLogReasons = joinReasons(unclassifiedReasons, resourceOnlyReasons, activationFailureReasons, []ReasonCode{ReasonOther})
 
 var componentStageSet = makeComponentStageSet(allComponentStages)
 var metricComponentStageSet = makeComponentStageSet(metricComponentStages)
@@ -2047,6 +2348,7 @@ var metricOperationSet = makeOperationSet(metricOperations)
 var directionSet = makeDirectionSet(allDirections)
 var commonReasonSet = makeReasonSet(unclassifiedReasons)
 var resourceReasonSet = makeReasonSet(resourceOnlyReasons)
+var activationFailureReasonSet = makeReasonSet(activationFailureReasons)
 var contractObservationReasons, contractObservationReasonSet, contractObservationMetricReasonByCode = loadContractObservationReasons()
 
 func makeComponentStageSet(values []ComponentStage) map[ComponentStage]struct{} {
@@ -2173,4 +2475,46 @@ func NormalizeHealthMetricReasons(reasons []ReasonCode) []ReasonCode {
 		mapped = append(mapped, reason)
 	}
 	return sortedUniqueReasons(mapped)
+}
+
+// ObserveSlotWait reports one blocking wait inside a Slot attempt. The wait
+// name must be one of SlotWaits.
+//
+// It exists as a function rather than as a line at each site because the three
+// waits are only useful read together: the question a reader arrives with is
+// "which of them was this attempt in", and an answer that exists for one of
+// them and not the others cannot be given.
+// The operation is the attempt's own, so a wait reads like every other line of
+// that attempt; a shared read that belongs to no single attempt passes none.
+func ObserveSlotWait(
+	ctx context.Context,
+	observer Observer,
+	wait string,
+	operation Operation,
+	started time.Time,
+	now func() time.Time,
+) {
+	if observer == nil || started.IsZero() {
+		return
+	}
+	if now == nil {
+		now = time.Now
+	}
+	elapsed := now().Sub(started)
+	if elapsed < 0 {
+		return
+	}
+	result := Result(ResultSuccess)
+	if elapsed >= SlowSlotWait {
+		// Not a failure -- nothing went wrong and nothing will report one.
+		// Degraded is what a Slot attempt that spent this long waiting is,
+		// and it is what keeps the line out of the success population.
+		result = Result(ResultDegraded)
+	}
+	// Observability is a fail-open side channel, as at every other boundary.
+	defer func() { _ = recover() }()
+	observer.Observe(ctx, Observation{
+		Component: ComponentScheduler, Stage: StageSlotWait, Result: result, Operation: operation,
+		Direction: DirectionInternal, Duration: elapsed, SlotWait: &SlotWaitFacts{Wait: wait},
+	})
 }

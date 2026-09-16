@@ -222,6 +222,9 @@ type cutoverFacts struct {
 	read            int
 	revisionsFolded int
 	contentSource   string
+	// group is the Query Group the cutover was working on. A cutover returns
+	// at its first failure, so on a failure this names where it stopped.
+	group string
 }
 
 func newCutoverFacts() *cutoverFacts {
@@ -257,8 +260,10 @@ func (repository *RedisCatalogRepository) observeCutover(ctx context.Context, fa
 		return
 	}
 	result := "success"
+	reason := ""
 	if err != nil {
 		result = "failure"
+		reason = cutoverFailureReason(err)
 	}
 	largest := 0
 	for _, size := range facts.timelineBytes {
@@ -268,8 +273,9 @@ func (repository *RedisCatalogRepository) observeCutover(ctx context.Context, fa
 	}
 	repository.observe(ctx, observability.Observation{
 		Component: observability.ComponentControlPlane, Stage: observability.StageScheduleCutover,
-		Result: observability.Result(result), ScheduleCutover: &observability.ScheduleCutoverFacts{
-			Result: result, Timelines: len(facts.timelineBytes), PayloadBytes: facts.payloadBytes,
+		Result: observability.Result(result), Err: err, ScheduleCutover: &observability.ScheduleCutoverFacts{
+			Result: result, Reason: reason, QueryGroup: facts.group,
+			Timelines: len(facts.timelineBytes), PayloadBytes: facts.payloadBytes,
 			MaxTimelineBytes: largest, TimelineBytes: facts.timelineBytes, SegmentsPruned: facts.pruned,
 			PrunesSkipped: facts.skipped, Duration: time.Since(facts.started),
 			QueryGroups: facts.decisions, TimelinesRead: facts.read, RevisionsFolded: facts.revisionsFolded,

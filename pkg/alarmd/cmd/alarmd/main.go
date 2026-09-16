@@ -63,6 +63,12 @@ func runWithRuntimeModeDependencies(
 	stdout, stderr io.Writer,
 	dependencies runtimeModeDependencies,
 ) int {
+	// The repair is its own command with its own flags. It is not a mode of
+	// running: it changes stored execution state by hand, once, and a flag on
+	// the run path is one somebody passes by accident.
+	if len(args) > 0 && args[0] == repairOpenSegmentsCommand {
+		return runRepairOpenSegments(ctx, args[1:], stdout, stderr)
+	}
 	flags := flag.NewFlagSet("alarmd", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	configPath := flags.String("config", "", "path to alarmd YAML configuration")

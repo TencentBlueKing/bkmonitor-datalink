@@ -126,7 +126,7 @@ func newChunkFixture(store *chunkStore, storeMaxItems uint64) chunkFixture {
 		ScheduleSegmentStart: 1_787_999_940, DuePlanSetDigest: "due-set-v1",
 	}
 	coordinator := &SlotExecutionCoordinator{
-		ports: Ports{State: store, GapGuard: store, Observer: observer},
+		ports: Ports{State: store, GapGuard: store, NoData: SharedNoDataStore, Hosts: SharedHostBusiness, Observer: observer},
 		budget: ProvisionalBudget{MaxSeries: 1 << 20, MaxRetainedBytes: 1 << 30, MaxStateMutations: 1 << 20,
 			MaxEvents: 1 << 20, MaxGapMutations: 1 << 20, StoreMaxItems: storeMaxItems},
 	}

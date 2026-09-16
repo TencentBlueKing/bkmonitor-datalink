@@ -38,7 +38,7 @@ func (source *Source) observeQueryTiming(ctx context.Context, request execution.
 					}
 					ready, err := frozenConsumerReadyAt(request.Contract, requirement, requirement.AbsoluteWindow(request.Contract.Slot.EvaluationTime), spec, source.config.MinReadyDelay,
 						time.Duration(consumer.DownstreamExecutionReserveMilliSec)*time.Millisecond,
-						query.Spec.PlanFacts.QueryDelaySeconds, request.Operation != execution.OperationNormal)
+						query.Spec.PlanFacts.QueryDelaySeconds)
 					if err != nil {
 						continue
 					}

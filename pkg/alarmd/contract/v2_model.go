@@ -15,7 +15,6 @@ const (
 	ExecutionEnvelopeSchemaV2 = "execution-envelope"
 	StrategyIRSchemaV2        = "alarmd-strategy-ir"
 	TriggerEventSchemaV1      = "trigger-event"
-	MessageReceiptSchemaV1    = "message-receipt"
 	ExecutionSummarySchemaV1  = "execution-summary"
 
 	QueryCompletenessFull        = "FULL"
@@ -48,6 +47,8 @@ const (
 	ReasonPlanInvalid                      = "PLAN_INVALID"
 	ReasonPlanDuplicateLevelID             = "PLAN_DUPLICATE_LEVEL_ID"
 	ReasonPlanBudgetExceeded               = "PLAN_BUDGET_EXCEEDED"
+	ReasonNoDataConfigInvalid              = "NO_DATA_CONFIG_INVALID"
+	ReasonBackendCapabilityMissing         = "BACKEND_CAPABILITY_MISSING"
 	ReasonProjectionInvalid                = "PROJECTION_INVALID"
 	ReasonSelectorInvalid                  = "SELECTOR_INVALID"
 	ReasonLevelInvalid                     = "LEVEL_INVALID"
@@ -78,28 +79,51 @@ const (
 	// ReasonSchedulePruned names a Progress cursor moved past a part of the
 	// Schedule timeline that was pruned before the cursor could be evaluated.
 	// The skipped Slots were never observed, which is a coverage fact.
-	ReasonSchedulePruned             = "SCHEDULE_PRUNED"
-	ReasonEffectiveTimeInactive      = "EFFECTIVE_TIME_INACTIVE"
-	ReasonEffectiveTimeUnknown       = "EFFECTIVE_TIME_UNKNOWN"
-	ReasonHistoryWarming             = "HISTORY_WARMING"
-	ReasonHistoryGapped              = "HISTORY_GAPPED"
-	ReasonKafkaUnavailable           = "KAFKA_UNAVAILABLE"
-	ReasonRedisUnavailable           = "REDIS_UNAVAILABLE"
-	ReasonProviderUnavailable        = "PROVIDER_UNAVAILABLE"
-	ReasonProgressBeginRejected      = "PROGRESS_BEGIN_REJECTED"
-	ReasonProgressBeginFailed        = "PROGRESS_BEGIN_FAILED"
-	ReasonActivationReadFailed       = "ACTIVATION_READ_FAILED"
+	ReasonSchedulePruned        = "SCHEDULE_PRUNED"
+	ReasonEffectiveTimeInactive = "EFFECTIVE_TIME_INACTIVE"
+	ReasonEffectiveTimeUnknown  = "EFFECTIVE_TIME_UNKNOWN"
+	ReasonHistoryWarming        = "HISTORY_WARMING"
+	ReasonHistoryGapped         = "HISTORY_GAPPED"
+	ReasonKafkaUnavailable      = "KAFKA_UNAVAILABLE"
+	ReasonRedisUnavailable      = "REDIS_UNAVAILABLE"
+	ReasonProviderUnavailable   = "PROVIDER_UNAVAILABLE"
+	ReasonProgressBeginRejected = "PROGRESS_BEGIN_REJECTED"
+	ReasonProgressBeginFailed   = "PROGRESS_BEGIN_FAILED"
+	ReasonActivationReadFailed  = "ACTIVATION_READ_FAILED"
+	// ReasonActivationMissing names a control round that found no activation
+	// record at all. It is separate from ACTIVATION_READ_FAILED because the
+	// store answered: there is no record, rather than no answer, and the two
+	// call for different work. A failed read is retried; a missing record is
+	// rebuilt from the published Catalog by whichever replica holds the
+	// Control Leader, and until one does, no replica can learn which Query
+	// Groups exist.
+	ReasonActivationMissing          = "ACTIVATION_MISSING"
 	ReasonSnapshotRetryPending       = "SNAPSHOT_RETRY_PENDING"
 	ReasonSlotSourceRetry            = "SLOT_SOURCE_RETRY"
 	ReasonBlockedExactSetUnavailable = "BLOCKED_EXACT_SET_UNAVAILABLE"
-	ReasonResourceHardStop           = "RESOURCE_HARD_STOP"
-	ReasonSlotBudgetExceeded         = "SLOT_BUDGET_EXCEEDED"
-	ReasonOutputACKUnknown           = "OUTPUT_ACK_UNKNOWN"
-	ReasonStateWriteRetryable        = "STATE_WRITE_RETRYABLE"
-	ReasonStateCorrupt               = "STATE_CORRUPT"
-	ReasonStateSchemaUnsupported     = "STATE_SCHEMA_UNSUPPORTED"
-	ReasonStateBudgetExceeded        = "STATE_BUDGET_EXCEEDED"
-	ReasonAuditDrop                  = "AUDIT_DROP"
+	// ReasonGapGuardConflict names a Slot refused because the Plan gap marker
+	// already persisted for its ApplyVersion neither matches what this Slot
+	// proposes nor already protects it. Without a name of its own the refusal
+	// left the attempt reading as an unclassified internal error, on every
+	// round, for a Query Group that would never get past it.
+	ReasonGapGuardConflict = "GAP_GUARD_CONFLICT"
+	// ReasonSnapshotRetentionInsufficient names a Plan whose recovery
+	// contract needs a Snapshot kept longer than this deployment retains one.
+	// The retention is the deployment's capacity and does not follow a Plan, so
+	// the Plan is what gives way -- but only that Plan.
+	ReasonSnapshotRetentionInsufficient = "SNAPSHOT_RETENTION_INSUFFICIENT"
+	// ReasonCompletionOffsetBelowReserve names a Plan whose completion deadline
+	// does not clear the downstream execution reserve, leaving its queries no
+	// time to run in.
+	ReasonCompletionOffsetBelowReserve = "COMPLETION_OFFSET_BELOW_RESERVE"
+	ReasonResourceHardStop             = "RESOURCE_HARD_STOP"
+	ReasonSlotBudgetExceeded           = "SLOT_BUDGET_EXCEEDED"
+	ReasonOutputACKUnknown             = "OUTPUT_ACK_UNKNOWN"
+	ReasonStateWriteRetryable          = "STATE_WRITE_RETRYABLE"
+	ReasonStateCorrupt                 = "STATE_CORRUPT"
+	ReasonStateSchemaUnsupported       = "STATE_SCHEMA_UNSUPPORTED"
+	ReasonStateBudgetExceeded          = "STATE_BUDGET_EXCEEDED"
+	ReasonAuditDrop                    = "AUDIT_DROP"
 
 	CompatibilityModeLegacyGroupOfOne = "LEGACY_GROUP_OF_ONE"
 
@@ -113,10 +137,6 @@ const (
 	LevelResultNormal      = "NORMAL"
 	LevelResultRecovery    = "RECOVERY"
 	LevelResultUnavailable = "UNAVAILABLE"
-
-	ReceiptStatusCompleted             = "COMPLETED"
-	ReceiptStatusCompletedWithTerminal = "COMPLETED_WITH_TERMINAL"
-	ReceiptStatusRejected              = "REJECTED"
 )
 
 const ReasonMultipleEvaluationUnitsUnsupported = "MULTIPLE_EVALUATION_UNITS_UNSUPPORTED"
@@ -238,7 +258,11 @@ type EvaluationPlanV2 struct {
 	// means "a scope existed and was dropped" - compilation rejects the Plan
 	// in that case rather than publish one that alerts outside its target.
 	TargetScope *TargetScopeV2 `json:"target_scope,omitempty"`
-	StrategyIR  StrategyIRV2   `json:"strategy_ir"`
+	// NoData is the item's no-data detection setting. Absent means the item
+	// does not detect no-data; see NoDataConfigV1 for why enablement is the
+	// presence of the section rather than a field inside it.
+	NoData     *NoDataConfigV1 `json:"no_data,omitempty"`
+	StrategyIR StrategyIRV2    `json:"strategy_ir"`
 	// WireFormat is the format this Plan's events are published as, decided
 	// when the Plan was built and frozen with it so a retried Slot cannot
 	// change format between attempts. Empty means the pre-choice behaviour:
@@ -294,9 +318,10 @@ func (plan EvaluationPlanV2) MarshalJSON() ([]byte, error) {
 		SubjectFacts        *MonitorSubjectFacts   `json:"subject_facts,omitempty"`
 		LegacyOutput        *LegacyOutputContext   `json:"legacy_output,omitempty"`
 		TargetScope         *TargetScopeV2         `json:"target_scope,omitempty"`
+		NoData              *NoDataConfigV1        `json:"no_data,omitempty"`
 		StrategyIR          StrategyIRV2           `json:"strategy_ir"`
 		WireFormat          string                 `json:"wire_format,omitempty"`
-	}{plan.PlanID, plan.StrategyRef, plan.InputProjection, plan.SourceCompatibility, plan.OutputIdentity, plan.SubjectFacts, plan.LegacyOutput, plan.TargetScope, plan.StrategyIR, plan.WireFormat})
+	}{plan.PlanID, plan.StrategyRef, plan.InputProjection, plan.SourceCompatibility, plan.OutputIdentity, plan.SubjectFacts, plan.LegacyOutput, plan.TargetScope, plan.NoData, plan.StrategyIR, plan.WireFormat})
 }
 
 type PlanSetV2 struct {
@@ -573,48 +598,6 @@ type CountSetV1 struct {
 type ReasonCountV1 struct {
 	ReasonCode string `json:"reason_code"`
 	Count      uint64 `json:"count"`
-}
-
-type PlanReceiptV1 struct {
-	PlanID                string `json:"plan_id"`
-	Selected              uint64 `json:"selected"`
-	Abnormal              uint64 `json:"abnormal"`
-	Normal                uint64 `json:"normal"`
-	Recovery              uint64 `json:"recovery"`
-	Unavailable           uint64 `json:"unavailable"`
-	Terminal              uint64 `json:"terminal"`
-	LevelTerminalAffected uint64 `json:"level_terminal_affected"`
-}
-
-type ReceiptCountsV1 struct {
-	Received  uint64 `json:"received"`
-	Selected  uint64 `json:"selected"`
-	Processed uint64 `json:"processed"`
-	// Unavailable counts selected Plan x Record evaluations that produced no
-	// valid three-state decision for a controlled runtime reason. ReasonCounts
-	// distinguishes suppression, missing facts, warming and gapped history.
-	Unavailable uint64 `json:"unavailable"`
-	Terminal    uint64 `json:"terminal"`
-	// LevelTerminalAffected counts Plan x Record evaluations whose sibling
-	// Level terminalized. It can overlap Processed and is not part of the
-	// Selected decomposition.
-	LevelTerminalAffected uint64 `json:"level_terminal_affected"`
-	Events                uint64 `json:"events"`
-}
-
-type MessageReceiptV1 struct {
-	Schema           Schema          `json:"schema"`
-	RequiredFeatures []string        `json:"required_features"`
-	ReceiptID        string          `json:"receipt_id"`
-	ExecutionID      string          `json:"execution_id"`
-	MessageID        string          `json:"message_id"`
-	PayloadDigest    string          `json:"payload_digest"`
-	PlanSetDigest    string          `json:"plan_set_digest"`
-	SourceWindow     SourceWindowV2  `json:"source_window"`
-	Status           string          `json:"status"`
-	Counts           ReceiptCountsV1 `json:"counts"`
-	PerPlan          []PlanReceiptV1 `json:"per_plan"`
-	ReasonCounts     []ReasonCountV1 `json:"reason_counts"`
 }
 
 type ExecutionSummaryV1 struct {

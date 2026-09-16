@@ -68,11 +68,10 @@ type KafkaOutputConfig struct {
 }
 
 type KafkaConfig struct {
-	LegacyAdapter  LegacyAdapterConfig `yaml:"legacy_adapter"`
-	Brokers        []string            `yaml:"brokers"`
-	InputTopic     string              `yaml:"input_topic"`
-	TriggerEvent   KafkaOutputConfig   `yaml:"trigger_event"`
-	MessageReceipt KafkaOutputConfig   `yaml:"message_receipt"`
+	LegacyAdapter LegacyAdapterConfig `yaml:"legacy_adapter"`
+	Brokers       []string            `yaml:"brokers"`
+	InputTopic    string              `yaml:"input_topic"`
+	TriggerEvent  KafkaOutputConfig   `yaml:"trigger_event"`
 	// Deprecated: accepted and ignored. It required every output topic to be
 	// repeated in a list, which protected nothing the topics themselves did not
 	// already state, and turned "add an output topic" into a startup failure
@@ -103,10 +102,6 @@ func (c KafkaConfig) ConsumerCoordinates() enginekafka.Config {
 
 func (c KafkaConfig) TriggerEventCoordinates() enginekafka.DecisionSinkConfig {
 	return c.outputCoordinates(c.TriggerEvent)
-}
-
-func (c KafkaConfig) MessageReceiptCoordinates() enginekafka.DecisionSinkConfig {
-	return c.outputCoordinates(c.MessageReceipt)
 }
 
 func (c KafkaConfig) outputCoordinates(output KafkaOutputConfig) enginekafka.DecisionSinkConfig {
@@ -164,11 +159,6 @@ type PlatformCacheConfig struct {
 	DynamicConfig *RedisConnectionConfig `yaml:"dynamic_config,omitempty"`
 }
 
-type ReceiptQueueConfig struct {
-	MaxQueuedMessages int `yaml:"max_queued_messages"`
-	MaxQueuedBytes    int `yaml:"max_queued_bytes"`
-}
-
 type Config struct {
 	Input           PhaseTwoInputConfig   `yaml:"input"`
 	HTTP            HTTPConfig            `yaml:"http"`
@@ -176,7 +166,6 @@ type Config struct {
 	Redis           RedisConfig           `yaml:"redis"`
 	PlatformCache   PlatformCacheConfig   `yaml:"platform_cache"`
 	Limits          LimitsConfig          `yaml:"limits"`
-	ReceiptQueue    ReceiptQueueConfig    `yaml:"receipt_queue"`
 	PhaseTwo        PhaseTwoRuntimeConfig `yaml:"phase_two"`
 	ShutdownTimeout Duration              `yaml:"shutdown_timeout"`
 }
@@ -197,9 +186,8 @@ func Default() Config {
 		},
 		Kafka: KafkaConfig{
 			ClientID: "alarmd", BrokerVersion: "0.10.2.0",
-			TriggerEvent:   KafkaOutputConfig{Topic: "alarmd_event", MaxMessageBytes: defaultOutputMaxMessageBytes},
-			LegacyAdapter:  LegacyAdapterConfig{Topic: "alarmd_0bkmonitor_backend_event"},
-			MessageReceipt: KafkaOutputConfig{MaxMessageBytes: defaultOutputMaxMessageBytes},
+			TriggerEvent:  KafkaOutputConfig{Topic: "alarmd_event", MaxMessageBytes: defaultOutputMaxMessageBytes},
+			LegacyAdapter: LegacyAdapterConfig{Topic: "alarmd_0bkmonitor_backend_event"},
 		},
 		Redis: RedisConfig{
 			RedisConnectionConfig: RedisConnectionConfig{Mode: RedisModeStandalone,
@@ -209,7 +197,6 @@ func Default() Config {
 			MinTTL:      Duration(time.Minute), MaxTTL: Duration(30 * 24 * time.Hour), RestartMargin: Duration(10 * time.Minute),
 		},
 		Limits:          defaultLimits(),
-		ReceiptQueue:    ReceiptQueueConfig{MaxQueuedMessages: 4096, MaxQueuedBytes: 16 << 20},
 		PhaseTwo:        defaultPhaseTwoRuntime(),
 		ShutdownTimeout: Duration(10 * time.Second),
 	}
@@ -464,12 +451,6 @@ func (c Config) StateStoreOptions(codec *state.Codec, router state.StorageRouter
 	}
 }
 
-func (c Config) ReceiptPublisherLimits() enginekafka.ReceiptPublisherLimits {
-	return enginekafka.ReceiptPublisherLimits{
-		MaxQueuedMessages: c.ReceiptQueue.MaxQueuedMessages, MaxQueuedBytes: c.ReceiptQueue.MaxQueuedBytes,
-	}
-}
-
 func Load(path string) (Config, error) {
 	cfg := Default().WithContainerCapacity()
 	if path == "" {
@@ -597,9 +578,6 @@ func (c Config) validateCommon() error {
 func (c Config) validateGoAccessRuntime() error {
 	if c.Kafka.InputTopic != "" || c.Kafka.GroupID != "" || c.Kafka.InitialOffset != "" {
 		return errors.New("phase-two Go Access must not configure phase-one Kafka input coordinates")
-	}
-	if c.Kafka.MessageReceipt.Topic != "" {
-		return errors.New("phase-two Go Access must not configure the phase-one message receipt topic")
 	}
 	if err := validatePhaseTwoKafkaOutput(c.Kafka); err != nil {
 		return fmt.Errorf("trigger event configuration: %w", err)

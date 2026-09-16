@@ -74,6 +74,11 @@ type objectCatalogContent struct {
 	manifestPayload []byte
 	objects         map[execution.ObjectDigest][]byte
 	contexts        map[execution.OutputContextDigest][]byte
+	// noDataPlans is how many Plans detect no-data according to the bytes this
+	// publication writes, read back out of those bytes rather than counted
+	// off the Catalog they were built from. The two should be the same number
+	// and the whole reason to take this one is that saying so is not evidence.
+	noDataPlans int
 }
 
 // objectCatalogState remembers, for the revision this process last wrote or
@@ -134,6 +139,11 @@ func buildObjectCatalogContent(catalog Catalog) (objectCatalogContent, error) {
 		if err != nil {
 			return objectCatalogContent{}, fmt.Errorf("alarmd controlplane: encode Query Group object: %w", err)
 		}
+		published, err := noDataPlansInPayload(payload)
+		if err != nil {
+			return objectCatalogContent{}, err
+		}
+		content.noDataPlans += published
 		digest, err := contract.DeriveCanonicalDigestV2OverCanonical(queryGroupObjectContractVersion, payload)
 		if err != nil {
 			return objectCatalogContent{}, err
@@ -217,6 +227,18 @@ func (repository *RedisCatalogRepository) writeObjectCatalog(ctx context.Context
 		return err
 	}
 	facts.ManifestBytes = len(content.manifestPayload)
+	// What the published bytes say, reported whether it is any or none. This
+	// is the first hop of the no-data count: the leader's own Catalog gauge
+	// says how many Plans it compiled, and this says how many of them survive
+	// into what every other process will read.
+	repository.observe(ctx, observability.Observation{
+		Component: observability.ComponentControlPlane, Stage: observability.StageSnapshotRefreshed,
+		Result: observability.ResultSuccess,
+		Trace:  observability.TraceFields{SnapshotRevision: string(catalog.SnapshotRevision)},
+		NoDataCensus: &observability.NoDataCensusFacts{
+			Hop: observability.NoDataHopPublished, Plans: content.noDataPlans,
+		},
+	})
 	_, knownObjects, knownContexts := repository.objectCatalog.snapshot()
 
 	// Digests the previous revision already proved present are skipped
@@ -420,4 +442,25 @@ func minInt(left, right int) int {
 		return left
 	}
 	return right
+}
+
+// noDataPlansInPayload counts the Plans a published Query Group object says
+// detect no-data, by decoding the bytes.
+//
+// Decoded rather than counted off the struct the bytes came from: the struct is
+// what the leader believes and the bytes are what every other process gets, and
+// three releases were spent on the difference between the two being argued
+// rather than measured.
+func noDataPlansInPayload(payload []byte) (int, error) {
+	var object QueryGroupObject
+	if err := json.Unmarshal(payload, &object); err != nil {
+		return 0, fmt.Errorf("alarmd controlplane: decode published Query Group object: %w", err)
+	}
+	count := 0
+	for _, plan := range object.Plans {
+		if plan.NoData != nil {
+			count++
+		}
+	}
+	return count, nil
 }

@@ -384,3 +384,52 @@ func (executor *blockingExecutor) Request() execution.SlotExecutionRequest {
 	defer executor.mu.Unlock()
 	return executor.request
 }
+
+// NextDeadline is what a dispatcher orders this Runner by: the frozen Slot's
+// query deadline while the Slot is held unfinished, a schedule-derived bound
+// while the source says the next Slot is in the future, and nothing once the
+// Slot completed and the next is not yet known.
+func TestRunnerNextDeadlineFollowsTheHeldSlotThenTheSchedule(t *testing.T) {
+	current := time.UnixMilli(1_700_000_000_000)
+	readyAt := current.Add(30 * time.Second)
+	slot := frozenSlot("query-group-1")
+	executor := &readinessDeferredExecutor{readyAt: readyAt}
+	source := &fakeSlotSource{slot: slot}
+	runner, err := NewRunner(
+		"query-group-1", &fakeSession{fence: slot.Dispatch.OwnerFence}, source, executor,
+		NewFlightCoordinator(), func() time.Time { return current },
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := runner.NextDeadline(); !got.IsZero() {
+		t.Fatalf("NextDeadline() before any round = %s, want zero", got)
+	}
+	if _, attempted, err := runner.RunOne(context.Background()); err != nil || !attempted {
+		t.Fatalf("RunOne(deferred) = attempted %t, err %v", attempted, err)
+	}
+	// Deferred for readiness: the Slot is held, and its deadline is what the
+	// dispatcher must weigh the wait against.
+	if got, want := runner.NextDeadline(), time.UnixMilli(slot.EarliestQueryDeadlineUnixMilli); !got.Equal(want) {
+		t.Fatalf("NextDeadline() after readiness deferral = %s, want the held Slot's deadline %s", got, want)
+	}
+	current = readyAt
+	executor.deferred = false
+	if result, attempted, err := runner.RunOne(context.Background()); err != nil || !attempted || !result.Completed {
+		t.Fatalf("RunOne(at ready) = (%+v, %t, %v)", result, attempted, err)
+	}
+	if got := runner.NextDeadline(); !got.IsZero() {
+		t.Fatalf("NextDeadline() after completion = %s, want zero until the next Slot is known", got)
+	}
+	// The source now says the next Slot is due at a later second with a
+	// ten-second interval: the bound is that second plus the interval.
+	source.slot = FrozenSlot{}
+	source.due = false
+	source.facts = SlotDueFacts{NotDueUntilUnix: current.Unix() + 40, IntervalSeconds: 10}
+	if _, attempted, err := runner.RunOne(context.Background()); err != nil || attempted {
+		t.Fatalf("RunOne(not due) = attempted %t, err %v", attempted, err)
+	}
+	if got, want := runner.NextDeadline(), time.Unix(current.Unix()+50, 0); !got.Equal(want) {
+		t.Fatalf("NextDeadline() while not due = %s, want %s", got, want)
+	}
+}

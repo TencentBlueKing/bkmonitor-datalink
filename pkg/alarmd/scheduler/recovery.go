@@ -63,13 +63,46 @@ const (
 	ReplayExpired  ReplayDisposition = "REPLAY_EXPIRED"
 )
 
+// ReplayExpiryReason says which of the several conditions that all expire a
+// replay actually happened. They need different responses and one of them is a
+// defect report, so "REPLAY_EXPIRED" alone is not something anyone can act on.
+type ReplayExpiryReason string
+
+const (
+	// ReplayExpiredByAge is the ordinary one: the Slot is older than the
+	// replay window allows, whatever the schedule under it.
+	ReplayExpiredByAge ReplayExpiryReason = "REPLAY_AGE_EXCEEDED"
+	// ReplayExpiredByDistance is the other ordinary one: too many grid points
+	// have passed since the Slot, so replaying it would compete with Slots the
+	// worker still has to run.
+	ReplayExpiredByDistance ReplayExpiryReason = "REPLAY_DISTANCE_EXCEEDED"
+	// ReplayExpiredByWait is a defect report. The Slot is still inside its
+	// replay window, and the readiness rule would hold the read until after
+	// that window closes -- so the replay would be dispatched, wait, and be
+	// abandoned for being late. Whenever this is counted, the readiness rule
+	// and the replay window have been derived from settings that disagree;
+	// under the settings any deployment can hold today it cannot happen.
+	ReplayExpiredByWait ReplayExpiryReason = "REPLAY_WAIT_EXCEEDS_DISTANCE"
+	// ReplayExpiredRange is the whole-range finalization of a run of Slots
+	// already past their replay window, which carries one set of facts for the
+	// range rather than per Slot.
+	ReplayExpiredRange ReplayExpiryReason = "REPLAY_RANGE_EXPIRED"
+)
+
 type SlotRecoveryFacts struct {
 	// RecheckAtUnixMilli is the next time these recovery facts can change.
 	// It is derived from reads the source already made, not a guessed interval.
 	RecheckAtUnixMilli int64
 	Disposition        ReplayDisposition
+	Reason             ReplayExpiryReason
 	Distance           uint32
 	Age                time.Duration
+	// ReadyAtUnixMilli and DistanceBoundaryUnixMilli are the two instants
+	// ReplayExpiredByWait compared. A reason without the values behind it says
+	// a rule was broken without saying by how much, which is the difference
+	// between a report someone can act on and one they have to reproduce.
+	ReadyAtUnixMilli          int64
+	DistanceBoundaryUnixMilli int64
 }
 
 func (facts SlotRecoveryFacts) validate(operation execution.Operation) error {
@@ -88,10 +121,26 @@ func (facts SlotRecoveryFacts) validate(operation execution.Operation) error {
 		if operation != execution.OperationNormal || facts.Distance == 0 || facts.Age < 0 {
 			return errors.New("alarmd scheduler: expired replay has invalid recovery facts")
 		}
+		// Every expiry names itself. The three conditions below are answered
+		// differently -- wait it out, accept the gap, or fix a misconfiguration
+		// -- and a Slot that expired without saying which was indistinguishable
+		// from the other two on every page that showed it.
+		if !facts.Reason.valid() {
+			return errors.New("alarmd scheduler: expired replay does not say why")
+		}
 	default:
 		return errors.New("alarmd scheduler: unknown replay disposition")
 	}
 	return nil
+}
+
+func (reason ReplayExpiryReason) valid() bool {
+	for _, known := range observability.ReplayExpiryReasons {
+		if string(reason) == known {
+			return true
+		}
+	}
+	return false
 }
 
 type recoveryAttempt struct {

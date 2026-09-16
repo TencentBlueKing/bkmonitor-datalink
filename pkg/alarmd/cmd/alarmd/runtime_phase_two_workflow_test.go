@@ -51,7 +51,7 @@ func TestWorkflowDispatcherOccupancyUsesActualQueues(t *testing.T) {
 	d.normal = append(d.normal, phaseTwoQueuedRunner{scheduled: first})
 	d.delayed = append(d.delayed, phaseTwoQueuedRunner{scheduled: second})
 	d.observeOccupancy(context.Background())
-	d.markDispatched(first, false, true)
+	d.markDispatched(first, false, -1, true)
 	d.changeExecuting(1)
 	d.observeOccupancy(context.Background())
 	d.changeExecuting(-1)

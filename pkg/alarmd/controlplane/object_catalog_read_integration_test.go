@@ -86,18 +86,32 @@ func TestAssembleQueryGroupIsTheInverseOfTheObjectSplit(t *testing.T) {
 type objectReadObserver struct {
 	mu    sync.Mutex
 	reads map[string]int
+	waits map[string]int
 }
 
 func (observer *objectReadObserver) Observe(_ context.Context, observation observability.Observation) {
+	observer.mu.Lock()
+	defer observer.mu.Unlock()
+	if observation.SlotWait != nil {
+		if observer.waits == nil {
+			observer.waits = make(map[string]int)
+		}
+		observer.waits[observation.SlotWait.Wait]++
+		return
+	}
 	if observation.ObjectRead == nil {
 		return
 	}
-	observer.mu.Lock()
-	defer observer.mu.Unlock()
 	if observer.reads == nil {
 		observer.reads = make(map[string]int)
 	}
 	observer.reads[observation.ObjectRead.Kind+"/"+observation.ObjectRead.Result]++
+}
+
+func (observer *objectReadObserver) waited(wait string) int {
+	observer.mu.Lock()
+	defer observer.mu.Unlock()
+	return observer.waits[wait]
 }
 
 func (observer *objectReadObserver) count(kind, result string) int {
@@ -331,6 +345,15 @@ func TestConcurrentReadersOfOneObjectShareOneNetworkRead(t *testing.T) {
 	}
 	if observer.count("query_group", "miss") != 1 || observer.count("query_group", "share") != readers-1 {
 		t.Fatalf("counters=%+v", observer.reads)
+	}
+	// Each sharing reader timed its wait. This one has no deadline of its own
+	// and produces no error however long it lasts, so without a measurement a
+	// reader blocked behind a slow leader is indistinguishable from one that
+	// was never scheduled -- which is the shape of the twenty-two second
+	// silence nothing could account for.
+	if got := observer.waited(observability.SlotWaitObjectShare); got != readers-1 {
+		t.Fatalf("timed object shares = %d, want one per sharing reader (%d). A wait nothing measures is "+
+			"a Slot attempt that can stall with no line anywhere to say what it is in", got, readers-1)
 	}
 }
 

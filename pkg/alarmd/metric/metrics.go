@@ -31,7 +31,13 @@ type BuildInfo struct {
 }
 
 type Recorder struct {
-	registry          *prometheus.Registry
+	registry *prometheus.Registry
+	// build is kept beside the build_info series so the same facts can be
+	// published where the page reads them. Until now the running version was
+	// only a metric label: answering "which commit is this deployment on"
+	// meant a PromQL query, and a rollout that left two builds running was
+	// invisible on the page that reads their combined numbers.
+	build             BuildInfo
 	lifecycleMu       sync.Mutex
 	lifecycleBound    bool
 	healthMu          sync.Mutex
@@ -45,7 +51,6 @@ type Recorder struct {
 	resourceMu        sync.Mutex
 	resourceBound     bool
 	observations      observationMetrics
-	receipts          receiptMetrics
 	phaseTwo          phaseTwoMetrics
 }
 
@@ -62,7 +67,6 @@ func NewRecorder(build BuildInfo) *Recorder {
 	)
 	buildInfo.WithLabelValues(build.Version, build.Commit, build.SchemaVersion).Set(1)
 	observations := newObservationMetrics()
-	receipts := newReceiptMetrics()
 	phaseTwo := newPhaseTwoMetrics()
 
 	collectorsToRegister := []prometheus.Collector{
@@ -81,16 +85,21 @@ func NewRecorder(build BuildInfo) *Recorder {
 		buildInfo,
 	}
 	collectorsToRegister = append(collectorsToRegister, observations.collectors()...)
-	collectorsToRegister = append(collectorsToRegister, receipts.collectors()...)
 	collectorsToRegister = append(collectorsToRegister, phaseTwo.collectors()...)
 	registry.MustRegister(collectorsToRegister...)
 
 	return &Recorder{
 		registry:     registry,
+		build:        build,
 		observations: observations,
-		receipts:     receipts,
 		phaseTwo:     phaseTwo,
 	}
+}
+
+// Build is the build this process reports in build_info, for publishing the
+// same facts on the fleet snapshot.
+func (r *Recorder) Build() BuildInfo {
+	return r.build
 }
 
 func (r *Recorder) Gatherer() prometheus.Gatherer {

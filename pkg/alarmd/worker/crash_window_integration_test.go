@@ -113,7 +113,7 @@ func TestG3ACrashWindowChild(t *testing.T) {
 	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{OpenAlerts: fixturePorts,
 		Finalization: fixturePorts, Activation: fixturePorts,
 		Query: fixturePorts, Sequencer: fixturePorts, Evaluator: fixturePorts,
-		Admission: admitter, GapGuard: fixturePorts,
+		Admission: admitter, GapGuard: fixturePorts, NoData: worker.SharedNoDataStore, Hosts: worker.SharedHostBusiness,
 		Events:   &g3aCrashEventSink{delegate: eventSink, stage: stage},
 		State:    &g3aCrashStateStore{delegate: stateStore, stage: stage},
 		Progress: progressStore, Observer: observability.ObserverFunc(func(context.Context, observability.Observation) {}),

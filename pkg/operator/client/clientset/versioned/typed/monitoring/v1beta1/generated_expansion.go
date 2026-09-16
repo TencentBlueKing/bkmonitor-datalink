@@ -13,4 +13,6 @@ package v1beta1
 
 type DataIDExpansion any
 
+type ProcessMonitorExpansion any
+
 type QCloudMonitorExpansion any

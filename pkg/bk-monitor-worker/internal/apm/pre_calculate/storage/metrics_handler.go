@@ -43,6 +43,7 @@ type MetricConfigOptions struct {
 	relationMetricMemDuration time.Duration
 	flowMetricMemDuration     time.Duration
 	flowMetricBuckets         []float64
+	relationDataID            uint
 }
 
 func MetricRelationMemDuration(m time.Duration) MetricConfigOption {
@@ -69,17 +70,26 @@ func MetricFlowBuckets(b []float64) MetricConfigOption {
 	}
 }
 
+// MetricRelationDataID sets the additional destination for both relation and flow metrics.
+func MetricRelationDataID(dataID uint) MetricConfigOption {
+	return func(options *MetricConfigOptions) { options.relationDataID = dataID }
+}
+
 type MetricDimensionsHandler struct {
 	dataId string
 
-	ctx context.Context
-	mu  sync.Mutex
+	ctx       context.Context
+	mu        sync.Mutex
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	closeOnce sync.Once
 
 	relationMetricDimensions *relationMetricsCollector
 	flowMetricCollector      *flowMetricsCollector
 
-	promClient *remote.PrometheusWriter
-	logger     monitorLogger.Logger
+	promClient       *remote.PrometheusWriter
+	relationReporter remote.RelationDataIDReporter
+	logger           monitorLogger.Logger
 }
 
 func (m *MetricDimensionsHandler) Add(data PrometheusStorageData) {
@@ -107,6 +117,12 @@ func (m *MetricDimensionsHandler) cleanUpAndReport(c MetricCollector) {
 		metrics.RecordApmPreCalcOperateStorageFailedTotal(m.dataId, metrics.SavePrometheusFailed)
 		m.logger.Errorf("[TraceMetricsReport] DataId: %s report to prometheus failed, error: %s", m.dataId, err)
 	}
+	if m.relationReporter != nil {
+		if err := m.relationReporter.Write(context.Background(), writeReq.Timeseries...); err != nil {
+			metrics.RecordApmPreCalcOperateStorageFailedTotal(m.dataId, metrics.SaveRelationFailed)
+			m.logger.Errorf("[TraceMetricsReport] DataId: %s report relation/flow to additional DataID failed: %s", m.dataId, err)
+		}
+	}
 }
 
 func (m *MetricDimensionsHandler) LoopCollect(c MetricCollector) {
@@ -126,8 +142,18 @@ func (m *MetricDimensionsHandler) LoopCollect(c MetricCollector) {
 }
 
 func (m *MetricDimensionsHandler) Close() {
-	m.cleanUpAndReport(m.relationMetricDimensions)
-	m.cleanUpAndReport(m.flowMetricCollector)
+	m.closeOnce.Do(func() {
+		m.cancel()
+		m.wg.Wait()
+		m.cleanUpAndReport(m.relationMetricDimensions)
+		m.cleanUpAndReport(m.flowMetricCollector)
+		if m.relationReporter != nil {
+			if err := m.relationReporter.Close(context.Background()); err != nil {
+				m.logger.Warnf("[MetricReport] close relation/flow reporter failed: %s", err)
+			}
+		}
+		_ = m.promClient.Close(context.Background())
+	})
 }
 
 func NewMetricDimensionHandler(
@@ -139,21 +165,32 @@ func NewMetricDimensionHandler(
 ) *MetricDimensionsHandler {
 	monitorLogger.Infof(
 		"[MetricDimension] \ncreate metric handler\n====\n"+
-			"prometheus host: %s \nconfigHeaders: %s \ndataId(%s) appKey(%+v) -> token: %s \n"+
+			"prometheus host: %s \ndataId(%s) appKey(%+v) \n"+
 			"flowMetricDuration: %s \nflowMetricBucket: %v \nrelationMetricDuration: %s \n====\n",
-		config.Url, config.Headers, dataId, baseInfo.AppKey(), baseInfo.Token,
+		config.Url, dataId, baseInfo.AppKey(),
 		metricsConfig.flowMetricMemDuration, metricsConfig.flowMetricBuckets, metricsConfig.relationMetricMemDuration,
 	)
 
+	ctx, cancel := context.WithCancel(ctx)
 	h := &MetricDimensionsHandler{
 		dataId:                   dataId,
 		promClient:               remote.NewPrometheusWriterClient(baseInfo.Token, config.Url, config.Headers),
 		relationMetricDimensions: newRelationMetricCollector(metricsConfig.relationMetricMemDuration),
 		flowMetricCollector:      newFlowMetricCollector(metricsConfig.flowMetricBuckets, metricsConfig.flowMetricMemDuration),
 		ctx:                      ctx,
+		cancel:                   cancel,
 		logger:                   monitorLogger.With(zap.String("name", "metricHandler"), zap.String("dataId", dataId)),
 	}
-	go h.LoopCollect(h.relationMetricDimensions)
-	go h.LoopCollect(h.flowMetricCollector)
+	if metricsConfig.relationDataID != 0 {
+		reporter, err := remote.NewRelationDataIDReporter(metricsConfig.relationDataID, config.Url, config.Headers)
+		if err != nil {
+			h.logger.Errorf("[MetricReport] create relation/flow reporter failed: %s", err)
+		} else {
+			h.relationReporter = reporter
+		}
+	}
+	h.wg.Add(2)
+	go func() { defer h.wg.Done(); h.LoopCollect(h.relationMetricDimensions) }()
+	go func() { defer h.wg.Done(); h.LoopCollect(h.flowMetricCollector) }()
 	return h
 }

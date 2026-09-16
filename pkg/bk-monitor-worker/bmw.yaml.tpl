@@ -119,6 +119,9 @@ worker:
 
 # ================================ 任务配置  ===================================
 taskConfig:
+  # Additional APM relation/flow target for all applications handled by this worker.
+  # Zero disables dual writing. The target must have an active TimeSeriesGroup.
+  relationDataID: 0
   # common: 任务通用配置
   common:
     queues:

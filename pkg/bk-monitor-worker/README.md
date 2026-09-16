@@ -5,6 +5,25 @@
 * 异步任务
 * 常驻任务
 
+## APM relation / flow 双写
+
+在 BMW 配置中设置一个额外的关系指标 DataID：
+
+```yaml
+taskConfig:
+  relationDataID: 12345
+```
+
+默认值为 `0`，不创建额外 writer。启用后，该 worker 处理的所有 APM 应用都会将预计算的 relation 和 flow 指标双写到配置的 DataID，原应用的指标上报继续保留。flow 包括 `_bucket`、`_sum`、`_count`、`_min`、`_max` 时序，指标名称、标签和样本保持不变。
+
+目标 DataID 必须对应唯一一个启用且未删除的 TimeSeriesGroup，并且其 token 非空。writer 直接读取该 token，缓存 5 分钟；刷新失败或 token 为空时返回错误，不回退到源应用或业务 token。目标 DataID 不从应用所属业务、Redis 内置关系配置或 SurrealDB 路由推导。配置生效需要重启对应 worker。
+
+灰度时应限定 worker 承载的应用范围，并确认目标数据源的业务、租户和图主键配置与这些应用一致。此配置不是按应用或业务的白名单。CMDB 和 custom relation 保留现有上报方式。
+
+额外写入失败记录 `save_relation_failed` 存储错误，原 APM 写入仍执行；关闭 handler 时先停止周期采集，再收集待上报批次并关闭 writer。该功能不增加持久化重试队列。
+
+要将 flow 转为图关系，还需要在目标链路配置相应的 RelationDefinition、图转换规则和 Storage/Binding；writer 不负责创建或刷新图模型，也不按图定义过滤上报数据。
+
 ## 常驻任务接入文档
 
 适用于接入具有以下特征的任务：

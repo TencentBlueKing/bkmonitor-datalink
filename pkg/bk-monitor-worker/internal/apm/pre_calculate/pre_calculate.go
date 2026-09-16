@@ -91,6 +91,7 @@ func Initial(parentCtx context.Context) (PreCalculateProcessor, error) {
 				storage.MetricRelationMemDuration(config.RelationMetricsInMemDuration),
 				storage.MetricFlowMemDuration(config.FlowMetricsInMemDuration),
 				storage.MetricFlowBuckets(config.MetricsDurationBuckets),
+				storage.MetricRelationDataID(config.RelationDataID),
 			),
 		).
 		WithMetricReport(

@@ -111,18 +111,36 @@ func UnattributedCount(anomalies []Anomaly) int {
 // read this field, neither re-derives it.
 func Attribute(anomalies []Anomaly) {
 	for index := range anomalies {
-		// The finding is decided first and the attribution read off it. Before
-		// this the two were decided separately -- attribution from the code
-		// tables here, the situation from the counts on the page -- and an
-		// object could be external for the verdict while the page told the
-		// reader it was undetermined, or the reverse. One decision, two
-		// readings.
-		anomalies[index].Finding = findingOf(anomalies[index])
-		anomalies[index].Attribution = attributionFromFinding(anomalies[index].Finding)
-		// Recorded per object rather than derived twice, so the page and the
-		// counts cannot disagree about which of these was actually decided.
-		anomalies[index].Unclassified = anomalies[index].Finding.Situation == SituationUnclassified
+		attribute(&anomalies[index])
 	}
+}
+
+// attribute decides everything the page reads about one object, in one place.
+//
+// The finding is decided first and the attribution read off it. Before this
+// the two were decided separately -- attribution from the code tables here,
+// the situation from the counts on the page -- and an object could be external
+// for the verdict while the page told the reader it was undetermined, or the
+// reverse. One decision, two readings.
+//
+// It is called again by MarkStalled for the objects it marks, because Stalled
+// is decided after the view is built and changes the answer to every question
+// here: a stalled object is this deployment's whatever its last code said.
+// Before that, the finding kept the last code's situation while the
+// attribution alone was rewritten, so the STALLED situation had no producer
+// and a stalled row rendered as the backend's or the strategy's.
+func attribute(anomaly *Anomaly) {
+	anomaly.Finding = findingOf(*anomaly)
+	anomaly.Attribution = attributionFromFinding(anomaly.Finding)
+	// Recorded per object rather than derived twice, so the page and the
+	// counts cannot disagree about which of these was actually decided.
+	anomaly.Unclassified = anomaly.Finding.Situation == SituationUnclassified
+	if check, under := checkOf(*anomaly); under {
+		anomaly.Finding.Check = check
+		anomaly.Finding.Group = groupKeyOf(*anomaly, check)
+	}
+	anomaly.Finding.Schedule = scheduleOf(*anomaly)
+	anomaly.Finding.Result = resultOf(*anomaly)
 }
 
 // OursCount returns how many of these count against the deployment.

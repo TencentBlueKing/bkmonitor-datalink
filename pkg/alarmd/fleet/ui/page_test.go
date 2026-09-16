@@ -167,23 +167,26 @@ func TestThePageHasWordingForEveryAnomalyKind(t *testing.T) {
 	}
 }
 
-// Every situation the server can decide has words on the page, and so does
-// every owner.
+// Every check the server can report has one sentence on the page, every owner
+// a word, and every value of the two dimensions a row shows a word.
 //
-// The page's SITUATION table is the whole of what it decides about a row now:
-// the server picks the situation from the evidence and the page looks up the
-// three sentences. A situation with no entry renders as a loud placeholder
-// rather than a blank -- but a placeholder on a live row is still a row a
-// reader cannot act on, and this is what keeps that from shipping. Adding a
-// situation in Go without adding its words here fails here.
-func TestThePageHasWordingForEverySituationAndOwner(t *testing.T) {
+// The CHECK table is the whole of the page's wording about what is wrong: the
+// server decides which check an object is under and folds the objects, the
+// page substitutes the counts into one sentence. A check with no entry renders
+// a loud placeholder rather than a blank -- but a placeholder on the first
+// screen is still a line a reader cannot act on, and this is what keeps that
+// from shipping. Adding a check in Go without adding its sentence fails here;
+// so does keeping a sentence for a check Go no longer sends.
+func TestThePageHasWordingForEveryCheckOwnerScheduleAndResult(t *testing.T) {
 	body := string(page)
 	for _, block := range []struct {
 		name, pattern string
 		values        []string
 	}{
-		{"SITUATION", `var SITUATION = \{([\s\S]*?)\};`, situationNames()},
+		{"CHECK", `var CHECK = \{([\s\S]*?)\};`, checkNames()},
 		{"OWNER", `var OWNER = \{([\s\S]*?)\};`, ownerNames()},
+		{"SCHEDULE", `var SCHEDULE = \{([\s\S]*?)\};`, scheduleNames()},
+		{"RESULT", `var RESULT = \{([\s\S]*?)\};`, resultNames()},
 	} {
 		found := regexp.MustCompile(block.pattern).FindStringSubmatch(body)
 		if found == nil {
@@ -194,28 +197,33 @@ func TestThePageHasWordingForEverySituationAndOwner(t *testing.T) {
 		}
 		for _, value := range block.values {
 			if !regexp.MustCompile(`\b` + value + `:`).MatchString(found[1]) {
-				t.Errorf("%s has no entry for %q: the row would render a placeholder where the "+
+				t.Errorf("%s has no entry for %q: the page would render a placeholder where the "+
 					"reader expects to be told what happened", block.name, value)
 			}
 		}
-		// And nothing on the page that Go cannot send, which would be words
-		// kept alive for a situation nothing decides.
 		declared := map[string]bool{}
 		for _, value := range block.values {
 			declared[value] = true
 		}
-		for _, match := range regexp.MustCompile(`(?m)^\s*([A-Z_]+):`).FindAllStringSubmatch(found[1], -1) {
+		for _, match := range regexp.MustCompile(`\b([A-Z_]+):`).FindAllStringSubmatch(found[1], -1) {
 			if !declared[match[1]] {
 				t.Errorf("%s has an entry for %q, which the server never sends", block.name, match[1])
 			}
 		}
 	}
+	// And the table is the size the design says: the first screen is sixteen
+	// lines at most, and a seventeenth sentence here is a seventeenth check.
+	entries := regexp.MustCompile(`(?m)^  [A-Z_]+:`).FindAllString(
+		regexp.MustCompile(`var CHECK = \{([\s\S]*?)\};`).FindStringSubmatch(body)[1], -1)
+	if len(entries) != 16 {
+		t.Errorf("CHECK has %d sentences, want 16", len(entries))
+	}
 }
 
-func situationNames() []string {
+func checkNames() []string {
 	names := make([]string, 0)
-	for _, situation := range fleet.Situations() {
-		names = append(names, string(situation))
+	for _, check := range fleet.Checks() {
+		names = append(names, string(check))
 	}
 	return names
 }
@@ -228,37 +236,33 @@ func ownerNames() []string {
 	return names
 }
 
-// Every column the route serves has to have wording of its own.
-//
-// The page does not render blank for one it has no entry for: both lookups fall
-// through to the anomaly column's, so the heading and the description of the
-// to-do list appear over a list of objects that are explicitly not on it. The
-// by-design column shipped that way -- the map was keyed "transitional" from an
-// earlier name of the column, and nothing here could see it.
-func TestEveryServedColumnHasItsOwnHeadingAndDescription(t *testing.T) {
-	body := string(page)
-	if len(fleet.ObjectColumns) == 0 {
-		t.Fatal("no object columns declared; the check would pass vacuously")
+func scheduleNames() []string {
+	names := make([]string, 0)
+	for _, schedule := range fleet.Schedules {
+		names = append(names, string(schedule))
 	}
-	// Closed at the first "};", not at a newline before one. TITLES ends on the
-	// same line as its last entry, so a pattern requiring the newline ran past
-	// it and swallowed BASIS as well -- and then a column missing from TITLES
-	// was found in BASIS and reported as present. The check covered one map
-	// twice and the other not at all, which a mutation on TITLES survived.
-	for _, block := range []struct{ name, pattern string }{
-		{"TITLES", `var TITLES = \{([\s\S]*?)\};`},
-		{"BASIS", `var BASIS = \{([\s\S]*?)\};`},
-	} {
-		found := regexp.MustCompile(block.pattern).FindStringSubmatch(body)
-		if found == nil {
-			t.Fatalf("the page no longer declares %s: every column renders another column's wording",
-				block.name)
-		}
-		for _, column := range fleet.ObjectColumns {
-			if !strings.Contains(found[1], column+":") {
-				t.Errorf("%s has no entry for column %q: the list falls through to the anomaly "+
-					"column's wording, which is false about every object in it", block.name, column)
-			}
+	return names
+}
+
+func resultNames() []string {
+	names := make([]string, 0)
+	for _, result := range fleet.Results {
+		names = append(names, string(result))
+	}
+	return names
+}
+
+// The page must not decide anything about a row itself. The two hundred lines
+// that used to work the situation back out of the counts are gone, and this is
+// what keeps them from coming back under another name: no function on the page
+// reads the window counts to reach a verdict.
+func TestThePageDoesNotInferASituationFromTheCounts(t *testing.T) {
+	body := string(page)
+	for _, retired := range []string{"function coverageNote(", "function windowNeverFills(",
+		"function windowIsStarved(", "function windowSeriesChurn(", "var SITUATION = {", "function situationWords("} {
+		if strings.Contains(body, retired) {
+			t.Errorf("the page declares %q again: the page renders what the server decided and does not "+
+				"decide anything from the counts", retired)
 		}
 	}
 }
@@ -290,12 +294,11 @@ func TestTheAnomalyColumnIsCalledOneThingEverywhere(t *testing.T) {
 		}
 	}
 	// Every place a reader meets the column. The anchor is something stable on
-	// the same source line as the label.
+	// the same source line as the label. The object list is not one of them any
+	// more: it opens by check, and the column is the API's, not the page's.
 	for _, anchor := range []struct{ what, marker string }{
 		{"verdict panel cell", `id="ownBad"`},
 		{"replica table header", `<th>其中 alarmd 的</th>`},
-		{"object list button", `id="colOwn"`},
-		{"object list heading", `anomalies: '`},
 	} {
 		found := false
 		for _, line := range strings.Split(body, "\n") {
@@ -388,31 +391,6 @@ func TestEveryWindowCoverageFieldThePageReadsExistsInTheAPI(t *testing.T) {
 	assertFieldsExist(t, "windowCoverage", reflect.TypeOf(fleet.HistoryCoverage{}))
 }
 
-// The page decides "this window will never fill" itself rather than reading a
-// server-computed flag, so a reader can check the conclusion against the
-// numbers printed beside it. That duplication is deliberate, and it is also
-// exactly how two copies of one rule drift apart.
-//
-// This only checks the page still has the function. Whether it decides the
-// same thing fleet.HistoryCoverage.Persistent decides is checked by running
-// both, in render_smoke_test.go -- a Go reimplementation of the rule compared
-// against the Go original would agree with itself no matter what the page did.
-func TestThePageStillDecidesWhetherAWindowCanEverFill(t *testing.T) {
-	if !regexp.MustCompile(`function windowNeverFills\(windowCoverage\) \{`).Match(page) {
-		t.Fatal("the page no longer declares windowNeverFills: every short window renders the same " +
-			"way again, which is the state this field was added to end")
-	}
-}
-
-// One level further down, and the level a reader trusts instead of paging: the
-// onset line says how much of the list started recently. A misspelled bucket
-// reads as undefined, the guard in front of it is false, and the line simply
-// omits that bucket -- so a population that is half an hour old renders as
-// though none of it is.
-func TestEveryOnsetFieldThePageReadsExistsInTheAPI(t *testing.T) {
-	assertFieldsExist(t, "onset", reflect.TypeOf(fleet.Onset{}))
-}
-
 // Anomaly kinds had this check and start-time provenances did not, although the
 // consequence is worse: an unmapped kind renders the wrong familiar word, an
 // unmapped provenance renders a raw enum beside a timestamp whose meaning that
@@ -438,39 +416,6 @@ func TestThePageHasWordingForEveryStartTimeProvenance(t *testing.T) {
 		if !strings.Contains(block[1], string(source)+": '") {
 			t.Errorf("SINCE_SOURCE has no wording for start-time provenance %q: it renders the raw "+
 				"name beside a timestamp that name was supposed to explain", source)
-		}
-	}
-}
-
-// The page tells a reader that a blank cause means the cause was not kept
-// rather than that there is none, and it decides that from the provenance. Its
-// list of which provenances mean "rebuilt from a record" is a copy of one in
-// fleet, and getting it wrong in either direction states something false: a
-// missing entry goes back to reading as "no cause", and a spurious one claims a
-// watched object was restored.
-func TestThePageAgreesOnWhichProvenancesMeanRestored(t *testing.T) {
-	body := string(page)
-	block := regexp.MustCompile(`var RESTORED_SOURCES = \{([^}]*)\}`).FindStringSubmatch(body)
-	if block == nil {
-		t.Fatal("the page no longer declares RESTORED_SOURCES: a restored object's blank cause " +
-			"reads as having no cause again")
-	}
-	listed := map[string]bool{}
-	for _, match := range regexp.MustCompile(`([A-Z_]+):\s*true`).FindAllStringSubmatch(block[1], -1) {
-		listed[match[1]] = true
-	}
-	declared := map[string]bool{}
-	for _, source := range fleet.RestoredSinceSources {
-		declared[string(source)] = true
-		if !listed[string(source)] {
-			t.Errorf("%q is a restored provenance but the page does not treat it as one: "+
-				"its blank cause reads as \"there is no cause\"", source)
-		}
-	}
-	for source := range listed {
-		if !declared[source] {
-			t.Errorf("the page calls %q a restored provenance and fleet does not: it would tell a "+
-				"reader a watched object's cause was lost", source)
 		}
 	}
 }

@@ -7,13 +7,21 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package consul
+package utils
 
-import (
-	"encoding/gob"
-)
+import "testing"
 
-// init 注册 consul.Storage 类型到 gob，用于 utils.HashIt 函数
-func init() {
-	gob.Register(&Storage{})
+func TestHashItDeterministic(t *testing.T) {
+	first := map[string]any{
+		"2": map[string]string{"type": "elasticsearch", "address": "http://es"},
+		"1": map[string]string{"type": "influxdb", "address": "http://influx"},
+	}
+	second := map[string]any{
+		"1": map[string]string{"address": "http://influx", "type": "influxdb"},
+		"2": map[string]string{"address": "http://es", "type": "elasticsearch"},
+	}
+
+	if HashItDeterministic(first) != HashItDeterministic(second) {
+		t.Fatal("equivalent maps must produce the same deterministic hash")
+	}
 }

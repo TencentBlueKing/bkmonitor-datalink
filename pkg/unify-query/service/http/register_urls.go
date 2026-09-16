@@ -141,6 +141,10 @@ func registerOtherHandlers(registerHandler *endpoint.RegisterHandler) {
 	handlerPath = viper.GetString(TsDBPrintHandlePathConfigPath)
 	registerHandler.Register(http.MethodGet, handlerPath, HandleTsDBPrint)
 
+	// storage_info
+	handlerPath = viper.GetString(StoragePrintHandlePathConfigPath)
+	registerHandler.Register(http.MethodGet, handlerPath, HandleStorage)
+
 	// HEAD
 	registerHandler.Register(http.MethodHead, "", HandlerHealth)
 

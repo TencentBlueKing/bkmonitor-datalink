@@ -43,6 +43,18 @@ func TestSpanFieldFetcher(t *testing.T) {
 		assert.Equal(t, "3", fetcher.FetchMethod(span, "kind"))
 		assert.Equal(t, "attr1", fetcher.FetchAttribute(span, "a1"))
 
+		for _, key := range []string{"kind", "span_name", "trace_id", "span_id", "status.code"} {
+			value, ok := fetcher.FetchMethodWithOk(span, key)
+			assert.True(t, ok)
+			assert.Equal(t, fetcher.FetchMethod(span, key), value)
+		}
+
+		for _, key := range []string{"not_exist", "a1", "r1", ""} {
+			value, ok := fetcher.FetchMethodWithOk(span, key)
+			assert.False(t, ok)
+			assert.Equal(t, "", value)
+		}
+
 		dst := make(map[string]string)
 		fetcher.FetchAttributesTo(span, []string{"a2", "a3"}, dst)
 		assert.Equal(t, map[string]string{"a2": "attr2", "a3": "attr3"}, dst)

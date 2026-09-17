@@ -28,10 +28,17 @@ import (
 // against 0 with no line; and the refusal that names what is missing, split
 // from the one that does not, because the pool card called those strategies
 // unusable while the line said 待确认. The design names all twenty.
+//
+// Twenty-three since the source standings: strategies the leader's round
+// listed and withheld before any became an object, one line per owner --
+// the platform that wrote the document, this deployment that cannot run it,
+// the strategy whose definition the compiler refused. A deployment whose
+// source withheld every strategy read HEALTHY with expected 0 and had no line
+// anywhere that said so.
 func TestTheCheckTableIsClosedAtTwenty(t *testing.T) {
-	if got := len(Checks()); got != 20 || len(checkAnswers) != 20 {
-		t.Errorf("the check table has %d rows in order and %d answered, want 20: a new check has to "+
-			"be a rule over the existing dimensions or a named standing, and the design says which twenty", got, len(checkAnswers))
+	if got := len(Checks()); got != 23 || len(checkAnswers) != 23 {
+		t.Errorf("the check table has %d rows in order and %d answered, want 23: a new check has to "+
+			"be a rule over the existing dimensions or a named standing, and the design says which", got, len(checkAnswers))
 	}
 	seen := map[Check]bool{}
 	for _, check := range Checks() {
@@ -51,7 +58,7 @@ func TestTheCheckTableIsClosedAtTwenty(t *testing.T) {
 	// This deployment's own before undetermined before the others, and the
 	// undetermined ones before what is confirmed as somebody else's: the order
 	// is the order the reader acts in.
-	rank := map[Owner]int{OwnerAlarmd: 0, OwnerUndetermined: 1, OwnerData: 2, OwnerStrategy: 2}
+	rank := map[Owner]int{OwnerPlatform: 0, OwnerAlarmd: 0, OwnerUndetermined: 1, OwnerData: 2, OwnerStrategy: 2}
 	previous := -1
 	for _, check := range Checks() {
 		if r := rank[checkAnswers[check].Owner]; r < previous {
@@ -121,6 +128,16 @@ func TestEveryCheckHasAProducerExceptTheNamedOne(t *testing.T) {
 		CheckReplicaDegraded: {Degradations: []Degradation{{Kind: DegradationOpenAlertSetStale, Replica: "pod-b"}}},
 		CheckOwnershipSkewed: {Rebalance: &RebalanceFacts{ReadyWorkers: 2, Assigned: 4, Target: 2, MostOwned: 4,
 			MostOwnedBy: "pod-a", LeastOwnedBy: "pod-b", Batch: 1, PlannedMoves: 1, StopSpreadPercent: 5, Shadow: true}, RebalanceReplica: "pod-a"},
+		// The source standings: one withheld group each, under the
+		// disposition that owns the line. Accepted is non-zero so the view is
+		// not also SOURCE_BLOCKED, which would be a second fact.
+		CheckSourceIncomplete: {Source: NewSourceFacts(at, map[string]int{"ACCEPTED": 3, "SOURCE_INCOMPLETE": 1},
+			[]WithheldObject{{StrategyID: "7", Scope: "STRATEGY", Disposition: "SOURCE_INCOMPLETE", Reason: "SOURCE_IDENTITY_UNAVAILABLE"}}), SourceReplica: "pod-a"},
+		CheckCapabilityUnsupported: {Source: NewSourceFacts(at, map[string]int{"ACCEPTED": 3, "UNSUPPORTED_PHASE2_CAPABILITY": 1},
+			[]WithheldObject{{StrategyID: "8", Scope: "STRATEGY", Disposition: "UNSUPPORTED_PHASE2_CAPABILITY", Reason: "SNAPSHOT_RETENTION_INSUFFICIENT"}}), SourceReplica: "pod-a"},
+		CheckConfigRejected: {Source: NewSourceFacts(at, map[string]int{"ACCEPTED": 3, "CONFIG_REJECTED": 1, "STALE_CONFIG": 1},
+			[]WithheldObject{{StrategyID: "9", Scope: "LEVEL", LevelID: 2, Disposition: "CONFIG_REJECTED", Reason: "LEVEL_INVALID", FieldPath: "items[0].algorithms[0]"},
+				{StrategyID: "10", Scope: "STRATEGY", Disposition: "STALE_CONFIG", Reason: "LEVEL_INVALID"}}), SourceReplica: "pod-a"},
 	}
 	for want, view := range standings {
 		reports := ReportChecks(nil, nil, &view, now)

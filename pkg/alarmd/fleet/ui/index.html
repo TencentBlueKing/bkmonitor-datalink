@@ -215,7 +215,8 @@ details.group table{margin:6px 0 0 12px}
       </div>
     </div>
     <div class="grid">
-      <div class="cell"><div class="k">应有 (expected)</div><div class="v" id="expected">–</div></div>
+      <div class="cell"><div class="k">应有 (expected)</div><div class="v" id="expected">–</div>
+        <div class="k" id="expectedHint"></div></div>
       <div class="cell"><div class="k">已覆盖 (covered)</div><div class="v" id="covered">–</div></div>
       <div class="cell"><div class="k">已知状态 (determined)</div><div class="v" id="determined">–</div></div>
       <div class="cell wide">
@@ -244,6 +245,7 @@ details.group table{margin:6px 0 0 12px}
     <p class="note">
       <b>判定规则</b>：证据不全 → <span class="s b-UNKNOWN">UNKNOWN</span>；
       证据齐全且<b>「没跑成待查」里有归到 alarmd 的</b> → <span class="s b-DEGRADED">DEGRADED</span>；
+      副本级运行状态超出设计界，或<b>策略缓存里有策略却一条都没被接受</b>（SOURCE_BLOCKED：不是没负载，是全被扣在配置获取环节）→ <span class="s b-DEGRADED">DEGRADED</span>；
       证据齐全且一个都没有 → <span class="s b-HEALTHY">HEALTHY</span>。
       <br><b>判定看的不是整栏</b>：「没跑成待查」是待处理清单，里面既有 alarmd 自己的，也有数据源没答、
       策略配置写不了的。只有归到 alarmd 的那部分进判定——整栏进判定的话，别人家的故障面越大 alarmd 看着越差，
@@ -263,7 +265,7 @@ details.group table{margin:6px 0 0 12px}
     <p class="basis">三部分：已确认是 alarmd 的；证据还分不出是谁的（不能交出去，也不能当没事）；已确认是业务侧的。点一行，看它按成因分组的对象。</p>
     <div id="objErr" class="err" hidden></div>
     <table>
-      <thead><tr><th>alarmd 已确认</th><th>谁处理</th><th></th></tr></thead>
+      <thead><tr><th>现在要处理的（alarmd 已确认的，和平台写入方写坏的）</th><th>谁处理</th><th></th></tr></thead>
       <tbody id="checkRows"></tbody>
     </table>
     <div class="empty" id="checksEmpty" hidden>现在没有已确认要 alarmd 这边处理的问题。</div>
@@ -316,6 +318,20 @@ details.group table{margin:6px 0 0 12px}
     <div class="empty" id="capEmpty" hidden>本次读取没有副本上报容量。</div>
     <div class="grid" id="capCards"></div>
     <p class="note" id="capNote"></p>
+  </section>
+
+  <section class="panel">
+    <h2>依赖</h2>
+    <!-- Where each external system is and what this replica has seen of it.
+         The address answers "which Redis is this"; the writer column answers
+         the question that follows it, "is it the one the platform writes to"
+         -- which the address cannot, because a Redis nobody writes to answers
+         every command. Credentials are never on this response. -->
+    <p class="basis" id="depBasis"></p>
+    <table>
+      <thead><tr><th>用途</th><th>地址 · 库 · 前缀</th><th>本进程最近一次</th><th>写入方证据</th></tr></thead>
+      <tbody id="depRows"></tbody>
+    </table>
   </section>
 
   <section class="panel" id="replicaPanel" hidden>
@@ -632,13 +648,19 @@ function momentLabel(at) {
 // Who has to act, in words. Keyed by the server's Owner values; a completeness
 // test holds this to the Go list.
 var OWNER = {ALARMD: 'alarmd', DATA: '数据侧', STRATEGY: '策略侧', NOBODY: '不用处理',
-             UNDETERMINED: '待确认'};
+             UNDETERMINED: '待确认', PLATFORM: '平台写入方'};
 
 // One sentence per check. This is the whole of the page's wording about what
 // is wrong: twenty lines, held to the Go table by a test. The server decides
 // which check an object is under and folds the objects; the page substitutes
 // the counts. {n} objects, {g} groups, {s} strategies, {b} businesses.
 var CHECK = {
+  // The three source standings: strategies the leader's round listed and did
+  // not accept, before any became an object. {s} is withheld records, {g}
+  // reasons; there is no {n}, because none of these is an object.
+  SOURCE_INCOMPLETE:     '策略缓存里 {s} 条策略的文档不满足合同，没有进入检测（{g} 种原因）——是写入方写的内容缺东西，不是策略配置错',
+  CAPABILITY_UNSUPPORTED: '{s} 条策略这个部署跑不了（{g} 种原因）——快照保留期或完成偏移不够，是 alarmd 部署参数',
+  CONFIG_REJECTED:       '{s} 条策略的定义编译不过（{g} 种原因）——按原因组看是哪个字段；带 STALE_CONFIG 的那组仍按上一版配置在跑',
   // The three standings. {since}, {c}, {applied} and {published} come from
   // the leader's activation facts on the report, not from counts; the split
   // line's numbers come from the leader's rebalance round on the report.
@@ -693,6 +715,7 @@ function lossWords(key) {
 
 // The replica-level standings, in words. Held to the Go list.
 var DEGRADATION = {
+  SOURCE_BLOCKED: '策略缓存里有策略，但这一轮一条都没接受——整个部署没有在检测任何东西；不是没负载，是全部被扣在配置获取环节',
   ACTIVATION_BEHIND: '控制面变更没有生效：源发布了新内容，激活跟不上去，舰队在执行旧发布',
   CONTROL_SOURCE_STALE: '策略源超过设计允许的时间没有刷新成功，跑的是上一份好的目录',
   CONTROL_LEADER_ABSENT: '副本拿不到控制面 leader 租约、也不知道谁持有，超过设计允许的时间——可能没人在刷新',
@@ -709,6 +732,9 @@ var DEGRADATION = {
 // not log the full request text, so it says what exists instead of sending
 // the reader to look for something that does not.
 var EVIDENCE = {
+  SOURCE_INCOMPLETE:     '展开按原因看策略样本：SOURCE_IDENTITY_UNAVAILABLE = 文档顶层缺 bk_tenant_id / space_uid；SOURCE_OBJECT_INCOMPLETE = ID 在 strategy_ids 里但 strategy_<id> 不存在；依赖面板"策略缓存"行给缓存 Redis 地址与 last_updated；指标 catalog_withheld_objects{disposition="SOURCE_INCOMPLETE",reason}；日志 source_withheld',
+  CAPABILITY_UNSUPPORTED: '展开按原因看策略样本与要求的值；指标 catalog_withheld_objects{disposition="UNSUPPORTED_PHASE2_CAPABILITY",reason}',
+  CONFIG_REJECTED:       '展开按原因看策略样本与字段路径（field_path 是编译器拒绝的那个字段）；指标 catalog_withheld_objects{disposition="CONFIG_REJECTED",reason}',
   CUTOVER_FAILING:       '展开这一行：最近一次激活失败原文、阶段/类别、连续轮数；日志 activation_failed（reason_code = 阶段/类别）',
   OWNERSHIP_SKEWED:      '副本表的"持有"列与"已运行"列（持有少的那个若比同构建的其它副本晚启动很久，就是中途重启过，原因看容器上一次退出）；Leader 的再平衡这一轮（计划/发出/暂停）在这一行的句子里；指标 worker_owned_query_groups{pod}、rebalance_gap、assignment_moves_total{reason=rebalance}、rebalance_paused_total{reason=set_unstable}',
   REPLICA_DEGRADED:      '展开按种类看是哪个副本；策略源过期的组直接带最近一次刷新失败的阶段与原文（下面组名后）；副本表里该副本的策略源/告警集合/平台设置时钟',
@@ -732,6 +758,9 @@ var EVIDENCE = {
 };
 
 var NEXT = {
+  SOURCE_INCOMPLETE:     '找策略缓存的写入方（bk-monitor 后台的 cache 进程，或替代它的模块）：缺身份字段的要写方按合同补 bk_tenant_id / space_uid（bk-monitor 主线 2026-08-31 起的缓存刷新才写）；ID 列表残留的要写方清掉已删除策略的 ID（2026-09-11 起的刷新会清）。Pod 外一句判据：在缓存 Redis 上 GET <前缀>.strategy_<任一 id>，顶层有 "space_uid" 才算过。alarmd 这边不用改，写方修好后下一轮刷新（最多 6 分钟）自动接受',
+  CAPABILITY_UNSUPPORTED: '改 alarmd 部署参数：按原因组看是快照保留期还是完成偏移不够，调到要求的值后下一轮刷新自动接受',
+  CONFIG_REJECTED:       '交策略侧：按原因组与字段路径改策略定义；alarmd 这边不用改，改好后下一轮刷新自动接受。STALE_CONFIG 组的策略仍在按上一版跑，不算漏检',
   CUTOVER_FAILING:       '先修激活：看展开里最近一次失败文本与 activation_failed 日志；修好前所有策略变更都不生效',
   OWNERSHIP_SKEWED:      '不要手动重启持有多的副本来均衡——重启只会把它的对象整批搬到剩下的副本，不会均分。{rebalance}；在均分回来之前，持有多的那个副本上的漏检与超时不按容量处理、不据此扩副本或加资源',
   REPLICA_DEGRADED:      '按种类处理：源过期看策略源刷新，leader 缺席看租约，告警集合/平台设置过期看对应发布者',
@@ -759,6 +788,9 @@ var NEXT = {
 // not go to zero, and a refusal recovers by being handed to its owner, not
 // by disappearing.
 var RECOVERY = {
+  SOURCE_INCOMPLETE:     '写方修好后一轮刷新：这一行的策略数降到 0、"应有"从 0 涨上来、对象开始出现在各栏；这一行消失',
+  CAPABILITY_UNSUPPORTED: '参数改好后一轮刷新：这一行消失，"应有"涨上来',
+  CONFIG_REJECTED:       '策略改好后一轮刷新：该策略离开这一组；这一行只在全部改好后消失',
   CUTOVER_FAILING:       '执行版本追上目标发布（两者一致）且之后一轮激活成功；这一行消失',
   OWNERSHIP_SKEWED:      'Leader 的再平衡计划移动数归零（最多与最少之差回到均分的 {stop}% 以内，这是调度器自己的容差）；这一行消失',
   REPLICA_DEGRADED:      '该副本的那个时钟回到设计界内；策略源的 = 一轮刷新成功、新目录发布，这一行消失',
@@ -1199,7 +1231,8 @@ function loadChecks() {
 // A line is a standing of the deployment itself, with no objects under it.
 // Held to the Go list of standings by a test.
 function isStanding(report) {
-  return report.code === 'CUTOVER_FAILING' || report.code === 'REPLICA_DEGRADED' || report.code === 'OWNERSHIP_SKEWED';
+  return report.code === 'CUTOVER_FAILING' || report.code === 'REPLICA_DEGRADED' || report.code === 'OWNERSHIP_SKEWED'
+    || report.code === 'SOURCE_INCOMPLETE' || report.code === 'CAPABILITY_UNSUPPORTED' || report.code === 'CONFIG_REJECTED';
 }
 
 // The first screen: the checks this reader acts on now; folded away, the
@@ -1223,7 +1256,10 @@ function renderChecks(checks) {
   latestChecks.forEach(function (report) {
     var up = (report.current || 0) > 0 || isStanding(report);
     if (report.retained) history.push(report);
-    if (report.owner === 'ALARMD') { if (up) todo.push(report); }
+    // The platform's lines sit with this deployment's: a strategy the
+    // platform wrote unusably is not detecting, and the operator of this
+    // deployment is the one who goes and says so.
+    if (report.owner === 'ALARMD' || report.owner === 'PLATFORM') { if (up) todo.push(report); }
     else if (report.owner === 'UNDETERMINED') { if (up) pending.push(report); }
     else governance.push(report);
   });
@@ -1256,7 +1292,12 @@ function renderChecks(checks) {
 // and what the refused objects lost -- apart, so a loss in progress is
 // never read as history and a refusal's consequence never as capacity.
 function todoSentence(todo, pending, governance, t) {
-  var parts = ['alarmd 已确认 ' + (todo.length ? t.checks + ' 类（' + t.objects + ' 个对象，去重）' : '没有'),
+  // The platform's lines are in the first count with this deployment's, and
+  // named apart: a reader who reads "alarmd 已确认 10 类" and finds one line
+  // owned by the platform's cache writer has been told the wrong thing.
+  var platform = todo.filter(function (r) { return r.owner === 'PLATFORM'; }).length;
+  var parts = ['现在要处理 ' + (todo.length ? t.checks + ' 类（' + t.objects + ' 个对象，去重'
+                 + (platform ? '；其中平台写入方 ' + platform + ' 类，按策略计不按对象计' : '') + '）' : '没有'),
                '待归因 ' + (pending.length ? t.undetermined + ' 类（' + t.undetermined_objects + ' 个对象）' : '没有'),
                '业务侧已确认 ' + (governance.length ? t.governance + ' 类（' + t.governance_objects + ' 个对象）在运营治理' : '没有')];
   var loss = [];
@@ -1405,14 +1446,19 @@ function renderGroups() {
     // A fold with no objects behind it is a replica-level fact, not a list:
     // a coverage hole, or a standing, which names its replicas instead.
     if (group.objects) parts.push(group.objects + ' 个对象');
+    else if (group.samples) parts.push(group.strategies + ' 条策略' + (group.disposition ? '，处置 ' + group.disposition : '')
+      + (group.disposition === 'STALE_CONFIG' ? '，仍按上一版配置在检测，新配置没生效' : '，没有对象（没进入检测）'));
     else if (group.replicas && group.replicas.length) parts.push('副本 ' + group.replicas.map(shortReplica).join('、') + '，没有可列的对象');
     else parts.push('副本级缺口，没有可列的对象');
-    if (group.strategies) parts.push(group.strategies + ' 条策略');
+    if (group.strategies && !group.samples) parts.push(group.strategies + ' 条策略');
     if (group.businesses) parts.push(group.businesses + ' 个业务');
     label.textContent = parts.join(' · ');
     details.appendChild(label);
     var body = document.createElement('div');
     details.appendChild(body);
+    if (group.samples) {
+      body.appendChild(sampleList(group));
+    }
     if (group.objects) {
       details.addEventListener('toggle', function () {
         expandedGroups[key] = details.open;
@@ -1425,6 +1471,35 @@ function renderGroups() {
     }
     host.appendChild(details);
   });
+}
+
+// The strategies a source standing's group names: a bounded sample with the
+// field the refusal was about, and how many the sample leaves out. Plain
+// identifiers, not console links: the console needs a business id, and the
+// commonest refusal here is a document without any identity at all.
+function sampleList(group) {
+  var wrap = document.createElement('div');
+  wrap.className = 'basis';
+  var samples = group.samples || [];
+  var head = document.createElement('p');
+  head.textContent = '策略样本（按 ID 升序，最多 ' + samples.length + ' 条'
+    + (group.strategies > samples.length ? '，另有 ' + (group.strategies - samples.length) + ' 条没列' : '') + '）：';
+  wrap.appendChild(head);
+  var ul = document.createElement('ul');
+  samples.forEach(function (sample) {
+    var li = document.createElement('li');
+    var id = document.createElement('span');
+    id.className = 'mono';
+    id.textContent = '策略 ' + sample.strategy_id;
+    li.appendChild(id);
+    var tail = [];
+    if (sample.scope === 'LEVEL') tail.push('级别 ' + sample.level_id);
+    if (sample.field_path) tail.push('字段 ' + sample.field_path);
+    if (tail.length) li.appendChild(document.createTextNode('　' + tail.join(' · ')));
+    ul.appendChild(li);
+  });
+  wrap.appendChild(ul);
+  return wrap;
 }
 
 // The objects of one group, a page at a time, from the server's ordering.
@@ -1836,6 +1911,8 @@ function renderDeployment(deployment) {
     text('poolFlowHint', flow.join('；'));
     renderCoverage(deployment.coverage);
     renderReplicas(deployment.per_replica);
+    renderSource(deployment.source, deployment.expected);
+    renderDependencies(deployment.dependencies || [], deployment.dependencies_replica);
     text('demotedHint', deployment.demoted_total
       ? '后端持续查不到，已降级不再反复查；不计入部署健康判定'
       : '当前没有对象被降级');
@@ -2177,6 +2254,114 @@ function shortId(id) { return String(id).slice(0, 12) + '…'; }
 function share(count, owned) {
   if (!owned || !count) return '';
   return '（' + (count / owned * 100).toFixed(1) + '%）';
+}
+
+// What the leader's last round found at the strategy source, under the
+// expected count it decides. An expected of 0 is two different deployments:
+// one with nothing to detect, and one holding everything at the
+// configuration step -- and the number alone is the same in both.
+function renderSource(source, expected) {
+  if (!source) {
+    text('expectedHint', expected === 0 ? '策略缓存的读数没有发布（旧构建，或还没有 leader 跑过一轮），说不出这个 0 是没策略还是全被扣住' : '');
+    return;
+  }
+  var withheld = (source.withheld || []);
+  var parts = ['策略缓存列出 ' + source.listed + ' 条，接受 ' + source.accepted + ' 条'];
+  if (withheld.length) {
+    parts.push('扣住 ' + withheld.map(function (g) { return g.count + ' 条 ' + g.disposition + '/' + g.reason; }).join('、'));
+  }
+  if (source.listed && !source.accepted) {
+    parts.push('不是没负载，是全部被扣在配置获取环节——看首屏第一行');
+  }
+  if (source.change_signal_present) {
+    parts.push('写入方标记 last_updated' + (source.change_signal_age_seconds !== undefined && source.change_signal_age_seconds !== null
+      ? ' 于 ' + elapsedLabel(source.change_signal_age_seconds) + '前更新' : ' 存在'));
+  } else {
+    parts.push('写入方没有留 last_updated 标记（每 6 分钟全量重读）');
+  }
+  text('expectedHint', parts.join('；'));
+}
+
+// The dependency table: one line per role, in the server's order, with the
+// role in words and the raw address beside it. What the process has seen of
+// the connection and what it found of the writer are two different columns
+// on purpose: a Redis that answers and a Redis the platform writes to are
+// two claims, and one live deployment had the first without the second.
+var ENDPOINT = {
+  state_redis: 'alarmd 自己的状态（目录、归属、进度、舰队）',
+  strategy_cache: '策略缓存（平台写、alarmd 读）',
+  cmdb_cache: 'CMDB 主机缓存（平台写、alarmd 读）',
+  dynamic_config: '平台动态配置（平台写、alarmd 读）',
+  query_backend: '查询后端（unify-query）',
+  output_kafka: '告警输出 Kafka（topic 在前缀列）',
+  compat_output_redis: '兼容输出用的服务 Redis（策略快照）'
+};
+
+function renderDependencies(list, replica) {
+  var host = document.getElementById('depRows');
+  host.textContent = '';
+  if (!list.length) {
+    text('depBasis', '这个构建没有发布依赖坐标。');
+    return;
+  }
+  text('depBasis', '副本 ' + shortReplica(replica || '') + ' 解析到的坐标；地址不含账号口令。"最近一次"是本进程对这条连接的最近成功/失败，两个角色共用一条连接时读同一条。');
+  list.forEach(function (dep) {
+    var tr = document.createElement('tr');
+    var role = document.createElement('td');
+    role.textContent = ENDPOINT[dep.role] || dep.role;
+    role.title = dep.role;
+    tr.appendChild(role);
+    var where = document.createElement('td');
+    where.className = 'mono';
+    if (!dep.configured) {
+      where.textContent = '未配置';
+    } else {
+      var bits = [dep.kind + ' ' + (dep.mode ? dep.mode + ' ' : '') + (dep.address || '（空地址）')];
+      if (dep.db !== undefined && dep.db !== null) bits.push('db ' + dep.db);
+      if (dep.prefix) bits.push(dep.prefix);
+      if (dep.shared_with) bits.push('与 ' + (ENDPOINT[dep.shared_with] ? dep.shared_with : dep.shared_with) + ' 共用连接');
+      where.textContent = bits.join(' · ');
+    }
+    tr.appendChild(where);
+    var seen = document.createElement('td');
+    var seenParts = [];
+    if (dep.last_success_age_seconds !== undefined && dep.last_success_age_seconds !== null) {
+      seenParts.push('成功 ' + elapsedLabel(dep.last_success_age_seconds) + '前');
+    }
+    if (dep.last_failure_age_seconds !== undefined && dep.last_failure_age_seconds !== null) {
+      seenParts.push('失败 ' + elapsedLabel(dep.last_failure_age_seconds) + '前：' + (dep.last_failure || '（无文本）'));
+    }
+    if (!seenParts.length) {
+      seenParts.push(dep.kind === 'redis' && dep.configured ? '本进程还没对它发过命令' : '这一列只对 Redis 连接有记录；查询后端与 Kafka 的失败在检查项里按对象归因');
+    }
+    seen.textContent = seenParts.join('；');
+    tr.appendChild(seen);
+    var writer = document.createElement('td');
+    writer.textContent = writerWords(dep);
+    tr.appendChild(writer);
+    host.appendChild(tr);
+  });
+}
+
+// The writer column, per role: what was found and how old it is, or that
+// nothing was, or that the role has no writer to speak of.
+function writerWords(dep) {
+  var w = dep.writer;
+  if (!w) {
+    return dep.role === 'strategy_cache' ? '（这个副本不是 leader，没读过策略缓存）' : '—';
+  }
+  var age = (w.age_seconds !== undefined && w.age_seconds !== null) ? elapsedLabel(w.age_seconds) + '前' : '';
+  switch (dep.role) {
+    case 'strategy_cache':
+      return (w.present ? '有：列出 ' + w.count + ' 条策略' : '没有：strategy_ids 为空或不存在——这个地址上没人在写策略缓存，或前缀不对')
+        + (w.state === 'marker_present' ? '；写入方标记 last_updated ' + (age ? '于 ' + age + '更新' : '存在') : '；没有 last_updated 标记');
+    case 'cmdb_cache':
+      return (w.present ? '有：' + w.count + ' 台主机' + (age ? '，来源刷新于 ' + age : '') : '没有：主机索引未加载')
+        + (w.state && w.state !== 'loaded' ? '（' + w.state + '）' : '');
+    case 'dynamic_config':
+      return (w.present ? '有：已加载' + (age ? '，' + age : '') : '没有') + (w.state ? '（' + w.state + '）' : '');
+  }
+  return w.present ? '有' : '没有';
 }
 
 function renderReplicas(rows) {

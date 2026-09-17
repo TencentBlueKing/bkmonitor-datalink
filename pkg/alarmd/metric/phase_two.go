@@ -95,6 +95,7 @@ type phaseTwoMetrics struct {
 	controlSource                   *controlSourceCollector
 	platformSettings                *platformSettingsCollector
 	redisCalls                      redisCallMetrics
+	redisHealth                     *redisClientHealthBook
 	controlCache                    *controlCacheCollector
 	dispatchRotation                *dispatchRotationCollector
 	legacyPodCache                  *prometheus.CounterVec
@@ -352,6 +353,7 @@ func newPhaseTwoMetrics() phaseTwoMetrics {
 	metrics.dueIndex = newDueIndexMetrics()
 	metrics.controlFacts = newControlFactsMetrics()
 	metrics.redisCalls = newRedisCallMetrics()
+	metrics.redisHealth = &redisClientHealthBook{}
 	metrics.controlCache = newControlCacheCollector()
 	metrics.dispatchRotation = newDispatchRotationCollector()
 	metrics.legacyPodCache = prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "legacy_pod_cache_total", Help: "Existing Python Pod cache reads by bounded result."}, []string{"result"})

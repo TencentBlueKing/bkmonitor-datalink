@@ -52,6 +52,9 @@ type controlSourceState struct {
 	// as "no data source has any Query Group", which is a different and
 	// much more alarming statement than "nothing new was built".
 	composition *controlplane.CatalogComposition
+	// source is the composition above as the fleet reads it, built at the
+	// same moment so the two cannot describe different rounds.
+	source *fleet.SourceFacts
 	// persistedSuccessAt is the last successful read of the persisted time
 	// of the last successful refresh round, by any process; zero when none
 	// is known. Read on every refresh tick by every replica, so the age it
@@ -117,6 +120,7 @@ func (bundle *phaseTwoWorkerBundle) noteControlRoundLocked(result phaseTwoContro
 	}
 	if result.Composition != nil {
 		state.composition = result.Composition
+		state.source = sourceFactsOf(result, bundle.dependencies.Now())
 	}
 	bundle.noteActivationLocked(result.Activation)
 }
@@ -223,6 +227,37 @@ func (bundle *phaseTwoWorkerBundle) catalogComposition() *controlplane.CatalogCo
 
 // controlSourceFleetFacts is what the fleet snapshot publishes. The ages
 // are absent, not zero, where unknown: a zero would read as just now.
+// sourceFactsOf is the round's composition in the fleet's terms: the
+// partition by disposition and every withheld record, with the source's
+// change marker beside them.
+func sourceFactsOf(result phaseTwoControlRefreshResult, at time.Time) *fleet.SourceFacts {
+	composition := result.Composition
+	objects := make(map[string]int, len(composition.Objects))
+	for disposition, count := range composition.Objects {
+		objects[string(disposition)] = count
+	}
+	withheld := make([]fleet.WithheldObject, 0, len(composition.WithheldObjects))
+	for _, object := range composition.WithheldObjects {
+		withheld = append(withheld, fleet.WithheldObject{StrategyID: object.SourceID, Scope: object.Scope,
+			LevelID: object.LevelID, Disposition: string(object.Disposition), Reason: object.Reason, FieldPath: object.FieldPath})
+	}
+	facts := fleet.NewSourceFacts(at, objects, withheld)
+	facts.ChangeSignalPresent = result.ChangeSignalPresent
+	if result.ChangeSignalPresent {
+		age := result.ChangeSignalAgeSeconds
+		facts.ChangeSignalAgeSeconds = &age
+	}
+	return facts
+}
+
+// sourceFleetFacts is what the fleet publishes about the source: the last
+// round this process composed, or nothing on a process that never led.
+func (bundle *phaseTwoWorkerBundle) sourceFleetFacts() *fleet.SourceFacts {
+	bundle.mu.RLock()
+	defer bundle.mu.RUnlock()
+	return bundle.controlSource.source
+}
+
 func (bundle *phaseTwoWorkerBundle) controlSourceFleetFacts() *fleet.ControlSourceFacts {
 	view := bundle.controlSourceView()
 	if !view.known {

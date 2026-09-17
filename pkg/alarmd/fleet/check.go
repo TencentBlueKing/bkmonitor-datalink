@@ -68,7 +68,28 @@ const (
 	CheckWindowUndecided    Check = "WINDOW_UNDECIDED"
 	CheckPlanUnevaluable    Check = "PLAN_UNEVALUABLE"
 	CheckConfigUnresolved   Check = "CONFIG_UNRESOLVED"
+	// The three source standings: strategies the control leader's round
+	// listed and did not accept, before any of them could be an object. They
+	// fold the source's withheld groups rather than object rows, one line per
+	// owner: a document the platform wrote without what the contract requires
+	// (or did not write at all) is the platform's; a strategy this build
+	// cannot run is this deployment's; a definition the compiler refused is
+	// the strategy's. A deployment whose source withheld every strategy had
+	// no line for it anywhere and read HEALTHY with nothing to do.
+	CheckSourceIncomplete      Check = "SOURCE_INCOMPLETE"
+	CheckCapabilityUnsupported Check = "CAPABILITY_UNSUPPORTED"
+	CheckConfigRejected        Check = "CONFIG_REJECTED"
 )
+
+// sourceChecks maps a withheld disposition to the standing that carries it.
+// STALE_CONFIG rides with CONFIG_REJECTED: the same refusal, on a strategy
+// that still runs its last good Plan, and the group says which.
+var sourceChecks = map[string]Check{
+	dispositionSourceIncomplete:      CheckSourceIncomplete,
+	dispositionCapabilityUnsupported: CheckCapabilityUnsupported,
+	dispositionConfigRejected:        CheckConfigRejected,
+	dispositionStaleConfig:           CheckConfigRejected,
+}
 
 // GroupBy is the key a check's objects are folded on. One backend not
 // answering is one line with sixty objects under it, not sixty lines; which
@@ -100,17 +121,20 @@ var checkAnswers = map[Check]struct {
 	Owner   Owner
 	GroupBy GroupBy
 }{
-	CheckCutoverFailing:     {OwnerAlarmd, GroupByReasonCode},
-	CheckReplicaDegraded:    {OwnerAlarmd, GroupByDegradation},
-	CheckOwnershipSkewed:    {OwnerAlarmd, GroupByReplica},
-	CheckSlotsOverdue:       {OwnerAlarmd, GroupByReplica},
-	CheckNeverEvaluated:     {OwnerAlarmd, GroupByReplica},
-	CheckRoundsStalled:      {OwnerAlarmd, GroupByReplica},
-	CheckDetectionAbandoned: {OwnerAlarmd, GroupByLoss},
-	CheckTimelinePruned:     {OwnerAlarmd, GroupByLoss},
-	CheckDependencyDown:     {OwnerAlarmd, GroupByReasonCode},
-	CheckDefect:             {OwnerAlarmd, GroupByReasonCode},
-	CheckObservationGap:     {OwnerAlarmd, GroupByGapKind},
+	CheckSourceIncomplete:      {OwnerPlatform, GroupByReasonCode},
+	CheckCapabilityUnsupported: {OwnerAlarmd, GroupByReasonCode},
+	CheckConfigRejected:        {OwnerStrategy, GroupByReasonCode},
+	CheckCutoverFailing:        {OwnerAlarmd, GroupByReasonCode},
+	CheckReplicaDegraded:       {OwnerAlarmd, GroupByDegradation},
+	CheckOwnershipSkewed:       {OwnerAlarmd, GroupByReplica},
+	CheckSlotsOverdue:          {OwnerAlarmd, GroupByReplica},
+	CheckNeverEvaluated:        {OwnerAlarmd, GroupByReplica},
+	CheckRoundsStalled:         {OwnerAlarmd, GroupByReplica},
+	CheckDetectionAbandoned:    {OwnerAlarmd, GroupByLoss},
+	CheckTimelinePruned:        {OwnerAlarmd, GroupByLoss},
+	CheckDependencyDown:        {OwnerAlarmd, GroupByReasonCode},
+	CheckDefect:                {OwnerAlarmd, GroupByReasonCode},
+	CheckObservationGap:        {OwnerAlarmd, GroupByGapKind},
 
 	CheckNoDataPersistent: {OwnerData, GroupByStrategy},
 
@@ -138,6 +162,11 @@ var checkAnswers = map[Check]struct {
 // order rather than as a fifth field beside each row. A test holds it to the
 // same keys as checkAnswers.
 var checkOrder = []Check{
+	// The source standings first: a strategy held at the configuration step
+	// never reaches anything below, and a reader who starts at the bottom
+	// would find nothing there to explain an empty deployment.
+	CheckSourceIncomplete,
+	CheckCapabilityUnsupported,
 	CheckCutoverFailing,
 	CheckReplicaDegraded,
 	CheckOwnershipSkewed,
@@ -158,6 +187,7 @@ var checkOrder = []Check{
 	CheckSeriesChurning,
 	CheckPlanUnevaluable,
 	CheckQueryTargetMissing,
+	CheckConfigRejected,
 }
 
 // Standing is whether a check is a fact about the whole deployment rather
@@ -166,7 +196,16 @@ var checkOrder = []Check{
 // the first screen's arithmetic and the page's layout cannot disagree on
 // which checks those are.
 func (check Check) Standing() bool {
-	return check == CheckCutoverFailing || check == CheckReplicaDegraded || check == CheckOwnershipSkewed
+	return check == CheckCutoverFailing || check == CheckReplicaDegraded || check == CheckOwnershipSkewed ||
+		check.SourceStanding()
+}
+
+// SourceStanding reports whether the check folds the source's withheld
+// strategies rather than object rows. Its groups carry strategies and
+// samples; nothing under it can be listed as an object, because none of
+// these ever became one.
+func (check Check) SourceStanding() bool {
+	return check == CheckSourceIncomplete || check == CheckCapabilityUnsupported || check == CheckConfigRejected
 }
 
 // Checks lists every check the table answers, in the order the page lists
@@ -408,6 +447,12 @@ type CheckGroup struct {
 	// bound was passed.
 	Stage string `json:"stage,omitempty"`
 	Text  string `json:"text,omitempty"`
+	// Disposition and Samples are on a source standing's fold: which
+	// disposition the control plane gave the strategies in it, and a bounded
+	// sample of which strategies. Strategies above holds the count; there are
+	// no objects to open, because none of these became one.
+	Disposition string           `json:"disposition,omitempty"`
+	Samples     []WithheldSample `json:"samples,omitempty"`
 }
 
 // ReportChecks folds every object in every column into the checks it is
@@ -434,6 +479,10 @@ func ReportChecks(columns [][]Anomaly, truncated map[string]bool, view *View, no
 		rebalance  *RebalanceFacts
 		skipped    *Consequence
 		reasons    map[string]int
+		// sourceStrategies is a source standing's count: withheld records,
+		// summed over its groups, where the object lines count distinct
+		// strategies behind objects.
+		sourceStrategies int
 	}
 	tallies := map[Check]*tally{}
 	ensure := func(check Check) *tally {
@@ -582,8 +631,9 @@ func ReportChecks(columns [][]Anomaly, truncated map[string]bool, view *View, no
 			entry.groups[key] = &CheckGroup{Key: key, Replicas: []string{view.ActivationReplica}}
 		}
 		for _, degradation := range view.Degradations {
-			if degradation.Kind == DegradationActivationBehind {
-				// Its own line, above.
+			if degradation.Kind == DegradationActivationBehind || degradation.Kind == DegradationSourceBlocked {
+				// Their own lines: the cutover line above, the source
+				// standings below.
 				continue
 			}
 			entry := ensure(CheckReplicaDegraded)
@@ -607,6 +657,31 @@ func ReportChecks(columns [][]Anomaly, truncated map[string]bool, view *View, no
 			key := view.Rebalance.MostOwnedBy
 			entry.groups[key] = &CheckGroup{Key: key, Replicas: []string{view.Rebalance.MostOwnedBy, view.Rebalance.LeastOwnedBy}}
 		}
+		// The source standings: every withheld group of the leader's last
+		// round, folded on its reason under the line its disposition owns.
+		// The line's strategy count is the sum of its groups; a strategy
+		// withheld at two levels is two records in the source and counts
+		// twice here, as it does in the control plane's own gauge.
+		if view.Source != nil {
+			for _, withheld := range view.Source.Withheld {
+				check, known := sourceChecks[withheld.Disposition]
+				if !known || withheld.Count == 0 {
+					continue
+				}
+				entry := ensure(check)
+				entry.replica = view.SourceReplica
+				entry.sourceStrategies += withheld.Count
+				key := withheld.Reason
+				if withheld.Disposition == dispositionStaleConfig {
+					// Same reason, different consequence: the strategy still
+					// runs its last good Plan. Folded apart so the count of
+					// strategies not detecting is not inflated by ones that are.
+					key = withheld.Disposition + "/" + withheld.Reason
+				}
+				entry.groups[key] = &CheckGroup{Key: key, Strategies: withheld.Count, Replicas: []string{view.SourceReplica},
+					Disposition: withheld.Disposition, Samples: withheld.Samples}
+			}
+		}
 	}
 	reports := make([]CheckReport, 0, len(tallies))
 	for check, entry := range tallies {
@@ -615,6 +690,9 @@ func ReportChecks(columns [][]Anomaly, truncated map[string]bool, view *View, no
 			Partial: entry.partial, Demoted: entry.demoted, Activation: entry.activation, Replica: entry.replica,
 			Current: entry.current, Retained: entry.retained, RetainedLastHour: entry.lastHour,
 			Consequence: entry.skipped, SkipReasons: entry.reasons, Rebalance: entry.rebalance}
+		if check.SourceStanding() {
+			report.Strategies = entry.sourceStrategies
+		}
 		if !entry.newest.IsZero() {
 			newest := entry.newest
 			report.RetainedNewest = &newest
@@ -792,7 +870,10 @@ func SummarizeTodo(reports []CheckReport, columns [][]Anomaly, view *View, now t
 }
 
 func (owner Owner) actionRequired() bool {
-	return owner == OwnerAlarmd || owner == OwnerUndetermined
+	// The platform's lines are on the first screen with this deployment's:
+	// a strategy the platform wrote unusably is not detecting, and the
+	// operator of this deployment is the one who can go and say so.
+	return owner == OwnerAlarmd || owner == OwnerUndetermined || owner == OwnerPlatform
 }
 
 // columnNames is the order the handler passes the columns in, so a truncated

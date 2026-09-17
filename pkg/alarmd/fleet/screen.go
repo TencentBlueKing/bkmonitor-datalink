@@ -75,6 +75,11 @@ func (report CheckReport) LineCount() int {
 	if !report.Code.Standing() {
 		return report.Current
 	}
+	if report.Code.SourceStanding() {
+		// Withheld strategies, not replicas: one leader reports them all, and
+		// a line that read 1 for eighty-one strategies would say nothing.
+		return report.Strategies
+	}
 	replicas := map[string]struct{}{}
 	for _, group := range report.Groups {
 		for _, replica := range group.Replicas {

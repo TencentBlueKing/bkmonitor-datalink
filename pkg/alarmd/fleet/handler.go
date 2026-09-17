@@ -231,6 +231,17 @@ type HealthResponse struct {
 	// judgement has to be beside them.
 	Rebalance        *RebalanceFacts `json:"rebalance,omitempty"`
 	RebalanceReplica string          `json:"rebalance_replica,omitempty"`
+	// Source is what the leader's last round found at the strategy source,
+	// and SourceReplica which leader. On the verdict route because Expected
+	// is decided by it: an expected of 0 next to a source listing 81 is a
+	// deployment holding everything at the configuration step, and a reader
+	// with only the 0 concludes there is nothing to detect.
+	Source        *SourceFacts `json:"source"`
+	SourceReplica string       `json:"source_replica,omitempty"`
+	// Dependencies is where this deployment's external systems are and what
+	// one replica has seen of them, and DependenciesReplica which replica.
+	Dependencies        []Endpoint `json:"dependencies"`
+	DependenciesReplica string     `json:"dependencies_replica,omitempty"`
 	// Overdue rides here rather than only in the list because the list can be
 	// paged or truncated, and "how many objects are not being evaluated" must
 	// not depend on how much of the list fitted.
@@ -769,6 +780,8 @@ func NewHandler(
 			Degradations: degradationList(view.Degradations),
 			Activation:   view.Activation, ActivationReplica: view.ActivationReplica,
 			Rebalance: view.Rebalance, RebalanceReplica: view.RebalanceReplica,
+			Source: view.Source, SourceReplica: view.SourceReplica,
+			Dependencies: dependencyList(view.Dependencies), DependenciesReplica: view.DependenciesReplica,
 			Overdue: view.Overdue, Dispatch: view.Dispatch, Schedule: view.Schedule,
 			Gaps: view.Gaps, Capacity: view.Capacity,
 			Load: LoadOf(&view, now()),
@@ -784,6 +797,16 @@ func degradationList(degradations []Degradation) []Degradation {
 		return []Degradation{}
 	}
 	return degradations
+}
+
+// dependencyList sends an empty list rather than null for a build that
+// published no dependencies: the page then says "not reported" once, instead
+// of failing on the field.
+func dependencyList(dependencies []Endpoint) []Endpoint {
+	if dependencies == nil {
+		return []Endpoint{}
+	}
+	return dependencies
 }
 
 func listObjects(response http.ResponseWriter, request *http.Request, service *Service,

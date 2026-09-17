@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -293,6 +294,48 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		FailureStage:              "schedule_cutover", FailureClass: "schedule_conflict",
 		LastFailure: "alarmd controlplane: schedule activation conflict",
 	}
+	// The source the leader read this round, in the shape a new deployment
+	// showed: every listed strategy withheld, most for want of the identity
+	// fields the contract requires, some listed without a document, a few
+	// refused by the compiler at a level -- so the source lines, the
+	// samples with a field path and a level, the STALE_CONFIG fold and the
+	// blocked degradation all render from one consistent fixture.
+	sourceWithheld := []fleet.WithheldObject{
+		{StrategyID: "9", Scope: "STRATEGY", Disposition: "SOURCE_INCOMPLETE", Reason: "SOURCE_IDENTITY_UNAVAILABLE"},
+		{StrategyID: "81", Scope: "STRATEGY", Disposition: "SOURCE_INCOMPLETE", Reason: "SOURCE_IDENTITY_UNAVAILABLE"},
+		{StrategyID: "120", Scope: "STRATEGY", Disposition: "SOURCE_INCOMPLETE", Reason: "SOURCE_OBJECT_INCOMPLETE"},
+		{StrategyID: "77", Scope: "LEVEL", LevelID: 2, Disposition: "CONFIG_REJECTED", Reason: "LEVEL_INVALID", FieldPath: "items[0].algorithms[0].config"},
+		{StrategyID: "78", Scope: "STRATEGY", Disposition: "STALE_CONFIG", Reason: "LEVEL_INVALID"},
+	}
+	for index := 0; index < 57; index++ {
+		sourceWithheld = append(sourceWithheld, fleet.WithheldObject{StrategyID: strconv.Itoa(200 + index), Scope: "STRATEGY",
+			Disposition: "SOURCE_INCOMPLETE", Reason: "SOURCE_IDENTITY_UNAVAILABLE"})
+	}
+	source := fleet.NewSourceFacts(at.Add(-30*time.Second), map[string]int{
+		"SOURCE_INCOMPLETE": 60, "CONFIG_REJECTED": 1, "STALE_CONFIG": 1}, sourceWithheld)
+	source.ChangeSignalPresent = true
+	signalAge := int64(95)
+	source.ChangeSignalAgeSeconds = &signalAge
+	stateDB, cacheDB := 8, 0
+	successAge, failureAge := 2.5, 3600.0
+	cmdbAge := 240.0
+	dependencies := []fleet.Endpoint{
+		{Role: fleet.EndpointStateRedis, Kind: "redis", Address: "redis.example:6379", Mode: "standalone", DB: &stateDB,
+			Prefix: "alarmd:phase2:g2:runtime:v1", Configured: true, LastSuccessAgeSeconds: &successAge},
+		{Role: fleet.EndpointStrategyCache, Kind: "redis", Address: "redis.example:6379", Mode: "standalone", DB: &cacheDB,
+			Prefix: "bk_monitorv3.ee.cache", Configured: true, LastSuccessAgeSeconds: &successAge,
+			LastFailureAgeSeconds: &failureAge, LastFailure: "dial tcp: i/o timeout",
+			Writer: &fleet.WriterEvidence{Present: true, Count: 62, AgeSeconds: ptrFloat(95), State: "marker_present"}},
+		{Role: fleet.EndpointCMDBCache, Kind: "redis", Address: "redis.example:6379", Mode: "standalone", DB: &cacheDB,
+			Prefix: "bk_monitorv3.ee.cache", Configured: true, SharedWith: fleet.EndpointStrategyCache, LastSuccessAgeSeconds: &successAge,
+			Writer: &fleet.WriterEvidence{Present: true, Count: 47788, AgeSeconds: &cmdbAge, State: "loaded"}},
+		{Role: fleet.EndpointDynamicConfig, Kind: "redis"},
+		{Role: fleet.EndpointQueryBackend, Kind: "http", Address: "http://unify-query.example:10205", Configured: true},
+		{Role: fleet.EndpointOutputKafka, Kind: "kafka", Address: "kafka-0.example:9092,kafka-1.example:9092",
+			Prefix: "0bkmonitor_backend_event", Configured: true},
+		{Role: fleet.EndpointCompatOutput, Kind: "redis", Address: "redis.example:6379", Mode: "standalone", DB: &stateDB,
+			Prefix: "bk_monitorv3.ee.cache", Configured: true},
+	}
 	degradations := []fleet.Degradation{
 		{Kind: fleet.DegradationActivationBehind, Replica: "bk-monitor-alarmd-trigger-5bdb679ddf-abcde"},
 		{Kind: fleet.DegradationOpenAlertSetStale, Replica: "bk-monitor-alarmd-trigger-5bdb679ddf-fghij"},
@@ -301,6 +344,10 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		// deployment keeps. The line says that, not the kind name.
 		{Kind: fleet.DegradationControlSourceStale, Replica: "bk-monitor-alarmd-trigger-5bdb679ddf-abcde",
 			Stage: "validate_catalog", Text: "plan retention 60h13m exceeds catalog retention 24h13m"},
+		// The blocked source, last, as Aggregate appends it after the replica
+		// loop: one fact about the deployment, decided on the newest round.
+		{Kind: fleet.DegradationSourceBlocked, Replica: "bk-monitor-alarmd-trigger-5bdb679ddf-abcde", Stage: "catalog",
+			Text: "source lists 62 strategies, 0 accepted: 59 SOURCE_INCOMPLETE/SOURCE_IDENTITY_UNAVAILABLE, 1 SOURCE_INCOMPLETE/SOURCE_OBJECT_INCOMPLETE, 1 CONFIG_REJECTED/LEVEL_INVALID, 1 STALE_CONFIG/LEVEL_INVALID"},
 	}
 	// The demoted pool: a refused object that also skipped Slots while
 	// there, two minutes ago. The shape of 346 live objects whose records
@@ -348,6 +395,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		// past the scheduler's tolerance, and the build only plans the
 		// moves. The third standing is built from this and nothing else.
 		Rebalance: rebalance, RebalanceReplica: "bk-monitor-alarmd-trigger-5bdb679ddf-abcde",
+		Source: source, SourceReplica: "bk-monitor-alarmd-trigger-5bdb679ddf-abcde",
 		Degradations: degradations}
 	columns := [][]fleet.Anomaly{rows, demoted}
 	checks := fleet.ReportChecks(columns, nil, retained, at)
@@ -443,6 +491,8 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			Degradations: degradations, Activation: activation,
 			ActivationReplica: "bk-monitor-alarmd-trigger-5bdb679ddf-abcde",
 			Rebalance:         rebalance, RebalanceReplica: "bk-monitor-alarmd-trigger-5bdb679ddf-abcde",
+			Source: source, SourceReplica: "bk-monitor-alarmd-trigger-5bdb679ddf-abcde",
+			Dependencies: dependencies, DependenciesReplica: "bk-monitor-alarmd-trigger-5bdb679ddf-abcde",
 			// The tracker writes the exit count and the exit time on adjacent
 			// lines, so a deployment with exits always has this. Without it here
 			// the fixture described a deployment that cannot exist -- and the page
@@ -561,6 +611,13 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 
 	output, err := exec.Command(node, filepath.Join(dir, "smoke.js"), dir).CombinedOutput()
 	text := strings.TrimSpace(string(output))
+	if dump := os.Getenv("FLEET_SMOKE_DUMP"); dump != "" {
+		// The whole rendering, for reading the sentences a change produced
+		// before pinning them; never part of the verdict.
+		if writeErr := os.WriteFile(dump, output, 0o644); writeErr != nil {
+			t.Logf("could not write the smoke dump: %v", writeErr)
+		}
+	}
 	if err != nil {
 		t.Errorf("the page threw while rendering:\n%s", text)
 		return
@@ -656,8 +713,13 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			t.Errorf("the checks do not say %q:\n%s", want, todoLine)
 		}
 	}
-	if !strings.HasPrefix(strings.TrimPrefix(todoLine, "CHECKS :: "), "控制面变更自 ") {
-		t.Errorf("the fleet executing a stale publication is not the first line:\n%s", todoLine)
+	// The source standing first: a strategy held at the configuration step
+	// never reaches anything below it. The stale publication is next.
+	if !strings.HasPrefix(strings.TrimPrefix(todoLine, "CHECKS :: "), "策略缓存里 60 条策略的文档不满足合同，没有进入检测（2 种原因）") {
+		t.Errorf("the withheld source is not the first line:\n%s", todoLine)
+	}
+	if !strings.Contains(todoLine, "控制面变更自 ") {
+		t.Errorf("the fleet executing a stale publication is not on the list:\n%s", todoLine)
 	}
 	// Not confirmed as this deployment's is its own part, not on the list
 	// above and not handed over: the bare refusal and the undecided windows.
@@ -712,8 +774,8 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		// refusal's consequence and not as capacity.
 		{"GOV ::", "2 个对象的查询被后端回\"表或字段不存在\"（1 种回答，1 条策略，1 个业务）——按策略引用核，未逐个核过实际请求与元数据前不认定是策略写错；其中 1 个已降级，不再反复查；其中 1 个在被拒期间还跳过了检测（最近 10 分钟内 1 个）——冷却让旧轮次超出重放范围，首要原因是查询不可用，扩容无用"},
 		{"GOV ::", "策略侧"},
-		{"ACTION ::", "现在要做的：先修激活：看展开里最近一次失败文本与 activation_failed 日志；修好前所有策略变更都不生效（控制面变更自 "},
-		{"ACTION ::", "；之后还有 8 类，按顺序在下面；待归因 5 类另看，别交出去"},
+		{"ACTION ::", "现在要做的：找策略缓存的写入方（bk-monitor 后台的 cache 进程，或替代它的模块）：缺身份字段的要写方按合同补 bk_tenant_id / space_uid"},
+		{"ACTION ::", "（策略缓存里 60 条策略的文档不满足合同，没有进入检测（2 种原因）——是写入方写的内容缺东西，不是策略配置错）；之后还有 9 类，按顺序在下面；待归因 5 类另看，别交出去"},
 		// A record line's folds name what each loss is; the refusal's object
 		// row says what it lost while under its line.
 		{"GROUPS LOSS ::", "ONGOING（仍在发生（最近 10 分钟内跳过）） · 1 个对象 · 1 条策略 · 1 个业务"},
@@ -768,6 +830,34 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			t.Errorf("%s does not say %q:\n%s", want.line, want.says, line)
 		}
 	}
+	// The source lines, the hint under the expected count and the dependency
+	// table, each on the one fixture: a blocked source with the identity
+	// refusal as its largest group, a sample cut at twenty, a level-scoped
+	// compiler refusal with its field, and a stale one said to be running.
+	for _, want := range []struct{ line, says string }{
+		{"GROUPS SOURCE ::", "SOURCE_IDENTITY_UNAVAILABLE · 59 条策略，处置 SOURCE_INCOMPLETE，没有对象（没进入检测）策略样本（按 ID 升序，最多 20 条，另有 39 条没列）：策略 9策略 81策略 200"},
+		{"GROUPS SOURCE ::", "SOURCE_OBJECT_INCOMPLETE · 1 条策略，处置 SOURCE_INCOMPLETE，没有对象（没进入检测）策略样本（按 ID 升序，最多 1 条）：策略 120"},
+		{"GROUPS REJECTED ::", "LEVEL_INVALID · 1 条策略，处置 CONFIG_REJECTED，没有对象（没进入检测）策略样本（按 ID 升序，最多 1 条）：策略 77　级别 2 · 字段 items[0].algorithms[0].config"},
+		{"GROUPS REJECTED ::", "STALE_CONFIG/LEVEL_INVALID · 1 条策略，处置 STALE_CONFIG，仍按上一版配置在检测，新配置没生效"},
+		{"EXPECTED HINT ::", "策略缓存列出 62 条，接受 0 条；扣住 59 条 SOURCE_INCOMPLETE/SOURCE_IDENTITY_UNAVAILABLE、1 条 CONFIG_REJECTED/LEVEL_INVALID、1 条 SOURCE_INCOMPLETE/SOURCE_OBJECT_INCOMPLETE、1 条 STALE_CONFIG/LEVEL_INVALID；不是没负载，是全部被扣在配置获取环节——看首屏第一行；写入方标记 last_updated 于 1 分 35 秒前更新"},
+		{"EXPECTED HINT nosource ::", "策略缓存的读数没有发布（旧构建，或还没有 leader 跑过一轮），说不出这个 0 是没策略还是全被扣住"},
+		{"EXPECTED HINT empty ::", "策略缓存列出 0 条，接受 0 条；写入方没有留 last_updated 标记"},
+		{"DEPS ::", "策略缓存（平台写、alarmd 读）redis standalone redis.example:6379 · db 0 · bk_monitorv3.ee.cache成功 3 秒前；失败 1 小时 0 分前：dial tcp: i/o timeout有：列出 62 条策略；写入方标记 last_updated 于 1 分 35 秒前更新"},
+		{"DEPS ::", "CMDB 主机缓存（平台写、alarmd 读）redis standalone redis.example:6379 · db 0 · bk_monitorv3.ee.cache · 与 strategy_cache 共用连接成功 3 秒前有：47788 台主机，来源刷新于 4 分 0 秒前"},
+		{"DEPS ::", "平台动态配置（平台写、alarmd 读）未配置"},
+		{"DEPS ::", "兼容输出用的服务 Redis（策略快照）redis standalone redis.example:6379 · db 8 · bk_monitorv3.ee.cache本进程还没对它发过命令"},
+		{"VAR degraded why ::", "策略缓存里有策略，但这一轮一条都没接受——整个部署没有在检测任何东西；不是没负载，是全部被扣在配置获取环节（副本 abcde）"},
+	} {
+		if line := lineStarting(text, want.line); !strings.Contains(line, want.says) {
+			t.Errorf("%s does not say %q:\n%s", want.line, want.says, line)
+		}
+	}
+	// And nothing on the page carries a credential-shaped address: the
+	// dependency table is the one place addresses appear, and the fixture's
+	// are bare host:port.
+	if deps := lineStarting(text, "DEPS ::"); strings.Contains(deps, "@") || strings.Contains(deps, "password") {
+		t.Errorf("the dependency table renders something credential-shaped:\n%s", deps)
+	}
 	if strings.Contains(todoLine, "策略引用了后端说不存在的表或字段") {
 		t.Errorf("the refusal naming a missing target is still on the list this reader acts on:\n%s", todoLine)
 	}
@@ -807,7 +897,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		// none), and one retained record made an hour ago.
 		// Three parts from the server's arithmetic, then what is being lost
 		// now and what the refused objects lost, apart from the record.
-		"需要处理：alarmd 已确认 9 类（16 个对象，去重）；待归因 5 类（15 个对象）；业务侧已确认 3 类（4 个对象）在运营治理。正在漏检 1 个对象（最近 10 分钟内跳过，最近一次 ",
+		"需要处理：现在要处理 10 类（16 个对象，去重；其中平台写入方 1 类，按策略计不按对象计）；待归因 5 类（15 个对象）；业务侧已确认 4 类（4 个对象）在运营治理。正在漏检 1 个对象（最近 10 分钟内跳过，最近一次 ",
 		"另有 1 个是滚动后的追赶漏检（副本启动 5 分钟内），看它还有没有新增",
 		"被拒的对象里 1 个在冷却期间跳过了检测（最近 10 分钟内 1 个），首要原因是查询不可用；已停止的漏检记录 1 个对象另列",
 		// On time, and on a stale publication: both true at once, and the
@@ -1117,6 +1207,8 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 // lineStarting returns the harness line with this prefix, or "" if the render
 // emitted none -- which is itself a result, and a different one from a line
 // that came out empty.
+func ptrFloat(value float64) *float64 { return &value }
+
 func lineStarting(text, prefix string) string {
 	for _, candidate := range strings.Split(text, "\n") {
 		if strings.HasPrefix(candidate, prefix) {
@@ -1290,6 +1382,21 @@ for (const [name, load] of Object.entries(loadStates)) {
   console.log('LOAD ' + name + ' :: ' + textOf(store['loadLines']) + ' ｜ ' + textOf(store['loadLimits']));
 }
 // Opening a line renders its folds.
+ctx.openCheck = 'SOURCE_INCOMPLETE';
+ctx.renderGroups();
+console.log('GROUPS SOURCE :: ' + textOf(store['groups']));
+ctx.openCheck = 'CONFIG_REJECTED';
+ctx.renderGroups();
+console.log('GROUPS REJECTED :: ' + textOf(store['groups']));
+console.log('EXPECTED HINT :: ' + textOf(store['expectedHint']));
+console.log('DEPS :: ' + textOf(store['depBasis']) + ' ｜ ' + textOf(store['depRows']));
+// The hint on the other two deployments the same 0 can be: a build that
+// published no source round, and a source with nothing listed.
+ctx.renderSource(null, 0);
+console.log('EXPECTED HINT nosource :: ' + textOf(store['expectedHint']));
+ctx.renderSource({listed: 0, accepted: 0, objects: {}, withheld: [], change_signal_present: false}, 0);
+console.log('EXPECTED HINT empty :: ' + textOf(store['expectedHint']));
+ctx.renderSource(data.health.source, 0);
 ctx.openCheck = 'OBSERVATION_GAP';
 ctx.renderChecks(data.checks);
 console.log('GROUPS :: ' + textOf(store['groups']));

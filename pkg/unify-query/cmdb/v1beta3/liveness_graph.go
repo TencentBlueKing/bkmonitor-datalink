@@ -16,6 +16,9 @@ import (
 )
 
 type LivenessGraph struct {
+	// maxTargetHops bounds extraction after rows from different SQL hops are merged.
+	maxTargetHops *int
+
 	QueryStart      int64                    `json:"query_start"`
 	QueryEnd        int64                    `json:"query_end"`
 	RootID          string                   `json:"root_id,omitempty"`
@@ -167,6 +170,10 @@ func mergeLivenessGraphsByRoot(graphs []*LivenessGraph) []*LivenessGraph {
 }
 
 func mergeLivenessGraphInto(dst, src *LivenessGraph) {
+	if src != nil && dst != nil && src.maxTargetHops != nil && (dst.maxTargetHops == nil || *src.maxTargetHops < *dst.maxTargetHops) {
+		dst.maxTargetHops = src.maxTargetHops
+	}
+
 	if dst == nil || src == nil {
 		return
 	}
@@ -298,6 +305,9 @@ func (g *LivenessGraph) collectTargetPaths(
 		})
 	}
 
+	if g.maxTargetHops != nil && len(edgePeriods) >= *g.maxTargetHops {
+		return
+	}
 	for _, edge := range g.outEdgesFromMap(nodeID) {
 		allowSelfLoop := !includeRootTarget && edge.ToID == nodeID && len(edgePeriods) == 0 && node.ResourceType == targetType
 		if visited[edge.ToID] && !allowSelfLoop {

@@ -145,9 +145,6 @@ func TestRangeValidationTraceIncludesPointLimit(t *testing.T) {
 
 func TestPathQueryTraceIncludesFullPathIdentityAndSelection(t *testing.T) {
 	recorder := setupV1Beta3TraceRecorder(t)
-	previousServingRelations := ActiveEdgeServingRelations
-	ActiveEdgeServingRelations = []string{string(RelationNodeWithPod)}
-	t.Cleanup(func() { ActiveEdgeServingRelations = previousServingRelations })
 	model := &Model{}
 	path := resourcePath{Steps: []resourcePathStep{
 		{ResourceType: string(ResourceTypeNode)},
@@ -200,9 +197,9 @@ func TestPathQueryTraceIncludesFullPathIdentityAndSelection(t *testing.T) {
 	assert.Equal(t, aggregateSpan.SpanContext().SpanID(), pathSpan.Parent().SpanID())
 	assert.Equal(t, identity, traceStringAttribute(t, pathSpan, "path-identity"))
 	assert.Equal(t, "success", traceStringAttribute(t, pathSpan, "path-result"))
-	assert.Equal(t, "active_edge_serving", traceStringAttribute(t, pathSpan, "query-route"))
+	assert.Equal(t, "single_table_flat_one_hop", traceStringAttribute(t, pathSpan, "query-route"))
 	assert.Equal(t, int64(1), traceIntAttribute(t, pathSpan, "path-hop-count"))
-	assert.Equal(t, int64(1), traceIntAttribute(t, pathSpan, "active-edge-serving-hop-count"))
+	assert.Equal(t, int64(1), traceIntAttribute(t, pathSpan, "relation-table-hop-count"))
 	assert.Equal(t, int64(1), traceIntAttribute(t, pathSpan, "edge-count"))
 }
 

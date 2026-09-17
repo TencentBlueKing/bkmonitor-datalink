@@ -305,6 +305,11 @@ type phaseTwoControlRefreshResult struct {
 	// composition it last had rather than reporting an empty one, because
 	// empty and "the Catalog has nothing in it" are not the same answer.
 	Composition *controlplane.CatalogComposition
+	// ChangeSignalPresent and ChangeSignalAgeSeconds are the source's change
+	// marker as the round read it, delivered with the composition so the
+	// fleet can say how old the writer's content is beside what it withheld.
+	ChangeSignalPresent    bool
+	ChangeSignalAgeSeconds int64
 	// Activation is what this round did about bringing the activation to the
 	// publication the source produced, when it tried. Absent on a round that
 	// did not try: a follower's load, a source failure before any publication

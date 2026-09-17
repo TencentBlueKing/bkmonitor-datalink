@@ -211,13 +211,13 @@ func TestThePageHasWordingForEveryCheckOwnerScheduleAndResult(t *testing.T) {
 			}
 		}
 	}
-	// And the table is the size the design says: the first screen is
-	// twenty lines at most, and a twenty-first sentence here is a
-	// twenty-first check.
+	// And the table is the size the design says: twenty object and
+	// deployment lines plus the three source standings, and one more
+	// sentence here is one more check.
 	entries := regexp.MustCompile(`(?m)^  [A-Z_]+:`).FindAllString(
 		regexp.MustCompile(`var CHECK = \{([\s\S]*?)\};`).FindStringSubmatch(body)[1], -1)
-	if len(entries) != 20 {
-		t.Errorf("CHECK has %d sentences, want 20", len(entries))
+	if len(entries) != 23 {
+		t.Errorf("CHECK has %d sentences, want 23", len(entries))
 	}
 	// The page's list of standings is the Go side's: a standing the page
 	// does not know is a line it files under "no objects, nothing up" and

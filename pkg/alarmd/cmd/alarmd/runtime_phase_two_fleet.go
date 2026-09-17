@@ -213,6 +213,11 @@ type fleetPublisher struct {
 	// has not attempted it, which is every follower; the aggregate then
 	// takes the one replica that has.
 	activation func() *fleet.ActivationFacts
+	// source and endpoints are the leader's last source round and every
+	// replica's resolved external systems; both nil-safe, both optional so
+	// the tests that build a publisher by hand keep working.
+	source    func() *fleet.SourceFacts
+	endpoints func() []fleet.Endpoint
 	// rebalance reports the control leader's latest rebalance planning
 	// round: how the ready replicas hold the objects and what the round
 	// would move. Nil on a follower; the aggregate takes the newest round
@@ -407,6 +412,12 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	}
 	if publisher.rebalance != nil {
 		snapshot.Rebalance = publisher.rebalance()
+	}
+	if publisher.source != nil {
+		snapshot.Source = publisher.source()
+	}
+	if publisher.endpoints != nil {
+		snapshot.Dependencies = publisher.endpoints()
 	}
 	// And the objects whose rounds end without a basis to decide recovery.
 	// Beside the anomalies for a different reason than the pool: not "this is

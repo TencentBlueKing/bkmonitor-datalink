@@ -754,6 +754,14 @@ type Snapshot struct {
 	// the ready replicas hold the assigned objects and what the round would
 	// move. Absent on every follower and on a build before this fact existed.
 	Rebalance *RebalanceFacts `json:"rebalance,omitempty"`
+	// Source is what the control leader's last refresh round found at the
+	// strategy source: how many strategies it listed, how many were accepted,
+	// and what kept the rest out. Absent on every follower and on a build
+	// before this fact existed.
+	Source *SourceFacts `json:"source,omitempty"`
+	// Dependencies is every external system this replica resolved, with what
+	// it has seen of each. Absent on a build before this fact existed.
+	Dependencies []Endpoint `json:"dependencies,omitempty"`
 }
 
 // RebalanceFacts is one rebalance planning round on the control leader, as
@@ -953,13 +961,21 @@ const (
 	// running deployment this went unseen for half a day, with the failure
 	// text sitting on every snapshot and nothing reading it.
 	DegradationActivationBehind DegradationKind = "ACTIVATION_BEHIND"
+	// DegradationSourceBlocked: the strategy source lists strategies and the
+	// control leader's round accepted none of them, so the deployment detects
+	// nothing while the source refreshes on time and every clock above reads
+	// fine. The object list is empty and cannot show it. On a new deployment
+	// this read HEALTHY with expected 0 for as long as anybody looked: the
+	// platform was writing 81 strategies and the round withheld all 81 for
+	// want of the identity fields the contract requires.
+	DegradationSourceBlocked DegradationKind = "SOURCE_BLOCKED"
 )
 
 // DegradationKinds is the closed set, for the page's wording table and the
 // check that folds them.
 var DegradationKinds = []DegradationKind{
 	DegradationActivationBehind, DegradationControlSourceStale, DegradationControlLeaderAbsent,
-	DegradationOpenAlertSetStale, DegradationPlatformSettingsStale,
+	DegradationOpenAlertSetStale, DegradationPlatformSettingsStale, DegradationSourceBlocked,
 }
 
 // Degradation is one replica-level reason the deployment is degraded.
@@ -1274,6 +1290,17 @@ type View struct {
 	// plan, and after a leader change two replicas carry one each.
 	Rebalance        *RebalanceFacts `json:"rebalance,omitempty"`
 	RebalanceReplica string          `json:"rebalance_replica,omitempty"`
+	// Source is the newest source round any counted replica published, and
+	// SourceReplica which one. Newest for the same reason Rebalance is: a
+	// replica that stopped being the leader keeps its last round.
+	Source        *SourceFacts `json:"source,omitempty"`
+	SourceReplica string       `json:"source_replica,omitempty"`
+	// Dependencies is what one counted replica resolved its external systems
+	// to, and DependenciesReplica which one: the newest snapshot's. Every
+	// replica renders the same coordinates; what differs is what each has
+	// seen of them, and the one shown is the one that published last.
+	Dependencies        []Endpoint `json:"dependencies,omitempty"`
+	DependenciesReplica string     `json:"dependencies_replica,omitempty"`
 }
 
 // Aggregate folds the published snapshots into one view.
@@ -1296,6 +1323,7 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 	counted := make([]Snapshot, 0, len(expectedReplicas))
 	ownedSets := make([][]string, 0, len(expectedReplicas))
 	setsComplete := true
+	var dependenciesTakenAt time.Time
 
 	byReplica := make(map[string]Snapshot, len(snapshots))
 	for _, snapshot := range snapshots {
@@ -1396,6 +1424,14 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		if snapshot.Rebalance != nil && (view.Rebalance == nil || snapshot.Rebalance.PlannedAt.After(view.Rebalance.PlannedAt)) {
 			facts := *snapshot.Rebalance
 			view.Rebalance, view.RebalanceReplica = &facts, replica
+		}
+		if snapshot.Source != nil && (view.Source == nil || snapshot.Source.At.After(view.Source.At)) {
+			facts := *snapshot.Source
+			view.Source, view.SourceReplica = &facts, replica
+		}
+		if len(snapshot.Dependencies) > 0 && (view.Dependencies == nil || snapshot.TakenAt.After(dependenciesTakenAt)) {
+			view.Dependencies = append([]Endpoint(nil), snapshot.Dependencies...)
+			view.DependenciesReplica, dependenciesTakenAt = replica, snapshot.TakenAt
 		}
 		perReplica := ReplicaView{
 			Replica: replica, Owned: snapshot.Owned, Determined: snapshot.Determined,
@@ -1570,9 +1606,34 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 	Attribute(view.Undecidable, now)
 	Attribute(view.ByDesign, now)
 	Attribute(view.NoData, now)
+	// Decided on the newest source round rather than inside the replica loop:
+	// a source is one thing, and after a leader change two replicas carry a
+	// round each, of which only the newest says what the source is now.
+	if view.Source.Blocked() {
+		view.Degradations = append(view.Degradations, Degradation{Kind: DegradationSourceBlocked,
+			Replica: view.SourceReplica, Stage: "catalog", Text: sourceBlockedText(view.Source)})
+	}
 	Settle(&view)
 	sortBuildGroups(view.Builds)
 	return view
+}
+
+// sourceBlockedText is the one sentence a blocked source's degradation
+// carries: how many the source listed, and what kept them out, largest
+// group first. The dispositions and reasons are the control plane's own
+// words, so the reader can find them in its log and in the withheld
+// metrics without translation.
+func sourceBlockedText(source *SourceFacts) string {
+	text := fmt.Sprintf("source lists %d strategies, 0 accepted", source.Listed)
+	for index, group := range source.Withheld {
+		if index == 0 {
+			text += ": "
+		} else {
+			text += ", "
+		}
+		text += fmt.Sprintf("%d %s/%s", group.Count, group.Disposition, group.Reason)
+	}
+	return text
 }
 
 // addToBuildGroup files a counted replica under the build it reported. A nil

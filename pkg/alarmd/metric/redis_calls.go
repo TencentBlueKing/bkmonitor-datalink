@@ -8,6 +8,7 @@ package metric
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -34,7 +35,86 @@ import (
 // series nobody notices. The values match the pool metrics so command load and
 // connection load join on the same label.
 var redisClientNames = map[string]struct{}{
-	"source": {}, "runtime": {}, "cmdb": {}, "legacy_output": {}, "legacy_pod_cache": {}, "diagnostics": {},
+	"source": {}, "runtime": {}, "cmdb": {}, "dynamic_config": {}, "legacy_output": {}, "legacy_pod_cache": {}, "diagnostics": {},
+}
+
+// RedisClientHealth is what this process has last seen of one Redis client:
+// when a command last completed, when one last failed, and what the failure
+// said. It is the reading the fleet page gives beside the client's address,
+// because an address alone cannot tell a Redis that answers from one that
+// does not, and the counters beside it say how often, never how recently.
+type RedisClientHealth struct {
+	LastSuccessAt time.Time
+	LastFailureAt time.Time
+	// LastFailure is the error's text, sanitised of anything that looks like a
+	// credential and bounded. Empty until one has failed.
+	LastFailure string
+}
+
+// redisClientHealthTextLimit bounds the failure text kept. Long enough for a
+// dial error with its address and reason; short enough that a client returning
+// a payload as its error does not fill the snapshot.
+const redisClientHealthTextLimit = 256
+
+// redisClientHealthBook is the per-client record, shared by every hook the
+// Recorder hands out so that a role served by a reused connection reads the
+// connection's health and not an empty one.
+type redisClientHealthBook struct {
+	mu      sync.Mutex
+	clients map[string]*RedisClientHealth
+}
+
+func (book *redisClientHealthBook) note(client string, at time.Time, err error) {
+	if book == nil {
+		return
+	}
+	book.mu.Lock()
+	defer book.mu.Unlock()
+	if book.clients == nil {
+		book.clients = map[string]*RedisClientHealth{}
+	}
+	health := book.clients[client]
+	if health == nil {
+		health = &RedisClientHealth{}
+		book.clients[client] = health
+	}
+	if err == nil || err == redis.Nil {
+		health.LastSuccessAt = at
+		return
+	}
+	health.LastFailureAt = at
+	text := sanitizeRedisError(err.Error())
+	if len(text) > redisClientHealthTextLimit {
+		text = text[:redisClientHealthTextLimit] + "..."
+	}
+	health.LastFailure = text
+}
+
+func (book *redisClientHealthBook) read(client string) (RedisClientHealth, bool) {
+	if book == nil {
+		return RedisClientHealth{}, false
+	}
+	book.mu.Lock()
+	defer book.mu.Unlock()
+	health := book.clients[client]
+	if health == nil {
+		return RedisClientHealth{}, false
+	}
+	return *health, true
+}
+
+// sanitizeRedisError strips what a Redis error can carry that a page must not
+// show: a URL-form address with credentials in it. Dial errors name the host
+// and port, which the page shows anyway beside the client; a password never
+// appears in go-redis's own errors, but an application error wrapping the
+// options might, and the rule is cheaper than the audit.
+func sanitizeRedisError(text string) string {
+	if at := strings.Index(text, "@"); at >= 0 {
+		if scheme := strings.LastIndex(text[:at], "://"); scheme >= 0 {
+			return text[:scheme+3] + "***" + text[at:]
+		}
+	}
+	return text
 }
 
 var redisCommandNames = map[string]struct{}{
@@ -111,6 +191,7 @@ type RedisCallHook struct {
 	metrics redisCallMetrics
 	client  string
 	now     func() time.Time
+	health  *redisClientHealthBook
 }
 
 // RedisHook returns the recorder's Redis instrumentation for one named client.
@@ -119,7 +200,18 @@ func (r *Recorder) RedisHook(client string) *RedisCallHook {
 	if r == nil {
 		return nil
 	}
-	return &RedisCallHook{metrics: r.phaseTwo.redisCalls, client: boundedRedisClient(client), now: time.Now}
+	return &RedisCallHook{metrics: r.phaseTwo.redisCalls, client: boundedRedisClient(client), now: time.Now,
+		health: r.phaseTwo.redisHealth}
+}
+
+// RedisClientHealth reads what the hooks have recorded for one client name.
+// False for a name no hook has reported on yet, which is a different answer
+// from a client that has never failed.
+func (r *Recorder) RedisClientHealth(client string) (RedisClientHealth, bool) {
+	if r == nil {
+		return RedisClientHealth{}, false
+	}
+	return r.phaseTwo.redisHealth.read(boundedRedisClient(client))
 }
 
 type redisCallStartKey struct{}
@@ -156,16 +248,21 @@ func (h *RedisCallHook) AfterProcessPipeline(ctx context.Context, cmds []redis.C
 	if h == nil {
 		return nil
 	}
+	var failed error
 	for index, cmd := range cmds {
 		name := boundedRedisCommand(cmd.Name())
 		h.metrics.calls.WithLabelValues(h.client, name, "true").Inc()
 		if err := cmd.Err(); err != nil && err != redis.Nil {
 			h.metrics.failures.WithLabelValues(h.client, name, "true").Inc()
+			if failed == nil {
+				failed = err
+			}
 		}
 		if index == 0 {
 			h.observeDuration(ctx, name, "true")
 		}
 	}
+	h.health.note(h.client, h.now(), failed)
 	return nil
 }
 
@@ -174,6 +271,7 @@ func (h *RedisCallHook) record(ctx context.Context, name, pipelined string, err 
 	if err != nil && err != redis.Nil {
 		h.metrics.failures.WithLabelValues(h.client, name, pipelined).Inc()
 	}
+	h.health.note(h.client, h.now(), err)
 	h.observeDuration(ctx, name, pipelined)
 }
 

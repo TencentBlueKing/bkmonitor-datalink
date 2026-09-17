@@ -53,10 +53,17 @@ const (
 	// owner is likeliest, because a guess handed to the wrong person is work
 	// nobody will find the cause of.
 	OwnerUndetermined Owner = "UNDETERMINED"
+	// OwnerPlatform: the platform that writes what this deployment reads --
+	// the strategy cache, the host cache -- wrote something this deployment
+	// cannot use, or nothing. Not this deployment's capacity or design, and
+	// not the strategy's definition either: a document without the identity
+	// fields the contract requires is the writer's to fix, and the strategy
+	// it describes is not being detected until it is.
+	OwnerPlatform Owner = "PLATFORM"
 )
 
 // Owners lists every owner, for the page's completeness check.
-var Owners = []Owner{OwnerAlarmd, OwnerData, OwnerStrategy, OwnerNobody, OwnerUndetermined}
+var Owners = []Owner{OwnerAlarmd, OwnerData, OwnerStrategy, OwnerNobody, OwnerUndetermined, OwnerPlatform}
 
 // Finding is what the page renders for one object.
 type Finding struct {

@@ -210,6 +210,7 @@ func openProductionPhaseTwoBundleWithDependencies(
 	}()
 	runtimeClient := controlClient
 	runtimeClientIsSource := reflect.DeepEqual(runtimeConnection, sourceConnection)
+	sharing := endpointSharing{runtimeIsSource: runtimeClientIsSource, compatOutputPresent: true}
 	if !runtimeClientIsSource {
 		runtimeClient, err = openProductionRedisWithHook(ctx, runtimeConnection, recorder.RedisHook("runtime"))
 		if err != nil {
@@ -229,8 +230,10 @@ func openProductionPhaseTwoBundleWithDependencies(
 	cmdbClientOwned := false
 	switch {
 	case reflect.DeepEqual(cmdbConnection, sourceConnection):
+		sharing.cmdbSharedWith = fleet.EndpointStrategyCache
 	case reflect.DeepEqual(cmdbConnection, runtimeConnection):
 		cmdbClient = runtimeClient
+		sharing.cmdbSharedWith = fleet.EndpointStateRedis
 	default:
 		cmdbClient, err = openProductionRedisWithHook(ctx, cmdbConnection, recorder.RedisHook("cmdb"))
 		if err != nil {
@@ -251,13 +254,17 @@ func openProductionPhaseTwoBundleWithDependencies(
 	dynamicConfigClientOwned := false
 	dynamicConfigConnection, dynamicConfigConfigured := cfg.DynamicConfigRedis()
 	if dynamicConfigConfigured {
+		sharing.dynamicConfigured = true
 		switch {
 		case reflect.DeepEqual(dynamicConfigConnection, sourceConnection):
 			dynamicConfigClient = controlClient
+			sharing.dynamicSharedWith = fleet.EndpointStrategyCache
 		case reflect.DeepEqual(dynamicConfigConnection, runtimeConnection):
 			dynamicConfigClient = runtimeClient
+			sharing.dynamicSharedWith = fleet.EndpointStateRedis
 		case reflect.DeepEqual(dynamicConfigConnection, cmdbConnection):
 			dynamicConfigClient = cmdbClient
+			sharing.dynamicSharedWith = fleet.EndpointCMDBCache
 		default:
 			opened, err := openProductionRedisWithHook(ctx, dynamicConfigConnection, recorder.RedisHook("dynamic_config"))
 			if err != nil {
@@ -870,6 +877,9 @@ func openProductionPhaseTwoBundleWithDependencies(
 		platformSettings: platformSettingsFactsSource(platformSettings, external.Now),
 		activation:       bundle.activationFleetFacts,
 		rebalance:        bundle.rebalanceFleetFacts,
+		source:           bundle.sourceFleetFacts,
+		endpoints: endpointFactsSource(cfg, sharing, recorder, cmdbIndex, platformSettings,
+			bundle.sourceFleetFacts, external.Now),
 	}
 	// The heartbeat reports the same acknowledgement and occupancy the fleet
 	// snapshot publishes, from the same sources.

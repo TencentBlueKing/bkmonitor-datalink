@@ -18,7 +18,6 @@ import (
 )
 
 func setDefaultConfig() {
-	viper.SetDefault(RelationBackendConfigPath, RelationBackendSurrealDB)
 	viper.SetDefault(MaxHopsConfigPath, 2)
 	viper.SetDefault(MaxAllowedHopsConfigPath, 5)
 	viper.SetDefault(DefaultLimitConfigPath, 100)
@@ -42,7 +41,6 @@ func setDefaultConfig() {
 }
 
 func LoadConfig() {
-	RelationBackend = normalizeRelationBackend(viper.GetString(RelationBackendConfigPath))
 	DefaultMaxHops = viper.GetInt(MaxHopsConfigPath)
 	MaxAllowedHops = viper.GetInt(MaxAllowedHopsConfigPath)
 	DefaultLimit = viper.GetInt(DefaultLimitConfigPath)

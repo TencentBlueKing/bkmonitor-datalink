@@ -32,7 +32,7 @@ var (
 	modelMutex   sync.Mutex
 )
 
-// defaultPathQueryMaxRouting 限制进程内同时执行的 SurrealDB 查询数。
+// defaultPathQueryMaxRouting 限制进程内同时执行的旧版图查询数。
 // 单个关系查询会按候选路径顺序执行，并发仅来自不同的 query_list 项或独立 HTTP 请求。
 const defaultPathQueryMaxRouting = 4
 
@@ -44,15 +44,13 @@ func GetModel(ctx context.Context) (cmdb.CMDB, error) {
 	modelMutex.Lock()
 	defer modelMutex.Unlock()
 	if defaultModel == nil {
-		client := NewBKBaseSurrealDBClient()
-		model, err := NewModel(ctx, client)
+		model, err := NewModel(ctx, nil)
 		if err != nil {
 			return nil, err
 		}
-		// 为默认 Model 注入 binding 解析器
-		model.SetResolver(GetBindingResolver())
-		model.SetVMModelResolver(v1beta1.GetModel)
+		// v1beta3 的关系查询直接使用 TSDB-backed TimeGraph。
 		model.SetTimeGraphResolver(v1beta1.GetModel)
+		model.SetTimeGraphPrimary(true)
 		defaultModel = model
 	}
 	return defaultModel, nil
@@ -88,7 +86,10 @@ func buildSourceInferencePriority() map[ResourceType]int {
 	return priority
 }
 
-// Model v2 CMDB 实现，基于 SurrealDB 图查询
+// Model v2 CMDB 实现。
+//
+// 默认服务模型的关系查询主路径由 TimeGraph 提供；executor 及其相关代码
+// 仍保留给 QueryLivenessGraph 等旧接口使用，避免在切换查询主路径时扩大改动范围。
 type Model struct {
 	executor          GraphQueryExecutor
 	resolver          *BindingResolver
@@ -96,6 +97,7 @@ type Model struct {
 	schemaProviderMu  sync.RWMutex
 	vmModelResolver   func(context.Context, string) (cmdb.CMDB, error)
 	timeGraphResolver func(context.Context, string) (cmdb.CMDB, error)
+	timeGraphPrimary  bool
 }
 
 // NewModel 创建 Model 实例。resolver 可由调用方后续通过 SetResolver 注入。
@@ -120,6 +122,13 @@ func (m *Model) SetVMModelResolver(resolver func(context.Context, string) (cmdb.
 // SetTimeGraphResolver 注入 TSDB-backed TimeGraph model。
 func (m *Model) SetTimeGraphResolver(resolver func(context.Context, string) (cmdb.CMDB, error)) {
 	m.timeGraphResolver = resolver
+}
+
+// SetTimeGraphPrimary makes the TimeGraph adapter the relation-query path for
+// this model. It is enabled by GetModel for the serving model; NewModel keeps
+// the legacy executor path available for existing low-level callers and tests.
+func (m *Model) SetTimeGraphPrimary(enabled bool) {
+	m.timeGraphPrimary = enabled
 }
 
 // SetSchemaProvider 注入校验、路径发现和 SQL 生成共用的 Schema；传入 nil 时保持现有配置不变。
@@ -153,17 +162,15 @@ func (m *Model) QueryResourceMatcher(
 	ctx, span := trace.NewSpan(ctx, "cmdb-query-resource-matcher")
 	defer endV1Beta3TraceSpan(span, &err)
 
-	if RelationBackend == RelationBackendTimeGraph || RelationBackend == RelationBackendAuto {
+	if m.timeGraphPrimary {
 		result, timeGraphErr := m.queryResourceMatcherWithTimeGraph(
 			ctx, lookBackDelta, spaceUid, ts, target, source, indexMatcher, expandMatcher, expandShow, pathResource,
 		)
-		if timeGraphErr == nil {
-			return result.source, result.sourceMatcher, result.paths, result.target, result.matchers, nil
-		}
-		if RelationBackend == RelationBackendTimeGraph {
+		if timeGraphErr != nil {
+			span.Set("failure-stage", "timegraph-query")
 			return "", nil, nil, "", nil, timeGraphErr
 		}
-		span.Set("timegraph-fallback-error", timeGraphErr.Error())
+		return result.source, result.sourceMatcher, result.paths, result.target, result.matchers, nil
 	}
 
 	span.Set("space-uid", spaceUid)
@@ -246,17 +253,15 @@ func (m *Model) QueryResourceMatcherRange(
 	ctx, span := trace.NewSpan(ctx, "cmdb-query-resource-matcher-range")
 	defer endV1Beta3TraceSpan(span, &err)
 
-	if RelationBackend == RelationBackendTimeGraph || RelationBackend == RelationBackendAuto {
+	if m.timeGraphPrimary {
 		timeGraphResult, timeGraphErr := m.queryResourceMatcherRangeWithTimeGraph(
 			ctx, lookBackDelta, spaceUid, step, startTs, endTs, target, source, indexMatcher, expandMatcher, expandShow, pathResource,
 		)
-		if timeGraphErr == nil {
-			return timeGraphResult.source, timeGraphResult.sourceMatcher, timeGraphResult.paths, timeGraphResult.target, timeGraphResult.matchers, nil
-		}
-		if RelationBackend == RelationBackendTimeGraph {
+		if timeGraphErr != nil {
+			span.Set("failure-stage", "timegraph-query")
 			return "", nil, nil, "", nil, timeGraphErr
 		}
-		span.Set("timegraph-fallback-error", timeGraphErr.Error())
+		return timeGraphResult.source, timeGraphResult.sourceMatcher, timeGraphResult.paths, timeGraphResult.target, timeGraphResult.matchers, nil
 	}
 
 	span.Set("space-uid", spaceUid)

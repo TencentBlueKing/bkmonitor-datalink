@@ -7,6 +7,7 @@ package v1beta3
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -130,10 +131,6 @@ func relationPathsToResources(paths []cmdb.RelationPath) [][]cmdb.Resource {
 }
 
 func TestQueryResourceMatcherUsesTimeGraphBackend(t *testing.T) {
-	previousBackend := RelationBackend
-	RelationBackend = RelationBackendTimeGraph
-	t.Cleanup(func() { RelationBackend = previousBackend })
-
 	fake := &fakeTimeGraphModel{
 		instantResults: []cmdb.PathResourcesResult{{
 			Timestamp:  1700000000000,
@@ -145,6 +142,7 @@ func TestQueryResourceMatcherUsesTimeGraphBackend(t *testing.T) {
 		}},
 	}
 	model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
+	model.SetTimeGraphPrimary(true)
 	model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) {
 		return fake, nil
 	})
@@ -164,11 +162,23 @@ func TestQueryResourceMatcherUsesTimeGraphBackend(t *testing.T) {
 	require.Equal(t, "node_with_system", fake.instantPlan[0].Steps[1].RelationType)
 }
 
-func TestQueryResourceMatcherRangeUsesTimeGraphBackendAndNormalizesBuckets(t *testing.T) {
-	previousBackend := RelationBackend
-	RelationBackend = RelationBackendTimeGraph
-	t.Cleanup(func() { RelationBackend = previousBackend })
+func TestTimeGraphPrimaryDoesNotFallbackToLegacyExecutor(t *testing.T) {
+	executor := &mockGraphQueryExecutor{}
+	model := &Model{executor: executor, schemaProvider: timeGraphTestSchemaProvider{}}
+	model.SetTimeGraphPrimary(true)
+	model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) {
+		return nil, errors.New("timegraph unavailable")
+	})
 
+	_, _, _, _, _, err := model.QueryResourceMatcher(
+		context.Background(), "", "bkcc__2", "1700000000",
+		"system", "node", cmdb.Matcher{"node": "n1"}, nil, true, nil,
+	)
+	require.ErrorContains(t, err, "timegraph unavailable")
+	require.Empty(t, executor.sqls)
+}
+
+func TestQueryResourceMatcherRangeUsesTimeGraphBackendAndNormalizesBuckets(t *testing.T) {
 	fake := &fakeTimeGraphModel{
 		rangeResults: []cmdb.PathResourcesResult{
 			{
@@ -190,6 +200,7 @@ func TestQueryResourceMatcherRangeUsesTimeGraphBackendAndNormalizesBuckets(t *te
 		},
 	}
 	model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
+	model.SetTimeGraphPrimary(true)
 	model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) {
 		return fake, nil
 	})
@@ -212,10 +223,4 @@ func TestQueryResourceMatcherRangeUsesTimeGraphBackendAndNormalizesBuckets(t *te
 	require.Equal(t, "1700000030", fake.rangeEnd)
 	require.Equal(t, [][]cmdb.Resource{{"node", "system"}}, fake.rangePaths)
 	require.Equal(t, "node_with_system", fake.rangePlan[0].Steps[1].RelationType)
-}
-
-func TestNormalizeRelationBackendFallsBackToSurrealDB(t *testing.T) {
-	require.Equal(t, RelationBackendSurrealDB, normalizeRelationBackend("unknown"))
-	require.Equal(t, RelationBackendTimeGraph, normalizeRelationBackend(RelationBackendTimeGraph))
-	require.Equal(t, RelationBackendAuto, normalizeRelationBackend(RelationBackendAuto))
 }

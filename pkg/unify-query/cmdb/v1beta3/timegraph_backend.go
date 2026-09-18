@@ -47,9 +47,6 @@ type timeGraphRangeResult struct {
 func (m *Model) getTimeGraphQuerier(ctx context.Context, spaceUID string) (timeGraphQuerier, error) {
 	resolver := m.timeGraphResolver
 	if resolver == nil {
-		resolver = m.vmModelResolver
-	}
-	if resolver == nil {
 		return nil, fmt.Errorf("timegraph resolver is not configured")
 	}
 

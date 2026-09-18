@@ -325,7 +325,7 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 }
 
 // HandlerAPIRelationV1Beta3MultiResource
-// @Summary  query relation multi resource (v1beta3, SurrealDB)
+// @Summary  query relation multi resource (v1beta3, TimeGraph)
 // @ID       relation_multi_resource_query_v1beta3
 // @Produce  json
 // @Param    traceparent            header    string                          false  "TraceID"
@@ -399,7 +399,7 @@ func HandlerAPIRelationV1Beta3MultiResource(c *gin.Context) {
 			}
 
 			timestamp := cast.ToString(qry.Timestamp)
-			// v1beta3 默认 HTTP 协议对齐旧 VM relation：底层走 SurrealDB，但响应仍返回 legacy path 字段。
+			// v1beta3 默认 HTTP 协议对齐旧 VM relation，底层由 TimeGraph 提供关系查询。
 			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, queryErr = model.QueryResourceMatcher(
 				queryCtx,
 				qry.LookBackDelta, user.SpaceUID, timestamp,
@@ -452,7 +452,7 @@ func HandlerAPIRelationV1Beta3MultiResource(c *gin.Context) {
 }
 
 // HandlerAPIRelationV1Beta3MultiResourceRange
-// @Summary  query relation multi resource range (v1beta3, SurrealDB)
+// @Summary  query relation multi resource range (v1beta3, TimeGraph)
 // @ID       relation_multi_resource_query_range_v1beta3
 // @Produce  json
 // @Param    traceparent            header    string                          false  "TraceID"

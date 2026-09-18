@@ -1141,7 +1141,7 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/api.ErrResponse'
-      summary: query relation multi resource (v1beta3, SurrealDB)
+      summary: query relation multi resource (v1beta3, TimeGraph)
   /api/v1/relation/v1beta3/multi_resource_range:
     post:
       operationId: relation_multi_resource_query_range_v1beta3
@@ -1172,7 +1172,7 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/api.ErrResponse'
-      summary: query relation multi resource range (v1beta3, SurrealDB)
+      summary: query relation multi resource range (v1beta3, TimeGraph)
   /check/query/ts:
     post:
       operationId: check_query_ts

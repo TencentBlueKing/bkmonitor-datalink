@@ -117,7 +117,7 @@ const docTemplate = `{
                 "produces": [
                     "application/json"
                 ],
-                "summary": "query relation multi resource (v1beta3, SurrealDB)",
+                "summary": "query relation multi resource (v1beta3, TimeGraph)",
                 "operationId": "relation_multi_resource_query_v1beta3",
                 "parameters": [
                     {
@@ -164,7 +164,7 @@ const docTemplate = `{
                 "produces": [
                     "application/json"
                 ],
-                "summary": "query relation multi resource range (v1beta3, SurrealDB)",
+                "summary": "query relation multi resource range (v1beta3, TimeGraph)",
                 "operationId": "relation_multi_resource_query_range_v1beta3",
                 "parameters": [
                     {

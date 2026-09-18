@@ -867,9 +867,14 @@ func (r *Repository) CompareAndSetLifecycleEventResult(
 	if err != nil {
 		return store.StoredEvent{}, err
 	}
-	body, err := json.Marshal(map[string]any{"doc": map[string]any{
-		"related_alert_ids": normalizedResult.RelatedAlertIDs,
-		"processing":        processing,
+	// processing 是完整快照，不能使用 doc 的递归合并：omitempty 会省略已清除的
+	// plan，导致终态或撤销计划后仍读到旧计划。脚本整体替换对象，CAS 条件仍由 ES 校验。
+	body, err := json.Marshal(map[string]any{"script": map[string]any{
+		"source": "ctx._source.related_alert_ids = params.related_alert_ids; ctx._source.processing = params.processing",
+		"params": map[string]any{
+			"related_alert_ids": normalizedResult.RelatedAlertIDs,
+			"processing":        processing,
+		},
 	}})
 	if err != nil {
 		return store.StoredEvent{}, err

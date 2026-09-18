@@ -268,11 +268,42 @@ func TestElasticsearchLifecycleEventProjectionAndPartialCAS(t *testing.T) {
 			if len(projected.Event.SourceRawData) != 0 || len(projected.Event.ExtraData) != 1 {
 				t.Fatalf("lifecycle projection=%#v", projected.Event)
 			}
-			updated, err := lifecycleStore.CompareAndSetLifecycleEventResult(ctx, event.BKTenantID, event.EventID, projected.Version, store.EventResult{
-				State: domain.EventProcessStateAccepted, RelatedAlertIDs: []string{"alert-1"}, Outcome: "alert_created", ProcessedAt: time.Now().Round(0).UTC(),
-			})
-			if err != nil || !slices.Contains(updated.Event.RelatedAlertIDs, "alert-1") || updated.Processing.State != domain.EventProcessStateAccepted {
-				t.Fatalf("CompareAndSetLifecycleEventResult()=%#v,%v", updated, err)
+			plan := &store.EventPlan{
+				UpgradePolicy: "close_and_create", State: domain.EventProcessStateAccepted,
+				Outcome: "alert_created", RelatedAlertIDs: []string{"alert-1"},
+				Evaluations: []store.EvaluationResult{{
+					Severity: event.Evaluations[0].Severity, Action: event.Evaluations[0].Action,
+					State: domain.EventProcessStateAccepted, Outcome: "alert_created", RelatedAlertIDs: []string{"alert-1"},
+				}},
+			}
+			for _, finish := range []bool{false, true} {
+				planned, planErr := lifecycleStore.CompareAndSetLifecycleEventResult(ctx, event.BKTenantID, event.EventID, projected.Version, store.EventResult{
+					State: domain.EventProcessStateUnprocessed, Plan: plan,
+				})
+				if planErr != nil {
+					t.Fatal(planErr)
+				}
+				if _, staleErr := lifecycleStore.CompareAndSetLifecycleEventResult(ctx, event.BKTenantID, event.EventID, projected.Version, store.EventResult{State: domain.EventProcessStateUnprocessed}); !errors.Is(staleErr, store.ErrVersionConflict) {
+					t.Fatalf("stale plan CAS error=%v", staleErr)
+				}
+				result := store.EventResult{State: domain.EventProcessStateUnprocessed}
+				if finish {
+					result = store.EventResult{
+						State: plan.State, RelatedAlertIDs: plan.RelatedAlertIDs, Outcome: plan.Outcome,
+						Evaluations: plan.Evaluations, ProcessedAt: time.Now().Round(0).UTC(),
+					}
+				}
+				if _, writeErr := lifecycleStore.CompareAndSetLifecycleEventResult(ctx, event.BKTenantID, event.EventID, planned.Version, result); writeErr != nil {
+					t.Fatal(writeErr)
+				}
+				// 必须回读真实文档，不能只断言写方法在内存中构造的返回快照。
+				projected, err = lifecycleStore.GetLifecycleEvent(ctx, event.BKTenantID, event.EventID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if projected.Processing.Plan != nil || projected.Processing.State != result.State {
+					t.Fatalf("finish=%v persisted processing=%#v", finish, projected.Processing)
+				}
 			}
 			complete, err := repository.GetEvent(ctx, event.BKTenantID, event.EventID)
 			if err != nil {
@@ -280,6 +311,13 @@ func TestElasticsearchLifecycleEventProjectionAndPartialCAS(t *testing.T) {
 			}
 			if string(complete.Event.SourceRawData["large"]) != `{"preserved":true}` || !slices.Contains(complete.Event.RelatedAlertIDs, "alert-1") {
 				t.Fatalf("complete event after partial CAS=%#v", complete.Event)
+			}
+			if _, err := lifecycleStore.GetLifecycleEvent(ctx, "another-tenant", event.EventID); !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("cross-tenant event read error=%v", err)
+			}
+			redelivered, err := repository.CreateEvent(ctx, event)
+			if err != nil || redelivered.Created || redelivered.Processing.Plan != nil || redelivered.Processing.State != plan.State {
+				t.Fatalf("terminal event redelivery=%#v,%v", redelivered, err)
 			}
 		})
 	}

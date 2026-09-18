@@ -41,7 +41,9 @@
   查询仍接受 refresh 延迟。
 
 `CompareAndSetEventResult` 也接受 unprocessed + plan 的计划 CAS；计划先保存才允许执行副作用。
-终态结果必须与已有计划一致。ES evaluations 使用 nested，values 和 plan 只保留原始对象、不建立动态索引。
+终态结果必须与已有计划一致，且不得残留 `plan`。ES 的 Lifecycle 投影 CAS 使用固定脚本整体
+替换 `processing`，保留 `_seq_no/_primary_term` 条件；撤销计划也清除旧对象，不能用对象局部合并
+代替替换。非法处理快照返回 `ErrInvalidEventProcessing`。ES evaluations 使用 nested，values 和 plan 只保留原始对象、不建立动态索引。
 MySQL related_alert_ids 使用 JSON 数组，查询通过 JSON_CONTAINS 判断成员关系并使用租户/接收时间索引。
 这是内部 schema 的直接调整，不提供存量单动作事件或旧 related_alert_id 字段的迁移。
 

@@ -24,4 +24,6 @@ var (
 	ErrInvalidCursor = errors.New("store invalid cursor")
 	// ErrInvalidArgument 表示调用参数不满足存储契约。
 	ErrInvalidArgument = errors.New("store invalid argument")
+	// ErrInvalidEventProcessing 表示 Event 处理快照违反状态约束，不能作为正常快照读取。
+	ErrInvalidEventProcessing = errors.New("store invalid event processing")
 )

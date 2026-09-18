@@ -99,6 +99,8 @@ func (a *Agent) logTaskFailure(ctx context.Context, task Task, err error) {
 		reason = "store_version_conflict"
 	case errors.Is(err, store.ErrIdentityConflict):
 		reason = "store_identity_conflict"
+	case errors.Is(err, store.ErrInvalidEventProcessing):
+		reason = "invalid_event_processing"
 	case errors.Is(err, store.ErrInvalidArgument):
 		reason = "invalid_argument"
 	case errors.Is(err, store.ErrNotFound):

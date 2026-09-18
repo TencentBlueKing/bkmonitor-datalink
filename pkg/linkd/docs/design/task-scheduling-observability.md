@@ -42,3 +42,7 @@
 - 指标只观测协议，不增加强 fencing 保证；边界见 [调度协议](task-scheduling-protocol.md)。
 
 演练步骤见 [核心调度验证流程](../guides/task-scheduling-validation.md)。
+
+任务失败日志保留来源、角色、assignment epoch、来源版本、阶段与固定 `reason_code`，
+不输出驱动的任意错误文本。`invalid_event_processing` 表示 Event 处理快照违反状态约束，
+包括终态残留计划或缺少完成结果；该分类可穿透包装与 `errors.Join`，不应误判为网络故障。

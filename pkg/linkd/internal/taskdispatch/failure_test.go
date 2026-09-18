@@ -24,6 +24,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kerr"
 	"linkd/internal/config"
 	"linkd/internal/consume"
+	"linkd/internal/store"
 )
 
 type redisFailure string
@@ -44,6 +45,7 @@ func TestTaskFailureDiagnostics(t *testing.T) {
 		{name: "redis", err: redisFailure("WRONGPASS private-secret private-payload"), reason: "redis_error"},
 		{name: "network", err: &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}, reason: "network_error", code: "system_error_code", number: float64(syscall.ECONNREFUSED)},
 		{name: "deadline", err: context.DeadlineExceeded, reason: "deadline_exceeded"},
+		{name: "joined invalid processing", err: errors.Join(fmt.Errorf("private-payload: %w", store.ErrInvalidEventProcessing)), reason: "invalid_event_processing"},
 		{name: "unknown", err: errors.New("private-secret private-payload"), reason: "task_error"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

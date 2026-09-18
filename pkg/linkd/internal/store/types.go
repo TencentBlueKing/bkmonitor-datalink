@@ -53,12 +53,12 @@ func (p EventProcessing) Normalize() (EventProcessing, error) {
 	if p.Plan != nil {
 		normalized, err := p.Plan.Normalize()
 		if err != nil {
-			return EventProcessing{}, err
+			return EventProcessing{}, fmt.Errorf("%w: plan: %w", ErrInvalidEventProcessing, err)
 		}
 		p.Plan = normalized
 	}
 	if !p.State.Valid() {
-		return EventProcessing{}, fmt.Errorf("event processing state is invalid: %q", p.State)
+		return EventProcessing{}, fmt.Errorf("%w: state is invalid: %q", ErrInvalidEventProcessing, p.State)
 	}
 	if p.ProcessedAt != nil {
 		value := p.ProcessedAt.Round(0).UTC()
@@ -66,12 +66,15 @@ func (p EventProcessing) Normalize() (EventProcessing, error) {
 	}
 	if p.State == domain.EventProcessStateUnprocessed {
 		if p.Outcome != "" || p.ReasonCode != "" || p.ProcessedAt != nil || len(p.Evaluations) > 0 {
-			return EventProcessing{}, fmt.Errorf("unprocessed event must not contain process result")
+			return EventProcessing{}, fmt.Errorf("%w: unprocessed event must not contain process result", ErrInvalidEventProcessing)
 		}
 		return p, nil
 	}
-	if p.Plan != nil || p.Outcome == "" || p.ProcessedAt == nil || p.ProcessedAt.IsZero() {
-		return EventProcessing{}, fmt.Errorf("terminal event processing requires outcome and processed_at")
+	if p.Plan != nil {
+		return EventProcessing{}, fmt.Errorf("%w: terminal event must not retain a plan", ErrInvalidEventProcessing)
+	}
+	if p.Outcome == "" || p.ProcessedAt == nil || p.ProcessedAt.IsZero() {
+		return EventProcessing{}, fmt.Errorf("%w: terminal event processing requires outcome and processed_at", ErrInvalidEventProcessing)
 	}
 	return p, nil
 }

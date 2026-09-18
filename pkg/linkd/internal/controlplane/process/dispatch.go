@@ -50,11 +50,11 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	if e != nil {
 		return e
 	}
-	controller.CleanerDefaults = cfg.Cleaner
+	lifecycle := config.LifecycleConfig{}
 	if cfg.Lifecycle != nil {
-		controller.LifecycleDefaults = *cfg.Lifecycle
+		lifecycle = *cfg.Lifecycle
 	}
-	api := &taskdispatch.API{Lifecycle: controller.LifecycleDefaults, Sources: sources, Controller: controller, Config: d}
+	api := &taskdispatch.API{Lifecycle: lifecycle, Sources: sources, Controller: controller, Config: d}
 	server := &http.Server{Addr: d.Listen, Handler: api.Handler(), ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
 	listener, e := (&net.ListenConfig{}).Listen(startup, "tcp", d.Listen)
 	if e != nil {

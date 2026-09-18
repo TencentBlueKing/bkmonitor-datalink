@@ -12,6 +12,7 @@ package taskdispatch
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"linkd/internal/config"
@@ -27,6 +28,7 @@ type Host struct {
 	Worker  config.WorkerConfig
 	Roles   []string
 	mu      sync.Mutex
+	runtime WorkerRuntime
 	runners map[string]Runner
 	started bool
 	done    chan struct{}
@@ -46,14 +48,14 @@ func WithForcedExit(ctx context.Context, exit func()) context.Context {
 }
 
 // Serve 将资源已经准备好的模块加入进程 agent，退出前等待全部任务停止。
-func Serve(ctx context.Context, cfg config.Config, role string, runner Runner, observers ...Observer) error {
+func Serve(ctx context.Context, cfg config.Config, role string, runner Runner, logger *slog.Logger, observers ...Observer) error {
 	if cfg.Dispatch.WorkerToken == "" {
 		return fmt.Errorf("dispatch.worker_token is required")
 	}
 	forced, _ := ctx.Value(exitKey{}).(func())
 	h, _ := ctx.Value(hostKey{}).(*Host)
 	if h == nil {
-		a := Agent{Observer: observerOrNoop(observers...), Config: cfg.Dispatch, Worker: cfg.Worker, Roles: []string{role}, RunTask: runner, OnForcedExit: forced}
+		a := Agent{Logger: logger, Runtime: workerRuntime(cfg, []string{role}), Observer: observerOrNoop(observers...), Config: cfg.Dispatch, Worker: cfg.Worker, Roles: []string{role}, RunTask: runner, OnForcedExit: forced}
 		return a.Run(ctx)
 	}
 	h.mu.Lock()
@@ -62,6 +64,13 @@ func Serve(ctx context.Context, cfg config.Config, role string, runner Runner, o
 		return fmt.Errorf("role already registered in worker")
 	}
 	h.runners[role] = runner
+	runtime := workerRuntime(cfg, []string{role})
+	if role == "cleaner" {
+		h.runtime.Cleaner = runtime.Cleaner
+	}
+	if role == "lifecycle" {
+		h.runtime.Lifecycle = runtime.Lifecycle
+	}
 	if len(h.runners) == len(h.Roles) && !h.started {
 		h.started = true
 		runners := make(map[string]Runner, len(h.runners))
@@ -69,7 +78,7 @@ func Serve(ctx context.Context, cfg config.Config, role string, runner Runner, o
 			runners[k] = v
 		}
 		go func() {
-			a := Agent{Observer: observerOrNoop(observers...), Config: h.Config, Worker: h.Worker, Roles: h.Roles, RunTask: func(ctx context.Context, t Task, s config.EventSource) error { return runners[t.Role](ctx, t, s) }, OnForcedExit: forced}
+			a := Agent{Logger: logger, Runtime: h.runtime, Observer: observerOrNoop(observers...), Config: h.Config, Worker: h.Worker, Roles: h.Roles, RunTask: func(ctx context.Context, t Task, s config.EventSource) error { return runners[t.Role](ctx, t, s) }, OnForcedExit: forced}
 			e := a.Run(ctx)
 			h.mu.Lock()
 			h.err = e

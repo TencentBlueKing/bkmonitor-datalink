@@ -123,6 +123,8 @@ func Run(
 	}
 
 	return taskdispatch.Serve(ctx, cfg, "lifecycle", func(taskCtx context.Context, task taskdispatch.Task, source config.EventSource) (taskErr error) {
+		stage := "enrich_datasources"
+		defer func() { taskErr = taskdispatch.WithTaskStage(stage, taskErr) }()
 		openCtx, cancelOpen := context.WithTimeout(taskCtx, startupTimeout)
 		enrichRuntime, err := openEnrichRuntime(
 			openCtx, source, lifecycleConfig.Concurrency+4,
@@ -137,10 +139,12 @@ func Run(
 				taskErr = errors.Join(taskErr, closeErr)
 			}
 		}()
+		stage = "enricher"
 		enricher, err := enrichRuntime.router(source, telemetryRuntime)
 		if err != nil {
 			return fmt.Errorf("initialize lifecycle source enricher: %w", err)
 		}
+		stage = "hooks"
 		hooks, closeHooks, err := openHooks(source.Hooks, telemetryRuntime)
 		if err != nil {
 			return fmt.Errorf("initialize source hooks: %w", err)
@@ -150,6 +154,7 @@ func Run(
 				logger.WarnContext(taskCtx, "source hook cleanup failed", "event_source_id", source.EventSourceID)
 			}
 		}()
+		stage = "processor"
 		processor, err := lifecycle.NewProcessor(
 			observedRepository,
 			recentAlerts,
@@ -165,6 +170,7 @@ func Run(
 			return fmt.Errorf("initialize lifecycle processor: %w", err)
 		}
 
+		stage = "mailbox"
 		lc := lifecycleConfig.ForSource(cfg.Dispatch.WithDefaults().Deployment, source.EventSourceID)
 		mailboxStore, err := mailbox.NewStore(lockClient, lc.MailboxConfig())
 		if err != nil {
@@ -172,15 +178,18 @@ func Run(
 		}
 		sc := lc.RedisStreamConfig(*storageConfig.Redis, taskdispatch.ConsumerName(task))
 		sc.RetiredConsumers = append([]string(nil), task.Retired...)
+		stage = "signal_session"
 		session, err := redisstream.NewSession(sc)
 		if err != nil {
 			return err
 		}
+		stage = "lease"
 		locker, err := scheduler.NewRedisLocker(lockClient, lc.SchedulerConfig())
 		if err != nil {
 			closeSession(session)
 			return err
 		}
+		stage = "scheduler"
 		handler, err := scheduler.NewHandler(observedRepository, mailboxStore, telemetryRuntime.ObserveLifecycleProcessor(processor), locker, lc.SchedulerConfig(), logger, telemetryRuntime.LifecycleSchedulerObserver())
 		if err != nil {
 			closeSession(session)
@@ -191,8 +200,9 @@ func Run(
 		rc := lc.RuntimeConfig()
 		rc.ShutdownDrainTimeout = taskdispatch.DrainTimeout
 		logger.InfoContext(taskCtx, "lifecycle source started", "event_source_id", source.EventSourceID, "stream", lc.Signal.Stream, "consumer", sc.Consumer, "recent_alert_cache_enabled", recentAlertCacheEnabled, "recent_alert_cache_ttl_seconds", recentAlertCacheTTL.Seconds())
+		stage = "consume"
 		return consume.New(rc, session, handler, consume.WithObserver(labels, telemetryRuntime.ConsumeObserver(labels))).Run(taskCtx)
-	}, telemetryRuntime.DispatchObserver())
+	}, logger, telemetryRuntime.DispatchObserver())
 
 }
 

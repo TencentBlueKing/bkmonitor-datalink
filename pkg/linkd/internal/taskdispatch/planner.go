@@ -22,10 +22,6 @@ import (
 // Reconcile 保留已有匹配 owner，再补足目标；撤销中的 assignment 仍占位置。
 // Kafka 分片元数据失败时只允许保留/撤销，不能新增 assignment。
 func Reconcile(st *State, releases []eventsource.Release, now time.Time) {
-	reconcileBudgets(st, releases, now, config.DefaultCleanerRuntimeConfig(), (config.LifecycleConfig{}).WithDefaults())
-}
-
-func reconcileBudgets(st *State, releases []eventsource.Release, now time.Time, cleanerDefaults config.CleanerRuntimeConfig, lifecycleDefaults config.LifecycleConfig) {
 	for id, t := range st.Tasks {
 		if t.Phase != "stopped" && !now.Before(t.Expires.Add(SafetyMargin)) {
 			t.Phase = "stopped"
@@ -165,12 +161,12 @@ func reconcileBudgets(st *State, releases []eventsource.Release, now time.Time, 
 				}
 				w := st.Workers[wid]
 				load, totalWorkers, totalBytes := 0, 0, int64(0)
-				costWorkers, costBytes := lifecycleDefaults.Concurrency, int64(lifecycleDefaults.Signal.MaxInflightMessages)*int64(lifecycleDefaults.Signal.MaxMessageBytes)
-				if role == "cleaner" {
-					runtime := s.Cleaner.RuntimeConfig(cleanerDefaults)
-					costWorkers = runtime.WorkerCount
-					costBytes = int64(runtime.MaxInflightBytes)
+				budget, err := w.Runtime.budgetFor(role, s)
+				if err != nil {
+					status.Reason = "worker runtime budget is missing or invalid"
+					continue
 				}
+				costWorkers, costBytes := budget.Concurrency, budget.InflightBytes
 				for _, t := range st.Tasks {
 					if t.Worker == wid && t.Phase != "stopped" {
 						load++

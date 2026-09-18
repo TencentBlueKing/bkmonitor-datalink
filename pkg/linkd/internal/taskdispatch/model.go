@@ -34,6 +34,8 @@ const (
 
 // Worker 是进程会话；all-in-one 注册两种角色而不是两个相同进程。
 type Worker struct {
+	// Runtime 是该进程会话实际使用的任务预算，不能由控制面默认配置替代。
+	Runtime          WorkerRuntime     `json:"runtime"`
 	MaxConcurrency   int               `json:"max_concurrency"`
 	MaxInflightBytes int64             `json:"max_inflight_bytes"`
 	StableAfter      time.Time         `json:"stable_after"`

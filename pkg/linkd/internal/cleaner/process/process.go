@@ -74,17 +74,21 @@ func Run(
 	}
 
 	lifecycleConfig := cfg.Lifecycle.WithDefaults()
-	return taskdispatch.Serve(ctx, cfg, "cleaner", func(taskCtx context.Context, task taskdispatch.Task, source config.EventSource) error {
+	return taskdispatch.Serve(ctx, cfg, "cleaner", func(taskCtx context.Context, task taskdispatch.Task, source config.EventSource) (taskErr error) {
+		stage := "signal_group"
+		defer func() { taskErr = taskdispatch.WithTaskStage(stage, taskErr) }()
 		source.RuntimeClientID = taskdispatch.ConsumerName(task)
 		lc := lifecycleConfig.ForSource(cfg.Dispatch.WithDefaults().Deployment, source.EventSourceID)
 		if err := redisClient.XGroupCreateMkStream(taskCtx, lc.Signal.Stream, lc.Signal.Group, "0").Err(); err != nil && !strings.HasPrefix(err.Error(), "BUSYGROUP") {
 			return err
 		}
+		stage = "mailbox"
 		publisher, err := cleaner.NewRedisMailboxPublisher(redisClient, lc.MailboxConfig())
 		if err != nil {
 			return err
 		}
 		backpressure := lc.Mailbox.Backpressure
+		stage = "backpressure"
 		receiveGate, err := cleaner.NewSignalBackpressureChecker(redisClient, cleaner.BackpressureConfig{Stream: lc.Signal.Stream, Group: lc.Signal.Group, CacheTTL: time.Duration(backpressure.CacheTTLSeconds) * time.Second, QueryTimeout: time.Duration(backpressure.QueryTimeoutSeconds) * time.Second, HighWatermark: backpressure.HighWatermark, LowWatermark: backpressure.LowWatermark}, telemetryBackpressureObserver{runtime: telemetryRuntime})
 		if err != nil {
 			return err
@@ -92,18 +96,21 @@ func Run(
 		runtimeConfig := source.Cleaner.RuntimeConfig(cfg.Cleaner)
 		runtimeConfig.ShutdownDrainTimeoutSeconds = int(taskdispatch.DrainTimeout / time.Second)
 		source.Cleaner.Runtime = &runtimeConfig
+		stage = "factory"
 		factory, err := cleaner.NewFactory(observedRepository, publisher, receiveGate, logger, cfg.Cleaner, cfg.Severity, func(s config.EventSource) consume.Observer {
 			return telemetryRuntime.ConsumeObserver(consume.RuntimeLabels{Stage: "clean", Transport: "kafka", EventSourceID: s.EventSourceID, RecordPipelineAttempts: true})
 		})
 		if err != nil {
 			return err
 		}
+		stage = "flow"
 		flow, err := factory.NewFlow(taskCtx, source)
 		if err != nil {
 			return err
 		}
+		stage = "consume"
 		return flow.Run(taskCtx)
-	}, telemetryRuntime.DispatchObserver())
+	}, logger, telemetryRuntime.DispatchObserver())
 }
 
 func repositoryConnectionBudget(cfg config.Config) int {

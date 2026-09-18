@@ -24,7 +24,7 @@ func fixture() (State, eventsource.Release, time.Time) {
 	s := newState()
 	for i := range 8 {
 		id := fmt.Sprint(i)
-		s.Workers[id] = Worker{ID: id, Roles: []string{"cleaner", "lifecycle"}, Labels: map[string]string{"pool": "a"}, Seen: now, MaxTasks: 16}
+		s.Workers[id] = Worker{Runtime: workerRuntime(config.Config{}, []string{"cleaner", "lifecycle"}), ID: id, Roles: []string{"cleaner", "lifecycle"}, Labels: map[string]string{"pool": "a"}, Seen: now, MaxTasks: 16}
 	}
 	spec := config.EventSource{EventSourceID: "source", Enabled: true}.WithDefaults()
 	r := eventsource.Release{ID: "source", Version: 1, Spec: spec}

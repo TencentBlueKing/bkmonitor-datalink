@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sync"
@@ -30,6 +31,9 @@ type Runner func(context.Context, Task, config.EventSource) error
 
 // Agent 负责进程全部角色，业务关闭不能阻塞独立的授权 watchdog。
 type Agent struct {
+	// Logger 接收已脱敏的任务故障上下文。
+	Logger            *slog.Logger
+	Runtime           WorkerRuntime
 	Observer          Observer
 	Config            config.DispatchConfig
 	Worker            config.WorkerConfig
@@ -42,6 +46,7 @@ type Agent struct {
 type localTask struct {
 	partitions atomic.Value
 	admission  atomic.Bool
+	budget     TaskBudget
 	task       Task
 	spec       config.EventSource
 	phase      string
@@ -54,13 +59,19 @@ type localTask struct {
 
 // Run 运行会话，配置/撤销立即开始停止；失联容错后自停，旧代次不可恢复。
 func (a *Agent) Run(ctx context.Context) error {
+	if a.Logger == nil {
+		return fmt.Errorf("worker logger is required")
+	}
+	if err := a.Runtime.validate(a.Roles); err != nil {
+		return err
+	}
 	observer := observerOrNoop(a.Observer)
 	// 停止确认和 watchdog 观测必须在调用方取消后继续，直到协议排空完成。
 	observationCtx := context.WithoutCancel(ctx)
 	cfg := a.Config.WithDefaults()
 	id := uuid.NewString()
 	client := Client{URL: cfg.URL, Token: cfg.WorkerToken, WorkerID: id}
-	worker := Worker{ID: id, Roles: a.Roles, Labels: a.Worker.Labels, Explicit: a.Worker.RequireExplicitSelector, MaxTasks: cfg.MaxTasks}
+	worker := Worker{Runtime: a.Runtime, ID: id, Roles: a.Roles, Labels: a.Worker.Labels, Explicit: a.Worker.RequireExplicitSelector, MaxTasks: cfg.MaxTasks}
 	worker.MaxConcurrency, worker.MaxInflightBytes = a.Worker.Limits()
 	var mu sync.Mutex
 	var forceOnce sync.Once
@@ -225,9 +236,27 @@ func (a *Agent) Run(ctx context.Context) error {
 					}
 					rel.Spec.Version = rel.Version
 					t = &localTask{task: task, spec: rel.Spec, phase: "prepared", deadline: started.Add(time.Duration(task.RemainingMillis)*time.Millisecond - SafetyMargin)}
+					t.budget, err = a.admitTask(task, rel.Spec, locals)
+					if err != nil {
+						t.phase = "stopped"
+						t.err = "worker runtime budget rejected"
+						mu.Unlock()
+						a.logTaskFailure(observationCtx, task, WithTaskStage("task_admission", err))
+						mu.Lock()
+					}
 					locals[task.ID] = t
 				}
 				if t != nil && t.phase == "prepared" && task.Phase == "starting" && !stopping && time.Now().Add(DrainTimeout+5*time.Second).Before(t.deadline) {
+					budget, err := a.admitTask(task, t.spec, locals)
+					if err != nil {
+						t.phase = "stopped"
+						t.err = "worker runtime budget rejected"
+						mu.Unlock()
+						a.logTaskFailure(observationCtx, task, WithTaskStage("task_admission", err))
+						mu.Lock()
+						continue
+					}
+					t.budget = budget
 					work, cancelTask := context.WithCancel(consume.WithPartitionObserver(consume.WithAdmission(observationCtx, &t.admission), func(p []string) { t.partitions.Store(p) }))
 					t.admission.Store(true)
 					t.cancel = cancelTask
@@ -237,10 +266,7 @@ func (a *Agent) Run(ctx context.Context) error {
 					taskCopy, specCopy := t.task, t.spec
 					go func(local *localTask) {
 						runStarted := time.Now()
-						err := a.RunTask(work, taskCopy, specCopy)
-						if err == nil && work.Err() == nil {
-							err = fmt.Errorf("task exited unexpectedly")
-						}
+						err := a.runTask(work, taskCopy, specCopy)
 						mu.Lock()
 						previousPhase := local.phase
 						local.phase = "stopped"
@@ -251,14 +277,14 @@ func (a *Agent) Run(ctx context.Context) error {
 								local.stopAt = time.Now()
 							}
 						}
-						if err != nil {
+						if err != nil && !expectedTaskCancellation(work, err) {
 							local.err = "task failed; inspect worker logs"
 						}
 						duration := time.Duration(0)
 						if !local.stopAt.IsZero() {
 							duration = time.Since(local.stopAt)
 						}
-						observer.Operation(observationCtx, "task_run", err == nil || (errors.Is(err, context.Canceled) && !errors.Is(err, consume.ErrStopIncomplete)), time.Since(runStarted))
+						observer.Operation(observationCtx, "task_run", err == nil || expectedTaskCancellation(work, err), time.Since(runStarted))
 						observer.Transition(observationCtx, "worker", local.task.Role, previousPhase, local.phase, "task_returned", duration)
 						close(local.done)
 						mu.Unlock()

@@ -60,6 +60,16 @@ linkd scheduling init --confirm-stopped --config <config.yaml>
 
 Redis 协调快照有 8 MiB 上限；worker 注册最多 256，单进程任务数默认 16，最多 256。
 静态 worker 默认预算为 128 并发、256 MiB inflight，可显式调整；匹配但容量不足的副本保持 Pending。
+worker 心跳携带本机有效预算：Cleaner 默认运行配置，以及 Lifecycle 每任务并发和在途字节数。
+中心使用目标 worker 的配置合并来源覆盖后分配额度，不能用控制面的默认值代替；同一进程会话内
+预算及总上限不可改变，修改配置需重启 worker。worker 在准备和启动任务时再次检查分配额度与
+实际配置、进程总量是否一致，prepared/running/stopping 都占额度，只有 stopped 后才能释放。
+all-in-one 两角色注册各自有效配置，并共享进程上限。缺少预算的心跳会被拒绝，部署时中心与
+worker 必须使用同一版本，本次协议调整不提供旧 worker 回退。
+
+任务失败写入 `source task failed` 日志，包含来源、角色、task_id、assignment_epoch、发布版本、
+失败 stage、reason_code 及可识别的 MySQL/Kafka/Redis/系统错误码；未知错误保留类型而不输出
+驱动自由文本，避免泄漏凭据或业务 payload。正常取消不计作失败，退出未完成仍记录错误。
 配置 API 和 worker API 分别鉴权，回传状态不含 Kafka 凭据。
 
 测试应覆盖：重复/乱序心跳、停止交接、授权到期、标签和数量、分片上限及探测失败、Pending 定向 Claim、进程停止、资源共享和 Redis 状态丢失。

@@ -14,13 +14,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	redis "github.com/redis/go-redis/v9"
-	"linkd/internal/config"
 	"linkd/internal/eventsource"
 )
 
@@ -30,8 +30,6 @@ redis.call('SET',KEYS[2],ARGV[3]); return 1`
 
 // Controller 串行规划与协议转移，Redis CAS 同时检查中心身份和完整旧快照。
 type Controller struct {
-	CleanerDefaults    config.CleanerRuntimeConfig
-	LifecycleDefaults  config.LifecycleConfig
 	client             *redis.Client
 	sources            *eventsource.Service
 	key, leader, token string
@@ -203,6 +201,9 @@ func (c *Controller) Beat(ctx context.Context, h Heartbeat) (_ []Task, runErr er
 			return nil, fmt.Errorf("unknown worker role")
 		}
 	}
+	if err := h.Worker.Runtime.validate(h.Worker.Roles); err != nil {
+		return nil, err
+	}
 	now := time.Now()
 	e := c.update(ctx, func(s *State) error {
 		if len(s.Workers) >= 256 {
@@ -215,6 +216,9 @@ func (c *Controller) Beat(ctx context.Context, h Heartbeat) (_ []Task, runErr er
 			return fmt.Errorf("stale heartbeat sequence")
 		}
 		if old, ok := s.Workers[w.ID]; ok {
+			if !reflect.DeepEqual(old.Runtime, w.Runtime) || old.MaxTasks != w.MaxTasks || old.MaxConcurrency != w.MaxConcurrency || old.MaxInflightBytes != w.MaxInflightBytes {
+				return fmt.Errorf("worker runtime and limits cannot change within a session")
+			}
 			w.StableAfter = old.StableAfter
 			w.CooldownUntil = old.CooldownUntil
 			if now.Sub(old.Seen) > 10*time.Second {
@@ -401,7 +405,7 @@ func (c *Controller) tick(ctx context.Context) (runErr error) {
 		for id, m := range updates {
 			s.Metadata[id] = m
 		}
-		reconcileBudgets(s, releases, time.Now(), c.CleanerDefaults.WithDefaults(), c.LifecycleDefaults.WithDefaults())
+		Reconcile(s, releases, time.Now())
 		return nil
 	})
 }

@@ -13,6 +13,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -85,6 +87,18 @@ func TestRedisCoordinatorIntegration(t *testing.T) {
 	if !found {
 		t.Fatal("start authorization missing")
 	}
+	changed := worker
+	changed.Seq++
+	changed.MaxConcurrency++
+	if _, err := c.Beat(ctx, Heartbeat{Worker: changed}); err == nil {
+		t.Fatal("changed session budget accepted")
+	}
+	changed = worker
+	changed.Seq++
+	changed.Runtime = WorkerRuntime{}
+	if _, err := c.Beat(ctx, Heartbeat{Worker: changed}); err == nil {
+		t.Fatal("missing session budget accepted")
+	}
 	observed := observer.count.Load()
 	if _, e = c.Beat(ctx, Heartbeat{Worker: worker}); e == nil {
 		t.Fatal("replayed heartbeat renewed lease")
@@ -156,7 +170,7 @@ func TestAgentStopHandshakeIntegration(t *testing.T) {
 	defer server.Close()
 	cfg.URL = server.URL
 	started := make(chan struct{})
-	a := Agent{Config: cfg, Roles: []string{"cleaner"}, RunTask: func(ctx context.Context, _ Task, _ config.EventSource) error {
+	a := Agent{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Runtime: workerRuntime(config.Config{}, []string{"cleaner"}), Config: cfg, Roles: []string{"cleaner"}, RunTask: func(ctx context.Context, _ Task, _ config.EventSource) error {
 		close(started)
 		<-ctx.Done()
 		return nil
@@ -241,7 +255,7 @@ func TestAgentDisconnectSelfStopIntegration(t *testing.T) {
 	cfg.URL = server.URL
 	started := make(chan struct{})
 	stopped := make(chan struct{})
-	a := Agent{Config: cfg, Roles: []string{"cleaner"}, RunTask: func(ctx context.Context, _ Task, _ config.EventSource) error {
+	a := Agent{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Runtime: workerRuntime(config.Config{}, []string{"cleaner"}), Config: cfg, Roles: []string{"cleaner"}, RunTask: func(ctx context.Context, _ Task, _ config.EventSource) error {
 		close(started)
 		<-ctx.Done()
 		close(stopped)

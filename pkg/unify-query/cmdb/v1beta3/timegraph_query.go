@@ -51,22 +51,6 @@ func (m *Model) buildTimeGraphFromRelations(ctx context.Context, spaceUID string
 		}
 	}
 
-	baseQueryParams := metadata.GetQueryParams(ctx)
-	var instance tsdb.Instance
-	if baseQueryParams.IsDirectQuery() {
-		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
-			StorageType: metadata.VictoriaMetricsStorageType,
-		})
-		if instance == nil {
-			return nil, fmt.Errorf("%s storage get error", metadata.VictoriaMetricsStorageType)
-		}
-	} else {
-		instance = prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
-			QueryMaxRouting: timeGraphQueryMaxRouting,
-			Timeout:         timeGraphQueryTimeout,
-		}, lookBack, timeGraphQueryMaxRouting)
-	}
-
 	instant := start.Equal(end)
 	for _, relation := range relations {
 		if len(relation.V) != 2 {
@@ -94,6 +78,21 @@ func (m *Model) buildTimeGraphFromRelations(ctx context.Context, spaceUID string
 			return nil, errors.WithMessage(err, "to prom expr")
 		}
 		relationQueryParams := metadata.GetQueryParams(relationCtx)
+
+		var instance tsdb.Instance
+		if relationQueryParams.IsDirectQuery() {
+			instance = prometheus.GetTsDbInstance(relationCtx, &metadata.Query{
+				StorageType: metadata.VictoriaMetricsStorageType,
+			})
+			if instance == nil {
+				return nil, fmt.Errorf("%s storage get error", metadata.VictoriaMetricsStorageType)
+			}
+		} else {
+			instance = prometheus.NewInstance(relationCtx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
+				QueryMaxRouting: timeGraphQueryMaxRouting,
+				Timeout:         timeGraphQueryTimeout,
+			}, lookBack, timeGraphQueryMaxRouting)
+		}
 
 		var matrix pl.Matrix
 		if instant {

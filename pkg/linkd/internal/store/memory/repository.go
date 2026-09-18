@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"sync"
@@ -211,7 +212,7 @@ func (r *Repository) ListEventsByAlert(
 	r.mu.RLock()
 	candidates := make([]eventEntry, 0)
 	for key, entry := range r.events {
-		if key.tenantID == bkTenantID && entry.event.RelatedAlertID == alertID &&
+		if key.tenantID == bkTenantID && slices.Contains(entry.event.RelatedAlertIDs, alertID) &&
 			!entry.event.ReceivedAt.Before(from) && !entry.event.ReceivedAt.After(to) {
 			candidates = append(candidates, entry)
 		}
@@ -452,17 +453,9 @@ func (r *Repository) CompareAndSetEventResult(
 	if entry.processing.State != domain.EventProcessStateUnprocessed {
 		return store.StoredEvent{}, fmt.Errorf("%w: event %q is already processed", store.ErrInvalidTransition, eventID)
 	}
-	updated := entry.event.Clone()
-	if normalizedResult.RelatedAlertID != "" {
-		updated, err = updated.WithRelatedAlertID(normalizedResult.RelatedAlertID)
-	}
+	updated, processing, err := store.ApplyEventResult(cloneStoredEvent(entry), normalizedResult)
 	if err != nil {
-		return store.StoredEvent{}, fmt.Errorf("%w: event %q: %w", store.ErrInvalidTransition, eventID, err)
-	}
-	processedAt := normalizedResult.ProcessedAt
-	processing := store.EventProcessing{
-		State: normalizedResult.State, Outcome: normalizedResult.Outcome,
-		ReasonCode: normalizedResult.ReasonCode, ProcessedAt: &processedAt,
+		return store.StoredEvent{}, err
 	}
 	entry = eventEntry{event: updated, processing: processing, version: r.newVersionLocked()}
 	r.events[key] = entry
@@ -822,10 +815,11 @@ func (r *Repository) QueryAlertByEvent(
 		eventEntry.processing.State != domain.EventProcessStateSuppressed {
 		return result, nil
 	}
-	alertKey := objectKey{tenantID: bkTenantID, objectID: eventEntry.event.RelatedAlertID}
-	if alertEntry, ok := r.alerts[alertKey]; ok {
-		alert := cloneStoredAlert(alertEntry)
-		result.Alert = &alert
+	for _, alertID := range eventEntry.event.RelatedAlertIDs {
+		alertKey := objectKey{tenantID: bkTenantID, objectID: alertID}
+		if entry, ok := r.alerts[alertKey]; ok {
+			result.Alerts = append(result.Alerts, cloneStoredAlert(entry))
+		}
 	}
 	return result, nil
 }

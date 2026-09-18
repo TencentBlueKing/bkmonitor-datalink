@@ -103,7 +103,7 @@ func TestKafkaPublisherIntegration(t *testing.T) {
 			if cleanErr != nil {
 				t.Fatalf("decode eventgen Kafka record: %v", cleanErr)
 			}
-			actions[draft.Action]++
+			actions[draft.Evaluations[0].Action]++
 			received++
 		}
 	}

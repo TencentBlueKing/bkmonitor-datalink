@@ -2,7 +2,7 @@
 CREATE TABLE IF NOT EXISTS linkd_events (
     bk_tenant_id VARBINARY(64) NOT NULL,
     event_id VARBINARY(160) NOT NULL,
-	related_alert_id VARBINARY(160) NULL,
+	related_alert_ids JSON NULL,
     version BIGINT UNSIGNED NOT NULL,
     processing_state VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
     received_at_ns BIGINT NOT NULL,
@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS linkd_events (
     processing JSON NOT NULL,
     PRIMARY KEY (bk_tenant_id, event_id),
     KEY idx_linkd_events_unprocessed (processing_state, received_at_ns, bk_tenant_id, event_id),
-	KEY idx_linkd_events_alert (bk_tenant_id, related_alert_id, received_at_ns, event_id)
+	KEY idx_linkd_events_received (bk_tenant_id, received_at_ns, event_id)
 ) ENGINE=InnoDB;
 
 -- linkd:statement

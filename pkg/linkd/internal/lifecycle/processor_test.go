@@ -30,17 +30,17 @@ func TestProcessEventCreateAndRepeatedTrigger(t *testing.T) {
 	processor := newTestProcessor(t, repo, hook)
 	first := testEvent("event-1", "warning")
 	created := persistAndProcess(t, repo, processor, first)
-	if created.Outcome != OutcomeAlertCreated || created.AlertID == "" {
+	if created.Outcome != OutcomeAlertCreated || created.AlertIDs[len(created.AlertIDs)-1] == "" {
 		t.Fatalf("created=%#v", created)
 	}
 	second := testEvent("event-2", "warning")
 	second.Title = "changed title"
 	second.OccurredAt = second.OccurredAt.Add(-time.Minute)
 	updated := persistAndProcess(t, repo, processor, second)
-	if updated.Outcome != OutcomeAlertUpdated || updated.AlertID != created.AlertID {
+	if updated.Outcome != OutcomeAlertUpdated || updated.AlertIDs[len(updated.AlertIDs)-1] != created.AlertIDs[len(created.AlertIDs)-1] {
 		t.Fatalf("updated=%#v", updated)
 	}
-	alert, err := repo.GetAlert(context.Background(), first.BKTenantID, created.AlertID)
+	alert, err := repo.GetAlert(context.Background(), first.BKTenantID, created.AlertIDs[len(created.AlertIDs)-1])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestProcessEventTerminalReplayDoesNotRepeatSideEffects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.EventID != first.EventID || second.AlertID != first.AlertID || second.Outcome != first.Outcome {
+	if second.EventID != first.EventID || second.AlertIDs[len(second.AlertIDs)-1] != first.AlertIDs[len(first.AlertIDs)-1] || second.Outcome != first.Outcome {
 		t.Fatalf("first=%#v second=%#v", first, second)
 	}
 	if len(hook.inputs) != 1 {
@@ -100,10 +100,10 @@ func TestSeverityUpgradeAndSuppression(t *testing.T) {
 	first := persistAndProcess(t, repo, processor, warning)
 	critical := testEvent("event-critical", "critical")
 	rotated := persistAndProcess(t, repo, processor, critical)
-	if rotated.Outcome != OutcomeAlertRotated || rotated.AlertID == first.AlertID {
+	if rotated.Outcome != OutcomeAlertRotated || rotated.AlertIDs[len(rotated.AlertIDs)-1] == first.AlertIDs[len(first.AlertIDs)-1] {
 		t.Fatalf("rotated=%#v", rotated)
 	}
-	old, err := repo.GetAlert(context.Background(), warning.BKTenantID, first.AlertID)
+	old, err := repo.GetAlert(context.Background(), warning.BKTenantID, first.AlertIDs[len(first.AlertIDs)-1])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,12 +112,12 @@ func TestSeverityUpgradeAndSuppression(t *testing.T) {
 	}
 	info := testEvent("event-info", "info")
 	suppressed := persistAndProcess(t, repo, processor, info)
-	if suppressed.Outcome != OutcomeAlertSuppressed || suppressed.EventState != domain.EventProcessStateSuppressed || suppressed.AlertID != rotated.AlertID {
+	if suppressed.Outcome != OutcomeAlertSuppressed || suppressed.EventState != domain.EventProcessStateSuppressed || suppressed.AlertIDs[len(suppressed.AlertIDs)-1] != rotated.AlertIDs[len(rotated.AlertIDs)-1] {
 		t.Fatalf("suppressed=%#v", suppressed)
 	}
 	stored, _ := repo.GetEvent(context.Background(), info.BKTenantID, info.EventID)
-	if stored.Event.RelatedAlertID != rotated.AlertID {
-		t.Fatalf("suppressed related alert=%q, want %q", stored.Event.RelatedAlertID, rotated.AlertID)
+	if !slices.Contains(stored.Event.RelatedAlertIDs, rotated.AlertIDs[len(rotated.AlertIDs)-1]) {
+		t.Fatalf("suppressed related alert=%q, want %q", stored.Event.RelatedAlertIDs[0], rotated.AlertIDs[len(rotated.AlertIDs)-1])
 	}
 	active, _ := repo.FindActiveAlert(context.Background(), store.ActiveAlertKey{BKTenantID: info.BKTenantID, EventSourceID: info.EventSourceID, Fingerprint: info.Fingerprint})
 	if active.Alert.Severity != "critical" || active.Alert.LatestEventID != critical.EventID {
@@ -128,25 +128,25 @@ func TestSeverityUpgradeAndSuppression(t *testing.T) {
 	}
 }
 
-func TestResolvedIgnoresSeverityAndOrphan(t *testing.T) {
+func TestResolvedMatchesSeverityAndOrphan(t *testing.T) {
 	repo := memory.New()
 	processor := newTestProcessor(t, repo, &recordingHook{})
 	opening := testEvent("event-1", "warning")
 	created := persistAndProcess(t, repo, processor, opening)
-	resolved := testEvent("event-2", "info")
-	resolved.Action = domain.EventActionResolved
-	resolved.ActionReason = "source resolved"
+	resolved := testEvent("event-2", "warning")
+	resolved.Evaluations[0].Action = domain.EventActionResolved
+	resolved.Evaluations[0].ActionReason = "source resolved"
 	result := persistAndProcess(t, repo, processor, resolved)
-	if result.Outcome != OutcomeAlertRecovered || result.AlertID != created.AlertID {
+	if result.Outcome != OutcomeAlertRecovered || result.AlertIDs[len(result.AlertIDs)-1] != created.AlertIDs[len(created.AlertIDs)-1] {
 		t.Fatalf("resolved=%#v", result)
 	}
-	alert, _ := repo.GetAlert(context.Background(), opening.BKTenantID, created.AlertID)
+	alert, _ := repo.GetAlert(context.Background(), opening.BKTenantID, created.AlertIDs[len(created.AlertIDs)-1])
 	if alert.Alert.Status != domain.AlertStatusRecovered || alert.Alert.EndType != domain.AlertEndTypeSource {
 		t.Fatalf("alert=%#v", alert.Alert)
 	}
 	orphan := testEvent("event-orphan", "warning")
 	orphan.Fingerprint = "other"
-	orphan.Action = domain.EventActionClosed
+	orphan.Evaluations[0].Action = domain.EventActionClosed
 	orphanResult := persistAndProcess(t, repo, processor, orphan)
 	if orphanResult.Outcome != OutcomeEventOrphaned || orphanResult.EventState != domain.EventProcessStateOrphaned {
 		t.Fatalf("orphan=%#v", orphanResult)
@@ -199,7 +199,7 @@ func TestEnricherCreationResults(t *testing.T) {
 			}
 			event := testEvent("event-enrich", "warning")
 			result := persistAndProcess(t, repo, processor, event)
-			stored, err := repo.GetAlert(context.Background(), event.BKTenantID, result.AlertID)
+			stored, err := repo.GetAlert(context.Background(), event.BKTenantID, result.AlertIDs[len(result.AlertIDs)-1])
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -231,7 +231,7 @@ func TestEnrichObserverSeesFinalDegradedResult(t *testing.T) {
 	}
 	event := testEvent("event-enrich-observer", "warning")
 	result := persistAndProcess(t, repo, processor, event)
-	stored, err := repo.GetAlert(context.Background(), event.BKTenantID, result.AlertID)
+	stored, err := repo.GetAlert(context.Background(), event.BKTenantID, result.AlertIDs[len(result.AlertIDs)-1])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -262,10 +262,16 @@ func TestResumePartiallyCreatedAlert(t *testing.T) {
 	processor := newTestProcessor(t, repo, &recordingHook{})
 	event := testEvent("event-1", "warning")
 	stored, _ := repo.CreateEvent(context.Background(), event)
-	alert, err := processor.newAlert(context.Background(), event)
+	plan, err := processor.preparePlan(context.Background(), event)
 	if err != nil {
 		t.Fatal(err)
 	}
+	planned, err := processor.writeEventResult(context.Background(), stored.StoredEvent, store.EventResult{State: domain.EventProcessStateUnprocessed, Plan: plan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.StoredEvent = planned
+	alert := plan.Mutations[0].Alert
 	if _, err := repo.CreateAlert(context.Background(), alert); err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +279,7 @@ func TestResumePartiallyCreatedAlert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Outcome != OutcomeAlertCreated || result.AlertID != alert.AlertID {
+	if result.Outcome != OutcomeAlertCreated || result.AlertIDs[len(result.AlertIDs)-1] != alert.AlertID {
 		t.Fatalf("result=%#v", result)
 	}
 	updated, _ := repo.GetEvent(context.Background(), event.BKTenantID, event.EventID)
@@ -289,7 +295,7 @@ func TestCloseAlert(t *testing.T) {
 	event := testEvent("event-1", "warning")
 	created := persistAndProcess(t, repo, processor, event)
 	effective := time.Date(2026, 9, 1, 1, 0, 0, 0, time.UTC)
-	command := CloseAlertCommand{OperationID: "op-1", BKTenantID: event.BKTenantID, AlertID: created.AlertID, OperatorKind: domain.OperatorKindUser, OperatorID: "user-1", Reason: "manual", EffectiveAt: effective}
+	command := CloseAlertCommand{OperationID: "op-1", BKTenantID: event.BKTenantID, AlertID: created.AlertIDs[len(created.AlertIDs)-1], OperatorKind: domain.OperatorKindUser, OperatorID: "user-1", Reason: "manual", EffectiveAt: effective}
 	invalid := command
 	invalid.Reason = ""
 	if err := invalid.Validate(); err == nil {
@@ -328,8 +334,8 @@ func TestProcessEventBatchesLogsBeforeFinalEventCAS(t *testing.T) {
 		},
 		{
 			name: "recover", setupSeverity: "warning", event: func() domain.Event {
-				event := testEvent("event-batch-recover", "info")
-				event.Action = domain.EventActionResolved
+				event := testEvent("event-batch-recover", "warning")
+				event.Evaluations[0].Action = domain.EventActionResolved
 				return event
 			}(),
 			wantCalls: []string{"alert_cas", "hook", "logs", "event_cas"},
@@ -338,7 +344,7 @@ func TestProcessEventBatchesLogsBeforeFinalEventCAS(t *testing.T) {
 		{
 			name: "source close", setupSeverity: "warning", event: func() domain.Event {
 				event := testEvent("event-batch-close", "warning")
-				event.Action = domain.EventActionClosed
+				event.Evaluations[0].Action = domain.EventActionClosed
 				return event
 			}(),
 			wantCalls: []string{"alert_cas", "hook", "logs", "event_cas"},
@@ -362,7 +368,7 @@ func TestProcessEventBatchesLogsBeforeFinalEventCAS(t *testing.T) {
 		{
 			name: "orphan", event: func() domain.Event {
 				event := testEvent("event-batch-orphan", "warning")
-				event.Action = domain.EventActionResolved
+				event.Evaluations[0].Action = domain.EventActionResolved
 				return event
 			}(),
 			wantCalls: []string{"event_cas"},
@@ -379,7 +385,7 @@ func TestProcessEventBatchesLogsBeforeFinalEventCAS(t *testing.T) {
 			processor := newTestProcessor(t, repository, trackingHook{repository: repository})
 			persistAndProcess(t, repository, processor, tt.event)
 			calls, batches := repository.snapshot()
-			if !slices.Equal(calls, tt.wantCalls) {
+			if !slices.Equal(calls, append([]string{"event_cas"}, tt.wantCalls...)) {
 				t.Fatalf("calls=%v, want %v", calls, tt.wantCalls)
 			}
 			if len(tt.wantKinds) == 0 {
@@ -422,7 +428,7 @@ func TestProcessEventDoesNotFinishEventWhenLogBatchHasItemFailure(t *testing.T) 
 		t.Fatalf("event state=%q, want unprocessed", stored.Processing.State)
 	}
 	calls, batches := repository.snapshot()
-	if !slices.Equal(calls, []string{"alert_create", "hook", "logs"}) || len(batches) != 1 || len(batches[0]) != 2 {
+	if !slices.Equal(calls, []string{"event_cas", "alert_create", "hook", "logs"}) || len(batches) != 1 || len(batches[0]) != 2 {
 		t.Fatalf("calls=%v batches=%v", calls, batches)
 	}
 
@@ -447,7 +453,7 @@ func TestCloseAlertBatchesOperationAndHookLogs(t *testing.T) {
 	repository := &trackingRepository{Repository: base, failBatchIndex: -1}
 	processor := newTestProcessor(t, repository, trackingHook{repository: repository})
 	command := CloseAlertCommand{
-		OperationID: "operation-close-batch", BKTenantID: event.BKTenantID, AlertID: created.AlertID,
+		OperationID: "operation-close-batch", BKTenantID: event.BKTenantID, AlertID: created.AlertIDs[len(created.AlertIDs)-1],
 		OperatorKind: domain.OperatorKindUser, OperatorID: "user-1", Reason: "manual",
 		EffectiveAt: time.Date(2026, 9, 1, 1, 0, 0, 0, time.UTC),
 	}
@@ -492,46 +498,43 @@ func TestProcessEventUsesRecentActiveAlertBeforeRepositorySearch(t *testing.T) {
 	}
 }
 
-func TestProcessEventUsesRecentTerminalAlertForRecovery(t *testing.T) {
+func TestProcessEventResumesPersistedTerminalPlan(t *testing.T) {
+	ctx := context.Background()
 	base := memory.New()
+	processor := newTestProcessor(t, base, NoopFinalHook{})
 	opening := testEvent("event-terminal-opening", "warning")
-	alert := storetestAlert(opening, "alert-terminal")
-	created, err := base.CreateAlert(context.Background(), alert)
+	persistAndProcess(t, base, processor, opening)
+	event := testEvent("event-terminal-cache", "warning")
+	event.Evaluations[0].Action = domain.EventActionResolved
+	created, err := base.CreateEvent(ctx, event)
 	if err != nil {
 		t.Fatal(err)
 	}
-	endedEvent := testEvent("event-terminal-cache", "warning")
-	endedEvent.Action = domain.EventActionResolved
-	terminal := alert.Clone()
-	terminal.Status = domain.AlertStatusRecovered
-	terminal.LatestEventID = endedEvent.EventID
-	terminal.LastOccurredAt = terminal.LastOccurredAt.Add(time.Minute)
-	terminal.UpdateAt = terminal.UpdateAt.Add(time.Minute)
-	endAt := terminal.LastOccurredAt
-	terminal.EndAt = &endAt
-	terminal.EndType = domain.AlertEndTypeSource
-	ended, err := base.CompareAndSetAlert(
-		context.Background(), alert.BKTenantID, alert.AlertID, created.Version, terminal,
-	)
+	plan, err := processor.preparePlan(ctx, created.Event)
 	if err != nil {
 		t.Fatal(err)
 	}
-	storedEndedEvent, err := base.CreateEvent(context.Background(), endedEvent)
+	saved, err := processor.writeEventResult(ctx, created.StoredEvent, store.EventResult{State: domain.EventProcessStateUnprocessed, Plan: plan})
 	if err != nil {
+		t.Fatal(err)
+	}
+	mutation := plan.Mutations[0]
+	ended, err := base.CompareAndSetAlert(ctx, event.BKTenantID, mutation.Alert.AlertID, store.NewVersionToken(mutation.ExpectedVersion), mutation.Alert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := newMemoryRecentAlertCache()
+	if err := cache.PutTerminal(ctx, ended); err != nil {
 		t.Fatal(err)
 	}
 	repository := &lookupTrackingRepository{Repository: base}
-	cache := newMemoryRecentAlertCache()
-	if err := cache.PutTerminal(context.Background(), ended); err != nil {
-		t.Fatal(err)
-	}
-	processor := newTestProcessorWithCache(t, repository, cache, NoopFinalHook{})
-	result, err := processor.ProcessEvent(context.Background(), storedEndedEvent.StoredEvent)
+	processor = newTestProcessorWithCache(t, repository, cache, NoopFinalHook{})
+	result, err := processor.ProcessEvent(ctx, saved)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Outcome != OutcomeAlertRecovered || repository.findActiveCalls != 0 || repository.findEndedCalls != 0 {
-		t.Fatalf("result=%#v active_calls=%d ended_calls=%d", result, repository.findActiveCalls, repository.findEndedCalls)
+		t.Fatalf("result=%+v searches=%d/%d", result, repository.findActiveCalls, repository.findEndedCalls)
 	}
 }
 
@@ -601,7 +604,7 @@ func TestProcessEventRepairsRecentCacheAfterAlertCASConflict(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Outcome != OutcomeAlertUpdated || repository.conflicts != 1 || repository.currentReads != 1 ||
+	if result.Outcome != OutcomeAlertUpdated || repository.conflicts != 1 || repository.currentReads != 3 ||
 		repository.eventReads != 1 {
 		t.Fatalf(
 			"result=%#v conflicts=%d current_reads=%d event_reads=%d",
@@ -884,7 +887,7 @@ func storetestAlert(event domain.Event, alertID string) domain.Alert {
 	now := event.CreateAt.Add(time.Second)
 	return domain.Alert{EventSourceVersion: 1,
 		AlertID: alertID, BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
-		Fingerprint: event.Fingerprint, Title: event.Title, Severity: event.Severity,
+		Fingerprint: event.Fingerprint, Title: event.Title, Severity: event.Evaluations[0].Severity,
 		Dimensions:    event.Dimensions.Clone(),
 		SourceEventID: event.SourceEventID, SourceAlertID: event.SourceAlertID,
 		Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive,
@@ -920,7 +923,7 @@ func mustGetStoredEvent(t *testing.T, repo store.Repository, event domain.Event)
 
 func testEvent(id, severity string) domain.Event {
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	return domain.Event{EventSourceVersion: 1, BKTenantID: "tenant-1", EventSourceID: "source", EventID: id, Fingerprint: "fingerprint-1", Title: "CPU high", Severity: severity, Action: domain.EventActionTriggered, Dimensions: domain.DimensionMap{"host": domain.NewStringScalar("host-1")}, OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, SourceEventID: "source-" + id, SourceAlertID: "source-alert", SourceRawData: domain.JSONObject{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}}
+	return domain.Event{Evaluations: []domain.EventEvaluation{{Severity: severity, Action: domain.EventActionTriggered}}, EventSourceVersion: 1, BKTenantID: "tenant-1", EventSourceID: "source", EventID: id, Fingerprint: "fingerprint-1", Title: "CPU high", Dimensions: domain.DimensionMap{"host": domain.NewStringScalar("host-1")}, OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, SourceEventID: "source-" + id, SourceAlertID: "source-alert", SourceRawData: domain.JSONObject{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}}
 }
 
 type fixedClock struct{ now time.Time }

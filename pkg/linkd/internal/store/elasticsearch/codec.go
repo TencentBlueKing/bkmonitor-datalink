@@ -155,15 +155,20 @@ func decodeEventHit(hit searchHit) (store.StoredEvent, error) {
 }
 
 func validateNormalizedStoredEvent(stored store.StoredEvent) error {
+	if stored.Processing.Plan != nil {
+		if err := store.ValidateEventPlan(stored.Event, stored.Processing.Plan); err != nil {
+			return err
+		}
+	}
 	if stored.Version.IsZero() {
 		return fmt.Errorf("stored event version must not be empty")
 	}
 	associated := stored.Processing.State == domain.EventProcessStateAccepted || stored.Processing.State == domain.EventProcessStateSuppressed
-	if associated && stored.Event.RelatedAlertID == "" {
-		return fmt.Errorf("associated event requires related_alert_id")
+	if associated && len(stored.Event.RelatedAlertIDs) == 0 {
+		return fmt.Errorf("associated event requires related_alert_ids")
 	}
-	if !associated && stored.Event.RelatedAlertID != "" {
-		return fmt.Errorf("only accepted or suppressed event may contain related_alert_id")
+	if !associated && len(stored.Event.RelatedAlertIDs) != 0 {
+		return fmt.Errorf("only accepted or suppressed event may contain related_alert_ids")
 	}
 	return nil
 }

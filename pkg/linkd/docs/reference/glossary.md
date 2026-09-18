@@ -13,7 +13,7 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | Signal          | 只表示某个 Mailbox 需要处理的 Redis Stream 唤醒消息，不绑定单个 Event                             |
 | SourceCleaner   | 由 EventSource 选择的来源解析器，只把 payload 中的来源事实解析为 EventDraft                       |
 | EventDraft      | Cleaner 提取的来源事实，不含 EventFactory 独占的身份、标准化结果和原始快照                         |
-| Event           | 标准化后的不可变来源事实；生命周期只允许补写 `related_alert_id`                                   |
+| Event           | 标准化后的不可变来源事实；生命周期只允许补写 `related_alert_ids`                                   |
 | source_raw_data | Event 保存的完整来源 payload 的 JSON 对象快照，创建后不可修改，定位为人工追溯资料；本次丰富迁移尽量不读取它，不将其作为默认输入或缺字段兜底 |
 | extra_data      | Event 中不进入核心字段的来源扩展数据，创建时确定并保持不可变；不承担丰富结果或处理工作区的职责      |
 | EventProcessing | 独立于 Event JSON 的技术元数据，包含 state、outcome、reason 和 processed_at                       |
@@ -55,13 +55,18 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | cw_labels       | 旧告警规则生成的业务或资源范围字符串标签列表；迁移后作为资源丰富信息保存，不等同于 Event/Alert.labels 或授权结果 |
 | 动态分组（dynamic_group_id） | 按旧模型与实例关系查询得到的分组归属，丰富结果保留旧字段名并保存查询时的分组 ID 列表；字段名为单数不表示单个分组，不表达分组成员的实时状态 |
 | active          | Alert 当前仍成立                                                                                  |
+| values | Event 本次观测的有限数字对象，不参与 fingerprint，不包含单位等元信息 |
+| evaluations | Event 中按标准 severity 唯一的判定列表，动作是 triggered/resolved/closed；顺序无语义 |
+| severity_upgrade_policy | 全局升级策略：update_current 保留 Alert 身份更新级别；close_and_create 关闭旧 Alert 后新建 |
+| EventPlan | EventProcessing 内先于副作用保存的裁决计划，冻结升级策略、Alert 目标快照和逐级结果；完成后删除 |
+| related_alert_ids | Event 最终关联的有界 Alert ID 列表，最多包含旧、新两条 Alert |
 | recovered       | 来源 resolved Event 使 Alert 进入的终态                                                           |
 | closed          | 来源关闭、直接关闭或等级升级使 Alert 进入的终态                                                   |
 | AlertLog        | 独立、确定性标识的不可变流水，记录状态操作、抑制和最终输出结果                                    |
 | VersionToken    | Repository 专属 CAS 令牌，不进入领域 JSON 或外部消息                                              |
 | accepted        | Event 已被生命周期接受并关联 Alert                                                                |
-| suppressed      | 低等级 triggered Event 被 active 高等级 Alert 抑制，Event 不关联 Alert                            |
-| orphaned        | resolved/closed 未找到 active Alert，Event 不关联 Alert                                           |
+| suppressed      | 低等级 triggered 判定被 active 高等级 Alert 抑制，或旧级别终结判定被更高级别触发替代，Event 关联实施抑制的 Alert                            |
+| orphaned        | resolved/closed 未找到同级 active Alert，Event 不关联 Alert                                           |
 | rejected        | Event 在清洗或领域校验阶段被确定性拒绝                                                            |
 | cause           | FinalHook 变更原因，包含 source event、user operation 或 system operation 的类型和稳定 ID         |
 

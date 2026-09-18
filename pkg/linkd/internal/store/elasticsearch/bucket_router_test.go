@@ -192,10 +192,10 @@ func TestBucketStartUsesUTCStableEpoch(t *testing.T) {
 
 func eventForIDTest(t *testing.T, eventID string, timestamp time.Time) domain.Event {
 	t.Helper()
-	return domain.Event{EventSourceVersion: 1,
+	return domain.Event{Evaluations: []domain.EventEvaluation{{Severity: "warning", Action: domain.EventActionTriggered}}, EventSourceVersion: 1,
 		BKTenantID: "tenant-1", EventSourceID: "source-1", EventID: eventID,
-		Fingerprint: "fp", Severity: "warning", Action: domain.EventActionTriggered,
-		Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{}, SourceRawData: domain.JSONObject{}, ExtraData: domain.JSONObject{},
+		Fingerprint: "fp",
+		Dimensions:  domain.DimensionMap{}, Labels: domain.DimensionMap{}, SourceRawData: domain.JSONObject{}, ExtraData: domain.JSONObject{},
 		OccurredAt: timestamp, ProducedAt: timestamp, ReceivedAt: timestamp, CreateAt: timestamp,
 	}
 }

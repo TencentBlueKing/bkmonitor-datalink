@@ -30,6 +30,8 @@ Alert 快照中的 `event_source_version` 为正整数，记录创建时继承�
 输出规则：
 
 - 创建、同等级 triggered、resolved、closed 和内部直接关闭均输出当前 Alert；
-- 等级升级按顺序输出旧 Alert closed 和新 Alert active 两个快照；
+- 等级升级使用 close_and_create 时按顺序输出旧 Alert closed 和新 Alert active；update_current 只输出同一 alert_id 的 active 快照，新 severity 生效，update_at 推进；
 - suppressed、orphaned、rejected 和纯幂等重投不输出 Alert 快照；
 - 输出使用 `update_at` 作为快照时间，不暴露 Repository 的 `VersionToken`。
+
+Event 的 values/evaluations 不直接加入 Alert V1 信封；Alert severity 现在表示当前级别，可在同一 alert_id 内升级。

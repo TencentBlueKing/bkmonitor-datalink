@@ -711,7 +711,7 @@ function buildFilters(
     if (params.eventSourceId)
       filters.push({ term: { event_source_id: params.eventSourceId } });
     if (params.relatedAlertId)
-      filters.push({ term: { related_alert_id: params.relatedAlertId } });
+      filters.push({ term: { related_alert_ids: params.relatedAlertId } });
   }
   if (entity === "alerts") {
     if (params.status) filters.push({ term: { status: params.status } });
@@ -754,13 +754,14 @@ function hitToItem(entity: EntityKind, hit: SearchHit): EntityItem {
       entity === "events"
         ? {
             ...pick(source, [
-              "action",
+              "evaluations",
               "event_source_id",
-              "severity",
-              "related_alert_id",
+              "values",
+              "related_alert_ids",
               "title",
             ]),
-            ...(source.processing ?? {}),
+            state: source.processing?.state,
+            outcome: source.processing?.outcome,
           }
         : entity === "alerts"
           ? pick(source, [

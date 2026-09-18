@@ -13,45 +13,51 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"slices"
 	"time"
 )
 
 var eventSourceIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // Event 是来源消息经过 SourceCleaner 和通用事件工厂标准化后的事件事实。
-// Event 创建后只有 RelatedAlertID 可以由生命周期处理器写入，其他来源事实不可覆盖。
+// Event 创建后只有 RelatedAlertIDs 可以由生命周期处理器写入，其他来源事实不可覆盖。
 type Event struct {
 	// EventSourceVersion 是创建时实际使用的不可变来源发布版本。
-	EventSourceVersion int64        `json:"event_source_version"`
-	BKTenantID         string       `json:"bk_tenant_id"`
-	EventSourceID      string       `json:"event_source_id"`
-	RelatedAlertID     string       `json:"related_alert_id,omitempty"`
-	EventID            string       `json:"event_id"`
-	Fingerprint        string       `json:"fingerprint"`
-	Title              string       `json:"title"`
-	Content            string       `json:"content"`
-	Severity           string       `json:"severity"`
-	Action             EventAction  `json:"action"`
-	ActionReason       string       `json:"action_reason"`
-	Dimensions         DimensionMap `json:"dimensions"`
-	SubjectSystem      string       `json:"subject_system"`
-	SubjectType        string       `json:"subject_type"`
-	SubjectID          string       `json:"subject_id"`
-	SubjectName        string       `json:"subject_name"`
-	OccurredAt         time.Time    `json:"occurred_at"`
-	ProducedAt         time.Time    `json:"produced_at"`
-	ReceivedAt         time.Time    `json:"received_at"`
-	CreateAt           time.Time    `json:"create_at"`
-	SourceEventID      string       `json:"source_event_id"`
-	SourceAlertID      string       `json:"source_alert_id"`
-	SourceRawData      JSONObject   `json:"source_raw_data,omitempty"`
-	Labels             DimensionMap `json:"labels"`
-	ExtraData          JSONObject   `json:"extra_data,omitempty"`
+	EventSourceVersion int64    `json:"event_source_version"`
+	BKTenantID         string   `json:"bk_tenant_id"`
+	EventSourceID      string   `json:"event_source_id"`
+	RelatedAlertIDs    []string `json:"related_alert_ids,omitempty"`
+	EventID            string   `json:"event_id"`
+	Fingerprint        string   `json:"fingerprint"`
+	Title              string   `json:"title"`
+	Content            string   `json:"content"`
+	// Evaluations 记录各级别的来源判定；数组顺序不携带处理顺序。
+	Evaluations []EventEvaluation `json:"evaluations"`
+	Dimensions  DimensionMap      `json:"dimensions"`
+	// Values 是本次事件的观测数值，创建后不可覆盖，也不参与 fingerprint。
+	Values        EventValues  `json:"values"`
+	SubjectSystem string       `json:"subject_system"`
+	SubjectType   string       `json:"subject_type"`
+	SubjectID     string       `json:"subject_id"`
+	SubjectName   string       `json:"subject_name"`
+	OccurredAt    time.Time    `json:"occurred_at"`
+	ProducedAt    time.Time    `json:"produced_at"`
+	ReceivedAt    time.Time    `json:"received_at"`
+	CreateAt      time.Time    `json:"create_at"`
+	SourceEventID string       `json:"source_event_id"`
+	SourceAlertID string       `json:"source_alert_id"`
+	SourceRawData JSONObject   `json:"source_raw_data,omitempty"`
+	Labels        DimensionMap `json:"labels"`
+	ExtraData     JSONObject   `json:"extra_data,omitempty"`
 }
 
 // Normalize 深拷贝动态字段、规范 UTC 时间并校验 Event。
 func (e Event) Normalize() (Event, error) {
 	e.Dimensions = e.Dimensions.Normalize()
+	e.Evaluations = slices.Clone(e.Evaluations)
+	slices.SortFunc(e.Evaluations, compareEvaluation)
+	e.RelatedAlertIDs = normalizeAlertIDs(e.RelatedAlertIDs)
+	e.Values = e.Values.Clone()
 	e.Labels = e.Labels.Normalize()
 	var err error
 	e.SourceRawData, err = e.SourceRawData.Normalize()
@@ -75,6 +81,9 @@ func (e Event) Normalize() (Event, error) {
 // Clone 返回不共享 map 或 JSON 字节的 Event 副本。
 func (e Event) Clone() Event {
 	e.Dimensions = e.Dimensions.Clone()
+	e.Evaluations = slices.Clone(e.Evaluations)
+	e.RelatedAlertIDs = slices.Clone(e.RelatedAlertIDs)
+	e.Values = e.Values.Clone()
 	e.Labels = e.Labels.Clone()
 	e.SourceRawData = e.SourceRawData.Clone()
 	e.ExtraData = e.ExtraData.Clone()
@@ -102,7 +111,6 @@ func (e Event) validate(validateJSON bool) error {
 		{"event_source_id", e.EventSourceID, 1, 32},
 		{"event_id", e.EventID, 1, EntityIDMaxBytes},
 		{"fingerprint", e.Fingerprint, 1, 128},
-		{"severity", e.Severity, 1, 32},
 	} {
 		if err := validateTextLength(field.name, field.value, field.min, field.max); err != nil {
 			return err
@@ -119,10 +127,8 @@ func (e Event) validate(validateJSON bool) error {
 		value string
 		max   int
 	}{
-		{"related_alert_id", e.RelatedAlertID, 256},
 		{"title", e.Title, 256},
 		{"content", e.Content, 1 << 20},
-		{"action_reason", e.ActionReason, 256},
 		{"subject_system", e.SubjectSystem, 32},
 		{"subject_type", e.SubjectType, 128},
 		{"subject_id", e.SubjectID, 256},
@@ -134,11 +140,22 @@ func (e Event) validate(validateJSON bool) error {
 			return err
 		}
 	}
-	if !e.Action.Valid() {
-		return fmt.Errorf("event action is invalid: %q", e.Action)
+	if err := ValidateEvaluations(e.Evaluations); err != nil {
+		return err
+	}
+	if len(e.RelatedAlertIDs) > 2 {
+		return fmt.Errorf("event may associate at most two alerts")
+	}
+	for _, id := range e.RelatedAlertIDs {
+		if err := validateTextLength("related_alert_id", id, 1, EntityIDMaxBytes); err != nil {
+			return err
+		}
 	}
 	if err := e.Dimensions.Validate(); err != nil {
 		return fmt.Errorf("event dimensions: %w", err)
+	}
+	if err := e.Values.Validate(); err != nil {
+		return fmt.Errorf("event values: %w", err)
 	}
 	if err := e.Labels.Validate(); err != nil {
 		return fmt.Errorf("event labels: %w", err)
@@ -182,23 +199,34 @@ func ValidateNormalizedNewEvent(event Event) error {
 }
 
 func validateNewEventState(event Event) error {
-	if event.RelatedAlertID != "" {
-		return fmt.Errorf("new event related_alert_id must be empty")
+	if len(event.RelatedAlertIDs) != 0 {
+		return fmt.Errorf("new event related_alert_ids must be empty")
 	}
 	return nil
 }
 
-// WithRelatedAlertID 返回写入生命周期关联结果后的 Event 副本。
-func (e Event) WithRelatedAlertID(alertID string) (Event, error) {
-	if e.RelatedAlertID != "" && e.RelatedAlertID != alertID {
-		return Event{}, fmt.Errorf("event related_alert_id is already set")
+// WithRelatedAlertIDs 返回生命周期关联结果，不允许重写已经提交的关联。
+func (e Event) WithRelatedAlertIDs(alertIDs []string) (Event, error) {
+	alertIDs = normalizeAlertIDs(alertIDs)
+	if len(e.RelatedAlertIDs) > 0 && !slices.Equal(e.RelatedAlertIDs, alertIDs) {
+		return Event{}, fmt.Errorf("event related_alert_ids are already set")
 	}
 	e = e.Clone()
-	e.RelatedAlertID = alertID
+	e.RelatedAlertIDs = alertIDs
 	return e.Normalize()
 }
 
-// ValidateEventReplacement 只允许生命周期处理器写入 RelatedAlertID。
+func normalizeAlertIDs(ids []string) []string {
+	ids = slices.Clone(ids)
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
+	if len(ids) == 0 {
+		return nil
+	}
+	return ids
+}
+
+// ValidateEventReplacement 只允许生命周期处理器写入 RelatedAlertIDs。
 func ValidateEventReplacement(current, replacement Event) error {
 	if err := current.Validate(); err != nil {
 		return fmt.Errorf("current event: %w", err)
@@ -208,13 +236,13 @@ func ValidateEventReplacement(current, replacement Event) error {
 	}
 	left := current.Clone()
 	right := replacement.Clone()
-	left.RelatedAlertID = ""
-	right.RelatedAlertID = ""
+	left.RelatedAlertIDs = nil
+	right.RelatedAlertIDs = nil
 	if !reflect.DeepEqual(left, right) {
 		return fmt.Errorf("event replacement must preserve source facts")
 	}
-	if current.RelatedAlertID != "" && current.RelatedAlertID != replacement.RelatedAlertID {
-		return fmt.Errorf("event related_alert_id is immutable after association")
+	if len(current.RelatedAlertIDs) > 0 && !slices.Equal(current.RelatedAlertIDs, replacement.RelatedAlertIDs) {
+		return fmt.Errorf("event related_alert_ids are immutable after association")
 	}
 	return nil
 }

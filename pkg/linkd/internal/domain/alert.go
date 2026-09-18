@@ -259,7 +259,8 @@ func ValidateEnrichPayload(status EnrichStatus, object JSONObject) error {
 	return nil
 }
 
-// ValidateAlertReplacement 校验 CAS 替换只修改生命周期字段且不会重新打开终态 Alert。
+// ValidateAlertReplacement 校验 CAS 仅修改当前级别和生命周期字段，终态不可重开。
+// 级别优先级由 Lifecycle 的冻结配置校验，Repository 不自行解释级别排序。
 func ValidateAlertReplacement(current, replacement Alert) error {
 	if err := current.Validate(); err != nil {
 		return fmt.Errorf("current alert: %w", err)
@@ -270,6 +271,7 @@ func ValidateAlertReplacement(current, replacement Alert) error {
 	left := current.Clone()
 	right := replacement.Clone()
 	clearLifecycle := func(alert *Alert) {
+		alert.Severity = ""
 		alert.Status = ""
 		alert.LatestEventID = ""
 		alert.LastOccurredAt = time.Time{}

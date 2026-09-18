@@ -16,6 +16,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -40,8 +41,9 @@ func (r eventRouteOverride) EventRoute(context.Context, string) (Route, error) {
 
 func TestDocumentCodecs(t *testing.T) {
 	event := storetest.Event("tenant-1", "event-1", "fp", "warning")
+	event.Values = domain.EventValues{}
 	event.Content = "CPU has remained above threshold"
-	event.ActionReason = "threshold_exceeded"
+	event.Evaluations[0].ActionReason = "threshold_exceeded"
 	event.SubjectSystem = "cmdb"
 	event.SubjectType = "host"
 	event.SubjectID = "host-1"
@@ -84,7 +86,7 @@ func TestDocumentCodecs(t *testing.T) {
 		t.Run(string(state), func(t *testing.T) {
 			terminalEvent := event.Clone()
 			if state == domain.EventProcessStateAccepted || state == domain.EventProcessStateSuppressed {
-				terminalEvent.RelatedAlertID = "alert-1"
+				terminalEvent.RelatedAlertIDs = []string{"alert-1"}
 			}
 			terminalProcessing := store.EventProcessing{State: state, Outcome: "test_outcome", ReasonCode: "test_reason", ProcessedAt: &processedAt}
 			encoded, encodeErr := encodeEventDocument(terminalEvent, terminalProcessing)
@@ -95,7 +97,7 @@ func TestDocumentCodecs(t *testing.T) {
 			if decodeErr != nil {
 				t.Fatal(decodeErr)
 			}
-			if decoded.Processing.State != state || decoded.Processing.Outcome != terminalProcessing.Outcome || decoded.Event.RelatedAlertID != terminalEvent.RelatedAlertID {
+			if decoded.Processing.State != state || decoded.Processing.Outcome != terminalProcessing.Outcome || !slices.Equal(decoded.Event.RelatedAlertIDs, terminalEvent.RelatedAlertIDs) {
 				t.Fatalf("decoded terminal event=%#v", decoded)
 			}
 		})
@@ -183,10 +185,10 @@ func TestMappings(t *testing.T) {
 	assertMappingFields(t, alerts, reflect.TypeFor[domain.Alert]())
 	assertMappingFields(t, logs, reflect.TypeFor[domain.AlertLog]())
 
-	assertPropertyTypes(t, events, "keyword", "bk_tenant_id", "event_source_id", "related_alert_id", "event_id", "fingerprint", "title", "content", "severity", "action", "action_reason", "subject_system", "subject_type", "subject_id", "subject_name", "source_event_id", "source_alert_id")
+	assertPropertyTypes(t, events, "keyword", "bk_tenant_id", "event_source_id", "related_alert_ids", "event_id", "fingerprint", "title", "content", "subject_system", "subject_type", "subject_id", "subject_name", "source_event_id", "source_alert_id")
 	assertPropertyTypes(t, events, "date_nanos", "occurred_at", "produced_at", "received_at", "create_at")
 	assertPropertyTypes(t, events, "flattened", "dimensions", "labels")
-	assertPropertyTypes(t, events, "object", "source_raw_data", "extra_data", "processing")
+	assertPropertyTypes(t, events, "object", "source_raw_data", "extra_data", "processing", "values")
 	assertPropertyTypes(t, processing, "keyword", "state", "outcome", "reason_code")
 	assertPropertyTypes(t, processing, "date_nanos", "processed_at")
 
@@ -209,7 +211,7 @@ func TestMappings(t *testing.T) {
 			t.Fatalf("opaque property=%#v", property)
 		}
 	}
-	for _, field := range []string{"title", "content", "action_reason", "subject_name"} {
+	for _, field := range []string{"title", "content", "subject_name"} {
 		property := events[field].(map[string]any)
 		if property["type"] != "keyword" || property["index"] != false || property["doc_values"] != false {
 			t.Fatalf("stored-only event field %q=%#v", field, property)
@@ -700,7 +702,7 @@ func TestCompareAndSetEventResultDoesNotWaitForRefresh(t *testing.T) {
 		event.BKTenantID,
 		event.EventID,
 		version,
-		store.EventResult{State: domain.EventProcessStateAccepted, RelatedAlertID: "alert-1", Outcome: "alert_created", ProcessedAt: processedAt},
+		store.EventResult{State: domain.EventProcessStateAccepted, RelatedAlertIDs: []string{"alert-1"}, Outcome: "alert_created", ProcessedAt: processedAt},
 	)
 	if err != nil || stored.Processing.State != domain.EventProcessStateAccepted {
 		t.Fatalf("CompareAndSetEventResult()=%#v,%v", stored, err)

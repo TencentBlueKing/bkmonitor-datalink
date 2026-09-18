@@ -65,7 +65,7 @@ func TestMapperBuildsStableEvent(t *testing.T) {
 	parsedID, parseErr := domain.ParseEventID(first.EventID)
 	if first.EventID != second.EventID || parseErr != nil || parsedID.BKTenantID != first.BKTenantID ||
 		parsedID.EventSourceID != source.EventSourceID || first.EventSourceID != source.EventSourceID ||
-		first.Fingerprint != "source-alert-1" || first.Severity != "warning" || first.RelatedAlertID != "" {
+		first.Fingerprint != "source-alert-1" || first.Evaluations[0].Severity != "warning" || len(first.RelatedAlertIDs) != 0 {
 		t.Fatalf("event=%#v", first)
 	}
 	if first.BKTenantID != message.TenantID {

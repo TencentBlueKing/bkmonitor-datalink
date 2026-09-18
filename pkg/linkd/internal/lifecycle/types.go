@@ -24,15 +24,16 @@ const maxCASAttempts = 3
 type ProcessOutcome string
 
 const (
-	OutcomeAlertCreated    ProcessOutcome = "alert_created"
-	OutcomeAlertUpdated    ProcessOutcome = "alert_updated"
-	OutcomeAlertRotated    ProcessOutcome = "alert_rotated"
-	OutcomeAlertRecovered  ProcessOutcome = "alert_recovered"
-	OutcomeAlertClosed     ProcessOutcome = "alert_closed"
-	OutcomeAlertSuppressed ProcessOutcome = "alert_suppressed"
-	OutcomeEventOrphaned   ProcessOutcome = "event_orphaned"
-	OutcomeRejected        ProcessOutcome = "rejected"
-	OutcomeAlreadyDone     ProcessOutcome = "already_processed"
+	OutcomeAlertCreated         ProcessOutcome = "alert_created"
+	OutcomeAlertUpdated         ProcessOutcome = "alert_updated"
+	OutcomeAlertSeverityChanged ProcessOutcome = "alert_severity_changed"
+	OutcomeAlertRotated         ProcessOutcome = "alert_rotated"
+	OutcomeAlertRecovered       ProcessOutcome = "alert_recovered"
+	OutcomeAlertClosed          ProcessOutcome = "alert_closed"
+	OutcomeAlertSuppressed      ProcessOutcome = "alert_suppressed"
+	OutcomeEventOrphaned        ProcessOutcome = "event_orphaned"
+	OutcomeRejected             ProcessOutcome = "rejected"
+	OutcomeAlreadyDone          ProcessOutcome = "already_processed"
 )
 
 const (
@@ -44,7 +45,7 @@ const (
 
 type ProcessResult struct {
 	EventID    string
-	AlertID    string
+	AlertIDs   []string
 	EventState domain.EventProcessState
 	Outcome    ProcessOutcome
 	ReasonCode string
@@ -105,6 +106,7 @@ type Processor struct {
 	enrichObserver EnrichObserver
 	finalHooks     []NamedFinalHook
 	severity       SeverityTable
+	upgradePolicy  string
 	clock          Clock
 	logger         Logger
 }
@@ -136,13 +138,16 @@ func NewProcessor(
 		seen[hook.Name] = true
 	}
 	processor := &Processor{
-		repository: repository, recentAlerts: recentAlerts, idGenerator: idGenerator, enricher: enricher,
+		upgradePolicy: "close_and_create", repository: repository, recentAlerts: recentAlerts, idGenerator: idGenerator, enricher: enricher,
 		enrichObserver: noopEnrichObserver{}, finalHooks: append([]NamedFinalHook(nil), finalHooks...), severity: severity, clock: clock, logger: logger,
 	}
 	for _, option := range options {
 		if option != nil {
 			option(processor)
 		}
+	}
+	if processor.upgradePolicy != "update_current" && processor.upgradePolicy != "close_and_create" {
+		return nil, fmt.Errorf("invalid severity upgrade policy")
 	}
 	return processor, nil
 }
@@ -183,4 +188,13 @@ func (c CloseAlertCommand) Validate() error {
 type CloseAlertResult struct {
 	Alert         domain.Alert
 	AlreadyClosed bool
+}
+
+// WithSeverityUpgradePolicy 配置进程级升级行为。空值使用关闭后新建，非法值由 NewProcessor 拒绝。
+func WithSeverityUpgradePolicy(policy string) ProcessorOption {
+	return func(p *Processor) {
+		if policy != "" {
+			p.upgradePolicy = policy
+		}
+	}
 }

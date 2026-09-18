@@ -1061,9 +1061,9 @@ func waitForAcceptedEvents(
 			state, exists := expected.EventStates[stored.Event.SourceEventID]
 			processed = processed && exists && stored.Processing.State == state
 			if state == domain.EventProcessStateAccepted || state == domain.EventProcessStateSuppressed {
-				processed = processed && stored.Event.RelatedAlertID != ""
+				processed = processed && len(stored.Event.RelatedAlertIDs) != 0
 			} else {
-				processed = processed && stored.Event.RelatedAlertID == ""
+				processed = processed && len(stored.Event.RelatedAlertIDs) == 0
 			}
 		}
 		if processed {
@@ -1097,9 +1097,9 @@ func waitForAcceptedMySQLEvents(
 			state, exists := expected.EventStates[stored.Event.SourceEventID]
 			processed = processed && exists && stored.Processing.State == state
 			if state == domain.EventProcessStateAccepted || state == domain.EventProcessStateSuppressed {
-				processed = processed && stored.Event.RelatedAlertID != ""
+				processed = processed && len(stored.Event.RelatedAlertIDs) != 0
 			} else {
-				processed = processed && stored.Event.RelatedAlertID == ""
+				processed = processed && len(stored.Event.RelatedAlertIDs) == 0
 			}
 		}
 		if processed {
@@ -1307,16 +1307,16 @@ func assertEvents(
 			t.Fatalf("Event processing state = %q, want %q: %#v", stored.Processing.State, wantState, event)
 		}
 		if (wantState == domain.EventProcessStateAccepted || wantState == domain.EventProcessStateSuppressed) &&
-			event.RelatedAlertID == "" {
+			len(event.RelatedAlertIDs) == 0 {
 			t.Fatalf("associated Event has no related_alert_id: %#v", event)
 		}
 		if wantState != domain.EventProcessStateAccepted && wantState != domain.EventProcessStateSuppressed &&
-			event.RelatedAlertID != "" {
+			len(event.RelatedAlertIDs) != 0 {
 			t.Fatalf("unassociated Event has related_alert_id: %#v", event)
 		}
 		if event.BKTenantID != rawRecord.BKTenantID || event.EventSourceID != dataset.Config.EventSourceID ||
-			event.Fingerprint != raw.SourceAlertID || event.Severity != raw.SourceSeverity ||
-			event.Title != raw.Title || event.Content != raw.Content || event.Action != raw.Action ||
+			event.Fingerprint != raw.SourceAlertID || event.Evaluations[0].Severity != raw.Evaluations[0].Severity ||
+			event.Title != raw.Title || event.Content != raw.Content || event.Evaluations[0].Action != raw.Evaluations[0].Action ||
 			!reflect.DeepEqual(event.Dimensions, raw.Dimensions) {
 			t.Fatalf("standard basic field mapping mismatch: event=%#v raw=%#v", event, raw)
 		}

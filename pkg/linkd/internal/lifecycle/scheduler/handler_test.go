@@ -48,7 +48,7 @@ func (p *fakeProcessor) ProcessEvent(_ context.Context, stored store.StoredEvent
 	if p.err != nil {
 		return lifecycle.ProcessResult{}, p.err
 	}
-	return lifecycle.ProcessResult{EventID: eventID, AlertID: "alert-1", Outcome: lifecycle.OutcomeAlertUpdated}, nil
+	return lifecycle.ProcessResult{EventID: eventID, AlertIDs: []string{"alert-1"}, Outcome: lifecycle.OutcomeAlertUpdated}, nil
 }
 
 type fakeMailbox struct {

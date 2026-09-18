@@ -54,7 +54,7 @@ func TestKafkaPublisherMapsAndChunksRecords(t *testing.T) {
 	records := make([]Record, kafkaPublishChunkSize+1)
 	for index := range records {
 		records[index] = Record{
-			Key: []byte("fingerprint"), Body: []byte(`{"action":"triggered"}`),
+			Key: []byte("fingerprint"), Body: []byte(`{"evaluations":[{"action":"triggered"}]}`),
 			Headers: map[string]string{
 				"message_id": "event-id", "bk_tenant_id": "tenant-a", "order_key": "tenant/source/fingerprint",
 			},

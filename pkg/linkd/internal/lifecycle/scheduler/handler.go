@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"linkd/internal/consume"
+	"linkd/internal/domain"
 	"linkd/internal/lifecycle"
 	"linkd/internal/store"
 )
@@ -136,7 +137,7 @@ func (h *Handler) Handle(ctx context.Context, message consume.Message) consume.O
 		}
 		h.observer.MailboxDrained(ctx, eventSourceID, "completed", processed)
 		h.logger.InfoContext(ctx, "lifecycle mailbox drained", "mailbox_id", signal.MailboxID, "processed", processed,
-			"event_id", lastResult.EventID, "alert_id", lastResult.AlertID, "outcome", lastResult.Outcome)
+			"event_id", lastResult.EventID, "alert_ids", lastResult.AlertIDs, "outcome", lastResult.Outcome)
 		return consume.Complete()
 	}
 	eventSourceID := ""
@@ -169,7 +170,7 @@ func (h *Handler) drain(
 			return processed, last, false, fmt.Errorf("mailbox %q contains event %q with mismatched identity", signal.MailboxID, eventID), nil
 		}
 		result, processErr := h.processor.ProcessEvent(ctx, stored)
-		h.observer.EventProcessed(ctx, stored.Event.EventSourceID, stored.Event.Action, result, processErr)
+		h.observer.EventProcessed(ctx, stored.Event.EventSourceID, eventAction(stored.Event.Evaluations), result, processErr)
 		if processErr != nil {
 			h.observer.MailboxOperation(ctx, stored.Event.EventSourceID, "process", "failed")
 			return processed, last, false, nil, processErr
@@ -217,3 +218,17 @@ var _ consume.Handler = (*Handler)(nil)
 
 // BindSource 在开始消费前固定来源作用域，不允许运行中修改。
 func (h *Handler) BindSource(id string) { h.expectedSource = id }
+
+// eventAction 为事件级指标提供有界动作标签，多种动作共存时使用 mixed。
+func eventAction(evaluations []domain.EventEvaluation) domain.EventAction {
+	if len(evaluations) == 0 {
+		return "unknown"
+	}
+	action := evaluations[0].Action
+	for _, evaluation := range evaluations[1:] {
+		if evaluation.Action != action {
+			return "mixed"
+		}
+	}
+	return action
+}

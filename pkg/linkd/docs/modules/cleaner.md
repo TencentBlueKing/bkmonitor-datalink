@@ -38,7 +38,7 @@ type SourceCleaner interface {
 
 SourceCleaner 只解释来源 payload，不能访问 Repository、Mailbox 或 MQ Session。当前只注册
 `standard`：接受单个 JSON object，把已知字段投影为 EventDraft；未知字段只在完整原始快照中保留，
-重复 key、尾随 JSON、非法 action 和已知字段类型错误会被拒绝。
+重复 key、尾随 JSON、非法 evaluation action、映射后重复级别、非法 values 和已知字段类型错误会被拒绝。
 
 EventDraft 不包含租户、来源、Event ID、fingerprint、标准 severity、接收时间和原始 payload，具体
 SourceCleaner 因而不能覆盖这些字段。EventFactory 统一处理：

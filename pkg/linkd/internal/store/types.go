@@ -11,6 +11,7 @@ package store
 
 import (
 	"fmt"
+	"slices"
 	"time"
 
 	"linkd/internal/domain"
@@ -33,6 +34,10 @@ func (t VersionToken) String() string { return t.value }
 
 // EventProcessing 是 Event JSON 之外的生命周期处理元数据。
 type EventProcessing struct {
+	// Plan 是已冻结的裁决计划，先持久化再执行副作用，防止重试读取新配置重新裁决。
+	Plan *EventPlan `json:"plan,omitempty"`
+	// Evaluations 保存逐级最终结果，事件级 State 是聚合结果。
+	Evaluations []EvaluationResult       `json:"evaluations,omitempty"`
 	State       domain.EventProcessState `json:"state"`
 	Outcome     string                   `json:"outcome,omitempty"`
 	ReasonCode  string                   `json:"reason_code,omitempty"`
@@ -44,6 +49,14 @@ func NewUnprocessedEventProcessing() EventProcessing {
 }
 
 func (p EventProcessing) Normalize() (EventProcessing, error) {
+	p = p.Clone()
+	if p.Plan != nil {
+		normalized, err := p.Plan.Normalize()
+		if err != nil {
+			return EventProcessing{}, err
+		}
+		p.Plan = normalized
+	}
 	if !p.State.Valid() {
 		return EventProcessing{}, fmt.Errorf("event processing state is invalid: %q", p.State)
 	}
@@ -52,18 +65,20 @@ func (p EventProcessing) Normalize() (EventProcessing, error) {
 		p.ProcessedAt = &value
 	}
 	if p.State == domain.EventProcessStateUnprocessed {
-		if p.Outcome != "" || p.ReasonCode != "" || p.ProcessedAt != nil {
+		if p.Outcome != "" || p.ReasonCode != "" || p.ProcessedAt != nil || len(p.Evaluations) > 0 {
 			return EventProcessing{}, fmt.Errorf("unprocessed event must not contain process result")
 		}
 		return p, nil
 	}
-	if p.Outcome == "" || p.ProcessedAt == nil || p.ProcessedAt.IsZero() {
+	if p.Plan != nil || p.Outcome == "" || p.ProcessedAt == nil || p.ProcessedAt.IsZero() {
 		return EventProcessing{}, fmt.Errorf("terminal event processing requires outcome and processed_at")
 	}
 	return p, nil
 }
 
 func (p EventProcessing) Clone() EventProcessing {
+	p.Plan = p.Plan.Clone()
+	p.Evaluations = cloneEvaluationResults(p.Evaluations)
 	if p.ProcessedAt != nil {
 		value := *p.ProcessedAt
 		p.ProcessedAt = &value
@@ -87,15 +102,20 @@ func (s StoredEvent) Validate() error {
 	if err != nil {
 		return err
 	}
+	if processing.Plan != nil {
+		if err := ValidateEventPlan(s.Event, processing.Plan); err != nil {
+			return err
+		}
+	}
 	if s.Version.IsZero() {
 		return fmt.Errorf("stored event version must not be empty")
 	}
 	if processing.State == domain.EventProcessStateAccepted || processing.State == domain.EventProcessStateSuppressed {
-		if s.Event.RelatedAlertID == "" {
-			return fmt.Errorf("associated event requires related_alert_id")
+		if len(s.Event.RelatedAlertIDs) == 0 {
+			return fmt.Errorf("associated event requires related_alert_ids")
 		}
-	} else if s.Event.RelatedAlertID != "" {
-		return fmt.Errorf("only accepted or suppressed event may contain related_alert_id")
+	} else if len(s.Event.RelatedAlertIDs) != 0 {
+		return fmt.Errorf("only accepted or suppressed event may contain related_alert_ids")
 	}
 	return nil
 }
@@ -199,25 +219,51 @@ type AlertLogPage struct {
 
 // EventResult 是一次生命周期裁决写回 Event 的完整结果。
 type EventResult struct {
-	State          domain.EventProcessState
-	RelatedAlertID string
-	Outcome        string
-	ReasonCode     string
-	ProcessedAt    time.Time
+	Plan            *EventPlan
+	Evaluations     []EvaluationResult
+	State           domain.EventProcessState
+	RelatedAlertIDs []string
+	Outcome         string
+	ReasonCode      string
+	ProcessedAt     time.Time
+}
+
+// Processing 返回与本次 CAS 对应的技术状态，未完成计划不带完成时间。
+func (r EventResult) Processing() EventProcessing {
+	p := EventProcessing{State: r.State, Outcome: r.Outcome, ReasonCode: r.ReasonCode, Plan: r.Plan.Clone(), Evaluations: cloneEvaluationResults(r.Evaluations)}
+	if r.State != domain.EventProcessStateUnprocessed {
+		at := r.ProcessedAt
+		p.ProcessedAt = &at
+	}
+	return p
 }
 
 func (r EventResult) Normalize() (EventResult, error) {
-	processing, err := (EventProcessing{State: r.State, Outcome: r.Outcome, ReasonCode: r.ReasonCode, ProcessedAt: &r.ProcessedAt}).Normalize()
+	processing, err := r.Processing().Normalize()
 	if err != nil {
 		return EventResult{}, err
 	}
-	r.ProcessedAt = *processing.ProcessedAt
-	if r.State == domain.EventProcessStateAccepted || r.State == domain.EventProcessStateSuppressed {
-		if r.RelatedAlertID == "" {
-			return EventResult{}, fmt.Errorf("associated event result requires related_alert_id")
+	r.Plan, r.Evaluations = processing.Plan, processing.Evaluations
+	r.RelatedAlertIDs = slices.Clone(r.RelatedAlertIDs)
+	slices.Sort(r.RelatedAlertIDs)
+	r.RelatedAlertIDs = slices.Compact(r.RelatedAlertIDs)
+	if len(r.RelatedAlertIDs) > 2 {
+		return EventResult{}, fmt.Errorf("event result may associate at most two alerts")
+	}
+	for _, id := range r.RelatedAlertIDs {
+		if id == "" || len(id) > domain.EntityIDMaxBytes {
+			return EventResult{}, fmt.Errorf("invalid related alert id")
 		}
-	} else if r.RelatedAlertID != "" {
-		return EventResult{}, fmt.Errorf("only accepted or suppressed event result may contain related_alert_id")
+	}
+	if r.State == domain.EventProcessStateAccepted || r.State == domain.EventProcessStateSuppressed {
+		if len(r.RelatedAlertIDs) == 0 {
+			return EventResult{}, fmt.Errorf("associated event result requires related_alert_ids")
+		}
+	} else if len(r.RelatedAlertIDs) > 0 {
+		return EventResult{}, fmt.Errorf("only accepted or suppressed event result may contain related_alert_ids")
+	}
+	if processing.ProcessedAt != nil {
+		r.ProcessedAt = *processing.ProcessedAt
 	}
 	return r, nil
 }
@@ -225,8 +271,8 @@ func (r EventResult) Normalize() (EventResult, error) {
 type ActiveAlertKey struct{ BKTenantID, EventSourceID, Fingerprint string }
 
 type AlertByEventResult struct {
-	Event StoredEvent
-	Alert *StoredAlert
+	Event  StoredEvent
+	Alerts []StoredAlert
 }
 
 func (request PageRequest) Normalize() (PageRequest, error) {

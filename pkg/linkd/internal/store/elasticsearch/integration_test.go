@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -268,16 +269,16 @@ func TestElasticsearchLifecycleEventProjectionAndPartialCAS(t *testing.T) {
 				t.Fatalf("lifecycle projection=%#v", projected.Event)
 			}
 			updated, err := lifecycleStore.CompareAndSetLifecycleEventResult(ctx, event.BKTenantID, event.EventID, projected.Version, store.EventResult{
-				State: domain.EventProcessStateAccepted, RelatedAlertID: "alert-1", Outcome: "alert_created", ProcessedAt: time.Now().Round(0).UTC(),
+				State: domain.EventProcessStateAccepted, RelatedAlertIDs: []string{"alert-1"}, Outcome: "alert_created", ProcessedAt: time.Now().Round(0).UTC(),
 			})
-			if err != nil || updated.Event.RelatedAlertID != "alert-1" || updated.Processing.State != domain.EventProcessStateAccepted {
+			if err != nil || !slices.Contains(updated.Event.RelatedAlertIDs, "alert-1") || updated.Processing.State != domain.EventProcessStateAccepted {
 				t.Fatalf("CompareAndSetLifecycleEventResult()=%#v,%v", updated, err)
 			}
 			complete, err := repository.GetEvent(ctx, event.BKTenantID, event.EventID)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if string(complete.Event.SourceRawData["large"]) != `{"preserved":true}` || complete.Event.RelatedAlertID != "alert-1" {
+			if string(complete.Event.SourceRawData["large"]) != `{"preserved":true}` || !slices.Contains(complete.Event.RelatedAlertIDs, "alert-1") {
 				t.Fatalf("complete event after partial CAS=%#v", complete.Event)
 			}
 		})

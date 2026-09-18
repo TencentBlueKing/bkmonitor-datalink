@@ -13,8 +13,8 @@ MQ RawEventMessage
   -> 各 lane 写入 Redis Mailbox 后确认上游消息
   -> Mailbox Signal + Redis fingerprint lease
   -> Lifecycle Processor
-     -> accepted: 创建或推进 Alert，并回写 related_alert_id
-     -> suppressed: Alert 不变，写确定性抑制流水并关联 related_alert_id
+     -> accepted: 创建或推进 Alert，并回写 related_alert_ids
+     -> suppressed: Alert 不变，写确定性抑制流水并关联 related_alert_ids
      -> orphaned: 不创建 Alert
   -> EventSource.hooks（Kafka Alert V1 / KAC Alarm / Redis 活跃策略索引）
 ```
@@ -45,7 +45,7 @@ MQ RawEventMessage
 
 Repository 不提供 Event、Alert、AlertLog 与 Kafka 的跨对象事务。生命周期通过以下手段收敛部分成功：
 
-- Event 处理结果和 `related_alert_id` 使用同一次 CAS 更新；
+- Event 先 CAS 保存冻结的多级别裁决计划，之后执行 Alert 副作用；完成时清除计划。Event 处理结果和 `related_alert_ids` 使用同一次 CAS 更新；
 - Alert 使用存储专属 `VersionToken` 有界重试；
 - fingerprint Redis lease 降低同一问题的并发竞争；
 - Redis Mailbox 用单一 List 保存待处理 Event ID，空到非空时原子写入唤醒 Signal；

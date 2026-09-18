@@ -51,6 +51,8 @@ const (
 
 // LifecycleConfig 描述 lifecycle 独立进程的消费、并发、锁和输出配置。
 type LifecycleConfig struct {
+	// SeverityUpgradePolicy 决定更高级别触发时更新当前告警或关闭后新建。
+	SeverityUpgradePolicy string `yaml:"severity_upgrade_policy"`
 	// ElasticsearchWriteBatch 控制 Lifecycle 专用跨 Event 合批。
 	ElasticsearchWriteBatch ElasticsearchWriteBatchConfig `yaml:"elasticsearch_write_batch"`
 	Concurrency             int                           `yaml:"concurrency"`
@@ -102,6 +104,9 @@ type LifecycleLockConfig struct {
 
 // WithDefaults 返回补齐 lifecycle 默认值且不共享嵌套数据的副本。
 func (c LifecycleConfig) WithDefaults() LifecycleConfig {
+	if c.SeverityUpgradePolicy == "" {
+		c.SeverityUpgradePolicy = "close_and_create"
+	}
 	if c.Concurrency == 0 {
 		c.Concurrency = defaultLifecycleConcurrency
 	}
@@ -191,6 +196,10 @@ func (c LifecycleConfig) WithDefaults() LifecycleConfig {
 
 // Validate 校验 lifecycle 资源上限和跨组件时间预算。
 func (c LifecycleConfig) Validate() error {
+	policy := c.WithDefaults().SeverityUpgradePolicy
+	if policy != "close_and_create" && policy != "update_current" {
+		return fmt.Errorf("lifecycle.severity_upgrade_policy must be close_and_create or update_current")
+	}
 	c = c.WithDefaults()
 	if c.Concurrency < 1 || c.Concurrency > 1024 {
 		return fmt.Errorf("lifecycle.concurrency must be between 1 and 1024")

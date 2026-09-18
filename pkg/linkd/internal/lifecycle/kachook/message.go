@@ -12,12 +12,11 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"linkd/internal/domain"
 	"linkd/internal/lifecycle"
 	"linkd/internal/lifecycle/enrich"
 	"linkd/internal/lifecycle/enrich/models"
-
-	"github.com/google/uuid"
 )
 
 const (
@@ -268,7 +267,7 @@ func encodeMetricQueryParams(value any) (string, error) {
 func kacAction(status domain.AlertStatus, outcome lifecycle.ProcessOutcome) (string, error) {
 	switch status {
 	case domain.AlertStatusActive:
-		if outcome != lifecycle.OutcomeAlertCreated && outcome != lifecycle.OutcomeAlertUpdated {
+		if outcome != lifecycle.OutcomeAlertCreated && outcome != lifecycle.OutcomeAlertUpdated && outcome != lifecycle.OutcomeAlertSeverityChanged {
 			return "", fmt.Errorf("KAC active alert outcome is invalid: %q", outcome)
 		}
 		return "firing", nil

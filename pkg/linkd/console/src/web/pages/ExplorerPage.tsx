@@ -582,11 +582,13 @@ function DetailDrawer({
 function relationLinks(entity: EntityKind, item: EntityItem) {
   const tenant = encodeURIComponent(item.tenantId);
   const links: Array<{ label: string; to: string }> = [];
-  if (entity === "events" && item.payload.related_alert_id) {
-    links.push({
-      label: "查看关联 Alert",
-      to: `/explore/alerts?bk_tenant_id=${tenant}&id=${encodeURIComponent(String(item.payload.related_alert_id))}`,
-    });
+  if (entity === "events" && Array.isArray(item.payload.related_alert_ids)) {
+    for (const alertId of item.payload.related_alert_ids) {
+      links.push({
+        label: `查看关联 Alert ${String(alertId)}`,
+        to: `/explore/alerts?bk_tenant_id=${tenant}&id=${encodeURIComponent(String(alertId))}`,
+      });
+    }
   }
   if (entity === "alerts") {
     for (const field of ["trigger_event_id", "latest_event_id"]) {

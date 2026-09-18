@@ -12,11 +12,11 @@ EventSource 的配置与运行边界见 [EventSource](../modules/event-source.md
 EventSourceRelease（持久化配置快照）
   └─ 产生多个 Event
        ├─ EventProcessing：该 Event 的生命周期处理结果
-       └─ accepted/suppressed 时 related_alert_id → Alert
+       └─ accepted/suppressed 时 related_alert_ids → 最多两个 Alert
                                       └─ 多条 AlertLog
 ```
 
-- `Event` 是不可变的来源事实，只有 `related_alert_id` 可以由 Lifecycle 补写；
+- `Event` 是不可变的来源事实，只有 `related_alert_ids` 可以由 Lifecycle 补写；
 - `EventProcessing` 是 Event JSON 之外的技术处理状态；
 - `Alert` 是由一个或多个被接受 Event 推进的当前生命周期快照；
 - `AlertLog` 是不可变操作和输出流水，不是 Alert 当前态的一部分；
@@ -50,13 +50,11 @@ Event 的 `event_source_version` 是正整数，记录实际使用的来源 Rele
 | `event_source_id`                  | 1–32 bytes，`^[a-zA-Z0-9_-]+$` | 产生 Event 的 EventSource                                                 |
 | `event_id`                         | 1–160 bytes                    | UTC 秒、租户、来源和 64-bit 稳定摘要组成的可解析身份                       |
 | `fingerprint`                      | 1–128 bytes                    | Lifecycle 关联 active Alert 的业务键，由 EventSource 配置生成             |
-| `related_alert_id`                 | 0–256 bytes                    | Cleaner 创建时为空；accepted/suppressed Event 写入关联 Alert ID            |
+| `related_alert_ids` | 最多 2 个 ID，每个 1–160 bytes | Cleaner 创建时为空；Lifecycle 终态 CAS 写入受到影响或实施抑制的 Alert，排序去重 |
 | `title`                            | 0–256 bytes                    | 来源标题；当前校验允许为空                                                |
 | `content`                          | 0–1 MiB                        | 来源描述                                                                  |
-| `severity`                         | 1–32 bytes                     | EventSource 映射后的 Linkd Severity name                                  |
-| `action`                           | `triggered/resolved/closed`    | 来源事实对生命周期的动作                                                  |
-| `action_reason`                    | 0–256 bytes                    | 动作原因，和 Event 内容分离                                               |
-| `condition_key` / `condition_name` | 各 0–256 bytes                 | 稳定观测条件及展示名称                                                    |
+| `evaluations` | 1–32 项，标准 severity 唯一 | 每项包含 severity、action（triggered/resolved/closed）与 action_reason（最多 256 bytes）；顺序无语义 |
+| `values` | 最多 256 个有限数字，key 为 1–256 bytes | 本次事件的观测值；空值统一为对象，缺失字段不补零，不参与 fingerprint；ES 只存储不索引 |
 | `dimensions`                       | 扁平 `DimensionMap`            | 参与检索和可选 fingerprint 计算的维度                                     |
 | `subject_system`                   | 0–32 bytes                     | 来源声明的对象命名空间，当前不校验枚举                                    |
 | `subject_type`                     | 0–128 bytes                    | 来源对象类型                                                              |
@@ -73,11 +71,11 @@ Event 的 `event_source_version` 是正整数，记录实际使用的来源 Rele
 
 ### 3.2 不变量
 
-- 新 Event 的 `related_alert_id` 必须为空；
-- Event 创建后，除 `related_alert_id` 外的字段不得变化；
+- 新 Event 的 `related_alert_ids` 必须为空；
+- Event 创建后，除 `related_alert_ids` 外的字段不得变化；
 - 相同 `(bk_tenant_id, event_id)` 和相同内容是幂等重投，内容不同是身份冲突；
-- `EventProcessing.state=accepted|suppressed` 时 `related_alert_id` 必填；
-- orphaned、rejected Event 的 `related_alert_id` 必须为空。
+- `EventProcessing.state=accepted|suppressed` 时 `related_alert_ids` 必填；
+- orphaned、rejected Event 的 `related_alert_ids` 必须为空。
 
 ## 4. EventProcessing
 
@@ -90,12 +88,17 @@ EventProcessing 是存储层与 Lifecycle 之间的处理元数据，不属于 E
 | `reason_code`  | 可空                                                | 稳定低基数原因，例如 active Alert 不存在、等级升级或等级抑制                                                                                              |
 | `processed_at` | 终态必填                                            | Lifecycle 完成裁决的 UTC 时间                                                                                                                             |
 
-`unprocessed` 不允许带 outcome、reason 或 processed_at。终态结果与 `related_alert_id` 通过一次 Event
+`unprocessed` 不允许带 outcome、reason、evaluations 结果或 processed_at，可以携带 `plan`。
+`plan` 冻结全局升级策略、有界 Alert 目标快照、稳定流水与逐级最终结果，先于副作用 CAS 保存。
+事件终态清除 plan，`EventProcessing.evaluations` 保存每级 severity/action/state/outcome/reason_code/related_alert_ids。
+整体 state 按有实际 Alert 变更为 accepted、只有抑制为 suppressed、其余为 orphaned 聚合；明细分别保留。
+升级优先于旧级别终结，后者明细记录 suppressed/evaluation_superseded；不匹配活动级别的终结为 orphaned。
+终态结果与 `related_alert_ids` 通过一次 Event
 CAS 一起写入，避免出现 accepted 但未关联 Alert 的快照。
 
 ## 5. Alert
 
-Alert 是一次异常的当前生命周期快照。它从 opening Event 创建；后续 Event 只推进生命周期字段，
+Alert 是一次异常的当前生命周期快照。它从 opening Event 创建；后续 Event 可推进生命周期字段及按配置升级当前 severity，
 不覆盖继承字段。
 
 ### 5.1 字段分组
@@ -104,7 +107,8 @@ Alert 是一次异常的当前生命周期快照。它从 opening Event 创建�
 | -------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | 身份     | `alert_id`                                                                                     | UTC 秒、租户、来源和 opening Event 摘要组成的可解析身份 |
 | 关联     | `bk_tenant_id`、`event_source_id`、`fingerprint`                                               | active Alert 的唯一关联范围                           |
-| 继承事实 | `title`、`content`、`severity`、condition、dimensions、subject、source IDs、labels、extra_data | 从 opening Event 复制，创建后不可修改                 |
+| 继承事实 | `title`、`content`、dimensions、subject、source IDs、labels、extra_data | 从 opening Event 复制，创建后不可修改                 |
+| 当前级别 | `severity` | 初始取 opening Event 中最高触发级别，update_current 升级时可修改；历史级别见 Event/AlertLog |
 | 当前状态 | `status`                                                                                       | `active/recovered/closed`；后两者为不可重新打开的终态 |
 | 当前进度 | `latest_event_id`、`last_occurred_at`、`update_at`                                             | 最近被接受 Event 及严格单调的服务端快照时间           |
 | 创建锚点 | `trigger_event_id`、`begin_at`、`create_at`                                                    | `create_at` 继承 opening Event 创建时间，创建后不变   |
@@ -140,7 +144,7 @@ AlertLog 是围绕一条 Alert 的不可变流水，记录状态操作、抑制�
 | `bk_tenant_id`   | 非空                                  | 与 Alert 相同的租户作用域                                                       |
 | `alert_id`       | 非空                                  | 所属 Alert                                                                      |
 | `operator_kind`  | `source/user/system`                  | 操作发起方                                                                      |
-| `operation_kind` | `trigger/recover/close/suppress/push` | 状态操作或最终输出动作                                                          |
+| `operation_kind` | `trigger/recover/close/suppress/severity_change/push` | 状态操作或最终输出动作                                                          |
 | `params`         | JSON object                           | 操作特有参数，例如 event_id、operation_id、reason、hook destination、message_id |
 | `created_time`   | 非零 UTC 时间                         | 操作或输出结果发生时间                                                          |
 

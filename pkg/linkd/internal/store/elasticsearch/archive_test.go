@@ -31,7 +31,7 @@ func TestArchiveTerminalAlertsBulkCreatesHistoryThenConditionallyDeletesActive(t
 	endAt := now.Add(time.Minute)
 	alert := domain.Alert{EventSourceVersion: 1,
 		AlertID: alertID, BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
-		Fingerprint: event.Fingerprint, Severity: event.Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
+		Fingerprint: event.Fingerprint, Severity: event.Evaluations[0].Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
 		ExtraData: domain.JSONObject{}, Status: domain.AlertStatusRecovered, LatestEventID: eventID,
 		LastOccurredAt: endAt, UpdateAt: endAt, TriggerEventID: eventID, BeginAt: now,
 		CreateAt: now, EndAt: &endAt, EndType: domain.AlertEndTypeSource,
@@ -282,7 +282,7 @@ func TestTerminalAlertCASLeavesPhysicalArchiveToManager(t *testing.T) {
 	alertID, _ := domain.GenerateAlertID(event, event.CreateAt)
 	active := domain.Alert{EventSourceVersion: 1,
 		AlertID: alertID, BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
-		Fingerprint: event.Fingerprint, Severity: event.Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
+		Fingerprint: event.Fingerprint, Severity: event.Evaluations[0].Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
 		ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: eventID,
 		LastOccurredAt: now, UpdateAt: now, TriggerEventID: eventID, BeginAt: now, CreateAt: now,
 		EnrichStatus: domain.EnrichStatusSucceeded, Enrich: succeededEnrich(),
@@ -366,7 +366,7 @@ func archiveStoredAlert(t *testing.T, stableID string, createAt time.Time) store
 	endAt := createAt.Add(time.Minute)
 	alert := domain.Alert{EventSourceVersion: 1,
 		AlertID: alertID, BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
-		Fingerprint: event.Fingerprint, Severity: event.Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
+		Fingerprint: event.Fingerprint, Severity: event.Evaluations[0].Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
 		ExtraData: domain.JSONObject{}, Status: domain.AlertStatusRecovered, LatestEventID: eventID,
 		LastOccurredAt: endAt, UpdateAt: endAt, TriggerEventID: eventID, BeginAt: createAt,
 		CreateAt: createAt, EndAt: &endAt, EndType: domain.AlertEndTypeSource,

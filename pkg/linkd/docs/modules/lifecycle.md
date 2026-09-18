@@ -4,7 +4,7 @@ Elasticsearch runtime 默认使用进程内共享合批器，将不同 Mailbox �
 CAS/create 和 AlertLog create 合并发送。现有校验、缓存修复和错误映射由 Repository 继续负责；
 调用方收到对应 item 成功后才进入下一步，不能提前输出或 ACK。批次内 CAS 校验与冲突核对使用
 realtime `_mget`；Lifecycle 的 Event 点读排除不参与裁决的 `source_raw_data`，终态 CAS 使用局部
-Bulk update，只修改 `related_alert_id` 和 `processing`。公共 Event 查询仍返回完整文档。
+Bulk update，只修改 `related_alert_ids` 和 `processing`。公共 Event 查询仍返回完整文档。
 写批次参数自动匹配 Lifecycle 并发，不允许独立手调：
 单批上限为并发的一半（向下取整、最少 1、最多 128），写侧等待为该上限的毫秒值（单项不等待），
 执行上限为并发数与 32 的较小值；默认并发 32 对应 16 项、16ms、32 批，字节预算默认 4 MiB。
@@ -206,83 +206,53 @@ Processor 必须幂等。最后一次 `LPOP` 前发生的新入队会由当前 H
 
 ## 4. Event 状态裁决
 
-| Event               | active Alert | EventProcessing | Alert 结果                                          |
-| ------------------- | ------------ | --------------- | --------------------------------------------------- |
-| triggered           | 不存在       | accepted        | 创建 active Alert                                   |
-| triggered，同等级   | 存在         | accepted        | 推进 latest_event_id、last_occurred_at、update_at   |
-| triggered，更高等级 | 存在         | accepted        | 旧 Alert closed/severity_upgrade，新建 active Alert |
-| triggered，更低等级 | 存在         | suppressed      | Alert 不变，追加 suppress AlertLog                  |
-| resolved            | 存在         | accepted        | Alert recovered/source                              |
-| closed              | 存在         | accepted        | Alert closed/source                                 |
-| resolved/closed     | 不存在       | orphaned        | 不创建 Alert                                        |
-| 非法状态组合        | 任意         | rejected        | 不修改 Alert                                        |
+同一 `(bk_tenant_id, event_source_id, fingerprint)` 仍最多一个 active Alert；Event 的多个判定共享
+一个 Mailbox。先验证所有级别，再从 triggered 判定选最高级别，不按数组顺序逐项执行。
 
-等级只对 triggered 比较。resolved/closed 不比较等级，否则低等级终结 Event 可能永远无法结束已有
-Alert。Alert 的继承字段始终来自 opening Event，后续 Event 的 title/content/dimensions/subject 差异
-不会覆盖它。
+1. 最高 triggered 高于当前 active 级别时，优先应用全局 `lifecycle.severity_upgrade_policy`；
+   同一事件中旧级别的 resolved/closed 被升级替代，记录 suppressed/evaluation_superseded。
+2. 没有更高级别触发时，只允许与 active 同级的 resolved/closed 结束它。
+3. 当前不存在 active（包括刚刚恢复/关闭）时，最高 triggered 创建新 Alert。
+4. 当前 active 与最高 triggered 同级时推进生命周期；更低的 triggered 被抑制。
+5. 未出现的级别不隐含恢复；历史被抑制的低级别不会自动激活，必须由本次或后续事件明确触发。
 
-`last_occurred_at` 取最近被接受 Event 的 occurred_at，乱序 Event 可以使它小于旧值；`update_at` 使用
-`max(now, current.update_at + 1ns)` 保持严格单调。
+| 当前 active | 本次判定 | 结果 |
+| --- | --- | --- |
+| 无 | critical 与 warning triggered | 创建 critical，抑制 warning |
+| warning | critical triggered + warning resolved/closed | 按全局策略升级，旧级别终结判定被替代 |
+| critical | critical resolved + warning triggered | 恢复 critical，创建 warning |
+| critical | critical triggered + warning resolved | 更新 critical，warning 恢复为 orphaned |
+| critical | 只有 warning triggered | 抑制 warning，critical 继续活动 |
 
-## 5. 各分支副作用顺序
+策略只有两个取值，默认 `close_and_create`：
 
-### 5.1 创建
+- `update_current`：原 Alert 保持 active 和 alert_id，更新 severity/latest_event_id/last_occurred_at/update_at；
+  保留 begin_at/create_at/trigger_event_id、来源版本、描述、维度和首次丰富结果。追加包含 from_severity、
+  to_severity 的 severity_change 流水，只输出一个 active 快照。
+- `close_and_create`：旧 Alert 进入 closed/severity_upgrade，按本次 Event 创建新的高等级 Alert，重新丰富；
+  先输出旧告警 closed，再输出新告警 active。一个 Event 关联旧、新两条 Alert。
 
-```text
-构造稳定 Alert ID
-  → Enrich
-  → CreateAlert(refresh=false)
-  → Recent Alert current SET EX 5
-  → FinalHook
-  → trigger + push AlertLog Bulk(refresh=false)
-  → Event CAS accepted + related_alert_id(refresh=false)
-```
+两种策略都不执行原地降级。当前高级别恢复且低级别再次触发时，结束旧 Alert 并创建新 Alert。
+`last_occurred_at` 仍取本次被接受 Event 的 occurred_at；`update_at` 严格单调。
 
-### 5.2 同等级推进
+## 5. 裁决计划与副作用
 
 ```text
-Alert CAS(refresh=false)
-  → Recent Alert current SET EX 5
-  → FinalHook
-  → push AlertLog Bulk(refresh=false)
-  → Event CAS accepted(refresh=false)
+读取 Event / active Alert，完整裁决全部级别
+  → 构造稳定 Alert ID、目标快照与流水；必要时同步 Enrich
+  → Event CAS 保存 processing.plan（仍为 unprocessed）
+  → 按计划执行最多两项 Alert CAS/create
+  → 每项写入后更新 Recent Alert 缓存
+  → 按旧告警、新告警顺序执行 FinalHook
+  → 一次批量追加操作与输出流水
+  → Event CAS 提交逐级结果及 related_alert_ids，清除 plan
+  → Mailbox 出队
 ```
 
-### 5.3 来源终结
+纯抑制也保存计划和稳定流水，不输出 Alert 快照。来源事实（包含 values 和 evaluations）不被处理结果覆盖。
+EventProcessing.state/outcome 是整个事件的摘要；每个级别的结果保存在 processing.evaluations。
 
-```text
-Alert CAS recovered/closed(refresh=false)
-  → Recent Alert current + ended MULTI/EXEC EX 5
-  → FinalHook
-  → recover/close + push AlertLog Bulk(refresh=false)
-  → Event CAS accepted(refresh=false)
-```
-
-### 5.4 等级抑制
-
-```text
-suppress AlertLog Bulk(refresh=false)
-  → Event CAS suppressed(refresh=false)
-```
-
-抑制不修改 Alert，不发送 Alert 快照，Event 不写 related_alert_id。
-
-### 5.5 等级升级
-
-```text
-旧 Alert CAS closed/severity_upgrade(refresh=false)
-  → Recent Alert terminal current + ended MULTI/EXEC EX 5
-  → Create 新 Alert(refresh=false)
-  → Recent Alert current 覆盖为新 active Alert，ended 保留
-  → 旧 Alert FinalHook
-  → 新 Alert FinalHook
-  → close/push/trigger/push AlertLog Bulk(refresh=false)
-  → Event CAS accepted 并关联新 Alert(refresh=false)
-```
-
-升级输出旧 Alert closed 和新 Alert active 两条 Kafka 快照。
-
-### 5.6 Elasticsearch 终态归档
+### 5.1 Elasticsearch 终态归档
 
 Lifecycle 的终态提交点是 Active Alert CAS 成功，不包含物理归档。Active 文档 `_id` 只由
 `bk_tenant_id + alert_id` 生成，因此已经终结但尚未归档的旧 Alert 不会占用新 Alert 的文档身份，
@@ -297,14 +267,11 @@ Alert，也不让 Lifecycle 重试已经成功的终态 CAS。归档过渡期间
 
 ## 6. 幂等与部分成功恢复
 
-上述步骤不是一个事务。Processor 使用下列稳定锚点恢复：
-
-- Event 已是终态：直接返回保存的 Processing 结果；
-- active Alert 的 `latest_event_id == event_id`：Alert 已推进，补齐后续输出和 Event CAS；
-- active Alert 的 `trigger_event_id == event_id`：Alert 已由该 Event 创建；
-- `FindAlertEndedByEvent` 命中 `latest_event_id + end_type=source`：来源终结 CAS 已完成；
-- `FindAlertEndedByEvent` 命中 `latest_event_id + end_type=severity_upgrade`：旧 Alert 已关闭，继续创建或读取确定性新 Alert；
-- AlertLog 和 Kafka message ID 均由稳定输入生成，重复追加/投递收敛为幂等。
+上述步骤不是一个事务。Event 终态直接返回；未完成时使用已保存计划，不按重启后的策略重新裁决。
+每项 Alert 通过 realtime GET 核对目标快照：一致则补齐缓存和后续步骤；尚未应用时按原 VersionToken
+进行 CAS，创建使用稳定 ID 和 create-only。若该源事件的 active 快照已被独立关闭命令推进为更晚终态，
+保留关闭结果且跳过旧 active hook，避免重试将活跃策略索引重新加入。第一项尚未生效且已被独立操作推进时，修复缓存并撤销计划后
+重裁决；已有副作用则继续原计划。计划读写与执行前都校验租户、来源、fingerprint 和 Event ID。
 
 同一次裁决产生的 AlertLog 在一次 Bulk 中提交。只有全部日志项成功后才执行独立的 Event CAS，避免
 Bulk 部分成功时 Event 已经终态而日志无法由现有重试路径补齐。Alert 与 Event/AlertLog 位于不同
@@ -321,7 +288,7 @@ AlertLog 或 Event CAS。Active 索引 `refresh_interval` 由
 Elasticsearch 不使用 Active 文档 `_id` 额外防御跨进程 fingerprint 重复；正常处理路径依赖 Mailbox
 lease 串行化同一 fingerprint。物理归档由 Alert Archiver 异步完成，不属于 Event 的处理成功条件。
 
-如果副作用完成但 Event CAS 前崩溃，Event 仍在 Mailbox 队首；重试从上述锚点继续，不重复关闭 Alert
+如果副作用完成但 Event CAS 前崩溃，Event 仍在 Mailbox 队首；重试从持久化计划继续，不重复关闭 Alert
 或创建不同身份的流水。
 
 重复 Mailbox 引用在 Event 已终态后不会再次执行领域副作用；这不等价于外部 exactly-once。若

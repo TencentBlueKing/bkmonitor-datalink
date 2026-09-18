@@ -87,7 +87,7 @@ func TestBaseCollectRawEventRunsLifecycleEnrichment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	storedAlert, err := repository.GetAlert(ctx, datasources.SampleTenantID, processed.AlertID)
+	storedAlert, err := repository.GetAlert(ctx, datasources.SampleTenantID, processed.AlertIDs[len(processed.AlertIDs)-1])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,17 +259,7 @@ func testEnrichDataSources() *config.EnrichDataSources {
 }
 
 func baseCollectRawPayload() []byte {
-	return []byte(`{
-		"bk_tenant_id":"tenant-1",
-		"event_id":"source-event-1","alert_id":"source-alert-1",
-		"title":"CPU usage is high","content":"Host 10.0.0.1 CPU usage reached 92.5%",
-		"severity":"warning","action":"triggered","action_reason":"",
-		"dimensions":{"bk_inst_id":101,"bk_target_ip":"10.0.0.1","bk_target_cloud_id":0},
-		"subject":{"system":"cmdb","type":"host","id":"101","name":"host-101"},
-		"occurred_at":"2026-09-01T00:00:00Z","produced_at":"2026-09-01T00:00:01Z",
-		"labels":{"strategy_id":123,"strategy_version":1,"bk_biz_id":2},
-		"extra_data":{"anomaly_begin_time":"2026-09-01T00:00:00Z","additional_dimensions":{"bk_host_id":101}}
-	}`)
+	return []byte(`{"alert_id":"source-alert-1","bk_tenant_id":"tenant-1","content":"Host 10.0.0.1 CPU usage reached 92.5%","dimensions":{"bk_inst_id":101,"bk_target_cloud_id":0,"bk_target_ip":"10.0.0.1"},"evaluations":[{"action":"triggered","action_reason":"","severity":"warning"}],"event_id":"source-event-1","extra_data":{"additional_dimensions":{"bk_host_id":101},"anomaly_begin_time":"2026-09-01T00:00:00Z"},"labels":{"bk_biz_id":2,"strategy_id":123,"strategy_version":1},"occurred_at":"2026-09-01T00:00:00Z","produced_at":"2026-09-01T00:00:01Z","subject":{"id":"101","name":"host-101","system":"cmdb","type":"host"},"title":"CPU usage is high"}`)
 }
 
 func assertBaseCollectEnrichment(t *testing.T, payload enrich.Payload) {

@@ -36,23 +36,22 @@ type RawEventMessage struct {
 // 由 EventFactory 统一生成或保存。BKTenantID 由 Standard payload 提供，
 // EventSource.related_tenant_id 可在 EventFactory 中覆盖它。
 type EventDraft struct {
-	BKTenantID     string
-	Title          string
-	Content        string
-	SourceSeverity string
-	Action         domain.EventAction
-	ActionReason   string
-	Dimensions     domain.DimensionMap
-	SubjectSystem  string
-	SubjectType    string
-	SubjectID      string
-	SubjectName    string
-	OccurredAt     time.Time
-	ProducedAt     time.Time
-	SourceEventID  string
-	SourceAlertID  string
-	Labels         domain.DimensionMap
-	ExtraData      domain.JSONObject
+	BKTenantID    string
+	Title         string
+	Content       string
+	Evaluations   []domain.EventEvaluation
+	Dimensions    domain.DimensionMap
+	Values        domain.EventValues
+	SubjectSystem string
+	SubjectType   string
+	SubjectID     string
+	SubjectName   string
+	OccurredAt    time.Time
+	ProducedAt    time.Time
+	SourceEventID string
+	SourceAlertID string
+	Labels        domain.DimensionMap
+	ExtraData     domain.JSONObject
 }
 
 // SourceCleaner 把一种来源 payload 确定性投影为 EventDraft。
@@ -68,20 +67,19 @@ type standardSubject struct {
 }
 
 type standardPayload struct {
-	BKTenantID   string              `json:"bk_tenant_id"`
-	EventID      string              `json:"event_id"`
-	AlertID      string              `json:"alert_id"`
-	Title        string              `json:"title"`
-	Content      string              `json:"content"`
-	Severity     string              `json:"severity"`
-	Action       domain.EventAction  `json:"action"`
-	ActionReason string              `json:"action_reason"`
-	Dimensions   domain.DimensionMap `json:"dimensions"`
-	Subject      standardSubject     `json:"subject"`
-	OccurredAt   time.Time           `json:"occurred_at"`
-	ProducedAt   time.Time           `json:"produced_at"`
-	Labels       domain.DimensionMap `json:"labels"`
-	ExtraData    domain.JSONObject   `json:"extra_data"`
+	BKTenantID  string                   `json:"bk_tenant_id"`
+	EventID     string                   `json:"event_id"`
+	AlertID     string                   `json:"alert_id"`
+	Title       string                   `json:"title"`
+	Content     string                   `json:"content"`
+	Evaluations []domain.EventEvaluation `json:"evaluations"`
+	Dimensions  domain.DimensionMap      `json:"dimensions"`
+	Values      domain.EventValues       `json:"values"`
+	Subject     standardSubject          `json:"subject"`
+	OccurredAt  time.Time                `json:"occurred_at"`
+	ProducedAt  time.Time                `json:"produced_at"`
+	Labels      domain.DimensionMap      `json:"labels"`
+	ExtraData   domain.JSONObject        `json:"extra_data"`
 }
 
 // StandardCleaner 解析 Linkd 标准事件 payload，并把来源字段投影为 EventDraft。
@@ -103,8 +101,13 @@ func (StandardCleaner) Clean(ctx context.Context, message RawEventMessage) (Even
 	if err := requireJSONEOF(decoder); err != nil {
 		return EventDraft{}, err
 	}
-	if !payload.Action.Valid() {
-		return EventDraft{}, fmt.Errorf("standard action is invalid: %q", payload.Action)
+	if len(payload.Evaluations) == 0 || len(payload.Evaluations) > domain.MaxEventEvaluations {
+		return EventDraft{}, fmt.Errorf("standard evaluations must contain between 1 and %d items", domain.MaxEventEvaluations)
+	}
+	for _, evaluation := range payload.Evaluations {
+		if !evaluation.Action.Valid() {
+			return EventDraft{}, fmt.Errorf("standard evaluation action is invalid")
+		}
 	}
 	if err := payload.Dimensions.Validate(); err != nil {
 		return EventDraft{}, fmt.Errorf("standard dimensions: %w", err)
@@ -118,12 +121,13 @@ func (StandardCleaner) Clean(ctx context.Context, message RawEventMessage) (Even
 	return EventDraft{
 		BKTenantID: payload.BKTenantID,
 		Title:      payload.Title, Content: payload.Content,
-		SourceSeverity: payload.Severity, Action: payload.Action, ActionReason: payload.ActionReason,
-		Dimensions: payload.Dimensions.Clone(), SubjectSystem: payload.Subject.System,
+		Evaluations: append([]domain.EventEvaluation(nil), payload.Evaluations...),
+		Dimensions:  payload.Dimensions.Clone(), SubjectSystem: payload.Subject.System,
 		SubjectType: payload.Subject.Type, SubjectID: payload.Subject.ID, SubjectName: payload.Subject.Name,
 		OccurredAt: payload.OccurredAt, ProducedAt: payload.ProducedAt,
 		SourceEventID: payload.EventID, SourceAlertID: payload.AlertID,
 		Labels: payload.Labels.Clone(), ExtraData: payload.ExtraData.Clone(),
+		Values: payload.Values.Clone(),
 	}, nil
 }
 

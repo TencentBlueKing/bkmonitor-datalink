@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -70,7 +71,7 @@ func TestEventCreateConflictsBatchRealtimeAndIsolateResults(t *testing.T) {
 							t.Fatal("request identity mismatch")
 						}
 						existing := e.Clone()
-						existing.RelatedAlertID = "alert-1"
+						existing.RelatedAlertIDs = []string{"alert-1"}
 						at := existing.CreateAt.Add(time.Second)
 						processing := store.EventProcessing{State: domain.EventProcessStateAccepted, Outcome: "accepted", ProcessedAt: &at}
 						if i == 0 && mode == "content_conflict" {
@@ -122,7 +123,7 @@ func TestEventCreateConflictsBatchRealtimeAndIsolateResults(t *testing.T) {
 				if (results[i].Err != nil) != wantError {
 					t.Fatalf("item %d: %+v", i, results[i])
 				}
-				if !wantError && (!results[i].Result.Processing.State.Terminal() || results[i].Result.Event.RelatedAlertID != "alert-1" || results[i].Result.Created) {
+				if !wantError && (!results[i].Result.Processing.State.Terminal() || !slices.Contains(results[i].Result.Event.RelatedAlertIDs, "alert-1") || results[i].Result.Created) {
 					t.Fatalf("lost realtime recovery state: %+v", results[i])
 				}
 			}

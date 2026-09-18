@@ -48,6 +48,7 @@ storage:
     database: 0
 
 lifecycle:
+  severity_upgrade_policy: close_and_create
   concurrency: 32
   elasticsearch_write_batch:
     enabled: true

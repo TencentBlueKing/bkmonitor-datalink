@@ -366,7 +366,7 @@ func TestManagerArchiveTerminalAlertsDoesNotManageBuckets(t *testing.T) {
 	endAt := now.Add(time.Minute)
 	alert := domain.Alert{EventSourceVersion: 1,
 		AlertID: alertID, BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
-		Fingerprint: event.Fingerprint, Severity: event.Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
+		Fingerprint: event.Fingerprint, Severity: event.Evaluations[0].Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
 		ExtraData: domain.JSONObject{}, Status: domain.AlertStatusRecovered, LatestEventID: eventID,
 		LastOccurredAt: endAt, UpdateAt: endAt, TriggerEventID: eventID, BeginAt: now,
 		CreateAt: now, EndAt: &endAt, EndType: domain.AlertEndTypeSource,

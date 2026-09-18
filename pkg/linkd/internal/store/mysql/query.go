@@ -32,13 +32,15 @@ func (r *Repository) QueryAlertByEvent(
 		event.Processing.State != domain.EventProcessStateSuppressed {
 		return result, nil
 	}
-	alert, err := r.GetAlert(ctx, bkTenantID, event.Event.RelatedAlertID)
-	if errors.Is(err, store.ErrNotFound) {
-		return result, nil
+	for _, alertID := range event.Event.RelatedAlertIDs {
+		alert, err := r.GetAlert(ctx, bkTenantID, alertID)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return store.AlertByEventResult{}, err
+		}
+		result.Alerts = append(result.Alerts, alert)
 	}
-	if err != nil {
-		return store.AlertByEventResult{}, err
-	}
-	result.Alert = &alert
 	return result, nil
 }

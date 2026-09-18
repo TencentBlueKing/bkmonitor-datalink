@@ -24,21 +24,26 @@
 
 ## Event
 
-- `CreateEvent` 只接受 `related_alert_id` 为空的新 Event；相同身份和内容为幂等，内容不同返回
+- `CreateEvent` 只接受 `related_alert_ids` 为空的新 Event；相同身份和内容为幂等，内容不同返回
   `ErrIdentityConflict`。
 - `CreateEvents` 按输入顺序返回逐项创建、幂等、冲突或暂时失败结果；请求级错误表示无法可靠解释
   整批响应。`CreateEvent` 委托 batch-of-one，避免维护两套语义。
 - Elasticsearch 使用 `_bulk?refresh=false` 的逐项 `create`；成功表示主分片已确认写入，不保证搜索立即
   可见。409 使用 realtime GET 回读并校验内容，429/5xx 保持可重试。MySQL 首版通过统一批量接口逐项
   写入，不宣称多行 SQL 性能。
-- `CompareAndSetEventResult` 在一次 CAS 中同时写 processing 和 `related_alert_id`。accepted 与 suppressed
+- `CompareAndSetEventResult` 在一次 CAS 中同时写 processing 和 `related_alert_ids`。accepted 与 suppressed
   必须关联 Alert；orphaned 与 rejected 必须保持为空。
-- `ListEventsByAlert` 按 `related_alert_id + received_at + event_id` 稳定分页；ES 使用 Alert 生命周期边界
+- `ListEventsByAlert` 按 related_alert_ids 成员关系过滤，再以 received_at + event_id 稳定分页；ES 使用 Alert 生命周期边界
   缩小 Event 桶范围，跨度过大时回退到 read alias。
 - Elasticsearch 的 Event 创建和结果 CAS 均使用 `refresh=false`：成功只表示主分片已经确认写请求，不
   保证 Event 或新的 processing 状态已经能被 `_search` 查询到。单 Event `GetEvent` 根据稳定 EventID
   路由到写 alias 并使用 realtime GET，使 Cleaner 幂等核对和 Lifecycle 处理不依赖 refresh；列表和统计
   查询仍接受 refresh 延迟。
+
+`CompareAndSetEventResult` 也接受 unprocessed + plan 的计划 CAS；计划先保存才允许执行副作用。
+终态结果必须与已有计划一致。ES evaluations 使用 nested，values 和 plan 只保留原始对象、不建立动态索引。
+MySQL related_alert_ids 使用 JSON 数组，查询通过 JSON_CONTAINS 判断成员关系并使用租户/接收时间索引。
+这是内部 schema 的直接调整，不提供存量单动作事件或旧 related_alert_id 字段的迁移。
 
 ## Alert
 
@@ -47,9 +52,9 @@
   唯一性，不额外维护全局 fingerprint 唯一索引。
 - Elasticsearch Active 与 History 文档都使用租户与 `alert_id` 摘要作为 `_id`。归档过渡期间同一
   Alert 可以同时存在于两个索引，内容必须一致；不同 Alert 即使 fingerprint 相同也使用不同 `_id`。
-- Alert CAS 必须保留所有继承字段和创建锚点，只允许推进生命周期字段；终态 Alert 不可再替换。
+- Alert CAS 必须保留所有继承字段和创建锚点，允许推进生命周期字段及当前 severity；终态 Alert 不可再替换。
 - `FindAlertEndedByEvent` 只匹配 `latest_event_id` 等于目标 Event 且 `end_type` 为 source 或
-  severity_upgrade 的终态 Alert，用于恢复跨对象部分成功。
+  severity_upgrade 的终态 Alert，保留为只读查询能力，Lifecycle 重试改用持久化计划与 Alert 实时读取。
 - Lifecycle 专用 Alert create/CAS 使用 `refresh=false`，写成功后必须先更新 Recent Alert 缓存再推进
   Hook、日志和 Event；普通 Repository 契约仍可使用 `refresh=wait_for` 保证独立调用后的搜索可见性。
 - CAS 冲突修复按 VersionToken 指向的物理文档执行 realtime GET，不依赖 `_search` refresh。
@@ -65,7 +70,7 @@
   Alert History 保持 `request` durability；
 - `ListAlertLogs` 只读取指定租户和 Alert，按 `created_time + log_id` 稳定升序分页；
 - 默认分页 100，最大 500；cursor 绑定对象类型、租户、父 Alert 和物理读目标，不能跨查询复用；
-- `QueryAlertByEvent` 总是返回 Event；Event accepted/suppressed 且 related_alert_id 存在时返回关联 Alert；
+- `QueryAlertByEvent` 总是返回 Event；Event accepted/suppressed 且 related_alert_ids 存在时返回关联 Alert 列表；
 - 查询组合多个对象时不承诺事务快照。
 
 ## 物理资源

@@ -276,7 +276,7 @@ describe("ElasticsearchConnector", () => {
 
     expect(searchBody).toContain('"processing.state":"unprocessed"');
     expect(searchBody).not.toContain("processing_state");
-    expect(searchBody).toContain('"related_alert_id":"alert-a"');
+    expect(searchBody).toContain('"related_alert_ids":"alert-a"');
     expect(page.items[0].payload).toMatchObject({
       event_id: "event-a",
       _processing: { state: "unprocessed" },

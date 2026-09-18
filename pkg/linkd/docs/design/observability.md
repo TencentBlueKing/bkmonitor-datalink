@@ -99,7 +99,7 @@ block、mutex 和 execution trace，不能用单张 CPU 火焰图代替因果分
 | `linkd.cleaner.step.*`             | transform、Event store、Mailbox enqueue/signal、source ACK                |
 | `linkd.cleaner.flow.active`        | 当前进程实际运行的 EventSource Flow                                       |
 | `linkd.cleaner.backpressure.*`     | Signal 积压检查、近似未完成量、暂停状态和暂停/恢复转换                     |
-| `linkd.lifecycle.result.items`     | Event action、state、ProcessOutcome 和有限 reason code                    |
+| `linkd.lifecycle.result.items`     | Event 判定的动作摘要（多动作使用 mixed）、state、ProcessOutcome 和有限 reason code                    |
 | `linkd.lifecycle.mailbox.*`        | peek/process/ack 与单次 drain 数量                                        |
 | `linkd.lifecycle.lease.operations` | acquire、renew、release 结果                                              |
 | `linkd.final_hook.*`               | FinalHook transport、结果和耗时                                           |

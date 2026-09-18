@@ -59,8 +59,8 @@ func TestEventFactoryProtectsSystemFieldsAndUsesResolvers(t *testing.T) {
 		RecordID: "record-1", BKTenantID: "tenant-1", ReceivedAt: receivedAt,
 		Payload: []byte(`{"title":"payload title","fingerprint":"payload-fingerprint","bk_tenant_id":"payload-tenant","unknown":{"nested":true}}`),
 	}
-	draft := EventDraft{
-		BKTenantID: "tenant-1", Title: "draft title", SourceSeverity: "P0", Action: domain.EventActionTriggered,
+	draft := EventDraft{Evaluations: []domain.EventEvaluation{{Severity: "P0", Action: domain.EventActionTriggered}},
+		BKTenantID: "tenant-1", Title: "draft title",
 		SubjectID: "host-1", Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
 		ExtraData: domain.JSONObject{},
 	}
@@ -71,8 +71,8 @@ func TestEventFactoryProtectsSystemFieldsAndUsesResolvers(t *testing.T) {
 	if severityResolver.raw != "P0" || fingerprintResolver.subject != "host-1" {
 		t.Fatalf("resolver inputs severity=%q subject=%q", severityResolver.raw, fingerprintResolver.subject)
 	}
-	if event.Severity != "critical" || event.Fingerprint != "resolved-fingerprint" ||
-		event.BKTenantID != "tenant-1" || event.Title != "draft title" || event.RelatedAlertID != "" {
+	if event.Evaluations[0].Severity != "critical" || event.Fingerprint != "resolved-fingerprint" ||
+		event.BKTenantID != "tenant-1" || event.Title != "draft title" || len(event.RelatedAlertIDs) != 0 {
 		t.Fatalf("event=%#v", event)
 	}
 	for _, key := range []string{"fingerprint", "bk_tenant_id", "unknown"} {
@@ -93,8 +93,8 @@ func TestEventFactoryRejectsTenantMismatch(t *testing.T) {
 	}
 	_, err = factory.Build(RawEventMessage{
 		RecordID: "record-1", BKTenantID: "envelope-tenant", ReceivedAt: time.Now(), Payload: []byte(`{}`),
-	}, EventDraft{
-		BKTenantID: "payload-tenant", SourceSeverity: "warning", Action: domain.EventActionTriggered,
+	}, EventDraft{Evaluations: []domain.EventEvaluation{{Severity: "warning", Action: domain.EventActionTriggered}},
+		BKTenantID: "payload-tenant",
 		Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{},
 	})
 	if err == nil {

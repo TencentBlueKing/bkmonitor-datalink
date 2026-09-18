@@ -26,10 +26,10 @@ MQ delivery
   → AlertLog + EventSource hooks（Kafka V1 / KAC Alarm / Redis 活跃策略索引）
 ```
 
-- Event action 仅 `triggered | resolved | closed`。
+- Event 使用 evaluations 记录多个级别的 `triggered | resolved | closed` 判定，values 记录本次数值。
 - Alert status 仅 `active | recovered | closed`，后两者不可重新打开。
-- 同等级 `triggered` 只推进生命周期字段；更高等级关闭旧 Alert 并创建新 Alert；更低等级 Event 被抑制且不修改 Alert。
-- accepted 与 suppressed Event 写入 `related_alert_id`；suppressed 不推进 Alert，orphaned/rejected 保持为空。
+- 同一 fingerprint 最多一个活动 Alert；更高级别触发优先，可全局配置原地升级或关闭后新建；恢复/关闭只匹配当前级别。
+- accepted 与 suppressed Event 写入 `related_alert_ids`；suppressed 不推进 Alert，orphaned/rejected 保持为空。
 - Enricher 在 Alert 创建前同步执行一次；未配置规则视为 succeeded 空结果，错误降级为 failed。
 - MySQL 和 Elasticsearch 都只承诺单对象 CAS；跨对象步骤依赖稳定身份和幂等流水恢复。Cleaner 确认
   原消息后不再扫描 Event 补发 Signal，因此 Redis Mailbox 必须依靠自身持久化和复制保证已确认数据。

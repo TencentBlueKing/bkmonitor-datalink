@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -389,7 +390,7 @@ func (r *Repository) GetEvents(
 	return batch, nil
 }
 
-// ListEventsByAlert 按 related_alert_id 和 received_at 稳定分页读取一次 Alert 关联的 Event。
+// ListEventsByAlert 按 related_alert_ids 和 received_at 稳定分页读取一次 Alert 关联的 Event。
 func (r *Repository) ListEventsByAlert(
 	ctx context.Context,
 	bkTenantID, alertID string,
@@ -450,7 +451,7 @@ func (r *Repository) ListEventsByAlert(
 		"size": page.Limit + 1, "track_total_hits": false, "seq_no_primary_term": true,
 		"query": map[string]any{"bool": map[string]any{"filter": []any{
 			map[string]any{"term": map[string]any{"bk_tenant_id": bkTenantID}},
-			map[string]any{"term": map[string]any{"related_alert_id": alertID}},
+			map[string]any{"term": map[string]any{"related_alert_ids": alertID}},
 			map[string]any{"range": map[string]any{"received_at": map[string]any{
 				"gte": from.Format(time.RFC3339Nano), "lte": to.Format(time.RFC3339Nano),
 			}}},
@@ -478,7 +479,7 @@ func (r *Repository) ListEventsByAlert(
 		if decodeErr != nil {
 			return store.EventPage{}, decodeErr
 		}
-		if stored.Event.BKTenantID != bkTenantID || stored.Event.RelatedAlertID != alertID {
+		if stored.Event.BKTenantID != bkTenantID || !slices.Contains(stored.Event.RelatedAlertIDs, alertID) {
 			return store.EventPage{}, fmt.Errorf("elasticsearch event-by-alert search returned an unexpected identity")
 		}
 		result.Events = append(result.Events, stored)
@@ -786,21 +787,10 @@ func (r *Repository) CompareAndSetEventResult(
 	if err != nil {
 		return store.StoredEvent{}, fmt.Errorf("%w: event result: %w", store.ErrInvalidArgument, err)
 	}
-	// current 来自本次 realtime GetEvent 并已完成完整文档校验；这里只修改标量关联字段，
-	// 不再 Clone 并重新规范化未变的动态 JSON。
-	updated := current.Event
-	if normalizedResult.RelatedAlertID != "" {
-		if current.Event.RelatedAlertID != "" && current.Event.RelatedAlertID != normalizedResult.RelatedAlertID {
-			return store.StoredEvent{}, fmt.Errorf("%w: event related_alert_id is already set", store.ErrInvalidTransition)
-		}
-		if len(normalizedResult.RelatedAlertID) > 256 {
-			return store.StoredEvent{}, fmt.Errorf("%w: related_alert_id length must not exceed 256 bytes", store.ErrInvalidArgument)
-		}
-		updated.RelatedAlertID = normalizedResult.RelatedAlertID
+	updated, processing, err := store.ApplyEventResult(current, normalizedResult)
+	if err != nil {
+		return store.StoredEvent{}, err
 	}
-	processedAt := normalizedResult.ProcessedAt
-	processing := store.EventProcessing{State: normalizedResult.State, Outcome: normalizedResult.Outcome,
-		ReasonCode: normalizedResult.ReasonCode, ProcessedAt: &processedAt}
 	body, err := encodeEventDocument(updated, processing)
 	if err != nil {
 		return store.StoredEvent{}, err
@@ -839,7 +829,7 @@ func (r *Repository) CompareAndSetEventResult(
 }
 
 // CompareAndSetLifecycleEventResult 使用 realtime 投影核对旧状态，并通过 update API 只写
-// related_alert_id 与 processing。if_seq_no/if_primary_term 仍是最终并发栅栏。
+// related_alert_ids 与 processing。if_seq_no/if_primary_term 仍是最终并发栅栏。
 func (r *Repository) CompareAndSetLifecycleEventResult(
 	ctx context.Context,
 	bkTenantID, eventID string,
@@ -873,17 +863,13 @@ func (r *Repository) CompareAndSetLifecycleEventResult(
 	if err != nil {
 		return store.StoredEvent{}, fmt.Errorf("%w: event result: %w", store.ErrInvalidArgument, err)
 	}
-	if len(normalizedResult.RelatedAlertID) > 256 {
-		return store.StoredEvent{}, fmt.Errorf("%w: related_alert_id length must not exceed 256 bytes", store.ErrInvalidArgument)
-	}
-	processedAt := normalizedResult.ProcessedAt
-	processing := store.EventProcessing{
-		State: normalizedResult.State, Outcome: normalizedResult.Outcome,
-		ReasonCode: normalizedResult.ReasonCode, ProcessedAt: &processedAt,
+	updated, processing, err := store.ApplyEventResult(current, normalizedResult)
+	if err != nil {
+		return store.StoredEvent{}, err
 	}
 	body, err := json.Marshal(map[string]any{"doc": map[string]any{
-		"related_alert_id": normalizedResult.RelatedAlertID,
-		"processing":       processing,
+		"related_alert_ids": normalizedResult.RelatedAlertIDs,
+		"processing":        processing,
 	}})
 	if err != nil {
 		return store.StoredEvent{}, err
@@ -907,8 +893,6 @@ func (r *Repository) CompareAndSetLifecycleEventResult(
 		}
 		return store.StoredEvent{}, fmt.Errorf("update lifecycle event %q: %w", eventID, err)
 	}
-	updated := current.Event
-	updated.RelatedAlertID = normalizedResult.RelatedAlertID
 	return storedEventFromIndexResponse(updated, processing, version.DocumentID, response)
 }
 

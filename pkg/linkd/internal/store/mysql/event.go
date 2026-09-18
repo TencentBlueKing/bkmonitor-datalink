@@ -12,6 +12,7 @@ package mysqlstore
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -54,7 +55,7 @@ func (r *Repository) createEvent(ctx context.Context, event domain.Event) (store
 		return store.CreateEventResult{}, err
 	}
 	_, err = r.db.ExecContext(ctx, `INSERT INTO linkd_events
-		(bk_tenant_id, event_id, related_alert_id, version, processing_state, received_at_ns, payload, processing)
+		(bk_tenant_id, event_id, related_alert_ids, version, processing_state, received_at_ns, payload, processing)
 		VALUES (?, ?, NULL, 1, ?, ?, ?, ?)`, normalized.BKTenantID, normalized.EventID,
 		processing.State, normalized.ReceivedAt.UnixNano(), payload, processingPayload)
 	if err == nil {
@@ -187,7 +188,7 @@ func (r *Repository) ListEventsByAlert(
 		}
 	}
 	query := `SELECT event_id, received_at_ns, ` + storedEventColumns + ` FROM linkd_events
-		WHERE bk_tenant_id=? AND related_alert_id=?
+		WHERE bk_tenant_id=? AND JSON_CONTAINS(related_alert_ids, JSON_QUOTE(?))
 		AND received_at_ns>=? AND received_at_ns<=?`
 	args := []any{bkTenantID, alertID, from.UnixNano(), to.UnixNano()}
 	if page.Cursor != "" {
@@ -421,18 +422,10 @@ func (r *Repository) CompareAndSetEventResult(ctx context.Context, tenantID, eve
 	if current.Processing.State != domain.EventProcessStateUnprocessed {
 		return store.StoredEvent{}, fmt.Errorf("%w: event already processed", store.ErrInvalidTransition)
 	}
-	updated := current.Event.Clone()
-	if normalizedResult.RelatedAlertID != "" {
-		updated, err = updated.WithRelatedAlertID(normalizedResult.RelatedAlertID)
-		if err != nil {
-			return store.StoredEvent{}, fmt.Errorf("%w: %w", store.ErrInvalidTransition, err)
-		}
+	updated, processing, err := store.ApplyEventResult(current, normalizedResult)
+	if err != nil {
+		return store.StoredEvent{}, err
 	}
-	if err := domain.ValidateEventReplacement(current.Event, updated); err != nil {
-		return store.StoredEvent{}, fmt.Errorf("%w: %w", store.ErrInvalidTransition, err)
-	}
-	processedAt := normalizedResult.ProcessedAt
-	processing := store.EventProcessing{State: normalizedResult.State, Outcome: normalizedResult.Outcome, ReasonCode: normalizedResult.ReasonCode, ProcessedAt: &processedAt}
 	payload, err := encodeEvent(updated)
 	if err != nil {
 		return store.StoredEvent{}, err
@@ -442,11 +435,11 @@ func (r *Repository) CompareAndSetEventResult(ctx context.Context, tenantID, eve
 		return store.StoredEvent{}, err
 	}
 	newVersion := expectedVersion + 1
-	var relatedAlertID any
-	if updated.RelatedAlertID != "" {
-		relatedAlertID = updated.RelatedAlertID
+	relatedAlertIDs, err := json.Marshal(updated.RelatedAlertIDs)
+	if err != nil {
+		return store.StoredEvent{}, err
 	}
-	execResult, err := tx.ExecContext(ctx, `UPDATE linkd_events SET payload=?,processing=?,processing_state=?,related_alert_id=?,version=? WHERE bk_tenant_id=? AND event_id=? AND version=?`, payload, processingPayload, processing.State, relatedAlertID, newVersion, tenantID, eventID, expectedVersion)
+	execResult, err := tx.ExecContext(ctx, `UPDATE linkd_events SET payload=?,processing=?,processing_state=?,related_alert_ids=?,version=? WHERE bk_tenant_id=? AND event_id=? AND version=?`, payload, processingPayload, processing.State, relatedAlertIDs, newVersion, tenantID, eventID, expectedVersion)
 	if err != nil {
 		return store.StoredEvent{}, err
 	}

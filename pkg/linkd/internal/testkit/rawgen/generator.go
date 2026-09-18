@@ -511,9 +511,10 @@ func (g *generator) eventRecord(
 	raw := standardRecord{
 		BKTenantID: tenantID,
 		EventID:    sourceEventID, AlertID: alertID,
-		Title:    fmt.Sprintf("%s %s", scenario, action),
-		Content:  fmt.Sprintf("generated seed=%d event=%d", g.config.Seed, g.eventCounter),
-		Severity: severity, Action: action,
+		Title:       fmt.Sprintf("%s %s", scenario, action),
+		Content:     fmt.Sprintf("generated seed=%d event=%d", g.config.Seed, g.eventCounter),
+		Evaluations: []domain.EventEvaluation{{Severity: severity, Action: action}},
+		Values:      domain.EventValues{},
 		Dimensions: domain.DimensionMap{
 			"host":     domain.NewStringScalar(fmt.Sprintf("host-%04d", scenarioIndex)),
 			"scenario": domain.NewStringScalar(string(scenario)),
@@ -563,19 +564,19 @@ func (g *generator) nextOccurredTime() time.Time {
 }
 
 type standardRecord struct {
-	BKTenantID string              `json:"bk_tenant_id"`
-	EventID    string              `json:"event_id"`
-	AlertID    string              `json:"alert_id"`
-	Title      string              `json:"title"`
-	Content    string              `json:"content"`
-	Severity   string              `json:"severity"`
-	Action     domain.EventAction  `json:"action"`
-	Dimensions domain.DimensionMap `json:"dimensions"`
-	Subject    standardSubject     `json:"subject"`
-	OccurredAt time.Time           `json:"occurred_at"`
-	ProducedAt time.Time           `json:"produced_at"`
-	Labels     domain.DimensionMap `json:"labels"`
-	ExtraData  domain.JSONObject   `json:"extra_data"`
+	BKTenantID  string                   `json:"bk_tenant_id"`
+	EventID     string                   `json:"event_id"`
+	AlertID     string                   `json:"alert_id"`
+	Title       string                   `json:"title"`
+	Content     string                   `json:"content"`
+	Evaluations []domain.EventEvaluation `json:"evaluations"`
+	Values      domain.EventValues       `json:"values"`
+	Dimensions  domain.DimensionMap      `json:"dimensions"`
+	Subject     standardSubject          `json:"subject"`
+	OccurredAt  time.Time                `json:"occurred_at"`
+	ProducedAt  time.Time                `json:"produced_at"`
+	Labels      domain.DimensionMap      `json:"labels"`
+	ExtraData   domain.JSONObject        `json:"extra_data"`
 }
 
 type standardSubject struct {

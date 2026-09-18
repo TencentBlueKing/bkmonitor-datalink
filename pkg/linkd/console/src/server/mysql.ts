@@ -171,7 +171,10 @@ export class MysqlConnector {
     this.addTimeRange(where, values, spec, params);
     if (entity === "events") {
       addEqual(where, values, "processing_state", params.state);
-      addEqual(where, values, "related_alert_id", params.relatedAlertId);
+      if (params.relatedAlertId) {
+        where.push("JSON_CONTAINS(related_alert_ids, JSON_QUOTE(?))");
+        values.push(params.relatedAlertId);
+      }
     }
     if (entity === "alert-logs") {
       addEqual(where, values, "alert_id", params.alertId);
@@ -288,7 +291,10 @@ export class MysqlConnector {
     if (entity === "events") {
       addEqual(where, values, "processing_state", params.state);
       addJSONEqual(where, values, "event_source_id", params.eventSourceId);
-      addEqual(where, values, "related_alert_id", params.relatedAlertId);
+      if (params.relatedAlertId) {
+        where.push("JSON_CONTAINS(related_alert_ids, JSON_QUOTE(?))");
+        values.push(params.relatedAlertId);
+      }
       return;
     }
     if (entity === "alerts") {
@@ -387,15 +393,19 @@ function summary(
 ): Record<string, unknown> {
   if (entity === "events") {
     const selected = pick(payload, [
-      "action",
+      "evaluations",
       "event_source_id",
-      "severity",
-      "related_alert_id",
+      "values",
+      "related_alert_ids",
       "title",
     ]);
     const processing = payload._processing;
     if (processing && typeof processing === "object")
-      return { ...selected, ...(processing as Record<string, unknown>) };
+      return {
+        ...selected,
+        state: (processing as Record<string, unknown>).state,
+        outcome: (processing as Record<string, unknown>).outcome,
+      };
     return selected;
   }
   if (entity === "alerts") {

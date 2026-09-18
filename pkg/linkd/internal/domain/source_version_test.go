@@ -17,10 +17,10 @@ import (
 
 func TestSourceVersionRedeliveryPreservesPersistedFacts(t *testing.T) {
 	now := time.Now().UTC()
-	original := Event{EventSourceVersion: 1, BKTenantID: "tenant", EventSourceID: "source", EventID: "event", ReceivedAt: now, SourceRawData: JSONObject{"severity": json.RawMessage(`"P1"`)}}
+	original := Event{Evaluations: []EventEvaluation{{Severity: "warning", Action: EventActionTriggered}}, EventSourceVersion: 1, BKTenantID: "tenant", EventSourceID: "source", EventID: "event", ReceivedAt: now, SourceRawData: JSONObject{"severity": json.RawMessage(`"P1"`)}}
 	incoming := original.Clone()
 	incoming.EventSourceVersion = 2
-	incoming.Severity = "critical"
+	incoming.Evaluations[0].Severity = "critical"
 	if e := ValidateEventRedelivery(incoming, original); e != nil {
 		t.Fatal(e)
 	}

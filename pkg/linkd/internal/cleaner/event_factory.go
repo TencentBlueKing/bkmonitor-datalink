@@ -120,8 +120,16 @@ func (f *EventFactory) Build(message RawEventMessage, draft EventDraft) (domain.
 	if err := json.Unmarshal(message.Payload, &sourceRawData); err != nil {
 		return domain.Event{}, fmt.Errorf("preserve source payload: %w", err)
 	}
-	severity, err := f.severityResolver.Resolve(f.source, f.severity, draft.SourceSeverity)
-	if err != nil {
+	evaluations := make([]domain.EventEvaluation, len(draft.Evaluations))
+	for index, evaluation := range draft.Evaluations {
+		severity, err := f.severityResolver.Resolve(f.source, f.severity, evaluation.Severity)
+		if err != nil {
+			return domain.Event{}, err
+		}
+		evaluation.Severity = severity
+		evaluations[index] = evaluation
+	}
+	if err := domain.ValidateEvaluations(evaluations); err != nil {
 		return domain.Event{}, err
 	}
 	receivedAt := message.ReceivedAt.Round(0).UTC()
@@ -145,13 +153,13 @@ func (f *EventFactory) Build(message RawEventMessage, draft EventDraft) (domain.
 		EventSourceVersion: f.source.Version,
 		BKTenantID:         tenantID, EventSourceID: f.source.EventSourceID,
 		EventID: eventID,
-		Title:   draft.Title, Content: draft.Content, Severity: severity,
-		Action: draft.Action, ActionReason: draft.ActionReason,
+		Title:   draft.Title, Content: draft.Content, Evaluations: evaluations,
 		Dimensions: draft.Dimensions.Clone(), SubjectSystem: draft.SubjectSystem,
 		SubjectType: draft.SubjectType, SubjectID: draft.SubjectID, SubjectName: draft.SubjectName,
 		OccurredAt: occurredAt, ProducedAt: producedAt, ReceivedAt: receivedAt, CreateAt: receivedAt,
 		SourceEventID: draft.SourceEventID, SourceAlertID: draft.SourceAlertID,
 		SourceRawData: sourceRawData, Labels: draft.Labels.Clone(), ExtraData: draft.ExtraData.Clone(),
+		Values: draft.Values.Clone(),
 	}
 	event.Fingerprint, err = f.fingerprintResolver.Resolve(f.source, event)
 	if err != nil {

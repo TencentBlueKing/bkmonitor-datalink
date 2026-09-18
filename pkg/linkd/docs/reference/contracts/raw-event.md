@@ -12,12 +12,12 @@ record timestamp 作为 received_at。`event_sources[].cleaner.type=standard` �
   "alert_id": "source-alert-1",
   "title": "CPU high",
   "content": "CPU usage is high",
-  "severity": "P2",
-  "action": "triggered",
-  "action_reason": "",
-  "condition_key": "cpu",
-  "condition_name": "CPU 使用率",
-  "dimensions": { "host": "host-1", "usage": 92.5 },
+  "values": { "cpu_usage": 92.5 },
+  "evaluations": [
+    { "severity": "P1", "action": "triggered", "action_reason": "严重阈值触发" },
+    { "severity": "P2", "action": "resolved", "action_reason": "警告级别恢复" }
+  ],
+  "dimensions": { "host": "host-1" },
   "subject": {
     "system": "cmdb",
     "type": "host",
@@ -31,10 +31,13 @@ record timestamp 作为 received_at。`event_sources[].cleaner.type=standard` �
 }
 ```
 
-- action 必填且只允许 `triggered | resolved | closed`。
-- payload severity 是来源原值；默认 SeverityResolver 依次使用 severity_mapping、全局同名 Severity、来源 default_severity 和全局 default_severity。
+- `evaluations` 必填，包含 1–32 项；每项 action 必填且只允许 `triggered | resolved | closed`。
+- 各项 severity 完成来源映射后必须唯一，重复标准级别使整条输入被拒绝；顺序不决定执行顺序，未出现级别不隐含恢复或关闭。
+- `values` 是可选的扁平数字对象，缺失、null 和空对象统一为 `{}`。最多 256 项，key 为 1–256 bytes；每个值必须是有限 float64，拒绝字段值 null、字符串、布尔值和嵌套值，缺失字段不补零。
+- values 不参与 fingerprint；所有判定共享本次事件的 values、dimensions 和 occurred_at。
+- evaluations 中的 severity 是来源原值；默认 SeverityResolver 依次使用 severity_mapping、全局同名 Severity、来源 default_severity 和全局 default_severity。
 - event_id 和 alert_id 分别映射为 Event.source_event_id 和 Event.source_alert_id，二者都允许为空。
-- bk_tenant_id、event_source_id、event_source_version、related_alert_id、fingerprint、received_at、create_at 和 source_raw_data 即使出现在 payload 中也不会覆盖 EventFactory 的结果，只会保留在原始快照中。
+- bk_tenant_id、event_source_id、event_source_version、related_alert_ids、fingerprint、received_at、create_at 和 source_raw_data 即使出现在 payload 中也不会覆盖 EventFactory 的结果，只会保留在原始快照中。
 - `RawEventMessage.bk_tenant_id` 来自适配器；EventSource.related_tenant_id 非空时强制覆盖消息租户，否则消息租户必填。
 - occurred_at 缺失时使用稳定 received_at；produced_at 缺失时同样使用 received_at。
 - event_id 为空时使用稳定 record ID 参与 Linkd Event ID 摘要。

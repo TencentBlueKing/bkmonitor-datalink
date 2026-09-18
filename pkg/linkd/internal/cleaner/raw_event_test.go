@@ -22,7 +22,7 @@ func TestStandardCleanerMapsKnownFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if draft.Action != "triggered" || draft.Title != "CPU high" || draft.BKTenantID != "tenant-1" ||
+	if draft.Evaluations[0].Action != "triggered" || draft.Title != "CPU high" || draft.BKTenantID != "tenant-1" ||
 		draft.SourceEventID != "source-event-1" || draft.SourceAlertID != "source-alert-1" ||
 		draft.SubjectSystem != "cmdb" || draft.SubjectType != "host" || draft.SubjectID != "1" {
 		t.Fatalf("draft=%#v", draft)
@@ -32,7 +32,7 @@ func TestStandardCleanerMapsKnownFields(t *testing.T) {
 func TestStandardCleanerAdditionalDimensions(t *testing.T) {
 	t.Parallel()
 	cleaner := StandardCleaner{}
-	valid := RawEventMessage{Payload: []byte(`{"action":"triggered","dimensions":{"host":"host-1"},"extra_data":{"additional_dimensions":{"bk_host_id":101}}}`)}
+	valid := RawEventMessage{Payload: []byte(`{"dimensions":{"host":"host-1"},"evaluations":[{"action":"triggered"}],"extra_data":{"additional_dimensions":{"bk_host_id":101}}}`)}
 	draft, err := cleaner.Clean(context.Background(), valid)
 	if err != nil {
 		t.Fatalf("valid additional dimensions: %v", err)
@@ -41,8 +41,8 @@ func TestStandardCleanerAdditionalDimensions(t *testing.T) {
 		t.Fatalf("additional dimensions=%s", draft.ExtraData["additional_dimensions"])
 	}
 	for name, payload := range map[string]string{
-		"nested value":  `{"action":"triggered","dimensions":{},"extra_data":{"additional_dimensions":{"host":{"id":1}}}}`,
-		"duplicate key": `{"action":"triggered","dimensions":{"host":"host-1"},"extra_data":{"additional_dimensions":{"host":"host-2"}}}`,
+		"nested value":  `{"dimensions":{},"evaluations":[{"action":"triggered"}],"extra_data":{"additional_dimensions":{"host":{"id":1}}}}`,
+		"duplicate key": `{"dimensions":{"host":"host-1"},"evaluations":[{"action":"triggered"}],"extra_data":{"additional_dimensions":{"host":"host-2"}}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := cleaner.Clean(context.Background(), RawEventMessage{Payload: []byte(payload)}); err == nil {
@@ -66,7 +66,7 @@ func TestStandardCleanerJSONValidationAndUnknownFields(t *testing.T) {
 	if _, err := cleaner.Clean(context.Background(), message); err == nil {
 		t.Fatal("standard payload without action was accepted")
 	}
-	message.Payload = []byte(`{"bk_tenant_id":"payload-tenant","fingerprint":"payload-value","unknown":{"nested":true},"title":"x","action":"triggered"}`)
+	message.Payload = []byte(`{"bk_tenant_id":"payload-tenant","evaluations":[{"action":"triggered"}],"fingerprint":"payload-value","title":"x","unknown":{"nested":true}}`)
 	draft, err := cleaner.Clean(context.Background(), message)
 	if err != nil {
 		t.Fatalf("standard payload with unknown fields: %v", err)
@@ -77,5 +77,5 @@ func TestStandardCleanerJSONValidationAndUnknownFields(t *testing.T) {
 }
 
 func validPayload() []byte {
-	return []byte(`{"bk_tenant_id":"tenant-1","event_id":"source-event-1","alert_id":"source-alert-1","title":"CPU high","content":"usage high","severity":"P2","action":"triggered","dimensions":{"host":"host-1"},"subject":{"system":"cmdb","type":"host","id":"1","name":"host-1"},"occurred_at":"2026-09-01T00:00:00Z","produced_at":"2026-09-01T00:00:01Z","labels":{"team":"ops"},"extra_data":{}}`)
+	return []byte(`{"alert_id":"source-alert-1","bk_tenant_id":"tenant-1","content":"usage high","dimensions":{"host":"host-1"},"evaluations":[{"action":"triggered","severity":"P2"}],"event_id":"source-event-1","extra_data":{},"labels":{"team":"ops"},"occurred_at":"2026-09-01T00:00:00Z","produced_at":"2026-09-01T00:00:01Z","subject":{"id":"1","name":"host-1","system":"cmdb","type":"host"},"title":"CPU high"}`)
 }

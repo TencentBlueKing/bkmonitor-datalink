@@ -131,7 +131,7 @@ func TestMultiHooksPersistPerInstanceAndRotateInOrder(t *testing.T) {
 	}
 	opening := testEvent("opening", "warning")
 	created := persistAndProcess(t, repo, processor, opening)
-	entries, err := repo.ListAlertLogs(context.Background(), opening.BKTenantID, created.AlertID, store.PageRequest{})
+	entries, err := repo.ListAlertLogs(context.Background(), opening.BKTenantID, created.AlertIDs[len(created.AlertIDs)-1], store.PageRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}

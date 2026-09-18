@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Linkd 当前核心模型、Cleaner、Lifecycle 与部署模式的实现说明。"
+      content="Linkd 2026-09-02 核心模型、Cleaner、Lifecycle 与部署模式的历史实现快照。"
     />
     <title>Linkd 核心模型 · Runtime · Deployment</title>
     <style>
@@ -1308,7 +1308,7 @@
         <span>Linkd / Engineering Map</span>
       </div>
       <div class="top-meta">
-        <span>依据当前仓库代码与权威设计文档</span>
+        <span>历史实现快照，当前模型以设计文档为准</span>
         <span>2026-09-02</span>
       </div>
     </header>
@@ -1383,8 +1383,10 @@
         <a href="#deployment">部署模式</a>
         <a href="#boundaries">实现边界</a>
         <div class="toc-note">
-          本页描述当前实现，不把旧 <span class="mono">KingeyeAlertEvent</span>
-          或规划中的 API / Leader Election 当作现行能力。
+          本页保留 2026-09-02 的实现快照。当前事件已增加 values、多级别 evaluations、
+          related_alert_ids 和可配置升级策略；请参阅
+          <a href="design/define.md">当前核心模型</a>与
+          <a href="modules/lifecycle.md">Lifecycle</a>。
         </div>
       </aside>
 

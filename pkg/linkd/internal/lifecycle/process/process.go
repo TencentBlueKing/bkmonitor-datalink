@@ -165,6 +165,7 @@ func Run(
 			lifecycle.SystemClock{},
 			logger,
 			lifecycle.WithEnrichObserver(telemetryRuntime.EnrichObserver()),
+			lifecycle.WithSeverityUpgradePolicy(lifecycleConfig.SeverityUpgradePolicy),
 		)
 		if err != nil {
 			return fmt.Errorf("initialize lifecycle processor: %w", err)

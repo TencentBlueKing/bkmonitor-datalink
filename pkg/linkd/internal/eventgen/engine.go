@@ -362,11 +362,17 @@ func (e *Engine) buildRecord(
 	payload := standardPayload{
 		BKTenantID: e.config.TenantID,
 		EventID:    sourceEventID, AlertID: template.AlertID,
-		Title: template.Title, Content: content, Severity: template.Severity,
-		Action: action, ActionReason: actionReason,
-		Dimensions: cloneAnyMap(template.Dimensions), Subject: template.Subject,
+		Title: template.Title, Content: content,
+		Evaluations: []domain.EventEvaluation{{Severity: template.Severity, Action: action, ActionReason: actionReason}},
+		Values:      domain.EventValues{},
+		Dimensions:  cloneAnyMap(template.Dimensions), Subject: template.Subject,
 		OccurredAt: now, ProducedAt: now,
 		Labels: cloneAnyMap(template.Labels), ExtraData: cloneAnyMap(extra),
+	}
+	if value, ok := extra["value"].(float64); ok {
+		if name, ok := extra["metric_name"].(string); ok {
+			payload.Values[name] = value
+		}
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -405,20 +411,19 @@ func (e *Engine) nextQuota() (int, uint64) {
 }
 
 type standardPayload struct {
-	BKTenantID   string             `json:"bk_tenant_id"`
-	EventID      string             `json:"event_id"`
-	AlertID      string             `json:"alert_id"`
-	Title        string             `json:"title"`
-	Content      string             `json:"content"`
-	Severity     string             `json:"severity"`
-	Action       domain.EventAction `json:"action"`
-	ActionReason string             `json:"action_reason"`
-	Dimensions   map[string]any     `json:"dimensions"`
-	Subject      standardSubject    `json:"subject"`
-	OccurredAt   time.Time          `json:"occurred_at"`
-	ProducedAt   time.Time          `json:"produced_at"`
-	Labels       map[string]any     `json:"labels"`
-	ExtraData    map[string]any     `json:"extra_data"`
+	BKTenantID  string                   `json:"bk_tenant_id"`
+	EventID     string                   `json:"event_id"`
+	AlertID     string                   `json:"alert_id"`
+	Title       string                   `json:"title"`
+	Content     string                   `json:"content"`
+	Evaluations []domain.EventEvaluation `json:"evaluations"`
+	Values      domain.EventValues       `json:"values"`
+	Dimensions  map[string]any           `json:"dimensions"`
+	Subject     standardSubject          `json:"subject"`
+	OccurredAt  time.Time                `json:"occurred_at"`
+	ProducedAt  time.Time                `json:"produced_at"`
+	Labels      map[string]any           `json:"labels"`
+	ExtraData   map[string]any           `json:"extra_data"`
 }
 
 type standardSubject struct {

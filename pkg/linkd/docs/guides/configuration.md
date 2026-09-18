@@ -48,12 +48,13 @@ LINKD_TEST_KAFKA_BROKERS=127.0.0.1:9092 go test -race ./internal/consume/kafka -
 Lifecycle 默认并发为 32；`lifecycle.elasticsearch_write_batch` 默认启用，仅作用于 Elasticsearch
 Lifecycle runtime。Event result update、Alert CAS/create、AlertLog create 跨独立调用合并为 Bulk，
 CAS 校验和冲突核对的 realtime GET 合并为 `_mget`。Lifecycle Event 点读通过 `_source` 投影排除
-不参与裁决的 `source_raw_data`，Event 终态 update 只写 `related_alert_id` 和 `processing`；
+不参与裁决的 `source_raw_data`，Event 终态 update 只写 `related_alert_ids` 和 `processing`；
 公共 Event 查询仍返回完整文档。每项成功后调用方才继续缓存、输出和 ACK；
 批次没有跨文档事务语义，Cleaner 与 Archiver 不使用这个队列。
 
 ```yaml
 lifecycle:
+  severity_upgrade_policy: close_and_create
   concurrency: 32
   elasticsearch_write_batch:
     enabled: true
@@ -563,3 +564,10 @@ Redis 连接参数独立于 `storage.redis`，同样支持 Sentinel 及两侧认
 接入示例、Redis 查询和排障见 [Redis 策略活跃告警 hook](active-alert-by-strategy.md)。
 Console Kafka 页面按来源和实例展示输出目标；动态管理接口中的连接凭据已脱敏，因此该模式只展示
 目标声明，不使用脱敏凭据探测输出集群 metadata，也不将其标记为已验证可用。
+
+### 全局级别升级策略
+
+`lifecycle.severity_upgrade_policy` 支持 `close_and_create`（默认，关闭低级别后新建）和
+`update_current`（保留当前 Alert 身份更新级别）。所有 Lifecycle 实例使用相同全局配置，重启生效；
+已保存计划的事件继续原策略，配置只影响尚未生成计划的事件。非法取值在启动校验时拒绝。
+高级别 trigger 优先于同一事件中旧级别的 recovery/closed；完整裁决规则见 [Lifecycle](../modules/lifecycle.md#4-event-状态裁决)。

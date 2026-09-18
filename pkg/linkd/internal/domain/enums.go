@@ -116,16 +116,17 @@ func (k OperatorKind) Valid() bool {
 type OperationKind string
 
 const (
-	OperationKindTrigger  OperationKind = "trigger"
-	OperationKindRecover  OperationKind = "recover"
-	OperationKindClose    OperationKind = "close"
-	OperationKindSuppress OperationKind = "suppress"
-	OperationKindPush     OperationKind = "push"
+	OperationKindSeverityChange OperationKind = "severity_change"
+	OperationKindTrigger        OperationKind = "trigger"
+	OperationKindRecover        OperationKind = "recover"
+	OperationKindClose          OperationKind = "close"
+	OperationKindSuppress       OperationKind = "suppress"
+	OperationKindPush           OperationKind = "push"
 )
 
 func (k OperationKind) Valid() bool {
 	switch k {
-	case OperationKindTrigger, OperationKindRecover, OperationKindClose, OperationKindSuppress, OperationKindPush:
+	case OperationKindSeverityChange, OperationKindTrigger, OperationKindRecover, OperationKindClose, OperationKindSuppress, OperationKindPush:
 		return true
 	default:
 		return false

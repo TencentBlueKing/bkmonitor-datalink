@@ -16,4 +16,5 @@ type RelationSchema struct {
 	ToType        ResourceType
 	IsDirectional bool
 	IsBelongsTo   bool
+	MetricName    string
 }

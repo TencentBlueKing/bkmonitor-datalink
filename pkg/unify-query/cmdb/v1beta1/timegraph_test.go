@@ -3,6 +3,7 @@ package v1beta1
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 )
@@ -126,5 +127,77 @@ func TestNodeIdentityIncludesResourceType(t *testing.T) {
 	}
 	if len(results) != 1 {
 		t.Fatalf("resource type collision collapsed the edge: %+v", results)
+	}
+}
+
+func TestTimeGraphRelationTypeConstrainsSameEndpoint(t *testing.T) {
+	config := &Config{Resource: []ResourceConf{
+		{Name: "left", Index: cmdb.Index{"id"}},
+		{Name: "right", Index: cmdb.Index{"id"}},
+	}}
+	tg := NewTimeGraphWithConfig(config)
+	ctx := context.Background()
+	info := cmdb.Matcher{"id": "same"}
+	if err := tg.AddTimeRelationWithRelation(ctx, cmdb.Relation{
+		V:            []cmdb.Resource{"left", "right"},
+		RelationType: "relation_a",
+		MetricName:   "relation_a_metric",
+	}, info, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := tg.AddTimeRelationWithRelation(ctx, cmdb.Relation{
+		V:            []cmdb.Resource{"left", "right"},
+		RelationType: "relation_b",
+		MetricName:   "relation_b_metric",
+	}, info, 100); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := tg.FindRelationPathResources(ctx, "left", []cmdb.Resource{"right"}, info, []cmdb.RelationPath{{
+		Steps: []cmdb.RelationPathStep{
+			{ResourceType: "left"},
+			{ResourceType: "right", RelationType: "relation_b"},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected relation_b path, got %+v", results)
+	}
+
+	results, err = tg.FindRelationPathResources(ctx, "left", []cmdb.Resource{"right"}, info, []cmdb.RelationPath{{
+		Steps: []cmdb.RelationPathStep{
+			{ResourceType: "left"},
+			{ResourceType: "right", RelationType: "relation_c"},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("unexpected unmatched relation path: %+v", results)
+	}
+}
+
+func TestTimeGraphUsesModelResourceConfigAndMetricName(t *testing.T) {
+	tg := NewTimeGraphWithConfig(&Config{Resource: []ResourceConf{
+		{Name: "left", Index: cmdb.Index{"left_id"}},
+		{Name: "right", Index: cmdb.Index{"right_id"}},
+	}})
+	query, err := tg.MakeQueryTs(
+		context.Background(),
+		"space",
+		cmdb.Matcher{"left_id": "l1", "right_id": "r1"},
+		time.Unix(100, 0),
+		time.Unix(100, 0),
+		time.Minute,
+		cmdb.Relation{V: []cmdb.Resource{"left", "right"}, MetricName: "custom_relation_metric"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if query == nil || len(query.QueryList) != 1 || query.QueryList[0].FieldName != "custom_relation_metric" {
+		t.Fatalf("unexpected custom relation query: %+v", query)
 	}
 }

@@ -213,6 +213,12 @@ func newModel(ctx context.Context, cfg *Config) (*model, error) {
 		if len(r.Resources) != 2 {
 			return nil, fmt.Errorf("wrong model %+v", r.Resources)
 		}
+		// The legacy VM graph only understands the static relation topology.
+		// Keep dynamic definitions in cfg for TimeGraph metric resolution, but do
+		// not expose them to the old path finder.
+		if r.Category == string(relation.RelationCategoryDynamic) {
+			continue
+		}
 
 		if err = g.AddEdge(string(r.Resources[0]), string(r.Resources[1])); err != nil {
 			return nil, fmt.Errorf("add edge error: %s", err.Error())

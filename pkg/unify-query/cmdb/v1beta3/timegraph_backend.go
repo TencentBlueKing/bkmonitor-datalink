@@ -23,6 +23,11 @@ type timeGraphQuerier interface {
 	QueryPathResourcesRange(context.Context, string, string, string, string, string, cmdb.Resource, []cmdb.Resource, [][]cmdb.Resource, cmdb.Matcher) ([]cmdb.PathResourcesResult, error)
 }
 
+type relationPathTimeGraphQuerier interface {
+	QueryRelationPathResources(context.Context, string, string, string, cmdb.Resource, []cmdb.Resource, []cmdb.RelationPath, cmdb.Matcher) ([]cmdb.PathResourcesResult, error)
+	QueryRelationPathResourcesRange(context.Context, string, string, string, string, string, cmdb.Resource, []cmdb.Resource, []cmdb.RelationPath, cmdb.Matcher) ([]cmdb.PathResourcesResult, error)
+}
+
 type timeGraphLegacyResult struct {
 	source        cmdb.Resource
 	sourceMatcher cmdb.Matcher
@@ -123,6 +128,24 @@ func resourcePathsToTimeGraphPaths(paths []resourcePath) [][]cmdb.Resource {
 	return result
 }
 
+func resourcePathsToTimeGraphRelationPaths(paths []resourcePath) []cmdb.RelationPath {
+	result := make([]cmdb.RelationPath, 0, len(paths))
+	for _, path := range paths {
+		steps := make([]cmdb.RelationPathStep, 0, len(path.Steps))
+		for _, step := range path.Steps {
+			steps = append(steps, cmdb.RelationPathStep{
+				ResourceType: cmdb.Resource(step.ResourceType),
+				RelationType: step.RelationType,
+				Category:     step.Category,
+				Direction:    step.Direction,
+				MetricName:   step.MetricName,
+			})
+		}
+		result = append(result, cmdb.RelationPath{Steps: steps})
+	}
+	return result
+}
+
 func resourcePathToResourceTypes(path resourcePath) []ResourceType {
 	result := make([]ResourceType, 0, len(path.Steps))
 	for _, step := range path.Steps {
@@ -210,16 +233,30 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 	}
 
 	candidatePaths := resourcePathsToTimeGraphPaths(paths)
-	results, err := querier.QueryPathResources(
-		ctx,
-		lookBackDelta,
-		spaceUID,
-		queryTimestamp,
-		cmdb.Resource(req.SourceType),
-		[]cmdb.Resource{cmdb.Resource(req.TargetType)},
-		candidatePaths,
-		cmdb.Matcher(req.SourceInfo),
-	)
+	var results []cmdb.PathResourcesResult
+	if relationQuerier, ok := querier.(relationPathTimeGraphQuerier); ok {
+		results, err = relationQuerier.QueryRelationPathResources(
+			ctx,
+			lookBackDelta,
+			spaceUID,
+			queryTimestamp,
+			cmdb.Resource(req.SourceType),
+			[]cmdb.Resource{cmdb.Resource(req.TargetType)},
+			resourcePathsToTimeGraphRelationPaths(paths),
+			cmdb.Matcher(req.SourceInfo),
+		)
+	} else {
+		results, err = querier.QueryPathResources(
+			ctx,
+			lookBackDelta,
+			spaceUID,
+			queryTimestamp,
+			cmdb.Resource(req.SourceType),
+			[]cmdb.Resource{cmdb.Resource(req.TargetType)},
+			candidatePaths,
+			cmdb.Matcher(req.SourceInfo),
+		)
+	}
 	if err != nil {
 		return timeGraphLegacyResult{}, err
 	}
@@ -311,18 +348,34 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	}
 
 	candidatePaths := resourcePathsToTimeGraphPaths(paths)
-	results, err := querier.QueryPathResourcesRange(
-		ctx,
-		lookBackDelta,
-		spaceUID,
-		step,
-		start,
-		end,
-		cmdb.Resource(req.SourceType),
-		[]cmdb.Resource{cmdb.Resource(req.TargetType)},
-		candidatePaths,
-		cmdb.Matcher(req.SourceInfo),
-	)
+	var results []cmdb.PathResourcesResult
+	if relationQuerier, ok := querier.(relationPathTimeGraphQuerier); ok {
+		results, err = relationQuerier.QueryRelationPathResourcesRange(
+			ctx,
+			lookBackDelta,
+			spaceUID,
+			step,
+			start,
+			end,
+			cmdb.Resource(req.SourceType),
+			[]cmdb.Resource{cmdb.Resource(req.TargetType)},
+			resourcePathsToTimeGraphRelationPaths(paths),
+			cmdb.Matcher(req.SourceInfo),
+		)
+	} else {
+		results, err = querier.QueryPathResourcesRange(
+			ctx,
+			lookBackDelta,
+			spaceUID,
+			step,
+			start,
+			end,
+			cmdb.Resource(req.SourceType),
+			[]cmdb.Resource{cmdb.Resource(req.TargetType)},
+			candidatePaths,
+			cmdb.Matcher(req.SourceInfo),
+		)
+	}
 	if err != nil {
 		return timeGraphRangeResult{}, err
 	}

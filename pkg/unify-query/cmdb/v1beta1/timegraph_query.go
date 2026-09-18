@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
@@ -31,7 +32,7 @@ func (r *model) buildTimeGraphFromRelations(ctx context.Context, spaceUID string
 	ctx, span := trace.NewSpan(ctx, "build-time-graph-from-relations")
 	defer span.End(&err)
 
-	tg := NewTimeGraph()
+	tg := NewTimeGraphWithConfig(r.cfg)
 	lookBack, err := time.ParseDuration(lookBackDelta)
 	if lookBackDelta != "" && err != nil {
 		return nil, errors.WithMessage(err, "parse look back delta")
@@ -104,7 +105,7 @@ func (r *model) buildTimeGraphFromRelations(ctx context.Context, spaceUID string
 			for i, point := range series.Points {
 				timestamps[i] = point.T
 			}
-			if err = tg.AddTimeRelation(ctx, relation.V[0], relation.V[1], info, timestamps...); err != nil {
+			if err = tg.AddTimeRelationWithRelation(ctx, relation, info, timestamps...); err != nil {
 				return nil, errors.WithMessage(err, "add time relation")
 			}
 		}
@@ -115,18 +116,123 @@ func (r *model) buildTimeGraphFromRelations(ctx context.Context, spaceUID string
 
 // buildRelationsFromPaths extracts and de-duplicates adjacent edges from paths.
 func (r *model) buildRelationsFromPaths(paths [][]cmdb.Resource) []cmdb.Relation {
-	seen := make(map[[2]cmdb.Resource]struct{})
+	relationPaths := make([]cmdb.RelationPath, 0, len(paths))
 	for _, path := range paths {
-		for i := 0; i+1 < len(path); i++ {
-			seen[[2]cmdb.Resource{path[i], path[i+1]}] = struct{}{}
+		steps := make([]cmdb.RelationPathStep, 0, len(path))
+		for _, resourceType := range path {
+			steps = append(steps, cmdb.RelationPathStep{ResourceType: resourceType})
+		}
+		relationPaths = append(relationPaths, cmdb.RelationPath{Steps: steps})
+	}
+	return r.buildRelationsFromRelationPaths(relationPaths)
+}
+
+func (r *model) buildRelationsFromRelationPaths(paths []cmdb.RelationPath) []cmdb.Relation {
+	type relationKey struct {
+		source       cmdb.Resource
+		target       cmdb.Resource
+		relationType string
+		metricName   string
+	}
+	seen := make(map[relationKey]struct{})
+	relations := make([]cmdb.Relation, 0)
+	for _, path := range paths {
+		for i := 1; i < len(path.Steps); i++ {
+			source := path.Steps[i-1].ResourceType
+			target := path.Steps[i].ResourceType
+			if source == "" || target == "" {
+				continue
+			}
+			candidates := r.timeGraphRelationCandidates(source, target, path.Steps[i])
+			for _, candidate := range candidates {
+				key := relationKey{
+					source:       source,
+					target:       target,
+					relationType: candidate.RelationType,
+					metricName:   candidate.MetricName,
+				}
+				if _, ok := seen[key]; ok {
+					continue
+				}
+				seen[key] = struct{}{}
+				relations = append(relations, cmdb.Relation{
+					V:            []cmdb.Resource{source, target},
+					RelationType: candidate.RelationType,
+					MetricName:   candidate.MetricName,
+				})
+			}
 		}
 	}
-
-	relations := make([]cmdb.Relation, 0, len(seen))
-	for edge := range seen {
-		relations = append(relations, cmdb.Relation{V: []cmdb.Resource{edge[0], edge[1]}})
-	}
 	return relations
+}
+
+func (r *model) timeGraphRelationCandidates(
+	source, target cmdb.Resource,
+	step cmdb.RelationPathStep,
+) []cmdb.Relation {
+	if r.cfg == nil {
+		return []cmdb.Relation{{
+			V:            []cmdb.Resource{source, target},
+			RelationType: step.RelationType,
+			MetricName:   step.MetricName,
+		}}
+	}
+
+	result := make([]cmdb.Relation, 0)
+	for _, configured := range r.cfg.Relation {
+		if len(configured.Resources) != 2 {
+			continue
+		}
+		if step.RelationType != "" && !sameRelationType(configured.RelationType, step.RelationType) {
+			continue
+		}
+		if !sameResourcePair(configured.Resources, source, target) {
+			continue
+		}
+		metricName := configured.MetricName
+		if step.MetricName != "" {
+			metricName = step.MetricName
+		}
+		result = append(result, cmdb.Relation{
+			V:            []cmdb.Resource{source, target},
+			RelationType: configured.RelationType,
+			MetricName:   metricName,
+		})
+	}
+	if len(result) > 0 {
+		return result
+	}
+	return []cmdb.Relation{{
+		V:            []cmdb.Resource{source, target},
+		RelationType: step.RelationType,
+		MetricName:   step.MetricName,
+	}}
+}
+
+func sameRelationType(left, right string) bool {
+	if left == right {
+		return true
+	}
+	if separator := strings.IndexByte(left, ':'); separator >= 0 {
+		return left[separator+1:] == right
+	}
+	return false
+}
+
+func sameResourcePair(resources []cmdb.Resource, source, target cmdb.Resource) bool {
+	return (resources[0] == source && resources[1] == target) || (resources[0] == target && resources[1] == source)
+}
+
+func relationPathsFromResourcePaths(paths [][]cmdb.Resource) []cmdb.RelationPath {
+	result := make([]cmdb.RelationPath, 0, len(paths))
+	for _, path := range paths {
+		steps := make([]cmdb.RelationPathStep, 0, len(path))
+		for _, resourceType := range path {
+			steps = append(steps, cmdb.RelationPathStep{ResourceType: resourceType})
+		}
+		result = append(result, cmdb.RelationPath{Steps: steps})
+	}
+	return result
 }
 
 func (r *model) resolveTimeGraphPaths(ctx context.Context, sourceType cmdb.Resource, targetTypes []cmdb.Resource, requested [][]cmdb.Resource) ([][]cmdb.Resource, error) {
@@ -167,15 +273,18 @@ func (r *model) queryTimeGraph(ctx context.Context, lookBackDelta, spaceUID stri
 	if err != nil {
 		return nil, err
 	}
+	return r.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, start, end, step, sourceType, targetTypes, relationPathsFromResourcePaths(paths), matcher)
+}
 
-	tg, err := r.buildTimeGraphFromRelations(ctx, spaceUID, start, end, step, matcher, r.buildRelationsFromPaths(paths), lookBackDelta)
+func (r *model) queryRelationTimeGraph(ctx context.Context, lookBackDelta, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
+	tg, err := r.buildTimeGraphFromRelations(ctx, spaceUID, start, end, step, matcher, r.buildRelationsFromRelationPaths(paths), lookBackDelta)
 	if err != nil {
 		return nil, errors.WithMessage(err, "build time graph")
 	}
 	defer tg.Clean(ctx)
 
 	results := make([]cmdb.PathResourcesResult, 0)
-	pathResults, queryErr := tg.FindPathResources(ctx, sourceType, targetTypes, matcher, paths)
+	pathResults, queryErr := tg.FindRelationPathResources(ctx, sourceType, targetTypes, matcher, paths)
 	if queryErr != nil {
 		return nil, errors.WithMessagef(queryErr, "find path from %s", sourceType)
 	}
@@ -215,6 +324,26 @@ func (r *model) QueryPathResources(ctx context.Context, lookBackDelta, spaceUID,
 	return r.queryTimeGraph(ctx, lookBackDelta, spaceUID, time.Unix(timestampValue, 0), time.Unix(timestampValue, 0), 5*time.Minute, sourceType, targetTypes, pathResources, matcher)
 }
 
+func (r *model) QueryRelationPathResources(ctx context.Context, lookBackDelta, spaceUID, timestamp string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
+	if spaceUID == "" {
+		return nil, errors.New("space uid is empty")
+	}
+	if timestamp == "" {
+		return nil, errors.New("timestamp is empty")
+	}
+	if sourceType == "" {
+		return nil, errors.New("source type is empty")
+	}
+	if len(targetTypes) == 0 {
+		return nil, errors.New("target types is empty")
+	}
+	timestampValue, err := cast.ToInt64E(timestamp)
+	if err != nil {
+		return nil, errors.WithMessage(err, "parse timestamp")
+	}
+	return r.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, time.Unix(timestampValue, 0), time.Unix(timestampValue, 0), 5*time.Minute, sourceType, targetTypes, paths, matcher)
+}
+
 func (r *model) QueryPathResourcesRange(ctx context.Context, lookBackDelta, spaceUID, step, startTimestamp, endTimestamp string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, pathResources [][]cmdb.Resource, matcher cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
 	if spaceUID == "" {
 		return nil, errors.New("space uid is empty")
@@ -244,4 +373,35 @@ func (r *model) QueryPathResourcesRange(ctx context.Context, lookBackDelta, spac
 		return nil, errors.New("step must be positive")
 	}
 	return r.queryTimeGraph(ctx, lookBackDelta, spaceUID, time.Unix(start, 0), time.Unix(end, 0), stepDuration, sourceType, targetTypes, pathResources, matcher)
+}
+
+func (r *model) QueryRelationPathResourcesRange(ctx context.Context, lookBackDelta, spaceUID, step, startTimestamp, endTimestamp string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
+	if spaceUID == "" {
+		return nil, errors.New("space uid is empty")
+	}
+	if startTimestamp == "" || endTimestamp == "" {
+		return nil, errors.New("timestamp is empty")
+	}
+	if sourceType == "" {
+		return nil, errors.New("source type is empty")
+	}
+	if len(targetTypes) == 0 {
+		return nil, errors.New("target types is empty")
+	}
+	start, err := cast.ToInt64E(startTimestamp)
+	if err != nil {
+		return nil, errors.WithMessage(err, "parse start timestamp")
+	}
+	end, err := cast.ToInt64E(endTimestamp)
+	if err != nil {
+		return nil, errors.WithMessage(err, "parse end timestamp")
+	}
+	stepDuration, err := time.ParseDuration(step)
+	if err != nil {
+		return nil, errors.WithMessage(err, "parse step")
+	}
+	if stepDuration <= 0 {
+		return nil, errors.New("step must be positive")
+	}
+	return r.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, time.Unix(start, 0), time.Unix(end, 0), stepDuration, sourceType, targetTypes, paths, matcher)
 }

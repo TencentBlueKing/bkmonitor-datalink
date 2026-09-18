@@ -24,6 +24,8 @@ type fakeTimeGraphModel struct {
 	rangeStep      string
 	instantPaths   [][]cmdb.Resource
 	rangePaths     [][]cmdb.Resource
+	instantPlan    []cmdb.RelationPath
+	rangePlan      []cmdb.RelationPath
 }
 
 type timeGraphTestSchemaProvider struct{}
@@ -89,6 +91,44 @@ func (m *fakeTimeGraphModel) QueryPathResourcesRange(
 	return m.rangeResults, nil
 }
 
+func (m *fakeTimeGraphModel) QueryRelationPathResources(
+	ctx context.Context,
+	lookBackDelta, spaceUID, timestamp string,
+	sourceType cmdb.Resource,
+	targetTypes []cmdb.Resource,
+	paths []cmdb.RelationPath,
+	matcher cmdb.Matcher,
+) ([]cmdb.PathResourcesResult, error) {
+	m.instantPlan = paths
+	m.instantPaths = relationPathsToResources(paths)
+	return m.QueryPathResources(ctx, lookBackDelta, spaceUID, timestamp, sourceType, targetTypes, m.instantPaths, matcher)
+}
+
+func (m *fakeTimeGraphModel) QueryRelationPathResourcesRange(
+	ctx context.Context,
+	lookBackDelta, spaceUID, step, start, end string,
+	sourceType cmdb.Resource,
+	targetTypes []cmdb.Resource,
+	paths []cmdb.RelationPath,
+	matcher cmdb.Matcher,
+) ([]cmdb.PathResourcesResult, error) {
+	m.rangePlan = paths
+	m.rangePaths = relationPathsToResources(paths)
+	return m.QueryPathResourcesRange(ctx, lookBackDelta, spaceUID, step, start, end, sourceType, targetTypes, m.rangePaths, matcher)
+}
+
+func relationPathsToResources(paths []cmdb.RelationPath) [][]cmdb.Resource {
+	result := make([][]cmdb.Resource, 0, len(paths))
+	for _, path := range paths {
+		resources := make([]cmdb.Resource, 0, len(path.Steps))
+		for _, step := range path.Steps {
+			resources = append(resources, step.ResourceType)
+		}
+		result = append(result, resources)
+	}
+	return result
+}
+
 func TestQueryResourceMatcherUsesTimeGraphBackend(t *testing.T) {
 	previousBackend := RelationBackend
 	RelationBackend = RelationBackendTimeGraph
@@ -121,6 +161,7 @@ func TestQueryResourceMatcherUsesTimeGraphBackend(t *testing.T) {
 	require.Equal(t, cmdb.Matchers{cmdb.Matcher{"ip": "10.0.0.1"}}, matchers)
 	require.Equal(t, "1700000000", fake.instantTs)
 	require.Equal(t, [][]cmdb.Resource{{"node", "system"}}, fake.instantPaths)
+	require.Equal(t, "node_with_system", fake.instantPlan[0].Steps[1].RelationType)
 }
 
 func TestQueryResourceMatcherRangeUsesTimeGraphBackendAndNormalizesBuckets(t *testing.T) {
@@ -170,6 +211,7 @@ func TestQueryResourceMatcherRangeUsesTimeGraphBackendAndNormalizesBuckets(t *te
 	require.Equal(t, "1700000000", fake.rangeStart)
 	require.Equal(t, "1700000030", fake.rangeEnd)
 	require.Equal(t, [][]cmdb.Resource{{"node", "system"}}, fake.rangePaths)
+	require.Equal(t, "node_with_system", fake.rangePlan[0].Steps[1].RelationType)
 }
 
 func TestNormalizeRelationBackendFallsBackToSurrealDB(t *testing.T) {

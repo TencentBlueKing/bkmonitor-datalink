@@ -36,17 +36,30 @@ type TimeGraph struct {
 	nodeBuilder *NodeBuilder                          // 节点构建器，负责节点的创建和去重
 	stringDict  *StringDict                           // 局部字符串字典，避免全局溢出，每个实例独立管理
 	timeGraph   map[int64]graph.Graph[uint64, uint64] // 时间分片图，key为时间戳，value为对应的图结构
+	edgeTypes   map[int64]map[timeGraphEdgeKey]map[string]struct{}
+}
+
+type timeGraphEdgeKey struct {
+	source uint64
+	target uint64
 }
 
 // NewTimeGraph 创建一个新的时序图实例
 // 返回: 新创建的 TimeGraph 指针
 // 注意: 每个实例都有自己独立的字符串字典，避免全局字典溢出问题
 func NewTimeGraph() *TimeGraph {
+	return NewTimeGraphWithConfig(nil)
+}
+
+// NewTimeGraphWithConfig creates a graph whose resource identity rules are
+// isolated from the process-global legacy configuration.
+func NewTimeGraphWithConfig(cfg *Config) *TimeGraph {
 	stringDict := NewStringDict() // 每个TimeGraph实例有自己的字符串字典
 	return &TimeGraph{
-		nodeBuilder: NewNodeBuilder(stringDict), // 传递局部StringDict给NodeBuilder
+		nodeBuilder: NewNodeBuilderWithConfig(stringDict, cfg), // 传递局部StringDict给NodeBuilder
 		stringDict:  stringDict,
 		timeGraph:   make(map[int64]graph.Graph[uint64, uint64]),
+		edgeTypes:   make(map[int64]map[timeGraphEdgeKey]map[string]struct{}),
 	}
 }
 
@@ -67,6 +80,9 @@ func (q *TimeGraph) Clean(ctx context.Context) {
 	// 清空 map 而不是重新创建，保留底层哈希表结构，减少内存分配
 	for k := range q.timeGraph {
 		delete(q.timeGraph, k)
+	}
+	for k := range q.edgeTypes {
+		delete(q.edgeTypes, k)
 	}
 }
 
@@ -139,6 +155,18 @@ func (q *TimeGraph) GetNodesByResourceType(resourceType cmdb.Resource) []cmdb.Ma
 //
 // 优化: 批量创建时间图，减少 map 查找次数和锁内操作
 func (q *TimeGraph) AddTimeRelation(ctx context.Context, source, target cmdb.Resource, info cmdb.Matcher, timestamps ...int64) error {
+	return q.AddTimeRelationWithRelation(ctx, cmdb.Relation{V: []cmdb.Resource{source, target}}, info, timestamps...)
+}
+
+// AddTimeRelationWithRelation adds a time-varying edge and retains the
+// relation identity used to query it. Multiple relation types may connect the
+// same pair of nodes, so the identity is stored separately from the simple
+// graph edge.
+func (q *TimeGraph) AddTimeRelationWithRelation(ctx context.Context, relation cmdb.Relation, info cmdb.Matcher, timestamps ...int64) error {
+	if len(relation.V) != 2 {
+		return nil
+	}
+	source, target := relation.V[0], relation.V[1]
 	// 提前返回，避免不必要的操作
 	if len(info) == 0 || len(timestamps) == 0 {
 		return nil
@@ -164,6 +192,9 @@ func (q *TimeGraph) AddTimeRelation(ctx context.Context, source, target cmdb.Res
 		if q.timeGraph[timestamp] == nil {
 			q.timeGraph[timestamp] = graph.New(newGraphFunc, graph.Directed())
 		}
+		if q.edgeTypes[timestamp] == nil {
+			q.edgeTypes[timestamp] = make(map[timeGraphEdgeKey]map[string]struct{})
+		}
 	}
 
 	// 批量添加节点和边
@@ -183,6 +214,22 @@ func (q *TimeGraph) AddTimeRelation(ctx context.Context, source, target cmdb.Res
 		// 添加边，忽略已存在的边
 		if err = g.AddEdge(sourceNode, targetNode); err != nil && !errors.Is(err, graph.ErrEdgeAlreadyExists) {
 			return err
+		}
+		keys := make([]string, 0, 2)
+		if relation.RelationType != "" {
+			keys = append(keys, relation.RelationType)
+		}
+		if relation.MetricName != "" && relation.MetricName != relation.RelationType {
+			keys = append(keys, relation.MetricName)
+		}
+		if len(keys) > 0 {
+			edgeKey := timeGraphEdgeKey{source: sourceNode, target: targetNode}
+			if q.edgeTypes[timestamp][edgeKey] == nil {
+				q.edgeTypes[timestamp][edgeKey] = make(map[string]struct{}, len(keys))
+			}
+			for _, key := range keys {
+				q.edgeTypes[timestamp][edgeKey][key] = struct{}{}
+			}
 		}
 	}
 
@@ -211,11 +258,14 @@ func (q *TimeGraph) MakeQueryTs(ctx context.Context, spaceUID string, info map[s
 		return nil, nil
 	}
 	source, target := relation.V[0], relation.V[1]
-	resources := []string{string(source), string(target)}
-	sort.Strings(resources)
-	metric := fmt.Sprintf("%s_relation", strings.Join(resources, "_with_"))
+	metric := relation.MetricName
+	if metric == "" {
+		resources := []string{string(source), string(target)}
+		sort.Strings(resources)
+		metric = fmt.Sprintf("%s_relation", strings.Join(resources, "_with_"))
+	}
 
-	indexSet := set.New[string](ResourcesIndex(source, target)...)
+	indexSet := set.New[string](q.nodeBuilder.resourceIndexes(source, target)...)
 	indexes := indexSet.ToArray()
 	sort.Strings(indexes)
 
@@ -393,6 +443,27 @@ func (q *TimeGraph) FindPathResources(
 	sourceMatcher cmdb.Matcher,
 	expectedPaths [][]cmdb.Resource,
 ) ([]PathResourcesResult, error) {
+	relationPaths := make([]cmdb.RelationPath, 0, len(expectedPaths))
+	for _, expectedPath := range expectedPaths {
+		steps := make([]cmdb.RelationPathStep, 0, len(expectedPath))
+		for _, resourceType := range expectedPath {
+			steps = append(steps, cmdb.RelationPathStep{ResourceType: resourceType})
+		}
+		relationPaths = append(relationPaths, cmdb.RelationPath{Steps: steps})
+	}
+	return q.FindRelationPathResources(ctx, sourceType, targetTypes, sourceMatcher, relationPaths)
+}
+
+// FindRelationPathResources finds paths constrained by both resource type and
+// relation identity. This prevents two relation definitions with the same
+// resource endpoints from being merged into one traversal.
+func (q *TimeGraph) FindRelationPathResources(
+	ctx context.Context,
+	sourceType cmdb.Resource,
+	targetTypes []cmdb.Resource,
+	sourceMatcher cmdb.Matcher,
+	expectedPaths []cmdb.RelationPath,
+) ([]PathResourcesResult, error) {
 	if sourceType == "" || len(targetTypes) == 0 {
 		return nil, nil
 	}
@@ -430,15 +501,15 @@ func (q *TimeGraph) FindPathResources(
 
 		for _, sourceNode := range sourceNodes {
 			for _, expectedPath := range expectedPaths {
-				if len(expectedPath) < 2 || expectedPath[0] != sourceType {
+				if len(expectedPath.Steps) < 2 || expectedPath.Steps[0].ResourceType != sourceType {
 					continue
 				}
-				nodePaths := q.findTypedNodePaths(sourceNode, expectedPath, adjacency)
+				nodePaths := q.findTypedRelationNodePaths(sourceNode, expectedPath.Steps, adjacency, q.edgeTypes[timestamp])
 				if len(nodePaths) == 0 {
 					continue
 				}
 
-				targetType := expectedPath[len(expectedPath)-1]
+				targetType := expectedPath.Steps[len(expectedPath.Steps)-1].ResourceType
 				if _, ok := targetTypeSet[targetType]; !ok {
 					continue
 				}
@@ -480,6 +551,19 @@ func (q *TimeGraph) FindPathResources(
 }
 
 func (q *TimeGraph) findTypedNodePaths(sourceNode uint64, expectedPath []cmdb.Resource, adjacency map[uint64]map[uint64]graph.Edge[uint64]) [][]uint64 {
+	steps := make([]cmdb.RelationPathStep, 0, len(expectedPath))
+	for _, resourceType := range expectedPath {
+		steps = append(steps, cmdb.RelationPathStep{ResourceType: resourceType})
+	}
+	return q.findTypedRelationNodePaths(sourceNode, steps, adjacency, nil)
+}
+
+func (q *TimeGraph) findTypedRelationNodePaths(
+	sourceNode uint64,
+	expectedPath []cmdb.RelationPathStep,
+	adjacency map[uint64]map[uint64]graph.Edge[uint64],
+	edgeTypes map[timeGraphEdgeKey]map[string]struct{},
+) [][]uint64 {
 	frontier := map[uint64][]uint64{sourceNode: {sourceNode}}
 	for index := 1; index < len(expectedPath); index++ {
 		next := make(map[uint64][]uint64)
@@ -497,7 +581,10 @@ func (q *TimeGraph) findTypedNodePaths(sourceNode uint64, expectedPath []cmdb.Re
 			sort.Slice(neighbors, func(i, j int) bool { return neighbors[i] < neighbors[j] })
 			for _, neighbor := range neighbors {
 				resourceType, _ := q.nodeBuilder.Info(neighbor)
-				if resourceType != expectedPath[index] || containsNode(frontier[current], neighbor) {
+				if resourceType != expectedPath[index].ResourceType || containsNode(frontier[current], neighbor) {
+					continue
+				}
+				if !relationEdgeMatches(edgeTypes, timeGraphEdgeKey{source: current, target: neighbor}, expectedPath[index]) {
 					continue
 				}
 				if _, exists := next[neighbor]; !exists {
@@ -518,6 +605,27 @@ func (q *TimeGraph) findTypedNodePaths(sourceNode uint64, expectedPath []cmdb.Re
 	}
 	sort.Slice(paths, func(i, j int) bool { return nodePathKey(paths[i]) < nodePathKey(paths[j]) })
 	return paths
+}
+
+func relationEdgeMatches(
+	edgeTypes map[timeGraphEdgeKey]map[string]struct{},
+	edgeKey timeGraphEdgeKey,
+	step cmdb.RelationPathStep,
+) bool {
+	if step.RelationType == "" && step.MetricName == "" {
+		return true
+	}
+	keys := edgeTypes[edgeKey]
+	if len(keys) == 0 {
+		return false
+	}
+	if _, ok := keys[step.RelationType]; ok {
+		return true
+	}
+	if _, ok := keys[step.MetricName]; ok {
+		return true
+	}
+	return false
 }
 
 func containsNode(path []uint64, target uint64) bool {

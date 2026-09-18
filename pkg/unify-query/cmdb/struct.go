@@ -29,7 +29,26 @@ type Resource string
 
 // Relation 两点关联路径
 type Relation struct {
-	V []Resource
+	V            []Resource
+	RelationType string     `json:"relation_type,omitempty"`
+	MetricName   string     `json:"metric_name,omitempty"`
+}
+
+// RelationPathStep describes one resource hop and the relation schema that
+// produced it. The relation metadata is optional for legacy callers that
+// only provide resource-type paths.
+type RelationPathStep struct {
+	ResourceType Resource `json:"resource_type"`
+	RelationType string   `json:"relation_type,omitempty"`
+	Category     string   `json:"category,omitempty"`
+	Direction    string   `json:"direction,omitempty"`
+	MetricName   string   `json:"metric_name,omitempty"`
+}
+
+// RelationPath is a planned source-to-target path with relation metadata for
+// each hop.
+type RelationPath struct {
+	Steps []RelationPathStep `json:"steps"`
 }
 
 // Path 关联路径 (v1)

@@ -16,6 +16,7 @@ type resourcePathStep struct {
 	RelationType string
 	Category     string
 	Direction    string
+	MetricName   string
 }
 
 type resourcePath struct {
@@ -132,6 +133,7 @@ func (pf *PathFinder) findSelfRelationPaths(resourceType ResourceType) []resourc
 				RelationType: string(rel.Schema.RelationType),
 				Category:     string(rel.Schema.Category),
 				Direction:    string(rel.Direction),
+				MetricName:   rel.Schema.MetricName,
 			},
 		}})
 	}
@@ -216,6 +218,7 @@ func (pf *PathFinder) dfs(
 			RelationType: string(rel.Schema.RelationType),
 			Category:     string(rel.Schema.Category),
 			Direction:    string(rel.Direction),
+			MetricName:   rel.Schema.MetricName,
 		}
 		currentPath = append(currentPath, nextStep)
 

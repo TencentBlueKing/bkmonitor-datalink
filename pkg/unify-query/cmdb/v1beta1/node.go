@@ -198,6 +198,14 @@ func (r *resourceType) id(resource cmdb.Resource) uint16 {
 //
 // 返回: 新创建的 NodeBuilder 指针
 func NewNodeBuilder(stringDict *StringDict) *NodeBuilder {
+	return newNodeBuilder(stringDict, nil)
+}
+
+func NewNodeBuilderWithConfig(stringDict *StringDict, cfg *Config) *NodeBuilder {
+	return newNodeBuilder(stringDict, cfg)
+}
+
+func newNodeBuilder(stringDict *StringDict, cfg *Config) *NodeBuilder {
 	if stringDict == nil {
 		// 如果未提供StringDict，使用全局字典（向后兼容）
 		stringDict = globalStringDict
@@ -211,6 +219,7 @@ func NewNodeBuilder(stringDict *StringDict) *NodeBuilder {
 		info:           make(map[uint64]cmdb.Matcher),
 		compressedInfo: make(map[uint64]map[uint64]uint64),
 		stringDict:     stringDict,
+		config:         resourceConfigSnapshot(cfg),
 	}
 }
 
@@ -235,6 +244,40 @@ type NodeBuilder struct {
 
 	// 字符串字典引用，支持使用TimeGraph的局部字典
 	stringDict *StringDict
+
+	// config is a per-model snapshot. A TimeGraph query must not read the
+	// process-global resource configuration because different namespaces can be
+	// queried concurrently.
+	config map[cmdb.Resource]ResourceConf
+}
+
+func resourceConfigSnapshot(cfg *Config) map[cmdb.Resource]ResourceConf {
+	if cfg == nil {
+		return nil
+	}
+	result := make(map[cmdb.Resource]ResourceConf, len(cfg.Resource))
+	for _, resource := range cfg.Resource {
+		result[resource.Name] = resource
+	}
+	return result
+}
+
+func (n *NodeBuilder) resourceIndexes(resourceTypes ...cmdb.Resource) cmdb.Index {
+	if n.config != nil {
+		var result cmdb.Index
+		for _, resourceType := range resourceTypes {
+			result = append(result, n.config[resourceType].Index...)
+		}
+		return result
+	}
+	return ResourcesIndex(resourceTypes...)
+}
+
+func (n *NodeBuilder) resourceInfoFields(resourceType cmdb.Resource) cmdb.Index {
+	if n.config != nil {
+		return n.config[resourceType].Info
+	}
+	return ResourcesInfo(resourceType)
 }
 
 // Clean 清理节点构建器的所有数据
@@ -371,7 +414,7 @@ func (n *NodeBuilder) GetID(resourceType cmdb.Resource, info cmdb.Matcher) (uint
 		return 0, errors.New(ErrEmptyMatcher)
 	}
 
-	indexes := ResourcesIndex(resourceType)
+	indexes := n.resourceIndexes(resourceType)
 	if len(indexes) == 0 {
 		return 0, fmt.Errorf(ErrIndexNotMatchIndex, resourceType)
 	}
@@ -440,7 +483,7 @@ func (n *NodeBuilder) GetID(resourceType cmdb.Resource, info cmdb.Matcher) (uint
 	}
 
 	// 同时存储信息字段
-	infoFields := ResourcesInfo(resourceType)
+	infoFields := n.resourceInfoFields(resourceType)
 	for _, k := range infoFields {
 		if v, ok := info[k]; ok {
 			matcher[k] = v

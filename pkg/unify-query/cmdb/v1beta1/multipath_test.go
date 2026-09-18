@@ -72,3 +72,32 @@ func TestModel_QueryResourceMatcherAll(t *testing.T) {
 		assert.NotNil(t, path.TargetList)
 	}
 }
+
+func TestModel_QueryResourceMatcherAllReturnsErrorWhenAllPathsFail(t *testing.T) {
+	mock.Init()
+	mock.Vm.Clear()
+
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+	metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid, SkipSpace: "skip"})
+
+	_, _, paths, _, err := testModel.QueryResourceMatcherAll(
+		ctx,
+		"",
+		influxdb.SpaceUid,
+		"1693973987",
+		"system",
+		"node",
+		cmdb.Matcher{
+			"bcs_cluster_id": "BCS-K8S-00000",
+			"node":           "node-127-0-0-1",
+		},
+		nil,
+		false,
+		[]cmdb.Resource{"node", "system"},
+	)
+
+	assert.Nil(t, paths)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "all relation paths failed")
+}

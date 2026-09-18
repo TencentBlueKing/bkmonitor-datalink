@@ -472,6 +472,9 @@ func (r *model) queryResourceMatcherAll(ctx context.Context, opt QueryResourceOp
 			break
 		}
 	}
+	if pathErrorCount > 0 && len(results) == 0 {
+		err = fmt.Errorf("all relation paths failed: %v", errorMessage)
+	}
 
 	for _, result := range results {
 		if len(result.ts) > 0 {

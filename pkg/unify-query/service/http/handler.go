@@ -802,28 +802,17 @@ func validateQueryTsDataSource(queryTs *structured.QueryTs) error {
 	return nil
 }
 
-// validateQueryTsRawPagination validates options that are meaningful only for
-// the raw SearchAfter execution path. A non-zero from would either be sent
-// alongside the keyset predicate or be folded into the per-route size.
+// validateQueryTsRawPagination validates options that are incompatible with
+// the raw SearchAfter execution path. Doris may fall back to per-result-table
+// offset pagination when a legacy table has neither __unique_key__ nor the
+// composite cursor fields, so from is intentionally validated by the query
+// factory after the storage schema is known.
 func validateQueryTsRawPagination(queryTs *structured.QueryTs) error {
 	if queryTs == nil || !queryTs.IsSearchAfter {
 		return nil
 	}
 	if queryTs.Scroll != "" {
 		return fmt.Errorf("is_search_after cannot be combined with scroll")
-	}
-	if queryTs.From != 0 {
-		return fmt.Errorf("from cannot be combined with is_search_after")
-	}
-	for _, query := range queryTs.QueryList {
-		if query != nil && query.From != 0 {
-			return fmt.Errorf("query from cannot be combined with is_search_after (reference_name=%s)", query.ReferenceName)
-		}
-	}
-	for tableUUID, option := range queryTs.ResultTableOptions {
-		if option != nil && option.From != nil && *option.From != 0 {
-			return fmt.Errorf("result table option from cannot be combined with is_search_after (table=%s)", tableUUID)
-		}
 	}
 	return nil
 }

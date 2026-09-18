@@ -83,6 +83,7 @@ type QueryFactory struct {
 	orders metadata.Orders
 
 	searchAfterPrepared bool
+	searchAfterMode     searchAfterMode
 	searchAfterColumns  []string
 
 	timeField string
@@ -93,6 +94,24 @@ type QueryFactory struct {
 }
 
 type TableFieldsMap = doris_parser.TableFieldsMap
+
+type searchAfterMode uint8
+
+const (
+	searchAfterModeNone searchAfterMode = iota
+	searchAfterModeKeyset
+	searchAfterModeOffset
+)
+
+// searchAfterFallbackFields are the stable-ish fields emitted by the standard
+// Doris log tables before __unique_key__ became mandatory. The time field is
+// included explicitly so custom sort lists still get the same composite
+// cursor when the table exposes the complete legacy shape.
+var searchAfterFallbackFields = []string{
+	dtEventTimeStamp,
+	"gseIndex",
+	"iterationIndex",
+}
 
 type shardKeyTimeBucketExpr interface {
 	WithShardKeyTimeBucket(enabled bool) sql_expr.SQLExpr
@@ -190,6 +209,13 @@ func (f *QueryFactory) WithKeepColumns(cols []string) *QueryFactory {
 
 func (f *QueryFactory) FieldMap() metadata.FieldsMap {
 	return f.expr.FieldMap()
+}
+
+// SearchAfterUsesOffset reports whether the query had to fall back to
+// per-result-table offset pagination because neither __unique_key__ nor the
+// legacy composite cursor fields were available.
+func (f *QueryFactory) SearchAfterUsesOffset() bool {
+	return f.searchAfterMode == searchAfterModeOffset
 }
 
 func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimension bool) (newData map[string]any) {
@@ -538,7 +564,7 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 		}
 	}
 
-	if f.query.IsSearchAfter && f.query.ResultTableOption != nil && len(f.query.ResultTableOption.SearchAfter) > 0 {
+	if f.searchAfterMode == searchAfterModeKeyset && f.query.ResultTableOption != nil && len(f.query.ResultTableOption.SearchAfter) > 0 {
 		searchAfter, err := f.expr.ParserSearchAfter(f.orders, f.query.ResultTableOption.SearchAfter)
 		if err != nil {
 			return "", err
@@ -552,6 +578,9 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 }
 
 func (f *QueryFactory) SearchAfterValues(data map[string]any) ([]any, error) {
+	if f.searchAfterMode == searchAfterModeOffset {
+		return nil, nil
+	}
 	if len(f.orders) == 0 {
 		return nil, fmt.Errorf("search_after requires order fields")
 	}
@@ -631,8 +660,8 @@ func (f *QueryFactory) prepareSearchAfter() error {
 	// 避免追加兜底排序字段时修改调用方传入的 Query.Orders。
 	f.orders = append(metadata.Orders(nil), f.orders...)
 
-	// search_after 依赖全序排序。业务排序字段相同时，追加 __unique_key__ 作为最后的
-	// 稳定排序字段；只有数据侧保证该字段在当前查询范围内非空且唯一时，才能避免相邻页遗漏或重复。
+	// search_after 依赖全序排序。业务排序字段相同时，优先追加由存储链路
+	// 生成的 __unique_key__ 作为稳定排序字段。
 	hasTieBreaker := false
 	for _, order := range f.orders {
 		if strings.EqualFold(order.Name, sql_expr.SearchAfterTieBreaker) {
@@ -640,15 +669,22 @@ func (f *QueryFactory) prepareSearchAfter() error {
 			break
 		}
 	}
-	if !hasTieBreaker {
-		if !f.FieldMap().Field(sql_expr.SearchAfterTieBreaker).Existed() {
-			return fmt.Errorf("search_after requires %s as a stable tie-breaker", sql_expr.SearchAfterTieBreaker)
-		}
+	if !hasTieBreaker && f.FieldMap().Field(sql_expr.SearchAfterTieBreaker).Existed() {
 		// 沿用最后一个业务排序字段的方向，避免改变用户定义的结果排序。
 		f.orders = append(f.orders, metadata.Order{
 			Name: sql_expr.SearchAfterTieBreaker,
 			Ast:  f.orders[len(f.orders)-1].Ast,
 		})
+	} else if !hasTieBreaker {
+		// 兼容 __unique_key__ 缺失的存量 Doris 日志表。标准旧表通常同时
+		// 具备时间、gseIndex 和 iterationIndex，这三个字段组成的游标比
+		// 单独使用时间字段更稳定。缺少任一字段时再退到 offset 分页，
+		// 让首屏查询和导出预检查保持可用。
+		if !f.appendFallbackOrders() {
+			f.searchAfterMode = searchAfterModeOffset
+			f.searchAfterPrepared = true
+			return nil
+		}
 	}
 
 	fields, err := f.expr.ParserSearchAfterFields(f.orders)
@@ -659,8 +695,42 @@ func (f *QueryFactory) prepareSearchAfter() error {
 	for index := range fields {
 		f.searchAfterColumns[index] = fmt.Sprintf("%s%d", searchAfterColumnTag, index)
 	}
+	f.searchAfterMode = searchAfterModeKeyset
 	f.searchAfterPrepared = true
 	return nil
+}
+
+func (f *QueryFactory) appendFallbackOrders() bool {
+	for _, field := range searchAfterFallbackFields {
+		if !f.FieldMap().Field(field).Existed() {
+			return false
+		}
+	}
+
+	lastAst := f.orders[len(f.orders)-1].Ast
+	for _, field := range searchAfterFallbackFields {
+		if f.hasOrderField(field) {
+			continue
+		}
+		f.orders = append(f.orders, metadata.Order{Name: field, Ast: lastAst})
+	}
+	return true
+}
+
+func (f *QueryFactory) hasOrderField(field string) bool {
+	for _, order := range f.orders {
+		name := order.Name
+		switch name {
+		case sql_expr.FieldTime:
+			name = f.timeField
+		case sql_expr.FieldValue:
+			name = f.query.Field
+		}
+		if strings.EqualFold(name, field) {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *QueryFactory) searchAfterSelectFields() ([]string, error) {
@@ -1399,11 +1469,14 @@ func isUnionQualifiedWildcardToken(s string, idx int) bool {
 
 func (f *QueryFactory) SQL() (sql string, err error) {
 	if f.query.IsSearchAfter {
-		if f.query.From != 0 {
+		if f.query.From != 0 && f.expr.Type() != sql_expr.Doris {
 			return "", fmt.Errorf("from cannot be combined with is_search_after")
 		}
 		if err := f.prepareSearchAfter(); err != nil {
 			return "", err
+		}
+		if f.searchAfterMode == searchAfterModeKeyset && f.query.From != 0 {
+			return "", fmt.Errorf("from cannot be combined with is_search_after")
 		}
 	}
 
@@ -1424,7 +1497,7 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	if err != nil {
 		return sql, err
 	}
-	if f.query.IsSearchAfter {
+	if f.searchAfterMode == searchAfterModeKeyset {
 		searchAfterFields, searchAfterErr := f.searchAfterSelectFields()
 		if searchAfterErr != nil {
 			return sql, searchAfterErr

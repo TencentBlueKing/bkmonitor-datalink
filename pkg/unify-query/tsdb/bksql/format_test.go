@@ -80,8 +80,9 @@ func TestNewSqlFactory(t *testing.T) {
 	end := time.Unix(1741796260, 0)
 
 	for name, c := range map[string]struct {
-		query    *metadata.Query
-		expected string
+		query     *metadata.Query
+		expected  string
+		fieldsMap metadata.FieldsMap
 
 		start time.Time
 		end   time.Time
@@ -358,6 +359,45 @@ func TestNewSqlFactory(t *testing.T) {
 			},
 			expected: "SELECT *, `dtEventTimeStamp` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_2_p8oibru8se2clq50`.doris WHERE `dtEventTimeStamp` >= 1784108029336 AND `dtEventTimeStamp` <= 1784108929336 AND `dtEventTime` >= '2026-07-15 17:33:49' AND `dtEventTime` <= '2026-07-15 17:48:50' AND `thedate` = '20260715' LIMIT 10000",
 		},
+		"Doris search_after 缺少唯一键时使用旧日志组合游标": {
+			query: &metadata.Query{
+				DB:            "legacy_doris_log",
+				Measurement:   sql_expr.Doris,
+				Field:         "dtEventTimeStamp",
+				Source:        []string{"log"},
+				Size:          10,
+				IsSearchAfter: true,
+				Orders: metadata.Orders{
+					{Name: "dtEventTimeStamp", Ast: false},
+				},
+			},
+			fieldsMap: metadata.FieldsMap{
+				"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
+				"gseIndex":         {FieldType: sql_expr.DorisTypeInt},
+				"iterationIndex":   {FieldType: sql_expr.DorisTypeInt},
+				"log":              {FieldType: sql_expr.DorisTypeText},
+			},
+			expected: "SELECT `log`, `dtEventTimeStamp` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_`, `dtEventTimeStamp` AS `__search_after_0`, `gseIndex` AS `__search_after_1`, `iterationIndex` AS `__search_after_2` FROM `legacy_doris_log`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313' ORDER BY `dtEventTimeStamp` DESC, `gseIndex` DESC, `iterationIndex` DESC LIMIT 10",
+		},
+		"Doris search_after 缺少组合字段时降级 offset": {
+			query: &metadata.Query{
+				DB:            "legacy_doris_log",
+				Measurement:   sql_expr.Doris,
+				Field:         "dtEventTimeStamp",
+				Source:        []string{"log"},
+				From:          7,
+				Size:          10,
+				IsSearchAfter: true,
+				Orders: metadata.Orders{
+					{Name: "dtEventTimeStamp", Ast: false},
+				},
+			},
+			fieldsMap: metadata.FieldsMap{
+				"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeBigInt},
+				"log":              {FieldType: sql_expr.DorisTypeText},
+			},
+			expected: "SELECT `log`, `dtEventTimeStamp` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `legacy_doris_log`.doris WHERE `dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313' ORDER BY `dtEventTimeStamp` DESC LIMIT 10 OFFSET 7",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
@@ -369,9 +409,9 @@ func TestNewSqlFactory(t *testing.T) {
 			}
 
 			log.Infof(ctx, "start: %s, end: %s", c.start, c.end)
-			fact := bksql.NewQueryFactory(ctx, c.query).
-				WithRangeTime(c.start, c.end).
-				WithFieldsMap(map[string]metadata.FieldOption{
+			fieldsMap := c.fieldsMap
+			if fieldsMap == nil {
+				fieldsMap = metadata.FieldsMap{
 					"level": {
 						FieldType: sql_expr.DorisTypeString,
 					},
@@ -384,7 +424,13 @@ func TestNewSqlFactory(t *testing.T) {
 					"gseIndex": {
 						FieldType: sql_expr.DorisTypeInt,
 					},
-				})
+				}
+			}
+
+			fact := bksql.NewQueryFactory(ctx, c.query).
+				WithRangeTime(c.start, c.end).
+				WithFieldsMap(fieldsMap).
+				WithKeepColumns(c.query.Source)
 			sql, err := fact.SQL()
 			assert.Nil(t, err)
 			assert.Equal(t, c.expected, sql)

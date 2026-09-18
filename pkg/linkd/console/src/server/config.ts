@@ -13,19 +13,19 @@ import {
 
 const cleanerRuntimeSchema = z
   .object({
-    worker_count: z.number().int().positive(),
-    max_batch_messages: z.number().int().positive(),
-    max_batch_bytes: z.number().int().positive(),
-    batch_wait_milliseconds: z.number().int().positive(),
-    max_concurrent_batches: z.number().int().positive(),
-    max_inflight_messages: z.number().int().positive(),
-    max_inflight_bytes: z.number().int().positive(),
-    max_inflight_per_lane: z.number().int().positive(),
-    resume_inflight_per_lane: z.number().int().positive(),
-    process_timeout_seconds: z.number().int().positive(),
-    retry_max_attempts: z.number().int().positive(),
-    retry_max_elapsed_seconds: z.number().int().positive(),
-    shutdown_drain_timeout_seconds: z.number().int().positive(),
+    worker_count: z.number().int().nonnegative(),
+    max_batch_messages: z.number().int().nonnegative(),
+    max_batch_bytes: z.number().int().nonnegative(),
+    batch_wait_milliseconds: z.number().int().nonnegative(),
+    max_concurrent_batches: z.number().int().nonnegative(),
+    max_inflight_messages: z.number().int().nonnegative(),
+    max_inflight_bytes: z.number().int().nonnegative(),
+    max_inflight_per_lane: z.number().int().nonnegative(),
+    resume_inflight_per_lane: z.number().int().nonnegative(),
+    process_timeout_seconds: z.number().int().nonnegative(),
+    retry_max_attempts: z.number().int().nonnegative(),
+    retry_max_elapsed_seconds: z.number().int().nonnegative(),
+    shutdown_drain_timeout_seconds: z.number().int().nonnegative(),
   })
   .partial()
   .default({});
@@ -590,6 +590,8 @@ export interface ConsoleConfig {
     archiveWorkerCount: number;
   };
   telemetry?: { listenAddress?: string };
+  // 来源 runtime 的零值继承同一份顶层 Cleaner 配置。
+  cleaner?: Partial<CleanerRuntime>;
   eventSources?: EventSourceConfig[];
   entities: {
     alerts: "mysql" | "elasticsearch";
@@ -680,6 +682,7 @@ export async function loadConfig(
     telemetry: {
       listenAddress: decoded.telemetry?.metrics.prometheus.listen_address,
     },
+    cleaner: cleanerDefaults,
     eventSources: normalizeEventSources(
       decoded.event_sources,
       configDir,
@@ -869,7 +872,7 @@ export function normalizeEventSources(
         name: h.name,
         connection: normalizeKafka(h.config, configDir),
       })),
-    runtime: withCleanerDefaults({ ...defaults, ...source.cleaner.runtime }),
+    runtime: withCleanerDefaults(defaults, source.cleaner.runtime ?? {}),
     kafka: {
       ...normalizeKafka(source.storage.kafka, configDir),
       consumerGroup: source.storage.kafka.consumer_group,
@@ -905,7 +908,7 @@ function normalizeKafka(
 }
 
 function withCleanerDefaults(
-  value: z.infer<typeof cleanerRuntimeSchema>,
+  ...overrides: Partial<CleanerRuntime>[]
 ): CleanerRuntime {
   const defaults: CleanerRuntime = {
     worker_count: 8,
@@ -922,7 +925,14 @@ function withCleanerDefaults(
     retry_max_elapsed_seconds: 120,
     shutdown_drain_timeout_seconds: 30,
   };
-  return { ...defaults, ...value };
+  // 与 Go MergeCleanerRuntime 一致：0/省略表示继承，只有非零值覆盖。
+  for (const override of overrides) {
+    for (const key of Object.keys(defaults) as (keyof CleanerRuntime)[]) {
+      const value = override[key];
+      if (value !== undefined && value !== 0) defaults[key] = value;
+    }
+  }
+  return defaults;
 }
 
 function splitAddress(address: string): { host: string; port: number } {

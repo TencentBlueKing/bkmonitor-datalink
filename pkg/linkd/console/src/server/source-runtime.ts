@@ -40,6 +40,7 @@ export async function loadRuntimeSources(
             .filter((r) => !r.deleted)
             .map((r) => ({ ...r.spec, event_source_id: r.id })),
           path.dirname(config.configPath ?? "linkd.yaml"),
+          config.cleaner,
         );
       } catch {
         throw new Error("source configuration invalid");

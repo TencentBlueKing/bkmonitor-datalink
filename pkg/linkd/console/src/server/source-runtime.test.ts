@@ -137,3 +137,72 @@ it("supports an empty source list", async () => {
   );
   expect(await loadRuntimeSources(config)).toEqual([]);
 });
+
+// 控制面的 Go 结构体会把未配置的来源覆盖编码为 0；它们必须继承全局预算。
+it("inherits zero-valued runtime fields from the Console cleaner configuration", async () => {
+  const record = structuredClone(records[0]);
+  const runtime = {
+    worker_count: 0,
+    max_batch_messages: 64,
+    max_batch_bytes: 0,
+    batch_wait_milliseconds: 0,
+    max_concurrent_batches: 0,
+    max_inflight_messages: 0,
+    max_inflight_bytes: 0,
+    max_inflight_per_lane: 0,
+    resume_inflight_per_lane: 0,
+    process_timeout_seconds: 0,
+    retry_max_attempts: 0,
+    retry_max_elapsed_seconds: 0,
+    shutdown_drain_timeout_seconds: 0,
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify([
+            {
+              ...record,
+              spec: { ...record.spec, cleaner: { type: "standard", runtime } },
+            },
+          ]),
+        ),
+    ),
+  );
+  const sources = await loadRuntimeSources({
+    ...config,
+    cleaner: { worker_count: 12, max_batch_messages: 256 },
+  } as ConsoleConfig);
+  expect(sources[0].runtime).toMatchObject({
+    worker_count: 12,
+    max_batch_messages: 64,
+    max_batch_bytes: 4 << 20,
+    batch_wait_milliseconds: 20,
+  });
+});
+it.each([-1, 1.5, "8"])(
+  "rejects an invalid runtime override %s",
+  async (value) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify([
+              {
+                ...records[0],
+                spec: {
+                  ...records[0].spec,
+                  cleaner: { runtime: { worker_count: value } },
+                },
+              },
+            ]),
+          ),
+      ),
+    );
+    await expect(loadRuntimeSources(config)).rejects.toThrow(
+      "source configuration invalid",
+    );
+  },
+);

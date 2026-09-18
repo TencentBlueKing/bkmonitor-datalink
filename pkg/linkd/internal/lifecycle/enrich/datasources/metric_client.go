@@ -72,6 +72,9 @@ func (c *MetricClient) FindMetricLibrary(
 	if query.FieldTag != "" {
 		base = base.Where("tag = ?", query.FieldTag)
 	}
+	// 每条分支从独立会话开始，避免模型条件和 ErrRecordNotFound
+	// 污染通用指标回退；公共租户、表及字段条件仍由会话继承。
+	base = base.Session(&gorm.Session{})
 	if query.ObjectModelCode != "" {
 		value, found, err := takeMetricMetadata(base.Where("object_model_code = ?", query.ObjectModelCode), "query model metric library")
 		if err != nil || found {

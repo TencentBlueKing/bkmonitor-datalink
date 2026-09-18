@@ -103,10 +103,8 @@ const (
 	searchAfterModeOffset
 )
 
-// searchAfterFallbackFields are the stable-ish fields emitted by the standard
-// Doris log tables before __unique_key__ became mandatory. The time field is
-// included explicitly so custom sort lists still get the same composite
-// cursor when the table exposes the complete legacy shape.
+// searchAfterFallbackFields 是标准 Doris 日志表在强制要求 __unique_key__ 之前通常提供的
+// 兼容游标字段。显式包含时间字段，是为了让自定义排序场景在表具备完整旧结构时仍使用同一组组合游标。
 var searchAfterFallbackFields = []string{
 	dtEventTimeStamp,
 	"gseIndex",

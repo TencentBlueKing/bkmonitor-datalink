@@ -10,6 +10,7 @@
 package v1beta3
 
 const (
+	RelationBackendConfigPath                        = "cmdb.v1beta3.relation.backend"
 	MaxHopsConfigPath                                = "cmdb.v1beta3.max_hops"
 	MaxAllowedHopsConfigPath                         = "cmdb.v1beta3.max_allowed_hops"
 	DefaultLimitConfigPath                           = "cmdb.v1beta3.default_limit"
@@ -26,10 +27,15 @@ const (
 )
 
 var (
-	DefaultMaxHops = 2
-	MaxAllowedHops = 5
-	DefaultLimit   = 100
-	MaxRangePoints = 11000
+	// RelationBackend controls the execution backend for the v1beta3 relation API.
+	// surrealdb preserves the current behavior; timegraph uses TSDB-backed
+	// query-time graph materialization; auto prefers TimeGraph and falls back to
+	// SurrealDB when the TimeGraph backend cannot serve a request.
+	RelationBackend = RelationBackendSurrealDB
+	DefaultMaxHops  = 2
+	MaxAllowedHops  = 5
+	DefaultLimit    = 100
+	MaxRangePoints  = 11000
 	// MaxEdgesPerHop 限制单个节点在每一跳可展开的关系边数量。
 	MaxEdgesPerHop = 1000
 	// MaxTargets 限制单个时间点可返回的目标数量。

@@ -52,6 +52,7 @@ func GetModel(ctx context.Context) (cmdb.CMDB, error) {
 		// 为默认 Model 注入 binding 解析器
 		model.SetResolver(GetBindingResolver())
 		model.SetVMModelResolver(v1beta1.GetModel)
+		model.SetTimeGraphResolver(v1beta1.GetModel)
 		defaultModel = model
 	}
 	return defaultModel, nil
@@ -89,11 +90,12 @@ func buildSourceInferencePriority() map[ResourceType]int {
 
 // Model v2 CMDB 实现，基于 SurrealDB 图查询
 type Model struct {
-	executor         GraphQueryExecutor
-	resolver         *BindingResolver
-	schemaProvider   SchemaProvider
-	schemaProviderMu sync.RWMutex
-	vmModelResolver  func(context.Context, string) (cmdb.CMDB, error)
+	executor          GraphQueryExecutor
+	resolver          *BindingResolver
+	schemaProvider    SchemaProvider
+	schemaProviderMu  sync.RWMutex
+	vmModelResolver   func(context.Context, string) (cmdb.CMDB, error)
+	timeGraphResolver func(context.Context, string) (cmdb.CMDB, error)
 }
 
 // NewModel 创建 Model 实例。resolver 可由调用方后续通过 SetResolver 注入。
@@ -113,6 +115,11 @@ func (m *Model) SetResolver(resolver *BindingResolver) {
 
 func (m *Model) SetVMModelResolver(resolver func(context.Context, string) (cmdb.CMDB, error)) {
 	m.vmModelResolver = resolver
+}
+
+// SetTimeGraphResolver 注入 TSDB-backed TimeGraph model。
+func (m *Model) SetTimeGraphResolver(resolver func(context.Context, string) (cmdb.CMDB, error)) {
+	m.timeGraphResolver = resolver
 }
 
 // SetSchemaProvider 注入校验、路径发现和 SQL 生成共用的 Schema；传入 nil 时保持现有配置不变。
@@ -145,6 +152,19 @@ func (m *Model) QueryResourceMatcher(
 ) (resSource cmdb.Resource, resIndexMatcher cmdb.Matcher, resPaths []string, resTarget cmdb.Resource, resMatchers cmdb.Matchers, err error) {
 	ctx, span := trace.NewSpan(ctx, "cmdb-query-resource-matcher")
 	defer endV1Beta3TraceSpan(span, &err)
+
+	if RelationBackend == RelationBackendTimeGraph || RelationBackend == RelationBackendAuto {
+		result, timeGraphErr := m.queryResourceMatcherWithTimeGraph(
+			ctx, lookBackDelta, spaceUid, ts, target, source, indexMatcher, expandMatcher, expandShow, pathResource,
+		)
+		if timeGraphErr == nil {
+			return result.source, result.sourceMatcher, result.paths, result.target, result.matchers, nil
+		}
+		if RelationBackend == RelationBackendTimeGraph {
+			return "", nil, nil, "", nil, timeGraphErr
+		}
+		span.Set("timegraph-fallback-error", timeGraphErr.Error())
+	}
 
 	span.Set("space-uid", spaceUid)
 	span.Set("timestamp", ts)
@@ -225,6 +245,19 @@ func (m *Model) QueryResourceMatcherRange(
 ) (resSource cmdb.Resource, resIndexMatcher cmdb.Matcher, resPaths []string, resTarget cmdb.Resource, result []cmdb.MatchersWithTimestamp, err error) {
 	ctx, span := trace.NewSpan(ctx, "cmdb-query-resource-matcher-range")
 	defer endV1Beta3TraceSpan(span, &err)
+
+	if RelationBackend == RelationBackendTimeGraph || RelationBackend == RelationBackendAuto {
+		timeGraphResult, timeGraphErr := m.queryResourceMatcherRangeWithTimeGraph(
+			ctx, lookBackDelta, spaceUid, step, startTs, endTs, target, source, indexMatcher, expandMatcher, expandShow, pathResource,
+		)
+		if timeGraphErr == nil {
+			return timeGraphResult.source, timeGraphResult.sourceMatcher, timeGraphResult.paths, timeGraphResult.target, timeGraphResult.matchers, nil
+		}
+		if RelationBackend == RelationBackendTimeGraph {
+			return "", nil, nil, "", nil, timeGraphErr
+		}
+		span.Set("timegraph-fallback-error", timeGraphErr.Error())
+	}
 
 	span.Set("space-uid", spaceUid)
 	span.Set("start-ts", startTs)

@@ -175,18 +175,16 @@ func (r *model) queryTimeGraph(ctx context.Context, lookBackDelta, spaceUID stri
 	defer tg.Clean(ctx)
 
 	results := make([]cmdb.PathResourcesResult, 0)
-	for _, targetType := range targetTypes {
-		pathResults, queryErr := tg.FindShortestPath(ctx, sourceType, targetType, matcher)
-		if queryErr != nil {
-			return nil, errors.WithMessagef(queryErr, "find path %s => %s", sourceType, targetType)
-		}
-		for _, result := range pathResults {
-			results = append(results, cmdb.PathResourcesResult{
-				Timestamp:  result.Timestamp,
-				TargetType: result.TargetType,
-				Path:       result.Path,
-			})
-		}
+	pathResults, queryErr := tg.FindPathResources(ctx, sourceType, targetTypes, matcher, paths)
+	if queryErr != nil {
+		return nil, errors.WithMessagef(queryErr, "find path from %s", sourceType)
+	}
+	for _, result := range pathResults {
+		results = append(results, cmdb.PathResourcesResult{
+			Timestamp:  result.Timestamp,
+			TargetType: result.TargetType,
+			Path:       result.Path,
+		})
 	}
 	sort.SliceStable(results, func(i, j int) bool {
 		if results[i].Timestamp == results[j].Timestamp {

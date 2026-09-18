@@ -383,6 +383,171 @@ func (q *TimeGraph) FindShortestPath(ctx context.Context, sourceType cmdb.Resour
 	return results, nil
 }
 
+// FindPathResources finds paths constrained by the resource-type paths used to
+// build the graph. Unlike FindShortestPath, it does not allow BFS to combine
+// edges from different candidate paths into a path that was never planned.
+func (q *TimeGraph) FindPathResources(
+	ctx context.Context,
+	sourceType cmdb.Resource,
+	targetTypes []cmdb.Resource,
+	sourceMatcher cmdb.Matcher,
+	expectedPaths [][]cmdb.Resource,
+) ([]PathResourcesResult, error) {
+	if sourceType == "" || len(targetTypes) == 0 {
+		return nil, nil
+	}
+
+	targetTypeSet := make(map[cmdb.Resource]struct{}, len(targetTypes))
+	for _, targetType := range targetTypes {
+		targetTypeSet[targetType] = struct{}{}
+	}
+
+	q.lock.RLock()
+	defer q.lock.RUnlock()
+
+	queryTimestamps := make([]int64, 0, len(q.timeGraph))
+	for timestamp := range q.timeGraph {
+		queryTimestamps = append(queryTimestamps, timestamp)
+	}
+	sort.Slice(queryTimestamps, func(i, j int) bool { return queryTimestamps[i] < queryTimestamps[j] })
+
+	sourceNodes := q.findNodesByPartialMatcher(sourceType, sourceMatcher)
+	if len(sourceNodes) == 0 {
+		return nil, nil
+	}
+
+	results := make([]PathResourcesResult, 0)
+	seen := make(map[string]struct{})
+	for _, timestamp := range queryTimestamps {
+		g := q.timeGraph[timestamp]
+		if g == nil {
+			continue
+		}
+		adjacency, err := g.AdjacencyMap()
+		if err != nil {
+			continue
+		}
+
+		for _, sourceNode := range sourceNodes {
+			for _, expectedPath := range expectedPaths {
+				if len(expectedPath) < 2 || expectedPath[0] != sourceType {
+					continue
+				}
+				nodePaths := q.findTypedNodePaths(sourceNode, expectedPath, adjacency)
+				if len(nodePaths) == 0 {
+					continue
+				}
+
+				targetType := expectedPath[len(expectedPath)-1]
+				if _, ok := targetTypeSet[targetType]; !ok {
+					continue
+				}
+				for _, path := range nodePaths {
+					key := fmt.Sprintf("%d:%s", timestamp, nodePathKey(path))
+					if _, ok := seen[key]; ok {
+						continue
+					}
+					seen[key] = struct{}{}
+
+					pathNodes := make([]cmdb.PathNode, 0, len(path))
+					for _, nodeID := range path {
+						resourceType, nodeInfo := q.nodeBuilder.Info(nodeID)
+						pathNodes = append(pathNodes, cmdb.PathNode{
+							ResourceType: resourceType,
+							Dimensions:   nodeInfo,
+						})
+					}
+					results = append(results, PathResourcesResult{
+						Timestamp:  timestamp,
+						TargetType: targetType,
+						Path:       pathNodes,
+					})
+				}
+			}
+		}
+	}
+
+	sort.SliceStable(results, func(i, j int) bool {
+		if results[i].Timestamp != results[j].Timestamp {
+			return results[i].Timestamp < results[j].Timestamp
+		}
+		if results[i].TargetType != results[j].TargetType {
+			return results[i].TargetType < results[j].TargetType
+		}
+		return nodePathKeyFromPathNodes(results[i].Path) < nodePathKeyFromPathNodes(results[j].Path)
+	})
+	return results, nil
+}
+
+func (q *TimeGraph) findTypedNodePaths(sourceNode uint64, expectedPath []cmdb.Resource, adjacency map[uint64]map[uint64]graph.Edge[uint64]) [][]uint64 {
+	frontier := map[uint64][]uint64{sourceNode: {sourceNode}}
+	for index := 1; index < len(expectedPath); index++ {
+		next := make(map[uint64][]uint64)
+		currentNodes := make([]uint64, 0, len(frontier))
+		for nodeID := range frontier {
+			currentNodes = append(currentNodes, nodeID)
+		}
+		sort.Slice(currentNodes, func(i, j int) bool { return currentNodes[i] < currentNodes[j] })
+
+		for _, current := range currentNodes {
+			neighbors := make([]uint64, 0, len(adjacency[current]))
+			for neighbor := range adjacency[current] {
+				neighbors = append(neighbors, neighbor)
+			}
+			sort.Slice(neighbors, func(i, j int) bool { return neighbors[i] < neighbors[j] })
+			for _, neighbor := range neighbors {
+				resourceType, _ := q.nodeBuilder.Info(neighbor)
+				if resourceType != expectedPath[index] || containsNode(frontier[current], neighbor) {
+					continue
+				}
+				if _, exists := next[neighbor]; !exists {
+					path := append([]uint64(nil), frontier[current]...)
+					next[neighbor] = append(path, neighbor)
+				}
+			}
+		}
+		frontier = next
+		if len(frontier) == 0 {
+			return nil
+		}
+	}
+
+	paths := make([][]uint64, 0, len(frontier))
+	for _, path := range frontier {
+		paths = append(paths, path)
+	}
+	sort.Slice(paths, func(i, j int) bool { return nodePathKey(paths[i]) < nodePathKey(paths[j]) })
+	return paths
+}
+
+func containsNode(path []uint64, target uint64) bool {
+	for _, nodeID := range path {
+		if nodeID == target {
+			return true
+		}
+	}
+	return false
+}
+
+func nodePathKey(path []uint64) string {
+	var builder strings.Builder
+	for _, nodeID := range path {
+		builder.WriteString(fmt.Sprintf("%d/", nodeID))
+	}
+	return builder.String()
+}
+
+func nodePathKeyFromPathNodes(path []cmdb.PathNode) string {
+	var builder strings.Builder
+	for _, node := range path {
+		builder.WriteString(string(node.ResourceType))
+		builder.WriteByte('/')
+		builder.WriteString(fmt.Sprint(node.Dimensions))
+		builder.WriteByte('|')
+	}
+	return builder.String()
+}
+
 // validatePathResourceTypes 验证路径中的节点资源类型是否符合指定的路径顺序
 func (q *TimeGraph) validatePathResourceTypes(nodePath []uint64, expectedPath []cmdb.Resource) bool {
 	if len(nodePath) != len(expectedPath) {

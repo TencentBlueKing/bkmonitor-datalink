@@ -398,6 +398,12 @@ func (n *NodeBuilder) GetID(resourceType cmdb.Resource, info cmdb.Matcher) (uint
 		buf = append(buf, info[k]...)
 		buf = append(buf, '|')
 	}
+	// The primary-key tuple alone is not sufficient to identify a node: two
+	// resource types may use the same field names and values. Include the
+	// resource type in the hash key before consulting the hash cache.
+	buf = append(buf, 0)
+	buf = append(buf, resourceType...)
+	buf = append(buf, 0)
 
 	// 使用更高效的哈希计算
 	hashID := xxhash.Sum64(buf)

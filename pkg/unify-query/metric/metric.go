@@ -40,6 +40,19 @@ const (
 	ResultMiss = "miss"
 )
 
+// CMDB relation metric label values. Keep these values bounded because they are
+// used directly as Prometheus labels.
+const (
+	CMDBRelationQueryModeInstant = "instant"
+	CMDBRelationQueryModeRange   = "range"
+
+	CMDBRelationResultStarted = "started"
+	CMDBRelationResultSuccess = "success"
+	CMDBRelationResultEmpty   = "empty"
+	CMDBRelationResultPartial = "partial"
+	CMDBRelationResultFailed  = "failed"
+)
+
 // RedisRouterLoadResult 为 unify_query_redis_router_load_total 的 result 标签取值（固定 success|failure，基数可控）。
 const (
 	RedisRouterLoadResultSuccess = "success"
@@ -196,6 +209,45 @@ var (
 		[]string{"route", "query_mode"},
 	)
 
+	cmdbRelationPathResultTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: "unify_query",
+			Name:      "cmdb_relation_path_result_total",
+			Help:      "unify-query CMDB relation path query results",
+		},
+		[]string{"route", "query_mode", "result"},
+	)
+
+	cmdbRelationQueryListSize = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "unify_query",
+			Name:      "cmdb_relation_query_list_size",
+			Help:      "number of relation queries in one HTTP request",
+			Buckets:   []float64{0, 1, 2, 4, 8, 16, 32, 64},
+		},
+		[]string{"route", "query_mode"},
+	)
+
+	cmdbRelationCandidatePathCount = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "unify_query",
+			Name:      "cmdb_relation_candidate_path_count",
+			Help:      "number of candidate relation paths for one query",
+			Buckets:   []float64{0, 1, 2, 4, 8, 16, 32, 64},
+		},
+		[]string{"route", "query_mode", "execution_mode"},
+	)
+
+	cmdbRelationTargetCount = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "unify_query",
+			Name:      "cmdb_relation_target_count",
+			Help:      "number of relation targets returned by one query",
+			Buckets:   []float64{0, 1, 2, 5, 10, 20, 50, 100, 500, 1000, 10000},
+		},
+		[]string{"route", "query_mode", "execution_mode"},
+	)
+
 	routeSeriesWrapTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "unify_query",
@@ -296,6 +348,26 @@ func CMDBRelationRouteInc(ctx context.Context, route, queryMode, result string) 
 func CMDBRelationRouteSecond(ctx context.Context, duration time.Duration, route, queryMode string) {
 	metric, _ := cmdbRelationRouteSeconds.GetMetricWithLabelValues(route, queryMode)
 	observe(ctx, metric, duration.Seconds())
+}
+
+func CMDBRelationPathResultInc(ctx context.Context, route, queryMode, result string) {
+	metric, _ := cmdbRelationPathResultTotal.GetMetricWithLabelValues(route, queryMode, result)
+	counterInc(ctx, metric)
+}
+
+func CMDBRelationQueryListSizeObserve(ctx context.Context, route, queryMode string, size int) {
+	metric, _ := cmdbRelationQueryListSize.GetMetricWithLabelValues(route, queryMode)
+	observe(ctx, metric, float64(size))
+}
+
+func CMDBRelationCandidatePathCountObserve(ctx context.Context, route, queryMode, executionMode string, count int) {
+	metric, _ := cmdbRelationCandidatePathCount.GetMetricWithLabelValues(route, queryMode, executionMode)
+	observe(ctx, metric, float64(count))
+}
+
+func CMDBRelationTargetCountObserve(ctx context.Context, route, queryMode, executionMode string, count int) {
+	metric, _ := cmdbRelationTargetCount.GetMetricWithLabelValues(route, queryMode, executionMode)
+	observe(ctx, metric, float64(count))
 }
 
 func RouteSeriesWrapInc(ctx context.Context, wrapKind, mergeFunc string) {

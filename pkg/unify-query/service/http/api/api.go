@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta3"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -71,27 +72,60 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 	data := new(cmdb.RelationMultiResourceResponse)
 	data.TraceID = span.TraceID()
 	data.Data = make([]cmdb.RelationMultiResourceResponseData, len(request.QueryList))
+	allPathQueryCount := 0
+	for _, qry := range request.QueryList {
+		if qry.ReturnAllPaths {
+			allPathQueryCount++
+		}
+	}
+	metric.CMDBRelationQueryListSizeObserve(ctx, "vm_legacy", metric.CMDBRelationQueryModeInstant, len(request.QueryList))
+	span.Set("query-mode", metric.CMDBRelationQueryModeInstant)
+	span.Set("query-count", len(request.QueryList))
+	span.Set("all-path-query-count", allPathQueryCount)
 
 	var (
-		sendWg sync.WaitGroup
-		lock   sync.Mutex
+		sendWg           sync.WaitGroup
+		lock             sync.Mutex
+		failedQueryCount int
 	)
-	p, _ := ants.NewPool(RelationMaxRouting)
+	p, err := ants.NewPool(RelationMaxRouting)
+	if err != nil {
+		resp.failed(ctx, fmt.Errorf("create relation worker pool: %w", err))
+		return
+	}
 	defer p.Release()
 
 	for idx, qry := range request.QueryList {
 		idx := idx
 		qry := qry
 		sendWg.Add(1)
-		_ = p.Submit(func() {
+		if submitErr := p.Submit(func() {
 			defer sendWg.Done()
+			queryCtx, querySpan := trace.NewSpan(ctx, "handler-api-relation-multi-resource-item")
+			var queryErr error
+			defer querySpan.End(&queryErr)
+			querySpan.Set("query-index", idx)
+			querySpan.Set("return-all-paths", qry.ReturnAllPaths)
+			querySpan.Set("requested-source-type", string(qry.SourceType))
+			querySpan.Set("requested-target-type", string(qry.TargetType))
 			d := cmdb.RelationMultiResourceResponseData{
 				Code: http.StatusOK,
 			}
-			var queryErr error
 
 			timestamp := cast.ToString(qry.Timestamp)
-			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, queryErr = model.QueryResourceMatcher(ctx, qry.LookBackDelta, user.SpaceUID, timestamp, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
+			if qry.ReturnAllPaths {
+				multiPathModel, ok := model.(cmdb.MultiPathCMDB)
+				if !ok {
+					queryErr = fmt.Errorf("relation model does not support multi-path query")
+				} else {
+					var paths []cmdb.RelationMultiResourcePathData
+					d.SourceType, d.SourceInfo, paths, d.TargetType, queryErr = multiPathModel.QueryResourceMatcherAll(queryCtx, qry.LookBackDelta, user.SpaceUID, timestamp, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
+					d.Paths = paths
+					d.Path, d.TargetList = selectLegacyInstantPath(paths)
+				}
+			} else {
+				d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, queryErr = model.QueryResourceMatcher(queryCtx, qry.LookBackDelta, user.SpaceUID, timestamp, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
+			}
 			if queryErr != nil {
 				d.Message = queryErr.Error()
 				d.Code = http.StatusBadRequest
@@ -101,13 +135,36 @@ func HandlerAPIRelationMultiResource(c *gin.Context) {
 			if d.TargetList == nil {
 				d.TargetList = make(cmdb.Matchers, 0)
 			}
+			pathCount := len(d.Paths)
+			if pathCount == 0 && len(d.Path) > 0 {
+				pathCount = 1
+			}
+			querySpan.Set("executed-path-count", pathCount)
+			querySpan.Set("target-count", len(d.TargetList))
+			querySpan.Set("response-code", d.Code)
 
 			lock.Lock()
 			data.Data[idx] = d
+			if queryErr != nil {
+				failedQueryCount++
+			}
 			lock.Unlock()
-		})
+		}); submitErr != nil {
+			sendWg.Done()
+			lock.Lock()
+			data.Data[idx] = cmdb.RelationMultiResourceResponseData{
+				Code:       http.StatusBadRequest,
+				Message:    submitErr.Error(),
+				TargetList: make(cmdb.Matchers, 0),
+			}
+			failedQueryCount++
+			lock.Unlock()
+		}
 	}
 	sendWg.Wait()
+	span.Set("failed-query-count", failedQueryCount)
+	span.Set("successful-query-count", len(request.QueryList)-failedQueryCount)
+	span.Set("partial-failure", failedQueryCount > 0)
 
 	resp.success(ctx, data)
 }
@@ -157,28 +214,61 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 	data := new(cmdb.RelationMultiResourceRangeResponse)
 	data.TraceID = span.TraceID()
 	data.Data = make([]cmdb.RelationMultiResourceRangeResponseData, len(request.QueryList))
+	allPathQueryCount := 0
+	for _, qry := range request.QueryList {
+		if qry.ReturnAllPaths {
+			allPathQueryCount++
+		}
+	}
+	metric.CMDBRelationQueryListSizeObserve(ctx, "vm_legacy", metric.CMDBRelationQueryModeRange, len(request.QueryList))
+	span.Set("query-mode", metric.CMDBRelationQueryModeRange)
+	span.Set("query-count", len(request.QueryList))
+	span.Set("all-path-query-count", allPathQueryCount)
 
 	var (
-		sendWg sync.WaitGroup
-		lock   sync.Mutex
+		sendWg           sync.WaitGroup
+		lock             sync.Mutex
+		failedQueryCount int
 	)
-	p, _ := ants.NewPool(RelationMaxRouting)
+	p, err := ants.NewPool(RelationMaxRouting)
+	if err != nil {
+		resp.failed(ctx, fmt.Errorf("create relation range worker pool: %w", err))
+		return
+	}
 	defer p.Release()
 
 	for idx, qry := range request.QueryList {
 		idx := idx
 		qry := qry
 		sendWg.Add(1)
-		_ = p.Submit(func() {
+		if submitErr := p.Submit(func() {
 			defer sendWg.Done()
+			queryCtx, querySpan := trace.NewSpan(ctx, "handler-api-relation-multi-resource-range-item")
+			var queryErr error
+			defer querySpan.End(&queryErr)
+			querySpan.Set("query-index", idx)
+			querySpan.Set("return-all-paths", qry.ReturnAllPaths)
+			querySpan.Set("requested-source-type", string(qry.SourceType))
+			querySpan.Set("requested-target-type", string(qry.TargetType))
 			d := cmdb.RelationMultiResourceRangeResponseData{
 				Code: http.StatusOK,
 			}
-			var queryErr error
 
 			startTs := cast.ToString(qry.StartTs)
 			endTs := cast.ToString(qry.EndTs)
-			d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, queryErr = model.QueryResourceMatcherRange(ctx, qry.LookBackDelta, user.SpaceUID, qry.Step, startTs, endTs, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
+			if qry.ReturnAllPaths {
+				multiPathModel, ok := model.(cmdb.MultiPathCMDB)
+				if !ok {
+					queryErr = fmt.Errorf("relation model does not support multi-path range query")
+				} else {
+					var paths []cmdb.RelationMultiResourceRangePathData
+					d.SourceType, d.SourceInfo, paths, d.TargetType, queryErr = multiPathModel.QueryResourceMatcherRangeAll(queryCtx, qry.LookBackDelta, user.SpaceUID, qry.Step, startTs, endTs, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
+					d.Paths = paths
+					d.Path, d.TargetList = selectLegacyRangePath(paths)
+				}
+			} else {
+				d.SourceType, d.SourceInfo, d.Path, d.TargetType, d.TargetList, queryErr = model.QueryResourceMatcherRange(queryCtx, qry.LookBackDelta, user.SpaceUID, qry.Step, startTs, endTs, qry.TargetType, qry.SourceType, qry.SourceInfo, qry.SourceExpandInfo, qry.TargetInfoShow, qry.PathResource)
+			}
 			if queryErr != nil {
 				d.Message = metadata.NewMessage(
 					metadata.MsgQueryRelation,
@@ -196,13 +286,40 @@ func HandlerAPIRelationMultiResourceRange(c *gin.Context) {
 			if d.TargetList == nil {
 				d.TargetList = make([]cmdb.MatchersWithTimestamp, 0)
 			}
+			pathCount := len(d.Paths)
+			if pathCount == 0 && len(d.Path) > 0 {
+				pathCount = 1
+			}
+			targetCount := 0
+			for _, bucket := range d.TargetList {
+				targetCount += len(bucket.Matchers)
+			}
+			querySpan.Set("executed-path-count", pathCount)
+			querySpan.Set("target-count", targetCount)
+			querySpan.Set("response-code", d.Code)
 
 			lock.Lock()
 			data.Data[idx] = d
+			if queryErr != nil {
+				failedQueryCount++
+			}
 			lock.Unlock()
-		})
+		}); submitErr != nil {
+			sendWg.Done()
+			lock.Lock()
+			data.Data[idx] = cmdb.RelationMultiResourceRangeResponseData{
+				Code:       http.StatusBadRequest,
+				Message:    submitErr.Error(),
+				TargetList: make([]cmdb.MatchersWithTimestamp, 0),
+			}
+			failedQueryCount++
+			lock.Unlock()
+		}
 	}
 	sendWg.Wait()
+	span.Set("failed-query-count", failedQueryCount)
+	span.Set("successful-query-count", len(request.QueryList)-failedQueryCount)
+	span.Set("partial-failure", failedQueryCount > 0)
 
 	resp.success(ctx, data)
 }

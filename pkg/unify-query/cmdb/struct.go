@@ -38,6 +38,19 @@ type Path []Relation
 // Paths 多组关联路径
 type Paths []Path
 
+// RelationMultiResourcePathData 描述一条静态关系路径及其查询结果。
+// 该结构用于可选的多路径查询，不影响旧版 path/target_list 字段。
+type RelationMultiResourcePathData struct {
+	Path       []string `json:"path"`
+	TargetList Matchers `json:"target_list"`
+}
+
+// RelationMultiResourceRangePathData 描述一条静态关系路径及其范围查询结果。
+type RelationMultiResourceRangePathData struct {
+	Path       []string                `json:"path"`
+	TargetList []MatchersWithTimestamp `json:"target_list"`
+}
+
 // RelationMultiResourceRequest 请求参数
 type RelationMultiResourceRequest struct {
 	QueryList []struct {
@@ -49,6 +62,9 @@ type RelationMultiResourceRequest struct {
 
 		TargetType     Resource `json:"target_type,omitempty"`
 		TargetInfoShow bool     `json:"target_info_show,omitempty"`
+		// ReturnAllPaths 开启后，legacy 接口会额外返回所有可执行的静态路径。
+		// 未开启时保持原有的首条有效路径语义。
+		ReturnAllPaths bool `json:"return_all_paths,omitempty"`
 
 		PathResource  []Resource `json:"path_resource,omitempty"`
 		LookBackDelta string     `json:"look_back_delta,omitempty"`
@@ -63,9 +79,10 @@ type RelationMultiResourceResponseData struct {
 	SourceInfo Matcher  `json:"source_info"`
 	TargetType Resource `json:"target_type"`
 
-	TargetList Matchers `json:"target_list"`
-	Path       []string `json:"path"`
-	Message    string   `json:"message"`
+	TargetList Matchers                        `json:"target_list"`
+	Path       []string                        `json:"path"`
+	Paths      []RelationMultiResourcePathData `json:"paths,omitempty"`
+	Message    string                          `json:"message"`
 
 	// Truncated 表示响应是否因服务端安全上限而被截断。
 	Truncated bool `json:"truncated,omitempty"`
@@ -92,6 +109,7 @@ type RelationMultiResourceRangeRequest struct {
 
 		TargetType     Resource `json:"target_type,omitempty"`
 		TargetInfoShow bool     `json:"target_info_show,omitempty"`
+		ReturnAllPaths bool     `json:"return_all_paths,omitempty"`
 
 		PathResource  []Resource `json:"path_resource,omitempty"`
 		LookBackDelta string     `json:"look_back_delta,omitempty"`
@@ -106,9 +124,10 @@ type RelationMultiResourceRangeResponseData struct {
 	SourceInfo Matcher  `json:"source_info"`
 	TargetType Resource `json:"target_type"`
 
-	TargetList []MatchersWithTimestamp `json:"target_list"`
-	Path       []string                `json:"path"`
-	Message    string                  `json:"message"`
+	TargetList []MatchersWithTimestamp              `json:"target_list"`
+	Path       []string                             `json:"path"`
+	Paths      []RelationMultiResourceRangePathData `json:"paths,omitempty"`
+	Message    string                               `json:"message"`
 
 	// Truncated 表示响应是否因服务端安全上限而被截断。
 	Truncated bool `json:"truncated,omitempty"`

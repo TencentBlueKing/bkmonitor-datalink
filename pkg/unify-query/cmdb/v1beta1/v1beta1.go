@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb"
@@ -340,8 +341,45 @@ func (r *model) getPaths(ctx context.Context, source, target cmdb.Resource, path
 	return paths, nil
 }
 
-func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptions) (source cmdb.Resource, sourceInfo cmdb.Matcher, hitPath []string, target cmdb.Resource, ts []cmdb.MatchersWithTimestamp, err error) {
+type pathQueryResult struct {
+	path []string
+	ts   []cmdb.MatchersWithTimestamp
+}
+
+// queryResourceMatcherAll 执行路径准备和 VM 查询。
+// 旧接口只消费其中第一条有数据的路径；多路径扩展则消费全部结果。
+func (r *model) queryResourceMatcherAll(ctx context.Context, opt QueryResourceOptions, collectAll bool) (source cmdb.Resource, sourceInfo cmdb.Matcher, results []pathQueryResult, target cmdb.Resource, err error) {
 	user := metadata.GetUser(ctx)
+	queryMode := metric.CMDBRelationQueryModeRange
+	if opt.Instant {
+		queryMode = metric.CMDBRelationQueryModeInstant
+	}
+	executionMode := "first_path"
+	if collectAll {
+		executionMode = "all_paths"
+	}
+	queryStarted := time.Now()
+	pathErrorCount := 0
+	targetCount := 0
+	hasData := false
+	metric.CMDBRelationRouteInc(ctx, "vm_legacy", queryMode, metric.CMDBRelationResultStarted)
+	defer func() {
+		result := metric.CMDBRelationResultSuccess
+		if err != nil {
+			result = metric.CMDBRelationResultFailed
+		} else if pathErrorCount > 0 {
+			if len(results) > 0 {
+				result = metric.CMDBRelationResultPartial
+			} else {
+				result = metric.CMDBRelationResultFailed
+			}
+		} else if !hasData {
+			result = metric.CMDBRelationResultEmpty
+		}
+		metric.CMDBRelationRouteInc(ctx, "vm_legacy", queryMode, result)
+		metric.CMDBRelationRouteSecond(ctx, time.Since(queryStarted), "vm_legacy", queryMode)
+		metric.CMDBRelationTargetCountObserve(ctx, "vm_legacy", queryMode, executionMode, targetCount)
+	}()
 
 	ctx, span := trace.NewSpan(ctx, "get-resource-indexMatcher")
 	defer span.End(&err)
@@ -356,6 +394,9 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	span.Set("query-target-resource", opt.Target)
 	span.Set("query-index-matcher", opt.IndexMatcher)
 	span.Set("query-path-resource", opt.PathResource)
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
+	span.Set("query-execution-mode", executionMode)
+	span.Set("query-collect-all-paths", collectAll)
 
 	opt.IndexMatcher = opt.IndexMatcher.Rename()
 	span.Set("query-renamed-index-matcher", opt.IndexMatcher)
@@ -364,7 +405,7 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 		opt.Source, err = r.getResourceFromMatch(ctx, opt.IndexMatcher)
 		if err != nil {
 			err = errors.WithMessage(err, "get resource error")
-			return source, sourceInfo, hitPath, target, ts, err
+			return source, sourceInfo, results, target, err
 		}
 	}
 
@@ -375,12 +416,12 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 
 	if opt.SpaceUid == "" {
 		err = errors.New("space uid is empty")
-		return source, sourceInfo, hitPath, target, ts, err
+		return source, sourceInfo, results, target, err
 	}
 
 	if opt.Start == "" || opt.End == "" {
 		err = errors.New("timestamp is empty")
-		return source, sourceInfo, hitPath, target, ts, err
+		return source, sourceInfo, results, target, err
 	}
 
 	// query-resource already set above
@@ -390,16 +431,18 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	sourceInfo, _, err = r.getIndexMatcher(ctx, opt.Source, opt.IndexMatcher)
 	if err != nil {
 		err = errors.WithMessagef(err, "get index matcher error")
-		return source, sourceInfo, hitPath, target, ts, err
+		return source, sourceInfo, results, target, err
 	}
 
 	paths, err := r.getPaths(ctx, opt.Source, opt.Target, opt.PathResource)
 	if err != nil {
 		err = errors.WithMessagef(err, "get path error")
-		return source, sourceInfo, hitPath, target, ts, err
+		return source, sourceInfo, results, target, err
 	}
 
 	span.Set("query-relation-paths", paths)
+	span.Set("query-candidate-path-count", len(paths))
+	metric.CMDBRelationCandidatePathCountObserve(ctx, "vm_legacy", queryMode, executionMode, len(paths))
 	metadata.GetQueryParams(ctx).SetIsSkipK8s(true)
 
 	var errorMessage []string
@@ -407,18 +450,36 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 	for _, path := range paths {
 		reqTs, reqErr := r.doRequest(ctx, path, opt)
 		if reqErr != nil {
+			pathErrorCount++
+			metric.CMDBRelationPathResultInc(ctx, "vm_legacy", queryMode, metric.CMDBRelationResultFailed)
 			errorMessage = append(errorMessage, fmt.Sprintf("path [%v] do request error: %s", path, reqErr))
 			continue
 		}
 
-		hitPath = path
-		if len(reqTs) > 0 {
-			ts = reqTs
+		if reqTs == nil {
+			reqTs = make([]cmdb.MatchersWithTimestamp, 0)
+		}
+		for _, bucket := range reqTs {
+			targetCount += len(bucket.Matchers)
+		}
+		pathResult := metric.CMDBRelationResultSuccess
+		if len(reqTs) == 0 {
+			pathResult = metric.CMDBRelationResultEmpty
+		}
+		metric.CMDBRelationPathResultInc(ctx, "vm_legacy", queryMode, pathResult)
+		results = append(results, pathQueryResult{path: path, ts: reqTs})
+		if !collectAll && len(reqTs) > 0 {
 			break
 		}
 	}
 
-	if len(ts) == 0 {
+	for _, result := range results {
+		if len(result.ts) > 0 {
+			hasData = true
+			break
+		}
+	}
+	if !hasData {
 		metadata.NewMessage(
 			metadata.MsgQueryRelation,
 			"%s",
@@ -426,8 +487,36 @@ func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptio
 		).Warn(ctx)
 	}
 
+	var hitPath []string
+	for _, result := range results {
+		hitPath = result.path
+		if len(result.ts) > 0 {
+			break
+		}
+	}
 	span.Set("query-hit-path", hitPath)
-	return source, sourceInfo, hitPath, target, ts, err
+	span.Set("query-path-errors", errorMessage)
+	span.Set("query-path-result-count", len(results))
+	span.Set("query-path-error-count", pathErrorCount)
+	span.Set("query-target-count", targetCount)
+	return source, sourceInfo, results, target, err
+}
+
+func (r *model) queryResourceMatcher(ctx context.Context, opt QueryResourceOptions) (source cmdb.Resource, sourceInfo cmdb.Matcher, hitPath []string, target cmdb.Resource, ts []cmdb.MatchersWithTimestamp, err error) {
+	source, sourceInfo, results, target, err := r.queryResourceMatcherAll(ctx, opt, false)
+	if err != nil {
+		return source, sourceInfo, hitPath, target, ts, err
+	}
+
+	for _, result := range results {
+		hitPath = result.path
+		if len(result.ts) > 0 {
+			ts = result.ts
+			break
+		}
+	}
+
+	return source, sourceInfo, hitPath, target, ts, nil
 }
 
 type QueryResourceOptions struct {
@@ -471,6 +560,42 @@ func (r *model) QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUi
 	return source, sourceInfo, path, target, shimMatcherWithTimestamp(ret), nil
 }
 
+// QueryResourceMatcherAll 返回所有可执行的静态路径。
+// 这是 legacy VM 查询的可选扩展，默认旧接口仍然只返回首条有效路径。
+func (r *model) QueryResourceMatcherAll(ctx context.Context, lookBackDelta, spaceUid string, timestamp string, target, source cmdb.Resource, indexMatcher, expandMatcher cmdb.Matcher, expandShow bool, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []cmdb.RelationMultiResourcePathData, cmdb.Resource, error) {
+	opt := QueryResourceOptions{
+		LookBackDelta: lookBackDelta,
+		SpaceUid:      spaceUid,
+		Start:         timestamp,
+		End:           timestamp,
+		Source:        source,
+		Target:        target,
+		IndexMatcher:  indexMatcher,
+		ExpandMatcher: expandMatcher,
+		PathResource:  pathResource,
+		ExpandShow:    expandShow,
+		Instant:       true,
+	}
+
+	resSource, resSourceInfo, results, resTarget, err := r.queryResourceMatcherAll(ctx, opt, true)
+	if err != nil {
+		return resSource, resSourceInfo, nil, resTarget, err
+	}
+
+	paths := make([]cmdb.RelationMultiResourcePathData, 0, len(results))
+	for _, result := range results {
+		targetList := shimMatcherWithTimestamp(result.ts)
+		if targetList == nil {
+			targetList = make(cmdb.Matchers, 0)
+		}
+		paths = append(paths, cmdb.RelationMultiResourcePathData{
+			Path:       result.path,
+			TargetList: targetList,
+		})
+	}
+	return resSource, resSourceInfo, paths, resTarget, nil
+}
+
 func (r *model) QueryResourceMatcherRange(ctx context.Context, lookBackDelta, spaceUid string, step string, start, end string, target, source cmdb.Resource, indexMatcher, expandMatcher cmdb.Matcher, expandShow bool, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []string, cmdb.Resource, []cmdb.MatchersWithTimestamp, error) {
 	opt := QueryResourceOptions{
 		LookBackDelta: lookBackDelta,
@@ -489,6 +614,42 @@ func (r *model) QueryResourceMatcherRange(ctx context.Context, lookBackDelta, sp
 	return r.queryResourceMatcher(ctx, opt)
 }
 
+// QueryResourceMatcherRangeAll 返回所有可执行的静态路径及其范围结果。
+func (r *model) QueryResourceMatcherRangeAll(ctx context.Context, lookBackDelta, spaceUid string, step string, start, end string, target, source cmdb.Resource, indexMatcher, expandMatcher cmdb.Matcher, expandShow bool, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []cmdb.RelationMultiResourceRangePathData, cmdb.Resource, error) {
+	opt := QueryResourceOptions{
+		LookBackDelta: lookBackDelta,
+		SpaceUid:      spaceUid,
+		Step:          step,
+		Start:         start,
+		End:           end,
+		Source:        source,
+		Target:        target,
+		IndexMatcher:  indexMatcher,
+		ExpandMatcher: expandMatcher,
+		ExpandShow:    expandShow,
+		PathResource:  pathResource,
+		Instant:       false,
+	}
+
+	resSource, resSourceInfo, results, resTarget, err := r.queryResourceMatcherAll(ctx, opt, true)
+	if err != nil {
+		return resSource, resSourceInfo, nil, resTarget, err
+	}
+
+	paths := make([]cmdb.RelationMultiResourceRangePathData, 0, len(results))
+	for _, result := range results {
+		targetList := result.ts
+		if targetList == nil {
+			targetList = make([]cmdb.MatchersWithTimestamp, 0)
+		}
+		paths = append(paths, cmdb.RelationMultiResourceRangePathData{
+			Path:       result.path,
+			TargetList: targetList,
+		})
+	}
+	return resSource, resSourceInfo, paths, resTarget, nil
+}
+
 func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceOptions) ([]cmdb.MatchersWithTimestamp, error) {
 	// 按照关联路径遍历查询
 	var (
@@ -498,6 +659,14 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 
 	ctx, span := trace.NewSpan(ctx, "query-do-request")
 	defer span.End(&err)
+	span.Set("query-path", path)
+	span.Set("query-path-depth", len(path))
+	if opt.Instant {
+		span.Set("query-mode", metric.CMDBRelationQueryModeInstant)
+	} else {
+		span.Set("query-mode", metric.CMDBRelationQueryModeRange)
+	}
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
 
 	indexMatcher, _, err := r.getIndexMatcher(ctx, opt.Source, opt.IndexMatcher)
 	if err != nil {
@@ -583,6 +752,12 @@ func (r *model) doRequest(ctx context.Context, path []string, opt QueryResourceO
 	if err != nil {
 		return nil, fmt.Errorf("instance query error: %s", err)
 	}
+	pointCount := 0
+	for _, series := range matrix {
+		pointCount += len(series.Points)
+	}
+	span.Set("query-result-series", len(matrix))
+	span.Set("query-result-points", pointCount)
 
 	if len(matrix) == 0 {
 		metadata.NewMessage(

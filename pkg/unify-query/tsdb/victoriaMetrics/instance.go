@@ -563,6 +563,7 @@ func (i *Instance) DirectQueryRange(
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-query-range")
 	defer span.End(&err)
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
 
 	vmExpand = metadata.GetExpand(ctx)
 
@@ -654,6 +655,7 @@ func (i *Instance) DirectQueryWithPartial(
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-query")
 	defer span.End(&err)
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
 
 	vmExpand = metadata.GetExpand(ctx)
 
@@ -715,6 +717,7 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-query-series")
 	defer span.End(&err)
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
 
 	span.Set("query-info", query)
 	span.Set("query-start", start)
@@ -770,6 +773,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-query")
 	defer span.End(&err)
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
 
 	span.Set("query-info", query)
 	span.Set("query-start", start)
@@ -820,6 +824,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-label-values")
 	defer span.End(&err)
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
 
 	span.Set("query-info", query)
 	span.Set("query-name", name)
@@ -923,6 +928,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-direct-label-values")
 	defer span.End(&err)
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
 
 	vmExpand = metadata.GetExpand(ctx)
 	if vmExpand == nil {

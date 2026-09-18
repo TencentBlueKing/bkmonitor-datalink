@@ -19,6 +19,8 @@ Linkd 项目仍处于早期开发阶段，本文档只描述当前代码、测�
 12. [外部协议](reference/contracts/README.md)：`standard` 输入和 Kafka Alert V1 输出。
 
 Kubernetes 部署入口：[Helm 部署与 worker 分组](guides/helm.md)。
+多级别事件改造的测试环境切换见[重置升级指南](guides/multilevel-event-upgrade.md)；
+[核心模型 HTML 说明页](linkd-core-model.html)提供当前模型与处理流程的可视化概览。
 
 ## 当前文档与归档
 
@@ -35,7 +37,8 @@ EventSource 管理与部分全局配置动态化独立演进：
 Lifecycle 等模块复用；包含停止确认、失联自停、超时强切及服务/容器发布防抖，当前采用有界自停模型。
 
 `design/`、`modules/`、`guides/` 和 `reference/` 是现行文档，修改行为时必须同步更新。已经被当前
-模型替换的早期占位页和重复模块页不再保留。
+模型替换的早期占位页和重复模块页不再保留。`design/alarm-callback-enrichment-migration.md` 是明确标注的
+历史决策记录，当前接口以丰富设计与核心模型为准。
 
 `research/` 与 `reviews/` 是带日期或 commit 基线的归档输入，不属于当前契约。阅读归档时必须以
 其记录的版本为准，不能反向覆盖当前代码和设计。

@@ -10,6 +10,7 @@
 - `event_id = "linkd-" + Alert.AlertID`，用于关联同一 Alert 的活动与终态消息；
 - Kafka key 使用 `event_id`；
 - `active/recovered/closed` 分别映射为 `firing/resolved/close`；
+- update_current 升级仍发送 firing，保持 event_id，level 使用新级别，alarm_id 因新快照变化；close_and_create 升级依次发送旧 close 和新 firing，event_id 不同；
 - `critical/warning/info` 分别映射为 `fatal/warning/remind`；
 - 无偏移时间按 `Asia/Shanghai` 格式化为 `YYYY-MM-DD HH:mm:ss`；
 - `source_name` 固定为 `鲸眼监控`；

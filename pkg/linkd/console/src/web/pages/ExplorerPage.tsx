@@ -289,7 +289,7 @@ export function ExplorerPage({ entity }: { entity: EntityKind }) {
             label="Severity"
             name="severity"
             defaultValue={urlParams.get("severity") ?? ""}
-            help="按事件或告警的严重程度精确过滤。"
+            help="按告警当前级别精确过滤。"
           />
         )}
         {filters.includes("alertId") && (

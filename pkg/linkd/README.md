@@ -59,7 +59,7 @@ tests/       数据生成和 all-in-one E2E
 [`docs/guides/configuration.md`](docs/guides/configuration.md)，存储边界见
 [`docs/design/core-storage-contract.md`](docs/design/core-storage-contract.md)，生命周期见
 [`docs/modules/lifecycle.md`](docs/modules/lifecycle.md)。后续部署形态统一为测试和小规模场景使用的
-`all-in-one`，以及 Cleaner、Lifecycle、控制面（API / Leader / Manager）三进程模式；当前实现与目标
+`all-in-one`，以及 Cleaner、Lifecycle、控制面（API / Leader / Manager）三进程模式；本次多级别事件改造的测试环境升级见[重置升级指南](docs/guides/multilevel-event-upgrade.md)。当前实现与目标
 边界见 [`docs/design/deployment.md`](docs/design/deployment.md)。
 
 ## 动态来源与任务调度

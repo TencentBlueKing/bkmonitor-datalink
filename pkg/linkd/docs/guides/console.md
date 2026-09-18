@@ -75,6 +75,8 @@ control-plane 和 all-in-one 不拥有各自的配置字段，但每个实际进
 - Prometheus 不可用：当前 Kafka/Redis/存储快照仍可查看，历史图表显示不可用。
 - 单个控制面数据源不可用：对应任务显示 `partial/unavailable`，其他任务状态与配置仍可查看。
 - Kafka 或 Redis 不可用：对应页面和运行节点显示 `unavailable`，其他区域继续工作。
+- Event 详情的 values/evaluations 是来源事实，`_processing.evaluations` 是逐级裁决；关联入口支持多个 Alert。
+- severity 过滤针对 Alert 当前级别，不把事件多个级别合成单个 severity；values 只存储展示，不做数值聚合。
 - 当前存储缺少可聚合字段时隐藏对应 facet，不扫描 `source_raw_data/extra_data/enrich/params` 等仅存储
   JSON 对象伪造结果。
 - Elasticsearch 拓扑只检查 `index_prefix` 推导的稳定读 alias，不接受浏览器传入任意索引表达式；alias

@@ -1,5 +1,8 @@
 # Lifecycle 与 Elasticsearch 吞吐压测
 
+> 历史实验/源码快照：本文数据保留当时版本口径。当前 Event 使用多级别 evaluations，并增加副作用前的计划 CAS；
+> 本文的单动作字段、写入次数与吞吐数据不能直接代表改造后版本。当前流程见[Lifecycle](../../modules/lifecycle.md)。
+
 测试日期：2026-09-04～2026-09-06。
 
 ## 1. 主要结论

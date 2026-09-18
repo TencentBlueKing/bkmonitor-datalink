@@ -123,11 +123,15 @@ Redis 单活动中心保护不等于支持多副本 follower 服务与高可用�
 - 滚动升级期间，消息和存储契约必须保持兼容。需要破坏性变更时先停止相关角色并按明确步骤升级，
   不依赖不同模式之间的双写兜底。
 
-启用 Elasticsearch Recent Alert 缓存和取消 Lifecycle Alert refresh 等待时，新旧 Lifecycle 不能混合
+当前 values/evaluations/related_alert_ids 改造同时改变 Standard 输入与 Event 存储结构。
+`storage migrate` 不转换旧事件；不保留数据的 ES + Helm 测试环境可按
+[重置升级指南](../guides/multilevel-event-upgrade.md)切换新业务前缀。保留真实数据的升级需另行设计迁移。
+
+仅针对此前启用 Elasticsearch Recent Alert 缓存和取消 Lifecycle Alert refresh 等待的改动，新旧 Lifecycle 不能混合
 消费同一 Mailbox。升级或回滚前应暂停 Cleaner、排空 Signal lag/PEL 和 Mailbox，再同时替换 Lifecycle；
 控制面须先把 Active 索引的 `refresh_interval` 对账为 YAML 中的配置值（默认 `5s`）。
-Event create 改用 `refresh=false` 不改变 Redis 或存储 schema；新旧 Cleaner 可以滚动替换，差异只在
-Event 搜索可见等待，Lifecycle 和幂等冲突核对均使用 realtime GET。
+仅 Event create 改用 `refresh=false` 的那次优化不改变 schema，差异只在 Event 搜索可见等待，
+彼时新旧 Cleaner 可滚动替换；此结论不适用于当前多级别输入改造。Lifecycle 和幂等冲突核对仍使用 realtime GET。
 Event、Alert History 和 AlertLog 的新时间桶也通过模板使用默认 `5s` refresh；修改该值只影响后续
 refresh 周期，不改变实时 GET 或 CAS 的可见性。
 AlertLog 默认使用 `async` translog durability，而 Event、Active Alert 和 Alert History 保持

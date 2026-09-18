@@ -146,6 +146,10 @@ GET /local-api/{events|alerts|alert-logs}/:id
 接口只使用固定查询模板，不接受任意 SQL、PromQL、Redis 命令、Kafka Admin 写操作或 ES target。
 实体列表默认最近一小时、50 条，最大七天、单页 200 条；精确 ID 可以省略时间范围。
 
+Event 详情展示来源 values/evaluations，以及 `_processing.evaluations` 中的逐级处理结果；关联跳转遍历
+related_alert_ids，可同时查看旧、新两个 Alert。页面的 related_alert_id 查询参数表示“查询关联此 Alert 的事件”，
+不是恢复旧的单值存储字段。severity 过滤和聚合针对 Alert 当前级别，values 不提供数值聚合。
+
 ## 存储统计能力
 
 统计不会修改 MySQL schema 或 Elasticsearch mapping：

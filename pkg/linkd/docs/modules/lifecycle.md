@@ -63,9 +63,10 @@ Elasticsearch 后端使用所有 Lifecycle 实例共享的 Redis Recent Alert �
 完整 Alert 快照和存储 `VersionToken`，但它不是
 Alert 事实源，也不会保存全部 active Alert。
 
-Event 裁决先查缓存；命中 active 时直接使用，命中 terminal 时把它视为“当前无 active”，并通过 ended
-条目恢复同一 Event 的终结或等级升级。只有 Redis 明确返回 key 不存在时才查询 Elasticsearch；Redis
-错误、缓存损坏或身份不一致均保留 Mailbox 队首重试。MySQL 后端不启用该缓存。
+首次裁决先查 current 缓存；命中 active 时直接使用，命中 terminal 时视为“当前无 active”。
+已有 processing.plan 的事件直接按计划实时读取目标 Alert，恢复不再依赖 ended 查询或当前升级配置。
+只有 current 缓存明确不存在时才查询 Elasticsearch；缓存错误、损坏或身份不一致均保留队首重试。
+ended 条目仍由缓存接口维护，但不是当前 Processor 的恢复入口。MySQL 后端不启用该缓存。
 
 ## 2. 关键抽象
 
@@ -109,8 +110,8 @@ Mailbox 队首 Event 后把同一 `StoredEvent` 快照交给 Processor；Process
 - `Clock`：服务端状态时间；
 - `Logger`：记录降级和失败上下文。
 
-Processor 最多进行 3 次 CAS 裁决循环。Version conflict 时必须重新读取 Event/Alert 并重新裁决，不能
-拿旧 replacement 盲目覆盖。
+Processor 最多进行 3 次 CAS 循环。冲突后重新读取 Event，优先恢复已保存计划；仅第一项尚未生效、
+原版本已被其他操作推进时才撤销并重裁决，不能拿旧 replacement 覆盖并发状态。
 
 ### 2.3 Enricher 与 FinalHook
 
@@ -125,7 +126,8 @@ type FinalHook interface {
 ```
 
 Enricher 在每次新 Alert 持久化前同步执行，允许 succeeded/partial/failed。首次创建与等级升级产生的
-新 Alert 都执行丰富；同等级推进和终态转换保留已有丰富结果。error、panic、非法状态或
+新 Alert 都执行丰富；update_current 升级、同等级推进和终态转换保留已有丰富结果。
+计划保存前失败可重新丰富；计划保存后重试复用其中已冻结的丰富快照。error、panic、非法状态或
 非法 JSON/协议降级为 failed 的固定 payload，同时保留 Alert 创建流程。
 
 Enricher 输入只包含已完成基础构造和 Normalize 的 Alert 深拷贝。具体实现位于
@@ -137,8 +139,9 @@ Enricher 输入只包含已完成基础构造和 Normalize 的 Alert 深拷贝�
 为唯一 key 的 envelope，包含 status、value 和可选 diagnostics。`Alert.enrich_status` 是总状态的
 唯一持久化字段，领域校验根据 Processor 状态重新聚合并要求一致。
 
-当前 `strategy → resource → display → metric → source` 的 BASE_COLLECT 样例使用固定 mock DataSource
-贯通。真实平台历史、鲸眼配置和资源数据源仍待接入与集成验证。
+当前 `strategy → resource → display → metric → source` 链已经提供 MySQL 和 Elasticsearch 数据源装配，
+由来源 Release 的 enrich.datasources 和实际 Processor 依赖选择连接；不回查监控平台策略历史表。
+单元测试中的 mock 不表示目标业务环境已经联调，接入示例见[主机告警丰富](../guides/host-alert-enrich-example.md)。
 
 FinalHook 在 Alert 真实变化后按当前任务 Release 的 `EventSource.hooks` 顺序执行。
 每个实例接收独立快照，各自产生成功或失败 push AlertLog，实例名参与流水幂等身份和指标。

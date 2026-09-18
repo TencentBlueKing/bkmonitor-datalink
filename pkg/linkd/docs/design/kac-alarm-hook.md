@@ -193,8 +193,9 @@ KAC 的恢复/关闭流程按 `event_id` 查找活动告警，再以终态消息
 若产品期望只把 Alert 创建和终态交给 KAC，应把“跳过 `alert_updated`”作为显式 Hook 配置或新协议版本，
 不能在实现中隐式丢弃。
 
-等级升级按 Lifecycle 现有顺序先发送旧 Alert 的 `close`，再发送新 Alert 的 `firing`。两个 AlertID
-不同，因此 KAC 先终结旧 `event_id`，再创建新 `event_id`。
+`close_and_create` 升级先发送旧 Alert 的 close，再发送新 Alert 的 firing，两个 AlertID/event_id 不同。
+`update_current` 升级发送原 Alert 的 firing，event_id 不变，level 使用新级别，alarm_id 按新 UpdateAt/outcome 生成；
+不重新丰富。两种策略在目标 KAC 环境中的合并、通知与持久化行为仍需联调。
 
 ### 4.3 等级映射
 
@@ -457,7 +458,8 @@ Alert create/CAS 成功
   → Event CAS accepted
 ```
 
-Hook 顺序由来源配置决定。等级升级继续沿用 Lifecycle 的“旧 Alert 全部 Hook → 新 Alert 全部 Hook”顺序。
+Hook 顺序由来源配置决定。close_and_create 升级采用“旧 Alert 全部 Hook → 新 Alert 全部 Hook”；
+update_current 升级仅执行当前 Alert 的 Hook。
 
 ### 8.2 重复与失败
 
@@ -481,7 +483,7 @@ Kingeye 当前 KAC consumer 在业务处理前提交 offset，见
 
 同一 Alert 使用稳定 `event_id` 作为 key，单个 Kafka partition 内保持 producer 顺序。跨 Alert、跨
 partition 没有全局顺序。单个来源多个 Lifecycle 副本仍由 Mailbox lease 串行处理同一 fingerprint；
-等级升级在一个 Processor 调用中先关旧 Alert 再开新 Alert。
+close_and_create 等级升级在一个 Processor 调用中先关旧 Alert 再开新 Alert；update_current 只更新原 Alert。
 
 配置变更通过旧任务排空、新任务接管生效。旧 Release 和新 Release 指向不同 Topic 时，两个 Topic
 之间没有顺序保证，变更需配合灰度和 KAC 消费切换。
@@ -529,7 +531,7 @@ Kafka 可达或 KAC consumer 已接管 Topic。
 ### 11.1 单元测试
 
 - `KACAlarmV1`：全部字段、空值、标量转文本、JSON-in-string 和场景扩展默认值；
-- 动作：active/recovered/closed，等级升级的旧 close 与新 firing；
+- 动作：active/recovered/closed，close_and_create 的旧 close 与新 firing，以及 update_current 的同 event_id firing 和新 level；
 - 身份：`alarm_id` 为 `linkd-` 加稳定 UUID，`event_id` 为 `linkd-` 加 AlertID；相同快照的两者及 message_id 均稳定，不同 update/outcome/hook 实例可区分；
 - 等级：固定三项映射、未知 Linkd Severity 失败；
 - 时间：UTC 到固定 `Asia/Shanghai`、秒级截断、终态缺少 EndAt；

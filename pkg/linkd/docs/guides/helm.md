@@ -421,7 +421,9 @@ helm upgrade --install linkd deploy/helm/linkd \
 Control Plane 固定一副本并使用 Recreate。它重启时可能等待旧 Redis 授权过期；
 Chart 不承诺无中断升级，也不会自动运行 `scheduling init`。
 从已有 all-in-one 部署迁入前必须停止旧控制面与 worker，避免同时存在活动中心。
-需要破坏性契约变更时，按相应版本说明暂停和排空 worker 后升级。
+需要破坏性契约变更时，按相应版本说明暂停并处理旧输入、队列和存储后升级。
+本次 values/evaluations/related_alert_ids 改造不是自动迁移；允许丢弃测试数据的环境按
+[多级别事件重置升级](multilevel-event-upgrade.md)操作，不直接滚动替换镜像。
 
 Chart 管理的内联配置变化通过 checksum 更新对应 Deployment。
 已有配置/认证 Secret 更新后，需显式重启受影响 Deployment；共享配置 Secret 的 key 变化不会自动重启：

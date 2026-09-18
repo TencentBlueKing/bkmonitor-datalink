@@ -22,7 +22,7 @@ MQ RawEventMessage
 ## 模块边界
 
 - `internal/config` 严格读取静态 YAML 和全局 Severity；来源由 `internal/eventsource` 持久化发布，`internal/taskdispatch` 为 Cleaner/Lifecycle 分配任务。
-- `internal/cleaner` 的 Processor 通过具体 SourceCleaner 解析来源事实，再由 EventFactory 补齐受控字段并构造 `domain.Event`；专用 Runtime 负责消息队列无关的并发、lane 内连续批量副作用和确认。内置 `standard` 接收 JSON object；租户、来源、稳定 record ID 和接收时间来自信封，完整 payload 写入 `source_raw_data`。
+- `internal/cleaner` 的 Processor 通过具体 SourceCleaner 解析来源事实，再由 EventFactory 补齐受控字段并构造 `domain.Event`；专用 Runtime 负责消息队列无关的并发、lane 内连续批量副作用和确认。内置 `standard` 接收 JSON object；来源、稳定 record ID 和接收时间来自信封；租户由来源固定配置或 payload/header 的一致性规则确定，完整 payload 写入 `source_raw_data`。
 - `internal/store` 保存 Event、独立处理元数据、Alert 和 AlertLog。Elasticsearch 数据进程只访问控制面
   存储管理任务准备好的 alias；Lifecycle 只提交 Alert 逻辑终态，Active 到 History 的搬迁由控制面异步完成。
 - `internal/controlplane/process` 装配并监督控制面管理任务；当前分别运行 Elasticsearch Schema 与 Active 资源对账、
@@ -39,7 +39,7 @@ MQ RawEventMessage
   摘要使用不同 domain seed 的 SHA-256 前 64 bit。Event 摘要包含完整 received_at 和稳定来源身份，Alert
   摘要包含 opening Event，因此重投不变。
 - fingerprint 只由 EventSource 配置的稳定 Event 字段生成；`source_alert_id` 只能作为 fingerprint 输入，不能形成查询旁路。
-- `related_tenant_id` 非空时强制覆盖消息信封中的租户。
+- `related_tenant_id` 非空时强制覆盖租户；否则优先读取 payload 的 `bk_tenant_id`，缺失时使用信封租户，两处非空且不一致则拒绝。
 
 ## 一致性与恢复
 
@@ -54,8 +54,8 @@ Repository 不提供 Event、Alert、AlertLog 与 Kafka 的跨对象事务。生
   Event 在 Lifecycle 中直接短路；
 - Elasticsearch Lifecycle 使用共享 Redis Recent Alert 缓存保存最近 refresh 窗口内的 Alert 写入；Event 裁决先查
   缓存，写 Alert 后先更新缓存，借此取消数据路径上的 search refresh 等待；
-- Cleaner 以目标 Signal Group 的 `lag + pending` 做 3 秒缓存的近似全局背压；
-- 使用 `latest_event_id + end_type` 恢复来源终结或等级升级；
+- Cleaner 以目标 Signal Group 的 `lag + pending` 做可配置短缓存的近似全局背压，默认缓存 1 秒；
+- 恢复使用 `EventProcessing.plan` 中已冻结的目标快照和原版本进行实时核对；已完成的操作不再重复改变状态，未完成的操作继续原计划；
 - AlertLog、直接关闭 operation 和 Kafka message ID 均使用稳定输入生成确定性身份。
 
 上游消息只能在 Event 已持久化且 Mailbox 入队成功后确认。确认前由 MQ 重投恢复；确认后 Redis

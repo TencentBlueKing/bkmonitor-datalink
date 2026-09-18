@@ -60,13 +60,13 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | severity_upgrade_policy | 全局升级策略：update_current 保留 Alert 身份更新级别；close_and_create 关闭旧 Alert 后新建 |
 | EventPlan | EventProcessing 内先于副作用保存的裁决计划，冻结升级策略、Alert 目标快照和逐级结果；完成后删除 |
 | related_alert_ids | Event 最终关联的有界 Alert ID 列表，最多包含旧、新两条 Alert |
-| recovered       | 来源 resolved Event 使 Alert 进入的终态                                                           |
-| closed          | 来源关闭、直接关闭或等级升级使 Alert 进入的终态                                                   |
+| recovered       | 与活动 Alert 同级的 resolved 判定使其进入的终态                                                           |
+| closed          | 同级来源关闭、直接关闭或 close_and_create 等级升级使 Alert 进入的终态                                                   |
 | AlertLog        | 独立、确定性标识的不可变流水，记录状态操作、抑制和最终输出结果                                    |
-| VersionToken    | Repository 专属 CAS 令牌，不进入领域 JSON 或外部消息                                              |
-| accepted        | Event 已被生命周期接受并关联 Alert                                                                |
-| suppressed      | 低等级 triggered 判定被 active 高等级 Alert 抑制，或旧级别终结判定被更高级别触发替代，Event 关联实施抑制的 Alert                            |
-| orphaned        | resolved/closed 未找到同级 active Alert，Event 不关联 Alert                                           |
+| VersionToken    | Repository 专属 CAS 令牌；可进入内部处理计划以恢复原版本 CAS，不进入领域 Event/Alert JSON 或外部消息                                              |
+| accepted        | 事件级表示至少产生一项 Alert 变更；判定级表示该级别被接受并关联 Alert                                                                |
+| suppressed      | 判定级表示低等级触发被抑制或旧级别终结被升级替代；事件级表示无 Alert 变更但存在抑制，关联实施抑制的 Alert                            |
+| orphaned        | 判定级表示 resolved/closed 未匹配同级活动 Alert；整个事件 orphaned 时关联列表为空                                           |
 | rejected        | Event 在清洗或领域校验阶段被确定性拒绝                                                            |
 | cause           | FinalHook 变更原因，包含 source event、user operation 或 system operation 的类型和稳定 ID         |
 

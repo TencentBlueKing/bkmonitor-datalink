@@ -13,7 +13,10 @@ RawEventMessage(standard)
   -> Kafka Alert V1 snapshot
 ```
 
-[`rawgen`](../../tools/rawgen) 使用固定 seed 生成 triggered、重复投递、resolved、closed、等级升级、低等级抑制、坏消息和跨租户场景。断言覆盖稳定 Event ID、租户覆盖、时间回退、Severity mapping、`related_alert_id`、处理 outcome、Alert 不可变继承字段、双快照升级输出和 Kafka cause。
+[`rawgen`](../../tools/rawgen) 使用固定 seed 生成 triggered、重复投递、resolved、closed、等级升级、低等级抑制、坏消息和跨租户场景。断言覆盖稳定 Event ID、租户覆盖、时间回退、Severity mapping、`related_alert_ids`、处理 outcome、Alert 不可变继承字段、默认 close_and_create 的双快照升级输出和 Kafka cause。
+
+当前 rawgen 的输入为单项 evaluations；多级别组合、update_current、升级优先级及计划恢复由
+[Lifecycle 回归测试](../../../internal/lifecycle/multilevel_test.go)覆盖，不把该单元测试结果描述为真实中间件 E2E。
 
 每次运行使用唯一的 MySQL database 或 Elasticsearch index prefix，以及独立 Kafka topic/group 和
 Redis stream/group/mailbox/lock 前缀；结束时只清理本次资源。Raw topic 固定创建 3 个 partition，并

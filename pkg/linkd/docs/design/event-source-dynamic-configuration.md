@@ -42,7 +42,7 @@ topic 身份变化或分片异常减少报告错误，不当作普通缩容。�
 ## 执行版本与重投
 
 Event.event_source_version 由 EventFactory 注入当前任务启动时固定的 Release 版本；新数据要求正整数。
-Alert 创建时继承触发 Event 的版本，普通更新不覆盖，等级升级的新 Alert 再次继承。
+Alert 创建时继承触发 Event 的版本；同级更新和 update_current 升级不覆盖，close_and_create 升级的新 Alert 从本次 Event 继承。
 AlertLog 不添加独立顶层版本，Alert 输出快照自然携带版本。
 
 不保存 offset→Release 区间。未落库消息按当前任务配置处理；已落库相同身份、相同原始来源事实的跨版本重投复用原 Event，包括其版本和处理状态。

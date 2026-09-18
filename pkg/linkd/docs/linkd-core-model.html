@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Linkd 2026-09-02 核心模型、Cleaner、Lifecycle 与部署模式的历史实现快照。"
+      content="Linkd 当前多级别事件模型、可配置升级策略、裁决计划与部署边界说明。"
     />
     <title>Linkd 核心模型 · Runtime · Deployment</title>
     <style>
@@ -1308,8 +1308,8 @@
         <span>Linkd / Engineering Map</span>
       </div>
       <div class="top-meta">
-        <span>历史实现快照，当前模型以设计文档为准</span>
-        <span>2026-09-02</span>
+        <span>已按当前代码核对，字段定义以核心模型文档为准</span>
+        <span>2026-09-18</span>
       </div>
     </header>
 
@@ -1383,10 +1383,8 @@
         <a href="#deployment">部署模式</a>
         <a href="#boundaries">实现边界</a>
         <div class="toc-note">
-          本页保留 2026-09-02 的实现快照。当前事件已增加 values、多级别 evaluations、
-          related_alert_ids 和可配置升级策略；请参阅
-          <a href="design/define.md">当前核心模型</a>与
-          <a href="modules/lifecycle.md">Lifecycle</a>。
+          当前事件使用 values、evaluations 和 related_alert_ids；同一 fingerprint 最多一个活动告警。
+          详细约束见 <a href="design/define.md">核心模型</a>与 <a href="modules/lifecycle.md">Lifecycle</a>。
         </div>
       </aside>
 
@@ -1430,7 +1428,7 @@
           <div class="callout">
             <span class="callout-mark">!</span>
             <p>
-              <strong>最重要的分界：</strong>Event 不是 Alert，Event 的
+              <strong>最重要的分界：</strong>Event 不是 Alert，每项 evaluation 的
               <code>action</code> 不是 Alert 的
               <code>status</code>，EventProcessing 的 <code>state</code>
               也不是 Enrich 的执行状态。它们解决的是不同问题，不能互相代替。
@@ -1445,7 +1443,7 @@
               <h2>核心模型与不变量</h2>
             </div>
             <p class="section-lead">
-              当前唯一演进基线是扁平的
+              当前唯一演进基线是包含公共事实与多级别判定的
               <code>domain.Event</code>。所有查询、身份、锁、Mailbox
               和流水都必须带稳定租户作用域。
             </p>
@@ -1456,7 +1454,7 @@
               <div class="model-card-head">
                 <div class="model-kicker">
                   <span>IMMUTABLE SOURCE FACT</span
-                  ><span class="field-count">26 fields</span>
+                  ><span class="field-count">values + evaluations</span>
                 </div>
                 <h3>Event</h3>
                 <p>
@@ -1465,7 +1463,7 @@
                 </p>
                 <div class="model-rule">
                   创建后只允许 Lifecycle 补写
-                  <code>related_alert_id</code>；其他事实不可覆盖。
+                  <code>related_alert_ids</code>；其他事实不可覆盖。
                 </div>
               </div>
               <details>
@@ -1475,16 +1473,14 @@
                     <strong>租户、来源与身份</strong>
                     <div class="chips">
                       <code>bk_tenant_id</code><code>event_source_id</code
-                      ><code>event_id</code> <code>fingerprint</code
-                      ><code>related_alert_id</code>
+                      ><code>event_source_version</code><code>event_id</code> <code>fingerprint</code
+                      ><code>related_alert_ids</code>
                     </div>
                   </div>
                   <div class="field-group">
                     <strong>事件语义</strong>
-                    <div class="chips">
-                      <code>title</code><code>content</code><code>severity</code
-                      ><code>action</code> <code>action_reason</code
-                      ><code>condition_key</code><code>condition_name</code>
+                    <div class="chips"><code>title</code><code>content</code><code>values</code><code>evaluations</code>
+                      <code>evaluation.severity</code><code>evaluation.action</code><code>evaluation.action_reason</code>
                     </div>
                   </div>
                   <div class="field-group">
@@ -1513,17 +1509,15 @@
               <div class="model-card-head">
                 <div class="model-kicker">
                   <span>PROCESS METADATA</span
-                  ><span class="field-count">4 fields</span>
+                  ><span class="field-count">plan + results</span>
                 </div>
                 <h3>EventProcessing</h3>
                 <p>
-                  位于 Event JSON 之外，描述 Lifecycle 对该 Event
-                  的一次终局裁决。
+                  位于 Event JSON 之外，保存副作用前的冻结计划、事件汇总和各级别的最终裁决。
                 </p>
                 <div class="model-rule">
-                  只有 <code>accepted</code> 可以写
-                  <code>related_alert_id</code>；终态必须有 outcome 与
-                  processed_at。
+                  unprocessed 可保存 plan；accepted/suppressed 终态写 related_alert_ids。
+                  完成后清除 plan，保存逐级结果、outcome 与 processed_at。
                 </div>
               </div>
               <details>
@@ -1533,7 +1527,7 @@
                     <strong>字段</strong>
                     <div class="chips">
                       <code>state</code><code>outcome</code
-                      ><code>reason_code</code><code>processed_at</code>
+                      ><code>reason_code</code><code>processed_at</code><code>plan</code><code>evaluations</code>
                     </div>
                   </div>
                   <div class="field-group">
@@ -1552,13 +1546,13 @@
               <div class="model-card-head">
                 <div class="model-kicker">
                   <span>CURRENT PROJECTION</span
-                  ><span class="field-count">30 fields</span>
+                  ><span class="field-count">single active alert</span>
                 </div>
                 <h3>Alert</h3>
                 <p>同一关联键下，一次异常从发生到结束的当前生命周期快照。</p>
                 <div class="model-rule">
-                  opening Event 冻结继承字段；后续 Event
-                  只推进生命周期字段，终态不可重新打开。
+                  opening Event 冻结来源事实与创建锚点；后续 Event 可推进生命周期，
+                  update_current 可升级 severity，终态不可重新打开。
                 </div>
               </div>
               <details>
@@ -1568,10 +1562,8 @@
                     <strong>锚点与继承事实</strong>
                     <div class="chips">
                       <code>alert_id</code><code>bk_tenant_id</code
-                      ><code>event_source_id</code><code>fingerprint</code>
-                      <code>title</code><code>content</code><code>severity</code
-                      ><code>condition_key</code> <code>condition_name</code
-                      ><code>dimensions</code><code>labels</code
+                      ><code>event_source_id</code><code>event_source_version</code><code>fingerprint</code>
+                      <code>title</code><code>content</code><code>dimensions</code><code>labels</code
                       ><code>extra_data</code> <code>source_event_id</code
                       ><code>source_alert_id</code>
                     </div>
@@ -1586,7 +1578,7 @@
                   <div class="field-group">
                     <strong>生命周期</strong>
                     <div class="chips">
-                      <code>status</code><code>latest_event_id</code
+                      <code>severity</code><code>status</code><code>latest_event_id</code
                       ><code>trigger_event_id</code>
                       <code>last_occurred_at</code><code>update_at</code
                       ><code>begin_at</code><code>create_at</code>
@@ -1634,7 +1626,7 @@
                     <div class="chips">
                       <code>source | user | system</code><code>trigger</code
                       ><code>recover</code> <code>close</code
-                      ><code>suppress</code><code>push</code>
+                      ><code>suppress</code><code>severity_change</code><code>push</code>
                     </div>
                   </div>
                 </div>
@@ -1645,7 +1637,7 @@
           <div class="subheading"><h3>状态空间不要混用</h3></div>
           <div class="state-strip">
             <div class="state-pill neutral">
-              <strong>Event.action</strong
+              <strong>Event.evaluations[].action</strong
               ><small>triggered / resolved / closed</small>
             </div>
             <div class="state-pill neutral">
@@ -1657,11 +1649,11 @@
             </div>
             <div class="state-pill stop">
               <strong>Alert.end_type</strong
-              ><small>source / user / system / upgrade</small>
+              ><small>source / user / system / severity_upgrade</small>
             </div>
             <div class="state-pill active">
               <strong>Enrich.status</strong
-              ><small>pending / succeeded / partial / failed</small>
+              ><small>pending / succeeded / partial / failed / skipped</small>
             </div>
           </div>
 
@@ -1738,11 +1730,10 @@
                   当前只注册 <code>standard</code>；输入必须是单个 JSON object。
                 </li>
                 <li>
-                  展开嵌套 subject、来源 event/alert ID、来源 severity
-                  等已知字段。
+                  展开 subject、来源 event/alert ID、values 和各级别 evaluations。
                 </li>
                 <li>
-                  重复 key、尾随 JSON、非法 action 或已知字段非法值确定性拒绝。
+                  重复 key、尾随 JSON、非法数值/动作及映射后重复级别使整条输入被拒绝。
                 </li>
                 <li>
                   不得访问 Repository、Mailbox、MQ Session 或产生外部副作用。
@@ -1752,7 +1743,7 @@
             <article class="panel">
               <h3>EventFactory 独占什么</h3>
               <ul class="clean-list">
-                <li>租户覆盖、EventSource、标准 severity 和接收时间。</li>
+                <li>租户覆盖/一致性校验、EventSource、逐级 severity 映射与稳定接收时间。</li>
                 <li>
                   确定性 Event ID；来源 Event ID 为空时使用稳定 record ID。
                 </li>
@@ -1910,7 +1901,7 @@
               <div class="pipe-arrow">→</div>
               <div class="pipe-node system">
                 <strong>ProcessEvent</strong
-                ><small>查找 / 比较 / CAS / 恢复</small>
+                ><small>多级别裁决 / 保存计划 / CAS / 恢复</small>
               </div>
               <div class="pipe-arrow">→</div>
               <div class="pipe-node side-effect">
@@ -1941,13 +1932,13 @@
           <div class="pipeline" aria-label="Lifecycle 最终落盘流程">
             <div class="pipeline-row">
               <div class="pipe-node system">
-                <strong>Lifecycle decision</strong
-                ><small>计算目标状态与输出</small>
+                <strong>Lifecycle decision + plan CAS</strong
+                ><small>冻结全部级别与升级策略</small>
               </div>
               <div class="pipe-arrow">→</div>
               <div class="pipe-node side-effect">
                 <strong>Alert create / CAS</strong
-                ><small>ES: refresh=wait_for</small>
+                ><small>refresh=false + Recent Alert</small>
               </div>
               <div class="pipe-arrow">→</div>
               <div class="pipe-node">
@@ -1975,124 +1966,38 @@
             <span class="callout-mark">W</span>
             <p>
               <strong>“最后统一落盘”的准确含义：</strong>同一次裁决产生的
-              AlertLog 统一批量提交， 并把 EventProcessing CAS
-              放在全部日志项成功之后。Alert create/CAS 仍先发生，
+              AlertLog 统一批量提交，完成结果的 Event CAS 位于全部日志项成功之后。
+              另有一次保存 plan 的 Event CAS 在 Alert 副作用之前发生；
               Alert、AlertLog 与 Event 之间仍没有跨对象事务。
             </p>
           </div>
 
-          <div class="subheading"><h3>Event 状态裁决矩阵</h3></div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Event</th>
-                  <th>active Alert</th>
-                  <th>EventProcessing</th>
-                  <th>Alert 结果</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td><code>triggered</code></td>
-                  <td>不存在</td>
-                  <td><code>accepted</code></td>
-                  <td>创建 active Alert，执行 Enricher</td>
-                </tr>
-                <tr>
-                  <td><code>triggered</code> / 同等级</td>
-                  <td>存在</td>
-                  <td><code>accepted</code></td>
-                  <td>只推进 latest_event_id、last_occurred_at、update_at</td>
-                </tr>
-                <tr>
-                  <td><code>triggered</code> / 更高等级</td>
-                  <td>存在</td>
-                  <td><code>accepted</code></td>
-                  <td>旧 Alert closed/severity_upgrade，创建新 active Alert</td>
-                </tr>
-                <tr>
-                  <td><code>triggered</code> / 更低等级</td>
-                  <td>存在</td>
-                  <td><code>suppressed</code></td>
-                  <td>Alert 不变，写 suppress AlertLog</td>
-                </tr>
-                <tr>
-                  <td><code>resolved</code></td>
-                  <td>存在</td>
-                  <td><code>accepted</code></td>
-                  <td>Alert → recovered/source</td>
-                </tr>
-                <tr>
-                  <td><code>closed</code></td>
-                  <td>存在</td>
-                  <td><code>accepted</code></td>
-                  <td>Alert → closed/source</td>
-                </tr>
-                <tr>
-                  <td><code>resolved / closed</code></td>
-                  <td>不存在</td>
-                  <td><code>orphaned</code></td>
-                  <td>不创建 Alert</td>
-                </tr>
-                <tr>
-                  <td>非法组合</td>
-                  <td>任意</td>
-                  <td><code>rejected</code></td>
-                  <td>不修改 Alert</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <div class="subheading"><h3>多级别裁决：先升级，再处理匹配级别的终结</h3></div>
+          <p>evaluations 的数组顺序不影响结果；未出现的级别不隐含恢复。表内状态为事件汇总，逐级结果另行保存。</p>
+          <div class="table-wrap"><table><thead><tr><th>当前活动 Alert</th><th>本次判定</th><th>汇总状态</th><th>结果</th></tr></thead><tbody>
+            <tr><td>无</td><td>critical、warning 同时 triggered</td><td>accepted</td><td>创建 critical，warning 被抑制</td></tr>
+            <tr><td>warning</td><td>critical triggered + warning resolved/closed</td><td>accepted</td><td>优先按全局策略升级，旧级别终结被替代</td></tr>
+            <tr><td>critical</td><td>critical resolved + warning triggered</td><td>accepted</td><td>恢复 critical，再创建 warning</td></tr>
+            <tr><td>critical</td><td>critical triggered + warning resolved</td><td>accepted</td><td>推进 critical，warning 的恢复为 orphaned</td></tr>
+            <tr><td>critical</td><td>只有 warning triggered</td><td>suppressed</td><td>critical 不变，记录抑制并关联该 Alert</td></tr>
+            <tr><td>无匹配级别</td><td>只有 resolved/closed</td><td>orphaned</td><td>不创建 Alert</td></tr>
+          </tbody></table></div>
+          <div class="callout"><span class="callout-mark">↗</span><p>
+            <code>lifecycle.severity_upgrade_policy</code> 默认 <code>close_and_create</code>，关闭旧 Alert 后创建新 Alert；
+            <code>update_current</code> 保留原 alert_id、创建锚点与丰富结果，只升级当前级别并记录 severity_change。
+            两者都不原地降级，历史被抑制的低级别也不会自动重新生效。
+          </p></div>
 
           <div class="subheading"><h3>典型分支的副作用顺序</h3></div>
           <div class="sequence-list">
-            <div class="sequence-item">
-              <strong>创建</strong>
-              <span class="sequence-code"
-                >stable Alert ID → Enrich → CreateAlert(wait_for) → FinalHook →
-                [trigger + push] Bulk(refresh=false) → Event CAS
-                accepted(refresh=false)</span
-              >
-            </div>
-            <div class="sequence-item">
-              <strong>同等级推进</strong>
-              <span class="sequence-code"
-                >Alert CAS(wait_for) → FinalHook → [push] Bulk(refresh=false) →
-                Event CAS accepted(refresh=false)</span
-              >
-            </div>
-            <div class="sequence-item">
-              <strong>来源终结</strong>
-              <span class="sequence-code"
-                >Alert CAS terminal(wait_for) → FinalHook → [recover/close +
-                push] Bulk(refresh=false) → Event CAS
-                accepted(refresh=false)</span
-              >
-            </div>
-            <div class="sequence-item">
-              <strong>等级抑制</strong>
-              <span class="sequence-code"
-                >[suppress] Bulk(refresh=false) → Event CAS
-                suppressed(refresh=false)</span
-              >
-            </div>
-            <div class="sequence-item">
-              <strong>等级升级</strong>
-              <span class="sequence-code"
-                >close old(wait_for) → create new(wait_for) → old/new FinalHook
-                → [close + push + trigger + push] Bulk(refresh=false) → Event
-                CAS accepted(refresh=false)</span
-              >
-            </div>
-            <div class="sequence-item">
-              <strong>直接关闭</strong>
-              <span class="sequence-code"
-                >Alert CAS closed(wait_for) → FinalHook → [close + push]
-                Bulk(refresh=false)</span
-              >
-            </div>
-          </div>
+<div class="sequence-item"><strong>创建</strong><span class="sequence-code">稳定 ID → Enrich → 保存 plan → CreateAlert + 缓存 → Hook → 日志 → Event 终态</span></div>
+<div class="sequence-item"><strong>同级推进</strong><span class="sequence-code">保存 plan → Alert CAS + 缓存 → Hook → 日志 → Event 终态</span></div>
+<div class="sequence-item"><strong>同级终结</strong><span class="sequence-code">保存 plan → 终态 CAS + 缓存 → Hook → 日志 → Event 终态</span></div>
+<div class="sequence-item"><strong>等级抑制</strong><span class="sequence-code">保存 plan → suppress 日志 → Event 终态及关联 Alert</span></div>
+<div class="sequence-item"><strong>关闭后新建</strong><span class="sequence-code">保存 plan → 关闭旧 Alert → 创建新 Alert → 旧/新 Hook → 日志 → Event 终态</span></div>
+<div class="sequence-item"><strong>原地升级</strong><span class="sequence-code">保存 plan → 升级原 Alert + 缓存 → active Hook → severity_change/push 日志 → Event 终态</span></div>
+<div class="sequence-item"><strong>直接关闭</strong><span class="sequence-code">独立幂等命令 → 终态 CAS + 缓存 → Hook → close/push 日志；不创建 Event</span></div>
+</div>
 
           <div class="callout">
             <span class="callout-mark">✓</span>
@@ -2112,16 +2017,16 @@
               <p>日志批次已经全部成功，直接返回保存的 Processing 结果。</p>
             </article>
             <article class="decision-card">
-              <span>ANCHOR 02</span><strong>latest_event_id 命中</strong>
-              <p>说明 Alert CAS 已完成，补齐输出与 Event 终局即可。</p>
+              <span>ANCHOR 02</span><strong>已保存 processing.plan</strong>
+              <p>冻结目标快照与升级策略，重启后继续原计划，不受新配置改变。</p>
             </article>
             <article class="decision-card">
-              <span>ANCHOR 03</span><strong>trigger_event_id 命中</strong>
-              <p>说明 Alert 已由该 opening Event 创建，继续幂等收尾。</p>
+              <span>ANCHOR 03</span><strong>实时读取目标 Alert</strong>
+              <p>规范化后与计划一致即视为已完成；否则按原 VersionToken 执行 CAS。</p>
             </article>
             <article class="decision-card">
-              <span>ANCHOR 04</span><strong>FindAlertEndedByEvent</strong>
-              <p>识别来源终结或等级升级已完成的旧 Alert。</p>
+              <span>ANCHOR 04</span><strong>更晚的独立关闭</strong>
+              <p>源事件快照已被更晚关闭时，保留终态并跳过旧 active Hook。</p>
             </article>
             <article class="decision-card">
               <span>ANCHOR 05</span><strong>确定性 ID</strong>
@@ -2132,7 +2037,7 @@
             </article>
             <article class="decision-card">
               <span>ANCHOR 06</span><strong>有界 CAS 重试</strong>
-              <p>最多 3 次；冲突后重读并重新裁决，不用旧 replacement 覆盖。</p>
+              <p>最多 3 次；仅第一项未生效且版本被推进时撤销重裁决，已有副作用继续原计划。</p>
             </article>
           </div>
 
@@ -2140,10 +2045,8 @@
             <article class="panel">
               <h3>Enricher</h3>
               <p>
-                只在创建新 Alert 前同步执行。error、panic、非法状态或非法 JSON
-                降级为
-                <code>failed + {}</code>，不阻断 Alert 创建；当前 Noop
-                实现返回空的 succeeded。
+                只在新 Alert 创建计划中执行；update_current 不重新丰富。失败形成规范 failed processors 信封，
+                不阻断创建；Noop 使用 succeeded 与 <code>{"processors":[]}</code>。已保存计划复用丰富快照。
               </p>
             </article>
             <article class="panel">
@@ -2160,12 +2063,9 @@
           <div class="callout danger">
             <span class="callout-mark">ES</span>
             <p>
-              Elasticsearch 的 Alert create/CAS 使用
-              <code>refresh=wait_for</code>，保证同 fingerprint 的后续 Event
-              能看到最新 Alert。AlertLog Bulk 和最终 Event CAS 使用
-              <code>refresh=false</code>，成功后仍可能在一个 refresh interval
-              内无法被 search 看见； 当前没有运行中的 Event
-              Replayer，未来扫描必须避开这段可见性窗口。
+              Lifecycle 的 Alert create/CAS、Event 计划与结果 CAS、AlertLog Bulk 均使用
+              <code>refresh=false</code>。Recent Alert 缓存与 realtime GET 跨越搜索可见性窗口；缓存写入失败保留队首重试。
+              这不提供跨对象事务，也不保证外部 Hook 恰好执行一次。
             </p>
           </div>
         </section>
@@ -2312,6 +2212,7 @@
                   <td>一次性</td>
                   <td>调用 ES Manager 预建指定历史时间桶后退出</td>
                 </tr>
+                <tr><td><code>linkd storage migrate</code></td><td>一次性</td><td>初始化存储与来源集合，不转换旧事件，也不重置调度状态</td></tr>
                 <tr>
                   <td><code>linkd config ... / version</code></td>
                   <td>辅助</td>
@@ -2324,10 +2225,8 @@
           <div class="callout warn">
             <span class="callout-mark">CP</span>
             <p>
-              当前控制面已经实现 Elasticsearch 索引/归档管理任务与 Redis Stream
-              观测/安全裁剪任务； API 和 Leader Election 仍是规划。Leader
-              完成前，拆分模式的 Control Plane 只能部署单副本。 All-in-one
-              仅在配置了至少一个管理任务时启动控制面职责。
+              当前控制面已提供 EventSource API、任务调度、ES schema/时间桶/归档管理和 Redis Stream 观测。
+              仍只允许单副本，Redis 单活动中心保护不等于完整多副本选举。Helm 部署三角色，all-in-one 保留为独立进程模式。
             </p>
           </div>
         </section>
@@ -2352,7 +2251,7 @@
                 <li><code>standard</code> Cleaner 与 EventFactory</li>
                 <li>Kafka Cleaner Flow、Redis Mailbox 与 Signal</li>
                 <li>Lifecycle 状态矩阵、Enricher、FinalHook</li>
-                <li>同次裁决 AlertLog 批量追加，最后 CAS Event 结果</li>
+                <li>values、多级别 evaluations、两种升级策略与持久化裁决计划</li>
                 <li>内存 / MySQL / Elasticsearch Repository</li>
                 <li>
                   All-in-one 与 Cleaner / Lifecycle / Control Plane 进程入口
@@ -2386,7 +2285,7 @@
                 <li>文档中的候选模块名已经定稿</li>
                 <li>存在通用跨对象事务或 durable inbox</li>
                 <li>直接关闭已有公开 HTTP / CLI / Kafka 入口</li>
-                <li>API、Leader Election、自动 retention 或分桶迁移已经落地</li>
+                <li>完整多副本 Leader Election、自动 retention 或旧事件数据迁移已经落地</li>
               </ul>
             </article>
           </div>
@@ -2398,8 +2297,9 @@
             <a href="./reference/contracts/raw-event.md">standard 输入契约</a>
             <a href="./design/core-storage-contract.md">核心存储契约</a>
             <a href="./design/deployment.md">部署模式</a>
+<a href="./guides/multilevel-event-upgrade.md">测试环境重置升级</a>
             <a href="../internal/domain/event.go">domain.Event 代码</a>
-            <a href="../internal/lifecycle/processor.go"
+            <a href="../internal/lifecycle/plan.go"
               >Lifecycle Processor 代码</a
             >
           </div>

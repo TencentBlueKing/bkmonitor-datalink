@@ -1,5 +1,7 @@
 # alarm_callback 回调输入字段盘点
 
+> 库外证据使用 Kingeye 源码路径引用，按本文记录的提交或取证日期查看；这些路径不是本仓库的相对链接，也不保证当前 Kingeye checkout 仍有相同文件。
+
 日期：2026-09-02。状态：源码输入盘点；用户后续映射方案见迁移计划第 5.19 节，完整输入 schema 尚未冻结。
 
 关联：[迁移执行计划](../design/alarm-callback-enrichment-migration.md)。
@@ -86,7 +88,7 @@ bk_strategy_history_id 已进一步明确为 alarm_strategy_history.id，不是�
 最终维度展示；Converter 使用维度 key/value 与指标库、Meta 等依赖重新生成展示条目。
 因此它们暂不列为必须提供的丰富输入。用户后续已将 F03/F04 合为 Event.Severity、F05–F07
 合为 Labels.bk_biz_id；表中的分处读取是旧事实。算法等级的显式映射已确认，见
-[迁移设计第 5.22 节](../design/alarm-callback-enrichment-migration.md#522-已确认策略算法等级显式映射到-eventseverity)。
+[迁移设计第 5.22 节](../design/alarm-callback-enrichment-migration.md#522-已确认内容文案算法等级显式映射到-eventseverity)。
 业务 ID 按来源、观测维度与资源归属分别使用的决定见
 [迁移设计第 5.24 节](../design/alarm-callback-enrichment-migration.md#524-已确认业务-id-按来源业务观测维度与资源归属分别使用)。
 新输入的 Labels.bk_biz_id 已确认为必填数字 Scalar 正整数；缺失返回 missing_field + failed，
@@ -275,10 +277,10 @@ pod/container/node 字段进行条件追加；集群名称、业务归属来自�
 
 2026-09-03 补充核对：公共 utils 中的 cmdb_query 是 kingeye.base.onemodel 的进程内别名，
 不能据该名字认定存在可供 Linkd 直接调用的同名 HTTP 接口。
-[search_tenant_entity_documents](../../../../../kingeye/src/kingeye/base/domains/onemodel/instances.py)
+search_tenant_entity_documents（Kingeye 源码 `src/kingeye/base/domains/onemodel/instances.py`）
 （184）通过 search_tenant_entities 调用 fabric Reader；
-[Reader 装配](../../../../../kingeye/src/kingeye/base/domains/onemodel/fabric_storage.py)（42）由配置选择实现，
-仓库的 [InstanceStorageFabricReader](../../../../../kingeye/src/kingeye/base/candidacy/infras/instance_storage/onemodel.py)
+Reader 装配（Kingeye 源码 `src/kingeye/base/domains/onemodel/fabric_storage.py`）（42）由配置选择实现，
+仓库的 InstanceStorageFabricReader（Kingeye 源码 `src/kingeye/base/candidacy/infras/instance_storage/onemodel.py`）
 （367）使用统一实例存储 SDK。这与 KAC k8s_field_add 直接使用 ResourceIndex 查询 ES 的路径
 应分别记录；当前只核对源码，未验证实际部署配置、存储后端或接口可用性。输出字段已在
 [迁移设计第 5.29 节](../design/alarm-callback-enrichment-migration.md#529-已确认k8s-专用输出归入-enrichk8s保留-bcs_cluster_id)
@@ -287,17 +289,17 @@ pod/container/node 字段进行条件追加；集群名称、业务归属来自�
 统一为当前 OneModel 实例存储，Go 侧对接其 Elasticsearch 后端。
 
 已有调用示例位于
-[common/alarm_callback/basic_push_alarm_data.py](../../../../../kingeye/src/kingeye/common/alarm_callback/basic_push_alarm_data.py)：
+common/alarm_callback/basic_push_alarm_data.py（Kingeye 源码 `src/kingeye/common/alarm_callback/basic_push_alarm_data.py`）：
 k8s_field_add（523）分别按 cluster_id 查询集群、按 cluster_id + namespace 查询 Namespace，
 两次均显式传入 self.bk_tenant_id，随后优先采用 Namespace 业务、回退集群业务，并读取集群名称；
 clean_model_inst_id（912）调用 build_k8s_inst_id 时显式传入 event_data.bk_tenant_id。
-公共 [utils.py](../../../../../kingeye/src/kingeye/common/alarm_callback/utils.py) 的
+公共 utils.py（Kingeye 源码 `src/kingeye/common/alarm_callback/utils.py`） 的
 search_k8s_instance_document（588）将模型与过滤字段组织为 EntityQuery，实际调用
 onemodel.search_tenant_entity_documents；build_k8s_inst_id（534）使用同一查询入口读取
 cw_object_model_inst_id。这些是当前 common 路径的源码示例，不代表 KAC 的旧调用点已同步；
 用户在核对示例后明确确认 Linkd 的 K8s 查询对齐当前 OneModel 实例存储。
 
-当前 [SDK 装配](../../../../../kingeye/src/kingeye/base/candidacy/infras/instance_storage/runtime.py) 的
+当前 SDK 装配（Kingeye 源码 `src/kingeye/base/candidacy/infras/instance_storage/runtime.py`） 的
 build_instance_storage_sdk（252）支持 Elasticsearch 与 Doris，由显式 read_backend 参数或
 BKAPP_INSTANCE_STORAGE_READ_BACKEND 配置选择，源码默认 elasticsearch。该默认值不能
 证明待接入部署使用哪个后端；用户已明确本次使用 ES。该事实来自用户确认，本次未读取
@@ -314,12 +316,12 @@ write，但当前适配器读写均使用该目标解析器；带模型过滤的
 
 字段保留链路如下：
 
-- [ES _instance_record](../../../../../kingeye/src/kingeye/base/candidacy/infras/instance_storage/elasticsearch.py)
+- ES _instance_record（Kingeye 源码 `src/kingeye/base/candidacy/infras/instance_storage/elasticsearch.py`）
   （423）将未列入保留/标准字段的键保存为 attributes；bk_biz_id 不在这些排除字段中。
-- [OneModel _instance_document](../../../../../kingeye/src/kingeye/base/candidacy/infras/instance_storage/onemodel.py)
+- OneModel _instance_document（Kingeye 源码 `src/kingeye/base/candidacy/infras/instance_storage/onemodel.py`）
   （329）展开 record.attributes，并另行提供标准 bk_biz_ids 列表。
-- [document_to_entity](../../../../../kingeye/src/kingeye/base/domains/onemodel/_shared.py)（216）的属性
-  排除项也不包含 bk_biz_id；[entity_to_document](../../../../../kingeye/src/kingeye/base/domains/onemodel/instances.py)
+- document_to_entity（Kingeye 源码 `src/kingeye/base/domains/onemodel/_shared.py`）（216）的属性
+  排除项也不包含 bk_biz_id；entity_to_document（Kingeye 源码 `src/kingeye/base/domains/onemodel/instances.py`）
   （117）再展开 entity.attributes，因此原有 bk_biz_id 会保留到最终返回文档。
 
 当前 common k8s_field_add（560）仍可按 namespace_info.get("bk_biz_id") or
@@ -350,7 +352,7 @@ cluster_info.get("bk_biz_id") 消费。该证据不保证每条真实记录均�
 | 旧路径/行为 | 本次处理与原因 |
 | --- | --- |
 | `R.id`、`R.event.id`；`R.begin_time/create_time`；`R.status` | 旧身份/时间/状态装配及日志定位。Linkd 已有 Event 与生命周期，不因迁移旧 AlarmEvent 构造函数而重复要求输入或覆盖核心事实 |
-| `clean_meta_info()` | 返回旧 event_data.id 的字符串；[BaseProcessor.process_alarms](../../../../../kingeye/src/kingeye/kac/alarm_callback/processors/base.py)（162–180）按当前时间生成批次 ID 池并赋给转换对象，该值不是回调中的业务 ID。已确认保留 meta_info 并改从 Event.SourceEventID 取值，见[迁移设计第 5.34 节](../design/alarm-callback-enrichment-migration.md#534-已确认meta_info-从-eventsourceeventid-取值) |
+| `clean_meta_info()` | 返回旧 event_data.id 的字符串；BaseProcessor.process_alarms（Kingeye 源码 `src/kingeye/kac/alarm_callback/processors/base.py`）（162–180）按当前时间生成批次 ID 池并赋给转换对象，该值不是回调中的业务 ID。已确认保留 meta_info 并改从 Event.SourceEventID 取值，见[迁移设计第 5.34 节](../design/alarm-callback-enrichment-migration.md#534-已确认meta_info-从-eventsourceeventid-取值) |
 | `R.end_time`、`R.event.end_time`、`R.description` | 旧终态时间/原因分支；已明确排除恢复/关闭丰富，不加入本次输入需求 |
 | `clean_bk_service_id()`、`clean_Namespace()` | 两项方法固定返回空字符串，没有来源读取需求；已确认不迁移这两个空占位输出，实际 K8s namespace 继续保留，见[迁移设计第 5.31 节](../design/alarm-callback-enrichment-migration.md#531-已确认不迁移-bk_service_id-与-namespace-空占位字段) |
 | `R.event.tags[].key/value` 中 `__NO_DATA_DIMENSION__` | 旧接入过滤判断；过滤已排除。日志无数据文案另由 F02 识别，不据此要求迁移整份 tags |
@@ -384,23 +386,23 @@ cluster_info.get("bk_biz_id") 消费。该证据不保证每条真实记录均�
 
 | 编号 | 文件与主要符号 |
 | --- | --- |
-| E01 | [entry.py](../../../../../kingeye/src/kingeye/kac/alarm_callback/entry.py)：StrategyCollectTypeMatcher，AlarmDataHandler.classify_alarm（142）、_search_configs_by_bk_strategy_ids（207） |
-| E02 | [processors/base.py](../../../../../kingeye/src/kingeye/kac/alarm_callback/processors/base.py)：process、adapt_alarm_data（289）、filter_no_data_alarms |
-| E03 | [processors/basic_event.py](../../../../../kingeye/src/kingeye/kac/alarm_callback/processors/basic_event.py)：AlarmTypeMatcher，MonitorSource/CollectTask/NoData/SystemMetric/UptimeCheckMixin |
-| E04 | [converter/base.py](../../../../../kingeye/src/kingeye/kac/alarm_callback/converter/base.py)：__init__（33）、clean_event（345）、get_dimensions_display（357）、get_obj_model_dim_display（442）、format_event_dict（542）、get_metric_query_params（628） |
-| E05 | [converter/basic_data.py](../../../../../kingeye/src/kingeye/kac/alarm_callback/converter/basic_data.py)：get_dimensions_display、format_event_dict、clean_object_inst_by_dimension（340）、get_object_model_inst_id（478）；[processors/basic_data.py](../../../../../kingeye/src/kingeye/kac/alarm_callback/processors/basic_data.py)：adapt_alarm_data |
-| E06 | [converter/vmware.py](../../../../../kingeye/src/kingeye/kac/alarm_callback/converter/vmware.py)：get_table_id/get_dimensions_display/format_event_dict；[cleaner/private_cloud.py](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/private_cloud.py)：clean_item |
-| E07 | [processors/log_metric.py](../../../../../kingeye/src/kingeye/kac/alarm_callback/processors/log_metric.py)：adapt_alarm_data/preprocess_alarms |
-| E08 | [processors/log_keyword.py](../../../../../kingeye/src/kingeye/kac/alarm_callback/processors/log_keyword.py)：adapt_alarm_data；[converter/log_event.py](../../../../../kingeye/src/kingeye/kac/alarm_callback/converter/log_event.py)：LogCollectConverter |
-| E09 | [cleaner/base.py](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/base.py)：get_biz_topo_message、k8s_field_add（383）、clean_object、clean_item、clean_metric_name、clean_dimension_info、clean_model_inst_id、clean_anomaly_begin_time、clean_unit |
-| E10 | [cleaner/log_metric.py](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/log_metric.py)：clean_content；[cleaner/log_keyword.py](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/log_keyword.py)：clean_content（191）、clean_log_relate_info |
-| E11 | [common/alarm_callback/utils.py](../../../../../kingeye/src/kingeye/common/alarm_callback/utils.py)：build_k8s_inst_id（534）、get_alarm_content（608）、dimension_escape（651）；由 [kac utils](../../../../../kingeye/src/kingeye/kac/alarm_callback/utils.py) 导入 |
-| E12 | [handle_alert_info.py](../../../../../kingeye/src/kingeye/kac/alarm_callback/handle_alert_info.py)：HandleAlertToGraphPanel 翻译器、create_where_with_dimensions（523）、get_dimensions（581）、get_graph_panel（609） |
-| E13 | [converter/uptime_check.py](../../../../../kingeye/src/kingeye/kac/alarm_callback/converter/uptime_check.py)：UptimeCheckConverter；[processors/uptime_check.py](../../../../../kingeye/src/kingeye/kac/alarm_callback/processors/uptime_check.py)：plenty_alarm_message |
-| E14 | [processors/access_object.py](../../../../../kingeye/src/kingeye/kac/alarm_callback/processors/access_object.py)：preprocess_alarms（11）；[converter/access_object.py](../../../../../kingeye/src/kingeye/kac/alarm_callback/converter/access_object.py)：get_dimensions_display |
-| E15 | [cleaner/basic_data.py](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/basic_data.py)：apm_field_add（59）、cloud_field_add（116） |
-| E16 | [onemodel/kubernetes.py](../../../../../kingeye/src/kingeye/base/domains/onemodel/kubernetes.py)：KUBERNETES_IDENTITY_DIMENSIONS（30）；[kubernetes_constant.py](../../../../../kingeye/src/kingeye/common/constant/kubernetes_constant.py)：K8S_DIMENSION_NAME（1291） |
-| E17 | [测试样本目录](../../../../../kingeye/src/kingeye/kac/tests/alarm_callback/source_data/) 与 [conftest.py](../../../../../kingeye/src/kingeye/kac/tests/alarm_callback/conftest.py)：origin_alarms 输入、外部依赖 mock；[test_apm_model_fields.py](../../../../../kingeye/src/kingeye/kac/tests/alarm_callback/test_apm_model_fields.py)：APM 局部字段测试 |
+| E01 | entry.py（Kingeye 源码 `src/kingeye/kac/alarm_callback/entry.py`）：StrategyCollectTypeMatcher，AlarmDataHandler.classify_alarm（142）、_search_configs_by_bk_strategy_ids（207） |
+| E02 | processors/base.py（Kingeye 源码 `src/kingeye/kac/alarm_callback/processors/base.py`）：process、adapt_alarm_data（289）、filter_no_data_alarms |
+| E03 | processors/basic_event.py（Kingeye 源码 `src/kingeye/kac/alarm_callback/processors/basic_event.py`）：AlarmTypeMatcher，MonitorSource/CollectTask/NoData/SystemMetric/UptimeCheckMixin |
+| E04 | converter/base.py（Kingeye 源码 `src/kingeye/kac/alarm_callback/converter/base.py`）：__init__（33）、clean_event（345）、get_dimensions_display（357）、get_obj_model_dim_display（442）、format_event_dict（542）、get_metric_query_params（628） |
+| E05 | converter/basic_data.py（Kingeye 源码 `src/kingeye/kac/alarm_callback/converter/basic_data.py`）：get_dimensions_display、format_event_dict、clean_object_inst_by_dimension（340）、get_object_model_inst_id（478）；processors/basic_data.py（Kingeye 源码 `src/kingeye/kac/alarm_callback/processors/basic_data.py`）：adapt_alarm_data |
+| E06 | converter/vmware.py（Kingeye 源码 `src/kingeye/kac/alarm_callback/converter/vmware.py`）：get_table_id/get_dimensions_display/format_event_dict；cleaner/private_cloud.py（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/private_cloud.py`）：clean_item |
+| E07 | processors/log_metric.py（Kingeye 源码 `src/kingeye/kac/alarm_callback/processors/log_metric.py`）：adapt_alarm_data/preprocess_alarms |
+| E08 | processors/log_keyword.py（Kingeye 源码 `src/kingeye/kac/alarm_callback/processors/log_keyword.py`）：adapt_alarm_data；converter/log_event.py（Kingeye 源码 `src/kingeye/kac/alarm_callback/converter/log_event.py`）：LogCollectConverter |
+| E09 | cleaner/base.py（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/base.py`）：get_biz_topo_message、k8s_field_add（383）、clean_object、clean_item、clean_metric_name、clean_dimension_info、clean_model_inst_id、clean_anomaly_begin_time、clean_unit |
+| E10 | cleaner/log_metric.py（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/log_metric.py`）：clean_content；cleaner/log_keyword.py（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/log_keyword.py`）：clean_content（191）、clean_log_relate_info |
+| E11 | common/alarm_callback/utils.py（Kingeye 源码 `src/kingeye/common/alarm_callback/utils.py`）：build_k8s_inst_id（534）、get_alarm_content（608）、dimension_escape（651）；由 kac utils（Kingeye 源码 `src/kingeye/kac/alarm_callback/utils.py`） 导入 |
+| E12 | handle_alert_info.py（Kingeye 源码 `src/kingeye/kac/alarm_callback/handle_alert_info.py`）：HandleAlertToGraphPanel 翻译器、create_where_with_dimensions（523）、get_dimensions（581）、get_graph_panel（609） |
+| E13 | converter/uptime_check.py（Kingeye 源码 `src/kingeye/kac/alarm_callback/converter/uptime_check.py`）：UptimeCheckConverter；processors/uptime_check.py（Kingeye 源码 `src/kingeye/kac/alarm_callback/processors/uptime_check.py`）：plenty_alarm_message |
+| E14 | processors/access_object.py（Kingeye 源码 `src/kingeye/kac/alarm_callback/processors/access_object.py`）：preprocess_alarms（11）；converter/access_object.py（Kingeye 源码 `src/kingeye/kac/alarm_callback/converter/access_object.py`）：get_dimensions_display |
+| E15 | cleaner/basic_data.py（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/basic_data.py`）：apm_field_add（59）、cloud_field_add（116） |
+| E16 | onemodel/kubernetes.py（Kingeye 源码 `src/kingeye/base/domains/onemodel/kubernetes.py`）：KUBERNETES_IDENTITY_DIMENSIONS（30）；kubernetes_constant.py（Kingeye 源码 `src/kingeye/common/constant/kubernetes_constant.py`）：K8S_DIMENSION_NAME（1291） |
+| E17 | 测试样本目录（Kingeye 源码 `src/kingeye/kac/tests/alarm_callback/source_data/`） 与 conftest.py（Kingeye 源码 `src/kingeye/kac/tests/alarm_callback/conftest.py`）：origin_alarms 输入、外部依赖 mock；test_apm_model_fields.py（Kingeye 源码 `src/kingeye/kac/tests/alarm_callback/test_apm_model_fields.py`）：APM 局部字段测试 |
 
 ## 11. 鲸眼配置对策略输入的覆盖情况
 
@@ -464,14 +466,14 @@ QC 与旧 S 表里的监控平台 Q 不是同一个结构；尤其 SI.query_conf
 
 | 证据 | 文件与用途 |
 | --- | --- |
-| E18 | [StrategyConfig 定义](../../../../../kingeye/src/kingeye/base/candidacy/models/declaratives/v1alpha1/strategy.py)：StrategyItemSpec、BaseStrategySpec、StrategyDetectAlgorithmSpec、StrategyStatus/Labels |
-| E19 | [BaseExecutor](../../../../../kingeye/src/kingeye/kmc/controller/executor/strategy_task/base_executor.py)：get_unit、build_items、init_kwargs_algorithms；这里只取转换证据，不在丰富中运行下发器 |
-| E20 | [DataExecutor](../../../../../kingeye/src/kingeye/kmc/controller/executor/strategy_task/data_executor/__init__.py)：init_kwargs_query_configs、get_data_source_label、update_promql_kwargs |
-| E21 | [TargetExecutor](../../../../../kingeye/src/kingeye/kmc/controller/executor/strategy_task/target_executor/__init__.py)：init_kwargs_query_configs、format_kwargs_base_target |
-| E22 | [LogExecutor](../../../../../kingeye/src/kingeye/kmc/controller/executor/strategy_task/data_executor/log_executor.py)：日志 query_config 与 time_field 来源 |
-| E23 | [ApmExecutor](../../../../../kingeye/src/kingeye/kmc/controller/executor/strategy_task/data_executor/apm_executor.py)：查询字段转换、APM 指标单位依赖 |
-| E24 | [StrategyMetricService](../../../../../kingeye/src/kingeye/common/alarm_callback/strategy_metric_service.py)：single_metric_info、multiple_metric、get_metric_info；空 query_configs 与单指标的关系 |
-| E25 | [策略转换](../../../../../kingeye/src/kingeye/base/domains/strategy/converter.py)：结果表/维度转换与 origin_config；该证据不能替代指定监控平台版本表的读取协议 |
+| E18 | StrategyConfig 定义（Kingeye 源码 `src/kingeye/base/candidacy/models/declaratives/v1alpha1/strategy.py`）：StrategyItemSpec、BaseStrategySpec、StrategyDetectAlgorithmSpec、StrategyStatus/Labels |
+| E19 | BaseExecutor（Kingeye 源码 `src/kingeye/kmc/controller/executor/strategy_task/base_executor.py`）：get_unit、build_items、init_kwargs_algorithms；这里只取转换证据，不在丰富中运行下发器 |
+| E20 | DataExecutor（Kingeye 源码 `src/kingeye/kmc/controller/executor/strategy_task/data_executor/__init__.py`）：init_kwargs_query_configs、get_data_source_label、update_promql_kwargs |
+| E21 | TargetExecutor（Kingeye 源码 `src/kingeye/kmc/controller/executor/strategy_task/target_executor/__init__.py`）：init_kwargs_query_configs、format_kwargs_base_target |
+| E22 | LogExecutor（Kingeye 源码 `src/kingeye/kmc/controller/executor/strategy_task/data_executor/log_executor.py`）：日志 query_config 与 time_field 来源 |
+| E23 | ApmExecutor（Kingeye 源码 `src/kingeye/kmc/controller/executor/strategy_task/data_executor/apm_executor.py`）：查询字段转换、APM 指标单位依赖 |
+| E24 | StrategyMetricService（Kingeye 源码 `src/kingeye/common/alarm_callback/strategy_metric_service.py`）：single_metric_info、multiple_metric、get_metric_info；空 query_configs 与单指标的关系 |
+| E25 | 策略转换（Kingeye 源码 `src/kingeye/base/domains/strategy/converter.py`）：结果表/维度转换与 origin_config；该证据不能替代指定监控平台版本表的读取协议 |
 
 
 ### 11.3 旧指标查询条件的实际合并行为
@@ -513,7 +515,7 @@ condition=or 时，也改写了前一组已追加的同一字典。因此告警�
 这是原纯函数样例可复现的范围扩大；本次没有修复 Kingeye。
 
 2026-09-03，用户确认 OR 问题保留并在迁移实现中增加代码注释，其余条件合并行为依旧迁移。
-具体要求见[迁移设计第 5.21.4 节](../design/alarm-callback-enrichment-migration.md#5214-已确认沿用旧条件合并保留并注释-or-问题)。
+具体要求见[迁移设计第 5.21.4 节](../design/alarm-callback-enrichment-migration.md#5214-已确认沿用旧条件合并将-or-范围扩大标记为已知迁移风险)。
 此前提出的“条件取交集，冲突则 partial”不采用；已经确认的“必要定位维度缺失且无法补齐时
 partial”仍以迁移设计第 5.21.3 节为准。上表作为后续输出对照基线，不代表 Go 实现已完成。
 
@@ -533,8 +535,8 @@ partial”仍以迁移设计第 5.21.3 节为准。上表作为后续输出对�
 | StrategyModel | 映射 alarm_strategy_v2，所查看的模型未声明修订 version 字段 | 不能据此直接设计 WHERE id = ? AND version = ? |
 | StrategyHistoryModel | 映射 alarm_strategy_history，含 strategy_id、create_time、content、operate、status 等；初始化迁移声明 id 为 BigAutoField 主键 | 用户已确认主键对应版本并直接读取 content，暂不考虑操作状态，不新增 status 筛选 |
 
-源码证据：[策略模型](../../../../../kingeye/src/kingeye/base/domains/strategy/models.py) 第 16–21、263–371 行；
-[策略对象与历史保存](../../../../../kingeye/src/kingeye/base/domains/strategy/strategy.py) 第 1733、1875、2041 行。
+源码证据：策略模型（Kingeye 源码 `src/kingeye/base/domains/strategy/models.py`） 第 16–21、263–371 行；
+策略对象与历史保存（Kingeye 源码 `src/kingeye/base/domains/strategy/strategy.py`） 第 1733、1875、2041 行。
 模型管理器可在 use_old_model 配置下使用旧监控数据库连接；当前未核对部署选项，不能仅凭
 类位于 Kingeye 仓库就断言这些表运行在鲸眼自有库。用户已确认逻辑读取目标，运行环境的连接
 和租户隔离条件仍须落实。
@@ -543,7 +545,7 @@ partial”仍以迁移设计第 5.21.3 节为准。上表作为后续输出对�
 创建成功后会补 history.strategy_id，并在第 2136 行标记 status=True。不能据表名或成功状态
 直接认定每条历史内容都包含最终下发后的完整数据；对应字段完整性须随消费矩阵验证。
 
-既有主键证据见[初始化迁移](../../../../../kingeye/src/kingeye/base/domains/strategy/migrations/0001_initial.py)
+既有主键证据见初始化迁移（Kingeye 源码 `src/kingeye/base/domains/strategy/migrations/0001_initial.py`）
 第 143–157 行。用户已纠正此前关于主表 history_id 的推测，认定主表没有该列；不再保留
 “部署库待核实”事项，也不增加该列。此结论来自用户明确认定，不表述为本轮查库验证结果。
 

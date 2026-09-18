@@ -1,6 +1,12 @@
 # alarm_callback 清洗与丰富迁移执行计划
 
-状态：执行计划 v1，已获用户整体认可，作为后续实施基线。
+> 库外证据使用 Kingeye 源码路径引用，按本文记录的提交或取证日期查看；这些路径不是本仓库的相对链接，也不保证当前 Kingeye checkout 仍有相同文件。
+
+> 历史迁移决策记录（2026-09-02 起）。下文保留当时接口与逐次决策，不作为当前接入或部署契约。
+> 当前 EnrichInput 只携带 Alert，当前事件采用 values/evaluations/related_alert_ids；升级与恢复使用持久化计划。
+> 实现入口见[丰富设计](alert-enrichment-development.md)、[核心模型](define.md)和[主机输入示例](../guides/host-alert-enrich-example.md)。
+
+当时状态：执行计划 v1，已获用户整体认可，作为迁移实施基线。
 迁移边界和阶段安排已确认；完整字段与依赖矩阵在前两个阶段收敛。
 2026-09-02 后续细化：用户要求先盘点旧回调读取字段，再逐项决定 Linkd 取值位置；
 SourceRawData 定位为人工追溯资料，丰富尽量不读取，不作为默认输入或缺字段兜底。
@@ -28,7 +34,7 @@ Linkd，以 `AlertEnricher` 为告警丰富入口，按 Linkd 当前边界重新
 生成分组丰富结果与诊断 → Lifecycle 保存并输出 Alert。
 仅在新 Alert 创建时执行；恢复、关闭沿用已有生命周期，不迁移旧终态补查。
 
-当前仅完成计划与后续旧输入字段盘点，没有迁移代码、调用业务服务、运行业务测试或创建 Git 提交。
+该记录形成时仅完成计划与旧输入字段盘点，当时没有迁移代码、业务调用或运行验证；这不是对当前仓库实现进度的描述。
 
 - 来源仓库：`kingeye@5597beae82d42b7c732bf4cc10f7cffeaaf44672`，调研时工作区干净。
 - 目标仓库：`kingeye-linkd@9b698332c0f994563d6800940dc6be6763933feb`；保留用户已有的未跟踪脚本和工具。
@@ -40,7 +46,7 @@ Linkd，以 `AlertEnricher` 为告警丰富入口，按 Linkd 当前边界重新
 `kmc/home_application/utils/callback_utils/basic_push_alarm_data.py`，不是本任务指定目录。
 两者的 K8s 查询等实现存在差别，不能把那份调研直接作为本次依赖清单。
 
-## 2. 当前实现对迁移的约束
+## 2. 迁移启动时的实现约束（历史快照）
 
 1. [enrich.go](../../internal/lifecycle/enrich.go) 的输入是 `domain.Event` 和待创建的 `domain.Alert`
    副本，结果仅包含状态和 JSON 数据，最终只能写 `Alert.enrich_status` 与 `Alert.enrich`。
@@ -57,8 +63,8 @@ Linkd，以 `AlertEnricher` 为告警丰富入口，按 Linkd 当前边界重新
 7. [SourceCleaner](../../internal/cleaner/raw_event.go)当前只有 `standard` 实现。旧回调原始消息不能
    默认视为可直接进入 Linkd。本次已确认从有效 Event 开始，不新增旧监控回调 SourceCleaner。
 
-另有一处资料冲突：根 `AGENTS.md` 提及 `internal/domain.AlertEvent`，但当前代码、测试和术语使用
-`domain.Event`，仓库不存在该目标类型。本计划按实际 `Event` 分析，保留该差异待确认后修正文档，
+当时存在资料冲突：根 `AGENTS.md` 提及 `internal/domain.AlertEvent`，但当前代码、测试和术语使用
+`domain.Event`，仓库不存在该目标类型。本计划按实际 `Event` 分析；2026-09-18 文档核对已把根规范统一为 `domain.Event`，
 不为名称差异新增兼容类型。
 
 ## 3. 功能归属与迁移范围
@@ -592,7 +598,7 @@ BaseConverter.get_obj_model_dim_display（442）在只有实例标识而缺少�
 2026-09-03，用户确认旧 clean_object() 生成的对象展示文本保存到 enrich.display.object，
 文本生成和回退规则按原分类迁移。此前已确认的输入位置、实例定位和局部失败规则继续适用。
 
-[BaseClear.clean_object](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/base.py)（473）
+BaseClear.clean_object（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/base.py`）（473）
 按主机、K8s 节点或其他对象返回展示文本；日志指标与日志关键字的对应方法返回空字符串，
 继续保留这些分类的旧行为，不仅因空字符串就新增失败诊断。
 
@@ -616,7 +622,7 @@ CMDB 与 Meta 的标识分别表达，不因部分分类取值相同而合并。
 | clean_model_name() | enrich.resource.model_name | Meta 对象模型名称 |
 
 字段取值遵循旧逻辑及此前已确认的调整。旧
-[BaseClear](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/base.py) 的 clean_bk_obj_id（721）
+BaseClear（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/base.py`） 的 clean_bk_obj_id（721）
 从模型信息取得 bk_cmdb_obj_id，clean_bk_inst_id（725）在没有对应 CMDB 模型时返回空字符串；
 clean_model_id（812）返回 object_model_code，clean_model_name（816）读取模型名称。
 这些适用条件继续保留，不能为填满五个字段而将一套标识复制到另一套。
@@ -648,7 +654,7 @@ clean_model_id（812）返回 object_model_code，clean_model_name（816）读�
 | 云区域名称 | enrich.resource.bk_cloud_name |
 
 取值优先级、名称查询与输出格式沿用旧分类逻辑及已确认的输入规则。旧
-[BaseClear](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/base.py) 的 clean_bk_biz_id、
+BaseClear（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/base.py`） 的 clean_bk_biz_id、
 clean_bk_biz_name、clean_bk_set_id、clean_bk_set_name、clean_bk_module_id、
 clean_bk_module_name（689–711）读取既有业务拓扑结果；云区域 ID（713）读取工作维度的
 bk_target_cloud_id，云区域名称（717）从对应映射取得。各分类的覆盖规则继续分别迁移，
@@ -671,9 +677,9 @@ K8s 集群字段的分别归属，以及来源业务标签不变。当前仅更�
 2026-09-03，用户确认将旧 cloud_plat_id 保存到 enrich.resource.cloud_plat_id，取值和
 适用条件沿用旧分类逻辑，并遵循已确认的输入位置。
 
-旧 [PrivateCloudCLear.clean_alarm_data](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/private_cloud.py)
+旧 PrivateCloudCLear.clean_alarm_data（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/private_cloud.py`）
 （6）直接输出 event_data.cloud_id；旧
-[BasicDataClear.cloud_field_add](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/basic_data.py)
+BasicDataClear.cloud_field_add（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/basic_data.py`）
 （116）仅在 data_source 以“云平台监控-”开头、且维度 cloud_id 为真值时补充该字段。
 迁移时基础数据分支从 Event.Dimensions.cloud_id 读取，保留原有条件和空值处理；条件中
 使用的 data_source 统一采用第 5.16.4 节确认的 StrategyConfig.spec.data_source。
@@ -792,7 +798,7 @@ Go 类型已在第 5.16.6 节确定为 []int64。cw_labels 保留旧字符串列
 | cw_labels | enrich.resource.cw_labels | 派生标签字符串列表 |
 
 动态分组继续按旧模型与实例关系读取 Redis 投影的 group_ids。旧
-[BaseClear.clean_dynamic_group_id](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/base.py)
+BaseClear.clean_dynamic_group_id（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/base.py`）
 （370）无对应记录时返回空列表；迁移保留此正常空结果，不把无分组视为依赖失败。
 Redis 读取或解析失败按既定局部失败契约返回 partial 与 dependency_invalid 诊断，保留
 其他有效结果，不以正常空列表掩盖依赖故障。租户隔离仍遵循已有读取适配要求。
@@ -815,7 +821,7 @@ cw_labels 按各分类原有的生成和覆盖顺序处理。基础规则、日�
 | field_extra_info.strategy_name.url | enrich.strategy.url |
 
 名称取值沿用旧逻辑。旧
-[BaseClear.clean_strategy_name](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/base.py)（752）
+BaseClear.clean_strategy_name（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/base.py`）（752）
 返回 Converter 已生成的 event_data.strategy_name；迁移时保留各分类的名称生成规则及
 此前确定的字段来源，不将两个策略对象的同名字段合并后统一选择。
 
@@ -873,12 +879,12 @@ StrategyConfig 获取失败时沿用已确认的 partial 与 dependency_invalid 
 2026-09-03，为确定 dynamic_group_id 的元素类型，进一步核对读取和写入代码：
 
 - 旧回调的 clean_dynamic_group_id 使用
-  [MetaRedisKey](../../../../../kingeye/src/kingeye/common/enum/cw_enum.py)（72）中的
+  MetaRedisKey（Kingeye 源码 `src/kingeye/common/enum/cw_enum.py`）（72）中的
   `meta_saas_cache_dynamic_inst_group|{cw_object_model_code}`，按实例 ID 读取 Hash 值。
 - 当前动态分组模块的
-  [get_dynamic_inst_group_cache_key](../../../../../kingeye/src/kingeye/base/domains/dynamic_group/constants.py)
+  get_dynamic_inst_group_cache_key（Kingeye 源码 `src/kingeye/base/domains/dynamic_group/constants.py`）
   （116）构造 `<redis_key_prefix>dynamic_inst_group:{cw_object_model_code}`。
-  [cache_dynamic_group_member](../../../../../kingeye/src/kingeye/base/domains/dynamic_group/operations/cache.py)
+  cache_dynamic_group_member（Kingeye 源码 `src/kingeye/base/domains/dynamic_group/operations/cache.py`）
   （91）将整数 dynamic_group_id 加入实例的 group_ids 集合，再以 JSON 列表写入该 Hash。
 
 两处源码的键规则不一致。用户已确认 Linkd 对齐当前动态分组模块的写入键规则：使用与
@@ -1156,13 +1162,13 @@ Event.Labels.bk_strategy_id 与 Event.Labels.bk_strategy_history_id，必须同�
 
 2026-09-02，Kingeye 源码基线仍为 5597beae82d42b7c732bf4cc10f7cffeaaf44672：
 
-- [KAC entry](../../../../../kingeye/src/kingeye/kac/alarm_callback/entry.py) 从回调 strategy.id
+- KAC entry（Kingeye 源码 `src/kingeye/kac/alarm_callback/entry.py`） 从回调 strategy.id
   关联鲸眼配置；其 _search_configs_by_bk_strategy_ids 不读取监控平台历史策略表。
-- [StrategyConfig 定义](../../../../../kingeye/src/kingeye/base/candidacy/models/declaratives/v1alpha1/strategy.py)
+- StrategyConfig 定义（Kingeye 源码 `src/kingeye/base/candidacy/models/declaratives/v1alpha1/strategy.py`）
   明确包含 status.bk_strategy_id、spec.strategy_item 和 spec.strategy_detect_algorithms。
   KAC entry 还尝试 backend_strategy_id 标签并回退 status 字段，实际物理查询以模型与表取证为准，
   不把旧调用中的一个过滤键自动当成实际表列。
-- 鲸眼 [ResourceManager](../../../../../kingeye/src/kingeye/base/infras/declaratives/base/resource.py)
+- 鲸眼 ResourceManager（Kingeye 源码 `src/kingeye/base/infras/declaratives/base/resource.py`）
   更新当前 spec、声明式事件通过资源 UID 查回当前资源等事实，仅描述鲸眼存储，不说明监控平台
   version 的保留能力。此前据此追问是否需要新建策略快照服务偏离了两份策略的边界。
 - 当前任务只确认**可能新增读取监控平台策略表**，没有验证该表的物理结构、租户字段、version
@@ -1257,7 +1263,7 @@ SourceRawData 或重新展开完整策略目标列表的理由。
 #### 5.21.5 已确认：维度缺失时按整份查询参数降级
 
 2026-09-03，用户确认第 5.21.3 节的省略单位为**整份查询参数**。旧
-[get_graph_panel](../../../../../kingeye/src/kingeye/kac/alarm_callback/handle_alert_info.py)（653）将
+get_graph_panel（Kingeye 源码 `src/kingeye/kac/alarm_callback/handle_alert_info.py`）（653）将
 expression、functions 和 query_configs 组织在同一个 unify_query_params 中；迁移时保留这份
 参数的完整性，不只删除其中无法构造的子查询。
 
@@ -1314,10 +1320,10 @@ metric 因此纳入已确认的业务分组及第 5.9.1 节的诊断 groups。�
 | clean_metric_name() | enrich.metric.metric_name | 保留旧指标名称字段的分类语义，不定义为统一指标 ID |
 | clean_unit() | enrich.metric.unit | 指标单位，保留旧分类的取值与回退 |
 
-旧 [BaseClear](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/base.py) 的 clean_item（531）、
+旧 BaseClear（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/base.py`） 的 clean_item（531）、
 clean_metric_name（598）和 clean_unit（913）分别生成上述信息。
-[日志指标](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/log_metric.py) 的 clean_metric_name（11）
-及 [日志关键字](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/log_keyword.py) 的
+日志指标（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/log_metric.py`） 的 clean_metric_name（11）
+及 日志关键字（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/log_keyword.py`） 的
 clean_item（110）、clean_metric_name（114）按别名、检索语句、占位文本的旧优先级返回展示值。
 因此不得将 metric.metric_name 当作跨分类的稳定指标标识，也不据此改写查询参数中的真实指标字段。
 
@@ -1343,10 +1349,10 @@ clean_item（110）、clean_metric_name（114）按别名、检索语句、占�
 | metric_unique_id | enrich.metric.metric_unique_id |
 
 取值与回退沿用旧分类逻辑及已确认的策略字段来源。旧
-[BaseClear](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/base.py) 的
+BaseClear（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/base.py`） 的
 clean_result_table_id（868）按分类读取结果表或解析云平台 metric_id，clean_metric_unique_id
 （855）拼接结果表与指标字段；保留原有 PromQL 提取路径及空值处理。
-[LogKeywordCLear](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/log_keyword.py) 的
+LogKeywordCLear（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/log_keyword.py`） 的
 clean_metric_unique_id（159）、clean_result_table_id（163）返回空字符串，迁移保留该行为。
 
 当前仅确认输出字段及沿用规则，未修改业务代码或执行运行验证。
@@ -1360,7 +1366,7 @@ clean_metric_unique_id（159）、clean_result_table_id（163）返回空字符�
 | aggregate_func | enrich.metric.aggregate_func |
 | time_interval | enrich.metric.time_interval |
 
-旧 [BaseClear](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/base.py) 的
+旧 BaseClear（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/base.py`） 的
 clean_aggregate_func（890）读取 strategy_item.agg_method，无 strategy_item 时返回 "avg"；
 clean_time_interval（895）读取 strategy_item.agg_interval，无 strategy_item 时返回 "60"。
 strategy_item 的取得保留原分类规则：普通分支使用鲸眼配置的 spec.strategy_item，云平台
@@ -1373,7 +1379,7 @@ strategy_item 的取得保留原分类规则：普通分支使用鲸眼配置的
 2026-09-03，用户确认将旧 where_condition 原名保存到 enrich.metric.where_condition，
 保留旧过滤和拼接规则，在独立工作副本上处理。
 
-旧 [BaseClear.clean_where_condition](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/base.py)
+旧 BaseClear.clean_where_condition（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/base.py`）
 （845）从工作维度中排除 bk_topo_node、bk_host_id，将剩余字段生成 key='value' 形式的
 条目，并以 " and " 连接；没有剩余字段时返回空字符串。迁移保留这些处理规则，维度输入
 遵循已确认的 Event.Dimensions 映射，过滤只作用于该输出的工作副本，不修改来源维度。
@@ -1408,9 +1414,9 @@ content 透传。time_field 缺失输出 null，存在时保留原 JSON 类型�
 
 #### 5.22.2 证据与实现验收
 
-- [旧图表算法选择](../../../../../kingeye/src/kingeye/kac/alarm_callback/handle_alert_info.py) 的
+- 旧图表算法选择（Kingeye 源码 `src/kingeye/kac/alarm_callback/handle_alert_info.py`） 的
   get_graph_panel（744）直接比较 algorithm.level 与 alert.severity。
-- [鲸眼策略下发转换](../../../../../kingeye/src/kingeye/kmc/controller/executor/strategy_task/base_executor.py)
+- 鲸眼策略下发转换（Kingeye 源码 `src/kingeye/kmc/controller/executor/strategy_task/base_executor.py`）
   的 init_kwargs_algorithms（373）从 strategy_detect_algorithms 读取 level.value。
 - [当前 Linkd 等级配置](../../internal/config/severity.go) 支持自定义等级名称和独立的 priority；
   [Event](../../internal/domain/event.go) 的 Severity 保存字符串名称。
@@ -1664,9 +1670,9 @@ content 的具体字段缺口继续按旧消费逻辑和已确认的局部失败
 
 旧行为证据：
 
-- [图表查询](../../../../../kingeye/src/kingeye/kac/alarm_callback/handle_alert_info.py) 的
+- 图表查询（Kingeye 源码 `src/kingeye/kac/alarm_callback/handle_alert_info.py`） 的
   get_graph_panel（658）将回调 event.bk_biz_id 放入统一查询参数；迁移后的该输入来自标签。
-- [DATA 资源处理](../../../../../kingeye/src/kingeye/kac/alarm_callback/converter/basic_data.py) 的
+- DATA 资源处理（Kingeye 源码 `src/kingeye/kac/alarm_callback/converter/basic_data.py`） 的
   clean_biz_and_alarm_obj（416）从拨测任务或主机业务关系等取得资源所属业务。
 - 字段盘点的 B07、D05 保留旧维度回填和资源业务回退的取证事实；本节已确认的新来源职责优先，
   不能用旧回填流程修改 Event，或把资源归属替代 F05–F07 的来源业务。
@@ -1702,10 +1708,10 @@ failed EnrichResult 与 nil error，生命周期继续创建 Alert；父 Context
 2026-09-03，用户确认 F11 改从 Event.ExtraData["log_related_info"] 读取，替代此前放入
 Dimensions 的初案；关联内容的加工和输出继续沿用旧逻辑。
 
-旧 [LogCollectConverter](../../../../../kingeye/src/kingeye/kac/alarm_callback/converter/log_event.py)
+旧 LogCollectConverter（Kingeye 源码 `src/kingeye/kac/alarm_callback/converter/log_event.py`）
 在第 10 行独立读取 log_related_info 并覆盖内部 related_info，缺失时使用空字符串；
 第 17–35 行的日志维度展示则遍历传入的全部维度。旧
-[LogKeywordCLear](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/log_keyword.py)
+LogKeywordCLear（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/log_keyword.py`）
 在 clean_content 中使用关联信息加工文案，在 clean_log_relate_info 中输出该信息。
 因此关联内容在新输入中单独承载，不作为对象定位、指标过滤或维度展示的数据。
 
@@ -1736,9 +1742,9 @@ Dimensions 的初案；关联内容的加工和输出继续沿用旧逻辑。
 | log_query_string | enrich.log.log_query_string | 按旧日志关键字分类输出，保留检索语句及其占位规则 |
 | log_relate_info | enrich.log.log_relate_info | 按旧日志关键字分类输出，关联信息为空时沿用旧省略规则 |
 
-旧 [LogMetricCLear.clean_alarm_data](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/log_metric.py)
+旧 LogMetricCLear.clean_alarm_data（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/log_metric.py`）
 （15）补充主题 ID 与名称；
-[LogKeywordCLear.clean_alarm_data](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/log_keyword.py)
+LogKeywordCLear.clean_alarm_data（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/log_keyword.py`）
 （38）还输出 log_query_string，并仅在关联信息为真值时输出 log_relate_info。
 新字段位置不扩大上述分类的适用范围，不因为日志指标缺少关键字专用输出而生成失败诊断。
 
@@ -1761,7 +1767,7 @@ enrich.metric.metric_query_params，派生 cw_labels 仍归 resource。
 | 主机 IP | Event.Dimensions["bk_target_ip"] |
 | 云区域 ID | Event.Dimensions["bk_target_cloud_id"] |
 
-旧 [SystemMetricMixin.preprocess_alarms](../../../../../kingeye/src/kingeye/kac/alarm_callback/processors/basic_event.py)
+旧 SystemMetricMixin.preprocess_alarms（Kingeye 源码 `src/kingeye/kac/alarm_callback/processors/basic_event.py`）
 第 235–242 行优先拆分 event.target，恰有两段时使用拆出的 IP 和云区域，否则回退读取工作维度。
 本次统一从上表两键取得信息，主机输入不再提供或解析组合 target，也不从旧 ip、bk_cloud_id、
 tags. 别名或 SourceRawData 补齐、覆盖它们。查询请求和结果关联使用同一组已解析定位值，
@@ -1803,10 +1809,10 @@ tags. 别名或 SourceRawData 补齐、覆盖它们。查询请求和结果关�
 
 旧实现证据及本轮变化：
 
-- 旧 [BaseConverter.format_event_dict](../../../../../kingeye/src/kingeye/kac/alarm_callback/converter/base.py)
+- 旧 BaseConverter.format_event_dict（Kingeye 源码 `src/kingeye/kac/alarm_callback/converter/base.py`）
   第 577–583 行先取外查 instance_detail.bk_inst_id，仅当模型为主机且缺少该 ID 时，才回退
   event.bk_host_id、工作维度 bk_target_host_id；旧首级不是直接读取 Event.Dimensions。
-- 旧 [DATA get_object_model_inst_id](../../../../../kingeye/src/kingeye/kac/alarm_callback/converter/basic_data.py)
+- 旧 DATA get_object_model_inst_id（Kingeye 源码 `src/kingeye/kac/alarm_callback/converter/basic_data.py`）
   的 system 分支先读 bk_target_host_id，再按 IP/云区域查询。旧分类之间不存在完全相同的
   三段维度读取链，不能把用户本轮统一的规则反向描述成现行 KAC 行为。
 - 本轮明确的是三个输入键不合并、均从 Dimensions 读取、顺序及全部缺失时的 partial。
@@ -1863,8 +1869,8 @@ IP 与云区域查询返回多个主机候选时，沿用旧逻辑使用底层�
 | 基础监控 SystemMetricMixin | IP 缺失使用空字符串，云区域缺失使用 -1；构造查询时将云区域转为整数，查询条件仍为 IP 与云区域同时匹配 |
 | DATA 的 system 主机分支 | 从维度读取 IP 和云区域，未启用原代码中已注释的 all 检查；构造查询时将云区域转为整数，保留 IP 与云区域两个条件 |
 
-证据：[基础分支](../../../../../kingeye/src/kingeye/kac/alarm_callback/processors/basic_event.py)
-第 241–242、267–268 行，以及 [DATA 分支](../../../../../kingeye/src/kingeye/kac/alarm_callback/converter/basic_data.py)
+证据：基础分支（Kingeye 源码 `src/kingeye/kac/alarm_callback/processors/basic_event.py`）
+第 241–242、267–268 行，以及 DATA 分支（Kingeye 源码 `src/kingeye/kac/alarm_callback/converter/basic_data.py`）
 第 482–500 行。DATA 的“没有云区域也能检索”注释不能取代实际代码：云区域缺失导致
 int(None) 失败，不能据该注释改成只按 IP 检索。数值 0 或字符串 "0" 能按旧转换生成
 云区域条件，不因 Python 真值检查而跳过；本节不新增“非零才有效”的约束。
@@ -1894,12 +1900,12 @@ int(None) 失败，不能据该注释改成只按 IP 检索。数值 0 或字符
 | apm_net_peer_name | enrich.apm.apm_net_peer_name |
 
 应用查询、名称匹配和维度转换沿用旧逻辑，并遵循已确认的输入位置与租户边界。
-旧 [BasicDataClear.apm_field_add](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/basic_data.py)
+旧 BasicDataClear.apm_field_add（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/basic_data.py`）
 （59）根据 data_source 或结果表派生应用名称，再查询应用并按名称精确匹配；不直接采用模糊
 查询返回的第一条记录。应用 ID 与别名来自匹配结果，输出应用名称来自该派生名称。
 迁移所用 data_source 统一来自 StrategyConfig.spec.data_source，见第 5.16.4 节。
 
-旧 [BaseClear.apm_dimension_key_map](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/base.py)
+旧 BaseClear.apm_dimension_key_map（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/base.py`）
 （128）将 service_name、bk_instance_id、span_name、net_peer_name 对应的维度展示条目
 real_value 转为服务、实例、接口和对端名称。迁移保留该转换及适用规则，不因同名字段
 出现就绕过原分类条件；原始维度仍从 Event.Dimensions 取得。
@@ -1928,7 +1934,7 @@ resource；本节不将它们复制进 apm，也不改写 Event/Alert 的主体�
 | 容器 | enrich.k8s.container_name | 按旧分支条件填充 |
 | 节点 | enrich.k8s.node | 按旧分支条件填充 |
 
-旧 [BaseClear.k8s_field_add](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/base.py)（383）
+旧 BaseClear.k8s_field_add（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/base.py`）（383）
 按模型与维度决定是否执行，并区分集群/节点与其他模型的追加字段行为。迁移保留这些适用条件，
 不因为 Event.Dimensions 中出现同名键就对所有分类填充 K8s 输出。
 
@@ -1956,9 +1962,9 @@ OneModel 实例存储。这一决定同时覆盖实例身份与展示/归属数�
 | 集群名称 | 用来源维度 bcs_cluster_id 对应存储查询字段 cluster_id，读取匹配集群的 cluster_name |
 | Namespace 业务归属 | 用 cluster_id + namespace 定位 Namespace，沿用 namespace_info.get("bk_biz_id") or cluster_info.get("bk_biz_id") 的原有规则，见第 5.30.2 节 |
 
-查询语义以当前 [公共回调实现](../../../../../kingeye/src/kingeye/common/alarm_callback/basic_push_alarm_data.py)
+查询语义以当前 公共回调实现（Kingeye 源码 `src/kingeye/common/alarm_callback/basic_push_alarm_data.py`）
 的 k8s_field_add（523）、clean_model_inst_id（912），以及
-[公共查询函数](../../../../../kingeye/src/kingeye/common/alarm_callback/utils.py) 的 build_k8s_inst_id（534）、
+公共查询函数（Kingeye 源码 `src/kingeye/common/alarm_callback/utils.py`） 的 build_k8s_inst_id（534）、
 search_k8s_instance_document（588）为依据。迁移不复制 KAC 未同步的 Python 调用参数，
 也不依赖运行时全局租户或默认租户；所有读取显式使用 Event.BKTenantID。
 
@@ -1983,9 +1989,9 @@ Go 侧直接读取并对齐其读取规则，见第 5.30.1 节。必要连接配
 提供，适配器只承担本次丰富需要的读取，不创建索引、修改映射或写入实例数据。
 
 **索引路由取证**：不能将“统一实例存储”理解为所有 K8s 查询都固定读取 kingeye_all_instance。
-当前 [SDK 装配及路由](../../../../../kingeye/src/kingeye/base/candidacy/infras/instance_storage/runtime.py)
+当前 SDK 装配及路由（Kingeye 源码 `src/kingeye/base/candidacy/infras/instance_storage/runtime.py`）
 （36、252）将模型目标解析器注入 ES 适配器；
-[ES 查询适配](../../../../../kingeye/src/kingeye/base/candidacy/infras/instance_storage/elasticsearch.py)
+ES 查询适配（Kingeye 源码 `src/kingeye/base/candidacy/infras/instance_storage/elasticsearch.py`）
 （129、143、570）会按查询中的 cw_object_model_code 选择对应目标。当前 K8s 模型对应：
 
 | K8s 模型 | OneModel 当前 ES 读取目标 |
@@ -2040,7 +2046,7 @@ search_k8s_instance_document 返回 dict(page.items[0])，无记录时返回空�
 ### 5.31 已确认：不迁移 bk_service_id 与 Namespace 空占位字段
 
 2026-09-03，用户确认旧 bk_service_id 与大写 Namespace 不纳入 enrich。
-旧 [BaseClear](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/base.py) 的
+旧 BaseClear（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/base.py`） 的
 clean_bk_service_id（732）、clean_Namespace（900）均固定返回空字符串，本次涉及的
 分类 Cleaner 没有重写这两个方法，因此不为它们新增输出字段或输入要求。
 
@@ -2055,7 +2061,7 @@ clean_bk_service_id（732）、clean_Namespace（900）均固定返回空字符�
 | --- | --- | --- |
 | 本次告警对应的首次异常点时间 | Event.ExtraData.anomaly_begin_time | enrich.metric.anomaly_begin_time |
 
-旧 [BaseClear.clean_anomaly_begin_time](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/base.py)
+旧 BaseClear.clean_anomaly_begin_time（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/base.py`）
 （820）按旧等级读取 event.anomaly 中的 anomaly_time，缺失时返回 None。迁移时由上游
 将对应时间作为独立的可选来源事实提供，不要求保留完整 anomaly 对象或在丰富阶段再次按等级提取。
 
@@ -2076,7 +2082,7 @@ clean_bk_service_id（732）、clean_Namespace（900）均固定返回空字符�
 | source_id | enrich.source.source_id | 沿用旧 clean_source_id()，返回 "built_in_bk" |
 | source_name | enrich.source.source_name | 本次使用默认名称 "鲸眼监控"，在赋值处增加 TODO，后续改为读取配置 |
 
-旧 [BaseClear](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/base.py) 的
+旧 BaseClear（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/base.py`） 的
 clean_source_id（491）返回固定值；clean_source_name（495）读取 metadata_settings 中的
 KMC_NAME，默认值为“鲸眼监控”。本次按用户决定暂不接入该名称配置读取。
 
@@ -2095,7 +2101,7 @@ KMC_NAME，默认值为“鲸眼监控”。本次按用户决定暂不接入该
 2026-09-03，用户明确保留 meta_info，改为直接读取 Event.SourceEventID，并确认保存到
 enrich.source.meta_info，与 source_id、source_name 共用 source 分组。
 
-旧 [BaseClear.clean_meta_info](../../../../../kingeye/src/kingeye/kac/alarm_callback/cleaner/base.py)（736）
+旧 BaseClear.clean_meta_info（Kingeye 源码 `src/kingeye/kac/alarm_callback/cleaner/base.py`）（736）
 返回 event_data.id 的字符串；该内部 ID 由旧 Processor 创建。迁移按用户决定使用
 Event 已有的来源事件标识，不再生成旧内部 ID 作为此字段的取值。
 

@@ -1,6 +1,6 @@
 # Alert Enrichment 可开发设计
 
-状态：开发基线。
+状态：当前丰富接口与实现基线；字段来源的历史论证见旧迁移决策记录，能力与验证范围以代码和测试为准。
 
 本文将 [alarm_callback 迁移执行计划](alarm-callback-enrichment-migration.md) 中已经确认的业务规则，收敛为可直接编码的 Go 模块、配置、结果协议和实施顺序。本文优先定义 Enrichment 的代码位置、调用输入、处理器编排和 `Alert.enrich` 结构；旧文档继续提供字段来源、旧行为证据和迁移取舍。实现本设计时须同步更新旧文档中的 Event 输入、硬编码来源和旧分组结构描述，保持单一现行契约。
 
@@ -11,9 +11,9 @@
 - Enricher 接收 `lifecycle.EnrichInput{Alert}`，后续路由、查询条件和字段加工统一读取 `EnrichInput.Alert` 的对应字段。
 - Scope 的业务输入只持有 Alert 深拷贝；Processor 不接触 Event，也不修改 Scope 内的 Alert，所有结果通过返回值汇总。
 - Enrichment 在新 Alert 持久化前同步执行；等级升级产生的新 Alert 同样执行。
-- 同等级更新、恢复和关闭沿用已有生命周期，不重新丰富。
+- update_current 原地升级、同等级更新、恢复和关闭不重新丰富；close_and_create 与恢复后新建低级别 Alert 会执行丰富。
 - Processor 只执行外部只读查询和确定性转换，不产生外部业务写入。
-- CAS 冲突和消息恢复可能让尚未持久化的 Alert 再次执行丰富，因此所有 Processor 必须可重复调用。
+- 裁决计划保存前失败或在无副作用时撤销重裁决，可重复执行丰富；计划保存后从冻结快照恢复，不重新查询，因此 Processor 必须无副作用且可重复调用。
 - `SourceRawData` 不进入 Alert，Processor 不读取该字段。
 - `ACCESS_OBJECT`、终态补查和智能算法专用图表增强继续排除。
 
@@ -24,7 +24,7 @@
 | `Event.BKTenantID` | `Alert.BKTenantID` |
 | `Event.EventSourceID` | `Alert.EventSourceID` |
 | `Event.Content` | `Alert.Content` |
-| `Event.Severity` | `Alert.Severity` |
+| 旧模型 `Event.Severity`（当前为创建 Alert 时选中的 evaluation.severity） | `Alert.Severity` |
 | `Event.Labels` | `Alert.Labels` |
 | `Event.Dimensions` | `Alert.Dimensions` |
 | `Event.ExtraData` | `Alert.ExtraData` |
@@ -809,12 +809,12 @@ strategy → resource → display → metric → source
 
 ### 14.5 生命周期测试
 
-- 首次创建与等级升级时，传给 Enricher 的 Alert 包含创建事件的继承字段，`TriggerEventID` 与 `BeginAt` 分别对应创建事件的 EventID 与 OccurredAt。
+- 首次创建与 close_and_create 等级升级时，传给 Enricher 的 Alert 包含创建事件的继承字段，`TriggerEventID` 与 `BeginAt` 分别对应创建事件的 EventID 与 OccurredAt。
 - 将原修改 `input.Event.Dimensions` 的输入隔离用例改为修改 `input.Alert` 的动态字段，验证保存的 Alert 与来源 Event 均不受影响。
 - 丰富降级日志的租户、事件与告警 ID 来自保护函数持有的 normalized Alert；Enricher 修改其输入副本后返回 error 或 panic，也不能污染日志身份。
-- 首次创建与等级升级执行丰富。
-- 同级更新、恢复和关闭保留原丰富结果。
-- CAS 冲突重试可重复执行。
+- 首次创建、close_and_create 等级升级及恢复后新建低级别 Alert 执行丰富。
+- update_current 等级升级、同级更新、恢复和关闭保留原丰富结果。
+- 计划保存前的重试可重复查询，已保存计划的恢复不重新丰富。
 - Processor 全失败时 Alert 仍可创建。
 - Repository 与 FinalHook 得到 `enrich_status` 及完整 `{processors}`。
 

@@ -12,6 +12,7 @@
 - [Redis 策略活跃告警 hook](active-alert-by-strategy.md)：来源配置、集合查询、一致性边界与排障；
 - [Elasticsearch 版本兼容](elasticsearch-compatibility.md)：Linkd 与 Console 的 ES 7.10+/8/9 范围及验证；
 - [Helm 部署与 worker 分组](helm.md)：三角色部署、独立配置 Secret、可选 Console 与认证入口；
+- [多级别事件测试环境重置升级](multilevel-event-upgrade.md)：ES + Helm 下允许丢弃测试数据时的停机切换；
 - [Standard Event 模拟器](event-generator.md)；
 - [使用 PM2 托管本地 Linkd 拓扑](pm2.md)；
 - [Linkd Console 运维调试工具](console.md)；
@@ -21,7 +22,7 @@
 后续按实际交付能力补充以下文档，而不提前记录尚未实现的操作步骤：
 
 - 生产部署、容量规划和高可用；
-- 升级、回滚和兼容性说明；
+- 需要保留真实数据的升级、回滚和兼容性方案；
 - 生产可观测性、日常运维和故障排查。
 
 面向内部开发者的模块实现细节应放在 [功能模块](../modules/README.md)，跨模块方案应放在 [设计文档](../design/README.md)。

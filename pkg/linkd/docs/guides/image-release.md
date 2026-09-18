@@ -118,8 +118,8 @@ gh workflow run linkd-images.yml --ref feat/linkd-dev \
 也不会把渲染出来的 Secret 上传到 Artifacts。验证不连接 Kubernetes 或真实中间件。
 
 Actions Summary 提供 Release 和 Artifact 两个下载入口。Release 的 tag 为 `helm/linkd/v<chart-version>`，
-例如 `helm/linkd/v0.1.4`；版本直接读取 `Chart.yaml`，没有单独版本输入。
-首次创建的 Git tag 指向首次发布提交，标题为 `Linkd Helm Chart 0.1.4`。
+例如 `helm/linkd/v<chart-version>`；版本直接读取 `Chart.yaml`，没有单独版本输入。
+首次创建的 Git tag 指向首次发布提交，标题为 `Linkd Helm Chart <chart-version>`。
 不存在时先创建草稿，上传后回下载校验，确认内容一致才发布；已存在时自动更新两个同名附件与构建说明。
 已有 Git tag 不移动，Release 说明中的源码提交和构建链接记录本次包的实际来源。
 更新已发布附件不是原子操作，失败时可能已部分更新，可重新触发相同版本修复；首次失败保留草稿供排查。
@@ -129,11 +129,12 @@ Actions Summary 提供 Release 和 Artifact 两个下载入口。Release 的 tag
 Artifact 名称为 `linkd-chart-<run-id>.<attempt>`，作为保留 30 天的备份。两种入口均包含：
 
 ```text
-linkd-0.1.4.tgz
+linkd-<chart-version>.tgz
 SHA256SUMS
 ```
 
-Chart 包默认沿用仓库的 `version: 0.1.4`、`appVersion: "0.1.4"` 和两个 GHCR `0.1.4` 镜像。
+Chart 版本和默认镜像分别以 [Chart.yaml](../../deploy/helm/linkd/Chart.yaml) 与
+[values.yaml](../../deploy/helm/linkd/values.yaml) 为准；这些标签不代表未发布的本地改造已进入镜像。
 `version` 只用于镜像构建，不会自动修改 Chart 的版本或默认镜像。
 发布下一版镜像后，需要显式更新 `values.yaml` 和 `Chart.yaml`，再单独触发 Helm 打包。
 
@@ -141,7 +142,7 @@ Chart 包默认沿用仓库的 `version: 0.1.4`、`appVersion: "0.1.4"` 和两�
 
 ```bash
 sha256sum -c SHA256SUMS
-helm upgrade --install linkd ./linkd-0.1.4.tgz \
+helm upgrade --install linkd ./linkd-<chart-version>.tgz \
   --namespace linkd --create-namespace -f /secure/linkd-values.yaml
 ```
 

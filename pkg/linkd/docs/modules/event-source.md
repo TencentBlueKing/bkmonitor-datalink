@@ -11,7 +11,7 @@ EventSource 是由控制面管理并持久化发布的来源配置。Record/Rele
 - Event 归属租户来自消息，还是被 `related_tenant_id` 强制覆盖；
 - 使用哪个 `SourceCleaner` 解释 payload；
 - 用哪些稳定 Event 字段生成 fingerprint；
-- 如何把来源 severity 映射为 Linkd Severity；
+- 如何逐项把 evaluations 的来源 severity 映射为 Linkd Severity，并拒绝映射后重复级别；
 - 从哪个 MQ subscription 接收消息；
 - 该来源 Cleaner Flow 的局部运行预算；
 - Alert 变更后按顺序执行的具名输出插件与各自参数。
@@ -54,7 +54,6 @@ Basic Auth 密码脱敏。
 fingerprint 是 Lifecycle 查找 active Alert 和构造 MailboxID 的唯一业务关联键。EventSource 只能引用：
 
 - `source_alert_id`；
-- `condition_key`；
 - `subject_system`、`subject_type`、`subject_id`；
 - `dimensions.<key>`。
 
@@ -100,6 +99,6 @@ Cleaner 的数量自动受 Kafka topic partition 数限制。每个进程同源�
 两类 Flow 复用进程连接资源；任务各自拥有消费 Session、确认和重试状态。
 配置变更通过停止报告/确认后重新分配，失联按有界自停与超时强切恢复。
 
-Event、Alert 均保存 event_source_version。Event 绑定生成时的 Release，Alert 继承创建 Event 的版本，普通更新不覆盖。
+Event、Alert 均保存 event_source_version。Event 绑定生成时的 Release，Alert 继承创建 Event 的版本，同级更新与 update_current 升级不覆盖。
 不保存 offset 版本区间，未落库消息按当前任务配置处理；已持久化相同原始事实的重投复用原 Event。
 来源只通过 API/provider 或显式 import 命令修改，启动不自动导入 YAML。旧数据不自动迁移或清理。

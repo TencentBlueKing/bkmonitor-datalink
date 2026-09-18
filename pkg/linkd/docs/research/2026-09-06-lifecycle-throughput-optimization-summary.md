@@ -1,5 +1,8 @@
 # Lifecycle 吞吐优化汇总
 
+> 历史实验/源码快照：本文数据保留当时版本口径。当前 Event 使用多级别 evaluations，并增加副作用前的计划 CAS；
+> 本文的单动作字段、写入次数与吞吐数据不能直接代表改造后版本。当前流程见[Lifecycle](../modules/lifecycle.md)。
+
 日期：2026-09-06。
 
 本文汇总本轮围绕 Alert 归档、Redis Stream、Cleaner、Lifecycle 与 Elasticsearch 请求链路完成的优化、验证结果和配置结论。它是阶段性技术总结，不是生产容量承诺；完整实验数据见[吞吐压测报告](benchmarks/2026-09-04-lifecycle-elasticsearch-throughput.md)，当前执行顺序与一致性边界见[Lifecycle 执行链路审查](2026-09-06-lifecycle-execution-flow.md)。

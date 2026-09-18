@@ -54,7 +54,9 @@ Kafka 同步发送调用结束并关闭 producer。
 
 ### 容器镜像
 
-模拟器镜像独立版本化，当前版本为 `0.1.1`（首次为 `0.1.0`），不跟随 Linkd / Console 的版本变化。
+模拟器镜像独立版本化，不跟随 Linkd / Console 自动变化。Chart 默认 tag 以
+[values.yaml](../../deploy/helm/linkd/values.yaml) 的 eventgen.image 为准；本地 Makefile 的 EVENTGEN_VERSION
+默认仍为 0.1.1，构建发布新格式时必须显式指定新版本，不能据默认标签判断已包含当前代码。
 GitHub workflow 的默认 `all` 不构建它；需显式选择 `component=linkd-eventgen` 并填写
 `eventgen_version`。发布操作见 [手动构建与发布](image-release.md)。
 
@@ -115,7 +117,8 @@ docker run --rm \
 | `queue_backlog_high` | `queue`、`consumer_group`、`cluster` |
 
 所有场景还包含唯一 `dimensions.generator_id`。测量值、阈值、单位和 firing/resolved 状态放在
-`extra_data`，不会在恢复时改变稳定维度。场景在 `--scenarios` 选中集合中均匀随机选择。
+`extra_data`；有限数字测量值同时写入 `values[metric_name]`。每条消息使用单项 evaluations
+携带本场景级别与 triggered/resolved，当前模拟器不自动合成多级别并行判定。不会在恢复时改变稳定维度。场景在 `--scenarios` 选中集合中均匀随机选择。
 
 ## 4. 身份、生命周期和 Kafka
 

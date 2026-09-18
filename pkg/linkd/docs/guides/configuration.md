@@ -208,7 +208,7 @@ priority 越小越严重。EventSource mapping/default 的目标必须存在于�
 
 fingerprint_mode=field 默认读取 source_alert_id，目标必须是非空字符串且不超过 128 bytes；fields 模式
 接受 1–32 个稳定路径并按路径排序、保留标量类型计算 SHA-256。允许
-`source_alert_id/condition_key/subject_system/subject_type/subject_id/dimensions.<key>`，缺失维度直接拒绝。
+`source_alert_id/subject_system/subject_type/subject_id/dimensions.<key>`，缺失维度直接拒绝。
 
 EventSource 各字段的职责、fingerprint/Severity 规则和“一来源一 Flow”边界见
 [EventSource 文档](../modules/event-source.md)。
@@ -571,3 +571,16 @@ Console Kafka 页面按来源和实例展示输出目标；动态管理接口中
 `update_current`（保留当前 Alert 身份更新级别）。所有 Lifecycle 实例使用相同全局配置，重启生效；
 已保存计划的事件继续原策略，配置只影响尚未生成计划的事件。非法取值在启动校验时拒绝。
 高级别 trigger 优先于同一事件中旧级别的 recovery/closed；完整裁决规则见 [Lifecycle](../modules/lifecycle.md#4-event-状态裁决)。
+
+以下为代码默认值，不是升级时必须使用的新前缀：
+
+| 配置 | 默认值 |
+| --- | --- |
+| storage.elasticsearch.index_prefix | `linkd` |
+| lifecycle.severity_upgrade_policy | `close_and_create` |
+| lifecycle.signal.stream | `linkd:lifecycle:signals` |
+| lifecycle.mailbox.key_prefix | `linkd:lifecycle:mailbox` |
+| lifecycle.lock.key_prefix | `linkd:lifecycle:lock` |
+
+Stream、Mailbox 和锁会继续按 deployment 与 EventSource 派生作用域；Recent Alert 缓存由 Mailbox
+基础前缀派生。切换多级别模型的测试环境见[重置升级](multilevel-event-upgrade.md)。

@@ -3,7 +3,7 @@
 状态：已实现  
 适用代码：`internal/lifecycle/enrich`、`internal/lifecycle`、`internal/telemetry`、`internal/lifecycle/process`  
 相关总则：[可观测性设计](observability.md)  
-实施记录：[Enrich 可观测性实施计划](enrich-observability-implementation-plan.md)
+实现入口与测试导航：[代码导航](#10-代码导航)
 
 ## 1. 定位
 
@@ -20,7 +20,8 @@ linkd.pipeline.attempt{linkd.stage="lifecycle"}
 └── FinalHook：linkd.final_hook.*
 ```
 
-`linkd.pipeline.*{linkd.stage="lifecycle"}` 继续表示单个 Event 的完整 Lifecycle 裁决。`linkd.enrich.*` 只表示创建新 Alert 时同步执行的丰富阶段。更新、恢复、关闭、抑制以及已处理 Event 的短路路径不会重新执行 Enrich，也不会产生 Enrich attempt。
+`linkd.pipeline.*{linkd.stage="lifecycle"}` 继续表示单个 Event 的完整 Lifecycle 裁决。`linkd.enrich.*` 只表示创建新 Alert 时同步执行的丰富阶段。update_current 原地升级、同级更新、单独恢复/关闭、抑制以及已处理 Event 的短路不产生 Enrich attempt。
+同一 Event 若在恢复后创建低级别 Alert，或按 close_and_create 升级，则为新 Alert 执行丰富。已保存计划的恢复复用快照，不新增 attempt。
 
 Observation 只产生诊断信号，不参与 Alert 状态、Enrich payload、CAS、Mailbox、Kafka ACK、重试和 DataSource 返回值的决策。
 

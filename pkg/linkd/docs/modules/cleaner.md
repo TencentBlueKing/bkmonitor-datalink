@@ -15,7 +15,7 @@ MQ Delivery
 ```
 
 输入信封包含稳定 `record_id`、租户、`event_source_id`、`received_at`、headers 和原始 payload。
-payload 不能覆盖信封来源、租户、接收时间或消息身份。EventSource 的详细边界见
+payload 不能覆盖来源、稳定接收时间或内部消息身份。租户支持 payload/header 输入：两处非空时须一致；来源 related_tenant_id 可强制覆盖。EventSource 的详细边界见
 [EventSource](event-source.md)，当前 `standard` payload 见[输入契约](../reference/contracts/raw-event.md)。
 
 Cleaner 的成功终态有三种：
@@ -40,10 +40,10 @@ SourceCleaner 只解释来源 payload，不能访问 Repository、Mailbox 或 MQ
 `standard`：接受单个 JSON object，把已知字段投影为 EventDraft；未知字段只在完整原始快照中保留，
 重复 key、尾随 JSON、非法 evaluation action、映射后重复级别、非法 values 和已知字段类型错误会被拒绝。
 
-EventDraft 不包含租户、来源、Event ID、fingerprint、标准 severity、接收时间和原始 payload，具体
-SourceCleaner 因而不能覆盖这些字段。EventFactory 统一处理：
+EventDraft 保存来源租户、values 和来源级别的 evaluations；不决定 EventSource、内部 Event ID、
+fingerprint、标准 severity、received_at 或完整原始快照。EventFactory 统一处理：
 
-- EventSource 租户覆盖；
+- EventSource 租户覆盖，以及 payload/header 租户一致性校验；
 - 通过 SeverityResolver 执行 mapping、全局同名和 default 规则；
 - occurred_at、produced_at 的稳定时间回退；
 - 确定性 Event ID；

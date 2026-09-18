@@ -46,7 +46,7 @@ Event 的 `event_source_version` 是正整数，记录实际使用的来源 Rele
 
 | 字段                               | 约束                           | 语义                                                                      |
 | ---------------------------------- | ------------------------------ | ------------------------------------------------------------------------- |
-| `bk_tenant_id`                     | 1–64 bytes                     | 归属租户；由信封或 EventSource `related_tenant_id` 决定                   |
+| `bk_tenant_id`                     | 1–64 bytes                     | 归属租户；由 EventSource 固定配置或 payload/header 一致性规则确定                   |
 | `event_source_id`                  | 1–32 bytes，`^[a-zA-Z0-9_-]+$` | 产生 Event 的 EventSource                                                 |
 | `event_id`                         | 1–160 bytes                    | UTC 秒、租户、来源和 64-bit 稳定摘要组成的可解析身份                       |
 | `fingerprint`                      | 1–128 bytes                    | Lifecycle 关联 active Alert 的业务键，由 EventSource 配置生成             |
@@ -54,7 +54,7 @@ Event 的 `event_source_version` 是正整数，记录实际使用的来源 Rele
 | `title`                            | 0–256 bytes                    | 来源标题；当前校验允许为空                                                |
 | `content`                          | 0–1 MiB                        | 来源描述                                                                  |
 | `evaluations` | 1–32 项，标准 severity 唯一 | 每项包含 severity、action（triggered/resolved/closed）与 action_reason（最多 256 bytes）；顺序无语义 |
-| `values` | 最多 256 个有限数字，key 为 1–256 bytes | 本次事件的观测值；空值统一为对象，缺失字段不补零，不参与 fingerprint；ES 只存储不索引 |
+| `values` | 最多 256 个有限数字，key 为 1–256 bytes | 本次事件的观测值；缺失/顶层 null 统一为空对象，字段值 null 非法，缺失字段不补零，不参与 fingerprint；ES 只存储不索引 |
 | `dimensions`                       | 扁平 `DimensionMap`            | 参与检索和可选 fingerprint 计算的维度                                     |
 | `subject_system`                   | 0–32 bytes                     | 来源声明的对象命名空间，当前不校验枚举                                    |
 | `subject_type`                     | 0–128 bytes                    | 来源对象类型                                                              |
@@ -84,15 +84,17 @@ EventProcessing 是存储层与 Lifecycle 之间的处理元数据，不属于 E
 | 字段           | 约束                                                | 语义                                                                                                                                                      |
 | -------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `state`        | `unprocessed/accepted/suppressed/orphaned/rejected` | Event 生命周期处理状态                                                                                                                                    |
-| `outcome`      | 终态必填                                            | 具体裁决结果，例如 `alert_created`、`alert_updated`、`alert_rotated`、`alert_recovered`、`alert_closed`、`alert_suppressed`、`event_orphaned`、`rejected` |
+| `outcome`      | 终态必填                                            | 具体裁决结果，例如 `alert_created`、`alert_updated`、`alert_severity_changed`、`alert_rotated`、`alert_recovered`、`alert_closed`、`alert_suppressed`、`event_orphaned`、`rejected` |
 | `reason_code`  | 可空                                                | 稳定低基数原因，例如 active Alert 不存在、等级升级或等级抑制                                                                                              |
+| `plan` | 仅 unprocessed 可携带 | 冻结升级策略、最多两项 Alert 目标快照、稳定操作流水和逐级裁决；终态清除 |
+| `evaluations` | Lifecycle 终态写入 | 每项包含 severity、action、state、outcome、reason_code 和 related_alert_ids；不覆盖 Event.evaluations |
 | `processed_at` | 终态必填                                            | Lifecycle 完成裁决的 UTC 时间                                                                                                                             |
 
 `unprocessed` 不允许带 outcome、reason、evaluations 结果或 processed_at，可以携带 `plan`。
 `plan` 冻结全局升级策略、有界 Alert 目标快照、稳定流水与逐级最终结果，先于副作用 CAS 保存。
 事件终态清除 plan，`EventProcessing.evaluations` 保存每级 severity/action/state/outcome/reason_code/related_alert_ids。
 整体 state 按有实际 Alert 变更为 accepted、只有抑制为 suppressed、其余为 orphaned 聚合；明细分别保留。
-升级优先于旧级别终结，后者明细记录 suppressed/evaluation_superseded；不匹配活动级别的终结为 orphaned。
+升级优先于旧级别终结，后者明细记录 suppressed/evaluation_superseded（reason_code=severity_upgrade）；不匹配活动级别的终结为 orphaned。
 终态结果与 `related_alert_ids` 通过一次 Event
 CAS 一起写入，避免出现 accepted 但未关联 Alert 的快照。
 
@@ -116,7 +118,7 @@ Alert 是一次异常的当前生命周期快照。它从 opening Event 创建�
 | 丰富     | `enrich_status`、`enrich`                                                                      | 每个新 Alert 持久化前同步计算，不覆盖来源事实                |
 
 `end_type` 只允许 `source/user/system/severity_upgrade`。recovered 的 end_type 固定为 source；closed
-可以由来源关闭、用户/系统直接关闭或等级升级产生。
+可以由来源关闭、用户/系统直接关闭或 close_and_create 等级升级产生；update_current 升级仍保持 active。
 
 `enrich_status` 允许 `pending/succeeded/partial/failed`，正常创建流程产生 succeeded、partial
 或 failed。`enrich` 固定只包含 `processors` 顶层 key；processors 按 EventSource 配置顺序保存，

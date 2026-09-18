@@ -38,6 +38,67 @@ type Path []Relation
 // Paths 多组关联路径
 type Paths []Path
 
+// PathNode describes a resource on a relation path together with its dimensions.
+type PathNode struct {
+	ResourceType Resource `json:"resource_type"`
+	Dimensions   Matcher  `json:"dimensions"`
+}
+
+// PathResourcesResult contains one complete source-to-target path at a timestamp.
+type PathResourcesResult struct {
+	Timestamp  int64      `json:"timestamp"`
+	TargetType Resource   `json:"target_type"`
+	Path       []PathNode `json:"path"`
+}
+
+// RelationPathResourcesRequest queries resource paths at one timestamp.
+type RelationPathResourcesRequest struct {
+	QueryList []struct {
+		Timestamp     int64        `json:"timestamp"`
+		SourceType    Resource     `json:"source_type,omitempty"`
+		TargetTypes   []Resource   `json:"target_types,omitempty"`
+		PathResources [][]Resource `json:"path_resources,omitempty"`
+		Matcher       Matcher      `json:"matcher,omitempty"`
+		LookBackDelta string       `json:"look_back_delta,omitempty"`
+	} `json:"query_list"`
+}
+
+type RelationPathResourcesResponseData struct {
+	Code    int                   `json:"code"`
+	Results []PathResourcesResult `json:"results"`
+	Message string                `json:"message"`
+}
+
+type RelationPathResourcesResponse struct {
+	TraceID string                              `json:"trace_id"`
+	Data    []RelationPathResourcesResponseData `json:"data"`
+}
+
+// RelationPathResourcesRangeRequest queries resource paths over a time range.
+type RelationPathResourcesRangeRequest struct {
+	QueryList []struct {
+		StartTs       int64        `json:"start_time"`
+		EndTs         int64        `json:"end_time"`
+		Step          string       `json:"step"`
+		SourceType    Resource     `json:"source_type,omitempty"`
+		TargetTypes   []Resource   `json:"target_types,omitempty"`
+		PathResources [][]Resource `json:"path_resources,omitempty"`
+		Matcher       Matcher      `json:"matcher,omitempty"`
+		LookBackDelta string       `json:"look_back_delta,omitempty"`
+	} `json:"query_list"`
+}
+
+type RelationPathResourcesRangeResponseData struct {
+	Code    int                   `json:"code"`
+	Results []PathResourcesResult `json:"results"`
+	Message string                `json:"message"`
+}
+
+type RelationPathResourcesRangeResponse struct {
+	TraceID string                                   `json:"trace_id"`
+	Data    []RelationPathResourcesRangeResponseData `json:"data"`
+}
+
 // RelationMultiResourcePathData 描述一条静态关系路径及其查询结果。
 // 该结构用于可选的多路径查询，不影响旧版 path/target_list 字段。
 type RelationMultiResourcePathData struct {

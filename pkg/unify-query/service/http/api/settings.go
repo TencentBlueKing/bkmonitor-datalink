@@ -12,6 +12,8 @@ package api
 const (
 	RelationMultiResourceConfigPath      = "api.relation.multi_resource"
 	RelationMultiResourceRangeConfigPath = "api.relation.mutil_resource_range"
+	RelationPathResourcesConfigPath      = "api.relation.path_resources"
+	RelationPathResourcesRangeConfigPath = "api.relation.path_resources_range"
 	RelationMaxRoutingConfigPath         = "api.relation.max_routing"
 
 	// V1beta3 SurrealDB 图查询专用路由（与 v1beta1 并存）。
@@ -22,6 +24,8 @@ const (
 var (
 	RelationMultiResource      string
 	RelationMultiResourceRange string
+	RelationPathResources      string
+	RelationPathResourcesRange string
 	RelationMaxRouting         int
 
 	RelationV1Beta3MultiResource      string

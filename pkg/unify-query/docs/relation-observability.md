@@ -89,17 +89,25 @@ histogram_quantile(0.95, sum by (le, query_mode, execution_mode) (
 ))
 ```
 
-## Dashboard 建议
+## Dashboard
 
-建议建立一个 `unify-query / Legacy VM Relation` 仪表盘，包含以下面板：
+已在业务 2 创建 `unify-query / Legacy VM Relation` 仪表盘：
 
-1. 请求结果堆叠：`success`、`empty`、`partial`、`failed`；
-2. instant/range P95 延迟；
-3. `first_path/all_paths` 候选路径数 P95；
-4. 路径失败率和空结果率；
-5. 目标数量 P95；
-6. 批量 `query_list` 大小 P95；
-7. Trace 跳转面板，按接口 span 名称过滤 `handler-api-relation-*`。
+- UID：`uq-legacy-vm-rel`
+- 地址：https://bkmonitor.bkop.woa.com/?bizId=2#/grafana/d/uq-legacy-vm-rel
+- 标签：`unify-query`、`cmdb`、`relation`、`vm_legacy`
 
-当前 BKMonitor MCP 的 dashboard 能力只有目录和详情读取，没有创建/更新接口，
-因此这里先保留可直接录入 Grafana/BKMonitor 的面板查询定义，不自动修改线上仪表盘。
+当前包含以下面板：
+
+1. 请求结果：`success`、`empty`、`partial`、`failed`；
+2. 请求失败率；
+3. instant/range P95 延迟；
+4. `first_path/all_paths` 候选路径数 P95；
+5. 路径结果：`success`、`empty`、`failed`；
+6. 目标数量 P95；
+7. 批量 `query_list` 大小 P95；
+8. 观测口径和 Trace 排查说明，按接口 span 名称过滤
+   `handler-api-relation-*`。
+
+仪表盘通过 BKMonitor Dashboard as Code 创建，并已回读确认包含 8 个面板；7 条
+PromQL 在业务 2 最近一小时均返回 HTTP 200。

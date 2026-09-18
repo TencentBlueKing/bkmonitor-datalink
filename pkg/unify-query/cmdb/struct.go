@@ -29,7 +29,26 @@ type Resource string
 
 // Relation 两点关联路径
 type Relation struct {
-	V []Resource
+	V            []Resource
+	RelationType string     `json:"relation_type,omitempty"`
+	MetricName   string     `json:"metric_name,omitempty"`
+}
+
+// RelationPathStep describes one resource hop and the relation schema that
+// produced it. The relation metadata is optional for legacy callers that
+// only provide resource-type paths.
+type RelationPathStep struct {
+	ResourceType Resource `json:"resource_type"`
+	RelationType string   `json:"relation_type,omitempty"`
+	Category     string   `json:"category,omitempty"`
+	Direction    string   `json:"direction,omitempty"`
+	MetricName   string   `json:"metric_name,omitempty"`
+}
+
+// RelationPath is a planned source-to-target path with relation metadata for
+// each hop.
+type RelationPath struct {
+	Steps []RelationPathStep `json:"steps"`
 }
 
 // Path 关联路径 (v1)
@@ -37,6 +56,80 @@ type Path []Relation
 
 // Paths 多组关联路径
 type Paths []Path
+
+// PathNode describes a resource on a relation path together with its dimensions.
+type PathNode struct {
+	ResourceType Resource `json:"resource_type"`
+	Dimensions   Matcher  `json:"dimensions"`
+}
+
+// PathResourcesResult contains one complete source-to-target path at a timestamp.
+type PathResourcesResult struct {
+	Timestamp  int64      `json:"timestamp"`
+	TargetType Resource   `json:"target_type"`
+	Path       []PathNode `json:"path"`
+}
+
+// RelationPathResourcesRequest queries resource paths at one timestamp.
+type RelationPathResourcesRequest struct {
+	QueryList []struct {
+		Timestamp     int64        `json:"timestamp"`
+		SourceType    Resource     `json:"source_type,omitempty"`
+		TargetTypes   []Resource   `json:"target_types,omitempty"`
+		PathResources [][]Resource `json:"path_resources,omitempty"`
+		Matcher       Matcher      `json:"matcher,omitempty"`
+		LookBackDelta string       `json:"look_back_delta,omitempty"`
+	} `json:"query_list"`
+}
+
+type RelationPathResourcesResponseData struct {
+	Code    int                   `json:"code"`
+	Results []PathResourcesResult `json:"results"`
+	Message string                `json:"message"`
+}
+
+type RelationPathResourcesResponse struct {
+	TraceID string                              `json:"trace_id"`
+	Data    []RelationPathResourcesResponseData `json:"data"`
+}
+
+// RelationPathResourcesRangeRequest queries resource paths over a time range.
+type RelationPathResourcesRangeRequest struct {
+	QueryList []struct {
+		StartTs       int64        `json:"start_time"`
+		EndTs         int64        `json:"end_time"`
+		Step          string       `json:"step"`
+		SourceType    Resource     `json:"source_type,omitempty"`
+		TargetTypes   []Resource   `json:"target_types,omitempty"`
+		PathResources [][]Resource `json:"path_resources,omitempty"`
+		Matcher       Matcher      `json:"matcher,omitempty"`
+		LookBackDelta string       `json:"look_back_delta,omitempty"`
+	} `json:"query_list"`
+}
+
+type RelationPathResourcesRangeResponseData struct {
+	Code    int                   `json:"code"`
+	Results []PathResourcesResult `json:"results"`
+	Message string                `json:"message"`
+}
+
+type RelationPathResourcesRangeResponse struct {
+	TraceID string                                   `json:"trace_id"`
+	Data    []RelationPathResourcesRangeResponseData `json:"data"`
+}
+
+// RelationMultiResourcePathData 描述一条静态关系路径及其查询结果。
+// 该结构用于可选的多路径查询，不影响旧版 path/target_list 字段。
+type RelationMultiResourcePathData struct {
+	Path       []string `json:"path"`
+	TargetList Matchers `json:"target_list"`
+}
+
+// RelationMultiResourceRangePathData 描述一条静态关系路径及其范围查询结果。
+type RelationMultiResourceRangePathData struct {
+	Path       []string                `json:"path"`
+	TargetList []MatchersWithTimestamp `json:"target_list"`
+}
 
 // RelationMultiResourceRequest 请求参数
 type RelationMultiResourceRequest struct {
@@ -49,6 +142,9 @@ type RelationMultiResourceRequest struct {
 
 		TargetType     Resource `json:"target_type,omitempty"`
 		TargetInfoShow bool     `json:"target_info_show,omitempty"`
+		// ReturnAllPaths 开启后，legacy 接口会额外返回所有可执行的静态路径。
+		// 未开启时保持原有的首条有效路径语义。
+		ReturnAllPaths bool `json:"return_all_paths,omitempty"`
 
 		PathResource  []Resource `json:"path_resource,omitempty"`
 		LookBackDelta string     `json:"look_back_delta,omitempty"`
@@ -63,9 +159,10 @@ type RelationMultiResourceResponseData struct {
 	SourceInfo Matcher  `json:"source_info"`
 	TargetType Resource `json:"target_type"`
 
-	TargetList Matchers `json:"target_list"`
-	Path       []string `json:"path"`
-	Message    string   `json:"message"`
+	TargetList Matchers                        `json:"target_list"`
+	Path       []string                        `json:"path"`
+	Paths      []RelationMultiResourcePathData `json:"paths,omitempty"`
+	Message    string                          `json:"message"`
 
 	// Truncated 表示响应是否因服务端安全上限而被截断。
 	Truncated bool `json:"truncated,omitempty"`
@@ -92,6 +189,7 @@ type RelationMultiResourceRangeRequest struct {
 
 		TargetType     Resource `json:"target_type,omitempty"`
 		TargetInfoShow bool     `json:"target_info_show,omitempty"`
+		ReturnAllPaths bool     `json:"return_all_paths,omitempty"`
 
 		PathResource  []Resource `json:"path_resource,omitempty"`
 		LookBackDelta string     `json:"look_back_delta,omitempty"`
@@ -106,9 +204,10 @@ type RelationMultiResourceRangeResponseData struct {
 	SourceInfo Matcher  `json:"source_info"`
 	TargetType Resource `json:"target_type"`
 
-	TargetList []MatchersWithTimestamp `json:"target_list"`
-	Path       []string                `json:"path"`
-	Message    string                  `json:"message"`
+	TargetList []MatchersWithTimestamp              `json:"target_list"`
+	Path       []string                             `json:"path"`
+	Paths      []RelationMultiResourceRangePathData `json:"paths,omitempty"`
+	Message    string                               `json:"message"`
 
 	// Truncated 表示响应是否因服务端安全上限而被截断。
 	Truncated bool `json:"truncated,omitempty"`

@@ -20,6 +20,8 @@ import (
 func setDefaultConfig() {
 	viper.SetDefault(RelationMultiResourceConfigPath, "/api/v1/relation/multi_resource")
 	viper.SetDefault(RelationMultiResourceRangeConfigPath, "/api/v1/relation/multi_resource_range")
+	viper.SetDefault(RelationPathResourcesConfigPath, "/api/v1/relation/path_resources")
+	viper.SetDefault(RelationPathResourcesRangeConfigPath, "/api/v1/relation/path_resources_range")
 	viper.SetDefault(RelationMaxRoutingConfigPath, 5)
 
 	viper.SetDefault(RelationV1Beta3MultiResourceConfigPath, "/api/v1/relation/v1beta3/multi_resource")
@@ -29,6 +31,8 @@ func setDefaultConfig() {
 func loadConfig() {
 	RelationMultiResource = viper.GetString(RelationMultiResourceConfigPath)
 	RelationMultiResourceRange = viper.GetString(RelationMultiResourceRangeConfigPath)
+	RelationPathResources = viper.GetString(RelationPathResourcesConfigPath)
+	RelationPathResourcesRange = viper.GetString(RelationPathResourcesRangeConfigPath)
 	RelationMaxRouting = viper.GetInt(RelationMaxRoutingConfigPath)
 
 	RelationV1Beta3MultiResource = viper.GetString(RelationV1Beta3MultiResourceConfigPath)

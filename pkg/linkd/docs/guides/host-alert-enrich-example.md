@@ -55,7 +55,7 @@ cleaner.RawEventMessage{
       "title": "CPU usage is high",
       "content": "Host 10.0.0.1 CPU usage reached 92.5%",
       "values": {
-        "cpu_usage": 92.5
+        "value": 92.5
       },
       "evaluations": [
         {
@@ -119,7 +119,7 @@ EventFactory 使用该配置覆盖租户；最终租户不能为空。
   "title": "CPU usage is high",
   "content": "Host 10.0.0.1 CPU usage reached 92.5%",
   "values": {
-    "cpu_usage": 92.5
+    "value": 92.5
   },
   "evaluations": [
     {
@@ -214,7 +214,7 @@ Kafka 发布时间时使用 `published_at`，以区分消息生产时间和传�
 
 ### 2.6 观测数值
 
-`values` 保存本次事件的扁平数值快照，例如 `{"cpu_usage": 92.5}`。该字段可省略；缺失、null 和空对象
+`values` 保存本次事件的扁平数值快照，默认示例为 `{"value": 92.5}`。该字段可省略；缺失、null 和空对象
 统一为空对象。最多 256 项，key 为 1–256 bytes，字段值必须是有限数字，不能使用字符串、布尔值、
 null 或嵌套对象。缺失的数值字段不补零。
 

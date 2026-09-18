@@ -164,3 +164,60 @@ func TestLoadSourceHooksAndRejectRemovedFields(t *testing.T) {
 		}
 	}
 }
+
+func TestPreserveHookSecretsByInstance(t *testing.T) {
+	old := EventSource{Hooks: []HookConfig{
+		{Name: "kafka", Type: HookTypeKafka, Config: HookParameters{Brokers: []string{"kafka:9092"}, Topic: "alerts", Security: kafkaclient.SecurityConfig{Protocol: "sasl_ssl", SASL: &kafkaclient.SASLConfig{Mechanism: "plain", Username: "reader", Password: "kafka-secret"}, TLS: &kafkaclient.TLSConfig{ClientCertPEM: "certificate", ClientKeyPEM: "private-key"}}}},
+		{Name: "kac", Type: HookTypeKAC, Config: HookParameters{Brokers: []string{"kafka:9092"}, Topic: "kac", Security: kafkaclient.SecurityConfig{Protocol: "sasl_plaintext", SASL: &kafkaclient.SASLConfig{Mechanism: "plain", Username: "reader", Password: "kac-secret"}}}},
+		{Name: "index", Type: HookTypeActiveAlertByStrategy, Config: HookParameters{KeyPrefix: "active", Redis: &RedisConfig{Mode: RedisModeSentinel, Password: "redis-secret", Sentinel: &RedisSentinelConfig{MasterName: "master", Addresses: []string{"sentinel:26379"}, Password: "sentinel-secret"}}}},
+	}}
+	t.Run("reorder and masked fields", func(t *testing.T) {
+		edited := old.Redacted()
+		edited.Hooks[0], edited.Hooks[2] = edited.Hooks[2], edited.Hooks[0]
+		got := edited.WithPreservedHookSecrets(old)
+		if got.Hooks[0].Config.Redis.Password != "redis-secret" || got.Hooks[0].Config.Redis.Sentinel.Password != "sentinel-secret" || got.Hooks[1].Config.Security.SASL.Password != "kac-secret" || got.Hooks[2].Config.Security.SASL.Password != "kafka-secret" || got.Hooks[2].Config.Security.TLS.ClientKeyPEM != "private-key" {
+			t.Fatal("credentials changed owners or were lost")
+		}
+		got.Hooks[0].Config.Redis.Sentinel.Password = "changed"
+		got.Hooks[2].Config.Security.SASL.Password = "changed"
+		if old.Hooks[2].Config.Redis.Sentinel.Password != "sentinel-secret" || edited.Hooks[2].Config.Security.SASL.Password != redactedSecret {
+			t.Fatal("preservation mutated input")
+		}
+	})
+	t.Run("omitted kafka security", func(t *testing.T) {
+		edited := old.Redacted()
+		edited.Hooks[0].Config.Security = kafkaclient.SecurityConfig{}
+		got := edited.WithPreservedHookSecrets(old)
+		if got.Hooks[0].Config.Security.SASL.Password != "kafka-secret" {
+			t.Fatal("omitted security lost credentials")
+		}
+	})
+	t.Run("explicit rotation and clearing", func(t *testing.T) {
+		edited := old.Redacted()
+		edited.Hooks[0].Config.Security.SASL.Password = "rotated"
+		edited.Hooks[0].Config.Security.TLS.ClientKeyPEM = "new-key"
+		edited.Hooks[2].Config.Redis.Password = ""
+		got := edited.WithPreservedHookSecrets(old)
+		if got.Hooks[0].Config.Security.SASL.Password != "rotated" || got.Hooks[0].Config.Security.TLS.ClientKeyPEM != "new-key" || got.Hooks[2].Config.Redis.Password != "" {
+			t.Fatal("explicit credentials overwritten")
+		}
+	})
+	for _, name := range []string{"new instance", "changed type", "no previous source"} {
+		t.Run(name, func(t *testing.T) {
+			edited := old.Redacted()
+			previous := old
+			switch name {
+			case "new instance":
+				edited.Hooks[0].Name = "renamed"
+			case "changed type":
+				edited.Hooks[0].Type = HookTypeKAC
+			case "no previous source":
+				previous = EventSource{}
+			}
+			got := edited.WithPreservedHookSecrets(previous)
+			if ValidateHooks(got.Hooks) == nil {
+				t.Fatal("unresolved redacted credentials accepted")
+			}
+		})
+	}
+}

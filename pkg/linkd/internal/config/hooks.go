@@ -154,6 +154,42 @@ func (h HookConfig) Redacted() HookConfig {
 	return h
 }
 
+// WithPreservedHookSecrets 按实例名及插件类型恢复管理接口返回的脱敏凭据。
+// 列表重排不改变凭据归属；新增、重命名或换类型的实例必须提交自己的凭据。
+// 空 Redis 密码表示显式清除，只有占位符会恢复；省略整个 Kafka security 保留原安全配置。
+func (s EventSource) WithPreservedHookSecrets(previous EventSource) EventSource {
+	s = s.clone()
+	for i := range s.Hooks {
+		hook := &s.Hooks[i]
+		for _, old := range previous.Hooks {
+			if hook.Name != old.Name || hook.Type != old.Type {
+				continue
+			}
+			currentSecurity, oldSecurity := &hook.Config.Security, old.Config.Security
+			if reflect.ValueOf(*currentSecurity).IsZero() {
+				*currentSecurity = oldSecurity.Clone()
+			} else {
+				if currentSecurity.SASL != nil && oldSecurity.SASL != nil && currentSecurity.SASL.Password == redactedSecret {
+					currentSecurity.SASL.Password = oldSecurity.SASL.Password
+				}
+				if currentSecurity.TLS != nil && oldSecurity.TLS != nil && currentSecurity.TLS.ClientKeyPEM == redactedSecret {
+					currentSecurity.TLS.ClientKeyPEM = oldSecurity.TLS.ClientKeyPEM
+				}
+			}
+			if current, oldRedis := hook.Config.Redis, old.Config.Redis; current != nil && oldRedis != nil {
+				if current.Password == redactedSecret {
+					current.Password = oldRedis.Password
+				}
+				if current.Sentinel != nil && oldRedis.Sentinel != nil && current.Sentinel.Password == redactedSecret {
+					current.Sentinel.Password = oldRedis.Sentinel.Password
+				}
+			}
+			break
+		}
+	}
+	return s
+}
+
 // KafkaParameters 返回 Kafka 传输参数；Kafka V1 与 KAC Hook 共用配置形状。
 func (h HookConfig) KafkaParameters() (brokers []string, topic, clientID string, maxMessageBytes int, security kafkaclient.SecurityConfig) {
 	c := h.WithDefaults().Config
@@ -186,6 +222,14 @@ func ValidateHooks(hooks []HookConfig) error {
 
 func (h HookConfig) validate() error {
 	c := h.WithDefaults().Config
+	// API 在发布前恢复既有实例；无法恢复的占位符不能成为真实凭据，
+	// YAML/provider 入口同样不能把脱敏配置误发布为可运行配置。
+	if (c.Security.SASL != nil && c.Security.SASL.Password == redactedSecret) ||
+		(c.Security.TLS != nil && c.Security.TLS.ClientKeyPEM == redactedSecret) ||
+		(c.Redis != nil && (c.Redis.Password == redactedSecret ||
+			(c.Redis.Sentinel != nil && c.Redis.Sentinel.Password == redactedSecret))) {
+		return fmt.Errorf("redacted hook credentials must be replaced with actual credentials")
+	}
 	switch h.Type {
 	case HookTypeKafka, HookTypeKAC:
 		if c.Redis != nil || c.KeyPrefix != "" || c.TimeoutMilliseconds != nil {

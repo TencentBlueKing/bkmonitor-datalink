@@ -74,7 +74,11 @@ Stream 管理器按来源清单有界遍历，只裁剪已确认前缀。
 
 常驻进程不自动加载 YAML 来源。YAML 保留静态连接、认证、预算和可显式导入的来源清单；优先用 API/Console 修改来源。
 API 保存成功返回 202，不代表所有 Flow 已切换；查看目标与实际任务状态判断应用结果。
-配置 token 与 worker token 必须不同，worker 仅能读取分配给当前会话的 Release。管理编辑省略 security 时保留旧凭据，不提交脱敏占位值。
+配置 token 与 worker token 必须不同，worker 仅能读取分配给当前会话的 Release。管理编辑省略输入 Kafka security 时保留旧凭据。
+Hook 编辑按实例 `name + type` 匹配既有凭据，列表重排不影响匹配。Kafka/KAC 的 SASL 密码、
+内联 TLS 私钥及 Redis/Sentinel 密码中的 `******` 会在发布前恢复；省略整个 Hook Kafka security
+保留原安全配置。显式新密码用于轮换，Redis 空密码用于清除。新增、重命名或换类型的 Hook
+必须提供自己的凭据，无法恢复的占位符会被拒绝，YAML/provider 也不能发布占位符。
 
 运行协议、失联自停和容灾边界见[中心化任务调度协议](task-scheduling-protocol.md)。
 没有历史数据/旧 Stream 兼容层；部署新版本前自行选择新的数据空间或明确处理旧数据，本程序不自动清理。

@@ -170,6 +170,7 @@ func (a *API) put(w http.ResponseWriter, r *http.Request) {
 			m.Spec.Storage.Kafka.Security = old.Spec.Storage.Kafka.Security
 		}
 		m.Spec.Enrich = m.Spec.Enrich.WithPreservedSecrets(old.Spec.Enrich)
+		m.Spec = m.Spec.WithPreservedHookSecrets(old.Spec)
 	}
 	record, e := a.Sources.Apply(r.Context(), m.Spec, m.Expected, false, "api")
 	if e != nil {

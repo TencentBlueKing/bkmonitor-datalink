@@ -98,7 +98,7 @@ test("eventgen instances use independent selectors, parameters and Secret keys",
     const pod = generator.spec.template.spec;
     const container = pod.containers[0];
     const args = Object.fromEntries(Array.from({length: container.args.length / 2}, (_, i) => [container.args[i * 2], container.args[i * 2 + 1]]));
-    assert.equal(container.image, "ghcr.io/tencentblueking/bkmonitor-datalink/linkd-eventgen:0.1.1");
+    assert.equal(container.image, "ghcr.io/tencentblueking/bkmonitor-datalink/linkd-eventgen:0.1.2");
     assert.equal(generator.spec.replicas, 1);
     assert.equal(generator.spec.strategy.type, "Recreate");
     assert.equal(generator.spec.selector.matchLabels["linkd/eventgen-instance"], instance);

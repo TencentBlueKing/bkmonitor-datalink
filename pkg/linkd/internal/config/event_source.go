@@ -178,7 +178,7 @@ func (c EnrichConfig) validate() error {
 		if err := processor.validate(); err != nil {
 			return fmt.Errorf("enrich.processors[%d]: %w", index, err)
 		}
-		if processor.Type != "strategy" && len(processor.Config) != 0 {
+		if processor.Type != "strategy" && processor.Type != "test" && len(processor.Config) != 0 {
 			return fmt.Errorf("enrich.processors[%d].config is not supported by processor %q", index, processor.Type)
 		}
 		if previous, exists := seenProcessors[processor.Type]; exists {
@@ -213,6 +213,8 @@ func (c EnrichConfig) SelectDataSources() (EnrichDataSources, error) {
 	selected := EnrichDataSources{}
 	for _, processor := range c.Processors {
 		switch processor.Type {
+		case "test":
+			// 测试处理器只生成固定字段和等待，不需要外部连接。
 		case "strategy", "resource":
 			if configured.MySQL == nil {
 				return EnrichDataSources{}, fmt.Errorf("enrich.datasources.mysql is required by configured enrich processors")

@@ -14,7 +14,6 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
-
 	"linkd/internal/domain"
 	"linkd/internal/lifecycle"
 	"linkd/internal/lifecycle/enrich"
@@ -116,7 +115,7 @@ func enrichChainKind(kind lifecycle.EnrichChainKind) string {
 
 func enrichProcessor(name string) string {
 	switch name {
-	case rules.StrategyProcessor, rules.ResourceProcessor, rules.DisplayProcessor, rules.MetricProcessor, rules.SourceProcessor:
+	case rules.StrategyProcessor, rules.ResourceProcessor, rules.DisplayProcessor, rules.MetricProcessor, rules.SourceProcessor, rules.TestProcessor:
 		return name
 	default:
 		return "unknown"
@@ -145,7 +144,7 @@ func enrichDependency(dependency string) string {
 	case "":
 		return "none"
 	case rules.DependencyKingeyeStrategy, rules.DependencyMetricLibrary,
-		rules.DependencyOneModel, rules.DependencyAlarmSource:
+		rules.DependencyOneModel, rules.DependencyAlarmSource, rules.TestProcessor:
 		return dependency
 	default:
 		return "other"

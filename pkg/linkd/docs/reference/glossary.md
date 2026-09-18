@@ -22,6 +22,7 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | Severity        | 全局有序等级表；priority 越小越严重，Event/Alert 只保存 name                                      |
 | 内容文案算法等级映射 | 丰富侧声明的策略内容文案算法等级到 Linkd Severity 名称的对应关系，用于选择本次告警的文案加工算法；默认 1→critical、2→warning、3→info，不由排序 priority 推断；智能算法专用图表增强不在本次范围 |
 | Alert           | 从首个 triggered Event 创建的一次异常生命周期；继承字段创建后永久锁定                             |
+| test（丰富处理器） | 通过进程内 datasource 模拟随机延迟、调用超时和概率故障的负载处理器；成功后写入固定 JSON 字段，调用进入统一数据源指标 |
 | 告警丰富        | 依据告警特征及依赖数据生成补充信息，结果保存在 Alert.enrich，不覆盖 Event 来源事实或 Alert 核心字段 |
 | 丰富分类        | 用于选择一个告警丰富主处理路径的分类，各分类可有内部特殊分支并共用依赖数据；不等同于 EventSource、告警等级或生命周期状态 |
 | partial（丰富状态） | 告警丰富局部失败，但保留了已获得的有效补充信息；不阻断 Alert 创建，也不表示后续会自动补齐       |

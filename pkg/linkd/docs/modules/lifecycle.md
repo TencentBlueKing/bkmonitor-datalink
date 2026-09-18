@@ -139,6 +139,10 @@ Enricher 输入只包含已完成基础构造和 Normalize 的 Alert 深拷贝�
 为唯一 key 的 envelope，包含 status、value 和可选 diagnostics。`Alert.enrich_status` 是总状态的
 唯一持久化字段，领域校验根据 Processor 状态重新聚合并要求一致。
 
+`test` 处理器通过注入的进程内 datasource 模拟顺序调用、随机延迟、调用超时和概率故障；
+成功后返回固定字段副本，失败遵循同一 Processor envelope。调用进入统一 datasource 指标，
+不依赖外部数据库。参数与范围见[配置指南](../guides/configuration.md)。
+
 当前 `strategy → resource → display → metric → source` 链已经提供 MySQL 和 Elasticsearch 数据源装配，
 由来源 Release 的 enrich.datasources 和实际 Processor 依赖选择连接；不回查监控平台策略历史表。
 单元测试中的 mock 不表示目标业务环境已经联调，接入示例见[主机告警丰富](../guides/host-alert-enrich-example.md)。

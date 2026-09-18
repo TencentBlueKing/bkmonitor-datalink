@@ -97,6 +97,11 @@ func openEnrichRuntime(
 		}
 		sources.OneModel = client
 	}
+	for _, processor := range source.Enrich.Processors {
+		if processor.Type == "test" {
+			sources.Test = datasources.TestClient{}
+		}
+	}
 	if telemetryRuntime != nil {
 		sources = telemetryRuntime.ObserveEnrichSources(sources)
 	}

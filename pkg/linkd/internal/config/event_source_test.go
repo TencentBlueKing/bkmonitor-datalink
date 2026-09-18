@@ -15,9 +15,8 @@ import (
 	"strings"
 	"testing"
 
-	"linkd/internal/kafkaclient"
-
 	"go.yaml.in/yaml/v3"
+	"linkd/internal/kafkaclient"
 )
 
 func TestSeverityConfig(t *testing.T) {
@@ -254,4 +253,16 @@ func validEnrichDataSources() *EnrichDataSources {
 
 func validEventSource() EventSource {
 	return EventSource{EventSourceID: "source-a", Enabled: true, Cleaner: CleanerConfig{Type: CleanerTypeStandard}, Storage: EventSourceStorageConfig{Type: StorageTypeKafka, Kafka: KafkaStorageConfig{Brokers: []string{"kafka.example.com:9092"}, Topic: "alerts", ConsumerGroup: "linkd"}}}
+}
+
+func TestTestEnrichDoesNotRequireDataSources(t *testing.T) {
+	source := validEventSource()
+	source.Enrich = EnrichConfig{Processors: []EnrichProcessorConfig{{Type: "test", Config: map[string]any{"fields": map[string]any{"sample": true}, "datasource": map[string]any{"sleep_mean_milliseconds": 10, "sleep_stddev_milliseconds": 2, "error_rate": 0.1}}}}}
+	if err := ValidateEventSources([]EventSource{source}, SeverityConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	selected, err := source.Enrich.SelectDataSources()
+	if err != nil || selected.MySQL != nil || selected.Elasticsearch != nil {
+		t.Fatalf("selected=%#v error=%v", selected, err)
+	}
 }

@@ -89,6 +89,8 @@ func (r *Router) Enrich(ctx context.Context, input lifecycle.EnrichInput) (lifec
 
 func newProcessor(config config.EnrichProcessorConfig) (enrich.Processor, error) {
 	switch config.Type {
+	case rules.TestProcessor:
+		return processors.NewTest(config.Config)
 	case rules.StrategyProcessor:
 		return processors.NewStrategy(config.Config)
 	case rules.ResourceProcessor:

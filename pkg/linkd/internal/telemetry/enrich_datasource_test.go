@@ -58,6 +58,8 @@ func TestEnrichDataSourceOutcome(t *testing.T) {
 		{name: "not found", want: "not_found"},
 		{name: "failed", err: errors.New("failed"), want: "failed"},
 		{name: "canceled", err: context.Canceled, want: "canceled"},
+		{name: "timeout", err: context.DeadlineExceeded, want: "timeout"},
+		{name: "injected failure", err: enrich.ErrInjectedTestFailure, want: "failed"},
 		{name: "invalid response", err: enrich.ErrInvalidDataSourceResponse, want: "invalid_response"},
 	}
 	for _, test := range cases {

@@ -16,7 +16,6 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
-
 	"linkd/internal/lifecycle/enrich"
 	"linkd/internal/lifecycle/enrich/models"
 )
@@ -27,6 +26,7 @@ const (
 	enrichDataSourceMetricLibrary = "metric_library"
 	enrichDataSourceAlarmSource   = "alarm_source"
 	enrichDataSourceOneModel      = "onemodel"
+	enrichDataSourceTest          = "test"
 )
 
 // ObserveEnrichSources 为全部已配置 Reader 增加调用结果和耗时指标。
@@ -49,6 +49,9 @@ func (r *Runtime) ObserveEnrichSources(sources enrich.Sources) enrich.Sources {
 	if sources.OneModel != nil {
 		sources.OneModel = &observedOneModelReader{next: sources.OneModel, metrics: r.metrics}
 	}
+	if sources.Test != nil {
+		sources.Test = &observedTestSource{next: sources.Test, metrics: r.metrics}
+	}
 	return sources
 }
 
@@ -66,8 +69,10 @@ func (r enrichDataSourceRecorder) record(ctx context.Context, source, operation 
 
 func enrichDataSourceOutcome(found bool, err error) string {
 	switch {
-	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+	case errors.Is(err, context.Canceled):
 		return "canceled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
 	case errors.Is(err, enrich.ErrInvalidDataSourceResponse):
 		return "invalid_response"
 	case err != nil:
@@ -137,4 +142,17 @@ func (r *observedOneModelReader) FindInstance(ctx context.Context, tenantID stri
 	value, found, err := r.next.FindInstance(ctx, tenantID, query)
 	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceOneModel, "find_instance", startedAt, found, err)
 	return value, found, err
+}
+
+// observedTestSource 使用固定标签，身份和随机参数不进入指标属性。
+type observedTestSource struct {
+	next    enrich.TestSource
+	metrics *instruments
+}
+
+func (r *observedTestSource) Call(ctx context.Context, request enrich.TestRequest) error {
+	startedAt := time.Now()
+	err := r.next.Call(ctx, request)
+	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceTest, "call", startedAt, err == nil, err)
+	return err
 }

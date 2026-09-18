@@ -179,12 +179,55 @@ event_sources:
 `event_sources[].enrich.processors[].config` 是归属该 Processor 的 JSON-compatible 配置 map，由对应
 Processor 自行校验字段和类型；每项最多 64 KiB，禁止空 key。当前 `strategy` 支持
 `web_saas_module_url`，值为可选的绝对 HTTP(S) 基础地址，禁止 query 和 fragment；配置后
-`strategy.url` 输出完整 URL，省略时继续输出站内相对路径。其他 Processor 当前只接受空 config。
+`strategy.url` 输出完整 URL，省略时继续输出站内相对路径。`test` 支持下述负载模拟参数；其余 Processor 当前只接受空 config。
 
 `event_sources[].enrich.processors` 是新 Alert 创建前的有序丰富链。当前注册名为
-`strategy/resource/display/metric/source`；空列表输出 `{"processors":[]}`。
+`strategy/resource/display/metric/source/test`；空列表输出 `{"processors":[]}`。
 重复类型、空 type、未知处理器或缺少 Processor 所需的数据源会在来源发布时被拒绝。路由按任务
 固定的 Release 创建，来源发布后通过停止确认与重新调度生效。停用来源按调度协议停止任务，积压保留。
+
+测试负载在单个来源中配置 `test`；运行时自动装配进程内模拟 datasource，不需要外部数据库：
+
+```yaml
+enrich:
+  processors:
+    - type: test
+      config:
+        fields:
+          region: local
+          simulated: true
+        datasource:
+          calls: 2
+          sleep_mean_milliseconds: 50
+          sleep_stddev_milliseconds: 15
+          sleep_max_milliseconds: 200
+          timeout_milliseconds: 150
+          error_rate: 0.05
+```
+
+`fields` 是固定 JSON object，支持嵌套对象、数组和标量，默认 `{}`；全部调用成功后写入
+`Alert.enrich.processors[].test.value`，不覆盖 Alert 核心字段。配置总大小仍受每处理器 64 KiB 上限限制。
+
+| datasource 参数 | 默认 | 约束与含义 |
+| --- | --- | --- |
+| `calls` | 1 | 每次丰富顺序调用 1–16 次；首次失败后停止，不自动重试 |
+| `sleep_mean_milliseconds` | 0 | 正态分布期望，可为小数，范围 0–sleep_max_milliseconds |
+| `sleep_stddev_milliseconds` | 0 | 标准差，可为小数，范围 0–60000；0 表示固定延迟 |
+| `sleep_max_milliseconds` | 60000 | 单次延迟上限，整数 1–60000 毫秒 |
+| `timeout_milliseconds` | 60000 | 单次 datasource 调用超时，整数 1–60000 毫秒 |
+| `error_rate` | 0 | 每次调用等待完成后独立注入错误的概率，范围 0–1；1 表示必定报错 |
+
+每次调用自动产生随机样本，无需种子配置。延迟采样值裁剪到 `[0, sleep_max_milliseconds]`，
+所以靠近上下界时，实际均值和标准差与配置的原始正态分布参数不同。
+错误概率针对单次调用；例如 calls=2、error_rate=0.05，忽略超时后的单次丰富失败概率约为 9.75%。
+父 Context 取消或超时优先终止等待，不产生额外后台任务；单次 datasource 超时或注入错误形成
+`test` 的 failed 空 value 信封，沿用既有 Enrich 失败隔离，不阻止后续处理器或 Alert 创建。
+父 Context 取消则终止整次 Enrich。
+
+调用通过与真实数据源相同的观测层记录 `datasource=test`、`operation=call` 的次数和耗时。
+结果标签为 `found/failed/timeout/canceled`，租户、告警身份和模拟参数不进入指标标签。
+每个新 Alert 的调用与字段副本独立；计划持久化后的重试沿用冻结结果，不重新模拟。
+无丰富基线测试使用 `processors: []`。原临时顶层 `sleep_milliseconds` 已移入 datasource 分布配置。
 
 丰富数据源由 `event_sources[].enrich.datasources` 随来源 Release 发布。`mysql` 表示 Enrich 范围内
 共享的数据库连接，策略、业务空间、告警源和指标等 Reader 在同一连接池上查询各自的表；`elasticsearch` 表示

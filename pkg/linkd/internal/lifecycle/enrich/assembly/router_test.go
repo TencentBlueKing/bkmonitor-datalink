@@ -491,3 +491,31 @@ func baseCollectAlert(source string) domain.Alert {
 		EnrichStatus: domain.EnrichStatusPending, Enrich: domain.JSONObject{},
 	}
 }
+
+func TestRouterTestProcessorHasNoDataSourceDependency(t *testing.T) {
+	source := config.EventSource{EventSourceID: "test-source", Enrich: config.EnrichConfig{Processors: []config.EnrichProcessorConfig{{Type: "test", Config: map[string]any{"fields": map[string]any{"region": "local", "nested": map[string]any{"enabled": true}}, "datasource": map[string]any{"calls": 2}}}}}}
+	if _, err := source.Enrich.SelectDataSources(); err != nil {
+		t.Fatal(err)
+	}
+	sources := panicSources{}.Sources()
+	sources.Test = datasources.TestClient{}
+	router, err := NewRouter([]config.EventSource{source}, sources)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := router.Enrich(t.Context(), lifecycle.EnrichInput{Alert: baseCollectAlert(source.EventSourceID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := enrich.DecodePayload(result.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != domain.EnrichStatusSucceeded || string(payload.Processors[0]["test"].Value["region"]) != `"local"` {
+		t.Fatalf("test enrich=%#v", result)
+	}
+	source.Enrich.Processors[0].Config["datasource"] = map[string]any{"error_rate": 2}
+	if _, err := NewRouter([]config.EventSource{source}, enrich.Sources{}); err == nil {
+		t.Fatal("invalid test configuration accepted")
+	}
+}

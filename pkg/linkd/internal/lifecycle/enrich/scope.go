@@ -66,6 +66,8 @@ type Sources struct {
 	Metric      MetricReader
 	OneModel    OneModelReader
 	AlarmSource AlarmSourceReader
+	// Test 仅用于显式启用的测试处理器。
+	Test TestSource
 }
 
 // CWStrategyReader 按全租户唯一的关联 ID 读取鲸眼声明式策略。

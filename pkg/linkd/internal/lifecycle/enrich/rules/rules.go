@@ -25,6 +25,8 @@ const (
 	DisplayProcessor  = "display"
 	MetricProcessor   = "metric"
 	SourceProcessor   = "source"
+	// TestProcessor 是不访问外部数据源的可配置负载模拟器。
+	TestProcessor = "test"
 )
 
 const (

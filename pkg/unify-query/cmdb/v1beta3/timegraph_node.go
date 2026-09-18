@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package v1beta1
+package v1beta3
 
 import (
 	"fmt"
@@ -201,11 +201,11 @@ func NewNodeBuilder(stringDict *StringDict) *NodeBuilder {
 	return newNodeBuilder(stringDict, nil)
 }
 
-func NewNodeBuilderWithConfig(stringDict *StringDict, cfg *Config) *NodeBuilder {
+func NewNodeBuilderWithConfig(stringDict *StringDict, cfg *TimeGraphConfig) *NodeBuilder {
 	return newNodeBuilder(stringDict, cfg)
 }
 
-func newNodeBuilder(stringDict *StringDict, cfg *Config) *NodeBuilder {
+func newNodeBuilder(stringDict *StringDict, cfg *TimeGraphConfig) *NodeBuilder {
 	if stringDict == nil {
 		// 如果未提供StringDict，使用全局字典（向后兼容）
 		stringDict = globalStringDict
@@ -248,14 +248,14 @@ type NodeBuilder struct {
 	// config is a per-model snapshot. A TimeGraph query must not read the
 	// process-global resource configuration because different namespaces can be
 	// queried concurrently.
-	config map[cmdb.Resource]ResourceConf
+	config map[cmdb.Resource]TimeGraphResourceConfig
 }
 
-func resourceConfigSnapshot(cfg *Config) map[cmdb.Resource]ResourceConf {
+func resourceConfigSnapshot(cfg *TimeGraphConfig) map[cmdb.Resource]TimeGraphResourceConfig {
 	if cfg == nil {
 		return nil
 	}
-	result := make(map[cmdb.Resource]ResourceConf, len(cfg.Resource))
+	result := make(map[cmdb.Resource]TimeGraphResourceConfig, len(cfg.Resource))
 	for _, resource := range cfg.Resource {
 		result[resource.Name] = resource
 	}

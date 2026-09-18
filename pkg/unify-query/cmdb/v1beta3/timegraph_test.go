@@ -1,4 +1,4 @@
-package v1beta1
+package v1beta3
 
 import (
 	"context"
@@ -9,14 +9,13 @@ import (
 )
 
 func TestTimeGraphFindShortestPathAcrossTimestamps(t *testing.T) {
-	updateResourceConfig(&Config{Resource: []ResourceConf{
+	config := &TimeGraphConfig{Resource: []TimeGraphResourceConfig{
 		{Name: "pod", Index: cmdb.Index{"cluster", "namespace", "pod"}},
 		{Name: "node", Index: cmdb.Index{"cluster", "node"}},
 		{Name: "system", Index: cmdb.Index{"ip"}},
-	}})
-	t.Cleanup(func() { updateResourceConfig(configData) })
+	}}
 
-	tg := NewTimeGraph()
+	tg := NewTimeGraphWithConfig(config)
 	info := cmdb.Matcher{
 		"cluster":   "c1",
 		"namespace": "default",
@@ -45,7 +44,7 @@ func TestTimeGraphFindShortestPathAcrossTimestamps(t *testing.T) {
 }
 
 func TestBuildRelationsFromPathsDeduplicatesEdges(t *testing.T) {
-	r := &model{}
+	r := &Model{}
 	relations := r.buildRelationsFromPaths([][]cmdb.Resource{
 		{"pod", "node", "system"},
 		{"pod", "node", "system"},
@@ -57,13 +56,12 @@ func TestBuildRelationsFromPathsDeduplicatesEdges(t *testing.T) {
 }
 
 func TestTimeGraphFindPathResourcesHonorsExpectedPath(t *testing.T) {
-	updateResourceConfig(&Config{Resource: []ResourceConf{
+	config := &TimeGraphConfig{Resource: []TimeGraphResourceConfig{
 		{Name: "pod", Index: cmdb.Index{"cluster", "namespace", "pod"}},
 		{Name: "node", Index: cmdb.Index{"cluster", "node"}},
 		{Name: "system", Index: cmdb.Index{"ip"}},
 		{Name: "service", Index: cmdb.Index{"cluster", "service"}},
-	}})
-	t.Cleanup(func() { updateResourceConfig(configData) })
+	}}
 
 	info := cmdb.Matcher{
 		"cluster":   "c1",
@@ -73,7 +71,7 @@ func TestTimeGraphFindPathResourcesHonorsExpectedPath(t *testing.T) {
 		"ip":        "10.0.0.1",
 		"service":   "svc1",
 	}
-	tg := NewTimeGraph()
+	tg := NewTimeGraphWithConfig(config)
 	ctx := context.Background()
 	for _, relation := range [][2]cmdb.Resource{
 		{"pod", "node"},
@@ -105,13 +103,12 @@ func TestTimeGraphFindPathResourcesHonorsExpectedPath(t *testing.T) {
 }
 
 func TestNodeIdentityIncludesResourceType(t *testing.T) {
-	updateResourceConfig(&Config{Resource: []ResourceConf{
+	config := &TimeGraphConfig{Resource: []TimeGraphResourceConfig{
 		{Name: "left", Index: cmdb.Index{"id"}},
 		{Name: "right", Index: cmdb.Index{"id"}},
-	}})
-	t.Cleanup(func() { updateResourceConfig(configData) })
+	}}
 
-	tg := NewTimeGraph()
+	tg := NewTimeGraphWithConfig(config)
 	if err := tg.AddTimeRelation(context.Background(), "left", "right", cmdb.Matcher{"id": "same"}, 100); err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +128,7 @@ func TestNodeIdentityIncludesResourceType(t *testing.T) {
 }
 
 func TestTimeGraphRelationTypeConstrainsSameEndpoint(t *testing.T) {
-	config := &Config{Resource: []ResourceConf{
+	config := &TimeGraphConfig{Resource: []TimeGraphResourceConfig{
 		{Name: "left", Index: cmdb.Index{"id"}},
 		{Name: "right", Index: cmdb.Index{"id"}},
 	}}
@@ -181,7 +178,7 @@ func TestTimeGraphRelationTypeConstrainsSameEndpoint(t *testing.T) {
 }
 
 func TestTimeGraphUsesModelResourceConfigAndMetricName(t *testing.T) {
-	tg := NewTimeGraphWithConfig(&Config{Resource: []ResourceConf{
+	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
 		{Name: "left", Index: cmdb.Index{"left_id"}},
 		{Name: "right", Index: cmdb.Index{"right_id"}},
 	}})

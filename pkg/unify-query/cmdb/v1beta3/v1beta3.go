@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta1"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
@@ -48,8 +47,10 @@ func GetModel(ctx context.Context) (cmdb.CMDB, error) {
 		if err != nil {
 			return nil, err
 		}
-		// v1beta3 的关系查询直接使用 TSDB-backed TimeGraph。
-		model.SetTimeGraphResolver(v1beta1.GetModel)
+		// v1beta3 的关系查询直接使用本包内的 TSDB-backed TimeGraph。
+		model.SetTimeGraphResolver(func(_ context.Context, _ string) (cmdb.CMDB, error) {
+			return model, nil
+		})
 		model.SetTimeGraphPrimary(true)
 		defaultModel = model
 	}

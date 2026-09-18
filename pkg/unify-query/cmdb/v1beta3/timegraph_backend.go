@@ -15,10 +15,9 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 )
 
-// timeGraphQuerier is implemented by the v1beta1 model's TSDB-backed
-// TimeGraph extension. It is intentionally kept as a small adapter contract so
-// v1beta3 owns request normalization and path planning while TimeGraph owns
-// relation metric reads and in-memory traversal.
+// timeGraphQuerier is the v1beta3 TimeGraph query contract. It is intentionally
+// kept small so request normalization and legacy response shaping stay separate
+// from relation metric reads and in-memory traversal.
 type timeGraphQuerier interface {
 	QueryPathResources(context.Context, string, string, string, cmdb.Resource, []cmdb.Resource, [][]cmdb.Resource, cmdb.Matcher) ([]cmdb.PathResourcesResult, error)
 	QueryPathResourcesRange(context.Context, string, string, string, string, string, cmdb.Resource, []cmdb.Resource, [][]cmdb.Resource, cmdb.Matcher) ([]cmdb.PathResourcesResult, error)
@@ -166,36 +165,6 @@ func timeGraphQueryTimestamp(ts string) (string, error) {
 	return strconv.FormatInt(timestampMs/1000, 10), nil
 }
 
-func timeGraphPathRank(path []cmdb.PathNode, candidates [][]cmdb.Resource) int {
-	if len(path) == 0 {
-		return len(candidates)
-	}
-	for index, candidate := range candidates {
-		if len(candidate) != len(path) {
-			continue
-		}
-		matched := true
-		for step, node := range path {
-			if node.ResourceType != candidate[step] {
-				matched = false
-				break
-			}
-		}
-		if matched {
-			return index
-		}
-	}
-	return len(candidates)
-}
-
-func timeGraphPathTypes(path []cmdb.PathNode) []string {
-	result := make([]string, 0, len(path))
-	for _, node := range path {
-		result = append(result, string(node.ResourceType))
-	}
-	return result
-}
-
 func timeGraphTargetMatcher(
 	path []cmdb.PathNode,
 	targetType ResourceType,
@@ -291,7 +260,7 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 	bestRank := len(candidatePaths)
 	matchersByID := make(map[string]cmdb.Matcher)
 	for _, result := range results {
-		rank := timeGraphPathRank(result.Path, candidatePaths)
+		rank := cmdb.PathRank(result.Path, candidatePaths)
 		if rank < bestRank {
 			bestRank = rank
 			matchersByID = make(map[string]cmdb.Matcher)
@@ -318,7 +287,7 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 		selectedPath = resourceTypesToPath(resourcePathToResourceTypes(paths[bestRank]))
 	}
 	if len(selectedPath) == 0 && len(results) > 0 {
-		selectedPath = timeGraphPathTypes(results[0].Path)
+		selectedPath = cmdb.PathResourceTypes(results[0].Path)
 	}
 	if len(selectedPath) == 0 && len(paths) > 0 {
 		selectedPath = resourceTypesToPath(resourcePathToResourceTypes(paths[0]))
@@ -436,7 +405,7 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	bestRank := len(candidatePaths)
 	timeSeries := make(map[int64]map[string]cmdb.Matcher)
 	for _, result := range results {
-		rank := timeGraphPathRank(result.Path, candidatePaths)
+		rank := cmdb.PathRank(result.Path, candidatePaths)
 		if rank < bestRank {
 			bestRank = rank
 			timeSeries = make(map[int64]map[string]cmdb.Matcher)
@@ -480,7 +449,7 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 		selectedPath = resourceTypesToPath(resourcePathToResourceTypes(paths[bestRank]))
 	}
 	if len(selectedPath) == 0 && len(results) > 0 {
-		selectedPath = timeGraphPathTypes(results[0].Path)
+		selectedPath = cmdb.PathResourceTypes(results[0].Path)
 	}
 	if len(selectedPath) == 0 && len(paths) > 0 {
 		selectedPath = resourceTypesToPath(resourcePathToResourceTypes(paths[0]))

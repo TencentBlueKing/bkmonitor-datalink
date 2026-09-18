@@ -14,9 +14,10 @@ import (
 	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta1"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta3"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -26,7 +27,7 @@ type timeGraphQuerier interface {
 }
 
 func getTimeGraphQuerier(ctx context.Context, spaceUID string) (timeGraphQuerier, error) {
-	model, err := v1beta1.GetModel(ctx, spaceUID)
+	model, err := v1beta3.GetModel(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -49,6 +50,9 @@ func HandlerAPIRelationPathResources(c *gin.Context) {
 		resp.failed(ctx, err)
 		return
 	}
+	span.Set("query-mode", metric.CMDBRelationQueryModeInstant)
+	span.Set("query-count", len(request.QueryList))
+	metric.CMDBRelationQueryListSizeObserve(ctx, metric.CMDBRelationRouteTimeGraph, metric.CMDBRelationQueryModeInstant, len(request.QueryList))
 	model, err := getTimeGraphQuerier(ctx, user.SpaceUID)
 	if err != nil {
 		resp.failed(ctx, err)
@@ -59,10 +63,16 @@ func HandlerAPIRelationPathResources(c *gin.Context) {
 		TraceID: span.TraceID(),
 		Data:    make([]cmdb.RelationPathResourcesResponseData, len(request.QueryList)),
 	}
+	failedQueryCount := 0
 	for i, queryItem := range request.QueryList {
-		results, queryErr := model.QueryPathResources(ctx, queryItem.LookBackDelta, user.SpaceUID, cast.ToString(queryItem.Timestamp), queryItem.SourceType, queryItem.TargetTypes, queryItem.PathResources, queryItem.Matcher)
+		queryCtx, querySpan := trace.NewSpan(ctx, "handler-api-relation-path-resources-item")
+		querySpan.Set("query-index", i)
+		results, queryErr := model.QueryPathResources(queryCtx, queryItem.LookBackDelta, user.SpaceUID, cast.ToString(queryItem.Timestamp), queryItem.SourceType, queryItem.TargetTypes, queryItem.PathResources, queryItem.Matcher)
+		querySpan.Set("result-count", len(results))
+		querySpan.End(&queryErr)
 		item := cmdb.RelationPathResourcesResponseData{Code: http.StatusOK, Results: results}
 		if queryErr != nil {
+			failedQueryCount++
 			item.Code = http.StatusBadRequest
 			item.Message = queryErr.Error()
 		}
@@ -71,6 +81,9 @@ func HandlerAPIRelationPathResources(c *gin.Context) {
 		}
 		data.Data[i] = item
 	}
+	span.Set("failed-query-count", failedQueryCount)
+	span.Set("successful-query-count", len(request.QueryList)-failedQueryCount)
+	span.Set("partial-failure", failedQueryCount > 0)
 	resp.success(ctx, data)
 }
 
@@ -86,6 +99,9 @@ func HandlerAPIRelationPathResourcesRange(c *gin.Context) {
 		resp.failed(ctx, err)
 		return
 	}
+	span.Set("query-mode", metric.CMDBRelationQueryModeRange)
+	span.Set("query-count", len(request.QueryList))
+	metric.CMDBRelationQueryListSizeObserve(ctx, metric.CMDBRelationRouteTimeGraph, metric.CMDBRelationQueryModeRange, len(request.QueryList))
 	model, err := getTimeGraphQuerier(ctx, user.SpaceUID)
 	if err != nil {
 		resp.failed(ctx, err)
@@ -96,10 +112,16 @@ func HandlerAPIRelationPathResourcesRange(c *gin.Context) {
 		TraceID: span.TraceID(),
 		Data:    make([]cmdb.RelationPathResourcesRangeResponseData, len(request.QueryList)),
 	}
+	failedQueryCount := 0
 	for i, queryItem := range request.QueryList {
-		results, queryErr := model.QueryPathResourcesRange(ctx, queryItem.LookBackDelta, user.SpaceUID, queryItem.Step, cast.ToString(queryItem.StartTs), cast.ToString(queryItem.EndTs), queryItem.SourceType, queryItem.TargetTypes, queryItem.PathResources, queryItem.Matcher)
+		queryCtx, querySpan := trace.NewSpan(ctx, "handler-api-relation-path-resources-range-item")
+		querySpan.Set("query-index", i)
+		results, queryErr := model.QueryPathResourcesRange(queryCtx, queryItem.LookBackDelta, user.SpaceUID, queryItem.Step, cast.ToString(queryItem.StartTs), cast.ToString(queryItem.EndTs), queryItem.SourceType, queryItem.TargetTypes, queryItem.PathResources, queryItem.Matcher)
+		querySpan.Set("result-count", len(results))
+		querySpan.End(&queryErr)
 		item := cmdb.RelationPathResourcesRangeResponseData{Code: http.StatusOK, Results: results}
 		if queryErr != nil {
+			failedQueryCount++
 			item.Code = http.StatusBadRequest
 			item.Message = queryErr.Error()
 		}
@@ -108,5 +130,8 @@ func HandlerAPIRelationPathResourcesRange(c *gin.Context) {
 		}
 		data.Data[i] = item
 	}
+	span.Set("failed-query-count", failedQueryCount)
+	span.Set("successful-query-count", len(request.QueryList)-failedQueryCount)
+	span.Set("partial-failure", failedQueryCount > 0)
 	resp.success(ctx, data)
 }

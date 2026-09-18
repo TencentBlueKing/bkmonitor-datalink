@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package v1beta1
+package v1beta3
 
 import (
 	"context"
@@ -48,12 +48,12 @@ type timeGraphEdgeKey struct {
 // 返回: 新创建的 TimeGraph 指针
 // 注意: 每个实例都有自己独立的字符串字典，避免全局字典溢出问题
 func NewTimeGraph() *TimeGraph {
-	return NewTimeGraphWithConfig(nil)
+	return NewTimeGraphWithConfig(defaultTimeGraphConfig())
 }
 
 // NewTimeGraphWithConfig creates a graph whose resource identity rules are
 // isolated from the process-global legacy configuration.
-func NewTimeGraphWithConfig(cfg *Config) *TimeGraph {
+func NewTimeGraphWithConfig(cfg *TimeGraphConfig) *TimeGraph {
 	stringDict := NewStringDict() // 每个TimeGraph实例有自己的字符串字典
 	return &TimeGraph{
 		nodeBuilder: NewNodeBuilderWithConfig(stringDict, cfg), // 传递局部StringDict给NodeBuilder

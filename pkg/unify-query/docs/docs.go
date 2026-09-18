@@ -112,6 +112,100 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/relation/v1beta3/multi_resource": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "query relation multi resource (v1beta3, SurrealDB)",
+                "operationId": "relation_multi_resource_query_v1beta3",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "TraceID",
+                        "name": "traceparent",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "bkcc__2",
+                        "description": "空间UID",
+                        "name": "X-Bk-Scope-Space-Uid",
+                        "in": "header"
+                    },
+                    {
+                        "description": "json data",
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.RelationMultiResourceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.RelationMultiResourceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/relation/v1beta3/multi_resource_range": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "query relation multi resource range (v1beta3, SurrealDB)",
+                "operationId": "relation_multi_resource_query_range_v1beta3",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "TraceID",
+                        "name": "traceparent",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "bkcc__2",
+                        "description": "空间UID",
+                        "name": "X-Bk-Scope-Space-Uid",
+                        "in": "header"
+                    },
+                    {
+                        "description": "json data",
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.RelationMultiResourceRangeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.RelationMultiResourceRangeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/check/query/ts": {
             "post": {
                 "produces": [
@@ -1195,6 +1289,40 @@ const docTemplate = `{
                 }
             }
         },
+        "cmdb.RelationMultiResourcePathData": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "target_list": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.Matcher"
+                    }
+                }
+            }
+        },
+        "cmdb.RelationMultiResourceRangePathData": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "target_list": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.MatchersWithTimestamp"
+                    }
+                }
+            }
+        },
         "cmdb.RelationMultiResourceRangeRequest": {
             "type": "object",
             "properties": {
@@ -1214,6 +1342,9 @@ const docTemplate = `{
                                 "items": {
                                     "type": "string"
                                 }
+                            },
+                            "return_all_paths": {
+                                "type": "boolean"
                             },
                             "source_expand_info": {
                                 "$ref": "#/definitions/cmdb.Matcher"
@@ -1270,6 +1401,12 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "paths": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.RelationMultiResourceRangePathData"
+                    }
+                },
                 "source_info": {
                     "$ref": "#/definitions/cmdb.Matcher"
                 },
@@ -1283,6 +1420,14 @@ const docTemplate = `{
                     }
                 },
                 "target_type": {
+                    "type": "string"
+                },
+                "truncated": {
+                    "description": "Truncated 表示响应是否因服务端安全上限而被截断。",
+                    "type": "boolean"
+                },
+                "truncated_reason": {
+                    "description": "TruncatedReason 标识触发截断的具体上限，便于调用方区分处理。",
                     "type": "string"
                 }
             }
@@ -1303,6 +1448,10 @@ const docTemplate = `{
                                 "items": {
                                     "type": "string"
                                 }
+                            },
+                            "return_all_paths": {
+                                "description": "ReturnAllPaths 开启后，legacy 接口会额外返回所有可执行的静态路径。\n未开启时保持原有的首条有效路径语义。",
+                                "type": "boolean"
                             },
                             "source_expand_info": {
                                 "$ref": "#/definitions/cmdb.Matcher"
@@ -1356,6 +1505,12 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "paths": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.RelationMultiResourcePathData"
+                    }
+                },
                 "source_info": {
                     "$ref": "#/definitions/cmdb.Matcher"
                 },
@@ -1369,6 +1524,14 @@ const docTemplate = `{
                     }
                 },
                 "target_type": {
+                    "type": "string"
+                },
+                "truncated": {
+                    "description": "Truncated 表示响应是否因服务端安全上限而被截断。",
+                    "type": "boolean"
+                },
+                "truncated_reason": {
+                    "description": "TruncatedReason 标识触发截断的具体上限，便于调用方区分处理。",
                     "type": "string"
                 }
             }
@@ -2528,9 +2691,25 @@ const docTemplate = `{
                 1000000,
                 1000000000,
                 60000000000,
+                3600000000000,
+                -9223372036854775808,
+                9223372036854775807,
+                1,
+                1000,
+                1000000,
+                1000000000,
+                60000000000,
                 3600000000000
             ],
             "x-enum-varnames": [
+                "minDuration",
+                "maxDuration",
+                "Nanosecond",
+                "Microsecond",
+                "Millisecond",
+                "Second",
+                "Minute",
+                "Hour",
                 "minDuration",
                 "maxDuration",
                 "Nanosecond",

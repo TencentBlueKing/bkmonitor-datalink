@@ -43,14 +43,17 @@ func (m *Model) buildTimeGraphFromRelations(ctx context.Context, spaceUID string
 	span.Set("query-step-seconds", step.Seconds())
 
 	tg := NewTimeGraphWithConfig(m.timeGraphConfig(spaceUID))
-	lookBack, err := time.ParseDuration(lookBackDelta)
-	if lookBackDelta != "" && err != nil {
-		return nil, errors.WithMessage(err, "parse look back delta")
+	var lookBack time.Duration
+	if lookBackDelta != "" {
+		lookBack, err = time.ParseDuration(lookBackDelta)
+		if err != nil {
+			return nil, errors.WithMessage(err, "parse look back delta")
+		}
 	}
 
-	queryParams := metadata.GetQueryParams(ctx)
+	baseQueryParams := metadata.GetQueryParams(ctx)
 	var instance tsdb.Instance
-	if queryParams.IsDirectQuery() {
+	if baseQueryParams.IsDirectQuery() {
 		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
 			StorageType: metadata.VictoriaMetricsStorageType,
 		})
@@ -64,15 +67,15 @@ func (m *Model) buildTimeGraphFromRelations(ctx context.Context, spaceUID string
 		}, lookBack, timeGraphQueryMaxRouting)
 	}
 
-	metadata.GetQueryParams(ctx).SetIsSkipK8s(true)
 	instant := start.Equal(end)
 	for _, relation := range relations {
 		if len(relation.V) != 2 {
 			continue
 		}
 
-		ctx = metadata.InitHashID(ctx)
-		queryTs, err := tg.MakeQueryTs(ctx, spaceUID, sourceInfo, start, end, step, relation)
+		relationCtx := metadata.InitHashID(ctx)
+		metadata.GetQueryParams(relationCtx).SetIsSkipK8s(true)
+		queryTs, err := tg.MakeQueryTs(relationCtx, spaceUID, sourceInfo, start, end, step, relation)
 		if err != nil {
 			return nil, errors.WithMessagef(err, "make query ts error for relation %v", relation)
 		}
@@ -80,27 +83,34 @@ func (m *Model) buildTimeGraphFromRelations(ctx context.Context, spaceUID string
 			continue
 		}
 
-		queryRef, err := queryTs.ToQueryReference(ctx)
+		queryRef, err := queryTs.ToQueryReference(relationCtx)
 		if err != nil {
 			return nil, errors.WithMessage(err, "to query reference")
 		}
-		metadata.SetExpand(ctx, query.ToVmExpand(ctx, queryRef))
+		metadata.SetExpand(relationCtx, query.ToVmExpand(relationCtx, queryRef))
 
-		expr, err := queryTs.ToPromExpr(ctx, nil)
+		expr, err := queryTs.ToPromExpr(relationCtx, nil)
 		if err != nil {
 			return nil, errors.WithMessage(err, "to prom expr")
 		}
+		relationQueryParams := metadata.GetQueryParams(relationCtx)
 
 		var matrix pl.Matrix
 		if instant {
-			vector, queryErr := instance.DirectQuery(ctx, expr.String(), queryParams.End)
+			vector, queryErr := instance.DirectQuery(relationCtx, expr.String(), relationQueryParams.End)
 			if queryErr != nil {
 				return nil, errors.WithMessage(queryErr, "direct query")
 			}
 			matrix = vectorToMatrix(vector)
 		} else {
 			var queryErr error
-			matrix, _, queryErr = instance.DirectQueryRange(ctx, expr.String(), queryParams.AlignStart, queryParams.End, queryParams.Step)
+			matrix, _, queryErr = instance.DirectQueryRange(
+				relationCtx,
+				expr.String(),
+				relationQueryParams.AlignStart,
+				relationQueryParams.End,
+				relationQueryParams.Step,
+			)
 			if queryErr != nil {
 				return nil, errors.WithMessage(queryErr, "direct query range")
 			}
@@ -115,7 +125,7 @@ func (m *Model) buildTimeGraphFromRelations(ctx context.Context, spaceUID string
 			for i, point := range series.Points {
 				timestamps[i] = point.T
 			}
-			if err = tg.AddTimeRelationWithRelation(ctx, relation, info, timestamps...); err != nil {
+			if err = tg.AddTimeRelationWithRelation(relationCtx, relation, info, timestamps...); err != nil {
 				return nil, errors.WithMessage(err, "add time relation")
 			}
 		}

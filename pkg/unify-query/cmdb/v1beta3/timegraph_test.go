@@ -198,3 +198,62 @@ func TestTimeGraphUsesModelResourceConfigAndMetricName(t *testing.T) {
 		t.Fatalf("unexpected custom relation query: %+v", query)
 	}
 }
+
+func TestTimeGraphSourceInfoNodeSupportsExpandedMatcher(t *testing.T) {
+	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
+		{Name: "node", Index: cmdb.Index{"node"}, Info: cmdb.Index{"region"}},
+		{Name: "system", Index: cmdb.Index{"ip"}},
+	}})
+	ctx := context.Background()
+	if err := tg.AddTimeNode(ctx, "node", cmdb.Matcher{"node": "n1", "region": "east"}, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := tg.AddTimeRelation(ctx, "node", "system", cmdb.Matcher{"node": "n1", "ip": "10.0.0.1"}, 100); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := tg.FindPathResources(
+		ctx,
+		"node",
+		[]cmdb.Resource{"system"},
+		cmdb.Matcher{"node": "n1", "region": "east"},
+		[][]cmdb.Resource{{"node", "system"}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Path[0].Dimensions["region"] != "east" {
+		t.Fatalf("expanded source matcher did not select enriched node: %+v", results)
+	}
+}
+
+func TestMakeResourceInfoQueryTsKeepsExpandedFields(t *testing.T) {
+	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
+		{Name: "node", Index: cmdb.Index{"node"}, Info: cmdb.Index{"region"}},
+	}})
+	query, err := tg.MakeResourceInfoQueryTs(
+		"space",
+		"node",
+		map[string]string{"node": "n1"},
+		map[string]string{"region": "east"},
+		time.Unix(100, 0),
+		time.Unix(100, 0),
+		time.Minute,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if query == nil || len(query.QueryList) != 1 {
+		t.Fatalf("unexpected resource info query: %+v", query)
+	}
+	resourceQuery := query.QueryList[0]
+	if resourceQuery.FieldName != "node_info_relation" {
+		t.Fatalf("unexpected resource info metric: %+v", resourceQuery)
+	}
+	if len(resourceQuery.AggregateMethodList) != 1 || len(resourceQuery.AggregateMethodList[0].Dimensions) != 2 {
+		t.Fatalf("resource info query dropped expanded dimensions: %+v", resourceQuery.AggregateMethodList)
+	}
+	if resourceQuery.AggregateMethodList[0].Dimensions[0] != "node" || resourceQuery.AggregateMethodList[0].Dimensions[1] != "region" {
+		t.Fatalf("unexpected resource info dimensions: %+v", resourceQuery.AggregateMethodList[0].Dimensions)
+	}
+}

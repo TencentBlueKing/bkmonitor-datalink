@@ -27,6 +27,24 @@ type fakeTimeGraphModel struct {
 	rangePaths     [][]cmdb.Resource
 	instantPlan    []cmdb.RelationPath
 	rangePlan      []cmdb.RelationPath
+	sourceExpand   cmdb.Matcher
+	rangeExpand    cmdb.Matcher
+}
+
+type mockCMDB struct{}
+
+func (mockCMDB) QueryResourceMatcher(
+	context.Context, string, string, string, cmdb.Resource, cmdb.Resource,
+	cmdb.Matcher, cmdb.Matcher, bool, []cmdb.Resource,
+) (cmdb.Resource, cmdb.Matcher, []string, cmdb.Resource, cmdb.Matchers, error) {
+	return "", nil, nil, "", nil, nil
+}
+
+func (mockCMDB) QueryResourceMatcherRange(
+	context.Context, string, string, string, string, string, cmdb.Resource, cmdb.Resource,
+	cmdb.Matcher, cmdb.Matcher, bool, []cmdb.Resource,
+) (cmdb.Resource, cmdb.Matcher, []string, cmdb.Resource, []cmdb.MatchersWithTimestamp, error) {
+	return "", nil, nil, "", nil, nil
 }
 
 type timeGraphTestSchemaProvider struct{}
@@ -43,6 +61,9 @@ func (timeGraphTestSchemaProvider) GetResourcePrimaryKeys(_ string, resourceType
 }
 
 func (timeGraphTestSchemaProvider) GetResourceFields(namespace string, resourceType ResourceType) []string {
+	if resourceType == "node" {
+		return []string{"node", "region"}
+	}
 	return timeGraphTestSchemaProvider{}.GetResourcePrimaryKeys(namespace, resourceType)
 }
 
@@ -118,6 +139,30 @@ func (m *fakeTimeGraphModel) QueryRelationPathResourcesRange(
 	return m.QueryPathResourcesRange(ctx, lookBackDelta, spaceUID, step, start, end, sourceType, targetTypes, m.rangePaths, matcher)
 }
 
+func (m *fakeTimeGraphModel) queryRelationPathResourcesWithSourceExpand(
+	ctx context.Context,
+	lookBackDelta, spaceUID, timestamp string,
+	sourceType cmdb.Resource,
+	targetTypes []cmdb.Resource,
+	paths []cmdb.RelationPath,
+	matcher, expand cmdb.Matcher,
+) ([]cmdb.PathResourcesResult, error) {
+	m.sourceExpand = expand
+	return m.QueryRelationPathResources(ctx, lookBackDelta, spaceUID, timestamp, sourceType, targetTypes, paths, matcher)
+}
+
+func (m *fakeTimeGraphModel) queryRelationPathResourcesRangeWithSourceExpand(
+	ctx context.Context,
+	lookBackDelta, spaceUID, step, start, end string,
+	sourceType cmdb.Resource,
+	targetTypes []cmdb.Resource,
+	paths []cmdb.RelationPath,
+	matcher, expand cmdb.Matcher,
+) ([]cmdb.PathResourcesResult, error) {
+	m.rangeExpand = expand
+	return m.QueryRelationPathResourcesRange(ctx, lookBackDelta, spaceUID, step, start, end, sourceType, targetTypes, paths, matcher)
+}
+
 func relationPathsToResources(paths []cmdb.RelationPath) [][]cmdb.Resource {
 	result := make([][]cmdb.Resource, 0, len(paths))
 	for _, path := range paths {
@@ -142,7 +187,6 @@ func TestQueryResourceMatcherUsesTimeGraphBackend(t *testing.T) {
 		}},
 	}
 	model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
-	model.SetTimeGraphPrimary(true)
 	model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) {
 		return fake, nil
 	})
@@ -163,9 +207,7 @@ func TestQueryResourceMatcherUsesTimeGraphBackend(t *testing.T) {
 }
 
 func TestTimeGraphPrimaryDoesNotFallbackToLegacyExecutor(t *testing.T) {
-	executor := &mockGraphQueryExecutor{}
-	model := &Model{executor: executor, schemaProvider: timeGraphTestSchemaProvider{}}
-	model.SetTimeGraphPrimary(true)
+	model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
 	model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) {
 		return nil, errors.New("timegraph unavailable")
 	})
@@ -175,7 +217,6 @@ func TestTimeGraphPrimaryDoesNotFallbackToLegacyExecutor(t *testing.T) {
 		"system", "node", cmdb.Matcher{"node": "n1"}, nil, true, nil,
 	)
 	require.ErrorContains(t, err, "timegraph unavailable")
-	require.Empty(t, executor.sqls)
 }
 
 func TestQueryResourceMatcherRangeUsesTimeGraphBackendAndNormalizesBuckets(t *testing.T) {
@@ -200,7 +241,6 @@ func TestQueryResourceMatcherRangeUsesTimeGraphBackendAndNormalizesBuckets(t *te
 		},
 	}
 	model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
-	model.SetTimeGraphPrimary(true)
 	model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) {
 		return fake, nil
 	})
@@ -223,4 +263,30 @@ func TestQueryResourceMatcherRangeUsesTimeGraphBackendAndNormalizesBuckets(t *te
 	require.Equal(t, "1700000030", fake.rangeEnd)
 	require.Equal(t, [][]cmdb.Resource{{"node", "system"}}, fake.rangePaths)
 	require.Equal(t, "node_with_system", fake.rangePlan[0].Steps[1].RelationType)
+}
+
+func TestBuildTimeGraphRequestAppliesSourceExpandInfo(t *testing.T) {
+	model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
+	req, _, err := model.buildTimeGraphRequest(
+		"bkcc__2", "system", "node",
+		cmdb.Matcher{"node": "n1"},
+		cmdb.Matcher{"region": "east"}, true, nil,
+	)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"node": "n1", "region": "east"}, req.SourceInfo)
+}
+
+func TestQueryResourceMatcherPassesSourceExpandInfoToTimeGraph(t *testing.T) {
+	fake := &fakeTimeGraphModel{}
+	model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
+	model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) {
+		return fake, nil
+	})
+
+	_, _, _, _, _, err := model.QueryResourceMatcher(
+		context.Background(), "", "bkcc__2", "1700000000",
+		"system", "node", cmdb.Matcher{"node": "n1"}, cmdb.Matcher{"region": "east"}, false, nil,
+	)
+	require.NoError(t, err)
+	require.Equal(t, cmdb.Matcher{"region": "east"}, fake.sourceExpand)
 }

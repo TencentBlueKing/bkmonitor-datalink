@@ -28,6 +28,11 @@ type relationPathTimeGraphQuerier interface {
 	QueryRelationPathResourcesRange(context.Context, string, string, string, string, string, cmdb.Resource, []cmdb.Resource, []cmdb.RelationPath, cmdb.Matcher) ([]cmdb.PathResourcesResult, error)
 }
 
+type sourceExpandRelationTimeGraphQuerier interface {
+	queryRelationPathResourcesWithSourceExpand(context.Context, string, string, string, cmdb.Resource, []cmdb.Resource, []cmdb.RelationPath, cmdb.Matcher, cmdb.Matcher) ([]cmdb.PathResourcesResult, error)
+	queryRelationPathResourcesRangeWithSourceExpand(context.Context, string, string, string, string, string, cmdb.Resource, []cmdb.Resource, []cmdb.RelationPath, cmdb.Matcher, cmdb.Matcher) ([]cmdb.PathResourcesResult, error)
+}
+
 type timeGraphLegacyResult struct {
 	source             cmdb.Resource
 	sourceMatcher      cmdb.Matcher
@@ -77,14 +82,11 @@ func (m *Model) buildTimeGraphRequest(
 	if source == "" || target == "" {
 		return nil, nil, fmt.Errorf("timegraph backend requires explicit source_type and target_type")
 	}
-	if len(expandMatcher) > 0 {
-		return nil, nil, fmt.Errorf("timegraph backend does not support source_expand_info")
-	}
-
 	req := &QueryRequest{
 		SpaceUID:            spaceUID,
 		SourceType:          FromCMDBResource(source),
 		SourceInfo:          matcherToMap(indexMatcher.Rename()),
+		SourceExpandInfo:    matcherToMap(expandMatcher),
 		TargetType:          FromCMDBResource(target),
 		TargetTypeExplicit:  true,
 		TargetInfoShow:      expandShow,
@@ -99,9 +101,19 @@ func (m *Model) buildTimeGraphRequest(
 	if err := validateSchemaProvider(provider, req.SchemaNamespace()); err != nil {
 		return nil, nil, err
 	}
+	if err := validateSourceExpandInfoFields(req, provider); err != nil {
+		return nil, nil, err
+	}
 	// Keep the same compatibility behavior as the existing v1beta3 legacy API:
-	// only primary-key fields identify the source resource.
+	// primary-key fields identify the source resource, while source_expand_info
+	// filters the already identified source by its non-primary node attributes.
 	req.SourceInfo = sourcePrimaryKeySubset(req, provider)
+	if req.SourceInfo == nil && len(req.SourceExpandInfo) > 0 {
+		req.SourceInfo = make(map[string]string, len(req.SourceExpandInfo))
+	}
+	for key, value := range req.SourceExpandInfo {
+		req.SourceInfo[key] = value
+	}
 
 	pathFinder := NewPathFinder(
 		WithAllowedCategories(req.AllowedRelationTypes...),
@@ -228,7 +240,19 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 	candidatePaths := resourcePathsToTimeGraphPaths(paths)
 	result.candidatePathCount = len(candidatePaths)
 	var results []cmdb.PathResourcesResult
-	if relationQuerier, ok := querier.(relationPathTimeGraphQuerier); ok {
+	if expandedQuerier, ok := querier.(sourceExpandRelationTimeGraphQuerier); ok {
+		results, err = expandedQuerier.queryRelationPathResourcesWithSourceExpand(
+			ctx,
+			lookBackDelta,
+			spaceUID,
+			queryTimestamp,
+			cmdb.Resource(req.SourceType),
+			[]cmdb.Resource{cmdb.Resource(req.TargetType)},
+			resourcePathsToTimeGraphRelationPaths(paths),
+			cmdb.Matcher(req.SourceInfo),
+			cmdb.Matcher(req.SourceExpandInfo),
+		)
+	} else if relationQuerier, ok := querier.(relationPathTimeGraphQuerier); ok {
 		results, err = relationQuerier.QueryRelationPathResources(
 			ctx,
 			lookBackDelta,
@@ -281,6 +305,9 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 	sort.SliceStable(matchers, func(i, j int) bool {
 		return fmt.Sprint(matchers[i]) < fmt.Sprint(matchers[j])
 	})
+	if err := validateTargetCount(len(matchers)); err != nil {
+		return timeGraphLegacyResult{}, err
+	}
 
 	selectedPath := []string(nil)
 	if bestRank < len(paths) {
@@ -369,7 +396,21 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	candidatePaths := resourcePathsToTimeGraphPaths(paths)
 	result.candidatePathCount = len(candidatePaths)
 	var results []cmdb.PathResourcesResult
-	if relationQuerier, ok := querier.(relationPathTimeGraphQuerier); ok {
+	if expandedQuerier, ok := querier.(sourceExpandRelationTimeGraphQuerier); ok {
+		results, err = expandedQuerier.queryRelationPathResourcesRangeWithSourceExpand(
+			ctx,
+			lookBackDelta,
+			spaceUID,
+			step,
+			start,
+			end,
+			cmdb.Resource(req.SourceType),
+			[]cmdb.Resource{cmdb.Resource(req.TargetType)},
+			resourcePathsToTimeGraphRelationPaths(paths),
+			cmdb.Matcher(req.SourceInfo),
+			cmdb.Matcher(req.SourceExpandInfo),
+		)
+	} else if relationQuerier, ok := querier.(relationPathTimeGraphQuerier); ok {
 		results, err = relationQuerier.QueryRelationPathResourcesRange(
 			ctx,
 			lookBackDelta,

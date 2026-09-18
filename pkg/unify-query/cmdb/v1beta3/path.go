@@ -276,9 +276,15 @@ func containsContiguousResourcePath(pathTypes []ResourceType, pathResource []Res
 	return false
 }
 
+type pathRelation struct {
+	Schema     *RelationSchema
+	Direction  TraversalDirection
+	TargetType ResourceType
+}
+
 // getRelationsForType 获取指定资源类型的所有可用关系
-func (pf *PathFinder) getRelationsForType(resourceType ResourceType) []*RelationQueryInfo {
-	var results []*RelationQueryInfo
+func (pf *PathFinder) getRelationsForType(resourceType ResourceType) []*pathRelation {
+	var results []*pathRelation
 
 	// 从 SchemaProvider 获取所有关联 Schema
 	schemas := pf.schemaProvider.ListRelationSchemas(pf.namespace)
@@ -315,77 +321,50 @@ func (pf *PathFinder) isRelationCategoryAllowed(category RelationCategory) bool 
 	return false
 }
 
-// buildStaticRelationInfos 构建静态关系查询信息
-func (pf *PathFinder) buildStaticRelationInfos(schema *RelationSchema, currentType ResourceType) []*RelationQueryInfo {
-	info := &RelationQueryInfo{
-		Schema:    schema,
-		KeySuffix: "",
-	}
+// buildStaticRelationInfos 构建静态关系路径信息
+func (pf *PathFinder) buildStaticRelationInfos(schema *RelationSchema, currentType ResourceType) []*pathRelation {
+	info := &pathRelation{Schema: schema}
 
 	if schema.FromType == currentType {
 		info.Direction = DirectionOutbound
-		info.WhereField = fieldIn
-		info.SelectField = fieldOut
-		info.TargetField = fieldOut
 		info.TargetType = schema.ToType
 		if schema.ToType == currentType && !schema.IsDirectional {
-			// 非定向自关联同一张关系表既可从 in->out 走，也可从 out->in 走。
-			// 这里拆成两个带不同 key 后缀的 transition，避免 SQL 结果 map 中同名字段互相覆盖。
-			reverseInfo := &RelationQueryInfo{
-				Schema:      schema,
-				Direction:   DirectionInbound,
-				KeySuffix:   "_inbound",
-				WhereField:  fieldOut,
-				SelectField: fieldIn,
-				TargetField: fieldIn,
-				TargetType:  schema.FromType,
-			}
-			info.KeySuffix = "_outbound"
-			return []*RelationQueryInfo{info, reverseInfo}
+			// 非定向自关联既可沿 outbound 也可沿 inbound 方向遍历。
+			reverseInfo := &pathRelation{Schema: schema, Direction: DirectionInbound, TargetType: schema.FromType}
+			return []*pathRelation{info, reverseInfo}
 		}
 	} else {
 		if schema.IsDirectional {
 			return nil
 		}
 		info.Direction = DirectionInbound
-		info.WhereField = fieldOut
-		info.SelectField = fieldIn
-		info.TargetField = fieldIn
 		info.TargetType = schema.FromType
 	}
 
-	return []*RelationQueryInfo{info}
+	return []*pathRelation{info}
 }
 
-// buildDynamicRelationInfos 构建动态关系查询信息
-func (pf *PathFinder) buildDynamicRelationInfos(schema *RelationSchema, currentType ResourceType) []*RelationQueryInfo {
-	var results []*RelationQueryInfo
+// buildDynamicRelationInfos 构建动态关系路径信息
+func (pf *PathFinder) buildDynamicRelationInfos(schema *RelationSchema, currentType ResourceType) []*pathRelation {
+	var results []*pathRelation
 	direction := pf.dynamicDirection
 
 	canOutbound := schema.FromType == currentType
 	canInbound := schema.ToType == currentType
 
 	if (direction == DirectionOutbound || direction == DirectionBoth) && canOutbound {
-		results = append(results, &RelationQueryInfo{
-			Schema:      schema,
-			Direction:   DirectionOutbound,
-			KeySuffix:   "_outbound",
-			WhereField:  fieldIn,
-			SelectField: fieldOut,
-			TargetField: fieldOut,
-			TargetType:  schema.ToType,
+		results = append(results, &pathRelation{
+			Schema:     schema,
+			Direction:  DirectionOutbound,
+			TargetType: schema.ToType,
 		})
 	}
 
 	if (direction == DirectionInbound || direction == DirectionBoth) && canInbound {
-		results = append(results, &RelationQueryInfo{
-			Schema:      schema,
-			Direction:   DirectionInbound,
-			KeySuffix:   "_inbound",
-			WhereField:  fieldOut,
-			SelectField: fieldIn,
-			TargetField: fieldIn,
-			TargetType:  schema.FromType,
+		results = append(results, &pathRelation{
+			Schema:     schema,
+			Direction:  DirectionInbound,
+			TargetType: schema.FromType,
 		})
 	}
 

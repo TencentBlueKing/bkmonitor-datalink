@@ -158,6 +158,35 @@ func (q *TimeGraph) AddTimeRelation(ctx context.Context, source, target cmdb.Res
 	return q.AddTimeRelationWithRelation(ctx, cmdb.Relation{V: []cmdb.Resource{source, target}}, info, timestamps...)
 }
 
+// AddTimeNode adds a resource node without creating an edge. Resource info
+// metrics use this path to enrich relation nodes with non-primary attributes
+// such as version or environment before relation traversal starts.
+func (q *TimeGraph) AddTimeNode(_ context.Context, resource cmdb.Resource, info cmdb.Matcher, timestamps ...int64) error {
+	if resource == "" || len(info) == 0 || len(timestamps) == 0 {
+		return nil
+	}
+
+	node, err := q.nodeBuilder.GetID(resource, info)
+	if err != nil {
+		return err
+	}
+
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	for _, timestamp := range timestamps {
+		if q.timeGraph[timestamp] == nil {
+			q.timeGraph[timestamp] = graph.New(func(t uint64) uint64 { return t }, graph.Directed())
+		}
+		if q.edgeTypes[timestamp] == nil {
+			q.edgeTypes[timestamp] = make(map[timeGraphEdgeKey]map[string]struct{})
+		}
+		if err = q.timeGraph[timestamp].AddVertex(node); err != nil && !errors.Is(err, graph.ErrVertexAlreadyExists) {
+			return err
+		}
+	}
+	return nil
+}
+
 // AddTimeRelationWithRelation adds a time-varying edge and retains the
 // relation identity used to query it. Multiple relation types may connect the
 // same pair of nodes, so the identity is stored separately from the simple
@@ -316,6 +345,85 @@ func (q *TimeGraph) MakeQueryTs(ctx context.Context, spaceUID string, info map[s
 		ReferenceName: metadata.DefaultReferenceName,
 	}
 
+	return &structured.QueryTs{
+		SpaceUid:    spaceUID,
+		QueryList:   []*structured.Query{query},
+		MetricMerge: metadata.DefaultReferenceName,
+		Start:       cast.ToString(start.Unix()),
+		End:         cast.ToString(end.Unix()),
+		Step:        step.String(),
+	}, nil
+}
+
+// MakeResourceInfoQueryTs builds the query for a resource's info relation.
+// Unlike a normal relation metric, the result must retain the configured
+// non-primary fields so the graph can filter or project them later.
+func (q *TimeGraph) MakeResourceInfoQueryTs(spaceUID string, resource cmdb.Resource, sourceInfo, expandInfo map[string]string, start, end time.Time, step time.Duration) (*structured.QueryTs, error) {
+	if resource == "" {
+		return nil, nil
+	}
+
+	primaryFields := q.nodeBuilder.resourceIndexes(resource)
+	infoFields := q.nodeBuilder.resourceInfoFields(resource)
+	fieldSet := make(map[string]struct{}, len(primaryFields)+len(infoFields))
+	for _, field := range primaryFields {
+		fieldSet[field] = struct{}{}
+	}
+	for _, field := range infoFields {
+		fieldSet[field] = struct{}{}
+	}
+	fields := make([]string, 0, len(fieldSet))
+	for field := range fieldSet {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+
+	fieldList := make([]structured.ConditionField, 0, len(primaryFields)+len(expandInfo))
+	for _, field := range primaryFields {
+		if value, ok := sourceInfo[field]; ok {
+			fieldList = append(fieldList, structured.ConditionField{
+				DimensionName: field,
+				Value:         []string{value},
+				Operator:      structured.ConditionEqual,
+			})
+		} else {
+			fieldList = append(fieldList, structured.ConditionField{
+				DimensionName: field,
+				Value:         []string{""},
+				Operator:      structured.ConditionNotEqual,
+			})
+		}
+	}
+	for field, value := range expandInfo {
+		if _, isPrimary := fieldSet[field]; !isPrimary {
+			fieldList = append(fieldList, structured.ConditionField{
+				DimensionName: field,
+				Value:         []string{value},
+				Operator:      structured.ConditionEqual,
+			})
+		}
+	}
+	sort.SliceStable(fieldList, func(i, j int) bool {
+		return fieldList[i].DimensionName < fieldList[j].DimensionName
+	})
+	conditionList := make([]string, 0, len(fieldList)-1)
+	for i := 1; i < len(fieldList); i++ {
+		conditionList = append(conditionList, structured.ConditionAnd)
+	}
+
+	query := &structured.Query{
+		FieldName: fmt.Sprintf("%s_info_relation", resource),
+		TimeAggregation: structured.TimeAggregation{
+			Function: structured.CountOT,
+			Window:   structured.Window(step.String()),
+		},
+		AggregateMethodList: structured.AggregateMethodList{{
+			Method:     structured.COUNT,
+			Dimensions: fields,
+		}},
+		Conditions:    structured.Conditions{FieldList: fieldList, ConditionList: conditionList},
+		ReferenceName: metadata.DefaultReferenceName,
+	}
 	return &structured.QueryTs{
 		SpaceUid:    spaceUID,
 		QueryList:   []*structured.Query{query},

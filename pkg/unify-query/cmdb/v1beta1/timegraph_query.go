@@ -31,6 +31,11 @@ func (r *model) buildTimeGraphFromRelations(ctx context.Context, spaceUID string
 	var err error
 	ctx, span := trace.NewSpan(ctx, "build-time-graph-from-relations")
 	defer span.End(&err)
+	span.Set("space-uid", spaceUID)
+	span.Set("relation-count", len(relations))
+	span.Set("query-start", start.Unix())
+	span.Set("query-end", end.Unix())
+	span.Set("query-step-seconds", step.Seconds())
 
 	tg := NewTimeGraphWithConfig(r.cfg)
 	lookBack, err := time.ParseDuration(lookBackDelta)
@@ -276,14 +281,26 @@ func (r *model) queryTimeGraph(ctx context.Context, lookBackDelta, spaceUID stri
 	return r.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, start, end, step, sourceType, targetTypes, relationPathsFromResourcePaths(paths), matcher)
 }
 
-func (r *model) queryRelationTimeGraph(ctx context.Context, lookBackDelta, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
-	tg, err := r.buildTimeGraphFromRelations(ctx, spaceUID, start, end, step, matcher, r.buildRelationsFromRelationPaths(paths), lookBackDelta)
+func (r *model) queryRelationTimeGraph(ctx context.Context, lookBackDelta, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher cmdb.Matcher) (results []cmdb.PathResourcesResult, err error) {
+	ctx, span := trace.NewSpan(ctx, "timegraph-query-relation")
+	defer span.End(&err)
+	span.Set("space-uid", spaceUID)
+	span.Set("source-type", sourceType)
+	span.Set("target-types", targetTypes)
+	span.Set("path-count", len(paths))
+	span.Set("query-start", start.Unix())
+	span.Set("query-end", end.Unix())
+	span.Set("query-step-seconds", step.Seconds())
+	relations := r.buildRelationsFromRelationPaths(paths)
+	span.Set("relation-count", len(relations))
+
+	tg, err := r.buildTimeGraphFromRelations(ctx, spaceUID, start, end, step, matcher, relations, lookBackDelta)
 	if err != nil {
 		return nil, errors.WithMessage(err, "build time graph")
 	}
 	defer tg.Clean(ctx)
 
-	results := make([]cmdb.PathResourcesResult, 0)
+	results = make([]cmdb.PathResourcesResult, 0)
 	pathResults, queryErr := tg.FindRelationPathResources(ctx, sourceType, targetTypes, matcher, paths)
 	if queryErr != nil {
 		return nil, errors.WithMessagef(queryErr, "find path from %s", sourceType)
@@ -295,6 +312,7 @@ func (r *model) queryRelationTimeGraph(ctx context.Context, lookBackDelta, space
 			Path:       result.Path,
 		})
 	}
+	span.Set("raw-result-count", len(results))
 	sort.SliceStable(results, func(i, j int) bool {
 		if results[i].Timestamp == results[j].Timestamp {
 			return results[i].TargetType < results[j].TargetType

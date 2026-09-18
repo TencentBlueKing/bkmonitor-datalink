@@ -45,6 +45,7 @@ const (
 const (
 	CMDBRelationQueryModeInstant = "instant"
 	CMDBRelationQueryModeRange   = "range"
+	CMDBRelationRouteTimeGraph   = "timegraph"
 
 	CMDBRelationResultStarted = "started"
 	CMDBRelationResultSuccess = "success"
@@ -248,6 +249,26 @@ var (
 		[]string{"route", "query_mode", "execution_mode"},
 	)
 
+	cmdbRelationTimeGraphResultCount = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "unify_query",
+			Name:      "cmdb_relation_timegraph_result_count",
+			Help:      "number of raw path resources returned by a TimeGraph query",
+			Buckets:   []float64{0, 1, 2, 5, 10, 20, 50, 100, 500, 1000, 5000, 10000},
+		},
+		[]string{"query_mode"},
+	)
+
+	cmdbRelationTimeGraphBucketCount = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "unify_query",
+			Name:      "cmdb_relation_timegraph_bucket_count",
+			Help:      "number of non-empty time buckets returned by a TimeGraph range query",
+			Buckets:   []float64{0, 1, 2, 5, 10, 20, 50, 100, 500, 1000, 5000},
+		},
+		[]string{"query_mode"},
+	)
+
 	routeSeriesWrapTotal = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "unify_query",
@@ -367,6 +388,16 @@ func CMDBRelationCandidatePathCountObserve(ctx context.Context, route, queryMode
 
 func CMDBRelationTargetCountObserve(ctx context.Context, route, queryMode, executionMode string, count int) {
 	metric, _ := cmdbRelationTargetCount.GetMetricWithLabelValues(route, queryMode, executionMode)
+	observe(ctx, metric, float64(count))
+}
+
+func CMDBRelationTimeGraphResultCountObserve(ctx context.Context, queryMode string, count int) {
+	metric, _ := cmdbRelationTimeGraphResultCount.GetMetricWithLabelValues(queryMode)
+	observe(ctx, metric, float64(count))
+}
+
+func CMDBRelationTimeGraphBucketCountObserve(ctx context.Context, queryMode string, count int) {
+	metric, _ := cmdbRelationTimeGraphBucketCount.GetMetricWithLabelValues(queryMode)
 	observe(ctx, metric, float64(count))
 }
 

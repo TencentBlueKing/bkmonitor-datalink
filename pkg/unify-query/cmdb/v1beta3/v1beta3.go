@@ -163,6 +163,21 @@ func (m *Model) QueryResourceMatcher(
 	defer endV1Beta3TraceSpan(span, &err)
 
 	if m.timeGraphPrimary {
+		queryStarted := time.Now()
+		metric.CMDBRelationRouteInc(ctx, metric.CMDBRelationRouteTimeGraph, string(graphQueryModeInstant), metric.CMDBRelationResultStarted)
+		span.Set("relation-backend", metric.CMDBRelationRouteTimeGraph)
+		span.Set("query-mode", string(graphQueryModeInstant))
+		defer func() {
+			result := metric.CMDBRelationResultSuccess
+			if err != nil {
+				result = metric.CMDBRelationResultFailed
+			} else if len(resMatchers) == 0 {
+				result = metric.CMDBRelationResultEmpty
+			}
+			metric.CMDBRelationRouteInc(ctx, metric.CMDBRelationRouteTimeGraph, string(graphQueryModeInstant), result)
+			metric.CMDBRelationRouteSecond(ctx, time.Since(queryStarted), metric.CMDBRelationRouteTimeGraph, string(graphQueryModeInstant))
+			metric.CMDBRelationTargetCountObserve(ctx, metric.CMDBRelationRouteTimeGraph, string(graphQueryModeInstant), "all_paths", len(resMatchers))
+		}()
 		result, timeGraphErr := m.queryResourceMatcherWithTimeGraph(
 			ctx, lookBackDelta, spaceUid, ts, target, source, indexMatcher, expandMatcher, expandShow, pathResource,
 		)
@@ -170,6 +185,9 @@ func (m *Model) QueryResourceMatcher(
 			span.Set("failure-stage", "timegraph-query")
 			return "", nil, nil, "", nil, timeGraphErr
 		}
+		span.Set("candidate-path-count", result.candidatePathCount)
+		span.Set("raw-result-count", result.rawResultCount)
+		span.Set("target-count", len(result.matchers))
 		return result.source, result.sourceMatcher, result.paths, result.target, result.matchers, nil
 	}
 
@@ -254,6 +272,25 @@ func (m *Model) QueryResourceMatcherRange(
 	defer endV1Beta3TraceSpan(span, &err)
 
 	if m.timeGraphPrimary {
+		queryStarted := time.Now()
+		metric.CMDBRelationRouteInc(ctx, metric.CMDBRelationRouteTimeGraph, string(graphQueryModeRange), metric.CMDBRelationResultStarted)
+		span.Set("relation-backend", metric.CMDBRelationRouteTimeGraph)
+		span.Set("query-mode", string(graphQueryModeRange))
+		defer func() {
+			status := metric.CMDBRelationResultSuccess
+			if err != nil {
+				status = metric.CMDBRelationResultFailed
+			} else if len(result) == 0 {
+				status = metric.CMDBRelationResultEmpty
+			}
+			metric.CMDBRelationRouteInc(ctx, metric.CMDBRelationRouteTimeGraph, string(graphQueryModeRange), status)
+			metric.CMDBRelationRouteSecond(ctx, time.Since(queryStarted), metric.CMDBRelationRouteTimeGraph, string(graphQueryModeRange))
+			targetCount := 0
+			for _, bucket := range result {
+				targetCount += len(bucket.Matchers)
+			}
+			metric.CMDBRelationTargetCountObserve(ctx, metric.CMDBRelationRouteTimeGraph, string(graphQueryModeRange), "all_paths", targetCount)
+		}()
 		timeGraphResult, timeGraphErr := m.queryResourceMatcherRangeWithTimeGraph(
 			ctx, lookBackDelta, spaceUid, step, startTs, endTs, target, source, indexMatcher, expandMatcher, expandShow, pathResource,
 		)
@@ -261,6 +298,10 @@ func (m *Model) QueryResourceMatcherRange(
 			span.Set("failure-stage", "timegraph-query")
 			return "", nil, nil, "", nil, timeGraphErr
 		}
+		span.Set("candidate-path-count", timeGraphResult.candidatePathCount)
+		span.Set("raw-result-count", timeGraphResult.rawResultCount)
+		span.Set("bucket-count", timeGraphResult.bucketCount)
+		span.Set("target-count", timeGraphResult.targetCount)
 		return timeGraphResult.source, timeGraphResult.sourceMatcher, timeGraphResult.paths, timeGraphResult.target, timeGraphResult.matchers, nil
 	}
 

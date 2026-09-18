@@ -5,7 +5,8 @@
 - `POST /api/v1/relation/multi_resource`
 - `POST /api/v1/relation/multi_resource_range`
 
-SurrealDB/v1beta3 不使用这里的 `vm_legacy` 指标。
+v1beta3 TimeGraph 不使用这里的 `vm_legacy` 指标；TimeGraph 观测见
+[v1beta3 TimeGraph 关系查询观测](timegraph-relation-observability.md)。
 
 ## Trace 观测点
 

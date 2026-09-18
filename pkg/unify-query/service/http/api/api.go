@@ -359,6 +359,8 @@ func HandlerAPIRelationV1Beta3MultiResource(c *gin.Context) {
 	paramsBody, _ := json.Marshal(request)
 	span.Set("handler-headers", c.Request.Header)
 	span.Set("handler-body", string(paramsBody))
+	span.Set("query-mode", metric.CMDBRelationQueryModeInstant)
+	metric.CMDBRelationQueryListSizeObserve(ctx, metric.CMDBRelationRouteTimeGraph, metric.CMDBRelationQueryModeInstant, len(request.QueryList))
 
 	model, err := v1beta3.GetModel(ctx)
 	if err != nil {
@@ -486,6 +488,8 @@ func HandlerAPIRelationV1Beta3MultiResourceRange(c *gin.Context) {
 	paramsBody, _ := json.Marshal(request)
 	span.Set("handler-headers", c.Request.Header)
 	span.Set("handler-body", string(paramsBody))
+	span.Set("query-mode", metric.CMDBRelationQueryModeRange)
+	metric.CMDBRelationQueryListSizeObserve(ctx, metric.CMDBRelationRouteTimeGraph, metric.CMDBRelationQueryModeRange, len(request.QueryList))
 
 	model, err := v1beta3.GetModel(ctx)
 	if err != nil {

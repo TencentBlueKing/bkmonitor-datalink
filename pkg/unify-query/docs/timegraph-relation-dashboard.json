@@ -1,0 +1,228 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_BKMONITOR",
+      "label": "BKMonitor",
+      "type": "datasource",
+      "pluginId": "bkmonitor-timeseries-datasource",
+      "pluginName": "BKMonitor Time Series"
+    }
+  ],
+  "__requires": [
+    {
+      "type": "grafana",
+      "id": "grafana",
+      "name": "Grafana",
+      "version": "10.0.0"
+    }
+  ],
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "指标口径",
+      "gridPos": {"x": 0, "y": 0, "w": 24, "h": 5},
+      "options": {
+        "mode": "markdown",
+        "content": "# v1beta3 TimeGraph 关系查询\n\n`route=\"timegraph\"` 是 v1beta3 关系查询主路径。接口请求量来自 `api_request_total`；TimeGraph 路由指标反映模型查询执行；底层 VictoriaMetrics 请求耗时来自 `tsdb_request_seconds`。空结果与失败分开统计，不把无采样当作成功。"
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "v1beta3 HTTP 请求速率",
+      "gridPos": {"x": 0, "y": 5, "w": 12, "h": 8},
+      "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "sum by (api, status) (rate(unify_query_api_request_total{api=~\"/api/v1/relation/v1beta3/multi_resource.*\"}[5m]))",
+          "type": "range",
+          "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"}
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "TimeGraph 查询结果速率",
+      "gridPos": {"x": 12, "y": 5, "w": 12, "h": 8},
+      "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"},
+      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "sum by (query_mode, result) (rate(unify_query_cmdb_relation_route_total{route=\"timegraph\"}[5m]))",
+          "type": "range",
+          "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"}
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "TimeGraph 查询 P95",
+      "gridPos": {"x": 0, "y": 13, "w": 12, "h": 8},
+      "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"},
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "histogram_quantile(0.95, sum by (le, query_mode) (rate(unify_query_cmdb_relation_route_seconds_bucket{route=\"timegraph\"}[5m])))",
+          "type": "range",
+          "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"}
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "TimeGraph 失败率",
+      "gridPos": {"x": 12, "y": 13, "w": 12, "h": 8},
+      "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"},
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "sum by (query_mode) (rate(unify_query_cmdb_relation_route_total{route=\"timegraph\",result=\"failed\"}[5m])) / sum by (query_mode) (rate(unify_query_cmdb_relation_route_total{route=\"timegraph\",result=~\"success|empty|failed\"}[5m]))",
+          "type": "range",
+          "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"}
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "候选路径 P95",
+      "gridPos": {"x": 0, "y": 21, "w": 12, "h": 8},
+      "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "histogram_quantile(0.95, sum by (le, query_mode, execution_mode) (rate(unify_query_cmdb_relation_candidate_path_count_bucket{route=\"timegraph\"}[5m])))",
+          "type": "range",
+          "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"}
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "目标数量 P95",
+      "gridPos": {"x": 12, "y": 21, "w": 12, "h": 8},
+      "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "histogram_quantile(0.95, sum by (le, query_mode, execution_mode) (rate(unify_query_cmdb_relation_target_count_bucket{route=\"timegraph\"}[5m])))",
+          "type": "range",
+          "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"}
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "TimeGraph 原始结果量 P95",
+      "gridPos": {"x": 0, "y": 29, "w": 12, "h": 8},
+      "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "histogram_quantile(0.95, sum by (le, query_mode) (rate(unify_query_cmdb_relation_timegraph_result_count_bucket[5m])))",
+          "type": "range",
+          "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"}
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "TimeGraph Range 非空桶数量 P95",
+      "gridPos": {"x": 12, "y": 29, "w": 12, "h": 8},
+      "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "histogram_quantile(0.95, sum by (le, query_mode) (rate(unify_query_cmdb_relation_timegraph_bucket_count_bucket{query_mode=\"range\"}[5m])))",
+          "type": "range",
+          "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"}
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "VictoriaMetrics 下游查询 P95",
+      "gridPos": {"x": 0, "y": 37, "w": 12, "h": 8},
+      "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"},
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "histogram_quantile(0.95, sum by (le) (rate(unify_query_tsdb_request_seconds_bucket{tsdb_type=\"victoria_metrics\"}[5m])))",
+          "type": "range",
+          "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"}
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "TimeGraph 路径结果",
+      "gridPos": {"x": 12, "y": 37, "w": 12, "h": 8},
+      "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"},
+      "fieldConfig": {"defaults": {"unit": "ops"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "sum by (query_mode, result) (rate(unify_query_cmdb_relation_path_result_total{route=\"timegraph\"}[5m]))",
+          "type": "range",
+          "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"}
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["unify-query", "cmdb", "relation", "timegraph", "v1beta3"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "",
+  "title": "unify-query v1beta3 TimeGraph 关系查询",
+  "uid": "uq-timegraph-v1beta3",
+  "version": 1
+}

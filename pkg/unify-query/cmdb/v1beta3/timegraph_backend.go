@@ -12,6 +12,7 @@ import (
 	"strconv"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 )
 
 // timeGraphQuerier is implemented by the v1beta1 model's TSDB-backed
@@ -29,19 +30,25 @@ type relationPathTimeGraphQuerier interface {
 }
 
 type timeGraphLegacyResult struct {
-	source        cmdb.Resource
-	sourceMatcher cmdb.Matcher
-	paths         []string
-	target        cmdb.Resource
-	matchers      cmdb.Matchers
+	source             cmdb.Resource
+	sourceMatcher      cmdb.Matcher
+	paths              []string
+	target             cmdb.Resource
+	matchers           cmdb.Matchers
+	candidatePathCount int
+	rawResultCount     int
 }
 
 type timeGraphRangeResult struct {
-	source        cmdb.Resource
-	sourceMatcher cmdb.Matcher
-	paths         []string
-	target        cmdb.Resource
-	matchers      []cmdb.MatchersWithTimestamp
+	source             cmdb.Resource
+	sourceMatcher      cmdb.Matcher
+	paths              []string
+	target             cmdb.Resource
+	matchers           []cmdb.MatchersWithTimestamp
+	candidatePathCount int
+	rawResultCount     int
+	bucketCount        int
+	targetCount        int
 }
 
 func (m *Model) getTimeGraphQuerier(ctx context.Context, spaceUID string) (timeGraphQuerier, error) {
@@ -215,7 +222,27 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 	indexMatcher, expandMatcher cmdb.Matcher,
 	expandShow bool,
 	pathResource []cmdb.Resource,
-) (timeGraphLegacyResult, error) {
+) (result timeGraphLegacyResult, err error) {
+	defer func() {
+		if result.candidatePathCount > 0 {
+			metric.CMDBRelationCandidatePathCountObserve(
+				ctx,
+				metric.CMDBRelationRouteTimeGraph,
+				metric.CMDBRelationQueryModeInstant,
+				"all_paths",
+				result.candidatePathCount,
+			)
+		}
+		metric.CMDBRelationTimeGraphResultCountObserve(ctx, metric.CMDBRelationQueryModeInstant, result.rawResultCount)
+		pathResult := metric.CMDBRelationResultSuccess
+		if err != nil {
+			pathResult = metric.CMDBRelationResultFailed
+		} else if result.rawResultCount == 0 {
+			pathResult = metric.CMDBRelationResultEmpty
+		}
+		metric.CMDBRelationPathResultInc(ctx, metric.CMDBRelationRouteTimeGraph, metric.CMDBRelationQueryModeInstant, pathResult)
+	}()
+
 	req, paths, err := m.buildTimeGraphRequest(spaceUID, target, source, indexMatcher, expandMatcher, expandShow, pathResource)
 	if err != nil {
 		return timeGraphLegacyResult{}, err
@@ -230,6 +257,7 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 	}
 
 	candidatePaths := resourcePathsToTimeGraphPaths(paths)
+	result.candidatePathCount = len(candidatePaths)
 	var results []cmdb.PathResourcesResult
 	if relationQuerier, ok := querier.(relationPathTimeGraphQuerier); ok {
 		results, err = relationQuerier.QueryRelationPathResources(
@@ -257,6 +285,7 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 	if err != nil {
 		return timeGraphLegacyResult{}, err
 	}
+	result.rawResultCount = len(results)
 
 	provider := m.getSchemaProvider()
 	bestRank := len(candidatePaths)
@@ -295,13 +324,16 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 		selectedPath = resourceTypesToPath(resourcePathToResourceTypes(paths[0]))
 	}
 
-	return timeGraphLegacyResult{
-		source:        cmdb.Resource(req.SourceType),
-		sourceMatcher: cmdb.Matcher(req.SourceInfo),
-		paths:         selectedPath,
-		target:        cmdb.Resource(req.TargetType),
-		matchers:      matchers,
-	}, nil
+	result = timeGraphLegacyResult{
+		source:             cmdb.Resource(req.SourceType),
+		sourceMatcher:      cmdb.Matcher(req.SourceInfo),
+		paths:              selectedPath,
+		target:             cmdb.Resource(req.TargetType),
+		matchers:           matchers,
+		candidatePathCount: result.candidatePathCount,
+		rawResultCount:     result.rawResultCount,
+	}
+	return result, nil
 }
 
 func (m *Model) queryResourceMatcherRangeWithTimeGraph(
@@ -311,7 +343,28 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	indexMatcher, expandMatcher cmdb.Matcher,
 	expandShow bool,
 	pathResource []cmdb.Resource,
-) (timeGraphRangeResult, error) {
+) (result timeGraphRangeResult, err error) {
+	defer func() {
+		if result.candidatePathCount > 0 {
+			metric.CMDBRelationCandidatePathCountObserve(
+				ctx,
+				metric.CMDBRelationRouteTimeGraph,
+				metric.CMDBRelationQueryModeRange,
+				"all_paths",
+				result.candidatePathCount,
+			)
+		}
+		metric.CMDBRelationTimeGraphResultCountObserve(ctx, metric.CMDBRelationQueryModeRange, result.rawResultCount)
+		metric.CMDBRelationTimeGraphBucketCountObserve(ctx, metric.CMDBRelationQueryModeRange, result.bucketCount)
+		pathResult := metric.CMDBRelationResultSuccess
+		if err != nil {
+			pathResult = metric.CMDBRelationResultFailed
+		} else if result.rawResultCount == 0 {
+			pathResult = metric.CMDBRelationResultEmpty
+		}
+		metric.CMDBRelationPathResultInc(ctx, metric.CMDBRelationRouteTimeGraph, metric.CMDBRelationQueryModeRange, pathResult)
+	}()
+
 	req, paths, err := m.buildTimeGraphRequest(spaceUID, target, source, indexMatcher, expandMatcher, expandShow, pathResource)
 	if err != nil {
 		return timeGraphRangeResult{}, err
@@ -345,6 +398,7 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	}
 
 	candidatePaths := resourcePathsToTimeGraphPaths(paths)
+	result.candidatePathCount = len(candidatePaths)
 	var results []cmdb.PathResourcesResult
 	if relationQuerier, ok := querier.(relationPathTimeGraphQuerier); ok {
 		results, err = relationQuerier.QueryRelationPathResourcesRange(
@@ -376,6 +430,7 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	if err != nil {
 		return timeGraphRangeResult{}, err
 	}
+	result.rawResultCount = len(results)
 
 	provider := m.getSchemaProvider()
 	bestRank := len(candidatePaths)
@@ -431,13 +486,26 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 		selectedPath = resourceTypesToPath(resourcePathToResourceTypes(paths[0]))
 	}
 
-	return timeGraphRangeResult{
-		source:        cmdb.Resource(req.SourceType),
-		sourceMatcher: cmdb.Matcher(req.SourceInfo),
-		paths:         selectedPath,
-		target:        cmdb.Resource(req.TargetType),
-		matchers:      series,
-	}, nil
+	result = timeGraphRangeResult{
+		source:             cmdb.Resource(req.SourceType),
+		sourceMatcher:      cmdb.Matcher(req.SourceInfo),
+		paths:              selectedPath,
+		target:             cmdb.Resource(req.TargetType),
+		matchers:           series,
+		candidatePathCount: result.candidatePathCount,
+		rawResultCount:     result.rawResultCount,
+		bucketCount:        len(series),
+		targetCount:        countTimeGraphRangeTargets(series),
+	}
+	return result, nil
+}
+
+func countTimeGraphRangeTargets(series []cmdb.MatchersWithTimestamp) int {
+	count := 0
+	for _, bucket := range series {
+		count += len(bucket.Matchers)
+	}
+	return count
 }
 
 func normalizeTimeGraphResultTimestamp(timestamp int64) int64 {

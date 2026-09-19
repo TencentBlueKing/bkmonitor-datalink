@@ -81,6 +81,7 @@ var (
 	SaveCacheFailed           = "save_cache_failed"
 	SaveBloomFilterFailed     = "save_bloom_filter_failed"
 	SavePrometheusFailed      = "save_prometheus_failed"
+	SaveRelationFailed        = "save_relation_failed"
 	// apmPreCalcOperateStorageFailedTotal apm预计算对 trace 进行预计算时发生存储层查询/保存失败的计数指标
 	apmPreCalcOperateStorageFailedTotal = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{

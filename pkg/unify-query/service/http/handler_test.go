@@ -764,6 +764,83 @@ func TestQueryRawWithHandler(t *testing.T) {
 	}
 
 	t.Run("search after across ES and Doris", testQueryRawSearchAfterAcrossESAndDoris)
+	t.Run("search after falls back to Doris offset", testQueryRawSearchAfterDorisOffsetFallback)
+}
+
+func testQueryRawSearchAfterDorisOffsetFallback(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid})
+	influxdb.MockSpaceRouter(ctx)
+
+	var (
+		callsLock sync.Mutex
+		dorisSQL  []string
+	)
+
+	dorisMatcher := httpmock.BodyContainsString("2_bklog_bkunify_query_doris").WithName("query-raw-search-after-doris-offset")
+	httpmock.RegisterMatcherResponder(http.MethodPost, mock.BkBaseUrl, dorisMatcher, func(req *http.Request) (*http.Response, error) {
+		var body struct {
+			SQL string `json:"sql"`
+		}
+		if err := stdjson.NewDecoder(req.Body).Decode(&body); err != nil {
+			return nil, err
+		}
+
+		if strings.HasPrefix(body.SQL, "SHOW CREATE TABLE") {
+			return httpmock.NewStringResponse(http.StatusOK, queryRawSearchAfterDorisOffsetSchema), nil
+		}
+
+		callsLock.Lock()
+		dorisSQL = append(dorisSQL, body.SQL)
+		page := len(dorisSQL)
+		callsLock.Unlock()
+
+		switch page {
+		case 1:
+			if strings.Contains(body.SQL, " OFFSET ") {
+				return nil, fmt.Errorf("first Doris offset page unexpectedly has OFFSET: %s", body.SQL)
+			}
+			return httpmock.NewStringResponse(http.StatusOK, queryRawSearchAfterDorisOffsetResponse("doris-1", 1)), nil
+		case 2:
+			if !strings.Contains(body.SQL, "LIMIT 1 OFFSET 1") {
+				return nil, fmt.Errorf("second Doris offset page lost offset 1: %s", body.SQL)
+			}
+			return httpmock.NewStringResponse(http.StatusOK, queryRawSearchAfterDorisOffsetResponse("doris-2", 2)), nil
+		case 3:
+			if !strings.Contains(body.SQL, "LIMIT 1 OFFSET 2") {
+				return nil, fmt.Errorf("final Doris offset page lost offset 2: %s", body.SQL)
+			}
+			return httpmock.NewStringResponse(http.StatusOK, `{"result":true,"message":"success","code":"00","data":{"totalRecords":2,"list":[]}}`), nil
+		default:
+			return nil, fmt.Errorf("Doris offset query should stop after its empty page, got call %d", page)
+		}
+	})
+	t.Cleanup(func() {
+		httpmock.RegisterMatcherResponder(
+			http.MethodPost,
+			mock.BkBaseUrl,
+			httpmock.NewMatcher("query-raw-search-after-doris-offset", nil),
+			nil,
+		)
+	})
+
+	baseBody := `{"space_uid":"bkcc__2","query_list":[{"data_source":"bklog","table_id":"result_table.doris","field_name":"dtEventTimeStamp","keep_columns":["message"],"reference_name":"a","conditions":{}}],"metric_merge":"a","order_by":["-dtEventTimeStamp"],"start_time":"1744662180000","end_time":"1744662280000","limit":1,"is_search_after":true}`
+
+	page1 := queryRawSearchAfterRequest(t, ctx, baseBody)
+	require.Equal(t, []string{"doris-1"}, queryRawSearchAfterMessages(page1))
+	firstOptions := queryRawSearchAfterOptions(t, page1)
+	require.Equal(t, 1, firstOptions["result_table.doris|4"].From)
+
+	page2 := queryRawSearchAfterRequest(t, ctx, queryRawSearchAfterBody(baseBody, page1.ResultTableOptions))
+	require.Equal(t, []string{"doris-2"}, queryRawSearchAfterMessages(page2))
+	secondOptions := queryRawSearchAfterOptions(t, page2)
+	require.Equal(t, 2, secondOptions["result_table.doris|4"].From)
+
+	page3 := queryRawSearchAfterRequest(t, ctx, queryRawSearchAfterBody(baseBody, page2.ResultTableOptions))
+	assert.Empty(t, page3.List)
+	thirdOptions := queryRawSearchAfterOptions(t, page3)
+	assert.Empty(t, thirdOptions["result_table.doris|4"].From)
 }
 
 func testQueryRawSearchAfterAcrossESAndDoris(t *testing.T) {
@@ -897,6 +974,8 @@ func testQueryRawSearchAfterAcrossESAndDoris(t *testing.T) {
 
 const queryRawSearchAfterDorisSchema = `{"result":true,"message":"success","code":"00","data":{"list":[{"Field":"thedate","Type":"INT"},{"Field":"dtEventTimeStamp","Type":"BIGINT"},{"Field":"dtEventTime","Type":"VARCHAR(32)"},{"Field":"__unique_key__","Type":"VARCHAR(512)"},{"Field":"message","Type":"TEXT"}]}}`
 
+const queryRawSearchAfterDorisOffsetSchema = `{"result":true,"message":"success","code":"00","data":{"list":[{"Field":"thedate","Type":"INT"},{"Field":"dtEventTimeStamp","Type":"BIGINT"},{"Field":"dtEventTime","Type":"VARCHAR(32)"},{"Field":"message","Type":"TEXT"}]}}`
+
 type queryRawSearchAfterResponse struct {
 	List               []map[string]any   `json:"list"`
 	ResultTableOptions stdjson.RawMessage `json:"result_table_options"`
@@ -910,6 +989,14 @@ func queryRawSearchAfterDorisResponse(message, cursor string) string {
 		cursor,
 		cursor,
 		message,
+	)
+}
+
+func queryRawSearchAfterDorisOffsetResponse(message string, timestamp int) string {
+	return fmt.Sprintf(
+		`{"result":true,"message":"success","code":"00","data":{"totalRecords":2,"list":[{"message":%q,"dtEventTimeStamp":%d}]}}`,
+		message,
+		timestamp,
 	)
 }
 
@@ -927,11 +1014,13 @@ func queryRawSearchAfterRequest(t *testing.T, ctx context.Context, body string) 
 }
 
 func queryRawSearchAfterOptions(t *testing.T, response queryRawSearchAfterResponse) map[string]struct {
+	From        int                `json:"from"`
 	SearchAfter stdjson.RawMessage `json:"search_after"`
 } {
 	t.Helper()
 
 	options := make(map[string]struct {
+		From        int                `json:"from"`
 		SearchAfter stdjson.RawMessage `json:"search_after"`
 	})
 	require.NoError(t, stdjson.Unmarshal(response.ResultTableOptions, &options))
@@ -1165,14 +1254,14 @@ func TestValidateQueryTsRawPagination(t *testing.T) {
 		},
 		"search after with top-level from": {
 			queryTs:   &structured.QueryTs{IsSearchAfter: true, From: 3},
-			expectErr: "from cannot be combined with is_search_after",
+			expectErr: "",
 		},
 		"search after with query from": {
 			queryTs: &structured.QueryTs{
 				IsSearchAfter: true,
 				QueryList:     []*structured.Query{{ReferenceName: "logs", From: 1}},
 			},
-			expectErr: "query from cannot be combined with is_search_after",
+			expectErr: "",
 		},
 		"search after with non-zero result table from": {
 			queryTs: &structured.QueryTs{
@@ -1181,7 +1270,7 @@ func TestValidateQueryTsRawPagination(t *testing.T) {
 					"logs|1": {From: &from},
 				},
 			},
-			expectErr: "result table option from cannot be combined with is_search_after",
+			expectErr: "",
 		},
 		"search after with zero result table from": {
 			queryTs: &structured.QueryTs{
@@ -1208,6 +1297,26 @@ func TestValidateQueryTsRawPagination(t *testing.T) {
 			if assert.Error(t, err) {
 				assert.Contains(t, err.Error(), tc.expectErr)
 			}
+		})
+	}
+}
+
+func TestHasRawPaginationCursor(t *testing.T) {
+	zero := 0
+	from := 7
+	testCases := map[string]struct {
+		option *metadata.ResultTableOption
+		want   bool
+	}{
+		"nil option":          {want: false},
+		"zero offset":         {option: &metadata.ResultTableOption{From: &zero}, want: false},
+		"offset cursor":       {option: &metadata.ResultTableOption{From: &from}, want: true},
+		"search after cursor": {option: &metadata.ResultTableOption{SearchAfter: []any{"cursor"}}, want: true},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, hasRawPaginationCursor(tc.option))
 		})
 	}
 }

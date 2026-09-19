@@ -157,14 +157,14 @@
 | `instant`           | bool   | 否   | 是否为瞬时查询                                                                                                                                                                                                                        |
 | `reference`         | bool   | 否   | 查询开始时间是否需要对齐                                                                                                                                                                                                              |
 | `not_time_align`    | bool   | 否   | 查询开始时间和聚合是否需要对齐                                                                                                                                                                                                        |
-| `from`              | int    | 否   | 翻页起始位置；启用 `is_search_after` 时必须为 0                                                                                                                                                                                       |
+| `from`              | int    | 否   | 翻页起始位置；Doris `is_search_after` 在缺少稳定游标字段时会自动使用该值进行 offset 分页                                                                                                                                                 |
 | `tsdb_map`          | object | 否   | 查询路由匹配中的 tsDB 列表，key 为 `reference_name`，用于直接指定存储信息（高级用法）                                                                                                                                                 |
 | `order_by`          | array  | 否   | 排序字段列表，按顺序排序，负数代表倒序，如 `["_time", "-_value"]`                                                                                                                                                                     |
 | `result_columns`    | array  | 否   | 指定保留返回字段值（内部使用）                                                                                                                                                                                                        |
 | `scroll`            | string | 否   | 滚动查询窗口超时时间，如 `3m`（用于 Elasticsearch 滚动查询）                                                                                                                                                                          |
 | `slice_max`         | int    | 否   | 最大切片数量（用于滚动查询）                                                                                                                                                                                                          |
 | `is_multi_from`     | bool   | 否   | 是否启用 MultiFrom 查询（用于 Elasticsearch）                                                                                                                                                                                         |
-| `is_search_after`   | bool   | 否   | 仅用于 `/query/raw` 原始查询。Elasticsearch 使用原生游标；Doris 使用非聚合、非 DISTINCT 的 Keyset Pagination（支持 NULL 游标值），并自动追加 `__unique_key__` 作为稳定排序尾键。不能与 `from` 或 `scroll` 同时使用；`TSpider` 不在 Doris SearchAfter 支持范围内                                                                                                            |
+| `is_search_after`   | bool   | 否   | 仅用于 `/query/raw` 原始查询。Elasticsearch 使用原生游标；Doris 对非聚合、非 DISTINCT 查询优先使用 `__unique_key__`，缺少时尝试 `dtEventTimeStamp + gseIndex + iterationIndex` 组合游标，再缺少时降级为 `from + limit`。不能与 `scroll` 同时使用；`TSpider` 不在 Doris SearchAfter 支持范围内 |
 | `clear_cache`       | bool   | 否   | 是否强制清理已存在的缓存会话（用于滚动查询）                                                                                                                                                                                          |
 | `highlight`         | object | 否   | 高亮配置（用于 Elasticsearch 查询）                                                                                                                                                                                                   |
 | `dry_run`           | bool   | 否   | 是否启用 DryRun（仅验证查询，不执行）                                                                                                                                                                                                 |
@@ -390,7 +390,7 @@
 
 **接口**: `POST /query/ts/raw`
 
-**描述**: 执行原始查询，返回原始数据列表（用于 Elasticsearch、Doris 等存储）。`is_search_after` 仅在此接口生效；Doris 要求结果表存在非空且稳定的 `__unique_key__`，并且查询不能包含聚合、`DISTINCT` 或自定义 SQL。
+**描述**: 执行原始查询，返回原始数据列表（用于 Elasticsearch、Doris 等存储）。`is_search_after` 仅在此接口生效；Doris 查询不能包含聚合、`DISTINCT` 或自定义 SQL。结果表存在 `__unique_key__` 时使用稳定 keyset 游标；缺少时尝试兼容组合游标，仍缺少时降级为 offset 分页。
 
 **请求头**: 同结构体查询（需要 `X-Bk-Scope-Space-Uid`）
 

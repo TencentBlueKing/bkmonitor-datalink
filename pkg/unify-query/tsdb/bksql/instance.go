@@ -485,7 +485,13 @@ func (i *Instance) QueryRawData(ctx context.Context, query *metadata.Query, star
 	total = int64(data.TotalRecords)
 	if query.IsSearchAfter {
 		option.SearchAfter = nil
-		if size > 0 {
+		if queryFactory.SearchAfterUsesOffset() {
+			option.From = nil
+			if size > 0 {
+				nextFrom := query.From + int(size)
+				option.From = &nextFrom
+			}
+		} else if size > 0 {
 			option.SearchAfter, err = queryFactory.SearchAfterValues(data.List[len(data.List)-1])
 			if err != nil {
 				return size, total, option, err

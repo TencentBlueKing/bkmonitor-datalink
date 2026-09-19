@@ -101,7 +101,7 @@ type QueryTs struct {
 	// 增加公共限制
 	// Limit 点数限制数量
 	Limit int `json:"limit,omitempty" example:"0"`
-	// From 翻页开启数字，不能与 IsSearchAfter 同时使用
+	// From 翻页起始位置。Doris SearchAfter 在缺少稳定游标字段时会降级为 offset 分页。
 	From int `json:"from,omitempty" example:"0"`
 
 	// Scroll 是否启用 Scroll 查询
@@ -110,7 +110,7 @@ type QueryTs struct {
 	SliceMax int `json:"slice_max,omitempty"`
 	// IsMultiFrom 是否启用 MultiFrom 查询
 	IsMultiFrom bool `json:"is_multi_from,omitempty"`
-	// IsSearchAfter 是否启用 SearchAfter 查询。仅用于 /query/raw 原始查询：Elasticsearch 使用原生游标，Doris 使用 keyset pagination（支持 NULL 游标值）；不能与 from 或 scroll 同时使用。
+	// IsSearchAfter 是否启用 SearchAfter 查询。仅用于 /query/raw 原始查询：Elasticsearch 使用原生游标；Doris 优先使用 __unique_key__，缺少时尝试 dtEventTimeStamp、gseIndex、iterationIndex 组合游标，再缺少时降级为 offset 分页；不能与 scroll 同时使用。
 	IsSearchAfter bool `json:"is_search_after,omitempty"`
 	// ClearCache 是否强制清理已存在的缓存会话
 	ClearCache bool `json:"clear_cache,omitempty"`

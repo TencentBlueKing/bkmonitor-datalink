@@ -28,8 +28,12 @@ var (
 // execution is delegated to the TSDB-backed TimeGraph implementation.
 type Model struct {
 	timeGraphResolver func(context.Context, string) (cmdb.CMDB, error)
-	schemaProvider    SchemaProvider
-	schemaProviderMu  sync.RWMutex
+	// timeGraphVMQuery is only set by package tests. It replaces the final VM
+	// call after QueryTs has been converted to PromQL, so public-entry tests can
+	// keep path planning and query rendering real without requiring a VM.
+	timeGraphVMQuery timeGraphVMQuery
+	schemaProvider   SchemaProvider
+	schemaProviderMu sync.RWMutex
 }
 
 // GetModel returns the serving model used by the v1beta3 HTTP handlers.

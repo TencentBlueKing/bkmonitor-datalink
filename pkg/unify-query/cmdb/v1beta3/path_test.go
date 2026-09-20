@@ -14,7 +14,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
@@ -637,25 +636,4 @@ func TestDefaultStaticProviderConfigPreservesDynamicRelationDirection(t *testing
 		relation.DirectionTypeDirectional,
 	)
 	assert.False(t, reverseOK)
-}
-
-func TestDefaultStaticProviderConfigPreservesDynamicRelationMetricName(t *testing.T) {
-	model := &Model{schemaProvider: NewSchemaProviderFromRelation(relation.NewDefaultStaticSchemaProvider())}
-	relations := model.buildRelationsFromRelationPathsForNamespace("", []cmdb.RelationPath{{
-		Steps: []cmdb.RelationPathStep{
-			{ResourceType: "pod"},
-			{
-				ResourceType: "system",
-				RelationType: "pod_to_system",
-				Category:     string(RelationCategoryDynamic),
-				Direction:    string(DirectionOutbound),
-			},
-		},
-	}})
-	if len(relations) != 1 {
-		t.Fatalf("unexpected relation candidates: %+v", relations)
-	}
-	if relations[0].MetricName != "pod_to_system_flow" {
-		t.Fatalf("default dynamic metric name was lost: %+v", relations[0])
-	}
 }

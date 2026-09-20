@@ -132,6 +132,9 @@ func contractDynamicProvider(resourceType ResourceType, metricName string) Schem
 }
 
 func TestTimeGraphContractCases(t *testing.T) {
+	startSec := int64(100)
+	instantStart := time.Unix(startSec, 0)
+	timestampMS := startSec * 1000
 	defaultProvider := NewSchemaProviderFromRelation(relation.NewDefaultStaticSchemaProvider())
 	serviceProvider := contractDynamicProvider("service", "service_to_service_flow")
 	staticProvider := contractSchemaProvider{
@@ -186,6 +189,7 @@ func TestTimeGraphContractCases(t *testing.T) {
 		targetInfoShow   bool
 		maxNodes         int
 		responses        map[string]pl.Matrix
+		wantErr          string
 		wantQueries      []contractQueryWant
 		wantResults      []PathResourcesResult
 	}{
@@ -199,14 +203,14 @@ func TestTimeGraphContractCases(t *testing.T) {
 				{ResourceType: "system", RelationType: "pod_to_system", Category: string(RelationCategoryDynamic), Direction: string(DirectionOutbound)},
 			}},
 			sourceInfo:    cmdb.Matcher{"bcs_cluster_id": "c1", "namespace": "ns", "pod": "p1"},
-			start:         time.Unix(100, 0),
-			end:           time.Unix(100, 0),
+			start:         instantStart,
+			end:           instantStart,
 			step:          5 * time.Minute,
 			lookBackDelta: "10m",
 			responses: map[string]pl.Matrix{
 				"pod_to_system_flow": contractMatrix(map[string]string{
 					"from_bcs_cluster_id": "c1", "from_namespace": "ns", "from_pod": "p1", "to_bk_target_ip": "10.0.0.1",
-				}, 100),
+				}, timestampMS),
 			},
 			wantQueries: []contractQueryWant{{
 				field: "pod_to_system_flow", window: "10m0s", step: "5m0s", start: "100", end: "100",
@@ -221,7 +225,7 @@ func TestTimeGraphContractCases(t *testing.T) {
 				},
 			}},
 			wantResults: []PathResourcesResult{{
-				Timestamp: 100, TargetType: "system", Path: []cmdb.PathNode{
+				Timestamp: timestampMS, TargetType: "system", Path: []cmdb.PathNode{
 					{ResourceType: "pod", Dimensions: cmdb.Matcher{"bcs_cluster_id": "c1", "namespace": "ns", "pod": "p1"}},
 					{ResourceType: "system", Dimensions: cmdb.Matcher{"bk_target_ip": "10.0.0.1"}},
 				},
@@ -237,8 +241,8 @@ func TestTimeGraphContractCases(t *testing.T) {
 				{ResourceType: "service", RelationType: "service_to_service", Category: string(RelationCategoryDynamic), Direction: string(DirectionOutbound)},
 			}},
 			sourceInfo: cmdb.Matcher{"id": "caller"},
-			start:      time.Unix(100, 0), end: time.Unix(100, 0), step: time.Minute, lookBackDelta: "10m",
-			responses: map[string]pl.Matrix{"service_to_service_flow": contractMatrix(map[string]string{"from_id": "caller", "to_id": "callee"}, 100)},
+			start:      instantStart, end: instantStart, step: time.Minute, lookBackDelta: "10m",
+			responses: map[string]pl.Matrix{"service_to_service_flow": contractMatrix(map[string]string{"from_id": "caller", "to_id": "callee"}, timestampMS)},
 			wantQueries: []contractQueryWant{{
 				field: "service_to_service_flow", window: "10m0s", step: "1m0s", start: "100", end: "100",
 				conditions: structured.Conditions{FieldList: []structured.ConditionField{
@@ -246,7 +250,7 @@ func TestTimeGraphContractCases(t *testing.T) {
 					{DimensionName: "to_id", Value: []string{""}, Operator: structured.ConditionNotEqual},
 				}, ConditionList: []string{structured.ConditionAnd}},
 			}},
-			wantResults: []PathResourcesResult{{Timestamp: 100, TargetType: "service", Path: []cmdb.PathNode{
+			wantResults: []PathResourcesResult{{Timestamp: timestampMS, TargetType: "service", Path: []cmdb.PathNode{
 				{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "caller"}}, {ResourceType: "service", Dimensions: cmdb.Matcher{"id": "callee"}},
 			}}},
 		},
@@ -260,8 +264,8 @@ func TestTimeGraphContractCases(t *testing.T) {
 				{ResourceType: "service", RelationType: "service_to_service", Category: string(RelationCategoryDynamic), Direction: string(DirectionInbound)},
 			}},
 			sourceInfo: cmdb.Matcher{"id": "callee"},
-			start:      time.Unix(100, 0), end: time.Unix(100, 0), step: time.Minute, lookBackDelta: "10m",
-			responses: map[string]pl.Matrix{"service_to_service_flow": contractMatrix(map[string]string{"from_id": "caller", "to_id": "callee"}, 100)},
+			start:      instantStart, end: instantStart, step: time.Minute, lookBackDelta: "10m",
+			responses: map[string]pl.Matrix{"service_to_service_flow": contractMatrix(map[string]string{"from_id": "caller", "to_id": "callee"}, timestampMS)},
 			wantQueries: []contractQueryWant{{
 				field: "service_to_service_flow", window: "10m0s", step: "1m0s", start: "100", end: "100",
 				conditions: structured.Conditions{FieldList: []structured.ConditionField{
@@ -269,7 +273,7 @@ func TestTimeGraphContractCases(t *testing.T) {
 					{DimensionName: "to_id", Value: []string{"callee"}, Operator: structured.ConditionEqual},
 				}, ConditionList: []string{structured.ConditionAnd}},
 			}},
-			wantResults: []PathResourcesResult{{Timestamp: 100, TargetType: "service", Path: []cmdb.PathNode{
+			wantResults: []PathResourcesResult{{Timestamp: timestampMS, TargetType: "service", Path: []cmdb.PathNode{
 				{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "callee"}}, {ResourceType: "service", Dimensions: cmdb.Matcher{"id": "caller"}},
 			}}},
 		},
@@ -306,7 +310,7 @@ func TestTimeGraphContractCases(t *testing.T) {
 				{ResourceType: "node"}, {ResourceType: "container", RelationType: "node_to_container", Category: string(RelationCategoryStatic), Direction: string(DirectionOutbound)},
 			}},
 			sourceInfo: cmdb.Matcher{"node_id": "n1"},
-			start:      time.Unix(100, 0), end: time.Unix(100, 0), step: time.Minute, lookBackDelta: "10m", targetInfoShow: true, maxNodes: 2,
+			start:      instantStart, end: instantStart, step: time.Minute, lookBackDelta: "10m", targetInfoShow: true, maxNodes: 2,
 			responses: map[string]pl.Matrix{
 				"node_to_container_flow": contractMatrix(map[string]string{"node_id": "n1", "container_id": "c1"}, 100000),
 				"container_info_relation": append(
@@ -321,6 +325,22 @@ func TestTimeGraphContractCases(t *testing.T) {
 			wantResults: []PathResourcesResult{{Timestamp: 100000, TargetType: "container", Path: []cmdb.PathNode{
 				{ResourceType: "node", Dimensions: cmdb.Matcher{"node_id": "n1"}}, {ResourceType: "container", Dimensions: cmdb.Matcher{"container_id": "c1", "version": "v1"}},
 			}}},
+		},
+		{
+			name:        "external_vm_error_is_returned",
+			provider:    staticProvider,
+			sourceType:  "left",
+			targetTypes: []cmdb.Resource{"right"},
+			path: cmdb.RelationPath{Steps: []cmdb.RelationPathStep{
+				{ResourceType: "left"}, {ResourceType: "right", RelationType: "left_to_right", Category: string(RelationCategoryStatic), Direction: string(DirectionOutbound)},
+			}},
+			sourceInfo:    cmdb.Matcher{"left_id": "l1"},
+			start:         instantStart,
+			end:           instantStart,
+			step:          time.Minute,
+			lookBackDelta: "10m",
+			responses:     map[string]pl.Matrix{},
+			wantErr:       `unexpected VM query metric "left_to_right_flow"`,
 		},
 	}
 
@@ -344,6 +364,11 @@ func TestTimeGraphContractCases(t *testing.T) {
 				ctx, "space", tc.start, tc.end, tc.step, tc.sourceType, tc.sourceInfo, tc.sourceExpandInfo,
 				relations, tc.lookBackDelta, vm.query,
 			)
+			if tc.wantErr != "" {
+				require.ErrorContains(t, err, tc.wantErr)
+				require.Len(t, vm.calls, 1)
+				return
+			}
 			require.NoError(t, err)
 			t.Cleanup(func() { tg.Clean(ctx) })
 

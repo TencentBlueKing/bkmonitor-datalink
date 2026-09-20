@@ -4,42 +4,198 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
+
+	pl "github.com/prometheus/prometheus/promql"
+	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
-func TestTimeGraphNodeInfoLimitBoundaries(t *testing.T) {
+func requireGraphLimitError(t *testing.T, err error, reason string, count, limit int) {
+	t.Helper()
+	var limitErr *ResultLimitError
+	require.ErrorAs(t, err, &limitErr)
+	require.Equal(t, reason, limitErr.Reason)
+	require.Equal(t, count, limitErr.Count)
+	require.Equal(t, limit, limitErr.Limit)
+}
+
+func TestTimeGraphNodeLimitBoundaries(t *testing.T) {
 	tests := []struct {
-		name       string
-		limit      int
-		timestamps []int64
-		wantErr    bool
+		name      string
+		ids       []string
+		wantError bool
 	}{
-		{name: "limit_minus_one", limit: 2, timestamps: []int64{100}, wantErr: false},
-		{name: "limit", limit: 2, timestamps: []int64{100, 200}, wantErr: false},
-		{name: "limit_plus_one", limit: 2, timestamps: []int64{100, 200, 300}, wantErr: true},
+		{name: "below_limit", ids: []string{"n1"}},
+		{name: "at_limit", ids: []string{"n1", "n2"}},
+		{name: "duplicate_node_does_not_count_twice", ids: []string{"n1", "n1", "n2"}},
+		{name: "above_limit", ids: []string{"n1", "n2", "n3"}, wantError: true},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tg := NewTimeGraphWithConfig(&TimeGraphConfig{
 				Resource:     []TimeGraphResourceConfig{{Name: "node", Index: cmdb.Index{"id"}}},
-				MaxNodeInfos: tc.limit,
+				MaxNodes:     2,
+				MaxNodeInfos: 100,
 			})
-			ctx := context.Background()
-			for i, timestamp := range tc.timestamps {
-				err := tg.AddTimeNode(ctx, "node", cmdb.Matcher{"id": "n1"}, timestamp)
-				if tc.wantErr && i == len(tc.timestamps)-1 {
-					var limitErr *ResultLimitError
-					if !errors.As(err, &limitErr) || limitErr.Reason != "max_graph_node_infos" || limitErr.Limit != tc.limit || limitErr.Count != tc.limit+1 {
-						t.Fatalf("unexpected limit error: %v", err)
-					}
+			for i, id := range tc.ids {
+				err := tg.AddTimeNode(context.Background(), "node", cmdb.Matcher{"id": id}, 100)
+				if tc.wantError && i == len(tc.ids)-1 {
+					requireGraphLimitError(t, err, "max_graph_nodes", 3, 2)
 					return
 				}
-				if err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, err)
 			}
+		})
+	}
+}
+
+func TestTimeGraphEdgeLimitBoundaries(t *testing.T) {
+	tests := []struct {
+		name      string
+		ids       []string
+		wantError bool
+	}{
+		{name: "below_limit", ids: []string{"a"}},
+		{name: "at_limit", ids: []string{"a", "b"}},
+		{name: "duplicate_edge_does_not_count_twice", ids: []string{"a", "a", "b"}},
+		{name: "above_limit", ids: []string{"a", "b", "c"}, wantError: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tg := NewTimeGraphWithConfig(&TimeGraphConfig{
+				Resource: []TimeGraphResourceConfig{
+					{Name: "left", Index: cmdb.Index{"id"}},
+					{Name: "right", Index: cmdb.Index{"id"}},
+				},
+				MaxNodes:     100,
+				MaxEdges:     2,
+				MaxNodeInfos: 100,
+			})
+			relation := cmdb.Relation{V: []cmdb.Resource{"left", "right"}, RelationType: "left_to_right"}
+			for i, id := range tc.ids {
+				err := tg.AddTimeRelationWithRelation(context.Background(), relation, cmdb.Matcher{"id": id}, 100)
+				if tc.wantError && i == len(tc.ids)-1 {
+					requireGraphLimitError(t, err, "max_graph_edges", 3, 2)
+					return
+				}
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestTimeGraphNodeInfoLimitBoundaries(t *testing.T) {
+	tests := []struct {
+		name       string
+		timestamps []int64
+		wantError  bool
+	}{
+		{name: "below_limit", timestamps: []int64{100}},
+		{name: "at_limit", timestamps: []int64{100, 200}},
+		{name: "duplicate_timestamp_does_not_count_twice", timestamps: []int64{100, 100, 200}},
+		{name: "above_limit", timestamps: []int64{100, 200, 300}, wantError: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tg := NewTimeGraphWithConfig(&TimeGraphConfig{
+				Resource:     []TimeGraphResourceConfig{{Name: "node", Index: cmdb.Index{"id"}}},
+				MaxNodes:     100,
+				MaxNodeInfos: 2,
+			})
+			for i, timestamp := range tc.timestamps {
+				err := tg.AddTimeNode(context.Background(), "node", cmdb.Matcher{"id": "n1"}, timestamp)
+				if tc.wantError && i == len(tc.timestamps)-1 {
+					requireGraphLimitError(t, err, "max_graph_node_infos", 3, 2)
+					return
+				}
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestTimeGraphResultLimitBoundaries(t *testing.T) {
+	tests := []struct {
+		name            string
+		ids             []string
+		wantError       bool
+		wantResultCount int
+	}{
+		{name: "below_limit", ids: []string{"a"}, wantResultCount: 1},
+		{name: "at_limit", ids: []string{"a", "b"}, wantResultCount: 2},
+		{name: "duplicate_path_does_not_count_twice", ids: []string{"a", "a", "b"}, wantResultCount: 2},
+		{name: "above_limit", ids: []string{"a", "b", "c"}, wantError: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tg := NewTimeGraphWithConfig(&TimeGraphConfig{
+				Resource: []TimeGraphResourceConfig{
+					{Name: "left", Index: cmdb.Index{"id"}},
+					{Name: "right", Index: cmdb.Index{"id"}},
+				},
+				MaxNodes:     100,
+				MaxEdges:     100,
+				MaxResults:   2,
+				MaxNodeInfos: 100,
+			})
+			relation := cmdb.Relation{V: []cmdb.Resource{"left", "right"}, RelationType: "left_to_right"}
+			for _, id := range tc.ids {
+				require.NoError(t, tg.AddTimeRelationWithRelation(context.Background(), relation, cmdb.Matcher{"id": id}, 100))
+			}
+			results, err := tg.FindPathResources(
+				context.Background(), "left", []cmdb.Resource{"right"}, nil,
+				[][]cmdb.Resource{{"left", "right"}},
+			)
+			if tc.wantError {
+				requireGraphLimitError(t, err, "max_graph_results", 3, 2)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, results, tc.wantResultCount)
+		})
+	}
+}
+
+func TestTimeGraphRangePointLimitBoundaries(t *testing.T) {
+	oldMaxRangePoints := MaxRangePoints
+	MaxRangePoints = 2
+	t.Cleanup(func() { MaxRangePoints = oldMaxRangePoints })
+
+	tests := []struct {
+		name      string
+		start     string
+		end       string
+		wantError bool
+	}{
+		{name: "one_point_below_limit", start: "1700000000", end: "1700000000"},
+		{name: "two_points_at_limit", start: "1700000000", end: "1700000060"},
+		{name: "three_points_above_limit", start: "1700000000", end: "1700000120", wantError: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			model := &Model{
+				schemaProvider: timeGraphTestSchemaProvider{},
+				timeGraphVMQuery: func(context.Context, *structured.QueryTs, string, bool, time.Time, time.Time, time.Duration) (pl.Matrix, error) {
+					return nil, nil
+				},
+			}
+			ctx := initTimeGraphQueryTestEnvironment()
+			_, err := model.QueryPathResourcesRange(
+				ctx, "10m", "space", "1m", tc.start, tc.end,
+				"node", []cmdb.Resource{"system"}, [][]cmdb.Resource{{"node", "system"}}, cmdb.Matcher{"node": "n1"},
+			)
+			if tc.wantError {
+				require.ErrorContains(t, err, "range query has more than 2 points")
+				return
+			}
+			require.NoError(t, err)
 		})
 	}
 }

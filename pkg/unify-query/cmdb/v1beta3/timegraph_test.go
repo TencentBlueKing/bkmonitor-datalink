@@ -381,68 +381,11 @@ func TestMakeQueryTsUsesDynamicEndpointLabels(t *testing.T) {
 	}
 }
 
-func TestTimeGraphDynamicSelfRelationUsesDirectionForInboundQuery(t *testing.T) {
-	tg := NewTimeGraphWithConfig(&TimeGraphConfig{
-		Resource: []TimeGraphResourceConfig{{Name: "service", Index: cmdb.Index{"id"}}},
-		Relation: []TimeGraphRelationConfig{{
-			Resources:    []cmdb.Resource{"service", "service"},
-			RelationType: "service_to_service",
-			MetricName:   "service_to_service_flow",
-			Category:     string(RelationCategoryDynamic),
-		}},
-	})
-	ctx := context.Background()
-	relation := cmdb.Relation{
-		V:            []cmdb.Resource{"service", "service"},
-		RelationType: "service_to_service",
-		MetricName:   "service_to_service_flow",
-		Category:     string(RelationCategoryDynamic),
-		Direction:    string(DirectionInbound),
-	}
-	if err := tg.AddTimeRelationWithRelation(ctx, relation, cmdb.Matcher{
-		"from_id": "caller",
-		"to_id":   "callee",
-	}, 100); err != nil {
-		t.Fatal(err)
-	}
-
-	results, err := tg.FindRelationPathResources(ctx, "service", []cmdb.Resource{"service"}, cmdb.Matcher{"id": "callee"}, []cmdb.RelationPath{{
-		Steps: []cmdb.RelationPathStep{
-			{ResourceType: "service"},
-			{ResourceType: "service", RelationType: "service_to_service", Category: string(RelationCategoryDynamic), Direction: string(DirectionInbound)},
-		},
-	}})
-	if err != nil || len(results) != 1 {
-		t.Fatalf("unexpected inbound self relation result: %v %+v", err, results)
-	}
-	if got := results[0].Path[0].Dimensions["id"]; got != "callee" {
-		t.Fatalf("unexpected inbound source: %+v", results[0].Path)
-	}
-	if got := results[0].Path[1].Dimensions["id"]; got != "caller" {
-		t.Fatalf("unexpected inbound target: %+v", results[0].Path)
-	}
-}
-
-func TestTimeGraphRangeQuerySeparatesStepAndLookback(t *testing.T) {
+func TestTimeGraphResourceInfoQuerySeparatesStepAndLookback(t *testing.T) {
 	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
 		{Name: "left", Index: cmdb.Index{"id"}},
 		{Name: "right", Index: cmdb.Index{"id"}},
 	}})
-	query, err := tg.MakeQueryTsWithWindow(
-		context.Background(), "space", nil,
-		time.Unix(100, 0), time.Unix(200, 0), time.Minute, 10*time.Minute,
-		cmdb.Relation{V: []cmdb.Resource{"left", "right"}, MetricName: "left_to_right"},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := string(query.QueryList[0].TimeAggregation.Window); got != "10m0s" {
-		t.Fatalf("unexpected relation lookback window: %s", got)
-	}
-	if query.Step != "1m0s" {
-		t.Fatalf("unexpected range step: %s", query.Step)
-	}
-
 	infoQuery, err := tg.MakeResourceInfoQueryTsWithWindow(
 		"space", "left", nil, nil, nil,
 		time.Unix(100, 0), time.Unix(200, 0), time.Minute, 10*time.Minute,
@@ -506,20 +449,6 @@ func TestTimeGraphSingleNodePathRequiresTimestampPresence(t *testing.T) {
 	}
 }
 
-func TestTimeGraphLimitsTimeSpecificNodeInfos(t *testing.T) {
-	tg := NewTimeGraphWithConfig(&TimeGraphConfig{
-		Resource:     []TimeGraphResourceConfig{{Name: "node", Index: cmdb.Index{"id"}}},
-		MaxNodeInfos: 1,
-	})
-	ctx := context.Background()
-	if err := tg.AddTimeNode(ctx, "node", cmdb.Matcher{"id": "n1"}, 100); err != nil {
-		t.Fatal(err)
-	}
-	if err := tg.AddTimeNode(ctx, "node", cmdb.Matcher{"id": "n1"}, 200); err == nil {
-		t.Fatal("expected time-specific node info limit")
-	}
-}
-
 func TestTimeGraphResourceInfoQueryFiltersExactPrimaryTuples(t *testing.T) {
 	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{{
 		Name: "pod", Index: cmdb.Index{"cluster", "pod"}, Info: cmdb.Index{"version"},
@@ -533,10 +462,52 @@ func TestTimeGraphResourceInfoQueryFiltersExactPrimaryTuples(t *testing.T) {
 		t.Fatal(err)
 	}
 	conditions := query.QueryList[0].Conditions
-	if len(conditions.FieldList) != 4 || len(conditions.ConditionList) != 3 {
-		t.Fatalf("unexpected target filter shape: %+v", conditions)
+	wantFields := []structured.ConditionField{
+		{DimensionName: "cluster", Value: []string{"c1"}, Operator: structured.ConditionEqual},
+		{DimensionName: "pod", Value: []string{"p1"}, Operator: structured.ConditionEqual},
+		{DimensionName: "cluster", Value: []string{"c2"}, Operator: structured.ConditionEqual},
+		{DimensionName: "pod", Value: []string{"p2"}, Operator: structured.ConditionEqual},
 	}
-	if conditions.ConditionList[0] != structured.ConditionAnd || conditions.ConditionList[1] != structured.ConditionOr || conditions.ConditionList[2] != structured.ConditionAnd {
-		t.Fatalf("target primary tuples were not grouped exactly: %+v", conditions.ConditionList)
+	wantConditions := structured.Conditions{
+		FieldList:     wantFields,
+		ConditionList: []string{structured.ConditionAnd, structured.ConditionOr, structured.ConditionAnd},
+	}
+	if !reflect.DeepEqual(conditions, wantConditions) {
+		t.Fatalf("unexpected target filter: want=%+v got=%+v", wantConditions, conditions)
+	}
+
+	groups, err := conditions.AnalysisConditions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		matcher cmdb.Matcher
+		want    bool
+	}{
+		{name: "first_tuple_matches", matcher: cmdb.Matcher{"cluster": "c1", "pod": "p1"}, want: true},
+		{name: "second_tuple_matches", matcher: cmdb.Matcher{"cluster": "c2", "pod": "p2"}, want: true},
+		{name: "cross_tuple_one_does_not_match", matcher: cmdb.Matcher{"cluster": "c1", "pod": "p2"}, want: false},
+		{name: "cross_tuple_two_does_not_match", matcher: cmdb.Matcher{"cluster": "c2", "pod": "p1"}, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			matched := false
+			for _, group := range groups {
+				groupMatched := true
+				for _, field := range group {
+					if len(field.Value) != 1 || tc.matcher[field.DimensionName] != field.Value[0] {
+						groupMatched = false
+						break
+					}
+				}
+				if groupMatched {
+					matched = true
+					break
+				}
+			}
+			if matched != tc.want {
+				t.Fatalf("matcher %v matched=%v, want=%v; groups=%+v", tc.matcher, matched, tc.want, groups)
+			}
+		})
 	}
 }

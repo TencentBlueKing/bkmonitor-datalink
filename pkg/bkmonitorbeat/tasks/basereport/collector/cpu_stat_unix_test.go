@@ -12,6 +12,8 @@
 package collector
 
 import (
+	"errors"
+	"fmt"
 	"regexp"
 	"testing"
 	"time"
@@ -55,10 +57,48 @@ var DefaultBasereportConfig = configs.BasereportConfig{
 
 func TestGetCPUStatUsageUnix(t *testing.T) {
 	report := &CpuReport{}
-	err := getCPUStatUsage(report)
+	valid, err := getCPUStatUsage(report)
 	assert.NoError(t, err)
+	assert.True(t, valid)
 	assert.NotNil(t, report.Stat)
 	assert.NotNil(t, report.Usage)
+}
+
+func TestCollectCPUPercentRollbackIsInvalid(t *testing.T) {
+	calls := make([]bool, 0, 2)
+	collect := func(_ time.Duration, percpu bool) ([]float64, error) {
+		calls = append(calls, percpu)
+		if percpu {
+			return nil, fmt.Errorf("wrapped: %w", cpu.ErrCPUTimesCounterRollback)
+		}
+		return []float64{20}, nil
+	}
+
+	perUsage, totalUsage, valid, err := collectCPUPercent(collect)
+
+	assert.NoError(t, err)
+	assert.False(t, valid)
+	assert.Nil(t, perUsage)
+	assert.Nil(t, totalUsage)
+	assert.Equal(t, []bool{true, false}, calls)
+}
+
+func TestCollectCPUPercentOrdinaryError(t *testing.T) {
+	expectedErr := errors.New("percent failed")
+	calls := make([]bool, 0, 2)
+	collect := func(_ time.Duration, percpu bool) ([]float64, error) {
+		calls = append(calls, percpu)
+		if percpu {
+			return nil, expectedErr
+		}
+		return []float64{20}, nil
+	}
+
+	_, _, valid, err := collectCPUPercent(collect)
+
+	assert.False(t, valid)
+	assert.ErrorIs(t, err, expectedErr)
+	assert.Equal(t, []bool{true, false}, calls)
 }
 
 func TestQueryCpuInfoUnix(t *testing.T) {

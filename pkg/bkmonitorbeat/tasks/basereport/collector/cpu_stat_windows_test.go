@@ -38,11 +38,12 @@ var DefaultBasereportConfigWin = configs.BasereportConfig{
 func TestGetCPUStatUsageWin(t *testing.T) {
 	report := &CpuReport{}
 	for i := 0; i <= 4; i++ {
-		err := getCPUStatUsage(report)
+		valid, err := getCPUStatUsage(report)
 		t.Log(report.TotalStat.Idle)
 		t.Log(report.TotalStat.System)
 		t.Log(report.TotalStat.User)
 		assert.NoError(t, err)
+		assert.True(t, valid)
 		assert.NotNil(t, report.Stat)
 		assert.NotNil(t, report.Usage)
 		time.Sleep(1 * time.Second)
@@ -62,8 +63,9 @@ func TestGetCPUStatUsageWinResetsReusableReport(t *testing.T) {
 		Usage: []float64{1, 2, 3},
 	}
 
-	err := getCPUStatUsage(report)
+	valid, err := getCPUStatUsage(report)
 	require.NoError(t, err)
+	require.True(t, valid)
 	require.NotEmpty(t, report.Stat)
 	require.NotEmpty(t, report.Usage)
 	assert.NotEqual(t, "stale", report.Stat[0].CPU)

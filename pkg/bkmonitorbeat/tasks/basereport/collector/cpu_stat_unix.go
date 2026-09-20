@@ -12,6 +12,7 @@
 package collector
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -37,11 +38,39 @@ func init() {
 	lastCPUTimeSlice.Unlock()
 }
 
-func getCPUStatUsage(report *CpuReport) error {
+type cpuPercentCollector func(interval time.Duration, percpu bool) ([]float64, error)
+
+func collectCPUPercent(collect cpuPercentCollector) (perUsage, totalUsage []float64, valid bool, err error) {
+	// 采集整机、逐核 CPU 使用率，并更新 gopsutil 对应基线
+	perUsage, perErr := collect(0, true)
+	totalUsage, totalErr := collect(0, false)
+
+	// 判断整机、逐核采集是否发生 CPU 累计计数回退
+	perRollback := errors.Is(perErr, cpu.ErrCPUTimesCounterRollback)
+	totalRollback := errors.Is(totalErr, cpu.ErrCPUTimesCounterRollback)
+
+	// 整机、逐核采集发生非 idle 回退错误时，向上抛错
+	if perErr != nil && !perRollback {
+		return nil, nil, false, perErr
+	}
+	if totalErr != nil && !totalRollback {
+		return nil, nil, false, totalErr
+	}
+
+	// 任一采集发生计数回退时，丢弃本轮数据，不抛错
+	if perRollback || totalRollback {
+		return nil, nil, false, nil
+	}
+
+	// 两次采集均正常时，返回有效的逐核，整机使用率
+	return perUsage, totalUsage, true, nil
+}
+
+func getCPUStatUsage(report *CpuReport) (bool, error) {
 	var err error
 	perCPUTimes, err := cpu.Times(true)
 	if err != nil {
-		return err
+		return false, err
 	}
 	// 比较两次获取的时间片的内容的长度,如果不对等直接退出
 	lastCPUTimeSlice.Lock()
@@ -51,14 +80,14 @@ func getCPUStatUsage(report *CpuReport) error {
 	if len(lastCPUTimeSlice.lastPerCPUTimes) <= 0 || len(perCPUTimes) != len(lastCPUTimeSlice.lastPerCPUTimes) {
 		lastCPUTimeSlice.lastPerCPUTimes, err = cpu.Times(true)
 		if err != nil {
-			return err
+			return false, err
 		}
 	}
 
 	l1, l2 := len(perCPUTimes), len(lastCPUTimeSlice.lastPerCPUTimes)
 	if l1 != l2 {
 		err = fmt.Errorf("received two CPU counts %d != %d", l1, l2)
-		return err
+		return false, err
 	}
 
 	for index, value := range perCPUTimes {
@@ -69,14 +98,14 @@ func getCPUStatUsage(report *CpuReport) error {
 
 	cpuTimes, err := cpu.Times(false)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	// 判断lastCPUTimes的长度，增加重写避免init方法失效的情况
 	if len(lastCPUTimeSlice.lastCPUTimes) <= 0 {
 		lastCPUTimeSlice.lastCPUTimes, err = cpu.Times(false)
 		if err != nil {
-			return err
+			return false, err
 		}
 	}
 
@@ -88,28 +117,30 @@ func getCPUStatUsage(report *CpuReport) error {
 	lastCPUTimeSlice.lastCPUTimes = cpuTimes
 	lastCPUTimeSlice.lastPerCPUTimes = perCPUTimes
 
-	// per usage
-	report.Usage, err = cpu.Percent(0, true)
+	perUsage, totalUsage, valid, err := collectCPUPercent(cpu.Percent)
 	if err != nil {
-		return err
+		return false, err
+	}
+	// idle 无效直接返回
+	if !valid {
+		return false, nil
 	}
 
+	report.Usage = perUsage
 	for i := range report.Usage {
-		if report.Usage[i] < 0 || int(report.Usage[i]) > 100 {
+		if report.Usage[i] < 0 || report.Usage[i] > 100 {
 			report.Usage[i] = 0.0
 		}
 	}
-	// total usage
-	total, err := cpu.Percent(0, false)
-	if err != nil {
-		return err
-	}
 
-	report.TotalUsage = total[0]
+	if len(totalUsage) == 0 {
+		return false, fmt.Errorf("empty total CPU usage")
+	}
+	report.TotalUsage = totalUsage[0]
 	if report.TotalUsage < 0 || report.TotalUsage > 100 {
 		report.TotalUsage = 0.0
 	}
-	return nil
+	return true, nil
 }
 
 // queryCpuInfo: 查询获取机器的CPU信息

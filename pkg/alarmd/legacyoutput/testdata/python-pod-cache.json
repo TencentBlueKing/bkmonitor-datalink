@@ -1,0 +1,106 @@
+[
+  {
+    "name": "pickle2",
+    "key": "prefix:1:bcs_pod:cluster:ns:pod",
+    "wire_base64": "gAJYhgAAAHsibmFtZSI6ICJwb2QiLCAibmFtZXNwYWNlIjogIm5zIiwgImJrX2Jpel9pZCI6IDIsICJiY3NfY2x1c3Rlcl9pZCI6ICJjbHVzdGVyIiwgIndvcmtsb2FkX3R5cGUiOiAiRGVwbG95bWVudCIsICJ3b3JrbG9hZF9uYW1lIjogIndlYiJ9cQAu",
+    "expected": {
+      "name": "pod",
+      "namespace": "ns",
+      "bk_biz_id": 2,
+      "bcs_cluster_id": "cluster",
+      "workload_type": "Deployment",
+      "workload_name": "web"
+    }
+  },
+  {
+    "name": "pickle2_zlib",
+    "key": "prefix:1:bcs_pod:cluster:ns:pod",
+    "wire_base64": "eJxrYIpoY2BgqFbKS8xNVbJSUCrIT1HSUQBziwsSk8FiecUgoaTs+KTMqvjMFKCQEYifXByfnFNaXJJaBBFUgvJAisvzi7Jz8hNT4ksqC8BmuKQW5ORX5qbmlaBIw6wtT01Sqi1k0AMAhBItyg==",
+    "expected": {
+      "name": "pod",
+      "namespace": "ns",
+      "bk_biz_id": 2,
+      "bcs_cluster_id": "cluster",
+      "workload_type": "Deployment",
+      "workload_name": "web"
+    }
+  },
+  {
+    "name": "pickle3",
+    "key": "prefix:1:bcs_pod:cluster:ns:pod",
+    "wire_base64": "gANYhgAAAHsibmFtZSI6ICJwb2QiLCAibmFtZXNwYWNlIjogIm5zIiwgImJrX2Jpel9pZCI6IDIsICJiY3NfY2x1c3Rlcl9pZCI6ICJjbHVzdGVyIiwgIndvcmtsb2FkX3R5cGUiOiAiRGVwbG95bWVudCIsICJ3b3JrbG9hZF9uYW1lIjogIndlYiJ9cQAu",
+    "expected": {
+      "name": "pod",
+      "namespace": "ns",
+      "bk_biz_id": 2,
+      "bcs_cluster_id": "cluster",
+      "workload_type": "Deployment",
+      "workload_name": "web"
+    }
+  },
+  {
+    "name": "pickle3_zlib",
+    "key": "prefix:1:bcs_pod:cluster:ns:pod",
+    "wire_base64": "eJxrYI5oY2BgqFbKS8xNVbJSUCrIT1HSUQBziwsSk8FiecUgoaTs+KTMqvjMFKCQEYifXByfnFNaXJJaBBFUgvJAisvzi7Jz8hNT4ksqC8BmuKQW5ORX5qbmlaBIw6wtT01Sqi1k0AMAhKEtyw==",
+    "expected": {
+      "name": "pod",
+      "namespace": "ns",
+      "bk_biz_id": 2,
+      "bcs_cluster_id": "cluster",
+      "workload_type": "Deployment",
+      "workload_name": "web"
+    }
+  },
+  {
+    "name": "pickle4",
+    "key": "prefix:1:bcs_pod:cluster:ns:pod",
+    "wire_base64": "gASVigAAAAAAAACMhnsibmFtZSI6ICJwb2QiLCAibmFtZXNwYWNlIjogIm5zIiwgImJrX2Jpel9pZCI6IDIsICJiY3NfY2x1c3Rlcl9pZCI6ICJjbHVzdGVyIiwgIndvcmtsb2FkX3R5cGUiOiAiRGVwbG95bWVudCIsICJ3b3JrbG9hZF9uYW1lIjogIndlYiJ9lC4=",
+    "expected": {
+      "name": "pod",
+      "namespace": "ns",
+      "bk_biz_id": 2,
+      "bcs_cluster_id": "cluster",
+      "workload_type": "Deployment",
+      "workload_name": "web"
+    }
+  },
+  {
+    "name": "pickle4_zlib",
+    "key": "prefix:1:bcs_pod:cluster:ns:pod",
+    "wire_base64": "eJxrYJnaxQABPW3VSnmJualKVgpKBfkpSjoKYG5xQWIyWCyvGCSUlB2flFkVn5kCFDIC8ZOL45NzSotLUosggkpQHkhxeX5Rdk5+Ykp8SWUB2AyX1IKc/Mrc1LwSFGmYteWpSUq1U/QAGLYvQg==",
+    "expected": {
+      "name": "pod",
+      "namespace": "ns",
+      "bk_biz_id": 2,
+      "bcs_cluster_id": "cluster",
+      "workload_type": "Deployment",
+      "workload_name": "web"
+    }
+  },
+  {
+    "name": "pickle5",
+    "key": "prefix:1:bcs_pod:cluster:ns:pod",
+    "wire_base64": "gAWVigAAAAAAAACMhnsibmFtZSI6ICJwb2QiLCAibmFtZXNwYWNlIjogIm5zIiwgImJrX2Jpel9pZCI6IDIsICJiY3NfY2x1c3Rlcl9pZCI6ICJjbHVzdGVyIiwgIndvcmtsb2FkX3R5cGUiOiAiRGVwbG95bWVudCIsICJ3b3JrbG9hZF9uYW1lIjogIndlYiJ9lC4=",
+    "expected": {
+      "name": "pod",
+      "namespace": "ns",
+      "bk_biz_id": 2,
+      "bcs_cluster_id": "cluster",
+      "workload_type": "Deployment",
+      "workload_name": "web"
+    }
+  },
+  {
+    "name": "pickle5_zlib",
+    "key": "prefix:1:bcs_pod:cluster:ns:pod",
+    "wire_base64": "eJxrYJ3axQABPW3VSnmJualKVgpKBfkpSjoKYG5xQWIyWCyvGCSUlB2flFkVn5kCFDIC8ZOL45NzSotLUosggkpQHkhxeX5Rdk5+Ykp8SWUB2AyX1IKc/Mrc1LwSFGmYteWpSUq1U/QAGUovQw==",
+    "expected": {
+      "name": "pod",
+      "namespace": "ns",
+      "bk_biz_id": 2,
+      "bcs_cluster_id": "cluster",
+      "workload_type": "Deployment",
+      "workload_name": "web"
+    }
+  }
+]

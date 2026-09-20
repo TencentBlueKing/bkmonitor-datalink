@@ -349,6 +349,7 @@ func TestReadExecutionEnvelopeV2QueryCompleteness(t *testing.T) {
 		{name: "full empty", result: QueryResultV2{Completeness: QueryCompletenessFull}, empty: true},
 		{name: "partial", result: QueryResultV2{Completeness: QueryCompletenessPartial, ReasonCode: ReasonQueryPartial}},
 		{name: "unavailable", result: QueryResultV2{Completeness: QueryCompletenessUnavailable, ReasonCode: ReasonQueryUnavailable}, empty: true},
+		{name: "unavailable exhausted budget", result: QueryResultV2{Completeness: QueryCompletenessUnavailable, ReasonCode: ReasonExecutionBudgetExhausted}, empty: true},
 		{name: "partial missing reason", result: QueryResultV2{Completeness: QueryCompletenessPartial}, wantFraming: true},
 	}
 	for _, test := range tests {
@@ -1047,9 +1048,64 @@ func TestReasonCatalogV2IsFrozenAndDomainAware(t *testing.T) {
 		ReasonAllowedForV2(ReasonProviderUnavailable, ReasonDomainReceipt) {
 		t.Fatalf("Provider reason definition = (%#v, %t)", provider, ok)
 	}
+	blockedExactSet, ok := LookupReasonV2(ReasonBlockedExactSetUnavailable)
+	if !ok || blockedExactSet.Class != ReasonClassDeterministic || blockedExactSet.Domains != ReasonDomainObservation {
+		t.Fatalf("Blocked exact-set reason definition = (%#v, %t)", blockedExactSet, ok)
+	}
+	// A deterministic BeginSlot failure is named by its own observation-only
+	// reason so it is never confused with an exact-set or transport condition.
+	beginFailed, ok := LookupReasonV2(ReasonProgressBeginFailed)
+	if !ok || beginFailed.Class != ReasonClassDeterministic || beginFailed.Domains != ReasonDomainObservation ||
+		ReasonAllowedForV2(ReasonProgressBeginFailed, ReasonDomainReceipt) || ReasonAllowedForV2(ReasonProgressBeginFailed, ReasonDomainQueryResult) {
+		t.Fatalf("Progress begin failed reason definition = (%#v, %t)", beginFailed, ok)
+	}
+	// PROVIDER_UNAVAILABLE used to stand in for every retryable control
+	// condition; these split it by cause. They are observation-only: they
+	// appear on non-committed Retrying results and are never persisted or
+	// carried by receipts.
+	for _, reason := range []string{
+		ReasonProgressBeginRejected, ReasonActivationReadFailed, ReasonSnapshotRetryPending, ReasonSlotSourceRetry,
+	} {
+		definition, ok := LookupReasonV2(reason)
+		if !ok || definition.Class != ReasonClassRetryable || definition.Domains != ReasonDomainObservation ||
+			ReasonAllowedForV2(reason, ReasonDomainReceipt) || ReasonAllowedForV2(reason, ReasonDomainQueryResult) {
+			t.Fatalf("split provider reason %q definition = (%#v, %t)", reason, definition, ok)
+		}
+	}
+	snapshotUnavailable, ok := LookupReasonV2(ReasonSnapshotUnavailable)
+	if !ok || snapshotUnavailable.Class != ReasonClassCoverage ||
+		snapshotUnavailable.Domains != ReasonDomainObservation ||
+		ReasonAllowedForV2(ReasonSnapshotUnavailable, ReasonDomainReceipt) ||
+		ReasonAllowedForV2(ReasonSnapshotUnavailable, ReasonDomainQueryResult) {
+		t.Fatalf("Snapshot unavailable reason definition = (%#v, %t)", snapshotUnavailable, ok)
+	}
+	gapSkipped, ok := LookupReasonV2(ReasonGapSkipped)
+	if !ok || gapSkipped.Class != ReasonClassCoverage || gapSkipped.Domains != ReasonDomainObservation ||
+		ReasonAllowedForV2(ReasonGapSkipped, ReasonDomainReceipt) ||
+		ReasonAllowedForV2(ReasonGapSkipped, ReasonDomainQueryResult) {
+		t.Fatalf("Gap-skipped reason definition = (%#v, %t)", gapSkipped, ok)
+	}
+	schedulePruned, ok := LookupReasonV2(ReasonSchedulePruned)
+	if !ok || schedulePruned.Class != ReasonClassCoverage || schedulePruned.Domains != ReasonDomainObservation ||
+		ReasonAllowedForV2(ReasonSchedulePruned, ReasonDomainReceipt) ||
+		ReasonAllowedForV2(ReasonSchedulePruned, ReasonDomainQueryResult) {
+		t.Fatalf("Schedule-pruned reason definition = (%#v, %t)", schedulePruned, ok)
+	}
 	if !ReasonAllowedForV2(ReasonQueryPartial, ReasonDomainQueryResult) ||
 		ReasonAllowedForV2(ReasonRecordInvalid, ReasonDomainQueryResult) {
 		t.Fatal("QueryResult Reason domain accepted an invalid mapping")
+	}
+	readinessBudget, ok := LookupReasonV2(ReasonReadinessBudgetInvalid)
+	if !ok || readinessBudget.Class != ReasonClassCoverage || readinessBudget.Domains != reasonQueryDomainsV2 ||
+		!ReasonAllowedForV2(ReasonReadinessBudgetInvalid, ReasonDomainQueryResult) ||
+		!ReasonAllowedForV2(ReasonReadinessBudgetInvalid, ReasonDomainReceipt) {
+		t.Fatalf("readiness budget reason definition = (%#v, %t)", readinessBudget, ok)
+	}
+	executionBudget, ok := LookupReasonV2(ReasonExecutionBudgetExhausted)
+	if !ok || executionBudget.Class != ReasonClassCoverage ||
+		executionBudget.Domains != ReasonDomainQueryResult|ReasonDomainObservation ||
+		!ReasonAllowedForV2(ReasonExecutionBudgetExhausted, ReasonDomainQueryResult) {
+		t.Fatalf("execution budget reason definition = (%#v, %t)", executionBudget, ok)
 	}
 	for _, reason := range []string{
 		ReasonEffectiveTimeInactive,
@@ -1062,6 +1118,13 @@ func TestReasonCatalogV2IsFrozenAndDomainAware(t *testing.T) {
 			!definition.Domains.Has(ReasonDomainReceipt) || !definition.Domains.Has(ReasonDomainObservation) ||
 			definition.Domains.Has(ReasonDomainQueryResult) || definition.Domains.Has(ReasonDomainSummary) {
 			t.Fatalf("runtime coverage reason %q definition = (%#v, %t)", reason, definition, ok)
+		}
+	}
+	for _, reason := range []string{ReasonStateCorrupt, ReasonStateSchemaUnsupported, ReasonStateBudgetExceeded} {
+		definition, ok := LookupReasonV2(reason)
+		if !ok || definition.Class != ReasonClassDeterministic ||
+			!definition.Domains.Has(ReasonDomainReceipt) || !definition.Domains.Has(ReasonDomainObservation) {
+			t.Fatalf("state deterministic reason %q definition = (%#v, %t)", reason, definition, ok)
 		}
 	}
 	firstCode := catalog[0].Code
@@ -1080,12 +1143,6 @@ func TestContractsRejectUnknownOrWrongDomainReasonCodes(t *testing.T) {
 		if _, _, err := ReadExecutionEnvelopeV2(encodeExecutionEnvelopeV2ForTest(t, envelope), generousReaderLimitsV2()); err == nil {
 			t.Fatalf("QueryResult accepted reason %q", reason)
 		}
-	}
-
-	receipt := validMessageReceiptV1ForTest()
-	receipt.ReasonCounts = []ReasonCountV1{{ReasonCode: "UNKNOWN_REASON", Count: 1}}
-	if _, err := BuildMessageReceiptV1(receipt); err == nil {
-		t.Fatal("MessageReceipt accepted an unknown reason")
 	}
 
 	summary := validExecutionSummaryV1ForTest()
@@ -1339,256 +1396,6 @@ func TestLevelResultV1RequiresConsistentWindowDecision(t *testing.T) {
 			err := validateSuccessfulLevelResultsV1([]LevelResultV1{result})
 			if (err != nil) != test.wantErr {
 				t.Fatalf("validateSuccessfulLevelResultsV1() error = %v, wantErr=%t", err, test.wantErr)
-			}
-		})
-	}
-}
-
-func TestReceiptAndSummaryStrictRoundTrip(t *testing.T) {
-	t.Parallel()
-
-	receipt, err := BuildMessageReceiptV1(MessageReceiptV1{
-		ExecutionID: "execution-1", MessageID: "message-1", PayloadDigest: strings.Repeat("1", 64),
-		PlanSetDigest: strings.Repeat("2", 64), SourceWindow: SourceWindowV2{FromTime: 1, UntilTime: 2},
-		Status:  ReceiptStatusCompleted,
-		Counts:  ReceiptCountsV1{Received: 1, Selected: 1, Processed: 1},
-		PerPlan: []PlanReceiptV1{{PlanID: "1001", Selected: 1, Normal: 1}},
-	})
-	if err != nil {
-		t.Fatalf("BuildMessageReceiptV1() error = %v", err)
-	}
-	if got, want := receipt.ReceiptID, "2032ccba8166552f363083f774baf09b8936ad14c4ae1623ebb52eb85220f024"; got != want {
-		t.Fatalf("receipt id = %s, want %s", got, want)
-	}
-	payload, err := EncodeMessageReceiptV1(receipt)
-	if err != nil {
-		t.Fatalf("EncodeMessageReceiptV1() error = %v", err)
-	}
-	assertGoldenPayloadV2(t, "testdata/go-v2/message_receipt_v1.json", payload)
-	if _, err := DecodeMessageReceiptV1(payload); err != nil {
-		t.Fatalf("DecodeMessageReceiptV1() error = %v", err)
-	}
-	unknown := append(payload[:len(payload)-1], []byte(`,"future":true}`)...)
-	if _, err := DecodeMessageReceiptV1(unknown); err == nil {
-		t.Fatal("DecodeMessageReceiptV1() accepted an unknown 1.0 field")
-	}
-	var legacy map[string]any
-	if err := json.Unmarshal(payload, &legacy); err != nil {
-		t.Fatalf("decode receipt for legacy-field test: %v", err)
-	}
-	legacyPerPlan := legacy["per_plan"].([]any)
-	legacyPerPlan[0].(map[string]any)["result_identity_digest"] = strings.Repeat("3", 64)
-	legacyPayload, err := json.Marshal(legacy)
-	if err != nil {
-		t.Fatalf("encode receipt with legacy field: %v", err)
-	}
-	if _, err := DecodeMessageReceiptV1(legacyPayload); err == nil {
-		t.Fatal("DecodeMessageReceiptV1() accepted removed result_identity_digest field")
-	}
-
-	summary, err := BuildExecutionSummaryV1(ExecutionSummaryV1{
-		ExecutionID: "execution-1", TenantID: "default", QueryGroupKey: "query-group-1",
-		SourceWindow: SourceWindowV2{FromTime: 1, UntilTime: 2}, PlanSetDigest: strings.Repeat("2", 64),
-		Source: CountSetV1{Messages: 1, Records: 1, Bytes: 10}, Published: CountSetV1{Messages: 1, Records: 1, Bytes: 10},
-	})
-	if err != nil {
-		t.Fatalf("BuildExecutionSummaryV1() error = %v", err)
-	}
-	if got, want := summary.SummaryID, "fdd0691b2822feb1f816a33c203f009a682626de9cf8853ccd68a102e22631b4"; got != want {
-		t.Fatalf("summary id = %s, want %s", got, want)
-	}
-	summaryPayload, err := EncodeExecutionSummaryV1(summary)
-	if err != nil {
-		t.Fatalf("EncodeExecutionSummaryV1() error = %v", err)
-	}
-	assertGoldenPayloadV2(t, "testdata/go-v2/execution_summary_v1.json", summaryPayload)
-	if _, err := DecodeExecutionSummaryV1(summaryPayload); err != nil {
-		t.Fatalf("DecodeExecutionSummaryV1() error = %v", err)
-	}
-}
-
-func TestMessageReceiptV1CountModel(t *testing.T) {
-	t.Parallel()
-
-	valid := validMessageReceiptV1ForTest()
-	valid.Counts = ReceiptCountsV1{Received: 2, Selected: 3, Processed: 2, Unavailable: 1, Events: 1}
-	valid.PerPlan = []PlanReceiptV1{
-		{PlanID: "1001", Selected: 2, Abnormal: 1, Unavailable: 1},
-		{PlanID: "1002", Selected: 1, Normal: 1},
-	}
-	valid.ReasonCounts = []ReasonCountV1{{ReasonCode: ReasonRequiredValueMissing, Count: 1}}
-	if _, err := BuildMessageReceiptV1(valid); err != nil {
-		t.Fatalf("BuildMessageReceiptV1(valid selected > received) error = %v", err)
-	}
-	mixedLevel := valid
-	mixedLevel.Status = ReceiptStatusCompletedWithTerminal
-	mixedLevel.Counts.LevelTerminalAffected = 1
-	mixedLevel.PerPlan = append([]PlanReceiptV1(nil), valid.PerPlan...)
-	mixedLevel.PerPlan[0].LevelTerminalAffected = 1
-	if _, err := BuildMessageReceiptV1(mixedLevel); err != nil {
-		t.Fatalf("BuildMessageReceiptV1(valid mixed-Level terminal) error = %v", err)
-	}
-	for _, reason := range []string{ReasonSelectorInvalid, ReasonPlanInvalid, ReasonLevelInvalid, ReasonValidationBudgetExceeded} {
-		uncountedTerminal := validMessageReceiptV1ForTest()
-		uncountedTerminal.Status = ReceiptStatusCompletedWithTerminal
-		uncountedTerminal.ReasonCounts = []ReasonCountV1{{ReasonCode: reason, Count: 1}}
-		if _, err := BuildMessageReceiptV1(uncountedTerminal); err != nil {
-			t.Fatalf("BuildMessageReceiptV1(valid uncounted %s terminal fact) error = %v", reason, err)
-		}
-	}
-	affectedWithoutDecision := validMessageReceiptV1ForTest()
-	affectedWithoutDecision.Status = ReceiptStatusCompletedWithTerminal
-	affectedWithoutDecision.Counts = ReceiptCountsV1{
-		Received: 1, Selected: 1, Unavailable: 1, LevelTerminalAffected: 1,
-	}
-	affectedWithoutDecision.PerPlan[0].Normal = 0
-	affectedWithoutDecision.PerPlan[0].Unavailable = 1
-	affectedWithoutDecision.PerPlan[0].LevelTerminalAffected = 1
-	if _, err := BuildMessageReceiptV1(affectedWithoutDecision); err == nil {
-		t.Fatal("BuildMessageReceiptV1() accepted Level terminal affected without a valid three-state result")
-	}
-
-	rejected := validMessageReceiptV1ForTest()
-	rejected.Status = ReceiptStatusRejected
-	rejected.Counts = ReceiptCountsV1{}
-	rejected.PerPlan = []PlanReceiptV1{}
-	rejected.ReasonCounts = []ReasonCountV1{{ReasonCode: ReasonMalformedJSON, Count: 1}}
-	if _, err := BuildMessageReceiptV1(rejected); err != nil {
-		t.Fatalf("BuildMessageReceiptV1(valid rejected) error = %v", err)
-	}
-	rejected.Counts.LevelTerminalAffected = 1
-	if _, err := BuildMessageReceiptV1(rejected); err == nil {
-		t.Fatal("BuildMessageReceiptV1() accepted REJECTED with a level terminal affected count")
-	}
-
-	tests := []struct {
-		name   string
-		mutate func(*MessageReceiptV1)
-	}{
-		{name: "top selected decomposition", mutate: func(receipt *MessageReceiptV1) { receipt.Counts.Selected++ }},
-		{name: "per plan decomposition", mutate: func(receipt *MessageReceiptV1) { receipt.PerPlan[0].Selected++ }},
-		{name: "per plan selected sum", mutate: func(receipt *MessageReceiptV1) { receipt.PerPlan[1].Selected++ }},
-		{name: "per plan selected exceeds received", mutate: func(receipt *MessageReceiptV1) { receipt.Counts.Received = 1 }},
-		{name: "processed sum", mutate: func(receipt *MessageReceiptV1) { receipt.Counts.Processed++ }},
-		{name: "events sum", mutate: func(receipt *MessageReceiptV1) { receipt.Counts.Events++ }},
-		{name: "level terminal affected sum", mutate: func(receipt *MessageReceiptV1) { receipt.Counts.LevelTerminalAffected++ }},
-		{name: "level terminal affected exceeds selected", mutate: func(receipt *MessageReceiptV1) {
-			receipt.Status = ReceiptStatusCompletedWithTerminal
-			receipt.Counts.LevelTerminalAffected = receipt.PerPlan[0].Selected + 1
-			receipt.PerPlan[0].LevelTerminalAffected = receipt.PerPlan[0].Selected + 1
-		}},
-		{name: "completed status with level terminal affected", mutate: func(receipt *MessageReceiptV1) {
-			receipt.Counts.LevelTerminalAffected = 1
-			receipt.PerPlan[0].LevelTerminalAffected = 1
-		}},
-		{name: "completed with terminal status without terminal counts", mutate: func(receipt *MessageReceiptV1) {
-			receipt.Status = ReceiptStatusCompletedWithTerminal
-		}},
-		{name: "terminal status", mutate: func(receipt *MessageReceiptV1) {
-			receipt.Counts.Terminal = 1
-			receipt.Counts.Selected++
-			receipt.PerPlan[1].Terminal = 1
-			receipt.PerPlan[1].Selected++
-		}},
-		{name: "rejected business counts", mutate: func(receipt *MessageReceiptV1) {
-			receipt.Status = ReceiptStatusRejected
-		}},
-		{name: "rejected per plan", mutate: func(receipt *MessageReceiptV1) {
-			receipt.Status = ReceiptStatusRejected
-			receipt.Counts = ReceiptCountsV1{}
-		}},
-	}
-	for _, test := range tests {
-		test := test
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			receipt := valid
-			receipt.PerPlan = append([]PlanReceiptV1(nil), valid.PerPlan...)
-			receipt.ReasonCounts = append([]ReasonCountV1(nil), valid.ReasonCounts...)
-			test.mutate(&receipt)
-			if _, err := BuildMessageReceiptV1(receipt); err == nil {
-				t.Fatal("BuildMessageReceiptV1() accepted inconsistent counts")
-			}
-		})
-	}
-}
-
-func TestMessageReceiptV1RepresentsMixedLevelTerminal(t *testing.T) {
-	t.Parallel()
-
-	receipt := validMessageReceiptV1ForTest()
-	receipt.Status = ReceiptStatusCompletedWithTerminal
-	receipt.Counts = ReceiptCountsV1{
-		Received: 1, Selected: 1, Processed: 1, LevelTerminalAffected: 1, Events: 1,
-	}
-	receipt.PerPlan[0].Normal = 0
-	receipt.PerPlan[0].Abnormal = 1
-	receipt.PerPlan[0].LevelTerminalAffected = 1
-	built, err := BuildMessageReceiptV1(receipt)
-	if err != nil {
-		t.Fatalf("BuildMessageReceiptV1() error = %v", err)
-	}
-	payload, err := EncodeMessageReceiptV1(built)
-	if err != nil {
-		t.Fatalf("EncodeMessageReceiptV1() error = %v", err)
-	}
-	assertGoldenPayloadV2(t, "testdata/go-v2/message_receipt_mixed_level_v1.json", payload)
-
-	decoded, err := DecodeMessageReceiptV1(payload)
-	if err != nil {
-		t.Fatalf("DecodeMessageReceiptV1() cannot express a processed Plan x Record with a sibling Level terminal: %v", err)
-	}
-	if decoded.Status != ReceiptStatusCompletedWithTerminal || decoded.Counts.Selected != 1 || decoded.Counts.Processed != 1 ||
-		decoded.Counts.Terminal != 0 || decoded.Counts.LevelTerminalAffected != 1 || decoded.Counts.Events != 1 ||
-		len(decoded.PerPlan) != 1 || decoded.PerPlan[0].Selected != 1 || decoded.PerPlan[0].Abnormal != 1 ||
-		decoded.PerPlan[0].Terminal != 0 || decoded.PerPlan[0].LevelTerminalAffected != 1 {
-		t.Fatalf("mixed-Level receipt = %#v", decoded)
-	}
-}
-
-func TestMessageReceiptV1RequiresLevelTerminalAffectedShape(t *testing.T) {
-	t.Parallel()
-
-	receipt, err := BuildMessageReceiptV1(validMessageReceiptV1ForTest())
-	if err != nil {
-		t.Fatalf("BuildMessageReceiptV1() error = %v", err)
-	}
-	payload, err := EncodeMessageReceiptV1(receipt)
-	if err != nil {
-		t.Fatalf("EncodeMessageReceiptV1() error = %v", err)
-	}
-
-	for _, scope := range []string{"counts", "per_plan"} {
-		t.Run(scope, func(t *testing.T) {
-			var object map[string]json.RawMessage
-			if err := json.Unmarshal(payload, &object); err != nil {
-				t.Fatalf("decode receipt fixture: %v", err)
-			}
-			switch scope {
-			case "counts":
-				var counts map[string]json.RawMessage
-				if err := json.Unmarshal(object["counts"], &counts); err != nil {
-					t.Fatalf("decode counts fixture: %v", err)
-				}
-				delete(counts, "level_terminal_affected")
-				object["counts"], err = json.Marshal(counts)
-			case "per_plan":
-				var perPlan []map[string]json.RawMessage
-				if err := json.Unmarshal(object["per_plan"], &perPlan); err != nil {
-					t.Fatalf("decode per_plan fixture: %v", err)
-				}
-				delete(perPlan[0], "level_terminal_affected")
-				object["per_plan"], err = json.Marshal(perPlan)
-			}
-			if err != nil {
-				t.Fatalf("encode %s fixture: %v", scope, err)
-			}
-			missing, err := json.Marshal(object)
-			if err != nil {
-				t.Fatalf("encode receipt fixture: %v", err)
-			}
-			if _, err := DecodeMessageReceiptV1(missing); err == nil {
-				t.Fatalf("DecodeMessageReceiptV1() accepted missing %s level_terminal_affected", scope)
 			}
 		})
 	}
@@ -1853,16 +1660,6 @@ func levelResultV1ForTest(levelID, priority uint32, result, fingerprint string) 
 			DetectionResult: "ANOMALOUS", PredicateDigest: strings.Repeat("8", 64),
 			NormalizedValue: json.RawMessage(`50.1`), EffectiveTimeStatus: "ACTIVE",
 		},
-	}
-}
-
-func validMessageReceiptV1ForTest() MessageReceiptV1 {
-	return MessageReceiptV1{
-		ExecutionID: "execution-1", MessageID: "message-1", PayloadDigest: strings.Repeat("1", 64),
-		PlanSetDigest: strings.Repeat("2", 64), SourceWindow: SourceWindowV2{FromTime: 1, UntilTime: 2},
-		Status:  ReceiptStatusCompleted,
-		Counts:  ReceiptCountsV1{Received: 1, Selected: 1, Processed: 1},
-		PerPlan: []PlanReceiptV1{{PlanID: "1001", Selected: 1, Normal: 1}},
 	}
 }
 

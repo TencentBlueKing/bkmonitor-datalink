@@ -39,7 +39,7 @@ func TestHealthAndResourceCollectorsUseBoundedSnapshots(t *testing.T) {
 		WorkerQueueBytes:   5,
 		ConsumerLagKnown:   true,
 		ConsumerLagRecords: 6,
-		LastProgressStage:  observability.StageTriggerCompleted,
+		LastProgressStage:  observability.StageProgressCommitted,
 		LastProgressAt:     now,
 		LastRecoveryAt:     now,
 	})
@@ -67,7 +67,7 @@ func TestHealthAndResourceCollectorsUseBoundedSnapshots(t *testing.T) {
 		`bkmonitor_alarmd_health_reason{reason_code="resource_worker_queue"} 1`,
 		`bkmonitor_alarmd_health_reason{reason_code="contract_retryable"} 1`,
 		"bkmonitor_alarmd_health_consumer_lag_records 6",
-		`bkmonitor_alarmd_health_last_progress_timestamp_seconds{stage="trigger_completed"} 123`,
+		`bkmonitor_alarmd_health_last_progress_timestamp_seconds{stage="progress_committed"} 123`,
 		`bkmonitor_alarmd_resource_state{resource_state="normal"} 1`,
 		"bkmonitor_alarmd_resource_cpu_cores 1.5",
 		"bkmonitor_alarmd_resource_state_bytes 70",

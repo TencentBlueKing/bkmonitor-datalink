@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/prometheus/model/histogram"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/prometheus/prometheus/promql"
@@ -173,6 +174,33 @@ func TestMergeBucketDuration(t *testing.T) {
 			assert.Equal(t, tc.expected, tc.queries.mergeBucketDuration(tc.name, tc.fallback))
 		})
 	}
+}
+
+func TestClonePromQLResultsBreaksPooledSliceAndHistogramAliases(t *testing.T) {
+	hist := &histogram.FloatHistogram{Count: 1}
+	matrix := promql.Matrix{{
+		Metric: labels.FromStrings("key", "value"),
+		Points: []promql.Point{{T: 1, H: hist}},
+	}}
+	vector := promql.Vector{{
+		Metric: labels.FromStrings("key", "value"),
+		Point:  promql.Point{T: 1, H: hist},
+	}}
+
+	clonedMatrix := clonePromQLMatrix(matrix)
+	clonedVector := clonePromQLVector(vector)
+	matrix[0].Metric[0].Value = "changed"
+	matrix[0].Points[0].T = 2
+	hist.Count = 2
+
+	assert.Equal(t, "value", clonedMatrix[0].Metric[0].Value)
+	assert.Equal(t, int64(1), clonedMatrix[0].Points[0].T)
+	assert.Equal(t, float64(1), clonedMatrix[0].Points[0].H.Count)
+	assert.Equal(t, "value", clonedVector[0].Metric[0].Value)
+	assert.Equal(t, int64(1), clonedVector[0].Point.T)
+	assert.Equal(t, float64(1), clonedVector[0].Point.H.Count)
+	assert.NotSame(t, hist, clonedMatrix[0].Points[0].H)
+	assert.NotSame(t, hist, clonedVector[0].Point.H)
 }
 
 func TestSortAndLimitLabelValues(t *testing.T) {

@@ -177,6 +177,11 @@ func HandlerQueryExemplar(c *gin.Context) {
 		return
 	}
 
+	if err = rejectFieldSemantics(query); err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
 	// metadata 中的 spaceUid 是从 header 头信息中获取
 	if user.SpaceUID != "" {
 		query.SpaceUid = user.SpaceUID
@@ -251,6 +256,11 @@ func HandlerQueryRaw(c *gin.Context) {
 	decoder.UseNumber()
 	err = decoder.Decode(queryTs)
 	if err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
+	if err = rejectFieldSemantics(queryTs); err != nil {
 		resp.failed(ctx, err)
 		return
 	}
@@ -347,6 +357,10 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	decoder.UseNumber()
 	err = decoder.Decode(queryTs)
 	if err != nil {
+		return
+	}
+
+	if err = rejectFieldSemantics(queryTs); err != nil {
 		return
 	}
 
@@ -464,6 +478,11 @@ func HandlerQueryTs(c *gin.Context) {
 		return
 	}
 
+	if err = validateFieldSemanticsRequest(query); err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
 	// metadata 中的 spaceUid 是从 header 头信息中获取，header 如果有的话，覆盖参数里的
 	if user.SpaceUID != "" {
 		query.SpaceUid = user.SpaceUID
@@ -517,6 +536,16 @@ func HandlerQueryTs(c *gin.Context) {
 	if err != nil {
 		resp.failed(ctx, err)
 		return
+	}
+
+	ack, ackErr := fieldSemanticsAcknowledgement(ctx, query, res)
+	if ackErr != nil {
+		err = ackErr
+		resp.failed(ctx, err)
+		return
+	}
+	if ack {
+		c.Header(fieldSemanticsHeader, metadata.FTAEventTagsV1)
 	}
 
 	span.Set("resp-size", fmt.Sprint(unsafe.Sizeof(res)))
@@ -647,6 +676,11 @@ func HandlerQueryReference(c *gin.Context) {
 		return
 	}
 
+	if err = rejectFieldSemantics(query); err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
 	// metadata 中的 spaceUid 是从 header 头信息中获取
 	if user.SpaceUID != "" {
 		query.SpaceUid = user.SpaceUID
@@ -717,6 +751,11 @@ func HandlerQueryTsClusterMetrics(c *gin.Context) {
 		).Error(ctx, err))
 		return
 	}
+	if err = rejectFieldSemantics(query); err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
 	queryStr, _ := json.Marshal(query)
 
 	metadata.NewMessage(
@@ -763,28 +802,17 @@ func validateQueryTsDataSource(queryTs *structured.QueryTs) error {
 	return nil
 }
 
-// validateQueryTsRawPagination validates options that are meaningful only for
-// the raw SearchAfter execution path. A non-zero from would either be sent
-// alongside the keyset predicate or be folded into the per-route size.
+// validateQueryTsRawPagination validates options that are incompatible with
+// the raw SearchAfter execution path. Doris may fall back to per-result-table
+// offset pagination when a legacy table has neither __unique_key__ nor the
+// composite cursor fields, so from is intentionally validated by the query
+// factory after the storage schema is known.
 func validateQueryTsRawPagination(queryTs *structured.QueryTs) error {
 	if queryTs == nil || !queryTs.IsSearchAfter {
 		return nil
 	}
 	if queryTs.Scroll != "" {
 		return fmt.Errorf("is_search_after cannot be combined with scroll")
-	}
-	if queryTs.From != 0 {
-		return fmt.Errorf("from cannot be combined with is_search_after")
-	}
-	for _, query := range queryTs.QueryList {
-		if query != nil && query.From != 0 {
-			return fmt.Errorf("query from cannot be combined with is_search_after (reference_name=%s)", query.ReferenceName)
-		}
-	}
-	for tableUUID, option := range queryTs.ResultTableOptions {
-		if option != nil && option.From != nil && *option.From != 0 {
-			return fmt.Errorf("result table option from cannot be combined with is_search_after (table=%s)", tableUUID)
-		}
 	}
 	return nil
 }

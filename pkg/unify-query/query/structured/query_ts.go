@@ -101,7 +101,7 @@ type QueryTs struct {
 	// 增加公共限制
 	// Limit 点数限制数量
 	Limit int `json:"limit,omitempty" example:"0"`
-	// From 翻页开启数字，不能与 IsSearchAfter 同时使用
+	// From 翻页起始位置。Doris SearchAfter 在缺少稳定游标字段时会降级为 offset 分页。
 	From int `json:"from,omitempty" example:"0"`
 
 	// Scroll 是否启用 Scroll 查询
@@ -110,7 +110,7 @@ type QueryTs struct {
 	SliceMax int `json:"slice_max,omitempty"`
 	// IsMultiFrom 是否启用 MultiFrom 查询
 	IsMultiFrom bool `json:"is_multi_from,omitempty"`
-	// IsSearchAfter 是否启用 SearchAfter 查询。仅用于 /query/raw 原始查询：Elasticsearch 使用原生游标，Doris 使用 keyset pagination（支持 NULL 游标值）；不能与 from 或 scroll 同时使用。
+	// IsSearchAfter 是否启用 SearchAfter 查询。仅用于 /query/raw 原始查询：Elasticsearch 使用原生游标；Doris 优先使用 __unique_key__，缺少时尝试 dtEventTimeStamp、gseIndex、iterationIndex 组合游标，再缺少时降级为 offset 分页；不能与 scroll 同时使用。
 	IsSearchAfter bool `json:"is_search_after,omitempty"`
 	// ClearCache 是否强制清理已存在的缓存会话
 	ClearCache bool `json:"clear_cache,omitempty"`
@@ -266,8 +266,12 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 		return nil, err
 	}
 
+	astBranchCount := queryASTBranchCount(q.MetricMerge, len(q.QueryList))
 	queryReference := make(metadata.QueryReference)
 	for _, query := range q.QueryList {
+		if query.ASTBranchCount == 0 {
+			query.ASTBranchCount = astBranchCount
+		}
 		// 兼容 SaaS 命名（bk_data / bk_log_search / bk_apm）-> 内部命名（bkdata / bklog / bkapm）
 		query.DataSource = normalizeDataSource(query.DataSource)
 
@@ -344,6 +348,24 @@ func (q *QueryTs) ToQueryReference(ctx context.Context) (metadata.QueryReference
 
 	metadata.SetQueryReference(ctx, queryReference)
 	return queryReference, nil
+}
+
+func queryASTBranchCount(expression string, fallback int) int {
+	expr, err := parser.ParseExpr(expression)
+	if err != nil {
+		return fallback
+	}
+	count := 0
+	parser.Inspect(expr, func(node parser.Node, _ []parser.Node) error {
+		if _, ok := node.(*parser.VectorSelector); ok {
+			count++
+		}
+		return nil
+	})
+	if count == 0 {
+		return fallback
+	}
+	return count
 }
 
 func (q *QueryTs) ToQueryClusterMetric(ctx context.Context) (*metadata.QueryClusterMetric, error) {
@@ -577,6 +599,10 @@ type TimeField struct {
 }
 
 type Query struct {
+	// FieldSemantics selects a versioned physical field schema.
+	FieldSemantics string `json:"field_semantics,omitempty"`
+	// SourceConditions keeps intrinsic source filters outside the user's bool group.
+	SourceConditions *Conditions `json:"source_conditions,omitempty"`
 	// DataSource 暂不使用
 	DataSource string `json:"data_source,omitempty" swaggerignore:"true"`
 	// TableID 数据实体ID，容器指标可以为空
@@ -625,6 +651,8 @@ type Query struct {
 	TableIDConditions AllConditions `json:"table_id_conditions,omitempty"`
 	// KeepColumns 保留字段
 	KeepColumns KeepColumns `json:"keep_columns,omitempty" swaggerignore:"true"`
+	// ASTBranchCount records the selector branch count for observation only.
+	ASTBranchCount int `json:"-" swaggerignore:"true"`
 
 	// AlignInfluxdbResult 保留字段，无需配置，是否对齐influxdb的结果,该判断基于promql和influxdb查询原理的差异
 	AlignInfluxdbResult bool `json:"-"`
@@ -858,6 +886,23 @@ func (q *Query) Aggregates() (aggs metadata.Aggregates, err error) {
 
 // ToQueryMetric 通过 spaceUid 转换成可查询结构体
 func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs) (*metadata.QueryMetric, error) {
+	var sourceConditions AllConditions
+	if q.SourceConditions != nil {
+		if q.FieldSemantics != metadata.FTAEventTagsV1 {
+			return nil, fmt.Errorf("source_conditions requires FTA field semantics")
+		}
+		var sourceErr error
+		sourceConditions, sourceErr = q.SourceConditions.AnalysisConditions()
+		if sourceErr != nil {
+			return nil, sourceErr
+		}
+	}
+	if q.FieldSemantics != "" && q.FieldSemantics != metadata.FTAEventTagsV1 {
+		return nil, fmt.Errorf("unsupported field_semantics %q", q.FieldSemantics)
+	}
+	if q.FieldSemantics != "" && q.DataSource == BkData {
+		return nil, fmt.Errorf("field_semantics requires elasticsearch storage")
+	}
 	var (
 		referenceName = q.ReferenceName
 		metricName    = q.FieldName
@@ -946,6 +991,26 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 			).Error(ctx, nil)
 		}
 
+		costProfile := metadata.QueryCostProfile{
+			SelectAllCandidate: len(aggregates) == 0 && len(q.KeepColumns) == 0 && q.SQL == "",
+			ASTBranchCount:     q.ASTBranchCount,
+			SQLPushdown:        q.IsDomSampled,
+		}
+		if costProfile.ASTBranchCount == 0 {
+			costProfile.ASTBranchCount = 1
+		}
+		costProfile.RangeFunction, costProfile.Window, costProfile.Step = q.queryCostRangeProfile()
+		costProfile.StepLessThanWindow = costProfile.Window > 0 &&
+			costProfile.Step > 0 &&
+			costProfile.Step < costProfile.Window
+		span.Set("query-cost.select-all-candidate", costProfile.SelectAllCandidate)
+		span.Set("query-cost.range-function", costProfile.RangeFunction)
+		span.Set("query-cost.step-less-than-window", costProfile.StepLessThanWindow)
+		span.Set("query-cost.ast-branches", costProfile.ASTBranchCount)
+		span.Set("query-cost.sql-pushdown", costProfile.SQLPushdown)
+		span.Set("query-cost.window", costProfile.Window)
+		span.Set("query-cost.step", costProfile.Step)
+
 		query := &metadata.Query{
 			StorageType:   metadata.BkSqlStorageType,
 			TableID:       string(tableID),
@@ -955,6 +1020,7 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 			Field:         q.FieldName,
 			Aggregates:    aggregates,
 			AllConditions: allConditions.MetaDataAllConditions(),
+			CostProfile:   costProfile,
 		}
 
 		query.SQL = q.SQL
@@ -1046,8 +1112,12 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 		for _, storageRange := range storageRanges {
 			query := q.BuildMetadataQuery(ctx, tsDB, allConditions)
 			if query == nil {
+				if q.FieldSemantics != "" {
+					return nil, fmt.Errorf("field_semantics query could not be built")
+				}
 				continue
 			}
+			query.SourceConditions = sourceConditions.MetaDataAllConditions()
 
 			query.Aggregates = aggregates.Copy()
 			query.Timezone = qp.Timezone
@@ -1149,6 +1219,15 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 				}
 			}
 
+			if query.FieldSemantics != "" && query.StorageType != metadata.ElasticsearchStorageType {
+				return nil, fmt.Errorf("field_semantics requires elasticsearch storage")
+			}
+			if query.FieldSemantics != "" {
+				if query.IsElasticsearchIndexPrefixMissing() {
+					return nil, fmt.Errorf("field_semantics requires an Elasticsearch index")
+				}
+				query.FieldSemanticsExecution = &metadata.FieldSemanticsExecution{}
+			}
 			metadata.GetQueryParams(ctx).SetStorageType(query.StorageType)
 
 			// 判断是否跳过合并操作
@@ -1186,8 +1265,86 @@ func (q *Query) ToQueryMetric(ctx context.Context, spaceUid string, tsDBs TsDBs)
 	}
 
 	span.Set("query_metric_length", len(queryMetric.QueryList))
+	if q.FieldSemantics != "" && len(queryMetric.QueryList) == 0 {
+		return nil, fmt.Errorf("field_semantics query has no storage routes")
+	}
 
 	return queryMetric, nil
+}
+
+func (q *Query) queryCostRangeProfile() (hasRangeFunction bool, window, step time.Duration) {
+	topLevelStep := queryCostDuration(q.Step)
+	if topLevelStep <= 0 {
+		topLevelStep = promql.GetDefaultStep()
+	}
+	step = topLevelStep
+
+	type rangeCandidate struct {
+		function   string
+		window     Window
+		isSubQuery bool
+		step       string
+	}
+	candidates := make([]rangeCandidate, 0, len(q.AggregateMethodList)+1)
+	candidates = append(candidates, rangeCandidate{
+		function:   q.TimeAggregation.Function,
+		window:     q.TimeAggregation.Window,
+		isSubQuery: q.TimeAggregation.IsSubQuery,
+		step:       q.TimeAggregation.Step,
+	})
+	for _, aggregate := range q.AggregateMethodList {
+		candidates = append(candidates, rangeCandidate{
+			function:   aggregate.Method,
+			window:     aggregate.Window,
+			isSubQuery: aggregate.IsSubQuery,
+			step:       aggregate.Step,
+		})
+	}
+
+	bestDensity := float64(-1)
+	enclosingStep := topLevelStep
+	// Range candidates are stored from inner to outer. Walk them backwards so
+	// an enclosing subquery step is applied to every range function inside it.
+	for i := len(candidates) - 1; i >= 0; i-- {
+		candidate := candidates[i]
+		if candidate.function == "" || candidate.window == "" {
+			continue
+		}
+		hasRangeFunction = true
+		parsedWindow := queryCostDuration(string(candidate.window))
+		if parsedWindow <= 0 {
+			continue
+		}
+		candidateStep := enclosingStep
+		if candidate.isSubQuery {
+			if candidate.step == "" || candidate.step == "0s" {
+				candidateStep = promql.GetDefaultStep()
+			} else {
+				candidateStep = queryCostDuration(candidate.step)
+			}
+		}
+		if candidateStep <= 0 {
+			continue
+		}
+		density := float64(parsedWindow) / float64(candidateStep)
+		if density > bestDensity {
+			bestDensity = density
+			window = parsedWindow
+			step = candidateStep
+		}
+		if candidate.isSubQuery {
+			enclosingStep = candidateStep
+		}
+	}
+	return hasRangeFunction, window, step
+}
+
+func queryCostDuration(value string) time.Duration {
+	duration, err := model.ParseDuration(value)
+	if err != nil {
+		return 0
+	}
+	return time.Duration(duration)
 }
 
 func (q *Query) BuildMetadataQuery(
@@ -1333,6 +1490,10 @@ func (q *Query) BuildMetadataQuery(
 
 	// 合并查询以及空间过滤条件到 condition 里面
 	allCondition = MergeConditionField(queryConditions, filterConditions)
+	if q.FieldSemantics == metadata.FTAEventTagsV1 {
+		allCondition = queryConditions
+		query.RoutingConditions = AllConditions(filterConditions).MetaDataAllConditions()
+	}
 
 	if len(queryConditions) > 1 || len(filterConditions) > 1 {
 		query.IsHasOr = true
@@ -1360,6 +1521,7 @@ func (q *Query) BuildMetadataQuery(
 	query.TimeField = tsDB.TimeField
 	query.NeedAddTime = tsDB.NeedAddTime
 	query.SourceType = tsDB.SourceType
+	query.FieldSemantics = q.FieldSemantics
 
 	query.AllConditions = allCondition.MetaDataAllConditions()
 	query.Condition = whereList.String()

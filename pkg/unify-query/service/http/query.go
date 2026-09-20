@@ -410,10 +410,13 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		queryRef.Range("", func(qry *metadata.Query) {
 			localQry := *qry
 			localQry.ResultTableOption = qry.ResultTableOption.Clone()
+			if localQry.ResultTableOption != nil && localQry.ResultTableOption.From != nil && *localQry.ResultTableOption.From > 0 {
+				localQry.From = *localQry.ResultTableOption.From
+			}
 			// SearchAfter 模式下，跳过已完成的 RT
 			// RT 不在 ResultTableOptions 中（nil）或 SearchAfter 为空，表示该 RT 数据已查完
 			if queryTs.IsSearchAfter && len(queryTs.ResultTableOptions) > 0 {
-				if localQry.ResultTableOption == nil || len(localQry.ResultTableOption.SearchAfter) == 0 {
+				if !hasRawPaginationCursor(localQry.ResultTableOption) {
 					return
 				}
 			}
@@ -433,7 +436,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			lock.Unlock()
 
 			// 如果是多数据合并，为了保证排序和Limit 的准确性，需要查询原始的所有数据，所以这里对 from 和 size 进行重写
-			if queryRef.Count() > 1 {
+			if queryRef.Count() > 1 && !hasRawOffsetCursor(localQry.ResultTableOption) {
 				if !queryTs.IsMultiFrom {
 					localQry.Size += localQry.From
 					localQry.From = 0
@@ -508,6 +511,14 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	}
 
 	return total, list, resultTableOptions, routeInfo, err
+}
+
+func hasRawPaginationCursor(option *metadata.ResultTableOption) bool {
+	return option != nil && ((option.From != nil && *option.From > 0) || len(option.SearchAfter) > 0)
+}
+
+func hasRawOffsetCursor(option *metadata.ResultTableOption) bool {
+	return option != nil && option.From != nil && *option.From > 0
 }
 
 func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, session *redisUtil.ScrollSession) (int64, []map[string]any, metadata.ResultTableOptions, []metadata.RouteInfo, bool, error) {
@@ -768,10 +779,21 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		startTime = qb.Start
 	}
 
+	queryEnd := qb.End
 	if queryTs.Instant {
-		res, err = instance.DirectQuery(ctx, queryTs.MetricMerge, startTime)
-	} else {
-		res, isPartial, err = instance.DirectQueryRange(ctx, queryTs.MetricMerge, startTime, qb.End, qb.Step)
+		queryEnd = startTime
+	}
+	res, isPartial, releaseResult, err := executeQueryWithClose(
+		ctx,
+		instance,
+		queryTs.MetricMerge,
+		startTime,
+		queryEnd,
+		qb.Step,
+		queryTs.Instant,
+	)
+	if releaseResult != nil {
+		defer releaseResult()
 	}
 	if err != nil {
 		return nil, err
@@ -898,7 +920,7 @@ func queryTsToReference(ctx context.Context, queryTs *structured.QueryTs) (metad
 
 // queryTsToInstanceAndStmt query 结构体转换为 instance 以及 stmt
 func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) (instance tsdb.Instance, stmt string, routeInfo []metadata.RouteInfo, err error) {
-	var promExprOpt = &structured.PromExprOption{}
+	promExprOpt := &structured.PromExprOption{}
 
 	ctx, span := trace.NewSpan(ctx, "query-ts-to-instance")
 	defer func() {
@@ -985,10 +1007,17 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 	qb := metadata.GetQueryParams(ctx)
 	span.Set("query-params", qb)
 
-	if query.Instant {
-		res, err = instance.DirectQuery(ctx, stmt, qb.End)
-	} else {
-		res, isPartial, err = instance.DirectQueryRange(ctx, stmt, qb.AlignStart, qb.End, qb.Step)
+	res, isPartial, releaseResult, err := executeQueryWithClose(
+		ctx,
+		instance,
+		stmt,
+		qb.AlignStart,
+		qb.End,
+		qb.Step,
+		query.Instant,
+	)
+	if releaseResult != nil {
+		defer releaseResult()
 	}
 	if err != nil {
 		return nil, err
@@ -1129,14 +1158,19 @@ func queryTsNamedOutputs(ctx context.Context, queryTs *structured.QueryTs) (*Nam
 				if executionMode == uqMetric.NamedOutputsModeDirect {
 					directCalls++
 				}
-				if queryTs.Instant {
-					if statusAware, ok := instance.(tsdb.InstantQueryWithPartial); ok {
-						return statusAware.DirectQueryWithPartial(executeCtx, stmt, queryParams.End)
-					}
-					result, queryErr := instance.DirectQuery(executeCtx, stmt, queryParams.End)
-					return result, false, queryErr
+				result, partial, releaseResult, queryErr := executeQueryWithClose(
+					executeCtx,
+					instance,
+					stmt,
+					queryParams.AlignStart,
+					queryParams.End,
+					queryParams.Step,
+					queryTs.Instant,
+				)
+				if queryErr != nil {
+					return nil, partial, queryErr
 				}
-				return instance.DirectQueryRange(executeCtx, stmt, queryParams.AlignStart, queryParams.End, queryParams.Step)
+				return &ownedQueryResult{value: result, release: releaseResult}, partial, nil
 			},
 		)
 	}

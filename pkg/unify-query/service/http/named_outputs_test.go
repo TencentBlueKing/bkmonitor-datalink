@@ -136,6 +136,42 @@ func TestExecuteNamedOutputsLegacyFirstResponseInRequestOrder(t *testing.T) {
 	require.Equal(t, "ROUTE_PARTIAL", metadata.GetStatus(ctx).Code, "output status must not overwrite the request status")
 }
 
+func TestExecuteNamedOutputsReleasesOwnedResultAfterConversion(t *testing.T) {
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+	q := namedOutputQuery()
+	closed := 0
+
+	data, err := executeNamedOutputsWith(
+		ctx,
+		q,
+		defaultNamedOutputSettings(),
+		nil,
+		"trace",
+		func(context.Context, structured.QueryOutput) (any, bool, error) {
+			vector := promPromql.Vector{{
+				Metric: labels.FromStrings("service", "api"),
+				Point:  promPromql.Point{T: 1000, V: 1},
+			}}
+			return &ownedQueryResult{
+				value: vector,
+				release: func() {
+					closed++
+					vector[0].Point.V = 99
+				},
+			}, false, nil
+		},
+	)
+
+	require.NoError(t, err)
+	require.Equal(t, len(q.OutputList), closed)
+	for _, output := range data.Outputs {
+		require.Equal(t, OutputStateSuccess, output.State)
+		require.Len(t, output.Tables, 1)
+		require.Equal(t, float64(1), output.Tables[0].Values[0][1])
+	}
+}
+
 func TestNamedResultFiltersInvalidRangeAndInstantPoints(t *testing.T) {
 	matrix := promPromql.Matrix{{
 		Metric: labels.FromStrings("service", "api"),

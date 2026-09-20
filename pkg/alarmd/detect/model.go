@@ -11,7 +11,6 @@ package detect
 
 import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
-	inputv2 "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/input/adapter/v2"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
@@ -25,42 +24,12 @@ const (
 	FactResultError       = "ERROR"
 )
 
-type ExecutionLimits struct {
-	MaxPlans                  uint64
-	MaxSelectedRecordsPerPlan uint64
-	MaxSeriesPerPlan          uint64
-	MaxRecordsPerSeries       uint64
-	MaxLevelFacts             uint64
-	MaxPredicateEvaluations   uint64
-	MaxResultBytes            uint64
-}
-
-func (limits ExecutionLimits) valid() bool {
-	return limits.MaxPlans > 0 && limits.MaxSelectedRecordsPerPlan > 0 && limits.MaxSeriesPerPlan > 0 &&
-		limits.MaxRecordsPerSeries > 0 && limits.MaxLevelFacts > 0 && limits.MaxPredicateEvaluations > 0 &&
-		limits.MaxResultBytes > 0
-}
-
-type EvaluateRequest struct {
-	Completeness          string
-	DatasetContractDigest string
-	Plans                 []PlanExecution
-	Limits                ExecutionLimits
-}
-
-type PlanExecution struct {
-	View inputv2.PlanView
-	Plan *strategy.CompiledPlan
-}
-
-type DetectionBatch struct {
-	Completeness      string
-	ExecutionMode     string
-	DetectionCoverage string
-	Series            []SeriesDetection
-	Counts            DetectionCounts
-}
-
+// DetectionCounts is what one detection reports about its own size. It
+// outlived the batch evaluation that first filled every field: the observer
+// still carries it, and the phase-two runtime reads Plans, CompiledLevels,
+// EvaluatedRecords and EstimatedResultBytes off it. The fields the batch path
+// used are left in place rather than trimmed to today's readers, so that a
+// reader added later does not have to reintroduce one.
 type DetectionCounts struct {
 	Plans                  uint64
 	CompiledLevels         uint64
@@ -76,6 +45,14 @@ type DetectionCounts struct {
 	SkippedPlans           uint64
 	SkippedSelectedRecords uint64
 	EstimatedResultBytes   uint64
+}
+
+// PlanExecution names the compiled Plan a detection runs against. It carried
+// the decoded envelope view beside it while a batch of records arrived on one
+// message; with that input retired the Plan is all that is left, and the type
+// stays because PreparePlan and the observation both name it.
+type PlanExecution struct {
+	Plan *strategy.CompiledPlan
 }
 
 type SeriesDetection struct {

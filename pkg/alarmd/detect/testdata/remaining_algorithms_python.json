@@ -1,0 +1,3280 @@
+{
+  "cases": [
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "floor": 20
+      },
+      "current": -120,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "604800": 100
+      },
+      "history_mode": "raw",
+      "id": "simple-week--120",
+      "kind": "SimpleYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "floor": 20
+      },
+      "current": -100,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "604800": 100
+      },
+      "history_mode": "raw",
+      "id": "simple-week--100",
+      "kind": "SimpleYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "floor": 20
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "604800": 100
+      },
+      "history_mode": "raw",
+      "id": "simple-week-0",
+      "kind": "SimpleYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "floor": 20
+      },
+      "current": 80,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "604800": 100
+      },
+      "history_mode": "raw",
+      "id": "simple-week-80",
+      "kind": "SimpleYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "floor": 20
+      },
+      "current": 100,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "604800": 100
+      },
+      "history_mode": "raw",
+      "id": "simple-week-100",
+      "kind": "SimpleYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "floor": 20
+      },
+      "current": 120,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "604800": 100
+      },
+      "history_mode": "raw",
+      "id": "simple-week-120",
+      "kind": "SimpleYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "floor": 20
+      },
+      "current": 120.000001,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "604800": 100
+      },
+      "history_mode": "raw",
+      "id": "simple-week-120.000001",
+      "kind": "SimpleYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "floor": 20
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "604800": -100
+      },
+      "history_mode": "raw",
+      "id": "simple-history--100",
+      "kind": "SimpleYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "floor": 20
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "604800": 0
+      },
+      "history_mode": "raw",
+      "id": "simple-history-0",
+      "kind": "SimpleYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "floor": 20
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "reason": "OracleError",
+        "status": "UNAVAILABLE"
+      },
+      "history": {
+        "604800": null
+      },
+      "history_mode": "raw",
+      "id": "simple-history-None",
+      "kind": "SimpleYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "avg",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": -100,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "120": -20,
+        "180": 200,
+        "60": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedRingRatio-avg--100",
+      "kind": "AdvancedRingRatio",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "avg",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "120": -20,
+        "180": 200,
+        "60": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedRingRatio-avg-0",
+      "kind": "AdvancedRingRatio",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "avg",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 48,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "120": -20,
+        "180": 200,
+        "60": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedRingRatio-avg-48",
+      "kind": "AdvancedRingRatio",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "avg",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 100,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "120": -20,
+        "180": 200,
+        "60": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedRingRatio-avg-100",
+      "kind": "AdvancedRingRatio",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "avg",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 120,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "120": -20,
+        "180": 200,
+        "60": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedRingRatio-avg-120",
+      "kind": "AdvancedRingRatio",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "avg",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 200,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "120": -20,
+        "180": 200,
+        "60": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedRingRatio-avg-200",
+      "kind": "AdvancedRingRatio",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "avg",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 120,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "120": null,
+        "180": 200,
+        "60": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedRingRatio-avg-missing-middle",
+      "kind": "AdvancedRingRatio",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "avg",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 120,
+      "data_unit": "short",
+      "expected": {
+        "reason": "NameError",
+        "reason_detail": "name 'floor_history_value' is not defined",
+        "status": "UNAVAILABLE"
+      },
+      "history": {},
+      "history_mode": "raw",
+      "id": "AdvancedRingRatio-avg-all-missing",
+      "kind": "AdvancedRingRatio",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "last",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": -100,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "120": -20,
+        "180": 200,
+        "60": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedRingRatio-last--100",
+      "kind": "AdvancedRingRatio",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "last",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "120": -20,
+        "180": 200,
+        "60": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedRingRatio-last-0",
+      "kind": "AdvancedRingRatio",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "last",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 48,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "120": -20,
+        "180": 200,
+        "60": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedRingRatio-last-48",
+      "kind": "AdvancedRingRatio",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "last",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 100,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "120": -20,
+        "180": 200,
+        "60": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedRingRatio-last-100",
+      "kind": "AdvancedRingRatio",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "last",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 120,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "120": -20,
+        "180": 200,
+        "60": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedRingRatio-last-120",
+      "kind": "AdvancedRingRatio",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "last",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 200,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "120": -20,
+        "180": 200,
+        "60": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedRingRatio-last-200",
+      "kind": "AdvancedRingRatio",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "last",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 120,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "120": null,
+        "180": 200,
+        "60": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedRingRatio-last-missing-middle",
+      "kind": "AdvancedRingRatio",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "last",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 120,
+      "data_unit": "short",
+      "expected": {
+        "reason": "NameError",
+        "reason_detail": "name 'floor_history_value' is not defined",
+        "status": "UNAVAILABLE"
+      },
+      "history": {},
+      "history_mode": "raw",
+      "id": "AdvancedRingRatio-last-all-missing",
+      "kind": "AdvancedRingRatio",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 2,
+        "fetch_type": "avg",
+        "floor": null,
+        "floor_interval": null
+      },
+      "current": 0.148148,
+      "data_unit": "percent",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "120": 0.1234574,
+        "60": 0.1234564
+      },
+      "history_mode": "raw",
+      "id": "AdvancedRingRatio-rounded-avg",
+      "kind": "AdvancedRingRatio",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "avg",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": -100,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": -20,
+        "259200": 200,
+        "86400": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedYearRound-avg--100",
+      "kind": "AdvancedYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "avg",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": -20,
+        "259200": 200,
+        "86400": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedYearRound-avg-0",
+      "kind": "AdvancedYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "avg",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 48,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": -20,
+        "259200": 200,
+        "86400": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedYearRound-avg-48",
+      "kind": "AdvancedYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "avg",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 100,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "172800": -20,
+        "259200": 200,
+        "86400": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedYearRound-avg-100",
+      "kind": "AdvancedYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "avg",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 120,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "172800": -20,
+        "259200": 200,
+        "86400": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedYearRound-avg-120",
+      "kind": "AdvancedYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "avg",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 200,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": -20,
+        "259200": 200,
+        "86400": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedYearRound-avg-200",
+      "kind": "AdvancedYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "avg",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 120,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "172800": null,
+        "259200": 200,
+        "86400": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedYearRound-avg-missing-middle",
+      "kind": "AdvancedYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "avg",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 120,
+      "data_unit": "short",
+      "expected": {
+        "reason": "NameError",
+        "reason_detail": "name 'floor_history_value' is not defined",
+        "status": "UNAVAILABLE"
+      },
+      "history": {},
+      "history_mode": "raw",
+      "id": "AdvancedYearRound-avg-all-missing",
+      "kind": "AdvancedYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "last",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": -100,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": -20,
+        "259200": 200,
+        "86400": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedYearRound-last--100",
+      "kind": "AdvancedYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "last",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": -20,
+        "259200": 200,
+        "86400": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedYearRound-last-0",
+      "kind": "AdvancedYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "last",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 48,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "172800": -20,
+        "259200": 200,
+        "86400": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedYearRound-last-48",
+      "kind": "AdvancedYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "last",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 100,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "172800": -20,
+        "259200": 200,
+        "86400": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedYearRound-last-100",
+      "kind": "AdvancedYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "last",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 120,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "172800": -20,
+        "259200": 200,
+        "86400": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedYearRound-last-120",
+      "kind": "AdvancedYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "last",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 200,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "172800": -20,
+        "259200": 200,
+        "86400": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedYearRound-last-200",
+      "kind": "AdvancedYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "last",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 120,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "172800": null,
+        "259200": 200,
+        "86400": 100
+      },
+      "history_mode": "raw",
+      "id": "AdvancedYearRound-last-missing-middle",
+      "kind": "AdvancedYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 3,
+        "fetch_type": "last",
+        "floor": 20,
+        "floor_interval": 2
+      },
+      "current": 120,
+      "data_unit": "short",
+      "expected": {
+        "reason": "NameError",
+        "reason_detail": "name 'floor_history_value' is not defined",
+        "status": "UNAVAILABLE"
+      },
+      "history": {},
+      "history_mode": "raw",
+      "id": "AdvancedYearRound-last-all-missing",
+      "kind": "AdvancedYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "ceil_interval": 2,
+        "fetch_type": "avg",
+        "floor": null,
+        "floor_interval": null
+      },
+      "current": 0.148148,
+      "data_unit": "percent",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "172800": 0.1234574,
+        "86400": 0.1234564
+      },
+      "history_mode": "raw",
+      "id": "AdvancedYearRound-rounded-avg",
+      "kind": "AdvancedYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ratio": 0.5,
+        "shock": 5,
+        "threshold": 10
+      },
+      "current": 20,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "60": 10
+      },
+      "history_mode": "raw",
+      "id": "ring-amplitude-20-10",
+      "kind": "RingRatioAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ratio": 0.5,
+        "shock": 5,
+        "threshold": 10
+      },
+      "current": 10,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "60": 20
+      },
+      "history_mode": "raw",
+      "id": "ring-amplitude-10-20",
+      "kind": "RingRatioAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ratio": 0.5,
+        "shock": 5,
+        "threshold": 10
+      },
+      "current": 9,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "60": 20
+      },
+      "history_mode": "raw",
+      "id": "ring-amplitude-9-20",
+      "kind": "RingRatioAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ratio": 0.5,
+        "shock": 5,
+        "threshold": 10
+      },
+      "current": -20,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "60": -10
+      },
+      "history_mode": "raw",
+      "id": "ring-amplitude--20--10",
+      "kind": "RingRatioAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ratio": 0.5,
+        "shock": 5,
+        "threshold": 10
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "60": 0
+      },
+      "history_mode": "raw",
+      "id": "ring-amplitude-0-0",
+      "kind": "RingRatioAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ratio": 0.5,
+        "shock": 5,
+        "threshold": 10
+      },
+      "current": 25,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "60": 10
+      },
+      "history_mode": "raw",
+      "id": "ring-amplitude-25-10",
+      "kind": "RingRatioAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ratio": 0.5,
+        "shock": 5,
+        "threshold": 10
+      },
+      "current": 24.999999,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "60": 10
+      },
+      "history_mode": "raw",
+      "id": "ring-amplitude-24.999999-10",
+      "kind": "RingRatioAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ratio": 0.5,
+        "shock": 5,
+        "threshold": 10
+      },
+      "current": 100,
+      "data_unit": "short",
+      "expected": {
+        "reason": "OracleError",
+        "status": "UNAVAILABLE"
+      },
+      "history": {
+        "60": null
+      },
+      "history_mode": "raw",
+      "id": "ring-amplitude-100-None",
+      "kind": "RingRatioAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "Ki",
+      "config": {
+        "ratio": 0.5,
+        "shock": 1,
+        "threshold": 1
+      },
+      "current": 2560,
+      "data_unit": "bytes",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "60": 1024
+      },
+      "history_mode": "raw",
+      "id": "ring-amplitude-binary-unit",
+      "kind": "RingRatioAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "Ki",
+      "config": {
+        "ratio": 0.5,
+        "shock": 1,
+        "threshold": 1
+      },
+      "current": 2.5,
+      "data_unit": "kbytes",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "60": 1
+      },
+      "history_mode": "raw",
+      "id": "ring-amplitude-prefixed-data-unit",
+      "kind": "RingRatioAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "Ki",
+      "config": {
+        "ratio": 0,
+        "shock": 0,
+        "threshold": 1
+      },
+      "current": 512,
+      "data_unit": "bytes",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "60": 1024
+      },
+      "history_mode": "raw",
+      "id": "ring-amplitude-first-threshold-unknown-prefix",
+      "kind": "RingRatioAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gt",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": -25,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "172800": 30,
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-gt--25",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gt",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": -25,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "0": -25,
+        "172800": 30,
+        "172860": 5,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "amplitude-gt--25",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gt",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "172800": 30,
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-gt-0",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gt",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "0": 0,
+        "172800": 30,
+        "172860": 5,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "amplitude-gt-0",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gt",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 25,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "172800": 30,
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-gt-25",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gt",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 25,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "0": 25,
+        "172800": 30,
+        "172860": 5,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "amplitude-gt-25",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gt",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 25.000001,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": 30,
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-gt-25.000001",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gt",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 25.000001,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "0": 25.000001,
+        "172800": 30,
+        "172860": 5,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "amplitude-gt-25.000001",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gte",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": -25,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": 30,
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-gte--25",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gte",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": -25,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "0": -25,
+        "172800": 30,
+        "172860": 5,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "amplitude-gte--25",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gte",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "172800": 30,
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-gte-0",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gte",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "0": 0,
+        "172800": 30,
+        "172860": 5,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "amplitude-gte-0",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gte",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 25,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": 30,
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-gte-25",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gte",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 25,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "0": 25,
+        "172800": 30,
+        "172860": 5,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "amplitude-gte-25",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gte",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 25.000001,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": 30,
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-gte-25.000001",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gte",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 25.000001,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "0": 25.000001,
+        "172800": 30,
+        "172860": 5,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "amplitude-gte-25.000001",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "lt",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": -25,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": 30,
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-lt--25",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "lt",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": -25,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "0": -25,
+        "172800": 30,
+        "172860": 5,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "amplitude-lt--25",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "lt",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": 30,
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-lt-0",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "lt",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "0": 0,
+        "172800": 30,
+        "172860": 5,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "amplitude-lt-0",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "lt",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 25,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": 30,
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-lt-25",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "lt",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 25,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "0": 25,
+        "172800": 30,
+        "172860": 5,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "amplitude-lt-25",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "lt",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 25.000001,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": 30,
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-lt-25.000001",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "lt",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 25.000001,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "0": 25.000001,
+        "172800": 30,
+        "172860": 5,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "amplitude-lt-25.000001",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "lte",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": -25,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": 30,
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-lte--25",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "lte",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": -25,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "0": -25,
+        "172800": 30,
+        "172860": 5,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "amplitude-lte--25",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "lte",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": 30,
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-lte-0",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "lte",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "0": 0,
+        "172800": 30,
+        "172860": 5,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "amplitude-lte-0",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "lte",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 25,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": 30,
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-lte-25",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "lte",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 25,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "0": 25,
+        "172800": 30,
+        "172860": 5,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "amplitude-lte-25",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "lte",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 25.000001,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": 30,
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-lte-25.000001",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "lte",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 25.000001,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "0": 25.000001,
+        "172800": 30,
+        "172860": 5,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "amplitude-lte-25.000001",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "eq",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": -25,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": 30,
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-eq--25",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "eq",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": -25,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "0": -25,
+        "172800": 30,
+        "172860": 5,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "amplitude-eq--25",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "eq",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "172800": 30,
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-eq-0",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "eq",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "0": 0,
+        "172800": 30,
+        "172860": 5,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "amplitude-eq-0",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "eq",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 25,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": 30,
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-eq-25",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "eq",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 25,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "0": 25,
+        "172800": 30,
+        "172860": 5,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "amplitude-eq-25",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "eq",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 25.000001,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "172800": 30,
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-eq-25.000001",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "eq",
+        "ratio": 2,
+        "shock": 5
+      },
+      "current": 25.000001,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "0": 25.000001,
+        "172800": 30,
+        "172860": 5,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "amplitude-eq-25.000001",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gt",
+        "ratio": 1,
+        "shock": 0
+      },
+      "current": 20,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": null,
+        "86400": 10
+      },
+      "history_mode": "raw",
+      "id": "YearRoundRange-missing-later-early-hit",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gt",
+        "ratio": 1,
+        "shock": 0
+      },
+      "current": 20,
+      "data_unit": "short",
+      "expected": {
+        "reason": "IndexError",
+        "status": "UNAVAILABLE"
+      },
+      "history": {
+        "172800": null,
+        "86400": 30
+      },
+      "history_mode": "raw",
+      "id": "YearRoundRange-missing-later-no-hit",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gt",
+        "ratio": 1,
+        "shock": 0
+      },
+      "current": 20,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": 10,
+        "86400": null
+      },
+      "history_mode": "raw",
+      "id": "YearRoundRange-missing-first",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "Ki",
+      "config": {
+        "days": 2,
+        "method": "gte",
+        "ratio": 1,
+        "shock": 0.5
+      },
+      "current": 2,
+      "data_unit": "kbytes",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "172800": 2,
+        "86400": 1
+      },
+      "history_mode": "raw",
+      "id": "YearRoundRange-binary-shock",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gt",
+        "ratio": 1,
+        "shock": 0
+      },
+      "current": 20,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "0": 20,
+        "172800": null,
+        "172860": null,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "YearRoundAmplitude-missing-later-early-hit",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gt",
+        "ratio": 1,
+        "shock": 0
+      },
+      "current": 20,
+      "data_unit": "short",
+      "expected": {
+        "reason": "AttributeError",
+        "status": "UNAVAILABLE"
+      },
+      "history": {
+        "0": 20,
+        "172800": null,
+        "172860": null,
+        "60": 0,
+        "86400": 30,
+        "86460": 0
+      },
+      "history_mode": "raw",
+      "id": "YearRoundAmplitude-missing-later-no-hit",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 2,
+        "method": "gt",
+        "ratio": 1,
+        "shock": 0
+      },
+      "current": 20,
+      "data_unit": "short",
+      "expected": {
+        "reason": "AttributeError",
+        "status": "UNAVAILABLE"
+      },
+      "history": {
+        "0": 20,
+        "172800": 10,
+        "172860": 0,
+        "60": 0,
+        "86400": null,
+        "86460": null
+      },
+      "history_mode": "raw",
+      "id": "YearRoundAmplitude-missing-first",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "Ki",
+      "config": {
+        "days": 2,
+        "method": "gte",
+        "ratio": 1,
+        "shock": 0.5
+      },
+      "current": 2,
+      "data_unit": "kbytes",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "0": 2,
+        "172800": 2,
+        "172860": 1,
+        "60": 1,
+        "86400": 1,
+        "86460": 0.5
+      },
+      "history_mode": "raw",
+      "id": "YearRoundAmplitude-binary-shock",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "floor": null
+      },
+      "current": 1,
+      "data_unit": "short",
+      "expected": {
+        "reason": "OracleError",
+        "status": "UNAVAILABLE"
+      },
+      "history": {
+        "604800": 0
+      },
+      "history_mode": "history_loader",
+      "id": "loader-time_series-0",
+      "kind": "SimpleYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "floor": null
+      },
+      "current": 1,
+      "data_unit": "short",
+      "expected": {
+        "reason": "OracleError",
+        "status": "UNAVAILABLE"
+      },
+      "history": {
+        "604800": null
+      },
+      "history_mode": "history_loader",
+      "id": "loader-time_series-None",
+      "kind": "SimpleYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "floor": null
+      },
+      "current": 1,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "604800": 0
+      },
+      "history_mode": "history_loader",
+      "id": "loader-log-0",
+      "kind": "SimpleYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "log"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "floor": null
+      },
+      "current": 1,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "604800": null
+      },
+      "history_mode": "history_loader",
+      "id": "loader-log-None",
+      "kind": "SimpleYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "log"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "floor": null
+      },
+      "current": 1,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "604800": 0
+      },
+      "history_mode": "history_loader",
+      "id": "loader-event-0",
+      "kind": "SimpleYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "event"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "floor": null
+      },
+      "current": 1,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "604800": null
+      },
+      "history_mode": "history_loader",
+      "id": "loader-event-None",
+      "kind": "SimpleYearRound",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "event"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "floor": null
+      },
+      "current": 120,
+      "data_unit": "short",
+      "expected": {
+        "reason": "OracleError",
+        "status": "UNAVAILABLE"
+      },
+      "history": {
+        "604800": 100
+      },
+      "history_mode": "history_loader",
+      "id": "query-PARTIAL",
+      "kind": "SimpleYearRound",
+      "precision": 6,
+      "query_state": "PARTIAL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ceil": 20,
+        "floor": null
+      },
+      "current": 120,
+      "data_unit": "short",
+      "expected": {
+        "reason": "ConnectionError",
+        "status": "UNAVAILABLE"
+      },
+      "history": {
+        "604800": 100
+      },
+      "history_mode": "history_loader",
+      "id": "query-UNAVAILABLE",
+      "kind": "SimpleYearRound",
+      "precision": 6,
+      "query_state": "UNAVAILABLE",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 1,
+        "method": "gt",
+        "ratio": 1,
+        "shock": 0
+      },
+      "current": 20,
+      "data_unit": "short",
+      "expected": {
+        "reason": "AttributeError",
+        "status": "UNAVAILABLE"
+      },
+      "history": {
+        "0": 20,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "history_loader",
+      "id": "loader-amplitude-zero-pair",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 1,
+        "method": "gt",
+        "ratio": 1,
+        "shock": 0
+      },
+      "current": 20,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "0": 20,
+        "60": 0,
+        "86400": 10,
+        "86460": 0
+      },
+      "history_mode": "history_loader",
+      "id": "loader-amplitude-zero-pair-event",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "event"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 1,
+        "method": "eq",
+        "ratio": 1,
+        "shock": 0
+      },
+      "current": 1.004,
+      "data_unit": "percent",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "86400": 1.003
+      },
+      "history_mode": "raw",
+      "id": "range-percent-round-2",
+      "kind": "YearRoundRange",
+      "precision": 2,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 1,
+        "method": "eq",
+        "ratio": 1,
+        "shock": 0
+      },
+      "current": 1.004,
+      "data_unit": "percent",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "86400": 1.003
+      },
+      "history_mode": "raw",
+      "id": "range-percent-round-6",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ratio": -0.5,
+        "shock": 0,
+        "threshold": -10
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "60": -5
+      },
+      "history_mode": "raw",
+      "id": "ring-amplitude-negative-ratio",
+      "kind": "RingRatioAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ratio": 1,
+        "shock": -3,
+        "threshold": -10
+      },
+      "current": -2,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "60": 2
+      },
+      "history_mode": "raw",
+      "id": "ring-amplitude-negative-shock",
+      "kind": "RingRatioAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "ratio": 2,
+        "shock": 12,
+        "threshold": -10
+      },
+      "current": -4,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "60": -5
+      },
+      "history_mode": "raw",
+      "id": "ring-amplitude-negative-threshold",
+      "kind": "RingRatioAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 1,
+        "method": "gt",
+        "ratio": -1,
+        "shock": 0
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-negative-ratio",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 1,
+        "method": "eq",
+        "ratio": 1,
+        "shock": -2
+      },
+      "current": -3,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "86400": 5
+      },
+      "history_mode": "raw",
+      "id": "range-negative-shock",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 1,
+        "method": "gt",
+        "ratio": -1,
+        "shock": 20
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "86400": -10
+      },
+      "history_mode": "raw",
+      "id": "range-signed-cross-zero",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 1,
+        "method": "gt",
+        "ratio": -1,
+        "shock": 0
+      },
+      "current": -2,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "0": -2,
+        "60": 2,
+        "86400": -10,
+        "86460": 10
+      },
+      "history_mode": "raw",
+      "id": "amplitude-negative-ratio",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 1,
+        "method": "eq",
+        "ratio": 3,
+        "shock": -2
+      },
+      "current": -2,
+      "data_unit": "short",
+      "expected": {
+        "status": "ANOMALOUS"
+      },
+      "history": {
+        "0": -2,
+        "60": 2,
+        "86400": -1,
+        "86460": 1
+      },
+      "history_mode": "raw",
+      "id": "amplitude-negative-shock",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 1,
+        "method": "gt",
+        "ratio": -1,
+        "shock": 4
+      },
+      "current": 0,
+      "data_unit": "short",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "0": 0,
+        "60": -1,
+        "86400": -1,
+        "86460": 1
+      },
+      "history_mode": "raw",
+      "id": "amplitude-signed-cross-zero",
+      "kind": "YearRoundAmplitude",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 1,
+        "method": "gt",
+        "ratio": 0,
+        "shock": 460962397203.8692
+      },
+      "current": 460962.39720386924,
+      "data_unit": "decmbytes",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "86400": 1
+      },
+      "history_mode": "raw",
+      "id": "range-decimal-multistep-ulp",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 1,
+        "method": "lt",
+        "ratio": 0,
+        "shock": 59799271279653.64
+      },
+      "current": 996.6545213275606,
+      "data_unit": "m",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "86400": 1
+      },
+      "history_mode": "raw",
+      "id": "range-minutes-multistep-ulp",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    },
+    {
+      "aggregation_interval": 60,
+      "algorithm_unit": "",
+      "config": {
+        "days": 1,
+        "method": "lt",
+        "ratio": 0,
+        "shock": 2069107489256797.8
+      },
+      "current": 574.7520803491104,
+      "data_unit": "h",
+      "expected": {
+        "status": "NORMAL"
+      },
+      "history": {
+        "86400": 1
+      },
+      "history_mode": "raw",
+      "id": "range-hours-multistep-ulp",
+      "kind": "YearRoundRange",
+      "precision": 6,
+      "query_state": "FULL",
+      "source_type": "time_series"
+    }
+  ],
+  "schema_version": 1,
+  "source_revision": "a40283a11e8b9a89a147851939cbbe90958df4e9",
+  "source_sha256": {
+    "bkmonitor/alarm_backends/service/detect/core.py": "64997f520dcb352cdec97577deb83574e9a9954071c22b84fe48a01733347afc",
+    "bkmonitor/alarm_backends/service/detect/strategy/__init__.py": "5d42c6ea9a7bc0b1144fbcf0fe167ed8616af17637424a67a32665fced74490b",
+    "bkmonitor/alarm_backends/service/detect/strategy/advanced_ring_ratio.py": "495b63086236ead29c66c75bf0a08e8ed49043e681e219b50fecc281ae5100be",
+    "bkmonitor/alarm_backends/service/detect/strategy/advanced_year_round.py": "704cca334e2264a41ffd6ba637e2afd9dcf9edc5ec248e94119116138f8d2db7",
+    "bkmonitor/alarm_backends/service/detect/strategy/ring_ratio_amplitude.py": "9198b7cdc4bb32df4b0bd9d1beae387e6c6a1b5cb6e998785ef839754d601b79",
+    "bkmonitor/alarm_backends/service/detect/strategy/simple_ring_ratio.py": "c50bee3f1ce9c1cfd4f524ad5ce201c60b082b93d6df4e5dde85928392001242",
+    "bkmonitor/alarm_backends/service/detect/strategy/simple_year_round.py": "f0644490646f5062fc6692ada9387fddf54133fa4e8a4bf301481e35f88f9904",
+    "bkmonitor/alarm_backends/service/detect/strategy/year_round_amplitude.py": "baddfe8fd7d1a1d71a734d436f33fb33bca0fb5b47f969840b12b1936db67762",
+    "bkmonitor/alarm_backends/service/detect/strategy/year_round_range.py": "64cd0ea3c85f39a01dbe8c27fef8924e78f6fa3eff4c45193b017204f316b46a",
+    "bkmonitor/alarm_backends/templatetags/unit.py": "640ddc1110d46a4dfd86374f1b20116bec87ca9586f79c5227d0c217a893eafa",
+    "bkmonitor/bkmonitor/utils/common_utils.py": "9ee688a795a055a3899ec261aa216dfd5755b5f60ac3b08d7c37c62815216aa1",
+    "bkmonitor/core/unit/init_data.py": "13246779579f0664a60ce0d3e08511a6794ca76c84a58b4e28de7f6a7201b1f1",
+    "bkmonitor/core/unit/models.py": "9272480bd23183189eb4c85bbe0fc49355cfbdc85eb6743dab1ce8e37d57d6cb"
+  }
+}

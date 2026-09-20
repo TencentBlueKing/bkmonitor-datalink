@@ -12,6 +12,7 @@ package structured
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/stretchr/testify/assert"
@@ -251,4 +252,45 @@ func TestE2E_PromQL_TableIDConditions_ToPromExpr_After_GetTsDBList(t *testing.T)
 	require.NotNil(t, result)
 	resultStr := result.String()
 	require.Contains(t, resultStr, `__bk_query_label_selector_scene="k8s"`)
+}
+
+func TestQueryPromQLRecordsSelectorBranchCount(t *testing.T) {
+	queryTs, err := NewQueryPromQLExpr(`left_metric + right_metric`).QueryTs()
+	require.NoError(t, err)
+	require.Len(t, queryTs.QueryList, 2)
+	for _, query := range queryTs.QueryList {
+		require.Equal(t, 2, query.ASTBranchCount)
+	}
+}
+
+func TestQueryPromQLRecordsSubqueryEvaluationDensity(t *testing.T) {
+	for name, testCase := range map[string]struct {
+		expression string
+		window     time.Duration
+		step       time.Duration
+	}{
+		"direct subquery": {
+			expression: `count_over_time(metric[1d:1m])`,
+			window:     24 * time.Hour,
+			step:       time.Minute,
+		},
+		"range function inside subquery": {
+			expression: `max_over_time(rate(metric[1d])[5m:1m])`,
+			window:     24 * time.Hour,
+			step:       time.Minute,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			queryTs, err := NewQueryPromQLExpr(testCase.expression).QueryTs()
+			require.NoError(t, err)
+			require.Len(t, queryTs.QueryList, 1)
+
+			query := queryTs.QueryList[0]
+			query.Step = "1d"
+			hasRangeFunction, window, step := query.queryCostRangeProfile()
+			require.True(t, hasRangeFunction)
+			require.Equal(t, testCase.window, window)
+			require.Equal(t, testCase.step, step)
+		})
+	}
 }

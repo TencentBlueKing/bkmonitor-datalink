@@ -100,7 +100,7 @@ func init() {
 //
 // 返回值：
 // - error：当 CPU 时间查询、基线重置或使用率计算失败时返回错误。
-func getCPUStatUsage(report *CpuReport) (bool, error) {
+func getCPUStatUsage(report *CpuReport) error {
 	report.Stat = report.Stat[:0]
 	report.Usage = report.Usage[:0]
 	report.TotalStat = cpu.TimesStat{}
@@ -110,7 +110,7 @@ func getCPUStatUsage(report *CpuReport) (bool, error) {
 	perCPUTimes, meta, err := getWindowsCPUTimesWithMeta()
 	if err != nil {
 		logger.Errorf("get CPU Stat fail: %v", err)
-		return false, err
+		return err
 	}
 	logWindowsCPUTimesQuery("collect", meta, len(perCPUTimes))
 
@@ -128,7 +128,7 @@ func getCPUStatUsage(report *CpuReport) (bool, error) {
 		if err != nil {
 			lastCPUTimeSlice.Unlock()
 			logger.Errorf("reset windows cpu baseline failed: %v", err)
-			return false, err
+			return err
 		}
 		logWindowsCPUTimesQuery("reset_baseline", meta, len(lastCPUTimeSlice.lastPerCPUTimes))
 	}
@@ -138,7 +138,7 @@ func getCPUStatUsage(report *CpuReport) (bool, error) {
 		lastCPUTimeSlice.Unlock()
 		err = fmt.Errorf("received two CPU counts %d != %d", l1, l2)
 		logger.Errorf("windows cpu baseline length mismatch: %v", err)
-		return false, err
+		return err
 	}
 
 	previousPerCPUTimes = cloneCPUTimesStats(lastCPUTimeSlice.lastPerCPUTimes)
@@ -157,7 +157,7 @@ func getCPUStatUsage(report *CpuReport) (bool, error) {
 	perUsage, err := calculateAllCPUBusyPercent(previousPerCPUTimes, perCPUTimes)
 	if err != nil {
 		logger.Errorf("get CPU Percent fail: %v", err)
-		return false, err
+		return err
 	}
 
 	report.Usage = perUsage
@@ -186,7 +186,7 @@ func getCPUStatUsage(report *CpuReport) (bool, error) {
 		"per_usage_len", len(report.Usage),
 		"total_usage", report.TotalUsage,
 	)
-	return true, nil
+	return nil
 }
 
 func cloneCPUTimesStats(src []cpu.TimesStat) []cpu.TimesStat {

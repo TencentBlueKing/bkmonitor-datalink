@@ -53,6 +53,46 @@ func TestTimeGraphNodeLimitBoundaries(t *testing.T) {
 	}
 }
 
+func TestTimeGraphRelationEntryNodeLimitBoundaries(t *testing.T) {
+	tests := []struct {
+		name       string
+		relations  []cmdb.Matcher
+		wantErr    bool
+		wantCount  int
+		wantReason string
+		wantLimit  int
+	}{
+		{name: "one_edge_creates_two_nodes", relations: []cmdb.Matcher{{"from_id": "a", "to_id": "b"}}, wantCount: 2},
+		{name: "two_edges_create_three_unique_nodes", relations: []cmdb.Matcher{{"from_id": "a", "to_id": "b"}, {"from_id": "a", "to_id": "c"}}, wantCount: 3},
+		{name: "third_target_exceeds_node_limit", relations: []cmdb.Matcher{{"from_id": "a", "to_id": "b"}, {"from_id": "a", "to_id": "c"}, {"from_id": "a", "to_id": "d"}}, wantErr: true, wantCount: 4, wantReason: "max_graph_nodes", wantLimit: 3},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tg := NewTimeGraphWithConfig(&TimeGraphConfig{
+				Resource: []TimeGraphResourceConfig{{Name: "service", Index: cmdb.Index{"id"}}},
+				MaxNodes: 3, MaxEdges: 100, MaxNodeInfos: 100,
+			})
+			relation := cmdb.Relation{
+				V:            []cmdb.Resource{"service", "service"},
+				RelationType: "service_to_service",
+				MetricName:   "service_to_service_flow",
+				Category:     string(RelationCategoryDynamic),
+				Direction:    string(DirectionOutbound),
+			}
+			for i, info := range tc.relations {
+				err := tg.AddTimeRelationWithRelation(context.Background(), relation, info, 100)
+				if tc.wantErr && i == len(tc.relations)-1 {
+					requireGraphLimitError(t, err, tc.wantReason, tc.wantCount, tc.wantLimit)
+					return
+				}
+				require.NoError(t, err)
+			}
+			require.Equal(t, tc.wantCount, tg.nodeBuilder.Length())
+		})
+	}
+}
+
 func TestTimeGraphEdgeLimitBoundaries(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -181,7 +221,8 @@ func TestTimeGraphRangePointLimitBoundaries(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			model := &Model{
-				schemaProvider: timeGraphTestSchemaProvider{},
+				schemaProvider:          timeGraphTestSchemaProvider{},
+				timeGraphQueryReference: timeGraphTestQueryReference,
 				timeGraphVMQuery: func(context.Context, *structured.QueryTs, string, bool, time.Time, time.Time, time.Duration) (pl.Matrix, error) {
 					return nil, nil
 				},
@@ -210,4 +251,23 @@ func TestTimeGraphCancelledRequestStopsMutation(t *testing.T) {
 	if _, err := tg.FindRelationPathResources(ctx, "node", []cmdb.Resource{"node"}, nil, []cmdb.RelationPath{{Steps: []cmdb.RelationPathStep{{ResourceType: "node"}}}}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected cancelled find to stop immediately, got %v", err)
 	}
+}
+
+func TestTimeGraphCancelledDuringExternalQueryStopsMutation(t *testing.T) {
+	ctx, cancel := context.WithCancel(initTimeGraphQueryTestEnvironment())
+	defer cancel()
+	model := &Model{
+		schemaProvider:          timeGraphTestSchemaProvider{},
+		timeGraphQueryReference: timeGraphTestQueryReference,
+		timeGraphVMQuery: func(context.Context, *structured.QueryTs, string, bool, time.Time, time.Time, time.Duration) (pl.Matrix, error) {
+			cancel()
+			return contractMatrix(map[string]string{"node": "n1", "ip": "10.0.0.1"}, 1700000000000), nil
+		},
+	}
+
+	_, err := model.QueryPathResources(
+		ctx, "10m", "space", "1700000000", "node", []cmdb.Resource{"system"},
+		[][]cmdb.Resource{{"node", "system"}}, cmdb.Matcher{"node": "n1"},
+	)
+	require.ErrorIs(t, err, context.Canceled)
 }

@@ -289,19 +289,6 @@ func TestBuildTimeGraphRequestInfersLegacySourceAndImplicitTarget(t *testing.T) 
 	require.Equal(t, []resourcePath{{Steps: []resourcePathStep{{ResourceType: "node"}}}}, paths)
 }
 
-func TestQueryPathResourcesRangeValidatesPointBudget(t *testing.T) {
-	oldMaxRangePoints := MaxRangePoints
-	MaxRangePoints = 1
-	t.Cleanup(func() { MaxRangePoints = oldMaxRangePoints })
-
-	model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
-	_, err := model.QueryPathResourcesRange(
-		context.Background(), "", "bkcc__2", "1s", "0", "120",
-		"node", []cmdb.Resource{"system"}, [][]cmdb.Resource{{"node", "system"}}, cmdb.Matcher{"node": "n1"},
-	)
-	require.ErrorContains(t, err, "range query has more than 1 points")
-}
-
 func TestQueryResourceMatcherPassesSourceExpandInfoToTimeGraph(t *testing.T) {
 	fake := &fakeTimeGraphModel{}
 	model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}

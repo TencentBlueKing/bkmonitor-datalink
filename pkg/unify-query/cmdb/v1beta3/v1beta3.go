@@ -29,11 +29,16 @@ var (
 type Model struct {
 	timeGraphResolver func(context.Context, string) (cmdb.CMDB, error)
 	// timeGraphVMQuery is only set by package tests. It replaces the final VM
-	// call after QueryTs has been converted to PromQL, so public-entry tests can
-	// keep path planning and query rendering real without requiring a VM.
+	// call after the normal QueryTs preparation and PromQL rendering, so
+	// public-entry tests can keep path planning and query rendering real without
+	// requiring a VM.
 	timeGraphVMQuery timeGraphVMQuery
-	schemaProvider   SchemaProvider
-	schemaProviderMu sync.RWMutex
+	// timeGraphQueryReference is a test-only replacement for metadata routing.
+	// The surrounding preparation (ToTime, SetExpand and ToPromExpr) remains the
+	// same as production; tests only avoid depending on live route metadata.
+	timeGraphQueryReference timeGraphQueryReference
+	schemaProvider          SchemaProvider
+	schemaProviderMu        sync.RWMutex
 }
 
 // GetModel returns the serving model used by the v1beta3 HTTP handlers.

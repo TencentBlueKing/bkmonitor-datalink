@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
@@ -355,6 +357,45 @@ func TestTimeGraphDynamicRelationKeepsEndpointIdentity(t *testing.T) {
 	if got := results[0].Path[1].Dimensions["id"]; got != "pod-1" {
 		t.Fatalf("unexpected target node: %+v", results[0].Path)
 	}
+}
+
+func TestTimeGraphSameTypeDynamicInboundAndOutboundCoexist(t *testing.T) {
+	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
+		{Name: "service", Index: cmdb.Index{"id"}},
+	}})
+	ctx := context.Background()
+	outbound := cmdb.Relation{
+		V:            []cmdb.Resource{"service", "service"},
+		RelationType: "service_to_service",
+		MetricName:   "service_to_service_flow",
+		Category:     string(RelationCategoryDynamic),
+		Direction:    string(DirectionOutbound),
+	}
+	inbound := outbound
+	inbound.Direction = string(DirectionInbound)
+	if err := tg.AddTimeRelationWithRelation(ctx, outbound, cmdb.Matcher{"from_id": "caller", "to_id": "callee"}, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := tg.AddTimeRelationWithRelation(ctx, inbound, cmdb.Matcher{"from_id": "other", "to_id": "caller"}, 100); err != nil {
+		t.Fatal(err)
+	}
+
+	paths := []cmdb.RelationPath{
+		{Steps: []cmdb.RelationPathStep{
+			{ResourceType: "service"},
+			{ResourceType: "service", RelationType: "service_to_service", Category: string(RelationCategoryDynamic), Direction: string(DirectionOutbound)},
+		}},
+		{Steps: []cmdb.RelationPathStep{
+			{ResourceType: "service"},
+			{ResourceType: "service", RelationType: "service_to_service", Category: string(RelationCategoryDynamic), Direction: string(DirectionInbound)},
+		}},
+	}
+	results, err := tg.FindRelationPathResources(ctx, "service", []cmdb.Resource{"service"}, cmdb.Matcher{"id": "caller"}, paths)
+	require.NoError(t, err)
+	require.Equal(t, []PathResourcesResult{
+		{Timestamp: 100, TargetType: "service", Path: []cmdb.PathNode{{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "caller"}}, {ResourceType: "service", Dimensions: cmdb.Matcher{"id": "callee"}}}},
+		{Timestamp: 100, TargetType: "service", Path: []cmdb.PathNode{{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "caller"}}, {ResourceType: "service", Dimensions: cmdb.Matcher{"id": "other"}}}},
+	}, results)
 }
 
 func TestMakeQueryTsUsesDynamicEndpointLabels(t *testing.T) {

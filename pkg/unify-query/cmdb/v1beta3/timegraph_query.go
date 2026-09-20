@@ -39,6 +39,30 @@ type timeGraphMatrixQuery func(context.Context, *structured.QueryTs) (pl.Matrix,
 
 type timeGraphVMQuery func(context.Context, *structured.QueryTs, string, bool, time.Time, time.Time, time.Duration) (pl.Matrix, error)
 
+type timeGraphQueryReference func(context.Context, *structured.QueryTs) (metadata.QueryReference, error)
+
+func (m *Model) prepareTimeGraphVMQuery(ctx context.Context, queryTs *structured.QueryTs) (string, *metadata.QueryParams, error) {
+	var (
+		queryRef metadata.QueryReference
+		err      error
+	)
+	if m.timeGraphQueryReference != nil {
+		queryRef, err = m.timeGraphQueryReference(ctx, queryTs)
+	} else {
+		queryRef, err = queryTs.ToQueryReference(ctx)
+	}
+	if err != nil {
+		return "", nil, errors.WithMessage(err, "to query reference")
+	}
+	metadata.SetExpand(ctx, query.ToVmExpand(ctx, queryRef))
+
+	expr, err := queryTs.ToPromExpr(ctx, nil)
+	if err != nil {
+		return "", nil, errors.WithMessage(err, "to prom expr")
+	}
+	return expr.String(), metadata.GetQueryParams(ctx), nil
+}
+
 // buildTimeGraphFromRelations materializes relation metrics into a temporary
 // in-memory TimeGraph for one query window.
 func (m *Model) buildTimeGraphFromRelations(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, relations []cmdb.Relation, lookBackDelta string) (*TimeGraph, error) {
@@ -83,35 +107,24 @@ func (m *Model) buildTimeGraphFromRelationsWithQuery(ctx context.Context, spaceU
 			return matrixQuery(queryCtx, queryTs)
 		}
 		if m.timeGraphVMQuery != nil {
-			if queryErr := queryTs.ToTime(queryCtx); queryErr != nil {
-				return nil, errors.WithMessage(queryErr, "parse query time")
-			}
-			expr, queryErr := queryTs.ToPromExpr(queryCtx, nil)
+			expr, relationQueryParams, queryErr := m.prepareTimeGraphVMQuery(queryCtx, queryTs)
 			if queryErr != nil {
-				return nil, errors.WithMessage(queryErr, "to prom expr")
+				return nil, queryErr
 			}
-			relationQueryParams := metadata.GetQueryParams(queryCtx)
 			return m.timeGraphVMQuery(
 				queryCtx,
 				queryTs,
-				expr.String(),
+				expr,
 				instant,
 				relationQueryParams.AlignStart,
 				relationQueryParams.End,
 				relationQueryParams.Step,
 			)
 		}
-		queryRef, queryErr := queryTs.ToQueryReference(queryCtx)
+		expr, relationQueryParams, queryErr := m.prepareTimeGraphVMQuery(queryCtx, queryTs)
 		if queryErr != nil {
-			return nil, errors.WithMessage(queryErr, "to query reference")
+			return nil, queryErr
 		}
-		metadata.SetExpand(queryCtx, query.ToVmExpand(queryCtx, queryRef))
-
-		expr, queryErr := queryTs.ToPromExpr(queryCtx, nil)
-		if queryErr != nil {
-			return nil, errors.WithMessage(queryErr, "to prom expr")
-		}
-		relationQueryParams := metadata.GetQueryParams(queryCtx)
 
 		var instance tsdb.Instance
 		if relationQueryParams.IsDirectQuery() {
@@ -129,7 +142,7 @@ func (m *Model) buildTimeGraphFromRelationsWithQuery(ctx context.Context, spaceU
 		}
 
 		if instant {
-			vector, queryErr := instance.DirectQuery(queryCtx, expr.String(), relationQueryParams.End)
+			vector, queryErr := instance.DirectQuery(queryCtx, expr, relationQueryParams.End)
 			if queryErr != nil {
 				return nil, errors.WithMessage(queryErr, "direct query")
 			}
@@ -137,7 +150,7 @@ func (m *Model) buildTimeGraphFromRelationsWithQuery(ctx context.Context, spaceU
 		}
 		matrix, _, queryErr := instance.DirectQueryRange(
 			queryCtx,
-			expr.String(),
+			expr,
 			relationQueryParams.AlignStart,
 			relationQueryParams.End,
 			relationQueryParams.Step,

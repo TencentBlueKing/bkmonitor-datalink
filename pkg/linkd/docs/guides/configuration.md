@@ -231,7 +231,7 @@ enrich:
 
 丰富数据源由 `event_sources[].enrich.datasources` 随来源 Release 发布。`mysql` 表示 Enrich 范围内
 共享的数据库连接，策略、业务空间、告警源和指标等 Reader 在同一连接池上查询各自的表；`elasticsearch` 表示
-共享的统一实例连接，OneModel Reader 固定查询 `kingeye_all_instance` alias。Lifecycle 启动来源任务时只为当前
+共享的统一实例连接；OneModel Reader 固定查询 `kingeye_all_instance` alias，投影边固定读取 `kingeye_topo`，CMDB 业务拓扑按 `index_prefix` 读取 `<prefix>cmdb_biz_topo_node` 与 `<prefix>cmdb_biz_topo_host_membership`。`index_prefix` 默认 `bk_monitor_base_`。Lifecycle 启动来源任务时只为当前
 Processor Chain 选择所需的物理连接，任务停止时关闭连接；数据源配置变化会产生新 Release 并重启该来源
 任务。管理接口默认隐藏 MySQL 密码、Elasticsearch API Key 和 Basic Auth 密码；授权 worker 获取完整
 Release。真实依赖的联调结果需单独验证，普通单元测试使用 mock 不代表生产链路已验证。
@@ -390,7 +390,9 @@ linkd run all-in-one --config /etc/linkd/linkd.yaml
 `alarm_collect_alarmsource.name`。
 
 `event_sources[].enrich.datasources.elasticsearch` 配置 Strategy/Resource Processor 使用的 OneModel
-Elasticsearch 读连接。OneModel Client 固定读取 `kingeye_all_instance` alias，使用根字段
+Elasticsearch 读连接。OneModel Client 固定读取 `kingeye_all_instance` alias 和 `kingeye_topo` 投影边；
+`index_prefix` 默认 `bk_monitor_base_`，用于读取 `<prefix>cmdb_biz_topo_node` 与
+`<prefix>cmdb_biz_topo_host_membership`。实例查询使用根字段
 `bk_tenant_id/model_id/model_inst_id` 定位实例；来源属性查询通过 nested `attribute_values` 类型槽表达，
 响应中的来源属性从 `attributes` 合并到 Resource 输出。该连接独立于 `storage.elasticsearch`，两段配置可以指向同一集群。
 

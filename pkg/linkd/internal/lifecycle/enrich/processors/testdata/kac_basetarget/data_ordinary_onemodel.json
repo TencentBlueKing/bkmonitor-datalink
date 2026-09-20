@@ -1,0 +1,334 @@
+{
+  "name": "data_ordinary_onemodel",
+  "kac_case": "derived_from_unified_instance_identity_spec",
+  "branch": "data",
+  "alert": {
+    "strategy_id": 5001,
+    "strategy_version": 1,
+    "bk_biz_id": 2,
+    "subject_name": "",
+    "content": "AVG(requests) >= 80, current value is 90",
+    "source_event_id": "fixture-data-ordinary-01",
+    "dimensions": {
+      "model_id": "cw-MySQL",
+      "model_inst_id": "svc|opaque-17",
+      "bk_biz_id": 2,
+      "service": "mysql"
+    }
+  },
+  "strategy": {
+    "config_type": "data",
+    "is_default": true,
+    "data_source": "bk_monitor",
+    "name": "指标丨请求量",
+    "alarm_alias": "",
+    "object_model_code": "cw-MySQL",
+    "bk_biz_id": 2,
+    "monitor_template_id": 501,
+    "config_id": "fixture-data-ordinary-config",
+    "aggregate_method": "AVG",
+    "aggregate_period": "60s",
+    "expression": "A",
+    "query_configs": [
+      {
+        "alias": "a",
+        "metric_field": "requests",
+        "result_table_id": "service.metric",
+        "agg_method": "AVG",
+        "agg_interval": 60,
+        "agg_dimension": [
+          "model_id",
+          "model_inst_id",
+          "bk_biz_id",
+          "service"
+        ],
+        "data_source_label": "bk_monitor",
+        "data_type_label": "time_series"
+      }
+    ]
+  },
+  "model": {
+    "model_id": "501",
+    "model_code": "cw-MySQL",
+    "fields": {
+      "object_model_name": "MySQL",
+      "bk_cmdb_obj_id": "MySQL"
+    }
+  },
+  "instance": {
+    "model_code": "cw-MySQL",
+    "instance_id": "svc|opaque-17",
+    "fields": {
+      "model_id": "cw-MySQL",
+      "model_inst_id": "svc|opaque-17",
+      "entity_uid": "cw-MySQL|svc|opaque-17"
+    },
+    "attributes": {
+      "bk_inst_id": 17,
+      "bk_inst_display_name": "fixture-mysql-17",
+      "bk_biz_id": 2,
+      "bk_biz_name": "fixture-biz-2"
+    }
+  },
+  "business": {
+    "model_code": "cw-biz",
+    "instance_id": "2",
+    "fields": {
+      "model_id": "cw-biz",
+      "model_inst_id": "2",
+      "entity_uid": "cw-biz|2"
+    },
+    "attributes": {
+      "bk_biz_id": 2,
+      "bk_biz_name": "fixture-biz-2"
+    }
+  },
+  "topology": {
+    "host_id": "",
+    "bk_biz_id": 0,
+    "bk_biz_name": "",
+    "bk_set_id": 0,
+    "bk_set_name": "",
+    "bk_module_id": 0,
+    "bk_module_name": ""
+  },
+  "metric": {
+    "ObjectModelCode": "cw-MySQL",
+    "FieldName": "requests",
+    "FieldCNName": "请求量",
+    "Description": "",
+    "Unit": "count",
+    "Dimensions": [
+      {
+        "key": "model_id",
+        "name": "对象模型ID"
+      },
+      {
+        "key": "model_inst_id",
+        "name": "对象模型实例ID"
+      },
+      {
+        "key": "bk_biz_id",
+        "name": "业务"
+      },
+      {
+        "key": "service",
+        "name": "服务"
+      }
+    ]
+  },
+  "expected_kac": {
+    "resource": {
+      "model_id": "cw-MySQL",
+      "model_inst_id": "svc|opaque-17",
+      "model_name": "MySQL",
+      "bk_obj_id": "MySQL",
+      "bk_inst_id": 17,
+      "bk_biz_id": 2,
+      "bk_biz_name": "fixture-biz-2",
+      "cw_labels": [
+        "bk_biz_id",
+        "bk_biz_id|2",
+        "cw-MySQL",
+        "cw-MySQL|svc|opaque-17"
+      ]
+    },
+    "display": {
+      "object": "",
+      "title": "指标丨请求量发生了告警",
+      "content": "AVG(requests) >= 80count, current value is 90count"
+    },
+    "metric": {
+      "metric_name": "requests",
+      "result_table_id": "service.metric",
+      "unit": "count",
+      "aggregate_func": "AVG",
+      "time_interval": 60
+    },
+    "source": {
+      "source_id": "built_in_bk",
+      "source_name": "基础监控",
+      "meta_info": "fixture-data-ordinary-01"
+    }
+  },
+  "expected_payload": {
+    "processors": [
+      {
+        "strategy": {
+          "status": "succeeded",
+          "value": {
+            "data_source": "bk_monitor",
+            "monitor_template_id": 501,
+            "strategy_config_id": "fixturedataordinaryconfig",
+            "strategy_id": 5001,
+            "strategy_name": "指标丨请求量",
+            "strategy_version": 1,
+            "url": "/#/kmc/manage/monitorStrategy/monitorStrategyDetails?id=501&strategy_config_id=fixturedataordinaryconfig"
+          }
+        }
+      },
+      {
+        "resource": {
+          "status": "succeeded",
+          "value": {
+            "bk_biz_id": 2,
+            "bk_biz_name": "fixture-biz-2",
+            "bk_cloud_id": null,
+            "bk_cloud_name": "",
+            "bk_inst_id": 17,
+            "bk_module_id": null,
+            "bk_module_name": "",
+            "bk_obj_id": "MySQL",
+            "bk_set_id": null,
+            "bk_set_name": "",
+            "cloud_plat_id": null,
+            "cw_labels": [
+              "bk_biz_id",
+              "bk_biz_id|2",
+              "cw-MySQL",
+              "cw-MySQL|svc|opaque-17"
+            ],
+            "dynamic_group_id": [],
+            "model_id": "cw-MySQL",
+            "model_inst_id": "svc|opaque-17",
+            "model_name": "MySQL"
+          }
+        }
+      },
+      {
+        "display": {
+          "status": "succeeded",
+          "value": {
+            "content": "AVG(requests) >= 80count, current value is 90count",
+            "dimension_text": "业务=2(fixture-biz-2) | 对象模型ID=cw-MySQL(MySQL) | 对象模型实例ID=svc|opaque-17(17) | 服务=mysql",
+            "dimensions": [
+              {
+                "name": "对象模型ID",
+                "real_key": "model_id",
+                "real_value": "cw-MySQL",
+                "value": "MySQL"
+              },
+              {
+                "name": "对象模型实例ID",
+                "real_key": "model_inst_id",
+                "real_value": "svc|opaque-17",
+                "value": "17"
+              },
+              {
+                "name": "业务",
+                "real_key": "bk_biz_id",
+                "real_value": 2,
+                "value": "fixture-biz-2"
+              },
+              {
+                "name": "服务",
+                "real_key": "service",
+                "real_value": "mysql",
+                "value": "mysql"
+              }
+            ],
+            "object": "",
+            "title": "指标丨请求量发生了告警"
+          }
+        }
+      },
+      {
+        "metric": {
+          "status": "succeeded",
+          "value": {
+            "aggregate_func": "AVG",
+            "anomaly_begin_time": null,
+            "display_name": "指标丨请求量",
+            "metric_name": "requests",
+            "metric_query_params": {
+              "bk_biz_id": 2,
+              "expression": "A",
+              "function": {
+                "time_compare": []
+              },
+              "functions": [],
+              "query_configs": [
+                {
+                  "bk_biz_id": 2,
+                  "custom_event_name": "",
+                  "data_source_label": "bk_monitor",
+                  "data_type_label": "time_series",
+                  "extend_fields": {},
+                  "filter_dict": {},
+                  "functions": [],
+                  "group_by": [
+                    "model_id",
+                    "model_inst_id",
+                    "bk_biz_id",
+                    "service"
+                  ],
+                  "index_set_id": 0,
+                  "interval": 60,
+                  "metrics": [
+                    {
+                      "alias": "a",
+                      "field": "requests",
+                      "method": "AVG"
+                    }
+                  ],
+                  "promql": "",
+                  "query_string": "",
+                  "table": "service.metric",
+                  "time_field": null,
+                  "where": [
+                    {
+                      "key": "bk_biz_id",
+                      "method": "eq",
+                      "value": [
+                        2
+                      ]
+                    },
+                    {
+                      "condition": "and",
+                      "key": "model_id",
+                      "method": "eq",
+                      "value": [
+                        "cw-MySQL"
+                      ]
+                    },
+                    {
+                      "condition": "and",
+                      "key": "model_inst_id",
+                      "method": "eq",
+                      "value": [
+                        "svc|opaque-17"
+                      ]
+                    },
+                    {
+                      "condition": "and",
+                      "key": "service",
+                      "method": "eq",
+                      "value": [
+                        "mysql"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "metric_unique_id": "service.metric.requests",
+            "result_table_id": "service.metric",
+            "time_interval": 60,
+            "unit": "count",
+            "where_condition": "bk_biz_id='2' and model_id='cw-MySQL' and model_inst_id='svc|opaque-17' and service='mysql'"
+          }
+        }
+      },
+      {
+        "source": {
+          "status": "succeeded",
+          "value": {
+            "meta_info": "fixture-data-ordinary-01",
+            "source_id": "built_in_bk",
+            "source_name": "基础监控"
+          }
+        }
+      }
+    ]
+  }
+}

@@ -29,6 +29,20 @@ func TestStandardCleanerMapsKnownFields(t *testing.T) {
 	}
 }
 
+func TestStandardCleanerPreservesNoDataDimension(t *testing.T) {
+	t.Parallel()
+	cleaner := StandardCleaner{}
+	message := RawEventMessage{Payload: []byte(`{"evaluations":[{"action":"triggered","severity":"warning"}],"dimensions":{"__NO_DATA_DIMENSION__":true,"model_id":"cw-Service","model_inst_id":"2"}}`)}
+	draft, err := cleaner.Clean(context.Background(), message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker, present := draft.Dimensions["__NO_DATA_DIMENSION__"]
+	if enabled, valid := marker.BoolValue(); !present || !valid || !enabled {
+		t.Fatalf("no-data marker was lost: %#v", draft.Dimensions)
+	}
+}
+
 func TestStandardCleanerAdditionalDimensions(t *testing.T) {
 	t.Parallel()
 	cleaner := StandardCleaner{}

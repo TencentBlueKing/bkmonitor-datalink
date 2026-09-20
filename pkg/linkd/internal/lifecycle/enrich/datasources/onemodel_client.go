@@ -25,13 +25,18 @@ import (
 const (
 	maxOneModelResponseBytes = 1 << 20
 	oneModelInstanceIndex    = "kingeye_all_instance"
+	oneModelEdgeIndex        = "kingeye_topo"
 )
 
-var _ enrich.OneModelReader = (*OneModelClient)(nil)
+var (
+	_ enrich.OneModelReader        = (*OneModelClient)(nil)
+	_ enrich.CollectTopologyReader = (*OneModelClient)(nil)
+)
 
 // OneModelClientConfig 注入 OneModel Elasticsearch 的只读传输。
 type OneModelClientConfig struct {
-	Transport ElasticsearchTransport
+	Transport   ElasticsearchTransport
+	IndexPrefix string
 }
 
 // ElasticsearchTransport 是 OneModelClient 使用的最小 ES 传输端口。
@@ -41,7 +46,9 @@ type ElasticsearchTransport interface {
 
 // OneModelClient 按 OneModel 统一实例契约读取 kingeye_all_instance。
 type OneModelClient struct {
-	transport ElasticsearchTransport
+	transport               ElasticsearchTransport
+	topologyNodeIndex       string
+	topologyMembershipIndex string
 }
 
 // NewOneModelClient 创建统一实例查询 Client；Transport 的生命周期由装配层管理。
@@ -49,7 +56,17 @@ func NewOneModelClient(config OneModelClientConfig) (*OneModelClient, error) {
 	if config.Transport == nil {
 		return nil, fmt.Errorf("create onemodel client: transport must not be nil")
 	}
-	return &OneModelClient{transport: config.Transport}, nil
+	if config.IndexPrefix == "" {
+		config.IndexPrefix = "bk_monitor_base_"
+	}
+	if err := validateIndexPrefix(config.IndexPrefix); err != nil {
+		return nil, fmt.Errorf("create onemodel client: index prefix: %w", err)
+	}
+	return &OneModelClient{
+		transport:               config.Transport,
+		topologyNodeIndex:       config.IndexPrefix + "cmdb_biz_topo_node",
+		topologyMembershipIndex: config.IndexPrefix + "cmdb_biz_topo_host_membership",
+	}, nil
 }
 
 // FindInstance 按租户、模型、实例身份及类型化属性精确匹配第一条统一实例。
@@ -114,7 +131,7 @@ func (c *OneModelClient) buildFindInstanceRequest(
 		filters = append(filters, clause)
 	}
 	body, err := json.Marshal(map[string]any{
-		"size":             1,
+		"size":             2,
 		"track_total_hits": false,
 		"query":            map[string]any{"bool": map[string]any{"filter": filters}},
 	})
@@ -191,6 +208,9 @@ func parseFindInstanceResponse(
 	if len(result.Hits.Hits) == 0 {
 		return enrich.Instance{}, false, nil
 	}
+	if len(result.Hits.Hits) != 1 {
+		return enrich.Instance{}, false, fmt.Errorf("%w: query returned multiple instance identities", enrich.ErrInvalidDataSourceResponse)
+	}
 	return parseInstanceSource(result.Hits.Hits[0].Source, tenantID, query)
 }
 
@@ -217,6 +237,13 @@ func parseInstanceSource(source map[string]any, tenantID string, query enrich.In
 		TenantID: tenantID, ModelCode: query.ModelCode, InstanceID: instanceID,
 		Fields: source, Attributes: attributes,
 	}, true, nil
+}
+
+func validateIndexPrefix(value string) error {
+	if value == "" || strings.ContainsAny(value, `/\\?#, *<>|\"`) || strings.HasPrefix(value, "_") || strings.HasPrefix(value, "-") || strings.HasPrefix(value, "+") {
+		return fmt.Errorf("invalid index prefix %q", value)
+	}
+	return nil
 }
 
 func validateOneModelIdentity(name, value string, maxBytes int) error {

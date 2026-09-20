@@ -53,38 +53,25 @@ func TestCombinedDimensions(t *testing.T) {
 	}
 }
 
-func TestResourceInstanceQueryUsesHostIDPriority(t *testing.T) {
+func TestStrategyInstanceQueryUsesHostIDPriority(t *testing.T) {
 	t.Parallel()
 	instID, _ := domain.NewNumberScalar(101)
 	hostID, _ := domain.NewNumberScalar(102)
 	targetID, _ := domain.NewNumberScalar(103)
-	query, diagnostics := resourceInstanceQuery(rules.HostModelCode, domain.DimensionMap{
+	query, ok := strategyInstanceQuery(rules.BaseTargetMonitorSource, rules.HostModelCode, domain.DimensionMap{
 		"bk_inst_id": instID, "bk_host_id": hostID, "bk_target_host_id": targetID,
 	})
-	if len(diagnostics) != 0 || query.ModelCode != rules.HostModelCode || query.InstanceID != "101" {
-		t.Fatalf("query=%#v diagnostics=%#v", query, diagnostics)
+	if !ok || query.ModelCode != rules.HostModelCode || query.InstanceID != "101" {
+		t.Fatalf("query=%#v ok=%t", query, ok)
 	}
 }
 
-func TestResourceInstanceQueryFallsBackToHostAddress(t *testing.T) {
-	t.Parallel()
-	cloudID, _ := domain.NewNumberScalar(0)
-	query, diagnostics := resourceInstanceQuery(rules.HostModelCode, domain.DimensionMap{
-		"bk_target_ip": domain.NewStringScalar("10.0.0.1"), "bk_target_cloud_id": cloudID,
-	})
-	if len(diagnostics) != 1 || len(query.AttributeFilters) != 2 ||
-		query.AttributeFilters[0] != (enrich.InstanceAttributeFilter{Field: rules.FieldBKHostInnerIP, Type: enrich.InstanceAttributeKeyword, Value: "10.0.0.1"}) ||
-		query.AttributeFilters[1] != (enrich.InstanceAttributeFilter{Field: rules.FieldBKCloudID, Type: enrich.InstanceAttributeLong, Value: float64(0)}) {
-		t.Fatalf("query=%#v diagnostics=%#v", query, diagnostics)
-	}
-}
-
-func TestResourceInstanceQueryKeepsNonHostBoundary(t *testing.T) {
+func TestStrategyInstanceQueryKeepsNonHostBoundary(t *testing.T) {
 	t.Parallel()
 	hostID, _ := domain.NewNumberScalar(102)
-	query, diagnostics := resourceInstanceQuery("cw-Disk", domain.DimensionMap{"bk_host_id": hostID})
-	if query.InstanceID != "" || len(query.AttributeFilters) != 0 || len(diagnostics) != 1 || diagnostics[0].Fields[0] != "dimensions.bk_inst_id" {
-		t.Fatalf("query=%#v diagnostics=%#v", query, diagnostics)
+	query, ok := strategyInstanceQuery(rules.BaseTargetBasic, "cw-Disk", domain.DimensionMap{"bk_host_id": hostID})
+	if ok || query.InstanceID != "" || len(query.AttributeFilters) != 0 {
+		t.Fatalf("query=%#v ok=%t", query, ok)
 	}
 }
 

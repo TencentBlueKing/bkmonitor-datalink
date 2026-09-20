@@ -16,17 +16,21 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+
 	"linkd/internal/lifecycle/enrich"
 	"linkd/internal/lifecycle/enrich/models"
 )
 
 const (
-	enrichDataSourceCWStrategy    = "cw_strategy"
-	enrichDataSourceBusiness      = "business"
-	enrichDataSourceMetricLibrary = "metric_library"
-	enrichDataSourceAlarmSource   = "alarm_source"
-	enrichDataSourceOneModel      = "onemodel"
-	enrichDataSourceTest          = "test"
+	enrichDataSourceCWStrategy      = "cw_strategy"
+	enrichDataSourceBusiness        = "business"
+	enrichDataSourceMetricLibrary   = "metric_library"
+	enrichDataSourceModel           = "onemodel_model"
+	enrichDataSourceAlarmSource     = "alarm_source"
+	enrichDataSourceCollectConfig   = "collect_config"
+	enrichDataSourceCollectTopology = "collect_topology"
+	enrichDataSourceUptime          = "uptime"
+	enrichDataSourceOneModel        = "onemodel"
 )
 
 // ObserveEnrichSources 为全部已配置 Reader 增加调用结果和耗时指标。
@@ -43,16 +47,43 @@ func (r *Runtime) ObserveEnrichSources(sources enrich.Sources) enrich.Sources {
 	if sources.Metric != nil {
 		sources.Metric = &observedMetricReader{next: sources.Metric, metrics: r.metrics}
 	}
+	if sources.Model != nil {
+		sources.Model = &observedModelReader{next: sources.Model, metrics: r.metrics}
+	}
 	if sources.AlarmSource != nil {
 		sources.AlarmSource = &observedAlarmSourceReader{next: sources.AlarmSource, metrics: r.metrics}
 	}
 	if sources.OneModel != nil {
 		sources.OneModel = &observedOneModelReader{next: sources.OneModel, metrics: r.metrics}
 	}
+	if sources.CollectConfig != nil {
+		sources.CollectConfig = &observedCollectConfigReader{next: sources.CollectConfig, metrics: r.metrics}
+	}
+	if sources.CollectTopology != nil {
+		sources.CollectTopology = &observedCollectTopologyReader{next: sources.CollectTopology, metrics: r.metrics}
+	}
+	if sources.Uptime != nil {
+		sources.Uptime = &observedUptimeReader{next: sources.Uptime, metrics: r.metrics}
+	}
+	if sources.UptimeNode != nil {
+		sources.UptimeNode = &observedUptimeNodeReader{next: sources.UptimeNode, metrics: r.metrics}
+	}
 	if sources.Test != nil {
 		sources.Test = &observedTestSource{next: sources.Test, metrics: r.metrics}
 	}
 	return sources
+}
+
+type observedTestSource struct {
+	next    enrich.TestSource
+	metrics *instruments
+}
+
+func (r *observedTestSource) Call(ctx context.Context, request enrich.TestRequest) error {
+	startedAt := time.Now()
+	err := r.next.Call(ctx, request)
+	enrichDataSourceRecorder{r.metrics}.record(ctx, "test", "call", startedAt, err == nil, err)
+	return err
 }
 
 type enrichDataSourceRecorder struct{ metrics *instruments }
@@ -69,10 +100,8 @@ func (r enrichDataSourceRecorder) record(ctx context.Context, source, operation 
 
 func enrichDataSourceOutcome(found bool, err error) string {
 	switch {
-	case errors.Is(err, context.Canceled):
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
 		return "canceled"
-	case errors.Is(err, context.DeadlineExceeded):
-		return "timeout"
 	case errors.Is(err, enrich.ErrInvalidDataSourceResponse):
 		return "invalid_response"
 	case err != nil:
@@ -120,6 +149,18 @@ func (r *observedMetricReader) FindMetricLibrary(ctx context.Context, query mode
 	return value, found, err
 }
 
+type observedModelReader struct {
+	next    enrich.ModelReader
+	metrics *instruments
+}
+
+func (r *observedModelReader) GetModelByCode(ctx context.Context, tenantID, modelCode string) (enrich.Model, bool, error) {
+	startedAt := time.Now()
+	value, found, err := r.next.GetModelByCode(ctx, tenantID, modelCode)
+	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceModel, "get_model_by_code", startedAt, found, err)
+	return value, found, err
+}
+
 type observedAlarmSourceReader struct {
 	next    enrich.AlarmSourceReader
 	metrics *instruments
@@ -144,15 +185,57 @@ func (r *observedOneModelReader) FindInstance(ctx context.Context, tenantID stri
 	return value, found, err
 }
 
-// observedTestSource 使用固定标签，身份和随机参数不进入指标属性。
-type observedTestSource struct {
-	next    enrich.TestSource
+type observedCollectConfigReader struct {
+	next    enrich.CollectConfigReader
 	metrics *instruments
 }
 
-func (r *observedTestSource) Call(ctx context.Context, request enrich.TestRequest) error {
+func (r *observedCollectConfigReader) GetCollectConfig(ctx context.Context, tenantID, taskID string) (models.CollectConfig, bool, error) {
 	startedAt := time.Now()
-	err := r.next.Call(ctx, request)
-	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceTest, "call", startedAt, err == nil, err)
-	return err
+	value, found, err := r.next.GetCollectConfig(ctx, tenantID, taskID)
+	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceCollectConfig, "get_collect_config", startedAt, found, err)
+	return value, found, err
+}
+
+type observedCollectTopologyReader struct {
+	next    enrich.CollectTopologyReader
+	metrics *instruments
+}
+
+func (r *observedCollectTopologyReader) FindRelatedHost(ctx context.Context, tenantID, modelCode, instanceID, relation string) (enrich.Instance, bool, error) {
+	startedAt := time.Now()
+	value, found, err := r.next.FindRelatedHost(ctx, tenantID, modelCode, instanceID, relation)
+	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceCollectTopology, "find_related_host", startedAt, found, err)
+	return value, found, err
+}
+
+func (r *observedCollectTopologyReader) FindHostTopology(ctx context.Context, tenantID, hostID string) (models.ResourceTopology, bool, error) {
+	startedAt := time.Now()
+	value, found, err := r.next.FindHostTopology(ctx, tenantID, hostID)
+	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceCollectTopology, "find_host_topology", startedAt, found, err)
+	return value, found, err
+}
+
+type observedUptimeReader struct {
+	next    enrich.UptimeReader
+	metrics *instruments
+}
+
+func (r *observedUptimeReader) GetUptimeTask(ctx context.Context, tenantID, taskID string) (models.UptimeTask, bool, error) {
+	startedAt := time.Now()
+	value, found, err := r.next.GetUptimeTask(ctx, tenantID, taskID)
+	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceUptime, "get_uptime_task", startedAt, found, err)
+	return value, found, err
+}
+
+type observedUptimeNodeReader struct {
+	next    enrich.UptimeNodeReader
+	metrics *instruments
+}
+
+func (r *observedUptimeNodeReader) GetUptimeNode(ctx context.Context, tenantID, nodeID string) (models.UptimeNode, bool, error) {
+	startedAt := time.Now()
+	value, found, err := r.next.GetUptimeNode(ctx, tenantID, nodeID)
+	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceUptime, "get_uptime_node", startedAt, found, err)
+	return value, found, err
 }

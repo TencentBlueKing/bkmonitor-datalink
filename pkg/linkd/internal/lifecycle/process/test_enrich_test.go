@@ -94,7 +94,10 @@ func TestSimulatedEnrichUsesObservedDataSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(data)
-	for outcome, count := range map[string]string{"found": "3", "failed": "1", "timeout": "1"} {
+	if !strings.Contains(body, `linkd_datasource="test"`) {
+		t.Fatal("test datasource was not observed")
+	}
+	for outcome, count := range map[string]string{"found": "3", "failed": "1", "canceled": "1"} {
 		found := false
 		for _, line := range strings.Split(body, "\n") {
 			if strings.HasPrefix(line, "linkd_enrich_datasource_operations_total{") && strings.Contains(line, `linkd_datasource="test"`) && strings.Contains(line, `linkd_operation="call"`) && strings.Contains(line, `linkd_outcome="`+outcome+`"`) && strings.HasSuffix(line, " "+count) {

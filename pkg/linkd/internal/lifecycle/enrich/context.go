@@ -94,6 +94,11 @@ type EnrichContext struct {
 	Source   SourceContext
 }
 
+// ValuesObject 将类型化 Processor 输出转换为领域 JSON object。
+func ValuesObject[T any](values T) (domain.JSONObject, error) {
+	return valuesObject(values)
+}
+
 func valuesObject[T any](values T) (domain.JSONObject, error) {
 	data, err := json.Marshal(values)
 	if err != nil {

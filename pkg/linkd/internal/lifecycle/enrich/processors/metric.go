@@ -194,6 +194,10 @@ type translatedMetricQuery struct {
 }
 
 func translateMetricQuery(query models.StrategyQueryConfig, dimensions map[string]any) translatedMetricQuery {
+	if query.DataSourceLabel == rules.DataSourcePrometheus {
+		field, table := parsePromQLIdentity(query.PromQL)
+		return translatedMetricQuery{field: field, table: table, filterDict: map[string]any{}}
+	}
 	translated := translatedMetricQuery{field: query.MetricField, table: query.ResultTableID, filterDict: map[string]any{}}
 	switch {
 	case query.DataSourceLabel == rules.DataSourceBKFTA:
@@ -220,10 +224,18 @@ func translateMetricQuery(query models.StrategyQueryConfig, dimensions map[strin
 	return translated
 }
 
+func parsePromQLIdentity(promql string) (string, string) {
+	parts := strings.Split(promql, ":")
+	if len(parts) < 3 {
+		return "", ""
+	}
+	return parts[len(parts)-1], strings.Join(parts[1:len(parts)-1], ".")
+}
+
 func selectQueryDimensions(query models.StrategyQueryConfig, dimensions domain.DimensionMap) map[string]any {
 	available := make(map[string]any, len(dimensions)+2)
 	for key, value := range dimensions {
-		if key == rules.FieldBKHostID {
+		if key == rules.FieldBKHostID || key == rules.FieldNoDataDimension {
 			continue
 		}
 		available[strings.TrimPrefix(key, rules.DimensionTagPrefix)] = rules.ScalarValue(value)
@@ -351,7 +363,7 @@ func parseAnomalyBeginTime(extraData domain.JSONObject) (string, bool, bool) {
 func cleanWhereCondition(dimensions domain.DimensionMap) string {
 	keys := make([]string, 0, len(dimensions))
 	for key := range dimensions {
-		if key == rules.FieldBKTopoNode || key == rules.FieldBKHostID {
+		if key == rules.FieldBKTopoNode || key == rules.FieldBKHostID || key == rules.FieldNoDataDimension {
 			continue
 		}
 		keys = append(keys, key)
@@ -447,7 +459,7 @@ func cleanMetricName(
 		return strategy.Spec.FieldName
 	}
 	if len(projection.QueryConfigs) > 1 || strategy.Spec.StrategyItem == nil ||
-		hasFunctions(strategy.Spec.StrategyItem.Functions) || hasFunctions(projection.Functions) {
+		hasFunctions(strategy.Spec.StrategyItem.Functions) || hasFunctions(projection.Functions) || hasFunctions(query.Functions) {
 		return ""
 	}
 	// 普通单指标

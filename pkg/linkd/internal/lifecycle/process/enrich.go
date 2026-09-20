@@ -89,13 +89,20 @@ func openEnrichRuntime(
 		}
 		runtime.transport = transport
 		client, err := datasources.NewOneModelClient(datasources.OneModelClientConfig{
-			Transport: transport,
+			Transport: transport, IndexPrefix: oneModelConfig.IndexPrefix,
 		})
 		if err != nil {
 			_ = runtime.Close()
 			return nil, fmt.Errorf("create onemodel client: %w", err)
 		}
 		sources.OneModel = client
+		k8sReader, err := datasources.NewOneModelK8sReader(client)
+		if err != nil {
+			_ = runtime.Close()
+			return nil, fmt.Errorf("create k8s reader: %w", err)
+		}
+		sources.K8s = k8sReader
+		sources.CollectTopology = client
 	}
 	for _, processor := range source.Enrich.Processors {
 		if processor.Type == "test" {

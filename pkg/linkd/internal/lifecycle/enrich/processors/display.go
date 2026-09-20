@@ -11,14 +11,19 @@ package processors
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
 	"linkd/internal/domain"
 	"linkd/internal/lifecycle/enrich"
+	"linkd/internal/lifecycle/enrich/basetarget"
+	"linkd/internal/lifecycle/enrich/collect"
 	"linkd/internal/lifecycle/enrich/models"
 	"linkd/internal/lifecycle/enrich/rules"
+	uptimeenrich "linkd/internal/lifecycle/enrich/uptime"
 )
 
 // Display 丰富告警的展示信息。
@@ -58,8 +63,51 @@ func (Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Process
 	if !businessMatches {
 		return failedDependency(rules.DependencyKingeyeStrategy), nil
 	}
+	classification := rules.Classify(strategy, alert.Dimensions)
 	objectName := cleanDisplayObject(alert, strategy, scope.Context().Resource.Values)
+	displayDiagnostics := make([]enrich.Diagnostic, 0, 1)
+	var uptimeResult *uptimeenrich.Result
+	if classification.BaseTarget == rules.BaseTargetUptimeCheck {
+		result, uptimeErr := uptimeenrich.Enrich(ctx, scope, *strategy.ObjectModelCode, alert.Dimensions, ids.BizID)
+		if uptimeErr != nil {
+			return enrich.ProcessorResult{}, uptimeErr
+		}
+		uptimeResult = &result
+		objectName = result.Object
+		displayDiagnostics = append(displayDiagnostics, result.DisplayDiagnostics...)
+	}
+	if classification.Main == rules.MainData {
+		objectName = ""
+		if strings.HasPrefix(projection.QueryConfigs[0].ResultTableID, "uptimecheck") {
+			result, uptimeErr := uptimeenrich.Enrich(ctx, scope, rules.UptimeModelCode, alert.Dimensions, ids.BizID)
+			if uptimeErr != nil {
+				return enrich.ProcessorResult{}, uptimeErr
+			}
+			uptimeResult = &result
+			objectName = result.Object
+			displayDiagnostics = append(displayDiagnostics, result.DisplayDiagnostics...)
+		}
+	} else if classification.BaseTarget == rules.BaseTargetCollectTask {
+		result, collectErr := collect.Enrich(ctx, scope, alert.Dimensions, ids.BizID, alert.SubjectName)
+		if collectErr != nil {
+			return enrich.ProcessorResult{}, collectErr
+		}
+		objectName = result.Object
+	} else if classification.Main != rules.MainData && classification.BaseTarget != rules.BaseTargetUptimeCheck {
+		result, targetErr := basetarget.Enrich(ctx, scope, classification, strategy, alert.Dimensions, ids.BizID, alert.SubjectName)
+		if targetErr != nil {
+			return enrich.ProcessorResult{}, targetErr
+		}
+		objectName = result.Object
+		displayDiagnostics = append(displayDiagnostics, result.DisplayDiagnostics...)
+	}
 	itemName, err := displayItem(ctx, scope, strategy, projection)
+	if rules.IsLogDisplay(classification.Main) {
+		itemName = sourceConfigString(strategy.Spec.SourceConfig, rules.FieldQueryString)
+		if itemName == "" {
+			itemName = rules.LogMetricFallback
+		}
+	}
 	if err != nil {
 		return failedDependency(rules.DependencyMetricLibrary), nil
 	}
@@ -75,21 +123,42 @@ func (Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Process
 			Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"extra_data.additional_dimensions"},
 		}}}, nil
 	}
-	dimensions, err := buildDisplayDimensions(ctx, scope, strategy, projection, alertDimensions, additional)
+	var dimensions []models.DimensionDisplay
+	var metricMetadata models.MetricMetadata
+	if classification.Main == rules.MainData && uptimeResult == nil {
+		mapping, mappingErr := dataMetricMetadata(ctx, scope, strategy, projection)
+		if mappingErr != nil {
+			return failedDependency(rules.DependencyMetricLibrary), nil
+		}
+		metricMetadata = mapping
+	}
+	if uptimeResult != nil {
+		dimensions = uptimeResult.Dimensions
+	} else {
+		dimensions, err = buildDisplayDimensions(ctx, scope, strategy, projection, alertDimensions, additional)
+	}
 	if err != nil {
 		return failedDependency(rules.DependencyMetricLibrary), nil
 	}
-	classification := rules.ClassifyDisplay(strategy)
-	title := cleanDisplayTitle(classification, strategy, alert, objectName, itemName)
+	title := cleanDisplayTitle(classification.Main, strategy, alert, objectName, itemName)
 	dimensionText := buildDimensionText(
 		dimensions,
-		classification,
+		classification.Main,
 		scope.Context().Resource.Values,
 		projection.QueryConfigs[0].ResultTableID,
 		additional,
 	)
+	content := alert.Content
+	if rules.IsLogDisplay(classification.Main) {
+		content = logDisplayContent(content, classification.Main, sourceConfigString(strategy.Spec.SourceConfig, rules.FieldQueryString))
+	} else {
+		content = applyDataContentAlgorithm(content, strategy, metricMetadata, alert.Severity)
+	}
+	if classification.Main == rules.MainData {
+		content = enrichDataAlgorithmContent(content, metricMetadata.ValueMapping)
+	}
 	values := models.DisplayValues{
-		Title: title, Content: alert.Content, Object: objectName,
+		Title: title, Content: content, Object: objectName,
 		Dimensions: dimensions, DimensionText: dimensionText,
 	}
 	scope.Context().Display.Set(values)
@@ -97,7 +166,151 @@ func (Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Process
 	if encodeErr != nil {
 		return enrich.ProcessorResult{}, encodeErr
 	}
-	return enrich.ProcessorResult{Status: domain.EnrichStatusSucceeded, Value: value}, nil
+	status := domain.EnrichStatusSucceeded
+	if len(displayDiagnostics) != 0 {
+		status = domain.EnrichStatusPartial
+	}
+	return enrich.ProcessorResult{Status: status, Value: value, Diagnostics: displayDiagnostics}, nil
+}
+
+func logDisplayContent(content string, classification rules.DisplayClassification, query string) string {
+	content = strings.SplitN(content, ",关联信息", 2)[0]
+	if classification == rules.DisplayLogMetric {
+		return content
+	}
+	if strings.Contains(content, "无数据") {
+		text := content
+		if index := strings.LastIndex(text, ")"); index >= 0 && index+1 < len(text) {
+			text = text[index+1:]
+		}
+		return fmt.Sprintf("【%s】关键字%s", query, text)
+	}
+	pattern := regexp.MustCompile(`(?:[<>=!]=?|大于等于|大于|小于等于|小于|等于|不等于)\s*\d+\.?\d*\s*,\s*当前值\s*\d+`)
+	match := pattern.FindString(content)
+	if match == "" {
+		match = content
+	} else if index := strings.Index(content, match); index >= 0 {
+		match = content[index:]
+	}
+	return fmt.Sprintf("匹配到【%s】关键字次数 %s", query, match)
+}
+
+func dataMetricMetadata(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy, projection models.StrategyItemProjection) (models.MetricMetadata, error) {
+	query := projection.QueryConfigs[0]
+	objectModelCode := ""
+	if strategy.ObjectModelCode != nil {
+		objectModelCode = *strategy.ObjectModelCode
+	}
+	metricQuery := models.MetricLibraryQuery{TableID: query.ResultTableID, FieldName: query.MetricField, ObjectModelCode: objectModelCode}
+	if strategy.Kind != models.CWStrategyKindCloud && strategy.Spec.FieldTag == models.CWStrategyFieldTagDerivedMetric {
+		metricQuery.TableID = ""
+		metricQuery.FieldName = strategy.Spec.FieldName
+		metricQuery.FieldTag = models.CWStrategyFieldTagDerivedMetric
+	}
+	metadata, found, err := scope.MetricLibrary(ctx, metricQuery)
+	if err != nil || !found {
+		return models.MetricMetadata{}, err
+	}
+	if len(projection.QueryConfigs) > 1 || hasFunctions(projection.Functions) || hasFunctions(query.Functions) {
+		return models.MetricMetadata{}, nil
+	}
+	return metadata, nil
+}
+
+func applyDataContentAlgorithm(content string, strategy models.CWStrategy, metadata models.MetricMetadata, severity string) string {
+	for _, item := range metadata.ValueMapping {
+		if item.OriginalValue == "" || item.MappedValue == "" {
+			continue
+		}
+		content = replaceMetricValue(content, item.OriginalValue, item.MappedValue)
+	}
+	if isDataThresholdContent(content) {
+		return appendMetricUnit(content, effectiveMetricUnit(strategy, metadata, severity))
+	}
+	return content
+}
+
+func enrichDataAlgorithmContent(content string, mapping []models.MetricValueMapping) string {
+	for _, item := range mapping {
+		if item.OriginalValue == "" || item.MappedValue == "" {
+			continue
+		}
+		content = annotateAlgorithmValues(content, item.OriginalValue, item.MappedValue)
+	}
+	return content
+}
+
+func annotateAlgorithmValues(content, original, mapped string) string {
+	parts := strings.Split(content, ",")
+	for index, part := range parts {
+		if strings.Contains(part, "无数据") || strings.Contains(part, "无数据上报") {
+			continue
+		}
+		if strings.Contains(part, "同一时刻绝对值") || strings.Contains(part, "前一时刻值") {
+			parts[index] = replaceMetricValue(part, original, mapped)
+			continue
+		}
+		if strings.Contains(part, "较前一时刻") || strings.Contains(part, "时间点的均值") || strings.Contains(part, "上周同一时刻") || strings.Contains(part, "同一时刻差值") {
+			parts[index] = replaceMetricValue(part, original, mapped)
+		}
+	}
+	return strings.Join(parts, ",")
+}
+
+func isDataThresholdContent(content string) bool {
+	return regexp.MustCompile(`\s[><=!]`).MatchString(content) &&
+		!strings.Contains(content, "前一时刻值") && !strings.Contains(content, "同一时刻绝对值")
+}
+
+func effectiveMetricUnit(strategy models.CWStrategy, metadata models.MetricMetadata, severity string) string {
+	for _, algorithm := range strategy.Spec.StrategyDetectAlgorithms {
+		if algorithm.LevelStatus != severity || algorithm.AlgorithmConfig == nil {
+			continue
+		}
+		if raw, ok := algorithm.AlgorithmConfig["algorithmUnit"]; ok {
+			var unit string
+			if json.Unmarshal(raw, &unit) == nil {
+				if unit == "NONE" {
+					return ""
+				}
+				if unit != "" {
+					return unit
+				}
+			}
+		}
+	}
+	switch metadata.Unit {
+	case "bytes":
+		return "B"
+	case "percent", "percentunit":
+		return "%"
+	default:
+		return metadata.Unit
+	}
+}
+
+func appendMetricUnit(content, unit string) string {
+	if unit == "" {
+		return content
+	}
+	pattern := `(?i)(>=|<=|>|<|=|current value is)\s*(-?[0-9]+(?:\.[0-9]+)?)`
+	re := regexp.MustCompile(pattern)
+	return re.ReplaceAllStringFunc(content, func(match string) string {
+		return match + unit
+	})
+}
+
+func replaceMetricValue(content, original, mapped string) string {
+	pattern := `(^|[^[:alnum:]_.-])(` + regexp.QuoteMeta(original) + `)($|[^[:alnum:]_.-])`
+	re := regexp.MustCompile(pattern)
+	return re.ReplaceAllStringFunc(content, func(match string) string {
+		index := strings.Index(match, original)
+		if index < 0 {
+			return match
+		}
+		end := index + len(original)
+		return match[:end] + "(" + mapped + ")" + match[end:]
+	})
 }
 
 func cleanDisplayTitle(
@@ -245,8 +458,8 @@ func buildDisplayDimensions(
 
 	// 对象模型和实例条目沿用 Converter 的固定生成顺序。
 	for _, field := range []struct{ key, name string }{
-		{rules.FieldCWObjectModelID, "对象模型ID"}, {rules.FieldObjectModelID, "对象模型ID"},
-		{rules.FieldCWObjectModelInstID, "对象模型实例ID"}, {rules.FieldObjectModelInstID, "对象模型实例ID"},
+		{rules.FieldModelID, "对象模型ID"}, {rules.FieldObjectModelID, "对象模型ID"},
+		{rules.FieldModelInstID, "对象模型实例ID"}, {rules.FieldObjectModelInstID, "对象模型实例ID"},
 	} {
 		appendDimension(field.key, field.name)
 	}
@@ -302,9 +515,9 @@ func displayDimensionValue(
 ) domain.Scalar {
 	var translated string
 	switch key {
-	case rules.FieldCWObjectModelID, rules.FieldObjectModelID:
+	case rules.FieldModelID, rules.FieldObjectModelID:
 		translated = resource.ModelName
-	case rules.FieldCWObjectModelInstID, rules.FieldObjectModelInstID:
+	case rules.FieldModelInstID, rules.FieldObjectModelInstID:
 		translated = fmt.Sprint(resource.BKInstID)
 	case rules.FieldBKBizID:
 		translated = resource.BKBizName

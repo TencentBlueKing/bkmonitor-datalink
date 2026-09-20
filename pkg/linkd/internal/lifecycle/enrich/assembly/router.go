@@ -99,6 +99,14 @@ func newProcessor(config config.EnrichProcessorConfig) (enrich.Processor, error)
 		return processors.Display{}, nil
 	case rules.MetricProcessor:
 		return processors.Metric{}, nil
+	case rules.LogProcessor:
+		return processors.Log{}, nil
+	case "cloud_resource":
+		return processors.CloudResourceProcessor{}, nil
+	case "k8s":
+		return processors.K8s{}, nil
+	case rules.APMProcessor:
+		return processors.APM{}, nil
 	case rules.SourceProcessor:
 		return processors.EventSource{}, nil
 	default:

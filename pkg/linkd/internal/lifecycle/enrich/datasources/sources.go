@@ -89,9 +89,27 @@ func newMySQLSources(database *gorm.DB) (enrich.Sources, error) {
 	if sources.AlarmSource, err = NewAlarmSourceClient(AlarmSourceClientConfig{DB: database}); err != nil {
 		return enrich.Sources{}, fmt.Errorf("initialize alarm source datasource: %w", err)
 	}
+	if sources.LogTheme, err = NewLogThemeClient(LogThemeClientConfig{DB: database}); err != nil {
+		return enrich.Sources{}, fmt.Errorf("initialize log theme datasource: %w", err)
+	}
+	if sources.CloudResource, err = NewCloudResourceClient(CloudResourceClientConfig{DB: database}); err != nil {
+		return enrich.Sources{}, fmt.Errorf("initialize cloud resource datasource: %w", err)
+	}
 	if sources.Metric, err = NewMetricClient(MetricClientConfig{DB: database}); err != nil {
 		return enrich.Sources{}, fmt.Errorf("initialize metric datasource: %w", err)
 	}
+	if sources.Model, err = NewModelClient(ModelClientConfig{DB: database}); err != nil {
+		return enrich.Sources{}, fmt.Errorf("initialize object model datasource: %w", err)
+	}
+	if sources.CollectConfig, err = NewCollectConfigClient(CollectConfigClientConfig{DB: database}); err != nil {
+		return enrich.Sources{}, fmt.Errorf("initialize collect config datasource: %w", err)
+	}
+	uptime, err := NewUptimeClient(UptimeClientConfig{DB: database})
+	if err != nil {
+		return enrich.Sources{}, fmt.Errorf("initialize uptime datasource: %w", err)
+	}
+	sources.Uptime = uptime
+	sources.UptimeNode = uptime
 	return sources, nil
 }
 

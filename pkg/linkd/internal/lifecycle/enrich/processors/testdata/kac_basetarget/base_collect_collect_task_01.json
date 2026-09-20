@@ -1,0 +1,350 @@
+{
+  "name": "base_collect_collect_task_01",
+  "kac_case": "base_collect_collect_task_01",
+  "branch": "collect_task",
+  "alert": {
+    "strategy_id": 1344,
+    "strategy_version": 2,
+    "bk_biz_id": 2,
+    "subject_name": "fixture-mysql-15_3006_192.0.2.115",
+    "content": "AVG(mysql_db_data_length) >= 1.0, current value is 352321536",
+    "source_event_id": "fixture-collect-event-01",
+    "dimensions": {
+      "ip": "192.0.2.12",
+      "bk_cloud_id": 0,
+      "bk_collect_config_id": "fixture-collect-mysql-15",
+      "bk_biz_id": 2,
+      "bk_host_id": 2,
+      "bk_target_ip": "192.0.2.12",
+      "bk_target_cloud_id": 0
+    }
+  },
+  "strategy": {
+    "is_default": true,
+    "data_source": "插件采集",
+    "name": "指标丨mysql_db_data_length",
+    "alarm_alias": "",
+    "object_model_code": "cw-MySQL",
+    "bk_biz_id": 2,
+    "monitor_template_id": 551,
+    "config_id": "6727e4669ee54c109a8f2ac89628a6ef",
+    "aggregate_method": "AVG",
+    "aggregate_period": "60s",
+    "expression": "A",
+    "query_configs": [
+      {
+        "alias": "a",
+        "metric_field": "mysql_db_data_length",
+        "result_table_id": "sql_test_ob_mysql_platform.sql1",
+        "agg_method": "AVG",
+        "agg_interval": 60,
+        "agg_dimension": [
+          "bk_target_ip",
+          "bk_target_cloud_id",
+          "bk_collect_config_id",
+          "bk_biz_id"
+        ],
+        "data_source_label": "bk_monitor",
+        "data_type_label": "time_series"
+      }
+    ]
+  },
+  "collect_config": {
+    "uid": "fixture-config-15",
+    "bk_collect_task_id": "fixture-collect-mysql-15",
+    "bk_object_code": "cw-MySQL",
+    "bk_inst_id": 15,
+    "final_biz_id": 2,
+    "is_remote_collect": true
+  },
+  "model": {
+    "model_id": "12345",
+    "model_code": "cw-MySQL",
+    "fields": {
+      "object_model_name": "MySQL",
+      "bk_cmdb_obj_id": "MySQL",
+      "host_related_field": "host"
+    }
+  },
+  "instance": {
+    "model_code": "cw-MySQL",
+    "instance_id": "15",
+    "fields": {
+      "model_id": "cw-MySQL",
+      "model_inst_id": "15",
+      "entity_uid": "cw-MySQL|15"
+    },
+    "attributes": {
+      "bk_inst_id": 15,
+      "bk_inst_display_name": "fixture-mysql-15_3006_192.0.2.115"
+    }
+  },
+  "related_host": {
+    "model_code": "cw-Host",
+    "instance_id": "2",
+    "fields": {
+      "model_id": "cw-Host",
+      "model_inst_id": "2",
+      "entity_uid": "cw-Host|2",
+      "bk_host_id": 2
+    },
+    "attributes": {
+      "bk_cloud_id": 0,
+      "bk_cloud_name": "default area"
+    }
+  },
+  "topology": {
+    "host_id": "2",
+    "bk_biz_id": 2,
+    "bk_biz_name": "fixture-biz-2",
+    "bk_set_id": 2,
+    "bk_set_name": "fixture-set-2",
+    "bk_module_id": 3,
+    "bk_module_name": "fixture-module-3"
+  },
+  "metric": {
+    "FieldName": "mysql_db_data_length",
+    "FieldCNName": "指标丨mysql_db_data_length",
+    "Description": "",
+    "Unit": "",
+    "Dimensions": [
+      {
+        "key": "bk_collect_config_id",
+        "name": "采集任务ID"
+      },
+      {
+        "key": "bk_biz_id",
+        "name": "业务"
+      },
+      {
+        "key": "bk_target_ip",
+        "name": "目标IP"
+      },
+      {
+        "key": "bk_target_cloud_id",
+        "name": "目标云区域ID"
+      }
+    ]
+  },
+  "expected_kac": {
+    "resource": {
+      "model_id": "cw-MySQL",
+      "model_inst_id": "15",
+      "bk_obj_id": "MySQL",
+      "bk_inst_id": 15,
+      "bk_biz_id": 2,
+      "bk_biz_name": "fixture-biz-2",
+      "bk_set_id": 2,
+      "bk_set_name": "fixture-set-2",
+      "bk_module_id": 3,
+      "bk_module_name": "fixture-module-3",
+      "bk_cloud_id": 0,
+      "bk_cloud_name": "default area",
+      "cw_labels": [
+        "bk_biz_id",
+        "bk_biz_id|2",
+        "bk_set_id",
+        "bk_set_id|2",
+        "cw-MySQL",
+        "cw-MySQL|15"
+      ]
+    },
+    "display": {
+      "object": "fixture-mysql-15_3006_192.0.2.115",
+      "content": "AVG(mysql_db_data_length) >= 1.0, current value is 352321536"
+    },
+    "metric": {
+      "metric_name": "mysql_db_data_length",
+      "result_table_id": "sql_test_ob_mysql_platform.sql1",
+      "aggregate_func": "AVG",
+      "time_interval": 60
+    },
+    "source": {
+      "source_id": "built_in_bk",
+      "source_name": "基础监控",
+      "meta_info": "fixture-collect-event-01"
+    }
+  },
+  "expected_payload": {
+    "processors": [
+      {
+        "strategy": {
+          "status": "succeeded",
+          "value": {
+            "data_source": "插件采集",
+            "monitor_template_id": 551,
+            "strategy_config_id": "6727e4669ee54c109a8f2ac89628a6ef",
+            "strategy_id": 1344,
+            "strategy_name": "指标丨mysql_db_data_length",
+            "strategy_version": 2,
+            "url": "/#/kmc/manage/monitorStrategy/monitorStrategyDetails?id=551&strategy_config_id=6727e4669ee54c109a8f2ac89628a6ef"
+          }
+        }
+      },
+      {
+        "resource": {
+          "status": "succeeded",
+          "value": {
+            "bk_biz_id": 2,
+            "bk_biz_name": "fixture-biz-2",
+            "bk_cloud_id": 0,
+            "bk_cloud_name": "default area",
+            "bk_inst_id": 15,
+            "bk_module_id": 3,
+            "bk_module_name": "fixture-module-3",
+            "bk_obj_id": "MySQL",
+            "bk_set_id": 2,
+            "bk_set_name": "fixture-set-2",
+            "cloud_plat_id": null,
+            "cw_labels": [
+              "bk_biz_id",
+              "bk_biz_id|2",
+              "bk_set_id",
+              "bk_set_id|2",
+              "cw-MySQL",
+              "cw-MySQL|15"
+            ],
+            "dynamic_group_id": [],
+            "model_id": "cw-MySQL",
+            "model_inst_id": "15",
+            "model_name": "MySQL"
+          }
+        }
+      },
+      {
+        "display": {
+          "status": "succeeded",
+          "value": {
+            "content": "AVG(mysql_db_data_length) >= 1.0, current value is 352321536",
+            "dimension_text": "业务=2(fixture-biz-2) | 目标IP=192.0.2.12 | 目标云区域ID=0(default area) | 采集任务ID=fixture-collect-mysql-15",
+            "dimensions": [
+              {
+                "name": "目标IP",
+                "real_key": "bk_target_ip",
+                "real_value": "192.0.2.12",
+                "value": "192.0.2.12"
+              },
+              {
+                "name": "目标云区域ID",
+                "real_key": "bk_target_cloud_id",
+                "real_value": 0,
+                "value": "default area"
+              },
+              {
+                "name": "采集任务ID",
+                "real_key": "bk_collect_config_id",
+                "real_value": "fixture-collect-mysql-15",
+                "value": "fixture-collect-mysql-15"
+              },
+              {
+                "name": "业务",
+                "real_key": "bk_biz_id",
+                "real_value": 2,
+                "value": "fixture-biz-2"
+              }
+            ],
+            "object": "fixture-mysql-15_3006_192.0.2.115",
+            "title": "fixture-mysql-15_3006_192.0.2.115发生了指标丨mysql_db_data_length告警"
+          }
+        }
+      },
+      {
+        "metric": {
+          "status": "succeeded",
+          "value": {
+            "aggregate_func": "AVG",
+            "anomaly_begin_time": null,
+            "display_name": "指标丨mysql_db_data_length",
+            "metric_name": "mysql_db_data_length",
+            "metric_query_params": {
+              "bk_biz_id": 2,
+              "expression": "A",
+              "function": {
+                "time_compare": []
+              },
+              "functions": [],
+              "query_configs": [
+                {
+                  "bk_biz_id": 2,
+                  "custom_event_name": "",
+                  "data_source_label": "bk_monitor",
+                  "data_type_label": "time_series",
+                  "extend_fields": {},
+                  "filter_dict": {},
+                  "functions": [],
+                  "group_by": [
+                    "bk_target_ip",
+                    "bk_target_cloud_id",
+                    "bk_collect_config_id",
+                    "bk_biz_id"
+                  ],
+                  "index_set_id": 0,
+                  "interval": 60,
+                  "metrics": [
+                    {
+                      "alias": "a",
+                      "field": "mysql_db_data_length",
+                      "method": "AVG"
+                    }
+                  ],
+                  "promql": "",
+                  "query_string": "",
+                  "table": "sql_test_ob_mysql_platform.sql1",
+                  "time_field": null,
+                  "where": [
+                    {
+                      "key": "bk_biz_id",
+                      "method": "eq",
+                      "value": [
+                        2
+                      ]
+                    },
+                    {
+                      "condition": "and",
+                      "key": "bk_collect_config_id",
+                      "method": "eq",
+                      "value": [
+                        "fixture-collect-mysql-15"
+                      ]
+                    },
+                    {
+                      "condition": "and",
+                      "key": "bk_target_cloud_id",
+                      "method": "eq",
+                      "value": [
+                        0
+                      ]
+                    },
+                    {
+                      "condition": "and",
+                      "key": "bk_target_ip",
+                      "method": "eq",
+                      "value": [
+                        "192.0.2.12"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "metric_unique_id": "sql_test_ob_mysql_platform.sql1.mysql_db_data_length",
+            "result_table_id": "sql_test_ob_mysql_platform.sql1",
+            "time_interval": 60,
+            "unit": "",
+            "where_condition": "bk_biz_id='2' and bk_cloud_id='0' and bk_collect_config_id='fixture-collect-mysql-15' and bk_target_cloud_id='0' and bk_target_ip='192.0.2.12' and ip='192.0.2.12'"
+          }
+        }
+      },
+      {
+        "source": {
+          "status": "succeeded",
+          "value": {
+            "meta_info": "fixture-collect-event-01",
+            "source_id": "built_in_bk",
+            "source_name": "基础监控"
+          }
+        }
+      }
+    ]
+  }
+}

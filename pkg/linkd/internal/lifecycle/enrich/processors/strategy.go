@@ -142,8 +142,9 @@ func (p Strategy) buildStrategyURL(
 	if strategy.ObjectModelCode == nil || *strategy.ObjectModelCode == "" {
 		return "", false
 	}
-	queryInstance, diagnostics := resourceInstanceQuery(*strategy.ObjectModelCode, scope.Alert().Dimensions)
-	if len(diagnostics) != 0 && queryInstance.InstanceID == "" && len(queryInstance.AttributeFilters) == 0 {
+	classification := rules.Classify(strategy, scope.Alert().Dimensions)
+	queryInstance, ok := strategyInstanceQuery(classification.BaseTarget, *strategy.ObjectModelCode, scope.Alert().Dimensions)
+	if !ok {
 		return "", false
 	}
 	instance, found, err := scope.Instance(ctx, queryInstance)
@@ -174,6 +175,33 @@ func (p Strategy) buildStrategyURL(
 		"object_model_code": []string{*strategy.ObjectModelCode},
 	}
 	return p.absoluteStrategyURL(rules.StrategyScenePath + query.Encode()), true
+}
+
+func strategyInstanceQuery(branch rules.BaseTargetBranch, modelCode string, dimensions domain.DimensionMap) (enrich.InstanceQuery, bool) {
+	switch branch {
+	case rules.BaseTargetMonitorSource:
+		if value, exists := dimensions[rules.FieldBKInstID]; exists && rules.ScalarProvided(value) {
+			return enrich.InstanceQuery{ModelCode: modelCode, InstanceID: rules.ScalarIdentity(value)}, true
+		}
+		modelValue, modelExists := dimensions[rules.FieldObjectModelID]
+		instanceValue, instanceExists := dimensions[rules.FieldObjectModelInstID]
+		if modelExists && instanceExists && rules.ScalarProvided(modelValue) && rules.ScalarProvided(instanceValue) {
+			return enrich.InstanceQuery{ModelCode: rules.ScalarIdentity(modelValue), InstanceID: rules.ScalarIdentity(instanceValue)}, true
+		}
+	case rules.BaseTargetNoData:
+		modelValue, modelExists := dimensions[rules.FieldModelID]
+		instanceValue, instanceExists := dimensions[rules.FieldModelInstID]
+		if modelExists && instanceExists && rules.ScalarIdentity(modelValue) == modelCode && rules.ScalarProvided(instanceValue) {
+			return enrich.InstanceQuery{ModelCode: modelCode, InstanceID: rules.ScalarIdentity(instanceValue)}, true
+		}
+	case rules.BaseTargetSystemMetric:
+		for _, field := range []string{rules.FieldBKInstID, rules.FieldBKHostID, rules.FieldBKTargetHostID} {
+			if value, exists := dimensions[field]; exists && rules.ScalarProvided(value) {
+				return enrich.InstanceQuery{ModelCode: modelCode, InstanceID: rules.ScalarIdentity(value)}, true
+			}
+		}
+	}
+	return enrich.InstanceQuery{}, false
 }
 
 func (p Strategy) absoluteStrategyURL(path string) string {

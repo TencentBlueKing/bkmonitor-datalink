@@ -143,6 +143,20 @@ func TestOneModelClientRejectsInvalidResponseIdentity(t *testing.T) {
 	}
 }
 
+func TestOneModelClientRejectsAmbiguousInstance(t *testing.T) {
+	t.Parallel()
+	document := `{"bk_tenant_id":"tenant-a","model_id":"cw-Host","model_inst_id":"167","entity_uid":"cw-Host|167","attributes":{}}`
+	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		body := `{"hits":{"hits":[{"_source":` + document + `},{"_source":` + document + `}]}}`
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	client, _ := NewOneModelClient(OneModelClientConfig{Transport: transport})
+	_, found, err := client.FindInstance(context.Background(), "tenant-a", enrich.InstanceQuery{ModelCode: rulesHostModel, InstanceID: "167"})
+	if found || err == nil || !strings.Contains(err.Error(), "multiple") {
+		t.Fatalf("found=%t err=%v", found, err)
+	}
+}
+
 func TestOneModelClientReturnsMissing(t *testing.T) {
 	t.Parallel()
 	transport := roundTripFunc(func(*http.Request) (*http.Response, error) {

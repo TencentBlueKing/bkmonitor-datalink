@@ -1,0 +1,482 @@
+{
+  "alert": {
+    "bk_biz_id": 5,
+    "content": "AVG(CPU使用率+CPU空闲率) >= 25.0, 当前值28.11059",
+    "dimensions": {
+      "bk_biz_id": "5",
+      "bk_cloud_id": 0,
+      "bk_host_id": 7,
+      "bk_target_cloud_id": 0,
+      "bk_target_host_id": "7",
+      "bk_target_ip": "192.0.2.17",
+      "device_name": "cpu-total",
+      "hostname": "fixture-host-17",
+      "ip": "192.0.2.17"
+    },
+    "source_event_id": "kac-system-metric-01",
+    "strategy_id": 2051,
+    "strategy_version": 2,
+    "subject_name": "192.0.2.17_0"
+  },
+  "branch": "system_metric",
+  "expected_kac": {
+    "display": {
+      "content": "AVG(CPU使用率+CPU空闲率) >= 25.0, 当前值28.11059",
+      "object": "192.0.2.17_0"
+    },
+    "metric": {
+      "aggregate_func": "AVG",
+      "metric_name": "",
+      "result_table_id": "system.cpu_summary",
+      "time_interval": 60,
+      "unit": "percent"
+    },
+    "resource": {
+      "bk_biz_id": 5,
+      "bk_biz_name": "fixture-biz-5",
+      "bk_inst_id": 7,
+      "bk_module_id": 82,
+      "bk_module_name": "fixture-module-82",
+      "bk_obj_id": "host",
+      "bk_set_id": 17,
+      "bk_set_name": "fixture-set-17",
+      "cw_labels": [
+        "bk_biz_id",
+        "bk_biz_id|5",
+        "bk_set_id",
+        "bk_set_id|17",
+        "cw-Host",
+        "cw-Host|7"
+      ],
+      "model_id": "cw-Host",
+      "model_inst_id": "7"
+    },
+    "source": {
+      "meta_info": "kac-system-metric-01",
+      "source_id": "built_in_bk",
+      "source_name": "基础监控"
+    }
+  },
+  "expected_payload": {
+    "processors": [
+      {
+        "strategy": {
+          "status": "succeeded",
+          "value": {
+            "data_source": "bk_monitor",
+            "monitor_template_id": 148,
+            "strategy_config_id": "0efd470d5559475da1edaf31f587c8a0",
+            "strategy_id": 2051,
+            "strategy_name": "指标丨CPU使用率 (usage)+CPU空闲率 (idle)",
+            "strategy_version": 2,
+            "url": "/#/kmc/manage/monitorStrategy/monitorStrategyDetails?id=148&strategy_config_id=0efd470d5559475da1edaf31f587c8a0"
+          }
+        }
+      },
+      {
+        "resource": {
+          "status": "succeeded",
+          "value": {
+            "bk_biz_id": 5,
+            "bk_biz_name": "fixture-biz-5",
+            "bk_cloud_id": 0,
+            "bk_cloud_name": "",
+            "bk_inst_id": 7,
+            "bk_module_id": 82,
+            "bk_module_name": "fixture-module-82",
+            "bk_obj_id": "host",
+            "bk_set_id": 17,
+            "bk_set_name": "fixture-set-17",
+            "cloud_plat_id": null,
+            "cw_labels": [
+              "bk_biz_id",
+              "bk_biz_id|5",
+              "bk_set_id",
+              "bk_set_id|17",
+              "cw-Host",
+              "cw-Host|7"
+            ],
+            "dynamic_group_id": [],
+            "model_id": "cw-Host",
+            "model_inst_id": "7",
+            "model_name": "主机"
+          }
+        }
+      },
+      {
+        "display": {
+          "status": "succeeded",
+          "value": {
+            "content": "AVG(CPU使用率+CPU空闲率) >= 25.0, 当前值28.11059",
+            "dimension_text": "业务=5(fixture-biz-5) | 主机名=fixture-host-17 | 云区域ID=0 | 目标IP=192.0.2.17 | 目标主机ID=7 | 设备名=cpu-total | 采集主机ID=7",
+            "dimensions": [
+              {
+                "name": "云区域ID",
+                "real_key": "bk_target_cloud_id",
+                "real_value": 0,
+                "value": 0
+              },
+              {
+                "name": "设备名",
+                "real_key": "device_name",
+                "real_value": "cpu-total",
+                "value": "cpu-total"
+              },
+              {
+                "name": "目标主机ID",
+                "real_key": "bk_target_host_id",
+                "real_value": "7",
+                "value": "7"
+              },
+              {
+                "name": "业务",
+                "real_key": "bk_biz_id",
+                "real_value": "5",
+                "value": "fixture-biz-5"
+              },
+              {
+                "name": "主机名",
+                "real_key": "hostname",
+                "real_value": "fixture-host-17",
+                "value": "fixture-host-17"
+              },
+              {
+                "name": "采集主机ID",
+                "real_key": "bk_host_id",
+                "real_value": 7,
+                "value": 7
+              },
+              {
+                "name": "目标IP",
+                "real_key": "bk_target_ip",
+                "real_value": "192.0.2.17",
+                "value": "192.0.2.17"
+              }
+            ],
+            "object": "192.0.2.17_0",
+            "title": "192.0.2.17_0发生了指标丨CPU使用率 (usage)+CPU空闲率 (idle)告警"
+          }
+        }
+      },
+      {
+        "metric": {
+          "status": "succeeded",
+          "value": {
+            "aggregate_func": "AVG",
+            "anomaly_begin_time": null,
+            "display_name": "指标丨CPU使用率 (usage)+CPU空闲率 (idle)",
+            "metric_name": "",
+            "metric_query_params": {
+              "bk_biz_id": 5,
+              "expression": "A+B",
+              "function": {
+                "time_compare": []
+              },
+              "functions": [],
+              "query_configs": [
+                {
+                  "bk_biz_id": 5,
+                  "custom_event_name": "",
+                  "data_source_label": "bk_monitor",
+                  "data_type_label": "time_series",
+                  "extend_fields": {},
+                  "filter_dict": {},
+                  "functions": [],
+                  "group_by": [
+                    "bk_target_cloud_id",
+                    "device_name",
+                    "bk_target_host_id",
+                    "bk_biz_id",
+                    "hostname",
+                    "bk_target_ip"
+                  ],
+                  "index_set_id": 0,
+                  "interval": 60,
+                  "metrics": [
+                    {
+                      "alias": "A",
+                      "field": "usage",
+                      "method": "AVG"
+                    }
+                  ],
+                  "promql": "",
+                  "query_string": "",
+                  "table": "system.cpu_summary",
+                  "time_field": null,
+                  "where": [
+                    {
+                      "key": "bk_biz_id",
+                      "method": "eq",
+                      "value": [
+                        "5"
+                      ]
+                    },
+                    {
+                      "condition": "and",
+                      "key": "bk_target_cloud_id",
+                      "method": "eq",
+                      "value": [
+                        0
+                      ]
+                    },
+                    {
+                      "condition": "and",
+                      "key": "bk_target_host_id",
+                      "method": "eq",
+                      "value": [
+                        "7"
+                      ]
+                    },
+                    {
+                      "condition": "and",
+                      "key": "bk_target_ip",
+                      "method": "eq",
+                      "value": [
+                        "192.0.2.17"
+                      ]
+                    },
+                    {
+                      "condition": "and",
+                      "key": "device_name",
+                      "method": "eq",
+                      "value": [
+                        "cpu-total"
+                      ]
+                    },
+                    {
+                      "condition": "and",
+                      "key": "hostname",
+                      "method": "eq",
+                      "value": [
+                        "fixture-host-17"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "bk_biz_id": 5,
+                  "custom_event_name": "",
+                  "data_source_label": "bk_monitor",
+                  "data_type_label": "time_series",
+                  "extend_fields": {},
+                  "filter_dict": {},
+                  "functions": [],
+                  "group_by": [
+                    "bk_target_cloud_id",
+                    "device_name",
+                    "bk_target_host_id",
+                    "bk_biz_id",
+                    "hostname",
+                    "bk_target_ip"
+                  ],
+                  "index_set_id": 0,
+                  "interval": 60,
+                  "metrics": [
+                    {
+                      "alias": "B",
+                      "field": "idle",
+                      "method": "AVG"
+                    }
+                  ],
+                  "promql": "",
+                  "query_string": "",
+                  "table": "system.cpu_summary",
+                  "time_field": null,
+                  "where": [
+                    {
+                      "key": "bk_biz_id",
+                      "method": "eq",
+                      "value": [
+                        "5"
+                      ]
+                    },
+                    {
+                      "condition": "and",
+                      "key": "bk_target_cloud_id",
+                      "method": "eq",
+                      "value": [
+                        0
+                      ]
+                    },
+                    {
+                      "condition": "and",
+                      "key": "bk_target_host_id",
+                      "method": "eq",
+                      "value": [
+                        "7"
+                      ]
+                    },
+                    {
+                      "condition": "and",
+                      "key": "bk_target_ip",
+                      "method": "eq",
+                      "value": [
+                        "192.0.2.17"
+                      ]
+                    },
+                    {
+                      "condition": "and",
+                      "key": "device_name",
+                      "method": "eq",
+                      "value": [
+                        "cpu-total"
+                      ]
+                    },
+                    {
+                      "condition": "and",
+                      "key": "hostname",
+                      "method": "eq",
+                      "value": [
+                        "fixture-host-17"
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "metric_unique_id": "system.cpu_summary.usage",
+            "result_table_id": "system.cpu_summary",
+            "time_interval": 60,
+            "unit": "percent",
+            "where_condition": "bk_biz_id='5' and bk_cloud_id='0' and bk_target_cloud_id='0' and bk_target_host_id='7' and bk_target_ip='192.0.2.17' and device_name='cpu-total' and hostname='fixture-host-17' and ip='192.0.2.17'"
+          }
+        }
+      },
+      {
+        "source": {
+          "status": "succeeded",
+          "value": {
+            "meta_info": "kac-system-metric-01",
+            "source_id": "built_in_bk",
+            "source_name": "基础监控"
+          }
+        }
+      }
+    ]
+  },
+  "instance": {
+    "attributes": {
+      "bk_cloud_id": 0,
+      "bk_host_id": 7,
+      "bk_host_innerip": "192.0.2.17",
+      "bk_host_name": "fixture-host-17",
+      "bk_inst_display_name": "192.0.2.17_0"
+    },
+    "fields": {
+      "bk_biz_ids": [
+        5
+      ],
+      "entity_uid": "cw-Host|7",
+      "model_id": "cw-Host",
+      "model_inst_id": "7"
+    },
+    "instance_id": "7",
+    "model_code": "cw-Host"
+  },
+  "kac_case": "system_metric_data",
+  "metric": {
+    "Description": "",
+    "Dimensions": [
+      {
+        "key": "device_name",
+        "name": "设备名"
+      },
+      {
+        "key": "bk_target_host_id",
+        "name": "目标主机ID"
+      },
+      {
+        "key": "bk_biz_id",
+        "name": "业务"
+      },
+      {
+        "key": "hostname",
+        "name": "主机名"
+      },
+      {
+        "key": "bk_host_id",
+        "name": "采集主机ID"
+      },
+      {
+        "key": "bk_target_ip",
+        "name": "目标IP"
+      },
+      {
+        "key": "bk_target_cloud_id",
+        "name": "云区域ID"
+      }
+    ],
+    "FieldCNName": "CPU使用率",
+    "FieldName": "usage",
+    "Unit": "percent"
+  },
+  "model": {
+    "fields": {
+      "bk_cmdb_obj_id": "host",
+      "object_model_name": "主机"
+    },
+    "model_code": "cw-Host",
+    "model_id": "36"
+  },
+  "name": "system_metric_data",
+  "strategy": {
+    "aggregate_method": "AVG",
+    "aggregate_period": "60s",
+    "alarm_alias": "",
+    "bk_biz_id": 5,
+    "config_id": "0efd470d5559475da1edaf31f587c8a0",
+    "data_source": "bk_monitor",
+    "expression": "A+B",
+    "is_default": true,
+    "monitor_template_id": 148,
+    "name": "指标丨CPU使用率 (usage)+CPU空闲率 (idle)",
+    "object_model_code": "cw-Host",
+    "query_configs": [
+      {
+        "agg_dimension": [
+          "bk_target_cloud_id",
+          "device_name",
+          "bk_target_host_id",
+          "bk_biz_id",
+          "hostname",
+          "bk_host_id",
+          "bk_target_ip"
+        ],
+        "agg_interval": 60,
+        "agg_method": "AVG",
+        "alias": "A",
+        "data_source_label": "bk_monitor",
+        "data_type_label": "time_series",
+        "metric_field": "usage",
+        "result_table_id": "system.cpu_summary"
+      },
+      {
+        "agg_dimension": [
+          "bk_target_cloud_id",
+          "device_name",
+          "bk_target_host_id",
+          "bk_biz_id",
+          "hostname",
+          "bk_host_id",
+          "bk_target_ip"
+        ],
+        "agg_interval": 60,
+        "agg_method": "AVG",
+        "alias": "B",
+        "data_source_label": "bk_monitor",
+        "data_type_label": "time_series",
+        "metric_field": "idle",
+        "result_table_id": "system.cpu_summary"
+      }
+    ]
+  },
+  "topology": {
+    "bk_biz_id": 5,
+    "bk_biz_name": "fixture-biz-5",
+    "bk_module_id": 82,
+    "bk_module_name": "fixture-module-82",
+    "bk_set_id": 17,
+    "bk_set_name": "fixture-set-17",
+    "host_id": "7"
+  }
+}

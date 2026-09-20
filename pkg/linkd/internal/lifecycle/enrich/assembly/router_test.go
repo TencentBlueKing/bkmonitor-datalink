@@ -25,6 +25,7 @@ import (
 	"linkd/internal/lifecycle/enrich/datasources"
 	"linkd/internal/lifecycle/enrich/models"
 	"linkd/internal/lifecycle/enrich/processors"
+	"linkd/internal/lifecycle/enrich/rules"
 	"linkd/internal/store/memory"
 )
 
@@ -65,6 +66,8 @@ func TestBaseCollectRawEventRunsLifecycleEnrichment(t *testing.T) {
 	dataSources := (&datasources.Mock{}).Sources()
 	dataSources.CWStrategy = baseCollectCWStrategy{}
 	dataSources.OneModel = baseCollectOneModel{}
+	dataSources.Model = baseCollectModel{}
+	dataSources.CollectTopology = baseCollectTopology{}
 	dataSources.Metric = baseCollectMetric{}
 	dataSources.AlarmSource = baseCollectAlarmSource{}
 	router, err := NewRouter([]config.EventSource{source}, dataSources)
@@ -111,6 +114,108 @@ func TestBaseCollectRawEventRunsLifecycleEnrichment(t *testing.T) {
 	assertBaseCollectEnrichment(t, payload)
 }
 
+// TestStandardNoDataMarkerReachesEnrich 固定标准事件到 Alert 的分类链路；Kingeye 原始
+// event.tags 的映射属于上游契约，此测试仅验证已经投影为标准 dimensions 的标记。
+func TestStandardNoDataMarkerReachesEnrich(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name               string
+		markerInDimensions bool
+		wantBranch         rules.BaseTargetBranch
+	}{
+		{name: "standard dimension", markerInDimensions: true, wantBranch: rules.BaseTargetNoData},
+		{name: "source tag only", wantBranch: rules.BaseTargetSystemMetric},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			var payload map[string]any
+			if err := json.Unmarshal(baseCollectRawPayload(), &payload); err != nil {
+				t.Fatal(err)
+			}
+			dimensions := map[string]any{"model_id": rules.HostModelCode, "model_inst_id": 101, "bk_biz_id": 2}
+			if test.markerInDimensions {
+				dimensions[rules.FieldNoDataDimension] = true
+			} else {
+				payload["event"] = map[string]any{"tags": []any{map[string]any{"key": rules.FieldNoDataDimension, "value": true}}}
+			}
+			payload["dimensions"] = dimensions
+			body, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			source := baseCollectEventSource()
+			mapper, err := cleaner.NewMapper(source, config.DefaultSeverityConfig())
+			if err != nil {
+				t.Fatal(err)
+			}
+			event, err := mapper.MapMessage(ctx, consume.Message{
+				ID: "no-data-fixture", TenantID: datasources.SampleTenantID,
+				EnqueuedAt: time.Date(2026, 9, 1, 0, 0, 2, 0, time.UTC),
+				Body:       body, Headers: map[string][]byte{"bk_tenant_id": []byte(datasources.SampleTenantID)},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := rules.Classify(models.CWStrategy{ObjectModelCode: pointerTo(rules.HostModelCode)}, event.Dimensions).BaseTarget; got != test.wantBranch {
+				t.Fatalf("event classification=%q want=%q", got, test.wantBranch)
+			}
+			dataSources := (&datasources.Mock{}).Sources()
+			dataSources.CWStrategy = baseCollectCWStrategy{}
+			dataSources.OneModel = baseCollectOneModel{}
+			dataSources.Model = baseCollectModel{}
+			dataSources.CollectTopology = baseCollectTopology{}
+			dataSources.Metric = baseCollectMetric{}
+			dataSources.AlarmSource = baseCollectAlarmSource{}
+			router, err := NewRouter([]config.EventSource{source}, dataSources)
+			if err != nil {
+				t.Fatal(err)
+			}
+			repository := memory.New()
+			stored, err := repository.CreateEvent(ctx, event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			processor, err := lifecycle.NewProcessor(repository, lifecycle.NoopRecentAlertCache{}, lifecycle.DeterministicAlertIDGenerator{}, router,
+				nil, config.DefaultSeverityConfig(), fixedClock{now: time.Date(2026, 9, 1, 0, 0, 3, 0, time.UTC)}, discardLogger{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			processed, err := processor.ProcessEvent(ctx, stored.StoredEvent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(processed.AlertIDs) == 0 {
+				t.Fatal("processed alert IDs are empty")
+			}
+			storedAlert, err := repository.GetAlert(ctx, datasources.SampleTenantID, processed.AlertIDs[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			alert := storedAlert.Alert
+			if _, ok := alert.Dimensions[rules.FieldNoDataDimension]; ok != test.markerInDimensions {
+				t.Fatalf("alert marker present=%t, want=%t", ok, test.markerInDimensions)
+			}
+			if got := rules.Classify(models.CWStrategy{ObjectModelCode: pointerTo(rules.HostModelCode)}, alert.Dimensions).BaseTarget; got != test.wantBranch {
+				t.Fatalf("alert classification=%q want=%q", got, test.wantBranch)
+			}
+			results, err := enrich.DecodePayload(alert.Enrich)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resource := results.Processors[1][rules.ResourceProcessor]
+			if test.markerInDimensions {
+				if resource.Status != domain.EnrichStatusSucceeded || string(resource.Value["model_inst_id"]) != `"101"` {
+					t.Fatalf("resource=%#v", resource)
+				}
+			} else if resource.Status != domain.EnrichStatusFailed || string(resource.Value["model_inst_id"]) != `""` {
+				t.Fatalf("unmapped source tag changed resource identity: %#v", resource)
+			}
+		})
+	}
+}
+
+func pointerTo(value string) *string { return &value }
+
 func TestRouterRunsConfiguredBaseCollectSlice(t *testing.T) {
 	t.Parallel()
 	sources := []config.EventSource{{
@@ -121,6 +226,8 @@ func TestRouterRunsConfiguredBaseCollectSlice(t *testing.T) {
 	}, {EventSourceID: "disabled-source"}}
 	dataSources := (&datasources.Mock{}).Sources()
 	dataSources.OneModel = sampleOneModel{}
+	dataSources.Model = baseCollectModel{}
+	dataSources.CollectTopology = baseCollectTopology{}
 	dataSources.Metric = sampleMetric{}
 	dataSources.AlarmSource = sampleAlarmSource{}
 	router, err := NewRouter(sources, dataSources)
@@ -275,7 +382,7 @@ func assertBaseCollectEnrichment(t *testing.T, payload enrich.Payload) {
 		t.Fatalf("resource=%#v", resource)
 	}
 	display := payload.Processors[2]["display"].Value
-	if string(display["title"]) != `"CPU 使用率过高"` || string(display["object"]) != `"host-101"` ||
+	if string(display["title"]) != `"CPU 使用率过高"` || string(display["object"]) != `"10.0.0.1"` ||
 		string(display["dimension_text"]) != `"bk_host_id(101)"` {
 		t.Fatalf("display=%#v", display)
 	}
@@ -364,6 +471,36 @@ func (baseCollectAlarmSource) GetAlarmSourceName(
 		return "", false, nil
 	}
 	return "鲸眼监控", true, nil
+}
+
+type baseCollectModel struct{}
+
+func (baseCollectModel) GetModelByCode(ctx context.Context, tenantID, modelCode string) (enrich.Model, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return enrich.Model{}, false, err
+	}
+	if tenantID != datasources.SampleTenantID || modelCode != rules.HostModelCode {
+		return enrich.Model{}, false, nil
+	}
+	return enrich.Model{TenantID: tenantID, ModelID: "36", ModelCode: modelCode, Fields: map[string]any{
+		rules.FieldObjectModelName: "主机", rules.FieldBKCMDBObjectID: "host",
+	}}, true, nil
+}
+
+type baseCollectTopology struct{}
+
+func (baseCollectTopology) FindRelatedHost(context.Context, string, string, string, string) (enrich.Instance, bool, error) {
+	return enrich.Instance{}, false, nil
+}
+
+func (baseCollectTopology) FindHostTopology(ctx context.Context, tenantID, hostID string) (models.ResourceTopology, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return models.ResourceTopology{}, false, err
+	}
+	if tenantID != datasources.SampleTenantID || hostID != "101" {
+		return models.ResourceTopology{}, false, nil
+	}
+	return models.ResourceTopology{BKBizID: 2, BKBizName: "业务 2", BKSetID: 3, BKSetName: "集群 3", BKModuleID: 4, BKModuleName: "模块 4"}, true, nil
 }
 
 type baseCollectOneModel struct{}

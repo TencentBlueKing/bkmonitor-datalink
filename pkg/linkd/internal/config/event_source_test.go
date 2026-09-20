@@ -195,16 +195,19 @@ func TestEventSourceCloneAndRedaction(t *testing.T) {
 	}
 }
 
-func TestEnrichRejectsLegacyOneModelIndexPrefix(t *testing.T) {
+func TestEnrichAcceptsTopologyIndexPrefix(t *testing.T) {
 	t.Parallel()
 	var dataSource EnrichDataSources
 	decoder := yaml.NewDecoder(strings.NewReader(`elasticsearch:
   addresses: [http://onemodel.example.com:9200]
-  index_prefix: bk_monitor_base_
+  index_prefix: custom_base_
 `))
 	decoder.KnownFields(true)
-	if err := decoder.Decode(&dataSource); err == nil {
-		t.Fatal("legacy enrich elasticsearch index_prefix was accepted")
+	if err := decoder.Decode(&dataSource); err != nil {
+		t.Fatal(err)
+	}
+	if dataSource.Elasticsearch == nil || dataSource.Elasticsearch.IndexPrefix != "custom_base_" {
+		t.Fatalf("datasource=%#v", dataSource)
 	}
 }
 

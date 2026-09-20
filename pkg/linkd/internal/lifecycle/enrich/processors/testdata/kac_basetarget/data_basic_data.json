@@ -1,0 +1,244 @@
+{
+  "name": "data_basic_data",
+  "kac_case": "basic_data",
+  "branch": "data",
+  "alert": {
+    "strategy_id": 1303,
+    "strategy_version": 2,
+    "bk_biz_id": 5,
+    "subject_name": "",
+    "content": "当前指标(AVG(cpu_load))已经有7259个周期无数据上报",
+    "source_event_id": "fixture-data-event-01",
+    "dimensions": {
+      "bk_biz_id": 5
+    }
+  },
+  "strategy": {
+    "config_type": "data",
+    "is_default": true,
+    "data_source": "自定义上报-test01",
+    "name": "指标丨cpu_load",
+    "alarm_alias": "",
+    "object_model_code": "",
+    "bk_biz_id": 5,
+    "monitor_template_id": 77,
+    "config_id": "2509adddb9e640559c598183aee9cb86",
+    "aggregate_method": "AVG",
+    "aggregate_period": "60s",
+    "expression": "A",
+    "query_configs": [
+      {
+        "alias": "a",
+        "metric_field": "cpu_load",
+        "result_table_id": "5_bkmonitor_time_series_1576329.__default__",
+        "agg_method": "AVG",
+        "agg_interval": 60,
+        "agg_dimension": [
+          "bk_obj_id",
+          "cpu",
+          "target",
+          "bk_biz_id"
+        ],
+        "data_source_label": "custom",
+        "data_type_label": "time_series"
+      }
+    ]
+  },
+  "model": {
+    "model_id": "999",
+    "model_code": "cw-Others",
+    "fields": {
+      "object_model_name": "其他"
+    }
+  },
+  "instance": {
+    "model_code": "",
+    "instance_id": "",
+    "fields": {},
+    "attributes": {}
+  },
+  "topology": {
+    "host_id": "",
+    "bk_biz_id": 0,
+    "bk_biz_name": "",
+    "bk_set_id": 0,
+    "bk_set_name": "",
+    "bk_module_id": 0,
+    "bk_module_name": ""
+  },
+  "metric": {
+    "ObjectModelCode": "cw-Others",
+    "FieldName": "cpu_load",
+    "FieldCNName": "cpu_load",
+    "Description": "",
+    "Unit": "",
+    "Dimensions": [
+      {
+        "key": "bk_biz_id",
+        "name": "业务"
+      }
+    ]
+  },
+  "expected_kac": {
+    "resource": {
+      "model_id": "cw-Others",
+      "model_inst_id": "",
+      "model_name": "其他",
+      "bk_biz_id": 5,
+      "cw_labels": [
+        "bk_biz_id",
+        "bk_biz_id|5"
+      ],
+      "bk_biz_name": "fixture-biz-5"
+    },
+    "display": {
+      "object": "",
+      "title": "指标丨cpu_load发生了告警",
+      "content": "当前指标(AVG(cpu_load))已经有7259个周期无数据上报"
+    },
+    "metric": {
+      "metric_name": "cpu_load",
+      "result_table_id": "5_bkmonitor_time_series_1576329.__default__",
+      "aggregate_func": "AVG",
+      "time_interval": 60
+    },
+    "source": {
+      "source_id": "built_in_bk",
+      "source_name": "基础监控",
+      "meta_info": "fixture-data-event-01"
+    }
+  },
+  "expected_payload": {
+    "processors": [
+      {
+        "strategy": {
+          "status": "succeeded",
+          "value": {
+            "data_source": "自定义上报-test01",
+            "monitor_template_id": 77,
+            "strategy_config_id": "2509adddb9e640559c598183aee9cb86",
+            "strategy_id": 1303,
+            "strategy_name": "指标丨cpu_load",
+            "strategy_version": 2,
+            "url": "/#/kmc/manage/monitorStrategy/monitorStrategyDetails?id=77&strategy_config_id=2509adddb9e640559c598183aee9cb86"
+          }
+        }
+      },
+      {
+        "resource": {
+          "status": "succeeded",
+          "value": {
+            "bk_biz_id": 5,
+            "bk_biz_name": "fixture-biz-5",
+            "bk_cloud_id": null,
+            "bk_cloud_name": "",
+            "bk_inst_id": null,
+            "bk_module_id": null,
+            "bk_module_name": "",
+            "bk_obj_id": null,
+            "bk_set_id": null,
+            "bk_set_name": "",
+            "cloud_plat_id": null,
+            "cw_labels": [
+              "bk_biz_id",
+              "bk_biz_id|5"
+            ],
+            "dynamic_group_id": [],
+            "model_id": "cw-Others",
+            "model_inst_id": "",
+            "model_name": "其他"
+          }
+        }
+      },
+      {
+        "display": {
+          "status": "succeeded",
+          "value": {
+            "content": "当前指标(AVG(cpu_load))已经有7259个周期无数据上报",
+            "dimension_text": "业务=5(fixture-biz-5)",
+            "dimensions": [
+              {
+                "name": "业务",
+                "real_key": "bk_biz_id",
+                "real_value": 5,
+                "value": "fixture-biz-5"
+              }
+            ],
+            "object": "",
+            "title": "指标丨cpu_load发生了告警"
+          }
+        }
+      },
+      {
+        "metric": {
+          "status": "succeeded",
+          "value": {
+            "aggregate_func": "AVG",
+            "anomaly_begin_time": null,
+            "display_name": "指标丨cpu_load",
+            "metric_name": "cpu_load",
+            "metric_query_params": {
+              "bk_biz_id": 5,
+              "expression": "A",
+              "function": {
+                "time_compare": []
+              },
+              "functions": [],
+              "query_configs": [
+                {
+                  "bk_biz_id": 5,
+                  "custom_event_name": "",
+                  "data_source_label": "custom",
+                  "data_type_label": "time_series",
+                  "extend_fields": {},
+                  "filter_dict": {},
+                  "functions": [],
+                  "group_by": [
+                    "bk_biz_id"
+                  ],
+                  "index_set_id": 0,
+                  "interval": 60,
+                  "metrics": [
+                    {
+                      "alias": "a",
+                      "field": "cpu_load",
+                      "method": "AVG"
+                    }
+                  ],
+                  "promql": "",
+                  "query_string": "",
+                  "table": "5_bkmonitor_time_series_1576329.__default__",
+                  "time_field": null,
+                  "where": [
+                    {
+                      "key": "bk_biz_id",
+                      "method": "eq",
+                      "value": [
+                        5
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            "metric_unique_id": "5_bkmonitor_time_series_1576329.__default__.cpu_load",
+            "result_table_id": "5_bkmonitor_time_series_1576329.__default__",
+            "time_interval": 60,
+            "unit": "",
+            "where_condition": "bk_biz_id='5'"
+          }
+        }
+      },
+      {
+        "source": {
+          "status": "succeeded",
+          "value": {
+            "meta_info": "fixture-data-event-01",
+            "source_id": "built_in_bk",
+            "source_name": "基础监控"
+          }
+        }
+      }
+    ]
+  }
+}

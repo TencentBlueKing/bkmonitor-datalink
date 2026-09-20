@@ -26,10 +26,13 @@ var _ enrich.MetricReader = (*MetricClient)(nil)
 const metricLibraryTable = "home_application_monitormetriclibrary"
 
 type metricMetadataRow struct {
-	FieldCNName   string          `gorm:"column:field_cn_name"`
-	Description   string          `gorm:"column:description"`
-	Unit          string          `gorm:"column:unit"`
-	DimensionList json.RawMessage `gorm:"column:dimension_list"`
+	ObjectModelCode string          `gorm:"column:object_model_code"`
+	FieldName       string          `gorm:"column:field_name"`
+	FieldCNName     string          `gorm:"column:field_cn_name"`
+	Description     string          `gorm:"column:description"`
+	Unit            string          `gorm:"column:unit"`
+	ValueMapping    json.RawMessage `gorm:"column:value_mapping"`
+	DimensionList   json.RawMessage `gorm:"column:dimension_list"`
 }
 
 // MetricClientConfig 注入已经选择 Kingeye schema 的 GORM 连接。
@@ -64,7 +67,7 @@ func (c *MetricClient) FindMetricLibrary(
 	}
 	base := c.db.WithContext(ctx).
 		Table(metricLibraryTable).
-		Select("field_cn_name", "description", "unit", "dimension_list").
+		Select("object_model_code", "field_name", "field_cn_name", "description", "unit", "value_mapping", "dimension_list").
 		Where("bk_tenant_id = ? AND field_name = ? AND is_deleted = ?", query.TenantID, query.FieldName, false)
 	if query.TableID != "" {
 		base = base.Where("table_id = ?", query.TableID)
@@ -93,6 +96,15 @@ func takeMetricMetadata(query *gorm.DB, operation string) (models.MetricMetadata
 	if err != nil {
 		return models.MetricMetadata{}, false, fmt.Errorf("%s: %w", operation, err)
 	}
+	if row.FieldName == "" {
+		return models.MetricMetadata{}, false, fmt.Errorf("%w: %s field_name is empty", enrich.ErrInvalidDataSourceResponse, operation)
+	}
+	valueMapping := make([]models.MetricValueMapping, 0)
+	if len(row.ValueMapping) != 0 && string(row.ValueMapping) != "null" {
+		if err := json.Unmarshal(row.ValueMapping, &valueMapping); err != nil {
+			return models.MetricMetadata{}, false, fmt.Errorf("%w: %s value_mapping: %w", enrich.ErrInvalidDataSourceResponse, operation, err)
+		}
+	}
 	dimensions := make([]models.MetricDimension, 0)
 	if len(row.DimensionList) != 0 {
 		if err := json.Unmarshal(row.DimensionList, &dimensions); err != nil {
@@ -100,9 +112,12 @@ func takeMetricMetadata(query *gorm.DB, operation string) (models.MetricMetadata
 		}
 	}
 	return models.MetricMetadata{
-		FieldCNName: row.FieldCNName,
-		Description: row.Description,
-		Unit:        row.Unit,
-		Dimensions:  dimensions,
+		ObjectModelCode: row.ObjectModelCode,
+		FieldName:       row.FieldName,
+		FieldCNName:     row.FieldCNName,
+		Description:     row.Description,
+		Unit:            row.Unit,
+		ValueMapping:    valueMapping,
+		Dimensions:      dimensions,
 	}, true, nil
 }

@@ -74,35 +74,61 @@ type MetricValues struct {
 	AnomalyBeginTime  *string `json:"anomaly_begin_time"`
 }
 
+// LogTheme 是 KLC 日志主题的最小租户隔离投影。
+type LogTheme struct {
+	TenantID string
+	ID       int64
+	Name     string
+}
+
 // LogValues 定义 log Processor 的完整输出字段。
 type LogValues struct {
-	LogThemeID     any    `json:"log_theme_id"`
-	LogThemeName   string `json:"log_theme_name"`
-	LogQueryString string `json:"log_query_string"`
-	LogRelateInfo  string `json:"log_relate_info"`
+	LogThemeID     any      `json:"log_theme_id"`
+	LogThemeName   string   `json:"log_theme_name"`
+	LogQueryString string   `json:"log_query_string"`
+	LogRelateInfo  string   `json:"log_relate_info"`
+	CWLabels       []string `json:"cw_labels"`
+}
+
+// APMApplication 是 Application Client 返回的租户内应用投影。
+type APMApplication struct {
+	TenantID string
+	ID       int64
+	Name     string
+	Alias    string
+	BKBizID  int64
 }
 
 // APMValues 定义 apm Processor 的完整输出字段。
 type APMValues struct {
-	APMAppID         any    `json:"apm_app_id"`
-	APMAppName       string `json:"apm_app_name"`
-	APMAppAlias      string `json:"apm_app_alias"`
-	APMServiceName   string `json:"apm_service_name"`
-	APMInstanceName  string `json:"apm_instance_name"`
-	APMInterfaceName string `json:"apm_interface_name"`
-	APMNetPeerName   string `json:"apm_net_peer_name"`
+	APMAppID         any      `json:"apm_app_id"`
+	APMAppName       string   `json:"apm_app_name"`
+	APMAppAlias      string   `json:"apm_app_alias"`
+	APMServiceName   string   `json:"apm_service_name"`
+	APMInstanceName  string   `json:"apm_instance_name"`
+	APMInterfaceName string   `json:"apm_interface_name"`
+	APMNetPeerName   string   `json:"apm_net_peer_name"`
+	ModelID          string   `json:"model_id"`
+	ModelInstID      string   `json:"model_inst_id"`
+	BKBizID          any      `json:"bk_biz_id"`
+	CWLabels         []string `json:"cw_labels"`
 }
 
 // K8sValues 定义 k8s Processor 的完整输出字段。
 type K8sValues struct {
-	BCSClusterID  string `json:"bcs_cluster_id"`
-	ClusterName   string `json:"cluster_name"`
-	Namespace     string `json:"namespace"`
-	Service       string `json:"service"`
-	WorkloadKind  string `json:"workload_kind"`
-	WorkloadName  string `json:"workload_name"`
-	PodName       string `json:"pod_name"`
-	ContainerName string `json:"container_name"`
+	BCSClusterID  string   `json:"bcs_cluster_id"`
+	ClusterName   string   `json:"cluster_name"`
+	Namespace     string   `json:"namespace"`
+	Service       string   `json:"service"`
+	WorkloadKind  string   `json:"workload_kind"`
+	WorkloadName  string   `json:"workload_name"`
+	PodName       string   `json:"pod_name"`
+	ContainerName string   `json:"container_name"`
+	BKBizID       any      `json:"bk_biz_id"`
+	BKBizName     string   `json:"bk_biz_name"`
+	ModelID       string   `json:"model_id"`
+	ModelInstID   string   `json:"model_inst_id"`
+	CWLabels      []string `json:"cw_labels"`
 }
 
 // SourceValues 定义 source Processor 的完整输出字段。
@@ -123,14 +149,23 @@ type MetricLibraryQuery struct {
 
 // MetricMetadata 是指标丰富和展示所需的元数据。
 type MetricMetadata struct {
-	FieldCNName string
-	Description string
-	Unit        string
-	Dimensions  []MetricDimension
+	ObjectModelCode string
+	FieldName       string
+	FieldCNName     string
+	Description     string
+	Unit            string
+	ValueMapping    []MetricValueMapping
+	Dimensions      []MetricDimension
 }
 
 // MetricDimension 是 MonitorMetricLibrary.dimension_list 中的展示定义。
 type MetricDimension struct {
 	Key  string `json:"key"`
 	Name string `json:"name"`
+}
+
+// MetricValueMapping 定义指标枚举原始值到展示名称的映射。
+type MetricValueMapping struct {
+	OriginalValue string `json:"original_value"`
+	MappedValue   string `json:"mapped_value"`
 }

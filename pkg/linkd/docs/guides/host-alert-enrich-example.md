@@ -672,4 +672,4 @@ go test ./internal/lifecycle/enrich/assembly \
 
 - [Standard Raw Event](../reference/contracts/raw-event.md)
 - [Lifecycle 模块](../modules/lifecycle.md)
-- [Enrich Observation](../design/enrich-observation.md)
+- [Alert Enrich 现行设计](../design/enrich.md)

@@ -24,7 +24,6 @@ const (
 	FingerprintModeField  = "field"
 	FingerprintModeFields = "fields"
 	CleanerTypeStandard   = "standard"
-	oneModelInstanceIndex = "kingeye_all_instance"
 )
 
 // EventSource 是一个全局唯一、供进程调度和事件标准化使用的事件源定义。
@@ -69,9 +68,10 @@ type EnrichMySQLDataSource struct {
 
 // EnrichElasticsearchDataSource 定义 Enrich 使用的 Elasticsearch 只读连接。
 type EnrichElasticsearchDataSource struct {
-	Addresses []string               `yaml:"addresses" json:"addresses"`
-	APIKey    string                 `yaml:"api_key,omitempty" json:"api_key,omitempty"`
-	BasicAuth *EnrichBasicAuthSource `yaml:"basic_auth,omitempty" json:"basic_auth,omitempty"`
+	Addresses   []string               `yaml:"addresses" json:"addresses"`
+	IndexPrefix string                 `yaml:"index_prefix,omitempty" json:"index_prefix,omitempty"`
+	APIKey      string                 `yaml:"api_key,omitempty" json:"api_key,omitempty"`
+	BasicAuth   *EnrichBasicAuthSource `yaml:"basic_auth,omitempty" json:"basic_auth,omitempty"`
 }
 
 // EnrichBasicAuthSource 定义 Enrich Elasticsearch 的 Basic Auth 凭据。
@@ -163,8 +163,11 @@ func (c EnrichElasticsearchDataSource) validate() error {
 	if c.BasicAuth != nil {
 		basicAuth = &BasicAuthConfig{Username: c.BasicAuth.Username, Password: c.BasicAuth.Password}
 	}
+	if c.IndexPrefix == "" {
+		c.IndexPrefix = "bk_monitor_base_"
+	}
 	return (ElasticsearchConfig{
-		Addresses: c.Addresses, IndexPrefix: oneModelInstanceIndex,
+		Addresses: c.Addresses, IndexPrefix: c.IndexPrefix,
 		APIKey: c.APIKey, BasicAuth: basicAuth,
 	}).Validate()
 }
@@ -223,7 +226,7 @@ func (c EnrichConfig) SelectDataSources() (EnrichDataSources, error) {
 				return EnrichDataSources{}, fmt.Errorf("enrich.datasources.elasticsearch is required by configured enrich processors")
 			}
 			selected.MySQL, selected.Elasticsearch = configured.MySQL, configured.Elasticsearch
-		case "display", "metric", "source":
+		case "display", "metric", "source", "log", "cloud_resource", "k8s", "apm":
 			if configured.MySQL == nil {
 				return EnrichDataSources{}, fmt.Errorf("enrich.datasources.mysql is required by configured enrich processors")
 			}

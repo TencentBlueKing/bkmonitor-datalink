@@ -6,6 +6,7 @@
 
 - [部署模式与进程拓扑](../design/deployment.md)（已确认方向与当前实现边界）；
 - [项目 README 的容器镜像](../../README.md#容器镜像)：在 `pkg/linkd` 独立构建 `tencentos/tencentos4-minimal` 运行时镜像；
+- [版本提升、打包与 Helm 部署](version-upgrade-and-deployment.md)：从提升版本、构建制品到部署验证和回滚的完整操作手册；
 - [自建构建机发布](ci-release.md)：原生 amd64 / arm64 镜像构建、Chart 上传和任务清理；
 - [手动构建与发布镜像](image-release.md)：GitHub Actions 手动构建 Linkd / Console、GHCR 权限与版本标签；
 - [配置与启动](configuration.md)；

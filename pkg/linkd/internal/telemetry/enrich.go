@@ -143,8 +143,10 @@ func enrichDependency(dependency string) string {
 	switch dependency {
 	case "":
 		return "none"
-	case rules.DependencyKingeyeStrategy, rules.DependencyMetricLibrary,
-		rules.DependencyOneModel, rules.DependencyAlarmSource, rules.TestProcessor:
+	case rules.DependencyKingeyeStrategy, rules.DependencyBusiness, rules.DependencyMetricLibrary,
+		rules.DependencyOneModel, rules.DependencyAlarmSource, rules.DependencyCollectConfig,
+		rules.DependencyCollectTopology, rules.DependencyUptime, rules.DependencyLogTheme,
+		rules.DependencyCloudResource, rules.DependencyAPMApplication, rules.TestProcessor:
 		return dependency
 	default:
 		return "other"

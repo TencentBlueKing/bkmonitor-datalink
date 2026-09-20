@@ -323,7 +323,7 @@ func (n *NodeBuilder) Info(id uint64) (cmdb.Resource, cmdb.Matcher) {
 	resourceName := n.resource.name(resourceTypeID)
 
 	if info, ok := n.info[id]; ok {
-		return resourceName, info
+		return resourceName, cloneMatcher(info)
 	}
 
 	return resourceName, nil
@@ -344,10 +344,24 @@ func (n *NodeBuilder) ResourceNodeInfo(resourceType cmdb.Resource) []cmdb.Matche
 	for id, info := range n.info {
 		resourceTypeID := uint16(id >> 48)
 		if resourceTypeID == resourceID {
-			infos = append(infos, info)
+			infos = append(infos, cloneMatcher(info))
 		}
 	}
 	return infos
+}
+
+// cloneMatcher prevents callers from retaining a matcher owned by the node
+// builder's reuse pool. In particular, Clean returns the internal maps to the
+// pool and the next query may otherwise mutate a previously returned result.
+func cloneMatcher(matcher cmdb.Matcher) cmdb.Matcher {
+	if matcher == nil {
+		return nil
+	}
+	result := make(cmdb.Matcher, len(matcher))
+	for key, value := range matcher {
+		result[key] = value
+	}
+	return result
 }
 
 // GetCompressedInfo 获取压缩后的节点信息
@@ -360,7 +374,11 @@ func (n *NodeBuilder) GetCompressedInfo(nodeID uint64) map[uint64]uint64 {
 	defer n.lock.RUnlock()
 
 	if compressed, ok := n.compressedInfo[nodeID]; ok {
-		return compressed
+		result := make(map[uint64]uint64, len(compressed))
+		for key, value := range compressed {
+			result[key] = value
+		}
+		return result
 	}
 	return nil
 }

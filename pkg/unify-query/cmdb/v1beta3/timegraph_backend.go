@@ -15,6 +15,17 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 )
 
+type timeGraphTargetInfoShowKey struct{}
+
+func withTimeGraphTargetInfoShow(ctx context.Context, show bool) context.Context {
+	return context.WithValue(ctx, timeGraphTargetInfoShowKey{}, show)
+}
+
+func timeGraphTargetInfoShow(ctx context.Context) bool {
+	show, _ := ctx.Value(timeGraphTargetInfoShowKey{}).(bool)
+	return show
+}
+
 // timeGraphQuerier is the v1beta3 TimeGraph query contract. It is intentionally
 // kept small so request normalization and legacy response shaping stay separate
 // from relation metric reads and in-memory traversal.
@@ -79,21 +90,25 @@ func (m *Model) buildTimeGraphRequest(
 	expandShow bool,
 	pathResource []cmdb.Resource,
 ) (*QueryRequest, []resourcePath, error) {
-	if source == "" || target == "" {
-		return nil, nil, fmt.Errorf("timegraph backend requires explicit source_type and target_type")
-	}
 	req := &QueryRequest{
 		SpaceUID:            spaceUID,
 		SourceType:          FromCMDBResource(source),
 		SourceInfo:          matcherToMap(indexMatcher.Rename()),
 		SourceExpandInfo:    matcherToMap(expandMatcher),
 		TargetType:          FromCMDBResource(target),
-		TargetTypeExplicit:  true,
+		TargetTypeExplicit:  target != "",
 		TargetInfoShow:      expandShow,
 		PathResource:        toResourceTypes(pathResource),
 		MaxHops:             computeMaxHops(source, target, pathResource),
 		LegacyCompatibility: true,
 		DisableRootLimit:    true,
+	}
+	if req.SourceType == "" {
+		inferred, err := inferSourceTypeFromInfo(req, m.getSchemaProvider())
+		if err != nil {
+			return nil, nil, err
+		}
+		req.SourceType = inferred
 	}
 	req.Normalize()
 
@@ -102,6 +117,9 @@ func (m *Model) buildTimeGraphRequest(
 		return nil, nil, err
 	}
 	if err := validateSourceExpandInfoFields(req, provider); err != nil {
+		return nil, nil, err
+	}
+	if err := adjustMaxHopsForUnconstrainedPath(req, provider); err != nil {
 		return nil, nil, err
 	}
 	// Keep the same compatibility behavior as the existing v1beta3 legacy API:
@@ -113,6 +131,9 @@ func (m *Model) buildTimeGraphRequest(
 	}
 	for key, value := range req.SourceExpandInfo {
 		req.SourceInfo[key] = value
+	}
+	if !req.TargetTypeExplicit {
+		return req, []resourcePath{{Steps: []resourcePathStep{{ResourceType: string(req.SourceType)}}}}, nil
 	}
 
 	pathFinder := NewPathFinder(
@@ -236,6 +257,7 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 	if err != nil {
 		return timeGraphLegacyResult{}, err
 	}
+	ctx = withTimeGraphTargetInfoShow(ctx, req.TargetInfoShow)
 
 	candidatePaths := resourcePathsToTimeGraphPaths(paths)
 	result.candidatePathCount = len(candidatePaths)
@@ -392,6 +414,7 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	if err != nil {
 		return timeGraphRangeResult{}, err
 	}
+	ctx = withTimeGraphTargetInfoShow(ctx, req.TargetInfoShow)
 
 	candidatePaths := resourcePathsToTimeGraphPaths(paths)
 	result.candidatePathCount = len(candidatePaths)

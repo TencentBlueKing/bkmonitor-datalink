@@ -15,6 +15,9 @@ const (
 	DefaultLimitConfigPath         = "cmdb.v1beta3.default_limit"
 	MaxRangePointsConfigPath       = "cmdb.v1beta3.max_range_points"
 	MaxTargetsConfigPath           = "cmdb.v1beta3.max_targets"
+	MaxGraphNodesConfigPath        = "cmdb.v1beta3.max_graph_nodes"
+	MaxGraphEdgesConfigPath        = "cmdb.v1beta3.max_graph_edges"
+	MaxGraphResultsConfigPath      = "cmdb.v1beta3.max_graph_results"
 	DefaultLookBackDeltaConfigPath = "cmdb.v1beta3.look_back_delta"
 )
 
@@ -24,6 +27,9 @@ var (
 	DefaultLimit         = 100
 	MaxRangePoints       = 11000
 	MaxTargets           = 5000
+	MaxGraphNodes        = 100000
+	MaxGraphEdges        = 200000
+	MaxGraphResults      = 10000
 	DefaultLookBackDelta = int64(86400000) // 24小时（毫秒）
 )
 
@@ -39,4 +45,25 @@ func effectiveMaxTargets() int {
 		return MaxTargets
 	}
 	return 5000
+}
+
+func effectiveMaxGraphNodes() int {
+	if MaxGraphNodes > 0 {
+		return MaxGraphNodes
+	}
+	return 100000
+}
+
+func effectiveMaxGraphEdges() int {
+	if MaxGraphEdges > 0 {
+		return MaxGraphEdges
+	}
+	return 200000
+}
+
+func effectiveMaxGraphResults() int {
+	if MaxGraphResults > 0 {
+		return MaxGraphResults
+	}
+	return 10000
 }

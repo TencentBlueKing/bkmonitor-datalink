@@ -8,6 +8,7 @@ package v1beta3
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -260,6 +261,96 @@ func validateSourceExpandInfoFields(req *QueryRequest, provider SchemaProvider) 
 		if _, ok := allowed[field]; !ok {
 			return fmt.Errorf("unknown source_expand_info field %q for source type %q", field, req.SourceType)
 		}
+	}
+	return nil
+}
+
+// inferSourceTypeFromInfo preserves the legacy v1beta3 contract where the
+// source type may be omitted and is resolved from source_info's primary key
+// tuple. The candidate with the most complete primary-key match wins, which is
+// deterministic for the common case and keeps old clients working when a
+// namespace contains resources with different key shapes.
+func inferSourceTypeFromInfo(req *QueryRequest, provider SchemaProvider) (ResourceType, error) {
+	if req == nil || provider == nil {
+		return "", fmt.Errorf("cannot infer source type without schema provider")
+	}
+	info := make(map[string]string, len(req.SourceInfo)+len(req.SourceExpandInfo))
+	for key, value := range req.SourceInfo {
+		info[key] = value
+	}
+	for key, value := range req.SourceExpandInfo {
+		info[key] = value
+	}
+	if len(info) == 0 {
+		return "", fmt.Errorf("source type cannot be inferred from empty source_info")
+	}
+	known := make(map[ResourceType]struct{})
+	for _, candidate := range provider.ListResourceTypes(req.SchemaNamespace()) {
+		known[candidate] = struct{}{}
+	}
+	for _, schema := range provider.ListRelationSchemas(req.SchemaNamespace()) {
+		known[schema.FromType] = struct{}{}
+		known[schema.ToType] = struct{}{}
+	}
+	candidates := make([]ResourceType, 0, len(known))
+	for candidate := range known {
+		candidates = append(candidates, candidate)
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i] < candidates[j] })
+	var best ResourceType
+	bestScore := -1
+	for _, candidate := range candidates {
+		keys := provider.GetResourcePrimaryKeys(req.SchemaNamespace(), candidate)
+		if len(keys) == 0 {
+			continue
+		}
+		matched := 0
+		for _, key := range keys {
+			if _, ok := info[key]; ok {
+				matched++
+			}
+		}
+		if matched != len(keys) || matched <= bestScore {
+			continue
+		}
+		best = candidate
+		bestScore = matched
+	}
+	if best == "" {
+		return "", fmt.Errorf("cannot infer source_type from source_info %v", req.SourceInfo)
+	}
+	return best, nil
+}
+
+// adjustMaxHopsForUnconstrainedPath lets the server discover paths longer
+// than the historical two-hop default, while still enforcing the hard safety
+// ceiling configured by MaxAllowedHops.
+func adjustMaxHopsForUnconstrainedPath(req *QueryRequest, provider SchemaProvider) error {
+	if req == nil || provider == nil || len(req.PathResource) > 0 || req.SourceType == "" || req.TargetType == "" || req.SourceType == req.TargetType {
+		return nil
+	}
+	if req.MaxHops >= MaxAllowedHops {
+		return nil
+	}
+	pathFinder := NewPathFinder(
+		WithAllowedCategories(req.AllowedRelationTypes...),
+		WithDynamicDirection(req.DynamicRelationDirection),
+		WithMaxHops(MaxAllowedHops),
+		WithSchemaProvider(provider),
+		WithNamespace(req.SchemaNamespace()),
+	)
+	paths, err := pathFinder.FindAllPaths(req.SourceType, req.TargetType, nil)
+	if err != nil {
+		return nil
+	}
+	for _, path := range paths {
+		hops := len(path.Steps) - 1
+		if hops > req.MaxHops {
+			req.MaxHops = hops
+		}
+	}
+	if req.MaxHops > MaxAllowedHops {
+		req.MaxHops = MaxAllowedHops
 	}
 	return nil
 }

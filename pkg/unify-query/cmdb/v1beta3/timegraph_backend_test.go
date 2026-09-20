@@ -276,6 +276,32 @@ func TestBuildTimeGraphRequestAppliesSourceExpandInfo(t *testing.T) {
 	require.Equal(t, map[string]string{"node": "n1", "region": "east"}, req.SourceInfo)
 }
 
+func TestBuildTimeGraphRequestInfersLegacySourceAndImplicitTarget(t *testing.T) {
+	model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
+	req, paths, err := model.buildTimeGraphRequest(
+		"bkcc__2", "", "",
+		cmdb.Matcher{"node": "n1"}, nil, false, nil,
+	)
+	require.NoError(t, err)
+	require.Equal(t, ResourceType("node"), req.SourceType)
+	require.Equal(t, ResourceType("node"), req.TargetType)
+	require.False(t, req.TargetTypeExplicit)
+	require.Equal(t, []resourcePath{{Steps: []resourcePathStep{{ResourceType: "node"}}}}, paths)
+}
+
+func TestQueryPathResourcesRangeValidatesPointBudget(t *testing.T) {
+	oldMaxRangePoints := MaxRangePoints
+	MaxRangePoints = 1
+	t.Cleanup(func() { MaxRangePoints = oldMaxRangePoints })
+
+	model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
+	_, err := model.QueryPathResourcesRange(
+		context.Background(), "", "bkcc__2", "1s", "0", "120",
+		"node", []cmdb.Resource{"system"}, [][]cmdb.Resource{{"node", "system"}}, cmdb.Matcher{"node": "n1"},
+	)
+	require.ErrorContains(t, err, "range query has more than 1 points")
+}
+
 func TestQueryResourceMatcherPassesSourceExpandInfoToTimeGraph(t *testing.T) {
 	fake := &fakeTimeGraphModel{}
 	model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}

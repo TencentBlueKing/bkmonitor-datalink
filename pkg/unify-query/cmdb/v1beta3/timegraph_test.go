@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
 func TestTimeGraphFindShortestPathAcrossTimestamps(t *testing.T) {
@@ -227,6 +228,45 @@ func TestTimeGraphSourceInfoNodeSupportsExpandedMatcher(t *testing.T) {
 	}
 }
 
+func TestTimeGraphUsesTimeSpecificExpandedMatcher(t *testing.T) {
+	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
+		{Name: "node", Index: cmdb.Index{"node"}, Info: cmdb.Index{"region"}},
+		{Name: "system", Index: cmdb.Index{"ip"}},
+	}})
+	ctx := context.Background()
+	if err := tg.AddTimeNode(ctx, "node", cmdb.Matcher{"node": "n1", "region": "east"}, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := tg.AddTimeNode(ctx, "node", cmdb.Matcher{"node": "n1", "region": "west"}, 200); err != nil {
+		t.Fatal(err)
+	}
+	if err := tg.AddTimeRelation(ctx, "node", "system", cmdb.Matcher{"node": "n1", "ip": "10.0.0.1"}, 100, 200); err != nil {
+		t.Fatal(err)
+	}
+	results, err := tg.FindPathResources(ctx, "node", []cmdb.Resource{"system"}, cmdb.Matcher{"node": "n1", "region": "west"}, [][]cmdb.Resource{{"node", "system"}})
+	if err != nil || len(results) != 1 || results[0].Timestamp != 200 {
+		t.Fatalf("time-specific expanded matcher was not respected: %v %+v", err, results)
+	}
+}
+
+func TestTimeGraphTargetInfoIsRetainedOnPath(t *testing.T) {
+	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
+		{Name: "node", Index: cmdb.Index{"node"}},
+		{Name: "system", Index: cmdb.Index{"ip"}, Info: cmdb.Index{"zone"}},
+	}})
+	ctx := context.Background()
+	if err := tg.AddTimeNode(ctx, "system", cmdb.Matcher{"ip": "10.0.0.1", "zone": "zone-a"}, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := tg.AddTimeRelation(ctx, "node", "system", cmdb.Matcher{"node": "n1", "ip": "10.0.0.1"}, 100); err != nil {
+		t.Fatal(err)
+	}
+	results, err := tg.FindPathResources(ctx, "node", []cmdb.Resource{"system"}, cmdb.Matcher{"node": "n1"}, [][]cmdb.Resource{{"node", "system"}})
+	if err != nil || len(results) != 1 || results[0].Path[1].Dimensions["zone"] != "zone-a" {
+		t.Fatalf("target info was dropped from path: %v %+v", err, results)
+	}
+}
+
 func TestMakeResourceInfoQueryTsKeepsExpandedFields(t *testing.T) {
 	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
 		{Name: "node", Index: cmdb.Index{"node"}, Info: cmdb.Index{"region"}},
@@ -255,5 +295,87 @@ func TestMakeResourceInfoQueryTsKeepsExpandedFields(t *testing.T) {
 	}
 	if resourceQuery.AggregateMethodList[0].Dimensions[0] != "node" || resourceQuery.AggregateMethodList[0].Dimensions[1] != "region" {
 		t.Fatalf("unexpected resource info dimensions: %+v", resourceQuery.AggregateMethodList[0].Dimensions)
+	}
+	if len(resourceQuery.Conditions.FieldList) != 2 || resourceQuery.Conditions.FieldList[1].DimensionName != "region" {
+		t.Fatalf("expanded field was not used as a filter: %+v", resourceQuery.Conditions.FieldList)
+	}
+}
+
+func TestTimeGraphResultDoesNotReferencePooledMatcherAfterClean(t *testing.T) {
+	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
+		{Name: "left", Index: cmdb.Index{"id"}},
+		{Name: "right", Index: cmdb.Index{"id"}},
+	}})
+	ctx := context.Background()
+	if err := tg.AddTimeRelation(ctx, "left", "right", cmdb.Matcher{"id": "old"}, 100); err != nil {
+		t.Fatal(err)
+	}
+	results, err := tg.FindPathResources(ctx, "left", []cmdb.Resource{"right"}, cmdb.Matcher{"id": "old"}, [][]cmdb.Resource{{"left", "right"}})
+	if err != nil || len(results) != 1 {
+		t.Fatalf("unexpected initial result: %v %+v", err, results)
+	}
+	oldDimensions := results[0].Path[0].Dimensions
+	tg.Clean(ctx)
+	if err := tg.AddTimeRelation(ctx, "left", "right", cmdb.Matcher{"id": "new"}, 100); err != nil {
+		t.Fatal(err)
+	}
+	if oldDimensions["id"] != "old" {
+		t.Fatalf("result dimensions were mutated after Clean: %+v", oldDimensions)
+	}
+}
+
+func TestTimeGraphDynamicRelationKeepsEndpointIdentity(t *testing.T) {
+	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
+		{Name: "service", Index: cmdb.Index{"id"}},
+		{Name: "pod", Index: cmdb.Index{"id"}},
+	}})
+	ctx := context.Background()
+	relation := cmdb.Relation{
+		V:            []cmdb.Resource{"service", "pod"},
+		RelationType: "service_to_pod_flow",
+		MetricName:   "service_to_pod_flow",
+		Category:     string(RelationCategoryDynamic),
+	}
+	if err := tg.AddTimeRelationWithRelation(ctx, relation, cmdb.Matcher{"from_id": "svc-1", "to_id": "pod-1"}, 100); err != nil {
+		t.Fatal(err)
+	}
+	results, err := tg.FindRelationPathResources(ctx, "service", []cmdb.Resource{"pod"}, cmdb.Matcher{"id": "svc-1"}, []cmdb.RelationPath{{
+		Steps: []cmdb.RelationPathStep{
+			{ResourceType: "service"},
+			{ResourceType: "pod", RelationType: "service_to_pod_flow", Category: string(RelationCategoryDynamic)},
+		},
+	}})
+	if err != nil || len(results) != 1 {
+		t.Fatalf("unexpected dynamic relation result: %v %+v", err, results)
+	}
+	if got := results[0].Path[0].Dimensions["id"]; got != "svc-1" {
+		t.Fatalf("unexpected source node: %+v", results[0].Path)
+	}
+	if got := results[0].Path[1].Dimensions["id"]; got != "pod-1" {
+		t.Fatalf("unexpected target node: %+v", results[0].Path)
+	}
+}
+
+func TestMakeQueryTsUsesDynamicEndpointLabels(t *testing.T) {
+	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
+		{Name: "service", Index: cmdb.Index{"id"}},
+		{Name: "pod", Index: cmdb.Index{"id"}},
+	}})
+	query, err := tg.MakeQueryTs(
+		context.Background(), "space",
+		cmdb.Matcher{"id": "svc-1"},
+		time.Unix(100, 0), time.Unix(100, 0), time.Minute,
+		cmdb.Relation{
+			V:          []cmdb.Resource{"service", "pod"},
+			MetricName: "service_to_pod_flow",
+			Category:   string(RelationCategoryDynamic),
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := query.QueryList[0].Conditions.FieldList
+	if len(fields) != 2 || fields[0].DimensionName != "from_id" || fields[0].Value[0] != "svc-1" || fields[1].DimensionName != "to_id" || fields[1].Operator != structured.ConditionNotEqual {
+		t.Fatalf("unexpected dynamic relation conditions: %+v", fields)
 	}
 }

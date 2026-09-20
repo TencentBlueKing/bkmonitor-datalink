@@ -30,8 +30,9 @@ type Resource string
 // Relation 两点关联路径
 type Relation struct {
 	V            []Resource
-	RelationType string     `json:"relation_type,omitempty"`
-	MetricName   string     `json:"metric_name,omitempty"`
+	RelationType string `json:"relation_type,omitempty"`
+	MetricName   string `json:"metric_name,omitempty"`
+	Category     string `json:"category,omitempty"`
 }
 
 // RelationPathStep describes one resource hop and the relation schema that

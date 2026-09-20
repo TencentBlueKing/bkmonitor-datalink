@@ -23,6 +23,9 @@ func setDefaultConfig() {
 	viper.SetDefault(DefaultLimitConfigPath, 100)
 	viper.SetDefault(MaxRangePointsConfigPath, 11000)
 	viper.SetDefault(MaxTargetsConfigPath, 5000)
+	viper.SetDefault(MaxGraphNodesConfigPath, 100000)
+	viper.SetDefault(MaxGraphEdgesConfigPath, 200000)
+	viper.SetDefault(MaxGraphResultsConfigPath, 10000)
 	viper.SetDefault(DefaultLookBackDeltaConfigPath, 86400000) // 24小时（毫秒）
 }
 
@@ -32,6 +35,9 @@ func LoadConfig() {
 	DefaultLimit = viper.GetInt(DefaultLimitConfigPath)
 	MaxRangePoints = viper.GetInt(MaxRangePointsConfigPath)
 	MaxTargets = viper.GetInt(MaxTargetsConfigPath)
+	MaxGraphNodes = viper.GetInt(MaxGraphNodesConfigPath)
+	MaxGraphEdges = viper.GetInt(MaxGraphEdgesConfigPath)
+	MaxGraphResults = viper.GetInt(MaxGraphResultsConfigPath)
 	DefaultLookBackDelta = viper.GetInt64(DefaultLookBackDeltaConfigPath)
 }
 

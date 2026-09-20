@@ -22,7 +22,6 @@ import (
 	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
@@ -37,6 +36,12 @@ type TimeGraph struct {
 	stringDict  *StringDict                           // 局部字符串字典，避免全局溢出，每个实例独立管理
 	timeGraph   map[int64]graph.Graph[uint64, uint64] // 时间分片图，key为时间戳，value为对应的图结构
 	edgeTypes   map[int64]map[timeGraphEdgeKey]map[string]struct{}
+	nodeInfos   map[int64]map[uint64]cmdb.Matcher // timestamp -> node -> time-specific dimensions
+	maxNodes    int
+	maxEdges    int
+	maxResults  int
+	edgeCount   int
+	relations   []TimeGraphRelationConfig
 }
 
 type timeGraphEdgeKey struct {
@@ -54,12 +59,31 @@ func NewTimeGraph() *TimeGraph {
 // NewTimeGraphWithConfig creates a graph whose resource identity rules are
 // isolated from the process-global legacy configuration.
 func NewTimeGraphWithConfig(cfg *TimeGraphConfig) *TimeGraph {
+	maxNodes, maxEdges, maxResults := effectiveMaxGraphNodes(), effectiveMaxGraphEdges(), effectiveMaxGraphResults()
+	var relations []TimeGraphRelationConfig
+	if cfg != nil {
+		if cfg.MaxNodes > 0 {
+			maxNodes = cfg.MaxNodes
+		}
+		if cfg.MaxEdges > 0 {
+			maxEdges = cfg.MaxEdges
+		}
+		if cfg.MaxResults > 0 {
+			maxResults = cfg.MaxResults
+		}
+		relations = append(relations, cfg.Relation...)
+	}
 	stringDict := NewStringDict() // 每个TimeGraph实例有自己的字符串字典
 	return &TimeGraph{
 		nodeBuilder: NewNodeBuilderWithConfig(stringDict, cfg), // 传递局部StringDict给NodeBuilder
 		stringDict:  stringDict,
 		timeGraph:   make(map[int64]graph.Graph[uint64, uint64]),
 		edgeTypes:   make(map[int64]map[timeGraphEdgeKey]map[string]struct{}),
+		nodeInfos:   make(map[int64]map[uint64]cmdb.Matcher),
+		maxNodes:    maxNodes,
+		maxEdges:    maxEdges,
+		maxResults:  maxResults,
+		relations:   relations,
 	}
 }
 
@@ -84,6 +108,10 @@ func (q *TimeGraph) Clean(ctx context.Context) {
 	for k := range q.edgeTypes {
 		delete(q.edgeTypes, k)
 	}
+	for k := range q.nodeInfos {
+		delete(q.nodeInfos, k)
+	}
+	q.edgeCount = 0
 }
 
 // Stat 获取时序图的统计信息
@@ -161,7 +189,10 @@ func (q *TimeGraph) AddTimeRelation(ctx context.Context, source, target cmdb.Res
 // AddTimeNode adds a resource node without creating an edge. Resource info
 // metrics use this path to enrich relation nodes with non-primary attributes
 // such as version or environment before relation traversal starts.
-func (q *TimeGraph) AddTimeNode(_ context.Context, resource cmdb.Resource, info cmdb.Matcher, timestamps ...int64) error {
+func (q *TimeGraph) AddTimeNode(ctx context.Context, resource cmdb.Resource, info cmdb.Matcher, timestamps ...int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if resource == "" || len(info) == 0 || len(timestamps) == 0 {
 		return nil
 	}
@@ -173,13 +204,23 @@ func (q *TimeGraph) AddTimeNode(_ context.Context, resource cmdb.Resource, info 
 
 	q.lock.Lock()
 	defer q.lock.Unlock()
+	if q.maxNodes > 0 && q.nodeBuilder.Length() > q.maxNodes {
+		return &ResultLimitError{Reason: "max_graph_nodes", Count: q.nodeBuilder.Length(), Limit: q.maxNodes}
+	}
 	for _, timestamp := range timestamps {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if q.timeGraph[timestamp] == nil {
 			q.timeGraph[timestamp] = graph.New(func(t uint64) uint64 { return t }, graph.Directed())
 		}
 		if q.edgeTypes[timestamp] == nil {
 			q.edgeTypes[timestamp] = make(map[timeGraphEdgeKey]map[string]struct{})
 		}
+		if q.nodeInfos[timestamp] == nil {
+			q.nodeInfos[timestamp] = make(map[uint64]cmdb.Matcher)
+		}
+		q.nodeInfos[timestamp][node] = cloneMatcher(info)
 		if err = q.timeGraph[timestamp].AddVertex(node); err != nil && !errors.Is(err, graph.ErrVertexAlreadyExists) {
 			return err
 		}
@@ -192,6 +233,9 @@ func (q *TimeGraph) AddTimeNode(_ context.Context, resource cmdb.Resource, info 
 // same pair of nodes, so the identity is stored separately from the simple
 // graph edge.
 func (q *TimeGraph) AddTimeRelationWithRelation(ctx context.Context, relation cmdb.Relation, info cmdb.Matcher, timestamps ...int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if len(relation.V) != 2 {
 		return nil
 	}
@@ -201,18 +245,35 @@ func (q *TimeGraph) AddTimeRelationWithRelation(ctx context.Context, relation cm
 		return nil
 	}
 
+	// Dynamic relations use from_/to_ labels. Static relations use the bare
+	// resource fields. Split the series labels before building node identities;
+	// using one matcher for both endpoints collapses distinct dynamic nodes.
+	dynamic := relation.Category == string(RelationCategoryDynamic)
+	sourcePrefix, targetPrefix := q.relationEndpointPrefixes(relation, source, target)
+	sourceInfo := q.relationEndpointInfo(info, source, sourcePrefix, dynamic)
+	targetInfo := q.relationEndpointInfo(info, target, targetPrefix, dynamic)
+	if len(sourceInfo) == 0 {
+		sourceInfo = info
+	}
+	if len(targetInfo) == 0 {
+		targetInfo = info
+	}
+
 	// 先获取节点ID，避免在锁内进行复杂操作
-	sourceNode, err := q.nodeBuilder.GetID(source, info)
+	sourceNode, err := q.nodeBuilder.GetID(source, sourceInfo)
 	if err != nil {
 		return err
 	}
-	targetNode, err := q.nodeBuilder.GetID(target, info)
+	targetNode, err := q.nodeBuilder.GetID(target, targetInfo)
 	if err != nil {
 		return err
 	}
 
 	q.lock.Lock()
 	defer q.lock.Unlock()
+	if q.maxNodes > 0 && q.nodeBuilder.Length() > q.maxNodes {
+		return &ResultLimitError{Reason: "max_graph_nodes", Count: q.nodeBuilder.Length(), Limit: q.maxNodes}
+	}
 
 	// 批量创建缺失的时间图，减少重复的 map 查找
 	// 使用局部变量缓存 graph.New 的结果，避免重复创建函数对象
@@ -224,11 +285,19 @@ func (q *TimeGraph) AddTimeRelationWithRelation(ctx context.Context, relation cm
 		if q.edgeTypes[timestamp] == nil {
 			q.edgeTypes[timestamp] = make(map[timeGraphEdgeKey]map[string]struct{})
 		}
+		if q.nodeInfos[timestamp] == nil {
+			q.nodeInfos[timestamp] = make(map[uint64]cmdb.Matcher)
+		}
 	}
 
 	// 批量添加节点和边
 	for _, timestamp := range timestamps {
+		if err = ctx.Err(); err != nil {
+			return err
+		}
 		g := q.timeGraph[timestamp]
+		q.nodeInfos[timestamp][sourceNode] = mergeMatcher(q.nodeInfos[timestamp][sourceNode], sourceInfo)
+		q.nodeInfos[timestamp][targetNode] = mergeMatcher(q.nodeInfos[timestamp][targetNode], targetInfo)
 
 		// 添加源节点，忽略已存在的节点
 		if err = g.AddVertex(sourceNode); err != nil && !errors.Is(err, graph.ErrVertexAlreadyExists) {
@@ -244,6 +313,14 @@ func (q *TimeGraph) AddTimeRelationWithRelation(ctx context.Context, relation cm
 		if err = g.AddEdge(sourceNode, targetNode); err != nil && !errors.Is(err, graph.ErrEdgeAlreadyExists) {
 			return err
 		}
+		edgeKey := timeGraphEdgeKey{source: sourceNode, target: targetNode}
+		if _, exists := q.edgeTypes[timestamp][edgeKey]; !exists {
+			if q.maxEdges > 0 && q.edgeCount >= q.maxEdges {
+				return &ResultLimitError{Reason: "max_graph_edges", Count: q.edgeCount + 1, Limit: q.maxEdges}
+			}
+			q.edgeTypes[timestamp][edgeKey] = make(map[string]struct{})
+			q.edgeCount++
+		}
 		keys := make([]string, 0, 2)
 		if relation.RelationType != "" {
 			keys = append(keys, relation.RelationType)
@@ -252,10 +329,6 @@ func (q *TimeGraph) AddTimeRelationWithRelation(ctx context.Context, relation cm
 			keys = append(keys, relation.MetricName)
 		}
 		if len(keys) > 0 {
-			edgeKey := timeGraphEdgeKey{source: sourceNode, target: targetNode}
-			if q.edgeTypes[timestamp][edgeKey] == nil {
-				q.edgeTypes[timestamp][edgeKey] = make(map[string]struct{}, len(keys))
-			}
 			for _, key := range keys {
 				q.edgeTypes[timestamp][edgeKey][key] = struct{}{}
 			}
@@ -263,6 +336,59 @@ func (q *TimeGraph) AddTimeRelationWithRelation(ctx context.Context, relation cm
 	}
 
 	return nil
+}
+
+func (q *TimeGraph) relationEndpointInfo(info cmdb.Matcher, resource cmdb.Resource, prefix string, dynamic bool) cmdb.Matcher {
+	fields := q.nodeBuilder.resourceIndexes(resource)
+	fields = append(fields, q.nodeBuilder.resourceInfoFields(resource)...)
+	result := make(cmdb.Matcher, len(fields))
+	for _, field := range fields {
+		if dynamic {
+			if value, ok := info[prefix+field]; ok {
+				result[field] = value
+				continue
+			}
+		}
+		if value, ok := info[field]; ok {
+			result[field] = value
+		}
+	}
+	return result
+}
+
+func (q *TimeGraph) relationEndpointPrefixes(relation cmdb.Relation, source, target cmdb.Resource) (string, string) {
+	if relation.Category != string(RelationCategoryDynamic) {
+		return "", ""
+	}
+	for _, configured := range q.relations {
+		if configured.Category != string(RelationCategoryDynamic) {
+			continue
+		}
+		if relation.MetricName != "" && configured.MetricName != relation.MetricName && configured.RelationType != relation.RelationType {
+			continue
+		}
+		if len(configured.Resources) != 2 {
+			continue
+		}
+		if configured.Resources[0] == source && configured.Resources[1] == target {
+			return "from_", "to_"
+		}
+		if configured.Resources[0] == target && configured.Resources[1] == source {
+			return "to_", "from_"
+		}
+	}
+	return "from_", "to_"
+}
+
+func mergeMatcher(base, extra cmdb.Matcher) cmdb.Matcher {
+	result := cloneMatcher(base)
+	if result == nil {
+		result = make(cmdb.Matcher, len(extra))
+	}
+	for key, value := range extra {
+		result[key] = value
+	}
+	return result
 }
 
 // MakeQueryTs 根据关系信息生成时序查询对象
@@ -294,15 +420,17 @@ func (q *TimeGraph) MakeQueryTs(ctx context.Context, spaceUID string, info map[s
 		metric = fmt.Sprintf("%s_relation", strings.Join(resources, "_with_"))
 	}
 
-	indexSet := set.New[string](q.nodeBuilder.resourceIndexes(source, target)...)
-	indexes := indexSet.ToArray()
-	sort.Strings(indexes)
+	sourcePrefix, targetPrefix := q.relationEndpointPrefixes(relation, source, target)
+	indexes, values := q.relationQueryFields(info, source, target, sourcePrefix, targetPrefix, relation.Category == string(RelationCategoryDynamic))
+	if len(indexes) == 0 {
+		return nil, fmt.Errorf("relation %s -> %s has no configured primary fields", source, target)
+	}
 
 	// 预分配切片容量，减少内存重新分配
 	indexCount := len(indexes)
 	fieldList := make([]structured.ConditionField, 0, indexCount)
 	for _, index := range indexes {
-		if v, ok := info[index]; ok {
+		if v, ok := values[index]; ok {
 			fieldList = append(fieldList, structured.ConditionField{
 				DimensionName: index,
 				Value:         []string{v},
@@ -317,11 +445,10 @@ func (q *TimeGraph) MakeQueryTs(ctx context.Context, spaceUID string, info map[s
 		}
 	}
 
-	dimensions := indexSet.ToArray()
-	sort.Strings(dimensions)
+	dimensions := append([]string(nil), indexes...)
 
 	// 预分配 conditionList 容量
-	conditionList := make([]string, 0, indexCount-1)
+	conditionList := make([]string, 0, max(indexCount-1, 0))
 	for i := 1; i < len(fieldList); i++ {
 		conditionList = append(conditionList, structured.ConditionAnd)
 	}
@@ -355,6 +482,35 @@ func (q *TimeGraph) MakeQueryTs(ctx context.Context, spaceUID string, info map[s
 	}, nil
 }
 
+func (q *TimeGraph) relationQueryFields(info cmdb.Matcher, source, target cmdb.Resource, sourcePrefix, targetPrefix string, dynamic bool) ([]string, map[string]string) {
+	fields := make(map[string]struct{})
+	values := make(map[string]string)
+	addFields := func(resource cmdb.Resource, prefix string, allowBare bool) {
+		for _, field := range q.nodeBuilder.resourceIndexes(resource) {
+			label := field
+			if dynamic {
+				label = prefix + field
+			}
+			if value, ok := info[label]; ok {
+				values[label] = value
+			} else if dynamic && allowBare {
+				if value, ok := info[field]; ok {
+					values[label] = value
+				}
+			}
+			fields[label] = struct{}{}
+		}
+	}
+	addFields(source, sourcePrefix, true)
+	addFields(target, targetPrefix, false)
+	indexes := make([]string, 0, len(fields))
+	for field := range fields {
+		indexes = append(indexes, field)
+	}
+	sort.Strings(indexes)
+	return indexes, values
+}
+
 // MakeResourceInfoQueryTs builds the query for a resource's info relation.
 // Unlike a normal relation metric, the result must retain the configured
 // non-primary fields so the graph can filter or project them later.
@@ -365,8 +521,10 @@ func (q *TimeGraph) MakeResourceInfoQueryTs(spaceUID string, resource cmdb.Resou
 
 	primaryFields := q.nodeBuilder.resourceIndexes(resource)
 	infoFields := q.nodeBuilder.resourceInfoFields(resource)
+	primarySet := make(map[string]struct{}, len(primaryFields))
 	fieldSet := make(map[string]struct{}, len(primaryFields)+len(infoFields))
 	for _, field := range primaryFields {
+		primarySet[field] = struct{}{}
 		fieldSet[field] = struct{}{}
 	}
 	for _, field := range infoFields {
@@ -395,7 +553,7 @@ func (q *TimeGraph) MakeResourceInfoQueryTs(spaceUID string, resource cmdb.Resou
 		}
 	}
 	for field, value := range expandInfo {
-		if _, isPrimary := fieldSet[field]; !isPrimary {
+		if _, isPrimary := primarySet[field]; !isPrimary {
 			fieldList = append(fieldList, structured.ConditionField{
 				DimensionName: field,
 				Value:         []string{value},
@@ -406,7 +564,7 @@ func (q *TimeGraph) MakeResourceInfoQueryTs(spaceUID string, resource cmdb.Resou
 	sort.SliceStable(fieldList, func(i, j int) bool {
 		return fieldList[i].DimensionName < fieldList[j].DimensionName
 	})
-	conditionList := make([]string, 0, len(fieldList)-1)
+	conditionList := make([]string, 0, max(len(fieldList)-1, 0))
 	for i := 1; i < len(fieldList); i++ {
 		conditionList = append(conditionList, structured.ConditionAnd)
 	}
@@ -462,6 +620,9 @@ type PathResourcesResult struct {
 //   - 部分匹配：只要 sourceMatcher 中的键值对在节点信息中存在且匹配，即认为满足条件
 //   - 结果按时间戳排序
 func (q *TimeGraph) FindShortestPath(ctx context.Context, sourceType cmdb.Resource, targetType cmdb.Resource, sourceMatcher cmdb.Matcher) ([]PathResourcesResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if sourceType == "" || targetType == "" {
 		return nil, nil
 	}
@@ -479,8 +640,8 @@ func (q *TimeGraph) FindShortestPath(ctx context.Context, sourceType cmdb.Resour
 	})
 
 	// 1. 找到满足部分条件的源节点
-	sourceNodes := q.findNodesByPartialMatcher(sourceType, sourceMatcher)
-	if len(sourceNodes) == 0 {
+	sourceCandidates := q.findNodesByResourceType(sourceType)
+	if len(sourceCandidates) == 0 {
 		return nil, nil
 	}
 
@@ -494,13 +655,23 @@ func (q *TimeGraph) FindShortestPath(ctx context.Context, sourceType cmdb.Resour
 	var results []PathResourcesResult
 
 	for _, timestamp := range queryTimestamps {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		g := q.timeGraph[timestamp]
 		if g == nil {
+			continue
+		}
+		sourceNodes := q.findNodesByPartialMatcherAt(timestamp, sourceType, sourceMatcher, sourceCandidates)
+		if len(sourceNodes) == 0 {
 			continue
 		}
 
 		// 对每个源节点，查找到每个目标节点的最短路径
 		for _, sourceNode := range sourceNodes {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			// 获取源节点信息，验证资源类型
 			sourceResource, _ := q.nodeBuilder.Info(sourceNode)
 			if sourceResource != sourceType {
@@ -509,6 +680,9 @@ func (q *TimeGraph) FindShortestPath(ctx context.Context, sourceType cmdb.Resour
 
 			// 对每个目标节点，查找最短路径
 			for _, targetNode := range targetNodes {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				// 查找从源节点到目标节点的最短路径
 				path, err := graph.ShortestPath(g, sourceNode, targetNode)
 				if err != nil {
@@ -522,7 +696,7 @@ func (q *TimeGraph) FindShortestPath(ctx context.Context, sourceType cmdb.Resour
 				// 将节点ID路径转换为资源类型和维度信息路径
 				pathNodes := make([]cmdb.PathNode, 0, len(path))
 				for _, nodeID := range path {
-					resourceType, nodeInfo := q.nodeBuilder.Info(nodeID)
+					resourceType, nodeInfo := q.infoAt(timestamp, nodeID)
 					pathNodes = append(pathNodes, cmdb.PathNode{
 						ResourceType: resourceType,
 						Dimensions:   nodeInfo,
@@ -534,6 +708,9 @@ func (q *TimeGraph) FindShortestPath(ctx context.Context, sourceType cmdb.Resour
 					TargetType: targetType,
 					Path:       pathNodes,
 				})
+				if limit := q.maxResults; limit > 0 && len(results) > limit {
+					return nil, &ResultLimitError{Reason: "max_graph_results", Count: len(results), Limit: limit}
+				}
 			}
 		}
 	}
@@ -572,6 +749,9 @@ func (q *TimeGraph) FindRelationPathResources(
 	sourceMatcher cmdb.Matcher,
 	expectedPaths []cmdb.RelationPath,
 ) ([]PathResourcesResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if sourceType == "" || len(targetTypes) == 0 {
 		return nil, nil
 	}
@@ -590,14 +770,17 @@ func (q *TimeGraph) FindRelationPathResources(
 	}
 	sort.Slice(queryTimestamps, func(i, j int) bool { return queryTimestamps[i] < queryTimestamps[j] })
 
-	sourceNodes := q.findNodesByPartialMatcher(sourceType, sourceMatcher)
-	if len(sourceNodes) == 0 {
+	sourceCandidates := q.findNodesByResourceType(sourceType)
+	if len(sourceCandidates) == 0 {
 		return nil, nil
 	}
 
 	results := make([]PathResourcesResult, 0)
 	seen := make(map[string]struct{})
 	for _, timestamp := range queryTimestamps {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		g := q.timeGraph[timestamp]
 		if g == nil {
 			continue
@@ -606,13 +789,28 @@ func (q *TimeGraph) FindRelationPathResources(
 		if err != nil {
 			continue
 		}
+		sourceNodes := q.findNodesByPartialMatcherAt(timestamp, sourceType, sourceMatcher, sourceCandidates)
+		if len(sourceNodes) == 0 {
+			continue
+		}
 
 		for _, sourceNode := range sourceNodes {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			for _, expectedPath := range expectedPaths {
-				if len(expectedPath.Steps) < 2 || expectedPath.Steps[0].ResourceType != sourceType {
+				if len(expectedPath.Steps) == 0 || expectedPath.Steps[0].ResourceType != sourceType {
 					continue
 				}
-				nodePaths := q.findTypedRelationNodePaths(sourceNode, expectedPath.Steps, adjacency, q.edgeTypes[timestamp])
+				nodePaths := [][]uint64(nil)
+				if len(expectedPath.Steps) == 1 {
+					nodePaths = [][]uint64{{sourceNode}}
+				} else {
+					nodePaths = q.findTypedRelationNodePaths(ctx, sourceNode, expectedPath.Steps, adjacency, q.edgeTypes[timestamp])
+					if err := ctx.Err(); err != nil {
+						return nil, err
+					}
+				}
 				if len(nodePaths) == 0 {
 					continue
 				}
@@ -622,6 +820,9 @@ func (q *TimeGraph) FindRelationPathResources(
 					continue
 				}
 				for _, path := range nodePaths {
+					if err := ctx.Err(); err != nil {
+						return nil, err
+					}
 					key := fmt.Sprintf("%d:%s", timestamp, nodePathKey(path))
 					if _, ok := seen[key]; ok {
 						continue
@@ -630,7 +831,7 @@ func (q *TimeGraph) FindRelationPathResources(
 
 					pathNodes := make([]cmdb.PathNode, 0, len(path))
 					for _, nodeID := range path {
-						resourceType, nodeInfo := q.nodeBuilder.Info(nodeID)
+						resourceType, nodeInfo := q.infoAt(timestamp, nodeID)
 						pathNodes = append(pathNodes, cmdb.PathNode{
 							ResourceType: resourceType,
 							Dimensions:   nodeInfo,
@@ -641,6 +842,9 @@ func (q *TimeGraph) FindRelationPathResources(
 						TargetType: targetType,
 						Path:       pathNodes,
 					})
+					if limit := q.maxResults; limit > 0 && len(results) > limit {
+						return nil, &ResultLimitError{Reason: "max_graph_results", Count: len(results), Limit: limit}
+					}
 				}
 			}
 		}
@@ -663,10 +867,11 @@ func (q *TimeGraph) findTypedNodePaths(sourceNode uint64, expectedPath []cmdb.Re
 	for _, resourceType := range expectedPath {
 		steps = append(steps, cmdb.RelationPathStep{ResourceType: resourceType})
 	}
-	return q.findTypedRelationNodePaths(sourceNode, steps, adjacency, nil)
+	return q.findTypedRelationNodePaths(context.Background(), sourceNode, steps, adjacency, nil)
 }
 
 func (q *TimeGraph) findTypedRelationNodePaths(
+	ctx context.Context,
 	sourceNode uint64,
 	expectedPath []cmdb.RelationPathStep,
 	adjacency map[uint64]map[uint64]graph.Edge[uint64],
@@ -674,6 +879,9 @@ func (q *TimeGraph) findTypedRelationNodePaths(
 ) [][]uint64 {
 	frontier := map[uint64][]uint64{sourceNode: {sourceNode}}
 	for index := 1; index < len(expectedPath); index++ {
+		if err := ctx.Err(); err != nil {
+			return nil
+		}
 		next := make(map[uint64][]uint64)
 		currentNodes := make([]uint64, 0, len(frontier))
 		for nodeID := range frontier {
@@ -682,6 +890,9 @@ func (q *TimeGraph) findTypedRelationNodePaths(
 		sort.Slice(currentNodes, func(i, j int) bool { return currentNodes[i] < currentNodes[j] })
 
 		for _, current := range currentNodes {
+			if err := ctx.Err(); err != nil {
+				return nil
+			}
 			neighbors := make([]uint64, 0, len(adjacency[current]))
 			for neighbor := range adjacency[current] {
 				neighbors = append(neighbors, neighbor)
@@ -805,6 +1016,25 @@ func (q *TimeGraph) findNodesByPartialMatcher(resourceType cmdb.Resource, partia
 	}
 
 	return matchedNodes
+}
+
+func (q *TimeGraph) infoAt(timestamp int64, nodeID uint64) (cmdb.Resource, cmdb.Matcher) {
+	resourceType, fallback := q.nodeBuilder.Info(nodeID)
+	if info, ok := q.nodeInfos[timestamp][nodeID]; ok {
+		return resourceType, cloneMatcher(info)
+	}
+	return resourceType, fallback
+}
+
+func (q *TimeGraph) findNodesByPartialMatcherAt(timestamp int64, resourceType cmdb.Resource, partialMatcher cmdb.Matcher, candidates []uint64) []uint64 {
+	matched := make([]uint64, 0, len(candidates))
+	for _, nodeID := range candidates {
+		nodeResource, nodeInfo := q.infoAt(timestamp, nodeID)
+		if nodeResource == resourceType && q.matchesPartial(nodeInfo, partialMatcher) {
+			matched = append(matched, nodeID)
+		}
+	}
+	return matched
 }
 
 // matchesPartial 检查节点信息是否满足部分匹配条件

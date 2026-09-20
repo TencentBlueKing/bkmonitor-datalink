@@ -90,9 +90,14 @@ func getCPUStatUsage(report *CpuReport) (bool, error) {
 		return false, err
 	}
 
+	// 校验时间差后继续更新 gopsutil 基线，确保下一轮采样恢复
+	timeStateValid := true
 	for index, value := range perCPUTimes {
 		item := lastCPUTimeSlice.lastPerCPUTimes[index]
 		tmp := calcTimeState(item, value)
+		if !isValidCPUTimeState(tmp) {
+			timeStateValid = false
+		}
 		report.Stat = append(report.Stat, tmp)
 	}
 
@@ -112,8 +117,11 @@ func getCPUStatUsage(report *CpuReport) (bool, error) {
 	cpuTimeStat := cpuTimes[0]
 	lastCpuTimeStat := lastCPUTimeSlice.lastCPUTimes[0]
 	report.TotalStat = calcTimeState(lastCpuTimeStat, cpuTimeStat)
+	if !isValidCPUTimeState(report.TotalStat) {
+		timeStateValid = false
+	}
 
-	// 将此次获取的timeState重新写入公共变量
+	// 无效样本也更新本地基线，避免下一轮继续使用回退前的旧基线
 	lastCPUTimeSlice.lastCPUTimes = cpuTimes
 	lastCPUTimeSlice.lastPerCPUTimes = perCPUTimes
 
@@ -121,8 +129,8 @@ func getCPUStatUsage(report *CpuReport) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	// idle 无效直接返回
-	if !valid {
+	// idle 回退或 CPU 时间差出现负数时，均丢弃本轮样本
+	if !valid || !timeStateValid {
 		return false, nil
 	}
 

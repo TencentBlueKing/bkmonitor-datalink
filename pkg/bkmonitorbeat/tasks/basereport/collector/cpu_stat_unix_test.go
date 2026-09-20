@@ -118,3 +118,20 @@ func TestCalcTimeState(t *testing.T) {
 	res := calcTimeState(t1TimeState, t2TimeState)
 	assert.NotNil(t, res)
 }
+
+func TestIsValidCPUTimeState(t *testing.T) {
+	previous := cpu.TimesStat{
+		CPU:    "cpu0",
+		User:   10,
+		System: 20,
+		Idle:   30,
+	}
+	current := previous
+	current.User = 11
+	current.System = 21
+	current.Idle = 31
+	assert.True(t, isValidCPUTimeState(calcTimeState(previous, current)))
+
+	current.System = 19
+	assert.False(t, isValidCPUTimeState(calcTimeState(previous, current)))
+}

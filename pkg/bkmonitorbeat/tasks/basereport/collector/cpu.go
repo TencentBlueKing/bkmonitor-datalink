@@ -106,3 +106,18 @@ func calcTimeState(t1, t2 cpu.TimesStat) cpu.TimesStat {
 		GuestNice: t2.GuestNice - t1.GuestNice,
 	}
 }
+
+// isValidCPUTimeState 判断 CPU 累计时间差是否有效。
+// CPU 累计计数发生回退时，差值会出现负数；该样本应被丢弃，不能修正后继续上报。
+func isValidCPUTimeState(state cpu.TimesStat) bool {
+	return state.User >= 0 &&
+		state.System >= 0 &&
+		state.Idle >= 0 &&
+		state.Nice >= 0 &&
+		state.Iowait >= 0 &&
+		state.Irq >= 0 &&
+		state.Softirq >= 0 &&
+		state.Steal >= 0 &&
+		state.Guest >= 0 &&
+		state.GuestNice >= 0
+}

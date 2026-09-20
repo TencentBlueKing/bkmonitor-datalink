@@ -41,16 +41,20 @@ func GetCPUInfo(config configs.CpuConfig) (*CpuReport, error) {
 		logger.Debug("collect cpu stat")
 
 		var once CpuReport
-		err := getCPUStatUsage(&once)
+		valid, err := getCPUStatUsage(&once)
 		if err != nil {
 			logger.Errorf("get cpu usage stat fail")
 			return nil, err
 		}
 
-		// select max cpu total usage report
-		if once.TotalUsage >= maxTotalUsage {
-			report = once
-			maxTotalUsage = report.TotalUsage
+		if valid {
+			// 只有有效样本才参与最大值选择
+			if once.TotalUsage >= maxTotalUsage {
+				report = once
+				maxTotalUsage = report.TotalUsage
+			}
+		} else {
+			logger.Warn("CPU idle counter rollback, discard invalid sample")
 		}
 
 		count--

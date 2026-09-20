@@ -33,6 +33,7 @@ type Relation struct {
 	RelationType string `json:"relation_type,omitempty"`
 	MetricName   string `json:"metric_name,omitempty"`
 	Category     string `json:"category,omitempty"`
+	Direction    string `json:"direction,omitempty"`
 }
 
 // RelationPathStep describes one resource hop and the relation schema that

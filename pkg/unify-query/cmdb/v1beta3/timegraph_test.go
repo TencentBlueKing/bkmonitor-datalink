@@ -379,3 +379,135 @@ func TestMakeQueryTsUsesDynamicEndpointLabels(t *testing.T) {
 		t.Fatalf("unexpected dynamic relation conditions: %+v", fields)
 	}
 }
+
+func TestTimeGraphDynamicSelfRelationUsesDirectionForInboundQuery(t *testing.T) {
+	tg := NewTimeGraphWithConfig(&TimeGraphConfig{
+		Resource: []TimeGraphResourceConfig{{Name: "service", Index: cmdb.Index{"id"}}},
+		Relation: []TimeGraphRelationConfig{{
+			Resources:    []cmdb.Resource{"service", "service"},
+			RelationType: "service_to_service",
+			MetricName:   "service_to_service_flow",
+			Category:     string(RelationCategoryDynamic),
+		}},
+	})
+	ctx := context.Background()
+	relation := cmdb.Relation{
+		V:            []cmdb.Resource{"service", "service"},
+		RelationType: "service_to_service",
+		MetricName:   "service_to_service_flow",
+		Category:     string(RelationCategoryDynamic),
+		Direction:    string(DirectionInbound),
+	}
+	if err := tg.AddTimeRelationWithRelation(ctx, relation, cmdb.Matcher{
+		"from_id": "caller",
+		"to_id":   "callee",
+	}, 100); err != nil {
+		t.Fatal(err)
+	}
+
+	results, err := tg.FindRelationPathResources(ctx, "service", []cmdb.Resource{"service"}, cmdb.Matcher{"id": "callee"}, []cmdb.RelationPath{{
+		Steps: []cmdb.RelationPathStep{
+			{ResourceType: "service"},
+			{ResourceType: "service", RelationType: "service_to_service", Category: string(RelationCategoryDynamic), Direction: string(DirectionInbound)},
+		},
+	}})
+	if err != nil || len(results) != 1 {
+		t.Fatalf("unexpected inbound self relation result: %v %+v", err, results)
+	}
+	if got := results[0].Path[0].Dimensions["id"]; got != "callee" {
+		t.Fatalf("unexpected inbound source: %+v", results[0].Path)
+	}
+	if got := results[0].Path[1].Dimensions["id"]; got != "caller" {
+		t.Fatalf("unexpected inbound target: %+v", results[0].Path)
+	}
+}
+
+func TestTimeGraphRangeQuerySeparatesStepAndLookback(t *testing.T) {
+	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
+		{Name: "left", Index: cmdb.Index{"id"}},
+		{Name: "right", Index: cmdb.Index{"id"}},
+	}})
+	query, err := tg.MakeQueryTsWithWindow(
+		context.Background(), "space", nil,
+		time.Unix(100, 0), time.Unix(200, 0), time.Minute, 10*time.Minute,
+		cmdb.Relation{V: []cmdb.Resource{"left", "right"}, MetricName: "left_to_right"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(query.QueryList[0].TimeAggregation.Window); got != "10m0s" {
+		t.Fatalf("unexpected relation lookback window: %s", got)
+	}
+	if query.Step != "1m0s" {
+		t.Fatalf("unexpected range step: %s", query.Step)
+	}
+
+	infoQuery, err := tg.MakeResourceInfoQueryTsWithWindow(
+		"space", "left", nil, nil, nil,
+		time.Unix(100, 0), time.Unix(200, 0), time.Minute, 10*time.Minute,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(infoQuery.QueryList[0].TimeAggregation.Window); got != "10m0s" || infoQuery.Step != "1m0s" {
+		t.Fatalf("unexpected resource info query timing: %+v", infoQuery)
+	}
+}
+
+func TestTimeGraphSingleNodePathRequiresTimestampPresence(t *testing.T) {
+	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{{Name: "node", Index: cmdb.Index{"id"}}}})
+	ctx := context.Background()
+	if err := tg.AddTimeNode(ctx, "node", cmdb.Matcher{"id": "n1"}, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := tg.AddTimeNode(ctx, "node", cmdb.Matcher{"id": "n2"}, 200); err != nil {
+		t.Fatal(err)
+	}
+	results, err := tg.FindRelationPathResources(ctx, "node", []cmdb.Resource{"node"}, nil, []cmdb.RelationPath{{
+		Steps: []cmdb.RelationPathStep{{ResourceType: "node"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("expected one node per timestamp, got %+v", results)
+	}
+	if results[0].Timestamp != 100 || results[0].Path[0].Dimensions["id"] != "n1" || results[1].Timestamp != 200 || results[1].Path[0].Dimensions["id"] != "n2" {
+		t.Fatalf("unexpected timestamp-specific nodes: %+v", results)
+	}
+}
+
+func TestTimeGraphLimitsTimeSpecificNodeInfos(t *testing.T) {
+	tg := NewTimeGraphWithConfig(&TimeGraphConfig{
+		Resource:     []TimeGraphResourceConfig{{Name: "node", Index: cmdb.Index{"id"}}},
+		MaxNodeInfos: 1,
+	})
+	ctx := context.Background()
+	if err := tg.AddTimeNode(ctx, "node", cmdb.Matcher{"id": "n1"}, 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := tg.AddTimeNode(ctx, "node", cmdb.Matcher{"id": "n1"}, 200); err == nil {
+		t.Fatal("expected time-specific node info limit")
+	}
+}
+
+func TestTimeGraphResourceInfoQueryFiltersExactPrimaryTuples(t *testing.T) {
+	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{{
+		Name: "pod", Index: cmdb.Index{"cluster", "pod"}, Info: cmdb.Index{"version"},
+	}}})
+	query, err := tg.MakeResourceInfoQueryTsWithWindow(
+		"space", "pod", nil, nil,
+		[]cmdb.Matcher{{"cluster": "c1", "pod": "p1"}, {"cluster": "c2", "pod": "p2"}},
+		time.Unix(100, 0), time.Unix(200, 0), time.Minute, 10*time.Minute,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conditions := query.QueryList[0].Conditions
+	if len(conditions.FieldList) != 4 || len(conditions.ConditionList) != 3 {
+		t.Fatalf("unexpected target filter shape: %+v", conditions)
+	}
+	if conditions.ConditionList[0] != structured.ConditionAnd || conditions.ConditionList[1] != structured.ConditionOr || conditions.ConditionList[2] != structured.ConditionAnd {
+		t.Fatalf("target primary tuples were not grouped exactly: %+v", conditions.ConditionList)
+	}
+}

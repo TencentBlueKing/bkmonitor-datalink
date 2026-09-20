@@ -29,11 +29,12 @@ type TimeGraphRelationConfig struct {
 // Keeping this snapshot immutable for the duration of one query prevents a
 // concurrent schema reload from changing node identity rules mid-query.
 type TimeGraphConfig struct {
-	Resource   []TimeGraphResourceConfig
-	Relation   []TimeGraphRelationConfig
-	MaxNodes   int
-	MaxEdges   int
-	MaxResults int
+	Resource     []TimeGraphResourceConfig
+	Relation     []TimeGraphRelationConfig
+	MaxNodes     int
+	MaxEdges     int
+	MaxResults   int
+	MaxNodeInfos int
 }
 
 func (m *Model) timeGraphConfig(namespace string) *TimeGraphConfig {
@@ -42,9 +43,10 @@ func (m *Model) timeGraphConfig(namespace string) *TimeGraphConfig {
 
 func buildTimeGraphConfig(provider SchemaProvider, namespace string) *TimeGraphConfig {
 	config := &TimeGraphConfig{
-		MaxNodes:   effectiveMaxGraphNodes(),
-		MaxEdges:   effectiveMaxGraphEdges(),
-		MaxResults: effectiveMaxGraphResults(),
+		MaxNodes:     effectiveMaxGraphNodes(),
+		MaxEdges:     effectiveMaxGraphEdges(),
+		MaxResults:   effectiveMaxGraphResults(),
+		MaxNodeInfos: effectiveMaxGraphNodeInfos(),
 	}
 
 	for _, resourceType := range provider.ListResourceTypes(namespace) {

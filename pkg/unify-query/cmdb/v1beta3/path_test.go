@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
@@ -67,7 +68,7 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 			Expected: []resourcePath{
 				{Steps: []resourcePathStep{
 					{ResourceType: "system", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "pod", RelationType: "system_to_pod", Category: "dynamic", Direction: "outbound"},
+					{ResourceType: "pod", RelationType: "system_to_pod", Category: "dynamic", Direction: "outbound", MetricName: "system_to_pod_flow"},
 				}},
 			},
 		},
@@ -81,7 +82,7 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 			Expected: []resourcePath{
 				{Steps: []resourcePathStep{
 					{ResourceType: "pod", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound"},
+					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound", MetricName: "pod_to_system_flow"},
 				}},
 			},
 		},
@@ -95,7 +96,7 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 			Expected: []resourcePath{
 				{Steps: []resourcePathStep{
 					{ResourceType: "pod", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound"},
+					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound", MetricName: "system_to_pod_flow"},
 				}},
 			},
 		},
@@ -109,11 +110,11 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 			Expected: []resourcePath{
 				{Steps: []resourcePathStep{
 					{ResourceType: "pod", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound"},
+					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound", MetricName: "pod_to_system_flow"},
 				}},
 				{Steps: []resourcePathStep{
 					{ResourceType: "pod", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound"},
+					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound", MetricName: "system_to_pod_flow"},
 				}},
 			},
 		},
@@ -131,7 +132,7 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 				}},
 				{Steps: []resourcePathStep{
 					{ResourceType: "system", RelationType: "", Category: "", Direction: ""},
-					{ResourceType: "pod", RelationType: "system_to_pod", Category: "dynamic", Direction: "outbound"},
+					{ResourceType: "pod", RelationType: "system_to_pod", Category: "dynamic", Direction: "outbound", MetricName: "system_to_pod_flow"},
 					{ResourceType: "node", RelationType: "node_with_pod", Category: "static", Direction: "inbound"},
 				}},
 			},
@@ -151,12 +152,12 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
-					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound"},
+					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound", MetricName: "pod_to_system_flow"},
 				}},
 				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
-					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound"},
+					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound", MetricName: "system_to_pod_flow"},
 				}},
 			},
 		},
@@ -184,27 +185,27 @@ func TestPathFinder_FindAllPaths(t *testing.T) {
 				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
-					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound"},
+					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound", MetricName: "pod_to_system_flow"},
 				}},
 				// 2跳: node -> pod -> system (动态 inbound)
 				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "pod", RelationType: "node_with_pod", Category: "static", Direction: "outbound"},
-					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound"},
+					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound", MetricName: "system_to_pod_flow"},
 				}},
 				// 3跳: node -> datasource -> pod -> system (动态 outbound)
 				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "datasource", RelationType: "datasource_with_node", Category: "static", Direction: "inbound"},
 					{ResourceType: "pod", RelationType: "datasource_with_pod", Category: "static", Direction: "outbound"},
-					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound"},
+					{ResourceType: "system", RelationType: "pod_to_system", Category: "dynamic", Direction: "outbound", MetricName: "pod_to_system_flow"},
 				}},
 				// 3跳: node -> datasource -> pod -> system (动态 inbound)
 				{Steps: []resourcePathStep{
 					{ResourceType: "node", RelationType: "", Category: "", Direction: ""},
 					{ResourceType: "datasource", RelationType: "datasource_with_node", Category: "static", Direction: "inbound"},
 					{ResourceType: "pod", RelationType: "datasource_with_pod", Category: "static", Direction: "outbound"},
-					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound"},
+					{ResourceType: "system", RelationType: "system_to_pod", Category: "dynamic", Direction: "inbound", MetricName: "system_to_pod_flow"},
 				}},
 			},
 		},
@@ -636,4 +637,25 @@ func TestDefaultStaticProviderConfigPreservesDynamicRelationDirection(t *testing
 		relation.DirectionTypeDirectional,
 	)
 	assert.False(t, reverseOK)
+}
+
+func TestDefaultStaticProviderConfigPreservesDynamicRelationMetricName(t *testing.T) {
+	model := &Model{schemaProvider: NewSchemaProviderFromRelation(relation.NewDefaultStaticSchemaProvider())}
+	relations := model.buildRelationsFromRelationPathsForNamespace("", []cmdb.RelationPath{{
+		Steps: []cmdb.RelationPathStep{
+			{ResourceType: "pod"},
+			{
+				ResourceType: "system",
+				RelationType: "pod_to_system",
+				Category:     string(RelationCategoryDynamic),
+				Direction:    string(DirectionOutbound),
+			},
+		},
+	}})
+	if len(relations) != 1 {
+		t.Fatalf("unexpected relation candidates: %+v", relations)
+	}
+	if relations[0].MetricName != "pod_to_system_flow" {
+		t.Fatalf("default dynamic metric name was lost: %+v", relations[0])
+	}
 }

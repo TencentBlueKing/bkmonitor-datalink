@@ -32,16 +32,18 @@ import (
 type TimeGraph struct {
 	lock sync.RWMutex // 读写锁，保证并发安全
 
-	nodeBuilder *NodeBuilder                          // 节点构建器，负责节点的创建和去重
-	stringDict  *StringDict                           // 局部字符串字典，避免全局溢出，每个实例独立管理
-	timeGraph   map[int64]graph.Graph[uint64, uint64] // 时间分片图，key为时间戳，value为对应的图结构
-	edgeTypes   map[int64]map[timeGraphEdgeKey]map[string]struct{}
-	nodeInfos   map[int64]map[uint64]cmdb.Matcher // timestamp -> node -> time-specific dimensions
-	maxNodes    int
-	maxEdges    int
-	maxResults  int
-	edgeCount   int
-	relations   []TimeGraphRelationConfig
+	nodeBuilder   *NodeBuilder                          // 节点构建器，负责节点的创建和去重
+	stringDict    *StringDict                           // 局部字符串字典，避免全局溢出，每个实例独立管理
+	timeGraph     map[int64]graph.Graph[uint64, uint64] // 时间分片图，key为时间戳，value为对应的图结构
+	edgeTypes     map[int64]map[timeGraphEdgeKey]map[string]struct{}
+	nodeInfos     map[int64]map[uint64]cmdb.Matcher // timestamp -> node -> time-specific dimensions
+	maxNodes      int
+	maxEdges      int
+	maxResults    int
+	maxNodeInfos  int
+	edgeCount     int
+	nodeInfoCount int
+	relations     []TimeGraphRelationConfig
 }
 
 type timeGraphEdgeKey struct {
@@ -59,7 +61,7 @@ func NewTimeGraph() *TimeGraph {
 // NewTimeGraphWithConfig creates a graph whose resource identity rules are
 // isolated from the process-global legacy configuration.
 func NewTimeGraphWithConfig(cfg *TimeGraphConfig) *TimeGraph {
-	maxNodes, maxEdges, maxResults := effectiveMaxGraphNodes(), effectiveMaxGraphEdges(), effectiveMaxGraphResults()
+	maxNodes, maxEdges, maxResults, maxNodeInfos := effectiveMaxGraphNodes(), effectiveMaxGraphEdges(), effectiveMaxGraphResults(), effectiveMaxGraphNodeInfos()
 	var relations []TimeGraphRelationConfig
 	if cfg != nil {
 		if cfg.MaxNodes > 0 {
@@ -71,19 +73,23 @@ func NewTimeGraphWithConfig(cfg *TimeGraphConfig) *TimeGraph {
 		if cfg.MaxResults > 0 {
 			maxResults = cfg.MaxResults
 		}
+		if cfg.MaxNodeInfos > 0 {
+			maxNodeInfos = cfg.MaxNodeInfos
+		}
 		relations = append(relations, cfg.Relation...)
 	}
 	stringDict := NewStringDict() // 每个TimeGraph实例有自己的字符串字典
 	return &TimeGraph{
-		nodeBuilder: NewNodeBuilderWithConfig(stringDict, cfg), // 传递局部StringDict给NodeBuilder
-		stringDict:  stringDict,
-		timeGraph:   make(map[int64]graph.Graph[uint64, uint64]),
-		edgeTypes:   make(map[int64]map[timeGraphEdgeKey]map[string]struct{}),
-		nodeInfos:   make(map[int64]map[uint64]cmdb.Matcher),
-		maxNodes:    maxNodes,
-		maxEdges:    maxEdges,
-		maxResults:  maxResults,
-		relations:   relations,
+		nodeBuilder:  NewNodeBuilderWithConfig(stringDict, cfg), // 传递局部StringDict给NodeBuilder
+		stringDict:   stringDict,
+		timeGraph:    make(map[int64]graph.Graph[uint64, uint64]),
+		edgeTypes:    make(map[int64]map[timeGraphEdgeKey]map[string]struct{}),
+		nodeInfos:    make(map[int64]map[uint64]cmdb.Matcher),
+		maxNodes:     maxNodes,
+		maxEdges:     maxEdges,
+		maxResults:   maxResults,
+		maxNodeInfos: maxNodeInfos,
+		relations:    relations,
 	}
 }
 
@@ -112,6 +118,7 @@ func (q *TimeGraph) Clean(ctx context.Context) {
 		delete(q.nodeInfos, k)
 	}
 	q.edgeCount = 0
+	q.nodeInfoCount = 0
 }
 
 // Stat 获取时序图的统计信息
@@ -220,7 +227,9 @@ func (q *TimeGraph) AddTimeNode(ctx context.Context, resource cmdb.Resource, inf
 		if q.nodeInfos[timestamp] == nil {
 			q.nodeInfos[timestamp] = make(map[uint64]cmdb.Matcher)
 		}
-		q.nodeInfos[timestamp][node] = cloneMatcher(info)
+		if err = q.setNodeInfo(timestamp, node, mergeMatcher(q.nodeInfos[timestamp][node], info)); err != nil {
+			return err
+		}
 		if err = q.timeGraph[timestamp].AddVertex(node); err != nil && !errors.Is(err, graph.ErrVertexAlreadyExists) {
 			return err
 		}
@@ -296,8 +305,12 @@ func (q *TimeGraph) AddTimeRelationWithRelation(ctx context.Context, relation cm
 			return err
 		}
 		g := q.timeGraph[timestamp]
-		q.nodeInfos[timestamp][sourceNode] = mergeMatcher(q.nodeInfos[timestamp][sourceNode], sourceInfo)
-		q.nodeInfos[timestamp][targetNode] = mergeMatcher(q.nodeInfos[timestamp][targetNode], targetInfo)
+		if err = q.setNodeInfo(timestamp, sourceNode, mergeMatcher(q.nodeInfos[timestamp][sourceNode], sourceInfo)); err != nil {
+			return err
+		}
+		if err = q.setNodeInfo(timestamp, targetNode, mergeMatcher(q.nodeInfos[timestamp][targetNode], targetInfo)); err != nil {
+			return err
+		}
 
 		// 添加源节点，忽略已存在的节点
 		if err = g.AddVertex(sourceNode); err != nil && !errors.Is(err, graph.ErrVertexAlreadyExists) {
@@ -356,9 +369,51 @@ func (q *TimeGraph) relationEndpointInfo(info cmdb.Matcher, resource cmdb.Resour
 	return result
 }
 
+func (q *TimeGraph) primaryMatcher(resource cmdb.Resource, info cmdb.Matcher) cmdb.Matcher {
+	primary := q.nodeBuilder.resourceIndexes(resource)
+	result := make(cmdb.Matcher, len(primary))
+	for _, field := range primary {
+		if value, ok := info[field]; ok {
+			result[field] = value
+		}
+	}
+	if len(result) != len(primary) {
+		return nil
+	}
+	return result
+}
+
+func (q *TimeGraph) primaryMatcherKey(resource cmdb.Resource, info cmdb.Matcher) string {
+	matcher := q.primaryMatcher(resource, info)
+	if len(matcher) == 0 {
+		return ""
+	}
+	var builder strings.Builder
+	builder.WriteString(string(resource))
+	for _, field := range q.nodeBuilder.resourceIndexes(resource) {
+		value, ok := matcher[field]
+		if !ok {
+			return ""
+		}
+		// Length prefixes make the key unambiguous even when values contain
+		// separators.
+		fmt.Fprintf(&builder, ":%d:%s=%d:%s", len(field), field, len(value), value)
+	}
+	return builder.String()
+}
+
 func (q *TimeGraph) relationEndpointPrefixes(relation cmdb.Relation, source, target cmdb.Resource) (string, string) {
 	if relation.Category != string(RelationCategoryDynamic) {
 		return "", ""
+	}
+	// Direction is part of the planned relation hop. It is required for
+	// same-type dynamic relations, where resource type comparison cannot tell
+	// whether the current source is the raw metric's from_ or to_ endpoint.
+	switch relation.Direction {
+	case string(DirectionInbound):
+		return "to_", "from_"
+	case string(DirectionOutbound):
+		return "from_", "to_"
 	}
 	for _, configured := range q.relations {
 		if configured.Category != string(RelationCategoryDynamic) {
@@ -378,6 +433,20 @@ func (q *TimeGraph) relationEndpointPrefixes(relation cmdb.Relation, source, tar
 		}
 	}
 	return "from_", "to_"
+}
+
+func (q *TimeGraph) setNodeInfo(timestamp int64, node uint64, info cmdb.Matcher) error {
+	if q.nodeInfos[timestamp] == nil {
+		q.nodeInfos[timestamp] = make(map[uint64]cmdb.Matcher)
+	}
+	if _, exists := q.nodeInfos[timestamp][node]; !exists {
+		if q.maxNodeInfos > 0 && q.nodeInfoCount >= q.maxNodeInfos {
+			return &ResultLimitError{Reason: "max_graph_node_infos", Count: q.nodeInfoCount + 1, Limit: q.maxNodeInfos}
+		}
+		q.nodeInfoCount++
+	}
+	q.nodeInfos[timestamp][node] = cloneMatcher(info)
+	return nil
 }
 
 func mergeMatcher(base, extra cmdb.Matcher) cmdb.Matcher {
@@ -409,6 +478,12 @@ func mergeMatcher(base, extra cmdb.Matcher) cmdb.Matcher {
 //
 // 优化: 预分配切片容量，减少内存重新分配
 func (q *TimeGraph) MakeQueryTs(ctx context.Context, spaceUID string, info map[string]string, start time.Time, end time.Time, step time.Duration, relation cmdb.Relation) (*structured.QueryTs, error) {
+	return q.MakeQueryTsWithWindow(ctx, spaceUID, info, start, end, step, step, relation)
+}
+
+// MakeQueryTsWithWindow keeps the range sampling step independent from the
+// lookback window used by count_over_time.
+func (q *TimeGraph) MakeQueryTsWithWindow(ctx context.Context, spaceUID string, info map[string]string, start time.Time, end time.Time, step, window time.Duration, relation cmdb.Relation) (*structured.QueryTs, error) {
 	if len(relation.V) != 2 {
 		return nil, nil
 	}
@@ -457,7 +532,7 @@ func (q *TimeGraph) MakeQueryTs(ctx context.Context, spaceUID string, info map[s
 		FieldName: metric,
 		TimeAggregation: structured.TimeAggregation{
 			Function: structured.CountOT,
-			Window:   structured.Window(step.String()),
+			Window:   structured.Window(window.String()),
 		},
 		AggregateMethodList: structured.AggregateMethodList{
 			{
@@ -515,6 +590,17 @@ func (q *TimeGraph) relationQueryFields(info cmdb.Matcher, source, target cmdb.R
 // Unlike a normal relation metric, the result must retain the configured
 // non-primary fields so the graph can filter or project them later.
 func (q *TimeGraph) MakeResourceInfoQueryTs(spaceUID string, resource cmdb.Resource, sourceInfo, expandInfo map[string]string, start, end time.Time, step time.Duration) (*structured.QueryTs, error) {
+	return q.makeResourceInfoQueryTs(spaceUID, resource, sourceInfo, expandInfo, nil, start, end, step, step)
+}
+
+// MakeResourceInfoQueryTsWithWindow is the range-query variant of
+// MakeResourceInfoQueryTs. primaryMatchers, when present, restricts the
+// query to the exact primary-key tuples discovered from relation series.
+func (q *TimeGraph) MakeResourceInfoQueryTsWithWindow(spaceUID string, resource cmdb.Resource, sourceInfo, expandInfo map[string]string, primaryMatchers []cmdb.Matcher, start, end time.Time, step, window time.Duration) (*structured.QueryTs, error) {
+	return q.makeResourceInfoQueryTs(spaceUID, resource, sourceInfo, expandInfo, primaryMatchers, start, end, step, window)
+}
+
+func (q *TimeGraph) makeResourceInfoQueryTs(spaceUID string, resource cmdb.Resource, sourceInfo, expandInfo map[string]string, primaryMatchers []cmdb.Matcher, start, end time.Time, step, window time.Duration) (*structured.QueryTs, error) {
 	if resource == "" {
 		return nil, nil
 	}
@@ -537,43 +623,71 @@ func (q *TimeGraph) MakeResourceInfoQueryTs(spaceUID string, resource cmdb.Resou
 	sort.Strings(fields)
 
 	fieldList := make([]structured.ConditionField, 0, len(primaryFields)+len(expandInfo))
-	for _, field := range primaryFields {
-		if value, ok := sourceInfo[field]; ok {
-			fieldList = append(fieldList, structured.ConditionField{
-				DimensionName: field,
-				Value:         []string{value},
-				Operator:      structured.ConditionEqual,
-			})
-		} else {
-			fieldList = append(fieldList, structured.ConditionField{
-				DimensionName: field,
-				Value:         []string{""},
-				Operator:      structured.ConditionNotEqual,
-			})
-		}
-	}
-	for field, value := range expandInfo {
-		if _, isPrimary := primarySet[field]; !isPrimary {
-			fieldList = append(fieldList, structured.ConditionField{
-				DimensionName: field,
-				Value:         []string{value},
-				Operator:      structured.ConditionEqual,
-			})
-		}
-	}
-	sort.SliceStable(fieldList, func(i, j int) bool {
-		return fieldList[i].DimensionName < fieldList[j].DimensionName
-	})
 	conditionList := make([]string, 0, max(len(fieldList)-1, 0))
-	for i := 1; i < len(fieldList); i++ {
-		conditionList = append(conditionList, structured.ConditionAnd)
+	if len(primaryMatchers) > 0 {
+		// Each matcher is one exact primary-key tuple. Build
+		// (k1=v1 AND k2=v2) OR (k1=v1 AND k2=v2), which avoids the
+		// cartesian-product overmatch that a per-field IN filter would create.
+		for _, matcher := range primaryMatchers {
+			for fieldIndex, field := range primaryFields {
+				value, ok := matcher[field]
+				if !ok {
+					continue
+				}
+				if len(fieldList) > 0 {
+					if fieldIndex == 0 {
+						// The first field of every tuple is joined to the
+						// previous tuple with OR; fields in a tuple use AND.
+						conditionList = append(conditionList, structured.ConditionOr)
+					} else {
+						conditionList = append(conditionList, structured.ConditionAnd)
+					}
+				}
+				fieldList = append(fieldList, structured.ConditionField{DimensionName: field, Value: []string{value}, Operator: structured.ConditionEqual})
+			}
+		}
+	} else {
+		for _, field := range primaryFields {
+			if value, ok := sourceInfo[field]; ok {
+				fieldList = append(fieldList, structured.ConditionField{DimensionName: field, Value: []string{value}, Operator: structured.ConditionEqual})
+			} else {
+				fieldList = append(fieldList, structured.ConditionField{DimensionName: field, Value: []string{""}, Operator: structured.ConditionNotEqual})
+			}
+		}
+	}
+	expandFields := make([]string, 0, len(expandInfo))
+	for field := range expandInfo {
+		expandFields = append(expandFields, field)
+	}
+	sort.Strings(expandFields)
+	for _, field := range expandFields {
+		value := expandInfo[field]
+		if _, isPrimary := primarySet[field]; !isPrimary {
+			if len(fieldList) > 0 {
+				conditionList = append(conditionList, structured.ConditionAnd)
+			}
+			fieldList = append(fieldList, structured.ConditionField{
+				DimensionName: field,
+				Value:         []string{value},
+				Operator:      structured.ConditionEqual,
+			})
+		}
+	}
+	if len(primaryMatchers) == 0 {
+		sort.SliceStable(fieldList, func(i, j int) bool {
+			return fieldList[i].DimensionName < fieldList[j].DimensionName
+		})
+		conditionList = conditionList[:0]
+		for i := 1; i < len(fieldList); i++ {
+			conditionList = append(conditionList, structured.ConditionAnd)
+		}
 	}
 
 	query := &structured.Query{
 		FieldName: fmt.Sprintf("%s_info_relation", resource),
 		TimeAggregation: structured.TimeAggregation{
 			Function: structured.CountOT,
-			Window:   structured.Window(step.String()),
+			Window:   structured.Window(window.String()),
 		},
 		AggregateMethodList: structured.AggregateMethodList{{
 			Method:     structured.COUNT,
@@ -662,7 +776,11 @@ func (q *TimeGraph) FindShortestPath(ctx context.Context, sourceType cmdb.Resour
 		if g == nil {
 			continue
 		}
-		sourceNodes := q.findNodesByPartialMatcherAt(timestamp, sourceType, sourceMatcher, sourceCandidates)
+		adjacency, err := g.AdjacencyMap()
+		if err != nil {
+			continue
+		}
+		sourceNodes := q.findNodesByPartialMatcherAt(timestamp, sourceType, sourceMatcher, sourceCandidates, adjacency)
 		if len(sourceNodes) == 0 {
 			continue
 		}
@@ -789,7 +907,7 @@ func (q *TimeGraph) FindRelationPathResources(
 		if err != nil {
 			continue
 		}
-		sourceNodes := q.findNodesByPartialMatcherAt(timestamp, sourceType, sourceMatcher, sourceCandidates)
+		sourceNodes := q.findNodesByPartialMatcherAt(timestamp, sourceType, sourceMatcher, sourceCandidates, adjacency)
 		if len(sourceNodes) == 0 {
 			continue
 		}
@@ -1026,9 +1144,12 @@ func (q *TimeGraph) infoAt(timestamp int64, nodeID uint64) (cmdb.Resource, cmdb.
 	return resourceType, fallback
 }
 
-func (q *TimeGraph) findNodesByPartialMatcherAt(timestamp int64, resourceType cmdb.Resource, partialMatcher cmdb.Matcher, candidates []uint64) []uint64 {
+func (q *TimeGraph) findNodesByPartialMatcherAt(timestamp int64, resourceType cmdb.Resource, partialMatcher cmdb.Matcher, candidates []uint64, present map[uint64]map[uint64]graph.Edge[uint64]) []uint64 {
 	matched := make([]uint64, 0, len(candidates))
 	for _, nodeID := range candidates {
+		if _, ok := present[nodeID]; !ok {
+			continue
+		}
 		nodeResource, nodeInfo := q.infoAt(timestamp, nodeID)
 		if nodeResource == resourceType && q.matchesPartial(nodeInfo, partialMatcher) {
 			matched = append(matched, nodeID)

@@ -59,12 +59,13 @@ func (m *Model) buildTimeGraphFromRelations(ctx context.Context, spaceUID string
 	} else {
 		lookBack = time.Duration(DefaultLookBackDelta) * time.Millisecond
 	}
+	span.Set("query-lookback-seconds", lookBack.Seconds())
+	span.Set("graph-max-node-infos", tg.maxNodeInfos)
 
 	instant := start.Equal(end)
+	// step controls range sampling. lookBack is only the count_over_time
+	// window; keeping them separate is important for sparse range queries.
 	queryStep := step
-	if instant {
-		queryStep = lookBack
-	}
 	queryMatrix := func(queryCtx context.Context, queryTs *structured.QueryTs) (pl.Matrix, error) {
 		queryRef, queryErr := queryTs.ToQueryReference(queryCtx)
 		if queryErr != nil {
@@ -116,8 +117,8 @@ func (m *Model) buildTimeGraphFromRelations(ctx context.Context, spaceUID string
 	if len(sourceExpandInfo) > 0 || len(relations) == 0 {
 		infoCtx := metadata.InitHashID(ctx)
 		metadata.GetQueryParams(infoCtx).SetIsSkipK8s(true)
-		queryTs, queryErr := tg.MakeResourceInfoQueryTs(
-			spaceUID, sourceType, sourceInfo, sourceExpandInfo, start, end, queryStep,
+		queryTs, queryErr := tg.MakeResourceInfoQueryTsWithWindow(
+			spaceUID, sourceType, sourceInfo, sourceExpandInfo, nil, start, end, queryStep, lookBack,
 		)
 		if queryErr != nil {
 			return nil, errors.WithMessage(queryErr, "make source info query ts")
@@ -145,21 +146,92 @@ func (m *Model) buildTimeGraphFromRelations(ctx context.Context, spaceUID string
 			}
 		}
 	}
-	if timeGraphTargetInfoShow(ctx) {
-		targetTypes := make(map[cmdb.Resource]struct{})
-		for _, relation := range relations {
-			if len(relation.V) == 2 {
-				targetTypes[relation.V[1]] = struct{}{}
+	// targetMatchersByType is the set of endpoint identities actually emitted
+	// by relation metrics. targetIDsByTimestamp additionally prevents an info
+	// series from creating an isolated node at a timestamp with no relation.
+	targetMatchersByType := make(map[cmdb.Resource]map[string]cmdb.Matcher)
+	targetIDsByTimestamp := make(map[int64]map[cmdb.Resource]map[string]struct{})
+	for _, relation := range relations {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if len(relation.V) != 2 {
+			continue
+		}
+
+		relationCtx := metadata.InitHashID(ctx)
+		metadata.GetQueryParams(relationCtx).SetIsSkipK8s(true)
+		queryTs, queryErr := tg.MakeQueryTsWithWindow(relationCtx, spaceUID, sourceInfo, start, end, queryStep, lookBack, relation)
+		if queryErr != nil {
+			return nil, errors.WithMessagef(queryErr, "make query ts error for relation %v", relation)
+		}
+		if queryTs == nil {
+			continue
+		}
+
+		matrix, queryErr := queryMatrix(relationCtx, queryTs)
+		if queryErr != nil {
+			return nil, queryErr
+		}
+		for _, series := range matrix {
+			if err := relationCtx.Err(); err != nil {
+				return nil, err
+			}
+			info := make(cmdb.Matcher, len(series.Metric))
+			for _, label := range series.Metric {
+				info[label.Name] = label.Value
+			}
+			timestamps := make([]int64, len(series.Points))
+			for i, point := range series.Points {
+				timestamps[i] = point.T
+			}
+			if err = tg.AddTimeRelationWithRelation(relationCtx, relation, info, timestamps...); err != nil {
+				return nil, errors.WithMessage(err, "add time relation")
+			}
+
+			if !timeGraphTargetInfoShow(ctx) {
+				continue
+			}
+			dynamic := relation.Category == string(RelationCategoryDynamic)
+			_, targetPrefix := tg.relationEndpointPrefixes(relation, relation.V[0], relation.V[1])
+			targetInfo := tg.relationEndpointInfo(info, relation.V[1], targetPrefix, dynamic)
+			if len(targetInfo) == 0 {
+				targetInfo = info
+			}
+			targetType := relation.V[1]
+			targetKey := tg.primaryMatcherKey(targetType, targetInfo)
+			if targetKey == "" {
+				continue
+			}
+			if targetMatchersByType[targetType] == nil {
+				targetMatchersByType[targetType] = make(map[string]cmdb.Matcher)
+			}
+			targetMatchersByType[targetType][targetKey] = tg.primaryMatcher(targetType, targetInfo)
+			for _, point := range series.Points {
+				if targetIDsByTimestamp[point.T] == nil {
+					targetIDsByTimestamp[point.T] = make(map[cmdb.Resource]map[string]struct{})
+				}
+				if targetIDsByTimestamp[point.T][targetType] == nil {
+					targetIDsByTimestamp[point.T][targetType] = make(map[string]struct{})
+				}
+				targetIDsByTimestamp[point.T][targetType][targetKey] = struct{}{}
 			}
 		}
-		for targetType := range targetTypes {
+	}
+
+	if timeGraphTargetInfoShow(ctx) {
+		for targetType, matchers := range targetMatchersByType {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
+			primaryMatchers := make([]cmdb.Matcher, 0, len(matchers))
+			for _, matcher := range matchers {
+				primaryMatchers = append(primaryMatchers, matcher)
+			}
 			infoCtx := metadata.InitHashID(ctx)
 			metadata.GetQueryParams(infoCtx).SetIsSkipK8s(true)
-			queryTs, queryErr := tg.MakeResourceInfoQueryTs(
-				spaceUID, targetType, nil, nil, start, end, queryStep,
+			queryTs, queryErr := tg.MakeResourceInfoQueryTsWithWindow(
+				spaceUID, targetType, nil, nil, primaryMatchers, start, end, queryStep, lookBack,
 			)
 			if queryErr != nil {
 				return nil, errors.WithMessage(queryErr, "make target info query ts")
@@ -179,57 +251,21 @@ func (m *Model) buildTimeGraphFromRelations(ctx context.Context, spaceUID string
 				for _, label := range series.Metric {
 					info[label.Name] = label.Value
 				}
-				timestamps := make([]int64, len(series.Points))
-				for i, point := range series.Points {
-					timestamps[i] = point.T
+				timestamps := make([]int64, 0, len(series.Points))
+				key := tg.primaryMatcherKey(targetType, info)
+				for _, point := range series.Points {
+					if _, ok := targetIDsByTimestamp[point.T][targetType][key]; ok {
+						timestamps = append(timestamps, point.T)
+					}
 				}
-				if err = tg.AddTimeNode(infoCtx, targetType, info, timestamps...); err != nil {
-					return nil, errors.WithMessage(err, "add target info node")
+				if len(timestamps) > 0 {
+					if err = tg.AddTimeNode(infoCtx, targetType, info, timestamps...); err != nil {
+						return nil, errors.WithMessage(err, "add target info node")
+					}
 				}
 			}
 		}
 	}
-	for _, relation := range relations {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if len(relation.V) != 2 {
-			continue
-		}
-
-		relationCtx := metadata.InitHashID(ctx)
-		metadata.GetQueryParams(relationCtx).SetIsSkipK8s(true)
-		queryTs, err := tg.MakeQueryTs(relationCtx, spaceUID, sourceInfo, start, end, queryStep, relation)
-		if err != nil {
-			return nil, errors.WithMessagef(err, "make query ts error for relation %v", relation)
-		}
-		if queryTs == nil {
-			continue
-		}
-
-		matrix, queryErr := queryMatrix(relationCtx, queryTs)
-		if queryErr != nil {
-			return nil, queryErr
-		}
-
-		for _, series := range matrix {
-			if err := relationCtx.Err(); err != nil {
-				return nil, err
-			}
-			info := make(cmdb.Matcher, len(series.Metric))
-			for _, label := range series.Metric {
-				info[label.Name] = label.Value
-			}
-			timestamps := make([]int64, len(series.Points))
-			for i, point := range series.Points {
-				timestamps[i] = point.T
-			}
-			if err = tg.AddTimeRelationWithRelation(relationCtx, relation, info, timestamps...); err != nil {
-				return nil, errors.WithMessage(err, "add time relation")
-			}
-		}
-	}
-
 	return tg, nil
 }
 
@@ -249,6 +285,7 @@ func (m *Model) buildRelationsFromRelationPathsForNamespace(namespace string, pa
 		relationType string
 		metricName   string
 		category     string
+		direction    string
 	}
 	seen := make(map[relationKey]struct{})
 	relations := make([]cmdb.Relation, 0)
@@ -267,6 +304,7 @@ func (m *Model) buildRelationsFromRelationPathsForNamespace(namespace string, pa
 					relationType: candidate.RelationType,
 					metricName:   candidate.MetricName,
 					category:     candidate.Category,
+					direction:    candidate.Direction,
 				}
 				if _, ok := seen[key]; ok {
 					continue
@@ -277,6 +315,7 @@ func (m *Model) buildRelationsFromRelationPathsForNamespace(namespace string, pa
 					RelationType: candidate.RelationType,
 					MetricName:   candidate.MetricName,
 					Category:     candidate.Category,
+					Direction:    candidate.Direction,
 				})
 			}
 		}
@@ -311,6 +350,7 @@ func (m *Model) timeGraphRelationCandidates(
 			RelationType: configured.RelationType,
 			MetricName:   metricName,
 			Category:     configured.Category,
+			Direction:    step.Direction,
 		})
 	}
 	if len(result) > 0 {
@@ -321,6 +361,7 @@ func (m *Model) timeGraphRelationCandidates(
 		RelationType: step.RelationType,
 		MetricName:   step.MetricName,
 		Category:     step.Category,
+		Direction:    step.Direction,
 	}}
 }
 

@@ -11,6 +11,7 @@ package http
 
 import (
 	"fmt"
+	"time"
 	"unsafe"
 
 	"github.com/gin-gonic/gin"
@@ -18,6 +19,7 @@ import (
 	influxdbRouter "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -175,6 +177,11 @@ func HandlerQueryExemplar(c *gin.Context) {
 		return
 	}
 
+	if err = rejectFieldSemantics(query); err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
 	// metadata 中的 spaceUid 是从 header 头信息中获取
 	if user.SpaceUID != "" {
 		query.SpaceUid = user.SpaceUID
@@ -245,8 +252,15 @@ func HandlerQueryRaw(c *gin.Context) {
 
 	// 解析请求 body
 	queryTs := &structured.QueryTs{}
-	err = json.NewDecoder(c.Request.Body).Decode(queryTs)
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.UseNumber()
+	err = decoder.Decode(queryTs)
 	if err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
+	if err = rejectFieldSemantics(queryTs); err != nil {
 		resp.failed(ctx, err)
 		return
 	}
@@ -262,6 +276,13 @@ func HandlerQueryRaw(c *gin.Context) {
 	listData.TraceID = span.TraceID()
 
 	if err = validateQueryTsDataSource(queryTs); err != nil {
+		resp.failed(ctx, metadata.NewMessage(
+			metadata.MsgQueryRaw,
+			"查询参数校验异常",
+		).Error(ctx, err))
+		return
+	}
+	if err = validateQueryTsRawPagination(queryTs); err != nil {
 		resp.failed(ctx, metadata.NewMessage(
 			metadata.MsgQueryRaw,
 			"查询参数校验异常",
@@ -332,8 +353,14 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	span.Set("query-space-uid", user.SpaceUID)
 
 	queryTs := &structured.QueryTs{}
-	err = json.NewDecoder(c.Request.Body).Decode(queryTs)
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.UseNumber()
+	err = decoder.Decode(queryTs)
 	if err != nil {
+		return
+	}
+
+	if err = rejectFieldSemantics(queryTs); err != nil {
 		return
 	}
 
@@ -342,6 +369,10 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	}
 
 	if err = validateQueryTsDataSource(queryTs); err != nil {
+		return
+	}
+	if queryTs.IsSearchAfter {
+		err = fmt.Errorf("is_search_after is not supported by query_raw_with_scroll")
 		return
 	}
 
@@ -411,7 +442,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      structured.QueryTs  			true   "json data"
-// @Success  200                   	{object}  PromData
+// @Success  200                   	{object}  QueryTsResponse  "未指定 response_contract 时返回 legacy PromData；named_outputs/v1 返回命名多输出"
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts [post]
 func HandlerQueryTs(c *gin.Context) {
@@ -447,6 +478,11 @@ func HandlerQueryTs(c *gin.Context) {
 		return
 	}
 
+	if err = validateFieldSemanticsRequest(query); err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
 	// metadata 中的 spaceUid 是从 header 头信息中获取，header 如果有的话，覆盖参数里的
 	if user.SpaceUID != "" {
 		query.SpaceUid = user.SpaceUID
@@ -461,7 +497,29 @@ func HandlerQueryTs(c *gin.Context) {
 		c.Request.URL.String(), c.Request.Header, string(queryStr),
 	).Info(ctx)
 
+	settings := getNamedOutputSettings()
+	namedOutputValidationStart := time.Now()
+	if err = query.ValidateNamedOutputs(settings.MaxOutputs); err != nil {
+		if query.ResponseContract != "" || query.LegacyOutputRef != "" || len(query.OutputList) > 0 {
+			metric.NamedOutputsRequestInc(ctx, metric.NamedOutputsRequestReceived)
+			metric.NamedOutputsRequestInc(ctx, metric.NamedOutputsRequestError)
+			metric.NamedOutputsRejectInc(ctx, namedOutputsValidationRejectReason(err))
+			metric.NamedOutputsDurationObserve(ctx, metric.NamedOutputsRequestError, time.Since(namedOutputValidationStart))
+		}
+		resp.failed(ctx, metadata.NewMessage(
+			metadata.MsgQueryTs,
+			"命名多输出参数校验异常",
+		).Error(ctx, err))
+		return
+	}
+
 	if err = validateQueryTsDataSource(query); err != nil {
+		if query.ResponseContract == structured.NamedOutputsV1 {
+			metric.NamedOutputsRequestInc(ctx, metric.NamedOutputsRequestReceived)
+			metric.NamedOutputsRequestInc(ctx, metric.NamedOutputsRequestError)
+			metric.NamedOutputsRejectInc(ctx, metric.NamedOutputsRejectValidation)
+			metric.NamedOutputsDurationObserve(ctx, metric.NamedOutputsRequestError, time.Since(namedOutputValidationStart))
+		}
 		resp.failed(ctx, metadata.NewMessage(
 			metadata.MsgQueryTs,
 			"查询参数校验异常",
@@ -469,10 +527,25 @@ func HandlerQueryTs(c *gin.Context) {
 		return
 	}
 
-	res, err := queryTsWithPromEngine(ctx, query)
+	var res any
+	if query.ResponseContract == structured.NamedOutputsV1 {
+		res, err = queryTsNamedOutputs(ctx, query)
+	} else {
+		res, err = queryTsWithPromEngine(ctx, query)
+	}
 	if err != nil {
 		resp.failed(ctx, err)
 		return
+	}
+
+	ack, ackErr := fieldSemanticsAcknowledgement(ctx, query, res)
+	if ackErr != nil {
+		err = ackErr
+		resp.failed(ctx, err)
+		return
+	}
+	if ack {
+		c.Header(fieldSemanticsHeader, metadata.FTAEventTagsV1)
 	}
 
 	span.Set("resp-size", fmt.Sprint(unsafe.Sizeof(res)))
@@ -603,6 +676,11 @@ func HandlerQueryReference(c *gin.Context) {
 		return
 	}
 
+	if err = rejectFieldSemantics(query); err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
 	// metadata 中的 spaceUid 是从 header 头信息中获取
 	if user.SpaceUID != "" {
 		query.SpaceUid = user.SpaceUID
@@ -673,6 +751,11 @@ func HandlerQueryTsClusterMetrics(c *gin.Context) {
 		).Error(ctx, err))
 		return
 	}
+	if err = rejectFieldSemantics(query); err != nil {
+		resp.failed(ctx, err)
+		return
+	}
+
 	queryStr, _ := json.Marshal(query)
 
 	metadata.NewMessage(
@@ -714,6 +797,32 @@ func validateQueryTsDataSource(queryTs *structured.QueryTs) error {
 				"data_source 为 %q 时，table_id 与 table_id_conditions 不能同时为空（reference_name=%s）",
 				ds, q.ReferenceName,
 			)
+		}
+	}
+	return nil
+}
+
+// validateQueryTsRawPagination validates options that are meaningful only for
+// the raw SearchAfter execution path. A non-zero from would either be sent
+// alongside the keyset predicate or be folded into the per-route size.
+func validateQueryTsRawPagination(queryTs *structured.QueryTs) error {
+	if queryTs == nil || !queryTs.IsSearchAfter {
+		return nil
+	}
+	if queryTs.Scroll != "" {
+		return fmt.Errorf("is_search_after cannot be combined with scroll")
+	}
+	if queryTs.From != 0 {
+		return fmt.Errorf("from cannot be combined with is_search_after")
+	}
+	for _, query := range queryTs.QueryList {
+		if query != nil && query.From != 0 {
+			return fmt.Errorf("query from cannot be combined with is_search_after (reference_name=%s)", query.ReferenceName)
+		}
+	}
+	for tableUUID, option := range queryTs.ResultTableOptions {
+		if option != nil && option.From != nil && *option.From != 0 {
+			return fmt.Errorf("result table option from cannot be combined with is_search_after (table=%s)", tableUUID)
 		}
 	}
 	return nil

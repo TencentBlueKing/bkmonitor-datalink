@@ -1,0 +1,27 @@
+{
+  "space_uid": "bkcc__golden_es_trailing_boolean",
+  "result_tables": [
+    {
+      "table_id": "demo_trailing_boolean_logs.partition_1"
+    }
+  ],
+  "result_table_details": {
+    "demo_trailing_boolean_logs.partition_1": {
+      "storage_id": 2005,
+      "storage_name": "es_cluster_trailing_boolean",
+      "storage_type": "elasticsearch",
+      "cluster_name": "es_cluster_trailing_boolean",
+      "db": "golden_trailing_boolean_logs",
+      "table_id": "demo_trailing_boolean_logs.partition_1",
+      "fields": ["events_total"],
+      "data_label": "demo_trailing_boolean_logs",
+      "tags_key": ["service"],
+      "source_type": "bklog"
+    }
+  },
+  "storages": {
+    "2005": {
+      "type": "elasticsearch"
+    }
+  }
+}

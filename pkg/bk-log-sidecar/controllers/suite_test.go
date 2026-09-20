@@ -34,6 +34,8 @@ var k8sClient client.Client
 
 var testEnv *envtest.Environment
 
+var testEnvStarted bool
+
 func TestAPIs(t *testing.T) {
 	RegisterFailHandler(Fail)
 
@@ -45,13 +47,19 @@ var _ = BeforeSuite(func() {
 
 	By("bootstrapping test environment")
 	testEnv = &envtest.Environment{
-		CRDDirectoryPaths:     []string{filepath.Join("..", "config", "crd", "bases")},
+		// 同一目录还保留一份面向旧集群发布的 v1beta1 CRD。envtest 只需要
+		// 安装当前 v1 清单；同时加载同名 CRD 会让新版 apiserver 把第二份
+		// 清单当作更新，并因转换后的 schema 不完整而拒绝启动。
+		CRDDirectoryPaths: []string{
+			filepath.Join("..", "config", "crd", "bases", "bk.tencent.com_bklogconfigs.yaml"),
+		},
 		ErrorIfCRDPathMissing: true,
 	}
 
 	cfg, err := testEnv.Start()
 	Expect(err).NotTo(HaveOccurred())
 	Expect(cfg).NotTo(BeNil())
+	testEnvStarted = true
 
 	err = bluekingv1alpha1.AddToScheme(scheme.Scheme)
 	Expect(err).NotTo(HaveOccurred())
@@ -66,6 +74,9 @@ var _ = BeforeSuite(func() {
 
 var _ = AfterSuite(func() {
 	By("tearing down the test environment")
+	if !testEnvStarted {
+		return
+	}
 	err := testEnv.Stop()
 	Expect(err).NotTo(HaveOccurred())
 })

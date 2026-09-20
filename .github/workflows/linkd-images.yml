@@ -1,0 +1,144 @@
+name: Linkd images
+
+# 仅人工触发；push、PR、Git tag 和 Release 均不触发打包。
+on:
+  workflow_dispatch:
+    inputs:
+      component:
+        description: 要构建并推送的镜像
+        type: choice
+        options:
+          - all
+          - linkd
+          - linkd-console
+        default: all
+      version:
+        description: 可选版本标签（如 v0.1.0-rc.1）；留空仅发布唯一构建标签
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+# 同一版本串行发布，避免并发覆盖；正在发布的任务不会被后续运行取消。
+concurrency:
+  group: linkd-images-${{ inputs.version || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.metadata.outputs.matrix }}
+      image-prefix: ${{ steps.metadata.outputs.image-prefix }}
+      build-tag: ${{ steps.metadata.outputs.build-tag }}
+      version: ${{ steps.metadata.outputs.version }}
+    steps:
+      - name: Validate inputs and prepare shared version
+        id: metadata
+        shell: bash
+        env:
+          COMPONENT: ${{ inputs.component }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          # 输入通过环境变量传入，避免把人工输入插入 shell 源码。
+          if [[ -n "$VERSION" && ! "$VERSION" =~ ^[a-zA-Z0-9_][a-zA-Z0-9_.-]{0,127}$ ]]; then
+            echo '::error::version 必须是合法的 Docker tag（最长 128 字符）'
+            exit 1
+          fi
+          case "$COMPONENT" in
+            all) components='["linkd","linkd-console"]' ;;
+            linkd) components='["linkd"]' ;;
+            linkd-console) components='["linkd-console"]' ;;
+            *) echo '::error::未知的 component'; exit 1 ;;
+          esac
+          # 重跑可能拉取不同的基础镜像；run attempt 区分同一提交的不同构建。
+          build_tag="sha-${GITHUB_SHA:0:12}-${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
+          {
+            echo "matrix={\"component\":$components}"
+            echo "image-prefix=ghcr.io/${GITHUB_REPOSITORY,,}"
+            echo "build-tag=$build_tag"
+            echo "version=${VERSION:-$build_tag}"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and push ${{ matrix.component }}
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Checkout selected commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Prepare image tags
+        id: image
+        shell: bash
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image-prefix }}/${{ matrix.component }}
+          BUILD_TAG: ${{ needs.prepare.outputs.build-tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          {
+            echo 'tags<<EOF'
+            echo "$IMAGE:$BUILD_TAG"
+            if [[ "$VERSION" != "$BUILD_TAG" ]]; then
+              echo "$IMAGE:$VERSION"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: ${{ matrix.component == 'linkd' && 'pkg/linkd' || 'pkg/linkd/console' }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image.outputs.tags }}
+          build-args: |
+            VERSION=${{ needs.prepare.outputs.version }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+
+      - name: Summarize published image
+        shell: bash
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image-prefix }}/${{ matrix.component }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          BUILD_TAG: ${{ needs.prepare.outputs.build-tag }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          {
+            printf '### %s\n\n' "$IMAGE"
+            printf -- '- 版本：`%s:%s`\n' "$IMAGE" "$VERSION"
+            printf -- '- 构建标签：`%s:%s`\n' "$IMAGE" "$BUILD_TAG"
+            printf -- '- 固定产物：`%s@%s`\n' "$IMAGE" "$DIGEST"
+            printf -- '- 源码提交：`%s`\n' "$GITHUB_SHA"
+            printf -- '- 平台：`linux/amd64`\n'
+          } >> "$GITHUB_STEP_SUMMARY"

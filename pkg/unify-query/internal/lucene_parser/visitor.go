@@ -408,7 +408,8 @@ func (n *ConditionNode) String() string {
 				o += "="
 			}
 
-			s = append(s, fmt.Sprintf("%s %s '%s'", field, o, v.Start.String()))
+			value := normalizeStringConditionValue(v.Start.String(), false)
+			s = append(s, fmt.Sprintf("%s %s '%s'", field, o, escapeSQLStringValue(value)))
 		}
 		if v.End != nil {
 			o := "<"
@@ -416,7 +417,8 @@ func (n *ConditionNode) String() string {
 				o += "="
 			}
 
-			s = append(s, fmt.Sprintf("%s %s '%s'", field, o, v.End.String()))
+			value := normalizeStringConditionValue(v.End.String(), false)
+			s = append(s, fmt.Sprintf("%s %s '%s'", field, o, escapeSQLStringValue(value)))
 		}
 		return strings.Join(s, fmt.Sprintf(" %s ", logicAnd))
 	case *WildCardNode:
@@ -437,8 +439,11 @@ func (n *ConditionNode) String() string {
 		value = n.value.String()
 	}
 	if n.isQuoted {
-		value = strings.ReplaceAll(value, `\`, ``)
-		value = strings.Trim(value, `"`)
+		value = normalizeStringConditionValue(value, true)
+		value = escapeSQLStringValue(value)
+	} else if _, ok := n.value.(*StringNode); ok {
+		value = normalizeStringConditionValue(value, false)
+		value = escapeSQLStringValue(value)
 	}
 
 	switch op {
@@ -473,6 +478,10 @@ func (n *ConditionNode) String() string {
 	}
 
 	return fmt.Sprintf("%s %s '%s'", field, op, value)
+}
+
+func escapeSQLStringValue(value string) string {
+	return strings.NewReplacer(`\`, `\\`, `'`, `''`).Replace(value)
 }
 
 // nonEmptyFieldSQL 渲染 SQL/Doris 路径的“字段存在且不为空字符串”条件，用于 NOT field:"" 兼容语义。
@@ -572,8 +581,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	}
 
 	if n.isQuoted {
-		value = strings.ReplaceAll(value, `\`, ``)
-		value = strings.Trim(value, `"`)
+		value = normalizeStringConditionValue(value, true)
 	}
 
 	if field == "_exists_" {
@@ -594,6 +602,9 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	if n.Option.FieldsMap != nil {
 		fieldOption = n.Option.FieldsMap.Field(field)
 	}
+	if _, ok := n.value.(*StringNode); ok && !n.isQuoted {
+		value = normalizeStringConditionValue(value, false)
+	}
 
 	if n.op != nil {
 		op = n.op.String()
@@ -609,12 +620,14 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	case *RangeNode:
 		cq := elastic.NewRangeQuery(field)
 		if cv.Start != nil {
-			cq.From(realValue(cv.Start))
+			value := normalizeStringConditionValue(cv.Start.String(), false)
+			cq.From(realStringValue(value))
 		}
 		cq.IncludeLower(cv.IsIncludeStart)
 
 		if cv.End != nil {
-			cq.To(realValue(cv.End))
+			value := normalizeStringConditionValue(cv.End.String(), false)
+			cq.To(realStringValue(value))
 		}
 		cq.IncludeUpper(cv.IsIncludeEnd)
 		if cv.Boost != "" {
@@ -641,12 +654,11 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 			result = wildcardQueryForField(field, value, fieldOption, cv.Boost)
 		}
 	case *RegexpNode:
-		rewrite := esregexpcompat.Rewrite(value)
+		rewrite := esregexpcompat.RewriteForQueryString(value)
 		value = rewrite.Pattern
-		cq := elastic.NewRegexpQuery(field, value)
-		if cv.Boost != "" {
-			cq.Boost(cast.ToFloat64(cv.Boost))
-		}
+		// ES regexp 是 term-level 查询，不会像 match/match_phrase 一样走 analyzer；
+		// 因此 text + lowercase/analyzed 字段需要在 UQ 侧按字段大小写语义归一化 pattern。
+		cq := regexpQueryForField(field, value, fieldOption, cv.Boost)
 		if rewrite.Negative {
 			// 正向不包含前缀形式必须要求字段存在；单独 must_not regexp 会误匹配缺失字段。
 			result = negativeLookaheadQuery(field, cq)
@@ -656,13 +668,13 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 	case *StringNode:
 		switch op {
 		case ">":
-			result = elastic.NewRangeQuery(field).Gt(realValue(n.value))
+			result = elastic.NewRangeQuery(field).Gt(realStringValue(value))
 		case ">=":
-			result = elastic.NewRangeQuery(field).Gte(realValue(n.value))
+			result = elastic.NewRangeQuery(field).Gte(realStringValue(value))
 		case "<":
-			result = elastic.NewRangeQuery(field).Lt(realValue(n.value))
+			result = elastic.NewRangeQuery(field).Lt(realStringValue(value))
 		case "<=":
-			result = elastic.NewRangeQuery(field).Lte(realValue(n.value))
+			result = elastic.NewRangeQuery(field).Lte(realStringValue(value))
 		case "!=":
 			notEqual = true
 			if fieldOption.IsAnalyzed {
@@ -710,7 +722,7 @@ func (n *ConditionNode) DSL() (allMust []elastic.Query, allShould []elastic.Quer
 }
 
 func wildcardQueryForField(field, value string, fieldOption metadata.FieldOption, boost string) elastic.Query {
-	if !wildcardShouldIgnoreCase(fieldOption) {
+	if !termPatternShouldIgnoreCase(fieldOption) {
 		return boostedWildcardQuery(field, value, false, boost)
 	}
 
@@ -732,13 +744,44 @@ func wildcardQueryForField(field, value string, fieldOption metadata.FieldOption
 	return boostedWildcardQuery(field, lowerValue, fieldOption.WildcardCaseInsensitive, boost)
 }
 
-func wildcardShouldIgnoreCase(fieldOption metadata.FieldOption) bool {
+func regexpQueryForField(field, value string, fieldOption metadata.FieldOption, boost string) elastic.Query {
+	if !termPatternShouldIgnoreCase(fieldOption) {
+		return boostedRegexpQuery(field, value, boost)
+	}
+
+	// regexp 没有复用 ES wildcard.case_insensitive 参数，避免不同 ES 版本兼容风险；
+	// 对大小写不敏感字段直接匹配 lowercase 后的索引 term。
+	lowerValue := strings.ToLower(value)
+	if fieldOption.IsMixedCaseSensitivity {
+		// 同名字段跨索引大小写语义不一致时，同时查询原始 pattern 和 lower pattern。
+		if lowerValue == value {
+			return boostedRegexpQuery(field, value, boost)
+		}
+		return elastic.NewBoolQuery().Should(
+			boostedRegexpQuery(field, value, boost),
+			boostedRegexpQuery(field, lowerValue, boost),
+		)
+	}
+
+	return boostedRegexpQuery(field, lowerValue, boost)
+}
+
+func termPatternShouldIgnoreCase(fieldOption metadata.FieldOption) bool {
 	if !fieldOption.Existed() || fieldOption.IsCaseSensitive {
 		return false
 	}
 
+	// 只有明确存在 lowercase 语义的字段才归一化 pattern；
 	// 默认 keyword 不 analyzed 且没有 normalizer，历史 FieldOption 零值不能触发 lower。
 	return fieldOption.IsAnalyzed || fieldOption.IsCaseInsensitive
+}
+
+func boostedRegexpQuery(field, value string, boost string) *elastic.RegexpQuery {
+	cq := elastic.NewRegexpQuery(field, value)
+	if boost != "" {
+		cq.Boost(cast.ToFloat64(boost))
+	}
+	return cq
 }
 
 func boostedWildcardQuery(field, value string, caseInsensitive bool, boost string) *elastic.WildcardQuery {

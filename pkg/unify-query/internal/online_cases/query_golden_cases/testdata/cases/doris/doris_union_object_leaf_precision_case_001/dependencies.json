@@ -1,0 +1,34 @@
+{
+  "bksql": {
+    "schema": [
+      {"Field": "thedate", "Type": "int"},
+      {"Field": "dtEventTimeStamp", "Type": "bigint"},
+      {"Field": "dtEventTime", "Type": "varchar"},
+      {"Field": "events_total", "Type": "bigint"},
+      {"Field": "path", "Type": "varchar(128)"},
+      {"Field": "dimensions.eventTime", "Type": "datetimev2(6)"},
+      {"Field": "resource.traceid", "Type": "varchar(128)"}
+    ],
+    "schema_by_sql": {
+      "SHOW CREATE TABLE `golden_object_current`.doris": [
+        {"Field": "thedate", "Type": "int"},
+        {"Field": "dtEventTimeStamp", "Type": "bigint"},
+        {"Field": "dtEventTime", "Type": "varchar"},
+        {"Field": "events_total", "Type": "bigint"},
+        {"Field": "path", "Type": "varchar(128)"},
+        {"Field": "dimensions.eventTime", "Type": "datetimev2(6)"},
+        {"Field": "resource.traceid", "Type": "varchar(128)"}
+      ],
+      "SHOW CREATE TABLE `golden_object_history`.doris": [
+        {"Field": "thedate", "Type": "int"},
+        {"Field": "dtEventTimeStamp", "Type": "bigint"},
+        {"Field": "dtEventTime", "Type": "varchar"},
+        {"Field": "events_total", "Type": "bigint"},
+        {"Field": "path", "Type": "text"},
+        {"Field": "dimensions.eventTime", "Type": "datetimev2(3)"},
+        {"Field": "resource.TraceID", "Type": "text"}
+      ]
+    },
+    "result": []
+  }
+}

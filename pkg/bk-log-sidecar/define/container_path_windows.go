@@ -18,6 +18,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
 )
 
+// ToHostPath 将 Windows 节点路径映射到 HostProcess 容器可见的宿主机路径。
+// 该规则与 Linux/Darwin 的根目录拼接不同，因此必须保留为 Windows 平台实现。
 func ToHostPath(path string) string {
 	return strings.ReplaceAll(path, config.HostPath, config.ContainerHostPath)
 }

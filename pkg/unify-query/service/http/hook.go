@@ -10,12 +10,29 @@
 package http
 
 import (
+	"context"
 	"fmt"
+	"reflect"
+	"strconv"
 
 	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/eventbus"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
+
+var warnQueryRawESBatchConfig = func(field, reason string) {
+	log.Warnf(
+		context.Background(),
+		"invalid query_raw ES batch config, using safe settings: field=%s reason=%s",
+		field,
+		reason,
+	)
+}
+
+var warnNamedOutputConfig = func(path string) {
+	log.Warnf(context.Background(), "invalid named outputs config, using safe default: field=%s", path)
+}
 
 // setDefaultConfig
 func setDefaultConfig() {
@@ -44,6 +61,12 @@ func setDefaultConfig() {
 	viper.SetDefault(TSQueryRawQueryHandlePathConfigPath, "/query/ts/raw")
 	viper.SetDefault(TSQueryRawQueryWithScrollHandlePathConfigPath, "/query/ts/raw_with_scroll")
 	viper.SetDefault(TSQueryRawMAXLimitConfigPath, 1e2)
+	viper.SetDefault(QueryRawESBatchMaxMembersConfigPath, DefaultQueryRawESBatchMaxMembers)
+	viper.SetDefault(QueryRawESBatchMaxBodyBytesConfigPath, DefaultQueryRawESBatchMaxBodyBytes)
+	viper.SetDefault(
+		QueryRawESBatchMaxConcurrentSearchesConfigPath,
+		DefaultQueryRawESBatchMaxConcurrentSearches,
+	)
 	viper.SetDefault(TSQueryInfoHandlePathConfigPath, "/query/ts/info")
 	viper.SetDefault(TSQueryStructToPromQLHandlePathConfigPath, "/query/ts/struct_to_promql")
 	viper.SetDefault(TSQueryPromQLToStructHandlePathConfigPath, "/query/ts/promql_to_struct")
@@ -71,6 +94,12 @@ func setDefaultConfig() {
 	viper.SetDefault(SegmentedMinInterval, "5m")
 
 	viper.SetDefault(QueryMaxRoutingConfigPath, 4)
+	viper.SetDefault(NamedOutputsMaxOutputsConfigPath, 4)
+	viper.SetDefault(NamedOutputsTimeoutConfigPath, "30s")
+	viper.SetDefault(NamedOutputsMaxSeriesConfigPath, 10000)
+	viper.SetDefault(NamedOutputsMaxPointsConfigPath, 1000000)
+	viper.SetDefault(NamedOutputsMaxCacheBytesConfigPath, 64*1024*1024)
+	viper.SetDefault(NamedOutputsMaxResponseBytesConfigPath, 16*1024*1024)
 
 	viper.SetDefault(ClusterMetricQueryPrefixConfigPath, "bkmonitor")
 	viper.SetDefault(ClusterMetricQueryTimeoutConfigPath, "30s")
@@ -82,6 +111,107 @@ func setDefaultConfig() {
 
 	// label values
 	viper.SetDefault(LabelValuesDefaultLimitConfigPath, 1e4)
+}
+
+func parseQueryRawESBatchInt(value any) (int, bool) {
+	if value == nil {
+		return 0, false
+	}
+
+	reflected := reflect.ValueOf(value)
+	switch reflected.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		signed := reflected.Int()
+		converted := int(signed)
+		return converted, int64(converted) == signed
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		unsigned := reflected.Uint()
+		maxInt := uint64(^uint(0) >> 1)
+		if unsigned > maxInt {
+			return 0, false
+		}
+		return int(unsigned), true
+	case reflect.String:
+		raw := reflected.String()
+		parsed, err := strconv.ParseInt(raw, 10, strconv.IntSize)
+		if err != nil || strconv.FormatInt(parsed, 10) != raw {
+			return 0, false
+		}
+		return int(parsed), true
+	default:
+		return 0, false
+	}
+}
+
+func queryRawESBatchInt(configPath string, defaultValue int, valid func(int) bool) int {
+	value, ok := parseQueryRawESBatchInt(viper.Get(configPath))
+	if !ok {
+		warnQueryRawESBatchConfig(configPath, "invalid_integer")
+		return defaultValue
+	}
+	if !valid(value) {
+		warnQueryRawESBatchConfig(configPath, "out_of_range")
+		return defaultValue
+	}
+	return value
+}
+
+func loadQueryRawESBatchSettings() {
+	settings := defaultQueryRawESBatchSettings()
+
+	settings.maxMembers = queryRawESBatchInt(
+		QueryRawESBatchMaxMembersConfigPath,
+		DefaultQueryRawESBatchMaxMembers,
+		func(value int) bool { return value >= 2 },
+	)
+	settings.maxBodyBytes = queryRawESBatchInt(
+		QueryRawESBatchMaxBodyBytesConfigPath,
+		DefaultQueryRawESBatchMaxBodyBytes,
+		func(value int) bool { return value > 0 },
+	)
+	settings.maxConcurrentSearches = queryRawESBatchInt(
+		QueryRawESBatchMaxConcurrentSearchesConfigPath,
+		DefaultQueryRawESBatchMaxConcurrentSearches,
+		func(value int) bool { return value >= 0 },
+	)
+
+	queryRawESBatchSettingsSnapshot.Store(settings)
+}
+
+func loadNamedOutputSettings() {
+	defaults := defaultNamedOutputSettings()
+	settings := defaults
+	if value := viper.GetInt(NamedOutputsMaxOutputsConfigPath); value > 0 {
+		settings.MaxOutputs = value
+	} else {
+		warnNamedOutputConfig(NamedOutputsMaxOutputsConfigPath)
+	}
+	if value := viper.GetDuration(NamedOutputsTimeoutConfigPath); value > 0 {
+		settings.Timeout = value
+	} else {
+		warnNamedOutputConfig(NamedOutputsTimeoutConfigPath)
+	}
+	if value := viper.GetInt(NamedOutputsMaxSeriesConfigPath); value > 0 {
+		settings.MaxSeries = value
+	} else {
+		warnNamedOutputConfig(NamedOutputsMaxSeriesConfigPath)
+	}
+	if value := viper.GetInt(NamedOutputsMaxPointsConfigPath); value > 0 {
+		settings.MaxPoints = value
+	} else {
+		warnNamedOutputConfig(NamedOutputsMaxPointsConfigPath)
+	}
+	if value := viper.GetInt64(NamedOutputsMaxCacheBytesConfigPath); value > 0 {
+		settings.MaxCacheBytes = value
+	} else {
+		warnNamedOutputConfig(NamedOutputsMaxCacheBytesConfigPath)
+	}
+	if value := viper.GetInt(NamedOutputsMaxResponseBytesConfigPath); value > 0 {
+		settings.MaxResponseBytes = value
+	} else {
+		warnNamedOutputConfig(NamedOutputsMaxResponseBytesConfigPath)
+	}
+	namedOutputSettingsSnapshot.Store(&settings)
 }
 
 // LoadConfig
@@ -111,10 +241,17 @@ func LoadConfig() {
 	JwtPublicKey = viper.GetString(JwtPublicKeyConfigPath)
 	JwtBkAppCodeSpaces = viper.GetStringMapStringSlice(JwtBkAppCodeSpacesConfigPath)
 	JwtEnabled = viper.GetBool(JwtEnabledConfigPath)
+
+	loadQueryRawESBatchSettings()
+	loadNamedOutputSettings()
 }
 
 // init
 func init() {
+	queryRawESBatchSettingsSnapshot.Store(defaultQueryRawESBatchSettings())
+	settings := defaultNamedOutputSettings()
+	namedOutputSettingsSnapshot.Store(&settings)
+
 	if err := eventbus.EventBus.Subscribe(eventbus.EventSignalConfigPreParse, setDefaultConfig); err != nil {
 		fmt.Printf(
 			"failed to subscribe event->[%s] for http module for default config, maybe http module won't working.",

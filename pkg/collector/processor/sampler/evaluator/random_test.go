@@ -75,7 +75,7 @@ func TestRandomEvaluatorPriority(t *testing.T) {
 	t.Run("String", func(t *testing.T) {
 		traces := g.Generate()
 		foreach.Spans(traces, func(span ptrace.Span) {
-			span.Attributes().UpsertString("sampling.priority", "1")
+			span.Attributes().PutString("sampling.priority", "1")
 		})
 		record := &define.Record{
 			RecordType: define.RecordTraces,
@@ -90,7 +90,7 @@ func TestRandomEvaluatorPriority(t *testing.T) {
 	t.Run("Int", func(t *testing.T) {
 		traces := g.Generate()
 		foreach.Spans(traces, func(span ptrace.Span) {
-			span.Attributes().UpsertInt("sampling.priority", 1)
+			span.Attributes().PutInt("sampling.priority", 1)
 		})
 		record := &define.Record{
 			RecordType: define.RecordTraces,
@@ -105,7 +105,7 @@ func TestRandomEvaluatorPriority(t *testing.T) {
 	t.Run("Float", func(t *testing.T) {
 		traces := g.Generate()
 		foreach.Spans(traces, func(span ptrace.Span) {
-			span.Attributes().UpsertDouble("sampling.priority", 1.0)
+			span.Attributes().PutDouble("sampling.priority", 1.0)
 		})
 		record := &define.Record{
 			RecordType: define.RecordTraces,

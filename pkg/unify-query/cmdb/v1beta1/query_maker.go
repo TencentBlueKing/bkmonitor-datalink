@@ -85,29 +85,29 @@ func (q *QueryFactory) MakeQueryTs() (*structured.QueryTs, error) {
 		}
 	}
 
+	// target_info_show is a projection switch. Targets with no Info fields
+	// have nothing to expand; ignore the flag instead of failing the relation query.
 	if q.ExpandShow {
 		infoIndex := ResourcesInfo(q.Target)
-		targetIndex := ResourcesIndex(q.Target)
+		if len(infoIndex) > 0 {
+			targetIndex := ResourcesIndex(q.Target)
 
-		if len(infoIndex) == 0 {
-			return nil, fmt.Errorf("该资源未配置 info 扩展数据")
-		}
+			ref := string(rune(ascii + q.index))
+			queries, err := q.buildInfoQuery(q.Target, q.IndexMatcher, q.ExpandMatcher)
+			if err != nil {
+				return nil, err
+			}
 
-		ref := string(rune(ascii + q.index))
-		queries, err := q.buildInfoQuery(q.Target, q.IndexMatcher, q.ExpandMatcher)
-		if err != nil {
-			return nil, err
-		}
+			queryList = append(queryList, queries)
 
-		queryList = append(queryList, queries)
+			allIndex := append([]string{}, targetIndex...)
+			allIndex = append(allIndex, infoIndex...)
 
-		allIndex := append([]string{}, targetIndex...)
-		allIndex = append(allIndex, infoIndex...)
-
-		if q.metricMerge == "" {
-			q.metricMerge = fmt.Sprintf("count(%s) by (%s)", ref, strings.Join(allIndex, ","))
-		} else {
-			q.metricMerge = fmt.Sprintf("(%s) * on(%s) group_left(%s) %s", q.metricMerge, strings.Join(targetIndex, ","), strings.Join(infoIndex, ","), ref)
+			if q.metricMerge == "" {
+				q.metricMerge = fmt.Sprintf("count(%s) by (%s)", ref, strings.Join(allIndex, ","))
+			} else {
+				q.metricMerge = fmt.Sprintf("(%s) * on(%s) group_left(%s) %s", q.metricMerge, strings.Join(targetIndex, ","), strings.Join(infoIndex, ","), ref)
+			}
 		}
 	}
 

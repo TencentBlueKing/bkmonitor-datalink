@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/doris_parser"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
@@ -66,10 +67,14 @@ type SQLExpr interface {
 	ParserQueryString(ctx context.Context, qs string) (string, error)
 	// ParserAllConditions 解析全量条件生成SQL条件表达式
 	ParserAllConditions(allConditions metadata.AllConditions) (string, error)
+	// ParserSearchAfter 解析游标条件生成SQL条件表达式
+	ParserSearchAfter(orders metadata.Orders, values []any) (string, error)
+	// ParserSearchAfterFields 返回游标排序字段的 SQL 表达式，用于内部投影游标值。
+	ParserSearchAfterFields(orders metadata.Orders) ([]string, error)
 	// ParserAggregatesAndOrders 解析聚合条件生成SQL条件表达式
 	ParserAggregatesAndOrders(selectDistinct []string, aggregates metadata.Aggregates, orders metadata.Orders) ([]string, []string, []string, *set.Set[string], TimeAggregate, error)
 	// ParserSQL 解析 String 语句
-	ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int) (string, error)
+	ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int, tableFieldsMap doris_parser.TableFieldsMap) (string, error)
 	// DescribeTableSQL 返回当前表结构
 	DescribeTableSQL(table string) string
 	// FieldMap 返回当前表结构
@@ -100,8 +105,11 @@ func NewSQLExpr(key string) SQLExpr {
 	case TSpider:
 		return &TSpiderSQLExpr{
 			DorisSQLExpr: DorisSQLExpr{
-				ignoreFieldSet: set.New[string](),
-				forceEq:        true,
+				ignoreFieldSet:            set.New[string](),
+				forceEq:                   true,
+				disableShardKeyTimeBucket: true,
+				disableTimeBucketCast:     true,
+				groupTimeBucketByExpr:     true,
 			},
 		}
 	default:
@@ -149,7 +157,7 @@ func (d *DefaultSQLExpr) WithFieldsMap(fieldMap metadata.FieldsMap) SQLExpr {
 	return d
 }
 
-func (d *DefaultSQLExpr) ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int) (string, error) {
+func (d *DefaultSQLExpr) ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int, tableFieldsMap doris_parser.TableFieldsMap) (string, error) {
 	return "", nil
 }
 
@@ -169,6 +177,20 @@ func (d *DefaultSQLExpr) FieldMap() metadata.FieldsMap {
 // ParserQueryString 解析查询字符串（当前实现返回空）
 func (d *DefaultSQLExpr) ParserQueryString(ctx context.Context, _ string) (string, error) {
 	return "", nil
+}
+
+func (d *DefaultSQLExpr) ParserSearchAfter(_ metadata.Orders, values []any) (string, error) {
+	if len(values) == 0 {
+		return "", nil
+	}
+	return "", fmt.Errorf("search_after is unsupported for %s", d.Type())
+}
+
+func (d *DefaultSQLExpr) ParserSearchAfterFields(orders metadata.Orders) ([]string, error) {
+	if len(orders) == 0 {
+		return nil, fmt.Errorf("search_after requires order fields")
+	}
+	return nil, fmt.Errorf("search_after is unsupported for %s", d.Type())
 }
 
 // ParserAggregatesAndOrders 解析聚合函数，生成 select 和 group by 字段

@@ -1,0 +1,22 @@
+id: vm_structured_instant_001
+storage: vm
+enabled: true
+shape_signature: query_ts/instant/vm/mean_by3/avg_over_time/table_id/single_route/output1
+source:
+  kind: production_log
+  outputs_kind: production_log
+  sampled_at: "2026-07-23"
+  fingerprint: sha256:4e9332bd347533d8d4d9acf0afd258ef81423807e82f26a73417c36d173d86c3
+tags:
+  - query_ts_api
+  - instant
+  - structured_query
+  - vm_query
+  - production_shape
+notes:
+  - 生产样本仅保留结构化 instant 查询形态；空间、结果表、指标、标签和集群均已一致替换为占位符。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

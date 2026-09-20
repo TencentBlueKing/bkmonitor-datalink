@@ -1,0 +1,46 @@
+{
+  "elasticsearch": {
+    "mapping": {
+      "golden_apm_trace_batch_rt_a": {
+        "mappings": {
+          "properties": {
+            "dtEventTimeStamp": {"type": "date"},
+            "trace_id": {"type": "keyword"},
+            "span_id": {"type": "keyword"},
+            "service_name": {"type": "keyword"}
+          }
+        }
+      },
+      "golden_apm_trace_batch_rt_b": {
+        "mappings": {
+          "properties": {
+            "dtEventTimeStamp": {"type": "date"},
+            "trace_id": {"type": "keyword"},
+            "span_id": {"type": "keyword"},
+            "service_name": {"type": "keyword"}
+          }
+        }
+      }
+    },
+    "search": {
+      "responses": [
+        {
+          "took": 1,
+          "timed_out": false,
+          "hits": {
+            "total": {"value": 0, "relation": "eq"},
+            "hits": []
+          }
+        },
+        {
+          "took": 1,
+          "timed_out": false,
+          "hits": {
+            "total": {"value": 0, "relation": "eq"},
+            "hits": []
+          }
+        }
+      ]
+    }
+  }
+}

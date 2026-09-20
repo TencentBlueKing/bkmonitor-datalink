@@ -153,13 +153,21 @@ type NestedAgg struct {
 type aggInfoList []any
 
 type FormatFactory struct {
-	ctx context.Context
+	fieldSemantics    string
+	sourceConditions  metadata.AllConditions
+	routingConditions metadata.AllConditions
+	ctx               context.Context
 
 	valueField string
 	timeField  metadata.TimeField
 
 	decode func(k string) string
 	encode func(k string) string
+
+	// aliasFreeEncode 与 encode 的差别只在于不做别名改写，用于还原请求里写的维度名
+	aliasFreeEncode func(k string) string
+	// extraLabelKeys 记录 ES 字段名需要额外补出的维度键，只有请求名与别名不一致时才有内容
+	extraLabelKeys map[string][]string
 
 	fieldsMap metadata.FieldsMap
 
@@ -323,6 +331,41 @@ func (f *FormatFactory) WithTransform(encode func(string) string, decode func(st
 	return f
 }
 
+// WithAliasFreeEncode 注册不做别名改写的字段名转换，用于还原请求里写的维度名。
+func (f *FormatFactory) WithAliasFreeEncode(encode func(string) string) *FormatFactory {
+	f.aliasFreeEncode = encode
+	return f
+}
+
+// recordRequestedDimension 记录请求里写的维度名。出端默认把字段名改写成别名，
+// 而 PromQL 的 by 子句用的是请求名，两者不一致时该维度会被整个聚合掉，
+// 所以这里留一份请求名，供聚合结果补出可分组的维度键。
+func (f *FormatFactory) recordRequestedDimension(requested, field string) {
+	if f.aliasFreeEncode == nil {
+		return
+	}
+
+	encoded := field
+	if f.encode != nil {
+		encoded = f.encode(field)
+	}
+
+	key := f.aliasFreeEncode(requested)
+	if key == "" || key == encoded {
+		return
+	}
+
+	if f.extraLabelKeys == nil {
+		f.extraLabelKeys = make(map[string][]string)
+	}
+	for _, exist := range f.extraLabelKeys[field] {
+		if exist == key {
+			return
+		}
+	}
+	f.extraLabelKeys[field] = append(f.extraLabelKeys[field], key)
+}
+
 func (f *FormatFactory) WithOrders(orders metadata.Orders) *FormatFactory {
 	f.orders = make(metadata.Orders, 0, len(orders))
 	for _, order := range orders {
@@ -351,6 +394,11 @@ func (s *FormatFactory) queryString(str string, isPrefix bool) elastic.Query {
 }
 
 func (f *FormatFactory) ParserQueryString(ctx context.Context, q string, isPrefix bool) elastic.Query {
+	if len(f.fieldsMap) == 0 {
+		// 没有 mapping 时无法可靠区分 text 与 keyword，交由实际 ES 分片按真实 mapping 解析。
+		return f.queryString(lucene_parser.NormalizeQueryStringSyntax(q), isPrefix)
+	}
+
 	node := lucene_parser.ParseLuceneWithVisitor(ctx, q, lucene_parser.Option{
 		FieldsMap: f.fieldsMap,
 	})
@@ -418,6 +466,10 @@ func (f *FormatFactory) timeAgg(name string, window time.Duration, timezoneOffse
 }
 
 func (f *FormatFactory) termAgg(name string, isFirst bool) {
+	if f.isKeyedTag(name) {
+		f.aggInfoList = append(f.aggInfoList, KeyedTagAgg{Name: name})
+		return
+	}
 	info := TermAgg{
 		Name: name,
 	}
@@ -489,11 +541,20 @@ func (f *FormatFactory) AggDataFormat(data elastic.Aggregations, metricLabel *pr
 	}()
 
 	af := &aggFormat{
+		strict:         f.fieldSemantics != "",
 		aggInfoList:    f.aggInfoList,
 		items:          make(items, 0),
 		promDataFormat: f.encode,
 		timeFormat:     f.toMillisecond,
 	}
+
+	// 配了别名的字段，出端默认只留别名键，而请求里写的是原始字段名，两边对不上。
+	// ts 查询要经 PromQL 分组，by 子句认的是请求名，所以补一份请求名的键让两种写法都能分组；
+	// 这份双键与 metadata.FieldAlias.AddAliasKeysWhenOriginalFieldPresent 是同一套过渡方案，将来一起清理。
+	// reference 查询直出聚合结果、下游按结果列取值，补键会凭空多出一列导致错位，
+	// 所以改成把别名键重命名为请求名：列数不变，且与 /query/ts、bksql 的返回口径一致。
+	af.extraLabelKeys = f.extraLabelKeys
+	af.renameLabel = f.isReference
 
 	af.get()
 	defer af.put()
@@ -624,6 +685,20 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 
 	for _, aggInfo := range f.aggInfoList {
 		switch info := aggInfo.(type) {
+		case KeyedTagAgg:
+			reverse := elastic.NewReverseNestedAggregation()
+			if agg != nil {
+				reverse.SubAggregation(name, agg)
+			}
+			terms := elastic.NewTermsAggregation().Field("tags.value.raw").Size(1440).ShowTermDocCountError(true).
+				SubAggregation("_reverse", reverse)
+			if f.size > 0 {
+				terms.Size(f.size)
+			}
+			agg = elastic.NewNestedAggregation().Path("tags").SubAggregation("key",
+				elastic.NewFilterAggregation().Filter(elastic.NewTermQuery("tags.key", strings.TrimPrefix(info.Name, "tags."))).
+					SubAggregation("value", terms))
+			name = info.Name
 		case ValueAgg:
 			switch info.FuncType {
 			case Min:
@@ -780,9 +855,16 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 			name = info.Name
 		case TermAgg:
 			curName := info.Name
-			curAgg := elastic.NewTermsAggregation().Field(info.Name)
+			field := info.Name
+			if f.fieldSemantics == metadata.FTAEventTagsV1 && field == "alert_name" {
+				field += ".raw"
+			}
+			curAgg := elastic.NewTermsAggregation().Field(field)
+			if f.fieldSemantics == metadata.FTAEventTagsV1 {
+				curAgg.ShowTermDocCountError(true)
+			}
 			fieldType := f.GetFieldType(info.Name)
-			if fieldType == "" || fieldType == Text || fieldType == KeyWord {
+			if f.fieldSemantics == "" && (fieldType == "" || fieldType == Text || fieldType == KeyWord) {
 				curAgg = curAgg.Missing(" ")
 			}
 
@@ -790,7 +872,7 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 				curAgg = curAgg.Size(f.size)
 			}
 			fieldLabelValues, ok := f.labelMap[info.Name]
-			if ok && len(fieldLabelValues) > 0 {
+			if f.fieldSemantics == "" && ok && len(fieldLabelValues) > 0 {
 				var filteredFieldLabelValues []any
 				for _, labelMapValue := range fieldLabelValues {
 					// 只有为非空的值并且操作符为等于时才添加到include子句
@@ -824,6 +906,9 @@ func (f *FormatFactory) Agg() (name string, agg elastic.Aggregation, err error) 
 }
 
 func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.Aggregation, error) {
+	if f.fieldSemantics != "" && f.fieldSemantics != metadata.FTAEventTagsV1 {
+		return "", nil, fmt.Errorf("unsupported field_semantics %q", f.fieldSemantics)
+	}
 	if len(aggregates) == 0 {
 		err := errors.New("aggregate_method_list is empty")
 		return "", nil, err
@@ -856,9 +941,11 @@ func (f *FormatFactory) EsAgg(aggregates metadata.Aggregates) (string, elastic.A
 				if dim == "" || dim == labels.MetricName {
 					continue
 				}
+				requested := dim
 				if f.decode != nil {
 					dim = f.decode(dim)
 				}
+				f.recordRequestedDimension(requested, dim)
 
 				f.termAgg(dim, idx == 0)
 			}
@@ -964,6 +1051,35 @@ func negativeLookaheadQuery(field string, regexp elastic.Query) elastic.Query {
 
 // Query 把 ts 的 conditions 转换成 es 查询
 func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Query, error) {
+	if len(f.sourceConditions) > 0 && f.fieldSemantics != metadata.FTAEventTagsV1 {
+		return nil, fmt.Errorf("source_conditions requires FTA field semantics")
+	}
+	if f.fieldSemantics != "" {
+		if f.fieldSemantics != metadata.FTAEventTagsV1 {
+			return nil, fmt.Errorf("unsupported field_semantics %q", f.fieldSemantics)
+		}
+		user, err := f.ftaQuery(allConditions)
+		if err != nil {
+			return nil, err
+		}
+		if len(f.sourceConditions) == 0 && len(f.routingConditions) == 0 {
+			return user, nil
+		}
+		combined := elastic.NewBoolQuery()
+		for _, conditions := range []metadata.AllConditions{f.sourceConditions, f.routingConditions} {
+			filter, err := f.ftaQuery(conditions)
+			if err != nil {
+				return nil, err
+			}
+			if filter != nil {
+				combined.Filter(filter)
+			}
+		}
+		if user != nil {
+			combined.Filter(user)
+		}
+		return combined, nil
+	}
 	bootQueries := make([]elastic.Query, 0)
 	orQuery := make([]elastic.Query, 0, len(allConditions))
 

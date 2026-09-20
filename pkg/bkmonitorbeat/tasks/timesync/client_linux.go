@@ -26,6 +26,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
 
+var newChronyConn = func(addr string, timeout time.Duration) (net.Conn, error) {
+	return net.DialTimeout("udp", addr, timeout)
+}
+
 type Client struct {
 	opt *Option
 }
@@ -99,7 +103,7 @@ func (c *Client) queryNtpd() (*Stat, error) {
 }
 
 func (c *Client) queryChrony() (*Stat, error) {
-	conn, err := net.DialTimeout("udp", c.opt.ChronyAddr, c.opt.Timeout)
+	conn, err := newChronyConn(c.opt.ChronyAddr, c.opt.Timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +113,7 @@ func (c *Client) queryChrony() (*Stat, error) {
 		Sequence:   1,
 		Connection: conn,
 	}
-	packet, err := client.Communicate(chrony.NewSourcesPacket())
+	packet, err := c.communicateChrony(conn, &client, chrony.NewSourcesPacket())
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +124,7 @@ func (c *Client) queryChrony() (*Stat, error) {
 
 	stat := newStat("chrony")
 	for i := 0; i < sources.NSources; i++ {
-		packet, err = client.Communicate(chrony.NewSourceDataPacket(int32(i)))
+		packet, err = c.communicateChrony(conn, &client, chrony.NewSourceDataPacket(int32(i)))
 		if err != nil {
 			logger.Warnf("client communicate error: %v", err)
 			stat.Err++
@@ -146,4 +150,12 @@ func (c *Client) queryChrony() (*Stat, error) {
 		stat.Add(sourceData.LatestMeas)
 	}
 	return stat, nil
+}
+
+func (c *Client) communicateChrony(conn net.Conn, client *chrony.Client, packet chrony.RequestPacket) (chrony.ResponsePacket, error) {
+	if err := conn.SetDeadline(time.Now().Add(c.opt.Timeout)); err != nil {
+		return nil, err
+	}
+
+	return client.Communicate(packet)
 }

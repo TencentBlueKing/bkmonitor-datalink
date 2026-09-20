@@ -1,0 +1,24 @@
+id: doris_multi_route_fanout_001
+storage: doris
+enabled: true
+shape_signature: query_ts/range/doris/data_label_route7/count_over_time/sum/query_string/output14
+source:
+  kind: production_log
+  outputs_kind: production_log
+  sampled_at: "2026-07-23"
+  fingerprint: sha256:d5ac8d57106127c1eea7328e760292da594b176595ff429239576fb7277c6973
+tags:
+  - query_ts_api
+  - aggregation
+  - query_string
+  - multi_route
+  - fan_out
+  - production_shape
+notes:
+  - 生产样本保留一个 reference 经七条 Doris 路由展开为七组 schema 和 query 请求的形态。
+  - 空间、物理表、字段、查询词和集群均已一致替换为占位符。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

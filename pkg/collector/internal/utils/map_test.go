@@ -142,12 +142,12 @@ func TestMergeMapWith(t *testing.T) {
 
 func TestMergeReplaceAttributeMaps(t *testing.T) {
 	m1 := pcommon.NewMap()
-	m1.InsertString("aaa", "111")
-	m1.InsertString("bbb.x", "222")
+	m1.PutString("aaa", "111")
+	m1.PutString("bbb.x", "222")
 
 	m2 := pcommon.NewMap()
-	m2.InsertString("aaa", "112")
-	m2.InsertString("ccc.x", "333")
+	m2.PutString("aaa", "112")
+	m2.PutString("ccc.x", "333")
 
 	m3 := MergeReplaceAttributeMaps(m1, m2)
 	expected := map[string]string{
@@ -160,10 +160,10 @@ func TestMergeReplaceAttributeMaps(t *testing.T) {
 
 func BenchmarkMergeReplaceAttributeMaps(b *testing.B) {
 	m := pcommon.NewMap()
-	m.InsertString("telemetry.sdk.name", "telemetry_sdk_name")
-	m.InsertString("telemetry.sdk.version", "telemetry_sdk_version")
-	m.InsertString("telemetry.sdk.language", "telemetry_sdk_language")
-	m.InsertString("foo.bar.key.value", "foo.bar.key.value")
+	m.PutString("telemetry.sdk.name", "telemetry_sdk_name")
+	m.PutString("telemetry.sdk.version", "telemetry_sdk_version")
+	m.PutString("telemetry.sdk.language", "telemetry_sdk_language")
+	m.PutString("foo.bar.key.value", "foo.bar.key.value")
 
 	b.ReportAllocs()
 	b.RunParallel(func(pb *testing.PB) {
@@ -175,10 +175,10 @@ func BenchmarkMergeReplaceAttributeMaps(b *testing.B) {
 
 func BenchmarkMergeReplaceAttributeMapsWithout(b *testing.B) {
 	m := pcommon.NewMap()
-	m.InsertString("telemetry.sdk.namex", "telemetry_sdk_name")
-	m.InsertString("telemetry.sdk.versionx", "telemetry_sdk_version")
-	m.InsertString("telemetry.sdk.languagex", "telemetry_sdk_language")
-	m.InsertString("foo.bar.key.value", "foo.bar.key.value")
+	m.PutString("telemetry.sdk.namex", "telemetry_sdk_name")
+	m.PutString("telemetry.sdk.versionx", "telemetry_sdk_version")
+	m.PutString("telemetry.sdk.languagex", "telemetry_sdk_language")
+	m.PutString("foo.bar.key.value", "foo.bar.key.value")
 
 	b.ReportAllocs()
 	b.RunParallel(func(pb *testing.PB) {

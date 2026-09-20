@@ -75,6 +75,42 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			dsl:   `{"term":{"name":"test"}}`,
 		},
 		{
+			name:  "unquoted escaped string",
+			input: `name:bk\-log\-search\-api`,
+			sql:   "`name` = 'bk-log-search-api'",
+			dsl:   `{"term":{"name":"bk-log-search-api"}}`,
+		},
+		{
+			name:  "unquoted escaped backslash",
+			input: `name:hello\\world`,
+			sql:   "`name` = 'hello\\\\world'",
+			dsl:   `{"term":{"name":"hello\\world"}}`,
+		},
+		{
+			name:  "unquoted escaped apostrophe",
+			input: `name:foo\'bar`,
+			sql:   "`name` = 'foo''bar'",
+			dsl:   `{"term":{"name":"foo'bar"}}`,
+		},
+		{
+			name:  "quoted escaped trailing backslash",
+			input: `name:"foo\\"`,
+			sql:   "`name` = 'foo\\\\'",
+			dsl:   `{"term":{"name":"foo\\"}}`,
+		},
+		{
+			name:  "analyzed unquoted escaped string",
+			input: `log:foo\+bar`,
+			sql:   "`log` MATCH_PHRASE 'foo+bar'",
+			dsl:   `{"match_phrase":{"log":{"query":"foo+bar"}}}`,
+		},
+		{
+			name:  "unquoted escaped range comparison",
+			input: `name:>foo\-bar`,
+			sql:   "`name` > 'foo-bar'",
+			dsl:   `{"range":{"name":{"from":"foo-bar","include_lower":false,"include_upper":true,"to":null}}}`,
+		},
+		{
 			name:  "one word",
 			input: "test",
 			sql:   "`log` MATCH_PHRASE 'test'",
@@ -130,6 +166,18 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 		{
 			name:  "date range query",
 			input: "timestamp:[2023-01-01 TO 2023-12-31]",
+			sql:   "`timestamp` >= '2023-01-01' AND `timestamp` <= '2023-12-31'",
+			dsl:   `{"range":{"timestamp":{"from":"2023-01-01","include_lower":true,"include_upper":true,"to":"2023-12-31"}}}`,
+		},
+		{
+			name:  "unquoted escaped string range",
+			input: `name:[foo\-bar TO zoo\-bar]`,
+			sql:   "`name` >= 'foo-bar' AND `name` <= 'zoo-bar'",
+			dsl:   `{"range":{"name":{"from":"foo-bar","include_lower":true,"include_upper":true,"to":"zoo-bar"}}}`,
+		},
+		{
+			name:  "unquoted escaped date range",
+			input: `timestamp:[2023\-01\-01 TO 2023\-12\-31]`,
 			sql:   "`timestamp` >= '2023-01-01' AND `timestamp` <= '2023-12-31'",
 			dsl:   `{"range":{"timestamp":{"from":"2023-01-01","include_lower":true,"include_upper":true,"to":"2023-12-31"}}}`,
 		},
@@ -300,6 +348,48 @@ func TestDorisSQLExpr_ParserQueryString(t *testing.T) {
 			input: `case_sensitive_log: (*ERROR* OR *Traceback*)`,
 			sql:   "(`case_sensitive_log` LIKE '%ERROR%' OR `case_sensitive_log` LIKE '%Traceback%')",
 			dsl:   `{"bool":{"should":[{"wildcard":{"case_sensitive_log":{"value":"*ERROR*"}}},{"wildcard":{"case_sensitive_log":{"value":"*Traceback*"}}}]}}`,
+		},
+		{
+			name:  "大小写不敏感 analyzed 字段的正则会 lower pattern",
+			input: `case_insensitive_log:/SSR_REQUEST_ERROR/`,
+			sql:   "`case_insensitive_log` REGEXP 'SSR_REQUEST_ERROR'",
+			dsl:   `{"regexp":{"case_insensitive_log":{"value":".*ssr_request_error.*"}}}`,
+		},
+		{
+			name:  "大小写不敏感字段的大写方括号短语 lower 后不补齐包含匹配",
+			input: `case_insensitive_log:/[Page Error]/`,
+			sql:   "`case_insensitive_log` REGEXP '[Page Error]'",
+			dsl:   `{"regexp":{"case_insensitive_log":{"value":"[page error]"}}}`,
+		},
+		{
+			name:  "大小写不敏感字段的小写方括号短语不补齐包含匹配",
+			input: `case_insensitive_log:/[page error]/`,
+			sql:   "`case_insensitive_log` REGEXP '[page error]'",
+			dsl:   `{"regexp":{"case_insensitive_log":{"value":"[page error]"}}}`,
+		},
+		{
+			name:  "旧版大小写不敏感字段的正则会 lower pattern",
+			input: `legacy_case_insensitive_log:/SSR_REQUEST_ERROR/`,
+			sql:   "`legacy_case_insensitive_log` REGEXP 'SSR_REQUEST_ERROR'",
+			dsl:   `{"regexp":{"legacy_case_insensitive_log":{"value":".*ssr_request_error.*"}}}`,
+		},
+		{
+			name:  "大小写敏感 analyzed 字段的正则保持原始大小写",
+			input: `case_sensitive_log:/SSR_REQUEST_ERROR/`,
+			sql:   "`case_sensitive_log` REGEXP 'SSR_REQUEST_ERROR'",
+			dsl:   `{"regexp":{"case_sensitive_log":{"value":".*SSR_REQUEST_ERROR.*"}}}`,
+		},
+		{
+			name:  "混合大小写语义字段的正则同时保留原始和 lower pattern",
+			input: `mixed_log:/SSR_REQUEST_ERROR/`,
+			sql:   "`mixed_log` REGEXP 'SSR_REQUEST_ERROR'",
+			dsl:   `{"bool":{"should":[{"regexp":{"mixed_log":{"value":".*SSR_REQUEST_ERROR.*"}}},{"regexp":{"mixed_log":{"value":".*ssr_request_error.*"}}}]}}`,
+		},
+		{
+			name:  "大小写不敏感字段的不包含正则 lower 后保持反向语义",
+			input: `case_insensitive_log:/^(?!.*ERROR).*/`,
+			sql:   "`case_insensitive_log` REGEXP '^(?!.*ERROR).*'",
+			dsl:   `{"bool":{"must":{"exists":{"field":"case_insensitive_log"}},"must_not":{"regexp":{"case_insensitive_log":{"value":".*error.*"}}}}}`,
 		},
 	}
 
@@ -540,14 +630,14 @@ func TestLuceneParser(t *testing.T) {
 		"match and time range with quote": {
 			q: "message: test\\ node AND datetime: [\"2020-01-01T00:00:00\" TO \"2020-12-31T00:00:00\"]",
 
-			es:  `{"bool":{"must":[{"match_phrase":{"message":{"query":"test\\ node"}}},{"range":{"datetime":{"from":"2020-01-01T00:00:00","include_lower":true,"include_upper":true,"to":"2020-12-31T00:00:00"}}}]}}`,
-			sql: "`message` MATCH_PHRASE 'test\\ node' AND `datetime` >= '2020-01-01T00:00:00' AND `datetime` <= '2020-12-31T00:00:00'",
+			es:  `{"bool":{"must":[{"match_phrase":{"message":{"query":"test node"}}},{"range":{"datetime":{"from":"2020-01-01T00:00:00","include_lower":true,"include_upper":true,"to":"2020-12-31T00:00:00"}}}]}}`,
+			sql: "`message` MATCH_PHRASE 'test node' AND `datetime` >= '2020-01-01T00:00:00' AND `datetime` <= '2020-12-31T00:00:00'",
 		},
 		"match and time range": {
 			q: "message: test\\ node AND datetime: [2020-01-01T00:00:00 TO 2020-12-31T00:00:00]",
 
-			es:  `{"bool":{"must":[{"match_phrase":{"message":{"query":"test\\ node"}}},{"range":{"datetime":{"from":"2020-01-01T00:00:00","include_lower":true,"include_upper":true,"to":"2020-12-31T00:00:00"}}}]}}`,
-			sql: "`message` MATCH_PHRASE 'test\\ node' AND `datetime` >= '2020-01-01T00:00:00' AND `datetime` <= '2020-12-31T00:00:00'",
+			es:  `{"bool":{"must":[{"match_phrase":{"message":{"query":"test node"}}},{"range":{"datetime":{"from":"2020-01-01T00:00:00","include_lower":true,"include_upper":true,"to":"2020-12-31T00:00:00"}}}]}}`,
+			sql: "`message` MATCH_PHRASE 'test node' AND `datetime` >= '2020-01-01T00:00:00' AND `datetime` <= '2020-12-31T00:00:00'",
 		},
 		"mixed or / and": {
 			q: "a:1 OR (b:2 AND c:4)",
@@ -622,7 +712,7 @@ func TestLuceneParser(t *testing.T) {
 		"转义符号支持": {
 			q:   `reading \"remove\"`,
 			es:  `{"bool":{"should":[{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"reading"}},{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"\\\"remove\\\""}}]}}`,
-			sql: "`log` MATCH_PHRASE 'reading' OR `log` MATCH_PHRASE '\\\"remove\\\"'",
+			sql: "`log` MATCH_PHRASE 'reading' OR `log` MATCH_PHRASE '\"remove\"'",
 		},
 		"双引号转义符号支持": {
 			q:   `"(reading \"remove\")"`,
@@ -809,10 +899,45 @@ func TestLuceneParser(t *testing.T) {
 			es:  `{"regexp":{"msg":{"value":".*TypeError.*"}}}`,
 			sql: "`msg` REGEXP 'TypeError'",
 		},
+		"字段方括号短语正则不补齐包含匹配": {
+			q:   `msg:/[Page Error]/`,
+			es:  `{"regexp":{"msg":{"value":"[Page Error]"}}}`,
+			sql: "`msg` REGEXP '[Page Error]'",
+		},
+		"字段普通字符类正则仍补齐包含匹配": {
+			q:   `msg:/[0-9]/`,
+			es:  `{"regexp":{"msg":{"value":".*[0-9].*"}}}`,
+			sql: "`msg` REGEXP '[0-9]'",
+		},
+		"字段空格下划线字符类正则仍补齐包含匹配": {
+			q:   `msg:/[ _]/`,
+			es:  `{"regexp":{"msg":{"value":".*[ _].*"}}}`,
+			sql: "`msg` REGEXP '[ _]'",
+		},
 		"字段正则顶层或表达式按分支补齐包含匹配": {
 			q:   `msg:/foo|bar/`,
 			es:  `{"regexp":{"msg":{"value":"(.*foo.*|.*bar.*)"}}}`,
 			sql: "`msg` REGEXP 'foo|bar'",
+		},
+		"字段正则外层分组方括号短语不补齐包含匹配": {
+			q:   `msg:/([Page Error])/`,
+			es:  `{"regexp":{"msg":{"value":"([Page Error])"}}}`,
+			sql: "`msg` REGEXP '([Page Error])'",
+		},
+		"字段正则双层分组方括号短语不补齐包含匹配": {
+			q:   `msg:/(([Page Error]))/`,
+			es:  `{"regexp":{"msg":{"value":"(([Page Error]))"}}}`,
+			sql: "`msg` REGEXP '(([Page Error]))'",
+		},
+		"字段正则外层分组内的方括号短语分支不补齐包含匹配": {
+			q:   `msg:/([Page Error]|foo)/`,
+			es:  `{"regexp":{"msg":{"value":"([Page Error]|.*foo.*)"}}}`,
+			sql: "`msg` REGEXP '([Page Error]|foo)'",
+		},
+		"字段正则双层分组内的方括号短语分支不补齐包含匹配": {
+			q:   `msg:/(([Page Error])|foo)/`,
+			es:  `{"regexp":{"msg":{"value":"(([Page Error])|.*foo.*)"}}}`,
+			sql: "`msg` REGEXP '(([Page Error])|foo)'",
 		},
 		"字段正则顶层或表达式保留分支锚点语义": {
 			q:   `msg:/^foo|bar/`,
@@ -828,6 +953,11 @@ func TestLuceneParser(t *testing.T) {
 			q:   `msg:/^(?!.*idip).*/`,
 			es:  `{"bool":{"must":{"exists":{"field":"msg"}},"must_not":{"regexp":{"msg":{"value":".*idip.*"}}}}}`,
 			sql: "`msg` REGEXP '^(?!.*idip).*'",
+		},
+		"字段正则不包含前缀内的字符类保持包含匹配": {
+			q:   `msg:/^(?!.*[abc]).*/`,
+			es:  `{"bool":{"must":{"exists":{"field":"msg"}},"must_not":{"regexp":{"msg":{"value":".*[abc].*"}}}}}`,
+			sql: "`msg` REGEXP '^(?!.*[abc]).*'",
 		},
 		"fuzzy_and_field": {
 			q:   `log: test~`,
@@ -911,12 +1041,12 @@ func TestLuceneParser(t *testing.T) {
 		"escape_parentheses": {
 			q:   `hello\(world\)`,
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"hello\\(world\\)"}}`,
-			sql: "`log` MATCH_PHRASE 'hello\\(world\\)'",
+			sql: "`log` MATCH_PHRASE 'hello(world)'",
 		},
 		"escape_star": {
 			q:   `hello\*world`,
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"hello\\*world"}}`,
-			sql: "`log` MATCH_PHRASE 'hello\\*world'",
+			sql: "`log` MATCH_PHRASE 'hello*world'",
 		},
 		"whitespace_multiple_spaces": {
 			q:   `  hello  world  `,
@@ -1114,22 +1244,22 @@ func TestLuceneParser(t *testing.T) {
 		"escape_question_mark": {
 			q:   `hello\?world`,
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"hello\\?world"}}`,
-			sql: "`log` MATCH_PHRASE 'hello\\?world'",
+			sql: "`log` MATCH_PHRASE 'hello?world'",
 		},
 		"escape_plus_sign": {
 			q:   `hello\+world`,
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"hello\\+world"}}`,
-			sql: "`log` MATCH_PHRASE 'hello\\+world'",
+			sql: "`log` MATCH_PHRASE 'hello+world'",
 		},
 		"escape_minus_sign": {
 			q:   `hello\-world`,
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"hello\\-world"}}`,
-			sql: "`log` MATCH_PHRASE 'hello\\-world'",
+			sql: "`log` MATCH_PHRASE 'hello-world'",
 		},
 		"escape_double_quote": {
 			q:   `hello\"world`,
 			es:  `{"query_string":{"analyze_wildcard":true,"fields":["*","__*"],"lenient":true,"query":"hello\\\"world"}}`,
-			sql: "`log` MATCH_PHRASE 'hello\\\"world'",
+			sql: "`log` MATCH_PHRASE 'hello\"world'",
 		},
 		"escape_double_backslash": {
 			q:   `hello\\world`,
@@ -1914,7 +2044,7 @@ func TestSingleQuoteAdaptation(t *testing.T) {
 		},
 		"single_quote_with_escaped_single": {
 			input: `log: 'it\'s working'`,
-			sql:   "`log` MATCH_PHRASE 'it's working'",
+			sql:   "`log` MATCH_PHRASE 'it''s working'",
 			es:    `{"match_phrase":{"log":{"query":"it's working"}}}`,
 		},
 		"mixed_quotes": {

@@ -27,6 +27,16 @@ func NewClient(kubeconfig string) (kubernetes.Interface, error) {
 	return kubernetes.NewForConfig(cfg)
 }
 
+func NewClientWithRateLimit(kubeconfig string, qps float32, burst int) (kubernetes.Interface, error) {
+	cfg, err := buildConfig(kubeconfig)
+	if err != nil {
+		return nil, err
+	}
+	cfg.QPS = qps
+	cfg.Burst = burst
+	return kubernetes.NewForConfig(cfg)
+}
+
 func buildConfig(kubeconfig string) (*rest.Config, error) {
 	if kubeconfig != "" {
 		return clientcmd.BuildConfigFromFlags("", kubeconfig)

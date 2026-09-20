@@ -117,9 +117,9 @@ func (p *dbFilter) processSlowQuery(record *define.Record, config Config) {
 
 			duration := int64(span.EndTimestamp() - span.StartTimestamp())
 			if duration > threshold.Nanoseconds() {
-				attrs.UpsertInt(config.SlowQuery.Destination, flagSlowQuery)
+				attrs.PutInt(config.SlowQuery.Destination, flagSlowQuery)
 			} else {
-				attrs.UpsertInt(config.SlowQuery.Destination, flagNotSlowQuery)
+				attrs.PutInt(config.SlowQuery.Destination, flagNotSlowQuery)
 			}
 		})
 	}

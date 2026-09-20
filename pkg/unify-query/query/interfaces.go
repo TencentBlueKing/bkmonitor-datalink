@@ -57,6 +57,7 @@ type StorageIDRange struct {
 	HasSourceType bool
 	Start         time.Time
 	End           time.Time
+	EndInclusive  bool
 	QueryStart    time.Time
 	QueryEnd      time.Time
 }
@@ -263,6 +264,10 @@ func (z *TsDBV2) GetStorageIDRangesWithDirectionalOverlap(start, end time.Time, 
 		if routeStart.Before(routeEnd) {
 			storageRange.Start = routeStart
 			storageRange.End = routeEnd
+			// storage route 本身保持 [start, end)；只有 routeEnd 被本次查询终点裁剪时，
+			// 才允许保留后端按闭区间返回的 t == queryEnd 样本。
+			storageRange.EndInclusive = routeEnd.Equal(routeCheckEnd) &&
+				(i == 0 || routeEnd.Before(recordEnd))
 		}
 		ranges = append(ranges, storageRange)
 	}

@@ -11,11 +11,13 @@ package bksql_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/prometheus/prometheus/prompb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -25,6 +27,53 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sql_expr"
 )
+
+func TestQueryFactory_SearchAfterValues(t *testing.T) {
+	query := &metadata.Query{
+		Field: "gseIndex",
+		Orders: metadata.Orders{
+			{Name: sql_expr.FieldTime, Ast: false},
+			{Name: "level", Ast: false},
+			{Name: sql_expr.FieldValue, Ast: true},
+		},
+	}
+	factory := bksql.NewQueryFactory(metadata.InitHashID(context.Background()), query)
+
+	values, err := factory.SearchAfterValues(map[string]any{
+		sql_expr.TimeStamp: json.Number("1745234704000"),
+		"level":            "info",
+		sql_expr.Value:     json.Number("4281730"),
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, []any{json.Number("1745234704000"), "info", json.Number("4281730")}, values)
+
+	values, err = factory.SearchAfterValues(map[string]any{
+		sql_expr.TimeStamp: json.Number("1745234704000"),
+		"level":            nil,
+		sql_expr.Value:     json.Number("4281730"),
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, []any{json.Number("1745234704000"), nil, json.Number("4281730")}, values)
+
+	_, err = factory.SearchAfterValues(map[string]any{
+		sql_expr.TimeStamp: json.Number("1745234704000"),
+		"level":            "info",
+	})
+	assert.EqualError(t, err, "search_after order field _value is missing from query result")
+}
+
+func TestQueryFactory_SearchAfterRejectsFrom(t *testing.T) {
+	query := &metadata.Query{
+		From:          1,
+		IsSearchAfter: true,
+		Orders: metadata.Orders{
+			{Name: "dtEventTimeStamp", Ast: false},
+		},
+	}
+
+	_, err := bksql.NewQueryFactory(metadata.InitHashID(context.Background()), query).SQL()
+	assert.EqualError(t, err, "from cannot be combined with is_search_after")
+}
 
 func TestNewSqlFactory(t *testing.T) {
 	start := time.Unix(1741795260, 0)
@@ -249,6 +298,66 @@ func TestNewSqlFactory(t *testing.T) {
 			},
 			expected: "SELECT CAST(__ext['container_id'] AS STRING) AS `__ext__bk_46__container_id`, COUNT(CAST(__ext['container_id'] AS STRING)) AS `_value_`, ((CAST((FLOOR(__shard_key__ / 1000) + 0) / 1440 AS INT) * 1440 - 0) * 60 * 1000) AS `_timestamp_` FROM `5000140_bklog_container_log_demo_analysis`.doris WHERE `dtEventTimeStamp` >= 1741935945000 AND `dtEventTimeStamp` <= 1742456145000 AND `dtEventTime` >= '2025-03-14 15:05:45' AND `dtEventTime` <= '2025-03-20 15:35:46' AND `thedate` >= '20250314' AND `thedate` <= '20250320' GROUP BY __ext__bk_46__container_id, _timestamp_",
 		},
+		"Doris 原始查询携带字段别名时不应生成 NULL 投影和排序": {
+			start: time.Unix(1784108029, 336*int64(time.Millisecond)),
+			end:   time.Unix(1784108929, 336*int64(time.Millisecond)),
+			query: &metadata.Query{
+				DB:          "2_bklog_2_p8oibru8se2clq50",
+				Measurement: sql_expr.Doris,
+				Field:       "dtEventTimeStamp",
+				FieldAlias: metadata.FieldAlias{
+					"dtEventTimeStamp": "dtEventTimeStampNanos",
+				},
+				Size: 10000,
+				Orders: metadata.Orders{
+					{
+						Name: "dtEventTimeStamp",
+						Ast:  false,
+					},
+				},
+			},
+			expected: "SELECT *, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_2_p8oibru8se2clq50`.doris WHERE `dtEventTimeStamp` >= 1784108029336 AND `dtEventTimeStamp` <= 1784108929336 AND `dtEventTime` >= '2026-07-15 17:33:49' AND `dtEventTime` <= '2026-07-15 17:48:50' AND `thedate` = '20260715' ORDER BY `dtEventTimeStamp` DESC LIMIT 10000",
+		},
+		"Doris 原始查询未投影 _value_ 时应跳过 _value 排序": {
+			start: time.Unix(1784108029, 336*int64(time.Millisecond)),
+			end:   time.Unix(1784108929, 336*int64(time.Millisecond)),
+			query: &metadata.Query{
+				DB:          "2_bklog_2_p8oibru8se2clq50",
+				Measurement: sql_expr.Doris,
+				Field:       "dtEventTimeStamp",
+				FieldAlias: metadata.FieldAlias{
+					"dtEventTimeStamp": "dtEventTimeStampNanos",
+				},
+				Size: 10000,
+				Orders: metadata.Orders{
+					{
+						Name: sql_expr.FieldValue,
+						Ast:  false,
+					},
+				},
+			},
+			expected: "SELECT *, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_2_p8oibru8se2clq50`.doris WHERE `dtEventTimeStamp` >= 1784108029336 AND `dtEventTimeStamp` <= 1784108929336 AND `dtEventTime` >= '2026-07-15 17:33:49' AND `dtEventTime` <= '2026-07-15 17:48:50' AND `thedate` = '20260715' LIMIT 10000",
+		},
+		"Doris 原始查询缺失非时间字段别名时应跳过排序": {
+			start: time.Unix(1784108029, 336*int64(time.Millisecond)),
+			end:   time.Unix(1784108929, 336*int64(time.Millisecond)),
+			query: &metadata.Query{
+				DB:          "2_bklog_2_p8oibru8se2clq50",
+				Measurement: sql_expr.Doris,
+				Field:       "dtEventTimeStamp",
+				FieldAlias: metadata.FieldAlias{
+					"pod_namespace": "__ext.pod.namespace",
+				},
+				Size: 10000,
+				Orders: metadata.Orders{
+					{
+						Name: "pod_namespace",
+						Ast:  false,
+					},
+				},
+			},
+			expected: "SELECT *, `dtEventTimeStamp` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `2_bklog_2_p8oibru8se2clq50`.doris WHERE `dtEventTimeStamp` >= 1784108029336 AND `dtEventTimeStamp` <= 1784108929336 AND `dtEventTime` >= '2026-07-15 17:33:49' AND `dtEventTime` <= '2026-07-15 17:48:50' AND `thedate` = '20260715' LIMIT 10000",
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
@@ -294,7 +403,7 @@ func TestNewQueryFactory_BkSql_TSpider_UserSQL(t *testing.T) {
 	start := time.Unix(1741795260, 0)
 	end := time.Unix(1741796260, 0)
 
-	const whereTime = "(`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` <= 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313')"
+	const whereTime = "(`dtEventTimeStamp` >= 1741795260000 AND `dtEventTimeStamp` < 1741796260000 AND `dtEventTime` >= '2025-03-13 00:01:00' AND `dtEventTime` <= '2025-03-13 00:17:41' AND `thedate` = '20250313')"
 
 	t.Run("without_fields_map", func(t *testing.T) {
 		tests := []struct {
@@ -340,7 +449,15 @@ func TestNewQueryFactory_BkSql_TSpider_UserSQL(t *testing.T) {
 				dbs:     []string{"db_a", "db_b"},
 				field:   "login_rate",
 				userSQL: "SELECT 1 FROM tbl",
-				wantSQL: "SELECT 1 FROM (SELECT * FROM `db_b` WHERE " + whereTime + " UNION ALL SELECT * FROM `db_a` WHERE " + whereTime + ") AS combined_data LIMIT 100",
+				wantSQL: "SELECT 1 FROM (SELECT 1 FROM `db_b` WHERE " + whereTime + " UNION ALL SELECT 1 FROM `db_a` WHERE " + whereTime + ") AS combined_data LIMIT 100",
+			},
+			{
+				name:    "multi_db_select_all_allowed",
+				db:      "unused_when_dbs_set",
+				dbs:     []string{"db_a", "db_b"},
+				field:   "login_rate",
+				userSQL: "SELECT * FROM tbl",
+				wantSQL: "SELECT * FROM (SELECT * FROM `db_b` WHERE " + whereTime + " UNION ALL SELECT * FROM `db_a` WHERE " + whereTime + ") AS combined_data LIMIT 100",
 			},
 			{
 				name:    "parenthesized_or_and_is_not_null_limit_offset",
@@ -821,4 +938,61 @@ func TestFormatDataToQueryResult_ValueParsing(t *testing.T) {
 			assert.Equal(t, c.expected, actual)
 		})
 	}
+}
+
+func TestFormatDataToQueryResultDynamicLabelsIncreaseSeriesRowsRatio(t *testing.T) {
+	ctx := metadata.InitHashID(context.Background())
+	start := time.Unix(1776758700, 0)
+	end := start.Add(5 * time.Minute)
+
+	format := func(dynamic bool) *prompb.QueryResult {
+		t.Helper()
+		query := &metadata.Query{
+			DataSource:  "bkdata",
+			StorageType: metadata.BkSqlStorageType,
+			TableID:     "2_cdn_flow",
+			DB:          "2_cdn_flow",
+			Field:       "metric_value2",
+		}
+		factory := bksql.NewQueryFactory(ctx, query).WithRangeTime(start, end)
+		_, err := factory.SQL()
+		require.NoError(t, err)
+
+		rows := make([]map[string]any, 0, 5)
+		for i := 0; i < 5; i++ {
+			labelValue := "stable"
+			if dynamic {
+				labelValue = fmt.Sprintf("minute-%d", i)
+			}
+			rows = append(rows, map[string]any{
+				"_timestamp_": start.Add(time.Duration(i) * time.Minute).UnixMilli(),
+				"_value_":     float64(i),
+				"data_time":   labelValue,
+			})
+		}
+		result, err := factory.FormatDataToQueryResult(ctx, rows)
+		require.NoError(t, err)
+		return result
+	}
+
+	stable := format(false)
+	dynamic := format(true)
+	require.Len(t, stable.Timeseries, 1)
+	require.Len(t, dynamic.Timeseries, 5)
+
+	countPointsAndLabelBytes := func(result *prompb.QueryResult) (int, int) {
+		var points, labelBytes int
+		for _, series := range result.Timeseries {
+			points += len(series.Samples)
+			for _, label := range series.Labels {
+				labelBytes += len(label.Name) + len(label.Value)
+			}
+		}
+		return points, labelBytes
+	}
+	stablePoints, stableLabelBytes := countPointsAndLabelBytes(stable)
+	dynamicPoints, dynamicLabelBytes := countPointsAndLabelBytes(dynamic)
+	require.Equal(t, 5, stablePoints)
+	require.Equal(t, 5, dynamicPoints)
+	require.Greater(t, dynamicLabelBytes, stableLabelBytes)
 }

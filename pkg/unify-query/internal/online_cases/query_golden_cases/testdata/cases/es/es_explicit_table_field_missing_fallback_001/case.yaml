@@ -1,0 +1,26 @@
+id: es_explicit_table_field_missing_fallback_001
+storage: es
+enabled: true
+shape_signature: query_ts/range/es/raw/explicit_table_id/field_metadata_miss/fallback/output_index_search
+source:
+  kind: merged_pr
+  outputs_kind: post_fix_handler_replay
+  sampled_at: "2026-07-23"
+  fingerprint: sha256:1413dd7b819cf286135188f783fc035cee0d661fe1de630eea11d1c302e15d24
+tags:
+  - query_ts_api
+  - raw
+  - explicit_route
+  - field_metadata
+  - post_fix_expected
+  - regression_fix
+  - production_shape
+notes:
+  - 问题形态和旧行为依据已合并 PR #1363 的问题说明与回归测试，未保存原始请求。
+  - 脱敏请求保留显式 table_id 已确定候选 RT、但 field_name 暂未出现在路由 fields 中的结构。
+  - 修复前路由层会丢弃该 RT，修复后应继续生成该 ES 索引查询。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

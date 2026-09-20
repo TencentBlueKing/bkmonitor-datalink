@@ -43,6 +43,8 @@ func (c metricsConverter) ToDataID(record *define.Record) int32 {
 	return record.Token.MetricsDataId
 }
 
+
+
 func (c metricsConverter) Convert(record *define.Record, f define.GatherFunc) {
 	pdMetrics := record.Data.(pmetric.Metrics)
 	resourceMetricsSlice := pdMetrics.ResourceMetrics()
@@ -60,7 +62,7 @@ func (c metricsConverter) Convert(record *define.Record, f define.GatherFunc) {
 			scopeMetric := scopeMetricsSlice.At(j)
 			dimensions := pcommon.NewMap()
 			rs.CopyTo(dimensions)
-			dimensions.InsertString("scope_name", scopeMetric.Scope().Name())
+            utils.InsertString(dimensions, "scope_name", scopeMetric.Scope().Name())
 			metrics := scopeMetric.Metrics()
 			for k := 0; k < metrics.Len(); k++ {
 				for _, dp := range c.Extract(metrics.At(k), dimensions) {
@@ -97,12 +99,12 @@ func toFloatValue(dp pmetric.NumberDataPoint) float64 {
 	var val float64
 	switch dp.ValueType() {
 	case pmetric.NumberDataPointValueTypeDouble:
-		val = dp.DoubleVal()
+		val = dp.DoubleValue()
 	case pmetric.NumberDataPointValueTypeInt:
-		val = float64(dp.IntVal())
+		val = float64(dp.IntValue())
 	}
 
-	if dp.Flags().HasFlag(pmetric.MetricDataPointFlagNoRecordedValue) {
+	if dp.Flags().NoRecordedValue() {
 		val = math.Float64frombits(value.StaleNaN)
 	}
 	return val
@@ -167,17 +169,17 @@ func (c metricsConverter) convertHistogramMetrics(pdMetric pmetric.Metric, rs pc
 		}
 
 		// 追加 buckets 指标
-		bounds := dp.MExplicitBounds()
-		bucketCounts := dp.MBucketCounts()
+		bounds := dp.ExplicitBounds()
+		bucketCounts := dp.BucketCounts()
 		var cumulativeCount uint64
-		for j := 0; j < len(bounds) && j < len(bucketCounts); j++ {
-			cumulativeCount += bucketCounts[j]
+		for j := 0; j < bounds.Len() && j < bucketCounts.Len(); j++ {
+			cumulativeCount += bucketCounts.At(j)
 			val := float64(cumulativeCount)
-			if dp.Flags().HasFlag(pmetric.MetricDataPointFlagNoRecordedValue) {
+			if dp.Flags().NoRecordedValue() {
 				val = math.Float64frombits(value.StaleNaN)
 			}
 
-			fv := strconv.FormatFloat(bounds[j], 'f', -1, 64)
+			fv := strconv.FormatFloat(bounds.At(j), 'f', -1, 64)
 			m := otMetricMapper{
 				Metrics:    map[string]float64{pdMetric.Name() + "_bucket": val},
 				Dimensions: utils.MergeMapWith(dimensions, "le", fv),
@@ -188,7 +190,7 @@ func (c metricsConverter) convertHistogramMetrics(pdMetric pmetric.Metric, rs pc
 
 		// 追加 +Inf bucket
 		val := float64(dp.Count())
-		if dp.Flags().HasFlag(pmetric.MetricDataPointFlagNoRecordedValue) {
+		if dp.Flags().NoRecordedValue() {
 			val = math.Float64frombits(value.StaleNaN)
 		}
 		m := otMetricMapper{
@@ -270,17 +272,17 @@ func (c metricsConverter) Extract(pdMetric pmetric.Metric, rs pcommon.Map) []com
 	name := utils.NormalizeName(pdMetric.Name())
 	pdMetric.SetName(name)
 
-	switch pdMetric.DataType() {
-	case pmetric.MetricDataTypeSum:
+	switch pdMetric.Type() {
+	case pmetric.MetricTypeSum:
 		return c.convertSumMetrics(pdMetric, rs)
 
-	case pmetric.MetricDataTypeHistogram:
+	case pmetric.MetricTypeHistogram:
 		return c.convertHistogramMetrics(pdMetric, rs)
 
-	case pmetric.MetricDataTypeGauge:
+	case pmetric.MetricTypeGauge:
 		return c.convertGaugeMetrics(pdMetric, rs)
 
-	case pmetric.MetricDataTypeSummary:
+	case pmetric.MetricTypeSummary:
 		return c.convertSummaryMetrics(pdMetric, rs)
 	}
 

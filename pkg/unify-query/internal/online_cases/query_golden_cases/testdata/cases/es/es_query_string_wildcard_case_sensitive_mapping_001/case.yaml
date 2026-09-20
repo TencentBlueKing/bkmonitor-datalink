@@ -1,0 +1,27 @@
+id: es_query_string_wildcard_case_sensitive_mapping_001
+storage: es
+enabled: true
+shape_signature: query_ts/range/es/raw/query_string/wildcard/custom_analyzer_case_sensitive/output_index_search
+source:
+  kind: merged_pr
+  outputs_kind: post_fix_handler_replay
+  sampled_at: "2026-07-23"
+  fingerprint: sha256:7ffcbd1be96222be507db379425a83bd081f534d432e1bcd52d6118e408b017b
+tags:
+  - query_ts_api
+  - raw
+  - query_string
+  - wildcard
+  - mapping_case_sensitivity
+  - post_fix_expected
+  - regression_fix
+  - production_shape
+notes:
+  - 问题形态和旧行为依据已合并 PR #1364 的问题说明与回归测试，未保存原始请求。
+  - 固定 mapping 使用无 lowercase filter 的 custom analyzer，锁定索引侧大小写敏感语义。
+  - 修复后 wildcard 必须保留 ERROR 与 Traceback 的原始大小写，不能统一转为小写。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

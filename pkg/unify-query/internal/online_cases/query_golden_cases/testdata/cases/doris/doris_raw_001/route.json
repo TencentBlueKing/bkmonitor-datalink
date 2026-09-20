@@ -1,0 +1,20 @@
+{
+  "space_uid": "bkcc__golden_doris_raw",
+  "result_tables": [{"table_id": "demo_doris_raw.partition_1"}],
+  "result_table_details": {
+    "demo_doris_raw.partition_1": {
+      "storage_id": 3101,
+      "storage_name": "doris_cluster_raw",
+      "storage_type": "bk_sql",
+      "cluster_name": "doris_cluster_raw",
+      "db": "golden_doris_raw_table",
+      "table_id": "demo_doris_raw.partition_1",
+      "measurement": "doris",
+      "fields": ["events_total"],
+      "data_label": "demo_doris_raw",
+      "tags_key": ["service", "status"],
+      "source_type": "bklog"
+    }
+  },
+  "storages": {"3101": {"type": "bk_sql"}}
+}

@@ -1,0 +1,27 @@
+{
+  "space_uid": "bkcc__golden_es_single_quote",
+  "result_tables": [
+    {
+      "table_id": "demo_single_quote_logs.partition_1"
+    }
+  ],
+  "result_table_details": {
+    "demo_single_quote_logs.partition_1": {
+      "storage_id": 2004,
+      "storage_name": "es_cluster_single_quote",
+      "storage_type": "elasticsearch",
+      "cluster_name": "es_cluster_single_quote",
+      "db": "golden_single_quote_logs",
+      "table_id": "demo_single_quote_logs.partition_1",
+      "fields": ["events_total"],
+      "data_label": "demo_single_quote_logs",
+      "tags_key": ["service"],
+      "source_type": "bklog"
+    }
+  },
+  "storages": {
+    "2004": {
+      "type": "elasticsearch"
+    }
+  }
+}

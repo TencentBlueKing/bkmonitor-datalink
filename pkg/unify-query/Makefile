@@ -29,9 +29,12 @@ upx: build
 tidy:
 	go mod tidy
 
-.PHONY: test
-test:
+.PHONY: test test-promql
+test: test-promql
 	go test -tags "$(BUILDTAGS)" -cover -timeout 1m -parallel 8  ./...
+
+test-promql:
+	cd third_party/prometheus && go test ./promql/...
 
 .PHONY: swag
 swag:

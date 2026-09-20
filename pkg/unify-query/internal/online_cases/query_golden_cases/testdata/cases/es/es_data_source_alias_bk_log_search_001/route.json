@@ -1,0 +1,19 @@
+{
+  "space_uid": "bkcc__golden_es_source_alias",
+  "result_tables": [{"table_id": "demo_logs.source_alias"}],
+  "result_table_details": {
+    "demo_logs.source_alias": {
+      "storage_id": 2304,
+      "storage_name": "es_cluster_source_alias",
+      "storage_type": "elasticsearch",
+      "cluster_name": "es_cluster_source_alias",
+      "db": "golden_es_source_alias",
+      "table_id": "demo_logs.source_alias",
+      "fields": ["known_metric"],
+      "data_label": "demo_logs_source_alias",
+      "tags_key": ["service"],
+      "source_type": "bklog"
+    }
+  },
+  "storages": {"2304": {"type": "elasticsearch"}}
+}

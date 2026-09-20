@@ -10,6 +10,7 @@
 package http
 
 import (
+	"sync/atomic"
 	"time"
 )
 
@@ -24,9 +25,15 @@ const (
 	SlowQueryThresholdConfigPath  = "http.slow_query_threshold"
 	DefaultQueryListLimitPath     = "http.default_query_list_limit"
 
-	QueryMaxRoutingConfigPath      = "http.query.max_routing"
-	QueryContentTypeConfigPath     = "http.query.content_type"
-	QueryContentEncodingConfigPath = "http.query.content_encoding"
+	QueryMaxRoutingConfigPath              = "http.query.max_routing"
+	QueryContentTypeConfigPath             = "http.query.content_type"
+	QueryContentEncodingConfigPath         = "http.query.content_encoding"
+	NamedOutputsMaxOutputsConfigPath       = "http.query.named_outputs.max_outputs"
+	NamedOutputsTimeoutConfigPath          = "http.query.named_outputs.timeout"
+	NamedOutputsMaxSeriesConfigPath        = "http.query.named_outputs.max_series"
+	NamedOutputsMaxPointsConfigPath        = "http.query.named_outputs.max_points"
+	NamedOutputsMaxCacheBytesConfigPath    = "http.query.named_outputs.max_cache_bytes"
+	NamedOutputsMaxResponseBytesConfigPath = "http.query.named_outputs.max_response_bytes"
 
 	// 服务配置
 	EnablePrometheusConfigPath = "http.prometheus.enable"
@@ -84,6 +91,21 @@ const (
 	LabelValuesDefaultLimitConfigPath = "http.label_values.default_limit"
 )
 
+const (
+	QueryRawESBatchMaxMembersConfigPath            = "http.query.raw.es_batch.max_members"
+	QueryRawESBatchMaxBodyBytesConfigPath          = "http.query.raw.es_batch.max_body_bytes"
+	QueryRawESBatchMaxConcurrentSearchesConfigPath = "http.query.raw.es_batch.max_concurrent_searches"
+	DefaultQueryRawESBatchMaxMembers               = 16
+	DefaultQueryRawESBatchMaxBodyBytes             = 1048576
+	DefaultQueryRawESBatchMaxConcurrentSearches    = 4
+)
+
+type queryRawESBatchSettings struct {
+	maxMembers            int
+	maxBodyBytes          int
+	maxConcurrentSearches int
+}
+
 var (
 	IPAddress           string
 	Port                int
@@ -110,4 +132,23 @@ var (
 	ScrollWindowTimeout      string
 	ScrollSessionLockTimeout string
 	ScrollSliceLimit         int
+
+	queryRawESBatchSettingsSnapshot atomic.Pointer[queryRawESBatchSettings]
+	namedOutputSettingsSnapshot     atomic.Pointer[namedOutputSettings]
 )
+
+func defaultQueryRawESBatchSettings() *queryRawESBatchSettings {
+	return &queryRawESBatchSettings{
+		maxMembers:            DefaultQueryRawESBatchMaxMembers,
+		maxBodyBytes:          DefaultQueryRawESBatchMaxBodyBytes,
+		maxConcurrentSearches: DefaultQueryRawESBatchMaxConcurrentSearches,
+	}
+}
+
+func getQueryRawESBatchSettings() queryRawESBatchSettings {
+	settings := queryRawESBatchSettingsSnapshot.Load()
+	if settings == nil {
+		settings = defaultQueryRawESBatchSettings()
+	}
+	return *settings
+}

@@ -7,6 +7,8 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
+//go:build linux
+
 package define
 
 import (
@@ -15,46 +17,39 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestContainerActualPath(t *testing.T) {
+// TestGetContainerMount 校验 linux 下 GetContainerMount 的前缀匹配语义：
+// 仅返回 container_path 为采集路径前缀的挂载（host_path -> container_path）。
+// 原 TestContainerActualPath 引用的 ContainerActualPath 已重构为 GetContainerMount，
+// 此处同步更新，避免 define 测试包编译失败。
+func TestGetContainerMount(t *testing.T) {
 	container := &Container{
 		RootPath: "/var/host",
 		Mounts: []Mount{
-			{
-				"/var/logs",
-				"/data/logs",
-			},
-			{
-				"/data/container",
-				"/data",
-			},
-			{
-				"/tmp",
-				"/data/logs/expired",
-			},
-			{
-				"/log/ds",
-				"/home/user00/log/ds",
-			},
+			{HostPath: "/host/data", ContainerPath: "/data"},
+			{HostPath: "/host/logs", ContainerPath: "/data/logs"},
+			{HostPath: "/host/other", ContainerPath: "/other"},
 		},
 	}
 
-	var path string
+	// 命中单个挂载
+	m, err := GetContainerMount("/data/a.log", container)
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]string{"/host/data": "/data"}, m)
 
-	path, _ = ContainerActualPath("/data/a.log", container)
-	assert.Equal(t, "/data/container/a.log", path)
+	// 父子挂载都命中（/data 与 /data/logs 均为前缀）
+	m, err = GetContainerMount("/data/logs/x.log", container)
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]string{
+		"/host/data": "/data",
+		"/host/logs": "/data/logs",
+	}, m)
 
-	path, _ = ContainerActualPath("/data/logs/xxx/yyy.log", container)
-	assert.Equal(t, "/var/logs/xxx/yyy.log", path)
+	// 未命中任何挂载
+	m, err = GetContainerMount("/nomatch/x.log", container)
+	assert.NoError(t, err)
+	assert.Empty(t, m)
 
-	path, _ = ContainerActualPath("/data/logs/expired/yyy.log", container)
-	assert.Equal(t, "/tmp/yyy.log", path)
-
-	path, _ = ContainerActualPath("/root/logs/yyy.log", container)
-	assert.Equal(t, "/var/host/root/logs/yyy.log", path)
-
-	path, _ = ContainerActualPath("/home/user00/log/dsa/yyy.log", container)
-	assert.Equal(t, "/var/host/home/user00/log/dsa/yyy.log", path)
-
-	path, _ = ContainerActualPath("/home/user00/log/ds/..yyy.log", container)
-	assert.Equal(t, "/log/ds/..yyy.log", path)
+	// 相对路径报错
+	_, err = GetContainerMount("relative/x.log", container)
+	assert.Error(t, err)
 }

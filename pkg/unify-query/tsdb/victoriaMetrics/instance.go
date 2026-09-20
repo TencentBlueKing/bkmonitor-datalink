@@ -632,11 +632,19 @@ func (i *Instance) DirectQueryRange(
 	return result, isPartial, err
 }
 
-// Query instant 查询
-func (i *Instance) DirectQuery(
+// DirectQuery keeps the legacy instant-query interface and intentionally drops
+// the partial bit. Named outputs use DirectQueryWithPartial below.
+func (i *Instance) DirectQuery(ctx context.Context, promqlStr string, end time.Time) (promql.Vector, error) {
+	result, _, err := i.DirectQueryWithPartial(ctx, promqlStr, end)
+	return result, err
+}
+
+// DirectQueryWithPartial exposes the VM instant response's partial bit without
+// changing the existing tsdb.Instance contract.
+func (i *Instance) DirectQueryWithPartial(
 	ctx context.Context, promqlStr string,
 	end time.Time,
-) (promql.Vector, error) {
+) (promql.Vector, bool, error) {
 	var (
 		vmExpand *metadata.VmExpand
 
@@ -654,7 +662,7 @@ func (i *Instance) DirectQuery(
 	span.Set("query-match", promqlStr)
 
 	if vmExpand == nil || len(vmExpand.ResultTableList) == 0 {
-		return promql.Vector{}, nil
+		return promql.Vector{}, false, nil
 	}
 
 	span.Set("vm-expand-cluster-name", vmExpand.ClusterName)
@@ -682,15 +690,16 @@ func (i *Instance) DirectQuery(
 
 	sql, err := json.Marshal(paramsQuery)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	err = i.vmQuery(ctx, string(sql), vmResp, span)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 
 	result, err := i.vectorFormat(ctx, vmResp, span)
+	isPartial := len(vmResp.Data.List) > 0 && vmResp.Data.List[0].IsPartial
 
 	var responseVMClusterList []string
 	if vmResp != nil && vmResp.Data.VmQueryCluster != nil {
@@ -698,7 +707,7 @@ func (i *Instance) DirectQuery(
 	}
 	spanSetStorageListDiff(span, vmExpand.RtDetailList, responseVMClusterList)
 
-	return result, err
+	return result, isPartial, err
 }
 
 func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start, end time.Time) (series []map[string]string, err error) {

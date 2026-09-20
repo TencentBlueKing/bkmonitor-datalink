@@ -1,0 +1,62 @@
+{
+  "method": "POST",
+  "path": "/query/ts/raw",
+  "headers": {
+    "Content-Type": "application/json",
+    "Bk-Query-Source": "golden",
+    "X-Bk-Scope-Space-Uid": "bkcc__golden_apm_trace_batch",
+    "X-Bk-Tenant-Id": "tenant_golden"
+  },
+  "body": {
+    "space_uid": "bkcc__golden_apm_trace_batch",
+    "query_list": [
+      {
+        "data_source": "bk_apm",
+        "table_id": "demo_trace_app_a.default",
+        "field_name": "",
+        "reference_name": "a",
+        "limit": 20,
+        "from": 0,
+        "conditions": {
+          "field_list": [
+            {
+              "field_name": "trace_id",
+              "value": ["trace_value_alpha"],
+              "op": "eq"
+            }
+          ],
+          "condition_list": []
+        },
+        "keep_columns": ["_time", "trace_id", "span_id", "service_name"],
+        "query_string": ""
+      },
+      {
+        "data_source": "bk_apm",
+        "table_id": "demo_trace_app_b.default",
+        "field_name": "",
+        "reference_name": "a",
+        "limit": 20,
+        "from": 0,
+        "conditions": {
+          "field_list": [
+            {
+              "field_name": "trace_id",
+              "value": ["trace_value_alpha"],
+              "op": "eq"
+            }
+          ],
+          "condition_list": []
+        },
+        "keep_columns": ["_time", "trace_id", "span_id", "service_name"],
+        "query_string": ""
+      }
+    ],
+    "metric_merge": "a",
+    "order_by": ["_time"],
+    "start_time": "1784701776",
+    "end_time": "1784702076",
+    "timezone": "UTC",
+    "instant": false,
+    "is_es_batch": true
+  }
+}

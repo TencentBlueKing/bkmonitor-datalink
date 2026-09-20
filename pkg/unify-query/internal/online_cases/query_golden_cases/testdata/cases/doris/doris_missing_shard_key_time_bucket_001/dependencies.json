@@ -1,0 +1,32 @@
+{
+  "bksql": {
+    "schema": [
+      {"Field": "thedate", "Type": "int"},
+      {"Field": "dtEventTimeStamp", "Type": "bigint"},
+      {"Field": "dtEventTime", "Type": "varchar"},
+      {"Field": "events_total", "Type": "double"},
+      {"Field": "service", "Type": "varchar"},
+      {"Field": "status", "Type": "varchar"}
+    ],
+    "schema_by_sql": {
+      "SHOW CREATE TABLE `golden_doris_no_shard_current`.doris": [
+        {"Field": "thedate", "Type": "int"},
+        {"Field": "dtEventTimeStamp", "Type": "bigint"},
+        {"Field": "dtEventTime", "Type": "varchar"},
+        {"Field": "__shard_key__", "Type": "bigint"},
+        {"Field": "events_total", "Type": "double"},
+        {"Field": "service", "Type": "varchar"},
+        {"Field": "status", "Type": "varchar"}
+      ],
+      "SHOW CREATE TABLE `golden_doris_no_shard_history`.doris": [
+        {"Field": "thedate", "Type": "int"},
+        {"Field": "dtEventTimeStamp", "Type": "bigint"},
+        {"Field": "dtEventTime", "Type": "varchar"},
+        {"Field": "events_total", "Type": "double"},
+        {"Field": "service", "Type": "varchar"},
+        {"Field": "status", "Type": "varchar"}
+      ]
+    },
+    "result": []
+  }
+}

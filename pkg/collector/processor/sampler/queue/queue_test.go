@@ -48,8 +48,8 @@ func TestTraceIDMap(t *testing.T) {
 	t.Run("MaxSpan=0", func(t *testing.T) {
 		idMap := newTraceIDMap(0)
 
-		traceID := pcommon.NewTraceID([16]byte{1, 2, 3, 4})
-		spanID := pcommon.NewSpanID([8]byte{1, 2})
+		traceID := pcommon.TraceID([16]byte{1, 2, 3, 4})
+		spanID := pcommon.SpanID([8]byte{1, 2})
 		idMap.Set(traceID, spanID)
 		dst := idMap.Pop(traceID)
 		assert.Len(t, dst, 0)
@@ -59,8 +59,8 @@ func TestTraceIDMap(t *testing.T) {
 	t.Run("MaxSpan=1", func(t *testing.T) {
 		idMap := newTraceIDMap(1)
 
-		traceID := pcommon.NewTraceID([16]byte{1, 2, 3, 4})
-		spanID := pcommon.NewSpanID([8]byte{1, 2})
+		traceID := pcommon.TraceID([16]byte{1, 2, 3, 4})
+		spanID := pcommon.SpanID([8]byte{1, 2})
 		idMap.Set(traceID, spanID)
 		dst := idMap.Pop(traceID)
 		assert.Len(t, dst, 1)
@@ -78,8 +78,8 @@ func TestTraceIDMap(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				for j := 0; j < 10; j++ {
-					traceID := pcommon.NewTraceID([16]byte{1, 2, 3, byte(j)})
-					spanID := pcommon.NewSpanID([8]byte{1, byte(j)})
+					traceID := pcommon.TraceID([16]byte{1, 2, 3, byte(j)})
+					spanID := pcommon.SpanID([8]byte{1, byte(j)})
 					idMap.Set(traceID, spanID)
 				}
 			}()
@@ -88,7 +88,7 @@ func TestTraceIDMap(t *testing.T) {
 		assert.Equal(t, 10, len(idMap.m))
 
 		for i := 0; i < 10; i++ {
-			spanIDs := idMap.Pop(pcommon.NewTraceID([16]byte{1, 2, 3, byte(i)}))
+			spanIDs := idMap.Pop(pcommon.TraceID([16]byte{1, 2, 3, byte(i)}))
 			assert.Len(t, spanIDs, 10)
 		}
 	})

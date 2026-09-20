@@ -23,6 +23,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/beater/taskfactory"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tenant"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/libgse/beat"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
@@ -43,9 +44,15 @@ type BaseConfigEngine struct {
 	repeatChildMetaTasks  []*configs.ChildTaskMetaConfig // 重复的子任务列表，子配置心跳会用到
 	wrongChildMetaTasks   []*configs.ChildTaskMetaConfig // 错误的子任务列表,子配置心跳会用到
 	errorChildMetaTasks   []*configs.ChildTaskMetaConfig // 读取失败的子任务列表,子配置心跳会用到
+	tenantDataIDResolver  tenant.DataIDResolver
 
 	heartbeatLock sync.Mutex   // 心跳数据读写锁
 	heartbeatInfo define.Event // 用于上传的心跳数据,全局配置部分
+}
+
+// SetTenantDataIDResolver sets the tenant DataID view used during config initialization.
+func (ce *BaseConfigEngine) SetTenantDataIDResolver(resolver tenant.DataIDResolver) {
+	ce.tenantDataIDResolver = resolver
 }
 
 // NewBaseConfigEngine 获取configEngine
@@ -73,6 +80,7 @@ func (ce *BaseConfigEngine) Init(cfg *common.Config, bt define.Beater) error {
 
 	// 获取全局config
 	baseConfig := configs.NewConfig()
+	baseConfig.SetTenantDataIDResolver(ce.tenantDataIDResolver)
 	err = cfg.Unpack(baseConfig)
 	if err != nil {
 		return fmt.Errorf("%s: %w", define.ErrUnpackCfg, err)
@@ -245,6 +253,9 @@ func (ce *BaseConfigEngine) GetBasicMetaConfig(ucfgConfig *ucfg.Config) (define.
 	if err != nil {
 		logger.Errorf("get task by type failed,error:%v", err)
 		return nil, err
+	}
+	if setter, ok := taskMetaConfig.(configs.TenantDataIDResolverSetter); ok {
+		setter.SetTenantDataIDResolver(ce.tenantDataIDResolver)
 	}
 	return taskMetaConfig, nil
 }

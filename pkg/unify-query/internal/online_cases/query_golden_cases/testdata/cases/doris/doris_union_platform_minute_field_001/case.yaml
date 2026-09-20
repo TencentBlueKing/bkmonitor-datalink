@@ -1,0 +1,26 @@
+id: doris_union_platform_minute_field_001
+storage: doris
+enabled: true
+shape_signature: query_ts_raw/range/doris/merge_db2/user_sql/minuteX/dependency_dtEventTimeStamp/output3
+source:
+  kind: merged_pr
+  outputs_kind: post_fix_handler_replay
+  sampled_at: "2026-07-24"
+  fingerprint: sha256:50308db03de2cc64815a60bf43d90833b15a2a70fb5a8c06741017496294d48b
+tags:
+  - query_ts_raw_api
+  - merge_db
+  - user_sql
+  - platform_minute_field
+  - post_fix_expected
+  - regression_fix
+  - production_shape
+notes:
+  - 回归 Doris 多物理表 UNION 的外层 SQL 使用计算平台 minuteX 内置字段时，内层投影必须补充 dtEventTimeStamp 依赖。
+  - 问题形态和旧行为依据已合并 PR #1403 的公开问题说明、回归测试和修复前基线回放，未使用生产日志或 trace。
+  - 请求、路由、物理表、字段和集群均为离线占位数据，不含真实生产标识。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

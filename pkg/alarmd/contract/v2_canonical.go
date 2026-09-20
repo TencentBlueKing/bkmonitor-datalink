@@ -1,0 +1,495 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2017-2025 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package contract
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"math"
+	"reflect"
+	"sort"
+	"strconv"
+	"unicode/utf8"
+)
+
+// CanonicalJSONV2 produces the shared digest representation: sorted object
+// keys, preserved array order and number tokens, no insignificant whitespace,
+// no HTML escaping and no trailing newline.
+func CanonicalJSONV2(value any) (result []byte, err error) {
+	var raw []byte
+	switch typed := value.(type) {
+	case json.RawMessage:
+		raw = bytes.Clone(typed)
+	case []byte:
+		raw = bytes.Clone(typed)
+	default:
+		var buffer bytes.Buffer
+		encoder := json.NewEncoder(&buffer)
+		encoder.SetEscapeHTML(false)
+		if err := encoder.Encode(value); err != nil {
+			return nil, invalid("canonical_json", err.Error())
+		}
+		raw = bytes.TrimSuffix(buffer.Bytes(), []byte{'\n'})
+	}
+	if len(raw) == 0 || !utf8.Valid(raw) || bytes.HasPrefix(raw, []byte{0xef, 0xbb, 0xbf}) {
+		return nil, invalid("canonical_json", "must contain non-empty UTF-8 JSON without BOM")
+	}
+	if err := validateJSONSurrogateEscapes(raw); err != nil {
+		return nil, err
+	}
+	valueType := reflect.TypeOf(value)
+	closed := canonicalClosedTypeCached(valueType)
+
+	// A closed string of valid UTF-8 has nothing left to canonicalize: no object
+	// keys to sort and no number tokens to preserve, and the decode and
+	// re-encode below hand back exactly the bytes the encoder just produced.
+	// The identity keys of Runtime State are derived one per series from such a
+	// string, so the round trip is skipped rather than paid for. This stays
+	// ahead of both forms, which would reach the same answer by decoding and
+	// re-emitting bytes that are already final.
+	//
+	// Invalid UTF-8 is the one case where the round trip is not the identity:
+	// the encoder writes an escaped replacement character, which the decode
+	// turns into that character and the re-encode then writes literally. Such a
+	// string keeps the long path, which is what defines its canonical form.
+	if closed && valueType.Kind() == reflect.String && utf8.ValidString(reflect.ValueOf(value).String()) {
+		return restoreJSONLineSeparatorsV2(raw), nil
+	}
+
+	mode := loadCanonicalMode()
+	goType := "nil"
+	if valueType != nil {
+		goType = valueType.String()
+	}
+
+	// The single-pass form is tried before the strict walk, not after it. It
+	// already refuses everything the walk refuses -- duplicate fields, a
+	// non-string key, a non-finite number, a trailing value, anything
+	// malformed -- so running the walk first would leave the saving on the
+	// table: the walk is a full decode of its own, and measured that way the
+	// two paths together were only 28% faster than the old one alone.
+	//
+	// It declines rather than reporting an error, and the established path then
+	// runs exactly as it did. So a decline can only cost time, and the rejection
+	// an input receives is still the one the established path writes.
+	if mode.servesStream() {
+		if out, ok := canonicalStreamV2(make([]byte, 0, len(raw)), raw); ok {
+			canonicalStreamServed.Add(1)
+			if mode.compares() && shouldSampleCanonicalShadow() {
+				// Reverse: the single-pass form is answering, so the established
+				// one is the shadow. This is a different claim from the forward
+				// direction and has to be proven on its own, because what the
+				// callers send changes once their stored digests come from here.
+				established, establishedErr := canonicalEstablishedV2(raw, closed)
+				compareCanonicalShadow(canonicalShadowInput{
+					GoType: goType, Direction: "reverse", Raw: raw,
+					Served: out, ServedErr: nil,
+					Compared: established, ComparedErr: establishedErr,
+				})
+			}
+			// No line separator restoration. That pass undoes the encoder's
+			// escaping of U+2028 and U+2029; emitting from decoded runes never
+			// escapes them, and the only way those six characters reach this
+			// output is as an escaped backslash followed by text, which the
+			// pass leaves alone anyway.
+			return out, nil
+		}
+		canonicalStreamDeclined.Add(1)
+	}
+
+	result, err = canonicalEstablishedV2(raw, closed)
+	if mode.compares() && !mode.servesStream() && shouldSampleCanonicalShadow() {
+		// Forward: the established form is answering and the single-pass one is
+		// the shadow.
+		out, ok := canonicalStreamV2(make([]byte, 0, len(raw)), raw)
+		compareCanonicalShadow(canonicalShadowInput{
+			GoType: goType, Direction: "forward", Raw: raw,
+			Served: result, ServedErr: err,
+			Compared: out, ComparedErr: nil, ComparedDeclined: !ok,
+		})
+	}
+	return result, err
+}
+
+// canonicalEstablishedV2 is the path this package has always taken: a strict
+// walk for anything the standard encoder did not produce, a decode into Go
+// values preserving number tokens, and a re-encode with sorted keys.
+//
+// It is a function of its own so that it can be the comparison arm as well as
+// the answer. Without that the reverse direction cannot be checked at all,
+// which is the gap that shipped in the first cut of this change.
+func canonicalEstablishedV2(raw []byte, closed bool) ([]byte, error) {
+	// Only the standard encoder over a closed type can establish unique keys.
+	// Raw fragments, interfaces and custom marshalers retain the strict walk.
+	if !closed {
+		if err := rejectDuplicateJSONFields(raw); err != nil {
+			return nil, err
+		}
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var normalized any
+	if err := decoder.Decode(&normalized); err != nil {
+		return nil, invalid("canonical_json", err.Error())
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return nil, err
+	}
+	var output bytes.Buffer
+	encoder := json.NewEncoder(&output)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(normalized); err != nil {
+		return nil, invalid("canonical_json", err.Error())
+	}
+	return restoreJSONLineSeparatorsV2(bytes.TrimSuffix(output.Bytes(), []byte{'\n'})), nil
+}
+
+// encoding/json always escapes U+2028 and U+2029. The v2 canonical contract
+// keeps non-ASCII UTF-8 literal; an even preceding backslash count represents
+// a literal "\\u2028" string and must remain escaped.
+func restoreJSONLineSeparatorsV2(encoded []byte) []byte {
+	if !bytes.Contains(encoded, []byte(`\u2028`)) && !bytes.Contains(encoded, []byte(`\u2029`)) {
+		return encoded[:len(encoded):len(encoded)]
+	}
+	result := make([]byte, 0, len(encoded))
+	for index := 0; index < len(encoded); {
+		if encoded[index] != '\\' {
+			result = append(result, encoded[index])
+			index++
+			continue
+		}
+		start := index
+		for index < len(encoded) && encoded[index] == '\\' {
+			index++
+		}
+		backslashes := index - start
+		if backslashes%2 == 1 && index+5 <= len(encoded) &&
+			(string(encoded[index:index+5]) == "u2028" || string(encoded[index:index+5]) == "u2029") {
+			result = append(result, encoded[start:index-1]...)
+			if encoded[index+4] == '8' {
+				result = append(result, '\xe2', '\x80', '\xa8')
+			} else {
+				result = append(result, '\xe2', '\x80', '\xa9')
+			}
+			index += 5
+			continue
+		}
+		result = append(result, encoded[start:index]...)
+	}
+	return result
+}
+
+var (
+	jsonNumberType    = reflect.TypeOf(json.Number(""))
+	jsonRawType       = reflect.TypeOf(json.RawMessage(nil))
+	byteSliceType     = reflect.TypeOf([]byte(nil))
+	jsonMarshalerType = reflect.TypeOf((*json.Marshaler)(nil)).Elem()
+	textMarshalerType = reflect.TypeOf((*encoding.TextMarshaler)(nil)).Elem()
+)
+
+// Recursive types conservatively use the existing strict path. The walk itself
+// inspects no values and holds no state; the top-level verdict is memoised in
+// v2_canonical_type_cache.go, deliberately not here, so that this file's rule
+// -- the file that defines persisted identity holds no cross-call state --
+// stays true by inspection. Moving that cache into this file would break the
+// rule silently, so do not.
+func canonicalClosedType(t reflect.Type, path map[reflect.Type]bool) bool {
+	if t == nil || t == jsonNumberType || t == jsonRawType || t == byteSliceType {
+		return false
+	}
+	if t.Implements(jsonMarshalerType) || reflect.PointerTo(t).Implements(jsonMarshalerType) ||
+		t.Implements(textMarshalerType) || reflect.PointerTo(t).Implements(textMarshalerType) {
+		return false
+	}
+	switch t.Kind() {
+	case reflect.Bool, reflect.String, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr, reflect.Float32, reflect.Float64:
+		return true
+	case reflect.Struct, reflect.Pointer, reflect.Slice, reflect.Array:
+		if path[t] {
+			return false
+		}
+		if path == nil {
+			path = make(map[reflect.Type]bool)
+		}
+		path[t] = true
+		defer delete(path, t)
+		if t.Kind() != reflect.Struct {
+			return canonicalClosedType(t.Elem(), path)
+		}
+		for i := 0; i < t.NumField(); i++ {
+			field := t.Field(i)
+			if field.Anonymous {
+				return false
+			}
+			if field.PkgPath != "" || field.Tag.Get("json") == "-" {
+				continue
+			}
+			if !canonicalClosedType(field.Type, path) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func deriveLengthPrefixedSHA256(field string, version string, values ...[]byte) (string, error) {
+	all := make([][]byte, 0, len(values)+1)
+	all = append(all, []byte(version))
+	all = append(all, values...)
+	digest := sha256.New()
+	var prefix [4]byte
+	for _, value := range all {
+		if !utf8.Valid(value) {
+			return "", invalid(field, "canonical field must contain valid UTF-8")
+		}
+		if uint64(len(value)) > math.MaxUint32 {
+			return "", invalid(field, "canonical field exceeds uint32 length")
+		}
+		binary.BigEndian.PutUint32(prefix[:], uint32(len(value)))
+		_, _ = digest.Write(prefix[:])
+		_, _ = digest.Write(value)
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+func digestCanonicalV2(field, domain string, value any) (string, error) {
+	canonical, err := CanonicalJSONV2(value)
+	if err != nil {
+		return "", invalid(field, err.Error())
+	}
+	return deriveLengthPrefixedSHA256(field, domain, canonical)
+}
+
+// DeriveCanonicalDigestV2 is the shared building block for module-owned,
+// versioned semantic objects. Callers own the typed input; M0 owns canonical
+// encoding, domain separation and SHA-256 framing.
+func DeriveCanonicalDigestV2(domain string, value any) (string, error) {
+	if !isOpaqueASCII(domain) {
+		return "", invalid("canonical_digest.domain", "must be non-empty opaque ASCII")
+	}
+	return digestCanonicalV2("canonical_digest", domain, value)
+}
+
+// DeriveCanonicalDigestV2OverCanonical is DeriveCanonicalDigestV2 for a value
+// that has already been encoded with CanonicalJSONV2. A store that keeps the
+// canonical bytes of an object next to the digest that names it can verify
+// the bytes it reads back by hashing them, without decoding the object first.
+// The two functions agree only on canonical input; the caller owns that.
+func DeriveCanonicalDigestV2OverCanonical(domain string, canonical []byte) (string, error) {
+	if !isOpaqueASCII(domain) {
+		return "", invalid("canonical_digest.domain", "must be non-empty opaque ASCII")
+	}
+	return deriveLengthPrefixedSHA256("canonical_digest", domain, canonical)
+}
+
+func digestJSONObjectWithoutV2(field, domain string, payload []byte, omitted string) (string, error) {
+	var object map[string]json.RawMessage
+	if err := decodeJSONObject(payload, &object); err != nil {
+		return "", invalid(field, err.Error())
+	}
+	if object == nil {
+		return "", invalid(field, "must be a JSON object")
+	}
+	delete(object, omitted)
+	return digestCanonicalV2(field, domain, object)
+}
+
+// isCanonicalScalarJSONV2 answers the only question this loop asks of a
+// dimension value - is it a scalar - while refusing everything the canonical
+// form refused.
+//
+// It replaces a CanonicalJSONV2 call whose output was read for one byte and
+// dropped. Those bytes never reached a digest: the digest below is derived
+// from the canonical form of the whole slice, which canonicalises every value
+// again. So the value was being canonicalised twice per series, and one of the
+// two results was only ever used as a type test.
+//
+// The rejections are the same set, and the caller collapses every reason into
+// one message, so neither the digest nor the error text can move:
+//
+//	empty, invalid UTF-8, a BOM, a bad surrogate escape, malformed JSON, a
+//	trailing second value, and any object or array.
+//
+// Duplicate object keys need no check of their own here. A payload that has
+// them is an object, and an object is refused for being one. What reaches the
+// digest still goes through the full strict path, so a duplicate key nested
+// inside a value cannot slip past: CanonicalJSONV2 over the whole slice walks
+// every value it contains.
+//
+// json.Valid rather than a decode: it runs the same scanner over the same
+// bytes without building a Decoder, a read buffer or a generic value, which is
+// where the cost being removed actually was.
+func isCanonicalScalarJSONV2(payload []byte) bool {
+	if len(payload) == 0 || !utf8.Valid(payload) || bytes.HasPrefix(payload, []byte{0xef, 0xbb, 0xbf}) {
+		return false
+	}
+	if err := validateJSONSurrogateEscapes(payload); err != nil {
+		return false
+	}
+	index := 0
+	for index < len(payload) {
+		switch payload[index] {
+		case ' ', '\t', '\r', '\n':
+			index++
+			continue
+		}
+		break
+	}
+	if index == len(payload) || payload[index] == '{' || payload[index] == '[' {
+		return false
+	}
+	return json.Valid(payload)
+}
+
+func DeriveDimensionIdentityDigestV2(tenantID, businessID string, fields []DimensionFieldV2) (string, error) {
+	if tenantID == "" || !utf8.ValidString(tenantID) {
+		return "", invalid("dimension_identity.tenant_id", "must be non-empty valid UTF-8")
+	}
+	if !canonicalSignedDecimalPattern.MatchString(businessID) {
+		return "", invalid("dimension_identity.business_id", "must use canonical signed decimal form")
+	}
+	if fields == nil {
+		return "", invalid("dimension_identity.fields", "must be an array")
+	}
+	previous := ""
+	for index, dimension := range fields {
+		if dimension.Name == "" || !utf8.ValidString(dimension.Name) || (index > 0 && dimension.Name <= previous) {
+			return "", invalid("dimension_identity.fields", "names must be non-empty, sorted and unique")
+		}
+		if !isCanonicalScalarJSONV2(dimension.Value) {
+			return "", invalid("dimension_identity.fields.value", "must be a scalar or null JSON value")
+		}
+		previous = dimension.Name
+	}
+	canonicalFields, err := CanonicalJSONV2(fields)
+	if err != nil {
+		return "", invalid("dimension_identity.fields", err.Error())
+	}
+	return deriveLengthPrefixedSHA256(
+		"dimension_identity.digest", "dimension-identity-v1",
+		[]byte(tenantID), []byte(businessID), canonicalFields,
+	)
+}
+
+func DeriveRecordIDV2(dimensionIdentityDigest string, sourceTime int64) (string, error) {
+	if !sha256Pattern.MatchString(dimensionIdentityDigest) {
+		return "", invalid("record_id.dimension_identity_digest", "must be 64 lowercase hexadecimal characters")
+	}
+	if sourceTime < 0 {
+		return "", invalid("record_id.source_time", "must be non-negative")
+	}
+	return deriveLengthPrefixedSHA256(
+		"record_id", "record-id-v2", []byte(dimensionIdentityDigest), []byte(strconv.FormatInt(sourceTime, 10)),
+	)
+}
+
+func DeriveQueryGroupKafkaKeyV2(tenantID, queryGroupKey string) ([]byte, error) {
+	if tenantID == "" || queryGroupKey == "" {
+		return nil, invalid("query_group.kafka_key", "tenant and Query Group key must be non-empty")
+	}
+	digest, err := deriveLengthPrefixedSHA256(
+		"query_group.kafka_key", "query-group-kafka-key-v1", []byte(tenantID), []byte(queryGroupKey),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return hex.DecodeString(digest)
+}
+
+func DerivePlanSetDigestV2(planSet PlanSetV2) (string, error) {
+	planSet.PlanSetDigest = ""
+	payload, err := CanonicalJSONV2(planSet)
+	if err != nil {
+		return "", err
+	}
+	return digestJSONObjectWithoutV2("plan_set.plan_set_digest", "plan-set-v2", payload, "plan_set_digest")
+}
+
+func DeriveExecutionEnvelopePayloadDigestV2(envelope ExecutionEnvelopeV2) (string, error) {
+	envelope.PayloadDigest = ""
+	payload, err := CanonicalJSONV2(envelope)
+	if err != nil {
+		return "", err
+	}
+	return digestJSONObjectWithoutV2("execution_envelope.payload_digest", "execution-envelope-payload-v2", payload, "payload_digest")
+}
+
+func DeriveStateCompatibilityHashV1(input StateCompatibilityInputV1) (string, error) {
+	if input.StateSchemaVersion == "" || input.CodecSemanticsVersion == "" ||
+		input.SourceTimeSemanticsVersion == "" || input.HistoryCellSemanticsVersion == "" {
+		return "", invalid("state_compatibility", "semantic versions must be non-empty")
+	}
+	if !sha256Pattern.MatchString(input.IdentitySchemaDigest) {
+		return "", invalid("state_compatibility.identity_schema_digest", "must be 64 lowercase hexadecimal characters")
+	}
+	if input.EvaluationScope != EvaluationScopeSeries && input.EvaluationScope != EvaluationScopeCrossSeries {
+		return "", invalid("state_compatibility.evaluation_scope", "unsupported scope")
+	}
+	if input.AggregationInterval == 0 || input.EvaluationInterval == 0 {
+		return "", invalid("state_compatibility", "intervals must be positive")
+	}
+	return digestCanonicalV2("state_compatibility_hash", "state-compatibility-v1", input)
+}
+
+func DeriveLevelDetectFingerprintV1(input LevelDetectSemanticV1) (string, error) {
+	if input.LevelID == 0 {
+		return "", invalid("level_detect_fingerprint.level_id", "must be positive")
+	}
+	if !sha256Pattern.MatchString(input.ProjectionDigest) || !sha256Pattern.MatchString(input.DetectorSemanticDigest) {
+		return "", invalid("level_detect_fingerprint", "semantic digests must be 64 lowercase hexadecimal characters")
+	}
+	return digestCanonicalV2("level_detect_fingerprint", "level-detect-fingerprint-v1", input)
+}
+
+func DeriveLevelTriggerFingerprintV1(levelDetectFingerprint string, triggerPlan, recoveryPlan TypedPlanV1) (string, error) {
+	if !sha256Pattern.MatchString(levelDetectFingerprint) {
+		return "", invalid("level_trigger_fingerprint", "detect fingerprint must be 64 lowercase hexadecimal characters")
+	}
+	return digestCanonicalV2("level_trigger_fingerprint", "level-trigger-fingerprint-v1", struct {
+		LevelDetectFingerprint string      `json:"level_detect_fingerprint"`
+		TriggerPlan            TypedPlanV1 `json:"trigger_plan"`
+		RecoveryPlan           TypedPlanV1 `json:"recovery_plan"`
+	}{levelDetectFingerprint, triggerPlan, recoveryPlan})
+}
+
+func DerivePlanFingerprintV1(domain string, fingerprints map[uint32]string) (string, error) {
+	if domain != DetectPlanFingerprintDomainV1 && domain != TriggerStateFingerprintDomainV1 {
+		return "", invalid("plan_fingerprint", "unsupported domain")
+	}
+	type entry struct {
+		LevelID     uint32 `json:"level_id"`
+		Fingerprint string `json:"fingerprint"`
+	}
+	levels := make([]uint32, 0, len(fingerprints))
+	for levelID := range fingerprints {
+		levels = append(levels, levelID)
+	}
+	sort.Slice(levels, func(left, right int) bool { return levels[left] < levels[right] })
+	entries := make([]entry, 0, len(levels))
+	for _, levelID := range levels {
+		fingerprint := fingerprints[levelID]
+		if levelID == 0 || !sha256Pattern.MatchString(fingerprint) {
+			return "", invalid("plan_fingerprint", fmt.Sprintf("invalid Level %d fingerprint", levelID))
+		}
+		entries = append(entries, entry{LevelID: levelID, Fingerprint: fingerprint})
+	}
+	if len(entries) == 0 {
+		return "", invalid("plan_fingerprint", "must contain at least one Level")
+	}
+	return digestCanonicalV2("plan_fingerprint", domain, entries)
+}

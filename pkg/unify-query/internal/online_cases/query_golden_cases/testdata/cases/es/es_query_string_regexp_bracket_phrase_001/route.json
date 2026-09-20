@@ -1,0 +1,19 @@
+{
+  "space_uid": "bkcc__golden_es_regexp_phrase",
+  "result_tables": [{"table_id": "demo_logs.regexp_phrase"}],
+  "result_table_details": {
+    "demo_logs.regexp_phrase": {
+      "storage_id": 2102,
+      "storage_name": "es_cluster_regexp_phrase",
+      "storage_type": "elasticsearch",
+      "cluster_name": "es_cluster_regexp_phrase",
+      "db": "golden_es_regexp_phrase",
+      "table_id": "demo_logs.regexp_phrase",
+      "fields": ["events_total"],
+      "data_label": "demo_logs",
+      "tags_key": ["service", "status"],
+      "source_type": "bklog"
+    }
+  },
+  "storages": {"2102": {"type": "elasticsearch"}}
+}

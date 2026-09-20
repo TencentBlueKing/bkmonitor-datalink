@@ -1,0 +1,30 @@
+[
+  {"backend": "elasticsearch", "method": "GET", "path": "/golden_es_escaped_range"},
+  {
+    "backend": "elasticsearch",
+    "method": "POST",
+    "path": "/golden_es_escaped_range/_search",
+    "body": {
+      "_source": {"includes": ["_time", "_value", "name", "release_date", "version"]},
+      "from": 0,
+      "query": {
+        "bool": {
+          "filter": [
+            {"range": {"dtEventTimeStamp": {"format": "epoch_second", "from": 1784701776, "include_lower": true, "include_upper": true, "to": 1784702076}}},
+            {
+              "bool": {
+                "must": [
+                  {"range": {"name": {"from": "foo-bar", "include_lower": true, "include_upper": true, "to": "zoo-bar"}}},
+                  {"range": {"release_date": {"from": "2023-01-01", "include_lower": true, "include_upper": true, "to": "2023-12-31"}}},
+                  {"range": {"version": {"from": "foo-bar", "include_lower": false, "include_upper": true, "to": null}}}
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "size": 10,
+      "sort": [{"dtEventTimeStamp": {"order": "asc", "unmapped_type": "date"}}]
+    }
+  }
+]

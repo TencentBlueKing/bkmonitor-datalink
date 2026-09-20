@@ -60,11 +60,12 @@ func TestTsDBV2_GetStorageIDRangesWithDirectionalOverlap(t *testing.T) {
 			end:   end,
 			expected: []StorageIDRange{
 				{
-					StorageID:  "16",
-					Start:      switchTime,
-					End:        end,
-					QueryStart: switchTime,
-					QueryEnd:   end.Add(StorageClusterRecordOverlap),
+					StorageID:    "16",
+					Start:        switchTime,
+					End:          end,
+					EndInclusive: true,
+					QueryStart:   switchTime,
+					QueryEnd:     end.Add(StorageClusterRecordOverlap),
 				},
 				{
 					StorageID:  "5",
@@ -84,11 +85,12 @@ func TestTsDBV2_GetStorageIDRangesWithDirectionalOverlap(t *testing.T) {
 			end:   switchTime.Add(5 * time.Minute),
 			expected: []StorageIDRange{
 				{
-					StorageID:  "16",
-					Start:      switchTime.Add(time.Minute),
-					End:        switchTime.Add(5 * time.Minute),
-					QueryStart: switchTime,
-					QueryEnd:   switchTime.Add(65 * time.Minute),
+					StorageID:    "16",
+					Start:        switchTime.Add(time.Minute),
+					End:          switchTime.Add(5 * time.Minute),
+					EndInclusive: true,
+					QueryStart:   switchTime,
+					QueryEnd:     switchTime.Add(65 * time.Minute),
 				},
 				{
 					StorageID:  "5",
@@ -106,11 +108,12 @@ func TestTsDBV2_GetStorageIDRangesWithDirectionalOverlap(t *testing.T) {
 			end:   switchTime.Add(95 * time.Minute),
 			expected: []StorageIDRange{
 				{
-					StorageID:  "16",
-					Start:      switchTime.Add(90 * time.Minute),
-					End:        switchTime.Add(95 * time.Minute),
-					QueryStart: switchTime.Add(30 * time.Minute),
-					QueryEnd:   switchTime.Add(155 * time.Minute),
+					StorageID:    "16",
+					Start:        switchTime.Add(90 * time.Minute),
+					End:          switchTime.Add(95 * time.Minute),
+					EndInclusive: true,
+					QueryStart:   switchTime.Add(30 * time.Minute),
+					QueryEnd:     switchTime.Add(155 * time.Minute),
 				},
 			},
 		},
@@ -128,11 +131,12 @@ func TestTsDBV2_GetStorageIDRangesWithDirectionalOverlap(t *testing.T) {
 					QueryEnd:   switchTime.Add(59 * time.Minute),
 				},
 				{
-					StorageID:  "5",
-					Start:      switchTime.Add(-5 * time.Minute),
-					End:        switchTime.Add(-time.Minute),
-					QueryStart: switchTime.Add(-65 * time.Minute),
-					QueryEnd:   switchTime,
+					StorageID:    "5",
+					Start:        switchTime.Add(-5 * time.Minute),
+					End:          switchTime.Add(-time.Minute),
+					EndInclusive: true,
+					QueryStart:   switchTime.Add(-65 * time.Minute),
+					QueryEnd:     switchTime,
 				},
 			},
 		},
@@ -154,11 +158,12 @@ func TestTsDBV2_GetStorageIDRangesWithDirectionalOverlap(t *testing.T) {
 
 		assert.Equal(t, []StorageIDRange{
 			{
-				StorageID:  "16",
-				Start:      switchTime,
-				End:        end,
-				QueryStart: switchTime,
-				QueryEnd:   end.Add(StorageClusterRecordOverlap),
+				StorageID:    "16",
+				Start:        switchTime,
+				End:          end,
+				EndInclusive: true,
+				QueryStart:   switchTime,
+				QueryEnd:     end.Add(StorageClusterRecordOverlap),
 			},
 			{
 				StorageID:  "5",
@@ -168,6 +173,29 @@ func TestTsDBV2_GetStorageIDRangesWithDirectionalOverlap(t *testing.T) {
 				QueryEnd:   switchTime,
 			},
 		}, db.GetStorageIDRangesWithDirectionalOverlap(start, end, 2*time.Hour, 0))
+	})
+
+	t.Run("查询终点恰好是切换点时旧 route 仍保持半开区间", func(t *testing.T) {
+		start := switchTime.Add(-5 * time.Minute)
+		db := &TsDBV2{
+			StorageID:             "16",
+			StorageClusterRecords: records,
+		}
+
+		assert.Equal(t, []StorageIDRange{
+			{
+				StorageID:  "16",
+				QueryStart: switchTime,
+				QueryEnd:   switchTime.Add(StorageClusterRecordOverlap),
+			},
+			{
+				StorageID:  "5",
+				Start:      start,
+				End:        switchTime,
+				QueryStart: start.Add(-StorageClusterRecordOverlap),
+				QueryEnd:   switchTime,
+			},
+		}, db.GetStorageIDRangesWithDirectionalOverlap(start, switchTime, 0, 0))
 	})
 
 	t.Run("avg_over_time 首个点回看旧 route 时保留旧存储权重范围", func(t *testing.T) {
@@ -180,11 +208,12 @@ func TestTsDBV2_GetStorageIDRangesWithDirectionalOverlap(t *testing.T) {
 
 		assert.Equal(t, []StorageIDRange{
 			{
-				StorageID:  "16",
-				Start:      switchTime,
-				End:        end,
-				QueryStart: switchTime,
-				QueryEnd:   end.Add(StorageClusterRecordOverlap),
+				StorageID:    "16",
+				Start:        switchTime,
+				End:          end,
+				EndInclusive: true,
+				QueryStart:   switchTime,
+				QueryEnd:     end.Add(StorageClusterRecordOverlap),
 			},
 			{
 				StorageID:  "5",
@@ -206,11 +235,12 @@ func TestTsDBV2_GetStorageIDRangesWithDirectionalOverlap(t *testing.T) {
 
 		assert.Equal(t, []StorageIDRange{
 			{
-				StorageID:  "16",
-				Start:      switchTime,
-				End:        switchTime.Add(35 * time.Minute),
-				QueryStart: switchTime,
-				QueryEnd:   switchTime.Add(35 * time.Minute),
+				StorageID:    "16",
+				Start:        switchTime,
+				End:          switchTime.Add(35 * time.Minute),
+				EndInclusive: true,
+				QueryStart:   switchTime,
+				QueryEnd:     switchTime.Add(35 * time.Minute),
 			},
 			{
 				StorageID:  "5",
@@ -232,11 +262,12 @@ func TestTsDBV2_GetStorageIDRangesWithDirectionalOverlap(t *testing.T) {
 
 		assert.Equal(t, []StorageIDRange{
 			{
-				StorageID:  "5",
-				Start:      start.Add(-2 * time.Hour),
-				End:        end,
-				QueryStart: start.Add(-2 * time.Hour),
-				QueryEnd:   end.Add(StorageClusterRecordOverlap),
+				StorageID:    "5",
+				Start:        start.Add(-2 * time.Hour),
+				End:          end,
+				EndInclusive: true,
+				QueryStart:   start.Add(-2 * time.Hour),
+				QueryEnd:     end.Add(StorageClusterRecordOverlap),
 			},
 		}, db.GetStorageIDRangesWithDirectionalOverlap(start, end, 2*time.Hour, 0))
 	})
@@ -270,16 +301,17 @@ func TestTsDBV2_GetStorageIDRangesWithDirectionalOverlap(t *testing.T) {
 
 		assert.Equal(t, []StorageIDRange{
 			{
-				StorageID:   "3",
-				StorageType: "bk_sql",
-				StorageName: "doris_default",
-				ClusterName: "doris_default",
-				DB:          "bkbase_table",
-				Measurement: "doris",
-				Start:       time.Unix(2000, 0),
-				End:         end,
-				QueryStart:  time.Unix(2000, 0),
-				QueryEnd:    end.Add(StorageClusterRecordOverlap),
+				StorageID:    "3",
+				StorageType:  "bk_sql",
+				StorageName:  "doris_default",
+				ClusterName:  "doris_default",
+				DB:           "bkbase_table",
+				Measurement:  "doris",
+				Start:        time.Unix(2000, 0),
+				End:          end,
+				EndInclusive: true,
+				QueryStart:   time.Unix(2000, 0),
+				QueryEnd:     end.Add(StorageClusterRecordOverlap),
 			},
 			{
 				StorageID:   "2",
@@ -413,6 +445,7 @@ func TestTsDBV2_GetStorageIDRangesWithDirectionalOverlap(t *testing.T) {
 				HasSourceType: true,
 				Start:         time.Unix(2000, 0),
 				End:           end,
+				EndInclusive:  true,
 				QueryStart:    time.Unix(2000, 0),
 				QueryEnd:      end.Add(StorageClusterRecordOverlap),
 			},

@@ -1,0 +1,23 @@
+{
+  "space_uid": "bkcc__demo",
+  "result_tables": [{"table_id": "demo_tspider_multi"}],
+  "result_table_details": {
+    "demo_tspider_multi": {
+      "storage_id": 3004,
+      "storage_name": "",
+      "storage_type": "bk_sql",
+      "cluster_name": "",
+      "db": "demo_tspider_multi",
+      "table_id": "demo_tspider_multi",
+      "measurement": "",
+      "fields": ["metric_a", "metric_b", "metric_c", "metric_d", "metric_e", "metric_f", "metric_g"],
+      "data_label": "demo_tspider_multi",
+      "tags_key": ["time_partition", "location", "workload"],
+      "source_type": "bkdata"
+    }
+  },
+  "data_labels": {
+    "demo_tspider_multi": ["demo_tspider_multi"]
+  },
+  "storages": {"3004": {"type": "bk_sql"}}
+}

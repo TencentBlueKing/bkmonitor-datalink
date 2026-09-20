@@ -1,0 +1,49 @@
+[
+  {"backend": "elasticsearch", "method": "GET", "path": "/golden_es_global_include"},
+  {
+    "backend": "elasticsearch",
+    "method": "POST",
+    "path": "/golden_es_global_include/_search",
+    "body": {
+      "aggregations": {
+        "response_code": {
+          "aggregations": {
+            "outcome_code": {
+              "aggregations": {
+                "dtEventTimeStamp": {
+                  "aggregations": {"_value": {"value_count": {"field": "events_total"}}},
+                  "date_histogram": {
+                    "extended_bounds": {"max": 1784702135999, "min": 1784701739999},
+                    "field": "dtEventTimeStamp",
+                    "interval": "1m",
+                    "min_doc_count": 0,
+                    "time_zone": "UTC"
+                  }
+                }
+              },
+              "terms": {"field": "outcome_code", "include": ["included_alpha", "included_beta"], "missing": " ", "size": 10000}
+            }
+          },
+          "terms": {"field": "response_code", "missing": " ", "size": 10000}
+        }
+      },
+      "query": {
+        "bool": {
+          "filter": [
+            {"range": {"dtEventTimeStamp": {"format": "epoch_second", "from": 1784701739, "include_lower": true, "include_upper": true, "to": 1784702135}}},
+            {
+              "bool": {
+                "must": [
+                  {"bool": {"must_not": {"bool": {"must": [{"term": {"response_code": "excluded_alpha"}}, {"term": {"operation_code": "operation_alpha"}}]}}}},
+                  {"bool": {"should": [{"term": {"outcome_code": "included_alpha"}}, {"term": {"outcome_code": "included_beta"}}]}},
+                  {"bool": {"must_not": {"term": {"response_code": "excluded_beta"}}}}
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "size": 0
+    }
+  }
+]

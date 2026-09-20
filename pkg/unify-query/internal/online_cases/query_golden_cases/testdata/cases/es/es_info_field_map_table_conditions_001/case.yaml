@@ -1,0 +1,25 @@
+id: es_info_field_map_table_conditions_001
+storage: es
+enabled: true
+shape_signature: query_info/field_map/es/empty_table_metric/table_id_conditions/output_index_mapping
+source:
+  kind: merged_pr
+  outputs_kind: post_fix_handler_replay
+  sampled_at: "2026-07-23"
+  fingerprint: sha256:5dc883c29d1290ab4af4997ee663f966178de72a65961050539447ed4d3ee284
+tags:
+  - query_info_api
+  - field_map
+  - table_id_conditions
+  - post_fix_expected
+  - regression_fix
+  - production_shape
+notes:
+  - 问题形态和旧行为依据已合并 PR #1297 的问题说明与回归测试，未保存原始请求。
+  - 脱敏请求保留 field_map 只传 table_id_conditions、不传 table_id 与 metric_name 的结构。
+  - 修复前条件会在 info 参数解析中丢失并触发空路由错误，修复后必须按 RT Labels 发起字段映射查询。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

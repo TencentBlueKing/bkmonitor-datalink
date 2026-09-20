@@ -45,9 +45,53 @@ func TestRewrite(t *testing.T) {
 			pattern:     "(foo|bar)",
 			wantPattern: ".*(foo|bar).*",
 		},
+		"默认方括号短语仍补齐包含匹配": {
+			pattern:     "[Page Error]",
+			wantPattern: ".*[Page Error].*",
+		},
+		"普通字符类仍补齐包含匹配": {
+			pattern:     "[0-9]",
+			wantPattern: ".*[0-9].*",
+		},
+		"整段排除字符类仍补齐包含匹配": {
+			pattern:     "[^abc]",
+			wantPattern: ".*[^abc].*",
+		},
+		"空字符类仍补齐包含匹配": {
+			pattern:     "[]",
+			wantPattern: ".*[].*",
+		},
+		"空排除字符类仍补齐包含匹配": {
+			pattern:     "[^]",
+			wantPattern: ".*[^].*",
+		},
+		"带量词字符类仍补齐包含匹配": {
+			pattern:     "[abc]+",
+			wantPattern: ".*[abc]+.*",
+		},
+		"带转义右中括号字符类仍补齐包含匹配": {
+			pattern:     `[a\]b]`,
+			wantPattern: `.*[a\]b].*`,
+		},
+		"带十六进制转义字符类仍补齐包含匹配": {
+			pattern:     `[\x61]`,
+			wantPattern: `.*[\x61].*`,
+		},
 		"字符类内竖线不视为顶层或表达式": {
 			pattern:     "[a|b]",
 			wantPattern: ".*[a|b].*",
+		},
+		"非整段字符类仍补齐包含匹配": {
+			pattern:     "[Ee]rror",
+			wantPattern: ".*[Ee]rror.*",
+		},
+		"默认顶层或表达式中的方括号短语分支仍补齐包含匹配": {
+			pattern:     "foo|[Page Error]",
+			wantPattern: "(.*foo.*|.*[Page Error].*)",
+		},
+		"转义字符类按普通包含处理": {
+			pattern:     `\[Page Error\]`,
+			wantPattern: `.*\[Page Error\].*`,
 		},
 		"前缀锚点改写为整值前缀匹配": {
 			pattern:     "^foo",
@@ -92,6 +136,16 @@ func TestRewrite(t *testing.T) {
 			wantPattern:  "(.*foo.*|.*bar.*)",
 			wantNegative: true,
 		},
+		"不包含语义固定前缀内的字符类保持包含匹配": {
+			pattern:      "^(?!.*[abc]).*",
+			wantPattern:  ".*[abc].*",
+			wantNegative: true,
+		},
+		"不包含语义固定前缀内的方括号短语保持包含匹配": {
+			pattern:      "^(?!.*[Page Error]).*",
+			wantPattern:  ".*[Page Error].*",
+			wantNegative: true,
+		},
 		"转义前缀锚点按普通包含处理": {
 			pattern:     `\^foo`,
 			wantPattern: `.*\^foo.*`,
@@ -110,6 +164,100 @@ func TestRewrite(t *testing.T) {
 			}
 			if got.Negative != tt.wantNegative {
 				t.Fatalf("Rewrite(%q).Negative = %v, want %v", tt.pattern, got.Negative, tt.wantNegative)
+			}
+		})
+	}
+}
+
+func TestRewriteForQueryString(t *testing.T) {
+	tests := map[string]struct {
+		pattern      string
+		wantPattern  string
+		wantNegative bool
+	}{
+		"方括号短语不补齐包含匹配": {
+			pattern:     "[Page Error]",
+			wantPattern: "[Page Error]",
+		},
+		"小写方括号短语不补齐包含匹配": {
+			pattern:     "[page error]",
+			wantPattern: "[page error]",
+		},
+		"空白字符类仍补齐包含匹配": {
+			pattern:     "[ ]",
+			wantPattern: ".*[ ].*",
+		},
+		"单字符加空格字符类仍补齐包含匹配": {
+			pattern:     "[a b]",
+			wantPattern: ".*[a b].*",
+		},
+		"数字加空格字符类仍补齐包含匹配": {
+			pattern:     "[0 9]",
+			wantPattern: ".*[0 9].*",
+		},
+		"空格和下划线字符类仍补齐包含匹配": {
+			pattern:     "[ _]",
+			wantPattern: ".*[ _].*",
+		},
+		"中文单字符加空格字符类仍补齐包含匹配": {
+			pattern:     "[中 文]",
+			wantPattern: ".*[中 文].*",
+		},
+		"中文方括号短语不补齐包含匹配": {
+			pattern:     "[页面 错误]",
+			wantPattern: "[页面 错误]",
+		},
+		"普通字符类仍补齐包含匹配": {
+			pattern:     "[0-9]",
+			wantPattern: ".*[0-9].*",
+		},
+		"十六进制转义字符类仍补齐包含匹配": {
+			pattern:     `[\x61]`,
+			wantPattern: `.*[\x61].*`,
+		},
+		"外层透明分组方括号短语不补齐包含匹配": {
+			pattern:     "([Page Error])",
+			wantPattern: "([Page Error])",
+		},
+		"双层透明分组方括号短语不补齐包含匹配": {
+			pattern:     "(([Page Error]))",
+			wantPattern: "(([Page Error]))",
+		},
+		"外层透明分组内的方括号短语分支不补齐包含匹配": {
+			pattern:     "([Page Error]|foo)",
+			wantPattern: "([Page Error]|.*foo.*)",
+		},
+		"双层透明分组内的方括号短语分支不补齐包含匹配": {
+			pattern:     "(([Page Error])|foo)",
+			wantPattern: "(([Page Error])|.*foo.*)",
+		},
+		"外层透明分组内无方括号短语时保持原包含匹配": {
+			pattern:     "(foo|bar)",
+			wantPattern: ".*(foo|bar).*",
+		},
+		"外层透明分组内合法字符类时保持原包含匹配": {
+			pattern:     "([ _]|foo)",
+			wantPattern: ".*([ _]|foo).*",
+		},
+		"顶层或表达式中的方括号短语分支不补齐包含匹配": {
+			pattern:     "foo|[Page Error]",
+			wantPattern: "(.*foo.*|[Page Error])",
+		},
+		"不包含语义固定前缀内的方括号短语保持包含匹配": {
+			pattern:      "^(?!.*[Page Error]).*",
+			wantPattern:  ".*[Page Error].*",
+			wantNegative: true,
+		},
+	}
+
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			got := RewriteForQueryString(tt.pattern)
+			if got.Pattern != tt.wantPattern {
+				t.Fatalf("RewriteForQueryString(%q).Pattern = %q, want %q", tt.pattern, got.Pattern, tt.wantPattern)
+			}
+			if got.Negative != tt.wantNegative {
+				t.Fatalf("RewriteForQueryString(%q).Negative = %v, want %v", tt.pattern, got.Negative, tt.wantNegative)
 			}
 		})
 	}

@@ -1,0 +1,21 @@
+id: vm_promql_instant_001
+storage: vm
+enabled: true
+shape_signature: promql_instant/vector_selector/regex2/eq3/single_route/vm_query/output1
+source:
+  kind: production_log
+  outputs_kind: production_log
+  sampled_at: "2026-07-23"
+  fingerprint: sha256:df29083a8c9d91ab2430dd1c2f725eba89ea60368f1070ef9c608b44a6369eb3
+tags:
+  - promql_api
+  - instant
+  - vm_query
+  - production_shape
+notes:
+  - 生产样本仅保留 PromQL instant 查询形态；空间、结果表、指标、标签和集群均已一致替换为占位符。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

@@ -1,0 +1,3889 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>alarmd 对象与判定</title>
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#fff; --line:#e3e6ea; --text:#1f2329; --muted:#6b7785;
+  --ok:#1f9d55; --warn:#c2811a; --unknown:#6b7785; --bad:#c0392b; --accent:#3a6ea5;
+}
+@media (prefers-color-scheme:dark){
+  :root{ --bg:#16181c; --panel:#1e2126; --line:#2d323a; --text:#e6e8ea; --muted:#98a2ae; }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+.wrap{padding:16px;max-width:1280px;margin:0 auto}
+h1{font-size:15px;margin:0 0 2px}
+.sub{color:var(--muted);font-size:12px;margin-bottom:14px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px;margin-bottom:14px}
+.panel h2{font-size:13px;margin:0 0 2px}
+.basis{color:var(--muted);font-size:11px;margin:0 0 10px}
+.verdict{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.badge{font-size:15px;font-weight:600;padding:2px 10px;border-radius:4px;color:#fff}
+.b-HEALTHY{background:var(--ok)} .b-DEGRADED{background:var(--warn)}
+.b-UNKNOWN{background:var(--unknown)} .b-ERROR{background:var(--bad)}
+.verdict .why{color:var(--muted)}
+.s{display:inline-block;padding:0 6px;border-radius:3px;color:#fff;font-weight:600;
+  font-size:11px;line-height:1.7;vertical-align:1px}
+/* auto-fill, not auto-fit: every grid on the page gets the same track width
+   from the same container width, so a card in a four-card row is the same
+   width as one in a seven-card row and the numbers line up in columns down
+   the page. auto-fit stretched each row's cards to fill it, and the numbers
+   drifted by row. */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.cell{border:1px solid var(--line);border-radius:5px;padding:8px 10px}
+.cell.wide{grid-column:span 2}
+.cell .k{color:var(--muted);font-size:11px}
+.cell .k:first-child{min-height:15px}
+.cell .v{font-size:19px;line-height:1.3;min-height:1.3em;font-variant-numeric:tabular-nums}
+.cell.hl .v{color:var(--warn)}
+.next{color:var(--muted);font-size:11px;margin-top:2px}
+.rec{max-height:340px;overflow:auto;background:var(--bg2,#0d1117);border:1px solid var(--line);
+  border-radius:5px;padding:8px 10px;font-size:11px;line-height:1.6;white-space:pre-wrap;word-break:break-all}
+.run{border:1px solid var(--line);border-radius:5px;margin-top:8px}
+.run>.rhead{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;padding:7px 10px;
+  background:rgba(58,110,165,.06);border-radius:4px 4px 0 0}
+.run>.rhead .no{font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+.run>.rhead .rv{flex:1;min-width:220px}
+.run>.rhead .when,.run>.rhead .took{color:var(--muted);font-size:11px;
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.run.bad>.rhead{background:rgba(192,57,43,.09)}
+.run.bad>.rhead .rv{color:var(--bad)}
+.run.wait>.rhead{background:rgba(107,119,133,.09)}
+.run .note{padding:5px 10px;border-top:1px solid var(--line);font-size:11px;color:var(--warn)}
+.steps{margin:0;padding:0;list-style:none}
+.steps li{display:flex;gap:10px;padding:5px 10px;border-top:1px solid var(--line);
+  align-items:baseline;flex-wrap:wrap}
+.steps li.sbad{background:rgba(192,57,43,.05)}
+.steps .st{min-width:150px;font-size:12px}
+.steps .de{flex:1;min-width:200px;color:var(--muted);font-size:11px}
+.steps .ns{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.facts{padding:5px 10px;border-top:1px solid var(--line)}
+.gaps{margin:10px 0 0;padding:0;list-style:none}
+.gaps li{border-left:3px solid var(--warn);padding:4px 8px;margin-top:6px;background:rgba(194,129,26,.08);font-size:12px}
+.gaps .kind{font-weight:600}
+.verdict .why{max-width:70ch;line-height:1.45}
+.impact{margin:0 0 12px;line-height:1.6;max-width:78ch}
+.impact .lead{font-size:13px}
+.impact b{font-variant-numeric:tabular-nums}
+.impact .act{color:var(--text);font-weight:600}
+.impact .quiet{color:var(--muted);font-size:11px}
+.tag.open{text-decoration:none;color:var(--accent);border-color:var(--accent)}
+/* Mechanism, statistical basis and design rationale go behind this.
+   Every panel opened with several of them at once, so a reader had to
+   hold four conditions in mind to explain one number, and the sentence
+   saying what to do was in the middle of them. */
+details.more{margin:4px 0 10px}
+details.more>summary{cursor:pointer;color:var(--muted);font-size:11px;list-style:none}
+details.more>summary::-webkit-details-marker{display:none}
+details.more>summary::before{content:'\25B8 ';display:inline-block;transition:transform .1s}
+details.more[open]>summary::before{transform:rotate(90deg)}
+details.more>summary:hover{color:var(--text)}
+details.more .note,details.more .basis{margin-top:6px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600;white-space:nowrap}
+td.mono,code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}
+.qg{cursor:help}
+.tag{display:inline-block;border:1px solid var(--line);border-radius:3px;padding:0 5px;margin:1px 3px 1px 0;font-size:11px}
+.pager{display:flex;gap:8px;align-items:center;margin-top:10px;color:var(--muted);font-size:12px}
+button{font:inherit;padding:4px 10px;border:1px solid var(--line);background:var(--panel);
+  color:var(--text);border-radius:4px;cursor:pointer}
+button:hover:not(:disabled){border-color:var(--accent)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+input{font:inherit;padding:4px 8px;border:1px solid var(--line);border-radius:4px;
+  background:var(--bg);color:var(--text)}
+.form{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.form input.qgin{flex:1;min-width:260px;font-family:ui-monospace,Menlo,monospace;font-size:11px}
+.err{border-left:3px solid var(--bad);background:rgba(192,57,43,.08);padding:8px 10px;
+  font-size:12px;margin-top:10px;white-space:pre-wrap}
+.empty{color:var(--muted);padding:10px 0;font-size:12px}
+.filters{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.applied{color:var(--warn);font-size:11px}
+.stuck{display:inline-block;margin-left:6px;padding:0 5px;border-radius:3px;font-size:10px;
+  background:rgba(192,57,43,.14);color:var(--bad);border:1px solid rgba(192,57,43,.35)}
+tr.stuckrow td{background:rgba(192,57,43,.05)}
+/* Deliberately not an alarm colour. This marks a row whose answer is settled
+   and whose answer is "working as designed" -- painting it like a fault is
+   what sent readers back to investigate it again. */
+.settled{color:var(--muted);font-size:11px;margin-top:2px}
+.sgroup.stuckg b{color:var(--bad)}
+.trend{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.tcard{border:1px solid var(--line);border-radius:6px;padding:10px 12px;background:var(--panel)}
+.tcard h3{margin:0 0 2px;font-size:12px;font-weight:600}
+.tcard .now{font-size:20px;font-variant-numeric:tabular-nums;line-height:1.2}
+.tcard .range{color:var(--muted);font-size:11px}
+.tcard .help{color:var(--muted);font-size:11px;margin-top:6px}
+.tcard .none{color:var(--warn);font-size:11px;margin-top:6px;word-break:break-all}
+.tcard svg{display:block;width:100%;height:52px;margin-top:6px}
+.tcard svg path{fill:none;stroke:var(--accent);stroke-width:1.5}
+.tcard svg .zero{stroke:var(--line);stroke-width:1;stroke-dasharray:3 3}
+.wpick{display:flex;gap:6px;align-items:center;margin-bottom:10px}
+.wpick button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.age{margin-left:8px;opacity:.75}
+.age.stale{color:#e0a33e;opacity:1}
+.summary{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:10px}
+.sgroup{font-size:11px;color:var(--muted)}
+.sgroup b{color:var(--text);font-weight:600;font-variant-numeric:tabular-nums}
+.sgroup .sep{opacity:.4;margin:0 4px}
+.note{color:var(--muted);font-size:11px;margin-top:8px}
+.brief{margin:6px 0 10px}
+.brief p{margin:2px 0;font-size:13px}
+tr.openrow td{background:rgba(52,152,219,.08)}
+details.group{margin:4px 0}
+details.group>summary{font-size:12px;color:var(--text)}
+details.group table{margin:6px 0 0 12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>alarmd 对象与判定</h1>
+  <div class="sub">
+    这个页面看的是<b>按策略把时序数据判成异常或恢复、并把结果发出去</b>这一段。
+    <b>发出去之后的收敛、通知、送达不在这里</b>——这一段正常，不等于告警已经送到人手上。
+    <span id="stamp"></span>
+    <span id="age" class="age"></span>
+  </div>
+  <details class="more">
+    <summary>“对象”是什么，为什么对象数和策略数对不上</summary>
+    <p class="basis">
+      一个<b>对象</b>是一次查询：alarmd 把查询内容完全相同的策略合并成一次查询来执行，
+      所以<b>多条策略可能共用一个对象</b>，一条策略也可能因为有多个查询而落在多个对象上。
+      这就是为什么页面上“54 个对象”会关联到“70 条策略”——两个数不该相等。
+      下面的表按对象列，因为执行是按对象发生的；<b>要找人处理得看“关联策略”那一列</b>，
+      顶部的“业务影响”已经把同一批对象换算成了策略数和业务数。
+      对象标识是那次查询的指纹，本身不可读，也无法在监控 SaaS 上按它查到东西。
+    </p>
+  </details>
+  <div class="form">
+    <span>自动刷新：每</span>
+    <input id="every" type="number" min="5" step="5" size="3">
+    <span>秒</span>
+    <button id="refreshNow">立即刷新</button>
+    <span class="basis" id="refreshNote"></span>
+  </div>
+
+  <section class="panel">
+    <h2>部署判定</h2>
+    <div class="verdict">
+      <span id="health" class="badge b-UNKNOWN">…</span>
+      <span id="why" class="why"></span>
+    </div>
+    <!-- What produced every number below. One line when the replicas agree on
+         a build; two or more when a rollout is in progress or stuck, and the
+         totals are then a mix that no single build produced. -->
+    <p class="basis" id="buildLine"></p>
+    <div class="brief">
+      <p id="briefAction"></p>
+      <p id="briefSchedule"></p>
+      <p id="briefTodo"></p>
+      <p id="briefBlind"></p>
+    </div>
+    <!-- The badge answers "is alarmd well". Nobody opens this page to ask that:
+         they ask whether alerting is working, what is affected and whether to
+         act. Those are different claims and the page was making only the first
+         while reading as though it made both. -->
+    <div id="impact" class="impact"></div>
+    <p class="basis">时间口径：本次请求时刻的聚合快照，非时间窗聚合。<span id="splitBasis"></span></p>
+    <div class="grid">
+      <div class="cell"><div class="k">正常</div><div class="v" id="healthy">–</div>
+        <div class="k">跑完了，结果完整</div></div>
+      <div class="cell hl"><div class="k">没跑成待查</div><div class="v" id="ownBad">–</div>
+        <div class="k">这一轮没跑成，而且不属于右边任何一类已经有结论的情况。
+          <b>不等于就是 alarmd 的问题</b>——栏里还要再分一次，只有归到 alarmd 的那部分才决定上面的判定</div></div>
+      <div class="cell"><div class="k">策略本身不可用</div><div class="v" id="demoted">–</div>
+        <div class="k" id="demotedHint">后端持续查不到，已降级不再反复查</div></div>
+      <div class="cell"><div class="k">判不了恢复</div><div class="v" id="undecidable">–</div>
+        <div class="k" id="undecidableHint">检测窗口没攒够点，恢复无从判起——正常现象，不是故障</div></div>
+      <div class="cell"><div class="k">按配置不处理</div><div class="v" id="byDesign">–</div>
+        <div class="k" id="byDesignHint">策略自己的生效时段说现在不该跑——这是常驻状态，不是过渡状态</div></div>
+      <div class="cell hl"><div class="k">状态未知</div><div class="v" id="unknown">–</div>
+        <div class="k">没有副本能报告它的状态。不知道不等于正常</div></div>
+      <div class="cell hl" id="unattributedCell" hidden>
+        <div class="k">成因没保留</div>
+        <div class="v" id="unattributed">–</div>
+        <div class="k" id="unattributedHint"></div>
+      </div>
+      <div class="cell hl wide" id="overdueCell" hidden>
+        <div class="k">没被调度 (overdue)</div>
+        <div class="v" id="overdue">–</div>
+        <div class="k" id="overdueHint"></div>
+      </div>
+    </div>
+    <div class="grid">
+      <div class="cell"><div class="k">应有 (expected)</div><div class="v" id="expected">–</div>
+        <div class="k" id="expectedHint"></div></div>
+      <div class="cell"><div class="k">已覆盖 (covered)</div><div class="v" id="covered">–</div></div>
+      <div class="cell"><div class="k">已知状态 (determined)</div><div class="v" id="determined">–</div></div>
+      <div class="cell wide">
+        <div class="k">出过降级池</div>
+        <div class="v" id="poolExits">–</div>
+        <div class="k" id="poolFlowHint"></div>
+      </div>
+    </div>
+    <ul class="gaps" id="gaps"></ul>
+    <p class="basis" id="prunedSkips" hidden></p>
+    <div id="coverWrap" hidden>
+      <p class="basis" id="coverBasis"></p>
+      <div class="grid">
+        <div class="cell hl"><div class="k">被两个副本同时持有</div><div class="v" id="covDup">–</div>
+          <div class="k">已覆盖是求和，这些被数了两遍</div></div>
+        <div class="cell hl"><div class="k">目录里已经没有了，副本还拿着</div><div class="v" id="covStale">–</div>
+          <div class="k">该释放的归属</div></div>
+        <div class="cell hl"><div class="k">目录里有，没人认领</div><div class="v" id="covMissing">–</div>
+          <div class="k">没有副本在跑它</div></div>
+      </div>
+      <p class="basis" id="coverIds"></p>
+    </div>
+    <div class="err" id="healthErr" hidden></div>
+    <details class="more">
+    <summary>判定规则、降级池为什么不计入、未知怎么来</summary>
+    <p class="note">
+      <b>判定规则</b>：证据不全 → <span class="s b-UNKNOWN">UNKNOWN</span>；
+      证据齐全且<b>「没跑成待查」里有归到 alarmd 的</b> → <span class="s b-DEGRADED">DEGRADED</span>；
+      副本级运行状态超出设计界，或<b>策略缓存里有策略却一条都没被接受</b>（SOURCE_BLOCKED：不是没负载，是全被扣在配置获取环节）→ <span class="s b-DEGRADED">DEGRADED</span>；
+      证据齐全且一个都没有 → <span class="s b-HEALTHY">HEALTHY</span>。
+      <br><b>判定看的不是整栏</b>：「没跑成待查」是待处理清单，里面既有 alarmd 自己的，也有数据源没答、
+      策略配置写不了的。只有归到 alarmd 的那部分进判定——整栏进判定的话，别人家的故障面越大 alarmd 看着越差，
+      而这个数一直不为零的信号等于没有信号。
+      <br><b>降级池不参与判定</b>：后端持续查不到的对象不计入判定。代价是这是个<b>把对象移出分母</b>的机制，
+      所以池必须有出口，“出过降级池”那一栏就是用来看出口的。<b>只进不出有两种可能</b>：出池路径坏了，
+      或者后端确实一直没恢复——这两种在池子大小上看起来一样。要分清看“冷却到期未重试”：
+      那是冷却已经到期、本该再查一次却没查的对象，它不为零才指向出池路径本身。
+      <br><b>未知怎么来</b>：未知 = 应有 − 已知状态。它同时包含“没有副本认领”和“认领了但还说不出结论”两种。
+      只要未知不为零，判定就停在 UNKNOWN——<b>不知道不等于健康</b>。
+    </p>
+    </details>
+  </section>
+
+  <section class="panel">
+    <h2>检查项</h2>
+    <p class="basis">三部分：已确认是 alarmd 的；证据还分不出是谁的（不能交出去，也不能当没事）；已确认是业务侧的。点一行，看它按成因分组的对象。</p>
+    <div id="objErr" class="err" hidden></div>
+    <table>
+      <thead><tr><th>现在要处理的（alarmd 已确认的，和平台写入方写坏的）</th><th>谁处理</th><th></th></tr></thead>
+      <tbody id="checkRows"></tbody>
+    </table>
+    <div class="empty" id="checksEmpty" hidden>现在没有已确认要 alarmd 这边处理的问题。</div>
+    <!-- Not confirmed as this deployment's is not confirmed as anybody's.
+         These used to sit in the table above under 待确认 while the act
+         line said the rest were the strategy's or the data's people. -->
+    <table id="pendingTable">
+      <thead><tr><th>待归因：未确认属 alarmd，也不等于业务侧的</th><th>谁处理</th><th></th></tr></thead>
+      <tbody id="pendingRows"></tbody>
+    </table>
+    <!-- Past loss, kept on record until somebody looks, apart from what is
+         wrong now. Mixed into the lines above it read as 393 objects to act
+         on when 10 were anomalous and the rest were Slots skipped hours ago;
+         and a loss still in progress is not history -- it is on the lines
+         above, and the fold here holds only what stopped. -->
+    <details class="more" id="historyFold">
+      <summary>历史检测缺口（已停止的漏检记录，不会自己消失；仍在发生的在上面）——<span id="historyCount"></span></summary>
+      <table><tbody id="historyRows"></tbody></table>
+    </details>
+    <details class="more">
+      <summary>运营治理：已确认是数据侧或策略侧的问题——<span id="govCount"></span></summary>
+      <table><tbody id="govRows"></tbody></table>
+      <div class="empty" id="govEmpty" hidden>没有。</div>
+    </details>
+    <div id="detail" hidden>
+      <h3 id="detailTitle"></h3>
+      <p class="basis" id="detailBasis"></p>
+      <div id="groups"></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>容量</h2>
+    <!-- The judgment first, the numbers under it as its evidence. The panel
+         used to report CPU, memory and permits and leave "is it enough" to
+         the reader, who could not answer it from those. -->
+    <div id="loadLines" class="basis"></div>
+    <p class="basis" id="loadLimits"></p>
+    <p class="basis">下面是各副本当前的占用与上限，是上面判断的依据。</p>
+    <details class="more">
+      <summary>时间口径与这些上限是怎么来的</summary>
+      <p class="basis">
+        与上面的判定同一次读取，来自各副本快照，不经时序库。
+        占用和上限都是各副本相加，两边同一个口径才能比；每个上限后面写了每副本多少、几个副本。
+        运维只设了两个数——容器的 CPU limit 和内存 limit；下面所有许可、队列、体量预算都是程序按这两个数算出来的，
+        不是可以单独调的旋钮。
+      </p>
+    </details>
+    <div id="capErr" class="err" hidden></div>
+    <div class="empty" id="capEmpty" hidden>本次读取没有副本上报容量。</div>
+    <div class="grid" id="capCards"></div>
+    <p class="note" id="capNote"></p>
+  </section>
+
+  <section class="panel">
+    <h2>依赖</h2>
+    <!-- Where each external system is and what this replica has seen of it.
+         The address answers "which Redis is this"; the writer column answers
+         the question that follows it, "is it the one the platform writes to"
+         -- which the address cannot, because a Redis nobody writes to answers
+         every command. Credentials are never on this response. -->
+    <p class="basis" id="depBasis"></p>
+    <table>
+      <thead><tr><th>用途</th><th>地址 · 库 · 前缀</th><th>本进程最近一次</th><th>写入方证据</th></tr></thead>
+      <tbody id="depRows"></tbody>
+    </table>
+  </section>
+
+  <section class="panel" id="replicaPanel" hidden>
+    <h2>按副本下钻</h2>
+    <p class="basis">同样是七十个异常，均摊和全压在一个副本上要做的事不一样。<b>点某一行可以把下面的对象列表限定到那个副本。</b></p>
+    <details class="more">
+      <summary>怎么读这张表（为什么带占比、哪一列不能横向比）</summary>
+      <p class="basis">
+        部署总数回答“这个部署好不好”，回答不了“是不是某一个副本在扛”。
+        <b>两个副本持有的对象数往往不一样</b>，所以计数后面都带了占比——裸计数会把持有量的差异算进“谁更差”里。
+        <b>“其中 alarmd 的”这一列要按“有没有副本大于 0”看，不要拿两个副本互相比</b>：
+        对象归谁每次再平衡都会变，劈分会在什么都没发生的情况下移动。
+      </p>
+    </details>
+    <table>
+      <thead><tr>
+        <th>副本</th><th>持有</th><th>正常</th><th>没跑成待查</th><th>其中 alarmd 的</th><th>降级池</th><th>判不了恢复</th><th>按配置不处理</th><th>状态未知</th>
+        <th>快照新鲜度</th><th>已运行</th><th>版本</th><th>内存</th><th>CPU</th><th>同时在跑</th>
+      </tr></thead>
+      <tbody id="repRows"></tbody>
+    </table>
+  </section>
+
+  <section class="panel" id="trendPanel" hidden>
+    <h2>趋势</h2>
+    <p class="basis"><b>卡片上的数是最后一个采样点，不是当前值；最低/最高是所选窗口内的，不是历史极值。</b></p>
+    <details class="more">
+      <summary>这些曲线和上面的判定不是同一种读</summary>
+      <p class="basis">
+        曲线读的是 alarmd 自己的指标，表达式写死在服务端，和判定用的是同一批数字。
+        但判定是此刻直读控制面，曲线是经采集、降采样的历史，最右端总比判定旧一个采集周期以上，
+        两者对不上一点是正常的。
+      </p>
+    </details>
+    <div class="wpick" id="wpick"></div>
+    <div id="trendErr" class="err" hidden></div>
+    <div class="trend" id="trend"></div>
+  </section>
+
+
+
+  <section class="panel">
+    <h2>观察窗口</h2>
+    <p class="basis">
+      对某一个对象记录接下来每一轮的详细过程，用来回答“这一轮到底发生了什么”。
+      <b>适合已经定位到具体对象、但从上面的表里看不出原因的情况</b>；上面的表已经说清楚的，不需要开窗。
+    </p>
+    <details class="more">
+      <summary>能看到什么、有什么限制</summary>
+      <p class="basis">
+        看到的是每一轮各阶段的耗时与结果、查询发出与返回了什么、判定为什么是这个结论。
+        <b>开窗只改变“记录什么”，不改变“执行什么”</b>——不会影响检测结果，也不会改任何配置。
+        <b>开窗那一刻起就在记录，不必等到期</b>，点“查看记录”即可看到已经产生的内容。
+        窗口按自身到期时刻失效，最长 <span id="maxTtl">–</span> 分钟；同时最多 <span id="maxOpen">–</span> 个对象。
+        它消耗共享诊断预算并自动过期；装不下时会被截断并按次上报，不会静默生效。
+      </p>
+    </details>
+    <div id="winErr" class="err" hidden></div>
+    <table>
+      <thead><tr><th>对象</th><th>开启人</th><th>开启于</th><th>到期</th><th>操作</th></tr></thead>
+      <tbody id="winRows"></tbody>
+    </table>
+    <div class="empty" id="winEmpty" hidden>当前没有开启的观察窗口。</div>
+    <div id="recWrap" hidden>
+      <p class="basis" id="recBasis"></p>
+      <div id="recErr" class="err" hidden></div>
+      <div id="recDrop" class="err" hidden></div>
+      <div id="recRuns"></div>
+      <div class="form" id="recTools" hidden>
+        <button id="recRaw">看原文</button>
+        <span class="basis" style="margin:0">原文是排查报告要附的东西；上面的结构是给读的人看的。</span>
+      </div>
+      <pre id="recBody" class="rec" hidden></pre>
+    </div>
+    <div class="form">
+      <input class="qgin" id="qg" placeholder="对象标识：点上面对象列表里的“对象”那一列会自动填进来" spellcheck="false">
+      <input id="by" placeholder="开启人" size="12">
+      <input id="ttl" type="number" min="1" value="15" size="4"> <span class="basis" style="margin:0">分钟</span>
+      <button class="primary" id="open">开启观察</button>
+    </div>
+  </section>
+</div>
+
+<script>
+// Everything is fetched relative to wherever this page is mounted, so a host
+// can proxy it under any prefix without the page being rebuilt. Resolving
+// against a base that always ends in "/" keeps "/alarmd" and "/alarmd/"
+// equivalent; without it the first form would escape one path segment upwards.
+var BASE = (function () {
+  var p = location.pathname;
+  return p.charAt(p.length - 1) === '/' ? p : p + '/';
+})();
+
+var LIMIT = 20;
+// Which line of the first screen is open, and which of its groups are
+// expanded. Navigation, not filters: the server decides which objects are
+// under a check, and the total it reports is the check's own.
+var openCheck = '';
+var expandedGroups = {};
+var groupOffsets = {};
+var latestChecks = [];
+// The replica rows of the latest health read, for the lines that name a
+// replica's start beside another's.
+var latestReplicas = [];
+
+function api(path, init) {
+  return fetch(BASE + 'api/' + path, init).then(function (r) {
+    return r.text().then(function (text) {
+      var body = null;
+      try { body = text ? JSON.parse(text) : null; } catch (e) { /* keep raw */ }
+      if (!r.ok) {
+        // A body that parsed but carries no error field is a structured
+        // response, not an explanation. Pasting the whole JSON into a sentence
+        // is not a message -- it is the raw response with a prefix on it, which
+        // is what a reader saw whenever a route answered in its own shape.
+        var reason = (body && body.error) || (body ? 'HTTP ' + r.status : (text || ('HTTP ' + r.status)));
+        var failure = new Error(reason);
+        // Carried rather than matched out of the text later: a provider message
+        // that happens to contain "404" is not a missing route, and deciding
+        // that from the sentence gets it wrong in whichever direction is worse.
+        failure.status = r.status;
+        throw failure;
+      }
+      return body;
+    });
+  });
+}
+
+function show(id, on) { document.getElementById(id).hidden = !on; }
+function text(id, v) { document.getElementById(id).textContent = v; }
+
+function fail(errId, err) {
+  var el = document.getElementById(errId);
+  // Never a blank panel and never a zero: say which channel could not answer.
+  el.textContent = '这一块读不到：' + err.message;
+  el.hidden = false;
+}
+
+function duration(sinceIso) {
+  var ms = Date.now() - new Date(sinceIso).getTime();
+  if (!isFinite(ms) || ms < 0) return '—';
+  var m = Math.floor(ms / 60000);
+  if (m < 60) return m + ' 分钟';
+  var h = Math.floor(m / 60);
+  if (h < 48) return h + ' 小时 ' + (m % 60) + ' 分';
+  return Math.floor(h / 24) + ' 天 ' + (h % 24) + ' 小时';
+}
+
+// An elapsed count of seconds, in a unit that can express it.
+//
+// duration() floors to whole minutes, which is right for an anomaly that has
+// been standing for hours and wrong for anything measured against a retry
+// cadence: it prints "0 分钟" for every value under sixty seconds, and "0" is
+// also what a reader sees when there is nothing to report at all. Those are
+// opposite facts and they rendered the same.
+function elapsedLabel(totalSeconds) {
+  var s = Math.round(totalSeconds || 0);
+  if (s < 90) return s + ' 秒';
+  var m = Math.floor(s / 60);
+  if (m < 60) return m + ' 分 ' + (s % 60) + ' 秒';
+  var h = Math.floor(m / 60);
+  return h + ' 小时 ' + (m % 60) + ' 分';
+}
+
+// A pod name is prefix + deployment hash + a short suffix; only the suffix
+// differs between replicas of one rollout.
+function shortReplica(name) {
+  var parts = String(name || '').split('-');
+  return parts.length > 1 ? parts[parts.length - 1] : String(name || '');
+}
+
+// One object can carry several records for the same strategy, and the record
+// learned without a business reads as a separate strategy beside the one that
+// has it. Collapsing them keeps a single strategy from looking like two.
+function dedupeStrategies(list) {
+  var byId = {};
+  (list || []).forEach(function (s) {
+    var current = byId[s.strategy_id];
+    if (!current || (!current.business_id && s.business_id)) byId[s.strategy_id] = s;
+  });
+  return Object.keys(byId).sort().map(function (k) { return byId[k]; });
+}
+
+// Each gap names what is missing in one line. The rule that turns gaps into a
+// verdict is stated once on the page instead of being repeated per kind.
+var GAP_MEANING = {
+  UNDETERMINED: '副本持有，但还没观察出结论',
+  REPLICA_MISSING: '副本没有上报快照',
+  SNAPSHOT_STALE: '副本快照过期：还活着，但卡住或写得太慢',
+  LIST_TRUNCATED: '异常太多，列表被截断，看到的不是全部',
+  OWNERSHIP_SHORTFALL: '有对象没有任何副本认领',
+  COVERAGE_INCONSISTENT: '覆盖数超过应有数，两边对不上',
+  NO_REPLICAS: '没有就绪副本，没有任何证据',
+  DENOMINATOR_UNAVAILABLE: '读不到应有对象集，没有分母',
+  REGISTRY_UNAVAILABLE: '读不到副本清单，不知道本应有谁上报'
+};
+
+// The pipeline's own bounded classification of where a round failed. Rendered
+// in words because the enum is what to grep for, not what to read.
+var FAILURE_CATEGORY = {
+  source_backend: '数据源后端',
+  provider_transport: '查询链路传输',
+  series_identity: '序列身份',
+  budget: '预算超限',
+  completion_contract: '完成契约',
+  named_input: '具名输入',
+  admission: '许可等待超时',
+  evaluation: '评估失败'
+};
+
+// The one shape every failure is read in, from the server's Blocked on the
+// row: which step, which dependency, what kind, what it did. Held to the Go
+// lists by a test. The dependency line says how it was decided -- by the
+// code or by the error's own words -- and "待定位" is an answer, not a blank:
+// a query timeout does not say whether the time went to the backend, the
+// network or the budget, and the row must not point at one of them.
+var STAGE = {
+  CONFIG: '配置获取',
+  SCHEDULE: '调度接管',
+  QUERY: '数据查询',
+  EVALUATE: '检测计算',
+  COMMIT: '结果提交',
+  UNLOCATED: '环节待定位'
+};
+var DEPENDENCY = {
+  REDIS: 'Redis（控制面与状态存储）',
+  QUERY_BACKEND: '查询后端',
+  CONTROL_SOURCE: '策略源',
+  KAFKA: 'Kafka（输出）',
+  NONE: 'alarmd 自身（预算、截止、定义）',
+  UNLOCATED: '依赖待定位'
+};
+var FAILURE_CLASS = {
+  TIMEOUT: '超时',
+  UNAVAILABLE: '不可用',
+  REFUSED: '被拒绝',
+  CAPACITY: '容量不足',
+  CONTRACT: '内部状态冲突',
+  CONFIG: '定义不可算',
+  RETENTION: '保留期不足',
+  UNLOCATED: '类型待定位'
+};
+var EFFECT = {
+  DELAYED: '只是延迟，还没丢',
+  RETRYING: '正在重试（这一轮没完成，会再跑）',
+  SKIPPED: '确认漏检（跳过记录已持久化，那段不补）',
+  UNCONFIRMED: '结果待确认（这一轮结束了但结果不能采信）'
+};
+
+// One sentence for the row: where it is stuck, talking to what, what kind,
+// and what it did to the detection -- then the last success, or that this
+// process never saw one, which is the fact a recovery is judged on.
+function blockedWords(blocked) {
+  var evidence = blocked.dependency_evidence === 'code' ? '，由原因码判定'
+    : blocked.dependency_evidence === 'text' ? '，由错误原文判定' : '';
+  return (STAGE[blocked.stage] || blocked.stage)
+    + '（' + (DEPENDENCY[blocked.dependency] || blocked.dependency) + evidence
+    + (blocked.operation ? '，操作 ' + blocked.operation : '') + '）'
+    + '：' + (FAILURE_CLASS[blocked.class] || blocked.class) + (blocked.code ? ' ' + blocked.code : '')
+    + '；影响：' + (EFFECT[blocked.effect] || blocked.effect)
+    + (blocked.last_success_at ? '；最近一次成功 ' + momentLabel(blocked.last_success_at) : '；本进程没见过它成功完成');
+}
+
+// What the timestamp in the previous column actually is. Three of these are not
+// a start time at all, and the column renders identically either way, so the
+// wording is the only thing carrying the difference.
+var SINCE_SOURCE = {
+  BUSINESS_STATE: '业务状态（跨重启保留）',
+  SNAPSHOT_CONTINUITY: '本进程看着它开始出问题的时刻',
+  PROCESS_START: '本副本接手时它就已经这样了——"已持续"是本进程看了多久，不是它坏了多久，只会更久',
+  RESTORED_LAST_FULL: '上次完整跑完的时刻；真正变坏的时刻没保留，所以实际没这么久',
+  RESTORED_AT_RESTART: '本进程接手的时刻；之前有多久没人知道，只会比这更久',
+  REFUSED_FUTURE: '记录的时刻比现在还晚，已拒绝——这是缺陷，请上报'
+};
+
+// Which direction each provenance is wrong in, rendered onto the duration
+// itself rather than only in the column beside it.
+//
+// The list is sorted by that duration, and three of the six sources are not a
+// measurement: a restored object's timestamp is an upper bound, a pre-existing
+// one's is a lower bound. Sorting them against each other as if they were the
+// same quantity puts the fifteen least trustworthy numbers at the top of page
+// one -- they are the largest precisely because their start times were pushed
+// back to the last thing on record. A reader would have to cross-reference the
+// provenance column row by row to know that, so it goes on the number.
+var SINCE_BOUND = {
+  PROCESS_START: '≥ ',
+  RESTORED_AT_RESTART: '≥ ',
+  RESTORED_LAST_FULL: '≤ ',
+  REFUSED_FUTURE: '? '
+};
+
+
+
+
+
+
+// A moment, with the date shown as soon as it is not today.
+//
+// A time-only stamp reads as "today at that time" whatever day it is, which is
+// exactly wrong for the two places it was used: the last demotion exit is the
+// number that says whether the pool still drains, and a stamp from three days
+// ago rendered as this afternoon.
+function momentLabel(at) {
+  var when = new Date(at);
+  if (isNaN(when.getTime())) { return '—'; }
+  var today = new Date();
+  if (when.toDateString() === today.toDateString()) { return when.toLocaleTimeString(); }
+  return when.toLocaleDateString(undefined, {month: 'numeric', day: 'numeric'})
+    + ' ' + when.toLocaleTimeString();
+}
+
+// A range, with the date shown as soon as its two ends are on different days.
+// Who has to act, in words. Keyed by the server's Owner values; a completeness
+// test holds this to the Go list.
+var OWNER = {ALARMD: 'alarmd', DATA: '数据侧', STRATEGY: '策略侧', NOBODY: '不用处理',
+             UNDETERMINED: '待确认', PLATFORM: '平台写入方'};
+
+// One sentence per check. This is the whole of the page's wording about what
+// is wrong: twenty lines, held to the Go table by a test. The server decides
+// which check an object is under and folds the objects; the page substitutes
+// the counts. {n} objects, {g} groups, {s} strategies, {b} businesses.
+var CHECK = {
+  // The three source standings: strategies the leader's round listed and did
+  // not accept, before any became an object. {s} is withheld records, {g}
+  // reasons; there is no {n}, because none of these is an object.
+  SOURCE_INCOMPLETE:     '策略缓存里 {s} 条策略的文档不满足合同，没有进入检测（{g} 种原因）——是写入方写的内容缺东西，不是策略配置错',
+  CAPABILITY_UNSUPPORTED: '{s} 条策略这个部署跑不了（{g} 种原因）——快照保留期或完成偏移不够，是 alarmd 部署参数',
+  CONFIG_REJECTED:       '{s} 条策略的定义编译不过（{g} 种原因）——按原因组看是哪个字段；带 STALE_CONFIG 的那组仍按上一版配置在跑',
+  // The three standings. {since}, {c}, {applied} and {published} come from
+  // the leader's activation facts on the report, not from counts; the split
+  // line's numbers come from the leader's rebalance round on the report.
+  CUTOVER_FAILING:       '控制面变更自 {since} 起没有生效：连续 {c} 轮激活失败（{g} 种原因），舰队在执行 {applied} 的内容，源已到 {published}',
+  REPLICA_DEGRADED:      '{g} 种副本级运行状态超出设计界，判定因此降级',
+  OWNERSHIP_SKEWED:      '对象分布不均：{most_by} 持有 {most} 个（{share}），{least_by} 持有 {least} 个，{ready} 个就绪副本均分应是 {target} 个——持有多的那个副本上的跳过、超时、排队都是这个原因，不是容量',
+  SLOTS_OVERDUE:         '{n} 个对象到期没跑',
+  NEVER_EVALUATED:       '{n} 个对象接管后从未评估',
+  ROUNDS_STALLED:        '{n} 个对象的轮次不再结束，不会自己恢复',
+  // The two record lines. What the loss is -- in progress, a budget
+  // rejection, or stopped -- is said by lossClause from the groups; the
+  // word 容量 appears only over a budget rejection.
+  DETECTION_ABANDONED:   '{n} 个对象跳过了检测，那段不补',
+  TIMELINE_PRUNED:       '{n} 个对象的游标越过了已裁掉的时间线，那段没检测也不补',
+  DEPENDENCY_DOWN:       'alarmd 自己的依赖没答，{n} 个对象受影响（{g} 种）',
+  DEFECT:                '{n} 个对象命中程序缺陷（{g} 种），上报',
+  OBSERVATION_GAP:       '{n} 个对象现在说不出结论（{g} 种原因）',
+  BACKEND_NOT_ANSWERING: '查询没有得到应答，{n} 个对象受影响（{g} 种症状，{s} 条策略）——客户端超时或 5xx，查询预算、网络、后端耗时哪一环还分不出',
+  QUERY_REFUSED:         '后端拒绝了 {n} 个对象的查询（{g} 种原因，{b} 个业务）——后端读了查询并回了状态码，是查询构造、策略引用还是后端规则还分不出',
+  QUERY_TARGET_MISSING:  '{n} 个对象的查询被后端回"表或字段不存在"（{g} 种回答，{s} 条策略，{b} 个业务）——按策略引用核，未逐个核过实际请求与元数据前不认定是策略写错',
+  NO_DATA_PERSISTENT:    '{n} 个对象持续没有数据（{s} 条策略）',
+  SERIES_CHURNING:       '{n} 个对象的序列活不过检测窗口（{s} 条策略），恢复判不了',
+  SERIES_DATA_MISSING:   '{n} 个对象恢复所需的老序列数据不完整（{s} 条策略），恢复判不了——是数据没到还是 alarmd 没取到还分不出',
+  WINDOW_UNDECIDED:      '{n} 个对象的窗口填不满，还分不出是谁的（{g} 种情况，{s} 条策略）',
+  PLAN_UNEVALUABLE:      '{s} 条策略按现在的定义算不了，{n} 个对象不检测',
+  CONFIG_UNRESOLVED:     '{n} 个对象的配置状态说不清（{s} 条策略）'
+};
+
+// What the objects of a check are folded on, in words.
+var GROUP_BY = {replica: '副本', reason_code: '原因码', detail: '后端症状', strategy: '策略', gap_kind: '缺口', cause: '情况',
+                degradation: '超界的状态', loss: '损失是什么'};
+
+// What a retained record is a record of, in words. Held to the Go list.
+// The window the first two are decided on comes from the response.
+var LOSS = {
+  WHILE_DEMOTED: '在被拒期间跳过（冷却让旧轮次超出重放范围，首要原因是查询不可用）',
+  AFTER_RESTART: '滚动后的追赶（副本启动 {g} 分钟内跳过；每次滚动都有，通常几分钟内结束——是否结束看这一组还有没有新增）',
+  ONGOING: '仍在发生（最近 {w} 分钟内跳过）',
+  HISTORICAL: '已停止（{w} 分钟以上没有再跳过）'
+};
+
+// The grace after a replica's start within which a skip is the restart's,
+// in minutes, from the response.
+function restartGraceMinutes() {
+  var seconds = latestTodo && latestTodo.restart_grace_seconds;
+  return seconds ? Math.round(seconds / 60) : 5;
+}
+
+function lossWords(key) {
+  return (LOSS[key] || key).replace('{w}', String(recentWindowMinutes())).replace('{g}', String(restartGraceMinutes()));
+}
+
+// The replica-level standings, in words. Held to the Go list.
+var DEGRADATION = {
+  SOURCE_BLOCKED: '策略缓存里有策略，但这一轮一条都没接受——整个部署没有在检测任何东西；不是没负载，是全部被扣在配置获取环节',
+  ACTIVATION_BEHIND: '控制面变更没有生效：源发布了新内容，激活跟不上去，舰队在执行旧发布',
+  CONTROL_SOURCE_STALE: '策略源超过设计允许的时间没有刷新成功，跑的是上一份好的目录',
+  CONTROL_LEADER_ABSENT: '副本拿不到控制面 leader 租约、也不知道谁持有，超过设计允许的时间——可能没人在刷新',
+  OPEN_ALERT_SET_STALE: '已开告警集合的副本超过设计允许的时间没拿到消费者的发布，恢复门在用旧知识',
+  PLATFORM_SETTINGS_STALE: '平台设置的副本超过设计允许的时间没拿到平台的发布，检测在用可能已变的设置'
+};
+
+// What each line owes past its sentence, per check and held to the Go list:
+// where the direct evidence is, what to do, and what state counts as
+// recovered. The sentence says what happened and what it affects; a reader
+// who opened a group still asked "so what do I do", and one who did it
+// still asked "when is it good". "先等" says until when and whom to find
+// after; "取原始请求核" says where the request actually is -- alarmd does
+// not log the full request text, so it says what exists instead of sending
+// the reader to look for something that does not.
+var EVIDENCE = {
+  SOURCE_INCOMPLETE:     '展开按原因看策略样本：SOURCE_IDENTITY_UNAVAILABLE = 文档顶层缺 bk_tenant_id / space_uid；SOURCE_OBJECT_INCOMPLETE = ID 在 strategy_ids 里但 strategy_<id> 不存在；依赖面板"策略缓存"行给缓存 Redis 地址与 last_updated；指标 catalog_withheld_objects{disposition="SOURCE_INCOMPLETE",reason}；日志 source_withheld',
+  CAPABILITY_UNSUPPORTED: '展开按原因看策略样本与要求的值；指标 catalog_withheld_objects{disposition="UNSUPPORTED_PHASE2_CAPABILITY",reason}',
+  CONFIG_REJECTED:       '展开按原因看策略样本与字段路径（field_path 是编译器拒绝的那个字段）；指标 catalog_withheld_objects{disposition="CONFIG_REJECTED",reason}',
+  CUTOVER_FAILING:       '展开这一行：最近一次激活失败原文、阶段/类别、连续轮数；日志 activation_failed（reason_code = 阶段/类别）',
+  OWNERSHIP_SKEWED:      '副本表的"持有"列与"已运行"列（持有少的那个若比同构建的其它副本晚启动很久，就是中途重启过，原因看容器上一次退出）；Leader 的再平衡这一轮（计划/发出/暂停）在这一行的句子里；指标 worker_owned_query_groups{pod}、rebalance_gap、assignment_moves_total{reason=rebalance}、rebalance_paused_total{reason=set_unstable}',
+  REPLICA_DEGRADED:      '展开按种类看是哪个副本；策略源过期的组直接带最近一次刷新失败的阶段与原文（下面组名后）；副本表里该副本的策略源/告警集合/平台设置时钟',
+  SLOTS_OVERDUE:         '对象行"超期"与超期多久（预计时刻已过多久）；副本表里该副本的已运行时长与被挡回数',
+  NEVER_EVALUATED:       '对象行"接管后未跑"与接管时刻',
+  ROUNDS_STALLED:        '对象行"最近一次错误"：原文、类型、卡住的 Slot、同一 Slot 连续几次',
+  DETECTION_ABANDONED:   '对象行"没检测的时段"：首末 Slot、记录时刻、对象周期；"资源预算拒绝"折对照容量面板的"预算被拒"',
+  TIMELINE_PRUNED:       '对象行"没检测的时段"：游标从哪跳到哪、记录时刻',
+  DEPENDENCY_DOWN:       '分组的原因码说是哪个依赖；对象行"最近一次错误"给原文',
+  DEFECT:                '分组的原因码 + 对象行"最近一次错误"原文与 Slot——上报带这两样',
+  OBSERVATION_GAP:       '对象行"等下次 · 预计 HH:MM"；副本级缺口看副本表里该副本的快照年龄',
+  QUERY_REFUSED:         '分组的后端回答只有状态码/状态词（非 200 的响应正文当前不保留，"最近一次错误"是结束这一轮的 alarmd 错误，不是后端原文）；请求本身 = 该策略的查询定义（行上策略链接），alarmd 不落完整请求文本',
+  WINDOW_UNDECIDED:      '对象行的窗口计数：短窗/满窗、保护与最初触发',
+  CONFIG_UNRESOLVED:     '对象行 config_changed 与快照/查询/调度三版本是否变了',
+  BACKEND_NOT_ANSWERING: '分组的症状（超时/5xx）；对象行的冷却到期时刻与失败次数；超时的还要看查询预算与后端耗时，这两样不在页面上',
+  NO_DATA_PERSISTENT:    '对象行连续空轮数，与"有过数据"（进过索引）',
+  SERIES_DATA_MISSING:   '对象行窗口计数：老序列缺点的比例；同一行若带超时或保护，缺点可能是 alarmd 没取到而不是数据没到',
+  SERIES_CHURNING:       '对象行窗口计数：新序列占比与活不过窗口的轮数',
+  PLAN_UNEVALUABLE:      '分组的策略与原因码',
+  QUERY_TARGET_MISSING:  '分组的后端回答（表/字段不存在的状态词）；策略引用的表与字段看行上策略链接，与元数据逐个核'
+};
+
+var NEXT = {
+  SOURCE_INCOMPLETE:     '找策略缓存的写入方（bk-monitor 后台的 cache 进程，或替代它的模块）：缺身份字段的要写方按合同补 bk_tenant_id / space_uid（bk-monitor 主线 2026-08-31 起的缓存刷新才写）；ID 列表残留的要写方清掉已删除策略的 ID（2026-09-11 起的刷新会清）。Pod 外一句判据：在缓存 Redis 上 GET <前缀>.strategy_<任一 id>，顶层有 "space_uid" 才算过。alarmd 这边不用改，写方修好后下一轮刷新（最多 6 分钟）自动接受',
+  CAPABILITY_UNSUPPORTED: '改 alarmd 部署参数：按原因组看是快照保留期还是完成偏移不够，调到要求的值后下一轮刷新自动接受',
+  CONFIG_REJECTED:       '交策略侧：按原因组与字段路径改策略定义；alarmd 这边不用改，改好后下一轮刷新自动接受。STALE_CONFIG 组的策略仍在按上一版跑，不算漏检',
+  CUTOVER_FAILING:       '先修激活：看展开里最近一次失败文本与 activation_failed 日志；修好前所有策略变更都不生效',
+  OWNERSHIP_SKEWED:      '不要手动重启持有多的副本来均衡——重启只会把它的对象整批搬到剩下的副本，不会均分。{rebalance}；在均分回来之前，持有多的那个副本上的漏检与超时不按容量处理、不据此扩副本或加资源',
+  REPLICA_DEGRADED:      '按种类处理：源过期看策略源刷新，leader 缺席看租约，告警集合/平台设置过期看对应发布者',
+  SLOTS_OVERDUE:         '看该副本是否卡住或过载：展开看对象与超期多久；持续增长就是容量或调度问题',
+  NEVER_EVALUATED:       '展开看接管后多久没跑；接管不久可等，超过一个周期就查该副本的调度',
+  ROUNDS_STALLED:        '不会自己恢复：展开找对象，查它卡在哪一步（日志按 query_group_key），必要时重启副本',
+  DETECTION_ABANDONED:   '仍在发生的：看对象行的"跳过前最后一步"（错过查询截止 / 数据未就绪 / 预算拒绝…）与周期，按那一步查；只有"资源预算拒绝"分组是资源装不下，其余不据此扩容，也不据此排除别的容量或调度约束',
+  TIMELINE_PRUNED:       '仍在发生的：看游标为什么落后到被剪；已停止的只是记录，那段永久没检测',
+  DEPENDENCY_DOWN:       '按原因码看是哪个依赖（Redis/Kafka/后端）；依赖恢复后自动清',
+  DEFECT:                '程序缺陷：带原因码上报，展开取一个对象的证据',
+  OBSERVATION_GAP:       '等下一轮完成以补齐原因（行上有预计时刻；到点后仍可能在等待、重试或取消）；超过预计完成时间仍未补齐，它会落到"到期没跑"那一行（alarmd 的），再查该副本的调度与执行；副本级缺口看该副本快照',
+  QUERY_REFUSED:         '展开看后端回答的状态词：说表/字段不存在的已单列到策略侧；只有状态码的，页面上没有后端原文可核，先留待归因，拿行上策略链接里的查询定义与后端侧日志对',
+  WINDOW_UNDECIDED:      '按"情况"分组看，再看行上最差窗口的进展：在补的（上一轮更少）等；连续多轮没进展的不能只等——看每一轮不完整的原因（那才是根因，多半是查询不可用或冷却）；保护未解除的等它解除，不改策略',
+  CONFIG_UNRESOLVED:     '按策略看：config_changed 为真才是最近改过，下一轮按新配置跑；为假的不在这一行',
+  BACKEND_NOT_ANSWERING: '先查查询链路：超时看查询预算、网络、后端耗时哪一环超了；5xx 看后端；核实是后端的再交数据侧。alarmd 已降频不再反复查',
+  NO_DATA_PERSISTENT:    '交数据侧：按策略看是数据停了还是采集停了',
+  SERIES_DATA_MISSING:   '先看同一行有没有超时或保护：有的先按那个查（缺点可能是 alarmd 没取到）；没有的再按策略给数据负责人',
+  SERIES_CHURNING:       '交策略侧：序列活不过检测窗口，通常是聚合维度太细',
+  PLAN_UNEVALUABLE:      '交策略侧：按现在的定义算不了，改策略',
+  QUERY_TARGET_MISSING:  '按策略核引用的表与字段是否真不存在（对元数据）：是就改策略或接入数据，不是就是查询构造或元数据问题回 alarmd；已降级的对象修好后会自动重试'
+};
+
+// What state counts as recovered, per check: the thing to look at after
+// acting, and a line count going to zero is not always it -- a record does
+// not go to zero, and a refusal recovers by being handed to its owner, not
+// by disappearing.
+var RECOVERY = {
+  SOURCE_INCOMPLETE:     '写方修好后一轮刷新：这一行的策略数降到 0、"应有"从 0 涨上来、对象开始出现在各栏；这一行消失',
+  CAPABILITY_UNSUPPORTED: '参数改好后一轮刷新：这一行消失，"应有"涨上来',
+  CONFIG_REJECTED:       '策略改好后一轮刷新：该策略离开这一组；这一行只在全部改好后消失',
+  CUTOVER_FAILING:       '执行版本追上目标发布（两者一致）且之后一轮激活成功；这一行消失',
+  OWNERSHIP_SKEWED:      'Leader 的再平衡计划移动数归零（最多与最少之差回到均分的 {stop}% 以内，这是调度器自己的容差）；这一行消失',
+  REPLICA_DEGRADED:      '该副本的那个时钟回到设计界内；策略源的 = 一轮刷新成功、新目录发布，这一行消失',
+  SLOTS_OVERDUE:         '超期数归零并保持一个周期；执行情况一句回到"跟得上"',
+  NEVER_EVALUATED:       '对象跑完第一轮',
+  ROUNDS_STALLED:        '对象的轮次重新结束（对象行离开"轮次不结束"）；不会自己发生',
+  DETECTION_ABANDONED:   '{w} 分钟内没有新的跳过（"仍在发生"折归零）；已停止的记录不会归零，那是记录不是指标',
+  TIMELINE_PRUNED:       '{w} 分钟内没有新的越过；已停止的记录不会归零',
+  DEPENDENCY_DOWN:       '依赖恢复后各对象下一轮完成，这一行自动清',
+  DEFECT:                '修复上线后该原因码不再出现',
+  OBSERVATION_GAP:       '各对象下一轮完成后补上成因、离开这一行——只是补齐证据，不等于这几个对象当前有新故障；副本级缺口随该副本重新发布快照消失',
+  QUERY_REFUSED:         '分出归属后转到对应行（策略侧或 alarmd）；不是等它消失',
+  WINDOW_UNDECIDED:      '行上最差窗口的有效点逐轮上涨直到填满，或保护解除；对象归到某一行或离开列表。连续多轮不涨不算在恢复',
+  CONFIG_UNRESOLVED:     '下一轮按新配置完成，对象离开这一行',
+  BACKEND_NOT_ANSWERING: '分出是哪一环后转到对应行；应答恢复后冷却到期自动重试成功，对象离开降级池（降级池"出过"数在涨）',
+  NO_DATA_PERSISTENT:    '数据恢复后下一轮非空',
+  SERIES_DATA_MISSING:   '分出是没到还是没取到后转到对应行；老序列补上点后窗口填满',
+  SERIES_CHURNING:       '序列稳定活过窗口后窗口填满',
+  PLAN_UNEVALUABLE:      '策略改定义后下一轮可算',
+  QUERY_TARGET_MISSING:  '策略改好或表接入后，冷却到期自动重试成功，对象离开降级池'
+};
+
+// The next step for the two record lines in the history fold, where the
+// loss has stopped: nothing to make stop, only a span with no alert cover.
+var NEXT_RETAINED = {
+  DETECTION_ABANDONED: '已停止，不用让它停；那段永久没检测，按策略看影响的是谁、要不要补告警覆盖',
+  TIMELINE_PRUNED:     '已停止，不用让它停；那段永久没检测，按策略看影响的是谁'
+};
+
+// The two dimensions each object row shows, in words. Held to the Go lists.
+var SCHEDULE = {NEW: '接管后未跑', ON_TIME: '等下次', LATE: '迟到', OVERDUE: '超期', PAUSED: '生效时段外',
+                STALLED: '轮次不结束', COOLING: '冷却中'};
+var RESULT = {COMPLETED: '完成', ERROR: '失败', REFUSED: '被拒绝', NO_DATA: '无数据'};
+
+// count is which of the line's objects the sentence is about: what is wrong
+// now, or what is on record. The same line can be in both sections with a
+// different number in each.
+function checkSentence(report, count) {
+  var words = CHECK[report.code];
+  if (!words) {
+    // Loudly. A check this table has no words for is a defect, and a blank
+    // line on the first screen reads as "nothing here".
+    return '（页面没有这条检查项的文案：' + report.code + '，请上报）';
+  }
+  if (count === undefined) count = report.objects || 0;
+  var activation = report.activation || {};
+  var since = activation.failing_seconds_this_process
+    ? momentLabel(new Date(Date.now() - activation.failing_seconds_this_process * 1000).toISOString()) : '（未知时刻）';
+  // Objects this deployment already stopped re-querying, said on the line
+  // because the pool card says it of the pool and the two must agree.
+  var demoted = report.demoted && count === (report.current || 0)
+    ? '；其中 ' + report.demoted + ' 个已降级，不再反复查' : '';
+  return rebalanceWords(words, report.rebalance).replace('{n}', String(count))
+    .replace('{g}', String((report.groups || []).length))
+    .replace('{s}', String(report.strategies || 0))
+    .replace('{b}', String(report.businesses || 0))
+    .replace('{c}', String(activation.consecutive_failures || 0))
+    .replace('{since}', since)
+    .replace('{applied}', shortRevision(activation.applied))
+    .replace('{published}', shortRevision(activation.published))
+    + demoted + lossClause(report, count) + consequenceClause(report) + standingClause(report);
+}
+
+// The split line's numbers, from the leader's rebalance round on the report:
+// who holds how much, the even share, and what the round would move. The
+// page substitutes; it does not decide from the counts that a split is too
+// uneven -- the scheduler's round already did, and its tolerance travels
+// with the facts as {stop}.
+function rebalanceWords(words, rebalance) {
+  var r = rebalance || {};
+  var assigned = r.assigned || 0;
+  var share = assigned ? Math.round((r.most_owned || 0) / assigned * 1000) / 10 + '%' : '（无）';
+  return words.replace('{most_by}', shortReplica(r.most_owned_by || '（未知副本）'))
+    .replace('{least_by}', shortReplica(r.least_owned_by || '（未知副本）'))
+    .replace('{most}', String(r.most_owned || 0)).replace('{least}', String(r.least_owned || 0))
+    .replace('{share}', share).replace('{ready}', String(r.ready_workers || 0))
+    .replace('{target}', String(r.target || 0)).replace('{moves}', String(r.planned_moves || 0))
+    .replace('{batch}', String(r.batch || 0)).replace('{stop}', String(r.stop_spread_percent || 0))
+    .replace('{rebalance}', rebalanceStanding(r));
+}
+
+// What the leader is doing about the split, from the round itself, in the
+// states the round can be in: a shadow round is a measurement the build
+// does not act on; a round paused because the ready set changed inside its
+// settling window wrote nothing on purpose and says for how much longer; a
+// round that published is moving, and the gap it still has to close is on
+// the line so a reader can watch it fall. The line has to say which,
+// rather than let a reader wait for a move that will not come or restart a
+// replica to force one that is already under way.
+function rebalanceStanding(r) {
+  if (!r || !r.planned_moves) return '等再平衡';
+  var gap = Math.max(0, (r.most_owned || 0) - (r.least_owned || 0));
+  var plan = 'Leader 本轮计划移 ' + r.planned_moves + ' 个（每轮最多 ' + (r.batch || 0) + ' 个）';
+  if (r.shadow) return plan + '，但这个构建只计划不执行——均分要等再平衡执行上线或下一次滚动';
+  if (r.paused) {
+    return plan + '，但这一轮没发：就绪副本集刚变过，等它稳定'
+      + (r.paused_for_seconds ? '（还剩 ' + Math.ceil(r.paused_for_seconds) + ' 秒）' : '') + '再发';
+  }
+  var conflicts = r.conflicts ? '，' + r.conflicts + ' 个因指派记录同时被改本轮没发、下轮再算' : '';
+  if (r.published_moves) {
+    return '已在移：本轮发出 ' + r.published_moves + ' 个（每轮最多 ' + (r.batch || 0) + ' 个），最多与最少还差 ' + gap + ' 个' + conflicts + '；看这一行的数在不在降';
+  }
+  return plan + '，这一轮一个都没发出去' + conflicts + '——若下一轮仍是 0，看 leader 日志 rebalance_planned';
+}
+
+// A standing's fold that carries the failure behind it says so on the line:
+// a stale strategy source whose last round stopped at catalogue validation
+// is "策略配置刷新失败：<what it said>，新配置尚未发布", not a kind name that
+// sent readers to the previous incident's cause.
+function standingClause(report) {
+  if (report.code === 'OWNERSHIP_SKEWED') return startLagClause(report.rebalance);
+  if (report.code !== 'REPLICA_DEGRADED') return '';
+  var parts = [];
+  (report.groups || []).forEach(function (group) {
+    if (group.key === 'CONTROL_SOURCE_STALE' && group.text) {
+      parts.push('策略配置刷新失败' + (group.stage ? '于 ' + group.stage : '') + '：' + group.text + '，新配置尚未发布，跑的是上一份好的目录');
+    }
+  });
+  return parts.length ? '——' + parts.join('；') : '';
+}
+
+// How the split came about, as far as the replica table can say: the
+// replica holding least started later than the one holding most, on the
+// same build. That is what a replica that left and came back looks like --
+// a rollout starts the two within a minute or two of each other -- and the
+// reader's next question, why it left, is answered by the container's last
+// exit, which this page cannot see and says so. Nothing when the health
+// read has not arrived or the two started together.
+function startLagClause(rebalance) {
+  if (!rebalance || !rebalance.most_owned_by || !rebalance.least_owned_by) return '';
+  var most = null, least = null;
+  latestReplicas.forEach(function (replica) {
+    if (replica.replica === rebalance.most_owned_by) most = replica;
+    if (replica.replica === rebalance.least_owned_by) least = replica;
+  });
+  if (!most || !least || !most.started_at || !least.started_at) return '';
+  var lag = (Date.parse(least.started_at) - Date.parse(most.started_at)) / 1000;
+  if (lag < 60) return '';
+  // Whether the two run the same build decides what the lag means, and only
+  // when both reported one: an unreported build is an older build, not a
+  // different one.
+  var builds = most.build && least.build ? (most.build.commit === least.build.commit ? 'same' : 'different') : 'unknown';
+  return '——' + shortReplica(least.replica) + ' 比 ' + shortReplica(most.replica) + ' 晚 ' + elapsedLabel(lag) + ' 启动'
+    + (builds === 'same' ? '（同一构建：不是滚动，是中途退出后重启的；退出原因看容器上一次退出，页面看不到）'
+       : builds === 'different' ? '（构建不同：是滚动的先后）' : '');
+}
+
+// Whether the worst window is filling, from the tracker's round-over-round
+// comparison: "等窗口填满" is advice only for a window that is moving, and a
+// window at 0/5 for thirty rounds is not, whatever its reason says.
+function windowProgress(coverage) {
+  if (!coverage || !coverage.short || !coverage.worst_required) return '';
+  var text = ' · 最差 ' + (coverage.worst_valid || 0) + '/' + coverage.worst_required;
+  if (coverage.previous_known) {
+    text += coverage.worst_valid > coverage.previous_worst_valid
+      ? '（上一轮 ' + coverage.previous_worst_valid + '，在补）'
+      : '（上一轮 ' + coverage.previous_worst_valid + '，连续 ' + (coverage.no_progress_rounds || 0) + ' 轮没进展）';
+  }
+  return text;
+}
+
+// The last step before a skip, in words. Held to nothing: the codes are the
+// emitters' and a new one prints as itself.
+var SKIP_REASON = {
+  QUERY_PERMIT_DEADLINE: '错过查询截止时间（重试到达时冻结的截止已过）',
+  NOTHING_TRIED: '这一 Slot 没有尝试过，直接越过了重放范围'
+};
+
+function skipReasonWords(code) {
+  if (SKIP_REASON[code]) return SKIP_REASON[code];
+  if (/BUDGET|RESOURCE_HARD_STOP|RECORD_TOO_LARGE/.test(code)) return '资源预算拒绝（' + code + '）';
+  return code;
+}
+
+// The window "still happening" is decided on, in minutes, from the
+// response; the page does not assume it.
+function recentWindowMinutes() {
+  var seconds = latestTodo && latestTodo.recent_window_seconds;
+  return seconds ? Math.round(seconds / 60) : 10;
+}
+
+// A record line's groups say what its objects lost: rounds still being
+// lost now, a budget rejection -- the one fold that is a capacity limit --
+// or a loss that stopped. Said on the line so that "跳过了检测" is never read
+// as "扩容" without the evidence for it.
+function lossClause(report, count) {
+  if (report.group_by !== 'loss') return '';
+  var ongoing = 0, restart = 0, budget = 0, stopped = 0;
+  (report.groups || []).forEach(function (group) {
+    if (group.key === 'ONGOING') ongoing += group.objects || 0;
+    else if (group.key === 'AFTER_RESTART') restart += group.objects || 0;
+    else if (group.key === 'HISTORICAL') stopped += group.objects || 0;
+    else if (/BUDGET|RESOURCE_HARD_STOP|RECORD_TOO_LARGE/.test(group.key)) budget += group.objects || 0;
+  });
+  var parts = [];
+  if (count === (report.current || 0)) {
+    if (ongoing) parts.push('最近 ' + recentWindowMinutes() + ' 分钟内仍在跳过 ' + ongoing + ' 个');
+    if (restart) parts.push(restart + ' 个是滚动后的追赶（副本启动 ' + restartGraceMinutes() + ' 分钟内），看这一组还有没有新增');
+    var reasons = report.skip_reasons || {};
+    var named = Object.keys(reasons).sort().map(function (code) { return skipReasonWords(code) + ' ' + reasons[code] + ' 个'; });
+    if (named.length) parts.push('跳过前最后一步：' + named.join('、'));
+    parts.push(budget ? '资源预算拒绝 ' + budget + ' 个——只有这部分是资源装不下' : '没有资源预算拒绝（只排除这一种拒绝，不排除别的容量或调度约束）');
+  } else if (stopped) {
+    parts.push('已停止，' + recentWindowMinutes() + ' 分钟以上没有再发生');
+  }
+  return parts.length ? '（' + parts.join('；') + '）' : '';
+}
+
+// A line whose objects sit in the demoted pool says what they lost there.
+// The skip is the cooldown's doing and the refusal is the cause, so it is
+// this line's clause and not a line of this deployment's own.
+function consequenceClause(report) {
+  var consequence = report.consequence;
+  if (!consequence || !consequence.skipped) return '';
+  return '；其中 ' + consequence.skipped + ' 个在被拒期间还跳过了检测'
+    + (consequence.skipped_recent ? '（最近 ' + recentWindowMinutes() + ' 分钟内 ' + consequence.skipped_recent + ' 个）' : '')
+    + '——冷却让旧轮次超出重放范围，首要原因是查询不可用，扩容无用';
+}
+
+// The standings in words, each once with its replicas: two replicas past the
+// same bound are one kind, not two.
+function degradationWords(degradations) {
+  var byKind = {};
+  var order = [];
+  degradations.forEach(function (d) {
+    if (!byKind[d.kind]) { byKind[d.kind] = []; order.push(d.kind); }
+    if (d.replica) byKind[d.kind].push(shortReplica(d.replica));
+  });
+  return order.map(function (kind) {
+    return (DEGRADATION[kind] || kind) + (byKind[kind].length ? '（副本 ' + byKind[kind].join('、') + '）' : '');
+  }).join('；');
+}
+
+// When the stopped losses stopped. Not "新增": a record keeps one skip per
+// object, the latest, so how many objects were added cannot be read from
+// it; what can is how many stopped within the last hour, and when the
+// latest did.
+function historyClause(report) {
+  var parts = [];
+  if (report.retained_last_hour) parts.push('其中 ' + report.retained_last_hour + ' 个最近 1 小时内还发生过');
+  else parts.push('最近 1 小时内都没有发生过');
+  if (report.retained_newest) parts.push('最后一次 ' + momentLabel(report.retained_newest));
+  return '——' + parts.join('，');
+}
+
+function shortRevision(revision) {
+  if (!revision) return '（未知）';
+  return String(revision).slice(0, 8);
+}
+
+// The running brief: three sentences, each answering one question. The first
+// and third come from the verdict response, the second from the checks.
+//
+// The first sentence is built from the schedule census and nothing else: how
+// many rounds finished before their next turn fell due, over the last hour and
+// the last six, and how many objects are past due now. Rounds that failed are
+// completed rounds here -- whether the work was done on time and whether it
+// produced a usable result are two different questions, and this sentence
+// answers only the first. The second question is what the checks below say.
+function renderBrief(deployment) {
+  renderBuildLine(deployment.builds, deployment.per_replica);
+  text('briefSchedule', scheduleSentence(deployment));
+  var gaps = deployment.gaps || [];
+  var unknown = deployment.unknown || 0;
+  // Objects restored from records that kept "this round did not complete"
+  // and not why. They are counted as anomalies, so the columns add up, but
+  // nothing about them can be concluded yet -- and this line said "全部对象都有
+  // 结论" over a grid showing two of them. Completeness is about conclusions,
+  // and these have none.
+  var unattributed = deployment.unattributed || 0;
+  var blind = [];
+  if (unknown) blind.push(unknown + ' 个对象现在说不出结论');
+  if (unattributed) blind.push(unattributed + ' 个对象没留下成因，还说不清归谁；各自再跑完一轮就补上');
+  if (gaps.length) blind.push(gaps.length + ' 处覆盖缺口');
+  // Two different completenesses, said apart. Every object having a
+  // conclusion is about the states; whether the anomaly lists behind the
+  // lines are whole is about the detail -- and "全部对象都有结论" beside a
+  // cell reading 看不全 left the reader to reconcile the two.
+  var truncated = (deployment.per_replica || []).filter(function (r) { return r.truncated; });
+  var detail = truncated.length
+    ? '明细不全：' + truncated.length + ' 个副本的异常清单被截断，下面的分组数和策略数是样本'
+    : '异常明细完整';
+  text('briefBlind', '状态覆盖：' + (blind.length ? blind.join('；') : '全部对象都有结论') + '。' + detail);
+}
+
+// Which build the numbers came from. Held to the Go grouping: one group per
+// distinct build, most replicas first, the replicas that reported no build in
+// a group of their own with an empty version.
+function buildLabel(build) {
+  if (!build || !build.version) return '未上报版本（旧构建）';
+  return build.version + '（' + String(build.commit || '').slice(0, 8) + '）';
+}
+
+function renderBuildLine(groups, replicas) {
+  var el = document.getElementById('buildLine');
+  groups = groups || [];
+  var counted = (replicas || []).length;
+  if (!groups.length) {
+    el.textContent = '版本：没有副本被计入，说不出在跑什么';
+    el.className = 'basis stuck';
+    return;
+  }
+  if (groups.length === 1) {
+    el.textContent = '版本：alarmd ' + buildLabel(groups[0].build) + '，' + counted + ' 个副本一致';
+    el.className = 'basis';
+    return;
+  }
+  // Two or more builds. Said as a mix rather than as a version, because the
+  // totals below are neither build's.
+  var parts = groups.map(function (group) {
+    return buildLabel(group.build) + ' ' + group.replicas.length + ' 副本';
+  });
+  el.textContent = '版本：' + groups.length + ' 个构建同时在跑——' + parts.join('、')
+    + '。滚动更新中或滚动卡住了；下面的数是几个构建混出来的，先看副本表再下结论';
+  el.className = 'basis stuck';
+}
+
+function percent(part, whole) {
+  if (!whole) return null;
+  return Math.round(part / whole * 1000) / 10;
+}
+
+// Where the deployment stands on its deadlines, from the census. One place,
+// read by the first sentence and by the capacity panel's queue verdict, so
+// the two cannot disagree about whether the work is keeping up.
+//
+// Falling behind is a short-window rate below the long-window one while
+// something is actually overdue. A rate alone can dip on a quiet hour; an
+// overdue count alone can be one stuck object on a deployment otherwise on
+// time. Both together is the deployment not keeping up.
+function scheduleStanding(census) {
+  var rate1h = percent(census.on_time_1h, census.completed_1h);
+  var rate6h = percent(census.on_time_6h, census.completed_6h);
+  var behind = census.overdue > 0 && (rate1h === null || rate6h === null || rate1h < rate6h);
+  return {rate1h: rate1h, rate6h: rate6h, behind: behind, overdue: census.overdue || 0};
+}
+
+// Whether queueing for a query slot is costing anything, in the terms the
+// census measures. The wait share alone cannot decide this, and on its own
+// it said "支持扩容" on a deployment with three quarters of its CPU idle.
+function queueVerdict(census) {
+  if (!census) {
+    return '。排队有没有耽误到期任务，本构建没有普查，判不了——别只凭这个比例扩容。';
+  }
+  var standing = scheduleStanding(census);
+  var rates = (standing.rate1h !== null ? '按时率 1 小时 ' + standing.rate1h + '%' : '过去 1 小时没有轮次返回')
+    + (standing.rate6h !== null ? '、6 小时 ' + standing.rate6h + '%' : '');
+  if (standing.behind) {
+    return '——而且在耽误到期任务（' + standing.overdue + ' 个超期，' + rates + '），位子是约束，这一项支持扩容。';
+  }
+  if (standing.overdue) {
+    return '——有 ' + standing.overdue + ' 个超期但在追（' + rates + '），先看能不能自己追上，再谈扩容。';
+  }
+  return '——但没有对象超期（' + rates + '），排队没耽误到期任务，不构成扩容理由。';
+}
+
+// Whether a full ready queue is something to grow. "这一种扩队列有用" was a
+// remedy stated off one counter; a bigger queue relieves a burst or only
+// makes objects wait longer, and which it is shows in whether due work is
+// finishing on time and whether detection is being lost -- so the verdict
+// is those facts, and a bigger queue is never promised.
+function queueFullVerdict(census) {
+  var ongoing = latestTodo ? latestTodo.ongoing || 0 : 0;
+  if (!census) {
+    return '。到期任务有没有被耽误，本构建没有普查，判不了——别只凭这个数扩队列。';
+  }
+  var standing = scheduleStanding(census);
+  var loss = ongoing ? '，且正在漏检 ' + ongoing + ' 个对象' : '';
+  if (standing.behind || ongoing) {
+    return '。此刻 ' + standing.overdue + ' 个对象超期' + loss + '：先看等待时长与消费速度——'
+      + '排队在增长、按时率在降（1 小时 ' + (standing.rate1h === null ? '无' : standing.rate1h + '%')
+      + ' 对 6 小时 ' + (standing.rate6h === null ? '无' : standing.rate6h + '%') + '）才是位子不够；'
+      + '只扩队列可能只是让任务等得更久，不保证有效。';
+  }
+  if (standing.overdue) {
+    return '。此刻 ' + standing.overdue + ' 个对象超期但在追、没有正在发生的漏检——先看能不能自己追上，再谈扩队列。';
+  }
+  return '。此刻没有对象超期、没有正在发生的漏检——排队没耽误到期任务，不构成扩队列的理由。';
+}
+
+function scheduleSentence(deployment) {
+  var census = deployment.schedule;
+  if (!census) {
+    // No replica has a due index, so nothing here can say whether the work is
+    // on time. Said as such rather than as "on time".
+    return '执行情况：没有副本带到期索引，说不出是否按时' + activationClause(deployment.activation);
+  }
+  var standing = scheduleStanding(census);
+  var rate1h = standing.rate1h;
+  var rate6h = standing.rate6h;
+  var behind = standing.behind;
+  var parts = [];
+  if (census.completed_1h) {
+    parts.push('过去 1 小时 ' + census.completed_1h + ' 轮里 ' + rate1h + '% 在下一轮到期前完成'
+      + (rate6h !== null ? '（6 小时 ' + rate6h + '%）' : ''));
+    if (census.held_back_1h) {
+      parts.push('被挡回 ' + census.held_back_1h + ' 轮，其中 ' + census.held_back_on_time_1h + ' 轮仍按时完成');
+    }
+  } else {
+    parts.push('过去 1 小时没有轮次返回');
+  }
+  if (census.overdue) {
+    parts.push(census.overdue + ' 个对象超期，最久 ' + elapsedLabel(census.oldest_late_seconds));
+  }
+  var now = [];
+  if (census.waiting) now.push(census.waiting + ' 个在等下次' + (census.cooling ? '（' + census.cooling + ' 个在冷却）' : ''));
+  if (census.late) now.push(census.late + ' 个迟到未超一个周期');
+  if (census.never) now.push(census.never + ' 个接管后还没跑第一轮');
+  if (now.length) parts.push('现在 ' + now.join('、'));
+  if (census.missing_period) parts.push(census.missing_period + ' 个对象周期未知，迟到没法判超期');
+  return '执行情况：' + (behind ? '跟不上' : (census.overdue ? '有超期但在追' : '跟得上')) + '——' + parts.join('；')
+    + activationClause(deployment.activation);
+}
+
+// Whether the work being done on time is the current work. On time and on a
+// stale publication are both true at once when the activation cannot follow
+// the source, and the first sentence said only the first.
+function activationClause(activation) {
+  if (!activation || !activation.behind_beyond_bound) return '';
+  var since = activation.failing_seconds_this_process
+    ? momentLabel(new Date(Date.now() - activation.failing_seconds_this_process * 1000).toISOString()) : '（未知时刻）';
+  return '。但控制面变更自 ' + since + ' 起没有生效：舰队在执行 ' + shortRevision(activation.applied)
+    + ' 的内容，源已到 ' + shortRevision(activation.published) + '，连续 ' + (activation.consecutive_failures || 0) + ' 轮激活失败';
+}
+
+var latestTodo = null;
+
+function loadChecks() {
+  // The checks ride on the object list response; one row is asked for so the
+  // response is small, and the rows themselves are fetched per group.
+  return api('objects?limit=1').then(function (objects) {
+    show('objErr', false);
+    latestTodo = objects.todo || null;
+    renderChecks(objects.checks || []);
+  }).catch(function (e) { fail('objErr', e); });
+}
+
+// A line is a standing of the deployment itself, with no objects under it.
+// Held to the Go list of standings by a test.
+function isStanding(report) {
+  return report.code === 'CUTOVER_FAILING' || report.code === 'REPLICA_DEGRADED' || report.code === 'OWNERSHIP_SKEWED'
+    || report.code === 'SOURCE_INCOMPLETE' || report.code === 'CAPABILITY_UNSUPPORTED' || report.code === 'CONFIG_REJECTED';
+}
+
+// The first screen: the checks this reader acts on now; folded away, the
+// record of past loss and the ones already confirmed as somebody else's.
+//
+// Three sections, three numbers, from the server's arithmetic (todo) rather
+// than by adding lines up: the sum of every line's objects counted past
+// losses as work and an object under two lines twice, and read as "需要处理
+// 768 个对象" over a deployment with a few dozen objects wrong.
+// Four sections: confirmed this deployment's, not yet anybody's, the record
+// of stopped losses, and confirmed somebody else's. The middle one is its
+// own because "not confirmed as ours" and "confirmed as theirs" are two
+// statements, and one table with an act line saying the rest were the
+// strategy's or the data's people made them one.
+function renderChecks(checks) {
+  latestChecks = checks || [];
+  var todo = [];
+  var pending = [];
+  var history = [];
+  var governance = [];
+  latestChecks.forEach(function (report) {
+    var up = (report.current || 0) > 0 || isStanding(report);
+    if (report.retained) history.push(report);
+    // The platform's lines sit with this deployment's: a strategy the
+    // platform wrote unusably is not detecting, and the operator of this
+    // deployment is the one who goes and says so.
+    if (report.owner === 'ALARMD' || report.owner === 'PLATFORM') { if (up) todo.push(report); }
+    else if (report.owner === 'UNDETERMINED') { if (up) pending.push(report); }
+    else governance.push(report);
+  });
+  fillCheckRows(document.getElementById('checkRows'), todo, 'current');
+  show('checksEmpty', todo.length === 0);
+  fillCheckRows(document.getElementById('pendingRows'), pending, 'current');
+  show('pendingTable', pending.length > 0);
+  fillCheckRows(document.getElementById('historyRows'), history, 'retained');
+  show('historyFold', history.length > 0);
+  fillCheckRows(document.getElementById('govRows'), governance, 'objects');
+  show('govEmpty', governance.length === 0);
+  var t = latestTodo || {checks: todo.length, objects: 0, undetermined: pending.length, undetermined_objects: 0,
+                          ongoing: 0, while_demoted: 0, retained: 0, retained_last_hour: 0,
+                          governance: governance.length, governance_objects: 0};
+  text('govCount', governance.length ? t.governance + ' 类，' + t.governance_objects + ' 个对象' : '没有');
+  text('historyCount', history.length
+    ? t.retained + ' 个对象'
+      + (t.retained_last_hour ? '，其中 ' + t.retained_last_hour + ' 个最近 1 小时内还发生过' : '，最近 1 小时内都没有发生过')
+      + (t.retained_newest ? '，最后一次 ' + momentLabel(t.retained_newest) : '')
+    : '没有');
+  text('briefTodo', todoSentence(todo, pending, governance, t));
+  text('briefAction', actionSentence(todo, pending, governance, t));
+  if (openCheck && !latestChecks.some(function (r) { return r.code === openCheck; })) {
+    openCheck = '';
+  }
+  renderGroups();
+}
+
+// The three parts, each with its own number, then what is being lost now
+// and what the refused objects lost -- apart, so a loss in progress is
+// never read as history and a refusal's consequence never as capacity.
+function todoSentence(todo, pending, governance, t) {
+  // The platform's lines are in the first count with this deployment's, and
+  // named apart: a reader who reads "alarmd 已确认 10 类" and finds one line
+  // owned by the platform's cache writer has been told the wrong thing.
+  var platform = todo.filter(function (r) { return r.owner === 'PLATFORM'; }).length;
+  var parts = ['现在要处理 ' + (todo.length ? t.checks + ' 类（' + t.objects + ' 个对象，去重'
+                 + (platform ? '；其中平台写入方 ' + platform + ' 类，按策略计不按对象计' : '') + '）' : '没有'),
+               '待归因 ' + (pending.length ? t.undetermined + ' 类（' + t.undetermined_objects + ' 个对象）' : '没有'),
+               '业务侧已确认 ' + (governance.length ? t.governance + ' 类（' + t.governance_objects + ' 个对象）在运营治理' : '没有')];
+  var loss = [];
+  if (t.ongoing) {
+    loss.push('正在漏检 ' + t.ongoing + ' 个对象（最近 ' + recentWindowMinutes() + ' 分钟内跳过'
+      + (t.ongoing_newest ? '，最近一次 ' + momentLabel(t.ongoing_newest) : '') + '）');
+  }
+  if (t.after_restart) {
+    loss.push('另有 ' + t.after_restart + ' 个是滚动后的追赶漏检（副本启动 ' + restartGraceMinutes() + ' 分钟内），看它还有没有新增');
+  }
+  if (t.while_demoted) {
+    loss.push('被拒的对象里 ' + t.while_demoted + ' 个在冷却期间跳过了检测'
+      + (t.while_demoted_recent ? '（最近 ' + recentWindowMinutes() + ' 分钟内 ' + t.while_demoted_recent + ' 个）' : '')
+      + '，首要原因是查询不可用');
+  }
+  if (t.retained) loss.push('已停止的漏检记录 ' + t.retained + ' 个对象另列');
+  return '需要处理：' + parts.join('；') + (loss.length ? '。' + loss.join('；') : '');
+}
+
+// One conclusion before the evidence. The lines are in the order the reader
+// acts, so the first one is the thing to do; the other sections are named so
+// the reader knows they were weighed and not hidden. The page used to give
+// three sentences that each stood, and left combining them to the reader.
+function actionSentence(todo, pending, governance, t) {
+  if (todo.length) {
+    var first = todo[0];
+    return '现在要做的：' + nextWords(first.code, first) + '（' + checkSentence(first, first.current) + '）'
+      + (todo.length > 1 ? '；之后还有 ' + (todo.length - 1) + ' 类，按顺序在下面' : '')
+      + (pending.length ? '；待归因 ' + pending.length + ' 类另看，别交出去' : '');
+  }
+  var parts = ['现在要做的：alarmd 这边没有已确认要处理的'];
+  if (pending.length) {
+    parts.push('先看待归因的 ' + pending.length + ' 类（' + t.undetermined_objects + ' 个对象）——未确认属 alarmd，也不等于业务侧的');
+  }
+  if (t.ongoing) {
+    parts.push('正在漏检 ' + t.ongoing + ' 个对象，先看它们的周期与最近一次跳过');
+  }
+  if (governance.length) {
+    parts.push('运营治理 ' + governance.length + ' 类交对应负责人');
+  }
+  return parts.join('；');
+}
+
+// A group's key in words where the key is a closed value the page has
+// words for: a standing's kind, or what a record is a record of. A budget
+// rejection under a record line is named as the one fold that is capacity.
+function groupKeyLabel(report, key, group) {
+  if (DEGRADATION[key]) {
+    var failure = group && group.text ? '——最近一次失败' + (group.stage ? '于 ' + group.stage : '') + '：' + group.text : '';
+    return key + '（' + DEGRADATION[key] + failure + '）';
+  }
+  if (report.group_by === 'loss') {
+    if (LOSS[key]) return key + '（' + lossWords(key) + '）';
+    if (/BUDGET|RESOURCE_HARD_STOP|RECORD_TOO_LARGE/.test(key)) return key + '（资源预算拒绝——这一组才是容量限制）';
+  }
+  return key;
+}
+
+// The next step for a check, with the window it names filled in.
+function nextWords(code, report) {
+  return tableWords(NEXT, code, '下一步', report);
+}
+
+// One of the per-check tables, loudly when the table has no entry: a blank
+// would read as "nothing to say".
+function tableWords(table, code, what, report) {
+  var words = table[code];
+  if (!words) return '（页面没有这条检查项的' + what + '：' + code + '，请上报）';
+  return rebalanceWords(words, report && report.rebalance).replace('{w}', String(recentWindowMinutes()));
+}
+
+// which is the count the sentence is about: 'current' for the todo list,
+// 'retained' for the record, 'objects' for governance.
+function fillCheckRows(host, reports, which) {
+  host.textContent = '';
+  reports.forEach(function (report) { host.appendChild(checkRow(report, which)); });
+}
+
+// One line of the first screen: the sentence, what to do, who acts, and
+// whether the count is a sample.
+function checkRow(report, which) {
+  var tr = document.createElement('tr');
+  if (report.code === openCheck) tr.className = 'openrow';
+  var what = document.createElement('td');
+  var count = which === 'retained' ? report.retained : (which === 'current' ? report.current : report.objects);
+  what.appendChild(document.createTextNode(checkSentence(report, count)));
+  if (which === 'retained') {
+    what.appendChild(document.createTextNode(historyClause(report)));
+  }
+  // The three things past the sentence, on one line each so a reader sees
+  // 影响 → 证据 → 下一步 → 恢复标准 in that order and never has to infer
+  // one from another.
+  var retained = which === 'retained';
+  var next = document.createElement('div');
+  next.className = 'next';
+  next.textContent = '证据：' + tableWords(EVIDENCE, report.code, '证据', report)
+    + ' ｜ 下一步：' + (retained && NEXT_RETAINED[report.code] ? NEXT_RETAINED[report.code] : nextWords(report.code, report))
+    + ' ｜ 恢复标准：' + (retained ? '记录不会归零；看的是同一对象有没有再跳过' : tableWords(RECOVERY, report.code, '恢复标准', report));
+  what.appendChild(next);
+  what.title = report.code;
+  what.style.cursor = 'pointer';
+  what.addEventListener('click', function () {
+    openCheck = openCheck === report.code ? '' : report.code;
+    renderChecks(latestChecks);
+  });
+  tr.appendChild(what);
+  var who = document.createElement('td');
+  who.textContent = OWNER[report.owner] || report.owner || '（没带归属，缺陷，请上报）';
+  if (report.owner === 'ALARMD') who.className = 'stuck';
+  if (report.owner === 'UNDETERMINED') {
+    who.title = '分组键落不到一个外部实体，证据分不出是谁的。留在这里等确认，不直接交给策略方或数据源';
+  }
+  tr.appendChild(who);
+  var note = document.createElement('td');
+  note.className = 'mono';
+  note.textContent = report.partial ? '样本' : '';
+  if (report.partial) note.title = '有副本没能发布完整清单，这一行的数是样本不是总数';
+  tr.appendChild(note);
+  return tr;
+}
+
+// The groups of the open check, each expandable to its objects.
+function renderGroups() {
+  var report = null;
+  latestChecks.forEach(function (r) { if (r.code === openCheck) report = r; });
+  show('detail', !!report);
+  var host = document.getElementById('groups');
+  host.textContent = '';
+  if (!report) return;
+  text('detailTitle', checkSentence(report));
+  text('detailBasis', '按' + (GROUP_BY[report.group_by] || report.group_by || '分组键') + '合并；展开一组看对象。'
+    + (report.partial ? '有副本没能发布完整清单，这里是样本。' : '')
+    // The standing's own evidence: what the last failed attempt said, and the
+    // two series that corroborate it from outside this page.
+    + (report.activation
+        ? '最近一次激活失败：' + (report.activation.last_failure || '（没有文本）')
+          + '（副本 ' + shortReplica(report.replica || '') + '）。伴随证据：segment_content_freshness_total{stale}、'
+          + 'schedule_cutover_total{result,reason}、日志 stage activation_failed。'
+        : ''));
+  (report.groups || []).forEach(function (group) {
+    var key = report.code + '|' + group.key;
+    var details = document.createElement('details');
+    details.className = 'more group';
+    var label = document.createElement('summary');
+    var parts = [groupKeyLabel(report, group.key, group)];
+    // A fold with no objects behind it is a replica-level fact, not a list:
+    // a coverage hole, or a standing, which names its replicas instead.
+    if (group.objects) parts.push(group.objects + ' 个对象');
+    else if (group.samples) parts.push(group.strategies + ' 条策略' + (group.disposition ? '，处置 ' + group.disposition : '')
+      + (group.disposition === 'STALE_CONFIG' ? '，仍按上一版配置在检测，新配置没生效' : '，没有对象（没进入检测）'));
+    else if (group.replicas && group.replicas.length) parts.push('副本 ' + group.replicas.map(shortReplica).join('、') + '，没有可列的对象');
+    else parts.push('副本级缺口，没有可列的对象');
+    if (group.strategies && !group.samples) parts.push(group.strategies + ' 条策略');
+    if (group.businesses) parts.push(group.businesses + ' 个业务');
+    label.textContent = parts.join(' · ');
+    details.appendChild(label);
+    var body = document.createElement('div');
+    details.appendChild(body);
+    if (group.samples) {
+      body.appendChild(sampleList(group));
+    }
+    if (group.objects) {
+      details.addEventListener('toggle', function () {
+        expandedGroups[key] = details.open;
+        if (details.open) loadGroup(report.code, group.key, body);
+      });
+      if (expandedGroups[key]) {
+        details.open = true;
+        loadGroup(report.code, group.key, body);
+      }
+    }
+    host.appendChild(details);
+  });
+}
+
+// The strategies a source standing's group names: a bounded sample with the
+// field the refusal was about, and how many the sample leaves out. Plain
+// identifiers, not console links: the console needs a business id, and the
+// commonest refusal here is a document without any identity at all.
+function sampleList(group) {
+  var wrap = document.createElement('div');
+  wrap.className = 'basis';
+  var samples = group.samples || [];
+  var head = document.createElement('p');
+  head.textContent = '策略样本（按 ID 升序，最多 ' + samples.length + ' 条'
+    + (group.strategies > samples.length ? '，另有 ' + (group.strategies - samples.length) + ' 条没列' : '') + '）：';
+  wrap.appendChild(head);
+  var ul = document.createElement('ul');
+  samples.forEach(function (sample) {
+    var li = document.createElement('li');
+    var id = document.createElement('span');
+    id.className = 'mono';
+    id.textContent = '策略 ' + sample.strategy_id;
+    li.appendChild(id);
+    var tail = [];
+    if (sample.scope === 'LEVEL') tail.push('级别 ' + sample.level_id);
+    if (sample.field_path) tail.push('字段 ' + sample.field_path);
+    if (tail.length) li.appendChild(document.createTextNode('　' + tail.join(' · ')));
+    ul.appendChild(li);
+  });
+  wrap.appendChild(ul);
+  return wrap;
+}
+
+// The objects of one group, a page at a time, from the server's ordering.
+function loadGroup(code, groupKey, body) {
+  var key = code + '|' + groupKey;
+  var offset = groupOffsets[key] || 0;
+  return api('objects?check=' + encodeURIComponent(code) + '&group=' + encodeURIComponent(groupKey)
+    + '&offset=' + offset + '&limit=' + LIMIT).then(function (objects) {
+    body.textContent = '';
+    var table = document.createElement('table');
+    var thead = document.createElement('thead');
+    var head = document.createElement('tr');
+    ['对象', '现在', '最近结果', '自何时 · 当前原因多久', '窗口', '去哪', ''].forEach(function (label) {
+      var th = document.createElement('th');
+      th.textContent = label;
+      head.appendChild(th);
+    });
+    thead.appendChild(head);
+    table.appendChild(thead);
+    var tbody = document.createElement('tbody');
+    var rows = objects.anomalies || [];
+    rows.forEach(function (anomaly) { tbody.appendChild(objectRow(anomaly)); });
+    table.appendChild(tbody);
+    body.appendChild(table);
+    var total = (objects.page && objects.page.total) || 0;
+    var pager = document.createElement('div');
+    pager.className = 'pager';
+    var prev = document.createElement('button');
+    prev.textContent = '上一页';
+    prev.disabled = offset <= 0;
+    prev.addEventListener('click', function () {
+      groupOffsets[key] = Math.max(0, offset - LIMIT);
+      loadGroup(code, groupKey, body);
+    });
+    var next = document.createElement('button');
+    next.textContent = '下一页';
+    next.disabled = offset + LIMIT >= total;
+    next.addEventListener('click', function () {
+      groupOffsets[key] = offset + LIMIT;
+      loadGroup(code, groupKey, body);
+    });
+    var info = document.createElement('span');
+    info.textContent = (rows.length ? '第 ' + (offset + 1) + '–' + (offset + rows.length) + ' 条' : '无')
+      + '，共 ' + total + ' 条' + pageTail(objects, total);
+    pager.appendChild(prev);
+    pager.appendChild(next);
+    pager.appendChild(info);
+    body.appendChild(pager);
+  }).catch(function (e) { fail('objErr', e); });
+}
+
+// One object: the four dimensions as values, where to go, and the evidence one
+// click away. No sentence on the row decides anything; the line above it did.
+function objectRow(anomaly) {
+  var tr = document.createElement('tr');
+  function cell(t, cls) {
+    var td = document.createElement('td');
+    if (cls) td.className = cls;
+    td.textContent = t;
+    tr.appendChild(td);
+    return td;
+  }
+  var qg = cell(anomaly.query_group.slice(0, 12) + '…', 'mono qg');
+  qg.title = anomaly.query_group + '（点击填入下面的观察窗口）';
+  qg.addEventListener('click', function () {
+    document.getElementById('qg').value = anomaly.query_group;
+  });
+  var finding = anomaly.finding || {};
+  // Now: the value, and beside it the moment or the lag that decides it.
+  var wake = anomaly.wake;
+  var nowWord = SCHEDULE[finding.schedule] || finding.schedule || '—';
+  if (wake && wake.known && wake.due_at) {
+    if (finding.schedule === 'ON_TIME') nowWord += ' · 预计 ' + momentLabel(wake.due_at);
+    if (finding.schedule === 'LATE' || finding.schedule === 'OVERDUE') {
+      nowWord += ' ' + elapsedLabel((Date.now() - new Date(wake.due_at).getTime()) / 1000);
+    }
+  }
+  // A round that keeps failing on one Slot is stuck on it; said here, on
+  // the cell that answers "what is it doing now", with the count.
+  var lastError = anomaly.last_error;
+  if (lastError && lastError.evaluation_time && lastError.attempts > 1) {
+    nowWord += ' · 卡在 ' + momentLabel(lastError.evaluation_time * 1000) + ' 这个 Slot，第 ' + lastError.attempts + ' 次失败';
+  }
+  var now = cell(nowWord);
+  if (wake && wake.known && wake.interval_seconds) {
+    now.title = '周期 ' + elapsedLabel(wake.interval_seconds) + '；到期 ' + momentLabel(wake.due_at)
+      + '；超过一个周期算超期';
+  }
+  if (finding.schedule === 'STALLED') {
+    now.className = 'stuck';
+    now.title = '已连续 ' + duration(anomaly.failing_since) + ' 没有一轮结束，超过了本部署终结一个跑不完 Slot 的时限';
+    tr.className = 'stuckrow';
+  } else if (finding.schedule === 'COOLING' && anomaly.query_cooldown) {
+    now.title = (new Date(anomaly.query_cooldown.until).getTime() <= Date.now()
+      ? '已到允许查询时间，等待真实查询恢复'
+      : '至 ' + momentLabel(anomaly.query_cooldown.until))
+      + '；最近真实查询 ' + momentLabel(anomaly.query_cooldown.last_query_at)
+      + '；连续失败 ' + (anomaly.query_cooldown.failures >= 32 ? '至少 ' : '') + anomaly.query_cooldown.failures;
+  }
+  // Last result: the value and the code it ended with.
+  var f = anomaly.failure;
+  var code = anomaly.cause_reason || (f && f.code) || anomaly.reason_code || '';
+  // A reason under a durable history guard is the guard's trigger carried
+  // onto this round, not this round's event. Read bare, CONFIG_DRIFT sent a
+  // reader to check whether a strategy was being edited; it was not.
+  var coverage = anomaly.coverage;
+  var held = coverage && coverage.guarded > 0 && anomaly.cause_reason
+    && anomaly.cause_reason !== 'HISTORY_WARMING' && anomaly.cause_reason !== 'HISTORY_GAPPED';
+  var result = cell((RESULT[finding.result] || finding.result || '—') + (code ? ' · ' + code : '')
+    + (held ? '（保护沿用，非本轮）' : ''), 'mono');
+  if (held) {
+    result.title = '历史窗口保护尚未解除；' + code + ' 是保护最初建立时的原因，每一轮都沿用，不代表这一轮又发生了它。'
+      + '当前缺什么看右边的窗口列';
+  }
+  if (f) {
+    result.title = [symptomText(f.detail), f.stage ? '阶段 ' + f.stage : '',
+      FAILURE_CATEGORY[f.category] || f.category || ''].filter(Boolean).join('\n');
+  }
+  // Since when: how long anomalous at all, and beside it the object's own
+  // clock -- how long it has been saying its current reason and for how many
+  // rounds. Two clocks, because an object degraded for an hour under one
+  // reason and for two rounds under another is both, and the second is what
+  // says whether the reason is settled or just arrived.
+  var heldText = (SINCE_BOUND[anomaly.since_from] || '') + duration(anomaly.since);
+  if (anomaly.consecutive) {
+    heldText += ' · 当前原因 ' + (anomaly.reason_since && anomaly.reason_since !== anomaly.since
+      ? duration(anomaly.reason_since) + '，' : '') + '连续 ' + anomaly.consecutive + ' 轮';
+  }
+  var held = cell(heldText);
+  held.title = SINCE_SOURCE[anomaly.since_from] || anomaly.since_from || '';
+  // The window, as counts.
+  var windowCoverage = anomaly.coverage;
+  var win = cell(windowCoverage && windowCoverage.levels
+    ? windowCoverage.levels + ' 个窗口 · 短 ' + (windowCoverage.short || 0) + ' · 空 ' + (windowCoverage.empty || 0)
+      + ' · 新 ' + (windowCoverage.fresh || 0)
+      + (windowCoverage.short_rounds ? ' · 连续 ' + windowCoverage.short_rounds + ' 轮' : '')
+      + windowProgress(windowCoverage)
+      + (windowCoverage.unusable ? ' · 检测用不了 ' + windowCoverage.unusable + ' 个：' + windowCoverage.unusable_reason : '')
+      + (windowCoverage.abnormal_on_incomplete ? ' · 不完整窗口上报了 ' + windowCoverage.abnormal_on_incomplete + ' 个异常' : '')
+    : '—', 'mono');
+  if (windowCoverage && windowCoverage.guarded) {
+    win.title = windowCoverage.guarded + '/' + windowCoverage.levels + ' 个窗口报的是沿用上一轮的结论，不是本轮算出来的';
+  }
+  // Where to go.
+  var td = document.createElement('td');
+  var strategies = dedupeStrategies(anomaly.strategies);
+  strategies.forEach(function (s) {
+    var span = document.createElement('span');
+    span.className = 'tag';
+    span.textContent = s.business_id ? (s.strategy_id + ' / 业务 ' + s.business_id) : s.strategy_id;
+    td.appendChild(span);
+    var open = strategyLink(s);
+    if (open) {
+      var a = document.createElement('a');
+      a.className = 'tag open';
+      a.href = open;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = '打开策略 ↗';
+      a.title = '在监控页面里打开策略 ' + s.strategy_id;
+      td.appendChild(a);
+    }
+  });
+  if (!strategies.length) {
+    td.textContent = anomaly.kind === 'BLOCKED_RUN'
+      ? '未观察到（这一轮没取到 Slot，策略是从 Slot 上读的）'
+      : '未观察到';
+  }
+  tr.appendChild(td);
+  // The evidence, one click away.
+  var more = document.createElement('td');
+  var details = document.createElement('details');
+  var toggle = document.createElement('summary');
+  toggle.textContent = '▸';
+  toggle.title = '种类、原因码、后端症状、起算来源、副本';
+  details.appendChild(toggle);
+  function line(k, v, title) {
+    if (!v || v === '—') return;
+    var div = document.createElement('div');
+    var b = document.createElement('b');
+    b.textContent = k + '：';
+    div.appendChild(b);
+    div.appendChild(document.createTextNode(v));
+    if (title) div.title = title;
+    details.appendChild(div);
+  }
+  line('种类', kindText(anomaly.kind));
+  line('结果码', anomaly.reason_code);
+  line('成因', anomaly.cause);
+  line('下一层原因', anomaly.cause_reason);
+  if (f) {
+    line('后端症状', symptomText(f.detail), f.detail);
+    line('失败在哪', FAILURE_CATEGORY[f.category] || f.category,
+      ['阶段 ' + f.stage, '分类 ' + f.category, f.code ? '代码 ' + f.code : ''].filter(Boolean).join('\n'));
+  }
+  // The same failure in the shape every failure is read in, so a Redis
+  // restart, a backend timeout and an uncompilable strategy answer the same
+  // question on the same line.
+  if (anomaly.blocked) {
+    line('卡在哪一步', blockedWords(anomaly.blocked),
+      '环节、依赖、类型、影响，由服务端按同一个原因码判定；"待定位"是结论——证据不足以指向某个依赖或环节时不猜');
+  }
+  // The error's own words, without opening a window and waiting for one
+  // more failure. The classification lines above say what kind; this says
+  // what exactly, and which Slot.
+  if (lastError) {
+    line('最近一次错误', lastError.text + (lastError.type ? '（' + lastError.type + '）' : '')
+      + (lastError.evaluation_time ? '，Slot ' + momentLabel(lastError.evaluation_time * 1000) : '')
+      + (lastError.attempts > 1 ? '，同一 Slot 连续 ' + lastError.attempts + ' 次' : '')
+      + '，' + momentLabel(lastError.at),
+      '这一轮返回的原始错误，已脱敏并截断到 256 字。同一 Slot 连续失败次数区分"卡住"和"每轮换一个 Slot 失败"');
+  }
+  // A failure of this deployment's own making beside the finding the column
+  // decided: the row is on its line for the column's reason and under
+  // DEFECT for this one, and neither hides the other.
+  if (anomaly.internal_failure) {
+    var internal = anomaly.internal_failure;
+    line('内部错误', internal.code + (internal.detail ? '（' + internal.detail + '）' : '') + (internal.stage ? '，阶段 ' + internal.stage : ''),
+      'alarmd 自己的合同或评估错误，与这一行的归属无关，另列在"程序缺陷"线下；健康完成一轮后清掉');
+  }
+  var skip = anomaly.skip;
+  if (skip) {
+    // What the loss is, from the server's classification of the record
+    // against the object's column and the record's age; the words carry
+    // the window it was decided on.
+    var loss = anomaly.loss && LOSS[anomaly.loss] ? '。' + lossWords(anomaly.loss) : '';
+    // The period names the mechanism: a loss in progress on a 10/15/30
+    // second object is the scheduler's replay bound, and the row says so
+    // rather than sending the reader to look the strategy's period up.
+    var period = skip.interval_seconds ? '，' + skip.interval_seconds + ' 秒周期' : '';
+    // The mechanism is the last step before the skip, not the period: a
+    // ten-second object can be skipped by the replay bound or by a retry
+    // that came too late, and the two are different fixes.
+    var mechanism = '';
+    line('没检测的时段', momentLabel(skip.first_slot * 1000) + ' – ' + momentLabel(skip.last_slot * 1000)
+      + (skip.slots ? '，' + skip.slots + ' 个 Slot' : '，个数无法得知')
+      + '，记录于 ' + momentLabel(skip.at) + period + loss + mechanism,
+      '这段里的时间点没有被评估过，也不会补跑。仍在发生的要看对象为什么追不上；已停止的只是记录，要处理的是这段没有告警覆盖的时间。');
+    if (skip.reason || anomaly.loss === 'ONGOING' || anomaly.loss === 'AFTER_RESTART') {
+      line('跳过前最后一步', skipReasonWords(skip.reason || 'NOTHING_TRIED'),
+        '这一 Slot 被放弃前最后一次失败的步骤；它是根因所在，不按周期推断');
+    }
+  }
+  line('起算来源', SINCE_SOURCE[anomaly.since_from] || anomaly.since_from);
+  line('副本', shortReplica(anomaly.replica), anomaly.replica);
+  more.appendChild(details);
+  tr.appendChild(more);
+  return tr;
+}
+//
+// The 24-hour trend window starts and ends at the same wall-clock time on two
+// different days, so a time-only label rendered it as "17:02:35 – 17:02:35":
+// a window of zero length, printed over a chart that visibly covers a day.
+function rangeLabel(startAt, endAt) {
+  var start = new Date(startAt), end = new Date(endAt);
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) { return '—'; }
+  if (start.toDateString() === end.toDateString()) {
+    return start.toLocaleTimeString() + ' – ' + end.toLocaleTimeString();
+  }
+  function dated(when) {
+    return when.toLocaleDateString(undefined, {month: 'numeric', day: 'numeric'})
+      + ' ' + when.toLocaleTimeString();
+  }
+  return dated(start) + ' – ' + dated(end);
+}
+
+function loadHealth() {
+  // Called rather than passed by reference. The check that every page function
+  // has a call site reads call syntax, and a bare reference is invisible to it
+  // -- so passing it here would let this renderer be deleted from every call
+  // path with nothing failing.
+  return api('health').then(function (deployment) { renderDeployment(deployment); })
+    .catch(function (e) { fail('healthErr', e); fail('capErr', e); });
+}
+
+// The whole health panel, top to bottom.
+//
+// Named rather than left inline in the fetch callback for the reason
+// objectRow was: inline, nothing can call it, so nothing can execute it, and
+// a ReferenceError anywhere in here replaces the deployment verdict -- the
+// most-read thing on the page -- with an error banner while every static
+// check stays green. That has already shipped once from the object table.
+function renderDeployment(deployment) {
+    show('healthErr', false);
+    var h = deployment.health || 'UNKNOWN';
+    var badge = document.getElementById('health');
+    badge.textContent = h;
+    badge.className = 'badge b-' + h;
+    text('expected', deployment.expected === null || deployment.expected === undefined ? '未知' : deployment.expected);
+    text('covered', deployment.covered);
+    text('determined', deployment.determined);
+    text('unknown', deployment.unknown);
+    text('healthy', deployment.healthy);
+    text('ownBad', deployment.anomalies_total);
+    text('demoted', deployment.demoted_total);
+    text('undecidable', deployment.undecidable_total || 0);
+    text('byDesign', deployment.by_design_total || 0);
+    // The number the verdict is actually decided on when there are no coverage
+    // gaps, and it had no field on this response at all. A deployment reading
+    // UNKNOWN with every other number at zero gave a reader nothing to go on.
+    //
+    // Not part of the column arithmetic below: these objects are already
+    // counted in "没跑成待查". This says how many of that column cannot yet be
+    // said to be anyone's, which is a different question from how many exist.
+    var unattributed = deployment.unattributed || 0;
+    show('unattributedCell', !!unattributed);
+    if (unattributed) {
+      text('unattributed', unattributed);
+      // Two things this said flatly and is only sometimes true.
+      //
+      // "判定停在 UNKNOWN" is the unattributed path to UNKNOWN, and it is not
+      // the only one: a coverage gap decides the verdict first and the banner
+      // then names the gap. A live page showed this cell claiming the verdict
+      // while the banner above it attributed the verdict to something else --
+      // one screen, two causes, and no way to tell which.
+      //
+      // And this cell is not a seventh column. These objects are already inside
+      // 没跑成待查; the cell sits in the same grid as the six that partition, so
+      // it has to say so or the eight cards read as eight columns against an
+      // equation with six terms in it.
+      var decidesVerdict = h === 'UNKNOWN' && !(deployment.gaps || []).length;
+      text('unattributedHint', '重启后从记录里恢复的：记录留了"这一轮没跑成"，没留为什么，'
+        + '所以还说不清是不是 alarmd 自己的问题。'
+        + (decidesVerdict
+            ? '本次判定就是停在这里。'
+            : '本次判定不是停在这里——原因见上面的"证据不全"那一句。')
+        + '已经计入左边的"没跑成待查"，不另占一栏。'
+        + '每个对象再跑完一轮就重新有成因，会自己清');
+    }
+    // Held before the object list renders, because the rows read it. It arrives
+    // on the verdict response, which is fetched first and refreshed on the same
+    // timer, so a console configured after a restart appears without a reload.
+    consoleBase = deployment.strategy_link_base || '';
+    renderImpact(deployment.impact);
+    // The equation is printed with its own arithmetic rather than asserted in
+    // prose. A reader who can only be told the columns partition the objects has
+    // no way to notice the day they stop doing so.
+    var parts = [deployment.healthy, deployment.anomalies_total, deployment.demoted_total,
+                 deployment.undecidable_total || 0, deployment.by_design_total || 0,
+                 deployment.unknown];
+    var sum = parts.reduce(function (a, b) { return a + (b || 0); }, 0);
+    var total = (deployment.expected === null || deployment.expected === undefined) ? deployment.covered : deployment.expected;
+    // Which cards are in the equation, named rather than left to be inferred
+    // from the order they happen to be laid out in. The grid holds eight cards
+    // and this sum has six terms; the two that are not in it are cross-cuts of
+    // 没跑成待查, so a reader adding all eight gets a number larger than the
+    // deployment and no way to find out why.
+    var crossCuts = [];
+    if (unattributed) crossCuts.push('成因没保留');
+    if (deployment.overdue || deployment.dispatch) crossCuts.push('没被调度');
+    text('splitBasis', '每个对象只落一栏：' + parts.join(' + ') + ' = ' + sum +
+      (sum === total ? '，等于应有的 ' + total : '，但应有的是 ' + total + ' —— 对不上，先别信这几个数')
+      + (crossCuts.length
+          ? '。' + crossCuts.join('、') + '是横切计数，已经含在上面六栏里，不参与这个等式'
+          : ''));
+    // Demotion is the one mechanism here that makes a deployment look better by
+    // removing objects from the denominator, so the pool never gets to report
+    // only its size. A pool with members and no exits is a way out that has
+    // stopped working, and its occupancy reads exactly like a backend that is
+    // still down.
+    var exits = deployment.demotion_exits || 0;
+    var entries = deployment.demotion_entries || 0;
+    text('poolExits', entries ? exits + ' / ' + entries : '—');
+    var flow = [];
+    if (!entries) {
+      flow.push('本次进程还没有对象进过降级池');
+    } else if (!exits) {
+      // Exits alone would call a real outage a broken mechanism: during one
+      // there is nothing to recover to, so nothing exits either. Extensions are
+      // what separates the two -- a pool being extended is being retried and
+      // failing, a pool with nothing moving is not being touched.
+      flow.push((deployment.demotion_extensions || 0)
+        ? '进过 ' + entries + ' 个，一个都没出来过，但还在被重试（延长 ' + deployment.demotion_extensions + ' 次）——后端大概还没好'
+        : '进过 ' + entries + ' 个，既没出来过也没被重试过——出池路径可能已经不工作了');
+    } else {
+      flow.push('进过 ' + entries + ' 个，出来过 ' + exits + ' 个');
+      if (deployment.last_demotion_exit) {
+        flow.push('最近一次出池 ' + momentLabel(deployment.last_demotion_exit));
+      }
+    }
+    if (deployment.demoted_due) {
+      // The count alone reads the same whether the retry path works or stopped:
+      // objects fall due continuously, so a steady handful is what both look
+      // like from outside. How long the worst one has waited is what separates
+      // them, and it is the question this panel exists to answer.
+      // Rendered in seconds, and the reading rule kept as a rule.
+      //
+      // This went through duration(), which floors to whole minutes, so every
+      // value under a minute printed "0 分钟" -- the same text a reader gets for
+      // nothing at all, on a line whose own next clause says tens of seconds is
+      // the normal range. A live page showed "6 个已到期，最久的一个已经过期 0
+      // 分钟". The dispatch overdue cell below has always printed this same kind
+      // of quantity in seconds; only this one did not.
+      //
+      // And the closing clause was appended whenever the number existed, so a
+      // 40-second overdue was followed by "这个数远大于一个检测周期，才说明出池
+      // 路径本身有问题". It is a rule for reading the number and it read as a
+      // verdict about it. There is no per-object period on this response, so the
+      // comparison belongs to the reader and has to be phrased as theirs.
+      var demotedOverdue = deployment.demoted_due_oldest_seconds || 0;
+      flow.push('其中 ' + deployment.demoted_due + ' 个的冷却时间已经到了还没被重试'
+        + (demotedOverdue
+            ? '，最久的一个过期 ' + elapsedLabel(demotedOverdue)
+              + '——重试按对象自己的周期发起，过期几十秒到几分钟是正常的；'
+              + '要超过这些对象自己的一个检测周期，才说明出池路径本身有问题'
+            : ''));
+    }
+    flow.push('计数从本次进程启动起算，重启归零');
+    text('poolFlowHint', flow.join('；'));
+    renderCoverage(deployment.coverage);
+    renderReplicas(deployment.per_replica);
+    renderSource(deployment.source, deployment.expected);
+    renderDependencies(deployment.dependencies || [], deployment.dependencies_replica);
+    text('demotedHint', deployment.demoted_total
+      ? '后端持续查不到，已降级不再反复查；不计入部署健康判定'
+      : '当前没有对象被降级');
+    // Worded as a normal condition, because it is one. These objects read data
+    // correctly and still raise anomalies; what they cannot do is decide that
+    // something went back to normal, because the window has no complete history
+    // to decide it on. Counting them as faults made a permanent, expected
+    // condition the biggest number on the page.
+    text('undecidableHint', (deployment.undecidable_total || 0)
+      ? '检测窗口数据不足，当前无法确认告警恢复。异常检测不受影响，恢复判定受影响。'
+        + '短暂缺点会自己补齐；持续缺点要查数据连续性和策略窗口。不计入部署健康判定。'
+      : '当前没有这种对象');
+    // Worded as finished business, because that is what it is: the change was
+    // already made on purpose and the next round runs under it. The column is
+    // deliberately narrow -- one reason on the list -- so that it does not
+    // become the place things go to stop being looked at.
+    text('byDesignHint', (deployment.by_design_total || 0)
+      ? '策略自己的生效时段/日历说现在不该跑。这是常驻状态不是过渡状态——只在工作时段生效的策略，'
+        + '每天有十几个小时在这里。不计入部署健康判定'
+      : '当前没有这种对象');
+    // Shown only where something actually holds wake times. A zero here on a
+    // deployment that holds none would report "nothing is being missed" for one
+    // where nothing is watching, which is the failure this whole cell is for.
+    var overdue = deployment.overdue;
+    show('overdueCell', !!overdue);
+    if (overdue) {
+      // Three states, not two. While the due index runs in shadow it decides
+      // nothing, so no object is ever held back, so this count cannot be
+      // anything but zero -- and printing "0，每个对象都在按自己的周期被处理"
+      // off that build is a reassurance nothing earned. What tells them apart
+      // is whether the deployment reports suppression at all: the code that
+      // reports it is the code that parks objects, so a build that parks
+      // nothing cannot produce the field.
+      if (!deployment.dispatch) {
+        text('overdue', '未启用');
+        text('overdueHint', '到期索引在影子模式，还不会拦下任何对象——所以这里结构上只可能是 0，不代表“没有对象漏掉”');
+      } else {
+        // A truncated count is a floor, and writing it as a plain number would
+        // state the sample as the total.
+        // Two clocks, said out loud. This one is "right now"; the six columns
+        // above are each object's most recent finished round. On a live page
+        // that read 正常 1667 beside 拦下 1993, and a reader with no way to know
+        // they are measured at different instants can only conclude one of them
+        // is wrong.
+        var parked = '当前有 ' + (deployment.dispatch.parked || 0)
+          + ' 个对象被到期索引拦下，没到点、本来就不该跑'
+          + '（这是此刻的调度状态；上面六栏说的是每个对象最近跑完的那一轮，两组数不是同一个时刻的，别相加）';
+        if (overdue.truncated) {
+          // "≥ 0" is every number, so it tells nobody anything, and the old
+          // wording then branched on the count alone and reassured off it --
+          // handing the most confident sentence on the cell to the one reading
+          // that counted least.
+          text('overdue', '看不全');
+          text('overdueHint', '异常列表被截断，这里数不出漏掉了几个——不是 0，是不知道。' + parked);
+        } else {
+          text('overdue', String(overdue.total));
+          text('overdueHint', overdue.total
+            ? '唤醒时刻已过、没有轮次回来；最久的 ' + Math.round(overdue.oldest_seconds || 0) +
+              ' 秒。可能没被派发，也可能派出去没回来'
+            : '每个对象都在按自己的周期被处理。' + parked);
+        }
+      }
+    }
+    renderPrunedSkips(deployment.pruned_skips || []);
+    var gaps = deployment.gaps || [];
+    // UNKNOWN has two ways in and the wording used to describe only one.
+    //
+    // The first is a coverage gap, and the footer under this panel explains
+    // that one. The second is an object whose cause was never recorded -- a
+    // per-object hole rather than a per-replica one, and it decides the
+    // verdict exactly the same way. A live deployment read UNKNOWN with no
+    // gaps, unknown-state zero and every column adding up, and this line told
+    // the reader "证据齐全" underneath it: the page asserting the opposite of
+    // its own badge, with nothing on it that could settle the argument.
+    var degradations = deployment.degradations || [];
+    text('why', gaps.length
+      ? '证据不全：' + (GAP_MEANING[gaps[0].kind] || gaps[0].kind) +
+        (gaps.length > 1 ? '，另有 ' + (gaps.length - 1) + ' 项' : '')
+      : (h === 'UNKNOWN' && unattributed
+          ? '证据不全：有 ' + unattributed + ' 个对象没留下成因（重启后从记录里恢复的，'
+            + '记录只保留了结果不保留原因），所以说不清它们是不是 alarmd 自己的问题。'
+            + '这不是覆盖缺口——上面的"状态未知"是另一回事，那一栏数的是没有副本能报告其状态的对象。'
+            + '这类会自己清：每个对象再跑完一轮就重新有成因了'
+      // The verdict follows only the objects capacity or design could have
+      // prevented, so the wording has to say that -- otherwise HEALTHY beside a
+      // list of ninety-nine objects reads as the page contradicting itself.
+      //
+      // A replica-level standing decides DEGRADED before the object list is
+      // consulted, and this sentence used to name the object list anyway:
+      // half a day of a fleet executing a stale publication read here as
+      // "容量或架构". The standing is named first when there is one.
+      : (h === 'DEGRADED'
+          ? (degradations.length
+              ? '证据齐全，副本级运行状态超出设计界：' + degradationWords(degradations)
+                + '。对象列表不决定这次判定；看首屏第一行'
+              : '证据齐全，存在 alarmd 自己该负责的异常（容量或架构）')
+          : (deployment.anomalies_total > 0
+              ? '证据齐全，alarmd 自己没有异常；列表里那些是数据源或策略配置的问题，由对应负责人处理'
+              : '证据齐全，无异常对象'))));
+    var ul = document.getElementById('gaps');
+    ul.textContent = '';
+    gaps.forEach(function (g) {
+      var li = document.createElement('li');
+      var k = document.createElement('span');
+      k.className = 'kind';
+      k.textContent = g.kind;
+      li.appendChild(k);
+      var tail = GAP_MEANING[g.kind] || '';
+      if (g.replica) tail = '副本 ' + shortReplica(g.replica) + '：' + tail;
+      if (g.detail) tail += '（' + g.detail + '）';
+      if (tail) li.appendChild(document.createTextNode('　' + tail));
+      ul.appendChild(li);
+    });
+    // Capacity rides on the same response as the verdict, so it is rendered
+    // from the same read rather than fetched separately: two reads would let
+    // the page show a verdict from one moment beside occupancy from another.
+    show('capErr', false);
+    renderLoad(deployment.load);
+    renderCapacity(deployment.capacity, gaps, deployment.schedule);
+    renderBrief(deployment);
+}
+
+// What the verdict costs, in the unit the work is done in.
+//
+// The badge and every cell under it count objects, which are alarmd's own
+// identities. A reader cannot look one up, cannot mention one to whoever
+// configured the strategy, and cannot tell from a count of them whether this is
+// one misconfiguration or fifty. So HEALTHY could sit above 58 demoted objects
+// with nothing on the page saying which alerts are not being raised.
+//
+// Three questions, in the order they get asked: 哪些策略拿不到检测结果、哪些只是
+// 不能自动恢复、要不要现在处理。
+// Normalised at the boundary, so every read of an API field happens on one
+// identifier the field check can be pointed at -- and so a column the response
+// omits renders zeros instead of throwing on a property of undefined.
+function columnImpact(columnFacts) {
+  columnFacts = columnFacts || {};
+  return {objects: columnFacts.objects || 0, strategies: columnFacts.strategies || 0,
+          businesses: columnFacts.businesses || 0, partial: !!columnFacts.partial};
+}
+
+function renderImpact(impact) {
+  var host = document.getElementById('impact');
+  host.textContent = '';
+  if (!impact) { return; }
+  function add(node) { host.appendChild(node); return node; }
+  function line(cls) {
+    var div = document.createElement('div');
+    if (cls) { div.className = cls; }
+    return add(div);
+  }
+  function strong(parent, value) {
+    var b = document.createElement('b');
+    b.textContent = value;
+    parent.appendChild(b);
+    return b;
+  }
+  // Detection is lost for as long as the condition lasts: a demoted object is
+  // not being queried at all, and an object in the to-do column did not produce
+  // a result this round. By-design rounds are excluded -- one round was voided
+  // and the next runs under the new configuration.
+  // The union of the two columns, taken from the response rather than added up
+  // here: a strategy with objects in both is one strategy, and adding overstates
+  // the very number a reader would act on -- by most when the deployment is at
+  // its worst. The two are still named, because they go to different people.
+  var blind = columnImpact(impact.blind);
+  var demoted = columnImpact(impact.demoted), pending = columnImpact(impact.anomalies);
+  var blindStrategies = blind.strategies;
+  var lead = line('lead');
+  if (blindStrategies) {
+    lead.appendChild(document.createTextNode('当前有 '));
+    strong(lead, blindStrategies);
+    lead.appendChild(document.createTextNode(' 条策略拿不到检测结果'));
+    if (blind.businesses) {
+      lead.appendChild(document.createTextNode('（涉及 ' + blind.businesses + ' 个业务）'));
+    }
+    lead.appendChild(document.createTextNode('：后端查不到 ' + demoted.strategies
+      + ' 条，没跑成待查 ' + pending.strategies + ' 条'
+      + (demoted.strategies + pending.strategies > blindStrategies
+          ? '，两边有重合的策略' : '') + '。'));
+  } else {
+    lead.appendChild(document.createTextNode('当前没有策略因为 alarmd 这一侧拿不到检测结果。'));
+  }
+  var undecided = columnImpact(impact.undecidable);
+  if (undecided.strategies) {
+    var rec = line('lead');
+    rec.appendChild(document.createTextNode('另有 '));
+    strong(rec, undecided.strategies);
+    rec.appendChild(document.createTextNode(' 条策略能报异常、但当前无法确认恢复'
+      + '——这些告警报出来之后不会自动关闭。'));
+  }
+  // Whether to act, and by whom. This is the only sentence here that asks
+  // somebody to do something, so it is the only one set apart -- and it is
+  // three parts, not two: what is confirmed this deployment's, what nobody
+  // can yet hand to anyone, and what is confirmed the strategy's or the
+  // data's. "其余要找策略配置或数据源的人" over lines reading 待确认 sent
+  // readers to the wrong people.
+  var alarmd = columnImpact(impact.alarmd), undetermined = columnImpact(impact.undetermined);
+  var strategy = columnImpact(impact.strategy), data = columnImpact(impact.data);
+  var act = line('act');
+  var parts = [];
+  parts.push(alarmd.objects
+    ? '需要 alarmd 这边处理的：' + alarmd.strategies + ' 条策略（' + alarmd.objects + ' 个对象）'
+    : '当前没有已确认要 alarmd 这边处理的');
+  if (undetermined.objects) {
+    parts.push('待归因：' + undetermined.strategies + ' 条策略（' + undetermined.objects
+      + ' 个对象）——未确认属 alarmd，也不等于业务侧的，不要交出去');
+  }
+  if (strategy.objects || data.objects) {
+    parts.push('业务侧已确认：策略侧 ' + strategy.strategies + ' 条策略（' + strategy.objects + ' 个对象）、数据侧 '
+      + data.strategies + ' 条策略（' + data.objects + ' 个对象）');
+  }
+  act.textContent = parts.join('；') + '。';
+  // What these counts cannot cover. Said here rather than left to be inferred:
+  // a strategy count off a truncated list is a lower bound in the same shape as
+  // an exact one, on the line a reader uses to decide whether to act tonight.
+  var caveats = [];
+  if (blind.partial || undecided.partial) {
+    caveats.push('有副本没能发布完整清单，上面的策略数是下界');
+  }
+  if (impact.no_strategies) {
+    caveats.push('有 ' + impact.no_strategies + ' 个对象没带策略信息'
+      + '（这一轮没取到 Slot，策略是从 Slot 上读的），它们影响到哪些策略这里说不出');
+  }
+  if (caveats.length) {
+    line('quiet').textContent = '（' + caveats.join('；') + '）';
+  }
+}
+
+// Where this environment's monitor console lives, if anybody said.
+//
+// Held from the verdict response rather than built into the page: the host is
+// environment-specific and alarmd cannot derive it, so it is configured once
+// and the route below -- which belongs to the product, not to any one
+// environment -- stays in code.
+var consoleBase = '';
+
+// A link to the strategy itself, or nothing.
+//
+// Nothing is the right answer in two cases and they are both ordinary: no
+// console was configured, and a reference that carries no business id -- the
+// console needs one to resolve the space, and a link without it lands on an
+// error page. A tag that is not a link is what this row showed before.
+function strategyLink(s) {
+  if (!consoleBase || !s || !s.strategy_id || !s.business_id) { return ''; }
+  return consoleBase + '?bizId=' + encodeURIComponent(s.business_id)
+    + '#/strategy-config/detail/' + encodeURIComponent(s.strategy_id);
+}
+
+
+// What the count line says beyond "共 N 条".
+//
+// Truncation is what the replica could not publish; a filter is what the reader
+// asked to leave out. Those are opposite facts about the same two numbers, and
+// this compared the column's deployment-wide total against the post-filter
+// total -- so filtering to one strategy, the ordinary way to use this page,
+// announced "副本实际有 16 条，快照已截断，此处只能翻到 1 条" over a complete
+// answer. A reader cannot tell a warning that fires during normal use from a
+// real one, so once it has fired wrongly, neither gets read again.
+//
+// The server already decides truncation, from those two numbers before any
+// filter is applied: summary.partial. Its answer is used rather than a worse
+// one re-derived here.
+//
+// A named function rather than inline, so the case that broke is reachable from
+// a test without a fetch.
+function pageTail(objects, total) {
+  var real = objects.anomalies_total;
+  if (objects.summary && objects.summary.partial) {
+    return '（副本没能发布完整清单，这一栏实际有 ' + real + ' 条，'
+      + (objects.filtered ? '过滤是在这份不完整的清单上做的，数不准' : '此处只能翻到 ' + total + ' 条') + '）';
+  }
+  if (objects.filtered && real !== undefined && real > total) {
+    return '（这一栏全部 ' + real + ' 条，已按条件过滤掉 ' + (real - total) + ' 条）';
+  }
+  return '';
+}
+
+
+
+// The coverage gap used to state its own two hypotheses and stop. Both are
+// still possible, but the sets that tell them apart are published now, so the
+// page shows which one it is instead of asking the reader to guess.
+function renderCoverage(coverage) {
+  show('coverWrap', !!coverage);
+  if (!coverage) return;
+  // The totals, not the sample lengths. The identity lists are capped, so their
+  // length is the size of the sample -- and it would start understating the
+  // problem exactly when the problem got big enough to hit the cap.
+  var dup = coverage.held_by_several_total || 0;
+  var stale = coverage.held_not_expected_total || 0;
+  var missing = coverage.expected_not_held_total || 0;
+  text('covDup', dup);
+  text('covStale', stale);
+  text('covMissing', missing);
+  text('coverBasis', coverage.comparable
+    ? '两边的对象集合都拿到了，下面三个数是数出来的，不是推测的。'
+    : '有副本没能把它持有的整份集合发上来，下面三个数只覆盖了发上来的那部分——'
+      + '这里的 0 是"这次没数到"，不是"没有"。');
+  // Naming them is the whole point: "多出 12 个" is not actionable, a list is.
+  var named = [];
+  if (stale) { named.push('目录里没有、副本还拿着：' + (coverage.held_not_expected || []).slice(0, 6).map(function (id) { return shortId(id); }).join(' ')); }
+  if (dup) { named.push('两个副本都拿着：' + (coverage.held_by_several || []).slice(0, 6).map(function (id) { return shortId(id); }).join(' ')); }
+  if (missing) { named.push('没人认领：' + (coverage.expected_not_held || []).slice(0, 6).map(function (id) { return shortId(id); }).join(' ')); }
+  // The old wording promised the complete list in the response. It is a bounded
+  // sample there too, so saying so is the difference between a reader who knows
+  // to filter and one who thinks they already have everything.
+  text('coverIds', named.length
+    ? named.join('；') + '（这里各列最多 6 个；接口里也只带样本，不是全量——要全量用上面的过滤逐个查）'
+    : '');
+}
+
+// The raw detail is a bounded key=value from the emitter, which is right for a
+// machine and useless to the person who has to go and fix the strategy. These
+// say what the finding is; anything unrecognised is shown verbatim rather than
+// bucketed, because a wrong plain sentence is worse than a raw string.
+var SYMPTOM_TEXT = {
+  'response=status_space_table_id_field_is_not_exists':
+    '这个业务空间里没有这张表或这个字段——策略查的对象不存在',
+  'transport=connection_refused': '连不上数据源',
+  'http_status=400': '数据源说请求本身不合法（400）',
+  'http_status=403': '没有权限读这个数据源（403）',
+  'http_status=500': '数据源内部错误（500）',
+  'http_status=503': '数据源暂时不可用（503）'
+};
+
+function symptomText(detail) {
+  if (!detail) return '—';
+  return SYMPTOM_TEXT[detail] || detail;
+}
+
+function shortId(id) { return String(id).slice(0, 12) + '…'; }
+
+// One row per replica, from the replicas' own snapshots rather than by dividing
+// totals -- dividing cannot recover which replica an anomaly came from.
+// share renders a count as a percentage of what the replica holds, which is
+// the only way two replicas' counts can be read against each other when they
+// hold different numbers of objects.
+function share(count, owned) {
+  if (!owned || !count) return '';
+  return '（' + (count / owned * 100).toFixed(1) + '%）';
+}
+
+// What the leader's last round found at the strategy source, under the
+// expected count it decides. An expected of 0 is two different deployments:
+// one with nothing to detect, and one holding everything at the
+// configuration step -- and the number alone is the same in both.
+function renderSource(source, expected) {
+  if (!source) {
+    text('expectedHint', expected === 0 ? '策略缓存的读数没有发布（旧构建，或还没有 leader 跑过一轮），说不出这个 0 是没策略还是全被扣住' : '');
+    return;
+  }
+  var withheld = (source.withheld || []);
+  var parts = ['策略缓存列出 ' + source.listed + ' 条，接受 ' + source.accepted + ' 条'];
+  if (withheld.length) {
+    parts.push('扣住 ' + withheld.map(function (g) { return g.count + ' 条 ' + g.disposition + '/' + g.reason; }).join('、'));
+  }
+  if (source.listed && !source.accepted) {
+    parts.push('不是没负载，是全部被扣在配置获取环节——看首屏第一行');
+  }
+  if (source.change_signal_present) {
+    parts.push('写入方标记 last_updated' + (source.change_signal_age_seconds !== undefined && source.change_signal_age_seconds !== null
+      ? ' 于 ' + elapsedLabel(source.change_signal_age_seconds) + '前更新' : ' 存在'));
+  } else {
+    parts.push('写入方没有留 last_updated 标记（每 6 分钟全量重读）');
+  }
+  text('expectedHint', parts.join('；'));
+}
+
+// The dependency table: one line per role, in the server's order, with the
+// role in words and the raw address beside it. What the process has seen of
+// the connection and what it found of the writer are two different columns
+// on purpose: a Redis that answers and a Redis the platform writes to are
+// two claims, and one live deployment had the first without the second.
+var ENDPOINT = {
+  state_redis: 'alarmd 自己的状态（目录、归属、进度、舰队）',
+  strategy_cache: '策略缓存（平台写、alarmd 读）',
+  cmdb_cache: 'CMDB 主机缓存（平台写、alarmd 读）',
+  dynamic_config: '平台动态配置（平台写、alarmd 读）',
+  query_backend: '查询后端（unify-query）',
+  output_kafka: '告警输出 Kafka（topic 在前缀列）',
+  compat_output_redis: '兼容输出用的服务 Redis（策略快照）'
+};
+
+function renderDependencies(list, replica) {
+  var host = document.getElementById('depRows');
+  host.textContent = '';
+  if (!list.length) {
+    text('depBasis', '这个构建没有发布依赖坐标。');
+    return;
+  }
+  text('depBasis', '副本 ' + shortReplica(replica || '') + ' 解析到的坐标；地址不含账号口令。"最近一次"是本进程对这条连接的最近成功/失败，两个角色共用一条连接时读同一条。');
+  list.forEach(function (dep) {
+    var tr = document.createElement('tr');
+    var role = document.createElement('td');
+    role.textContent = ENDPOINT[dep.role] || dep.role;
+    role.title = dep.role;
+    tr.appendChild(role);
+    var where = document.createElement('td');
+    where.className = 'mono';
+    if (!dep.configured) {
+      where.textContent = '未配置';
+    } else {
+      var bits = [dep.kind + ' ' + (dep.mode ? dep.mode + ' ' : '') + (dep.address || '（空地址）')];
+      if (dep.db !== undefined && dep.db !== null) bits.push('db ' + dep.db);
+      if (dep.prefix) bits.push(dep.prefix);
+      if (dep.shared_with) bits.push('与 ' + (ENDPOINT[dep.shared_with] ? dep.shared_with : dep.shared_with) + ' 共用连接');
+      where.textContent = bits.join(' · ');
+    }
+    tr.appendChild(where);
+    var seen = document.createElement('td');
+    var seenParts = [];
+    if (dep.last_success_age_seconds !== undefined && dep.last_success_age_seconds !== null) {
+      seenParts.push('成功 ' + elapsedLabel(dep.last_success_age_seconds) + '前');
+    }
+    if (dep.last_failure_age_seconds !== undefined && dep.last_failure_age_seconds !== null) {
+      seenParts.push('失败 ' + elapsedLabel(dep.last_failure_age_seconds) + '前：' + (dep.last_failure || '（无文本）'));
+    }
+    if (!seenParts.length) {
+      seenParts.push(dep.kind === 'redis' && dep.configured ? '本进程还没对它发过命令' : '这一列只对 Redis 连接有记录；查询后端与 Kafka 的失败在检查项里按对象归因');
+    }
+    seen.textContent = seenParts.join('；');
+    tr.appendChild(seen);
+    var writer = document.createElement('td');
+    writer.textContent = writerWords(dep);
+    tr.appendChild(writer);
+    host.appendChild(tr);
+  });
+}
+
+// The writer column, per role: what was found and how old it is, or that
+// nothing was, or that the role has no writer to speak of.
+function writerWords(dep) {
+  var w = dep.writer;
+  if (!w) {
+    return dep.role === 'strategy_cache' ? '（这个副本不是 leader，没读过策略缓存）' : '—';
+  }
+  var age = (w.age_seconds !== undefined && w.age_seconds !== null) ? elapsedLabel(w.age_seconds) + '前' : '';
+  switch (dep.role) {
+    case 'strategy_cache':
+      return (w.present ? '有：列出 ' + w.count + ' 条策略' : '没有：strategy_ids 为空或不存在——这个地址上没人在写策略缓存，或前缀不对')
+        + (w.state === 'marker_present' ? '；写入方标记 last_updated ' + (age ? '于 ' + age + '更新' : '存在') : '；没有 last_updated 标记');
+    case 'cmdb_cache':
+      return (w.present ? '有：' + w.count + ' 台主机' + (age ? '，来源刷新于 ' + age : '') : '没有：主机索引未加载')
+        + (w.state && w.state !== 'loaded' ? '（' + w.state + '）' : '');
+    case 'dynamic_config':
+      return (w.present ? '有：已加载' + (age ? '，' + age : '') : '没有') + (w.state ? '（' + w.state + '）' : '');
+  }
+  return w.present ? '有' : '没有';
+}
+
+function renderReplicas(rows) {
+  rows = rows || [];
+  latestReplicas = rows;
+  show('replicaPanel', rows.length > 0);
+  var host = document.getElementById('repRows');
+  host.textContent = '';
+  rows.forEach(function (replica) {
+    var tr = document.createElement('tr');
+    function cell(t, cls) {
+      var td = document.createElement('td');
+      if (cls) td.className = cls;
+      td.textContent = t;
+      tr.appendChild(td);
+      return td;
+    }
+    var name = cell(shortReplica(replica.replica), 'mono');
+    name.title = replica.replica;
+    cell(replica.owned + (replica.truncated ? '（列表被截断，下面几个数是下界）' : ''));
+    cell(replica.healthy);
+    // Counts beside their share of what the replica holds. Two replicas rarely
+    // hold the same number -- a live read had 452 against 527 -- so a bare pair
+    // of counts folds a 17% ownership imbalance into what reads as "which one
+    // is worse". 33 against 53 looks like sixty percent apart and is 7.3%
+    // against 10.1%.
+    //
+    // The share is not a caveat that erases the signal: on the next read the
+    // same pair was 0.4% against 2.0%, still five times apart. It separates a
+    // replica actually doing worse from one that simply holds more.
+    cell(replica.anomalies + share(replica.anomalies, replica.owned));
+    // The column the verdict is decided on. Read as "is any replica above
+    // zero", not as a comparison: which replica holds which object moves at
+    // every rendezvous, so the split between them shifts without anything
+    // having happened. Measured elsewhere the same day -- two pods' CPU split
+    // moved 25% and 9% in opposite directions over twenty minutes with nothing
+    // changed and the deployment total flat to 3%.
+    var repOurs = cell(replica.ours + share(replica.ours, replica.owned));
+    if (replica.ours > 0) { repOurs.className = 'stuck'; }
+    repOurs.title = '容量或架构能避免的那部分，判定看的就是这个数。'
+      + '看法是"有没有副本大于 0"，不是"哪个副本更大"——对象归谁每次再平衡都会变，'
+      + '两个副本之间的劈分会在什么都没发生的情况下移动。'
+      + (replica.unattributed ? '\n另有 ' + replica.unattributed + ' 个暂时看不出是谁的' : '');
+    cell(replica.demoted);
+    // Its own column on the replica row, not folded into healthy. The row has
+    // to add up on its own -- that is what lets a reader see which replica
+    // breaks the sum rather than only that the deployment does.
+    var repUndecidable = cell(replica.undecidable || 0);
+    repUndecidable.title = '检测窗口没攒够点，恢复判不了。正常现象，不计入判定，也不算在正常里——'
+      + '每个对象只落一栏，这一行几个数相加等于"持有"。';
+    var repByDesign = cell(replica.by_design || 0);
+    repByDesign.title = '配置就是这么写的，不用处理。不计入判定，也不算在正常里——'
+      + '每个对象只落一栏，这一行几个数相加等于"持有"。';
+    cell(replica.unknown);
+    // A replica publishing late describes a past it has not updated, and that
+    // is invisible in every other number on this row.
+    var age = cell(Math.round(replica.age_seconds) + ' 秒前');
+    if (replica.age_seconds > 60) { age.className = 'stuck'; }
+    // How long this replica's process has been up, which is the ceiling on
+    // every duration it reports. Zero means it did not publish one -- an older
+    // build -- and that is not the same as "just started", so it says so.
+    var up = cell(replica.uptime_seconds ? duration(new Date(Date.now() - replica.uptime_seconds * 1000).toISOString()) : '未上报');
+    if (replica.uptime_seconds && replica.uptime_seconds < 1800) { up.className = 'stuck'; }
+    up.title = '这个副本上报的"已持续"里，起算来源是本进程接手的那些（带 ≥ 的）不会超过这个数——'
+      + '刚重启时它们量的是进程年龄。起算点来自持久化状态或冷却记录的行不受这个数约束，会更老。';
+    // The build this row's numbers came from. Beside uptime because the two
+    // are read together after a release: a short uptime on a new build is the
+    // rollout, a short uptime on the old build is a restart.
+    var build = cell(buildLabel(replica.build), 'mono');
+    if (replica.build) { build.title = 'commit ' + replica.build.commit + '，schema ' + replica.build.schema_version; }
+    var cap = replica.capacity;
+    cell(cap ? bytes(cap.memory_used_bytes) + ' / ' + bytes(cap.memory_limit_bytes) : '—');
+    cell(cap && cap.cpu_cores ? (cap.cpu_seconds !== undefined ? '上限 ' + cap.cpu_cores + ' 核' : '—') : '—');
+    cell(cap ? (cap.permits_held + ' / ' + cap.permit_budget) : '—');
+    host.appendChild(tr);
+  });
+}
+
+
+
+
+
+
+
+// What changed since the last refresh, by identity rather than by count.
+//
+// A count cannot tell a population apart from a turnover of the same size:
+// eighteen objects staying eighteen is either eighteen objects stuck or
+// eighteen recovering while eighteen new ones arrive, and those are opposite
+// situations. Establishing which took a script, two reads pinned to a list of
+// object ids, and an hour of waiting -- and the page had the second read in
+// hand the whole time, thirty seconds after the first.
+//
+// It compares the rows actually rendered, so on a paged list it describes this
+// page. That is stated rather than hidden: a churn figure over a slice is still
+// the answer to "are these the same objects", which is what it is for.
+//
+// The previous read is kept only in this tab, and a reload legitimately starts
+// over -- the same terms as the capacity rates beside it.
+var previousObjects = {};
+
+
+
+
+// What the reader has to know before trusting any duration below this line.
+//
+// Kept to the cases where it changes the reading: a young deployment caps every
+// duration under it, a mixed rollout means the totals span two builds, and a
+// generation that changed since the last refresh means everything reset.
+var previousGeneration = null;
+
+
+
+
+// betweenReads turns a cumulative figure into what happened since the last
+// read of this page.
+//
+// A cumulative number on a single read is not readable: "被限流 2 秒" counts
+// from a start nobody can see, and could be all of last week or the last
+// minute. The page already reads twice a minute, so the answer only costs
+// remembering the previous read -- and nothing here is stored anywhere else,
+// so a reload legitimately starts over.
+var previousReads = {};
+function betweenReads(key, value, at) {
+  var previous = previousReads[key];
+  if (typeof value === 'number') previousReads[key] = {at: at, value: value};
+  if (typeof value !== 'number' || !previous) return null;
+  var elapsed = (at - previous.at) / 1000;
+  var delta = value - previous.value;
+  // A restart resets the counter, and a replica leaving the deployment lowers
+  // the sum. Either way a negative delta is a changed population, not idleness,
+  // and reporting it as zero load would be the wrong direction to be wrong in.
+  if (elapsed <= 0 || delta < 0) return null;
+  return {rate: delta / elapsed, elapsed: elapsed};
+}
+
+// Capacity comes from the same read as the verdict, so the page never has to
+// ask the time series database what this deployment's limits are -- and the two
+// cannot disagree.
+// Anomaly kinds, looked up rather than branched. The page used to ask "is it
+// BLOCKED_RUN, otherwise it is degraded", which is a lie the moment a third
+// kind exists -- and one that reads as a normal row, so nothing looks wrong.
+// An unknown kind shows its own name: being told a word you do not recognise
+// is a far better outcome than being told the wrong familiar one.
+var KIND_TEXT = {
+  QUERY_COOLDOWN: '外部查询冷却',
+  DEGRADED_RUN: '降级',
+  BLOCKED_RUN: '被阻塞',
+  OVERDUE_WAKE: '没被调度',
+  SKIPPED_SPAN: '留存的漏检记录',
+  NO_DATA: '持续无数据'
+};
+function kindText(kind) { return KIND_TEXT[kind] || kind || '—'; }
+
+// census is the schedule census from the same read, for the queue verdict:
+// whether waiting for a slot cost any deadline is answered there, not here.
+// The operating judgment, in words per closed state the server decides.
+// Each line is the state, then the numbers it was read from: the reader
+// takes the conclusion with its evidence, and the limits with both.
+var ON_TIME = {
+  KEEPING_UP: '按时完成：跟得上，没有对象超期',
+  CATCHING_UP: '按时完成：有 {overdue} 个对象超期但在追（最久 {oldest}）——1 小时按时率 {r1} 不低于 6 小时 {r6}',
+  FALLING_BEHIND: '按时完成：跟不上——{overdue} 个对象超期（最久 {oldest}），1 小时按时率 {r1} 低于 6 小时 {r6}',
+  UNKNOWN: '按时完成：没有副本带到期索引，说不出'
+};
+var BACKLOG = {
+  NONE: '积压：没有，{span} 前也没有',
+  GROWING: '积压：在涨——现在 {now} 个超期，{span} 前 {earlier} 个',
+  SHRINKING: '积压：在消——现在 {now} 个超期，{span} 前 {earlier} 个',
+  FLAT: '积压：持平——现在 {now} 个超期，{span} 前 {earlier} 个',
+  UNKNOWN: '积压：现在 {now} 个超期；没有够早的对照样本，涨没涨说不出'
+};
+var LOSS_STATE = {
+  NONE: '漏检：最近 {w} 分钟没有对象跳过检测',
+  IN_PROGRESS: '漏检：正在发生——{ongoing} 个对象最近 {w} 分钟内跳过了检测{restart}'
+};
+var BOTTLENECK = {
+  NONE: '瓶颈：没有——工作按时完成、没有漏检，资源数字不指向任何约束',
+  BUDGET: '瓶颈：内存派生的体量预算——已拒绝 {rejections} 次，这套资源装不下当前负载（这是唯一按定义就是容量的读数；其余读数为零只排除各自那一种约束）',
+  MEMORY: '瓶颈：内存——容器撞到 limit {hits} 次',
+  CPU: '瓶颈：CPU——启动至今被限流的时间占 {throttled}',
+  SKEW: '瓶颈：对象分布不均——{most_by} 持有 {share} 的对象（{most} / 均分 {target}），它的并发位子与队列满是因为它持有别的副本没持有的；加副本、加资源都分不走它的对象，{rebalance}',
+  PERMITS: '瓶颈：查询并发位子——启动至今 {waits} 的取位子排过队，而工作在落后或在漏检',
+  QUEUE: '瓶颈：就绪队列——满过 {queue} 次，而工作在落后或在漏检',
+  UNLOCATED: '瓶颈：资源数字都不指向任何一处，但工作在落后或在漏检——约束在调度（重放边界、派发顺序），加资源不是这一步',
+  UNKNOWN: '瓶颈：没有副本报容量，判不了'
+};
+var LOAD_LIMIT = {
+  COUNTERS_SINCE_START: '资源占比是各进程启动至今的累计，不是最近 1 小时',
+  TREND_SPAN_SHORT: '积压对照样本不足 1 小时（最年轻的副本索引还没跑满 1 小时）',
+  NO_CENSUS: '没有到期索引，按时与积压两项判不了',
+  NO_CAPACITY: '没有容量数据，瓶颈一项判不了',
+  NO_HEADROOM_ESTIMATE: '不推算还能承载多少对象——没有测这个，编出来的数会被当真'
+};
+
+function percentOf(share) {
+  return share === null || share === undefined ? '（无）' : Math.round(share * 100) + '%';
+}
+
+function rateWords(rate) {
+  return rate === null || rate === undefined ? '（无轮次）' : Math.round(rate * 10) / 10 + '%';
+}
+
+function renderLoad(load) {
+  var host = document.getElementById('loadLines');
+  host.textContent = '';
+  if (!load) {
+    host.textContent = '（这一构建没有运行判断）';
+    text('loadLimits', '');
+    return;
+  }
+  var w = String(load.loss && load.loss.window_seconds ? Math.round(load.loss.window_seconds / 60) : recentWindowMinutes());
+  var onTime = load.on_time || {};
+  var backlog = load.backlog || {};
+  var loss = load.loss || {};
+  var bottleneck = load.bottleneck || {};
+  var lines = [
+    (ON_TIME[onTime.state] || '按时完成：（页面没有这个状态的文案：' + onTime.state + '，请上报）')
+      .replace('{overdue}', String(onTime.overdue || 0))
+      .replace('{oldest}', elapsedLabel(onTime.oldest_late_seconds || 0))
+      .replace('{r1}', rateWords(onTime.rate_1h)).replace('{r6}', rateWords(onTime.rate_6h)),
+    (BACKLOG[backlog.state] || '积压：（页面没有这个状态的文案：' + backlog.state + '，请上报）')
+      .replace('{now}', String(backlog.now || 0))
+      .replace('{earlier}', String(backlog.earlier === undefined || backlog.earlier === null ? '（无）' : backlog.earlier))
+      .replace('{span}', elapsedLabel(backlog.span_seconds || 0)),
+    (LOSS_STATE[loss.state] || '漏检：（页面没有这个状态的文案：' + loss.state + '，请上报）')
+      .replace('{ongoing}', String(loss.ongoing || 0)).replace('{w}', w)
+      .replace('{restart}', loss.after_restart
+        ? '，另有 ' + loss.after_restart + ' 个是滚动后的追赶（副本启动 '
+          + Math.round((loss.restart_grace_seconds || 300) / 60) + ' 分钟内），看它还有没有新增、不由它问容量' : '')
+      + (loss.while_demoted_recent ? '；另有 ' + loss.while_demoted_recent + ' 个被拒的对象在冷却期间跳过（首要原因是查询不可用，不是容量）' : ''),
+    rebalanceWords(BOTTLENECK[bottleneck.resource] || '瓶颈：（页面没有这个状态的文案：' + bottleneck.resource + '，请上报）', bottleneck.skew)
+      .replace('{rejections}', String(bottleneck.budget_rejections || 0))
+      .replace('{hits}', String(bottleneck.memory_limit_hits || 0))
+      .replace('{throttled}', percentOf(bottleneck.throttled_share))
+      .replace('{waits}', percentOf(bottleneck.permit_wait_share))
+      .replace('{queue}', String(bottleneck.queue_full || 0))
+      // A resource reading taken while one replica holds nearly everything
+      // is that replica's: the number is real, and the move it suggests is
+      // not, because the other replica has the same resource idle.
+      + (bottleneck.skew && bottleneck.resource !== 'SKEW' && bottleneck.resource !== 'NONE' && bottleneck.resource !== 'UNKNOWN'
+          ? '；对象分布不均（' + shortReplica(bottleneck.skew.most_owned_by || '') + ' 持有 '
+            + (bottleneck.skew.assigned ? Math.round((bottleneck.skew.most_owned || 0) / bottleneck.skew.assigned * 1000) / 10 + '%' : '（无）')
+            + '），这个读数是它一个副本的，先看首屏"对象分布不均"那一行，不据此扩容'
+          : '')
+  ];
+  lines.forEach(function (line) {
+    var div = document.createElement('div');
+    div.textContent = line;
+    host.appendChild(div);
+  });
+  text('loadLimits', '限制条件：' + (load.limits || []).map(function (limit) {
+    return LOAD_LIMIT[limit] || '（页面没有这个限制的文案：' + limit + '，请上报）';
+  }).join('；'));
+}
+
+function renderCapacity(cap, gaps, census) {
+  var box = document.getElementById('capCards');
+  box.textContent = '';
+  if (!cap || !cap.replicas) {
+    // Capacity is built from the snapshots the verdict accepted, so it goes
+    // empty when every snapshot was refused -- and why it was refused is the
+    // difference between "these processes never published" and "these processes
+    // stopped publishing". The evidence is already in the gaps beside it.
+    var stale = false;
+    (gaps || []).forEach(function (g) { if (g.kind === 'SNAPSHOT_STALE') stale = true; });
+    text('capEmpty', stale
+      ? '副本的上报都太旧了，这里不显示旧的占用——它描述的是上报那一刻，不是此刻。见上方“证据不全”里的 SNAPSHOT_STALE。'
+      : '本次读取没有副本上报容量。');
+    show('capEmpty', true);
+    text('capNote', '');
+    return;
+  }
+  show('capEmpty', false);
+  function cell(k, v, hint, warn) {
+    var d = document.createElement('div');
+    d.className = 'cell' + (warn ? ' hl' : '');
+    var kk = document.createElement('div'); kk.className = 'k'; kk.textContent = k;
+    var vv = document.createElement('div'); vv.className = 'v'; vv.textContent = v;
+    d.appendChild(kk); d.appendChild(vv);
+    if (hint) { var h = document.createElement('div'); h.className = 'k'; h.textContent = hint; d.appendChild(h); }
+    box.appendChild(d);
+  }
+  var permitCeiling = cap.permit_budget * cap.replicas;
+  var at = Date.now();
+  // Every cumulative figure is turned into a rate exactly once per render.
+  // betweenReads records the value it was handed, so asking it a second time in
+  // the same render gives that caller a zero-length interval and therefore no
+  // answer -- and the verdict and the cells both need these.
+  var rate = {
+    permits: betweenReads('permit_seconds', cap.permit_seconds, at),
+    throttled: betweenReads('throttled_seconds', cap.throttled_seconds || 0, at),
+    cpu: betweenReads('cpu_seconds', cap.cpu_seconds || 0, at),
+    memoryHits: betweenReads('memory_limit_hits', cap.memory_limit_hits || 0, at),
+    series: cap.pulled ? betweenReads('pulled_series', cap.pulled.series, at) : null,
+    points: cap.pulled ? betweenReads('pulled_records', cap.pulled.records, at) : null
+  };
+
+  // The two limits the operator actually set come first, because every ceiling
+  // after them is arithmetic on these two.
+  //
+  // The field names carry the _bytes suffix the API actually uses. Dropping
+  // that suffix read undefined, the guard in front of this cell was then false,
+  // and the cell simply never appeared -- with the numbers present in every
+  // response the whole time.
+  if (cap.memory_limit_bytes) {
+    // The ceiling beside it is every replica's limit added up, so it has to say
+    // so: without the per-replica figure, 16 GiB on a two-replica deployment
+    // reads as 16 GiB per container.
+    var memHint = cap.replicas + ' 个副本各 ' + bytes(cap.memory_limit_bytes) +
+      '；上限来源 ' + (cap.memory_source || '未知') + '；cgroup 用量，不是 Go 堆';
+    if (cap.memory_oom_kills) {
+      memHint = '被杀过 ' + cap.memory_oom_kills + ' 次；' + memHint;
+    } else if (cap.memory_limit_hits) {
+      memHint = '撞过 ' + count(cap.memory_limit_hits) + ' 次上限' +
+        (rate.memoryHits ? (rate.memoryHits.rate > 0 ? '，此刻仍在撞' : '，此刻没在撞') : '') + '；' + memHint;
+    } else {
+      memHint = '没撞过上限；' + memHint;
+    }
+    cell('内存', bytes(cap.memory_used_bytes) + ' / ' + bytes(cap.memory_limit_bytes * cap.replicas),
+      memHint, cap.memory_oom_kills > 0 || (rate.memoryHits && rate.memoryHits.rate > 0));
+  }
+  if (cap.cpu_cores) {
+    // Same problem as the permits, same fix. "累计被限流 2 秒" counts from a
+    // start nobody can see, so it says nothing about whether this deployment is
+    // being throttled now -- two seconds could be all of yesterday or the last
+    // minute.
+    var throttled = rate.throttled;
+    // Named, not assumed. Every ceiling below is derived from this core count,
+    // so a process that fell back to the host's cores publishes a table that
+    // looks authoritative and is several times too large; without the source
+    // there is nothing on the page that could tell you.
+    var cpuFrom = cap.cpu_source === 'cpu_quota' || cap.cpu_source === 'cpu_quota_minimum'
+      ? '来自容器 CPU limit'
+      : (cap.cpu_source === 'environment_override' ? '来自 GOMAXPROCS 环境变量，不是容器 limit'
+        : (cap.cpu_source ? '没读到容器 limit（' + cap.cpu_source + '），按宿主机核数算的，下面的上限都偏大'
+          : '来源未知'));
+    // Cores in use against cores allowed. "8 核 × 2" alone said the same thing
+    // to a deployment using half a core and one using seven, and the core count
+    // is the number every ceiling below is derived from -- so it is the one
+    // figure here that most needed a measured load beside it.
+    var ceiling = cap.cpu_cores * cap.replicas;
+    var used = rate.cpu;
+    // cgroup counts throttling as wall time held back, summed over replicas, so
+    // one replica's share is the rate divided by how many reported.
+    var throttledShare = throttled ? throttled.rate / cap.replicas * 100 : null;
+    cell('CPU',
+      used ? used.rate.toFixed(2) + ' / ' + ceiling + ' 核' : ceiling + ' 核（' + cap.cpu_cores + ' × ' + cap.replicas + '）',
+      (used
+        ? '最近 ' + Math.round(used.elapsed) + ' 秒的平均用量，' + cap.replicas + ' 个副本各 ' + cap.cpu_cores + ' 核'
+        : '用量要两次读取才算得出，约 30 秒后出现') +
+      '；' + cpuFrom + '；' +
+      (throttledShare !== null
+        // One decimal was not enough. A live read throttled 0.0017 seconds over
+        // 35, which is a share of 0.002% -- real, and it printed as "被限流
+        // 0.0% 的时间", a number that says throttling is happening and a figure
+        // that says it is not. Below what one decimal can show, the words carry
+        // it instead.
+        ? (throttledShare <= 0 ? '没被限流'
+          : (throttledShare < 0.05 ? '几乎没有被限流（不到 0.1%）'
+            : '被限流 ' + throttledShare.toFixed(1) + '% 的时间'))
+        // Cumulative seconds since process start is the wrong quantity: it has
+        // no denominator a reader can see, so 71 seconds says nothing about
+        // whether this deployment is being held back -- it could be a bad
+        // minute yesterday or a steady squeeze all week, and it grows forever
+        // without ever meaning more. The share needs two reads like every other
+        // rate on this card, so until then only the one bit that is decidable
+        // from a single read is stated.
+        : (cap.throttled_seconds ? '启动至今被限流过，占多少时间要两次读取才算得出，约 30 秒后出现'
+                                 : '启动至今没被限流')),
+      cap.cpu_source !== 'cpu_quota' && cap.cpu_source !== 'cpu_quota_minimum');
+  }
+  // The load the ceilings have to be read against. Printing "series 524288"
+  // with nothing beside it says the same thing to a deployment pulling two
+  // hundred series a second and one pulling two hundred thousand -- a limit
+  // without a measured load is not a capacity statement.
+  if (cap.pulled) {
+    // Two different units, which the old wording ran together: 条 counted time
+    // series and 个点 counted the datapoints inside them, so "4293 条/秒" beside
+    // "8506 个点" read as two numbers for one thing that disagreed. They are one
+    // number each for two things, and their ratio -- points per series -- is the
+    // useful one, because it says how many points a series carries per pull.
+    //
+    // The cumulative total is gone. It counts from process start, which moves
+    // on every restart and answers no question anyone opening this page has.
+    // Points per series is deliberately not shown. It looks like a per-round
+    // fact -- "each evaluation fetches N points" -- and is not one: it is a mean
+    // over a mixture. A plain threshold pulls one point for its own period,
+    // while an algorithm that needs history pulls a window many times longer on
+    // a single series, so a small minority of those drags the mean well above
+    // what any ordinary round does. The mean hides exactly the part that
+    // matters, which is that a few requirements cost tens of times the rest.
+    // The two rates come out equal whenever every series pulled in the window
+    // carried a single point, and then a hint insisting they are two different
+    // quantities reads as the page contradicting its own numbers -- a live read
+    // showed "769 条时序/秒" above "一共 769 个数据点/秒".
+    //
+    // They were equal to the unit: 23011 series and 23011 points over the same
+    // 35 seconds, against a lifetime ratio of 1.76 points per series. That is
+    // not a coincidence and it is not nothing: it says no round in that window
+    // pulled a history window, every one of them fetched one point for its own
+    // period. So the equal case gets its own sentence, which is the reading, not
+    // a restatement of the definition.
+    var pointsPerSeries = rate.series && rate.points && rate.series.rate > 0
+      ? rate.points.rate / rate.series.rate : null;
+    var pullHint;
+    if (!rate.series) {
+      pullHint = '全部副本相加，两次读取才算得出，约 30 秒后出现';
+    } else if (!rate.points) {
+      pullHint = '数据点速率要两次读取才算得出';
+    } else if (pointsPerSeries === null) {
+      // The series rate is zero: nothing was pulled between these two reads, so
+      // there is no average to take. Two refreshes a second apart land here
+      // routinely -- the counter has not moved -- and this branch used to fall
+      // through to the last one, which divides by it. That threw
+      // "Cannot read properties of null (reading 'toFixed')" and took the whole
+      // capacity panel and the verdict above it down with it, because one throw
+      // inside this renderer fails both.
+      //
+      // The guard for exactly this null is two lines below, on the branch that
+      // does not need it; whoever wrote it saw the case and guarded the wrong
+      // branch.
+      pullHint = '这两次读取之间没有新的拉取，算不出平均每条多少个点——刷新太快时是正常的，隔一个采集周期再看';
+    } else if (Math.abs(pointsPerSeries - 1) < 0.005) {
+      pullHint = '这些时序里一共 ' + rate.points.rate.toFixed(0)
+        + ' 个数据点/秒——和条数一样，也就是这段时间每条时序只取了 1 个点，没有谁在拉历史窗口';
+    } else {
+      pullHint = '这些时序里一共 ' + rate.points.rate.toFixed(0) + ' 个数据点/秒，平均每条 '
+        + pointsPerSeries.toFixed(1) + ' 个点。条数是拉了多少条曲线，点数是曲线里一共多少个点';
+    }
+    cell('Access 拉取', rate.series ? rate.series.rate.toFixed(0) + ' 条时序/秒' : '等下一次读取', pullHint);
+  }
+  // Derived from the two above. The instant answers "is anything running right
+  // now", which a page load lands on at an arbitrary moment. It cannot answer
+  // "how busy is this", and the number that can was already being published and
+  // never shown: cumulative permit-hold seconds. Two reads of it over the wall
+  // time between them give the mean number of permits occupied, and the page
+  // makes a read every thirty seconds -- so the useful figure costs nothing but
+  // remembering the last one.
+  var held = rate.permits;
+  // One cell, not two. Showing the instant beside the mean puts two different
+  // numbers under one name and makes the reader work out which one to believe;
+  // that a page load lands on an arbitrary moment is this page's problem to
+  // solve, not the reader's to know about. The instant stays in the hint, where
+  // it answers the one question it can: is anything running right this second.
+  // One card, because neither number answers anything alone.
+  //
+  // "8.5 of 64" is how much is being used, not how much is left, and a reader
+  // cannot tell from it whether the limit is in the way: low is not slack, and
+  // high is not trouble until callers start waiting. The queue is the half that
+  // settles it, and it sat in a separate cell where nobody had reason to read
+  // the two together.
+  //
+  // Written for someone who has not read this codebase: "许可" is the code's
+  // word and stays in the hint for whoever files a bug, but the card says what
+  // it is -- how many queries run at once, and how many may.
+  // The queue is an instant and so is permits_held, so the number beside the
+  // queue has to be the instant too. Leading with the 30-second average put two
+  // different clocks in one sentence: "2.2 of 64 running" next to "10 queued"
+  // reads as a contradiction, when both can be true -- the average spans half a
+  // minute during which the budget may well have been full.
+  // Four sentences, a parenthetical inside a parenthetical, and a caveat that
+  // undercut the number it was attached to without telling anyone what to do
+  // with it. Rewritten to one sentence of measurement and one of queue.
+  //
+  // The code's own word for these and where the ceiling comes from are both
+  // gone from the card: the panel's opening paragraph already says the operator
+  // sets two numbers and the program derives every ceiling below them, and
+  // saying it again on each card is what pushed the measurement to the end.
+  var ceilingText = '上限 ' + permitCeiling + ' 个（' + cap.replicas + ' 副本各 ' + cap.permit_budget + '）';
+  // "没有查询在排队。" was a statement about the deployment made from one
+  // instant, and both halves of why that is wrong are already written down --
+  // one in the Go type beside this field, one in the shape of the workload.
+  //
+  // The field's own comment: a caller admitted immediately never appears here,
+  // so zero says the budget was not the constraint at this instant and says
+  // nothing about whether it has room.
+  //
+  // And the instant is not drawn from a flat distribution. Objects come due on
+  // their evaluation period, so the queues fill and drain on that cycle; a
+  // reading taken at one point in it is a phase, not a level. Sampled every 60
+  // seconds against a 60-second cycle, every sample lands in the same phase and
+  // a quantity that reaches its ceiling once a minute reads as a constant low
+  // number -- which is the most confident-looking way to be wrong.
+  //
+  // So the zero case says what it is and points at the number that does answer
+  // the question, instead of answering it wrongly.
+  // The question this cell is opened for is "are there enough places", and
+  // until now nothing on it could answer that.
+  //
+  // permits_held and waiting are both instants. A caller queueing behind a full
+  // budget and then being granted begins and ends between two reads, so waiting
+  // is zero at almost every moment anyone looks and permits_held reports
+  // whichever phase of the evaluation cycle the read landed in. Ruling out
+  // saturation from those two is ruling it out with instruments that cannot see
+  // it, and a live panel did exactly that: "没有查询在排队" on a deployment
+  // where most queries wait.
+  //
+  // permit_waits over permit_acquires is cumulative and counted at one point
+  // over one population, so it survives the cycle and is a share rather than a
+  // ratio between two different things.
+  //
+  // What the share cannot say is whether the queueing matters. It said
+  // "支持扩容" at 50%, and a live deployment showed it at 58% with CPU at a
+  // quarter of its limit, memory at a seventh and an average of 12 queries
+  // running against a budget of 64: queueing, yes; a reason to add pods, not
+  // shown. Whether the queue costs anything is a question about deadlines --
+  // did rounds still finish before their next turn fell due -- and that is
+  // what the census measures. So the verdict is read from there, in the same
+  // terms as the first sentence of the page, and the share stays a
+  // measurement.
+  var asked = cap.permit_acquires || 0;
+  var waited = cap.permit_waits || 0;
+  var queueText;
+  if (asked) {
+    var share = Math.round((waited / asked) * 100);
+    queueText = waited
+      ? '启动至今 ' + asked + ' 次取位子里有 ' + waited + ' 次（' + share + '%）没能立刻拿到、排过队'
+        + queueVerdict(census)
+      : '启动至今 ' + asked + ' 次取位子全部立刻拿到，没有一次排过队——位子不是约束。';
+  } else {
+    queueText = '启动至今还没有查询取过位子，够不够无从谈起。';
+  }
+  if (cap.waiting > 0) {
+    queueText = '此刻另有 ' + cap.waiting + ' 个在排队等位子。' + queueText;
+  }
+  cell('同时在跑的查询',
+    cap.permits_held + ' / ' + permitCeiling,
+    (held
+      ? '最近 ' + Math.round(held.elapsed) + ' 秒平均跑着 ' + held.rate.toFixed(1)
+        + ' 个，此刻 ' + cap.permits_held + ' 个；' + ceilingText + '。'
+      : '此刻在跑 ' + cap.permits_held + ' 个，' + ceilingText + '；平均值约 30 秒后出现。')
+      + queueText,
+    cap.waiting > 0);
+  // Only shown when it says something is wrong.
+  //
+  // "2069 圈走完" is a counter that climbs on a healthy deployment forever: it
+  // reports that the walk is running, which nobody opened this page to ask, and
+  // it cannot be acted on at any value. What can be acted on is a walk that
+  // stops finishing, or objects turned away over and over -- and those now have
+  // a better answer beside them in 没被调度, which names the objects rather than
+  // counting the passes.
+  //
+  // The walk's own duration is gone with it. It measures dispatcher overhead in
+  // milliseconds, which belongs to whoever is profiling the scheduler, not to
+  // whoever is deciding whether to wake someone up.
+  var rot = cap.rotation;
+  if (rot && rot.truncated) {
+    cell('轮转被打断', rot.truncated + ' 次',
+      '走完 ' + rot.completed + ' 圈；打断在涨而走完不动 = 已经不再覆盖全部对象', true);
+  }
+  // Two branches, opposite answers, one number.
+  //
+  // This said "同一个对象每被满队列挡回一次记一次" and left a reader with one
+  // remedy: grow the queue. Only one of the two branches behind the count is a
+  // queue with no room. The other is the recovery queue being full of objects
+  // all due sooner than this one -- the dispatcher's own comment calls it "a
+  // decision, not a lack of room" -- and more room does not change it at all.
+  //
+  // Which one dominates decides whether there is anything to do, so the cell
+  // leads with the split and the total is the thing said second.
+  if (rot && rot.deferred) {
+    var full = rot.deferred_queue_full || 0;
+    var notBetter = rot.deferred_not_better || 0;
+    var detail;
+    if (!full && !notBetter) {
+      // An older replica that does not publish the split. Saying nothing about
+      // the cause is correct here; saying the old sentence would be a guess.
+      detail = '副本没有报告是哪一种原因，所以这里说不出该不该处理。'
+        + '两种原因分别是：就绪队列没位置（队列会被扩就有用），'
+        + '和恢复队列里的对象都比它更早到期（这是排序结果，扩队列没用）。';
+    } else if (!full) {
+      detail = '全部 ' + notBetter + ' 次都是"恢复队列里的对象都比它更早到期"——'
+        + '这是排队顺序的结果，不是没位置，扩队列不会改变这个数。'
+        + '这一栏在涨不代表跑不过来。';
+    } else if (!notBetter) {
+      detail = '全部 ' + full + ' 次都是就绪队列没位置。队列满时这一轮轮转就停在这里，'
+        + '排在它后面的对象这一轮也没被轮到（所以"轮转被打断"会同步涨）' + queueFullVerdict(census);
+    } else {
+      detail = '就绪队列没位置 ' + full + ' 次（队列满时轮转就地停下，后面的对象这一轮也没轮到）；'
+        + '恢复队列里都比它更早到期 ' + notBetter + ' 次（这是排队顺序，扩队列没用）' + queueFullVerdict(census);
+    }
+    cell('被挡回', rot.deferred + ' 次', detail, !!full);
+  }
+
+  var rejected = 0, worst = '';
+  Object.keys(cap.rejections || {}).forEach(function (b) {
+    rejected += cap.rejections[b];
+    if (!worst || cap.rejections[b] > cap.rejections[worst]) worst = b;
+  });
+  cell('预算被拒（按内存派生）', rejected ? (rejected + ' 次') : '0 次',
+    rejected ? ('最多的是 ' + worst + '；这是这套资源装不下当前负载，不是这条预算配小了')
+             : '没有任何体量预算拦下过东西', rejected > 0);
+
+  var note = '体量预算由内存 limit 派生，是每个 Slot 的上限而不是池子，所以不给占用率——正确读法是“最大的 Slot 逼近到几成”。';
+  var ceilings = Object.keys(cap.budgets || {}).sort().map(function (b) {
+    return b + ' ' + cap.budgets[b];
+  }).join(' · ');
+  if (ceilings) note += ' 当前上限：' + ceilings + '。';
+  if (cap.disagreement && cap.disagreement.length) {
+    note += ' 注意：副本之间对 ' + cap.disagreement.join('、') + ' 的上限不一致，通常意味着发布只滚了一半。';
+  }
+  text('capNote', note);
+}
+
+function bytes(n) {
+  if (!n) return '0';
+  var u = ['B', 'KiB', 'MiB', 'GiB', 'TiB'], i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (i ? n.toFixed(1) : String(n)) + ' ' + u[i];
+}
+
+// Cumulative counts run to the hundreds of millions within a day, and at that
+// size the digits stop being read at all.
+function count(n) {
+  if (!n) return '0';
+  var u = ['', ' 万', ' 亿'], i = 0;
+  while (n >= 10000 && i < u.length - 1) { n /= 10000; i++; }
+  return (i ? n.toFixed(1) : String(n)) + u[i];
+}
+
+// The identifiers below are the code's own, and they are shown beside a plain
+// reading rather than replaced by one. Whoever is deciding what to do needs the
+// plain words; whoever is filing a bug needs the identifier. An unknown value
+// falls through as itself, so a stage added later shows up rather than
+// disappearing into a default.
+var STAGE_TEXT = {
+  runner_queued: '排队等执行位',
+  queue_skipped: '这轮没排上队',
+  runner_decision: '决定这轮做什么',
+  runner_dispatch: '派去执行',
+  runner_return: '执行返回',
+  runner_completed: '这一轮总用时',
+  execution_outcome: '本轮执行结果',
+  slot_completed: '时间点结束',
+  slot_selection: '选定要算的时间点',
+  slot_source_completed: '取这一轮要算什么，用时',
+  slot_readiness_arrival: '到达查询层',
+  schedule_due: '到点了',
+  slot_started: '开始算这个时间点',
+  query_completed: '查询结束',
+  progress_committed: '进度已落库',
+  plan_schedule_binding: '策略与周期绑定',
+  expired_range_returned: '跳过已过期的时间段',
+  stream_complete: '查询结果收齐',
+  provider: '向查询服务取数'
+};
+var DECISION_TEXT = {
+  queued: '已排上队',
+  normal_queue_full: '正常队列满了，这轮没排上',
+  delayed_queue_full: '重试队列满了，这轮没排上',
+  delayed_queue_evicted: '被更该先跑的挤掉',
+  execution_slot_acquired: '拿到执行位',
+  query_running: '查询进行中',
+  returned: '执行结束返回',
+  query_readiness_deferred: '数据还没到，按设计等下一轮',
+  identity_field_null: '目标身份字段是空的',
+  unknown: '未归类',
+  source_not_due: '还没到点，跳过这轮',
+  future_slot: '要算的时间点还在未来',
+  selected: '选定了时间点',
+  started: '开始执行',
+  completed: '执行完成',
+  readiness_deferred: '数据还没到，等下一轮',
+  execution_returned: '执行已返回',
+  waiting_P: '在等执行位',
+  P_acquired: '拿到执行位'
+};
+// Two stages carry no outcome at all. Both are emitted by one timing wrapper
+// that records how long a call took and stamps every record success, on purpose
+// -- the failures on that path report themselves, with their own reasons, on
+// their own records.
+//
+// The page was printing that stamp as an outcome, so a round blocked inside the
+// Slot source rendered "取到这一轮要算什么：成功" directly above the record that
+// said it was blocked. A reader following the trace concluded the fetch had
+// worked and went looking one stage further down -- past the answer. The
+// duration is the whole content of these rows, and it is already in the last
+// column, so the word comes off and the names say what they are.
+var TIMING_ONLY_STAGES = {
+  slot_source_completed: true,
+  runner_completed: true
+};
+
+var RESULT_TEXT = {
+  terminal: '终止', retrying: '会重试', success: '成功', ok: '成功',
+  degraded: '降级', skipped: '跳过', started: '开始', retrying: '会重试'
+};
+var REASON_TEXT = {
+  internal_unknown: '没有归类的原因',
+  query_not_ready: '数据还没入库，正常等待',
+  snapshot_continuity: '快照连续性'
+};
+
+// Some decisions say why, and the rest only say where the run had got to.
+// Treating "returned" as a reason would answer "why did this end without a
+// reason" with "because it returned", which is not an answer.
+var CAUSAL_DECISIONS = {
+  query_readiness_deferred: true, normal_queue_full: true, delayed_queue_full: true,
+  delayed_queue_evicted: true, identity_field_null: true
+};
+
+// Two values mean "this site reported no reason" rather than naming one.
+// Printing them puts a word that looks like a cause on a step that had none --
+// and reason_not_reported appeared four times in a single normal run.
+var NO_REASON = {none: true, reason_not_reported: true, internal_unknown: false};
+
+function say(dict, value) {
+  if (!value) return '';
+  return dict[value] || value;
+}
+
+function reasonText(code) {
+  if (!code || NO_REASON[code]) return '';
+  return say(REASON_TEXT, code);
+}
+
+function nanos(ns) {
+  if (!ns) return '';
+  if (ns < 1e6) return Math.round(ns / 1e3) + ' µs';
+  if (ns < 1e9) return Math.round(ns / 1e6) + ' ms';
+  return (ns / 1e9).toFixed(2) + ' s';
+}
+
+// Records arrive newest first because that is the right order for runs. Inside
+// one run the order that reads is the order it happened, and the timestamps are
+// no help -- a whole run is usually emitted inside one millisecond -- so
+// arrival order is what gets reversed, not the clock.
+// The process is part of the key, not decoration. run_id counts rounds inside
+// one process and starts again at one when that process does, while these
+// records outlive it: they are kept per object, retained past the window that
+// produced them, and every replica writes the same object's records to the same
+// place. So after a restart or a handover the list holds two round 1s, and
+// grouping on run_id alone welds them into one round that shows a query starting
+// in one process and finishing in another.
+function groupRuns(records) {
+  var runs = [], byKey = {};
+  records.slice().reverse().forEach(function (record) {
+    var facts = record.facts || {};
+    var process = record.process_id || '';
+    // Records made before a run exists -- queue decisions, for one -- still
+    // matter, so they group under their stage instead of being dropped.
+    var key = facts.run_id
+      ? 'run:' + process + ':' + facts.run_id
+      : 'norun:' + process + ':' + (record.stage || '?');
+    var run = byKey[key];
+    if (!run) {
+      run = byKey[key] = {
+        id: facts.run_id || 0, process: process, at: record.time_unix_ms || 0, steps: []
+      };
+      runs.push(run);
+    }
+    run.steps.push(record);
+  });
+  return runs.reverse();
+}
+
+// How many processes wrote this object's records. More than one means a restart
+// or a handover happened inside the retention, which the reader has to know:
+// round numbers repeat across processes, so two rounds numbered the same are not
+// the same round and a gap between them is a change of process, not a stall.
+function processesIn(records) {
+  var seen = {}, count = 0;
+  records.forEach(function (record) {
+    var process = (record && record.process_id) || '';
+    if (process && !seen[process]) { seen[process] = true; count++; }
+  });
+  return count;
+}
+
+// One line saying what happened in this run, chosen so the most actionable
+// thing wins. A run that failed and also waited is a run someone should look
+// at, and leading with the wait would say the opposite.
+function runVerdict(run) {
+  var failure = null, skipped = null, deferred = null, notDue = false, ended = null, decided = '';
+  run.steps.forEach(function (record) {
+    var facts = record.facts || {};
+    if (facts.failure_code && !failure) failure = facts;
+    if (facts.decision === 'normal_queue_full' || facts.decision === 'delayed_queue_full' ||
+        facts.decision === 'delayed_queue_evicted') skipped = facts;
+    if (facts.decision === 'query_readiness_deferred' || facts.decision === 'readiness_deferred') deferred = facts;
+    if (facts.decision === 'source_not_due' || facts.decision === 'future_slot') notDue = true;
+    if (facts.decision && facts.decision !== 'unknown') decided = facts.decision;
+    if (record.result === 'terminal' || record.result === 'retrying') ended = record;
+  });
+  if (failure) {
+    return {tone: 'bad', text: '失败在「' + say(STAGE_TEXT, failure.failure_stage) + '」：' +
+      failure.failure_code + '（' + failure.failure_category + '）'};
+  }
+  if (skipped) return {tone: 'wait', text: say(DECISION_TEXT, skipped.decision)};
+  if (deferred) return {tone: 'wait', text: '数据还没到，按设计等下一轮——不用处理'};
+  // A poll that found the next Slot is not due yet is the dispatcher working
+  // normally, and it is most of what a window records. It was reading as
+  // "终止" in red because the timing record on runner_completed reports
+  // terminal unconditionally, with no reason -- so the loudest row in a normal
+  // round was a failure that never happened.
+  if (notDue) return {tone: '', text: '还没到点，这轮不做事——正常轮询'};
+  var reason = ended ? reasonText(ended.reason_code) : '';
+  if (ended && reason) {
+    return {tone: ended.result === 'terminal' ? 'bad' : '',
+      text: say(RESULT_TEXT, ended.result) + '：' + reason};
+  }
+  // Ended with no reason given. That is not a verdict: it says the site did not
+  // report one, not that something went wrong. Whatever the run actually
+  // decided is the better answer, and calling it a failure on the strength of a
+  // bare "terminal" is how a normal round gets painted red.
+  if (decided) return {tone: '', text: say(DECISION_TEXT, decided)};
+  if (ended) return {tone: '', text: say(RESULT_TEXT, ended.result) + '（未说明原因）'};
+  return {tone: '', text: '还在进行'};
+}
+
+// Which time point this run was computing, and which replica ran it. Both are
+// per run rather than per step, and both are what someone cross-checking
+// against logs or another tool needs first.
+function runCoordinates(run) {
+  var slot = 0, owner = '';
+  run.steps.forEach(function (record) {
+    if (record.evaluation_time) slot = record.evaluation_time;
+    if (record.owner_id) owner = record.owner_id;
+  });
+  var parts = [];
+  if (slot) parts.push('算的是 ' + new Date(slot * 1000).toLocaleTimeString() + ' 这个点');
+  if (owner) parts.push('在 ' + shortReplica(owner));
+  return parts.join(' · ');
+}
+
+// A run whose steps knew why but whose ending did not is worth pointing at.
+// The reason exists one step earlier and is gone by the time the run completes,
+// so the completion says "unknown" about something that was not unknown -- and
+// an unclassified ending is indistinguishable from a real fault in every count
+// that groups by reason.
+function runReasonLost(run) {
+  var known = '', lost = false;
+  run.steps.forEach(function (record) {
+    var facts = record.facts || {};
+    if (CAUSAL_DECISIONS[facts.decision]) known = facts.decision;
+    if (record.reason_code === 'internal_unknown') lost = true;
+  });
+  if (!lost || !known) return '';
+  return '这轮的原因本来是知道的（' + say(DECISION_TEXT, known) + '），到结束时记成了 internal_unknown。' +
+    '按原因分组的统计会把它算进「没有归类的原因」，跟真正查不出原因的混在一起。';
+}
+
+// Only facts that carry information. The record always ships the full set, and
+// most of them are zero on most runs: showing the zeros costs the reader the
+// whole screen and tells them nothing.
+var FACT_LABELS = [
+  ['evaluations_observed', '评估序列', ''],
+  ['range_count', '时间段', ''],
+  ['state_preflight_calls_observed', '状态预读', ' 次'],
+  ['state_preflight_keys_observed', '预读键', ''],
+  ['state_apply_calls_observed', '状态写入', ' 次'],
+  ['state_apply_keys_observed', '写入键', ''],
+  ['capacity_requested', '预算申请', ''],
+  ['capacity_limit', '预算上限', '']
+];
+var FACT_NANOS = [
+  ['evaluation_ns_observed', '评估耗时'],
+  ['state_preflight_ns_observed', '状态预读耗时'],
+  ['state_apply_ns_observed', '状态写入耗时'],
+  ['queue_wait_ns', '排队等了']
+];
+
+function runFacts(run) {
+  var totals = {};
+  run.steps.forEach(function (record) {
+    var facts = record.facts || {};
+    Object.keys(facts).forEach(function (name) {
+      if (typeof facts[name] === 'number') totals[name] = Math.max(totals[name] || 0, facts[name]);
+    });
+  });
+  var tags = [];
+  FACT_LABELS.forEach(function (pair) {
+    if (totals[pair[0]]) tags.push(pair[1] + ' ' + totals[pair[0]] + pair[2]);
+  });
+  FACT_NANOS.forEach(function (pair) {
+    if (totals[pair[0]]) tags.push(pair[1] + ' ' + nanos(totals[pair[0]]));
+  });
+  // Deliberately next to 排队等了, because neither number names a cause on its
+  // own: a round that started late because it slept too long and one that
+  // started late because it queued behind capacity show the same delay, and
+  // only the pair tells them apart.
+  if (totals.readiness_slack_seconds) {
+    tags.push('数据就绪后又等了 ' + totals.readiness_slack_seconds.toFixed(1) + ' 秒');
+  } else if (runBoundary(run) === 'mixed') {
+    // Says why there is no number rather than leaving the tag out, which reads
+    // as "nothing to report".
+    tags.push('这轮各查询的就绪时刻不一致，没有统一的“等了多久”');
+  }
+  return tags;
+}
+
+// runBoundary reports whether this round's queries agreed on one moment their
+// data became readable.
+function runBoundary(run) {
+  var boundary = '';
+  run.steps.forEach(function (record) {
+    var facts = record.facts || {};
+    if (facts.readiness_boundary) boundary = facts.readiness_boundary;
+  });
+  return boundary;
+}
+
+// A window on a busy object records the same step over and over -- one "queued"
+// per generation, thirteen in a row with nothing to tell them apart. Printing
+// each one is not detail, it is the same row thirteen times, and it pushes
+// whatever did differ off the screen. Consecutive identical steps become one
+// row that says how many and over what span.
+function collapseSteps(steps) {
+  var collapsed = [];
+  steps.forEach(function (record) {
+    var facts = record.facts || {};
+    var key = [record.stage, record.result, record.reason_code,
+      facts.decision, facts.failure_code].join('|');
+    var last = collapsed[collapsed.length - 1];
+    if (last && last.key === key) {
+      last.count++;
+      if (record.time_unix_ms) last.last = record.time_unix_ms;
+      return;
+    }
+    collapsed.push({key: key, record: record, count: 1,
+      first: record.time_unix_ms || 0, last: record.time_unix_ms || 0});
+  });
+  return collapsed;
+}
+
+function renderRuns(host, runs, manyProcesses) {
+  host.textContent = '';
+  runs.forEach(function (run) {
+    var verdict = runVerdict(run);
+    var box = document.createElement('div');
+    box.className = 'run' + (verdict.tone ? ' ' + verdict.tone : '');
+
+    var head = document.createElement('div');
+    head.className = 'rhead';
+    function part(cls, content) {
+      var span = document.createElement('span');
+      span.className = cls;
+      span.textContent = content;
+      head.appendChild(span);
+    }
+    // The process is shown only when there is more than one, because that is
+    // when the round number stops identifying the round on its own.
+    part('no', (run.id ? '第 ' + run.id + ' 轮' : '轮次之外') +
+      (manyProcesses && run.process ? '（进程 ' + run.process + '）' : ''));
+    part('rv', verdict.text);
+    part('when', run.at ? new Date(run.at).toLocaleTimeString() : '');
+    var took = 0;
+    run.steps.forEach(function (record) { took = Math.max(took, record.duration_ns || 0); });
+    if (took) part('took', nanos(took));
+    box.appendChild(head);
+
+    var where = runCoordinates(run);
+    if (where) {
+      var coords = document.createElement('div');
+      coords.className = 'facts';
+      var label = document.createElement('span');
+      label.className = 'tag';
+      label.textContent = where;
+      coords.appendChild(label);
+      box.appendChild(coords);
+    }
+
+    var lost = runReasonLost(run);
+    if (lost) {
+      var note = document.createElement('div');
+      note.className = 'note';
+      note.textContent = lost;
+      box.appendChild(note);
+    }
+
+    var list = document.createElement('ol');
+    list.className = 'steps';
+    collapseSteps(run.steps).forEach(function (group) {
+      var record = group.record;
+      var facts = record.facts || {};
+      var item = document.createElement('li');
+      // A bare terminal with no reason is not evidence of anything -- the
+      // timing record on this path reports it unconditionally. Marking those
+      // rows red put two red lines in a round where nothing happened.
+      if (facts.failure_code || (record.result === 'terminal' && reasonText(record.reason_code))) {
+        item.className = 'sbad';
+      }
+      var stage = document.createElement('span');
+      stage.className = 'st';
+      stage.textContent = say(STAGE_TEXT, record.stage) + (group.count > 1 ? ' ×' + group.count : '');
+      // The identifier stays reachable without spending a column on it.
+      stage.title = record.stage;
+      item.appendChild(stage);
+      var detail = document.createElement('span');
+      detail.className = 'de';
+      var parts = [];
+      if (facts.decision) parts.push(say(DECISION_TEXT, facts.decision));
+      if (record.result && !TIMING_ONLY_STAGES[record.stage]) {
+        parts.push(say(RESULT_TEXT, record.result));
+      }
+      var reason = reasonText(record.reason_code);
+      // The failure code and the reason are often the same string; printing
+      // both put "QUERY_TIMEOUT · QUERY_TIMEOUT" on the row.
+      if (reason && reason !== facts.failure_code) parts.push(reason);
+      if (facts.failure_code) parts.push(facts.failure_code);
+      // The sentence that says which failure this actually was. The reason code
+      // above it is one level too coarse: BLOCKED_EXACT_SET_UNAVAILABLE covers a
+      // retired schedule, a corrupt projection and a store that would not
+      // answer, and someone read every row of this view on exactly that object
+      // and still could not say which. It goes last because it is the longest
+      // and the most specific -- the row reads coarse to fine.
+      if (record.error) parts.push(record.error);
+      // A step that carries no decision and no result still happened, and a
+      // blank row reads as missing data rather than as a step with nothing to
+      // report. Say the one thing it did establish.
+      if (!parts.length && record.slot_identity_known) parts.push('时间点身份已确定');
+      detail.textContent = parts.join(' · ');
+      item.appendChild(detail);
+      var timing = document.createElement('span');
+      timing.className = 'ns';
+      // Repeats report the span they happened over. A maximum of thirteen
+      // identical zero-length records says nothing; "over four minutes" says
+      // whether this is one burst or a condition that persists.
+      timing.textContent = group.count > 1 && group.first && group.last > group.first
+        ? '跨 ' + nanos((group.last - group.first) * 1e6)
+        : nanos(record.duration_ns);
+      item.appendChild(timing);
+      list.appendChild(item);
+    });
+    box.appendChild(list);
+
+    var tags = runFacts(run);
+    if (tags.length) {
+      var facts = document.createElement('div');
+      facts.className = 'facts';
+      tags.forEach(function (label) {
+        var tag = document.createElement('span');
+        tag.className = 'tag';
+        tag.textContent = label;
+        facts.appendChild(tag);
+      });
+      box.appendChild(facts);
+    }
+    host.appendChild(box);
+  });
+}
+
+// An observation window's output is readable where the window was opened. It
+// starts the moment the window opens, so this is not a wait-for-the-end report.
+function loadRecords(queryGroup) {
+  show('recWrap', true);
+  show('recErr', false);
+  show('recDrop', false);
+  show('recTools', false);
+  show('recBody', false);
+  text('recBasis', '对象 ' + queryGroup.slice(0, 12) + '… 的记录，最新在前。');
+  var runsHost = document.getElementById('recRuns');
+  runsHost.textContent = '读取中…';
+  // Read through the object rather than an endpoint of its own: the API is
+  // capped at five capabilities, and "what did my window record for this
+  // object" is part of looking at the object.
+  // Named distinctly rather than reusing the page's one-letter response
+  // variable: every field read off it is checked against the detail response's
+  // own shape, and that check finds the reads by the name in front of the dot --
+  // so the name has to belong to this response and nothing else on the page.
+  return api('objects/' + encodeURIComponent(queryGroup) + '?records=200').then(function (objectDetail) {
+    var rs = objectDetail.records || [];
+    var h = objectDetail.diagnostics || {};
+    if (objectDetail.records_error) {
+      runsHost.textContent = objectDetail.records_error;
+      return;
+    }
+    if (!rs.length) {
+      // An empty list and an unrecorded window look the same and call for
+      // opposite next steps, so the store's own counters are shown instead of
+      // a bare "no data".
+      runsHost.textContent =
+        h.dropped || h.failed
+          ? '这个窗口没有可读记录，但诊断通道丢过 ' + (h.dropped || 0) + ' 条、写失败 ' + (h.failed || 0) +
+            ' 条——“没发生”和“没记下来”不是一回事。'
+          : '窗口开启后这个对象还没有产生记录。它按轮次产生，慢周期对象要等下一轮。';
+      return;
+    }
+    // Both of these change how the runs below should be read, so both are
+    // collected and both are shown. Writing one over the other would silently
+    // drop a caveat -- and the pair of them together is the worst case, where a
+    // gap could be a dropped record or a change of process and the reader has to
+    // know both are possible.
+    var caveats = [];
+    // A dropped record makes this an incomplete sample, and a reader who does
+    // not know that will read "the run stopped here" off a gap the channel
+    // made. It goes above the runs rather than beside them.
+    var dropped = 0;
+    rs.forEach(function (r) { dropped = Math.max(dropped, (r && r.dropped_total) || 0); });
+    if (dropped || h.dropped || h.failed) {
+      caveats.push('这份记录不完整：诊断通道丢了 ' + (dropped || h.dropped || 0) + ' 条' +
+        (h.failed ? '、写失败 ' + h.failed + ' 条' : '') +
+        '。下面缺的一步可能是没发生，也可能是没记下来——不要当作完整证据。');
+    }
+    var processes = processesIn(rs);
+    if (processes > 1) {
+      caveats.push('这段记录来自 ' + processes + ' 个进程：期间发生过重启或对象被别的副本接管。' +
+        '轮次编号在每个进程里各自从 1 开始，已按进程分开——编号相同的不是同一轮，中间的空档是换了进程，不是卡住。');
+    }
+    if (caveats.length) {
+      text('recDrop', caveats.join(' '));
+      show('recDrop', true);
+    }
+    var runs = groupRuns(rs);
+    renderRuns(runsHost, runs, processes > 1);
+    show('recTools', true);
+    document.getElementById('recBody').textContent = rs.map(function (r) {
+      return JSON.stringify(r);
+    }).join('\n');
+    text('recBasis', '对象 ' + queryGroup.slice(0, 12) + '… 共 ' + rs.length + ' 条，归成 ' + runs.length +
+      ' 轮，最新在前；保留 ' + Math.round((objectDetail.retention_seconds || 0) / 60) +
+      ' 分钟，窗口结束后仍可看一段时间。每轮里按发生顺序排。');
+  }).catch(function (e) {
+    runsHost.textContent = '';
+    // The detail route says not found when this object is neither in the anomaly
+    // list nor has any recorded output. For this panel that is not a failure --
+    // it is the same answer as an empty list, and showing it as a broken read
+    // sends the reader looking for a problem with the page.
+    if (e.status === 404) {
+      runsHost.textContent = '窗口开启后这个对象还没有产生记录。它按轮次产生，慢周期对象要等下一轮。';
+      return;
+    }
+    fail('recErr', e);
+  });
+}
+
+
+
+
+
+
+
+
+// The two things about these counts that the headline cannot carry and a reader
+// will otherwise assume wrong.
+//
+// The second one is the more important. shortRounds increments on any round
+// where at least one window was short, so a strategy whose series churn -- a
+// different one warming every round -- drives it up for ever without any single
+// window ever being persistently short. Which of the two a row is, is answered
+// separately by freshSeriesNote, off whether this round loaded any history for
+// the series; shortRounds itself stays silent on it rather than assuming one.
+// Spans of Slots nothing ever evaluated.
+//
+// This is the most complete form of "detection did not happen" the deployment
+// produces, and it had nothing on the page at all. A degraded round was
+// attempted; a demoted object is being retried; an overdue object is late.
+// These Slots were never evaluated, will not be revisited, and the object went
+// straight back to running normally -- so every column, every total and every
+// per-round signal correctly reports it as fine. There was no place where the
+// loss could be said, which is why it needed one of its own rather than a seat
+// in a column.
+//
+// The length of the span is what ranks, and it is the only size available: how
+// many Slots are inside it cannot be known, because the parts of the timeline
+// that would have counted them are the parts that were removed. The page says
+// that rather than printing a number that would read as measured.
+function renderPrunedSkips(skips) {
+  show('prunedSkips', skips.length > 0);
+  if (!skips.length) return;
+  var longest = skips[0];
+  var parts = ['有 ' + skips.length + ' 个对象存在一段"从来没有被检测过"的时间'
+    + '——它们的游标曾经指向已经被裁掉的时间线，被移到了时间线还留着的最早一个时间点。'
+    + '那一段里的时间点没有被评估过，也不会补跑。'];
+  parts.push('最长的一段是 ' + shortId(longest.query_group) + '，跨度 '
+    + elapsedLabel(longest.span_seconds) + '，发生在 ' + momentLabel(longest.at));
+  if (longest.discarded_slot) {
+    parts.push('其中有一个时间点当时正在跑，被一起丢掉了');
+  }
+  parts.push('跨度里有多少个时间点无法得知：能数它们的那部分时间线正是被裁掉的那部分。'
+    + '所以这里只给时间跨度，不给个数——给个数就会被当成数出来的');
+  parts.push('这些对象现在通常是正常的，上面每一栏都会这么报，而且都没报错。'
+    + '要处理的不是它们此刻的状态，是那一段没有告警覆盖的时间');
+  text('prunedSkips', parts.join('；') + '。');
+}
+
+
+
+
+
+
+function loadWindows() {
+  return api('windows').then(function (d) {
+    show('winErr', false);
+    text('maxTtl', Math.round((d.max_ttl_seconds || 0) / 60));
+    text('maxOpen', d.max_open);
+    var ws = d.windows || [];
+    var tb = document.getElementById('winRows');
+    tb.textContent = '';
+    ws.forEach(function (w) {
+      var tr = document.createElement('tr');
+      function cell(t, cls) {
+        var td = document.createElement('td');
+        if (cls) td.className = cls;
+        td.textContent = t;
+        tr.appendChild(td);
+      }
+      cell(w.query_group.slice(0, 12) + '…', 'mono');
+      cell(w.opened_by || '未记录');
+      cell(w.opened_at ? new Date(w.opened_at).toLocaleString() : '—');
+      cell(w.expires_at ? new Date(w.expires_at).toLocaleString() : '—');
+      var td = document.createElement('td');
+      var r = document.createElement('button');
+      r.textContent = '查看记录';
+      r.addEventListener('click', function () { loadRecords(w.query_group); });
+      td.appendChild(r);
+      var b = document.createElement('button');
+      b.textContent = '结束';
+      b.addEventListener('click', function () { closeWindow(w.query_group, b); });
+      td.appendChild(b);
+      tr.appendChild(td);
+      tb.appendChild(tr);
+    });
+    show('winEmpty', ws.length === 0);
+  }).catch(function (e) { fail('winErr', e); });
+}
+
+function postWindow(body, button) {
+  button.disabled = true;
+  return api('windows', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(function () {
+    show('winErr', false);
+    return loadWindows();
+  }).catch(function (e) {
+    fail('winErr', e);
+  }).then(function () {
+    button.disabled = false;
+  });
+}
+
+function closeWindow(queryGroup, button) {
+  return postWindow({ query_groups: [queryGroup], close: true }, button);
+}
+
+document.getElementById('open').addEventListener('click', function () {
+  var b = this;
+  postWindow({
+    query_groups: [document.getElementById('qg').value.trim()],
+    opened_by: document.getElementById('by').value.trim(),
+    ttl_seconds: Math.round(Number(document.getElementById('ttl').value) * 60)
+  }, b);
+});
+
+
+// The raw records stay one click away rather than being the default. They are
+// what a bug report attaches; they are not what someone reads to find out where
+// an object is stuck.
+document.getElementById('recRaw').addEventListener('click', function () {
+  var body = document.getElementById('recBody');
+  var showing = body.hidden;
+  show('recBody', showing);
+  this.textContent = showing ? '收起原文' : '看原文';
+});
+
+
+var trendWindow = '1h';
+// The curves are drawn here rather than by a chart library: four sparklines do
+// not justify shipping one, and the Rust version's 1MB chart bundle is on this
+// design's list of things not to repeat.
+function sparkline(points) {
+  var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 100 40');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  if (points.length < 2) return svg;
+  var values = points.map(function (p) { return p.value; });
+  var lo = Math.min.apply(null, values);
+  var hi = Math.max.apply(null, values);
+  // A flat line drawn against its own min and max becomes noise. Anchor the
+  // scale at zero so "steady at 931" and "steady at 0" do not look the same.
+  if (hi === lo) { lo = Math.min(0, lo); hi = hi === lo ? lo + 1 : hi; }
+  else { lo = Math.min(0, lo); }
+  var t0 = points[0].at;
+  var span = points[points.length - 1].at - t0 || 1;
+  var d = points.map(function (p, i) {
+    var x = ((p.at - t0) / span) * 100;
+    var y = 40 - ((p.value - lo) / (hi - lo)) * 38 - 1;
+    return (i ? 'L' : 'M') + x.toFixed(2) + ' ' + y.toFixed(2);
+  }).join(' ');
+  if (lo < 0 || (lo === 0 && hi > 0)) {
+    var zero = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    zero.setAttribute('class', 'zero');
+    zero.setAttribute('x1', '0'); zero.setAttribute('x2', '100');
+    var zy = (40 - ((0 - lo) / (hi - lo)) * 38 - 1).toFixed(2);
+    zero.setAttribute('y1', zy); zero.setAttribute('y2', zy);
+    svg.appendChild(zero);
+  }
+  var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', d);
+  svg.appendChild(path);
+  return svg;
+}
+
+function sharedUnavailable(series) {
+  if (series.length < 2) return null;
+  var first = series[0];
+  if (!first.unavailable) return null;
+  for (var i = 1; i < series.length; i++) {
+    if (series[i].unavailable !== first.unavailable) return null;
+  }
+  return first.unavailable;
+}
+
+function sharedUnavailableCard(code, series) {
+  var card = document.createElement('div');
+  card.className = 'tcard';
+  card.style.gridColumn = '1 / -1';
+  var title = document.createElement('h3');
+  title.textContent = '这 ' + series.length + ' 条曲线都取不到：' + code;
+  card.appendChild(title);
+  var why = document.createElement('div');
+  why.className = 'none';
+  // 原因相同时，逐条的 detail 只差指标名；把它们并列出来比抄四遍完整文案有用。
+  why.textContent = series.map(function (item) {
+    return item.label + '（' + item.promql + '）';
+  }).join('；');
+  card.appendChild(why);
+  var help = document.createElement('div');
+  help.className = 'help';
+  help.textContent = '判定与对象清单不受影响——它们读的是控制面，和这里的时序库无关。'
+    + '常见成因：这些指标所在的版本还没发布，或者本部署的指标 scope 没配对。';
+  card.appendChild(help);
+  return card;
+}
+
+function trendCard(item, siblingsWithData) {
+  var card = document.createElement('div');
+  card.className = 'tcard';
+  var title = document.createElement('h3');
+  title.textContent = item.label;
+  // The expression is the fact source. A number whose origin cannot be checked
+  // is worth less than no number.
+  title.title = item.promql;
+  card.appendChild(title);
+
+  var points = item.points || [];
+  if (item.unavailable) {
+    var none = document.createElement('div');
+    none.className = 'none';
+    // A refused curve and an empty one mean different things: the first says
+    // nobody is looking, the second says nothing happened.
+    none.textContent = '取不到：' + item.unavailable + (item.detail ? '（' + item.detail + '）' : '');
+    card.appendChild(none);
+  } else if (!points.length) {
+    var empty = document.createElement('div');
+    empty.className = 'range';
+    empty.textContent = '这段窗口内没有数据点'
+      + (siblingsWithData > 0
+          ? '——同批另外 ' + siblingsWithData + ' 条有数据，所以取数是通的：'
+            + '要么这段时间真的没有发生，要么这条指标在这一代还没开始上报'
+          : '——同批没有一条有数据，先怀疑取数本身，不要读成"什么都没发生"');
+    card.appendChild(empty);
+  } else {
+    var values = points.map(function (p) { return p.value; });
+    var now = document.createElement('div');
+    now.className = 'now';
+    now.textContent = fmtNumber(values[values.length - 1]);
+    card.appendChild(now);
+    var range = document.createElement('div');
+    range.className = 'range';
+    range.textContent = '窗口内最低 ' + fmtNumber(Math.min.apply(null, values)) +
+      ' · 最高 ' + fmtNumber(Math.max.apply(null, values)) + ' · ' + points.length + ' 点';
+    // 最后一个采样点不是当前值：采集周期加入库延迟摆在中间，贴近 now 的点还
+    // 可能因为尚未入库而显示成零。
+    now.title = '最后一个采样点，时刻 ' + new Date(points[points.length - 1].at).toLocaleTimeString() +
+      '；不是当前值';
+    card.appendChild(range);
+    card.appendChild(sparkline(points));
+    if (item.partial) {
+      var partial = document.createElement('div');
+      partial.className = 'none';
+      partial.textContent = '上游报告结果不完整，这条曲线可能缺段';
+      card.appendChild(partial);
+    }
+  }
+  var help = document.createElement('div');
+  help.className = 'help';
+  help.textContent = item.help || '';
+  card.appendChild(help);
+  return card;
+}
+
+function fmtNumber(value) {
+  if (!isFinite(value)) return '—';
+  if (Math.abs(value) >= 100 || value === Math.round(value)) return String(Math.round(value));
+  return value.toFixed(2);
+}
+
+function loadTrend() {
+  return api('series?window=' + encodeURIComponent(trendWindow)).then(function (d) {
+    show('trendPanel', true);
+    show('trendErr', false);
+    var pick = document.getElementById('wpick');
+    pick.textContent = '';
+    (d.window_choices || []).forEach(function (key) {
+      var button = document.createElement('button');
+      button.textContent = key;
+      if (key === d.window) button.className = 'on';
+      button.addEventListener('click', function () { trendWindow = key; loadTrend(); });
+      pick.appendChild(button);
+    });
+    var span = document.createElement('span');
+    span.className = 'range';
+    span.textContent = '窗口 ' + rangeLabel(d.start, d.end) + '，每点 ' + d.step_seconds + ' 秒';
+    pick.appendChild(span);
+
+    var host = document.getElementById('trend');
+    host.textContent = '';
+    var series = d.series || [];
+    // 全都因为同一个原因取不到时，把同一段上游文案抄四遍不增加任何信息，只是让
+    // 整段变成噪音。原因相同才合并；只要有一条不同就照旧逐条显示，合并会盖掉
+    // 那条不一样的。
+    var shared = sharedUnavailable(series);
+    if (shared) {
+      host.appendChild(sharedUnavailableCard(shared, series));
+      return;
+    }
+    // Whether any sibling curve came back with points, which is what tells an
+    // empty curve apart from an endpoint nobody could reach.
+    //
+    // "No points in this window" used to mean one thing: nothing happened. A
+    // change landing upstream makes several gauges emit no series at all until
+    // they have loaded, deliberately -- reporting a zero before loading is how
+    // a legitimate value lands inside somebody's threshold and supports the
+    // wrong conclusion. The trade is only worth it if "not loaded" can be told
+    // from "could not read anything", and the way to tell is that everything
+    // else came back.
+    var siblingsWithData = series.filter(function (item) {
+      return !item.unavailable && (item.points || []).length > 0;
+    }).length;
+    series.forEach(function (item) { host.appendChild(trendCard(item, siblingsWithData)); });
+  }).catch(function (e) {
+    // A deployment that was never told where its own metrics live has no curves
+    // to show. That is a missing route, not a broken page, so the section stays
+    // out of the way instead of showing an error nobody can act on.
+    if (e.status === 404) {
+      show('trendPanel', false);
+      return;
+    }
+    show('trendPanel', true);
+    fail('trendErr', e);
+  });
+}
+
+// How often the page re-reads, and how old what is on screen already is.
+//
+// Both are shown because the second is the one a reader needs and neither was
+// available: every number on this page is a point read, the page refreshed on a
+// fixed thirty-second timer, and nothing said so -- so a verdict could be
+// twenty-nine seconds old while being read as "now". During a rollout that is
+// the difference between watching a deployment recover and watching a stale
+// frame of it.
+var MIN_REFRESH_SECONDS = 5;
+var DEFAULT_REFRESH_SECONDS = 30;
+var refreshSeconds = DEFAULT_REFRESH_SECONDS;
+var lastRead = 0;
+var refreshTimer = 0;
+
+function storedRefreshSeconds() {
+  // The URL wins over the stored value so a link can carry a cadence, which is
+  // what someone shares when they want another person to watch the same thing.
+  var fromUrl = new URLSearchParams(location.search).get('every');
+  var raw = fromUrl;
+  if (raw === null) {
+    // Reading storage throws outright in some browsers rather than returning
+    // null, and a page that cannot render because of a preference is worse than
+    // one that forgets it.
+    try { raw = localStorage.getItem('alarmd.every'); } catch (e) { raw = null; }
+  }
+  var parsed = parseInt(raw, 10);
+  // Unreadable falls back to the default; too small is clamped to the floor, the
+  // same as typing it into the box. Sending one to the default and the other to
+  // the floor would make the same number mean two different things depending on
+  // where it came from.
+  if (!isFinite(parsed)) return DEFAULT_REFRESH_SECONDS;
+  return Math.max(MIN_REFRESH_SECONDS, parsed);
+}
+
+function applyRefreshSeconds(seconds) {
+  refreshSeconds = Math.max(MIN_REFRESH_SECONDS, Math.floor(seconds) || DEFAULT_REFRESH_SECONDS);
+  document.getElementById('every').value = refreshSeconds;
+  try { localStorage.setItem('alarmd.every', String(refreshSeconds)); } catch (e) { /* preference only */ }
+  if (refreshTimer) { clearInterval(refreshTimer); }
+  refreshTimer = setInterval(refresh, refreshSeconds * 1000);
+  // The floor is not a round number picked for looks: one refresh is four reads
+  // of the control plane and every replica snapshot, and under five seconds the
+  // page costs the deployment more than it tells the reader.
+  text('refreshNote', '最短 ' + MIN_REFRESH_SECONDS + ' 秒——一次刷新是四个接口、'
+    + '每个都直读控制面和各副本快照，再快下去这个页面对部署的开销比它给的信息多。');
+}
+
+function tickAge() {
+  if (!lastRead) return;
+  var seconds = Math.round((Date.now() - lastRead) / 1000);
+  var host = document.getElementById('age');
+  host.textContent = '· 屏幕上的数是 ' + seconds + ' 秒前读的';
+  // Past one interval the page should already have refreshed; if it has not,
+  // what is on screen is older than the reader has any reason to expect.
+  host.className = seconds > refreshSeconds + 2 ? 'age stale' : 'age';
+}
+
+function refresh() {
+  lastRead = Date.now();
+  text('stamp', '读取于 ' + new Date().toLocaleTimeString());
+  tickAge();
+  loadHealth();
+  loadChecks();
+  loadWindows();
+  loadTrend();
+}
+
+document.getElementById('every').addEventListener('change', function () {
+  applyRefreshSeconds(parseInt(this.value, 10));
+  refresh();
+});
+document.getElementById('refreshNow').addEventListener('click', refresh);
+applyRefreshSeconds(storedRefreshSeconds());
+setInterval(tickAge, 1000);
+refresh();
+</script>
+</body>
+</html>

@@ -134,10 +134,26 @@ type OffSetInfo struct {
 
 type Aggregates []Aggregate
 
+// QueryCostProfile describes structural query properties used for observation.
+// It must not be used as an environment-independent admission policy.
+type QueryCostProfile struct {
+	SelectAllCandidate bool
+	RangeFunction      bool
+	StepLessThanWindow bool
+	ASTBranchCount     int
+	SQLPushdown        bool
+	Window             time.Duration
+	Step               time.Duration
+}
+
 // Query 查询扩展信息，为后面查询提供定位
 type Query struct {
-	SourceType string `json:"source_type,omitempty"`
-	Password   string `json:"password,omitempty"` // 查询鉴权
+	FieldSemanticsExecution *FieldSemanticsExecution `json:"-"`
+	RoutingConditions       AllConditions            `json:"routing_conditions,omitempty"`
+	FieldSemantics          string                   `json:"field_semantics,omitempty"`
+	SourceConditions        AllConditions            `json:"source_conditions,omitempty"`
+	SourceType              string                   `json:"source_type,omitempty"`
+	Password                string                   `json:"password,omitempty"` // 查询鉴权
 
 	ClusterID string `json:"cluster_id,omitempty"` // 存储 ID
 
@@ -176,6 +192,8 @@ type Query struct {
 
 	Aggregates Aggregates `json:"aggregates,omitempty"` // 聚合方法列表，从内到外排序
 
+	CostProfile QueryCostProfile `json:"-"`
+
 	Condition string `json:"condition,omitempty"` // 过滤条件
 
 	// Vm 过滤条件
@@ -188,10 +206,11 @@ type Query struct {
 
 	SegmentedEnable bool `json:"segmented_enable,omitempty"` // 是否开启分段查询
 
-	RouteStart      time.Time `json:"-"` // 当前存储路由在本次查询中的生效开始时间，用于计算权重
-	RouteEnd        time.Time `json:"-"` // 当前存储路由在本次查询中的生效结束时间，用于计算权重
-	RouteQueryStart time.Time `json:"-"` // 当前存储路由带迁移重叠的查询开始时间
-	RouteQueryEnd   time.Time `json:"-"` // 当前存储路由带迁移重叠的查询结束时间
+	RouteStart        time.Time `json:"-"` // 当前存储路由在本次查询中的生效开始时间，用于计算权重
+	RouteEnd          time.Time `json:"-"` // 当前存储路由在本次查询中的生效结束时间，用于计算权重
+	RouteEndInclusive bool      `json:"-"` // RouteEnd 是否为本次查询终点；内部路由切换点仍保持半开区间
+	RouteQueryStart   time.Time `json:"-"` // 当前存储路由带迁移重叠的查询开始时间
+	RouteQueryEnd     time.Time `json:"-"` // 当前存储路由带迁移重叠的查询结束时间
 
 	// 查询扩展
 	QueryString string `json:"query_string,omitempty"`
@@ -207,6 +226,7 @@ type Query struct {
 	Size   int      `json:"size,omitempty"`
 
 	Scroll            string             `json:"scroll,omitempty"`
+	IsSearchAfter     bool               `json:"is_search_after,omitempty"`
 	ResultTableOption *ResultTableOption `json:"result_table_option,omitempty"`
 
 	Orders      Orders    `json:"orders,omitempty"`
@@ -304,6 +324,28 @@ type Order struct {
 type Orders []Order
 
 type AllConditions [][]ConditionField
+
+// MergeAllConditions 将 source 和 target 做 AND 合并，并保持 AllConditions 的析取范式：
+// 外层分组表示 OR 分支，内层字段表示 AND 条件。
+func MergeAllConditions(source, target AllConditions) AllConditions {
+	if len(source) == 0 {
+		return target
+	}
+	if len(target) == 0 {
+		return source
+	}
+
+	merged := make(AllConditions, 0, len(source)*len(target))
+	for _, sourceGroup := range source {
+		for _, targetGroup := range target {
+			group := make([]ConditionField, 0, len(sourceGroup)+len(targetGroup))
+			group = append(group, sourceGroup...)
+			group = append(group, targetGroup...)
+			merged = append(merged, group)
+		}
+	}
+	return merged
+}
 
 type QueryList []*Query
 

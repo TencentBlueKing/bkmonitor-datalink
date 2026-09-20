@@ -11,6 +11,9 @@ package prometheus
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -25,6 +28,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/function"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -35,10 +39,13 @@ const (
 type QueryRangeStorage struct {
 	QueryMaxRouting int
 	Timeout         time.Duration
+	SelectorCache   *SelectorCache
 }
 
 func (s *QueryRangeStorage) Querier(ctx context.Context, min, max int64) (storage.Querier, error) {
-	return NewQuerier(ctx, time.Unix(min, 0), time.Unix(max, 0), s.QueryMaxRouting, s.Timeout), nil
+	querier := NewQuerier(ctx, time.Unix(min, 0), time.Unix(max, 0), s.QueryMaxRouting, s.Timeout)
+	querier.selectorCache = s.SelectorCache
+	return querier, nil
 }
 
 func NewQuerier(ctx context.Context, min, max time.Time, maxRouting int, timeout time.Duration) *Querier {
@@ -52,11 +59,12 @@ func NewQuerier(ctx context.Context, min, max time.Time, maxRouting int, timeout
 }
 
 type Querier struct {
-	ctx        context.Context
-	min        time.Time
-	max        time.Time
-	maxRouting int
-	timeout    time.Duration
+	ctx           context.Context
+	min           time.Time
+	max           time.Time
+	maxRouting    int
+	timeout       time.Duration
+	selectorCache *SelectorCache
 }
 
 // checkCtxDone
@@ -100,12 +108,13 @@ func (q *Querier) getQueryList(matchers []*labels.Matcher) (string, QueryList) {
 		}
 
 		queryList = append(queryList, &Query{
-			instance:   instance,
-			qry:        qry,
-			start:      qry.RouteStart,
-			end:        qry.RouteEnd,
-			queryStart: qry.RouteQueryStart,
-			queryEnd:   qry.RouteQueryEnd,
+			instance:     instance,
+			qry:          qry,
+			start:        qry.RouteStart,
+			end:          qry.RouteEnd,
+			endInclusive: qry.RouteEndInclusive,
+			queryStart:   qry.RouteQueryStart,
+			queryEnd:     qry.RouteQueryEnd,
 		})
 	})
 
@@ -143,11 +152,7 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 	referenceName, queryList := q.getQueryList(matchers)
 	span.Set("reference_name", referenceName)
 	mergeFunc := queryList.mergeFuncName(hints)
-	var rangeSelector time.Duration
-	if hints != nil && hints.Range > 0 {
-		rangeSelector = time.Duration(hints.Range) * time.Millisecond
-	}
-	bucketDuration := queryList.mergeBucketDuration(mergeFunc, qp.Step, rangeSelector)
+	bucketDuration := queryList.mergeBucketDuration(mergeFunc, qp.Step)
 	span.Set("merge_func", mergeFunc)
 	span.Set("merge_bucket_duration", bucketDuration)
 
@@ -162,7 +167,6 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			}
 		}
 
-		// avg 类函数在带 route 时间段时会使用聚合 bucket 宽度计算覆盖时长；其它函数不受 bucket 宽度影响。
 		set = storage.NewMergeSeriesSet(sets, function.NewMergeSeriesSetWithFuncAndSortByStep(mergeFunc, bucketDuration))
 	}()
 
@@ -223,10 +227,23 @@ func (q *Querier) selectFn(hints *storage.SelectHints, matchers ...*labels.Match
 			successedPaths.Add(1)
 			switch strategy.wrapKind {
 			case seriesSetWrapValidRouteRange:
-				setCh <- function.NewTimeRangeSeriesSet(currentSet, strategy.weightStart, strategy.weightEnd)
+				metric.RouteSeriesWrapInc(ctx, metric.RouteSeriesWrapValid, mergeFunc)
+				timeRangeSet := function.NewTimeRangeSeriesSet(currentSet, strategy.weightStart, strategy.weightEnd)
+				opts := make([]function.RouteRangeFilterOption, 0, 2)
+				if queryList.allowRouteStartBoundaryBucket(query) {
+					// 当前逻辑 source 的 routeStart 前没有相邻时间路由时，保留首个 backward range bucket。
+					// 其他独立 RT 不影响该判定；真正的后续 route 仍不能开启这个例外。
+					opts = append(opts, function.WithRouteStartBoundaryBucket())
+				}
+				if query.endInclusive {
+					opts = append(opts, function.WithRouteEndInclusive())
+				}
+				setCh <- function.NewRouteRangeFilterSeriesSet(timeRangeSet, mergeFunc, bucketDuration, opts...)
 			case seriesSetWrapZeroRouteRange:
+				metric.RouteSeriesWrapInc(ctx, metric.RouteSeriesWrapZero, mergeFunc)
 				setCh <- function.NewZeroTimeRangeSeriesSet(currentSet)
 			default:
+				metric.RouteSeriesWrapInc(ctx, metric.RouteSeriesWrapNone, mergeFunc)
 				setCh <- currentSet
 			}
 		})
@@ -273,7 +290,16 @@ func (q *Querier) Select(_ bool, hints *storage.SelectHints, matchers ...*labels
 			return
 		}
 
-		promise <- q.selectFn(hints, matchers...)
+		if q.selectorCache == nil {
+			promise <- q.selectFn(hints, matchers...)
+			return
+		}
+		key := q.selectorKey(hints, matchers...)
+		promise <- q.selectorCache.GetOrLoad(q.ctx, key, func(selectorCtx context.Context) storage.SeriesSet {
+			selectorQuerier := *q
+			selectorQuerier.ctx = selectorCtx
+			return selectorQuerier.selectFn(hints, matchers...)
+		})
 	}()
 
 	return &lazySeriesSet{
@@ -293,6 +319,66 @@ func (q *Querier) Select(_ bool, hints *storage.SelectHints, matchers ...*labels
 		},
 		set: nil,
 	}
+}
+
+func (q *Querier) selectorKey(hints *storage.SelectHints, matchers ...*labels.Matcher) string {
+	matcherValues := make([]string, 0, len(matchers))
+	referenceName := ""
+	for _, matcher := range matchers {
+		matcherValues = append(matcherValues, matcher.String())
+		if matcher.Name == labels.MetricName {
+			referenceName = matcher.Value
+		}
+	}
+	sort.Strings(matcherValues)
+
+	grouping := make([]string, 0)
+	if hints != nil {
+		grouping = append(grouping, hints.Grouping...)
+		sort.Strings(grouping)
+	}
+	routeQueries := metadata.GetQueryReference(q.ctx)[referenceName]
+	routeDigest := make([]string, 0)
+	for _, queryMetric := range routeQueries {
+		if queryMetric == nil {
+			continue
+		}
+		for _, routeQuery := range queryMetric.QueryList {
+			if routeQuery == nil {
+				continue
+			}
+			encoded, _ := json.Marshal(routeQuery)
+			routeDigest = append(routeDigest, routeQuery.StorageUUID()+"|"+string(encoded))
+		}
+	}
+	sort.Strings(routeDigest)
+	params := metadata.GetQueryParams(q.ctx)
+	payload := struct {
+		ReferenceName string
+		Matchers      []string
+		Hints         *storage.SelectHints
+		Grouping      []string
+		Min           int64
+		Max           int64
+		Start         int64
+		End           int64
+		Step          int64
+		Routes        []string
+	}{
+		ReferenceName: referenceName,
+		Matchers:      matcherValues,
+		Hints:         hints,
+		Grouping:      grouping,
+		Min:           q.min.UnixNano(),
+		Max:           q.max.UnixNano(),
+		Start:         params.Start.UnixNano(),
+		End:           params.End.UnixNano(),
+		Step:          params.Step.Nanoseconds(),
+		Routes:        routeDigest,
+	}
+	encoded, _ := json.Marshal(payload)
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:])
 }
 
 // LabelValues 返回可能的标签(维度)值。

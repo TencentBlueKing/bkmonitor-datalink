@@ -60,3 +60,16 @@ func TestQueryStorageUUIDSkipsZeroRouteRange(t *testing.T) {
 
 	assert.NotContains(t, q.StorageUUID(), fmt.Sprintf("%d", time.Time{}.UnixNano()))
 }
+
+func TestQueryStorageUUIDIncludesRouteEndSemantics(t *testing.T) {
+	halfOpen := Query{
+		StorageType: BkSqlStorageType,
+		StorageID:   "s1",
+		RouteStart:  time.Unix(100, 0),
+		RouteEnd:    time.Unix(200, 0),
+	}
+	inclusive := halfOpen
+	inclusive.RouteEndInclusive = true
+
+	assert.NotEqual(t, halfOpen.StorageUUID(), inclusive.StorageUUID())
+}

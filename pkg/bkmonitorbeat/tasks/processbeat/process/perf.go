@@ -29,14 +29,23 @@ type PortConfigStore struct {
 
 var ErrSkipCollect = errors.New("skip collect")
 
+type procMetaReader interface {
+	readMeta(pid int32) (define.ProcStat, error)
+}
+
 type procPerfMgr struct {
 	mut      sync.Mutex
 	totalMem uint64
 	ioCache  map[int32]define.IOStat
 	cpuCache map[int32]define.CPUStat
+	reader   procMetaReader
 }
 
 func (p *procPerfMgr) GetOneMetaData(pid int32) (define.ProcStat, error) {
+	return p.getOneMetaData(pid)
+}
+
+func (p *procPerfMgr) getOneMetaDataByGopsutil(pid int32) (define.ProcStat, error) {
 	var stat define.ProcStat
 	proc, err := shiroups.NewProcess(pid)
 	if err != nil {
@@ -51,7 +60,7 @@ func (p *procPerfMgr) GetOneMetaData(pid int32) (define.ProcStat, error) {
 	if len(status) > 0 {
 		s = status[0]
 	}
-	stat.Status = p.getProcState(s)
+	stat.Status = procStateName(s)
 
 	stat.Username, _ = proc.Username()
 	stat.Name, _ = proc.Name()
@@ -81,6 +90,10 @@ func (p *procPerfMgr) MergeMetaDataPerfStat(meta, perf define.ProcStat) define.P
 }
 
 func (p *procPerfMgr) getProcState(s string) string {
+	return procStateName(s)
+}
+
+func procStateName(s string) string {
 	switch s {
 	case "S", "sleep", "sleeping":
 		return "sleeping"

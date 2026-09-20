@@ -38,6 +38,9 @@ func buildConfigData() *Config {
 
 	relations := make([]RelationConf, 0, len(relation.DefaultRelationDefinitions()))
 	for _, rd := range relation.DefaultRelationDefinitions() {
+		if relation.ToRelationCategory(rd.Category) == relation.RelationCategoryDynamic {
+			continue
+		}
 		relations = append(relations, RelationConf{
 			Resources: []cmdb.Resource{
 				cmdb.Resource(rd.FromResource),

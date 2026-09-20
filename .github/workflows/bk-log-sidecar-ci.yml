@@ -1,0 +1,81 @@
+name: bk-log-sidecar CI
+
+on:
+  pull_request:
+    paths:
+      - "pkg/bk-log-sidecar/**"
+      - ".github/workflows/bk-log-sidecar-ci.yml"
+  push:
+    branches:
+      - master
+    paths:
+      - "pkg/bk-log-sidecar/**"
+      - ".github/workflows/bk-log-sidecar-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bk-log-sidecar-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: pkg/bk-log-sidecar
+
+jobs:
+  build:
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: windows
+            goarch: amd64
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: pkg/bk-log-sidecar/go.mod
+          cache-dependency-path: pkg/bk-log-sidecar/go.sum
+
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build ./...
+
+  unit-test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: pkg/bk-log-sidecar/go.mod
+          cache-dependency-path: pkg/bk-log-sidecar/go.sum
+
+      - name: Set up envtest
+        shell: bash
+        run: |
+          # 固定到兼容 Go 1.25 的版本，避免 latest 隐式切换到新的 Go 工具链。
+          go install sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.0.0-20260305142021-f9589b9f2b9d
+          KUBEBUILDER_ASSETS="$("$(go env GOPATH)/bin/setup-envtest" use -p path 1.26.1)"
+          test -x "$KUBEBUILDER_ASSETS/etcd"
+          echo "KUBEBUILDER_ASSETS=$KUBEBUILDER_ASSETS" >> "$GITHUB_ENV"
+
+      - name: Run unit tests
+        run: go test -race ./... -count=1

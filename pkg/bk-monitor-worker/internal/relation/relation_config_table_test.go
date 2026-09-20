@@ -732,6 +732,42 @@ func (m *MockSchemaProvider) ListResourceDefinitions(namespace string) ([]*relat
 	return result, nil
 }
 
+func (m *MockSchemaProvider) Name() string {
+	return "mock"
+}
+
+func (m *MockSchemaProvider) ListNamespaces() ([]string, error) {
+	seen := make(map[string]struct{})
+	for _, def := range m.resourceDefs {
+		seen[def.Namespace] = struct{}{}
+	}
+	for _, def := range m.relationDefs {
+		seen[def.Namespace] = struct{}{}
+	}
+	result := make([]string, 0, len(seen))
+	for namespace := range seen {
+		result = append(result, namespace)
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
+func (m *MockSchemaProvider) ListAllResourceDefinitions() (map[string][]*relation.ResourceDefinition, error) {
+	result := make(map[string][]*relation.ResourceDefinition)
+	for _, def := range m.resourceDefs {
+		result[def.Namespace] = append(result[def.Namespace], def)
+	}
+	return result, nil
+}
+
+func (m *MockSchemaProvider) ListAllRelationDefinitions() (map[string][]*relation.RelationDefinition, error) {
+	result := make(map[string][]*relation.RelationDefinition)
+	for _, def := range m.relationDefs {
+		result[def.Namespace] = append(result[def.Namespace], def)
+	}
+	return result, nil
+}
+
 func (m *MockSchemaProvider) GetResourcePrimaryKeys(resourceType relation.ResourceType) []string {
 	for _, def := range m.resourceDefs {
 		if def.Name == string(resourceType) {

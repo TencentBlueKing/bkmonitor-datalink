@@ -1,7 +1,15 @@
 # bkm-ksm-exporter
 
-A small Prometheus exporter that emits `kube_hpa_*` metrics for
-HorizontalPodAutoscaler objects, read from the `autoscaling/v2` API.
+A small profile-based Prometheus exporter for Kubernetes compatibility and
+extension metrics. The same image currently provides two isolated deployment
+profiles:
+
+- `hpa` (the default): emits `kube_hpa_*` from `autoscaling/v2`;
+- `pod-terminating`: emits continuous `pod_terminating_seconds` series.
+
+The profiles are intentionally deployed as separate Deployments. A large Pod
+watch or Pod state capacity failure therefore cannot consume the HPA exporter's
+cache or readiness budget.
 
 ## Why
 
@@ -12,10 +20,11 @@ and produces **no** `kube_hpa_*` metrics. This exporter reads HPAs from
 labels and semantics as kube-state-metrics v1.9.7**, so existing dashboards,
 alerting rules and metric-keep lists keep working unchanged on newer clusters.
 
-It is intentionally minimal and is meant as a high-version compatibility
-supplement next to an existing kube-state-metrics deployment — not a replacement.
-The collector registry (`exporter.Source`) is extensible, so other resource
-families whose old API versions have been removed can be added the same way.
+The HPA profile is intentionally minimal and is meant as a high-version
+compatibility supplement next to an existing kube-state-metrics deployment —
+not a replacement. The collector registry (`exporter.Source`) is extensible, but
+profiles with materially different cardinality or failure domains must remain
+separate workloads.
 
 ## Metrics
 
@@ -43,26 +52,84 @@ All gauges, with default labels `namespace` and `hpa`:
 > container — e.g. the old/new pair recommended during a container rename — would
 > collide into duplicate samples.
 
+## Pod terminating profile
+
+This profile exposes every Pod whose `metadata.deletionTimestamp` is set. It
+does not apply a 1h/2h threshold: those are alert-strategy conditions, not
+collection rules.
+
+The collection path is:
+
+1. stream a consistent, paginated cluster Pod List;
+2. project and retain only deleting Pods while releasing each full page;
+3. start a continuous Watch at the List snapshot resourceVersion;
+4. reconnect ordinary Watch closures from the last resourceVersion;
+5. relist only after resource-version expiry or lost consistency;
+6. coalesce changes into ConfigMap checkpoints.
+
+The Watch map is keyed by Pod UID, so a late Delete for an old Pod cannot remove
+a same-name replacement. Metrics are keyed by `namespace/pod/node`. After a
+persisted active dimension disappears, the exporter persists and exposes the
+same dimension with value `0` for `recovery-hold`, allowing an ordinary static
+threshold strategy to recover.
+
+State PATCH results that may have reached the API server are read back before
+the process commits its in-memory view or retries. A definitely failed write
+does not freeze a recovery deadline; the first successfully persisted retry
+gets a complete recovery hold.
+
+Persistent memory is proportional to deleting Pods plus recovery entries, not
+to total cluster Pods. Initial List transient memory is bounded by one API page.
+Network and CPU are still proportional to cluster Pod Watch traffic. The
+profile is disabled by default in the Chart and has independent resources,
+page size, client QPS/burst and checkpoint interval.
+
 ## Run
+
+Legacy HPA invocation remains unchanged:
 
 ```
 bkm-ksm-exporter --listen=:8080
 ```
 
-Flags:
+Pod terminating profile:
+
+```
+bkm-ksm-exporter \
+  --collector=pod-terminating \
+  --state-namespace=bkmonitor-operator \
+  --state-configmap=pod-terminating-reporter-state
+```
+
+Common and HPA flags:
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--collector` | `hpa` | `hpa`, `pod-terminating`, or the Helm hook profile `pod-terminating-state-init` |
 | `--listen` | `:8080` | metrics HTTP listen address |
 | `--kubeconfig` | `""` | kubeconfig for out-of-cluster runs; empty uses in-cluster config |
 | `--resync` | `5m` | informer resync period |
 | `--sync-timeout` | `2m` | max wait for the initial informer cache sync before exiting for restart |
 | `--version` | | print version and exit |
 
+Pod profile flags:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--state-namespace` | required | state ConfigMap namespace |
+| `--state-configmap` | required | state ConfigMap name |
+| `--page-limit` | `1000` | maximum Pods requested per List page |
+| `--request-timeout` | `30s` | timeout for each List/Get/Patch request |
+| `--checkpoint-interval` | `5s` | coalesced state persistence interval |
+| `--recovery-hold` | `10m` | same-dimension zero retention |
+| `--stale-after` | `15m` | suppress business rows after persistence remains unhealthy |
+| `--client-qps` | `20` | Pod profile Kubernetes client QPS |
+| `--client-burst` | `40` | Pod profile Kubernetes client burst |
+
 Endpoints:
 
-- `/metrics` — exposition. Returns **503 until the informer cache has synced**, so
-  a scraper never ingests a successful-but-empty scrape that looks like "zero HPAs".
+- `/metrics` — exposition. Returns **503 until the selected profile has completed
+  its initial cache/snapshot sync and state checkpoint**.
 - `/healthz` — liveness probe. 200 as soon as the process is up; it does not gate
   on cache readiness, so a slow sync will not get the pod restarted.
 - `/readyz` — readiness probe. 200 once the cache has synced, 503 before. Wire
@@ -70,13 +137,18 @@ Endpoints:
 
 ## RBAC
 
-The pod's ServiceAccount needs read access to HPAs:
+The HPA ServiceAccount needs read access to HPAs:
 
 ```yaml
 - apiGroups: ["autoscaling"]
   resources: ["horizontalpodautoscalers"]
   verbs: ["get", "list", "watch"]
 ```
+
+The Pod profile needs cluster-wide `pods:list,watch` and only
+`configmaps:get,patch` for its named state ConfigMap. A short-lived Helm hook
+ServiceAccount has `configmaps:get,create` to create the state only when absent;
+upgrade and reinstall validate and preserve existing state.
 
 ## Build
 

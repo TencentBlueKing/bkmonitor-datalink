@@ -1,0 +1,18 @@
+id: tspider_aggregate_001
+storage: tspider
+enabled: true
+shape_signature: query_ts/range/tspider/schema/count_over_time/sum_by1/condition1/output2
+source:
+  kind: production_log
+  outputs_kind: post_fix_handler_replay
+  sampled_at: "2026-07-22"
+  fingerprint: sha256:fac336cff74fa899cf7522a6bf6230f196bdb96708e4fdf06875b58fffb120ab
+tags: [query_ts_api, aggregation, schema_query, production_shape, post_fix_expected]
+notes:
+  - 生产请求仅保留查询结构，空间、物理表、字段和条件值均已替换为占位符。
+  - 时间桶分组修复后，expected output 已由修复后的真实 handler 重新校准。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

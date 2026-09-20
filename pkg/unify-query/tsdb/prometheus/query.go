@@ -21,32 +21,94 @@ import (
 )
 
 type Query struct {
-	instance   tsdb.Instance
-	qry        *metadata.Query
-	start      time.Time
-	end        time.Time
-	queryStart time.Time
-	queryEnd   time.Time
+	instance     tsdb.Instance
+	qry          *metadata.Query
+	start        time.Time
+	end          time.Time
+	endInclusive bool
+	queryStart   time.Time
+	queryEnd     time.Time
 }
 
 type QueryList []*Query
 
+// allowRouteStartBoundaryBucket 判断当前 query 的 routeStart 前是否存在同一逻辑数据源的相邻时间路由。
+// 同一个 reference 可能展开成多个独立 RT，不能用 QueryList 总长度判断是否为单路 route。
+func (ql QueryList) allowRouteStartBoundaryBucket(target *Query) bool {
+	if target == nil {
+		return false
+	}
+
+	for _, other := range ql {
+		if other == nil || other == target || !isSameRouteSource(target, other) {
+			continue
+		}
+		if validTimeRange(other.start, other.end) && other.end.Equal(target.start) {
+			return false
+		}
+		if validTimeRange(other.queryStart, other.queryEnd) && other.queryEnd.Equal(target.start) {
+			return false
+		}
+	}
+	return true
+}
+
+func isSameRouteSource(a, b *Query) bool {
+	if a == nil || b == nil || a.qry == nil || b.qry == nil {
+		return true
+	}
+	if a.qry.TableID == "" || b.qry.TableID == "" {
+		// 缺少逻辑 RT 身份时保持保守语义，避免把真实相邻 route 误判为独立 source。
+		return true
+	}
+	return a.qry.DataSource == b.qry.DataSource &&
+		a.qry.TableID == b.qry.TableID &&
+		a.qry.Field == b.qry.Field
+}
+
 func (ql QueryList) mergeFuncName(hints *storage.SelectHints) string {
 	outerAggName := ql.outerAggName()
 	if hints != nil && hints.Func != "" {
+		hintFunc := strings.ToLower(hints.Func)
 		// last_over_time 只是为了扩展回看窗口，真实的存储侧窗口聚合仍应决定多路由合并方式。
-		if strings.EqualFold(hints.Func, "last_over_time") {
+		if hintFunc == "last_over_time" {
 			if name := ql.windowedStorageAggName(); name != "" {
 				return name
 			}
 		}
-		if strings.EqualFold(hints.Func, "last_over_time") && function.IsAvgFunc(outerAggName) {
+		if hintFunc == "last_over_time" && function.IsAvgFunc(outerAggName) {
 			return outerAggName
+		}
+		// PromQL *_over_time 下推到存储后，返回的是以窗口起点为 timestamp 的普通聚合 bucket。
+		// 合并和 route 过滤必须使用匹配的存储聚合函数，不能继续按 evaluation instant 的后向窗口处理。
+		if isRangeBucketFunc(hintFunc) {
+			if name := ql.matchedWindowedStorageAggName(hintFunc); name != "" {
+				return name
+			}
 		}
 		return hints.Func
 	}
 
 	return outerAggName
+}
+
+func (ql QueryList) matchedWindowedStorageAggName(hintFunc string) string {
+	for _, query := range ql {
+		if query == nil || query.qry == nil {
+			continue
+		}
+		aggregates := query.qry.Aggregates
+		for i := len(aggregates) - 1; i >= 0; i-- {
+			agg := aggregates[i]
+			if agg.Window <= 0 || !isSameBucketFunc(hintFunc, strings.ToLower(agg.Name)) {
+				continue
+			}
+			if name := storageBucketFuncName(strings.ToLower(agg.Name)); name != "" {
+				return name
+			}
+		}
+	}
+	return ""
 }
 
 func (ql QueryList) windowedStorageAggName() string {
@@ -81,10 +143,10 @@ func (ql QueryList) outerAggName() string {
 }
 
 // mergeBucketDuration 返回多路由合并时用于计算 route 覆盖时长的 bucket 宽度。
-// 优先使用下推聚合里与当前合并函数匹配的窗口；普通 avg 没有真实时间窗口时返回 0，
-// 避免把瞬时点误当成 [t, t+step) 区间；avg_over_time 来自 Prometheus hint 时，
-// 如果缺少下推窗口，则优先使用 Prometheus range selector 宽度，再使用查询步长作为兜底 bucket 宽度。
-func (ql QueryList) mergeBucketDuration(name string, fallback, rangeSelector time.Duration) time.Duration {
+// 优先使用下推聚合里与当前合并函数匹配的窗口。Prometheus 原生 *_over_time
+// 没有对应下推聚合时，存储返回的是原始样本，必须返回 0 按 timestamp 过滤，
+// 不能把 SelectHints.Range 误当成存储 bucket 宽度。
+func (ql QueryList) mergeBucketDuration(name string, fallback time.Duration) time.Duration {
 	name = strings.ToLower(name)
 	for _, query := range ql {
 		if query == nil || query.qry == nil {
@@ -106,11 +168,7 @@ func (ql QueryList) mergeBucketDuration(name string, fallback, rangeSelector tim
 		return 0
 	}
 	if isRangeBucketFunc(name) {
-		// *_over_time 来自 Prometheus hint 且缺少下推聚合窗口时，用 selector range 作为 bucket 宽度。
-		if rangeSelector > 0 {
-			return rangeSelector
-		}
-		return fallback
+		return 0
 	}
 	return fallback
 }

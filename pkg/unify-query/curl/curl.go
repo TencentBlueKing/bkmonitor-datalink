@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	encodingJson "encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -45,11 +46,29 @@ type Options struct {
 	Password string
 
 	Timeout time.Duration
+
+	// MaxResponseBytes 限制响应体最大字节数，在 JSON 解码前拒绝超限响应；
+	// 非正数表示不限制，以兼容未配置该选项的现有调用方。
+	MaxResponseBytes int64
 }
 
 type Curl interface {
 	WithDecoder(decoder func(ctx context.Context, reader io.Reader, resp any) (int, error))
 	Request(ctx context.Context, method string, opt Options, res any) (int, error)
+}
+
+// ResponseBodyLimitError 表示 HTTP 响应体超过调用方设置的大小上限。
+type ResponseBodyLimitError struct {
+	Limit int64
+}
+
+func (e *ResponseBodyLimitError) Error() string {
+	return fmt.Sprintf("response body exceeds maximum size of %d bytes", e.Limit)
+}
+
+// TruncationReason 返回稳定的机器可读原因，供上层接口生成截断元数据。
+func (e *ResponseBodyLimitError) TruncationReason() string {
+	return "max_response_bytes"
 }
 
 // HttpCurl http 请求方法
@@ -96,8 +115,8 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 
 	metadata.NewMessage(
 		metadata.MsgHttpCurl,
-		"%s [%s] body: %s",
-		method, opt.UrlPath, opt.Body,
+		"%s [%s] body_bytes: %d",
+		method, opt.UrlPath, len(opt.Body),
 	).Info(ctx)
 
 	for k, v := range opt.Headers {
@@ -106,7 +125,9 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 		}
 	}
 
+	roundTripStarted := time.Now()
 	resp, err := client.Do(req)
+	span.Set("response-headers-duration", time.Since(roundTripStarted))
 	if err != nil {
 		return size, HandleClientError(ctx, metadata.MsgHttpCurl, opt.UrlPath, err)
 	}
@@ -127,20 +148,44 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 	}
 
 	if c.decoder != nil {
-		size, err = c.decoder(ctx, resp.Body, res)
+		decodeStarted := time.Now()
+		reader := io.Reader(resp.Body)
+		if opt.MaxResponseBytes > 0 {
+			// 额外读取一个字节，用于区分“恰好达到上限”和“实际已经超限”。
+			reader = io.LimitReader(resp.Body, opt.MaxResponseBytes+1)
+		}
+		size, err = c.decoder(ctx, reader, res)
+		span.Set("response-body-decode-duration", time.Since(decodeStarted))
+		span.Set("response-body-bytes", size)
+		if opt.MaxResponseBytes > 0 && int64(size) > opt.MaxResponseBytes {
+			return size, &ResponseBodyLimitError{Limit: opt.MaxResponseBytes}
+		}
 		return size, err
 	} else {
-		_, err = io.Copy(buf, resp.Body)
+		bodyReadStarted := time.Now()
+		reader := io.Reader(resp.Body)
+		if opt.MaxResponseBytes > 0 {
+			// 额外读取一个字节，用于区分“恰好达到上限”和“实际已经超限”。
+			reader = io.LimitReader(resp.Body, opt.MaxResponseBytes+1)
+		}
+		_, err = io.Copy(buf, reader)
+		span.Set("response-body-read-duration", time.Since(bodyReadStarted))
 		if err != nil {
 			return size, err
 		}
 		size = buf.Len()
+		span.Set("response-body-bytes", size)
+		if opt.MaxResponseBytes > 0 && int64(size) > opt.MaxResponseBytes {
+			return size, &ResponseBodyLimitError{Limit: opt.MaxResponseBytes}
+		}
 
 		// 使用标准库的 json.Decoder，因为需要 UseNumber() 功能
 		// sonic 的 Decoder 不支持 UseNumber()，会导致大整数精度丢失
+		decodeStarted := time.Now()
 		decoder := encodingJson.NewDecoder(buf)
 		decoder.UseNumber()
 		err = decoder.Decode(&res)
+		span.Set("json-decode-duration", time.Since(decodeStarted))
 		return size, err
 	}
 }

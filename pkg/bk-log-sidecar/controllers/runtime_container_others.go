@@ -26,7 +26,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/define"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-log-sidecar/utils"
 )
 
 // criV1Alpha2Rewriter rewrites gRPC method paths from runtime.v1.RuntimeService
@@ -40,17 +39,23 @@ func criV1Alpha2Rewriter(ctx context.Context, method string, req, reply interfac
 // NewContainerdRuntime creates a Runtime for containerd.
 // When useV1Alpha2 is true, a gRPC interceptor rewrites CRI method paths to
 // runtime.v1alpha2 for containerd < 1.6.
-func NewContainerdRuntime(useV1Alpha2 bool) define.Runtime {
+func NewContainerdRuntime(useV1Alpha2 bool) (define.Runtime, error) {
 	client, err := containerd.New(config.ContainerdAddress, containerd.WithDefaultNamespace(config.ContainerdNamespace))
-	utils.CheckError(err)
+	if err != nil {
+		return nil, fmt.Errorf("create containerd client: %w", err)
+	}
 
-	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	dialOpts := []grpc.DialOption{grpc.WithInsecure()}
 	if useV1Alpha2 {
 		dialOpts = append(dialOpts, grpc.WithUnaryInterceptor(criV1Alpha2Rewriter))
 	}
 	conn, err := grpc.DialContext(ctx, fmt.Sprintf("unix://%s", config.ContainerdAddress), dialOpts...)
-	utils.CheckError(err)
+	if err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("dial containerd CRI: %w", err)
+	}
 
 	return &ContainerdRuntime{
 		ContainerdBase: ContainerdBase{
@@ -58,5 +63,5 @@ func NewContainerdRuntime(useV1Alpha2 bool) define.Runtime {
 			log:              ctrl.Log.WithName("containerd"),
 		},
 		cri: &criClient{client: v1.NewRuntimeServiceClient(conn)},
-	}
+	}, nil
 }

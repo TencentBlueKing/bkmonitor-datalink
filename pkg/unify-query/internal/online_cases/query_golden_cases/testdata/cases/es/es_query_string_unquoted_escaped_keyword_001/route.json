@@ -1,0 +1,19 @@
+{
+  "space_uid": "bkcc__golden_es_escaped_keyword",
+  "result_tables": [{"table_id": "demo_logs.escaped_keyword"}],
+  "result_table_details": {
+    "demo_logs.escaped_keyword": {
+      "storage_id": 2302,
+      "storage_name": "es_cluster_escaped_keyword",
+      "storage_type": "elasticsearch",
+      "cluster_name": "es_cluster_escaped_keyword",
+      "db": "golden_es_escaped_keyword",
+      "table_id": "demo_logs.escaped_keyword",
+      "fields": ["events_total"],
+      "data_label": "demo_logs_escaped_keyword",
+      "tags_key": ["cluster", "name"],
+      "source_type": "bklog"
+    }
+  },
+  "storages": {"2302": {"type": "elasticsearch"}}
+}

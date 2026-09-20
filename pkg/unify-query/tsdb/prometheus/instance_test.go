@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/prometheus/model/histogram"
 	"github.com/prometheus/prometheus/model/labels"
 	"github.com/prometheus/prometheus/prompb"
 	"github.com/prometheus/prometheus/promql"
@@ -49,7 +50,6 @@ func TestMergeBucketDuration(t *testing.T) {
 		name     string
 		queries  QueryList
 		fallback time.Duration
-		rangeSel time.Duration
 		expected time.Duration
 	}{
 		"函数匹配时使用聚合窗口": {
@@ -81,7 +81,7 @@ func TestMergeBucketDuration(t *testing.T) {
 			fallback: 5 * time.Minute,
 			expected: 0,
 		},
-		"hint 中的 avg_over_time 缺少聚合窗口时使用 range selector 宽度": {
+		"hint 中的 avg_over_time 缺少聚合窗口时按原始样本处理": {
 			name: "avg_over_time",
 			queries: QueryList{
 				{
@@ -89,10 +89,9 @@ func TestMergeBucketDuration(t *testing.T) {
 				},
 			},
 			fallback: time.Minute,
-			rangeSel: 5 * time.Minute,
-			expected: 5 * time.Minute,
+			expected: 0,
 		},
-		"hint 中的 avg_over_time 缺少 range selector 时使用查询步长": {
+		"hint 中的 avg_over_time 缺少聚合窗口时不使用查询步长": {
 			name: "avg_over_time",
 			queries: QueryList{
 				{
@@ -100,9 +99,9 @@ func TestMergeBucketDuration(t *testing.T) {
 				},
 			},
 			fallback: time.Minute,
-			expected: time.Minute,
+			expected: 0,
 		},
-		"hint 中的 sum_over_time 缺少聚合窗口时使用 range selector 宽度": {
+		"hint 中的 sum_over_time 缺少聚合窗口时按原始样本处理": {
 			name: "sum_over_time",
 			queries: QueryList{
 				{
@@ -110,8 +109,7 @@ func TestMergeBucketDuration(t *testing.T) {
 				},
 			},
 			fallback: time.Minute,
-			rangeSel: time.Hour,
-			expected: time.Hour,
+			expected: 0,
 		},
 		"hint 使用 avg 别名时仍匹配 avg_over_time 窗口": {
 			name: "avg",
@@ -173,9 +171,93 @@ func TestMergeBucketDuration(t *testing.T) {
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			assert.Equal(t, tc.expected, tc.queries.mergeBucketDuration(tc.name, tc.fallback, tc.rangeSel))
+			assert.Equal(t, tc.expected, tc.queries.mergeBucketDuration(tc.name, tc.fallback))
 		})
 	}
+}
+
+func TestClonePromQLResultsBreaksPooledSliceAndHistogramAliases(t *testing.T) {
+	hist := &histogram.FloatHistogram{Count: 1}
+	matrix := promql.Matrix{{
+		Metric: labels.FromStrings("key", "value"),
+		Points: []promql.Point{{T: 1, H: hist}},
+	}}
+	vector := promql.Vector{{
+		Metric: labels.FromStrings("key", "value"),
+		Point:  promql.Point{T: 1, H: hist},
+	}}
+
+	clonedMatrix := clonePromQLMatrix(matrix)
+	clonedVector := clonePromQLVector(vector)
+	matrix[0].Metric[0].Value = "changed"
+	matrix[0].Points[0].T = 2
+	hist.Count = 2
+
+	assert.Equal(t, "value", clonedMatrix[0].Metric[0].Value)
+	assert.Equal(t, int64(1), clonedMatrix[0].Points[0].T)
+	assert.Equal(t, float64(1), clonedMatrix[0].Points[0].H.Count)
+	assert.Equal(t, "value", clonedVector[0].Metric[0].Value)
+	assert.Equal(t, int64(1), clonedVector[0].Point.T)
+	assert.Equal(t, float64(1), clonedVector[0].Point.H.Count)
+	assert.NotSame(t, hist, clonedMatrix[0].Points[0].H)
+	assert.NotSame(t, hist, clonedVector[0].Point.H)
+}
+
+func TestSortAndLimitLabelValues(t *testing.T) {
+	values := []string{"c", "a", "b"}
+	assert.Equal(t, []string{"a", "b"}, sortAndLimitLabelValues(values, 2))
+	assert.Equal(t, []string{"a", "b", "c"}, sortAndLimitLabelValues(values, 0))
+}
+
+func TestQueryListAllowRouteStartBoundaryBucketPerSource(t *testing.T) {
+	newQuery := func(tableID string, start, end, queryStart, queryEnd int64) *Query {
+		return &Query{
+			qry: &metadata.Query{
+				DataSource: "bkmonitor",
+				TableID:    tableID,
+				Field:      "value",
+			},
+			start:      time.Unix(start, 0),
+			end:        time.Unix(end, 0),
+			queryStart: time.Unix(queryStart, 0),
+			queryEnd:   time.Unix(queryEnd, 0),
+		}
+	}
+
+	t.Run("同一 reference 的独立 RT 各自保留首 bucket", func(t *testing.T) {
+		first := newQuery("first.rt", 100, 200, 40, 260)
+		second := newQuery("second.rt", 100, 200, 40, 260)
+		queries := QueryList{first, second}
+
+		assert.True(t, queries.allowRouteStartBoundaryBucket(first))
+		assert.True(t, queries.allowRouteStartBoundaryBucket(second))
+	})
+
+	t.Run("同一 source 的后续 route 禁用首 bucket 例外", func(t *testing.T) {
+		first := newQuery("shared.rt", 100, 150, 40, 150)
+		second := newQuery("shared.rt", 150, 200, 150, 260)
+		queries := QueryList{first, second}
+
+		assert.True(t, queries.allowRouteStartBoundaryBucket(first))
+		assert.False(t, queries.allowRouteStartBoundaryBucket(second))
+	})
+
+	t.Run("同一 source 的 overlap-only 前路由也算相邻 route", func(t *testing.T) {
+		previous := newQuery("shared.rt", 0, 0, 40, 150)
+		current := newQuery("shared.rt", 150, 200, 150, 260)
+		queries := QueryList{previous, current}
+
+		assert.False(t, queries.allowRouteStartBoundaryBucket(current))
+	})
+
+	t.Run("同一 source 的并行完整范围不是相邻时间 route", func(t *testing.T) {
+		first := newQuery("shared.rt", 100, 200, 40, 260)
+		second := newQuery("shared.rt", 100, 200, 40, 260)
+		queries := QueryList{first, second}
+
+		assert.True(t, queries.allowRouteStartBoundaryBucket(first))
+		assert.True(t, queries.allowRouteStartBoundaryBucket(second))
+	})
 }
 
 func TestMergeFuncName(t *testing.T) {
@@ -194,6 +276,66 @@ func TestMergeFuncName(t *testing.T) {
 				},
 			},
 			expected: "max_over_time",
+		},
+		"sum_over_time 下推后使用 forward sum bucket": {
+			hints: &storage.SelectHints{
+				Func: function.SumOT,
+			},
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: function.Sum, Window: time.Minute},
+						},
+					},
+				},
+			},
+			expected: function.Sum,
+		},
+		"avg_over_time 下推后使用 forward avg bucket": {
+			hints: &storage.SelectHints{
+				Func: function.AvgOT,
+			},
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: function.Avg, Window: time.Minute},
+						},
+					},
+				},
+			},
+			expected: function.Avg,
+		},
+		"over_time 没有匹配的下推窗口时保留 Prometheus hint": {
+			hints: &storage.SelectHints{
+				Func: function.SumOT,
+			},
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: function.Avg, Window: time.Minute},
+						},
+					},
+				},
+			},
+			expected: function.SumOT,
+		},
+		"over_time 下推聚合没有窗口时保留 Prometheus hint": {
+			hints: &storage.SelectHints{
+				Func: function.SumOT,
+			},
+			queries: QueryList{
+				{
+					qry: &metadata.Query{
+						Aggregates: metadata.Aggregates{
+							{Name: function.Sum},
+						},
+					},
+				},
+			},
+			expected: function.SumOT,
 		},
 		"last_over_time 仅用于回看窗口时优先使用下推 avg": {
 			hints: &storage.SelectHints{
@@ -290,6 +432,61 @@ func TestMergeFuncName(t *testing.T) {
 			assert.Equal(t, tc.expected, tc.queries.mergeFuncName(tc.hints))
 		})
 	}
+}
+
+func TestPushedOverTimeKeepsForwardBucketAtRouteStart(t *testing.T) {
+	previous := &Query{
+		qry: &metadata.Query{
+			DataSource: "bkmonitor",
+			TableID:    "shared.rt",
+			Field:      "value",
+			Aggregates: metadata.Aggregates{
+				{Name: function.Sum, Window: time.Minute},
+			},
+		},
+		start: time.Unix(0, 0),
+		end:   time.Unix(100, 0),
+	}
+	current := &Query{
+		qry:        previous.qry,
+		start:      time.Unix(100, 0),
+		end:        time.Unix(200, 0),
+		queryStart: time.Unix(100, 0),
+		queryEnd:   time.Unix(200, 0),
+	}
+	queries := QueryList{previous, current}
+	mergeFunc := queries.mergeFuncName(&storage.SelectHints{Func: function.SumOT})
+
+	assert.Equal(t, function.Sum, mergeFunc)
+	assert.False(t, queries.allowRouteStartBoundaryBucket(current))
+
+	set := promRemote.FromQueryResult(true, &prompb.QueryResult{
+		Timeseries: []*prompb.TimeSeries{
+			{
+				Labels: []prompb.Label{
+					{Name: "__name__", Value: "requests_total"},
+				},
+				Samples: []prompb.Sample{
+					{Timestamp: time.Unix(100, 0).UnixMilli(), Value: 42},
+				},
+			},
+		},
+	})
+	set = function.NewTimeRangeSeriesSet(set, current.start, current.end)
+	set = function.NewRouteRangeFilterSeriesSet(set, mergeFunc, time.Minute)
+
+	ts, err := mock.SeriesSetToTimeSeries(set)
+	assert.NoError(t, err)
+	assert.Equal(t, mock.TimeSeriesList{
+		{
+			Labels: []prompb.Label{
+				{Name: "__name__", Value: "requests_total"},
+			},
+			Samples: []prompb.Sample{
+				{Timestamp: time.Unix(100, 0).UnixMilli(), Value: 42},
+			},
+		},
+	}, ts)
 }
 
 func TestQueryCalcSelectStrategy(t *testing.T) {

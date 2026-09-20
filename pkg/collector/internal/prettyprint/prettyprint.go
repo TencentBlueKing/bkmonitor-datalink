@@ -73,7 +73,7 @@ func Metrics(metrics pmetric.Metrics) {
 		logger.Debugf("Pretty/Metrics: resource=%#v, metric=%s, dataType=%s, attributes=%#v",
 			rs.AsRaw(),
 			metric.Name(),
-			metric.DataType().String(),
+			metric.Type().String(),
 			attrs.AsRaw(),
 		)
 	})

@@ -1,0 +1,25 @@
+id: es_query_string_missing_mapping_single_quote_001
+storage: es
+enabled: true
+shape_signature: query_ts/range/es/aggregate/query_string/single_quote_phrase/mapping_empty/output_index_search
+source:
+  kind: merged_pr
+  outputs_kind: post_fix_handler_replay
+  sampled_at: "2026-07-27"
+  fingerprint: sha256:d4e4fe429db3a582a9e873e0debc38cadf4f3df0688eb686d24c78fdde0dfa8f
+tags:
+  - query_ts_api
+  - aggregation
+  - query_string
+  - missing_mapping
+  - single_quote_phrase
+  - post_fix_expected
+  - regression_fix
+notes:
+  - 问题形态来自已合并变更和既有单引号短语契约，没有关联生产日志或 trace，不计入生产采样收敛。
+  - 正确 output 先把单引号短语适配为双引号，再只规范化短语外的布尔运算符。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

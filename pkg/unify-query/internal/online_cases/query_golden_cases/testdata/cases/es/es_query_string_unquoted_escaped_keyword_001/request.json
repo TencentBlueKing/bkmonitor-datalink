@@ -1,0 +1,29 @@
+{
+  "method": "POST",
+  "path": "/query/ts/raw",
+  "headers": {
+    "Content-Type": "application/json",
+    "Bk-Query-Source": "golden",
+    "X-Bk-Scope-Space-Uid": "bkcc__golden_es_escaped_keyword",
+    "X-Bk-Tenant-Id": "tenant_golden"
+  },
+  "body": {
+    "space_uid": "bkcc__golden_es_escaped_keyword",
+    "query_list": [{
+      "data_source": "bk_log",
+      "table_id": "demo_logs.escaped_keyword",
+      "field_name": "events_total",
+      "reference_name": "a",
+      "limit": 10,
+      "from": 0,
+      "keep_columns": ["_time", "_value", "message", "cluster", "name"],
+      "query_string": "message: \"\\\"pathname\\\": \\\"/srv/app/lib64\" AND cluster: region* AND name: bk\\-log\\-search\\-api"
+    }],
+    "metric_merge": "a",
+    "order_by": ["_time"],
+    "start_time": "1784701776",
+    "end_time": "1784702076",
+    "timezone": "UTC",
+    "instant": false
+  }
+}

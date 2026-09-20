@@ -1,0 +1,26 @@
+id: es_table_id_conditions_k8s_non_split_001
+storage: es
+enabled: true
+shape_signature: query_ts/range/es/raw/empty_table_id/table_id_conditions/scene_k8s/non_split_rt/output_index_search
+source:
+  kind: merged_pr
+  outputs_kind: post_fix_handler_replay
+  sampled_at: "2026-07-23"
+  fingerprint: sha256:e9a525da3ed1fecaf865a83a4803882fffd06a56a6ea0b4a9de15c61563a8439
+tags:
+  - query_ts_api
+  - raw
+  - table_id_conditions
+  - k8s
+  - post_fix_expected
+  - regression_fix
+  - production_shape
+notes:
+  - 问题形态和旧行为依据已合并 PR #1296 的问题说明与回归测试，未保存原始请求。
+  - 脱敏请求保留 bklog、空 table_id、scene=k8s 标签条件和非 split-measurement ES RT 的组合。
+  - 修复后显式 table_id_conditions 优先于容器指标默认过滤，必须命中该日志 RT。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

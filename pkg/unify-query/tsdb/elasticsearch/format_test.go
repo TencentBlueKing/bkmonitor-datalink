@@ -43,6 +43,62 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"match_phrase":{"key":{"query":"val-1"}}}}`,
 		},
+		"condition and existed field in same group": {
+			conditions: metadata.AllConditions{{
+				{
+					DimensionName: "level",
+					Value:         []string{"__uq_conditions_should_match_nothing__"},
+					Operator:      structured.ConditionEqual,
+				},
+				{
+					DimensionName: "path",
+					Operator:      structured.ConditionExisted,
+				},
+			}},
+			expected: `{"query":{"bool":{"must":[{"match_phrase":{"level":{"query":"__uq_conditions_should_match_nothing__"}}},{"exists":{"field":"path"}}]}}}`,
+		},
+		"condition and existed field in separate groups": {
+			conditions: metadata.AllConditions{
+				{{
+					DimensionName: "level",
+					Value:         []string{"__uq_conditions_should_match_nothing__"},
+					Operator:      structured.ConditionEqual,
+				}},
+				{{
+					DimensionName: "path",
+					Operator:      structured.ConditionExisted,
+				}},
+			},
+			expected: `{"query":{"bool":{"should":[{"match_phrase":{"level":{"query":"__uq_conditions_should_match_nothing__"}}},{"exists":{"field":"path"}}]}}}`,
+		},
+		"OR condition groups AND existed field": {
+			conditions: metadata.MergeAllConditions(
+				metadata.AllConditions{
+					{{
+						DimensionName: "level",
+						Value:         []string{"info"},
+						Operator:      structured.ConditionEqual,
+					}},
+					{{
+						DimensionName: "level",
+						Value:         []string{"warn"},
+						Operator:      structured.ConditionEqual,
+					}},
+				},
+				metadata.AllConditions{{{
+					DimensionName: "path",
+					Operator:      structured.ConditionExisted,
+				}}},
+			),
+			expected: `{"query":{"bool":{"should":[{"bool":{"must":[{"match_phrase":{"level":{"query":"info"}}},{"exists":{"field":"path"}}]}},{"bool":{"must":[{"match_phrase":{"level":{"query":"warn"}}},{"exists":{"field":"path"}}]}}]}}}`,
+		},
+		"empty conditions AND existed field": {
+			conditions: metadata.MergeAllConditions(nil, metadata.AllConditions{{{
+				DimensionName: "path",
+				Operator:      structured.ConditionExisted,
+			}}}),
+			expected: `{"query":{"exists":{"field":"path"}}}`,
+		},
 		"query 2": {
 			conditions: metadata.AllConditions{
 				{
@@ -260,6 +316,30 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"regexp":{"keyword":{"value":".*TypeError.*"}}}}`,
 		},
+		"结构化方括号短语正则仍补齐包含匹配": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"[Page Error]"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"regexp":{"keyword":{"value":".*[Page Error].*"}}}}`,
+		},
+		"结构化普通字符类正则仍补齐包含匹配": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"[0-9]"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"regexp":{"keyword":{"value":".*[0-9].*"}}}}`,
+		},
 		"结构化正则顶层或表达式按分支补齐包含匹配": {
 			conditions: metadata.AllConditions{
 				{
@@ -307,6 +387,18 @@ func TestFormatFactory_Query(t *testing.T) {
 				},
 			},
 			expected: `{"query":{"bool":{"must":{"exists":{"field":"keyword"}},"must_not":{"regexp":{"keyword":{"value":".*idip.*"}}}}}}`,
+		},
+		"结构化正则不包含前缀内的字符类保持包含匹配": {
+			conditions: metadata.AllConditions{
+				{
+					{
+						DimensionName: "keyword",
+						Value:         []string{"^(?!.*[abc]).*"},
+						Operator:      structured.ConditionRegEqual,
+					},
+				},
+			},
+			expected: `{"query":{"bool":{"must":{"exists":{"field":"keyword"}},"must_not":{"regexp":{"keyword":{"value":".*[abc].*"}}}}}}`,
 		},
 		"结构化正则不包含前缀形式只作用于当前 value": {
 			conditions: metadata.AllConditions{

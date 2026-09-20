@@ -1,0 +1,28 @@
+id: doris_union_object_leaf_precision_case_001
+storage: doris
+enabled: true
+shape_signature: query_ts_raw/range/doris/merge_db2/select_all/object_leaf_case/time_precision/output3
+source:
+  kind: merged_pr
+  outputs_kind: post_fix_handler_replay
+  sampled_at: "2026-07-23"
+  fingerprint: sha256:7b0b805e0eeb28aee4c08d9fbcdf1fe158c445141c10d988f91249a7ed55bcd8
+tags:
+  - query_ts_raw_api
+  - merge_db
+  - select_all
+  - object_leaf
+  - case_sensitive_leaf
+  - datetime_precision
+  - post_fix_expected
+  - regression_fix
+  - production_shape
+notes:
+  - 回归 Doris 对象叶子字段大小写与 DATETIMEV2 精度：大小写不同的叶子不能合并，公共时间叶子按较高精度投影。
+  - 生产查询形态和旧行为依据已合并 PR 的公开问题说明与回归测试，未保存 trace ID 或原始请求。
+  - 请求、路由、物理表、字段和集群均为离线占位数据，不含真实生产标识。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

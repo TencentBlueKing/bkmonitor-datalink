@@ -11,7 +11,7 @@ package fieldnormalizer
 
 import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
-
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/utils"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/internal/fields"
 )
 
@@ -43,7 +43,7 @@ func FuncConcat(l, r, op string) NormalizeFunc {
 		if !ok {
 			return
 		}
-		attrs.InsertString(key, lv.AsString()+op+rv.AsString())
+		utils.InsertString(attrs, key, lv.AsString()+op+rv.AsString())
 	}
 }
 
@@ -56,7 +56,7 @@ func FuncOr(keys ...string) NormalizeFunc {
 
 		for _, k := range keys {
 			if v, ok := attrs.Get(k); ok {
-				attrs.Insert(key, v)
+				v.CopyTo(attrs.PutEmpty(key))
 				return
 			}
 		}
@@ -120,7 +120,7 @@ func (sfn SpanFieldNormalizer) Normalize(span ptrace.Span, spanKind string) {
 		switch ff {
 		case fields.FieldFromAttributes:
 			// 如果 key 空值则跳过
-			if val, ok := span.Attributes().Get(v); !ok || val.StringVal() == "" {
+			if val, ok := span.Attributes().Get(v); !ok || val.Str() == "" {
 				continue
 			}
 

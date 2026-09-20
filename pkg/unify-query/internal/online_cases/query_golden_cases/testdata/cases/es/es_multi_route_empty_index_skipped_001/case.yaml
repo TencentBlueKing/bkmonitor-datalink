@@ -1,0 +1,26 @@
+id: es_multi_route_empty_index_skipped_001
+storage: es
+enabled: true
+shape_signature: query_ts/range/es/raw/data_label/multi_rt/empty_index_prefix_skipped/output_valid_index_search
+source:
+  kind: merged_pr
+  outputs_kind: post_fix_handler_replay
+  sampled_at: "2026-07-23"
+  fingerprint: sha256:e5a1400df29a0ac32e4bca1637afaa2b5ee1ac7c89fdb93b93f6eb2638bb5d43
+tags:
+  - query_ts_api
+  - raw
+  - multi_result_table
+  - invalid_metadata
+  - post_fix_expected
+  - regression_fix
+  - production_shape
+notes:
+  - 问题形态和旧行为依据已合并 PR #1314 的问题说明与回归测试，未保存原始请求。
+  - 脱敏路由保留同一 data_label 下一个有效 ES 索引和一个 db/dbs 均为空的子任务。
+  - 修复后无效子任务必须被跳过，且有效索引的下游请求不受影响。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

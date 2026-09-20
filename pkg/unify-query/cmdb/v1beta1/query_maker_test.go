@@ -11,7 +11,6 @@ package v1beta1
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,8 +33,6 @@ func TestMakeQuery(t *testing.T) {
 		expandMatch  map[string]string
 		promQL       string
 		step         string
-
-		err error
 	}
 
 	cases := []Case{
@@ -94,17 +91,6 @@ func TestMakeQuery(t *testing.T) {
 			},
 			step:   "1m",
 			promQL: `count by (bcs_cluster_id, node) (count_over_time(bkmonitor:node_with_pod_relation{bcs_cluster_id!="",namespace!="",node!="",pod!=""}[1m]) * on (bcs_cluster_id, namespace, pod) group_left () (count by (bcs_cluster_id, namespace, pod) (count_over_time(bkmonitor:container_with_pod_relation{bcs_cluster_id!="",container="unify-query",namespace!="",pod!=""}[1m]) * on (bcs_cluster_id, namespace, pod, container) group_left () (count_over_time(bkmonitor:container_info_relation{bcs_cluster_id!="",container="unify-query",namespace!="",pod!="",version="3.9.3269"}[1m])))))`,
-		},
-		{
-			name:       "level 2 with expand show",
-			path:       []string{"pod", "node", "system"},
-			expandShow: true,
-			indexMatcher: map[string]string{
-				"pod":            "pod1",
-				"namespace":      "ns1",
-				"bcs_cluster_id": "cluster1",
-			},
-			err: fmt.Errorf("该资源未配置 info 扩展数据"),
 		},
 		{
 			name:       "level 3 with expand show",
@@ -183,20 +169,50 @@ func TestMakeQuery(t *testing.T) {
 			}
 
 			queryTs, err := queryMaker.MakeQueryTs()
-			if c.err != nil {
-				assert.Equal(t, err, c.err)
-			} else {
-				assert.NoError(t, err)
-				assert.NotNil(t, queryTs)
+			assert.NoError(t, err)
+			assert.NotNil(t, queryTs)
 
-				if queryTs != nil {
-					promQLString, promQLErr := queryTs.ToPromQL(ctx)
-					assert.Nil(t, promQLErr)
-					if promQLErr == nil {
-						assert.Equal(t, c.promQL, promQLString)
-					}
+			if queryTs != nil {
+				promQLString, promQLErr := queryTs.ToPromQL(ctx)
+				assert.Nil(t, promQLErr)
+				if promQLErr == nil {
+					assert.Equal(t, c.promQL, promQLString)
 				}
 			}
 		})
 	}
+}
+
+func TestMakeQueryIgnoresExpandShowWhenTargetHasNoInfo(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	path := []string{"pod", "node", "system"}
+	indexMatcher := map[string]string{
+		"pod":            "pod1",
+		"namespace":      "ns1",
+		"bcs_cluster_id": "cluster1",
+	}
+
+	promQL := func(expandShow bool) string {
+		t.Helper()
+		queryMaker := &QueryFactory{
+			Path:         path,
+			Source:       cmdb.Resource(path[0]),
+			Target:       cmdb.Resource(path[len(path)-1]),
+			IndexMatcher: indexMatcher,
+			ExpandShow:   expandShow,
+		}
+		queryTs, err := queryMaker.MakeQueryTs()
+		assert.NoError(t, err)
+		if queryTs == nil {
+			return ""
+		}
+		promQLString, promQLErr := queryTs.ToPromQL(ctx)
+		assert.NoError(t, promQLErr)
+		return promQLString
+	}
+
+	without := promQL(false)
+	assert.Equal(t, without, promQL(true))
+	assert.NotEmpty(t, without)
 }

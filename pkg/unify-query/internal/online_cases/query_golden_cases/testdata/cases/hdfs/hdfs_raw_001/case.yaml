@@ -1,0 +1,17 @@
+id: hdfs_raw_001
+storage: hdfs
+enabled: true
+shape_signature: query_ts_raw/range/hdfs/schema/raw/limit10/order_time/output2
+source:
+  kind: production_log
+  outputs_kind: production_log
+  sampled_at: "2026-07-22"
+  fingerprint: sha256:5b7c32e40fa0fdbf4da039eca905e056ff1d5c1484938f17f2aceee57fe6cb84
+tags: [query_ts_raw_api, raw, pagination, schema_query, production_shape]
+notes:
+  - 生产请求仅保留 raw 查询结构，空间、物理表、字段和集群均已替换为占位符。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

@@ -11,8 +11,11 @@ package sql_expr
 
 import (
 	"context"
+	encodingJson "encoding/json"
 	"fmt"
+	"math"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +32,8 @@ const (
 	Doris = "doris"
 
 	ShardKey = "__shard_key__"
+	// SearchAfterTieBreaker 是 Doris 日志表的稳定行标识，用于保证 keyset pagination 不会在排序值相同时漏行。
+	SearchAfterTieBreaker = "__unique_key__"
 
 	SelectIndex = "_index"
 
@@ -82,6 +87,18 @@ type DorisSQLExpr struct {
 	// 而是直接使用 = / != 进行精确匹配。适用于 TSpider 等不支持全文检索的存储。
 	forceEq bool
 
+	// disableShardKeyTimeBucket 为 true 时，分钟级时间聚合也使用 timeField。
+	// TSpider 以及字段结构不完整或没有 __shard_key__ 的 Doris 表，需要走该兼容路径。
+	disableShardKeyTimeBucket bool
+
+	// disableTimeBucketCast 为 true 时，timeField 时间桶不生成 CAST(... AS INT)。
+	// TSpider 的 MySQL 语法检查不兼容该 CAST 写法。
+	disableTimeBucketCast bool
+
+	// groupTimeBucketByExpr 为 true 时，使用完整时间桶表达式分组。
+	// TSpider 的语义检查不会将 SELECT 别名识别为 GROUP BY 字段。
+	groupTimeBucketByExpr bool
+
 	isSetLabels bool
 	lock        sync.Mutex
 }
@@ -113,6 +130,13 @@ func (d *DorisSQLExpr) WithFieldsMap(fieldsMap metadata.FieldsMap) SQLExpr {
 	return d
 }
 
+// WithShardKeyTimeBucket 用显式开关控制是否启用 __shard_key__ 时间分桶。
+// BKBase 返回的部分 Doris 表结构不包含 __shard_key__ 时，上层会关闭该开关。
+func (d *DorisSQLExpr) WithShardKeyTimeBucket(enabled bool) SQLExpr {
+	d.disableShardKeyTimeBucket = !enabled
+	return d
+}
+
 func (d *DorisSQLExpr) WithKeepColumns(cols []string) SQLExpr {
 	d.keepColumns = cols
 	return d
@@ -120,6 +144,14 @@ func (d *DorisSQLExpr) WithKeepColumns(cols []string) SQLExpr {
 
 func (d *DorisSQLExpr) FieldMap() metadata.FieldsMap {
 	return d.fieldsMap
+}
+
+func (d *DorisSQLExpr) useShardKeyTimeBucket(window time.Duration) bool {
+	if d.disableShardKeyTimeBucket || int64(window.Seconds())%60 != 0 {
+		return false
+	}
+
+	return true
 }
 
 func (d *DorisSQLExpr) ParserQueryString(ctx context.Context, qs string) (string, error) {
@@ -143,16 +175,22 @@ func (d *DorisSQLExpr) ParserSQLWithVisitor(ctx context.Context, q, table, where
 	return "", nil
 }
 
-func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int) (sql string, err error) {
+func (d *DorisSQLExpr) ParserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int, tableFieldsMap doris_parser.TableFieldsMap) (sql string, err error) {
+	return d.parserSQL(ctx, q, tables, where, offset, limit, tableFieldsMap, true)
+}
+
+func (d *DorisSQLExpr) parserSQL(ctx context.Context, q string, tables []string, where string, offset, limit int, tableFieldsMap doris_parser.TableFieldsMap, rejectSelectAllUnion bool) (sql string, err error) {
 	opt := &doris_parser.Option{
 		DimensionTransform: d.dimTransform,
 		AddIgnoreField: func(s string) {
 			d.ignoreFieldSet.Add(strings.ToUpper(s))
 		},
-		Tables: tables,
-		Where:  where,
-		Offset: offset,
-		Limit:  limit,
+		Tables:               tables,
+		Where:                where,
+		TableFieldsMap:       tableFieldsMap,
+		RejectSelectAllUnion: rejectSelectAllUnion,
+		Offset:               offset,
+		Limit:                limit,
 	}
 
 	return doris_parser.ParseDorisSQLWithVisitor(ctx, q, opt)
@@ -177,6 +215,8 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 	var (
 		window         time.Duration
 		timeZoneOffset int64
+		// valueProjected 标记 SELECT 中是否真的生成了 `_value_`，避免 raw 查询跳过 NULL 投影后仍按 `_value` 排序。
+		valueProjected bool
 	)
 
 	dimensionSet = set.New[string]([]string{FieldValue}...)
@@ -210,10 +250,12 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 		switch agg.Name {
 		case "cardinality":
 			selectFields = append(selectFields, fmt.Sprintf("COUNT(DISTINCT %s) AS `%s`", valueField, Value))
+			valueProjected = true
 		// date_histogram 不支持无需进行函数聚合
 		case "date_histogram":
 		default:
 			selectFields = append(selectFields, fmt.Sprintf("%s(%s) AS `%s`", strings.ToUpper(agg.Name), valueField, Value))
+			valueProjected = true
 		}
 
 		if agg.Window > 0 {
@@ -238,17 +280,24 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 			timeZoneOffset *= -1
 		}
 
-		// 如果是按照分钟聚合，则使用 __shard_key__ 作为时间字段
+		// Doris 按分钟聚合时优先使用 __shard_key__；当上层根据字段表关闭该优化时回退到 timeField。
 		var timeField string
-		if int64(window.Seconds())%60 == 0 {
+		if d.useShardKeyTimeBucket(window) {
 			windowMinutes := int(window.Minutes())
 			timeField = fmt.Sprintf(`((CAST((FLOOR(%s / 1000) %s %d) / %d AS INT) * %d %s %d) * 60 * 1000)`, ShardKey, fh1, timeZoneOffset/6e4, windowMinutes, windowMinutes, fh2, timeZoneOffset/6e4)
+		} else if d.disableTimeBucketCast {
+			timeField = fmt.Sprintf(`(FLOOR((%s %s %d) / %d) * %d %s %d)`, d.timeField, fh1, timeZoneOffset, window.Milliseconds(), window.Milliseconds(), fh2, timeZoneOffset)
 		} else {
 			timeField = fmt.Sprintf(`(CAST((FLOOR(%s %s %d) / %d) AS INT) * %d %s %d)`, d.timeField, fh1, timeZoneOffset, window.Milliseconds(), window.Milliseconds(), fh2, timeZoneOffset)
 		}
 
-		selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", timeField, TimeStamp))
-		groupByFields = append(groupByFields, TimeStamp)
+		if d.groupTimeBucketByExpr {
+			selectFields = append(selectFields, fmt.Sprintf("MAX%s AS `%s`", timeField, TimeStamp))
+			groupByFields = append(groupByFields, timeField)
+		} else {
+			selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", timeField, TimeStamp))
+			groupByFields = append(groupByFields, TimeStamp)
+		}
 
 		// 只有时间聚合的条件下，才可以使用时间聚合排序
 		dimensionSet.Add(FieldTime)
@@ -277,8 +326,9 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 			selectFields = append(selectFields, SelectAll)
 		}
 
-		if valueField != "" {
+		if valueField != "" && valueField != metadata.Null {
 			selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", valueField, Value))
+			valueProjected = true
 		}
 		if d.timeField != "" {
 			selectFields = append(selectFields, fmt.Sprintf("`%s` AS `%s`", d.timeField, TimeStamp))
@@ -298,6 +348,9 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 		var orderField string
 		switch order.Name {
 		case FieldValue:
+			if !valueProjected {
+				continue
+			}
 			orderField = Value
 		case FieldTime:
 			orderField = TimeStamp
@@ -305,7 +358,10 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 			orderField = order.Name
 		}
 
-		orderField, _ = d.dimTransform(orderField)
+		orderField = d.orderFieldTransform(orderField)
+		if orderField == "" {
+			continue
+		}
 
 		// 移除重复的排序字段
 		if orderNameSet.Existed(orderField) {
@@ -323,8 +379,262 @@ func (d *DorisSQLExpr) ParserAggregatesAndOrders(selectDistinct []string, aggreg
 	return selectFields, groupByFields, orderByFields, dimensionSet, timeAggregate, err
 }
 
+func (d *DorisSQLExpr) orderFieldTransform(field string) string {
+	transformed, _ := d.dimTransform(field)
+	if transformed != metadata.Null {
+		return transformed
+	}
+
+	if field == d.timeField {
+		return fmt.Sprintf("`%s`", normalizeDorisFieldName(field))
+	}
+
+	return ""
+}
+
 func (d *DorisSQLExpr) ParserRangeTime(timeField string, start, end time.Time) string {
 	return fmt.Sprintf("`%s` >= %d AND `%s` <= %d", timeField, start.UnixMilli(), timeField, end.UnixMilli())
+}
+
+type searchAfterField struct {
+	expr    string
+	literal string
+	asc     bool
+	isNull  bool
+}
+
+func (d *DorisSQLExpr) ParserSearchAfter(orders metadata.Orders, values []any) (string, error) {
+	if len(values) == 0 {
+		return "", nil
+	}
+
+	fields, err := d.parseSearchAfterFields(orders, values)
+	if err != nil {
+		return "", err
+	}
+
+	conditions := make([]string, 0, len(fields))
+	for idx, field := range fields {
+		parts := make([]string, 0, idx+1)
+		for previous := 0; previous < idx; previous++ {
+			parts = append(parts, fields[previous].equalCondition())
+		}
+
+		strictCondition, compound := field.afterCondition()
+		if strictCondition == "" {
+			continue
+		}
+		if compound && len(parts) > 0 {
+			strictCondition = fmt.Sprintf("(%s)", strictCondition)
+		}
+		parts = append(parts, strictCondition)
+		conditions = append(conditions, fmt.Sprintf("(%s)", strings.Join(parts, " AND ")))
+	}
+	if len(conditions) == 0 {
+		return "FALSE", nil
+	}
+
+	return fmt.Sprintf("(%s)", strings.Join(conditions, " OR ")), nil
+}
+
+func (f searchAfterField) equalCondition() string {
+	if f.isNull {
+		return fmt.Sprintf("%s IS NULL", f.expr)
+	}
+	return fmt.Sprintf("%s = %s", f.expr, f.literal)
+}
+
+func (f searchAfterField) afterCondition() (condition string, compound bool) {
+	if f.isNull {
+		if f.asc {
+			return fmt.Sprintf("%s IS NOT NULL", f.expr), false
+		}
+		return "", false
+	}
+
+	op := ">"
+	if !f.asc {
+		op = "<"
+		return fmt.Sprintf("%s %s %s OR %s IS NULL", f.expr, op, f.literal, f.expr), true
+	}
+	return fmt.Sprintf("%s %s %s", f.expr, op, f.literal), false
+}
+
+func (d *DorisSQLExpr) ParserSearchAfterFields(orders metadata.Orders) ([]string, error) {
+	fields, err := d.parseSearchAfterFields(orders, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	expressions := make([]string, 0, len(fields))
+	for _, field := range fields {
+		expressions = append(expressions, field.expr)
+	}
+	return expressions, nil
+}
+
+func (d *DorisSQLExpr) parseSearchAfterFields(orders metadata.Orders, values []any) ([]searchAfterField, error) {
+	if len(orders) == 0 {
+		return nil, fmt.Errorf("search_after requires order fields")
+	}
+	if values != nil && len(orders) != len(values) {
+		return nil, fmt.Errorf("search_after values count %d does not match order fields count %d", len(values), len(orders))
+	}
+
+	fields := make([]searchAfterField, 0, len(orders))
+	fieldSet := set.New[string]()
+
+	for idx, order := range orders {
+		fieldName := order.Name
+		switch fieldName {
+		case FieldTime:
+			fieldName = d.timeField
+		case FieldValue:
+			fieldName = d.valueField
+		}
+		if fieldName == "" {
+			return nil, fmt.Errorf("search_after order field %s is empty", order.Name)
+		}
+
+		originField := fieldName
+		if alias, ok := d.fieldAlias[originField]; ok {
+			originField = alias
+		}
+		fieldOption, existed := d.getField(originField)
+		if !existed || fieldOption.FieldType == "" {
+			return nil, fmt.Errorf("search_after order field %s does not exist", order.Name)
+		}
+
+		fieldExpr, _ := d.dimTransform(fieldName)
+		if fieldExpr == "" || fieldExpr == metadata.Null {
+			return nil, fmt.Errorf("search_after order field %s cannot be transformed", order.Name)
+		}
+		if fieldSet.Existed(fieldExpr) {
+			return nil, fmt.Errorf("search_after contains duplicate order field %s", order.Name)
+		}
+		fieldSet.Add(fieldExpr)
+
+		field := searchAfterField{expr: fieldExpr, asc: order.Ast}
+		if values != nil {
+			if values[idx] == nil {
+				field.isNull = true
+			} else {
+				literal, err := d.searchAfterLiteral(values[idx], fieldOption.FieldType)
+				if err != nil {
+					return nil, fmt.Errorf("invalid search_after value for field %s: %w", order.Name, err)
+				}
+				field.literal = literal
+			}
+		}
+		fields = append(fields, field)
+	}
+
+	return fields, nil
+}
+
+func (d *DorisSQLExpr) searchAfterLiteral(value any, fieldType string) (string, error) {
+	if value == nil {
+		return "", fmt.Errorf("null value is unsupported")
+	}
+
+	fieldType = strings.ToUpper(fieldType)
+	if strings.HasPrefix(fieldType, "ARRAY<") || strings.HasSuffix(fieldType, " ARRAY") {
+		return "", fmt.Errorf("array field type %s is unsupported", fieldType)
+	}
+
+	if isDorisNumericType(fieldType) {
+		var number string
+		switch value := value.(type) {
+		case encodingJson.Number:
+			number = value.String()
+		case int:
+			number = strconv.FormatInt(int64(value), 10)
+		case int8:
+			number = strconv.FormatInt(int64(value), 10)
+		case int16:
+			number = strconv.FormatInt(int64(value), 10)
+		case int32:
+			number = strconv.FormatInt(int64(value), 10)
+		case int64:
+			number = strconv.FormatInt(value, 10)
+		case uint:
+			number = strconv.FormatUint(uint64(value), 10)
+		case uint8:
+			number = strconv.FormatUint(uint64(value), 10)
+		case uint16:
+			number = strconv.FormatUint(uint64(value), 10)
+		case uint32:
+			number = strconv.FormatUint(uint64(value), 10)
+		case uint64:
+			number = strconv.FormatUint(value, 10)
+		case float32:
+			if math.IsNaN(float64(value)) || math.IsInf(float64(value), 0) {
+				return "", fmt.Errorf("non-finite number is unsupported")
+			}
+			number = strconv.FormatFloat(float64(value), 'g', -1, 32)
+		case float64:
+			if math.IsNaN(value) || math.IsInf(value, 0) {
+				return "", fmt.Errorf("non-finite number is unsupported")
+			}
+			number = strconv.FormatFloat(value, 'g', -1, 64)
+		case string:
+			number = value
+		default:
+			return "", fmt.Errorf("value type %T is incompatible with numeric field type %s", value, fieldType)
+		}
+		if !regexp.MustCompile(`^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$`).MatchString(number) {
+			return "", fmt.Errorf("value %q is not a valid number", number)
+		}
+		return number, nil
+	}
+
+	if fieldType == DorisTypeBoolean {
+		switch value := value.(type) {
+		case bool:
+			return strings.ToUpper(strconv.FormatBool(value)), nil
+		case string:
+			parsed, err := strconv.ParseBool(value)
+			if err != nil {
+				return "", fmt.Errorf("value %q is not a valid boolean", value)
+			}
+			return strings.ToUpper(strconv.FormatBool(parsed)), nil
+		default:
+			return "", fmt.Errorf("value type %T is incompatible with boolean field", value)
+		}
+	}
+
+	if isDorisStringType(fieldType) || isDorisDateType(fieldType) {
+		valueString, ok := value.(string)
+		if !ok {
+			return "", fmt.Errorf("value type %T is incompatible with field type %s", value, fieldType)
+		}
+		return fmt.Sprintf("'%s'", d.valueTransform(valueString)), nil
+	}
+
+	return "", fmt.Errorf("field type %s is unsupported", fieldType)
+}
+
+func isDorisNumericType(fieldType string) bool {
+	for _, prefix := range []string{
+		DorisTypeTinyInt, DorisTypeSmallInt, DorisTypeInt, DorisTypeBigInt, DorisTypeLargeInt,
+		DorisTypeFloat, DorisTypeDouble, DorisTypeDecimalV3, DorisTypeDecimal,
+	} {
+		if fieldType == prefix || strings.HasPrefix(fieldType, prefix+"(") {
+			return true
+		}
+	}
+	return false
+}
+
+func isDorisStringType(fieldType string) bool {
+	return fieldType == DorisTypeString || fieldType == DorisTypeText ||
+		strings.HasPrefix(fieldType, "VARCHAR(") || strings.HasPrefix(fieldType, "CHAR(")
+}
+
+func isDorisDateType(fieldType string) bool {
+	return fieldType == DorisTypeDate || fieldType == "DATEV2" ||
+		fieldType == DorisTypeDatetime || fieldType == "DATETIMEV2" || fieldType == DorisTypeTimestamp ||
+		strings.HasPrefix(fieldType, DorisTypeDatetime+"(") || strings.HasPrefix(fieldType, "DATETIMEV2(")
 }
 
 func (d *DorisSQLExpr) ParserAllConditions(allConditions metadata.AllConditions) (string, error) {
@@ -652,7 +962,7 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 		return ns, as
 	}
 
-	ns = s
+	ns = normalizeDorisFieldName(s)
 	if alias, ok := d.fieldAlias[ns]; ok {
 		as = ns
 		ns = alias
@@ -710,6 +1020,18 @@ func (d *DorisSQLExpr) dimTransform(s string) (ns string, as string) {
 
 	ns = fmt.Sprintf(`CAST(%s AS %s)`, suffixFields.String(), castType)
 	return ns, as
+}
+
+func normalizeDorisFieldName(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) < 2 || s[0] != '`' || s[len(s)-1] != '`' {
+		return s
+	}
+	name := s[1 : len(s)-1]
+	if strings.Contains(name, "`") {
+		return s
+	}
+	return name
 }
 
 func (d *DorisSQLExpr) valueTransform(s string) string {

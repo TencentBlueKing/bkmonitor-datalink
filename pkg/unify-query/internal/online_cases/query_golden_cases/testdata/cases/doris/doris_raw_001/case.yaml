@@ -1,0 +1,17 @@
+id: doris_raw_001
+storage: doris
+enabled: true
+shape_signature: query_ts_raw/range/doris/schema/raw/limit10/order_time/output2
+source:
+  kind: production_log
+  outputs_kind: production_log
+  sampled_at: "2026-07-22"
+  fingerprint: sha256:1d56ef9a7a966277bf6524d2c5b88de0ab6febb59187d5fc5535793655fd75a4
+tags: [query_ts_raw_api, raw, pagination, schema_query, production_shape]
+notes:
+  - 生产请求仅保留 raw 查询结构，空间、物理表、字段和集群均已替换为占位符。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

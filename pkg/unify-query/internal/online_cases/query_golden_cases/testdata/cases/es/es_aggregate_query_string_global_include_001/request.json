@@ -1,0 +1,29 @@
+{
+  "method": "POST",
+  "path": "/query/ts",
+  "headers": {
+    "Content-Type": "application/json",
+    "Bk-Query-Source": "golden",
+    "X-Bk-Scope-Space-Uid": "bkcc__golden_es_global_include",
+    "X-Bk-Tenant-Id": "tenant_golden"
+  },
+  "body": {
+    "space_uid": "bkcc__golden_es_global_include",
+    "query_list": [{
+      "data_source": "bk_log",
+      "table_id": "demo_logs.global_include",
+      "field_name": "events_total",
+      "function": [{"method": "sum", "dimensions": ["outcome_code", "response_code"]}],
+      "time_aggregation": {"function": "count_over_time", "window": "1m"},
+      "reference_name": "a",
+      "conditions": {"field_list": [], "condition_list": []},
+      "query_string": "NOT(response_code:\"excluded_alpha\" AND operation_code:\"operation_alpha\") AND ((outcome_code:\"included_alpha\") OR (outcome_code:\"included_beta\")) AND NOT (response_code:\"excluded_beta\")"
+    }],
+    "metric_merge": "a",
+    "start_time": "1784701776",
+    "end_time": "1784702076",
+    "step": "60s",
+    "timezone": "UTC",
+    "instant": false
+  }
+}

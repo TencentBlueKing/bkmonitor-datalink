@@ -28,11 +28,20 @@ processor:
 {% if attribute_config is defined %}
   - name: "{{ attribute_config.name }}"
     config:
-      as_int:
+      {%- if attribute_config.as_string is defined %}
+      as_string:
         keys:
-          {%- for key in attribute_config.as_int%}
+          {%- for key in attribute_config.as_string %}
           - "{{ key }}"
           {%- endfor %}
+      {%- endif %}
+      {%- if attribute_config.as_int is defined %}
+      as_int:
+        keys:
+          {%- for key in attribute_config.as_int %}
+          - "{{ key }}"
+          {%- endfor %}
+      {%- endif %}
       assemble:
         {%- for config in attribute_config.assemble %}
         - destination: "{{ config.destination }}"

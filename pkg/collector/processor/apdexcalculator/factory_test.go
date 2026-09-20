@@ -102,8 +102,8 @@ func testMetricsDimension(t *testing.T, data any, conf *Config, exist bool) {
 	pdMetrics := record.Data.(pmetric.Metrics)
 	assert.Equal(t, 1, pdMetrics.MetricCount())
 	foreach.Metrics(pdMetrics, func(metric pmetric.Metric) {
-		switch metric.DataType() {
-		case pmetric.MetricDataTypeGauge:
+		switch metric.Type() {
+		case pmetric.MetricTypeGauge:
 			dps := metric.Gauge().DataPoints()
 			for n := 0; n < dps.Len(); n++ {
 				dp := dps.At(n)
@@ -231,8 +231,8 @@ func testProcessMetricsStandardCalculator(val time.Duration, threshold float64, 
 
 	var errs []error
 	foreach.Metrics(record.Data.(pmetric.Metrics), func(metric pmetric.Metric) {
-		switch metric.DataType() {
-		case pmetric.MetricDataTypeGauge:
+		switch metric.Type() {
+		case pmetric.MetricTypeGauge:
 			dps := metric.Gauge().DataPoints()
 			for n := 0; n < dps.Len(); n++ {
 				dp := dps.At(n)
@@ -323,8 +323,8 @@ func testProcessTracesStandardCalculator(startTime, endTime time.Duration, thres
 func TestFindMetricsAttributes(t *testing.T) {
 	t.Run("Exist", func(t *testing.T) {
 		m := pcommon.NewMap()
-		m.InsertString("net.host", "host")
-		m.InsertString("net.port", "port")
+		m.PutString("net.host", "host")
+		m.PutString("net.port", "port")
 
 		found := findMetricsAttributes("attributes.net.port", m)
 		assert.True(t, found)
@@ -332,8 +332,8 @@ func TestFindMetricsAttributes(t *testing.T) {
 
 	t.Run("Exist but empty value", func(t *testing.T) {
 		m := pcommon.NewMap()
-		m.InsertString("net.host", "host")
-		m.InsertString("net.port", "")
+		m.PutString("net.host", "host")
+		m.PutString("net.port", "")
 
 		found := findMetricsAttributes("attributes.net.port", m)
 		assert.False(t, found)

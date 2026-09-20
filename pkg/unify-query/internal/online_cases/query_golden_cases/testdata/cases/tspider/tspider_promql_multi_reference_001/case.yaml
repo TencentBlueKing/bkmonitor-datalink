@@ -1,0 +1,28 @@
+id: tspider_promql_multi_reference_001
+storage: tspider
+enabled: true
+shape_signature: promql_range/tspider/schema/sum_over_time8/sum_by3/binary_div_add_mul/reference8/output16
+source:
+  kind: production_log
+  outputs_kind: post_fix_handler_replay
+  sampled_at: "2026-07-22"
+  fingerprint: sha256:1d7f744a92358e8f276fb9dc9c6765f5ab888bd5ab30c92249430441042a1d3c
+tags:
+  - promql_api
+  - query_range
+  - multi_reference
+  - range_selector
+  - binary_expression
+  - schema_query
+  - post_fix_expected
+  - regression_fix
+  - production_shape
+notes:
+  - 生产请求仅保留 PromQL 结构；空间、结果表、指标、维度和身份信息均已一致替换。
+  - BKBase 执行端记录为 HDFS，但 UQ 路由的 measurement 为空，实际使用 TSpider SQL 表达式，因此按 TSpider 分类。
+  - 原始失败输出按引用生成 8 个 schema 请求和 8 个聚合请求；golden 保存修复后 handler 回放得到的 16 个输出。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

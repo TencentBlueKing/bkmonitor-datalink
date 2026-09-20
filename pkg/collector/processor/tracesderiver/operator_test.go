@@ -112,13 +112,13 @@ func TestOperatorDuration(t *testing.T) {
 	data := g.Generate()
 
 	span1 := data.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0)
-	span1.Attributes().InsertString("http.method", "GET")
+	span1.Attributes().PutString("http.method", "GET")
 	span1.SetStartTimestamp(100)
 	span1.SetEndTimestamp(200)
 
 	// 时间戳异常 处理为 0
 	span2 := data.ResourceSpans().At(0).ScopeSpans().At(1).Spans().At(0)
-	span2.Attributes().InsertString("http.method", "POST")
+	span2.Attributes().PutString("http.method", "POST")
 	span2.SetStartTimestamp(300)
 	span2.SetEndTimestamp(200)
 
@@ -134,7 +134,7 @@ func TestOperatorDuration(t *testing.T) {
 
 	foreach.Metrics(metrics, func(metric pmetric.Metric) {
 		assert.Equal(t, "test_bk_apm_duration", metric.Name())
-		assert.Equal(t, float64(100), metric.Gauge().DataPoints().At(0).DoubleVal())
-		assert.Equal(t, float64(0), metric.Gauge().DataPoints().At(1).DoubleVal())
+		assert.Equal(t, float64(100), metric.Gauge().DataPoints().At(0).DoubleValue())
+		assert.Equal(t, float64(0), metric.Gauge().DataPoints().At(1).DoubleValue())
 	})
 }

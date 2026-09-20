@@ -16,7 +16,10 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/beater"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/beater/taskfactory"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/define"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/tenant"
 )
 
 // yaml文件格式
@@ -77,4 +80,29 @@ func TestParseConfig(t *testing.T) {
 	assert.Equal(t, "test", childTaskMetaConfig.Name)
 	assert.Equal(t, "ping", childTaskMetaConfig.Type)
 	assert.Equal(t, "1.2.3", childTaskMetaConfig.Version)
+}
+
+func TestGetBasicMetaConfigInjectsTenantDataIDResolver(t *testing.T) {
+	const configType = "tenant-test-basereport"
+	taskfactory.SetTaskConfigByName(configType, func() define.TaskMetaConfig {
+		return &configs.BasereportConfig{}
+	})
+	storage := tenant.NewStorage()
+	resolver := storage.NewResolver([]string{define.ModuleBasereport})
+	ce := beater.NewBaseConfigEngine(context.Background()).(*beater.BaseConfigEngine)
+	ce.SetTenantDataIDResolver(resolver)
+	cfg, err := ce.ParseToUcfg([]byte("type: " + configType))
+	if err != nil {
+		t.Fatalf("create child config: %v", err)
+	}
+
+	meta, err := ce.GetBasicMetaConfig(cfg)
+	if err != nil {
+		t.Fatalf("get child meta config: %v", err)
+	}
+	baseReport := meta.(*configs.BasereportConfig)
+	baseReport.DataID = 1001
+	if got := len(baseReport.GetTaskConfigList()); got != 0 {
+		t.Fatalf("child basereport task count = %d, want 0 without tenant data ID", got)
+	}
 }

@@ -1,0 +1,26 @@
+id: es_query_string_escaped_range_001
+storage: es
+enabled: true
+shape_signature: query_ts/range/es/raw/query_string/string_date_comparison_ranges/escaped_reserved_character/output_index_search
+source:
+  kind: production_log
+  outputs_kind: post_fix_handler_replay
+  sampled_at: "2026-07-29"
+  fingerprint: sha256:7f3790f3406bdfe6f809b6485a8fbfbb500c592452acfeb7614e91ba8e7ddf19
+tags:
+  - query_ts_api
+  - raw
+  - query_string
+  - range
+  - escaped_value
+  - post_fix_expected
+  - regression_fix
+  - production_shape
+notes:
+  - 生产问题请求仅保留字符串区间和保留字符转义结构，空间、索引、字段和值均已替换。
+  - 修复前 range 端点中的反斜杠会被保留到 ES DSL，修复后字符串区间、日期区间和比较式都必须还原转义后的连字符。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

@@ -62,6 +62,11 @@ http:
     max_routing: 10
     content_type: application/x-protobuf
     content_encoding: snappy
+    raw:
+      es_batch:
+        max_members: 16
+        max_body_bytes: 1048576
+        max_concurrent_searches: 4
 query:
   down_sampled:
     enable: true

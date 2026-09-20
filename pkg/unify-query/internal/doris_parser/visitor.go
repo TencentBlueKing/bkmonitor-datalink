@@ -12,6 +12,8 @@ package doris_parser
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 
 	antlr "github.com/antlr4-go/antlr/v4"
@@ -23,7 +25,9 @@ import (
 )
 
 const (
-	Star = "*"
+	Star                 = "*"
+	unionDummyProjection = "1"
+	maxDorisDecimalWidth = 38
 )
 
 const (
@@ -98,11 +102,1466 @@ type Statement struct {
 
 	nodeMap map[string]Node
 
-	Tables  []string
-	Where   string
-	Offset  int
-	Limit   int
-	errNode []string
+	Tables         []string
+	Where          string
+	TableFieldsMap TableFieldsMap
+	// RejectSelectAllUnion controls Doris-only schema drift protection for SELECT * unions.
+	RejectSelectAllUnion bool
+	Offset               int
+	Limit                int
+	errNode              []string
+}
+
+type TableFieldsMap map[string]metadata.FieldsMap
+
+// UnionProjectionField carries the physical field used by inner UNION branches
+// and the exact schema field that should be validated for compatibility.
+type UnionProjectionField struct {
+	Field           string
+	ValidateName    string
+	RequirePhysical bool
+}
+
+type unionProjectionField struct {
+	field           string
+	validateName    string
+	requirePhysical bool
+}
+
+type selectAllUnionField struct {
+	projection unionProjectionField
+	fieldType  string
+}
+
+type unionDependencyFields struct {
+	projection []unionProjectionField
+	where      []unionProjectionField
+}
+
+// collectColumnNamesFromSQL 从已经渲染完成的 SQL 片段里提取物理列名。
+//
+// 多表 UNION 的内层投影必须保留外层表达式依赖的源字段，例如
+// `CAST(log AS TEXT)` 里的 log、`CAST(__ext[...] AS TEXT)` 里的 __ext。
+// 因此这里同时识别反引号字段和可解析的未反引号 identifier。
+//
+// 这里不是完整 SQL parser，只处理 visitor 已渲染出的 SELECT/GROUP/ORDER 片段：
+// 跳过字符串字面量、未反引号 SQL keyword、函数名和 AS 后的 alias。dotted path
+// 只收 root，避免把对象 key 或路径段误投影为原表列。ignoreNames 只用于 GROUP/ORDER
+// 这类可能引用 SELECT alias 的片段；SELECT 自身不能用全局 alias 名过滤，否则
+// `SELECT host AS ip, ip` 会把真实源字段 `ip` 错删。
+func collectColumnNamesFromSQL(s string, ignoreNames map[string]struct{}) []string {
+	fields := collectUnionProjectionFields(s, ignoreNames)
+	var names []string
+	seen := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		if _, ok := seen[field.field]; ok {
+			continue
+		}
+		seen[field.field] = struct{}{}
+		names = append(names, field.field)
+	}
+	return names
+}
+
+func collectUnionProjectionFields(s string, ignoreNames map[string]struct{}) []unionProjectionField {
+	var fields []unionProjectionField
+	seen := make(map[string]struct{})
+	for idx := 0; idx < len(s); idx++ {
+		switch s[idx] {
+		case '\'':
+			idx = skipSingleQuotedSQLString(s, idx)
+			continue
+		case '"':
+			idx = skipDoubleQuotedSQLString(s, idx)
+			continue
+		case '`':
+			start := idx
+			end := strings.IndexByte(s[idx+1:], '`')
+			if end < 0 {
+				return fields
+			}
+			end += idx + 1
+			name := s[idx+1 : end]
+			idx = end
+			if shouldSkipColumnName(s, start, name, ignoreNames, true) {
+				continue
+			}
+			field := fmt.Sprintf("`%s`", name)
+			validateName := name + collectObjectPathSuffix(s, idx+1)
+			key := field + "\x00" + validateName
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			fields = append(fields, unionProjectionField{field: field, validateName: validateName})
+			continue
+		}
+
+		if !isSQLIdentifierStart(s[idx]) {
+			continue
+		}
+
+		start := idx
+		for idx < len(s) && isSQLIdentifierPart(s[idx]) {
+			idx++
+		}
+		name := s[start:idx]
+		idx--
+		if isIdentifierPartOfNumericLiteral(s, start) {
+			continue
+		}
+		if previousNonSpaceByte(s, start) == '.' {
+			continue
+		}
+		if shouldSkipColumnName(s, start, name, ignoreNames, false) {
+			continue
+		}
+		// 标识符后紧跟 '(' 时是函数名，例如 COUNT(*) 或 CAST(...)，
+		// 函数参数会在后续扫描中单独识别，COUNT(*) 不会产生字段依赖。
+		if nextNonSpaceByte(s, idx+1) == '(' {
+			continue
+		}
+		validateName := name + collectObjectPathSuffix(s, idx+1)
+		field := fmt.Sprintf("`%s`", name)
+		key := field + "\x00" + validateName
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		fields = append(fields, unionProjectionField{field: field, validateName: validateName})
+	}
+	return fields
+}
+
+func shouldSkipColumnName(s string, start int, name string, ignoreNames map[string]struct{}, quoted bool) bool {
+	if name == "" {
+		return true
+	}
+	if ignoreNamesContains(ignoreNames, name) {
+		return true
+	}
+	if !quoted && isSQLKeyword(name) {
+		return true
+	}
+	if previousTokenIsAS(s, start) {
+		return true
+	}
+	return false
+}
+
+func ignoreNamesContains(ignoreNames map[string]struct{}, name string) bool {
+	if len(ignoreNames) == 0 {
+		return false
+	}
+	if _, ok := ignoreNames[name]; ok {
+		return true
+	}
+	_, ok := ignoreNames[strings.ToLower(name)]
+	return ok
+}
+
+func collectObjectPathSuffix(s string, start int) string {
+	var parts []string
+	for idx := start; idx < len(s); {
+		for idx < len(s) && s[idx] == ' ' {
+			idx++
+		}
+		if idx >= len(s) {
+			break
+		}
+		switch s[idx] {
+		case '.':
+			idx++
+			for idx < len(s) && s[idx] == ' ' {
+				idx++
+			}
+			partStart := idx
+			if idx >= len(s) || !isSQLIdentifierStart(s[idx]) {
+				return strings.Join(parts, "")
+			}
+			for idx < len(s) && isSQLIdentifierPart(s[idx]) {
+				idx++
+			}
+			parts = append(parts, "."+s[partStart:idx])
+		case '[':
+			part, next, ok := scanBracketObjectPathPart(s, idx)
+			if !ok {
+				return strings.Join(parts, "")
+			}
+			if part != "" {
+				parts = append(parts, "."+part)
+			}
+			idx = next
+		default:
+			return strings.Join(parts, "")
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+func scanBracketObjectPathPart(s string, start int) (string, int, bool) {
+	idx := start + 1
+	for idx < len(s) && s[idx] == ' ' {
+		idx++
+	}
+	if idx >= len(s) {
+		return "", idx, false
+	}
+
+	var part string
+	switch s[idx] {
+	case '\'', '"', '`':
+		quote := s[idx]
+		end := skipQuotedSQLString(s, idx, quote)
+		if end <= idx || end >= len(s) {
+			return "", end, false
+		}
+		part = s[idx+1 : end]
+		idx = end + 1
+	default:
+		partStart := idx
+		for idx < len(s) && isSQLIdentifierPart(s[idx]) {
+			idx++
+		}
+		part = s[partStart:idx]
+	}
+
+	for idx < len(s) && s[idx] == ' ' {
+		idx++
+	}
+	if idx >= len(s) || s[idx] != ']' {
+		return "", idx, false
+	}
+	return part, idx + 1, true
+}
+
+func previousTokenIsAS(s string, start int) bool {
+	idx := start - 1
+	for idx >= 0 && s[idx] == ' ' {
+		idx--
+	}
+	end := idx + 1
+	for idx >= 0 && isSQLIdentifierPart(s[idx]) {
+		idx--
+	}
+	return strings.EqualFold(s[idx+1:end], "AS")
+}
+
+func previousNonSpaceByte(s string, start int) byte {
+	for idx := start - 1; idx >= 0; idx-- {
+		if s[idx] != ' ' {
+			return s[idx]
+		}
+	}
+	return 0
+}
+
+func nextNonSpaceByte(s string, start int) byte {
+	for idx := start; idx < len(s); idx++ {
+		if s[idx] != ' ' {
+			return s[idx]
+		}
+	}
+	return 0
+}
+
+func isSQLIdentifierStart(b byte) bool {
+	return b == '_' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
+}
+
+func isSQLIdentifierPart(b byte) bool {
+	return isSQLIdentifierStart(b) || b >= '0' && b <= '9'
+}
+
+func isSQLDigit(b byte) bool {
+	return b >= '0' && b <= '9'
+}
+
+func isIdentifierPartOfNumericLiteral(s string, start int) bool {
+	return start > 0 && isSQLDigit(s[start-1])
+}
+
+func isSQLKeyword(name string) bool {
+	switch strings.ToUpper(name) {
+	case "AND", "ARRAY", "AS", "ASC", "BETWEEN", "BIGINT", "BOOL", "BOOLEAN", "BY", "CASE", "CAST",
+		"CURRENT_DATE", "CURRENT_TIME", "CURRENT_TIMESTAMP", "CURRENT_USER", "DATE", "DATETIME", "DAY",
+		"DECIMAL", "DESC", "DISTINCT", "DOUBLE", "ELSE", "END", "FALSE", "FLOAT", "FROM", "GROUP", "HOUR",
+		"ESCAPE", "IN", "INT", "INTEGER", "INTERVAL", "IS", "LIKE", "LIMIT", "LOCALTIME", "LOCALTIMESTAMP", "MATCH", "MATCH_ALL", "MATCH_ANY",
+		"MATCH_PHRASE", "MATCH_PHRASE_EDGE", "MATCH_PHRASE_PREFIX", "MATCH_REGEXP",
+		"MINUTE", "MONTH", "NOT", "NULL", "OR", "ORDER", "QUARTER", "REGEXP", "RLIKE", "SECOND", "SELECT",
+		"SESSION_USER", "STRING", "TEXT", "THEN", "TIME", "TIMESTAMP", "TRUE", "VARCHAR", "WEEK", "WHEN", "WHERE", "XOR", "YEAR":
+		return true
+	default:
+		return false
+	}
+}
+
+func skipSingleQuotedSQLString(s string, start int) int {
+	return skipQuotedSQLString(s, start, '\'')
+}
+
+func skipDoubleQuotedSQLString(s string, start int) int {
+	return skipQuotedSQLString(s, start, '"')
+}
+
+func skipQuotedSQLString(s string, start int, quote byte) int {
+	for idx := start + 1; idx < len(s); idx++ {
+		switch s[idx] {
+		case '\\':
+			idx++
+		case quote:
+			if idx+1 < len(s) && s[idx+1] == quote {
+				idx++
+				continue
+			}
+			return idx
+		}
+	}
+	return len(s) - 1
+}
+
+func hasTopLevelWildcard(s string) bool {
+	if isDistinctStarExpression(s) {
+		return true
+	}
+
+	return scanTopLevelWildcard(s, isWildcardToken, true)
+}
+
+func hasTopLevelQualifiedWildcard(s string) bool {
+	return scanTopLevelWildcard(s, isQualifiedWildcardToken, false)
+}
+
+func scanTopLevelWildcard(s string, match func(string, int) bool, matchDistinct bool) bool {
+	depth := 0
+	for idx := 0; idx < len(s); idx++ {
+		switch s[idx] {
+		case '\'':
+			idx = skipSingleQuotedSQLString(s, idx)
+		case '"':
+			idx = skipDoubleQuotedSQLString(s, idx)
+		case '`':
+			end := strings.IndexByte(s[idx+1:], '`')
+			if end < 0 {
+				return false
+			}
+			idx += end + 1
+		case '(':
+			depth++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+		default:
+			if matchDistinct && depth == 0 && isDistinctStarAt(s, idx) {
+				return true
+			}
+		case '*':
+			if depth == 0 && match(s, idx) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isDistinctStarAt(s string, idx int) bool {
+	if idx > 0 && isSQLIdentifierPart(s[idx-1]) {
+		return false
+	}
+	const distinct = "DISTINCT"
+	if idx+len(distinct) > len(s) || !strings.EqualFold(s[idx:idx+len(distinct)], distinct) {
+		return false
+	}
+	idx += len(distinct)
+	if idx < len(s) && isSQLIdentifierPart(s[idx]) {
+		return false
+	}
+	for idx < len(s) && s[idx] == ' ' {
+		idx++
+	}
+	if idx < len(s) && s[idx] == '*' {
+		next := nextNonSpaceByte(s, idx+1)
+		return next == 0 || next == ','
+	}
+	if idx >= len(s) || s[idx] != '(' {
+		return false
+	}
+	idx++
+	for idx < len(s) && s[idx] == ' ' {
+		idx++
+	}
+	if idx >= len(s) || s[idx] != '*' {
+		return false
+	}
+	idx++
+	for idx < len(s) && s[idx] == ' ' {
+		idx++
+	}
+	return idx < len(s) && s[idx] == ')'
+}
+
+func isDistinctStarExpression(s string) bool {
+	normalized := strings.Map(func(r rune) rune {
+		switch r {
+		case ' ', '\t', '\n', '\r':
+			return -1
+		default:
+			return r
+		}
+	}, s)
+	return strings.EqualFold(normalized, "DISTINCT(*)") || strings.EqualFold(normalized, "DISTINCT*")
+}
+
+func isWildcardToken(s string, idx int) bool {
+	prev := previousNonSpaceByte(s, idx)
+	next := nextNonSpaceByte(s, idx+1)
+	return (prev == 0 || prev == ',') && (next == 0 || next == ',')
+}
+
+func isQualifiedWildcardToken(s string, idx int) bool {
+	prev := previousNonSpaceByte(s, idx)
+	next := nextNonSpaceByte(s, idx+1)
+	return prev == '.' && (next == 0 || next == ',')
+}
+
+func (v *Statement) unionSelectList() string {
+	selectSQL := v.ItemString(SelectItem)
+
+	if hasTopLevelQualifiedWildcard(selectSQL) {
+		// 多表 UNION 会把 FROM 改写成 combined_data 子查询，原始表别名不再存在。
+		// 因此只有 plain * 可以按公共字段展开，t.* 这类 qualified wildcard 继续要求显式字段。
+		if len(v.Tables) > 1 && v.RejectSelectAllUnion {
+			v.errNode = append(v.errNode, "doris multi-table union does not support SELECT *; use explicit fields")
+		}
+		return Star
+	}
+
+	if selectSQL == Star || hasTopLevelWildcard(selectSQL) {
+		if len(v.Tables) > 1 && v.RejectSelectAllUnion {
+			selectList, err := v.expandSelectAllUnionSelectList(selectSQL)
+			if err != nil {
+				v.errNode = append(v.errNode, err.Error())
+				return Star
+			}
+			return selectList
+		}
+		return Star
+	}
+
+	// 多张 Doris 表合并时不能无条件 SELECT *：
+	// 历史表和当前表可能存在字段漂移，Doris 要求 UNION ALL 两侧列数一致。
+	// 因此外层 SQL 只依赖部分字段时，内层子查询只投影这些字段；顶层 SELECT *
+	// 在有表结构时会先转换成公共字段投影。COUNT(*) 不是顶层 wildcard，不会被展开。
+	// 若没有任何真实字段依赖，内层 UNION 使用常量投影即可保留行数语义。
+	dependencies := v.collectUnionDependencyFields(selectSQL)
+	if len(dependencies.projection) == 0 {
+		if err := validateUnionWhereFields(v.Tables, dependencies.where, v.TableFieldsMap); err != nil {
+			v.errNode = append(v.errNode, err.Error())
+		}
+		if len(v.Tables) > 1 {
+			return unionDummyProjection
+		}
+		return Star
+	}
+
+	if err := validateUnionProjectionFields(v.Tables, dependencies.projection, v.TableFieldsMap); err != nil {
+		v.errNode = append(v.errNode, err.Error())
+	}
+	if err := validateUnionWhereFields(v.Tables, dependencies.where, v.TableFieldsMap); err != nil {
+		v.errNode = append(v.errNode, err.Error())
+	}
+	return strings.Join(unionProjectionFieldNames(dependencies.projection), ", ")
+}
+
+func (v *Statement) expandSelectAllUnionSelectList(selectSQL string) (string, error) {
+	fields, err := ExpandSelectAllUnionFields(v.Tables, v.TableFieldsMap)
+	if err != nil {
+		return "", err
+	}
+
+	dependencies := v.collectUnionDependencyFields(selectSQL)
+	if err := validateUnionProjectionFields(v.Tables, dependencies.projection, v.TableFieldsMap); err != nil {
+		return "", err
+	}
+	if err := validateUnionWhereFields(v.Tables, dependencies.where, v.TableFieldsMap); err != nil {
+		return "", err
+	}
+
+	// SELECT * 只展开物理 schema 交集；计算平台虚拟内置字段不在物理
+	// schema 中，但外层显式依赖它们时，内层 UNION 仍必须投影这些字段。
+	fields, err = appendBuiltinPlatformSelectAllDependencies(
+		v.Tables,
+		fields,
+		fromUnionProjectionFields(dependencies.projection),
+		v.TableFieldsMap,
+	)
+	if err != nil {
+		return "", err
+	}
+	if len(fields) == 0 {
+		return "", fmt.Errorf("doris multi-table union does not support SELECT *; use explicit fields")
+	}
+	if err := rejectSelectAllExtraProjectionFields(fields, dependencies.projection); err != nil {
+		return "", err
+	}
+	return strings.Join(fields, ", "), nil
+}
+
+func (v *Statement) collectUnionDependencyFields(selectSQL string) unionDependencyFields {
+	aliases := v.collectSelectAliases()
+	for alias := range collectAliasesFromSQL(selectSQL) {
+		addAlias(aliases, alias)
+	}
+
+	// GROUP/ORDER 可能引用 SELECT alias；这些 alias 不是内层 UNION 分支
+	// 需要投影的源字段，收集依赖时必须跳过。
+	projection := collectUnionProjectionFields(selectSQL, nil)
+	projection = append(projection, collectUnionProjectionFields(v.ItemString(GroupItem), aliases)...)
+	projection = append(projection, collectUnionProjectionFields(v.ItemString(OrderItem), aliases)...)
+	projection = appendMinuteBucketUnionDependencies(v.Tables, projection, v.TableFieldsMap)
+
+	return unionDependencyFields{
+		projection: projection,
+		where:      collectUnionProjectionFields(v.ItemString(WhereItem), nil),
+	}
+}
+
+func appendMinuteBucketUnionDependencies(tables []string, fields []unionProjectionField, tableFieldsMap TableFieldsMap) []unionProjectionField {
+	seen := make(map[string]struct{}, len(fields)+1)
+	for _, field := range fields {
+		seen[minuteBucketUnionDependencyKey(field)] = struct{}{}
+	}
+
+	result := fields
+	for _, field := range fields {
+		if !IsVirtualMinutePlatformField(tables, field.validateName, tableFieldsMap) {
+			continue
+		}
+		dependency := unionProjectionField{
+			field:           quoteUnionField("dtEventTimeStamp"),
+			validateName:    "dtEventTimeStamp",
+			requirePhysical: true,
+		}
+		key := minuteBucketUnionDependencyKey(dependency)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, dependency)
+	}
+	return result
+}
+
+func minuteBucketUnionDependencyKey(field unionProjectionField) string {
+	return unionProjectionDependencyKey(field.field, field.validateName, field.requirePhysical)
+}
+
+func unionProjectionDependencyKey(field string, validateName string, requirePhysical bool) string {
+	if requirePhysical {
+		return field + "\x00" + validateName + "\x00physical"
+	}
+	return field + "\x00" + validateName
+}
+
+func unionProjectionFieldNames(fields []unionProjectionField) []string {
+	seen := make(map[string]struct{}, len(fields))
+	result := make([]string, 0, len(fields))
+	for _, field := range fields {
+		if _, ok := seen[field.field]; ok {
+			continue
+		}
+		seen[field.field] = struct{}{}
+		result = append(result, field.field)
+	}
+	return result
+}
+
+func ValidateUnionProjectionFields(tables []string, fields []string, tableFieldsMap TableFieldsMap) error {
+	projectionFields := make([]unionProjectionField, 0, len(fields))
+	for _, field := range fields {
+		projectionFields = append(projectionFields, unionProjectionField{
+			field:        field,
+			validateName: unquoteUnionField(field),
+		})
+	}
+	return validateUnionProjectionFields(tables, projectionFields, tableFieldsMap)
+}
+
+// ValidateUnionProjectionFieldNames validates UNION projections when the SQL
+// projection root differs from the schema leaf that the outer query reads.
+func ValidateUnionProjectionFieldNames(tables []string, fields []UnionProjectionField, tableFieldsMap TableFieldsMap) error {
+	projectionFields := make([]unionProjectionField, 0, len(fields))
+	for _, field := range fields {
+		projectionFields = append(projectionFields, unionProjectionField{
+			field:           field.Field,
+			validateName:    field.ValidateName,
+			requirePhysical: field.RequirePhysical,
+		})
+	}
+	return validateUnionProjectionFields(tables, projectionFields, tableFieldsMap)
+}
+
+func fromUnionProjectionFields(fields []unionProjectionField) []UnionProjectionField {
+	result := make([]UnionProjectionField, 0, len(fields))
+	for _, field := range fields {
+		result = append(result, UnionProjectionField{
+			Field:           field.field,
+			ValidateName:    field.validateName,
+			RequirePhysical: field.requirePhysical,
+		})
+	}
+	return result
+}
+
+// ExpandSelectAllUnionFieldsWithDependencies converts SELECT * into common
+// physical fields and keeps explicit virtual platform field dependencies that
+// are intentionally absent from every physical table schema.
+func ExpandSelectAllUnionFieldsWithDependencies(tables []string, tableFieldsMap TableFieldsMap, dependencies []UnionProjectionField) ([]string, error) {
+	fields, err := ExpandSelectAllUnionFields(tables, tableFieldsMap)
+	if err != nil {
+		return nil, err
+	}
+	return appendBuiltinPlatformSelectAllDependencies(tables, fields, dependencies, tableFieldsMap)
+}
+
+// ExpandSelectAllUnionFields converts SELECT * for Doris multi-table UNION into
+// a deterministic explicit projection over fields shared by every table.
+func ExpandSelectAllUnionFields(tables []string, tableFieldsMap TableFieldsMap) ([]string, error) {
+	fields, err := collectSelectAllUnionProjectionFields(tables, tableFieldsMap)
+	if err != nil {
+		return nil, err
+	}
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	if err := validateUnionProjectionFields(tables, fields, tableFieldsMap); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(fields))
+	for _, field := range fields {
+		names = append(names, field.field)
+	}
+	return names, nil
+}
+
+func appendBuiltinPlatformSelectAllDependencies(tables []string, fields []string, dependencies []UnionProjectionField, tableFieldsMap TableFieldsMap) ([]string, error) {
+	if len(dependencies) == 0 {
+		return fields, nil
+	}
+
+	seen := make(map[string]struct{}, (len(fields)+len(dependencies))*2)
+	for _, field := range fields {
+		addSelectAllProjectionOutputName(seen, field)
+	}
+
+	result := append([]string(nil), fields...)
+	for _, dependency := range dependencies {
+		field := unionProjectionField{
+			field:        dependency.Field,
+			validateName: dependency.ValidateName,
+		}
+		if selectAllProjectionOutputNameExists(seen, field.field) {
+			continue
+		}
+		name := field.validateName
+		if name == "" {
+			name = unquoteUnionField(field.field)
+		}
+		skipBuiltin, err := shouldSkipBuiltinPlatformField(tables, field.field, name, field.requirePhysical, tableFieldsMap)
+		if err != nil {
+			return nil, err
+		}
+		if !skipBuiltin {
+			continue
+		}
+		result = append(result, field.field)
+		addSelectAllProjectionOutputName(seen, field.field)
+	}
+	return result, nil
+}
+
+func collectSelectAllUnionProjectionFields(tables []string, tableFieldsMap TableFieldsMap) ([]unionProjectionField, error) {
+	if len(tables) == 0 || len(tableFieldsMap) == 0 {
+		return nil, nil
+	}
+
+	common := make(map[string]selectAllUnionField)
+	for idx, table := range tables {
+		fieldsMap, ok := tableFieldsMap[table]
+		if !ok {
+			return nil, fmt.Errorf("doris multi-table union missing schema for table %s", table)
+		}
+		if idx == 0 {
+			for name, option := range fieldsMap {
+				name = strings.TrimSpace(name)
+				if name == "" || !option.Existed() || isUnsupportedUnionFieldType(option.FieldType) {
+					continue
+				}
+				key := selectAllUnionFieldKey(name)
+				if _, ok := common[key]; ok {
+					continue
+				}
+				common[key] = selectAllUnionField{
+					projection: unionProjectionField{
+						field:        selectAllUnionProjectionField(name, option.FieldType),
+						validateName: name,
+					},
+					fieldType: option.FieldType,
+				}
+			}
+			continue
+		}
+
+		for key, field := range common {
+			option := selectAllUnionFieldOption(fieldsMap, field.projection.validateName)
+			safeType, compatible := safeUnionFieldType(field.fieldType, option.FieldType)
+			if !option.Existed() ||
+				isUnsupportedUnionFieldType(option.FieldType) ||
+				!compatible {
+				delete(common, key)
+				continue
+			}
+			field.fieldType = safeType
+			field.projection.field = selectAllUnionProjectionField(field.projection.validateName, safeType)
+			common[key] = field
+		}
+	}
+
+	if len(common) == 0 {
+		return nil, fmt.Errorf("doris multi-table union SELECT * has no common fields")
+	}
+
+	keys := make([]string, 0, len(common))
+	for key := range common {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	fields := make([]unionProjectionField, 0, len(keys))
+	for _, key := range keys {
+		fields = append(fields, common[key].projection)
+	}
+	return fields, nil
+}
+
+func selectAllUnionFieldKey(name string) string {
+	name = unquoteUnionField(strings.TrimSpace(name))
+	if root, leaf, ok := splitObjectUnionFieldName(name); ok {
+		return strings.ToLower(root) + "." + leaf
+	}
+	return strings.ToLower(name)
+}
+
+func selectAllUnionFieldOption(fieldsMap metadata.FieldsMap, name string) metadata.FieldOption {
+	name = unquoteUnionField(strings.TrimSpace(name))
+	if root, leaf, ok := splitObjectUnionFieldName(name); ok {
+		return exactObjectLeafOption(fieldsMap, root, leaf)
+	}
+	return fieldsMap.Field(name)
+}
+
+func selectAllUnionProjectionField(field string, fieldType string) string {
+	field = unquoteUnionField(strings.TrimSpace(field))
+	if !strings.Contains(field, ".") {
+		return quoteUnionField(field)
+	}
+	return fmt.Sprintf("CAST(%s AS %s) AS `%s`", dorisObjectFieldExpression(field), dorisCastType(fieldType), field)
+}
+
+func dorisObjectFieldExpression(field string) string {
+	parts := strings.Split(field, ".")
+	if len(parts) == 0 {
+		return field
+	}
+
+	mapFieldSet := map[string]struct{}{
+		"resource":   {},
+		"attributes": {},
+	}
+
+	var builder strings.Builder
+	sep := ""
+	for idx, part := range parts {
+		switch idx {
+		case 0:
+			sep = "['"
+		case len(parts) - 1:
+			sep = "']"
+		}
+
+		builder.WriteString(part)
+		builder.WriteString(sep)
+		if _, ok := mapFieldSet[part]; ok {
+			sep = "."
+		} else if sep != "." {
+			sep = "']['"
+		}
+	}
+	return builder.String()
+}
+
+func dorisCastType(fieldType string) string {
+	fieldType = strings.ToUpper(strings.TrimSpace(fieldType))
+	if strings.HasPrefix(fieldType, "ARRAY<") && strings.HasSuffix(fieldType, ">") {
+		return strings.TrimSuffix(strings.TrimPrefix(fieldType, "ARRAY<"), ">") + " ARRAY"
+	}
+	if fieldType == "" {
+		return "STRING"
+	}
+	return fieldType
+}
+
+func rejectSelectAllExtraProjectionFields(fields []string, extraFields []unionProjectionField) error {
+	seen := make(map[string]struct{}, len(fields)*2)
+	for _, field := range fields {
+		addSelectAllProjectionOutputName(seen, field)
+	}
+	for _, field := range extraFields {
+		if selectAllProjectionOutputNameExists(seen, field.field) {
+			continue
+		}
+		return fmt.Errorf("doris multi-table union SELECT * cannot be combined with field dependency %s; use explicit fields", field.field)
+	}
+	return nil
+}
+
+func addSelectAllProjectionOutputName(seen map[string]struct{}, field string) {
+	seen[field] = struct{}{}
+	if key := normalizedSelectAllProjectionName(field); key != "" {
+		seen[key] = struct{}{}
+	}
+	upperField := strings.ToUpper(field)
+	idx := strings.LastIndex(upperField, " AS `")
+	if idx < 0 {
+		return
+	}
+	alias := field[idx+len(" AS "):]
+	if strings.HasPrefix(alias, "`") && strings.HasSuffix(alias, "`") {
+		seen[alias] = struct{}{}
+		if key := normalizedSelectAllProjectionName(alias); key != "" {
+			seen[key] = struct{}{}
+		}
+	}
+}
+
+func selectAllProjectionOutputNameExists(seen map[string]struct{}, field string) bool {
+	if _, ok := seen[field]; ok {
+		return true
+	}
+	if key := normalizedSelectAllProjectionName(field); key != "" {
+		_, ok := seen[key]
+		return ok
+	}
+	return false
+}
+
+func normalizedSelectAllProjectionName(field string) string {
+	field = strings.TrimSpace(field)
+	if field == "" {
+		return ""
+	}
+	if strings.HasPrefix(field, "`") && strings.HasSuffix(field, "`") {
+		field = unquoteUnionField(field)
+	}
+	if strings.ContainsAny(field, " ()") {
+		return ""
+	}
+	return strings.ToLower(field)
+}
+
+func validateUnionProjectionFields(tables []string, fields []unionProjectionField, tableFieldsMap TableFieldsMap) error {
+	if len(tableFieldsMap) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		name := field.validateName
+		if name == "" {
+			name = unquoteUnionField(field.field)
+		}
+		skipBuiltin, err := shouldSkipBuiltinPlatformField(tables, field.field, name, field.requirePhysical, tableFieldsMap)
+		if err != nil {
+			return err
+		}
+		if skipBuiltin {
+			continue
+		}
+		key := unionProjectionDependencyKey(field.field, name, field.requirePhysical)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if ok, err := validateRootObjectUnionField(tables, field.field, name, tableFieldsMap); ok || err != nil {
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		var base metadata.FieldOption
+		var baseTable string
+		for _, table := range tables {
+			fieldsMap, ok := tableFieldsMap[table]
+			if !ok {
+				return fmt.Errorf("doris multi-table union missing schema for table %s", table)
+			}
+			fieldOption, existed := unionFieldOption(fieldsMap, field.field, name)
+			if !existed {
+				return fmt.Errorf("doris multi-table union field %s is missing from table %s", field.field, table)
+			}
+			if isUnsupportedUnionFieldType(fieldOption.FieldType) {
+				return fmt.Errorf("doris multi-table union field %s in table %s has unsupported type %s", field.field, table, fieldOption.FieldType)
+			}
+			if base.Existed() && !compatibleUnionFieldTypes(base.FieldType, fieldOption.FieldType) {
+				return fmt.Errorf(
+					"doris multi-table union field %s type mismatch: table %s has %s, table %s has %s",
+					field.field, baseTable, base.FieldType, table, fieldOption.FieldType,
+				)
+			}
+			if !base.Existed() {
+				base = fieldOption
+				baseTable = table
+			}
+		}
+	}
+	return nil
+}
+
+func validateUnionWhereFields(tables []string, fields []unionProjectionField, tableFieldsMap TableFieldsMap) error {
+	if len(tableFieldsMap) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		name := field.validateName
+		if name == "" {
+			name = unquoteUnionField(field.field)
+		}
+		skipBuiltin, err := shouldSkipBuiltinPlatformField(tables, field.field, name, field.requirePhysical, tableFieldsMap)
+		if err != nil {
+			return err
+		}
+		if skipBuiltin {
+			continue
+		}
+		key := unionProjectionDependencyKey(field.field, name, field.requirePhysical)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		if ok, err := validateRootObjectUnionFieldPresence(tables, field.field, name, tableFieldsMap); ok || err != nil {
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		for _, table := range tables {
+			fieldsMap, ok := tableFieldsMap[table]
+			if !ok {
+				return fmt.Errorf("doris multi-table union missing schema for table %s", table)
+			}
+			if _, existed := unionFieldOption(fieldsMap, field.field, name); !existed {
+				return fmt.Errorf("doris multi-table union field %s is missing from table %s", field.field, table)
+			}
+		}
+	}
+	return nil
+}
+
+// validateRootObjectUnionField 校验直接投影对象 root 的场景。
+//
+// 例如 SELECT dimensions 时，schema 往往只有 dimensions.xxx leaf，没有
+// dimensions root 字段。这里按完整 leaf 集合比较，避免随机选中某个 leaf 后
+// 把两张完全相同的对象 schema 误判为类型不兼容。
+func validateRootObjectUnionField(tables []string, field string, validateName string, tableFieldsMap TableFieldsMap) (bool, error) {
+	rootName := unquoteUnionField(field)
+	if validateName != rootName {
+		return false, nil
+	}
+
+	var baseTable string
+	var baseFields map[string]rootObjectUnionField
+	for _, table := range tables {
+		fieldsMap, ok := tableFieldsMap[table]
+		if !ok {
+			return false, fmt.Errorf("doris multi-table union missing schema for table %s", table)
+		}
+		if fieldsMap.Field(rootName).Existed() {
+			return false, nil
+		}
+		fields := rootObjectUnionFields(fieldsMap, rootName)
+		if len(fields) == 0 {
+			if baseFields == nil {
+				return false, nil
+			}
+			return true, fmt.Errorf("doris multi-table union field %s is missing from table %s", field, table)
+		}
+		if baseFields == nil {
+			baseFields = fields
+			baseTable = table
+			continue
+		}
+		if err := validateRootObjectUnionFields(baseTable, baseFields, table, fields); err != nil {
+			return true, err
+		}
+	}
+	return baseFields != nil, nil
+}
+
+func validateRootObjectUnionFieldPresence(tables []string, field string, validateName string, tableFieldsMap TableFieldsMap) (bool, error) {
+	rootName := unquoteUnionField(field)
+	if validateName != rootName {
+		return false, nil
+	}
+
+	for _, table := range tables {
+		fieldsMap, ok := tableFieldsMap[table]
+		if !ok {
+			return true, fmt.Errorf("doris multi-table union missing schema for table %s", table)
+		}
+		if fieldsMap.Field(rootName).Existed() || len(rootObjectUnionFields(fieldsMap, rootName)) > 0 {
+			continue
+		}
+		return true, fmt.Errorf("doris multi-table union field %s is missing from table %s", field, table)
+	}
+	return true, nil
+}
+
+type rootObjectUnionField struct {
+	name   string
+	option metadata.FieldOption
+}
+
+func rootObjectUnionFields(fieldsMap metadata.FieldsMap, rootName string) map[string]rootObjectUnionField {
+	fields := make(map[string]rootObjectUnionField)
+	for fieldName, option := range fieldsMap {
+		root, leaf, ok := splitObjectUnionFieldName(fieldName)
+		if !option.Existed() || !ok || !strings.EqualFold(root, rootName) {
+			continue
+		}
+		fields[strings.ToLower(root)+"."+leaf] = rootObjectUnionField{name: fieldName, option: option}
+	}
+	return fields
+}
+
+func validateRootObjectUnionFields(
+	baseTable string,
+	baseFields map[string]rootObjectUnionField,
+	table string,
+	fields map[string]rootObjectUnionField,
+) error {
+	for key, baseField := range baseFields {
+		fieldOption, ok := fields[key]
+		if !ok {
+			return fmt.Errorf("doris multi-table union field %s is missing from table %s", quoteUnionField(baseField.name), table)
+		}
+		if isUnsupportedUnionFieldType(fieldOption.option.FieldType) {
+			return fmt.Errorf("doris multi-table union field %s in table %s has unsupported type %s", quoteUnionField(fieldOption.name), table, fieldOption.option.FieldType)
+		}
+		if !compatibleUnionFieldTypes(baseField.option.FieldType, fieldOption.option.FieldType) {
+			return fmt.Errorf(
+				"doris multi-table union field %s type mismatch: table %s has %s, table %s has %s",
+				quoteUnionField(fieldOption.name), baseTable, baseField.option.FieldType, table, fieldOption.option.FieldType,
+			)
+		}
+	}
+	for key, fieldOption := range fields {
+		if _, ok := baseFields[key]; ok {
+			continue
+		}
+		return fmt.Errorf("doris multi-table union field %s is missing from table %s", quoteUnionField(fieldOption.name), baseTable)
+	}
+	return nil
+}
+
+// unionFieldOption 解析 UNION 投影字段对应的 schema。
+//
+// 对象字段表达式渲染后会使用 root 列，例如 dimensions['pipelineName'] 会投影为
+// `dimensions`，而 schema 里通常只有 dimensions.pipelineName 这样的 leaf 字段。
+// validateName 用于传递已知 leaf；直接投影 root 对象时，会先按完整 leaf 集合校验，
+// 再进入这里的兜底逻辑。
+func unionFieldOption(fieldsMap metadata.FieldsMap, field string, validateName string) (metadata.FieldOption, bool) {
+	fieldOption := exactObjectLeafOrFieldOption(fieldsMap, validateName)
+	if fieldOption.Existed() {
+		return fieldOption, true
+	}
+
+	rootName := unquoteUnionField(field)
+	if validateName != rootName {
+		fieldOption = exactObjectLeafOrFieldOption(fieldsMap, rootName)
+		if fieldOption.Existed() {
+			return fieldOption, true
+		}
+		return metadata.FieldOption{}, false
+	}
+
+	// 兼容只传 root 对象名的旧调用方：选择固定顺序的 leaf，避免依赖 Go map
+	// 的随机遍历顺序导致同一份 schema 偶发类型误判。
+	fieldNames := make([]string, 0, len(fieldsMap))
+	for fieldName := range fieldsMap {
+		fieldNames = append(fieldNames, fieldName)
+	}
+	sort.Slice(fieldNames, func(i, j int) bool {
+		return strings.ToLower(fieldNames[i]) < strings.ToLower(fieldNames[j])
+	})
+	for _, fieldName := range fieldNames {
+		option := fieldsMap[fieldName]
+		fieldRoot, _, ok := splitObjectUnionFieldName(fieldName)
+		if ok && strings.EqualFold(fieldRoot, rootName) && option.Existed() {
+			return option, true
+		}
+	}
+	return metadata.FieldOption{}, false
+}
+
+// 对象 leaf 对应 Doris variant/map key，必须区分大小写；顶层物理列仍沿用
+// FieldsMap.Field 的历史大小写不敏感匹配。
+func exactObjectLeafOrFieldOption(fieldsMap metadata.FieldsMap, name string) metadata.FieldOption {
+	name = unquoteUnionField(strings.TrimSpace(name))
+	if root, leaf, ok := splitObjectUnionFieldName(name); ok {
+		return exactObjectLeafOption(fieldsMap, root, leaf)
+	}
+	return fieldsMap.Field(name)
+}
+
+func exactObjectLeafOption(fieldsMap metadata.FieldsMap, rootName string, leafName string) metadata.FieldOption {
+	for fieldName, option := range fieldsMap {
+		root, leaf, ok := splitObjectUnionFieldName(fieldName)
+		if option.Existed() && ok && strings.EqualFold(root, rootName) && leaf == leafName {
+			return option
+		}
+	}
+	return metadata.FieldOption{}
+}
+
+func splitObjectUnionFieldName(name string) (string, string, bool) {
+	name = unquoteUnionField(strings.TrimSpace(name))
+	idx := strings.IndexByte(name, '.')
+	if idx <= 0 || idx >= len(name)-1 {
+		return "", "", false
+	}
+	return name[:idx], name[idx+1:], true
+}
+
+func unquoteUnionField(field string) string {
+	return strings.TrimSuffix(strings.TrimPrefix(field, "`"), "`")
+}
+
+func quoteUnionField(field string) string {
+	field = unquoteUnionField(strings.TrimSpace(field))
+	return fmt.Sprintf("`%s`", field)
+}
+
+func IsBuiltinPlatformField(field string) bool {
+	return IsFixedBuiltinPlatformField(field) || IsMinutePlatformField(field)
+}
+
+func IsFixedBuiltinPlatformField(field string) bool {
+	normalized := strings.ToLower(unquoteUnionField(strings.TrimSpace(field)))
+	switch normalized {
+	case "dteventtimestamp", "dteventtime", "localtime", "thedate":
+		return true
+	default:
+		return false
+	}
+}
+
+func IsMinutePlatformField(field string) bool {
+	field = strings.ToLower(unquoteUnionField(strings.TrimSpace(field)))
+	if !strings.HasPrefix(field, "minute") {
+		return false
+	}
+	suffix := strings.TrimPrefix(field, "minute")
+	if suffix == "" {
+		return false
+	}
+	for _, ch := range suffix {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func IsVirtualMinutePlatformField(tables []string, field string, tableFieldsMap TableFieldsMap) bool {
+	if !IsMinutePlatformField(field) {
+		return false
+	}
+	// Doris 字段解析会先匹配真实 schema 字段；只有 schema 中完全没有
+	// minuteX 时，它才是计算平台虚拟时间桶，需要补充 dtEventTimeStamp 依赖。
+	return !anyUnionTableHasField(tables, field, tableFieldsMap)
+}
+
+func anyUnionTableHasField(tables []string, field string, tableFieldsMap TableFieldsMap) bool {
+	if len(tables) == 0 || len(tableFieldsMap) == 0 {
+		return false
+	}
+	field = unquoteUnionField(strings.TrimSpace(field))
+	for _, table := range tables {
+		fieldsMap, ok := tableFieldsMap[table]
+		if !ok {
+			continue
+		}
+		if exactObjectLeafOrFieldOption(fieldsMap, field).Existed() {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldSkipBuiltinPlatformField(tables []string, field string, validateName string, requirePhysical bool, tableFieldsMap TableFieldsMap) (bool, error) {
+	if !IsBuiltinPlatformField(validateName) {
+		return false, nil
+	}
+	if IsFixedBuiltinPlatformField(validateName) && !requirePhysical {
+		return true, nil
+	}
+	for _, table := range tables {
+		fieldsMap, ok := tableFieldsMap[table]
+		if !ok {
+			return false, fmt.Errorf("doris multi-table union missing schema for table %s", table)
+		}
+		if _, existed := unionFieldOption(fieldsMap, field, validateName); existed {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func isUnsupportedUnionFieldType(fieldType string) bool {
+	switch normalizeUnionFieldType(fieldType) {
+	case "json", "jsonb":
+		return true
+	default:
+		return false
+	}
+}
+
+func compatibleUnionFieldTypes(left, right string) bool {
+	_, ok := safeUnionFieldType(left, right)
+	return ok
+}
+
+func safeUnionFieldType(left, right string) (string, bool) {
+	normalized := normalizeUnionFieldType(left)
+	if normalized != normalizeUnionFieldType(right) {
+		return "", false
+	}
+	return safeNormalizedUnionFieldType(normalized, left, right)
+}
+
+func safeNormalizedUnionFieldType(normalized, left, right string) (string, bool) {
+	if strings.HasPrefix(normalized, "array:") {
+		fieldType, ok := safeNormalizedUnionFieldType(strings.TrimPrefix(normalized, "array:"), left, right)
+		if !ok {
+			return "", false
+		}
+		return fieldType + " ARRAY", true
+	}
+
+	switch normalized {
+	case "string":
+		return "TEXT", true
+	case "integer":
+		if baseUnionFieldType(left) == "largeint" || baseUnionFieldType(right) == "largeint" {
+			return "LARGEINT", true
+		}
+		return "BIGINT", true
+	case "decimal":
+		return safeDecimalUnionFieldType(left, right)
+	case "number":
+		return "DOUBLE", true
+	case "boolean":
+		return "BOOLEAN", true
+	case "time":
+		return safeTimeUnionFieldType(left, right)
+	default:
+		return dorisCastType(left), true
+	}
+}
+
+func baseUnionFieldType(fieldType string) string {
+	t := strings.ToLower(strings.TrimSpace(fieldType))
+	if strings.HasPrefix(t, "array<") && strings.HasSuffix(t, ">") {
+		return baseUnionFieldType(t[len("array<") : len(t)-1])
+	}
+	if strings.HasSuffix(t, " array") {
+		return baseUnionFieldType(strings.TrimSuffix(t, " array"))
+	}
+	if idx := strings.IndexByte(t, '('); idx >= 0 {
+		t = t[:idx]
+	}
+	return strings.TrimSpace(t)
+}
+
+type timeUnionFieldSpec struct {
+	kind      string
+	precision int
+	isV2      bool
+}
+
+func safeTimeUnionFieldType(left, right string) (string, bool) {
+	leftSpec := timeUnionFieldSpecFromType(left)
+	rightSpec := timeUnionFieldSpecFromType(right)
+	if leftSpec.kind == "date" && rightSpec.kind == "date" {
+		return "DATE", true
+	}
+	precision := max(leftSpec.precision, rightSpec.precision)
+	typeName := "DATETIME"
+	if leftSpec.isV2 || rightSpec.isV2 {
+		typeName = "DATETIMEV2"
+	}
+	if precision == 0 {
+		return typeName, true
+	}
+	return fmt.Sprintf("%s(%d)", typeName, precision), true
+}
+
+// timeUnionFieldSpecFromType 提取 Doris 时间类型的基础类型和小数秒精度。
+// DATETIMEV2 需要单独标记，避免多表 UNION 的对象 leaf cast 退化成 DATETIME 后丢失精度。
+func timeUnionFieldSpecFromType(fieldType string) timeUnionFieldSpec {
+	t := strings.ToLower(strings.TrimSpace(fieldType))
+	if strings.HasPrefix(t, "array<") && strings.HasSuffix(t, ">") {
+		return timeUnionFieldSpecFromType(t[len("array<") : len(t)-1])
+	}
+	if strings.HasSuffix(t, " array") {
+		return timeUnionFieldSpecFromType(strings.TrimSuffix(t, " array"))
+	}
+
+	base := t
+	params := ""
+	if idx := strings.IndexByte(t, '('); idx >= 0 {
+		base = strings.TrimSpace(t[:idx])
+		params = strings.TrimSuffix(t[idx+1:], ")")
+	}
+
+	switch base {
+	case "date", "datev1", "datev2":
+		return timeUnionFieldSpec{kind: "date"}
+	case "datetime", "datetimev1", "datetimev2", "timestamp":
+		spec := timeUnionFieldSpec{kind: "datetime", isV2: base == "datetimev2"}
+		if params == "" {
+			return spec
+		}
+		precision, err := strconv.Atoi(strings.TrimSpace(strings.Split(params, ",")[0]))
+		if err != nil || precision < 0 {
+			return spec
+		}
+		if precision > 6 {
+			precision = 6
+		}
+		spec.precision = precision
+		return spec
+	default:
+		return timeUnionFieldSpec{kind: base}
+	}
+}
+
+type decimalUnionFieldSpec struct {
+	kind      string
+	precision int
+	scale     int
+	hasParams bool
+}
+
+func safeDecimalUnionFieldType(left, right string) (string, bool) {
+	leftSpec, leftOK := decimalUnionFieldSpecFromType(left)
+	rightSpec, rightOK := decimalUnionFieldSpecFromType(right)
+	if !leftOK || !rightOK {
+		return dorisCastType(left), true
+	}
+	if leftSpec.hasParams && rightSpec.hasParams {
+		kind := "DECIMAL"
+		if leftSpec.kind == "decimalv3" || rightSpec.kind == "decimalv3" {
+			kind = "DECIMALV3"
+		}
+		scale := max(leftSpec.scale, rightSpec.scale)
+		integerDigits := max(leftSpec.precision-leftSpec.scale, rightSpec.precision-rightSpec.scale)
+		precision := integerDigits + scale
+		if precision > maxDorisDecimalWidth {
+			return "", false
+		}
+		return fmt.Sprintf("%s(%d,%d)", kind, precision, scale), true
+	}
+	if strings.EqualFold(strings.TrimSpace(left), strings.TrimSpace(right)) {
+		return dorisCastType(left), true
+	}
+	if leftSpec.kind == "decimalv3" || rightSpec.kind == "decimalv3" {
+		return "DECIMALV3", true
+	}
+	return "DECIMAL", true
+}
+
+func decimalUnionFieldSpecFromType(fieldType string) (decimalUnionFieldSpec, bool) {
+	t := strings.ToLower(strings.TrimSpace(fieldType))
+	if strings.HasPrefix(t, "array<") && strings.HasSuffix(t, ">") {
+		return decimalUnionFieldSpecFromType(t[len("array<") : len(t)-1])
+	}
+	if strings.HasSuffix(t, " array") {
+		return decimalUnionFieldSpecFromType(strings.TrimSuffix(t, " array"))
+	}
+
+	base := t
+	params := ""
+	if idx := strings.IndexByte(t, '('); idx >= 0 {
+		base = strings.TrimSpace(t[:idx])
+		params = strings.TrimSuffix(t[idx+1:], ")")
+	}
+	if base != "decimal" && base != "decimalv2" && base != "decimalv3" {
+		return decimalUnionFieldSpec{}, false
+	}
+
+	spec := decimalUnionFieldSpec{kind: base}
+	if params == "" {
+		return spec, true
+	}
+
+	parts := strings.Split(params, ",")
+	precision, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil {
+		return spec, true
+	}
+	scale := 0
+	if len(parts) > 1 {
+		scale, err = strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err != nil {
+			return spec, true
+		}
+	}
+	spec.precision = precision
+	spec.scale = scale
+	spec.hasParams = true
+	return spec, true
+}
+
+func normalizeUnionFieldType(fieldType string) string {
+	t := strings.ToLower(strings.TrimSpace(fieldType))
+	if strings.HasPrefix(t, "array<") && strings.HasSuffix(t, ">") {
+		return "array:" + normalizeUnionFieldType(t[len("array<"):len(t)-1])
+	}
+	if strings.HasSuffix(t, " array") {
+		return "array:" + normalizeUnionFieldType(strings.TrimSuffix(t, " array"))
+	}
+	if idx := strings.IndexByte(t, '('); idx >= 0 {
+		t = t[:idx]
+	}
+	t = strings.TrimSpace(t)
+	switch t {
+	case "char", "varchar", "string", "text":
+		return "string"
+	case "tinyint", "smallint", "int", "integer", "bigint", "largeint":
+		return "integer"
+	case "decimal", "decimalv2", "decimalv3":
+		return "decimal"
+	case "float", "double":
+		return "number"
+	case "bool", "boolean":
+		return "boolean"
+	case "date", "datev1", "datev2", "datetime", "datetimev1", "datetimev2", "timestamp":
+		return "time"
+	default:
+		return t
+	}
 }
 
 func (v *Statement) ItemString(name string) string {
@@ -134,18 +1593,163 @@ func (v *Statement) collectSelectAliases() map[string]struct{} {
 		if fieldNode.as != nil {
 			name := strings.Trim(nodeToString(fieldNode.as), "`")
 			if name != "" {
-				aliases[name] = struct{}{}
+				addAlias(aliases, name)
 			}
 		}
 	}
 	return aliases
 }
 
+func addAlias(aliases map[string]struct{}, name string) {
+	if name == "" {
+		return
+	}
+	aliases[name] = struct{}{}
+	aliases[strings.ToLower(name)] = struct{}{}
+}
+
+// collectAliasesFromSQL 是测试和非标准节点的兜底：真实 parser 节点优先通过
+// collectSelectAliases() 提供 alias，但部分单测直接塞渲染后的 SQL 字符串。
+// 这里补齐 AS alias，避免 GROUP/ORDER 引用外层 alias 时被误下推到原表。
+func collectAliasesFromSQL(s string) map[string]struct{} {
+	aliases := make(map[string]struct{})
+	depth := 0
+	for idx := 0; idx < len(s); idx++ {
+		switch s[idx] {
+		case '\'':
+			idx = skipSingleQuotedSQLString(s, idx)
+			continue
+		case '"':
+			idx = skipDoubleQuotedSQLString(s, idx)
+			continue
+		case '`':
+			end := strings.IndexByte(s[idx+1:], '`')
+			if end < 0 {
+				return aliases
+			}
+			idx += end + 1
+			continue
+		case '(':
+			depth++
+			continue
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+			continue
+		}
+		if depth > 0 || !isASClauseAt(s, idx) {
+			continue
+		}
+
+		idx += len(" AS ")
+		for idx < len(s) && s[idx] == ' ' {
+			idx++
+		}
+		if idx >= len(s) {
+			break
+		}
+		if s[idx] == '`' {
+			end := strings.IndexByte(s[idx+1:], '`')
+			if end < 0 {
+				break
+			}
+			name := s[idx+1 : idx+1+end]
+			if name != "" {
+				addAlias(aliases, name)
+			}
+			idx += end + 1
+			continue
+		}
+		start := idx
+		for idx < len(s) && isSQLIdentifierPart(s[idx]) {
+			idx++
+		}
+		if idx > start {
+			addAlias(aliases, s[start:idx])
+		}
+	}
+	return aliases
+}
+
+func isASClauseAt(s string, idx int) bool {
+	return idx+len(" AS ") <= len(s) && strings.EqualFold(s[idx:idx+len(" AS ")], " AS ")
+}
+
+func joinWhereConditions(conditions ...string) string {
+	list := make([]string, 0, len(conditions))
+	for _, condition := range conditions {
+		condition = strings.TrimSpace(condition)
+		if condition != "" {
+			list = append(list, condition)
+		}
+	}
+	if len(list) <= 1 {
+		return strings.Join(list, "")
+	}
+	for i, condition := range list {
+		list[i] = parenthesizedWhereCondition(condition)
+	}
+	return strings.Join(list, " AND ")
+}
+
+func parenthesizedWhereCondition(condition string) string {
+	if isParenthesizedWhereCondition(condition) {
+		return condition
+	}
+	return fmt.Sprintf("(%s)", condition)
+}
+
+func isParenthesizedWhereCondition(condition string) bool {
+	if len(condition) < 2 || condition[0] != '(' || condition[len(condition)-1] != ')' {
+		return false
+	}
+
+	depth := 0
+	inString := false
+	for i := 0; i < len(condition); i++ {
+		switch condition[i] {
+		case '\'':
+			if inString && i+1 < len(condition) && condition[i+1] == '\'' {
+				i++
+				continue
+			}
+			inString = !inString
+		case '(':
+			if !inString {
+				depth++
+			}
+		case ')':
+			if !inString {
+				depth--
+				if depth == 0 && i != len(condition)-1 {
+					return false
+				}
+			}
+		}
+	}
+	return depth == 0 && !inString
+}
+
 func (v *Statement) String() string {
 	var result []string
+	var renderedWhere string
+	var whereRendered bool
+	renderWhere := func() string {
+		if !whereRendered {
+			renderedWhere = v.ItemString(WhereItem)
+			whereRendered = true
+		}
+		return renderedWhere
+	}
 
 	for _, name := range []string{SelectItem, TableItem, WhereItem, GroupItem, OrderItem, LimitItem} {
-		res := v.ItemString(name)
+		res := ""
+		if name == WhereItem && whereRendered {
+			res = renderedWhere
+		} else {
+			res = v.ItemString(name)
+		}
 		key := name
 
 		switch name {
@@ -154,17 +1758,25 @@ func (v *Statement) String() string {
 			if tableNode, ok := v.nodeMap[TableItem].(*TableNode); ok && tableNode.SubQuery != nil {
 				tableNode.SubQuery.Tables = v.Tables
 				tableNode.SubQuery.Where = v.Where
+				tableNode.SubQuery.TableFieldsMap = v.TableFieldsMap
+				tableNode.SubQuery.RejectSelectAllUnion = v.RejectSelectAllUnion
 				v.Where = ""
 				res = tableNode.String()
+				if err := tableNode.SubQuery.Error(); err != nil {
+					v.errNode = append(v.errNode, err.Error())
+				}
 			} else if len(v.Tables) > 0 {
 				if len(v.Tables) == 1 {
 					res = v.Tables[0]
 				} else {
 					stmts := make([]string, 0, len(v.Tables))
+					selectList := v.unionSelectList()
+					where := joinWhereConditions(renderWhere(), v.Where)
 					for _, t := range v.Tables {
-						s := fmt.Sprintf("SELECT * FROM %s", t)
-						if v.Where != "" {
-							s = fmt.Sprintf("%s WHERE %s", s, v.Where)
+						// 多表合并时将时间/查询条件下推到每张物理表，同时用显式投影规避表结构不一致。
+						s := fmt.Sprintf("SELECT %s FROM %s", selectList, t)
+						if where != "" {
+							s = fmt.Sprintf("%s WHERE %s", s, where)
 						}
 						stmts = append(stmts, s)
 					}
@@ -873,7 +2485,7 @@ func (v *FieldNode) String() string {
 			// 都应保留原名并加反引号，不走 fieldMap 转换（否则会被映射为 Null）。
 			result = fmt.Sprintf("`%s`", key)
 		} else {
-			originField, as := v.Encode(result)
+			originField, as := v.Encode(key)
 			if v.exprType == selectCtxType && as != "" && v.as == nil {
 				v.as = &StringNode{Name: as}
 			}
@@ -1373,8 +2985,10 @@ type Option struct {
 	DimensionTransform Encode
 	AddIgnoreField     func(string)
 
-	Tables []string
-	Where  string
-	Offset int
-	Limit  int
+	Tables               []string
+	Where                string
+	TableFieldsMap       TableFieldsMap
+	RejectSelectAllUnion bool
+	Offset               int
+	Limit                int
 }

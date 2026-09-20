@@ -1,0 +1,19 @@
+{
+  "space_uid": "bkcc__golden_es_escaped_range",
+  "result_tables": [{"table_id": "demo_logs.escaped_range"}],
+  "result_table_details": {
+    "demo_logs.escaped_range": {
+      "storage_id": 2301,
+      "storage_name": "es_cluster_escaped_range",
+      "storage_type": "elasticsearch",
+      "cluster_name": "es_cluster_escaped_range",
+      "db": "golden_es_escaped_range",
+      "table_id": "demo_logs.escaped_range",
+      "fields": ["events_total"],
+      "data_label": "demo_logs_escaped_range",
+      "tags_key": ["name", "release_date", "version"],
+      "source_type": "bklog"
+    }
+  },
+  "storages": {"2301": {"type": "elasticsearch"}}
+}

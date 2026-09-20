@@ -96,7 +96,7 @@ func TestLogsEscapeHTML(t *testing.T) {
 	const body = "<html>&<tag>"
 
 	first := testkits.FirstLogRecord(data)
-	first.Body().SetStringVal(body)
+	first.Body().SetStr(body)
 
 	record := define.Record{
 		RecordType: define.RecordLogs,

@@ -1,0 +1,24 @@
+{
+  "method": "POST",
+  "path": "/query/ts",
+  "headers": {"Content-Type": "application/json", "Bk-Query-Source": "golden", "X-Bk-Scope-Space-Uid": "bkcc__golden_influxdb", "X-Bk-Tenant-Id": "tenant_golden"},
+  "body": {
+    "space_uid": "bkcc__golden_influxdb",
+    "query_list": [{
+      "data_source": "bk_monitor",
+      "table_id": "golden_influx.cpu_summary_demo",
+      "field_name": "cpu_usage_value",
+      "function": [{"method": "mean", "dimensions": ["service_name"]}],
+      "time_aggregation": {"function": "avg_over_time", "window": "1m"},
+      "reference_name": "a",
+      "conditions": {"field_list": [{"field_name": "status_code", "value": ["healthy"], "op": "eq"}], "condition_list": []},
+      "query_string": ""
+    }],
+    "metric_merge": "a",
+    "start_time": "1784701776",
+    "end_time": "1784702076",
+    "step": "60s",
+    "timezone": "UTC",
+    "instant": false
+  }
+}

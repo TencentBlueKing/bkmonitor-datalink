@@ -1,0 +1,29 @@
+{
+  "method": "POST",
+  "path": "/query/ts/raw",
+  "headers": {
+    "Content-Type": "application/json",
+    "Bk-Query-Source": "golden",
+    "X-Bk-Scope-Space-Uid": "bkcc__golden_es_escaped_range",
+    "X-Bk-Tenant-Id": "tenant_golden"
+  },
+  "body": {
+    "space_uid": "bkcc__golden_es_escaped_range",
+    "query_list": [{
+      "data_source": "bk_log",
+      "table_id": "demo_logs.escaped_range",
+      "field_name": "events_total",
+      "reference_name": "a",
+      "limit": 10,
+      "from": 0,
+      "keep_columns": ["_time", "_value", "name", "release_date", "version"],
+      "query_string": "name:[foo\\-bar TO zoo\\-bar] AND release_date:[2023\\-01\\-01 TO 2023\\-12\\-31] AND version:>foo\\-bar"
+    }],
+    "metric_merge": "a",
+    "order_by": ["_time"],
+    "start_time": "1784701776",
+    "end_time": "1784702076",
+    "timezone": "UTC",
+    "instant": false
+  }
+}

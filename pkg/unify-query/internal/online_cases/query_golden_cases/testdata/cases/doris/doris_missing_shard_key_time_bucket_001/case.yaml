@@ -1,0 +1,26 @@
+id: doris_missing_shard_key_time_bucket_001
+storage: doris
+enabled: true
+shape_signature: query_ts/range/doris/merge_db2/schema_partial_no_shard_key/count_over_time/timefield_bucket/output3
+source:
+  kind: merged_pr
+  outputs_kind: post_fix_handler_replay
+  sampled_at: "2026-07-24"
+  fingerprint: sha256:e47e421ff19cd5997bd1409246ec380d64f638c45afc1e3512d5bb85cb8cf678
+tags:
+  - query_ts_api
+  - aggregation
+  - missing_shard_key
+  - timefield_bucket
+  - post_fix_expected
+  - regression_fix
+  - production_shape
+notes:
+  - 回归 Doris 分钟聚合的两张物理表中任意一张缺少 __shard_key__ 时，合并查询的时间桶必须整体回退到 dtEventTimeStamp。
+  - 问题形态和旧行为依据已合并 PR #1408 的公开问题说明、回归测试和修复前基线回放，未使用生产日志或 trace。
+  - 请求、路由、物理表、字段、条件值和集群均为离线占位数据，不含真实生产标识。
+files:
+  request: request.json
+  route: route.json
+  dependencies: dependencies.json
+  expect_outputs: expect.outputs.json

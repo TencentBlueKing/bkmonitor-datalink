@@ -1,0 +1,33 @@
+[
+  {
+    "backend": "elasticsearch",
+    "method": "GET",
+    "path": "/golden_es_source_alias"
+  },
+  {
+    "backend": "elasticsearch",
+    "method": "POST",
+    "path": "/golden_es_source_alias/_search",
+    "body": {
+      "_source": {"includes": ["_time", "_value", "service"]},
+      "from": 0,
+      "query": {
+        "bool": {
+          "filter": {
+            "range": {
+              "dtEventTimeStamp": {
+                "format": "epoch_second",
+                "from": 1784701776,
+                "include_lower": true,
+                "include_upper": true,
+                "to": 1784702076
+              }
+            }
+          }
+        }
+      },
+      "size": 10,
+      "sort": [{"dtEventTimeStamp": {"order": "asc", "unmapped_type": "date"}}]
+    }
+  }
+]

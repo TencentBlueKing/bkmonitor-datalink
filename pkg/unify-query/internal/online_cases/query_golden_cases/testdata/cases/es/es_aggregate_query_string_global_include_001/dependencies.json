@@ -1,0 +1,17 @@
+{
+  "elasticsearch": {
+    "mapping": {"golden_es_global_include": {"mappings": {"properties": {
+      "dtEventTimeStamp": {"type": "date"},
+      "events_total": {"type": "long"},
+      "outcome_code": {"type": "keyword"},
+      "response_code": {"type": "keyword"},
+      "operation_code": {"type": "keyword"}
+    }}}},
+    "search": {
+      "took": 1,
+      "timed_out": false,
+      "hits": {"total": {"value": 0, "relation": "eq"}, "hits": []},
+      "aggregations": {}
+    }
+  }
+}

@@ -1,0 +1,20 @@
+# Build outputs
+/bin/
+/dist/
+/devtools/dist/
+/devtools/dist-server/
+/devtools/node_modules/
+/devtools/coverage/
+/devtools/playwright-report/
+/devtools/test-results/
+/devtools/devtools.config.yaml
+/.pnpm-store/
+*.test
+*.out
+coverage.out
+
+# Local editor and OS files
+.DS_Store
+*.swp
+.idea/
+.vscode/

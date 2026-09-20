@@ -109,6 +109,21 @@ func TestNewSQLExpr_TSpider(t *testing.T) {
 	assert.Equal(t, TSpider, ts.Type())
 }
 
+func TestTSpiderSQLExpr_ChainedOptionsKeepTSpiderType(t *testing.T) {
+	expr := NewSQLExpr(TSpider).
+		WithInternalFields("dtEventTimeStamp", "value").
+		WithEncode(func(s string) string { return "`" + s + "`" }).
+		WithFieldsMap(metadata.FieldsMap{
+			"value": {FieldType: DorisTypeString},
+		}).
+		WithFieldAlias(metadata.FieldAlias{}).
+		WithKeepColumns([]string{"value"})
+
+	_, ok := expr.(*TSpiderSQLExpr)
+	assert.True(t, ok)
+	assert.Equal(t, TSpider, expr.Type())
+}
+
 func TestHDFS_vs_Default_RegexComparison(t *testing.T) {
 	condition := metadata.ConditionField{
 		DimensionName: "projectId",

@@ -1,0 +1,37 @@
+{
+  "method": "POST",
+  "path": "/query/ts",
+  "headers": {
+    "Content-Type": "application/json",
+    "Bk-Query-Source": "golden",
+    "X-Bk-Scope-Space-Uid": "bkcc__golden_vm_structured_instant",
+    "X-Bk-Tenant-Id": "tenant_golden"
+  },
+  "body": {
+    "space_uid": "bkcc__golden_vm_structured_instant",
+    "query_list": [{
+      "table_id": "demo_vm_structured.partition_1",
+      "field_name": "requests_total",
+      "is_regexp": false,
+      "function": [{
+        "method": "mean",
+        "dimensions": ["cluster", "namespace", "service"]
+      }],
+      "time_aggregation": {
+        "function": "avg_over_time",
+        "window": "1m"
+      },
+      "reference_name": "a",
+      "dimensions": ["cluster", "namespace", "service"],
+      "conditions": {},
+      "keep_columns": ["_time", "a", "cluster", "namespace", "service"],
+      "query_string": ""
+    }],
+    "metric_merge": "a",
+    "start_time": "1784701776",
+    "end_time": "1784702076",
+    "step": "60s",
+    "timezone": "UTC",
+    "instant": true
+  }
+}

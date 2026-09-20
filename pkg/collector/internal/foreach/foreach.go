@@ -80,32 +80,32 @@ func Metrics(metrics pmetric.Metrics, f func(metric pmetric.Metric)) {
 }
 
 func MetricsDataPoint(metric pmetric.Metric, f func(attrs pcommon.Map)) {
-	switch metric.DataType() {
-	case pmetric.MetricDataTypeGauge:
+	switch metric.Type() {
+	case pmetric.MetricTypeGauge:
 		dps := metric.Gauge().DataPoints()
 		for i := 0; i < dps.Len(); i++ {
 			f(dps.At(i).Attributes())
 		}
 
-	case pmetric.MetricDataTypeSum:
+	case pmetric.MetricTypeSum:
 		dps := metric.Sum().DataPoints()
 		for i := 0; i < dps.Len(); i++ {
 			f(dps.At(i).Attributes())
 		}
 
-	case pmetric.MetricDataTypeSummary:
+	case pmetric.MetricTypeSummary:
 		dps := metric.Summary().DataPoints()
 		for i := 0; i < dps.Len(); i++ {
 			f(dps.At(i).Attributes())
 		}
 
-	case pmetric.MetricDataTypeHistogram:
+	case pmetric.MetricTypeHistogram:
 		dps := metric.Histogram().DataPoints()
 		for i := 0; i < dps.Len(); i++ {
 			f(dps.At(i).Attributes())
 		}
 
-	case pmetric.MetricDataTypeExponentialHistogram:
+	case pmetric.MetricTypeExponentialHistogram:
 		dps := metric.ExponentialHistogram().DataPoints()
 		for i := 0; i < dps.Len(); i++ {
 			f(dps.At(i).Attributes())

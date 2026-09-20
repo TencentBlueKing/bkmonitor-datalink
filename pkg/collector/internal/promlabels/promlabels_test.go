@@ -60,7 +60,7 @@ func TestLabelsGet(t *testing.T) {
 	}
 }
 
-func TestLabelsUpsert(t *testing.T) {
+func TestLabelsPut(t *testing.T) {
 	tests := []struct {
 		name     string
 		key      string
@@ -103,7 +103,7 @@ func TestLabelsUpsert(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.origin.Upsert(tt.key, tt.value)
+			tt.origin.Put(tt.key, tt.value)
 			assert.Equal(t, tt.expected, tt.origin)
 		})
 	}

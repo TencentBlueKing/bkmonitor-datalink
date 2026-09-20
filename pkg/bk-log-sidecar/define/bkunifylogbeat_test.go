@@ -25,10 +25,12 @@ func TestBkunifylogbeatConfig(t *testing.T) {
       delimiter: '|'
       docker-json: null
       input: ""
+      mounts: []
       paths:
         - test
         - testsdf
       remove_path_prefix: ""
+      root_fs: ""
       tail_files: false
 `
 	local := Local{
@@ -51,12 +53,14 @@ func TestBkunifylogbeatConfigWithExtOptions(t *testing.T) {
       ignore_older: 1h
       input: ""
       ludicrous_mode: true
+      mounts: []
       output.console:
         enabled: true
       paths:
         - test
         - testsdf
       remove_path_prefix: ""
+      root_fs: ""
       tail_files: false
 `
 	local := Local{

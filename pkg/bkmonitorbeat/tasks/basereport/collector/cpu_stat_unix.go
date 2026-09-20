@@ -66,11 +66,11 @@ func collectCPUPercent(collect cpuPercentCollector) (perUsage, totalUsage []floa
 	return perUsage, totalUsage, true, nil
 }
 
-func getCPUStatUsage(report *CpuReport) (bool, error) {
+func getCPUStatUsage(report *CpuReport) error {
 	var err error
 	perCPUTimes, err := cpu.Times(true)
 	if err != nil {
-		return false, err
+		return err
 	}
 	// 比较两次获取的时间片的内容的长度,如果不对等直接退出
 	lastCPUTimeSlice.Lock()
@@ -80,50 +80,58 @@ func getCPUStatUsage(report *CpuReport) (bool, error) {
 	if len(lastCPUTimeSlice.lastPerCPUTimes) <= 0 || len(perCPUTimes) != len(lastCPUTimeSlice.lastPerCPUTimes) {
 		lastCPUTimeSlice.lastPerCPUTimes, err = cpu.Times(true)
 		if err != nil {
-			return false, err
+			return err
 		}
 	}
 
 	l1, l2 := len(perCPUTimes), len(lastCPUTimeSlice.lastPerCPUTimes)
 	if l1 != l2 {
 		err = fmt.Errorf("received two CPU counts %d != %d", l1, l2)
-		return false, err
+		return err
 	}
 
+	// 校验时间差后继续更新 gopsutil 基线，确保下一轮采样恢复
+	timeStateValid := true
 	for index, value := range perCPUTimes {
 		item := lastCPUTimeSlice.lastPerCPUTimes[index]
 		tmp := calcTimeState(item, value)
+		if !isValidCPUTimeState(tmp) {
+			timeStateValid = false
+		}
 		report.Stat = append(report.Stat, tmp)
 	}
 
 	cpuTimes, err := cpu.Times(false)
 	if err != nil {
-		return false, err
+		return err
 	}
 
 	// 判断lastCPUTimes的长度，增加重写避免init方法失效的情况
 	if len(lastCPUTimeSlice.lastCPUTimes) <= 0 {
 		lastCPUTimeSlice.lastCPUTimes, err = cpu.Times(false)
 		if err != nil {
-			return false, err
+			return err
 		}
 	}
 
 	cpuTimeStat := cpuTimes[0]
 	lastCpuTimeStat := lastCPUTimeSlice.lastCPUTimes[0]
 	report.TotalStat = calcTimeState(lastCpuTimeStat, cpuTimeStat)
+	if !isValidCPUTimeState(report.TotalStat) {
+		timeStateValid = false
+	}
 
-	// 将此次获取的timeState重新写入公共变量
+	// 无效样本也更新本地基线，避免下一轮继续使用回退前的旧基线
 	lastCPUTimeSlice.lastCPUTimes = cpuTimes
 	lastCPUTimeSlice.lastPerCPUTimes = perCPUTimes
 
 	perUsage, totalUsage, valid, err := collectCPUPercent(cpu.Percent)
 	if err != nil {
-		return false, err
+		return err
 	}
-	// idle 无效直接返回
-	if !valid {
-		return false, nil
+	// idle 回退或 CPU 时间差出现负数时，均丢弃本轮样本
+	if !valid || !timeStateValid {
+		return errInvalidCPUStat
 	}
 
 	report.Usage = perUsage
@@ -134,13 +142,13 @@ func getCPUStatUsage(report *CpuReport) (bool, error) {
 	}
 
 	if len(totalUsage) == 0 {
-		return false, fmt.Errorf("empty total CPU usage")
+		return fmt.Errorf("empty total CPU usage")
 	}
 	report.TotalUsage = totalUsage[0]
 	if report.TotalUsage < 0 || report.TotalUsage > 100 {
 		report.TotalUsage = 0.0
 	}
-	return true, nil
+	return nil
 }
 
 // queryCpuInfo: 查询获取机器的CPU信息

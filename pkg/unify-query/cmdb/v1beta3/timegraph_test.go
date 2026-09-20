@@ -2,6 +2,7 @@ package v1beta3
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -455,25 +456,53 @@ func TestTimeGraphRangeQuerySeparatesStepAndLookback(t *testing.T) {
 }
 
 func TestTimeGraphSingleNodePathRequiresTimestampPresence(t *testing.T) {
-	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{{Name: "node", Index: cmdb.Index{"id"}}}})
-	ctx := context.Background()
-	if err := tg.AddTimeNode(ctx, "node", cmdb.Matcher{"id": "n1"}, 100); err != nil {
-		t.Fatal(err)
+	type sample struct {
+		at int64
+		id string
 	}
-	if err := tg.AddTimeNode(ctx, "node", cmdb.Matcher{"id": "n2"}, 200); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name    string
+		samples []sample
+		want    []PathResourcesResult
+	}{
+		{
+			name:    "same_node_present_at_both_timestamps",
+			samples: []sample{{at: 100, id: "n1"}, {at: 200, id: "n1"}},
+			want: []PathResourcesResult{
+				{Timestamp: 100, TargetType: "node", Path: []cmdb.PathNode{{ResourceType: "node", Dimensions: cmdb.Matcher{"id": "n1"}}}},
+				{Timestamp: 200, TargetType: "node", Path: []cmdb.PathNode{{ResourceType: "node", Dimensions: cmdb.Matcher{"id": "n1"}}}},
+			},
+		},
+		{
+			name:    "nodes_are_visible_only_at_their_own_timestamps",
+			samples: []sample{{at: 100, id: "n1"}, {at: 200, id: "n2"}},
+			want: []PathResourcesResult{
+				{Timestamp: 100, TargetType: "node", Path: []cmdb.PathNode{{ResourceType: "node", Dimensions: cmdb.Matcher{"id": "n1"}}}},
+				{Timestamp: 200, TargetType: "node", Path: []cmdb.PathNode{{ResourceType: "node", Dimensions: cmdb.Matcher{"id": "n2"}}}},
+			},
+		},
 	}
-	results, err := tg.FindRelationPathResources(ctx, "node", []cmdb.Resource{"node"}, nil, []cmdb.RelationPath{{
-		Steps: []cmdb.RelationPathStep{{ResourceType: "node"}},
-	}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(results) != 2 {
-		t.Fatalf("expected one node per timestamp, got %+v", results)
-	}
-	if results[0].Timestamp != 100 || results[0].Path[0].Dimensions["id"] != "n1" || results[1].Timestamp != 200 || results[1].Path[0].Dimensions["id"] != "n2" {
-		t.Fatalf("unexpected timestamp-specific nodes: %+v", results)
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{{Name: "node", Index: cmdb.Index{"id"}}}})
+			t.Cleanup(func() { tg.Clean(ctx) })
+			for _, item := range tc.samples {
+				if err := tg.AddTimeNode(ctx, "node", cmdb.Matcher{"id": item.id}, item.at); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := tg.FindRelationPathResources(ctx, "node", []cmdb.Resource{"node"}, nil, []cmdb.RelationPath{{
+				Steps: []cmdb.RelationPathStep{{ResourceType: "node"}},
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(tc.want, got) {
+				t.Fatalf("unexpected timestamp-specific nodes: want=%+v got=%+v", tc.want, got)
+			}
+		})
 	}
 }
 

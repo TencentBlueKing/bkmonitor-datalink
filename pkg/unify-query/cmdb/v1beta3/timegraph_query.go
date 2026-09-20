@@ -31,9 +31,19 @@ const (
 	timeGraphQueryTimeout    = time.Minute
 )
 
+// timeGraphMatrixQuery is the narrow external boundary used by the graph
+// builder. Production leaves it nil and queries VM; contract tests inject a
+// deterministic VM response while keeping planning, query construction and
+// graph traversal real.
+type timeGraphMatrixQuery func(context.Context, *structured.QueryTs) (pl.Matrix, error)
+
 // buildTimeGraphFromRelations materializes relation metrics into a temporary
 // in-memory TimeGraph for one query window.
 func (m *Model) buildTimeGraphFromRelations(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, relations []cmdb.Relation, lookBackDelta string) (*TimeGraph, error) {
+	return m.buildTimeGraphFromRelationsWithQuery(ctx, spaceUID, start, end, step, sourceType, sourceInfo, sourceExpandInfo, relations, lookBackDelta, nil)
+}
+
+func (m *Model) buildTimeGraphFromRelationsWithQuery(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, relations []cmdb.Relation, lookBackDelta string, matrixQuery timeGraphMatrixQuery) (*TimeGraph, error) {
 	var err error
 	ctx, span := trace.NewSpan(ctx, "build-time-graph-from-relations")
 	defer span.End(&err)
@@ -67,6 +77,9 @@ func (m *Model) buildTimeGraphFromRelations(ctx context.Context, spaceUID string
 	// window; keeping them separate is important for sparse range queries.
 	queryStep := step
 	queryMatrix := func(queryCtx context.Context, queryTs *structured.QueryTs) (pl.Matrix, error) {
+		if matrixQuery != nil {
+			return matrixQuery(queryCtx, queryTs)
+		}
 		queryRef, queryErr := queryTs.ToQueryReference(queryCtx)
 		if queryErr != nil {
 			return nil, errors.WithMessage(queryErr, "to query reference")

@@ -176,25 +176,19 @@ func publicSourceExpandProvider() SchemaProvider {
 	}
 }
 
-type publicSourceExpandVM struct {
-	vm          publicTimeGraphVM
-	allowedZone string
-}
-
-func (vm *publicSourceExpandVM) query(ctx context.Context, queryTs *structured.QueryTs, expr string, instant bool, start, end time.Time, step time.Duration) (pl.Matrix, error) {
-	matrix, err := vm.vm.query(ctx, queryTs, expr, instant, start, end, step)
-	if err != nil {
-		return nil, err
+func publicResourceInfoConditions(primaryField, primaryValue, infoField, infoValue string) structured.Conditions {
+	fields := []structured.ConditionField{{DimensionName: primaryField, Value: []string{primaryValue}, Operator: structured.ConditionEqual}}
+	if infoField != "" {
+		fields = append(fields, structured.ConditionField{DimensionName: infoField, Value: []string{infoValue}, Operator: structured.ConditionEqual})
 	}
-	if queryTs.QueryList[0].FieldName != "node_info_relation" {
-		return matrix, nil
-	}
-	for _, field := range queryTs.QueryList[0].Conditions.FieldList {
-		if field.DimensionName == "zone" && (len(field.Value) == 0 || field.Value[0] != vm.allowedZone) {
-			return pl.Matrix{}, nil
+	var conditionList []string
+	if len(fields) > 1 {
+		conditionList = make([]string, 0, len(fields)-1)
+		for range fields[1:] {
+			conditionList = append(conditionList, structured.ConditionAnd)
 		}
 	}
-	return matrix, nil
+	return structured.Conditions{FieldList: fields, ConditionList: conditionList}
 }
 
 func TestTimeGraphPublicQueryContractCases(t *testing.T) {
@@ -349,84 +343,82 @@ func TestTimeGraphPublicQueryContractCases(t *testing.T) {
 	}
 }
 
-func publicChainResults(timestamps ...int64) []cmdb.PathResourcesResult {
-	results := make([]cmdb.PathResourcesResult, 0, len(timestamps))
-	for _, timestamp := range timestamps {
-		results = append(results, cmdb.PathResourcesResult{
-			Timestamp:  timestamp,
-			TargetType: "target",
-			Path: []cmdb.PathNode{
-				{ResourceType: "node", Dimensions: cmdb.Matcher{"node_id": "n1"}},
-				{ResourceType: "middle", Dimensions: cmdb.Matcher{"middle_id": "m1"}},
-				{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}},
-			},
-		})
-	}
-	return results
-}
-
 func TestTimeGraphPublicRangeQueryContract(t *testing.T) {
-	const (
-		step             = time.Minute
-		lookback         = "10m0s"
-		nodeMiddleExpr   = "count by (middle_id, node_id) (count_over_time(a[10m]))"
-		middleTargetExpr = "count by (middle_id, target_id) (count_over_time(a[10m]))"
-	)
+	const step = time.Minute
+	const lookback = "10m0s"
 	tests := []struct {
 		name        string
 		startSec    int64
 		endSec      int64
-		pointsSec   []int64
+		responses   map[string]pl.Matrix
 		wantResults []cmdb.PathResourcesResult
 		wantCalls   []publicTimeGraphQueryWant
 	}{
 		{
-			name:      "aligned_start_uses_start_as_first_evaluation_point",
-			startSec:  1700000040,
-			endSec:    1700000160,
-			pointsSec: []int64{1700000040, 1700000100, 1700000160},
+			name:     "aligned_start_uses_start_as_first_evaluation_point",
+			startSec: 1700000040,
+			endSec:   1700000160,
+			responses: map[string]pl.Matrix{
+				"node_to_middle_flow":   contractMatrix(map[string]string{"node_id": "n1", "middle_id": "m1"}, 1700000040000, 1700000100000, 1700000160000),
+				"middle_to_target_flow": contractMatrix(map[string]string{"middle_id": "m1", "target_id": "t1"}, 1700000040000, 1700000100000, 1700000160000),
+			},
+			wantResults: []cmdb.PathResourcesResult{
+				{Timestamp: 1700000040000, TargetType: "target", Path: []cmdb.PathNode{
+					{ResourceType: "node", Dimensions: cmdb.Matcher{"node_id": "n1"}},
+					{ResourceType: "middle", Dimensions: cmdb.Matcher{"middle_id": "m1"}},
+					{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}},
+				}},
+				{Timestamp: 1700000100000, TargetType: "target", Path: []cmdb.PathNode{
+					{ResourceType: "node", Dimensions: cmdb.Matcher{"node_id": "n1"}},
+					{ResourceType: "middle", Dimensions: cmdb.Matcher{"middle_id": "m1"}},
+					{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}},
+				}},
+				{Timestamp: 1700000160000, TargetType: "target", Path: []cmdb.PathNode{
+					{ResourceType: "node", Dimensions: cmdb.Matcher{"node_id": "n1"}},
+					{ResourceType: "middle", Dimensions: cmdb.Matcher{"middle_id": "m1"}},
+					{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}},
+				}},
+			},
+			wantCalls: []publicTimeGraphQueryWant{
+				{metric: "node_to_middle_flow", expr: "count by (middle_id, node_id) (count_over_time(a[10m]))", start: 1700000040, end: 1700000160, step: step, window: lookback, conditions: publicStaticRelationConditions("node_id", "n1", "middle_id"), aggregate: publicStaticRelationAggregate("middle_id", "node_id")},
+				{metric: "middle_to_target_flow", expr: "count by (middle_id, target_id) (count_over_time(a[10m]))", start: 1700000040, end: 1700000160, step: step, window: lookback, conditions: publicStaticRelationConditions("middle_id", "", "target_id"), aggregate: publicStaticRelationAggregate("middle_id", "target_id")},
+			},
 		},
 		{
-			name:      "unaligned_start_is_truncated_before_range_query",
-			startSec:  1700000000,
-			endSec:    1700000120,
-			pointsSec: []int64{1699999980, 1700000040, 1700000100},
+			name:     "unaligned_start_is_truncated_before_range_query",
+			startSec: 1700000000,
+			endSec:   1700000120,
+			responses: map[string]pl.Matrix{
+				"node_to_middle_flow":   contractMatrix(map[string]string{"node_id": "n1", "middle_id": "m1"}, 1699999980000, 1700000040000, 1700000100000),
+				"middle_to_target_flow": contractMatrix(map[string]string{"middle_id": "m1", "target_id": "t1"}, 1699999980000, 1700000040000, 1700000100000),
+			},
+			wantResults: []cmdb.PathResourcesResult{
+				{Timestamp: 1699999980000, TargetType: "target", Path: []cmdb.PathNode{
+					{ResourceType: "node", Dimensions: cmdb.Matcher{"node_id": "n1"}},
+					{ResourceType: "middle", Dimensions: cmdb.Matcher{"middle_id": "m1"}},
+					{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}},
+				}},
+				{Timestamp: 1700000040000, TargetType: "target", Path: []cmdb.PathNode{
+					{ResourceType: "node", Dimensions: cmdb.Matcher{"node_id": "n1"}},
+					{ResourceType: "middle", Dimensions: cmdb.Matcher{"middle_id": "m1"}},
+					{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}},
+				}},
+				{Timestamp: 1700000100000, TargetType: "target", Path: []cmdb.PathNode{
+					{ResourceType: "node", Dimensions: cmdb.Matcher{"node_id": "n1"}},
+					{ResourceType: "middle", Dimensions: cmdb.Matcher{"middle_id": "m1"}},
+					{ResourceType: "target", Dimensions: cmdb.Matcher{"target_id": "t1"}},
+				}},
+			},
+			wantCalls: []publicTimeGraphQueryWant{
+				{metric: "node_to_middle_flow", expr: "count by (middle_id, node_id) (count_over_time(a[10m]))", start: 1699999980, end: 1700000120, step: step, window: lookback, conditions: publicStaticRelationConditions("node_id", "n1", "middle_id"), aggregate: publicStaticRelationAggregate("middle_id", "node_id")},
+				{metric: "middle_to_target_flow", expr: "count by (middle_id, target_id) (count_over_time(a[10m]))", start: 1699999980, end: 1700000120, step: step, window: lookback, conditions: publicStaticRelationConditions("middle_id", "", "target_id"), aggregate: publicStaticRelationAggregate("middle_id", "target_id")},
+			},
 		},
-	}
-
-	for i := range tests {
-		tests[i].wantResults = publicChainResults(
-			int64(tests[i].pointsSec[0])*1000,
-			int64(tests[i].pointsSec[1])*1000,
-			int64(tests[i].pointsSec[2])*1000,
-		)
-		alignedStart := time.Unix(tests[i].startSec, 0).UTC().Truncate(step).Unix()
-		tests[i].wantCalls = []publicTimeGraphQueryWant{
-			{
-				metric: "node_to_middle_flow", expr: nodeMiddleExpr, instant: false,
-				start: alignedStart, end: tests[i].endSec, step: step, window: lookback,
-				conditions: publicStaticRelationConditions("node_id", "n1", "middle_id"),
-				aggregate:  publicStaticRelationAggregate("middle_id", "node_id"),
-			},
-			{
-				metric: "middle_to_target_flow", expr: middleTargetExpr, instant: false,
-				start: alignedStart, end: tests[i].endSec, step: step, window: lookback,
-				conditions: publicStaticRelationConditions("middle_id", "", "target_id"),
-				aggregate:  publicStaticRelationAggregate("middle_id", "target_id"),
-			},
-		}
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			pointMS := make([]int64, 0, len(tc.pointsSec))
-			for _, point := range tc.pointsSec {
-				pointMS = append(pointMS, point*1000)
-			}
-			vm := &publicTimeGraphVM{responses: map[string]pl.Matrix{
-				"node_to_middle_flow":   contractMatrix(map[string]string{"node_id": "n1", "middle_id": "m1"}, pointMS...),
-				"middle_to_target_flow": contractMatrix(map[string]string{"middle_id": "m1", "target_id": "t1"}, pointMS...),
-			}}
+			vm := &publicTimeGraphVM{responses: tc.responses}
 			model := &Model{
 				schemaProvider:          publicChainProvider(),
 				timeGraphVMQuery:        vm.query,
@@ -450,38 +442,59 @@ func TestTimeGraphPublicSourceExpandAndTargetInfoCases(t *testing.T) {
 	tests := []struct {
 		name             string
 		sourceExpandInfo cmdb.Matcher
-		targetInfo       pl.Matrix
+		responses        map[string]pl.Matrix
 		wantMatchers     cmdb.Matchers
+		wantCalls        []publicTimeGraphQueryWant
 	}{
 		{
 			name:             "source_expand_hit_returns_target_info",
 			sourceExpandInfo: cmdb.Matcher{"zone": "east"},
-			targetInfo:       contractMatrix(map[string]string{"middle_id": "m1", "version": "v1"}, timestampMS),
-			wantMatchers:     cmdb.Matchers{{"middle_id": "m1", "version": "v1"}},
+			responses: map[string]pl.Matrix{
+				"node_info_relation":   contractMatrix(map[string]string{"node_id": "n1", "zone": "east"}, timestampMS),
+				"node_to_middle_flow":  contractMatrix(map[string]string{"node_id": "n1", "middle_id": "m1"}, timestampMS),
+				"middle_info_relation": contractMatrix(map[string]string{"middle_id": "m1", "version": "v1"}, timestampMS),
+			},
+			wantMatchers: cmdb.Matchers{{"middle_id": "m1", "version": "v1"}},
+			wantCalls: []publicTimeGraphQueryWant{
+				{metric: "node_info_relation", expr: "count by (node_id, zone) (count_over_time(a[10m]))", instant: true, start: 1699999800, end: 1700000000, step: 5 * time.Minute, window: "10m0s", conditions: publicResourceInfoConditions("node_id", "n1", "zone", "east"), aggregate: publicStaticRelationAggregate("node_id", "zone")},
+				{metric: "node_to_middle_flow", expr: "count by (middle_id, node_id) (count_over_time(a[10m]))", instant: true, start: 1699999800, end: 1700000000, step: 5 * time.Minute, window: "10m0s", conditions: publicStaticRelationConditions("node_id", "n1", "middle_id"), aggregate: publicStaticRelationAggregate("middle_id", "node_id")},
+				{metric: "middle_info_relation", expr: "count by (middle_id, version) (count_over_time(a[10m]))", instant: true, start: 1699999800, end: 1700000000, step: 5 * time.Minute, window: "10m0s", conditions: publicResourceInfoConditions("middle_id", "m1", "", ""), aggregate: publicStaticRelationAggregate("middle_id", "version")},
+			},
 		},
 		{
 			name:             "source_expand_miss_returns_empty_result",
 			sourceExpandInfo: cmdb.Matcher{"zone": "west"},
-			targetInfo:       contractMatrix(map[string]string{"middle_id": "m1", "version": "v1"}, timestampMS),
-			wantMatchers:     cmdb.Matchers{},
+			responses: map[string]pl.Matrix{
+				"node_info_relation":   pl.Matrix{},
+				"node_to_middle_flow":  contractMatrix(map[string]string{"node_id": "n1", "middle_id": "m1"}, timestampMS),
+				"middle_info_relation": contractMatrix(map[string]string{"middle_id": "m1", "version": "v1"}, timestampMS),
+			},
+			wantMatchers: cmdb.Matchers{},
+			wantCalls: []publicTimeGraphQueryWant{
+				{metric: "node_info_relation", expr: "count by (node_id, zone) (count_over_time(a[10m]))", instant: true, start: 1699999800, end: 1700000000, step: 5 * time.Minute, window: "10m0s", conditions: publicResourceInfoConditions("node_id", "n1", "zone", "west"), aggregate: publicStaticRelationAggregate("node_id", "zone")},
+				{metric: "node_to_middle_flow", expr: "count by (middle_id, node_id) (count_over_time(a[10m]))", instant: true, start: 1699999800, end: 1700000000, step: 5 * time.Minute, window: "10m0s", conditions: publicStaticRelationConditions("node_id", "n1", "middle_id"), aggregate: publicStaticRelationAggregate("middle_id", "node_id")},
+				{metric: "middle_info_relation", expr: "count by (middle_id, version) (count_over_time(a[10m]))", instant: true, start: 1699999800, end: 1700000000, step: 5 * time.Minute, window: "10m0s", conditions: publicResourceInfoConditions("middle_id", "m1", "", ""), aggregate: publicStaticRelationAggregate("middle_id", "version")},
+			},
 		},
 		{
 			name:             "missing_target_info_keeps_primary_identity",
 			sourceExpandInfo: cmdb.Matcher{"zone": "east"},
-			targetInfo:       pl.Matrix{},
-			wantMatchers:     cmdb.Matchers{{"middle_id": "m1"}},
+			responses: map[string]pl.Matrix{
+				"node_info_relation":   contractMatrix(map[string]string{"node_id": "n1", "zone": "east"}, timestampMS),
+				"node_to_middle_flow":  contractMatrix(map[string]string{"node_id": "n1", "middle_id": "m1"}, timestampMS),
+				"middle_info_relation": pl.Matrix{},
+			},
+			wantMatchers: cmdb.Matchers{{"middle_id": "m1"}},
+			wantCalls: []publicTimeGraphQueryWant{
+				{metric: "node_info_relation", expr: "count by (node_id, zone) (count_over_time(a[10m]))", instant: true, start: 1699999800, end: 1700000000, step: 5 * time.Minute, window: "10m0s", conditions: publicResourceInfoConditions("node_id", "n1", "zone", "east"), aggregate: publicStaticRelationAggregate("node_id", "zone")},
+				{metric: "node_to_middle_flow", expr: "count by (middle_id, node_id) (count_over_time(a[10m]))", instant: true, start: 1699999800, end: 1700000000, step: 5 * time.Minute, window: "10m0s", conditions: publicStaticRelationConditions("node_id", "n1", "middle_id"), aggregate: publicStaticRelationAggregate("middle_id", "node_id")},
+				{metric: "middle_info_relation", expr: "count by (middle_id, version) (count_over_time(a[10m]))", instant: true, start: 1699999800, end: 1700000000, step: 5 * time.Minute, window: "10m0s", conditions: publicResourceInfoConditions("middle_id", "m1", "", ""), aggregate: publicStaticRelationAggregate("middle_id", "version")},
+			},
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			vm := &publicSourceExpandVM{
-				vm: publicTimeGraphVM{responses: map[string]pl.Matrix{
-					"node_info_relation":   contractMatrix(map[string]string{"node_id": "n1", "zone": "east"}, timestampMS),
-					"node_to_middle_flow":  contractMatrix(map[string]string{"node_id": "n1", "middle_id": "m1"}, timestampMS),
-					"middle_info_relation": tc.targetInfo,
-				}},
-				allowedZone: "east",
-			}
+			vm := &publicTimeGraphVM{responses: tc.responses}
 			model := &Model{
 				schemaProvider:          publicSourceExpandProvider(),
 				timeGraphVMQuery:        vm.query,
@@ -500,6 +513,7 @@ func TestTimeGraphPublicSourceExpandAndTargetInfoCases(t *testing.T) {
 			require.Equal(t, []string{"node", "middle"}, paths)
 			require.Equal(t, cmdb.Resource("middle"), target)
 			require.Equal(t, tc.wantMatchers, matchers)
+			requirePublicTimeGraphCalls(t, vm.calls, tc.wantCalls)
 		})
 	}
 }

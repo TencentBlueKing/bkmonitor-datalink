@@ -106,68 +106,86 @@ func TestTimeGraphFindPathResourcesHonorsExpectedPath(t *testing.T) {
 	}
 }
 
-func TestNodeIdentityIncludesResourceType(t *testing.T) {
-	config := &TimeGraphConfig{Resource: []TimeGraphResourceConfig{
-		{Name: "left", Index: cmdb.Index{"id"}},
-		{Name: "right", Index: cmdb.Index{"id"}},
-	}}
-
-	tg := NewTimeGraphWithConfig(config)
-	if err := tg.AddTimeRelation(context.Background(), "left", "right", cmdb.Matcher{"id": "same"}, 100); err != nil {
-		t.Fatal(err)
-	}
-	results, err := tg.FindPathResources(
-		context.Background(),
-		"left",
-		[]cmdb.Resource{"right"},
-		cmdb.Matcher{"id": "same"},
-		[][]cmdb.Resource{{"left", "right"}},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(results) != 1 {
-		t.Fatalf("resource type collision collapsed the edge: %+v", results)
-	}
-}
-
-func TestNodeIdentityLengthPrefixesPrimaryKeyTuple(t *testing.T) {
+func TestNodeIdentity(t *testing.T) {
 	tests := []struct {
-		name  string
-		infos []cmdb.Matcher
-		want  []cmdb.Matcher
+		name      string
+		config    []TimeGraphResourceConfig
+		additions []struct {
+			resource cmdb.Resource
+			info     cmdb.Matcher
+		}
+		wantByType map[cmdb.Resource][]cmdb.Matcher
 	}{
 		{
-			name:  "ordinary_values",
-			infos: []cmdb.Matcher{{"a": "x", "b": "y"}},
-			want:  []cmdb.Matcher{{"a": "x", "b": "y"}},
+			name:   "different_resource_types_do_not_share_identity",
+			config: []TimeGraphResourceConfig{{Name: "left", Index: cmdb.Index{"id"}}, {Name: "right", Index: cmdb.Index{"id"}}},
+			additions: []struct {
+				resource cmdb.Resource
+				info     cmdb.Matcher
+			}{
+				{resource: "left", info: cmdb.Matcher{"id": "same"}},
+				{resource: "right", info: cmdb.Matcher{"id": "same"}},
+			},
+			wantByType: map[cmdb.Resource][]cmdb.Matcher{
+				"left":  {cmdb.Matcher{"id": "same"}},
+				"right": {cmdb.Matcher{"id": "same"}},
+			},
 		},
 		{
-			name: "delimiter_values_remain_distinct",
-			infos: []cmdb.Matcher{
-				{"a": "x|b=y", "b": "z"},
-				{"a": "x", "b": "y|b=z"},
+			name:   "ordinary_values",
+			config: []TimeGraphResourceConfig{{Name: "node", Index: cmdb.Index{"a", "b"}}},
+			additions: []struct {
+				resource cmdb.Resource
+				info     cmdb.Matcher
+			}{
+				{resource: "node", info: cmdb.Matcher{"a": "x", "b": "y"}},
 			},
-			want: []cmdb.Matcher{
-				{"a": "x|b=y", "b": "z"},
-				{"a": "x", "b": "y|b=z"},
+			wantByType: map[cmdb.Resource][]cmdb.Matcher{
+				"node": {cmdb.Matcher{"a": "x", "b": "y"}},
 			},
 		},
 		{
-			name:  "repeated_primary_key_is_deduplicated",
-			infos: []cmdb.Matcher{{"a": "x", "b": "y"}, {"a": "x", "b": "y"}},
-			want:  []cmdb.Matcher{{"a": "x", "b": "y"}},
+			name:   "delimiter_values_remain_distinct",
+			config: []TimeGraphResourceConfig{{Name: "node", Index: cmdb.Index{"a", "b"}}},
+			additions: []struct {
+				resource cmdb.Resource
+				info     cmdb.Matcher
+			}{
+				{resource: "node", info: cmdb.Matcher{"a": "x|b=y", "b": "z"}},
+				{resource: "node", info: cmdb.Matcher{"a": "x", "b": "y|b=z"}},
+			},
+			wantByType: map[cmdb.Resource][]cmdb.Matcher{
+				"node": {
+					cmdb.Matcher{"a": "x|b=y", "b": "z"},
+					cmdb.Matcher{"a": "x", "b": "y|b=z"},
+				},
+			},
+		},
+		{
+			name:   "repeated_primary_key_is_deduplicated",
+			config: []TimeGraphResourceConfig{{Name: "node", Index: cmdb.Index{"a", "b"}}},
+			additions: []struct {
+				resource cmdb.Resource
+				info     cmdb.Matcher
+			}{
+				{resource: "node", info: cmdb.Matcher{"a": "x", "b": "y"}},
+				{resource: "node", info: cmdb.Matcher{"a": "x", "b": "y"}},
+			},
+			wantByType: map[cmdb.Resource][]cmdb.Matcher{
+				"node": {cmdb.Matcher{"a": "x", "b": "y"}},
+			},
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{{Name: "node", Index: cmdb.Index{"a", "b"}}}})
-			for _, info := range tc.infos {
-				require.NoError(t, tg.AddTimeNode(context.Background(), "node", info, 100))
+			tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: tc.config})
+			for _, addition := range tc.additions {
+				require.NoError(t, tg.AddTimeNode(context.Background(), addition.resource, addition.info, 100))
 			}
-			got := tg.GetNodesByResourceType("node")
-			require.ElementsMatch(t, tc.want, got)
+			for resource, want := range tc.wantByType {
+				require.ElementsMatch(t, want, tg.GetNodesByResourceType(resource))
+			}
 		})
 	}
 }
@@ -176,9 +194,10 @@ func TestTimeGraphSameTimestampAttributeConflictIsStable(t *testing.T) {
 	tests := []struct {
 		name     string
 		versions []string
+		wantInfo cmdb.Matcher
 	}{
-		{name: "v1_then_v2", versions: []string{"v1", "v2"}},
-		{name: "v2_then_v1", versions: []string{"v2", "v1"}},
+		{name: "lexicographically_larger_wins_v1_then_v2", versions: []string{"v1", "v2"}, wantInfo: cmdb.Matcher{"id": "m1", "version": "v2"}},
+		{name: "lexicographically_larger_wins_v2_then_v1", versions: []string{"v2", "v1"}, wantInfo: cmdb.Matcher{"id": "m1", "version": "v2"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -191,12 +210,9 @@ func TestTimeGraphSameTimestampAttributeConflictIsStable(t *testing.T) {
 			results, err := tg.FindRelationPathResources(context.Background(), "node", []cmdb.Resource{"node"}, cmdb.Matcher{"id": "m1"}, []cmdb.RelationPath{{
 				Steps: []cmdb.RelationPathStep{{ResourceType: "node"}},
 			}})
-			if err != nil || len(results) != 1 {
-				t.Fatalf("unexpected result: %v %+v", err, results)
-			}
-			if got := results[0].Path[0].Dimensions["version"]; got != "v2" {
-				t.Fatalf("attribute conflict depended on VM order: got %q", got)
-			}
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			require.Equal(t, tc.wantInfo, results[0].Path[0].Dimensions)
 		})
 	}
 }
@@ -374,16 +390,31 @@ func TestMakeResourceInfoQueryTsKeepsExpandedFields(t *testing.T) {
 	}
 }
 
-func TestTimeGraphResultMatcherOwnership(t *testing.T) {
+func TestTimeGraphResultMatcherOwnershipAfterMutation(t *testing.T) {
 	tests := []struct {
-		name         string
-		mutateInput  bool
-		mutateResult bool
-		rebuildAfter bool
+		name           string
+		mutationTarget string
+		mutationValue  string
+		wantResult     []PathResourcesResult
 	}{
-		{name: "input_map", mutateInput: true},
-		{name: "returned_map", mutateResult: true},
-		{name: "clean_then_rebuild", rebuildAfter: true},
+		{
+			name:           "input_map_mutation_does_not_change_next_query",
+			mutationTarget: "input",
+			mutationValue:  "modified",
+			wantResult: []PathResourcesResult{{Timestamp: 100, TargetType: "right", Path: []cmdb.PathNode{
+				{ResourceType: "left", Dimensions: cmdb.Matcher{"id": "old"}},
+				{ResourceType: "right", Dimensions: cmdb.Matcher{"id": "old"}},
+			}}},
+		},
+		{
+			name:           "returned_map_mutation_does_not_change_next_query",
+			mutationTarget: "returned",
+			mutationValue:  "modified",
+			wantResult: []PathResourcesResult{{Timestamp: 100, TargetType: "right", Path: []cmdb.PathNode{
+				{ResourceType: "left", Dimensions: cmdb.Matcher{"id": "old"}},
+				{ResourceType: "right", Dimensions: cmdb.Matcher{"id": "old"}},
+			}}},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -394,25 +425,62 @@ func TestTimeGraphResultMatcherOwnership(t *testing.T) {
 			}})
 			input := cmdb.Matcher{"id": "old"}
 			require.NoError(t, tg.AddTimeRelation(ctx, "left", "right", input, 100))
-			if tc.mutateInput {
-				input["id"] = "modified"
+			if tc.mutationTarget == "input" {
+				input["id"] = tc.mutationValue
 			}
 			results, err := tg.FindPathResources(ctx, "left", []cmdb.Resource{"right"}, cmdb.Matcher{"id": "old"}, [][]cmdb.Resource{{"left", "right"}})
 			require.NoError(t, err)
 			require.Len(t, results, 1)
-			if tc.mutateResult {
-				results[0].Path[0].Dimensions["id"] = "modified"
-			}
-			if tc.rebuildAfter {
-				tg.Clean(ctx)
-				require.NoError(t, tg.AddTimeRelation(ctx, "left", "right", cmdb.Matcher{"id": "new"}, 100))
-				require.Equal(t, "old", results[0].Path[0].Dimensions["id"])
-				return
+			if tc.mutationTarget == "returned" {
+				results[0].Path[0].Dimensions["id"] = tc.mutationValue
 			}
 			results, err = tg.FindPathResources(ctx, "left", []cmdb.Resource{"right"}, cmdb.Matcher{"id": "old"}, [][]cmdb.Resource{{"left", "right"}})
 			require.NoError(t, err)
-			require.Len(t, results, 1)
-			require.Equal(t, "old", results[0].Path[0].Dimensions["id"])
+			require.Equal(t, tc.wantResult, results)
+		})
+	}
+}
+
+func TestTimeGraphResultSurvivesCleanAndRebuild(t *testing.T) {
+	tests := []struct {
+		name          string
+		oldInfo       cmdb.Matcher
+		newInfo       cmdb.Matcher
+		wantOldResult []PathResourcesResult
+		wantNewResult []PathResourcesResult
+	}{
+		{
+			name:    "old_result_keeps_owned_dimensions_after_rebuild",
+			oldInfo: cmdb.Matcher{"id": "old"},
+			newInfo: cmdb.Matcher{"id": "new"},
+			wantOldResult: []PathResourcesResult{{Timestamp: 100, TargetType: "right", Path: []cmdb.PathNode{
+				{ResourceType: "left", Dimensions: cmdb.Matcher{"id": "old"}},
+				{ResourceType: "right", Dimensions: cmdb.Matcher{"id": "old"}},
+			}}},
+			wantNewResult: []PathResourcesResult{{Timestamp: 100, TargetType: "right", Path: []cmdb.PathNode{
+				{ResourceType: "left", Dimensions: cmdb.Matcher{"id": "new"}},
+				{ResourceType: "right", Dimensions: cmdb.Matcher{"id": "new"}},
+			}}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
+				{Name: "left", Index: cmdb.Index{"id"}},
+				{Name: "right", Index: cmdb.Index{"id"}},
+			}})
+			require.NoError(t, tg.AddTimeRelation(ctx, "left", "right", tc.oldInfo, 100))
+			oldResults, err := tg.FindPathResources(ctx, "left", []cmdb.Resource{"right"}, tc.oldInfo, [][]cmdb.Resource{{"left", "right"}})
+			require.NoError(t, err)
+			require.Equal(t, tc.wantOldResult, oldResults)
+
+			tg.Clean(ctx)
+			require.NoError(t, tg.AddTimeRelation(ctx, "left", "right", tc.newInfo, 100))
+			require.Equal(t, tc.wantOldResult, oldResults)
+			newResults, err := tg.FindPathResources(ctx, "left", []cmdb.Resource{"right"}, tc.newInfo, [][]cmdb.Resource{{"left", "right"}})
+			require.NoError(t, err)
+			require.Equal(t, tc.wantNewResult, newResults)
 		})
 	}
 }

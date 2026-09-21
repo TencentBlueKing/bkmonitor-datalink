@@ -73,10 +73,9 @@ func TestCollectCPUPercentRollbackIsInvalid(t *testing.T) {
 		return []float64{20}, nil
 	}
 
-	perUsage, totalUsage, valid, err := collectCPUPercent(collect)
+	perUsage, totalUsage, err := collectCPUPercent(collect)
 
-	assert.NoError(t, err)
-	assert.False(t, valid)
+	assert.ErrorIs(t, err, errInvalidCPUStat)
 	assert.Nil(t, perUsage)
 	assert.Nil(t, totalUsage)
 	assert.Equal(t, []bool{true, false}, calls)
@@ -93,9 +92,7 @@ func TestCollectCPUPercentOrdinaryError(t *testing.T) {
 		return []float64{20}, nil
 	}
 
-	_, _, valid, err := collectCPUPercent(collect)
-
-	assert.False(t, valid)
+	_, _, err := collectCPUPercent(collect)
 	assert.ErrorIs(t, err, expectedErr)
 	assert.Equal(t, []bool{true, false}, calls)
 }

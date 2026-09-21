@@ -313,7 +313,6 @@ func TestTimeGraphRangeQueryHonorsCancellableBudget(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			called := make(chan struct{})
 			deadlines := make(chan time.Time, 1)
 			model := &Model{
 				schemaProvider:          timeGraphTestSchemaProvider{},
@@ -324,15 +323,16 @@ func TestTimeGraphRangeQueryHonorsCancellableBudget(t *testing.T) {
 						return nil, errors.New("timegraph query has no deadline")
 					}
 					deadlines <- deadline
-					close(called)
 					<-ctx.Done()
 					return nil, ctx.Err()
 				},
 			}
+			ctx, cancel := context.WithCancel(initTimeGraphQueryTestEnvironment())
+			t.Cleanup(cancel)
 			result := make(chan error, 1)
 			started := time.Now()
 			go func() {
-				result <- tc.query(model, initTimeGraphQueryTestEnvironment())
+				result <- tc.query(model, ctx)
 			}()
 
 			select {
@@ -341,11 +341,6 @@ func TestTimeGraphRangeQueryHonorsCancellableBudget(t *testing.T) {
 				require.LessOrEqual(t, deadline.Sub(started), budget+100*time.Millisecond)
 			case <-time.After(time.Second):
 				t.Fatal("range query did not reach VM mock")
-			}
-			select {
-			case <-called:
-			case <-time.After(time.Second):
-				t.Fatal("range query did not start cancellable VM call")
 			}
 			select {
 			case err := <-result:

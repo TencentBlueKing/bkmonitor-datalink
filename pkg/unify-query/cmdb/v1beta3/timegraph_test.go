@@ -390,16 +390,23 @@ func TestMakeResourceInfoQueryTsKeepsExpandedFields(t *testing.T) {
 	}
 }
 
+type matcherMutationTarget string
+
+const (
+	mutationTargetInput    matcherMutationTarget = "input"
+	mutationTargetReturned matcherMutationTarget = "returned"
+)
+
 func TestTimeGraphResultMatcherOwnershipAfterMutation(t *testing.T) {
 	tests := []struct {
 		name           string
-		mutationTarget string
+		mutationTarget matcherMutationTarget
 		mutationValue  string
 		wantResult     []PathResourcesResult
 	}{
 		{
 			name:           "input_map_mutation_does_not_change_next_query",
-			mutationTarget: "input",
+			mutationTarget: mutationTargetInput,
 			mutationValue:  "modified",
 			wantResult: []PathResourcesResult{{Timestamp: 100, TargetType: "right", Path: []cmdb.PathNode{
 				{ResourceType: "left", Dimensions: cmdb.Matcher{"id": "old"}},
@@ -408,7 +415,7 @@ func TestTimeGraphResultMatcherOwnershipAfterMutation(t *testing.T) {
 		},
 		{
 			name:           "returned_map_mutation_does_not_change_next_query",
-			mutationTarget: "returned",
+			mutationTarget: mutationTargetReturned,
 			mutationValue:  "modified",
 			wantResult: []PathResourcesResult{{Timestamp: 100, TargetType: "right", Path: []cmdb.PathNode{
 				{ResourceType: "left", Dimensions: cmdb.Matcher{"id": "old"}},
@@ -425,13 +432,18 @@ func TestTimeGraphResultMatcherOwnershipAfterMutation(t *testing.T) {
 			}})
 			input := cmdb.Matcher{"id": "old"}
 			require.NoError(t, tg.AddTimeRelation(ctx, "left", "right", input, 100))
-			if tc.mutationTarget == "input" {
+			switch tc.mutationTarget {
+			case mutationTargetInput, mutationTargetReturned:
+			default:
+				t.Fatalf("unknown mutation target %q", tc.mutationTarget)
+			}
+			if tc.mutationTarget == mutationTargetInput {
 				input["id"] = tc.mutationValue
 			}
 			results, err := tg.FindPathResources(ctx, "left", []cmdb.Resource{"right"}, cmdb.Matcher{"id": "old"}, [][]cmdb.Resource{{"left", "right"}})
 			require.NoError(t, err)
 			require.Len(t, results, 1)
-			if tc.mutationTarget == "returned" {
+			if tc.mutationTarget == mutationTargetReturned {
 				results[0].Path[0].Dimensions["id"] = tc.mutationValue
 			}
 			results, err = tg.FindPathResources(ctx, "left", []cmdb.Resource{"right"}, cmdb.Matcher{"id": "old"}, [][]cmdb.Resource{{"left", "right"}})

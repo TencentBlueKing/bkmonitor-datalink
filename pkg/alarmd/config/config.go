@@ -83,7 +83,9 @@ type KafkaConfig struct {
 	// ClientID and BrokerVersion identify this producer to the broker and fix
 	// the protocol it speaks. Neither is something a deployment knows better
 	// than the product: the identity is the product's name and the version is
-	// the oldest protocol every supported broker understands.
+	// the oldest protocol that carries what the program sends
+	// (enginekafka.MinimumBrokerVersion: record headers, for the tenant on
+	// the standard RawEvent).
 	ClientID      string `yaml:"-"`
 	BrokerVersion string `yaml:"-"`
 	InitialOffset string `yaml:"initial_offset"`
@@ -185,7 +187,7 @@ func Default() Config {
 			DiagnosticsListen: "127.0.0.1:6060",
 		},
 		Kafka: KafkaConfig{
-			ClientID: "alarmd", BrokerVersion: "0.10.2.0",
+			ClientID: "alarmd", BrokerVersion: enginekafka.MinimumBrokerVersion,
 			TriggerEvent:  KafkaOutputConfig{Topic: "alarmd_event", MaxMessageBytes: defaultOutputMaxMessageBytes},
 			LegacyAdapter: LegacyAdapterConfig{Topic: "alarmd_0bkmonitor_backend_event"},
 		},

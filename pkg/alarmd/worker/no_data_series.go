@@ -97,16 +97,16 @@ func (stream *streamedExecution) noDataRoundFor(
 	identity := execution.PlanNoDataIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration}
 	snapshot, found := stream.noData.Find(identity)
 	if !found {
-		return noDataRound{}, fmt.Errorf(
-			"alarmd worker: no-data memory for strategy %s was not loaded", due.Identity.StrategyID)
+		return noDataRound{}, derivationFailed(fmt.Errorf(
+			"alarmd worker: no-data memory for strategy %s was not loaded", due.Identity.StrategyID))
 	}
 	version, err := execution.BuildApplyVersion(stream.header.Contract, due.StateApplyEpoch)
 	if err != nil {
-		return noDataRound{}, err
+		return noDataRound{}, derivationFailed(err)
 	}
 	period := int64(due.CompiledPlan.EvaluationSemantics().EvaluationInterval)
 	if err := noDataPointGrid(int64(stream.header.Contract.Slot.EvaluationTime), period); err != nil {
-		return noDataRound{}, err
+		return noDataRound{}, derivationFailed(err)
 	}
 	hosts := stream.noDataHosts[identity]
 	decided, err := nodata.EvaluatePlanSlot(nodata.PlanSlotInput{
@@ -125,7 +125,7 @@ func (stream *streamedExecution) noDataRoundFor(
 		OutOfBusiness:    hosts.OutOfBusiness,
 	})
 	if err != nil {
-		return noDataRound{}, err
+		return noDataRound{}, derivationFailed(err)
 	}
 	round := noDataRound{mutation: decided.Mutation, outcome: decided.Outcome}
 	if len(decided.Series) == 0 {
@@ -133,12 +133,12 @@ func (stream *streamedExecution) noDataRoundFor(
 	}
 	view, err := execution.PlanViewFor(due, execution.SeriesKindNoData)
 	if err != nil {
-		return noDataRound{}, err
+		return noDataRound{}, outputFailed(err)
 	}
 	for _, synthetic := range decided.Series {
 		entry, err := stream.noDataCompletedSeries(view, synthetic, version)
 		if err != nil {
-			return noDataRound{}, err
+			return noDataRound{}, outputFailed(err)
 		}
 		round.series = append(round.series, entry)
 	}
@@ -247,7 +247,24 @@ func (stream *streamedExecution) evaluateNoData(
 		round, err := stream.noDataRoundFor(due, seriesDimensionsFor(prepared, due.Identity),
 			stream.noDataCompleteness(due))
 		if err != nil {
-			return err
+			outcome, local := noDataLocalOutcome(err)
+			if !local || ctx.Err() != nil {
+				return err
+			}
+			// This Plan's no-data detection did not happen. Its threshold
+			// detection did, and the rest of this Slot's Plans have not been
+			// looked at yet; both used to be thrown away here, and the Slot
+			// retried to compute them again, over a no-data record nobody was
+			// asking about. The failure is this Plan's outcome for this Slot.
+			//
+			// Nothing is remembered either. A round that could not be decided
+			// has nothing to write, and a round whose verdicts could not be
+			// said must not record that it said them: the next round would
+			// count the absence from a checkpoint no alert was ever raised
+			// against.
+			stream.observeNoDataLocalFailure(ctx, due, outcome, err)
+			stream.recordNoDataOutcome(ctx, due, outcome)
+			continue
 		}
 		// A synthetic series writes state like any other, so it spends from the
 		// same per-Slot budget. A Plan whose series do not fit is skipped by
@@ -256,14 +273,22 @@ func (stream *streamedExecution) evaluateNoData(
 		// would report the groups that fitted as absent and say nothing about
 		// the rest.
 		if !noDataFitsSlotBudget(stream.noDataStateMutations, uint64(len(round.series)), budget) {
-			stream.noDataOutcomes = append(stream.noDataOutcomes, nodata.OutcomeSkippedSlotBudget)
+			stream.recordNoDataOutcome(ctx, due, nodata.OutcomeSkippedSlotBudget)
 			continue
 		}
 		stream.noDataStateMutations += uint64(len(round.series))
-		stream.noDataOutcomes = append(stream.noDataOutcomes, round.outcome)
+		stream.recordNoDataOutcome(ctx, due, round.outcome)
 		if round.mutation != nil {
 			stream.noDataMutations = append(stream.noDataMutations, *round.mutation)
 		}
+		// The synthetic series go through the same batch the real ones do,
+		// preflight read included, and they are written like any other. They
+		// count in the same census, on both sides: counted on the written side
+		// only -- which is where a write is a write -- they put written above
+		// read on a live deployment by exactly their number, and the census
+		// read as a renewal covering a negative population.
+		stream.seriesCensus.Due += len(round.series)
+		stream.seriesCensus.Read += len(round.series)
 		for _, entry := range round.series {
 			pending = append(pending, entry)
 			if len(pending) >= batchLimit {
@@ -312,19 +337,105 @@ func (coordinator *SlotExecutionCoordinator) applyNoDataMemory(
 	}
 	for _, item := range result.Items {
 		switch item.Status {
-		case execution.NoDataApplied, execution.NoDataAlreadyApplied, execution.NoDataStale, execution.NoDataConflict:
-			continue
-		case execution.NoDataRetryable:
-			continue
+		case execution.NoDataApplied, execution.NoDataAlreadyApplied, execution.NoDataStale,
+			execution.NoDataConflict, execution.NoDataRetryable:
+			// Reported, including the ones that worked. Whether a Plan's
+			// memory is being kept is a question about the present, and a
+			// reader with only the failures has to answer it from an absence
+			// of them -- which reads the same whether the Plan recovered, or
+			// stopped being evaluated, or started losing races instead.
+			coordinator.observeNoDataMemoryWrite(ctx, request, item)
 		default:
-			// A deterministic refusal is this build disagreeing with what it
-			// just built, which no retry resolves and which would otherwise be
-			// invisible until someone wondered why a duration never grew.
-			return fmt.Errorf("alarmd worker: no-data memory for strategy %s was refused: %s",
-				item.Identity.Plan.StrategyID, item.ReasonCode)
+			// Reported, not raised. A deterministic refusal is one no retry
+			// resolves, so failing the Slot over it does not store the record
+			// and does throw away the threshold results this round already
+			// computed and sent -- every round, for as long as the condition
+			// lasts. That is this Plan's ordinary detection stopped, and the
+			// other Plans of the Query Group with it, over a record nobody was
+			// looking at.
+			//
+			// What failing the Slot did give was visibility, and that is what
+			// this line is for. It names the Plan, the store's own reason and,
+			// for a refusal about size, the two numbers it compared -- which
+			// is more than the failed Slot carried: that one reached the page
+			// as internal_unknown on a retry.
+			coordinator.observeNoDataMemoryRefusal(ctx, request, item)
 		}
 	}
 	return nil
+}
+
+// observeNoDataMemoryWrite reports what became of one Plan's memory write.
+//
+// One line per Plan per Slot, on every outcome including the ordinary one. The
+// volume is the volume of no-data Plans, which is the same order as the Slot
+// lines beside it, and the repeated-line budget bounds it by (reason, Query
+// Group) like every other workflow stage.
+func (coordinator *SlotExecutionCoordinator) observeNoDataMemoryWrite(
+	ctx context.Context, request execution.SlotExecutionRequest, item execution.NoDataApplyItemResult,
+) {
+	stored := execution.NoDataWriteStored(item.Status)
+	result := observability.Result(observability.ResultDegraded)
+	if stored {
+		result = observability.Result(observability.ResultSuccess)
+	}
+	coordinator.emitObservation(ctx, observability.Observation{
+		Component: observability.ComponentState, Stage: observability.StageNoDataMemoryWritten,
+		Operation: observability.Operation(request.Operation),
+		Direction: observability.DirectionInternal, Result: result,
+		ReasonCode: observability.ReasonCode(item.ReasonCode),
+		Trace: observability.TraceFields{
+			StrategyID: item.Identity.Plan.StrategyID, BusinessID: item.Identity.Plan.BusinessID,
+		},
+		NoDataMemoryWrite: noDataMemoryWriteFacts(item, stored),
+	})
+}
+
+// noDataMemoryWriteFacts is what the line says about one write.
+//
+// The conflict, when there is one, travels with it. A conflict carries no
+// reason code -- it is a comparison the write lost, not a rejection -- so
+// without these values the line reports that the write did not happen and
+// nothing about which comparison refused it or what the two sides were. That
+// is not a shortcoming anybody would notice until it mattered: a fleet whose
+// every memory write was refused read as reason_not_reported for a day, while
+// the store had the failing comparison in hand the whole time.
+func noDataMemoryWriteFacts(
+	item execution.NoDataApplyItemResult, stored bool,
+) *observability.NoDataMemoryWriteFacts {
+	facts := &observability.NoDataMemoryWriteFacts{Outcome: string(item.Status), Stored: stored}
+	if conflict := item.Conflict; conflict != nil {
+		facts.DerivedFrom = string(conflict.DerivedFrom)
+		facts.Conflict = &observability.NoDataMemoryConflictFacts{
+			Kind:             string(conflict.Kind),
+			Persisted:        string(conflict.Persisted),
+			Proposed:         string(conflict.Proposed),
+			ExpectedRevision: conflict.ExpectedRevision,
+			StoredRevision:   conflict.StoredRevision,
+		}
+	}
+	return facts
+}
+
+// observeNoDataMemoryRefusal reports one Plan the store would not take a
+// memory for.
+func (coordinator *SlotExecutionCoordinator) observeNoDataMemoryRefusal(
+	ctx context.Context, request execution.SlotExecutionRequest, item execution.NoDataApplyItemResult,
+) {
+	facts := observability.NoDataMemoryRefusalFacts{Reason: string(item.ReasonCode)}
+	if size := item.Size; size != nil {
+		facts.Record, facts.Groups, facts.Limit = string(size.Record), size.Groups, size.Limit
+	}
+	coordinator.emitObservation(ctx, observability.Observation{
+		Component: observability.ComponentState, Stage: observability.StageNoDataMemoryRefused,
+		Operation: observability.Operation(request.Operation),
+		Direction: observability.DirectionInternal, Result: observability.ResultDegraded,
+		ReasonCode: observability.ReasonCode(item.ReasonCode),
+		Trace: observability.TraceFields{
+			StrategyID: item.Identity.Plan.StrategyID, BusinessID: item.Identity.Plan.BusinessID,
+		},
+		NoDataMemoryRefusal: &facts,
+	})
 }
 
 // observeNoDataOutcomes reports what happened to every no-data Plan this Slot,

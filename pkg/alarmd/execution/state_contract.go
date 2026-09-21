@@ -50,17 +50,22 @@ func SlotMutationCap(storeItems, processBudget uint64) uint64 {
 // StateApplyFence carries the owner fence one Runtime State apply must verify
 // inside the storage write itself. At is the wall-clock instant the fence is
 // compared against the lease deadline; it uses the same rule as admission.
+// StateApplyFence is what a fenced State write carries about its writer.
+// It names no instant: whether the writer's lease is live is decided where
+// the write lands, on that store's clock, and nothing the writer says about
+// the time takes part.
 type StateApplyFence struct {
 	Fence OwnerFence
-	At    time.Time
+	// ContentScope, when set, names the executable view the writes were
+	// produced from; the store's fence then also refuses an Assignment
+	// record that has moved to another (decision-016). Empty leaves the
+	// fence exactly as it was before the field existed.
+	ContentScope string
 }
 
 func (fence StateApplyFence) Validate(contractRef FrozenExecutionContractRef) error {
 	if err := fence.Fence.Validate(contractRef); err != nil {
 		return err
-	}
-	if fence.At.IsZero() {
-		return errors.New("alarmd execution: state apply fence time is required")
 	}
 	return nil
 }

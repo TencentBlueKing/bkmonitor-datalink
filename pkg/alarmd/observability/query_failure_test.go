@@ -1,3 +1,12 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package observability
 
 import (
@@ -20,7 +29,7 @@ func TestQueryFailureLogRejectsSensitiveValues(t *testing.T) {
 	secret := "https://user:secret@example.test/?token=secret"
 	for _, facts := range []QueryFailureFacts{
 		{Stage: "execute", Category: "source_backend", Code: "SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS"},
-		{Stage: "stream_complete", Category: "budget", Code: "retained_bytes"},
+		{Stage: "stream_complete", Category: "budget", Code: CapacityBudgetFailureCode(CapacityBudgetRetainedBytes)},
 		{Stage: secret, Category: secret, Code: secret, Detail: secret},
 	} {
 		var output bytes.Buffer
@@ -59,7 +68,12 @@ func TestQueryFailureCodesFollowBoundedGrammarInsteadOfWhitelist(t *testing.T) {
 		{"named input code", QueryFailureFacts{Stage: "stream_complete", Category: "named_input", Code: "COMPLETION_ONLY_REQUIREMENT_MISSING"}, QueryFailureFacts{Stage: "stream_complete", Category: "named_input", Code: "COMPLETION_ONLY_REQUIREMENT_MISSING"}},
 		{"admission code", QueryFailureFacts{Stage: "execute", Category: "admission", Code: "QUERY_PERMIT_DEADLINE"}, QueryFailureFacts{Stage: "execute", Category: "admission", Code: "QUERY_PERMIT_DEADLINE"}},
 		{"evaluation code", QueryFailureFacts{Stage: "stream_complete", Category: "evaluation", Code: "EVALUATION_RESULT_INVALID"}, QueryFailureFacts{Stage: "stream_complete", Category: "evaluation", Code: "EVALUATION_RESULT_INVALID"}},
-		{"capacity budget", QueryFailureFacts{Stage: "stream_complete", Category: "budget", Code: "retained_bytes"}, QueryFailureFacts{Stage: "stream_complete", Category: "budget", Code: "retained_bytes"}},
+		// A budget's own value is a metric label, not a code, and budget has no
+		// exemption from the grammar: a publisher that passes the label through
+		// gets OTHER and has to notice. It used to be kept, which is how every
+		// budget rejection published an unparsable code unnoticed.
+		{"capacity budget label is not a code", QueryFailureFacts{Stage: "stream_complete", Category: "budget", Code: "retained_bytes"}, QueryFailureFacts{Stage: "stream_complete", Category: "budget", Code: "OTHER"}},
+		{"capacity budget code", QueryFailureFacts{Stage: "stream_complete", Category: "budget", Code: CapacityBudgetFailureCode(CapacityBudgetRetainedBytes)}, QueryFailureFacts{Stage: "stream_complete", Category: "budget", Code: CapacityBudgetFailureCode(CapacityBudgetRetainedBytes)}},
 		{"response budget", QueryFailureFacts{Stage: "execute", Category: "budget", Code: "RESPONSE_BYTES_EXCEEDED"}, QueryFailureFacts{Stage: "execute", Category: "budget", Code: "RESPONSE_BYTES_EXCEEDED"}},
 		{"unknown budget", QueryFailureFacts{Stage: "execute", Category: "budget", Code: "free text"}, QueryFailureFacts{Stage: "execute", Category: "budget", Code: "OTHER"}},
 		{"unknown category", QueryFailureFacts{Stage: "execute", Category: "mystery", Code: "VALID_CODE"}, QueryFailureFacts{Stage: "execute", Category: "other", Code: "OTHER"}},

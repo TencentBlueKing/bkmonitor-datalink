@@ -12,6 +12,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,17 +29,44 @@ func noDataLoadItemV2() execution.PlanNoDataLoadItem {
 	}
 }
 
+// noDataPresentAsOf is the round the fixtures' Plan last had data in. Every
+// fixture group is absent or was last seen before it, so nothing here depends
+// on the compressed encoding unless it says so.
+const noDataPresentAsOf = int64(1000)
+
 func noDataMutationV2(t *testing.T, expected uint64, groups ...execution.NoDataGroupMemory) execution.PlanNoDataMutation {
 	t.Helper()
-	mutation, err := execution.BuildPlanNoDataMutation(execution.PlanNoDataMutation{
-		Identity: noDataIdentityV2(), SchemaVersion: execution.NoDataMemorySchemaV1,
-		ExpectedMarkerRevision: expected, ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1",
-		RosterVersion: "TARGET_STATIC/1", Groups: groups,
+	// An expected revision of zero is a statement derived from no record;
+	// any other is a delta against the per-group record read at applyVersion.
+	derivedFrom, loaded := execution.NoDataRepresentationNone, execution.ApplyVersion{}
+	if expected != 0 {
+		derivedFrom, loaded = execution.NoDataRepresentationPerGroup, applyVersion()
+	}
+	return noDataMutationFrom(t, execution.PlanNoDataMemoryUpdate{
+		DerivedFrom: derivedFrom, LoadedApplyVersion: loaded,
+		Identity: noDataIdentityV2(), ExpectedMarkerRevision: expected, ApplyVersion: applyVersion(),
+		ScheduleRevision: "plan-r1", RosterVersion: "TARGET_STATIC/1",
+		PresentAsOf: noDataPresentAsOf, Memory: groups,
 	})
+}
+
+func noDataMutationFrom(t *testing.T, update execution.PlanNoDataMemoryUpdate) execution.PlanNoDataMutation {
+	t.Helper()
+	mutation, err := execution.BuildPlanNoDataMutation(update)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return mutation
+}
+
+// noDataHashKey is where the memory this build writes lives.
+func noDataHashKey(t *testing.T) string {
+	t.Helper()
+	key, err := PlanNoDataHashKeyV2("alarmd", noDataIdentityV2())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key
 }
 
 // What was written comes back, including the roster version the round decided
@@ -71,10 +99,7 @@ func TestNoDataMemoryRoundTripsThroughTheStore(t *testing.T) {
 	// Written with a lifetime. The load renews it to what this Plan needs, but a
 	// key created in a Plan's last Slot is never loaded again, and one written
 	// without a lifetime would then be immortal.
-	key, err := PlanNoDataKeyV2("alarmd", noDataIdentityV2())
-	if err != nil {
-		t.Fatal(err)
-	}
+	key := noDataHashKey(t)
 	if got := backend.writeTTLs[key]; got != GenerationScopedFloor {
 		t.Fatalf("the memory was written with lifetime %s, want the floor %s", got, GenerationScopedFloor)
 	}
@@ -95,8 +120,11 @@ func TestNoDataMemoryRoundTripsThroughTheStore(t *testing.T) {
 	if len(snapshot.Groups) != 1 || snapshot.Groups[0].FirstAbsent != 940 {
 		t.Fatalf("groups = %+v, want the one that was written", snapshot.Groups)
 	}
-	if snapshot.SchemaVersion != execution.NoDataMemorySchemaV1 {
+	if snapshot.SchemaVersion != execution.WrittenNoDataMemorySchema {
 		t.Fatalf("schema = %d, want the one this build writes", snapshot.SchemaVersion)
+	}
+	if snapshot.PresentAsOf != noDataPresentAsOf {
+		t.Fatalf("present as of = %d, want the round the write named", snapshot.PresentAsOf)
 	}
 
 	// Replaying the same mutation is recognised rather than written twice.
@@ -169,19 +197,9 @@ func TestNoDataMemoryFromANewerBuildIsUnreadableRatherThanCorrupt(t *testing.T) 
 func TestNoDataApplyRefusesToOverwriteARecordItCannotRead(t *testing.T) {
 	backend := &casMemoryBackend{values: make(map[string][]byte)}
 	store := generationStore(t, backend)
-	key, err := PlanNoDataKeyV2("alarmd", noDataIdentityV2())
-	if err != nil {
-		t.Fatal(err)
-	}
-	future, err := json.Marshal(noDataEnvelope{
-		Schema: executionNoDataSchema, Version: execution.MaxSupportedNoDataMemorySchema + 1,
-		Identity: noDataIdentityV2(), MarkerRevision: 9, ApplyVersion: applyVersion(),
-		MutationDigest: "digest", ScheduleRevision: "plan-r1", RosterVersion: "HISTORY/1",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	backend.values[key] = future
+	key := noDataHashKey(t)
+	future := futureHashHeader(t)
+	backend.hashes = map[string]map[string][]byte{key: {noDataHeaderField: future}}
 
 	applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{
 		Contract: frozenRef(),
@@ -193,9 +211,26 @@ func TestNoDataApplyRefusesToOverwriteARecordItCannotRead(t *testing.T) {
 	if applied.Items[0].Status != execution.NoDataRejected {
 		t.Fatalf("apply = %+v, want it refused", applied.Items[0])
 	}
-	if string(backend.values[key]) != string(future) {
+	if string(backend.hashes[key][noDataHeaderField]) != string(future) {
 		t.Fatal("the record a newer build wrote was overwritten")
 	}
+}
+
+// futureHashHeader is a header in a shape this build has no definition for.
+func futureHashHeader(t *testing.T) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(map[string]any{
+		"schema": executionNoDataSchema, "version": execution.MaxSupportedNoDataMemorySchema + 1,
+		"identity": noDataIdentityV2(), "marker_revision": 9, "apply_version": applyVersion(),
+		"memory_digest": "digest", "schedule_revision": "plan-r1", "roster_version": "HISTORY/1",
+		"present_as_of": noDataPresentAsOf,
+		// The field a newer schema added, which this build has no name for.
+		"absent_since_reason": "something this build has never heard of",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
 }
 
 // Two writers racing on one Plan: the second one's expectation no longer holds
@@ -214,29 +249,39 @@ func TestNoDataApplyConflictsOnAStaleMarkerRevision(t *testing.T) {
 
 	// A second writer that still believes the record does not exist. Its apply
 	// version differs, so this is the marker check rather than the version one.
-	stale, err := execution.BuildPlanNoDataMutation(execution.PlanNoDataMutation{
-		Identity: noDataIdentityV2(), SchemaVersion: execution.NoDataMemorySchemaV1,
-		ExpectedMarkerRevision: 0,
+	stale := noDataMutationFrom(t, execution.PlanNoDataMemoryUpdate{
+		DerivedFrom: execution.NoDataRepresentationNone,
+		Identity:    noDataIdentityV2(), ExpectedMarkerRevision: 0,
 		ApplyVersion: execution.ApplyVersion{
 			StateApplyEpoch: applyVersion().StateApplyEpoch + 1,
 			EvaluationTime:  applyVersion().EvaluationTime + 60,
 			SlotDigest:      applyVersion().SlotDigest,
 		},
 		ScheduleRevision: "plan-r1", RosterVersion: "TARGET_STATIC/1",
-		Groups: []execution.NoDataGroupMemory{{GroupKey: "b", LastSeen: 1000}},
+		PresentAsOf: noDataPresentAsOf,
+		Memory:      []execution.NoDataGroupMemory{{GroupKey: "b", LastSeen: 1000}},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	applied, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{
 		Contract: frozenRef(), Items: []execution.PlanNoDataMutation{stale},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if applied.Items[0].Status != execution.NoDataConflict {
-		t.Fatalf("apply = %+v, want a conflict: it expected a record that is no longer there",
-			applied.Items[0])
+	item := applied.Items[0]
+	if item.Status != execution.NoDataConflict {
+		t.Fatalf("apply = %+v, want a conflict: it expected a record that is no longer there", item)
+	}
+	// A conflict that says only "conflict" is not actionable: a revision that
+	// moved and one statement meeting another of its own version call for
+	// different things, and only one of them resolves itself on the next round.
+	if item.Conflict == nil || item.Conflict.Kind != execution.StateVersionConflictRevisionMoved {
+		t.Fatalf("conflict = %+v, want the revision named as having moved", item.Conflict)
+	}
+	// The memories, not the statements: a reader comparing a conflict to what
+	// is stored is asking which memory is there, and the statement digest of a
+	// write that never landed names nothing anyone can look up.
+	if item.Conflict.Proposed != stale.MemoryDigest || item.Conflict.Persisted == "" {
+		t.Fatalf("conflict = %+v, want both memories named", item.Conflict)
 	}
 }
 
@@ -265,6 +310,22 @@ func TestNoDataKeyIsItsOwnKey(t *testing.T) {
 	}
 	if other == noData {
 		t.Fatal("two state generations share one no-data key, so a content change would inherit the old memory")
+	}
+	// The two representations coexist for a rollout, so they must be two keys -
+	// and two keys the cleanup can tell apart with a glob, because that is how
+	// it enumerates the records it is allowed to delete.
+	hash, err := PlanNoDataHashKeyV2("alarmd", identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hash == noData {
+		t.Fatalf("both no-data representations live at %q; one would overwrite the other", hash)
+	}
+	if !strings.HasPrefix(noData, "alarmd:nodata:v2:") {
+		t.Fatalf("the whole-memory key is %q, which the cleanup pattern does not describe", noData)
+	}
+	if strings.HasPrefix(hash, "alarmd:nodata:v2:") {
+		t.Fatalf("the hash key %q matches the cleanup pattern; the cleanup would delete live memory", hash)
 	}
 }
 

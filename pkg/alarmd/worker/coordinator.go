@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 )
 
 type Ports struct {
@@ -53,12 +54,22 @@ type Ports struct {
 	// RECOVERY envelope, and the trigger counts that as not_configured, which
 	// on a production worker is the wiring having come apart.
 	OpenAlerts execution.OpenAlertCopy
+	// ExecutionEvidence records and reads how far an earlier attempt at a Slot
+	// got. It is the one optional port: nil keeps exactly the behaviour of
+	// builds before it existed, which is that a Slot finalized after its replay
+	// window reads as never evaluated. A deployment without it loses a reading,
+	// not a detection.
+	ExecutionEvidence execution.SlotExecutionEvidenceStore
 }
 
 type SlotExecutionCoordinator struct {
 	ports        Ports
 	budget       ProvisionalBudget
 	reservations processProvisionalReservations
+	// noDataSkips is how long each Plan's no-data detection has been skipping.
+	// One per process, because a streak is about rounds rather than about one
+	// Slot. See no_data_skip_streak.go.
+	noDataSkips noDataSkipStreaks
 }
 
 type processProvisionalReservations struct {
@@ -152,6 +163,13 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 	if err := request.Validate(); err != nil {
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: invalid execution request: %w", err)
 	}
+	ctx, applied := withAppliedPlans(ctx)
+	// On the way out, and only when this attempt wrote state and then could not
+	// write the Slot down. Best-effort by construction: the mark is what lets a
+	// later query-free completion say "this was evaluated", and failing to
+	// leave it costs that completion its evidence -- it must not also change
+	// what this attempt reports to the scheduler, which is about the Slot.
+	defer func() { coordinator.recordExecutionEvidence(ctx, request, applied) }()
 	ctx = observability.ContextWithTraceFields(ctx, observability.TraceFields{
 		QueryGroupKey:        string(request.Contract.Slot.QueryGroup),
 		SnapshotRevision:     string(request.Contract.SnapshotRevision),
@@ -168,7 +186,7 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 	beginStarted := time.Now()
 	begin, err := coordinator.ports.Progress.BeginSlot(ctx, execution.ProgressBeginRequest{
 		Identity:   execution.ProgressIdentity{QueryGroup: request.Contract.Slot.QueryGroup},
-		OwnerFence: request.OwnerFence, Projection: request.UnfinishedProjection(),
+		OwnerFence: request.OwnerFence, Projection: request.UnfinishedProjection(), ContentScope: request.ContentScope,
 	})
 	// Timed whichever way it went. A BeginSlot that fails says so; one that
 	// simply took twenty seconds used to say nothing at all, and an attempt
@@ -256,7 +274,7 @@ func (coordinator *SlotExecutionCoordinator) Execute(
 		var executeErr error
 		result, executeErr = coordinator.finalizePreparedWithGaps(
 			sequenceCtx, request, stream.header, stream.bindings, stream.state, stream.gaps, stream.evaluated,
-			stream.noDataMutations, stream.queryEvidence.availability(),
+			stream.noDataMutations, stream.queryEvidence.availability(), stream.seriesCensus,
 		)
 		return executeErr
 	})
@@ -316,9 +334,9 @@ func (coordinator *SlotExecutionCoordinator) executeQueryFreeFinalization(
 			// The mode was never what made reuse safe. queryFreeGapAlreadyProtects
 			// is, and it checks sufficiency directly: same Plan, same
 			// generation, same ApplyVersion, same schedule revision, a
-			// Plan-wide scope that is gapped with nothing observed against it
-			// and the same RequiredFullSlots. It is deliberately not relaxed
-			// here -- the gate above it is what moves.
+			// Plan-wide scope whose protection is at least as strong as the
+			// requested protection. The same Slot must not reset observations
+			// already committed by an earlier attempt.
 			true,
 		); err != nil {
 			return err
@@ -341,9 +359,16 @@ func (coordinator *SlotExecutionCoordinator) executeQueryFreeFinalization(
 		if finalization.Mode == execution.FinalizationGapSkipped {
 			completionKind = execution.CompletionGapSkipped
 		}
+		// What an earlier attempt at this Slot got to, read here because this
+		// is the last moment anything knows the frozen due set and the first
+		// moment the completion is being built. Both query-free modes ask: each
+		// of them can be the second half of an attempt that evaluated, alerted
+		// and then failed to write the Slot down.
+		evidence := coordinator.readExecutionEvidence(sequenceCtx, plans, request.Contract.Slot)
 		result, err = coordinator.commitProgress(sequenceCtx, request, execution.SlotCompletion{
 			Contract: request.Contract, Kind: completionKind,
 			Result: observability.ResultDegraded, ReasonCode: finalization.ReasonCode,
+			Evidence: evidence,
 		}, execution.CompletionAttribution{})
 		return err
 	})
@@ -495,7 +520,7 @@ func (coordinator *SlotExecutionCoordinator) protectActivatedPlanGaps(
 	request execution.SlotExecutionRequest,
 	reason execution.ReasonCode,
 	activations execution.PlanActivationResult,
-	reuseSufficientQueryFreeProtection bool,
+	reuseCommittedQueryFreeStatement bool,
 ) error {
 	return coordinator.ports.Sequencer.Sequence(
 		ctx,
@@ -506,7 +531,7 @@ func (coordinator *SlotExecutionCoordinator) protectActivatedPlanGaps(
 				request,
 				reason,
 				activations,
-				reuseSufficientQueryFreeProtection,
+				reuseCommittedQueryFreeStatement,
 			)
 			return err
 		},
@@ -574,7 +599,7 @@ func (coordinator *SlotExecutionCoordinator) ensureActivatedPlanGaps(
 	request execution.SlotExecutionRequest,
 	reason execution.ReasonCode,
 	activations execution.PlanActivationResult,
-	reuseSufficientQueryFreeProtection bool,
+	reuseCommittedQueryFreeStatement bool,
 ) (bool, error) {
 	owner := &streamedExecution{coordinator: coordinator, request: request}
 	defer owner.releaseProvisional()
@@ -635,6 +660,11 @@ func (coordinator *SlotExecutionCoordinator) ensureActivatedPlanGaps(
 			return false, err
 		}
 		plan := selected[item.Identity.Plan]
+		// Query-free finalization cannot replace a statement already committed
+		// by this Slot, including a tombstone left by successful gap recovery.
+		if reuseCommittedQueryFreeStatement && sameSlotGapCommitted(marker, item, plan) {
+			continue
+		}
 		mutation, err := execution.BuildPlanGapMutation(execution.PlanGapMutation{
 			Identity: item.Identity, ExpectedMarkerRevision: marker.MarkerRevision,
 			ApplyVersion: item.ApplyVersion, ScheduleRevision: item.ScheduleRevision,
@@ -655,9 +685,6 @@ func (coordinator *SlotExecutionCoordinator) ensureActivatedPlanGaps(
 					requireAlready[item.Identity] = struct{}{}
 					break
 				}
-				if reuseSufficientQueryFreeProtection && queryFreeGapAlreadyProtects(marker, item, plan) {
-					continue
-				}
 				return false, newGapGuardConflict(marker, item, mutation, reason, plan)
 			}
 		}
@@ -672,27 +699,14 @@ func (coordinator *SlotExecutionCoordinator) ensureActivatedPlanGaps(
 	return coordinator.applyActivatedPlanGaps(ctx, request.Operation, request.Contract, mutations, requireAlready)
 }
 
-func queryFreeGapAlreadyProtects(
-	marker execution.GapGuardSnapshot,
-	item execution.PlanGapLoadItem,
-	plan execution.ActivatedPlan,
-) bool {
-	// The existing Guard reason explains how recovery protection was established.
-	// Query-free finalization records SNAPSHOT_UNAVAILABLE in Progress without rewriting it.
-	if marker.Status != execution.GapFound || marker.Identity != item.Identity ||
-		plan.Identity != item.Identity.Plan || plan.StateGeneration != item.Identity.StateGeneration ||
-		plan.StateApplyEpoch != item.ApplyVersion.StateApplyEpoch || plan.ScheduleRevision != item.ScheduleRevision ||
-		execution.CompareApplyVersion(marker.PersistedApplyVersion, item.ApplyVersion) != execution.ApplyVersionEqual ||
-		marker.LastScheduleRevision != item.ScheduleRevision {
-		return false
-	}
-	for _, scope := range marker.Scopes {
-		if !scope.Scope.HasLevel {
-			return scope.Status == execution.GapStatusGapped && scope.ObservedFullSlots == 0 &&
-				scope.RequiredFullSlots == plan.RequiredFullSlots
-		}
-	}
-	return false
+// sameSlotGapCommitted fences reuse with the selected identity and versions.
+// A tombstone is this Slot's conclusion too, not active protection to strengthen.
+func sameSlotGapCommitted(marker execution.GapGuardSnapshot, item execution.PlanGapLoadItem, plan execution.ActivatedPlan) bool {
+	return (marker.Status == execution.GapFound || marker.Status == execution.GapClearedTombstone) && marker.Identity == item.Identity &&
+		plan.Identity == item.Identity.Plan && plan.StateGeneration == item.Identity.StateGeneration &&
+		plan.StateApplyEpoch == item.ApplyVersion.StateApplyEpoch && plan.ScheduleRevision == item.ScheduleRevision &&
+		execution.CompareApplyVersion(marker.PersistedApplyVersion, item.ApplyVersion) == execution.ApplyVersionEqual &&
+		marker.LastScheduleRevision == item.ScheduleRevision
 }
 
 func ensureGappedKind(marker execution.GapGuardSnapshot) (execution.GapMutationKind, error) {
@@ -719,6 +733,7 @@ func (coordinator *SlotExecutionCoordinator) applyActivatedPlanGaps(
 	contractRef execution.FrozenExecutionContractRef,
 	items []execution.PlanGapMutation,
 	requireAlready map[execution.PlanGapIdentity]struct{},
+	extensions ...map[execution.PlanGapIdentity]*observability.GapExtensionFacts,
 ) (bool, error) {
 	allAlready := len(items) > 0
 	err := coordinator.applyGapChunks(ctx, operation, contractRef, items, "activated Plan gap guard",
@@ -733,7 +748,7 @@ func (coordinator *SlotExecutionCoordinator) applyActivatedPlanGaps(
 				return fmt.Errorf("activated Plan gap guard did not complete: %s", item.Status)
 			}
 			return nil
-		})
+		}, extensions...)
 	if err != nil {
 		return false, fmt.Errorf("alarmd worker: apply activated Plan gap guard: %w", err)
 	}
@@ -751,11 +766,20 @@ func (coordinator *SlotExecutionCoordinator) applyGapChunks(
 	items []execution.PlanGapMutation,
 	subject string,
 	accept func(execution.GapGuardApplyItemResult) error,
+	extensionMaps ...map[execution.PlanGapIdentity]*observability.GapExtensionFacts,
 ) error {
 	started := time.Now()
 	var totals applyTotals
 	return forEachChunk(ctx, len(items), coordinator.applyChunkItems(coordinator.budget.MaxGapMutations), func(chunk applyChunk) error {
 		chunkItems := items[chunk.start:chunk.end]
+		var extensions []*observability.GapExtensionFacts
+		if len(extensionMaps) > 0 {
+			for _, item := range chunkItems {
+				if facts := extensionMaps[0][item.Identity]; facts != nil {
+					extensions = append(extensions, facts)
+				}
+			}
+		}
 		chunkStarted := time.Now()
 		result, err := coordinator.ports.GapGuard.ApplyGap(ctx, execution.GapGuardApplyRequest{Contract: contractRef, Items: chunkItems})
 		var reason execution.ReasonCode
@@ -780,7 +804,7 @@ func (coordinator *SlotExecutionCoordinator) applyGapChunks(
 		}
 		totals.keys += int64(len(chunkItems))
 		coordinator.observeChunk(ctx, observability.StageGapGuardCommitted, operation, chunkStarted, started, "", reason,
-			chunk, totals, observability.Counts{}, err)
+			chunk, totals, observability.Counts{}, err, nil, extensions...)
 		return err
 	})
 }
@@ -811,6 +835,9 @@ func (coordinator *SlotExecutionCoordinator) finalizePrepared(
 	return coordinator.finalizePreparedWithGaps(
 		ctx, request, header, bindings, loadedState, execution.GapLoadResult{}, evaluated, nil,
 		execution.QueryAvailabilityUnknown,
+		// The census a caller with no stream can state: the loaded views are
+		// the series it read, and it meant to evaluate exactly those.
+		seriesCensus{Due: len(loadedState.Items), Read: len(loadedState.Items)},
 	)
 }
 
@@ -824,6 +851,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	evaluated execution.EvaluationResult,
 	noDataMemory []execution.PlanNoDataMutation,
 	queryAvailability execution.QueryAvailability,
+	census seriesCensus,
 ) (execution.SlotExecutionResult, error) {
 	var err error
 	activationRequest := duePlanActivationRequest(request.Contract, header.DuePlans)
@@ -865,7 +893,16 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 	})
 	stateIndex := indexStatePreflight(loadedState)
 	var retryPendingReason execution.ReasonCode
-	var stateAdmissionTerminalReason execution.ReasonCode
+	// The first deterministic refusal that ends a Plan by name: a State
+	// admission that will not take its writes, or an output the sink will not
+	// write. Either finishes the Slot as TERMINAL with that name; the other
+	// Plans run, and Progress advances by the rule every terminal completion
+	// follows. Neither waits on anything, so neither is retried.
+	var deterministicTerminalReason execution.ReasonCode
+	// One reading per Slot rather than per Plan: the question is how many of
+	// this Slot's keys were read and not written, and a Plan is not a
+	// population anyone reads that against.
+	var frozenRenewals observability.FrozenStateRenewalFacts
 	for _, planResult := range planResults {
 		if _, changed := changedPlans[planResult.Plan]; changed {
 			continue
@@ -877,6 +914,12 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 		if err := coordinator.admit(ctx, request, due); err != nil {
 			return execution.SlotExecutionResult{}, err
 		}
+		// Gap statements commit independently from series State. This also
+		// covers retries whose query became partial or exceeded its budget,
+		// which never enter the evaluator.
+		planResult.GuardBeforeEvents = uncommittedGapMutations(loadedGaps, planResult.GuardBeforeEvents)
+		planResult.GuardAfterState = uncommittedGapMutations(loadedGaps, planResult.GuardAfterState)
+
 		if err := coordinator.applyGap(ctx, request.Operation, request.Contract, planResult.GuardBeforeEvents); err != nil {
 			return execution.SlotExecutionResult{}, err
 		}
@@ -893,6 +936,7 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 		// witnessed view and the mutation are both in hand, and the question
 		// only has meaning for mutations that are actually about to be written.
 		var writeReuse observability.StateWriteReuseFacts
+		var alreadyApplied observability.StateAlreadyAppliedFacts
 		for _, stateResult := range stateResults {
 			statePosition, found := stateIndex[stateResult.Mutation.Identity]
 			if !found {
@@ -900,8 +944,8 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 			}
 			view := loadedState.Items[statePosition]
 			started := time.Now()
-			disposition := execution.ClassifyStateMutation(view, stateResult.Mutation)
-			switch disposition {
+			classified := execution.ClassifyStateMutationDetail(view, stateResult.Mutation)
+			switch classified.Disposition {
 			case execution.StateProceed:
 				reuseClass, reuseReason := execution.ClassifyStateWriteReuse(view, stateResult.Mutation)
 				writeReuse.Record(
@@ -913,6 +957,8 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 				mutations = append(mutations, stateResult.Mutation)
 				eventsByState[stateResult.Mutation.Identity] = append([]contract.TriggerEventV1(nil), stateResult.Events...)
 			case execution.StateAlreadyApplied:
+				alreadyApplied.Record(observability.StateAlreadyAppliedAtPreflight, observability.StateAlreadyAppliedKind(classified.AlreadyApplied),
+					string(stateResult.Mutation.Identity.SeriesIdentityDigest), stateResult.Mutation.ExpectedBlobRevision, view.BlobRevision)
 				execution.CaptureSlotCoverage(ctx, func(c *execution.SlotCoverageCapture) {
 					if c.PriorStateApplied != nil {
 						c.PriorStateApplied()
@@ -921,8 +967,28 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 				coordinator.observe(ctx, observability.ComponentState, observability.StageMutationCompared, request.Operation, started, observability.ResultSuccess, observability.ReasonNone, nil)
 				continue
 			case execution.StateStaleVersion, execution.StateVersionConflict:
-				err = fmt.Errorf("state mutation preflight: %s", disposition)
-				coordinator.observe(ctx, observability.ComponentState, observability.StageMutationCompared, request.Operation, started, "", "", err)
+				// The refusal names itself and the line carries the name:
+				// the reason from the error, and for a conflict the kind
+				// with the two revisions compared, so the line does not read
+				// internal_unknown beside an error_type that already knew.
+				refusal := &StateConflictError{Stage: "state mutation preflight", Status: string(classified.Disposition)}
+				var conflicts *observability.StateVersionConflictFacts
+				if classified.Disposition == execution.StateVersionConflict {
+					refusal.Kind, refusal.ExpectedRevision, refusal.StoredRevision, refusal.VersionComparison =
+						classified.VersionConflict, stateResult.Mutation.ExpectedBlobRevision, view.BlobRevision, view.VersionComparison
+					conflicts = &observability.StateVersionConflictFacts{}
+					conflicts.Record(observability.StateAlreadyAppliedAtPreflight, observability.StateVersionConflictKind(classified.VersionConflict),
+						string(stateResult.Mutation.Identity.SeriesIdentityDigest), stateResult.Mutation.ExpectedBlobRevision, view.BlobRevision,
+						string(view.VersionComparison), false)
+				}
+				err = refusal
+				reason, _ := StateConflictReason(err)
+				coordinator.emitObservation(ctx, observability.Observation{
+					Component: observability.ComponentState, Stage: observability.StageMutationCompared,
+					Operation: observability.Operation(request.Operation), Direction: observability.DirectionInternal,
+					ReasonCode: observability.ReasonCode(reason), Duration: time.Since(started), Err: err,
+					StateVersionConflict: conflicts,
+				})
 				return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: %w", err)
 			default:
 				err = errors.New("unknown state mutation preflight result")
@@ -940,16 +1006,33 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 				StateWriteReuse: &facts,
 			})
 		}
+		if !alreadyApplied.Empty() {
+			coordinator.emitAlreadyApplied(ctx, request.Operation, alreadyApplied)
+		}
+
+		// The retention need travels with the Plan's mutations so the store
+		// sizes their TTL against the Plan frozen with this Slot. The frozen
+		// series below need it for the same reason and must get the same
+		// answer: a renewal computed from a different retention would give a
+		// key a different life from the one its write gave it.
+		frozen := frozenSeriesOf(planResult.Plan, loadedState, planResult.StateResults)
+		var retention []execution.StateRetentionRequirement
+		if len(mutations) > 0 || len(frozen) > 0 {
+			retention, err = execution.DeriveStateRetentionRequirement(due.CompiledPlan)
+			if err != nil {
+				return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: %w", err)
+			}
+		}
+		// Before the writes, not after. A renewal is about the keys this Plan
+		// is not writing, so nothing below can change what it decides -- but
+		// an apply that fails returns from this function, and the keys that
+		// were about to expire would then go one more Slot without anyone
+		// asking about them, on the Slot that already went wrong.
+		coordinator.renewFrozenState(ctx, request, retention, frozen, &frozenRenewals)
 
 		if len(mutations) > 0 {
 			if err := coordinator.admit(ctx, request, due); err != nil {
 				return execution.SlotExecutionResult{}, err
-			}
-			// The retention need travels with the Plan's mutations so the store
-			// sizes their TTL against the Plan frozen with this Slot.
-			retention, err := execution.DeriveStateRetentionRequirement(due.CompiledPlan)
-			if err != nil {
-				return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: %w", err)
 			}
 			rejected, encodedBytes, err := coordinator.admitState(ctx, request.Operation, request.Contract, retention, mutations)
 			if err != nil {
@@ -960,8 +1043,8 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 			events := make([]contract.TriggerEventV1, 0)
 			for index, mutation := range mutations {
 				if reason, terminal := rejected[mutation.Identity]; terminal {
-					if stateAdmissionTerminalReason == "" {
-						stateAdmissionTerminalReason = reason
+					if deterministicTerminalReason == "" {
+						deterministicTerminalReason = reason
 					}
 					continue
 				}
@@ -971,6 +1054,30 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 			}
 			sortTriggerEvents(events)
 			if err := coordinator.writeEvents(ctx, request.Operation, events); err != nil {
+				if reason, deferred := outputDeferralReason(err); deferred {
+					// The sink did not start the batch: the lease has less
+					// life left than one batch needs to land. Nothing is
+					// unknown and nothing is wrong with the content; the
+					// Plan waits, by that name, for the next renewal.
+					if retryPendingReason == "" {
+						retryPendingReason = reason
+					}
+					continue
+				}
+				if reason, rejected := outputRejectionReason(err); rejected {
+					// Decided in this process, from this Plan's own decisions
+					// or this deployment's own client: the same events meet
+					// the same refusal on every retry. This Plan's State is
+					// not applied, because its output was not written and
+					// State follows the ACK; the Slot completes by the name,
+					// the sibling Plans go on, and Progress moves past it.
+					// Retrying instead would report a Kafka that is up as
+					// down, every round, and commit nothing.
+					if deterministicTerminalReason == "" {
+						deterministicTerminalReason = reason
+					}
+					continue
+				}
 				if !isRetryableOutputDependency(err) {
 					return execution.SlotExecutionResult{}, err
 				}
@@ -983,10 +1090,15 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 				continue
 			}
 			if len(accepted) > 0 {
-				rejectedApply, err := coordinator.applyState(ctx, request.Operation, request.Contract, request.OwnerFence, retention, accepted, acceptedBytes)
+				rejectedApply, err := coordinator.applyState(ctx, request.Operation, request.Contract, request.OwnerFence, request.ContentScope, retention, accepted, acceptedBytes)
 				if err != nil {
 					return execution.SlotExecutionResult{}, err
 				}
+				// Counted after the write, not from the mutations built: a
+				// key whose write was refused is a key that did not have its
+				// life refreshed, and it belongs on the other side of the
+				// census.
+				census.Written += len(accepted) - len(rejectedApply)
 				for _, mutation := range accepted {
 					reason, terminal := rejectedApply[mutation.Identity]
 					if !terminal {
@@ -1006,6 +1118,8 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 			retryPendingReason = planResult.ReasonCode
 		}
 	}
+	frozenRenewals.RecordCensus(census.Due, census.Read, census.Written)
+	coordinator.observeFrozenStateRenewal(ctx, request.Operation, frozenRenewals)
 	// After every Plan's state and gap, inside the same sequenced scope. The
 	// memory only changes what the next round reports as a duration and which
 	// groups it expects, never whether this round fired - so it follows the
@@ -1044,10 +1158,10 @@ func (coordinator *SlotExecutionCoordinator) finalizePreparedWithGaps(
 		completion.Result = evaluated.Result
 		completion.ReasonCode = evaluated.ReasonCode
 	}
-	if stateAdmissionTerminalReason != "" {
+	if deterministicTerminalReason != "" {
 		completion.Kind = execution.CompletionTerminal
 		completion.Result = observability.ResultTerminal
-		completion.ReasonCode = stateAdmissionTerminalReason
+		completion.ReasonCode = deterministicTerminalReason
 		// A terminal Slot is no longer an unavailable one, so whatever the
 		// traversal was about to say is now about a completion that did not
 		// happen. deriveCompletion reports no cause for TERMINAL for the same
@@ -1136,7 +1250,7 @@ func (coordinator *SlotExecutionCoordinator) commitProgress(
 	progressRequest := execution.ProgressCommitRequest{
 		Identity:   execution.ProgressIdentity{QueryGroup: request.Contract.Slot.QueryGroup},
 		OwnerFence: request.OwnerFence, ExpectedNextSlot: request.ExpectedNextSlot, Completion: completion,
-		Projection: request.UnfinishedProjection(),
+		Projection: request.UnfinishedProjection(), ContentScope: request.ContentScope,
 	}
 	if err := progressRequest.Validate(); err != nil {
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: invalid progress commit: %w", err)
@@ -1154,6 +1268,10 @@ func (coordinator *SlotExecutionCoordinator) commitProgress(
 		coordinator.observe(ctx, observability.ComponentProgress, observability.StageProgressCommitted, request.Operation, started, "", progress.ReasonCode, err)
 		return execution.SlotExecutionResult{}, fmt.Errorf("alarmd worker: %w", err)
 	}
+	// The Slot is written down. Whatever this attempt applied is now recorded
+	// where it belongs, so it must leave no mark behind: the mark answers a
+	// question only an attempt that never got here can raise.
+	appliedPlansFrom(ctx).progressCommitted()
 	observationResult := observability.Result(observability.ResultSuccess)
 	observationReason := progress.ReasonCode
 	if completion.Kind == execution.CompletionGapSkipped || completion.Kind == execution.CompletionSnapshotUnavailable {
@@ -1166,7 +1284,8 @@ func (coordinator *SlotExecutionCoordinator) commitProgress(
 		}
 	})
 	coordinator.observeCommittedProgress(ctx, request.Operation, started, observationResult, observationReason,
-		string(completion.Kind), string(completionCause.Cause), string(completionCause.Reason), completionCause.Coverage)
+		string(completion.Kind), string(completionCause.Cause), string(completionCause.Reason), completionCause.Coverage,
+		completion.Evidence)
 	return execution.SlotExecutionResult{Completed: true, CompletionKind: completion.Kind, Result: completion.Result, ReasonCode: completion.ReasonCode}, nil
 }
 
@@ -1195,7 +1314,15 @@ func (coordinator *SlotExecutionCoordinator) admitPlan(
 			err = fmt.Errorf("admission denied: %s", result.ReasonCode)
 		}
 	}
-	coordinator.observe(ctx, observability.ComponentState, observability.StageSideEffectAdmission, request.Operation, started, "", result.ReasonCode, err)
+	// A fence refusal comes back as the store's typed error with no reason
+	// on the result; without naming it here the admission line -- and the
+	// fence_checked line relayed from it -- said internal_unknown for a
+	// stale fence, a Query Group assigned elsewhere and a moved scope alike.
+	reason := result.ReasonCode
+	if named, ok := ownership.RefusalReason(err); ok && reason == "" {
+		reason = execution.ReasonCode(named)
+	}
+	coordinator.observe(ctx, observability.ComponentState, observability.StageSideEffectAdmission, request.Operation, started, "", reason, err)
 	if err != nil {
 		return fmt.Errorf("alarmd worker: side-effect admission: %w", err)
 	}
@@ -1255,6 +1382,9 @@ func (coordinator *SlotExecutionCoordinator) writeEvents(
 		return nil
 	}
 	ctx = observability.ContextWithTraceFields(ctx, observability.TraceFields{StrategyID: events[0].PlanRef.StrategyID, BusinessID: events[0].BusinessID})
+	// The sink's own count of what it handed the broker, for the line: a
+	// batch the protocol has no message for is a success that wrote nothing.
+	ctx, outputWrite := observability.ContextWithOutputWriteReport(ctx)
 	started := time.Now()
 	err := coordinator.ports.Events.WriteBatch(ctx, events)
 	execution.CaptureSlotCoverage(ctx, func(c *execution.SlotCoverageCapture) {
@@ -1263,14 +1393,34 @@ func (coordinator *SlotExecutionCoordinator) writeEvents(
 		}
 	})
 	reason := execution.ReasonCode(observability.ReasonNone)
+	var rejection *observability.OutputRejectionFacts
 	if err != nil {
 		reason = execution.ReasonCode(observability.ReasonInternalUnknown)
 		if isRetryableOutputDependency(err) {
 			reason = execution.ReasonCode(contract.ReasonOutputACKUnknown)
 		}
+		// The sink's own refusal is named by the sink: the reason word is the
+		// observation's reason, and the sentence travels as facts beside it
+		// rather than being read back out of the error chain.
+		if named, rejected := outputRejectionReason(err); rejected {
+			reason = named
+			rejection = &observability.OutputRejectionFacts{Reason: string(named)}
+			var detailed outputRejectionDetail
+			if errors.As(err, &detailed) {
+				rejection.Detail = detailed.OutputRejectionDetail()
+			}
+		}
+		if deferral, deferred := outputDeferralReason(err); deferred {
+			reason = deferral
+		}
 	}
-	coordinator.observeWithCounts(ctx, observability.ComponentOutput, observability.StageEventACKed, operation, started,
-		"", reason, observability.Counts{Events: int64(len(events))}, err)
+	coordinator.emitObservation(ctx, observability.Observation{
+		Component: observability.ComponentOutput, Stage: observability.StageEventACKed,
+		Operation: observability.Operation(operation), Direction: observability.DirectionInternal,
+		ReasonCode: observability.ReasonCode(reason), Duration: time.Since(started),
+		Counts: observability.Counts{Events: int64(len(events))}, Err: err, OutputRejection: rejection,
+		OutputWrite: outputWrite(),
+	})
 	if err != nil {
 		return fmt.Errorf("alarmd worker: acknowledge events: %w", err)
 	}
@@ -1283,12 +1433,53 @@ func (coordinator *SlotExecutionCoordinator) writeEvents(
 	return nil
 }
 
+// outputRejectionDetail is the sentence the sink's refusal carries beside its
+// reason word -- the converter's or the client's, without identity. Declared
+// here rather than imported so the coordinator names the shape it reads and
+// not the package that produces it, the way outputRejectionReason does.
+type outputRejectionDetail interface {
+	OutputRejectionDetail() string
+}
+
 func isRetryableOutputDependency(err error) bool {
 	if err == nil {
 		return false
 	}
 	var dependencyErr interface{ RetryableOutputDependency() }
 	return errors.As(err, &dependencyErr) && dependencyErr != nil
+}
+
+// outputDeferralReason reports whether the sink declined to start the batch
+// because the Slot's lease has less life left than the batch needs
+// (kafka.OutputDeferredError), and the reason it names. Retryable by
+// construction -- the next renewal changes the answer -- but not an unknown
+// acknowledgement: no broker was asked.
+func outputDeferralReason(err error) (execution.ReasonCode, bool) {
+	if err == nil {
+		return "", false
+	}
+	var deferral interface{ OutputDeferralReason() string }
+	if !errors.As(err, &deferral) || deferral == nil || deferral.OutputDeferralReason() == "" {
+		return "", false
+	}
+	return execution.ReasonCode(deferral.OutputDeferralReason()), true
+}
+
+// outputRejectionReason reports whether the sink refused to write the events
+// on its own account -- the converter would not represent them, or the client
+// refused them before any broker -- and the reason it names for the Slot's
+// completion (kafka.OutputRejectedError). Such an error is checked before the
+// dependency marker on purpose: it never carries that marker, and a sink that
+// gave it both would have a reader retry a refusal.
+func outputRejectionReason(err error) (execution.ReasonCode, bool) {
+	if err == nil {
+		return "", false
+	}
+	var rejection interface{ OutputRejectionReason() string }
+	if !errors.As(err, &rejection) || rejection == nil || rejection.OutputRejectionReason() == "" {
+		return "", false
+	}
+	return execution.ReasonCode(rejection.OutputRejectionReason()), true
 }
 
 // admitState admits one Plan's mutations in Store-sized chunks. It returns the
@@ -1349,7 +1540,7 @@ func (coordinator *SlotExecutionCoordinator) admitState(
 		totals.keys += int64(len(chunkItems))
 		totals.bytes += chunkBytes
 		coordinator.observeChunk(ctx, observability.StageStateAdmission, operation, chunkStarted, started, observationResult, reason,
-			chunk, totals, observability.Counts{Keys: int64(len(chunkItems)), StateBytes: chunkBytes}, err)
+			chunk, totals, observability.Counts{Keys: int64(len(chunkItems)), StateBytes: chunkBytes}, err, nil)
 		return err
 	})
 	if err != nil {
@@ -1374,6 +1565,7 @@ func (coordinator *SlotExecutionCoordinator) applyState(
 	operation execution.Operation,
 	contractRef execution.FrozenExecutionContractRef,
 	fence execution.OwnerFence,
+	contentScope string,
 	retention []execution.StateRetentionRequirement,
 	mutations []execution.StateMutation,
 	encodedBytes []int64,
@@ -1383,18 +1575,24 @@ func (coordinator *SlotExecutionCoordinator) applyState(
 	useFence := ok && fence.Validate(contractRef) == nil
 	deterministic := make(map[execution.StateKeyIdentity]execution.ReasonCode)
 	var totals applyTotals
+	var alreadyApplied observability.StateAlreadyAppliedFacts
 	err := forEachChunk(ctx, len(mutations), coordinator.applyChunkItems(coordinator.budget.MaxStateMutations), func(chunk applyChunk) error {
 		chunkItems := mutations[chunk.start:chunk.end]
+		expectedRevisions := make(map[execution.StateKeyIdentity]uint64, len(chunkItems))
+		for _, mutation := range chunkItems {
+			expectedRevisions[mutation.Identity] = mutation.ExpectedBlobRevision
+		}
 		applyRequest := execution.StateApplyRequest{Contract: contractRef, Retention: retention, Items: chunkItems}
 		chunkStarted := time.Now()
 		var result execution.StateApplyResult
 		var err error
 		if useFence {
-			result, err = fenced.ApplyRuntimeFenced(ctx, applyRequest, execution.StateApplyFence{Fence: fence, At: chunkStarted})
+			result, err = fenced.ApplyRuntimeFenced(ctx, applyRequest, execution.StateApplyFence{Fence: fence, ContentScope: contentScope})
 		} else {
 			result, err = coordinator.ports.State.ApplyRuntime(ctx, applyRequest)
 		}
 		var reason execution.ReasonCode
+		var conflicts observability.StateVersionConflictFacts
 		rejected := 0
 		if err == nil {
 			if err = result.Validate(); err == nil {
@@ -1406,15 +1604,50 @@ func (coordinator *SlotExecutionCoordinator) applyState(
 			}
 			if err == nil {
 				reason = firstStateApplyFailureReason(result.Items)
+				var refusal *StateConflictError
 				for _, item := range result.Items {
 					switch item.Status {
-					case execution.StateApplied, execution.StateApplyAlreadyApplied:
+					case execution.StateApplied:
+						// This attempt wrote this Plan's state. Noted here
+						// because this is the only place that knows, and used
+						// only if the attempt then fails to write its Progress.
+						appliedPlansFrom(ctx).recordApplied(item.Identity.Plan)
+					case execution.StateApplyAlreadyApplied:
+						// The store says how it decided; a store that does not
+						// is read as stable, so a missing kind cannot pose as
+						// the one reading this family exists to catch.
+						kind := observability.StateAlreadyAppliedKind(item.AlreadyApplied)
+						if kind == "" {
+							kind = observability.StateAlreadyAppliedStable
+						}
+						alreadyApplied.Record(observability.StateAlreadyAppliedAtApply, kind,
+							string(item.Identity.SeriesIdentityDigest), expectedRevisions[item.Identity], item.StoredBlobRevision)
 					case execution.StateApplyDeterministicInvalid:
 						deterministic[item.Identity] = item.ReasonCode
 						rejected++
+					case execution.StateApplyStale, execution.StateApplyVersionConflict:
+						// Every refused item is counted by the comparison
+						// that refused it; the error carries the first one's
+						// values. A store that does not say which comparison
+						// counts as other, so a missing kind cannot pose as
+						// the one a reader would act on.
+						named := &StateConflictError{Stage: "state apply did not complete", Status: string(item.Status), RepeatedKey: item.RepeatedKey}
+						if item.Status == execution.StateApplyVersionConflict {
+							named.Kind, named.ExpectedRevision, named.StoredRevision, named.VersionComparison =
+								item.VersionConflict, expectedRevisions[item.Identity], item.StoredBlobRevision, item.StoredVersionComparison
+							conflicts.Record(observability.StateAlreadyAppliedAtApply, observability.StateVersionConflictKind(item.VersionConflict),
+								string(item.Identity.SeriesIdentityDigest), expectedRevisions[item.Identity], item.StoredBlobRevision,
+								string(item.StoredVersionComparison), item.RepeatedKey)
+						}
+						if refusal == nil {
+							refusal = named
+						}
 					default:
 						err = fmt.Errorf("state apply did not complete: %s", item.Status)
 					}
+				}
+				if err == nil && refusal != nil {
+					err = refusal
 				}
 			}
 		}
@@ -1428,16 +1661,52 @@ func (coordinator *SlotExecutionCoordinator) applyState(
 		if rejected > 0 {
 			observationResult = observability.ResultTerminal
 		}
+		// A version refusal is a typed error with a name of its own. The
+		// item's reason is empty for it -- the store names the status, not a
+		// reason -- so without this the chunk's line normalised to
+		// internal_unknown beside an error_type that already said which
+		// refusal it was, while the terminal line for the same round named it.
+		if named, ok := StateConflictReason(err); ok {
+			reason = named
+		}
+		// A fenced write the store refused is the store's typed error too: a
+		// stale fence, or a content scope that moved under the write. Named
+		// the same way, so the three numbers a scope move is verified by --
+		// old scope written before it took effect, old scope refused after,
+		// new scope written -- are readable from this line's reason.
+		if named, ok := ownership.RefusalReason(err); ok {
+			reason = execution.ReasonCode(named)
+		}
 		totals.keys += int64(len(chunkItems))
 		totals.bytes += chunkBytes
+		var conflictFacts *observability.StateVersionConflictFacts
+		if !conflicts.Empty() {
+			conflictFacts = &conflicts
+		}
 		coordinator.observeChunk(ctx, observability.StageStateApplied, operation, chunkStarted, started, observationResult, reason,
-			chunk, totals, observability.Counts{Keys: int64(len(chunkItems)), StateBytes: chunkBytes}, err)
+			chunk, totals, observability.Counts{Keys: int64(len(chunkItems)), StateBytes: chunkBytes}, err, conflictFacts)
 		return err
 	})
+	if !alreadyApplied.Empty() {
+		coordinator.emitAlreadyApplied(ctx, operation, alreadyApplied)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("alarmd worker: apply state: %w", err)
 	}
 	return deterministic, nil
+}
+
+// emitAlreadyApplied publishes one Slot's ALREADY_APPLIED decisions from one
+// site. It is published before the apply error is returned, so a chunk that
+// met its own landed write and a later chunk that failed are both on the
+// record for the round the retry follows.
+func (coordinator *SlotExecutionCoordinator) emitAlreadyApplied(ctx context.Context, operation execution.Operation, facts observability.StateAlreadyAppliedFacts) {
+	coordinator.emitObservation(ctx, observability.Observation{
+		Component: observability.ComponentState, Stage: observability.StageMutationCompared,
+		Result: observability.ResultSuccess, Operation: observability.Operation(operation),
+		Direction: observability.DirectionInternal, ReasonCode: observability.ReasonNone,
+		StateAlreadyApplied: &facts,
+	})
 }
 
 func firstStateAdmissionFailureReason(items []execution.StateAdmissionItemResult) execution.ReasonCode {
@@ -1696,7 +1965,7 @@ func indexStatePreflight(result execution.StatePreflightResult) map[execution.St
 }
 
 // Called only after this invocation received and validated ProgressCommitted.
-func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx context.Context, operation execution.Operation, started time.Time, result observability.Result, reason observability.ReasonCode, kind, cause, causeReason string, coverage execution.HistoryCoverage) {
+func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx context.Context, operation execution.Operation, started time.Time, result observability.Result, reason observability.ReasonCode, kind, cause, causeReason string, coverage execution.HistoryCoverage, evidence *execution.ExecutionEvidence) {
 	if reason == "" {
 		reason = observability.ReasonNone
 	}
@@ -1707,8 +1976,21 @@ func (coordinator *SlotExecutionCoordinator) observeCommittedProgress(ctx contex
 		Operation: observability.Operation(operation), Direction: observability.DirectionInternal,
 		Result: result, ReasonCode: reason, Duration: time.Since(started), ProgressCompletionKind: kind,
 		ProgressCompletionCause: cause, ProgressCompletionReason: causeReason,
-		HistoryCoverage: coverageFacts,
+		HistoryCoverage: coverageFacts, ExecutionEvidence: executionEvidenceFacts(evidence),
 	})
+}
+
+// executionEvidenceFacts carries what an earlier attempt got to onto the
+// completion's observation, in the same hand-copied shape as the coverage
+// counts above and for the same reason: a field computed where the decision is
+// made and dropped on the way out is this codebase's most frequent defect.
+func executionEvidenceFacts(evidence *execution.ExecutionEvidence) *observability.ExecutionEvidenceFacts {
+	if evidence == nil {
+		return nil
+	}
+	return &observability.ExecutionEvidenceFacts{
+		Kind: string(evidence.Kind), PlansApplied: evidence.PlansApplied, PlansTotal: evidence.PlansTotal,
+	}
 }
 
 // historyCoverageFacts carries the Slot's window counts onto the observation.
@@ -1802,4 +2084,17 @@ func storedStateLabel(status execution.StateLoadStatus) observability.StateWrite
 	default:
 		return observability.StateWriteReuseStoredOther
 	}
+}
+
+func gapExtensionFacts(marker execution.GapGuardSnapshot, mutation execution.PlanGapMutation) *observability.GapExtensionFacts {
+	facts := &observability.GapExtensionFacts{StrategyID: mutation.Identity.Plan.StrategyID, MarkerRevision: marker.MarkerRevision}
+	for _, scope := range marker.Scopes {
+		facts.Persisted = append(facts.Persisted, observability.GapScopeFacts{LevelID: scope.Scope.LevelID, HasLevel: scope.Scope.HasLevel,
+			Status: string(scope.Status), Reason: string(scope.ReasonCode), Required: scope.RequiredFullSlots, Observed: scope.ObservedFullSlots})
+	}
+	for _, scope := range mutation.Scopes {
+		facts.Proposed = append(facts.Proposed, observability.GapScopeFacts{LevelID: scope.Scope.LevelID, HasLevel: scope.Scope.HasLevel,
+			Kind: string(scope.Kind), Status: string(execution.GapStatusGapped), Reason: string(scope.ReasonCode), Required: scope.RequiredFullSlots})
+	}
+	return facts
 }

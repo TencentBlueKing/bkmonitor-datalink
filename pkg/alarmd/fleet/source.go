@@ -10,6 +10,7 @@
 package fleet
 
 import (
+	"fmt"
 	"sort"
 	"time"
 )
@@ -45,6 +46,18 @@ type SourceFacts struct {
 	// Absent age with a present marker is a marker this build could not read.
 	ChangeSignalPresent    bool   `json:"change_signal_present"`
 	ChangeSignalAgeSeconds *int64 `json:"change_signal_age_seconds,omitempty"`
+	// Plans is how many Plans the round's Catalog holds and RevisionedPlans
+	// how many of them carry an authoritative strategy revision -- the fact
+	// that decides, under the automatic protocol choice, whether any event
+	// can go out as the standard raw event. Zero revisioned on a source that
+	// lists strategies is a deployment whose standard output path is
+	// unreachable, and that has to be one number on the first screen rather
+	// than a gate counter that only ever says not gated. Both absent (zero)
+	// on a build before they existed; PlansKnown says the round reported
+	// them.
+	Plans           int  `json:"plans,omitempty"`
+	RevisionedPlans int  `json:"revisioned_plans,omitempty"`
+	PlansKnown      bool `json:"plans_known,omitempty"`
 }
 
 // WithheldGroup is one (disposition, reason) pair the round withheld
@@ -182,11 +195,13 @@ func (facts *SourceFacts) WithheldCount(dispositions ...string) int {
 }
 
 // Blocked says the source lists strategies and the round accepted none of
-// them: the whole source is being held at the configuration step. This is the
-// one reading the verdict acts on. A source with some strategies withheld is
-// a line on the first screen with its owner; a source with all of them
-// withheld is a deployment that detects nothing, whatever the badge would
-// otherwise say.
+// them: the whole source is being held at the configuration step. A source
+// with some strategies withheld is a line on the first screen with its
+// owner. Whether a source with all of them withheld degrades the verdict is
+// decided with what the deployment executes (sourceStandingOf): running
+// nothing, it detects nothing whatever the badge would otherwise say;
+// running its last accepted configuration, it is a cache that cannot update
+// the run, which is the configuration's standing and not the run's.
 func (facts *SourceFacts) Blocked() bool {
 	return facts != nil && facts.Listed > 0 && facts.Accepted == 0
 }
@@ -204,4 +219,139 @@ func (facts *SourceFacts) Groups(disposition string) []WithheldGroup {
 		}
 	}
 	return groups
+}
+
+// SourceStandingKind is what the source facts mean for this deployment, decided
+// against what it executes. The facts alone cannot say: a source accepting
+// nothing is a deployment detecting nothing when it also runs nothing, and a
+// deployment running its last accepted configuration when it runs something.
+type SourceStandingKind string
+
+const (
+	// SourceAccepting: the round accepted strategies. Some may be withheld;
+	// those are on the source lines with their owners.
+	SourceAccepting SourceStandingKind = "ACCEPTING"
+	// SourceNothingListed: the source lists no strategies. Nothing withheld,
+	// nothing to run; whether that is right is the platform's question.
+	SourceNothingListed SourceStandingKind = "NOTHING_LISTED"
+	// SourceUpdateUnusable: the source lists strategies, the round accepted
+	// none, and the deployment is running objects -- the configuration it
+	// last accepted. Detection continues; what this cache cannot do is
+	// update it. It is a fact about the configuration, not about the run,
+	// and it does not degrade the verdict: a cache that has not been written
+	// for hours proves only that nothing new was written, not that detection
+	// is unavailable. A change made at the source that fails to take effect
+	// because of it would be its own line, when something can see one.
+	SourceUpdateUnusable SourceStandingKind = "UPDATE_UNUSABLE"
+	// SourceBlocked: the source lists strategies, the round accepted none,
+	// and nothing is running. The deployment detects nothing while every
+	// clock above it reads fine; this is the one reading the verdict acts on.
+	SourceBlocked SourceStandingKind = "BLOCKED"
+)
+
+// SourceStandingKinds is the closed list, for the page's wording table.
+var SourceStandingKinds = []SourceStandingKind{SourceAccepting, SourceNothingListed, SourceUpdateUnusable, SourceBlocked}
+
+// SourceStanding is the source facts read against the run, with the two
+// sentences the first screen shows: what is running, and what the cache is.
+type SourceStanding struct {
+	Kind SourceStandingKind `json:"kind"`
+	// Listed and Accepted are the round's; Incomplete is how many of the
+	// withheld are SOURCE_INCOMPLETE -- documents without the identity the
+	// contract requires, or not there at all -- because that is the count
+	// the sentence names.
+	Listed     int `json:"listed"`
+	Accepted   int `json:"accepted"`
+	Incomplete int `json:"incomplete"`
+	// Executing is how many objects the deployment runs: the catalogue's
+	// count when it is known, or what the replicas own, whichever is more.
+	Executing int `json:"executing"`
+	// WriterAgeSeconds is how long since the source's writer moved its
+	// change marker, when it has one. Evidence of when something was last
+	// written, and only that: it is carried beside the verdict, not into it.
+	WriterAgeSeconds *int64 `json:"writer_age_seconds,omitempty"`
+	// Run is the sentence about detection, Cache the sentence about the
+	// configuration source. Composed here so the page and any other reader
+	// say the same thing.
+	Run   string `json:"run"`
+	Cache string `json:"cache"`
+}
+
+// sourceStandingOf decides the standing from the newest round and what the
+// deployment executes.
+func sourceStandingOf(source *SourceFacts, executing int) *SourceStanding {
+	if source == nil {
+		return nil
+	}
+	standing := &SourceStanding{Listed: source.Listed, Accepted: source.Accepted,
+		Incomplete: source.WithheldCount(dispositionSourceIncomplete), Executing: executing,
+		WriterAgeSeconds: source.ChangeSignalAgeSeconds}
+	switch {
+	case source.Listed == 0:
+		standing.Kind = SourceNothingListed
+	case source.Accepted > 0:
+		standing.Kind = SourceAccepting
+	case executing > 0:
+		standing.Kind = SourceUpdateUnusable
+	default:
+		standing.Kind = SourceBlocked
+	}
+	standing.Run, standing.Cache = sourceStandingLines(standing)
+	return standing
+}
+
+// sourceStandingLines composes the two sentences. The cache sentence names
+// the count and what is wrong with it in the reader's words, and says what
+// the cache cannot do -- not what detection is doing, which is the run
+// sentence's and is decided from the run.
+func sourceStandingLines(standing *SourceStanding) (run, cache string) {
+	switch standing.Kind {
+	case SourceNothingListed:
+		return fmt.Sprintf("%d 个对象正在检测", standing.Executing), "策略缓存里没有列出任何策略"
+	case SourceAccepting:
+		cache = fmt.Sprintf("策略缓存列出 %d 条，可用 %d 条", standing.Listed, standing.Accepted)
+		if withheld := standing.Listed - standing.Accepted; withheld > 0 {
+			cache += fmt.Sprintf("，扣住 %d 条（原因见检查项）", withheld)
+		}
+		return fmt.Sprintf("%d 个对象正在检测", standing.Executing), cache
+	case SourceUpdateUnusable:
+		return fmt.Sprintf("%d 个对象按已生效的配置继续检测", standing.Executing),
+			fmt.Sprintf("当前缓存有 %d 条%s，不能用于更新配置%s", standing.Listed, sourceUnusableWord(standing), writerAgeWords(standing.WriterAgeSeconds))
+	default:
+		return "没有任何策略在检测",
+			fmt.Sprintf("策略缓存列出 %d 条%s，一条都不能用%s", standing.Listed, sourceUnusableWord(standing), writerAgeWords(standing.WriterAgeSeconds))
+	}
+}
+
+// sourceUnusableWord says what is wrong with the listed strategies when none
+// was accepted, as a phrase that follows the count. All of them incomplete is
+// the one shape a reader has met and is named outright; a mixture counts the
+// incomplete and the rest apart, because the rest are on other lines with
+// other owners; none incomplete sends the reader to those lines.
+func sourceUnusableWord(standing *SourceStanding) string {
+	switch {
+	case standing.Incomplete == standing.Listed:
+		return "身份不完整"
+	case standing.Incomplete > 0:
+		return fmt.Sprintf("，其中 %d 条身份不完整、%d 条因别的原因被扣（原因见检查项）", standing.Incomplete, standing.Listed-standing.Incomplete)
+	default:
+		return "，全部因别的原因被扣（原因见检查项）"
+	}
+}
+
+// writerAgeWords is the writer's marker as evidence and nothing more: how long
+// since anything was written, which does not by itself say what is running.
+func writerAgeWords(age *int64) string {
+	if age == nil {
+		return ""
+	}
+	seconds := *age
+	switch {
+	case seconds >= 2*3600:
+		return fmt.Sprintf("；缓存最近一次写入在 %.1f 小时前（只说明没有新写入）", float64(seconds)/3600)
+	case seconds >= 120:
+		return fmt.Sprintf("；缓存最近一次写入在 %d 分钟前", seconds/60)
+	default:
+		return fmt.Sprintf("；缓存最近一次写入在 %d 秒前", seconds)
+	}
 }

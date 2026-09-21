@@ -255,6 +255,8 @@ func (session scopeTestSession) ValidateCurrent(context.Context, time.Time) (exe
 	return session.fence, nil
 }
 
+func (session scopeTestSession) Deadline() time.Time { return time.Time{} }
+
 func (session scopeTestSession) ValidateCurrentWithAssignment(
 	context.Context,
 	time.Time,
@@ -302,6 +304,8 @@ func (group *schedulerRunnerQueryGroup) NextReadyAt() time.Time { return group.r
 func (group *schedulerRunnerQueryGroup) DueBound() scheduler.RunnerDueBound {
 	return group.runner.DueBound()
 }
+
+func (group *schedulerRunnerQueryGroup) NextDeadline() time.Time { return group.runner.NextDeadline() }
 
 func (*schedulerRunnerQueryGroup) MaintainLease(ctx context.Context, _, _ time.Duration) error {
 	<-ctx.Done()

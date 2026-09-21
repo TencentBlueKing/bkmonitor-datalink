@@ -36,18 +36,23 @@ const (
 	ValidationScopeLevel  ValidationScope = "LEVEL"
 	ValidationScopeRecord ValidationScope = "RECORD"
 
-	ReasonMalformedJSON                    = "MALFORMED_JSON"
-	ReasonSchemaMajorUnsupported           = "SCHEMA_MAJOR_UNSUPPORTED"
-	ReasonRequiredFeatureUnsupported       = "REQUIRED_FEATURE_UNSUPPORTED"
-	ReasonTenantInvalid                    = "TENANT_INVALID"
-	ReasonPayloadDigestMismatch            = "PAYLOAD_DIGEST_MISMATCH"
-	ReasonPlanSetConflict                  = "PLAN_SET_CONFLICT"
-	ReasonSelectorOrdinalInvalid           = "SELECTOR_ORDINAL_INVALID"
-	ReasonMessageBudgetExceeded            = "MESSAGE_BUDGET_EXCEEDED"
-	ReasonPlanInvalid                      = "PLAN_INVALID"
-	ReasonPlanDuplicateLevelID             = "PLAN_DUPLICATE_LEVEL_ID"
-	ReasonPlanBudgetExceeded               = "PLAN_BUDGET_EXCEEDED"
-	ReasonNoDataConfigInvalid              = "NO_DATA_CONFIG_INVALID"
+	ReasonMalformedJSON              = "MALFORMED_JSON"
+	ReasonSchemaMajorUnsupported     = "SCHEMA_MAJOR_UNSUPPORTED"
+	ReasonRequiredFeatureUnsupported = "REQUIRED_FEATURE_UNSUPPORTED"
+	ReasonTenantInvalid              = "TENANT_INVALID"
+	ReasonPayloadDigestMismatch      = "PAYLOAD_DIGEST_MISMATCH"
+	ReasonPlanSetConflict            = "PLAN_SET_CONFLICT"
+	ReasonSelectorOrdinalInvalid     = "SELECTOR_ORDINAL_INVALID"
+	ReasonMessageBudgetExceeded      = "MESSAGE_BUDGET_EXCEEDED"
+	ReasonPlanInvalid                = "PLAN_INVALID"
+	ReasonPlanDuplicateLevelID       = "PLAN_DUPLICATE_LEVEL_ID"
+	ReasonPlanBudgetExceeded         = "PLAN_BUDGET_EXCEEDED"
+	ReasonNoDataConfigInvalid        = "NO_DATA_CONFIG_INVALID"
+	// ReasonNoDataRosterUnsupported names an item whose target shape this
+	// build cannot turn into an expected set. Like the one above it, it
+	// suspends that Plan's no-data detection and nothing else: the strategy's
+	// thresholds are compiled and detected either way.
+	ReasonNoDataRosterUnsupported          = "NO_DATA_ROSTER_UNSUPPORTED"
 	ReasonBackendCapabilityMissing         = "BACKEND_CAPABILITY_MISSING"
 	ReasonProjectionInvalid                = "PROJECTION_INVALID"
 	ReasonSelectorInvalid                  = "SELECTOR_INVALID"
@@ -65,9 +70,13 @@ const (
 	ReasonRequiredValueNormalizationFailed = "REQUIRED_VALUE_NORMALIZATION_FAILED"
 	ReasonConfigDrift                      = "CONFIG_DRIFT"
 	ReasonQueryPartial                     = "QUERY_PARTIAL"
-	ReasonQueryTimeout                     = "QUERY_TIMEOUT"
-	ReasonQueryUnavailable                 = "QUERY_UNAVAILABLE"
-	ReasonReadinessBudgetInvalid           = "READINESS_BUDGET_INVALID"
+	// ReasonQueryEmpty names a dependency query that completed and returned
+	// no rows at all. The query succeeded, so the binding carries no reason of
+	// its own; this is the one the guard for the Level it starves carries.
+	ReasonQueryEmpty             = "QUERY_EMPTY"
+	ReasonQueryTimeout           = "QUERY_TIMEOUT"
+	ReasonQueryUnavailable       = "QUERY_UNAVAILABLE"
+	ReasonReadinessBudgetInvalid = "READINESS_BUDGET_INVALID"
 	// ReasonQueryNotReady names a Slot deferred because the window it would
 	// query is not in yet. It is the normal pacing of every Slot, and the
 	// highest-volume observation alarmd makes, so it needs its own name:
@@ -107,6 +116,10 @@ const (
 	// left the attempt reading as an unclassified internal error, on every
 	// round, for a Query Group that would never get past it.
 	ReasonGapGuardConflict = "GAP_GUARD_CONFLICT"
+	// State version refusals are observation-only names; they do not change
+	// the state store's status contract or the scheduler's retry decision.
+	ReasonStateVersionConflict = "STATE_VERSION_CONFLICT"
+	ReasonStateStaleVersion    = "STATE_STALE_VERSION"
 	// ReasonSnapshotRetentionInsufficient names a Plan whose recovery
 	// contract needs a Snapshot kept longer than this deployment retains one.
 	// The retention is the deployment's capacity and does not follow a Plan, so
@@ -119,11 +132,43 @@ const (
 	ReasonResourceHardStop             = "RESOURCE_HARD_STOP"
 	ReasonSlotBudgetExceeded           = "SLOT_BUDGET_EXCEEDED"
 	ReasonOutputACKUnknown             = "OUTPUT_ACK_UNKNOWN"
-	ReasonStateWriteRetryable          = "STATE_WRITE_RETRYABLE"
-	ReasonStateCorrupt                 = "STATE_CORRUPT"
-	ReasonStateSchemaUnsupported       = "STATE_SCHEMA_UNSUPPORTED"
-	ReasonStateBudgetExceeded          = "STATE_BUDGET_EXCEEDED"
-	ReasonAuditDrop                    = "AUDIT_DROP"
+	// ReasonOutputConversionRejected: the output converter would not write a
+	// decision (no frozen strategy revision, no series identity, no primary
+	// level, a business identity that is not a number, ...). Decided in this
+	// process from the decision's own content, so the same decision meets the
+	// same refusal on every round: the Plan completes terminally by this name,
+	// its sibling Plans run, and nothing waits on a broker.
+	ReasonOutputConversionRejected = "OUTPUT_CONVERSION_REJECTED"
+	// ReasonOutputClientRejected: the Kafka client refused a message before any
+	// broker saw it -- a protocol version too old for the record's headers, a
+	// message over the client's own size cap. This deployment's wiring, not
+	// the broker's weather: a retry sends the same message to the same client
+	// and gets the same answer.
+	ReasonOutputClientRejected = "OUTPUT_CLIENT_REJECTED"
+	// ReasonOutputLeaseExpiring: an output batch was not started because the
+	// Slot's lease has less life left than one batch needs to land
+	// (decision-016 per-batch admission). Nothing was sent; the Plan waits,
+	// and the Slot retries after the next renewal or ends with the lease.
+	// Named apart from OUTPUT_ACK_UNKNOWN because no broker was asked.
+	ReasonOutputLeaseExpiring    = "OUTPUT_LEASE_EXPIRING"
+	ReasonStateWriteRetryable    = "STATE_WRITE_RETRYABLE"
+	ReasonStateCorrupt           = "STATE_CORRUPT"
+	ReasonStateSchemaUnsupported = "STATE_SCHEMA_UNSUPPORTED"
+	ReasonStateBudgetExceeded    = "STATE_BUDGET_EXCEEDED"
+	ReasonAuditDrop              = "AUDIT_DROP"
+	// Ownership refusals, observation-only. The ownership store answers a
+	// fence check, a lease acquire or renew, or a fenced write with one of
+	// four typed errors; until these names existed every one of them was
+	// observed as internal_unknown, and which of the four a deployment was
+	// seeing -- a fence gone stale, a Query Group assigned elsewhere, a lease
+	// held by another worker, or a content scope that moved under a write --
+	// could only be told apart by reading the error sentence off a rate-limited
+	// log line. They are names for the observation; the store's error values
+	// and the callers' retry decisions do not change.
+	ReasonOwnershipStaleFence = "OWNERSHIP_STALE_FENCE"
+	ReasonOwnershipNotDesired = "OWNERSHIP_NOT_DESIRED"
+	ReasonOwnershipLeaseBusy  = "OWNERSHIP_LEASE_BUSY"
+	ReasonContentScopeMoved   = "CONTENT_SCOPE_MOVED"
 
 	CompatibilityModeLegacyGroupOfOne = "LEGACY_GROUP_OF_ONE"
 
@@ -267,7 +312,16 @@ type EvaluationPlanV2 struct {
 	// when the Plan was built and frozen with it so a retried Slot cannot
 	// change format between attempts. Empty means the pre-choice behaviour:
 	// the frozen revision decides.
-	WireFormat         string `json:"wire_format,omitempty"`
+	WireFormat string `json:"wire_format,omitempty"`
+	// SignalType is what this Plan's events are observed from -- metric, log
+	// or event -- decided from the item's query configs when the Plan is built
+	// and frozen with it, for the same reason the wire format is: the sink has
+	// no Plan in hand and cannot work it out from a record.
+	//
+	// Empty means this build could not name it: a data type it has no mapping
+	// for, or an item whose configs disagree. The event then omits the field
+	// rather than carrying a guess.
+	SignalType         string `json:"signal_type,omitempty"`
 	TerminalReasonCode string `json:"terminal_reason_code,omitempty"`
 }
 
@@ -287,17 +341,35 @@ func (plan EvaluationPlanV2) PublishesCompatibleProtocol() bool {
 	return plan.StrategyRef.SnapshotRevision == 0
 }
 
-// The formats an event can be published as. They name bytes on a topic, not a
-// deployment's intent - the configuration's three words resolve into these.
+// The two external formats plus the historical spelling retained for reading
+// frozen Plans. TriggerEvent is only an internal result, never an output format.
 const (
 	// WireFormatPythonCompatible is the event the Python alert builder reads.
 	WireFormatPythonCompatible = "python_compatible"
-	// WireFormatTriggerEvent is alarmd's own decision event.
+	// WireFormatTriggerEvent is a historical frozen-Plan value. Readers resolve
+	// it to standard raw output; new Plans never select it.
 	WireFormatTriggerEvent = "trigger_event_v1"
 	// WireFormatStandardRawEvent is the standard raw event the alert pipeline
 	// consumes.
 	WireFormatStandardRawEvent = "standard_raw_event"
 )
+
+// ResolveOutputWireFormat interprets historical frozen Plans without changing
+// their serialized identity. Evaluation (including recovery gating) and the
+// output sink use the same rule. Unknown formats remain unknown for rejection.
+func ResolveOutputWireFormat(format string, snapshotRevision int64) string {
+	switch format {
+	case WireFormatTriggerEvent:
+		return WireFormatStandardRawEvent
+	case "":
+		if snapshotRevision > 0 {
+			return WireFormatStandardRawEvent
+		}
+		return WireFormatPythonCompatible
+	default:
+		return format
+	}
+}
 
 // MarshalJSON keeps the 2.0 wire union flat: a producer emits either the
 // executable Plan body or the bounded terminal Plan identity, never both.
@@ -546,7 +618,10 @@ type TriggerEventV1 struct {
 	// WireFormat is the format this event is published as, taken from the Plan
 	// it was evaluated for. It travels beside the event rather than inside it:
 	// a consumer reads one format and never has to be told which.
-	WireFormat              string               `json:"-"`
+	WireFormat string `json:"-"`
+	// SignalType travels beside WireFormat and for the same reason: the sink
+	// has no Plan in hand. Empty means this build could not name it.
+	SignalType              string               `json:"-"`
 	Schema                  Schema               `json:"schema"`
 	RequiredFeatures        []string             `json:"required_features"`
 	EventID                 string               `json:"event_id"`

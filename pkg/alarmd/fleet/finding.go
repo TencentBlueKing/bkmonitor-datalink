@@ -90,6 +90,23 @@ type Finding struct {
 // whatever its last round said; the window counts say more about a window
 // reason than the word does; and only then are the codes read.
 func checkOf(anomaly Anomaly, schedule Schedule) (check Check, under bool, unclassified bool) {
+	// A code the table files as this deployment's own defect is the line,
+	// whatever else the row says: a gap guard in conflict with itself stops
+	// the Slot, so the object also stalls, and filing it as stalled first
+	// sent the reader to "restart the replica" for a defect that repeats
+	// until fixed -- and flickered between the two lines every time the
+	// object changed owner.
+	if check, decided := codeVerdict(anomaly); decided && check == CheckDefect {
+		return CheckDefect, true, false
+	}
+	// This deployment's own client refusing to write the round's events is
+	// the same kind of line: a refusal the client decided, repeated every
+	// round until the configuration or the converter changes. Read from the
+	// failure's words, because the code it arrives under is the one the
+	// broker not answering also arrives under.
+	if _, kind, isOutput := outputFailureOf(anomaly); isOutput && kind == OutputFailureClientRejected && failureThisRound(anomaly) {
+		return CheckDefect, true, false
+	}
 	switch {
 	case anomaly.Stalled:
 		return CheckRoundsStalled, true, false
@@ -97,6 +114,10 @@ func checkOf(anomaly Anomaly, schedule Schedule) (check Check, under bool, uncla
 		return CheckSlotsOverdue, true, false
 	case anomaly.Kind == KindNoData:
 		return CheckNoDataPersistent, true, false
+	case anomaly.Kind == KindEmptyEveryRound:
+		return CheckEmptyEveryRound, true, false
+	case anomaly.Kind == KindNoDataMemoryRefused:
+		return CheckNoDataMemoryRefused, true, false
 	case anomaly.Kind == KindQueryCooldown:
 		// Cooldown is what this deployment does about a backend that keeps not
 		// answering; the line is the backend's, unless the backend answered and
@@ -106,35 +127,56 @@ func checkOf(anomaly Anomaly, schedule Schedule) (check Check, under bool, uncla
 		}
 		return CheckBackendNotAnswering, true, false
 	}
-	if anomaly.CauseReason == "HISTORY_WARMING" || anomaly.CauseReason == "HISTORY_GAPPED" {
-		if check, under, decided := windowCheck(anomaly.CauseReason, anomaly.Coverage); decided {
-			return check, under, false
+	// The window counts and the guard describe the last round that
+	// completed. A round that failed since is read by its own facts, below:
+	// an object whose last completion was warming and whose latest round
+	// failed is a failed round, and the page follows the latest round even
+	// when the object alternates -- one round failing, one completing
+	// degraded -- because that is what the object is doing.
+	if !failedExecution(anomaly.ReasonCode) {
+		if anomaly.CauseReason == "HISTORY_WARMING" || anomaly.CauseReason == "HISTORY_GAPPED" {
+			if check, under, decided := windowCheck(anomaly.CauseReason, anomaly.Coverage); decided {
+				return check, under, false
+			}
+		}
+		// A reason carried by a durable history guard is not this round's
+		// finding. A Level judged WARMING or GAPPED under some trigger -- a
+		// configuration change, a gap marker -- reports that trigger's reason on
+		// every UNKNOWN outcome until the guard releases, and the counts beside
+		// it stay live. Read through the code table, CONFIG_DRIFT under a guard
+		// became "配置状态说不清" for six strategies whose configuration had not
+		// changed and whose snapshot, query and schedule revisions were identical
+		// before and after two of them recovered. The question such a row poses
+		// is why the guard has not released, which is a window question: it goes
+		// under the undecided window, folded on the trigger and on whether the
+		// live window is still short or already full.
+		if held, line := guardHeld(anomaly); held {
+			if !line {
+				// The round a guard converges on: full window, first round of
+				// it. Not a line, and not a configuration question either.
+				return "", false, false
+			}
+			return CheckWindowUndecided, true, false
 		}
 	}
-	// A reason carried by a durable history guard is not this round's
-	// finding. A Level judged WARMING or GAPPED under some trigger -- a
-	// configuration change, a gap marker -- reports that trigger's reason on
-	// every UNKNOWN outcome until the guard releases, and the counts beside
-	// it stay live. Read through the code table, CONFIG_DRIFT under a guard
-	// became "配置状态说不清" for six strategies whose configuration had not
-	// changed and whose snapshot, query and schedule revisions were identical
-	// before and after two of them recovered. The question such a row poses
-	// is why the guard has not released, which is a window question: it goes
-	// under the undecided window, folded on the trigger and on whether the
-	// live window is still short or already full.
-	if held, line := guardHeld(anomaly); held {
-		if !line {
-			// The round a guard converges on: full window, first round of
-			// it. Not a line, and not a configuration question either.
+	if check, decided := codeVerdict(anomaly); decided {
+		if check == "" {
 			return "", false, false
 		}
-		return CheckWindowUndecided, true, false
+		return check, true, false
 	}
-	failureCode := ""
-	if anomaly.Failure != nil {
-		failureCode = anomaly.Failure.Code
+	if restoredWithoutEvidence(anomaly) {
+		return CheckObservationGap, true, false
 	}
-	for _, code := range []string{anomaly.CauseReason, string(anomaly.Cause), failureCode, anomaly.ReasonCode} {
+	return CheckDefect, true, true
+}
+
+// codeVerdict is what the code table says about the row's codes, read in
+// the order they are trusted: the cause's reason, the cause, the query
+// failure's code, the round's outcome. Decided with an empty check is a
+// code the table calls normal. Not decided is a row no code reaches.
+func codeVerdict(anomaly Anomaly) (check Check, decided bool) {
+	for _, code := range decisionCodes(anomaly) {
 		if code == "" {
 			continue
 		}
@@ -143,17 +185,76 @@ func checkOf(anomaly Anomaly, schedule Schedule) (check Check, under bool, uncla
 			continue
 		}
 		if verdict.normal {
-			return "", false, false
+			return "", true
 		}
 		if verdict.check == CheckBackendNotAnswering && queryRejected(anomaly.Failure) {
-			return refusalCheck(anomaly.Failure), true, false
+			return refusalCheck(anomaly.Failure), true
 		}
-		return verdict.check, true, false
+		if verdict.check == CheckDetectionAbandoned && fullyExecuted(anomaly) {
+			// The Slot was given up for bookkeeping, not for detection: an
+			// earlier attempt had executed every Plan.
+			return CheckBookkeepingAbandoned, true
+		}
+		return verdict.check, true
 	}
-	if restoredWithoutEvidence(anomaly) {
-		return CheckObservationGap, true, false
+	return "", false
+}
+
+// fullyExecuted reports whether the row's evidence says an earlier attempt
+// executed every Plan of the Slot the row was decided on: the latest
+// completion's evidence for an object row, the span's for a record.
+func fullyExecuted(anomaly Anomaly) bool {
+	if anomaly.Skip != nil {
+		return anomaly.Skip.FullyApplied()
 	}
-	return CheckDefect, true, true
+	return anomaly.ExecutionEvidence != nil && anomaly.ExecutionEvidence.Reading == routedetail.EvidenceReadingFullyApplied
+}
+
+// decisionCodes is the row's codes in the order they are trusted, shared by
+// the check and by the reading so the line and its stage cannot come from
+// two different codes. For a row whose latest round completed: the cause's
+// reason, the cause, the query failure's code, the round's outcome. For a
+// row whose latest round failed, only this round's facts: the failure's
+// code when the failure named this round, then the outcome. The cause
+// describes the last round that completed and is not this round's -- read
+// cause first, a row whose last completion was skipped past the replay
+// window and whose rounds since were refused by a gap guard sat under
+// "检测已停" while the refusal repeated every thirty seconds; and one whose
+// rounds since failed with an error nobody named was still explained by the
+// skip, with the error's words beside it. A failed round with no name of
+// its own is unclassified, which is what it is. A failure kept from an
+// earlier Slot is not this round's either and gets no say.
+func decisionCodes(anomaly Anomaly) []string {
+	failureCode := ""
+	if anomaly.Failure != nil {
+		failureCode = anomaly.Failure.Code
+	}
+	if failedExecution(anomaly.ReasonCode) {
+		if failureThisRound(anomaly) {
+			return []string{failureCode, anomaly.ReasonCode}
+		}
+		return []string{anomaly.ReasonCode}
+	}
+	return []string{anomaly.CauseReason, string(anomaly.Cause), failureCode, anomaly.ReasonCode}
+}
+
+// failureThisRound says the row's query failure belongs to its latest round:
+// by Slot when both are known, by clock against the latest round's when the
+// failure is stamped but a Slot is not. A failure with neither -- a row
+// from a publisher before either field -- is read as it always was, as the
+// round's: the fields exist to exclude a failure the evidence places in
+// another round, not to exclude one the evidence says nothing about.
+func failureThisRound(anomaly Anomaly) bool {
+	if anomaly.Failure == nil {
+		return false
+	}
+	if anomaly.RoundSlot != 0 && anomaly.Failure.Slot != 0 {
+		return anomaly.Failure.Slot == anomaly.RoundSlot
+	}
+	if anomaly.Failure.At != nil {
+		return !anomaly.Failure.At.Before(anomaly.ReasonLastAt)
+	}
+	return true
 }
 
 // gapRestoredWithoutCause is the fold, within the observation gap, of objects
@@ -336,6 +437,20 @@ var codeChecks = map[string]verdict{
 	// deployment's store is keeping what it is given.
 	"ACTIVATION_MISSING": lands(CheckDependencyDown),
 
+	// This deployment refused its own output before a broker was asked: the
+	// converter would not write the decision, or the Kafka client would not
+	// send the record on the protocol it is built with. Both are decided from
+	// this process's own content and wiring, and a retry decides them the
+	// same way; the Plan completes by the name each round until the strategy
+	// or the deployment changes.
+	"OUTPUT_CONVERSION_REJECTED": lands(CheckDefect),
+	"OUTPUT_CLIENT_REJECTED":     lands(CheckDefect),
+	// An output batch held back because the lease it would run under is
+	// about to end: one round of it is the mechanism working at a handover
+	// or a renewal hiccup; rounds of it mean the lease is not being renewed,
+	// which is the store or the leader, not the content.
+	"OUTPUT_LEASE_EXPIRING": lands(CheckDependencyDown),
+
 	// What this deployment persisted cannot be read back as written. Retrying
 	// reads the same bytes.
 	"STATE_CORRUPT":            lands(CheckDefect),
@@ -353,6 +468,43 @@ var codeChecks = map[string]verdict{
 	// refusal carries both values, which is what makes it actionable rather
 	// than something to watch.
 	"GAP_GUARD_CONFLICT": lands(CheckDefect),
+	// The state this deployment persisted for a series moved under the Slot
+	// that was writing it: the version the Slot read is no longer the version
+	// in the store (STATE_VERSION_CONFLICT, the compare-and-set refused), or
+	// the Slot's own version is behind the one already persisted
+	// (STATE_STALE_VERSION). Both sides of the comparison are this system's
+	// writes -- a concurrent Slot on the same series, a batch applied in part,
+	// a previous owner's tail -- and retrying reads the same two versions
+	// again. Named at the terminal by the scheduler; before it was, the
+	// rounds reached here as internal_unknown and the row carried no code.
+	"STATE_VERSION_CONFLICT": lands(CheckDefect),
+	"STATE_STALE_VERSION":    lands(CheckDefect),
+	// The ownership store refused this deployment's own worker: its fence
+	// went stale, the assignment names another worker, another owner holds
+	// the lease, or the content scope moved under a fenced write. Each is a
+	// mechanism of this system's -- a handover, a lease expiring, a scope
+	// change taking effect -- and one round of any of them is that mechanism
+	// working. An object does not reach a line on one round: it takes
+	// DefaultDegradedRounds in a row, and a worker that keeps being refused
+	// for an object it keeps trying is this deployment's ownership loop
+	// disagreeing with its own store. Nobody outside can help with that, so
+	// it is ours, whichever of the four words it wears.
+	//
+	// One of the four has a lawful run: a lease held by an owner that went
+	// away without releasing stays BUSY to the next desired worker until the
+	// lease's TTL runs out, so a clean pod kill is up to LeaseTTL of BUSY in a
+	// row, and on a ten-second object three rounds is exactly that TTL. Today
+	// no producer puts any of the four on a Slot's terminal reason -- they are
+	// on the admission, lease and state lines and the refusals counter -- so
+	// this row is not reachable; the first producer to make it reachable
+	// (the content-scope work) has to bring the lease TTL onto the snapshot
+	// and gate this line on the reason having held longer than TTL plus one
+	// period, not on a round count. The mapping is kept so the code is
+	// decided rather than absorbed by the default.
+	"OWNERSHIP_STALE_FENCE": lands(CheckDefect),
+	"OWNERSHIP_NOT_DESIRED": lands(CheckDefect),
+	"OWNERSHIP_LEASE_BUSY":  lands(CheckDefect),
+	"CONTENT_SCOPE_MOVED":   lands(CheckDefect),
 	// A Plan this deployment cannot serve: it asks for a Snapshot kept longer
 	// than the retention, or leaves its own queries no time to run. Neither is
 	// weather and neither clears itself -- somebody changes the strategy or
@@ -391,9 +543,13 @@ var codeChecks = map[string]verdict{
 	"LEVEL_BUDGET_EXCEEDED": lands(CheckPlanUnevaluable),
 
 	// The backend was asked and did not answer usefully.
-	"QUERY_TIMEOUT":        lands(CheckBackendNotAnswering),
-	"QUERY_UNAVAILABLE":    lands(CheckBackendNotAnswering),
-	"QUERY_PARTIAL":        lands(CheckBackendNotAnswering),
+	"QUERY_TIMEOUT":     lands(CheckBackendNotAnswering),
+	"QUERY_UNAVAILABLE": lands(CheckBackendNotAnswering),
+	"QUERY_PARTIAL":     lands(CheckBackendNotAnswering),
+	// The backend answered and the dependency holds no rows: the data the
+	// algorithm compares against is missing, the same reading a series with
+	// no history point gets.
+	"QUERY_EMPTY":          lands(CheckSeriesDataMissing),
 	"PROVIDER_UNAVAILABLE": lands(CheckBackendNotAnswering),
 	"QUERY_NOT_READY":      lands(CheckBackendNotAnswering),
 	"LATE_OUT_OF_WINDOW":   lands(CheckBackendNotAnswering),
@@ -415,12 +571,21 @@ var codeChecks = map[string]verdict{
 	"SCHEMA_MAJOR_UNSUPPORTED":              lands(CheckPlanUnevaluable),
 	"PLAN_INVALID":                          lands(CheckPlanUnevaluable),
 	"PLAN_DUPLICATE_LEVEL_ID":               lands(CheckPlanUnevaluable),
-	// The strategy turned no-data detection on and its settings produce no
-	// decision. It is the strategy's, like the rest of this group: nothing about
-	// this deployment changes the answer, and the whole Plan is withheld rather
-	// than run with its thresholds and no absence detection - a Plan half-wired
-	// that way would answer "is this strategy covered" with neither yes nor no.
-	"NO_DATA_CONFIG_INVALID": lands(CheckPlanUnevaluable),
+	// The strategy turned no-data detection on and this build cannot compile
+	// the settings, or cannot derive the expected set the target implies.
+	//
+	// Under no line. It used to land here because the whole Plan was withheld,
+	// and the comment argued that a half-wired Plan answers "is this strategy
+	// covered" with neither yes nor no. The ruling went the other way and the
+	// argument with it: the strategy is evaluated, its thresholds detect, and
+	// only its absence detection is suspended. Putting it under "the Plan
+	// cannot be evaluated" would file a working strategy as a broken one, and
+	// the half that is off is not invisible -- it is counted in
+	// catalog_no_data_plans under its own suspended source and listed by
+	// strategy, which is the coverage question this belongs to rather than a
+	// first-screen line.
+	"NO_DATA_CONFIG_INVALID":     isNormal,
+	"NO_DATA_ROSTER_UNSUPPORTED": isNormal,
 	// The definition's input projection, not this deployment's state
 	// projection: the compiler emits it for a plan whose input_projection is
 	// invalid, and the catalog files it as CONFIG_REJECTED beside PLAN_INVALID.

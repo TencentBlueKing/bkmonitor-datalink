@@ -234,3 +234,51 @@ func TestRedisCallHookRecordsPerClientHealth(t *testing.T) {
 		t.Error("a nil recorder reads as known")
 	}
 }
+
+// NOSCRIPT is the server saying it has not got the script and the client
+// sending it: not a failure of anything, and it sat in LastFailure on a live
+// dependency table for as long as nothing else failed. It has its own count
+// and clock, the failure record does not move, and the reply is matched on
+// the server's word alone -- an error that merely mentions the word elsewhere
+// is a failure like any other.
+func TestRedisCallHookKeepsScriptCacheMissesApartFromFailures(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	hook := recorder.RedisHook("source")
+	moment := time.Unix(1000, 0)
+	hook.now = func() time.Time { return moment }
+	ctx, _ := hook.BeforeProcess(context.Background(), nil)
+	miss := redis.NewCmd(ctx, "evalsha", "deadbeef", 1, "k")
+	miss.SetErr(errors.New("NOSCRIPT No matching script. Please use EVAL."))
+	_ = hook.AfterProcess(ctx, miss)
+	health, _ := recorder.RedisClientHealth("source")
+	if health.ScriptCacheMisses != 1 || !health.LastScriptCacheMissAt.Equal(moment) {
+		t.Fatalf("after a NOSCRIPT reply: misses %d at %s, want 1 at %s", health.ScriptCacheMisses, health.LastScriptCacheMissAt, moment)
+	}
+	if !health.LastFailureAt.IsZero() || health.LastFailure != "" || !health.LastSuccessAt.IsZero() {
+		t.Fatalf("a NOSCRIPT reply moved the failure or success record: %+v", health)
+	}
+	// A second miss, later, in a pipeline: the count and the clock move.
+	moment = moment.Add(7 * time.Second)
+	pctx, _ := hook.BeforeProcessPipeline(context.Background(), nil)
+	batch := []redis.Cmder{redis.NewStringCmd(pctx, "get", "a"), redis.NewCmd(pctx, "evalsha", "deadbeef", 1, "k")}
+	batch[1].SetErr(errors.New("NOSCRIPT No matching script. Please use EVAL."))
+	_ = hook.AfterProcessPipeline(pctx, batch)
+	health, _ = recorder.RedisClientHealth("source")
+	if health.ScriptCacheMisses != 2 || !health.LastScriptCacheMissAt.Equal(moment) || !health.LastFailureAt.IsZero() {
+		t.Fatalf("after a second miss in a pipeline: %+v, want 2 misses at %s and no failure", health, moment)
+	}
+	// A failure whose text mentions the word elsewhere is a failure.
+	moment = moment.Add(time.Second)
+	other := redis.NewCmd(ctx, "evalsha", "deadbeef", 1, "k")
+	other.SetErr(errors.New("ERR Error running script: NOSCRIPT is not what this is"))
+	_ = hook.AfterProcess(ctx, other)
+	health, _ = recorder.RedisClientHealth("source")
+	if health.ScriptCacheMisses != 2 || !health.LastFailureAt.Equal(moment) || health.LastFailure == "" {
+		t.Fatalf("an error mentioning the word was read as a cache miss: %+v", health)
+	}
+	// The failure counter still counts the error reply: it counts replies,
+	// and the dependency table is where the two are told apart.
+	if got := testutil.ToFloat64(recorder.phaseTwo.redisCalls.failures.WithLabelValues("source", "evalsha", "false")); got != 2 {
+		t.Errorf("evalsha failures = %v, want 2: the miss and the error, both error replies", got)
+	}
+}

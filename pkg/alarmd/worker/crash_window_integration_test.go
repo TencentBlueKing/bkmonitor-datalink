@@ -8,14 +8,13 @@ package worker_test
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -34,7 +33,6 @@ import (
 )
 
 const (
-	g3aAcceptanceFlag      = "ALARMD_G3A_CRASH_E2E"
 	g3aChildFlag           = "ALARMD_G3A_CRASH_CHILD"
 	g3aChildStage          = "ALARMD_G3A_CRASH_STAGE"
 	g3aChildRedisAddress   = "ALARMD_G3A_REDIS_ADDRESS"
@@ -50,6 +48,21 @@ const (
 	crashAfterStateApply = "AFTER_STATE_APPLY"
 	crashComplete        = "COMPLETE"
 	crashExitCode        = 86
+
+	// g3aProduceAPIKey is Kafka's Produce API key and
+	// g3aProduceVersionWithHeaders the first Produce version that carries a
+	// record batch, and with it record headers. Written here rather than
+	// imported from the kafka package so this case states the protocol it
+	// requires of its broker in its own words: a test that took the number
+	// from the code under test would agree with it however it changed.
+	g3aProduceAPIKey             int16 = 0
+	g3aProduceVersionWithHeaders int16 = 3
+
+	// g3aAlertIDPrefix marks the line the child prints the alert identity on.
+	// The parent cannot read it off the broker -- sarama hands back no
+	// records -- so the two runs report theirs and the parent compares them,
+	// which is two processes agreeing rather than one vouching for itself.
+	g3aAlertIDPrefix = "g3a-alert-id: "
 )
 
 type crashWindowCase struct {
@@ -60,12 +73,30 @@ type crashWindowCase struct {
 	wantEventsAfter  int
 }
 
-func TestG3ACrashWindowsWithRealRedisKafkaSubprocess(t *testing.T) {
-	if os.Getenv(g3aAcceptanceFlag) != "1" {
-		t.Skip("set ALARMD_G3A_CRASH_E2E=1 to run the real Redis/Kafka process-level acceptance test")
-	}
+// TestG3ACrashWindowsWithRealRedisAndSubprocess kills a real child process at
+// each of the three points between a Slot's three durable writes and reads
+// what survived.
+//
+// It runs by default. It used to be gated behind ALARMD_G3A_CRASH_E2E=1
+// because it needed a Kafka distribution, a ZooKeeper and a whitespace-free
+// JDK on the machine; the gate meant the case had never run outside the one
+// session that wrote it, and three separate breakages had accumulated in it
+// unnoticed. What these windows prove is alarmd's own write ordering and what
+// is visible after each step -- not broker replication -- so the broker is now
+// sarama's MockBroker in this process: a real Kafka protocol server, speaking
+// the version it negotiates, reached over a real socket by a real child
+// process. Redis stays a real redis-server and the crash stays a real
+// os.Exit of a real OS process, because those two are what the windows are
+// about.
+//
+// The one thing the in-process broker cannot do is hand back the bytes it was
+// given: sarama keeps a ProduceRequest's records unexported and its
+// MockResponse interface cannot be implemented outside the package, so the
+// ledger here counts produce requests rather than decoding them. What makes
+// that count readable as events is pinned at the other end, in
+// g3aCrashEventSink: a batch that is not exactly one event fails the child.
+func TestG3ACrashWindowsWithRealRedisAndSubprocess(t *testing.T) {
 	redisAddress := startG3ARedis(t)
-	kafkaBroker := startG3AKafka(t)
 
 	tests := []crashWindowCase{
 		{name: "event ACK before", stage: crashBeforeEventACK, wantEventsBefore: 0, wantEventsAfter: 1},
@@ -74,7 +105,7 @@ func TestG3ACrashWindowsWithRealRedisKafkaSubprocess(t *testing.T) {
 	}
 	for index, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			runG3ACrashWindow(t, redisAddress, kafkaBroker, index, test)
+			runG3ACrashWindow(t, redisAddress, index, test)
 		})
 	}
 }
@@ -93,7 +124,7 @@ func TestG3ACrashWindowChild(t *testing.T) {
 	stateStore, stateBackend := openG3AStateStore(t, os.Getenv(g3aChildRedisAddress), os.Getenv(g3aChildStatePrefix))
 	t.Cleanup(func() { _ = stateBackend.Close() })
 	progressStore := openG3AProgressStore(t, ownerStore, os.Getenv(g3aChildProgressPrefix))
-	admitter, err := ownership.NewAdmitter(ownerStore, g3aActivePlanReader{}, time.Now)
+	admitter, err := ownership.NewAdmitter(ownerStore, g3aActivePlanReader{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,11 +165,14 @@ func TestG3ACrashWindowChild(t *testing.T) {
 	}
 }
 
-func runG3ACrashWindow(t *testing.T, redisAddress, kafkaBroker string, index int, test crashWindowCase) {
+func runG3ACrashWindow(t *testing.T, redisAddress string, index int, test crashWindowCase) {
 	t.Helper()
 	unique := fmt.Sprintf("%d-%d", time.Now().UnixNano(), index)
 	topic := "alarmd-g3a-crash-" + unique
-	createG3AKafkaTopic(t, kafkaBroker, topic)
+	// One broker per window, so what it recorded is this window's and a count
+	// taken before the crash cannot be another case's leftovers.
+	broker := startG3AMockBroker(t, topic)
+	kafkaBroker := broker.Addr()
 	ownerPrefix := "alarmd-g3a-owner-" + unique
 	statePrefix := "alarmd-g3a-state-" + unique
 	progressPrefix := "alarmd-g3a-progress-" + unique
@@ -160,15 +194,24 @@ func runG3ACrashWindow(t *testing.T, redisAddress, kafkaBroker string, index int
 		t.Fatalf("publish old assignment: %v", err)
 	}
 	oldLease, err := ownerStore.Acquire(context.Background(), frozenContract().Slot.QueryGroup,
-		assignment.DesiredWorkerID, now, 30*time.Second)
+		assignment.DesiredWorkerID, now, g3aCrashedLeaseTTL)
 	if err != nil {
 		t.Fatalf("acquire old owner: %v", err)
 	}
 
-	runG3AChild(t, redisAddress, kafkaBroker, ownerPrefix, statePrefix, progressPrefix, topic, test.stage, oldLease.Fence, true)
-	beforeEvents := readG3AKafkaEvents(t, kafkaBroker, topic)
-	if len(beforeEvents) != test.wantEventsBefore {
-		t.Fatalf("events after crash=%d, want=%d", len(beforeEvents), test.wantEventsBefore)
+	crashOutput := runG3AChild(t, redisAddress, kafkaBroker, ownerPrefix, statePrefix, progressPrefix,
+		topic, test.stage, oldLease.Fence, true)
+	beforeEvents := g3aEventsAtBroker(t, broker)
+	if beforeEvents != test.wantEventsBefore {
+		t.Fatalf("events after crash=%d, want=%d", beforeEvents, test.wantEventsBefore)
+	}
+	// The child said it sent this many and the broker says it received that
+	// many. Two independent counts of one population, which is what keeps a
+	// silent refusal from reading as a crash that happened earlier than it
+	// did: before this the sink was rejecting every event and the window
+	// still reported the number it expected.
+	if sent := len(g3aAlertIDsIn(crashOutput)); sent != beforeEvents {
+		t.Fatalf("the child reported sending %d events and the broker received %d", sent, beforeEvents)
 	}
 	beforeState := loadG3AState(t, stateStore)
 	if test.wantStateBefore {
@@ -176,10 +219,7 @@ func runG3ACrashWindow(t *testing.T, redisAddress, kafkaBroker string, index int
 	} else if beforeState.Status != execution.StateMissingWarming {
 		t.Fatalf("state after crash=%+v, want missing", beforeState)
 	}
-	beforeProgress, err := progressStore.LoadProgress(context.Background(), execution.ProgressIdentity{QueryGroup: frozenContract().Slot.QueryGroup})
-	if err != nil || beforeProgress.Status != execution.ProgressMissing {
-		t.Fatalf("Progress after crash=(%+v, %v), want missing", beforeProgress, err)
-	}
+	assertG3ACrashLeftTheSlotUnfinished(t, progressStore)
 
 	newWorkerID := "worker-new-" + unique
 	assignment, err = ownerStore.PublishAssignment(context.Background(), authority, ownership.AssignmentDecision{
@@ -190,23 +230,28 @@ func runG3ACrashWindow(t *testing.T, redisAddress, kafkaBroker string, index int
 	if err != nil {
 		t.Fatalf("publish takeover assignment: %v", err)
 	}
-	newLease, err := ownerStore.Acquire(context.Background(), frozenContract().Slot.QueryGroup,
-		newWorkerID, oldLease.Deadline.Add(time.Millisecond), 2*time.Minute)
-	if err != nil {
-		t.Fatalf("acquire new owner: %v", err)
-	}
+	newLease := acquireG3AAfterLeaseLapse(t, ownerStore, newWorkerID)
 	assertG3AStaleProgressCannotFillCrashGap(t, progressStore, oldLease.Fence)
-	runG3AChild(t, redisAddress, kafkaBroker, ownerPrefix, statePrefix, progressPrefix, topic, crashComplete, newLease.Fence, false)
+	replayOutput := runG3AChild(t, redisAddress, kafkaBroker, ownerPrefix, statePrefix, progressPrefix,
+		topic, crashComplete, newLease.Fence, false)
 
-	afterEvents := readG3AKafkaEvents(t, kafkaBroker, topic)
-	if len(afterEvents) != test.wantEventsAfter {
-		t.Fatalf("events after restart=%d, want=%d", len(afterEvents), test.wantEventsAfter)
+	afterEvents := g3aEventsAtBroker(t, broker)
+	if afterEvents != test.wantEventsAfter {
+		t.Fatalf("events after restart=%d, want=%d", afterEvents, test.wantEventsAfter)
 	}
-	wantEvent := validTriggerEvent()
-	for eventIndex, event := range afterEvents {
-		if event.EventID != wantEvent.EventID || event.EventSemanticDigest != wantEvent.EventSemanticDigest {
-			t.Fatalf("event[%d] identity=(%q,%q), want stable (%q,%q)", eventIndex,
-				event.EventID, event.EventSemanticDigest, wantEvent.EventID, wantEvent.EventSemanticDigest)
+	// A replayed Slot must produce the same alert, not a second one: alert_id
+	// is what the consumer deduplicates on, so a restart that minted a fresh
+	// one would turn every crash into a duplicate alert downstream. The two
+	// values come from two different processes.
+	identities := append(g3aAlertIDsIn(crashOutput), g3aAlertIDsIn(replayOutput)...)
+	if len(identities) != afterEvents {
+		t.Fatalf("the two runs reported %d alert identities and the broker received %d events",
+			len(identities), afterEvents)
+	}
+	for position, identity := range identities {
+		if identity == "" || identity != identities[0] {
+			t.Fatalf("alert identity %d = %q, want the same alert the run before the crash minted (%q)",
+				position, identity, identities[0])
 		}
 	}
 	afterState := loadG3AState(t, stateStore)
@@ -231,7 +276,7 @@ func runG3AChild(
 	redisAddress, kafkaBroker, ownerPrefix, statePrefix, progressPrefix, topic, stage string,
 	fence execution.OwnerFence,
 	wantCrash bool,
-) {
+) string {
 	t.Helper()
 	testBinary, err := os.Executable()
 	if err != nil {
@@ -264,11 +309,30 @@ func runG3AChild(
 		if !errors.As(runErr, &exitErr) || exitErr.ExitCode() != crashExitCode {
 			t.Fatalf("child stage %q exit=(%v), want code %d\n%s", stage, runErr, crashExitCode, output)
 		}
-		return
+		return string(output)
 	}
 	if runErr != nil {
 		t.Fatalf("child stage %q failed: %v\n%s", stage, runErr, output)
 	}
+	return string(output)
+}
+
+// g3aAlertIDsIn is every alert identity a child run reported handing the sink.
+//
+// The identity is read from the child's own output because the broker cannot
+// give it back. That is worth exactly what it is: not proof that the bytes
+// carried it -- linkdoutput/converter_test.go proves alert_id is the series
+// identity -- but proof that two separate processes, one before a crash and
+// one after it, minted the same one for the same Slot.
+func g3aAlertIDsIn(output string) []string {
+	identities := make([]string, 0, 2)
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if after, found := strings.CutPrefix(line, g3aAlertIDPrefix); found {
+			identities = append(identities, after)
+		}
+	}
+	return identities
 }
 
 type g3aCrashEventSink struct {
@@ -276,11 +340,64 @@ type g3aCrashEventSink struct {
 	stage    string
 }
 
+// WriteBatch crashes at the stage under test, and before that gives each event
+// the routing a real Plan carries.
+//
+// The shared worker fixture builds events with no wire format and no snapshot
+// reference, which ResolveOutputWireFormat reads as the Python-compatible
+// protocol -- a protocol whose branch then refuses the event, because the
+// fixture has no frozen compatibility context either. Nothing would reach the
+// broker at all, and the counts this whole case is built on would be
+// unreachable. Stamping the routing here rather than in the shared fixture
+// keeps it out of the dozens of other cases that use the same events and do
+// not send them anywhere.
+//
+// The format is the standard raw event, which is what a Plan carrying a
+// snapshot revision resolves to and what the alert pipeline actually
+// consumes. The Python-compatible encoding is not re-proved here: its message
+// shape is pinned by cases in kafka/trigger_event_sink_test.go that run by
+// default, and what these three windows are about is how many messages
+// survive a crash, not which encoder produced them.
 func (sink *g3aCrashEventSink) WriteBatch(ctx context.Context, events []contract.TriggerEventV1) error {
+	// One event per batch is what lets the parent read its produce-request
+	// count as an event count: the broker can say how many requests arrived
+	// and not how many records each carried, so the second number is pinned
+	// here, where it is known. A fixture that grew a second event would
+	// otherwise leave the parent quietly counting batches and calling them
+	// events.
+	if len(events) != 1 {
+		fmt.Fprintf(os.Stderr, "g3a crash fixture wrote a batch of %d events; the parent counts produce "+
+			"requests and reads them as events, which only holds at one\n", len(events))
+		os.Exit(crashExitCode + 1)
+	}
 	if sink.stage == crashBeforeEventACK {
 		os.Exit(crashExitCode)
 	}
-	if err := sink.delegate.WriteBatch(ctx, events); err != nil {
+	routed := make([]contract.TriggerEventV1, len(events))
+	for index := range events {
+		routed[index] = events[index]
+		routed[index].WireFormat = contract.WireFormatStandardRawEvent
+		routed[index].StrategyRef = &contract.StrategySnapshotRef{
+			TenantID: events[index].TenantID, BusinessID: 2, StrategyID: 1001, Revision: 7,
+		}
+		// The series identity, which the standard converter turns into
+		// alert_id -- the field the alert pipeline deduplicates on. Without
+		// it the converter refuses the event outright ("a decision without a
+		// series identity has no alert identity"), which is how this case
+		// spent its whole life sending nothing while reporting a crash stage
+		// that never fired. Derived from the event's own identity so a
+		// replayed Slot mints the same alert rather than a second one; the
+		// parent compares the two runs' values.
+		routed[index].DedupeMD5 = fmt.Sprintf("%x", md5.Sum([]byte(events[index].EventID)))
+	}
+	fmt.Fprintf(os.Stderr, "%s%s\n", g3aAlertIDPrefix, routed[0].DedupeMD5)
+	if err := sink.delegate.WriteBatch(ctx, routed); err != nil {
+		// Said out loud because the Coordinator does not re-raise it: a write
+		// the sink refuses becomes a Plan outcome, the Slot still completes,
+		// and the parent then sees only "the crash stage never fired". That
+		// is how this case sat broken -- the sink was refusing every event
+		// and the failure it produced named something else entirely.
+		fmt.Fprintf(os.Stderr, "g3a crash fixture: the real sink refused the batch: %v\n", err)
 		return err
 	}
 	if sink.stage == crashAfterEventACK {
@@ -424,6 +541,80 @@ func assertG3AAppliedState(t *testing.T, got execution.RuntimeStateView) {
 	}
 }
 
+// assertG3ACrashLeftTheSlotUnfinished is what "nothing was committed" looks
+// like in the Progress record after a crash mid-Slot.
+//
+// Not an absent record. The Slot begins its Progress before it does anything
+// with a side effect, so a crash leaves the attempt written down: the record
+// exists, it names this Slot as unfinished, and its cursor has not moved past
+// the Slot nor recorded any completion. The case used to require the record
+// to be missing, which stopped being true once a Slot began its Progress --
+// and because the whole case was behind an environment flag, the assertion
+// went on describing a version of the worker that no longer existed. It is
+// also the stronger statement: a crash that had committed something would
+// satisfy "missing" only by losing the record entirely.
+// g3aCrashedLeaseTTL is how long the owner that crashes holds its lease.
+//
+// Short because the next owner has to wait it out for real. Long enough that
+// the child, which takes a fraction of it, never has a fenced write refused
+// for a lease that expired underneath it.
+//
+// It is shorter than the per-batch output admission needs (decision-016 batch
+// 2 wants OutputAdmissionMargin + OutputBatchBound, eleven seconds, left on
+// the lease before it starts a batch). That costs nothing here because the
+// child builds its Coordinator from ports and carries no LeaseAuthority on
+// the context, so the sink admits as it always did. Wiring a Session into
+// this fixture would make every batch deferred instead of sent, and the
+// windows would go quiet rather than red -- so that change has to raise this
+// TTL above the admission window with it.
+const g3aCrashedLeaseTTL = 2 * time.Second
+
+// acquireG3AAfterLeaseLapse takes the Query Group over the way a survivor
+// does after a crash: by waiting out the dead owner's lease.
+//
+// A crashed owner releases nothing, so the lease stays held until it expires.
+// Expiry is judged on Redis's own clock now (decision-016 batch 1b removed
+// the caller's clock from the fence), so this can no longer be staged by
+// handing the store an instant past the old deadline -- the store would look
+// at its own clock and refuse, which it did. Waiting is what is left, and it
+// is also what actually happens in production.
+func acquireG3AAfterLeaseLapse(t *testing.T, store *ownership.RedisStore, workerID string) ownership.Lease {
+	t.Helper()
+	deadline := time.Now().Add(g3aCrashedLeaseTTL + 10*time.Second)
+	for {
+		lease, err := store.Acquire(context.Background(), frozenContract().Slot.QueryGroup,
+			workerID, time.Now(), 2*time.Minute)
+		if err == nil {
+			return lease
+		}
+		if !errors.Is(err, ownership.ErrLeaseBusy) {
+			t.Fatalf("acquire new owner: %v", err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the crashed owner's lease was still held %s after its TTL", g3aCrashedLeaseTTL)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func assertG3ACrashLeftTheSlotUnfinished(t *testing.T, store *progress.Store) {
+	t.Helper()
+	loaded, err := store.LoadProgress(context.Background(),
+		execution.ProgressIdentity{QueryGroup: frozenContract().Slot.QueryGroup})
+	if err != nil || loaded.Status != execution.ProgressFound || loaded.Progress == nil {
+		t.Fatalf("Progress after crash=(%+v, %v), want the begun Slot recorded", loaded, err)
+	}
+	if loaded.Progress.UnfinishedSlot == nil ||
+		loaded.Progress.UnfinishedSlot.Contract.Slot.EvaluationTime != frozenContract().Slot.EvaluationTime {
+		t.Fatalf("Progress after crash=%+v, want this Slot named as the unfinished one", *loaded.Progress)
+	}
+	if loaded.Progress.NextSlot != frozenContract().Slot.EvaluationTime ||
+		loaded.Progress.LastFullSlot != 0 || loaded.Progress.LastCompletionKind != "" {
+		t.Fatalf("Progress after crash=%+v, want the cursor still on this Slot and no completion recorded",
+			*loaded.Progress)
+	}
+}
+
 func assertG3AStaleProgressCannotFillCrashGap(
 	t *testing.T,
 	store *progress.Store,
@@ -434,10 +625,11 @@ func assertG3AStaleProgressCannotFillCrashGap(
 	if err != nil || result.Status != execution.ProgressStaleOwner {
 		t.Fatalf("stale owner crash-gap commit=(%+v, %v), want STALE_OWNER", result, err)
 	}
-	loaded, err := store.LoadProgress(context.Background(), execution.ProgressIdentity{QueryGroup: fence.QueryGroup})
-	if err != nil || loaded.Status != execution.ProgressMissing {
-		t.Fatalf("Progress after stale crash-gap commit=(%+v, %v), want missing", loaded, err)
-	}
+	// Refused and without a trace: the record is still the one the crash left
+	// behind. Requiring it to be missing asked the wrong question once a Slot
+	// began its Progress -- and would have been satisfied by a refusal that
+	// deleted the record, which is the opposite of leaving it alone.
+	assertG3ACrashLeftTheSlotUnfinished(t, store)
 }
 
 func assertG3AStaleProgressReadback(
@@ -483,87 +675,74 @@ func g3aProgressRequest(fence execution.OwnerFence, slot execution.EvaluationTim
 	}
 }
 
-func createG3AKafkaTopic(t *testing.T, broker, topic string) {
+// startG3AMockBroker is the Kafka the child writes to: sarama's in-process
+// protocol server on a real socket, answering ApiVersions, Metadata and
+// Produce for this window's topic.
+//
+// It answers Produce up to v3, the first version that carries record
+// batches and so record headers, because the standard raw event puts the
+// tenant in a header and the sink refuses to send it to a cluster that
+// takes no headers. A broker that stopped at v2 would therefore make these
+// three windows measure the refusal rather than the crash.
+func startG3AMockBroker(t *testing.T, topic string) *sarama.MockBroker {
 	t.Helper()
-	config := sarama.NewConfig()
-	config.Version = sarama.V2_1_0_0
-	config.Net.DialTimeout = 2 * time.Second
-	admin, err := sarama.NewClusterAdmin([]string{broker}, config)
-	if err != nil {
-		t.Fatalf("open Kafka admin: %v", err)
-	}
-	t.Cleanup(func() { _ = admin.Close() })
-	if err := admin.CreateTopic(topic, &sarama.TopicDetail{NumPartitions: 1, ReplicationFactor: 1}, false); err != nil {
-		t.Fatalf("create Kafka topic %q: %v", topic, err)
-	}
-	t.Cleanup(func() { _ = admin.DeleteTopic(topic) })
+	broker := sarama.NewMockBroker(t, 1)
+	t.Cleanup(broker.Close)
+	broker.SetHandlerByMap(map[string]sarama.MockResponse{
+		"MetadataRequest": sarama.NewMockMetadataResponse(t).
+			SetBroker(broker.Addr(), broker.BrokerID()).
+			SetLeader(topic, 0, broker.BrokerID()),
+		"ApiVersionsRequest": sarama.NewMockWrapper(&sarama.ApiVersionsResponse{
+			ApiVersions: []*sarama.ApiVersionsResponseBlock{
+				{ApiKey: g3aProduceAPIKey, MinVersion: 0, MaxVersion: g3aProduceVersionWithHeaders},
+			},
+		}),
+		"ProduceRequest": sarama.NewMockProduceResponse(t).SetVersion(g3aProduceVersionWithHeaders),
+	})
+	return broker
 }
 
-func readG3AKafkaEvents(t *testing.T, broker, topic string) []contract.TriggerEventV1 {
+// g3aEventsAtBroker is how many events reached the broker so far.
+//
+// Counted as produce requests, which is the most the far end can say: sarama
+// keeps ProduceRequest.records unexported and its MockResponse interface
+// takes unexported types, so no code outside that package can decode what a
+// mock broker was handed. The count reads as events because of the two ends
+// that are pinned: g3aCrashEventSink refuses a batch that is not exactly one
+// event, and the produce version asserted here is the one that carries a
+// record batch, so one request here is one event there.
+//
+// What those bytes look like is proved where they exist, in
+// linkdoutput/converter_test.go: the consumer's field names, alert_id, and
+// alert_id being the same for two conversions of one event -- which is the
+// property the replay windows below depend on and used to re-assert by
+// reading the topic.
+func g3aEventsAtBroker(t *testing.T, broker *sarama.MockBroker) int {
 	t.Helper()
-	config := sarama.NewConfig()
-	config.Version = sarama.V2_1_0_0
-	config.Consumer.Return.Errors = true
-	config.Net.DialTimeout = 2 * time.Second
-	client, err := sarama.NewClient([]string{broker}, config)
-	if err != nil {
-		t.Fatalf("open Kafka metadata client: %v", err)
-	}
-	oldest, err := client.GetOffset(topic, 0, sarama.OffsetOldest)
-	if err != nil {
-		_ = client.Close()
-		t.Fatalf("read Kafka oldest offset: %v", err)
-	}
-	newest, err := client.GetOffset(topic, 0, sarama.OffsetNewest)
-	if err != nil {
-		_ = client.Close()
-		t.Fatalf("read Kafka newest offset: %v", err)
-	}
-	if err := client.Close(); err != nil {
-		t.Fatalf("close Kafka metadata client: %v", err)
-	}
-	if newest == oldest {
-		return nil
-	}
-
-	consumer, err := sarama.NewConsumer([]string{broker}, config)
-	if err != nil {
-		t.Fatalf("open Kafka consumer: %v", err)
-	}
-	defer consumer.Close()
-	partition, err := consumer.ConsumePartition(topic, 0, oldest)
-	if err != nil {
-		t.Fatalf("consume Kafka topic: %v", err)
-	}
-	defer partition.Close()
-	events := make([]contract.TriggerEventV1, 0, int(newest-oldest))
-	timer := time.NewTimer(10 * time.Second)
-	defer timer.Stop()
-	for int64(len(events)) < newest-oldest {
-		select {
-		case message := <-partition.Messages():
-			if message == nil {
-				t.Fatal("Kafka partition message channel closed")
-			}
-			event, decodeErr := contract.DecodeTriggerEventV1(message.Value)
-			if decodeErr != nil {
-				t.Fatalf("decode TriggerEventV1 at offset %d: %v", message.Offset, decodeErr)
-			}
-			events = append(events, *event)
-		case consumeErr := <-partition.Errors():
-			t.Fatalf("consume Kafka topic: %v", consumeErr)
-		case <-timer.C:
-			t.Fatalf("timed out reading %d Kafka events; got %d", newest-oldest, len(events))
+	produced := 0
+	for _, exchange := range broker.History() {
+		produce, ok := exchange.Request.(*sarama.ProduceRequest)
+		if !ok {
+			continue
 		}
+		if produce.Version != g3aProduceVersionWithHeaders {
+			t.Fatalf("broker received produce v%d, want v%d: below it the standard raw event's "+
+				"tenant header cannot be sent at all", produce.Version, g3aProduceVersionWithHeaders)
+		}
+		produced++
 	}
-	return events
+	return produced
 }
 
 func startG3ARedis(t *testing.T) string {
 	t.Helper()
+	// Skipped rather than failed when redis-server is missing, which is how
+	// every other real-Redis case in this tree behaves: the machine either
+	// has it and the windows run, or it does not and nothing here can be
+	// decided. A failure would only teach people to set a flag again.
 	redisServer, err := exec.LookPath("redis-server")
 	if err != nil {
-		t.Fatalf("real redis-server is required for G3a crash-window acceptance: %v", err)
+		t.Skip("redis-server is not installed")
 	}
 	address := reserveG3AAddress(t)
 	_, port, err := net.SplitHostPort(address)
@@ -574,144 +753,6 @@ func startG3ARedis(t *testing.T) string {
 		"--bind", "127.0.0.1", "--port", port, "--save", "", "--appendonly", "no", "--protected-mode", "no")
 	waitG3ATCP(t, address, process, 10*time.Second)
 	return address
-}
-
-func startG3AKafka(t *testing.T) string {
-	t.Helper()
-	kafkaScript, zookeeperScript := resolveG3AKafkaScripts(t)
-	javaHome := resolveG3AJavaHome(t)
-	zookeeperAddress := reserveG3AAddress(t)
-	_, zookeeperPort, err := net.SplitHostPort(zookeeperAddress)
-	if err != nil {
-		t.Fatalf("split ZooKeeper address %q: %v", zookeeperAddress, err)
-	}
-	kafkaAddress := reserveG3AAddress(t)
-	root := t.TempDir()
-	zookeeperConfig := filepath.Join(root, "zookeeper.properties")
-	zookeeperData := filepath.Join(root, "zookeeper-data")
-	if err := os.MkdirAll(zookeeperData, 0o755); err != nil {
-		t.Fatalf("create ZooKeeper data directory: %v", err)
-	}
-	zookeeperProperties := strings.Join([]string{
-		"dataDir=" + zookeeperData,
-		"clientPort=" + zookeeperPort,
-		"maxClientCnxns=0",
-		"admin.enableServer=false",
-		"tickTime=2000",
-		"initLimit=5",
-		"syncLimit=2",
-	}, "\n") + "\n"
-	if err := os.WriteFile(zookeeperConfig, []byte(zookeeperProperties), 0o600); err != nil {
-		t.Fatalf("write ZooKeeper config: %v", err)
-	}
-	zookeeperLog := filepath.Join(root, "zookeeper-log")
-	if err := os.MkdirAll(zookeeperLog, 0o755); err != nil {
-		t.Fatalf("create ZooKeeper log directory: %v", err)
-	}
-	zookeeper := startG3AProcess(t, zookeeperScript, g3AKafkaEnvironment(javaHome, zookeeperLog), zookeeperConfig)
-	waitG3ATCP(t, zookeeperAddress, zookeeper, 15*time.Second)
-
-	kafkaConfig := filepath.Join(root, "server.properties")
-	kafkaData := filepath.Join(root, "kafka-data")
-	if err := os.MkdirAll(kafkaData, 0o755); err != nil {
-		t.Fatalf("create Kafka data directory: %v", err)
-	}
-	kafkaProperties := strings.Join([]string{
-		"broker.id=1",
-		"listeners=PLAINTEXT://" + kafkaAddress,
-		"advertised.listeners=PLAINTEXT://" + kafkaAddress,
-		"log.dirs=" + kafkaData,
-		"zookeeper.connect=" + zookeeperAddress,
-		"num.partitions=1",
-		"default.replication.factor=1",
-		"offsets.topic.replication.factor=1",
-		"transaction.state.log.replication.factor=1",
-		"transaction.state.log.min.isr=1",
-		"min.insync.replicas=1",
-		"auto.create.topics.enable=true",
-		"delete.topic.enable=true",
-		"group.initial.rebalance.delay.ms=0",
-	}, "\n") + "\n"
-	if err := os.WriteFile(kafkaConfig, []byte(kafkaProperties), 0o600); err != nil {
-		t.Fatalf("write Kafka config: %v", err)
-	}
-	kafkaLog := filepath.Join(root, "kafka-log")
-	if err := os.MkdirAll(kafkaLog, 0o755); err != nil {
-		t.Fatalf("create Kafka log directory: %v", err)
-	}
-	kafka := startG3AProcess(t, kafkaScript, g3AKafkaEnvironment(javaHome, kafkaLog), kafkaConfig)
-	waitG3AKafka(t, kafkaAddress, kafka, 25*time.Second)
-	return kafkaAddress
-}
-
-func resolveG3AKafkaScripts(t *testing.T) (string, string) {
-	t.Helper()
-	candidates := make([]string, 0, 2)
-	if configured := os.Getenv("ALARMD_TEST_KAFKA_HOME"); configured != "" {
-		candidates = append(candidates, configured)
-	}
-	if wrapper, err := exec.LookPath("kafka-server-start"); err == nil {
-		resolved, resolveErr := filepath.EvalSymlinks(wrapper)
-		if resolveErr == nil {
-			candidates = append(candidates, filepath.Join(filepath.Dir(filepath.Dir(resolved)), "libexec"))
-		}
-	}
-	for _, root := range candidates {
-		kafkaScript := filepath.Join(root, "bin", "kafka-server-start.sh")
-		zookeeperScript := filepath.Join(root, "bin", "zookeeper-server-start.sh")
-		if executableFile(kafkaScript) && executableFile(zookeeperScript) {
-			return kafkaScript, zookeeperScript
-		}
-	}
-	t.Fatalf("real Kafka and ZooKeeper libexec scripts are required; checked %v", candidates)
-	return "", ""
-}
-
-func resolveG3AJavaHome(t *testing.T) string {
-	t.Helper()
-	candidates := []string{os.Getenv("ALARMD_TEST_JAVA_HOME"), os.Getenv("JAVA_HOME")}
-	installed, _ := filepath.Glob("/Library/Java/JavaVirtualMachines/*/Contents/Home")
-	sort.Sort(sort.Reverse(sort.StringSlice(installed)))
-	candidates = append(candidates, installed...)
-	for _, candidate := range candidates {
-		if candidate == "" || strings.ContainsAny(candidate, " \t\r\n") {
-			continue
-		}
-		java := filepath.Join(candidate, "bin", "java")
-		if !executableFile(java) {
-			continue
-		}
-		command := exec.Command(java, "-version")
-		if err := command.Run(); err == nil {
-			return candidate
-		}
-	}
-	t.Fatalf("a whitespace-free working JDK is required for the real Kafka test; checked %v", candidates)
-	return ""
-}
-
-func executableFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
-}
-
-func g3AKafkaEnvironment(javaHome, logDirectory string) []string {
-	environment := make([]string, 0, len(os.Environ())+5)
-	for _, entry := range os.Environ() {
-		if strings.HasPrefix(entry, "JAVA_HOME=") || strings.HasPrefix(entry, "KAFKA_HEAP_OPTS=") ||
-			strings.HasPrefix(entry, "KAFKA_JMX_OPTS=") || strings.HasPrefix(entry, "KAFKA_GC_LOG_OPTS=") ||
-			strings.HasPrefix(entry, "LOG_DIR=") {
-			continue
-		}
-		environment = append(environment, entry)
-	}
-	return append(environment,
-		"JAVA_HOME="+javaHome,
-		"KAFKA_HEAP_OPTS=-Xms256m -Xmx256m",
-		"KAFKA_JMX_OPTS=-Dkafka.g3a.test=true",
-		"KAFKA_GC_LOG_OPTS=-Dkafka.g3a.gc.test=true",
-		"LOG_DIR="+logDirectory,
-	)
 }
 
 type lockedBuffer struct {
@@ -778,27 +819,6 @@ func waitG3ATCP(t *testing.T, address string, process *g3aProcess, timeout time.
 	t.Fatalf("process did not listen on %s within %s\n%s", address, timeout, process.output.String())
 }
 
-func waitG3AKafka(t *testing.T, broker string, process *g3aProcess, timeout time.Duration) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	var lastErr error
-	for time.Now().Before(deadline) {
-		config := sarama.NewConfig()
-		config.Version = sarama.V2_1_0_0
-		config.Net.DialTimeout = 500 * time.Millisecond
-		config.Net.ReadTimeout = time.Second
-		config.Net.WriteTimeout = time.Second
-		client, err := sarama.NewClient([]string{broker}, config)
-		if err == nil {
-			_ = client.Close()
-			return
-		}
-		lastErr = err
-		time.Sleep(50 * time.Millisecond)
-	}
-	t.Fatalf("Kafka did not become ready on %s within %s: %v\n%s", broker, timeout, lastErr, process.output.String())
-}
-
 func reserveG3AAddress(t *testing.T) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -814,3 +834,23 @@ func reserveG3AAddress(t *testing.T) string {
 
 var _ execution.EventSink = (*g3aCrashEventSink)(nil)
 var _ execution.StateStore = (*g3aCrashStateStore)(nil)
+
+// freshFrozenRenewals is what a state double that is not about renewals
+// answers: one item per requested series, nothing renewed. The caller
+// validates that a store answered for exactly the series it was asked about,
+// so a double that answered for a different set would fail every Slot.
+func freshFrozenRenewals(request execution.FrozenStateRenewalRequest) execution.FrozenStateRenewalResult {
+	result := execution.FrozenStateRenewalResult{Items: make([]execution.FrozenStateRenewalItem, len(request.Items))}
+	for index, item := range request.Items {
+		result.Items[index] = execution.FrozenStateRenewalItem{
+			Identity: item.Identity, Outcome: execution.FrozenRenewalFresh,
+		}
+	}
+	return result
+}
+
+func (store *g3aCrashStateStore) RenewFrozenRuntime(
+	_ context.Context, request execution.FrozenStateRenewalRequest,
+) (execution.FrozenStateRenewalResult, error) {
+	return freshFrozenRenewals(request), nil
+}

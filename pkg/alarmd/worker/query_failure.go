@@ -1,3 +1,12 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package worker
 
 import (
@@ -48,10 +57,6 @@ const (
 	codeStreamedNamedInputFoldInvalid     = "STREAMED_NAMED_INPUT_FOLD_INVALID"
 	codeEvaluationFailed                  = "EVALUATION_FAILED"
 	codeEvaluationResultInvalid           = "EVALUATION_RESULT_INVALID"
-	// codeGapScopeReasonConflict names a Plan whose incomplete named inputs of
-	// one gap scope carry different completion reasons; the error's detail
-	// says which two, so the shape can be read before either side is changed.
-	codeGapScopeReasonConflict = "GAP_SCOPE_REASON_CONFLICT"
 )
 
 // queryContractError is a typed worker failure. It keeps the historical error
@@ -106,11 +111,21 @@ func wrapEvaluationError(code string, err error) error {
 
 func (coordinator *SlotExecutionCoordinator) observeQueryFailure(ctx context.Context, operation execution.Operation, started time.Time, stage string, err error) {
 	facts := observability.QueryFailureFacts{Stage: stage, Category: observability.QueryFailureCategoryOther, Code: observability.QueryFailureCodeOther}
+	reason := observability.ReasonInternalUnknown
 	var exceeded *provisionalBudgetExceededError
 	var diagnostic interface{ QueryFailure() (string, string) }
 	if errors.As(err, &exceeded) {
 		facts.Category = observability.QueryFailureCategoryBudget
-		facts.Code = string(exceeded.budget)
+		facts.Code = observability.CapacityBudgetFailureCode(exceeded.budget)
+		// Named rather than internal_unknown, and by the same rule the capacity
+		// rejection uses: a Slot whose own output is past a per-Slot cap gets
+		// the terminal code, because no retry in this process produces a
+		// smaller one, and a rejection on shared capacity gets the pause code,
+		// because concurrent Slots do free their share.
+		reason = observability.ReasonCode(contract.ReasonResourceHardStop)
+		if exceeded.slot {
+			reason = observability.ReasonCode(contract.ReasonSlotBudgetExceeded)
+		}
 	} else if errors.As(err, &diagnostic) {
 		facts.Category, facts.Code = diagnostic.QueryFailure()
 	}
@@ -121,7 +136,7 @@ func (coordinator *SlotExecutionCoordinator) observeQueryFailure(ctx context.Con
 	if errors.As(err, &detailed) {
 		facts.Detail = detailed.QueryFailureDetail()
 	}
-	observation := observability.Observation{Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted, Result: observability.ResultFailed, Operation: observability.Operation(operation), Direction: observability.DirectionInternal, ReasonCode: observability.ReasonInternalUnknown, Duration: time.Since(started), Err: err, QueryFailure: &facts}
+	observation := observability.Observation{Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted, Result: observability.ResultFailed, Operation: observability.Operation(operation), Direction: observability.DirectionInternal, ReasonCode: reason, Duration: time.Since(started), Err: err, QueryFailure: &facts}
 	defer func() { _ = recover() }()
 	coordinator.ports.Observer.Observe(ctx, observation)
 }

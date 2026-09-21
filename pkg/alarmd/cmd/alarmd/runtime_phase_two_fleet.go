@@ -17,6 +17,7 @@ import (
 	"time"
 
 	accessuq "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/access/uq"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
@@ -67,7 +68,7 @@ func (source registryReplicas) ReadyReplicas(ctx context.Context, at time.Time) 
 	if source.store == nil {
 		return nil, errors.New("alarmd fleet: ownership store is required")
 	}
-	workers, err := source.store.ListReadyWorkers(ctx, at)
+	workers, _, err := source.store.ListReadyWorkers(ctx, at)
 	if err != nil {
 		return nil, err
 	}
@@ -90,6 +91,7 @@ func (source registryReplicas) ReadyReplicas(ctx context.Context, at time.Time) 
 type observationWindowApplier struct {
 	store   *fleet.WindowStore
 	flow    *observability.TargetFlow
+	samples *observability.SeriesSampler
 	now     func() time.Time
 	observe func(applied, requested, dropped int, err error)
 }
@@ -101,6 +103,9 @@ func (applier observationWindowApplier) applyOnce(ctx context.Context) {
 			applier.observe(0, 0, 0, err)
 		}
 		return
+	}
+	if applier.samples != nil {
+		_ = applier.samples.Select(fleet.SampleSelections(windows))
 	}
 	requested := fleet.QueryGroups(windows)
 	selection := make([]string, 0, observability.TargetFlowMaxGroups)
@@ -218,14 +223,34 @@ type fleetPublisher struct {
 	// the tests that build a publisher by hand keep working.
 	source    func() *fleet.SourceFacts
 	endpoints func() []fleet.Endpoint
+	// readiness reports this replica's own readiness, bit by bit, from the
+	// same source its readiness endpoint answers from. Nil-safe and optional
+	// like the two above.
+	readiness func() *fleet.ReadinessFacts
 	// rebalance reports the control leader's latest rebalance planning
 	// round: how the ready replicas hold the objects and what the round
 	// would move. Nil on a follower; the aggregate takes the newest round
 	// any replica published.
 	rebalance func() *fleet.RebalanceFacts
+	// assignmentScope reports the control leader's latest reconcile round's
+	// census of the content scope on the Assignment records. Nil on a
+	// follower, like rebalance.
+	assignmentScope func() *fleet.AssignmentScopeFacts
+	// assignmentSweep reports the control leader's last sweep of retired
+	// Assignment records. Nil on a follower.
+	assignmentSweep func() *fleet.AssignmentSweepFacts
+	// viewStream reports this replica's account of the view stream: the
+	// Leader's ledger, or Leading false. Nil on a runtime without the stream.
+	viewStream func() *fleet.ViewStreamFacts
 	// platformSettings reports the state of this replica's copy of the
 	// platform's settings. Nil on a bundle that has none.
 	platformSettings func() *fleet.PlatformSettingsFacts
+	// outputProtocol is the wire format choice this process runs with, read
+	// once from its configuration at assembly: the configuration does not
+	// change under a running process, and what it decides is frozen into
+	// each Plan by the control leader anyway. Nil on a publisher built by
+	// hand, and the snapshot then carries no choice.
+	outputProtocol *fleet.OutputProtocolFacts
 }
 
 // fleetOverdueWakeCeiling bounds how many parked objects one publish carries.
@@ -310,6 +335,16 @@ func (publisher *fleetPublisher) publishOnce(ctx context.Context) {
 // so the two types can differ in package without differing in content.
 func fleetBuildFacts(build metric.BuildInfo) fleet.BuildFacts {
 	return fleet.BuildFacts{Version: build.Version, Commit: build.Commit, SchemaVersion: build.SchemaVersion}
+}
+
+// fleetOutputProtocolFacts is the choice this process runs with: the word the
+// reconciler was configured with -- the same call, so the fleet cannot
+// publish one word while the Plans are built under another -- and whether the
+// configuration spelled it. Empty in the configuration is the default, auto,
+// and is published as auto with explicit false rather than as an empty word:
+// an empty word is what an older build publishes by publishing nothing.
+func fleetOutputProtocolFacts(cfg config.Config) *fleet.OutputProtocolFacts {
+	return &fleet.OutputProtocolFacts{Configured: cfg.OutputProtocol(), Explicit: cfg.PhaseTwo.Output.Protocol != ""}
 }
 
 // buildFacts is the build this publisher was given, or nil when it was given
@@ -413,11 +448,27 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	if publisher.rebalance != nil {
 		snapshot.Rebalance = publisher.rebalance()
 	}
+	if publisher.assignmentScope != nil {
+		snapshot.AssignmentScope = publisher.assignmentScope()
+	}
+	if publisher.assignmentSweep != nil {
+		snapshot.AssignmentSweep = publisher.assignmentSweep()
+	}
+	if publisher.viewStream != nil {
+		snapshot.ViewStream = publisher.viewStream()
+	}
 	if publisher.source != nil {
 		snapshot.Source = publisher.source()
 	}
 	if publisher.endpoints != nil {
 		snapshot.Dependencies = publisher.endpoints()
+	}
+	if publisher.readiness != nil {
+		snapshot.Readiness = publisher.readiness()
+	}
+	if publisher.outputProtocol != nil {
+		facts := *publisher.outputProtocol
+		snapshot.OutputProtocol = &facts
 	}
 	// And the objects whose rounds end without a basis to decide recovery.
 	// Beside the anomalies for a different reason than the pool: not "this is
@@ -452,16 +503,33 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	// And the objects whose data stopped: rounds completing, nothing coming
 	// back. In no column, and on the data side's line.
 	snapshot.NoData = publisher.tracker.NoData()
+	// And the objects whose absence memory the store refuses: rounds
+	// completing, results going out, and what they learn about absence not
+	// written down. In no column, on its own line.
+	snapshot.NoDataMemory = publisher.tracker.NoDataMemory()
+	// And the problems whose objects recovered within the hour: the evidence
+	// the RECOVERED reading is made of, which nothing on the current lines
+	// carries once the objects have left them.
+	snapshot.Recovered = publisher.tracker.Recovered()
+	// And the running count of Slots executed and then closed without their
+	// Progress: the records keep one span per object and cannot carry it.
+	snapshot.BookkeepingAbandoned = publisher.tracker.BookkeepingAbandoned()
 	// Where every listed object is in its cycle, and the census over all of
 	// them. From the same index and the same instant as the overdue facts, so
 	// the row and the sentence above it cannot read two clocks.
 	if publisher.schedule != nil {
 		census := publisher.schedule.Census(at, len(owned))
 		snapshot.Schedule = &census
-		for _, column := range [][]fleet.Anomaly{snapshot.Anomalies, snapshot.Demoted, snapshot.Undecidable, snapshot.ByDesign, snapshot.NoData} {
+		for _, column := range [][]fleet.Anomaly{snapshot.Anomalies, snapshot.Demoted, snapshot.Undecidable, snapshot.ByDesign, snapshot.NoData, snapshot.NoDataMemory} {
 			for index := range column {
 				wake := publisher.schedule.WakeOf(column[index].QueryGroup)
 				column[index].Wake = &wake
+				// The period beside the run of empty rounds, from the same
+				// index: the number a reader holds the source's reporting
+				// period against is on the row that asks the question.
+				if facts := column[index].EmptyEveryRound; facts != nil {
+					facts.IntervalSeconds = wake.IntervalSeconds
+				}
 			}
 		}
 		// And the period behind each retained record, from the same index: a

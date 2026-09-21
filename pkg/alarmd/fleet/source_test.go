@@ -233,3 +233,144 @@ func TestTheVerdictRouteCarriesTheSourceAndTheDependencies(t *testing.T) {
 		t.Errorf("a snapshot without the facts does not send them as absent: %s", text)
 	}
 }
+
+// The todo names the platform's lines apart from this deployment's, with the
+// strategies under them: they are in Checks, and "alarmd 已确认 N 类" with a
+// platform line among them tells the reader the wrong thing. The page used
+// to derive the split by walking the lines; a reader of the JSON had nothing
+// to read, and now reads what the page reads.
+func TestTheTodoNamesThePlatformsLinesApart(t *testing.T) {
+	view := &View{Source: blockedSource(now), SourceReplica: "pod-a"}
+	reports := ReportChecks(nil, nil, view, now)
+	todo := SummarizeTodo(reports, nil, view, now)
+	if todo.Checks != 1 || todo.PlatformChecks != 1 || todo.PlatformStrategies != 26 {
+		t.Fatalf("todo = checks %d, platform checks %d, platform strategies %d; want 1, 1, 26: the one line is the platform's, over 26 strategies",
+			todo.Checks, todo.PlatformChecks, todo.PlatformStrategies)
+	}
+	// A deployment's own standing beside it: two lines, one of them the
+	// platform's, and the platform count does not grow with ours.
+	view.Degradations = []Degradation{{Kind: DegradationOpenAlertSetStale, Replica: "pod-a"}}
+	reports = ReportChecks(nil, nil, view, now)
+	todo = SummarizeTodo(reports, nil, view, now)
+	if todo.Checks != 2 || todo.PlatformChecks != 1 || todo.PlatformStrategies != 26 {
+		t.Fatalf("todo = checks %d, platform checks %d, platform strategies %d; want 2, 1, 26", todo.Checks, todo.PlatformChecks, todo.PlatformStrategies)
+	}
+}
+
+// A source accepting nothing degrades the verdict only when nothing runs
+// because of it. A deployment running objects on its last accepted
+// configuration is detecting; what it has is a cache that cannot update the
+// run, and the standing says so in two sentences -- what is running, what the
+// cache is -- with the writer's marker as evidence of when something was last
+// written and nothing more. Nothing running and nothing accepted is still the
+// blocked deployment the degradation exists for.
+func TestASourceAcceptingNothingDegradesOnlyWhenNothingRunsBecauseOfIt(t *testing.T) {
+	age := int64(53356)
+	unusable := func(at time.Time) *SourceFacts {
+		withheld := make([]WithheldObject, 0, 67)
+		for index := 0; index < 67; index++ {
+			withheld = append(withheld, WithheldObject{StrategyID: strconv.Itoa(300 + index), Scope: "STRATEGY",
+				Disposition: "SOURCE_INCOMPLETE", Reason: "SOURCE_IDENTITY_UNAVAILABLE", FieldPath: "bk_tenant_id,space_uid"})
+		}
+		facts := NewSourceFacts(at, map[string]int{"SOURCE_INCOMPLETE": 67}, withheld)
+		facts.ChangeSignalPresent, facts.ChangeSignalAgeSeconds = true, &age
+		return facts
+	}
+	// Six objects running on the last accepted configuration.
+	running := []Snapshot{{Replica: "pod-a", TakenAt: now.Add(-10 * time.Second), Owned: 6, Determined: 6, Source: unusable(now.Add(-time.Minute))}}
+	view := Aggregate(Expectation{QueryGroups: 6, Known: true}, running, []string{"pod-a"}, now, freshness)
+	if view.Health != HealthHealthy {
+		t.Fatalf("health = %s with 6 objects running on the last accepted configuration, want HEALTHY (degradations %+v)", view.Health, view.Degradations)
+	}
+	for _, degradation := range view.Degradations {
+		if degradation.Kind == DegradationSourceBlocked {
+			t.Fatalf("SOURCE_BLOCKED on a deployment running 6 objects: %+v", degradation)
+		}
+	}
+	standing := view.SourceStanding
+	if standing == nil || standing.Kind != SourceUpdateUnusable || standing.Listed != 67 || standing.Accepted != 0 ||
+		standing.Incomplete != 67 || standing.Executing != 6 || standing.WriterAgeSeconds == nil || *standing.WriterAgeSeconds != 53356 {
+		t.Fatalf("standing = %+v, want UPDATE_UNUSABLE over 67 listed / 0 accepted / 67 incomplete, 6 executing, marker 53356 s", standing)
+	}
+	if standing.Run != "6 个对象按已生效的配置继续检测" ||
+		standing.Cache != "当前缓存有 67 条身份不完整，不能用于更新配置；缓存最近一次写入在 14.8 小时前（只说明没有新写入）" {
+		t.Errorf("sentences = %q / %q", standing.Run, standing.Cache)
+	}
+	// The same source with nothing running: blocked, degraded, and said so.
+	idle := []Snapshot{{Replica: "pod-a", TakenAt: now.Add(-10 * time.Second), Source: unusable(now.Add(-time.Minute))}}
+	view = Aggregate(Expectation{QueryGroups: 0, Known: true}, idle, []string{"pod-a"}, now, freshness)
+	if view.Health != HealthDegraded || view.SourceStanding == nil || view.SourceStanding.Kind != SourceBlocked {
+		t.Fatalf("health = %s standing %+v with nothing running, want DEGRADED / BLOCKED", view.Health, view.SourceStanding)
+	}
+	if view.SourceStanding.Run != "没有任何策略在检测" ||
+		view.SourceStanding.Cache != "策略缓存列出 67 条身份不完整，一条都不能用；缓存最近一次写入在 14.8 小时前（只说明没有新写入）" {
+		t.Errorf("blocked sentences = %q / %q", view.SourceStanding.Run, view.SourceStanding.Cache)
+	}
+	// A mixture counts the incomplete and the rest apart -- the rest are on
+	// other lines with other owners -- and none incomplete sends the reader
+	// to those lines; neither borrows the all-incomplete word.
+	mixed := []Snapshot{{Replica: "pod-a", TakenAt: now.Add(-10 * time.Second), Owned: 3, Determined: 3,
+		Source: NewSourceFacts(now, map[string]int{"SOURCE_INCOMPLETE": 7, "CONFIG_REJECTED": 3}, nil)}}
+	view = Aggregate(Expectation{QueryGroups: 3, Known: true}, mixed, []string{"pod-a"}, now, freshness)
+	if s := view.SourceStanding; s == nil || s.Kind != SourceUpdateUnusable ||
+		s.Cache != "当前缓存有 10 条，其中 7 条身份不完整、3 条因别的原因被扣（原因见检查项），不能用于更新配置" {
+		t.Errorf("mixed standing = %+v", s)
+	}
+	rejected := []Snapshot{{Replica: "pod-a", TakenAt: now.Add(-10 * time.Second),
+		Source: NewSourceFacts(now, map[string]int{"CONFIG_REJECTED": 4}, nil)}}
+	view = Aggregate(Expectation{QueryGroups: 0, Known: true}, rejected, []string{"pod-a"}, now, freshness)
+	if s := view.SourceStanding; s == nil || s.Kind != SourceBlocked ||
+		s.Cache != "策略缓存列出 4 条，全部因别的原因被扣（原因见检查项），一条都不能用" {
+		t.Errorf("none-incomplete standing = %+v", s)
+	}
+	// What counts as running is the catalogue's count or what is owned,
+	// whichever is more: six in the catalogue nobody owns yet still run.
+	view = Aggregate(Expectation{QueryGroups: 6, Known: true}, idle, []string{"pod-a"}, now, freshness)
+	if view.SourceStanding == nil || view.SourceStanding.Kind != SourceUpdateUnusable || view.SourceStanding.Executing != 6 {
+		t.Errorf("standing with 6 expected and none owned = %+v, want UPDATE_UNUSABLE over 6", view.SourceStanding)
+	}
+	// And with the catalogue unknown, what is owned.
+	view = Aggregate(Expectation{Known: false}, running, []string{"pod-a"}, now, freshness)
+	if view.SourceStanding == nil || view.SourceStanding.Kind != SourceUpdateUnusable || view.SourceStanding.Executing != 6 {
+		t.Errorf("standing with the catalogue unknown and 6 owned = %+v, want UPDATE_UNUSABLE over 6", view.SourceStanding)
+	}
+	// A source accepting some: accepting, with the withheld counted; one
+	// listing nothing: nothing listed. Neither has a marker to speak of.
+	accepting := []Snapshot{{Replica: "pod-a", TakenAt: now.Add(-10 * time.Second), Owned: 70, Determined: 70,
+		Source: NewSourceFacts(now, map[string]int{"ACCEPTED": 70, "SOURCE_INCOMPLETE": 11}, nil)}}
+	view = Aggregate(Expectation{QueryGroups: 70, Known: true}, accepting, []string{"pod-a"}, now, freshness)
+	if s := view.SourceStanding; s == nil || s.Kind != SourceAccepting || s.Run != "70 个对象正在检测" || s.Cache != "策略缓存列出 81 条，可用 70 条，扣住 11 条（原因见检查项）" {
+		t.Errorf("accepting standing = %+v", s)
+	}
+	empty := []Snapshot{{Replica: "pod-a", TakenAt: now.Add(-10 * time.Second), Source: NewSourceFacts(now, map[string]int{}, nil)}}
+	view = Aggregate(Expectation{QueryGroups: 0, Known: true}, empty, []string{"pod-a"}, now, freshness)
+	if s := view.SourceStanding; s == nil || s.Kind != SourceNothingListed || s.Cache != "策略缓存里没有列出任何策略" || s.Run != "0 个对象正在检测" {
+		t.Errorf("nothing-listed standing = %+v", s)
+	}
+	if view.Health == HealthDegraded {
+		t.Errorf("a source listing nothing degraded the verdict: %+v", view.Degradations)
+	}
+	// No round: no standing.
+	view = Aggregate(Expectation{QueryGroups: 6, Known: true}, healthySnapshots(), replicas(), now, freshness)
+	if view.SourceStanding != nil {
+		t.Errorf("standing without a source round = %+v, want none", view.SourceStanding)
+	}
+}
+
+// The verdict route carries the standing beside the source facts, as
+// published, so the page's two sentences are the server's.
+func TestTheVerdictRouteCarriesTheSourceStanding(t *testing.T) {
+	snapshots := []Snapshot{{Replica: "pod-a", TakenAt: now.Add(-10 * time.Second), Owned: 6, Determined: 6,
+		Source: NewSourceFacts(now.Add(-time.Minute), map[string]int{"SOURCE_INCOMPLETE": 67},
+			[]WithheldObject{{StrategyID: "300", Disposition: "SOURCE_INCOMPLETE", Reason: "SOURCE_IDENTITY_UNAVAILABLE"}})}}
+	handler := handlerWith(t, snapshots, Expectation{QueryGroups: 6, Known: true}, []string{"pod-a"})
+	_, health := get(t, handler, "/api/health")
+	standing, _ := health["source_standing"].(map[string]any)
+	if standing == nil || standing["kind"] != "UPDATE_UNUSABLE" || standing["executing"] != 6.0 || standing["incomplete"] != 67.0 ||
+		standing["run"] != "6 个对象按已生效的配置继续检测" || standing["cache"] != "当前缓存有 67 条身份不完整，不能用于更新配置" {
+		t.Fatalf("source_standing = %v", health["source_standing"])
+	}
+	if health["health"] != "HEALTHY" {
+		t.Errorf("health = %v, want HEALTHY: the objects run", health["health"])
+	}
+}

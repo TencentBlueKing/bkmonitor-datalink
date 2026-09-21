@@ -1,3 +1,12 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package controlplane
 
 import (
@@ -100,6 +109,14 @@ func (compiler *LegacyPrimaryQueryCompiler) compilePromQL(source PrimaryQuerySou
 	})
 }
 
+// promQLMatch renders a filter_dict as the promql match string the provider
+// takes beside the expression, the way the backend renders it: string values
+// in Python's repr quoting, nested maps flattened, values of any other type
+// skipped. Keys are sorted here and not there. The sort is not for parity --
+// matcher order has no meaning to the provider -- it is what makes the match
+// string, and through it the query revision the objects are addressed by,
+// deterministic across rounds; removing it to match the backend's map order
+// would recut every promql Query Group's revision on every refresh.
 func promQLMatch(raw json.RawMessage) (string, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return "", nil

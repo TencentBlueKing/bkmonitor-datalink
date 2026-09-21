@@ -1,0 +1,209 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2017-2025 Tencent. All rights reserved.
+// Licensed under the MIT License.
+
+// The direct control protocol of decision-016: one bidirectional stream per
+// Worker, opened by the Worker to the Control Leader, carrying the Worker's
+// projection of the Leader's desired set as a snapshot and then one-step
+// deltas, and the Worker's receipts per version back.
+//
+// What travels is references. An entry names a Query Group's execution
+// object and output contexts by digest; the bytes are read through the
+// content-addressed catalog, or fetched on this stream by ObjectRequest
+// when the catalog cannot serve them. Nothing on this stream is a lease:
+// assignment facts are a preview of the Assignment record, and the
+// authority a Worker executes under is what its lease renewal reads back
+// from that record. Heartbeats extend nothing.
+
+syntax = "proto3";
+
+package alarmd.control.v1;
+
+option go_package = "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream/pb;pb";
+
+service ControlService {
+  // Connect is the one stream. The Worker speaks first with Hello; the
+  // Leader answers with a Snapshot, or a Refusal and the end of the stream.
+  rpc Connect(stream WorkerMessage) returns (stream LeaderMessage);
+}
+
+message WorkerMessage {
+  oneof body {
+    Hello hello = 1;
+    SnapshotRequest snapshot_request = 2;
+    Receipt receipt = 3;
+    Heartbeat heartbeat = 4;
+    ObjectRequest object_request = 5;
+  }
+}
+
+message LeaderMessage {
+  oneof body {
+    Snapshot snapshot = 1;
+    Delta delta = 2;
+    Heartbeat heartbeat = 3;
+    ObjectResult object_result = 4;
+    Refusal refusal = 5;
+  }
+}
+
+// Hello opens the stream. The Leader admits the Worker when worker_id names
+// a registered Worker whose registration carries this stream_token and
+// protocol_version is one it speaks; installed names the view the Worker
+// holds, if any, so the Leader can answer with a Delta when that view is
+// exactly one step behind and a Snapshot otherwise. The token is a secret
+// the Worker wrote into its own registration; it is never logged.
+message Hello {
+  string worker_id = 1;
+  string incarnation = 2;
+  uint32 protocol_version = 3;
+  string stream_token = 4;
+  Version installed = 5;
+}
+
+// SnapshotRequest asks for the current view whole. The Worker sends it when
+// a Delta did not apply -- base not installed, digest mismatch -- and says
+// which, in its bounded words.
+message SnapshotRequest {
+  string reason = 1;
+  Version installed = 2;
+}
+
+// Version names one published view of one Worker: the Leader's term
+// (control_epoch, distinct from any Query Group's owner_epoch), the
+// transport revision within the term, and the digest of this Worker's
+// view body at it.
+message Version {
+  uint64 control_epoch = 1;
+  uint64 revision = 2;
+  string digest = 3;
+}
+
+// Publication is the activation the view is projected from: the
+// publication the fleet executes and the record revision of the activation
+// that named it, which is the header the Worker's hot path probes today.
+message Publication {
+  string snapshot_revision = 1;
+  uint64 publication_epoch = 2;
+  uint64 activation_record_revision = 3;
+}
+
+message PlanIdentity {
+  string tenant_id = 1;
+  string business_id = 2;
+  string strategy_id = 3;
+}
+
+message OutputContextRef {
+  PlanIdentity plan = 1;
+  string digest = 2;
+}
+
+// Content is what a Query Group is published with: its execution object and
+// the output context of each Plan, by digest -- the references its open
+// Segment carries.
+message Content {
+  string object_digest = 1;
+  repeated OutputContextRef output_contexts = 2;
+}
+
+// Assignment is the Assignment record's decision for a Query Group as the
+// Leader last wrote it. A preview: the record is the authority.
+message Assignment {
+  string desired_worker_id = 1;
+  uint64 revision = 2;
+  string content_scope = 3;
+  string pending_content_scope = 4;
+  int64 effective_at_ms = 5;
+}
+
+// Entry is one Query Group of the Worker's view. content is absent for a
+// Query Group the Worker is assigned but the publication no longer carries:
+// draining, nothing current to execute.
+message Entry {
+  string query_group = 1;
+  Content content = 2;
+  Assignment assignment = 3;
+}
+
+// Snapshot is the Worker's whole view at a version. A large view is sent in
+// chunks that share the version; the Worker installs nothing until it holds
+// every chunk and the assembled body hashes to version.digest.
+message Snapshot {
+  Version version = 1;
+  Publication publication = 2;
+  repeated Entry entries = 3;
+  uint32 chunk = 4;
+  uint32 chunks = 5;
+}
+
+// Delta takes the Worker from base to target, one revision of one term:
+// the entries new or changed for this Worker and the Query Groups that left
+// its view. It is the difference of the Worker's two projections, so a
+// Query Group newly assigned arrives with its content. A Worker whose
+// installed view is not exactly base does not apply it and asks for a
+// Snapshot. An empty delta -- no upserts, no removals, base.digest equal to
+// target.digest -- is installed by receipt alone.
+message Delta {
+  Version base = 1;
+  Version target = 2;
+  Publication publication = 3;
+  repeated Entry upserts = 4;
+  repeated string removed = 5;
+}
+
+// Receipt is what the Worker reports about a version. The stage facts are
+// explicit: acked when the complete message was received, installed when
+// the body verified against its digest and the view was installed
+// atomically, switched when every Query Group of the view executes under
+// it -- evidenced by the Assignment record's content_scope, read back on
+// lease renewal, equalling the view's; not by anything on this stream. A
+// stage not reached carries failure in the Worker's bounded words.
+// objects_missing is how many objects of the whole installed view the
+// Worker could not read, a fact of the view and not a failure to install;
+// it means nothing unless objects_probed is set, because a Worker whose
+// probe failed knows nothing about its objects and does not say 0.
+message Receipt {
+  string incarnation = 1;
+  Version version = 2;
+  bool acked = 3;
+  bool installed = 4;
+  bool switched = 5;
+  string failure = 6;
+  uint32 objects_missing = 7;
+  bool objects_probed = 8;
+}
+
+// Heartbeat keeps the stream known alive in both directions and carries the
+// version the sender holds. It extends no lease and no authority.
+message Heartbeat {
+  int64 sent_at_ms = 1;
+  Version installed = 2;
+}
+
+// ObjectRequest asks for one immutable object by its digest, on this stream,
+// when the catalog cannot serve it; kind is query_group or output_context.
+// The answer changes no version and extends no lease.
+message ObjectRequest {
+  string kind = 1;
+  string digest = 2;
+}
+
+// ObjectResult carries the object's canonical bytes -- the Worker hashes them
+// against the digest before trusting them -- or the bounded reason it is
+// unavailable. Absence is a stated fact, never an empty object.
+message ObjectResult {
+  string kind = 1;
+  string digest = 2;
+  bytes payload = 3;
+  string unavailable = 4;
+}
+
+// Refusal is why the Leader will not serve this stream, in bounded words:
+// NOT_LEADER, UNKNOWN_WORKER, BAD_TOKEN, PROTOCOL_VERSION. The stream ends
+// after it; the Worker rediscovers the Leader before connecting again.
+message Refusal {
+  string reason = 1;
+  uint64 control_epoch = 2;
+}

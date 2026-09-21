@@ -25,6 +25,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/worker"
 )
 
@@ -564,6 +565,7 @@ func (runtime *productionPhaseTwoControl) refresh(
 	// sees a count move must be able to find the line that moved it whichever
 	// return the round took.
 	observeWithheldObjects(ctx, runtime.dependencies.Observer, result.Withheld)
+	observeSuspendedNoDataObjects(ctx, runtime.dependencies.Observer, result.Suspended)
 	sourceRefresh := sourceRefreshIdentity(result, result.Publication)
 	defer func() {
 		observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
@@ -1268,6 +1270,7 @@ type productionPhaseTwoOwnershipStore interface {
 	ReadAssignedSet(context.Context, string) (ownership.AssignedSet, error)
 	AcquireControlLeader(context.Context, string, time.Time, time.Duration) (ownership.PublicationAuthority, error)
 	RenewControlLeader(context.Context, ownership.PublicationAuthority, time.Time, time.Duration) (ownership.PublicationAuthority, error)
+	SweepAssignments(context.Context, ownership.PublicationAuthority, map[execution.QueryGroupIdentity]struct{}) (ownership.AssignmentSweep, error)
 	Close() error
 }
 
@@ -1314,6 +1317,19 @@ type productionPhaseTwoOwnershipDependencies struct {
 	// terminated; moving after it settles is one convergence.
 	LeaseTTL          time.Duration
 	ReconcileInterval time.Duration
+	// ContentScopes reads the content each Query Group is currently
+	// published with -- the ObjectDigest the current activation's manifest
+	// names for it -- for the reconcile round to write into Assignment
+	// records (decision-016). Required: a leader that cannot read them
+	// cannot start the contract, and one that reads them from a fallback
+	// would name content the fleet is not executing.
+	ContentScopes func(context.Context) (map[execution.QueryGroupIdentity]string, error)
+	// ViewStream and ViewSource are decision-016's view stream: the round
+	// hands the stream the desired set it arrived at, built from what the
+	// source says the fleet executes. Both nil is a runtime without the
+	// stream, which every round tolerates.
+	ViewStream *viewstream.Server
+	ViewSource viewSource
 }
 
 type productionPhaseTwoOwnership struct {
@@ -1335,6 +1351,12 @@ type productionPhaseTwoOwnership struct {
 	// fleet snapshot this replica publishes. Nil until this process has
 	// planned a round, which only a Leader does.
 	lastRebalance *fleet.RebalanceFacts
+	// lastAssignmentScope is the same round's census of the content scope
+	// on the records it settled, for the fleet snapshot. Nil until a round.
+	lastAssignmentScope *fleet.AssignmentScopeFacts
+	// lastAssignmentSweep is the latest sweep of retired records, success or
+	// failure, for the fleet snapshot. Nil until a sweep has run.
+	lastAssignmentSweep *fleet.AssignmentSweepFacts
 
 	// readySet is the ready set the last round reconciled against and when
 	// it last changed, remembered under the fence epoch it was observed in;
@@ -1343,6 +1365,13 @@ type productionPhaseTwoOwnership struct {
 	readyEpoch     uint64
 	readySet       map[string]struct{}
 	readyChangedAt time.Time
+
+	// sweptSet is the Query Group set the last Assignment sweep ran against,
+	// under the fence epoch it ran in. A round sweeps when it is the first
+	// of a term or when a Query Group of the last swept set is gone: those
+	// are the only moments a record can newly be left behind.
+	sweptEpoch uint64
+	sweptSet   map[execution.QueryGroupIdentity]struct{}
 }
 
 // rebalanceStabilisation is how long the ready set must have been unchanged
@@ -1367,6 +1396,9 @@ func newProductionPhaseTwoOwnership(
 	}
 	if dependencies.LeaseTTL <= 0 || dependencies.ReconcileInterval <= 0 {
 		return nil, errors.New("phase-two rebalance stabilisation inputs are required")
+	}
+	if dependencies.ContentScopes == nil {
+		return nil, errors.New("phase-two content scope reader is required")
 	}
 	return &productionPhaseTwoOwnership{
 		dependencies: dependencies, reconciler: dependencies.Reconcile, flights: dependencies.Flights,
@@ -1401,6 +1433,32 @@ func (runtime *productionPhaseTwoOwnership) TryAcquireControlLeader(
 	return err == nil, err
 }
 
+// contentScopesFor is the round's content policy. Declaring needs the
+// current content in hand; a failed read is reported and the round leaves
+// scopes as they are, because a round that withdrew on a read failure would
+// turn a Redis blip into a fleet-wide rollback of the contract.
+func (runtime *productionPhaseTwoOwnership) contentScopesFor(
+	ctx context.Context,
+	workers []ownership.WorkerRegistration,
+) (scheduler.ContentScopes, error) {
+	if !ownership.AllDeclare(workers, ownership.CapabilityContentScope) {
+		return scheduler.ContentScopes{Policy: scheduler.ContentScopesWithdrawn}, nil
+	}
+	digests, err := runtime.dependencies.ContentScopes(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return scheduler.ContentScopes{}, err
+		}
+		observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
+			Component: observability.ComponentOwnership, Stage: observability.StageAssignmentAcquired,
+			Result: observability.ResultDegraded, Operation: observability.OperationTransition,
+			Direction: observability.DirectionInternal, ReasonCode: observability.ReasonInternalUnknown, Err: err,
+		})
+		return scheduler.ContentScopes{}, nil
+	}
+	return scheduler.ContentScopes{Policy: scheduler.ContentScopesDeclared, Digests: digests}, nil
+}
+
 func (runtime *productionPhaseTwoOwnership) PublishAssignments(
 	ctx context.Context,
 	queryGroups []execution.QueryGroupIdentity,
@@ -1423,22 +1481,40 @@ func (runtime *productionPhaseTwoOwnership) PublishAssignments(
 	// One ready set per round: every Query Group below is settled against
 	// the same workers, and a listing that fails fails the round before any
 	// Query Group is touched, exactly as a failed listing did before.
-	workers, err := runtime.reconciler.ListReadyWorkers(ctx, at)
+	workers, registryReads, err := runtime.reconciler.ListReadyWorkers(ctx, at)
 	if err != nil {
 		return err
 	}
-	owners := make(map[execution.QueryGroupIdentity]string, len(ordered))
-	records := make(map[execution.QueryGroupIdentity]ownership.AssignmentRecord, len(ordered))
-	for _, queryGroup := range ordered {
-		record, err := runtime.reconciler.ReconcileWith(ctx, authority, queryGroup, workers, at)
-		if err != nil {
-			if errors.Is(err, ownership.ErrStaleFence) {
-				runtime.clearControlAuthority(authority)
-			}
-			return err
+	// The content contract's gate, decided once per round on the same ready
+	// set the placements use: every ready worker declares it, and the round
+	// brings each record to the content its Query Group is published with;
+	// one does not, and the round withdraws every scope (decision-016
+	// section 7.1.1). A leader that cannot read the current content this
+	// round declares nothing and withdraws nothing -- unknown is not a
+	// withdrawal -- and says so once per round.
+	scopes, err := runtime.contentScopesFor(ctx, workers)
+	if err != nil {
+		return err
+	}
+	// Every Query Group's record in one bounded batch, then the placement
+	// decisions over it. Reading them one at a time cost the round a Redis
+	// round trip per Query Group, all of it waiting, all of it before any
+	// decision could be taken.
+	records, assignmentReads, err := runtime.reconciler.ReconcileRoundWithScopes(ctx, authority, ordered, workers, at, scopes)
+	runtime.observeControlReads(ctx, assignmentReads, registryReads, len(ordered))
+	if err != nil {
+		if errors.Is(err, ownership.ErrStaleFence) {
+			runtime.clearControlAuthority(authority)
 		}
+		return err
+	}
+	// The round's census of the content scope on the records it settled,
+	// for the page: the same read, counted once, so how far the contract
+	// has reached the records is not a question for a script in a Pod.
+	runtime.recordAssignmentScope(at, scopes, records)
+	owners := make(map[execution.QueryGroupIdentity]string, len(ordered))
+	for queryGroup, record := range records {
 		owners[queryGroup] = record.DesiredWorkerID
-		records[queryGroup] = record
 	}
 	// Placement first, correction second, both under this round's ready
 	// set: rendezvous only decides where a Query Group with no eligible
@@ -1456,7 +1532,78 @@ func (runtime *productionPhaseTwoOwnership) PublishAssignments(
 		return err
 	}
 	runtime.publishAssignmentIndex(ctx, authority, owners, workers, at)
+	runtime.sweepRetiredAssignments(ctx, authority, ordered)
+	runtime.publishView(ctx, authority, records, owners)
 	return nil
+}
+
+// sweepRetiredAssignments reclaims the Assignment records of Query Groups
+// this round no longer runs, when something could have been left behind
+// since the last sweep: the first round of a term, or a Query Group of the
+// last swept set missing from this one. Records carry no expiry, so without
+// this a retired Query Group's record and ownership hash stayed for good.
+// Advisory to the round: a failed sweep is reported and the round stands.
+func (runtime *productionPhaseTwoOwnership) sweepRetiredAssignments(
+	ctx context.Context,
+	authority ownership.PublicationAuthority,
+	queryGroups []execution.QueryGroupIdentity,
+) {
+	keep := make(map[execution.QueryGroupIdentity]struct{}, len(queryGroups))
+	for _, queryGroup := range queryGroups {
+		keep[queryGroup] = struct{}{}
+	}
+	runtime.mu.Lock()
+	due := runtime.sweptEpoch != authority.Fence.OwnerEpoch || runtime.sweptSet == nil
+	if !due {
+		for queryGroup := range runtime.sweptSet {
+			if _, still := keep[queryGroup]; !still {
+				due = true
+				break
+			}
+		}
+	}
+	runtime.mu.Unlock()
+	if !due {
+		return
+	}
+	sweep, err := runtime.dependencies.Store.SweepAssignments(ctx, authority, keep)
+	facts := &observability.AssignmentSweepFacts{Scanned: sweep.Scanned, Retired: sweep.Retired,
+		Reclaimed: sweep.Reclaimed, HeldByLease: sweep.HeldByLease, Changed: sweep.Changed}
+	// The same numbers for the fleet snapshot, success or failure: a sweep
+	// that ran and reclaimed six records on a live deployment was known
+	// only to the Pod's own memory.
+	sweptAt := time.Now()
+	if runtime.dependencies.Now != nil {
+		sweptAt = runtime.dependencies.Now()
+	}
+	published := &fleet.AssignmentSweepFacts{At: sweptAt, Result: string(observability.ResultSuccess),
+		Scanned: sweep.Scanned, Retired: sweep.Retired, Reclaimed: sweep.Reclaimed, HeldByLease: sweep.HeldByLease,
+		Changed: sweep.Changed, DurationSeconds: sweep.Duration.Seconds()}
+	if err != nil {
+		if errors.Is(err, ownership.ErrStaleFence) {
+			runtime.clearControlAuthority(authority)
+		}
+		reason := ownershipObservationReason(err)
+		published.Result, published.Reason = string(observability.ResultFailed), string(reason)
+		runtime.mu.Lock()
+		runtime.lastAssignmentSweep = published
+		runtime.mu.Unlock()
+		observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
+			Component: observability.ComponentOwnership, Stage: observability.StageAssignmentSwept,
+			Result: observability.ResultFailed, Operation: observability.OperationWrite, Duration: sweep.Duration,
+			ReasonCode: reason, Err: err, AssignmentSweep: facts,
+		})
+		return
+	}
+	runtime.mu.Lock()
+	runtime.sweptEpoch, runtime.sweptSet = authority.Fence.OwnerEpoch, keep
+	runtime.lastAssignmentSweep = published
+	runtime.mu.Unlock()
+	observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
+		Component: observability.ComponentOwnership, Stage: observability.StageAssignmentSwept,
+		Result: observability.ResultSuccess, Operation: observability.OperationWrite, Duration: sweep.Duration,
+		AssignmentSweep: facts,
+	})
 }
 
 // rebalanceOutcome is what one round did with the plan it computed.
@@ -1564,6 +1711,35 @@ func (runtime *productionPhaseTwoOwnership) observeReadySet(
 // one so the plan can be checked against the Assignments by hand, and what
 // the round did with it -- published, paused for the ready set to settle,
 // or refused by the store for some of them.
+// observeControlReads reports what this round spent on the two control-plane
+// reads, whether or not the round went on to succeed.
+//
+// It is called before the error is handled on purpose. A round that failed
+// still spent its round trips, and the reading that matters most -- a round
+// that took far longer than the others -- is most likely to be one that then
+// failed. Reporting only on success would leave those out of the very
+// distribution somebody is looking at them in.
+func (runtime *productionPhaseTwoOwnership) observeControlReads(
+	ctx context.Context,
+	assignments ownership.ControlReadStats,
+	registry ownership.ControlReadStats,
+	queryGroups int,
+) {
+	facts := &observability.ControlReadFacts{
+		QueryGroups:            queryGroups,
+		AssignmentKeys:         assignments.Keys,
+		AssignmentRoundTrips:   assignments.RoundTrips,
+		AssignmentMilliseconds: float64(assignments.Duration.Nanoseconds()) / float64(time.Millisecond),
+		RegistryKeys:           registry.Keys,
+		RegistryRoundTrips:     registry.RoundTrips,
+		RegistryMilliseconds:   float64(registry.Duration.Nanoseconds()) / float64(time.Millisecond),
+	}
+	observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
+		Component: observability.ComponentOwnership, Stage: observability.StageControlReadsSpent,
+		Result: observability.ResultSuccess, Operation: observability.OperationLoad, ControlReads: facts,
+	})
+}
+
 func (runtime *productionPhaseTwoOwnership) observeRebalance(
 	ctx context.Context,
 	plan scheduler.RebalancePlan,
@@ -1624,6 +1800,65 @@ func (runtime *productionPhaseTwoOwnership) LastRebalance() *fleet.RebalanceFact
 		return nil
 	}
 	facts := *runtime.lastRebalance
+	return &facts
+}
+
+// recordAssignmentScope keeps the round's content-scope census for the
+// fleet snapshot, with the policy spelled in the fleet's words.
+func (runtime *productionPhaseTwoOwnership) recordAssignmentScope(
+	at time.Time,
+	scopes scheduler.ContentScopes,
+	records map[execution.QueryGroupIdentity]ownership.AssignmentRecord,
+) {
+	facts := fleet.AssignmentScopeOf(at, assignmentScopePolicyWord(scopes.Policy), scopes.Digests, records)
+	runtime.mu.Lock()
+	runtime.lastAssignmentScope = facts
+	runtime.mu.Unlock()
+}
+
+// assignmentScopePolicyWord is the fleet's word for the round's policy.
+// Every policy has one; a new policy without a word here is the untouched
+// word, which is the one that reads as "the round changed nothing".
+func assignmentScopePolicyWord(policy scheduler.ContentScopePolicy) string {
+	switch policy {
+	case scheduler.ContentScopesDeclared:
+		return fleet.AssignmentScopePolicyDeclared
+	case scheduler.ContentScopesWithdrawn:
+		return fleet.AssignmentScopePolicyWithdrawn
+	default:
+		return fleet.AssignmentScopePolicyUntouched
+	}
+}
+
+// LastAssignmentScope is the latest round's content-scope census on this
+// process, for the fleet snapshot; nil on a process that has never been the
+// Leader.
+func (runtime *productionPhaseTwoOwnership) LastAssignmentScope() *fleet.AssignmentScopeFacts {
+	if runtime == nil {
+		return nil
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if runtime.lastAssignmentScope == nil {
+		return nil
+	}
+	facts := *runtime.lastAssignmentScope
+	return &facts
+}
+
+// LastAssignmentSweep is the latest sweep of retired Assignment records on
+// this process, success or failure, for the fleet snapshot; nil until one
+// has run.
+func (runtime *productionPhaseTwoOwnership) LastAssignmentSweep() *fleet.AssignmentSweepFacts {
+	if runtime == nil {
+		return nil
+	}
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
+	if runtime.lastAssignmentSweep == nil {
+		return nil
+	}
+	facts := *runtime.lastAssignmentSweep
 	return &facts
 }
 
@@ -1706,6 +1941,7 @@ func (runtime *productionPhaseTwoOwnership) publishAssignmentIndex(
 		observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
 			Component: observability.ComponentOwnership, Stage: observability.StageAssignmentIndexWritten,
 			Result: observability.ResultFailed, Operation: observability.OperationWrite, Err: err, AssignmentIndex: facts,
+			ReasonCode: ownershipObservationReason(err),
 		})
 		return
 	}
@@ -2005,6 +2241,7 @@ func (runtime *productionPhaseTwoOwnership) clearControlAuthority(authority owne
 	defer runtime.mu.Unlock()
 	if runtime.authority.Fence == authority.Fence {
 		runtime.authority = ownership.PublicationAuthority{}
+		runtime.viewStepDown()
 	}
 }
 
@@ -2073,6 +2310,7 @@ func (runtime *productionPhaseTwoOwnership) ensureControlAuthority(
 		return ownership.PublicationAuthority{}, err
 	}
 	runtime.authority = authority
+	runtime.viewLead(authority.Fence.OwnerEpoch)
 	return authority, nil
 }
 
@@ -2149,7 +2387,17 @@ func (executor observedProductionSlotExecutor) Execute(
 	result, err := executor.next.Execute(ctx, request)
 	var shortCompletion *observability.ShortPeriodCompletionFacts
 	if err == nil && result.Completed && result.CompletionKind != "" && observability.IsShortPeriodCohort(request.ShortPeriodCohort) {
-		shortCompletion = &observability.ShortPeriodCompletionFacts{Cohort: request.ShortPeriodCohort, CompletionKind: string(result.CompletionKind), LagSeconds: time.Since(time.Unix(int64(request.Contract.Slot.EvaluationTime), 0)).Seconds()}
+		shortCompletion = &observability.ShortPeriodCompletionFacts{Cohort: request.ShortPeriodCohort, CompletionKind: string(result.CompletionKind),
+			LagSeconds: time.Since(time.Unix(int64(request.Contract.Slot.EvaluationTime), 0)).Seconds(), AttemptNo: request.AttemptNo}
+	}
+	// What held the round before this one, on the completions where that is
+	// the question. Any cohort: it used to ride inside the short-period
+	// bundle, and the Query Groups on sixty seconds and slower -- the bulk of
+	// the ones whose Slots are being skipped -- have no such bundle, so their
+	// completion lines named the outcome and never the cause.
+	var heldBy *observability.HeldByFacts
+	if result.CompletionKind == execution.CompletionGapSkipped || request.ReplayExpired {
+		heldBy = scheduler.HeldByFromContext(ctx)
 	}
 	observedResult := result.Result
 	reason := result.ReasonCode
@@ -2172,6 +2420,9 @@ func (executor observedProductionSlotExecutor) Execute(
 			if conflict, named := worker.GapGuardConflictReason(err); named {
 				reason = observability.ReasonCode(conflict)
 			}
+			if conflict, named := worker.StateConflictReason(err); named {
+				reason = observability.ReasonCode(conflict)
+			}
 		}
 	} else if observedResult == "" {
 		observedResult = observability.ResultSuccess
@@ -2179,6 +2430,7 @@ func (executor observedProductionSlotExecutor) Execute(
 	observeRuntime(ctx, executor.observer, observability.Observation{
 		Component: observability.ComponentScheduler, Stage: observability.StageSlotCompleted,
 		Operation: observability.Operation(request.Operation), ShortPeriodCompletion: shortCompletion,
+		HeldBy:         heldBy,
 		ExecuteOutcome: executeReturnOutcome(result, err),
 		Result:         observedResult, ReasonCode: reason, Direction: observability.DirectionInternal,
 		Duration: time.Since(started), Trace: trace, Err: observedErr,
@@ -2224,6 +2476,13 @@ func (runtime *productionPhaseTwoQueryGroup) DueBound() scheduler.RunnerDueBound
 		return scheduler.RunnerDueBound{}
 	}
 	return runtime.runner.DueBound()
+}
+
+func (runtime *productionPhaseTwoQueryGroup) NextDeadline() time.Time {
+	if runtime == nil || runtime.runner == nil {
+		return time.Time{}
+	}
+	return runtime.runner.NextDeadline()
 }
 
 // MaintainLease renews the Query Group lease every interval. A failure to
@@ -2309,14 +2568,12 @@ func observeProductionOwnership(
 	err error,
 ) {
 	result := observability.Result(observability.ResultSuccess)
-	reason := observability.ReasonCode(observability.ReasonNone)
 	if err != nil {
 		result = observability.ResultFailed
-		reason = observability.ReasonInternalUnknown
 	}
 	observeRuntime(ctx, observer, observability.Observation{
 		Component: observability.ComponentOwnership, Stage: stage, Result: result,
-		Direction: observability.DirectionInternal, ReasonCode: reason, Err: err,
+		Direction: observability.DirectionInternal, ReasonCode: ownershipObservationReason(err), Err: err,
 	})
 }
 

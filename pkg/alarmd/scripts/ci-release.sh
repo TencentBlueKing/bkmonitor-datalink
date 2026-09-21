@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# Tencent is pleased to support the open source community by making
+# 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+# Copyright (C) 2026 Tencent. All rights reserved.
+# Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at http://opensource.org/licenses/MIT
+# Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+# an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+# specific language governing permissions and limitations under the License.
+
 # alarmd 的 CI 发布脚本：原生 Linux amd64/arm64 构建，build → push，finally 里 cleanup。
 # 契约与 pkg/linkd/scripts/ci-release.sh 相同，流水线可以照 linkd 的接。
 # 版本来源二选一：按 tag 发布时只给 SOURCE_TAG（pkg/alarmd/v<版本>，镜像 tag 就是 <版本>，

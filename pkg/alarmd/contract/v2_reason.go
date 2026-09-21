@@ -59,9 +59,12 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonMultipleEvaluationUnitsUnsupported: {
 		ReasonMultipleEvaluationUnitsUnsupported, ReasonClassDeterministic, reasonOutcomeDomainsV2,
 	},
-	ReasonPlanDuplicateLevelID:     {ReasonPlanDuplicateLevelID, ReasonClassDeterministic, reasonOutcomeDomainsV2},
-	ReasonPlanBudgetExceeded:       {ReasonPlanBudgetExceeded, ReasonClassDeterministic, reasonOutcomeDomainsV2},
-	ReasonNoDataConfigInvalid:      {ReasonNoDataConfigInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonPlanDuplicateLevelID: {ReasonPlanDuplicateLevelID, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonPlanBudgetExceeded:   {ReasonPlanBudgetExceeded, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonNoDataConfigInvalid:  {ReasonNoDataConfigInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	// Deterministic for the same reason: the target's shape and the no-data
+	// dimensions are both frozen, so every round would reach this answer again.
+	ReasonNoDataRosterUnsupported:  {ReasonNoDataRosterUnsupported, ReasonClassDeterministic, reasonOutcomeDomainsV2},
 	ReasonBackendCapabilityMissing: {ReasonBackendCapabilityMissing, ReasonClassDeterministic, reasonOutcomeDomainsV2},
 	ReasonProjectionInvalid:        {ReasonProjectionInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
 	ReasonSelectorInvalid:          {ReasonSelectorInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
@@ -80,6 +83,7 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 
 	ReasonConfigDrift:      {ReasonConfigDrift, ReasonClassCoverage, reasonQueryDomainsV2},
 	ReasonQueryPartial:     {ReasonQueryPartial, ReasonClassCoverage, reasonQueryDomainsV2},
+	ReasonQueryEmpty:       {ReasonQueryEmpty, ReasonClassCoverage, reasonQueryDomainsV2},
 	ReasonQueryTimeout:     {ReasonQueryTimeout, ReasonClassCoverage, reasonQueryDomainsV2},
 	ReasonQueryUnavailable: {ReasonQueryUnavailable, ReasonClassCoverage, reasonQueryDomainsV2},
 	ReasonReadinessBudgetInvalid: {
@@ -116,7 +120,9 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonBlockedExactSetUnavailable: {ReasonBlockedExactSetUnavailable, ReasonClassDeterministic, ReasonDomainObservation},
 	// Deterministic: the persisted marker and the proposed one are both facts,
 	// and repeating the attempt compares the same two facts again.
-	ReasonGapGuardConflict: {ReasonGapGuardConflict, ReasonClassDeterministic, ReasonDomainObservation},
+	ReasonGapGuardConflict:     {ReasonGapGuardConflict, ReasonClassDeterministic, ReasonDomainObservation},
+	ReasonStateVersionConflict: {ReasonStateVersionConflict, ReasonClassDeterministic, ReasonDomainObservation},
+	ReasonStateStaleVersion:    {ReasonStateStaleVersion, ReasonClassDeterministic, ReasonDomainObservation},
 	// Deterministic: the Plan asks for more than this deployment has, and it
 	// will ask for the same on every round until one of the two changes.
 	ReasonSnapshotRetentionInsufficient: {
@@ -127,12 +133,26 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	// One Slot's own State, Event or Gap output exceeds the per-Slot cap the
 	// process can ever apply; the Slot completes deterministically. The code
 	// is observation-only: Progress records the coverage completion reason.
-	ReasonSlotBudgetExceeded:     {ReasonSlotBudgetExceeded, ReasonClassCoverage, ReasonDomainObservation},
-	ReasonOutputACKUnknown:       {ReasonOutputACKUnknown, ReasonClassRetryable, ReasonDomainObservation},
-	ReasonStateWriteRetryable:    {ReasonStateWriteRetryable, ReasonClassRetryable, ReasonDomainObservation},
-	ReasonStateCorrupt:           {ReasonStateCorrupt, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
-	ReasonStateSchemaUnsupported: {ReasonStateSchemaUnsupported, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
-	ReasonStateBudgetExceeded:    {ReasonStateBudgetExceeded, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
+	ReasonSlotBudgetExceeded: {ReasonSlotBudgetExceeded, ReasonClassCoverage, ReasonDomainObservation},
+	ReasonOutputACKUnknown:   {ReasonOutputACKUnknown, ReasonClassRetryable, ReasonDomainObservation},
+	// Deterministic output refusals decided in this process (see the codes):
+	// they name a Slot's terminal completion, so they are receipt as well as
+	// observation reasons, like the deterministic State refusals below.
+	ReasonOutputConversionRejected: {ReasonOutputConversionRejected, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
+	ReasonOutputClientRejected:     {ReasonOutputClientRejected, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
+	ReasonOutputLeaseExpiring:      {ReasonOutputLeaseExpiring, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonStateWriteRetryable:      {ReasonStateWriteRetryable, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonStateCorrupt:             {ReasonStateCorrupt, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
+	ReasonStateSchemaUnsupported:   {ReasonStateSchemaUnsupported, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
+	ReasonStateBudgetExceeded:      {ReasonStateBudgetExceeded, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
+	// Ownership refusals. A stale fence, an assignment naming another worker
+	// and a moved content scope are facts about the store the same attempt
+	// would meet again; a lease held by another owner is the one that a later
+	// attempt can find released.
+	ReasonOwnershipStaleFence: {ReasonOwnershipStaleFence, ReasonClassDeterministic, ReasonDomainObservation},
+	ReasonOwnershipNotDesired: {ReasonOwnershipNotDesired, ReasonClassDeterministic, ReasonDomainObservation},
+	ReasonOwnershipLeaseBusy:  {ReasonOwnershipLeaseBusy, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonContentScopeMoved:   {ReasonContentScopeMoved, ReasonClassDeterministic, ReasonDomainObservation},
 }
 
 func ReasonCatalogV2() []ReasonDefinitionV2 {

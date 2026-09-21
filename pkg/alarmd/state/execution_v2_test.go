@@ -18,7 +18,14 @@ import (
 )
 
 type casMemoryBackend struct {
-	values   map[string][]byte
+	values map[string][]byte
+	// hashes is the second key space this backend holds: one map of fields per
+	// key, which is what the no-data memory moved to.
+	hashes map[string]map[string][]byte
+	// commands is which hash command each call used, so a test can say what a
+	// path read rather than only what it concluded. The difference between one
+	// field and every field is the whole cost argument.
+	commands []string
 	conflict bool
 	reads    int
 	// remaining models what PTTL would answer, in the same encoding: absent
@@ -26,6 +33,9 @@ type casMemoryBackend struct {
 	// written before lifetimes existed looks like.
 	remaining map[string]time.Duration
 	renewals  []renewalCall
+	// renewalErr makes the renewal path fail the way an unreachable Redis
+	// does: the batch's effect is unknown, so no key gets an outcome.
+	renewalErr error
 	// writeTTLs is the lifetime each write asked for, so a test can tell a key
 	// written with one from a key written to live forever.
 	writeTTLs map[string]time.Duration
@@ -36,6 +46,7 @@ type renewalCall struct {
 	TTL       time.Duration
 	Threshold time.Duration
 	Renewed   bool
+	Outcome   RenewalOutcome
 }
 
 func (backend *casMemoryBackend) MGet(_ context.Context, keys []string) ([][]byte, error) {
@@ -48,23 +59,47 @@ func (backend *casMemoryBackend) MGet(_ context.Context, keys []string) ([][]byt
 }
 
 func (backend *casMemoryBackend) RenewIfBelow(
-	_ context.Context, key string, ttl, threshold time.Duration,
-) (bool, error) {
-	call := renewalCall{Key: key, TTL: ttl, Threshold: threshold}
-	if _, exists := backend.values[key]; exists {
-		// The script's rule, restated here rather than assumed: a key with no
-		// expiry is renewed, and one with time left above the threshold is not.
-		left, hasExpiry := backend.remaining[key]
-		if !hasExpiry || left < threshold {
-			call.Renewed = true
-			if backend.remaining == nil {
-				backend.remaining = make(map[string]time.Duration)
-			}
-			backend.remaining[key] = ttl
-		}
+	ctx context.Context, key string, ttl, threshold time.Duration,
+) (RenewalOutcome, error) {
+	outcomes, err := backend.RenewManyIfBelow(ctx, []string{key}, ttl, threshold)
+	if err != nil {
+		return "", err
 	}
-	backend.renewals = append(backend.renewals, call)
-	return call.Renewed, nil
+	return outcomes[0], nil
+}
+
+// RenewManyIfBelow answers a batch the way the pipeline does: one outcome per
+// key, in order, every key decided on its own. The script's three replies are
+// restated here rather than assumed -- a key that is not there is MISSING, one
+// with no expiry or less than the threshold left is renewed, and anything else
+// is FRESH -- so a test can tell the reading that names a lost record from the
+// reading that says there was nothing to do.
+func (backend *casMemoryBackend) RenewManyIfBelow(
+	_ context.Context, keys []string, ttl, threshold time.Duration,
+) ([]RenewalOutcome, error) {
+	if backend.renewalErr != nil {
+		return nil, backend.renewalErr
+	}
+	outcomes := make([]RenewalOutcome, len(keys))
+	for index, key := range keys {
+		call := renewalCall{Key: key, TTL: ttl, Threshold: threshold, Outcome: RenewalMissing}
+		_, isValue := backend.values[key]
+		_, isHash := backend.hashes[key]
+		if isValue || isHash {
+			call.Outcome = RenewalFresh
+			left, hasExpiry := backend.remaining[key]
+			if !hasExpiry || left < threshold {
+				call.Renewed, call.Outcome = true, RenewalRenewed
+				if backend.remaining == nil {
+					backend.remaining = make(map[string]time.Duration)
+				}
+				backend.remaining[key] = ttl
+			}
+		}
+		backend.renewals = append(backend.renewals, call)
+		outcomes[index] = call.Outcome
+	}
+	return outcomes, nil
 }
 
 func TestIncrementalGapLoadStopsBeforeNextReadOnRejectionAndCancel(t *testing.T) {
@@ -94,6 +129,83 @@ func TestIncrementalGapLoadStopsBeforeNextReadOnRejectionAndCancel(t *testing.T)
 	}
 }
 func (*casMemoryBackend) SetMany(context.Context, []BackendWrite) error { return nil }
+
+// ReadHash and ApplyHashDelta are the hash half of the backend, written to the
+// same rules the Lua script holds rather than to what the caller happens to do
+// with them. The header comparison in particular is the whole atomicity
+// argument, so a fake that applied unconditionally would let every test of the
+// conflict paths pass against a store that had none.
+func (backend *casMemoryBackend) ReadHashField(_ context.Context, key, field string) ([]byte, error) {
+	backend.commands = append(backend.commands, "HGET")
+	value, found := backend.hashes[key][field]
+	if !found {
+		return nil, nil
+	}
+	return append([]byte(nil), value...), nil
+}
+
+func (backend *casMemoryBackend) ReadHash(_ context.Context, key string) (map[string][]byte, error) {
+	backend.commands = append(backend.commands, "HGETALL")
+	backend.reads++
+	fields := backend.hashes[key]
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	copied := make(map[string][]byte, len(fields))
+	for name, value := range fields {
+		copied[name] = append([]byte(nil), value...)
+	}
+	return copied, nil
+}
+
+func (backend *casMemoryBackend) ApplyHashDelta(
+	_ context.Context, write HashDeltaWrite,
+) (HashDeltaOutcome, error) {
+	if backend.conflict {
+		return HashDeltaOutcome{Status: HashDeltaConflict}, nil
+	}
+	fields := backend.hashes[write.Key]
+	header, present := fields[write.HeaderField]
+	if write.ExpectedMissing {
+		if present {
+			return HashDeltaOutcome{Status: HashDeltaConflict, Current: header}, nil
+		}
+	} else {
+		if !present {
+			return HashDeltaOutcome{Status: HashDeltaConflict}, nil
+		}
+		if HeaderDigest(header) != write.ExpectedDigest {
+			return HashDeltaOutcome{Status: HashDeltaConflict, Current: header}, nil
+		}
+	}
+	if write.Replace {
+		// The script's DEL, restated rather than assumed. A double that laid a
+		// whole-memory statement on top of what the record held would leave the
+		// groups the statement no longer has -- which is exactly the mixture
+		// nobody wrote, and the reason this branch exists.
+		fields = nil
+		delete(backend.hashes, write.Key)
+	}
+	if fields == nil {
+		fields = make(map[string][]byte)
+		if backend.hashes == nil {
+			backend.hashes = make(map[string]map[string][]byte)
+		}
+		backend.hashes[write.Key] = fields
+	}
+	for _, field := range write.Set {
+		fields[field.Name] = append([]byte(nil), field.Value...)
+	}
+	for _, name := range write.Del {
+		delete(fields, name)
+	}
+	fields[write.HeaderField] = append([]byte(nil), write.Header...)
+	if backend.writeTTLs == nil {
+		backend.writeTTLs = make(map[string]time.Duration)
+	}
+	backend.writeTTLs[write.Key] = write.TTL
+	return HashDeltaOutcome{Status: HashDeltaApplied}, nil
+}
 func (backend *casMemoryBackend) CompareAndSet(_ context.Context, key string, expected []byte, missing bool, value []byte, ttl time.Duration) (bool, error) {
 	if backend.conflict {
 		return false, nil
@@ -168,7 +280,7 @@ func TestPlanGapIdentityHasNoSeriesOrLevel(t *testing.T) {
 
 func TestApplyGapRejectsInvalidIdentityWithoutCallingStorage(t *testing.T) {
 	backend := &casMemoryBackend{values: make(map[string][]byte)}
-	router, _ := NewFixedRouter("monitor-01", backend)
+	router, _ := NewFixedRouter("state-01", backend)
 	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
 	identity := execution.PlanGapIdentity{Plan: execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "9:1"}, StateGeneration: "generation"}
 	mutation, err := execution.BuildPlanGapMutation(execution.PlanGapMutation{Identity: identity, ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1", Scopes: []execution.GapScopeMutation{{Kind: execution.GapOpen, ReasonCode: execution.ReasonCode(contract.ReasonHistoryGapped), RequiredFullSlots: 2}}})
@@ -186,7 +298,7 @@ func TestApplyGapRejectsInvalidIdentityWithoutCallingStorage(t *testing.T) {
 
 func TestExecutionStoreDoesNotResetCorruptRuntimeState(t *testing.T) {
 	backend := &casMemoryBackend{values: make(map[string][]byte)}
-	router, _ := NewFixedRouter("monitor-01", backend)
+	router, _ := NewFixedRouter("state-01", backend)
 	store, err := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
 	if err != nil {
 		t.Fatal(err)
@@ -249,7 +361,7 @@ func TestGapWarmupCountsFullSlotsMonotonicallyAndResetsOnScheduleChange(t *testi
 
 func TestExecutionStoreExactCASAndReplay(t *testing.T) {
 	backend := &casMemoryBackend{values: make(map[string][]byte)}
-	router, _ := NewFixedRouter("monitor-01", backend)
+	router, _ := NewFixedRouter("state-01", backend)
 	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
 	mutation, err := execution.BuildStateMutation(execution.StateMutation{Identity: stateIdentityV2(), ApplyVersion: applyVersion(),
 		AffectedRecords: []execution.RecordAnchor{{RecordID: "r1", SourceTime: 60}},
@@ -273,7 +385,7 @@ func TestExecutionStoreExactCASAndReplay(t *testing.T) {
 
 func TestExecutionStoreAdmissionAndCASBudgetStatuses(t *testing.T) {
 	backend := &casMemoryBackend{values: make(map[string][]byte), conflict: true}
-	router, _ := NewFixedRouter("monitor-01", backend)
+	router, _ := NewFixedRouter("state-01", backend)
 	mutation, err := execution.BuildStateMutation(execution.StateMutation{Identity: stateIdentityV2(), ApplyVersion: applyVersion(), AffectedRecords: []execution.RecordAnchor{{RecordID: "r1", SourceTime: 60}}, Levels: []execution.RuntimeLevelStateMutation{{LevelID: 1, LevelStateCompatibility: "compat", HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm", LastProcessedEventTime: 60}}, Points: []execution.StateHistoryPoint{{RecordID: "r1", SourceTime: 60, Levels: []execution.StateLevelFact{{LevelID: 1, DetectFingerprint: "detect", Result: execution.LevelFactNormal}}}}})
 	if err != nil {
 		t.Fatal(err)
@@ -293,7 +405,7 @@ func TestExecutionStoreAdmissionAndCASBudgetStatuses(t *testing.T) {
 
 func TestRuntimeOversizeIsLocalAndApplyDoesNotOverwrite(t *testing.T) {
 	backend := &casMemoryBackend{values: make(map[string][]byte)}
-	router, _ := NewFixedRouter("monitor-01", backend)
+	router, _ := NewFixedRouter("state-01", backend)
 	goodIdentity := stateIdentityV2()
 	goodIdentity.SeriesIdentityDigest = "good"
 	badIdentity := stateIdentityV2()
@@ -327,7 +439,7 @@ func TestRuntimeOversizeIsLocalAndApplyDoesNotOverwrite(t *testing.T) {
 
 func TestExecutionStorePlanGapRoundTripAndTombstone(t *testing.T) {
 	backend := &casMemoryBackend{values: make(map[string][]byte)}
-	router, _ := NewFixedRouter("monitor-01", backend)
+	router, _ := NewFixedRouter("state-01", backend)
 	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
 	identity := execution.PlanGapIdentity{Plan: stateIdentityV2().Plan, StateGeneration: "generation"}
 	opened, err := execution.BuildPlanGapMutation(execution.PlanGapMutation{Identity: identity, ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1",
@@ -390,7 +502,7 @@ func TestExecutionStorePlanGapRoundTripAndTombstone(t *testing.T) {
 
 func TestGapOversizeIsLocalAndApplyDoesNotOverwrite(t *testing.T) {
 	backend := &casMemoryBackend{values: make(map[string][]byte)}
-	router, _ := NewFixedRouter("monitor-01", backend)
+	router, _ := NewFixedRouter("state-01", backend)
 	good := execution.PlanGapIdentity{Plan: stateIdentityV2().Plan, StateGeneration: "good"}
 	bad := execution.PlanGapIdentity{Plan: stateIdentityV2().Plan, StateGeneration: "bad"}
 	mutation, err := execution.BuildPlanGapMutation(execution.PlanGapMutation{Identity: good, ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1", Scopes: []execution.GapScopeMutation{{Kind: execution.GapOpen, ReasonCode: execution.ReasonCode(contract.ReasonHistoryGapped), RequiredFullSlots: 2}}})

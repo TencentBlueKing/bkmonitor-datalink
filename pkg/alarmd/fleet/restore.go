@@ -46,6 +46,33 @@ type RestoredState struct {
 	// is not the same as "it completed fully at the epoch" and must not be
 	// turned into a timestamp.
 	LastFullSlot time.Time
+	// LastRound is the round that last moved the cursor, as the commit knew
+	// it: which Slot, when it was committed, how it ended and why, and the
+	// revisions it ran under. Nil on a record written before the field
+	// existed, which is a real answer -- no round committed since -- and not
+	// a round at Slot zero. With it a restarted replica lists a failing
+	// object under its cause at once instead of under "restored without its
+	// cause" until the next round; without it the object waits a round, as
+	// before.
+	LastRound *RestoredRound
+}
+
+// RestoredRound is the persisted summary of the last committed round.
+type RestoredRound struct {
+	// Slot is the evaluation time the round completed, not the one it moved
+	// to; CompletedAt is the commit's clock -- how long ago anything last
+	// happened here.
+	Slot        time.Time `json:"slot"`
+	CompletedAt time.Time `json:"completed_at"`
+	Kind        string    `json:"kind"`
+	ReasonCode  string    `json:"reason_code,omitempty"`
+	// Revisions the round ran under. They seed the tracker's "last completed
+	// round" triple, so the first round this process completes under other
+	// revisions reports the configuration as changed since, the same way a
+	// change watched in-process does: the restored cause is then history.
+	SnapshotRevision string `json:"snapshot_revision,omitempty"`
+	QueryRevision    string `json:"query_revision,omitempty"`
+	ScheduleRevision string `json:"schedule_revision,omitempty"`
 }
 
 // Restore seeds one object from what survived the restart. It reports whether
@@ -86,6 +113,21 @@ func (tracker *Tracker) Restore(queryGroup string, restored RestoredState, at ti
 	}
 	state.determined = true
 	state.lastCompleted = restored.LastCompletion
+	// A committed round that completed with records is records seen, as far
+	// as this process can vouch for anything it did not watch: it is what
+	// keeps a sparse source from being listed as never having spoken an hour
+	// after every release. A committed empty round says nothing either way
+	// about the rounds before it, and leaves "seen" unset.
+	if round := restored.LastRound; round != nil && round.Kind == "FULL_COMPLETED" {
+		state.sawData = true
+	}
+	if round := restored.LastRound; round != nil && healthyCompletion(restored.LastCompletion) && !round.CompletedAt.IsZero() {
+		// The commit recorded a healthy round: that is a success this process
+		// can vouch for when the object fails later, even though it did not
+		// watch it -- the commit is the positive evidence, not the watching.
+		state.lastHealthyAt = round.CompletedAt
+		state.completedRevisions = revisionTriple{round.SnapshotRevision, round.QueryRevision, round.ScheduleRevision}
+	}
 	if !healthyCompletion(restored.LastCompletion) {
 		// The persisted state says the last round did not go well. Seeding it
 		// straight into an anomaly rather than waiting to see it fail again is
@@ -95,10 +137,24 @@ func (tracker *Tracker) Restore(queryGroup string, restored RestoredState, at ti
 		// Over-reporting one object for one round is the cheaper mistake.
 		state.currentKind = KindDegradedRun
 		state.reasonCode = restored.LastCompletion
-		// The cause is not persisted -- it is observation only -- so a restored
-		// object explains itself with the completion kind alone until it
-		// completes a round in this process. Leaving it blank is the honest
-		// answer; guessing one would attribute a cause nobody recorded.
+		// The cause is observation only, unless the commit kept its summary:
+		// then the round's own reason, its Slot and its commit clock are what
+		// the row says, and the revisions it ran under seed the "last
+		// completed round" triple so a change since reads as one. A record
+		// without the summary explains itself with the completion kind alone
+		// until it completes a round in this process; guessing a cause would
+		// attribute one nobody recorded.
+		if round := restored.LastRound; round != nil {
+			state.causeReason = round.ReasonCode
+			if !round.CompletedAt.IsZero() {
+				// The round said its reason when it was committed: that is
+				// both ends of the reason's clock this process can vouch for.
+				state.reasonKey, state.reasonSince, state.reasonLastAt, state.reasonRuns = "restored/"+round.Kind+"/"+round.ReasonCode, round.CompletedAt, round.CompletedAt, 1
+			}
+			state.completedRevisions = revisionTriple{round.SnapshotRevision, round.QueryRevision, round.ScheduleRevision}
+			summary := *round
+			state.restoredRound = &summary
+		}
 		state.degradedRuns = tracker.degradedRounds
 		state.inAnomalyRun = true
 		// The run started before this process did and the real start point did

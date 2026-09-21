@@ -143,6 +143,7 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 		compiled.outputIdentity = &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, request.Plan.OutputIdentity.DimensionFields...), DynamicDimensions: request.Plan.OutputIdentity.DynamicDimensions}
 	}
 	compiled.wireFormat = request.Plan.WireFormat
+	compiled.signalType = request.Plan.SignalType
 	if request.Plan.SubjectFacts != nil {
 		compiled.subjectFacts = &contract.MonitorSubjectFacts{
 			Labels:        append([]string{}, request.Plan.SubjectFacts.Labels...),

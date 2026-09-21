@@ -10,6 +10,7 @@
 package kafka
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -74,11 +75,17 @@ func TestNewDecisionProducerConfigForcesAcknowledgementAndBounds(t *testing.T) {
 	}
 }
 
-func TestNewDecisionProducerConfigSupportsDatalinkKafkaBaseline(t *testing.T) {
+// The floor of the protocol range is the oldest protocol the program works
+// against at all -- consumer groups, which the input needs -- and it is one
+// number in one place, parsed once. The producer built at the floor speaks
+// exactly that version without idempotence; a version below it is refused
+// with the reason at configuration time. Record headers are not the floor:
+// they are negotiated per cluster when the sink opens.
+func TestNewDecisionProducerConfigFloorIsTheOldestProtocolTheProgramSpeaks(t *testing.T) {
 	t.Parallel()
 
 	coordinates := validDecisionSinkConfig()
-	coordinates.BrokerVersion = "0.10.2.0"
+	coordinates.BrokerVersion = MinimumBrokerVersion
 	config, err := NewDecisionProducerConfig(coordinates)
 	if err != nil {
 		t.Fatalf("NewDecisionProducerConfig() error = %v", err)
@@ -87,10 +94,26 @@ func TestNewDecisionProducerConfigSupportsDatalinkKafkaBaseline(t *testing.T) {
 		t.Fatalf("broker version = %s, want %s", config.Version, sarama.V0_10_2_0)
 	}
 	if config.Producer.Idempotent {
-		t.Fatal("0.10.2-compatible Shadow producer must not require InitProducerID")
+		t.Fatal("the producer at the floor must not require InitProducerID")
 	}
 	if config.Producer.RequiredAcks != sarama.WaitForAll {
 		t.Fatalf("required acks = %d, want WaitForAll", config.Producer.RequiredAcks)
+	}
+	// The values the checks decide by are the values the texts name: each
+	// string parsed once.
+	if minimumBrokerVersion != sarama.V0_10_2_0 || minimumBrokerVersion.String() != MinimumBrokerVersion ||
+		recordHeaderBrokerVersion != sarama.V0_11_0_0 || recordHeaderBrokerVersion.String() != RecordHeaderBrokerVersion {
+		t.Fatalf("parsed floor %s / header version %s, want them derived from %q / %q",
+			minimumBrokerVersion, recordHeaderBrokerVersion, MinimumBrokerVersion, RecordHeaderBrokerVersion)
+	}
+
+	coordinates.BrokerVersion = "0.10.1.0"
+	_, err = NewDecisionProducerConfig(coordinates)
+	if err == nil || !strings.Contains(err.Error(), "consumer groups") || !strings.Contains(err.Error(), MinimumBrokerVersion) {
+		t.Fatalf("NewDecisionProducerConfig(0.10.1.0) error = %v, want a refusal naming consumer groups and %s", err, MinimumBrokerVersion)
+	}
+	if _, err := NewDecisionProducerOnlyConfig(coordinates); err == nil {
+		t.Fatal("NewDecisionProducerOnlyConfig(0.10.1.0) = nil, want the same refusal on the producer-only path")
 	}
 }
 

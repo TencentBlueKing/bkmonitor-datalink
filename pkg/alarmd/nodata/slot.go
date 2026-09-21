@@ -106,13 +106,28 @@ const (
 	// close them. Nothing is judged, nothing is remembered and no series is
 	// produced, so the round leaves no trace but its name.
 	OutcomeSkippedHostsUnresolved SlotOutcome = "SKIPPED_HOSTS_UNRESOLVED"
+	// OutcomeSkippedDerivationFailed means this Plan's no-data round could not
+	// be worked out at all: its memory was not loaded, its Slot could not be
+	// turned into the inputs the evaluation takes, or the evaluation refused
+	// them. The evaluation never produces it -- these are the caller's own
+	// failures -- and it is named here so that all of them are read from one
+	// list.
+	OutcomeSkippedDerivationFailed SlotOutcome = "SKIPPED_DERIVATION_FAILED"
+	// OutcomeSkippedOutputFailed means the round was decided and its verdicts
+	// could not be turned into the series the ordinary evaluation reads.
+	//
+	// It is separate from a failed derivation because the two send a reader to
+	// different places: nothing was decided in the first, and something was
+	// decided and could not be said in the second -- which is the one that
+	// leaves a group's absence known to this process and to nobody else.
+	OutcomeSkippedOutputFailed SlotOutcome = "SKIPPED_OUTPUT_FAILED"
 )
 
 // SlotOutcomes is every outcome a Plan that detects no-data can land on, for a
 // partition to pre-create and for a reader to bound the family by.
 var SlotOutcomes = []SlotOutcome{
 	OutcomeEvaluated, OutcomeSkippedQueryNotFull, OutcomeSkippedSlotBudget, OutcomeSkippedMemoryUnreadable,
-	OutcomeSkippedHostsUnresolved,
+	OutcomeSkippedHostsUnresolved, OutcomeSkippedDerivationFailed, OutcomeSkippedOutputFailed,
 }
 
 // EvaluateSlot turns one Slot's evidence into the no-data decision for it.

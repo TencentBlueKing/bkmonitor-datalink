@@ -17,7 +17,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Shopify/sarama"
+	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 )
 
 // InputMode selects the only active input source for one phase-two worker.
@@ -88,15 +88,8 @@ func validatePhaseTwoKafkaOutput(c KafkaConfig) error {
 	if c.TriggerEvent.MaxMessageBytes <= 0 {
 		return errors.New("kafka producer: trigger_event.max_message_bytes must be positive")
 	}
-	version, err := sarama.ParseKafkaVersion(c.BrokerVersion)
-	if err != nil {
-		return fmt.Errorf("kafka producer: broker_version %q: %w", c.BrokerVersion, err)
-	}
-	if !version.IsAtLeast(sarama.V0_10_2_0) || !sarama.MaxVersion.IsAtLeast(version) {
-		return fmt.Errorf(
-			"kafka producer: broker_version %q is outside supported range 0.10.2.0..%s",
-			c.BrokerVersion, sarama.MaxVersion,
-		)
+	if _, err := enginekafka.ValidateBrokerVersion("kafka producer", c.BrokerVersion); err != nil {
+		return err
 	}
 	return nil
 }

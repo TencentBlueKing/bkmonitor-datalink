@@ -41,7 +41,7 @@ func TestFencedBatchAppliesAfterTheScriptCacheIsFlushed(t *testing.T) {
 	ctx := context.Background()
 	guard := &FenceGuard{Keys: fixture.owners.FenceKeys(frozenRef().Slot.QueryGroup),
 		OwnerID: fixture.fence.OwnerID, OwnerEpoch: fixture.fence.OwnerEpoch,
-		LeaseToken: fixture.fence.LeaseToken, NowMillis: fixture.leased.Add(time.Second).UnixMilli()}
+		LeaseToken: fixture.fence.LeaseToken}
 
 	first := []FencedWrite{{Key: "script-flush:a", ExpectedMissing: true, Value: []byte(`{"first":true}`), TTL: time.Minute}}
 	outcomes, err := fixture.backend.CompareAndSetManyByDigest(ctx, guard, first)

@@ -48,14 +48,27 @@ func (backend *pipelineMemoryBackend) MGet(ctx context.Context, keys []string) (
 }
 
 func (backend *pipelineMemoryBackend) RenewIfBelow(
-	_ context.Context, key string, ttl, threshold time.Duration,
-) (bool, error) {
-	_ = threshold
-	if _, exists := backend.values[key]; !exists {
-		return false, nil
+	ctx context.Context, key string, ttl, threshold time.Duration,
+) (RenewalOutcome, error) {
+	outcomes, err := backend.RenewManyIfBelow(ctx, []string{key}, ttl, threshold)
+	if err != nil {
+		return "", err
 	}
-	_ = ttl
-	return true, nil
+	return outcomes[0], nil
+}
+
+func (backend *pipelineMemoryBackend) RenewManyIfBelow(
+	_ context.Context, keys []string, ttl, threshold time.Duration,
+) ([]RenewalOutcome, error) {
+	_, _ = ttl, threshold
+	outcomes := make([]RenewalOutcome, len(keys))
+	for index, key := range keys {
+		outcomes[index] = RenewalMissing
+		if _, exists := backend.values[key]; exists {
+			outcomes[index] = RenewalRenewed
+		}
+	}
+	return outcomes, nil
 }
 
 func (backend *pipelineMemoryBackend) CompareAndSet(ctx context.Context, key string, expected []byte, missing bool, value []byte, ttl time.Duration) (bool, error) {
@@ -105,7 +118,6 @@ func testFenceKeys() ownership.FenceKeys {
 func testApplyFence() execution.StateApplyFence {
 	return execution.StateApplyFence{
 		Fence: execution.OwnerFence{QueryGroup: frozenRef().Slot.QueryGroup, OwnerID: "worker-1", OwnerEpoch: 3, LeaseToken: "lease-token"},
-		At:    time.Unix(1_700_000_000, 0),
 	}
 }
 
@@ -149,7 +161,7 @@ func preflightItems(mutations []execution.StateMutation) []execution.StatePrefli
 
 func newBatchStore(t *testing.T, backend Backend, resolver FenceKeyResolver) *ExecutionStore {
 	t.Helper()
-	router, err := NewFixedRouter("monitor-01", backend)
+	router, err := NewFixedRouter("state-01", backend)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +234,10 @@ func TestLoadRuntimeBatchesReadsAndIsolatesInvalidItems(t *testing.T) {
 func TestLoadRuntimeFailedBatchIsRetryableAndLeavesNoWitness(t *testing.T) {
 	backend := newFakeBackend()
 	backend.readErr = errors.New("connection reset")
-	store := newBatchStore(t, backend, nil)
+	// The read-only fake would not pass the probe at open; the transport
+	// failure under test is reached through a router that listed a capable
+	// target and routes to this one.
+	store := capabilityStore(t, backend)
 	mutations := seriesMutations(t, 3, applyVersion(), 0)
 	loaded, err := store.LoadRuntime(context.Background(), execution.StatePreflightRequest{Contract: frozenRef(), Items: preflightItems(mutations)})
 	if err != nil {
@@ -263,7 +278,7 @@ func TestApplyRuntimePipelinesWitnessedItemsAndStoresSequentialBytes(t *testing.
 	}
 	for _, guard := range batched.guards {
 		if guard == nil || guard.Keys != testFenceKeys() || guard.OwnerID != "worker-1" || guard.OwnerEpoch != 3 ||
-			guard.LeaseToken != "lease-token" || guard.NowMillis != testApplyFence().At.UnixMilli() {
+			guard.LeaseToken != "lease-token" {
 			t.Fatalf("pipeline guard = %+v", guard)
 		}
 	}
@@ -326,11 +341,14 @@ func TestApplyRuntimeClassifiesValueChangedBetweenPreflightAndApply(t *testing.T
 	movedRevision := seriesMutation(t, seriesIdentity(1), newer, 1, "")
 	movedBytes := seriesMutation(t, seriesIdentity(2), newer, 1, "")
 	vanished := seriesMutation(t, seriesIdentity(3), newer, 1, "")
+	recreated := seriesMutation(t, seriesIdentity(4), newer, 3, "")
 	for _, mutation := range []execution.StateMutation{movedRevision, movedBytes, vanished} {
 		key, _ := RuntimeStateKeyV2("alarmd", mutation.Identity)
 		backend.values[key], _ = encodeRuntime(seriesMutation(t, mutation.Identity, version, 0, ""), 1)
 	}
-	items := preflightItems([]execution.StateMutation{missingThenWritten, movedRevision, movedBytes, vanished})
+	key4, _ := RuntimeStateKeyV2("alarmd", recreated.Identity)
+	backend.values[key4], _ = encodeRuntime(seriesMutation(t, recreated.Identity, version, 2, ""), 3)
+	items := preflightItems([]execution.StateMutation{missingThenWritten, movedRevision, movedBytes, vanished, recreated})
 	if _, err := store.LoadRuntime(context.Background(), execution.StatePreflightRequest{Contract: frozenRef(), Items: items}); err != nil {
 		t.Fatalf("LoadRuntime() error = %v", err)
 	}
@@ -344,18 +362,20 @@ func TestApplyRuntimeClassifiesValueChangedBetweenPreflightAndApply(t *testing.T
 	backend.values[key2], _ = encodeRuntime(seriesMutation(t, movedBytes.Identity, older, 0, "other"), 1)
 	key3, _ := RuntimeStateKeyV2("alarmd", vanished.Identity)
 	delete(backend.values, key3)
+	// The key was gone and written fresh: revision 3 at preflight, 1 now.
+	backend.values[key4], _ = encodeRuntime(seriesMutation(t, recreated.Identity, version, 0, "other"), 1)
 	snapshot := map[string]string{}
 	for key, value := range backend.values {
 		snapshot[key] = string(value)
 	}
 
 	result, err := store.ApplyRuntime(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(),
-		Items: []execution.StateMutation{missingThenWritten, movedRevision, movedBytes, vanished}})
+		Items: []execution.StateMutation{missingThenWritten, movedRevision, movedBytes, vanished, recreated}})
 	if err != nil {
 		t.Fatalf("ApplyRuntime() error = %v", err)
 	}
 	want := []execution.StateApplyStatus{execution.StateApplyVersionConflict, execution.StateApplyVersionConflict,
-		execution.StateApplyCASConflict, execution.StateApplyVersionConflict}
+		execution.StateApplyCASConflict, execution.StateApplyVersionConflict, execution.StateApplyVersionConflict}
 	for index, status := range want {
 		if result.Items[index].Status != status {
 			t.Fatalf("item %d = %+v, want %s", index, result.Items[index], status)
@@ -363,6 +383,24 @@ func TestApplyRuntimeClassifiesValueChangedBetweenPreflightAndApply(t *testing.T
 	}
 	if result.Items[2].ReasonCode != execution.ReasonCode(contract.ReasonStateWriteRetryable) {
 		t.Fatalf("CAS conflict reason = %s", result.Items[2].ReasonCode)
+	}
+	// Each conflict says which comparison refused it and what it compared;
+	// the status alone reads the same for a key that expired and a key
+	// another writer moved.
+	wantKinds := map[int]execution.StateApplyItemResult{
+		0: {VersionConflict: execution.StateVersionConflictRevisionMoved, StoredBlobRevision: 1, StoredVersionComparison: execution.ApplyVersionEqual},
+		1: {VersionConflict: execution.StateVersionConflictRevisionMoved, StoredBlobRevision: 2, StoredVersionComparison: execution.ApplyVersionPersistedOlder},
+		3: {VersionConflict: execution.StateVersionConflictMissing},
+		4: {VersionConflict: execution.StateVersionConflictRevisionReset, StoredBlobRevision: 1, StoredVersionComparison: execution.ApplyVersionPersistedOlder},
+	}
+	for index, want := range wantKinds {
+		got := result.Items[index]
+		if got.VersionConflict != want.VersionConflict || got.StoredBlobRevision != want.StoredBlobRevision || got.StoredVersionComparison != want.StoredVersionComparison {
+			t.Fatalf("item %d = %+v, want kind %s stored revision %d comparison %q", index, got, want.VersionConflict, want.StoredBlobRevision, want.StoredVersionComparison)
+		}
+	}
+	if result.Items[2].VersionConflict != "" {
+		t.Fatalf("CAS conflict carries a version conflict kind: %+v", result.Items[2])
 	}
 	if len(backend.values) != len(snapshot) {
 		t.Fatalf("conflicting apply changed the key set: %d != %d", len(backend.values), len(snapshot))
@@ -527,4 +565,245 @@ func TestRuntimeWitnessCacheScopesBySlotAndEvictsOldGroups(t *testing.T) {
 	if _, ok := cache.take(newest, identity); !ok {
 		t.Fatal("newest group was evicted")
 	}
+}
+
+// The same write sent a second time, unchanged, is the statement already on
+// disk and must read ALREADY_APPLIED with kind revision_skew, without a write.
+//
+// This is what the Redis client library does on its own: a pipeline whose
+// reply was lost to a read timeout or a dropped connection is re-sent as it
+// was, and the first copy had already executed. Nothing preflights again in
+// between, so the shape is built the way it happens: the witness still says
+// the key is missing, the bytes on disk are already ours. Classifying the
+// second copy by revision first called our own landed write a conflict, and
+// the Slot's retry then re-evaluated against post-Slot state and conflicted
+// again on every attempt.
+func TestApplyRuntimeTheSameWriteSentAgainUnchangedIsAlreadyApplied(t *testing.T) {
+	requireSkew := func(t *testing.T, result execution.StateApplyResult) {
+		t.Helper()
+		for index, item := range result.Items {
+			if item.Status != execution.StateApplyAlreadyApplied {
+				t.Fatalf("item %d after an unchanged re-send = %+v, want %s: the bytes on disk are this very "+
+					"mutation, and calling them a conflict sends the Slot into a retry that cannot ever succeed",
+					index, item, execution.StateApplyAlreadyApplied)
+			}
+			// The item says how it was decided and where the statement was
+			// found, or the coordinator cannot count re-sends apart from
+			// ordinary replays.
+			if item.AlreadyApplied != execution.StateAlreadyAppliedRevisionSkew || item.StoredBlobRevision != 1 {
+				t.Fatalf("item %d after an unchanged re-send = %+v, want kind revision_skew at stored revision 1", index, item)
+			}
+		}
+	}
+	requireUntouched := func(t *testing.T, backend *pipelineMemoryBackend, snapshot map[string]string) {
+		t.Helper()
+		if len(backend.values) != len(snapshot) {
+			t.Fatalf("re-send changed the key set: %d != %d", len(backend.values), len(snapshot))
+		}
+		for key, value := range snapshot {
+			if string(backend.values[key]) != value {
+				t.Fatalf("re-send rewrote %s", key)
+			}
+		}
+	}
+	snapshotOf := func(backend *pipelineMemoryBackend) map[string]string {
+		snapshot := map[string]string{}
+		for key, value := range backend.values {
+			snapshot[key] = string(value)
+		}
+		return snapshot
+	}
+
+	t.Run("pipelined fenced write whose first copy landed", func(t *testing.T) {
+		backend := newPipelineMemoryBackend()
+		store := newBatchStore(t, backend, fixedFenceKeys{testFenceKeys()})
+		mutations := seriesMutations(t, 3, applyVersion(), 0)
+		request := execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: mutations}
+		if _, err := store.LoadRuntime(context.Background(), execution.StatePreflightRequest{Contract: frozenRef(), Items: preflightItems(mutations)}); err != nil {
+			t.Fatalf("LoadRuntime() error = %v", err)
+		}
+		// The first copy executed: our bytes are on disk at revision 1. The
+		// witness from preflight still says missing, so the re-sent copy goes
+		// to the pipeline and meets them there.
+		for _, mutation := range mutations {
+			key, _ := RuntimeStateKeyV2("alarmd", mutation.Identity)
+			backend.values[key], _ = encodeRuntime(mutation, 1)
+		}
+		snapshot := snapshotOf(backend)
+		result, err := store.ApplyRuntimeFenced(context.Background(), request, testApplyFence())
+		if err != nil {
+			t.Fatalf("ApplyRuntimeFenced() error = %v", err)
+		}
+		if backend.pipelines != 1 {
+			t.Fatalf("pipelines = %d, want the re-sent copy to reach the pipeline and be classified from the conflict it meets", backend.pipelines)
+		}
+		requireSkew(t, result)
+		requireUntouched(t, backend, snapshot)
+	})
+
+	t.Run("sequential write sent again without a new preflight", func(t *testing.T) {
+		backend := newPipelineMemoryBackend()
+		store := newBatchStore(t, backend, nil)
+		mutations := seriesMutations(t, 3, applyVersion(), 0)
+		request := execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: mutations}
+		first, err := store.ApplyRuntime(context.Background(), request)
+		if err != nil {
+			t.Fatalf("ApplyRuntime() error = %v", err)
+		}
+		requireAllStatus(t, first, execution.StateApplied)
+		snapshot := snapshotOf(backend)
+		again, err := store.ApplyRuntime(context.Background(), request)
+		if err != nil {
+			t.Fatalf("re-sent ApplyRuntime() error = %v", err)
+		}
+		requireSkew(t, again)
+		requireUntouched(t, backend, snapshot)
+	})
+
+	t.Run("retry that preflighted again but kept the old expectation", func(t *testing.T) {
+		backend := newPipelineMemoryBackend()
+		store := newBatchStore(t, backend, fixedFenceKeys{testFenceKeys()})
+		mutations := seriesMutations(t, 3, applyVersion(), 0)
+		request := execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: mutations}
+		apply := func() execution.StateApplyResult {
+			t.Helper()
+			if _, err := store.LoadRuntime(context.Background(), execution.StatePreflightRequest{Contract: frozenRef(), Items: preflightItems(mutations)}); err != nil {
+				t.Fatalf("LoadRuntime() error = %v", err)
+			}
+			result, err := store.ApplyRuntimeFenced(context.Background(), request, testApplyFence())
+			if err != nil {
+				t.Fatalf("ApplyRuntimeFenced() error = %v", err)
+			}
+			return result
+		}
+		requireAllStatus(t, apply(), execution.StateApplied)
+		snapshot := snapshotOf(backend)
+		requireSkew(t, apply())
+		requireUntouched(t, backend, snapshot)
+	})
+}
+
+// The same key twice in one request with the same statement is the producer's
+// duplicate, not a re-sent write: the later copy reads ALREADY_APPLIED with
+// kind repeated_key, so a steady skew count that is really this cannot pose as
+// a re-sending client.
+func TestApplyRuntimeRepeatedKeyWithTheSameStatementIsNamedRepeatedKey(t *testing.T) {
+	backend := newPipelineMemoryBackend()
+	store := newBatchStore(t, backend, nil)
+	first := seriesMutation(t, seriesIdentity(0), applyVersion(), 0, "")
+	again := first
+	sibling := seriesMutation(t, seriesIdentity(1), applyVersion(), 0, "")
+	result, err := store.ApplyRuntime(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(),
+		Items: []execution.StateMutation{first, sibling, again}})
+	if err != nil {
+		t.Fatalf("ApplyRuntime() error = %v", err)
+	}
+	if result.Items[0].Status != execution.StateApplied || result.Items[1].Status != execution.StateApplied {
+		t.Fatalf("first copies = %+v / %+v, want applied", result.Items[0], result.Items[1])
+	}
+	later := result.Items[2]
+	if later.Status != execution.StateApplyAlreadyApplied || later.AlreadyApplied != execution.StateAlreadyAppliedRepeatedKey || later.StoredBlobRevision != 1 {
+		t.Fatalf("later copy = %+v, want ALREADY_APPLIED kind repeated_key at stored revision 1: the request itself wrote this key, no client re-sent it", later)
+	}
+	key, _ := RuntimeStateKeyV2("alarmd", first.Identity)
+	view := decodeRuntime(backend.values[key], first.Identity, frozenRef(), first.ApplyVersion)
+	if view.BlobRevision != 1 {
+		t.Fatalf("the later copy rewrote the key: revision %d, want 1", view.BlobRevision)
+	}
+}
+
+// The same key twice in one request with two different statements is a
+// conflict the producer caused, and the item says so: from the status alone it
+// reads like a race with another writer, and the fix for those lives in
+// different places.
+func TestApplyRuntimeRepeatedKeyWithADifferentStatementIsAConflictThatNamesTheRepeat(t *testing.T) {
+	backend := newPipelineMemoryBackend()
+	store := newBatchStore(t, backend, nil)
+	first := seriesMutation(t, seriesIdentity(0), applyVersion(), 0, "")
+	other := seriesMutation(t, seriesIdentity(0), applyVersion(), 0, "other")
+	if first.MutationDigest == other.MutationDigest {
+		t.Fatal("fixture: the two statements must differ")
+	}
+	result, err := store.ApplyRuntime(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(),
+		Items: []execution.StateMutation{first, other}})
+	if err != nil {
+		t.Fatalf("ApplyRuntime() error = %v", err)
+	}
+	if result.Items[0].Status != execution.StateApplied || result.Items[0].RepeatedKey {
+		t.Fatalf("first copy = %+v, want applied and not marked repeated", result.Items[0])
+	}
+	if result.Items[1].Status != execution.StateApplyVersionConflict || !result.Items[1].RepeatedKey {
+		t.Fatalf("later different copy = %+v, want STATE_VERSION_CONFLICT marked as a repeated key", result.Items[1])
+	}
+	// The repeat mark does not replace the comparison: the later copy
+	// expected nothing and met the earlier copy at revision 1.
+	if later := result.Items[1]; later.VersionConflict != execution.StateVersionConflictRevisionMoved || later.StoredBlobRevision != 1 {
+		t.Fatalf("later different copy = %+v, want kind revision_moved at stored revision 1 beside the repeat mark", later)
+	}
+}
+
+// The sequential path and the witnessed path name their conflicts the same
+// way the pipelined one does: the missing key from the site that saw it
+// missing, the rest from the one classifier. A retry carrying an old
+// expectation into a key that expired is the shape the missing kind exists
+// to name, and it is decided without a round trip when the witness already
+// says so.
+func TestApplyRuntimeSequentialAndWitnessedConflictsNameTheComparison(t *testing.T) {
+	version := applyVersion()
+	t.Run("sequential", func(t *testing.T) {
+		backend := newPipelineMemoryBackend()
+		store := newBatchStore(t, backend, nil)
+		expired := seriesMutation(t, seriesIdentity(0), version, 2, "")
+		reset := seriesMutation(t, seriesIdentity(1), version, 3, "")
+		moved := seriesMutation(t, seriesIdentity(2), version, 1, "")
+		otherStatement := seriesMutation(t, seriesIdentity(3), version, 1, "")
+		keyReset, _ := RuntimeStateKeyV2("alarmd", reset.Identity)
+		backend.values[keyReset], _ = encodeRuntime(seriesMutation(t, reset.Identity, version, 0, "fresh"), 1)
+		keyMoved, _ := RuntimeStateKeyV2("alarmd", moved.Identity)
+		backend.values[keyMoved], _ = encodeRuntime(seriesMutation(t, moved.Identity, version, 1, "theirs"), 2)
+		keyOther, _ := RuntimeStateKeyV2("alarmd", otherStatement.Identity)
+		backend.values[keyOther], _ = encodeRuntime(seriesMutation(t, otherStatement.Identity, version, 0, "theirs"), 1)
+		result, err := store.ApplyRuntime(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(),
+			Items: []execution.StateMutation{expired, reset, moved, otherStatement}})
+		if err != nil {
+			t.Fatalf("ApplyRuntime() error = %v", err)
+		}
+		requireAllStatus(t, result, execution.StateApplyVersionConflict)
+		want := []execution.StateApplyItemResult{
+			{VersionConflict: execution.StateVersionConflictMissing},
+			{VersionConflict: execution.StateVersionConflictRevisionReset, StoredBlobRevision: 1, StoredVersionComparison: execution.ApplyVersionEqual},
+			{VersionConflict: execution.StateVersionConflictRevisionMoved, StoredBlobRevision: 2, StoredVersionComparison: execution.ApplyVersionEqual},
+			{VersionConflict: execution.StateVersionConflictSameVersionOtherStatement, StoredBlobRevision: 1, StoredVersionComparison: execution.ApplyVersionEqual},
+		}
+		for index, item := range want {
+			got := result.Items[index]
+			if got.VersionConflict != item.VersionConflict || got.StoredBlobRevision != item.StoredBlobRevision || got.StoredVersionComparison != item.StoredVersionComparison {
+				t.Fatalf("item %d = %+v, want kind %s stored revision %d comparison %q", index, got, item.VersionConflict, item.StoredBlobRevision, item.StoredVersionComparison)
+			}
+		}
+		if backend.casCalls != 0 {
+			t.Fatalf("a refused item reached CompareAndSet: cas=%d", backend.casCalls)
+		}
+	})
+	t.Run("witnessed missing with an old expectation", func(t *testing.T) {
+		backend := newPipelineMemoryBackend()
+		store := newBatchStore(t, backend, fixedFenceKeys{testFenceKeys()})
+		fresh := seriesMutation(t, seriesIdentity(0), version, 0, "")
+		if _, err := store.LoadRuntime(context.Background(), execution.StatePreflightRequest{Contract: frozenRef(), Items: preflightItems([]execution.StateMutation{fresh})}); err != nil {
+			t.Fatalf("LoadRuntime() error = %v", err)
+		}
+		stale := seriesMutation(t, seriesIdentity(0), version, 4, "")
+		result, err := store.ApplyRuntimeFenced(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(),
+			Items: []execution.StateMutation{stale}}, testApplyFence())
+		if err != nil {
+			t.Fatalf("ApplyRuntimeFenced() error = %v", err)
+		}
+		got := result.Items[0]
+		if got.Status != execution.StateApplyVersionConflict || got.VersionConflict != execution.StateVersionConflictMissing || got.StoredBlobRevision != 0 {
+			t.Fatalf("item = %+v, want STATE_VERSION_CONFLICT kind missing at stored revision 0", got)
+		}
+		if backend.pipelines != 0 || backend.casCalls != 0 || len(backend.values) != 0 {
+			t.Fatalf("witnessed missing decided with a round trip or a write: pipelines=%d cas=%d keys=%d", backend.pipelines, backend.casCalls, len(backend.values))
+		}
+	})
 }

@@ -168,7 +168,7 @@ func TestRecordsComeBackForAnObjectThatIsNotAnomalous(t *testing.T) {
 		t.Fatalf("status = %d, want the window's output returned for an object that is behaving", status)
 	}
 	if body["found"] != false {
-		t.Fatalf("found = %v, want false: the object is not in the anomaly list and the body has to say so",
+		t.Fatalf("found = %v, want false: only historical records remain for this inactive object",
 			body["found"])
 	}
 	if records, ok := body["records"].([]any); !ok || len(records) != 1 {
@@ -180,9 +180,7 @@ func TestRecordsComeBackForAnObjectThatIsNotAnomalous(t *testing.T) {
 		t.Fatalf("retention_seconds = %v, want %v", body["retention_seconds"], DiagnosticRetention/time.Second)
 	}
 
-	// With nothing to return, not found is still the honest answer: this view
-	// holds anomalies rather than the owned set, so a healthy object and an
-	// identity belonging to nothing look the same from here.
+	// The complete active set excludes this identity, and no records remain.
 	status, _ = get(t, handler, "/api/objects/qg-never-observed?records=50")
 	if status != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 when there is nothing at all to return", status)
@@ -204,7 +202,7 @@ func diagnosticsTestHandler(t *testing.T, store *DiagnosticStore) http.Handler {
 	snapshots := healthySnapshots()
 	snapshots[1].Anomalies = append(snapshots[1].Anomalies, anomaly("qg-a"))
 	snapshots[1].TotalAnomalies = 1
-	service := mustService(t, stubExpectations{expectation: Expectation{QueryGroups: 2, Known: true}},
+	service := mustService(t, stubExpectations{expectation: Expectation{QueryGroups: 2, Known: true, IDs: []string{"qg-a", "qg-other"}}},
 		stubRegistry{replicas: []string{"pod-a", "pod-b"}}, stubSnapshots{snapshots: snapshots})
 	handler, err := NewHandler(service, nil, func() time.Time { return now }, 0, nil, store, "")
 	if err != nil {

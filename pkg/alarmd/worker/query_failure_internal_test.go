@@ -1,10 +1,18 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package worker
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -18,7 +26,8 @@ func TestQueryFailureWrappedBudgetWinsOverProviderDiagnostic(t *testing.T) {
 	c := &SlotExecutionCoordinator{ports: Ports{Observer: observability.ObserverFunc(func(_ context.Context, o observability.Observation) { got = observability.NormalizeObservation(o) })}}
 	original := &provisionalBudgetExceededError{budget: observability.CapacityBudgetRetainedBytes}
 	c.observeQueryFailure(context.Background(), execution.OperationReplay, time.Now(), "execute", providerLikeBudgetError{fmt.Errorf("https://user:secret@example.test/?token=secret: %w", original)})
-	if got.QueryFailure == nil || got.QueryFailure.Category != "budget" || got.QueryFailure.Code != "retained_bytes" {
+	if got.QueryFailure == nil || got.QueryFailure.Category != "budget" ||
+		got.QueryFailure.Code != observability.CapacityBudgetFailureCode(observability.CapacityBudgetRetainedBytes) {
 		t.Fatalf("diagnostics=%+v", got.QueryFailure)
 	}
 }
@@ -54,7 +63,7 @@ func TestQueryContractErrorsKeepTextAndChainWhileExposingCodes(t *testing.T) {
 		codeCompletionOnlyExactSetInvalid, codeNamedInputExactSetInvalid, codePhysicalCompletionMissing, codePhysicalCompletenessInvalid,
 		codeRequirementQueryAmbiguous, codeRequirementQueryMissing, codeSeriesBeforeBegin, codeSeriesBatchInvalid,
 		codeSeriesBatchNotSingleSeries, codeSeriesBindingOutsideRequirements, codeSeriesBindingDuplicate, codeSeriesBindingMismatch,
-		codeSeriesRecordOutsideWindow, codeStreamedNamedInputDuplicate, codeGapScopeReasonConflict,
+		codeSeriesRecordOutsideWindow, codeStreamedNamedInputDuplicate,
 	} {
 		if !observability.ValidQueryFailureCode(code) {
 			t.Fatalf("worker failure code %q violates the log code grammar", code)
@@ -131,51 +140,17 @@ func TestProviderUnavailableFactsCountEveryUnavailablePhysicalQuery(t *testing.T
 	}
 }
 
-// A Plan whose incomplete named inputs of one gap scope carry different
-// completion reasons is refused under its own name, with both reasons: the
-// code goes to the counter's category, the pair to the bounded detail, and
-// the inputs to the text, so the shape can be read off one line instead of
-// inferred from an internal_unknown.
-func TestCompletionGapMutationNamesTheConflictingReasons(t *testing.T) {
-	plan := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "1001"}
-	due := execution.DuePlan{Identity: plan}
-	consumer := execution.ConsumerRef{Plan: plan, LevelID: 3, HasLevel: true}
-	bindings := []execution.NamedInputBinding{
-		{Consumer: consumer, RequirementID: "req-a", DatasetName: "primary", Completeness: execution.CompletenessPartial, ReasonCode: "QUERY_PARTIAL"},
-		{Consumer: consumer, RequirementID: "req-b", DatasetName: "baseline", Completeness: execution.CompletenessUnavailable, ReasonCode: "QUERY_TIMEOUT"},
-	}
-	_, err := completionGapReasons(due, bindings, nil, "")
-	var conflict *gapScopeReasonConflictError
-	if !errors.As(err, &conflict) {
-		t.Fatalf("completionGapMutation error = %v, want the gap scope conflict", err)
-	}
-	text := err.Error()
-	for _, want := range []string{"strategy 1001", "level 3", "req-a", "req-b", "QUERY_PARTIAL", "QUERY_TIMEOUT"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("error text %q does not name %q", text, want)
-		}
-	}
-	var got observability.Observation
-	c := &SlotExecutionCoordinator{ports: Ports{Observer: observability.ObserverFunc(func(_ context.Context, o observability.Observation) { got = observability.NormalizeObservation(o) })}}
-	c.observeQueryFailure(context.Background(), execution.OperationNormal, time.Now(), observability.QueryFailureStageStreamComplete, err)
-	if got.QueryFailure == nil || got.QueryFailure.Category != observability.QueryFailureCategoryNamedInput ||
-		got.QueryFailure.Code != codeGapScopeReasonConflict || got.QueryFailure.Detail != "level=3-first=query_partial-second=query_timeout-why=undecided" {
-		t.Fatalf("failure facts = %+v, want the named input conflict with both reasons in the detail", got.QueryFailure)
-	}
-	// The same reason twice in one scope is not a conflict.
-	agreeing := []execution.NamedInputBinding{bindings[0], {Consumer: consumer, RequirementID: "req-b", DatasetName: "baseline", Completeness: execution.CompletenessPartial, ReasonCode: "QUERY_PARTIAL"}}
-	reasons, err := completionGapReasons(due, agreeing, nil, "")
-	if err != nil || reasons[execution.GapScope{LevelID: 3, HasLevel: true}] != "QUERY_PARTIAL" {
-		t.Fatalf("agreeing reasons: reasons = %v, err = %v; want the one reason on the Level scope", reasons, err)
-	}
-}
-
-// The shape the reference deployment shows on every replay after a restart:
-// two ALGORITHM_DEPENDENCY inputs of one Level, both UNAVAILABLE, one timed
-// out and one refused. The evaluator gave the Level an UNKNOWN outcome with
-// one of the two reasons, and the result contract will compare the Level's
-// marker with exactly that, so that is the reason the scope carries.
-func TestCompletionGapReasonsTakeTheLevelOutcomeReasonWhenInputsDisagree(t *testing.T) {
+// Inputs of one scope that failed differently fold to one reason, and the
+// fold is the whole answer.
+//
+// These three cases were the refusal. A Level whose two inputs came back
+// QUERY_TIMEOUT and QUERY_UNAVAILABLE -- which one backend outage produces on
+// every round -- left nothing able to satisfy both of the result contract's
+// comparisons, and the Plan's entire evaluation was refused for as long as it
+// lasted. There is nothing left to decide between them: the marker's reason
+// and the Level's own UNKNOWN reason are now the same function of the same
+// inputs.
+func TestInputsThatFailedDifferentlyFoldToOneReason(t *testing.T) {
 	plan := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "9022"}
 	due := execution.DuePlan{Identity: plan}
 	consumer := execution.ConsumerRef{Plan: plan, LevelID: 1, HasLevel: true}
@@ -183,96 +158,37 @@ func TestCompletionGapReasonsTakeTheLevelOutcomeReasonWhenInputsDisagree(t *test
 		Role: execution.InputRoleAlgorithmDependency, Completeness: execution.CompletenessUnavailable, ReasonCode: "QUERY_TIMEOUT"}
 	history := execution.NamedInputBinding{Consumer: consumer, RequirementID: "req-history", DatasetName: "history_86400",
 		Role: execution.InputRoleAlgorithmDependency, Completeness: execution.CompletenessUnavailable, ReasonCode: "QUERY_UNAVAILABLE"}
-	outcome := func(reason execution.ReasonCode) []execution.LevelOutcome {
-		return []execution.LevelOutcome{{Plan: plan, LevelID: 1, Outcome: execution.LevelOutcomeUnknown, ReasonCode: reason}}
-	}
-	level := execution.GapScope{LevelID: 1, HasLevel: true}
-	for _, decided := range []execution.ReasonCode{"QUERY_UNAVAILABLE", "QUERY_TIMEOUT"} {
-		reasons, err := completionGapReasons(due, []execution.NamedInputBinding{previous, history}, outcome(decided), "")
-		if err != nil || len(reasons) != 1 || reasons[level] != decided {
-			t.Fatalf("outcome %s: reasons = %v, err = %v; want the outcome's reason on the Level scope", decided, reasons, err)
-		}
-	}
-	// Inputs that agree decide the scope without the outcome: an outcome that
-	// says otherwise is the evaluator's business, not a conflict.
-	agreeing := history
-	agreeing.ReasonCode = "QUERY_TIMEOUT"
-	reasons, err := completionGapReasons(due, []execution.NamedInputBinding{previous, agreeing}, outcome("QUERY_UNAVAILABLE"), "")
-	if err != nil || len(reasons) != 1 || reasons[level] != "QUERY_TIMEOUT" {
-		t.Fatalf("agreeing inputs: reasons = %v, err = %v; want the inputs' own reason", reasons, err)
-	}
-	// A Plan-scope input beside the Level keeps its own scope and reason.
-	planInput := execution.NamedInputBinding{Consumer: execution.ConsumerRef{Plan: plan}, RequirementID: "req-plan", DatasetName: "primary",
-		Role: execution.InputRolePrimary, Completeness: execution.CompletenessUnavailable, ReasonCode: "QUERY_PARTIAL"}
-	reasons, err = completionGapReasons(due, []execution.NamedInputBinding{planInput, previous, history}, outcome("QUERY_UNAVAILABLE"), "")
-	if err != nil || len(reasons) != 2 || reasons[execution.GapScope{}] != "QUERY_PARTIAL" || reasons[level] != "QUERY_UNAVAILABLE" {
-		t.Fatalf("plan and level scopes: reasons = %v, err = %v", reasons, err)
-	}
-	// Another Plan's bindings and FULL inputs are not this Plan's scopes.
-	foreign := previous
-	foreign.Consumer.Plan = execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "other"}
-	full := history
-	full.Completeness = execution.CompletenessFull
-	full.ReasonCode = ""
-	if _, err := completionGapReasons(due, []execution.NamedInputBinding{foreign, full}, outcome("QUERY_UNAVAILABLE"), ""); err == nil {
-		t.Fatal("no incomplete input of this Plan was accepted as a gap scope")
-	}
-}
-
-// The refusal stays reachable, under its name, wherever the outcome cannot
-// decide: the Level has no UNKNOWN outcome, its series disagree, its reason
-// is not one the inputs gave, a PARTIAL input carries another reason, or the
-// disagreement is on the Plan scope, which has no outcome of its own.
-func TestCompletionGapReasonsStillRefuseWhatTheOutcomeCannotDecide(t *testing.T) {
-	plan := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "9022"}
-	due := execution.DuePlan{Identity: plan}
-	consumer := execution.ConsumerRef{Plan: plan, LevelID: 1, HasLevel: true}
-	previous := execution.NamedInputBinding{Consumer: consumer, RequirementID: "req-previous", DatasetName: "previous",
-		Role: execution.InputRoleAlgorithmDependency, Completeness: execution.CompletenessUnavailable, ReasonCode: "QUERY_TIMEOUT"}
-	history := execution.NamedInputBinding{Consumer: consumer, RequirementID: "req-history", DatasetName: "history_86400",
-		Role: execution.InputRoleAlgorithmDependency, Completeness: execution.CompletenessUnavailable, ReasonCode: "QUERY_UNAVAILABLE"}
-	unknown := func(levelID uint32, reason execution.ReasonCode) execution.LevelOutcome {
-		return execution.LevelOutcome{Plan: plan, LevelID: levelID, Outcome: execution.LevelOutcomeUnknown, ReasonCode: reason}
-	}
 	partial := previous
 	partial.Completeness = execution.CompletenessPartial
 	planPrevious, planHistory := previous, history
 	planPrevious.Consumer = execution.ConsumerRef{Plan: plan}
 	planHistory.Consumer = execution.ConsumerRef{Plan: plan}
-	cases := []struct {
-		name       string
-		bindings   []execution.NamedInputBinding
-		outcomes   []execution.LevelOutcome
-		planReason execution.ReasonCode
-		detail     string
+	levelScope := execution.GapScope{LevelID: 1, HasLevel: true}
+
+	for _, test := range []struct {
+		name     string
+		bindings []execution.NamedInputBinding
+		scope    execution.GapScope
 	}{
-		{"no outcome and no plan reason", []execution.NamedInputBinding{previous, history}, nil, "", "level=1-first=query_timeout-second=query_unavailable-why=undecided"},
-		{"no outcome and the plan reason is none", []execution.NamedInputBinding{previous, history}, nil, "none", "level=1-first=query_timeout-second=query_unavailable-why=undecided"},
-		{"no outcome and a plan reason no input gave", []execution.NamedInputBinding{previous, history}, nil, "CONFIG_DRIFT", "level=1-first=query_timeout-second=query_unavailable-why=undecided"},
-		{"outcome of another level", []execution.NamedInputBinding{previous, history}, []execution.LevelOutcome{unknown(2, "QUERY_UNAVAILABLE")}, "", "level=1-first=query_timeout-second=query_unavailable-why=undecided"},
-		{"outcome is not unknown", []execution.NamedInputBinding{previous, history},
-			[]execution.LevelOutcome{{Plan: plan, LevelID: 1, Outcome: execution.LevelOutcomeNormal}}, "", "level=1-first=query_timeout-second=query_unavailable-why=undecided"},
-		{"series disagree", []execution.NamedInputBinding{previous, history},
-			[]execution.LevelOutcome{unknown(1, "QUERY_UNAVAILABLE"), unknown(1, "QUERY_TIMEOUT")}, "", "level=1-first=query_timeout-second=query_unavailable-why=undecided"},
-		{"outcome reason no input gave", []execution.NamedInputBinding{previous, history}, []execution.LevelOutcome{unknown(1, "CONFIG_DRIFT")}, "", "level=1-first=query_timeout-second=query_unavailable-why=undecided"},
-		{"partial input carries another reason than the outcome", []execution.NamedInputBinding{partial, history}, []execution.LevelOutcome{unknown(1, "QUERY_UNAVAILABLE")}, "", "level=1-first=query_timeout-second=query_unavailable-why=partial"},
-		{"partial input carries another reason than the plan", []execution.NamedInputBinding{partial, history}, nil, "QUERY_UNAVAILABLE", "level=1-first=query_timeout-second=query_unavailable-why=partial"},
-		{"plan scope has no outcome and no plan reason", []execution.NamedInputBinding{planPrevious, planHistory}, []execution.LevelOutcome{unknown(1, "QUERY_UNAVAILABLE")}, "", "level=plan-first=query_timeout-second=query_unavailable-why=undecided"},
-	}
-	for _, c := range cases {
-		_, err := completionGapReasons(due, c.bindings, c.outcomes, c.planReason)
-		var conflict *gapScopeReasonConflictError
-		if !errors.As(err, &conflict) {
-			t.Fatalf("%s: err = %v, want the named conflict", c.name, err)
-		}
-		if got := conflict.QueryFailureDetail(); got != c.detail {
-			t.Fatalf("%s: detail = %q, want %q", c.name, got, c.detail)
-		}
-		for _, want := range []string{"strategy 9022", "req-previous", "req-history"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Fatalf("%s: error text %q does not name %q", c.name, err.Error(), want)
+		{"a level scope, nothing else deciding", []execution.NamedInputBinding{previous, history}, levelScope},
+		{"the other way round", []execution.NamedInputBinding{history, previous}, levelScope},
+		{"a partial input disagreeing with an unavailable one", []execution.NamedInputBinding{partial, history}, levelScope},
+		{"a plan scope, which has no outcome of its own", []execution.NamedInputBinding{planPrevious, planHistory}, execution.GapScope{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			// The signature is the assertion: the fold takes the bindings and
+			// nothing else. The Level outcomes and the Plan reason, which used
+			// to have to agree with the marker, are no longer reachable from
+			// here.
+			reasons, err := completionGapReasons(due, test.bindings)
+			if err != nil {
+				t.Fatalf("completionGapReasons() = %v; inputs that failed differently are not a refusal", err)
 			}
-		}
+			if got := reasons[test.scope]; got != "QUERY_UNAVAILABLE" {
+				t.Fatalf("scope %+v folded to %q, want QUERY_UNAVAILABLE: a backend that did not answer "+
+					"at all outranks one that answered late", test.scope, got)
+			}
+		})
 	}
 }
 
@@ -294,14 +210,19 @@ func TestLoadedFactDispositionRefusalKeepsItsCodeThroughTheEvaluationWrapper(t *
 	}
 }
 
-// The shape the reference deployment shows on the no-series path in steady
-// state: the PRIMARY input timed out and a dependency input was refused, both
-// UNAVAILABLE on one Level, no series and so no outcome. The Plan result
-// carries the PRIMARY's reason, and the contract compares no marker with a
-// reason on that path, so the scope takes the Plan's reason. On the series
-// path the Level's outcome still decides first, and the Plan's reason is
-// only consulted where there is none.
-func TestCompletionGapReasonsTakeThePlanReasonWhereNoOutcomeDecides(t *testing.T) {
+// The no-series path takes the fold too, and the Plan result keeps its own
+// reason.
+//
+// This is the one behaviour the fold changes rather than repairs. On that path
+// there is no Level outcome, and the marker used to take whatever reason the
+// Plan result carried -- the PRIMARY input's, chosen by the merge. It now
+// takes the fold of the scope's inputs, which can be a different input's
+// reason. Nothing compares the two: the Plan result's reason is what the round
+// reports about itself, the marker's is what protects the scope, and they
+// answer different questions. What matters is that the marker is now the same
+// function of the same inputs as everywhere else, so no round can be refused
+// for the two derivations disagreeing.
+func TestTheNoSeriesPathTakesTheFoldAndLeavesThePlanResultAlone(t *testing.T) {
 	plan := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "9022"}
 	due := execution.DuePlan{Identity: plan}
 	consumer := execution.ConsumerRef{Plan: plan, LevelID: 1, HasLevel: true}
@@ -310,20 +231,10 @@ func TestCompletionGapReasonsTakeThePlanReasonWhereNoOutcomeDecides(t *testing.T
 	history := execution.NamedInputBinding{Consumer: consumer, RequirementID: "req-history", DatasetName: "history_86400",
 		Role: execution.InputRoleAlgorithmDependency, Completeness: execution.CompletenessUnavailable, ReasonCode: "QUERY_UNAVAILABLE"}
 	level := execution.GapScope{LevelID: 1, HasLevel: true}
-	reasons, err := completionGapReasons(due, []execution.NamedInputBinding{primary, history}, nil, primary.ReasonCode)
-	if err != nil || len(reasons) != 1 || reasons[level] != "QUERY_TIMEOUT" {
-		t.Fatalf("no-series shape: reasons = %v, err = %v; want the Plan's reason on the Level scope", reasons, err)
-	}
-	// The Plan's reason may be the dependency's when the merge path chose an
-	// UNAVAILABLE input; whichever input carries it decides.
-	reasons, err = completionGapReasons(due, []execution.NamedInputBinding{primary, history}, nil, "QUERY_UNAVAILABLE")
-	if err != nil || reasons[level] != "QUERY_UNAVAILABLE" {
-		t.Fatalf("plan reason of the dependency: reasons = %v, err = %v", reasons, err)
-	}
-	// With an outcome, the outcome decides even when the Plan's reason differs.
-	outcome := []execution.LevelOutcome{{Plan: plan, LevelID: 1, Outcome: execution.LevelOutcomeUnknown, ReasonCode: "QUERY_UNAVAILABLE"}}
-	reasons, err = completionGapReasons(due, []execution.NamedInputBinding{primary, history}, outcome, "QUERY_TIMEOUT")
-	if err != nil || reasons[level] != "QUERY_UNAVAILABLE" {
-		t.Fatalf("outcome over plan reason: reasons = %v, err = %v", reasons, err)
+
+	reasons, err := completionGapReasons(due, []execution.NamedInputBinding{primary, history})
+	if err != nil || len(reasons) != 1 || reasons[level] != "QUERY_UNAVAILABLE" {
+		t.Fatalf("no-series shape: reasons = %v, err = %v; want the fold of the scope's inputs and not "+
+			"whichever one the merge happened to report", reasons, err)
 	}
 }

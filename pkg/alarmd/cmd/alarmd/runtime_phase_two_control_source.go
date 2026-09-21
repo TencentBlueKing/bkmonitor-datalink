@@ -242,6 +242,7 @@ func sourceFactsOf(result phaseTwoControlRefreshResult, at time.Time) *fleet.Sou
 			LevelID: object.LevelID, Disposition: string(object.Disposition), Reason: object.Reason, FieldPath: object.FieldPath})
 	}
 	facts := fleet.NewSourceFacts(at, objects, withheld)
+	facts.Plans, facts.RevisionedPlans, facts.PlansKnown = composition.PlansTotal, composition.RevisionedPlans, true
 	facts.ChangeSignalPresent = result.ChangeSignalPresent
 	if result.ChangeSignalPresent {
 		age := result.ChangeSignalAgeSeconds

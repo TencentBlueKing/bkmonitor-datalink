@@ -29,9 +29,10 @@ import (
 )
 
 const (
-	hostCacheSuffix        = "cache.cmdb.host"
-	hostTopoRefreshedField = "cache.cmdb_last_refresh_all_time.host_topo"
-	scanBatch              = int64(1000)
+	hostCacheSuffix            = "cache.cmdb.host"
+	serviceInstanceCacheSuffix = "cache.cmdb.service_instance"
+	hostTopoRefreshedField     = "cache.cmdb_last_refresh_all_time.host_topo"
+	scanBatch                  = int64(1000)
 )
 
 // HostFacts is what enrichment knows about one host.
@@ -49,6 +50,24 @@ type HostFacts struct {
 	TopoNodes   []string
 	State       string
 	DisplayName string
+	// Attributes are the scalar top-level fields of the cache record as text,
+	// by field name: bk_state, bk_os_type, bk_host_name and whatever else the
+	// writer put there. They are decoded once here so a target on a host
+	// attribute costs the filter a lookup, not a decode; no target reads
+	// them yet.
+	Attributes map[string]string
+}
+
+// ServiceInstanceFacts is what enrichment knows about one service instance:
+// the host it runs on and the topology of its module. An instance sits in
+// exactly one module, so unlike a host it has one chain, and a target naming
+// any node of that chain includes it.
+type ServiceInstanceFacts struct {
+	ID        string
+	HostID    string
+	IP        string
+	CloudID   string
+	TopoNodes []string
 }
 
 // Index is an immutable snapshot. Refreshes publish a new one; readers keep
@@ -56,6 +75,7 @@ type HostFacts struct {
 type Index struct {
 	byIdentity        map[string]*HostFacts
 	hosts             int
+	serviceInstances  map[string]*ServiceInstanceFacts
 	builtAt           time.Time
 	sourceRefreshedAt time.Time
 }
@@ -65,6 +85,14 @@ func (index *Index) Hosts() int {
 		return 0
 	}
 	return index.hosts
+}
+
+// ServiceInstances is how many service instances the index holds.
+func (index *Index) ServiceInstances() int {
+	if index == nil {
+		return 0
+	}
+	return len(index.serviceInstances)
 }
 
 func (index *Index) BuiltAt() time.Time {
@@ -94,6 +122,15 @@ func (index *Index) Lookup(key string) (*HostFacts, bool) {
 	return facts, found
 }
 
+// LookupServiceInstance resolves one service-instance id.
+func (index *Index) LookupServiceInstance(id string) (*ServiceInstanceFacts, bool) {
+	if index == nil || id == "" {
+		return nil, false
+	}
+	facts, found := index.serviceInstances[id]
+	return facts, found
+}
+
 type Reader struct {
 	client redis.Cmdable
 	prefix string
@@ -118,6 +155,10 @@ func (reader *Reader) hostKey() string {
 	return reader.prefix + "." + hostCacheSuffix
 }
 
+func (reader *Reader) serviceInstanceKey() string {
+	return reader.prefix + "." + serviceInstanceCacheSuffix
+}
+
 func (reader *Reader) refreshedKey() string {
 	return reader.prefix + "." + hostTopoRefreshedField
 }
@@ -128,17 +169,16 @@ func (reader *Reader) refreshedKey() string {
 func (reader *Reader) Load(ctx context.Context, now time.Time) (*Index, error) {
 	builder := newIndexBuilder(now)
 
-	var cursor uint64
-	for {
-		fields, next, err := reader.client.HScan(ctx, reader.hostKey(), cursor, "", scanBatch).Result()
-		if err != nil {
-			return nil, fmt.Errorf("alarmd cmdbcache: scan host cache: %w", err)
-		}
-		builder.addFields(fields)
-		cursor = next
-		if cursor == 0 {
-			break
-		}
+	if err := reader.scan(ctx, reader.hostKey(), builder.addFields); err != nil {
+		return nil, fmt.Errorf("alarmd cmdbcache: scan host cache: %w", err)
+	}
+	// The service-instance cache is a second hash the same writer maintains
+	// beside the host one. It is read into the same snapshot so the two
+	// cannot be from different refreshes: an instance resolved against a
+	// host index older than itself would place it under a module the host
+	// has since left.
+	if err := reader.scan(ctx, reader.serviceInstanceKey(), builder.addServiceInstanceFields); err != nil {
+		return nil, fmt.Errorf("alarmd cmdbcache: scan service instance cache: %w", err)
 	}
 	index := builder.index
 
@@ -146,6 +186,22 @@ func (reader *Reader) Load(ctx context.Context, now time.Time) (*Index, error) {
 		index.sourceRefreshedAt = parseRefreshedAt(refreshed)
 	}
 	return index, nil
+}
+
+// scan streams one hash through consume, a page at a time.
+func (reader *Reader) scan(ctx context.Context, key string, consume func([]string)) error {
+	var cursor uint64
+	for {
+		fields, next, err := reader.client.HScan(ctx, key, cursor, "", scanBatch).Result()
+		if err != nil {
+			return err
+		}
+		consume(fields)
+		cursor = next
+		if cursor == 0 {
+			return nil
+		}
+	}
 }
 
 // indexBuilder accumulates scanned fields. It exists so the host-count and
@@ -157,8 +213,29 @@ type indexBuilder struct {
 
 func newIndexBuilder(now time.Time) *indexBuilder {
 	return &indexBuilder{
-		index: &Index{byIdentity: make(map[string]*HostFacts), builtAt: now},
-		seen:  make(map[string]*HostFacts),
+		index: &Index{
+			byIdentity: make(map[string]*HostFacts), serviceInstances: make(map[string]*ServiceInstanceFacts),
+			builtAt: now,
+		},
+		seen: make(map[string]*HostFacts),
+	}
+}
+
+// addServiceInstanceFields consumes an HSCAN page of the service-instance
+// hash: alternating instance id and record. The record carries its own id;
+// the field is what the writer keyed it by, and a disagreement between the
+// two is the writer's defect, so the field wins as the lookup key.
+func (builder *indexBuilder) addServiceInstanceFields(fields []string) {
+	for position := 0; position+1 < len(fields); position += 2 {
+		identity, payload := fields[position], fields[position+1]
+		facts, err := decodeServiceInstance(payload)
+		if err != nil {
+			continue
+		}
+		if facts.ID == "" {
+			facts.ID = identity
+		}
+		builder.index.serviceInstances[identity] = facts
 	}
 }
 
@@ -197,6 +274,14 @@ type wireHost struct {
 	TopoLinks   map[string][]json.RawMessage `json:"topo_link"`
 }
 
+type wireServiceInstance struct {
+	ID        json.Number                  `json:"service_instance_id"`
+	HostID    json.Number                  `json:"bk_host_id"`
+	IP        string                       `json:"ip"`
+	CloudID   json.Number                  `json:"bk_cloud_id"`
+	TopoLinks map[string][]json.RawMessage `json:"topo_link"`
+}
+
 type wireTopoNode struct {
 	ObjectID   string      `json:"bk_obj_id"`
 	InstanceID json.Number `json:"bk_inst_id"`
@@ -216,14 +301,44 @@ func decodeHost(payload string) (*HostFacts, error) {
 		BusinessID:  numberText(wire.BusinessID),
 		State:       wire.State,
 		DisplayName: wire.DisplayName,
+		TopoNodes:   topoNodes(wire.TopoLinks),
+		Attributes:  scalarAttributes(payload),
 	}
 	if facts.CloudID == "" {
 		facts.CloudID = "0"
 	}
-	// Every link contributes its whole chain: a host in several modules sits
-	// under several sets, and a target naming any of those nodes includes it.
+	return facts, nil
+}
+
+func decodeServiceInstance(payload string) (*ServiceInstanceFacts, error) {
+	decoder := json.NewDecoder(strings.NewReader(payload))
+	decoder.UseNumber()
+	var wire wireServiceInstance
+	if err := decoder.Decode(&wire); err != nil {
+		return nil, err
+	}
+	facts := &ServiceInstanceFacts{
+		ID:        numberText(wire.ID),
+		HostID:    numberText(wire.HostID),
+		IP:        wire.IP,
+		CloudID:   numberText(wire.CloudID),
+		TopoNodes: topoNodes(wire.TopoLinks),
+	}
+	if facts.CloudID == "" {
+		// Python's fuller writes the instance's cloud as it is; the cache
+		// writer takes it from the host, where an absent cloud is the direct
+		// area, the same default the host decoder applies.
+		facts.CloudID = "0"
+	}
+	return facts, nil
+}
+
+// topoNodes flattens the links of a record into its node set. Every link
+// contributes its whole chain: a host in several modules sits under several
+// sets, and a target naming any of those nodes includes it.
+func topoNodes(links map[string][]json.RawMessage) []string {
 	nodes := make(map[string]struct{})
-	for _, link := range wire.TopoLinks {
+	for _, link := range links {
 		for _, raw := range link {
 			var node wireTopoNode
 			if err := json.Unmarshal(raw, &node); err != nil {
@@ -236,11 +351,47 @@ func decodeHost(payload string) (*HostFacts, error) {
 			nodes[node.ObjectID+"|"+instance] = struct{}{}
 		}
 	}
-	facts.TopoNodes = make([]string, 0, len(nodes))
+	flat := make([]string, 0, len(nodes))
 	for node := range nodes {
-		facts.TopoNodes = append(facts.TopoNodes, node)
+		flat = append(flat, node)
 	}
-	return facts, nil
+	return flat
+}
+
+// scalarAttributes reads the top-level string, number and boolean fields of
+// a cache record as text. Objects and arrays are not attributes a target can
+// name a value of, so they are left out rather than flattened by a rule
+// nobody asked for.
+func scalarAttributes(payload string) map[string]string {
+	decoder := json.NewDecoder(strings.NewReader(payload))
+	decoder.UseNumber()
+	var fields map[string]json.RawMessage
+	if err := decoder.Decode(&fields); err != nil {
+		return nil
+	}
+	attributes := make(map[string]string, len(fields))
+	for name, raw := range fields {
+		if len(raw) == 0 {
+			continue
+		}
+		switch raw[0] {
+		case '"':
+			var text string
+			if err := json.Unmarshal(raw, &text); err == nil {
+				attributes[name] = text
+			}
+		case 't', 'f':
+			attributes[name] = string(raw)
+		case '{', '[', 'n':
+			continue
+		default:
+			attributes[name] = numberText(json.Number(raw))
+		}
+	}
+	if len(attributes) == 0 {
+		return nil
+	}
+	return attributes
 }
 
 func numberText(value json.Number) string {

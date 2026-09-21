@@ -242,8 +242,27 @@ func (profile profileEligibility) Eligible(
 	return worker.DeploymentProfile == string(profile)
 }
 
-func (store *fakeAssignmentStore) ListReadyWorkers(context.Context, time.Time) ([]ownership.WorkerRegistration, error) {
-	return append([]ownership.WorkerRegistration(nil), store.workers...), nil
+func (store *fakeAssignmentStore) ListReadyWorkers(
+	context.Context, time.Time,
+) ([]ownership.WorkerRegistration, ownership.ControlReadStats, error) {
+	return append([]ownership.WorkerRegistration(nil), store.workers...),
+		ownership.ControlReadStats{Keys: len(store.workers), RoundTrips: 1}, nil
+}
+
+// The batch answers from the same single current record the one-at-a-time
+// read answers from, so a case written against either path sees the same
+// store.
+func (store *fakeAssignmentStore) ReadAssignments(
+	_ context.Context,
+	queryGroups []execution.QueryGroupIdentity,
+) (map[execution.QueryGroupIdentity]ownership.AssignmentRecord, ownership.ControlReadStats, error) {
+	found := make(map[execution.QueryGroupIdentity]ownership.AssignmentRecord, len(queryGroups))
+	for _, queryGroup := range queryGroups {
+		if store.current.QueryGroup == queryGroup {
+			found[queryGroup] = store.current
+		}
+	}
+	return found, ownership.ControlReadStats{Keys: len(queryGroups), RoundTrips: 1}, nil
 }
 
 func (store *fakeAssignmentStore) PublishAssignment(

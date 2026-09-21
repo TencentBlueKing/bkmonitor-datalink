@@ -73,13 +73,23 @@ func TestWarmingLevelIsHeldBackWhenItsDependencyHasNoData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A dependency that completed empty is an incomplete input by the one
+	// definition the fold reads, so the worker proposes a Level marker for
+	// it and the outcome names that marker's reason rather than the stored
+	// guard's: the marker is the guard that ends up covering it.
+	proposeRoundGuard(t, next, &result)
 	if err := result.Validate(next); err != nil {
 		t.Fatalf("a warming Level advanced on a dependency without data and the contract refused it: %v", err)
 	}
 	held := result.Plans[0]
 	if held.LevelOutcomes[0].Outcome != execution.LevelOutcomeUnknown ||
-		held.LevelOutcomes[0].ReasonCode != execution.ReasonCode(contract.ReasonHistoryWarming) {
-		t.Fatalf("outcome on the held round = %+v, want UNKNOWN under the warming guard", held.LevelOutcomes[0])
+		held.LevelOutcomes[0].ReasonCode != execution.ReasonCode(contract.ReasonQueryEmpty) {
+		t.Fatalf("outcome on the held round = %+v, want UNKNOWN naming the empty dependency", held.LevelOutcomes[0])
+	}
+	if len(held.GuardBeforeEvents) != 1 || len(held.GuardBeforeEvents[0].Scopes) != 1 ||
+		held.GuardBeforeEvents[0].Scopes[0].ReasonCode != execution.ReasonCode(contract.ReasonQueryEmpty) ||
+		!held.GuardBeforeEvents[0].Scopes[0].Scope.HasLevel {
+		t.Fatalf("the held round's guard = %+v, want one Level marker naming the empty dependency", held.GuardBeforeEvents)
 	}
 	if len(held.StateResults) != 0 {
 		t.Fatalf("the held round wrote state: %+v", held.StateResults[0].Mutation)

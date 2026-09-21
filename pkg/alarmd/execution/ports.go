@@ -115,6 +115,15 @@ type StateStore interface {
 	LoadRuntime(context.Context, StatePreflightRequest) (StatePreflightResult, error)
 	AdmitRuntime(context.Context, StateApplyRequest) (StateAdmissionResult, error)
 	ApplyRuntime(context.Context, StateApplyRequest) (StateApplyResult, error)
+	// RenewFrozenRuntime keeps alive the keys of series that were read and will
+	// not be written this Slot.
+	//
+	// Required rather than an optional extension a store may be asserted for.
+	// A key life is exactly the kind of guarantee that fails silently when one
+	// implementation quietly lacks the method: every test double would have it,
+	// production would not, and the only symptom would be the state loss this
+	// exists to stop, arriving months later and looking like a warming series.
+	RenewFrozenRuntime(context.Context, FrozenStateRenewalRequest) (FrozenStateRenewalResult, error)
 }
 
 type ProgressStore interface {

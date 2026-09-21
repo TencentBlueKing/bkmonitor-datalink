@@ -331,3 +331,129 @@ func TestActivationFailureReasonSurvivesNormalisationAndIsLogged(t *testing.T) {
 		t.Fatalf("reason_code = %#v, want schedule_cutover/schedule_conflict; event=%#v", event["reason_code"], event)
 	}
 }
+
+// The short-period completion line carries which attempt completed. A lag past
+// the deadline reads two ways -- dispatched late, or a retry after an earlier
+// attempt failed -- and without the attempt number on the line the live tail
+// past fifteen seconds could not be told one from the other.
+func TestLoggingObserverWritesTheAttemptOnAShortPeriodCompletion(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := NewBoundedLogPolicy(limiter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+		Component: ComponentScheduler, Stage: StageSlotCompleted, Operation: OperationRetry, Result: ResultSuccess,
+		ShortPeriodCompletion: &ShortPeriodCompletionFacts{Cohort: "10s", CompletionKind: "FULL_COMPLETED", LagSeconds: 17.5, AttemptNo: 2},
+	})
+
+	var event map[string]any
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("decode short period completion log: %v; log=%s", err, output.String())
+	}
+	completion, ok := event["short_period_completion"].(map[string]any)
+	if !ok {
+		t.Fatalf("no short_period_completion on the line: %#v", event)
+	}
+	if completion["attempt_no"] != float64(2) || completion["completion_kind"] != "FULL_COMPLETED" || completion["lag_seconds"] != 17.5 {
+		t.Fatalf("short_period_completion = %#v, want attempt 2, FULL_COMPLETED, lag 17.5", completion)
+	}
+}
+
+// The frozen-state renewal line carries its eight numbers. They reached the
+// metric and not the line, so a reader of one Slot's log saw that a renewal
+// happened and nothing of what it found; a script matching *due* on the line
+// found due_plan_set_digest instead and read a false positive.
+func TestLoggingObserverWritesTheFrozenStateRenewalNumbers(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := NewBoundedLogPolicy(limiter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts := &FrozenStateRenewalFacts{}
+	facts.RecordCensus(12, 11, 7)
+	facts.Record(3, 1, 0, 0)
+	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+		Component: ComponentState, Stage: StageFrozenStateRenewed, Operation: OperationNormal, Result: ResultSuccess,
+		FrozenStateRenewal: facts,
+	})
+
+	var event map[string]any
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("decode frozen state renewal log: %v; log=%s", err, output.String())
+	}
+	renewal, ok := event["frozen_state_renewal"].(map[string]any)
+	if !ok {
+		t.Fatalf("no frozen_state_renewal on the line: %#v", event)
+	}
+	for field, want := range map[string]float64{"due": 12, "read": 11, "written": 7, "frozen": 4, "renewed": 3, "fresh": 1, "missing": 0, "failed": 0} {
+		if renewal[field] != want {
+			t.Fatalf("frozen_state_renewal[%q] = %v, want %v; line=%#v", field, renewal[field], want, renewal)
+		}
+	}
+}
+
+// A view_session line carries the stream's own word as its reason_code, so a
+// count by reason reaches it: every discovery miss on a live deployment read
+// reason_not_reported with the one word that said what happened -- NO_LEADER
+// -- two levels down in the facts. An endpoint or a detail in the same slot
+// is not a word and is not promoted; a degraded line with none of the words
+// still says the site did not report one.
+func TestTheViewSessionLineCarriesTheStreamsWordAsItsReasonCode(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		reason string
+		result Result
+		want   string
+	}{
+		{"NO_LEADER", ResultDegraded, "NO_LEADER"},
+		{"DELTA_DIGEST_MISMATCH", ResultDegraded, "DELTA_DIGEST_MISMATCH"},
+		{"NOT_LEADER", ResultDegraded, "NOT_LEADER"},
+		{"10.0.0.1:9000", ResultDegraded, string(ReasonNotReported)},
+		{"10.0.0.1:9000", ResultSuccess, string(ReasonNone)},
+	} {
+		var output bytes.Buffer
+		limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 10})
+		if err != nil {
+			t.Fatal(err)
+		}
+		policy, err := NewBoundedLogPolicy(limiter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+			Component: ComponentOwnership, Stage: StageViewSession, Result: test.result,
+			ReasonCode: ViewStreamReasonCode(test.reason),
+			ViewStream: &ViewStreamFacts{Event: "discovery_missed", WorkerID: "w1", Reason: test.reason},
+		})
+		var event map[string]any
+		if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+			t.Fatalf("decode view_session log for %q: %v; log=%s", test.reason, err, output.String())
+		}
+		if event["reason_code"] != test.want {
+			t.Errorf("reason %q result %s: reason_code = %v, want %s (event %v)", test.reason, test.result, event["reason_code"], test.want, event)
+		}
+		facts, _ := event["view_stream"].(map[string]any)
+		if facts == nil || facts["reason"] != test.reason {
+			t.Errorf("reason %q: the facts no longer carry it as given: %v", test.reason, event["view_stream"])
+		}
+	}
+	// Every word in the list is admitted by the normaliser as itself.
+	for _, word := range ViewStreamReasons {
+		if got := NormalizeReason(word, ResultDegraded); got != word {
+			t.Errorf("NormalizeReason(%s) = %s, want the word itself", word, got)
+		}
+	}
+}

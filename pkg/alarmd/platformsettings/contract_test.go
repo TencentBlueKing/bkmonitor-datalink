@@ -16,13 +16,13 @@ import (
 
 // The keys are the protocol's formulas verbatim: prefix as given, the
 // tenant percent-encoded the way Python's quote(safe="") does it, the DB
-// key under the strategy domain.
+// key under the field's owning domain.
 func TestKeysFollowTheProtocolFormulas(t *testing.T) {
 	if got := RevisionKey(DefaultKeyPrefix); got != "bk_monitor_base:dynamic_config:revision" {
 		t.Fatalf("revision key = %s", got)
 	}
 	if got := ConfigKey(DefaultKeyPrefix, Tenant, FieldHostDisableMonitorStates.DBKey()); got !=
-		"bk_monitor_base:dynamic_config:{system}:base_config.domains.strategy.host_disable_monitor_states" {
+		"bk_monitor_base:dynamic_config:{system}:base_config.metadata.host_disable_monitor_states" {
 		t.Fatalf("config key = %s", got)
 	}
 	for tenant, want := range map[string]string{"tenant/a": "tenant%2Fa", "a b": "a%20b", "ok-._~": "ok-._~", "租户": "%E7%A7%9F%E6%88%B7"} {

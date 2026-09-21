@@ -90,7 +90,7 @@ func (filter *HostStatusFilter) Admit(_ PlanContext, facts *Facts) Decision {
 		// The index could not be consulted. Dropping every unresolved host now
 		// would turn a cache outage into fleet-wide silence, so the record is
 		// kept and the gap is visible in the counter.
-		return Decision{Admit: true, Reason: "host_facts_unavailable"}
+		return Decision{Admit: true, Reason: facts.FactsUnavailableReason()}
 	}
 	if !facts.HostResolved {
 		return Decision{Reason: "host_unknown"}

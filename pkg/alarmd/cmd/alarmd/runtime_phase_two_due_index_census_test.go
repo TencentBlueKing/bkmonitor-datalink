@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -41,9 +42,13 @@ func TestDueIndexCensusCountsEveryEntryByItsCyclePosition(t *testing.T) {
 
 	// Seven objects owned, six with entries: one never evaluated.
 	census := index.Census(clock.at, 7)
+	// The same entries by period: five on the sixty-second period, one of them
+	// cooling and one overdue; the entry with no period under 0. Ordered by
+	// period so two censuses of one deployment list the same way.
 	want := fleet.ScheduleCensus{Waiting: 2, Cooling: 1, Late: 3, Overdue: 1, Never: 1,
-		OldestLateSeconds: 1000, MissingPeriod: 1}
-	if census != want {
+		OldestLateSeconds: 1000, MissingPeriod: 1,
+		Cohorts: []fleet.ScheduleCohort{{IntervalSeconds: 0, Objects: 1}, {IntervalSeconds: 60, Objects: 5, Cooling: 1, Overdue: 1}}}
+	if !reflect.DeepEqual(census, want) {
 		t.Errorf("census = %+v, want %+v", census, want)
 	}
 	// The wake facts for one object are the entry as it stands; an object with
@@ -336,5 +341,50 @@ func TestCensusReportsTheBacklogItFoundEarlier(t *testing.T) {
 	end := index.Census(time.Unix(100_200+7200+59*60, 0), 3)
 	if end.OverdueAgo == nil || *end.OverdueAgo != 2 || end.OverdueAgoSeconds != 59*60 {
 		t.Fatalf("59 minutes on = %+v, want the two-hour census as the earlier sample", end)
+	}
+}
+
+// A row that says every round was empty carries the object's period from the
+// same index, on the row's own facts: the number a reader holds the source's
+// reporting period against is beside the run it explains, and an object the
+// index has no entry for says zero rather than a period nobody recorded.
+func TestFleetPublisherPutsThePeriodOnEmptyEveryRoundRows(t *testing.T) {
+	clock := &dueIndexClock{at: time.Unix(20_000, 0)}
+	dispatcher := dueIndexDispatcher(clock, metric.NewRecorder(metric.BuildInfo{}), 8, 8,
+		map[execution.QueryGroupIdentity]walkRunner{"qg-15s": {}})
+	index := dispatcher.dueIndex
+	index.Record("qg-15s", dispatcher.bundle.runners["qg-15s"], index.versionEpoch,
+		scheduler.RunnerDueBound{NotDueUntilUnix: 20_015, IntervalSeconds: 15}, time.Unix(19_990, 0))
+	tracker := fleet.NewTracker(nil, "replica-1", clock.now)
+	// An hour and a quarter of empty rounds on both, from before the clock's
+	// present so the hour has passed when the snapshot is taken.
+	for _, name := range []string{"qg-15s", "qg-unindexed"} {
+		at := time.Unix(20_000-75*60, 0)
+		for ; at.Before(time.Unix(20_000, 0)); at = at.Add(15 * time.Second) {
+			clock.at = at
+			tracker.Observe(context.Background(), observability.Observation{ProgressCompletionKind: "FULL_EMPTY_COMPLETED",
+				Trace: observability.TraceFields{QueryGroupKey: name, StrategyID: "4101", EvaluationTime: at.Unix()}})
+		}
+	}
+	clock.at = time.Unix(20_000, 0)
+	publisher := fleetPublisher{
+		tracker: tracker, replica: "replica-1", now: clock.now,
+		owned: func() []execution.QueryGroupIdentity {
+			return []execution.QueryGroupIdentity{"qg-15s", "qg-unindexed"}
+		},
+		schedule: index,
+	}
+	snapshot := publisher.snapshot(context.Background())
+	byObject := map[string]fleet.Anomaly{}
+	for _, row := range snapshot.NoData {
+		byObject[row.QueryGroup] = row
+	}
+	row := byObject["qg-15s"]
+	if row.Kind != fleet.KindEmptyEveryRound || row.EmptyEveryRound == nil || row.EmptyEveryRound.IntervalSeconds != 15 ||
+		row.Wake == nil || row.Wake.IntervalSeconds != 15 {
+		t.Fatalf("row for the indexed object = %+v (facts %+v), want EMPTY_EVERY_ROUND with its fifteen-second period on the facts", row, row.EmptyEveryRound)
+	}
+	if row := byObject["qg-unindexed"]; row.Kind != fleet.KindEmptyEveryRound || row.EmptyEveryRound == nil || row.EmptyEveryRound.IntervalSeconds != 0 {
+		t.Fatalf("row for the unindexed object = %+v (facts %+v), want listed with no period", row, row.EmptyEveryRound)
 	}
 }

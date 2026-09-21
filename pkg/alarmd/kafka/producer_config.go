@@ -26,6 +26,21 @@ const (
 	decisionProducerMessageOverheadCap = 64 * 1024
 )
 
+// OutputBatchBound is how long one output batch is allowed to take to land
+// before the sink refuses to start it against a lease with less life left
+// (decision-016 per-batch admission): the producer's per-request timeout,
+// the time one attempt at the broker may take. Not the retried worst case:
+// retries follow a failure, and a failure is reported as an unknown ACK
+// whether or not the lease outlives it; what admission decides is whether a
+// batch that goes well lands inside the lease. It is the same constant the
+// producer is built with, so the two cannot drift.
+const OutputBatchBound = decisionProducerTimeout
+
+// OutputAdmissionMargin is the allowance between the admission check and
+// the first byte on the wire, and for the spread between the clock the lease
+// deadline was carried over on and the one this process reads now.
+const OutputAdmissionMargin = time.Second
+
 var kafkaTopicNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 // DecisionSinkConfig contains the immutable coordinates and application-level
@@ -79,12 +94,8 @@ func (c DecisionSinkConfig) ValidateProducerOnly() error {
 	if c.MaxMessageBytes <= 0 {
 		return errors.New("kafka decision producer: max_message_bytes must be positive")
 	}
-	version, err := sarama.ParseKafkaVersion(c.BrokerVersion)
-	if err != nil {
-		return fmt.Errorf("kafka decision producer: broker_version %q: %w", c.BrokerVersion, err)
-	}
-	if !version.IsAtLeast(sarama.V0_10_2_0) || !sarama.MaxVersion.IsAtLeast(version) {
-		return fmt.Errorf("kafka decision producer: broker_version %q is outside supported producer range 0.10.2.0..%s", c.BrokerVersion, sarama.MaxVersion)
+	if _, err := ValidateBrokerVersion("kafka decision producer", c.BrokerVersion); err != nil {
+		return err
 	}
 	return nil
 }

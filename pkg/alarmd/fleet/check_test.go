@@ -29,15 +29,35 @@ import (
 // from the one that does not, because the pool card called those strategies
 // unusable while the line said 待确认. The design names all twenty.
 //
-// Twenty-three since the source standings: strategies the leader's round
+// Twenty-one since the store began refusing absence memories without failing
+// the round: a Plan that runs and reports and cannot write down what it
+// learned is detection that stopped silently, and none of the twenty rules
+// could see it -- the round is fine by every dimension they read.
+//
+// Twenty-four since the source standings: strategies the leader's round
 // listed and withheld before any became an object, one line per owner --
 // the platform that wrote the document, this deployment that cannot run it,
 // the strategy whose definition the compiler refused. A deployment whose
 // source withheld every strategy read HEALTHY with expected 0 and had no line
 // anywhere that said so.
+//
+// Twenty-five since interrupted bookkeeping: a Slot an earlier attempt had
+// executed whole -- events sent, state written -- and then could not write
+// the Progress for was closed later as GAP_SKIPPED and filed as detection
+// that never happened. It is the one visible face of a control-plane store
+// failing writes, and it is not a loss of detection, so it is its own line on
+// the record side.
+//
+// Twenty-six since the strategy's half of no-data: an object this process
+// has never seen return records and whose every round for an hour completed
+// empty. FULL_EMPTY is a healthy completion and the no-data line waits for
+// data to have been seen, so five strategies aggregating below their
+// source's period read HEALTHY for a day; the data side's line and this one
+// have different owners doing different things, so it is not a fold of the
+// first.
 func TestTheCheckTableIsClosedAtTwenty(t *testing.T) {
-	if got := len(Checks()); got != 23 || len(checkAnswers) != 23 {
-		t.Errorf("the check table has %d rows in order and %d answered, want 23: a new check has to "+
+	if got := len(Checks()); got != 26 || len(checkAnswers) != 26 {
+		t.Errorf("the check table has %d rows in order and %d answered, want 26: a new check has to "+
 			"be a rule over the existing dimensions or a named standing, and the design says which", got, len(checkAnswers))
 	}
 	seen := map[Check]bool{}
@@ -89,9 +109,13 @@ func TestTheCheckTableIsClosedAtTwenty(t *testing.T) {
 func TestEveryCheckHasAProducerExceptTheNamedOne(t *testing.T) {
 	at := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
 	producers := map[Check]Anomaly{
-		CheckRoundsStalled:       {Kind: KindDegradedRun, CauseReason: "QUERY_TIMEOUT", Stalled: true},
-		CheckSlotsOverdue:        {Kind: KindOverdueWake},
-		CheckDetectionAbandoned:  {Kind: KindDegradedRun, CauseReason: "GAP_SKIPPED"},
+		CheckRoundsStalled:      {Kind: KindDegradedRun, CauseReason: "QUERY_TIMEOUT", Stalled: true},
+		CheckSlotsOverdue:       {Kind: KindOverdueWake},
+		CheckDetectionAbandoned: {Kind: KindDegradedRun, CauseReason: "GAP_SKIPPED"},
+		// The same code with the evidence that an earlier attempt executed
+		// every Plan: bookkeeping interrupted, not detection abandoned.
+		CheckBookkeepingAbandoned: {Kind: KindDegradedRun, CauseReason: "GAP_SKIPPED",
+			ExecutionEvidence: &ExecutionEvidence{Kind: "STATE_APPLIED", Reading: "STATE_APPLIED", PlansApplied: 2, PlansTotal: 2}},
 		CheckTimelinePruned:      {Kind: KindDegradedRun, CauseReason: "SCHEDULE_PRUNED"},
 		CheckDependencyDown:      {Kind: KindBlockedRun, ReasonCode: "source_error"},
 		CheckDefect:              {Kind: KindBlockedRun, ReasonCode: "panic"},
@@ -100,6 +124,8 @@ func TestEveryCheckHasAProducerExceptTheNamedOne(t *testing.T) {
 		CheckQueryRefused:        {Kind: KindQueryCooldown, Failure: &FailureRef{Code: "QUERY_UNAVAILABLE", Detail: "http_status=400"}},
 		CheckQueryTargetMissing:  {Kind: KindQueryCooldown, Failure: &FailureRef{Code: "QUERY_UNAVAILABLE", Detail: "response=status_space_table_id_field_is_not_exists"}},
 		CheckNoDataPersistent:    {Kind: KindNoData},
+		CheckEmptyEveryRound:     {Kind: KindEmptyEveryRound, EmptyEveryRound: &EmptyEveryRoundFacts{Rounds: 240, NeverSawData: true, Cause: EmptyEveryRoundCauseUnknown}},
+		CheckNoDataMemoryRefused: {Kind: KindNoDataMemoryRefused, ReasonCode: "STATE_BUDGET_EXCEEDED"},
 		CheckSeriesChurning: {Kind: KindDegradedRun, CauseReason: "HISTORY_WARMING", Coverage: &HistoryCoverage{
 			Levels: 9, Short: 4, WorstValid: 2, WorstRequired: 9, ShortRounds: 40, Fresh: 4, ShortFresh: 4, FreshRounds: 40}},
 		CheckSeriesDataMissing: {Kind: KindDegradedRun, CauseReason: "HISTORY_WARMING", Coverage: &HistoryCoverage{
@@ -212,16 +238,28 @@ func TestGroupKeysFoldOnTheEntityAndNameItsAbsence(t *testing.T) {
 	if got := groupKeyOf(Anomaly{}, CheckSeriesChurning); got != groupNoStrategy {
 		t.Errorf("strategy group with no strategies = %q, want %q", got, groupNoStrategy)
 	}
-	detailed := Anomaly{Failure: &FailureRef{Code: "QUERY_UNAVAILABLE", Detail: "http_status=503"}}
-	if got := groupKeyOf(detailed, CheckBackendNotAnswering); got != "http_status=503" {
+	// The detail fold, on the refusal that names what is missing.
+	detailed := Anomaly{Failure: &FailureRef{Code: "QUERY_REFUSED", Detail: "response=status_space_table_id_field_is_not_exists"}}
+	if got := groupKeyOf(detailed, CheckQueryTargetMissing); got != "response=status_space_table_id_field_is_not_exists" {
 		t.Errorf("detail group = %q, want the detail", got)
 	}
-	coded := Anomaly{Failure: &FailureRef{Code: "QUERY_UNAVAILABLE"}}
-	if got := groupKeyOf(coded, CheckBackendNotAnswering); got != "QUERY_UNAVAILABLE" {
+	coded := Anomaly{Failure: &FailureRef{Code: "QUERY_REFUSED"}}
+	if got := groupKeyOf(coded, CheckQueryTargetMissing); got != "QUERY_REFUSED" {
 		t.Errorf("detail group without a detail = %q, want the code", got)
 	}
-	if got := groupKeyOf(Anomaly{}, CheckBackendNotAnswering); got != groupNoDetail {
+	if got := groupKeyOf(Anomaly{}, CheckQueryTargetMissing); got != groupNoDetail {
 		t.Errorf("detail group with nothing = %q, want %q", got, groupNoDetail)
+	}
+	// The fold on the Blocked reading: where, talking to what, what kind --
+	// and a row with no reading folds under the unlocated triple rather than
+	// being dropped. The reading is on the row before the fold reads it.
+	blockedRow := []Anomaly{{Kind: KindDegradedRun, CauseReason: "QUERY_TIMEOUT", Failure: &FailureRef{Code: "QUERY_TIMEOUT", Detail: "transport=timeout"}}}
+	Attribute(blockedRow, now)
+	if got := blockedRow[0].Finding.Group; got != "QUERY/UNLOCATED/TIMEOUT" {
+		t.Errorf("blocked group = %q, want the stage/dependency/class triple", got)
+	}
+	if got := groupKeyOf(Anomaly{}, CheckBackendNotAnswering); got != "UNLOCATED/UNLOCATED/UNLOCATED" {
+		t.Errorf("blocked group with no reading = %q, want the unlocated triple", got)
 	}
 	if got := groupKeyOf(Anomaly{Replica: "pod-a"}, CheckRoundsStalled); got != "pod-a" {
 		t.Errorf("replica group = %q", got)
@@ -243,8 +281,13 @@ func TestGroupKeysFoldOnTheEntityAndNameItsAbsence(t *testing.T) {
 	if got := groupKeyOf(mixed, CheckWindowUndecided); got != causeSeriesMixed {
 		t.Errorf("mixed window group = %q, want %q", got, causeSeriesMixed)
 	}
-	if got := groupKeyOf(Anomaly{CauseReason: "REDIS_UNAVAILABLE"}, CheckDependencyDown); got != "REDIS_UNAVAILABLE" {
+	if got := groupKeyOf(Anomaly{CauseReason: "REDIS_UNAVAILABLE"}, CheckCutoverFailing); got != "REDIS_UNAVAILABLE" {
 		t.Errorf("code group = %q", got)
+	}
+	redis := []Anomaly{{Kind: KindDegradedRun, CauseReason: "REDIS_UNAVAILABLE"}}
+	Attribute(redis, now)
+	if got := redis[0].Finding.Group; got != "COMMIT/REDIS/UNAVAILABLE" {
+		t.Errorf("dependency group = %q, want the problem triple", got)
 	}
 }
 
@@ -297,9 +340,9 @@ func TestReportChecksFoldsColumnsAndCountsDistinctly(t *testing.T) {
 		t.Errorf("DEPENDENCY_DOWN = %d objects / %d strategies / %d businesses, want 3 / 2 / 1: "+
 			"strategies and businesses are distinct, not summed", dep.Objects, dep.Strategies, dep.Businesses)
 	}
-	if len(dep.Groups) != 2 || dep.Groups[0].Key != "REDIS_UNAVAILABLE" || dep.Groups[0].Objects != 2 ||
-		dep.Groups[1].Key != "KAFKA_UNAVAILABLE" {
-		t.Errorf("DEPENDENCY_DOWN groups = %+v, want redis (2) before kafka (1)", dep.Groups)
+	if len(dep.Groups) != 2 || dep.Groups[0].Key != "COMMIT/REDIS/UNAVAILABLE" || dep.Groups[0].Objects != 2 ||
+		dep.Groups[0].Codes["REDIS_UNAVAILABLE"] != 2 || dep.Groups[1].Key != "COMMIT/KAFKA/UNAVAILABLE" || dep.Groups[1].Codes["KAFKA_UNAVAILABLE"] != 1 {
+		t.Errorf("DEPENDENCY_DOWN groups = %+v, want the Redis problem (2, REDIS_UNAVAILABLE 2) before the Kafka one (1)", dep.Groups)
 	}
 	if dep.Partial {
 		t.Error("DEPENDENCY_DOWN is partial, but the only truncated column is the demoted pool it draws nothing from")
@@ -308,8 +351,9 @@ func TestReportChecksFoldsColumnsAndCountsDistinctly(t *testing.T) {
 	if backend.Objects != 2 || !backend.Partial {
 		t.Errorf("BACKEND_NOT_ANSWERING = %+v, want 2 objects and partial (its column was truncated)", backend)
 	}
-	if len(backend.Groups) != 1 || backend.Groups[0].Key != "transport=timeout" || backend.Groups[0].Strategies != 1 {
-		t.Errorf("BACKEND_NOT_ANSWERING groups = %+v, want one fold on the symptom over one strategy", backend.Groups)
+	if len(backend.Groups) != 1 || backend.Groups[0].Key != "QUERY/UNLOCATED/UNAVAILABLE" || backend.Groups[0].Strategies != 1 ||
+		backend.Groups[0].Codes["QUERY_UNAVAILABLE"] != 2 {
+		t.Errorf("BACKEND_NOT_ANSWERING groups = %+v, want one problem at the query step with the dependency unlocated, over one strategy, the code counted under it", backend.Groups)
 	}
 	// The blind spots: four objects nobody can speak for, and a stale replica
 	// that has no object count to give.

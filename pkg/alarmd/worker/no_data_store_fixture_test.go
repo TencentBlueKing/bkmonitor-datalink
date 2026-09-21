@@ -32,7 +32,11 @@ func (store *emptyNoDataStore) LoadNoData(
 	result := execution.NoDataLoadResult{Items: make([]execution.NoDataMemorySnapshot, len(request.Items))}
 	for index, item := range request.Items {
 		result.Items[index] = execution.NoDataMemorySnapshot{
+			// NONE rather than an unset field: the store stamps it, and a
+			// double that leaves it empty is standing in for a snapshot the
+			// store cannot produce.
 			Identity: item.Identity, Status: execution.NoDataMemoryMissing,
+			Representation: execution.NoDataRepresentationNone,
 		}
 	}
 	return result, nil

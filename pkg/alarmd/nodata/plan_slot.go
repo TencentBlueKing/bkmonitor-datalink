@@ -108,27 +108,63 @@ func EvaluatePlanSlot(input PlanSlotInput) (PlanSlotResult, error) {
 	})
 
 	groups := storedGroups(result.Memory)
-	if sameStoredGroups(groups, input.Snapshot.Groups) && input.Snapshot.RosterVersion == result.Roster.Version {
+	presentAsOf := presentAsOf(groups, input.Snapshot.PresentAsOf, input.EvaluationTime)
+	if sameStoredGroups(groups, input.Snapshot.Groups) && input.Snapshot.RosterVersion == result.Roster.Version &&
+		presentAsOf == input.Snapshot.PresentAsOf {
 		// Nothing moved. Sending the mutation anyway would be correct and
 		// idempotent - the digest would match and the store would say so - but
 		// it costs a round trip per Plan per Slot for a write that changes
 		// nothing, and the Slot's mutation budget is the scarce thing here.
+		//
+		// The present-as-of is part of "nothing moved" because it is part of
+		// the memory: it is the last-seen time of every group stored without
+		// an absence, so a round where it advanced changed what those groups
+		// say even though their own entries are unchanged.
 		return slot, nil
 	}
-	mutation, err := execution.BuildPlanNoDataMutation(execution.PlanNoDataMutation{
-		Identity:               input.Identity,
-		SchemaVersion:          execution.NoDataMemorySchemaV1,
+	mutation, err := execution.BuildPlanNoDataMutation(execution.PlanNoDataMemoryUpdate{
+		Identity: input.Identity,
+		// Which record the revision and the loaded groups below came out of.
+		// Without it the statement claims to be a delta against the per-group
+		// record whatever it was actually derived from, and a Plan still on
+		// the whole-memory record can never write one.
+		DerivedFrom:            input.Snapshot.Representation,
+		LoadedApplyVersion:     input.Snapshot.PersistedApplyVersion,
 		ExpectedMarkerRevision: input.Snapshot.MarkerRevision,
 		ApplyVersion:           input.ApplyVersion,
 		ScheduleRevision:       input.ScheduleRevision,
 		RosterVersion:          result.Roster.Version,
-		Groups:                 groups,
+		PresentAsOf:            presentAsOf,
+		Memory:                 groups,
+		Loaded:                 input.Snapshot.Groups,
+		LoadedPresentAsOf:      input.Snapshot.PresentAsOf,
 	})
 	if err != nil {
 		return PlanSlotResult{}, err
 	}
 	slot.Mutation = &mutation
 	return slot, nil
+}
+
+// presentAsOf is the round this Plan last had data in.
+//
+// It is read off the memory the round produced rather than off the round's
+// inputs: every group the evaluation saw is written with this round's time and
+// no absence, by the two places that record presence, so a memory holding one
+// of those is a round that had data. Taking it from the inputs instead would
+// have to decide what "had data" means for a series that arrived for a group
+// the roster had already dropped, and the memory has already decided that.
+//
+// With nothing seen, the stored value is carried forward. It must never go
+// backwards: it is the last-seen time of every group stored as present, so
+// moving it back would move those groups' clocks back with it.
+func presentAsOf(groups []execution.NoDataGroupMemory, stored int64, evaluationTime int64) int64 {
+	for _, group := range groups {
+		if group.FirstAbsent == 0 && group.LastSeen == evaluationTime {
+			return evaluationTime
+		}
+	}
+	return stored
 }
 
 // loadedMemory is the stored record as the evaluation reads it. A record that

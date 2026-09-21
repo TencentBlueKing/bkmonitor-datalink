@@ -2051,7 +2051,7 @@ func TestProductionPhaseTwoOwnershipUsesAssignmentAndLeaseBeforeRunner(t *testin
 		ControlLeaderTTL: time.Minute, Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 			observations = append(observations, observation)
 		}), Reconcile: reconciler, Flights: flights, RecoveryLimits: limits, PostRecoveryTerminalDelay: time.Minute, QueryDeadlineReserve: 5 * time.Second,
-		SnapshotRetention: time.Hour, PublicationDelayAllowance: time.Minute, SettlingWait: 30 * time.Second, LeaseTTL: 30 * time.Second, ReconcileInterval: 5 * time.Second,
+		SnapshotRetention: time.Hour, PublicationDelayAllowance: time.Minute, SettlingWait: 30 * time.Second, LeaseTTL: 30 * time.Second, ReconcileInterval: 5 * time.Second, ContentScopes: noContentScopes,
 	})
 	if err != nil {
 		t.Fatalf("newProductionPhaseTwoOwnership() error = %v", err)
@@ -2138,7 +2138,7 @@ func TestProductionPhaseTwoOwnershipFollowerReadsAssignmentWithoutPublishing(t *
 		Progress: unavailableScheduleProgress{}, Executor: rejectingSlotExecutor{}, Now: func() time.Time { return now },
 		ControlLeaderTTL: time.Minute, Observer: observability.NopObserver{}, Reconcile: reconciler,
 		Flights: flights, RecoveryLimits: limits, PostRecoveryTerminalDelay: time.Minute, QueryDeadlineReserve: 5 * time.Second,
-		SnapshotRetention: time.Hour, PublicationDelayAllowance: time.Minute, SettlingWait: 30 * time.Second, LeaseTTL: 30 * time.Second, ReconcileInterval: 5 * time.Second,
+		SnapshotRetention: time.Hour, PublicationDelayAllowance: time.Minute, SettlingWait: 30 * time.Second, LeaseTTL: 30 * time.Second, ReconcileInterval: 5 * time.Second, ContentScopes: noContentScopes,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -2357,8 +2357,12 @@ func productionRequest(fact execution.FrozenSlotContractFact, operation executio
 }
 
 type fakePhaseTwoOwnershipStore struct {
-	mu                     sync.Mutex
-	now                    time.Time
+	mu  sync.Mutex
+	now time.Time
+	// sweepErr, when set, is what SweepAssignments fails with after
+	// recording the keep set; sweep is what it reports when it does not.
+	sweepErr               error
+	sweep                  ownership.AssignmentSweep
 	worker                 ownership.WorkerRegistration
 	assignment             ownership.AssignmentRecord
 	checkErr               error
@@ -2375,6 +2379,11 @@ type fakePhaseTwoOwnershipStore struct {
 	renewCalls       int
 	renewLeaderErr   func() error
 	renewLeaderCalls int
+	// decisions is every Assignment decision published, in order, so a test
+	// can read what a publication was conditioned on and what it carried.
+	decisions []ownership.AssignmentDecision
+	// sweeps is the keep set of every Assignment sweep asked of the store.
+	sweeps []map[execution.QueryGroupIdentity]struct{}
 }
 
 func (store *fakePhaseTwoOwnershipStore) renewCount() int {
@@ -2396,10 +2405,27 @@ func (store *fakePhaseTwoOwnershipStore) RegisterWorker(_ context.Context, worke
 	return nil
 }
 
-func (store *fakePhaseTwoOwnershipStore) ListReadyWorkers(context.Context, time.Time) ([]ownership.WorkerRegistration, error) {
+func (store *fakePhaseTwoOwnershipStore) ListReadyWorkers(
+	context.Context, time.Time,
+) ([]ownership.WorkerRegistration, ownership.ControlReadStats, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	return []ownership.WorkerRegistration{store.worker}, nil
+	return []ownership.WorkerRegistration{store.worker}, ownership.ControlReadStats{Keys: 1, RoundTrips: 1}, nil
+}
+
+func (store *fakePhaseTwoOwnershipStore) ReadAssignments(
+	_ context.Context,
+	queryGroups []execution.QueryGroupIdentity,
+) (map[execution.QueryGroupIdentity]ownership.AssignmentRecord, ownership.ControlReadStats, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	found := make(map[execution.QueryGroupIdentity]ownership.AssignmentRecord, len(queryGroups))
+	for _, queryGroup := range queryGroups {
+		if store.assignment.QueryGroup == queryGroup {
+			found[queryGroup] = store.assignment
+		}
+	}
+	return found, ownership.ControlReadStats{Keys: len(queryGroups), RoundTrips: 1}, nil
 }
 
 func (store *fakePhaseTwoOwnershipStore) ReadAssignment(context.Context, execution.QueryGroupIdentity) (ownership.AssignmentRecord, error) {
@@ -2419,10 +2445,12 @@ func (store *fakePhaseTwoOwnershipStore) PublishAssignment(
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	store.publishAssignmentCalls++
+	store.decisions = append(store.decisions, decision)
 	store.assignment = ownership.AssignmentRecord{
 		QueryGroup: decision.QueryGroup, DesiredWorkerID: decision.DesiredWorkerID,
 		AssignmentGeneration: 1, RecordRevision: 1, ControlEpoch: authority.Fence.OwnerEpoch,
 		PlacementReason: decision.PlacementReason, AssignedAt: decision.DecidedAt,
+		ContentScope: decision.ContentScope,
 	}
 	return store.assignment, nil
 }
@@ -2501,7 +2529,7 @@ func (store *fakePhaseTwoOwnershipStore) Renew(
 	return ownership.Lease{Fence: fence, Deadline: at.Add(ttl)}, nil
 }
 
-func (store *fakePhaseTwoOwnershipStore) CheckFence(context.Context, execution.OwnerFence, time.Time) error {
+func (store *fakePhaseTwoOwnershipStore) CheckFence(context.Context, execution.OwnerFence) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	return store.checkErr
@@ -2510,7 +2538,6 @@ func (store *fakePhaseTwoOwnershipStore) CheckFence(context.Context, execution.O
 func (store *fakePhaseTwoOwnershipStore) CheckFenceWithAssignment(
 	context.Context,
 	execution.OwnerFence,
-	time.Time,
 ) (ownership.AssignmentRecord, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -2674,7 +2701,7 @@ func newRenewalTestFixture(t *testing.T) renewalTestFixture {
 			observations = append(observations, observation)
 			mu.Unlock()
 		}), Reconcile: reconciler, Flights: flights, RecoveryLimits: limits, PostRecoveryTerminalDelay: time.Minute,
-		QueryDeadlineReserve: 5 * time.Second, SnapshotRetention: time.Hour, PublicationDelayAllowance: time.Minute, SettlingWait: 30 * time.Second, LeaseTTL: 30 * time.Second, ReconcileInterval: 5 * time.Second,
+		QueryDeadlineReserve: 5 * time.Second, SnapshotRetention: time.Hour, PublicationDelayAllowance: time.Minute, SettlingWait: 30 * time.Second, LeaseTTL: 30 * time.Second, ReconcileInterval: 5 * time.Second, ContentScopes: noContentScopes,
 	})
 	if err != nil {
 		t.Fatalf("newProductionPhaseTwoOwnership() error = %v", err)

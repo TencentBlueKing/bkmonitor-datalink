@@ -12,6 +12,7 @@ package execution_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -160,9 +161,29 @@ func TestStateMutationPreflightClassifiesStableReplay(t *testing.T) {
 	if got := execution.ClassifyStateMutation(view, mutation); got != execution.StateAlreadyApplied {
 		t.Fatalf("same version/digest=%q", got)
 	}
+	if got := execution.ClassifyStateMutationDetail(view, mutation); got.AlreadyApplied != execution.StateAlreadyAppliedStable || got.VersionConflict != "" {
+		t.Fatalf("same version/digest at the expected revision = %+v, want kind stable and no conflict kind", got)
+	}
+	// The same statement one revision up is the write that landed while its
+	// reply was lost, re-sent unchanged. It is on disk; it is applied. Before
+	// this it was a conflict, and the Slot retried against post-Slot state
+	// and conflicted on every attempt.
+	skewed := view
+	skewed.BlobRevision = mutation.ExpectedBlobRevision + 1
+	if got := execution.ClassifyStateMutationDetail(skewed, mutation); got.Disposition != execution.StateAlreadyApplied || got.AlreadyApplied != execution.StateAlreadyAppliedRevisionSkew {
+		t.Fatalf("same version/digest one revision up = %+v, want ALREADY_APPLIED/revision_skew", got)
+	}
+	// Same version, different digest, one revision up is still somebody else's
+	// statement: the digest is what says whose it is, not the revision.
+	skewed.PersistedMutationDigest = execution.MutationDigest("different")
+	if got := execution.ClassifyStateMutationDetail(skewed, mutation); got.Disposition != execution.StateVersionConflict ||
+		got.VersionConflict != execution.StateVersionConflictRevisionMoved || got.AlreadyApplied != "" {
+		t.Fatalf("same version/different digest one revision up = %+v, want STATE_VERSION_CONFLICT/revision_moved", got)
+	}
 	view.PersistedMutationDigest = execution.MutationDigest("different")
-	if got := execution.ClassifyStateMutation(view, mutation); got != execution.StateVersionConflict {
-		t.Fatalf("same version/different digest=%q", got)
+	if got := execution.ClassifyStateMutationDetail(view, mutation); got.Disposition != execution.StateVersionConflict ||
+		got.VersionConflict != execution.StateVersionConflictSameVersionOtherStatement {
+		t.Fatalf("same version/different digest at the expected revision = %+v, want STATE_VERSION_CONFLICT/same_version_other_statement", got)
 	}
 	view.PersistedApplyVersion.EvaluationTime++
 	view.VersionComparison = execution.ApplyVersionPersistedNewer
@@ -1117,8 +1138,29 @@ func TestDegradedOutcomeCannotClearItsOnlyFinalGuard(t *testing.T) {
 			GuardAfterState: []execution.PlanGapMutation{clear},
 		}},
 	}
-	if err := result.Validate(request); err == nil {
+	err := result.Validate(request)
+	if err == nil {
 		t.Fatal("clearing the only exact guard before Progress must fail")
+	}
+	// The refusal says what the two comparisons saw. A residue of this line
+	// on two production objects could not be attributed because it said
+	// only that it refused; each value here is what a reader needs to tell
+	// "the outcome carried this round's fold" from "the stored marker's
+	// reason" from "a local one", and the State guard from the marker.
+	for _, want := range []string{
+		"outcome TERMINAL", "reason " + string(reason), "level 5", "outcomes for level 1",
+		"input full yes", "round fold none",
+		"state series guard none", "state level guard none", "state written no",
+		"marker plan loaded GAPPED/" + string(reason), "marker level loaded none",
+		"marker plan final none", "marker level final none", "guard proposed yes",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("refusal %q does not say %q", err.Error(), want)
+		}
+	}
+	var refusal *execution.ResultContractError
+	if !errors.As(err, &refusal) || refusal.Code() != "GUARD_MISSING_FOR_DEGRADED_OUTCOME" {
+		t.Fatalf("refusal code = %v, want GUARD_MISSING_FOR_DEGRADED_OUTCOME with the description in the text only", err)
 	}
 }
 
@@ -1800,4 +1842,66 @@ func frozenApplyVersion() execution.ApplyVersion {
 		panic(err)
 	}
 	return version
+}
+
+// Every STATE_VERSION_CONFLICT names the comparison that refused it, and the
+// name follows the branch, not the caller: the stored revision against the
+// expected one first (behind is reset, ahead is moved, whatever the
+// ApplyVersion says), then at the expected revision the ApplyVersion and the
+// digest. A conflict with no kind would read the same as the one the reader
+// is looking for.
+func TestStateMutationConflictKindsFollowTheComparisonThatRefused(t *testing.T) {
+	mutation := validStateMutation()
+	mutation.ExpectedBlobRevision = 5
+	base := execution.RuntimeStateView{Identity: mutation.Identity, BlobRevision: 5, Status: execution.StateFoundReady,
+		PersistedApplyVersion: mutation.ApplyVersion, PersistedMutationDigest: execution.MutationDigest("somebody-else"),
+		VersionComparison: execution.ApplyVersionEqual}
+	for _, test := range []struct {
+		name       string
+		revision   uint64
+		comparison execution.ApplyVersionComparison
+		want       execution.StateVersionConflictKind
+	}{
+		{"stored ahead, persisted older", 6, execution.ApplyVersionPersistedOlder, execution.StateVersionConflictRevisionMoved},
+		{"stored ahead, persisted equal", 6, execution.ApplyVersionEqual, execution.StateVersionConflictRevisionMoved},
+		{"stored ahead, persisted newer", 9, execution.ApplyVersionPersistedNewer, execution.StateVersionConflictRevisionMoved},
+		{"stored behind, persisted older", 1, execution.ApplyVersionPersistedOlder, execution.StateVersionConflictRevisionReset},
+		{"stored behind, persisted newer", 4, execution.ApplyVersionPersistedNewer, execution.StateVersionConflictRevisionReset},
+		{"expected revision, same version, other digest", 5, execution.ApplyVersionEqual, execution.StateVersionConflictSameVersionOtherStatement},
+		{"expected revision, no ordering", 5, "", execution.StateVersionConflictVersionIncomparable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			view := base
+			view.BlobRevision, view.VersionComparison = test.revision, test.comparison
+			got := execution.ClassifyStateMutationDetail(view, mutation)
+			if got.Disposition != execution.StateVersionConflict || got.VersionConflict != test.want || got.AlreadyApplied != "" {
+				t.Fatalf("classification = %+v, want STATE_VERSION_CONFLICT kind %s", got, test.want)
+			}
+		})
+	}
+	// The dispositions that are not conflicts carry no conflict kind.
+	for _, test := range []struct {
+		name       string
+		revision   uint64
+		comparison execution.ApplyVersionComparison
+		digest     execution.MutationDigest
+		want       execution.StatePreflightDisposition
+	}{
+		{"proceed", 5, execution.ApplyVersionPersistedOlder, "somebody-else", execution.StateProceed},
+		{"stale", 5, execution.ApplyVersionPersistedNewer, "somebody-else", execution.StateStaleVersion},
+		{"already applied", 5, execution.ApplyVersionEqual, mutation.MutationDigest, execution.StateAlreadyApplied},
+		{"already applied one up", 6, execution.ApplyVersionEqual, mutation.MutationDigest, execution.StateAlreadyApplied},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			view := base
+			view.BlobRevision, view.VersionComparison, view.PersistedMutationDigest = test.revision, test.comparison, test.digest
+			got := execution.ClassifyStateMutationDetail(view, mutation)
+			if got.Disposition != test.want || got.VersionConflict != "" {
+				t.Fatalf("classification = %+v, want %s with no conflict kind", got, test.want)
+			}
+		})
+	}
+	if kinds := execution.AllStateVersionConflictKinds(); len(kinds) != 5 {
+		t.Fatalf("named conflict kinds = %v, want the missing key plus the four conflict branches of the classifier", kinds)
+	}
 }

@@ -77,3 +77,43 @@ func observeWithheldObjects(
 // withheldScopeLevel is the scope a disposition carries when it is about one
 // level rather than the whole strategy.
 const withheldScopeLevel = "LEVEL"
+
+// observeSuspendedNoDataObjects writes one line per strategy whose no-data
+// half changed state this round, naming the strategy.
+//
+// It is the names behind catalog_no_data_plans{source=SUSPENDED_*}. Without
+// them the counts say that some strategies are detecting thresholds and not
+// absence, and nothing at all about which -- and the coverage list this
+// migration is read from is a list of strategies, not a number. It is the same
+// gap the withheld lines were added to close, for the objects that used to be
+// withheld and now are not.
+//
+// Its own stage rather than source_withheld. These strategies are running: a
+// reader who has learned that a source_withheld line means a strategy is not
+// being evaluated would read these as outages, and there would be no way to
+// tell them apart afterwards.
+//
+// Changed only, same as the withheld lines, and the disposition is not carried
+// because there is only one: every one of these is ACCEPTED, and a constant
+// field is a column that teaches a reader nothing while looking like it
+// varies.
+func observeSuspendedNoDataObjects(
+	ctx context.Context,
+	observer observability.Observer,
+	report controlplane.WithheldReport,
+) {
+	for index, line := range report.Lines {
+		facts := observability.SourceWithheldFacts{Reason: line.Reason, Field: line.FieldPath}
+		if index == len(report.Lines)-1 {
+			facts.Dropped = report.Dropped
+		}
+		observeRuntime(ctx, observer, observability.Observation{
+			Component:      observability.ComponentControlPlane,
+			Stage:          observability.StageNoDataSuspended,
+			Result:         observability.ResultSuccess,
+			Direction:      observability.DirectionInternal,
+			Trace:          observability.TraceFields{StrategyID: line.SourceID, TerminalScope: line.Scope},
+			SourceWithheld: &facts,
+		})
+	}
+}

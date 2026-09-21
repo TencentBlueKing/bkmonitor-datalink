@@ -23,6 +23,39 @@ const (
 	FinalizationGapSkipped          FinalizationMode = "GAP_SKIPPED"
 )
 
+// FinalizationModes is every mode a finalization can be in.
+//
+// Published so a test can scan all of them rather than the ones somebody
+// remembered. The scan that needs it is the one on the gap scope reason
+// vocabulary: a mode that carries Plan targets writes its reason straight onto
+// a gap scope, so the vocabulary has to know it, and a list of "the modes that
+// do that" maintained by hand is a list the next mode is missing from.
+var FinalizationModes = []FinalizationMode{
+	FinalizationQueryRequired,
+	FinalizationSnapshotRetry,
+	FinalizationExactSetBlocked,
+	FinalizationSnapshotUnavailable,
+	FinalizationGapSkipped,
+}
+
+// QueryFreeGapScopeReason is the reason a finalization mode puts on the gap
+// scopes of the Plans it finalizes, for the modes that finalize any.
+//
+// One function rather than a branch inside Validate and a list beside the
+// metric. The reason a mode requires and the reason the metric has to name are
+// the same fact, and the first time they were derived separately the metric
+// read 46.6% "other" while every Validate call passed.
+func QueryFreeGapScopeReason(mode FinalizationMode) (ReasonCode, bool) {
+	switch mode {
+	case FinalizationSnapshotUnavailable:
+		return ReasonCode(contract.ReasonSnapshotUnavailable), true
+	case FinalizationGapSkipped:
+		return ReasonCode(contract.ReasonGapSkipped), true
+	default:
+		return "", false
+	}
+}
+
 const ReasonBlockedExactSetUnavailable ReasonCode = ReasonCode(contract.ReasonBlockedExactSetUnavailable)
 
 // FrozenDuePlanTargets is the recoverable identity projection of the frozen
@@ -107,10 +140,7 @@ func (finalization QueryFreeFinalization) Validate(request SlotExecutionRequest)
 		}
 		return nil
 	case FinalizationSnapshotUnavailable, FinalizationGapSkipped:
-		expectedReason := ReasonCode(contract.ReasonSnapshotUnavailable)
-		if finalization.Mode == FinalizationGapSkipped {
-			expectedReason = ReasonCode(contract.ReasonGapSkipped)
-		}
+		expectedReason, _ := QueryFreeGapScopeReason(finalization.Mode)
 		if finalization.ReasonCode != expectedReason {
 			return errors.New("alarmd execution: query-free finalization requires its exact reason")
 		}

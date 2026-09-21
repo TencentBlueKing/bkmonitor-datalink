@@ -141,25 +141,31 @@ func (cache *runtimeWitnessCache) evictLocked(current execution.QueryGroupIdenti
 // classifyWitnessedMutation reproduces the version classification the
 // sequential path performs on a fresh read, using the facts recorded at
 // preflight. It reports whether the write may proceed.
-func classifyWitnessedMutation(witness runtimeWitness, mutation execution.StateMutation) (execution.StateApplyStatus, bool) {
+func classifyWitnessedMutation(witness runtimeWitness, mutation execution.StateMutation) (execution.StateApplyItemResult, bool) {
+	item := execution.StateApplyItemResult{Identity: mutation.Identity}
 	if witness.missing {
 		if mutation.ExpectedBlobRevision != 0 {
-			return execution.StateApplyVersionConflict, false
+			item.MarkVersionConflict(execution.StateVersionConflictMissing, execution.RuntimeStateView{})
+			return item, false
 		}
-		return "", true
+		return item, true
 	}
 	view := execution.RuntimeStateView{BlobRevision: witness.blobRevision,
 		PersistedApplyVersion: witness.applyVersion, PersistedMutationDigest: witness.mutationDigest}
 	view.VersionComparison = execution.CompareApplyVersion(view.PersistedApplyVersion, mutation.ApplyVersion)
-	switch execution.ClassifyStateMutation(view, mutation) {
+	classified := execution.ClassifyStateMutationDetail(view, mutation)
+	switch classified.Disposition {
 	case execution.StateAlreadyApplied:
-		return execution.StateApplyAlreadyApplied, false
+		item.Status, item.AlreadyApplied, item.StoredBlobRevision = execution.StateApplyAlreadyApplied, classified.AlreadyApplied, view.BlobRevision
+		return item, false
 	case execution.StateStaleVersion:
-		return execution.StateApplyStale, false
+		item.Status = execution.StateApplyStale
+		return item, false
 	case execution.StateVersionConflict:
-		return execution.StateApplyVersionConflict, false
+		item.MarkVersionConflict(classified.VersionConflict, view)
+		return item, false
 	}
-	return "", true
+	return item, true
 }
 
 // classifyFencedOutcome maps one pipeline reply onto the per-item statuses the
@@ -179,7 +185,7 @@ func (store *ExecutionStore) classifyFencedOutcome(
 		item.Status = execution.StateApplied
 	case FencedWriteConflictMissing:
 		if mutation.ExpectedBlobRevision != 0 {
-			item.Status = execution.StateApplyVersionConflict
+			item.MarkVersionConflict(execution.StateVersionConflictMissing, execution.RuntimeStateView{})
 		} else {
 			item.Status, item.ReasonCode = execution.StateApplyCASConflict, execution.ReasonCode(contract.ReasonStateWriteRetryable)
 		}
@@ -195,13 +201,14 @@ func (store *ExecutionStore) classifyFencedOutcome(
 			return item
 		}
 		view.VersionComparison = execution.CompareApplyVersion(view.PersistedApplyVersion, mutation.ApplyVersion)
-		switch execution.ClassifyStateMutation(view, mutation) {
+		classified := execution.ClassifyStateMutationDetail(view, mutation)
+		switch classified.Disposition {
 		case execution.StateAlreadyApplied:
-			item.Status = execution.StateApplyAlreadyApplied
+			item.Status, item.AlreadyApplied, item.StoredBlobRevision = execution.StateApplyAlreadyApplied, classified.AlreadyApplied, view.BlobRevision
 		case execution.StateStaleVersion:
 			item.Status = execution.StateApplyStale
 		case execution.StateVersionConflict:
-			item.Status = execution.StateApplyVersionConflict
+			item.MarkVersionConflict(classified.VersionConflict, view)
 		default:
 			item.Status, item.ReasonCode = execution.StateApplyCASConflict, execution.ReasonCode(contract.ReasonStateWriteRetryable)
 		}
@@ -263,17 +270,27 @@ func (pipeline *runtimeApplyPipeline) flush(ctx context.Context) error {
 		}
 		return nil
 	}
-	stale := false
+	stale, moved := false, false
 	for position, index := range pipeline.indexes {
 		outcome := outcomes[position]
 		if outcome.Err == nil && outcome.Status == FencedWriteStaleOwner {
 			stale = true
 			continue
 		}
+		if outcome.Err == nil && outcome.Status == FencedWriteContentMoved {
+			moved = true
+			continue
+		}
 		pipeline.result.Items[index] = pipeline.store.classifyFencedOutcome(pipeline.request.Contract, pipeline.request.Items[index], outcome)
 	}
 	if stale {
 		return fmt.Errorf("state: runtime state apply for %s: %w", pipeline.request.Contract.Slot.QueryGroup, ownership.ErrStaleFence)
+	}
+	if moved {
+		// Not a stale fence: the lease is live and the Query Group is still
+		// this worker's. What is behind is the view it wrote from, so the
+		// error names that and the caller re-reads rather than releases.
+		return fmt.Errorf("state: runtime state apply for %s: %w", pipeline.request.Contract.Slot.QueryGroup, ownership.ErrContentScopeMoved)
 	}
 	return nil
 }
@@ -291,7 +308,7 @@ func (store *ExecutionStore) ApplyRuntimeFenced(
 		return store.applyRuntime(ctx, request, nil)
 	}
 	guard := &FenceGuard{Keys: store.options.FenceKeys.FenceKeys(fence.Fence.QueryGroup), OwnerID: fence.Fence.OwnerID,
-		OwnerEpoch: fence.Fence.OwnerEpoch, LeaseToken: fence.Fence.LeaseToken, NowMillis: fence.At.UnixMilli()}
+		OwnerEpoch: fence.Fence.OwnerEpoch, LeaseToken: fence.Fence.LeaseToken, ContentScope: fence.ContentScope}
 	if err := guard.validate(); err != nil {
 		return execution.StateApplyResult{}, err
 	}
@@ -334,6 +351,7 @@ func (store *ExecutionStore) applyRuntime(
 		seen[keys[index]] = struct{}{}
 	}
 	pipeline := &runtimeApplyPipeline{store: store, guard: guard, request: request, result: &result}
+	written := make(map[string]struct{}, len(request.Items))
 	for index, mutation := range request.Items {
 		item := execution.StateApplyItemResult{Identity: mutation.Identity}
 		if err := mutation.ValidateDigest(); err != nil || keyErrors[index] != nil {
@@ -363,11 +381,22 @@ func (store *ExecutionStore) applyRuntime(
 				continue
 			}
 			result.Items[index] = store.applyRuntimeSequential(ctx, request.Contract, mutation, keys[index], ttl, casBackend)
+			// The later copy of a key this request already wrote meets the
+			// earlier copy's bytes one revision up. Name that for what it is
+			// -- the producer sent one series twice -- so it does not count as
+			// a re-sent write.
+			if _, earlier := written[keys[index]]; earlier {
+				result.Items[index].RepeatedKey = true
+				if result.Items[index].Status == execution.StateApplyAlreadyApplied &&
+					result.Items[index].AlreadyApplied == execution.StateAlreadyAppliedRevisionSkew {
+					result.Items[index].AlreadyApplied = execution.StateAlreadyAppliedRepeatedKey
+				}
+			}
+			written[keys[index]] = struct{}{}
 			continue
 		}
-		if status, proceed := classifyWitnessedMutation(witness, mutation); !proceed {
-			item.Status = status
-			result.Items[index] = item
+		if classified, proceed := classifyWitnessedMutation(witness, mutation); !proceed {
+			result.Items[index] = classified
 			continue
 		}
 		encoded, err := encodeRuntime(mutation, mutation.ExpectedBlobRevision+1)
@@ -416,19 +445,20 @@ func (store *ExecutionStore) applyRuntimeSequential(
 			return item
 		}
 		view.VersionComparison = execution.CompareApplyVersion(view.PersistedApplyVersion, mutation.ApplyVersion)
-		switch execution.ClassifyStateMutation(view, mutation) {
+		classified := execution.ClassifyStateMutationDetail(view, mutation)
+		switch classified.Disposition {
 		case execution.StateAlreadyApplied:
-			item.Status = execution.StateApplyAlreadyApplied
+			item.Status, item.AlreadyApplied, item.StoredBlobRevision = execution.StateApplyAlreadyApplied, classified.AlreadyApplied, view.BlobRevision
 			return item
 		case execution.StateStaleVersion:
 			item.Status = execution.StateApplyStale
 			return item
 		case execution.StateVersionConflict:
-			item.Status = execution.StateApplyVersionConflict
+			item.MarkVersionConflict(classified.VersionConflict, view)
 			return item
 		}
 	} else if mutation.ExpectedBlobRevision != 0 {
-		item.Status = execution.StateApplyVersionConflict
+		item.MarkVersionConflict(execution.StateVersionConflictMissing, execution.RuntimeStateView{})
 		return item
 	}
 	encoded, err := encodeRuntime(mutation, mutation.ExpectedBlobRevision+1)

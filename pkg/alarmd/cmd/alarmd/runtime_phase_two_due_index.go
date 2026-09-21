@@ -7,6 +7,7 @@ package main
 
 import (
 	"container/heap"
+	"sort"
 	"sync"
 	"time"
 
@@ -605,12 +606,30 @@ func (index *phaseTwoDueIndex) Census(now time.Time, owned int) fleet.ScheduleCe
 	index.mu.Lock()
 	defer index.mu.Unlock()
 	nowUnix := now.Unix()
+	// The same pass counts each entry under its period, so the cohort a
+	// reader meets on a histogram has its population and its cooling and
+	// overdue share from the one source that knows every object's period.
+	cohorts := make(map[int64]*fleet.ScheduleCohort)
+	cohortOf := func(interval int64) *fleet.ScheduleCohort {
+		if interval < 0 {
+			interval = 0
+		}
+		cohort, ok := cohorts[interval]
+		if !ok {
+			cohort = &fleet.ScheduleCohort{IntervalSeconds: interval}
+			cohorts[interval] = cohort
+		}
+		return cohort
+	}
 	for _, entry := range index.pending {
+		cohort := cohortOf(entry.intervalSeconds)
+		cohort.Objects++
 		switch {
 		case entry.dueAtUnix > nowUnix:
 			census.Waiting++
 			if entry.queryCooldown {
 				census.Cooling++
+				cohort.Cooling++
 			}
 		default:
 			late := nowUnix - entry.dueAtUnix
@@ -622,12 +641,17 @@ func (index *phaseTwoDueIndex) Census(now time.Time, owned int) fleet.ScheduleCe
 				census.Late++
 			default:
 				census.Overdue++
+				cohort.Overdue++
 			}
 			if float64(late) > census.OldestLateSeconds {
 				census.OldestLateSeconds = float64(late)
 			}
 		}
 	}
+	for _, cohort := range cohorts {
+		census.Cohorts = append(census.Cohorts, *cohort)
+	}
+	sort.Slice(census.Cohorts, func(i, j int) bool { return census.Cohorts[i].IntervalSeconds < census.Cohorts[j].IntervalSeconds })
 	if owned > len(index.entries) {
 		census.Never = owned - len(index.entries)
 	}

@@ -76,12 +76,20 @@ const (
 	// have passed since the Slot, so replaying it would compete with Slots the
 	// worker still has to run.
 	ReplayExpiredByDistance ReplayExpiryReason = "REPLAY_DISTANCE_EXCEEDED"
-	// ReplayExpiredByWait is a defect report. The Slot is still inside its
-	// replay window, and the readiness rule would hold the read until after
-	// that window closes -- so the replay would be dispatched, wait, and be
-	// abandoned for being late. Whenever this is counted, the readiness rule
-	// and the replay window have been derived from settings that disagree;
-	// under the settings any deployment can hold today it cannot happen.
+	// ReplayExpiredByWait is a defect report: the readiness rule would hold the
+	// read until after the replay window closes, so the replay would be
+	// dispatched, wait, and be abandoned for being late. Whenever this is
+	// counted, the two rules have been derived from settings that disagree.
+	//
+	// Counting zero of these does not mean it is not happening. The readiness
+	// instant the guard compares is not the one access waits for: the guard
+	// uses evaluationTime plus the settling wait, while access computes it
+	// from the query window's end plus the source delay plus that same wait
+	// (access/source.go frozenConsumerReadyAt). The guard's number is a lower
+	// bound on the real one and is documented as deliberately under-firing, so
+	// a Query Group whose real readiness lands well past the window can be in
+	// this contradiction on every Slot and never be counted here. Read it as
+	// "the cheap comparison caught one", never as "there are none".
 	ReplayExpiredByWait ReplayExpiryReason = "REPLAY_WAIT_EXCEEDS_DISTANCE"
 	// ReplayExpiredRange is the whole-range finalization of a run of Slots
 	// already past their replay window, which carries one set of facts for the

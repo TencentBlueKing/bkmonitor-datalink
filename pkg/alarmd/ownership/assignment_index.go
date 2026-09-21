@@ -94,23 +94,22 @@ type AssignmentIndexPublication struct {
 // identity, a rewrite flag and the encoded Query Group list. The round
 // number lives in the index hash and is incremented server-side, so it
 // stays monotonic across Leaders. Set keys are hashes of round plus
-// content, written before the index field that names that round.
-var publishAssignmentIndexScript = redis.NewScript(`
+// content, written before the index field that names that round. The time
+// in ARGV[4] is what the Leader says about when it wrote, stored as
+// written_at_ms for readers; whether the Leader's lease is live is judged
+// by the fence on the server's clock, as everywhere.
+var publishAssignmentIndexScript = redis.NewScript(FenceLua + `
 local leader_id = ARGV[1]
 local leader_epoch = ARGV[2]
 local leader_token = ARGV[3]
-local now_ms = tonumber(ARGV[4])
-if redis.call('HGET', KEYS[1], 'execution_disposition') ~= 'ACTIVE' or
-   redis.call('HGET', KEYS[1], 'owner_id') ~= leader_id or
-   redis.call('HGET', KEYS[1], 'owner_epoch') ~= leader_epoch or
-   redis.call('HGET', KEYS[1], 'lease_token') ~= leader_token or
-   tonumber(redis.call('HGET', KEYS[1], 'deadline_ms') or '0') <= now_ms then
+local written_at_ms = tonumber(ARGV[4])
+if fence_refusal('', KEYS[1], '0', leader_id, leader_epoch, leader_token, '', redis_now_ms()) then
   return {'STALE', 0}
 end
 local ttl_ms = tonumber(ARGV[5])
 local count = tonumber(ARGV[6])
 local round = redis.call('HINCRBY', KEYS[2], 'round', 1)
-redis.call('HSET', KEYS[2], 'control_epoch', leader_epoch, 'written_at_ms', now_ms)
+redis.call('HSET', KEYS[2], 'control_epoch', leader_epoch, 'written_at_ms', written_at_ms)
 local keep = {}
 local missing = {}
 for index = 1, count do

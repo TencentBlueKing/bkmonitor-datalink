@@ -65,6 +65,15 @@ const (
 	monitorAPMServiceNameDimensio = "service_name"
 )
 
+// MonitorSubjectTypes lists every type ProjectMonitorSubject can return, in
+// a stable order, so an output that spells each type for its consumer can be
+// checked against the whole set rather than against the ones somebody
+// remembered.
+func MonitorSubjectTypes() []string {
+	return []string{MonitorSubjectHost, MonitorSubjectService, MonitorSubjectTopo, MonitorSubjectK8sPod,
+		MonitorSubjectK8sNode, MonitorSubjectK8sService, MonitorSubjectK8sWorkload, MonitorSubjectAPMService}
+}
+
 var (
 	monitorAPMAppLabel     = regexp.MustCompile(`^APM-APP\((.*?)\)`)
 	monitorAPMServiceLabel = regexp.MustCompile(`^APM-SERVICE\((.*?)\)`)

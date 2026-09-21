@@ -9,14 +9,12 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
 func TestAdmitterRequiresCurrentFenceAndCurrentPlanActivation(t *testing.T) {
-	now := time.UnixMilli(1_700_000_000_000)
 	request := execution.SideEffectAdmissionRequest{
 		Contract: execution.FrozenExecutionContractRef{
 			Slot:                 execution.SlotIdentity{QueryGroup: "query-group-1", EvaluationTime: 100},
@@ -32,7 +30,7 @@ func TestAdmitterRequiresCurrentFenceAndCurrentPlanActivation(t *testing.T) {
 	}
 	fence := &fakeFenceChecker{}
 	activation := &fakeActivationReader{active: true}
-	admitter, err := NewAdmitter(fence, activation, func() time.Time { return now })
+	admitter, err := NewAdmitter(fence, activation)
 	if err != nil {
 		t.Fatalf("NewAdmitter() error = %v", err)
 	}
@@ -56,7 +54,7 @@ func TestAdmitterRequiresCurrentFenceAndCurrentPlanActivation(t *testing.T) {
 
 type fakeFenceChecker struct{ err error }
 
-func (checker *fakeFenceChecker) CheckFence(context.Context, execution.OwnerFence, time.Time) error {
+func (checker *fakeFenceChecker) CheckFence(context.Context, execution.OwnerFence) error {
 	return checker.err
 }
 

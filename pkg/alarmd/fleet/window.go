@@ -11,6 +11,7 @@ package fleet
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -44,10 +45,12 @@ const (
 // expires on its own: without it, an operator finding an object observed has no
 // way to tell whether someone is mid-investigation or something was left behind.
 type Window struct {
-	QueryGroup string    `json:"query_group"`
-	OpenedBy   string    `json:"opened_by"`
-	OpenedAt   time.Time `json:"opened_at"`
-	ExpiresAt  time.Time `json:"expires_at"`
+	QueryGroup string                               `json:"query_group"`
+	OpenedBy   string                               `json:"opened_by"`
+	OpenedAt   time.Time                            `json:"opened_at"`
+	ExpiresAt  time.Time                            `json:"expires_at"`
+	WindowID   string                               `json:"window_id,omitempty"`
+	Sample     *observability.SeriesSampleSelection `json:"sample,omitempty"`
 }
 
 // WindowStore keeps the open windows in the control plane, where every replica
@@ -95,6 +98,25 @@ func ValidateQueryGroup(queryGroup string) error {
 // Open records windows on the given objects, replacing any window already open
 // on the same object. It returns what is open afterwards.
 func (store *WindowStore) Open(ctx context.Context, queryGroups []string, openedBy string, ttl time.Duration, now time.Time) ([]Window, error) {
+	return store.open(ctx, queryGroups, openedBy, ttl, now, nil)
+}
+
+// OpenSample uses the same control window, TTL, audit and replacement rules.
+// Identity/version resolution belongs to the caller's authoritative catalog.
+func (store *WindowStore) OpenSample(ctx context.Context, queryGroup string, selection observability.SeriesSampleSelection, openedBy string, ttl time.Duration, now time.Time) ([]Window, error) {
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return nil, err
+	}
+	selection.QueryGroup, selection.WindowID = queryGroup, hex.EncodeToString(id[:])
+	selection.OpenedAt, selection.ExpiresAt = now, now.Add(ttl)
+	if err := selection.Validate(); err != nil {
+		return nil, err
+	}
+	return store.open(ctx, []string{queryGroup}, openedBy, ttl, now, &selection)
+}
+
+func (store *WindowStore) open(ctx context.Context, queryGroups []string, openedBy string, ttl time.Duration, now time.Time, sample *observability.SeriesSampleSelection) ([]Window, error) {
 	if len(queryGroups) == 0 {
 		return nil, errors.New("at least one query group is required")
 	}
@@ -133,9 +155,14 @@ func (store *WindowStore) Open(ctx context.Context, queryGroups []string, opened
 			continue
 		}
 		members = append(members, &redis.Z{Score: float64(expiresAt.UnixMilli()), Member: queryGroup})
-		encoded, err := json.Marshal(Window{
+		window := Window{
 			QueryGroup: queryGroup, OpenedBy: openedBy, OpenedAt: now, ExpiresAt: expiresAt,
-		})
+		}
+		if sample != nil {
+			window.Sample = sample
+			window.WindowID = sample.WindowID
+		}
+		encoded, err := json.Marshal(window)
 		if err != nil {
 			return nil, err
 		}
@@ -243,6 +270,23 @@ func QueryGroups(windows []Window) []string {
 		queryGroups = append(queryGroups, window.QueryGroup)
 	}
 	return queryGroups
+}
+
+// SampleSelections never invents missing audit provenance. Invalid records
+// are omitted; a subsequent successful Select closes their prior selection.
+func SampleSelections(windows []Window) []observability.SeriesSampleSelection {
+	selections := make([]observability.SeriesSampleSelection, 0, len(windows))
+	for _, window := range windows {
+		if window.Sample == nil {
+			continue
+		}
+		s := *window.Sample
+		if s.QueryGroup != window.QueryGroup || s.WindowID != window.WindowID || !s.OpenedAt.Equal(window.OpenedAt) || !s.ExpiresAt.Equal(window.ExpiresAt) || s.Validate() != nil {
+			continue
+		}
+		selections = append(selections, s)
+	}
+	return selections
 }
 
 func containsString(values []string, want string) bool {

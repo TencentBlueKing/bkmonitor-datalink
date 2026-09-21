@@ -8,6 +8,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -16,6 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/cmdbcache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 // How often the CMDB host index is rebuilt, and how old it may get before the
@@ -34,6 +37,12 @@ const (
 	cmdbIndexStalenessBound  = 10 * cmdbIndexRefreshInterval
 )
 
+// How often one plan may describe its object-identity rejections in the log.
+// The counter carries the volume; the line carries the two sides that
+// disagreed, and one such line per plan per minute is enough to read the
+// mismatch off and few enough not to be the log.
+const identityReportWindow = time.Minute
+
 // buildSeriesAdmission assembles the access-path decision: enrich a series with
 // the CMDB facts its strategy filters on, then admit it only inside that
 // strategy's monitoring target.
@@ -47,6 +56,7 @@ func buildSeriesAdmission(
 	cfg config.Config,
 	client redis.Cmdable,
 	recorder *metric.Recorder,
+	logger *observability.Logger,
 	hostStatus *dynamicHostStatusFilter,
 ) (*admission.Chain, *cmdbcache.Store, error) {
 	// The platform states its key prefix once and both of its caches hang off
@@ -73,13 +83,61 @@ func buildSeriesAdmission(
 	}
 	publishCMDBIndexHealth(recorder, store)
 
-	filters := seriesAdmissionFilters(hostStatus)
+	filters := seriesAdmissionFilters(hostStatus, newIdentityReporter(logger, time.Now))
 	recorder.SetHostDisableMonitorStates(hostDisableMonitorStateCount(filters))
+	// Python's order: the record's own identities, then the host it names,
+	// then the service instance it names - which may re-place it under the
+	// instance's module and host.
 	chain := admission.NewChain(
-		[]admission.Fuller{admission.IdentityFuller{}, cmdbcache.NewHostTopologyFuller(store)},
+		[]admission.Fuller{
+			admission.IdentityFuller{},
+			cmdbcache.NewHostTopologyFuller(store),
+			cmdbcache.NewServiceInstanceTopologyFuller(store),
+		},
 		filters,
 	)
 	return chain, store, nil
+}
+
+// newIdentityReporter writes one plan's object-identity rejections as a log
+// line with the two sides that disagreed, at most once per plan, reason and
+// window. Both sides are coordinates - dimension names, and the model and
+// instance identifiers a target and a record name each other by - which the
+// log envelope admits; no metric value or payload reaches the line.
+func newIdentityReporter(logger *observability.Logger, now func() time.Time) *admission.IdentityReporter {
+	if logger == nil {
+		return nil
+	}
+	return admission.NewIdentityReporter(now, identityReportWindow, func(report admission.IdentityReport) {
+		attributes := []slog.Attr{
+			slog.String("reason", report.Reason),
+			slog.String("bk_tenant_id", report.TenantID),
+			slog.String("bk_biz_id", report.BusinessID),
+			slog.String("strategy_id", report.StrategyID),
+			slog.Uint64("rejections", report.Count),
+		}
+		if len(report.ExpectedPairs) > 0 {
+			attributes = append(attributes,
+				slog.String("expected_dimension_pairs", identityPairsText(report.ExpectedPairs)),
+				slog.String("record_dimensions", strings.Join(report.DimensionNames, ",")),
+			)
+		}
+		if len(report.CandidateKeys) > 0 || len(report.TargetKeys) > 0 {
+			attributes = append(attributes,
+				slog.String("record_keys", strings.Join(report.CandidateKeys, ",")),
+				slog.String("target_keys_sample", strings.Join(report.TargetKeys, ",")),
+			)
+		}
+		logger.Info("series_admission", "rejected", int(report.Count), 0, attributes...)
+	})
+}
+
+func identityPairsText(pairs [][2]string) string {
+	parts := make([]string, 0, len(pairs))
+	for _, pair := range pairs {
+		parts = append(parts, pair[0]+"|"+pair[1])
+	}
+	return strings.Join(parts, ",")
 }
 
 // maintainCMDBIndex keeps the index fresh for as long as the process runs and
@@ -108,6 +166,7 @@ func publishCMDBIndexHealth(recorder *metric.Recorder, store *cmdbcache.Store) {
 	recorder.SetCMDBHostIndex(
 		health.Hosts, health.Age.Seconds(), health.SourceAge.Seconds(), health.Degraded, health.DegradedReason,
 	)
+	recorder.SetCMDBServiceInstanceIndex(health.ServiceInstances)
 }
 
 // seriesAdmissionFilters is the access-path filter chain, in Python's order:
@@ -120,8 +179,8 @@ func publishCMDBIndexHealth(recorder *metric.Recorder, store *cmdbcache.Store) {
 // same resolution the platform's own consumers apply, so the list in force
 // here is the list in force there. It follows the copy when the platform
 // changes it, through the filter's own swap, without a restart.
-func seriesAdmissionFilters(hostStatus *dynamicHostStatusFilter) []admission.Filter {
-	filters := []admission.Filter{admission.TargetScopeFilter{}}
+func seriesAdmissionFilters(hostStatus *dynamicHostStatusFilter, reporter *admission.IdentityReporter) []admission.Filter {
+	filters := []admission.Filter{admission.TargetScopeFilter{Reporter: reporter}}
 	if hostStatus != nil {
 		filters = append(filters, hostStatus)
 	}

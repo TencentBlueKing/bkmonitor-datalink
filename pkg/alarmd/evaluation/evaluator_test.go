@@ -1,9 +1,20 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package evaluation
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -79,21 +90,26 @@ func TestEvaluatorRejectsRecordLimitBeforeCopyingPrimaryView(t *testing.T) {
 		}
 	}
 	evaluator := newEvaluator(t)
-	allocation := testing.Benchmark(func(b *testing.B) {
-		for index := 0; index < b.N; index++ {
-			_, err := evaluator.Evaluate(context.Background(), req)
-			if err == nil || !strings.Contains(err.Error(), "record budget exceeded") {
-				b.Fatalf("error=%v", err)
-			}
+	// Keep the byte bound that catches copying before rejection, without a
+	// benchmark's time-based calibration in the ordinary regression suite.
+	const runs = 100
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	for index := 0; index < runs; index++ {
+		_, err := evaluator.Evaluate(context.Background(), req)
+		if err == nil || !strings.Contains(err.Error(), "record budget exceeded") {
+			t.Fatalf("error=%v", err)
 		}
-	})
-	if allocation.AllocedBytesPerOp() > 64<<10 {
-		t.Fatalf("oversized PRIMARY was copied before rejection: %d bytes/op", allocation.AllocedBytesPerOp())
+	}
+	runtime.ReadMemStats(&after)
+	if bytesPerOp := (after.TotalAlloc - before.TotalAlloc) / runs; bytesPerOp > 64<<10 {
+		t.Fatalf("oversized PRIMARY was copied before rejection: %d bytes/op", bytesPerOp)
 	}
 }
 
-// This measures one supported 500-record series, not the process heap or the
-// maximum combination of levels and history. The input is built outside timing.
+// Keep the supported 500-record shape and its folded state mutation. Capacity
+// measurement belongs in the opt-in profile, not a calibrated loop in this test.
 func TestEvaluatorRetainsSupportedRecordLimit(t *testing.T) {
 	records := make([]contract.CanonicalRecordV2, 500)
 	for i := range records {
@@ -106,18 +122,13 @@ func TestEvaluatorRetainsSupportedRecordLimit(t *testing.T) {
 	evaluator := newEvaluator(t)
 	evaluator.limits.MaxRecords = 500
 	evaluator.limits.Trigger.MaxEvidenceBytesPerEvent = 64 << 10
-	allocation := testing.Benchmark(func(b *testing.B) {
-		for i := 0; i < b.N; i++ {
-			result, err := evaluator.Evaluate(context.Background(), req)
-			if err != nil {
-				b.Fatal(err)
-			}
-			if len(result.Plans) != 1 || len(result.Plans[0].LevelOutcomes) != 500 || len(result.Plans[0].StateResults) != 1 || len(result.Plans[0].StateResults[0].Events) != 500 {
-				b.Fatal("supported series lost records or exceeded one folded state mutation")
-			}
-		}
-	})
-	t.Logf("500 records, one level, 4 KiB dimensions: %d bytes/op (total allocations, not live heap)", allocation.AllocedBytesPerOp())
+	result, err := evaluator.Evaluate(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Plans) != 1 || len(result.Plans[0].LevelOutcomes) != 500 || len(result.Plans[0].StateResults) != 1 || len(result.Plans[0].StateResults[0].Events) != 500 {
+		t.Fatal("supported series lost records or exceeded one folded state mutation")
+	}
 }
 
 func TestEvaluatorFoldsSameSeriesRecordsInSourceOrder(t *testing.T) {
@@ -459,7 +470,7 @@ func TestEvaluatorWarmingAndGappedNeverEmitNormalOrRecovery(t *testing.T) {
 	}
 }
 
-func newEvaluator(t *testing.T) *Evaluator {
+func newEvaluator(t testing.TB) *Evaluator {
 	d, err := detect.NewEvaluator(detect.NewDefaultRegistry(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -471,11 +482,11 @@ func newEvaluator(t *testing.T) *Evaluator {
 	return e
 }
 
-func requestFixture(t *testing.T, value json.RawMessage, history []execution.StateHistoryPoint) execution.EvaluationRequest {
+func requestFixture(t testing.TB, value json.RawMessage, history []execution.StateHistoryPoint) execution.EvaluationRequest {
 	return requestFixtureForPlan(t, compiled(t), []contract.CanonicalRecordV2{{RecordID: strings.Repeat("b", 64), SourceTime: 100, BusinessID: "2", DimensionIdentity: contract.DimensionIdentityV2{Digest: strings.Repeat("c", 64)}, Values: map[string]json.RawMessage{"value": value}, Dimensions: map[string]json.RawMessage{}, ReceivedTime: 100}}, history)
 }
 
-func requestFixtureForPlan(t *testing.T, plan *strategy.CompiledPlan, records []contract.CanonicalRecordV2, history []execution.StateHistoryPoint) execution.EvaluationRequest {
+func requestFixtureForPlan(t testing.TB, plan *strategy.CompiledPlan, records []contract.CanonicalRecordV2, history []execution.StateHistoryPoint) execution.EvaluationRequest {
 	id := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}
 	due := execution.DuePlan{Identity: id, CompiledPlan: plan, StateGeneration: "state-v1", StateApplyEpoch: 1, ScheduleRevision: "plan-schedule", CompletionDeadlineUnixMilli: 200000}
 	consumer := execution.ConsumerRef{Plan: id, LevelID: 5, HasLevel: true}
@@ -508,22 +519,22 @@ func requestFixtureForPlan(t *testing.T, plan *strategy.CompiledPlan, records []
 	return execution.EvaluationRequest{Header: execution.InternalExecutionHeader{ExecutionID: "execution", Contract: contractRef, DuePlans: []execution.DuePlan{due}, Requirements: []execution.DataRequirement{requirement}, EffectiveTimeFacts: []execution.BoundEffectiveTimeFact{{Consumer: consumer, SeriesIdentity: series, Fact: facts[0]}}, RequiredPhysicalQueries: []execution.PlannedPhysicalQueryRef{{Digest: "physical", QueryRevision: "query"}}, DeadlineUnixMilli: 200000}, Inputs: []execution.SeriesEvaluationInputRequest{{Contract: contractRef, Consumer: consumer, SeriesIdentity: series, RequirementIDs: []execution.RequirementID{"main"}, Inputs: []execution.NamedInputBinding{binding}}}, State: execution.StatePreflightResult{Items: []execution.RuntimeStateView{stateView}}, Gaps: execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{Identity: execution.PlanGapIdentity{Plan: id, StateGeneration: "state-v1"}, Status: execution.GapMissing}}}}
 }
 
-func compiled(t *testing.T) *strategy.CompiledPlan {
+func compiled(t testing.TB) *strategy.CompiledPlan {
 	return compiledWindow(t, 1, 1)
 }
 
-func compiledWindow(t *testing.T, windowSize, requiredAnomalies uint32) *strategy.CompiledPlan {
+func compiledWindow(t testing.TB, windowSize, requiredAnomalies uint32) *strategy.CompiledPlan {
 	return compiledWindowWithUptime(t, windowSize, requiredAnomalies, false)
 }
 
-func compiledWindowWithUptime(t *testing.T, windowSize, requiredAnomalies uint32, uptime bool) *strategy.CompiledPlan {
+func compiledWindowWithUptime(t testing.TB, windowSize, requiredAnomalies uint32, uptime bool) *strategy.CompiledPlan {
 	return compiledWindowWithNoData(t, windowSize, requiredAnomalies, nil, uptime)
 }
 
 // compiledWindowWithNoData is the same fixture plan with no-data detection
 // optionally on, so a test can have a Plan that carries a no-data level without
 // changing anything else about it.
-func compiledWindowWithNoData(t *testing.T, windowSize, requiredAnomalies uint32, noData *contract.NoDataConfigV1, uptime bool) *strategy.CompiledPlan {
+func compiledWindowWithNoData(t testing.TB, windowSize, requiredAnomalies uint32, noData *contract.NoDataConfigV1, uptime bool) *strategy.CompiledPlan {
 	c, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), strategy.Limits{MaxPlanBytes: 1 << 20, MaxLevelsPerPlan: 16, MaxAlgorithmsPerLevel: 8, MaxGroupsPerAlgorithm: 16, MaxConditionsPerAlgorithm: 64, MaxASTNodesPerLevel: 256, MaxTriggerWindowSize: 16, MaxRecoveryConsecutiveWindows: 16, MaxRequiredHistoryPoints: 32, MaxTriggerComputeCost: 1 << 20, MaxCompiledPlanBytes: 1 << 20, MaxCacheEntries: 16, MaxCacheBytes: 1 << 20, NegativeCacheTTL: time.Minute, BudgetRevision: "test"})
 	if err != nil {
 		t.Fatal(err)
@@ -704,4 +715,60 @@ func TestEvaluatorKeepsPlanGapWithoutDurableState(t *testing.T) {
 			t.Fatalf("revision %q cleared a gap without durable state: %+v", revision, result.Plans[0])
 		}
 	}
+}
+
+// proposeRoundGuard does for a test what the worker does after Evaluate: when
+// the round's inputs are incomplete by the one definition the fold reads, the
+// Plan's result carries the gap marker that fold names, so the contract sees
+// the guard that will cover the outcome. Evaluate itself never proposes it --
+// the worker owns the marker -- so a test that validates an evaluation with an
+// incomplete input has to stand in for the worker or it validates a shape
+// production never produces.
+func proposeRoundGuard(t *testing.T, request execution.EvaluationRequest, result *execution.EvaluationResult) {
+	t.Helper()
+	due := request.Header.DuePlans[0]
+	var bindings []execution.NamedInputBinding
+	for _, input := range request.Inputs {
+		bindings = append(bindings, input.Inputs...)
+	}
+	reasons := execution.RoundGapScopeReasons(bindings, due.Identity)
+	if len(reasons) == 0 {
+		return
+	}
+	identity := execution.PlanGapIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration}
+	marker, _ := request.Gaps.Find(identity)
+	version, err := execution.BuildApplyVersion(request.Header.Contract, due.StateApplyEpoch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var required uint32
+	for _, level := range due.CompiledPlan.Levels() {
+		if points := level.RequiredDetectHistoryPoints(); points > required {
+			required = points
+		}
+	}
+	scopes := make([]execution.GapScope, 0, len(reasons))
+	for scope := range reasons {
+		scopes = append(scopes, scope)
+	}
+	sort.Slice(scopes, func(i, j int) bool {
+		if scopes[i].HasLevel != scopes[j].HasLevel {
+			return !scopes[i].HasLevel
+		}
+		return scopes[i].LevelID < scopes[j].LevelID
+	})
+	mutations := make([]execution.GapScopeMutation, 0, len(scopes))
+	for _, scope := range scopes {
+		mutations = append(mutations, execution.GapScopeMutation{Scope: scope, Kind: execution.GapOpen,
+			ReasonCode: reasons[scope], RequiredFullSlots: required})
+	}
+	mutation, err := execution.BuildPlanGapMutation(execution.PlanGapMutation{
+		Identity: identity, ExpectedMarkerRevision: marker.MarkerRevision,
+		ApplyVersion: version, ScheduleRevision: due.ScheduleRevision, Scopes: mutations,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result.Plans[0].GuardBeforeEvents = []execution.PlanGapMutation{mutation}
+	result.Plans[0].GuardAfterState = nil
 }

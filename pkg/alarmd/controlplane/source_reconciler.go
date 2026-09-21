@@ -1,3 +1,12 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package controlplane
 
 import (
@@ -109,7 +118,11 @@ type SourceRefreshResult struct {
 	// Withheld names the objects whose disposition changed this round, so a
 	// reader can ask which strategy is held back rather than only how many.
 	// Empty on a round where nothing changed, which is the steady state.
-	Withheld    WithheldReport
+	Withheld WithheldReport
+	// Suspended names the strategies whose no-data half changed state this
+	// round. Same shape and same budget as Withheld, different question: these
+	// are evaluated, and only their absence detection is off.
+	Suspended   WithheldReport
 	Composition CatalogComposition
 }
 
@@ -172,6 +185,8 @@ type SourceReconciler struct {
 	// that has said nothing, which is what makes its first round name
 	// everything without needing a flag to say so.
 	namedWithheld []ObjectDisposition
+	// namedSuspended is the same memory for suspended no-data halves.
+	namedSuspended []ObjectDisposition
 }
 
 // ConfigureClock sets the clock the reconciler paces its periodic full reads
@@ -261,7 +276,7 @@ func (reconciler *SourceReconciler) Refresh(
 	cycle, read, err := reconciler.observe(ctx, source)
 	retainedStaleRevisions := 0
 	var composition CatalogComposition
-	var withheld WithheldReport
+	var withheld, suspended WithheldReport
 	defer func() {
 		if err != nil {
 			reconciler.unsettle()
@@ -270,6 +285,7 @@ func (reconciler *SourceReconciler) Refresh(
 		result.RetainedStaleRevisions = retainedStaleRevisions
 		result.Composition = composition
 		result.Withheld = withheld
+		result.Suspended = suspended
 		result.CompiledStrategies, result.ReusedStrategies = reconciler.candidates.Stats()
 		result.ReadMode, result.ReadReason, result.StrategiesRead = read.mode, read.reason, read.strategies
 		result.ChangeSignalPresent, result.ChangeSignalAgeSeconds = read.signalPresent, read.signalAgeSeconds
@@ -330,6 +346,14 @@ func (reconciler *SourceReconciler) Refresh(
 	// disagree about how many.
 	withheld = ChangedWithheld(composition.WithheldObjects, reconciler.namedWithheld)
 	reconciler.namedWithheld = RememberNamed(reconciler.namedWithheld, composition.WithheldObjects, withheld.Lines)
+	// The same discipline for the strategies whose no-data half is suspended.
+	// They are not withheld -- they are running -- so they get their own list
+	// and their own stage, and the same changed-only rule: a deployment with a
+	// standing set of them would otherwise repeat the whole set every round
+	// and bury the one that just joined it.
+	suspended = ChangedWithheld(composition.SuspendedNoDataObjects, reconciler.namedSuspended)
+	reconciler.namedSuspended = RememberNamed(
+		reconciler.namedSuspended, composition.SuspendedNoDataObjects, suspended.Lines)
 	// The active revision remains the execution authority even when latest points
 	// at a stranded candidate. Restore its occurrence directly; requiring two
 	// identical source observations here can leave the active Snapshot expired

@@ -519,17 +519,38 @@ func (source *ProductionSlotSource) Next(
 		RecoveryUntilUnixMilli:         recoveryUntil,
 		KeepUntilUnixMilli:             keepUntil,
 		Dispatch: SlotDispatchContext{Operation: operation, OwnerFence: currentFence,
-			AssignmentGeneration: currentAssignment.AssignmentGeneration},
+			AssignmentGeneration: currentAssignment.AssignmentGeneration, ContentScope: declaredContentScope(schedule.Segment)},
 		ExpectedNextSlot: nextSlot,
 		Recovery:         recovery,
 	}
 	if source.expiredRangeEnabled && load.Progress != nil && load.Progress.NextSlot == nextSlot && load.Progress.UnfinishedSlot == nil &&
 		ctx.Value(rangeFlightContextKey{}) == queryGroup && recovery.Disposition == ReplayExpired {
-		if rangeSlot, eligible, rangeErr := source.buildExpiredRange(ctx, slot, schedule, at); rangeErr != nil {
+		outcome := refusedRange(observability.RangeGateApplied)
+		if rangeSlot, refusal, rangeErr := source.buildExpiredRange(ctx, slot, schedule, at); rangeErr != nil {
 			return FrozenSlot{}, false, SlotDueFacts{}, rangeErr
-		} else if eligible && rangeFitsProgress(*load.Progress, rangeSlot.ExpiredRange) {
+		} else if refusal.word != "" {
+			outcome = refusal
+		} else if !rangeFitsProgress(*load.Progress, rangeSlot.ExpiredRange) {
+			// The builder sealed a proof and this round cannot store it beside
+			// the Progress record. Same word the builder uses when the seal
+			// itself refuses the size, because to a reader they are one
+			// situation: the range that would catch this Query Group up does
+			// not fit in what carries it.
+			outcome = refusedRange(observability.RangeGateProofTooLarge)
+		} else {
 			slot = rangeSlot
 		}
+		source.observeRangeGate(ctx, fact.Contract.Slot.EvaluationTime, outcome, load, nextSlot)
+	} else if recovery.Disposition == ReplayExpired {
+		// The Slot is being given up on and the one path that could catch the
+		// Query Group up was not taken. Which of the gate's conditions refused
+		// it is a local of this comparison and is kept nowhere: a Query Group
+		// shedding a Slot every round reports GAP_SKIPPED and nothing about
+		// why it never catches up, and four Query Groups sat at a constant
+		// four Slots behind for hours with no reading that could name the
+		// reason.
+		source.observeRangeGate(ctx, fact.Contract.Slot.EvaluationTime,
+			refusedRange(rangeGateRefusal(source, load, nextSlot, ctx, queryGroup)), load, nextSlot)
 	}
 	if err := slot.Validate(queryGroup); err != nil {
 		return FrozenSlot{}, false, SlotDueFacts{}, err
@@ -590,6 +611,45 @@ func shortPeriodCohort(schedule execution.FrozenQueryGroupSchedule, slot executi
 // nothing; a Slot must not fail to resume because the schedule under it could
 // not be read, which is a state a resumed Slot is more likely to be in than
 // any other.
+// declaredContentScope is the content a Slot frozen from the Segment
+// declares to its fenced writes (decision-016): the Segment's ObjectDigest
+// while the Segment is the open one, nothing once it is closed.
+//
+// The content scope guards one thing: a worker whose view of the timeline
+// is behind, executing a Slot under a Segment it still believes open when
+// the leader has since cut a new one. Such a Slot declares the old content
+// and the record, which by then names the new, refuses it. A Slot under a
+// Segment the worker itself knows to be closed is not that: it is a replay
+// of a time the closed Segment covered, executed under the content that
+// governed that time, which is what the timeline is for -- a recovery walks
+// old Segments for hours after a publication. Declaring the old content
+// there would have the record refuse every replay once the change took
+// effect, and the Query Group would never catch up. Replays run under the
+// lease alone, as they always have.
+func declaredContentScope(segment execution.ScheduleSegmentFact) string {
+	if segment.End != nil {
+		return ""
+	}
+	return string(segment.ObjectDigest)
+}
+
+// projectionContentScope is declaredContentScope for a Slot rebuilt from
+// its persisted projection: the content the first attempt froze under, if
+// the live timeline still has that Segment open with that content; nothing
+// otherwise, including when the timeline cannot be read -- a retry that
+// cannot tell is a replay under the lease alone, never a declared write on
+// content it cannot vouch for.
+func (source *ProductionSlotSource) projectionContentScope(ctx context.Context, projection execution.UnfinishedSlotProjection) string {
+	if projection.ContentScope == "" {
+		return ""
+	}
+	schedule, err := source.catalog.ReadFrozenSchedule(ctx, source.queryGroup, projection.Contract.Slot.EvaluationTime)
+	if err != nil || schedule.Segment.End != nil || string(schedule.Segment.ObjectDigest) != projection.ContentScope {
+		return ""
+	}
+	return projection.ContentScope
+}
+
 func (source *ProductionSlotSource) cohortForSlot(ctx context.Context, slot execution.EvaluationTime) string {
 	schedule, err := source.catalog.ReadFrozenSchedule(ctx, source.queryGroup, slot)
 	if err != nil {
@@ -665,7 +725,13 @@ func (source *ProductionSlotSource) slotFromProjection(
 		Contract: projection.Contract, DuePlanTargets: projection.DuePlanTargets.Clone(),
 		EarliestQueryDeadlineUnixMilli: projection.EarliestQueryDeadlineUnixMilli,
 		RecoveryUntilUnixMilli:         recoveryUntil, KeepUntilUnixMilli: projection.KeepUntilUnixMilli,
-		Dispatch:         SlotDispatchContext{Operation: operation, OwnerFence: currentFence, AssignmentGeneration: currentAssignment.AssignmentGeneration},
+		// The content the first attempt froze under, from the projection it
+		// wrote down, declared only while that Segment is still the open one:
+		// a retry of a Slot the timeline has since moved past is a replay,
+		// and replays declare nothing (declaredContentScope).
+		Dispatch: SlotDispatchContext{Operation: operation, OwnerFence: currentFence,
+			AssignmentGeneration: currentAssignment.AssignmentGeneration,
+			ContentScope:         source.projectionContentScope(ctx, projection)},
 		ExpectedNextSlot: projection.Contract.Slot.EvaluationTime, Recovery: recovery,
 		ShortPeriodCohort: source.cohortForSlot(ctx, projection.Contract.Slot.EvaluationTime),
 	}
@@ -732,7 +798,7 @@ func (source *ProductionSlotSource) snapshotUnavailableSlot(
 		RecoveryUntilUnixMilli:         recoveryUntil,
 		KeepUntilUnixMilli:             keepUntil,
 		Dispatch: SlotDispatchContext{Operation: operation, OwnerFence: currentFence,
-			AssignmentGeneration: currentAssignment.AssignmentGeneration},
+			AssignmentGeneration: currentAssignment.AssignmentGeneration, ContentScope: declaredContentScope(schedule.Segment)},
 		ExpectedNextSlot: nextSlot,
 		Recovery:         recovery,
 	}
@@ -799,17 +865,26 @@ func (source *ProductionSlotSource) classifyRecovery(
 		return "", SlotRecoveryFacts{}, err
 	}
 	facts := SlotRecoveryFacts{Disposition: ReplayEligible, Distance: distance, Age: age, RecheckAtUnixMilli: recheckAt}
-	if distance > source.recovery.MaxReplaySlots {
-		facts.Disposition = ReplayExpired
-		facts.Reason = ReplayExpiredByDistance
-		source.observeReplayExpiry(ctx, evaluationTime, facts)
-		return execution.OperationNormal, facts, nil
-	}
+	// The contradiction is decided before the distance, and the order is the
+	// meaning. Both can be true of the same Slot, and they are not two ways of
+	// saying one thing: distance says the Query Group fell behind and the gap
+	// is accepted, the contradiction says two rules were derived from settings
+	// that disagree and somebody can fix it. Deciding distance first hides the
+	// second inside the first exactly when it is permanent -- a Query Group
+	// held past its own window on every Slot is always also too far by the
+	// time anyone looks, so it reports the accepted gap forever and the
+	// fixable defect is never once named.
 	expired, err := source.replayWaitOutlastsDistance(ctx, evaluationTime, deadline, &facts)
 	if err != nil {
 		return "", SlotRecoveryFacts{}, err
 	}
 	if expired {
+		source.observeReplayExpiry(ctx, evaluationTime, facts)
+		return execution.OperationNormal, facts, nil
+	}
+	if distance > source.recovery.MaxReplaySlots {
+		facts.Disposition = ReplayExpired
+		facts.Reason = ReplayExpiredByDistance
 		source.observeReplayExpiry(ctx, evaluationTime, facts)
 		return execution.OperationNormal, facts, nil
 	}
@@ -839,6 +914,11 @@ func (source *ProductionSlotSource) observeReplayExpiry(
 		ReplayExpiry: &observability.ReplayExpiryFacts{
 			Reason: string(facts.Reason), Distance: facts.Distance, AgeSeconds: facts.Age.Seconds(),
 			ReadyAtUnixMilli: facts.ReadyAtUnixMilli, DistanceBoundaryUnixMilli: facts.DistanceBoundaryUnixMilli,
+			// What the round before this one did with the Query Group. A Slot
+			// given up on for distance says nothing about how it got that far
+			// behind, and the four Query Groups that did this for hours were
+			// being held every round by something this line never named.
+			HeldBy: HeldByFromContext(ctx),
 		},
 	})
 }
@@ -878,9 +958,18 @@ func (source *ProductionSlotSource) replayWaitOutlastsDistance(
 	// outlast the boundary and the walk below is not worth its reads. This is
 	// the ordinary case -- it is what a healthy deployment does on every
 	// replay -- and the walk happens only when the arithmetic cannot rule the
-	// contradiction out. A recheck instant of zero means the schedule retires
-	// before the limit, so there is no boundary to outlast.
-	if facts.RecheckAtUnixMilli == 0 || readyAt < facts.RecheckAtUnixMilli {
+	// contradiction out.
+	//
+	// The shortcut applies only inside the limit. Past it the recheck instant
+	// is zero because the distance walk stopped at the limit rather than
+	// because the schedule retires, and reading zero as "no boundary to
+	// outlast" is what made this guard silent on exactly the Query Groups it
+	// was written for: one permanently held past its window is also past the
+	// limit by the time anyone looks, so the shortcut fired on every round and
+	// the contradiction was never computed once. Past the limit the Slot is
+	// being given up on anyway, so the walk it costs is affordable.
+	if facts.Distance <= source.recovery.MaxReplaySlots &&
+		(facts.RecheckAtUnixMilli == 0 || readyAt < facts.RecheckAtUnixMilli) {
 		return false, nil
 	}
 	boundary, bounded, err := source.replayDistanceBoundary(ctx, evaluationTime)

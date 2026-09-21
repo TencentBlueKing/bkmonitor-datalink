@@ -56,6 +56,27 @@ func PlanNoDataKeyV2(prefix string, identity execution.PlanNoDataIdentity) (stri
 	return executionKey(prefix, "nodata", identity.Plan, identity.StateGeneration, ""), nil
 }
 
+// PlanNoDataHashKeyV2 names one Plan's no-data memory in the shape that holds
+// one field per group.
+//
+// It is a second key rather than a second shape under the first, because the
+// two coexist for a rollout: a build that only knows the whole-memory record
+// must go on finding it where it was, and a build that writes the hash must
+// not have to decide what an old value under a new key means. The kind segment
+// is what separates them, and it separates them under a glob as well: the
+// cleanup that enumerates the old records scans "<prefix>:nodata:v2:*", and no
+// hash key can match it because the character after "nodata" differs.
+//
+// The "v2" segment both keys carry is the execution key scheme's version. It
+// has nothing to do with the memory's schema version, which is a field inside
+// the record.
+func PlanNoDataHashKeyV2(prefix string, identity execution.PlanNoDataIdentity) (string, error) {
+	if err := validatePlanIdentity(prefix, identity.Plan, identity.StateGeneration); err != nil {
+		return "", err
+	}
+	return executionKey(prefix, "nodata-hash", identity.Plan, identity.StateGeneration, ""), nil
+}
+
 func validatePlanIdentity(prefix string, plan execution.PlanIdentity, generation execution.StateGeneration) error {
 	if strings.TrimSpace(prefix) == "" || len(prefix) > 64 || strings.ContainsAny(prefix, "{} \t\r\n") {
 		return identityError("valid key prefix is required")

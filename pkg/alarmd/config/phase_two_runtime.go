@@ -227,10 +227,9 @@ type PhaseTwoCoordinatorConfig struct {
 // frozen with it, so a Slot that is retried cannot change wire format between
 // attempts.
 const (
-	// OutputProtocolAuto keeps the split the frozen revision already decides:
-	// a strategy with a revision publishes the native event, one without it
-	// publishes the Python-compatible event. It is the default because it is
-	// what the process already did.
+	// OutputProtocolAuto selects the standard raw event for a strategy with a
+	// frozen revision and the Python-compatible event for one without it.
+	// TriggerEvent remains an internal evaluation result, never a wire format.
 	OutputProtocolAuto = "auto"
 	// OutputProtocolLegacy publishes every strategy through the
 	// Python-compatible protocol, including strategies that have a revision.
@@ -344,6 +343,36 @@ type PhaseTwoRuntimeConfig struct {
 	Coordinator      PhaseTwoCoordinatorConfig      `yaml:"-"`
 	Canonical        PhaseTwoCanonicalConfig        `yaml:"canonical"`
 	PlatformSettings PhaseTwoPlatformSettingsConfig `yaml:"platform_settings"`
+	Observation      PhaseTwoObservationConfig      `yaml:"observation"`
+}
+
+// PhaseTwoObservationConfig is the operator's allocation to the strategy
+// directory, the cost candidates and the criterion samples: the diagnostics
+// that read the control plane and write the diagnostic store on their own
+// account, beyond what detection needs.
+//
+// MemoryPercent is the share of the container's memory limit they may hold,
+// from which every other bound of theirs is derived (config.DeriveObservationCapacity).
+// Zero -- the default -- leaves them off: the directory cold read of a
+// ten-thousand-Plan catalogue and the per-tick cost summary were measured
+// on synthetic populations only, and the ruling is that they are switched on
+// by an operator who has been given the measured budget for that deployment,
+// not by whichever container happens to know its limit. An operator turning
+// them on says how much, and nothing here says "unlimited".
+type PhaseTwoObservationConfig struct {
+	MemoryPercent int `yaml:"memory_percent"`
+}
+
+// ObservationMemoryPercentMax bounds the allocation: a quarter of the
+// container is the point past which the diagnostics are competing with the
+// detection they are supposed to describe.
+const ObservationMemoryPercentMax = 25
+
+func (c PhaseTwoObservationConfig) validate() error {
+	if c.MemoryPercent < 0 || c.MemoryPercent > ObservationMemoryPercentMax {
+		return fmt.Errorf("phase_two.observation.memory_percent %d must be between 0 (off) and %d", c.MemoryPercent, ObservationMemoryPercentMax)
+	}
+	return nil
 }
 
 func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
@@ -505,6 +534,9 @@ func (c PhaseTwoRuntimeConfig) validate() error {
 	}
 	if err := platformsettings.ValidateKeyPrefix(c.PlatformSettings.RedisKeyPrefix); err != nil {
 		return fmt.Errorf("phase_two platform_settings.redis_key_prefix: %w", err)
+	}
+	if err := c.Observation.validate(); err != nil {
+		return err
 	}
 	for name, list := range map[string]*[]string{
 		"host_disable_monitor_states": c.PlatformSettings.HostDisableMonitorStates,

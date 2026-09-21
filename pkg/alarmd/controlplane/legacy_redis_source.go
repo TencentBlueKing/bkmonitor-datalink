@@ -1,3 +1,12 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package controlplane
 
 import (
@@ -148,9 +157,13 @@ func (source *LegacyRedisStrategySource) Strategies(ctx context.Context, ids []s
 		tenantID, tenantOK := decodeRequiredIdentityString(identityDTO.TenantID)
 		spaceUID, spaceOK := decodeRequiredIdentityString(identityDTO.SpaceUID)
 		if !tenantOK || !spaceOK {
+			// Which field, not only that one was. The source page samples
+			// this disposition with the strategy id and the reason, and a
+			// reader of 47 such rows could not tell whether the writer had
+			// stopped filling the tenant, the space, or both.
 			strategy.SourceDisposition = &ObjectDisposition{
 				SourceID: ids[index], Scope: "STRATEGY", Disposition: DispositionSourceIncomplete,
-				Reason: "SOURCE_IDENTITY_UNAVAILABLE",
+				Reason: "SOURCE_IDENTITY_UNAVAILABLE", FieldPath: missingIdentityFieldPath(tenantOK, spaceOK),
 			}
 			strategies = append(strategies, strategy)
 			continue
@@ -186,6 +199,19 @@ func (source *LegacyRedisStrategySource) ChangeSignal(ctx context.Context) (Sour
 		return SourceChangeSignal{}, nil
 	}
 	return SourceChangeSignal{Present: true, Value: payload, WrittenAt: time.Unix(seconds, 0)}, nil
+}
+
+// missingIdentityFieldPath names the identity field or fields a document did
+// not carry usably, in the document's own key names.
+func missingIdentityFieldPath(tenantOK, spaceOK bool) string {
+	switch {
+	case !tenantOK && !spaceOK:
+		return "bk_tenant_id,space_uid"
+	case !tenantOK:
+		return "bk_tenant_id"
+	default:
+		return "space_uid"
+	}
 }
 
 func decodeRequiredIdentityString(payload json.RawMessage) (string, bool) {

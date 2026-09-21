@@ -43,14 +43,19 @@ func TestRenewIfBelowFollowsRedisPTTLReplies(t *testing.T) {
 	const lifetime = 10 * time.Second
 	threshold := GenerationScopedRenewalThreshold(lifetime)
 
-	// A key that is not there is left alone. Renewing it would create a key
-	// with no value, which every reader classifies as corrupt state.
-	renewed, err := backend.RenewIfBelow(ctx, "absent", lifetime, threshold)
+	// A key that is not there is left alone and says so by name. Renewing it
+	// would create a key with no value, which every reader classifies as
+	// corrupt state -- and answering FRESH would be worse than useless: a
+	// vanished record and a record with life to spare are opposite readings,
+	// and the Runtime State renewal decides whether a series' history was
+	// silently lost from exactly this reply.
+	outcome, err := backend.RenewIfBelow(ctx, "absent", lifetime, threshold)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if renewed {
-		t.Fatal("a key that does not exist was renewed into existence")
+	if outcome != RenewalMissing {
+		t.Fatalf("renewing a key that does not exist answered %q, want %q; a lost record must not read "+
+			"the same as a healthy one", outcome, RenewalMissing)
 	}
 	values, err := backend.MGet(ctx, []string{"absent"})
 	if err != nil {
@@ -69,12 +74,12 @@ func TestRenewIfBelowFollowsRedisPTTLReplies(t *testing.T) {
 		[]string{"immortal"}, "v").Result(); err != nil {
 		t.Fatal(err)
 	}
-	renewed, err = backend.RenewIfBelow(ctx, "immortal", lifetime, threshold)
+	outcome, err = backend.RenewIfBelow(ctx, "immortal", lifetime, threshold)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !renewed {
-		t.Fatal("a key with no expiry was not given one; keys written before this existed would stay immortal")
+	if outcome != RenewalRenewed {
+		t.Fatalf("a key with no expiry answered %q; keys written before this existed would stay immortal", outcome)
 	}
 	remaining := remainingLife(t, backend, "immortal")
 	if remaining <= 0 || remaining > lifetime {
@@ -83,12 +88,12 @@ func TestRenewIfBelowFollowsRedisPTTLReplies(t *testing.T) {
 
 	// Plenty of life left: no renewal, and the remaining time must not jump.
 	before := remainingLife(t, backend, "immortal")
-	renewed, err = backend.RenewIfBelow(ctx, "immortal", lifetime, threshold)
+	outcome, err = backend.RenewIfBelow(ctx, "immortal", lifetime, threshold)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if renewed {
-		t.Fatal("a key with most of its life left was renewed anyway")
+	if outcome != RenewalFresh {
+		t.Fatalf("a key with most of its life left answered %q, want %q", outcome, RenewalFresh)
 	}
 	after := remainingLife(t, backend, "immortal")
 	if after > before {
@@ -99,12 +104,12 @@ func TestRenewIfBelowFollowsRedisPTTLReplies(t *testing.T) {
 	if err := backend.SetMany(ctx, []BackendWrite{{Key: "expiring", Value: []byte("v"), TTL: time.Second}}); err != nil {
 		t.Fatal(err)
 	}
-	renewed, err = backend.RenewIfBelow(ctx, "expiring", lifetime, threshold)
+	outcome, err = backend.RenewIfBelow(ctx, "expiring", lifetime, threshold)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !renewed {
-		t.Fatal("a key about to expire was not renewed")
+	if outcome != RenewalRenewed {
+		t.Fatalf("a key about to expire answered %q, want %q", outcome, RenewalRenewed)
 	}
 	remaining = remainingLife(t, backend, "expiring")
 	if remaining <= threshold {

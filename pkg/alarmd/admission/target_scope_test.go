@@ -22,6 +22,16 @@ func scope(groups ...TargetScopeGroup) *TargetScope {
 	return &TargetScope{Groups: groups}
 }
 
+// hostFacts is a record that carries the given host identities and nothing
+// else, the shape a series names a host by before CMDB enrichment.
+func hostFacts(keys ...string) Facts {
+	facts := Facts{}
+	for _, key := range keys {
+		facts.AddHostKey(key)
+	}
+	return facts
+}
+
 func topo(method TargetScopeMethod, values ...string) TargetScopeCondition {
 	return TargetScopeCondition{Field: TargetScopeTopoNode, Method: method, Keys: keys(values...)}
 }
@@ -34,7 +44,7 @@ func host(method TargetScopeMethod, values ...string) TargetScopeCondition {
 // pointed at one of a host's several modules must still include it, which is
 // the case a single-node model gets wrong.
 func TestAHostInSeveralModulesMatchesATargetNamingAnyOfThem(t *testing.T) {
-	facts := Facts{HostKeys: []string{"10.0.0.1|0"}}
+	facts := hostFacts("10.0.0.1|0")
 	facts.SetTopoNodes([]string{"module|85", "set|12", "biz|7", "module|91", "set|13"})
 
 	for _, node := range []string{"module|85", "module|91", "set|13", "biz|7"} {
@@ -58,19 +68,19 @@ func TestIncludeAndExcludeInOneGroupBothHaveToHold(t *testing.T) {
 	}}
 	plan := PlanContext{TargetScope: scope(group)}
 
-	inside := Facts{HostKeys: []string{"10.0.0.1|0"}}
+	inside := hostFacts("10.0.0.1|0")
 	inside.SetTopoNodes([]string{"biz|9", "set|81", "module|100"})
 	if decision := (TargetScopeFilter{}).Admit(plan, &inside); !decision.Admit {
 		t.Errorf("a host in an included set and no excluded module was dropped: %v", decision)
 	}
 
-	excluded := Facts{HostKeys: []string{"10.0.0.2|0"}}
+	excluded := hostFacts("10.0.0.2|0")
 	excluded.SetTopoNodes([]string{"biz|9", "set|81", "module|7298"})
 	if decision := (TargetScopeFilter{}).Admit(plan, &excluded); decision.Admit {
 		t.Error("a host in an excluded module was admitted")
 	}
 
-	elsewhere := Facts{HostKeys: []string{"10.0.0.3|0"}}
+	elsewhere := hostFacts("10.0.0.3|0")
 	elsewhere.SetTopoNodes([]string{"biz|9", "set|900"})
 	if decision := (TargetScopeFilter{}).Admit(plan, &elsewhere); decision.Admit {
 		t.Error("a host outside every included set was admitted")
@@ -83,7 +93,7 @@ func TestAnyGroupAdmits(t *testing.T) {
 		TargetScopeGroup{Conditions: []TargetScopeCondition{topo(TargetScopeInclude, "set|1")}},
 		TargetScopeGroup{Conditions: []TargetScopeCondition{host(TargetScopeInclude, "10.0.0.9|0")}},
 	)}
-	facts := Facts{HostKeys: []string{"10.0.0.9|0"}}
+	facts := hostFacts("10.0.0.9|0")
 	facts.SetTopoNodes([]string{"set|2"})
 	if decision := (TargetScopeFilter{}).Admit(plan, &facts); !decision.Admit {
 		t.Errorf("a record matching the second alternative was dropped: %v", decision)
@@ -98,7 +108,7 @@ func TestAnyGroupAdmits(t *testing.T) {
 func TestATopologyTargetRejectsRecordsWithNoTopology(t *testing.T) {
 	plan := PlanContext{TargetScope: scope(TargetScopeGroup{Conditions: []TargetScopeCondition{topo(TargetScopeInclude, "set|81")}})}
 
-	unknownHost := Facts{HostKeys: []string{"10.9.9.9|0"}}
+	unknownHost := hostFacts("10.9.9.9|0")
 	if decision := (TargetScopeFilter{}).Admit(plan, &unknownHost); decision.Admit {
 		t.Error("a host CMDB does not know was admitted into a topology target")
 	}
@@ -153,8 +163,8 @@ func TestChainEnrichesOnceAndNamesTheRejectingFilter(t *testing.T) {
 		"bk_target_cloud_id": json.RawMessage(`0`),
 	}
 	facts := chain.Enrich(dimensions)
-	if len(facts.HostKeys) != 1 || facts.HostKeys[0] != "10.0.0.1|0" {
-		t.Fatalf("identity enrichment produced %v", facts.HostKeys)
+	if len(facts.HostKeys()) != 1 || facts.HostKeys()[0] != "10.0.0.1|0" {
+		t.Fatalf("identity enrichment produced %v", facts.HostKeys())
 	}
 	admitted, filter, reason := chain.Admit(PlanContext{TargetScope: scope(
 		TargetScopeGroup{Conditions: []TargetScopeCondition{host(TargetScopeInclude, "10.0.0.2|0")}},
@@ -178,12 +188,12 @@ func TestIdentityEnrichmentAcceptsBothDimensionEncodings(t *testing.T) {
 		"bk_target_cloud_id": json.RawMessage(`"0"`),
 		"bk_host_id":         json.RawMessage(`"12345"`),
 	})
-	if len(numeric.HostKeys) != 2 || len(textual.HostKeys) != 2 {
-		t.Fatalf("host keys: numeric %v textual %v", numeric.HostKeys, textual.HostKeys)
+	if len(numeric.HostKeys()) != 2 || len(textual.HostKeys()) != 2 {
+		t.Fatalf("host keys: numeric %v textual %v", numeric.HostKeys(), textual.HostKeys())
 	}
-	for index := range numeric.HostKeys {
-		if numeric.HostKeys[index] != textual.HostKeys[index] {
-			t.Fatalf("encodings disagree: %v vs %v", numeric.HostKeys, textual.HostKeys)
+	for index := range numeric.HostKeys() {
+		if numeric.HostKeys()[index] != textual.HostKeys()[index] {
+			t.Fatalf("encodings disagree: %v vs %v", numeric.HostKeys(), textual.HostKeys())
 		}
 	}
 }
@@ -192,8 +202,8 @@ func TestIdentityEnrichmentAcceptsBothDimensionEncodings(t *testing.T) {
 func TestAnAbsentCloudDefaultsToTheDirectArea(t *testing.T) {
 	chain := NewChain([]Fuller{IdentityFuller{}}, nil)
 	facts := chain.Enrich(map[string]json.RawMessage{"ip": json.RawMessage(`"10.0.0.1"`)})
-	if len(facts.HostKeys) != 1 || facts.HostKeys[0] != "10.0.0.1|0" {
-		t.Fatalf("host keys = %v", facts.HostKeys)
+	if len(facts.HostKeys()) != 1 || facts.HostKeys()[0] != "10.0.0.1|0" {
+		t.Fatalf("host keys = %v", facts.HostKeys())
 	}
 }
 
@@ -215,7 +225,8 @@ func TestAnAdmissionThatCouldNotDecideCarriesItsReasonOut(t *testing.T) {
 		t.Fatalf("decision = %v/%s/%s, want the gap named on an admitted record", admitted, name, reason)
 	}
 	// An ordinary admission still reports nothing, so the two are distinct.
-	plain := &Facts{TopoNodes: []string{"module|85"}}
+	plain := &Facts{}
+	plain.SetTopoNodes([]string{"module|85"})
 	if _, _, reason := chain.Admit(PlanContext{TargetScope: scope}, plain); reason != "" {
 		t.Fatalf("reason = %q, want an in-scope record to carry none", reason)
 	}

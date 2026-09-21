@@ -42,8 +42,11 @@ import (
 
 // catalogIndexEntry is what the index keeps per Query Group.
 type catalogIndexEntry struct {
-	Digest execution.ObjectDigest
-	Plans  []execution.PlanIdentity
+	Group            execution.QueryGroupIdentity
+	Digest           execution.ObjectDigest
+	Plans            []execution.PlanIdentity
+	QueryRevision    execution.QueryRevision
+	ScheduleRevision execution.ScheduleRevision
 }
 
 func (entry catalogIndexEntry) samePlans(plans []execution.PlanIdentity) bool {
@@ -102,7 +105,7 @@ func indexFromCatalog(catalog Catalog) (map[execution.QueryGroupIdentity]catalog
 		if err != nil {
 			return nil, err
 		}
-		groups[group.Identity] = catalogIndexEntry{Digest: digest, Plans: planIdentities(group)}
+		groups[group.Identity] = catalogIndexEntry{Group: group.Identity, Digest: digest, Plans: planIdentities(group), QueryRevision: group.QueryPlan.QueryRevision, ScheduleRevision: group.ScheduleRevision}
 	}
 	return groups, nil
 }
@@ -322,7 +325,7 @@ func (repository *RedisCatalogRepository) ensureCatalogIndex(
 			for _, plan := range object.Plans {
 				plans = append(plans, plan.Identity)
 			}
-			ensured.entries[entry.QueryGroup] = catalogIndexEntry{Digest: entry.ObjectDigest, Plans: plans}
+			ensured.entries[entry.QueryGroup] = catalogIndexEntry{Group: object.Identity, Digest: entry.ObjectDigest, Plans: plans, QueryRevision: object.QueryPlan.QueryRevision, ScheduleRevision: object.ScheduleRevision}
 			repository.controlReads.index.misses.Add(1)
 		}
 	}

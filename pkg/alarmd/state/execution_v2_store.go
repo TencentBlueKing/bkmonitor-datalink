@@ -38,14 +38,48 @@ type CompareAndSetBackend interface {
 // not passed over: a renewal nobody performs leaves keys immortal, and the only
 // place that shows up is a Redis instance months later.
 type LifetimeBackend interface {
-	RenewIfBelow(context.Context, string, time.Duration, time.Duration) (bool, error)
+	RenewIfBelow(context.Context, string, time.Duration, time.Duration) (RenewalOutcome, error)
+	// RenewManyIfBelow is the same decision for a batch of keys, answered in
+	// one round trip rather than one per key. Both are required: a caller that
+	// holds one key must not pay for a slice, and a caller holding a Slot's
+	// worth of them must not pay for a round trip each.
+	RenewManyIfBelow(context.Context, []string, time.Duration, time.Duration) ([]RenewalOutcome, error)
 }
+
+// RenewalOutcome is what one renewal found when it looked.
+//
+// Three states, not a bool, because the third one is the reason this exists.
+// A renewal that finds no key is the moment a piece of state was lost without
+// anything noticing -- the Plan will rebuild it as a new series and report
+// nothing -- and a bool return spells that "not renewed", which is also what a
+// key with plenty of life left says. Those two readings are opposites and the
+// old signature could not tell them apart.
+type RenewalOutcome string
+
+const (
+	// RenewalRenewed is a key that was running out and now is not.
+	RenewalRenewed RenewalOutcome = "RENEWED"
+	// RenewalFresh is a key with more than the threshold still to live. No
+	// expiry was set; the round trip was still spent.
+	RenewalFresh RenewalOutcome = "FRESH"
+	// RenewalMissing is a key that was read this round and was gone by the
+	// time the renewal asked about it. Nothing recreates it here: writing a
+	// key with no value would only make every reader classify it as corrupt.
+	RenewalMissing RenewalOutcome = "MISSING"
+)
 
 type ExecutionStoreOptions struct {
 	Prefix          string
 	Router          StorageRouter
 	MaxValueBytes   int
 	MaxItemsPerCall int
+	// MaxNoDataGroups bounds how many groups one Plan's no-data memory may
+	// hold. It is a guard against an expected set that has run away, not a
+	// working limit: the memory is stored one field per group and has no size
+	// ceiling, so this is an order of magnitude beyond what any Plan reaches.
+	// Zero takes DefaultMaxNoDataGroups rather than meaning no bound, because
+	// an unset field must not be the way a guard is removed.
+	MaxNoDataGroups int
 	// MinTTL, MaxTTL and RestartMargin bound the write TTL the store derives
 	// per apply request from that request's Plan retention. MaxTTL is the
 	// ceiling a derived TTL may not exceed, not the value keys are written at.
@@ -65,6 +99,14 @@ type ExecutionStore struct {
 	// generation-scoped keys it loads. Per store rather than per package so
 	// two stores in one process cannot answer for each other's keys.
 	renewals *renewalGate
+	// frozenRenewals is the same memory for Runtime State keys whose Level was
+	// frozen this round. A second table rather than a shared one because the
+	// two populations are sized differently -- generation-scoped keys are two
+	// per Plan, Runtime State keys are one per series, thousands for a single
+	// query group -- so one table would let a burst of series keys evict every
+	// Plan's entry, and the reset counter could not say which population
+	// overflowed.
+	frozenRenewals *renewalGate
 }
 
 type runtimeEnvelope struct {
@@ -89,13 +131,28 @@ type gapEnvelope struct {
 	Scopes           []execution.GapScopeState      `json:"scopes,omitempty"`
 }
 
+// DefaultMaxNoDataGroups is the group guard a store takes when none is given.
+//
+// It is derived from what the container can hold rather than from what a Plan
+// is expected to have: the largest memory seen in production is a few thousand
+// groups, and this is two orders of magnitude above it, which is what makes it
+// a guard rather than something a Plan can reach by growing normally.
+const DefaultMaxNoDataGroups = 100000
+
 func NewExecutionStore(options ExecutionStoreOptions) (*ExecutionStore, error) {
 	if options.Prefix == "" || options.Router == nil || options.MaxValueBytes <= 0 ||
 		options.MaxItemsPerCall <= 0 || options.MinTTL <= 0 || options.MaxTTL < options.MinTTL ||
-		options.RestartMargin < 0 {
+		options.RestartMargin < 0 || options.MaxNoDataGroups < 0 {
 		return nil, fmt.Errorf("state: invalid execution store options")
 	}
-	return &ExecutionStore{options: options, witnesses: newRuntimeWitnessCache(), renewals: newRenewalGate()}, nil
+	if options.MaxNoDataGroups == 0 {
+		options.MaxNoDataGroups = DefaultMaxNoDataGroups
+	}
+	if err := probeBackendCapabilities("execution store", options.Router, executionStoreCapabilities); err != nil {
+		return nil, err
+	}
+	return &ExecutionStore{options: options, witnesses: newRuntimeWitnessCache(),
+		renewals: newRenewalGate(), frozenRenewals: newRenewalGate()}, nil
 }
 
 // runtimeTTL derives how long the keys of one apply request have to survive
@@ -396,6 +453,7 @@ func (store *ExecutionStore) ApplyGap(ctx context.Context, request execution.Gap
 		}
 		raw := values[0]
 		var previous gapEnvelope
+		var sameSlotScopes []execution.GapScopeState
 		if raw != nil {
 			if len(raw) > store.options.MaxValueBytes {
 				item.Status, item.ReasonCode = execution.GapGuardRejected, execution.ReasonCode(contract.ReasonStateBudgetExceeded)
@@ -418,11 +476,18 @@ func (store *ExecutionStore) ApplyGap(ctx context.Context, request execution.Gap
 			if comparison == execution.ApplyVersionEqual {
 				if previous.MutationDigest == mutation.MutationDigest {
 					item.Status = execution.GapGuardAlreadyApplied
-				} else {
-					item.Status = execution.GapGuardConflict
+					result.Items[index] = item
+					continue
 				}
-				result.Items[index] = item
-				continue
+				var extended bool
+				if previous.ScheduleRevision == mutation.ScheduleRevision {
+					sameSlotScopes, extended = execution.ExtendSameSlotGap(previous.Scopes, mutation.Scopes)
+				}
+				if !extended {
+					item.Status = execution.GapGuardConflict
+					result.Items[index] = item
+					continue
+				}
 			}
 		}
 		if previous.MarkerRevision != mutation.ExpectedMarkerRevision {
@@ -430,7 +495,10 @@ func (store *ExecutionStore) ApplyGap(ctx context.Context, request execution.Gap
 			result.Items[index] = item
 			continue
 		}
-		nextScopes := applyGapScopes(previous.Scopes, mutation.Scopes, previous.ScheduleRevision, mutation.ScheduleRevision)
+		nextScopes := sameSlotScopes
+		if nextScopes == nil {
+			nextScopes = applyGapScopes(previous.Scopes, mutation.Scopes, previous.ScheduleRevision, mutation.ScheduleRevision)
+		}
 		if err := validatePersistedGapScopes(nextScopes); err != nil {
 			item.Status, item.ReasonCode = execution.GapGuardRejected, execution.ReasonCode(contract.ReasonStateCorrupt)
 			result.Items[index] = item

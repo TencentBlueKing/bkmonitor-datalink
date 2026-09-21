@@ -8,6 +8,8 @@ package execution
 import (
 	"reflect"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -120,6 +122,13 @@ func validateLevelOutcomes(
 	if err := validateStateHistoryReplacements(plan, result.StateResults, states); err != nil {
 		return err
 	}
+	// The markers this round ends with, built the way the exact-guard rule
+	// builds them, so an outcome's reason is judged against the guard that
+	// will actually be covering it rather than against a second derivation of
+	// what that guard ought to say.
+	finalMarkers := cloneGapScopes(loadedGapScopes(gaps, result.Plan))
+	applyGapMutations(finalMarkers, result.GuardBeforeEvents)
+	applyGapMutations(finalMarkers, result.GuardAfterState)
 	seen := make(map[levelOutcomeIdentity]LevelOutcome, len(result.LevelOutcomes))
 	for _, outcome := range result.LevelOutcomes {
 		identity := levelOutcomeIdentity{
@@ -131,7 +140,7 @@ func validateLevelOutcomes(
 		if _, duplicate := seen[identity]; duplicate {
 			return resultContractViolation(codeOutcomeDuplicate, "duplicate Level outcome")
 		}
-		if err := validateLevelOutcome(input, plan, result.Disposition, outcome, result.StateResults, states, gaps); err != nil {
+		if err := validateLevelOutcome(input, plan, result.Disposition, outcome, result.StateResults, states, gaps, finalMarkers); err != nil {
 			return err
 		}
 		seen[identity] = outcome
@@ -153,6 +162,7 @@ func validateLevelOutcome(
 	stateResults []StateEvaluation,
 	states StatePreflightResult,
 	gaps GapLoadResult,
+	finalMarkers map[GapScope]GapScopeState,
 ) error {
 	if outcome.Plan != plan.Identity || !compiledPlanHasLevel(plan.CompiledPlan, outcome.LevelID) ||
 		outcome.SeriesIdentityDigest == "" {
@@ -204,7 +214,26 @@ func validateLevelOutcome(
 			}
 		case LevelOutcomeUnknown:
 			if !loadedSeriesWarmingCompleted(outcome, plan, stateResults, states, gaps) {
-				if _, ok := guardReasons[outcome.ReasonCode]; !ok && disposition != PlanRetryPending {
+				// Either the reason the guard is already up for, or the
+				// reason the marker this round ends with carries. Both are
+				// exact -- two named values, not "any reason" -- and the
+				// second has to be admitted because it is the guard that will
+				// actually be covering this outcome.
+				//
+				// Read off the final marker through the same function the
+				// exact-guard rule uses, not worked out again from the inputs.
+				// Recomputing it here would put the fold in two places with
+				// nothing comparing them, which is the shape this whole change
+				// exists to remove.
+				//
+				// Only the first used to be, and a round that brought a new
+				// incomplete input to an already guarded Level could then
+				// satisfy neither rule: this one wanted the stored reason and
+				// the exact-guard rule wanted the final marker's, which is the
+				// new one. The Plan failed to evaluate on every Slot for as
+				// long as the input stayed incomplete.
+				if _, ok := guardReasons[outcome.ReasonCode]; !ok && disposition != PlanRetryPending &&
+					!finalGapGuardsOutcome(finalMarkers, outcome) {
 					return resultContractViolation(codeOutcomeUnknownDropsGuardReason, "UNKNOWN Level outcome does not preserve its active guard reason")
 				}
 				constrained = true
@@ -779,10 +808,23 @@ func validateDegradedGuardCoverage(
 			}
 			continue
 		}
+		if loadedStateGuardsTerminalOutcome(states, outcome) || loadedGapGuardsTerminalOutcome(gaps, outcome) {
+			// The blob this round read is itself the guard. A series whose
+			// stored state cannot be decoded produces a TERMINAL outcome
+			// naming that, and there is no marker to point at: the record is
+			// the persistent fact, read again identically on every round, and
+			// more durable than anything a writer could put beside it.
+			// Without this the contract refused the Level every round for as
+			// long as the bad record sat there, and the refusal named nothing
+			// anybody could clear.
+			continue
+		}
 		if finalStateGuardsOutcome(finalStates, outcome) || finalGapGuardsOutcome(finalMarkers, outcome) {
 			continue
 		}
-		return resultContractViolation(codeGuardMissingForDegradedOutcome, "degraded Level outcome lacks an exact durable guard")
+		return resultContractViolation(codeGuardMissingForDegradedOutcome,
+			"degraded Level outcome lacks an exact durable guard"+
+				describeMissingGuard(input, result, loadedMarkers, finalMarkers, finalStates, outcome))
 	}
 	if obligations == 0 &&
 		(result.Disposition == PlanUnavailable || result.Disposition == PlanReadinessGap || result.Disposition == PlanTerminal) &&
@@ -790,6 +832,121 @@ func validateDegradedGuardCoverage(
 		return resultContractViolation(codeGuardMissingPreEvent, "degraded plan completion requires a durable pre-event gap guard")
 	}
 	return nil
+}
+
+// describeMissingGuard renders what the two comparisons saw when neither
+// guarded a degraded outcome. The refusal used to say only that it refused,
+// and a residue of it on two objects could not be attributed: whether the
+// outcome carried this round's fold, the stored marker's reason or a local
+// one, and whether the State guard or the marker was the one that did not
+// match, were not in the line. Each value is a closed vocabulary, a bounded
+// integer or yes/no; who it happened to is on the observation already.
+func describeMissingGuard(
+	input InternalExecution, result PlanEvaluationResult,
+	loadedMarkers, finalMarkers map[GapScope]GapScopeState,
+	finalStates map[StateKeyIdentity]RuntimeStateView, outcome LevelOutcome,
+) string {
+	seriesGuard, levelGuard, stateWritten := "none", "none", false
+	for identity, state := range finalStates {
+		if identity.Plan != outcome.Plan || identity.SeriesIdentityDigest != outcome.SeriesIdentityDigest {
+			continue
+		}
+		if state.SeriesGuard != nil {
+			seriesGuard = string(state.SeriesGuard.ReasonCode)
+		}
+		for _, level := range state.Levels {
+			if level.LevelID == outcome.LevelID {
+				levelGuard = string(level.HistoryCompleteness) + "/" + contractReasonOrNone(level.GapReasonCode)
+			}
+		}
+	}
+	for _, state := range result.StateResults {
+		if state.Mutation.Identity.Plan == outcome.Plan && state.Mutation.Identity.SeriesIdentityDigest == outcome.SeriesIdentityDigest {
+			stateWritten = true
+		}
+	}
+	// Empty when this round proposes no guard for the Level.
+	fold, _ := RoundGuardReasonForLevel(input.Inputs, outcome.Plan, outcome.LevelID)
+	outcomesForLevel := 0
+	for _, other := range result.LevelOutcomes {
+		if other.Plan == outcome.Plan && other.LevelID == outcome.LevelID && other.SeriesIdentityDigest == outcome.SeriesIdentityDigest {
+			outcomesForLevel++
+		}
+	}
+	return " (outcome " + string(outcome.Outcome) +
+		", reason " + contractReasonOrNone(outcome.ReasonCode) +
+		", level " + strconv.FormatUint(uint64(outcome.LevelID), 10) +
+		", outcomes for level " + strconv.Itoa(outcomesForLevel) +
+		", input full " + formatContractBool(stateInputAllowsAdvance(input, outcome)) +
+		", inputs " + describeAffectedInputs(input.Inputs, outcome) +
+		", round fold " + contractReasonOrNone(fold) +
+		", state series guard " + seriesGuard +
+		", state level guard " + levelGuard +
+		", state written " + formatContractBool(stateWritten) +
+		", marker plan loaded " + markerReasonOrNone(loadedMarkers, GapScope{}) +
+		", marker level loaded " + markerReasonOrNone(loadedMarkers, GapScope{HasLevel: true, LevelID: outcome.LevelID}) +
+		", marker plan final " + markerReasonOrNone(finalMarkers, GapScope{}) +
+		", marker level final " + markerReasonOrNone(finalMarkers, GapScope{HasLevel: true, LevelID: outcome.LevelID}) +
+		", guard proposed " + formatContractBool(len(result.GuardBeforeEvents) != 0 || len(result.GuardAfterState) != 0) + ")"
+}
+
+// maxDescribedInputs bounds how many of the Level's bindings the refusal
+// spells out; the rest are counted. A Level rarely has more than a handful.
+const maxDescribedInputs = 6
+
+// describeAffectedInputs renders the bindings "input full" was decided over,
+// one term per binding, as scope:role:completeness/data/disposition, and
+// whether a quality or terminal fact localized the outcome to this record.
+// "input full no" alone could not say which of its four conjuncts failed;
+// the round fold reads only completeness, so a binding that is FULL yet
+// EMPTY, or degraded without being partial, is invisible to it and visible
+// here. Every value is a closed vocabulary.
+func describeAffectedInputs(all []NamedInputBinding, outcome LevelOutcome) string {
+	bindings := affectedBindingsOf(all, outcome.Plan, outcome.LevelID)
+	if len(bindings) == 0 {
+		return "none"
+	}
+	terms := make([]string, 0, len(bindings)+1)
+	for index, binding := range bindings {
+		if index == maxDescribedInputs {
+			terms = append(terms, "+"+strconv.Itoa(len(bindings)-index))
+			break
+		}
+		scope := "plan"
+		if binding.Consumer.HasLevel {
+			scope = "level"
+		}
+		terms = append(terms, scope+":"+string(binding.Role)+":"+string(binding.Completeness)+"/"+
+			inputDataStateOrUnknown(binding.DataState)+"/"+string(binding.Disposition))
+	}
+	localized, err := localizedInputOutcome(all, outcome.Plan, outcome)
+	localizedText := formatContractBool(err == nil && localized)
+	if err != nil {
+		localizedText = "error"
+	}
+	return "[" + strings.Join(terms, " ") + "] localized " + localizedText
+}
+
+func inputDataStateOrUnknown(state DataState) string {
+	if state == DataStateUnknown {
+		return "UNKNOWN"
+	}
+	return string(state)
+}
+
+func contractReasonOrNone(reason ReasonCode) string {
+	if reason == "" {
+		return "none"
+	}
+	return string(reason)
+}
+
+func markerReasonOrNone(markers map[GapScope]GapScopeState, scope GapScope) string {
+	marker, found := markers[scope]
+	if !found {
+		return "none"
+	}
+	return string(marker.Status) + "/" + contractReasonOrNone(marker.ReasonCode)
 }
 
 func loadedGapScopes(gaps GapLoadResult, plan PlanIdentity) map[GapScope]GapScopeState {
@@ -919,6 +1076,63 @@ func finalStateGuardsOutcome(states map[StateKeyIdentity]RuntimeStateView, outco
 				level.GapReasonCode == outcome.ReasonCode {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// loadedGapGuardsTerminalOutcome reports whether a TERMINAL outcome is covered
+// by the gap marker that caused it. A marker that loaded terminal is the
+// persistent fact behind every Level of the Plan being terminal, and there is
+// no marker to point at because the marker is the thing that is broken.
+//
+// Three conditions, and each is load-bearing -- see
+// loadedStateGuardsTerminalOutcome, which is the same rule for the other
+// record.
+func loadedGapGuardsTerminalOutcome(gaps GapLoadResult, outcome LevelOutcome) bool {
+	if outcome.Outcome != LevelOutcomeTerminal {
+		return false
+	}
+	for _, marker := range gaps.Items {
+		if marker.Identity.Plan != outcome.Plan {
+			continue
+		}
+		if marker.Status == GapTerminal && marker.ReasonCode == outcome.ReasonCode {
+			return true
+		}
+	}
+	return false
+}
+
+// loadedStateGuardsTerminalOutcome reports whether a TERMINAL outcome is
+// covered by the loaded record that caused it.
+//
+// Only TERMINAL, and only when the loaded view of that series says the record
+// could not be read and says it with the outcome's own reason. All three
+// matter. Widening it to any outcome would let a business UNKNOWN pass with no
+// guard at all; dropping the reason comparison would let a Level terminal for
+// one cause be covered by a record broken for another.
+//
+// The outcome-kind half cannot be reached through Validate today -- a
+// non-TERMINAL outcome beside a DeterministicInvalid series is already refused
+// by codeOutcomeInvalidSeriesNotTerminal above -- so all three are pinned at
+// the predicate in result_contract_internal_test.go. That rule is a separate
+// rule, and this line is what holds if it is ever relaxed.
+//
+// It reads the loaded views rather than the final ones on purpose: a series
+// whose record could not be decoded produces no mutation, so the two are the
+// same here -- and the loaded set is where the fact is, which is what this
+// rule is about.
+func loadedStateGuardsTerminalOutcome(states StatePreflightResult, outcome LevelOutcome) bool {
+	if outcome.Outcome != LevelOutcomeTerminal {
+		return false
+	}
+	for _, view := range states.Items {
+		if view.Identity.Plan != outcome.Plan || view.Identity.SeriesIdentityDigest != outcome.SeriesIdentityDigest {
+			continue
+		}
+		if view.Status == StateDeterministicInvalid && view.ReasonCode == outcome.ReasonCode {
+			return true
 		}
 	}
 	return false

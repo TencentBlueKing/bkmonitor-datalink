@@ -188,14 +188,47 @@ func TestBundleReadsTheRebalanceRoundOnlyFromARuntimeThatPlans(t *testing.T) {
 	if got := (*phaseTwoWorkerBundle)(nil).rebalanceFleetFacts(); got != nil {
 		t.Fatalf("rebalanceFleetFacts() on a nil bundle = %+v, want nil", got)
 	}
+	// The same source, the same rule, for the round's content-scope census.
+	scope := &fleet.AssignmentScopeFacts{Policy: fleet.AssignmentScopePolicyDeclared, Total: 3, Declared: 2, Current: 2, Undeclared: 1}
+	bundle.dependencies.Ownership = &planningOwnershipRuntime{fakePhaseTwoOwnership: &fakePhaseTwoOwnership{}, scope: scope}
+	if got := bundle.assignmentScopeFleetFacts(); got == nil || *got != *scope {
+		t.Fatalf("assignmentScopeFleetFacts() = %+v, want the runtime's census", got)
+	}
+	bundle.dependencies.Ownership = &fakePhaseTwoOwnership{}
+	if got := bundle.assignmentScopeFleetFacts(); got != nil {
+		t.Fatalf("assignmentScopeFleetFacts() from a runtime that does not plan = %+v, want nil", got)
+	}
+	sweep := &fleet.AssignmentSweepFacts{Result: "success", Scanned: 2407, Retired: 6, Reclaimed: 6}
+	bundle.dependencies.Ownership = &planningOwnershipRuntime{fakePhaseTwoOwnership: &fakePhaseTwoOwnership{}, sweep: sweep}
+	if got := bundle.assignmentSweepFleetFacts(); got == nil || *got != *sweep {
+		t.Fatalf("assignmentSweepFleetFacts() = %+v, want the runtime's sweep", got)
+	}
+	bundle.dependencies.Ownership = &fakePhaseTwoOwnership{}
+	if got := bundle.assignmentSweepFleetFacts(); got != nil {
+		t.Fatalf("assignmentSweepFleetFacts() from a runtime that does not plan = %+v, want nil", got)
+	}
 }
 
 type planningOwnershipRuntime struct {
 	*fakePhaseTwoOwnership
-	last *fleet.RebalanceFacts
+	last  *fleet.RebalanceFacts
+	scope *fleet.AssignmentScopeFacts
+	sweep *fleet.AssignmentSweepFacts
 }
 
 func (runtime *planningOwnershipRuntime) LastRebalance() *fleet.RebalanceFacts { return runtime.last }
+
+func (runtime *planningOwnershipRuntime) LastAssignmentScope() *fleet.AssignmentScopeFacts {
+	return runtime.scope
+}
+
+func (runtime *planningOwnershipRuntime) LastAssignmentSweep() *fleet.AssignmentSweepFacts {
+	return runtime.sweep
+}
+
+// The fake is the source the bundle reads both facts from: a fake that
+// implemented one and not the other would make the bundle read neither.
+var _ phaseTwoRebalanceSource = (*planningOwnershipRuntime)(nil)
 
 // A retained record of past loss carries the strategies behind the object,
 // so the row built from it can be traced to something a reader can act on.

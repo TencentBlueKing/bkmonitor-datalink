@@ -1132,16 +1132,17 @@ func TestGapSkipsAreRetainedPastTheRoundsThatFollow(t *testing.T) {
 
 // An object whose query returns no records for the degraded-rounds threshold,
 // after having returned some, is listed as no-data: healthy for the equation,
-// the data side's to look at. One that never returned records is not -- a
-// source that only speaks when something happens looks the same until it
-// speaks -- and a round with records ends the run.
+// the data side's to look at. One that never returned records is not on that
+// line -- a source that only speaks when something happens looks the same
+// until it speaks -- and a round with records ends the run. (Never having
+// spoken for an hour is its own line; empty_every_round_test.go.)
 func TestNoDataIsListedOnlyAfterDataStopped(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
 	empty := func(queryGroup string) {
 		tracker.Observe(context.Background(), completion(queryGroup, "FULL_EMPTY_COMPLETED", "8930"))
 	}
-	// Never had data: not listed however long it stays empty.
+	// Never had data: not on the data side's line however many rounds.
 	for round := 0; round < DefaultDegradedRounds+2; round++ {
 		empty("qg-silent-by-nature")
 	}

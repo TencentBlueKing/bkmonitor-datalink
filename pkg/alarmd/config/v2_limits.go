@@ -11,10 +11,12 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/trigger"
@@ -223,6 +225,13 @@ func (c LimitsConfig) validate() error {
 		compiler.MaxLevelsPerPlan > int(triggerLimits.MaxLevels) ||
 		compiler.MaxLevelsPerPlan > int(triggerLimits.MaxLevelResultsPerEvent) || compiler.MaxLevelsPerPlan > codec.MaxLevels {
 		return errors.New("plan and level budgets are inconsistent")
+	}
+	if compiler.MaxLevelsPerPlan > linkdoutput.MaxEvaluations {
+		// Every decided level of a Plan is one evaluation on the standard
+		// output, and the consumer refuses a message carrying more than its
+		// bound. The relation lives here, where the budget is set, rather
+		// than as a refusal met one alert at a time.
+		return fmt.Errorf("limits.compiler.max_levels_per_plan %d exceeds the %d evaluations the standard output carries", compiler.MaxLevelsPerPlan, linkdoutput.MaxEvaluations)
 	}
 	if compiler.MaxRequiredHistoryPoints > triggerLimits.MaxRequiredHistoryPoints ||
 		compiler.MaxRequiredHistoryPoints > uint32(codec.MaxPoints) {

@@ -47,8 +47,30 @@ func progressRestoreSource(store *progress.Store) func(context.Context, executio
 		if result.Progress.LastFullSlot > 0 {
 			restored.LastFullSlot = time.Unix(int64(result.Progress.LastFullSlot), 0)
 		}
+		restored.LastRound = restoredRoundOf(result.Progress.LastCompletion)
 		return restored, nil
 	}
+}
+
+// restoredRoundOf maps the commit's summary of the last round onto what the
+// tracker restores from. Nil in, nil out: a record from before the field
+// existed has no round to speak of, and a summary at Slot zero would read as
+// a round that happened. The commit's clock is RFC3339 by contract; a value
+// that does not parse leaves the time zero rather than inventing one, and
+// the row then keeps the reason and drops the clock.
+func restoredRoundOf(summary *execution.LastCompletionSummary) *fleet.RestoredRound {
+	if summary == nil {
+		return nil
+	}
+	round := &fleet.RestoredRound{
+		Slot: time.Unix(int64(summary.Slot), 0), Kind: string(summary.Kind), ReasonCode: string(summary.ReasonCode),
+		SnapshotRevision: string(summary.Contract.SnapshotRevision), QueryRevision: string(summary.Contract.QueryRevision),
+		ScheduleRevision: string(summary.Contract.ScheduleRevision),
+	}
+	if completedAt, err := time.Parse(time.RFC3339Nano, summary.CompletedAt); err == nil {
+		round.CompletedAt = completedAt
+	}
+	return round
 }
 
 // fleetRestoreBudgetPerPublish is how many objects one publish may read back.

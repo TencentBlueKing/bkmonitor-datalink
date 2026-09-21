@@ -17,11 +17,17 @@ import (
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet/ui"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
@@ -41,6 +47,7 @@ import (
 type Server struct {
 	handler            http.Handler
 	apiHandler         atomic.Pointer[http.Handler]
+	grpcHandler        atomic.Pointer[http.Handler]
 	diagnosticsHandler http.Handler
 	diagnosticsAddress string
 	ready              atomic.Bool
@@ -66,6 +73,62 @@ func WithDiagnosticsAddress(address string) Option {
 // be indistinguishable from a deployment that has no API at all.
 func (s *Server) SetAPI(handler http.Handler) {
 	s.apiHandler.Store(&handler)
+}
+
+// SetGRPC installs the gRPC surface -- decision-016's control stream -- on
+// the query listener. gRPC needs HTTP/2, and the listener speaks it in the
+// clear (h2c) for exactly this: the stream shares the port every replica
+// already reaches every other on, and no second port or setting exists for
+// it. Until this is called a gRPC request is answered 503, like the API.
+//
+// Two facts this rests on, for whoever edits the listener: http.Server here
+// sets ReadHeaderTimeout alone. ReadTimeout, WriteTimeout and IdleTimeout
+// stay unset, because any of them would cut a long-lived stream at the
+// deadline and the symptom would be "the stream drops for no reason". A
+// timeout added for the request/response routes has to leave the gRPC
+// route out. And the stream's client runs gRPC keepalive at thirty
+// seconds, which this listener tolerates only because grpc.Server.ServeHTTP
+// applies no keepalive enforcement policy; a native gRPC listener would
+// refuse that ping rate with too_many_pings under its default five-minute
+// MinTime and close every stream. Whoever moves the stream off this
+// listener sets the policy to match.
+func (s *Server) SetGRPC(handler http.Handler) {
+	s.grpcHandler.Store(&handler)
+}
+
+// isGRPC tells a gRPC request from the rest by what gRPC guarantees: HTTP/2
+// and the application/grpc content type.
+func isGRPC(request *http.Request) bool {
+	return request.ProtoMajor == 2 && strings.HasPrefix(request.Header.Get("Content-Type"), "application/grpc")
+}
+
+func (s *Server) serveGRPC(response http.ResponseWriter, request *http.Request) {
+	if handler := s.grpcHandler.Load(); handler != nil && *handler != nil {
+		(*handler).ServeHTTP(response, request)
+		return
+	}
+	notReadyGRPC.ServeHTTP(response, request)
+}
+
+// notReadyGRPC answers every call UNAVAILABLE in gRPC's own framing while
+// the runtime that serves the stream is not open. A plain 503 would do for
+// a browser; a gRPC client given one may treat the whole connection as
+// bad, and the next call over it -- after the stream is installed -- would
+// hang rather than be served.
+var notReadyGRPC = grpc.NewServer(grpc.UnknownServiceHandler(func(any, grpc.ServerStream) error {
+	return status.Error(codes.Unavailable, "control stream is not ready yet")
+}))
+
+// listenerHandler routes a request to the gRPC surface or the mux, over a
+// listener that accepts HTTP/2 in the clear.
+func (s *Server) listenerHandler() http.Handler {
+	return h2c.NewHandler(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if isGRPC(request) {
+			s.serveGRPC(response, request)
+			return
+		}
+		s.handler.ServeHTTP(response, request)
+	}), &http2.Server{})
 }
 
 func (s *Server) serveAPI(response http.ResponseWriter, request *http.Request) {
@@ -188,8 +251,9 @@ func (s *Server) Run(ctx context.Context, address string, shutdownTimeout time.D
 	}()
 
 	httpServer := &http.Server{
-		Addr:              address,
-		Handler:           s.handler,
+		Addr:    address,
+		Handler: s.listenerHandler(),
+		// The only timeout, on purpose: see SetGRPC.
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	serveErrors := make(chan error, 1)

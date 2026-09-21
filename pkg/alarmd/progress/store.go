@@ -221,7 +221,7 @@ func (store *Store) BeginSlot(ctx context.Context, request execution.ProgressBeg
 		return execution.ProgressBeginResult{}, err
 	}
 	status, applyErr := store.options.Control.FencedCompareAndSet(ctx, ownership.FencedCASRequest{
-		Fence: request.OwnerFence, At: store.options.Now(), Namespace: name,
+		Fence: request.OwnerFence, Namespace: name, ContentScope: request.ContentScope,
 		ExpectedMissing: missing, Expected: raw, Value: encoded, TTL: 0,
 	})
 	switch status {
@@ -292,7 +292,21 @@ func (store *Store) CommitProgress(ctx context.Context, request execution.Progre
 		return execution.ProgressCommitResult{}, fmt.Errorf("progress: next continuous Slot must follow completion")
 	}
 	next := execution.ScheduleProgress{Identity: request.Identity, NextSlot: nextSlot,
-		LastCompletionKind: request.Completion.Kind}
+		LastCompletionKind: request.Completion.Kind,
+		// Copied from the round that is committing, not read back from
+		// anywhere: every field is already in hand here, so the summary costs
+		// no round trip and cannot disagree with the commit it describes.
+		//
+		// Written on every commit, so it is always the last one. There is no
+		// merge with what was stored: a summary of the previous round kept
+		// beside this one would be two answers to a question that has one.
+		LastCompletion: &execution.LastCompletionSummary{
+			Slot:        request.ExpectedNextSlot,
+			CompletedAt: store.options.Now().UTC().Format(time.RFC3339),
+			Kind:        request.Completion.Kind,
+			ReasonCode:  request.Completion.ReasonCode,
+			Contract:    request.Completion.Contract,
+		}}
 	if !missing {
 		next.LastFullSlot = current.LastFullSlot
 		next.CurrentOrRecentGap = current.CurrentOrRecentGap
@@ -308,7 +322,7 @@ func (store *Store) CommitProgress(ctx context.Context, request execution.Progre
 		return execution.ProgressCommitResult{}, err
 	}
 	status, applyErr := store.options.Control.FencedCompareAndSet(ctx, ownership.FencedCASRequest{
-		Fence: request.OwnerFence, At: store.options.Now(), Namespace: name,
+		Fence: request.OwnerFence, Namespace: name, ContentScope: request.ContentScope,
 		ExpectedMissing: missing, Expected: raw, Value: encoded, TTL: 0,
 	})
 	switch status {
@@ -346,8 +360,19 @@ func shouldFoldRecentGap(
 	completion execution.SlotCompletion,
 ) bool {
 	switch completion.Kind {
-	case execution.CompletionPartialGap, execution.CompletionTerminal, execution.CompletionGapSkipped,
-		execution.CompletionSnapshotUnavailable:
+	case execution.CompletionGapSkipped, execution.CompletionSnapshotUnavailable:
+		// A Slot that missed its replay window is a gap unless an earlier
+		// attempt at it already evaluated every Plan it was going to. That
+		// attempt sent its events and wrote its state; all it failed to do was
+		// write down that it had, which is not a detection that did not happen.
+		//
+		// Every Plan, not one of them. A partially applied Slot really did
+		// leave some Plans unevaluated, and the consumers that read a gap as
+		// fact -- no-data, expired ranges -- have to keep seeing it: the cost of
+		// one gap too many is one extra evaluation, and the cost of one too few
+		// is a miss nobody can see.
+		return completion.Evidence == nil || !completion.Evidence.FullyApplied()
+	case execution.CompletionPartialGap, execution.CompletionTerminal:
 		return true
 	case execution.CompletionUnavailable:
 		// A FULL+DATA result can remain guarded by an earlier query-free
@@ -377,6 +402,7 @@ func foldRecentGap(
 	return &execution.ProgressGapSummary{
 		Kind: request.Completion.Kind, ReasonCode: request.Completion.ReasonCode,
 		FirstSlot: request.ExpectedNextSlot, LastSlot: request.ExpectedNextSlot, Count: 1,
+		Evidence: request.Completion.Evidence,
 	}
 }
 
@@ -614,7 +640,7 @@ func (store *Store) SkipPrunedRange(ctx context.Context, request execution.Progr
 		return execution.ProgressSkipResult{}, err
 	}
 	status, applyErr := store.options.Control.FencedCompareAndSet(ctx, ownership.FencedCASRequest{
-		Fence: request.OwnerFence, At: store.options.Now(), Namespace: name,
+		Fence: request.OwnerFence, Namespace: name,
 		ExpectedMissing: false, Expected: raw, Value: encoded, TTL: 0,
 	})
 	switch status {

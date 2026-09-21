@@ -13,11 +13,13 @@
 package execution
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -158,6 +160,14 @@ type SlotExecutionRequest struct {
 	OwnerFence       OwnerFence
 	ExpectedNextSlot EvaluationTime
 	ExpiredRange     *ExpiredRangeProjectionV1
+	// ContentScope names the execution content this Slot runs under: the
+	// ObjectDigest of the Schedule Segment it was frozen from (decision-016).
+	// Every fenced write the Slot makes -- State, Progress, the expired range
+	// -- declares it, and the store's fence refuses the write by name once
+	// the Assignment record has moved the Query Group to other content. Empty
+	// for a Segment written before Segments named their content, in which
+	// case the fence compares what it always compared and nothing more.
+	ContentScope string
 }
 
 func (request SlotExecutionRequest) Validate() error {
@@ -206,6 +216,7 @@ func (request SlotExecutionRequest) UnfinishedProjection() UnfinishedSlotProject
 		Contract: request.Contract, DuePlanTargets: request.DuePlanTargets.Clone(),
 		EarliestQueryDeadlineUnixMilli: request.EarliestQueryDeadlineUnixMilli,
 		KeepUntilUnixMilli:             request.KeepUntilUnixMilli,
+		ContentScope:                   request.ContentScope,
 	}
 }
 
@@ -1271,22 +1282,126 @@ const (
 	StateVersionConflict StatePreflightDisposition = "STATE_VERSION_CONFLICT"
 )
 
+// StateAlreadyAppliedKind says how an ALREADY_APPLIED was decided. stable is
+// the ordinary replay: the retry read the stored revision, expected it, and
+// found its own statement. revision_skew is the same statement found at a
+// revision the mutation did not expect -- the write landed and its reply was
+// lost, or something re-sent it -- which used to be classified a conflict.
+// The two are counted apart because revision_skew is the only reading that
+// can say whether that re-send happens in production, and how often, and a
+// fix whose trigger cannot be seen is a fix nobody can confirm.
+type StateAlreadyAppliedKind string
+
+const (
+	StateAlreadyAppliedStable       StateAlreadyAppliedKind = "stable"
+	StateAlreadyAppliedRevisionSkew StateAlreadyAppliedKind = "revision_skew"
+	// StateAlreadyAppliedRepeatedKey is a revision_skew with a known cause:
+	// the same request carried this key twice, and the later copy met the
+	// earlier copy's bytes. That is not a re-sent write, it is an evaluation
+	// that produced two mutations for one series identity, and it is counted
+	// apart because the fix is at the producer and a steady revision_skew
+	// that is really this would otherwise read as a re-sending client.
+	StateAlreadyAppliedRepeatedKey StateAlreadyAppliedKind = "repeated_key"
+)
+
+func AllStateAlreadyAppliedKinds() []StateAlreadyAppliedKind {
+	return []StateAlreadyAppliedKind{StateAlreadyAppliedStable, StateAlreadyAppliedRevisionSkew, StateAlreadyAppliedRepeatedKey}
+}
+
+// StateVersionConflictKind says which comparison refused a
+// STATE_VERSION_CONFLICT. The status alone reads the same for a key that
+// expired between the Slot's read and its write, a key another writer moved,
+// and a Slot that re-evaluated one window into a different statement, and the
+// fix for each lives somewhere else: the first is the key's TTL against the
+// Slot's duration, the second is ownership, the third is the evaluation. Each
+// kind is one branch of the classifier, so a count by kind is a count of
+// branches taken and not a second reading of the same facts.
+type StateVersionConflictKind string
+
+const (
+	// StateVersionConflictMissing: the mutation expected a stored revision and
+	// the key is not there. A key that expires between the preflight read and
+	// the apply leaves exactly this; the retry reads missing, expects nothing
+	// and succeeds, so a steady count here with no rising revision_moved is
+	// the TTL, not a writer.
+	StateVersionConflictMissing StateVersionConflictKind = "missing"
+	// StateVersionConflictRevisionMoved: the stored revision is ahead of the
+	// one expected, and the bytes there are not this statement. Something
+	// wrote the key after the Slot read it.
+	StateVersionConflictRevisionMoved StateVersionConflictKind = "revision_moved"
+	// StateVersionConflictRevisionReset: the stored revision is behind the
+	// one expected. Revisions only grow on one key, so the key was gone and
+	// written fresh since the read: an expiry or a flush followed by another
+	// writer, which is the missing kind seen one write later.
+	StateVersionConflictRevisionReset StateVersionConflictKind = "revision_reset"
+	// StateVersionConflictSameVersionOtherStatement: the revision is the one
+	// expected and the stored ApplyVersion is this mutation's, but the digest
+	// differs. Two evaluations of one window produced two statements for one
+	// series; the store did not move, the input did.
+	StateVersionConflictSameVersionOtherStatement StateVersionConflictKind = "same_version_other_statement"
+	// StateVersionConflictVersionIncomparable: the revision is the one
+	// expected and the stored ApplyVersion could not be ordered against the
+	// mutation's. The view reached the classifier without a comparison.
+	StateVersionConflictVersionIncomparable StateVersionConflictKind = "version_incomparable"
+)
+
+func AllStateVersionConflictKinds() []StateVersionConflictKind {
+	return []StateVersionConflictKind{StateVersionConflictMissing, StateVersionConflictRevisionMoved,
+		StateVersionConflictRevisionReset, StateVersionConflictSameVersionOtherStatement, StateVersionConflictVersionIncomparable}
+}
+
+// StateMutationClassification is one mutation's disposition against the
+// stored view with, for the two dispositions that have more than one way of
+// being reached, which one it was. AlreadyApplied is set only for
+// ALREADY_APPLIED and VersionConflict only for STATE_VERSION_CONFLICT.
+type StateMutationClassification struct {
+	Disposition     StatePreflightDisposition
+	AlreadyApplied  StateAlreadyAppliedKind
+	VersionConflict StateVersionConflictKind
+}
+
 func ClassifyStateMutation(view RuntimeStateView, mutation StateMutation) StatePreflightDisposition {
+	return ClassifyStateMutationDetail(view, mutation).Disposition
+}
+
+// ClassifyStateMutationDetail is ClassifyStateMutation with how the
+// disposition was reached. It is the only place the stored view and a
+// mutation are compared; the store's apply paths and the coordinator's
+// preflight both read their kinds from here.
+func ClassifyStateMutationDetail(view RuntimeStateView, mutation StateMutation) StateMutationClassification {
+	// The same statement already on disk is applied, whichever revision it
+	// landed at. This is decided before the revision is compared because the
+	// revision cannot tell our own landed write from somebody else's: a write
+	// re-sent after its reply was lost meets its own bytes one revision up.
+	// Called a conflict, that sent the Slot into a retry that re-evaluated
+	// against post-Slot state and conflicted on every attempt. The digest is
+	// the whole mutation less the revision it expected, so equal digests under
+	// an equal ApplyVersion are the same statement.
+	if view.VersionComparison == ApplyVersionEqual && mutation.MutationDigest != "" &&
+		view.PersistedMutationDigest == mutation.MutationDigest {
+		if mutation.ExpectedBlobRevision != view.BlobRevision {
+			return StateMutationClassification{Disposition: StateAlreadyApplied, AlreadyApplied: StateAlreadyAppliedRevisionSkew}
+		}
+		return StateMutationClassification{Disposition: StateAlreadyApplied, AlreadyApplied: StateAlreadyAppliedStable}
+	}
 	if mutation.ExpectedBlobRevision != view.BlobRevision {
-		return StateVersionConflict
+		if view.BlobRevision < mutation.ExpectedBlobRevision {
+			return StateMutationClassification{Disposition: StateVersionConflict, VersionConflict: StateVersionConflictRevisionReset}
+		}
+		return StateMutationClassification{Disposition: StateVersionConflict, VersionConflict: StateVersionConflictRevisionMoved}
 	}
 	switch view.VersionComparison {
 	case ApplyVersionPersistedOlder:
-		return StateProceed
+		return StateMutationClassification{Disposition: StateProceed}
 	case ApplyVersionPersistedNewer:
-		return StateStaleVersion
+		return StateMutationClassification{Disposition: StateStaleVersion}
 	case ApplyVersionEqual:
 		if view.PersistedMutationDigest != mutation.MutationDigest {
-			return StateVersionConflict
+			return StateMutationClassification{Disposition: StateVersionConflict, VersionConflict: StateVersionConflictSameVersionOtherStatement}
 		}
-		return StateAlreadyApplied
+		return StateMutationClassification{Disposition: StateAlreadyApplied, AlreadyApplied: StateAlreadyAppliedStable}
 	default:
-		return StateVersionConflict
+		return StateMutationClassification{Disposition: StateVersionConflict, VersionConflict: StateVersionConflictVersionIncomparable}
 	}
 }
 
@@ -1439,6 +1554,11 @@ const (
 	GapStatusWarming GapStatus = "WARMING"
 )
 
+// GapScopeStatuses is every status a held scope can be in, for the partition
+// to pre-create and for a reader to bound a family by. A scope that is neither
+// is not held: the marker drops it.
+var GapScopeStatuses = []GapStatus{GapStatusGapped, GapStatusWarming}
+
 type GapScope struct {
 	LevelID  uint32
 	HasLevel bool
@@ -1485,20 +1605,117 @@ type NoDataGroupMemory struct {
 	FirstAbsent int64  `json:"first_absent,omitempty"`
 }
 
-// PlanNoDataMutation replaces one Plan's whole no-data memory.
+// NoDataGroupAbsence is what a record holds about a group that was not seen in
+// the round PresentAsOf names: when it was last seen, and when it was first
+// called absent. Either may be zero - the whole-item group has never been seen
+// as a series and carries no LastSeen - but not both, because a group that
+// remembers nothing is not stored.
+type NoDataGroupAbsence struct {
+	LastSeen    int64 `json:"last_seen,omitempty"`
+	FirstAbsent int64 `json:"first_absent,omitempty"`
+}
+
+// NoDataGroupDelta is one group's stored value.
+//
+// Absent nil means the group was seen in the round PresentAsOf names, and that
+// is the whole value: its LastSeen is PresentAsOf and it has no first-absent.
+// Writing the timestamp per group instead would write the same number once per
+// group, which for a Plan with thousands of them is the difference the whole
+// representation change exists to remove.
+//
+// The compression is only valid for a group whose LastSeen really is
+// PresentAsOf. A group the roster stopped expecting while it was present keeps
+// its own older LastSeen and never gets a FirstAbsent - that is where a history
+// roster grows from - so it is written out in full, or its last-seen time would
+// silently follow the Plan's and its absence would read as shorter than it was.
+type NoDataGroupDelta struct {
+	GroupKey string              `json:"group_key"`
+	Absent   *NoDataGroupAbsence `json:"absent,omitempty"`
+}
+
+// PlanNoDataMutation changes one Plan's no-data memory.
+//
+// It is a delta, not the memory: Set carries the groups whose stored value
+// this round changes and Del the ones it removes, both relative to the record
+// at ExpectedMarkerRevision. That is why the expected revision is not advisory
+// here the way it is for a whole replacement - a delta applied to a different
+// version is a different memory, so a revision mismatch is a conflict rather
+// than something to be reconciled.
+//
+// It carries two digests because there are two questions and one value cannot
+// answer both. MemoryDigest identifies the memory the delta results in: two
+// rounds that reach the same memory carry the same one whatever they had to
+// change to get there, which is what lets the store answer "already applied"
+// without holding the memory. MutationDigest identifies this statement, covers
+// MemoryDigest, and is the only one the store can recompute - the memory is
+// deliberately not on the wire, so without it a payload could name any memory
+// digest it liked and the store would store it.
 type PlanNoDataMutation struct {
-	Identity               PlanNoDataIdentity
-	SchemaVersion          NoDataMemorySchema
+	Identity      PlanNoDataIdentity
+	SchemaVersion NoDataMemorySchema
+	// DerivedFrom is the representation this round read the memory out of.
+	//
+	// A marker revision belongs to the record that issued it, and the two
+	// representations keep separate ones. A statement derived from the
+	// whole-memory record therefore has no revision to expect of the per-group
+	// record, and must not be compared against one: the first deployment that
+	// did compare them refused every write in the fleet -- the per-group record
+	// did not exist yet, the expected revision came off the blob, and the
+	// mismatch read as "the record vanished" on every round forever.
+	//
+	// It also decides what the statement is. A delta describes the difference
+	// from the record it was derived against, so a delta derived from the blob
+	// is meaningless to the hash: the groups it leaves out are the ones that
+	// did not change since the blob, and they are not in the hash at all. Only
+	// a statement derived from the per-group record is a delta; every other
+	// one carries the whole memory and replaces what is stored.
+	DerivedFrom            NoDataRepresentation
 	ExpectedMarkerRevision uint64
-	ApplyVersion           ApplyVersion
-	ScheduleRevision       PlanScheduleRevision
+	// LoadedApplyVersion is the apply version of the record this statement was
+	// derived against, and zero when it was derived against none.
+	//
+	// It is the guard a whole-record statement has where a delta has the
+	// revision. A delta proves at apply time that the record is the one it
+	// was derived from by expecting its revision; a statement derived from the
+	// other record has no revision of this one to expect, and without this
+	// field the only thing standing between it and a record somebody wrote
+	// after the read is the ordering of Slot versions -- which lets a write
+	// from an older Slot, landing between this Slot's read and its write, be
+	// replaced rather than met. Apply versions are the one currency both
+	// records share, so this is what a whole-record statement expects instead:
+	// the record it is replacing must not be newer than the one it read.
+	LoadedApplyVersion ApplyVersion
+	ApplyVersion       ApplyVersion
+	ScheduleRevision   PlanScheduleRevision
 	// RosterVersion names the derivation the expected set came from. It is in
 	// the digest because the same group timestamps decided against a different
 	// roster are a different memory, and a reader comparing two records has no
 	// other way to tell.
-	RosterVersion  string
+	RosterVersion string
+	// PresentAsOf is the round this Plan last had data in, which every group
+	// written without an absence was seen in. It never moves backwards: a round
+	// that saw nothing carries the previous one forward.
+	PresentAsOf int64
+	// MemoryDigest is what the store keeps beside the record and compares the
+	// next statement against.
+	MemoryDigest   MutationDigest
 	MutationDigest MutationDigest
-	Groups         []NoDataGroupMemory
+	// GroupCount is how many groups the resulting memory holds. The store
+	// cannot count them - it holds the record and applies a delta to it without
+	// reading the groups - so the writer, which has the whole memory in hand,
+	// states the number the group bound is checked against.
+	GroupCount uint32
+	Set        []NoDataGroupDelta
+	Del        []string
+}
+
+// ReplacesWholeRecord reports whether this statement stands on its own.
+//
+// True for everything but a per-group delta: those are the statements whose
+// Set is the entire memory and whose Del is empty, and applying one has to
+// leave the record holding exactly that and nothing it held before.
+func (mutation PlanNoDataMutation) ReplacesWholeRecord() bool {
+	return mutation.DerivedFrom != NoDataRepresentationPerGroup
 }
 
 type StateEvaluation struct {
@@ -2643,6 +2860,30 @@ type StateApplyItemResult struct {
 	Identity   StateKeyIdentity
 	Status     StateApplyStatus
 	ReasonCode ReasonCode
+	// AlreadyApplied says how an ALREADY_APPLIED was decided and
+	// VersionConflict how a STATE_VERSION_CONFLICT was; each is empty for
+	// every other status. StoredBlobRevision is the revision the key was found
+	// at for both, zero when it was not found, so a line can say how far the
+	// expectation was off; StoredVersionComparison is how the stored
+	// ApplyVersion ordered against the mutation's, empty when there was
+	// nothing stored to compare.
+	AlreadyApplied          StateAlreadyAppliedKind
+	VersionConflict         StateVersionConflictKind
+	StoredBlobRevision      uint64
+	StoredVersionComparison ApplyVersionComparison
+	// RepeatedKey says the request itself carried this key earlier. On an
+	// ALREADY_APPLIED it is the repeated_key kind; on a STATE_VERSION_CONFLICT
+	// it is the one fact that tells a producer that made two different
+	// statements for one series from a writer that lost a race, and the
+	// status alone reads the same for both.
+	RepeatedKey bool
+}
+
+// MarkVersionConflict fills in a STATE_VERSION_CONFLICT with the values the
+// comparison used, so the item carries them to whoever reads the refusal.
+func (item *StateApplyItemResult) MarkVersionConflict(kind StateVersionConflictKind, view RuntimeStateView) {
+	item.Status, item.VersionConflict = StateApplyVersionConflict, kind
+	item.StoredBlobRevision, item.StoredVersionComparison = view.BlobRevision, view.VersionComparison
 }
 
 type StateApplyResult struct {
@@ -2977,12 +3218,164 @@ type ProgressIdentity struct {
 	QueryGroup QueryGroupIdentity
 }
 
+// ExecutionEvidenceKind is what a query-free completion learned about how far
+// an earlier attempt at this Slot got.
+type ExecutionEvidenceKind string
+
+const (
+	// EvidenceStateApplied is at least one due Plan whose state an earlier
+	// attempt wrote. The events went out before the state did, so this also
+	// means those Plans alerted.
+	EvidenceStateApplied ExecutionEvidenceKind = "STATE_APPLIED"
+	// EvidenceNoneFound is a mark that was read and was not there. It is the
+	// ordinary case: a Slot that never got past its query leaves none.
+	EvidenceNoneFound ExecutionEvidenceKind = "NONE_FOUND"
+	// EvidenceUnreadable is a mark that could not be read, which is not the
+	// same as one that is not there. The difference is the whole point of
+	// having the value: "nothing ran" and "nobody could say" lead somewhere
+	// different, and folding the second into the first is how a detection that
+	// did happen gets recorded as one that never did.
+	EvidenceUnreadable ExecutionEvidenceKind = "UNREADABLE"
+)
+
+// ExecutionEvidenceKinds is every value, for a metric to bound itself by.
+var ExecutionEvidenceKinds = []ExecutionEvidenceKind{
+	EvidenceStateApplied, EvidenceNoneFound, EvidenceUnreadable,
+}
+
+// The readings a counter takes of one completion's evidence.
+//
+// Four of them, and they are not the three kinds: STATE_APPLIED splits into
+// "every Plan" and "some of them", which is the split the gap fold turns on and
+// therefore the one a reader has to be able to see. It is derived here rather
+// than added to the kinds, so Validate and the counter cannot end up with two
+// vocabularies for one fact.
+const (
+	EvidenceReadingFullyApplied = "STATE_APPLIED"
+	EvidenceReadingMixed        = "MIXED"
+	EvidenceReadingNoneFound    = "NONE_FOUND"
+	EvidenceReadingUnreadable   = "UNREADABLE"
+	// EvidenceReadingAbsent is a completion carrying no evidence at all: a
+	// build or a deployment without the port. It is a label rather than a
+	// skipped observation, so the readings add up to the query-free
+	// completions and a reader can check that instead of assuming it -- and so
+	// a runtime that is not recording evidence says so here rather than by the
+	// other three staying at zero, which is what "nothing has gone wrong"
+	// looks like too.
+	EvidenceReadingAbsent = "ABSENT"
+)
+
+// ExecutionEvidenceReadings is every label the counter may carry.
+var ExecutionEvidenceReadings = []string{
+	EvidenceReadingFullyApplied, EvidenceReadingMixed, EvidenceReadingNoneFound,
+	EvidenceReadingUnreadable, EvidenceReadingAbsent,
+}
+
+// ReadEvidence names what a completion's evidence says, for the counter.
+func ReadEvidence(evidence *ExecutionEvidence) string {
+	if evidence == nil {
+		return EvidenceReadingAbsent
+	}
+	switch evidence.Kind {
+	case EvidenceStateApplied:
+		if evidence.FullyApplied() {
+			return EvidenceReadingFullyApplied
+		}
+		return EvidenceReadingMixed
+	case EvidenceNoneFound:
+		return EvidenceReadingNoneFound
+	case EvidenceUnreadable:
+		return EvidenceReadingUnreadable
+	default:
+		return EvidenceReadingAbsent
+	}
+}
+
+// QueryFreeCompletionKinds is the two kinds this counter is partitioned by.
+var QueryFreeCompletionKinds = []CompletionKind{CompletionGapSkipped, CompletionSnapshotUnavailable}
+
+// ExecutionEvidence is what a query-free completion found out about an earlier
+// attempt at the same Slot.
+//
+// A query-free completion happens when a Slot missed its replay window: it does
+// not query, does not load state, and holds nothing but the frozen due Plans.
+// So it cannot tell "this Slot was never evaluated" from "this Slot evaluated,
+// sent its events, wrote its state, and then failed to write down that it had
+// done so" -- and it used to record both as a gap, which is the second one
+// recorded as the first.
+//
+// It appears only on the two query-free kinds. A completion that came from the
+// query path is its own evidence.
+type ExecutionEvidence struct {
+	Kind ExecutionEvidenceKind
+	// PlansApplied is how many of PlansTotal an earlier attempt got to. Both
+	// are carried rather than a ratio or a flag: a Slot that applied three of
+	// ten Plans is a different situation from one that applied ten, and the
+	// fold below treats them differently.
+	PlansApplied int
+	PlansTotal   int
+}
+
+// Validate checks one reading of an earlier attempt against itself.
+func (evidence ExecutionEvidence) Validate() error {
+	if evidence.PlansApplied < 0 || evidence.PlansTotal < 0 {
+		return errors.New("alarmd execution: execution evidence counts must not be negative")
+	}
+	if evidence.PlansApplied > evidence.PlansTotal {
+		return errors.New("alarmd execution: execution evidence applied more Plans than the Slot had")
+	}
+	switch evidence.Kind {
+	case EvidenceStateApplied:
+		if evidence.PlansApplied < 1 {
+			return errors.New("alarmd execution: STATE_APPLIED evidence names no Plan")
+		}
+	case EvidenceNoneFound, EvidenceUnreadable:
+		if evidence.PlansApplied != 0 {
+			return fmt.Errorf("alarmd execution: %s evidence names %d applied Plans",
+				evidence.Kind, evidence.PlansApplied)
+		}
+	default:
+		return fmt.Errorf("alarmd execution: unknown execution evidence kind %q", evidence.Kind)
+	}
+	return nil
+}
+
+// FullyApplied reports whether an earlier attempt got to every Plan this Slot
+// was going to evaluate.
+//
+// It is the one question the gap fold asks, and it lives here so the fold and
+// the page cannot answer it differently. Anything less than all of them is a
+// partial execution: some Plans really were not evaluated, and the Slot still
+// owes them a gap.
+func (evidence ExecutionEvidence) FullyApplied() bool {
+	return evidence.Kind == EvidenceStateApplied && evidence.PlansTotal > 0 &&
+		evidence.PlansApplied == evidence.PlansTotal
+}
+
+// SlotExecutionEvidenceStore records which Plans of a Slot an attempt applied,
+// and reads it back for a completion that cannot know otherwise.
+//
+// Both halves are best-effort by construction. Recording failure costs a later
+// completion its evidence and must not change what the failing attempt reports;
+// a read failure is UNREADABLE and must not stop a Slot that has already missed
+// its window from finishing.
+type SlotExecutionEvidenceStore interface {
+	Record(ctx context.Context, slot SlotIdentity, duePlans []PlanIdentity,
+		applied []PlanIdentity, recoveryUntil time.Time, now time.Time) error
+	Read(ctx context.Context, slot SlotIdentity, duePlans []PlanIdentity) (ExecutionEvidence, error)
+}
+
 type SlotCompletion struct {
 	Contract   FrozenExecutionContractRef
 	Kind       CompletionKind
 	Primary    *PrimaryInputFact
 	Result     Result
 	ReasonCode ReasonCode
+	// Evidence is how far an earlier attempt at this Slot got, and is set only
+	// on the two query-free kinds. Nil is a real state and not an omission to
+	// be worked around: a completion written by a build from before this
+	// existed has none, and the fold treats that exactly as it did before.
+	Evidence *ExecutionEvidence
 }
 
 type ProgressCommitRequest struct {
@@ -2991,6 +3384,9 @@ type ProgressCommitRequest struct {
 	ExpectedNextSlot EvaluationTime
 	Completion       SlotCompletion
 	Projection       UnfinishedSlotProjection
+	// ContentScope is declared to the fence of this write; see
+	// SlotExecutionRequest.ContentScope.
+	ContentScope string
 }
 
 func (request ProgressCommitRequest) Validate() error {
@@ -3029,7 +3425,20 @@ func (request ProgressCommitRequest) Validate() error {
 		if request.Completion.ReasonCode != expectedReason {
 			return errors.New("alarmd execution: query-free completion requires its exact reason")
 		}
+		if evidence := request.Completion.Evidence; evidence != nil {
+			if err := evidence.Validate(); err != nil {
+				return err
+			}
+		}
 		return nil
+	}
+	if request.Completion.Evidence != nil {
+		// A completion that came from the query path is its own evidence: it
+		// queried, it evaluated, and it is saying so. Carrying a reading of an
+		// earlier attempt there would be a second answer to a question already
+		// answered, and the fold would have two places to look.
+		return fmt.Errorf("alarmd execution: %s completion carries execution evidence, which only a "+
+			"query-free completion may", request.Completion.Kind)
 	}
 	if request.Completion.Primary == nil {
 		return errors.New("alarmd execution: business completion requires PRIMARY facts")
@@ -3108,6 +3517,45 @@ type ScheduleProgress struct {
 	CurrentOrRecentGap *ProgressGapSummary
 	UnfinishedSlot     *UnfinishedSlotProjection
 	UnfinishedRange    *ExpiredRangeProjectionV1 `json:",omitempty"`
+	// LastCompletion is what the round that last moved this cursor concluded.
+	//
+	// LastCompletionKind above is one word of it and was all there was: a
+	// reader with a Query Group that stopped could see that the last round
+	// ended in a gap and not which Slot it was, when it happened, why, or
+	// against which frozen contract -- and the round itself had scrolled out
+	// of the log by the time anyone looked. Every field here was already in
+	// hand at the commit, so carrying them costs no read.
+	//
+	// Nil on a record written before this field existed. That is a real
+	// answer -- this process has not committed a round for that Query Group
+	// since the upgrade -- and it is why the field is a pointer rather than a
+	// zero-valued struct that would read as a completion at Slot zero.
+	LastCompletion *LastCompletionSummary `json:"last_completion,omitempty"`
+}
+
+// LastCompletionSummary is one committed round, as the commit already knew it.
+//
+// The names are the wire contract the page reads by and are fixed; a field
+// renamed here is a field the page stops finding, with nothing failing to say
+// so.
+type LastCompletionSummary struct {
+	// Slot is the evaluation time the round completed, not the one it moved to.
+	Slot EvaluationTime `json:"slot"`
+	// CompletedAt is when this process committed it, RFC3339. It is the
+	// commit's clock rather than the Slot's, because the question it answers is
+	// "how long ago did anything happen here", and a Slot time answers that
+	// only for a deployment that is keeping up -- which is not the deployment
+	// anybody is looking at when they ask.
+	CompletedAt string `json:"completed_at"`
+	// Kind and ReasonCode are how it ended and why, the same two the round
+	// reported. The reason is empty for a completion that had none.
+	Kind       CompletionKind `json:"kind"`
+	ReasonCode ReasonCode     `json:"reason_code,omitempty"`
+	// Contract is the frozen contract the round ran under, verbatim. It is
+	// what makes the summary checkable against anything else that names the
+	// same Slot: a summary carrying a Slot number and no contract cannot be
+	// told from one written by a different generation of the same Query Group.
+	Contract FrozenExecutionContractRef `json:"contract"`
 }
 
 type UnfinishedSlotProjection struct {
@@ -3115,6 +3563,14 @@ type UnfinishedSlotProjection struct {
 	DuePlanTargets                 FrozenDuePlanTargets
 	EarliestQueryDeadlineUnixMilli int64
 	KeepUntilUnixMilli             int64
+	// ContentScope is the content the Slot was begun under
+	// (SlotExecutionRequest.ContentScope), kept so a retry from this
+	// projection declares the same content the first attempt did. It is
+	// metadata of the projection, like a Segment's ObjectDigest is of the
+	// Segment: it takes no part in Equal, so a projection begun by a binary
+	// that did not write it is still the same unfinished Slot. Omitted when
+	// empty, so records written before it existed re-encode unchanged.
+	ContentScope string `json:",omitempty"`
 }
 
 func (projection UnfinishedSlotProjection) Validate() error {
@@ -3147,6 +3603,9 @@ type ProgressBeginRequest struct {
 	Identity   ProgressIdentity
 	OwnerFence OwnerFence
 	Projection UnfinishedSlotProjection
+	// ContentScope is declared to the fence of this write; see
+	// SlotExecutionRequest.ContentScope.
+	ContentScope string
 }
 
 type ProgressBeginResult struct {
@@ -3226,6 +3685,14 @@ type ProgressGapSummary struct {
 	// though the population inside it cannot be.
 	ResumedAt   EvaluationTime
 	NextProbeAt *int64
+	// Evidence is what the completion that opened or extended this gap knew
+	// about an earlier attempt at the same Slot. It is persisted with the gap
+	// so the page reads it from here rather than inferring it from a tracker
+	// that only sees what is happening now: the gap outlives the round.
+	//
+	// Nil for every gap this build did not put evidence on, which is every kind
+	// but the two query-free ones and every gap written before this existed.
+	Evidence *ExecutionEvidence
 }
 
 func (progress ScheduleProgress) Validate() error {

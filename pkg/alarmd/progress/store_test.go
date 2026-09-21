@@ -23,6 +23,8 @@ type controlFake struct {
 	status  ownership.FencedCASStatus
 	group   execution.QueryGroupIdentity
 	name    string
+	// scopes is the content scope each fenced write declared, in order.
+	scopes []string
 }
 
 func TestBeginSlotPersistsIdempotentlyAndCompletionClearsProjection(t *testing.T) {
@@ -1038,6 +1040,7 @@ func (fake *controlFake) ReadControl(_ context.Context, group execution.QueryGro
 	return append([]byte(nil), fake.value...), fake.missing, nil
 }
 func (fake *controlFake) FencedCompareAndSet(_ context.Context, request ownership.FencedCASRequest) (ownership.FencedCASStatus, error) {
+	fake.scopes = append(fake.scopes, request.ContentScope)
 	status := fake.status
 	if status == "" {
 		status = ownership.FencedCASApplied

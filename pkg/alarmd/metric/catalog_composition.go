@@ -70,9 +70,10 @@ func newCatalogCompositionCollector() *catalogCompositionCollector {
 			"Source objects the Catalog the leader last built did not turn into a Plan, by what happened "+
 				"to them and why. The disposition alone cannot be acted on: a CONFIG_REJECTED strategy has "+
 				"stopped detecting, a STALE_CONFIG one is still running its last good Plan, and the reason "+
-				"names the configuration that caused either. A reason this build does not name is counted "+
-				"under other, so a reason added at its site and not in the list shows as a rising other "+
-				"rather than as a count that stops adding up. "+
+				"names the configuration that caused either. The reason is the control plane's own word, "+
+				"carried as written -- a reason added at its site appears here under its name the first "+
+				"scrape it has an object -- while a disposition this build does not name is counted under "+
+				"other, so the partition keeps adding up. "+
 				"Most pairs are absent from a scrape that had no objects under them; a few are published "+
 				"at zero regardless, because their zero is a claim somebody acts on and a claim that "+
 				"reads the same as 'this build does not produce that reason' is not one. Every pair "+

@@ -92,11 +92,14 @@ func (coordinator *SlotExecutionCoordinator) observeChunk(
 	totals applyTotals,
 	counts observability.Counts,
 	err error,
+	conflicts *observability.StateVersionConflictFacts,
+	extensions ...*observability.GapExtensionFacts,
 ) {
 	coordinator.emitObservation(ctx, observability.Observation{
 		Component: observability.ComponentState, Stage: stage, Result: result,
 		Operation: observability.Operation(operation), Direction: observability.DirectionInternal,
 		ReasonCode: reason, Duration: time.Since(chunkStarted), Counts: counts, Err: err,
+		GapExtensions: extensions, StateVersionConflict: conflicts,
 		StateApplyChunk: &observability.StateApplyChunkFacts{
 			Index: chunk.index, Count: chunk.count, AppliedKeys: totals.keys, AppliedBytes: totals.bytes,
 			ElapsedMillis: time.Since(applyStarted).Milliseconds(),

@@ -182,7 +182,13 @@ func lossRecords(view *View, now time.Time, visit func(queryGroup string, check,
 		visit(queryGroup, check, line, code, skip, loss)
 	}
 	for queryGroup, skip := range view.GapSkips {
-		each(queryGroup, CheckDetectionAbandoned, "GAP_SKIPPED", skip)
+		check := CheckDetectionAbandoned
+		if skip.FullyApplied() {
+			// Every Slot of the span had been executed by an earlier attempt:
+			// not detection given up, bookkeeping interrupted.
+			check = CheckBookkeepingAbandoned
+		}
+		each(queryGroup, check, "GAP_SKIPPED", skip)
 	}
 	for queryGroup, pruned := range view.PrunedSkips {
 		each(queryGroup, CheckTimelinePruned, "SCHEDULE_PRUNED", SkippedSpan{FirstSlot: pruned.From, LastSlot: pruned.To,

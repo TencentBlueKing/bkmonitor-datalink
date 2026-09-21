@@ -18,10 +18,20 @@ var admissionResults = map[string]struct{}{"admitted": {}, "rejected": {}}
 var admissionFilters = map[string]struct{}{"target_scope": {}, "host_status": {}, "none": {}}
 var admissionReasons = map[string]struct{}{
 	"in_scope": {}, "out_of_scope": {}, "scope_empty": {}, "plan_not_indexed": {}, "none": {},
+	// Target scope on object identity: a record that built no identity is a
+	// defect on the writing or querying side every time, and an identity the
+	// target did not name is either a record outside the target or a target
+	// written in another representation than the data; the two are named
+	// apart from out_of_scope so the first is alertable and the second is
+	// readable against in_scope.
+	"object_identity_missing": {}, "object_identity_unmatched": {},
 	// Host status: the reasons matter separately because they call for
 	// different actions - a disabled host is the filter working, an unknown
 	// host is a CMDB gap, and unavailable facts mean it is not filtering.
-	"monitoring_disabled": {}, "host_unknown": {}, "host_identity_invalid": {}, "host_facts_unavailable": {},
+	// The two indexes enrichment consults are written by different jobs, so
+	// each names its own unavailability.
+	"monitoring_disabled": {}, "host_unknown": {}, "host_identity_invalid": {},
+	"host_facts_unavailable": {}, "service_instance_facts_unavailable": {},
 }
 
 // RecordSeriesAdmission counts one admission decision.
@@ -76,6 +86,16 @@ func (r *Recorder) SetCMDBHostIndex(hosts int, ageSeconds float64, sourceAgeSeco
 	}
 	r.phaseTwo.cmdbIndexDegraded.Reset()
 	r.phaseTwo.cmdbIndexDegraded.WithLabelValues(reason).Set(value)
+}
+
+// SetCMDBServiceInstanceIndex publishes how many service instances the index
+// holds. Zero beside a non-zero service_instance_facts_unavailable count is
+// the signature of an instance cache nobody writes.
+func (r *Recorder) SetCMDBServiceInstanceIndex(instances int) {
+	if r == nil {
+		return
+	}
+	r.phaseTwo.cmdbIndexServiceInstances.Set(float64(instances))
 }
 
 // RecordUnmappedSeverity counts one event whose alert level had no name in

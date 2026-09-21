@@ -2587,6 +2587,8 @@ func (runner *fakePhaseTwoQueryGroup) RunOneAdmitted(
 
 func (*fakePhaseTwoQueryGroup) NextReadyAt() time.Time { return time.Time{} }
 
+func (*fakePhaseTwoQueryGroup) NextDeadline() time.Time { return time.Time{} }
+
 func (*fakePhaseTwoQueryGroup) DueBound() scheduler.RunnerDueBound {
 	return scheduler.RunnerDueBound{}
 }
@@ -2733,6 +2735,12 @@ func withCompatibilityOutput(cfg *config.Config, address string) {
 
 func validGoAccessRuntimeConfig() config.Config {
 	cfg := config.Default()
+	// A port nothing on a developer machine listens on: the bundle's view
+	// stream client dials the address the registration advertises, which is
+	// derived from this listener, and a test must never reach whatever else
+	// happens to be on 127.0.0.1:8080. Tests that serve the stream set their
+	// own address.
+	cfg.HTTP.Listen = "127.0.0.1:1"
 	accessBKData := false
 	cfg.Kafka.Brokers = []string{"127.0.0.1:9092"}
 	cfg.Kafka.TriggerEvent.Topic = "alarmd-trigger-event"

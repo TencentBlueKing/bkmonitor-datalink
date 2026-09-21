@@ -115,14 +115,20 @@ var Fields = []Field{
 	FieldHostDisableMonitorStates, FieldIsAccessBKData, FieldBKDataCMDBLevelTables, FieldFileSystemTypeIgnore,
 }
 
-// DBKeyPrefix is where the base platform declares these fields. The DB key
-// is what the protocol's config key ends with and what a change event
-// names.
-const DBKeyPrefix = "base_config.domains.strategy."
-
-// DBKey is the field's full DB key.
+// DBKey is the field's full DB key in the publishing platform's dynamic
+// configuration tree. Settings keep their owning domain; being consumed
+// by the strategy compiler does not move their declarations to strategy.
 func (field Field) DBKey() string {
-	return DBKeyPrefix + string(field)
+	switch field {
+	case FieldHostDisableMonitorStates, FieldIsAccessBKData:
+		return "base_config.metadata." + string(field)
+	case FieldBKDataCMDBLevelTables:
+		return "base_config.domains.strategy." + string(field)
+	case FieldFileSystemTypeIgnore:
+		return "base_config.domains.dataview." + string(field)
+	default:
+		return ""
+	}
 }
 
 // ValidField reports whether field is one of the closed set.

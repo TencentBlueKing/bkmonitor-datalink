@@ -39,6 +39,7 @@ func foundSnapshot(identity PlanNoDataIdentity, groups ...NoDataGroupMemory) NoD
 		SchemaVersion:           NoDataMemorySchemaV1,
 		LastScheduleRevision:    "revision-1",
 		RosterVersion:           "TARGET_STATIC/1",
+		Representation:          NoDataRepresentationPerGroup,
 		Groups:                  groups,
 	}
 }

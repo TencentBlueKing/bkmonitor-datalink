@@ -22,6 +22,13 @@ var (
 	ErrStaleFence         = errors.New("alarmd ownership: owner fence is stale")
 	ErrAssignmentAbsent   = errors.New("alarmd ownership: assignment is absent")
 	ErrAssignmentConflict = errors.New("alarmd ownership: Assignment record revision conflict")
+	// ErrContentScopeMoved is the fence refusing a writer that declared the
+	// content scope it is executing when the Assignment record names another.
+	// The lease itself may be perfectly good: it is the view that is behind.
+	// It is therefore not a lease decision -- a worker that meets it keeps
+	// the Query Group and has to bring its view up to the record, not give
+	// the Query Group up.
+	ErrContentScopeMoved = errors.New("alarmd ownership: content scope has moved")
 )
 
 // IsLeaseDecision reports whether err is an authoritative answer from the
@@ -56,6 +63,23 @@ type WorkerRegistration struct {
 	DeploymentProfile   string              `json:"deployment_profile"`
 	CapabilitiesDigest  string              `json:"capabilities_digest"`
 	ExpiresAt           time.Time           `json:"expires_at"`
+	// Capabilities names the control contracts this binary takes part in,
+	// by word (CapabilityContentScope, ...). A leader writes a contract's
+	// facts only once every ready worker declares it: the digest above says
+	// two workers are alike, this says what a worker can do, and a leader
+	// deciding whether to start a contract needs the second. Absent from a
+	// registration written by a binary from before it, which declares
+	// nothing -- the answer a rollout needs.
+	Capabilities []string `json:"capabilities,omitempty"`
+	// Endpoint is where this worker's control stream is served (host:port
+	// of its HTTP listener; the stream shares it), and StreamToken the
+	// secret a Worker opening a stream to this worker as Leader must
+	// present -- written by the worker into its own registration, so the
+	// registry is the trust root (decision-016). Both are absent from a
+	// registration written by a binary from before the stream, which
+	// neither serves nor joins it. The token is never logged.
+	Endpoint    string `json:"endpoint,omitempty"`
+	StreamToken string `json:"stream_token,omitempty"`
 	// Applied and Load are the worker's acknowledgement and occupancy as of
 	// this heartbeat. Both are optional: a registration written by a worker
 	// that does not report them decodes with nil, which a reader takes as
@@ -136,6 +160,50 @@ func (worker WorkerRegistration) Validate() error {
 	return worker.Load.validate()
 }
 
+// ControlLeader is who holds the control leader lease, as the lease hash
+// names it: the worker id and the term. Read by a Worker looking for the
+// Leader's stream endpoint; the lease token is not part of it.
+type ControlLeader struct {
+	OwnerID    string
+	OwnerEpoch uint64
+}
+
+// CapabilityContentScope is the decision-016 content contract: a worker
+// that declares it names the content each Slot runs under on every fenced
+// write, and follows a pending content change from its renewal replies. A
+// leader writes content scopes into Assignment records only once every
+// ready worker declares it; until then, and again if one that does not
+// joins, the records carry no scope and the fence compares what it always
+// compared. The gate is about leaders as much as workers: a leader from
+// before this contract moves an owner without clearing a pending scope,
+// and the fleet it could be elected from is the ready set.
+const CapabilityContentScope = "content-scope.v1"
+
+// Declares reports whether the registration names the capability.
+func (worker WorkerRegistration) Declares(capability string) bool {
+	for _, declared := range worker.Capabilities {
+		if declared == capability {
+			return true
+		}
+	}
+	return false
+}
+
+// AllDeclare reports whether every worker in the set names the capability.
+// An empty set declares nothing: a contract is started for a fleet, not
+// for nobody.
+func AllDeclare(workers []WorkerRegistration, capability string) bool {
+	if len(workers) == 0 {
+		return false
+	}
+	for _, worker := range workers {
+		if !worker.Declares(capability) {
+			return false
+		}
+	}
+	return true
+}
+
 // PlacementReason says why an Assignment names the worker it names.
 // RENDEZVOUS is the sticky hash every Assignment carries today. REBALANCE is
 // a move the Control Leader makes to even the owned counts out after the
@@ -160,7 +228,33 @@ type AssignmentRecord struct {
 	RecordRevision       uint64
 	ControlEpoch         uint64
 	PlacementReason      PlacementReason
-	AssignedAt           time.Time
+	// AssignedAt is the leader's own account of when it decided, on the
+	// leader's clock, stored as given. It is not on the clock the record's
+	// lease deadline and EffectiveAt are on (Redis's, see FenceLua), so a
+	// difference between them is a difference between two clocks, not a
+	// duration; nothing should compute one.
+	AssignedAt time.Time
+	// ContentScope names what the desired worker is authorized to execute
+	// for this Query Group: the digest of its executable view. Empty until a
+	// leader has written one; the fence compares it only against writers
+	// that declare theirs (decision-016).
+	ContentScope string
+	// PendingContentScope and EffectiveAt describe a content change that has
+	// been decided but not yet taken effect: the record still authorizes
+	// ContentScope, and switches to the pending one at EffectiveAt, which is
+	// never earlier than the lease deadline the current holder was renewed
+	// to plus ContentSwitchMargin. Renewal does not extend a lease past it.
+	// Both are zero when no change is pending. EffectiveAt is on Redis's
+	// clock, as the record holds it (FenceLua); a holder that needs it on
+	// its own clock reads it from the Lease its renewal returned.
+	PendingContentScope string
+	EffectiveAt         time.Time
+}
+
+// ContentChangePending reports whether the record carries a content change
+// that has not taken effect yet.
+func (record AssignmentRecord) ContentChangePending() bool {
+	return record.PendingContentScope != "" && !record.EffectiveAt.IsZero()
 }
 
 // AssignmentDecision is a Control Leader decision based on one observed
@@ -171,12 +265,30 @@ type AssignmentDecision struct {
 	ExpectedRecordRevision uint64
 	PlacementReason        PlacementReason
 	DecidedAt              time.Time
+	// ContentScope is the executable view this decision authorizes. Empty
+	// leaves whatever the record names untouched, so a leader that does not
+	// yet compute it publishes exactly as before. A non-empty scope that
+	// differs from the record's, for a desired worker that is unchanged and
+	// holds a live lease, is written as pending and takes effect after that
+	// lease's deadline; with no live lease, or together with a change of
+	// desired worker, it is written directly.
+	ContentScope string
+	// WithdrawContentScope clears the record's scope and any pending change,
+	// so the fence compares the lease alone again. It is written directly,
+	// not as a pending change: withdrawing the comparison refuses nobody, so
+	// there is no holder to protect from it. It is the rollback path of the
+	// content contract and what a leader writes when a worker that does not
+	// declare the contract joins the fleet. Exclusive with ContentScope.
+	WithdrawContentScope bool
 }
 
 func (decision AssignmentDecision) Validate() error {
 	if decision.QueryGroup == "" || decision.DesiredWorkerID == "" || decision.DecidedAt.IsZero() ||
 		!decision.PlacementReason.valid() {
 		return errors.New("alarmd ownership: invalid Assignment decision")
+	}
+	if decision.WithdrawContentScope && decision.ContentScope != "" {
+		return errors.New("alarmd ownership: an Assignment decision cannot both name and withdraw a content scope")
 	}
 	return nil
 }
@@ -192,9 +304,34 @@ func (record AssignmentRecord) Validate() error {
 	return nil
 }
 
+// Lease is what a holder was admitted to, expressed on the holder's own
+// clock. The store mints deadlines on Redis's clock and judges expiry there
+// (FenceLua); what comes back to the holder is the remaining duration, added
+// to the instant the holder passed in when it asked -- an instant from before
+// the round trip, so the holder's deadline is always a little earlier than
+// the server's and never later. Deadline and EffectiveAt are therefore
+// comparable with the holder's clock and with nothing else; the same
+// instants as Redis holds them are on the AssignmentRecord, which stays on
+// Redis's clock.
 type Lease struct {
 	Fence    execution.OwnerFence
 	Deadline time.Time
+	// ContentScope is what the Assignment record authorized this lease for
+	// at the moment it was acquired or renewed, and PendingContentScope /
+	// EffectiveAt the change it will switch to, when one is pending. A
+	// renewal under a pending change is capped at EffectiveAt, which is how
+	// the holder learns it must be on the new content by then: under the cap
+	// Deadline and EffectiveAt are the same instant. All empty for the
+	// control leader identity, which has no Assignment record.
+	ContentScope        string
+	PendingContentScope string
+	EffectiveAt         time.Time
+}
+
+// ContentChangePending reports whether the lease was renewed under a content
+// change that has not taken effect yet.
+func (lease Lease) ContentChangePending() bool {
+	return lease.PendingContentScope != "" && !lease.EffectiveAt.IsZero()
 }
 
 type PublicationAuthority struct {
@@ -208,14 +345,24 @@ const (
 	FencedCASApplied    FencedCASStatus = "APPLIED"
 	FencedCASConflict   FencedCASStatus = "CONFLICT"
 	FencedCASStaleOwner FencedCASStatus = "STALE_OWNER"
+	// FencedCASContentMoved is the fence refusing a writer whose declared
+	// content scope is no longer the one the Assignment record names. The
+	// error beside it is ErrContentScopeMoved, not ErrStaleFence.
+	FencedCASContentMoved FencedCASStatus = "CONTENT_MOVED"
 )
 
+// FencedCASRequest is one fenced write of a control value. It names no
+// instant: whether the fence's lease is live is decided on Redis's clock
+// inside the script (FenceLua), not from anything the writer says.
 type FencedCASRequest struct {
 	Fence           execution.OwnerFence
-	At              time.Time
 	Namespace       string
 	ExpectedMissing bool
 	Expected        []byte
 	Value           []byte
 	TTL             time.Duration
+	// ContentScope, when set, is the executable view the writer is acting
+	// on; the fence then also refuses a record that names another. Empty
+	// keeps the fence as it was before the field existed.
+	ContentScope string
 }

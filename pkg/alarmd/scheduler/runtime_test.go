@@ -296,11 +296,14 @@ type fakeSession struct {
 	fence      execution.OwnerFence
 	assignment ownership.AssignmentRecord
 	err        error
+	deadline   time.Time
 }
 
 func (session *fakeSession) ValidateCurrent(context.Context, time.Time) (execution.OwnerFence, error) {
 	return session.fence, session.err
 }
+
+func (session *fakeSession) Deadline() time.Time { return session.deadline }
 
 // The zero Assignment record is deliberate: this fake has no Assignment facts,
 // so the Runner has nothing worth handing to the source and the source reads
@@ -394,7 +397,7 @@ func TestRunnerNextDeadlineFollowsTheHeldSlotThenTheSchedule(t *testing.T) {
 	readyAt := current.Add(30 * time.Second)
 	slot := frozenSlot("query-group-1")
 	executor := &readinessDeferredExecutor{readyAt: readyAt}
-	source := &fakeSlotSource{slot: slot}
+	source := &fakeSlotSource{slot: slot, facts: SlotDueFacts{IntervalSeconds: 10}}
 	runner, err := NewRunner(
 		"query-group-1", &fakeSession{fence: slot.Dispatch.OwnerFence}, source, executor,
 		NewFlightCoordinator(), func() time.Time { return current },
@@ -403,7 +406,7 @@ func TestRunnerNextDeadlineFollowsTheHeldSlotThenTheSchedule(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := runner.NextDeadline(); !got.IsZero() {
-		t.Fatalf("NextDeadline() before any round = %s, want zero", got)
+		t.Fatalf("NextDeadline() before any round = %s, want zero: nothing is known yet", got)
 	}
 	if _, attempted, err := runner.RunOne(context.Background()); err != nil || !attempted {
 		t.Fatalf("RunOne(deferred) = attempted %t, err %v", attempted, err)
@@ -418,8 +421,11 @@ func TestRunnerNextDeadlineFollowsTheHeldSlotThenTheSchedule(t *testing.T) {
 	if result, attempted, err := runner.RunOne(context.Background()); err != nil || !attempted || !result.Completed {
 		t.Fatalf("RunOne(at ready) = (%+v, %t, %v)", result, attempted, err)
 	}
-	if got := runner.NextDeadline(); !got.IsZero() {
-		t.Fatalf("NextDeadline() after completion = %s, want zero until the next Slot is known", got)
+	// Completed, next Slot not yet frozen: the bound is now plus the
+	// interval the round saw. Zero here is what put a ten-second Runner
+	// behind the minute's thousand Slots at the full ready queue.
+	if got, want := runner.NextDeadline(), current.Add(10*time.Second); !got.Equal(want) {
+		t.Fatalf("NextDeadline() after completion = %s, want now plus the interval %s", got, want)
 	}
 	// The source now says the next Slot is due at a later second with a
 	// ten-second interval: the bound is that second plus the interval.

@@ -19,14 +19,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
-// Facts is the enriched identity of one series: what the fullers could work
-// out about the thing the series describes.
-//
-// TopoNodes is a set, not a value. A host belongs to every node on every
-// topology link it has, so a host in three modules carries three chains of
-// business, set and module, and a target naming any one of them includes it.
 // HostNaming is what a series' own dimensions said about its host.
 type HostNaming struct {
 	// NamedID is true when a bk_host_id dimension is present, whatever value.
@@ -42,9 +38,10 @@ type HostNaming struct {
 	// than its presence, so a bk_host_id that is there but empty names no id.
 	IDKey string
 	// AddressKey is the "ip|cloud" key Python's address lookup builds, from
-	// bk_target_ip and bk_target_cloud_id. It is kept apart from the keys in
-	// Facts.HostKeys because those also carry the ip / bk_cloud_id spellings,
-	// which build target-scope keys but which Python never looks a host up by.
+	// bk_target_ip and bk_target_cloud_id. It is kept apart from the host
+	// identity attribute because that also carries the ip / bk_cloud_id
+	// spellings, which build target-scope keys but which Python never looks a
+	// host up by.
 	AddressKey string
 }
 
@@ -72,15 +69,27 @@ func (naming HostNaming) LookupKey() (string, bool) {
 	return "", false
 }
 
+// Facts is the enriched identity of one series: what the fullers could work
+// out about the thing the series describes.
 type Facts struct {
-	// HostKeys are the identities a host record can be matched by: "ip|cloud"
-	// and the bare host id. Both are kept because a strategy target may name
-	// either.
-	HostKeys []string
-	// ServiceInstanceKeys are the service-instance identities of the series.
-	ServiceInstanceKeys []string
-	// TopoNodes are the "obj|inst" nodes the series belongs to.
-	TopoNodes []string
+	// Attributes are the candidate values a record can be matched by, keyed
+	// by attribute name (contract.AttributeHostIdentity and the others in its
+	// table). The target matcher reads the attribute a condition's field
+	// names and nothing else, so a fuller that learns a new attribute about
+	// the record registers it here and the matcher needs no new case.
+	//
+	// These are facts about the record, never part of it. They are read by
+	// filters and reports; they are not written back into the dimensions,
+	// and the alert fingerprint is derived from the dimensions alone. The
+	// two must stay apart: a fact from CMDB changes when CMDB changes, and an
+	// identity that followed it would split one alert in two on every
+	// topology move.
+	Attributes map[string][]string
+	// Dimensions is the series' own labels as the fullers saw them, held for
+	// the conditions that build their candidates from dimension pairs named
+	// by the strategy rather than from an attribute filled ahead of time. It
+	// is the caller's map, read and never written.
+	Dimensions map[string]json.RawMessage
 	// HostResolved records whether the host the record names was found in CMDB
 	// - the one HostNaming.LookupKey picks, not any identity that happens to
 	// resolve. A series whose host is unknown is not the same as one with no
@@ -90,6 +99,13 @@ type Facts struct {
 	HostState string
 	// HostBusinessID is the business the resolved host belongs to.
 	HostBusinessID string
+	// HostAttributes are the scalar fields of the resolved host's cache
+	// record, by field name, exposed to the matcher as
+	// contract.AttributeHostPrefix + name. The map is the index's own and is
+	// read only; keeping a reference costs the series nothing, where copying
+	// twenty fields into Attributes would allocate on every series for a
+	// target nobody has written yet.
+	HostAttributes map[string]string
 	// HostNaming records what the series said about its host, rather than what
 	// could be made of it. The host status filter needs the difference: Python
 	// keeps a record that names no host at all, drops one that names a host it
@@ -101,53 +117,138 @@ type Facts struct {
 	// unresolved hosts must not do so while the index is missing: that would
 	// turn a cache outage into fleet-wide silence.
 	HostFactsUnavailable bool
+	// FactsUnavailableSource names which index could not be consulted, as
+	// the reason the filters report: the host index and the service-instance
+	// index are written by different jobs and fail separately, and a counter
+	// that folded them would say "CMDB" when only one of the two is missing.
+	FactsUnavailableSource string
 }
+
+// The indexes enrichment consults, as the reasons a filter reports when one
+// of them could not be.
+const (
+	FactsUnavailableHostIndex            = "host_facts_unavailable"
+	FactsUnavailableServiceInstanceIndex = "service_instance_facts_unavailable"
+)
+
+// MarkFactsUnavailable records that an index could not be consulted. The
+// first index to fail names the reason; a later one does not overwrite it,
+// so the report says which dependency went first.
+func (facts *Facts) MarkFactsUnavailable(source string) {
+	if facts.HostFactsUnavailable {
+		return
+	}
+	facts.HostFactsUnavailable = true
+	facts.FactsUnavailableSource = source
+}
+
+// FactsUnavailableReason is the bounded reason a filter reports for admitting
+// a record it could not decide on.
+func (facts *Facts) FactsUnavailableReason() string {
+	if facts == nil || !facts.HostFactsUnavailable {
+		return ""
+	}
+	if facts.FactsUnavailableSource == "" {
+		return FactsUnavailableHostIndex
+	}
+	return facts.FactsUnavailableSource
+}
+
+// Candidates returns the values the record can be matched by on one
+// attribute, or nil when the fullers learned none.
+func (facts *Facts) Candidates(attribute string) []string {
+	if facts == nil {
+		return nil
+	}
+	if values, found := facts.Attributes[attribute]; found {
+		return values
+	}
+	if name, isHostAttribute := strings.CutPrefix(attribute, contract.AttributeHostPrefix); isHostAttribute {
+		if value, found := facts.HostAttributes[name]; found && value != "" {
+			return []string{value}
+		}
+	}
+	return nil
+}
+
+// Add records one candidate value for an attribute, keeping the values
+// unique and in the order they were learned.
+func (facts *Facts) Add(attribute string, value string) {
+	if attribute == "" || value == "" {
+		return
+	}
+	if facts.Attributes == nil {
+		facts.Attributes = make(map[string][]string, 4)
+	}
+	for _, existing := range facts.Attributes[attribute] {
+		if existing == value {
+			return
+		}
+	}
+	facts.Attributes[attribute] = append(facts.Attributes[attribute], value)
+}
+
+// Set replaces the candidate values of an attribute with a canonical set:
+// unique, sorted, empties dropped. An empty set removes the attribute, so a
+// fuller that learned nothing leaves no trace that could read as "learned an
+// empty list".
+func (facts *Facts) Set(attribute string, values []string) {
+	if attribute == "" {
+		return
+	}
+	unique := make(map[string]struct{}, len(values))
+	canonical := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if _, seen := unique[value]; seen {
+			continue
+		}
+		unique[value] = struct{}{}
+		canonical = append(canonical, value)
+	}
+	if len(canonical) == 0 {
+		if facts.Attributes != nil {
+			delete(facts.Attributes, attribute)
+		}
+		return
+	}
+	sort.Strings(canonical)
+	if facts.Attributes == nil {
+		facts.Attributes = make(map[string][]string, 4)
+	}
+	facts.Attributes[attribute] = canonical
+}
+
+// HostKeys are the identities a host record can be matched by: "ip|cloud"
+// and the bare host id. Both are kept because a strategy target may name
+// either.
+func (facts *Facts) HostKeys() []string { return facts.Candidates(contract.AttributeHostIdentity) }
+
+// ServiceInstanceKeys are the service-instance identities of the series.
+func (facts *Facts) ServiceInstanceKeys() []string {
+	return facts.Candidates(contract.AttributeServiceInstanceID)
+}
+
+// TopoNodes are the "obj|inst" nodes the series belongs to. It is a set, not
+// a value: a host belongs to every node on every topology link it has, so a
+// host in three modules carries three chains of business, set and module,
+// and a target naming any one of them includes it.
+func (facts *Facts) TopoNodes() []string { return facts.Candidates(contract.AttributeHostTopoNode) }
 
 // AddHostKey records an identity the record can be matched by. Fullers in
 // other packages call it, so resolving a host by one identity can teach the
 // record the other one.
-func (facts *Facts) AddHostKey(key string) {
-	if key == "" {
-		return
-	}
-	for _, existing := range facts.HostKeys {
-		if existing == key {
-			return
-		}
-	}
-	facts.HostKeys = append(facts.HostKeys, key)
-}
+func (facts *Facts) AddHostKey(key string) { facts.Add(contract.AttributeHostIdentity, key) }
 
 func (facts *Facts) AddServiceInstanceKey(key string) {
-	if key == "" {
-		return
-	}
-	for _, existing := range facts.ServiceInstanceKeys {
-		if existing == key {
-			return
-		}
-	}
-	facts.ServiceInstanceKeys = append(facts.ServiceInstanceKeys, key)
+	facts.Add(contract.AttributeServiceInstanceID, key)
 }
 
 // SetTopoNodes stores the node set canonically so decisions are stable and
 // comparable across refreshes.
-func (facts *Facts) SetTopoNodes(nodes []string) {
-	unique := make(map[string]struct{}, len(nodes))
-	canonical := make([]string, 0, len(nodes))
-	for _, node := range nodes {
-		if node == "" {
-			continue
-		}
-		if _, seen := unique[node]; seen {
-			continue
-		}
-		unique[node] = struct{}{}
-		canonical = append(canonical, node)
-	}
-	sort.Strings(canonical)
-	facts.TopoNodes = canonical
-}
+func (facts *Facts) SetTopoNodes(nodes []string) { facts.Set(contract.AttributeHostTopoNode, nodes) }
 
 // PlanContext is what a filter may know about the plan it is deciding for.
 // New filters read new fields here; the chain itself stays unchanged.
@@ -194,7 +295,11 @@ func NewChain(fullers []Fuller, filters []Filter) *Chain {
 
 // Enrich derives the facts of one series once.
 func (chain *Chain) Enrich(dimensions map[string]json.RawMessage) Facts {
-	facts := Facts{}
+	// The dimensions are handed to every fuller and kept on the facts by
+	// reference. They are read only: a fuller writes what it learns into
+	// Attributes, never into this map, so the series the fingerprint is
+	// derived from is exactly the series the provider returned.
+	facts := Facts{Dimensions: dimensions}
 	if chain == nil {
 		return facts
 	}

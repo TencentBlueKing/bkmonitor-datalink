@@ -163,7 +163,7 @@ func (repository *RedisCatalogRepository) loadQueryGroupObjectsCached(
 	objects := make(map[execution.ObjectDigest]QueryGroupObject, len(batch))
 	missing := make([]ManifestQueryGroup, 0, len(batch))
 	for _, entry := range batch {
-		if value, ok := repository.objectCache.lookup(repository.queryGroupObjectKey(entry.ObjectDigest)); ok {
+		if value, _, ok := repository.objectCache.lookup(repository.queryGroupObjectKey(entry.ObjectDigest)); ok {
 			if stored, ok := value.(storedQueryGroupObject); ok {
 				repository.observeObjectRead(ctx, objectReadKindQueryGroup, objectReadHit)
 				objects[entry.ObjectDigest] = stored.object
@@ -198,7 +198,7 @@ func (repository *RedisCatalogRepository) loadOutputContexts(
 		if _, done := contexts[ref.Digest]; done {
 			continue
 		}
-		if value, ok := repository.objectCache.lookup(repository.outputContextKey(ref.Digest)); ok {
+		if value, _, ok := repository.objectCache.lookup(repository.outputContextKey(ref.Digest)); ok {
 			if context, ok := value.(OutputContextObject); ok {
 				repository.observeObjectRead(ctx, objectReadKindOutputContext, objectReadHit)
 				contexts[ref.Digest] = context

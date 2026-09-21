@@ -107,6 +107,17 @@ func newCutoverStalledFixture(t *testing.T, configure func(*config.Config)) *cut
 // choose how the Query Group falls behind before the cutover.
 func startCutoverFixture(t *testing.T, configure func(*config.Config)) *cutoverStallFixture {
 	t.Helper()
+	return startCutoverFixtureWith(t, configure, observability.Discard(observability.ComponentRuntime), nil)
+}
+
+// startCutoverFixtureWith is startCutoverFixture with the production logger
+// a test wants to read, and a hook run against Redis after the strategies
+// are installed and before the bundle opens -- for state a deployment left
+// behind that the first round must find.
+func startCutoverFixtureWith(
+	t *testing.T, configure func(*config.Config), logger *observability.Logger, before func(ctx context.Context, client *redis.Client, cfg config.Config),
+) *cutoverStallFixture {
+	t.Helper()
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()
 	installCutoverStallStrategies(t, ctx, redisClient, "system.mem", 1725000000)
@@ -170,6 +181,9 @@ func startCutoverFixture(t *testing.T, configure func(*config.Config)) *cutoverS
 		configure(&cfg)
 	}
 	fixture.cfg = cfg
+	if before != nil {
+		before(ctx, redisClient, cfg)
+	}
 
 	additionalObserver := observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 		fixture.observationsMu.Lock()
@@ -178,7 +192,7 @@ func startCutoverFixture(t *testing.T, configure func(*config.Config)) *cutoverS
 	})
 	events := &recordingPhaseTwoEventSink{}
 	bundle, err := openProductionPhaseTwoBundleWithDependencies(
-		ctx, cfg, metric.NewRecorder(metric.BuildInfo{}), observability.Discard(observability.ComponentRuntime),
+		ctx, cfg, metric.NewRecorder(metric.BuildInfo{}), logger,
 		newPhaseTwoApplicationHealth(),
 		func(client redis.Cmdable, prefix string) (controlplane.StrategySource, error) {
 			return controlplane.NewLegacyRedisStrategySource(client, prefix)

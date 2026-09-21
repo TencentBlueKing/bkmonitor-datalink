@@ -171,7 +171,7 @@ func (s *DecisionSink) writeMessages(ctx context.Context, messages []*sarama.Pro
 
 	if batchProducer, ok := s.producer.(syncBatchMessageProducer); ok && len(messages) > 1 {
 		if err := batchProducer.SendMessages(messages); err != nil {
-			producerErr := fmt.Errorf("kafka decision sink: send batch: %w", err)
+			producerErr := fmt.Errorf("kafka decision sink: send batch: %w", describeBatchFailure(err, len(messages)))
 			if contextErr := ctx.Err(); contextErr != nil {
 				return errors.Join(contextErr, producerErr)
 			}
@@ -189,6 +189,23 @@ func (s *DecisionSink) writeMessages(ctx context.Context, messages []*sarama.Pro
 		}
 	}
 	return nil
+}
+
+// describeBatchFailure gives a batch failure the words of its cause. The
+// client reports a failed batch as a list of per-message errors whose own
+// text is only "Failed to deliver N messages." -- the cause is on each
+// element, and an error chain that stops at the list has lost it. On a live
+// deployment every event of six objects failed for a whole afternoon and
+// the row, the log line and the window record all said the count and not
+// the one sentence that decided it, which was on the first element. The
+// list stays in the chain (errors.Is and errors.As still find it); the first
+// element's cause is what the text now leads with, and the count follows.
+func describeBatchFailure(err error, attempted int) error {
+	var failures sarama.ProducerErrors
+	if !errors.As(err, &failures) || len(failures) == 0 || failures[0] == nil {
+		return err
+	}
+	return fmt.Errorf("%d of %d messages failed, first: %w (%w)", len(failures), attempted, failures[0], err)
 }
 
 // Shutdown prevents new writes and closes the producer before its dedicated

@@ -319,6 +319,9 @@ func TestSlotExecutionCoordinatorOrdersRequiredSideEffects(t *testing.T) {
 	assertTrace(t, fixture.trace, fullTrace)
 	wantStages := []observability.Stage{
 		observability.StageGapLoaded,
+		// Right behind the load, because that is where the marker was read. A
+		// round that goes on to fail later has still stood under the guard.
+		observability.StageGapGuardProgress,
 		observability.StageStatePreflight,
 		observability.StageEvaluationCompleted,
 		// Every Slot says how many of its Plans detect no-data, including this
@@ -340,6 +343,12 @@ func TestSlotExecutionCoordinatorOrdersRequiredSideEffects(t *testing.T) {
 		observability.StageEventACKed,
 		observability.StageStateApplied,
 		observability.StageGapGuardCommitted,
+		// The Slot's series census, reported on every Slot that had anything
+		// due rather than only when something was frozen. It writes nothing
+		// and sits after the writes it is counting; a Slot that stopped
+		// reporting it would be a Slot nobody could tell from one with an
+		// empty candidate set.
+		observability.StageFrozenStateRenewed,
 		observability.StageSideEffectAdmission,
 		observability.StageProgressCommitted,
 	}
@@ -349,6 +358,77 @@ func TestSlotExecutionCoordinatorOrdersRequiredSideEffects(t *testing.T) {
 	}
 	if !reflect.DeepEqual(gotStages, wantStages) {
 		t.Fatalf("observed stages=%v, want=%v", gotStages, wantStages)
+	}
+}
+
+// A held guard says how far it has got every round it is read, not only on
+// the rounds where the number moved. The state somebody is looking for is a
+// count that is not moving -- a strategy at 0 of 5 for hours -- and that state
+// is exactly the one a changed-only rule would report nothing about.
+func TestSlotExecutionCoordinatorReportsGapScopeProgressEveryRound(t *testing.T) {
+	fixture := newFixture(t, true, "")
+	fixture.ports.gapScopes = []execution.GapScopeState{
+		{
+			Scope: execution.GapScope{}, Status: execution.GapStatusGapped,
+			ReasonCode: execution.ReasonCode(contract.ReasonConfigDrift), RequiredFullSlots: 5,
+		},
+		{
+			Scope: execution.GapScope{LevelID: 5, HasLevel: true}, Status: execution.GapStatusWarming,
+			ReasonCode: execution.ReasonCode(contract.ReasonHistoryWarming), RequiredFullSlots: 5, ObservedFullSlots: 3,
+		},
+	}
+	if _, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal)); err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	// Both numbers of both scopes, read off the observations rather than off
+	// the fixture: a reader needs k, N, which scope, and why it is held, and
+	// an assertion that only counted the lines would pass on a report of
+	// zeroes.
+	var got []observability.GapProgressFacts
+	for _, observation := range slotObservations(fixture.observations) {
+		if observation.Stage != observability.StageGapGuardProgress {
+			continue
+		}
+		if observation.GapProgress == nil {
+			t.Fatalf("gap progress observation carried no facts: %+v", observation)
+		}
+		// Beside the gap load and the gap commit, which are both state. A
+		// reader looking for what a guard is doing filters by component, so a
+		// line under another one is a line they do not see; and an
+		// unregistered component/stage pair normalises the stage to _other,
+		// which takes the line out of the log budget's workflow path as well.
+		if observation.Component != observability.ComponentState {
+			t.Fatalf("gap progress component=%q, want=%q", observation.Component, observability.ComponentState)
+		}
+		if observation.Trace.StrategyID != planIdentity().StrategyID {
+			t.Fatalf("gap progress strategy=%q, want=%q", observation.Trace.StrategyID, planIdentity().StrategyID)
+		}
+		got = append(got, *observation.GapProgress)
+	}
+	want := []observability.GapProgressFacts{
+		{Scope: "plan", Status: string(execution.GapStatusGapped), Reason: contract.ReasonConfigDrift,
+			Required: 5, Observed: 0, Progress: contract.GapScopeProgressNone},
+		{Scope: "5", Status: string(execution.GapStatusWarming), Reason: contract.ReasonHistoryWarming,
+			Required: 5, Observed: 3, Progress: contract.GapScopeProgressPartial},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("gap progress facts=%+v, want=%+v", got, want)
+	}
+}
+
+// Nothing is reported for a Plan whose marker is gone. That silence is the
+// counterpart of the line above: a reader who saw a scope reported for every
+// Plan could not tell a held guard from a released one.
+func TestSlotExecutionCoordinatorReportsNoGapScopeProgressWithoutAMarker(t *testing.T) {
+	fixture := newFixture(t, true, "")
+	fixture.ports.gapMissing = true
+	if _, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationNormal)); err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+	for _, observation := range slotObservations(fixture.observations) {
+		if observation.Stage == observability.StageGapGuardProgress {
+			t.Fatalf("cleared marker reported progress: %+v", observation.GapProgress)
+		}
 	}
 }
 
@@ -645,8 +725,20 @@ func TestSlotExecutionCoordinatorShortCircuitsAlreadyAppliedState(t *testing.T) 
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
 	assertTrace(t, fixture.trace, []string{
-		"query", "gap_load", "state_load", "evaluate", "sequence", "admission_initial", "gap_after", "admission_progress", "progress_commit",
+		"query", "gap_load", "state_load", "sequence", "admission_initial", "admission_progress", "progress_commit",
 	})
+	var reused int
+	for _, observed := range *fixture.observations {
+		if observed.Stage == observability.StageMutationCompared {
+			normalized := observability.NormalizeObservation(observed)
+			if normalized.ReasonCode == observability.ReasonStateAlreadyAppliedBeforeEvaluation {
+				reused++
+			}
+		}
+	}
+	if reused != 1 {
+		t.Fatalf("pre-evaluation reuse observations = %d, want 1", reused)
+	}
 }
 
 func TestSlotExecutionCoordinatorRejectsInvalidRequestAndProviderDrift(t *testing.T) {
@@ -693,7 +785,16 @@ func TestSlotExecutionCoordinatorPreservesStateTerminalAsPlanCompletion(t *testi
 	if fixture.ports.lastProgress.Completion.Kind != execution.CompletionTerminal {
 		t.Fatalf("completion=%q", fixture.ports.lastProgress.Completion.Kind)
 	}
-	stateObservation := slotObservations(fixture.observations)[1]
+	// Selected by stage rather than by position: an index into the
+	// observation stream breaks on any unrelated line added anywhere before
+	// it, and names nothing about what it is checking.
+	var stateObservation observability.Observation
+	for _, observed := range slotObservations(fixture.observations) {
+		if observed.Stage == observability.StageStatePreflight {
+			stateObservation = observed
+			break
+		}
+	}
 	if stateObservation.Result != observability.ResultTerminal || stateObservation.ReasonCode != contract.ReasonRecordInvalid ||
 		stateObservation.Counts.Keys != 1 {
 		t.Fatalf("state observation=%+v", stateObservation)
@@ -945,10 +1046,20 @@ func TestSlotExecutionCoordinatorKeepsEventACKUnknownRetryable(t *testing.T) {
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
 	assertTrace(t, fixture.trace, fullTrace[:9])
-	last := (*fixture.observations)[len(*fixture.observations)-1]
-	if last.Stage != observability.StageEventACKed || last.Result != observability.ResultFailed ||
-		last.ReasonCode != execution.ReasonCode(contract.ReasonOutputACKUnknown) {
-		t.Fatalf("event ACK observation=%+v", last)
+	// The ACK failure is the last thing that happened to this Plan, rather
+	// than the last line of the Slot: the Slot still reports its series census
+	// on the way out, which writes nothing. What the test is actually about --
+	// that nothing after the failure advanced state or Progress -- is asserted
+	// directly below.
+	var acked *observability.Observation
+	for index := range *fixture.observations {
+		if observation := (*fixture.observations)[index]; observation.Stage == observability.StageEventACKed {
+			acked = &(*fixture.observations)[index]
+		}
+	}
+	if acked == nil || acked.Result != observability.ResultFailed ||
+		acked.ReasonCode != execution.ReasonCode(contract.ReasonOutputACKUnknown) {
+		t.Fatalf("event ACK observation=%+v", acked)
 	}
 	if fixture.ports.stateApplyCalls != 0 || !isZeroProgressCommit(fixture.ports.lastProgress) {
 		t.Fatalf("unknown event ACK advanced state/progress: state=%d progress=%+v",
@@ -1030,7 +1141,21 @@ func (ports *recordingPorts) ResolveFinalization(
 	_ context.Context,
 	request execution.SlotExecutionRequest,
 ) (execution.QueryFreeFinalization, error) {
-	return execution.QueryFreeFinalization{Contract: request.Contract, Mode: execution.FinalizationQueryRequired}, nil
+	mode := ports.finalizationMode
+	if mode == "" {
+		mode = execution.FinalizationQueryRequired
+	}
+	finalization := execution.QueryFreeFinalization{Contract: request.Contract, Mode: mode}
+	if mode == execution.FinalizationGapSkipped || mode == execution.FinalizationSnapshotUnavailable {
+		// A query-free finalization carries the due Plans it is finalizing:
+		// that frozen set is the only thing the path has to work from.
+		finalization.Targets = request.DuePlanTargets
+		finalization.ReasonCode = execution.ReasonCode(contract.ReasonGapSkipped)
+		if mode == execution.FinalizationSnapshotUnavailable {
+			finalization.ReasonCode = execution.ReasonCode(contract.ReasonSnapshotUnavailable)
+		}
+	}
+	return finalization, nil
 }
 
 func (ports *recordingPorts) LoadActivations(
@@ -1086,17 +1211,36 @@ func (ports *recordingPorts) LoadActivations(
 }
 
 type recordingPorts struct {
-	openAlerts                      map[string]bool
-	trackedPlans                    []execution.PlanIdentity
-	acknowledged                    []contract.TriggerEventV1
-	openAlertCalls                  []string
-	trace                           *[]string
-	ready                           bool
-	failStage                       string
-	beginErr                        error
-	admissionCalls                  int
-	contractDrift                   bool
-	alreadyApplied                  bool
+	// finalizationMode lets a test put the Slot on the query-free path, which
+	// is where the evidence is read. Empty means the ordinary query path.
+	finalizationMode execution.FinalizationMode
+	evidence         *memoryEvidenceStore
+	openAlerts       map[string]bool
+	trackedPlans     []execution.PlanIdentity
+	acknowledged     []contract.TriggerEventV1
+	openAlertCalls   []string
+	trace            *[]string
+	ready            bool
+	failStage        string
+	// failErr, when set, is what the failing stage wraps, so a test can hand
+	// the coordinator the store's own typed refusal rather than an anonymous
+	// error.
+	failErr error
+	// eventRejection, when set with failStage event_ack, makes the event
+	// write fail as the sink's own refusal rather than a retryable dependency.
+	eventRejection *eventRejectionShape
+	// outputWrite, when set, is the count the fake sink reports for every
+	// batch, the way the real sink counts what a batch became.
+	outputWrite    *observability.OutputWriteFacts
+	beginErr       error
+	lastBegin      execution.ProgressBeginRequest
+	admissionCalls int
+	contractDrift  bool
+	alreadyApplied bool
+	// stateApplyAlreadyApplied makes every state write report that an earlier
+	// attempt had already written it, which is what a retry of a Slot whose
+	// first attempt got that far actually sees.
+	stateApplyAlreadyApplied        bool
 	degraded                        bool
 	completionCompleteness          execution.Completeness
 	wrongGapIdentity                bool
@@ -1121,11 +1265,15 @@ type recordingPorts struct {
 	activatedGapMarkers             map[execution.PlanGapIdentity]execution.GapGuardSnapshot
 	progressActivationChecked       bool
 	admissionRejectAt               int
+	frozenRenewalRequests           []execution.FrozenStateRenewalRequest
+	frozenRenewalOutcome            execution.FrozenRenewalOutcome
+	frozenRenewalErr                error
 	stateLoadStatus                 execution.StateLoadStatus
 	stateRetryableFirstOnly         bool
 	stateLoadCalls                  int
 	gapLoadStatus                   execution.GapLoadStatus
 	gapMissing                      bool
+	gapScopes                       []execution.GapScopeState
 	eventSeriesDrift                bool
 	eventTimeDrift                  bool
 	eventRecordDrift                bool
@@ -1389,7 +1537,10 @@ func (ports *recordingPorts) Evaluate(_ context.Context, request execution.Evalu
 			ApplyVersion: mutation.ApplyVersion, ScheduleRevision: "plan-schedule-v1",
 			Scopes: []execution.GapScopeMutation{{Kind: execution.GapOpen, ReasonCode: reason, RequiredFullSlots: 1}},
 		})}
-	} else {
+	} else if !ports.gapMissing {
+		// Only when the load found a marker. A Plan with no marker has nothing
+		// to clear, and a GapClear naming marker revision 1 against a missing
+		// one is refused before it reaches the store.
 		guardAfter = []execution.PlanGapMutation{mustPlanGapMutation(execution.PlanGapMutation{
 			Identity:               execution.PlanGapIdentity{Plan: planIdentity(), StateGeneration: "state-v1"},
 			ExpectedMarkerRevision: 1, ApplyVersion: mutation.ApplyVersion, ScheduleRevision: "plan-schedule-v1",
@@ -1504,6 +1655,9 @@ func (ports *recordingPorts) LoadGaps(_ context.Context, request execution.GapLo
 			items[index].Scopes = []execution.GapScopeState{{
 				Status: execution.GapStatusWarming, ReasonCode: execution.ReasonCode(contract.ReasonHistoryWarming), RequiredFullSlots: 1,
 			}}
+			if ports.gapScopes != nil {
+				items[index].Scopes = append([]execution.GapScopeState(nil), ports.gapScopes...)
+			}
 		}
 	}
 	return execution.GapLoadResult{Items: items}, ports.fail("gap_load")
@@ -1592,15 +1746,40 @@ func (ports *recordingPorts) lastTrace() string {
 	return (*ports.trace)[len(*ports.trace)-1]
 }
 
-func (ports *recordingPorts) WriteBatch(_ context.Context, events []contract.TriggerEventV1) error {
+func (ports *recordingPorts) WriteBatch(ctx context.Context, events []contract.TriggerEventV1) error {
 	ports.record("event_ack")
 	ports.eventCount += len(events)
 	ports.lastEvents = append([]contract.TriggerEventV1(nil), events...)
+	if ports.outputWrite != nil {
+		observability.ReportOutputWrite(ctx, int(ports.outputWrite.Published), int(ports.outputWrite.WithoutMessage))
+	}
 	if err := ports.fail("event_ack"); err != nil {
+		if ports.eventRejection != nil {
+			// The sink refusing to write, as the sink states it: not a
+			// retryable dependency, and named by reason word and sentence.
+			return &outputRejectedTestError{err: err, reason: ports.eventRejection.reason, detail: ports.eventRejection.detail}
+		}
 		return &retryableOutputTestError{err: err}
 	}
 	return nil
 }
+
+// outputRejectedTestError is the sink's refusal in the shape the sink's own
+// error has: an Error() that wraps the sentence with identity, and the two
+// methods the coordinator reads the reason word and the bare sentence from.
+type outputRejectedTestError struct {
+	err            error
+	reason, detail string
+}
+
+func (err *outputRejectedTestError) Error() string {
+	return err.reason + ": " + err.detail + " (event evt-1, strategy 1001, business 2, format standard_raw_event)"
+}
+func (err *outputRejectedTestError) Unwrap() error                 { return err.err }
+func (err *outputRejectedTestError) OutputRejectionReason() string { return err.reason }
+func (err *outputRejectedTestError) OutputRejectionDetail() string { return err.detail }
+
+type eventRejectionShape struct{ reason, detail string }
 
 type retryableOutputTestError struct{ err error }
 
@@ -1643,6 +1822,11 @@ func (ports *recordingPorts) ApplyRuntime(_ context.Context, request execution.S
 	}
 	for index, item := range request.Items {
 		items[index] = execution.StateApplyItemResult{Identity: item.Identity, Status: execution.StateApplied}
+		if ports.stateApplyAlreadyApplied {
+			items[index].Status = execution.StateApplyAlreadyApplied
+			items[index].AlreadyApplied = execution.StateAlreadyAppliedStable
+			items[index].StoredBlobRevision = 1
+		}
 		if ports.wrongStateApplyIdentity {
 			items[index].Identity.SeriesIdentityDigest = "another"
 		}
@@ -1666,7 +1850,8 @@ func (ports *recordingPorts) CommitProgress(_ context.Context, request execution
 	return execution.ProgressCommitResult{Status: execution.ProgressCommitted}, ports.fail("progress_commit")
 }
 
-func (ports *recordingPorts) BeginSlot(_ context.Context, _ execution.ProgressBeginRequest) (execution.ProgressBeginResult, error) {
+func (ports *recordingPorts) BeginSlot(_ context.Context, request execution.ProgressBeginRequest) (execution.ProgressBeginResult, error) {
+	ports.lastBegin = request
 	if ports.beginErr != nil {
 		return execution.ProgressBeginResult{}, ports.beginErr
 	}
@@ -1685,6 +1870,9 @@ func isZeroProgressCommit(request execution.ProgressCommitRequest) bool {
 }
 func (ports *recordingPorts) fail(stage string) error {
 	if ports.failStage == stage {
+		if ports.failErr != nil {
+			return fmt.Errorf("injected %s: %w", stage, ports.failErr)
+		}
 		return errors.New("injected " + stage)
 	}
 	return nil
@@ -2047,4 +2235,26 @@ func publicMethodNames(value reflect.Type) []string {
 		methods[index] = value.Method(index).Name
 	}
 	return methods
+}
+
+// RenewFrozenRuntime records what the Slot asked about and answers with what
+// the test set, so a test can put a renewal failure or a vanished key in front
+// of a whole Slot and read what the Slot then did.
+func (ports *recordingPorts) RenewFrozenRuntime(
+	_ context.Context, request execution.FrozenStateRenewalRequest,
+) (execution.FrozenStateRenewalResult, error) {
+	ports.record("frozen_state_renewal")
+	ports.frozenRenewalRequests = append(ports.frozenRenewalRequests, request)
+	if ports.frozenRenewalErr != nil {
+		return execution.FrozenStateRenewalResult{}, ports.frozenRenewalErr
+	}
+	outcome := ports.frozenRenewalOutcome
+	if outcome == "" {
+		outcome = execution.FrozenRenewalRenewed
+	}
+	result := execution.FrozenStateRenewalResult{Items: make([]execution.FrozenStateRenewalItem, len(request.Items))}
+	for index, item := range request.Items {
+		result.Items[index] = execution.FrozenStateRenewalItem{Identity: item.Identity, Outcome: outcome}
+	}
+	return result, nil
 }

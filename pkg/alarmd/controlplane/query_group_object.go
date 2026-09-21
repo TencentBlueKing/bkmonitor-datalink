@@ -93,6 +93,10 @@ type OutputContextObject struct {
 	SubjectFacts        *contract.MonitorSubjectFacts   `json:"subject_facts,omitempty"`
 	LegacyOutput        *contract.LegacyOutputContext   `json:"legacy_output,omitempty"`
 	WireFormat          string                          `json:"wire_format,omitempty"`
+	// SignalType is here for the same reason WireFormat is: it is read only
+	// when an event is rendered, and it is frozen with the Plan so a Slot
+	// retried across a strategy edit publishes the same bytes both times.
+	SignalType string `json:"signal_type,omitempty"`
 }
 
 // BuildQueryGroupObject projects the execution content out of a published
@@ -144,7 +148,7 @@ func BuildOutputContext(plan FrozenPlan) OutputContextObject {
 		ContractVersion: outputContextContractVersion, Identity: plan.Identity,
 		StrategyRef: plan.Plan.StrategyRef, SourceCompatibility: plan.Plan.SourceCompatibility,
 		SubjectFacts: plan.Plan.SubjectFacts, LegacyOutput: plan.Plan.LegacyOutput,
-		WireFormat: plan.Plan.WireFormat,
+		WireFormat: plan.Plan.WireFormat, SignalType: plan.Plan.SignalType,
 	}
 }
 

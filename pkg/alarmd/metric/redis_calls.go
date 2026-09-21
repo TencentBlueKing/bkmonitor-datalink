@@ -49,6 +49,25 @@ type RedisClientHealth struct {
 	// LastFailure is the error's text, sanitised of anything that looks like a
 	// credential and bounded. Empty until one has failed.
 	LastFailure string
+	// ScriptCacheMisses counts the NOSCRIPT replies: EVALSHA named a script
+	// the server has not cached, and the caller's next step is to send the
+	// body with EVAL. It is the one error reply that is not a failure of
+	// anything -- it is how a script gets loaded after this process, the
+	// server or the sentinel's master changes -- and it was sitting in
+	// LastFailure on a deployment's dependency table for as long as nothing
+	// else failed, which read as a Redis with a problem. Kept apart, with
+	// its own clock: a miss long after start is a server that lost its
+	// cache, which is a restart or a failover this process did not otherwise
+	// see.
+	ScriptCacheMisses     int
+	LastScriptCacheMissAt time.Time
+}
+
+// noScriptReply is the reply that means the script body has to be sent again,
+// matched strictly on the server's own word so that no other error is read
+// as it. The same predicate the state backend retries on.
+func noScriptReply(err error) bool {
+	return err != nil && strings.HasPrefix(err.Error(), "NOSCRIPT")
 }
 
 // redisClientHealthTextLimit bounds the failure text kept. Long enough for a
@@ -80,6 +99,11 @@ func (book *redisClientHealthBook) note(client string, at time.Time, err error) 
 	}
 	if err == nil || err == redis.Nil {
 		health.LastSuccessAt = at
+		return
+	}
+	if noScriptReply(err) {
+		health.ScriptCacheMisses++
+		health.LastScriptCacheMissAt = at
 		return
 	}
 	health.LastFailureAt = at
@@ -160,7 +184,7 @@ func newRedisCallMetrics() redisCallMetrics {
 		}, labels),
 		failures: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Namespace: metricNamespace, Subsystem: metricSubsystem, Name: "redis_command_failure_total",
-			Help: "Redis commands that returned an error, excluding the empty-result signal.",
+			Help: "Redis commands that returned an error, excluding the empty-result signal. A NOSCRIPT reply to EVALSHA is counted here as the error reply it is, and is not a dependency failure: the client answers it with EVAL, and the fleet page keeps it apart as a script cache miss.",
 		}, labels),
 	}
 }

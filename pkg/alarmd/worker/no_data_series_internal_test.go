@@ -443,6 +443,15 @@ func TestAnEvaluatedPlanSpendsWhatItsSeriesCost(t *testing.T) {
 		t.Fatalf("the second Plan landed on %q, want %q - the first Plan's series did not spend the budget",
 			stream.noDataOutcomes[1], nodata.OutcomeSkippedSlotBudget)
 	}
+	// The one synthetic series that went to the batch is in the census on
+	// both sides it can be on before the write: it is a series the Slot meant
+	// to evaluate and issued a preflight for. Left out, the written side of
+	// the census counted it and the read side did not, and on a live
+	// deployment written stood above read by exactly the synthetic series.
+	// The skipped Plan's series never went anywhere and is not counted.
+	if stream.seriesCensus != (seriesCensus{Due: 1, Read: 1}) {
+		t.Fatalf("census = %+v, want the one synthetic series that went to the batch on due and read", stream.seriesCensus)
+	}
 }
 
 // failingStatePort answers every runtime load with an error, so a test can
@@ -704,4 +713,10 @@ func TestTheCensusIsZeroWhenNoPlanDetectsNoData(t *testing.T) {
 	if stream.noDataPlansSeen != 0 {
 		t.Fatalf("census = %d on a Slot where no Plan detects no-data, want 0", stream.noDataPlansSeen)
 	}
+}
+
+func (failingStatePort) RenewFrozenRuntime(
+	_ context.Context, request execution.FrozenStateRenewalRequest,
+) (execution.FrozenStateRenewalResult, error) {
+	return freshFrozenRenewals(request), nil
 }

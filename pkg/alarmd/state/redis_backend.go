@@ -41,6 +41,8 @@ type redisClient interface {
 	Ping(context.Context) *redis.StatusCmd
 	Eval(context.Context, string, []string, ...interface{}) *redis.Cmd
 	Close() error
+	hashClient
+	setClient
 }
 
 // compareAndSetByDigestSHA addresses the batched script by its SHA-1, so one
@@ -77,15 +79,17 @@ return 1
 // renewIfBelowScript extends a key's life only when it is running out.
 //
 // PTTL answers -2 for a key that does not exist and -1 for one that exists with
-// no expiry. The first returns early. The second needs no branch of its own:
-// the threshold is never negative, so -1 is always below it and the key is
-// renewed - which is what a key that never expires needs, that being the state
-// this exists to end. A clause spelling that out would be implied by the
-// comparison below it, and a condition no test can be written against is a
-// condition that rots quietly.
+// no expiry. The first returns 2 rather than 0, so the caller can tell a key
+// that vanished from a key with life left; those two are the opposite readings
+// and one reply for both is how a lost record reads as a healthy one. The
+// second needs no branch of its own: the threshold is never negative, so -1 is
+// always below it and the key is renewed - which is what a key that never
+// expires needs, that being the state this exists to end. A clause spelling
+// that out would be implied by the comparison below it, and a condition no
+// test can be written against is a condition that rots quietly.
 const renewIfBelowScript = `
 local remaining = redis.call('PTTL', KEYS[1])
-if remaining == -2 then return 0 end
+if remaining == -2 then return 2 end
 if remaining >= tonumber(ARGV[2]) then return 0 end
 redis.call('PEXPIRE', KEYS[1], ARGV[1])
 return 1
@@ -105,21 +109,21 @@ return 1
 // ARGV[1] expected missing ('1'/'0'); ARGV[2] SHA-1 hex of the expected value;
 // ARGV[3] new value; ARGV[4] TTL in milliseconds (0 keeps the key persistent);
 // ARGV[5] require assignment ('1'/'0'); ARGV[6] owner id; ARGV[7] owner epoch;
-// ARGV[8] lease token; ARGV[9] now in milliseconds.
+// ARGV[8] lease token; ARGV[9], optional, the content scope the writer is
+// executing (empty: not compared). No instant is passed: the lease deadline
+// is compared with the server's clock, the one it was minted on.
 //
-// Replies: {'APPLIED'}, {'STALE_OWNER'}, {'CONFLICT_MISSING'} when the key
-// vanished, {'CONFLICT', current} when the current bytes differ.
-const compareAndSetByDigestScript = `
+// The fence itself is ownership.FenceLua, the same text every fenced script
+// runs; this script only maps its refusals. A moved content scope answers
+// CONTENT_MOVED so the caller can tell a stale view from a stale lease.
+//
+// Replies: {'APPLIED'}, {'STALE_OWNER'}, {'CONTENT_MOVED'}, {'CONFLICT_MISSING'}
+// when the key vanished, {'CONFLICT', current} when the current bytes differ.
+const compareAndSetByDigestScript = ownership.FenceLua + `
 if #KEYS == 3 then
-  if ARGV[5] == '1' then
-    local desired = redis.call('HGET', KEYS[2], 'desired_worker_id')
-    if not desired or desired ~= ARGV[6] then return {'STALE_OWNER'} end
-  end
-  if redis.call('HGET', KEYS[3], 'execution_disposition') ~= 'ACTIVE' or
-     redis.call('HGET', KEYS[3], 'owner_id') ~= ARGV[6] or
-     redis.call('HGET', KEYS[3], 'owner_epoch') ~= ARGV[7] or
-     redis.call('HGET', KEYS[3], 'lease_token') ~= ARGV[8] or
-     tonumber(redis.call('HGET', KEYS[3], 'deadline_ms') or '0') <= tonumber(ARGV[9]) then return {'STALE_OWNER'} end
+  local refusal = fence_refusal(KEYS[2], KEYS[3], ARGV[5], ARGV[6], ARGV[7], ARGV[8], ARGV[9] or '', redis_now_ms())
+  if refusal == 'CONTENT_MOVED' then return {'CONTENT_MOVED'} end
+  if refusal then return {'STALE_OWNER'} end
 end
 local current = redis.call('GET', KEYS[1])
 if ARGV[1] == '1' then
@@ -138,18 +142,22 @@ return {'APPLIED'}
 
 // FenceGuard is the owner fence one batched write verifies inside Redis. It
 // combines the ownership store's key descriptor with the lease facts the
-// worker was admitted with and the instant the deadline is compared against.
+// worker was admitted with. It carries no instant: the deadline is compared
+// with Redis's own clock inside the script.
 type FenceGuard struct {
 	Keys       ownership.FenceKeys
 	OwnerID    string
 	OwnerEpoch uint64
 	LeaseToken string
-	NowMillis  int64
+	// ContentScope, when set, is the executable view the writer is acting
+	// on; the fence then also refuses an Assignment record that names
+	// another (decision-016). Empty keeps the five comparisons as they were.
+	ContentScope string
 }
 
 func (guard FenceGuard) validate() error {
 	if guard.Keys.OwnershipKey == "" || (guard.Keys.RequireAssignment && guard.Keys.AssignmentKey == "") ||
-		guard.OwnerID == "" || guard.OwnerEpoch == 0 || guard.LeaseToken == "" || guard.NowMillis <= 0 {
+		guard.OwnerID == "" || guard.OwnerEpoch == 0 || guard.LeaseToken == "" {
 		return fmt.Errorf("state: invalid fence guard")
 	}
 	return nil
@@ -173,6 +181,10 @@ const (
 	FencedWriteStaleOwner      FencedWriteStatus = "STALE_OWNER"
 	FencedWriteConflictMissing FencedWriteStatus = "CONFLICT_MISSING"
 	FencedWriteConflict        FencedWriteStatus = "CONFLICT"
+	// FencedWriteContentMoved is the fence refusing a writer whose declared
+	// content scope the Assignment record no longer names: the lease holds,
+	// the view is behind. Reported with ownership.ErrContentScopeMoved.
+	FencedWriteContentMoved FencedWriteStatus = "CONTENT_MOVED"
 )
 
 // FencedWriteOutcome is one per-key result. Current carries the bytes Redis
@@ -237,11 +249,22 @@ func (backend *RedisBackend) Address() string {
 	return backend.address
 }
 
+// Ping is readiness for this backend: the server answers, and it runs the
+// owner fence its batched writes carry (compareAndSetByDigestScript reads
+// TIME and then writes, which not every Redis accepts). The probe names a
+// key of its own that is never created, so it can share a server with the
+// ownership store without touching a key of either.
 func (backend *RedisBackend) Ping(ctx context.Context) error {
 	if backend == nil || backend.client == nil {
 		return fmt.Errorf("state: Redis backend is required")
 	}
-	return backend.client.Ping(ctx).Err()
+	if err := backend.client.Ping(ctx).Err(); err != nil {
+		return err
+	}
+	if _, err := ownership.ProbeFenceClock(ctx, backend.client, "alarmd-state"); err != nil {
+		return fmt.Errorf("state: %w", err)
+	}
+	return nil
 }
 
 func (backend *RedisBackend) MGet(ctx context.Context, keys []string) ([][]byte, error) {
@@ -326,21 +349,75 @@ func (backend *RedisBackend) CompareAndSet(
 // first time they are loaded, so the ones still in use repair themselves and
 // only the ones nothing loads any more are left for a one-off sweep.
 //
-// A missing key is left alone and reported as not renewed. Creating it here
-// would write a key with no value, which every reader would then classify as
-// corrupt state.
+// A missing key is left alone and reported as MISSING. Creating it here would
+// write a key with no value, which every reader would then classify as corrupt
+// state.
 func (backend *RedisBackend) RenewIfBelow(
 	ctx context.Context, key string, ttl, threshold time.Duration,
-) (bool, error) {
-	if backend == nil || backend.client == nil || key == "" || ttl <= 0 || threshold < 0 || threshold > ttl {
-		return false, fmt.Errorf("state: invalid Redis lifetime renewal")
-	}
-	result, err := backend.client.Eval(ctx, renewIfBelowScript, []string{key},
-		ttl.Milliseconds(), threshold.Milliseconds()).Int()
+) (RenewalOutcome, error) {
+	outcomes, err := backend.RenewManyIfBelow(ctx, []string{key}, ttl, threshold)
 	if err != nil {
-		return false, err
+		return "", err
 	}
-	return result == 1, nil
+	return outcomes[0], nil
+}
+
+// RenewManyIfBelow runs the same script for every key in one pipeline.
+//
+// One round trip rather than one per key, because the caller that needs this
+// is holding a whole Slot's frozen series at once. The largest query group in
+// production carries about 5,100 of them; sending those one at a time would
+// add seconds to a Slot that already takes twelve, and it would do it to the
+// Slot that is already the slowest one on the deployment.
+//
+// A transport failure fails the whole call: the pipeline's effect is then
+// unknown, and a renewal whose outcome is unknown must not be recorded as
+// either a renewal or a loss. A reply error on one key is that key's own
+// error, since the others were still answered.
+func (backend *RedisBackend) RenewManyIfBelow(
+	ctx context.Context, keys []string, ttl, threshold time.Duration,
+) ([]RenewalOutcome, error) {
+	if backend == nil || backend.client == nil || len(keys) == 0 || ttl <= 0 || threshold < 0 || threshold > ttl {
+		return nil, fmt.Errorf("state: invalid Redis lifetime renewal")
+	}
+	for _, key := range keys {
+		if key == "" {
+			return nil, fmt.Errorf("state: invalid Redis lifetime renewal")
+		}
+	}
+	cmds, err := backend.client.Pipelined(ctx, func(pipeline redis.Pipeliner) error {
+		for _, key := range keys {
+			pipeline.Eval(ctx, renewIfBelowScript, []string{key},
+				ttl.Milliseconds(), threshold.Milliseconds())
+		}
+		return nil
+	})
+	if err != nil && !isRedisReplyError(err) {
+		return nil, err
+	}
+	if len(cmds) != len(keys) {
+		return nil, fmt.Errorf("state: Redis pipeline returned %d replies for %d renewals", len(cmds), len(keys))
+	}
+	outcomes := make([]RenewalOutcome, len(keys))
+	for index, cmd := range cmds {
+		command, ok := cmd.(*redis.Cmd)
+		if !ok {
+			return nil, fmt.Errorf("state: Redis pipeline returned an unexpected reply for renewal %d", index)
+		}
+		result, err := command.Int()
+		if err != nil {
+			return nil, err
+		}
+		switch result {
+		case 1:
+			outcomes[index] = RenewalRenewed
+		case 2:
+			outcomes[index] = RenewalMissing
+		default:
+			outcomes[index] = RenewalFresh
+		}
+	}
+	return outcomes, nil
 }
 
 // CompareAndSetManyByDigest sends one EVAL per write in a single pipeline. A
@@ -427,7 +504,7 @@ func (backend *RedisBackend) evalFencedWrites(
 			if guard != nil {
 				keys = append(keys, guard.Keys.AssignmentKey, guard.Keys.OwnershipKey)
 				args = append(args, boolArg(guard.Keys.RequireAssignment), guard.OwnerID,
-					strconv.FormatUint(guard.OwnerEpoch, 10), guard.LeaseToken, guard.NowMillis)
+					strconv.FormatUint(guard.OwnerEpoch, 10), guard.LeaseToken, guard.ContentScope)
 			}
 			if byDigest {
 				pipeline.EvalSha(ctx, compareAndSetByDigestSHA, keys, args...)
@@ -465,7 +542,7 @@ func decodeFencedWriteReply(cmd redis.Cmder) FencedWriteOutcome {
 		return FencedWriteOutcome{Err: fmt.Errorf("state: Redis fenced write status %T is not text", items[0])}
 	}
 	switch FencedWriteStatus(code) {
-	case FencedWriteApplied, FencedWriteStaleOwner, FencedWriteConflictMissing:
+	case FencedWriteApplied, FencedWriteStaleOwner, FencedWriteContentMoved, FencedWriteConflictMissing:
 		return FencedWriteOutcome{Status: FencedWriteStatus(code)}
 	case FencedWriteConflict:
 		if len(items) != 2 {
@@ -515,6 +592,13 @@ func NewFixedRouter(name string, backend Backend) (*FixedRouter, error) {
 		return nil, fmt.Errorf("state: fixed storage target name and backend are required")
 	}
 	return &FixedRouter{target: StorageTarget{Name: name, Backend: backend}}, nil
+}
+
+func (router *FixedRouter) Targets() []StorageTarget {
+	if router == nil || router.target.Name == "" || router.target.Backend == nil {
+		return nil
+	}
+	return []StorageTarget{router.target}
 }
 
 func (router *FixedRouter) Route(_, _ string) (StorageTarget, error) {

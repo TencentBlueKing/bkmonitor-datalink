@@ -162,6 +162,14 @@ func (l *LoggingObserver) Observe(ctx context.Context, observation Observation) 
 }
 
 func (l *Logger) logObservation(ctx context.Context, observation Observation, admission LogAdmission) {
+	// Terminal scheduler errors bypass the worker's internal observations.
+	// Read typed evidence from the returned error before text is truncated.
+	if observation.GapConflict == nil && observation.Err != nil {
+		var conflict interface{ GapConflictEvidence() *GapExtensionFacts }
+		if errors.As(observation.Err, &conflict) {
+			observation.GapConflict = conflict.GapConflictEvidence()
+		}
+	}
 	observation.Trace = mergeTraceFields(observation.Trace, TraceFieldsFromContext(ctx))
 	attributes := []slog.Attr{
 		slog.String("component", string(observation.Component)),
@@ -172,6 +180,12 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 		slog.String("direction", string(observation.Direction)),
 		slog.Int64("duration_ms", observation.Duration.Milliseconds()),
 	}
+	if f := observation.GapExtensions; len(f) > 0 {
+		attributes = append(attributes, slog.Any("gap_extensions", f))
+	}
+	if f := observation.GapConflict; f != nil {
+		attributes = append(attributes, slog.Any("gap_conflict", f))
+	}
 	if f := observation.QueryCooldown; f != nil {
 		attributes = append(attributes, slog.Any("query_cooldown", f))
 	}
@@ -180,6 +194,42 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 	}
 	if f := observation.ShortPeriodCompletion; f != nil {
 		attributes = append(attributes, slog.Any("short_period_completion", f))
+	}
+	if r := observation.OutputRejection; r != nil {
+		attributes = append(attributes, slog.Any("output_rejection", r))
+	}
+	if w := observation.OutputWrite; w != nil {
+		// Both numbers, zero included: a success that handed the broker
+		// nothing is the case this exists to tell from a write.
+		attributes = append(attributes, slog.Int64("messages_published", w.Published), slog.Int64("events_without_message", w.WithoutMessage))
+	}
+	if f := observation.FrozenStateRenewal; f != nil {
+		// The eight numbers on the line, not only on the metric: the line is
+		// what a reader of one Slot has, and without them frozen_state_renewed
+		// said a renewal happened and nothing about it.
+		attributes = append(attributes, slog.Any("frozen_state_renewal", f))
+	}
+	if f := observation.DispatchTurnaway; f != nil {
+		attributes = append(attributes, slog.Any("dispatch_turnaway", f))
+	}
+	if f := observation.ViewStream; f != nil {
+		attributes = append(attributes, slog.Any("view_stream", f))
+	}
+	if f := observation.StateAlreadyApplied; f != nil && !f.Empty() {
+		for key, count := range f.Counts {
+			attributes = append(attributes, slog.Int64("state_already_applied_"+string(key.Site)+"_"+string(key.Kind), count))
+		}
+		if f.Skew != nil {
+			attributes = append(attributes, slog.Any("state_revision_skew", f.Skew))
+		}
+	}
+	if f := observation.StateVersionConflict; f != nil && !f.Empty() {
+		for key, count := range f.Counts {
+			attributes = append(attributes, slog.Int64("state_version_conflict_"+string(key.Site)+"_"+string(key.Kind), count))
+		}
+		if len(f.Samples) > 0 {
+			attributes = append(attributes, slog.Any("state_version_conflict_samples", f.Samples))
+		}
 	}
 	if f := observation.StateApplyChunk; f != nil {
 		attributes = append(attributes, slog.Int("chunk_index", f.Index), slog.Int("chunk_count", f.Count),
@@ -242,6 +292,35 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 		// that has something to explain.
 		attributes = append(attributes, slog.String("slot_wait", facts.Wait))
 	}
+	if facts := observation.RangeGate; facts != nil {
+		// The word plus the values it was derived from. Without the values the
+		// word cannot be checked, and this word exists precisely because the
+		// previous reading -- a GAP_SKIPPED completion -- could not be.
+		attributes = append(attributes,
+			slog.String("range_gate", facts.Outcome),
+			slog.Int64("range_gate_progress_next_slot", facts.ProgressNextSlot),
+			slog.Int64("range_gate_expected_next_slot", facts.ExpectedNextSlot),
+			slog.Bool("range_gate_unfinished_slot", facts.UnfinishedSlotPresent),
+		)
+		if facts.UnfinishedSlotPresent {
+			attributes = append(attributes,
+				slog.Int64("range_gate_unfinished_evaluation_time", facts.UnfinishedSlotEvaluationTime))
+		}
+		// The two candidate bounds, on the refusals that computed them. They
+		// were on the facts and on no line: the word steps_below_one says the
+		// range would be shorter than two Slots and nothing about which of the
+		// two bounds held it there, which is the difference between a Query
+		// Group barely past its window and one whose deadline has only just
+		// passed. Not emitted as zeroes when they were never computed, for the
+		// same reason bounds_known exists at all.
+		if facts.BoundsKnown {
+			attributes = append(attributes,
+				slog.Bool("range_gate_bounds_known", true),
+				slog.Int64("range_gate_distance_bound", facts.DistanceBound),
+				slog.Int64("range_gate_deadline_bound", facts.DeadlineBound),
+			)
+		}
+	}
 	if facts := observation.ReplayExpiry; facts != nil {
 		// The reason on every expiry, and the two compared instants on the one
 		// that reports a defect. A Slot that says only that it was skipped
@@ -257,7 +336,9 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 				slog.Int64("replay_distance_boundary", facts.DistanceBoundaryUnixMilli),
 			)
 		}
+		attributes = appendHeldByAttributes(attributes, facts.HeldBy)
 	}
+	attributes = appendHeldByAttributes(attributes, observation.HeldBy)
 	if facts := observation.SegmentContent; facts != nil {
 		attributes = append(attributes, slog.String("segment_content", facts.State))
 	}
@@ -266,6 +347,63 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			slog.String("no_data_outcome", facts.Outcome),
 			slog.Int("no_data_outcome_plans", facts.Plans),
 		)
+	}
+	if facts := observation.GapProgress; facts != nil {
+		// Both numbers, on every line. The question these answer is "how far
+		// has this guard got", and k alone answers it only for a reader who
+		// already knows N -- which varies by strategy, because it is the
+		// largest history requirement across that strategy's Levels.
+		attributes = append(attributes,
+			slog.String("gap_scope", facts.Scope),
+			slog.String("gap_scope_status", facts.Status),
+			slog.String("gap_scope_reason", facts.Reason),
+			slog.Uint64("gap_full_slots_required", uint64(facts.Required)),
+			slog.Uint64("gap_full_slots_observed", uint64(facts.Observed)),
+			slog.String("gap_progress", facts.Progress),
+		)
+	}
+	if facts := observation.NoDataMemoryWrite; facts != nil {
+		// Both, always. The outcome alone makes a reader remember which of the
+		// five mean the record was kept, and that is the question they came
+		// with; stored alone loses which situation it was.
+		attributes = append(attributes,
+			slog.String("no_data_memory_outcome", facts.Outcome),
+			slog.Bool("no_data_memory_stored", facts.Stored),
+		)
+		if facts.DerivedFrom != "" {
+			attributes = append(attributes, slog.String("no_data_memory_derived_from", facts.DerivedFrom))
+		}
+		if conflict := facts.Conflict; conflict != nil {
+			// Which comparison failed and both sides of it. A conflict carries
+			// no reason code -- it is not a rejection -- so without these the
+			// line says the write was refused and nothing about why, which is
+			// what a fleet-wide refusal looked like for a day.
+			attributes = append(attributes,
+				slog.String("no_data_memory_conflict", conflict.Kind),
+				slog.Uint64("no_data_memory_expected_revision", conflict.ExpectedRevision),
+				slog.Uint64("no_data_memory_stored_revision", conflict.StoredRevision),
+			)
+			if conflict.Persisted != "" || conflict.Proposed != "" {
+				attributes = append(attributes,
+					slog.String("no_data_memory_persisted_digest", conflict.Persisted),
+					slog.String("no_data_memory_proposed_digest", conflict.Proposed),
+				)
+			}
+		}
+	}
+	if facts := observation.NoDataMemoryRefusal; facts != nil {
+		attributes = append(attributes, slog.String("no_data_memory_refusal", facts.Reason))
+		if facts.Record != "" {
+			// Both numbers together or neither. A reader given the measurement
+			// with no bound, or the bound with no measurement, cannot tell how
+			// far over it is, which is the only question this line exists to
+			// answer.
+			attributes = append(attributes,
+				slog.String("no_data_memory_record", facts.Record),
+				slog.Int("no_data_memory_groups", facts.Groups),
+				slog.Int("no_data_memory_limit", facts.Limit),
+			)
+		}
 	}
 	if facts := observation.StateGenerationSkew; facts != nil {
 		attributes = append(attributes,
@@ -310,6 +448,18 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			slog.Any("rebalance_owned", facts.Owned),
 			slog.Bool("rebalance_moves_truncated", facts.MovesTruncated),
 			slog.Any("rebalance_moves", facts.Moves),
+		)
+	}
+	if facts := observation.AssignmentSweep; facts != nil {
+		// The five numbers of a sweep, zeros included: the line existed for a
+		// release with only its stage and result on it, and "swept" with
+		// nothing beside it could not be told from "swept nothing".
+		attributes = append(attributes,
+			slog.Int("assignment_sweep_scanned", facts.Scanned),
+			slog.Int("assignment_sweep_retired", facts.Retired),
+			slog.Int("assignment_sweep_reclaimed", facts.Reclaimed),
+			slog.Int("assignment_sweep_held_by_lease", facts.HeldByLease),
+			slog.Int("assignment_sweep_changed", facts.Changed),
 		)
 	}
 	if facts := observation.AssignmentIndex; facts != nil {
@@ -619,6 +769,10 @@ func mandatoryLogStage(stage Stage) bool {
 	case StageSnapshotRefreshed, StageSnapshotUnavailable, StageAssignmentAcquired, StageAssignmentLost,
 		StageTakeoverStarted, StageTakeoverCompleted:
 		return true
+	case StageAssignmentSwept, StageViewPublished, StageViewSession, StageViewInstalled:
+		// Once per term, or once per Worker per connection: rare, and the
+		// only account there is of what happened. Never budgeted away.
+		return true
 	case StageSourceWithheld:
 		// Outside the repeated-line budget, and it has to be. That budget is
 		// per (reason, query group), and a withheld source has no query group -
@@ -679,4 +833,31 @@ func (w *serializedLogWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.next.Write(p)
+}
+
+// appendHeldByAttributes writes what held the previous round as flat keys.
+//
+// Flat, like everything else on these lines: the renderer emits keys rather
+// than objects, and a nested held_by is written but invisible to anything
+// filtering the line. It first shipped nested inside one cohort's bundle and
+// the lines that most needed it -- the sixty-second and slower Query Groups
+// being skipped -- had no bundle and therefore no cause on them at all.
+func appendHeldByAttributes(attributes []slog.Attr, held *HeldByFacts) []slog.Attr {
+	if held == nil {
+		return attributes
+	}
+	attributes = append(attributes,
+		slog.String("held_by", held.Decision),
+		slog.Int64("held_by_at", held.AtUnixMilli),
+	)
+	switch held.Decision {
+	case "query_cooldown":
+		attributes = append(attributes,
+			slog.Uint64("held_by_cooldown_failures", uint64(held.QueryCooldownFailures)),
+			slog.Int64("held_by_cooldown_until", held.QueryCooldownUntilMilli),
+		)
+	case HeldByReadinessDeferred:
+		attributes = append(attributes, slog.Int64("held_by_ready_at", held.ReadyAtUnixMilli))
+	}
+	return attributes
 }

@@ -30,7 +30,7 @@ func TestFrozenContractKeepsScheduleAsProvenance(t *testing.T) {
 
 func TestScheduleProgressUsesQueryGroupIdentity(t *testing.T) {
 	fields := fieldNames(reflect.TypeOf(execution.ScheduleProgress{}))
-	want := []string{"Identity", "NextSlot", "LastFullSlot", "LastCompletionKind", "CurrentOrRecentGap", "UnfinishedSlot", "UnfinishedRange"}
+	want := []string{"Identity", "NextSlot", "LastFullSlot", "LastCompletionKind", "CurrentOrRecentGap", "UnfinishedSlot", "UnfinishedRange", "LastCompletion"}
 	if !reflect.DeepEqual(fields, want) {
 		t.Fatalf("ScheduleProgress fields = %v, want %v", fields, want)
 	}
@@ -38,11 +38,11 @@ func TestScheduleProgressUsesQueryGroupIdentity(t *testing.T) {
 
 func TestProgressContractsDoNotFreezeNextSlotAfterCompletion(t *testing.T) {
 	if got, want := fieldNames(reflect.TypeOf(execution.SlotExecutionRequest{})),
-		[]string{"ShortPeriodCohort", "Contract", "DuePlanTargets", "EarliestQueryDeadlineUnixMilli", "RecoveryUntilUnixMilli", "KeepUntilUnixMilli", "ReplayExpired", "Operation", "AttemptNo", "OwnerFence", "ExpectedNextSlot", "ExpiredRange"}; !reflect.DeepEqual(got, want) {
+		[]string{"ShortPeriodCohort", "Contract", "DuePlanTargets", "EarliestQueryDeadlineUnixMilli", "RecoveryUntilUnixMilli", "KeepUntilUnixMilli", "ReplayExpired", "Operation", "AttemptNo", "OwnerFence", "ExpectedNextSlot", "ExpiredRange", "ContentScope"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("SlotExecutionRequest fields = %v, want %v", got, want)
 	}
 	if got, want := fieldNames(reflect.TypeOf(execution.ProgressCommitRequest{})),
-		[]string{"Identity", "OwnerFence", "ExpectedNextSlot", "Completion", "Projection"}; !reflect.DeepEqual(got, want) {
+		[]string{"Identity", "OwnerFence", "ExpectedNextSlot", "Completion", "Projection", "ContentScope"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("ProgressCommitRequest fields = %v, want %v", got, want)
 	}
 }

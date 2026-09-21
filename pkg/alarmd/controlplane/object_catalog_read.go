@@ -79,18 +79,20 @@ func newObjectReadCache(maxEntries, maxBytes int) *objectReadCache {
 	return &objectReadCache{entries: make(map[string]*list.Element), order: list.New(), maxEntries: maxEntries, maxBytes: maxBytes}
 }
 
-func (cache *objectReadCache) lookup(key string) (any, bool) {
+// lookup returns the cached object and the stored size it was decoded from.
+func (cache *objectReadCache) lookup(key string) (any, int, bool) {
 	if cache == nil {
-		return nil, false
+		return nil, 0, false
 	}
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	element, ok := cache.entries[key]
 	if !ok {
-		return nil, false
+		return nil, 0, false
 	}
 	cache.order.MoveToFront(element)
-	return element.Value.(*objectCacheEntry).value, true
+	entry := element.Value.(*objectCacheEntry)
+	return entry.value, entry.bytes, true
 }
 
 func (cache *objectReadCache) store(key string, value any, bytes int) {
@@ -146,18 +148,20 @@ func (repository *RedisCatalogRepository) observeObjectRead(ctx context.Context,
 
 // loadObject reads one catalog object by key: the process cache first, then
 // one shared network read whose bytes are hashed against digest before they
-// are decoded, cached and returned.
+// are decoded, cached and returned. The stored size of the object comes back
+// with it on every path, hit included, because the local view is sized from
+// it and a hit is by far the common path.
 func (repository *RedisCatalogRepository) loadObject(
 	ctx context.Context,
 	kind, key, domain, digest string,
 	decode func([]byte) (any, error),
-) (any, error) {
+) (any, int, error) {
 	if repository == nil || repository.client == nil || digest == "" {
-		return nil, errors.New("alarmd controlplane: catalog object digest is required")
+		return nil, 0, errors.New("alarmd controlplane: catalog object digest is required")
 	}
-	if value, ok := repository.objectCache.lookup(key); ok {
+	if value, size, ok := repository.objectCache.lookup(key); ok {
 		repository.observeObjectRead(ctx, kind, objectReadHit)
-		return value, nil
+		return value, size, nil
 	}
 	flights := &repository.objectFlights
 	flights.mu.Lock()
@@ -180,13 +184,13 @@ func (repository *RedisCatalogRepository) loadObject(
 		case <-flight.done:
 		case <-ctx.Done():
 			observability.ObserveSlotWait(ctx, repository.observer, observability.SlotWaitObjectShare, "", waited, time.Now)
-			return nil, ctx.Err()
+			return nil, 0, ctx.Err()
 		}
 		observability.ObserveSlotWait(ctx, repository.observer, observability.SlotWaitObjectShare, "", waited, time.Now)
 		if flight.err == nil {
 			repository.observeObjectRead(ctx, kind, objectReadShare)
 		}
-		return flight.value, flight.err
+		return flight.value, flight.bytes, flight.err
 	}
 	flight.value, flight.bytes, flight.err = repository.readObject(ctx, kind, key, domain, digest, decode)
 	flights.mu.Lock()
@@ -196,7 +200,7 @@ func (repository *RedisCatalogRepository) loadObject(
 	if flight.err == nil {
 		repository.objectCache.store(key, flight.value, flight.bytes)
 	}
-	return flight.value, flight.err
+	return flight.value, flight.bytes, flight.err
 }
 
 func (repository *RedisCatalogRepository) readObject(
@@ -260,17 +264,18 @@ func noDataOccurrencesIn(payload []byte) int {
 
 // LoadQueryGroupObject reads the execution content stored under digest.
 func (repository *RedisCatalogRepository) LoadQueryGroupObject(ctx context.Context, digest execution.ObjectDigest) (QueryGroupObject, error) {
-	stored, err := repository.loadStoredQueryGroupObject(ctx, digest)
+	stored, _, err := repository.loadStoredQueryGroupObject(ctx, digest)
 	if err != nil {
 		return QueryGroupObject{}, err
 	}
 	return stored.object, nil
 }
 
+// loadStoredQueryGroupObject returns the decoded object and its stored size.
 func (repository *RedisCatalogRepository) loadStoredQueryGroupObject(
 	ctx context.Context, digest execution.ObjectDigest,
-) (storedQueryGroupObject, error) {
-	value, err := repository.loadObject(ctx, objectReadKindQueryGroup, repository.queryGroupObjectKey(digest), queryGroupObjectContractVersion, string(digest),
+) (storedQueryGroupObject, int, error) {
+	value, size, err := repository.loadObject(ctx, objectReadKindQueryGroup, repository.queryGroupObjectKey(digest), queryGroupObjectContractVersion, string(digest),
 		func(payload []byte) (any, error) {
 			var object QueryGroupObject
 			if err := json.Unmarshal(payload, &object); err != nil {
@@ -284,14 +289,20 @@ func (repository *RedisCatalogRepository) loadStoredQueryGroupObject(
 			}, nil
 		})
 	if err != nil {
-		return storedQueryGroupObject{}, err
+		return storedQueryGroupObject{}, 0, err
 	}
-	return value.(storedQueryGroupObject), nil
+	return value.(storedQueryGroupObject), size, nil
 }
 
 // LoadOutputContext reads the rendering context stored under digest.
 func (repository *RedisCatalogRepository) LoadOutputContext(ctx context.Context, digest execution.OutputContextDigest) (OutputContextObject, error) {
-	value, err := repository.loadObject(ctx, objectReadKindOutputContext, repository.outputContextKey(digest), outputContextContractVersion, string(digest),
+	context, _, err := repository.loadOutputContext(ctx, digest)
+	return context, err
+}
+
+// loadOutputContext returns the decoded context and its stored size.
+func (repository *RedisCatalogRepository) loadOutputContext(ctx context.Context, digest execution.OutputContextDigest) (OutputContextObject, int, error) {
+	value, size, err := repository.loadObject(ctx, objectReadKindOutputContext, repository.outputContextKey(digest), outputContextContractVersion, string(digest),
 		func(payload []byte) (any, error) {
 			var object OutputContextObject
 			if err := json.Unmarshal(payload, &object); err != nil {
@@ -303,9 +314,9 @@ func (repository *RedisCatalogRepository) LoadOutputContext(ctx context.Context,
 			return object, nil
 		})
 	if err != nil {
-		return OutputContextObject{}, err
+		return OutputContextObject{}, 0, err
 	}
-	return value.(OutputContextObject), nil
+	return value.(OutputContextObject), size, nil
 }
 
 // AssembleQueryGroup is the inverse of BuildQueryGroupObject and
@@ -336,7 +347,8 @@ func AssembleQueryGroup(object QueryGroupObject, contexts map[execution.PlanIden
 				SourceCompatibility: context.SourceCompatibility, OutputIdentity: plan.OutputIdentity,
 				SubjectFacts: context.SubjectFacts, LegacyOutput: context.LegacyOutput, TargetScope: plan.TargetScope,
 				NoData:     plan.NoData,
-				StrategyIR: strategyIR, WireFormat: context.WireFormat, TerminalReasonCode: plan.TerminalReasonCode,
+				StrategyIR: strategyIR, WireFormat: context.WireFormat, SignalType: context.SignalType,
+				TerminalReasonCode: plan.TerminalReasonCode,
 			},
 			StateGeneration: plan.StateGeneration, ScheduleSpec: plan.ScheduleSpec, ScheduleRevision: plan.ScheduleRevision,
 			RequirementTemplates: plan.RequirementTemplates, QueryPlans: plan.QueryPlans,
@@ -366,60 +378,75 @@ func (repository *RedisCatalogRepository) LoadSegmentQueryGroup(
 	segment = segment.At(at)
 	if segment.ObjectDigest == "" {
 		repository.observeObjectRead(ctx, objectReadKindSegment, segmentReadLegacySegment)
+		repository.localView.forget(segment.QueryGroup)
 		return fallback(ctx)
 	}
-	group, result, err := repository.loadSegmentQueryGroupByContent(ctx, segment)
+	group, entry, result, err := repository.loadSegmentQueryGroupByContent(ctx, segment)
 	if err == nil {
 		repository.observeObjectRead(ctx, objectReadKindSegment, segmentReadObject)
+		repository.localView.record(segment.QueryGroup, entry)
 		return group, nil
 	}
 	if result == "" {
 		return QueryGroup{}, err
 	}
 	repository.observeObjectRead(ctx, objectReadKindSegment, result)
+	// Served from the Snapshot, not by content: the Query Group leaves the
+	// view until a Slot is read by content again.
+	repository.localView.forget(segment.QueryGroup)
 	return fallback(ctx)
 }
 
-// loadSegmentQueryGroupByContent returns the assembled Query Group, or the
-// reason the content path cannot serve this Segment. An empty reason with an
-// error is an I/O failure the caller must return rather than work around.
-func (repository *RedisCatalogRepository) loadSegmentQueryGroupByContent(ctx context.Context, segment execution.ScheduleSegmentFact) (QueryGroup, string, error) {
-	stored, err := repository.loadStoredQueryGroupObject(ctx, segment.ObjectDigest)
+// loadSegmentQueryGroupByContent returns the assembled Query Group and what
+// it cost in stored bytes, or the reason the content path cannot serve this
+// Segment. An empty reason with an error is an I/O failure the caller must
+// return rather than work around.
+func (repository *RedisCatalogRepository) loadSegmentQueryGroupByContent(
+	ctx context.Context, segment execution.ScheduleSegmentFact,
+) (QueryGroup, localViewEntry, string, error) {
+	entry := localViewEntry{object: segment.ObjectDigest}
+	stored, size, err := repository.loadStoredQueryGroupObject(ctx, segment.ObjectDigest)
 	object := stored.object
 	switch {
 	case errors.Is(err, ErrCatalogObjectUnavailable):
-		return QueryGroup{}, segmentReadObjectMissing, err
+		return QueryGroup{}, entry, segmentReadObjectMissing, err
 	case errors.Is(err, ErrCatalogObjectCorrupt):
-		return QueryGroup{}, segmentReadObjectInvalid, err
+		return QueryGroup{}, entry, segmentReadObjectInvalid, err
 	case err != nil:
-		return QueryGroup{}, "", err
+		return QueryGroup{}, entry, "", err
 	}
 	if object.Identity != segment.QueryGroup {
-		return QueryGroup{}, segmentReadObjectMismatch, errors.New("alarmd controlplane: catalog object belongs to another Query Group")
+		return QueryGroup{}, entry, segmentReadObjectMismatch, errors.New("alarmd controlplane: catalog object belongs to another Query Group")
 	}
+	entry.objectBytes, entry.plans = size, len(object.Plans)
 	contexts := make(map[execution.PlanIdentity]OutputContextObject, len(object.Plans))
+	counted := make(map[execution.OutputContextDigest]struct{}, len(object.Plans))
 	for _, plan := range object.Plans {
 		ref := segment.OutputContextRefFor(plan.Identity)
 		if ref == "" {
-			return QueryGroup{}, segmentReadWithoutRef, errors.New("alarmd controlplane: Segment names no output context for a Plan")
+			return QueryGroup{}, entry, segmentReadWithoutRef, errors.New("alarmd controlplane: Segment names no output context for a Plan")
 		}
-		context, err := repository.LoadOutputContext(ctx, ref)
+		context, size, err := repository.loadOutputContext(ctx, ref)
 		switch {
 		case errors.Is(err, ErrCatalogObjectUnavailable):
-			return QueryGroup{}, segmentReadObjectMissing, err
+			return QueryGroup{}, entry, segmentReadObjectMissing, err
 		case errors.Is(err, ErrCatalogObjectCorrupt):
-			return QueryGroup{}, segmentReadObjectInvalid, err
+			return QueryGroup{}, entry, segmentReadObjectInvalid, err
 		case err != nil:
-			return QueryGroup{}, "", err
+			return QueryGroup{}, entry, "", err
 		}
 		contexts[plan.Identity] = context
+		if _, seen := counted[ref]; !seen {
+			counted[ref] = struct{}{}
+			entry.outputContextBytes += size
+		}
 	}
 	group, err := AssembleQueryGroup(object, contexts)
 	if err != nil {
-		return QueryGroup{}, segmentReadObjectMismatch, err
+		return QueryGroup{}, entry, segmentReadObjectMismatch, err
 	}
 	repository.observeAssembledBytes(ctx, segment, stored.noDataOccurrences)
-	return group, "", nil
+	return group, entry, "", nil
 }
 
 // observeAssembledBytes reports what the stored bytes of the Segment's object

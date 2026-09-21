@@ -1,3 +1,12 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package observability
 
 // QueryFailureFacts is log-only: no raw error, query, URL or dimension values.
@@ -13,6 +22,10 @@ const (
 	QueryFailureStageStreamComplete = "stream_complete"
 	QueryFailureStageProvider       = "provider"
 	QueryFailureStageOther          = "other"
+	// QueryFailureStageOutput is the write of the round's events, after the
+	// evaluation: a failure there is the sink's, and the row reads it by the
+	// error's own words rather than by a query failure's detail grammar.
+	QueryFailureStageOutput = "output"
 
 	QueryFailureCategorySourceBackend      = "source_backend"
 	QueryFailureCategorySeriesIdentity     = "series_identity"
@@ -28,6 +41,8 @@ const (
 	// the result contract rejected.
 	QueryFailureCategoryEvaluation = "evaluation"
 	QueryFailureCategoryOther      = "other"
+	// QueryFailureCategoryOutput is a failure writing the round's events.
+	QueryFailureCategoryOutput = "output"
 
 	QueryFailureCodeOther = "OTHER"
 
@@ -41,11 +56,13 @@ const (
 var (
 	QueryFailureStages = []string{
 		QueryFailureStageExecute, QueryFailureStageStreamComplete, QueryFailureStageProvider, QueryFailureStageOther,
+		QueryFailureStageOutput,
 	}
 	QueryFailureCategories = []string{
 		QueryFailureCategorySourceBackend, QueryFailureCategorySeriesIdentity, QueryFailureCategoryBudget,
 		QueryFailureCategoryCompletionContract, QueryFailureCategoryNamedInput, QueryFailureCategoryProviderTransport,
 		QueryFailureCategoryAdmission, QueryFailureCategoryEvaluation, QueryFailureCategoryOther,
+		QueryFailureCategoryOutput,
 	}
 )
 
@@ -66,6 +83,33 @@ func ValidQueryFailureCode(code string) bool {
 		}
 	}
 	return true
+}
+
+// CapacityBudgetFailureCode is the failure code a rejection by one budget
+// carries.
+//
+// It exists because the budget's own value is a metric label -- lower case,
+// chosen to read well beside other labels -- and the failure code grammar is
+// upper case. The budget was being passed straight through as the code, so
+// every budget rejection published a code no reader could parse: fleet
+// normalised it away and the page was left with the free text, which is rate
+// limited and gone first. The two spellings are the same fact, and this is the
+// one place that says so.
+func CapacityBudgetFailureCode(budget CapacityBudget) string {
+	switch NormalizeCapacityBudget(budget) {
+	case CapacityBudgetSeries:
+		return "BUDGET_SERIES"
+	case CapacityBudgetRetainedBytes:
+		return "BUDGET_RETAINED_BYTES"
+	case CapacityBudgetStateMutations:
+		return "BUDGET_STATE_MUTATIONS"
+	case CapacityBudgetEvents:
+		return "BUDGET_EVENTS"
+	case CapacityBudgetGapMutations:
+		return "BUDGET_GAP_MUTATIONS"
+	default:
+		return "BUDGET_OTHER"
+	}
 }
 
 // NormalizeQueryFailureCode returns code when it matches the grammar and OTHER
@@ -104,13 +148,15 @@ func normalizeQueryFailure(component Component, stage Stage, input *QueryFailure
 		f.Stage = QueryFailureStageOther
 	}
 	switch f.Category {
-	case QueryFailureCategoryBudget:
-		if budget := NormalizeCapacityBudget(CapacityBudget(f.Code)); budget != "" && budget != CapacityBudgetOther {
-			f.Code = string(budget)
-		} else {
-			f.Code = NormalizeQueryFailureCode(f.Code)
-		}
-	case QueryFailureCategorySourceBackend, QueryFailureCategorySeriesIdentity, QueryFailureCategoryCompletionContract,
+	// Budget goes through the same grammar as every other category. It used to
+	// have an exemption: a code that spelled a known budget was kept as it was,
+	// which is how every budget rejection came to publish a lower-case label as
+	// its code without anything noticing. The exemption was what made it
+	// invisible -- OTHER on that path would have said at once that the code was
+	// not a code. Publishers map the budget to its code themselves now, with
+	// CapacityBudgetFailureCode.
+	case QueryFailureCategoryBudget, QueryFailureCategorySourceBackend, QueryFailureCategorySeriesIdentity,
+		QueryFailureCategoryCompletionContract,
 		QueryFailureCategoryNamedInput, QueryFailureCategoryProviderTransport, QueryFailureCategoryAdmission,
 		QueryFailureCategoryEvaluation:
 		f.Code = NormalizeQueryFailureCode(f.Code)

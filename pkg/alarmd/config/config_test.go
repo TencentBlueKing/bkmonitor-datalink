@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 )
 
@@ -225,6 +226,15 @@ func TestValidateRejectsInvalidRedisAndRuntimeBudgets(t *testing.T) {
 		"compiler levels exceed trigger event": func(cfg *Config) {
 			cfg.Limits.Trigger.MaxLevelResultsPerEvent = uint32(cfg.Limits.Compiler.MaxLevelsPerPlan - 1)
 		},
+		// Every decided level is one evaluation on the standard output, and
+		// the consumer refuses a message with more than its bound; a level
+		// budget above it would be met one dropped alert at a time.
+		"compiler levels exceed the standard output's evaluations": func(cfg *Config) {
+			over := linkdoutput.MaxEvaluations + 1
+			cfg.Limits.Reader.MaxLevelsPerPlan, cfg.Limits.Compiler.MaxLevelsPerPlan = over, over
+			cfg.Limits.Trigger.MaxLevels, cfg.Limits.Trigger.MaxLevelResultsPerEvent = uint32(over), uint32(over)
+			cfg.Limits.Codec.MaxLevels = over
+		},
 		"zero codec budget": func(cfg *Config) { cfg.Limits.Codec.MaxLevels = 0 },
 		"zero store budget": func(cfg *Config) { cfg.Limits.Store.MaxKeysPerBatch = 0 },
 	}
@@ -289,6 +299,10 @@ type staticRouter struct{}
 
 func (staticRouter) Route(_, _ string) (state.StorageTarget, error) {
 	return state.StorageTarget{Name: "primary", Backend: nil}, nil
+}
+
+func (staticRouter) Targets() []state.StorageTarget {
+	return []state.StorageTarget{{Name: "primary", Backend: nil}}
 }
 
 // withCompatibilityServiceRedis gives a configuration the service Redis the

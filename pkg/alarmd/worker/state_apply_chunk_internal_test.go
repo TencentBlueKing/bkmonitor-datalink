@@ -41,6 +41,13 @@ type chunkStore struct {
 	cancel            context.CancelFunc
 	gapStatuses       []execution.GapGuardApplyStatus
 	delay             time.Duration
+	// skewCall answers its first item ALREADY_APPLIED at a revision one above
+	// the one the mutation expected: the write landed and was sent again.
+	skewCall int
+	// conflictCall refuses its items STATE_VERSION_CONFLICT: the first and
+	// third with the key missing, the second moved two revisions ahead under
+	// a newer ApplyVersion, the fourth without saying which comparison.
+	conflictCall int
 }
 
 func (store *chunkStore) LoadRuntime(context.Context, execution.StatePreflightRequest) (execution.StatePreflightResult, error) {
@@ -76,6 +83,17 @@ func (store *chunkStore) ApplyRuntime(ctx context.Context, request execution.Sta
 		result.Items[0].Status, result.Items[0].ReasonCode = execution.StateApplyRetryable, execution.ReasonCode(contract.ReasonStateWriteRetryable)
 	case store.deterministicCall:
 		result.Items[0].Status, result.Items[0].ReasonCode = execution.StateApplyDeterministicInvalid, execution.ReasonCode(contract.ReasonStateCorrupt)
+	case store.skewCall:
+		result.Items[0].Status, result.Items[0].AlreadyApplied = execution.StateApplyAlreadyApplied, execution.StateAlreadyAppliedRevisionSkew
+		result.Items[0].StoredBlobRevision = request.Items[0].ExpectedBlobRevision + 1
+		result.Items[1].Status, result.Items[1].AlreadyApplied = execution.StateApplyAlreadyApplied, execution.StateAlreadyAppliedStable
+		result.Items[1].StoredBlobRevision = request.Items[1].ExpectedBlobRevision
+	case store.conflictCall:
+		result.Items[0].MarkVersionConflict(execution.StateVersionConflictMissing, execution.RuntimeStateView{})
+		result.Items[1].MarkVersionConflict(execution.StateVersionConflictRevisionMoved, execution.RuntimeStateView{
+			BlobRevision: request.Items[1].ExpectedBlobRevision + 2, VersionComparison: execution.ApplyVersionPersistedNewer})
+		result.Items[2].MarkVersionConflict(execution.StateVersionConflictMissing, execution.RuntimeStateView{})
+		result.Items[3].Status = execution.StateApplyVersionConflict
 	}
 	return result, nil
 }
@@ -160,7 +178,7 @@ func TestApplyStateChunksAtTheStoreCallBound(t *testing.T) {
 			store := &chunkStore{delay: time.Millisecond}
 			fixture := newChunkFixture(store, 8192)
 			mutations := chunkMutations(total)
-			rejected, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, chunkRetention, mutations, nil)
+			rejected, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, "", chunkRetention, mutations, nil)
 			if err != nil || len(rejected) != 0 {
 				t.Fatalf("applyState() rejected=%v error=%v", rejected, err)
 			}
@@ -184,11 +202,8 @@ func TestApplyStateChunksAtTheStoreCallBound(t *testing.T) {
 				t.Fatalf("fenced calls = %d, want every chunk fenced", len(store.fences))
 			}
 			for index, fence := range store.fences {
-				if fence.Fence != fixture.fence || fence.At.IsZero() {
-					t.Fatalf("chunk %d fence = %+v, want the Slot owner fence with an instant", index, fence)
-				}
-				if index > 0 && !fence.At.After(store.fences[index-1].At) {
-					t.Fatalf("chunk %d reused the fence instant of the previous chunk", index)
+				if fence.Fence != fixture.fence {
+					t.Fatalf("chunk %d fence = %+v, want the Slot owner fence", index, fence)
 				}
 			}
 			applied := fixture.chunkObservations(observability.StageStateApplied)
@@ -216,7 +231,7 @@ func TestApplyStateStopsAtTheFirstFailedChunk(t *testing.T) {
 	t.Run("transport failure in chunk 2", func(t *testing.T) {
 		store := &chunkStore{failCall: 2}
 		fixture := newChunkFixture(store, 8192)
-		_, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, chunkRetention, mutations, nil)
+		_, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, "", chunkRetention, mutations, nil)
 		if err == nil || !strings.Contains(err.Error(), "injected transport failure") || len(store.stateCalls) != 2 {
 			t.Fatalf("applyState() error=%v calls=%d, want the failure after two calls", err, len(store.stateCalls))
 		}
@@ -228,7 +243,7 @@ func TestApplyStateStopsAtTheFirstFailedChunk(t *testing.T) {
 	t.Run("retryable item in chunk 2", func(t *testing.T) {
 		store := &chunkStore{retryableCall: 2}
 		fixture := newChunkFixture(store, 8192)
-		_, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, chunkRetention, mutations, nil)
+		_, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, "", chunkRetention, mutations, nil)
 		if err == nil || !strings.Contains(err.Error(), "did not complete: RETRYABLE_IO") || len(store.stateCalls) != 2 {
 			t.Fatalf("applyState() error=%v calls=%d, want retryable stop after two calls", err, len(store.stateCalls))
 		}
@@ -240,7 +255,7 @@ func TestApplyStateStopsAtTheFirstFailedChunk(t *testing.T) {
 	t.Run("deterministic item in chunk 3", func(t *testing.T) {
 		store := &chunkStore{deterministicCall: 3}
 		fixture := newChunkFixture(store, 8192)
-		rejected, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, chunkRetention, mutations, nil)
+		rejected, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, "", chunkRetention, mutations, nil)
 		if err != nil || len(store.stateCalls) != 3 {
 			t.Fatalf("applyState() error=%v calls=%d, want every chunk sent", err, len(store.stateCalls))
 		}
@@ -259,7 +274,7 @@ func TestApplyStateStopsBetweenChunksOnCancellation(t *testing.T) {
 	defer cancel()
 	store := &chunkStore{cancelCall: 1, cancel: cancel}
 	fixture := newChunkFixture(store, 8192)
-	_, err := fixture.coordinator.applyState(ctx, execution.OperationNormal, fixture.contract, fixture.fence, chunkRetention, chunkMutations(2*8192), nil)
+	_, err := fixture.coordinator.applyState(ctx, execution.OperationNormal, fixture.contract, fixture.fence, "", chunkRetention, chunkMutations(2*8192), nil)
 	if !errors.Is(err, context.Canceled) || len(store.stateCalls) != 1 {
 		t.Fatalf("applyState() error=%v calls=%d, want cancellation before chunk 2", err, len(store.stateCalls))
 	}
@@ -362,4 +377,109 @@ func TestSlotBudgetDerivesThePerSlotCaps(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A write the store found already on disk is counted by how the store decided
+// it, and a revision_skew keeps its two revisions. This is the reading that
+// says whether a re-sent write happens in production at all; a Slot that
+// merely completes reads the same as one that met its own landed write.
+func TestApplyStateCountsAlreadyAppliedBySiteAndKindAndKeepsTheSkew(t *testing.T) {
+	store := &chunkStore{skewCall: 1}
+	fixture := newChunkFixture(store, 8192)
+	mutations := chunkMutations(3)
+	for index := range mutations {
+		mutations[index].ExpectedBlobRevision = 7
+	}
+	rejected, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, "", chunkRetention, mutations, nil)
+	if err != nil || len(rejected) != 0 {
+		t.Fatalf("applyState() rejected=%v error=%v: ALREADY_APPLIED items complete the apply", rejected, err)
+	}
+	var facts *observability.StateAlreadyAppliedFacts
+	for _, observation := range fixture.chunkObservations(observability.StageMutationCompared) {
+		if observation.StateAlreadyApplied != nil {
+			if facts != nil {
+				t.Fatalf("two already-applied observations for one applyState; want one per site")
+			}
+			facts = observation.StateAlreadyApplied
+		}
+	}
+	if facts == nil {
+		t.Fatal("applyState met an already-applied write and published no already-applied facts")
+	}
+	wantCounts := map[observability.StateAlreadyAppliedKey]int64{
+		{Site: observability.StateAlreadyAppliedAtApply, Kind: observability.StateAlreadyAppliedRevisionSkew}: 1,
+		{Site: observability.StateAlreadyAppliedAtApply, Kind: observability.StateAlreadyAppliedStable}:       1,
+	}
+	if len(facts.Counts) != len(wantCounts) {
+		t.Fatalf("already-applied counts = %v, want %v", facts.Counts, wantCounts)
+	}
+	for key, want := range wantCounts {
+		if facts.Counts[key] != want {
+			t.Fatalf("already-applied counts[%+v] = %d, want %d; counts=%v", key, facts.Counts[key], want, facts.Counts)
+		}
+	}
+	if facts.Skew == nil || facts.Skew.Site != observability.StateAlreadyAppliedAtApply ||
+		facts.Skew.ExpectedRevision != 7 || facts.Skew.StoredRevision != 8 ||
+		facts.Skew.SeriesIdentity != string(mutations[0].Identity.SeriesIdentityDigest) {
+		t.Fatalf("revision skew sample = %+v, want site apply, expected 7, stored 8, series %s", facts.Skew, mutations[0].Identity.SeriesIdentityDigest)
+	}
+}
+
+// A refused chunk counts every conflicting item by the comparison that
+// refused it and carries the first one's values in the error, so the line
+// says "3 missing, 1 moved" and not "STATE_VERSION_CONFLICT" four times; an
+// item the store refused without a kind counts as other rather than as any
+// kind a reader would act on.
+func TestApplyStateCountsVersionConflictsByKindAndNamesTheFirst(t *testing.T) {
+	store := &chunkStore{conflictCall: 1}
+	fixture := newChunkFixture(store, 8192)
+	mutations := chunkMutations(4)
+	for index := range mutations {
+		mutations[index].ExpectedBlobRevision = 7
+	}
+	_, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, "", chunkRetention, mutations, nil)
+	var refusal *StateConflictError
+	if !errors.As(err, &refusal) {
+		t.Fatalf("applyState() error = %v, want a StateConflictError", err)
+	}
+	if refusal.Kind != execution.StateVersionConflictMissing || refusal.ExpectedRevision != 7 || refusal.StoredRevision != 0 || refusal.VersionComparison != "" {
+		t.Fatalf("refusal = %+v, want the first item's kind missing, expected 7, stored 0", refusal)
+	}
+	if want := "state apply did not complete: STATE_VERSION_CONFLICT (missing: expected revision 7, stored revision 0)"; refusal.Error() != want {
+		t.Fatalf("refusal text = %q, want %q", refusal.Error(), want)
+	}
+	applied := fixture.chunkObservations(observability.StageStateApplied)
+	if len(applied) != 1 {
+		t.Fatalf("state_applied observations = %d, want the one refused chunk", len(applied))
+	}
+	facts := applied[0].StateVersionConflict
+	if facts == nil || string(applied[0].ReasonCode) != contract.ReasonStateVersionConflict {
+		t.Fatalf("refused chunk line = reason %s facts %+v, want STATE_VERSION_CONFLICT with conflict facts on the same line", applied[0].ReasonCode, facts)
+	}
+	wantCounts := map[observability.StateVersionConflictKey]int64{
+		{Site: observability.StateAlreadyAppliedAtApply, Kind: observability.StateVersionConflictMissing}:       2,
+		{Site: observability.StateAlreadyAppliedAtApply, Kind: observability.StateVersionConflictRevisionMoved}: 1,
+		{Site: observability.StateAlreadyAppliedAtApply, Kind: "other"}:                                         1,
+	}
+	if len(facts.Counts) != len(wantCounts) {
+		t.Fatalf("conflict counts = %v, want %v", facts.Counts, wantCounts)
+	}
+	for key, want := range wantCounts {
+		if facts.Counts[key] != want {
+			t.Fatalf("conflict counts[%+v] = %d, want %d; counts=%v", key, facts.Counts[key], want, facts.Counts)
+		}
+	}
+	if len(facts.Samples) != 3 || facts.Samples[0].Kind != observability.StateVersionConflictMissing ||
+		facts.Samples[0].SeriesIdentity != string(mutations[0].Identity.SeriesIdentityDigest) ||
+		facts.Samples[1].Kind != observability.StateVersionConflictRevisionMoved || facts.Samples[1].ExpectedRevision != 7 ||
+		facts.Samples[1].StoredRevision != 9 || facts.Samples[1].VersionComparison != string(execution.ApplyVersionPersistedNewer) ||
+		facts.Samples[2].Kind != "other" {
+		t.Fatalf("conflict samples = %+v, want one per kind in first-seen order: missing(series 0), revision_moved(7 -> 9, PERSISTED_NEWER), other", facts.Samples)
+	}
+}
+
+func (store *chunkStore) RenewFrozenRuntime(
+	_ context.Context, request execution.FrozenStateRenewalRequest,
+) (execution.FrozenStateRenewalResult, error) {
+	return freshFrozenRenewals(request), nil
 }

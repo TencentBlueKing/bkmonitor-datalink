@@ -14,10 +14,14 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
+// LeaseStore is what a Session needs of the ownership store. The instants
+// on Acquire and Renew are the caller's anchors for the Lease it gets back
+// (see Lease); whether a lease is live is decided by the store on its own
+// clock, which is why CheckFence takes none.
 type LeaseStore interface {
 	Acquire(context.Context, execution.QueryGroupIdentity, string, time.Time, time.Duration) (Lease, error)
 	Renew(context.Context, execution.OwnerFence, time.Time, time.Duration) (Lease, error)
-	CheckFence(context.Context, execution.OwnerFence, time.Time) error
+	CheckFence(context.Context, execution.OwnerFence) error
 	// CheckFenceWithAssignment is the fence check plus the Assignment record it
 	// already had to consult, in one round trip. It is on the interface rather
 	// than behind a type assertion because a Session reaches its store only
@@ -25,7 +29,7 @@ type LeaseStore interface {
 	// back to the two-round-trip path silently, which is exactly the regression
 	// this method exists to prevent, and it would do so with no compile error
 	// and no failing test.
-	CheckFenceWithAssignment(context.Context, execution.OwnerFence, time.Time) (AssignmentRecord, error)
+	CheckFenceWithAssignment(context.Context, execution.OwnerFence) (AssignmentRecord, error)
 	Release(context.Context, execution.OwnerFence) error
 }
 
@@ -58,12 +62,16 @@ func OpenSession(
 	return &Session{store: store, lease: lease, accepting: true}, nil
 }
 
+// ValidateCurrent is the two halves of a fence validation: this Session
+// still admits work on its lease at the caller's instant (the local half,
+// on the holder's clock), and the store still confirms the lease (the
+// store's half, on the store's clock).
 func (session *Session) ValidateCurrent(ctx context.Context, at time.Time) (execution.OwnerFence, error) {
 	lease, err := session.admittedLease(at)
 	if err != nil {
 		return execution.OwnerFence{}, err
 	}
-	if err := session.store.CheckFence(ctx, lease.Fence, at); err != nil {
+	if err := session.store.CheckFence(ctx, lease.Fence); err != nil {
 		session.stopAccepting()
 		return execution.OwnerFence{}, err
 	}
@@ -83,7 +91,7 @@ func (session *Session) ValidateCurrentWithAssignment(
 	if err != nil {
 		return execution.OwnerFence{}, AssignmentRecord{}, err
 	}
-	record, err := session.store.CheckFenceWithAssignment(ctx, lease.Fence, at)
+	record, err := session.store.CheckFenceWithAssignment(ctx, lease.Fence)
 	if err != nil {
 		// Only an authoritative answer about the fence ends admission here.
 		// This call can also fail for reasons that say nothing about the lease:

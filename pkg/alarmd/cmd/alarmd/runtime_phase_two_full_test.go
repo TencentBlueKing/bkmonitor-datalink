@@ -1966,9 +1966,10 @@ func loadPhaseTwoProgress(
 }
 
 type recordingPhaseTwoEventSink struct {
-	mu     sync.Mutex
-	events []contract.TriggerEventV1
-	closed bool
+	mu       sync.Mutex
+	events   []contract.TriggerEventV1
+	closed   bool
+	protocol *enginekafka.ProtocolNegotiation
 }
 
 func (s *recordingPhaseTwoEventSink) ConfigureStandardOutput(enginekafka.StandardEventConverter) error {
@@ -1977,6 +1978,14 @@ func (s *recordingPhaseTwoEventSink) ConfigureStandardOutput(enginekafka.Standar
 
 func (s *recordingPhaseTwoEventSink) ConfigureLegacyOutput(enginekafka.LegacyEventConverter, string, int) error {
 	return nil
+}
+
+// protocol is what the fake reports as its agreement with its brokers; nil,
+// the default, is a sink that asked nobody.
+func (s *recordingPhaseTwoEventSink) ProtocolNegotiation() *enginekafka.ProtocolNegotiation {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.protocol
 }
 
 type selectiveRetryablePhaseTwoEventSink struct {
@@ -1992,6 +2001,10 @@ func (s *selectiveRetryablePhaseTwoEventSink) ConfigureStandardOutput(enginekafk
 }
 
 func (s *selectiveRetryablePhaseTwoEventSink) ConfigureLegacyOutput(enginekafka.LegacyEventConverter, string, int) error {
+	return nil
+}
+
+func (s *selectiveRetryablePhaseTwoEventSink) ProtocolNegotiation() *enginekafka.ProtocolNegotiation {
 	return nil
 }
 
@@ -2084,6 +2097,8 @@ func (runtime *recordingPhaseTwoQueryGroupRuntime) RunOneAdmitted(
 func (runtime *recordingPhaseTwoQueryGroupRuntime) NextReadyAt() time.Time {
 	return runtime.next.NextReadyAt()
 }
+
+func (runtime *recordingPhaseTwoQueryGroupRuntime) NextDeadline() time.Time { return time.Time{} }
 
 func (runtime *recordingPhaseTwoQueryGroupRuntime) DueBound() scheduler.RunnerDueBound {
 	return scheduler.RunnerDueBound{}

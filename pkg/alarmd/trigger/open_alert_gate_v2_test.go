@@ -106,7 +106,7 @@ func TestRecoveryEnvelopeGoesOnlyToAnOpenAlert(t *testing.T) {
 			envelope: true, asked: 0,
 		},
 		{
-			name: "a Plan on alarmd's own decision event, identity and all: not the consumer's protocol, the set is not asked",
+			name: "a historical decision-event Plan now uses the consumer recovery gate",
 			plan: func(t *testing.T) *strategy.CompiledPlan {
 				return compilePlanV2WithOutput(t, recovered, func(p *contract.EvaluationPlanV2) {
 					p.WireFormat = contract.WireFormatTriggerEvent
@@ -116,8 +116,21 @@ func TestRecoveryEnvelopeGoesOnlyToAnOpenAlert(t *testing.T) {
 				})
 			},
 			set:      func(t *testing.T) *openAlertSetFixture { return &openAlertSetFixture{} },
-			wantGate: RecoveryGateV2{OpenAlertGate: OpenAlertGateProtocolNotGated},
-			envelope: true, asked: 0,
+			wantGate: RecoveryGateV2{Held: true, Cause: RecoveryHeldNoOpenAlert, OpenAlertGate: OpenAlertGateHeldNoOpenAlert},
+			envelope: false, asked: 1,
+		}, {
+			name: "a historical empty-format Plan with revision uses the consumer recovery gate",
+			plan: func(t *testing.T) *strategy.CompiledPlan {
+				return compilePlanV2WithOutput(t, recovered, func(p *contract.EvaluationPlanV2) {
+					p.WireFormat = ""
+					p.StrategyRef.SnapshotRevision = 7
+					p.StrategyIR.StrategyRef.SnapshotRevision = 7
+					p.OutputIdentity = identity
+				})
+			},
+			set:      func(t *testing.T) *openAlertSetFixture { return &openAlertSetFixture{} },
+			wantGate: RecoveryGateV2{Held: true, Cause: RecoveryHeldNoOpenAlert, OpenAlertGate: OpenAlertGateHeldNoOpenAlert},
+			envelope: false, asked: 1,
 		},
 	}
 	for _, test := range tests {

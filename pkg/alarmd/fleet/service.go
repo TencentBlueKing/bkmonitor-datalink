@@ -134,10 +134,11 @@ func (service *Service) View(ctx context.Context) View {
 	replicas, replicasErr, expectation, expectationErr := service.sources(ctx, at)
 	if replicasErr != nil {
 		return View{
-			Health:    HealthUnknown,
-			Gaps:      []Gap{{Kind: GapRegistryUnavailable, Detail: gapDetail(replicasErr)}},
-			Anomalies: []Anomaly{},
-			Replicas:  []string{},
+			expectation: expectation,
+			Health:      HealthUnknown,
+			Gaps:        []Gap{{Kind: GapRegistryUnavailable, Detail: gapDetail(replicasErr)}},
+			Anomalies:   []Anomaly{},
+			Replicas:    []string{},
 		}
 	}
 

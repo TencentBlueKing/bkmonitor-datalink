@@ -1,3 +1,12 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package controlplane_test
 
 import (
@@ -108,6 +117,11 @@ func TestLegacyRedisStrategySourceRejectsInvalidWireIdentityShapes(t *testing.T)
 		field string
 		value any
 	}{
+		// field is both what the test breaks and the field_path the
+		// disposition has to name: the source page samples it, and a row
+		// that says only SOURCE_IDENTITY_UNAVAILABLE cannot tell a writer
+		// that stopped filling the tenant from one that stopped filling the
+		// space.
 		{name: "missing tenant", field: "bk_tenant_id", value: nil},
 		{name: "empty tenant", field: "bk_tenant_id", value: ""},
 		{name: "non-string tenant", field: "bk_tenant_id", value: 2},
@@ -150,8 +164,42 @@ func TestLegacyRedisStrategySourceRejectsInvalidWireIdentityShapes(t *testing.T)
 				strategies[0].SourceDisposition.Reason != "SOURCE_IDENTITY_UNAVAILABLE" {
 				t.Fatalf("strategies=%#v", strategies)
 			}
+			if got := strategies[0].SourceDisposition.FieldPath; got != test.field {
+				t.Fatalf("field_path = %q, want %q: the disposition has to say which identity field the document lacks", got, test.field)
+			}
 		})
 	}
+	// Both missing is named as both, so a writer that stopped filling either
+	// is told apart from one that filled neither.
+	t.Run("missing both", func(t *testing.T) {
+		client := newControlplaneRedis(t)
+		ctx := context.Background()
+		var value map[string]any
+		if err := json.Unmarshal(realThresholdDocuments(t)[0], &value); err != nil {
+			t.Fatal(err)
+		}
+		delete(value, "bk_tenant_id")
+		delete(value, "space_uid")
+		payload, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := client.Set(ctx, "bkmonitor.cache.strategy_1001", payload, 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+		source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache")
+		if err != nil {
+			t.Fatal(err)
+		}
+		strategies, err := source.Strategies(ctx, []string{"1001"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(strategies) != 1 || strategies[0].SourceDisposition == nil ||
+			strategies[0].SourceDisposition.FieldPath != "bk_tenant_id,space_uid" {
+			t.Fatalf("strategies=%#v, want field_path naming both identity fields", strategies)
+		}
+	})
 }
 
 func TestLegacyRedisStrategySourceDistinguishesEmptyAndIncompleteActiveSet(t *testing.T) {

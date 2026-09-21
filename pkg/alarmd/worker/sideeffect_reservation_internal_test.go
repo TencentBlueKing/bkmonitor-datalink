@@ -1,8 +1,18 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package worker
 
 import (
 	"context"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -44,13 +54,16 @@ func TestProvisionalMeasurementDoesNotCopyLargeEventPayload(t *testing.T) {
 	result.Plans[0].StateResults[0].Events[0].EventID = strings.Repeat("a", 4<<20)
 	// Size accounting must not build another event-sized JSON buffer. Small
 	// reflection/iteration allocations are unrelated to payload length.
-	allocation := testing.Benchmark(func(b *testing.B) {
-		for index := 0; index < b.N; index++ {
-			_, _ = evaluationRetainedSize(execution.StatePreflightResult{}, result)
-		}
-	})
-	if allocation.AllocedBytesPerOp() > 64<<10 {
-		t.Fatalf("size accounting copied event payload: %d bytes/op", allocation.AllocedBytesPerOp())
+	const runs = 100
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	for index := 0; index < runs; index++ {
+		_, _ = evaluationRetainedSize(execution.StatePreflightResult{}, result)
+	}
+	runtime.ReadMemStats(&after)
+	if bytesPerOp := (after.TotalAlloc - before.TotalAlloc) / runs; bytesPerOp > 64<<10 {
+		t.Fatalf("size accounting copied event payload: %d bytes/op", bytesPerOp)
 	}
 }
 

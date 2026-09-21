@@ -20,8 +20,9 @@ import (
 // phase-two tests were already using it, so it moved here rather than being
 // deleted with its old neighbours.
 type fakeHTTPRuntime struct {
-	run func(context.Context, string, time.Duration) error
-	api http.Handler
+	run  func(context.Context, string, time.Duration) error
+	api  http.Handler
+	grpc http.Handler
 }
 
 func (runtime *fakeHTTPRuntime) Run(ctx context.Context, address string, timeout time.Duration) error {
@@ -29,3 +30,5 @@ func (runtime *fakeHTTPRuntime) Run(ctx context.Context, address string, timeout
 }
 
 func (runtime *fakeHTTPRuntime) SetAPI(handler http.Handler) { runtime.api = handler }
+
+func (runtime *fakeHTTPRuntime) SetGRPC(handler http.Handler) { runtime.grpc = handler }

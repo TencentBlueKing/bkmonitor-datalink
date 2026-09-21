@@ -54,6 +54,11 @@ type SlotDispatchContext struct {
 	Operation            execution.Operation
 	OwnerFence           execution.OwnerFence
 	AssignmentGeneration uint64
+	// ContentScope is the content the Slot runs under, the ObjectDigest of
+	// the Segment it was frozen from; the Slot's fenced writes declare it
+	// (execution.SlotExecutionRequest.ContentScope). Empty for a Segment
+	// that predates content addressing.
+	ContentScope string
 }
 
 func (slot FrozenSlot) Validate(queryGroup execution.QueryGroupIdentity) error {
@@ -97,6 +102,14 @@ func (slot FrozenSlot) Validate(queryGroup execution.QueryGroupIdentity) error {
 
 type OwnerSession interface {
 	ValidateCurrent(context.Context, time.Time) (execution.OwnerFence, error)
+	// Deadline is the instant, on this process's clock, after which the
+	// Session no longer admits work on its lease; under a pending content
+	// change it is the change's effective time. The Runner hands it to the
+	// executor as the attempt's execution.LeaseAuthority, which the output
+	// sink consults before starting a batch (decision-016). Required, not
+	// discovered: a session without it would leave every batch admitted
+	// against no lease at all, with nothing failing to say so.
+	Deadline() time.Time
 	// ValidateCurrentWithAssignment is ValidateCurrent plus the Assignment
 	// record naming the fence owner, from one store round trip. The Runner
 	// opens every attempt with it and hands the result to the SlotSource, which
@@ -364,6 +377,12 @@ type Runner struct {
 	sourceNextAt   time.Time
 	dueBound       RunnerDueBound
 	queryCooldown  queryCooldownState
+	// heldBy is what the previous round did, carried forward so the next
+	// round's Slot can report what kept it from running. It is the Runner's
+	// own word -- the same one run_one_return_total counts -- and is read on
+	// the far side of the source call, which is why it has to survive the
+	// round that produced it rather than being passed down it.
+	heldBy observability.HeldByFacts
 	// nextDeadline is the query deadline of the Slot this Runner froze and did
 	// not complete -- deferred for readiness, refused admission, or failed and
 	// backing off -- so a dispatcher can order it against the others by when
@@ -501,10 +520,19 @@ func NewRunner(
 
 // NextDeadline reports when the next Slot this Runner would run stops being
 // worth running: the frozen Slot's query deadline when one is held, else a
-// bound derived from the schedule -- the next due second plus the shortest
-// interval due there, which for every cohort is at or before the true
-// deadline and orders the cohorts the same way. Zero when nothing is known,
-// which a dispatcher orders after everything that is.
+// bound derived from the schedule. Zero only when nothing is known, which a
+// dispatcher orders after everything that is.
+//
+// The bound is the next due second plus the shortest interval due there,
+// and when the next due second is not known -- the Slot just completed and
+// the next one is not frozen until the next round -- the current second plus
+// that interval. Both are within the query reserve of the true deadline for
+// every cohort (a cohort's deadline is due time plus offset minus reserve,
+// and the offset is at least the interval) and order the cohorts the same
+// way. The second case is the one the minute's tide found: a ten-second
+// Runner back in the ready queue right after completing a Slot carried no
+// deadline, ranked behind a thousand minute Slots that did, and was held
+// back at the full queue -- the one cohort the ordering exists for.
 //
 // It is read at the same point NextReadyAt is: a dispatcher deciding what to
 // run next needs both, and a Slot that is ready first but expires last is
@@ -517,11 +545,13 @@ func (runner *Runner) NextDeadline() time.Time {
 		return runner.nextDeadline
 	}
 	bound := runner.dueBound
-	if bound.Verdict == DueVerdictNotDue && !bound.Deferred && !bound.Retired &&
-		bound.NotDueUntilUnix > 0 && bound.IntervalSeconds > 0 {
+	if bound.IntervalSeconds <= 0 || bound.Retired {
+		return time.Time{}
+	}
+	if bound.Verdict == DueVerdictNotDue && !bound.Deferred && bound.NotDueUntilUnix > 0 {
 		return time.Unix(bound.NotDueUntilUnix+bound.IntervalSeconds, 0)
 	}
-	return time.Time{}
+	return runner.now().Add(time.Duration(bound.IntervalSeconds) * time.Second)
 }
 
 // NextReadyAt reports when the Runner can make its next QG-local attempt.
@@ -620,7 +650,15 @@ func (runner *Runner) runOneTracked(
 	// that hangs leaves its old bound standing and falls behind the wall clock,
 	// where a scheme that cleared the entry on dispatch would show nothing at all.
 	var sourceFacts SlotDueFacts
-	defer func() { runner.recordDueBound(decision, sourceFacts) }()
+	defer func() {
+		runner.recordDueBound(decision, sourceFacts)
+		runner.rememberHeldBy(decision)
+	}()
+	// What the previous round did travels into this one, so a Slot that is
+	// given up on can name it on its own line. Injected before the source is
+	// called because the source is where the decision to give up is taken, and
+	// again available to the executor below, which reports the completion.
+	ctx = withHeldBy(ctx, runner.heldBy)
 	if err := ctx.Err(); err != nil {
 		decision = "cancelled"
 		return execution.SlotExecutionResult{}, false, err
@@ -727,6 +765,7 @@ func (runner *Runner) runOneTracked(
 		KeepUntilUnixMilli:             slot.KeepUntilUnixMilli,
 		ReplayExpired:                  slot.Recovery.Disposition == ReplayExpired,
 		Operation:                      operation, AttemptNo: runner.attemptNo(slot), OwnerFence: fence, ExpectedNextSlot: slot.ExpectedNextSlot,
+		ContentScope: slot.Dispatch.ContentScope,
 	}
 	if err := request.Validate(); err != nil {
 		return execution.SlotExecutionResult{}, false, err
@@ -743,7 +782,7 @@ func (runner *Runner) runOneTracked(
 		defer releaseAdmission()
 	}
 	decision = "execute"
-	result, err := runner.executor.Execute(ctx, request)
+	result, err := runner.executor.Execute(execution.ContextWithLeaseAuthority(ctx, runner.session), request)
 	if err != nil {
 		var deferred interface{ ReadinessReadyAt() time.Time }
 		if errors.As(err, &deferred) {

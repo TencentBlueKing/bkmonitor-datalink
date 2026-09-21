@@ -22,10 +22,12 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/nodata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 )
 
@@ -116,6 +118,7 @@ func TestObservationCountsRemainSeparatedByStageDirectionAndResult(t *testing.T)
 			Result:    observability.ResultSuccess,
 			Direction: observability.DirectionInternal,
 			Counts:    observability.Counts{Records: 2},
+			Duration:  time.Second,
 		},
 		{
 			Component: observability.ComponentTrigger,
@@ -136,20 +139,7 @@ func TestObservationCountsRemainSeparatedByStageDirectionAndResult(t *testing.T)
 			t.Fatalf("stage count is missing %q:\n%s", want, got)
 		}
 	}
-}
-
-func TestMetricNamesAndLabelsMatchApprovedContract(t *testing.T) {
-	recorder := NewRecorder(BuildInfo{})
-	recorder.Observe(context.Background(), observability.Observation{
-		Component:  observability.ComponentTrigger,
-		Stage:      observability.StageTriggerCompleted,
-		Result:     observability.ResultSuccess,
-		Direction:  observability.DirectionOutput,
-		ReasonCode: observability.ReasonNone,
-		Duration:   time.Second,
-	})
-
-	got := scrape(t, recorder)
+	// The same scrape covers the exported base families after Observe.
 	wants := []string{
 		"bkmonitor_alarmd_build_info",
 		"bkmonitor_alarmd_observation_total",
@@ -266,8 +256,11 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_capacity_transition_total":                    "variableLabels: {budget,result}",
 		"bkmonitor_alarmd_state_write_reuse_total":                      "variableLabels: {class,stored}",
 		"bkmonitor_alarmd_state_write_change_reason_total":              "variableLabels: {reason,stored}",
+		"bkmonitor_alarmd_state_already_applied_total":                  "variableLabels: {site,kind}",
+		"bkmonitor_alarmd_state_version_conflict_total":                 "variableLabels: {site,kind}",
 		"bkmonitor_alarmd_worker_owned_query_groups":                    "variableLabels: {worker_role}",
 		"bkmonitor_alarmd_ownership_transition_total":                   "variableLabels: {transition,result,reason_class}",
+		"bkmonitor_alarmd_ownership_refusals_total":                     "variableLabels: {site,refusal}",
 		"bkmonitor_alarmd_source_observation_total":                     "variableLabels: {source_kind,result,reason_class}",
 		"bkmonitor_alarmd_source_refresh_total":                         "variableLabels: {status}",
 		"bkmonitor_alarmd_source_compile_total":                         "variableLabels: {result}",
@@ -290,6 +283,7 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_series_admission_total":                       "variableLabels: {filter,result,reason}",
 		"bkmonitor_alarmd_unmapped_severity_total":                      "variableLabels: {level}",
 		"bkmonitor_alarmd_cmdb_host_index_hosts":                        "variableLabels: {}",
+		"bkmonitor_alarmd_cmdb_service_instance_index_instances":        "variableLabels: {}",
 		"bkmonitor_alarmd_host_disable_monitor_states":                  "variableLabels: {}",
 		"bkmonitor_alarmd_cmdb_host_index_age_seconds":                  "variableLabels: {kind}",
 		"bkmonitor_alarmd_cmdb_host_index_degraded":                     "variableLabels: {reason}",
@@ -313,8 +307,8 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_query_unavailable_attribution_total":          "variableLabels: {attribution}",
 		"bkmonitor_alarmd_slot_readiness_slack_seconds":                 "variableLabels: {}",
 		"bkmonitor_alarmd_slot_readiness_boundary_total":                "variableLabels: {boundary}",
-		"bkmonitor_alarmd_short_period_slot_execution_duration_seconds": "variableLabels: {cohort}",
-		"bkmonitor_alarmd_short_period_slot_completion_lag_seconds":     "variableLabels: {cohort}",
+		"bkmonitor_alarmd_short_period_slot_execution_duration_seconds": "variableLabels: {cohort,completion_kind}",
+		"bkmonitor_alarmd_short_period_slot_completion_lag_seconds":     "variableLabels: {cohort,completion_kind}",
 		"bkmonitor_alarmd_run_one_return_total":                         "variableLabels: {outcome}",
 		"bkmonitor_alarmd_expired_range_total":                          "variableLabels: {result}",
 		"bkmonitor_alarmd_expired_slots_finalized_total":                "variableLabels: {reason}",
@@ -335,6 +329,25 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_schedule_timeline_bytes":                      "variableLabels: {}",
 		"bkmonitor_alarmd_schedule_segments_pruned_total":               "variableLabels: {}",
 		"bkmonitor_alarmd_dispatch_rotation_total":                      "variableLabels: {result}",
+		"bkmonitor_alarmd_local_view_object_bytes":                      "variableLabels: {kind}",
+		"bkmonitor_alarmd_local_view_query_groups":                      "variableLabels: {}",
+		"bkmonitor_alarmd_view_stream_leading":                          "variableLabels: {}",
+		"bkmonitor_alarmd_view_revision":                                "variableLabels: {}",
+		"bkmonitor_alarmd_view_stream_sessions":                         "variableLabels: {}",
+		"bkmonitor_alarmd_view_version_receivers":                       "variableLabels: {stage}",
+		"bkmonitor_alarmd_view_receipts_ignored_total":                  "variableLabels: {reason}",
+		"bkmonitor_alarmd_view_publications_total":                      "variableLabels: {result}",
+		"bkmonitor_alarmd_view_messages_sent_total":                     "variableLabels: {kind}",
+		"bkmonitor_alarmd_view_stream_refusals_total":                   "variableLabels: {}",
+		"bkmonitor_alarmd_view_client_connected":                        "variableLabels: {}",
+		"bkmonitor_alarmd_view_installed_revision":                      "variableLabels: {}",
+		"bkmonitor_alarmd_view_objects_missing":                         "variableLabels: {}",
+		"bkmonitor_alarmd_view_install_total":                           "variableLabels: {kind}",
+		"bkmonitor_alarmd_view_install_failure_total":                   "variableLabels: {reason}",
+		"bkmonitor_alarmd_view_snapshot_request_total":                  "variableLabels: {}",
+		"bkmonitor_alarmd_view_client_refusal_total":                    "variableLabels: {reason}",
+		"bkmonitor_alarmd_view_client_connection_total":                 "variableLabels: {}",
+		"bkmonitor_alarmd_view_discovery_miss_total":                    "variableLabels: {reason}",
 		"bkmonitor_alarmd_dispatch_walk_total":                          "variableLabels: {result}",
 		"bkmonitor_alarmd_due_index_audit_overshoot_seconds":            "variableLabels: {cooldown}",
 		"bkmonitor_alarmd_schedule_prune_skipped_total":                 "variableLabels: {reason}",
@@ -363,6 +376,9 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_dispatch_queue_turnaways_total":               "variableLabels: {outcome,cohort}",
 		"bkmonitor_alarmd_assignment_moves_total":                       "variableLabels: {reason}",
 		"bkmonitor_alarmd_rebalance_paused_total":                       "variableLabels: {reason}",
+		"bkmonitor_alarmd_control_read_round_trips_total":               "variableLabels: {read}",
+		"bkmonitor_alarmd_control_read_keys_total":                      "variableLabels: {read}",
+		"bkmonitor_alarmd_control_read_duration_seconds":                "variableLabels: {read}",
 		"bkmonitor_alarmd_assignment_index_stale_rounds":                "variableLabels: {}",
 		"bkmonitor_alarmd_assignment_index_write_total":                 "variableLabels: {result}",
 		"bkmonitor_alarmd_control_facts_read_total":                     "variableLabels: {fact}",
@@ -407,6 +423,16 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 	expected["bkmonitor_alarmd_catalog_withheld_objects"] = "variableLabels: {disposition,reason}"
 	expected["bkmonitor_alarmd_catalog_no_data_plans"] = "variableLabels: {source}"
 	expected["bkmonitor_alarmd_worker_no_data_slot_plans_total"] = "variableLabels: {outcome}"
+	expected["bkmonitor_alarmd_worker_no_data_persistent_skips_total"] = "variableLabels: {outcome}"
+	expected["bkmonitor_alarmd_worker_no_data_memory_refusals_total"] = "variableLabels: {reason,record}"
+	expected["bkmonitor_alarmd_worker_no_data_memory_writes_total"] = "variableLabels: {outcome}"
+	expected["bkmonitor_alarmd_query_free_completion_total"] = "variableLabels: {kind,evidence}"
+	expected["bkmonitor_alarmd_execution_evidence_written_total"] = "variableLabels: {result}"
+	expected["bkmonitor_alarmd_worker_no_data_memory_reads_total"] = "variableLabels: {representation}"
+	expected["bkmonitor_alarmd_worker_no_data_memory_renewals_total"] = "variableLabels: {result,reason}"
+	expected["bkmonitor_alarmd_worker_frozen_state_renewals_total"] = "variableLabels: {result}"
+	expected["bkmonitor_alarmd_worker_frozen_state_census_total"] = "variableLabels: {stage}"
+	expected["bkmonitor_alarmd_worker_gap_guard_scope_rounds_total"] = "variableLabels: {status,reason,progress}"
 	expected["bkmonitor_alarmd_worker_no_data_plans_seen_total"] = "variableLabels: {}"
 	expected["bkmonitor_alarmd_no_data_plans_by_hop_total"] = "variableLabels: {hop}"
 	expected["bkmonitor_alarmd_segment_content_freshness_total"] = "variableLabels: {state}"
@@ -654,6 +680,8 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("capacity_transition_total"):             len(phaseTwoBudgets) * len(phaseTwoCapacityResults),
 		fqName("state_write_reuse_total"):               len(observability.AllStateWriteReuseClasses()) * len(observability.AllStateWriteReuseStored()),
 		fqName("state_write_change_reason_total"):       len(observability.AllStateWriteChangeReasons()) * len(observability.AllStateWriteReuseStored()),
+		fqName("state_already_applied_total"):           len(observability.AllStateAlreadyAppliedSites()) * len(observability.AllStateAlreadyAppliedKinds()),
+		fqName("state_version_conflict_total"):          len(observability.AllStateAlreadyAppliedSites()) * len(observability.AllStateVersionConflictKinds()),
 		fqName("source_observation_total"):              len(observability.AllSourceKinds()) * len(phaseTwoSourceResults) * len(observability.AllReasons(observability.ComponentControlPlane)),
 		fqName("source_refresh_total"):                  len(observability.AllSourceRefreshStatuses()),
 		fqName("source_compile_total"):                  len(sourceCompileResults),
@@ -663,6 +691,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("activation_failure_total"):              len(observability.AllActivationFailureStages()) * len(observability.AllActivationFailureClasses()),
 		fqName("worker_owned_query_groups"):             1,
 		fqName("ownership_transition_total"):            len(phaseTwoOwnershipTransitions) * metricReasonSets(observability.ComponentOwnership),
+		fqName("ownership_refusals_total"):              len(ownershipRefusalSites) * len(ownership.RefusalReasons),
 		fqName("capacity_budget"):                       len(phaseTwoBudgets) - 1,
 		fqName("container_memory_limit_bytes"):          len(capacitySources) + 1,
 		fqName("container_cpu_cores"):                   len(capacitySources) + 1,
@@ -692,11 +721,12 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		// Levels 1..64 plus "other". Empty in a healthy build: the platform's
 		// three levels all have names here, so a series appearing at all is the
 		// signal.
-		fqName("unmapped_severity_total"):     65,
-		fqName("cmdb_host_index_hosts"):       1,
-		fqName("host_disable_monitor_states"): 1,
-		fqName("cmdb_host_index_age_seconds"): 2,
-		fqName("cmdb_host_index_degraded"):    len(cmdbIndexReasons),
+		fqName("unmapped_severity_total"):               65,
+		fqName("cmdb_host_index_hosts"):                 1,
+		fqName("cmdb_service_instance_index_instances"): 1,
+		fqName("host_disable_monitor_states"):           1,
+		fqName("cmdb_host_index_age_seconds"):           2,
+		fqName("cmdb_host_index_degraded"):              len(cmdbIndexReasons),
 		// Every combination is created at construction, so these are exact rather
 		// than an upper bound: a series that has never happened still publishes a
 		// zero, which is what lets "no violations" be told apart from "not wired".
@@ -726,9 +756,10 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		// Unlabelled, so one histogram: eleven buckets plus +Inf, sum and count.
 		fqName("slot_readiness_slack_seconds"): histogramSeries(1, len(slotReadinessSlackBuckets)),
 		// unified, mixed, none, OTHER.
-		fqName("slot_readiness_boundary_total"):                4,
-		fqName("short_period_slot_execution_duration_seconds"): 24,
-		fqName("short_period_slot_completion_lag_seconds"):     24,
+		fqName("slot_readiness_boundary_total"): 4,
+		// Every cohort and completion kind exists from construction.
+		fqName("short_period_slot_execution_duration_seconds"): histogramSeries(len(observability.ShortPeriodCohorts)*len(observability.ShortPeriodCompletionKinds), len(shortPeriodBuckets)),
+		fqName("short_period_slot_completion_lag_seconds"):     histogramSeries(len(observability.ShortPeriodCohorts)*len(observability.ShortPeriodCompletionKinds), len(shortPeriodBuckets)),
 		fqName("run_one_return_total"):                         13,
 		fqName("expired_range_total"):                          4,
 		fqName("expired_slots_finalized_total"):                2,
@@ -754,6 +785,32 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		// a numerator and a denominator that do not describe the same thing.
 		fqName("dispatch_rotation_total"): 2,
 		fqName("dispatch_walk_total"):     4,
+		// Two kinds of content and one count; the view is defined over the
+		// owned set, so a Worker role always has a source and these are
+		// always present, zeros for an idle Worker.
+		fqName("local_view_object_bytes"): 2,
+		fqName("local_view_query_groups"): 1,
+		// The Leader's view stream: five stages, four ignore reasons, two
+		// publication results, three message kinds, and four single gauges
+		// or counters; all closed lists.
+		fqName("view_stream_leading"):         1,
+		fqName("view_revision"):               1,
+		fqName("view_stream_sessions"):        1,
+		fqName("view_version_receivers"):      5,
+		fqName("view_receipts_ignored_total"): 4,
+		fqName("view_publications_total"):     2,
+		fqName("view_messages_sent_total"):    3,
+		fqName("view_stream_refusals_total"):  1,
+		// The Worker's side: closed failure and refusal words plus other.
+		fqName("view_client_connected"):        1,
+		fqName("view_installed_revision"):      1,
+		fqName("view_objects_missing"):         1,
+		fqName("view_install_total"):           len(viewClientInstallKinds) + 1,
+		fqName("view_install_failure_total"):   len(viewClientInstallFailures) + 1,
+		fqName("view_snapshot_request_total"):  1,
+		fqName("view_client_refusal_total"):    len(viewClientRefusals) + 1,
+		fqName("view_client_connection_total"): 1,
+		fqName("view_discovery_miss_total"):    len(viewClientDiscoveryMisses) + 1,
 		// Audited dispatches only -- one Query Group per generation -- which is
 		// why it is its own metric and not a cell on due_index_prediction_total,
 		// whose four cells mix a sampled population with a full one.
@@ -789,6 +846,9 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("dispatch_queue_turnaways_total"):              len(dispatchTurnawayOutcomes) * len(dispatchTurnawayCohorts),
 		fqName("assignment_moves_total"):                      1,
 		fqName("rebalance_paused_total"):                      1,
+		fqName("control_read_round_trips_total"):              len(ControlReadKinds),
+		fqName("control_read_keys_total"):                     len(ControlReadKinds),
+		fqName("control_read_duration_seconds"):               histogramSeries(len(ControlReadKinds), len(controlReadDurationBuckets)),
 		fqName("assignment_index_stale_rounds"):               1,
 		fqName("assignment_index_write_total"):                2,
 		// Closed label sets, every series created at construction; see
@@ -865,6 +925,44 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	// created at startup so a zero on the one that never resolves on its own
 	// can be told from a label nothing ever wrote.
 	bounds[fqName("worker_no_data_slot_plans_total")] = len(nodata.SlotOutcomes)
+	// Every outcome but EVALUATED: a Plan that evaluated has not stalled, so
+	// that pair cannot happen and a label for it would be a zero that means
+	// nothing rather than one that means "nothing has stopped".
+	bounds[fqName("worker_no_data_persistent_skips_total")] = len(nodata.SlotOutcomes) - 1
+	// One per shape a deterministic refusal takes, and no more: the pair is
+	// written only from the list execution publishes, and the store's own test
+	// keeps that list equal to what the store can produce.
+	bounds[fqName("worker_no_data_memory_refusals_total")] = len(execution.NoDataRefusals)
+	// One per outcome the store can return that is not a deterministic
+	// refusal, and no more: the label is written only from the list execution
+	// publishes.
+	bounds[fqName("worker_no_data_memory_writes_total")] = len(execution.NoDataWriteOutcomes)
+	bounds[fqName("query_free_completion_total")] =
+		len(execution.QueryFreeCompletionKinds) * len(execution.ExecutionEvidenceReadings)
+	// Success and degraded; the write either landed or it did not.
+	bounds[fqName("execution_evidence_written_total")] = 2
+	bounds[fqName("worker_no_data_memory_reads_total")] = len(execution.NoDataRepresentations)
+	// One success shape and one per reason a renewal can fail with. The reasons
+	// are the two the store maps its errors onto, so the bound is the shape of
+	// that mapping rather than a number chosen to fit.
+	bounds[fqName("worker_no_data_memory_renewals_total")] = 3
+	// One per outcome a renewal can have, and no more: the label is written
+	// only from the list execution publishes, and two of the four are read as
+	// zeros -- missing staying at zero is the mechanism having closed the
+	// silent loss, renewed staying at zero is it never having run -- so all
+	// four exist from startup.
+	bounds[fqName("worker_frozen_state_renewals_total")] = len(execution.FrozenRenewalOutcomes)
+	// One per stage of the census and no more. All three are created at
+	// startup: a replica with nothing due and a replica reporting nothing at
+	// all read identically otherwise, which is the reading this family was
+	// added to end.
+	bounds[fqName("worker_frozen_state_census_total")] = 3
+	// Every held status against every reason this build can put on a scope
+	// plus the catch-all, against every place the count can stand. All three
+	// come from published lists, so a value added to any of them moves this
+	// bound with it rather than leaving a series outside it.
+	bounds[fqName("worker_gap_guard_scope_rounds_total")] = len(execution.GapScopeStatuses) *
+		(len(contract.GapScopeReasons()) + 1) * len(contract.GapScopeProgressValues)
 	// One series: a count, unlabelled. Its whole job is to be read against
 	// the outcome family, which carries the breakdown.
 	bounds[fqName("worker_no_data_plans_seen_total")] = 1

@@ -1,3 +1,12 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package controlplane
 
 import (
@@ -20,10 +29,59 @@ type ScheduleActivationReconciler struct {
 	stateSemantics strategy.StateSemantics
 	progress       ScheduleActivationProgressReader
 	now            func() time.Time
+	// scopes, when set, is told which Query Groups change content and to
+	// what before the cutover is written (decision-016 batch 3). See
+	// ContentScopeWriter and WithContentScopeWriter.
+	scopes ContentScopeWriter
 }
 
 type ScheduleActivationProgressReader interface {
 	LoadProgress(context.Context, execution.ProgressIdentity) (execution.ProgressLoadResult, error)
+}
+
+// ContentScopeWriter writes the content each changing Query Group is about
+// to be published with into its Assignment record, before the Segment that
+// carries that content is cut. A Slot frozen from the new Segment declares
+// the new digest; if the record still named only the old one the fence would
+// refuse it (CONTENT_MOVED) until the next reconcile round caught up, which
+// is one round's worth of refused Slots on every publication. Written first,
+// the record already names the new content (pending under a live lease, and
+// the fence admits the pending scope) by the time any Segment says it.
+//
+// It is advisory to the cutover: an error is reported by the implementation
+// and the activation proceeds, because the reconcile round writes the same
+// scopes within one round and a publication must not fail for it. What
+// counts as declaring, and whether the fleet takes part at all, is the
+// implementation's to decide -- it is the same gate the reconcile round
+// uses, so the two never disagree on whether a scope is written.
+type ContentScopeWriter interface {
+	PublishContentScopes(context.Context, map[execution.QueryGroupIdentity]execution.ObjectDigest)
+}
+
+// WithContentScopeWriter attaches the writer the cutover tells first.
+func (reconciler *ScheduleActivationReconciler) WithContentScopeWriter(writer ContentScopeWriter) *ScheduleActivationReconciler {
+	if reconciler != nil {
+		reconciler.scopes = writer
+	}
+	return reconciler
+}
+
+// contentChanges is what the new publication says about each Query Group
+// whose content differs from the previous activation's, or which the
+// previous activation did not have: the digest its Segment is about to
+// carry. Unchanged Query Groups are left out; their records already name it.
+func contentChanges(published PublishedContent, previous map[execution.QueryGroupIdentity]execution.ObjectDigest) map[execution.QueryGroupIdentity]execution.ObjectDigest {
+	changes := make(map[execution.QueryGroupIdentity]execution.ObjectDigest)
+	for identity, entry := range published.Groups {
+		if entry.Digest == "" {
+			continue
+		}
+		if old, had := previous[identity]; had && old == entry.Digest {
+			continue
+		}
+		changes[identity] = entry.Digest
+	}
+	return changes
 }
 
 const maxReappearedQueryGroupFailureSamples = 8
@@ -211,6 +269,14 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 	next := ActivationState{RecordRevision: previous.RecordRevision + 1, Current: publication,
 		Plans: records, Draining: draining}
 	expected := ActivationExpectation{RecordRevision: previous.RecordRevision, Current: previous.Current, Pending: previous.Pending}
+	// The records first, the Segments second: by the time a worker freezes a
+	// Slot from a Segment that names the new content, its Assignment record
+	// already does.
+	if reconciler.scopes != nil {
+		if changes := contentChanges(published.content, previousContent.digests); len(changes) > 0 {
+			reconciler.scopes.PublishContentScopes(ctx, changes)
+		}
+	}
 	failureStage, failureClass = ActivationFailureStageScheduleCutover, ActivationFailureClassScheduleConflict
 	if applyErr := reconciler.repository.CompareAndSetPublicationScheduleActivation(
 		ctx, expected, next, boundary, reconciler.progress,

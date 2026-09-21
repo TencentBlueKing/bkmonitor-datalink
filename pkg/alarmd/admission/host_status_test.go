@@ -186,7 +186,7 @@ func TestTheAlternativeAddressSpellingIsNotHostNamingForThisFilter(t *testing.T)
 		t.Fatalf("decision = %+v, want the record admitted: Python does not treat it as host data", decision)
 	}
 	// The target scope still resolves it, so the two readings really are separate.
-	if len(facts.HostKeys) == 0 {
+	if len(facts.HostKeys()) == 0 {
 		t.Fatal("the target scope lost the alternative spelling it relies on")
 	}
 }
@@ -257,16 +257,16 @@ func TestTheTargetMatchKeyKeepsTheCloudDimensionAsItStands(t *testing.T) {
 	}, nil)
 	want := "192.0.2.10|{{ cmdb_instance.host.bk_cloud_id[0].id }}"
 	found := false
-	for _, key := range facts.HostKeys {
+	for _, key := range facts.HostKeys() {
 		if key == want {
 			found = true
 		}
 		if key == "192.0.2.10|0" {
-			t.Fatalf("host keys = %v, want no coerced key for target matching", facts.HostKeys)
+			t.Fatalf("host keys = %v, want no coerced key for target matching", facts.HostKeys())
 		}
 	}
 	if !found {
-		t.Fatalf("host keys = %v, want %q", facts.HostKeys, want)
+		t.Fatalf("host keys = %v, want %q", facts.HostKeys(), want)
 	}
 }
 
@@ -279,13 +279,13 @@ func TestAnAbsentCloudIsTheDirectAreaOnBothKeys(t *testing.T) {
 		"bk_target_cloud_id": raw(`""`),
 	}, nil)
 	found := false
-	for _, key := range facts.HostKeys {
+	for _, key := range facts.HostKeys() {
 		if key == "192.0.2.10|0" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("host keys = %v, want the direct area", facts.HostKeys)
+		t.Fatalf("host keys = %v, want the direct area", facts.HostKeys())
 	}
 }
 
@@ -323,12 +323,12 @@ func TestTheLookupKeyIsThePlatformsOwnSpellingsOnly(t *testing.T) {
 	// The alternative spelling still builds a target-scope key, so the two
 	// readings really are separate.
 	found := false
-	for _, candidate := range facts.HostKeys {
+	for _, candidate := range facts.HostKeys() {
 		if candidate == "192.0.2.10|5" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("host keys = %v, want the alternative spelling kept for target matching", facts.HostKeys)
+		t.Fatalf("host keys = %v, want the alternative spelling kept for target matching", facts.HostKeys())
 	}
 }

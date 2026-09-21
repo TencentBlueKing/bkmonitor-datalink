@@ -70,9 +70,10 @@ type publicTimeGraphQueryWant struct {
 }
 
 type publicTimeGraphVM struct {
-	responses map[string]pl.Matrix
-	failOn    string
-	calls     []publicTimeGraphQueryCall
+	responses     map[string]pl.Matrix
+	responseQueue []pl.Matrix
+	failOn        string
+	calls         []publicTimeGraphQueryCall
 }
 
 func (vm *publicTimeGraphVM) query(ctx context.Context, queryTs *structured.QueryTs, expr string, instant bool, start, end time.Time, step time.Duration) (pl.Matrix, error) {
@@ -91,6 +92,13 @@ func (vm *publicTimeGraphVM) query(ctx context.Context, queryTs *structured.Quer
 	})
 	if metadata.GetExpand(ctx) == nil {
 		return nil, errors.New("timegraph VM query was called without SetExpand preparation")
+	}
+	if vm.responseQueue != nil {
+		index := len(vm.calls) - 1
+		if index >= len(vm.responseQueue) {
+			return nil, fmt.Errorf("public VM response queue exhausted at call %d", index)
+		}
+		return vm.responseQueue[index], nil
 	}
 	if response, ok := vm.responses[metric]; ok {
 		if metric == vm.failOn {
@@ -173,6 +181,22 @@ func publicSourceExpandProvider() SchemaProvider {
 		schemas: []RelationSchema{
 			{RelationType: "node_to_middle", Category: RelationCategoryStatic, FromType: "node", ToType: "middle", MetricName: "node_to_middle_flow"},
 		},
+	}
+}
+
+func publicDynamicSelfProvider() SchemaProvider {
+	return contractSchemaProvider{
+		resources: []ResourceType{"service"},
+		primary:   map[ResourceType][]string{"service": {"id"}},
+		fields:    map[ResourceType][]string{"service": {"id"}},
+		schemas: []RelationSchema{{
+			RelationType:  "service_to_service",
+			Category:      RelationCategoryDynamic,
+			FromType:      "service",
+			ToType:        "service",
+			IsDirectional: true,
+			MetricName:    "service_to_service_flow",
+		}},
 	}
 }
 
@@ -465,6 +489,74 @@ func TestTimeGraphPublicRangeQueryContract(t *testing.T) {
 			results, err := model.QueryPathResourcesRange(
 				ctx, "10m", "space", "1m", fmt.Sprint(tc.startSec), fmt.Sprint(tc.endSec),
 				"node", []cmdb.Resource{"target"}, nil, cmdb.Matcher{"node_id": "n1"},
+			)
+			require.NoError(t, err)
+			require.Equal(t, tc.wantResults, results)
+			requirePublicTimeGraphCalls(t, vm.calls, tc.wantCalls)
+		})
+	}
+}
+
+func TestTimeGraphPublicDynamicSelfRelationFindsBothDirections(t *testing.T) {
+	const timestampMS int64 = 1700000000000
+	tests := []struct {
+		name        string
+		responses   []pl.Matrix
+		wantResults []cmdb.PathResourcesResult
+		wantCalls   []publicTimeGraphQueryWant
+	}{
+		{
+			name: "auto_discovery_keeps_outbound_and_inbound_hops",
+			responses: []pl.Matrix{
+				contractMatrix(map[string]string{"from_id": "caller", "to_id": "callee"}, timestampMS),
+				contractMatrix(map[string]string{"from_id": "other", "to_id": "caller"}, timestampMS),
+			},
+			wantResults: []cmdb.PathResourcesResult{
+				{Timestamp: timestampMS, TargetType: "service", Path: []cmdb.PathNode{
+					{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "caller"}},
+					{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "callee"}},
+				}},
+				{Timestamp: timestampMS, TargetType: "service", Path: []cmdb.PathNode{
+					{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "caller"}},
+					{ResourceType: "service", Dimensions: cmdb.Matcher{"id": "other"}},
+				}},
+			},
+			wantCalls: []publicTimeGraphQueryWant{
+				{
+					metric: "service_to_service_flow", expr: "count by (from_id, to_id) (count_over_time(a[10m]))", instant: true,
+					start: 1699999800, end: 1700000000, step: 5 * time.Minute, window: "10m0s",
+					conditions: structured.Conditions{FieldList: []structured.ConditionField{
+						{DimensionName: "from_id", Value: []string{"caller"}, Operator: structured.ConditionEqual},
+						{DimensionName: "to_id", Value: []string{""}, Operator: structured.ConditionNotEqual},
+					}, ConditionList: []string{structured.ConditionAnd}},
+					aggregate: publicStaticRelationAggregate("from_id", "to_id"),
+				},
+				{
+					metric: "service_to_service_flow", expr: "count by (from_id, to_id) (count_over_time(a[10m]))", instant: true,
+					start: 1699999800, end: 1700000000, step: 5 * time.Minute, window: "10m0s",
+					conditions: structured.Conditions{FieldList: []structured.ConditionField{
+						{DimensionName: "from_id", Value: []string{""}, Operator: structured.ConditionNotEqual},
+						{DimensionName: "to_id", Value: []string{"caller"}, Operator: structured.ConditionEqual},
+					}, ConditionList: []string{structured.ConditionAnd}},
+					aggregate: publicStaticRelationAggregate("from_id", "to_id"),
+				},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			vm := &publicTimeGraphVM{responseQueue: tc.responses}
+			model := &Model{
+				schemaProvider:          publicDynamicSelfProvider(),
+				timeGraphVMQuery:        vm.query,
+				timeGraphQueryReference: timeGraphTestQueryReference,
+			}
+			ctx := initTimeGraphQueryTestEnvironment()
+
+			results, err := model.QueryPathResources(
+				ctx, "10m", "space", "1700000000", "service", []cmdb.Resource{"service"}, nil,
+				cmdb.Matcher{"id": "caller"},
 			)
 			require.NoError(t, err)
 			require.Equal(t, tc.wantResults, results)

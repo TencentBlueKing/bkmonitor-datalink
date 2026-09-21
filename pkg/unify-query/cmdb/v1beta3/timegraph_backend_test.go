@@ -316,3 +316,90 @@ func TestQueryResourceMatcherPassesSourceExpandInfoToTimeGraph(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, cmdb.Matcher{"region": "east"}, fake.sourceExpand)
 }
+
+func TestQueryResourceMatcherKeepsDistinctCompositePrimaryKeys(t *testing.T) {
+	provider := contractSchemaProvider{
+		resources: []ResourceType{"source", "target"},
+		primary: map[ResourceType][]string{
+			"source": {"id"},
+			"target": {"a", "b"},
+		},
+		fields: map[ResourceType][]string{
+			"source": {"id"},
+			"target": {"a", "b"},
+		},
+		schemas: []RelationSchema{{
+			RelationType: "source_to_target",
+			Category:     RelationCategoryStatic,
+			FromType:     "source",
+			ToType:       "target",
+			MetricName:   "source_to_target_flow",
+		}},
+	}
+	tests := []struct {
+		name         string
+		instant      []cmdb.PathResourcesResult
+		wantMatchers cmdb.Matchers
+	}{
+		{
+			name: "values_containing_identity_delimiters_remain_distinct",
+			instant: []cmdb.PathResourcesResult{
+				{TargetType: "target", Path: []cmdb.PathNode{
+					{ResourceType: "source", Dimensions: cmdb.Matcher{"id": "s1"}},
+					{ResourceType: "target", Dimensions: cmdb.Matcher{"a": "x,b=y", "b": "z"}},
+				}},
+				{TargetType: "target", Path: []cmdb.PathNode{
+					{ResourceType: "source", Dimensions: cmdb.Matcher{"id": "s1"}},
+					{ResourceType: "target", Dimensions: cmdb.Matcher{"a": "x", "b": "y,b=z"}},
+				}},
+			},
+			wantMatchers: cmdb.Matchers{
+				{"a": "x,b=y", "b": "z"},
+				{"a": "x", "b": "y,b=z"},
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeTimeGraphModel{instantResults: tc.instant}
+			model := &Model{schemaProvider: provider}
+			model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) {
+				return fake, nil
+			})
+
+			_, _, _, _, got, err := model.QueryResourceMatcher(
+				initTimeGraphQueryTestEnvironment(), "10m", "space", "1700000000",
+				"target", "source", cmdb.Matcher{"id": "s1"}, nil, false,
+				[]cmdb.Resource{"source", "target"},
+			)
+			require.NoError(t, err)
+			require.ElementsMatch(t, tc.wantMatchers, got)
+		})
+	}
+}
+
+func TestQueryResourceMatcherRangeDefaultsEmptyStep(t *testing.T) {
+	tests := []struct {
+		name     string
+		step     string
+		wantStep string
+	}{
+		{name: "empty_step_uses_one_minute", step: "", wantStep: "1m0s"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := &fakeTimeGraphModel{}
+			model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
+			model.SetTimeGraphResolver(func(context.Context, string) (cmdb.CMDB, error) {
+				return fake, nil
+			})
+
+			_, _, _, _, _, err := model.QueryResourceMatcherRange(
+				initTimeGraphQueryTestEnvironment(), "10m", "bkcc__2", tc.step,
+				"1700000000", "1700000060", "system", "node", cmdb.Matcher{"node": "n1"}, nil, false, nil,
+			)
+			require.NoError(t, err)
+			require.Equal(t, tc.wantStep, fake.rangeStep)
+		})
+	}
+}

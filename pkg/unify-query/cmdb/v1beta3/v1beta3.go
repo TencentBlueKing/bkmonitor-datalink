@@ -223,6 +223,20 @@ func parseStep(step string) (int64, error) {
 	return stepMs, nil
 }
 
+func parseStepDuration(step string) (time.Duration, error) {
+	if step == "" {
+		return time.Minute, nil
+	}
+	duration, err := time.ParseDuration(step)
+	if err != nil {
+		return 0, err
+	}
+	if duration <= 0 {
+		return 0, fmt.Errorf("step must be positive")
+	}
+	return duration, nil
+}
+
 func validateRangeBuckets(start, end, stepMs int64) (int, error) {
 	if end < start {
 		return 0, fmt.Errorf("start_time must be less than or equal to end_time")

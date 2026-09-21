@@ -388,18 +388,7 @@ func (q *TimeGraph) primaryMatcherKey(resource cmdb.Resource, info cmdb.Matcher)
 	if len(matcher) == 0 {
 		return ""
 	}
-	var builder strings.Builder
-	builder.WriteString(string(resource))
-	for _, field := range q.nodeBuilder.resourceIndexes(resource) {
-		value, ok := matcher[field]
-		if !ok {
-			return ""
-		}
-		// Length prefixes make the key unambiguous even when values contain
-		// separators.
-		fmt.Fprintf(&builder, ":%d:%s=%d:%s", len(field), field, len(value), value)
-	}
-	return builder.String()
+	return generateResourceIdentityKey(ResourceType(resource), q.nodeBuilder.resourceIndexes(resource), matcher)
 }
 
 func (q *TimeGraph) relationEndpointPrefixes(relation cmdb.Relation, source, target cmdb.Resource) (string, string) {

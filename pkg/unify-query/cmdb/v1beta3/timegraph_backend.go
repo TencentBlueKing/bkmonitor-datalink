@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
@@ -214,7 +215,16 @@ func timeGraphTargetMatcher(
 	if ResourceType(target.ResourceType) != targetType {
 		return "", nil, false
 	}
-	key := GenerateResourceID(targetType, map[string]string(target.Dimensions))
+	primaryFields := provider.GetResourcePrimaryKeys(namespace, targetType)
+	key := ""
+	if len(primaryFields) == 0 {
+		key = GenerateResourceID(targetType, map[string]string(target.Dimensions))
+	} else {
+		key = generateResourceIdentityKey(targetType, primaryFields, map[string]string(target.Dimensions))
+		if key == "" {
+			return "", nil, false
+		}
+	}
 	matcher := filterTargetMatcher(target.Dimensions, provider, namespace, targetType, targetInfoShow)
 	return key, matcher, true
 }
@@ -401,6 +411,7 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	if err != nil {
 		return timeGraphRangeResult{}, err
 	}
+	normalizedStep := (time.Duration(stepMs) * time.Millisecond).String()
 	if _, err := validateRangeBuckets(startMs, endMs, stepMs); err != nil {
 		return timeGraphRangeResult{}, err
 	}
@@ -426,7 +437,7 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 			ctx,
 			lookBackDelta,
 			spaceUID,
-			step,
+			normalizedStep,
 			start,
 			end,
 			cmdb.Resource(req.SourceType),
@@ -440,7 +451,7 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 			ctx,
 			lookBackDelta,
 			spaceUID,
-			step,
+			normalizedStep,
 			start,
 			end,
 			cmdb.Resource(req.SourceType),

@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
@@ -173,6 +174,23 @@ func TestTimeGraphContractCases(t *testing.T) {
 			MetricName:   "node_to_container_flow",
 		}},
 	}
+	dynamicChainProvider := contractSchemaProvider{
+		resources: []ResourceType{"front", "middle", "back"},
+		primary: map[ResourceType][]string{
+			"front":  {"id"},
+			"middle": {"id"},
+			"back":   {"id"},
+		},
+		fields: map[ResourceType][]string{
+			"front":  {"id"},
+			"middle": {"id"},
+			"back":   {"id"},
+		},
+		schemas: []RelationSchema{
+			{RelationType: RelationType("front_to_middle"), Category: RelationCategoryDynamic, FromType: "front", ToType: "middle", IsDirectional: true, MetricName: "front_to_middle_flow"},
+			{RelationType: RelationType("middle_to_back"), Category: RelationCategoryDynamic, FromType: "middle", ToType: "back", IsDirectional: true, MetricName: "middle_to_back_flow"},
+		},
+	}
 
 	tests := []struct {
 		name             string
@@ -327,6 +345,47 @@ func TestTimeGraphContractCases(t *testing.T) {
 			}}},
 		},
 		{
+			name:        "multi_hop_dynamic_query_only_constrains_root_edge",
+			provider:    dynamicChainProvider,
+			sourceType:  "front",
+			targetTypes: []cmdb.Resource{"back"},
+			path: cmdb.RelationPath{Steps: []cmdb.RelationPathStep{
+				{ResourceType: "front"},
+				{ResourceType: "middle", RelationType: "front_to_middle", Category: string(RelationCategoryDynamic), Direction: string(DirectionOutbound)},
+				{ResourceType: "back", RelationType: "middle_to_back", Category: string(RelationCategoryDynamic), Direction: string(DirectionOutbound)},
+			}},
+			sourceInfo:    cmdb.Matcher{"id": "f1"},
+			start:         instantStart,
+			end:           instantStart,
+			step:          time.Minute,
+			lookBackDelta: "10m",
+			responses: map[string]pl.Matrix{
+				"front_to_middle_flow": contractMatrix(map[string]string{"from_id": "f1", "to_id": "m1"}, timestampMS),
+				"middle_to_back_flow":  contractMatrix(map[string]string{"from_id": "m1", "to_id": "b1"}, timestampMS),
+			},
+			wantQueries: []contractQueryWant{
+				{
+					field: "front_to_middle_flow", window: "10m0s", step: "1m0s", start: "100", end: "100",
+					conditions: structured.Conditions{FieldList: []structured.ConditionField{
+						{DimensionName: "from_id", Value: []string{"f1"}, Operator: structured.ConditionEqual},
+						{DimensionName: "to_id", Value: []string{""}, Operator: structured.ConditionNotEqual},
+					}, ConditionList: []string{structured.ConditionAnd}},
+				},
+				{
+					field: "middle_to_back_flow", window: "10m0s", step: "1m0s", start: "100", end: "100",
+					conditions: structured.Conditions{FieldList: []structured.ConditionField{
+						{DimensionName: "from_id", Value: []string{""}, Operator: structured.ConditionNotEqual},
+						{DimensionName: "to_id", Value: []string{""}, Operator: structured.ConditionNotEqual},
+					}, ConditionList: []string{structured.ConditionAnd}},
+				},
+			},
+			wantResults: []PathResourcesResult{{Timestamp: timestampMS, TargetType: "back", Path: []cmdb.PathNode{
+				{ResourceType: "front", Dimensions: cmdb.Matcher{"id": "f1"}},
+				{ResourceType: "middle", Dimensions: cmdb.Matcher{"id": "m1"}},
+				{ResourceType: "back", Dimensions: cmdb.Matcher{"id": "b1"}},
+			}}},
+		},
+		{
 			name:        "external_vm_error_is_returned",
 			provider:    staticProvider,
 			sourceType:  "left",
@@ -357,7 +416,7 @@ func TestTimeGraphContractCases(t *testing.T) {
 
 			model := &Model{schemaProvider: tc.provider}
 			relations := model.buildRelationsFromRelationPathsForNamespace("", []cmdb.RelationPath{tc.path})
-			require.Len(t, relations, 1)
+			require.Len(t, relations, len(tc.path.Steps)-1)
 			vm := &contractVM{responses: tc.responses}
 			ctx := withTimeGraphTargetInfoShow(context.Background(), tc.targetInfoShow)
 			tg, err := model.buildTimeGraphFromRelationsWithQuery(
@@ -383,6 +442,64 @@ func TestTimeGraphContractCases(t *testing.T) {
 				require.Equal(t, want.start, vm.calls[i].start)
 				require.Equal(t, want.end, vm.calls[i].end)
 				require.Equal(t, want.conditions, vm.calls[i].conditions)
+			}
+		})
+	}
+}
+
+func TestTimeGraphSubqueryContextsPreserveUser(t *testing.T) {
+	relation := cmdb.Relation{
+		V:            []cmdb.Resource{"node", "system"},
+		RelationType: "node_with_system",
+		Category:     string(RelationCategoryStatic),
+	}
+	tests := []struct {
+		name             string
+		sourceExpandInfo cmdb.Matcher
+		targetInfoShow   bool
+		relations        []cmdb.Relation
+		wantQueryCount   int
+	}{
+		{name: "source_info_query", sourceExpandInfo: cmdb.Matcher{"region": "east"}, wantQueryCount: 1},
+		{name: "relation_query", relations: []cmdb.Relation{relation}, wantQueryCount: 1},
+		{name: "target_info_query", targetInfoShow: true, relations: []cmdb.Relation{relation}, wantQueryCount: 2},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := initTimeGraphQueryTestEnvironment()
+			parentUser := &metadata.User{Key: "bkmonitor:tester", TenantID: "tenant-a", SpaceUID: "bkcc__2"}
+			metadata.SetUser(ctx, parentUser)
+			parentHashID := parentUser.HashID
+			seenUsers := make([]metadata.User, 0, tc.wantQueryCount)
+			seenBizIDs := make([]string, 0, tc.wantQueryCount)
+			query := func(queryCtx context.Context, queryTs *structured.QueryTs) (pl.Matrix, error) {
+				seenUsers = append(seenUsers, *metadata.GetUser(queryCtx))
+				seenBizIDs = append(seenBizIDs, metadata.GetBkBizID(queryCtx))
+				if len(queryTs.QueryList) == 1 && queryTs.QueryList[0].FieldName == "node_with_system_relation" {
+					return contractMatrix(map[string]string{"node": "n1", "ip": "10.0.0.1"}, 100000), nil
+				}
+				return nil, nil
+			}
+			model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
+			queryCtx := withTimeGraphTargetInfoShow(ctx, tc.targetInfoShow)
+			tg, err := model.buildTimeGraphFromRelationsWithQuery(
+				queryCtx, "bkcc__2", time.Unix(100, 0), time.Unix(100, 0), time.Minute,
+				"node", cmdb.Matcher{"node": "n1"}, tc.sourceExpandInfo, tc.relations, "10m", query,
+			)
+			require.NoError(t, err)
+			t.Cleanup(func() { tg.Clean(queryCtx) })
+			require.Len(t, seenUsers, tc.wantQueryCount)
+			require.Equal(t, parentHashID, parentUser.HashID)
+			for _, user := range seenUsers {
+				require.Equal(t, "tenant-a", user.TenantID)
+				require.Equal(t, "bkcc__2", user.SpaceUID)
+				require.Equal(t, "bkmonitor:tester", user.Key)
+				require.NotEmpty(t, user.HashID)
+				require.NotEqual(t, parentHashID, user.HashID)
+			}
+			for _, bizID := range seenBizIDs {
+				require.Equal(t, "2", bizID)
 			}
 		})
 	}

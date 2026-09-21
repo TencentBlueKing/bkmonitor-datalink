@@ -38,6 +38,22 @@ var timeGraphQueryTimeout = time.Minute
 // graph traversal real.
 type timeGraphMatrixQuery func(context.Context, *structured.QueryTs) (pl.Matrix, error)
 
+type timeGraphRelationKey struct {
+	source       cmdb.Resource
+	target       cmdb.Resource
+	relationType string
+	metricName   string
+	category     string
+	direction    string
+}
+
+func newTimeGraphSubqueryContext(ctx context.Context) context.Context {
+	user := *metadata.GetUser(ctx)
+	queryCtx := metadata.InitHashID(ctx)
+	metadata.SetUser(queryCtx, &user)
+	return queryCtx
+}
+
 type timeGraphVMQuery func(context.Context, *structured.QueryTs, string, bool, time.Time, time.Time, time.Duration) (pl.Matrix, error)
 
 type timeGraphQueryReference func(context.Context, *structured.QueryTs) (metadata.QueryReference, error)
@@ -67,10 +83,18 @@ func (m *Model) prepareTimeGraphVMQuery(ctx context.Context, queryTs *structured
 // buildTimeGraphFromRelations materializes relation metrics into a temporary
 // in-memory TimeGraph for one query window.
 func (m *Model) buildTimeGraphFromRelations(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, relations []cmdb.Relation, lookBackDelta string) (*TimeGraph, error) {
-	return m.buildTimeGraphFromRelationsWithQuery(ctx, spaceUID, start, end, step, sourceType, sourceInfo, sourceExpandInfo, relations, lookBackDelta, nil)
+	return m.buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx, spaceUID, start, end, step, sourceType, sourceInfo, sourceExpandInfo, nil, relations, lookBackDelta, nil)
 }
 
 func (m *Model) buildTimeGraphFromRelationsWithQuery(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, relations []cmdb.Relation, lookBackDelta string, matrixQuery timeGraphMatrixQuery) (*TimeGraph, error) {
+	return m.buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx, spaceUID, start, end, step, sourceType, sourceInfo, sourceExpandInfo, nil, relations, lookBackDelta, matrixQuery)
+}
+
+func (m *Model) buildTimeGraphFromRelationsWithRootRelations(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, rootRelations map[timeGraphRelationKey]struct{}, relations []cmdb.Relation, lookBackDelta string) (*TimeGraph, error) {
+	return m.buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx, spaceUID, start, end, step, sourceType, sourceInfo, sourceExpandInfo, rootRelations, relations, lookBackDelta, nil)
+}
+
+func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, rootRelations map[timeGraphRelationKey]struct{}, relations []cmdb.Relation, lookBackDelta string, matrixQuery timeGraphMatrixQuery) (*TimeGraph, error) {
 	var err error
 	ctx, span := trace.NewSpan(ctx, "build-time-graph-from-relations")
 	defer span.End(&err)
@@ -163,7 +187,7 @@ func (m *Model) buildTimeGraphFromRelationsWithQuery(ctx context.Context, spaceU
 	}
 
 	if len(sourceExpandInfo) > 0 || len(relations) == 0 {
-		infoCtx := metadata.InitHashID(ctx)
+		infoCtx := newTimeGraphSubqueryContext(ctx)
 		metadata.GetQueryParams(infoCtx).SetIsSkipK8s(true)
 		queryTs, queryErr := tg.MakeResourceInfoQueryTsWithWindow(
 			spaceUID, sourceType, sourceInfo, sourceExpandInfo, nil, start, end, queryStep, lookBack,
@@ -207,9 +231,17 @@ func (m *Model) buildTimeGraphFromRelationsWithQuery(ctx context.Context, spaceU
 			continue
 		}
 
-		relationCtx := metadata.InitHashID(ctx)
+		relationCtx := newTimeGraphSubqueryContext(ctx)
 		metadata.GetQueryParams(relationCtx).SetIsSkipK8s(true)
-		queryTs, queryErr := tg.MakeQueryTsWithWindow(relationCtx, spaceUID, sourceInfo, start, end, queryStep, lookBack, relation)
+		relationSourceInfo := sourceInfo
+		isRootRelation := len(relation.V) == 2 && relation.V[0] == sourceType
+		if rootRelations != nil {
+			_, isRootRelation = rootRelations[timeGraphRelationKeyFor(relation)]
+		}
+		if !isRootRelation {
+			relationSourceInfo = nil
+		}
+		queryTs, queryErr := tg.MakeQueryTsWithWindow(relationCtx, spaceUID, relationSourceInfo, start, end, queryStep, lookBack, relation)
 		if queryErr != nil {
 			return nil, errors.WithMessagef(queryErr, "make query ts error for relation %v", relation)
 		}
@@ -276,7 +308,7 @@ func (m *Model) buildTimeGraphFromRelationsWithQuery(ctx context.Context, spaceU
 			for _, matcher := range matchers {
 				primaryMatchers = append(primaryMatchers, matcher)
 			}
-			infoCtx := metadata.InitHashID(ctx)
+			infoCtx := newTimeGraphSubqueryContext(ctx)
 			metadata.GetQueryParams(infoCtx).SetIsSkipK8s(true)
 			queryTs, queryErr := tg.MakeResourceInfoQueryTsWithWindow(
 				spaceUID, targetType, nil, nil, primaryMatchers, start, end, queryStep, lookBack,
@@ -327,15 +359,7 @@ func (m *Model) buildRelationsFromRelationPaths(paths []cmdb.RelationPath) []cmd
 }
 
 func (m *Model) buildRelationsFromRelationPathsForNamespace(namespace string, paths []cmdb.RelationPath) []cmdb.Relation {
-	type relationKey struct {
-		source       cmdb.Resource
-		target       cmdb.Resource
-		relationType string
-		metricName   string
-		category     string
-		direction    string
-	}
-	seen := make(map[relationKey]struct{})
+	seen := make(map[timeGraphRelationKey]struct{})
 	relations := make([]cmdb.Relation, 0)
 	for _, path := range paths {
 		for i := 1; i < len(path.Steps); i++ {
@@ -346,14 +370,7 @@ func (m *Model) buildRelationsFromRelationPathsForNamespace(namespace string, pa
 			}
 			candidates := m.timeGraphRelationCandidates(namespace, source, target, path.Steps[i])
 			for _, candidate := range candidates {
-				key := relationKey{
-					source:       source,
-					target:       target,
-					relationType: candidate.RelationType,
-					metricName:   candidate.MetricName,
-					category:     candidate.Category,
-					direction:    candidate.Direction,
-				}
+				key := timeGraphRelationKeyFor(candidate)
 				if _, ok := seen[key]; ok {
 					continue
 				}
@@ -369,6 +386,29 @@ func (m *Model) buildRelationsFromRelationPathsForNamespace(namespace string, pa
 		}
 	}
 	return relations
+}
+
+func timeGraphRelationKeyFor(relation cmdb.Relation) timeGraphRelationKey {
+	key := timeGraphRelationKey{relationType: relation.RelationType, metricName: relation.MetricName, category: relation.Category, direction: relation.Direction}
+	if len(relation.V) == 2 {
+		key.source = relation.V[0]
+		key.target = relation.V[1]
+	}
+	return key
+}
+
+func (m *Model) rootTimeGraphRelationKeys(namespace string, sourceType cmdb.Resource, paths []cmdb.RelationPath) map[timeGraphRelationKey]struct{} {
+	result := make(map[timeGraphRelationKey]struct{})
+	for _, path := range paths {
+		if len(path.Steps) < 2 || path.Steps[0].ResourceType != sourceType {
+			continue
+		}
+		rootPath := cmdb.RelationPath{Steps: append([]cmdb.RelationPathStep(nil), path.Steps[:2]...)}
+		for _, relation := range m.buildRelationsFromRelationPathsForNamespace(namespace, []cmdb.RelationPath{rootPath}) {
+			result[timeGraphRelationKeyFor(relation)] = struct{}{}
+		}
+	}
+	return result
 }
 
 func (m *Model) timeGraphRelationCandidates(
@@ -430,7 +470,7 @@ func sameResourcePair(resources []cmdb.Resource, source, target cmdb.Resource) b
 	return (resources[0] == source && resources[1] == target) || (resources[0] == target && resources[1] == source)
 }
 
-func (m *Model) resolveTimeGraphPaths(ctx context.Context, spaceUID string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, requested [][]cmdb.Resource) ([][]cmdb.Resource, error) {
+func (m *Model) resolveTimeGraphPaths(ctx context.Context, spaceUID string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, requested [][]cmdb.Resource) ([]cmdb.RelationPath, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -469,7 +509,7 @@ func (m *Model) resolveTimeGraphPaths(ctx context.Context, spaceUID string, sour
 			paths = append(paths, normalizedPath)
 		}
 		if len(paths) > 0 {
-			return paths, nil
+			return cmdb.RelationPathsFromResourcePaths(paths), nil
 		}
 	}
 
@@ -478,7 +518,7 @@ func (m *Model) resolveTimeGraphPaths(ctx context.Context, spaceUID string, sour
 		WithNamespace(spaceUID),
 		WithMaxHops(MaxAllowedHops),
 	)
-	var paths [][]cmdb.Resource
+	var paths []cmdb.RelationPath
 	for _, targetType := range targetTypes {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -488,11 +528,7 @@ func (m *Model) resolveTimeGraphPaths(ctx context.Context, spaceUID string, sour
 			continue
 		}
 		for _, graphPath := range graphPaths {
-			path := make([]cmdb.Resource, 0, len(graphPath.Steps))
-			for _, step := range graphPath.Steps {
-				path = append(path, cmdb.Resource(step.ResourceType))
-			}
-			paths = append(paths, path)
+			paths = append(paths, resourcePathsToTimeGraphRelationPaths([]resourcePath{graphPath})...)
 		}
 	}
 	if len(paths) == 0 {
@@ -515,7 +551,7 @@ func (m *Model) queryTimeGraph(ctx context.Context, lookBackDelta, spaceUID stri
 	if err != nil {
 		return nil, err
 	}
-	return m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, start, end, step, sourceType, targetTypes, cmdb.RelationPathsFromResourcePaths(paths), matcher, sourceExpandInfo)
+	return m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, start, end, step, sourceType, targetTypes, paths, matcher, sourceExpandInfo)
 }
 
 func (m *Model) queryRelationTimeGraph(ctx context.Context, lookBackDelta, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher, sourceExpandInfo cmdb.Matcher) (results []cmdb.PathResourcesResult, err error) {
@@ -546,8 +582,9 @@ func (m *Model) queryRelationTimeGraph(ctx context.Context, lookBackDelta, space
 	span.Set("query-step-seconds", step.Seconds())
 	relations := m.buildRelationsFromRelationPathsForNamespace(spaceUID, paths)
 	span.Set("relation-count", len(relations))
+	rootRelations := m.rootTimeGraphRelationKeys(spaceUID, sourceType, paths)
 
-	tg, err := m.buildTimeGraphFromRelations(ctx, spaceUID, start, end, step, sourceType, matcher, sourceExpandInfo, relations, lookBackDelta)
+	tg, err := m.buildTimeGraphFromRelationsWithRootRelations(ctx, spaceUID, start, end, step, sourceType, matcher, sourceExpandInfo, rootRelations, relations, lookBackDelta)
 	if err != nil {
 		return nil, errors.WithMessage(err, "build time graph")
 	}
@@ -660,7 +697,7 @@ func (m *Model) queryPathResourcesRangeWithSourceExpand(ctx context.Context, loo
 	if err != nil {
 		return nil, errors.WithMessage(err, "parse end timestamp")
 	}
-	stepDuration, err := time.ParseDuration(step)
+	stepDuration, err := parseStepDuration(step)
 	if err != nil {
 		return nil, errors.WithMessage(err, "parse step")
 	}
@@ -699,7 +736,7 @@ func (m *Model) queryRelationPathResourcesRangeWithSourceExpand(ctx context.Cont
 	if err != nil {
 		return nil, errors.WithMessage(err, "parse end timestamp")
 	}
-	stepDuration, err := time.ParseDuration(step)
+	stepDuration, err := parseStepDuration(step)
 	if err != nil {
 		return nil, errors.WithMessage(err, "parse step")
 	}
@@ -734,7 +771,7 @@ func (m *Model) QueryRelationPathResourcesRange(ctx context.Context, lookBackDel
 	if err != nil {
 		return nil, errors.WithMessage(err, "parse end timestamp")
 	}
-	stepDuration, err := time.ParseDuration(step)
+	stepDuration, err := parseStepDuration(step)
 	if err != nil {
 		return nil, errors.WithMessage(err, "parse step")
 	}

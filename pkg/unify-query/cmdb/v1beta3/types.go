@@ -129,3 +129,20 @@ func GenerateResourceID(resourceType ResourceType, labels map[string]string) str
 
 	return fmt.Sprintf("%s:⟨%s⟩", resourceType, strings.Join(pairs, ","))
 }
+
+func generateResourceIdentityKey(resourceType ResourceType, fields []string, labels map[string]string) string {
+	if len(fields) == 0 {
+		return GenerateResourceID(resourceType, labels)
+	}
+
+	var builder strings.Builder
+	builder.WriteString(string(resourceType))
+	for _, field := range fields {
+		value, ok := labels[field]
+		if !ok {
+			return ""
+		}
+		fmt.Fprintf(&builder, ":%d:%s=%d:%s", len(field), field, len(value), value)
+	}
+	return builder.String()
+}

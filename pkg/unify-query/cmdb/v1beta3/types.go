@@ -130,6 +130,8 @@ func GenerateResourceID(resourceType ResourceType, labels map[string]string) str
 	return fmt.Sprintf("%s:⟨%s⟩", resourceType, strings.Join(pairs, ","))
 }
 
+// generateResourceIdentityKey 按 schema 声明的主键字段生成资源身份。
+// 资源类型、字段名和值都使用长度前缀编码，避免值中包含分隔符时产生歧义。
 func generateResourceIdentityKey(resourceType ResourceType, fields []string, labels map[string]string) string {
 	if len(fields) == 0 {
 		return GenerateResourceID(resourceType, labels)

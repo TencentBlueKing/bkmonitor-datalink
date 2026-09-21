@@ -23,25 +23,22 @@ var (
 	modelMutex   sync.Mutex
 )
 
-// Model is the v1beta3 TimeGraph relation model. RelationDefinition and the
-// relation metric schema are the only sources of graph topology; query
-// execution is delegated to the TSDB-backed TimeGraph implementation.
+// Model 是 v1beta3 TimeGraph 关系模型。图拓扑只来自 RelationDefinition 和
+// 关系指标 schema，查询执行委托给基于 TSDB 的 TimeGraph 实现。
 type Model struct {
 	timeGraphResolver func(context.Context, string) (cmdb.CMDB, error)
-	// timeGraphVMQuery is only set by package tests. It replaces the final VM
-	// call after the normal QueryTs preparation and PromQL rendering, so
-	// public-entry tests can keep path planning and query rendering real without
-	// requiring a VM.
+	// timeGraphVMQuery 仅由包内测试设置。它替换 QueryTs 准备和 PromQL 渲染之后
+	// 的最后一次 VM 调用，使公开入口测试无需连接 VM 也能覆盖真实的路径规划和
+	// 查询渲染。
 	timeGraphVMQuery timeGraphVMQuery
-	// timeGraphQueryReference is a test-only replacement for metadata routing.
-	// The surrounding preparation (ToTime, SetExpand and ToPromExpr) remains the
-	// same as production; tests only avoid depending on live route metadata.
+	// timeGraphQueryReference 仅用于测试，替代 metadata 路由解析。周围的
+	// ToTime、SetExpand 和 ToPromExpr 流程与生产保持一致，测试只绕过实时路由元数据。
 	timeGraphQueryReference timeGraphQueryReference
 	schemaProvider          SchemaProvider
 	schemaProviderMu        sync.RWMutex
 }
 
-// GetModel returns the serving model used by the v1beta3 HTTP handlers.
+// GetModel 返回 v1beta3 HTTP handler 使用的服务模型。
 func GetModel(ctx context.Context) (cmdb.CMDB, error) {
 	modelMutex.Lock()
 	defer modelMutex.Unlock()
@@ -58,18 +55,18 @@ func GetModel(ctx context.Context) (cmdb.CMDB, error) {
 	return defaultModel, nil
 }
 
-// NewModel creates a TimeGraph-only model.
+// NewModel 创建只提供 TimeGraph 能力的模型。
 func NewModel(_ context.Context) (*Model, error) {
 	return &Model{schemaProvider: GetSchemaProvider()}, nil
 }
 
-// SetTimeGraphResolver injects the TimeGraph implementation. It is primarily
-// used by tests; production uses the model itself as the resolver target.
+// SetTimeGraphResolver 注入 TimeGraph 实现，主要用于测试；生产环境以模型自身
+// 作为 resolver 目标。
 func (m *Model) SetTimeGraphResolver(resolver func(context.Context, string) (cmdb.CMDB, error)) {
 	m.timeGraphResolver = resolver
 }
 
-// SetSchemaProvider injects the RelationDefinition-backed schema provider.
+// SetSchemaProvider 注入由 RelationDefinition 支持的 schema provider。
 func (m *Model) SetSchemaProvider(provider SchemaProvider) {
 	if provider == nil {
 		return
@@ -89,7 +86,7 @@ func (m *Model) getSchemaProvider() SchemaProvider {
 	return provider
 }
 
-// QueryResourceMatcher implements the instant relation API through TimeGraph.
+// QueryResourceMatcher 通过 TimeGraph 实现 instant 关系查询接口。
 func (m *Model) QueryResourceMatcher(
 	ctx context.Context,
 	lookBackDelta, spaceUID, timestamp string,
@@ -131,8 +128,8 @@ func (m *Model) QueryResourceMatcher(
 	return result.source, result.sourceMatcher, result.paths, result.target, result.matchers, nil
 }
 
-// QueryResourceMatcherRange implements the range relation API through
-// TimeGraph while preserving the v1beta3 response shape.
+// QueryResourceMatcherRange 通过 TimeGraph 实现 range 关系查询接口，同时保持
+// v1beta3 的响应结构不变。
 func (m *Model) QueryResourceMatcherRange(
 	ctx context.Context,
 	lookBackDelta, spaceUID, step string,
@@ -224,6 +221,8 @@ func parseStep(step string) (int64, error) {
 }
 
 func parseStepDuration(step string) (time.Duration, error) {
+	// 旧接口允许省略 step，统一按一分钟处理，并把规范化后的 duration 继续
+	// 传给底层查询，避免校验和实际执行使用两套步长。
 	if step == "" {
 		return time.Minute, nil
 	}
@@ -288,11 +287,9 @@ func validateSourceExpandInfoFields(req *QueryRequest, provider SchemaProvider) 
 	return nil
 }
 
-// inferSourceTypeFromInfo preserves the legacy v1beta3 contract where the
-// source type may be omitted and is resolved from source_info's primary key
-// tuple. The candidate with the most complete primary-key match wins, which is
-// deterministic for the common case and keeps old clients working when a
-// namespace contains resources with different key shapes.
+// inferSourceTypeFromInfo 保留 v1beta3 旧契约：允许省略 source type，并根据
+// source_info 中的主键元组推断资源类型。优先选择主键匹配最完整的候选；在常见
+// 情况下结果是确定的，也能兼容同一 namespace 中主键结构不同的旧客户端。
 func inferSourceTypeFromInfo(req *QueryRequest, provider SchemaProvider) (ResourceType, error) {
 	if req == nil || provider == nil {
 		return "", fmt.Errorf("cannot infer source type without schema provider")
@@ -345,9 +342,8 @@ func inferSourceTypeFromInfo(req *QueryRequest, provider SchemaProvider) (Resour
 	return best, nil
 }
 
-// adjustMaxHopsForUnconstrainedPath lets the server discover paths longer
-// than the historical two-hop default, while still enforcing the hard safety
-// ceiling configured by MaxAllowedHops.
+// adjustMaxHopsForUnconstrainedPath 允许服务端发现超过历史两跳默认值的路径，
+// 同时仍然执行硬性的安全上限约束，最大跳数由 MaxAllowedHops 配置。
 func adjustMaxHopsForUnconstrainedPath(req *QueryRequest, provider SchemaProvider) error {
 	if req == nil || provider == nil || len(req.PathResource) > 0 || req.SourceType == "" || req.TargetType == "" || req.SourceType == req.TargetType {
 		return nil

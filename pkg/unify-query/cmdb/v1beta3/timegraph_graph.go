@@ -58,8 +58,8 @@ func NewTimeGraph() *TimeGraph {
 	return NewTimeGraphWithConfig(defaultTimeGraphConfig())
 }
 
-// NewTimeGraphWithConfig creates a graph whose resource identity rules are
-// isolated from the process-global legacy configuration.
+// NewTimeGraphWithConfig 创建使用独立资源身份规则的图实例，避免读取进程级的
+// 旧配置。
 func NewTimeGraphWithConfig(cfg *TimeGraphConfig) *TimeGraph {
 	maxNodes, maxEdges, maxResults, maxNodeInfos := effectiveMaxGraphNodes(), effectiveMaxGraphEdges(), effectiveMaxGraphResults(), effectiveMaxGraphNodeInfos()
 	var relations []TimeGraphRelationConfig
@@ -193,9 +193,8 @@ func (q *TimeGraph) AddTimeRelation(ctx context.Context, source, target cmdb.Res
 	return q.AddTimeRelationWithRelation(ctx, cmdb.Relation{V: []cmdb.Resource{source, target}}, info, timestamps...)
 }
 
-// AddTimeNode adds a resource node without creating an edge. Resource info
-// metrics use this path to enrich relation nodes with non-primary attributes
-// such as version or environment before relation traversal starts.
+// AddTimeNode 只添加资源节点，不创建关系边。资源 info 指标通过此方法在遍历
+// 开始前为关系节点补充版本、环境等非主键属性。
 func (q *TimeGraph) AddTimeNode(ctx context.Context, resource cmdb.Resource, info cmdb.Matcher, timestamps ...int64) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -237,10 +236,8 @@ func (q *TimeGraph) AddTimeNode(ctx context.Context, resource cmdb.Resource, inf
 	return nil
 }
 
-// AddTimeRelationWithRelation adds a time-varying edge and retains the
-// relation identity used to query it. Multiple relation types may connect the
-// same pair of nodes, so the identity is stored separately from the simple
-// graph edge.
+// AddTimeRelationWithRelation 添加随时间变化的关系边，并保留查询该边时使用的
+// 关系身份。同一对节点可能存在多种关系，因此关系身份不能只依赖普通图边。
 func (q *TimeGraph) AddTimeRelationWithRelation(ctx context.Context, relation cmdb.Relation, info cmdb.Matcher, timestamps ...int64) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -254,9 +251,8 @@ func (q *TimeGraph) AddTimeRelationWithRelation(ctx context.Context, relation cm
 		return nil
 	}
 
-	// Dynamic relations use from_/to_ labels. Static relations use the bare
-	// resource fields. Split the series labels before building node identities;
-	// using one matcher for both endpoints collapses distinct dynamic nodes.
+	// 动态关系使用 from_/to_ 标签，静态关系直接使用资源字段。构造节点身份前
+	// 必须先拆分两端标签，否则把同一份 matcher 用于两端会合并不同的动态节点。
 	dynamic := relation.Category == string(RelationCategoryDynamic)
 	sourcePrefix, targetPrefix := q.relationEndpointPrefixes(relation, source, target)
 	sourceInfo := q.relationEndpointInfo(info, source, sourcePrefix, dynamic)
@@ -395,9 +391,8 @@ func (q *TimeGraph) relationEndpointPrefixes(relation cmdb.Relation, source, tar
 	if relation.Category != string(RelationCategoryDynamic) {
 		return "", ""
 	}
-	// Direction is part of the planned relation hop. It is required for
-	// same-type dynamic relations, where resource type comparison cannot tell
-	// whether the current source is the raw metric's from_ or to_ endpoint.
+	// 方向是关系路径规划的一部分。同类型动态关系无法仅凭资源类型判断当前
+	// source 对应原始指标的 from_ 还是 to_ 端点，因此这里必须使用规划方向。
 	switch relation.Direction {
 	case string(DirectionInbound):
 		return "to_", "from_"
@@ -459,8 +454,8 @@ func (q *TimeGraph) MakeQueryTs(ctx context.Context, spaceUID string, info map[s
 	return q.MakeQueryTsWithWindow(ctx, spaceUID, info, start, end, step, step, relation)
 }
 
-// MakeQueryTsWithWindow keeps the range sampling step independent from the
-// lookback window used by count_over_time.
+// MakeQueryTsWithWindow 让 range 采样步长与 count_over_time 使用的回溯窗口
+// 保持独立。
 func (q *TimeGraph) MakeQueryTsWithWindow(ctx context.Context, spaceUID string, info map[string]string, start time.Time, end time.Time, step, window time.Duration, relation cmdb.Relation) (*structured.QueryTs, error) {
 	if len(relation.V) != 2 {
 		return nil, nil
@@ -564,16 +559,14 @@ func (q *TimeGraph) relationQueryFields(info cmdb.Matcher, source, target cmdb.R
 	return indexes, values
 }
 
-// MakeResourceInfoQueryTs builds the query for a resource's info relation.
-// Unlike a normal relation metric, the result must retain the configured
-// non-primary fields so the graph can filter or project them later.
+// MakeResourceInfoQueryTs 构造资源 info 关系查询。与普通关系指标不同，结果
+// 必须保留配置中的非主键字段，供后续图遍历过滤或投影。
 func (q *TimeGraph) MakeResourceInfoQueryTs(spaceUID string, resource cmdb.Resource, sourceInfo, expandInfo map[string]string, start, end time.Time, step time.Duration) (*structured.QueryTs, error) {
 	return q.makeResourceInfoQueryTs(spaceUID, resource, sourceInfo, expandInfo, nil, start, end, step, step)
 }
 
-// MakeResourceInfoQueryTsWithWindow is the range-query variant of
-// MakeResourceInfoQueryTs. primaryMatchers, when present, restricts the
-// query to the exact primary-key tuples discovered from relation series.
+// MakeResourceInfoQueryTsWithWindow 是 MakeResourceInfoQueryTs 的 range 版本。
+// primaryMatchers 不为空时，查询只匹配关系指标中发现的完整主键元组。
 func (q *TimeGraph) MakeResourceInfoQueryTsWithWindow(spaceUID string, resource cmdb.Resource, sourceInfo, expandInfo map[string]string, primaryMatchers []cmdb.Matcher, start, end time.Time, step, window time.Duration) (*structured.QueryTs, error) {
 	return q.makeResourceInfoQueryTs(spaceUID, resource, sourceInfo, expandInfo, primaryMatchers, start, end, step, window)
 }
@@ -603,9 +596,9 @@ func (q *TimeGraph) makeResourceInfoQueryTs(spaceUID string, resource cmdb.Resou
 	fieldList := make([]structured.ConditionField, 0, len(primaryFields)+len(expandInfo))
 	conditionList := make([]string, 0, max(len(fieldList)-1, 0))
 	if len(primaryMatchers) > 0 {
-		// Each matcher is one exact primary-key tuple. Build
-		// (k1=v1 AND k2=v2) OR (k1=v1 AND k2=v2), which avoids the
-		// cartesian-product overmatch that a per-field IN filter would create.
+		// 每个 matcher 表示一个完整的主键元组，构造为
+		// (k1=v1 AND k2=v2) OR (k1=v1 AND k2=v2)，避免按字段分别过滤时产生
+		// 笛卡尔积式的误匹配。
 		for _, matcher := range primaryMatchers {
 			for fieldIndex, field := range primaryFields {
 				value, ok := matcher[field]
@@ -614,8 +607,8 @@ func (q *TimeGraph) makeResourceInfoQueryTs(spaceUID string, resource cmdb.Resou
 				}
 				if len(fieldList) > 0 {
 					if fieldIndex == 0 {
-						// The first field of every tuple is joined to the
-						// previous tuple with OR; fields in a tuple use AND.
+						// 每个元组的第一个字段与前一个元组使用 OR 连接，同一元组内字段
+						// 使用 AND 连接。
 						conditionList = append(conditionList, structured.ConditionOr)
 					} else {
 						conditionList = append(conditionList, structured.ConditionAnd)
@@ -814,9 +807,9 @@ func (q *TimeGraph) FindShortestPath(ctx context.Context, sourceType cmdb.Resour
 	return results, nil
 }
 
-// FindPathResources finds paths constrained by the resource-type paths used to
-// build the graph. Unlike FindShortestPath, it does not allow BFS to combine
-// edges from different candidate paths into a path that was never planned.
+// FindPathResources 按构图时使用的资源类型路径约束遍历结果。
+// 与 FindShortestPath 不同，它不会让 BFS 拼接不同候选路径中的边，从而产生
+// 规划中不存在的路径。
 func (q *TimeGraph) FindPathResources(
 	ctx context.Context,
 	sourceType cmdb.Resource,
@@ -835,9 +828,8 @@ func (q *TimeGraph) FindPathResources(
 	return q.FindRelationPathResources(ctx, sourceType, targetTypes, sourceMatcher, relationPaths)
 }
 
-// FindRelationPathResources finds paths constrained by both resource type and
-// relation identity. This prevents two relation definitions with the same
-// resource endpoints from being merged into one traversal.
+// FindRelationPathResources 同时按资源类型和关系身份约束遍历结果，避免两条
+// 端点相同但关系定义不同的边被合并到同一次遍历中。
 func (q *TimeGraph) FindRelationPathResources(
 	ctx context.Context,
 	sourceType cmdb.Resource,

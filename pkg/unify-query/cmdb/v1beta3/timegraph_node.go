@@ -246,9 +246,8 @@ type NodeBuilder struct {
 	// 字符串字典引用，支持使用TimeGraph的局部字典
 	stringDict *StringDict
 
-	// config is a per-model snapshot. A TimeGraph query must not read the
-	// process-global resource configuration because different namespaces can be
-	// queried concurrently.
+	// config 是模型级配置快照。TimeGraph 查询不能读取进程级资源配置，因为
+	// 不同 namespace 可能会并发服务。
 	config map[cmdb.Resource]TimeGraphResourceConfig
 }
 
@@ -351,9 +350,9 @@ func (n *NodeBuilder) ResourceNodeInfo(resourceType cmdb.Resource) []cmdb.Matche
 	return infos
 }
 
-// cloneMatcher prevents callers from retaining a matcher owned by the node
-// builder's reuse pool. In particular, Clean returns the internal maps to the
-// pool and the next query may otherwise mutate a previously returned result.
+// cloneMatcher 防止调用方持有节点构建器复用池中的 matcher。
+// 尤其是 Clean 会把内部 map 归还对象池；如果不复制，下一次查询可能改写
+// 已经返回给调用方的结果。
 func cloneMatcher(matcher cmdb.Matcher) cmdb.Matcher {
 	if matcher == nil {
 		return nil
@@ -371,8 +370,8 @@ func mergeMatcher(base, extra cmdb.Matcher) cmdb.Matcher {
 		result = make(cmdb.Matcher, len(extra))
 	}
 	for key, value := range extra {
-		// Multiple VM series can describe the same node at one timestamp. Keep
-		// the lexicographically larger value as the deterministic tie-breaker.
+		// 同一时间点可能有多条 VM series 描述同一个节点。属性冲突时取字典序较大的
+		// 值作为确定性的裁决规则，不依赖 VM 返回顺序。
 		if current, ok := result[key]; !ok || value > current {
 			result[key] = value
 		}
@@ -471,8 +470,8 @@ func (n *NodeBuilder) GetID(resourceType cmdb.Resource, info cmdb.Matcher) (uint
 		}
 	}()
 
-	// Length-prefix every part of the identity. Delimiter-based encodings
-	// collapse distinct primary-key tuples when a value contains the delimiter.
+	// 身份中的每一部分都使用长度前缀编码。仅靠分隔符拼接会在主键值包含分隔符
+	// 时产生歧义，把不同的主键元组合并成同一个节点。
 	buf = appendLengthPrefixed(buf, string(resourceType))
 	for _, k := range indexes {
 		if _, ok := info[k]; !ok {

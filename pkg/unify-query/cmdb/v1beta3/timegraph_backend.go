@@ -27,9 +27,8 @@ func timeGraphTargetInfoShow(ctx context.Context) bool {
 	return show
 }
 
-// timeGraphQuerier is the v1beta3 TimeGraph query contract. It is intentionally
-// kept small so request normalization and legacy response shaping stay separate
-// from relation metric reads and in-memory traversal.
+// timeGraphQuerier 定义 v1beta3 TimeGraph 查询契约。
+// 接口保持精简，让请求归一化和旧版响应适配与关系指标读取、内存图遍历相互独立。
 type timeGraphQuerier interface {
 	QueryPathResources(context.Context, string, string, string, cmdb.Resource, []cmdb.Resource, [][]cmdb.Resource, cmdb.Matcher) ([]cmdb.PathResourcesResult, error)
 	QueryPathResourcesRange(context.Context, string, string, string, string, string, cmdb.Resource, []cmdb.Resource, [][]cmdb.Resource, cmdb.Matcher) ([]cmdb.PathResourcesResult, error)
@@ -125,9 +124,8 @@ func (m *Model) buildTimeGraphRequest(
 	if err := adjustMaxHopsForUnconstrainedPath(req, provider); err != nil {
 		return nil, nil, err
 	}
-	// Keep the same compatibility behavior as the existing v1beta3 legacy API:
-	// primary-key fields identify the source resource, while source_expand_info
-	// filters the already identified source by its non-primary node attributes.
+	// 保持现有 v1beta3 旧接口的兼容语义：先用主键字段确定源资源，再用
+	// source_expand_info 按非主键节点属性过滤已经确定的源资源。
 	req.SourceInfo = sourcePrimaryKeySubset(req, provider)
 	if req.SourceInfo == nil && len(req.SourceExpandInfo) > 0 {
 		req.SourceInfo = make(map[string]string, len(req.SourceExpandInfo))
@@ -218,6 +216,8 @@ func timeGraphTargetMatcher(
 	primaryFields := provider.GetResourcePrimaryKeys(namespace, targetType)
 	key := ""
 	if len(primaryFields) == 0 {
+		// 没有 schema 主键时保留旧逻辑；有主键时只用主键字段生成稳定的
+		// 去重键，避免 info 属性变化或字段顺序影响返回结果。
 		key = GenerateResourceID(targetType, map[string]string(target.Dimensions))
 	} else {
 		key = generateResourceIdentityKey(targetType, primaryFields, map[string]string(target.Dimensions))
@@ -411,6 +411,8 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	if err != nil {
 		return timeGraphRangeResult{}, err
 	}
+	// 使用解析后的步长继续调用 TimeGraph；不能把调用方传入的空字符串再次
+	// 传到底层，否则底层会重新解析空 duration 并报错。
 	normalizedStep := (time.Duration(stepMs) * time.Millisecond).String()
 	if _, err := validateRangeBuckets(startMs, endMs, stepMs); err != nil {
 		return timeGraphRangeResult{}, err

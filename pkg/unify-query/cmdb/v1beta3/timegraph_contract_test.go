@@ -22,9 +22,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/relation"
 )
 
-// contractSchemaProvider makes the schema that matters to a case visible next
-// to the request and VM response. It deliberately does not hide configuration
-// in a setup callback.
+// contractSchemaProvider 让 case 所需的 schema 与请求、VM 响应放在一起，避免
+// 把决定行为的配置隐藏在 setup 回调中。
 type contractSchemaProvider struct {
 	resources []ResourceType
 	primary   map[ResourceType][]string

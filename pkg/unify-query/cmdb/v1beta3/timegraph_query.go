@@ -32,12 +32,14 @@ const (
 
 var timeGraphQueryTimeout = time.Minute
 
-// timeGraphMatrixQuery is the narrow external boundary used by the graph
-// builder. Production leaves it nil and queries VM; contract tests inject a
-// deterministic VM response while keeping planning, query construction and
-// graph traversal real.
+// timeGraphMatrixQuery 是图构建阶段唯一的外部查询边界。
+// 生产环境保持为空并访问 VM；契约测试注入确定性的 VM 响应，仍然走真实的
+// 路径规划、查询构造和图遍历流程。
 type timeGraphMatrixQuery func(context.Context, *structured.QueryTs) (pl.Matrix, error)
 
+// timeGraphRelationKey 唯一标识一条待查询的关系边。
+// 除了两端资源类型，还必须保留关系类型、指标、类别和方向，避免不同关系
+// 因为资源类型相同而被合并。
 type timeGraphRelationKey struct {
 	source       cmdb.Resource
 	target       cmdb.Resource
@@ -47,6 +49,9 @@ type timeGraphRelationKey struct {
 	direction    string
 }
 
+// newTimeGraphSubqueryContext 为每次 VM 子查询创建独立的 metadata 上下文。
+// InitHashID 会替换上下文中的用户元数据，因此必须先复制用户值，再把副本
+// 写回子上下文，才能同时保留租户、空间和业务信息且不修改父请求。
 func newTimeGraphSubqueryContext(ctx context.Context) context.Context {
 	user := *metadata.GetUser(ctx)
 	queryCtx := metadata.InitHashID(ctx)
@@ -80,8 +85,8 @@ func (m *Model) prepareTimeGraphVMQuery(ctx context.Context, queryTs *structured
 	return expr.String(), metadata.GetQueryParams(ctx), nil
 }
 
-// buildTimeGraphFromRelations materializes relation metrics into a temporary
-// in-memory TimeGraph for one query window.
+// buildTimeGraphFromRelations 在一个查询时间窗口内，将关系指标装载到临时的
+// 内存 TimeGraph 中。
 func (m *Model) buildTimeGraphFromRelations(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, relations []cmdb.Relation, lookBackDelta string) (*TimeGraph, error) {
 	return m.buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx, spaceUID, start, end, step, sourceType, sourceInfo, sourceExpandInfo, nil, relations, lookBackDelta, nil)
 }
@@ -90,6 +95,8 @@ func (m *Model) buildTimeGraphFromRelationsWithQuery(ctx context.Context, spaceU
 	return m.buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx, spaceUID, start, end, step, sourceType, sourceInfo, sourceExpandInfo, nil, relations, lookBackDelta, matrixQuery)
 }
 
+// buildTimeGraphFromRelationsWithRootRelations 只允许 rootRelations 对应的第一跳
+// 关系使用 sourceInfo。该入口用于完整关系路径查询，避免把起点条件带到后续跳数。
 func (m *Model) buildTimeGraphFromRelationsWithRootRelations(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, rootRelations map[timeGraphRelationKey]struct{}, relations []cmdb.Relation, lookBackDelta string) (*TimeGraph, error) {
 	return m.buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx, spaceUID, start, end, step, sourceType, sourceInfo, sourceExpandInfo, rootRelations, relations, lookBackDelta, nil)
 }
@@ -124,8 +131,8 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 	span.Set("graph-max-node-infos", tg.maxNodeInfos)
 
 	instant := start.Equal(end)
-	// step controls range sampling. lookBack is only the count_over_time
-	// window; keeping them separate is important for sparse range queries.
+	// step 只控制 range 查询的采样间隔，lookBack 只控制 count_over_time 的
+	// 回溯窗口；两者必须分开，否则稀疏的 range 查询会产生错误的采样结果。
 	queryStep := step
 	queryMatrix := func(queryCtx context.Context, queryTs *structured.QueryTs) (pl.Matrix, error) {
 		if matrixQuery != nil {
@@ -218,9 +225,9 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 			}
 		}
 	}
-	// targetMatchersByType is the set of endpoint identities actually emitted
-	// by relation metrics. targetIDsByTimestamp additionally prevents an info
-	// series from creating an isolated node at a timestamp with no relation.
+	// targetMatchersByType 保存关系指标实际产生的目标节点身份。
+	// targetIDsByTimestamp 进一步限制 info 指标：只有同一时间点确实出现在
+	// 关系中的节点才能补充属性，避免凭空创建孤立节点。
 	targetMatchersByType := make(map[cmdb.Resource]map[string]cmdb.Matcher)
 	targetIDsByTimestamp := make(map[int64]map[cmdb.Resource]map[string]struct{})
 	for _, relation := range relations {
@@ -234,6 +241,8 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 		relationCtx := newTimeGraphSubqueryContext(ctx)
 		metadata.GetQueryParams(relationCtx).SetIsSkipK8s(true)
 		relationSourceInfo := sourceInfo
+		// 只有路径第一跳需要用起点 matcher 缩小 VM 查询范围；后续关系的
+		// 起点由前一跳返回的节点决定，不能继续复用根节点条件。
 		isRootRelation := len(relation.V) == 2 && relation.V[0] == sourceType
 		if rootRelations != nil {
 			_, isRootRelation = rootRelations[timeGraphRelationKeyFor(relation)]
@@ -349,7 +358,7 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 	return tg, nil
 }
 
-// buildRelationsFromPaths extracts and de-duplicates adjacent edges from paths.
+// buildRelationsFromPaths 从路径中提取相邻边，并对重复关系去重。
 func (m *Model) buildRelationsFromPaths(paths [][]cmdb.Resource) []cmdb.Relation {
 	return m.buildRelationsFromRelationPathsForNamespace("", cmdb.RelationPathsFromResourcePaths(paths))
 }
@@ -397,6 +406,9 @@ func timeGraphRelationKeyFor(relation cmdb.Relation) timeGraphRelationKey {
 	return key
 }
 
+// rootTimeGraphRelationKeys 找出所有路径从 sourceType 出发的第一跳关系。
+// 只有这些根边使用调用方的 source matcher；后续边必须使用前一跳发现的节点
+// 继续查询，不能重复套用起点条件。
 func (m *Model) rootTimeGraphRelationKeys(namespace string, sourceType cmdb.Resource, paths []cmdb.RelationPath) map[timeGraphRelationKey]struct{} {
 	result := make(map[timeGraphRelationKey]struct{})
 	for _, path := range paths {
@@ -509,6 +521,8 @@ func (m *Model) resolveTimeGraphPaths(ctx context.Context, spaceUID string, sour
 			paths = append(paths, normalizedPath)
 		}
 		if len(paths) > 0 {
+			// 旧接口只提供资源类型路径，没有关系方向、类别和指标名，保持原有
+			// 兼容转换；自动发现路径则在下方完整保留 PathFinder 的关系计划。
 			return cmdb.RelationPathsFromResourcePaths(paths), nil
 		}
 	}

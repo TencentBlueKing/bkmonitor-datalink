@@ -14,7 +14,6 @@ import (
 
 	"github.com/pkg/errors"
 	pl "github.com/prometheus/prometheus/promql"
-	"github.com/spf13/cast"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
@@ -641,11 +640,11 @@ func (m *Model) queryPathResourcesWithSourceExpand(ctx context.Context, lookBack
 	if len(targetTypes) == 0 {
 		return nil, errors.New("target types is empty")
 	}
-	timestampValue, err := cast.ToInt64E(timestamp)
+	timestampValue, err := parseTimestamp(timestamp)
 	if err != nil {
 		return nil, errors.WithMessage(err, "parse timestamp")
 	}
-	return m.queryTimeGraph(ctx, lookBackDelta, spaceUID, time.Unix(timestampValue, 0), time.Unix(timestampValue, 0), 5*time.Minute, sourceType, targetTypes, pathResources, matcher, sourceExpandInfo)
+	return m.queryTimeGraph(ctx, lookBackDelta, spaceUID, time.UnixMilli(timestampValue), time.UnixMilli(timestampValue), 5*time.Minute, sourceType, targetTypes, pathResources, matcher, sourceExpandInfo)
 }
 
 func (m *Model) QueryPathResources(ctx context.Context, lookBackDelta, spaceUID, timestamp string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, pathResources [][]cmdb.Resource, matcher cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
@@ -665,11 +664,11 @@ func (m *Model) queryRelationPathResourcesWithSourceExpand(ctx context.Context, 
 	if len(targetTypes) == 0 {
 		return nil, errors.New("target types is empty")
 	}
-	timestampValue, err := cast.ToInt64E(timestamp)
+	timestampValue, err := parseTimestamp(timestamp)
 	if err != nil {
 		return nil, errors.WithMessage(err, "parse timestamp")
 	}
-	return m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, time.Unix(timestampValue, 0), time.Unix(timestampValue, 0), 5*time.Minute, sourceType, targetTypes, paths, matcher, sourceExpandInfo)
+	return m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, time.UnixMilli(timestampValue), time.UnixMilli(timestampValue), 5*time.Minute, sourceType, targetTypes, paths, matcher, sourceExpandInfo)
 }
 
 func (m *Model) QueryRelationPathResources(ctx context.Context, lookBackDelta, spaceUID, timestamp string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
@@ -685,11 +684,11 @@ func (m *Model) QueryRelationPathResources(ctx context.Context, lookBackDelta, s
 	if len(targetTypes) == 0 {
 		return nil, errors.New("target types is empty")
 	}
-	timestampValue, err := cast.ToInt64E(timestamp)
+	timestampValue, err := parseTimestamp(timestamp)
 	if err != nil {
 		return nil, errors.WithMessage(err, "parse timestamp")
 	}
-	return m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, time.Unix(timestampValue, 0), time.Unix(timestampValue, 0), 5*time.Minute, sourceType, targetTypes, paths, matcher, nil)
+	return m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, time.UnixMilli(timestampValue), time.UnixMilli(timestampValue), 5*time.Minute, sourceType, targetTypes, paths, matcher, nil)
 }
 
 func (m *Model) queryPathResourcesRangeWithSourceExpand(ctx context.Context, lookBackDelta, spaceUID, step, startTimestamp, endTimestamp string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, pathResources [][]cmdb.Resource, matcher, sourceExpandInfo cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
@@ -705,11 +704,11 @@ func (m *Model) queryPathResourcesRangeWithSourceExpand(ctx context.Context, loo
 	if len(targetTypes) == 0 {
 		return nil, errors.New("target types is empty")
 	}
-	start, err := cast.ToInt64E(startTimestamp)
+	start, err := parseTimestamp(startTimestamp)
 	if err != nil {
 		return nil, errors.WithMessage(err, "parse start timestamp")
 	}
-	end, err := cast.ToInt64E(endTimestamp)
+	end, err := parseTimestamp(endTimestamp)
 	if err != nil {
 		return nil, errors.WithMessage(err, "parse end timestamp")
 	}
@@ -721,10 +720,10 @@ func (m *Model) queryPathResourcesRangeWithSourceExpand(ctx context.Context, loo
 		return nil, errors.New("step must be positive")
 	}
 	stepMs := stepDuration.Milliseconds()
-	if _, err := validateRangeBuckets(start*1000, end*1000, stepMs); err != nil {
+	if _, err := validateRangeBuckets(start, end, stepMs); err != nil {
 		return nil, err
 	}
-	return m.queryTimeGraph(ctx, lookBackDelta, spaceUID, time.Unix(start, 0), time.Unix(end, 0), stepDuration, sourceType, targetTypes, pathResources, matcher, sourceExpandInfo)
+	return m.queryTimeGraph(ctx, lookBackDelta, spaceUID, time.UnixMilli(start), time.UnixMilli(end), stepDuration, sourceType, targetTypes, pathResources, matcher, sourceExpandInfo)
 }
 
 func (m *Model) QueryPathResourcesRange(ctx context.Context, lookBackDelta, spaceUID, step, startTimestamp, endTimestamp string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, pathResources [][]cmdb.Resource, matcher cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
@@ -744,11 +743,11 @@ func (m *Model) queryRelationPathResourcesRangeWithSourceExpand(ctx context.Cont
 	if len(targetTypes) == 0 {
 		return nil, errors.New("target types is empty")
 	}
-	start, err := cast.ToInt64E(startTimestamp)
+	start, err := parseTimestamp(startTimestamp)
 	if err != nil {
 		return nil, errors.WithMessage(err, "parse start timestamp")
 	}
-	end, err := cast.ToInt64E(endTimestamp)
+	end, err := parseTimestamp(endTimestamp)
 	if err != nil {
 		return nil, errors.WithMessage(err, "parse end timestamp")
 	}
@@ -760,10 +759,10 @@ func (m *Model) queryRelationPathResourcesRangeWithSourceExpand(ctx context.Cont
 		return nil, errors.New("step must be positive")
 	}
 	stepMs := stepDuration.Milliseconds()
-	if _, err := validateRangeBuckets(start*1000, end*1000, stepMs); err != nil {
+	if _, err := validateRangeBuckets(start, end, stepMs); err != nil {
 		return nil, err
 	}
-	return m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, time.Unix(start, 0), time.Unix(end, 0), stepDuration, sourceType, targetTypes, paths, matcher, sourceExpandInfo)
+	return m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, time.UnixMilli(start), time.UnixMilli(end), stepDuration, sourceType, targetTypes, paths, matcher, sourceExpandInfo)
 }
 
 func (m *Model) QueryRelationPathResourcesRange(ctx context.Context, lookBackDelta, spaceUID, step, startTimestamp, endTimestamp string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
@@ -779,11 +778,11 @@ func (m *Model) QueryRelationPathResourcesRange(ctx context.Context, lookBackDel
 	if len(targetTypes) == 0 {
 		return nil, errors.New("target types is empty")
 	}
-	start, err := cast.ToInt64E(startTimestamp)
+	start, err := parseTimestamp(startTimestamp)
 	if err != nil {
 		return nil, errors.WithMessage(err, "parse start timestamp")
 	}
-	end, err := cast.ToInt64E(endTimestamp)
+	end, err := parseTimestamp(endTimestamp)
 	if err != nil {
 		return nil, errors.WithMessage(err, "parse end timestamp")
 	}
@@ -794,10 +793,10 @@ func (m *Model) QueryRelationPathResourcesRange(ctx context.Context, lookBackDel
 	if stepDuration <= 0 {
 		return nil, errors.New("step must be positive")
 	}
-	if _, err := validateRangeBuckets(start*1000, end*1000, stepDuration.Milliseconds()); err != nil {
+	if _, err := validateRangeBuckets(start, end, stepDuration.Milliseconds()); err != nil {
 		return nil, err
 	}
-	return m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, time.Unix(start, 0), time.Unix(end, 0), stepDuration, sourceType, targetTypes, paths, matcher, nil)
+	return m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, time.UnixMilli(start), time.UnixMilli(end), stepDuration, sourceType, targetTypes, paths, matcher, nil)
 }
 
 func vectorToMatrix(vector pl.Vector) pl.Matrix {

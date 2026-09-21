@@ -497,6 +497,60 @@ func TestTimeGraphPublicRangeQueryContract(t *testing.T) {
 	}
 }
 
+func TestTimeGraphPublicQueryNormalizesMillisecondTimestamps(t *testing.T) {
+	const timestampMS int64 = 1700000000000
+
+	t.Run("instant", func(t *testing.T) {
+		vm := &publicTimeGraphVM{responses: map[string]pl.Matrix{
+			"node_to_middle_flow":   contractMatrix(map[string]string{"node_id": "n1", "middle_id": "m1"}, timestampMS),
+			"middle_to_target_flow": contractMatrix(map[string]string{"middle_id": "m1", "target_id": "t1"}, timestampMS),
+		}}
+		model := &Model{
+			schemaProvider:          publicChainProvider(),
+			timeGraphVMQuery:        vm.query,
+			timeGraphQueryReference: timeGraphTestQueryReference,
+		}
+		ctx := initTimeGraphQueryTestEnvironment()
+		results, err := model.QueryPathResources(
+			ctx, "10m", "space", fmt.Sprint(timestampMS), "node", []cmdb.Resource{"target"}, nil,
+			cmdb.Matcher{"node_id": "n1"},
+		)
+		require.NoError(t, err)
+		require.Len(t, results, 1)
+		require.Equal(t, timestampMS, results[0].Timestamp)
+		requirePublicTimeGraphCalls(t, vm.calls, []publicTimeGraphQueryWant{
+			{metric: "node_to_middle_flow", expr: "count by (middle_id, node_id) (count_over_time(a[10m]))", instant: true, start: 1699999800, end: 1700000000, step: 5 * time.Minute, window: "10m0s", conditions: publicStaticRelationConditions("node_id", "n1", "middle_id"), aggregate: publicStaticRelationAggregate("middle_id", "node_id")},
+			{metric: "middle_to_target_flow", expr: "count by (middle_id, target_id) (count_over_time(a[10m]))", instant: true, start: 1699999800, end: 1700000000, step: 5 * time.Minute, window: "10m0s", conditions: publicStaticRelationConditions("middle_id", "", "target_id"), aggregate: publicStaticRelationAggregate("middle_id", "target_id")},
+		})
+	})
+
+	t.Run("range", func(t *testing.T) {
+		const startMS int64 = 1700000040000
+		const endMS int64 = 1700000160000
+		vm := &publicTimeGraphVM{responses: map[string]pl.Matrix{
+			"node_to_middle_flow":   contractMatrix(map[string]string{"node_id": "n1", "middle_id": "m1"}, startMS, 1700000100000, endMS),
+			"middle_to_target_flow": contractMatrix(map[string]string{"middle_id": "m1", "target_id": "t1"}, startMS, 1700000100000, endMS),
+		}}
+		model := &Model{
+			schemaProvider:          publicChainProvider(),
+			timeGraphVMQuery:        vm.query,
+			timeGraphQueryReference: timeGraphTestQueryReference,
+		}
+		ctx := initTimeGraphQueryTestEnvironment()
+		results, err := model.QueryPathResourcesRange(
+			ctx, "10m", "space", "1m", fmt.Sprint(startMS), fmt.Sprint(endMS), "node", []cmdb.Resource{"target"}, nil,
+			cmdb.Matcher{"node_id": "n1"},
+		)
+		require.NoError(t, err)
+		require.Len(t, results, 3)
+		require.Equal(t, startMS, results[0].Timestamp)
+		requirePublicTimeGraphCalls(t, vm.calls, []publicTimeGraphQueryWant{
+			{metric: "node_to_middle_flow", expr: "count by (middle_id, node_id) (count_over_time(a[10m]))", instant: false, start: 1700000040, end: 1700000160, step: time.Minute, window: "10m0s", conditions: publicStaticRelationConditions("node_id", "n1", "middle_id"), aggregate: publicStaticRelationAggregate("middle_id", "node_id")},
+			{metric: "middle_to_target_flow", expr: "count by (middle_id, target_id) (count_over_time(a[10m]))", instant: false, start: 1700000040, end: 1700000160, step: time.Minute, window: "10m0s", conditions: publicStaticRelationConditions("middle_id", "", "target_id"), aggregate: publicStaticRelationAggregate("middle_id", "target_id")},
+		})
+	})
+}
+
 func TestTimeGraphPublicDynamicSelfRelationFindsBothDirections(t *testing.T) {
 	const timestampMS int64 = 1700000000000
 	tests := []struct {

@@ -40,30 +40,26 @@ func init() {
 
 type cpuPercentCollector func(interval time.Duration, percpu bool) ([]float64, error)
 
-func collectCPUPercent(collect cpuPercentCollector) (perUsage, totalUsage []float64, valid bool, err error) {
-	// 采集整机、逐核 CPU 使用率，并更新 gopsutil 对应基线
+// 采集整机、逐核 CPU 使用率，计数回退时丢弃本轮数据，其他错误直接返回
+func collectCPUPercent(collect cpuPercentCollector) (perUsage, totalUsage []float64, err error) {
 	perUsage, perErr := collect(0, true)
 	totalUsage, totalErr := collect(0, false)
 
-	// 判断整机、逐核采集是否发生 CPU 累计计数回退
 	perRollback := errors.Is(perErr, cpu.ErrCPUTimesCounterRollback)
 	totalRollback := errors.Is(totalErr, cpu.ErrCPUTimesCounterRollback)
 
-	// 整机、逐核采集发生非 idle 回退错误时，向上抛错
 	if perErr != nil && !perRollback {
-		return nil, nil, false, perErr
+		return nil, nil, perErr
 	}
 	if totalErr != nil && !totalRollback {
-		return nil, nil, false, totalErr
+		return nil, nil, totalErr
 	}
 
-	// 任一采集发生计数回退时，丢弃本轮数据，不抛错
 	if perRollback || totalRollback {
-		return nil, nil, false, nil
+		return nil, nil, errInvalidCPUStat
 	}
 
-	// 两次采集均正常时，返回有效的逐核，整机使用率
-	return perUsage, totalUsage, true, nil
+	return perUsage, totalUsage, nil
 }
 
 func getCPUStatUsage(report *CpuReport) error {
@@ -125,12 +121,13 @@ func getCPUStatUsage(report *CpuReport) error {
 	lastCPUTimeSlice.lastCPUTimes = cpuTimes
 	lastCPUTimeSlice.lastPerCPUTimes = perCPUTimes
 
-	perUsage, totalUsage, valid, err := collectCPUPercent(cpu.Percent)
+	perUsage, totalUsage, err := collectCPUPercent(cpu.Percent)
 	if err != nil {
 		return err
 	}
-	// idle 回退或 CPU 时间差出现负数时，均丢弃本轮样本
-	if !valid || !timeStateValid {
+
+	// CPU 时间差出现负数时，丢弃本轮样本；idle 回退已通过 errInvalidCPUStat 返回
+	if !timeStateValid {
 		return errInvalidCPUStat
 	}
 

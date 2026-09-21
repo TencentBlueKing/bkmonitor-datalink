@@ -47,14 +47,11 @@ func GetCPUInfo(config configs.CpuConfig) (*CpuReport, error) {
 		err := getCPUStatUsage(&once)
 		if err != nil {
 			if errors.Is(err, errInvalidCPUStat) {
-				// 采样无效，丢弃
 				logger.Warn("CPU idle counter rollback, discard invalid sample")
 			} else {
-				// 真实的采集错误
 				logger.Errorf("get cpu usage stat fail: %v", err)
 			}
 		} else {
-			// 有效样本才参与最大值选择
 			if once.TotalUsage >= maxTotalUsage {
 				report = once
 				maxTotalUsage = once.TotalUsage

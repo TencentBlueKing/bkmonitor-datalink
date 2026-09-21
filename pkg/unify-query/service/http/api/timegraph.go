@@ -61,13 +61,14 @@ func getTimeGraphQuerier(ctx context.Context, spaceUID string) (timeGraphQuerier
 
 // HandlerAPIRelationPathResources queries the complete resource path at one timestamp.
 func HandlerAPIRelationPathResources(c *gin.Context) {
+	var err error
 	ctx, span := trace.NewSpan(c.Request.Context(), "handler-api-relation-path-resources")
-	defer span.End(nil)
+	defer span.End(&err)
 	resp := &response{c: c}
 	user := metadata.GetUser(ctx)
 
 	request := new(cmdb.RelationPathResourcesRequest)
-	if err := json.NewDecoder(c.Request.Body).Decode(request); err != nil {
+	if err = json.NewDecoder(c.Request.Body).Decode(request); err != nil {
 		resp.failed(ctx, err)
 		return
 	}
@@ -113,13 +114,14 @@ func HandlerAPIRelationPathResources(c *gin.Context) {
 
 // HandlerAPIRelationPathResourcesRange queries complete resource paths over a time range.
 func HandlerAPIRelationPathResourcesRange(c *gin.Context) {
+	var err error
 	ctx, span := trace.NewSpan(c.Request.Context(), "handler-api-relation-path-resources-range")
-	defer span.End(nil)
+	defer span.End(&err)
 	resp := &response{c: c}
 	user := metadata.GetUser(ctx)
 
 	request := new(cmdb.RelationPathResourcesRangeRequest)
-	if err := json.NewDecoder(c.Request.Body).Decode(request); err != nil {
+	if err = json.NewDecoder(c.Request.Body).Decode(request); err != nil {
 		resp.failed(ctx, err)
 		return
 	}

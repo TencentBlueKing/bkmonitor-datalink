@@ -212,6 +212,24 @@
           "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"}
         }
       ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "path_resources API 请求速率",
+      "gridPos": {"x": 0, "y": 45, "w": 12, "h": 8},
+      "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"},
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}},
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "sum by (api, status) (rate(unify_query_api_request_total{api=~\"/api/v1/relation/path_resources.*\"}[5m]))",
+          "type": "range",
+          "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"}
+        }
+      ]
     }
   ],
   "refresh": "30s",

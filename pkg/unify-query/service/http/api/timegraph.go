@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/cast"
@@ -24,6 +25,26 @@ import (
 type timeGraphQuerier interface {
 	QueryPathResources(context.Context, string, string, string, cmdb.Resource, []cmdb.Resource, [][]cmdb.Resource, cmdb.Matcher) ([]cmdb.PathResourcesResult, error)
 	QueryPathResourcesRange(context.Context, string, string, string, string, string, cmdb.Resource, []cmdb.Resource, [][]cmdb.Resource, cmdb.Matcher) ([]cmdb.PathResourcesResult, error)
+}
+
+func observeTimeGraphPathQueryMetrics(ctx context.Context, queryMode string, started time.Time, results []cmdb.PathResourcesResult, queryErr error) {
+	result := metric.CMDBRelationResultSuccess
+	if queryErr != nil {
+		result = metric.CMDBRelationResultFailed
+	} else if len(results) == 0 {
+		result = metric.CMDBRelationResultEmpty
+	}
+	metric.CMDBRelationRouteInc(ctx, metric.CMDBRelationRouteTimeGraph, queryMode, result)
+	metric.CMDBRelationRouteSecond(ctx, time.Since(started), metric.CMDBRelationRouteTimeGraph, queryMode)
+	metric.CMDBRelationPathResultInc(ctx, metric.CMDBRelationRouteTimeGraph, queryMode, result)
+	metric.CMDBRelationTimeGraphResultCountObserve(ctx, queryMode, len(results))
+	if queryMode == metric.CMDBRelationQueryModeRange {
+		buckets := make(map[int64]struct{}, len(results))
+		for _, item := range results {
+			buckets[item.Timestamp] = struct{}{}
+		}
+		metric.CMDBRelationTimeGraphBucketCountObserve(ctx, queryMode, len(buckets))
+	}
 }
 
 func getTimeGraphQuerier(ctx context.Context, spaceUID string) (timeGraphQuerier, error) {
@@ -67,7 +88,10 @@ func HandlerAPIRelationPathResources(c *gin.Context) {
 	for i, queryItem := range request.QueryList {
 		queryCtx, querySpan := trace.NewSpan(ctx, "handler-api-relation-path-resources-item")
 		querySpan.Set("query-index", i)
+		queryStarted := time.Now()
+		metric.CMDBRelationRouteInc(queryCtx, metric.CMDBRelationRouteTimeGraph, metric.CMDBRelationQueryModeInstant, metric.CMDBRelationResultStarted)
 		results, queryErr := model.QueryPathResources(queryCtx, queryItem.LookBackDelta, user.SpaceUID, cast.ToString(queryItem.Timestamp), queryItem.SourceType, queryItem.TargetTypes, queryItem.PathResources, queryItem.Matcher)
+		observeTimeGraphPathQueryMetrics(queryCtx, metric.CMDBRelationQueryModeInstant, queryStarted, results, queryErr)
 		querySpan.Set("result-count", len(results))
 		querySpan.End(&queryErr)
 		item := cmdb.RelationPathResourcesResponseData{Code: http.StatusOK, Results: results}
@@ -116,7 +140,10 @@ func HandlerAPIRelationPathResourcesRange(c *gin.Context) {
 	for i, queryItem := range request.QueryList {
 		queryCtx, querySpan := trace.NewSpan(ctx, "handler-api-relation-path-resources-range-item")
 		querySpan.Set("query-index", i)
+		queryStarted := time.Now()
+		metric.CMDBRelationRouteInc(queryCtx, metric.CMDBRelationRouteTimeGraph, metric.CMDBRelationQueryModeRange, metric.CMDBRelationResultStarted)
 		results, queryErr := model.QueryPathResourcesRange(queryCtx, queryItem.LookBackDelta, user.SpaceUID, queryItem.Step, cast.ToString(queryItem.StartTs), cast.ToString(queryItem.EndTs), queryItem.SourceType, queryItem.TargetTypes, queryItem.PathResources, queryItem.Matcher)
+		observeTimeGraphPathQueryMetrics(queryCtx, metric.CMDBRelationQueryModeRange, queryStarted, results, queryErr)
 		querySpan.Set("result-count", len(results))
 		querySpan.End(&queryErr)
 		item := cmdb.RelationPathResourcesRangeResponseData{Code: http.StatusOK, Results: results}

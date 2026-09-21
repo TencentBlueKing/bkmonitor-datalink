@@ -1,6 +1,7 @@
 # v1beta3 TimeGraph 关系查询观测
 
-v1beta3 的 instant/range 关系接口统一使用 `route="timegraph"`。仪表盘 UID 为
+v1beta3 的 instant/range 关系接口统一使用 `route="timegraph"`，包括
+`/api/v1/relation/path_resources` 及其 range 接口。仪表盘 UID 为
 `uq-timegraph-v1beta3`，业务为 2：
 
 <https://bkmonitor.bkop.woa.com/?bizId=2#/grafana/d/uq-timegraph-v1beta3>

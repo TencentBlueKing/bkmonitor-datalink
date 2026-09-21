@@ -35,7 +35,7 @@ type TimeGraph struct {
 	nodeBuilder   *NodeBuilder                          // 节点构建器，负责节点的创建和去重
 	stringDict    *StringDict                           // 局部字符串字典，避免全局溢出，每个实例独立管理
 	timeGraph     map[int64]graph.Graph[uint64, uint64] // 时间分片图，key为时间戳，value为对应的图结构
-	edgeTypes     map[int64]map[timeGraphEdgeKey]map[string]struct{}
+	edgeTypes     map[int64]map[timeGraphEdgeKey]map[timeGraphEdgeRelation]struct{}
 	nodeInfos     map[int64]map[uint64]cmdb.Matcher // timestamp -> node -> time-specific dimensions
 	maxNodes      int
 	maxEdges      int
@@ -50,6 +50,18 @@ type timeGraphEdgeKey struct {
 	source uint64
 	target uint64
 }
+
+// 同一节点对可以承载不同方向的多种关系，遍历时必须匹配同一条关系的身份。
+type timeGraphEdgeRelation struct {
+	relationType string
+	metricName   string
+	direction    string
+}
+
+const (
+	timeGraphFromPrefix = "from_"
+	timeGraphToPrefix   = "to_"
+)
 
 // NewTimeGraph 创建一个新的时序图实例
 // 返回: 新创建的 TimeGraph 指针
@@ -83,7 +95,7 @@ func NewTimeGraphWithConfig(cfg *TimeGraphConfig) *TimeGraph {
 		nodeBuilder:  NewNodeBuilderWithConfig(stringDict, cfg), // 传递局部StringDict给NodeBuilder
 		stringDict:   stringDict,
 		timeGraph:    make(map[int64]graph.Graph[uint64, uint64]),
-		edgeTypes:    make(map[int64]map[timeGraphEdgeKey]map[string]struct{}),
+		edgeTypes:    make(map[int64]map[timeGraphEdgeKey]map[timeGraphEdgeRelation]struct{}),
 		nodeInfos:    make(map[int64]map[uint64]cmdb.Matcher),
 		maxNodes:     maxNodes,
 		maxEdges:     maxEdges,
@@ -221,7 +233,7 @@ func (q *TimeGraph) AddTimeNode(ctx context.Context, resource cmdb.Resource, inf
 			q.timeGraph[timestamp] = graph.New(func(t uint64) uint64 { return t }, graph.Directed())
 		}
 		if q.edgeTypes[timestamp] == nil {
-			q.edgeTypes[timestamp] = make(map[timeGraphEdgeKey]map[string]struct{})
+			q.edgeTypes[timestamp] = make(map[timeGraphEdgeKey]map[timeGraphEdgeRelation]struct{})
 		}
 		if q.nodeInfos[timestamp] == nil {
 			q.nodeInfos[timestamp] = make(map[uint64]cmdb.Matcher)
@@ -255,6 +267,13 @@ func (q *TimeGraph) AddTimeRelationWithRelation(ctx context.Context, relation cm
 	// 必须先拆分两端标签，否则把同一份 matcher 用于两端会合并不同的动态节点。
 	dynamic := relation.Category == string(RelationCategoryDynamic)
 	sourcePrefix, targetPrefix := q.relationEndpointPrefixes(relation, source, target)
+	direction := relation.Direction
+	if dynamic {
+		direction = string(DirectionOutbound)
+		if sourcePrefix == timeGraphToPrefix {
+			direction = string(DirectionInbound)
+		}
+	}
 	sourceInfo := q.relationEndpointInfo(info, source, sourcePrefix, dynamic)
 	targetInfo := q.relationEndpointInfo(info, target, targetPrefix, dynamic)
 	if len(sourceInfo) == 0 {
@@ -288,7 +307,7 @@ func (q *TimeGraph) AddTimeRelationWithRelation(ctx context.Context, relation cm
 			q.timeGraph[timestamp] = graph.New(newGraphFunc, graph.Directed())
 		}
 		if q.edgeTypes[timestamp] == nil {
-			q.edgeTypes[timestamp] = make(map[timeGraphEdgeKey]map[string]struct{})
+			q.edgeTypes[timestamp] = make(map[timeGraphEdgeKey]map[timeGraphEdgeRelation]struct{})
 		}
 		if q.nodeInfos[timestamp] == nil {
 			q.nodeInfos[timestamp] = make(map[uint64]cmdb.Matcher)
@@ -327,21 +346,14 @@ func (q *TimeGraph) AddTimeRelationWithRelation(ctx context.Context, relation cm
 			if q.maxEdges > 0 && q.edgeCount >= q.maxEdges {
 				return &ResultLimitError{Reason: "max_graph_edges", Count: q.edgeCount + 1, Limit: q.maxEdges}
 			}
-			q.edgeTypes[timestamp][edgeKey] = make(map[string]struct{})
+			q.edgeTypes[timestamp][edgeKey] = make(map[timeGraphEdgeRelation]struct{})
 			q.edgeCount++
 		}
-		keys := make([]string, 0, 2)
-		if relation.RelationType != "" {
-			keys = append(keys, relation.RelationType)
-		}
-		if relation.MetricName != "" && relation.MetricName != relation.RelationType {
-			keys = append(keys, relation.MetricName)
-		}
-		if len(keys) > 0 {
-			for _, key := range keys {
-				q.edgeTypes[timestamp][edgeKey][key] = struct{}{}
-			}
-		}
+		q.edgeTypes[timestamp][edgeKey][timeGraphEdgeRelation{
+			relationType: relation.RelationType,
+			metricName:   relation.MetricName,
+			direction:    direction,
+		}] = struct{}{}
 	}
 
 	return nil
@@ -395,9 +407,9 @@ func (q *TimeGraph) relationEndpointPrefixes(relation cmdb.Relation, source, tar
 	// source 对应原始指标的 from_ 还是 to_ 端点，因此这里必须使用规划方向。
 	switch relation.Direction {
 	case string(DirectionInbound):
-		return "to_", "from_"
+		return timeGraphToPrefix, timeGraphFromPrefix
 	case string(DirectionOutbound):
-		return "from_", "to_"
+		return timeGraphFromPrefix, timeGraphToPrefix
 	}
 	for _, configured := range q.relations {
 		if configured.Category != string(RelationCategoryDynamic) {
@@ -410,13 +422,13 @@ func (q *TimeGraph) relationEndpointPrefixes(relation cmdb.Relation, source, tar
 			continue
 		}
 		if configured.Resources[0] == source && configured.Resources[1] == target {
-			return "from_", "to_"
+			return timeGraphFromPrefix, timeGraphToPrefix
 		}
 		if configured.Resources[0] == target && configured.Resources[1] == source {
-			return "to_", "from_"
+			return timeGraphToPrefix, timeGraphFromPrefix
 		}
 	}
-	return "from_", "to_"
+	return timeGraphFromPrefix, timeGraphToPrefix
 }
 
 func (q *TimeGraph) setNodeInfo(timestamp int64, node uint64, info cmdb.Matcher) error {
@@ -949,7 +961,7 @@ func (q *TimeGraph) findTypedRelationNodePaths(
 	sourceNode uint64,
 	expectedPath []cmdb.RelationPathStep,
 	adjacency map[uint64]map[uint64]graph.Edge[uint64],
-	edgeTypes map[timeGraphEdgeKey]map[string]struct{},
+	edgeTypes map[timeGraphEdgeKey]map[timeGraphEdgeRelation]struct{},
 ) [][]uint64 {
 	// Keep every path state instead of only one path per current node. Two
 	// different paths may converge on the same node and must both remain
@@ -994,22 +1006,23 @@ func (q *TimeGraph) findTypedRelationNodePaths(
 }
 
 func relationEdgeMatches(
-	edgeTypes map[timeGraphEdgeKey]map[string]struct{},
+	edgeTypes map[timeGraphEdgeKey]map[timeGraphEdgeRelation]struct{},
 	edgeKey timeGraphEdgeKey,
 	step cmdb.RelationPathStep,
 ) bool {
-	if step.RelationType == "" && step.MetricName == "" {
+	matchDirection := step.Direction != "" && step.Direction != string(DirectionBoth)
+	if step.RelationType == "" && step.MetricName == "" && !matchDirection {
 		return true
 	}
-	keys := edgeTypes[edgeKey]
-	if len(keys) == 0 {
-		return false
-	}
-	if _, ok := keys[step.RelationType]; ok {
-		return true
-	}
-	if _, ok := keys[step.MetricName]; ok {
-		return true
+	for relation := range edgeTypes[edgeKey] {
+		if matchDirection && relation.direction != step.Direction {
+			continue
+		}
+		if (step.RelationType == "" && step.MetricName == "") ||
+			(step.RelationType != "" && relation.relationType == step.RelationType) ||
+			(step.MetricName != "" && relation.metricName == step.MetricName) {
+			return true
+		}
 	}
 	return false
 }

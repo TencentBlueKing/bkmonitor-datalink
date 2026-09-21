@@ -407,19 +407,28 @@ func timeGraphRelationKeyFor(relation cmdb.Relation) timeGraphRelationKey {
 	return key
 }
 
-// rootTimeGraphRelationKeys 找出所有路径从 sourceType 出发的第一跳关系。
-// 仅候选路径的首跳关系下推 source matcher；非首跳关系先查询候选边，再由
-// 内存图遍历限定可达节点。
+// rootTimeGraphRelationKeys 找出只用于首跳的关系。关系查询会去重，因此同时
+// 出现在后续跳数（包括其他候选路径）的关系不能下推起点条件，否则会漏边。
 func (m *Model) rootTimeGraphRelationKeys(namespace string, sourceType cmdb.Resource, paths []cmdb.RelationPath) map[timeGraphRelationKey]struct{} {
 	result := make(map[timeGraphRelationKey]struct{})
+	nonRoot := make(map[timeGraphRelationKey]struct{})
 	for _, path := range paths {
 		if len(path.Steps) < 2 || path.Steps[0].ResourceType != sourceType {
 			continue
 		}
-		rootPath := cmdb.RelationPath{Steps: append([]cmdb.RelationPathStep(nil), path.Steps[:2]...)}
-		for _, relation := range m.buildRelationsFromRelationPathsForNamespace(namespace, []cmdb.RelationPath{rootPath}) {
-			result[timeGraphRelationKeyFor(relation)] = struct{}{}
+		for i := 1; i < len(path.Steps); i++ {
+			for _, relation := range m.timeGraphRelationCandidates(namespace, path.Steps[i-1].ResourceType, path.Steps[i].ResourceType, path.Steps[i]) {
+				key := timeGraphRelationKeyFor(relation)
+				if i == 1 {
+					result[key] = struct{}{}
+				} else {
+					nonRoot[key] = struct{}{}
+				}
+			}
 		}
+	}
+	for key := range nonRoot {
+		delete(result, key)
 	}
 	return result
 }
@@ -446,13 +455,22 @@ func (m *Model) timeGraphRelationCandidates(
 		if step.MetricName != "" {
 			metricName = step.MetricName
 		}
-		result = append(result, cmdb.Relation{
+		candidate := cmdb.Relation{
 			V:            []cmdb.Resource{source, target},
 			RelationType: configured.RelationType,
 			MetricName:   metricName,
 			Category:     configured.Category,
 			Direction:    step.Direction,
-		})
+		}
+		// 同类型动态边不能通过资源类型推断方向。未指定方向的资源路径与
+		// 自动规划保持一致，分别查询 from_ 和 to_ 端点，避免丢失入向关系。
+		if source == target && configured.Category == string(RelationCategoryDynamic) &&
+			(step.Direction == "" || step.Direction == string(DirectionBoth)) {
+			candidate.Direction = string(DirectionOutbound)
+			result = append(result, candidate)
+			candidate.Direction = string(DirectionInbound)
+		}
+		result = append(result, candidate)
 	}
 	if len(result) > 0 {
 		return result

@@ -106,6 +106,42 @@ func TestTimeGraphFindPathResourcesHonorsExpectedPath(t *testing.T) {
 	}
 }
 
+func TestTimeGraphFindPathResourcesPreservesConvergingPaths(t *testing.T) {
+	config := &TimeGraphConfig{Resource: []TimeGraphResourceConfig{
+		{Name: "source", Index: cmdb.Index{"source_id"}},
+		{Name: "middle", Index: cmdb.Index{"middle_id"}},
+		{Name: "target", Index: cmdb.Index{"target_id"}},
+	}}
+	tg := NewTimeGraphWithConfig(config)
+	ctx := context.Background()
+	for _, info := range []cmdb.Matcher{
+		{"source_id": "s", "middle_id": "m1"},
+		{"source_id": "s", "middle_id": "m2"},
+	} {
+		require.NoError(t, tg.AddTimeRelation(ctx, "source", "middle", info, 100))
+	}
+	for _, info := range []cmdb.Matcher{
+		{"middle_id": "m1", "target_id": "t"},
+		{"middle_id": "m2", "target_id": "t"},
+	} {
+		require.NoError(t, tg.AddTimeRelation(ctx, "middle", "target", info, 100))
+	}
+
+	results, err := tg.FindPathResources(
+		ctx,
+		"source",
+		[]cmdb.Resource{"target"},
+		cmdb.Matcher{"source_id": "s"},
+		[][]cmdb.Resource{{"source", "middle", "target"}},
+	)
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+	require.ElementsMatch(t, []cmdb.Matcher{
+		{"middle_id": "m1"},
+		{"middle_id": "m2"},
+	}, []cmdb.Matcher{results[0].Path[1].Dimensions, results[1].Path[1].Dimensions})
+}
+
 func TestNodeIdentity(t *testing.T) {
 	tests := []struct {
 		name      string

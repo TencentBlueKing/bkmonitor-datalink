@@ -951,22 +951,20 @@ func (q *TimeGraph) findTypedRelationNodePaths(
 	adjacency map[uint64]map[uint64]graph.Edge[uint64],
 	edgeTypes map[timeGraphEdgeKey]map[string]struct{},
 ) [][]uint64 {
-	frontier := map[uint64][]uint64{sourceNode: {sourceNode}}
+	// Keep every path state instead of only one path per current node. Two
+	// different paths may converge on the same node and must both remain
+	// available for the rest of the traversal.
+	frontier := [][]uint64{{sourceNode}}
 	for index := 1; index < len(expectedPath); index++ {
 		if err := ctx.Err(); err != nil {
 			return nil
 		}
-		next := make(map[uint64][]uint64)
-		currentNodes := make([]uint64, 0, len(frontier))
-		for nodeID := range frontier {
-			currentNodes = append(currentNodes, nodeID)
-		}
-		sort.Slice(currentNodes, func(i, j int) bool { return currentNodes[i] < currentNodes[j] })
-
-		for _, current := range currentNodes {
+		next := make([][]uint64, 0)
+		for _, currentPath := range frontier {
 			if err := ctx.Err(); err != nil {
 				return nil
 			}
+			current := currentPath[len(currentPath)-1]
 			neighbors := make([]uint64, 0, len(adjacency[current]))
 			for neighbor := range adjacency[current] {
 				neighbors = append(neighbors, neighbor)
@@ -974,16 +972,14 @@ func (q *TimeGraph) findTypedRelationNodePaths(
 			sort.Slice(neighbors, func(i, j int) bool { return neighbors[i] < neighbors[j] })
 			for _, neighbor := range neighbors {
 				resourceType, _ := q.nodeBuilder.Info(neighbor)
-				if resourceType != expectedPath[index].ResourceType || containsNode(frontier[current], neighbor) {
+				if resourceType != expectedPath[index].ResourceType || containsNode(currentPath, neighbor) {
 					continue
 				}
 				if !relationEdgeMatches(edgeTypes, timeGraphEdgeKey{source: current, target: neighbor}, expectedPath[index]) {
 					continue
 				}
-				if _, exists := next[neighbor]; !exists {
-					path := append([]uint64(nil), frontier[current]...)
-					next[neighbor] = append(path, neighbor)
-				}
+				path := append([]uint64(nil), currentPath...)
+				next = append(next, append(path, neighbor))
 			}
 		}
 		frontier = next
@@ -992,10 +988,7 @@ func (q *TimeGraph) findTypedRelationNodePaths(
 		}
 	}
 
-	paths := make([][]uint64, 0, len(frontier))
-	for _, path := range frontier {
-		paths = append(paths, path)
-	}
+	paths := frontier
 	sort.Slice(paths, func(i, j int) bool { return nodePathKey(paths[i]) < nodePathKey(paths[j]) })
 	return paths
 }

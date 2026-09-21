@@ -33,8 +33,9 @@ const (
 var timeGraphQueryTimeout = time.Minute
 
 // timeGraphMatrixQuery 是图构建阶段唯一的外部查询边界。
-// 生产环境保持为空并访问 VM；契约测试注入确定性的 VM 响应，仍然走真实的
-// 路径规划、查询构造和图遍历流程。
+// 生产环境保持为空并访问 VM；契约测试注入确定性的响应，跳过
+// prepareTimeGraphVMQuery，主要覆盖 QueryTs 构造、建图和遍历，不覆盖路由解析、
+// Expand 或 PromQL 渲染。
 type timeGraphMatrixQuery func(context.Context, *structured.QueryTs) (pl.Matrix, error)
 
 // timeGraphRelationKey 唯一标识一条待查询的关系边。
@@ -50,8 +51,9 @@ type timeGraphRelationKey struct {
 }
 
 // newTimeGraphSubqueryContext 为每次 VM 子查询创建独立的 metadata 上下文。
-// InitHashID 会替换上下文中的用户元数据，因此必须先复制用户值，再把副本
-// 写回子上下文，才能同时保留租户、空间和业务信息且不修改父请求。
+// InitHashID 会创建新的 metadata ID，用户信息按 ID 存储，因此需要把用户副本
+// 写入新 ID。SetUser 会修改传入的 User 对象，不能复用父请求的 User 指针，
+// 以免子查询改写父请求。
 func newTimeGraphSubqueryContext(ctx context.Context) context.Context {
 	user := *metadata.GetUser(ctx)
 	queryCtx := metadata.InitHashID(ctx)
@@ -241,8 +243,8 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 		relationCtx := newTimeGraphSubqueryContext(ctx)
 		metadata.GetQueryParams(relationCtx).SetIsSkipK8s(true)
 		relationSourceInfo := sourceInfo
-		// 只有路径第一跳需要用起点 matcher 缩小 VM 查询范围；后续关系的
-		// 起点由前一跳返回的节点决定，不能继续复用根节点条件。
+		// 仅候选路径的首跳关系下推 source matcher；非首跳关系先查询候选边，
+		// 再由内存图遍历限定可达节点。
 		isRootRelation := len(relation.V) == 2 && relation.V[0] == sourceType
 		if rootRelations != nil {
 			_, isRootRelation = rootRelations[timeGraphRelationKeyFor(relation)]
@@ -407,8 +409,8 @@ func timeGraphRelationKeyFor(relation cmdb.Relation) timeGraphRelationKey {
 }
 
 // rootTimeGraphRelationKeys 找出所有路径从 sourceType 出发的第一跳关系。
-// 只有这些根边使用调用方的 source matcher；后续边必须使用前一跳发现的节点
-// 继续查询，不能重复套用起点条件。
+// 仅候选路径的首跳关系下推 source matcher；非首跳关系先查询候选边，再由
+// 内存图遍历限定可达节点。
 func (m *Model) rootTimeGraphRelationKeys(namespace string, sourceType cmdb.Resource, paths []cmdb.RelationPath) map[timeGraphRelationKey]struct{} {
 	result := make(map[timeGraphRelationKey]struct{})
 	for _, path := range paths {

@@ -433,23 +433,9 @@ func (q *TimeGraph) setNodeInfo(timestamp int64, node uint64, info cmdb.Matcher)
 	return nil
 }
 
-// MakeQueryTs 根据关系信息生成时序查询对象
-// 参数:
-//   - ctx: 上下文对象
-//   - spaceUID: 空间UID
-//   - info: 资源匹配器，包含查询的维度信息
-//   - start: 查询开始时间
-//   - end: 查询结束时间
-//   - step: 查询步长
-//   - relation: 资源关系，包含源资源、目标资源和指标名称
-//
-// 返回: 时序查询对象指针，如果关系没有对应的指标则返回 nil
-// 生成的查询特点:
-//   - 使用 count_over_time 进行时间聚合
-//   - 使用 COUNT 方法进行维度聚合
-//   - 对于 info 中存在的维度使用等值条件，不存在的使用非等值条件
-//
-// 优化: 预分配切片容量，减少内存重新分配
+// MakeQueryTs 根据关系定义构造时序查询。未配置 MetricName 时，按两端资源
+// 类型排序生成默认指标名；这里同时使用 step 作为 range 采样步长和回溯窗口。
+// 需要分开设置两者时，使用 MakeQueryTsWithWindow。
 func (q *TimeGraph) MakeQueryTs(ctx context.Context, spaceUID string, info map[string]string, start time.Time, end time.Time, step time.Duration, relation cmdb.Relation) (*structured.QueryTs, error) {
 	return q.MakeQueryTsWithWindow(ctx, spaceUID, info, start, end, step, step, relation)
 }

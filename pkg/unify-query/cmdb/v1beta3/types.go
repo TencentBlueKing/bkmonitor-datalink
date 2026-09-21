@@ -131,7 +131,8 @@ func GenerateResourceID(resourceType ResourceType, labels map[string]string) str
 }
 
 // generateResourceIdentityKey 按 schema 声明的主键字段生成资源身份。
-// 资源类型、字段名和值都使用长度前缀编码，避免值中包含分隔符时产生歧义。
+// 资源类型使用普通前缀，字段名和值使用长度前缀，避免值中包含分隔符时产生
+// 歧义；主键字段缺失时返回空字符串，未声明主键时回退到 GenerateResourceID。
 func generateResourceIdentityKey(resourceType ResourceType, fields []string, labels map[string]string) string {
 	if len(fields) == 0 {
 		return GenerateResourceID(resourceType, labels)

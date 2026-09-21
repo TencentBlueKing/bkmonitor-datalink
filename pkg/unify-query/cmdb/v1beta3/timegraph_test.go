@@ -131,6 +131,76 @@ func TestNodeIdentityIncludesResourceType(t *testing.T) {
 	}
 }
 
+func TestNodeIdentityLengthPrefixesPrimaryKeyTuple(t *testing.T) {
+	tests := []struct {
+		name  string
+		infos []cmdb.Matcher
+		want  []cmdb.Matcher
+	}{
+		{
+			name:  "ordinary_values",
+			infos: []cmdb.Matcher{{"a": "x", "b": "y"}},
+			want:  []cmdb.Matcher{{"a": "x", "b": "y"}},
+		},
+		{
+			name: "delimiter_values_remain_distinct",
+			infos: []cmdb.Matcher{
+				{"a": "x|b=y", "b": "z"},
+				{"a": "x", "b": "y|b=z"},
+			},
+			want: []cmdb.Matcher{
+				{"a": "x|b=y", "b": "z"},
+				{"a": "x", "b": "y|b=z"},
+			},
+		},
+		{
+			name:  "repeated_primary_key_is_deduplicated",
+			infos: []cmdb.Matcher{{"a": "x", "b": "y"}, {"a": "x", "b": "y"}},
+			want:  []cmdb.Matcher{{"a": "x", "b": "y"}},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{{Name: "node", Index: cmdb.Index{"a", "b"}}}})
+			for _, info := range tc.infos {
+				require.NoError(t, tg.AddTimeNode(context.Background(), "node", info, 100))
+			}
+			got := tg.GetNodesByResourceType("node")
+			require.ElementsMatch(t, tc.want, got)
+		})
+	}
+}
+
+func TestTimeGraphSameTimestampAttributeConflictIsStable(t *testing.T) {
+	tests := []struct {
+		name     string
+		versions []string
+	}{
+		{name: "v1_then_v2", versions: []string{"v1", "v2"}},
+		{name: "v2_then_v1", versions: []string{"v2", "v1"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{{Name: "node", Index: cmdb.Index{"id"}, Info: cmdb.Index{"version"}}}})
+			for _, version := range tc.versions {
+				if err := tg.AddTimeNode(context.Background(), "node", cmdb.Matcher{"id": "m1", "version": version}, 100); err != nil {
+					t.Fatal(err)
+				}
+			}
+			results, err := tg.FindRelationPathResources(context.Background(), "node", []cmdb.Resource{"node"}, cmdb.Matcher{"id": "m1"}, []cmdb.RelationPath{{
+				Steps: []cmdb.RelationPathStep{{ResourceType: "node"}},
+			}})
+			if err != nil || len(results) != 1 {
+				t.Fatalf("unexpected result: %v %+v", err, results)
+			}
+			if got := results[0].Path[0].Dimensions["version"]; got != "v2" {
+				t.Fatalf("attribute conflict depended on VM order: got %q", got)
+			}
+		})
+	}
+}
+
 func TestTimeGraphRelationTypeConstrainsSameEndpoint(t *testing.T) {
 	config := &TimeGraphConfig{Resource: []TimeGraphResourceConfig{
 		{Name: "left", Index: cmdb.Index{"id"}},
@@ -304,26 +374,46 @@ func TestMakeResourceInfoQueryTsKeepsExpandedFields(t *testing.T) {
 	}
 }
 
-func TestTimeGraphResultDoesNotReferencePooledMatcherAfterClean(t *testing.T) {
-	tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
-		{Name: "left", Index: cmdb.Index{"id"}},
-		{Name: "right", Index: cmdb.Index{"id"}},
-	}})
-	ctx := context.Background()
-	if err := tg.AddTimeRelation(ctx, "left", "right", cmdb.Matcher{"id": "old"}, 100); err != nil {
-		t.Fatal(err)
+func TestTimeGraphResultMatcherOwnership(t *testing.T) {
+	tests := []struct {
+		name         string
+		mutateInput  bool
+		mutateResult bool
+		rebuildAfter bool
+	}{
+		{name: "input_map", mutateInput: true},
+		{name: "returned_map", mutateResult: true},
+		{name: "clean_then_rebuild", rebuildAfter: true},
 	}
-	results, err := tg.FindPathResources(ctx, "left", []cmdb.Resource{"right"}, cmdb.Matcher{"id": "old"}, [][]cmdb.Resource{{"left", "right"}})
-	if err != nil || len(results) != 1 {
-		t.Fatalf("unexpected initial result: %v %+v", err, results)
-	}
-	oldDimensions := results[0].Path[0].Dimensions
-	tg.Clean(ctx)
-	if err := tg.AddTimeRelation(ctx, "left", "right", cmdb.Matcher{"id": "new"}, 100); err != nil {
-		t.Fatal(err)
-	}
-	if oldDimensions["id"] != "old" {
-		t.Fatalf("result dimensions were mutated after Clean: %+v", oldDimensions)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			tg := NewTimeGraphWithConfig(&TimeGraphConfig{Resource: []TimeGraphResourceConfig{
+				{Name: "left", Index: cmdb.Index{"id"}},
+				{Name: "right", Index: cmdb.Index{"id"}},
+			}})
+			input := cmdb.Matcher{"id": "old"}
+			require.NoError(t, tg.AddTimeRelation(ctx, "left", "right", input, 100))
+			if tc.mutateInput {
+				input["id"] = "modified"
+			}
+			results, err := tg.FindPathResources(ctx, "left", []cmdb.Resource{"right"}, cmdb.Matcher{"id": "old"}, [][]cmdb.Resource{{"left", "right"}})
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			if tc.mutateResult {
+				results[0].Path[0].Dimensions["id"] = "modified"
+			}
+			if tc.rebuildAfter {
+				tg.Clean(ctx)
+				require.NoError(t, tg.AddTimeRelation(ctx, "left", "right", cmdb.Matcher{"id": "new"}, 100))
+				require.Equal(t, "old", results[0].Path[0].Dimensions["id"])
+				return
+			}
+			results, err = tg.FindPathResources(ctx, "left", []cmdb.Resource{"right"}, cmdb.Matcher{"id": "old"}, [][]cmdb.Resource{{"left", "right"}})
+			require.NoError(t, err)
+			require.Len(t, results, 1)
+			require.Equal(t, "old", results[0].Path[0].Dimensions["id"])
+		})
 	}
 }
 

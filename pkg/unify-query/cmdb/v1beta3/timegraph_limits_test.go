@@ -209,14 +209,16 @@ func TestTimeGraphRangePointLimitBoundaries(t *testing.T) {
 	t.Cleanup(func() { MaxRangePoints = oldMaxRangePoints })
 
 	tests := []struct {
-		name      string
-		start     string
-		end       string
-		wantError bool
+		name         string
+		start        string
+		end          string
+		useRelations bool
+		wantError    bool
 	}{
 		{name: "one_point_below_limit", start: "1700000000", end: "1700000000"},
 		{name: "two_points_at_limit", start: "1700000000", end: "1700000060"},
 		{name: "three_points_above_limit", start: "1700000000", end: "1700000120", wantError: true},
+		{name: "relation_entrypoint_above_limit", start: "1700000000", end: "1700000120", useRelations: true, wantError: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -228,15 +230,68 @@ func TestTimeGraphRangePointLimitBoundaries(t *testing.T) {
 				},
 			}
 			ctx := initTimeGraphQueryTestEnvironment()
-			_, err := model.QueryPathResourcesRange(
-				ctx, "10m", "space", "1m", tc.start, tc.end,
-				"node", []cmdb.Resource{"system"}, [][]cmdb.Resource{{"node", "system"}}, cmdb.Matcher{"node": "n1"},
-			)
+			var err error
+			if tc.useRelations {
+				_, err = model.QueryRelationPathResourcesRange(
+					ctx, "10m", "space", "1m", tc.start, tc.end,
+					"node", []cmdb.Resource{"system"}, []cmdb.RelationPath{{
+						Steps: []cmdb.RelationPathStep{{ResourceType: "node"}, {ResourceType: "system"}},
+					}}, cmdb.Matcher{"node": "n1"},
+				)
+			} else {
+				_, err = model.QueryPathResourcesRange(
+					ctx, "10m", "space", "1m", tc.start, tc.end,
+					"node", []cmdb.Resource{"system"}, [][]cmdb.Resource{{"node", "system"}}, cmdb.Matcher{"node": "n1"},
+				)
+			}
 			if tc.wantError {
 				require.ErrorContains(t, err, "range query has more than 2 points")
 				return
 			}
 			require.NoError(t, err)
+		})
+	}
+}
+
+func TestTimeGraphRangeQueryHonorsCancellableBudget(t *testing.T) {
+	oldTimeout := timeGraphQueryTimeout
+	timeGraphQueryTimeout = 10 * time.Millisecond
+	t.Cleanup(func() { timeGraphQueryTimeout = oldTimeout })
+
+	tests := []struct {
+		name         string
+		useRelations bool
+	}{
+		{name: "path_entrypoint"},
+		{name: "relation_entrypoint", useRelations: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			model := &Model{
+				schemaProvider:          timeGraphTestSchemaProvider{},
+				timeGraphQueryReference: timeGraphTestQueryReference,
+				timeGraphVMQuery: func(ctx context.Context, _ *structured.QueryTs, _ string, _ bool, _ time.Time, _ time.Time, _ time.Duration) (pl.Matrix, error) {
+					<-ctx.Done()
+					return nil, ctx.Err()
+				},
+			}
+			started := time.Now()
+			var err error
+			if tc.useRelations {
+				_, err = model.QueryRelationPathResourcesRange(
+					initTimeGraphQueryTestEnvironment(), "10m", "space", "1m", "1700000000", "1700000060",
+					"node", []cmdb.Resource{"system"}, []cmdb.RelationPath{{
+						Steps: []cmdb.RelationPathStep{{ResourceType: "node"}, {ResourceType: "system"}},
+					}}, cmdb.Matcher{"node": "n1"},
+				)
+			} else {
+				_, err = model.QueryPathResourcesRange(
+					initTimeGraphQueryTestEnvironment(), "10m", "space", "1m", "1700000000", "1700000060",
+					"node", []cmdb.Resource{"system"}, [][]cmdb.Resource{{"node", "system"}}, cmdb.Matcher{"node": "n1"},
+				)
+			}
+			require.ErrorIs(t, err, context.DeadlineExceeded)
+			require.Less(t, time.Since(started), time.Second)
 		})
 	}
 }

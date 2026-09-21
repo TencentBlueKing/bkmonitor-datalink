@@ -449,17 +449,6 @@ func (q *TimeGraph) setNodeInfo(timestamp int64, node uint64, info cmdb.Matcher)
 	return nil
 }
 
-func mergeMatcher(base, extra cmdb.Matcher) cmdb.Matcher {
-	result := cloneMatcher(base)
-	if result == nil {
-		result = make(cmdb.Matcher, len(extra))
-	}
-	for key, value := range extra {
-		result[key] = value
-	}
-	return result
-}
-
 // MakeQueryTs 根据关系信息生成时序查询对象
 // 参数:
 //   - ctx: 上下文对象

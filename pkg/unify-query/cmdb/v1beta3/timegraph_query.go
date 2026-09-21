@@ -28,8 +28,9 @@ import (
 
 const (
 	timeGraphQueryMaxRouting = 2
-	timeGraphQueryTimeout    = time.Minute
 )
+
+var timeGraphQueryTimeout = time.Minute
 
 // timeGraphMatrixQuery is the narrow external boundary used by the graph
 // builder. Production leaves it nil and queries VM; contract tests inject a
@@ -520,6 +521,22 @@ func (m *Model) queryTimeGraph(ctx context.Context, lookBackDelta, spaceUID stri
 func (m *Model) queryRelationTimeGraph(ctx context.Context, lookBackDelta, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher, sourceExpandInfo cmdb.Matcher) (results []cmdb.PathResourcesResult, err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-query-relation")
 	defer span.End(&err)
+	if start.After(end) {
+		return nil, errors.New("start_time must be less than or equal to end_time")
+	}
+	if step <= 0 {
+		return nil, errors.New("step must be greater than 0")
+	}
+	if !start.Equal(end) {
+		points, rangeErr := validateRangeBuckets(start.UnixMilli(), end.UnixMilli(), step.Milliseconds())
+		if rangeErr != nil {
+			return nil, rangeErr
+		}
+		span.Set("range-points", points)
+	}
+	var cancel context.CancelFunc
+	ctx, cancel = context.WithTimeout(ctx, timeGraphQueryTimeout)
+	defer cancel()
 	span.Set("space-uid", spaceUID)
 	span.Set("source-type", sourceType)
 	span.Set("target-types", targetTypes)
@@ -723,6 +740,9 @@ func (m *Model) QueryRelationPathResourcesRange(ctx context.Context, lookBackDel
 	}
 	if stepDuration <= 0 {
 		return nil, errors.New("step must be positive")
+	}
+	if _, err := validateRangeBuckets(start*1000, end*1000, stepDuration.Milliseconds()); err != nil {
+		return nil, err
 	}
 	return m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, time.Unix(start, 0), time.Unix(end, 0), stepDuration, sourceType, targetTypes, paths, matcher, nil)
 }

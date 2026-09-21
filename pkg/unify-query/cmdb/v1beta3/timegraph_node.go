@@ -10,6 +10,7 @@
 package v1beta3
 
 import (
+	"encoding/binary"
 	"fmt"
 	"sync"
 
@@ -364,6 +365,28 @@ func cloneMatcher(matcher cmdb.Matcher) cmdb.Matcher {
 	return result
 }
 
+func mergeMatcher(base, extra cmdb.Matcher) cmdb.Matcher {
+	result := cloneMatcher(base)
+	if result == nil {
+		result = make(cmdb.Matcher, len(extra))
+	}
+	for key, value := range extra {
+		// Multiple VM series can describe the same node at one timestamp. Keep
+		// the lexicographically larger value as the deterministic tie-breaker.
+		if current, ok := result[key]; !ok || value > current {
+			result[key] = value
+		}
+	}
+	return result
+}
+
+func appendLengthPrefixed(buf []byte, value string) []byte {
+	var length [binary.MaxVarintLen64]byte
+	n := binary.PutUvarint(length[:], uint64(len(value)))
+	buf = append(buf, length[:n]...)
+	return append(buf, value...)
+}
+
 // GetCompressedInfo 获取压缩后的节点信息
 // 参数:
 //   - nodeID: 节点ID
@@ -448,23 +471,16 @@ func (n *NodeBuilder) GetID(resourceType cmdb.Resource, info cmdb.Matcher) (uint
 		}
 	}()
 
+	// Length-prefix every part of the identity. Delimiter-based encodings
+	// collapse distinct primary-key tuples when a value contains the delimiter.
+	buf = appendLengthPrefixed(buf, string(resourceType))
 	for _, k := range indexes {
 		if _, ok := info[k]; !ok {
 			return 0, fmt.Errorf(ErrIndexNotMatchIndex, k)
 		}
-
-		// 直接写入字节切片，避免字符串转换
-		buf = append(buf, k...)
-		buf = append(buf, '=')
-		buf = append(buf, info[k]...)
-		buf = append(buf, '|')
+		buf = appendLengthPrefixed(buf, k)
+		buf = appendLengthPrefixed(buf, info[k])
 	}
-	// The primary-key tuple alone is not sufficient to identify a node: two
-	// resource types may use the same field names and values. Include the
-	// resource type in the hash key before consulting the hash cache.
-	buf = append(buf, 0)
-	buf = append(buf, resourceType...)
-	buf = append(buf, 0)
 
 	// 使用更高效的哈希计算
 	hashID := xxhash.Sum64(buf)
@@ -474,6 +490,22 @@ func (n *NodeBuilder) GetID(resourceType cmdb.Resource, info cmdb.Matcher) (uint
 
 	// 检查缓存
 	if id, ok := n.data[hashID]; ok {
+		infoFields := n.resourceInfoFields(resourceType)
+		candidate := make(cmdb.Matcher, len(infoFields))
+		for _, key := range infoFields {
+			if value, exists := info[key]; exists {
+				candidate[key] = value
+			}
+		}
+		if len(candidate) > 0 {
+			merged := mergeMatcher(n.info[id], candidate)
+			n.info[id] = merged
+			compressed := make(map[uint64]uint64, len(merged))
+			for key, value := range merged {
+				compressed[n.stringDict.GetID(key)] = n.stringDict.GetID(value)
+			}
+			n.compressedInfo[id] = compressed
+		}
 		return id, nil
 	}
 

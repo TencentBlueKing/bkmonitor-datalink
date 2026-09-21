@@ -267,13 +267,26 @@ func TestQueryResourceMatcherRangeUsesTimeGraphBackendAndNormalizesBuckets(t *te
 
 func TestBuildTimeGraphRequestAppliesSourceExpandInfo(t *testing.T) {
 	model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
-	req, _, err := model.buildTimeGraphRequest(
-		"bkcc__2", "system", "node",
-		cmdb.Matcher{"node": "n1"},
-		cmdb.Matcher{"region": "east"}, true, nil,
-	)
-	require.NoError(t, err)
-	require.Equal(t, map[string]string{"node": "n1", "region": "east"}, req.SourceInfo)
+	tests := []struct {
+		name       string
+		expand     cmdb.Matcher
+		wantExpand map[string]string
+		wantSource map[string]string
+	}{
+		{name: "known_field", expand: cmdb.Matcher{"region": "east"}, wantExpand: map[string]string{"region": "east"}, wantSource: map[string]string{"node": "n1", "region": "east"}},
+		{name: "legacy_unknown_field", expand: cmdb.Matcher{"legacy_label": "value"}, wantExpand: map[string]string{"legacy_label": "value"}, wantSource: map[string]string{"node": "n1", "legacy_label": "value"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _, err := model.buildTimeGraphRequest(
+				"bkcc__2", "system", "node",
+				cmdb.Matcher{"node": "n1"}, tc.expand, true, nil,
+			)
+			require.NoError(t, err)
+			require.Equal(t, tc.wantExpand, req.SourceExpandInfo)
+			require.Equal(t, tc.wantSource, req.SourceInfo)
+		})
+	}
 }
 
 func TestBuildTimeGraphRequestInfersLegacySourceAndImplicitTarget(t *testing.T) {

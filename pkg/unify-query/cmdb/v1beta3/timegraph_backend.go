@@ -116,8 +116,10 @@ func (m *Model) buildTimeGraphRequest(
 	if err := validateSchemaProvider(provider, req.SchemaNamespace()); err != nil {
 		return nil, nil, err
 	}
-	if err := validateSourceExpandInfoFields(req, provider); err != nil {
-		return nil, nil, err
+	if !req.LegacyCompatibility {
+		if err := validateSourceExpandInfoFields(req, provider); err != nil {
+			return nil, nil, err
+		}
 	}
 	if err := adjustMaxHopsForUnconstrainedPath(req, provider); err != nil {
 		return nil, nil, err

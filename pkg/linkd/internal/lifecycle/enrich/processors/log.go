@@ -41,7 +41,7 @@ func (Log) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 	}
 	classification := rules.ClassifyDisplay(strategy)
 	if !rules.IsLogDisplay(classification) {
-		return logFailure(rules.DependencyKingeyeStrategy)
+		return enrich.ProcessorResult{Status: domain.EnrichStatusSkipped, Value: domain.JSONObject{}}, nil
 	}
 	query := sourceConfigString(strategy.Spec.SourceConfig, rules.FieldQueryString)
 	relatedInfo, relatedValid := logRelatedInfo(alert.ExtraData)

@@ -83,7 +83,7 @@ func (p Strategy) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proc
 				}
 			}
 		}
-		values.StrategyName = strategy.Spec.Name
+		values.StrategyName = legacyKACStrategyName(strategy)
 		if values.StrategyName == "" {
 			values.StrategyName = strategy.Name
 		}
@@ -114,6 +114,19 @@ func (p Strategy) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proc
 		}
 	}
 	return enrich.ProcessorResult{Status: status, Value: value, Diagnostics: diagnostics}, nil
+}
+
+func legacyKACStrategyName(strategy models.CWStrategy) string {
+	if strategy.MonitorTemplateName != "" {
+		if strategy.Spec.StrategyItem != nil && len(strategy.Spec.StrategyItem.QueryConfigs) != 0 && strategy.Spec.StrategyItem.QueryConfigs[0].PromQL != "" {
+			return strategy.MonitorTemplateName
+		}
+		if strategy.Spec.AliasName != "" {
+			return strategy.MonitorTemplateName + "-" + strategy.Spec.AliasName
+		}
+		return strategy.MonitorTemplateName
+	}
+	return strategy.Spec.Name
 }
 
 func strategyDependencyDiagnostics(strategyFound bool, strategyErr error) []enrich.Diagnostic {

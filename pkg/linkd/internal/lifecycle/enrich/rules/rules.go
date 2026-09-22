@@ -123,6 +123,8 @@ const (
 	FieldTaskID                    = "task_id"
 	FieldCloudID                   = "cloud_id"
 	FieldQueryString               = "query_string"
+	FieldLogThemeId                = "log_theme_id"
+	FieldLogThemeName              = "log_theme_name"
 	FieldEventName                 = "event_name"
 	FieldAnomalyBeginTime          = "anomaly_begin_time"
 	FieldAPMAppID                  = "apm_app_id"

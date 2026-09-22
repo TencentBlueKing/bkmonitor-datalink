@@ -150,7 +150,8 @@ func (Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Process
 	)
 	content := alert.Content
 	if rules.IsLogDisplay(classification.Main) {
-		content = logDisplayContent(content, classification.Main, sourceConfigString(strategy.Spec.SourceConfig, rules.FieldQueryString))
+		subjectName := logDisplaySubject(alert.SubjectName, sourceConfigString(strategy.Spec.SourceConfig, rules.FieldLogThemeName))
+		content = subjectName + logDisplayContent(content, classification.Main, sourceConfigString(strategy.Spec.SourceConfig, rules.FieldQueryString))
 	} else {
 		content = applyDataContentAlgorithm(content, strategy, metricMetadata, alert.Severity)
 	}
@@ -171,6 +172,13 @@ func (Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Process
 		status = domain.EnrichStatusPartial
 	}
 	return enrich.ProcessorResult{Status: status, Value: value, Diagnostics: displayDiagnostics}, nil
+}
+
+func logDisplaySubject(alertSubject string, logThemeName string) string {
+	if alertSubject != "" {
+		return alertSubject
+	}
+	return logThemeName
 }
 
 func logDisplayContent(content string, classification rules.DisplayClassification, query string) string {
@@ -328,8 +336,9 @@ func cleanDisplayTitle(
 	case rules.DisplayLogMetric:
 		return alert.SubjectName + "发生了" + itemName + "告警"
 	case rules.DisplayLogKeyword:
+		subjectName := logDisplaySubject(alert.SubjectName, sourceConfigString(strategy.Spec.SourceConfig, rules.FieldLogThemeName))
 		queryString := sourceConfigString(strategy.Spec.SourceConfig, rules.FieldQueryString)
-		return alert.SubjectName + "发生了【" + queryString + "】关键字告警"
+		return subjectName + "发生了【" + queryString + "】关键字告警"
 	default:
 		return objectName + "发生了" + itemName + "告警"
 	}

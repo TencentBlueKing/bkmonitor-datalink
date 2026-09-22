@@ -44,6 +44,28 @@ func TestCWStrategyClientIntegration(t *testing.T) {
 	}
 }
 
+func TestCWStrategyClientReadsMonitorTemplateName(t *testing.T) {
+	dsn := os.Getenv("LINKD_TEST_KINGEYE_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("LINKD_TEST_KINGEYE_MYSQL_DSN is not set")
+	}
+	database, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := NewCWStrategyClient(CWStrategyClientConfig{DB: database})
+	if err != nil {
+		t.Fatal(err)
+	}
+	strategy, found, err := client.GetByBKStrategyID(t.Context(), "system", 472)
+	if err != nil || !found {
+		t.Fatalf("strategy found=%t error=%v", found, err)
+	}
+	if strategy.MonitorTemplateID == nil || *strategy.MonitorTemplateID != 95 || strategy.MonitorTemplateName != "日志高级" {
+		t.Fatalf("monitor template id=%v name=%q", strategy.MonitorTemplateID, strategy.MonitorTemplateName)
+	}
+}
+
 func TestCWStrategyFromRowDecodesStrategyItemQueryProjection(t *testing.T) {
 	t.Parallel()
 	tenantID := "tenant-1"

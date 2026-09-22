@@ -110,6 +110,7 @@ type enrichValues struct {
 	resource models.ResourceValues
 	display  models.DisplayValues
 	metric   models.MetricValues
+	log      models.LogValues
 	source   models.SourceValues
 }
 
@@ -166,7 +167,9 @@ func convertMessageWithLevel(input lifecycle.FinalHookInput, resolve func(string
 		AggregateFunc: values.metric.AggregateFunc, WhereCondition: values.metric.WhereCondition,
 		Unit: values.metric.Unit, DataSource: values.strategy.DataSource,
 		FieldExtraInfo:    fieldExtraInfo{StrategyName: strategyExtraInfo{URL: values.strategy.URL}},
-		MetricQueryParams: query, DynamicGroupID: nonNilStrings(values.resource.DynamicGroupID), CWLabels: nonNilStrings(values.resource.CWLabels),
+		MetricQueryParams: query, DynamicGroupID: nonNilStrings(values.resource.DynamicGroupID), CWLabels: preferredLabels(values.log.CWLabels, values.resource.CWLabels),
+		LogThemeID: scalarInt64(values.log.LogThemeID), LogThemeName: values.log.LogThemeName,
+		LogQueryString: values.log.LogQueryString, LogRelateInfo: values.log.LogRelateInfo,
 	}
 	if input.Alert.Status.Terminal() {
 		closeTime := input.Alert.EndAt.In(kacTimeZone).Format(kacTimeLayout)
@@ -218,6 +221,8 @@ func decodeEnrich(object domain.JSONObject) (enrichValues, error) {
 				err = decodeProcessorValue(envelope.Value, &values.display)
 			case "metric":
 				err = decodeProcessorValue(envelope.Value, &values.metric)
+			case "log":
+				err = decodeProcessorValue(envelope.Value, &values.log)
 			case "source":
 				err = decodeProcessorValue(envelope.Value, &values.source)
 			}
@@ -332,6 +337,18 @@ func scalarText(value any) string {
 	}
 }
 
+func scalarInt64(value any) int64 {
+	text := scalarText(value)
+	if text == "" {
+		return 0
+	}
+	parsed, err := strconv.ParseInt(text, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return parsed
+}
+
 func firstNonEmpty(values ...string) string {
 	for _, value := range values {
 		if value != "" {
@@ -346,4 +363,11 @@ func nonNilStrings(values []string) []string {
 		return []string{}
 	}
 	return values
+}
+
+func preferredLabels(primary, fallback []string) []string {
+	if len(primary) != 0 {
+		return nonNilStrings(primary)
+	}
+	return nonNilStrings(fallback)
 }

@@ -55,6 +55,9 @@ func (Resource) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proces
 		return failedDependency(rules.DependencyKingeyeStrategy), nil
 	}
 	classification := rules.Classify(strategy, dimensions)
+	if rules.IsLogDisplay(classification.Main) {
+		return resourceScenarioResult(scope, models.ResourceValues{DynamicGroupID: []string{}, CWLabels: []string{}}, nil, false)
+	}
 	if classification.Main == rules.MainData {
 		return processDataResource(ctx, scope, strategy, ids.BizID)
 	}

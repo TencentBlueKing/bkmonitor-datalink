@@ -94,6 +94,28 @@ func TestLogContentProjection(t *testing.T) {
 	}
 }
 
+func TestLogSkipsNonLogStrategy(t *testing.T) {
+	t.Parallel()
+	reader := &logTestReader{strategy: logStrategy("", ""), sourceName: "基础监控"}
+	reader.strategy.Spec.MetricSource = "bk_monitor"
+	chain, err := enrich.NewChain([]enrich.Processor{Log{}}, enrich.Sources{CWStrategy: reader})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := chain.Enrich(context.Background(), lifecycle.EnrichInput{Alert: processorBaseTargetAlert(t, domain.DimensionMap{})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := enrich.DecodePayload(result.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope := payload.Processors[0][rules.LogProcessor]
+	if result.Status != domain.EnrichStatusSkipped || envelope.Status != domain.EnrichStatusSkipped || len(envelope.Diagnostics) != 0 {
+		t.Fatalf("status=%q log=%#v", result.Status, envelope)
+	}
+}
+
 func TestLogMetricFixtureProjection(t *testing.T) {
 	t.Parallel()
 	reader := &logTestReader{strategy: logStrategy(models.CWMonitorItemTypeLog, ""), sourceName: "基础监控"}
@@ -133,16 +155,17 @@ func TestLogMetricFixtureProjection(t *testing.T) {
 func TestLogMetricAndKeywordProjection(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name      string
-		itemType  models.CWMonitorItemType
-		query     string
-		expected  string
-		related   string
-		wantTitle string
+		name        string
+		itemType    models.CWMonitorItemType
+		query       string
+		expected    string
+		related     string
+		wantTitle   string
+		wantContent string
 	}{
-		{name: "metric", itemType: models.CWMonitorItemTypeLog, query: "level:error", expected: "level:error", wantTitle: "日志主题发生了level:error告警"},
-		{name: "keyword", itemType: models.CWMonitorItemTypeLogKeyword, query: "error", expected: "error", related: `{"host":"web-1"}`, wantTitle: "日志主题发生了【error】关键字告警"},
-		{name: "keyword fallback", itemType: models.CWMonitorItemTypeLogKeyword, expected: "--", wantTitle: "日志主题发生了【】关键字告警"},
+		{name: "metric", itemType: models.CWMonitorItemTypeLog, query: "level:error", expected: "level:error", wantTitle: "日志主题发生了level:error告警", wantContent: "日志主题source content"},
+		{name: "keyword", itemType: models.CWMonitorItemTypeLogKeyword, query: "error", expected: "error", related: `{"host":"web-1"}`, wantTitle: "日志主题发生了【error】关键字告警", wantContent: "日志主题匹配到【error】关键字次数 source content"},
+		{name: "keyword fallback", itemType: models.CWMonitorItemTypeLogKeyword, expected: "--", wantTitle: "日志主题发生了【】关键字告警", wantContent: "日志主题匹配到【】关键字次数 source content"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			reader := &logTestReader{strategy: logStrategy(tc.itemType, tc.query), sourceName: "日志源"}
@@ -164,6 +187,10 @@ func TestLogMetricAndKeywordProjection(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			resource := payload.Processors[1][rules.ResourceProcessor]
+			if resource.Status != domain.EnrichStatusSucceeded || len(resource.Diagnostics) != 0 {
+				t.Fatalf("resource=%#v", resource)
+			}
 			logValue := payload.Processors[3][rules.LogProcessor]
 			var log models.LogValues
 			if err := json.Unmarshal(mustRawObject(t, logValue.Value), &log); err != nil {
@@ -179,6 +206,13 @@ func TestLogMetricAndKeywordProjection(t *testing.T) {
 			}
 			if title != tc.wantTitle {
 				t.Fatalf("title=%q", title)
+			}
+			var content string
+			if err := json.Unmarshal(display.Value["content"], &content); err != nil {
+				t.Fatal(err)
+			}
+			if content != tc.wantContent {
+				t.Fatalf("content=%q want=%q", content, tc.wantContent)
 			}
 		})
 	}

@@ -92,6 +92,53 @@ func TestStrategyBusinessMatch(t *testing.T) {
 	}
 }
 
+func TestStrategyUsesLegacyKACDisplayName(t *testing.T) {
+	t.Parallel()
+	bizID := int64(2)
+	scope, err := enrich.NewScope(strategyTestAlert(t, bizID), enrich.Sources{
+		CWStrategy: strategyProcessorReader{strategy: models.CWStrategy{
+			BKBizID: &bizID, MonitorTemplateName: "日志高级",
+			Spec: models.CWStrategySpec{
+				Name: "keyword_num", AliasName: "日志关键字丨mt-es接入任务场景正常-080601",
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := (Strategy{}).Process(context.Background(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(result.Value["strategy_name"]); got != `"日志高级-日志关键字丨mt-es接入任务场景正常-080601"` {
+		t.Fatalf("strategy_name=%s", got)
+	}
+}
+
+func TestStrategyUsesOnlyTemplateNameForPromQL(t *testing.T) {
+	t.Parallel()
+	bizID := int64(2)
+	scope, err := enrich.NewScope(strategyTestAlert(t, bizID), enrich.Sources{
+		CWStrategy: strategyProcessorReader{strategy: models.CWStrategy{
+			BKBizID: &bizID, MonitorTemplateName: "日志高级",
+			Spec: models.CWStrategySpec{
+				Name: "keyword_num", AliasName: "日志关键字丨mt-es接入任务场景正常-080601",
+				StrategyItem: &models.CWStrategyItem{QueryConfigs: []models.StrategyQueryConfig{{PromQL: "sum(rate(log_total[5m]))"}}},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := (Strategy{}).Process(context.Background(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(result.Value["strategy_name"]); got != `"日志高级"` {
+		t.Fatalf("strategy_name=%s", got)
+	}
+}
+
 func TestBuildStrategyURLUsesConfiguredWebSaaSModuleURL(t *testing.T) {
 	t.Parallel()
 	processor, err := NewStrategy(map[string]any{"web_saas_module_url": "https://example.com/kingeye"})

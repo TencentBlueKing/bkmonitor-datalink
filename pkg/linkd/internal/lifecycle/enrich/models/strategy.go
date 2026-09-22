@@ -94,6 +94,7 @@ type CWStrategy struct {
 	IsDefault                *bool
 	DefaultStrategyConfigUID *string
 	MonitorTemplateID        *int64
+	MonitorTemplateName      string
 	ConfigID                 *string
 	ObjectModelCode          *string
 	BKObjectInstID           *string

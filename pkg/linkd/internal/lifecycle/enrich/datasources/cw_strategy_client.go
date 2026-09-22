@@ -56,6 +56,12 @@ type cwStrategyRow struct {
 	BKObjectInstID           *string        `gorm:"column:bk_object_inst_id"`
 }
 
+type monitorTemplateRow struct {
+	ID       int64  `gorm:"column:id"`
+	TenantID string `gorm:"column:bk_tenant_id"`
+	Name     string `gorm:"column:name"`
+}
+
 // CWStrategyClientConfig 注入已经选择目标 schema 的鲸眼声明式策略数据库连接。
 // 连接池的创建、Ping、容量设置和关闭仍由进程装配层负责。
 type CWStrategyClientConfig struct {
@@ -84,9 +90,9 @@ func (c *CWStrategyClient) GetByBKStrategyID(ctx context.Context, tenantID strin
 		return models.CWStrategy{}, false, fmt.Errorf("get cw strategy by bk strategy ID: tenant ID and positive strategy ID are required")
 	}
 	return c.take(
+		ctx,
 		c.db.WithContext(ctx).
 			Where("bk_tenant_id = ?", tenantID).
-			Where("active = ?", 1).
 			Where(datatypes.JSONQuery("status").Equals(bkStrategyID, "bk_strategy_id")),
 		tenantID,
 		bkStrategyID,
@@ -94,7 +100,7 @@ func (c *CWStrategyClient) GetByBKStrategyID(ctx context.Context, tenantID strin
 	)
 }
 
-func (c *CWStrategyClient) take(query *gorm.DB, tenantID string, strategyID int64, operation string) (models.CWStrategy, bool, error) {
+func (c *CWStrategyClient) take(ctx context.Context, query *gorm.DB, tenantID string, strategyID int64, operation string) (models.CWStrategy, bool, error) {
 	var row cwStrategyRow
 	err := query.
 		Table("core_v1alpha1_strategy").
@@ -117,6 +123,21 @@ func (c *CWStrategyClient) take(query *gorm.DB, tenantID string, strategyID int6
 	}
 	if strategyID > 0 && result.Status.BKStrategyID != strategyID {
 		return models.CWStrategy{}, false, fmt.Errorf("%w: core_v1alpha1_strategy strategy identity does not match query", enrich.ErrInvalidDataSourceResponse)
+	}
+	if result.MonitorTemplateID != nil && *result.MonitorTemplateID > 0 {
+		var template monitorTemplateRow
+		err = c.db.WithContext(ctx).
+			Table("home_application_monitortemplate").
+			Select("id", "bk_tenant_id", "name").
+			Where("id = ? AND bk_tenant_id = ?", *result.MonitorTemplateID, tenantID).
+			Take(&template).Error
+		if err != nil {
+			return models.CWStrategy{}, false, fmt.Errorf("%w: query monitor template name", enrich.ErrInvalidDataSourceResponse)
+		}
+		if template.ID != *result.MonitorTemplateID || template.TenantID != tenantID || template.Name == "" {
+			return models.CWStrategy{}, false, fmt.Errorf("%w: monitor template identity does not match strategy", enrich.ErrInvalidDataSourceResponse)
+		}
+		result.MonitorTemplateName = template.Name
 	}
 	return result, true, nil
 }

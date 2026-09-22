@@ -226,6 +226,7 @@ data_source
 ```
 
 当前策略身份来自 `labels.strategy_id + labels.strategy_version + labels.bk_biz_id`。鲸眼声明式策略从 Kingeye MySQL 读取，并校验租户、策略身份和业务边界。默认策略、云策略与实例策略生成不同 URL。
+`strategy_name` 沿用旧 KAC 展示语义：普通策略使用 `monitor_template.name + "-" + spec.alias_name`，PromQL 策略只使用 `monitor_template.name`；没有 `monitor_template_id` 的策略才回退 `spec.name` 或声明式资源名。
 
 ### 6.2 resource
 
@@ -561,7 +562,7 @@ Alert.Dimensions.task_id
 - 日志指标使用查询语句作为 metric 展示名，日志关键字为空查询时回退 `--`；
 - 日志场景使用空 Resource 语义，Display 使用空 object；
 - 关键字从 `Alert.ExtraData.log_related_info` 读取关联信息；
-- 日志 Display 内容裁剪已按旧 KAC 规则实现：日志指标移除“关联信息”尾部；日志关键字命中内容生成“匹配到【query】关键字次数 ...”，无数据内容生成“【query】关键字 ...”；
+- 日志 Display 内容先拼接 `Alert.SubjectName`，再执行日志内容裁剪：日志指标移除“关联信息”尾部；日志关键字命中内容生成“匹配到【query】关键字次数 ...”，无数据内容生成“【query】关键字 ...”；`Alert.SubjectName` 为空时保持原内容形态；
 - 输出日志主题、查询语句、关联信息和 `cw_labels`；
 - 已读取 KAC `log_metric_data.json` 与 `log_keyword.json` 的真实输入/清洗输出，补充同字段语义的完整 Processor 链测试；
 - 派生输入测试覆盖日志 Processor 的正常、关键字空查询和主题缺失边界。

@@ -11,9 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
 	"linkd/internal/domain"
 	"linkd/internal/lifecycle"
+
+	"github.com/google/uuid"
 )
 
 func TestConvertMessageMapsAlertAndEnrichToKACAlarm(t *testing.T) {
@@ -56,23 +57,31 @@ func TestConvertMessageMapsAlertAndEnrichToKACAlarm(t *testing.T) {
 	}
 }
 
-func TestNativeLevelAndUnknownSystemClosure(t *testing.T) {
+func TestConvertMessageMapsLogEnrichToKACAlarm(t *testing.T) {
 	alert := testAlert()
-	alert.Severity = "custom"
-	input := lifecycle.FinalHookInput{Cause: lifecycle.AlertChangeCause{Type: lifecycle.AlertChangeCauseSourceEvent, ID: "event"}, Alert: alert, Outcome: lifecycle.OutcomeAlertCreated}
-	message, err := convertMessageWithLevel(input, func(name string) (string, error) { return name, nil })
-	if err != nil || message.Level != "custom" {
-		t.Fatalf("custom level failed: %v", err)
+	alert.Enrich = jsonObject(`{"processors":[
+		{"display":{"status":"succeeded","value":{"title":"日志告警","content":"匹配到【error】关键字次数 2","object":"","dimensions":[],"dimension_text":""}}},
+		{"log":{"status":"succeeded","value":{"log_theme_id":36,"log_theme_name":"应用日志","log_query_string":"error","log_relate_info":"{\"host\":\"web-1\"}","cw_labels":["bk_biz_id","bk_biz_id|2","log","log|36"]}}},
+		{"resource":{"status":"succeeded","value":{"dynamic_group_id":[],"cw_labels":[]}}}
+	]}`)
+	message, err := convertMessage(lifecycle.FinalHookInput{
+		Cause: lifecycle.AlertChangeCause{Type: lifecycle.AlertChangeCauseSourceEvent, ID: "event-1"},
+		Alert: alert, Outcome: lifecycle.OutcomeAlertCreated,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
-	input.Alert.Status = domain.AlertStatusClosed
-	input.Alert.EndType = domain.AlertEndTypeSystem
-	input.Alert.EndReason = "unknown_severity"
-	end := input.Alert.UpdateAt
-	input.Alert.EndAt = &end
-	input.Outcome = lifecycle.OutcomeAlertClosed
-	message, err = convertMessage(input)
-	if err != nil || message.Level != "custom" || message.Action != "close" {
-		t.Fatalf("unknown system closure rejected: %v", err)
+	if message.LogThemeID != 36 || message.LogThemeName != "应用日志" || message.LogQueryString != "error" || message.LogRelateInfo != `{"host":"web-1"}` {
+		t.Fatalf("log fields=%+v", message)
+	}
+	wantLabels := []string{"bk_biz_id", "bk_biz_id|2", "log", "log|36"}
+	if len(message.CWLabels) != len(wantLabels) {
+		t.Fatalf("cw_labels=%v", message.CWLabels)
+	}
+	for index := range wantLabels {
+		if message.CWLabels[index] != wantLabels[index] {
+			t.Fatalf("cw_labels=%v", message.CWLabels)
+		}
 	}
 }
 

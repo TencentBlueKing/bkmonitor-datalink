@@ -178,15 +178,15 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 	}
 
 	tsDBs := make([]*query.TsDBV2, 0)
-	defaultMetricNames := make([]string, 0)
 
 	// 原 Space(Type、BKDataID) 字段去掉，SegmentedEnable 设置了默认值 false
 	// 原 Proxy(RetentionPolicies、BKBizID、DataID）直接去掉
-	defaultTsDB := s.getTsDBWithResultTableDetail(query.TsDBV2{
+	baseTsDB := query.TsDBV2{
 		TableID:    tableID,
 		Filters:    filters,
 		MetricName: fieldName,
-	}, rtDetail)
+	}
+	defaultTsDB := s.getTsDBWithResultTableDetail(baseTsDB, rtDetail)
 
 	// 字段为空时，需要返回结果表的信息，表示无需过滤字段过滤
 	// bklog 或者 bkapm 则不判断 field 是否存在
@@ -223,28 +223,20 @@ func (s *SpaceFilter) NewTsDBs(spaceTable *routerInfluxdb.SpaceResultTable, fiel
 		return tsDBs, nil
 	}
 
-	if !defaultTsDB.IsSplit() {
-		defaultMetricNames = metricNames
-	} else {
-		// 当指标类型为单指标单表时，则需要对每个指标检查是否有独立的路由配置
+	if defaultTsDB.IsSplit() {
+		// 独立指标 RT 作为补充路由，不能排除 data_label / table_id 正常索引到的 RT。
 		for _, mName := range metricNames {
 			sepRt := s.GetMetricSepRT(tableID, mName)
 			if sepRt != nil {
-				defaultTsDB.ExpandMetricNames = []string{mName}
-				sepTsDB := s.getTsDBWithResultTableDetail(defaultTsDB, sepRt)
-
+				sepTsDB := s.getTsDBWithResultTableDetail(baseTsDB, sepRt)
+				sepTsDB.ExpandMetricNames = []string{mName}
 				tsDBs = append(tsDBs, &sepTsDB)
-			} else {
-				defaultMetricNames = append(defaultMetricNames, mName)
 			}
 		}
 	}
 
-	// 如果这里出现指标列表为空，则说明指标都有独立的配置，不需要将默认的结果表配置写入
-	if len(defaultMetricNames) > 0 {
-		defaultTsDB.ExpandMetricNames = defaultMetricNames
-		tsDBs = append(tsDBs, &defaultTsDB)
-	}
+	defaultTsDB.ExpandMetricNames = metricNames
+	tsDBs = append(tsDBs, &defaultTsDB)
 
 	return tsDBs, nil
 }
@@ -261,6 +253,10 @@ func (s *SpaceFilter) GetMetricSepRT(tableID string, metricName string) *routerI
 	}
 	// 按照固定路由规则来检索是否有独立配置的 RT
 	sepRtID := fmt.Sprintf("%s.%s", route[0], metricName)
+	if sepRtID == tableID {
+		// 原 RT 已包含该指标，无需将自身再追加为补充路由。
+		return nil
+	}
 	rt := s.router.GetResultTable(s.ctx, sepRtID, true)
 	return rt
 }

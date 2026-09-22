@@ -31,12 +31,10 @@ type Client interface {
 	Eval(context.Context, string, []string, ...any) *redis.Cmd
 }
 
-// Config 定义输出目标和默认启用的集合变更通知；Database 用于区分不按 DB 隔离的 Pub/Sub 消息。
+// Config 定义输出前缀和超时；Redis 连接及 DB 由注入客户端管理。
 type Config struct {
 	// KeyPrefix 是集合前缀，集合继续按租户和策略隔离。
 	KeyPrefix string
-	// Database 必须与注入客户端选择的逻辑 DB 一致。
-	Database int
 	// Timeout 同时限制集合修改及发布操作。
 	Timeout time.Duration
 }
@@ -44,20 +42,19 @@ type Config struct {
 // Hook 对 active 执行 SADD，对 recovered/closed 执行 SREM，不设置 TTL。
 // 同一前缀下不同来源共用成员，没有引用计数、乱序保护或失败补偿。
 type Hook struct {
-	client   Client
-	prefix   string
-	timeout  time.Duration
-	channel  string
-	database int
+	client  Client
+	prefix  string
+	timeout time.Duration
+	channel string
 }
 
 // New 创建索引插件，不建立连接，也不接管客户端的关闭职责。
 // 通知始终启用，channel 固定为 KeyPrefix + ":changes"，共享前缀的 Hook 自动共用渠道。
 func New(client Client, cfg Config) (*Hook, error) {
-	if client == nil || cfg.KeyPrefix == "" || strings.TrimSpace(cfg.KeyPrefix) != cfg.KeyPrefix || len(cfg.KeyPrefix) > 256 || cfg.Timeout <= 0 || cfg.Database < 0 {
+	if client == nil || cfg.KeyPrefix == "" || strings.TrimSpace(cfg.KeyPrefix) != cfg.KeyPrefix || len(cfg.KeyPrefix) > 256 || cfg.Timeout <= 0 {
 		return nil, fmt.Errorf("strategy hook requires client, valid prefix and positive timeout")
 	}
-	return &Hook{client: client, prefix: cfg.KeyPrefix, timeout: cfg.Timeout, channel: cfg.KeyPrefix + ":changes", database: cfg.Database}, nil
+	return &Hook{client: client, prefix: cfg.KeyPrefix, timeout: cfg.Timeout, channel: cfg.KeyPrefix + ":changes"}, nil
 }
 
 // Execute 同步更新集合；独立超时只使本插件失败，父上下文取消由 Lifecycle 终止处理。
@@ -96,7 +93,7 @@ func (h *Hook) Execute(ctx context.Context, input lifecycle.FinalHookInput) (lif
 	default:
 		return result, fmt.Errorf("invalid alert status for strategy hook")
 	}
-	payload, marshalErr := json.Marshal(changeNotice{Version: 1, BKTenantID: input.Alert.BKTenantID, StrategyID: strategy, Key: key, Database: h.database})
+	payload, marshalErr := json.Marshal(changeNotice{BKTenantID: input.Alert.BKTenantID, StrategyID: strategy})
 	if marshalErr != nil || len(payload) > 64<<10 {
 		return result, fmt.Errorf("strategy hook change notice exceeds encoding limits")
 	}

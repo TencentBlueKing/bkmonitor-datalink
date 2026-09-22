@@ -77,9 +77,9 @@ Hook 通过同一次 Lua 执行集合修改和条件发布：`SADD/SREM` 返回�
 大于 0 才执行 `PUBLISH`。重复添加已有成员、删除不存在成员不通知；删除最后一个成员导致 key 消失时仍通知。
 客户端需要集合的读写权限、`EVAL` 和对应 channel 的 `PUBLISH` 权限；不要求打开 Redis keyspace notifications。
 
-消息包含 `version`、`database`、`bk_tenant_id`、`strategy_id` 和完整 `key`。例如订阅
-`linkd:active-alert-by-strategy:changes` 后，按消息中的 key 重新读取集合。Pub/Sub 不按 DB 隔离，
-消费者必须核对 database 与租户；不同环境建议使用不同 channel。
+消息只包含 `bk_tenant_id` 和 `strategy_id`。消费者使用已约定的 Redis 连接、DB 和 `key_prefix`，
+拼接 `<key_prefix>:<bk_tenant_id>:<strategy_id>` 后重新读取集合。Pub/Sub 不按 DB 隔离，
+不同环境或需要隔离的 DB 应使用不同 `key_prefix`，从而使用不同 channel。
 共享同一前缀的多个 Hook 自动使用同一 channel；不同前缀的通知各自隔离。
 通知只覆盖本 Hook 发起的修改，外部客户端直接改集合不会自动发布。
 
@@ -88,11 +88,8 @@ Hook 通过同一次 Lua 执行集合修改和条件发布：`SADD/SREM` 返回�
 
 ```json
 {
-  "version": 1,
-  "database": 8,
   "bk_tenant_id": "system",
-  "strategy_id": "123",
-  "key": "alarmd:open_alerts:system:123"
+  "strategy_id": "123"
 }
 ```
 
@@ -102,7 +99,7 @@ Hook 通过同一次 Lua 执行集合修改和条件发布：`SADD/SREM` 返回�
 redis-cli -h 127.0.0.1 -p 6379 SUBSCRIBE 'alarmd:open_alerts:changes'
 ```
 
-收到消息后，用普通 Redis 连接选择消息中的 DB，再对 key 执行 `SSCAN` 或 `SISMEMBER`。
+收到消息后，用预先配置的普通 Redis 连接选择 DB 8，对 `alarmd:open_alerts:system:123` 执行 `SSCAN` 或 `SISMEMBER`。
 消息不携带成员增删明细；读取时 key 可能已被删除，按空集合处理。使用 RESP2 时不要在订阅连接上执行集合查询。
 
 这是即时失效通知，不是心跳或可靠消息队列。订阅确认后应补读，断线重连后也需要补读。

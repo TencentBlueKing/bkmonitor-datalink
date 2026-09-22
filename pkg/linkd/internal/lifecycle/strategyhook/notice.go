@@ -19,11 +19,8 @@ end
 return changed
 `
 
-// changeNotice 是 v1 失效通知，不包含成员列表或告警内容；订阅者根据 key 重新读取集合。
+// changeNotice 只携带租户和策略；订阅者使用约定的 Redis 连接与前缀定位集合。
 type changeNotice struct {
-	Version    int    `json:"version"`
 	BKTenantID string `json:"bk_tenant_id"`
 	StrategyID string `json:"strategy_id"`
-	Key        string `json:"key"`
-	Database   int    `json:"database"`
 }

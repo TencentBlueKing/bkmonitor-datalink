@@ -113,7 +113,7 @@ func openHook(spec config.HookConfig) (lifecycle.FinalHook, func() error, error)
 		}
 		// go-redis 默认 socket deadline 不追随调用方 context；为毫秒级插件单独启用。
 		// 专用构造入口负责在创建连接池前设置选项。
-		hook, err := strategyhook.New(client, strategyhook.Config{KeyPrefix: spec.Config.KeyPrefix, Database: spec.Config.Redis.Database, Timeout: time.Duration(*spec.Config.TimeoutMilliseconds) * time.Millisecond})
+		hook, err := strategyhook.New(client, strategyhook.Config{KeyPrefix: spec.Config.KeyPrefix, Timeout: time.Duration(*spec.Config.TimeoutMilliseconds) * time.Millisecond})
 		if err != nil {
 			return nil, nil, errors.Join(err, client.Close())
 		}

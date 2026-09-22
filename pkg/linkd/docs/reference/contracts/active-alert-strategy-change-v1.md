@@ -11,17 +11,15 @@
 
 ```json
 {
-  "version": 1,
-  "database": 8,
   "bk_tenant_id": "system",
-  "strategy_id": "123",
-  "key": "alarmd:open_alerts:system:123"
+  "strategy_id": "123"
 }
 ```
 
 `strategy_id` 使用与集合 key 一致的字符串；数字标签按 Hook 规则转为十进制字符串。
-消息不包含密码、Alert 内容、fingerprint 或成员列表，不提供全局 revision、事件身份或历史回放。
-`database` 是发布客户端实际选择的逻辑 DB；Pub/Sub channel 自身不按 DB 隔离。
+消息严格只含 `bk_tenant_id` 和 `strategy_id` 两个字符串字段，不携带 `version`、`database`、`key`、
+密码、Alert 内容、fingerprint 或成员列表，不提供全局 revision、事件身份或历史回放。
+Redis 连接、DB 和 `key_prefix` 由发布者与订阅者预先约定，消费者据此拼接集合 key。
 
 ## 触发条件
 
@@ -37,14 +35,16 @@
 
 ## 消费与故障边界
 
-订阅者将消息视为“这个 key 需要重新读取”，可按 database、tenant、key 合并通知。
+订阅者将消息视为“这个租户的策略集合需要重新读取”，可按 channel、租户、策略合并通知。
+集合 key 为 `<key_prefix>:<bk_tenant_id>:<strategy_id>`，读取使用订阅者预先配置的 Redis 连接与 DB。
 订阅确认后先补读一次，并保留周期补读；重连后重新补读。读取时集合已再次变化或 key 不存在都是正常情况。
 
 Redis Pub/Sub 是至多一次投递，断线期间的消息不会补发，也没有消费 ACK。Lua 的原子执行不提供
 错误回滚：例如集合命令成功后 `PUBLISH` 被 ACL 拒绝，Hook 返回失败，但集合可能已经变化。
 响应丢失时结果也可能不确定；无变化的重试不会额外发布。因此通知不能替代周期对账，也不证明下游已更新。
 
-不同 DB 共用 channel 会收到彼此通知，消费者须核对 `database` 和租户；不同环境应使用不同 channel。
+Pub/Sub 不按 DB 隔离。不同 DB 共用 channel 会收到彼此通知，消息本身无法区分 DB；
+不同环境或需要区分的 DB 应配置不同 `key_prefix`，从而派生不同 channel。
 连接权限至少应包含原有集合操作、`EVAL` 及对应 channel 的 `PUBLISH`；不需要配置 keyspace notifications。
 
 官方语义：[Redis Pub/Sub 投递与 DB 作用域](https://redis.io/docs/latest/develop/pubsub/)、

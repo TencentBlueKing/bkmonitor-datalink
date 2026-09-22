@@ -27,7 +27,7 @@ import (
 
 func TestChangeNoticeOnlyForChangedMembership(t *testing.T) {
 	c := &setClient{}
-	h, err := New(c, Config{KeyPrefix: "active", Database: 8, Timeout: time.Second})
+	h, err := New(c, Config{KeyPrefix: "active", Timeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,11 +41,8 @@ func TestChangeNoticeOnlyForChangedMembership(t *testing.T) {
 		t.Fatalf("notices=%d", len(c.notices))
 	}
 	for _, n := range c.notices {
-		var payload changeNotice
-		if err := json.Unmarshal([]byte(n.payload), &payload); err != nil {
-			t.Fatal(err)
-		}
-		if n.channel != "active:changes" || payload != (changeNotice{Version: 1, BKTenantID: "tenant", StrategyID: "123", Key: "active:tenant:123", Database: 8}) {
+		payload := decodeNotice(t, n.payload)
+		if n.channel != "active:changes" || payload != (changeNotice{BKTenantID: "tenant", StrategyID: "123"}) {
 			t.Fatalf("notice=%+v %s", payload, n.channel)
 		}
 	}
@@ -56,11 +53,8 @@ func TestChangeNoticeOnlyForChangedMembership(t *testing.T) {
 	if _, err := h.Execute(t.Context(), other); err != nil {
 		t.Fatal(err)
 	}
-	var payload changeNotice
-	if err := json.Unmarshal([]byte(c.notices[2].payload), &payload); err != nil {
-		t.Fatal(err)
-	}
-	if payload.BKTenantID != "other" || payload.StrategyID != "456" || payload.Key != "active:other:456" {
+	payload := decodeNotice(t, c.notices[2].payload)
+	if payload.BKTenantID != "other" || payload.StrategyID != "456" {
 		t.Fatalf("notice=%+v", payload)
 	}
 }
@@ -182,7 +176,7 @@ func TestNotificationRedisIntegration(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	h, err := New(client, Config{KeyPrefix: prefix, Database: 8, Timeout: time.Second})
+	h, err := New(client, Config{KeyPrefix: prefix, Timeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,11 +221,8 @@ func TestNotificationRedisIntegration(t *testing.T) {
 			break
 		}
 		count++
-		var notice changeNotice
-		if err := json.Unmarshal([]byte(message.Payload), &notice); err != nil {
-			t.Fatal(err)
-		}
-		if notice != (changeNotice{Version: 1, BKTenantID: "tenant", StrategyID: "123", Key: key, Database: 8}) {
+		notice := decodeNotice(t, message.Payload)
+		if notice != (changeNotice{BKTenantID: "tenant", StrategyID: "123"}) {
 			t.Fatalf("notice=%+v", notice)
 		}
 	}
@@ -253,4 +244,16 @@ func TestNotificationRedisIntegration(t *testing.T) {
 	if message, err := pubsub.ReceiveMessage(ctx); err != nil || message.Payload != "after-error" {
 		t.Fatalf("failed update published: %v %v", message, err)
 	}
+}
+
+func decodeNotice(t *testing.T, payload string) changeNotice {
+	t.Helper()
+	var fields map[string]string
+	if err := json.Unmarshal([]byte(payload), &fields); err != nil {
+		t.Fatal(err)
+	}
+	if len(fields) != 2 || fields["bk_tenant_id"] == "" || fields["strategy_id"] == "" {
+		t.Fatalf("notice must contain only tenant and strategy: %s", payload)
+	}
+	return changeNotice{BKTenantID: fields["bk_tenant_id"], StrategyID: fields["strategy_id"]}
 }

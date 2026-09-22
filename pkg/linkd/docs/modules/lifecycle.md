@@ -177,7 +177,8 @@ KAC 插件把相同 Alert 快照转换为 KAC `alarm_collect_topic` 扁平消息
 
 通知始终启用，channel 固定为 `<key_prefix>:changes`，不提供独立 channel 配置。
 集合修改和变更判断、`PUBLISH` 在同一 Lua 中执行。
-仅成员实际变化才发布，重复无变化操作不发布；通知只携带租户、策略、DB 和 key，供消费者重新读取。
+仅成员实际变化才发布，重复无变化操作不发布；通知只携带 `bk_tenant_id` 和 `strategy_id`，
+消费者使用约定的 Redis 连接、DB 和前缀拼接 key 后重新读取。
 不提供心跳、离线补发或事务回滚；协议见[策略索引变更通知 v1](../reference/contracts/active-alert-strategy-change-v1.md)。
 
 独立超时使用 `timeout_milliseconds`，默认 1000ms，遵从父上下文更早的截止时间。

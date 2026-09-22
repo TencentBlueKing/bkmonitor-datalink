@@ -1,7 +1,8 @@
 # v1beta3 TimeGraph 关系查询观测
 
-v1beta3 的 instant/range 关系接口统一使用 `route="timegraph"`，包括
-`/api/v1/relation/path_resources`、共享拓扑接口及其 range 接口。仪表盘 UID 为
+v1beta3 关系查询使用 TimeGraph。旧 `multi_resource` 模型指标使用
+`route="timegraph"`；完整共享拓扑使用独立的 `cmdb_topology_*` 指标。
+路径查询和拓扑查询共用 `cmdb_timegraph_*` 构图与取数指标。仪表盘 UID 为
 `uq-timegraph-v1beta3`，业务为 2：
 
 <https://bkmonitor.bkop.woa.com/?bizId=2#/grafana/d/uq-timegraph-v1beta3>
@@ -22,6 +23,35 @@ v1beta1 不再承载 TimeGraph 实现，HTTP path-resources 接口也直接使�
 - `unify_query_cmdb_relation_timegraph_result_count`：TimeGraph 返回的原始路径资源数量；
 - `unify_query_cmdb_relation_timegraph_bucket_count`：range 查询产生的非空时间桶数量；
 - `unify_query_tsdb_request_seconds`：底层 VictoriaMetrics 请求耗时。
+
+共享拓扑和共用阶段的指标如下，均以 `unify_query_` 为前缀：
+
+| 指标 | 标签与口径 |
+| --- | --- |
+| `cmdb_topology_operations_total` | `scope=request/query`、`query_mode=instant/range`、`result`；每个请求或子查询只记录一次终态 |
+| `cmdb_topology_operation_seconds` | `scope`、`query_mode`；包含失败、拒绝、取消和超时的耗时 |
+| `cmdb_topology_inflight` | `query_mode`；正在执行的模型查询数，所有返回路径均减一 |
+| `cmdb_topology_size` | `query_mode`、`kind=points/nodes/edges/partial_snapshots`；返回结果的评估点数、所有快照节点/边的数量之和、不完整快照数 |
+| `cmdb_topology_rejections_total` | `query_mode`、`reason`；固定的参数或容量拒绝原因 |
+| `cmdb_timegraph_stage_seconds` | `stage`、`result`；构图、源信息/关系边/目标信息取数、拓扑遍历各阶段耗时，`_count` 同时表示阶段执行次数 |
+| `cmdb_timegraph_size` | `stage`、`kind`；构图节点、边、节点属性、时间桶数量，以及 Matrix 序列数、样本点数 |
+
+子查询 `result` 为 `success/empty/partial/failed/rejected/canceled/timeout`。
+有任意不完整快照时优先记 `partial`，即使节点为空也不记成 `empty`。
+HTTP `scope=request` 的空批次记 `empty`，所有子查询失败记 `failed`，
+混合成功/失败或有不完整结果记 `partial`；非法 JSON 记 `rejected`。
+外层 HTTP 200 不能代表子查询成功。HTTP 时间模式校验失败未进入模型时，也记录一次
+`scope=query` 拒绝；进入模型后由模型统一记录，避免重复计数。
+
+`reason` 只允许 `invalid_request/max_shared_topology_points/max_graph_nodes/`
+`max_graph_edges/max_graph_node_infos/max_graph_results/max_targets/other`。
+`stage` 只允许 `build/source-info/relation-edge/target-info/topology-traversal`。
+错误原文、租户、资源类型、关系名称、matcher、trace ID 不作为指标标签；trace exemplar
+仍按现有机制关联。构图规模在失败时也记录；响应和 Matrix 规模只记录成功返回的数据，
+不会用失败时的零值污染结果规模分布。响应节点/边总数不是跨时间去重数量，也不是堆内存。
+
+新指标不会合并到旧 `route_total` 中；旧 route、path result、target 和 bucket 指标
+仍描述 `multi_resource` 适配路径，不能用它们的存在证明 topology 已被监控。
 
 `candidate_path_count` 和路径结果使用 `execution_mode="all_paths"`，因为 TimeGraph
 会在一次查询窗口内物化候选关系并统一遍历，不再按 SurrealDB path 逐条执行。

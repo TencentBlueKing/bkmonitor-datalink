@@ -8,6 +8,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -61,12 +62,21 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 	if rangeQuery {
 		queryMode = metric.CMDBRelationQueryModeRange
 	}
+	started := time.Now()
+	requestResult := metric.CMDBRelationResultSuccess
+	defer func() {
+		if handlerErr != nil && requestResult != metric.CMDBRelationResultRejected {
+			requestResult = metric.CMDBTimeGraphErrorResult(handlerErr)
+		}
+		metric.CMDBTopologyObserve(ctx, metric.CMDBTopologyScopeRequest, queryMode, requestResult, time.Since(started))
+	}()
 	span.Set("query-mode", queryMode)
 	span.Set("handler-headers", c.Request.Header)
 
 	request := new(cmdb.SharedTopologyRequest)
 	if err := json.NewDecoder(c.Request.Body).Decode(request); err != nil {
 		handlerErr = err
+		requestResult = metric.CMDBRelationResultRejected
 		resp.failed(ctx, err)
 		return
 	}
@@ -91,11 +101,13 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		Data:    make([]cmdb.SharedTopologyResponseData, len(request.QueryList)),
 	}
 	failedQueryCount := 0
+	partialQueryCount := 0
 	itemSpanName := "handler-api-relation-v1beta3-topology-item"
 	if rangeQuery {
 		itemSpanName += "-range"
 	}
 	for index, query := range request.QueryList {
+		queryStarted := time.Now()
 		queryCtx, querySpan := trace.NewSpan(ctx, itemSpanName)
 		query.SpaceUID = metadata.GetUser(ctx).SpaceUID
 		querySpan.Set("query-index", index)
@@ -125,6 +137,10 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		}
 		if queryErr == nil {
 			result, queryErr = topologyModel.QuerySharedTopology(queryCtx, query)
+		} else {
+			// HTTP 时间模式校验未进入模型，单独记录该子查询，避免遗漏或重复计数。
+			metric.CMDBTopologyObserve(queryCtx, metric.CMDBTopologyScopeQuery, queryMode, metric.CMDBRelationResultRejected, time.Since(queryStarted))
+			metric.CMDBTopologyRejectInc(queryCtx, queryMode, "invalid_request")
 		}
 		if queryErr != nil {
 			failedQueryCount++
@@ -155,6 +171,9 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		querySpan.Set("response-node-count", nodeCount)
 		querySpan.Set("response-edge-count", edgeCount)
 		querySpan.Set("partial-snapshot-count", partialCount)
+		if partialCount > 0 {
+			partialQueryCount++
+		}
 		querySpan.End(&queryErr)
 		data.Data[index] = item
 	}
@@ -162,5 +181,13 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 	span.Set("failed-query-count", failedQueryCount)
 	span.Set("successful-query-count", len(request.QueryList)-failedQueryCount)
 	span.Set("partial-failure", failedQueryCount > 0)
+	switch {
+	case len(request.QueryList) == 0:
+		requestResult = metric.CMDBRelationResultEmpty
+	case failedQueryCount == len(request.QueryList):
+		requestResult = metric.CMDBRelationResultFailed
+	case failedQueryCount > 0 || partialQueryCount > 0:
+		requestResult = metric.CMDBRelationResultPartial
+	}
 	resp.success(ctx, data)
 }

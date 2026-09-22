@@ -18,6 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -136,10 +137,13 @@ func (m *Model) buildTimeGraphFromRelationsWithRootRelations(ctx context.Context
 	return m.buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx, spaceUID, start, end, step, sourceType, sourceInfo, sourceExpandInfo, rootRelations, relations, lookBackDelta, nil)
 }
 
-func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, rootRelations map[timeGraphRelationKey]struct{}, relations []cmdb.Relation, lookBackDelta string, matrixQuery timeGraphMatrixQuery) (*TimeGraph, error) {
-	var err error
+func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, rootRelations map[timeGraphRelationKey]struct{}, relations []cmdb.Relation, lookBackDelta string, matrixQuery timeGraphMatrixQuery) (graph *TimeGraph, err error) {
 	ctx, span := trace.NewSpan(ctx, "build-time-graph-from-relations")
 	defer span.End(&err)
+	started := time.Now()
+	defer func() {
+		metric.CMDBTimeGraphStageObserve(ctx, "build", metric.CMDBTimeGraphErrorResult(err), time.Since(started))
+	}()
 	span.Set("space-uid", spaceUID)
 	span.Set("relation-count", len(relations))
 	span.Set("query-start", start.Unix())
@@ -162,6 +166,13 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 	var configErr error
 	configSpan.End(&configErr)
 	tg := NewTimeGraphWithConfig(config)
+	defer func() {
+		// 失败路径同样记录已物化规模，便于定位触发容量保护的位置。
+		metric.CMDBTimeGraphSizeObserve(ctx, "build", "nodes", tg.nodeBuilder.Length())
+		metric.CMDBTimeGraphSizeObserve(ctx, "build", "edges", tg.edgeCount)
+		metric.CMDBTimeGraphSizeObserve(ctx, "build", "node_infos", tg.nodeInfoCount)
+		metric.CMDBTimeGraphSizeObserve(ctx, "build", "timepoints", len(tg.timeGraph))
+	}()
 	span.Set("graph-max-nodes", tg.maxNodes)
 	span.Set("graph-max-edges", tg.maxEdges)
 	span.Set("graph-max-results", tg.maxResults)
@@ -194,11 +205,24 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 	queryMatrix := func(queryCtx context.Context, queryTs *structured.QueryTs) (matrix pl.Matrix, partial bool, err error) {
 		queryCtx, span := trace.NewSpan(queryCtx, "timegraph-query-matrix")
 		defer span.End(&err)
+		queryStarted := time.Now()
+		stage := timeGraphQueryStage(queryCtx)
+		defer func() {
+			outcome := metric.CMDBTimeGraphErrorResult(err)
+			if err == nil {
+				if partial {
+					outcome = metric.CMDBRelationResultPartial
+				} else if len(matrix) == 0 {
+					outcome = metric.CMDBRelationResultEmpty
+				}
+			}
+			metric.CMDBTimeGraphStageObserve(queryCtx, stage, outcome, time.Since(queryStarted))
+		}()
 		matrixQueryCount++
 		span.Set("query-mode", map[bool]string{true: "instant", false: "range"}[instant])
 		span.Set("query-source", "vm")
 		wrapQueryErr := false
-		if stage := timeGraphQueryStage(queryCtx); stage != "" {
+		if stage != "" {
 			span.Set("query-stage", stage)
 		}
 		if queryTs != nil {
@@ -294,6 +318,10 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 		span.Set("matrix-series-count", len(matrix))
 		span.Set("matrix-point-count", pointCount)
 		span.Set("matrix-partial", partial)
+		if err == nil {
+			metric.CMDBTimeGraphSizeObserve(queryCtx, stage, "series", len(matrix))
+			metric.CMDBTimeGraphSizeObserve(queryCtx, stage, "points", pointCount)
+		}
 		if err != nil {
 			if wrapQueryErr {
 				if instant {

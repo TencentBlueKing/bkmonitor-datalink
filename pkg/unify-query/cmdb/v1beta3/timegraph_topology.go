@@ -9,8 +9,10 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -168,6 +170,23 @@ func (q *TimeGraph) sharedTopologyState(grid TopologyGrid, query SharedTopologyQ
 func (q *TimeGraph) FindSharedTopology(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery) (snapshots []SharedTopologySnapshot, err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-find-shared-topology")
 	defer span.End(&err)
+	started := time.Now()
+	defer func() {
+		outcome := metric.CMDBTimeGraphErrorResult(err)
+		if err == nil {
+			outcome = metric.CMDBRelationResultEmpty
+			for _, snapshot := range snapshots {
+				if snapshot.Partial {
+					outcome = metric.CMDBRelationResultPartial
+					break
+				}
+				if len(snapshot.Nodes) > 0 {
+					outcome = metric.CMDBRelationResultSuccess
+				}
+			}
+		}
+		metric.CMDBTimeGraphStageObserve(ctx, "topology-traversal", outcome, time.Since(started))
+	}()
 	span.Set("source-type", query.SourceType)
 	span.Set("max-hops", query.MaxHops)
 	span.Set("grid-point-count", len(grid.Timestamps))

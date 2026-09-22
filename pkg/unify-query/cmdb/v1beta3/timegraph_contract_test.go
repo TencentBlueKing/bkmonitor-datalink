@@ -458,10 +458,12 @@ func TestTimeGraphSubqueryContextsPreserveUser(t *testing.T) {
 		targetInfoShow   bool
 		relations        []cmdb.Relation
 		wantQueryCount   int
+		metricStage      string
+		metricResult     string
 	}{
-		{name: "source_info_query", sourceExpandInfo: cmdb.Matcher{"region": "east"}, wantQueryCount: 1},
-		{name: "relation_query", relations: []cmdb.Relation{relation}, wantQueryCount: 1},
-		{name: "target_info_query", targetInfoShow: true, relations: []cmdb.Relation{relation}, wantQueryCount: 2},
+		{name: "source_info_query", sourceExpandInfo: cmdb.Matcher{"region": "east"}, wantQueryCount: 1, metricStage: "source-info", metricResult: "empty"},
+		{name: "relation_query", relations: []cmdb.Relation{relation}, wantQueryCount: 1, metricStage: "relation-edge", metricResult: "success"},
+		{name: "target_info_query", targetInfoShow: true, relations: []cmdb.Relation{relation}, wantQueryCount: 2, metricStage: "target-info", metricResult: "empty"},
 	}
 
 	for _, tc := range tests {
@@ -482,11 +484,14 @@ func TestTimeGraphSubqueryContextsPreserveUser(t *testing.T) {
 			}
 			model := &Model{schemaProvider: timeGraphTestSchemaProvider{}}
 			queryCtx := withTimeGraphTargetInfoShow(ctx, tc.targetInfoShow)
+			metricLabels := map[string]string{"stage": tc.metricStage, "result": tc.metricResult}
+			metricBefore := readTimeGraphMetric(t, "cmdb_timegraph_stage_seconds", metricLabels, "count")
 			tg, err := model.buildTimeGraphFromRelationsWithQuery(
 				queryCtx, "bkcc__2", time.Unix(100, 0), time.Unix(100, 0), time.Minute,
 				"node", cmdb.Matcher{"node": "n1"}, tc.sourceExpandInfo, tc.relations, "10m", query,
 			)
 			require.NoError(t, err)
+			require.Equal(t, metricBefore+1, readTimeGraphMetric(t, "cmdb_timegraph_stage_seconds", metricLabels, "count"))
 			t.Cleanup(func() { tg.Clean(queryCtx) })
 			require.Len(t, seenUsers, tc.wantQueryCount)
 			require.Equal(t, parentHashID, parentUser.HashID)

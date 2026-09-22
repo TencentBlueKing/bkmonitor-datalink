@@ -30,7 +30,7 @@
       "gridPos": {"x": 0, "y": 0, "w": 24, "h": 5},
       "options": {
         "mode": "markdown",
-        "content": "# v1beta3 TimeGraph 关系查询\n\n`route=\"timegraph\"` 是 v1beta3 关系查询主路径。接口请求量来自 `api_request_total`；TimeGraph 路由指标反映模型查询执行；底层 VictoriaMetrics 请求耗时来自 `tsdb_request_seconds`。空结果与失败分开统计，不把无采样当作成功。"
+        "content": "# v1beta3 TimeGraph 关系查询\n\n`route=\"timegraph\"` 是 v1beta3 关系查询主路径。接口请求量来自 `api_request_total`；旧路由指标描述 multi_resource；共享拓扑使用 cmdb_topology_* 按请求/子查询记录终态，partial 与失败、空结果分别统计；底层 VictoriaMetrics 请求耗时来自 `tsdb_request_seconds`。空结果与失败分开统计，不把无采样当作成功。"
       }
     },
     {
@@ -45,7 +45,7 @@
         {
           "refId": "A",
           "format": "time_series",
-          "source": "sum by (api, status) (rate(unify_query_api_request_total{api=~\"/api/v1/relation/v1beta3/multi_resource.*\"}[5m]))",
+          "source": "sum by (api, status) (rate(unify_query_api_request_total{api=~\"/api/v1/relation/v1beta3/(multi_resource|topology).*\"}[5m]))",
           "type": "range",
           "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"}
         }
@@ -228,6 +228,342 @@
           "source": "sum by (api, status) (rate(unify_query_api_request_total{api=~\"/api/v1/relation/path_resources.*\"}[5m]))",
           "type": "range",
           "datasource": {"type": "bkmonitor-timeseries-datasource", "uid": "000000002"}
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "共享拓扑请求与子查询结果",
+      "gridPos": {
+        "x": 0,
+        "y": 53,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "sum by (scope, query_mode, result) (rate(unify_query_cmdb_topology_operations_total[5m]))",
+          "type": "range",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          }
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "共享拓扑请求与子查询 P95",
+      "gridPos": {
+        "x": 12,
+        "y": 53,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "histogram_quantile(0.95, sum by (le, scope, query_mode) (rate(unify_query_cmdb_topology_operation_seconds_bucket[5m])))",
+          "type": "range",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          }
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "共享拓扑子查询失败、拒绝与取消比例",
+      "gridPos": {
+        "x": 0,
+        "y": 61,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "sum by (query_mode, result) (rate(unify_query_cmdb_topology_operations_total{scope=\"query\",result=~\"failed|rejected|canceled|timeout\"}[5m])) / on (query_mode) group_left sum by (query_mode) (rate(unify_query_cmdb_topology_operations_total{scope=\"query\"}[5m]))",
+          "type": "range",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          }
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "共享拓扑在途查询",
+      "gridPos": {
+        "x": 12,
+        "y": 61,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "sum by (query_mode) (unify_query_cmdb_topology_inflight)",
+          "type": "range",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          }
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "timeseries",
+      "title": "共享拓扑响应规模 P95",
+      "gridPos": {
+        "x": 0,
+        "y": 69,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "histogram_quantile(0.95, sum by (le, query_mode, kind) (rate(unify_query_cmdb_topology_size_bucket[5m])))",
+          "type": "range",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          }
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "type": "timeseries",
+      "title": "共享拓扑拒绝原因",
+      "gridPos": {
+        "x": 12,
+        "y": 69,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "sum by (query_mode, reason) (rate(unify_query_cmdb_topology_rejections_total[5m]))",
+          "type": "range",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          }
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "TimeGraph 构图、取数与遍历 P95",
+      "gridPos": {
+        "x": 0,
+        "y": 77,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "histogram_quantile(0.95, sum by (le, stage, result) (rate(unify_query_cmdb_timegraph_stage_seconds_bucket[5m])))",
+          "type": "range",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          }
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "TimeGraph 构图与 Matrix 规模 P95",
+      "gridPos": {
+        "x": 12,
+        "y": 77,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "histogram_quantile(0.95, sum by (le, stage, kind) (rate(unify_query_cmdb_timegraph_size_bucket[5m])))",
+          "type": "range",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          }
         }
       ]
     }

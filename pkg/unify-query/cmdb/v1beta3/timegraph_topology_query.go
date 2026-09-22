@@ -15,6 +15,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -26,6 +27,10 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	if request.StartTime != 0 || request.EndTime != 0 {
 		queryMode = "range"
 	}
+	started := time.Now()
+	validated := false
+	metric.CMDBTopologyInFlightAdd(queryMode, 1)
+	defer func() { observeSharedTopologyResult(ctx, queryMode, started, validated, result, err) }()
 	span.Set("query-mode", queryMode)
 	span.Set("space-uid", request.SpaceUID)
 	span.Set("source-type", request.SourceType)
@@ -109,6 +114,7 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 
 	queryCtx, cancel := context.WithTimeout(ctx, timeGraphQueryTimeout)
 	defer cancel()
+	validated = true
 	queryCtx = withTimeGraphForceSourceInfo(queryCtx)
 	graph, err := m.buildTimeGraphFromRelationsWithQueryAndRootRelations(
 		queryCtx,
@@ -207,7 +213,7 @@ func normalizeSharedTopologyTime(request cmdb.SharedTopologyQuery) (time.Time, t
 	maxPoints := effectiveMaxSharedTopologyPoints()
 	pointCount := distance/stepMs + 1
 	if pointCount > int64(maxPoints) {
-		return time.Time{}, time.Time{}, 0, "", TopologyGrid{}, fmt.Errorf("topology time grid contains %d points, maximum is %d", pointCount, maxPoints)
+		return time.Time{}, time.Time{}, 0, "", TopologyGrid{}, &topologyGridLimitError{count: pointCount, limit: maxPoints}
 	}
 	timestamps := make([]int64, pointCount)
 	for index := int64(0); index < pointCount; index++ {

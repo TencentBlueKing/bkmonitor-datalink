@@ -53,7 +53,10 @@ HTTP `scope=request` 的空批次记 `empty`，所有子查询失败记 `failed`
 `scope=query` 拒绝；进入模型后由模型统一记录，避免重复计数。
 
 `reason` 只允许 `invalid_request/max_shared_topology_points/max_graph_nodes/`
-`max_graph_edges/max_graph_node_infos/max_graph_results/max_targets/other`。
+`max_graph_edges/max_graph_node_infos/max_graph_results/max_targets/`
+`max_response_bytes/max_topology_matrix_points/max_topology_matrix_series/`
+`max_topology_output_elements/max_topology_output_bytes/max_topology_concurrency/`
+`max_topology_queries/other`。
 `stage` 只允许 `build/source-info/relation-edge/target-info/topology-traversal`。
 错误原文、租户、资源类型、关系名称、matcher、trace ID 不作为指标标签；trace exemplar
 仍按现有机制关联。构图规模在失败时也记录；响应和 Matrix 规模只记录成功返回的数据，
@@ -61,6 +64,10 @@ HTTP `scope=request` 的空批次记 `empty`，所有子查询失败记 `failed`
 
 新指标不会合并到旧 `route_total` 中；旧 route、path result、target 和 bucket 指标
 仍描述 `multi_resource` 适配路径，不能用它们的存在证明 topology 已被监控。
+
+拓扑入口现已直接共享构图。时间点及边计数保留逻辑预算口径，不能把它们解释为
+图对象数量或内存字节；构图模式、默认资源保护及完整流水线探针见
+[共享构图与资源边界](timegraph-shared-memory.md)。
 
 `candidate_path_count` 和路径结果使用 `execution_mode="all_paths"`，因为 TimeGraph
 会在一次查询窗口内物化候选关系并统一遍历，不再按 SurrealDB path 逐条执行。

@@ -27,9 +27,6 @@ func NewTopologyGrid(timestamps []int64) (TopologyGrid, error) {
 	if len(timestamps) == 0 {
 		return TopologyGrid{}, fmt.Errorf("topology time grid must contain at least one point")
 	}
-	if maxPoints > 64 {
-		return TopologyGrid{}, fmt.Errorf("topology time grid maximum %d exceeds uint64 capacity 64", maxPoints)
-	}
 	if len(timestamps) > maxPoints {
 		return TopologyGrid{}, fmt.Errorf("topology time grid contains %d points, maximum is %d", len(timestamps), maxPoints)
 	}
@@ -91,7 +88,7 @@ type sharedTopologyEdgeState struct {
 	activeBits uint64
 }
 
-func (q *TimeGraph) sharedTopologyState(grid TopologyGrid, query SharedTopologyQuery) (map[uint64]uint64, []sharedTopologyEdgeState, error) {
+func (q *TimeGraph) sharedTopologyState(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery) (map[uint64]uint64, []sharedTopologyEdgeState, error) {
 	if query.SourceType == "" {
 		return nil, nil, fmt.Errorf("topology source type is required")
 	}
@@ -102,19 +99,21 @@ func (q *TimeGraph) sharedTopologyState(grid TopologyGrid, query SharedTopologyQ
 		return nil, nil, fmt.Errorf("topology max hops %d exceeds maximum %d", query.MaxHops, MaxAllowedHops)
 	}
 
+	if q.shared != nil {
+		return q.shared.state(ctx, grid, query)
+	}
+
 	timestampIndex := make(map[int64]uint8, len(grid.Timestamps))
 	for i, timestamp := range grid.Timestamps {
 		timestampIndex[timestamp] = uint8(i)
 	}
-	var gridMask uint64
-	if len(grid.Timestamps) == 64 {
-		gridMask = ^uint64(0)
-	} else {
-		gridMask = (uint64(1) << len(grid.Timestamps)) - 1
-	}
+	gridMask := (uint64(1) << len(grid.Timestamps)) - 1
 
 	nodeBits := make(map[uint64]uint64, len(q.topologyNodes))
 	for node, timestamps := range q.topologyNodes {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 		for timestamp := range timestamps {
 			if index, ok := timestampIndex[timestamp]; ok {
 				nodeBits[node] |= uint64(1) << index
@@ -138,6 +137,9 @@ func (q *TimeGraph) sharedTopologyState(grid TopologyGrid, query SharedTopologyQ
 
 	edges := make([]sharedTopologyEdgeState, 0, len(q.topologyEdges))
 	for key, timestamps := range q.topologyEdges {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
 		if len(categorySet) > 0 {
 			if _, ok := categorySet[key.relation.category]; !ok {
 				continue
@@ -210,7 +212,7 @@ func (q *TimeGraph) FindSharedTopology(ctx context.Context, grid TopologyGrid, q
 	stateSpan.Set("allowed-category-count", len(query.AllowedCategories))
 	stateSpan.Set("allowed-relation-type-count", len(query.AllowedRelationTypes))
 	stateSpan.Set("direction", query.Direction)
-	nodeBits, edges, stateErr := q.sharedTopologyState(grid, query)
+	nodeBits, edges, stateErr := q.sharedTopologyState(ctx, grid, query)
 	if stateErr == nil {
 		stateSpan.Set("graph-node-count", len(nodeBits))
 		stateSpan.Set("graph-edge-count", len(edges))
@@ -225,6 +227,9 @@ func (q *TimeGraph) FindSharedTopology(ctx context.Context, grid TopologyGrid, q
 	reachable := make(map[uint64]uint64)
 	frontier := make(map[uint64]uint64)
 	for node, bits := range nodeBits {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		resourceType, info := q.nodeBuilder.Info(node)
 		if resourceType != query.SourceType {
 			continue
@@ -252,6 +257,9 @@ func (q *TimeGraph) FindSharedTopology(ctx context.Context, grid TopologyGrid, q
 		}
 		discovered := make(map[uint64]uint64)
 		for _, edge := range edges {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			candidate := frontier[edge.key.source] & edge.activeBits & nodeBits[edge.key.target]
 			if candidate != 0 {
 				discovered[edge.key.target] |= candidate
@@ -270,6 +278,30 @@ func (q *TimeGraph) FindSharedTopology(ctx context.Context, grid TopologyGrid, q
 	span.Set("reachable-node-count", len(reachable))
 	span.Set("traversal-level-count", query.MaxHops)
 
+	snapshots, err = q.materializeSharedTopology(ctx, grid, query, reachable, edges)
+	if err != nil {
+		return nil, err
+	}
+	nodeCount, edgeCount, partialCount := 0, 0, 0
+	for _, snapshot := range snapshots {
+		nodeCount += len(snapshot.Nodes)
+		edgeCount += len(snapshot.Edges)
+		if snapshot.Partial {
+			partialCount++
+		}
+	}
+	span.Set("snapshot-node-count", nodeCount)
+	span.Set("snapshot-edge-count", edgeCount)
+	span.Set("partial-snapshot-count", partialCount)
+	return snapshots, nil
+}
+
+// materializeSharedTopology 在预算内生成独立快照；调用方持有图的读锁。
+func (q *TimeGraph) materializeSharedTopology(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, reachable map[uint64]uint64, edges []sharedTopologyEdgeState) ([]SharedTopologySnapshot, error) {
+	budget := newTopologyOutputBudget(grid, query.PartialTimestamps)
+	if err := budget.checkBytes(0); err != nil {
+		return nil, err
+	}
 	result := make([]SharedTopologySnapshot, len(grid.Timestamps))
 	for index, timestamp := range grid.Timestamps {
 		result[index].Timestamp = timestamp
@@ -286,8 +318,11 @@ func (q *TimeGraph) FindSharedTopology(ctx context.Context, grid TopologyGrid, q
 			if bits&(uint64(1)<<index) == 0 {
 				continue
 			}
-			resourceType, info := q.nodeBuilder.Info(node)
-			resourceType, info = q.nodeInfoAt(grid.Timestamps[index], node, info)
+			_, info := q.nodeBuilder.Info(node)
+			resourceType, info := q.nodeInfoAt(grid.Timestamps[index], node, info)
+			if err := budget.add(topologyNodeByteBound(resourceType, info)); err != nil {
+				return nil, err
+			}
 			result[index].Nodes = append(result[index].Nodes, SharedTopologyNode{
 				ID:           node,
 				ResourceType: resourceType,
@@ -306,6 +341,9 @@ func (q *TimeGraph) FindSharedTopology(ctx context.Context, grid TopologyGrid, q
 		for index := range grid.Timestamps {
 			if activeBits&(uint64(1)<<index) == 0 {
 				continue
+			}
+			if err := budget.add(topologyEdgeByteBound(edge.key)); err != nil {
+				return nil, err
 			}
 			result[index].Edges = append(result[index].Edges, SharedTopologyEdge{
 				Source:       edge.key.source,
@@ -332,28 +370,31 @@ func (q *TimeGraph) FindSharedTopology(ctx context.Context, grid TopologyGrid, q
 			if left.RelationType != right.RelationType {
 				return left.RelationType < right.RelationType
 			}
-			return left.MetricName < right.MetricName
+			if left.MetricName != right.MetricName {
+				return left.MetricName < right.MetricName
+			}
+			if left.Category != right.Category {
+				return left.Category < right.Category
+			}
+			return left.Direction < right.Direction
 		})
 	}
-	snapshots = result
-	nodeCount, edgeCount, partialCount := 0, 0, 0
-	for _, snapshot := range snapshots {
-		nodeCount += len(snapshot.Nodes)
-		edgeCount += len(snapshot.Edges)
-		if snapshot.Partial {
-			partialCount++
-		}
-	}
-	span.Set("snapshot-node-count", nodeCount)
-	span.Set("snapshot-edge-count", edgeCount)
-	span.Set("partial-snapshot-count", partialCount)
-	return snapshots, nil
+	return result, nil
 }
 
 // nodeInfoAt 返回节点在指定时间点的属性；没有时间点属性时回退到稳定身份
 // 信息，保证关系指标只提供主键的场景仍能正常输出。
 func (q *TimeGraph) nodeInfoAt(timestamp int64, node uint64, fallback cmdb.Matcher) (cmdb.Resource, cmdb.Matcher) {
 	resourceType, _ := q.nodeBuilder.Info(node)
+	if q.shared != nil {
+		bit := q.shared.timestampBits[timestamp]
+		for _, version := range q.shared.nodeInfos[node] {
+			if version.activeBits&bit != 0 {
+				return resourceType, cloneMatcher(version.dimensions)
+			}
+		}
+		return resourceType, fallback
+	}
 	if timestampInfo, ok := q.nodeInfos[timestamp][node]; ok {
 		return resourceType, cloneMatcher(timestampInfo)
 	}

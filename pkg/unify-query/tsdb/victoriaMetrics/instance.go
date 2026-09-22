@@ -531,9 +531,10 @@ func (i *Instance) vmQuery(
 	size, err := i.curl.Request(
 		ctx, curl.Post,
 		curl.Options{
-			UrlPath: i.url,
-			Body:    body,
-			Headers: headers,
+			UrlPath:          i.url,
+			Body:             body,
+			Headers:          headers,
+			MaxResponseBytes: metadata.BackendResponseLimit(ctx),
 		},
 		data,
 	)

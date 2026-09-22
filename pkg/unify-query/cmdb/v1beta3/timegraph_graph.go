@@ -28,10 +28,11 @@ import (
 )
 
 // TimeGraph 时序图结构，用于管理时间序列的图数据
-// 采用时间分片设计，每个时间戳对应一个独立的图，提高查询效率
-// 使用节点共享机制，相同资源信息共享同一个节点ID，节省内存
+// 路径查询保留逐时间点图，拓扑查询直接保存共享身份和时间位。
+// 两种存储复用节点身份规则，按入口选择，不同时物化。
 type TimeGraph struct {
-	lock sync.RWMutex // 读写锁，保证并发安全
+	shared *sharedTimeGraph // 拓扑入口直接保存时间位，不创建逐桶图。
+	lock   sync.RWMutex     // 读写锁，保证并发安全
 
 	nodeBuilder   *NodeBuilder                          // 节点构建器，负责节点的创建和去重
 	stringDict    *StringDict                           // 局部字符串字典，避免全局溢出，每个实例独立管理
@@ -78,6 +79,16 @@ func NewTimeGraph() *TimeGraph {
 // NewTimeGraphWithConfig 创建使用独立资源身份规则的图实例，避免读取进程级的
 // 旧配置。
 func NewTimeGraphWithConfig(cfg *TimeGraphConfig) *TimeGraph {
+	q := newTimeGraphWithConfig(cfg)
+	q.timeGraph = make(map[int64]graph.Graph[uint64, uint64])
+	q.edgeTypes = make(map[int64]map[timeGraphEdgeKey]map[timeGraphEdgeRelation]struct{})
+	q.nodeInfos = make(map[int64]map[uint64]cmdb.Matcher)
+	q.topologyNodes = make(map[uint64]map[int64]struct{})
+	q.topologyEdges = make(map[timeGraphTopologyEdgeKey]map[int64]struct{})
+	return q
+}
+
+func newTimeGraphWithConfig(cfg *TimeGraphConfig) *TimeGraph {
 	maxNodes, maxEdges, maxResults, maxNodeInfos := effectiveMaxGraphNodes(), effectiveMaxGraphEdges(), effectiveMaxGraphResults(), effectiveMaxGraphNodeInfos()
 	var relations []TimeGraphRelationConfig
 	if cfg != nil {
@@ -97,19 +108,14 @@ func NewTimeGraphWithConfig(cfg *TimeGraphConfig) *TimeGraph {
 	}
 	stringDict := NewStringDict() // 每个TimeGraph实例有自己的字符串字典
 	return &TimeGraph{
-		nodeBuilder:   NewNodeBuilderWithConfig(stringDict, cfg), // 传递局部StringDict给NodeBuilder
-		stringDict:    stringDict,
-		timeGraph:     make(map[int64]graph.Graph[uint64, uint64]),
-		edgeTypes:     make(map[int64]map[timeGraphEdgeKey]map[timeGraphEdgeRelation]struct{}),
-		nodeInfos:     make(map[int64]map[uint64]cmdb.Matcher),
-		topologyNodes: make(map[uint64]map[int64]struct{}),
-		topologyEdges: make(map[timeGraphTopologyEdgeKey]map[int64]struct{}),
-		partialTimes:  make(map[int64]string),
-		maxNodes:      maxNodes,
-		maxEdges:      maxEdges,
-		maxResults:    maxResults,
-		maxNodeInfos:  maxNodeInfos,
-		relations:     relations,
+		nodeBuilder:  NewNodeBuilderWithConfig(stringDict, cfg), // 传递局部StringDict给NodeBuilder
+		stringDict:   stringDict,
+		partialTimes: make(map[int64]string),
+		maxNodes:     maxNodes,
+		maxEdges:     maxEdges,
+		maxResults:   maxResults,
+		maxNodeInfos: maxNodeInfos,
+		relations:    relations,
 	}
 }
 
@@ -145,6 +151,9 @@ func (q *TimeGraph) Clean(ctx context.Context) {
 	}
 	for k := range q.partialTimes {
 		delete(q.partialTimes, k)
+	}
+	if q.shared != nil {
+		q.shared.clear()
 	}
 	q.edgeCount = 0
 	q.nodeInfoCount = 0
@@ -272,6 +281,13 @@ func (q *TimeGraph) AddTimeNode(ctx context.Context, resource cmdb.Resource, inf
 	if q.maxNodes > 0 && q.nodeBuilder.Length() > q.maxNodes {
 		return &ResultLimitError{Reason: "max_graph_nodes", Count: q.nodeBuilder.Length(), Limit: q.maxNodes}
 	}
+	if q.shared != nil {
+		active, err := q.shared.timeBits(timestamps)
+		if err != nil {
+			return err
+		}
+		return q.setSharedNodeInfo(node, info, active)
+	}
 	for _, timestamp := range timestamps {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -348,6 +364,10 @@ func (q *TimeGraph) AddTimeRelationWithRelation(ctx context.Context, relation cm
 	defer q.lock.Unlock()
 	if q.maxNodes > 0 && q.nodeBuilder.Length() > q.maxNodes {
 		return &ResultLimitError{Reason: "max_graph_nodes", Count: q.nodeBuilder.Length(), Limit: q.maxNodes}
+	}
+
+	if q.shared != nil {
+		return q.addSharedRelation(ctx, relation, direction, sourceNode, targetNode, sourceInfo, targetInfo, timestamps)
 	}
 
 	// 批量创建缺失的时间图，减少重复的 map 查找

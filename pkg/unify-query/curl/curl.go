@@ -83,6 +83,9 @@ func (c *HttpCurl) WithDecoder(decoder func(ctx context.Context, reader io.Reade
 func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res any) (size int, err error) {
 	ctx, span := trace.NewSpan(ctx, "http-curl")
 	defer span.End(&err)
+	if limit := metadata.BackendResponseLimit(ctx); limit > 0 && (opt.MaxResponseBytes <= 0 || opt.MaxResponseBytes > limit) {
+		opt.MaxResponseBytes = limit
+	}
 
 	client := http.Client{
 		Transport: otelhttp.NewTransport(http.DefaultTransport),
@@ -136,7 +139,9 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 	defer func() {
 		_ = resp.Body.Close()
 		buf.Reset()
-		bufPool.Put(buf)
+		if buf.Cap() <= 1024*1024 {
+			bufPool.Put(buf)
+		}
 	}()
 
 	if resp.StatusCode != http.StatusOK {
@@ -158,6 +163,7 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 		span.Set("response-body-decode-duration", time.Since(decodeStarted))
 		span.Set("response-body-bytes", size)
 		if opt.MaxResponseBytes > 0 && int64(size) > opt.MaxResponseBytes {
+			metadata.MarkBackendResponseLimitExceeded(ctx)
 			return size, &ResponseBodyLimitError{Limit: opt.MaxResponseBytes}
 		}
 		return size, err
@@ -176,6 +182,7 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 		size = buf.Len()
 		span.Set("response-body-bytes", size)
 		if opt.MaxResponseBytes > 0 && int64(size) > opt.MaxResponseBytes {
+			metadata.MarkBackendResponseLimitExceeded(ctx)
 			return size, &ResponseBodyLimitError{Limit: opt.MaxResponseBytes}
 		}
 

@@ -67,6 +67,7 @@ func HandleProxy(c *gin.Context) {
 	)
 
 	ctx, span := trace.NewSpan(ctx, "handler-proxy")
+	defer runResponseCleanup(c)
 
 	defer func() {
 		if err != nil {

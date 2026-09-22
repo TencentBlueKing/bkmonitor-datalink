@@ -9,7 +9,10 @@
 
 package v1beta3
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // topologyGridLimitError 保留原有错误文案，同时提供稳定的超限指标分类。
 type topologyGridLimitError struct {
@@ -36,6 +39,9 @@ type ResultLimitError struct {
 
 // Error 返回可直接用于接口错误消息的超限说明。
 func (e *ResultLimitError) Error() string {
+	if strings.HasPrefix(e.Reason, "max_topology_") || e.Reason == "max_response_bytes" {
+		return fmt.Sprintf("topology resource limit exceeded: %s (%d > %d)", e.Reason, e.Count, e.Limit)
+	}
 	if e.Path != "" {
 		return fmt.Sprintf("result limit exceeded: %s returned %d items, maximum is %d", e.Path, e.Count, e.Limit)
 	}

@@ -7,6 +7,7 @@ package api
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/proxy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -73,11 +75,40 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 	span.Set("query-mode", queryMode)
 	span.Set("handler-headers", c.Request.Header)
 
+	ctx, release, err := v1beta3.AcquireSharedTopology(ctx)
+	if err != nil {
+		handlerErr = err
+		requestResult = metric.CMDBRelationResultRejected
+		metric.CMDBTopologyRejectInc(ctx, queryMode, "max_topology_concurrency")
+		resp.failed(ctx, err)
+		return
+	}
+	if _, proxied := c.Get(proxy.ContextConfigUnifyResponseProcess); proxied {
+		proxy.DeferResponseCleanup(c, release)
+	} else {
+		defer release()
+	}
+	const maxRequestBytes = 1024 * 1024
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, maxRequestBytes+1))
+	if err == nil && len(body) > maxRequestBytes {
+		err = fmt.Errorf("topology request exceeds maximum size of %d bytes", maxRequestBytes)
+	}
 	request := new(cmdb.SharedTopologyRequest)
-	if err := json.NewDecoder(c.Request.Body).Decode(request); err != nil {
+	if err == nil {
+		err = json.Unmarshal(body, request)
+	}
+	if err != nil {
 		handlerErr = err
 		requestResult = metric.CMDBRelationResultRejected
 		resp.failed(ctx, err)
+		return
+	}
+	const maxQueries = 16
+	if len(request.QueryList) > maxQueries {
+		handlerErr = &v1beta3.ResultLimitError{Reason: "max_topology_queries", Count: len(request.QueryList), Limit: maxQueries}
+		requestResult = metric.CMDBRelationResultRejected
+		metric.CMDBTopologyRejectInc(ctx, queryMode, "max_topology_queries")
+		resp.failed(ctx, handlerErr)
 		return
 	}
 	span.Set("query-count", len(request.QueryList))
@@ -100,6 +131,7 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		TraceID: span.TraceID(),
 		Data:    make([]cmdb.SharedTopologyResponseData, len(request.QueryList)),
 	}
+	responseBytes := 1024
 	failedQueryCount := 0
 	partialQueryCount := 0
 	itemSpanName := "handler-api-relation-v1beta3-topology-item"
@@ -156,6 +188,27 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		if item.Snapshots == nil {
 			item.Snapshots = make([]cmdb.SharedTopologySnapshot, 0)
 		}
+		// 批次内结果累计也必须有界，不能用 query_list 倍增单查询预算。
+		if len(item.Message) > 4096 {
+			item.Message = item.Message[:4096]
+		}
+		encoded, encodeErr := json.Marshal(item)
+		if encodeErr != nil {
+			querySpan.End(&encodeErr)
+			handlerErr = encodeErr
+			resp.failed(ctx, encodeErr)
+			return
+		}
+		if len(encoded) > v1beta3.TopologyOutputByteLimit()-responseBytes {
+			queryErr = &v1beta3.ResultLimitError{Reason: "max_topology_output_bytes", Count: responseBytes + len(encoded), Limit: v1beta3.TopologyOutputByteLimit()}
+			querySpan.End(&queryErr)
+			handlerErr = queryErr
+			requestResult = metric.CMDBRelationResultRejected
+			metric.CMDBTopologyRejectInc(ctx, queryMode, "max_topology_output_bytes")
+			resp.failed(ctx, queryErr)
+			return
+		}
+		responseBytes += len(encoded) + 1
 		querySpan.Set("query-index", index)
 		querySpan.Set("point-count", item.PointCount)
 		querySpan.Set("response-code", item.Code)

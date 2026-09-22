@@ -138,6 +138,10 @@ func (m *Model) buildTimeGraphFromRelationsWithRootRelations(ctx context.Context
 }
 
 func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, rootRelations map[timeGraphRelationKey]struct{}, relations []cmdb.Relation, lookBackDelta string, matrixQuery timeGraphMatrixQuery) (graph *TimeGraph, err error) {
+	return m.buildTimeGraph(ctx, spaceUID, start, end, step, sourceType, sourceInfo, sourceExpandInfo, rootRelations, relations, lookBackDelta, matrixQuery, nil)
+}
+
+func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, rootRelations map[timeGraphRelationKey]struct{}, relations []cmdb.Relation, lookBackDelta string, matrixQuery timeGraphMatrixQuery, topologyGrid *TopologyGrid) (graph *TimeGraph, err error) {
 	ctx, span := trace.NewSpan(ctx, "build-time-graph-from-relations")
 	defer span.End(&err)
 	started := time.Now()
@@ -165,14 +169,27 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 	configSpan.Set("max-graph-node-infos", config.MaxNodeInfos)
 	var configErr error
 	configSpan.End(&configErr)
-	tg := NewTimeGraphWithConfig(config)
+	var tg *TimeGraph
+	if topologyGrid != nil {
+		tg, err = newSharedTimeGraph(config, *topologyGrid)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		tg = NewTimeGraphWithConfig(config)
+	}
 	defer func() {
 		// 失败路径同样记录已物化规模，便于定位触发容量保护的位置。
 		metric.CMDBTimeGraphSizeObserve(ctx, "build", "nodes", tg.nodeBuilder.Length())
 		metric.CMDBTimeGraphSizeObserve(ctx, "build", "edges", tg.edgeCount)
 		metric.CMDBTimeGraphSizeObserve(ctx, "build", "node_infos", tg.nodeInfoCount)
-		metric.CMDBTimeGraphSizeObserve(ctx, "build", "timepoints", len(tg.timeGraph))
+		metric.CMDBTimeGraphSizeObserve(ctx, "build", "timepoints", tg.timepointCount())
 	}()
+	if tg.shared != nil {
+		span.Set("graph-storage-mode", "shared")
+	} else {
+		span.Set("graph-storage-mode", "time-buckets")
+	}
 	span.Set("graph-max-nodes", tg.maxNodes)
 	span.Set("graph-max-edges", tg.maxEdges)
 	span.Set("graph-max-results", tg.maxResults)
@@ -194,207 +211,22 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 	span.Set("query-lookback-seconds", lookBack.Seconds())
 	span.Set("graph-max-node-infos", tg.maxNodeInfos)
 
-	instant := start.Equal(end)
 	// step 只控制 range 查询的采样间隔，lookBack 只控制 count_over_time 的
 	// 回溯窗口；两者必须分开，否则稀疏的 range 查询会产生错误的采样结果。
 	queryStep := step
-	matrixQueryCount := 0
 	sourceInfoQueryCount := 0
 	relationEdgeQueryCount := 0
 	targetInfoQueryCount := 0
-	queryMatrix := func(queryCtx context.Context, queryTs *structured.QueryTs) (matrix pl.Matrix, partial bool, err error) {
-		queryCtx, span := trace.NewSpan(queryCtx, "timegraph-query-matrix")
-		defer span.End(&err)
-		if metadata.IsExactTimeGrid(queryCtx) {
-			// 所有取数阶段共用请求网格，不让 QueryTs 按 step 向下移动起点。
-			queryTs.NotTimeAlign = true
-		}
-		queryStarted := time.Now()
-		stage := timeGraphQueryStage(queryCtx)
-		defer func() {
-			outcome := metric.CMDBTimeGraphErrorResult(err)
-			if err == nil {
-				if partial {
-					outcome = metric.CMDBRelationResultPartial
-				} else if len(matrix) == 0 {
-					outcome = metric.CMDBRelationResultEmpty
-				}
-			}
-			metric.CMDBTimeGraphStageObserve(queryCtx, stage, outcome, time.Since(queryStarted))
-		}()
-		matrixQueryCount++
-		span.Set("query-mode", map[bool]string{true: "instant", false: "range"}[instant])
-		span.Set("query-source", "vm")
-		wrapQueryErr := false
-		if stage != "" {
-			span.Set("query-stage", stage)
-		}
-		if queryTs != nil {
-			span.Set("query-space-uid", queryTs.SpaceUid)
-			span.Set("query-start", queryTs.Start)
-			span.Set("query-end", queryTs.End)
-			span.Set("query-step", queryTs.Step)
-			span.Set("query-count", len(queryTs.QueryList))
-		}
-
-		var relationQueryParams *metadata.QueryParams
-		if matrixQuery != nil {
-			span.Set("query-source", "test-matrix")
-			matrix, err = matrixQuery(queryCtx, queryTs)
-		} else if m.timeGraphVMQueryWithPartial != nil {
-			span.Set("query-source", "test-vm-with-partial")
-			var expr string
-			expr, relationQueryParams, err = m.prepareTimeGraphVMQuery(queryCtx, queryTs)
-			if err == nil {
-				matrix, partial, err = m.timeGraphVMQueryWithPartial(
-					queryCtx,
-					queryTs,
-					expr,
-					instant,
-					relationQueryParams.AlignStart,
-					relationQueryParams.End,
-					relationQueryParams.Step,
-				)
-			}
-		} else if m.timeGraphVMQuery != nil {
-			span.Set("query-source", "test-vm")
-			var expr string
-			expr, relationQueryParams, err = m.prepareTimeGraphVMQuery(queryCtx, queryTs)
-			if err == nil {
-				matrix, err = m.timeGraphVMQuery(
-					queryCtx,
-					queryTs,
-					expr,
-					instant,
-					relationQueryParams.AlignStart,
-					relationQueryParams.End,
-					relationQueryParams.Step,
-				)
-			}
-		} else {
-			wrapQueryErr = true
-			var expr string
-			expr, relationQueryParams, err = m.prepareTimeGraphVMQuery(queryCtx, queryTs)
-			if err == nil {
-				var instance tsdb.Instance
-				if relationQueryParams.IsDirectQuery() {
-					instance = prometheus.GetTsDbInstance(queryCtx, &metadata.Query{
-						StorageType: metadata.VictoriaMetricsStorageType,
-					})
-					if instance == nil {
-						err = fmt.Errorf("%s storage get error", metadata.VictoriaMetricsStorageType)
-					}
-				} else {
-					instance = prometheus.NewInstance(queryCtx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
-						QueryMaxRouting: timeGraphQueryMaxRouting,
-						Timeout:         timeGraphQueryTimeout,
-					}, lookBack, timeGraphQueryMaxRouting)
-				}
-				if err == nil && instant {
-					var vector pl.Vector
-					vector, partial, err = queryTimeGraphInstant(queryCtx, instance, expr, relationQueryParams.End)
-					if err == nil {
-						matrix = vectorToMatrix(vector)
-					}
-				} else if err == nil {
-					matrix, partial, err = instance.DirectQueryRange(
-						queryCtx,
-						expr,
-						relationQueryParams.AlignStart,
-						relationQueryParams.End,
-						relationQueryParams.Step,
-					)
-				}
-			}
-		}
-		pointCount := 0
-		for _, series := range matrix {
-			pointCount += len(series.Points)
-			if err == nil && metadata.IsExactTimeGrid(queryCtx) {
-				for _, point := range series.Points {
-					if point.T < start.UnixMilli() || point.T > end.UnixMilli() || (point.T-start.UnixMilli())%step.Milliseconds() != 0 {
-						err = errors.New("backend sample timestamp does not match topology time grid")
-						break
-					}
-				}
-			}
-		}
-		// Prometheus 聚合后端通过子查询 metadata 报告部分成功，VM 则返回 partial 位。
-		// 合并当前子查询的两种信号，让空结果的快照、指标和 trace 同样保留不完整状态。
-		if status := metadata.GetStatus(queryCtx); status != nil {
-			partial = partial || status.Code == metadata.QueryTsPartial
-		}
-		if err == nil && partial {
-			partialStart, partialEnd, partialStep := start, end, queryStep
-			if relationQueryParams != nil {
-				partialStart, partialEnd, partialStep = relationQueryParams.AlignStart, relationQueryParams.End, relationQueryParams.Step
-			}
-			if instant {
-				partialStart = partialEnd
-			}
-			tg.markPartialRange(partialStart, partialEnd, partialStep, "backend_partial")
-		}
-		span.Set("matrix-series-count", len(matrix))
-		span.Set("matrix-point-count", pointCount)
-		span.Set("matrix-partial", partial)
-		if err == nil {
-			metric.CMDBTimeGraphSizeObserve(queryCtx, stage, "series", len(matrix))
-			metric.CMDBTimeGraphSizeObserve(queryCtx, stage, "points", pointCount)
-		}
-		if err != nil {
-			if wrapQueryErr {
-				if instant {
-					err = errors.WithMessage(err, "direct query")
-				} else {
-					err = errors.WithMessage(err, "direct query range")
-				}
-			}
-			return nil, partial, err
-		}
-		return matrix, partial, nil
-	}
+	loader := &timeGraphMatrixLoader{model: m, graph: tg, start: start, end: end, step: queryStep, lookBack: lookBack, override: matrixQuery, topology: topologyGrid != nil}
+	queryMatrix := loader.query
 
 	if len(sourceExpandInfo) > 0 || len(relations) == 0 || timeGraphForceSourceInfo(ctx) {
-		infoCtx := newTimeGraphSubqueryContext(ctx)
-		metadata.GetQueryParams(infoCtx).SetIsSkipK8s(true)
-		_, infoQuerySpan := trace.NewSpan(infoCtx, "timegraph-build-resource-info-query")
-		infoQuerySpan.Set("query-kind", "source-info")
-		infoQuerySpan.Set("resource-type", sourceType)
-		queryTs, queryErr := tg.MakeResourceInfoQueryTsWithWindow(
-			spaceUID, sourceType, sourceInfo, sourceExpandInfo, nil, start, end, queryStep, lookBack,
-		)
-		infoQuerySpan.Set("query-generated", queryTs != nil)
-		if queryTs != nil {
-			infoQuerySpan.Set("query-count", len(queryTs.QueryList))
-		}
-		infoQuerySpan.End(&queryErr)
-		if queryErr != nil {
-			return nil, errors.WithMessage(queryErr, "make source info query ts")
-		}
-		if queryTs != nil {
-			sourceInfoQueryCount++
-			matrix, _, queryErr := queryMatrix(withTimeGraphQueryStage(infoCtx, "source-info"), queryTs)
-			if queryErr != nil {
-				return nil, errors.WithMessage(queryErr, "query source info relation")
-			}
-			for _, series := range matrix {
-				if err := infoCtx.Err(); err != nil {
-					return nil, err
-				}
-				info := make(cmdb.Matcher, len(series.Metric))
-				for _, label := range series.Metric {
-					info[label.Name] = label.Value
-				}
-				timestamps := make([]int64, len(series.Points))
-				for i, point := range series.Points {
-					timestamps[i] = point.T
-				}
-				if err = tg.AddTimeNode(infoCtx, sourceType, info, timestamps...); err != nil {
-					return nil, errors.WithMessage(err, "add source info node")
-				}
-			}
+		sourceInfoQueryCount, err = loader.addSourceInfo(ctx, spaceUID, sourceType, sourceInfo, sourceExpandInfo)
+		if err != nil {
+			return nil, err
 		}
 	}
+
 	// targetMatchersByType 保存关系指标实际产生的目标节点身份。
 	// targetIDsByTimestamp 进一步限制 info 指标：只有同一时间点确实出现在
 	// 关系中的节点才能补充属性，避免凭空创建孤立节点。
@@ -491,72 +323,336 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 	}
 
 	if timeGraphTargetInfoShow(ctx) {
-		for targetType, matchers := range targetMatchersByType {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			primaryMatchers := make([]cmdb.Matcher, 0, len(matchers))
-			for _, matcher := range matchers {
-				primaryMatchers = append(primaryMatchers, matcher)
-			}
-			infoCtx := newTimeGraphSubqueryContext(ctx)
-			metadata.GetQueryParams(infoCtx).SetIsSkipK8s(true)
-			_, infoQuerySpan := trace.NewSpan(infoCtx, "timegraph-build-resource-info-query")
-			infoQuerySpan.Set("query-kind", "target-info")
-			infoQuerySpan.Set("resource-type", targetType)
-			infoQuerySpan.Set("primary-matcher-count", len(primaryMatchers))
-			queryTs, queryErr := tg.MakeResourceInfoQueryTsWithWindow(
-				spaceUID, targetType, nil, nil, primaryMatchers, start, end, queryStep, lookBack,
-			)
-			infoQuerySpan.Set("query-generated", queryTs != nil)
-			if queryTs != nil {
-				infoQuerySpan.Set("query-count", len(queryTs.QueryList))
-			}
-			infoQuerySpan.End(&queryErr)
-			if queryErr != nil {
-				return nil, errors.WithMessage(queryErr, "make target info query ts")
-			}
-			if queryTs == nil {
-				continue
-			}
-			targetInfoQueryCount++
-			matrix, _, queryErr := queryMatrix(withTimeGraphQueryStage(infoCtx, "target-info"), queryTs)
-			if queryErr != nil {
-				return nil, errors.WithMessage(queryErr, "query target info relation")
-			}
-			for _, series := range matrix {
-				if err := infoCtx.Err(); err != nil {
-					return nil, err
-				}
-				info := make(cmdb.Matcher, len(series.Metric))
-				for _, label := range series.Metric {
-					info[label.Name] = label.Value
-				}
-				timestamps := make([]int64, 0, len(series.Points))
-				key := tg.primaryMatcherKey(targetType, info)
-				for _, point := range series.Points {
-					if _, ok := targetIDsByTimestamp[point.T][targetType][key]; ok {
-						timestamps = append(timestamps, point.T)
-					}
-				}
-				if len(timestamps) > 0 {
-					if err = tg.AddTimeNode(infoCtx, targetType, info, timestamps...); err != nil {
-						return nil, errors.WithMessage(err, "add target info node")
-					}
-				}
-			}
+		targetInfoQueryCount, err = loader.addTargetInfo(ctx, spaceUID, targetMatchersByType, targetIDsByTimestamp)
+		if err != nil {
+			return nil, err
 		}
+	}
+
+	span.Set("graph-legacy-timepoint-count", len(tg.timeGraph))
+	if tg.shared != nil {
+		span.Set("graph-shared-edge-count", len(tg.shared.edgeBits))
+		versions := 0
+		for _, infos := range tg.shared.nodeInfos {
+			versions += len(infos)
+		}
+		span.Set("graph-attribute-version-count", versions)
 	}
 	span.Set("graph-node-count", tg.nodeBuilder.Length())
 	span.Set("graph-edge-count", tg.edgeCount)
 	span.Set("graph-node-info-count", tg.nodeInfoCount)
-	span.Set("graph-timepoint-count", len(tg.timeGraph))
+	span.Set("graph-timepoint-count", tg.timepointCount())
 	span.Set("graph-partial-point-count", len(tg.partialTimes))
-	span.Set("matrix-query-count", matrixQueryCount)
+	span.Set("matrix-query-count", loader.queryCount)
 	span.Set("source-info-query-count", sourceInfoQueryCount)
 	span.Set("relation-edge-query-count", relationEdgeQueryCount)
 	span.Set("target-info-query-count", targetInfoQueryCount)
 	return tg, nil
+}
+
+// timeGraphMatrixLoader 统一取数、网格校验和完整性状态，并按请求累计 Matrix 预算。
+// 构图器只负责把已校验的序列写入所选存储。
+type timeGraphMatrixLoader struct {
+	model                  *Model
+	graph                  *TimeGraph
+	start, end             time.Time
+	step, lookBack         time.Duration
+	override               timeGraphMatrixQuery
+	topology               bool
+	queryCount, pointCount int
+}
+
+func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *structured.QueryTs) (matrix pl.Matrix, partial bool, err error) {
+	m, tg := loader.model, loader.graph
+	start, end, queryStep, lookBack := loader.start, loader.end, loader.step, loader.lookBack
+	instant, matrixQuery := start.Equal(end), loader.override
+
+	queryCtx, span := trace.NewSpan(queryCtx, "timegraph-query-matrix")
+	defer span.End(&err)
+	if metadata.IsExactTimeGrid(queryCtx) {
+		// 所有取数阶段共用请求网格，不让 QueryTs 按 step 向下移动起点。
+		queryTs.NotTimeAlign = true
+	}
+	queryStarted := time.Now()
+	stage := timeGraphQueryStage(queryCtx)
+	defer func() {
+		outcome := metric.CMDBTimeGraphErrorResult(err)
+		if err == nil {
+			if partial {
+				outcome = metric.CMDBRelationResultPartial
+			} else if len(matrix) == 0 {
+				outcome = metric.CMDBRelationResultEmpty
+			}
+		}
+		metric.CMDBTimeGraphStageObserve(queryCtx, stage, outcome, time.Since(queryStarted))
+	}()
+	loader.queryCount++
+	span.Set("query-mode", map[bool]string{true: "instant", false: "range"}[instant])
+	span.Set("query-source", "vm")
+	wrapQueryErr := false
+	if stage != "" {
+		span.Set("query-stage", stage)
+	}
+	if queryTs != nil {
+		span.Set("query-space-uid", queryTs.SpaceUid)
+		span.Set("query-start", queryTs.Start)
+		span.Set("query-end", queryTs.End)
+		span.Set("query-step", queryTs.Step)
+		span.Set("query-count", len(queryTs.QueryList))
+	}
+
+	var relationQueryParams *metadata.QueryParams
+	switch {
+	case matrixQuery != nil:
+		span.Set("query-source", "test-matrix")
+		matrix, err = matrixQuery(queryCtx, queryTs)
+	case m.timeGraphVMQueryWithPartial != nil:
+		span.Set("query-source", "test-vm-with-partial")
+		var expr string
+		expr, relationQueryParams, err = m.prepareTimeGraphVMQuery(queryCtx, queryTs)
+		if err == nil {
+			matrix, partial, err = m.timeGraphVMQueryWithPartial(
+				queryCtx,
+				queryTs,
+				expr,
+				instant,
+				relationQueryParams.AlignStart,
+				relationQueryParams.End,
+				relationQueryParams.Step,
+			)
+		}
+	case m.timeGraphVMQuery != nil:
+		span.Set("query-source", "test-vm")
+		var expr string
+		expr, relationQueryParams, err = m.prepareTimeGraphVMQuery(queryCtx, queryTs)
+		if err == nil {
+			matrix, err = m.timeGraphVMQuery(
+				queryCtx,
+				queryTs,
+				expr,
+				instant,
+				relationQueryParams.AlignStart,
+				relationQueryParams.End,
+				relationQueryParams.Step,
+			)
+		}
+	default:
+		wrapQueryErr = true
+		var expr string
+		expr, relationQueryParams, err = m.prepareTimeGraphVMQuery(queryCtx, queryTs)
+		if err == nil {
+			var instance tsdb.Instance
+			if relationQueryParams.IsDirectQuery() {
+				instance = prometheus.GetTsDbInstance(queryCtx, &metadata.Query{
+					StorageType: metadata.VictoriaMetricsStorageType,
+				})
+				if instance == nil {
+					err = fmt.Errorf("%s storage get error", metadata.VictoriaMetricsStorageType)
+				}
+			} else {
+				instance = prometheus.NewInstance(queryCtx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
+					QueryMaxRouting: timeGraphQueryMaxRouting,
+					Timeout:         timeGraphQueryTimeout,
+				}, lookBack, timeGraphQueryMaxRouting)
+			}
+			if err == nil && instant {
+				var vector pl.Vector
+				vector, partial, err = queryTimeGraphInstant(queryCtx, instance, expr, relationQueryParams.End)
+				if err == nil {
+					matrix = vectorToMatrix(vector)
+				}
+			} else if err == nil {
+				matrix, partial, err = instance.DirectQueryRange(
+					queryCtx,
+					expr,
+					relationQueryParams.AlignStart,
+					relationQueryParams.End,
+					relationQueryParams.Step,
+				)
+			}
+		}
+	}
+	pointCount, err := loader.validateMatrix(queryCtx, matrix, err)
+	// Prometheus 聚合后端通过子查询 metadata 报告部分成功，VM 则返回 partial 位。
+	// 合并当前子查询的两种信号，让空结果的快照、指标和 trace 同样保留不完整状态。
+	if status := metadata.GetStatus(queryCtx); status != nil {
+		partial = partial || status.Code == metadata.QueryTsPartial
+	}
+	if err == nil && partial {
+		partialStart, partialEnd, partialStep := start, end, queryStep
+		if relationQueryParams != nil {
+			partialStart, partialEnd, partialStep = relationQueryParams.AlignStart, relationQueryParams.End, relationQueryParams.Step
+		}
+		if instant {
+			partialStart = partialEnd
+		}
+		tg.markPartialRange(partialStart, partialEnd, partialStep, "backend_partial")
+	}
+	span.Set("matrix-series-count", len(matrix))
+	span.Set("matrix-point-count", pointCount)
+	span.Set("matrix-partial", partial)
+	if err == nil {
+		metric.CMDBTimeGraphSizeObserve(queryCtx, stage, "series", len(matrix))
+		metric.CMDBTimeGraphSizeObserve(queryCtx, stage, "points", pointCount)
+	}
+	if err != nil {
+		if wrapQueryErr {
+			if instant {
+				err = errors.WithMessage(err, "direct query")
+			} else {
+				err = errors.WithMessage(err, "direct query range")
+			}
+		}
+		return nil, partial, err
+	}
+	return matrix, partial, nil
+}
+
+func (loader *timeGraphMatrixLoader) addSourceInfo(ctx context.Context, spaceUID string, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher) (queryCount int, err error) {
+	tg, queryMatrix := loader.graph, loader.query
+	start, end, queryStep, lookBack := loader.start, loader.end, loader.step, loader.lookBack
+
+	infoCtx := newTimeGraphSubqueryContext(ctx)
+	metadata.GetQueryParams(infoCtx).SetIsSkipK8s(true)
+	_, infoQuerySpan := trace.NewSpan(infoCtx, "timegraph-build-resource-info-query")
+	infoQuerySpan.Set("query-kind", "source-info")
+	infoQuerySpan.Set("resource-type", sourceType)
+	queryTs, queryErr := tg.MakeResourceInfoQueryTsWithWindow(
+		spaceUID, sourceType, sourceInfo, sourceExpandInfo, nil, start, end, queryStep, lookBack,
+	)
+	infoQuerySpan.Set("query-generated", queryTs != nil)
+	if queryTs != nil {
+		infoQuerySpan.Set("query-count", len(queryTs.QueryList))
+	}
+	infoQuerySpan.End(&queryErr)
+	if queryErr != nil {
+		return queryCount, errors.WithMessage(queryErr, "make source info query ts")
+	}
+	if queryTs != nil {
+		queryCount++
+		matrix, _, queryErr := queryMatrix(withTimeGraphQueryStage(infoCtx, "source-info"), queryTs)
+		if queryErr != nil {
+			return queryCount, errors.WithMessage(queryErr, "query source info relation")
+		}
+		for _, series := range matrix {
+			if err := infoCtx.Err(); err != nil {
+				return queryCount, err
+			}
+			info := make(cmdb.Matcher, len(series.Metric))
+			for _, label := range series.Metric {
+				info[label.Name] = label.Value
+			}
+			timestamps := make([]int64, len(series.Points))
+			for i, point := range series.Points {
+				timestamps[i] = point.T
+			}
+			if err = tg.AddTimeNode(infoCtx, sourceType, info, timestamps...); err != nil {
+				return queryCount, errors.WithMessage(err, "add source info node")
+			}
+		}
+	}
+
+	return queryCount, nil
+}
+
+func (loader *timeGraphMatrixLoader) addTargetInfo(ctx context.Context, spaceUID string, targetMatchersByType map[cmdb.Resource]map[string]cmdb.Matcher, targetIDsByTimestamp map[int64]map[cmdb.Resource]map[string]struct{}) (queryCount int, err error) {
+	tg, queryMatrix := loader.graph, loader.query
+	start, end, queryStep, lookBack := loader.start, loader.end, loader.step, loader.lookBack
+
+	for targetType, matchers := range targetMatchersByType {
+		if err := ctx.Err(); err != nil {
+			return queryCount, err
+		}
+		primaryMatchers := make([]cmdb.Matcher, 0, len(matchers))
+		for _, matcher := range matchers {
+			primaryMatchers = append(primaryMatchers, matcher)
+		}
+		infoCtx := newTimeGraphSubqueryContext(ctx)
+		metadata.GetQueryParams(infoCtx).SetIsSkipK8s(true)
+		_, infoQuerySpan := trace.NewSpan(infoCtx, "timegraph-build-resource-info-query")
+		infoQuerySpan.Set("query-kind", "target-info")
+		infoQuerySpan.Set("resource-type", targetType)
+		infoQuerySpan.Set("primary-matcher-count", len(primaryMatchers))
+		queryTs, queryErr := tg.MakeResourceInfoQueryTsWithWindow(
+			spaceUID, targetType, nil, nil, primaryMatchers, start, end, queryStep, lookBack,
+		)
+		infoQuerySpan.Set("query-generated", queryTs != nil)
+		if queryTs != nil {
+			infoQuerySpan.Set("query-count", len(queryTs.QueryList))
+		}
+		infoQuerySpan.End(&queryErr)
+		if queryErr != nil {
+			return queryCount, errors.WithMessage(queryErr, "make target info query ts")
+		}
+		if queryTs == nil {
+			continue
+		}
+		queryCount++
+		matrix, _, queryErr := queryMatrix(withTimeGraphQueryStage(infoCtx, "target-info"), queryTs)
+		if queryErr != nil {
+			return queryCount, errors.WithMessage(queryErr, "query target info relation")
+		}
+		for _, series := range matrix {
+			if err := infoCtx.Err(); err != nil {
+				return queryCount, err
+			}
+			info := make(cmdb.Matcher, len(series.Metric))
+			for _, label := range series.Metric {
+				info[label.Name] = label.Value
+			}
+			timestamps := make([]int64, 0, len(series.Points))
+			key := tg.primaryMatcherKey(targetType, info)
+			for _, point := range series.Points {
+				if _, ok := targetIDsByTimestamp[point.T][targetType][key]; ok {
+					timestamps = append(timestamps, point.T)
+				}
+			}
+			if len(timestamps) > 0 {
+				if err = tg.AddTimeNode(infoCtx, targetType, info, timestamps...); err != nil {
+					return queryCount, errors.WithMessage(err, "add target info node")
+				}
+			}
+		}
+	}
+
+	return queryCount, nil
+}
+
+func (loader *timeGraphMatrixLoader) validateMatrix(queryCtx context.Context, matrix pl.Matrix, err error) (int, error) {
+	tg := loader.graph
+	start, end, queryStep := loader.start, loader.end, loader.step
+	if loader.topology && metadata.BackendResponseLimitExceeded(queryCtx) {
+		err = &ResultLimitError{Reason: "max_response_bytes", Count: int(metadata.BackendResponseLimit(queryCtx)) + 1, Limit: int(metadata.BackendResponseLimit(queryCtx))}
+	}
+	if loader.topology && err == nil && len(matrix) > tg.maxNodes {
+		err = &ResultLimitError{Reason: "max_topology_matrix_series", Count: len(matrix), Limit: tg.maxNodes}
+	}
+	pointCount := 0
+	for _, series := range matrix {
+		if err != nil {
+			break
+		}
+		if err = queryCtx.Err(); err != nil {
+			break
+		}
+		pointCount += len(series.Points)
+		if loader.topology && err == nil {
+			loader.pointCount += len(series.Points)
+			limit := positiveTopologyLimit(MaxSharedTopologyMatrixPoints, 1000000)
+			if loader.pointCount > limit {
+				err = &ResultLimitError{Reason: "max_topology_matrix_points", Count: loader.pointCount, Limit: limit}
+			}
+		}
+		if err == nil && metadata.IsExactTimeGrid(queryCtx) {
+			for _, point := range series.Points {
+				if point.T < start.UnixMilli() || point.T > end.UnixMilli() || (point.T-start.UnixMilli())%queryStep.Milliseconds() != 0 {
+					err = errors.New("backend sample timestamp does not match topology time grid")
+					break
+				}
+			}
+		}
+	}
+	return pointCount, err
 }
 
 // queryTimeGraphInstant 优先保留后端完整性状态；完整拓扑不接受无法报告该状态的后端。

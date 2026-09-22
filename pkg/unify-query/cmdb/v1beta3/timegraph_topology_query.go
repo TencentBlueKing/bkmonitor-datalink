@@ -113,7 +113,13 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	validated = true
 	queryCtx = withTimeGraphForceSourceInfo(queryCtx)
 	queryCtx = metadata.WithExactTimeGrid(queryCtx)
-	graph, err := m.buildTimeGraphFromRelationsWithQueryAndRootRelations(
+	queryCtx, release, err := AcquireSharedTopology(queryCtx)
+	if err != nil {
+		return cmdb.SharedTopologyResult{}, err
+	}
+	defer release()
+	queryCtx = metadata.WithBackendResponseLimit(queryCtx, int64(positiveTopologyLimit(MaxSharedTopologyBackendBytes, 16*1024*1024)))
+	graph, err := m.buildTimeGraph(
 		queryCtx,
 		request.SpaceUID,
 		start,
@@ -127,6 +133,7 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		relations,
 		lookBack,
 		nil,
+		&grid,
 	)
 	if err != nil {
 		return cmdb.SharedTopologyResult{}, errors.WithMessage(err, "build shared topology")

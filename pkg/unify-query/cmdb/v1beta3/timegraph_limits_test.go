@@ -372,7 +372,7 @@ func TestTimeGraphCancelledDuringExternalQueryStopsMutation(t *testing.T) {
 		timeGraphQueryReference: timeGraphTestQueryReference,
 		timeGraphVMQuery: func(context.Context, *structured.QueryTs, string, bool, time.Time, time.Time, time.Duration) (pl.Matrix, error) {
 			cancel()
-			return contractMatrix(map[string]string{"node": "n1", "ip": "10.0.0.1"}, 1700000000000), nil
+			return contractMatrix(map[string]string{"node": "n1", "ip": "test-ip-1"}, 1700000000000), nil
 		},
 	}
 

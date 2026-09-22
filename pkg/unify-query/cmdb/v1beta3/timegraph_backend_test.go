@@ -182,7 +182,7 @@ func TestQueryResourceMatcherUsesTimeGraphBackend(t *testing.T) {
 			TargetType: "system",
 			Path: []cmdb.PathNode{
 				{ResourceType: "node", Dimensions: cmdb.Matcher{"node": "n1"}},
-				{ResourceType: "system", Dimensions: cmdb.Matcher{"ip": "10.0.0.1"}},
+				{ResourceType: "system", Dimensions: cmdb.Matcher{"ip": "test-ip-1"}},
 			},
 		}},
 	}
@@ -200,7 +200,7 @@ func TestQueryResourceMatcherUsesTimeGraphBackend(t *testing.T) {
 	require.Equal(t, cmdb.Matcher{"node": "n1"}, sourceInfo)
 	require.Equal(t, []string{"node", "system"}, path)
 	require.Equal(t, cmdb.Resource("system"), target)
-	require.Equal(t, cmdb.Matchers{cmdb.Matcher{"ip": "10.0.0.1"}}, matchers)
+	require.Equal(t, cmdb.Matchers{cmdb.Matcher{"ip": "test-ip-1"}}, matchers)
 	require.Equal(t, "1700000000", fake.instantTs)
 	require.Equal(t, [][]cmdb.Resource{{"node", "system"}}, fake.instantPaths)
 	require.Equal(t, "node_with_system", fake.instantPlan[0].Steps[1].RelationType)
@@ -227,7 +227,7 @@ func TestQueryResourceMatcherRangeUsesTimeGraphBackendAndNormalizesBuckets(t *te
 				TargetType: "system",
 				Path: []cmdb.PathNode{
 					{ResourceType: "node", Dimensions: cmdb.Matcher{"node": "n1"}},
-					{ResourceType: "system", Dimensions: cmdb.Matcher{"ip": "10.0.0.1"}},
+					{ResourceType: "system", Dimensions: cmdb.Matcher{"ip": "test-ip-1"}},
 				},
 			},
 			{
@@ -235,7 +235,7 @@ func TestQueryResourceMatcherRangeUsesTimeGraphBackendAndNormalizesBuckets(t *te
 				TargetType: "system",
 				Path: []cmdb.PathNode{
 					{ResourceType: "node", Dimensions: cmdb.Matcher{"node": "n1"}},
-					{ResourceType: "system", Dimensions: cmdb.Matcher{"ip": "10.0.0.2"}},
+					{ResourceType: "system", Dimensions: cmdb.Matcher{"ip": "test-ip-2"}},
 				},
 			},
 		},
@@ -255,8 +255,8 @@ func TestQueryResourceMatcherRangeUsesTimeGraphBackendAndNormalizesBuckets(t *te
 	require.Equal(t, []string{"node", "system"}, path)
 	require.Equal(t, cmdb.Resource("system"), target)
 	require.Equal(t, []cmdb.MatchersWithTimestamp{
-		{Timestamp: 1700000000000, Matchers: cmdb.Matchers{cmdb.Matcher{"ip": "10.0.0.1"}}},
-		{Timestamp: 1700000030000, Matchers: cmdb.Matchers{cmdb.Matcher{"ip": "10.0.0.2"}}},
+		{Timestamp: 1700000000000, Matchers: cmdb.Matchers{cmdb.Matcher{"ip": "test-ip-1"}}},
+		{Timestamp: 1700000030000, Matchers: cmdb.Matchers{cmdb.Matcher{"ip": "test-ip-2"}}},
 	}, series)
 	require.Equal(t, "30s", fake.rangeStep)
 	require.Equal(t, "1700000000", fake.rangeStart)

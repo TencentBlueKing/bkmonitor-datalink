@@ -975,12 +975,16 @@ func (q *TimeGraph) FindRelationPathResources(
 				if len(expectedPath.Steps) == 0 || expectedPath.Steps[0].ResourceType != sourceType {
 					continue
 				}
+				targetType := expectedPath.Steps[len(expectedPath.Steps)-1].ResourceType
+				if _, ok := targetTypeSet[targetType]; !ok {
+					continue
+				}
 				nodePaths := [][]uint64(nil)
 				if len(expectedPath.Steps) == 1 {
 					nodePaths = [][]uint64{{sourceNode}}
 				} else {
-					nodePaths = q.findTypedRelationNodePaths(ctx, sourceNode, expectedPath.Steps, adjacency, q.edgeTypes[timestamp])
-					if err := ctx.Err(); err != nil {
+					nodePaths, err = q.findTypedRelationNodePaths(ctx, sourceNode, expectedPath.Steps, adjacency, q.edgeTypes[timestamp])
+					if err != nil {
 						return nil, err
 					}
 				}
@@ -988,10 +992,6 @@ func (q *TimeGraph) FindRelationPathResources(
 					continue
 				}
 
-				targetType := expectedPath.Steps[len(expectedPath.Steps)-1].ResourceType
-				if _, ok := targetTypeSet[targetType]; !ok {
-					continue
-				}
 				for _, path := range nodePaths {
 					if err := ctx.Err(); err != nil {
 						return nil, err
@@ -999,6 +999,9 @@ func (q *TimeGraph) FindRelationPathResources(
 					key := fmt.Sprintf("%d:%s", timestamp, nodePathKey(path))
 					if _, ok := seen[key]; ok {
 						continue
+					}
+					if limit := q.maxResults; limit > 0 && len(results) >= limit {
+						return nil, &ResultLimitError{Reason: "max_graph_results", Count: len(results) + 1, Limit: limit}
 					}
 					seen[key] = struct{}{}
 
@@ -1015,9 +1018,6 @@ func (q *TimeGraph) FindRelationPathResources(
 						TargetType: targetType,
 						Path:       pathNodes,
 					})
-					if limit := q.maxResults; limit > 0 && len(results) > limit {
-						return nil, &ResultLimitError{Reason: "max_graph_results", Count: len(results), Limit: limit}
-					}
 				}
 			}
 		}
@@ -1043,33 +1043,23 @@ func (q *TimeGraph) FindRelationPathResources(
 	return results, nil
 }
 
-func (q *TimeGraph) findTypedNodePaths(sourceNode uint64, expectedPath []cmdb.Resource, adjacency map[uint64]map[uint64]graph.Edge[uint64]) [][]uint64 {
-	steps := make([]cmdb.RelationPathStep, 0, len(expectedPath))
-	for _, resourceType := range expectedPath {
-		steps = append(steps, cmdb.RelationPathStep{ResourceType: resourceType})
-	}
-	return q.findTypedRelationNodePaths(context.Background(), sourceNode, steps, adjacency, nil)
-}
-
 func (q *TimeGraph) findTypedRelationNodePaths(
 	ctx context.Context,
 	sourceNode uint64,
 	expectedPath []cmdb.RelationPathStep,
 	adjacency map[uint64]map[uint64]graph.Edge[uint64],
 	edgeTypes map[timeGraphEdgeKey]map[timeGraphEdgeRelation]struct{},
-) [][]uint64 {
-	// Keep every path state instead of only one path per current node. Two
-	// different paths may converge on the same node and must both remain
-	// available for the rest of the traversal.
+) ([][]uint64, error) {
+	// 汇合到同一节点的路径仍需分别保留，但每层状态数必须受结果预算约束。
 	frontier := [][]uint64{{sourceNode}}
 	for index := 1; index < len(expectedPath); index++ {
 		if err := ctx.Err(); err != nil {
-			return nil
+			return nil, err
 		}
 		next := make([][]uint64, 0)
 		for _, currentPath := range frontier {
 			if err := ctx.Err(); err != nil {
-				return nil
+				return nil, err
 			}
 			current := currentPath[len(currentPath)-1]
 			neighbors := make([]uint64, 0, len(adjacency[current]))
@@ -1078,6 +1068,9 @@ func (q *TimeGraph) findTypedRelationNodePaths(
 			}
 			sort.Slice(neighbors, func(i, j int) bool { return neighbors[i] < neighbors[j] })
 			for _, neighbor := range neighbors {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				resourceType, _ := q.nodeBuilder.Info(neighbor)
 				if resourceType != expectedPath[index].ResourceType || containsNode(currentPath, neighbor) {
 					continue
@@ -1085,19 +1078,23 @@ func (q *TimeGraph) findTypedRelationNodePaths(
 				if !relationEdgeMatches(edgeTypes, timeGraphEdgeKey{source: current, target: neighbor}, expectedPath[index]) {
 					continue
 				}
+				// 在复制路径前拒绝，避免先物化指数级组合再检查最终结果数量。
+				if limit := q.maxResults; limit > 0 && len(next) >= limit {
+					return nil, &ResultLimitError{Reason: "max_graph_results", Count: len(next) + 1, Limit: limit, Path: "path expansion"}
+				}
 				path := append([]uint64(nil), currentPath...)
 				next = append(next, append(path, neighbor))
 			}
 		}
 		frontier = next
 		if len(frontier) == 0 {
-			return nil
+			return nil, nil
 		}
 	}
 
 	paths := frontier
 	sort.Slice(paths, func(i, j int) bool { return nodePathKey(paths[i]) < nodePathKey(paths[j]) })
-	return paths
+	return paths, nil
 }
 
 func relationEdgeMatches(

@@ -476,6 +476,13 @@ func (i *Instance) InstanceType() string {
 // This behaviour can be disabled by passing -search.disableCache command-line flag to VictoriaMetrics. Another option is to pass nocache=1 query arg to /api/v1/query_range.
 // 在一些场景下，如果 step 不能被 start 整除，会导致返回的数据跟我们的开始时间无法对其，所以需要增肌 no-cache=1 参数，避免性能消耗过大，只处理 1m 以上的
 func (i *Instance) noCache(ctx context.Context, start, step int64) int {
+	// 精确网格查询不能使用会调整采样点的缓存，即使步长不足一分钟。
+	if metadata.IsExactTimeGrid(ctx) {
+		return 1
+	}
+	if step <= 0 {
+		return 0
+	}
 	if start%step > 0 && step > 60 {
 		return 1
 	}

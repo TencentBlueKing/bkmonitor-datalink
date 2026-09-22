@@ -15,6 +15,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
@@ -105,17 +106,13 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	relationSpan.Set("relation-count", len(relations))
 	relationSpan.End(&relationErr)
 	span.Set("relation-count", len(relations))
-	rootRelations := make(map[timeGraphRelationKey]struct{})
-	for _, relation := range relations {
-		if len(relation.V) == 2 && relation.V[0] == request.SourceType {
-			rootRelations[timeGraphRelationKeyFor(relation)] = struct{}{}
-		}
-	}
+	rootRelations := sharedTopologyRootRelationKeys(request.SourceType, maxHops, relations)
 
 	queryCtx, cancel := context.WithTimeout(ctx, timeGraphQueryTimeout)
 	defer cancel()
 	validated = true
 	queryCtx = withTimeGraphForceSourceInfo(queryCtx)
+	queryCtx = metadata.WithExactTimeGrid(queryCtx)
 	graph, err := m.buildTimeGraphFromRelationsWithQueryAndRootRelations(
 		queryCtx,
 		request.SpaceUID,
@@ -202,6 +199,10 @@ func normalizeSharedTopologyTime(request cmdb.SharedTopologyQuery) (time.Time, t
 	if err != nil {
 		return time.Time{}, time.Time{}, 0, "", TopologyGrid{}, errors.WithMessage(err, "parse step")
 	}
+	// VM 的 start/end/step 使用整数秒，必须在取模前拒绝无法执行的精度。
+	if step < time.Second || step%time.Second != 0 {
+		return time.Time{}, time.Time{}, 0, "", TopologyGrid{}, errors.New("topology step must be a positive whole number of seconds")
+	}
 	stepMs := step.Milliseconds()
 	if endMs < startMs {
 		return time.Time{}, time.Time{}, 0, "", TopologyGrid{}, errors.New("start_time must be less than or equal to end_time")
@@ -230,7 +231,50 @@ func normalizeTopologyTimestamp(timestamp int64) (int64, error) {
 	if timestamp < 0 {
 		return 0, errors.New("timestamp must be greater than or equal to 0")
 	}
-	return parseTimestamp(strconv.FormatInt(timestamp, 10))
+	timestampMs, err := parseTimestamp(strconv.FormatInt(timestamp, 10))
+	if err != nil {
+		return 0, err
+	}
+	if timestampMs%1000 != 0 {
+		return 0, errors.New("topology timestamp must have whole-second precision")
+	}
+	return timestampMs, nil
+}
+
+// sharedTopologyRootRelationKeys 仅在 H 跳内不会再次到达起点类型时下推种子条件。
+// 再次到达的节点也需要出边，包括边界节点之间的诱导边，不能只保留种子的边。
+func sharedTopologyRootRelationKeys(source cmdb.Resource, maxHops int, relations []cmdb.Relation) map[timeGraphRelationKey]struct{} {
+	result := make(map[timeGraphRelationKey]struct{})
+	adjacency := make(map[cmdb.Resource][]cmdb.Resource)
+	for _, relation := range relations {
+		if len(relation.V) != 2 {
+			continue
+		}
+		adjacency[relation.V[0]] = append(adjacency[relation.V[0]], relation.V[1])
+	}
+	frontier := []cmdb.Resource{source}
+	seen := map[cmdb.Resource]bool{source: true}
+	for hop := 0; hop < maxHops && len(frontier) > 0; hop++ {
+		next := make([]cmdb.Resource, 0)
+		for _, resource := range frontier {
+			for _, target := range adjacency[resource] {
+				if target == source {
+					return result
+				}
+				if !seen[target] {
+					seen[target] = true
+					next = append(next, target)
+				}
+			}
+		}
+		frontier = next
+	}
+	for _, relation := range relations {
+		if len(relation.V) == 2 && relation.V[0] == source {
+			result[timeGraphRelationKeyFor(relation)] = struct{}{}
+		}
+	}
+	return result
 }
 
 func normalizeSharedTopologyLookBack(value string) (string, error) {

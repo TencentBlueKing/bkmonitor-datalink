@@ -38,13 +38,26 @@ func sharedTopologyQueryModel(responses map[string]pl.Matrix) *Model {
 		schemaProvider:          sharedTopologyQueryProvider(),
 		timeGraphQueryReference: timeGraphTestQueryReference,
 	}
-	model.timeGraphVMQuery = func(_ context.Context, queryTs *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, error) {
+	model.timeGraphVMQuery = func(_ context.Context, queryTs *structured.QueryTs, _ string, _ bool, start, end time.Time, step time.Duration) (pl.Matrix, error) {
 		field := queryTs.QueryList[0].FieldName
 		response, ok := responses[field]
 		if !ok {
 			return nil, fmt.Errorf("unexpected topology query metric %q", field)
 		}
-		return response, nil
+		// 模拟后端仅返回实际请求网格内的样本，不让 instant 测试混入 range 数据。
+		matrix := make(pl.Matrix, 0, len(response))
+		for _, series := range response {
+			filtered := pl.Series{Metric: series.Metric}
+			for _, point := range series.Points {
+				if point.T >= start.UnixMilli() && point.T <= end.UnixMilli() && (point.T-start.UnixMilli())%step.Milliseconds() == 0 {
+					filtered.Points = append(filtered.Points, point)
+				}
+			}
+			if len(filtered.Points) > 0 {
+				matrix = append(matrix, filtered)
+			}
+		}
+		return matrix, nil
 	}
 	return model
 }

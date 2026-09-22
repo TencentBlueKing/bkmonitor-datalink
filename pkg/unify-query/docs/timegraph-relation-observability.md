@@ -13,6 +13,15 @@ v1beta1 不再承载 TimeGraph 实现，HTTP path-resources 接口也直接使�
 
 ## 指标
 
+共享拓扑时间网格保留请求起点，不按 step 向下对齐；源信息、关系边和目标信息使用
+同一网格，VM 查询禁用可能移动采样点的缓存。当前 VM 协议使用整数秒，时间参数可用
+秒或整秒对应的毫秒格式，step 必须为正整秒；非整秒精度在取数前明确拒绝。
+后端样本偏离网格时返回错误，不转换成完整空图；instant 和 range 均保留 backend partial。
+
+同类型多跳或 H 跳内可能回到起点类型时，关系取数取消种子下推，以保留后续边和
+边界节点间的诱导边。路径查询的 `max_graph_results` 同时限制每层展开状态和最终累计
+结果；中间层超限也会拒绝，即使后续过滤可能减少最终结果。显式路径仍受静态关系方向约束。
+
 - `unify_query_api_request_total`：v1beta3 HTTP 请求量，按接口和状态区分；
 - `unify_query_cmdb_relation_route_total`：TimeGraph 查询结果，`result` 为
   `started`、`success`、`empty` 或 `failed`；

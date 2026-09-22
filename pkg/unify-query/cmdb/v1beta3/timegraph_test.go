@@ -25,7 +25,7 @@ func TestTimeGraphFindShortestPathAcrossTimestamps(t *testing.T) {
 		"namespace": "default",
 		"pod":       "p1",
 		"node":      "n1",
-		"ip":        "10.0.0.1",
+		"ip":        "test-ip-1",
 	}
 	ctx := context.Background()
 	if err := tg.AddTimeRelation(ctx, "pod", "node", info, 100, 200); err != nil {
@@ -72,7 +72,7 @@ func TestTimeGraphFindPathResourcesHonorsExpectedPath(t *testing.T) {
 		"namespace": "default",
 		"pod":       "p1",
 		"node":      "n1",
-		"ip":        "10.0.0.1",
+		"ip":        "test-ip-1",
 		"service":   "svc1",
 	}
 	tg := NewTimeGraphWithConfig(config)
@@ -334,7 +334,7 @@ func TestTimeGraphSourceInfoNodeSupportsExpandedMatcher(t *testing.T) {
 	if err := tg.AddTimeNode(ctx, "node", cmdb.Matcher{"node": "n1", "region": "east"}, 100); err != nil {
 		t.Fatal(err)
 	}
-	if err := tg.AddTimeRelation(ctx, "node", "system", cmdb.Matcher{"node": "n1", "ip": "10.0.0.1"}, 100); err != nil {
+	if err := tg.AddTimeRelation(ctx, "node", "system", cmdb.Matcher{"node": "n1", "ip": "test-ip-1"}, 100); err != nil {
 		t.Fatal(err)
 	}
 
@@ -365,7 +365,7 @@ func TestTimeGraphUsesTimeSpecificExpandedMatcher(t *testing.T) {
 	if err := tg.AddTimeNode(ctx, "node", cmdb.Matcher{"node": "n1", "region": "west"}, 200); err != nil {
 		t.Fatal(err)
 	}
-	if err := tg.AddTimeRelation(ctx, "node", "system", cmdb.Matcher{"node": "n1", "ip": "10.0.0.1"}, 100, 200); err != nil {
+	if err := tg.AddTimeRelation(ctx, "node", "system", cmdb.Matcher{"node": "n1", "ip": "test-ip-1"}, 100, 200); err != nil {
 		t.Fatal(err)
 	}
 	results, err := tg.FindPathResources(ctx, "node", []cmdb.Resource{"system"}, cmdb.Matcher{"node": "n1", "region": "west"}, [][]cmdb.Resource{{"node", "system"}})
@@ -380,10 +380,10 @@ func TestTimeGraphTargetInfoIsRetainedOnPath(t *testing.T) {
 		{Name: "system", Index: cmdb.Index{"ip"}, Info: cmdb.Index{"zone"}},
 	}})
 	ctx := context.Background()
-	if err := tg.AddTimeNode(ctx, "system", cmdb.Matcher{"ip": "10.0.0.1", "zone": "zone-a"}, 100); err != nil {
+	if err := tg.AddTimeNode(ctx, "system", cmdb.Matcher{"ip": "test-ip-1", "zone": "zone-a"}, 100); err != nil {
 		t.Fatal(err)
 	}
-	if err := tg.AddTimeRelation(ctx, "node", "system", cmdb.Matcher{"node": "n1", "ip": "10.0.0.1"}, 100); err != nil {
+	if err := tg.AddTimeRelation(ctx, "node", "system", cmdb.Matcher{"node": "n1", "ip": "test-ip-1"}, 100); err != nil {
 		t.Fatal(err)
 	}
 	results, err := tg.FindPathResources(ctx, "node", []cmdb.Resource{"system"}, cmdb.Matcher{"node": "n1"}, [][]cmdb.Resource{{"node", "system"}})

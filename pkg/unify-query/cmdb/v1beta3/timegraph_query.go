@@ -205,6 +205,10 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 	queryMatrix := func(queryCtx context.Context, queryTs *structured.QueryTs) (matrix pl.Matrix, partial bool, err error) {
 		queryCtx, span := trace.NewSpan(queryCtx, "timegraph-query-matrix")
 		defer span.End(&err)
+		if metadata.IsExactTimeGrid(queryCtx) {
+			// 所有取数阶段共用请求网格，不让 QueryTs 按 step 向下移动起点。
+			queryTs.NotTimeAlign = true
+		}
 		queryStarted := time.Now()
 		stage := timeGraphQueryStage(queryCtx)
 		defer func() {
@@ -251,8 +255,12 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 					relationQueryParams.End,
 					relationQueryParams.Step,
 				)
-				if err == nil && partial && !instant {
-					tg.markPartialRange(relationQueryParams.AlignStart, relationQueryParams.End, relationQueryParams.Step, "backend_partial")
+				if err == nil && partial {
+					partialStart := relationQueryParams.AlignStart
+					if instant {
+						partialStart = relationQueryParams.End
+					}
+					tg.markPartialRange(partialStart, relationQueryParams.End, relationQueryParams.Step, "backend_partial")
 				}
 			}
 		} else if m.timeGraphVMQuery != nil {
@@ -293,9 +301,12 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 				}
 				if err == nil && instant {
 					var vector pl.Vector
-					vector, err = instance.DirectQuery(queryCtx, expr, relationQueryParams.End)
+					vector, partial, err = queryTimeGraphInstant(queryCtx, instance, expr, relationQueryParams.End)
 					if err == nil {
 						matrix = vectorToMatrix(vector)
+						if partial {
+							tg.markPartialRange(relationQueryParams.End, relationQueryParams.End, relationQueryParams.Step, "backend_partial")
+						}
 					}
 				} else if err == nil {
 					matrix, partial, err = instance.DirectQueryRange(
@@ -314,6 +325,14 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 		pointCount := 0
 		for _, series := range matrix {
 			pointCount += len(series.Points)
+			if err == nil && metadata.IsExactTimeGrid(queryCtx) {
+				for _, point := range series.Points {
+					if point.T < start.UnixMilli() || point.T > end.UnixMilli() || (point.T-start.UnixMilli())%step.Milliseconds() != 0 {
+						err = errors.New("backend sample timestamp does not match topology time grid")
+						break
+					}
+				}
+			}
 		}
 		span.Set("matrix-series-count", len(matrix))
 		span.Set("matrix-point-count", pointCount)
@@ -540,6 +559,18 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 	return tg, nil
 }
 
+// queryTimeGraphInstant 优先保留后端完整性状态；完整拓扑不接受无法报告该状态的后端。
+func queryTimeGraphInstant(ctx context.Context, instance tsdb.Instance, expr string, end time.Time) (pl.Vector, bool, error) {
+	if statusAware, ok := instance.(tsdb.InstantQueryWithPartial); ok {
+		return statusAware.DirectQueryWithPartial(ctx, expr, end)
+	}
+	if metadata.IsExactTimeGrid(ctx) {
+		return nil, false, errors.New("instant backend does not report result completeness")
+	}
+	vector, err := instance.DirectQuery(ctx, expr, end)
+	return vector, false, err
+}
+
 // buildRelationsFromPaths 从路径中提取相邻边，并对重复关系去重。
 func (m *Model) buildRelationsFromPaths(paths [][]cmdb.Resource) []cmdb.Relation {
 	return m.buildRelationsFromRelationPathsForNamespace("", cmdb.RelationPathsFromResourcePaths(paths))
@@ -622,14 +653,21 @@ func (m *Model) timeGraphRelationCandidates(
 	cfg := m.timeGraphConfig(namespace)
 
 	result := make([]cmdb.Relation, 0)
+	configuredPair := false
 	for _, configured := range cfg.Relation {
 		if len(configured.Resources) != 2 {
 			continue
 		}
+		if !sameResourcePair(configured.Resources, source, target) {
+			continue
+		}
+		configuredPair = true
 		if step.RelationType != "" && !sameRelationType(configured.RelationType, step.RelationType) {
 			continue
 		}
-		if !sameResourcePair(configured.Resources, source, target) {
+		// 静态单向关系只允许 schema 定义的方向，显式路径不能反转它。
+		if configured.Category == string(RelationCategoryStatic) && configured.IsDirectional &&
+			(configured.Resources[0] != source || step.Direction == string(DirectionInbound)) {
 			continue
 		}
 		metricName := configured.MetricName
@@ -653,7 +691,8 @@ func (m *Model) timeGraphRelationCandidates(
 		}
 		result = append(result, candidate)
 	}
-	if len(result) > 0 {
+	if len(result) > 0 || configuredPair {
+		// 已知关系不符合约束时不能通过默认指标 fallback 重新合成。
 		return result
 	}
 	return []cmdb.Relation{{
@@ -820,6 +859,14 @@ func (m *Model) queryRelationTimeGraph(ctx context.Context, lookBackDelta, space
 	span.Set("query-start", start.Unix())
 	span.Set("query-end", end.Unix())
 	span.Set("query-step-seconds", step.Seconds())
+	for _, path := range paths {
+		for index := 1; index < len(path.Steps); index++ {
+			source, target := path.Steps[index-1].ResourceType, path.Steps[index].ResourceType
+			if len(m.timeGraphRelationCandidates(spaceUID, source, target, path.Steps[index])) == 0 {
+				return nil, fmt.Errorf("path relation %s -> %s is not allowed by schema", source, target)
+			}
+		}
+	}
 	relations := m.buildRelationsFromRelationPathsForNamespace(spaceUID, paths)
 	span.Set("relation-count", len(relations))
 	rootRelations := m.rootTimeGraphRelationKeys(spaceUID, sourceType, paths)

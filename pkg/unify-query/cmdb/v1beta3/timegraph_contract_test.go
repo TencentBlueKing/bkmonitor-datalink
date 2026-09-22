@@ -226,7 +226,7 @@ func TestTimeGraphContractCases(t *testing.T) {
 			lookBackDelta: "10m",
 			responses: map[string]pl.Matrix{
 				"pod_to_system_flow": contractMatrix(map[string]string{
-					"from_bcs_cluster_id": "c1", "from_namespace": "ns", "from_pod": "p1", "to_bk_target_ip": "10.0.0.1",
+					"from_bcs_cluster_id": "c1", "from_namespace": "ns", "from_pod": "p1", "to_bk_target_ip": "test-ip-1",
 				}, timestampMS),
 			},
 			wantQueries: []contractQueryWant{{
@@ -244,7 +244,7 @@ func TestTimeGraphContractCases(t *testing.T) {
 			wantResults: []PathResourcesResult{{
 				Timestamp: timestampMS, TargetType: "system", Path: []cmdb.PathNode{
 					{ResourceType: "pod", Dimensions: cmdb.Matcher{"bcs_cluster_id": "c1", "namespace": "ns", "pod": "p1"}},
-					{ResourceType: "system", Dimensions: cmdb.Matcher{"bk_target_ip": "10.0.0.1"}},
+					{ResourceType: "system", Dimensions: cmdb.Matcher{"bk_target_ip": "test-ip-1"}},
 				},
 			}},
 		},
@@ -478,7 +478,7 @@ func TestTimeGraphSubqueryContextsPreserveUser(t *testing.T) {
 				seenUsers = append(seenUsers, *metadata.GetUser(queryCtx))
 				seenBizIDs = append(seenBizIDs, metadata.GetBkBizID(queryCtx))
 				if len(queryTs.QueryList) == 1 && queryTs.QueryList[0].FieldName == "node_with_system_relation" {
-					return contractMatrix(map[string]string{"node": "n1", "ip": "10.0.0.1"}, 100000), nil
+					return contractMatrix(map[string]string{"node": "n1", "ip": "test-ip-1"}, 100000), nil
 				}
 				return nil, nil
 			}

@@ -34,8 +34,8 @@ strategy → resource → display → metric → source
 | BaseTarget / KAC `BASE_COLLECT` | 约 90% | 六个二级分支、生产 Reader、请求内缓存、业务/云区域/标签、派生与 KAC fixture、主要失败矩阵已完成；真实边界样本继续补充 |
 | DATA | 约 90%～95% | 已接入 Standard Kafka → Lifecycle → Strategy/Resource/Display/Metric/Source 主流程；普通时序、system 主机、uptimecheck、hardware_、多模型、枚举、衍生指标、PromQL、函数和查询翻译已完成；真实样例继续补充 |
 | LOG_METRIC / LOG_KEYWORD | 约 75%～85% | 分类、日志 Processor、`log_theme_logtheme` MySQL Reader、接口入参租户查询、主题回退、关联信息、内容裁剪、主流程装配和派生测试已完成；真实数据库命中与专用查询契约继续验证 |
-| Cloud / K8s / APM | Cloud 约 65%～75%，K8s 约 75%～85%，APM 约 65%～75% | 三类 Processor、路由注册、派生身份和主要失败矩阵已完成；CloudResource 与 K8s OneModel Reader 已接入生产装配，APM Application Reader和剩余真实回放继续推进 |
-| 生产环境闭环 | 约 50%～55% | BaseTarget 的主要 MySQL、OneModel、关系边和业务拓扑协议已完成第一轮核验；日志、Cloud、K8s、APM 的外部适配器待接入 |
+| Cloud / K8s / APM | Cloud 约 65%～75%，K8s 约 75%～85%，APM 约 75%～85% | 三类 Processor、路由注册、派生身份和主要失败矩阵已完成；CloudResource、K8s OneModel 与 APM Application Reader 已接入生产装配，剩余真实回放继续推进 |
+| 生产环境闭环 | 约 55%～60% | BaseTarget 的主要 MySQL、OneModel、关系边和业务拓扑协议已完成第一轮核验；日志、Cloud、K8s、APM 的主要外部适配器已接入，真实命中和端到端回放仍待验证 |
 
 这些百分比用于安排迁移顺序，不属于发布验收指标。
 
@@ -145,7 +145,7 @@ apm
 source
 ```
 
-`log`、`cloud_resource`、`k8s`、`apm` 已完成注册和派生测试；生产链是否启用仍由 EventSource 的 Processor 列表和已装配 Reader 决定。当前生产装配已提供 MySQL、OneModel、LogTheme、CloudResource 和 K8s Reader；APM Application Reader仍待接入。
+`log`、`cloud_resource`、`k8s`、`apm` 已完成注册和派生测试；生产链是否启用仍由 EventSource 的 Processor 列表决定。当前生产装配已提供 MySQL、OneModel、LogTheme、CloudResource、K8s 和 APM Application Reader。
 
 ## 5. Payload 契约
 
@@ -298,9 +298,9 @@ meta_info
 
 `source_id` 来自 `Alert.EventSourceID`，`source_name` 按租户和来源 ID 查询 Kingeye，`meta_info` 来自 `Alert.SourceEventID`。
 
-### 6.6 已注册但生产适配未闭环的分组
+### 6.6 已注册的专用分组
 
-`log`、`cloud_resource`、`k8s`、`apm` 已有 Processor、类型化输出、Router 注册和派生测试。LogTheme、CloudResource 和 K8s 已接入生产 Reader；APM Application Reader仍待接入。
+`log`、`cloud_resource`、`k8s`、`apm` 已有 Processor、类型化输出、Router 注册和派生测试。LogTheme、CloudResource、K8s 和 APM Application 已接入生产 Reader；是否运行由各 EventSource 的 Processor 列表决定。
 
 ## 7. DataSource 现状
 
@@ -318,6 +318,7 @@ meta_info
 | `OneModelReader.FindInstance` | Elasticsearch `kingeye_all_instance` | 已实现并装配 |
 | `ModelReader` | Kingeye MySQL `object_model_v2` | 已实现并装配 |
 | `CollectTopologyReader` | Elasticsearch `kingeye_topo` 与 CMDB 业务拓扑索引 | 已实现并装配 |
+| `APMApplicationReader` | Kingeye MySQL `kapm_namespace` | 已实现并装配 |
 
 所有查询应显式携带 `bk_tenant_id`，区分 found、not found、查询错误和非法响应，并传播 Context。
 
@@ -330,7 +331,7 @@ meta_info
 | CloudResource | 已装配 | MySQL Reader 已接入 `enrich.Sources.CloudResource`，按接口入参租户和 `cloud_id + type + instanceid` 查询并关联云平台名称；当前 CloudResource 表为空 |
 | CloudPlugin / SysSetting | 已移出当前 Cloud 主链 | 当前 Cloud/VMWARE 契约不依赖 CloudPlugin、SysSetting，不阻塞资源丰富 |
 | K8s Reader | 已装配 | `OneModelK8sReader` 复用 `OneModelClient` 查询 `kingeye_all_instance`，按租户、模型和 K8s 属性过滤并复核实例身份；不直接读取 `kmc_k8s_*` |
-| APM application API | 缺失 | APM 应用候选查询无法接入真实 Application 服务 |
+| APM Application Reader | 已装配 | MySQL Reader 按接口入参租户、业务和应用名精确查询 `kapm_namespace` 未删除记录，并复核返回身份 |
 
 ### 7.3 OneModel 实例协议
 
@@ -369,7 +370,7 @@ Scope 当前按稳定查询键复用：
 
 - CW Strategy、Business、AlarmSource；
 - OneModel Instance；
-- Model、MetricLibrary、CollectConfig、UptimeTask/Node；
+- Model、MetricLibrary、CollectConfig、UptimeTask/Node、APMApplication；
 - RelatedHost 与 HostTopology；
 - Collect/Uptime/BaseTarget 场景结果。
 
@@ -438,7 +439,7 @@ Resource 与 Display 共享同一个场景解析结果。MonitorSource、NoData�
 | `LOG_KEYWORD` | 75%～85% | 分类、标题、`log` Processor、`log_theme_logtheme` Reader、接口入参租户查询、查询语句、关联信息、空资源、日志标签、命中/无数据裁剪和 KAC 样例字段对照 | 真实数据库记录命中、专用 URL/查询细节和完整 JSON fixture |
 | `VMWARE/Cloud` | 65%～75% | Cloud 类型、期望 Kafka 输入、旧 KAC 表结构与读取字段、策略读取、CloudResource MySQL Reader、复合身份、资源投影、业务标签、响应身份校验、Router 注册和主流程验证；已用 Navicat 转发连接验证空数据查询 | 真实 CloudResource 记录和完整 fixture | |
 | K8s 横切能力 | 75%～85% | 输出模型、Processor、Router/配置注册、`OneModelK8sReader` 生产装配、`kingeye_all_instance` 实际数据核验、Cluster/Namespace/Service/Workload/Pod/Container/Node 身份映射、Workload-Pod 特殊映射、实例/业务/集群名称和 `cw_labels` 投影、响应身份校验、Context 输出和完整 Processor 链测试 | 真实 Kafka Event 回放、Cluster/Namespace 多业务优先级、PV/PVC 接入和完整 JSON fixture |
-| APM 横切能力 | 65%～75% | 输出模型、APM 表判断、`apm` Processor、应用名推导、ApplicationReader、精确匹配、租户校验、别名、application/service/service-instance 身份、Resource 联动、维度、业务/应用标签、Reader 错误/重复匹配矩阵和完整链路测试 | 真实 Application Client、重复应用最终产品决策和完整 JSON fixture |
+| APM 横切能力 | 75%～85% | 输出模型、APM 表判断、`apm` Processor、真实 `additional_dimensions.app_name` 输入、`kapm_namespace` ApplicationReader、精确匹配、租户/业务校验、别名、application/service/service-instance 身份、Resource 联动、维度、业务/应用标签、请求内缓存、KAC 映射、Reader 错误/重复匹配矩阵和完整链路测试 | 真实数据库命中、重复应用最终产品决策和完整 JSON fixture |
 
 ### 9.3 Collect
 
@@ -574,23 +575,23 @@ Alert.Dimensions.task_id
 
 ### 9.7 Cloud、K8s、APM
 
-三类专用 Processor 已完成第一轮代码接入、Router 注册、类型化输出和派生测试。生产装配现状以第 7 节为准：LogTheme、CloudResource 和 K8s 已进入 MySQL/OneModel Sources，APM Application Reader仍保持可注入边界。
+三类专用 Processor 已完成第一轮代码接入、Router 注册、类型化输出和派生测试。生产装配现状以第 7 节为准：LogTheme、CloudResource、APM Application 和 K8s 已进入 MySQL/OneModel Sources。
 
 APM 第一轮纵切已完成：
 
-- 新增 `APMApplicationReader`，按租户和应用名称读取候选应用；
+- 新增 `APMApplicationReader`，按租户、业务和应用名称读取候选应用；生产实现从 Kingeye `kapm_namespace` 表精确查询未删除应用，并复用 Enrich MySQL 连接池；
 - 精确匹配应用名称后投影应用 ID、别名和业务；
 - 生成 application/service/service-instance 模型身份与 `cw_labels`；
 
 - 新增 `apm` Processor 与 Router/配置注册；
 - 识别 `bkapm` 结果表；
-- 应用名称按 `data_source=应用-<name>` 或 `_bkapm_metric_<name>` 推导；
+- 应用名称优先读取 alarmd 真实输入 `extra_data.additional_dimensions.app_name`，缺失时再按 `data_source=应用-<name>` 或 `_bkapm_metric_<name>` 推导；
 - application 身份为 `<app_id>`，service 身份为 `<app_id>|<service>`，service-instance 身份为 `<app_id>|<service>|<instance>`；
 - 投影 application/service/instance/span/net_peer 字段；
-- 缺少应用 ID、应用未命中、非精确匹配或租户不匹配返回 partial；真实 Application Client 待接入，Reader 缺失时保留派生应用名称和维度投影；
-- Resource Processor 已按 APM 维度生成 application/service/service-instance 资源身份，并补齐业务/应用标签；
+- 应用未命中、非精确匹配、租户或业务不匹配返回 partial；旧 `dimensions.apm_app_id` 仅保留为兼容回退；
+- Resource Processor 与 APM Processor 共用应用解析和请求内缓存，按 `app_id + service_name + bk_instance_id` 生成 application/service/service-instance 资源身份，并补齐业务/应用标签；即使 EventSource 尚未配置 `apm` Processor，现有 `resource` Processor 也能生成 APM 对象身份；
 - 已覆盖 ApplicationReader 未命中、非精确匹配、租户不匹配、Reader 错误、缺少应用 ID、重复精确匹配和完整 Processor 链测试；
-- 真实 APM 数据按当前迁移决策跳过，真实 Application Client 保留待环境接入；
+- 已用 alarmd 真实 APM 字段布局补充回归测试，覆盖 `additional_dimensions.app_name`、`service_name`、`bk_instance_id` 和 `net_peer_name`；
 - 已补完整 Processor 链测试、application/service/service-instance 三种身份 payload、应用非精确匹配、租户不匹配、Reader 错误和重复精确匹配矩阵；重复匹配当前沿用 Reader 返回顺序的第一条精确结果。
 
 Cloud 第一轮纵切已完成：
@@ -875,7 +876,7 @@ K8s OneModel Reader 已接入主流程，并已用本机 ES system 租户真实�
 
 ### P6：APM
 
-第一轮派生迁移已完成。后续接入真实 Application Client，确认重复应用产品决策和完整 JSON fixture；application/service/service-instance 的派生身份、Resource 联动和失败矩阵已由测试保护。
+第一轮派生迁移及 MySQL Application Reader 已完成，并按 alarmd 真实字段布局补充回归测试。后续验证真实数据库命中、重复应用产品决策和完整 JSON fixture；application/service/service-instance 的派生身份、Resource 联动和失败矩阵已由测试保护。
 
 ### 迁移尾声待定：跨场景真实契约与历史边界验证
 

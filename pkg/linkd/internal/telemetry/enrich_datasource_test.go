@@ -28,7 +28,8 @@ func TestObserveEnrichSourcesPreservesResults(t *testing.T) {
 	sources := runtime.ObserveEnrichSources(enrich.Sources{
 		CWStrategy: testCWStrategyReader{err: wantErr}, Business: testBusinessReader{},
 		Metric: testMetricReader{}, Model: testModelReader{}, AlarmSource: testAlarmSourceReader{},
-		OneModel: testOneModelReader{}, CollectConfig: testCollectConfigReader{},
+		APMApplication: testAPMApplicationReader{},
+		OneModel:       testOneModelReader{}, CollectConfig: testCollectConfigReader{},
 		CollectTopology: testCollectTopologyReader{}, Uptime: testUptimeReader{}, UptimeNode: testUptimeNodeReader{},
 	})
 	if _, found, err := sources.CWStrategy.GetByBKStrategyID(context.Background(), "tenant", 1); found || !errors.Is(err, wantErr) {
@@ -42,6 +43,9 @@ func TestObserveEnrichSourcesPreservesResults(t *testing.T) {
 	}
 	if _, found, err := sources.Model.GetModelByCode(context.Background(), "tenant", "cw-Host"); !found || err != nil {
 		t.Fatalf("model found=%t err=%v", found, err)
+	}
+	if applications, err := sources.APMApplication.FindAPMApplications(context.Background(), "tenant", 2, "demo"); err != nil || len(applications) != 1 {
+		t.Fatalf("APM applications=%#v err=%v", applications, err)
 	}
 	if _, found, err := sources.CollectConfig.GetCollectConfig(context.Background(), "tenant", "collect-1"); !found || err != nil {
 		t.Fatalf("collect config found=%t err=%v", found, err)
@@ -107,6 +111,12 @@ type testOneModelReader struct{}
 
 func (testOneModelReader) FindInstance(context.Context, string, enrich.InstanceQuery) (enrich.Instance, bool, error) {
 	return enrich.Instance{}, true, nil
+}
+
+type testAPMApplicationReader struct{}
+
+func (testAPMApplicationReader) FindAPMApplications(context.Context, string, int64, string) ([]models.APMApplication, error) {
+	return []models.APMApplication{{TenantID: "tenant", ID: 17, Name: "demo", BKBizID: 2}}, nil
 }
 
 type testCollectConfigReader struct{}

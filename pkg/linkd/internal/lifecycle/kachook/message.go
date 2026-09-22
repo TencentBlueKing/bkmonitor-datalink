@@ -111,6 +111,7 @@ type enrichValues struct {
 	display  models.DisplayValues
 	metric   models.MetricValues
 	log      models.LogValues
+	apm      models.APMValues
 	source   models.SourceValues
 }
 
@@ -167,9 +168,13 @@ func convertMessageWithLevel(input lifecycle.FinalHookInput, resolve func(string
 		AggregateFunc: values.metric.AggregateFunc, WhereCondition: values.metric.WhereCondition,
 		Unit: values.metric.Unit, DataSource: values.strategy.DataSource,
 		FieldExtraInfo:    fieldExtraInfo{StrategyName: strategyExtraInfo{URL: values.strategy.URL}},
-		MetricQueryParams: query, DynamicGroupID: nonNilStrings(values.resource.DynamicGroupID), CWLabels: preferredLabels(values.log.CWLabels, values.resource.CWLabels),
+		MetricQueryParams: query, DynamicGroupID: nonNilStrings(values.resource.DynamicGroupID), CWLabels: preferredLabels(values.log.CWLabels, values.apm.CWLabels, values.resource.CWLabels),
 		LogThemeID: scalarInt64(values.log.LogThemeID), LogThemeName: values.log.LogThemeName,
 		LogQueryString: values.log.LogQueryString, LogRelateInfo: values.log.LogRelateInfo,
+		APMAppID: scalarInt64(values.apm.APMAppID), APMAppName: values.apm.APMAppName,
+		APMAppAlias: values.apm.APMAppAlias, APMServiceName: values.apm.APMServiceName,
+		APMInstanceName: values.apm.APMInstanceName, APMInterfaceName: values.apm.APMInterfaceName,
+		APMNetPeerName: values.apm.APMNetPeerName,
 	}
 	if input.Alert.Status.Terminal() {
 		closeTime := input.Alert.EndAt.In(kacTimeZone).Format(kacTimeLayout)
@@ -223,6 +228,8 @@ func decodeEnrich(object domain.JSONObject) (enrichValues, error) {
 				err = decodeProcessorValue(envelope.Value, &values.metric)
 			case "log":
 				err = decodeProcessorValue(envelope.Value, &values.log)
+			case "apm":
+				err = decodeProcessorValue(envelope.Value, &values.apm)
 			case "source":
 				err = decodeProcessorValue(envelope.Value, &values.source)
 			}
@@ -365,9 +372,11 @@ func nonNilStrings(values []string) []string {
 	return values
 }
 
-func preferredLabels(primary, fallback []string) []string {
-	if len(primary) != 0 {
-		return nonNilStrings(primary)
+func preferredLabels(candidates ...[]string) []string {
+	for _, candidate := range candidates {
+		if len(candidate) != 0 {
+			return nonNilStrings(candidate)
+		}
 	}
-	return nonNilStrings(fallback)
+	return []string{}
 }

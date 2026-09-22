@@ -78,7 +78,10 @@ func (Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Process
 	}
 	if classification.Main == rules.MainData {
 		objectName = ""
-		if strings.HasPrefix(projection.QueryConfigs[0].ResultTableID, "uptimecheck") {
+		resultTableID := projection.QueryConfigs[0].ResultTableID
+		if rules.IsAPMTable(resultTableID) {
+			objectName = rules.DimensionText(alert.Dimensions, rules.FieldServiceName)
+		} else if strings.HasPrefix(resultTableID, "uptimecheck") {
 			result, uptimeErr := uptimeenrich.Enrich(ctx, scope, rules.UptimeModelCode, alert.Dimensions, ids.BizID)
 			if uptimeErr != nil {
 				return enrich.ProcessorResult{}, uptimeErr

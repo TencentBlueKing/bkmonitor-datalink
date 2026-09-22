@@ -191,6 +191,13 @@ func TestLogMetricAndKeywordProjection(t *testing.T) {
 			if resource.Status != domain.EnrichStatusSucceeded || len(resource.Diagnostics) != 0 {
 				t.Fatalf("resource=%#v", resource)
 			}
+			var resourceValues models.ResourceValues
+			if err := json.Unmarshal(mustRawObject(t, resource.Value), &resourceValues); err != nil {
+				t.Fatal(err)
+			}
+			if resourceValues.BKBizID != float64(2) || resourceValues.ModelID != "" || resourceValues.ModelInstID != "" {
+				t.Fatalf("resource values=%#v", resourceValues)
+			}
 			logValue := payload.Processors[3][rules.LogProcessor]
 			var log models.LogValues
 			if err := json.Unmarshal(mustRawObject(t, logValue.Value), &log); err != nil {

@@ -95,6 +95,9 @@ func newMySQLSources(database *gorm.DB) (enrich.Sources, error) {
 	if sources.CloudResource, err = NewCloudResourceClient(CloudResourceClientConfig{DB: database}); err != nil {
 		return enrich.Sources{}, fmt.Errorf("initialize cloud resource datasource: %w", err)
 	}
+	if sources.APMApplication, err = NewAPMApplicationClient(APMApplicationClientConfig{DB: database}); err != nil {
+		return enrich.Sources{}, fmt.Errorf("initialize APM application datasource: %w", err)
+	}
 	if sources.Metric, err = NewMetricClient(MetricClientConfig{DB: database}); err != nil {
 		return enrich.Sources{}, fmt.Errorf("initialize metric datasource: %w", err)
 	}

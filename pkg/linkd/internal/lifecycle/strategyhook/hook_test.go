@@ -29,44 +29,58 @@ import (
 )
 
 type setClient struct {
-	mu     sync.Mutex
-	values map[string]map[string]bool
-	err    error
-	block  bool
+	mu      sync.Mutex
+	values  map[string]map[string]bool
+	err     error
+	block   bool
+	pubErr  error
+	notices []publishedNotice
+	evals   int
 }
 
-func (c *setClient) command(ctx context.Context, key string, add bool, members ...any) *redis.IntCmd {
-	if c.block {
-		<-ctx.Done()
-		return redis.NewIntResult(0, ctx.Err())
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.err != nil {
-		return redis.NewIntResult(0, c.err)
-	}
+type publishedNotice struct{ channel, payload string }
+
+// apply 由持锁调用方使用，与 Redis 返回的“实际改变成员数量”语义一致。
+func (c *setClient) apply(key string, add bool, members ...any) int64 {
 	if c.values == nil {
 		c.values = map[string]map[string]bool{}
 	}
 	if c.values[key] == nil {
 		c.values[key] = map[string]bool{}
 	}
+	var changed int64
 	for _, m := range members {
+		if c.values[key][m.(string)] != add {
+			changed++
+		}
 		if add {
 			c.values[key][m.(string)] = true
 		} else {
 			delete(c.values[key], m.(string))
 		}
 	}
-	return redis.NewIntResult(1, nil)
+	return changed
 }
 
-func (c *setClient) SAdd(ctx context.Context, key string, members ...any) *redis.IntCmd {
-	return c.command(ctx, key, true, members...)
-}
-
-func (c *setClient) SRem(ctx context.Context, key string, members ...any) *redis.IntCmd {
-	return c.command(ctx, key, false, members...)
+func (c *setClient) Eval(ctx context.Context, _ string, keys []string, args ...any) *redis.Cmd {
+	if c.block {
+		<-ctx.Done()
+		return redis.NewCmdResult(nil, ctx.Err())
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.evals++
+	if c.err != nil {
+		return redis.NewCmdResult(nil, c.err)
+	}
+	changed := c.apply(keys[0], args[0] == "SADD", args[1])
+	if changed > 0 {
+		if c.pubErr != nil {
+			return redis.NewCmdResult(nil, c.pubErr)
+		}
+		c.notices = append(c.notices, publishedNotice{channel: args[2].(string), payload: args[3].(string)})
+	}
+	return redis.NewCmdResult(changed, nil)
 }
 
 func hookInput() lifecycle.FinalHookInput {
@@ -86,7 +100,7 @@ func terminal(input lifecycle.FinalHookInput, status domain.AlertStatus) lifecyc
 
 func TestMembershipAndIsolation(t *testing.T) {
 	c := &setClient{}
-	h, err := New(c, "active", time.Second)
+	h, err := New(c, Config{KeyPrefix: "active", Timeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +135,7 @@ func TestMembershipAndIsolation(t *testing.T) {
 			t.Fatal("terminal deletion crossed tenant boundary")
 		}
 	}
-	separate, err := New(c, "another-prefix", time.Second)
+	separate, err := New(c, Config{KeyPrefix: "another-prefix", Timeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +163,7 @@ func TestStrategyLabelBoundaries(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			c := &setClient{}
-			h, err := New(c, "active", time.Second)
+			h, err := New(c, Config{KeyPrefix: "active", Timeout: time.Second})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -170,7 +184,7 @@ func TestStrategyLabelBoundaries(t *testing.T) {
 }
 
 func TestFailureTimeoutAndConcurrentCancellation(t *testing.T) {
-	failing, err := New(&setClient{err: errors.New("credential-private")}, "active", time.Second)
+	failing, err := New(&setClient{err: errors.New("credential-private")}, Config{KeyPrefix: "active", Timeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -178,14 +192,14 @@ func TestFailureTimeoutAndConcurrentCancellation(t *testing.T) {
 	if err == nil || strings.Contains(err.Error(), "credential-private") || result.MessageID == "" {
 		t.Fatal("failure was lost or leaked")
 	}
-	blocking, err := New(&setClient{block: true}, "active", 10*time.Millisecond)
+	blocking, err := New(&setClient{block: true}, Config{KeyPrefix: "active", Timeout: 10 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err = blocking.Execute(context.Background(), hookInput()); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("timeout=%v", err)
 	}
-	cancelHook, err := New(&setClient{block: true}, "active", time.Minute)
+	cancelHook, err := New(&setClient{block: true}, Config{KeyPrefix: "active", Timeout: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +253,7 @@ func TestRedisSocketRespectsMillisecondDeadline(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	h, err := New(client, "active", 50*time.Millisecond)
+	h, err := New(client, Config{KeyPrefix: "active", Timeout: 50 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +293,7 @@ func TestRedisIntegration(t *testing.T) {
 			t.Error(err)
 		}
 	}()
-	h, err := New(client, prefix, time.Second)
+	h, err := New(client, Config{KeyPrefix: prefix, Timeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}

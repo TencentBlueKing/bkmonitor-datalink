@@ -20,8 +20,10 @@ const metricHelp: Record<string, string> = {
   "lifecycle-drain-p95":
     "所选时间窗内，95% 的单次 Mailbox drain 数量不超过该值。",
   "lifecycle-lease": "分布式 lease 获取、续租和释放的操作速率。",
-  "final-hook": "Lifecycle 将结果投递到 FinalHook 的尝试速率，并按结果拆分。",
-  "final-hook-p95": "所选时间窗内 FinalHook 耗时的近似 95 分位值。",
+  "final-hook":
+    "按 EventSource、Hook 名称、传输和 succeeded/failed/skipped 拆分的调用速率；跳过不计入成功率。",
+  "final-hook-p95":
+    "所选计算窗口内 FinalHook 耗时的近似 95 分位值，按 EventSource、Hook 名称、传输和结果拆分。",
   "pipeline-throughput": "各处理阶段每秒执行的尝试数；失败重试也会计入。",
   "pipeline-average": "各阶段尝试耗时的平均值，由总耗时除以尝试次数得到。",
   "pipeline-p95": "所选时间窗内各阶段耗时的近似 95 分位值。",

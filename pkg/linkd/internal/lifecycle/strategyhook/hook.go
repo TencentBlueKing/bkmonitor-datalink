@@ -26,30 +26,43 @@ import (
 	"linkd/internal/lifecycle"
 )
 
-// Client 是索引维护所需的 Redis 原子集合操作；连接生命周期由装配方管理。
+// Client 原子执行集合修改及条件发布；连接生命周期由装配方管理。
 type Client interface {
-	SAdd(context.Context, string, ...any) *redis.IntCmd
-	SRem(context.Context, string, ...any) *redis.IntCmd
+	Eval(context.Context, string, []string, ...any) *redis.Cmd
+}
+
+// Config 定义输出目标和默认启用的集合变更通知；Database 用于区分不按 DB 隔离的 Pub/Sub 消息。
+type Config struct {
+	// KeyPrefix 是集合前缀，集合继续按租户和策略隔离。
+	KeyPrefix string
+	// Database 必须与注入客户端选择的逻辑 DB 一致。
+	Database int
+	// Timeout 同时限制集合修改及发布操作。
+	Timeout time.Duration
 }
 
 // Hook 对 active 执行 SADD，对 recovered/closed 执行 SREM，不设置 TTL。
 // 同一前缀下不同来源共用成员，没有引用计数、乱序保护或失败补偿。
 type Hook struct {
-	client  Client
-	prefix  string
-	timeout time.Duration
+	client   Client
+	prefix   string
+	timeout  time.Duration
+	channel  string
+	database int
 }
 
 // New 创建索引插件，不建立连接，也不接管客户端的关闭职责。
-func New(client Client, prefix string, timeout time.Duration) (*Hook, error) {
-	if client == nil || prefix == "" || strings.TrimSpace(prefix) != prefix || len(prefix) > 256 || timeout <= 0 {
+// 通知始终启用，channel 固定为 KeyPrefix + ":changes"，共享前缀的 Hook 自动共用渠道。
+func New(client Client, cfg Config) (*Hook, error) {
+	if client == nil || cfg.KeyPrefix == "" || strings.TrimSpace(cfg.KeyPrefix) != cfg.KeyPrefix || len(cfg.KeyPrefix) > 256 || cfg.Timeout <= 0 || cfg.Database < 0 {
 		return nil, fmt.Errorf("strategy hook requires client, valid prefix and positive timeout")
 	}
-	return &Hook{client: client, prefix: prefix, timeout: timeout}, nil
+	return &Hook{client: client, prefix: cfg.KeyPrefix, timeout: cfg.Timeout, channel: cfg.KeyPrefix + ":changes", database: cfg.Database}, nil
 }
 
 // Execute 同步更新集合；独立超时只使本插件失败，父上下文取消由 Lifecycle 终止处理。
 // SADD/SREM 重放幂等，但旧快照在新快照之后重放仍可能覆盖成员状态。
+// 发布失败或响应丢失可能发生在集合已经修改之后；返回错误不表示回滚。
 func (h *Hook) Execute(ctx context.Context, input lifecycle.FinalHookInput) (lifecycle.FinalHookResult, error) {
 	result := lifecycle.FinalHookResult{Name: "active-alert-by-strategy", Transport: "redis", Destination: h.prefix, MessageID: invocationID(input)}
 	if err := ctx.Err(); err != nil {
@@ -74,14 +87,20 @@ func (h *Hook) Execute(ctx context.Context, input lifecycle.FinalHookInput) (lif
 	result.Destination = key
 	call, cancel := context.WithTimeout(ctx, h.timeout)
 	defer cancel()
+	var operation string
 	switch input.Alert.Status {
 	case domain.AlertStatusActive:
-		err = h.client.SAdd(call, key, input.Alert.Fingerprint).Err()
+		operation = "SADD"
 	case domain.AlertStatusRecovered, domain.AlertStatusClosed:
-		err = h.client.SRem(call, key, input.Alert.Fingerprint).Err()
+		operation = "SREM"
 	default:
 		return result, fmt.Errorf("invalid alert status for strategy hook")
 	}
+	payload, marshalErr := json.Marshal(changeNotice{Version: 1, BKTenantID: input.Alert.BKTenantID, StrategyID: strategy, Key: key, Database: h.database})
+	if marshalErr != nil || len(payload) > 64<<10 {
+		return result, fmt.Errorf("strategy hook change notice exceeds encoding limits")
+	}
+	err = h.client.Eval(call, changeScript, []string{key}, operation, input.Alert.Fingerprint, h.channel, string(payload)).Err()
 	if err != nil {
 		// Redis 服务端错误可能含服务端返回的敏感文本；仅保留可用于 errors.Is 的取消分类。
 		if errors.Is(err, context.Canceled) {

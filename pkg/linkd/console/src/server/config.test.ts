@@ -332,6 +332,17 @@ event_sources:
 `;
       await writeFile(configPath, yaml);
       const config = await loadConfig(configPath);
+      expect(config.eventSources?.[0].strategyHooks).toEqual([
+        expect.objectContaining({
+          name: "active",
+          keyPrefix: "active",
+          notifyChannel: "active:changes",
+          redis: expect.objectContaining({
+            password: "redis-private",
+            database: 0,
+          }),
+        }),
+      ]);
       expect(config.eventSources?.[0].kafkaHooks?.map((h) => h.name)).toEqual([
         "first",
         "second",
@@ -344,6 +355,10 @@ event_sources:
         "redis-private",
       );
       for (const invalid of [
+        yaml.replace(
+          "key_prefix: active",
+          "key_prefix: active\n          notify_channel: custom",
+        ),
         yaml + "lifecycle:\n  output: {}\n",
         yaml.replace("timeout_milliseconds", "timeout_seconds"),
         yaml.replace("name: second", "name: first"),

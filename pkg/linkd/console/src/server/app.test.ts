@@ -24,6 +24,21 @@ const config = {
 } satisfies ConsoleConfig;
 
 describe("local API", () => {
+  it("requires explicit strategy scope and sends no-store for index reads", async () => {
+    const app = await createApp(config);
+    try {
+      const targets = await app.inject("/local-api/strategy-index/targets");
+      expect(targets.json()).toEqual([]);
+      expect(targets.headers["cache-control"]).toBe("no-store");
+      const invalid = await app.inject(
+        "/local-api/strategy-index/reconcile?event_source_id=source&hook_name=active",
+      );
+      expect(invalid.statusCode).toBe(400);
+      expect(invalid.body).not.toContain("secret-not-visible");
+    } finally {
+      await app.close();
+    }
+  });
   it("mounts all API routes under the configured path and keeps authentication", async () => {
     const prefix = "/apps/linkd";
     const app = await createApp({
@@ -45,6 +60,7 @@ describe("local API", () => {
         "/local-api/version",
         "/local-api/capabilities",
         "/local-api/config",
+        "/local-api/strategy-index/targets",
       ]) {
         expect((await app.inject(prefix + route)).statusCode).toBe(401);
         expect(

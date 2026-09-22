@@ -99,7 +99,7 @@ export function MetricChart({ panel }: { panel: MetricPanel }) {
   ) {
     return (
       <div className="chart-empty">
-        窗口内没有可计算样本；无请求时均值和分位数不等于 0。
+        窗口内没有可计算样本；无调用时，成功率、均值和分位数均不补零。
       </div>
     );
   }

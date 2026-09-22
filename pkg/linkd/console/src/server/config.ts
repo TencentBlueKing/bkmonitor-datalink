@@ -473,6 +473,12 @@ export interface EventSourceConfig {
   enabled: boolean;
   cleanerType: string;
   kafkaHooks?: Array<{ name: string; connection: KafkaConnection }>;
+  strategyHooks?: Array<{
+    name: string;
+    keyPrefix: string;
+    notifyChannel?: string;
+    redis: NonNullable<ConsoleConfig["redis"]>;
+  }>;
   runtime: CleanerRuntime;
   kafka: KafkaConnection & {
     consumerGroup: string;
@@ -866,6 +872,28 @@ export function normalizeEventSources(
     eventSourceId: source.event_source_id,
     enabled: source.enabled,
     cleanerType: source.cleaner.type,
+    strategyHooks: source.hooks
+      .filter((h) => h.type === "active-alert-by-strategy")
+      .map((h) => ({
+        name: h.name,
+        keyPrefix: h.config.key_prefix,
+        notifyChannel: `${h.config.key_prefix}:changes`,
+        redis: {
+          mode: h.config.redis.mode,
+          address: h.config.redis.address,
+          username: h.config.redis.username,
+          password: h.config.redis.password,
+          database: h.config.redis.database,
+          sentinel: h.config.redis.sentinel
+            ? {
+                masterName: h.config.redis.sentinel.master_name,
+                addresses: [...h.config.redis.sentinel.addresses],
+                username: h.config.redis.sentinel.username,
+                password: h.config.redis.sentinel.password,
+              }
+            : undefined,
+        },
+      })),
     kafkaHooks: source.hooks
       .filter((h) => h.type === "kafka" || h.type === "kac")
       .map((h) => ({

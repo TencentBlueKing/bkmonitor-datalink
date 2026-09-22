@@ -9,9 +9,12 @@ import {
 } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { MetricPanel } from "../../shared/contracts";
 
 vi.mock("../components/MetricPanelCard", () => ({
-  MetricPanelCard: () => null,
+  MetricPanelCard: ({ panel }: { panel: MetricPanel }) => (
+    <div data-testid={panel.id}>{panel.title}</div>
+  ),
 }));
 
 import { LifecyclePage } from "./LifecyclePage";
@@ -22,6 +25,29 @@ afterEach(() => {
 });
 
 describe("LifecyclePage", () => {
+  it("shows Hook success rate, results and P95 in both the page and node details", async () => {
+    stubLifecycleAPI();
+    renderPage();
+    const section = await screen.findByRole("region", { name: "Hook 输出" });
+    for (const id of [
+      "final-hook-success-ratio",
+      "final-hook",
+      "final-hook-p95",
+    ]) {
+      expect(await within(section).findByTestId(id)).toBeVisible();
+    }
+    expect(section).toHaveTextContent("成功率排除 skipped");
+    fireEvent.click(screen.getByRole("button", { name: /final_hook/ }));
+    const dialog = screen.getByRole("dialog", { name: "final_hook 节点详情" });
+    for (const id of [
+      "final-hook-success-ratio",
+      "final-hook",
+      "final-hook-p95",
+    ]) {
+      expect(within(dialog).getByTestId(id)).toBeVisible();
+    }
+  });
+
   it("renders the signal queue and mailbox/lock dashboard instead of raw JSON", async () => {
     stubLifecycleAPI();
     renderPage();
@@ -259,6 +285,9 @@ function stubLifecycleAPI() {
 
 function stageMetricPanels() {
   return [
+    ...["final-hook-success-ratio", "final-hook", "final-hook-p95"].map((id) =>
+      metricPanel(id, []),
+    ),
     metricPanel("pipeline-completed", [
       metricSeries("clean", 9),
       metricSeries("lifecycle", 5, { linkd_outcome: "accepted" }),

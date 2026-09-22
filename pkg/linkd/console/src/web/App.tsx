@@ -61,6 +61,11 @@ const ConfigPage = lazy(() =>
     default: module.ConfigPage,
   })),
 );
+const StrategyIndexPage = lazy(() =>
+  import("./pages/StrategyIndexPage").then((module) => ({
+    default: module.StrategyIndexPage,
+  })),
+);
 
 type NavigationItem = {
   to: string;
@@ -91,6 +96,7 @@ const navigationGroups: Array<{
       { to: "/explore/events", label: "Events", glyph: "E" },
       { to: "/explore/alerts", label: "Alerts", glyph: "A" },
       { to: "/explore/alert-logs", label: "Alert Logs", glyph: "L" },
+      { to: "/strategy-index", label: "策略活跃索引", glyph: "I" },
     ],
   },
   {
@@ -326,6 +332,16 @@ function PageRoutes() {
           }
         />
         <Route path="/event-sources" element={<EventSourcesPage />} />
+        <Route
+          path="/strategy-index"
+          element={
+            <Suspense
+              fallback={<div className="page-loading">正在加载策略索引…</div>}
+            >
+              <StrategyIndexPage />
+            </Suspense>
+          }
+        />
         <Route
           path="/config"
           element={

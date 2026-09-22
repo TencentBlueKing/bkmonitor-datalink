@@ -603,6 +603,9 @@ hooks:
 Redis 连接参数独立于 `storage.redis`，同样支持 Sentinel 及两侧认证；密码在管理展示中脱敏。
 `key_prefix` 必填，不自动添加来源 ID；`timeout_milliseconds` 为正整数毫秒，默认 1000，
 可使用 100、500 等值，禁止零、负值、null、Duration 溢出及旧秒级字段。
+集合变更通知始终启用，channel 固定为 `<key_prefix>:changes`，无需也不接受 `notify_channel` 配置；
+仅在集合实际新增/移除成员时发布通知，同前缀的所有租户与策略共享该 channel。
+消息格式及 Redis DB 隔离要求见[策略索引变更通知 v1](../reference/contracts/active-alert-strategy-change-v1.md)。
 运行时输出 Redis 不可达不阻止来源装配，每次实际调用按超时记录失败。
 
 集合成员和失败边界以 [Lifecycle 插件行为](../modules/lifecycle.md#23-enricher-与-finalhook) 为准。

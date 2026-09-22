@@ -77,6 +77,17 @@ test("shows Event diagnostics and physical Bulk counts on desktop and mobile", a
         to: "2026-09-06T01:00:00Z",
         step: 15,
         panels: [
+          line("final-hook-success-ratio", "FinalHook 成功率", "%", {
+            "source-a · active-by-strategy": 75,
+            "source-a · kac": 90,
+          }),
+          line("final-hook", "FinalHook 速率", "operation/s", {
+            "source-a · active-by-strategy · succeeded": 30,
+            "source-a · active-by-strategy · failed": 10,
+          }),
+          line("final-hook-p95", "FinalHook P95", "s", {
+            "source-a · active-by-strategy": 0.05,
+          }),
           count("lifecycle-batch-executions", {
             succeeded: 7100,
             partial_failed: 12,
@@ -126,6 +137,11 @@ test("shows Event diagnostics and physical Bulk counts on desktop and mobile", a
   await expect(bulk.getByText("564,500", { exact: true })).toBeVisible();
   await expect(bulk.getByText("22", { exact: true })).toBeVisible();
   await expect(bulk.locator("canvas")).toHaveCount(6);
+  const hooks = page.getByRole("region", { name: "Hook 输出", exact: true });
+  await expect(
+    hooks.getByRole("heading", { name: "FinalHook 成功率", exact: true }),
+  ).toBeVisible();
+  await expect(hooks.locator("canvas")).toHaveCount(3);
   await bulk.scrollIntoViewIfNeeded();
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({

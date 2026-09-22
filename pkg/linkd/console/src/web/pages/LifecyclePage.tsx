@@ -149,6 +149,7 @@ export function LifecyclePage() {
         "lifecycle-recent-alert-hit-ratio",
         ...pipelinePanelIDs,
         "final-hook",
+        "final-hook-success-ratio",
         "final-hook-p95",
         "retry-rate",
         "messaging-inflight",
@@ -295,6 +296,12 @@ export function LifecyclePage() {
         config={config}
       />
       <MetricSection
+        title="Hook 输出"
+        description="按 EventSource 和 Hook 名称对照成功率、调用结果与 P95。成功率排除 skipped，无调用时无数据；Hook 失败不会回滚 Alert 状态。"
+        panels={metrics.data?.panels ?? []}
+        ids={["final-hook-success-ratio", "final-hook", "final-hook-p95"]}
+      />
+      <MetricSection
         title="定位慢操作与恢复"
         description="物理 Bulk 执行慢、客户端排队慢和逻辑 Repository 调用慢并不等价；结合错误、重试及 lease 结果判断。"
         panels={metrics.data?.panels ?? []}
@@ -304,7 +311,6 @@ export function LifecyclePage() {
           "retry-rate",
           "lifecycle-lease",
           "lifecycle-mailbox",
-          "final-hook-p95",
         ]}
       />
 
@@ -514,7 +520,7 @@ function lifecycleNodePanels(panels: MetricPanel[], step: string) {
     ],
     mailbox_ack: ["lifecycle-mailbox"],
     xack: ["settled-rate"],
-    final_hook: ["final-hook", "final-hook-p95"],
+    final_hook: ["final-hook-success-ratio", "final-hook", "final-hook-p95"],
   };
   const operations: Record<string, string> = {
     mailbox_peek: "peek",

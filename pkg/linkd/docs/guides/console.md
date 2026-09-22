@@ -61,9 +61,20 @@ Console 必须能够访问 Kafka bootstrap 地址及 broker 的 advertised 地�
 
 ## 指标边界
 
+「核心数据 → 策略活跃索引」提供 `active-alert-by-strategy` 的按租户、策略查询和只读对账。
+会合并当前配置识别出的共享来源，并区分一致、Redis 缺失、Redis 独有和无法确认；查询失败、
+扫描超限及并发变更不会被当成确定一致。用法、上限与一致性边界见
+[策略索引查询与对账](active-alert-by-strategy.md#console-查询与对账)。
+
 Cleaner 指标按 EventSource 聚合，received、settled 和 lane gauge 可以带 Kafka partition。Lifecycle
 记录 Signal、Mailbox、lease、Event 裁决和 FinalHook。指标禁止包含 tenant、实体 ID、fingerprint、
 topic、group、完整错误或 payload。
+
+Lifecycle 页的「Hook 输出」及 `final_hook` 节点详情同时展示成功率、调用结果速率与 P95，
+按 EventSource 和 Hook 名称区分实例。成功率使用所选计算窗口内
+`succeeded / (succeeded + failed)`，跨 Worker 按调用量聚合；错误、超时与 panic 计为失败，
+`skipped` 不计入。全部失败显示 0%；无调用、只有 skipped 或无时序时不补成 0% 或 100%。
+成功只表示 Hook 调用返回成功，不保证下游业务处理完成；失败不会回滚已保存的 Alert 状态。
 
 Prometheus exporter 使用统一的 `telemetry.metrics.prometheus.listen_address`。cleaner、lifecycle、
 control-plane 和 all-in-one 不拥有各自的配置字段，但每个实际进程都会启动独立 exporter，并通过

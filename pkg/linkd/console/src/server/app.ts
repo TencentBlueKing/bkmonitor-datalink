@@ -24,6 +24,8 @@ import { registerBasicAuth, validateServerAccess } from "./auth.js";
 import { readBuildInfo } from "./version.js";
 import { normalizeBasePath } from "../shared/base-path.js";
 import { registerWeb } from "./web.js";
+import { StrategyIndexConnector } from "./strategy-index.js";
+import { strategyQuerySchema } from "../shared/strategy-index.js";
 
 const detailQuerySchema = z.object({
   bk_tenant_id: z.string().min(1).max(1024),
@@ -89,6 +91,34 @@ async function registerConsoleRoutes(
   const prometheusConnector = new PrometheusConnector(config);
   const kafkaConnector = new KafkaConnector(config);
   const redisConnector = new RedisConnector(config);
+  const strategyIndex = new StrategyIndexConnector(
+    config,
+    config.entities.alerts === "mysql"
+      ? mysqlConnector
+      : elasticsearchConnector,
+  );
+
+  for (const operation of ["targets", "reconcile"] as const) {
+    app.get(
+      `/local-api/strategy-index/${operation}`,
+      async (request, reply) => {
+        reply.header("Cache-Control", "no-store");
+        const abort = new AbortController();
+        const canceled = () => abort.abort();
+        request.raw.once("aborted", canceled);
+        try {
+          return await (operation === "targets"
+            ? strategyIndex.targets(abort.signal)
+            : strategyIndex.inspect(
+                strategyQuerySchema.parse(request.query),
+                abort.signal,
+              ));
+        } finally {
+          request.raw.off("aborted", canceled);
+        }
+      },
+    );
+  }
 
   app.setErrorHandler((error, request, reply) => {
     const cause =

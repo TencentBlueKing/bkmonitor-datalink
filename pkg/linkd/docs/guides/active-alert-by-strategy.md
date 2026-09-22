@@ -3,7 +3,7 @@
 `active-alert-by-strategy` 将 Alert 状态投影到 Redis set，供消费者按租户和策略查询活跃 fingerprint。
 它随单个 EventSource 发布，由 Lifecycle 执行。Redis 集合是尽力更新的输出索引，Alert 的权威状态仍在告警存储中。
 
-本文依据 2026-09-10 仓库代码（`a7fdaaa8`）整理，描述当前实现，不代表目标环境已完成联调。
+本文依据 2026-09-22 仓库代码整理，包含 Console 查询与对账，描述当前实现，不代表目标环境已完成联调。
 插件状态规则以 [Lifecycle 插件行为](../modules/lifecycle.md#23-enricher-与-finalhook) 为权威定义；本文侧重接入、查询和排障。
 
 ## 1. 配置与生效
@@ -28,7 +28,7 @@ hooks:
 | `name` | 来源内唯一、稳定的实例名，参与日志身份和指标；1～64 个字符，首字符为字母或数字，其余允许字母、数字、下划线和连字符 |
 | `type` | 固定为 `active-alert-by-strategy` |
 | `config.redis` | 必填，独立于 `storage.redis`；支持 standalone 和 Sentinel，认证字段与全局 Redis 配置相同 |
-| `config.key_prefix` | 必填，1～256 字节，不能有首尾空白；不会自动追加来源 ID |
+| `config.key_prefix` | 必填，1～256 字节，不能有首尾空白；不会自动追加来源 ID。通知 channel 固定为 `<key_prefix>:changes` |
 | `config.timeout_milliseconds` | 正整数毫秒，缺省为 1000；不接受 0、负值、null、超出 Duration 范围的数值或旧秒级字段 |
 
 每个来源最多配置 16 个 hook，按列表顺序执行；可以与 Kafka hook 组合，也可以配置多个 Redis 实例。
@@ -69,6 +69,46 @@ recovered/closed → SREM linkd:active-alert-by-strategy:tenant-a:123 fp-host-01
 
 字符串不做裁剪；调用方应统一策略 ID 的类型和格式。hook 不设置 TTL，也不执行周期性清理。
 
+### 集合变更通知
+
+集合变更通知始终启用，无需也不接受 `notify_channel` 配置。channel 与集合使用共同的 `key_prefix`，
+固定为 `<key_prefix>:changes`，同前缀的所有租户和策略共享该 channel。
+Hook 通过同一次 Lua 执行集合修改和条件发布：`SADD/SREM` 返回实际变更数
+大于 0 才执行 `PUBLISH`。重复添加已有成员、删除不存在成员不通知；删除最后一个成员导致 key 消失时仍通知。
+客户端需要集合的读写权限、`EVAL` 和对应 channel 的 `PUBLISH` 权限；不要求打开 Redis keyspace notifications。
+
+消息包含 `version`、`database`、`bk_tenant_id`、`strategy_id` 和完整 `key`。例如订阅
+`linkd:active-alert-by-strategy:changes` 后，按消息中的 key 重新读取集合。Pub/Sub 不按 DB 隔离，
+消费者必须核对 database 与租户；不同环境建议使用不同 channel。
+共享同一前缀的多个 Hook 自动使用同一 channel；不同前缀的通知各自隔离。
+通知只覆盖本 Hook 发起的修改，外部客户端直接改集合不会自动发布。
+
+若 Hook 使用 DB 8、前缀 `alarmd:open_alerts`，通知 channel 自动为 `alarmd:open_alerts:changes`。
+租户 `system`、策略 `123` 的集合变化时，通知为：
+
+```json
+{
+  "version": 1,
+  "database": 8,
+  "bk_tenant_id": "system",
+  "strategy_id": "123",
+  "key": "alarmd:open_alerts:system:123"
+}
+```
+
+订阅示例（连接和认证按实际环境设置）：
+
+```bash
+redis-cli -h 127.0.0.1 -p 6379 SUBSCRIBE 'alarmd:open_alerts:changes'
+```
+
+收到消息后，用普通 Redis 连接选择消息中的 DB，再对 key 执行 `SSCAN` 或 `SISMEMBER`。
+消息不携带成员增删明细；读取时 key 可能已被删除，按空集合处理。使用 RESP2 时不要在订阅连接上执行集合查询。
+
+这是即时失效通知，不是心跳或可靠消息队列。订阅确认后应补读，断线重连后也需要补读。
+发布失败记录 Hook 失败，集合可能已经修改；随后无变化的重试不会补发通知。完整消息与故障语义见
+[策略索引变更通知 v1](../reference/contracts/active-alert-strategy-change-v1.md)。
+
 ## 3. 触发与一致性边界
 
 Lifecycle 在 Alert 真实变更后执行 hook，包括创建、更新和终态转换；它不是收到每条输入消息就执行的清洗回调。
@@ -100,6 +140,40 @@ hook 没有业务级失败补偿队列，失败不会自动安排后续补写。
 修改实例 `name` 不会改变集合 key，也不能实现数据隔离。
 
 ## 4. 查询与接入验收
+
+### Console 查询与对账
+
+打开 Console「核心数据 → 策略活跃索引」（`/strategy-index`），选择 EventSource / Hook，
+输入明确的租户 ID 和策略 ID，再执行「查询并对账」。Hook 名称不要求为 `active-by-strategy`，
+只要类型为 `active-alert-by-strategy` 即可。页面同时展示 Redis 集合成员、相关活动告警及详情入口。
+
+连接参数来自控制面当前来源配置，凭据只在 Console 服务端使用；未配置控制面时使用本地来源配置。
+该连接独立于 Console 的 `storage.redis`，支持 standalone 与 Sentinel。读取控制面失败不回退旧配置。
+同一配置目标（实例定位、DB、前缀）的来源合并对账，包括暂时停用但仍可能保留活动告警的来源。
+不同 DNS 别名、不同 Sentinel 入口或外部写入者不能仅凭配置识别为同一个实例，需人工核对范围。
+
+| 结果 | 含义 |
+| --- | --- |
+| 一致 | 同一 fingerprint 在两侧本轮读取中均存在；可关联多个来源的 Alert |
+| Redis 缺失 | 已找到该策略的活动告警，但完整读取的 Redis 集合中没有成员 |
+| Redis 独有 | Redis 中存在，但完整读取的当前关联来源中没有相应策略的活动告警；不能直接认定可删除 |
+| 无法确认 | 对应另一侧读取失败或超限，不能据此推断缺失 |
+
+MySQL 查询当前 `status=active` 记录，Elasticsearch 只查询 `<index_prefix>-alerts-active`，
+不套用 Explorer 的默认时间窗口，不读取历史索引。策略标签按 Hook 规则比较：字符串原样，
+有限数字转为非指数十进制，布尔值、缺失和空字符串不匹配。对账以 fingerprint 集合为准，
+集合成员数不等于 Alert 条数。
+
+先在存储侧按租户、共享来源、active 状态和策略标签筛选，再按 Hook 规则核验。
+一次最多读取 5000 条候选 Active Alert；Redis
+最多读 5000 个成员、100 轮 SSCAN、累计 2 MiB 成员内容。每次最多 64 个共享来源，配置列表
+最多 512 个此类 Hook，同时最多 4 个查询；超限或错误显示不完整。页面每页显示 100 个 fingerprint。
+对账不提供任意地址或 key 输入，不执行 SADD、SREM、删除、回填或修复。
+
+这是一次只读观察，不是跨存储事务快照。ES 刷新延迟、并发告警变更、来源发布传播、历史前缀及
+已删除来源都可能造成差异。即使扫描前后 SCARD 相同也不能证明期间没有成员替换；修复前应复查。
+
+### Redis 命令与接入验收
 
 下面是针对示例 standalone 地址和 database 的只读查询。使用真实环境时替换连接参数和 key；认证通过受控环境提供，不把密码写入命令历史。
 
@@ -147,5 +221,8 @@ Redis hook 的 `transport` 为 `redis`，已解析策略时 `destination` 为完
 - [串行执行与失败流水](../../internal/lifecycle/hook.go)。
 - [集合、标签、超时、取消及 Redis 集成测试](../../internal/lifecycle/strategyhook/hook_test.go)。
 
-已有测试包含真实 Redis 集成用例，但只有设置 `LINKD_TEST_REDIS_ADDRESS` 才会执行；未设置时跳过。
-本文档变更只核对实现并检查文档链接，不表示本次执行了真实 Redis、Kafka 或告警存储端到端验证。
+Hook 的真实 Redis 集成用例通过 `LINKD_TEST_REDIS_ADDRESS` 显式启用。
+Console 对账集成测试见 `console/src/server/strategy-index.integration.test.ts`，需要同时设置
+`LINKD_TEST_REDIS_ADDRESS` 与 `LINKD_TEST_ELASTICSEARCH_URL`；只创建并清理唯一前缀的测试资源。
+MySQL 查询测试通过 `LINKD_TEST_MYSQL_URL` 显式启用，需要专用测试实例的建库权限，使用并清理独立测试数据库。
+普通测试使用假来源和假连接；这些专项验证不等同于 Kingeye 目标环境或完整业务链路验证。

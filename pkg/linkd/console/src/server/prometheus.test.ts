@@ -27,6 +27,82 @@ const config = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("PrometheusConnector", () => {
+  it("keeps Hook identities and scopes success rates without treating idle or skipped calls as success", async () => {
+    const queries: string[] = [];
+    const timestamp = new Date("2026-09-04T01:00:00Z").getTime() / 1000;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: URL | Request | string) => {
+        const query = new URL(String(input)).searchParams.get("query") ?? "";
+        queries.push(query);
+        return new Response(
+          JSON.stringify({
+            status: "success",
+            data: {
+              result: query.includes(" or (0 * ")
+                ? [
+                    {
+                      metric: {
+                        linkd_event_source_id: "source-a",
+                        linkd_hook_name: "redis-active",
+                      },
+                      values: [[timestamp, "0"]],
+                    },
+                    {
+                      metric: {
+                        linkd_event_source_id: "source-a",
+                        linkd_hook_name: "kac",
+                      },
+                      values: [[timestamp, "75"]],
+                    },
+                    {
+                      metric: {
+                        linkd_event_source_id: "source-a",
+                        linkd_hook_name: "idle",
+                      },
+                      values: [[timestamp, "NaN"]],
+                    },
+                  ]
+                : [],
+            },
+          }),
+        );
+      }),
+    );
+    const result = await new PrometheusConnector(config).panels(
+      new Date("2026-09-04T00:00:00Z"),
+      new Date(timestamp * 1000),
+      15,
+      {
+        instance: "worker-a",
+        eventSourceId: "source-a",
+        calculationWindowSeconds: 300,
+      },
+    );
+    const hookQueries = queries.filter((q) => q.includes("linkd_final_hook_"));
+    expect(hookQueries).toHaveLength(3);
+    for (const query of hookQueries) {
+      expect(query).toContain('instance="worker-a"');
+      expect(query).toContain('linkd_event_source_id="source-a"');
+      expect(query).toContain("[300s]");
+      expect(query).toContain("linkd_event_source_id, linkd_hook_name");
+    }
+    const ratio = hookQueries.find((q) => q.startsWith("100 *"))!;
+    expect(ratio).toContain('linkd_outcome="succeeded"');
+    expect(ratio).toContain('linkd_outcome=~"succeeded|failed"');
+    expect(ratio).toContain(" or (0 * sum(rate(");
+    expect(ratio).not.toMatch(/skipped|clamp_min|messaging_system|vector\(0\)/);
+    const panel = result.panels.find(
+      (p) => p.id === "final-hook-success-ratio",
+    )!;
+    expect(panel.unit).toBe("%");
+    expect(panel.series.map((s) => [s.name, s.points[0][1]])).toEqual([
+      ["source-a · redis-active", 0],
+      ["source-a · kac", 75],
+      ["source-a · idle", null],
+    ]);
+  });
+
   it("uses range totals at the selected endpoint, precise timing schema, and Event-only latency", async () => {
     const urls: URL[] = [];
     const from = new Date("2026-09-04T00:00:00Z"),

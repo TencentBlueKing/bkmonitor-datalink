@@ -1,5 +1,23 @@
 import { consoleURL } from "./base-path";
 import {
+  strategyTargetsSchema,
+  strategyResultSchema,
+  type StrategyQuery,
+} from "../shared/strategy-index";
+
+export async function getStrategyTargets() {
+  return strategyTargetsSchema.parse(
+    await request("/local-api/strategy-index/targets"),
+  );
+}
+export async function reconcileStrategyIndex(query: StrategyQuery) {
+  return strategyResultSchema.parse(
+    await request(
+      `/local-api/strategy-index/reconcile?${new URLSearchParams(query)}`,
+    ),
+  );
+}
+import {
   dynamicConfigResponseSchema,
   capabilitySchema,
   controlPlaneRuntimeSchema,

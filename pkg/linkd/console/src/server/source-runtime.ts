@@ -15,6 +15,7 @@ const recordSchema = z.object({
 // 管理 token 仅在 Console 服务端使用；完整配置不通过浏览器管理代理透传。
 export async function loadRuntimeSources(
   config: ConsoleConfig,
+  signal?: AbortSignal,
 ): Promise<EventSourceConfig[]> {
   const dispatch = config.dispatch;
   if (!dispatch?.apiToken) throw new Error("dispatch is not configured");
@@ -25,7 +26,12 @@ export async function loadRuntimeSources(
       `${dispatch.url.replace(/\/$/, "")}/api/v1/event-sources?limit=100&after=${encodeURIComponent(after)}&include_secrets=true`,
       {
         headers: { Authorization: `Bearer ${dispatch.apiToken}` },
-        signal: AbortSignal.timeout(config.query.timeoutMilliseconds),
+        signal: signal
+          ? AbortSignal.any([
+              signal,
+              AbortSignal.timeout(config.query.timeoutMilliseconds),
+            ])
+          : AbortSignal.timeout(config.query.timeoutMilliseconds),
         cache: "no-store",
       },
     );

@@ -175,6 +175,11 @@ KAC 插件把相同 Alert 快照转换为 KAC `alarm_collect_topic` 扁平消息
 共用一个成员，关闭任一告警都会删除，没有引用计数。升级时先执行旧告警的所有关闭 hook，
 再执行新告警的所有创建 hook。
 
+通知始终启用，channel 固定为 `<key_prefix>:changes`，不提供独立 channel 配置。
+集合修改和变更判断、`PUBLISH` 在同一 Lua 中执行。
+仅成员实际变化才发布，重复无变化操作不发布；通知只携带租户、策略、DB 和 key，供消费者重新读取。
+不提供心跳、离线补发或事务回滚；协议见[策略索引变更通知 v1](../reference/contracts/active-alert-strategy-change-v1.md)。
+
 独立超时使用 `timeout_milliseconds`，默认 1000ms，遵从父上下文更早的截止时间。
 普通 Redis 错误只记录失败，不补偿、不自动重建或回填，也不保护乱序旧快照。
 任务使用当前发布版本，不按 Alert 创建版本寻找旧 hook。修改 Redis 目标或前缀不迁移、清理旧集合。

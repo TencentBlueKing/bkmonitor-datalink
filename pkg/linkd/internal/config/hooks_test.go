@@ -82,6 +82,16 @@ func TestKACHookUsesKafkaParametersAndRejectsRedisParameters(t *testing.T) {
 	}
 }
 
+func TestNotifyChannelCannotBeConfigured(t *testing.T) {
+	var parameters HookParameters
+	if err := json.Unmarshal([]byte(`{"notify_channel":"custom"}`), &parameters); err == nil {
+		t.Fatal("JSON accepted configurable channel")
+	}
+	if err := yaml.Unmarshal([]byte("notify_channel: custom\n"), &parameters); err == nil {
+		t.Fatal("YAML accepted configurable channel")
+	}
+}
+
 func TestHookJSONYAMLRoundTripAndRedaction(t *testing.T) {
 	first := strategyConfig()
 	first.Config.Redis = &RedisConfig{Mode: RedisModeSentinel, Password: "redis-private", Sentinel: &RedisSentinelConfig{MasterName: "main", Addresses: []string{"sentinel:26379"}, Password: "sentinel-private"}}

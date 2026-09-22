@@ -25,6 +25,48 @@ const config = {
 } satisfies ConsoleConfig;
 
 describe("MysqlConnector", () => {
+  it("reconciles only tenant-scoped active alerts without a time cutoff or full payload", async () => {
+    const query = vi.fn(async () => [
+      [
+        {
+          bk_tenant_id: "tenant",
+          alert_id: "a",
+          event_source_id: "source",
+          fingerprint: "fp",
+          status: "active",
+          strategy_json: '"00123"',
+        },
+      ],
+      [],
+    ]);
+    const connector = new MysqlConnector(config, { query } as unknown as Pool);
+    expect(
+      await connector.readStrategyAlerts(
+        "tenant",
+        ["source", "shared"],
+        "00123",
+        5001,
+      ),
+    ).toEqual([
+      {
+        bk_tenant_id: "tenant",
+        alert_id: "a",
+        event_source_id: "source",
+        fingerprint: "fp",
+        status: "active",
+        labels: { strategy_id: "00123" },
+      },
+    ]);
+    const [options, values] = query.mock.calls[0] as unknown as [
+      { sql: string; timeout: number },
+      unknown[],
+    ];
+    expect(options.sql).toContain("bk_tenant_id=? AND status='active'");
+    expect(options.sql).toContain("event_source_id IN (?,?)");
+    expect(options.sql).not.toMatch(/update_at|SELECT.*payload FROM/);
+    expect(options.timeout).toBe(5000);
+    expect(values).toEqual(["tenant", "source", "shared", "00123", 5001]);
+  });
   it("uses a fixed read-only query and normalizes payloads", async () => {
     const query = vi.fn(async (sqlText: string, values?: unknown[]) => {
       expect(sqlText).toContain("SELECT");

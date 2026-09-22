@@ -463,7 +463,26 @@ const panelDefinitions: PanelDefinition[] = [
     unit: "operation/s",
     kind: "line",
     query: (selector, window) =>
-      `sum(rate(linkd_final_hook_operations_total${selector}[${window}])) by (linkd_event_source_id, messaging_system, linkd_outcome)`,
+      `sum(rate(linkd_final_hook_operations_total${selector}[${window}])) by (linkd_event_source_id, linkd_hook_name, messaging_system, linkd_outcome)`,
+  },
+  {
+    id: "final-hook-success-ratio",
+    title: "FinalHook 成功率",
+    unit: "%",
+    kind: "line",
+    description:
+      "按 EventSource 和 Hook 名称统计计算窗口内的成功调用 /（成功 + 失败）。失败包含返回错误、超时和 panic；skipped 不计入。全部失败为 0%，无调用或仅跳过时无成功率；表示 Hook 调用结果，不代表下游业务处理完成。",
+    query: (selector, window) => {
+      // panic 可能缺失 transport，按稳定 Hook 身份聚合才能把失败计入同一分母。
+      const group = "linkd_event_source_id, linkd_hook_name";
+      const rate = (outcome: string) =>
+        `sum(rate(linkd_final_hook_operations_total${mergeSelector(selector, outcome)}[${window}])) by (${group})`;
+      const succeeded = rate('linkd_outcome="succeeded"');
+      const attempted = rate('linkd_outcome=~"succeeded|failed"');
+      // 首次调用就失败时可能没有 succeeded 时序；仅为已有尝试补分子 0。
+      // 分母保持原值，0/0 作为空点处理，不能将空闲期伪装成 0% 或 100%。
+      return `100 * (${succeeded} or (0 * ${attempted})) / (${attempted})`;
+    },
   },
   {
     id: "final-hook-p95",
@@ -471,7 +490,7 @@ const panelDefinitions: PanelDefinition[] = [
     unit: "s",
     kind: "line",
     query: (selector, window) =>
-      `histogram_quantile(0.95, sum(rate(linkd_final_hook_duration_seconds_bucket${selector}[${window}])) by (le, linkd_event_source_id, messaging_system, linkd_outcome))`,
+      `histogram_quantile(0.95, sum(rate(linkd_final_hook_duration_seconds_bucket${selector}[${window}])) by (le, linkd_event_source_id, linkd_hook_name, messaging_system, linkd_outcome))`,
   },
   {
     id: "pipeline-throughput",
@@ -918,6 +937,7 @@ function seriesName(labels: Record<string, string>, index: number): string {
     labels.linkd_status,
     labels.linkd_outcome,
     labels.linkd_event_source_id,
+    labels.linkd_hook_name,
     labels.messaging_kafka_partition,
     labels.linkd_step,
     labels.linkd_outcome,

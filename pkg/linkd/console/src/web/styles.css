@@ -4245,3 +4245,95 @@ td:last-child {
   overflow-wrap: anywhere;
   text-align: left;
 }
+.strategy-query,
+.strategy-summary,
+.strategy-results {
+  min-height: 0;
+  padding: 20px;
+  margin-bottom: 20px;
+}
+.strategy-page {
+  font-size: 13px;
+  line-height: 1.6;
+}
+.strategy-page input,
+.strategy-page select,
+.strategy-page button {
+  color: inherit;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px 12px;
+  font: inherit;
+}
+.strategy-page button {
+  cursor: pointer;
+}
+.strategy-page button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.strategy-page button[type="submit"] {
+  border-color: var(--green);
+  color: var(--green);
+}
+.strategy-page :is(input, select, button):focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.strategy-page .strategy-counts strong {
+  font-size: 20px;
+  color: var(--green);
+}
+.strategy-counts [data-status="missing_redis"] strong {
+  color: var(--red);
+}
+.strategy-counts [data-status="redis_only"] strong {
+  color: var(--amber);
+}
+.strategy-counts [data-status="unknown"] strong {
+  color: var(--muted);
+}
+.strategy-summary ul {
+  color: var(--muted);
+}
+.strategy-query fieldset {
+  border: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: minmax(180px, 2fr) repeat(2, minmax(100px, 1fr)) auto;
+  align-items: end;
+  gap: 14px;
+}
+.strategy-query label,
+.strategy-results label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+.strategy-query input,
+.strategy-query select {
+  width: 100%;
+  min-width: 0;
+}
+.strategy-scope,
+.strategy-fingerprint {
+  overflow-wrap: anywhere;
+}
+.strategy-counts,
+.strategy-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: center;
+  margin: 18px 0;
+}
+.strategy-summary ul {
+  line-height: 1.8;
+}
+@media (max-width: 760px) {
+  .strategy-query fieldset {
+    grid-template-columns: 1fr;
+  }
+}

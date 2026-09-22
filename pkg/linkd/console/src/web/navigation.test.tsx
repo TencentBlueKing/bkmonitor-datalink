@@ -63,7 +63,12 @@ describe("sidebar navigation", () => {
       ["模块", ["/cleaner", "/lifecycle", "/control-plane"]],
       [
         "核心数据",
-        ["/explore/events", "/explore/alerts", "/explore/alert-logs"],
+        [
+          "/explore/events",
+          "/explore/alerts",
+          "/explore/alert-logs",
+          "/strategy-index",
+        ],
       ],
       [
         "存储",

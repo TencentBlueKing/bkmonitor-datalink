@@ -237,13 +237,13 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 			span.Set("query-count", len(queryTs.QueryList))
 		}
 
+		var relationQueryParams *metadata.QueryParams
 		if matrixQuery != nil {
 			span.Set("query-source", "test-matrix")
 			matrix, err = matrixQuery(queryCtx, queryTs)
 		} else if m.timeGraphVMQueryWithPartial != nil {
 			span.Set("query-source", "test-vm-with-partial")
 			var expr string
-			var relationQueryParams *metadata.QueryParams
 			expr, relationQueryParams, err = m.prepareTimeGraphVMQuery(queryCtx, queryTs)
 			if err == nil {
 				matrix, partial, err = m.timeGraphVMQueryWithPartial(
@@ -255,18 +255,10 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 					relationQueryParams.End,
 					relationQueryParams.Step,
 				)
-				if err == nil && partial {
-					partialStart := relationQueryParams.AlignStart
-					if instant {
-						partialStart = relationQueryParams.End
-					}
-					tg.markPartialRange(partialStart, relationQueryParams.End, relationQueryParams.Step, "backend_partial")
-				}
 			}
 		} else if m.timeGraphVMQuery != nil {
 			span.Set("query-source", "test-vm")
 			var expr string
-			var relationQueryParams *metadata.QueryParams
 			expr, relationQueryParams, err = m.prepareTimeGraphVMQuery(queryCtx, queryTs)
 			if err == nil {
 				matrix, err = m.timeGraphVMQuery(
@@ -282,7 +274,6 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 		} else {
 			wrapQueryErr = true
 			var expr string
-			var relationQueryParams *metadata.QueryParams
 			expr, relationQueryParams, err = m.prepareTimeGraphVMQuery(queryCtx, queryTs)
 			if err == nil {
 				var instance tsdb.Instance
@@ -304,9 +295,6 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 					vector, partial, err = queryTimeGraphInstant(queryCtx, instance, expr, relationQueryParams.End)
 					if err == nil {
 						matrix = vectorToMatrix(vector)
-						if partial {
-							tg.markPartialRange(relationQueryParams.End, relationQueryParams.End, relationQueryParams.Step, "backend_partial")
-						}
 					}
 				} else if err == nil {
 					matrix, partial, err = instance.DirectQueryRange(
@@ -316,9 +304,6 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 						relationQueryParams.End,
 						relationQueryParams.Step,
 					)
-					if err == nil && partial {
-						tg.markPartialRange(relationQueryParams.AlignStart, relationQueryParams.End, relationQueryParams.Step, "backend_partial")
-					}
 				}
 			}
 		}
@@ -333,6 +318,21 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 					}
 				}
 			}
+		}
+		// Prometheus 聚合后端通过子查询 metadata 报告部分成功，VM 则返回 partial 位。
+		// 合并当前子查询的两种信号，让空结果的快照、指标和 trace 同样保留不完整状态。
+		if status := metadata.GetStatus(queryCtx); status != nil {
+			partial = partial || status.Code == metadata.QueryTsPartial
+		}
+		if err == nil && partial {
+			partialStart, partialEnd, partialStep := start, end, queryStep
+			if relationQueryParams != nil {
+				partialStart, partialEnd, partialStep = relationQueryParams.AlignStart, relationQueryParams.End, relationQueryParams.Step
+			}
+			if instant {
+				partialStart = partialEnd
+			}
+			tg.markPartialRange(partialStart, partialEnd, partialStep, "backend_partial")
 		}
 		span.Set("matrix-series-count", len(matrix))
 		span.Set("matrix-point-count", pointCount)

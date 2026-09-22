@@ -198,6 +198,100 @@
                 }
             }
         },
+        "/api/v1/relation/v1beta3/topology": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "query relation shared topology",
+                "operationId": "relation_shared_topology_query_v1beta3",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "TraceID",
+                        "name": "traceparent",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "bkcc__2",
+                        "description": "空间UID",
+                        "name": "X-Bk-Scope-Space-Uid",
+                        "in": "header"
+                    },
+                    {
+                        "description": "json data",
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.SharedTopologyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.SharedTopologyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/relation/v1beta3/topology_range": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "query relation shared topology range",
+                "operationId": "relation_shared_topology_query_range_v1beta3",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "TraceID",
+                        "name": "traceparent",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "bkcc__2",
+                        "description": "空间UID",
+                        "name": "X-Bk-Scope-Space-Uid",
+                        "in": "header"
+                    },
+                    {
+                        "description": "json data",
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.SharedTopologyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.SharedTopologyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/check/query/ts": {
             "post": {
                 "produces": [
@@ -1528,6 +1622,173 @@
                 }
             }
         },
+        "cmdb.SharedTopologyEdge": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string"
+                },
+                "direction": {
+                    "type": "string"
+                },
+                "metric_name": {
+                    "type": "string"
+                },
+                "relation_type": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "integer"
+                },
+                "target": {
+                    "type": "integer"
+                }
+            }
+        },
+        "cmdb.SharedTopologyNode": {
+            "type": "object",
+            "properties": {
+                "dimensions": {
+                    "$ref": "#/definitions/cmdb.Matcher"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "resource_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "cmdb.SharedTopologyQuery": {
+            "type": "object",
+            "properties": {
+                "allowed_categories": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "allowed_relation_types": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "dynamic_relation_direction": {
+                    "type": "string"
+                },
+                "end_time": {
+                    "type": "integer"
+                },
+                "look_back_delta": {
+                    "type": "string"
+                },
+                "max_hops": {
+                    "type": "integer"
+                },
+                "source_info": {
+                    "$ref": "#/definitions/cmdb.Matcher"
+                },
+                "source_type": {
+                    "type": "string"
+                },
+                "start_time": {
+                    "type": "integer"
+                },
+                "step": {
+                    "type": "string"
+                },
+                "target_types": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "timestamp": {
+                    "type": "integer"
+                }
+            }
+        },
+        "cmdb.SharedTopologyRequest": {
+            "type": "object",
+            "properties": {
+                "query_list": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.SharedTopologyQuery"
+                    }
+                }
+            }
+        },
+        "cmdb.SharedTopologyResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.SharedTopologyResponseData"
+                    }
+                },
+                "trace_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "cmdb.SharedTopologyResponseData": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "integer"
+                },
+                "end_time": {
+                    "type": "integer"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "point_count": {
+                    "type": "integer"
+                },
+                "snapshots": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.SharedTopologySnapshot"
+                    }
+                },
+                "start_time": {
+                    "type": "integer"
+                },
+                "step": {
+                    "type": "string"
+                }
+            }
+        },
+        "cmdb.SharedTopologySnapshot": {
+            "type": "object",
+            "properties": {
+                "edges": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.SharedTopologyEdge"
+                    }
+                },
+                "nodes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.SharedTopologyNode"
+                    }
+                },
+                "partial": {
+                    "type": "boolean"
+                },
+                "partial_reason": {
+                    "type": "string"
+                },
+                "timestamp": {
+                    "type": "integer"
+                }
+            }
+        },
         "http.CheckQueryTsDataResponse": {
             "type": "object",
             "properties": {
@@ -2296,6 +2557,10 @@
                     "type": "string",
                     "example": "usage"
                 },
+                "field_semantics": {
+                    "description": "FieldSemantics selects a versioned physical field schema.",
+                    "type": "string"
+                },
                 "from": {
                     "description": "From 翻页开启数字",
                     "type": "integer",
@@ -2349,6 +2614,14 @@
                     "description": "Slimit 维度限制数量",
                     "type": "integer",
                     "example": 0
+                },
+                "source_conditions": {
+                    "description": "SourceConditions keeps intrinsic source filters outside the user's bool group.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/structured.Conditions"
+                        }
+                    ]
                 },
                 "sql": {
                     "description": "SQL doris sql 解析",
@@ -2512,7 +2785,7 @@
                     "example": "1657851600"
                 },
                 "from": {
-                    "description": "From 翻页起始位置；Doris SearchAfter 缺少稳定游标字段时会降级为 offset 分页",
+                    "description": "From 翻页起始位置。Doris SearchAfter 在缺少稳定游标字段时会降级为 offset 分页。",
                     "type": "integer",
                     "example": 0
                 },
@@ -2684,8 +2957,6 @@
                 1000000000,
                 60000000000,
                 3600000000000,
-                -9223372036854775808,
-                9223372036854775807,
                 1,
                 1000,
                 1000000,
@@ -2710,8 +2981,6 @@
                 "Second",
                 "Minute",
                 "Hour",
-                "minDuration",
-                "maxDuration",
                 "Nanosecond",
                 "Microsecond",
                 "Millisecond",

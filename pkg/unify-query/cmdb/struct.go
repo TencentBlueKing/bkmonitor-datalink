@@ -72,6 +72,80 @@ type PathResourcesResult struct {
 	Path       []PathNode `json:"path"`
 }
 
+// SharedTopologyQuery 描述一次 instant 或 range 完整局部拓扑查询。它与旧路径
+// 请求分离：目标类型只过滤返回节点，遍历仍使用完整的候选关系图。
+type SharedTopologyQuery struct {
+	SpaceUID                 string     `json:"-"`
+	Timestamp                int64      `json:"timestamp,omitempty"`
+	StartTime                int64      `json:"start_time,omitempty"`
+	EndTime                  int64      `json:"end_time,omitempty"`
+	Step                     string     `json:"step,omitempty"`
+	SourceType               Resource   `json:"source_type"`
+	SourceInfo               Matcher    `json:"source_info,omitempty"`
+	TargetTypes              []Resource `json:"target_types,omitempty"`
+	MaxHops                  int        `json:"max_hops,omitempty"`
+	AllowedCategories        []string   `json:"allowed_categories,omitempty"`
+	AllowedRelationTypes     []string   `json:"allowed_relation_types,omitempty"`
+	DynamicRelationDirection string     `json:"dynamic_relation_direction,omitempty"`
+	LookBackDelta            string     `json:"look_back_delta,omitempty"`
+}
+
+type SharedTopologyRequest struct {
+	QueryList []SharedTopologyQuery `json:"query_list"`
+}
+
+// SharedTopologyResult 是模型层返回的规范化拓扑结果。
+type SharedTopologyResult struct {
+	StartTime  int64
+	EndTime    int64
+	Step       string
+	PointCount int
+	Snapshots  []SharedTopologySnapshot
+}
+
+// SharedTopologyNode 是响应中的节点身份和维度信息。
+type SharedTopologyNode struct {
+	ID           uint64   `json:"id"`
+	ResourceType Resource `json:"resource_type"`
+	Dimensions   Matcher  `json:"dimensions"`
+}
+
+// SharedTopologyEdge 是响应中的关系身份和端点。
+type SharedTopologyEdge struct {
+	Source       uint64 `json:"source"`
+	Target       uint64 `json:"target"`
+	RelationType string `json:"relation_type"`
+	MetricName   string `json:"metric_name"`
+	Category     string `json:"category"`
+	Direction    string `json:"direction"`
+}
+
+// SharedTopologySnapshot 是一个评估时间点的诱导子图。
+type SharedTopologySnapshot struct {
+	Timestamp     int64                `json:"timestamp"`
+	Nodes         []SharedTopologyNode `json:"nodes"`
+	Edges         []SharedTopologyEdge `json:"edges"`
+	Partial       bool                 `json:"partial"`
+	PartialReason string               `json:"partial_reason,omitempty"`
+}
+
+// SharedTopologyResponseData 是一个 query_list 项的 HTTP 响应。
+type SharedTopologyResponseData struct {
+	Code       int                      `json:"code"`
+	StartTime  int64                    `json:"start_time"`
+	EndTime    int64                    `json:"end_time"`
+	Step       string                   `json:"step"`
+	PointCount int                      `json:"point_count"`
+	Snapshots  []SharedTopologySnapshot `json:"snapshots"`
+	Message    string                   `json:"message,omitempty"`
+}
+
+// SharedTopologyResponse 是共享拓扑 HTTP 响应。
+type SharedTopologyResponse struct {
+	TraceID string                       `json:"trace_id"`
+	Data    []SharedTopologyResponseData `json:"data"`
+}
+
 // RelationPathResourcesRequest queries resource paths at one timestamp.
 type RelationPathResourcesRequest struct {
 	QueryList []struct {

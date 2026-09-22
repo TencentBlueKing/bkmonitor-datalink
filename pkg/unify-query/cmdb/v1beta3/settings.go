@@ -10,29 +10,31 @@
 package v1beta3
 
 const (
-	MaxHopsConfigPath              = "cmdb.v1beta3.max_hops"
-	MaxAllowedHopsConfigPath       = "cmdb.v1beta3.max_allowed_hops"
-	DefaultLimitConfigPath         = "cmdb.v1beta3.default_limit"
-	MaxRangePointsConfigPath       = "cmdb.v1beta3.max_range_points"
-	MaxTargetsConfigPath           = "cmdb.v1beta3.max_targets"
-	MaxGraphNodesConfigPath        = "cmdb.v1beta3.max_graph_nodes"
-	MaxGraphEdgesConfigPath        = "cmdb.v1beta3.max_graph_edges"
-	MaxGraphResultsConfigPath      = "cmdb.v1beta3.max_graph_results"
-	MaxGraphNodeInfosConfigPath    = "cmdb.v1beta3.max_graph_node_infos"
-	DefaultLookBackDeltaConfigPath = "cmdb.v1beta3.look_back_delta"
+	MaxHopsConfigPath                 = "cmdb.v1beta3.max_hops"
+	MaxAllowedHopsConfigPath          = "cmdb.v1beta3.max_allowed_hops"
+	DefaultLimitConfigPath            = "cmdb.v1beta3.default_limit"
+	MaxRangePointsConfigPath          = "cmdb.v1beta3.max_range_points"
+	MaxTargetsConfigPath              = "cmdb.v1beta3.max_targets"
+	MaxGraphNodesConfigPath           = "cmdb.v1beta3.max_graph_nodes"
+	MaxGraphEdgesConfigPath           = "cmdb.v1beta3.max_graph_edges"
+	MaxGraphResultsConfigPath         = "cmdb.v1beta3.max_graph_results"
+	MaxGraphNodeInfosConfigPath       = "cmdb.v1beta3.max_graph_node_infos"
+	MaxSharedTopologyPointsConfigPath = "cmdb.v1beta3.max_shared_topology_points"
+	DefaultLookBackDeltaConfigPath    = "cmdb.v1beta3.look_back_delta"
 )
 
 var (
-	DefaultMaxHops       = 2
-	MaxAllowedHops       = 5
-	DefaultLimit         = 100
-	MaxRangePoints       = 11000
-	MaxTargets           = 5000
-	MaxGraphNodes        = 100000
-	MaxGraphEdges        = 200000
-	MaxGraphResults      = 10000
-	MaxGraphNodeInfos    = 1000000
-	DefaultLookBackDelta = int64(86400000) // 24小时（毫秒）
+	DefaultMaxHops          = 2
+	MaxAllowedHops          = 5
+	DefaultLimit            = 100
+	MaxRangePoints          = 11000
+	MaxTargets              = 5000
+	MaxGraphNodes           = 100000
+	MaxGraphEdges           = 200000
+	MaxGraphResults         = 10000
+	MaxGraphNodeInfos       = 1000000
+	MaxSharedTopologyPoints = 60
+	DefaultLookBackDelta    = int64(86400000) // 24小时（毫秒）
 )
 
 func effectiveMaxRangePoints() int {
@@ -75,4 +77,11 @@ func effectiveMaxGraphNodeInfos() int {
 		return MaxGraphNodeInfos
 	}
 	return 1000000
+}
+
+func effectiveMaxSharedTopologyPoints() int {
+	if MaxSharedTopologyPoints > 0 {
+		return MaxSharedTopologyPoints
+	}
+	return 60
 }

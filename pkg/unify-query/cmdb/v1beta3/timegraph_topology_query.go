@@ -1,0 +1,316 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2022 THL A29 Limited, a Tencent company. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+
+package v1beta3
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"strconv"
+	"time"
+
+	"github.com/pkg/errors"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+)
+
+// QuerySharedTopology 查询一个统一时间网格上的完整局部拓扑。
+func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopologyQuery) (cmdb.SharedTopologyResult, error) {
+	if err := ctx.Err(); err != nil {
+		return cmdb.SharedTopologyResult{}, err
+	}
+	if request.SpaceUID == "" {
+		return cmdb.SharedTopologyResult{}, errors.New("space uid is empty")
+	}
+	if request.SourceType == "" {
+		return cmdb.SharedTopologyResult{}, errors.New("source type is empty")
+	}
+
+	maxHops := request.MaxHops
+	if maxHops == 0 {
+		maxHops = DefaultMaxHops
+	}
+	if maxHops < 0 || maxHops > MaxAllowedHops {
+		return cmdb.SharedTopologyResult{}, fmt.Errorf("max hops %d is outside [0, %d]", maxHops, MaxAllowedHops)
+	}
+
+	direction := TraversalDirection(request.DynamicRelationDirection)
+	if direction == "" {
+		direction = DirectionBoth
+	}
+	if direction != DirectionOutbound && direction != DirectionInbound && direction != DirectionBoth {
+		return cmdb.SharedTopologyResult{}, fmt.Errorf("unsupported dynamic relation direction %q", direction)
+	}
+
+	start, end, step, responseStep, grid, err := normalizeSharedTopologyTime(request)
+	if err != nil {
+		return cmdb.SharedTopologyResult{}, err
+	}
+	lookBack, err := normalizeSharedTopologyLookBack(request.LookBackDelta)
+	if err != nil {
+		return cmdb.SharedTopologyResult{}, err
+	}
+	relations := m.sharedTopologyRelations(request.SpaceUID, request.AllowedCategories, request.AllowedRelationTypes, direction)
+	rootRelations := make(map[timeGraphRelationKey]struct{})
+	for _, relation := range relations {
+		if len(relation.V) == 2 && relation.V[0] == request.SourceType {
+			rootRelations[timeGraphRelationKeyFor(relation)] = struct{}{}
+		}
+	}
+
+	queryCtx, cancel := context.WithTimeout(ctx, timeGraphQueryTimeout)
+	defer cancel()
+	queryCtx = withTimeGraphForceSourceInfo(queryCtx)
+	graph, err := m.buildTimeGraphFromRelationsWithQueryAndRootRelations(
+		queryCtx,
+		request.SpaceUID,
+		start,
+		end,
+		step,
+		request.SourceType,
+		request.SourceInfo,
+		// 共享拓扑必须保留没有关系边的种子，因此强制查询源节点信息。
+		nil,
+		rootRelations,
+		relations,
+		lookBack,
+		nil,
+	)
+	if err != nil {
+		return cmdb.SharedTopologyResult{}, errors.WithMessage(err, "build shared topology")
+	}
+	defer graph.Clean(queryCtx)
+
+	topologyQuery := SharedTopologyQuery{
+		SourceType:           request.SourceType,
+		SourceMatcher:        request.SourceInfo,
+		MaxHops:              maxHops,
+		AllowedCategories:    toRelationCategories(request.AllowedCategories),
+		AllowedRelationTypes: append([]string(nil), request.AllowedRelationTypes...),
+		Direction:            direction,
+		PartialTimestamps:    graph.partialTimesCopy(),
+	}
+	snapshots, err := graph.FindSharedTopology(queryCtx, grid, topologyQuery)
+	if err != nil {
+		return cmdb.SharedTopologyResult{}, errors.WithMessage(err, "find shared topology")
+	}
+	filterSharedTopologySnapshots(snapshots, request.SourceType, request.TargetTypes)
+	return cmdb.SharedTopologyResult{
+		StartTime:  grid.Timestamps[0],
+		EndTime:    grid.Timestamps[len(grid.Timestamps)-1],
+		Step:       responseStep,
+		PointCount: len(grid.Timestamps),
+		Snapshots:  convertSharedTopologySnapshots(snapshots),
+	}, nil
+}
+
+func normalizeSharedTopologyTime(request cmdb.SharedTopologyQuery) (time.Time, time.Time, time.Duration, string, TopologyGrid, error) {
+	if request.StartTime == 0 && request.EndTime == 0 {
+		timestamp, err := normalizeTopologyTimestamp(request.Timestamp)
+		if err != nil {
+			return time.Time{}, time.Time{}, 0, "", TopologyGrid{}, errors.WithMessage(err, "parse timestamp")
+		}
+		grid, err := NewTopologyGrid([]int64{timestamp})
+		if err != nil {
+			return time.Time{}, time.Time{}, 0, "", TopologyGrid{}, err
+		}
+		return time.UnixMilli(timestamp), time.UnixMilli(timestamp), time.Minute, "0s", grid, nil
+	}
+	if request.StartTime == 0 || request.EndTime == 0 {
+		return time.Time{}, time.Time{}, 0, "", TopologyGrid{}, errors.New("start_time and end_time must be provided together")
+	}
+	startMs, err := normalizeTopologyTimestamp(request.StartTime)
+	if err != nil {
+		return time.Time{}, time.Time{}, 0, "", TopologyGrid{}, errors.WithMessage(err, "parse start timestamp")
+	}
+	endMs, err := normalizeTopologyTimestamp(request.EndTime)
+	if err != nil {
+		return time.Time{}, time.Time{}, 0, "", TopologyGrid{}, errors.WithMessage(err, "parse end timestamp")
+	}
+	step, err := parseStepDuration(request.Step)
+	if err != nil {
+		return time.Time{}, time.Time{}, 0, "", TopologyGrid{}, errors.WithMessage(err, "parse step")
+	}
+	stepMs := step.Milliseconds()
+	if endMs < startMs {
+		return time.Time{}, time.Time{}, 0, "", TopologyGrid{}, errors.New("start_time must be less than or equal to end_time")
+	}
+	distance := endMs - startMs
+	if distance%stepMs != 0 {
+		return time.Time{}, time.Time{}, 0, "", TopologyGrid{}, errors.New("range end_time must align with step")
+	}
+	maxPoints := effectiveMaxSharedTopologyPoints()
+	pointCount := distance/stepMs + 1
+	if pointCount > int64(maxPoints) {
+		return time.Time{}, time.Time{}, 0, "", TopologyGrid{}, fmt.Errorf("topology time grid contains %d points, maximum is %d", pointCount, maxPoints)
+	}
+	timestamps := make([]int64, pointCount)
+	for index := int64(0); index < pointCount; index++ {
+		timestamps[index] = startMs + index*stepMs
+	}
+	grid, err := NewTopologyGrid(timestamps)
+	if err != nil {
+		return time.Time{}, time.Time{}, 0, "", TopologyGrid{}, err
+	}
+	return time.UnixMilli(startMs), time.UnixMilli(endMs), step, step.String(), grid, nil
+}
+
+func normalizeTopologyTimestamp(timestamp int64) (int64, error) {
+	if timestamp < 0 {
+		return 0, errors.New("timestamp must be greater than or equal to 0")
+	}
+	return parseTimestamp(strconv.FormatInt(timestamp, 10))
+}
+
+func normalizeSharedTopologyLookBack(value string) (string, error) {
+	if value == "" {
+		return fmt.Sprintf("%dms", DefaultLookBackDelta), nil
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return "", errors.WithMessage(err, "parse look back delta")
+	}
+	if duration <= 0 {
+		return "", errors.New("look back delta must be positive")
+	}
+	return value, nil
+}
+
+func (m *Model) sharedTopologyRelations(namespace string, allowedCategories, allowedRelationTypes []string, direction TraversalDirection) []cmdb.Relation {
+	categorySet := make(map[string]struct{}, len(allowedCategories))
+	for _, category := range allowedCategories {
+		categorySet[category] = struct{}{}
+	}
+	relationTypeSet := make(map[string]struct{}, len(allowedRelationTypes))
+	for _, relationType := range allowedRelationTypes {
+		relationTypeSet[relationType] = struct{}{}
+	}
+
+	result := make([]cmdb.Relation, 0)
+	for _, schema := range m.getSchemaProvider().ListRelationSchemas(namespace) {
+		category := string(schema.Category)
+		if len(categorySet) > 0 {
+			if _, ok := categorySet[category]; !ok {
+				continue
+			}
+		}
+		relationType := string(schema.RelationType)
+		if len(relationTypeSet) > 0 {
+			if _, ok := relationTypeSet[relationType]; !ok {
+				continue
+			}
+		}
+		appendRelation := func(source, target ResourceType, edgeDirection TraversalDirection) {
+			result = append(result, cmdb.Relation{
+				V:            []cmdb.Resource{cmdb.Resource(source), cmdb.Resource(target)},
+				RelationType: relationType,
+				MetricName:   schema.MetricName,
+				Category:     category,
+				Direction:    string(edgeDirection),
+			})
+		}
+		if schema.Category == RelationCategoryDynamic {
+			if direction == DirectionOutbound || direction == DirectionBoth {
+				appendRelation(schema.FromType, schema.ToType, DirectionOutbound)
+			}
+			if direction == DirectionInbound || direction == DirectionBoth {
+				appendRelation(schema.ToType, schema.FromType, DirectionInbound)
+			}
+			continue
+		}
+		appendRelation(schema.FromType, schema.ToType, DirectionOutbound)
+		if !schema.IsDirectional {
+			appendRelation(schema.ToType, schema.FromType, DirectionInbound)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		left, right := result[i], result[j]
+		if left.RelationType != right.RelationType {
+			return left.RelationType < right.RelationType
+		}
+		if left.V[0] != right.V[0] {
+			return left.V[0] < right.V[0]
+		}
+		if left.V[1] != right.V[1] {
+			return left.V[1] < right.V[1]
+		}
+		return left.Direction < right.Direction
+	})
+	return result
+}
+
+func toRelationCategories(values []string) []RelationCategory {
+	result := make([]RelationCategory, len(values))
+	for i, value := range values {
+		result[i] = RelationCategory(value)
+	}
+	return result
+}
+
+func filterSharedTopologySnapshots(snapshots []SharedTopologySnapshot, sourceType cmdb.Resource, targetTypes []cmdb.Resource) {
+	if len(targetTypes) == 0 {
+		return
+	}
+	allowed := make(map[cmdb.Resource]struct{}, len(targetTypes)+1)
+	allowed[sourceType] = struct{}{}
+	for _, targetType := range targetTypes {
+		allowed[targetType] = struct{}{}
+	}
+	for index := range snapshots {
+		keptNodes := make(map[uint64]struct{})
+		nodes := snapshots[index].Nodes[:0]
+		for _, node := range snapshots[index].Nodes {
+			if _, ok := allowed[node.ResourceType]; !ok {
+				continue
+			}
+			keptNodes[node.ID] = struct{}{}
+			nodes = append(nodes, node)
+		}
+		edges := snapshots[index].Edges[:0]
+		for _, edge := range snapshots[index].Edges {
+			if _, sourceOK := keptNodes[edge.Source]; !sourceOK {
+				continue
+			}
+			if _, targetOK := keptNodes[edge.Target]; !targetOK {
+				continue
+			}
+			edges = append(edges, edge)
+		}
+		snapshots[index].Nodes = nodes
+		snapshots[index].Edges = edges
+	}
+}
+
+func convertSharedTopologySnapshots(snapshots []SharedTopologySnapshot) []cmdb.SharedTopologySnapshot {
+	result := make([]cmdb.SharedTopologySnapshot, len(snapshots))
+	for i, snapshot := range snapshots {
+		result[i] = cmdb.SharedTopologySnapshot{
+			Timestamp:     snapshot.Timestamp,
+			Partial:       snapshot.Partial,
+			PartialReason: snapshot.PartialReason,
+			Nodes:         make([]cmdb.SharedTopologyNode, len(snapshot.Nodes)),
+			Edges:         make([]cmdb.SharedTopologyEdge, len(snapshot.Edges)),
+		}
+		for j, node := range snapshot.Nodes {
+			result[i].Nodes[j] = cmdb.SharedTopologyNode{
+				ID:           node.ID,
+				ResourceType: node.ResourceType,
+				Dimensions:   cloneMatcher(node.Dimensions),
+			}
+		}
+		for j, edge := range snapshot.Edges {
+			result[i].Edges[j] = cmdb.SharedTopologyEdge{
+				Source:       edge.Source,
+				Target:       edge.Target,
+				RelationType: edge.RelationType,
+				MetricName:   edge.MetricName,
+				Category:     edge.Category,
+				Direction:    edge.Direction,
+			}
+		}
+	}
+	return result
+}

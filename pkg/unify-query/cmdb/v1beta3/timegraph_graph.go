@@ -36,7 +36,10 @@ type TimeGraph struct {
 	stringDict    *StringDict                           // 局部字符串字典，避免全局溢出，每个实例独立管理
 	timeGraph     map[int64]graph.Graph[uint64, uint64] // 时间分片图，key为时间戳，value为对应的图结构
 	edgeTypes     map[int64]map[timeGraphEdgeKey]map[timeGraphEdgeRelation]struct{}
-	nodeInfos     map[int64]map[uint64]cmdb.Matcher // timestamp -> node -> time-specific dimensions
+	nodeInfos     map[int64]map[uint64]cmdb.Matcher               // timestamp -> node -> time-specific dimensions
+	topologyNodes map[uint64]map[int64]struct{}                   // 共享节点身份 -> 观测时间点
+	topologyEdges map[timeGraphTopologyEdgeKey]map[int64]struct{} // 共享关系身份 -> 有效时间点
+	partialTimes  map[int64]string                                // 时间点 -> 数据不完整原因
 	maxNodes      int
 	maxEdges      int
 	maxResults    int
@@ -55,6 +58,7 @@ type timeGraphEdgeKey struct {
 type timeGraphEdgeRelation struct {
 	relationType string
 	metricName   string
+	category     string
 	direction    string
 }
 
@@ -92,16 +96,19 @@ func NewTimeGraphWithConfig(cfg *TimeGraphConfig) *TimeGraph {
 	}
 	stringDict := NewStringDict() // 每个TimeGraph实例有自己的字符串字典
 	return &TimeGraph{
-		nodeBuilder:  NewNodeBuilderWithConfig(stringDict, cfg), // 传递局部StringDict给NodeBuilder
-		stringDict:   stringDict,
-		timeGraph:    make(map[int64]graph.Graph[uint64, uint64]),
-		edgeTypes:    make(map[int64]map[timeGraphEdgeKey]map[timeGraphEdgeRelation]struct{}),
-		nodeInfos:    make(map[int64]map[uint64]cmdb.Matcher),
-		maxNodes:     maxNodes,
-		maxEdges:     maxEdges,
-		maxResults:   maxResults,
-		maxNodeInfos: maxNodeInfos,
-		relations:    relations,
+		nodeBuilder:   NewNodeBuilderWithConfig(stringDict, cfg), // 传递局部StringDict给NodeBuilder
+		stringDict:    stringDict,
+		timeGraph:     make(map[int64]graph.Graph[uint64, uint64]),
+		edgeTypes:     make(map[int64]map[timeGraphEdgeKey]map[timeGraphEdgeRelation]struct{}),
+		nodeInfos:     make(map[int64]map[uint64]cmdb.Matcher),
+		topologyNodes: make(map[uint64]map[int64]struct{}),
+		topologyEdges: make(map[timeGraphTopologyEdgeKey]map[int64]struct{}),
+		partialTimes:  make(map[int64]string),
+		maxNodes:      maxNodes,
+		maxEdges:      maxEdges,
+		maxResults:    maxResults,
+		maxNodeInfos:  maxNodeInfos,
+		relations:     relations,
 	}
 }
 
@@ -129,8 +136,47 @@ func (q *TimeGraph) Clean(ctx context.Context) {
 	for k := range q.nodeInfos {
 		delete(q.nodeInfos, k)
 	}
+	for k := range q.topologyNodes {
+		delete(q.topologyNodes, k)
+	}
+	for k := range q.topologyEdges {
+		delete(q.topologyEdges, k)
+	}
+	for k := range q.partialTimes {
+		delete(q.partialTimes, k)
+	}
 	q.edgeCount = 0
 	q.nodeInfoCount = 0
+}
+
+func (q *TimeGraph) markPartialRange(start, end time.Time, step time.Duration, reason string) {
+	if reason == "" {
+		reason = "backend_partial"
+	}
+	if step <= 0 || end.Before(start) {
+		return
+	}
+	startMs, endMs, stepMs := start.UnixMilli(), end.UnixMilli(), step.Milliseconds()
+	if stepMs <= 0 || endMs < startMs {
+		return
+	}
+	pointCount := uint64(endMs-startMs)/uint64(stepMs) + 1
+	q.lock.Lock()
+	defer q.lock.Unlock()
+	for index := uint64(0); index < pointCount; index++ {
+		timestamp := startMs + int64(index)*stepMs
+		q.partialTimes[timestamp] = reason
+	}
+}
+
+func (q *TimeGraph) partialTimesCopy() map[int64]string {
+	q.lock.RLock()
+	defer q.lock.RUnlock()
+	result := make(map[int64]string, len(q.partialTimes))
+	for timestamp, reason := range q.partialTimes {
+		result[timestamp] = reason
+	}
+	return result
 }
 
 // Stat 获取时序图的统计信息
@@ -241,6 +287,10 @@ func (q *TimeGraph) AddTimeNode(ctx context.Context, resource cmdb.Resource, inf
 		if err = q.setNodeInfo(timestamp, node, mergeMatcher(q.nodeInfos[timestamp][node], info)); err != nil {
 			return err
 		}
+		if q.topologyNodes[node] == nil {
+			q.topologyNodes[node] = make(map[int64]struct{})
+		}
+		q.topologyNodes[node][timestamp] = struct{}{}
 		if err = q.timeGraph[timestamp].AddVertex(node); err != nil && !errors.Is(err, graph.ErrVertexAlreadyExists) {
 			return err
 		}
@@ -326,6 +376,14 @@ func (q *TimeGraph) AddTimeRelationWithRelation(ctx context.Context, relation cm
 		if err = q.setNodeInfo(timestamp, targetNode, mergeMatcher(q.nodeInfos[timestamp][targetNode], targetInfo)); err != nil {
 			return err
 		}
+		if q.topologyNodes[sourceNode] == nil {
+			q.topologyNodes[sourceNode] = make(map[int64]struct{})
+		}
+		q.topologyNodes[sourceNode][timestamp] = struct{}{}
+		if q.topologyNodes[targetNode] == nil {
+			q.topologyNodes[targetNode] = make(map[int64]struct{})
+		}
+		q.topologyNodes[targetNode][timestamp] = struct{}{}
 
 		// 添加源节点，忽略已存在的节点
 		if err = g.AddVertex(sourceNode); err != nil && !errors.Is(err, graph.ErrVertexAlreadyExists) {
@@ -354,6 +412,20 @@ func (q *TimeGraph) AddTimeRelationWithRelation(ctx context.Context, relation cm
 			metricName:   relation.MetricName,
 			direction:    direction,
 		}] = struct{}{}
+		topologyEdgeKey := timeGraphTopologyEdgeKey{
+			source: sourceNode,
+			target: targetNode,
+			relation: timeGraphEdgeRelation{
+				relationType: relation.RelationType,
+				metricName:   relation.MetricName,
+				category:     relation.Category,
+				direction:    direction,
+			},
+		}
+		if q.topologyEdges[topologyEdgeKey] == nil {
+			q.topologyEdges[topologyEdgeKey] = make(map[int64]struct{})
+		}
+		q.topologyEdges[topologyEdgeKey][timestamp] = struct{}{}
 	}
 
 	return nil

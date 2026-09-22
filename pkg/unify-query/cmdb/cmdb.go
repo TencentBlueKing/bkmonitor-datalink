@@ -28,3 +28,8 @@ type MultiPathCMDB interface {
 
 	QueryResourceMatcherRangeAll(ctx context.Context, lookBackDelta, spaceUid string, step string, startTs, endTs string, target, source Resource, indexesMatcher, expandMatcher Matcher, expandShow bool, pathResource []Resource) (Resource, Matcher, []RelationMultiResourceRangePathData, Resource, error)
 }
+
+// SharedTopologyCMDB 是完整局部拓扑查询的可选扩展，避免改变旧 CMDB 接口。
+type SharedTopologyCMDB interface {
+	QuerySharedTopology(context.Context, SharedTopologyQuery) (SharedTopologyResult, error)
+}

@@ -26,6 +26,8 @@ func setDefaultConfig() {
 
 	viper.SetDefault(RelationV1Beta3MultiResourceConfigPath, "/api/v1/relation/v1beta3/multi_resource")
 	viper.SetDefault(RelationV1Beta3MultiResourceRangeConfigPath, "/api/v1/relation/v1beta3/multi_resource_range")
+	viper.SetDefault(RelationV1Beta3TopologyConfigPath, "/api/v1/relation/v1beta3/topology")
+	viper.SetDefault(RelationV1Beta3TopologyRangeConfigPath, "/api/v1/relation/v1beta3/topology_range")
 }
 
 func loadConfig() {
@@ -37,6 +39,8 @@ func loadConfig() {
 
 	RelationV1Beta3MultiResource = viper.GetString(RelationV1Beta3MultiResourceConfigPath)
 	RelationV1Beta3MultiResourceRange = viper.GetString(RelationV1Beta3MultiResourceRangeConfigPath)
+	RelationV1Beta3Topology = viper.GetString(RelationV1Beta3TopologyConfigPath)
+	RelationV1Beta3TopologyRange = viper.GetString(RelationV1Beta3TopologyRangeConfigPath)
 }
 
 // init

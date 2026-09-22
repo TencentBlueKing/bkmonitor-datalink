@@ -27,6 +27,7 @@ func setDefaultConfig() {
 	viper.SetDefault(MaxGraphEdgesConfigPath, 200000)
 	viper.SetDefault(MaxGraphResultsConfigPath, 10000)
 	viper.SetDefault(MaxGraphNodeInfosConfigPath, 1000000)
+	viper.SetDefault(MaxSharedTopologyPointsConfigPath, 60)
 	viper.SetDefault(DefaultLookBackDeltaConfigPath, 86400000) // 24小时（毫秒）
 }
 
@@ -40,6 +41,7 @@ func LoadConfig() {
 	MaxGraphEdges = viper.GetInt(MaxGraphEdgesConfigPath)
 	MaxGraphResults = viper.GetInt(MaxGraphResultsConfigPath)
 	MaxGraphNodeInfos = viper.GetInt(MaxGraphNodeInfosConfigPath)
+	MaxSharedTopologyPoints = viper.GetInt(MaxSharedTopologyPointsConfigPath)
 	DefaultLookBackDelta = viper.GetInt64(DefaultLookBackDeltaConfigPath)
 }
 

@@ -183,6 +183,115 @@ definitions:
         description: TruncatedReason 标识触发截断的具体上限，便于调用方区分处理。
         type: string
     type: object
+  cmdb.SharedTopologyEdge:
+    properties:
+      category:
+        type: string
+      direction:
+        type: string
+      metric_name:
+        type: string
+      relation_type:
+        type: string
+      source:
+        type: integer
+      target:
+        type: integer
+    type: object
+  cmdb.SharedTopologyNode:
+    properties:
+      dimensions:
+        $ref: '#/definitions/cmdb.Matcher'
+      id:
+        type: integer
+      resource_type:
+        type: string
+    type: object
+  cmdb.SharedTopologyQuery:
+    properties:
+      allowed_categories:
+        items:
+          type: string
+        type: array
+      allowed_relation_types:
+        items:
+          type: string
+        type: array
+      dynamic_relation_direction:
+        type: string
+      end_time:
+        type: integer
+      look_back_delta:
+        type: string
+      max_hops:
+        type: integer
+      source_info:
+        $ref: '#/definitions/cmdb.Matcher'
+      source_type:
+        type: string
+      start_time:
+        type: integer
+      step:
+        type: string
+      target_types:
+        items:
+          type: string
+        type: array
+      timestamp:
+        type: integer
+    type: object
+  cmdb.SharedTopologyRequest:
+    properties:
+      query_list:
+        items:
+          $ref: '#/definitions/cmdb.SharedTopologyQuery'
+        type: array
+    type: object
+  cmdb.SharedTopologyResponse:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/cmdb.SharedTopologyResponseData'
+        type: array
+      trace_id:
+        type: string
+    type: object
+  cmdb.SharedTopologyResponseData:
+    properties:
+      code:
+        type: integer
+      end_time:
+        type: integer
+      message:
+        type: string
+      point_count:
+        type: integer
+      snapshots:
+        items:
+          $ref: '#/definitions/cmdb.SharedTopologySnapshot'
+        type: array
+      start_time:
+        type: integer
+      step:
+        type: string
+    type: object
+  cmdb.SharedTopologySnapshot:
+    properties:
+      edges:
+        items:
+          $ref: '#/definitions/cmdb.SharedTopologyEdge'
+        type: array
+      nodes:
+        items:
+          $ref: '#/definitions/cmdb.SharedTopologyNode'
+        type: array
+      partial:
+        type: boolean
+      partial_reason:
+        type: string
+      timestamp:
+        type: integer
+    type: object
   http.CheckQueryTsDataResponse:
     properties:
       data:
@@ -710,6 +819,9 @@ definitions:
         description: FieldName 查询指标
         example: usage
         type: string
+      field_semantics:
+        description: FieldSemantics selects a versioned physical field schema.
+        type: string
       from:
         description: From 翻页开启数字
         example: 0
@@ -752,6 +864,11 @@ definitions:
         description: Slimit 维度限制数量
         example: 0
         type: integer
+      source_conditions:
+        allOf:
+        - $ref: '#/definitions/structured.Conditions'
+        description: SourceConditions keeps intrinsic source filters outside the user's
+          bool group.
       sql:
         description: SQL doris sql 解析
         type: string
@@ -866,7 +983,7 @@ definitions:
         example: "1657851600"
         type: string
       from:
-        description: From 翻页起始位置；Doris SearchAfter 缺少稳定游标字段时会降级为 offset 分页
+        description: From 翻页起始位置。Doris SearchAfter 在缺少稳定游标字段时会降级为 offset 分页。
         example: 0
         type: integer
       highlight:
@@ -886,7 +1003,9 @@ definitions:
         description: IsMultiFrom 是否启用 MultiFrom 查询
         type: boolean
       is_search_after:
-        description: IsSearchAfter 是否启用 SearchAfter 查询。仅用于 /query/raw 原始查询：Elasticsearch 使用原生游标；Doris 优先使用 __unique_key__，缺少时尝试 dtEventTimeStamp、gseIndex、iterationIndex 组合游标，再缺少时降级为 offset 分页；不能与 scroll 同时使用。
+        description: IsSearchAfter 是否启用 SearchAfter 查询。仅用于 /query/raw 原始查询：Elasticsearch
+          使用原生游标；Doris 优先使用 __unique_key__，缺少时尝试 dtEventTimeStamp、gseIndex、iterationIndex
+          组合游标，再缺少时降级为 offset 分页；不能与 scroll 同时使用。
         type: boolean
       legacy_output_ref:
         description: LegacyOutputRef 指向与 MetricMerge 等价的输出，供旧服务兼容降级。
@@ -1006,8 +1125,6 @@ definitions:
     - 1000000000
     - 60000000000
     - 3600000000000
-    - -9223372036854775808
-    - 9223372036854775807
     - 1
     - 1000
     - 1000000
@@ -1032,8 +1149,6 @@ definitions:
     - Second
     - Minute
     - Hour
-    - minDuration
-    - maxDuration
     - Nanosecond
     - Microsecond
     - Millisecond
@@ -1172,6 +1287,68 @@ paths:
           schema:
             $ref: '#/definitions/api.ErrResponse'
       summary: query relation multi resource range (v1beta3, TimeGraph)
+  /api/v1/relation/v1beta3/topology:
+    post:
+      operationId: relation_shared_topology_query_v1beta3
+      parameters:
+      - description: TraceID
+        in: header
+        name: traceparent
+        type: string
+      - default: bkcc__2
+        description: 空间UID
+        in: header
+        name: X-Bk-Scope-Space-Uid
+        type: string
+      - description: json data
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/cmdb.SharedTopologyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/cmdb.SharedTopologyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrResponse'
+      summary: query relation shared topology
+  /api/v1/relation/v1beta3/topology_range:
+    post:
+      operationId: relation_shared_topology_query_range_v1beta3
+      parameters:
+      - description: TraceID
+        in: header
+        name: traceparent
+        type: string
+      - default: bkcc__2
+        description: 空间UID
+        in: header
+        name: X-Bk-Scope-Space-Uid
+        type: string
+      - description: json data
+        in: body
+        name: data
+        required: true
+        schema:
+          $ref: '#/definitions/cmdb.SharedTopologyRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/cmdb.SharedTopologyResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrResponse'
+      summary: query relation shared topology range
   /check/query/ts:
     post:
       operationId: check_query_ts

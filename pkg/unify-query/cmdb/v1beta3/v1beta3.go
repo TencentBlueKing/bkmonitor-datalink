@@ -34,6 +34,9 @@ type Model struct {
 	// timeGraphQueryReference 仅用于测试，替代 metadata 路由解析。周围的
 	// ToTime、SetExpand 和 ToPromExpr 流程与生产保持一致，测试只绕过实时路由元数据。
 	timeGraphQueryReference timeGraphQueryReference
+	// timeGraphVMQueryWithPartial 是共享拓扑测试使用的带状态 VM 查询入口；
+	// 生产查询直接从 tsdb.Instance.DirectQueryRange 获取相同状态。
+	timeGraphVMQueryWithPartial timeGraphVMQueryWithPartial
 	schemaProvider          SchemaProvider
 	schemaProviderMu        sync.RWMutex
 }

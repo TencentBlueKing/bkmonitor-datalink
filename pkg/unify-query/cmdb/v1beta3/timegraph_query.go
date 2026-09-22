@@ -37,6 +37,17 @@ var timeGraphQueryTimeout = time.Minute
 // Expand 或 PromQL 渲染。
 type timeGraphMatrixQuery func(context.Context, *structured.QueryTs) (pl.Matrix, error)
 
+type timeGraphForceSourceInfoKey struct{}
+
+func withTimeGraphForceSourceInfo(ctx context.Context) context.Context {
+	return context.WithValue(ctx, timeGraphForceSourceInfoKey{}, true)
+}
+
+func timeGraphForceSourceInfo(ctx context.Context) bool {
+	force, _ := ctx.Value(timeGraphForceSourceInfoKey{}).(bool)
+	return force
+}
+
 // timeGraphRelationKey 唯一标识一条待查询的关系边。
 // 除了两端资源类型，还必须保留关系类型、指标、类别和方向，避免不同关系
 // 因为资源类型相同而被合并。
@@ -61,6 +72,8 @@ func newTimeGraphSubqueryContext(ctx context.Context) context.Context {
 }
 
 type timeGraphVMQuery func(context.Context, *structured.QueryTs, string, bool, time.Time, time.Time, time.Duration) (pl.Matrix, error)
+
+type timeGraphVMQueryWithPartial func(context.Context, *structured.QueryTs, string, bool, time.Time, time.Time, time.Duration) (pl.Matrix, bool, error)
 
 type timeGraphQueryReference func(context.Context, *structured.QueryTs) (metadata.QueryReference, error)
 
@@ -139,6 +152,25 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 		if matrixQuery != nil {
 			return matrixQuery(queryCtx, queryTs)
 		}
+		if m.timeGraphVMQueryWithPartial != nil {
+			expr, relationQueryParams, queryErr := m.prepareTimeGraphVMQuery(queryCtx, queryTs)
+			if queryErr != nil {
+				return nil, queryErr
+			}
+			matrix, partial, queryErr := m.timeGraphVMQueryWithPartial(
+				queryCtx,
+				queryTs,
+				expr,
+				instant,
+				relationQueryParams.AlignStart,
+				relationQueryParams.End,
+				relationQueryParams.Step,
+			)
+			if queryErr == nil && partial && !instant {
+				tg.markPartialRange(relationQueryParams.AlignStart, relationQueryParams.End, relationQueryParams.Step, "backend_partial")
+			}
+			return matrix, queryErr
+		}
 		if m.timeGraphVMQuery != nil {
 			expr, relationQueryParams, queryErr := m.prepareTimeGraphVMQuery(queryCtx, queryTs)
 			if queryErr != nil {
@@ -181,7 +213,7 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 			}
 			return vectorToMatrix(vector), nil
 		}
-		matrix, _, queryErr := instance.DirectQueryRange(
+		matrix, partial, queryErr := instance.DirectQueryRange(
 			queryCtx,
 			expr,
 			relationQueryParams.AlignStart,
@@ -191,10 +223,13 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 		if queryErr != nil {
 			return nil, errors.WithMessage(queryErr, "direct query range")
 		}
+		if partial {
+			tg.markPartialRange(relationQueryParams.AlignStart, relationQueryParams.End, relationQueryParams.Step, "backend_partial")
+		}
 		return matrix, nil
 	}
 
-	if len(sourceExpandInfo) > 0 || len(relations) == 0 {
+	if len(sourceExpandInfo) > 0 || len(relations) == 0 || timeGraphForceSourceInfo(ctx) {
 		infoCtx := newTimeGraphSubqueryContext(ctx)
 		metadata.GetQueryParams(infoCtx).SetIsSkipK8s(true)
 		queryTs, queryErr := tg.MakeResourceInfoQueryTsWithWindow(

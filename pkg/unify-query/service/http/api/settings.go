@@ -19,6 +19,8 @@ const (
 	// V1beta3 TimeGraph 关系查询专用路由。
 	RelationV1Beta3MultiResourceConfigPath      = "api.relation.v1beta3.multi_resource"
 	RelationV1Beta3MultiResourceRangeConfigPath = "api.relation.v1beta3.multi_resource_range"
+	RelationV1Beta3TopologyConfigPath           = "api.relation.v1beta3.topology"
+	RelationV1Beta3TopologyRangeConfigPath      = "api.relation.v1beta3.topology_range"
 )
 
 var (
@@ -30,4 +32,6 @@ var (
 
 	RelationV1Beta3MultiResource      string
 	RelationV1Beta3MultiResourceRange string
+	RelationV1Beta3Topology           string
+	RelationV1Beta3TopologyRange      string
 )

@@ -126,9 +126,15 @@ func newTimeGraphWithConfig(cfg *TimeGraphConfig) *TimeGraph {
 //
 // 优化: 复用 map，减少内存分配
 func (q *TimeGraph) Clean(ctx context.Context) {
+	ctx, span := trace.NewSpan(ctx, "timegraph-clean")
+	var cleanupErr error
+	defer finishTimeGraphStage(ctx, span, "cleanup", time.Now(), &cleanupErr)
 	q.lock.Lock()
 	defer q.lock.Unlock()
 
+	span.Set("nodes-before-clean", q.nodeBuilder.Length())
+	span.Set("edges-before-clean", q.edgeCount)
+	span.Set("parent-canceled", ctx.Err() != nil)
 	q.nodeBuilder.Clean()
 	q.stringDict = NewStringDict() // 重新创建新的字符串字典，实现完全清理
 	q.nodeBuilder.stringDict = q.stringDict

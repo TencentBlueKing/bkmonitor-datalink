@@ -24,6 +24,7 @@ import (
 func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopologyQuery) (result cmdb.SharedTopologyResult, err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-query-shared-topology")
 	defer span.End(&err)
+	defer func() { SetTimeGraphLimitTrace(span, err) }()
 	queryMode := "instant"
 	if request.StartTime != 0 || request.EndTime != 0 {
 		queryMode = "range"
@@ -106,7 +107,12 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	relationSpan.Set("relation-count", len(relations))
 	relationSpan.End(&relationErr)
 	span.Set("relation-count", len(relations))
+	_, planSpan := trace.NewSpan(ctx, "timegraph-plan-topology-fetch")
 	rootRelations := sharedTopologyRootRelationKeys(request.SourceType, maxHops, relations)
+	planSpan.Set("relation-count", len(relations))
+	planSpan.Set("root-filter-relation-count", len(rootRelations))
+	planSpan.Set("max-hops", maxHops)
+	planSpan.End(&relationErr)
 
 	queryCtx, cancel := context.WithTimeout(ctx, timeGraphQueryTimeout)
 	defer cancel()
@@ -119,6 +125,9 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	}
 	defer release()
 	queryCtx = metadata.WithBackendResponseLimit(queryCtx, int64(positiveTopologyLimit(MaxSharedTopologyBackendBytes, 16*1024*1024)))
+	span.Set("backend-response-byte-limit", metadata.BackendResponseLimit(queryCtx))
+	span.Set("matrix-point-limit", positiveTopologyLimit(MaxSharedTopologyMatrixPoints, 1000000))
+
 	graph, err := m.buildTimeGraph(
 		queryCtx,
 		request.SpaceUID,
@@ -153,6 +162,16 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	if err != nil {
 		return cmdb.SharedTopologyResult{}, errors.WithMessage(err, "find shared topology")
 	}
+	_, convertSpan := trace.NewSpan(queryCtx, "timegraph-convert-topology")
+	convertStarted := time.Now()
+	inputNodes, inputEdges := 0, 0
+	for _, snapshot := range snapshots {
+		inputNodes += len(snapshot.Nodes)
+		inputEdges += len(snapshot.Edges)
+	}
+	convertSpan.Set("input-node-count", inputNodes)
+	convertSpan.Set("input-edge-count", inputEdges)
+	convertSpan.Set("target-type-count", len(request.TargetTypes))
 	filterSharedTopologySnapshots(snapshots, request.SourceType, request.TargetTypes)
 	result = cmdb.SharedTopologyResult{
 		StartTime:  grid.Timestamps[0],
@@ -161,6 +180,7 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		PointCount: len(grid.Timestamps),
 		Snapshots:  convertSharedTopologySnapshots(snapshots),
 	}
+	convertSpan.Set("snapshot-count", len(result.Snapshots))
 	span.Set("query-start", result.StartTime)
 	span.Set("query-end", result.EndTime)
 	span.Set("point-count", result.PointCount)
@@ -173,6 +193,10 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 			partialCount++
 		}
 	}
+	convertSpan.Set("output-node-count", nodeCount)
+	convertSpan.Set("output-edge-count", edgeCount)
+	convertSpan.End(&err)
+	metric.CMDBTimeGraphStageObserve(queryCtx, "topology-convert", metric.CMDBRelationResultSuccess, time.Since(convertStarted))
 	span.Set("snapshot-node-count", nodeCount)
 	span.Set("snapshot-edge-count", edgeCount)
 	span.Set("partial-snapshot-count", partialCount)

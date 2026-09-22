@@ -43,6 +43,10 @@ func TestTimeGraphMetricsRejectDynamicLabels(t *testing.T) {
 		{"阶段名称", func() { CMDBTimeGraphStageObserve(ctx, "secret-stage", "success", time.Second) }},
 		{"规模名称", func() { CMDBTimeGraphSizeObserve(ctx, "build", "secret-kind", 1) }},
 		{"负耗时", func() { CMDBTopologyObserve(ctx, "query", "instant", "success", -time.Second) }},
+		{"存储模式", func() { CMDBTimeGraphStorageObserve(ctx, "private-storage", "nodes", "success", 1) }},
+		{"存储种类", func() { CMDBTimeGraphStorageObserve(ctx, "shared", "private-kind", "success", 1) }},
+		{"构图阶段", func() { CMDBTimeGraphBuildPhaseObserve(ctx, "shared", "private-phase", "success", time.Second) }},
+		{"字节阶段", func() { CMDBTopologyPayloadObserve(ctx, "private-stage", "success", 1) }},
 		{"负规模", func() { CMDBTopologySizeObserve(ctx, "instant", -1, 0, 0, 0) }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -74,7 +78,7 @@ func TestTopologyRejectionReasonsAreBounded(t *testing.T) {
 func timeGraphFamilies(t *testing.T) []*dto.MetricFamily {
 	t.Helper()
 	registry := prometheus.NewRegistry()
-	registry.MustRegister(cmdbTopologyOperationsTotal, cmdbTopologyOperationSeconds, cmdbTopologyInFlight, cmdbTopologySize, cmdbTopologyRejectionsTotal, cmdbTimeGraphStageSeconds, cmdbTimeGraphSize)
+	registry.MustRegister(cmdbTopologyOperationsTotal, cmdbTopologyOperationSeconds, cmdbTopologyInFlight, cmdbTopologySize, cmdbTopologyRejectionsTotal, cmdbTimeGraphStageSeconds, cmdbTimeGraphSize, cmdbTimeGraphStorageSize, cmdbTimeGraphBuildPhaseSeconds, cmdbTopologyAdmissionActive, cmdbTopologyAdmissionLimit, cmdbTopologyPayloadBytes)
 	families, err := registry.Gather()
 	require.NoError(t, err)
 	return families

@@ -8,8 +8,11 @@ package v1beta3
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 var topologyAdmission struct {
@@ -28,16 +31,24 @@ func positiveTopologyLimit(value, fallback int) int {
 
 // AcquireSharedTopology 在进程内限制拓扑请求并发，超限立即拒绝，不在内存中
 // 排队。HTTP 层可持有名额到响应完成，模型入口复用同一名额；内部调用单独准入。
-func AcquireSharedTopology(ctx context.Context) (context.Context, func(), error) {
+func AcquireSharedTopology(ctx context.Context) (admittedCtx context.Context, releaseFn func(), err error) {
+	_, span := trace.NewSpan(ctx, "timegraph-admission")
+	defer finishTimeGraphStage(ctx, span, "admission", time.Now(), &err)
 	if err := ctx.Err(); err != nil {
 		return ctx, nil, err
 	}
 	if admitted, _ := ctx.Value(topologyAdmissionKey{}).(bool); admitted {
+		span.Set("admission-reused", true)
 		return ctx, func() {}, nil
 	}
 	topologyAdmission.Lock()
 	defer topologyAdmission.Unlock()
 	limit := positiveTopologyLimit(MaxSharedTopologyConcurrency, 2)
+	defer func() {
+		metric.CMDBTopologyAdmissionSet(topologyAdmission.active, limit)
+		span.Set("admission-active", topologyAdmission.active)
+		span.Set("admission-limit", limit)
+	}()
 	if topologyAdmission.active >= limit {
 		return ctx, nil, &ResultLimitError{Reason: "max_topology_concurrency", Count: topologyAdmission.active + 1, Limit: limit}
 	}
@@ -45,9 +56,14 @@ func AcquireSharedTopology(ctx context.Context) (context.Context, func(), error)
 	var once sync.Once
 	release := func() {
 		once.Do(func() {
+			_, releaseSpan := trace.NewSpan(ctx, "timegraph-release-admission")
+			var releaseErr error
+			defer finishTimeGraphStage(ctx, releaseSpan, "admission-release", time.Now(), &releaseErr)
 			topologyAdmission.Lock()
 			defer topologyAdmission.Unlock()
 			topologyAdmission.active--
+			releaseSpan.Set("admission-active", topologyAdmission.active)
+			metric.CMDBTopologyAdmissionSet(topologyAdmission.active, positiveTopologyLimit(MaxSharedTopologyConcurrency, 2))
 		})
 	}
 	return context.WithValue(ctx, topologyAdmissionKey{}, true), release, nil

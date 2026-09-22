@@ -169,21 +169,26 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	configSpan.Set("max-graph-node-infos", config.MaxNodeInfos)
 	var configErr error
 	configSpan.End(&configErr)
+	_, storageSpan := trace.NewSpan(ctx, "timegraph-create-storage")
 	var tg *TimeGraph
 	if topologyGrid != nil {
 		tg, err = newSharedTimeGraph(config, *topologyGrid)
 		if err != nil {
+			storageSpan.End(&err)
 			return nil, err
 		}
 	} else {
 		tg = NewTimeGraphWithConfig(config)
 	}
+	storageSpan.Set("shared", tg.shared != nil)
+	storageSpan.End(&err)
+	sourceInfoQueryCount, relationEdgeQueryCount, targetInfoQueryCount := 0, 0, 0
+	loader := &timeGraphMatrixLoader{model: m, graph: tg, start: start, end: end, step: step, override: matrixQuery, topology: topologyGrid != nil}
 	defer func() {
-		// 失败路径同样记录已物化规模，便于定位触发容量保护的位置。
-		metric.CMDBTimeGraphSizeObserve(ctx, "build", "nodes", tg.nodeBuilder.Length())
-		metric.CMDBTimeGraphSizeObserve(ctx, "build", "edges", tg.edgeCount)
-		metric.CMDBTimeGraphSizeObserve(ctx, "build", "node_infos", tg.nodeInfoCount)
-		metric.CMDBTimeGraphSizeObserve(ctx, "build", "timepoints", tg.timepointCount())
+		observeTimeGraphBuild(ctx, span, tg, loader, started, err)
+		span.Set("source-info-query-count", sourceInfoQueryCount)
+		span.Set("relation-edge-query-count", relationEdgeQueryCount)
+		span.Set("target-info-query-count", targetInfoQueryCount)
 	}()
 	if tg.shared != nil {
 		span.Set("graph-storage-mode", "shared")
@@ -214,10 +219,7 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	// step 只控制 range 查询的采样间隔，lookBack 只控制 count_over_time 的
 	// 回溯窗口；两者必须分开，否则稀疏的 range 查询会产生错误的采样结果。
 	queryStep := step
-	sourceInfoQueryCount := 0
-	relationEdgeQueryCount := 0
-	targetInfoQueryCount := 0
-	loader := &timeGraphMatrixLoader{model: m, graph: tg, start: start, end: end, step: queryStep, lookBack: lookBack, override: matrixQuery, topology: topologyGrid != nil}
+	loader.lookBack = lookBack
 	queryMatrix := loader.query
 
 	if len(sourceExpandInfo) > 0 || len(relations) == 0 || timeGraphForceSourceInfo(ctx) {
@@ -276,49 +278,8 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 		if queryErr != nil {
 			return nil, queryErr
 		}
-		for _, series := range matrix {
-			if err := relationCtx.Err(); err != nil {
-				return nil, err
-			}
-			info := make(cmdb.Matcher, len(series.Metric))
-			for _, label := range series.Metric {
-				info[label.Name] = label.Value
-			}
-			timestamps := make([]int64, len(series.Points))
-			for i, point := range series.Points {
-				timestamps[i] = point.T
-			}
-			if err = tg.AddTimeRelationWithRelation(relationCtx, relation, info, timestamps...); err != nil {
-				return nil, errors.WithMessage(err, "add time relation")
-			}
-
-			if !timeGraphTargetInfoShow(ctx) {
-				continue
-			}
-			dynamic := relation.Category == string(RelationCategoryDynamic)
-			_, targetPrefix := tg.relationEndpointPrefixes(relation, relation.V[0], relation.V[1])
-			targetInfo := tg.relationEndpointInfo(info, relation.V[1], targetPrefix, dynamic)
-			if len(targetInfo) == 0 {
-				targetInfo = info
-			}
-			targetType := relation.V[1]
-			targetKey := tg.primaryMatcherKey(targetType, targetInfo)
-			if targetKey == "" {
-				continue
-			}
-			if targetMatchersByType[targetType] == nil {
-				targetMatchersByType[targetType] = make(map[string]cmdb.Matcher)
-			}
-			targetMatchersByType[targetType][targetKey] = tg.primaryMatcher(targetType, targetInfo)
-			for _, point := range series.Points {
-				if targetIDsByTimestamp[point.T] == nil {
-					targetIDsByTimestamp[point.T] = make(map[cmdb.Resource]map[string]struct{})
-				}
-				if targetIDsByTimestamp[point.T][targetType] == nil {
-					targetIDsByTimestamp[point.T][targetType] = make(map[string]struct{})
-				}
-				targetIDsByTimestamp[point.T][targetType][targetKey] = struct{}{}
-			}
+		if err = tg.applyRelationMatrix(relationCtx, matrix, relation, targetMatchersByType, targetIDsByTimestamp); err != nil {
+			return nil, err
 		}
 	}
 
@@ -329,24 +290,6 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 		}
 	}
 
-	span.Set("graph-legacy-timepoint-count", len(tg.timeGraph))
-	if tg.shared != nil {
-		span.Set("graph-shared-edge-count", len(tg.shared.edgeBits))
-		versions := 0
-		for _, infos := range tg.shared.nodeInfos {
-			versions += len(infos)
-		}
-		span.Set("graph-attribute-version-count", versions)
-	}
-	span.Set("graph-node-count", tg.nodeBuilder.Length())
-	span.Set("graph-edge-count", tg.edgeCount)
-	span.Set("graph-node-info-count", tg.nodeInfoCount)
-	span.Set("graph-timepoint-count", tg.timepointCount())
-	span.Set("graph-partial-point-count", len(tg.partialTimes))
-	span.Set("matrix-query-count", loader.queryCount)
-	span.Set("source-info-query-count", sourceInfoQueryCount)
-	span.Set("relation-edge-query-count", relationEdgeQueryCount)
-	span.Set("target-info-query-count", targetInfoQueryCount)
 	return tg, nil
 }
 
@@ -360,6 +303,7 @@ type timeGraphMatrixLoader struct {
 	override               timeGraphMatrixQuery
 	topology               bool
 	queryCount, pointCount int
+	queryDuration          time.Duration
 }
 
 func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *structured.QueryTs) (matrix pl.Matrix, partial bool, err error) {
@@ -384,7 +328,11 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 				outcome = metric.CMDBRelationResultEmpty
 			}
 		}
-		metric.CMDBTimeGraphStageObserve(queryCtx, stage, outcome, time.Since(queryStarted))
+		duration := time.Since(queryStarted)
+		loader.queryDuration += duration
+		span.Set("matrix-cumulative-point-count", loader.pointCount)
+		SetTimeGraphLimitTrace(span, err)
+		metric.CMDBTimeGraphStageObserve(queryCtx, stage, outcome, duration)
 	}()
 	loader.queryCount++
 	span.Set("query-mode", map[bool]string{true: "instant", false: "range"}[instant])
@@ -534,21 +482,8 @@ func (loader *timeGraphMatrixLoader) addSourceInfo(ctx context.Context, spaceUID
 		if queryErr != nil {
 			return queryCount, errors.WithMessage(queryErr, "query source info relation")
 		}
-		for _, series := range matrix {
-			if err := infoCtx.Err(); err != nil {
-				return queryCount, err
-			}
-			info := make(cmdb.Matcher, len(series.Metric))
-			for _, label := range series.Metric {
-				info[label.Name] = label.Value
-			}
-			timestamps := make([]int64, len(series.Points))
-			for i, point := range series.Points {
-				timestamps[i] = point.T
-			}
-			if err = tg.AddTimeNode(infoCtx, sourceType, info, timestamps...); err != nil {
-				return queryCount, errors.WithMessage(err, "add source info node")
-			}
+		if err = tg.applySourceMatrix(infoCtx, matrix, sourceType); err != nil {
+			return queryCount, err
 		}
 	}
 
@@ -592,33 +527,22 @@ func (loader *timeGraphMatrixLoader) addTargetInfo(ctx context.Context, spaceUID
 		if queryErr != nil {
 			return queryCount, errors.WithMessage(queryErr, "query target info relation")
 		}
-		for _, series := range matrix {
-			if err := infoCtx.Err(); err != nil {
-				return queryCount, err
-			}
-			info := make(cmdb.Matcher, len(series.Metric))
-			for _, label := range series.Metric {
-				info[label.Name] = label.Value
-			}
-			timestamps := make([]int64, 0, len(series.Points))
-			key := tg.primaryMatcherKey(targetType, info)
-			for _, point := range series.Points {
-				if _, ok := targetIDsByTimestamp[point.T][targetType][key]; ok {
-					timestamps = append(timestamps, point.T)
-				}
-			}
-			if len(timestamps) > 0 {
-				if err = tg.AddTimeNode(infoCtx, targetType, info, timestamps...); err != nil {
-					return queryCount, errors.WithMessage(err, "add target info node")
-				}
-			}
+		if err = tg.applyTargetMatrix(infoCtx, matrix, targetType, targetIDsByTimestamp); err != nil {
+			return queryCount, err
 		}
 	}
 
 	return queryCount, nil
 }
 
-func (loader *timeGraphMatrixLoader) validateMatrix(queryCtx context.Context, matrix pl.Matrix, err error) (int, error) {
+func (loader *timeGraphMatrixLoader) validateMatrix(queryCtx context.Context, matrix pl.Matrix, err error) (pointCount int, validationErr error) {
+	queryCtx, span := trace.NewSpan(queryCtx, "timegraph-validate-matrix")
+	defer finishTimeGraphStage(queryCtx, span, "matrix-validation", time.Now(), &validationErr)
+	defer func() {
+		span.Set("matrix-series-count", len(matrix))
+		span.Set("matrix-counted-point-count", pointCount)
+		span.Set("matrix-cumulative-point-count", loader.pointCount)
+	}()
 	tg := loader.graph
 	start, end, queryStep := loader.start, loader.end, loader.step
 	if loader.topology && metadata.BackendResponseLimitExceeded(queryCtx) {
@@ -627,7 +551,7 @@ func (loader *timeGraphMatrixLoader) validateMatrix(queryCtx context.Context, ma
 	if loader.topology && err == nil && len(matrix) > tg.maxNodes {
 		err = &ResultLimitError{Reason: "max_topology_matrix_series", Count: len(matrix), Limit: tg.maxNodes}
 	}
-	pointCount := 0
+	pointCount = 0
 	for _, series := range matrix {
 		if err != nil {
 			break

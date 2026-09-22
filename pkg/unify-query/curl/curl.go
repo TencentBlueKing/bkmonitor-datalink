@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -87,6 +88,14 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 		opt.MaxResponseBytes = limit
 	}
 
+	span.Set("response-body-byte-limit", opt.MaxResponseBytes)
+	readBody := false
+	defer func() {
+		if readBody && metadata.BackendResponseLimit(ctx) > 0 {
+			metric.CMDBTopologyPayloadObserve(ctx, "backend-response", metric.CMDBTimeGraphErrorResult(err), size)
+		}
+	}()
+
 	client := http.Client{
 		Transport: otelhttp.NewTransport(http.DefaultTransport),
 		Timeout:   opt.Timeout,
@@ -129,7 +138,9 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 	}
 
 	roundTripStarted := time.Now()
+	_, headersSpan := trace.NewSpan(ctx, "http-curl-response-headers")
 	resp, err := client.Do(req)
+	headersSpan.End(&err)
 	span.Set("response-headers-duration", time.Since(roundTripStarted))
 	if err != nil {
 		return size, HandleClientError(ctx, metadata.MsgHttpCurl, opt.UrlPath, err)
@@ -152,6 +163,7 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 		).Error(ctx, err)
 	}
 
+	readBody = true
 	if c.decoder != nil {
 		decodeStarted := time.Now()
 		reader := io.Reader(resp.Body)
@@ -159,7 +171,14 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 			// 额外读取一个字节，用于区分“恰好达到上限”和“实际已经超限”。
 			reader = io.LimitReader(resp.Body, opt.MaxResponseBytes+1)
 		}
-		size, err = c.decoder(ctx, reader, res)
+		decodeCtx, decodeSpan := trace.NewSpan(ctx, "http-curl-decode-body")
+		size, err = c.decoder(decodeCtx, reader, res)
+		decodeSpan.Set("decoded-bytes", size)
+		decodeErr := err
+		if opt.MaxResponseBytes > 0 && int64(size) > opt.MaxResponseBytes {
+			decodeErr = &ResponseBodyLimitError{Limit: opt.MaxResponseBytes}
+		}
+		decodeSpan.End(&decodeErr)
 		span.Set("response-body-decode-duration", time.Since(decodeStarted))
 		span.Set("response-body-bytes", size)
 		if opt.MaxResponseBytes > 0 && int64(size) > opt.MaxResponseBytes {
@@ -174,13 +193,21 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 			// 额外读取一个字节，用于区分“恰好达到上限”和“实际已经超限”。
 			reader = io.LimitReader(resp.Body, opt.MaxResponseBytes+1)
 		}
+		_, bodySpan := trace.NewSpan(ctx, "http-curl-read-body")
 		_, err = io.Copy(buf, reader)
+		bodySpan.Set("read-bytes", buf.Len())
+		bodySpan.Set("read-byte-limit", opt.MaxResponseBytes)
+		bodyErr := err
+		if opt.MaxResponseBytes > 0 && int64(buf.Len()) > opt.MaxResponseBytes {
+			bodyErr = &ResponseBodyLimitError{Limit: opt.MaxResponseBytes}
+		}
+		bodySpan.End(&bodyErr)
 		span.Set("response-body-read-duration", time.Since(bodyReadStarted))
+		size = buf.Len()
+		span.Set("response-body-bytes", size)
 		if err != nil {
 			return size, err
 		}
-		size = buf.Len()
-		span.Set("response-body-bytes", size)
 		if opt.MaxResponseBytes > 0 && int64(size) > opt.MaxResponseBytes {
 			metadata.MarkBackendResponseLimitExceeded(ctx)
 			return size, &ResponseBodyLimitError{Limit: opt.MaxResponseBytes}
@@ -191,7 +218,9 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 		decodeStarted := time.Now()
 		decoder := encodingJson.NewDecoder(buf)
 		decoder.UseNumber()
+		_, decodeSpan := trace.NewSpan(ctx, "http-curl-json-decode")
 		err = decoder.Decode(&res)
+		decodeSpan.End(&err)
 		span.Set("json-decode-duration", time.Since(decodeStarted))
 		return size, err
 	}

@@ -487,6 +487,7 @@
       "id": 19,
       "type": "timeseries",
       "title": "TimeGraph 构图、取数与遍历 P95",
+      "description": "topology-traversal 包含 state 与 materialize 子阶段；嵌套阶段不要相加，encode 不含最终 socket 写出。",
       "gridPos": {
         "x": 0,
         "y": 77,
@@ -566,6 +567,188 @@
           }
         }
       ]
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "共享拓扑构图取数与本地耗时 P95",
+      "gridPos": {
+        "x": 0,
+        "y": 85,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "histogram_quantile(0.95, sum by (le, storage, phase, result) (rate(unify_query_cmdb_timegraph_build_phase_seconds_bucket[5m])))",
+          "type": "range",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          }
+        }
+      ],
+      "description": "每次 build 独立累计 Matrix 调用与余下本地墙钟；local 不是 CPU 时间，不相减两个 P95。"
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "共享拓扑存储对象与逻辑时间记录 P95",
+      "gridPos": {
+        "x": 12,
+        "y": 85,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "histogram_quantile(0.95, sum by (le, storage, kind, result) (rate(unify_query_cmdb_timegraph_storage_size_bucket[5m])))",
+          "type": "range",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          }
+        }
+      ],
+      "description": "relations/attribute_versions 与逻辑时间记录口径不同，均不是堆字节；legacy_graphs 在 shared 应为零。"
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "共享拓扑实际准入占用与限制",
+      "gridPos": {
+        "x": 0,
+        "y": 93,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "unify_query_cmdb_topology_admission_active",
+          "type": "range",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          }
+        },
+        {
+          "refId": "B",
+          "format": "time_series",
+          "source": "unify_query_cmdb_topology_admission_limit",
+          "type": "range",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          }
+        }
+      ],
+      "description": "保留各采集实例标签，按进程比较；名额持有到 HTTP/代理响应写完。limit 首次请求前为零。"
+    },
+    {
+      "id": 24,
+      "type": "timeseries",
+      "title": "共享拓扑读取与单项编码字节 P95",
+      "gridPos": {
+        "x": 12,
+        "y": 93,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "bkmonitor-timeseries-datasource",
+        "uid": "000000002"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "source": "histogram_quantile(0.95, sum by (le, stage, result) (rate(unify_query_cmdb_topology_payload_bytes_bucket[5m])))",
+          "type": "range",
+          "datasource": {
+            "type": "bkmonitor-timeseries-datasource",
+            "uid": "000000002"
+          }
+        }
+      ],
+      "description": "请求/后端超限为 limit+1 的已读下界；response-item 为已编码单项，即使批次随后被拒绝；不是整批 wire bytes。"
     }
   ],
   "refresh": "30s",

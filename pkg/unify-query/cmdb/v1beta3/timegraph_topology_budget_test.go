@@ -92,6 +92,8 @@ func TestSharedTopologyConcurrentAdmissionAndRecovery(t *testing.T) {
 			t.Fatal("backend was not reached")
 		}
 	}
+	require.Equal(t, 2.0, readTimeGraphMetric(t, "cmdb_topology_admission_active", nil, "gauge"))
+	require.Equal(t, 2.0, readTimeGraphMetric(t, "cmdb_topology_admission_limit", nil, "gauge"))
 	_, err := model.QuerySharedTopology(metadata.InitHashID(context.Background()), request)
 	var limit *ResultLimitError
 	require.ErrorAs(t, err, &limit)
@@ -104,13 +106,16 @@ func TestSharedTopologyConcurrentAdmissionAndRecovery(t *testing.T) {
 	require.NoError(t, err)
 	_, nestedRelease, err := AcquireSharedTopology(admitted)
 	require.NoError(t, err)
+	require.Equal(t, 1.0, readTimeGraphMetric(t, "cmdb_topology_admission_active", nil, "gauge"))
 	nestedRelease()
+	require.Equal(t, 1.0, readTimeGraphMetric(t, "cmdb_topology_admission_active", nil, "gauge"))
 	release()
 	release()
 	topologyAdmission.Lock()
 	active := topologyAdmission.active
 	topologyAdmission.Unlock()
 	require.Zero(t, active)
+	require.Zero(t, readTimeGraphMetric(t, "cmdb_topology_admission_active", nil, "gauge"))
 }
 
 func TestTopologyJSONByteBound(t *testing.T) {

@@ -107,7 +107,7 @@ func CMDBTopologyRejectInc(ctx context.Context, mode, reason string) {
 	switch reason {
 	case "invalid_request", "max_shared_topology_points", "max_graph_nodes", "max_graph_edges", "max_graph_node_infos", "max_graph_results", "max_targets",
 		"max_response_bytes", "max_topology_matrix_points", "max_topology_matrix_series",
-		"max_topology_output_elements", "max_topology_output_bytes", "max_topology_concurrency", "max_topology_queries":
+		"max_topology_output_elements", "max_topology_output_bytes", "max_topology_concurrency", "max_topology_queries", "max_topology_request_bytes":
 	default:
 		reason = "other"
 	}
@@ -150,7 +150,7 @@ func timeGraphResult(result string) bool {
 
 func timeGraphStage(stage string) bool {
 	switch stage {
-	case "build", "source-info", "relation-edge", "target-info", "topology-traversal":
+	case "build", "source-info", "relation-edge", "target-info", "topology-traversal", "topology-state", "topology-materialize", "topology-convert", "topology-encode", "apply-relation", "apply-source-info", "apply-target-info", "matrix-validation", "topology-propagation", "cleanup", "admission", "admission-release":
 		return true
 	}
 	return false

@@ -212,7 +212,9 @@ func (q *TimeGraph) FindSharedTopology(ctx context.Context, grid TopologyGrid, q
 	stateSpan.Set("allowed-category-count", len(query.AllowedCategories))
 	stateSpan.Set("allowed-relation-type-count", len(query.AllowedRelationTypes))
 	stateSpan.Set("direction", query.Direction)
+	stateStarted := time.Now()
 	nodeBits, edges, stateErr := q.sharedTopologyState(ctx, grid, query)
+	metric.CMDBTimeGraphStageObserve(ctx, "topology-state", metric.CMDBTimeGraphErrorResult(stateErr), time.Since(stateStarted))
 	if stateErr == nil {
 		stateSpan.Set("graph-node-count", len(nodeBits))
 		stateSpan.Set("graph-edge-count", len(edges))
@@ -224,56 +226,10 @@ func (q *TimeGraph) FindSharedTopology(ctx context.Context, grid TopologyGrid, q
 	span.Set("graph-node-count", len(nodeBits))
 	span.Set("graph-edge-count", len(edges))
 
-	reachable := make(map[uint64]uint64)
-	frontier := make(map[uint64]uint64)
-	for node, bits := range nodeBits {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		resourceType, info := q.nodeBuilder.Info(node)
-		if resourceType != query.SourceType {
-			continue
-		}
-		matchedBits := uint64(0)
-		for index, timestamp := range grid.Timestamps {
-			if bits&(uint64(1)<<index) == 0 {
-				continue
-			}
-			_, timestampInfo := q.nodeInfoAt(timestamp, node, info)
-			if q.matchesPartial(timestampInfo, query.SourceMatcher) {
-				matchedBits |= uint64(1) << index
-			}
-		}
-		if matchedBits != 0 {
-			reachable[node] = matchedBits
-			frontier[node] = matchedBits
-		}
-	}
-	span.Set("source-match-node-count", len(frontier))
-
-	for level := 0; level < query.MaxHops; level++ {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		discovered := make(map[uint64]uint64)
-		for _, edge := range edges {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			candidate := frontier[edge.key.source] & edge.activeBits & nodeBits[edge.key.target]
-			if candidate != 0 {
-				discovered[edge.key.target] |= candidate
-			}
-		}
-		nextFrontier := make(map[uint64]uint64)
-		for node, candidate := range discovered {
-			newBits := candidate &^ reachable[node]
-			if newBits != 0 {
-				reachable[node] |= newBits
-				nextFrontier[node] = newBits
-			}
-		}
-		frontier = nextFrontier
+	reachable, seedCount, err := q.propagateSharedTopology(ctx, grid, query, nodeBits, edges)
+	span.Set("source-match-node-count", seedCount)
+	if err != nil {
+		return nil, err
 	}
 	span.Set("reachable-node-count", len(reachable))
 	span.Set("traversal-level-count", query.MaxHops)
@@ -296,9 +252,97 @@ func (q *TimeGraph) FindSharedTopology(ctx context.Context, grid TopologyGrid, q
 	return snapshots, nil
 }
 
+func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, nodeBits map[uint64]uint64, edges []sharedTopologyEdgeState) (result map[uint64]uint64, seedCount int, err error) {
+	ctx, span := trace.NewSpan(ctx, "timegraph-propagate-topology")
+	defer finishTimeGraphStage(ctx, span, "topology-propagation", time.Now(), &err)
+	span.Set("max-hops", query.MaxHops)
+	reachable := make(map[uint64]uint64)
+	frontier := make(map[uint64]uint64)
+	frontierSizes := make([]int64, 0, 8)
+	completed := 0
+	defer func() {
+		span.Set("frontier-nodes-by-level", frontierSizes)
+		span.Set("completed-levels", completed)
+		span.Set("frontier-levels-truncated", completed >= 64)
+		span.Set("reachable-node-count", len(reachable))
+	}()
+	for node, bits := range nodeBits {
+		if err := ctx.Err(); err != nil {
+			return nil, seedCount, err
+		}
+		resourceType, info := q.nodeBuilder.Info(node)
+		if resourceType != query.SourceType {
+			continue
+		}
+		matchedBits := uint64(0)
+		for index, timestamp := range grid.Timestamps {
+			if bits&(uint64(1)<<index) == 0 {
+				continue
+			}
+			_, timestampInfo := q.nodeInfoAt(timestamp, node, info)
+			if q.matchesPartial(timestampInfo, query.SourceMatcher) {
+				matchedBits |= uint64(1) << index
+			}
+		}
+		if matchedBits != 0 {
+			reachable[node] = matchedBits
+			frontier[node] = matchedBits
+		}
+	}
+	seedCount = len(frontier)
+	span.Set("source-match-node-count", seedCount)
+	if len(frontierSizes) < 64 {
+		frontierSizes = append(frontierSizes, int64(len(frontier)))
+	}
+
+	for level := 0; level < query.MaxHops; level++ {
+		if err := ctx.Err(); err != nil {
+			return nil, seedCount, err
+		}
+		discovered := make(map[uint64]uint64)
+		for _, edge := range edges {
+			if err := ctx.Err(); err != nil {
+				return nil, seedCount, err
+			}
+			candidate := frontier[edge.key.source] & edge.activeBits & nodeBits[edge.key.target]
+			if candidate != 0 {
+				discovered[edge.key.target] |= candidate
+			}
+		}
+		nextFrontier := make(map[uint64]uint64)
+		for node, candidate := range discovered {
+			newBits := candidate &^ reachable[node]
+			if newBits != 0 {
+				reachable[node] |= newBits
+				nextFrontier[node] = newBits
+			}
+		}
+		frontier = nextFrontier
+		completed++
+		if len(frontierSizes) < 64 {
+			frontierSizes = append(frontierSizes, int64(len(frontier)))
+		}
+	}
+	span.Set("reachable-node-count", len(reachable))
+	span.Set("traversal-level-count", query.MaxHops)
+
+	return reachable, seedCount, nil
+}
+
 // materializeSharedTopology 在预算内生成独立快照；调用方持有图的读锁。
-func (q *TimeGraph) materializeSharedTopology(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, reachable map[uint64]uint64, edges []sharedTopologyEdgeState) ([]SharedTopologySnapshot, error) {
+func (q *TimeGraph) materializeSharedTopology(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, reachable map[uint64]uint64, edges []sharedTopologyEdgeState) (snapshots []SharedTopologySnapshot, err error) {
+	ctx, span := trace.NewSpan(ctx, "timegraph-materialize-topology")
+	defer span.End(&err)
+	started := time.Now()
 	budget := newTopologyOutputBudget(grid, query.PartialTimestamps)
+	defer func() {
+		span.Set("output-budget-elements-used", budget.elements)
+		span.Set("output-budget-elements-limit", budget.maxElements)
+		span.Set("output-budget-bytes-used", budget.bytes)
+		span.Set("output-budget-bytes-limit", budget.maxBytes)
+		SetTimeGraphLimitTrace(span, err)
+		metric.CMDBTimeGraphStageObserve(ctx, "topology-materialize", metric.CMDBTimeGraphErrorResult(err), time.Since(started))
+	}()
 	if err := budget.checkBytes(0); err != nil {
 		return nil, err
 	}

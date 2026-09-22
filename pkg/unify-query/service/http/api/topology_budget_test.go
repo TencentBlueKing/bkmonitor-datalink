@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta3"
@@ -28,12 +30,19 @@ func TestTopologyHandlerBudgets(t *testing.T) {
 		{name: "批次数量过大", body: `{"query_list":[` + strings.Repeat(`{},`, 16) + `{}]}`, reason: "max_topology_queries"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			reason := "max_topology_queries"
+			if test.name == "请求体过大" {
+				reason = "max_topology_request_bytes"
+			}
+			before := topologyObservation(t, "cmdb_topology_rejections_total", map[string]string{"query_mode": "instant", "reason": reason}).GetCounter().GetValue()
 			w := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(w)
 			c.Request = httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(test.body))
 			HandlerAPIRelationV1Beta3Topology(c)
 			require.Equal(t, http.StatusBadRequest, w.Code)
 			require.Contains(t, w.Body.String(), test.reason)
+			require.Equal(t, before+1, topologyObservation(t, "cmdb_topology_rejections_total", map[string]string{"query_mode": "instant", "reason": reason}).GetCounter().GetValue())
+			require.Zero(t, topologyObservation(t, "cmdb_topology_admission_active", nil).GetGauge().GetValue())
 		})
 	}
 	old := v1beta3.MaxSharedTopologyOutputBytes
@@ -53,6 +62,7 @@ type topologyAdmissionWriter struct {
 }
 
 func (w *topologyAdmissionWriter) Write(body []byte) (int, error) {
+	require.Equal(w.t, 1.0, topologyObservation(w.t, "cmdb_topology_admission_active", nil).GetGauge().GetValue())
 	_, release, err := v1beta3.AcquireSharedTopology(context.Background())
 	if err == nil {
 		release()
@@ -76,4 +86,39 @@ func TestTopologyAdmissionHeldThroughProxyResponse(t *testing.T) {
 	_, release, err := v1beta3.AcquireSharedTopology(context.Background())
 	require.NoError(t, err)
 	release()
+}
+
+func topologyObservation(t *testing.T, name string, labels map[string]string) *dto.Metric {
+	t.Helper()
+	families, err := prometheus.DefaultGatherer.Gather()
+	require.NoError(t, err)
+	for _, f := range families {
+		if f.GetName() != "unify_query_"+name {
+			continue
+		}
+		for _, m := range f.Metric {
+			matched := len(m.Label) == len(labels)
+			for _, l := range m.Label {
+				matched = matched && labels[l.GetName()] == l.GetValue()
+			}
+			if matched {
+				return m
+			}
+		}
+	}
+	return &dto.Metric{}
+}
+
+func TestTopologyEncodedItemObservations(t *testing.T) {
+	log.InitTestLogger()
+	labels := map[string]string{"stage": "response-item", "result": "success"}
+	before := topologyObservation(t, "cmdb_topology_payload_bytes", labels).GetHistogram()
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{"query_list":[{},{}]}`))
+	HandlerAPIRelationV1Beta3Topology(c)
+	require.Equal(t, http.StatusOK, w.Code)
+	after := topologyObservation(t, "cmdb_topology_payload_bytes", labels).GetHistogram()
+	require.Equal(t, before.GetSampleCount()+2, after.GetSampleCount())
+	require.Greater(t, after.GetSampleSum(), before.GetSampleSum())
 }

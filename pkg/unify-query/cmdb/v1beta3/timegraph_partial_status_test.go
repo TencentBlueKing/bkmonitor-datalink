@@ -134,6 +134,16 @@ func TestSharedTopologyPartialStatusCases(t *testing.T) {
 				operationLabels := map[string]string{"scope": "query", "query_mode": mode, "result": tt.wantResult}
 				beforeOperations := readTimeGraphMetric(t, "cmdb_topology_operations_total", operationLabels, "counter")
 				result, err := model.QuerySharedTopology(ctx, request)
+				if !tt.queryError && !tt.empty {
+					found := false
+					for _, span := range recorder.Ended() {
+						if span.Name() == "timegraph-apply-target-info-matrix" {
+							found = true
+						}
+					}
+					require.True(t, found, "target-info Matrix writes must have their own span")
+				}
+
 				require.Equal(t, parentStatus, metadata.GetStatus(ctx), "子查询不能反向修改父请求状态")
 				if tt.queryError {
 					require.ErrorContains(t, err, "查询执行失败")

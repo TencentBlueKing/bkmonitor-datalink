@@ -58,7 +58,6 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 	}
 	ctx, span := trace.NewSpan(c.Request.Context(), spanName)
 	var handlerErr error
-	defer span.End(&handlerErr)
 	resp := &response{c: c}
 	queryMode := metric.CMDBRelationQueryModeInstant
 	if rangeQuery {
@@ -66,12 +65,22 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 	}
 	started := time.Now()
 	requestResult := metric.CMDBRelationResultSuccess
-	defer func() {
+	finishRequest := func() {
+		if writeErr := proxy.ResponseWriteError(c); handlerErr == nil && writeErr != nil {
+			handlerErr = writeErr
+		}
 		if handlerErr != nil && requestResult != metric.CMDBRelationResultRejected {
 			requestResult = metric.CMDBTimeGraphErrorResult(handlerErr)
 		}
 		metric.CMDBTopologyObserve(ctx, metric.CMDBTopologyScopeRequest, queryMode, requestResult, time.Since(started))
-	}()
+		v1beta3.SetTimeGraphLimitTrace(span, handlerErr)
+		span.End(&handlerErr)
+	}
+	if _, proxied := c.Get(proxy.ContextConfigUnifyResponseProcess); proxied {
+		proxy.DeferResponseCleanup(c, finishRequest)
+	} else {
+		defer finishRequest()
+	}
 	span.Set("query-mode", queryMode)
 	span.Set("handler-headers", c.Request.Header)
 
@@ -89,20 +98,36 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		defer release()
 	}
 	const maxRequestBytes = 1024 * 1024
+	_, readSpan := trace.NewSpan(ctx, "topology-read-request-body")
 	body, err := io.ReadAll(io.LimitReader(c.Request.Body, maxRequestBytes+1))
 	if err == nil && len(body) > maxRequestBytes {
-		err = fmt.Errorf("topology request exceeds maximum size of %d bytes", maxRequestBytes)
+		err = fmt.Errorf("topology request exceeds maximum size of %d bytes: %w", maxRequestBytes, &v1beta3.ResultLimitError{Reason: "max_topology_request_bytes", Count: len(body), Limit: maxRequestBytes})
 	}
+	readSpan.Set("request-body-bytes", len(body))
+	readSpan.Set("request-body-byte-limit", maxRequestBytes)
+	v1beta3.SetTimeGraphLimitTrace(readSpan, err)
+	readSpan.End(&err)
 	request := new(cmdb.SharedTopologyRequest)
 	if err == nil {
+		_, decodeSpan := trace.NewSpan(ctx, "topology-decode-request")
 		err = json.Unmarshal(body, request)
+		decodeSpan.Set("query-count", len(request.QueryList))
+		decodeSpan.End(&err)
 	}
+	span.Set("request-body-bytes", len(body))
 	if err != nil {
 		handlerErr = err
 		requestResult = metric.CMDBRelationResultRejected
+		reason := "invalid_request"
+		if len(body) > maxRequestBytes {
+			reason = "max_topology_request_bytes"
+		}
+		metric.CMDBTopologyRejectInc(ctx, queryMode, reason)
+		metric.CMDBTopologyPayloadObserve(ctx, "request-body", metric.CMDBRelationResultRejected, len(body))
 		resp.failed(ctx, err)
 		return
 	}
+	metric.CMDBTopologyPayloadObserve(ctx, "request-body", metric.CMDBRelationResultSuccess, len(body))
 	const maxQueries = 16
 	if len(request.QueryList) > maxQueries {
 		handlerErr = &v1beta3.ResultLimitError{Reason: "max_topology_queries", Count: len(request.QueryList), Limit: maxQueries}
@@ -113,7 +138,9 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 	}
 	span.Set("query-count", len(request.QueryList))
 	metric.CMDBRelationQueryListSizeObserve(ctx, metric.CMDBRelationRouteTimeGraph, queryMode, len(request.QueryList))
+	_, modelSpan := trace.NewSpan(ctx, "topology-get-model")
 	model, err := v1beta3.GetModel(ctx)
+	modelSpan.End(&err)
 	if err != nil {
 		handlerErr = err
 		resp.failed(ctx, err)
@@ -132,6 +159,10 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		Data:    make([]cmdb.SharedTopologyResponseData, len(request.QueryList)),
 	}
 	responseBytes := 1024
+	defer func() {
+		span.Set("response-budget-bytes-used", responseBytes)
+		span.Set("response-budget-bytes-limit", v1beta3.TopologyOutputByteLimit())
+	}()
 	failedQueryCount := 0
 	partialQueryCount := 0
 	itemSpanName := "handler-api-relation-v1beta3-topology-item"
@@ -192,7 +223,14 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		if len(item.Message) > 4096 {
 			item.Message = item.Message[:4096]
 		}
+		_, encodeSpan := trace.NewSpan(queryCtx, "timegraph-encode-topology-item")
+		encodeStarted := time.Now()
 		encoded, encodeErr := json.Marshal(item)
+		encodeSpan.Set("encoded-item-bytes", len(encoded))
+		encodeSpan.End(&encodeErr)
+		metric.CMDBTimeGraphStageObserve(queryCtx, "topology-encode", metric.CMDBTimeGraphErrorResult(encodeErr), time.Since(encodeStarted))
+		metric.CMDBTopologyPayloadObserve(queryCtx, "response-item", metric.CMDBTimeGraphErrorResult(encodeErr), len(encoded))
+		querySpan.Set("encoded-item-bytes", len(encoded))
 		if encodeErr != nil {
 			querySpan.End(&encodeErr)
 			handlerErr = encodeErr
@@ -201,6 +239,7 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		}
 		if len(encoded) > v1beta3.TopologyOutputByteLimit()-responseBytes {
 			queryErr = &v1beta3.ResultLimitError{Reason: "max_topology_output_bytes", Count: responseBytes + len(encoded), Limit: v1beta3.TopologyOutputByteLimit()}
+			v1beta3.SetTimeGraphLimitTrace(querySpan, queryErr)
 			querySpan.End(&queryErr)
 			handlerErr = queryErr
 			requestResult = metric.CMDBRelationResultRejected
@@ -227,6 +266,7 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		if partialCount > 0 {
 			partialQueryCount++
 		}
+		v1beta3.SetTimeGraphLimitTrace(querySpan, queryErr)
 		querySpan.End(&queryErr)
 		data.Data[index] = item
 	}

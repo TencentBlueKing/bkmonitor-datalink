@@ -251,7 +251,10 @@ func spanSetVmQueryClusterIfPresent(span *trace.Span, prefix string, v *metadata
 	span.Set(key, string(b))
 }
 
-func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Vector, error) {
+func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (result promql.Vector, err error) {
+	_, formatSpan := trace.NewSpan(ctx, "victoria-metrics-vectorFormat")
+	defer formatSpan.End(&err)
+	defer func() { formatSpan.Set("output-series-count", len(result)) }()
 	if !resp.Result || resp.Code != OK {
 		return nil, metadata.NewMessage(
 			metadata.MsgQueryVictoriaMetrics,
@@ -317,7 +320,10 @@ func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *tra
 	return nil, nil
 }
 
-func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Matrix, bool, error) {
+func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (result promql.Matrix, partial bool, err error) {
+	_, formatSpan := trace.NewSpan(ctx, "victoria-metrics-matrixFormat")
+	defer formatSpan.End(&err)
+	defer func() { formatSpan.Set("output-series-count", len(result)) }()
 	if !resp.Result || resp.Code != OK {
 		return nil, false, metadata.NewMessage(
 			metadata.MsgQueryVictoriaMetrics,

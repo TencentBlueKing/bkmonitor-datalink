@@ -90,6 +90,9 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	if dynamic != nil {
 		tasks = append(tasks, taskgroup.Task{Name: "dynamic-config", Run: dynamic.Run})
 	}
+	tasks = append(tasks, taskgroup.Task{Name: "active-alert-indexes", Run: func(ctx context.Context) error {
+		return runActiveIndexes(ctx, cfg, sources, logger)
+	}})
 	if cfg.ControlPlane != nil && cfg.ControlPlane.RedisStream != nil && cfg.Lifecycle != nil {
 		settings := cfg.ControlPlane.RedisStream.WithDefaults()
 		after := ""

@@ -36,6 +36,16 @@ export const strategyResultSchema = z.object({
   complete: z.boolean(),
   warnings: z.array(z.string()),
   redis: z.object({
+    projection: z
+      .object({
+        lastSuccess: z.string().nullable(),
+        lastAttempt: z.string().nullable(),
+        error: z.string().nullable(),
+        discoverySuccess: z.string().nullable(),
+        discoveryError: z.string().nullable(),
+        pending: z.boolean(),
+      })
+      .optional(),
     complete: z.boolean(),
     total: z.number().nullable(),
     scanned: z.number(),

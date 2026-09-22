@@ -7,20 +7,24 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package strategyhook
+package config
 
-// 脚本内判定实际变化，避免多个 Worker 在独立 SISMEMBER 与写入之间竞争而重复通知。
-// PUBLISH 返回 0 仅表示没有订阅者。脚本原子执行不代表错误回滚：发布失败时集合可能已改变。
-const changeScript = `
-local changed = redis.call(ARGV[1], KEYS[1], ARGV[2])
-if changed > 0 then
-  redis.call('PUBLISH', ARGV[3], ARGV[4])
-end
-return changed
-`
+import "testing"
 
-// changeNotice 只携带租户和策略；订阅者使用约定的 Redis 连接与前缀定位集合。
-type changeNotice struct {
-	BKTenantID string `json:"bk_tenant_id"`
-	StrategyID string `json:"strategy_id"`
+func TestActiveIndexDefaultsAndLimits(t *testing.T) {
+	c := ActiveIndexConfig{}.WithDefaults()
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if c.PollIntervalSeconds != 1 || c.ReconcileIntervalSeconds != 60 {
+		t.Fatal("unexpected defaults")
+	}
+	for _, bad := range []ActiveIndexConfig{{MaxRows: -1}, {MaxBytes: 65 << 20}, {BatchSize: 101}, {OperationTimeoutSeconds: 61}, {PollIntervalSeconds: 61}} {
+		if err := bad.Validate(); err == nil {
+			t.Fatalf("accepted %+v", bad)
+		}
+	}
+	if err := (ControlPlaneConfig{ActiveIndex: &ActiveIndexConfig{}}).Validate(); err != nil {
+		t.Fatal(err)
+	}
 }

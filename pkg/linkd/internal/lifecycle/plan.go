@@ -368,7 +368,7 @@ func (p *Processor) executePlan(ctx context.Context, stored store.StoredEvent) (
 			return store.StoredEvent{}, err
 		}
 	}
-	// 保持旧告警终态 hook 在新告警创建 hook 之前，Redis 活跃索引最终收敛到新告警。
+	// 保持旧告警终态输出在新告警创建输出之前；活跃索引 Hook 只合并刷新提示。
 	logs := make([]domain.AlertLog, 0, len(plan.Logs)+len(plan.Mutations)*len(p.finalHooks))
 	for index, mutation := range plan.Mutations {
 		for _, log := range plan.Logs {

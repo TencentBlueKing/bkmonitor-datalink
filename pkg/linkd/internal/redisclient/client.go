@@ -20,6 +20,8 @@ import (
 
 // Options 描述 Redis 数据节点认证和可选的 Sentinel master 发现配置。
 type Options struct {
+	// PoolSize 非零时限制目标专属客户端的连接池，零值沿用既有默认。
+	PoolSize int
 	// ContextTimeoutEnabled 使 socket deadline 服从调用方截止时间；仅毫秒级输出插件启用。
 	ContextTimeoutEnabled bool
 	Address               string
@@ -76,6 +78,8 @@ func New(options Options) (*redis.Client, error) {
 	}
 	if options.Sentinel == nil {
 		return redis.NewClient(&redis.Options{
+			PoolSize:              options.PoolSize,
+			MaxActiveConns:        options.PoolSize,
 			ContextTimeoutEnabled: options.ContextTimeoutEnabled,
 			Addr:                  options.Address,
 			Username:              options.Username,
@@ -88,6 +92,8 @@ func New(options Options) (*redis.Client, error) {
 
 func newFailoverOptions(options Options) *redis.FailoverOptions {
 	return &redis.FailoverOptions{
+		PoolSize:              options.PoolSize,
+		MaxActiveConns:        options.PoolSize,
 		ContextTimeoutEnabled: options.ContextTimeoutEnabled,
 		MasterName:            options.Sentinel.MasterName,
 		SentinelAddrs:         append([]string(nil), options.Sentinel.Addresses...),

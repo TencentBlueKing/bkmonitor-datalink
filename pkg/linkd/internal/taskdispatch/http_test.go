@@ -25,6 +25,44 @@ import (
 
 type configurationDocuments struct{ record eventsource.Record }
 
+type publishedDocuments struct {
+	configurationDocuments
+	release eventsource.Release
+}
+
+func (d publishedDocuments) Get(ctx context.Context, collection, key string) (json.RawMessage, string, error) {
+	if collection == "releases" {
+		b, err := json.Marshal(d.release)
+		return b, "1", err
+	}
+	return d.configurationDocuments.Get(ctx, collection, key)
+}
+
+func TestPublishedSourceListPreservesScopeAndRedaction(t *testing.T) {
+	draft := config.EventSource{EventSourceID: "source", Hooks: []config.HookConfig{{Name: "active", Type: config.HookTypeActiveAlertByStrategy, Config: config.HookParameters{Redis: &config.RedisConfig{Address: "redis:6379", Password: "draft-secret"}, KeyPrefix: "draft"}}}}
+	released := draft.WithDefaults()
+	released.Hooks[0].Config.KeyPrefix = "published"
+	released.Hooks[0].Config.Redis.Password = "release-secret"
+	docs := publishedDocuments{configurationDocuments: configurationDocuments{record: eventsource.Record{ID: "source", Published: 1, Deleted: true, Spec: draft}}, release: eventsource.Release{ID: "source", Version: 1, Spec: released}}
+	handler := (&API{Sources: eventsource.New(docs, config.SeverityConfig{}), Config: config.DispatchConfig{APIToken: "admin", WorkerToken: "worker"}}).Handler()
+	for _, query := range []string{"?published=true", "?published=true&include_secrets=true"} {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/event-sources"+query, nil)
+		req.Header.Set("Authorization", "Bearer admin")
+		out := httptest.NewRecorder()
+		handler.ServeHTTP(out, req)
+		var records []eventsource.Record
+		if err := json.Unmarshal(out.Body.Bytes(), &records); err != nil {
+			t.Fatal(err)
+		}
+		if out.Code != 200 || len(records) != 1 || !records[0].Deleted || records[0].Spec.Hooks[0].Config.KeyPrefix != "published" {
+			t.Fatalf("unexpected list status=%d", out.Code)
+		}
+		if strings.Contains(out.Body.String(), "draft-secret") || strings.Contains(out.Body.String(), "release-secret") != strings.Contains(query, "include_secrets=true") {
+			t.Fatal("wrong credentials exposed")
+		}
+	}
+}
+
 func (d configurationDocuments) Get(context.Context, string, string) (json.RawMessage, string, error) {
 	b, e := json.Marshal(d.record)
 	return b, "1", e

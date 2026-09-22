@@ -16,10 +16,10 @@ import (
 	"math"
 	"reflect"
 	"regexp"
-	"strings"
 	"time"
 
 	"go.yaml.in/yaml/v3"
+	"linkd/internal/activeindex"
 	"linkd/internal/kafkaclient"
 	"linkd/internal/lifecycle/kafkahook"
 )
@@ -246,8 +246,8 @@ func (h HookConfig) validate() error {
 		if err := c.Redis.Validate(); err != nil {
 			return fmt.Errorf("redis: %w", err)
 		}
-		if c.KeyPrefix == "" || strings.TrimSpace(c.KeyPrefix) != c.KeyPrefix || len(c.KeyPrefix) > 256 {
-			return fmt.Errorf("key_prefix must be 1 to 256 bytes without surrounding whitespace")
+		if err := activeindex.ValidatePrefix(c.KeyPrefix); err != nil {
+			return err
 		}
 		if *c.TimeoutMilliseconds <= 0 || *c.TimeoutMilliseconds > math.MaxInt64/int64(time.Millisecond) {
 			return fmt.Errorf("timeout_milliseconds must be positive and fit time.Duration")

@@ -51,7 +51,7 @@ export function StrategyIndexPage() {
           <h1>策略活跃索引</h1>
           <p>
             查询 active-by-strategy 的 fingerprint 集合，与当前 Active Alert
-            对账。
+            对账。状态由控制面统一维护，允许短暂传播延迟。
           </p>
         </div>
         <button
@@ -171,6 +171,33 @@ export function StrategyIndexPage() {
               {data.redis.scanned} 个成员；已扫描 {data.alerts.scanned} 条
               Active Alert，其中 {data.alerts.matched} 条匹配本策略。
             </p>
+            {data.redis.projection && (
+              <p>
+                控制面投影：
+                {data.redis.projection.error
+                  ? `刷新失败（${data.redis.projection.error}）`
+                  : data.redis.projection.lastSuccess
+                    ? "已校准"
+                    : "尚未校准"}
+                {data.redis.projection.pending ? " · 待刷新" : ""}
+                <br />
+                最近成功：
+                {data.redis.projection.lastSuccess
+                  ? formatTime(data.redis.projection.lastSuccess, timeMode)
+                  : "无"}
+                {data.redis.projection.lastSuccess &&
+                  `（距查询结束 ${Math.max(0, Math.floor((Date.parse(data.finishedAt) - Date.parse(data.redis.projection.lastSuccess)) / 1000))} 秒）`}
+                <br />
+                目标周期发现：
+                {data.redis.projection.discoveryError ??
+                  (data.redis.projection.discoverySuccess
+                    ? formatTime(
+                        data.redis.projection.discoverySuccess,
+                        timeMode,
+                      )
+                    : "尚未完成")}
+              </p>
+            )}
             <div className="strategy-counts">
               {Object.entries(statuses).map(([status, label]) => (
                 <span key={status} data-status={status}>

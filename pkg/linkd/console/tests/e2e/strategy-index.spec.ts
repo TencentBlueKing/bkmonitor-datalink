@@ -45,9 +45,21 @@ test("queries and reconciles strategy membership on desktop and mobile", async (
         complete: true,
         warnings: [
           "两侧读取不是原子快照；告警变更期间可能存在短暂差异，请复查。",
-          "来源共用 Redis 成员，没有引用计数。",
+          "控制面按共享来源的活跃告警并集维护成员。",
         ],
-        redis: { complete: true, total: 2, scanned: 2 },
+        redis: {
+          complete: true,
+          total: 2,
+          scanned: 2,
+          projection: {
+            lastSuccess: "2026-09-21T23:59:01Z",
+            lastAttempt: "2026-09-22T00:00:00Z",
+            error: "read_failed",
+            discoverySuccess: "2026-09-21T23:59:00Z",
+            discoveryError: null,
+            pending: true,
+          },
+        },
         alerts: { complete: true, scanned: 3, matched: 2 },
         rows: [
           {
@@ -91,6 +103,8 @@ test("queries and reconciles strategy membership on desktop and mobile", async (
     page.getByRole("link", { name: "host / alert-1" }),
   ).toHaveAttribute("href", "/explore/alerts?bk_tenant_id=system&id=alert-1");
   await expect(page.getByRole("table").getByRole("row")).toHaveCount(4);
+  await expect(page.getByText(/控制面投影：刷新失败/)).toBeVisible();
+  await expect(page.getByText(/距查询结束 60 秒/)).toBeVisible();
   await page.screenshot({
     path: info.outputPath("strategy-desktop.png"),
     fullPage: true,

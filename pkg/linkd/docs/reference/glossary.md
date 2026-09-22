@@ -101,7 +101,7 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 ## 来源输出插件
 
 - **具名 hook**：`EventSource.hooks` 中按顺序执行的插件实例，`name` 是该来源内唯一的稳定实例身份，`type` 是内置注册名，`config` 是该插件的参数。当前内置 `kafka` 与 `active-alert-by-strategy`。
-- **活跃告警策略索引**：由 `active-alert-by-strategy` 将 Alert 当前状态投影到 Redis set，按租户和 `labels.strategy_id` 分组，成员为 fingerprint。它是尽力更新的输出索引，不是 Alert 权威状态。
+- **活跃告警策略索引**：由控制面统一将已落库 Active Alert 的 fingerprint 并集投影到 Redis Set，按租户和 `labels.strategy_id` 分组；Hook 仅提交刷新提示，周期校准恢复遗漏。它是可重建、允许传播延迟的查询缓存，不是 Alert 权威状态。
 - **策略索引变更通知**：集合成员实际新增或移除时，自动向 `<key_prefix>:changes` 发布的 Redis Pub/Sub 提示，只携带 `bk_tenant_id` 和 `strategy_id`；消费者使用约定的连接、DB 和前缀重新读取集合，不作为心跳或历史事件日志。
 
 动态配置的最后有效快照用于上游异常和进程重启恢复，不是事件历史配置版本。

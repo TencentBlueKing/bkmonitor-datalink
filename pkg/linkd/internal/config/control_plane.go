@@ -29,6 +29,7 @@ const (
 
 // ControlPlaneConfig 描述控制面独占执行的低吞吐管理任务。
 type ControlPlaneConfig struct {
+	ActiveIndex   *ActiveIndexConfig               `yaml:"active_index,omitempty"`
 	DynamicConfig *DynamicConfigConfig             `yaml:"dynamic_config,omitempty"`
 	Elasticsearch *ElasticsearchControlPlaneConfig `yaml:"elasticsearch,omitempty"`
 	RedisStream   *RedisStreamManagerConfig        `yaml:"redis_stream,omitempty"`
@@ -65,6 +66,10 @@ type RedisStreamManagerConfig struct {
 // WithDefaults 返回补齐控制面管理任务默认值且不共享嵌套配置的副本。
 func (c ControlPlaneConfig) WithDefaults() ControlPlaneConfig {
 	normalized := c
+	if c.ActiveIndex != nil {
+		v := c.ActiveIndex.WithDefaults()
+		normalized.ActiveIndex = &v
+	}
 	if c.DynamicConfig != nil {
 		v := c.DynamicConfig.Clone()
 		normalized.DynamicConfig = &v
@@ -122,8 +127,13 @@ func (c RedisStreamManagerConfig) WithDefaults() RedisStreamManagerConfig {
 
 // Validate 校验已声明的控制面任务。
 func (c ControlPlaneConfig) Validate() error {
-	if c.Elasticsearch == nil && c.RedisStream == nil && c.DynamicConfig == nil {
+	if c.Elasticsearch == nil && c.RedisStream == nil && c.DynamicConfig == nil && c.ActiveIndex == nil {
 		return fmt.Errorf("control_plane must configure at least one management task")
+	}
+	if c.ActiveIndex != nil {
+		if err := c.ActiveIndex.Validate(); err != nil {
+			return fmt.Errorf("control_plane.%w", err)
+		}
 	}
 	if c.Elasticsearch != nil {
 		if err := c.Elasticsearch.Validate(); err != nil {

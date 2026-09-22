@@ -90,3 +90,59 @@ it("destroys a blocked connection on deadline and does not retry", async () => {
     }),
   );
 });
+
+it("detects same-cardinality replacement during scan and reports projection failure", async () => {
+  fakes.client.sendCommand.mockReset();
+  fakes.client.sendCommand
+    .mockResolvedValueOnce([
+      "2026-09-22T01:00:00Z",
+      "2026-09-22T01:00:00Z",
+      "",
+      "1",
+    ])
+    .mockResolvedValueOnce(1)
+    .mockResolvedValueOnce(["0", ["fp"]])
+    .mockResolvedValueOnce(1)
+    .mockResolvedValueOnce([
+      "2026-09-22T01:00:01Z",
+      "2026-09-22T01:00:02Z",
+      "read_failed",
+      "1",
+    ])
+    .mockResolvedValueOnce(["2026-09-22T01:00:00Z", "discovery_failed"])
+    .mockResolvedValueOnce("123");
+  const result = await readStrategyMembers(
+    { mode: "standalone", address: "redis:6379", database: 8 },
+    "prefix:tenant:123",
+    AbortSignal.timeout(1000),
+    1000,
+    "prefix",
+  );
+  expect(result.complete).toBe(false);
+  expect(result.projection).toMatchObject({
+    error: "read_failed",
+    discoveryError: "discovery_failed",
+    pending: true,
+  });
+});
+
+it("distinguishes an unbuilt empty index from a confirmed empty snapshot", async () => {
+  fakes.client.sendCommand.mockReset();
+  fakes.client.sendCommand
+    .mockResolvedValueOnce([null, null, null, null])
+    .mockResolvedValueOnce(0)
+    .mockResolvedValueOnce(["0", []])
+    .mockResolvedValueOnce(0)
+    .mockResolvedValueOnce([null, null, null, null])
+    .mockResolvedValueOnce([null, null])
+    .mockResolvedValueOnce(null);
+  const result = await readStrategyMembers(
+    { mode: "standalone", address: "redis:6379", database: 8 },
+    "prefix:tenant:123",
+    AbortSignal.timeout(1000),
+    1000,
+    "prefix",
+  );
+  expect(result.projection?.lastSuccess).toBeNull();
+  expect(result.members).toEqual([]);
+});

@@ -58,7 +58,10 @@ export class StrategyIndexConnector {
     private readonly config: ConsoleConfig,
     private readonly alerts: StrategyAlertReader | undefined,
     private readonly readRedis = readStrategyMembers,
-    private readonly loadSources = loadRuntimeSources,
+    private readonly loadSources = (
+      config: ConsoleConfig,
+      signal?: AbortSignal,
+    ) => loadRuntimeSources(config, signal, true),
   ) {}
 
   private async sources(signal: AbortSignal) {
@@ -114,6 +117,7 @@ export class StrategyIndexConnector {
           key,
           signal,
           Math.min(15000, this.config.query.timeoutMilliseconds),
+          scope.keyPrefix,
         ),
         this.alerts
           ? this.alerts.readStrategyAlerts(
@@ -126,8 +130,12 @@ export class StrategyIndexConnector {
       ]);
       const warnings = [
         "两侧读取不是原子快照；告警并发变更、ES 刷新延迟和来源发布切换可能造成短暂差异，请复查。",
-        "仅对账当前配置中共享目标的来源；已删除来源、旧前缀或外部写入的成员需要另行确认。",
+        "仅对账当前配置中共享目标的来源；已移除绑定、旧前缀或外部写入的成员需要另行确认。",
       ];
+      if (redis.status === "fulfilled" && !redis.value.projection?.lastSuccess)
+        warnings.push(
+          "尚无成功校准记录，空集合不能证明没有活动告警；控制面可能未启动或 Redis 正在重建。",
+        );
       const rows = new Map<string, StrategyResult["rows"][number]>();
       const redisOK = redis.status === "fulfilled" && redis.value.complete;
       const alertOK =
@@ -148,7 +156,7 @@ export class StrategyIndexConnector {
         );
       if (scope.sources.length > 1)
         warnings.push(
-          "这些来源共用 Redis 成员且没有引用计数；某个来源关闭告警可能删除其他来源仍活跃的 fingerprint。",
+          "控制面按共享来源的 Active Alert 并集维护成员，单个来源关闭不会直接删除共享 fingerprint。",
         );
       if (redis.status === "fulfilled")
         for (const fingerprint of redis.value.members)
@@ -194,6 +202,8 @@ export class StrategyIndexConnector {
         warnings,
         redis: {
           complete: redisOK,
+          projection:
+            redis.status === "fulfilled" ? redis.value.projection : undefined,
           total: redis.status === "fulfilled" ? redis.value.total : null,
           scanned:
             redis.status === "fulfilled" ? redis.value.members.length : 0,

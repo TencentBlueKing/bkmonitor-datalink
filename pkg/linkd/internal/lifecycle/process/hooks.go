@@ -107,6 +107,7 @@ func openHook(spec config.HookConfig) (lifecycle.FinalHook, func() error, error)
 	case config.HookTypeActiveAlertByStrategy:
 		options := spec.Config.Redis.ClientOptions()
 		options.ContextTimeoutEnabled = true
+		options.PoolSize = 2
 		client, err := redisclient.New(options)
 		if err != nil {
 			return nil, nil, err

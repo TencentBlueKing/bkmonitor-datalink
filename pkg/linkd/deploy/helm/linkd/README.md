@@ -25,3 +25,11 @@ Chart 版本为 `0.1.11`。Linkd 与 Console 的默认镜像分别为 `ghcr.io/t
 
 在模块根目录执行 `make helm-check`。需要 Helm 3、Node.js、已安装的 Console 依赖和 Go。
 测试只构建配置校验器、执行本地渲染和校验，不连接 Kubernetes 或中间件。
+
+## 策略活跃告警缓存
+
+配置 `active-alert-by-strategy` Hook 后，控制面自动运行投影任务，Worker 只提交刷新提示。
+通过 `configuration.control_plane.active_index` 调整轮询、周期校准和资源预算。
+共享目标 Redis 必须允许内部队列、租约、临时集合和发布操作；连接独立于 `storage.redis`。
+升级此行为时先停止旧版本直接写集合的 Worker，避免滚动期间混用两种写入职责；新控制面会回填当前 Active Alert。
+现有集合 key、成员和两字段 Pub/Sub 协议保持不变。详见[缓存指南](../../../docs/guides/active-alert-by-strategy.md)。

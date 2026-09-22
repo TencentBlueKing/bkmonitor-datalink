@@ -161,29 +161,20 @@ KAC 插件把相同 Alert 快照转换为 KAC `alarm_collect_topic` 扁平消息
 `Asia/Shanghai` 时区和 `source_name=鲸眼监控` 固定在适配器内。
 实现与配置见 [KAC Alarm Hook](../design/kac-alarm-hook.md) 和[来源 hooks](../guides/configuration.md#eventsource-hooks)。
 
-`active-alert-by-strategy` 独立配置 Redis，执行规则如下：
+`active-alert-by-strategy` 独立配置 Redis。Lifecycle 在 Alert 落库后只提交租户、策略的刷新提示，
+不直接修改正式集合。缺失或空 `labels.strategy_id` 跳过，非法类型失败；字符串原样使用，数字转为稳定十进制文本。
+提示默认超时 1000ms，普通错误记录 Hook 失败后继续，不回滚已保存的 Alert。
 
-| Alert 快照 | 操作 |
-| --- | --- |
-| `active` | `SADD <prefix>:<bk_tenant_id>:<strategy_id> <fingerprint>` |
-| `recovered`、`closed` | `SREM <prefix>:<bk_tenant_id>:<strategy_id> <fingerprint>` |
-| 缺失或空字符串 `labels.strategy_id` | 跳过，无 push 流水 |
-| 布尔或非法 `strategy_id` | hook 失败，不写 Redis |
+控制面读取已发布绑定来源的 Active Alert 并集，完整构建后原子替换 Redis Set。
+共享 fingerprint 只在全部相关告警离开 active 后移除；旧 Hook 重放只触发重读当前状态。
+提示丢失通过周期发现恢复，正式集合无 TTL，允许存储 refresh 和任务传播延迟。
+`hook_succeeded` 只表示提示成功，缓存新鲜度由控制面发布状态判断。
 
-策略标签只读取 `strategy_id`，不回退 `bk_strategy_id`；字符串原样使用，数字转为稳定十进制文本。
-集合不设 TTL；租户强制隔离，来源隔离由前缀负责。同前缀、同租户、同策略、同 fingerprint
-共用一个成员，关闭任一告警都会删除，没有引用计数。升级时先执行旧告警的所有关闭 hook，
-再执行新告警的所有创建 hook。
-
-通知始终启用，channel 固定为 `<key_prefix>:changes`，不提供独立 channel 配置。
-集合修改和变更判断、`PUBLISH` 在同一 Lua 中执行。
-仅成员实际变化才发布，重复无变化操作不发布；通知只携带 `bk_tenant_id` 和 `strategy_id`，
-消费者使用约定的 Redis 连接、DB 和前缀拼接 key 后重新读取。
-不提供心跳、离线补发或事务回滚；协议见[策略索引变更通知 v1](../reference/contracts/active-alert-strategy-change-v1.md)。
-
-独立超时使用 `timeout_milliseconds`，默认 1000ms，遵从父上下文更早的截止时间。
-普通 Redis 错误只记录失败，不补偿、不自动重建或回填，也不保护乱序旧快照。
-任务使用当前发布版本，不按 Alert 创建版本寻找旧 hook。修改 Redis 目标或前缀不迁移、清理旧集合。
+通知始终启用，channel 为 `<key_prefix>:changes`，只在控制面发布的成员实际变化时发送。
+消息仅含 `bk_tenant_id` 和 `strategy_id`；通知失败不回滚集合，也不提供离线补发。
+协议见[策略索引变更通知 v1](../reference/contracts/active-alert-strategy-change-v1.md)，
+跨模块职责与故障恢复见[活跃告警缓存设计](../design/active-alert-index.md)。
+修改 Redis 目标或前缀为新目标回填当前活动告警，不自动清理旧目标。
 
 ## 3. Signal 处理流程
 

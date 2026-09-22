@@ -82,6 +82,14 @@ lifecycle:
     retry_delay_milliseconds: 500
     release_timeout_seconds: 3
 control_plane:
+  # 配置策略 Hook 时自动维护；正式 Redis 集合由控制面统一写入。
+  active_index:
+    poll_interval_seconds: 1
+    reconcile_interval_seconds: 60
+    operation_timeout_seconds: 10
+    batch_size: 16
+    max_rows: 100000
+    max_bytes: 33554432
   elasticsearch:
     schema_and_active_reconcile_interval_seconds: 3600
     bucket_reconcile_interval_seconds: 21600

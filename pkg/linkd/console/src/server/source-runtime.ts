@@ -9,6 +9,7 @@ import {
 const recordSchema = z.object({
   id: z.string(),
   deleted: z.boolean(),
+  published: z.number().int().nonnegative().optional(),
   spec: z.record(z.string(), z.unknown()),
 });
 
@@ -16,6 +17,7 @@ const recordSchema = z.object({
 export async function loadRuntimeSources(
   config: ConsoleConfig,
   signal?: AbortSignal,
+  published = false,
 ): Promise<EventSourceConfig[]> {
   const dispatch = config.dispatch;
   if (!dispatch?.apiToken) throw new Error("dispatch is not configured");
@@ -23,7 +25,7 @@ export async function loadRuntimeSources(
   let after = "";
   for (let page = 0; page < 100; page++) {
     const response = await fetch(
-      `${dispatch.url.replace(/\/$/, "")}/api/v1/event-sources?limit=100&after=${encodeURIComponent(after)}&include_secrets=true`,
+      `${dispatch.url.replace(/\/$/, "")}/api/v1/event-sources?limit=100&after=${encodeURIComponent(after)}&include_secrets=true${published ? "&published=true" : ""}`,
       {
         headers: { Authorization: `Bearer ${dispatch.apiToken}` },
         signal: signal
@@ -41,9 +43,11 @@ export async function loadRuntimeSources(
     records.push(...batch);
     if (batch.length < 100) {
       try {
+        if (published && records.some((r) => r.published === undefined))
+          throw new Error("published source version missing");
         return normalizeEventSources(
           records
-            .filter((r) => !r.deleted)
+            .filter((r) => (published ? (r.published ?? 0) > 0 : !r.deleted))
             .map((r) => ({ ...r.spec, event_source_id: r.id })),
           path.dirname(config.configPath ?? "linkd.yaml"),
           config.cleaner,

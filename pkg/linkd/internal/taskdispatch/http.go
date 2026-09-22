@@ -109,6 +109,11 @@ func includeSecrets(w http.ResponseWriter, r *http.Request) (bool, error) {
 }
 
 func (a *API) list(w http.ResponseWriter, r *http.Request) {
+	published := r.URL.Query().Get("published")
+	if published != "" && published != "true" && published != "false" {
+		failure(w, fmt.Errorf("invalid published"))
+		return
+	}
 	full, err := includeSecrets(w, r)
 	if err != nil {
 		failure(w, err)
@@ -127,6 +132,21 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) {
 	if e != nil {
 		failure(w, e)
 		return
+	}
+	// 策略缓存诊断必须与投影任务使用同一已发布范围；保留未发布记录和 tombstone，
+	// 避免过滤后的页长被误认为分页结束。默认列表仍返回编辑版本。
+	if published == "true" {
+		for i := range rs {
+			if rs[i].Published == 0 {
+				continue
+			}
+			release, err := a.Sources.GetRelease(r.Context(), rs[i].ID, rs[i].Published)
+			if err != nil {
+				failure(w, err)
+				return
+			}
+			rs[i].Spec = release.Spec
+		}
 	}
 	if !full {
 		for i := range rs {

@@ -77,6 +77,7 @@ describe("strategy index reconciliation", () => {
       "open:tenant:123",
       expect.any(AbortSignal),
       1000,
+      "open",
     ]);
     expect(result.complete).toBe(true);
     expect(result.alerts.matched).toBe(3);

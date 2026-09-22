@@ -14,6 +14,7 @@
 | [alarm-callback-enrichment-migration.md](alarm-callback-enrichment-migration.md) | 历史迁移决策记录，保留旧接口取证；当前丰富实现见下项 |
 | [alert-enrichment-development.md](alert-enrichment-development.md) | 当前 Alert 输入、Processor 编排、丰富结果和验证边界 |
 | [event-source-dynamic-configuration.md](event-source-dynamic-configuration.md) | EventSource 管理、发布、多副本与分片上限 |
+| [active-alert-index.md](active-alert-index.md) | 控制面统一维护策略缓存、原子发布与故障恢复 |
 | [dynamic-configuration.md](dynamic-configuration.md)             | Severity 来源同步、持久化恢复与在线应用，默认关闭 |
 | [task-scheduling-protocol.md](task-scheduling-protocol.md)         | 中心调度、停止握手、有界自停和多副本；跨模块复用 |
 

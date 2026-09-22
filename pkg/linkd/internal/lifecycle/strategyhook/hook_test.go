@@ -12,10 +12,7 @@ package strategyhook
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net"
-	"os"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -29,37 +26,11 @@ import (
 )
 
 type setClient struct {
-	mu      sync.Mutex
-	values  map[string]map[string]bool
-	err     error
-	block   bool
-	pubErr  error
-	notices []publishedNotice
-	evals   int
-}
-
-type publishedNotice struct{ channel, payload string }
-
-// apply 由持锁调用方使用，与 Redis 返回的“实际改变成员数量”语义一致。
-func (c *setClient) apply(key string, add bool, members ...any) int64 {
-	if c.values == nil {
-		c.values = map[string]map[string]bool{}
-	}
-	if c.values[key] == nil {
-		c.values[key] = map[string]bool{}
-	}
-	var changed int64
-	for _, m := range members {
-		if c.values[key][m.(string)] != add {
-			changed++
-		}
-		if add {
-			c.values[key][m.(string)] = true
-		} else {
-			delete(c.values[key], m.(string))
-		}
-	}
-	return changed
+	mu     sync.Mutex
+	values map[string]map[string]bool
+	err    error
+	block  bool
+	evals  int
 }
 
 func (c *setClient) Eval(ctx context.Context, _ string, keys []string, args ...any) *redis.Cmd {
@@ -73,14 +44,14 @@ func (c *setClient) Eval(ctx context.Context, _ string, keys []string, args ...a
 	if c.err != nil {
 		return redis.NewCmdResult(nil, c.err)
 	}
-	changed := c.apply(keys[0], args[0] == "SADD", args[1])
-	if changed > 0 {
-		if c.pubErr != nil {
-			return redis.NewCmdResult(nil, c.pubErr)
-		}
-		c.notices = append(c.notices, publishedNotice{channel: args[2].(string), payload: args[3].(string)})
+	if c.values == nil {
+		c.values = map[string]map[string]bool{}
 	}
-	return redis.NewCmdResult(changed, nil)
+	if c.values[keys[0]] == nil {
+		c.values[keys[0]] = map[string]bool{}
+	}
+	c.values[keys[0]][args[0].(string)] = true
+	return redis.NewCmdResult(int64(1), nil)
 }
 
 func hookInput() lifecycle.FinalHookInput {
@@ -96,55 +67,6 @@ func terminal(input lifecycle.FinalHookInput, status domain.AlertStatus) lifecyc
 	input.Alert.EndAt = &end
 	input.Alert.EndType = domain.AlertEndTypeSource
 	return input
-}
-
-func TestMembershipAndIsolation(t *testing.T) {
-	c := &setClient{}
-	h, err := New(c, Config{KeyPrefix: "active", Timeout: time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	input := hookInput()
-	first, err := h.Execute(context.Background(), input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	again, err := h.Execute(context.Background(), input)
-	if err != nil || first.MessageID != again.MessageID {
-		t.Fatalf("repeat: %v", err)
-	}
-	if !c.values["active:tenant:123"]["fp"] || len(c.values["active:tenant:123"]) != 1 {
-		t.Fatal("wrong set member")
-	}
-	other := input
-	other.Alert = other.Alert.Clone()
-	other.Alert.BKTenantID = "another"
-	if _, err := h.Execute(context.Background(), other); err != nil {
-		t.Fatal(err)
-	}
-	for _, status := range []domain.AlertStatus{domain.AlertStatusRecovered, domain.AlertStatusClosed} {
-		if _, err := h.Execute(context.Background(), input); err != nil {
-			t.Fatal(err)
-		}
-		for range 2 {
-			if _, err := h.Execute(context.Background(), terminal(input, status)); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if c.values["active:tenant:123"]["fp"] || !c.values["active:another:123"]["fp"] {
-			t.Fatal("terminal deletion crossed tenant boundary")
-		}
-	}
-	separate, err := New(c, Config{KeyPrefix: "another-prefix", Timeout: time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := separate.Execute(context.Background(), input); err != nil {
-		t.Fatal(err)
-	}
-	if !c.values["another-prefix:tenant:123"]["fp"] || c.values["active:tenant:123"]["fp"] {
-		t.Fatal("prefix boundary")
-	}
 }
 
 func TestStrategyLabelBoundaries(t *testing.T) {
@@ -265,64 +187,5 @@ func TestRedisSocketRespectsMillisecondDeadline(t *testing.T) {
 	<-done
 	if !errors.Is(callErr, context.DeadlineExceeded) || elapsed > time.Second {
 		t.Fatalf("deadline not enforced: %v, %s", callErr, elapsed)
-	}
-}
-
-func TestRedisIntegration(t *testing.T) {
-	address := os.Getenv("LINKD_TEST_REDIS_ADDRESS")
-	if address == "" {
-		t.Skip("LINKD_TEST_REDIS_ADDRESS is not set")
-	}
-	client, err := redisclient.New(redisclient.Options{Address: address, ContextTimeoutEnabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := client.Close(); err != nil {
-			t.Error(err)
-		}
-	}()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	prefix := fmt.Sprintf("linkd-test:strategy:%d", time.Now().UnixNano())
-	key := prefix + ":tenant:123"
-	defer func() {
-		cleanup, stop := context.WithTimeout(context.Background(), time.Second)
-		defer stop()
-		if err := client.Del(cleanup, key).Err(); err != nil {
-			t.Error(err)
-		}
-	}()
-	h, err := New(client, Config{KeyPrefix: prefix, Timeout: time.Second})
-	if err != nil {
-		t.Fatal(err)
-	}
-	input := hookInput()
-	for range 2 {
-		if _, err := h.Execute(ctx, input); err != nil {
-			t.Fatal(err)
-		}
-	}
-	members, err := client.SMembers(ctx, key).Result()
-	if err != nil || !slices.Equal(members, []string{"fp"}) {
-		t.Fatalf("members=%v error=%v", members, err)
-	}
-	ttl, err := client.TTL(ctx, key).Result()
-	if err != nil || ttl != -1 {
-		t.Fatalf("TTL=%v error=%v", ttl, err)
-	}
-	for _, status := range []domain.AlertStatus{domain.AlertStatusRecovered, domain.AlertStatusClosed} {
-		if _, err := h.Execute(ctx, input); err != nil {
-			t.Fatal(err)
-		}
-		for range 2 {
-			if _, err := h.Execute(ctx, terminal(input, status)); err != nil {
-				t.Fatal(err)
-			}
-		}
-		count, err := client.SCard(ctx, key).Result()
-		if err != nil || count != 0 {
-			t.Fatalf("terminal set=%d error=%v", count, err)
-		}
 	}
 }

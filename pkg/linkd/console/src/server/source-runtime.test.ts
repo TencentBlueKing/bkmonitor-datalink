@@ -206,3 +206,22 @@ it.each([-1, 1.5, "8"])(
     );
   },
 );
+
+it("keeps tombstones and excludes unpublished sources for projection diagnostics", async () => {
+  const fetcher = vi.fn(
+    async () =>
+      new Response(
+        JSON.stringify([
+          { ...records[0], published: 1, deleted: true },
+          { ...records[0], id: "draft", published: 0 },
+        ]),
+      ),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  const sources = await loadRuntimeSources(config, undefined, true);
+  expect(sources.map((s) => s.eventSourceId)).toEqual(["test"]);
+  expect(fetcher).toHaveBeenCalledWith(
+    expect.stringContaining("published=true"),
+    expect.anything(),
+  );
+});

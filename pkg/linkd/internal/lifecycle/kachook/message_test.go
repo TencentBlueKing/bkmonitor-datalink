@@ -62,7 +62,7 @@ func TestConvertMessageMapsLogEnrichToKACAlarm(t *testing.T) {
 	alert.Enrich = jsonObject(`{"processors":[
 		{"display":{"status":"succeeded","value":{"title":"日志告警","content":"匹配到【error】关键字次数 2","object":"","dimensions":[],"dimension_text":""}}},
 		{"log":{"status":"succeeded","value":{"log_theme_id":36,"log_theme_name":"应用日志","log_query_string":"error","log_relate_info":"{\"host\":\"web-1\"}","cw_labels":["bk_biz_id","bk_biz_id|2","log","log|36"]}}},
-		{"resource":{"status":"succeeded","value":{"dynamic_group_id":[],"cw_labels":[]}}}
+		{"resource":{"status":"succeeded","value":{"bk_biz_id":2,"dynamic_group_id":[],"cw_labels":[]}}}
 	]}`)
 	message, err := convertMessage(lifecycle.FinalHookInput{
 		Cause: lifecycle.AlertChangeCause{Type: lifecycle.AlertChangeCauseSourceEvent, ID: "event-1"},
@@ -74,6 +74,9 @@ func TestConvertMessageMapsLogEnrichToKACAlarm(t *testing.T) {
 	if message.LogThemeID != 36 || message.LogThemeName != "应用日志" || message.LogQueryString != "error" || message.LogRelateInfo != `{"host":"web-1"}` {
 		t.Fatalf("log fields=%+v", message)
 	}
+	if message.BKBizID != "2" {
+		t.Fatalf("bk_biz_id=%q", message.BKBizID)
+	}
 	wantLabels := []string{"bk_biz_id", "bk_biz_id|2", "log", "log|36"}
 	if len(message.CWLabels) != len(wantLabels) {
 		t.Fatalf("cw_labels=%v", message.CWLabels)
@@ -82,6 +85,28 @@ func TestConvertMessageMapsLogEnrichToKACAlarm(t *testing.T) {
 		if message.CWLabels[index] != wantLabels[index] {
 			t.Fatalf("cw_labels=%v", message.CWLabels)
 		}
+	}
+}
+
+func TestConvertMessageMapsAPMEnrichToKACAlarm(t *testing.T) {
+	alert := testAlert()
+	alert.Enrich = jsonObject(`{"processors":[
+		{"display":{"status":"succeeded","value":{"title":"APM告警","content":"请求量异常","object":"account","dimensions":[],"dimension_text":""}}},
+		{"resource":{"status":"succeeded","value":{"model_id":"cw-service_instance","model_inst_id":"29|account|instance-a","bk_inst_id":29,"bk_biz_id":10,"dynamic_group_id":[],"cw_labels":["bk_biz_id","bk_biz_id|10","apm_app_id","apm_app_id|29"]}}},
+		{"apm":{"status":"succeeded","value":{"apm_app_id":29,"apm_app_name":"test223","apm_app_alias":"Test 223","apm_service_name":"account","apm_instance_name":"instance-a","apm_interface_name":"GET /account","apm_net_peer_name":"10.10.28.210:3306","model_id":"cw-service_instance","model_inst_id":"29|account|instance-a","bk_biz_id":10,"cw_labels":["bk_biz_id","bk_biz_id|10","apm_app_id","apm_app_id|29"]}}}
+	]}`)
+	message, err := convertMessage(lifecycle.FinalHookInput{
+		Cause: lifecycle.AlertChangeCause{Type: lifecycle.AlertChangeCauseSourceEvent, ID: "event-1"},
+		Alert: alert, Outcome: lifecycle.OutcomeAlertCreated,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.APMAppID != 29 || message.APMAppName != "test223" || message.APMAppAlias != "Test 223" || message.APMServiceName != "account" || message.APMInstanceName != "instance-a" || message.APMInterfaceName != "GET /account" || message.APMNetPeerName != "10.10.28.210:3306" {
+		t.Fatalf("apm fields=%+v", message)
+	}
+	if message.ModelID != "cw-service_instance" || message.ModelInstID != "29|account|instance-a" || message.BKBizID != "10" {
+		t.Fatalf("resource fields=%+v", message)
 	}
 }
 

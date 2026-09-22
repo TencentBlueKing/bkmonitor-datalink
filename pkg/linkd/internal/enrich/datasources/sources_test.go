@@ -25,9 +25,10 @@ func TestMySQLReadersShareOneDatabase(t *testing.T) {
 	cwStrategy := sources.CWStrategy.(*CWStrategyClient)
 	business := sources.Business.(*BusinessClient)
 	alarmSource := sources.AlarmSource.(*AlarmSourceClient)
+	apmApplication := sources.APMApplication.(*APMApplicationClient)
 	metric := sources.Metric.(*MetricClient)
 	model := sources.Model.(*ModelClient)
-	if cwStrategy.db != database || business.db != database || alarmSource.db != database || metric.db != database || model.db != database {
+	if cwStrategy.db != database || business.db != database || alarmSource.db != database || apmApplication.db != database || metric.db != database || model.db != database {
 		t.Fatal("mysql readers do not share the enrich database")
 	}
 }

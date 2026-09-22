@@ -121,9 +121,9 @@ type CollectTopologyReader interface {
 	FindHostTopology(ctx context.Context, tenantID, hostID string) (models.ResourceTopology, bool, error)
 }
 
-// APMApplicationReader 按租户和应用名称读取 APM 应用候选项。
+// APMApplicationReader 按租户、业务和应用名称读取 APM 应用候选项。
 type APMApplicationReader interface {
-	FindAPMApplications(ctx context.Context, tenantID, name string) ([]models.APMApplication, error)
+	FindAPMApplications(ctx context.Context, tenantID string, bizID int64, name string) ([]models.APMApplication, error)
 }
 
 // K8sReader 按租户、对象模型和 K8s 维度读取统一实例身份。
@@ -216,6 +216,16 @@ type instanceResult struct {
 	err   error
 }
 
+type apmApplicationQuery struct {
+	bizID int64
+	name  string
+}
+
+type apmApplicationResult struct {
+	values []models.APMApplication
+	err    error
+}
+
 // Scope 保存单次 Enrich 调用的只读 Alert 快照和请求内数据。
 func (s *Scope) CloudResource(ctx context.Context, cloudID, resourceType, instanceID string) (models.CloudResource, bool, error) {
 	if s.sources.CloudResource == nil {
@@ -240,6 +250,7 @@ type Scope struct {
 	instances       map[string]instanceResult
 	models          map[string]modelResult
 	metrics         map[models.MetricLibraryQuery]metricResult
+	apmApplications map[apmApplicationQuery]apmApplicationResult
 	collectConfigs  map[string]collectConfigResult
 	uptimeTasks     map[string]uptimeTaskResult
 	uptimeNodes     map[string]uptimeNodeResult
@@ -273,7 +284,8 @@ func newScope(alert domain.Alert, sources Sources, preview bool) (*Scope, error)
 		alert: normalized.Clone(), original: normalized.Clone(), sources: sources, enrichContext: &EnrichContext{},
 		instances: make(map[string]instanceResult), models: make(map[string]modelResult),
 		metrics: make(map[models.MetricLibraryQuery]metricResult), collectConfigs: make(map[string]collectConfigResult),
-		uptimeTasks: make(map[string]uptimeTaskResult), uptimeNodes: make(map[string]uptimeNodeResult),
+		apmApplications: make(map[apmApplicationQuery]apmApplicationResult),
+		uptimeTasks:     make(map[string]uptimeTaskResult), uptimeNodes: make(map[string]uptimeNodeResult),
 		relatedHosts: make(map[string]instanceResult), topologies: make(map[string]topologyResult), logThemes: make(map[int64]logThemeResult),
 		scenarios: make(map[string]scenarioResult),
 	}, nil
@@ -338,12 +350,23 @@ func (s *Scope) MetricLibrary(ctx context.Context, query models.MetricLibraryQue
 	return result.value, result.found, result.err
 }
 
-// APMApplications 按名称读取租户内 APM 应用候选项。
-func (s *Scope) APMApplications(ctx context.Context, name string) ([]models.APMApplication, error) {
-	if s.sources.APMApplication == nil {
-		return nil, fmt.Errorf("apm application reader is unavailable")
+// APMApplications 按业务和名称读取租户内 APM 应用候选项，并在单次 Enrich 内复用结果。
+func (s *Scope) APMApplications(ctx context.Context, bizID int64, name string) ([]models.APMApplication, error) {
+	query := apmApplicationQuery{bizID: bizID, name: name}
+	if result, exists := s.apmApplications[query]; exists {
+		return append([]models.APMApplication(nil), result.values...), result.err
 	}
-	return s.sources.APMApplication.FindAPMApplications(ctx, s.alert.BKTenantID, name)
+	result := apmApplicationResult{}
+	if s.sources.APMApplication == nil {
+		result.err = fmt.Errorf("apm application reader is unavailable")
+	} else {
+		result.values, result.err = s.sources.APMApplication.FindAPMApplications(ctx, s.alert.BKTenantID, bizID, name)
+	}
+	if ctx.Err() == nil {
+		result.values = append([]models.APMApplication(nil), result.values...)
+		s.apmApplications[query] = result
+	}
+	return append([]models.APMApplication(nil), result.values...), result.err
 }
 
 // K8sInstance 读取 K8s 对象模型对应的统一实例。

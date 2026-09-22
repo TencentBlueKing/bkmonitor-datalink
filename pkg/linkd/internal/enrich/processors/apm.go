@@ -47,34 +47,17 @@ func (APM) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 	if err != nil || !rules.IsAPMTable(projection.QueryConfigs[0].ResultTableID) {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusSkipped, Value: domain.JSONObject{}}, nil
 	}
-	appName := apmApplicationName(strategy, projection.QueryConfigs[0].ResultTableID)
-	appID := dimensionText(alert.Dimensions, "apm_app_id")
-	appAlias := ""
-	if appName != "" {
-		apps, appErr := scope.APMApplications(ctx, appName)
-		if appErr == nil {
-			for _, app := range apps {
-				if app.TenantID == alert.BKTenantID && app.Name == appName {
-					if appID == "" {
-						appID = fmt.Sprint(app.ID)
-					}
-					appAlias = app.Alias
-					break
-				}
-			}
-		} else {
-			diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyAPMApplication})
-		}
+	application, applicationDiagnostics, err := resolveAPMApplication(ctx, scope, strategy, projection.QueryConfigs[0].ResultTableID, ids.BizID)
+	if err != nil {
+		return enrich.ProcessorResult{}, err
 	}
+	diagnostics = append(diagnostics, applicationDiagnostics...)
 	service := dimensionText(alert.Dimensions, rules.FieldServiceName)
 	instance := dimensionText(alert.Dimensions, rules.FieldAPMInstanceID)
-	modelID, modelInstID := apmModelIdentity(appID, service, instance)
-	values := models.APMValues{APMAppID: apmIDValue(appID), APMAppName: appName, APMAppAlias: appAlias, APMServiceName: service, APMInstanceName: instance, APMInterfaceName: dimensionText(alert.Dimensions, rules.FieldAPMSpanName), APMNetPeerName: dimensionText(alert.Dimensions, rules.FieldAPMNetPeerName), ModelID: modelID, ModelInstID: modelInstID, BKBizID: ids.BizID}
-	if appID != "" {
-		values.CWLabels = []string{"bk_biz_id", fmt.Sprintf("bk_biz_id|%d", ids.BizID), "apm_app_id", "apm_app_id|" + appID}
-	}
-	if appID == "" {
-		diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeMissingField, Fields: []string{"dimensions.apm_app_id"}})
+	modelID, modelInstID := apmModelIdentity(application.ID, service, instance)
+	values := models.APMValues{APMAppID: apmIDValue(application.ID), APMAppName: application.Name, APMAppAlias: application.Alias, APMServiceName: service, APMInstanceName: instance, APMInterfaceName: dimensionText(alert.Dimensions, rules.FieldAPMSpanName), APMNetPeerName: dimensionText(alert.Dimensions, rules.FieldAPMNetPeerName), ModelID: modelID, ModelInstID: modelInstID, BKBizID: ids.BizID}
+	if application.ID != "" {
+		values.CWLabels = apmLabels(ids.BizID, application.ID)
 	}
 	scope.Context().APM.Set(values)
 	value, encodeErr := scope.Context().APM.JSONObject()
@@ -86,6 +69,57 @@ func (APM) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 		status = domain.EnrichStatusPartial
 	}
 	return enrich.ProcessorResult{Status: status, Value: value, Diagnostics: diagnostics}, nil
+}
+
+func apmLabels(bizID int64, appID string) []string {
+	return []string{"bk_biz_id", fmt.Sprintf("bk_biz_id|%d", bizID), "apm_app_id", "apm_app_id|" + appID}
+}
+
+type apmApplicationProjection struct {
+	ID    string
+	Name  string
+	Alias string
+}
+
+// resolveAPMApplication 使用 alarmd 实际输入中的 additional_dimensions.app_name
+// 定位租户和业务内的 APM 应用；旧 dimensions.apm_app_id 仅保留为兼容回退。
+func resolveAPMApplication(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy, tableID string, bizID int64) (apmApplicationProjection, []enrich.Diagnostic, error) {
+	alert := scope.Alert()
+	projection := apmApplicationProjection{ID: dimensionText(alert.Dimensions, rules.FieldAPMAppID)}
+	diagnostics := []enrich.Diagnostic{}
+	additional, err := additionalDimensions(alert.ExtraData)
+	if err != nil {
+		diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeInvalidField, Fields: []string{"extra_data.additional_dimensions"}})
+	} else {
+		projection.Name = dimensionText(additional, "app_name")
+	}
+	if projection.Name == "" {
+		projection.Name = apmApplicationName(strategy, tableID)
+	}
+	if projection.Name == "" {
+		if projection.ID == "" {
+			diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeMissingField, Fields: []string{"extra_data.additional_dimensions.app_name"}})
+		}
+		return projection, diagnostics, nil
+	}
+	apps, readErr := scope.APMApplications(ctx, bizID, projection.Name)
+	if err := ctx.Err(); err != nil {
+		return apmApplicationProjection{}, nil, err
+	}
+	if readErr != nil {
+		diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyAPMApplication})
+		return projection, diagnostics, nil
+	}
+	for _, app := range apps {
+		if app.TenantID != alert.BKTenantID || app.BKBizID != bizID || app.Name != projection.Name || app.ID <= 0 {
+			continue
+		}
+		projection.ID = fmt.Sprint(app.ID)
+		projection.Alias = app.Alias
+		return projection, diagnostics, nil
+	}
+	diagnostics = append(diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyAPMApplication})
+	return projection, diagnostics, nil
 }
 
 func apmApplicationName(strategy models.CWStrategy, tableID string) string {

@@ -56,7 +56,7 @@ func (Resource) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proces
 	}
 	classification := rules.Classify(strategy, dimensions)
 	if rules.IsLogDisplay(classification.Main) {
-		return resourceScenarioResult(scope, models.ResourceValues{DynamicGroupID: []string{}, CWLabels: []string{}}, nil, false)
+		return resourceScenarioResult(scope, models.ResourceValues{BKBizID: ids.BizID, DynamicGroupID: []string{}, CWLabels: []string{}}, nil, false)
 	}
 	if classification.Main == rules.MainData {
 		return processDataResource(ctx, scope, strategy, ids.BizID)
@@ -153,25 +153,28 @@ func processDataResource(ctx context.Context, scope *enrich.Scope, strategy mode
 
 func processAPMResource(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy, query models.StrategyQueryConfig, bizID int64) (enrich.ProcessorResult, error) {
 	dimensions := scope.Alert().Dimensions
-	appID := rules.DimensionText(dimensions, "apm_app_id")
-	service := rules.DimensionText(dimensions, rules.FieldServiceName)
-	instance := rules.DimensionText(dimensions, rules.FieldAPMInstanceID)
-	modelID, modelInstID := apmModelIdentity(appID, service, instance)
-	values := models.ResourceValues{ModelID: modelID, ModelInstID: modelInstID, BKInstID: appID, BKBizID: bizID, DynamicGroupID: []string{}}
-	if appID == "" {
-		return resourceScenarioResult(scope, values, []enrich.Diagnostic{{Code: enrich.DiagnosticCodeMissingField, Fields: []string{"dimensions.apm_app_id"}}}, true)
-	}
-	business, found, err := scope.Instance(ctx, enrich.InstanceQuery{ModelCode: "cw-biz", InstanceID: fmt.Sprint(bizID)})
-	if err := ctx.Err(); err != nil {
+	application, diagnostics, err := resolveAPMApplication(ctx, scope, strategy, query.ResultTableID, bizID)
+	if err != nil {
 		return enrich.ProcessorResult{}, err
 	}
-	if err == nil && found && business.TenantID == scope.Alert().BKTenantID && business.ModelCode == "cw-biz" && business.InstanceID == fmt.Sprint(bizID) {
+	service := rules.DimensionText(dimensions, rules.FieldServiceName)
+	instance := rules.DimensionText(dimensions, rules.FieldAPMInstanceID)
+	modelID, modelInstID := apmModelIdentity(application.ID, service, instance)
+	values := models.ResourceValues{ModelID: modelID, ModelInstID: modelInstID, BKInstID: apmIDValue(application.ID), BKBizID: bizID, DynamicGroupID: []string{}}
+	if application.ID == "" {
+		return resourceScenarioResult(scope, values, diagnostics, true)
+	}
+	business, found, readErr := scope.Instance(ctx, enrich.InstanceQuery{ModelCode: "cw-biz", InstanceID: fmt.Sprint(bizID)})
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return enrich.ProcessorResult{}, ctxErr
+	}
+	if readErr == nil && found && business.TenantID == scope.Alert().BKTenantID && business.ModelCode == "cw-biz" && business.InstanceID == fmt.Sprint(bizID) {
 		if name, ok := rules.FirstStringField(business.Attributes, rules.FieldBKBizName); ok {
 			values.BKBizName = name
 		}
 	}
-	values.CWLabels = enrich.ResourceLabels(values)
-	return resourceScenarioResult(scope, values, nil, true)
+	values.CWLabels = apmLabels(bizID, application.ID)
+	return resourceScenarioResult(scope, values, diagnostics, true)
 }
 
 func dataObjectModelCode(strategy models.CWStrategy, dimensions domain.DimensionMap) string {

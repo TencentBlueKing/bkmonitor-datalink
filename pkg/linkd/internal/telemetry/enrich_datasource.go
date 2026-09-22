@@ -30,6 +30,7 @@ const (
 	enrichDataSourceCollectTopology = "collect_topology"
 	enrichDataSourceUptime          = "uptime"
 	enrichDataSourceOneModel        = "onemodel"
+	enrichDataSourceAPMApplication  = "apm_application"
 )
 
 // ObserveEnrichSources 为全部已配置 Reader 增加调用结果和耗时指标。
@@ -51,6 +52,9 @@ func (r *Runtime) ObserveEnrichSources(sources enrich.Sources) enrich.Sources {
 	}
 	if sources.AlarmSource != nil {
 		sources.AlarmSource = &observedAlarmSourceReader{next: sources.AlarmSource, metrics: r.metrics}
+	}
+	if sources.APMApplication != nil {
+		sources.APMApplication = &observedAPMApplicationReader{next: sources.APMApplication, metrics: r.metrics}
 	}
 	if sources.OneModel != nil {
 		sources.OneModel = &observedOneModelReader{next: sources.OneModel, metrics: r.metrics}
@@ -163,6 +167,18 @@ func (r *observedModelReader) GetModelByCode(ctx context.Context, tenantID, mode
 type observedAlarmSourceReader struct {
 	next    enrich.AlarmSourceReader
 	metrics *instruments
+}
+
+type observedAPMApplicationReader struct {
+	next    enrich.APMApplicationReader
+	metrics *instruments
+}
+
+func (r *observedAPMApplicationReader) FindAPMApplications(ctx context.Context, tenantID string, bizID int64, name string) ([]models.APMApplication, error) {
+	startedAt := time.Now()
+	values, err := r.next.FindAPMApplications(ctx, tenantID, bizID, name)
+	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceAPMApplication, "find_apm_applications", startedAt, len(values) != 0, err)
+	return values, err
 }
 
 func (r *observedAlarmSourceReader) GetAlarmSourceName(ctx context.Context, tenantID, sourceID string) (string, bool, error) {

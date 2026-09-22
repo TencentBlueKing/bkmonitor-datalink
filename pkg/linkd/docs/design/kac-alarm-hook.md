@@ -290,9 +290,9 @@ KAC converter 先调用 `enrich.DecodePayload(Alert.Enrich)`，再按 Processor 
 
 ### 5.4 场景扩展字段
 
-KAC ES 模型允许动态字段，旧 Cleaner 会追加日志、APM、K8s 和云平台字段。当前 Linkd Router 只注册
-`strategy/resource/display/metric/source` 五个 Processor，因此首版由 KAC Hook 为场景扩展字段写入固定默认值。
-首版固定输出：
+KAC ES 模型允许动态字段，旧 Cleaner 会追加日志、APM、K8s 和云平台字段。Linkd KAC Hook 当前读取
+`log` 和 `apm` Processor 的类型化输出；对应 Processor 未配置、失败或跳过时保留固定默认值。K8s 专用字段
+仍使用默认值，云平台 ID 由 `resource.cloud_plat_id` 提供。稳定输出形状如下：
 
 ```json
 {
@@ -319,10 +319,9 @@ KAC ES 模型允许动态字段，旧 Cleaner 会追加日志、APM、K8s 和云
 }
 ```
 
-默认值按字段类型固定：数值 ID `log_theme_id`、`apm_app_id` 使用 `0`，其余当前扩展字段使用空字符串，
-保证 payload 字段形状和类型稳定。当前 Hook 不读取尚未注册的 Log/APM/K8s Processor。后续这些场景完成
-Enrich 设计和实现后，再通过 KAC 契约版本评审决定是否用真实值替换默认值。诊断、Processor status、
-完整 Alert、ExtraData 和任意未知 Enrich 字段保持在 Linkd 内部。
+默认值按字段类型固定：数值 ID `log_theme_id`、`apm_app_id` 使用 `0`，其余扩展字段使用空字符串，
+保证 payload 字段形状和类型稳定。`log/apm` Processor 成功或 partial 且携带有效值时，Hook 写入真实字段；
+诊断、Processor status、完整 Alert、ExtraData 和任意未知 Enrich 字段保持在 Linkd 内部。
 
 ### 5.5 当前字段缺口
 
@@ -340,8 +339,8 @@ Enrich 设计和实现后，再通过 KAC 契约版本评审决定是否用真�
    不承诺带上 latest Event 的新文案；
 6. 直接关闭只有 Alert 和 operation cause，依然可以生成 KAC close；`meta_info` 保留 opening source
    event 身份，close 原因来自 Alert.EndReason；
-7. 当前运行时尚未注册 `log/apm/k8s` Processor，首版为相关场景扩展字段写入固定类型默认值；真实值接入
-   需要后续 KAC 契约版本评审。
+7. KAC Hook 已读取 `log/apm` Processor 的真实值；未配置、失败或跳过时保留固定类型默认值。K8s 专用字段
+   当前仍使用默认值，待 KAC 映射与真实回放闭环。
 
 ## 6. Hook 配置
 

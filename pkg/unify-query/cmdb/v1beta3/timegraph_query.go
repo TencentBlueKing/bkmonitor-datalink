@@ -39,6 +39,8 @@ type timeGraphMatrixQuery func(context.Context, *structured.QueryTs) (pl.Matrix,
 
 type timeGraphForceSourceInfoKey struct{}
 
+type timeGraphQueryStageKey struct{}
+
 func withTimeGraphForceSourceInfo(ctx context.Context) context.Context {
 	return context.WithValue(ctx, timeGraphForceSourceInfoKey{}, true)
 }
@@ -46,6 +48,15 @@ func withTimeGraphForceSourceInfo(ctx context.Context) context.Context {
 func timeGraphForceSourceInfo(ctx context.Context) bool {
 	force, _ := ctx.Value(timeGraphForceSourceInfoKey{}).(bool)
 	return force
+}
+
+func withTimeGraphQueryStage(ctx context.Context, stage string) context.Context {
+	return context.WithValue(ctx, timeGraphQueryStageKey{}, stage)
+}
+
+func timeGraphQueryStage(ctx context.Context) string {
+	stage, _ := ctx.Value(timeGraphQueryStageKey{}).(string)
+	return stage
 }
 
 // timeGraphRelationKey 唯一标识一条待查询的关系边。
@@ -82,6 +93,15 @@ func (m *Model) prepareTimeGraphVMQuery(ctx context.Context, queryTs *structured
 		queryRef metadata.QueryReference
 		err      error
 	)
+	ctx, span := trace.NewSpan(ctx, "timegraph-prepare-vm-query")
+	defer span.End(&err)
+	if queryTs != nil {
+		span.Set("query-space-uid", queryTs.SpaceUid)
+		span.Set("query-start", queryTs.Start)
+		span.Set("query-end", queryTs.End)
+		span.Set("query-step", queryTs.Step)
+		span.Set("query-count", len(queryTs.QueryList))
+	}
 	if m.timeGraphQueryReference != nil {
 		queryRef, err = m.timeGraphQueryReference(ctx, queryTs)
 	} else {
@@ -96,6 +116,7 @@ func (m *Model) prepareTimeGraphVMQuery(ctx context.Context, queryTs *structured
 	if err != nil {
 		return "", nil, errors.WithMessage(err, "to prom expr")
 	}
+	span.Set("query-expression-length", len(expr.String()))
 	return expr.String(), metadata.GetQueryParams(ctx), nil
 }
 
@@ -124,8 +145,26 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 	span.Set("query-start", start.Unix())
 	span.Set("query-end", end.Unix())
 	span.Set("query-step-seconds", step.Seconds())
+	span.Set("source-type", sourceType)
+	span.Set("source-matcher-count", len(sourceInfo))
+	span.Set("source-expand-matcher-count", len(sourceExpandInfo))
+	span.Set("root-relation-count", len(rootRelations))
 
-	tg := NewTimeGraphWithConfig(m.timeGraphConfig(spaceUID))
+	_, configSpan := trace.NewSpan(ctx, "timegraph-build-config")
+	config := m.timeGraphConfig(spaceUID)
+	configSpan.Set("space-uid", spaceUID)
+	configSpan.Set("resource-config-count", len(config.Resource))
+	configSpan.Set("relation-config-count", len(config.Relation))
+	configSpan.Set("max-graph-nodes", config.MaxNodes)
+	configSpan.Set("max-graph-edges", config.MaxEdges)
+	configSpan.Set("max-graph-results", config.MaxResults)
+	configSpan.Set("max-graph-node-infos", config.MaxNodeInfos)
+	var configErr error
+	configSpan.End(&configErr)
+	tg := NewTimeGraphWithConfig(config)
+	span.Set("graph-max-nodes", tg.maxNodes)
+	span.Set("graph-max-edges", tg.maxEdges)
+	span.Set("graph-max-results", tg.maxResults)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -148,98 +187,146 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 	// step 只控制 range 查询的采样间隔，lookBack 只控制 count_over_time 的
 	// 回溯窗口；两者必须分开，否则稀疏的 range 查询会产生错误的采样结果。
 	queryStep := step
-	queryMatrix := func(queryCtx context.Context, queryTs *structured.QueryTs) (pl.Matrix, error) {
-		if matrixQuery != nil {
-			return matrixQuery(queryCtx, queryTs)
+	matrixQueryCount := 0
+	sourceInfoQueryCount := 0
+	relationEdgeQueryCount := 0
+	targetInfoQueryCount := 0
+	queryMatrix := func(queryCtx context.Context, queryTs *structured.QueryTs) (matrix pl.Matrix, partial bool, err error) {
+		queryCtx, span := trace.NewSpan(queryCtx, "timegraph-query-matrix")
+		defer span.End(&err)
+		matrixQueryCount++
+		span.Set("query-mode", map[bool]string{true: "instant", false: "range"}[instant])
+		span.Set("query-source", "vm")
+		wrapQueryErr := false
+		if stage := timeGraphQueryStage(queryCtx); stage != "" {
+			span.Set("query-stage", stage)
 		}
-		if m.timeGraphVMQueryWithPartial != nil {
-			expr, relationQueryParams, queryErr := m.prepareTimeGraphVMQuery(queryCtx, queryTs)
-			if queryErr != nil {
-				return nil, queryErr
-			}
-			matrix, partial, queryErr := m.timeGraphVMQueryWithPartial(
-				queryCtx,
-				queryTs,
-				expr,
-				instant,
-				relationQueryParams.AlignStart,
-				relationQueryParams.End,
-				relationQueryParams.Step,
-			)
-			if queryErr == nil && partial && !instant {
-				tg.markPartialRange(relationQueryParams.AlignStart, relationQueryParams.End, relationQueryParams.Step, "backend_partial")
-			}
-			return matrix, queryErr
-		}
-		if m.timeGraphVMQuery != nil {
-			expr, relationQueryParams, queryErr := m.prepareTimeGraphVMQuery(queryCtx, queryTs)
-			if queryErr != nil {
-				return nil, queryErr
-			}
-			return m.timeGraphVMQuery(
-				queryCtx,
-				queryTs,
-				expr,
-				instant,
-				relationQueryParams.AlignStart,
-				relationQueryParams.End,
-				relationQueryParams.Step,
-			)
-		}
-		expr, relationQueryParams, queryErr := m.prepareTimeGraphVMQuery(queryCtx, queryTs)
-		if queryErr != nil {
-			return nil, queryErr
+		if queryTs != nil {
+			span.Set("query-space-uid", queryTs.SpaceUid)
+			span.Set("query-start", queryTs.Start)
+			span.Set("query-end", queryTs.End)
+			span.Set("query-step", queryTs.Step)
+			span.Set("query-count", len(queryTs.QueryList))
 		}
 
-		var instance tsdb.Instance
-		if relationQueryParams.IsDirectQuery() {
-			instance = prometheus.GetTsDbInstance(queryCtx, &metadata.Query{
-				StorageType: metadata.VictoriaMetricsStorageType,
-			})
-			if instance == nil {
-				return nil, fmt.Errorf("%s storage get error", metadata.VictoriaMetricsStorageType)
+		if matrixQuery != nil {
+			span.Set("query-source", "test-matrix")
+			matrix, err = matrixQuery(queryCtx, queryTs)
+		} else if m.timeGraphVMQueryWithPartial != nil {
+			span.Set("query-source", "test-vm-with-partial")
+			var expr string
+			var relationQueryParams *metadata.QueryParams
+			expr, relationQueryParams, err = m.prepareTimeGraphVMQuery(queryCtx, queryTs)
+			if err == nil {
+				matrix, partial, err = m.timeGraphVMQueryWithPartial(
+					queryCtx,
+					queryTs,
+					expr,
+					instant,
+					relationQueryParams.AlignStart,
+					relationQueryParams.End,
+					relationQueryParams.Step,
+				)
+				if err == nil && partial && !instant {
+					tg.markPartialRange(relationQueryParams.AlignStart, relationQueryParams.End, relationQueryParams.Step, "backend_partial")
+				}
+			}
+		} else if m.timeGraphVMQuery != nil {
+			span.Set("query-source", "test-vm")
+			var expr string
+			var relationQueryParams *metadata.QueryParams
+			expr, relationQueryParams, err = m.prepareTimeGraphVMQuery(queryCtx, queryTs)
+			if err == nil {
+				matrix, err = m.timeGraphVMQuery(
+					queryCtx,
+					queryTs,
+					expr,
+					instant,
+					relationQueryParams.AlignStart,
+					relationQueryParams.End,
+					relationQueryParams.Step,
+				)
 			}
 		} else {
-			instance = prometheus.NewInstance(queryCtx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
-				QueryMaxRouting: timeGraphQueryMaxRouting,
-				Timeout:         timeGraphQueryTimeout,
-			}, lookBack, timeGraphQueryMaxRouting)
-		}
-
-		if instant {
-			vector, queryErr := instance.DirectQuery(queryCtx, expr, relationQueryParams.End)
-			if queryErr != nil {
-				return nil, errors.WithMessage(queryErr, "direct query")
+			wrapQueryErr = true
+			var expr string
+			var relationQueryParams *metadata.QueryParams
+			expr, relationQueryParams, err = m.prepareTimeGraphVMQuery(queryCtx, queryTs)
+			if err == nil {
+				var instance tsdb.Instance
+				if relationQueryParams.IsDirectQuery() {
+					instance = prometheus.GetTsDbInstance(queryCtx, &metadata.Query{
+						StorageType: metadata.VictoriaMetricsStorageType,
+					})
+					if instance == nil {
+						err = fmt.Errorf("%s storage get error", metadata.VictoriaMetricsStorageType)
+					}
+				} else {
+					instance = prometheus.NewInstance(queryCtx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
+						QueryMaxRouting: timeGraphQueryMaxRouting,
+						Timeout:         timeGraphQueryTimeout,
+					}, lookBack, timeGraphQueryMaxRouting)
+				}
+				if err == nil && instant {
+					var vector pl.Vector
+					vector, err = instance.DirectQuery(queryCtx, expr, relationQueryParams.End)
+					if err == nil {
+						matrix = vectorToMatrix(vector)
+					}
+				} else if err == nil {
+					matrix, partial, err = instance.DirectQueryRange(
+						queryCtx,
+						expr,
+						relationQueryParams.AlignStart,
+						relationQueryParams.End,
+						relationQueryParams.Step,
+					)
+					if err == nil && partial {
+						tg.markPartialRange(relationQueryParams.AlignStart, relationQueryParams.End, relationQueryParams.Step, "backend_partial")
+					}
+				}
 			}
-			return vectorToMatrix(vector), nil
 		}
-		matrix, partial, queryErr := instance.DirectQueryRange(
-			queryCtx,
-			expr,
-			relationQueryParams.AlignStart,
-			relationQueryParams.End,
-			relationQueryParams.Step,
-		)
-		if queryErr != nil {
-			return nil, errors.WithMessage(queryErr, "direct query range")
+		pointCount := 0
+		for _, series := range matrix {
+			pointCount += len(series.Points)
 		}
-		if partial {
-			tg.markPartialRange(relationQueryParams.AlignStart, relationQueryParams.End, relationQueryParams.Step, "backend_partial")
+		span.Set("matrix-series-count", len(matrix))
+		span.Set("matrix-point-count", pointCount)
+		span.Set("matrix-partial", partial)
+		if err != nil {
+			if wrapQueryErr {
+				if instant {
+					err = errors.WithMessage(err, "direct query")
+				} else {
+					err = errors.WithMessage(err, "direct query range")
+				}
+			}
+			return nil, partial, err
 		}
-		return matrix, nil
+		return matrix, partial, nil
 	}
 
 	if len(sourceExpandInfo) > 0 || len(relations) == 0 || timeGraphForceSourceInfo(ctx) {
 		infoCtx := newTimeGraphSubqueryContext(ctx)
 		metadata.GetQueryParams(infoCtx).SetIsSkipK8s(true)
+		_, infoQuerySpan := trace.NewSpan(infoCtx, "timegraph-build-resource-info-query")
+		infoQuerySpan.Set("query-kind", "source-info")
+		infoQuerySpan.Set("resource-type", sourceType)
 		queryTs, queryErr := tg.MakeResourceInfoQueryTsWithWindow(
 			spaceUID, sourceType, sourceInfo, sourceExpandInfo, nil, start, end, queryStep, lookBack,
 		)
+		infoQuerySpan.Set("query-generated", queryTs != nil)
+		if queryTs != nil {
+			infoQuerySpan.Set("query-count", len(queryTs.QueryList))
+		}
+		infoQuerySpan.End(&queryErr)
 		if queryErr != nil {
 			return nil, errors.WithMessage(queryErr, "make source info query ts")
 		}
 		if queryTs != nil {
-			matrix, queryErr := queryMatrix(infoCtx, queryTs)
+			sourceInfoQueryCount++
+			matrix, _, queryErr := queryMatrix(withTimeGraphQueryStage(infoCtx, "source-info"), queryTs)
 			if queryErr != nil {
 				return nil, errors.WithMessage(queryErr, "query source info relation")
 			}
@@ -286,7 +373,18 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 		if !isRootRelation {
 			relationSourceInfo = nil
 		}
-		queryTs, queryErr := tg.MakeQueryTsWithWindow(relationCtx, spaceUID, relationSourceInfo, start, end, queryStep, lookBack, relation)
+		relationQueryCtx, relationQuerySpan := trace.NewSpan(relationCtx, "timegraph-build-relation-query")
+		relationQuerySpan.Set("source-type", relation.V[0])
+		relationQuerySpan.Set("target-type", relation.V[1])
+		relationQuerySpan.Set("relation-type", relation.RelationType)
+		relationQuerySpan.Set("metric-name", relation.MetricName)
+		relationQuerySpan.Set("root-relation", isRootRelation)
+		queryTs, queryErr := tg.MakeQueryTsWithWindow(relationQueryCtx, spaceUID, relationSourceInfo, start, end, queryStep, lookBack, relation)
+		relationQuerySpan.Set("query-generated", queryTs != nil)
+		if queryTs != nil {
+			relationQuerySpan.Set("query-count", len(queryTs.QueryList))
+		}
+		relationQuerySpan.End(&queryErr)
 		if queryErr != nil {
 			return nil, errors.WithMessagef(queryErr, "make query ts error for relation %v", relation)
 		}
@@ -294,7 +392,8 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 			continue
 		}
 
-		matrix, queryErr := queryMatrix(relationCtx, queryTs)
+		relationEdgeQueryCount++
+		matrix, _, queryErr := queryMatrix(withTimeGraphQueryStage(relationCtx, "relation-edge"), queryTs)
 		if queryErr != nil {
 			return nil, queryErr
 		}
@@ -355,16 +454,26 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 			}
 			infoCtx := newTimeGraphSubqueryContext(ctx)
 			metadata.GetQueryParams(infoCtx).SetIsSkipK8s(true)
+			_, infoQuerySpan := trace.NewSpan(infoCtx, "timegraph-build-resource-info-query")
+			infoQuerySpan.Set("query-kind", "target-info")
+			infoQuerySpan.Set("resource-type", targetType)
+			infoQuerySpan.Set("primary-matcher-count", len(primaryMatchers))
 			queryTs, queryErr := tg.MakeResourceInfoQueryTsWithWindow(
 				spaceUID, targetType, nil, nil, primaryMatchers, start, end, queryStep, lookBack,
 			)
+			infoQuerySpan.Set("query-generated", queryTs != nil)
+			if queryTs != nil {
+				infoQuerySpan.Set("query-count", len(queryTs.QueryList))
+			}
+			infoQuerySpan.End(&queryErr)
 			if queryErr != nil {
 				return nil, errors.WithMessage(queryErr, "make target info query ts")
 			}
 			if queryTs == nil {
 				continue
 			}
-			matrix, queryErr := queryMatrix(infoCtx, queryTs)
+			targetInfoQueryCount++
+			matrix, _, queryErr := queryMatrix(withTimeGraphQueryStage(infoCtx, "target-info"), queryTs)
 			if queryErr != nil {
 				return nil, errors.WithMessage(queryErr, "query target info relation")
 			}
@@ -391,6 +500,15 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 			}
 		}
 	}
+	span.Set("graph-node-count", tg.nodeBuilder.Length())
+	span.Set("graph-edge-count", tg.edgeCount)
+	span.Set("graph-node-info-count", tg.nodeInfoCount)
+	span.Set("graph-timepoint-count", len(tg.timeGraph))
+	span.Set("graph-partial-point-count", len(tg.partialTimes))
+	span.Set("matrix-query-count", matrixQueryCount)
+	span.Set("source-info-query-count", sourceInfoQueryCount)
+	span.Set("relation-edge-query-count", relationEdgeQueryCount)
+	span.Set("target-info-query-count", targetInfoQueryCount)
 	return tg, nil
 }
 
@@ -536,12 +654,18 @@ func sameResourcePair(resources []cmdb.Resource, source, target cmdb.Resource) b
 	return (resources[0] == source && resources[1] == target) || (resources[0] == target && resources[1] == source)
 }
 
-func (m *Model) resolveTimeGraphPaths(ctx context.Context, spaceUID string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, requested [][]cmdb.Resource) ([]cmdb.RelationPath, error) {
+func (m *Model) resolveTimeGraphPaths(ctx context.Context, spaceUID string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, requested [][]cmdb.Resource) (paths []cmdb.RelationPath, err error) {
+	ctx, span := trace.NewSpan(ctx, "timegraph-resolve-paths")
+	defer span.End(&err)
+	span.Set("space-uid", spaceUID)
+	span.Set("source-type", sourceType)
+	span.Set("target-types", targetTypes)
+	span.Set("requested-path-count", len(requested))
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if len(requested) > 0 {
-		paths := make([][]cmdb.Resource, 0, len(requested))
+		resourcePaths := make([][]cmdb.Resource, 0, len(requested))
 		known := make(map[ResourceType]struct{})
 		provider := m.getSchemaProvider()
 		for _, resourceType := range provider.ListResourceTypes(spaceUID) {
@@ -561,7 +685,7 @@ func (m *Model) resolveTimeGraphPaths(ctx context.Context, spaceUID string, sour
 				if !containsResource(targetTypes, sourceType) {
 					return nil, fmt.Errorf("invalid path_resource %v: target type does not match", path)
 				}
-				paths = append(paths, normalizedPath)
+				resourcePaths = append(resourcePaths, normalizedPath)
 				continue
 			}
 			if !containsResource(targetTypes, normalizedPath[len(normalizedPath)-1]) {
@@ -572,12 +696,15 @@ func (m *Model) resolveTimeGraphPaths(ctx context.Context, spaceUID string, sour
 					return nil, fmt.Errorf("unknown path resource type %q", resourceType)
 				}
 			}
-			paths = append(paths, normalizedPath)
+			resourcePaths = append(resourcePaths, normalizedPath)
 		}
-		if len(paths) > 0 {
+		if len(resourcePaths) > 0 {
 			// 旧接口只提供资源类型路径，没有关系方向、类别和指标名，保持原有
 			// 兼容转换；自动发现路径则在下方完整保留 PathFinder 的关系计划。
-			return cmdb.RelationPathsFromResourcePaths(paths), nil
+			paths = cmdb.RelationPathsFromResourcePaths(resourcePaths)
+			span.Set("resolved-path-count", len(paths))
+			span.Set("path-source", "request")
+			return paths, nil
 		}
 	}
 
@@ -586,7 +713,6 @@ func (m *Model) resolveTimeGraphPaths(ctx context.Context, spaceUID string, sour
 		WithNamespace(spaceUID),
 		WithMaxHops(MaxAllowedHops),
 	)
-	var paths []cmdb.RelationPath
 	for _, targetType := range targetTypes {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -602,6 +728,8 @@ func (m *Model) resolveTimeGraphPaths(ctx context.Context, spaceUID string, sour
 	if len(paths) == 0 {
 		return nil, errors.New("no paths found")
 	}
+	span.Set("resolved-path-count", len(paths))
+	span.Set("path-source", "schema")
 	return paths, nil
 }
 
@@ -614,17 +742,33 @@ func containsResource(resources []cmdb.Resource, target cmdb.Resource) bool {
 	return false
 }
 
-func (m *Model) queryTimeGraph(ctx context.Context, lookBackDelta, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, targetTypes []cmdb.Resource, pathResources [][]cmdb.Resource, matcher, sourceExpandInfo cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
+func (m *Model) queryTimeGraph(ctx context.Context, lookBackDelta, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, targetTypes []cmdb.Resource, pathResources [][]cmdb.Resource, matcher, sourceExpandInfo cmdb.Matcher) (results []cmdb.PathResourcesResult, err error) {
+	ctx, span := trace.NewSpan(ctx, "timegraph-resolve-and-query")
+	defer span.End(&err)
+	span.Set("space-uid", spaceUID)
+	span.Set("source-type", sourceType)
+	span.Set("target-types", targetTypes)
+	span.Set("requested-path-count", len(pathResources))
+	span.Set("source-matcher-count", len(matcher))
+	span.Set("source-expand-matcher-count", len(sourceExpandInfo))
 	paths, err := m.resolveTimeGraphPaths(ctx, spaceUID, sourceType, targetTypes, pathResources)
 	if err != nil {
 		return nil, err
 	}
-	return m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, start, end, step, sourceType, targetTypes, paths, matcher, sourceExpandInfo)
+	span.Set("resolved-path-count", len(paths))
+	results, err = m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, start, end, step, sourceType, targetTypes, paths, matcher, sourceExpandInfo)
+	span.Set("result-count", len(results))
+	return results, err
 }
 
 func (m *Model) queryRelationTimeGraph(ctx context.Context, lookBackDelta, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher, sourceExpandInfo cmdb.Matcher) (results []cmdb.PathResourcesResult, err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-query-relation")
 	defer span.End(&err)
+	span.Set("look-back-delta", lookBackDelta)
+	span.Set("source-matcher-count", len(matcher))
+	span.Set("source-expand-matcher-count", len(sourceExpandInfo))
+	span.Set("target-type-count", len(targetTypes))
+	span.Set("relation-path-count", len(paths))
 	if start.After(end) {
 		return nil, errors.New("start_time must be less than or equal to end_time")
 	}
@@ -671,6 +815,17 @@ func (m *Model) queryRelationTimeGraph(ctx context.Context, lookBackDelta, space
 		})
 	}
 	span.Set("raw-result-count", len(results))
+	uniqueTimestamps := make(map[int64]struct{}, len(results))
+	uniqueTargetTypes := make(map[cmdb.Resource]struct{}, len(results))
+	pathNodeCount := 0
+	for _, result := range results {
+		uniqueTimestamps[result.Timestamp] = struct{}{}
+		uniqueTargetTypes[result.TargetType] = struct{}{}
+		pathNodeCount += len(result.Path)
+	}
+	span.Set("result-timestamp-count", len(uniqueTimestamps))
+	span.Set("result-target-type-count", len(uniqueTargetTypes))
+	span.Set("result-path-node-count", pathNodeCount)
 	sort.SliceStable(results, func(i, j int) bool {
 		if results[i].Timestamp == results[j].Timestamp {
 			return results[i].TargetType < results[j].TargetType
@@ -680,7 +835,16 @@ func (m *Model) queryRelationTimeGraph(ctx context.Context, lookBackDelta, space
 	return results, nil
 }
 
-func (m *Model) queryPathResourcesWithSourceExpand(ctx context.Context, lookBackDelta, spaceUID, timestamp string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, pathResources [][]cmdb.Resource, matcher, sourceExpandInfo cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
+func (m *Model) queryPathResourcesWithSourceExpand(ctx context.Context, lookBackDelta, spaceUID, timestamp string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, pathResources [][]cmdb.Resource, matcher, sourceExpandInfo cmdb.Matcher) (results []cmdb.PathResourcesResult, err error) {
+	ctx, span := trace.NewSpan(ctx, "timegraph-query-path-resources")
+	defer span.End(&err)
+	span.Set("query-mode", "instant")
+	span.Set("space-uid", spaceUID)
+	span.Set("source-type", sourceType)
+	span.Set("target-types", targetTypes)
+	span.Set("requested-path-count", len(pathResources))
+	span.Set("source-matcher-count", len(matcher))
+	span.Set("source-expand-matcher-count", len(sourceExpandInfo))
 	if spaceUID == "" {
 		return nil, errors.New("space uid is empty")
 	}
@@ -697,14 +861,25 @@ func (m *Model) queryPathResourcesWithSourceExpand(ctx context.Context, lookBack
 	if err != nil {
 		return nil, errors.WithMessage(err, "parse timestamp")
 	}
-	return m.queryTimeGraph(ctx, lookBackDelta, spaceUID, time.UnixMilli(timestampValue), time.UnixMilli(timestampValue), 5*time.Minute, sourceType, targetTypes, pathResources, matcher, sourceExpandInfo)
+	results, err = m.queryTimeGraph(ctx, lookBackDelta, spaceUID, time.UnixMilli(timestampValue), time.UnixMilli(timestampValue), 5*time.Minute, sourceType, targetTypes, pathResources, matcher, sourceExpandInfo)
+	span.Set("result-count", len(results))
+	return results, err
 }
 
 func (m *Model) QueryPathResources(ctx context.Context, lookBackDelta, spaceUID, timestamp string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, pathResources [][]cmdb.Resource, matcher cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
 	return m.queryPathResourcesWithSourceExpand(ctx, lookBackDelta, spaceUID, timestamp, sourceType, targetTypes, pathResources, matcher, nil)
 }
 
-func (m *Model) queryRelationPathResourcesWithSourceExpand(ctx context.Context, lookBackDelta, spaceUID, timestamp string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher, sourceExpandInfo cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
+func (m *Model) queryRelationPathResourcesWithSourceExpand(ctx context.Context, lookBackDelta, spaceUID, timestamp string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher, sourceExpandInfo cmdb.Matcher) (results []cmdb.PathResourcesResult, err error) {
+	ctx, span := trace.NewSpan(ctx, "timegraph-query-relation-path-resources")
+	defer span.End(&err)
+	span.Set("query-mode", "instant")
+	span.Set("space-uid", spaceUID)
+	span.Set("source-type", sourceType)
+	span.Set("target-types", targetTypes)
+	span.Set("relation-path-count", len(paths))
+	span.Set("source-matcher-count", len(matcher))
+	span.Set("source-expand-matcher-count", len(sourceExpandInfo))
 	if spaceUID == "" {
 		return nil, errors.New("space uid is empty")
 	}
@@ -721,30 +896,28 @@ func (m *Model) queryRelationPathResourcesWithSourceExpand(ctx context.Context, 
 	if err != nil {
 		return nil, errors.WithMessage(err, "parse timestamp")
 	}
-	return m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, time.UnixMilli(timestampValue), time.UnixMilli(timestampValue), 5*time.Minute, sourceType, targetTypes, paths, matcher, sourceExpandInfo)
+	results, err = m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, time.UnixMilli(timestampValue), time.UnixMilli(timestampValue), 5*time.Minute, sourceType, targetTypes, paths, matcher, sourceExpandInfo)
+	span.Set("result-count", len(results))
+	return results, err
 }
 
 func (m *Model) QueryRelationPathResources(ctx context.Context, lookBackDelta, spaceUID, timestamp string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
-	if spaceUID == "" {
-		return nil, errors.New("space uid is empty")
-	}
-	if timestamp == "" {
-		return nil, errors.New("timestamp is empty")
-	}
-	if sourceType == "" {
-		return nil, errors.New("source type is empty")
-	}
-	if len(targetTypes) == 0 {
-		return nil, errors.New("target types is empty")
-	}
-	timestampValue, err := parseTimestamp(timestamp)
-	if err != nil {
-		return nil, errors.WithMessage(err, "parse timestamp")
-	}
-	return m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, time.UnixMilli(timestampValue), time.UnixMilli(timestampValue), 5*time.Minute, sourceType, targetTypes, paths, matcher, nil)
+	return m.queryRelationPathResourcesWithSourceExpand(ctx, lookBackDelta, spaceUID, timestamp, sourceType, targetTypes, paths, matcher, nil)
 }
 
-func (m *Model) queryPathResourcesRangeWithSourceExpand(ctx context.Context, lookBackDelta, spaceUID, step, startTimestamp, endTimestamp string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, pathResources [][]cmdb.Resource, matcher, sourceExpandInfo cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
+func (m *Model) queryPathResourcesRangeWithSourceExpand(ctx context.Context, lookBackDelta, spaceUID, step, startTimestamp, endTimestamp string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, pathResources [][]cmdb.Resource, matcher, sourceExpandInfo cmdb.Matcher) (results []cmdb.PathResourcesResult, err error) {
+	ctx, span := trace.NewSpan(ctx, "timegraph-query-path-resources-range")
+	defer span.End(&err)
+	span.Set("query-mode", "range")
+	span.Set("space-uid", spaceUID)
+	span.Set("source-type", sourceType)
+	span.Set("target-types", targetTypes)
+	span.Set("requested-path-count", len(pathResources))
+	span.Set("source-matcher-count", len(matcher))
+	span.Set("source-expand-matcher-count", len(sourceExpandInfo))
+	span.Set("requested-step", step)
+	span.Set("requested-start", startTimestamp)
+	span.Set("requested-end", endTimestamp)
 	if spaceUID == "" {
 		return nil, errors.New("space uid is empty")
 	}
@@ -776,14 +949,28 @@ func (m *Model) queryPathResourcesRangeWithSourceExpand(ctx context.Context, loo
 	if _, err := validateRangeBuckets(start, end, stepMs); err != nil {
 		return nil, err
 	}
-	return m.queryTimeGraph(ctx, lookBackDelta, spaceUID, time.UnixMilli(start), time.UnixMilli(end), stepDuration, sourceType, targetTypes, pathResources, matcher, sourceExpandInfo)
+	results, err = m.queryTimeGraph(ctx, lookBackDelta, spaceUID, time.UnixMilli(start), time.UnixMilli(end), stepDuration, sourceType, targetTypes, pathResources, matcher, sourceExpandInfo)
+	span.Set("result-count", len(results))
+	return results, err
 }
 
 func (m *Model) QueryPathResourcesRange(ctx context.Context, lookBackDelta, spaceUID, step, startTimestamp, endTimestamp string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, pathResources [][]cmdb.Resource, matcher cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
 	return m.queryPathResourcesRangeWithSourceExpand(ctx, lookBackDelta, spaceUID, step, startTimestamp, endTimestamp, sourceType, targetTypes, pathResources, matcher, nil)
 }
 
-func (m *Model) queryRelationPathResourcesRangeWithSourceExpand(ctx context.Context, lookBackDelta, spaceUID, step, startTimestamp, endTimestamp string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher, sourceExpandInfo cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
+func (m *Model) queryRelationPathResourcesRangeWithSourceExpand(ctx context.Context, lookBackDelta, spaceUID, step, startTimestamp, endTimestamp string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher, sourceExpandInfo cmdb.Matcher) (results []cmdb.PathResourcesResult, err error) {
+	ctx, span := trace.NewSpan(ctx, "timegraph-query-relation-path-resources-range")
+	defer span.End(&err)
+	span.Set("query-mode", "range")
+	span.Set("space-uid", spaceUID)
+	span.Set("source-type", sourceType)
+	span.Set("target-types", targetTypes)
+	span.Set("relation-path-count", len(paths))
+	span.Set("source-matcher-count", len(matcher))
+	span.Set("source-expand-matcher-count", len(sourceExpandInfo))
+	span.Set("requested-step", step)
+	span.Set("requested-start", startTimestamp)
+	span.Set("requested-end", endTimestamp)
 	if spaceUID == "" {
 		return nil, errors.New("space uid is empty")
 	}
@@ -815,41 +1002,13 @@ func (m *Model) queryRelationPathResourcesRangeWithSourceExpand(ctx context.Cont
 	if _, err := validateRangeBuckets(start, end, stepMs); err != nil {
 		return nil, err
 	}
-	return m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, time.UnixMilli(start), time.UnixMilli(end), stepDuration, sourceType, targetTypes, paths, matcher, sourceExpandInfo)
+	results, err = m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, time.UnixMilli(start), time.UnixMilli(end), stepDuration, sourceType, targetTypes, paths, matcher, sourceExpandInfo)
+	span.Set("result-count", len(results))
+	return results, err
 }
 
 func (m *Model) QueryRelationPathResourcesRange(ctx context.Context, lookBackDelta, spaceUID, step, startTimestamp, endTimestamp string, sourceType cmdb.Resource, targetTypes []cmdb.Resource, paths []cmdb.RelationPath, matcher cmdb.Matcher) ([]cmdb.PathResourcesResult, error) {
-	if spaceUID == "" {
-		return nil, errors.New("space uid is empty")
-	}
-	if startTimestamp == "" || endTimestamp == "" {
-		return nil, errors.New("timestamp is empty")
-	}
-	if sourceType == "" {
-		return nil, errors.New("source type is empty")
-	}
-	if len(targetTypes) == 0 {
-		return nil, errors.New("target types is empty")
-	}
-	start, err := parseTimestamp(startTimestamp)
-	if err != nil {
-		return nil, errors.WithMessage(err, "parse start timestamp")
-	}
-	end, err := parseTimestamp(endTimestamp)
-	if err != nil {
-		return nil, errors.WithMessage(err, "parse end timestamp")
-	}
-	stepDuration, err := parseStepDuration(step)
-	if err != nil {
-		return nil, errors.WithMessage(err, "parse step")
-	}
-	if stepDuration <= 0 {
-		return nil, errors.New("step must be positive")
-	}
-	if _, err := validateRangeBuckets(start, end, stepDuration.Milliseconds()); err != nil {
-		return nil, err
-	}
-	return m.queryRelationTimeGraph(ctx, lookBackDelta, spaceUID, time.UnixMilli(start), time.UnixMilli(end), stepDuration, sourceType, targetTypes, paths, matcher, nil)
+	return m.queryRelationPathResourcesRangeWithSourceExpand(ctx, lookBackDelta, spaceUID, step, startTimestamp, endTimestamp, sourceType, targetTypes, paths, matcher, nil)
 }
 
 func vectorToMatrix(vector pl.Vector) pl.Matrix {

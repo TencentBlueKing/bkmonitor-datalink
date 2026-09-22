@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 // TimeGraph 时序图结构，用于管理时间序列的图数据
@@ -774,7 +775,12 @@ type PathResourcesResult struct {
 //   - 直接查找从 sourceType 到 targetType 的最短路径，不需要指定中间路径
 //   - 部分匹配：只要 sourceMatcher 中的键值对在节点信息中存在且匹配，即认为满足条件
 //   - 结果按时间戳排序
-func (q *TimeGraph) FindShortestPath(ctx context.Context, sourceType cmdb.Resource, targetType cmdb.Resource, sourceMatcher cmdb.Matcher) ([]PathResourcesResult, error) {
+func (q *TimeGraph) FindShortestPath(ctx context.Context, sourceType cmdb.Resource, targetType cmdb.Resource, sourceMatcher cmdb.Matcher) (results []PathResourcesResult, err error) {
+	ctx, span := trace.NewSpan(ctx, "timegraph-find-shortest-path")
+	defer span.End(&err)
+	span.Set("source-type", sourceType)
+	span.Set("target-type", targetType)
+	span.Set("source-matcher-count", len(sourceMatcher))
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -784,6 +790,7 @@ func (q *TimeGraph) FindShortestPath(ctx context.Context, sourceType cmdb.Resour
 
 	q.lock.RLock()
 	defer q.lock.RUnlock()
+	span.Set("graph-timepoint-count", len(q.timeGraph))
 
 	// 获取所有时间戳并排序
 	queryTimestamps := make([]int64, 0, len(q.timeGraph))
@@ -807,8 +814,6 @@ func (q *TimeGraph) FindShortestPath(ctx context.Context, sourceType cmdb.Resour
 	}
 
 	// 3. 在每个时间戳的图中查找从源到目标的最短路径
-	var results []PathResourcesResult
-
 	for _, timestamp := range queryTimestamps {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -874,6 +879,9 @@ func (q *TimeGraph) FindShortestPath(ctx context.Context, sourceType cmdb.Resour
 		}
 	}
 
+	span.Set("source-candidate-count", len(sourceCandidates))
+	span.Set("target-candidate-count", len(targetNodes))
+	span.Set("result-count", len(results))
 	return results, nil
 }
 
@@ -906,7 +914,13 @@ func (q *TimeGraph) FindRelationPathResources(
 	targetTypes []cmdb.Resource,
 	sourceMatcher cmdb.Matcher,
 	expectedPaths []cmdb.RelationPath,
-) ([]PathResourcesResult, error) {
+) (results []PathResourcesResult, err error) {
+	ctx, span := trace.NewSpan(ctx, "timegraph-find-relation-paths")
+	defer span.End(&err)
+	span.Set("source-type", sourceType)
+	span.Set("target-types", targetTypes)
+	span.Set("source-matcher-count", len(sourceMatcher))
+	span.Set("expected-path-count", len(expectedPaths))
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -921,6 +935,7 @@ func (q *TimeGraph) FindRelationPathResources(
 
 	q.lock.RLock()
 	defer q.lock.RUnlock()
+	span.Set("graph-timepoint-count", len(q.timeGraph))
 
 	queryTimestamps := make([]int64, 0, len(q.timeGraph))
 	for timestamp := range q.timeGraph {
@@ -933,7 +948,7 @@ func (q *TimeGraph) FindRelationPathResources(
 		return nil, nil
 	}
 
-	results := make([]PathResourcesResult, 0)
+	results = make([]PathResourcesResult, 0)
 	seen := make(map[string]struct{})
 	for _, timestamp := range queryTimestamps {
 		if err := ctx.Err(); err != nil {
@@ -1017,6 +1032,14 @@ func (q *TimeGraph) FindRelationPathResources(
 		}
 		return nodePathKeyFromPathNodes(results[i].Path) < nodePathKeyFromPathNodes(results[j].Path)
 	})
+	span.Set("source-candidate-count", len(sourceCandidates))
+	span.Set("result-count", len(results))
+	span.Set("seen-path-count", len(seen))
+	resultTimestamps := make(map[int64]struct{}, len(results))
+	for _, result := range results {
+		resultTimestamps[result.Timestamp] = struct{}{}
+	}
+	span.Set("result-timestamp-count", len(resultTimestamps))
 	return results, nil
 }
 

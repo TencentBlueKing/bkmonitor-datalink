@@ -89,6 +89,10 @@ func HandlerAPIRelationPathResources(c *gin.Context) {
 	for i, queryItem := range request.QueryList {
 		queryCtx, querySpan := trace.NewSpan(ctx, "handler-api-relation-path-resources-item")
 		querySpan.Set("query-index", i)
+		querySpan.Set("requested-source-type", queryItem.SourceType)
+		querySpan.Set("requested-target-types", queryItem.TargetTypes)
+		querySpan.Set("requested-path-count", len(queryItem.PathResources))
+		querySpan.Set("requested-matcher-count", len(queryItem.Matcher))
 		queryStarted := time.Now()
 		metric.CMDBRelationRouteInc(queryCtx, metric.CMDBRelationRouteTimeGraph, metric.CMDBRelationQueryModeInstant, metric.CMDBRelationResultStarted)
 		results, queryErr := model.QueryPathResources(queryCtx, queryItem.LookBackDelta, user.SpaceUID, cast.ToString(queryItem.Timestamp), queryItem.SourceType, queryItem.TargetTypes, queryItem.PathResources, queryItem.Matcher)
@@ -142,6 +146,11 @@ func HandlerAPIRelationPathResourcesRange(c *gin.Context) {
 	for i, queryItem := range request.QueryList {
 		queryCtx, querySpan := trace.NewSpan(ctx, "handler-api-relation-path-resources-range-item")
 		querySpan.Set("query-index", i)
+		querySpan.Set("requested-source-type", queryItem.SourceType)
+		querySpan.Set("requested-target-types", queryItem.TargetTypes)
+		querySpan.Set("requested-path-count", len(queryItem.PathResources))
+		querySpan.Set("requested-matcher-count", len(queryItem.Matcher))
+		querySpan.Set("requested-step", queryItem.Step)
 		queryStarted := time.Now()
 		metric.CMDBRelationRouteInc(queryCtx, metric.CMDBRelationRouteTimeGraph, metric.CMDBRelationQueryModeRange, metric.CMDBRelationResultStarted)
 		results, queryErr := model.QueryPathResourcesRange(queryCtx, queryItem.LookBackDelta, user.SpaceUID, queryItem.Step, cast.ToString(queryItem.StartTs), cast.ToString(queryItem.EndTs), queryItem.SourceType, queryItem.TargetTypes, queryItem.PathResources, queryItem.Matcher)

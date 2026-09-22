@@ -14,6 +14,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 type timeGraphTargetInfoShowKey struct{}
@@ -66,7 +67,10 @@ type timeGraphRangeResult struct {
 	targetCount        int
 }
 
-func (m *Model) getTimeGraphQuerier(ctx context.Context, spaceUID string) (timeGraphQuerier, error) {
+func (m *Model) getTimeGraphQuerier(ctx context.Context, spaceUID string) (querier timeGraphQuerier, err error) {
+	ctx, span := trace.NewSpan(ctx, "timegraph-resolve-querier")
+	defer span.End(&err)
+	span.Set("space-uid", spaceUID)
 	resolver := m.timeGraphResolver
 	if resolver == nil {
 		return nil, fmt.Errorf("timegraph resolver is not configured")
@@ -80,6 +84,7 @@ func (m *Model) getTimeGraphQuerier(ctx context.Context, spaceUID string) (timeG
 	if !ok {
 		return nil, fmt.Errorf("relation model does not support TimeGraph query")
 	}
+	span.Set("querier-type", fmt.Sprintf("%T", querier))
 	return querier, nil
 }
 
@@ -237,6 +242,14 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 	expandShow bool,
 	pathResource []cmdb.Resource,
 ) (result timeGraphLegacyResult, err error) {
+	ctx, span := trace.NewSpan(ctx, "timegraph-adapt-instant-result")
+	defer span.End(&err)
+	span.Set("space-uid", spaceUID)
+	span.Set("source-type", source)
+	span.Set("target-type", target)
+	span.Set("path-resource-count", len(pathResource))
+	span.Set("source-matcher-count", len(indexMatcher))
+	span.Set("source-expand-matcher-count", len(expandMatcher))
 	defer func() {
 		if result.candidatePathCount > 0 {
 			metric.CMDBRelationCandidatePathCountObserve(
@@ -363,6 +376,9 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 		candidatePathCount: result.candidatePathCount,
 		rawResultCount:     result.rawResultCount,
 	}
+	span.Set("candidate-path-count", result.candidatePathCount)
+	span.Set("raw-result-count", result.rawResultCount)
+	span.Set("target-count", len(result.matchers))
 	return result, nil
 }
 
@@ -374,6 +390,14 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	expandShow bool,
 	pathResource []cmdb.Resource,
 ) (result timeGraphRangeResult, err error) {
+	ctx, span := trace.NewSpan(ctx, "timegraph-adapt-range-result")
+	defer span.End(&err)
+	span.Set("space-uid", spaceUID)
+	span.Set("source-type", source)
+	span.Set("target-type", target)
+	span.Set("path-resource-count", len(pathResource))
+	span.Set("source-matcher-count", len(indexMatcher))
+	span.Set("source-expand-matcher-count", len(expandMatcher))
 	defer func() {
 		if result.candidatePathCount > 0 {
 			metric.CMDBRelationCandidatePathCountObserve(
@@ -545,6 +569,10 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 		bucketCount:        len(series),
 		targetCount:        countTimeGraphRangeTargets(series),
 	}
+	span.Set("candidate-path-count", result.candidatePathCount)
+	span.Set("raw-result-count", result.rawResultCount)
+	span.Set("bucket-count", result.bucketCount)
+	span.Set("target-count", result.targetCount)
 	return result, nil
 }
 

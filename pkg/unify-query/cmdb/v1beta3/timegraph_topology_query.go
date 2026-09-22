@@ -15,10 +15,27 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 // QuerySharedTopology 查询一个统一时间网格上的完整局部拓扑。
-func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopologyQuery) (cmdb.SharedTopologyResult, error) {
+func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopologyQuery) (result cmdb.SharedTopologyResult, err error) {
+	ctx, span := trace.NewSpan(ctx, "timegraph-query-shared-topology")
+	defer span.End(&err)
+	queryMode := "instant"
+	if request.StartTime != 0 || request.EndTime != 0 {
+		queryMode = "range"
+	}
+	span.Set("query-mode", queryMode)
+	span.Set("space-uid", request.SpaceUID)
+	span.Set("source-type", request.SourceType)
+	span.Set("target-types", request.TargetTypes)
+	span.Set("source-matcher-count", len(request.SourceInfo))
+	span.Set("max-hops", request.MaxHops)
+	span.Set("allowed-category-count", len(request.AllowedCategories))
+	span.Set("allowed-relation-type-count", len(request.AllowedRelationTypes))
+	span.Set("dynamic-relation-direction", request.DynamicRelationDirection)
+	span.Set("look-back-delta", request.LookBackDelta)
 	if err := ctx.Err(); err != nil {
 		return cmdb.SharedTopologyResult{}, err
 	}
@@ -45,15 +62,44 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		return cmdb.SharedTopologyResult{}, fmt.Errorf("unsupported dynamic relation direction %q", direction)
 	}
 
-	start, end, step, responseStep, grid, err := normalizeSharedTopologyTime(request)
-	if err != nil {
-		return cmdb.SharedTopologyResult{}, err
+	_, gridSpan := trace.NewSpan(ctx, "timegraph-normalize-topology-grid")
+	var gridErr error
+	gridSpan.Set("query-mode", queryMode)
+	gridSpan.Set("requested-start", request.StartTime)
+	gridSpan.Set("requested-end", request.EndTime)
+	gridSpan.Set("requested-step", request.Step)
+	gridSpan.Set("max-point-count", effectiveMaxSharedTopologyPoints())
+	start, end, step, responseStep, grid, gridErr := normalizeSharedTopologyTime(request)
+	if gridErr == nil {
+		gridSpan.Set("point-count", len(grid.Timestamps))
+		gridSpan.Set("normalized-start", grid.Timestamps[0])
+		gridSpan.Set("normalized-end", grid.Timestamps[len(grid.Timestamps)-1])
+		gridSpan.Set("normalized-step", responseStep)
 	}
-	lookBack, err := normalizeSharedTopologyLookBack(request.LookBackDelta)
-	if err != nil {
-		return cmdb.SharedTopologyResult{}, err
+	gridSpan.End(&gridErr)
+	if gridErr != nil {
+		return cmdb.SharedTopologyResult{}, gridErr
 	}
+
+	_, lookBackSpan := trace.NewSpan(ctx, "timegraph-normalize-lookback")
+	var lookBackErr error
+	lookBack, lookBackErr := normalizeSharedTopologyLookBack(request.LookBackDelta)
+	lookBackSpan.Set("requested-look-back", request.LookBackDelta)
+	lookBackSpan.Set("normalized-look-back", lookBack)
+	lookBackSpan.End(&lookBackErr)
+	if lookBackErr != nil {
+		return cmdb.SharedTopologyResult{}, lookBackErr
+	}
+
+	_, relationSpan := trace.NewSpan(ctx, "timegraph-resolve-topology-relations")
+	var relationErr error
 	relations := m.sharedTopologyRelations(request.SpaceUID, request.AllowedCategories, request.AllowedRelationTypes, direction)
+	relationSpan.Set("space-uid", request.SpaceUID)
+	relationSpan.Set("allowed-category-count", len(request.AllowedCategories))
+	relationSpan.Set("allowed-relation-type-count", len(request.AllowedRelationTypes))
+	relationSpan.Set("relation-count", len(relations))
+	relationSpan.End(&relationErr)
+	span.Set("relation-count", len(relations))
 	rootRelations := make(map[timeGraphRelationKey]struct{})
 	for _, relation := range relations {
 		if len(relation.V) == 2 && relation.V[0] == request.SourceType {
@@ -98,13 +144,29 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		return cmdb.SharedTopologyResult{}, errors.WithMessage(err, "find shared topology")
 	}
 	filterSharedTopologySnapshots(snapshots, request.SourceType, request.TargetTypes)
-	return cmdb.SharedTopologyResult{
+	result = cmdb.SharedTopologyResult{
 		StartTime:  grid.Timestamps[0],
 		EndTime:    grid.Timestamps[len(grid.Timestamps)-1],
 		Step:       responseStep,
 		PointCount: len(grid.Timestamps),
 		Snapshots:  convertSharedTopologySnapshots(snapshots),
-	}, nil
+	}
+	span.Set("query-start", result.StartTime)
+	span.Set("query-end", result.EndTime)
+	span.Set("point-count", result.PointCount)
+	span.Set("snapshot-count", len(result.Snapshots))
+	nodeCount, edgeCount, partialCount := 0, 0, 0
+	for _, snapshot := range result.Snapshots {
+		nodeCount += len(snapshot.Nodes)
+		edgeCount += len(snapshot.Edges)
+		if snapshot.Partial {
+			partialCount++
+		}
+	}
+	span.Set("snapshot-node-count", nodeCount)
+	span.Set("snapshot-edge-count", edgeCount)
+	span.Set("partial-snapshot-count", partialCount)
+	return result, nil
 }
 
 func normalizeSharedTopologyTime(request cmdb.SharedTopologyQuery) (time.Time, time.Time, time.Duration, string, TopologyGrid, error) {

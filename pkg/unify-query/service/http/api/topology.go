@@ -15,6 +15,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta3"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
@@ -48,10 +49,20 @@ func HandlerAPIRelationV1Beta3TopologyRange(c *gin.Context) {
 }
 
 func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
-	ctx, span := trace.NewSpan(c.Request.Context(), "handler-api-relation-v1beta3-topology")
+	spanName := "handler-api-relation-v1beta3-topology"
+	if rangeQuery {
+		spanName += "-range"
+	}
+	ctx, span := trace.NewSpan(c.Request.Context(), spanName)
 	var handlerErr error
 	defer span.End(&handlerErr)
 	resp := &response{c: c}
+	queryMode := metric.CMDBRelationQueryModeInstant
+	if rangeQuery {
+		queryMode = metric.CMDBRelationQueryModeRange
+	}
+	span.Set("query-mode", queryMode)
+	span.Set("handler-headers", c.Request.Header)
 
 	request := new(cmdb.SharedTopologyRequest)
 	if err := json.NewDecoder(c.Request.Body).Decode(request); err != nil {
@@ -59,6 +70,8 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		resp.failed(ctx, err)
 		return
 	}
+	span.Set("query-count", len(request.QueryList))
+	metric.CMDBRelationQueryListSizeObserve(ctx, metric.CMDBRelationRouteTimeGraph, queryMode, len(request.QueryList))
 	model, err := v1beta3.GetModel(ctx)
 	if err != nil {
 		handlerErr = err
@@ -77,9 +90,25 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		TraceID: span.TraceID(),
 		Data:    make([]cmdb.SharedTopologyResponseData, len(request.QueryList)),
 	}
+	failedQueryCount := 0
+	itemSpanName := "handler-api-relation-v1beta3-topology-item"
+	if rangeQuery {
+		itemSpanName += "-range"
+	}
 	for index, query := range request.QueryList {
-		queryCtx, querySpan := trace.NewSpan(ctx, "handler-api-relation-v1beta3-topology-item")
+		queryCtx, querySpan := trace.NewSpan(ctx, itemSpanName)
 		query.SpaceUID = metadata.GetUser(ctx).SpaceUID
+		querySpan.Set("query-index", index)
+		querySpan.Set("requested-source-type", query.SourceType)
+		querySpan.Set("requested-target-types", query.TargetTypes)
+		querySpan.Set("requested-max-hops", query.MaxHops)
+		querySpan.Set("requested-source-matcher-count", len(query.SourceInfo))
+		querySpan.Set("requested-relation-type-count", len(query.AllowedRelationTypes))
+		querySpan.Set("requested-category-count", len(query.AllowedCategories))
+		querySpan.Set("requested-timestamp", query.Timestamp)
+		querySpan.Set("requested-start", query.StartTime)
+		querySpan.Set("requested-end", query.EndTime)
+		querySpan.Set("requested-step", query.Step)
 		item := cmdb.SharedTopologyResponseData{Code: http.StatusOK}
 		var result cmdb.SharedTopologyResult
 		var queryErr error
@@ -98,6 +127,7 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 			result, queryErr = topologyModel.QuerySharedTopology(queryCtx, query)
 		}
 		if queryErr != nil {
+			failedQueryCount++
 			item.Code = http.StatusBadRequest
 			item.Message = queryErr.Error()
 		} else {
@@ -113,9 +143,24 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		querySpan.Set("query-index", index)
 		querySpan.Set("point-count", item.PointCount)
 		querySpan.Set("response-code", item.Code)
+		querySpan.Set("snapshot-count", len(item.Snapshots))
+		nodeCount, edgeCount, partialCount := 0, 0, 0
+		for _, snapshot := range item.Snapshots {
+			nodeCount += len(snapshot.Nodes)
+			edgeCount += len(snapshot.Edges)
+			if snapshot.Partial {
+				partialCount++
+			}
+		}
+		querySpan.Set("response-node-count", nodeCount)
+		querySpan.Set("response-edge-count", edgeCount)
+		querySpan.Set("partial-snapshot-count", partialCount)
 		querySpan.End(&queryErr)
 		data.Data[index] = item
 	}
 	span.Set("query-count", len(request.QueryList))
+	span.Set("failed-query-count", failedQueryCount)
+	span.Set("successful-query-count", len(request.QueryList)-failedQueryCount)
+	span.Set("partial-failure", failedQueryCount > 0)
 	resp.success(ctx, data)
 }

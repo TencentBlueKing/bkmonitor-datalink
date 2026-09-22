@@ -11,6 +11,7 @@ import (
 	"sort"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 // TopologyGrid 是共享拓扑查询使用的规范化时间网格，时间点严格递增。
@@ -164,7 +165,13 @@ func (q *TimeGraph) sharedTopologyState(grid TopologyGrid, query SharedTopologyQ
 // FindSharedTopology 为网格中的每个时刻返回一个 H 跳诱导子图。节点、关系
 // 身份和时间状态在查询内共享，避免为每个时刻复制完整图；旧路径接口继续
 // 使用原有实现。
-func (q *TimeGraph) FindSharedTopology(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery) ([]SharedTopologySnapshot, error) {
+func (q *TimeGraph) FindSharedTopology(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery) (snapshots []SharedTopologySnapshot, err error) {
+	ctx, span := trace.NewSpan(ctx, "timegraph-find-shared-topology")
+	defer span.End(&err)
+	span.Set("source-type", query.SourceType)
+	span.Set("max-hops", query.MaxHops)
+	span.Set("grid-point-count", len(grid.Timestamps))
+	span.Set("partial-point-count", len(query.PartialTimestamps))
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -177,10 +184,24 @@ func (q *TimeGraph) FindSharedTopology(ctx context.Context, grid TopologyGrid, q
 	q.lock.RLock()
 	defer q.lock.RUnlock()
 
-	nodeBits, edges, err := q.sharedTopologyState(grid, query)
-	if err != nil {
-		return nil, err
+	_, stateSpan := trace.NewSpan(ctx, "timegraph-build-shared-topology-state")
+	var stateErr error
+	stateSpan.Set("source-type", query.SourceType)
+	stateSpan.Set("source-matcher-count", len(query.SourceMatcher))
+	stateSpan.Set("allowed-category-count", len(query.AllowedCategories))
+	stateSpan.Set("allowed-relation-type-count", len(query.AllowedRelationTypes))
+	stateSpan.Set("direction", query.Direction)
+	nodeBits, edges, stateErr := q.sharedTopologyState(grid, query)
+	if stateErr == nil {
+		stateSpan.Set("graph-node-count", len(nodeBits))
+		stateSpan.Set("graph-edge-count", len(edges))
 	}
+	stateSpan.End(&stateErr)
+	if stateErr != nil {
+		return nil, stateErr
+	}
+	span.Set("graph-node-count", len(nodeBits))
+	span.Set("graph-edge-count", len(edges))
 
 	reachable := make(map[uint64]uint64)
 	frontier := make(map[uint64]uint64)
@@ -204,6 +225,7 @@ func (q *TimeGraph) FindSharedTopology(ctx context.Context, grid TopologyGrid, q
 			frontier[node] = matchedBits
 		}
 	}
+	span.Set("source-match-node-count", len(frontier))
 
 	for level := 0; level < query.MaxHops; level++ {
 		if err := ctx.Err(); err != nil {
@@ -226,6 +248,8 @@ func (q *TimeGraph) FindSharedTopology(ctx context.Context, grid TopologyGrid, q
 		}
 		frontier = nextFrontier
 	}
+	span.Set("reachable-node-count", len(reachable))
+	span.Set("traversal-level-count", query.MaxHops)
 
 	result := make([]SharedTopologySnapshot, len(grid.Timestamps))
 	for index, timestamp := range grid.Timestamps {
@@ -292,7 +316,19 @@ func (q *TimeGraph) FindSharedTopology(ctx context.Context, grid TopologyGrid, q
 			return left.MetricName < right.MetricName
 		})
 	}
-	return result, nil
+	snapshots = result
+	nodeCount, edgeCount, partialCount := 0, 0, 0
+	for _, snapshot := range snapshots {
+		nodeCount += len(snapshot.Nodes)
+		edgeCount += len(snapshot.Edges)
+		if snapshot.Partial {
+			partialCount++
+		}
+	}
+	span.Set("snapshot-node-count", nodeCount)
+	span.Set("snapshot-edge-count", edgeCount)
+	span.Set("partial-snapshot-count", partialCount)
+	return snapshots, nil
 }
 
 // nodeInfoAt 返回节点在指定时间点的属性；没有时间点属性时回退到稳定身份

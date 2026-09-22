@@ -117,7 +117,7 @@ Processor 最多进行 3 次 CAS 循环。冲突后重新读取 Event，优先�
 
 ```go
 type AlertEnricher interface {
-    Enrich(ctx context.Context, input EnrichInput) (EnrichResult, error)
+    Enrich(ctx context.Context, input enrich.Input) (enrich.Result, error)
 }
 
 type FinalHook interface {
@@ -131,7 +131,7 @@ Enricher 在每次新 Alert 持久化前同步执行，允许 succeeded/partial/
 非法 JSON/协议降级为 failed 的固定 payload，同时保留 Alert 创建流程。
 
 Enricher 输入只包含已完成基础构造和 Normalize 的 Alert 深拷贝。具体实现位于
-`internal/lifecycle/enrich`，Scope 保存 Alert 深拷贝并向每个 Processor 返回隔离副本；处理器只通过
+`internal/enrich`，Scope 保存 Alert 深拷贝并向每个 Processor 返回隔离副本；处理器只通过
 返回值追加丰富信息。Lifecycle 按 EventSource 路由有序链，单 Processor error/panic 会形成 failed
 信封并继续执行，父 Context 取消会立即停止。
 
@@ -324,8 +324,9 @@ cause 执行 FinalHook，再把 close 与 push AlertLog 一次批量写入。相
 ## 8. 恢复与数据安全边界
 
 - Signal 未 XACK 时，Redis Streams PEL/XAUTOCLAIM 负责重新投递；
-- Signal XACK 只清理 PEL 引用，不删除 Stream entry；启用 `control_plane.redis_stream` 后由控制面在
-  软长度上限触发时，只裁剪所有 Consumer Group 都已经确认的连续前缀；
+- Signal XACK 只清理 PEL 引用，不删除 Stream entry；配置 Redis 与 Lifecycle 后，控制面默认执行安全裁剪，
+  在软长度上限触发时只裁剪所有 Consumer Group 都已经确认的连续前缀；
+  可通过 `control_plane.redis_stream.enabled: false` 显式关闭，预算说明见[配置指南](../guides/configuration.md)；
 - Event 从 Mailbox 移除前崩溃，队首仍可重放；
 - lease 锁忙只 Defer，不消耗普通 Retry 次数；
 - Cleaner 只有 Event 持久化和 Mailbox 入队都成功后才确认上游 MQ；

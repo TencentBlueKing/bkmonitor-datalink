@@ -206,8 +206,9 @@ func ValidateEnrichPayload(status EnrichStatus, object JSONObject) error {
 		return fmt.Errorf("alert enrich must contain processors")
 	}
 	var processors []map[string]struct {
-		Status      EnrichStatus `json:"status"`
-		Value       JSONObject   `json:"value"`
+		Status      EnrichStatus  `json:"status"`
+		Value       JSONObject    `json:"value"`
+		Patches     []EnrichPatch `json:"patches"`
 		Diagnostics []struct {
 			Code string `json:"code"`
 		} `json:"diagnostics,omitempty"`
@@ -221,8 +222,13 @@ func ValidateEnrichPayload(status EnrichStatus, object JSONObject) error {
 			return fmt.Errorf("alert enrich processors[%d] must contain exactly one entry", index)
 		}
 		for name, envelope := range entry {
-			if name == "" || (envelope.Status != EnrichStatusSucceeded && envelope.Status != EnrichStatusPartial && envelope.Status != EnrichStatusFailed && envelope.Status != EnrichStatusSkipped) || envelope.Value == nil {
+			if name == "" || (envelope.Status != EnrichStatusSucceeded && envelope.Status != EnrichStatusPartial && envelope.Status != EnrichStatusFailed && envelope.Status != EnrichStatusSkipped) || (envelope.Value == nil && envelope.Patches == nil) {
 				return fmt.Errorf("alert enrich processors[%d] is invalid", index)
+			}
+			for _, patch := range envelope.Patches {
+				if err := patch.Validate(); err != nil {
+					return fmt.Errorf("alert enrich patch: %w", err)
+				}
 			}
 			switch envelope.Status {
 			case EnrichStatusSucceeded:

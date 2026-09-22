@@ -24,20 +24,16 @@ func (r *Repository) ReadActiveIndex(ctx context.Context, q activeindex.Query) (
 	}
 	label := "JSON_EXTRACT(payload, '$.labels.strategy_id')"
 	//nolint:gosec // 仅拼接固定列和有界占位符；来源、租户、策略及 LIMIT 均使用绑定参数。
-	query := "SELECT bk_tenant_id,event_source_id,fingerprint," + label + " FROM linkd_alerts WHERE status='active' AND event_source_id IN (" + placeholders(len(q.Sources)) + ")"
+	query := "SELECT bk_tenant_id,event_source_id,fingerprint," + label + ",JSON_EXTRACT(payload, '$.enrich') FROM linkd_alerts WHERE status='active' AND event_source_id IN (" + placeholders(len(q.Sources)) + ")"
 	args := make([]any, 0, len(q.Sources)+4)
 	for _, source := range q.Sources {
 		args = append(args, source)
 	}
 	if q.Scope != nil {
-		query += " AND bk_tenant_id=? AND ((JSON_TYPE(" + label + ")='STRING' AND CAST(JSON_UNQUOTE(" + label + ") AS BINARY)=CAST(? AS BINARY))"
-		args = append(args, q.Scope.BKTenantID, q.Scope.StrategyID)
-		if n, ok := activeindex.NumericStrategy(q.Scope.StrategyID); ok {
-			query += " OR (JSON_TYPE(" + label + ") IN ('INTEGER','DOUBLE','DECIMAL') AND CAST(" + label + " AS DOUBLE)=?)"
-			args = append(args, n)
-		}
-		query += ")"
+		query += " AND bk_tenant_id=?"
+		args = append(args, q.Scope.BKTenantID)
 	}
+
 	query += " LIMIT ?"
 	args = append(args, q.MaxRows+1)
 	rows, err := r.db.QueryContext(ctx, query, args...)
@@ -49,17 +45,22 @@ func (r *Repository) ReadActiveIndex(ctx context.Context, q activeindex.Query) (
 	bytes := 0
 	for rows.Next() {
 		var row activeindex.Row
-		var labelJSON []byte
-		if err := rows.Scan(&row.BKTenantID, &row.EventSourceID, &row.Fingerprint, &labelJSON); err != nil {
+		var labelJSON, enrichJSON []byte
+		if err := rows.Scan(&row.BKTenantID, &row.EventSourceID, &row.Fingerprint, &labelJSON, &enrichJSON); err != nil {
 			return nil, err
 		}
-		bytes += len(row.BKTenantID) + len(row.EventSourceID) + len(row.Fingerprint) + len(labelJSON)
+		bytes += len(row.BKTenantID) + len(row.EventSourceID) + len(row.Fingerprint) + len(labelJSON) + len(enrichJSON)
 		if len(result) >= q.MaxRows || bytes > q.MaxBytes {
 			return nil, fmt.Errorf("active index snapshot exceeds limits")
 		}
 		if len(labelJSON) != 0 && string(labelJSON) != "null" {
 			if err := json.Unmarshal(append(append([]byte(`{"strategy_id":`), labelJSON...), '}'), &row.Labels); err != nil {
 				return nil, fmt.Errorf("invalid strategy label")
+			}
+		}
+		if len(enrichJSON) > 0 && string(enrichJSON) != "null" {
+			if err := json.Unmarshal(enrichJSON, &row.Enrich); err != nil {
+				return nil, fmt.Errorf("invalid enrichment payload")
 			}
 		}
 		result = append(result, row)

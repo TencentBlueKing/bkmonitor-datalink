@@ -14,8 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"linkd/internal/telemetry"
 )
 
 func TestLoadTelemetryPrometheusConfig(t *testing.T) {
@@ -35,7 +33,7 @@ func TestLoadTelemetryPrometheusConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if config.Telemetry == nil || config.Telemetry.Metrics.Exporter != telemetry.ExporterPrometheus {
+	if config.Telemetry == nil || config.Telemetry.Metrics.Exporter != TelemetryExporterPrometheus {
 		t.Fatalf("Load() telemetry = %#v", config.Telemetry)
 	}
 	redacted, err := MarshalRedacted(config)

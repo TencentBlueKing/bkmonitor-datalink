@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/twmb/franz-go/pkg/kgo"
+	"linkd/internal/enrich/kingeye"
 	"linkd/internal/lifecycle"
 )
 
@@ -33,7 +34,7 @@ func TestHookEmitsKACAlarmRecord(t *testing.T) {
 	if string(record.Key) != "linkd-alert-1" || !record.Timestamp.Equal(input.Alert.UpdateAt) || len(record.Headers) != 0 {
 		t.Fatalf("record key=%q timestamp=%s headers=%v", record.Key, record.Timestamp, record.Headers)
 	}
-	var message Message
+	var message kingeye.AlarmMessage
 	if err := json.Unmarshal(record.Value, &message); err != nil {
 		t.Fatal(err)
 	}

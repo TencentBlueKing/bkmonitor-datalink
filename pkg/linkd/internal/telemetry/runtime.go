@@ -17,12 +17,10 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"os"
-	"regexp"
 	goruntime "runtime"
 	"time"
 
 	promclient "github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/prometheus"
@@ -31,6 +29,7 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
+	settings "linkd/internal/config"
 )
 
 const (
@@ -44,7 +43,6 @@ const (
 type Runtime struct {
 	provider                     metric.MeterProvider
 	shutdown                     func(context.Context) error
-	meter                        metric.Meter
 	server                       *http.Server
 	listener                     net.Listener
 	profileServer                *http.Server
@@ -55,7 +53,7 @@ type Runtime struct {
 
 // Start 创建指定职责的 telemetry runtime。Prometheus 端口会在返回前完成 bind，
 // 因此地址冲突不会等到业务进程接管消息后才暴露。
-func Start(ctx context.Context, cfg Config, role Role, version string) (*Runtime, error) {
+func Start(ctx context.Context, cfg settings.TelemetryConfig, role Role, version string) (*Runtime, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("start telemetry: context must not be nil")
 	}
@@ -69,7 +67,7 @@ func Start(ctx context.Context, cfg Config, role Role, version string) (*Runtime
 		if err != nil {
 			return nil, err
 		}
-		runtime := &Runtime{provider: provider, meter: meter, metrics: metrics}
+		runtime := &Runtime{provider: provider, metrics: metrics}
 		if err := runtime.startProfiling(ctx, cfg.Profiling); err != nil {
 			return nil, err
 		}
@@ -78,7 +76,7 @@ func Start(ctx context.Context, cfg Config, role Role, version string) (*Runtime
 
 	address := cfg.ListenAddress()
 	registry := promclient.NewRegistry()
-	exporter, err := prometheus.New(prometheus.WithRegisterer(registry))
+	exporter, err := prometheus.New(prometheus.WithRegisterer(registry), prometheus.WithTranslationStrategy(metricTranslationStrategy()))
 	if err != nil {
 		return nil, fmt.Errorf("create prometheus exporter: %w", err)
 	}
@@ -97,17 +95,9 @@ func Start(ctx context.Context, cfg Config, role Role, version string) (*Runtime
 		_ = provider.Shutdown(context.Background())
 		return nil, err
 	}
-	// 调度延迟与 GC CPU 可区分外部请求等待和本机运行时竞争；不采集无关的全量运行时指标。
-	goMetrics := collectors.WithGoCollectorRuntimeMetrics(collectors.GoRuntimeMetricsRule{
-		Matcher: regexp.MustCompile(`^/(sched/latencies:seconds|cpu/classes/gc/.*|cpu/classes/total:cpu-seconds)$`),
-	})
-	if err := registry.Register(collectors.NewGoCollector(goMetrics)); err != nil {
+	if err := registerBuiltinCollectors(registry); err != nil {
 		_ = provider.Shutdown(context.Background())
-		return nil, fmt.Errorf("register go collector: %w", err)
-	}
-	if err := registry.Register(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{})); err != nil {
-		_ = provider.Shutdown(context.Background())
-		return nil, fmt.Errorf("register process collector: %w", err)
+		return nil, err
 	}
 
 	listenConfig := net.ListenConfig{}
@@ -128,7 +118,6 @@ func Start(ctx context.Context, cfg Config, role Role, version string) (*Runtime
 	runtime := &Runtime{
 		provider: provider,
 		shutdown: provider.Shutdown,
-		meter:    meter,
 		server:   server,
 		listener: listener,
 		metrics:  metrics,
@@ -150,7 +139,7 @@ func Start(ctx context.Context, cfg Config, role Role, version string) (*Runtime
 	return runtime, nil
 }
 
-func (r *Runtime) startProfiling(ctx context.Context, cfg ProfilingConfig) error {
+func (r *Runtime) startProfiling(ctx context.Context, cfg settings.TelemetryProfilingConfig) error {
 	if !cfg.Enabled {
 		return nil
 	}

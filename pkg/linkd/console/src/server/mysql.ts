@@ -8,7 +8,11 @@ import type {
 } from "../shared/contracts.js";
 import type { ConsoleConfig } from "./config.js";
 import { decodeCursor, encodeCursor, queryHash } from "./cursor.js";
-import { numericStrategy, type StrategyAlertRow } from "./strategy-alerts.js";
+import {
+  effectiveStrategyRow,
+  readEffectiveStrategyAlerts,
+  type StrategyAlertRow,
+} from "./strategy-alerts.js";
 
 interface EntitySpec {
   table: string;
@@ -85,6 +89,7 @@ export class MysqlConnector {
   async *scanActiveStrategyAlerts(
     sources: string[],
     signal: AbortSignal,
+    tenant?: string,
   ): AsyncIterable<StrategyAlertRow[]> {
     if (!sources.length || sources.length > 64)
       throw new Error("invalid audit scope");
@@ -92,34 +97,41 @@ export class MysqlConnector {
     for (;;) {
       signal.throwIfAborted();
       const args: unknown[] = [...sources];
-      let cursor = "";
+      let cursor = tenant ? " AND bk_tenant_id=?" : "";
+      if (tenant) args.push(tenant);
       if (after) {
-        cursor =
+        cursor +=
           " AND (bk_tenant_id > ? OR (bk_tenant_id = ? AND alert_id > ?))";
         args.push(after[0], after[0], after[1]);
       }
       const [rows] = await this.pool.query<RowDataPacket[]>(
         {
-          sql: `SELECT /*+ MAX_EXECUTION_TIME(${this.timeoutMilliseconds}) */ bk_tenant_id,alert_id,event_source_id,fingerprint,status,CAST(JSON_EXTRACT(payload,'$.labels.strategy_id') AS CHAR) AS strategy_json FROM linkd_alerts WHERE status='active' AND event_source_id IN (${sources.map(() => "?").join(",")})${cursor} ORDER BY bk_tenant_id,alert_id LIMIT 1000`,
+          sql: `SELECT /*+ MAX_EXECUTION_TIME(${this.timeoutMilliseconds}) */ bk_tenant_id,alert_id,event_source_id,fingerprint,status,CAST(JSON_EXTRACT(payload,'$.labels.strategy_id') AS CHAR) AS strategy_json,CAST(JSON_EXTRACT(payload,'$.enrich') AS CHAR) AS enrich_json FROM linkd_alerts WHERE status='active' AND event_source_id IN (${sources.map(() => "?").join(",")})${cursor} ORDER BY bk_tenant_id,alert_id LIMIT 1000`,
           timeout: this.timeoutMilliseconds,
         },
         args,
       );
       signal.throwIfAborted();
       if (!rows.length) return;
-      const result = rows.map((row) => ({
-        bk_tenant_id: text(row.bk_tenant_id),
-        alert_id: text(row.alert_id),
-        event_source_id: text(row.event_source_id),
-        fingerprint: text(row.fingerprint),
-        status: text(row.status),
-        labels: {
-          strategy_id:
-            row.strategy_json == null
+      const result = rows.map((row) =>
+        effectiveStrategyRow({
+          bk_tenant_id: text(row.bk_tenant_id),
+          alert_id: text(row.alert_id),
+          event_source_id: text(row.event_source_id),
+          fingerprint: text(row.fingerprint),
+          status: text(row.status),
+          enrich:
+            row.enrich_json == null
               ? undefined
-              : JSON.parse(text(row.strategy_json)),
-        },
-      }));
+              : JSON.parse(text(row.enrich_json)),
+          labels: {
+            strategy_id:
+              row.strategy_json == null
+                ? undefined
+                : JSON.parse(text(row.strategy_json)),
+          },
+        }),
+      );
       const last = result.at(-1)!;
       after = [last.bk_tenant_id, last.alert_id];
       yield result;
@@ -135,43 +147,16 @@ export class MysqlConnector {
   ): Promise<StrategyAlertRow[]> {
     if (!sources.length || sources.length > 64 || limit < 1 || limit > 5001)
       throw new Error("invalid reconciliation scope");
-    // 不使用 Explorer 的默认时间范围，避免遗漏长期未更新的活动告警。
-    const label = "JSON_EXTRACT(payload, '$.labels.strategy_id')";
-    const numeric = numericStrategy(strategy);
-    const exact = `(JSON_TYPE(${label})='STRING' AND CAST(JSON_UNQUOTE(${label}) AS BINARY)=CAST(? AS BINARY))`;
-    const predicate =
-      numeric === undefined
-        ? exact
-        : `(${exact} OR (JSON_TYPE(${label}) IN ('INTEGER','DOUBLE','DECIMAL') AND CAST(${label} AS DOUBLE)=?))`;
-    const [rows] = await this.pool.query<RowDataPacket[]>(
-      {
-        sql: `SELECT /*+ MAX_EXECUTION_TIME(${this.timeoutMilliseconds}) */ bk_tenant_id, alert_id, event_source_id, fingerprint, status,
-        CAST(JSON_EXTRACT(payload, '$.labels.strategy_id') AS CHAR) AS strategy_json
-        FROM linkd_alerts WHERE bk_tenant_id=? AND status='active'
-        AND event_source_id IN (${sources.map(() => "?").join(",")}) AND ${predicate} ORDER BY alert_id LIMIT ?`,
-        timeout: this.timeoutMilliseconds,
-      },
-      [
+    return readEffectiveStrategyAlerts(
+      this.scanActiveStrategyAlerts(
+        sources,
+        AbortSignal.timeout(this.timeoutMilliseconds),
         tenant,
-        ...sources,
-        strategy,
-        ...(numeric === undefined ? [] : [numeric]),
-        limit,
-      ],
+      ),
+      tenant,
+      strategy,
+      limit,
     );
-    return rows.map((row) => ({
-      bk_tenant_id: text(row.bk_tenant_id),
-      alert_id: text(row.alert_id),
-      event_source_id: text(row.event_source_id),
-      fingerprint: text(row.fingerprint),
-      status: text(row.status),
-      labels: {
-        strategy_id:
-          row.strategy_json == null
-            ? undefined
-            : JSON.parse(text(row.strategy_json)),
-      },
-    }));
   }
 
   async search(entity: EntityKind, params: SearchParams): Promise<EntityPage> {

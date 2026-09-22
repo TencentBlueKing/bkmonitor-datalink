@@ -82,6 +82,43 @@ RawEventMessage MQ
 
 Enricher 在创建 Alert 的 lifecycle attempt 内同步执行，不设计独立异步队列。内部 `CloseAlert` 是独立有界执行，cause 使用稳定 operation ID。
 
+## 指标目录与注册约束
+
+业务指标的实际创建和目录登记共用 `internal/telemetry` 中的 `instrumentRegistry`。
+`metrics.go`、`dispatch.go`、`write_batch.go` 的每个声明同时提供中文短名称、模块、用途和维度；
+单位、HELP 描述与 instrument 类型从传给 OTel 的同一组选项和构造器读取，不维护独立指标名清单。
+注册时检查必填元数据、分类、维度词表，以及 OTel 名和导出名冲突。
+
+`MetricCatalog()` 使用 no-op Meter 执行同一套注册流程，再从与运行时相同的 Go/process collector
+发现原生指标，按名称返回只读目录。ES 批次 instrument 也在初始化时统一注册；原有“启用观察器后
+上报零值”的行为保留。控制面在创建 API Handler 时构造一次目录，请求阶段不触发业务 I/O、采集或
+配置更新。进程重启至包含新指标的二进制后，API 与 Console 自动包含新定义，不需要手工维护页面。
+
+新增业务指标必须在现有注册流程中使用带元数据的构造器，例如：
+
+```go
+meter.Int64Counter(
+    "linkd.enrich.attempts",
+    describeMetric("告警丰富尝试结果", "enrich", "throughput",
+        "linkd.event_source_id", "linkd.status", "linkd.outcome", "linkd.chain_kind"),
+    metric.WithUnit("{attempt}"),
+    metric.WithDescription("新 Alert 同步丰富尝试结果"),
+)
+```
+
+模块、用途使用目录中已有分类；新增维度同时在 `metric_dimensions.go` 说明语义和可选条件，仍须
+满足低基数约束。构造器不嵌入原始 Meter，避免新增指标跳过元数据。结构测试遍历生产代码中的
+instrument 声明，检查没有绕过登记、没有未进入目录的延迟注册路径；真实 scrape 测试对照目录
+检查名称、类型、HELP 和实际标签，既有直方图桶与数值行为继续由原测试验证。
+
+目录与 exporter 共用现有 Prometheus 名称翻译策略，使用 exporter 已依赖的 `otlptranslator`
+实现，不重新实现单位后缀和标签转义规则。该库由间接依赖改为直接使用，没有新增依赖版本。
+Go/process 自动发现先保证新增项可见，现有指标有中文短名称，新出现的未知原生指标暂用通用中文
+标题并保留上游 HELP；后续可完善中文说明。Resource 和抓取标签与业务维度分开说明，不伪造不存在
+的 tenant、Alert ID 标签。
+
+API、鉴权和页面使用说明统一见 [Console 指标边界](../guides/console.md#指标边界)。
+
 ## 已实现 Metric
 
 Prometheus exporter 使用单一 `telemetry.metrics.prometheus.listen_address`。每个常驻进程都初始化独立
@@ -140,10 +177,10 @@ Cleaner 页面使用 `linkd.pipeline.attempt.duration` 展示整体平均耗时�
 
 Kafka assignment/offset/lag、Signal Group `lag + pending` 和 Mailbox List 扫描是 Console 直接读取的
 当前快照。Cleaner 的 `linkd.cleaner.backpressure.*` 则最多每 3 秒按请求路径采样一次目标 Group；查询失败
-和未知 lag 会记录为 fail-open，Group 缺失记录为暂停。启用
-`control_plane.redis_stream` 后，控制面周期采集 Redis Stream 的 `XLEN`、`MEMORY USAGE`、Group、Consumer、
+和未知 lag 会记录为 fail-open，Group 缺失记录为暂停。配置 Redis 与 Lifecycle 后，
+`control_plane.redis_stream` 默认启用，控制面周期采集 Redis Stream 的 `XLEN`、`MEMORY USAGE`、Group、Consumer、
 PEL、最大 lag、最老条目/Pending 年龄和软上限超量，并通过自身 `/metrics` 暴露。指标不携带 Stream 或
-Group 名称，避免配置值形成高基数标签；未启用任务时不生成虚假零值。
+Group 名称，避免配置值形成高基数标签；显式设置 `enabled: false` 关闭任务时不生成虚假零值。
 
 `linkd.lifecycle.recent_alert_cache.operations` 使用固定 `linkd.operation` 和 `linkd.outcome` 记录 current、
 ended、terminal 和 repair 操作。Console 展示操作速率与读取命中率；指标不携带租户、AlertID、EventID、

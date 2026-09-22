@@ -212,6 +212,34 @@ const hooksSchema = z
     "hook names must be unique",
   );
 
+const redisStreamManagerSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+    reconcile_interval_seconds: z.number().int().positive().default(10),
+    operation_timeout_seconds: z.number().int().positive().default(3),
+    max_entries: z.number().int().positive().default(100_000),
+    trim_batch_size: z.number().int().positive().default(10_000),
+    max_trim_entries_per_cycle: z.number().int().positive().optional(),
+  })
+  .superRefine((value, context) => {
+    const maxTrimEntriesPerCycle =
+      value.max_trim_entries_per_cycle ?? value.trim_batch_size * 10;
+    if (maxTrimEntriesPerCycle < value.trim_batch_size) {
+      context.addIssue({
+        code: "custom",
+        path: ["max_trim_entries_per_cycle"],
+        message: "must not be less than trim_batch_size",
+      });
+    }
+    if (maxTrimEntriesPerCycle > value.trim_batch_size * 100) {
+      context.addIssue({
+        code: "custom",
+        path: ["max_trim_entries_per_cycle"],
+        message: "must not exceed 100 times trim_batch_size",
+      });
+    }
+  });
+
 const linkdConfigSchema = z
   .object({
     storage: z
@@ -378,33 +406,7 @@ const linkdConfigSchema = z
             archive_worker_count: z.number().int().positive().default(1),
           })
           .optional(),
-        redis_stream: z
-          .object({
-            reconcile_interval_seconds: z.number().int().positive().default(10),
-            operation_timeout_seconds: z.number().int().positive().default(3),
-            max_entries: z.number().int().positive().default(100_000),
-            trim_batch_size: z.number().int().positive().default(10_000),
-            max_trim_entries_per_cycle: z.number().int().positive().optional(),
-          })
-          .superRefine((value, context) => {
-            const maxTrimEntriesPerCycle =
-              value.max_trim_entries_per_cycle ?? value.trim_batch_size * 10;
-            if (maxTrimEntriesPerCycle < value.trim_batch_size) {
-              context.addIssue({
-                code: "custom",
-                path: ["max_trim_entries_per_cycle"],
-                message: "must not be less than trim_batch_size",
-              });
-            }
-            if (maxTrimEntriesPerCycle > value.trim_batch_size * 100) {
-              context.addIssue({
-                code: "custom",
-                path: ["max_trim_entries_per_cycle"],
-                message: "must not exceed 100 times trim_batch_size",
-              });
-            }
-          })
-          .optional(),
+        redis_stream: redisStreamManagerSchema.optional(),
       })
       .passthrough()
       .optional(),
@@ -581,6 +583,7 @@ export interface ConsoleConfig {
     };
   };
   redisStreamManager?: {
+    explicit: boolean;
     reconcileIntervalSeconds: number;
     operationTimeoutSeconds: number;
     maxEntries: number;
@@ -835,9 +838,20 @@ export async function loadConfig(
       },
     };
   }
-  if (decoded.control_plane?.redis_stream) {
-    const manager = decoded.control_plane.redis_stream;
+  const declaredStreamManager = decoded.control_plane?.redis_stream;
+  const manager =
+    declaredStreamManager ??
+    (config.redis && config.lifecycle
+      ? redisStreamManagerSchema.parse({})
+      : undefined);
+  if (manager?.enabled) {
+    if (!config.redis || !config.lifecycle) {
+      throw new Error(
+        "storage.redis and lifecycle are required for Redis Stream management",
+      );
+    }
     config.redisStreamManager = {
+      explicit: declaredStreamManager !== undefined,
       reconcileIntervalSeconds: manager.reconcile_interval_seconds,
       operationTimeoutSeconds: manager.operation_timeout_seconds,
       maxEntries: manager.max_entries,

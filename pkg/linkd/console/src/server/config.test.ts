@@ -8,6 +8,99 @@ import { loadConfig, redactedConfig } from "./config.js";
 
 describe("Linkd config loader", () => {
   it.each([
+    ["omitted control plane", "", true, true, true, false],
+    ["empty control plane", "control_plane: {}\n", true, true, true, false],
+    [
+      "explicit manager",
+      "control_plane:\n  redis_stream: {}\n",
+      true,
+      true,
+      true,
+      true,
+    ],
+    [
+      "disabled manager",
+      "control_plane:\n  redis_stream:\n    enabled: false\n",
+      true,
+      true,
+      false,
+      false,
+    ],
+    ["redis missing", "", false, true, false, false],
+    ["lifecycle missing", "", true, false, false, false],
+    [
+      "disabled without dependencies",
+      "control_plane:\n  redis_stream:\n    enabled: false\n",
+      false,
+      false,
+      false,
+      false,
+    ],
+  ])(
+    "resolves default Stream management: %s",
+    async (_name, controlPlane, redis, lifecycle, enabled, explicit) => {
+      const directory = await mkdtemp(
+        path.join(tmpdir(), "linkd-stream-defaults-"),
+      );
+      try {
+        const configPath = path.join(directory, "linkd.yaml");
+        await writeFile(
+          configPath,
+          `storage:
+  repository: mysql
+  mysql:
+    address: 127.0.0.1:3306
+    database: linkd
+    username: linkd
+${redis ? "  redis:\n    address: 127.0.0.1:6379\n" : ""}${lifecycle ? "lifecycle: {}\n" : ""}${controlPlane}`,
+        );
+        const config = await loadConfig(configPath);
+        if (enabled) {
+          expect(config.redisStreamManager).toEqual({
+            explicit,
+            reconcileIntervalSeconds: 10,
+            operationTimeoutSeconds: 3,
+            maxEntries: 100_000,
+            trimBatchSize: 10_000,
+            maxTrimEntriesPerCycle: 100_000,
+          });
+        } else {
+          expect(config.redisStreamManager).toBeUndefined();
+        }
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("rejects an explicitly enabled Stream manager without dependencies", async () => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "linkd-stream-dependencies-"),
+    );
+    try {
+      const configPath = path.join(directory, "linkd.yaml");
+      await writeFile(
+        configPath,
+        `storage:
+  repository: mysql
+  mysql:
+    address: 127.0.0.1:3306
+    database: linkd
+    username: linkd
+control_plane:
+  redis_stream:
+    enabled: true
+`,
+      );
+      await expect(loadConfig(configPath)).rejects.toThrow(
+        "storage.redis and lifecycle are required",
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
     [1, 1, 0, 1],
     [2, 1, 0, 2],
     [3, 1, 0, 3],
@@ -140,6 +233,7 @@ telemetry:
       expect(config.eventSources?.[0].runtime.max_batch_messages).toBe(32);
       expect(config.telemetry?.listenAddress).toBe("127.0.0.1:9464");
       expect(config.redisStreamManager).toEqual({
+        explicit: true,
         reconcileIntervalSeconds: 45,
         operationTimeoutSeconds: 5,
         maxEntries: 80_000,

@@ -18,12 +18,13 @@ import (
 	"testing"
 	"time"
 
+	settings "linkd/internal/config"
 	"linkd/internal/consume"
 )
 
 func TestBatchMetricsAndSignalDurationIsolation(t *testing.T) {
 	ctx := t.Context()
-	r, err := Start(ctx, Config{Metrics: MetricsConfig{Exporter: ExporterPrometheus, Prometheus: PrometheusConfig{ListenAddress: "127.0.0.1:0"}}}, RoleLifecycle, "test")
+	r, err := Start(ctx, settings.TelemetryConfig{Metrics: settings.TelemetryMetricsConfig{Exporter: settings.TelemetryExporterPrometheus, Prometheus: settings.TelemetryPrometheusConfig{ListenAddress: "127.0.0.1:0"}}}, RoleLifecycle, "test")
 	if err != nil {
 		t.Fatal(err)
 	}

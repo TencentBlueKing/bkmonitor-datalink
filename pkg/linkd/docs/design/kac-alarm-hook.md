@@ -1,5 +1,7 @@
 # KAC Alarm Hook 设计
 
+KAC 固定消息协议与字段映射校验位于 `internal/enrich/kingeye`，Kafka 发送运行时保留在 `internal/lifecycle/kachook`；配置包只依赖纯协议。
+
 > 状态：已实现首版，并完成本地 PM2/Docker Kafka 端到端验证；目标 KAC 环境的消费与持久化仍待联调。
 >
 > 取证基线：Linkd `c1d490a9`；Kingeye `c78683a9eecf4b50840a9f58e7228d8fca3be4`。Kingeye 取证工作区存在未跟踪的 `src/envs/`，本文只读取源码与测试。
@@ -230,8 +232,8 @@ KAC converter 先调用 `enrich.DecodePayload(Alert.Enrich)`，再按 Processor 
 - KAC Schema 要求的非空字段在转换后统一校验；
 - converter 只读 Alert 快照，不修改 Alert、Enrich 或共享 map。
 
-现有类型化结果位于 [`models/output.go`](../../internal/lifecycle/enrich/models/output.go)，信封协议位于
-[`enrich/result.go`](../../internal/lifecycle/enrich/result.go)。
+现有类型化结果位于 [`models/output.go`](../../internal/enrich/models/output.go)，信封协议位于
+[`enrich/result.go`](../../internal/enrich/result.go)。
 
 ### 5.2 基础字段
 

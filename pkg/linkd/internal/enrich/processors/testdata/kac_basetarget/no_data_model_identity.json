@@ -1,0 +1,431 @@
+{
+  "name": "no_data_model_identity",
+  "kac_case": "derived_from_kingeye_no_data_mixin",
+  "branch": "no_data",
+  "alert": {
+    "strategy_id": 3001,
+    "strategy_version": 1,
+    "bk_biz_id": 2,
+    "subject_name": "fixture-service-fallback",
+    "content": "连续 2 个周期未收到数据",
+    "source_event_id": "kac-no-data-model-01",
+    "dimensions": {
+      "model_id": "cw-Service",
+      "model_inst_id": "2",
+      "bk_biz_id": 2,
+      "__NO_DATA_DIMENSION__": true
+    }
+  },
+  "strategy": {
+    "is_default": true,
+    "data_source": "bk_monitor",
+    "name": "指标丨请求量",
+    "alarm_alias": "",
+    "object_model_code": "cw-Service",
+    "bk_biz_id": 2,
+    "monitor_template_id": 301,
+    "config_id": "fixture-no-data-config",
+    "aggregate_method": "AVG",
+    "aggregate_period": "60s",
+    "expression": "A",
+    "query_configs": [
+      {
+        "alias": "A",
+        "metric_field": "requests",
+        "result_table_id": "service.metric",
+        "agg_method": "AVG",
+        "agg_interval": 60,
+        "agg_dimension": [
+          "model_id",
+          "model_inst_id",
+          "bk_biz_id"
+        ],
+        "data_source_label": "bk_monitor",
+        "data_type_label": "time_series"
+      }
+    ]
+  },
+  "model": {
+    "model_id": "20",
+    "model_code": "cw-Service",
+    "fields": {
+      "object_model_name": "服务",
+      "bk_cmdb_obj_id": "service"
+    }
+  },
+  "instance": {
+    "model_code": "cw-Service",
+    "instance_id": "2",
+    "fields": {
+      "model_id": "cw-Service",
+      "model_inst_id": "2",
+      "entity_uid": "cw-Service|2"
+    },
+    "attributes": {
+      "bk_inst_id": 2,
+      "bk_inst_name": "fixture-service",
+      "bk_inst_display_name": "fixture-service-2",
+      "bk_biz_id": 2
+    }
+  },
+  "topology": {
+    "host_id": "",
+    "bk_biz_id": 0,
+    "bk_biz_name": "",
+    "bk_set_id": 0,
+    "bk_set_name": "",
+    "bk_module_id": 0,
+    "bk_module_name": ""
+  },
+  "metric": {
+    "FieldName": "requests",
+    "FieldCNName": "请求量",
+    "Description": "",
+    "Unit": "count",
+    "Dimensions": [
+      {
+        "key": "model_id",
+        "name": "对象模型ID"
+      },
+      {
+        "key": "model_inst_id",
+        "name": "对象模型实例ID"
+      },
+      {
+        "key": "bk_biz_id",
+        "name": "业务"
+      }
+    ]
+  },
+  "expected_kac": {
+    "resource": {
+      "bk_biz_id": 2,
+      "bk_obj_id": "service",
+      "bk_inst_id": 2,
+      "model_id": "cw-Service",
+      "model_inst_id": "2",
+      "cw_labels": [
+        "bk_biz_id",
+        "bk_biz_id|2",
+        "cw-Service",
+        "cw-Service|2"
+      ]
+    },
+    "display": {
+      "title": "fixture-service-2发生了指标丨请求量告警",
+      "object": "fixture-service-2",
+      "content": "连续 2 个周期未收到数据"
+    },
+    "metric": {
+      "metric_name": "requests",
+      "result_table_id": "service.metric",
+      "unit": "count",
+      "aggregate_func": "AVG",
+      "time_interval": 60
+    },
+    "source": {
+      "source_id": "built_in_bk",
+      "source_name": "基础监控",
+      "meta_info": "kac-no-data-model-01"
+    }
+  },
+  "expected_payload": {
+    "processors": [
+      {
+        "strategy": {
+          "status": "succeeded",
+          "patches": [
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"data_source\"]",
+              "value": "bk_monitor"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"monitor_template_id\"]",
+              "value": 301
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"strategy_config_id\"]",
+              "value": "fixturenodataconfig"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"strategy_id\"]",
+              "value": 3001
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"strategy_name\"]",
+              "value": "指标丨请求量"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"strategy_version\"]",
+              "value": 1
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"url\"]",
+              "value": "/#/kmc/manage/monitorStrategy/monitorStrategyDetails?id=301&strategy_config_id=fixturenodataconfig"
+            }
+          ]
+        }
+      },
+      {
+        "resource": {
+          "status": "succeeded",
+          "patches": [
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"bk_biz_id\"]",
+              "value": 2
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"bk_biz_name\"]",
+              "value": ""
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"bk_cloud_name\"]",
+              "value": ""
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"bk_inst_id\"]",
+              "value": 2
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"bk_module_name\"]",
+              "value": ""
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"bk_obj_id\"]",
+              "value": "service"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"bk_set_name\"]",
+              "value": ""
+            },
+            {
+              "op": "set",
+              "path": "$[\"extra_data\"][\"cw_labels\"]",
+              "value": [
+                "bk_biz_id",
+                "bk_biz_id|2",
+                "cw-Service",
+                "cw-Service|2"
+              ]
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"model_id\"]",
+              "value": "cw-Service"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"model_inst_id\"]",
+              "value": "2"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"model_name\"]",
+              "value": "服务"
+            }
+          ]
+        }
+      },
+      {
+        "display": {
+          "status": "succeeded",
+          "patches": [
+            {
+              "op": "set",
+              "path": "$.content",
+              "value": "连续 2 个周期未收到数据"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"dimension_text\"]",
+              "value": "业务=2() | 对象模型ID=cw-Service(服务) | 对象模型实例ID=2(2)"
+            },
+            {
+              "op": "set",
+              "path": "$[\"extra_data\"][\"dimensions\"]",
+              "value": [
+                {
+                  "name": "对象模型ID",
+                  "real_key": "model_id",
+                  "real_value": "cw-Service",
+                  "value": "服务"
+                },
+                {
+                  "name": "对象模型实例ID",
+                  "real_key": "model_inst_id",
+                  "real_value": "2",
+                  "value": "2"
+                },
+                {
+                  "name": "业务",
+                  "real_key": "bk_biz_id",
+                  "real_value": 2,
+                  "value": 2
+                }
+              ]
+            },
+            {
+              "op": "set",
+              "path": "$.subject_name",
+              "value": "fixture-service-2"
+            },
+            {
+              "op": "set",
+              "path": "$.title",
+              "value": "fixture-service-2发生了指标丨请求量告警"
+            }
+          ]
+        }
+      },
+      {
+        "metric": {
+          "status": "succeeded",
+          "patches": [
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"aggregate_func\"]",
+              "value": "AVG"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"display_name\"]",
+              "value": "指标丨请求量"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"metric_name\"]",
+              "value": "requests"
+            },
+            {
+              "op": "set",
+              "path": "$[\"extra_data\"][\"metric_query_params\"]",
+              "value": {
+                "bk_biz_id": 2,
+                "expression": "A",
+                "function": {
+                  "time_compare": []
+                },
+                "functions": [],
+                "query_configs": [
+                  {
+                    "bk_biz_id": 2,
+                    "custom_event_name": "",
+                    "data_source_label": "bk_monitor",
+                    "data_type_label": "time_series",
+                    "extend_fields": {},
+                    "filter_dict": {},
+                    "functions": [],
+                    "group_by": [
+                      "model_id",
+                      "model_inst_id",
+                      "bk_biz_id"
+                    ],
+                    "index_set_id": 0,
+                    "interval": 60,
+                    "metrics": [
+                      {
+                        "alias": "A",
+                        "field": "requests",
+                        "method": "AVG"
+                      }
+                    ],
+                    "promql": "",
+                    "query_string": "",
+                    "table": "service.metric",
+                    "time_field": null,
+                    "where": [
+                      {
+                        "key": "bk_biz_id",
+                        "method": "eq",
+                        "value": [
+                          2
+                        ]
+                      },
+                      {
+                        "condition": "and",
+                        "key": "model_id",
+                        "method": "eq",
+                        "value": [
+                          "cw-Service"
+                        ]
+                      },
+                      {
+                        "condition": "and",
+                        "key": "model_inst_id",
+                        "method": "eq",
+                        "value": [
+                          "2"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"metric_unique_id\"]",
+              "value": "service.metric.requests"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"result_table_id\"]",
+              "value": "service.metric"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"time_interval\"]",
+              "value": 60
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"unit\"]",
+              "value": "count"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"where_condition\"]",
+              "value": "bk_biz_id='2' and model_id='cw-Service' and model_inst_id='2'"
+            }
+          ]
+        }
+      },
+      {
+        "source": {
+          "status": "succeeded",
+          "patches": [
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"meta_info\"]",
+              "value": "kac-no-data-model-01"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"source_id\"]",
+              "value": "built_in_bk"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"source_name\"]",
+              "value": "基础监控"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

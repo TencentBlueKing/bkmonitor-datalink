@@ -14,7 +14,6 @@ import (
 	"fmt"
 
 	"linkd/internal/logging"
-	"linkd/internal/telemetry"
 )
 
 // MaxFileSize 是 Linkd 配置文件允许的最大字节数。
@@ -28,7 +27,7 @@ type Config struct {
 	Storage      *StorageConfig       `yaml:"storage,omitempty"`
 	Lifecycle    *LifecycleConfig     `yaml:"lifecycle,omitempty"`
 	ControlPlane *ControlPlaneConfig  `yaml:"control_plane,omitempty"`
-	Telemetry    *telemetry.Config    `yaml:"telemetry,omitempty"`
+	Telemetry    *TelemetryConfig     `yaml:"telemetry,omitempty"`
 	Cleaner      CleanerRuntimeConfig `yaml:"cleaner"`
 	Severity     SeverityConfig       `yaml:"severity"`
 	EventSources []EventSource        `yaml:"event_sources"`
@@ -85,7 +84,7 @@ func (c Config) Validate() error {
 				return fmt.Errorf("storage.elasticsearch repository is required when control_plane.elasticsearch is configured")
 			}
 		}
-		if c.ControlPlane.RedisStream != nil {
+		if c.ControlPlane.RedisStream != nil && c.ControlPlane.RedisStream.IsEnabled() {
 			if c.Storage == nil || c.Storage.Redis == nil {
 				return fmt.Errorf("storage.redis is required when control_plane.redis_stream is configured")
 			}

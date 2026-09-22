@@ -98,8 +98,8 @@ func ValidateConfig(cfg config.Config) error {
 		if err := cfg.Storage.Redis.Validate(); err != nil {
 			return fmt.Errorf("run control plane: storage.redis.%w", err)
 		}
-		if err := cfg.ControlPlane.Validate(); err != nil {
-			return fmt.Errorf("run control plane: %w", err)
+		if err := cfg.RedisStreamSettings().Validate(); err != nil {
+			return fmt.Errorf("run control plane: control_plane.redis_stream.%w", err)
 		}
 		if err := cfg.Lifecycle.Validate(); err != nil {
 			return fmt.Errorf("run control plane: %w", err)
@@ -120,7 +120,8 @@ func hasElasticsearchTask(cfg config.Config) bool {
 }
 
 func hasRedisStreamTask(cfg config.Config) bool {
-	return cfg.ControlPlane != nil && cfg.ControlPlane.RedisStream != nil
+	settings := cfg.RedisStreamSettings()
+	return settings != nil && settings.IsEnabled()
 }
 
 func elasticsearchTaskSettings(cfg config.Config) config.ElasticsearchControlPlaneConfig {

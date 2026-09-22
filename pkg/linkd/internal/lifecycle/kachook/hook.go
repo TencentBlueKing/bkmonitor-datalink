@@ -10,7 +10,6 @@ import (
 	"crypto/sha256"
 	"encoding/base32"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"hash"
 	"strings"
@@ -86,7 +85,7 @@ func (h *Hook) Execute(ctx context.Context, input lifecycle.FinalHookInput) (lif
 	if err != nil {
 		return result, err
 	}
-	payload, err := json.Marshal(message)
+	payload, err := mappedPayload(message, input.Alert, h.config.FieldMappings)
 	if err != nil {
 		return result, fmt.Errorf("marshal KAC alarm message: %w", err)
 	}

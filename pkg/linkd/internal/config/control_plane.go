@@ -51,6 +51,8 @@ type ElasticsearchControlPlaneConfig struct {
 // MaxEntries 是软上限：控制面只裁剪所有 Consumer Group 都已确认的连续前缀，
 // 未读或 Pending 消息可以使实际长度暂时超过该值。
 type RedisStreamManagerConfig struct {
+	// Enabled 省略时默认启用；false 显式关闭指标采集和安全裁剪。
+	Enabled *bool `yaml:"enabled,omitempty"`
 	// ReconcileIntervalSeconds 是指标采集和裁剪周期。
 	ReconcileIntervalSeconds int `yaml:"reconcile_interval_seconds"`
 	// OperationTimeoutSeconds 限制单轮 Redis 操作总时间。
@@ -61,6 +63,25 @@ type RedisStreamManagerConfig struct {
 	TrimBatchSize int64 `yaml:"trim_batch_size"`
 	// MaxTrimEntriesPerCycle 限制单轮累计裁剪的条目数。
 	MaxTrimEntriesPerCycle int64 `yaml:"max_trim_entries_per_cycle"`
+}
+
+// IsEnabled 报告 Stream 管理任务是否启用，省略开关时默认为 true。
+func (c RedisStreamManagerConfig) IsEnabled() bool {
+	return c.Enabled == nil || *c.Enabled
+}
+
+// RedisStreamSettings 返回有效的 Stream 管理配置副本。
+// 未声明任务时，仅在 Redis 和 Lifecycle 均已配置时启用默认任务；显式配置仍交给校验检查依赖。
+func (c Config) RedisStreamSettings() *RedisStreamManagerConfig {
+	if c.ControlPlane != nil && c.ControlPlane.RedisStream != nil {
+		settings := c.ControlPlane.RedisStream.WithDefaults()
+		return &settings
+	}
+	if c.Storage == nil || c.Storage.Redis == nil || c.Lifecycle == nil {
+		return nil
+	}
+	settings := (RedisStreamManagerConfig{}).WithDefaults()
+	return &settings
 }
 
 // WithDefaults 返回补齐控制面管理任务默认值且不共享嵌套配置的副本。
@@ -107,6 +128,8 @@ func (c ElasticsearchControlPlaneConfig) WithDefaults() ElasticsearchControlPlan
 
 // WithDefaults 返回补齐采集、超时和裁剪预算的配置。
 func (c RedisStreamManagerConfig) WithDefaults() RedisStreamManagerConfig {
+	enabled := c.IsEnabled()
+	c.Enabled = &enabled
 	if c.ReconcileIntervalSeconds == 0 {
 		c.ReconcileIntervalSeconds = defaultRedisStreamReconcileIntervalSeconds
 	}

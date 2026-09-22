@@ -33,7 +33,7 @@ func TestAgentRejectsOverBudgetAssignments(t *testing.T) {
 	rejected := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/internal/releases/") {
-			output(w, eventsource.Release{ID: "source", Version: 1, Spec: config.EventSource{EventSourceID: "source"}})
+			writeAgentTestResponse(t, w, eventsource.Release{ID: "source", Version: 1, Spec: config.EventSource{EventSourceID: "source"}})
 			return
 		}
 		var heartbeat Heartbeat
@@ -57,7 +57,7 @@ func TestAgentRejectsOverBudgetAssignments(t *testing.T) {
 		for i := range tasks {
 			tasks[i] = Task{ID: fmt.Sprintf("source-%d:lifecycle:0", i), Source: fmt.Sprintf("source-%d", i), Role: "lifecycle", Epoch: int64(i + 1), Version: 1, Phase: "starting", RemainingMillis: 60000, Concurrency: runtime.Lifecycle.Concurrency, InflightBytes: runtime.Lifecycle.InflightBytes}
 		}
-		output(w, tasks)
+		writeAgentTestResponse(t, w, tasks)
 	}))
 	defer server.Close()
 	var started atomic.Int64
@@ -102,7 +102,7 @@ func TestHostAdvertisesBothEffectiveRoleBudgets(t *testing.T) {
 		case registered <- h.Worker:
 		default:
 		}
-		output(w, []Task{})
+		writeAgentTestResponse(t, w, []Task{})
 	}))
 	defer server.Close()
 	dispatch := config.DispatchConfig{URL: server.URL, WorkerToken: "synthetic-worker"}
@@ -134,5 +134,13 @@ func TestHostAdvertisesBothEffectiveRoleBudgets(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("role did not stop")
 		}
+	}
+}
+
+func writeAgentTestResponse(t *testing.T, w http.ResponseWriter, value any) {
+	t.Helper()
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(value); err != nil {
+		t.Error(err)
 	}
 }

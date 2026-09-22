@@ -18,25 +18,25 @@ import (
 	"time"
 
 	"linkd/internal/config"
-	"linkd/internal/lifecycle"
-	"linkd/internal/lifecycle/enrich/assembly"
+	"linkd/internal/enrich"
+	"linkd/internal/enrich/assembly"
 	"linkd/internal/telemetry"
 )
 
 func TestOneModelTransportRejectsExcessiveConnectionBudget(t *testing.T) {
 	t.Parallel()
 	dataSource := &config.EnrichElasticsearchDataSource{Addresses: []string{"http://127.0.0.1:9200"}}
-	if _, err := newOneModelTransport(dataSource, 1025, time.Second); err == nil {
-		t.Fatal("newOneModelTransport() accepted an excessive connection budget")
+	if _, err := assembly.NewOneModelTransport(dataSource, 1025, time.Second); err == nil {
+		t.Fatal("assembly.NewOneModelTransport() accepted an excessive connection budget")
 	}
 }
 
 func TestOneModelTransportUsesConnectionBudget(t *testing.T) {
 	t.Parallel()
 	dataSource := &config.EnrichElasticsearchDataSource{Addresses: []string{"http://127.0.0.1:9200"}}
-	transport, err := newOneModelTransport(dataSource, 36, 30*time.Second)
+	transport, err := assembly.NewOneModelTransport(dataSource, 36, 30*time.Second)
 	if err != nil {
-		t.Fatalf("newOneModelTransport() error = %v", err)
+		t.Fatalf("assembly.NewOneModelTransport() error = %v", err)
 	}
 	transport.Close()
 }
@@ -190,12 +190,12 @@ func validRedisConfig() *config.RedisConfig {
 func TestReleaseEnrichRoutesAreIndependent(t *testing.T) {
 	t.Parallel()
 	source := config.EventSource{EventSourceID: "dynamic-source", Version: 1}
-	firstRuntime, err := openEnrichRuntime(context.Background(), source, 8, time.Second, nil)
+	firstRuntime, err := assembly.Open(context.Background(), source, 8, time.Second, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = firstRuntime.Close() }()
-	first, err := firstRuntime.router(source, nil)
+	first, err := firstRuntime.Router(source, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestReleaseEnrichRoutesAreIndependent(t *testing.T) {
 	if err := validateEnricherConfig(source); err == nil {
 		t.Fatal("unknown processor accepted")
 	}
-	if first.(*assembly.Router).EnrichChainKind(source.EventSourceID) != lifecycle.EnrichChainNoop {
+	if first.EnrichChainKind(source.EventSourceID) != enrich.ChainNoop {
 		t.Fatal("new release changed an existing route")
 	}
 }

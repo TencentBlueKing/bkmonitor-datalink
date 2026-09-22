@@ -14,13 +14,14 @@ import (
 	"errors"
 	"testing"
 
-	"linkd/internal/lifecycle/enrich"
-	"linkd/internal/lifecycle/enrich/models"
+	settings "linkd/internal/config"
+	"linkd/internal/enrich"
+	"linkd/internal/enrich/models"
 )
 
 func TestObserveEnrichSourcesPreservesResults(t *testing.T) {
 	t.Parallel()
-	runtime, err := Start(context.Background(), Config{}, RoleLifecycle, "test")
+	runtime, err := Start(context.Background(), settings.TelemetryConfig{}, RoleLifecycle, "test")
 	if err != nil {
 		t.Fatal(err)
 	}

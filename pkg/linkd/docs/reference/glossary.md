@@ -1,5 +1,10 @@
 # Linkd 术语
 
+自定义丰富使用 **Enrich Patch（丰富补丁）** 记录对 Alert 可丰富字段的已求值赋值；原始 Alert 不改写。
+**有效告警视图** 是原始 Alert 按 Processor 顺序应用补丁后的临时读取结果，不单独持久化。
+**丰富规则** 属于一个 Processor；**操作** 是规则内按顺序执行的提取、替换或赋值。详见
+[自定义丰富规格](../design/custom-enrichment.md)。
+
 权威字段与状态矩阵见 [`define.md`](../design/define.md)。
 
 Linkd Console 是独立构建的运行与管理控制台，代码位于 `console/`；通过正式控制面 API 管理 EventSource，

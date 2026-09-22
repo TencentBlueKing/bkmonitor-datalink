@@ -335,6 +335,11 @@ fetch，降到低水位恢复，中间区间保持原状态。要求 `0 < low_wa
 避免短暂观测故障解除已经生效的背压。该水位统计的是 `lag + pending` Signal，并不等同于精确的
 Mailbox Event 数量；容量判断必须同时观察 Mailbox 深度。
 
+配置了 `storage.redis` 和 `lifecycle` 后，Redis Signal Stream 的指标采集和安全裁剪默认开启；
+省略 `control_plane.redis_stream` 或整个 `control_plane` 配置段也会使用默认预算。
+任务由 `control-plane` 或 `all-in-one` 进程执行，独立 Cleaner/Lifecycle 进程不会执行裁剪。
+需要显式关闭时设置 `control_plane.redis_stream.enabled: false`；关闭后已确认的 Stream 条目仍会持续占用内存。
+
 控制面可分别配置 Elasticsearch 三项管理任务的周期，以及 Redis Signal Stream 的指标采集和安全裁剪：
 
 ```yaml
@@ -346,6 +351,7 @@ control_plane:
     archive_batch_size: 1000
     archive_worker_count: 1
   redis_stream:
+    enabled: true
     reconcile_interval_seconds: 10
     operation_timeout_seconds: 3
     max_entries: 100000
@@ -360,8 +366,8 @@ Consumer Group 的 `last-delivered-id` 和最老 PEL ID，直到回落到软上�
 没有删除进展或无法证明新边界安全。任务只删除所有 Group 都已经确认的连续前缀；
 未读或 Pending Signal 即使使 Stream 暂时超过上限也会保留。
 配置的 `lifecycle.signal.group` 不存在、跨命令观察到 PEL 正在变化，或无法证明边界安全时，本轮只采集
-指标而不裁剪。该任务要求同时配置 `storage.redis` 和 `lifecycle`，但不要求使用 Elasticsearch
-Repository，因此 Redis-only 控制面也可以独立启动。
+指标而不裁剪。显式启用该任务时必须同时配置 `storage.redis` 和 `lifecycle`；未声明任务且依赖不齐时
+不会自动启用。任务不要求使用 Elasticsearch Repository，因此 Redis-only 控制面也可以独立启动。
 
 完整存储、Redis、lifecycle retry/lease/mailbox、Kafka output 和 telemetry 示例见仓库
 [`configs/linkd.yaml`](../../configs/linkd.yaml)。常用命令：

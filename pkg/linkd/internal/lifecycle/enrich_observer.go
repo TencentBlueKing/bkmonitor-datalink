@@ -14,15 +14,7 @@ import (
 	"time"
 
 	"linkd/internal/domain"
-)
-
-// EnrichChainKind 描述 EventSource 实际使用的丰富链类型。
-type EnrichChainKind string
-
-const (
-	EnrichChainConfigured EnrichChainKind = "configured"
-	EnrichChainNoop       EnrichChainKind = "noop"
-	EnrichChainUnknown    EnrichChainKind = "unknown"
+	"linkd/internal/enrich"
 )
 
 const (
@@ -38,7 +30,7 @@ type EnrichObservation struct {
 	EventSourceID string
 	Status        domain.EnrichStatus
 	Outcome       string
-	ChainKind     EnrichChainKind
+	ChainKind     enrich.ChainKind
 	Duration      time.Duration
 	PayloadBytes  int64
 }
@@ -51,7 +43,7 @@ type EnrichObserver interface {
 
 // EnrichRouteClassifier 提供 EventSource 对应的丰富链类型。
 type EnrichRouteClassifier interface {
-	EnrichChainKind(eventSourceID string) EnrichChainKind
+	EnrichChainKind(eventSourceID string) enrich.ChainKind
 }
 
 type noopEnrichObserver struct{}

@@ -1,3 +1,4 @@
+import { EnrichPreviewPage } from "./pages/EnrichPreviewPage";
 import { EventSourcesPage } from "./pages/EventSourcesPage";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -20,6 +21,12 @@ import { getCapabilities } from "./api";
 import { PageQueryFailureContext } from "./navigation";
 import { ExplorerPage } from "./pages/ExplorerPage";
 import { TimeContext, type TimeMode } from "./time";
+
+const MetricCatalogPage = lazy(() =>
+  import("./pages/MetricCatalogPage").then((module) => ({
+    default: module.MetricCatalogPage,
+  })),
+);
 
 const OverviewPage = lazy(() =>
   import("./pages/OverviewPage").then((module) => ({
@@ -115,6 +122,8 @@ const navigationGroups: Array<{
   {
     label: "系统",
     items: [
+      { to: "/metrics/catalog", label: "指标目录", glyph: "M" },
+      { to: "/enrich-preview", label: "丰富调试", glyph: "✧" },
       { to: "/event-sources", label: "Event Sources", glyph: "◈" },
       { to: "/config", label: "Configuration", glyph: "⚙" },
     ],
@@ -248,6 +257,16 @@ function PageRoutes() {
     <PageErrorBoundary resetKey={resetKey}>
       <Routes key={location.pathname} location={location}>
         <Route
+          path="/metrics/catalog"
+          element={
+            <Suspense
+              fallback={<div className="page-loading">正在加载指标目录…</div>}
+            >
+              <MetricCatalogPage />
+            </Suspense>
+          }
+        />
+        <Route
           path="/overview"
           element={
             <Suspense
@@ -331,6 +350,7 @@ function PageRoutes() {
             </Suspense>
           }
         />
+        <Route path="/enrich-preview" element={<EnrichPreviewPage />} />
         <Route path="/event-sources" element={<EventSourcesPage />} />
         <Route
           path="/strategy-index"

@@ -53,14 +53,10 @@ func (r *Repository) ReadActiveIndex(ctx context.Context, q activeindex.Query) (
 	}
 	filters := []any{map[string]any{"term": map[string]any{"status": "active"}}, map[string]any{"terms": map[string]any{"event_source_id": q.Sources}}}
 	if q.Scope != nil {
-		terms := []string{q.Scope.StrategyID}
-		if n, ok := activeindex.NumericStrategy(q.Scope.StrategyID); ok {
-			b, _ := json.Marshal(n)
-			terms = append(terms, string(b))
-		}
-		filters = append(filters, map[string]any{"term": map[string]any{"bk_tenant_id": q.Scope.BKTenantID}}, map[string]any{"terms": map[string]any{"labels.strategy_id": terms}})
+		// strategy_id 可能被补丁覆盖，必须在读取 enrich 后按有效值过滤。
+		filters = append(filters, map[string]any{"term": map[string]any{"bk_tenant_id": q.Scope.BKTenantID}})
 	}
-	body := map[string]any{"size": 500, "track_total_hits": false, "_source": []string{"bk_tenant_id", "event_source_id", "fingerprint", "labels.strategy_id"}, "query": map[string]any{"bool": map[string]any{"filter": filters}}, "sort": []any{map[string]any{"bk_tenant_id": "asc"}, map[string]any{"alert_id": "asc"}, map[string]any{"_index": "asc"}}}
+	body := map[string]any{"size": 500, "track_total_hits": false, "_source": []string{"bk_tenant_id", "event_source_id", "fingerprint", "labels.strategy_id", "enrich"}, "query": map[string]any{"bool": map[string]any{"filter": filters}}, "sort": []any{map[string]any{"bk_tenant_id": "asc"}, map[string]any{"alert_id": "asc"}, map[string]any{"_index": "asc"}}}
 	result := make([]activeindex.Row, 0)
 	bytes := 0
 	for {

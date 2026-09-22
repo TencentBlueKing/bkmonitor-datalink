@@ -17,24 +17,102 @@ import (
 
 func TestLoadControlPlaneRedisStreamDefaults(t *testing.T) {
 	t.Parallel()
-	path := writeConfig(t, `storage:
+	for _, controlPlane := range []string{
+		"",
+		"control_plane: {}\n",
+		"control_plane:\n  redis_stream: {}\n",
+		"control_plane:\n  active_index: {}\n",
+	} {
+		t.Run(controlPlane, func(t *testing.T) {
+			t.Parallel()
+			path := writeConfig(t, `storage:
+  redis:
+    address: redis.example.com:6379
+lifecycle: {}
+`+controlPlane)
+			cfg, err := load(path, Overrides{}, mapLookup(nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.ControlPlane == nil || cfg.ControlPlane.RedisStream == nil {
+				t.Fatalf("control plane=%#v", cfg.ControlPlane)
+			}
+			stream := cfg.ControlPlane.RedisStream
+			if !stream.IsEnabled() || stream.ReconcileInterval() != 10*time.Second || stream.OperationTimeout() != 3*time.Second ||
+				stream.MaxEntries != 100000 || stream.TrimBatchSize != 10000 || stream.MaxTrimEntriesPerCycle != 100000 {
+				t.Fatalf("redis stream defaults=%#v", stream)
+			}
+			printed, err := MarshalRedacted(cfg)
+			if err != nil || !strings.Contains(string(printed), "enabled: true") {
+				t.Fatalf("MarshalRedacted()=%s, error=%v", printed, err)
+			}
+		})
+	}
+}
+
+func TestLoadRedisStreamActivation(t *testing.T) {
+	t.Parallel()
+	const dependencies = "storage:\n  redis:\n    address: redis.example.com:6379\nlifecycle: {}\n"
+	for _, test := range []struct {
+		name           string
+		content        string
+		wantConfigured bool
+		wantEnabled    bool
+		wantError      string
+	}{
+		{name: "no dependencies", content: "{}\n"},
+		{name: "redis only", content: "storage:\n  redis:\n    address: redis.example.com:6379\n"},
+		{name: "lifecycle only", content: "lifecycle: {}\n"},
+		{name: "explicitly disabled", content: dependencies + "control_plane:\n  redis_stream:\n    enabled: false\n", wantConfigured: true},
+		{name: "disabled without dependencies", content: "control_plane:\n  redis_stream:\n    enabled: false\n", wantConfigured: true},
+		{name: "explicitly enabled", content: dependencies + "control_plane:\n  redis_stream:\n    enabled: true\n", wantConfigured: true, wantEnabled: true},
+		{name: "enabled without redis", content: "lifecycle: {}\ncontrol_plane:\n  redis_stream: {}\n", wantError: "storage.redis is required"},
+		{name: "enabled without lifecycle", content: "storage:\n  redis:\n    address: redis.example.com:6379\ncontrol_plane:\n  redis_stream: {}\n", wantError: "lifecycle is required"},
+		{name: "invalid budget", content: dependencies + "control_plane:\n  redis_stream:\n    max_entries: -1\n", wantError: "max_entries"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			cfg, err := load(writeConfig(t, test.content), Overrides{}, mapLookup(nil))
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("load() error=%v, want %q", err, test.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			settings := cfg.RedisStreamSettings()
+			if (settings != nil) != test.wantConfigured || (settings != nil && settings.IsEnabled()) != test.wantEnabled {
+				t.Fatalf("RedisStreamSettings()=%#v", settings)
+			}
+		})
+	}
+}
+
+func TestLoadRedisStreamPreservesOverrides(t *testing.T) {
+	t.Parallel()
+	cfg, err := load(writeConfig(t, `storage:
   redis:
     address: redis.example.com:6379
 lifecycle: {}
 control_plane:
-  redis_stream: {}
-`)
-	cfg, err := load(path, Overrides{}, mapLookup(nil))
+  redis_stream:
+    reconcile_interval_seconds: 30
+    operation_timeout_seconds: 5
+    max_entries: 50000
+    trim_batch_size: 500
+`), Overrides{}, mapLookup(nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ControlPlane == nil || cfg.ControlPlane.RedisStream == nil {
-		t.Fatalf("control plane=%#v", cfg.ControlPlane)
+	settings := cfg.RedisStreamSettings()
+	if !settings.IsEnabled() || settings.ReconcileIntervalSeconds != 30 || settings.OperationTimeoutSeconds != 5 || settings.MaxEntries != 50000 || settings.TrimBatchSize != 500 || settings.MaxTrimEntriesPerCycle != 5000 {
+		t.Fatalf("RedisStreamSettings()=%#v", settings)
 	}
-	stream := cfg.ControlPlane.RedisStream
-	if stream.ReconcileInterval() != 10*time.Second || stream.OperationTimeout() != 3*time.Second ||
-		stream.MaxEntries != 100000 || stream.TrimBatchSize != 10000 || stream.MaxTrimEntriesPerCycle != 100000 {
-		t.Fatalf("redis stream defaults=%#v", stream)
+	*settings.Enabled = false
+	if !cfg.ControlPlane.RedisStream.IsEnabled() {
+		t.Fatal("effective settings share the input enabled pointer")
 	}
 }
 

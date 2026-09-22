@@ -17,12 +17,13 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kgo"
 	"linkd/internal/domain"
+	"linkd/internal/kafkaclient"
 	"linkd/internal/lifecycle"
 )
 
 func TestHookEmitsV1AlertChange(t *testing.T) {
 	producer := &fakeProducer{}
-	hook := newHook(Config{Brokers: []string{"localhost:9092"}, Topic: "alerts", MaxMessageBytes: 1 << 20}, producer)
+	hook := newHook(kafkaclient.ProducerConfig{Brokers: []string{"localhost:9092"}, Topic: "alerts", MaxMessageBytes: 1 << 20}, producer)
 	alert := testAlert()
 	input := lifecycle.FinalHookInput{Cause: lifecycle.AlertChangeCause{Type: lifecycle.AlertChangeCauseSourceEvent, ID: "event-1"}, Alert: alert, Outcome: lifecycle.OutcomeAlertCreated}
 	result, err := hook.Execute(context.Background(), input)

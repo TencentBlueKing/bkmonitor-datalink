@@ -127,6 +127,39 @@ func TestValidateConfigRejectsInvalidElasticsearchTaskSchedule(t *testing.T) {
 	}
 }
 
+func TestRedisStreamTaskDefaultsAndExplicitDisable(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name         string
+		controlPlane *config.ControlPlaneConfig
+		wantEnabled  bool
+	}{
+		{name: "omitted control plane", wantEnabled: true},
+		{name: "omitted stream manager", controlPlane: &config.ControlPlaneConfig{}, wantEnabled: true},
+		{name: "explicit stream manager", controlPlane: &config.ControlPlaneConfig{RedisStream: &config.RedisStreamManagerConfig{}}, wantEnabled: true},
+		{name: "disabled", controlPlane: &config.ControlPlaneConfig{RedisStream: &config.RedisStreamManagerConfig{Enabled: new(false)}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := config.Config{
+				Storage:      &config.StorageConfig{Redis: &config.RedisConfig{Address: "redis.example.com:6379"}},
+				Lifecycle:    &config.LifecycleConfig{},
+				ControlPlane: test.controlPlane,
+			}
+			if err := ValidateConfig(cfg); err != nil {
+				t.Fatal(err)
+			}
+			if got := hasRedisStreamTask(cfg); got != test.wantEnabled {
+				t.Fatalf("hasRedisStreamTask()=%t, want %t", got, test.wantEnabled)
+			}
+			cfg.Lifecycle = nil
+			if test.controlPlane == nil && hasRedisStreamTask(cfg) {
+				t.Fatal("default task enabled without lifecycle")
+			}
+		})
+	}
+}
+
 func TestPrepareElasticsearchDataPlanePreservesDependencyOrder(t *testing.T) {
 	t.Parallel()
 	manager := &recordingElasticsearchManager{}

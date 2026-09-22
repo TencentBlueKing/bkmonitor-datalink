@@ -7,8 +7,10 @@ package kachook
 
 import (
 	"fmt"
+	"maps"
 	"math"
 
+	"linkd/internal/enrich/kingeye"
 	"linkd/internal/kafkaclient"
 )
 
@@ -16,6 +18,7 @@ const defaultMaxMessageBytes = 1 << 20
 
 // Config 描述 KAC Alarm producer 和目标 Kafka topic。
 type Config struct {
+	FieldMappings   map[string]string
 	Brokers         []string
 	Topic           string
 	ClientID        string
@@ -25,6 +28,7 @@ type Config struct {
 
 // WithDefaults 返回补齐默认值且不共享动态字段的副本。
 func (c Config) WithDefaults() Config {
+	c.FieldMappings = maps.Clone(c.FieldMappings)
 	c.Brokers = append([]string(nil), c.Brokers...)
 	if c.MaxMessageBytes == 0 {
 		c.MaxMessageBytes = defaultMaxMessageBytes
@@ -47,6 +51,9 @@ func (c Config) Validate() error {
 	}
 	if c.MaxMessageBytes <= 0 || c.MaxMessageBytes > math.MaxInt32 {
 		return fmt.Errorf("max_message_bytes must be between 1 and %d", math.MaxInt32)
+	}
+	if err := kingeye.ValidateFieldMappings(c.FieldMappings); err != nil {
+		return err
 	}
 	return c.Security.Validate()
 }

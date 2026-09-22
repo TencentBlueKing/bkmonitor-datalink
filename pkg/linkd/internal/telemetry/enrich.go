@@ -15,9 +15,9 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"linkd/internal/domain"
+	"linkd/internal/enrich"
+	"linkd/internal/enrich/rules"
 	"linkd/internal/lifecycle"
-	"linkd/internal/lifecycle/enrich"
-	"linkd/internal/lifecycle/enrich/rules"
 )
 
 type enrichObserver struct{ metrics *instruments }
@@ -104,12 +104,12 @@ func enrichOutcome(outcome string) string {
 	}
 }
 
-func enrichChainKind(kind lifecycle.EnrichChainKind) string {
+func enrichChainKind(kind enrich.ChainKind) string {
 	switch kind {
-	case lifecycle.EnrichChainConfigured, lifecycle.EnrichChainNoop, lifecycle.EnrichChainUnknown:
+	case enrich.ChainConfigured, enrich.ChainNoop, enrich.ChainUnknown:
 		return string(kind)
 	default:
-		return string(lifecycle.EnrichChainUnknown)
+		return string(enrich.ChainUnknown)
 	}
 }
 

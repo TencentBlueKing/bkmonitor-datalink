@@ -43,7 +43,7 @@ type producer interface {
 
 // Hook 把最终 Alert 快照同步发送到配置的 Kafka topic，并等待 broker ACK。
 type Hook struct {
-	config    Config
+	config    kafkaclient.ProducerConfig
 	producer  producer
 	closeOnce sync.Once
 }
@@ -61,16 +61,16 @@ type Message struct {
 }
 
 // New 创建拥有独立 franz-go client 的 Kafka FinalHook。
-func New(config Config) (*Hook, error) {
+func New(config kafkaclient.ProducerConfig) (*Hook, error) {
 	config = config.WithDefaults()
-	if err := config.validateStatic(); err != nil {
+	if err := config.ValidateStatic(); err != nil {
 		return nil, fmt.Errorf("create kafka alert hook: %w", err)
 	}
 	options, err := kafkaclient.ClientOptions(config.Brokers, config.ClientID, config.Security)
 	if err != nil {
 		return nil, fmt.Errorf("create kafka alert hook options: %w", err)
 	}
-	// Config.Validate 已把 MaxMessageBytes 限制在 [1, math.MaxInt32]。
+	// kafkaclient.ProducerConfig.Validate 已把 MaxMessageBytes 限制在 [1, math.MaxInt32]。
 	batchMaxBytes := int32(config.MaxMessageBytes) //nolint:gosec // G115: validated before conversion.
 	options = append(
 		options,
@@ -84,7 +84,7 @@ func New(config Config) (*Hook, error) {
 	return newHook(config, client), nil
 }
 
-func newHook(config Config, client producer) *Hook {
+func newHook(config kafkaclient.ProducerConfig, client producer) *Hook {
 	return &Hook{config: config.WithDefaults(), producer: client}
 }
 

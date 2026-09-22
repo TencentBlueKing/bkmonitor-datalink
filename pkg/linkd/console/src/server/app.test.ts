@@ -217,6 +217,39 @@ describe("local API", () => {
     });
   });
 
+  it.each([true, false])(
+    "reports Stream manager configuration source (explicit=%s)",
+    async (explicit) => {
+      const app = await createApp({
+        ...config,
+        redisStreamManager: {
+          explicit,
+          reconcileIntervalSeconds: 10,
+          operationTimeoutSeconds: 3,
+          maxEntries: 100000,
+          trimBatchSize: 10000,
+          maxTrimEntriesPerCycle: 100000,
+        },
+      });
+      try {
+        const response = await app.inject({
+          method: "GET",
+          url: "/local-api/runtime/control-plane?range_seconds=3600",
+        });
+        expect(response.statusCode).toBe(200);
+        expect(response.json().tasks).toContainEqual(
+          expect.objectContaining({
+            id: "redis-stream-manager",
+            enabled: true,
+            configSource: explicit ? "explicit" : "default",
+          }),
+        );
+      } finally {
+        await app.close();
+      }
+    },
+  );
+
   it("returns the four control-plane tasks even when they are disabled", async () => {
     const app = await createApp(config);
     const response = await app.inject({

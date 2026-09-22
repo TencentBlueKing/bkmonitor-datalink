@@ -61,11 +61,13 @@ describe("MysqlConnector", () => {
       { sql: string; timeout: number },
       unknown[],
     ];
-    expect(options.sql).toContain("bk_tenant_id=? AND status='active'");
+    expect(options.sql).toContain("bk_tenant_id=?");
+    expect(options.sql).toContain("status='active'");
+    expect(options.sql).toContain("enrich_json");
     expect(options.sql).toContain("event_source_id IN (?,?)");
     expect(options.sql).not.toMatch(/update_at|SELECT.*payload FROM/);
     expect(options.timeout).toBe(5000);
-    expect(values).toEqual(["tenant", "source", "shared", "00123", 5001]);
+    expect(values).toEqual(["source", "shared", "tenant"]);
   });
   it("uses a fixed read-only query and normalizes payloads", async () => {
     const query = vi.fn(async (sqlText: string, values?: unknown[]) => {

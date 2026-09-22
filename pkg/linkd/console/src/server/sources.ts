@@ -56,9 +56,70 @@ export function registerSourceRoutes(
   app.get("/local-api/scheduling", async (_request, reply) =>
     proxy("GET", "/api/v1/runtime", undefined, reply),
   );
+  app.get("/local-api/metrics/catalog", async (_request, reply) =>
+    proxy("GET", "/api/v1/metrics/catalog", undefined, reply),
+  );
   app.get("/local-api/dynamic-config", async (_request, reply) =>
     proxy("GET", "/api/v1/dynamic-config", undefined, reply),
   );
+  app.post(
+    "/local-api/enrich/preview",
+    { bodyLimit: 1 << 20 },
+    async (request, reply) => {
+      if (request.headers.origin) {
+        try {
+          const origin = new URL(request.headers.origin);
+          if (
+            !["http:", "https:"].includes(origin.protocol) ||
+            origin.host !== request.headers.host
+          )
+            return reply
+              .code(403)
+              .send({ error: { message: "请求来源不匹配" } });
+        } catch {
+          return reply.code(403).send({ error: { message: "请求来源不匹配" } });
+        }
+      }
+      return proxy("POST", "/api/v1/enrich/preview", request.body, reply);
+    },
+  );
+  app.get("/local-api/enrich/config/:id", async (request, reply) => {
+    const { id } = params.parse(request.params);
+    if (!config.dispatch?.apiToken)
+      return reply.code(503).send({ error: { message: "控制面未配置" } });
+    try {
+      const get = async (path: string) => {
+        const response = await fetch(
+          `${config.dispatch!.url.replace(/\/$/, "")}${path}`,
+          {
+            headers: { Authorization: `Bearer ${config.dispatch!.apiToken}` },
+            signal: AbortSignal.timeout(config.query.timeoutMilliseconds),
+          },
+        );
+        if (!response.ok) throw new Error("read failed");
+        return response.json() as Promise<unknown>;
+      };
+      const record = z
+        .object({ published: z.number(), deleted: z.boolean() })
+        .parse(await get(`/api/v1/event-sources/${id}`));
+      if (record.deleted || record.published <= 0)
+        return reply.code(404).send({ error: { message: "来源尚未发布" } });
+      const release = z
+        .object({
+          spec: z.object({
+            enrich: z
+              .object({ processors: z.array(z.unknown()).optional() })
+              .optional(),
+          }),
+        })
+        .parse(
+          await get(`/api/v1/event-sources/${id}/releases/${record.published}`),
+        );
+      return { enrich: { processors: release.spec.enrich?.processors ?? [] } };
+    } catch {
+      return reply.code(502).send({ error: { message: "加载已发布配置失败" } });
+    }
+  });
   async function proxy(
     method: string,
     path: string,
@@ -82,6 +143,18 @@ export function registerSourceRoutes(
           signal: AbortSignal.timeout(config.query.timeoutMilliseconds),
         },
       );
+      if (!response.ok && path === "/api/v1/enrich/preview") {
+        const error = z
+          .object({ error: z.object({ message: z.string().max(4096) }) })
+          .safeParse(await response.json().catch(() => null));
+        return reply.code(response.status).send({
+          error: {
+            message: error.success
+              ? error.data.error.message
+              : `预览失败（${response.status}）`,
+          },
+        });
+      }
       if (!response.ok)
         return reply.code(response.status).send({
           error: {

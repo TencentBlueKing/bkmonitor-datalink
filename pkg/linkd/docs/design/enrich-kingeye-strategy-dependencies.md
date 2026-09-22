@@ -1,6 +1,6 @@
 # Enrich 对鲸眼监控策略的读取需求
 
-本文汇总当前 Linkd Enrich 对鲸眼监控策略的依赖。实现依据见 [`internal/lifecycle/enrich/`](../../internal/lifecycle/enrich/)。
+本文汇总当前 Linkd Enrich 对鲸眼监控策略的依赖。实现依据见 [`internal/enrich/`](../../internal/enrich/)。
 
 ## 当前读取方式
 

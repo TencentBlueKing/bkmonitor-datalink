@@ -32,10 +32,10 @@ import (
 	"github.com/twmb/franz-go/pkg/kmsg"
 	"go.yaml.in/yaml/v3"
 	"linkd/internal/config"
+	controlapi "linkd/internal/controlplane/api"
 	"linkd/internal/eventsource"
 	"linkd/internal/lifecycle/mailbox"
 	"linkd/internal/taskdispatch"
-	"linkd/internal/telemetry"
 )
 
 type drillWorker struct {
@@ -451,7 +451,7 @@ func (d *schedulingDrill) start(name, role, pool string, explicit bool) {
 	cfg := d.cfg
 	cfg.Dispatch.URL = w.proxy.URL
 	cfg.Worker = config.WorkerConfig{Labels: map[string]string{"pool": pool, "drill": name}, RequireExplicitSelector: explicit}
-	cfg.Telemetry = &telemetry.Config{Metrics: telemetry.MetricsConfig{Exporter: telemetry.ExporterPrometheus, Prometheus: telemetry.PrometheusConfig{ListenAddress: w.metrics}}}
+	cfg.Telemetry = &config.TelemetryConfig{Metrics: config.TelemetryMetricsConfig{Exporter: config.TelemetryExporterPrometheus, Prometheus: config.TelemetryPrometheusConfig{ListenAddress: w.metrics}}}
 	encoded, err := yaml.Marshal(cfg)
 	if err != nil {
 		d.t.Fatal(err)
@@ -579,7 +579,7 @@ func (d *schedulingDrill) versions(c, l int) {
 func (d *schedulingDrill) publish() {
 	d.t.Helper()
 	var record eventsource.Record
-	if err := d.client.Call(d.ctx, http.MethodPut, "/api/v1/event-sources/"+d.source.EventSourceID, taskdispatch.Mutation{Expected: d.revision, Spec: d.source}, &record); err != nil {
+	if err := d.client.Call(d.ctx, http.MethodPut, "/api/v1/event-sources/"+d.source.EventSourceID, controlapi.Mutation{Expected: d.revision, Spec: d.source}, &record); err != nil {
 		d.t.Fatal(err)
 	}
 	d.revision = record.Revision

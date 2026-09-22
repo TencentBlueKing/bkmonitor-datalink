@@ -61,6 +61,44 @@ Console 必须能够访问 Kafka bootstrap 地址及 broker 的 advertised 地�
 
 ## 指标边界
 
+「系统 → 指标目录」（`/metrics/catalog`）展示当前控制面二进制包含的指标定义，支持按功能模块、
+指标类型、用途过滤，以及按中文名、OTel 名、Prometheus 名、维度和描述搜索。点击指标名可展开
+完整统计口径、维度说明和可复制的查询序列。筛选条件保存在 URL 中，可收藏或分享同一查询。
+
+目录由控制面 `GET /api/v1/metrics/catalog` 提供，经 Console 的 `GET /local-api/metrics/catalog`
+代理读取。配置 `dispatch.url` 与 `dispatch.api_token` 即可使用；不要求配置 Prometheus，也不要求
+开启 `telemetry.metrics`。管理 token 只留在 Console 服务端，worker token 无权读取此接口。
+
+```bash
+curl --fail --silent --show-error \
+  -H "Authorization: Bearer ${LINKD_API_TOKEN}" \
+  "${LINKD_CONTROL_PLANE_URL}/api/v1/metrics/catalog"
+```
+
+API 返回完整只读目录，不分页、不查询历史样本、不接受修改；Console 在浏览器中筛选并按 20 项分页。
+响应字段如下：
+
+| 字段 | 含义 |
+| --- | --- |
+| `schema_version` | 当前响应结构版本为 `1` |
+| `modules` / `purposes` | `{id, name}` 形式的功能模块和用途分类 |
+| `metrics[].name` / `prometheus_name` | 原始注册名与 Prometheus family 名 |
+| `metrics[].display_name` / `description` | 中文短名称与完整统计口径；业务指标描述与 HELP 共用定义 |
+| `metrics[].module` / `purpose` | 所属分类键 |
+| `metrics[].type` / `prometheus_type` | 注册类型与导出类型；`up_down_counter` 导出为 `gauge` |
+| `metrics[].unit` / `unit_label` | 注册单位与便于阅读的中文单位 |
+| `metrics[].dimensions` | 可能出现的维度，每项包含原始名、Prometheus 标签名、中文说明 |
+| `metrics[].series` | 可查询序列名；Histogram 包含 `_bucket`、`_sum`、`_count` |
+| `metrics[].origin` | `linkd`、`runtime` 或 `exporter` |
+| `common_dimensions` / `notes` | 公共 OTel scope 维度与使用边界说明 |
+
+目录表示**二进制可提供的定义**，不代表功能已启用、产生了样本或已被采集。Go/process 指标从相同
+collector 自动发现，会随平台和依赖版本变化。`Histogram` 的桶序列另带 `le` 标签，`Summary` 的
+分位序列另带 `quantile` 标签；Prometheus 抓取时添加的 `job`、`instance` 不属于业务维度。
+`service_version`、`linkd_role` 等 Resource 信息位于 `target_info`。
+
+开发者增加指标的登记流程见 [指标目录与注册约束](../design/observability.md#指标目录与注册约束)。
+
 「核心数据 → 策略活跃索引」自动列出 `active-alert-by-strategy` 的租户、策略组合，使用 SCAN/ZSCAN 游标逐批读取，点击行即可只读对账；「开始整体对账」后台检查当前缓存目标的全部租户和策略，展示进度、双向差异和无法确认的范围。
 会合并已发布配置识别出的共享来源，并区分一致、Redis 缺失、Redis 独有和无法确认；查询失败、
 扫描超限及并发变更不会被当成确定一致。页面展示控制面最近完整发现、待刷新数量，以及单策略校准时间、快照年龄和失败状态。用法、上限与一致性边界见

@@ -8,7 +8,11 @@ import type {
 } from "../shared/contracts.js";
 import type { ConsoleConfig } from "./config.js";
 import { decodeCursor, encodeCursor, queryHash } from "./cursor.js";
-import { numericStrategy, type StrategyAlertRow } from "./strategy-alerts.js";
+import {
+  effectiveStrategyRow,
+  readEffectiveStrategyAlerts,
+  type StrategyAlertRow,
+} from "./strategy-alerts.js";
 
 interface SearchHit {
   _index?: string;
@@ -174,51 +178,22 @@ export class ElasticsearchConnector {
       limit > 5001
     )
       throw new Error("invalid reconciliation scope");
-    // 只查 Active alias，不让归档过渡副本或 Explorer 的时间窗口影响对账。
-    const number = numericStrategy(strategy);
-    // flattened 以 JSON 标量文本索引；数值的指数形式和 Hook 的非指数 key 都要覆盖。
-    // 最终仍按 _source 重新核对类型，避免把字符串 "1e+21" 当作数值标签。
-    const terms = [
-      ...new Set([
-        strategy,
-        ...(number === undefined ? [] : [JSON.stringify(number)]),
-      ]),
-    ];
-    const response = await this.request<{
-      hits: { hits: Array<{ _source: StrategyAlertRow }> };
-    }>(`/${escapeTarget(this.indexPrefix + "-alerts-active")}/_search`, {
-      method: "POST",
-      body: JSON.stringify({
-        size: limit,
-        track_total_hits: false,
-        _source: [
-          "bk_tenant_id",
-          "alert_id",
-          "event_source_id",
-          "fingerprint",
-          "status",
-          "labels.strategy_id",
-        ],
-        query: {
-          bool: {
-            filter: [
-              { term: { bk_tenant_id: tenant } },
-              { term: { status: "active" } },
-              { terms: { event_source_id: sources } },
-              { terms: { "labels.strategy_id": terms } },
-            ],
-          },
-        },
-        sort: [{ alert_id: "asc" }],
-        timeout: `${this.timeoutMilliseconds}ms`,
-      }),
-    });
-    return response.hits.hits.map((hit) => hit._source);
+    return readEffectiveStrategyAlerts(
+      this.scanActiveStrategyAlerts(
+        sources,
+        AbortSignal.timeout(this.timeoutMilliseconds),
+        tenant,
+      ),
+      tenant,
+      strategy,
+      limit,
+    );
   }
 
   async *scanActiveStrategyAlerts(
     sources: string[],
     signal: AbortSignal,
+    tenant?: string,
   ): AsyncIterable<StrategyAlertRow[]> {
     if (!this.indexPrefix || !sources.length || sources.length > 64)
       throw new Error("invalid audit scope");
@@ -249,6 +224,7 @@ export class ElasticsearchConnector {
               "fingerprint",
               "status",
               "labels.strategy_id",
+              "enrich",
             ],
             pit: { id: pit, keep_alive: "1m" },
             query: {
@@ -256,6 +232,7 @@ export class ElasticsearchConnector {
                 filter: [
                   { term: { status: "active" } },
                   { terms: { event_source_id: sources } },
+                  ...(tenant ? [{ term: { bk_tenant_id: tenant } }] : []),
                 ],
               },
             },
@@ -273,7 +250,7 @@ export class ElasticsearchConnector {
         if (!hits.length) return;
         after = hits.at(-1)!.sort?.slice(0, 3);
         if (after?.length !== 3) throw new Error("invalid audit search cursor");
-        yield hits.map((hit) => hit._source);
+        yield hits.map((hit) => effectiveStrategyRow(hit._source));
         if (hits.length < 1000) return;
       }
     } finally {

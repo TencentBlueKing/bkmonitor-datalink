@@ -148,6 +148,7 @@ func NewRootCommand(version, gitCommit string, dependencies Dependencies) *cobra
 	flags.StringVar(&options.logFormat, "log-format", "", "显式覆盖日志格式")
 
 	root.AddCommand(
+		newEnrichCommand(),
 		newRunCommand(options),
 		newStorageCommand(options),
 		newConfigCommand(options),

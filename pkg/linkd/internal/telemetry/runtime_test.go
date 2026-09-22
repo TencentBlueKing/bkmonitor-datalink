@@ -18,20 +18,21 @@ import (
 	"testing"
 	"time"
 
+	settings "linkd/internal/config"
 	"linkd/internal/consume"
 	controlplaneredisstream "linkd/internal/controlplane/redisstream"
 	"linkd/internal/domain"
+	"linkd/internal/enrich"
+	"linkd/internal/enrich/rules"
 	"linkd/internal/lifecycle"
-	"linkd/internal/lifecycle/enrich"
-	"linkd/internal/lifecycle/enrich/rules"
 )
 
 func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) {
 	t.Parallel()
 
-	config := Config{Metrics: MetricsConfig{
-		Exporter:   ExporterPrometheus,
-		Prometheus: PrometheusConfig{ListenAddress: "127.0.0.1:0"},
+	config := settings.TelemetryConfig{Metrics: settings.TelemetryMetricsConfig{
+		Exporter:   settings.TelemetryExporterPrometheus,
+		Prometheus: settings.TelemetryPrometheusConfig{ListenAddress: "127.0.0.1:0"},
 	}}
 	runtime, err := Start(context.Background(), config, RoleCleaner, "test-version")
 	if err != nil && strings.Contains(err.Error(), "operation not permitted") {
@@ -72,7 +73,7 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 	enrichObserver.Started(ctx, "source-a")
 	enrichObserver.Finished(ctx, lifecycle.EnrichObservation{
 		EventSourceID: "source-a", Status: domain.EnrichStatusPartial,
-		Outcome: lifecycle.EnrichOutcomeCompleted, ChainKind: lifecycle.EnrichChainConfigured,
+		Outcome: lifecycle.EnrichOutcomeCompleted, ChainKind: enrich.ChainConfigured,
 		Duration: 12 * time.Millisecond, PayloadBytes: 2048,
 	})
 	runtime.EnrichProcessorObserver().ProcessorFinished(ctx, enrich.ProcessorObservation{
@@ -127,6 +128,7 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 		t.Fatalf("read metrics error = %v", err)
 	}
 	text := string(body)
+	assertScrapeMatchesCatalog(t, text)
 	for _, expected := range []string{
 		"linkd_pipeline_attempts_total",
 		"go_sched_latencies_seconds_bucket",
@@ -226,9 +228,9 @@ func TestStartFailsBeforeBusinessRunsWhenPortIsOccupied(t *testing.T) {
 		t.Fatalf("listen test port: %v", err)
 	}
 	defer func() { _ = listener.Close() }()
-	config := Config{Metrics: MetricsConfig{
-		Exporter:   ExporterPrometheus,
-		Prometheus: PrometheusConfig{ListenAddress: listener.Addr().String()},
+	config := settings.TelemetryConfig{Metrics: settings.TelemetryMetricsConfig{
+		Exporter:   settings.TelemetryExporterPrometheus,
+		Prometheus: settings.TelemetryPrometheusConfig{ListenAddress: listener.Addr().String()},
 	}}
 	if _, err := Start(context.Background(), config, RoleCleaner, "test"); err == nil || !strings.Contains(err.Error(), "listen prometheus") {
 		t.Fatalf("Start() error = %v", err)
@@ -238,7 +240,7 @@ func TestStartFailsBeforeBusinessRunsWhenPortIsOccupied(t *testing.T) {
 func TestDisabledMetricsUsesNoopProvider(t *testing.T) {
 	t.Parallel()
 
-	runtime, err := Start(context.Background(), Config{}, RoleCleaner, "test")
+	runtime, err := Start(context.Background(), settings.TelemetryConfig{}, RoleCleaner, "test")
 	if err != nil {
 		t.Fatalf("Start() error = %v", err)
 	}
@@ -251,7 +253,7 @@ func TestDisabledMetricsUsesNoopProvider(t *testing.T) {
 }
 
 func TestProfilingEndpointWithoutMetrics(t *testing.T) {
-	config := Config{Profiling: ProfilingConfig{
+	config := settings.TelemetryConfig{Profiling: settings.TelemetryProfilingConfig{
 		Enabled: true, ListenAddress: "127.0.0.1:0", BlockProfileRate: 100000, MutexProfileFraction: 10,
 	}}
 	runtime, err := Start(context.Background(), config, RoleLifecycle, "test")
@@ -302,9 +304,9 @@ func TestProfilingStartupFailureReleasesMetricsListener(t *testing.T) {
 		t.Fatalf("release metrics address: %v", err)
 	}
 
-	config := testConfig()
+	config := settings.TelemetryConfig{Metrics: settings.TelemetryMetricsConfig{Exporter: settings.TelemetryExporterPrometheus, Prometheus: settings.TelemetryPrometheusConfig{ListenAddress: "127.0.0.1:9464"}}}
 	config.Metrics.Prometheus.ListenAddress = metricsAddress
-	config.Profiling = ProfilingConfig{Enabled: true, ListenAddress: profileListener.Addr().String()}
+	config.Profiling = settings.TelemetryProfilingConfig{Enabled: true, ListenAddress: profileListener.Addr().String()}
 	if _, err := Start(t.Context(), config, RoleLifecycle, "test"); err == nil {
 		t.Fatal("Start() error = nil, want profiling bind failure")
 	}

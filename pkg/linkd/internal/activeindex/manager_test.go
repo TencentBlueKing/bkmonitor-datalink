@@ -11,6 +11,7 @@ package activeindex
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -234,5 +235,17 @@ func TestScopeAndNumericBoundaries(t *testing.T) {
 		if err != nil || got != s {
 			t.Fatal("scope roundtrip")
 		}
+	}
+}
+
+func TestGroupUsesEnrichedStrategyInsteadOfRawLabel(t *testing.T) {
+	row := Row{BKTenantID: "t", EventSourceID: "host", Fingerprint: "fp", Labels: domain.DimensionMap{"strategy_id": domain.NewStringScalar("old")}, Enrich: domain.JSONObject{"processors": json.RawMessage(`[{"fields":{"status":"succeeded","patches":[{"op":"set","path":"$.extra_data.items[0].name","value":"renamed"},{"op":"set","path":"$.labels.strategy_id","value":"new"}]}}]`)}}
+	q := Query{Sources: []string{"host"}, Scope: &Scope{BKTenantID: "t", StrategyID: "new"}, MaxRows: 10, MaxBytes: 1024}
+	groups, err := Group(q, []Row{row})
+	if err != nil || len(groups[*q.Scope]) != 1 {
+		t.Fatalf("groups=%v err=%v", groups, err)
+	}
+	if id, _, _ := StrategyID(row.Labels); id != "old" {
+		t.Fatal("original label changed")
 	}
 }

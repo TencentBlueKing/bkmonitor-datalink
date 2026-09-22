@@ -17,6 +17,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"linkd/internal/config"
+	controlapi "linkd/internal/controlplane/api"
 	"linkd/internal/eventsource"
 	"linkd/internal/runtimeconfig"
 	"linkd/internal/taskdispatch"
@@ -61,7 +62,7 @@ func newEventSourceCommand(options *commandOptions) *cobra.Command {
 				return e
 			}
 			var result eventsource.Record
-			e = client.Call(cmd.Context(), http.MethodPut, path, taskdispatch.Mutation{Expected: current.Revision, Spec: spec}, &result)
+			e = client.Call(cmd.Context(), http.MethodPut, path, controlapi.Mutation{Expected: current.Revision, Spec: spec}, &result)
 			if e != nil {
 				return e
 			}

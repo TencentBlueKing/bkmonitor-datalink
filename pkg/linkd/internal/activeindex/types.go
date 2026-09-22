@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"linkd/internal/domain"
+	"linkd/internal/enrich/view"
 )
 
 // Scope 是集合的租户和策略身份，沿用对外通知协议。
@@ -90,6 +91,7 @@ func StrategyID(labels domain.DimensionMap) (string, bool, error) {
 
 // Row 是仅供缓存投影使用的窄告警快照，不读取告警正文。
 type Row struct {
+	Enrich        domain.JSONObject   `json:"enrich,omitempty"`
 	BKTenantID    string              `json:"bk_tenant_id"`
 	EventSourceID string              `json:"event_source_id"`
 	Fingerprint   string              `json:"fingerprint"`
@@ -127,7 +129,11 @@ func Group(q Query, rows []Row) (map[Scope][]string, error) {
 		if !slices.Contains(q.Sources, row.EventSourceID) || row.Fingerprint == "" || len(row.Fingerprint) > 128 {
 			return nil, fmt.Errorf("invalid active index row")
 		}
-		strategy, skip, err := StrategyID(row.Labels)
+		effective, err := view.EnrichedLabels(row.Labels, row.Enrich)
+		if err != nil {
+			return nil, err
+		}
+		strategy, skip, err := StrategyID(effective)
 		if err != nil {
 			return nil, err
 		}

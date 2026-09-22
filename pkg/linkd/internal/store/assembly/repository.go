@@ -30,7 +30,7 @@ const (
 	maxElasticsearchConnectionsPerHost = 1024
 )
 
-// Runtime 持有一个已经完成连接检查和 schema 初始化的 Repository 及其资源。
+// Runtime 持有 Repository 及连接资源；只有 Open 执行初始化，OpenReadOnly 不执行写操作。
 type Runtime struct {
 	Repository store.Repository
 	Backend    string
@@ -108,6 +108,10 @@ func (r *Runtime) Close() error {
 }
 
 func openMySQL(ctx context.Context, cfg config.MySQLConfig, maxConnections int) (*Runtime, error) {
+	return openMySQLMode(ctx, cfg, maxConnections, true)
+}
+
+func openMySQLMode(ctx context.Context, cfg config.MySQLConfig, maxConnections int, initialize bool) (*Runtime, error) {
 	dsn := driver.NewConfig()
 	dsn.User = cfg.Username
 	dsn.Passwd = cfg.Password
@@ -132,9 +136,11 @@ func openMySQL(ctx context.Context, cfg config.MySQLConfig, maxConnections int) 
 		_ = database.Close()
 		return nil, fmt.Errorf("initialize mysql repository: %w", err)
 	}
-	if err := repository.EnsureSchema(ctx); err != nil {
-		_ = database.Close()
-		return nil, fmt.Errorf("initialize mysql repository schema: %w", err)
+	if initialize {
+		if err := repository.EnsureSchema(ctx); err != nil {
+			_ = database.Close()
+			return nil, fmt.Errorf("initialize mysql repository schema: %w", err)
+		}
 	}
 	return &Runtime{
 		Repository: repository,
@@ -261,5 +267,28 @@ func JoinCloseError(runErr *error, runtime *Runtime) {
 	}
 	if err := runtime.Close(); err != nil {
 		*runErr = errors.Join(*runErr, err)
+	}
+}
+
+// OpenReadOnly 只连接并读取已有存储，不初始化表、索引或投影；调用方只注入读取端口。
+func OpenReadOnly(ctx context.Context, cfg config.StorageConfig, maxConnections int) (*Runtime, error) {
+	if ctx == nil || maxConnections < 1 {
+		return nil, fmt.Errorf("read repository requires context and positive connection limit")
+	}
+	cfg = cfg.WithDefaults()
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	switch cfg.Repository {
+	case config.RepositoryTypeMySQL:
+		return openMySQLMode(ctx, *cfg.MySQL, maxConnections, false)
+	case config.RepositoryTypeElasticsearch:
+		r, _, transport, err := newElasticsearchComponents(*cfg.Elasticsearch, maxConnections)
+		if err != nil {
+			return nil, err
+		}
+		return &Runtime{Repository: r, Backend: cfg.Repository, close: func() error { transport.Close(); return nil }}, nil
+	default:
+		return nil, fmt.Errorf("repository backend required")
 	}
 }

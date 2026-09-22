@@ -78,7 +78,10 @@ describe("sidebar navigation", () => {
           "/infrastructure/redis",
         ],
       ],
-      ["系统", ["/event-sources", "/config"]],
+      [
+        "系统",
+        ["/metrics/catalog", "/enrich-preview", "/event-sources", "/config"],
+      ],
     ] as const;
 
     for (const [label, routes] of expectedGroups) {

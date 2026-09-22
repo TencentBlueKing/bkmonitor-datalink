@@ -16,9 +16,8 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
-
-	"linkd/internal/lifecycle/enrich"
-	"linkd/internal/lifecycle/enrich/models"
+	"linkd/internal/enrich"
+	"linkd/internal/enrich/models"
 )
 
 const (

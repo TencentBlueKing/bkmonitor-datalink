@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"linkd/internal/domain"
-	"linkd/internal/lifecycle"
-
 	"github.com/google/uuid"
+	"linkd/internal/domain"
+	"linkd/internal/enrich/kingeye"
+	"linkd/internal/lifecycle"
 )
 
 func TestConvertMessageMapsAlertAndEnrichToKACAlarm(t *testing.T) {
@@ -206,4 +206,31 @@ func jsonObject(value string) domain.JSONObject {
 		panic(err)
 	}
 	return object
+}
+
+func TestCustomPatchesAndExplicitKACMappings(t *testing.T) {
+	alert := testAlert()
+	alert.Enrich = jsonObject(`{"processors":[{"fields":{"status":"succeeded","patches":[{"op":"set","path":"$.title","value":"custom title"},{"op":"set","path":"$.labels.strategy_id","value":9001},{"op":"set","path":"$.labels.owner","value":"alice"},{"op":"set","path":"$.labels.monitor_template_id","value":33}]}}]}`)
+	alert.EnrichStatus = domain.EnrichStatusSucceeded
+	message, err := convertMessage(lifecycle.FinalHookInput{Cause: lifecycle.AlertChangeCause{Type: lifecycle.AlertChangeCauseSourceEvent, ID: "event-1"}, Alert: alert, Outcome: lifecycle.OutcomeAlertCreated})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message.Name != "custom title" || message.StrategyID != "33" {
+		t.Fatalf("message=%+v", message)
+	}
+	payload, err := mappedPayload(message, alert, map[string]string{"custom_owner": "$.labels.owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var object map[string]any
+	if err := json.Unmarshal(payload, &object); err != nil {
+		t.Fatal(err)
+	}
+	if object["custom_owner"] != "alice" {
+		t.Fatalf("payload=%s", payload)
+	}
+	if err := kingeye.ValidateFieldMappings(map[string]string{"bk_tenant_id": "$.labels.owner"}); err == nil {
+		t.Fatal("overrode protocol tenant")
+	}
 }

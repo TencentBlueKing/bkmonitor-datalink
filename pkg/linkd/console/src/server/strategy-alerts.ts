@@ -6,6 +6,7 @@ export interface StrategyAlertRow {
   fingerprint: string;
   status: string;
   labels?: { strategy_id?: unknown };
+  enrich?: unknown;
 }
 export interface StrategyAlertReader {
   // 整体对账逐批扫描完整 active 范围，不使用 Explorer 的时间窗口。
@@ -49,4 +50,69 @@ export function numericStrategy(strategy: string): number | undefined {
   return Number.isFinite(number) && strategyLabel(number) === strategy
     ? number
     : undefined;
+}
+
+// effectiveStrategyRow 仅投影策略标签，按处理器和补丁顺序计算，不持久化最终值。
+export function effectiveStrategyRow(row: StrategyAlertRow): StrategyAlertRow {
+  let value = row.labels?.strategy_id;
+  const payload = row.enrich as
+    | {
+        processors?: Array<
+          Record<
+            string,
+            {
+              status?: string;
+              patches?: Array<{ op?: string; path?: string; value?: unknown }>;
+              value?: Record<string, unknown>;
+            }
+          >
+        >;
+      }
+    | undefined;
+  for (const entry of payload?.processors ?? []) {
+    for (const result of Object.values(entry)) {
+      if (result.status !== "succeeded" && result.status !== "partial")
+        continue;
+      if (result.patches) {
+        for (const patch of result.patches) {
+          if (
+            patch.op === "set" &&
+            (patch.path === '$["labels"]["strategy_id"]' ||
+              patch.path === "$.labels.strategy_id")
+          )
+            value = patch.value;
+        }
+      } else if (result.value?.strategy_id !== undefined)
+        value = result.value.strategy_id;
+    }
+  }
+  return { ...row, labels: { ...row.labels, strategy_id: value } };
+}
+// readEffectiveStrategyAlerts 必须扫描后再匹配，原始标签过滤会漏掉补丁新增或覆盖的策略。
+export async function readEffectiveStrategyAlerts(
+  pages: AsyncIterable<StrategyAlertRow[]>,
+  tenant: string,
+  strategy: string,
+  limit: number,
+): Promise<StrategyAlertRow[]> {
+  const matches: StrategyAlertRow[] = [];
+  let scanned = 0;
+  let bytes = 0;
+  for await (const page of pages) {
+    scanned += page.length;
+    bytes += Buffer.byteLength(JSON.stringify(page));
+    if (scanned > 100000 || bytes > 64 * 1024 * 1024)
+      throw new Error("策略对账扫描超过上限");
+    for (const raw of page) {
+      const row = effectiveStrategyRow(raw);
+      if (
+        row.bk_tenant_id === tenant &&
+        strategyLabel(row.labels?.strategy_id) === strategy
+      ) {
+        matches.push(row);
+        if (matches.length === limit) return matches;
+      }
+    }
+  }
+  return matches;
 }

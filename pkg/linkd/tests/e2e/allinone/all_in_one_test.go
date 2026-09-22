@@ -39,6 +39,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kmsg"
 	"linkd/internal/cleaner"
 	"linkd/internal/config"
+	controlapi "linkd/internal/controlplane/api"
 	"linkd/internal/domain"
 	"linkd/internal/eventsource"
 	"linkd/internal/lifecycle/kafkahook"
@@ -1573,7 +1574,7 @@ func importSources(ctx context.Context, t *testing.T, process *linkdProcess, pat
 	}
 	for _, source := range cfg.EventSources {
 		var record any
-		if err := client.Call(ctx, http.MethodPut, "/api/v1/event-sources/"+source.EventSourceID, taskdispatch.Mutation{Spec: source}, &record); err != nil {
+		if err := client.Call(ctx, http.MethodPut, "/api/v1/event-sources/"+source.EventSourceID, controlapi.Mutation{Spec: source}, &record); err != nil {
 			t.Fatal("explicit source import", err)
 		}
 	}
@@ -1663,12 +1664,12 @@ func verifySourceMutationCycle(ctx context.Context, t *testing.T, path string) {
 	var record eventsource.Record
 	zero := 0
 	spec.Scheduling.Cleaner.Replicas.Number = &zero
-	if err := client.Call(ctx, http.MethodPut, endpoint, taskdispatch.Mutation{Expected: 1, Spec: spec}, &record); err != nil || record.Published != 2 {
+	if err := client.Call(ctx, http.MethodPut, endpoint, controlapi.Mutation{Expected: 1, Spec: spec}, &record); err != nil || record.Published != 2 {
 		t.Fatalf("zero replicas publication: %v %+v", err, record.Redacted())
 	}
 	waitTaskCounts(ctx, t, client, 0, 2)
 	spec.Scheduling.Cleaner.Replicas.Number = nil
-	if err := client.Call(ctx, http.MethodPut, endpoint, taskdispatch.Mutation{Expected: 2, Spec: spec}, &record); err != nil || record.Published != 3 {
+	if err := client.Call(ctx, http.MethodPut, endpoint, controlapi.Mutation{Expected: 2, Spec: spec}, &record); err != nil || record.Published != 3 {
 		t.Fatal("resume publication failed", err)
 	}
 	waitTaskCounts(ctx, t, client, 3, 2)

@@ -19,14 +19,14 @@ import (
 
 	"linkd/internal/config"
 	"linkd/internal/domain"
-	"linkd/internal/lifecycle"
-	"linkd/internal/lifecycle/enrich"
+	"linkd/internal/enrich"
+	"linkd/internal/enrich/assembly"
 	"linkd/internal/store/storetest"
 	"linkd/internal/telemetry"
 )
 
 func TestSimulatedEnrichUsesObservedDataSource(t *testing.T) {
-	runtime, err := telemetry.Start(t.Context(), telemetry.Config{Metrics: telemetry.MetricsConfig{Exporter: telemetry.ExporterPrometheus, Prometheus: telemetry.PrometheusConfig{ListenAddress: "127.0.0.1:0"}}}, telemetry.RoleLifecycle, "test")
+	runtime, err := telemetry.Start(t.Context(), config.TelemetryConfig{Metrics: config.TelemetryMetricsConfig{Exporter: config.TelemetryExporterPrometheus, Prometheus: config.TelemetryPrometheusConfig{ListenAddress: "127.0.0.1:0"}}}, telemetry.RoleLifecycle, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestSimulatedEnrichUsesObservedDataSource(t *testing.T) {
 			if err := validateEnricherConfig(source); err != nil {
 				t.Fatal(err)
 			}
-			opened, err := openEnrichRuntime(t.Context(), source, 8, time.Second, runtime)
+			opened, err := assembly.Open(t.Context(), source, 8, time.Second, runtime)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -58,12 +58,12 @@ func TestSimulatedEnrichUsesObservedDataSource(t *testing.T) {
 					t.Error(err)
 				}
 			}()
-			router, err := opened.router(source, runtime)
+			router, err := opened.Router(source, runtime)
 			if err != nil {
 				t.Fatal(err)
 			}
 			alert := storetest.Alert("private-tenant", "private-alert", "event", "fp", "warning")
-			result, err := router.Enrich(t.Context(), lifecycle.EnrichInput{Alert: alert})
+			result, err := router.Enrich(t.Context(), enrich.Input{Alert: alert})
 			if err != nil || result.Status != tc.status {
 				t.Fatalf("status=%v error=%v", result.Status, err)
 			}

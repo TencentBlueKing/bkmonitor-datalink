@@ -5,7 +5,7 @@
 本示例供 alarmd 推送给 Linkd 时参考，alarmd 生产者的实际接入状态需单独验证。Linkd 侧对应实现与回归测试位于：
 
 ```text
-internal/lifecycle/enrich/assembly/router_test.go
+internal/enrich/assembly/router_test.go
 TestBaseCollectRawEventRunsLifecycleEnrichment
 ```
 
@@ -648,7 +648,7 @@ Processor error 和 panic 会被 Chain 隔离，后续 Processor 继续执行。
 运行现有回归测试，验证 StandardCleaner、EventFactory、Lifecycle 与五个 Enrich Processor 的链路：
 
 ```bash
-go test ./internal/lifecycle/enrich/assembly \
+go test ./internal/enrich/assembly \
   -run TestBaseCollectRawEventRunsLifecycleEnrichment \
   -count=1
 ```

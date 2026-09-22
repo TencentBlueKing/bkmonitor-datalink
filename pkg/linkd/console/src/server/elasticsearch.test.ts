@@ -30,9 +30,15 @@ afterEach(() => vi.unstubAllGlobals());
 
 it("reconciles only the Active alias and rejects partial shard success", async () => {
   const fetcher = vi.fn(
-    async () =>
+    async (input: string) =>
       new Response(
-        JSON.stringify({ hits: { hits: [] }, _shards: { failed: 0 } }),
+        JSON.stringify(
+          input.includes("/_pit?")
+            ? { id: "pit-id" }
+            : input.endsWith("/_pit")
+              ? { succeeded: true }
+              : { hits: { hits: [] }, _shards: { failed: 0 } },
+        ),
       ),
   );
   vi.stubGlobal("fetch", fetcher);
@@ -43,18 +49,18 @@ it("reconciles only the Active alias and rejects partial shard success", async (
   expect(
     await connector.readStrategyAlerts("tenant", ["source"], "123", 5001),
   ).toEqual([]);
-  const [url, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
-  expect(url).toBe("http://elasticsearch:9200/linkd-alerts-active/_search");
+  const [url, init] = fetcher.mock.calls[1] as unknown as [string, RequestInit];
+  expect(url).toBe("http://elasticsearch:9200/_search");
   const body = JSON.parse(String(init.body));
   expect(body.query.bool.filter).toEqual([
-    { term: { bk_tenant_id: "tenant" } },
     { term: { status: "active" } },
     { terms: { event_source_id: ["source"] } },
-    { terms: { "labels.strategy_id": ["123"] } },
+    { term: { bk_tenant_id: "tenant" } },
   ]);
   expect(body._source).toContain("labels.strategy_id");
   expect(body).not.toHaveProperty("range");
-  expect(body.size).toBe(5001);
+  expect(body.size).toBe(1000);
+  expect(body._source).toContain("enrich");
   fetcher.mockResolvedValue(
     new Response(
       JSON.stringify({ hits: { hits: [] }, _shards: { failed: 1 } }),

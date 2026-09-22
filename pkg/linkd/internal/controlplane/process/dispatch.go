@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"linkd/internal/config"
+	controlapi "linkd/internal/controlplane/api"
 	streams "linkd/internal/controlplane/redisstream"
 	"linkd/internal/eventsource"
 	sourcestore "linkd/internal/eventsource/storage"
@@ -62,7 +63,7 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	if cfg.Lifecycle != nil {
 		lifecycle = *cfg.Lifecycle
 	}
-	api := &taskdispatch.API{DynamicConfig: dynamic, Lifecycle: lifecycle, Sources: sources, Controller: controller, Config: d}
+	api := &controlapi.API{Previewer: newEnrichPreview(sources, *cfg.Storage), DynamicConfig: dynamic, Lifecycle: lifecycle, Sources: sources, Controller: controller, Config: d}
 	server := &http.Server{Addr: d.Listen, Handler: api.Handler(), ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
 	// 上游读取可能耗尽最初的装配期限；已回退快照/YAML 后不应因此阻止管理 API 启动。
 	listenCtx, cancelListen := context.WithTimeout(ctx, 3*time.Second)
@@ -93,8 +94,7 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	tasks = append(tasks, taskgroup.Task{Name: "active-alert-indexes", Run: func(ctx context.Context) error {
 		return runActiveIndexes(ctx, cfg, sources, logger)
 	}})
-	if cfg.ControlPlane != nil && cfg.ControlPlane.RedisStream != nil && cfg.Lifecycle != nil {
-		settings := cfg.ControlPlane.RedisStream.WithDefaults()
+	if settings := cfg.RedisStreamSettings(); settings != nil && settings.IsEnabled() && cfg.Lifecycle != nil {
 		after := ""
 		tasks = append(tasks, taskgroup.Task{Name: "source-stream-managers", Run: func(ctx context.Context) error {
 			ticker := time.NewTicker(settings.ReconcileInterval())

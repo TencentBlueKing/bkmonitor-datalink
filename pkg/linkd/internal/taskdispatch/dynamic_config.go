@@ -18,32 +18,6 @@ import (
 	"linkd/internal/runtimeconfig"
 )
 
-func (a *API) dynamicStatus(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	if a.DynamicConfig == nil {
-		output(w, map[string]any{"config": map[string]any{"enabled": false, "origin": "yaml", "sync_state": "disabled"}, "workers": map[string]Worker{}})
-		return
-	}
-	state, err := a.Controller.Snapshot(r.Context())
-	if err != nil {
-		http.Error(w, "runtime unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	output(w, struct {
-		Config  any               `json:"config"`
-		Workers map[string]Worker `json:"workers"`
-	}{a.DynamicConfig.Status(), state.Workers})
-}
-
-func (a *API) workerSeverity(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	if a.DynamicConfig == nil {
-		http.Error(w, "dynamic config disabled", http.StatusNotFound)
-		return
-	}
-	output(w, a.DynamicConfig.Status().Current)
-}
-
 // SeverityState 返回当前进程等级状态；all-in-one 两角色共享一个原子快照。
 func SeverityState(ctx context.Context, c config.SeverityConfig) *runtimeconfig.Severity {
 	if h, _ := ctx.Value(hostKey{}).(*Host); h != nil {

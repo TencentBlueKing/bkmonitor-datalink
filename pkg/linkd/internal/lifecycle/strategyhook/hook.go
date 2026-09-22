@@ -23,6 +23,7 @@ import (
 	redis "github.com/redis/go-redis/v9"
 	"linkd/internal/activeindex"
 	"linkd/internal/domain"
+	"linkd/internal/enrich/view"
 	"linkd/internal/lifecycle"
 )
 
@@ -68,7 +69,11 @@ func (h *Hook) Execute(ctx context.Context, input lifecycle.FinalHookInput) (lif
 	if err := input.Cause.Validate(); err != nil {
 		return result, fmt.Errorf("invalid cause for strategy hook")
 	}
-	strategy, skip, err := strategyID(input.Alert.Labels)
+	effective, err := view.EnrichedAlert(input.Alert)
+	if err != nil {
+		return result, err
+	}
+	strategy, skip, err := strategyID(effective.Labels)
 	if err != nil {
 		return result, err
 	}

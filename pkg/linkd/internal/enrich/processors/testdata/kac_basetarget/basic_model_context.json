@@ -1,0 +1,391 @@
+{
+  "name": "basic_model_context",
+  "kac_case": "derived_from_kac_base_cleaner",
+  "branch": "basic",
+  "alert": {
+    "strategy_id": 4001,
+    "strategy_version": 1,
+    "bk_biz_id": 2,
+    "subject_name": "fixture-disk-subject",
+    "content": "AVG(disk_io) >= 80, current value is 90",
+    "source_event_id": "fixture-basic-event-01",
+    "dimensions": {
+      "bk_biz_id": 2,
+      "device": "vda"
+    }
+  },
+  "strategy": {
+    "is_default": true,
+    "data_source": "bk_monitor",
+    "name": "指标丨Disk IO",
+    "alarm_alias": "",
+    "object_model_code": "cw-Disk",
+    "bk_biz_id": 2,
+    "monitor_template_id": 401,
+    "config_id": "fixture-basic-config",
+    "aggregate_method": "AVG",
+    "aggregate_period": "60s",
+    "expression": "A",
+    "query_configs": [
+      {
+        "alias": "A",
+        "metric_field": "disk_io",
+        "result_table_id": "system.disk",
+        "agg_method": "AVG",
+        "agg_interval": 60,
+        "agg_dimension": [
+          "bk_biz_id",
+          "device"
+        ],
+        "data_source_label": "bk_monitor",
+        "data_type_label": "time_series"
+      }
+    ]
+  },
+  "model": {
+    "model_id": "70",
+    "model_code": "cw-Disk",
+    "fields": {
+      "object_model_name": "Disk",
+      "bk_cmdb_obj_id": "disk"
+    }
+  },
+  "instance": {
+    "model_code": "",
+    "instance_id": "",
+    "fields": {},
+    "attributes": {}
+  },
+  "topology": {
+    "host_id": "",
+    "bk_biz_id": 0,
+    "bk_biz_name": "",
+    "bk_set_id": 0,
+    "bk_set_name": "",
+    "bk_module_id": 0,
+    "bk_module_name": ""
+  },
+  "metric": {
+    "FieldName": "disk_io",
+    "FieldCNName": "Disk IO",
+    "Description": "",
+    "Unit": "percent",
+    "Dimensions": [
+      {
+        "key": "bk_biz_id",
+        "name": "业务"
+      },
+      {
+        "key": "device",
+        "name": "设备"
+      }
+    ]
+  },
+  "expected_kac": {
+    "resource": {
+      "model_id": "cw-Disk",
+      "model_inst_id": "",
+      "model_name": "Disk",
+      "bk_obj_id": "disk",
+      "bk_biz_id": 2,
+      "cw_labels": [
+        "bk_biz_id",
+        "bk_biz_id|2"
+      ]
+    },
+    "display": {
+      "object": "fixture-disk-subject",
+      "title": "fixture-disk-subject发生了指标丨Disk IO告警",
+      "content": "AVG(disk_io) >= 80, current value is 90"
+    },
+    "metric": {
+      "metric_name": "disk_io",
+      "result_table_id": "system.disk",
+      "unit": "percent",
+      "aggregate_func": "AVG",
+      "time_interval": 60
+    },
+    "source": {
+      "source_id": "built_in_bk",
+      "source_name": "基础监控",
+      "meta_info": "fixture-basic-event-01"
+    }
+  },
+  "expected_payload": {
+    "processors": [
+      {
+        "strategy": {
+          "status": "succeeded",
+          "patches": [
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"data_source\"]",
+              "value": "bk_monitor"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"monitor_template_id\"]",
+              "value": 401
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"strategy_config_id\"]",
+              "value": "fixturebasicconfig"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"strategy_id\"]",
+              "value": 4001
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"strategy_name\"]",
+              "value": "指标丨Disk IO"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"strategy_version\"]",
+              "value": 1
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"url\"]",
+              "value": "/#/kmc/manage/monitorStrategy/monitorStrategyDetails?id=401&strategy_config_id=fixturebasicconfig"
+            }
+          ]
+        }
+      },
+      {
+        "resource": {
+          "status": "succeeded",
+          "patches": [
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"bk_biz_id\"]",
+              "value": 2
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"bk_biz_name\"]",
+              "value": ""
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"bk_cloud_name\"]",
+              "value": ""
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"bk_module_name\"]",
+              "value": ""
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"bk_obj_id\"]",
+              "value": "disk"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"bk_set_name\"]",
+              "value": ""
+            },
+            {
+              "op": "set",
+              "path": "$[\"extra_data\"][\"cw_labels\"]",
+              "value": [
+                "bk_biz_id",
+                "bk_biz_id|2"
+              ]
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"model_id\"]",
+              "value": "cw-Disk"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"model_inst_id\"]",
+              "value": ""
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"model_name\"]",
+              "value": "Disk"
+            }
+          ]
+        }
+      },
+      {
+        "display": {
+          "status": "succeeded",
+          "patches": [
+            {
+              "op": "set",
+              "path": "$.content",
+              "value": "AVG(disk_io) >= 80, current value is 90"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"dimension_text\"]",
+              "value": "业务=2() | 设备=vda"
+            },
+            {
+              "op": "set",
+              "path": "$[\"extra_data\"][\"dimensions\"]",
+              "value": [
+                {
+                  "name": "业务",
+                  "real_key": "bk_biz_id",
+                  "real_value": 2,
+                  "value": 2
+                },
+                {
+                  "name": "设备",
+                  "real_key": "device",
+                  "real_value": "vda",
+                  "value": "vda"
+                }
+              ]
+            },
+            {
+              "op": "set",
+              "path": "$.subject_name",
+              "value": "fixture-disk-subject"
+            },
+            {
+              "op": "set",
+              "path": "$.title",
+              "value": "fixture-disk-subject发生了指标丨Disk IO告警"
+            }
+          ]
+        }
+      },
+      {
+        "metric": {
+          "status": "succeeded",
+          "patches": [
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"aggregate_func\"]",
+              "value": "AVG"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"display_name\"]",
+              "value": "指标丨Disk IO"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"metric_name\"]",
+              "value": "disk_io"
+            },
+            {
+              "op": "set",
+              "path": "$[\"extra_data\"][\"metric_query_params\"]",
+              "value": {
+                "bk_biz_id": 2,
+                "expression": "A",
+                "function": {
+                  "time_compare": []
+                },
+                "functions": [],
+                "query_configs": [
+                  {
+                    "bk_biz_id": 2,
+                    "custom_event_name": "",
+                    "data_source_label": "bk_monitor",
+                    "data_type_label": "time_series",
+                    "extend_fields": {},
+                    "filter_dict": {},
+                    "functions": [],
+                    "group_by": [
+                      "bk_biz_id",
+                      "device"
+                    ],
+                    "index_set_id": 0,
+                    "interval": 60,
+                    "metrics": [
+                      {
+                        "alias": "A",
+                        "field": "disk_io",
+                        "method": "AVG"
+                      }
+                    ],
+                    "promql": "",
+                    "query_string": "",
+                    "table": "system.disk",
+                    "time_field": null,
+                    "where": [
+                      {
+                        "key": "bk_biz_id",
+                        "method": "eq",
+                        "value": [
+                          2
+                        ]
+                      },
+                      {
+                        "condition": "and",
+                        "key": "device",
+                        "method": "eq",
+                        "value": [
+                          "vda"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"metric_unique_id\"]",
+              "value": "system.disk.disk_io"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"result_table_id\"]",
+              "value": "system.disk"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"time_interval\"]",
+              "value": 60
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"unit\"]",
+              "value": "percent"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"where_condition\"]",
+              "value": "bk_biz_id='2' and device='vda'"
+            }
+          ]
+        }
+      },
+      {
+        "source": {
+          "status": "succeeded",
+          "patches": [
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"meta_info\"]",
+              "value": "fixture-basic-event-01"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"source_id\"]",
+              "value": "built_in_bk"
+            },
+            {
+              "op": "set",
+              "path": "$[\"labels\"][\"source_name\"]",
+              "value": "基础监控"
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

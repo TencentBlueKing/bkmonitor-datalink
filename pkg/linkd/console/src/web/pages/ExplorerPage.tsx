@@ -591,6 +591,10 @@ function relationLinks(entity: EntityKind, item: EntityItem) {
     }
   }
   if (entity === "alerts") {
+    links.push({
+      label: "重新模拟丰富",
+      to: `/enrich-preview?bk_tenant_id=${tenant}&alert_id=${encodeURIComponent(item.id)}&event_source_id=${encodeURIComponent(String(item.payload.event_source_id ?? ""))}`,
+    });
     for (const field of ["trigger_event_id", "latest_event_id"]) {
       if (item.payload[field])
         links.push({

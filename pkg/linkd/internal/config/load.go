@@ -19,7 +19,6 @@ import (
 
 	"go.yaml.in/yaml/v3"
 	"linkd/internal/logging"
-	"linkd/internal/telemetry"
 )
 
 const (
@@ -34,7 +33,7 @@ type fileConfig struct {
 	Storage      *StorageConfig       `yaml:"storage"`
 	Lifecycle    *LifecycleConfig     `yaml:"lifecycle"`
 	ControlPlane *ControlPlaneConfig  `yaml:"control_plane"`
-	Telemetry    *telemetry.Config    `yaml:"telemetry"`
+	Telemetry    *TelemetryConfig     `yaml:"telemetry"`
 	Cleaner      CleanerRuntimeConfig `yaml:"cleaner"`
 	Severity     SeverityConfig       `yaml:"severity"`
 	EventSources []fileEventSource    `yaml:"event_sources"`
@@ -136,6 +135,12 @@ func load(path string, overrides Overrides, lookupEnv func(string) (string, bool
 		Cleaner:      decoded.Cleaner.WithDefaults(),
 		Severity:     decoded.Severity.WithDefaults(),
 		EventSources: eventSources,
+	}
+	if settings := cfg.RedisStreamSettings(); settings != nil {
+		if cfg.ControlPlane == nil {
+			cfg.ControlPlane = &ControlPlaneConfig{}
+		}
+		cfg.ControlPlane.RedisStream = settings
 	}
 	if value, ok := lookupEnv("LINKD_API_TOKEN"); ok {
 		cfg.Dispatch.APIToken = value

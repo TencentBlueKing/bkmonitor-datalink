@@ -196,8 +196,27 @@ pnpm test:e2e
 
 ## EventSource 管理与来源队列
 
-Event Sources 页面通过正式控制面 API 增删改来源、enabled、标签和两种角色的 replicas，并展示 Kafka 上限、有效目标、worker 标签和实际分区。
+Event Sources 页面通过正式控制面 API 管理来源，分为事件来源列表和 Workers 两个页签。
+列表支持按 ID / Topic 搜索、按启停状态筛选，每页 20 条，默认隐藏已删除来源。
+页头每 5 秒刷新配置和调度快照，可暂停或手动刷新；刷新失败保留上次快照并标明状态，未知运行数量不会显示为 0。
+
+点击来源打开详情抽屉。在“配置”中通过常用表单编辑启停、Cleaner / Lifecycle replicas 和 selector，
+或切换高级 JSON 编辑 Cleaner 预算、Enrich、Hooks 等完整配置；两种方式共享草稿且不丢失高级字段。
+已有来源的 ID、关联租户、Kafka 订阅、Cleaner 类型及指纹配置不能迁移，需要变更时新建来源。
+副本数接受 `all` 或 `0–10000` 整数，`0` 停止对应角色；空 selector 排除要求显式标签的 Worker。
+“运行情况”仅展示该来源的调度目标、Kafka 上限、任务 Worker、发布版本、阶段、实际分区与错误。
+
+发布、删除和恢复继续使用编辑时的 revision 做并发校验。自动刷新不会覆盖草稿；版本冲突时保留修改，
+须主动重新载入最新配置。关闭有修改的抽屉、重新载入或删除来源时会确认；删除不依赖草稿 JSON。
+已删除来源可通过状态筛选查看并恢复发布，恢复时按表单中的启停配置运行。
+发布成功显示控制面返回的版本，是否已运行仍以任务快照为准。草稿只保留在内存中。
 需要设置 Linkd YAML 的 dispatch.url（或 LINKD_CONTROL_PLANE_URL）和服务端 LINKD_API_TOKEN；token 不下发浏览器。
 来源配置不再以启动 YAML 为运行权威，编辑时省略 security 保留旧凭据，禁止把脱敏占位内容提交为凭据。
 Redis 页面可按来源选择派生 Stream、Mailbox 和 lease。Kafka 输入诊断采用中心元数据和 worker ownership 报告，未重复采集的 offset/ISR 显示未知。
 本次新增的配置写入仅代理控制面，实体存储和其他运维查询仍只读。
+
+## 指标目录
+
+「系统 → 指标目录」支持按模块、类型和用途筛选，搜索中文名、OTel/Prometheus 指标名及维度，展开说明并复制查询序列。页面读取控制面的完整只读目录，不要求连接 Prometheus；新增业务指标随注册声明自动进入目录。
+
+配置要求、接口字段和采集边界统一见 [Console 指标边界](../docs/guides/console.md#指标边界)。

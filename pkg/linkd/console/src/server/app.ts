@@ -496,7 +496,11 @@ function controlPlaneTasks(
       enabled: Boolean(config.redisStreamManager),
       dependsOn: [],
       intervalSeconds: redis.reconcileIntervalSeconds,
-      configSource: config.redisStreamManager ? "explicit" : "disabled",
+      configSource: config.redisStreamManager
+        ? config.redisStreamManager.explicit
+          ? "explicit"
+          : "default"
+        : "disabled",
       settings: {
         reconcileIntervalSeconds: redis.reconcileIntervalSeconds,
         operationTimeoutSeconds: redis.operationTimeoutSeconds,

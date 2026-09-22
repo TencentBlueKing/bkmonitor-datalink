@@ -13,10 +13,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"sync/atomic"
 	"testing"
@@ -136,189 +132,6 @@ func TestRedisCoordinatorIntegration(t *testing.T) {
 	}
 }
 
-type agentSources struct {
-	emptySources
-	release eventsource.Release
-}
-
-func (a agentSources) Get(_ context.Context, kind, id string) (json.RawMessage, string, error) {
-	if kind == "releases" {
-		b, e := json.Marshal(a.release)
-		return b, "1", e
-	}
-	return nil, "", eventsource.ErrNotFound
-}
-
-func TestAgentStopHandshakeIntegration(t *testing.T) {
-	address := os.Getenv("LINKD_TEST_DISPATCH_REDIS")
-	if address == "" {
-		t.Skip("set LINKD_TEST_DISPATCH_REDIS for explicit integration")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	client := redis.NewClient(&redis.Options{Addr: address})
-	defer func() { _ = client.Close() }()
-	_, rel, now := fixture()
-	sources := eventsource.New(agentSources{release: rel}, config.SeverityConfig{})
-	c, e := NewController(ctx, client, sources, "agent-"+uuid.NewString())
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer client.Del(context.Background(), c.key, c.leader)
-	cfg := config.DispatchConfig{APIToken: "test-admin", WorkerToken: "test-worker"}
-	server := httptest.NewServer((&API{Sources: sources, Controller: c, Config: cfg}).Handler())
-	defer server.Close()
-	cfg.URL = server.URL
-	started := make(chan struct{})
-	a := Agent{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Runtime: workerRuntime(config.Config{}, []string{"cleaner"}), Config: cfg, Roles: []string{"cleaner"}, RunTask: func(ctx context.Context, _ Task, _ config.EventSource) error {
-		close(started)
-		<-ctx.Done()
-		return nil
-	}}
-	run, cancelRun := context.WithCancel(ctx)
-	defer cancelRun()
-	done := make(chan error, 1)
-	go func() { done <- a.Run(run) }()
-	planned := false
-	for !planned {
-		if e := c.update(ctx, func(s *State) error {
-			if len(s.Workers) == 0 {
-				return nil
-			}
-			s.Metadata[rel.ID] = UpdateMetadata(Metadata{}, rel.Spec, "topic-id", 1, nil, now)
-			Reconcile(s, []eventsource.Release{rel}, time.Now())
-			planned = len(s.Tasks) > 0
-			return nil
-		}); e != nil {
-			t.Fatal(e)
-		}
-		if !planned {
-			select {
-			case <-ctx.Done():
-				t.Fatal("worker did not register")
-			case <-time.After(20 * time.Millisecond):
-			}
-		}
-	}
-	select {
-	case <-started:
-	case <-ctx.Done():
-		t.Fatal("task was not authorized")
-	}
-	cancelRun()
-	select {
-	case e := <-done:
-		if e != nil {
-			t.Fatal(e)
-		}
-	case <-ctx.Done():
-		t.Fatal("agent failed to stop")
-	}
-	s, e := c.Snapshot(context.Background())
-	if e != nil {
-		t.Fatal(e)
-	}
-	for _, task := range s.Tasks {
-		if task.Phase != "stopped" {
-			t.Fatalf("stop report not confirmed: %+v", task)
-		}
-	}
-}
-
-func TestAgentDisconnectSelfStopIntegration(t *testing.T) {
-	address := os.Getenv("LINKD_TEST_DISPATCH_REDIS")
-	if address == "" {
-		t.Skip("set LINKD_TEST_DISPATCH_REDIS for explicit integration")
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
-	defer cancel()
-	client := redis.NewClient(&redis.Options{Addr: address})
-	defer func() { _ = client.Close() }()
-	_, rel, now := fixture()
-	sources := eventsource.New(agentSources{release: rel}, config.SeverityConfig{})
-	c, e := NewController(ctx, client, sources, "agent-"+uuid.NewString())
-	if e != nil {
-		t.Fatal(e)
-	}
-	defer client.Del(context.Background(), c.key, c.leader)
-	cfg := config.DispatchConfig{APIToken: "test-admin", WorkerToken: "test-worker"}
-	var offline atomic.Bool
-	api := (&API{Sources: sources, Controller: c, Config: cfg}).Handler()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if offline.Load() {
-			http.Error(w, "unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		api.ServeHTTP(w, r)
-	}))
-	defer server.Close()
-	cfg.URL = server.URL
-	started := make(chan struct{})
-	stopped := make(chan struct{})
-	a := Agent{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), Runtime: workerRuntime(config.Config{}, []string{"cleaner"}), Config: cfg, Roles: []string{"cleaner"}, RunTask: func(ctx context.Context, _ Task, _ config.EventSource) error {
-		close(started)
-		<-ctx.Done()
-		close(stopped)
-		return nil
-	}}
-	run, cancelRun := context.WithCancel(ctx)
-	defer cancelRun()
-	done := make(chan error, 1)
-	go func() { done <- a.Run(run) }()
-	planned := false
-	for !planned {
-		if e := c.update(ctx, func(s *State) error {
-			if len(s.Workers) == 0 {
-				return nil
-			}
-			s.Metadata[rel.ID] = UpdateMetadata(Metadata{}, rel.Spec, "topic-id", 1, nil, now)
-			Reconcile(s, []eventsource.Release{rel}, time.Now())
-			planned = len(s.Tasks) > 0
-			return nil
-		}); e != nil {
-			t.Fatal(e)
-		}
-		if !planned {
-			select {
-			case <-ctx.Done():
-				t.Fatal("worker did not register")
-			case <-time.After(20 * time.Millisecond):
-			}
-		}
-	}
-	select {
-	case <-started:
-	case <-ctx.Done():
-		t.Fatal("task was not authorized")
-	}
-	offline.Store(true)
-	select {
-	case <-stopped:
-	case <-time.After(20 * time.Second):
-		t.Fatal("worker did not self stop after losing control connection")
-	}
-	offline.Store(false)
-	time.Sleep(HeartbeatInterval + time.Second)
-	cancelRun()
-	select {
-	case e := <-done:
-		if e != nil {
-			t.Fatal(e)
-		}
-	case <-ctx.Done():
-		t.Fatal("agent failed to stop")
-	}
-	s, e := c.Snapshot(context.Background())
-	if e != nil {
-		t.Fatal(e)
-	}
-	for _, task := range s.Tasks {
-		if task.Phase != "stopped" {
-			t.Fatalf("stop report not confirmed: %+v", task)
-		}
-	}
-}
-
 // transitionRecorder 继承 no-op 端口，仅统计已提交转换。
 type transitionRecorder struct {
 	noopObserver
@@ -366,7 +179,10 @@ func TestRedisObserverTimeoutReassignmentIntegration(t *testing.T) {
 	if err := c.update(ctx, func(s *State) error { *s = state; return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.update(ctx, func(s *State) error { Reconcile(s, []eventsource.Release{release}, time.Now()); return nil }); err != nil {
+	if err := c.update(ctx, func(s *State) error {
+		Reconcile(s, []eventsource.Release{release}, time.Now())
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	snapshot, err := c.Snapshot(ctx)

@@ -17,7 +17,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"linkd/internal/taskdispatch"
+	controlapi "linkd/internal/controlplane/api"
 )
 
 func TestImportSourceWithDynamicKACSeverity(t *testing.T) {
@@ -32,7 +32,7 @@ func TestImportSourceWithDynamicKACSeverity(t *testing.T) {
 		case r.Method == http.MethodGet:
 			w.WriteHeader(http.StatusNotFound)
 		case r.Method == http.MethodPut:
-			var mutation taskdispatch.Mutation
+			var mutation controlapi.Mutation
 			if err := json.NewDecoder(r.Body).Decode(&mutation); err != nil {
 				t.Error(err)
 			}

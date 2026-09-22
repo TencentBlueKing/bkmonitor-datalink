@@ -20,6 +20,7 @@ import (
 	"linkd/internal/config"
 	"linkd/internal/consume"
 	"linkd/internal/consume/redisstream"
+	"linkd/internal/enrich/assembly"
 	"linkd/internal/lifecycle"
 	"linkd/internal/lifecycle/mailbox"
 	"linkd/internal/lifecycle/recentalert"
@@ -127,7 +128,7 @@ func Run(
 		stage := "enrich_datasources"
 		defer func() { taskErr = taskdispatch.WithTaskStage(stage, taskErr) }()
 		openCtx, cancelOpen := context.WithTimeout(taskCtx, startupTimeout)
-		enrichRuntime, err := openEnrichRuntime(
+		enrichRuntime, err := assembly.Open(
 			openCtx, source, lifecycleConfig.Concurrency+4,
 			time.Duration(lifecycleConfig.ProcessTimeoutSeconds)*time.Second, telemetryRuntime,
 		)
@@ -141,7 +142,7 @@ func Run(
 			}
 		}()
 		stage = "enricher"
-		enricher, err := enrichRuntime.router(source, telemetryRuntime)
+		enricher, err := enrichRuntime.Router(source, telemetryRuntime)
 		if err != nil {
 			return fmt.Errorf("initialize lifecycle source enricher: %w", err)
 		}

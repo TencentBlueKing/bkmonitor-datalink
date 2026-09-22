@@ -1,8 +1,8 @@
 # Alert Enrich 现行设计与 KAC 迁移基线
 
-状态：现行设计与迁移状态的唯一权威文档
+状态：内置丰富场景与 KAC 迁移基线；自定义规则、补丁、预览和配置转换以[自定义丰富开发规格](custom-enrichment.md)为准。
 
-适用代码：`internal/lifecycle/enrich`、`internal/lifecycle/process`、`internal/config`、`internal/telemetry`
+适用代码：`internal/enrich`、`internal/lifecycle/process`、`internal/config`、`internal/telemetry`
 事实基线：当前工作区代码、测试与 `go test ./...` 结果
 
 本文统一描述 Linkd Alert Enrich 的现行契约、实现边界、KAC 行为迁移状态和后续顺序。代码与本文发生差异时，以代码和测试判断当前已实现行为，并同步修正文档。
@@ -16,7 +16,7 @@ Alert.EnrichStatus
 Alert.Enrich
 ```
 
-Alert 的标题、内容、标签、维度、主体、来源和生命周期字段保持来源事实，不由 Enrich 改写。等级升级产生的新 Alert 会重新执行 Enrich；同等级更新、恢复和关闭沿用已有结果。
+Alert 的标题、内容、标签、维度、主体、来源和生命周期字段保持来源事实，不由 Enrich 改写。等级升级产生的新 Alert 会重新执行 Enrich；同等级更新、`update_current` 等级升级、恢复和关闭沿用已有结果。
 
 当前可配置生产链由 EventSource 按需组合，核心链为：
 
@@ -43,7 +43,7 @@ strategy → resource → display → metric → source
 
 ### 2.1 输入与副作用
 
-- Enricher 输入固定为 `lifecycle.EnrichInput{Alert}`。
+- Enricher 输入固定为 `enrich.Input{Alert}`。
 - Scope 保存 `Alert.Clone()`，`Scope.Alert()` 继续返回隔离副本。
 - Processor 只执行外部只读查询和确定性转换。
 - Processor 不写回 Alert，也不把查询响应塞入 `ExtraData`。
@@ -72,7 +72,7 @@ Lifecycle 构造并 Normalize 新 Alert
   → Router 按 Alert.EventSourceID 选择不可变 Chain
   → Scope 保存 Alert 深拷贝和 DataSource Readers
   → 按配置顺序执行 Processor
-  → 每个 Processor 返回 status/value/diagnostics
+  → 每个 Processor 返回结果，统一持久化为 status/patches/trace/diagnostics
   → Chain 聚合 EnrichStatus 并编码 Payload
   → Lifecycle 校验、降级并写回 Alert.EnrichStatus / Alert.Enrich
   → Repository 创建 Alert
@@ -84,14 +84,14 @@ Lifecycle 构造并 Normalize 新 Alert
 | 关注点 | 文件 |
 | --- | --- |
 | Lifecycle 端口与调用保护 | `internal/lifecycle/enrich.go`、`internal/lifecycle/enrich_observer.go` |
-| Chain、隔离和状态聚合 | `internal/lifecycle/enrich/enricher.go`、`status.go` |
-| Payload 和 diagnostics | `internal/lifecycle/enrich/result.go` |
-| Scope 与 Reader 接口 | `internal/lifecycle/enrich/scope.go` |
-| EventSource 路由与注册 | `internal/lifecycle/enrich/assembly/router.go` |
-| Processor | `internal/lifecycle/enrich/processors/` |
-| Collect 场景 | `internal/lifecycle/enrich/collect/` |
-| Uptime 场景 | `internal/lifecycle/enrich/uptime/` |
-| 外部读取适配器 | `internal/lifecycle/enrich/datasources/` |
+| Chain、隔离和状态聚合 | `internal/enrich/enricher.go`、`status.go` |
+| Payload 和 diagnostics | `internal/enrich/result.go` |
+| Scope 与 Reader 接口 | `internal/enrich/scope.go` |
+| EventSource 路由与注册 | `internal/enrich/assembly/router.go` |
+| Processor | `internal/enrich/processors/` |
+| Collect 场景 | `internal/enrich/collect/` |
+| Uptime 场景 | `internal/enrich/uptime/` |
+| 外部读取适配器 | `internal/enrich/datasources/` |
 | 生产装配 | `internal/lifecycle/process/enrich.go` |
 | Observation | `internal/telemetry/enrich.go`、`enrich_datasource.go` |
 
@@ -157,7 +157,7 @@ source
     {
       "resource": {
         "status": "partial",
-        "value": {},
+        "patches": [],
         "diagnostics": [
           {
             "code": "dependency_invalid",
@@ -175,8 +175,12 @@ source
 | 字段 | 类型 | 规则 |
 | --- | --- | --- |
 | `status` | `succeeded/partial/failed/skipped` | Processor 状态 |
-| `value` | object | 无输出时使用 `{}` |
+| `patches` | array | 已求值的有序 JSONPath 补丁，无输出时为 `[]` |
+| `trace` | array，可省略 | 自定义规则和操作的执行状态、命中数及耗时 |
 | `diagnostics` | array，可省略 | 稳定、脱敏的输入或依赖诊断 |
+
+`value` 仅用于读取历史记录及内置处理器的内部 DTO；新结果不写 `value` 或最终 `values`。
+按处理器顺序应用补丁可得到临时有效视图，原始 Alert 不改变。详细目标白名单和顺序见[自定义丰富规格](custom-enrichment.md)。
 
 总状态算法：
 
@@ -329,14 +333,14 @@ meta_info
 | LogTheme 生产 Reader | 已装配 | MySQL Reader 查询 `log_theme_logtheme`，使用调用方传入的 `bk_tenant_id`，只投影 `bk_tenant_id`、`log_theme_id`、`log_theme_name`；生产装配接入 `enrich.Sources.LogTheme` | |
 | CloudResource | 已装配 | MySQL Reader 已接入 `enrich.Sources.CloudResource`，按接口入参租户和 `cloud_id + type + instanceid` 查询并关联云平台名称；当前 CloudResource 表为空 |
 | CloudPlugin / SysSetting | 已移出当前 Cloud 主链 | 当前 Cloud/VMWARE 契约不依赖 CloudPlugin、SysSetting，不阻塞资源丰富 |
-| K8s Reader | 已装配 | `OneModelK8sReader` 复用 `OneModelClient` 查询 `kingeye_all_instance`，按租户、模型和 K8s 属性过滤并复核实例身份；不直接读取 `kmc_k8s_*` |
+| K8s Reader | 已装配 | `OneModelK8sReader` 复用 `onemodel.Client` 查询 `kingeye_all_instance`，按租户、模型和 K8s 属性过滤并复核实例身份；不直接读取 `kmc_k8s_*` |
 | APM application API | 缺失 | APM 应用候选查询无法接入真实 Application 服务 |
 
 ### 7.3 OneModel 实例协议
 
 `event_sources[].enrich.datasources.elasticsearch.index_prefix` 配置 CMDB 业务拓扑索引前缀，默认 `bk_monitor_base_`；实例 alias `kingeye_all_instance` 与投影边 `kingeye_topo` 使用固定契约名。
 
-当前 `OneModelClient` 固定查询：
+当前 `onemodel.Client` 固定查询：
 
 ```text
 kingeye_all_instance
@@ -614,7 +618,7 @@ K8s 已完成 OneModel Reader 主流程接入，复用统一实例索引 `kingey
 - `k8s` Processor、Router/配置注册和 `OneModelK8sReader` 生产装配；
 - K8s Reader 返回真实实例后，投影 `model_id`、`model_inst_id`、`cluster_name`、`bk_biz_id`、`bk_biz_name` 和确定的 `cw_labels`；
 - 业务选择对齐旧 KAC：Namespace `bk_biz_id` 优先，Cluster `bk_biz_id` 回退，随后使用 `bk_biz_ids` 第一个值，最后回退 Kafka `labels.bk_biz_id`；
-- `OneModelK8sReader` 通过 `OneModelClient` 按租户、对象模型和类型化属性过滤；
+- `OneModelK8sReader` 通过 `onemodel.Client` 按租户、对象模型和类型化属性过滤；
 - Cluster、Namespace、Service、Workload、Pod、Container、Node 的身份维度映射；
 - Workload `workload_kind=Pod` 改查 `cw-K8s_Pod` 的旧 KAC 特殊规则；
 - Reader 响应租户、模型、实例和 `entity_uid` 复核；
@@ -932,6 +936,6 @@ Kingeye / OneModel / 其他来源
 - 使用与字段示例：[主机推送告警 Enrich 示例](../guides/host-alert-enrich-example.md)
 - 输入字段取证归档：[alarm_callback 输入字段盘点](../research/alarm-callback-input-field-inventory.md)
 - 外部数据依赖取证归档：[Kingeye alarm_callback 数据依赖](../research/kingeye-alarm-callback-data-dependencies.md)
-- 实际数据准备清单：[Enrich 实际数据准备清单](../research/enrich-real-data-preparation.md)
+- 自定义规则与开发验证：[自定义丰富开发规格](custom-enrichment.md)
 
-本文是 Enrich 设计、迁移状态、Observation 和后续方向的唯一现行入口。研究文档只保留带版本的证据，不覆盖本文和代码。
+本文维护内置 Enrich 场景、迁移状态和 Observation；自定义规则与补丁协议以[自定义丰富开发规格](custom-enrichment.md)为准。研究文档保留带版本的证据，不覆盖实现和已确认规格。

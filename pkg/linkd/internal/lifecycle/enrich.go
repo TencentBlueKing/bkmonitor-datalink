@@ -16,22 +16,12 @@ import (
 	"time"
 
 	"linkd/internal/domain"
+	"linkd/internal/enrich"
 )
-
-// EnrichInput 是 Enricher 可读取但不得修改的待创建 Alert 副本。
-type EnrichInput struct {
-	Alert domain.Alert
-}
-
-// EnrichResult 只允许设置 Alert 的 enrich_status 与 enrich。
-type EnrichResult struct {
-	Status domain.EnrichStatus
-	Data   domain.JSONObject
-}
 
 // AlertEnricher 为新建 Alert 提供同步、无副作用且可重试的丰富入口。
 type AlertEnricher interface {
-	Enrich(ctx context.Context, input EnrichInput) (EnrichResult, error)
+	Enrich(ctx context.Context, input enrich.Input) (enrich.Result, error)
 }
 
 func (p *Processor) enrichNewAlert(
@@ -43,7 +33,7 @@ func (p *Processor) enrichNewAlert(
 		return domain.Alert{}, fmt.Errorf("normalize base alert before enrich: %w", err)
 	}
 	startedAt := time.Now()
-	chainKind := EnrichChainUnknown
+	chainKind := enrich.ChainUnknown
 	if classifier, ok := p.enricher.(EnrichRouteClassifier); ok {
 		chainKind = classifier.EnrichChainKind(normalized.EventSourceID)
 	}
@@ -56,7 +46,7 @@ func (p *Processor) enrichNewAlert(
 		observation.Duration = time.Since(startedAt)
 		p.enrichObserver.Finished(ctx, observation)
 	}()
-	result, failureReason := p.callEnricher(ctx, EnrichInput{Alert: normalized.Clone()})
+	result, failureReason := p.callEnricher(ctx, enrich.Input{Alert: normalized.Clone()})
 	if err := ctx.Err(); err != nil {
 		return domain.Alert{}, err
 	}
@@ -115,26 +105,26 @@ func enrichMetricOutcome(failureReason string) string {
 	}
 }
 
-func failedEnrichResult() EnrichResult {
-	return EnrichResult{Status: domain.EnrichStatusFailed, Data: domain.JSONObject{
+func failedEnrichResult() enrich.Result {
+	return enrich.Result{Status: domain.EnrichStatusFailed, Data: domain.JSONObject{
 		"processors": json.RawMessage(`[{"enricher":{"status":"failed","value":{},"diagnostics":[{"code":"dependency_invalid","dependency":"enricher"}]}}]`),
 	}}
 }
 
 func (p *Processor) callEnricher(
 	ctx context.Context,
-	input EnrichInput,
-) (result EnrichResult, failureReason string) {
+	input enrich.Input,
+) (result enrich.Result, failureReason string) {
 	defer func() {
 		if recover() != nil {
-			result = EnrichResult{}
+			result = enrich.Result{}
 			failureReason = "enricher_panic"
 		}
 	}()
 	var err error
 	result, err = p.enricher.Enrich(ctx, input)
 	if err != nil {
-		return EnrichResult{}, "enricher_error"
+		return enrich.Result{}, "enricher_error"
 	}
 	return result, ""
 }

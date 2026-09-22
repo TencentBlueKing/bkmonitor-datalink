@@ -12,10 +12,12 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
 
+	"linkd/internal/enrich/custom"
 	"linkd/internal/kafkaclient"
 )
 
@@ -54,8 +56,15 @@ type EnrichConfig struct {
 
 // EnrichDataSources 定义该来源的丰富处理器可复用的物理数据源连接。
 type EnrichDataSources struct {
-	MySQL         *EnrichMySQLDataSource         `yaml:"mysql,omitempty" json:"mysql,omitempty"`
-	Elasticsearch *EnrichElasticsearchDataSource `yaml:"elasticsearch,omitempty" json:"elasticsearch,omitempty"`
+	KingeyeDisplay *EnrichDisplayDataSource       `yaml:"kingeye_display,omitempty" json:"kingeye_display,omitempty"`
+	MySQL          *EnrichMySQLDataSource         `yaml:"mysql,omitempty" json:"mysql,omitempty"`
+	Elasticsearch  *EnrichElasticsearchDataSource `yaml:"elasticsearch,omitempty" json:"elasticsearch,omitempty"`
+}
+
+// EnrichDisplayDataSource 只读取 Kingeye 已有展示缓存；KeyPrefix 与该环境缓存前缀一致。
+type EnrichDisplayDataSource struct {
+	Redis     RedisConfig `yaml:"redis" json:"redis"`
+	KeyPrefix string      `yaml:"key_prefix,omitempty" json:"key_prefix,omitempty"`
 }
 
 // EnrichMySQLDataSource 定义 Enrich 使用的 MySQL 只读连接。
@@ -95,6 +104,11 @@ func (c EnrichConfig) clone() EnrichConfig {
 
 func (c EnrichDataSources) clone() EnrichDataSources {
 	cloned := c
+	if c.KingeyeDisplay != nil {
+		value := *c.KingeyeDisplay
+		value.Redis = value.Redis.clone()
+		cloned.KingeyeDisplay = &value
+	}
 	if c.MySQL != nil {
 		value := *c.MySQL
 		cloned.MySQL = &value
@@ -121,16 +135,33 @@ func (c EnrichConfig) WithPreservedSecrets(previous EnrichConfig) EnrichConfig {
 	if merged.DataSources == nil || previous.DataSources == nil {
 		return merged
 	}
-	if merged.DataSources.MySQL != nil && previous.DataSources.MySQL != nil &&
+	if merged.DataSources.MySQL != nil && previous.DataSources.MySQL != nil && merged.DataSources.MySQL.Address == previous.DataSources.MySQL.Address && merged.DataSources.MySQL.Username == previous.DataSources.MySQL.Username && merged.DataSources.MySQL.Database == previous.DataSources.MySQL.Database &&
 		(merged.DataSources.MySQL.Password == "" || merged.DataSources.MySQL.Password == redactedSecret) {
 		merged.DataSources.MySQL.Password = previous.DataSources.MySQL.Password
 	}
+	if merged.DataSources.KingeyeDisplay != nil && previous.DataSources.KingeyeDisplay != nil {
+		current := &merged.DataSources.KingeyeDisplay.Redis
+		old := previous.DataSources.KingeyeDisplay.Redis
+		sameTarget := current.Address == old.Address && current.Username == old.Username && current.Mode == old.Mode
+		if (current.Sentinel == nil) != (old.Sentinel == nil) {
+			sameTarget = false
+		}
+		if current.Sentinel != nil && old.Sentinel != nil {
+			sameTarget = sameTarget && current.Sentinel.MasterName == old.Sentinel.MasterName && slices.Equal(current.Sentinel.Addresses, old.Sentinel.Addresses)
+		}
+		if sameTarget && (current.Password == "" || current.Password == redactedSecret) {
+			current.Password = old.Password
+		}
+		if current.Sentinel != nil && old.Sentinel != nil && current.Sentinel.MasterName == old.Sentinel.MasterName && slices.Equal(current.Sentinel.Addresses, old.Sentinel.Addresses) && current.Sentinel.Username == old.Sentinel.Username && (current.Sentinel.Password == "" || current.Sentinel.Password == redactedSecret) {
+			current.Sentinel.Password = old.Sentinel.Password
+		}
+	}
 	currentElasticsearch, oldElasticsearch := merged.DataSources.Elasticsearch, previous.DataSources.Elasticsearch
-	if currentElasticsearch != nil && oldElasticsearch != nil {
+	if currentElasticsearch != nil && oldElasticsearch != nil && slices.Equal(currentElasticsearch.Addresses, oldElasticsearch.Addresses) {
 		if currentElasticsearch.APIKey == "" || currentElasticsearch.APIKey == redactedSecret {
 			currentElasticsearch.APIKey = oldElasticsearch.APIKey
 		}
-		if currentElasticsearch.BasicAuth != nil && oldElasticsearch.BasicAuth != nil &&
+		if currentElasticsearch.BasicAuth != nil && oldElasticsearch.BasicAuth != nil && currentElasticsearch.BasicAuth.Username == oldElasticsearch.BasicAuth.Username &&
 			(currentElasticsearch.BasicAuth.Password == "" || currentElasticsearch.BasicAuth.Password == redactedSecret) {
 			currentElasticsearch.BasicAuth.Password = oldElasticsearch.BasicAuth.Password
 		}
@@ -140,6 +171,9 @@ func (c EnrichConfig) WithPreservedSecrets(previous EnrichConfig) EnrichConfig {
 
 func (c EnrichDataSources) redacted() EnrichDataSources {
 	redacted := c.clone()
+	if redacted.KingeyeDisplay != nil {
+		redacted.KingeyeDisplay.Redis = *(StorageConfig{Redis: &redacted.KingeyeDisplay.Redis}).Redacted().Redis
+	}
 	if redacted.MySQL != nil && redacted.MySQL.Password != "" {
 		redacted.MySQL.Password = redactedSecret
 	}
@@ -173,6 +207,14 @@ func (c EnrichElasticsearchDataSource) validate() error {
 }
 
 func (c EnrichConfig) validate() error {
+	if c.DataSources != nil && c.DataSources.KingeyeDisplay != nil {
+		if err := c.DataSources.KingeyeDisplay.Redis.Validate(); err != nil {
+			return fmt.Errorf("invalid kingeye_display redis configuration")
+		}
+		if len(c.DataSources.KingeyeDisplay.KeyPrefix) > 128 {
+			return fmt.Errorf("display key prefix too long")
+		}
+	}
 	seenProcessors := make(map[string]int, len(c.Processors))
 	for index, processor := range c.Processors {
 		if strings.TrimSpace(processor.Type) == "" {
@@ -181,8 +223,13 @@ func (c EnrichConfig) validate() error {
 		if err := processor.validate(); err != nil {
 			return fmt.Errorf("enrich.processors[%d]: %w", index, err)
 		}
-		if processor.Type != "strategy" && processor.Type != "test" && len(processor.Config) != 0 {
+		if processor.Type != "strategy" && processor.Type != "test" && processor.Type != "cmdb" && processor.Type != "fields" && len(processor.Config) != 0 {
 			return fmt.Errorf("enrich.processors[%d].config is not supported by processor %q", index, processor.Type)
+		}
+		if processor.Type == "cmdb" || processor.Type == "fields" {
+			if _, err := custom.Compile(processor.Type, processor.Config); err != nil {
+				return fmt.Errorf("enrich.processors[%d]: %w", index, err)
+			}
 		}
 		if previous, exists := seenProcessors[processor.Type]; exists {
 			return fmt.Errorf("enrich.processors[%d].type duplicates enrich.processors[%d]: %q", index, previous, processor.Type)
@@ -216,6 +263,27 @@ func (c EnrichConfig) SelectDataSources() (EnrichDataSources, error) {
 	selected := EnrichDataSources{}
 	for _, processor := range c.Processors {
 		switch processor.Type {
+		case "cmdb", "fields":
+			program, err := custom.Compile(processor.Type, processor.Config)
+			if err != nil {
+				return EnrichDataSources{}, err
+			}
+			if processor.Type == "cmdb" {
+				if configured.Elasticsearch == nil {
+					return EnrichDataSources{}, fmt.Errorf("enrich.datasources.elasticsearch is required by cmdb")
+				}
+				selected.Elasticsearch = configured.Elasticsearch
+			}
+			if program.NeedsDisplay() {
+				if configured.MySQL == nil {
+					return EnrichDataSources{}, fmt.Errorf("enrich.datasources.mysql required by display transform")
+				}
+				selected.MySQL = configured.MySQL
+				if configured.KingeyeDisplay == nil {
+					return EnrichDataSources{}, fmt.Errorf("enrich.datasources.kingeye_display required by display transform")
+				}
+				selected.KingeyeDisplay = configured.KingeyeDisplay
+			}
 		case "test":
 			// 测试处理器只生成固定字段和等待，不需要外部连接。
 		case "strategy", "resource":
@@ -596,3 +664,6 @@ func (s EventSource) subscriptionKey() subscriptionKey {
 	sort.Strings(brokers)
 	return subscriptionKey{strings.Join(brokers, "\x00"), s.Storage.Kafka.Topic, s.Storage.Kafka.ConsumerGroup}
 }
+
+// Validate 校验丰富配置并静态编译所有表达式，不访问外部服务。
+func (c EnrichConfig) Validate() error { return c.validate() }

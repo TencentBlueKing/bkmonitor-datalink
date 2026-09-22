@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"linkd/internal/domain"
+	"linkd/internal/enrich"
 	"linkd/internal/store"
 	"linkd/internal/store/memory"
 )
@@ -157,31 +158,31 @@ func TestEnricherCreationResults(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name       string
-		enrich     func(EnrichInput) (EnrichResult, error)
+		enrich     func(enrich.Input) (enrich.Result, error)
 		wantStatus domain.EnrichStatus
 	}{
-		{name: "succeeded", enrich: func(EnrichInput) (EnrichResult, error) {
+		{name: "succeeded", enrich: func(enrich.Input) (enrich.Result, error) {
 			return testEnrichResult(domain.EnrichStatusSucceeded, domain.JSONObject{"owner": []byte(`"ops"`)}), nil
 		}, wantStatus: domain.EnrichStatusSucceeded},
-		{name: "partial", enrich: func(EnrichInput) (EnrichResult, error) {
+		{name: "partial", enrich: func(enrich.Input) (enrich.Result, error) {
 			return testEnrichResult(domain.EnrichStatusPartial, domain.JSONObject{}), nil
 		}, wantStatus: domain.EnrichStatusPartial},
-		{name: "reported failed", enrich: func(EnrichInput) (EnrichResult, error) {
+		{name: "reported failed", enrich: func(enrich.Input) (enrich.Result, error) {
 			return testEnrichResult(domain.EnrichStatusFailed, domain.JSONObject{}), nil
 		}, wantStatus: domain.EnrichStatusFailed},
-		{name: "pending is reserved", enrich: func(EnrichInput) (EnrichResult, error) {
-			return EnrichResult{Status: domain.EnrichStatusPending}, nil
+		{name: "pending is reserved", enrich: func(enrich.Input) (enrich.Result, error) {
+			return enrich.Result{Status: domain.EnrichStatusPending}, nil
 		}, wantStatus: domain.EnrichStatusFailed},
-		{name: "invalid status", enrich: func(EnrichInput) (EnrichResult, error) {
-			return EnrichResult{Status: "unknown"}, nil
+		{name: "invalid status", enrich: func(enrich.Input) (enrich.Result, error) {
+			return enrich.Result{Status: "unknown"}, nil
 		}, wantStatus: domain.EnrichStatusFailed},
-		{name: "error", enrich: func(EnrichInput) (EnrichResult, error) {
-			return EnrichResult{}, errors.New("lookup failed")
+		{name: "error", enrich: func(enrich.Input) (enrich.Result, error) {
+			return enrich.Result{}, errors.New("lookup failed")
 		}, wantStatus: domain.EnrichStatusFailed},
-		{name: "panic", enrich: func(EnrichInput) (EnrichResult, error) {
+		{name: "panic", enrich: func(enrich.Input) (enrich.Result, error) {
 			panic("broken enricher")
 		}, wantStatus: domain.EnrichStatusFailed},
-		{name: "input mutation is isolated", enrich: func(input EnrichInput) (EnrichResult, error) {
+		{name: "input mutation is isolated", enrich: func(input enrich.Input) (enrich.Result, error) {
 			input.Alert.Dimensions["host"] = domain.NewStringScalar("changed")
 			input.Alert.Labels["changed"] = domain.NewBoolScalar(true)
 			input.Alert.ExtraData["changed"] = []byte(`true`)
@@ -222,7 +223,7 @@ func TestEnrichObserverSeesFinalDegradedResult(t *testing.T) {
 	observer := &recordingEnrichObserver{}
 	processor, err := NewProcessor(
 		repo, NoopRecentAlertCache{}, DeterministicAlertIDGenerator{},
-		stubEnricher{fn: func(EnrichInput) (EnrichResult, error) { panic("broken") }},
+		stubEnricher{fn: func(enrich.Input) (enrich.Result, error) { panic("broken") }},
 		[]NamedFinalHook{{Name: "noop", Hook: NoopFinalHook{}}}, testSeverity{}, fixedClock{time.Date(2026, 9, 1, 0, 10, 0, 0, time.UTC)}, discardLogger{},
 		WithEnrichObserver(observer),
 	)
@@ -241,7 +242,7 @@ func TestEnrichObserverSeesFinalDegradedResult(t *testing.T) {
 	observation := observer.finished[0]
 	encoded, _ := json.Marshal(stored.Alert.Enrich)
 	if observation.Status != domain.EnrichStatusFailed || observation.Outcome != EnrichOutcomePanic ||
-		observation.ChainKind != EnrichChainUnknown || observation.PayloadBytes != int64(len(encoded)) {
+		observation.ChainKind != enrich.ChainUnknown || observation.PayloadBytes != int64(len(encoded)) {
 		t.Fatalf("observation=%#v payload_bytes=%d", observation, len(encoded))
 	}
 }
@@ -932,32 +933,32 @@ func (c fixedClock) Now() time.Time { return c.now }
 
 type testSeverity struct{}
 
-func testEnrichResult(status domain.EnrichStatus, value domain.JSONObject) EnrichResult {
+func testEnrichResult(status domain.EnrichStatus, value domain.JSONObject) enrich.Result {
 	valueData, _ := json.Marshal(value)
 	processorStatus := status
 	if status == domain.EnrichStatusPartial {
 		processorStatus = domain.EnrichStatusPartial
 	}
 	processors, _ := json.Marshal([]map[string]any{{"test": map[string]any{"status": processorStatus, "value": json.RawMessage(valueData)}}})
-	return EnrichResult{Status: status, Data: domain.JSONObject{"processors": processors}}
+	return enrich.Result{Status: status, Data: domain.JSONObject{"processors": processors}}
 }
 
 type testNoopEnricher struct{}
 
-func (testNoopEnricher) Enrich(ctx context.Context, _ EnrichInput) (EnrichResult, error) {
+func (testNoopEnricher) Enrich(ctx context.Context, _ enrich.Input) (enrich.Result, error) {
 	if err := ctx.Err(); err != nil {
-		return EnrichResult{}, err
+		return enrich.Result{}, err
 	}
-	return EnrichResult{Status: domain.EnrichStatusSucceeded, Data: domain.JSONObject{
+	return enrich.Result{Status: domain.EnrichStatusSucceeded, Data: domain.JSONObject{
 		"processors": []byte(`[]`),
 	}}, nil
 }
 
 type stubEnricher struct {
-	fn func(EnrichInput) (EnrichResult, error)
+	fn func(enrich.Input) (enrich.Result, error)
 }
 
-func (s stubEnricher) Enrich(_ context.Context, input EnrichInput) (EnrichResult, error) {
+func (s stubEnricher) Enrich(_ context.Context, input enrich.Input) (enrich.Result, error) {
 	return s.fn(input)
 }
 

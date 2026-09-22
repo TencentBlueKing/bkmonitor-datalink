@@ -90,7 +90,7 @@ func openHook(spec config.HookConfig) (lifecycle.FinalHook, func() error, error)
 	switch spec.Type {
 	case config.HookTypeKAC:
 		brokers, topic, clientID, maxMessageBytes, security := spec.KafkaParameters()
-		hook, err := kachook.New(kachook.Config{
+		hook, err := kachook.New(kachook.Config{FieldMappings: spec.Config.FieldMappings,
 			Brokers: brokers, Topic: topic, ClientID: clientID,
 			MaxMessageBytes: maxMessageBytes, Security: security,
 		}, spec.Name)

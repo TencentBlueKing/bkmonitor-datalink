@@ -18,12 +18,13 @@ import (
 	"testing"
 	"time"
 
+	settings "linkd/internal/config"
 	"linkd/internal/taskdispatch/observation"
 )
 
 func TestDispatchMetricsResetAndConcurrentObservation(t *testing.T) {
 	ctx := t.Context()
-	runtime, err := Start(ctx, Config{Metrics: MetricsConfig{Exporter: ExporterPrometheus, Prometheus: PrometheusConfig{ListenAddress: "127.0.0.1:0"}}}, RoleAllInOne, "test")
+	runtime, err := Start(ctx, settings.TelemetryConfig{Metrics: settings.TelemetryMetricsConfig{Exporter: settings.TelemetryExporterPrometheus, Prometheus: settings.TelemetryPrometheusConfig{ListenAddress: "127.0.0.1:0"}}}, RoleAllInOne, "test")
 	if err != nil {
 		t.Fatal(err)
 	}

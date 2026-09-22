@@ -104,6 +104,8 @@ control_plane:
     archive_batch_size: 1000
     archive_worker_count: 1
   redis_stream:
+    # 配置 storage.redis 和 lifecycle 后默认启用；省略整个配置段也会执行。
+    enabled: true
     reconcile_interval_seconds: 10
     operation_timeout_seconds: 3
     max_entries: 100000

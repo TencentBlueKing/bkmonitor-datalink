@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"reflect"
 	"regexp"
@@ -20,8 +21,8 @@ import (
 
 	"go.yaml.in/yaml/v3"
 	"linkd/internal/activeindex"
+	"linkd/internal/enrich/kingeye"
 	"linkd/internal/kafkaclient"
-	"linkd/internal/lifecycle/kafkahook"
 )
 
 const (
@@ -50,6 +51,7 @@ type HookConfig struct {
 // HookParameters 是内置插件参数的封闭联合；ValidateHooks 拒绝其他插件的参数。
 // Redis 和 TimeoutMilliseconds 使用指针区分缺省与显式空配置、零超时。
 type HookParameters struct {
+	FieldMappings       map[string]string          `yaml:"field_mappings,omitempty" json:"field_mappings,omitempty"`
 	Brokers             []string                   `yaml:"brokers,omitempty" json:"brokers,omitempty"`
 	Topic               string                     `yaml:"topic,omitempty" json:"topic,omitempty"`
 	ClientID            string                     `yaml:"client_id,omitempty" json:"client_id,omitempty"`
@@ -109,6 +111,7 @@ func (c *HookParameters) UnmarshalYAML(node *yaml.Node) error {
 }
 
 func (h HookConfig) clone() HookConfig {
+	h.Config.FieldMappings = maps.Clone(h.Config.FieldMappings)
 	h.Config.Brokers = append([]string(nil), h.Config.Brokers...)
 	h.Config.Security = h.Config.Security.Clone()
 	if h.Config.Redis != nil {
@@ -197,9 +200,9 @@ func (h HookConfig) KafkaParameters() (brokers []string, topic, clientID string,
 }
 
 // KafkaConfig 构造 Kafka V1 插件运行时参数；调用方须先验证插件类型。
-func (h HookConfig) KafkaConfig() kafkahook.Config {
+func (h HookConfig) KafkaConfig() kafkaclient.ProducerConfig {
 	c := h.WithDefaults().Config
-	return kafkahook.Config{Brokers: c.Brokers, Topic: c.Topic, ClientID: c.ClientID, MaxMessageBytes: c.MaxMessageBytes, Security: c.Security}
+	return kafkaclient.ProducerConfig{Brokers: c.Brokers, Topic: c.Topic, ClientID: c.ClientID, MaxMessageBytes: c.MaxMessageBytes, Security: c.Security}
 }
 
 // ValidateHooks 在发布前校验注册类型、实例身份和各插件参数，不连接外部服务。
@@ -229,6 +232,14 @@ func (h HookConfig) validate() error {
 		(c.Redis != nil && (c.Redis.Password == redactedSecret ||
 			(c.Redis.Sentinel != nil && c.Redis.Sentinel.Password == redactedSecret))) {
 		return fmt.Errorf("redacted hook credentials must be replaced with actual credentials")
+	}
+	if len(c.FieldMappings) > 0 {
+		if h.Type != HookTypeKAC {
+			return fmt.Errorf("field_mappings only applies to KAC")
+		}
+		if err := kingeye.ValidateFieldMappings(c.FieldMappings); err != nil {
+			return err
+		}
 	}
 	switch h.Type {
 	case HookTypeKafka, HookTypeKAC:

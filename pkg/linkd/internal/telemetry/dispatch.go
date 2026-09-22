@@ -36,52 +36,52 @@ type dispatchInstruments struct {
 	authorization     metric.Float64Gauge
 }
 
-func newDispatchInstruments(meter metric.Meter) (*dispatchInstruments, error) {
+func newDispatchInstruments(meter *instrumentRegistry) (*dispatchInstruments, error) {
 	result := &dispatchInstruments{}
 	var err error
-	if result.operations, err = meter.Int64Counter("linkd.dispatch.operations", metric.WithUnit("{operation}"), metric.WithDescription("调度协议操作次数")); err != nil {
+	if result.operations, err = meter.Int64Counter("linkd.dispatch.operations", describeMetric("调度协议操作数", "dispatch", "throughput", "linkd.operation", "linkd.outcome"), metric.WithUnit("{operation}"), metric.WithDescription("调度协议操作次数")); err != nil {
 		return nil, err
 	}
-	if result.operationDuration, err = meter.Float64Histogram("linkd.dispatch.operation.duration", metric.WithUnit("s"), metric.WithDescription("调度协议操作耗时"), metric.WithExplicitBucketBoundaries(0.01, 0.1, 0.5, 1, 2, 5, 10, 20, 30, 60, 90, 120)); err != nil {
+	if result.operationDuration, err = meter.Float64Histogram("linkd.dispatch.operation.duration", describeMetric("调度协议操作耗时", "dispatch", "latency", "linkd.operation", "linkd.outcome"), metric.WithUnit("s"), metric.WithDescription("调度协议操作耗时"), metric.WithExplicitBucketBoundaries(0.01, 0.1, 0.5, 1, 2, 5, 10, 20, 30, 60, 90, 120)); err != nil {
 		return nil, err
 	}
-	if result.transitions, err = meter.Int64Counter("linkd.dispatch.transitions", metric.WithUnit("{transition}"), metric.WithDescription("已提交的中心状态或 worker 本地状态转换次数")); err != nil {
+	if result.transitions, err = meter.Int64Counter("linkd.dispatch.transitions", describeMetric("调度状态转换", "dispatch", "state", "linkd.dispatch.side", "linkd.task.role", "linkd.task.from", "linkd.task.phase", "linkd.reason"), metric.WithUnit("{transition}"), metric.WithDescription("已提交的中心状态或 worker 本地状态转换次数")); err != nil {
 		return nil, err
 	}
-	if result.handoffDuration, err = meter.Float64Histogram("linkd.dispatch.handoff.duration", metric.WithUnit("s"), metric.WithDescription("中心停止确认或 worker 本地停止耗时"), metric.WithExplicitBucketBoundaries(0.01, 0.1, 0.5, 1, 2, 5, 10, 20, 30, 60, 90, 120)); err != nil {
+	if result.handoffDuration, err = meter.Float64Histogram("linkd.dispatch.handoff.duration", describeMetric("任务停止交接耗时", "dispatch", "latency", "linkd.dispatch.side", "linkd.task.role"), metric.WithUnit("s"), metric.WithDescription("中心停止确认或 worker 本地停止耗时"), metric.WithExplicitBucketBoundaries(0.01, 0.1, 0.5, 1, 2, 5, 10, 20, 30, 60, 90, 120)); err != nil {
 		return nil, err
 	}
-	if result.controllerTasks, err = meter.Int64Gauge("linkd.dispatch.controller.tasks", metric.WithUnit("{task}"), metric.WithDescription("中心任务数量，按角色和阶段聚合")); err != nil {
+	if result.controllerTasks, err = meter.Int64Gauge("linkd.dispatch.controller.tasks", describeMetric("中心任务数量", "dispatch", "capacity", "linkd.task.role", "linkd.task.phase"), metric.WithUnit("{task}"), metric.WithDescription("中心任务数量，按角色和阶段聚合")); err != nil {
 		return nil, err
 	}
-	if result.controllerWorkers, err = meter.Int64Gauge("linkd.dispatch.controller.workers", metric.WithUnit("{worker}"), metric.WithDescription("中心会话数，按健康状态聚合")); err != nil {
+	if result.controllerWorkers, err = meter.Int64Gauge("linkd.dispatch.controller.workers", describeMetric("中心工作会话数", "dispatch", "state", "linkd.worker.state"), metric.WithUnit("{worker}"), metric.WithDescription("中心会话数，按健康状态聚合")); err != nil {
 		return nil, err
 	}
-	if result.replicas, err = meter.Int64Gauge("linkd.dispatch.controller.replicas", metric.WithUnit("{task}"), metric.WithDescription("匹配、目标、运行和缺额的来源角色数量之和")); err != nil {
+	if result.replicas, err = meter.Int64Gauge("linkd.dispatch.controller.replicas", describeMetric("来源角色副本数", "dispatch", "capacity", "linkd.task.role", "linkd.replica.kind"), metric.WithUnit("{task}"), metric.WithDescription("匹配、目标、运行和缺额的来源角色数量之和")); err != nil {
 		return nil, err
 	}
-	if result.metadataSources, err = meter.Int64Gauge("linkd.dispatch.kafka.sources", metric.WithUnit("{source}"), metric.WithDescription("Kafka 元数据来源数，按 ready/waiting/error 聚合")); err != nil {
+	if result.metadataSources, err = meter.Int64Gauge("linkd.dispatch.kafka.sources", describeMetric("Kafka 元数据来源数", "dispatch", "state", "linkd.metadata.state"), metric.WithUnit("{source}"), metric.WithDescription("Kafka 元数据来源数，按 ready/waiting/error 聚合")); err != nil {
 		return nil, err
 	}
-	if result.metadataAge, err = meter.Float64Gauge("linkd.dispatch.kafka.metadata.age", metric.WithUnit("s"), metric.WithDescription("Kafka 最近成功结果的最大年龄，尚无成功结果为 -1")); err != nil {
+	if result.metadataAge, err = meter.Float64Gauge("linkd.dispatch.kafka.metadata.age", describeMetric("Kafka 元数据最大年龄", "dispatch", "latency"), metric.WithUnit("s"), metric.WithDescription("Kafka 最近成功结果的最大年龄，尚无成功结果为 -1")); err != nil {
 		return nil, err
 	}
-	if result.workerTasks, err = meter.Int64Gauge("linkd.dispatch.worker.tasks", metric.WithUnit("{task}"), metric.WithDescription("本进程任务数，按角色和阶段聚合")); err != nil {
+	if result.workerTasks, err = meter.Int64Gauge("linkd.dispatch.worker.tasks", describeMetric("本进程任务数量", "dispatch", "capacity", "linkd.task.role", "linkd.task.phase"), metric.WithUnit("{task}"), metric.WithDescription("本进程任务数，按角色和阶段聚合")); err != nil {
 		return nil, err
 	}
-	if result.partitions, err = meter.Int64Gauge("linkd.dispatch.worker.partitions", metric.WithUnit("{partition}"), metric.WithDescription("本进程活动 Cleaner 最近报告的 partition 分配数之和")); err != nil {
+	if result.partitions, err = meter.Int64Gauge("linkd.dispatch.worker.partitions", describeMetric("本进程持有分区数", "dispatch", "capacity"), metric.WithUnit("{partition}"), metric.WithDescription("本进程活动 Cleaner 最近报告的 partition 分配数之和")); err != nil {
 		return nil, err
 	}
-	if result.paused, err = meter.Int64Gauge("linkd.dispatch.worker.admission.paused", metric.WithUnit("{task}"), metric.WithDescription("本进程暂停接收新消息的活动任务数")); err != nil {
+	if result.paused, err = meter.Int64Gauge("linkd.dispatch.worker.admission.paused", describeMetric("本进程暂停接收任务数", "dispatch", "state"), metric.WithUnit("{task}"), metric.WithDescription("本进程暂停接收新消息的活动任务数")); err != nil {
 		return nil, err
 	}
-	if result.failures, err = meter.Int64Gauge("linkd.dispatch.worker.heartbeat.failures", metric.WithUnit("{failure}"), metric.WithDescription("连续心跳失败次数")); err != nil {
+	if result.failures, err = meter.Int64Gauge("linkd.dispatch.worker.heartbeat.failures", describeMetric("连续心跳失败次数", "dispatch", "reliability"), metric.WithUnit("{failure}"), metric.WithDescription("连续心跳失败次数")); err != nil {
 		return nil, err
 	}
-	if result.heartbeatAge, err = meter.Float64Gauge("linkd.dispatch.worker.heartbeat.age", metric.WithUnit("s"), metric.WithDescription("距最近成功心跳的时间；首次成功前从 agent 启动计时")); err != nil {
+	if result.heartbeatAge, err = meter.Float64Gauge("linkd.dispatch.worker.heartbeat.age", describeMetric("距上次成功心跳时间", "dispatch", "latency"), metric.WithUnit("s"), metric.WithDescription("距最近成功心跳的时间；首次成功前从 agent 启动计时")); err != nil {
 		return nil, err
 	}
-	if result.authorization, err = meter.Float64Gauge("linkd.dispatch.worker.authorization.remaining", metric.WithUnit("s"), metric.WithDescription("活动任务本地安全截止时间的最小剩余秒数；无任务为 0")); err != nil {
+	if result.authorization, err = meter.Float64Gauge("linkd.dispatch.worker.authorization.remaining", describeMetric("任务授权最小剩余时间", "dispatch", "latency"), metric.WithUnit("s"), metric.WithDescription("活动任务本地安全截止时间的最小剩余秒数；无任务为 0")); err != nil {
 		return nil, err
 	}
 	return result, nil

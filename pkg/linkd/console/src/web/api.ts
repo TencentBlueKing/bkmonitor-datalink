@@ -1,3 +1,4 @@
+import { metricCatalogSchema } from "../shared/metric-catalog";
 import { consoleURL } from "./base-path";
 import {
   strategyTargetsSchema,
@@ -296,4 +297,12 @@ async function request(
     throw new Error(message);
   }
   return data;
+}
+
+export async function getMetricCatalog({
+  signal,
+}: { signal?: AbortSignal } = {}) {
+  return metricCatalogSchema.parse(
+    await request("/local-api/metrics/catalog", signal),
+  );
 }

@@ -31,7 +31,7 @@ func runWithTelemetry(
 	if run == nil {
 		return fmt.Errorf("run with telemetry: runner must not be nil")
 	}
-	telemetryConfig := telemetry.Config{}
+	telemetryConfig := config.TelemetryConfig{}
 	if cfg.Telemetry != nil {
 		telemetryConfig = *cfg.Telemetry
 	}

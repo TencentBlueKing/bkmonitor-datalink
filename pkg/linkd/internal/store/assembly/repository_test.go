@@ -9,7 +9,13 @@
 
 package assembly
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"linkd/internal/config"
+)
 
 func TestElasticsearchConnectionBudgetBounds(t *testing.T) {
 	t.Parallel()
@@ -24,5 +30,21 @@ func TestElasticsearchConnectionBudgetBounds(t *testing.T) {
 		if got := elasticsearchConnectionBudget(test.requested); got != test.want {
 			t.Fatalf("elasticsearchConnectionBudget(%d)=%d, want %d", test.requested, got, test.want)
 		}
+	}
+}
+
+func TestReadOnlyElasticsearchOpenDoesNotInitializeSchema(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { calls++; w.WriteHeader(500) }))
+	defer server.Close()
+	runtime, err := OpenReadOnly(t.Context(), config.StorageConfig{Repository: config.RepositoryTypeElasticsearch, Elasticsearch: &config.ElasticsearchConfig{Addresses: []string{server.URL}}, Redis: &config.RedisConfig{Address: "localhost:6379"}}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 0 {
+		t.Fatalf("read-only constructor made %d initialization requests", calls)
 	}
 }

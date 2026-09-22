@@ -269,3 +269,38 @@ func TestTestEnrichDoesNotRequireDataSources(t *testing.T) {
 		t.Fatalf("selected=%#v error=%v", selected, err)
 	}
 }
+
+func TestCustomEnrichCompileReleaseAndSecretBoundary(t *testing.T) {
+	var enrich EnrichConfig
+	if err := json.Unmarshal([]byte(`{"processors":[{"type":"fields","config":{"rules":[{"id":"x","operations":[{"id":"a","type":"assign","assignments":[{"target":"$.labels.strategy_id","value":{"literal":9001}}]}]}]}}]}`), &enrich); err != nil {
+		t.Fatal(err)
+	}
+	if err := enrich.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	source := validEventSource()
+	source.Enrich = enrich
+	if err := ValidateEventSources([]EventSource{source}, SeverityConfig{}); err != nil {
+		t.Fatal(err)
+	}
+	previous := EnrichConfig{DataSources: &EnrichDataSources{Elasticsearch: &EnrichElasticsearchDataSource{Addresses: []string{"http://old:9200"}, APIKey: "private"}}}
+	current := EnrichConfig{DataSources: &EnrichDataSources{Elasticsearch: &EnrichElasticsearchDataSource{Addresses: []string{"http://changed:9200"}}}}
+	if current.WithPreservedSecrets(previous).DataSources.Elasticsearch.APIKey != "" {
+		t.Fatal("credential reused for changed endpoint")
+	}
+	current.DataSources = nil
+	if current.WithPreservedSecrets(previous).DataSources.Elasticsearch.APIKey != "private" {
+		t.Fatal("same-source connection not inherited")
+	}
+	for _, target := range []string{"$.severity", "$.extra_data.cw_labels", "$.labels.dynamic_group_id"} {
+		var invalid EnrichConfig
+		raw, _ := json.Marshal(enrich)
+		raw = []byte(strings.ReplaceAll(string(raw), "$.labels.strategy_id", target))
+		if err := json.Unmarshal(raw, &invalid); err != nil {
+			t.Fatal(err)
+		}
+		if err := invalid.Validate(); err == nil {
+			t.Errorf("accepted %s", target)
+		}
+	}
+}

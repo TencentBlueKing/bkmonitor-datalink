@@ -61,9 +61,9 @@ Console 必须能够访问 Kafka bootstrap 地址及 broker 的 advertised 地�
 
 ## 指标边界
 
-「核心数据 → 策略活跃索引」提供 `active-alert-by-strategy` 的按租户、策略查询和只读对账。
+「核心数据 → 策略活跃索引」自动列出 `active-alert-by-strategy` 的租户、策略组合，使用 SCAN/ZSCAN 游标逐批读取，点击行即可只读对账；「开始整体对账」后台检查当前缓存目标的全部租户和策略，展示进度、双向差异和无法确认的范围。
 会合并已发布配置识别出的共享来源，并区分一致、Redis 缺失、Redis 独有和无法确认；查询失败、
-扫描超限及并发变更不会被当成确定一致。页面展示控制面最近成功校准时间、快照年龄、待刷新标记及失败状态。用法、上限与一致性边界见
+扫描超限及并发变更不会被当成确定一致。页面展示控制面最近完整发现、待刷新数量，以及单策略校准时间、快照年龄和失败状态。用法、上限与一致性边界见
 [策略索引查询与对账](active-alert-by-strategy.md#console-查询与对账)。
 
 Cleaner 指标按 EventSource 聚合，received、settled 和 lane gauge 可以带 Kafka partition。Lifecycle

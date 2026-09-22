@@ -25,7 +25,12 @@ import { readBuildInfo } from "./version.js";
 import { normalizeBasePath } from "../shared/base-path.js";
 import { registerWeb } from "./web.js";
 import { StrategyIndexConnector } from "./strategy-index.js";
-import { strategyQuerySchema } from "../shared/strategy-index.js";
+import { StrategyAuditJobs } from "./strategy-audit.js";
+import {
+  strategyQuerySchema,
+  strategyBrowseQuerySchema,
+  strategyAuditRequestSchema,
+} from "../shared/strategy-index.js";
 
 const detailQuerySchema = z.object({
   bk_tenant_id: z.string().min(1).max(1024),
@@ -97,24 +102,60 @@ async function registerConsoleRoutes(
       ? mysqlConnector
       : elasticsearchConnector,
   );
+  const audits = new StrategyAuditJobs(
+    (query, signal) => strategyIndex.auditTarget(query, signal),
+    config.entities.alerts === "mysql"
+      ? mysqlConnector
+      : elasticsearchConnector,
+    Math.min(15000, config.query.timeoutMilliseconds),
+  );
+  app.get("/local-api/strategy-index/audits", async (_request, reply) => {
+    reply.header("Cache-Control", "no-store");
+    return audits.latest();
+  });
+  app.post("/local-api/strategy-index/audits", async (request, reply) => {
+    reply.header("Cache-Control", "no-store");
+    return audits.start(strategyAuditRequestSchema.parse(request.body));
+  });
+  app.get("/local-api/strategy-index/audits/:id", async (request, reply) => {
+    reply.header("Cache-Control", "no-store");
+    return audits.get(z.object({ id: z.uuid() }).parse(request.params).id);
+  });
+  app.post(
+    "/local-api/strategy-index/audits/:id/cancel",
+    async (request, reply) => {
+      reply.header("Cache-Control", "no-store");
+      return audits.cancel(z.object({ id: z.uuid() }).parse(request.params).id);
+    },
+  );
 
-  for (const operation of ["targets", "reconcile"] as const) {
+  for (const operation of ["targets", "reconcile", "browse"] as const) {
     app.get(
       `/local-api/strategy-index/${operation}`,
       async (request, reply) => {
         reply.header("Cache-Control", "no-store");
         const abort = new AbortController();
         const canceled = () => abort.abort();
+        const disconnected = () => {
+          if (!reply.raw.writableEnded) abort.abort();
+        };
         request.raw.once("aborted", canceled);
+        reply.raw.once("close", disconnected);
         try {
           return await (operation === "targets"
             ? strategyIndex.targets(abort.signal)
-            : strategyIndex.inspect(
-                strategyQuerySchema.parse(request.query),
-                abort.signal,
-              ));
+            : operation === "browse"
+              ? strategyIndex.browse(
+                  strategyBrowseQuerySchema.parse(request.query),
+                  abort.signal,
+                )
+              : strategyIndex.inspect(
+                  strategyQuerySchema.parse(request.query),
+                  abort.signal,
+                ));
         } finally {
           request.raw.off("aborted", canceled);
+          reply.raw.off("close", disconnected);
         }
       },
     );
@@ -357,6 +398,7 @@ async function registerConsoleRoutes(
   }
 
   app.addHook("onClose", async () => {
+    await audits.close();
     await mysqlConnector?.close();
     await redisConnector.close();
   });

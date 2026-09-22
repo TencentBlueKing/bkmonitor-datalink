@@ -8,6 +8,11 @@ export interface StrategyAlertRow {
   labels?: { strategy_id?: unknown };
 }
 export interface StrategyAlertReader {
+  // 整体对账逐批扫描完整 active 范围，不使用 Explorer 的时间窗口。
+  scanActiveStrategyAlerts?(
+    sources: string[],
+    signal: AbortSignal,
+  ): AsyncIterable<StrategyAlertRow[]>;
   readStrategyAlerts(
     tenant: string,
     sources: string[],

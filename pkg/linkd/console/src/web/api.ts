@@ -3,11 +3,57 @@ import {
   strategyTargetsSchema,
   strategyResultSchema,
   type StrategyQuery,
+  strategyBrowseResultSchema,
+  type StrategyBrowseQuery,
+  strategyAuditSchema,
+  type StrategyAuditRequest,
 } from "../shared/strategy-index";
+
+export async function startStrategyAudit(query: StrategyAuditRequest) {
+  return strategyAuditSchema.parse(
+    await request("/local-api/strategy-index/audits", undefined, {
+      method: "POST",
+      body: JSON.stringify(query),
+    }),
+  );
+}
+export async function getStrategyAudit(id: string) {
+  return strategyAuditSchema.parse(
+    await request(`/local-api/strategy-index/audits/${encodeURIComponent(id)}`),
+  );
+}
+export async function latestStrategyAudit() {
+  return strategyAuditSchema
+    .nullable()
+    .parse(await request("/local-api/strategy-index/audits"));
+}
+export async function cancelStrategyAudit(id: string) {
+  return strategyAuditSchema.parse(
+    await request(
+      `/local-api/strategy-index/audits/${encodeURIComponent(id)}/cancel`,
+      undefined,
+      { method: "POST" },
+    ),
+  );
+}
 
 export async function getStrategyTargets() {
   return strategyTargetsSchema.parse(
     await request("/local-api/strategy-index/targets"),
+  );
+}
+export async function browseStrategyIndex(
+  query: StrategyBrowseQuery,
+  signal?: AbortSignal,
+) {
+  const params = new URLSearchParams({
+    event_source_id: query.event_source_id,
+    hook_name: query.hook_name,
+    count: String(query.count),
+  });
+  if (query.cursor) params.set("cursor", query.cursor);
+  return strategyBrowseResultSchema.parse(
+    await request(`/local-api/strategy-index/browse?${params}`, signal),
   );
 }
 export async function reconcileStrategyIndex(query: StrategyQuery) {
@@ -225,9 +271,18 @@ export async function getEntity(
   );
 }
 
-async function request(url: string): Promise<unknown> {
+async function request(
+  url: string,
+  signal?: AbortSignal,
+  init: RequestInit = {},
+): Promise<unknown> {
   const response = await fetch(consoleURL(url), {
-    headers: { accept: "application/json" },
+    ...init,
+    headers: {
+      accept: "application/json",
+      ...(init.body ? { "content-type": "application/json" } : {}),
+    },
+    signal,
   });
   const data = (await response.json()) as unknown;
   if (!response.ok) {

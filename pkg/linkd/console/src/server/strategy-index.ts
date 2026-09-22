@@ -3,10 +3,15 @@ import type {
   StrategyQuery,
   StrategyResult,
   StrategyTarget,
+  StrategyBrowseQuery,
+  StrategyBrowseResult,
 } from "../shared/strategy-index.js";
 import { loadRuntimeSources } from "./source-runtime.js";
 import { strategyLabel, type StrategyAlertReader } from "./strategy-alerts.js";
 import { readStrategyMembers } from "./strategy-redis.js";
+import { readStrategyPage } from "./strategy-browse.js";
+import { queryHash } from "./cursor.js";
+import type { AuditTarget } from "./strategy-audit.js";
 
 type Binding = NonNullable<EventSourceConfig["strategyHooks"]>[number] & {
   eventSourceId: string;
@@ -62,6 +67,7 @@ export class StrategyIndexConnector {
       config: ConsoleConfig,
       signal?: AbortSignal,
     ) => loadRuntimeSources(config, signal, true),
+    private readonly readPage = readStrategyPage,
   ) {}
 
   private async sources(signal: AbortSignal) {
@@ -92,7 +98,93 @@ export class StrategyIndexConnector {
   targets(signal?: AbortSignal): Promise<StrategyTarget[]> {
     return this.limited(async (signal) => {
       const all = await this.sources(signal);
-      return all.map((b) => target(b, all));
+      const seen = new Set<string>();
+      return all
+        .filter((b) => {
+          const key = destination(b);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .map((b) => target(b, all));
+    }, signal);
+  }
+  auditTarget(
+    query: Pick<StrategyQuery, "event_source_id" | "hook_name">,
+    signal?: AbortSignal,
+  ): Promise<AuditTarget> {
+    return this.limited(async (signal) => {
+      const all = await this.sources(signal);
+      const selected = all.find(
+        (b) =>
+          b.eventSourceId === query.event_source_id &&
+          b.name === query.hook_name,
+      );
+      if (!selected)
+        throw new Error("Hook must exist in current source configuration");
+      const scope = target(selected, all);
+      if (scope.sources.length > 64)
+        throw new Error("shared index must not exceed 64 sources");
+      if (
+        all.some(
+          (b) =>
+            b.keyPrefix !== selected.keyPrefix &&
+            destination({ ...b, keyPrefix: selected.keyPrefix }) ===
+              destination(selected) &&
+            (b.keyPrefix.startsWith(selected.keyPrefix + ":") ||
+              selected.keyPrefix.startsWith(b.keyPrefix + ":")),
+        )
+      )
+        throw new Error("strategy prefixes overlap");
+      return {
+        target: scope,
+        redis: selected.redis,
+        identity: queryHash({
+          destination: destination(selected),
+          sources: scope.sources,
+        }),
+      };
+    }, signal);
+  }
+  browse(
+    query: StrategyBrowseQuery,
+    signal?: AbortSignal,
+  ): Promise<StrategyBrowseResult> {
+    return this.limited(async (signal) => {
+      const all = await this.sources(signal);
+      const selected = all.find(
+        (b) =>
+          b.eventSourceId === query.event_source_id &&
+          b.name === query.hook_name,
+      );
+      if (!selected)
+        throw new Error("Hook must exist in current source configuration");
+      const scope = target(selected, all);
+      if (scope.sources.length > 64)
+        throw new Error("shared index must not exceed 64 sources");
+      if (
+        all.some(
+          (b) =>
+            b.keyPrefix !== selected.keyPrefix &&
+            destination({ ...b, keyPrefix: selected.keyPrefix }) ===
+              destination(selected) &&
+            (b.keyPrefix.startsWith(selected.keyPrefix + ":") ||
+              selected.keyPrefix.startsWith(b.keyPrefix + ":")),
+        )
+      )
+        throw new Error(
+          "strategy prefixes overlap; cannot determine scan scope",
+        );
+      const page = await this.readPage(
+        selected.redis,
+        scope.keyPrefix,
+        { destination: destination(selected), sources: scope.sources },
+        query.cursor,
+        query.count,
+        signal,
+        Math.min(15000, this.config.query.timeoutMilliseconds),
+      );
+      return { target: scope, scannedAt: new Date().toISOString(), ...page };
     }, signal);
   }
   inspect(query: StrategyQuery, signal?: AbortSignal): Promise<StrategyResult> {

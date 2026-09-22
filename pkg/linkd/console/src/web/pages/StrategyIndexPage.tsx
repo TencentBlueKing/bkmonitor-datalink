@@ -1,9 +1,14 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { getStrategyTargets, reconcileStrategyIndex } from "../api";
+import {
+  browseStrategyIndex,
+  getStrategyTargets,
+  reconcileStrategyIndex,
+} from "../api";
 import { formatTime, useTimeMode } from "../time";
 import type { StrategyResult } from "../../shared/strategy-index";
+import { StrategyAuditPanel } from "../components/StrategyAuditPanel";
 
 const statuses = {
   matched: "一致",
@@ -22,8 +27,11 @@ export function StrategyIndexPage() {
     refetchOnWindowFocus: false,
   });
   const [selection, setSelection] = useState("");
-  const [tenant, setTenant] = useState("");
-  const [strategy, setStrategy] = useState("");
+  const [cursors, setCursors] = useState<Array<string | undefined>>([
+    undefined,
+  ]);
+  const [scanCount, setScanCount] = useState(50);
+  const detailRef = useRef<HTMLElement>(null);
   const [filter, setFilter] = useState<RowStatus | "all">("all");
   const [page, setPage] = useState(0);
   const result = useMutation({
@@ -34,7 +42,37 @@ export function StrategyIndexPage() {
     targets.data?.find(
       (t) => `${t.eventSourceId}/${t.hookName}` === selection,
     ) ?? (!selection ? targets.data?.[0] : undefined);
+  const cursor = cursors.at(-1);
+  const catalog = useQuery({
+    queryKey: [
+      "strategy-index-browse",
+      chosen?.eventSourceId,
+      chosen?.hookName,
+      cursor,
+      scanCount,
+    ],
+    queryFn: ({ signal }) =>
+      browseStrategyIndex(
+        {
+          event_source_id: chosen!.eventSourceId,
+          hook_name: chosen!.hookName,
+          cursor,
+          count: scanCount,
+        },
+        signal,
+      ),
+    enabled: !!chosen,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
   const data = result.data;
+  useEffect(() => {
+    if (data)
+      detailRef.current?.scrollIntoView?.({
+        behavior: "smooth",
+        block: "start",
+      });
+  }, [data]);
   const rows =
     data?.rows.filter((r) => filter === "all" || r.status === filter) ?? [];
   const counts = (status: RowStatus) =>
@@ -56,10 +94,15 @@ export function StrategyIndexPage() {
         </div>
         <button
           type="button"
-          onClick={() => void targets.refetch()}
+          onClick={() => {
+            setSelection("");
+            setCursors([undefined]);
+            reset();
+            void targets.refetch();
+          }}
           disabled={targets.isFetching || result.isPending}
         >
-          刷新 Hook 列表
+          刷新缓存目标
         </button>
       </div>
       {targets.isError && (
@@ -69,93 +112,234 @@ export function StrategyIndexPage() {
       {targets.isSuccess && targets.data.length === 0 && (
         <p>当前来源未配置 active-alert-by-strategy Hook。</p>
       )}
-      <form
-        className="strategy-query panel"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!chosen) return;
-          setPage(0);
-          result.mutate({
-            event_source_id: chosen.eventSourceId,
-            hook_name: chosen.hookName,
-            bk_tenant_id: tenant,
-            strategy_id: strategy,
-          });
-        }}
-      >
+      <section className="strategy-query panel" aria-label="缓存目标">
         <fieldset disabled={result.isPending}>
           <label>
-            EventSource / Hook
+            缓存目标
             <select
               value={chosen ? `${chosen.eventSourceId}/${chosen.hookName}` : ""}
               onChange={(e) => {
                 setSelection(e.target.value);
+                setCursors([undefined]);
                 reset();
               }}
-              required
             >
-              {!chosen && <option value="">请选择 Hook</option>}
+              {!chosen && <option value="">暂无缓存目标</option>}
               {targets.data?.map((t) => (
                 <option
                   key={`${t.eventSourceId}/${t.hookName}`}
                   value={`${t.eventSourceId}/${t.hookName}`}
                 >
-                  {t.eventSourceId} / {t.hookName}
+                  {t.keyPrefix} · DB {t.database} · {t.address}
                 </option>
               ))}
             </select>
           </label>
           <label>
-            租户 ID
-            <input
-              value={tenant}
+            每批扫描量
+            <select
+              value={scanCount}
               onChange={(e) => {
-                setTenant(e.target.value);
+                setScanCount(Number(e.target.value));
+                setCursors([undefined]);
                 reset();
               }}
-              maxLength={256}
-              required
-            />
+            >
+              {[10, 50, 100, 200].map((n) => (
+                <option key={n} value={n}>
+                  {n}
+                </option>
+              ))}
+            </select>
           </label>
-          <label>
-            策略 ID
-            <input
-              value={strategy}
-              onChange={(e) => {
-                setStrategy(e.target.value);
-                reset();
-              }}
-              maxLength={1024}
-              required
-            />
-          </label>
-          <button type="submit" disabled={!chosen || !tenant || !strategy}>
-            {result.isPending ? "正在查询与对账…" : "查询并对账"}
+          <button
+            type="button"
+            disabled={!chosen || catalog.isFetching}
+            onClick={() => {
+              setCursors([undefined]);
+              reset();
+              if (cursor === undefined) void catalog.refetch();
+            }}
+          >
+            重新扫描
           </button>
         </fieldset>
         {chosen && (
           <p className="strategy-scope">
-            {chosen.address} · DB {chosen.database} · 前缀 {chosen.keyPrefix}
-            <br />
             共享来源：{chosen.sources.join("、")}
-            {chosen.notifyChannel && (
-              <>
-                <br />
-                通知 Channel：{chosen.notifyChannel}
-              </>
-            )}
+            <br />
+            通知 Channel：
+            {chosen.notifyChannel ?? `${chosen.keyPrefix}:changes`}
           </p>
         )}
         <p>
-          策略 ID
-          按原样匹配，不去除空白。共享同一目标的来源合并对账；只读查询，不修改
-          Redis 或告警。
+          自动列出已缓存或待刷新的租户与策略。点击对应行查看成员和对账，无需填写
+          ID。
         </p>
-      </form>
+      </section>
+      <StrategyAuditPanel
+        target={chosen}
+        onInspect={(query) => {
+          setPage(0);
+          setFilter("all");
+          result.mutate(query);
+        }}
+      />
+      {catalog.isFetching && <p role="status">正在读取扫描批次…</p>}
+      {catalog.isError && (
+        <p role="alert">组合列表读取失败：{catalog.error.message}</p>
+      )}
+      {catalog.data && (
+        <>
+          <section className="panel strategy-summary" aria-label="缓存维护任务">
+            <h2>缓存维护任务</h2>
+            <p>根据已发布的策略 Hook 自动启用 · Hook 触发刷新与周期校准</p>
+            <div className="strategy-task-summary">
+              <div>
+                <span>周期发现状态</span>
+                <strong>
+                  {catalog.data.health.error
+                    ? "最近发现失败"
+                    : catalog.data.health.lastSuccess
+                      ? "已有成功记录"
+                      : "尚无执行记录"}
+                </strong>
+              </div>
+              <div>
+                <span>最近完整发现</span>
+                <strong>
+                  {catalog.data.health.lastSuccess
+                    ? formatTime(catalog.data.health.lastSuccess, timeMode)
+                    : "无"}
+                </strong>
+              </div>
+              <div>
+                <span>待刷新组合</span>
+                <strong>{catalog.data.health.pendingCount}</strong>
+              </div>
+              <div>
+                <span>最早计划刷新</span>
+                <strong>
+                  {catalog.data.health.oldestDueAt
+                    ? formatTime(catalog.data.health.oldestDueAt, timeMode)
+                    : "无"}
+                </strong>
+              </div>
+            </div>
+            <p>
+              读取于 {formatTime(catalog.data.scannedAt, timeMode)}
+              。成功记录表示曾完成校准，不代表进程此刻仍在运行。
+            </p>
+          </section>
+          <section className="panel strategy-results" aria-label="租户策略组合">
+            <header>
+              <h2>租户与策略组合</h2>
+              <span>
+                第 {cursors.length} 批 · {catalog.data.rows.length} 个组合
+              </span>
+            </header>
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>租户</th>
+                    <th>策略 ID</th>
+                    <th>缓存成员</th>
+                    <th>刷新状态</th>
+                    <th>最近成功校准</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {catalog.data.rows.map((row) => (
+                    <tr key={row.key}>
+                      <td>{row.tenantId}</td>
+                      <td className="strategy-fingerprint">{row.strategyId}</td>
+                      <td>{row.members ?? "未知"}</td>
+                      <td>
+                        {row.error
+                          ? "读取或刷新失败"
+                          : row.pending
+                            ? "待刷新"
+                            : row.lastSuccess
+                              ? "已校准"
+                              : "尚未校准"}
+                      </td>
+                      <td>
+                        {row.lastSuccess
+                          ? formatTime(row.lastSuccess, timeMode)
+                          : "无"}
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          disabled={result.isPending || catalog.isFetching}
+                          aria-label={`对账租户 ${row.tenantId} 策略 ${row.strategyId}`}
+                          onClick={() => {
+                            setPage(0);
+                            setFilter("all");
+                            result.mutate({
+                              event_source_id:
+                                catalog.data.target.eventSourceId,
+                              hook_name: catalog.data.target.hookName,
+                              bk_tenant_id: row.tenantId,
+                              strategy_id: row.strategyId,
+                            });
+                          }}
+                        >
+                          查看对账
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {catalog.data.rows.length === 0 && (
+              <p>
+                {catalog.data.nextCursor
+                  ? "本批没有匹配组合，可继续扫描下一批。"
+                  : "扫描已结束，本批没有匹配组合。"}
+              </p>
+            )}
+            <div className="strategy-pagination">
+              <button
+                type="button"
+                disabled={cursors.length <= 1 || catalog.isFetching}
+                onClick={() => setCursors((current) => current.slice(0, -1))}
+              >
+                上一批
+              </button>
+              <button
+                type="button"
+                disabled={!catalog.data.nextCursor || catalog.isFetching}
+                onClick={() => {
+                  const next = catalog.data?.nextCursor;
+                  if (next) setCursors((current) => [...current, next]);
+                }}
+              >
+                下一批
+              </button>
+              <span>
+                {catalog.data.nextCursor ? "仍有未扫描范围" : "已完成一轮扫描"}
+              </span>
+            </div>
+            <ul>
+              {catalog.data.warnings.map((w) => (
+                <li key={w}>{w}</li>
+              ))}
+            </ul>
+          </section>
+        </>
+      )}
       {result.isError && <p role="alert">查询失败：{result.error.message}</p>}
       {data && (
         <>
-          <article className="panel strategy-summary" aria-label="对账摘要">
+          <article
+            ref={detailRef}
+            className="panel strategy-summary"
+            aria-label="对账摘要"
+          >
             <h2>{data.complete ? "已读完当前查询范围" : "对账不完整"}</h2>
             <p className="strategy-scope">{data.key}</p>
             <p>

@@ -4301,7 +4301,7 @@ td:last-child {
   border: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: minmax(180px, 2fr) repeat(2, minmax(100px, 1fr)) auto;
+  grid-template-columns: minmax(180px, 2fr) minmax(100px, 1fr) auto;
   align-items: end;
   gap: 14px;
 }
@@ -4336,4 +4336,21 @@ td:last-child {
   .strategy-query fieldset {
     grid-template-columns: 1fr;
   }
+}
+
+.strategy-task-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+.strategy-task-summary > div {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.strategy-task-summary span {
+  color: var(--muted);
 }

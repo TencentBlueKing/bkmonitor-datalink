@@ -9,7 +9,10 @@ import {
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, expect, it, vi } from "vitest";
 import { StrategyIndexPage } from "./StrategyIndexPage";
-import type { StrategyResult } from "../../shared/strategy-index";
+import type {
+  StrategyBrowseResult,
+  StrategyResult,
+} from "../../shared/strategy-index";
 
 afterEach(() => {
   cleanup();
@@ -47,12 +50,46 @@ const result: StrategyResult = {
     { fingerprint: "extra", status: "redis_only", alerts: [] },
   ],
 };
+const catalog: StrategyBrowseResult = {
+  target,
+  scannedAt: "2026-09-22T00:00:01Z",
+  nextCursor: null,
+  phase: "sets",
+  warnings: [],
+  health: {
+    lastSuccess: "2026-09-22T00:00:00Z",
+    lastAttempt: "2026-09-22T00:00:00Z",
+    error: null,
+    pendingCount: 0,
+    oldestDueAt: null,
+  },
+  rows: [
+    {
+      tenantId: "tenant",
+      strategyId: "123",
+      key: "open:tenant:123",
+      members: 2,
+      pending: false,
+      lastSuccess: "2026-09-22T00:00:00Z",
+      lastAttempt: "2026-09-22T00:00:00Z",
+      error: null,
+    },
+  ],
+};
 function show(response = result, empty = false) {
   const fetcher = vi.fn(
     async (url: RequestInfo | URL) =>
       new Response(
         JSON.stringify(
-          String(url).includes("/targets") ? (empty ? [] : [target]) : response,
+          String(url).includes("/targets")
+            ? empty
+              ? []
+              : [target]
+            : String(url).includes("/browse?")
+              ? catalog
+              : String(url).endsWith("/audits")
+                ? null
+                : response,
         ),
       ),
   );
@@ -71,36 +108,41 @@ function show(response = result, empty = false) {
   return fetcher;
 }
 async function submit() {
-  await screen.findByRole("option", { name: "source / active" });
-  fireEvent.change(screen.getByLabelText("租户 ID"), {
-    target: { value: "tenant" },
-  });
-  fireEvent.change(screen.getByLabelText("策略 ID"), {
-    target: { value: "123" },
-  });
-  fireEvent.click(screen.getByRole("button", { name: "查询并对账" }));
+  fireEvent.click(
+    await screen.findByRole("button", { name: "对账租户 tenant 策略 123" }),
+  );
 }
-it("queries only on submit and links matched alerts with tenant isolation", async () => {
+it("automatically lists combinations but reads alert members only after clicking a row", async () => {
   const fetcher = show();
-  expect(screen.getByRole("button", { name: "查询并对账" })).toBeDisabled();
+  await screen.findByRole("button", { name: "对账租户 tenant 策略 123" });
+  expect(screen.queryByLabelText("租户 ID")).toBeNull();
+  expect(
+    fetcher.mock.calls.filter(([url]) => String(url).includes("/browse?")),
+  ).toHaveLength(1);
+  expect(
+    fetcher.mock.calls.filter(([url]) => String(url).includes("/reconcile?")),
+  ).toHaveLength(0);
   await submit();
   expect(await screen.findByText("已读完当前查询范围")).toBeVisible();
   expect(screen.getByText(/通知 Channel：open:changes/)).toBeVisible();
-  expect(fetcher).toHaveBeenCalledTimes(2);
-  expect(String(fetcher.mock.calls[1][0])).toContain(
-    "bk_tenant_id=tenant&strategy_id=123",
+  const calls = fetcher.mock.calls.filter(([url]) =>
+    String(url).includes("/reconcile?"),
   );
+  expect(calls).toHaveLength(1);
+  expect(String(calls[0][0])).toContain("bk_tenant_id=tenant&strategy_id=123");
   expect(
     screen.getByRole("link", { name: "source / alert-1" }),
   ).toHaveAttribute("href", "/explore/alerts?bk_tenant_id=tenant&id=alert-1");
   fireEvent.change(screen.getByLabelText("对账结果"), {
     target: { value: "missing_redis" },
   });
-  const table = within(screen.getByRole("table"));
+  const table = within(
+    within(screen.getByLabelText("索引成员对账")).getByRole("table"),
+  );
   expect(table.getByText("missing")).toBeVisible();
   expect(table.queryByText("extra")).toBeNull();
-  fireEvent.change(screen.getByLabelText("租户 ID"), {
-    target: { value: "another" },
+  fireEvent.change(screen.getByLabelText("每批扫描量"), {
+    target: { value: "100" },
   });
   expect(screen.queryByText("已读完当前查询范围")).toBeNull();
 });
@@ -111,8 +153,11 @@ it("shows incomplete reads without reporting empty consistency", async () => {
   expect(screen.getByText("Redis 读取失败")).toBeVisible();
   expect(screen.getByText(/不能据此判断两侧为空或一致/)).toBeVisible();
 });
-it("handles no configured hooks", async () => {
-  show(result, true);
+it("handles no configured hooks without opening a scan", async () => {
+  const fetcher = show(result, true);
   expect(await screen.findByText(/当前来源未配置/)).toBeVisible();
-  expect(screen.getByRole("button", { name: "查询并对账" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "重新扫描" })).toBeDisabled();
+  expect(
+    fetcher.mock.calls.filter(([url]) => String(url).includes("/browse?")),
+  ).toHaveLength(0);
 });

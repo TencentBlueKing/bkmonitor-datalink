@@ -216,6 +216,71 @@ export class ElasticsearchConnector {
     return response.hits.hits.map((hit) => hit._source);
   }
 
+  async *scanActiveStrategyAlerts(
+    sources: string[],
+    signal: AbortSignal,
+  ): AsyncIterable<StrategyAlertRow[]> {
+    if (!this.indexPrefix || !sources.length || sources.length > 64)
+      throw new Error("invalid audit scope");
+    // 此路径必须拒绝缺失 active alias，不能将缺失或部分分片解释为空快照。
+    const opened = await this.request<{ id: string }>(
+      `/${escapeTarget(this.indexPrefix + "-alerts-active")}/_pit?keep_alive=1m&ignore_unavailable=false`,
+      { method: "POST", signal },
+    );
+    let pit = opened.id;
+    if (!pit) throw new Error("empty audit PIT");
+    let after: unknown[] | undefined;
+    try {
+      for (;;) {
+        signal.throwIfAborted();
+        const result = await this.request<{
+          pit_id?: string;
+          hits: { hits: Array<{ _source: StrategyAlertRow; sort: unknown[] }> };
+        }>("/_search", {
+          method: "POST",
+          signal,
+          body: JSON.stringify({
+            size: 1000,
+            track_total_hits: false,
+            _source: [
+              "bk_tenant_id",
+              "alert_id",
+              "event_source_id",
+              "fingerprint",
+              "status",
+              "labels.strategy_id",
+            ],
+            pit: { id: pit, keep_alive: "1m" },
+            query: {
+              bool: {
+                filter: [
+                  { term: { status: "active" } },
+                  { terms: { event_source_id: sources } },
+                ],
+              },
+            },
+            sort: [
+              { bk_tenant_id: "asc" },
+              { alert_id: "asc" },
+              { _index: "asc" },
+            ],
+            search_after: after,
+            timeout: `${this.timeoutMilliseconds}ms`,
+          }),
+        });
+        pit = result.pit_id ?? pit;
+        const hits = result.hits.hits;
+        if (!hits.length) return;
+        after = hits.at(-1)!.sort?.slice(0, 3);
+        if (after?.length !== 3) throw new Error("invalid audit search cursor");
+        yield hits.map((hit) => hit._source);
+        if (hits.length < 1000) return;
+      }
+    } finally {
+      await this.closePIT(pit);
+    }
+  }
+
   async search(entity: EntityKind, params: SearchParams): Promise<EntityPage> {
     const targets = this.targets[entity];
     await this.validateTargets(targets);
@@ -698,7 +763,12 @@ export class ElasticsearchConnector {
         ...this.headers,
         ...init.headers,
       },
-      signal: AbortSignal.timeout(this.timeoutMilliseconds),
+      signal: init.signal
+        ? AbortSignal.any([
+            init.signal,
+            AbortSignal.timeout(this.timeoutMilliseconds),
+          ])
+        : AbortSignal.timeout(this.timeoutMilliseconds),
     });
     if (!response.ok)
       throw new Error(

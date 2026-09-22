@@ -82,6 +82,51 @@ export class MysqlConnector {
     await this.pool.end();
   }
 
+  async *scanActiveStrategyAlerts(
+    sources: string[],
+    signal: AbortSignal,
+  ): AsyncIterable<StrategyAlertRow[]> {
+    if (!sources.length || sources.length > 64)
+      throw new Error("invalid audit scope");
+    let after: [string, string] | undefined;
+    for (;;) {
+      signal.throwIfAborted();
+      const args: unknown[] = [...sources];
+      let cursor = "";
+      if (after) {
+        cursor =
+          " AND (bk_tenant_id > ? OR (bk_tenant_id = ? AND alert_id > ?))";
+        args.push(after[0], after[0], after[1]);
+      }
+      const [rows] = await this.pool.query<RowDataPacket[]>(
+        {
+          sql: `SELECT /*+ MAX_EXECUTION_TIME(${this.timeoutMilliseconds}) */ bk_tenant_id,alert_id,event_source_id,fingerprint,status,CAST(JSON_EXTRACT(payload,'$.labels.strategy_id') AS CHAR) AS strategy_json FROM linkd_alerts WHERE status='active' AND event_source_id IN (${sources.map(() => "?").join(",")})${cursor} ORDER BY bk_tenant_id,alert_id LIMIT 1000`,
+          timeout: this.timeoutMilliseconds,
+        },
+        args,
+      );
+      signal.throwIfAborted();
+      if (!rows.length) return;
+      const result = rows.map((row) => ({
+        bk_tenant_id: text(row.bk_tenant_id),
+        alert_id: text(row.alert_id),
+        event_source_id: text(row.event_source_id),
+        fingerprint: text(row.fingerprint),
+        status: text(row.status),
+        labels: {
+          strategy_id:
+            row.strategy_json == null
+              ? undefined
+              : JSON.parse(text(row.strategy_json)),
+        },
+      }));
+      const last = result.at(-1)!;
+      after = [last.bk_tenant_id, last.alert_id];
+      yield result;
+      if (rows.length < 1000) return;
+    }
+  }
+
   async readStrategyAlerts(
     tenant: string,
     sources: string[],

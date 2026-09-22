@@ -83,6 +83,36 @@ it.skipIf(!url)(
         5001,
       );
       expect(exact.map((row) => row.alert_id)).toEqual(["2"]);
+      const discovered = [];
+      for await (const page of connector.scanActiveStrategyAlerts(
+        ["a", "b"],
+        AbortSignal.timeout(5000),
+      ))
+        discovered.push(...page);
+      expect(discovered.map((row) => row.alert_id).sort()).toEqual([
+        "1",
+        "2",
+        "3",
+      ]);
+      const values = Array.from({ length: 1005 }, (_, i) => [
+        "tenant",
+        `page-${String(i).padStart(5, "0")}`,
+        "paged",
+        `fp-${i}`,
+        "active",
+        JSON.stringify({ labels: { strategy_id: "bulk" } }),
+      ]);
+      await admin.query(`INSERT INTO ${database}.linkd_alerts VALUES ?`, [
+        values,
+      ]);
+      const paged = [];
+      for await (const page of connector.scanActiveStrategyAlerts(
+        ["paged"],
+        AbortSignal.timeout(5000),
+      ))
+        paged.push(page);
+      expect(paged.map((page) => page.length)).toEqual([1000, 5]);
+      expect(new Set(paged.flat().map((row) => row.alert_id)).size).toBe(1005);
     } finally {
       await connector?.close();
       if (created) await admin.query(`DROP DATABASE ${database}`);

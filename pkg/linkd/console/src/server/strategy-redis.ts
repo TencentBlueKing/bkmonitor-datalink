@@ -59,13 +59,15 @@ export async function scanStrategyMembers(
   return { members: [...members], total, complete: false };
 }
 
-export async function readStrategyMembers(
+export type StrategyRedisCommand = (args: string[]) => Promise<unknown>;
+
+// 策略诊断共享连接、认证与取消边界；所有命令均使用服务端解析的目标。
+export async function withStrategyRedis<T>(
   config: NonNullable<ConsoleConfig["redis"]>,
-  key: string,
   signal: AbortSignal,
   timeout: number,
-  keyPrefix?: string,
-): Promise<StrategyMembers> {
+  run: (command: StrategyRedisCommand) => Promise<T>,
+): Promise<T> {
   const socket = { connectTimeout: timeout, reconnectStrategy: false as const };
   const client =
     config.mode === "sentinel"
@@ -110,7 +112,7 @@ export async function readStrategyMembers(
       (async () => {
         await client.connect();
         signal.throwIfAborted();
-        const command = async (args: string[]): Promise<unknown> => {
+        const command: StrategyRedisCommand = async (args) => {
           signal.throwIfAborted();
           if (config.mode === "sentinel")
             return (client as ReturnType<typeof createSentinel>).sendCommand(
@@ -119,71 +121,81 @@ export async function readStrategyMembers(
             );
           return (client as ReturnType<typeof createClient>).sendCommand(args);
         };
-        const root =
-          keyPrefix === undefined
-            ? undefined
-            : `linkd:active-index:${createHash("sha256").update(keyPrefix).digest("hex")}`;
-        const statusKey =
-          root && `${root}:status:${key.slice(keyPrefix!.length + 1)}`;
-        const readStatus = async () => {
-          const raw = await command([
-            "HMGET",
-            statusKey!,
-            "last_success",
-            "last_attempt",
-            "error",
-            "members",
-          ]);
-          if (
-            !Array.isArray(raw) ||
-            raw.length !== 4 ||
-            raw.some(
-              (v) => v !== null && (typeof v !== "string" || v.length > 128),
-            )
-          )
-            throw new Error("invalid projection status");
-          return raw as Array<string | null>;
-        };
-        const before = statusKey ? await readStatus() : undefined;
-        const members = await scanStrategyMembers(([operation, ...args]) =>
-          command([operation, key, ...args]),
-        );
-        if (!root || !statusKey) return members;
-        const after = await readStatus();
-        const health = await command([
-          "HMGET",
-          `${root}:health`,
-          "last_success",
-          "error",
-        ]);
-        if (
-          !Array.isArray(health) ||
-          health.length !== 2 ||
-          health.some(
-            (v) => v !== null && (typeof v !== "string" || v.length > 128),
-          )
-        )
-          throw new Error("invalid projection health");
-        const pending = await command(["ZSCORE", `${root}:pending`, key]);
-        return {
-          ...members,
-          complete:
-            members.complete &&
-            before?.[0] === after[0] &&
-            (after[3] === null || Number(after[3]) === members.total),
-          projection: {
-            lastSuccess: after[0],
-            lastAttempt: after[1],
-            error: after[2] || null,
-            discoverySuccess: health[0],
-            discoveryError: health[1] || null,
-            pending: pending !== null,
-          },
-        };
+        return run(command);
       })(),
     ]);
   } finally {
     signal.removeEventListener("abort", abort);
     if (client.isOpen) client.destroy();
   }
+}
+
+export async function readStrategyMembers(
+  config: NonNullable<ConsoleConfig["redis"]>,
+  key: string,
+  signal: AbortSignal,
+  timeout: number,
+  keyPrefix?: string,
+): Promise<StrategyMembers> {
+  return withStrategyRedis(config, signal, timeout, async (command) => {
+    const root =
+      keyPrefix === undefined
+        ? undefined
+        : `linkd:active-index:${createHash("sha256").update(keyPrefix).digest("hex")}`;
+    const statusKey =
+      root && `${root}:status:${key.slice(keyPrefix!.length + 1)}`;
+    const readStatus = async () => {
+      const raw = await command([
+        "HMGET",
+        statusKey!,
+        "last_success",
+        "last_attempt",
+        "error",
+        "members",
+      ]);
+      if (
+        !Array.isArray(raw) ||
+        raw.length !== 4 ||
+        raw.some((v) => v !== null && (typeof v !== "string" || v.length > 128))
+      )
+        throw new Error("invalid projection status");
+      return raw as Array<string | null>;
+    };
+    const before = statusKey ? await readStatus() : undefined;
+    const members = await scanStrategyMembers(([operation, ...args]) =>
+      command([operation, key, ...args]),
+    );
+    if (!root || !statusKey) return members;
+    const after = await readStatus();
+    const health = await command([
+      "HMGET",
+      `${root}:health`,
+      "last_success",
+      "error",
+    ]);
+    if (
+      !Array.isArray(health) ||
+      health.length !== 2 ||
+      health.some(
+        (v) => v !== null && (typeof v !== "string" || v.length > 128),
+      )
+    )
+      throw new Error("invalid projection health");
+    const pending = await command(["ZSCORE", `${root}:pending`, key]);
+    return {
+      ...members,
+      complete:
+        members.complete &&
+        before?.[0] === after[0] &&
+        (after[3] === null || Number(after[3]) === members.total),
+      projection: {
+        lastSuccess: after[0],
+        lastAttempt: after[1],
+        error: after[2] || null,
+        discoverySuccess: health[0],
+        discoveryError: health[1] || null,
+        pending: pending !== null,
+      },
+    };
+  });
 }

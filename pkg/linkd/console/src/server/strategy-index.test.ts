@@ -176,7 +176,7 @@ describe("strategy index reconciliation", () => {
     await Promise.resolve();
     abort.abort();
     await Promise.all(running);
-    expect(await c.targets()).toHaveLength(4);
+    expect(await c.targets()).toHaveLength(3);
   });
   it("never falls back to stale local bindings when the control plane fails", async () => {
     const c = new StrategyIndexConnector(
@@ -258,4 +258,47 @@ it("normalizes strategy labels like the Hook while preserving string identities"
     [Infinity, undefined],
   ])
     expect(strategyLabel(value)).toBe(expected);
+});
+
+it("browses only a configured shared target and keeps its credentials on the server", async () => {
+  const page = vi.fn(async () => ({
+    rows: [],
+    nextCursor: null,
+    phase: "sets" as const,
+    warnings: [],
+    health: {
+      lastSuccess: null,
+      lastAttempt: null,
+      error: null,
+      pendingCount: 0,
+      oldestDueAt: null,
+    },
+  }));
+  const c = new StrategyIndexConnector(
+    config,
+    undefined,
+    undefined,
+    undefined,
+    page,
+  );
+  const result = await c.browse({
+    event_source_id: "a",
+    hook_name: "active",
+    count: 50,
+  });
+  expect(result.target.sources).toEqual(["a", "b"]);
+  expect(JSON.stringify(result)).not.toContain("private-password");
+  expect(page.mock.calls[0]).toEqual([
+    redis,
+    "open",
+    expect.objectContaining({ sources: ["a", "b"] }),
+    undefined,
+    50,
+    expect.any(AbortSignal),
+    1000,
+  ]);
+  await expect(
+    c.browse({ event_source_id: "missing", hook_name: "active", count: 50 }),
+  ).rejects.toThrow("Hook must exist");
+  expect(page).toHaveBeenCalledTimes(1);
 });

@@ -120,6 +120,16 @@ it.skipIf(!es || !redisAddress)(
           "/tmp",
         ),
       } satisfies ConsoleConfig;
+      const scanned = [];
+      for await (const page of new ElasticsearchConnector(
+        config,
+      ).scanActiveStrategyAlerts(["a", "b"], AbortSignal.timeout(5000)))
+        scanned.push(...page);
+      expect(scanned.map((row) => row.alert_id).sort()).toEqual([
+        "1",
+        "2",
+        "4",
+      ]);
       const c = new StrategyIndexConnector(
         config,
         new ElasticsearchConnector(config),
@@ -164,6 +174,35 @@ it.skipIf(!es || !redisAddress)(
       expect(large.rows.map((row) => row.fingerprint)).toEqual([
         "large-number",
       ]);
+      const operations =
+        Array.from({ length: 1005 }, (_, i) => [
+          JSON.stringify({ index: { _index: index, _id: `page-${i}` } }),
+          JSON.stringify({
+            alert_id: `page-${String(i).padStart(5, "0")}`,
+            fingerprint: `fp-${i}`,
+            event_source_id: "paged",
+            bk_tenant_id: "tenant",
+            status: "active",
+            labels: { strategy_id: "bulk" },
+          }),
+        ])
+          .flat()
+          .join("\n") + "\n";
+      const bulk = await fetch(`${es}/_bulk?refresh=wait_for`, {
+        method: "POST",
+        headers: { "content-type": "application/x-ndjson" },
+        body: operations,
+        signal: AbortSignal.timeout(10000),
+      });
+      expect(bulk.ok).toBe(true);
+      expect(await bulk.json()).toMatchObject({ errors: false });
+      const pages = [];
+      for await (const page of new ElasticsearchConnector(
+        config,
+      ).scanActiveStrategyAlerts(["paged"], AbortSignal.timeout(5000)))
+        pages.push(page);
+      expect(pages.map((page) => page.length)).toEqual([1000, 5]);
+      expect(new Set(pages.flat().map((row) => row.alert_id)).size).toBe(1005);
       await redis.del(key);
       await redis.set(key, "wrong-type");
       const failed = await c.inspect(query);

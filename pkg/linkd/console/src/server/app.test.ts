@@ -35,6 +35,15 @@ describe("local API", () => {
       );
       expect(invalid.statusCode).toBe(400);
       expect(invalid.body).not.toContain("secret-not-visible");
+      const invalidBrowse = await app.inject(
+        "/local-api/strategy-index/browse?event_source_id=source&hook_name=active&count=201",
+      );
+      expect(invalidBrowse.statusCode).toBe(400);
+      expect(invalidBrowse.headers["cache-control"]).toBe("no-store");
+      const unknownTarget = await app.inject(
+        "/local-api/strategy-index/browse?event_source_id=source&hook_name=active",
+      );
+      expect(unknownTarget.statusCode).toBe(400);
     } finally {
       await app.close();
     }
@@ -61,6 +70,7 @@ describe("local API", () => {
         "/local-api/capabilities",
         "/local-api/config",
         "/local-api/strategy-index/targets",
+        "/local-api/strategy-index/audits",
       ]) {
         expect((await app.inject(prefix + route)).statusCode).toBe(401);
         expect(
@@ -70,6 +80,37 @@ describe("local API", () => {
           404,
         );
       }
+      const browseURL =
+        prefix +
+        "/local-api/strategy-index/browse?event_source_id=source&hook_name=active";
+      expect((await app.inject(browseURL)).statusCode).toBe(401);
+      expect((await app.inject({ url: browseURL, headers })).statusCode).toBe(
+        400,
+      );
+      const auditURL = prefix + "/local-api/strategy-index/audits";
+      expect(
+        (
+          await app.inject({
+            method: "POST",
+            url: auditURL,
+            payload: { event_source_id: "source", hook_name: "active" },
+          })
+        ).statusCode,
+      ).toBe(401);
+      expect(
+        (
+          await app.inject({
+            method: "POST",
+            url: auditURL,
+            headers,
+            payload: {
+              event_source_id: "source",
+              hook_name: "active",
+              address: "arbitrary",
+            },
+          })
+        ).statusCode,
+      ).toBe(400);
       // 正式来源管理路由也必须经过前缀和认证，不能落到 SPA fallback。
       const source = await app.inject({
         url: prefix + "/local-api/event-sources",

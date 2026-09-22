@@ -47,7 +47,10 @@ func observeTimeGraphPathQueryMetrics(ctx context.Context, queryMode string, sta
 	}
 }
 
-func getTimeGraphQuerier(ctx context.Context, spaceUID string) (timeGraphQuerier, error) {
+func getTimeGraphQuerier(ctx context.Context, spaceUID string) (querier timeGraphQuerier, err error) {
+	ctx, span := trace.NewSpan(ctx, "handler-api-timegraph-resolve-querier")
+	defer span.End(&err)
+	span.Set("space-uid", spaceUID)
 	model, err := v1beta3.GetModel(ctx)
 	if err != nil {
 		return nil, err
@@ -56,6 +59,7 @@ func getTimeGraphQuerier(ctx context.Context, spaceUID string) (timeGraphQuerier
 	if !ok {
 		return nil, fmt.Errorf("relation model does not support TimeGraph query")
 	}
+	span.Set("querier-type", fmt.Sprintf("%T", querier))
 	return querier, nil
 }
 

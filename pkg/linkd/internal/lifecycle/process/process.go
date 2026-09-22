@@ -122,7 +122,8 @@ func Run(
 		recentAlertCacheTTL = cacheConfig.TTL()
 	}
 
-	return taskdispatch.Serve(ctx, cfg, "lifecycle", func(taskCtx context.Context, task taskdispatch.Task, source config.EventSource) (taskErr error) {
+	severityState := taskdispatch.SeverityState(ctx, cfg.Severity)
+	return taskdispatch.ServeWithSeverity(ctx, cfg, "lifecycle", func(taskCtx context.Context, task taskdispatch.Task, source config.EventSource) (taskErr error) {
 		stage := "enrich_datasources"
 		defer func() { taskErr = taskdispatch.WithTaskStage(stage, taskErr) }()
 		openCtx, cancelOpen := context.WithTimeout(taskCtx, startupTimeout)
@@ -145,7 +146,7 @@ func Run(
 			return fmt.Errorf("initialize lifecycle source enricher: %w", err)
 		}
 		stage = "hooks"
-		hooks, closeHooks, err := openHooks(source.Hooks, telemetryRuntime)
+		hooks, closeHooks, err := openHooksWithSeverity(source.Hooks, telemetryRuntime, severityState)
 		if err != nil {
 			return fmt.Errorf("initialize source hooks: %w", err)
 		}
@@ -161,7 +162,7 @@ func Run(
 			lifecycle.DeterministicAlertIDGenerator{},
 			enricher,
 			hooks,
-			cfg.Severity,
+			severityState,
 			lifecycle.SystemClock{},
 			logger,
 			lifecycle.WithEnrichObserver(telemetryRuntime.EnrichObserver()),
@@ -203,7 +204,7 @@ func Run(
 		logger.InfoContext(taskCtx, "lifecycle source started", "event_source_id", source.EventSourceID, "stream", lc.Signal.Stream, "consumer", sc.Consumer, "recent_alert_cache_enabled", recentAlertCacheEnabled, "recent_alert_cache_ttl_seconds", recentAlertCacheTTL.Seconds())
 		stage = "consume"
 		return consume.New(rc, session, handler, consume.WithObserver(labels, telemetryRuntime.ConsumeObserver(labels))).Run(taskCtx)
-	}, logger, telemetryRuntime.DispatchObserver())
+	}, logger, severityState, telemetryRuntime.DispatchObserver())
 
 }
 

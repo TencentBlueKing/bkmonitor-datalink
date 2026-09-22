@@ -1,5 +1,6 @@
 import { consoleURL } from "./base-path";
 import {
+  dynamicConfigResponseSchema,
   capabilitySchema,
   controlPlaneRuntimeSchema,
   elasticsearchTopologySchema,
@@ -31,6 +32,12 @@ import {
   type ConfigResponse,
   type EntityStats,
 } from "../shared/contracts";
+
+export async function getDynamicConfig() {
+  return dynamicConfigResponseSchema.parse(
+    await request("/local-api/dynamic-config"),
+  );
+}
 
 export async function getCapabilities(): Promise<Capabilities> {
   return capabilitySchema.parse(await request("/local-api/capabilities"));

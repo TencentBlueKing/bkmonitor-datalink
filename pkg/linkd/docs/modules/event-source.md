@@ -79,8 +79,9 @@ source severity
   → global severity.default_severity
 ```
 
-Event 和 Alert 只保存 Severity name。Lifecycle 在处理 triggered Event 时通过当前进程冻结的 Severity
-表比较等级；配置修改需要重启，不会回溯修改已有对象。
+Event 和 Alert 只保存 Severity name。Lifecycle 每次裁决通过当前进程的完整 Severity 快照比较等级。动态配置默认关闭；启用后在线应用，
+旧 mapping 引用已删除等级不阻止 Flow 装配。未映射且无显式来源默认值的未知标准等级保留到 Event，
+由 Lifecycle 标记 rejected；未知等级活动 Alert 在下次处理同一 fingerprint 时关闭。详见[动态配置](../design/dynamic-configuration.md)。
 
 ## 5. Enrichment 路由
 

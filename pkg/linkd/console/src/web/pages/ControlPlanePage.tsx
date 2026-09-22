@@ -19,6 +19,7 @@ import { JsonViewer } from "../components/JsonViewer";
 import { MetricPanelCard } from "../components/MetricPanelCard";
 import { MetricQueryControls } from "../components/MetricQueryControls";
 import { RefreshControls } from "../components/RefreshControls";
+import { DynamicConfigPanel } from "./DynamicConfigPanel";
 import {
   defaultMetricCalculationWindowSeconds,
   defaultMetricRangeSeconds,
@@ -198,6 +199,8 @@ export function ControlPlanePage() {
           控制面状态加载失败：{errorMessage(runtime.error)}
         </div>
       )}
+
+      <DynamicConfigPanel autoRefresh={autoRefresh} />
 
       <div className="control-plane-summary">
         <SummaryCard

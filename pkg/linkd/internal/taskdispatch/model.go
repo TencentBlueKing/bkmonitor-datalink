@@ -34,6 +34,9 @@ const (
 
 // Worker 是进程会话；all-in-one 注册两种角色而不是两个相同进程。
 type Worker struct {
+	// ConfigDigest 与 ConfigError 反馈实际安装的动态配置及脱敏失败阶段。
+	ConfigDigest string `json:"config_digest,omitempty"`
+	ConfigError  string `json:"config_error,omitempty"`
 	// Runtime 是该进程会话实际使用的任务预算，不能由控制面默认配置替代。
 	Runtime          WorkerRuntime     `json:"runtime"`
 	MaxConcurrency   int               `json:"max_concurrency"`

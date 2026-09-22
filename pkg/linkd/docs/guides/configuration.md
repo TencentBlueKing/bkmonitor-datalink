@@ -396,8 +396,8 @@ Elasticsearch 读连接。OneModel Client 固定读取 `kingeye_all_instance` al
 `bk_tenant_id/model_id/model_inst_id` 定位实例；来源属性查询通过 nested `attribute_values` 类型槽表达，
 响应中的来源属性从 `attributes` 合并到 Resource 输出。该连接独立于 `storage.elasticsearch`，两段配置可以指向同一集群。
 
-`config print` 会隐藏 MySQL、Redis、Elasticsearch 和 Kafka 认证信息。进程运行期间 EventSource 和
-Severity 配置冻结；修改配置需要重启进程。
+`config print` 会隐藏 MySQL、Redis、Elasticsearch 和 Kafka 认证信息。EventSource 使用已发布的来源快照；
+Severity 默认使用启动 YAML，启用[动态配置](#动态配置)后在线应用。
 
 `cleaner`、`lifecycle`、`control-plane` 和 `all-in-one` 都会初始化自己的 telemetry runtime。启用
 Prometheus exporter 后，每个进程分别暴露 `/metrics`；部署在独立 Pod 时可以使用相同端口，共享宿主
@@ -629,3 +629,78 @@ Console Kafka 页面按来源和实例展示输出目标；动态管理接口中
 
 Stream、Mailbox 和锁会继续按 deployment 与 EventSource 派生作用域；Recent Alert 缓存由 Mailbox
 基础前缀派生。切换多级别模型的测试环境见[重置升级](multilevel-event-upgrade.md)。
+
+
+## 动态配置
+
+默认关闭，不增加 MySQL/Redis 来源依赖，也不读写动态配置快照：
+
+```yaml
+control_plane:
+  dynamic_config:
+    enabled: false
+```
+
+启用告警等级同步时，将以下块合并到控制面的配置。Worker 无需持有上游数据库凭据，
+通过现有控制面地址和 Worker token 接收配置。
+
+```yaml
+control_plane:
+  dynamic_config:
+    enabled: true
+    sources:
+      kingeye_levels:
+        type: kingeye_alarmlevel
+        mysql:
+          address: kingeye-mysql:3306
+          database: kingeye
+          username: linkd_reader
+          password: "由部署 Secret 提供"
+        table: alarm_alarmlevel
+        bk_tenant_id: system
+        poll_interval_seconds: 30
+        operation_timeout_seconds: 3
+    bindings:
+      severity:
+        source: kingeye_levels
+```
+
+来源 MySQL 只需要 SELECT 权限。快照保存在 Linkd 自己的 `storage.repository`，其账户沿用
+现有 schema 初始化和读写权限；不会把快照写回 Kingeye。
+
+Redis 适配器可在后续绑定已确定的 dynamicconfig 字段。值须为完整等级数组，包含必填的
+`name` 和整数 `priority`，不能绑定任意字段来覆盖 Linkd 启动参数：
+
+```yaml
+control_plane:
+  dynamic_config:
+    enabled: true
+    sources:
+      kingeye_redis:
+        type: kingeye_dynamicconfig
+        redis:
+          mode: standalone
+          address: kingeye-redis:6379
+          database: 0
+          password: "由部署 Secret 提供"
+        redis_key_prefix: "bk_monitor_base:"
+        bk_tenant_id: system
+        poll_interval_seconds: 300
+        operation_timeout_seconds: 3
+    bindings:
+      severity:
+        source: kingeye_redis
+        key: "替换为上游实际发布的等级字段"
+```
+
+Redis 连接同样支持 `sentinel`，字段与 `storage.redis` 相同。以上密码说明仅为文档占位，
+YAML 不自动展开任意环境变量；实际配置通过受保护文件或 Secret 注入。
+
+来源同步周期允许 1..86400 秒，操作超时允许 1..60 秒；等级最多 256 项，载荷最多 1 MiB。
+默认等级优先沿用 YAML；其名称被删除时使用当前最轻等级，已清洗未知等级仍按拒绝策略处理。
+
+启动优先恢复已持久化有效快照，后台同步最新配置。没有可用快照且上游异常时才回退 YAML。
+运行中读取、校验、持久化失败均保留最后有效值；持久化成功后才发布。快照不自动过期，
+来源实例、数据库、表/前缀或租户切换会使用新的隔离身份。
+
+完整行为、接口与未知等级处理见[动态配置设计](../design/dynamic-configuration.md)。

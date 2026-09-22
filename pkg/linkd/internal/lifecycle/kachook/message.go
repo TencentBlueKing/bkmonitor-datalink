@@ -114,6 +114,10 @@ type enrichValues struct {
 }
 
 func convertMessage(input lifecycle.FinalHookInput) (Message, error) {
+	return convertMessageWithLevel(input, kacLevel)
+}
+
+func convertMessageWithLevel(input lifecycle.FinalHookInput, resolve func(string) (string, error)) (Message, error) {
 	if err := input.Cause.Validate(); err != nil {
 		return Message{}, fmt.Errorf("KAC alarm cause: %w", err)
 	}
@@ -128,7 +132,11 @@ func convertMessage(input lifecycle.FinalHookInput) (Message, error) {
 	if err != nil {
 		return Message{}, err
 	}
-	level, err := kacLevel(input.Alert.Severity)
+	level, err := resolve(input.Alert.Severity)
+	if err != nil && input.Alert.Status == domain.AlertStatusClosed && input.Alert.EndType == domain.AlertEndTypeSystem && input.Alert.EndReason == "unknown_severity" {
+		level = input.Alert.Severity
+		err = nil
+	}
 	if err != nil {
 		return Message{}, err
 	}

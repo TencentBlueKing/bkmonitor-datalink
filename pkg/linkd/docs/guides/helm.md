@@ -451,3 +451,14 @@ pnpm exec playwright test --config playwright.auth.config.ts
 
 Helm 测试检查渲染、配置加载、组隔离和错误参数，不连接真实集群。
 生产镜像与浏览器验证不等于 Kafka/Redis/Repository 端到端验证，真实部署仍需单独联调。
+
+
+## 动态配置来源与恢复
+
+默认无需开启动态配置。启用时将 `control_plane.dynamic_config` 放到
+`controlPlane.configuration` 或控制面 `existingSecret` 中；不要把上游凭据放进共享的
+`configuration` 或 Worker 配置。Worker 只使用控制面 HTTP 接口。
+
+动态配置最后有效快照使用已有 Linkd MySQL/Elasticsearch，升级初始化仅在开关启用时创建独立快照集合，
+不探测 Kingeye 上游。数据库故障时可从快照恢复；关闭开关后不读取这些快照，也不会删除它们。
+来源示例见[配置指南](configuration.md#动态配置)。

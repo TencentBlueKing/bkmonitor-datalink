@@ -31,7 +31,7 @@ KAC 告警中心输出实现与边界见 [KAC Alarm Hook 设计](design/kac-alar
 EventSource 管理与部分全局配置动态化独立演进：
 
 - [EventSource 动态配置](design/event-source-dynamic-configuration.md)：来源独立管理、主动拉取/API 修改、版本与 Flow 生效，已接入实现。
-- [部分配置动态化](design/dynamic-configuration.md)：Severity 等选定配置项的消费者、生效和恢复边界，不包含来源管理，仍为待评审方案。
+- [部分配置动态化](design/dynamic-configuration.md)：Severity 等选定配置项的消费者、生效和恢复边界，不包含来源管理，已实现，默认关闭。
 
 跨模块运行协议：[中心化任务调度](design/task-scheduling-protocol.md)，由 EventSource 首先接入，后续可供
 Lifecycle 等模块复用；包含停止确认、失联自停、超时强切及服务/容器发布防抖，当前采用有界自停模型。

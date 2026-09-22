@@ -23,6 +23,7 @@ import (
 	"linkd/internal/eventsource"
 	sourcestore "linkd/internal/eventsource/storage"
 	"linkd/internal/redisclient"
+	"linkd/internal/runtimeconfig"
 	"linkd/internal/taskdispatch"
 	"linkd/internal/taskgroup"
 	"linkd/internal/telemetry"
@@ -40,7 +41,9 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 		return e
 	}
 	defer func() { _ = docs.Close() }()
+	severity := runtimeconfig.NewSeverity(cfg.Severity)
 	sources := eventsource.New(docs, cfg.Severity, cfg.Cleaner)
+	sources.UseSeverity(severity)
 	client, e := redisclient.New(cfg.Storage.Redis.ClientOptions())
 	if e != nil {
 		return e
@@ -51,12 +54,20 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 		return e
 	}
 	lifecycle := config.LifecycleConfig{}
+	dynamic, closeDynamic, e := openDynamicConfig(ctx, cfg, severity, logger)
+	if e != nil {
+		return e
+	}
+	defer func() { _ = closeDynamic() }()
 	if cfg.Lifecycle != nil {
 		lifecycle = *cfg.Lifecycle
 	}
-	api := &taskdispatch.API{Lifecycle: lifecycle, Sources: sources, Controller: controller, Config: d}
+	api := &taskdispatch.API{DynamicConfig: dynamic, Lifecycle: lifecycle, Sources: sources, Controller: controller, Config: d}
 	server := &http.Server{Addr: d.Listen, Handler: api.Handler(), ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second}
-	listener, e := (&net.ListenConfig{}).Listen(startup, "tcp", d.Listen)
+	// 上游读取可能耗尽最初的装配期限；已回退快照/YAML 后不应因此阻止管理 API 启动。
+	listenCtx, cancelListen := context.WithTimeout(ctx, 3*time.Second)
+	listener, e := (&net.ListenConfig{}).Listen(listenCtx, "tcp", d.Listen)
+	cancelListen()
 	if e != nil {
 		return e
 	}
@@ -76,6 +87,9 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 			return server.Shutdown(shutdown)
 		}
 	}}}
+	if dynamic != nil {
+		tasks = append(tasks, taskgroup.Task{Name: "dynamic-config", Run: dynamic.Run})
+	}
 	if cfg.ControlPlane != nil && cfg.ControlPlane.RedisStream != nil && cfg.Lifecycle != nil {
 		settings := cfg.ControlPlane.RedisStream.WithDefaults()
 		after := ""

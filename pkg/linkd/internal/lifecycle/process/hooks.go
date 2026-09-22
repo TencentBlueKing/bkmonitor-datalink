@@ -21,6 +21,7 @@ import (
 	"linkd/internal/lifecycle/kafkahook"
 	"linkd/internal/lifecycle/strategyhook"
 	"linkd/internal/redisclient"
+	"linkd/internal/runtimeconfig"
 	"linkd/internal/telemetry"
 )
 
@@ -28,6 +29,31 @@ import (
 // 每个任务独占客户端，发布切换先排空旧任务再关闭，避免影响其他来源。
 func openHooks(configs []config.HookConfig, runtime *telemetry.Runtime) ([]lifecycle.NamedFinalHook, func() error, error) {
 	return assembleHooks(configs, runtime, openHook)
+}
+
+func openHooksWithSeverity(configs []config.HookConfig, runtime *telemetry.Runtime, severity *runtimeconfig.Severity) ([]lifecycle.NamedFinalHook, func() error, error) {
+	return assembleHooks(configs, runtime, func(spec config.HookConfig) (lifecycle.FinalHook, func() error, error) {
+		hook, closeHook, err := openHook(spec)
+		if h, ok := hook.(*kachook.Hook); ok && err == nil {
+			h.UseLevelResolver(func(name string) (string, error) {
+				snapshot := severity.SeveritySnapshot()
+				if snapshot.NativeNames {
+					return name, nil
+				}
+				switch name {
+				case "critical":
+					return "fatal", nil
+				case "info":
+					return "remind", nil
+				}
+				if snapshot.Severity.Has(name) {
+					return name, nil
+				}
+				return "", fmt.Errorf("unknown KAC severity")
+			})
+		}
+		return hook, closeHook, err
+	})
 }
 
 // assembleHooks 的工厂参数允许验证部分初始化失败时的资源回收契约。

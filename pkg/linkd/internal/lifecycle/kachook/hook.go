@@ -32,10 +32,11 @@ type producer interface {
 
 // Hook 将 Alert 快照转换为 KAC Alarm JSON 并同步发送到 Kafka。
 type Hook struct {
-	config    Config
-	name      string
-	producer  producer
-	closeOnce sync.Once
+	config        Config
+	name          string
+	producer      producer
+	closeOnce     sync.Once
+	levelResolver func(string) (string, error)
 }
 
 // New 创建拥有独立 Kafka client 的 KAC FinalHook。
@@ -66,8 +67,11 @@ func New(config Config, name string) (*Hook, error) {
 }
 
 func newHook(config Config, name string, producer producer) *Hook {
-	return &Hook{config: config.WithDefaults(), name: name, producer: producer}
+	return &Hook{config: config.WithDefaults(), name: name, producer: producer, levelResolver: kacLevel}
 }
+
+// UseLevelResolver 在开始执行前注入等级映射，允许运行时原子快照支持 KAC 自定义名称。
+func (h *Hook) UseLevelResolver(resolve func(string) (string, error)) { h.levelResolver = resolve }
 
 // Execute 发送单个 KAC Alarm JSON；MessageID 在同一快照重试中保持稳定。
 func (h *Hook) Execute(ctx context.Context, input lifecycle.FinalHookInput) (lifecycle.FinalHookResult, error) {
@@ -78,7 +82,7 @@ func (h *Hook) Execute(ctx context.Context, input lifecycle.FinalHookInput) (lif
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	message, err := convertMessage(input)
+	message, err := convertMessageWithLevel(input, h.levelResolver)
 	if err != nil {
 		return result, err
 	}

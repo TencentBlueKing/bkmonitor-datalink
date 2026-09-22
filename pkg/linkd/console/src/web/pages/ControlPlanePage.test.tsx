@@ -114,6 +114,11 @@ function stubResponses(runtime: ControlPlaneRuntime): void {
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes("/local-api/dynamic-config"))
+        return response({
+          config: { enabled: false, origin: "yaml", sync_state: "disabled" },
+          workers: {},
+        });
       if (url.includes("/local-api/runtime/control-plane"))
         return response(runtime);
       if (url.includes("/local-api/metrics"))

@@ -246,6 +246,25 @@ func validEvent() domain.Event {
 	return domain.Event{Evaluations: []domain.EventEvaluation{{Severity: "warning", Action: domain.EventActionTriggered}}, EventSourceVersion: 1, BKTenantID: "tenant-1", EventSourceID: "source-a", EventID: "event-1", Fingerprint: "fingerprint-1", Title: "CPU high", Dimensions: domain.DimensionMap{"host": domain.NewStringScalar("host-1")}, OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, SourceEventID: "source-event-1", SourceAlertID: "source-alert-1", SourceRawData: domain.JSONObject{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}}
 }
 
+func TestRedeliveryAfterDynamicSeverityMappingChange(t *testing.T) {
+	original := validEvent()
+	original.SourceRawData = domain.JSONObject{"severity": json.RawMessage(`"custom"`)}
+	incoming := original.Clone()
+	incoming.Evaluations[0].Severity = "custom"
+	if err := domain.ValidateEventRedelivery(incoming, original); err != nil {
+		t.Fatal(err)
+	}
+	incoming.Evaluations[0].Action = domain.EventActionResolved
+	if err := domain.ValidateEventRedelivery(incoming, original); err == nil {
+		t.Fatal("action change accepted")
+	}
+	incoming = original.Clone()
+	incoming.Title = "changed"
+	if err := domain.ValidateEventRedelivery(incoming, original); err == nil {
+		t.Fatal("unrelated normalization change accepted")
+	}
+}
+
 func validAlert() domain.Alert {
 	event := validEvent()
 	now := event.CreateAt.Add(time.Second)

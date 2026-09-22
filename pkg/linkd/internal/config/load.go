@@ -66,6 +66,11 @@ func Load(path string, overrides Overrides) (Config, error) {
 	return load(path, overrides, os.LookupEnv)
 }
 
+// LoadWithSeverity 用控制面当前等级校验显式来源导入，不要求在导入文件中复制动态等级表。
+func LoadWithSeverity(path string, overrides Overrides, severity SeverityConfig) (Config, error) {
+	return load(path, overrides, os.LookupEnv, severity)
+}
+
 // MarshalRedacted 将可安全展示的最终配置编码为 YAML。
 func MarshalRedacted(cfg Config) ([]byte, error) {
 	data, err := yaml.Marshal(cfg.Redacted())
@@ -75,7 +80,7 @@ func MarshalRedacted(cfg Config) ([]byte, error) {
 	return data, nil
 }
 
-func load(path string, overrides Overrides, lookupEnv func(string) (string, bool)) (Config, error) {
+func load(path string, overrides Overrides, lookupEnv func(string) (string, bool), severity ...SeverityConfig) (Config, error) {
 	data, err := readFile(path)
 	if err != nil {
 		return Config{}, err
@@ -87,6 +92,9 @@ func load(path string, overrides Overrides, lookupEnv func(string) (string, bool
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&decoded); err != nil {
 		return Config{}, fmt.Errorf("decode config %q: %w", path, err)
+	}
+	if len(severity) > 0 {
+		decoded.Severity = severity[0].WithDefaults()
 	}
 	var extra yaml.Node
 	err = decoder.Decode(&extra)

@@ -24,6 +24,7 @@ import (
 	"linkd/internal/config"
 	"linkd/internal/consume"
 	"linkd/internal/eventsource"
+	"linkd/internal/runtimeconfig"
 )
 
 // Runner 适配一个任务；返回前必须退出所有后台工作并关闭任务所属资源。
@@ -31,6 +32,9 @@ type Runner func(context.Context, Task, config.EventSource) error
 
 // Agent 负责进程全部角色，业务关闭不能阻塞独立的授权 watchdog。
 type Agent struct {
+	// Severity 是本进程所有任务读取的共享配置状态。
+	Severity       *runtimeconfig.Severity
+	staticSeverity runtimeconfig.Snapshot
 	// Logger 接收已脱敏的任务故障上下文。
 	Logger            *slog.Logger
 	Runtime           WorkerRuntime
@@ -66,11 +70,19 @@ func (a *Agent) Run(ctx context.Context) error {
 		return err
 	}
 	observer := observerOrNoop(a.Observer)
+	if a.Severity != nil {
+		a.staticSeverity = a.Severity.SeveritySnapshot()
+	}
 	// 停止确认和 watchdog 观测必须在调用方取消后继续，直到协议排空完成。
 	observationCtx := context.WithoutCancel(ctx)
 	cfg := a.Config.WithDefaults()
 	id := uuid.NewString()
-	client := Client{URL: cfg.URL, Token: cfg.WorkerToken, WorkerID: id}
+	var advertisedDigest string
+	client := Client{URL: cfg.URL, Token: cfg.WorkerToken, WorkerID: id, OnResponse: func(h http.Header) {
+		if value := h.Get("X-Linkd-Dynamic-Config"); value != "" {
+			advertisedDigest = value
+		}
+	}}
 	worker := Worker{Runtime: a.Runtime, ID: id, Roles: a.Roles, Labels: a.Worker.Labels, Explicit: a.Worker.RequireExplicitSelector, MaxTasks: cfg.MaxTasks}
 	worker.MaxConcurrency, worker.MaxInflightBytes = a.Worker.Limits()
 	var mu sync.Mutex
@@ -170,6 +182,14 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 		worker.Draining = stopping
 		worker.Seq++
+		if a.Severity != nil {
+			snap := a.Severity.SeveritySnapshot()
+			if snap.Enabled {
+				worker.ConfigDigest = snap.Digest
+			} else {
+				worker.ConfigDigest = ""
+			}
+		}
 		reports := make([]Report, 0, len(locals))
 		remaining := 0
 		for _, t := range locals {
@@ -192,6 +212,10 @@ func (a *Agent) Run(ctx context.Context) error {
 		e := client.Call(call, http.MethodPost, "/internal/heartbeat", Heartbeat{Worker: worker, Reports: reports}, &tasks)
 		cancel()
 		observer.Operation(observationCtx, "heartbeat_client", e == nil, time.Since(started))
+		configReady := true
+		if e == nil {
+			configReady, worker.ConfigError = a.syncSeverity(observationCtx, client, advertisedDigest)
+		}
 		mu.Lock()
 		if e != nil {
 			failures++
@@ -224,7 +248,7 @@ func (a *Agent) Run(ctx context.Context) error {
 						t.admission.Store(true)
 					}
 				}
-				if t == nil && !stopping { // 只加载固定 Release，不在准备期创建 MQ Session。
+				if t == nil && !stopping && configReady { // 只加载固定 Release，不在准备期创建 MQ Session。
 					mu.Unlock()
 					fetch, done := context.WithTimeout(observationCtx, 2*time.Second)
 					var rel eventsource.Release
@@ -246,7 +270,7 @@ func (a *Agent) Run(ctx context.Context) error {
 					}
 					locals[task.ID] = t
 				}
-				if t != nil && t.phase == "prepared" && task.Phase == "starting" && !stopping && time.Now().Add(DrainTimeout+5*time.Second).Before(t.deadline) {
+				if t != nil && t.phase == "prepared" && task.Phase == "starting" && !stopping && configReady && time.Now().Add(DrainTimeout+5*time.Second).Before(t.deadline) {
 					budget, err := a.admitTask(task, t.spec, locals)
 					if err != nil {
 						t.phase = "stopped"

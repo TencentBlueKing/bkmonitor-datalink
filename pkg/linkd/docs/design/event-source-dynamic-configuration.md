@@ -1,6 +1,6 @@
 # EventSource 动态配置
 
-本页描述来源管理和运行时装配。部分全局配置动态化仍是[独立方案](dynamic-configuration.md)，全局 Severity 当前继续启动时冻结。
+本页描述来源管理和运行时装配。选定全局配置通过[动态配置](dynamic-configuration.md)独立同步和恢复，默认关闭时 Severity 使用启动 YAML。
 
 ## 配置事实与发布
 

@@ -1,5 +1,41 @@
 import { z } from "zod";
 
+export const dynamicConfigResponseSchema = z.object({
+  config: z.object({
+    enabled: z.boolean(),
+    origin: z.string(),
+    sync_state: z.string(),
+    source: z.string().optional(),
+    source_type: z.string().optional(),
+    bk_tenant_id: z.string().optional(),
+    last_attempt: z.string().optional(),
+    last_success: z.string().optional(),
+    persisted_at: z.string().optional(),
+    error: z.string().optional(),
+    current: z
+      .object({
+        digest: z.string(),
+        severity: z.object({
+          default_severity: z.string(),
+          levels: z.array(z.object({ name: z.string(), priority: z.number() })),
+        }),
+      })
+      .optional(),
+  }),
+  workers: z
+    .record(
+      z.string(),
+      z.object({
+        id: z.string(),
+        config_digest: z.string().optional(),
+        config_error: z.string().optional(),
+        seen: z.string().optional(),
+      }),
+    )
+    .default({}),
+});
+export type DynamicConfigResponse = z.infer<typeof dynamicConfigResponseSchema>;
+
 export const entityKindSchema = z.enum(["events", "alerts", "alert-logs"]);
 export type EntityKind = z.infer<typeof entityKindSchema>;
 

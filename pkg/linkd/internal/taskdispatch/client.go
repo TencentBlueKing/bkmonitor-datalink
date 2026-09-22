@@ -24,6 +24,8 @@ import (
 type Client struct {
 	URL, Token, WorkerID string
 	HTTP                 *http.Client
+	// OnResponse 在调用 goroutine 同步观察响应头，不读取远端错误载荷。
+	OnResponse func(http.Header)
 }
 
 // Call 执行受认证 JSON 请求，不暴露含凭据的请求和远端错误载荷。
@@ -52,6 +54,9 @@ func (c Client) Call(ctx context.Context, method, path string, in, out any) erro
 		return fmt.Errorf("control plane unavailable")
 	}
 	defer func() { _ = response.Body.Close() }()
+	if c.OnResponse != nil {
+		c.OnResponse(response.Header)
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return fmt.Errorf("control plane HTTP %d", response.StatusCode)
 	}

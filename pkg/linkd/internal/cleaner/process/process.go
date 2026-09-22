@@ -74,7 +74,8 @@ func Run(
 	}
 
 	lifecycleConfig := cfg.Lifecycle.WithDefaults()
-	return taskdispatch.Serve(ctx, cfg, "cleaner", func(taskCtx context.Context, task taskdispatch.Task, source config.EventSource) (taskErr error) {
+	severityState := taskdispatch.SeverityState(ctx, cfg.Severity)
+	return taskdispatch.ServeWithSeverity(ctx, cfg, "cleaner", func(taskCtx context.Context, task taskdispatch.Task, source config.EventSource) (taskErr error) {
 		stage := "signal_group"
 		defer func() { taskErr = taskdispatch.WithTaskStage(stage, taskErr) }()
 		source.RuntimeClientID = taskdispatch.ConsumerName(task)
@@ -103,6 +104,7 @@ func Run(
 		if err != nil {
 			return err
 		}
+		factory.UseSeverity(severityState)
 		stage = "flow"
 		flow, err := factory.NewFlow(taskCtx, source)
 		if err != nil {
@@ -110,7 +112,7 @@ func Run(
 		}
 		stage = "consume"
 		return flow.Run(taskCtx)
-	}, logger, telemetryRuntime.DispatchObserver())
+	}, logger, severityState, telemetryRuntime.DispatchObserver())
 }
 
 func repositoryConnectionBudget(cfg config.Config) int {

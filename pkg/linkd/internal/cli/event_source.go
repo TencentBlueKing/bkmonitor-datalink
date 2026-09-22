@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 	"linkd/internal/config"
 	"linkd/internal/eventsource"
+	"linkd/internal/runtimeconfig"
 	"linkd/internal/taskdispatch"
 )
 
@@ -32,12 +33,26 @@ func newEventSourceCommand(options *commandOptions) *cobra.Command {
 		if file == "" {
 			return fmt.Errorf("--file is required")
 		}
-		input, e := config.Load(file, config.Overrides{})
+		d := cfg.Dispatch.WithDefaults()
+		client := taskdispatch.Client{URL: d.URL, Token: d.APIToken}
+		var dynamic struct {
+			Config struct {
+				Enabled bool                   `json:"enabled"`
+				Current runtimeconfig.Snapshot `json:"current"`
+			} `json:"config"`
+		}
+		if e = client.Call(cmd.Context(), http.MethodGet, "/api/v1/dynamic-config", nil, &dynamic); e != nil {
+			return e
+		}
+		var input config.Config
+		if dynamic.Config.Enabled {
+			input, e = config.LoadWithSeverity(file, config.Overrides{}, dynamic.Config.Current.Severity)
+		} else {
+			input, e = config.Load(file, config.Overrides{})
+		}
 		if e != nil {
 			return e
 		}
-		d := cfg.Dispatch.WithDefaults()
-		client := taskdispatch.Client{URL: d.URL, Token: d.APIToken}
 		for _, spec := range input.EventSources {
 			var current eventsource.Record
 			path := "/api/v1/event-sources/" + url.PathEscape(spec.EventSourceID)

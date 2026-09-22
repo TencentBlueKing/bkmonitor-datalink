@@ -4221,3 +4221,27 @@ td:last-child {
     gap: 10px;
   }
 }
+
+.dynamic-config-panel {
+  min-height: 0;
+  padding: 16px;
+}
+.dynamic-config-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.dynamic-config-panel code {
+  overflow-wrap: anywhere;
+}
+.dynamic-config-panel table {
+  width: 100%;
+  table-layout: fixed;
+}
+.dynamic-config-panel td,
+.dynamic-config-panel th {
+  padding: 8px;
+  overflow-wrap: anywhere;
+  text-align: left;
+}

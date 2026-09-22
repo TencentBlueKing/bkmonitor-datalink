@@ -65,6 +65,7 @@ func runMigration(ctx context.Context, cfg config.Config, steps migrationSteps) 
 		{"check Redis", steps.checkRedis},
 		{"prepare repository", steps.prepareRepository},
 		{"prepare source collections", steps.prepareSources},
+		{"prepare dynamic config snapshots", prepareDynamicConfigSnapshots},
 	} {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("migrate %s: %w", step.name, err)

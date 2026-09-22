@@ -24,6 +24,16 @@ import (
 // ProcessEvent 在 fingerprint lease 内先保存确定性计划，再执行有界副作用并提交最终结果。
 // 同一事件的所有级别共享该计划；外部 hook 仍遵从至少一次调用边界。
 func (p *Processor) ProcessEvent(ctx context.Context, initial store.StoredEvent) (ProcessResult, error) {
+	// Processor 被多个 fingerprint 并发使用，复制接收者而不是原地改写共享字段。
+	if provider, ok := p.severity.(interface {
+		FreezeSeverity() (SeverityTable, string)
+	}); ok {
+		table, digest := provider.FreezeSeverity()
+		local := *p
+		local.severity = table
+		local.configDigest = digest
+		return local.ProcessEvent(ctx, initial)
+	}
 	if ctx == nil {
 		return ProcessResult{}, fmt.Errorf("process lifecycle event: context must not be nil")
 	}
@@ -98,7 +108,41 @@ func (p *Processor) preparePlan(ctx context.Context, event domain.Event) (*store
 	if err := event.Validate(); err != nil {
 		return nil, err
 	}
-	plan := &store.EventPlan{UpgradePolicy: p.upgradePolicy, State: domain.EventProcessStateOrphaned, Outcome: string(OutcomeEventOrphaned), ReasonCode: ReasonActiveAlertNotFound}
+	plan := &store.EventPlan{ConfigDigest: p.configDigest, UpgradePolicy: p.upgradePolicy, State: domain.EventProcessStateOrphaned, Outcome: string(OutcomeEventOrphaned), ReasonCode: ReasonActiveAlertNotFound}
+	active, err := p.findActiveAlert(ctx, store.ActiveAlertKey{BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID, Fingerprint: event.Fingerprint})
+	hasActive := err == nil
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return nil, err
+	}
+	now, err := p.now()
+	if err != nil {
+		return nil, err
+	}
+	if hasActive {
+		if _, ok := p.severity.Priority(active.Alert.Severity); !ok {
+			closed := terminalAlert(active.Alert, event, domain.AlertStatusClosed, domain.AlertEndTypeSystem, "unknown_severity", now)
+			closed.EndAt = &now
+			plan.SystemClose = &closed
+			hasActive = false
+			p.logger.WarnContext(ctx, "closing active alert with unknown severity", "bk_tenant_id", event.BKTenantID, "event_source_id", event.EventSourceID, "alert_id", active.Alert.AlertID, "severity", active.Alert.Severity, "config_digest", p.configDigest)
+		}
+	}
+	unknown := []string{}
+	for _, evaluation := range event.Evaluations {
+		if _, ok := p.severity.Priority(evaluation.Severity); !ok {
+			unknown = append(unknown, evaluation.Severity)
+		}
+	}
+	if len(unknown) > 0 {
+		plan.State = domain.EventProcessStateRejected
+		plan.Outcome = "event_rejected"
+		plan.ReasonCode = "unknown_severity"
+		for _, evaluation := range event.Evaluations {
+			plan.Evaluations = append(plan.Evaluations, store.EvaluationResult{Severity: evaluation.Severity, Action: evaluation.Action, State: domain.EventProcessStateRejected, Outcome: plan.Outcome, ReasonCode: plan.ReasonCode})
+		}
+		p.logger.WarnContext(ctx, "rejecting event with unknown severity", "bk_tenant_id", event.BKTenantID, "event_source_id", event.EventSourceID, "event_id", event.EventID, "unknown_severities", unknown, "config_digest", p.configDigest)
+		return plan, plan.Validate()
+	}
 	highest := -1
 	for i, evaluation := range event.Evaluations {
 		if _, ok := p.severity.Priority(evaluation.Severity); !ok {
@@ -118,15 +162,6 @@ func (p *Processor) preparePlan(ctx context.Context, event domain.Event) (*store
 			}
 		}
 		plan.Evaluations = append(plan.Evaluations, store.EvaluationResult{Severity: evaluation.Severity, Action: evaluation.Action, State: domain.EventProcessStateOrphaned, Outcome: string(OutcomeEventOrphaned), ReasonCode: ReasonActiveAlertNotFound})
-	}
-	active, err := p.findActiveAlert(ctx, store.ActiveAlertKey{BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID, Fingerprint: event.Fingerprint})
-	hasActive := err == nil
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return nil, err
-	}
-	now, err := p.now()
-	if err != nil {
-		return nil, err
 	}
 	terminal := -1
 	if hasActive {
@@ -302,6 +337,19 @@ func (p *Processor) executePlan(ctx context.Context, stored store.StoredEvent) (
 	plan := stored.Processing.Plan
 	if err := store.ValidateEventPlan(stored.Event, plan); err != nil {
 		return store.StoredEvent{}, err
+	}
+	if target := plan.SystemClose; target != nil {
+		current, err := p.getAlertCurrent(ctx, target.BKTenantID, target.AlertID)
+		if err != nil {
+			return store.StoredEvent{}, err
+		}
+		// 已被独立操作终结时不覆盖；自身部分成功则继续补齐同一关闭命令的日志和 hook。
+		if current.Alert.Status == domain.AlertStatusActive || (current.Alert.EndType == domain.AlertEndTypeSystem && current.Alert.EndReason == "unknown_severity" && current.Alert.EndAt != nil && current.Alert.EndAt.Equal(*target.EndAt)) {
+			_, err = p.CloseAlert(ctx, CloseAlertCommand{OperationID: digestStrings("unknown-severity", stored.Event.EventID, target.AlertID), BKTenantID: target.BKTenantID, AlertID: target.AlertID, OperatorKind: domain.OperatorKindSystem, OperatorID: "dynamic_config", Reason: "unknown_severity", EffectiveAt: *target.EndAt, ConfigDigest: plan.ConfigDigest})
+			if err != nil {
+				return store.StoredEvent{}, err
+			}
+		}
 	}
 	superseded := make([]bool, len(plan.Mutations))
 	for index, mutation := range plan.Mutations {

@@ -22,15 +22,17 @@ import (
 	"time"
 
 	"linkd/internal/config"
+	"linkd/internal/dynamicconfig"
 	"linkd/internal/eventsource"
 )
 
 // API 提供来源管理和 worker 协议；两类请求使用不同 token。
 type API struct {
-	Lifecycle  config.LifecycleConfig
-	Sources    *eventsource.Service
-	Controller *Controller
-	Config     config.DispatchConfig
+	DynamicConfig *dynamicconfig.Manager
+	Lifecycle     config.LifecycleConfig
+	Sources       *eventsource.Service
+	Controller    *Controller
+	Config        config.DispatchConfig
 }
 
 // Handler 创建有身份校验的正式接口。
@@ -42,6 +44,8 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/event-sources/{id}", a.delete)
 	mux.HandleFunc("GET /api/v1/event-sources/{id}/releases/{version}", a.release)
 	mux.HandleFunc("GET /api/v1/runtime", a.status)
+	mux.HandleFunc("GET /api/v1/dynamic-config", a.dynamicStatus)
+	mux.HandleFunc("GET /internal/settings/severity", a.workerSeverity)
 	mux.HandleFunc("POST /internal/heartbeat", a.beat)
 	mux.HandleFunc("GET /internal/releases/{id}/{version}", a.workerRelease)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -234,6 +238,11 @@ func (a *API) status(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) beat(w http.ResponseWriter, r *http.Request) {
+	if a.DynamicConfig != nil {
+		w.Header().Set("X-Linkd-Dynamic-Config", a.DynamicConfig.Status().Current.Digest)
+	} else {
+		w.Header().Set("X-Linkd-Dynamic-Config", "disabled")
+	}
 	var h Heartbeat
 	if e := decode(r, &h); e != nil {
 		failure(w, e)

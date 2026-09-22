@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	"linkd/internal/config"
+	"linkd/internal/runtimeconfig"
 )
 
 type hostKey struct{}
@@ -24,15 +25,16 @@ type exitKey struct{}
 
 // Host 显式聚合 all-in-one 两个实际消费者，不使用全局进程注册表。
 type Host struct {
-	Config  config.DispatchConfig
-	Worker  config.WorkerConfig
-	Roles   []string
-	mu      sync.Mutex
-	runtime WorkerRuntime
-	runners map[string]Runner
-	started bool
-	done    chan struct{}
-	err     error
+	Config   config.DispatchConfig
+	Worker   config.WorkerConfig
+	Roles    []string
+	mu       sync.Mutex
+	runtime  WorkerRuntime
+	runners  map[string]Runner
+	started  bool
+	done     chan struct{}
+	err      error
+	severity *runtimeconfig.Severity
 }
 
 // WithHost 把一个进程的共享 agent 注入两种角色的装配上下文。
@@ -49,13 +51,18 @@ func WithForcedExit(ctx context.Context, exit func()) context.Context {
 
 // Serve 将资源已经准备好的模块加入进程 agent，退出前等待全部任务停止。
 func Serve(ctx context.Context, cfg config.Config, role string, runner Runner, logger *slog.Logger, observers ...Observer) error {
+	return ServeWithSeverity(ctx, cfg, role, runner, logger, SeverityState(ctx, cfg.Severity), observers...)
+}
+
+// ServeWithSeverity 将角色使用的等级状态注入 agent，确保更新被真实消费者读取。
+func ServeWithSeverity(ctx context.Context, cfg config.Config, role string, runner Runner, logger *slog.Logger, severity *runtimeconfig.Severity, observers ...Observer) error {
 	if cfg.Dispatch.WorkerToken == "" {
 		return fmt.Errorf("dispatch.worker_token is required")
 	}
 	forced, _ := ctx.Value(exitKey{}).(func())
 	h, _ := ctx.Value(hostKey{}).(*Host)
 	if h == nil {
-		a := Agent{Logger: logger, Runtime: workerRuntime(cfg, []string{role}), Observer: observerOrNoop(observers...), Config: cfg.Dispatch, Worker: cfg.Worker, Roles: []string{role}, RunTask: runner, OnForcedExit: forced}
+		a := Agent{Severity: severity, Logger: logger, Runtime: workerRuntime(cfg, []string{role}), Observer: observerOrNoop(observers...), Config: cfg.Dispatch, Worker: cfg.Worker, Roles: []string{role}, RunTask: runner, OnForcedExit: forced}
 		return a.Run(ctx)
 	}
 	h.mu.Lock()
@@ -78,7 +85,7 @@ func Serve(ctx context.Context, cfg config.Config, role string, runner Runner, l
 			runners[k] = v
 		}
 		go func() {
-			a := Agent{Logger: logger, Runtime: h.runtime, Observer: observerOrNoop(observers...), Config: h.Config, Worker: h.Worker, Roles: h.Roles, RunTask: func(ctx context.Context, t Task, s config.EventSource) error { return runners[t.Role](ctx, t, s) }, OnForcedExit: forced}
+			a := Agent{Severity: severity, Logger: logger, Runtime: h.runtime, Observer: observerOrNoop(observers...), Config: h.Config, Worker: h.Worker, Roles: h.Roles, RunTask: func(ctx context.Context, t Task, s config.EventSource) error { return runners[t.Role](ctx, t, s) }, OnForcedExit: forced}
 			e := a.Run(ctx)
 			h.mu.Lock()
 			h.err = e

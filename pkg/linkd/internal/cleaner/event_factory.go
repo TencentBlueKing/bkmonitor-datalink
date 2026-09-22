@@ -15,6 +15,7 @@ import (
 
 	"linkd/internal/config"
 	"linkd/internal/domain"
+	"linkd/internal/runtimeconfig"
 )
 
 // SeverityResolver 根据来源取值和 EventSource 配置生成 Linkd 标准 severity。
@@ -52,8 +53,21 @@ func (DefaultFingerprintResolver) Resolve(source config.EventSource, event domai
 type EventFactory struct {
 	source              config.EventSource
 	severity            config.SeverityConfig
+	runtimeSeverity     *runtimeconfig.Severity
 	severityResolver    SeverityResolver
 	fingerprintResolver FingerprintResolver
+}
+
+// NewDynamicEventFactory 让来源长期运行时读取最新等级，保留已删除的来源映射以便落库后拒绝。
+func NewDynamicEventFactory(source config.EventSource, state *runtimeconfig.Severity) (*EventFactory, error) {
+	if state == nil {
+		return nil, fmt.Errorf("severity state is required")
+	}
+	snapshot := state.SeveritySnapshot()
+	if err := config.ValidateRuntimeSource(source, snapshot.Severity, snapshot.Enabled); err != nil {
+		return nil, err
+	}
+	return &EventFactory{source: source.WithDefaults(), severity: snapshot.Severity, runtimeSeverity: state, severityResolver: DefaultSeverityResolver{}, fingerprintResolver: DefaultFingerprintResolver{}}, nil
 }
 
 // NewEventFactory 使用 Linkd 默认 resolver 创建 EventFactory。
@@ -121,8 +135,26 @@ func (f *EventFactory) Build(message RawEventMessage, draft EventDraft) (domain.
 		return domain.Event{}, fmt.Errorf("preserve source payload: %w", err)
 	}
 	evaluations := make([]domain.EventEvaluation, len(draft.Evaluations))
+	severityConfig := f.severity
+	dynamic := false
+	if f.runtimeSeverity != nil {
+		snapshot := f.runtimeSeverity.SeveritySnapshot()
+		severityConfig = snapshot.Severity
+		dynamic = snapshot.Enabled
+	}
 	for index, evaluation := range draft.Evaluations {
-		severity, err := f.severityResolver.Resolve(f.source, f.severity, evaluation.Severity)
+		severity, err := f.severityResolver.Resolve(f.source, severityConfig, evaluation.Severity)
+		// 动态等级模式保留无法识别的标准等级，交由 Lifecycle 落 rejected；
+		// 不能在删除等级时把旧事件悄悄降为全局默认等级。
+		if dynamic && evaluation.Severity != "" {
+			if mapped, ok := f.source.SeverityMapping[evaluation.Severity]; ok {
+				severity = mapped
+				err = nil
+			} else if f.source.DefaultSeverity == "" {
+				severity = evaluation.Severity
+				err = nil
+			}
+		}
 		if err != nil {
 			return domain.Event{}, err
 		}

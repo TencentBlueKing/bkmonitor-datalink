@@ -68,20 +68,20 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | accepted        | 事件级表示至少产生一项 Alert 变更；判定级表示该级别被接受并关联 Alert                                                                |
 | suppressed      | 判定级表示低等级触发被抑制或旧级别终结被升级替代；事件级表示无 Alert 变更但存在抑制，关联实施抑制的 Alert                            |
 | orphaned        | 判定级表示 resolved/closed 未匹配同级活动 Alert；整个事件 orphaned 时关联列表为空                                           |
-| rejected        | Event 在清洗或领域校验阶段被确定性拒绝                                                            |
+| rejected        | Event 被确定性拒绝；Lifecycle 遇到未知标准等级时持久化该终态并跳过                                                            |
 | cause           | FinalHook 变更原因，包含 source event、user operation 或 system operation 的类型和稳定 ID         |
 
-## 动态配置候选术语
+## 动态配置术语
 
 来源管理术语分别用于[EventSource 动态配置](../design/event-source-dynamic-configuration.md)和
-[部分配置动态化](../design/dynamic-configuration.md)，来源管理已接入实现，全局配置动态化仍为方案。两项独立管理版本与发布，
+[部分配置动态化](../design/dynamic-configuration.md)，来源管理与选定等级配置同步均已接入实现。两项独立管理，
 不定义跨来源与全局配置的统一 ConfigRelease。
 
-| 术语 | 候选定义 |
+| 术语 | 定义 |
 | --- | --- |
 | EventSourceRecord | 带管理作用域、资源版本与管理者的来源定义，仅属于 EventSource 项目 |
 | EventSourceRelease | 单来源一次发布的完整不可变配置快照，不包含全局配置；与 Record 兼容 ES/MySQL 单对象操作 |
-| SeverityPolicy | 部分配置动态化中的全局等级定义与默认值，独立于来源版本管理 |
+| SeverityPolicy | deployment 内当前等级定义与默认值，支持动态来源同步，独立于来源版本管理 |
 | event_source_version | Event 生成/Alert 创建时实际使用的来源 Release 版本，不是执行代次 |
 | desired / applied revision | 期望发布版本与运行时实际应用版本，保存成功不等于生效成功 |
 
@@ -89,7 +89,7 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 
 以下术语用于[中心化任务调度协议](../design/task-scheduling-protocol.md)。当前容灾边界为有界自停模型。
 
-| 术语 | 候选定义 |
+| 术语 | 定义 |
 | --- | --- |
 | TaskKey | 带 deployment、管理/租户作用域、模块与稳定资源/分片身份的互斥执行单元 |
 | assignment_epoch | 同一 TaskKey 的执行代次，每次重新分配递增，不等于来源发布版本 |
@@ -102,3 +102,5 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 
 - **具名 hook**：`EventSource.hooks` 中按顺序执行的插件实例，`name` 是该来源内唯一的稳定实例身份，`type` 是内置注册名，`config` 是该插件的参数。当前内置 `kafka` 与 `active-alert-by-strategy`。
 - **活跃告警策略索引**：由 `active-alert-by-strategy` 将 Alert 当前状态投影到 Redis set，按租户和 `labels.strategy_id` 分组，成员为 fingerprint。它是尽力更新的输出索引，不是 Alert 权威状态。
+
+动态配置的最后有效快照用于上游异常和进程重启恢复，不是事件历史配置版本。

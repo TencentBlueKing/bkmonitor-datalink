@@ -262,11 +262,39 @@ func validateOptionalTextLength(name, value string, maxLength int) error {
 	return nil
 }
 
-// ValidateEventRedelivery 允许跨发布重投复用已保存的 Event，但不允许同一身份携带不同原始事实。
+// ValidateEventRedelivery 允许跨发布或动态等级重映射的重投复用已保存 Event，不覆盖原始事实。
 // 这只用于 create 冲突核对；生命周期 CAS 仍使用 ValidateEventReplacement。
 func ValidateEventRedelivery(incoming, stored Event) error {
-	if incoming.EventSourceVersion != stored.EventSourceVersion && incoming.EventID == stored.EventID && incoming.BKTenantID == stored.BKTenantID && incoming.EventSourceID == stored.EventSourceID && incoming.ReceivedAt.Equal(stored.ReceivedAt) && incoming.SourceEventID == stored.SourceEventID && incoming.SourceAlertID == stored.SourceAlertID && len(incoming.SourceRawData) > 0 && reflect.DeepEqual(incoming.SourceRawData, stored.SourceRawData) {
-		return nil
+	if incoming.EventID == stored.EventID && incoming.BKTenantID == stored.BKTenantID && incoming.EventSourceID == stored.EventSourceID && incoming.ReceivedAt.Equal(stored.ReceivedAt) && incoming.SourceEventID == stored.SourceEventID && incoming.SourceAlertID == stored.SourceAlertID && len(incoming.SourceRawData) > 0 && reflect.DeepEqual(incoming.SourceRawData, stored.SourceRawData) {
+		if incoming.EventSourceVersion != stored.EventSourceVersion {
+			return nil
+		}
+		// 同一来源版本只允许等级映射差异；动作、原因及其数量不能随重投变化。
+		type actionFact struct {
+			action EventAction
+			reason string
+		}
+		counts := map[actionFact]int{}
+		for _, e := range incoming.Evaluations {
+			counts[actionFact{e.Action, e.ActionReason}]++
+		}
+		for _, e := range stored.Evaluations {
+			counts[actionFact{e.Action, e.ActionReason}]--
+		}
+		same := true
+		for _, count := range counts {
+			if count != 0 {
+				same = false
+				break
+			}
+		}
+		if same {
+			candidate := incoming.Clone()
+			candidate.Evaluations = slices.Clone(stored.Evaluations)
+			if err := ValidateEventReplacement(candidate, stored); err == nil {
+				return nil
+			}
+		}
 	}
 	return ValidateEventReplacement(incoming, stored)
 }

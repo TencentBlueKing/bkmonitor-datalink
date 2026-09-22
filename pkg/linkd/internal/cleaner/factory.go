@@ -17,18 +17,23 @@ import (
 	"linkd/internal/config"
 	"linkd/internal/consume"
 	consumekafka "linkd/internal/consume/kafka"
+	"linkd/internal/runtimeconfig"
 )
 
 // Factory 为每个启用 EventSource 创建独立 Kafka Session、Mapper、Handler 和 Runtime。
 type Factory struct {
-	events        EventBatchWriter
-	mailboxes     MailboxWriter
-	receiveGate   ReceiveGate
-	logger        Logger
-	runtimeConfig config.CleanerRuntimeConfig
-	severity      config.SeverityConfig
-	observer      func(config.EventSource) consume.Observer
+	events          EventBatchWriter
+	mailboxes       MailboxWriter
+	receiveGate     ReceiveGate
+	logger          Logger
+	runtimeConfig   config.CleanerRuntimeConfig
+	severity        config.SeverityConfig
+	runtimeSeverity *runtimeconfig.Severity
+	observer        func(config.EventSource) consume.Observer
 }
+
+// UseSeverity 必须在 NewFlow 前注入进程共享的配置状态。
+func (f *Factory) UseSeverity(state *runtimeconfig.Severity) { f.runtimeSeverity = state }
 
 // NewFactory 创建默认 cleaner FlowFactory。
 func NewFactory(
@@ -67,7 +72,19 @@ func (f *Factory) NewFlow(ctx context.Context, source config.EventSource) (Flow,
 	if ctx == nil {
 		return nil, fmt.Errorf("create cleaner flow: context must not be nil")
 	}
-	mapper, err := NewMapper(source, f.severity)
+	var mapper *Mapper
+	var err error
+	if f.runtimeSeverity != nil {
+		var factory *EventFactory
+		factory, err = NewDynamicEventFactory(source, f.runtimeSeverity)
+		if err == nil {
+			var sc SourceCleaner
+			sc, err = registeredCleaner(source.WithDefaults().Cleaner.Type)
+			mapper = &Mapper{cleaner: sc, factory: factory}
+		}
+	} else {
+		mapper, err = NewMapper(source, f.severity)
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -527,6 +527,26 @@ func (s EventSource) MapSeverity(raw string, severity SeverityConfig) (string, e
 	return fallback, nil
 }
 
+// ValidateRuntimeSource 在动态等级模式只校验来源结构；已删除的引用留待 Lifecycle 拒绝，
+// 避免某个旧 mapping 阻止整个来源重启。新建/编辑来源仍使用完整引用校验。
+func ValidateRuntimeSource(s EventSource, severity SeverityConfig, dynamic bool) error {
+	if dynamic {
+		for _, target := range s.SeverityMapping {
+			if err := validateBoundedText("severity_mapping target", target, 1, 32); err != nil {
+				return err
+			}
+		}
+		if s.DefaultSeverity != "" {
+			if err := validateBoundedText("default_severity", s.DefaultSeverity, 1, 32); err != nil {
+				return err
+			}
+		}
+		s.SeverityMapping = nil
+		s.DefaultSeverity = ""
+	}
+	return ValidateEventSources([]EventSource{s}, severity)
+}
+
 func (c KafkaStorageConfig) validate() error {
 	if c.FetchMaxWaitMilliseconds < 10 || c.FetchMaxWaitMilliseconds > 5000 {
 		return fmt.Errorf("fetch_max_wait_milliseconds must be between 10 and 5000")

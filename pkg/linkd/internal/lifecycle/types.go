@@ -61,7 +61,7 @@ type AlertIDGenerator interface {
 	Generate(event domain.Event) (string, error)
 }
 
-// SeverityTable 提供当前进程冻结的严重程度排序。
+// SeverityTable 提供一次裁决内一致的严重程度排序。
 type SeverityTable interface{ Priority(name string) (int, bool) }
 
 type Logger interface {
@@ -106,6 +106,7 @@ type Processor struct {
 	enrichObserver EnrichObserver
 	finalHooks     []NamedFinalHook
 	severity       SeverityTable
+	configDigest   string
 	upgradePolicy  string
 	clock          Clock
 	logger         Logger
@@ -154,6 +155,8 @@ func NewProcessor(
 
 // CloseAlertCommand 是用户或系统直接关闭 active Alert 的稳定幂等命令。
 type CloseAlertCommand struct {
+	// ConfigDigest 在配置变更触发的系统关闭中提供诊断上下文。
+	ConfigDigest string
 	OperationID  string
 	BKTenantID   string
 	AlertID      string

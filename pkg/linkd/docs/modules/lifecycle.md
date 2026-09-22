@@ -341,3 +341,11 @@ cause 执行 FinalHook，再把 close 与 push AlertLog 一次批量写入。相
 rejected 等结果不一定生成日志，不能单独作为“Event 已处理”的判据。
 
 配置中的 Signal、Mailbox、lease、Retry 和并发预算见[配置指南](../guides/configuration.md)。
+
+
+## 动态等级变更
+
+等级来源、恢复与分发由[动态配置](../design/dynamic-configuration.md)管理，Lifecycle 只读取进程内快照。
+未知等级的活动 Alert 在处理到同一 fingerprint 时作为 system 操作关闭；对应清理意图保存在 EventPlan，
+用于关闭后日志/Hook 失败时幂等补齐。Event 包含任何未知等级则整条标记 `rejected/unknown_severity`，
+不执行其余 evaluation 的业务操作，持久化完成后正常确认 Mailbox，不修改已经终态的 Event 或 Alert。

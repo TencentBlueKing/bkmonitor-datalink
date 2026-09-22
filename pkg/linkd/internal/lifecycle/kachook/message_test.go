@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
 	"linkd/internal/domain"
 	"linkd/internal/lifecycle"
 )
@@ -54,6 +53,26 @@ func TestConvertMessageMapsAlertAndEnrichToKACAlarm(t *testing.T) {
 	}
 	if message.CloseTime != nil || message.CloseReason != nil {
 		t.Fatalf("active close fields=%+v", message)
+	}
+}
+
+func TestNativeLevelAndUnknownSystemClosure(t *testing.T) {
+	alert := testAlert()
+	alert.Severity = "custom"
+	input := lifecycle.FinalHookInput{Cause: lifecycle.AlertChangeCause{Type: lifecycle.AlertChangeCauseSourceEvent, ID: "event"}, Alert: alert, Outcome: lifecycle.OutcomeAlertCreated}
+	message, err := convertMessageWithLevel(input, func(name string) (string, error) { return name, nil })
+	if err != nil || message.Level != "custom" {
+		t.Fatalf("custom level failed: %v", err)
+	}
+	input.Alert.Status = domain.AlertStatusClosed
+	input.Alert.EndType = domain.AlertEndTypeSystem
+	input.Alert.EndReason = "unknown_severity"
+	end := input.Alert.UpdateAt
+	input.Alert.EndAt = &end
+	input.Outcome = lifecycle.OutcomeAlertClosed
+	message, err = convertMessage(input)
+	if err != nil || message.Level != "custom" || message.Action != "close" {
+		t.Fatalf("unknown system closure rejected: %v", err)
 	}
 }
 

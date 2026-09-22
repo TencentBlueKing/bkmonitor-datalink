@@ -38,6 +38,10 @@ type AlertMutation struct {
 // EventPlan 保存副作用执行前的裁决快照。最多结束一个旧 Alert 并创建一个新 Alert。
 // 来源事实、排序配置或全局升级策略变化，都不能改变已经提交的计划。
 type EventPlan struct {
+	// SystemClose 保存事件裁决前的未知等级清理，独立于事件业务关联，重试使用同一时间。
+	SystemClose *domain.Alert `json:"system_close,omitempty"`
+	// ConfigDigest 仅用于诊断，不要求加载历史配置。
+	ConfigDigest    string                   `json:"config_digest,omitempty"`
 	UpgradePolicy   string                   `json:"upgrade_policy"`
 	Mutations       []AlertMutation          `json:"mutations"`
 	Logs            []domain.AlertLog        `json:"logs"`
@@ -62,6 +66,10 @@ func (p *EventPlan) Clone() *EventPlan {
 		return nil
 	}
 	result := *p
+	if p.SystemClose != nil {
+		a := p.SystemClose.Clone()
+		result.SystemClose = &a
+	}
 	result.Mutations = slices.Clone(p.Mutations)
 	for i := range result.Mutations {
 		result.Mutations[i].Alert = result.Mutations[i].Alert.Clone()
@@ -84,6 +92,13 @@ func (p *EventPlan) Normalize() (*EventPlan, error) {
 		return nil, err
 	}
 	result := p.Clone()
+	if result.SystemClose != nil {
+		a, err := result.SystemClose.Normalize()
+		if err != nil {
+			return nil, err
+		}
+		result.SystemClose = &a
+	}
 	for i := range result.Mutations {
 		alert, err := result.Mutations[i].Alert.Normalize()
 		if err != nil {
@@ -103,6 +118,14 @@ func (p *EventPlan) Normalize() (*EventPlan, error) {
 
 // Validate 校验计划大小和所有持久化目标，实际租户和事件边界由 ApplyEventResult 校验。
 func (p *EventPlan) Validate() error {
+	if p.SystemClose != nil {
+		if err := p.SystemClose.Validate(); err != nil {
+			return err
+		}
+		if p.SystemClose.Status != domain.AlertStatusClosed || p.SystemClose.EndType != domain.AlertEndTypeSystem || p.SystemClose.EndReason != "unknown_severity" {
+			return fmt.Errorf("invalid system severity closure")
+		}
+	}
 	if p.UpgradePolicy != "update_current" && p.UpgradePolicy != "close_and_create" {
 		return fmt.Errorf("invalid plan upgrade policy")
 	}
@@ -190,6 +213,11 @@ func ApplyEventResult(current StoredEvent, result EventResult) (domain.Event, Ev
 func ValidateEventPlan(event domain.Event, plan *EventPlan) error {
 	if err := plan.Validate(); err != nil {
 		return err
+	}
+	if a := plan.SystemClose; a != nil {
+		if a.BKTenantID != event.BKTenantID || a.EventSourceID != event.EventSourceID || a.Fingerprint != event.Fingerprint {
+			return fmt.Errorf("system closure scope mismatch")
+		}
 	}
 	if len(plan.Evaluations) != len(event.Evaluations) {
 		return fmt.Errorf("%w: plan evaluations mismatch", ErrInvalidArgument)

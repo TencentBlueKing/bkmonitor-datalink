@@ -56,6 +56,9 @@ export function registerSourceRoutes(
   app.get("/local-api/scheduling", async (_request, reply) =>
     proxy("GET", "/api/v1/runtime", undefined, reply),
   );
+  app.get("/local-api/dynamic-config", async (_request, reply) =>
+    proxy("GET", "/api/v1/dynamic-config", undefined, reply),
+  );
   async function proxy(
     method: string,
     path: string,

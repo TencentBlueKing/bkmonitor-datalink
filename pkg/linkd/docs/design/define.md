@@ -155,13 +155,13 @@ AlertLog 是围绕一条 Alert 的不可变流水，记录状态操作、抑制�
 
 ## 7. Severity
 
-Severity 是进程级、运行期冻结的有序 name 表。默认值为 `critical(1)`、`warning(2)`、`info(3)`，
+Severity 是 deployment 内的有序 name 表，默认读取启动 YAML，启用动态配置后在线更新。默认值为 `critical(1)`、`warning(2)`、`info(3)`，
 priority 越小越严重。自定义 levels 整体替换默认表，name 和 priority 必须分别唯一；Event 和 Alert
 只保存 name，不保存 priority。
 
 EventSource 先使用 `severity_mapping` 映射来源值；未命中但原值已经是全局 Severity name 时直接使用，
 否则使用来源 `default_severity`，再退回全局 `default_severity`。配置变更不会回溯改写存量 Event 或 Alert，当前实现也不会扫描存量数据校验
-Severity name 兼容性。
+Severity name 兼容性。动态模式保留未映射的未知标准等级；Lifecycle 将含未知等级的未处理 Event 标记 rejected，处理到未知等级活动 Alert 时系统关闭。具体恢复与传播边界见[动态配置设计](dynamic-configuration.md)。
 
 ## 8. 状态归属
 

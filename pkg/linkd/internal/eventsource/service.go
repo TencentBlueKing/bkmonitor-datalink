@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"linkd/internal/config"
+	"linkd/internal/runtimeconfig"
 )
 
 var (
@@ -58,10 +59,14 @@ type Release struct {
 
 // Service 将 API、provider 和显式导入统一成来源发布用例。
 type Service struct {
-	docs     Documents
-	severity config.SeverityConfig
-	cleaner  config.CleanerRuntimeConfig
+	runtimeSeverity *runtimeconfig.Severity
+	docs            Documents
+	severity        config.SeverityConfig
+	cleaner         config.CleanerRuntimeConfig
 }
+
+// UseSeverity 注入控制面统一配置，必须在服务开始接受并发请求前调用。
+func (s *Service) UseSeverity(state *runtimeconfig.Severity) { s.runtimeSeverity = state }
 
 // New 创建来源服务，不隐式导入配置。
 func New(d Documents, severity config.SeverityConfig, defaults ...config.CleanerRuntimeConfig) *Service {
@@ -125,7 +130,11 @@ func (s *Service) Apply(ctx context.Context, spec config.EventSource, expected i
 	if err := spec.Cleaner.RuntimeConfig(s.cleaner).Validate(); err != nil {
 		return Record{}, err
 	}
-	if e := config.ValidateEventSources([]config.EventSource{spec}, s.severity); e != nil {
+	severity := s.severity
+	if s.runtimeSeverity != nil {
+		severity = s.runtimeSeverity.SeveritySnapshot().Severity
+	}
+	if e := config.ValidateEventSources([]config.EventSource{spec}, severity); e != nil {
 		return Record{}, e
 	}
 	r, t, e := s.get(ctx, spec.EventSourceID)

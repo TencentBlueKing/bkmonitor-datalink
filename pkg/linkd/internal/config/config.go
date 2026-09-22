@@ -132,6 +132,10 @@ func (c Config) Redacted() Config {
 	}
 	if c.ControlPlane != nil {
 		controlPlane := c.ControlPlane.WithDefaults()
+		if controlPlane.DynamicConfig != nil {
+			v := controlPlane.DynamicConfig.Redacted()
+			controlPlane.DynamicConfig = &v
+		}
 		redacted.ControlPlane = &controlPlane
 	}
 	if c.Telemetry != nil {

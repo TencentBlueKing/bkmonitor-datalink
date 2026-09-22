@@ -71,6 +71,14 @@ Event/Alert 保存实际使用的 event_source_version，来源级 Stream 支持
 
 实现和边界见[来源管理](docs/design/event-source-dynamic-configuration.md)与[调度协议](docs/design/task-scheduling-protocol.md)。
 
+## 动态配置
+
+`control_plane.dynamic_config.enabled` 默认关闭。启用后可从 Kingeye AlarmLevel MySQL 表定时同步等级，
+或从已约定的 Redis dynamicconfig 字段读取并 watch；来源连接独立配置。
+控制面先持久化最后有效配置再在线分发，重启优先恢复快照，上游故障不会清空当前等级表。
+未知等级 Event 标记 rejected；处理到未知等级活动 Alert 时系统关闭。
+详见[配置指南](docs/guides/configuration.md#动态配置)与[设计和恢复语义](docs/design/dynamic-configuration.md)。
+
 ## 本地开发
 
 要求 Go 1.26.7、golangci-lint v2.13.2，以及已安装依赖的 Node.js/pnpm 环境。

@@ -131,12 +131,26 @@ const navigationGroups: Array<{
 ];
 
 export function App() {
-  const [theme, setTheme] = useState<"dark" | "light">("dark");
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    try {
+      return localStorage.getItem("linkd-console-theme") === "light"
+        ? "light"
+        : "dark";
+    } catch {
+      // 浏览器禁用本地存储时仍可使用默认主题和本次会话内的切换。
+      return "dark";
+    }
+  });
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document
       .querySelector('meta[name="theme-color"]')
       ?.setAttribute("content", theme === "dark" ? "#090d13" : "#f4f7fa");
+    try {
+      localStorage.setItem("linkd-console-theme", theme);
+    } catch {
+      // 存储不可用不能阻断页面渲染或主题切换。
+    }
   }, [theme]);
   const routeLocation = useLocation();
   const [timeMode, setTimeMode] = useState<TimeMode>("local");

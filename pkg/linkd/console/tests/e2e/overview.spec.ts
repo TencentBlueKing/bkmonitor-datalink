@@ -65,6 +65,15 @@ test("shows the overview and storage navigation", async ({ page }) => {
 
   await page.getByLabel("重试速率说明").hover();
   await expect(page.getByRole("tooltip")).toContainText("可恢复失败");
+  await page.getByRole("button", { name: "切换为浅色模式" }).click();
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  await expect(
+    page.getByRole("button", { name: "切换为深色模式" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "切换为深色模式" }).click();
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 });
 
 test("can leave a failed query page through the sidebar", async ({ page }) => {

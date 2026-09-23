@@ -9,6 +9,9 @@ ES 支持范围和部署注意事项见 [Elasticsearch 版本兼容](elasticsear
 
 完整启动参数、环境变量、接口与安全边界见 [Console README](../../console/README.md)。
 
+深浅主题选择保存在当前浏览器的 localStorage，刷新页面或重新打开同站点后恢复上次选择；首次访问默认深色。
+浏览器禁用本地存储时仍可切换主题，但选择仅在当前页面内有效。
+
 ## 感知模型
 
 ```text

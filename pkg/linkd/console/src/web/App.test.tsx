@@ -4,10 +4,13 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
+import { explorerCapabilities } from "../../tests/fixtures/explorer";
 
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  localStorage.clear();
 });
 
 describe("App", () => {
@@ -69,6 +72,36 @@ describe("App", () => {
     expect(
       await screen.findByRole("heading", { name: "处理状态" }),
     ).toBeInTheDocument();
+    expect(localStorage.getItem("linkd-console-theme")).toBe("light");
+    cleanup();
+    renderApp("/overview");
+    expect(document.documentElement).toHaveAttribute("data-theme", "light");
+    act(() => screen.getByRole("button", { name: "切换为深色模式" }).click());
+    cleanup();
+    renderApp("/overview");
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+    expect(localStorage.getItem("linkd-console-theme")).toBe("dark");
+  });
+
+  it("falls back to dark for an invalid stored theme", () => {
+    localStorage.setItem("linkd-console-theme", "invalid");
+    renderThemePage();
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+    expect(
+      screen.getByRole("button", { name: "切换为浅色模式" }),
+    ).toBeInTheDocument();
+  });
+
+  it("allows theme switching when browser storage is unavailable", () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new DOMException("Storage disabled", "SecurityError");
+    });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("Storage disabled", "SecurityError");
+    });
+    renderThemePage();
+    act(() => screen.getByRole("button", { name: "切换为浅色模式" }).click());
+    expect(document.documentElement).toHaveAttribute("data-theme", "light");
   });
 
   it("keeps sidebar navigation usable after an entity query fails", async () => {
@@ -218,6 +251,27 @@ function renderApp(path: string) {
       </MemoryRouter>
     </QueryClientProvider>,
   );
+}
+
+function renderThemePage() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) =>
+      response(
+        String(input).includes("capabilities")
+          ? explorerCapabilities
+          : {
+              entity: "events",
+              source: "elasticsearch",
+              items: [],
+              total: 0,
+              facets: [],
+              timeline: [],
+            },
+      ),
+    ),
+  );
+  return renderApp("/explore/events");
 }
 
 function response(value: unknown, status = 200): Response {

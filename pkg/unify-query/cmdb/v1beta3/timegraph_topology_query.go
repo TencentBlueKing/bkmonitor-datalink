@@ -98,6 +98,11 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		return cmdb.SharedTopologyResult{}, lookBackErr
 	}
 
+	provider := m.getSchemaProvider()
+	if err := validateSchemaProvider(provider, request.SpaceUID); err != nil {
+		return cmdb.SharedTopologyResult{}, errors.WithMessage(err, "validate topology schema")
+	}
+
 	_, relationSpan := trace.NewSpan(ctx, "timegraph-resolve-topology-relations")
 	var relationErr error
 	relations := m.sharedTopologyRelations(request.SpaceUID, request.AllowedCategories, request.AllowedRelationTypes, direction)

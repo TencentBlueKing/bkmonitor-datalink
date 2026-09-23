@@ -1,4 +1,5 @@
 import { registerSourceRoutes } from "./sources.js";
+import { registerCloseAlert } from "./close-alert.js";
 import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
 
@@ -89,6 +90,7 @@ async function registerConsoleRoutes(
   basePath: string,
 ): Promise<void> {
   app.get("/local-api/version", () => readBuildInfo());
+  registerCloseAlert(app, config);
   const mysqlConnector = config.mysql ? new MysqlConnector(config) : undefined;
   const elasticsearchConnector = config.elasticsearch
     ? new ElasticsearchConnector(config)

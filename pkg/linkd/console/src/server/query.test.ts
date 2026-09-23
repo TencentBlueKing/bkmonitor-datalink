@@ -25,6 +25,35 @@ const config = {
 } satisfies ConsoleConfig;
 
 describe("parseSearchQuery", () => {
+  it("maps investigation filters and accepts only the supported sort directions", () => {
+    expect(
+      parseSearchQuery(
+        {
+          outcome: "rejected",
+          subject_id: "host-1",
+          source_event_id: "raw-1",
+          source_alert_id: "origin-alert",
+          enrich_status: "failed",
+          order: "asc",
+        },
+        "alerts",
+        config,
+      ),
+    ).toMatchObject({
+      outcome: "rejected",
+      subjectId: "host-1",
+      sourceEventId: "raw-1",
+      sourceAlertId: "origin-alert",
+      enrichStatus: "failed",
+      order: "asc",
+    });
+    expect(() =>
+      parseSearchQuery({ order: "desc; DROP TABLE alerts" }, "alerts", config),
+    ).toThrow();
+    expect(() =>
+      parseSearchQuery({ enrich_status: "invented" }, "alerts", config),
+    ).toThrow();
+  });
   it("adds a bounded default range", () => {
     const parsed = parseSearchQuery({}, "events", config);
     expect(parsed.limit).toBe(50);

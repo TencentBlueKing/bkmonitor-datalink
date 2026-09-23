@@ -1033,6 +1033,11 @@ export function publicConfig(config: ConsoleConfig) {
           "state",
           "eventSourceId",
           "relatedAlertId",
+          "fingerprint",
+          "outcome",
+          "subjectId",
+          "sourceEventId",
+          "sourceAlertId",
         ],
       },
       alerts: {
@@ -1046,6 +1051,10 @@ export function publicConfig(config: ConsoleConfig) {
           "eventSourceId",
           "fingerprint",
           "severity",
+          "enrichStatus",
+          "subjectId",
+          "sourceEventId",
+          "sourceAlertId",
         ],
       },
       "alert-logs": {

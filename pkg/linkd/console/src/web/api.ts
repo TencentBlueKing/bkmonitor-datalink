@@ -242,22 +242,26 @@ export async function getElasticsearchPerformance() {
 export async function searchEntities(
   entity: EntityKind,
   values: Record<string, string | undefined>,
+  signal?: AbortSignal,
 ): Promise<EntityPage> {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(values))
     if (value) query.set(key, value);
-  return entityPageSchema.parse(await request(`/local-api/${entity}?${query}`));
+  return entityPageSchema.parse(
+    await request(`/local-api/${entity}?${query}`, signal),
+  );
 }
 
 export async function getEntityStats(
   entity: EntityKind,
   values: Record<string, string | undefined>,
+  signal?: AbortSignal,
 ): Promise<EntityStats> {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(values))
     if (value) query.set(key, value);
   return entityStatsSchema.parse(
-    await request(`/local-api/${entity}/stats?${query}`),
+    await request(`/local-api/${entity}/stats?${query}`, signal),
   );
 }
 
@@ -265,10 +269,14 @@ export async function getEntity(
   entity: EntityKind,
   tenantId: string,
   id: string,
+  signal?: AbortSignal,
 ): Promise<EntityItem> {
   const query = new URLSearchParams({ bk_tenant_id: tenantId });
   return entityItemSchema.parse(
-    await request(`/local-api/${entity}/${encodeURIComponent(id)}?${query}`),
+    await request(
+      `/local-api/${entity}/${encodeURIComponent(id)}?${query}`,
+      signal,
+    ),
   );
 }
 

@@ -1,7 +1,7 @@
 # Linkd Console
 
 Linkd Console 是运行感知与来源配置工具，默认本地模式只监听 loopback。React 页面只访问同源 `/local-api/*`；Node
-连接层读取静态连接配置并代理正式 EventSource API，其他基础设施和实体查询保持只读。
+连接层读取静态连接配置并代理正式 EventSource 与 Alert 关闭 API，基础设施和实体查询保持只读。
 它不参与消息消费或确认，不直接写入业务存储。
 
 ## 启动
@@ -88,7 +88,7 @@ docker run --rm --name linkd-console \
 - Cleaner：EventSource、Kafka partition、transform、Event store、Mailbox 和 Kafka confirm。
 - Lifecycle：Event 处理与 Signal 调度分离；独立 Enrich 区域展示同步丰富总体状态、在途调用、平均/P95/P99、Processor 状态与 P99、诊断、DataSource 调用与 P99、payload 大小；独立 ES 合批区展示范围执行次数、提交/成功/失败操作数、每批大小、字节数、排队与执行耗时，并显示配置推导值。
 - Control Plane：四个固定管理任务的 owner、依赖、周期、最近结果、耗时和收敛工作量。
-- Events、Alerts、AlertLogs：只读列表、详情、关联跳转和当前 schema 能力内的统计。
+- Events、Alerts、AlertLogs：分对象查询、结构化详情、关联列表与流水、当前 schema 能力内的统计；Alert 详情支持通过控制面主动关闭。
 - Kafka、Redis、Elasticsearch：实时只读基础设施状态；ES 节点快照单独显示 CPU、heap、write active/queue、累计 rejected、当前 merge 和未提交 translog，不把累计量解释为待处理队列。
 - Configuration：Linkd YAML 的脱敏有效摘要。
 
@@ -141,10 +141,16 @@ GET /local-api/metrics
 GET /local-api/{events|alerts|alert-logs}
 GET /local-api/{events|alerts|alert-logs}/stats
 GET /local-api/{events|alerts|alert-logs}/:id
+POST /local-api/alerts/:id/close
 ```
 
 接口只使用固定查询模板，不接受任意 SQL、PromQL、Redis 命令、Kafka Admin 写操作或 ES target。
 实体列表默认最近一小时、50 条，最大七天、单页 200 条；精确 ID 可以省略时间范围。
+
+实体页面的查询、关联查看、时间语义和主动关闭流程见 [Console 实体排障](../docs/guides/console.md#实体查询与关联排障)。
+`order=asc|desc` 控制实体业务时间排序，默认 `desc`；游标绑定全部筛选与排序，更改条件须从首页开始。
+Event 新增 `fingerprint/outcome/subject_id/source_event_id/source_alert_id` 精确查询；Alert 新增
+`enrich_status/subject_id/source_event_id/source_alert_id` 精确查询。列表与统计使用同样的 ID、时间及业务筛选，统计仍是独立快照。
 
 Event 详情展示来源 values/evaluations，以及 `_processing.evaluations` 中的逐级处理结果；关联跳转遍历
 related_alert_ids，可同时查看旧、新两个 Alert。页面的 related_alert_id 查询参数表示“查询关联此 Alert 的事件”，
@@ -154,11 +160,11 @@ related_alert_ids，可同时查看旧、新两个 Alert。页面的 related_ale
 
 统计不会修改 MySQL schema 或 Elasticsearch mapping：
 
-| 对象     | MySQL                               | Elasticsearch                                    |
-| -------- | ----------------------------------- | ------------------------------------------------ |
-| Event    | received 趋势、state、related Alert | received 趋势、EventSource、state、related Alert |
-| Alert    | 当前 status、EventSource、severity  | update 趋势、status、EventSource、severity       |
-| AlertLog | created 趋势、operation/operator    | created 趋势、operation/operator                 |
+| 对象     | MySQL                                                      | Elasticsearch                                    |
+| -------- | ---------------------------------------------------------- | ------------------------------------------------ |
+| Event    | received 趋势、state、related Alert                        | received 趋势、EventSource、state、related Alert |
+| Alert    | 同列表筛选下的 status、EventSource、severity（无时间趋势） | update 趋势、status、EventSource、severity       |
+| AlertLog | created 趋势、operation/operator                           | created 趋势、operation/operator                 |
 
 除低基数的 AlertLog `operation_kind/operator_kind` 外，开放 JSON 字段只用于已有的精确调试过滤，
 不用于大范围聚合。所有统计继续受时间范围、查询超时和返回数量上限约束。
@@ -213,7 +219,7 @@ Event Sources 页面通过正式控制面 API 管理来源，分为事件来源�
 需要设置 Linkd YAML 的 dispatch.url（或 LINKD_CONTROL_PLANE_URL）和服务端 LINKD_API_TOKEN；token 不下发浏览器。
 来源配置不再以启动 YAML 为运行权威，编辑时省略 security 保留旧凭据，禁止把脱敏占位内容提交为凭据。
 Redis 页面可按来源选择派生 Stream、Mailbox 和 lease。Kafka 输入诊断采用中心元数据和 worker ownership 报告，未重复采集的 offset/ISR 显示未知。
-本次新增的配置写入仅代理控制面，实体存储和其他运维查询仍只读。
+来源配置写入和主动关闭告警均代理控制面，Console 不直接写实体存储；其他运维查询仍只读。
 
 ## 指标目录
 

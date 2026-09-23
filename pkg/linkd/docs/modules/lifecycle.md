@@ -319,7 +319,9 @@ type CloseAlertCommand struct {
 cause 执行 FinalHook，再把 close 与 push AlertLog 一次批量写入。相同命令可补齐流水和输出；不同
 命令不能改写已有终态。
 
-当前没有 HTTP、CLI 或 Kafka 直接关闭入口。
+控制面已提供受管理 token 保护的 [HTTP 主动关闭入口](../reference/contracts/alert-close.md)，Console 通过
+该入口调用现有用例；当前仍没有 CLI 或 Kafka 直接关闭入口。独立关闭请求最多四个并发、每次十秒，
+使用当前已发布来源的 Hook 配置；不重新丰富。CAS 成功后缓存失败的重试也会修复近期缓存，再补齐输出和流水。
 
 ## 8. 恢复与数据安全边界
 

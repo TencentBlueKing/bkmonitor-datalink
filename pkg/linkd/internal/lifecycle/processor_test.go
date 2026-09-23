@@ -315,6 +315,61 @@ func TestCloseAlert(t *testing.T) {
 	}
 }
 
+func TestCloseAlertRetryRepairsCacheAfterCAS(t *testing.T) {
+	repo := memory.New()
+	processor := newTestProcessor(t, repo, &recordingHook{})
+	event := testEvent("event-close-cache", "warning")
+	created := persistAndProcess(t, repo, processor, event)
+	cache := newMemoryRecentAlertCache()
+	processor.recentAlerts = cache
+	command := CloseAlertCommand{OperationID: "close-cache", BKTenantID: event.BKTenantID, AlertID: created.AlertIDs[0], OperatorKind: domain.OperatorKindUser, OperatorID: "user", Reason: "manual", EffectiveAt: event.ReceivedAt.Add(time.Hour)}
+	cache.putErr = errors.New("redis unavailable")
+	if _, err := processor.CloseAlert(context.Background(), command); err == nil {
+		t.Fatal("cache failure was ignored")
+	}
+	stored, err := repo.GetAlert(context.Background(), command.BKTenantID, command.AlertID)
+	if err != nil || stored.Alert.Status != domain.AlertStatusClosed {
+		t.Fatalf("CAS should already be committed: %#v %v", stored, err)
+	}
+	cache.putErr = nil
+	result, err := processor.CloseAlert(context.Background(), command)
+	if err != nil || !result.AlreadyClosed {
+		t.Fatalf("retry = %#v %v", result, err)
+	}
+	cached, found, err := cache.GetCurrent(context.Background(), activeKeyForTest(result.Alert))
+	if err != nil || !found || cached.Alert.Status != domain.AlertStatusClosed {
+		t.Fatalf("cache repair = %#v %v %v", cached, found, err)
+	}
+	logs, err := repo.ListAlertLogs(context.Background(), command.BKTenantID, command.AlertID, store.PageRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closes := 0
+	for _, log := range logs.Logs {
+		if log.OperationKind == domain.OperationKindClose {
+			closes++
+		}
+	}
+	if closes != 1 {
+		t.Fatalf("close log count = %d", closes)
+	}
+	// 已开始的新生命周期必须继续占据 current 缓存，旧关闭重试不能覆盖它。
+	newer := cached
+	newer.Alert.AlertID = "newer-alert"
+	newer.Alert.CreateAt = result.Alert.CreateAt.Add(time.Hour)
+	newer.Alert.Status = domain.AlertStatusActive
+	if err := cache.PutCurrent(context.Background(), newer); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := processor.CloseAlert(context.Background(), command); err != nil {
+		t.Fatal(err)
+	}
+	current, _, err := cache.GetCurrent(context.Background(), activeKeyForTest(result.Alert))
+	if err != nil || current.Alert.AlertID != "newer-alert" {
+		t.Fatalf("new lifecycle cache overwritten: %#v %v", current, err)
+	}
+}
+
 func TestProcessEventBatchesLogsBeforeFinalEventCAS(t *testing.T) {
 	tests := []struct {
 		name          string

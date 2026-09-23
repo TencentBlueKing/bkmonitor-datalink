@@ -28,6 +28,87 @@ const config = {
 
 afterEach(() => vi.unstubAllGlobals());
 
+it.each(["events", "alerts", "alert-logs"] as const)(
+  "keeps %s stats and list predicates identical and honors ascending pagination",
+  async (entity) => {
+    const bodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string, init?: RequestInit) => {
+        if (input.includes("/_resolve/index/"))
+          return jsonResponse({ indices: [{ name: `linkd-${entity}` }] });
+        if (
+          input.includes("/_pit?") ||
+          (input.endsWith("/_pit") && init?.method === "POST")
+        )
+          return jsonResponse({ id: "pit" });
+        if (input.endsWith("/_pit")) return jsonResponse({ succeeded: true });
+        const body = JSON.parse(String(init?.body));
+        bodies.push(body);
+        return jsonResponse({
+          hits: { hits: [], total: { value: 0 } },
+          aggregations: {},
+        });
+      }),
+    );
+    const connector = new ElasticsearchConnector(config);
+    const params = {
+      limit: 1,
+      tenantId: "tenant",
+      id: "id",
+      eventSourceId: "source",
+      state: "accepted",
+      status: "active",
+      outcome: "alert_updated",
+      fingerprint: "fp",
+      subjectId: "host",
+      sourceEventId: "original",
+      sourceAlertId: "external",
+      enrichStatus: "failed",
+      order: "asc" as const,
+      alertId: "alert",
+      operationKind: "close",
+      operatorKind: "user",
+      from: "2026-09-23T00:00:00.000Z",
+      to: "2026-09-23T01:00:00.000Z",
+    };
+    await connector.search(entity, params);
+    await connector.stats(entity, params);
+    expect(bodies[0].query).toEqual(bodies[1].query);
+    expect(bodies[0].sort).toEqual([
+      {
+        [entity === "events"
+          ? "received_at"
+          : entity === "alerts"
+            ? "update_at"
+            : "created_time"]: "asc",
+      },
+      { bk_tenant_id: "asc" },
+      {
+        [entity === "events"
+          ? "event_id"
+          : entity === "alerts"
+            ? "alert_id"
+            : "log_id"]: "asc",
+      },
+      { _index: "asc" },
+    ]);
+    if (entity !== "alert-logs") {
+      const text = JSON.stringify(bodies[0].query);
+      for (const field of [
+        "subject_id",
+        "source_event_id",
+        "source_alert_id",
+        "fingerprint",
+      ])
+        expect(text).toContain(field);
+      expect(text).toContain(
+        entity === "events" ? "processing.outcome" : "enrich_status",
+      );
+    }
+  },
+);
+
 it("reconciles only the Active alias and rejects partial shard success", async () => {
   const fetcher = vi.fn(
     async (input: string) =>

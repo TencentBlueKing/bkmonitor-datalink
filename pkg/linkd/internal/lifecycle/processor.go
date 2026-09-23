@@ -146,7 +146,7 @@ func (p *Processor) CloseAlert(ctx context.Context, command CloseAlertCommand) (
 	}
 	command.EffectiveAt = command.EffectiveAt.Round(0).UTC()
 	for attempt := 0; attempt < maxCASAttempts; attempt++ {
-		stored, err := p.repository.GetAlert(ctx, command.BKTenantID, command.AlertID)
+		stored, err := p.getAlertCurrent(ctx, command.BKTenantID, command.AlertID)
 		if err != nil {
 			return CloseAlertResult{}, err
 		}
@@ -160,6 +160,11 @@ func (p *Processor) CloseAlert(ctx context.Context, command CloseAlertCommand) (
 			if stored.Alert.Status != domain.AlertStatusClosed || stored.Alert.EndType != endType || stored.Alert.EndReason != command.Reason ||
 				stored.Alert.EndAt == nil || !stored.Alert.EndAt.Equal(command.EffectiveAt) {
 				return CloseAlertResult{}, fmt.Errorf("%w: alert is already terminal", store.ErrInvalidTransition)
+			}
+			// 首次关闭可能在 CAS 成功后写缓存失败；重试必须修复可见性窗口，
+			// 否则旧 active 缓存会持续参与新事件裁决。
+			if err := p.repairClosedAlertCache(ctx, stored); err != nil {
+				return CloseAlertResult{}, fmt.Errorf("repair directly closed alert cache: %w", err)
 			}
 			operationLog, err := operationCloseLog(command, stored.Alert)
 			if err != nil {
@@ -223,6 +228,29 @@ func (p *Processor) CloseAlert(ctx context.Context, command CloseAlertCommand) (
 		return CloseAlertResult{Alert: updated.Alert.Clone()}, nil
 	}
 	return CloseAlertResult{}, fmt.Errorf("close alert after %d CAS attempts: %w", maxCASAttempts, store.ErrVersionConflict)
+}
+
+// 重试可能晚于同 fingerprint 的新生命周期，不能用旧 closed 快照掩盖新 active。
+// 调用方与 Event Processor 共用 fingerprint lease，保护检查到写入之间的窗口。
+func (p *Processor) repairClosedAlertCache(ctx context.Context, stored store.StoredAlert) error {
+	key := store.ActiveAlertKey{BKTenantID: stored.Alert.BKTenantID, EventSourceID: stored.Alert.EventSourceID, Fingerprint: stored.Alert.Fingerprint}
+	cached, found, err := p.recentAlerts.GetCurrent(ctx, key)
+	if err != nil {
+		return err
+	}
+	if found && cached.Alert.AlertID != stored.Alert.AlertID && !cached.Alert.CreateAt.Before(stored.Alert.CreateAt) {
+		return nil
+	}
+	if !found {
+		active, err := p.repository.FindActiveAlert(ctx, key)
+		if err == nil && active.Alert.AlertID != stored.Alert.AlertID {
+			return p.recentAlerts.PutCurrent(ctx, active)
+		}
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return err
+		}
+	}
+	return p.recentAlerts.PutCurrent(ctx, stored)
 }
 
 func (p *Processor) now() (time.Time, error) {

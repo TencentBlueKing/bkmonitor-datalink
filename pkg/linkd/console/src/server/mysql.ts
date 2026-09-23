@@ -175,7 +175,7 @@ export class MysqlConnector {
         throw new Error("invalid mysql cursor");
       const [sortTime, tenantID, entityID] = cursor.values;
       where.push(`(
-        ${spec.timeExpression} < ? OR
+        ${spec.timeExpression} ${params.order === "asc" ? ">" : "<"} ? OR
         (${spec.timeExpression} = ? AND (bk_tenant_id > ? OR (bk_tenant_id = ? AND ${spec.idColumn} > ?)))
       )`);
       values.push(sortTime, sortTime, tenantID, tenantID, entityID);
@@ -190,7 +190,7 @@ export class MysqlConnector {
         ${spec.payloadExpression} AS payload
       FROM ${spec.table}
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-      ORDER BY ${spec.timeExpression} DESC, bk_tenant_id ASC, ${spec.idColumn} ASC
+      ORDER BY ${spec.timeExpression} ${params.order === "asc" ? "ASC" : "DESC"}, bk_tenant_id ASC, ${spec.idColumn} ASC
       LIMIT ?`;
     const [rows] = await this.pool.query<EntityRow[]>(sql, values);
     const visible = rows.slice(0, params.limit);
@@ -247,18 +247,8 @@ export class MysqlConnector {
     const values: unknown[] = [];
     addEqual(where, values, "bk_tenant_id", params.tenantId);
     this.addTimeRange(where, values, spec, params);
-    if (entity === "events") {
-      addEqual(where, values, "processing_state", params.state);
-      if (params.relatedAlertId) {
-        where.push("JSON_CONTAINS(related_alert_ids, JSON_QUOTE(?))");
-        values.push(params.relatedAlertId);
-      }
-    }
-    if (entity === "alert-logs") {
-      addEqual(where, values, "alert_id", params.alertId);
-      addJSONEqual(where, values, "operation_kind", params.operationKind);
-      addJSONEqual(where, values, "operator_kind", params.operatorKind);
-    }
+    addEqual(where, values, spec.idColumn, params.id);
+    this.addEntityFilters(entity, where, values, params);
     const bucketSeconds = statsBucketSeconds(params);
     const bucketNanos = BigInt(bucketSeconds) * 1_000_000_000n;
     const condition = where.length ? `WHERE ${where.join(" AND ")}` : "";
@@ -303,9 +293,9 @@ export class MysqlConnector {
     const where: string[] = [];
     const values: unknown[] = [];
     addEqual(where, values, "bk_tenant_id", params.tenantId);
-    addEqual(where, values, "status", params.status);
-    addEqual(where, values, "event_source_id", params.eventSourceId);
-    addEqual(where, values, "severity", params.severity);
+    addEqual(where, values, "alert_id", params.id);
+    this.addTimeRange(where, values, specs.alerts, params);
+    this.addEntityFilters("alerts", where, values, params);
     const condition = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const totalSQL = `SELECT /*+ MAX_EXECUTION_TIME(${this.timeoutMilliseconds}) */ COUNT(*) AS count FROM linkd_alerts ${condition}`;
     const facet = async (column: "status" | "event_source_id" | "severity") => {
@@ -328,7 +318,7 @@ export class MysqlConnector {
       timeline: [],
       facets,
       warnings: [
-        "当前 MySQL schema 没有独立 update_at 列，因此只展示 Alert 当前快照分布。",
+        "Alert 统计与列表使用相同筛选；时间过滤读取 JSON update_at，当前存储不提供时间趋势。",
       ],
     };
   }
@@ -366,9 +356,22 @@ export class MysqlConnector {
     values: unknown[],
     params: SearchParams,
   ): void {
+    if (entity !== "alert-logs") {
+      for (const [field, value] of [
+        ["subject_id", params.subjectId],
+        ["source_event_id", params.sourceEventId],
+        ["source_alert_id", params.sourceAlertId],
+      ])
+        addJSONEqual(where, values, field!, value);
+    }
     if (entity === "events") {
       addEqual(where, values, "processing_state", params.state);
       addJSONEqual(where, values, "event_source_id", params.eventSourceId);
+      addJSONEqual(where, values, "fingerprint", params.fingerprint);
+      if (params.outcome) {
+        where.push("JSON_UNQUOTE(JSON_EXTRACT(processing, '$.outcome')) = ?");
+        values.push(params.outcome);
+      }
       if (params.relatedAlertId) {
         where.push("JSON_CONTAINS(related_alert_ids, JSON_QUOTE(?))");
         values.push(params.relatedAlertId);
@@ -380,6 +383,7 @@ export class MysqlConnector {
       addEqual(where, values, "event_source_id", params.eventSourceId);
       addEqual(where, values, "fingerprint", params.fingerprint);
       addEqual(where, values, "severity", params.severity);
+      addJSONEqual(where, values, "enrich_status", params.enrichStatus);
       return;
     }
     addEqual(where, values, "alert_id", params.alertId);

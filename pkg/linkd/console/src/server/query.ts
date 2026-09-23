@@ -18,6 +18,14 @@ const rawQuerySchema = z.object({
   alert_id: z.string().max(1024).optional(),
   operation_kind: z.string().max(64).optional(),
   operator_kind: z.string().max(64).optional(),
+  outcome: z.string().max(64).optional(),
+  subject_id: z.string().max(1024).optional(),
+  source_event_id: z.string().max(1024).optional(),
+  source_alert_id: z.string().max(1024).optional(),
+  enrich_status: z
+    .enum(["pending", "succeeded", "partial", "failed", "skipped"])
+    .optional(),
+  order: z.enum(["asc", "desc"]).optional(),
   limit: z.coerce.number().int().positive().optional(),
   cursor: z.string().max(16384).optional(),
 });
@@ -68,6 +76,12 @@ export function parseSearchQuery(
     alertId: parsed.alert_id,
     operationKind: parsed.operation_kind,
     operatorKind: parsed.operator_kind,
+    outcome: parsed.outcome,
+    subjectId: parsed.subject_id,
+    sourceEventId: parsed.source_event_id,
+    sourceAlertId: parsed.source_alert_id,
+    enrichStatus: parsed.enrich_status,
+    order: parsed.order,
     limit,
     cursor: parsed.cursor,
   };

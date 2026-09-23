@@ -30,7 +30,8 @@ import (
 
 // API 提供来源管理和 worker 协议；两类请求使用不同 token。
 type API struct {
-	Previewer interface {
+	AlertCloser AlertCloser
+	Previewer   interface {
 		Preview(context.Context, preview.Request) (preview.Response, error)
 	}
 	DynamicConfig *dynamicconfig.Manager
@@ -45,6 +46,7 @@ func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/metrics/catalog", metricCatalogHandler())
 	mux.HandleFunc("POST /api/v1/enrich/preview", a.previewEnrich)
+	mux.HandleFunc("POST /api/v1/alerts/{id}/close", a.closeAlert)
 	mux.HandleFunc("GET /api/v1/event-sources", a.list)
 	mux.HandleFunc("GET /api/v1/event-sources/{id}", a.get)
 	mux.HandleFunc("PUT /api/v1/event-sources/{id}", a.put)

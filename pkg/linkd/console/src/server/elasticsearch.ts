@@ -286,7 +286,7 @@ export class ElasticsearchConnector {
         // 每个物理索引内 (租户, 实体 ID) 唯一；_index 区分时间桶及归档过渡副本，
         // 在 ES 7.10 的 PIT 中也能形成全序，不依赖 7.12 才引入的 _shard_doc。
         sort: [
-          { [fields.time]: "desc" },
+          { [fields.time]: params.order ?? "desc" },
           { bk_tenant_id: "asc" },
           { [fields.id]: "asc" },
           { _index: "asc" },
@@ -810,6 +810,10 @@ function buildFilters(
     });
   }
   if (entity === "events") {
+    if (params.fingerprint)
+      filters.push({ term: { fingerprint: params.fingerprint } });
+    if (params.outcome)
+      filters.push({ term: { "processing.outcome": params.outcome } });
     if (params.state)
       filters.push({ term: { "processing.state": params.state } });
     if (params.eventSourceId)
@@ -818,6 +822,8 @@ function buildFilters(
       filters.push({ term: { related_alert_ids: params.relatedAlertId } });
   }
   if (entity === "alerts") {
+    if (params.enrichStatus)
+      filters.push({ term: { enrich_status: params.enrichStatus } });
     if (params.status) filters.push({ term: { status: params.status } });
     if (params.eventSourceId)
       filters.push({ term: { event_source_id: params.eventSourceId } });
@@ -831,6 +837,14 @@ function buildFilters(
       filters.push({ term: { operation_kind: params.operationKind } });
     if (params.operatorKind)
       filters.push({ term: { operator_kind: params.operatorKind } });
+  }
+  if (entity !== "alert-logs") {
+    for (const [field, value] of [
+      ["subject_id", params.subjectId],
+      ["source_event_id", params.sourceEventId],
+      ["source_alert_id", params.sourceAlertId],
+    ])
+      if (value) filters.push({ term: { [field!]: value } });
   }
   return filters;
 }

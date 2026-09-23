@@ -272,6 +272,12 @@ func JoinCloseError(runErr *error, runtime *Runtime) {
 
 // OpenReadOnly 只连接并读取已有存储，不初始化表、索引或投影；调用方只注入读取端口。
 func OpenReadOnly(ctx context.Context, cfg config.StorageConfig, maxConnections int) (*Runtime, error) {
+	return OpenExisting(ctx, cfg, maxConnections)
+}
+
+// OpenExisting 连接已有存储且不初始化 schema；调用方可以执行既有领域用例的读写。
+// 只读入口应继续使用 OpenReadOnly 并只注入读取端口。
+func OpenExisting(ctx context.Context, cfg config.StorageConfig, maxConnections int) (*Runtime, error) {
 	if ctx == nil || maxConnections < 1 {
 		return nil, fmt.Errorf("read repository requires context and positive connection limit")
 	}

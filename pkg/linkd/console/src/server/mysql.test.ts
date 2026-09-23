@@ -25,6 +25,88 @@ const config = {
 } satisfies ConsoleConfig;
 
 describe("MysqlConnector", () => {
+  it.each(["events", "alerts", "alert-logs"] as const)(
+    "keeps %s list and every statistic on identical filters",
+    async (entity) => {
+      const query = vi.fn<
+        (sql: string, values?: unknown[]) => Promise<unknown>
+      >(async () => [[], []]);
+      const connector = new MysqlConnector(config, {
+        query,
+      } as unknown as Pool);
+      const params = {
+        limit: 20,
+        tenantId: "tenant",
+        id: "entity",
+        eventSourceId: "source",
+        state: "accepted",
+        status: "active",
+        fingerprint: "fp",
+        subjectId: "host",
+        sourceEventId: "original",
+        sourceAlertId: "external",
+        enrichStatus: "failed",
+        outcome: "alert_updated",
+        severity: "critical",
+        alertId: "alert",
+        operationKind: "close",
+        operatorKind: "user",
+        from: "2026-09-23T00:00:00.000Z",
+        to: "2026-09-23T01:00:00.000Z",
+      };
+      await connector.search(entity, params);
+      const [listSql, listValues] = query.mock.calls[0];
+      const listWhere = listSql.split("WHERE ")[1].split("ORDER BY")[0].trim();
+      query.mockClear();
+      await connector.stats(entity, params);
+      for (const [sql, values] of query.mock.calls) {
+        const clauses = sql
+          .split("WHERE ")[1]
+          .split(/GROUP BY|ORDER BY/)[0]
+          .trim()
+          .split(" AND ");
+        const args = sql.includes(" AS bucket") ? values?.slice(1) : values;
+        const expected = listWhere
+          .split(" AND ")
+          .map((clause, index) => [clause, listValues?.[index]]);
+        expect(clauses.map((clause, index) => [clause, args?.[index]])).toEqual(
+          expect.arrayContaining(expected),
+        );
+        expect(clauses).toHaveLength(expected.length);
+      }
+    },
+  );
+  it("paginates ascending timestamps with stable tenant and ID tie-breaks", async () => {
+    const query = vi.fn<(sql: string, values?: unknown[]) => Promise<unknown>>(
+      async () => [
+        [1, 2].map((n) => ({
+          tenant_id: "tenant",
+          entity_id: `event-${n}`,
+          sort_time: "1788105600000000000",
+          payload: {},
+        })),
+        [],
+      ],
+    );
+    const connector = new MysqlConnector(config, { query } as unknown as Pool);
+    const first = await connector.search("events", { limit: 1, order: "asc" });
+    await connector.search("events", {
+      limit: 1,
+      order: "asc",
+      cursor: first.nextCursor,
+    });
+    expect(query.mock.calls[1][0]).toContain("received_at_ns > ?");
+    expect(query.mock.calls[1][0]).toContain(
+      "ORDER BY received_at_ns ASC, bk_tenant_id ASC, event_id ASC",
+    );
+    await expect(
+      connector.search("events", {
+        limit: 1,
+        order: "desc",
+        cursor: first.nextCursor,
+      }),
+    ).rejects.toThrow("cursor does not match query");
+  });
   it("reconciles only tenant-scoped active alerts without a time cutoff or full payload", async () => {
     const query = vi.fn(async () => [
       [

@@ -211,7 +211,9 @@ export function App() {
                 <span className="readonly-pill">
                   {routeLocation.pathname === "/event-sources"
                     ? "CONFIGURATION API"
-                    : "READ ONLY"}
+                    : routeLocation.pathname === "/explore/alerts"
+                      ? "ALERT OPERATIONS"
+                      : "READ ONLY"}
                 </span>
                 <button
                   className="theme-button"

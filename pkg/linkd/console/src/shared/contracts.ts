@@ -559,6 +559,12 @@ export interface SearchParams {
   alertId?: string;
   operationKind?: string;
   operatorKind?: string;
+  outcome?: string;
+  subjectId?: string;
+  sourceEventId?: string;
+  sourceAlertId?: string;
+  enrichStatus?: string;
+  order?: "asc" | "desc";
   limit: number;
   cursor?: string;
 }

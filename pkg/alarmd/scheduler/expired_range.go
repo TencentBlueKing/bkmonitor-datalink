@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package scheduler
 
 import (
@@ -395,12 +386,28 @@ func (source *ProductionSlotSource) observeRangeGate(
 			facts.UnfinishedSlotEvaluationTime = int64(load.Progress.UnfinishedSlot.Contract.Slot.EvaluationTime)
 		}
 	}
+	// The word is the line's reason_code as well as a fact: with the reason
+	// left empty a degraded result read as reason_not_reported, on a line
+	// that had reported.
 	source.observer.Observe(ctx, observability.Observation{
 		Component: observability.ComponentScheduler, Stage: observability.StageRangeGateDecided,
-		Result: observability.ResultDegraded, Direction: observability.DirectionInternal,
+		Result: rangeGateResult(outcome.word), ReasonCode: observability.ReasonCode(outcome.word),
+		Direction: observability.DirectionInternal,
 		Trace: observability.TraceFields{
 			QueryGroupKey: string(source.queryGroup), EvaluationTime: int64(evaluationTime),
 		},
 		RangeGate: facts,
 	})
+}
+
+// rangeGateResult is the result a round's range_gate line carries for its
+// word. A round that reached the builder and got its range is not degraded
+// -- it is the round the refusals are read against -- and says success;
+// every refusal word is degraded. It used to say degraded for all thirteen,
+// so a line reading degraded/applied contradicted itself.
+func rangeGateResult(word string) observability.Result {
+	if word == observability.RangeGateApplied {
+		return observability.ResultSuccess
+	}
+	return observability.Result(observability.ResultDegraded)
 }

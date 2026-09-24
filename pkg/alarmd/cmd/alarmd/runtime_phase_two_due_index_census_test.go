@@ -167,12 +167,13 @@ func TestFleetPublisherCarriesTheCensusAndWakeFacts(t *testing.T) {
 		}
 	}
 	// And one whose data stopped, so the no-data list is published and its
-	// row carries wake facts like every other.
+	// row carries wake facts like every other: records at one Slot, then
+	// empty rounds whose Slots span the data side's hour.
 	tracker.Observe(context.Background(), observability.Observation{ProgressCompletionKind: "FULL_COMPLETED",
-		Trace: observability.TraceFields{QueryGroupKey: "query-group-c", StrategyID: "1", BusinessID: "2"}})
+		Trace: observability.TraceFields{QueryGroupKey: "query-group-c", StrategyID: "1", BusinessID: "2", EvaluationTime: 20_000 - 3660}})
 	for i := 0; i < fleet.DefaultDegradedRounds; i++ {
 		tracker.Observe(context.Background(), observability.Observation{ProgressCompletionKind: "FULL_EMPTY_COMPLETED",
-			Trace: observability.TraceFields{QueryGroupKey: "query-group-c", StrategyID: "1", BusinessID: "2"}})
+			Trace: observability.TraceFields{QueryGroupKey: "query-group-c", StrategyID: "1", BusinessID: "2", EvaluationTime: int64(20_000 - 120 + 60*i)}})
 	}
 	publisher := fleetPublisher{
 		tracker: tracker, replica: "replica-1", now: clock.now,
@@ -386,5 +387,146 @@ func TestFleetPublisherPutsThePeriodOnEmptyEveryRoundRows(t *testing.T) {
 	}
 	if row := byObject["qg-unindexed"]; row.Kind != fleet.KindEmptyEveryRound || row.EmptyEveryRound == nil || row.EmptyEveryRound.IntervalSeconds != 0 {
 		t.Fatalf("row for the unindexed object = %+v (facts %+v), want listed with no period", row, row.EmptyEveryRound)
+	}
+}
+
+// The fill projection is attached where the period is: at publication, from
+// the same index the row's wake comes from. A flat short window on an
+// indexed object carries it; the same window on an object the index has no
+// entry for has no period to project with and carries none.
+func TestFleetPublisherProjectsTheFillOfAFlatShortWindow(t *testing.T) {
+	clock := &dueIndexClock{at: time.Unix(20_000, 0)}
+	dispatcher := dueIndexDispatcher(clock, metric.NewRecorder(metric.BuildInfo{}), 8, 8,
+		map[execution.QueryGroupIdentity]walkRunner{"qg-60s": {}})
+	index := dispatcher.dueIndex
+	index.Record("qg-60s", dispatcher.bundle.runners["qg-60s"], index.versionEpoch,
+		scheduler.RunnerDueBound{NotDueUntilUnix: 20_060, IntervalSeconds: 60}, time.Unix(19_990, 0))
+	tracker := fleet.NewTracker(nil, "replica-1", clock.now)
+	// Five rounds short by the same three positions of a 1469-position
+	// window, on both objects.
+	for _, name := range []string{"qg-60s", "qg-unindexed"} {
+		for round := 0; round < 5; round++ {
+			clock.at = time.Unix(20_000-int64(5-round)*60, 0)
+			tracker.Observe(context.Background(), observability.Observation{
+				ProgressCompletionKind: "COMPLETED_WITH_UNAVAILABLE", ProgressCompletionCause: "LEVEL_OUTCOME_UNKNOWN",
+				ProgressCompletionReason: "GAP_SKIPPED",
+				HistoryCoverage:          &observability.HistoryCoverageFacts{Levels: 249, Short: 249, WorstValid: 1466, WorstRequired: 1469, Guarded: 249},
+				Trace:                    observability.TraceFields{QueryGroupKey: name, StrategyID: "4101", EvaluationTime: clock.at.Unix()},
+			})
+		}
+	}
+	clock.at = time.Unix(20_000, 0)
+	publisher := fleetPublisher{
+		tracker: tracker, replica: "replica-1", now: clock.now,
+		owned: func() []execution.QueryGroupIdentity {
+			return []execution.QueryGroupIdentity{"qg-60s", "qg-unindexed"}
+		},
+		schedule: index,
+	}
+	snapshot := publisher.snapshot(context.Background())
+	byObject := map[string]fleet.Anomaly{}
+	for _, column := range [][]fleet.Anomaly{snapshot.Anomalies, snapshot.Undecidable, snapshot.Demoted, snapshot.ByDesign} {
+		for _, row := range column {
+			byObject[row.QueryGroup] = row
+		}
+	}
+	row, listed := byObject["qg-60s"]
+	if !listed || row.Coverage == nil || row.Coverage.UnchangedRounds != 4 {
+		t.Fatalf("row for the indexed object = %+v, want it listed with the flat count at 4", row)
+	}
+	fill := row.WindowFill
+	wantBy := time.Unix(20_000, 0).Add(time.Duration(1469-4) * time.Minute)
+	if fill == nil || fill.Holes != 3 || fill.PeriodSeconds != 60 || fill.SpanSeconds != 1469*60 || !fill.Sliding ||
+		fill.LatestFillBy == nil || !fill.LatestFillBy.Equal(wantBy) {
+		t.Fatalf("fill on the indexed object = %+v, want 3 sliding holes at 60 s, latest by %v", fill, wantBy)
+	}
+	if row := byObject["qg-unindexed"]; row.WindowFill != nil {
+		t.Fatalf("the unindexed object carries %+v, want no projection without a period", row.WindowFill)
+	}
+}
+
+// scriptedSchedule answers WakeOf from a table and counts nothing.
+type scriptedSchedule map[string]fleet.WakeFacts
+
+func (schedule scriptedSchedule) Census(time.Time, int) fleet.ScheduleCensus {
+	return fleet.ScheduleCensus{}
+}
+func (schedule scriptedSchedule) WakeOf(queryGroup string) fleet.WakeFacts {
+	return schedule[queryGroup]
+}
+
+// The snapshot names the owned objects that are only waiting for their first
+// round, from the tracker and the schedule together: a long object nothing
+// has returned for and whose turn is ahead. A long object that has returned
+// a round (and so concluded), a minute object, one on a backoff bound and one
+// due further out than its period are not waiting.
+func TestFleetPublisherNamesTheObjectsAwaitingTheirFirstRound(t *testing.T) {
+	clock := &dueIndexClock{at: time.Unix(20_000, 0)}
+	at := time.Unix(20_000, 0)
+	tracker := fleet.NewTracker(nil, "replica-1", clock.now)
+	tracker.Observe(context.Background(), observability.Observation{ProgressCompletionKind: "COMPLETED_WITH_UNAVAILABLE",
+		Trace: observability.TraceFields{QueryGroupKey: "long-returned", StrategyID: "1", BusinessID: "2"}})
+	if !tracker.HasConclusion("long-returned") {
+		t.Fatal("fixture: a returned round must have concluded long-returned")
+	}
+	schedule := scriptedSchedule{
+		"long-new":      {Known: true, IntervalSeconds: 7200, DueAt: at.Add(time.Hour)},
+		"long-later":    {Known: true, IntervalSeconds: 216000, DueAt: at.Add(50 * time.Hour)},
+		"long-returned": {Known: true, IntervalSeconds: 7200, DueAt: at.Add(time.Hour)},
+		"minute-new":    {Known: true, IntervalSeconds: 60, DueAt: at.Add(30 * time.Second)},
+		"long-backoff":  {Known: true, IntervalSeconds: 7200, DueAt: at.Add(time.Hour), Deferred: true},
+		"long-far":      {Known: true, IntervalSeconds: 7200, DueAt: at.Add(3 * time.Hour)},
+	}
+	publisher := fleetPublisher{
+		tracker: tracker, replica: "replica-1", now: clock.now,
+		owned: func() []execution.QueryGroupIdentity {
+			return []execution.QueryGroupIdentity{"long-later", "long-new", "long-returned", "minute-new", "long-backoff", "long-far"}
+		},
+		schedule: schedule,
+	}
+	snapshot := publisher.snapshot(context.Background())
+	if snapshot.AwaitingFirstRoundTotal != 2 || len(snapshot.AwaitingFirstRound) != 2 ||
+		snapshot.AwaitingFirstRound[0].QueryGroup != "long-new" || snapshot.AwaitingFirstRound[1].QueryGroup != "long-later" ||
+		snapshot.AwaitingFirstRound[1].IntervalSeconds != 216000 {
+		t.Fatalf("awaiting = %+v total %d, want long-new then long-later, soonest first", snapshot.AwaitingFirstRound, snapshot.AwaitingFirstRoundTotal)
+	}
+	bare := publisher
+	bare.schedule = nil
+	if plain := bare.snapshot(context.Background()); plain.AwaitingFirstRoundTotal != 0 {
+		t.Errorf("a publisher with no schedule exempted %d objects", plain.AwaitingFirstRoundTotal)
+	}
+}
+
+// Through the real due index, what each kind of round writes back decides the
+// exemption: a round not yet due leaves a bound ahead and is waiting; a
+// cancelled round's zero bound is clamped to now, a backoff is Deferred and a
+// cooldown is QueryCooldown, and none of those is waiting -- so an object
+// whose rounds keep being cancelled is never exempted into a healthy verdict.
+func TestTheDueIndexBoundDecidesWhetherAnObjectIsAwaitingItsFirstRound(t *testing.T) {
+	clock := &dueIndexClock{at: time.Unix(50_000, 0)}
+	dispatcher := dueIndexDispatcher(clock, metric.NewRecorder(metric.BuildInfo{}), 8, 8,
+		map[execution.QueryGroupIdentity]walkRunner{"not-due": {}, "cancelled": {}, "backoff": {}, "cooling": {}})
+	index := dispatcher.dueIndex
+	record := func(queryGroup execution.QueryGroupIdentity, bound scheduler.RunnerDueBound) {
+		bound.IntervalSeconds = 7200
+		index.Record(queryGroup, dispatcher.bundle.runners[queryGroup], index.versionEpoch, bound, clock.at)
+	}
+	record("not-due", scheduler.RunnerDueBound{NotDueUntilUnix: 50_000 + 3600})
+	record("cancelled", scheduler.RunnerDueBound{})
+	record("backoff", scheduler.RunnerDueBound{NotDueUntilUnix: 50_000 + 600, Deferred: true})
+	record("cooling", scheduler.RunnerDueBound{NotDueUntilUnix: 50_000 + 600, QueryCooldown: true})
+	publisher := fleetPublisher{
+		tracker: fleet.NewTracker(nil, "replica-1", clock.now), replica: "replica-1", now: clock.now,
+		owned: func() []execution.QueryGroupIdentity {
+			return []execution.QueryGroupIdentity{"not-due", "cancelled", "backoff", "cooling"}
+		},
+		schedule: index,
+	}
+	snapshot := publisher.snapshot(context.Background())
+	if snapshot.AwaitingFirstRoundTotal != 1 || len(snapshot.AwaitingFirstRound) != 1 || snapshot.AwaitingFirstRound[0].QueryGroup != "not-due" {
+		t.Fatalf("awaiting = %+v total %d, want only not-due", snapshot.AwaitingFirstRound, snapshot.AwaitingFirstRoundTotal)
+	}
+	if wake := index.WakeOf("cancelled"); !wake.Known || wake.DueAt.After(clock.at) {
+		t.Fatalf("fixture: a cancelled round's wake %+v should be clamped to now", wake)
 	}
 }

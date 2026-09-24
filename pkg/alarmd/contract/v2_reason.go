@@ -59,9 +59,26 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonMultipleEvaluationUnitsUnsupported: {
 		ReasonMultipleEvaluationUnitsUnsupported, ReasonClassDeterministic, reasonOutcomeDomainsV2,
 	},
-	ReasonPlanDuplicateLevelID: {ReasonPlanDuplicateLevelID, ReasonClassDeterministic, reasonOutcomeDomainsV2},
-	ReasonPlanBudgetExceeded:   {ReasonPlanBudgetExceeded, ReasonClassDeterministic, reasonOutcomeDomainsV2},
-	ReasonNoDataConfigInvalid:  {ReasonNoDataConfigInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonPlanDuplicateLevelID:   {ReasonPlanDuplicateLevelID, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonPlanBudgetExceeded:     {ReasonPlanBudgetExceeded, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonNoDataConfigInvalid:    {ReasonNoDataConfigInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonNoDataPlanUncompilable: {ReasonNoDataPlanUncompilable, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	// Deterministic, every one of them: the definition and the snapshot it is
+	// compiled against are both frozen for the round, so the next attempt on
+	// the same pair reaches the same answer. A snapshot that arrives later
+	// makes a different pair, not a different verdict on this one.
+	ReasonEffectiveTimeInvalid:               {ReasonEffectiveTimeInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeSnapshotInvalid:       {ReasonEffectiveTimeSnapshotInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeSnapshotStatusInvalid: {ReasonEffectiveTimeSnapshotStatusInvalid, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeSnapshotUnavailable:   {ReasonEffectiveTimeSnapshotUnavailable, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeSchemaUnsupported:     {ReasonEffectiveTimeSchemaUnsupported, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeCalendarsMissing:      {ReasonEffectiveTimeCalendarsMissing, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeCalendarMissing:       {ReasonEffectiveTimeCalendarMissing, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeCalendarNotPresent:    {ReasonEffectiveTimeCalendarNotPresent, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeCalendarIdentity:      {ReasonEffectiveTimeCalendarIdentity, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeCalendarDuplicate:     {ReasonEffectiveTimeCalendarDuplicate, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonEffectiveTimeCalendarItemsMissing:  {ReasonEffectiveTimeCalendarItemsMissing, ReasonClassDeterministic, reasonOutcomeDomainsV2},
+	ReasonCompilerTerminalUnclassified:       {ReasonCompilerTerminalUnclassified, ReasonClassDeterministic, reasonOutcomeDomainsV2},
 	// Deterministic for the same reason: the target's shape and the no-data
 	// dimensions are both frozen, so every round would reach this answer again.
 	ReasonNoDataRosterUnsupported:  {ReasonNoDataRosterUnsupported, ReasonClassDeterministic, reasonOutcomeDomainsV2},
@@ -82,6 +99,7 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonRequiredValueNormalizationFailed: {ReasonRequiredValueNormalizationFailed, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
 
 	ReasonConfigDrift:      {ReasonConfigDrift, ReasonClassCoverage, reasonQueryDomainsV2},
+	ReasonPlanReactivated:  {ReasonPlanReactivated, ReasonClassCoverage, reasonQueryDomainsV2},
 	ReasonQueryPartial:     {ReasonQueryPartial, ReasonClassCoverage, reasonQueryDomainsV2},
 	ReasonQueryEmpty:       {ReasonQueryEmpty, ReasonClassCoverage, reasonQueryDomainsV2},
 	ReasonQueryTimeout:     {ReasonQueryTimeout, ReasonClassCoverage, reasonQueryDomainsV2},
@@ -92,12 +110,25 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	// Observation only: a deferral never reaches a receipt or a query result,
 	// it just says the Slot will come back when its window is in.
 	ReasonQueryNotReady: {ReasonQueryNotReady, ReasonClassRetryable, ReasonDomainObservation},
+	// A Level may be unavailable for it, so it is a Receipt reason too. The
+	// access layer hands it to every consumer of a query a recovery ran out of
+	// time to send, and a consumer of a dependency query is a Level whose
+	// primary query may well have answered: that Level has a record, makes a
+	// Detect fact, and the fact carries this reason. Without the Receipt
+	// domain the trigger refused that fact and failed the whole Slot with
+	// TRIGGER_INVARIANT, on replays only, because only a recovery has a
+	// deadline to run out of.
 	ReasonExecutionBudgetExhausted: {
-		ReasonExecutionBudgetExhausted, ReasonClassCoverage, ReasonDomainQueryResult | ReasonDomainObservation,
+		ReasonExecutionBudgetExhausted, ReasonClassCoverage,
+		ReasonDomainQueryResult | ReasonDomainReceipt | ReasonDomainObservation,
 	},
-	ReasonSnapshotUnavailable:   {ReasonSnapshotUnavailable, ReasonClassCoverage, ReasonDomainObservation},
-	ReasonGapSkipped:            {ReasonGapSkipped, ReasonClassCoverage, ReasonDomainObservation},
-	ReasonSchedulePruned:        {ReasonSchedulePruned, ReasonClassCoverage, ReasonDomainObservation},
+	ReasonSnapshotUnavailable: {ReasonSnapshotUnavailable, ReasonClassCoverage, ReasonDomainObservation},
+	ReasonGapSkipped:          {ReasonGapSkipped, ReasonClassCoverage, ReasonDomainObservation},
+	ReasonSchedulePruned:      {ReasonSchedulePruned, ReasonClassCoverage, ReasonDomainObservation},
+	// Coverage, like the pruned skip beside it: Slots passed without being
+	// evaluated. Not deterministic, because nothing was refused - the active
+	// set simply did not hold the Plan while they went by.
+	ReasonPlanNotActive:         {ReasonPlanNotActive, ReasonClassCoverage, ReasonDomainObservation},
 	ReasonEffectiveTimeInactive: {ReasonEffectiveTimeInactive, ReasonClassCoverage, ReasonDomainReceipt | ReasonDomainObservation},
 	ReasonEffectiveTimeUnknown:  {ReasonEffectiveTimeUnknown, ReasonClassCoverage, ReasonDomainReceipt | ReasonDomainObservation},
 	ReasonHistoryWarming:        {ReasonHistoryWarming, ReasonClassCoverage, ReasonDomainReceipt | ReasonDomainObservation},
@@ -105,8 +136,17 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonRecordTooLarge:        {ReasonRecordTooLarge, ReasonClassCoverage, ReasonDomainSummary | ReasonDomainObservation},
 	ReasonAuditDrop:             {ReasonAuditDrop, ReasonClassCoverage, ReasonDomainObservation},
 
-	ReasonKafkaUnavailable:      {ReasonKafkaUnavailable, ReasonClassRetryable, ReasonDomainSummary | ReasonDomainObservation},
-	ReasonRedisUnavailable:      {ReasonRedisUnavailable, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonKafkaUnavailable: {ReasonKafkaUnavailable, ReasonClassRetryable, ReasonDomainSummary | ReasonDomainObservation},
+	ReasonRedisUnavailable: {ReasonRedisUnavailable, ReasonClassRetryable, ReasonDomainObservation},
+	// Retryable: the Slot is retried by the scheduler, and a smaller read or a
+	// quieter link can succeed. Retryable does not make it the dependency's
+	// fault, which is why it has its own word.
+	ReasonStateReadTimeout:  {ReasonStateReadTimeout, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonStateReadDeadline: {ReasonStateReadDeadline, ReasonClassRetryable, ReasonDomainObservation},
+	// Deterministic: retrying reproduces it exactly. The Slot is over the share
+	// every time until the strategy's shape changes, so calling it retryable
+	// would have the scheduler back off and re-run it forever.
+	ReasonQGBudgetShareExceeded: {ReasonQGBudgetShareExceeded, ReasonClassDeterministic, ReasonDomainObservation},
 	ReasonProviderUnavailable:   {ReasonProviderUnavailable, ReasonClassRetryable, ReasonDomainObservation},
 	ReasonProgressBeginRejected: {ReasonProgressBeginRejected, ReasonClassRetryable, ReasonDomainObservation},
 	ReasonProgressBeginFailed:   {ReasonProgressBeginFailed, ReasonClassDeterministic, ReasonDomainObservation},
@@ -117,10 +157,27 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonActivationMissing:          {ReasonActivationMissing, ReasonClassRetryable, ReasonDomainObservation},
 	ReasonSnapshotRetryPending:       {ReasonSnapshotRetryPending, ReasonClassRetryable, ReasonDomainObservation},
 	ReasonSlotSourceRetry:            {ReasonSlotSourceRetry, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonViewNotExecutable:          {ReasonViewNotExecutable, ReasonClassRetryable, ReasonDomainObservation},
 	ReasonBlockedExactSetUnavailable: {ReasonBlockedExactSetUnavailable, ReasonClassDeterministic, ReasonDomainObservation},
 	// Deterministic: the persisted marker and the proposed one are both facts,
 	// and repeating the attempt compares the same two facts again.
-	ReasonGapGuardConflict:     {ReasonGapGuardConflict, ReasonClassDeterministic, ReasonDomainObservation},
+	ReasonGapGuardConflict: {ReasonGapGuardConflict, ReasonClassDeterministic, ReasonDomainObservation},
+	// Conflict and stale version are retryable rather than deterministic: both
+	// say the marker moved, and re-reading it is what resolves them - which is
+	// what the same-Slot retry was already doing before the refusals had
+	// names. GAP_GUARD_CONFLICT above stays deterministic because it is this
+	// Slot's own comparison, and re-running it reaches the same answer.
+	// Deterministic: the same batches produce the same shape again. It is a
+	// reading rather than a refusal, so nothing retries on its account.
+	ReasonGapGuardDuplicatedAcrossBatches: {ReasonGapGuardDuplicatedAcrossBatches, ReasonClassDeterministic, ReasonDomainObservation},
+	// Deterministic rather than retryable: the disagreement is between two
+	// batches of this Slot's own evaluation, so the same Slot run again from
+	// the same markers reaches it again. A retry would spend a round to be
+	// refused identically.
+	ReasonGapGuardDisagree:     {ReasonGapGuardDisagree, ReasonClassDeterministic, ReasonDomainObservation},
+	ReasonGapApplyConflict:     {ReasonGapApplyConflict, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonGapApplyStaleVersion: {ReasonGapApplyStaleVersion, ReasonClassRetryable, ReasonDomainObservation},
+	ReasonGapWriteRetryable:    {ReasonGapWriteRetryable, ReasonClassRetryable, ReasonDomainObservation},
 	ReasonStateVersionConflict: {ReasonStateVersionConflict, ReasonClassDeterministic, ReasonDomainObservation},
 	ReasonStateStaleVersion:    {ReasonStateStaleVersion, ReasonClassDeterministic, ReasonDomainObservation},
 	// Deterministic: the Plan asks for more than this deployment has, and it
@@ -145,6 +202,12 @@ var reasonCatalogV2 = map[string]ReasonDefinitionV2{
 	ReasonStateCorrupt:             {ReasonStateCorrupt, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
 	ReasonStateSchemaUnsupported:   {ReasonStateSchemaUnsupported, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
 	ReasonStateBudgetExceeded:      {ReasonStateBudgetExceeded, ReasonClassDeterministic, ReasonDomainReceipt | ReasonDomainObservation},
+	// Observation only, and deterministic: the same Plan meeting the same
+	// stored record decides the same way, so a retry of the Slot is not what
+	// resolves either of them. Not receipt reasons - no write was refused, the
+	// evaluation was.
+	ReasonStateLevelContractMismatch: {ReasonStateLevelContractMismatch, ReasonClassDeterministic, ReasonDomainObservation},
+	ReasonTriggerInvariant:           {ReasonTriggerInvariant, ReasonClassDeterministic, ReasonDomainObservation},
 	// Ownership refusals. A stale fence, an assignment naming another worker
 	// and a moved content scope are facts about the store the same attempt
 	// would meet again; a lease held by another owner is the one that a later
@@ -177,4 +240,18 @@ func IsKnownReasonV2(code string) bool {
 func ReasonAllowedForV2(code string, domain ReasonDomainsV2) bool {
 	definition, ok := LookupReasonV2(code)
 	return ok && definition.Domains.Has(domain)
+}
+
+// LevelUnavailableReasonV2 says whether a Level may be UNAVAILABLE for this
+// reason: whether a Detect fact may carry it into the trigger, and so into
+// the Level's outcome and the gap guard it proposes.
+//
+// A Detect fact's reason has two ways in. A detector declares the reasons it
+// may fail with, and the compiler refuses a declaration outside this set; an
+// input binding carries the reason the access layer gave it, and nothing
+// checked those until the trigger did, at run time, by failing the Slot. One
+// predicate for both, so the compiler, the trigger and a test of what the
+// access layer stamps all ask the same question.
+func LevelUnavailableReasonV2(code string) bool {
+	return ReasonAllowedForV2(code, ReasonDomainReceipt|ReasonDomainObservation)
 }

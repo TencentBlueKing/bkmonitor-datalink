@@ -16,6 +16,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/absentalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
@@ -57,16 +58,26 @@ const (
 	ComponentPythonProducer = "python_producer"
 	ComponentOther          = "_other"
 
-	StageConfigLoaded           = "config_loaded"
-	StageLegacyPodCache         = "legacy_pod_cache"
-	StageSnapshotRefreshed      = "snapshot_refreshed"
-	StageSnapshotUnavailable    = "snapshot_unavailable"
-	StageActivationFailed       = "activation_failed"
-	StageActiveQGSet            = "active_qg_set"
-	StageObjectCatalog          = "object_catalog"
-	StageObjectRead             = "object_read"
-	StageFrozenPlanGeneration   = "frozen_plan_generation"
-	StageActivationHold         = "activation_hold"
+	StageConfigLoaded             = "config_loaded"
+	StageEffectiveTimeMaintenance = "effective_time_maintenance"
+	// StageAbsentStrategyClose is the control leader's difference between the
+	// alert link's unrecovered alerts and the strategy snapshot, and the
+	// closes it pushes for strategies that no longer exist.
+	StageAbsentStrategyClose  = "absent_strategy_close"
+	StageLegacyPodCache       = "legacy_pod_cache"
+	StageSnapshotRefreshed    = "snapshot_refreshed"
+	StageSnapshotUnavailable  = "snapshot_unavailable"
+	StageActivationFailed     = "activation_failed"
+	StageActiveQGSet          = "active_qg_set"
+	StageObjectCatalog        = "object_catalog"
+	StageObjectRead           = "object_read"
+	StageFrozenPlanGeneration = "frozen_plan_generation"
+	StageActivationHold       = "activation_hold"
+	// StageStateCarryDecided is the Control Leader deciding what an
+	// activation whose state generation moved may carry; StageStateCarried
+	// is a Worker carrying it for each series. See StateCarryFacts.
+	StageStateCarryDecided      = "state_carry_decided"
+	StageStateCarried           = "state_carried"
 	StageScheduleCutover        = "schedule_cutover"
 	StageLegacyQGMigration      = "legacy_active_qg_migration"
 	StageDrainingQGReconciled   = "draining_query_groups"
@@ -123,7 +134,11 @@ const (
 	StageStatePreflight         = "state_preflight"
 	StageGapLoaded              = "gap_loaded"
 	StageNoDataDecided          = "no_data_decided"
-	StageSourceWithheld         = "source_withheld"
+	// StageTargetResolved names what one Plan's target plan resolved to in
+	// one Slot: the state the admission filter and the absence judgement
+	// both read, and each selector's answer by name (decision-017).
+	StageTargetResolved = "target_resolved"
+	StageSourceWithheld = "source_withheld"
 	// StageNoDataSuspended names a strategy that is being evaluated and whose
 	// absence detection is not. It is deliberately not source_withheld: that
 	// stage means the strategy is not running, and a reader who has learned
@@ -172,6 +187,15 @@ const (
 	// signal: not the write family, which is correctly silent for such a Plan,
 	// and not the memory itself, which reads fine right up until it is gone.
 	StageNoDataMemoryRenewed = "no_data_memory_renewed"
+	// StageSplitPlanned is the Leader deciding what splitting one object
+	// would look like, or why it cannot be split. A dry run for now: the
+	// stage exists so the decision can be read on the objects it would
+	// actually be taken on, before anything acts on it.
+	StageSplitPlanned = "split_planned"
+	// StageDimensionCensus is a Slot leaving one candidate Plan's dimension
+	// census behind (decision-020 section 4.7.3): what its series look like
+	// along each dimension, which is what a split is planned from.
+	StageDimensionCensus = "dimension_census"
 	// StageFrozenStateRenewed names the renewal of the Runtime State keys of
 	// the series a Slot read and did not write.
 	//
@@ -394,6 +418,60 @@ type Counts struct {
 	Bytes      int64
 	Keys       int64
 	StateBytes int64
+	// EnvelopeReads is how many of a state preflight's series had to be read
+	// from the older representation as well, because the framed record could
+	// not answer for them. It is the second pass's cost, and it is not the
+	// migration indicator: a series with no record at all has no frame, so it
+	// lands here for ever.
+	EnvelopeReads int64
+	// The four EnvelopeReads splits into; see execution.StatePreflightResult
+	// for the table. EnvelopeAnswered is the only one that ends, and reading
+	// it as zero is the whole point of having it -- so all four go on the line
+	// at every value, zero included. A count that exists to answer "how many"
+	// has its answer erased by omitting its zero.
+	EnvelopeAnswered    int64
+	EnvelopeCorrupt     int64
+	NoRecordYet         int64
+	FrameCorruptRescued int64
+	FrameCorruptLost    int64
+	Unclassified        int64
+	// StateFetchMillis and StateDecodeMillis split a state preflight's time
+	// into the store's reads and this process's decoding of what they
+	// returned; see execution.PreflightTiming.
+	StateFetchMillis  int64
+	StateDecodeMillis int64
+	// EnvelopeReadsApply is how many items of a state apply had their outcome
+	// decided by the older representation on the per-key write path, which
+	// reads both keys and which none of the preflight's counts can see. The
+	// other consumer of the envelope beside EnvelopeAnswered: the envelope
+	// can be deleted only when both have stayed at zero for a whole retention
+	// window, and a sum could not say which one had not.
+	EnvelopeReadsApply int64
+}
+
+// TargetResolutionFacts is one Plan's target plan resolved for one Slot:
+// the composed state, the age of a snapshot served past a failed refresh,
+// and every selector's answer by name. It is the one place the reader
+// learns why a target plan's Plan admitted what it admitted and whether its
+// absence was judged.
+type TargetResolutionFacts struct {
+	StrategyID string
+	State      string
+	// StaleAgeSeconds is non-zero when a selector answered from a snapshot
+	// kept past a failed refresh: resolved_from_stale_snapshot.
+	StaleAgeSeconds int64
+	Selectors       []TargetSelectorFacts
+}
+
+// TargetSelectorFacts is one selector's answer.
+type TargetSelectorFacts struct {
+	Kind, ID, State, Reason string
+	Kept, Dropped           int
+	// NodeMissing marks a topology reference to a node the topology cache
+	// does not list; NodeForeign one whose node holds hosts under another
+	// business only. Both are carried to the object row as they are.
+	NodeMissing bool
+	NodeForeign bool
 }
 
 // NoDataSlotFacts is what happened to one Plan's no-data detection in one Slot.
@@ -424,6 +502,26 @@ type NoDataSlotFacts struct {
 // changes. A converging guard moves k every round and a stuck one does not,
 // and the stuck one is what somebody is looking for -- a changed-only rule
 // would say nothing about exactly the case this exists for.
+// GapStatementFacts is one Plan's gap marker statements within one Slot, when
+// there is more than one of them.
+//
+// The two lists are reported apart because they are two different defects: a
+// statement in each is the accumulation across series batches assembling a
+// shape no batch produced, and two in one list is one batch or one merge
+// producing two statements for one key. The digests are what let two Slots'
+// lines be compared, and the expected revisions are what say whether the
+// second statement could ever have applied after the first.
+type GapStatementFacts struct {
+	// Shape is "across_lists" or "within_one_list".
+	Shape string
+	// BeforeEvents and AfterState are each list's "digest@expected_revision",
+	// in a stable order.
+	BeforeEvents []string
+	AfterState   []string
+	// Statements is how many there were in total.
+	Statements int
+}
+
 type GapProgressFacts struct {
 	// Scope is "plan" or the level id, so the two kinds are not told apart by
 	// a zero.
@@ -447,6 +545,61 @@ type GapProgressFacts struct {
 // round -- a count of rounds is what the outcome buckets already give.
 type NoDataStallFacts struct {
 	Outcome string
+}
+
+// NoDataAbsenceFacts is what one Plan's no-data round decided about its
+// groups, on the round it decided: the counts the evaluation reports, and the
+// horizon it decided them against.
+//
+// One line per Plan per Slot that judged, carrying the counts as the round
+// counted them at the site of each decision. Nothing here is a difference
+// between this round's memory and the last: a difference reads zero in the
+// round that failed to load the memory, which is the round most worth
+// reporting. Expired is the absences this round stopped tracking; Suppressed
+// the groups it met already stopped -- the standing size of what the horizon
+// is holding down, which is the number a deployment that switched the horizon
+// on has no other way to see. Absent is the groups still tracked and reported
+// absent this round. HorizonSeconds is the Plan's effective horizon as
+// compilation froze it, zero for none: the same round key that recompiles a
+// Plan when the platform's changes is what keeps this current.
+type NoDataAbsenceFacts struct {
+	Outcome        string
+	HorizonSeconds int64
+	// HorizonSource is where the horizon came from as compilation froze it
+	// beside the number: PLATFORM or STRATEGY, empty for no horizon and for
+	// a Plan compiled before the source was frozen.
+	HorizonSource string
+	RosterSource  string
+	Expected      uint64
+	Present       uint64
+	Absent        uint64
+	Unavailable   uint64
+	Dropped       uint64
+	Expired       uint64
+	Suppressed    uint64
+	// AbsentAges is Absent by how long each absence has been open at this
+	// round -- this round, under an hour, under a day, a day or more -- as
+	// the evaluation filed them from the same start the horizon reads. They
+	// sum to Absent. This is what says whether a horizon can reach anything:
+	// thousands of absences all under an hour old are groups that report
+	// every few rounds and reset their clock, which no horizon stops, and
+	// the last bucket is what a one-day horizon would.
+	AbsentAges NoDataAbsentAges
+}
+
+// NoDataAbsentAges is the age buckets of the absences one round reported.
+type NoDataAbsentAges struct {
+	ThisRound uint64
+	UnderHour uint64
+	UnderDay  uint64
+	DayOrMore uint64
+}
+
+// NoDataAbsenceOutcomes is every count the absence line carries, in the order
+// the metric creates them, so a label nothing ever wrote can be told from one
+// that wrote zero.
+var NoDataAbsenceOutcomes = []string{
+	"expected", "present", "absent", "unavailable", "dropped", "expired", "suppressed",
 }
 
 // NoDataMemoryRefusalFacts is one Plan's refused absence-memory write: why the
@@ -591,6 +744,34 @@ func (facts *FrozenStateRenewalFacts) Record(renewed, fresh, missing, failed int
 	facts.Fresh += fresh
 	facts.Missing += missing
 	facts.Failed += failed
+}
+
+// DimensionCensusFacts is one census write: where its values came from, what
+// the store did with it, how much of the strategy it could name, and the two
+// numbers the candidate decision was made on.
+//
+// PeakBytes and ShareBytes are on the line because "why is this Plan a
+// candidate" is otherwise unanswerable afterwards: the gate is this
+// replica's own peak against its own pool share (decision-020 section
+// 4.7.3.1), both of which move, and a census that appears or stops
+// appearing is otherwise a change with no reading behind it.
+//
+// OverflowValues and OverflowSeries are the reading that says the bound was
+// reached: a census that names four thousand values and hides a tail of
+// twenty thousand is not a distribution a split can be planned from, and it
+// has to be possible to see that without reading the record.
+type DimensionCensusFacts struct {
+	Source         string `json:"source"`
+	Status         string `json:"status"`
+	Series         uint32 `json:"series"`
+	Dimensions     int    `json:"dimensions"`
+	Values         int    `json:"values"`
+	OverflowValues uint32 `json:"overflow_values"`
+	OverflowSeries uint32 `json:"overflow_series"`
+	Bytes          int    `json:"bytes"`
+	Limit          int    `json:"limit"`
+	PeakBytes      uint64 `json:"peak_bytes"`
+	ShareBytes     uint64 `json:"share_bytes"`
 }
 
 // RecordCensus states where the Slot's series went.
@@ -771,7 +952,7 @@ type ScheduleCutoverFacts struct {
 
 // ScheduleCutoverDecisions is the closed vocabulary of what a publication
 // cutover does with one Query Group.
-var ScheduleCutoverDecisions = []string{"kept", "revised", "cut", "legacy_cut", "retired", "added"}
+var ScheduleCutoverDecisions = []string{"kept", "revised", "cut", "legacy_cut", "retired", "added", "blocked", "reopened", "retired_unwritten"}
 
 // ReplayExpiryFacts describe one Slot the scheduler gave up replaying.
 //
@@ -1104,7 +1285,7 @@ type ObjectReadFacts struct {
 // ObjectReadFacts; a value outside them is reported as "other".
 var (
 	ObjectReadKinds   = []string{"query_group", "output_context", "segment", "manifest"}
-	ObjectReadResults = []string{"hit", "miss", "share", "missing", "invalid", "object", "legacy_segment", "segment_without_ref", "object_missing", "object_invalid", "object_mismatch"}
+	ObjectReadResults = []string{"hit", "miss", "share", "missing", "invalid", "newer", "object", "legacy_segment", "segment_without_ref", "object_missing", "object_invalid", "object_newer", "object_mismatch"}
 )
 
 // StateGenerationSkewFacts report a due Plan whose state generation, as the
@@ -1118,6 +1299,44 @@ type StateGenerationSkewFacts struct {
 	// StrategyID names the Plan the skew was found on; the Slot and Segment
 	// travel in the observation's trace fields.
 	StrategyID string
+}
+
+// StateCarryFacts count history carried across a moved state generation.
+// Scope is "plan" for the Control Leader's decision per activation and
+// "series" for a Worker's per series; Count is how many met Result.
+type StateCarryFacts struct {
+	Scope  string
+	Result string
+	Count  int
+}
+
+// StateCarryScopes and StateCarryResults are the closed vocabularies of
+// StateCarryFacts; a value outside them is reported as "other".
+var (
+	StateCarryScopes  = []string{"plan", "series"}
+	StateCarryResults = map[string][]string{
+		"plan":   {"carried", "partial", "none_detect_changed", "none_previous_unreadable", "none_discontinuous"},
+		"series": {"carried", "nothing_kept", "skipped_active_guard", "old_missing"},
+	}
+)
+
+func normalizeStateCarryFacts(facts *StateCarryFacts) *StateCarryFacts {
+	if facts == nil {
+		return nil
+	}
+	normalized := StateCarryFacts{Scope: "other", Result: "other", Count: facts.Count}
+	for _, scope := range StateCarryScopes {
+		if facts.Scope != scope {
+			continue
+		}
+		normalized.Scope = scope
+		for _, result := range StateCarryResults[scope] {
+			if facts.Result == result {
+				normalized.Result = result
+			}
+		}
+	}
+	return &normalized
 }
 
 // StateGenerationSkewKinds is the closed vocabulary of
@@ -1215,6 +1434,54 @@ type RebalanceFacts struct {
 	Conflicts        int     `json:"conflicts"`
 	Paused           bool    `json:"paused"`
 	PausedForSeconds float64 `json:"paused_for_seconds"`
+	// Bytes is the same round's byte-constraint planning (decision-020
+	// section 5.7), which runs before the count correction above.
+	Bytes *ByteConstraintFacts `json:"bytes,omitempty"`
+	// ShardAware is the same round's split gate (decision-020 section
+	// 4.7.7): how many ready workers, and which of them do not declare the
+	// split contract. A split is published only while Unaware is empty.
+	ShardAware *ShardAwareFacts `json:"shard_aware,omitempty"`
+}
+
+// ShardAwareFacts is one round's split-contract census over the ready set.
+// Unaware is a list rather than a count because the replica is what a
+// rollout reader looks for, and 0 -> n -> 0 across a roll is the reading.
+type ShardAwareFacts struct {
+	Ready   int      `json:"ready"`
+	Unaware []string `json:"unaware,omitempty"`
+	// SplitsHeld is how many splits the round was asked for and did not
+	// publish because Unaware is not empty; zero on a fleet asked for none.
+	SplitsHeld int `json:"splits_held"`
+}
+
+// ByteConstraintFacts is one round's byte-constraint planning: retained
+// bytes are a capacity constraint on placement, and a Worker whose Query
+// Groups' per-Slot peaks sum past SharePercent of its pool gives its
+// largest one to the Worker with the most headroom. What was not judged is
+// said as such - PoolUnknown Workers registered no pool, Unread Query
+// Groups have no reported peak - so a round that moved nothing can be told
+// from a round that could judge nothing.
+type ByteConstraintFacts struct {
+	SharePercent   int              `json:"share_percent"`
+	Judged         int              `json:"judged"`
+	PoolUnknown    []string         `json:"pool_unknown,omitempty"`
+	Unread         int              `json:"unread"`
+	Unsettled      []string         `json:"unsettled,omitempty"`
+	Overloaded     []string         `json:"overloaded,omitempty"`
+	Unplaceable    []string         `json:"unplaceable,omitempty"`
+	PlannedMoves   int              `json:"planned_moves"`
+	PublishedMoves int              `json:"published_moves"`
+	Conflicts      int              `json:"conflicts"`
+	Paused         bool             `json:"paused"`
+	Moves          []ByteMoveSample `json:"moves,omitempty"`
+}
+
+// ByteMoveSample is one byte-constraint move with the peak it was judged by.
+type ByteMoveSample struct {
+	QueryGroup string `json:"query_group"`
+	From       string `json:"from"`
+	To         string `json:"to"`
+	Bytes      uint64 `json:"bytes"`
 }
 
 // ControlReadFacts is what one control round spent reading the records it
@@ -1294,6 +1561,25 @@ func normalizeRebalanceFacts(facts *RebalanceFacts) *RebalanceFacts {
 	if len(normalized.Moves) > MaxRebalanceMoveSamples {
 		normalized.Moves = normalized.Moves[:MaxRebalanceMoveSamples]
 		normalized.MovesTruncated = true
+	}
+	if gate := facts.ShardAware; gate != nil {
+		// Copied rather than shared: the round keeps its own list and the
+		// observation is read after the round moves on. Bounded by the ready
+		// set, which is the fleet, and truncated at the same sample bound the
+		// owned counts use so one enormous fleet cannot make one enormous
+		// line.
+		bounded := *gate
+		bounded.Unaware = append([]string(nil), gate.Unaware...)
+		if len(bounded.Unaware) > MaxRebalanceOwnedSamples {
+			bounded.Unaware = bounded.Unaware[:MaxRebalanceOwnedSamples]
+		}
+		if bounded.Ready < 0 {
+			bounded.Ready = 0
+		}
+		if bounded.SplitsHeld < 0 {
+			bounded.SplitsHeld = 0
+		}
+		normalized.ShardAware = &bounded
 	}
 	return &normalized
 }
@@ -1744,21 +2030,21 @@ type AlgorithmEvaluationFact struct {
 	Provenance            AlgorithmProvenance       `json:"provenance,omitempty"`
 }
 
-// RecoveryGateCause is why a record whose Levels agreed on RECOVERY did not
-// send its envelope, or the one shape it was sent past. The set is closed: it
-// is a metric label.
+// RecoveryGateCause is the state of the first other Level a RECOVERY record
+// was decided beside. None of them holds the envelope: a RECOVERY speaks for
+// its own Level only (trigger recoveryGateV2). The set is closed: it is a
+// metric label.
 type RecoveryGateCause string
 
 const (
-	// RecoveryGateLevelUnavailable held the envelope: a Level's state could
-	// not be established this round.
+	// RecoveryGateLevelUnavailable: another Level's state could not be
+	// established this round.
 	RecoveryGateLevelUnavailable RecoveryGateCause = "level_unavailable"
-	// RecoveryGateLevelRecovering held the envelope: a Level read NORMAL with
-	// recovery enabled, so a window inside its recovery span still triggers.
+	// RecoveryGateLevelRecovering: another Level read NORMAL with recovery
+	// enabled, so a window inside its recovery span still triggers.
 	RecoveryGateLevelRecovering RecoveryGateCause = "level_recovering"
-	// RecoveryGateLevelWithoutRecovery did not hold: the envelope was sent
-	// past a NORMAL Level whose recovery is disabled and which therefore can
-	// never say RECOVERY. Counted so the shape's existence can be read.
+	// RecoveryGateLevelWithoutRecovery: another Level read NORMAL with its
+	// recovery disabled.
 	RecoveryGateLevelWithoutRecovery RecoveryGateCause = "level_without_recovery"
 )
 
@@ -1769,10 +2055,92 @@ type RecoveryGateFact struct {
 	Records uint64            `json:"records"`
 }
 
-// OpenAlertGateOutcome is what the second recovery gate, the consumer's
-// open alert set, did with a RECOVERY record every Level had agreed on. The
-// set is closed: it is a metric label. A record is counted here or under a
-// RecoveryGateCause, never both.
+// LevelOutcomeFact is one cell of an evaluation's Level outcomes: the
+// outcome kind, the reason for an UNKNOWN or TERMINAL one (empty for the
+// business outcomes, which carry none), and how many Level outcomes fell in
+// it. LevelOutcomeKinds is the closed list of kinds; the reason is bounded
+// by the observation reason catalog, and one outside it is reported as
+// other so the cell count stays bounded.
+type LevelOutcomeFact struct {
+	Outcome string `json:"outcome"`
+	Reason  string `json:"reason,omitempty"`
+	Count   uint64 `json:"count"`
+}
+
+// LevelOutcomeKinds is every Level outcome kind, in the execution's words.
+var LevelOutcomeKinds = []string{"NORMAL", "ABNORMAL", "RECOVERY", "UNKNOWN", "TERMINAL"}
+
+// LevelOutcomeReasonOther is the reason label for an UNKNOWN or TERMINAL
+// outcome whose reason is not a coverage reason.
+const LevelOutcomeReasonOther = "other"
+
+// LevelOutcomeReasons is every reason an UNKNOWN or TERMINAL Level outcome
+// is counted under by name: the coverage class of the observation catalog -
+// the effective time, a warming or gapped window, a gap guard, a query that
+// answered partially or not at all - and other for every reason outside it.
+// The coverage class is the family a Level that was not judged carries; a
+// deterministic or retryable reason on a TERMINAL outcome is a defect with
+// its own line and is counted as other here rather than leaking every
+// exact code into a label. The metric pre-creates the two outcomes over
+// this list, which bounds it.
+func LevelOutcomeReasons() []string {
+	reasons := make([]string, 0, 1)
+	for _, definition := range contract.ReasonCatalogV2() {
+		if definition.Class == contract.ReasonClassCoverage && definition.Domains.Has(contract.ReasonDomainObservation) {
+			reasons = append(reasons, definition.Code)
+		}
+	}
+	sort.Strings(reasons)
+	return append(reasons, LevelOutcomeReasonOther)
+}
+
+// LevelOutcomeReasonLabel is the metric label for a Level outcome's reason:
+// the reason itself when it is a coverage reason, other otherwise. The log
+// line keeps the exact reason; only the metric is bounded this way.
+func LevelOutcomeReasonLabel(reason string) string {
+	for _, known := range LevelOutcomeReasons() {
+		if known == reason {
+			return reason
+		}
+	}
+	return LevelOutcomeReasonOther
+}
+
+func normalizeLevelOutcomeFacts(observation Observation) []LevelOutcomeFact {
+	if observation.Component != ComponentEvaluation || observation.Stage != StageEvaluationCompleted {
+		return nil
+	}
+	facts := make([]LevelOutcomeFact, 0, len(observation.LevelOutcomes))
+	for _, fact := range observation.LevelOutcomes {
+		if fact.Count == 0 {
+			continue
+		}
+		known := false
+		for _, kind := range LevelOutcomeKinds {
+			known = known || kind == fact.Outcome
+		}
+		if !known {
+			continue
+		}
+		if fact.Outcome == "UNKNOWN" || fact.Outcome == "TERMINAL" {
+			if fact.Reason == "" {
+				fact.Reason = LevelOutcomeReasonOther
+			}
+		} else {
+			fact.Reason = ""
+		}
+		facts = append(facts, fact)
+	}
+	if len(facts) == 0 {
+		return nil
+	}
+	return facts
+}
+
+// OpenAlertGateOutcome is what the recovery gate, the consumer's open alert
+// set, did with a RECOVERY record. The set is closed: it is a metric label.
+// Every RECOVERY record is counted here; a RecoveryGateCause describes the
+// record beside it and may count the same record.
 type OpenAlertGateOutcome string
 
 const (
@@ -1801,8 +2169,8 @@ var OpenAlertGateOutcomes = []OpenAlertGateOutcome{
 	OpenAlertGateNotConfigured, OpenAlertGateProtocolNotGated,
 }
 
-// OpenAlertGateFact counts, for one evaluation, the records the second gate
-// decided under one outcome.
+// OpenAlertGateFact counts, for one evaluation, the records the open alert
+// gate decided under one outcome.
 type OpenAlertGateFact struct {
 	Outcome OpenAlertGateOutcome `json:"outcome"`
 	Records uint64               `json:"records"`
@@ -1847,6 +2215,15 @@ type TraceFields struct {
 }
 
 type Observation struct {
+	// GapStatements, when set, says one Plan carried more than one gap marker
+	// statement in a single Slot. A reading rather than a refusal: the Slot
+	// went on, and this is what says the shape happened.
+	// GapApplySite is which of the Slot's two gap applies refused, empty when
+	// none did. Its own field rather than only inside the error text: which
+	// write refused is what separates this Slot's other call from a writer in
+	// another process, and that cannot be grouped or counted out of a sentence.
+	GapApplySite  string
+	GapStatements *GapStatementFacts
 	GapExtensions []*GapExtensionFacts
 	GapConflict   *GapExtensionFacts
 	QueryCooldown *QueryCooldownFacts
@@ -1861,7 +2238,24 @@ type Observation struct {
 	// had no message for. Nil when the sink did not count -- and left
 	// absent rather than read as zero, because a success with zero messages
 	// is a real state this field exists to name.
-	OutputWrite            *OutputWriteFacts
+	OutputWrite *OutputWriteFacts
+	// OutputWireFormat is the wire format the Plan's events are published
+	// as, on the evaluation line of the Plan that decided them (empty when
+	// the line is not a Plan's); OutputWireFormats how many events of an
+	// event_acked batch went out as each.
+	OutputWireFormat  string
+	OutputWireFormats OutputWireFormatCounts
+	// OutputEventKinds is OutputWireFormats split by event kind, on the same
+	// event_acked observation.
+	OutputEventKinds OutputEventKindCounts
+	// PlanSeriesMatched is how many PRIMARY series this Slot's query bound to
+	// the Plan an evaluation line is about, on every evaluation line of that
+	// Plan and on the completion-only line of a Plan bound to none. A Plan
+	// bound to no series evaluates nothing, writes no state and advances no
+	// guard: a gap guard on such a Plan sits at 0 of N for as long as the
+	// Plan has no input, and read without this number that is a guard
+	// warming. Nil when the line is not a Plan's.
+	PlanSeriesMatched      *int
 	RunOutcome             string
 	Attempted              bool
 	ExecuteOutcome         string
@@ -1885,7 +2279,22 @@ type Observation struct {
 	// lifetime is shorter than the window, which is short on every round for
 	// ever and by design will never produce a recovery. Both report the same
 	// reason on every round, so without the counts the two are one population.
-	HistoryCoverage       *HistoryCoverageFacts
+	HistoryCoverage *HistoryCoverageFacts
+	// HistoryCoverageRejected is set, and HistoryCoverage nil, when the
+	// coverage facts this observation carried did not pass normalize: the
+	// rule they broke and, for a rule about one window, its series. A
+	// refused reading leaves this in its place rather than nothing, so the
+	// row and the log say the server declined the reading instead of
+	// looking like a run with every window complete.
+	HistoryCoverageRejected *CoverageRejection
+	// PrimaryInput is what the Slot's PRIMARY query answered with, on the
+	// completion line: whether it answered whole, and whether it carried any
+	// records. It is the fact that says whose a hole is. A series missing
+	// from a round whose query answered whole and carried records was not in
+	// the result -- the data's; one missing from a round whose query did not
+	// answer was never asked for -- this side's. Nil when the completion
+	// carried no primary fact (a Slot skipped without a query).
+	PrimaryInput          *PrimaryInputFacts
 	Dispatcher            *DispatcherFacts
 	DispatchTurnaway      *DispatchTurnawayFacts
 	PermitWait            *PermitWaitFacts
@@ -1902,10 +2311,14 @@ type Observation struct {
 	Err                   error
 	CapacityBudget        CapacityBudget
 	CapacityRejection     *CapacityRejectionFacts
+	SlotBudgetUsage       *SlotBudgetUsageFacts
+	SlotTiming            *SlotTimingFacts
 	SourceKind            SourceKind
 	QueryPermit           *QueryPermitFacts
 	NoDataSlot            *NoDataSlotFacts
+	TargetResolution      *TargetResolutionFacts
 	NoDataStall           *NoDataStallFacts
+	NoDataAbsence         *NoDataAbsenceFacts
 	GapProgress           *GapProgressFacts
 	NoDataMemoryRefusal   *NoDataMemoryRefusalFacts
 	NoDataMemoryWrite     *NoDataMemoryWriteFacts
@@ -1936,13 +2349,25 @@ type Observation struct {
 	// Group on a sixty-second or longer period -- which is most of the ones
 	// whose Slots are being skipped -- has no such bundle, so their
 	// completion lines carried no cause at all.
-	HeldBy               *HeldByFacts
+	HeldBy *HeldByFacts
+	// SlotCompletionKind is the completion the Slot reached, beside the reason
+	// the line reports.
+	//
+	// Separate fields, not required to agree, and they disagree in the case
+	// this line is hardest to read: a Slot whose Level outcomes are UNKNOWN
+	// completes COMPLETED_WITH_UNAVAILABLE and copies GAP_SKIPPED up from the
+	// Level. On the reason alone that is the same line as a Slot given up on
+	// before it ran, and the two want opposite investigations. Its own field
+	// rather than ProgressCompletionKind, which target flow reads to fill
+	// Completion on a line that already emits its own.
+	SlotCompletionKind   string
 	RangeDistance        *RangeDistanceFacts
 	RangeGate            *RangeGateFacts
 	SlotWait             *SlotWaitFacts
 	ObjectCatalog        *ObjectCatalogFacts
 	ObjectRead           *ObjectReadFacts
 	StateGenerationSkew  *StateGenerationSkewFacts
+	StateCarry           *StateCarryFacts
 	ActivationHold       *ActivationHoldFacts
 	LegacyMigration      *LegacyQGMigrationFacts
 	DrainingQG           *DrainingQGFacts
@@ -1958,9 +2383,32 @@ type Observation struct {
 	AlgorithmInputs      []AlgorithmInputFact
 	RecoveryGates        []RecoveryGateFact
 	OpenAlertGates       []OpenAlertGateFact
-	ControlSourceRound   *ControlSourceRoundFacts
-	normalized           bool
-	stageReasonBucket    bool
+	// LevelOutcomes is what the evaluation concluded per Level outcome and
+	// reason, on an evaluation_completed line: how many Level outcomes were
+	// NORMAL, ABNORMAL, RECOVERY, and for UNKNOWN and TERMINAL by which
+	// reason. The line's own reason is the Plan's fold - one word for the
+	// worst Level - so a Level suppressed by its effective time or held by a
+	// warming window had no name on the line unless it was that word.
+	LevelOutcomes []LevelOutcomeFact
+	// Shardability is the catalog counted by whether a value-list split
+	// could be expressed at all, once per publication.
+	Shardability *ShardabilityFacts
+	// ShardQuery is whether that object's own query could express the split
+	// the planner decided on. Beside SplitPlan and not folded into it: one
+	// says whether the pieces would be even, the other whether the strategy
+	// can be cut at all, and a strategy can be worth splitting and
+	// impossible to express.
+	ShardQuery *ShardQueryFacts
+	// SplitPlan is one object's split decision as the Leader's dry run
+	// reached it; SplitRound is what that round looked at. Two structures
+	// because they have two subjects - one object, and one round.
+	SplitPlan  *SplitPlanFacts
+	SplitRound *SplitRoundFacts
+	// DimensionCensus is one candidate Plan's census as this Slot wrote it.
+	DimensionCensus    *DimensionCensusFacts
+	ControlSourceRound *ControlSourceRoundFacts
+	normalized         bool
+	stageReasonBucket  bool
 
 	// DurationKnown distinguishes a measured zero from an absent timer. Older
 	// producers with a positive Duration are also understood as measured.
@@ -2029,9 +2477,11 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.CapacityBudget = NormalizeCapacityBudget(observation.CapacityBudget)
 	observation.CapacityRejection = normalizeCapacityRejection(observation)
 	observation.QueryCooldown = normalizeQueryCooldownFacts(observation.QueryCooldown)
-	observation.HistoryCoverage = normalizeHistoryCoverageFacts(observation.HistoryCoverage)
+	observation.HistoryCoverage, observation.HistoryCoverageRejected = normalizeHistoryCoverageFacts(observation.HistoryCoverage)
+	observation.PrimaryInput = normalizePrimaryInputFacts(observation.PrimaryInput)
 	observation.QueryPermit = normalizeQueryPermitFacts(observation.QueryPermit)
 	observation.NoDataSlot = normalizeNoDataSlotFacts(observation.NoDataSlot)
+	observation.NoDataAbsence = normalizeNoDataAbsenceFacts(observation.NoDataAbsence)
 	observation.SourceWithheld = normalizeSourceWithheldFacts(observation.SourceWithheld)
 	observation.NoDataCensus = normalizeNoDataCensusFacts(observation.NoDataCensus)
 	observation.SegmentContent = normalizeSegmentContentFacts(observation.SegmentContent)
@@ -2042,6 +2492,8 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.QueryStatus = normalizeQueryStatus(observation.Component, observation.Stage, observation.QueryStatus)
 	observation.QueryUnavailable = normalizeQueryUnavailable(observation.Component, observation.Stage, observation.QueryUnavailable)
 	observation.SlotReadiness = normalizeSlotReadiness(observation.SlotReadiness)
+	observation.DimensionCensus = normalizeDimensionCensusFacts(observation.DimensionCensus)
+	observation.SplitPlan = normalizeSplitPlanFacts(observation.SplitPlan)
 	if observation.RuntimeConfig != nil {
 		if observation.Component != ComponentRuntime || observation.Stage != StageConfigLoaded {
 			observation.RuntimeConfig = nil
@@ -2055,6 +2507,7 @@ func NormalizeObservation(observation Observation) Observation {
 	observation.ObjectCatalog = normalizeObjectCatalogFacts(observation.ObjectCatalog)
 	observation.ObjectRead = normalizeObjectReadFacts(observation.ObjectRead)
 	observation.StateGenerationSkew = normalizeStateGenerationSkewFacts(observation.StateGenerationSkew)
+	observation.StateCarry = normalizeStateCarryFacts(observation.StateCarry)
 	observation.ActivationHold = normalizeActivationHoldFacts(observation.ActivationHold)
 	observation.LegacyMigration = normalizeLegacyQGMigrationFacts(observation.LegacyMigration)
 	observation.DrainingQG = normalizeDrainingQGFacts(observation.DrainingQG)
@@ -2076,6 +2529,7 @@ func NormalizeObservation(observation Observation) Observation {
 	)
 	observation.AlgorithmEvaluations, observation.AlgorithmInputs = normalizeAlgorithmFacts(observation)
 	observation.RecoveryGates = normalizeRecoveryGateFacts(observation)
+	observation.LevelOutcomes = normalizeLevelOutcomeFacts(observation)
 	observation.OpenAlertGates = normalizeOpenAlertGateFacts(observation)
 	observation.ControlSourceRound = normalizeControlSourceRoundFacts(observation)
 	observation.Counts = normalizeCounts(observation.Counts)
@@ -2435,6 +2889,26 @@ func normalizeDrainingQGFacts(facts *DrainingQGFacts) *DrainingQGFacts {
 // SchedulePruneSkipReasons is the closed vocabulary of ScheduleCutoverFacts.PrunesSkipped.
 var SchedulePruneSkipReasons = []string{"progress_unavailable", "progress_missing"}
 
+// The outcomes a state preflight's second pass splits into, as the closed set
+// the counter pre-creates. Only OldRepresentation ends; NoRecordYet never
+// does; the three corrupt ones should be zero and are read to confirm it.
+//
+// Pre-created because this family is read for its zeros, and an outcome nobody
+// pre-created is absent -- which reads the same as zero and means the opposite.
+const (
+	EnvelopePassOldRepresentation = "old_representation"
+	EnvelopePassNoRecordYet       = "no_record_yet"
+	EnvelopePassEnvelopeCorrupt   = "envelope_corrupt"
+	EnvelopePassFrameCorruptSaved = "frame_corrupt_rescued"
+	EnvelopePassFrameCorruptLost  = "frame_corrupt_lost"
+	// EnvelopePassUnclassified is a shape the split does not know: unreachable
+	// today, carried so that a sixth one is counted rather than dropped.
+	EnvelopePassUnclassified = "unclassified"
+)
+
+var EnvelopePassOutcomes = []string{EnvelopePassOldRepresentation, EnvelopePassNoRecordYet,
+	EnvelopePassEnvelopeCorrupt, EnvelopePassFrameCorruptSaved, EnvelopePassFrameCorruptLost, EnvelopePassUnclassified}
+
 func normalizeScheduleCutoverFacts(facts *ScheduleCutoverFacts) *ScheduleCutoverFacts {
 	if facts == nil {
 		return nil
@@ -2656,6 +3130,21 @@ func normalizeNoDataSlotFacts(facts *NoDataSlotFacts) *NoDataSlotFacts {
 	return &normalized
 }
 
+// normalizeNoDataAbsenceFacts drops facts that name no outcome and clamps a
+// negative horizon to none. The counts are unsigned and are kept as counted:
+// an outcome this build does not know is kept for the same reason the Slot
+// facts keep one.
+func normalizeNoDataAbsenceFacts(facts *NoDataAbsenceFacts) *NoDataAbsenceFacts {
+	if facts == nil || facts.Outcome == "" {
+		return nil
+	}
+	normalized := *facts
+	if normalized.HorizonSeconds < 0 {
+		normalized.HorizonSeconds = 0
+	}
+	return &normalized
+}
+
 func normalizeQueryPermitFacts(facts *QueryPermitFacts) *QueryPermitFacts {
 	if facts == nil {
 		return nil
@@ -2784,6 +3273,15 @@ func NormalizeReason(reason ReasonCode, result Result) ReasonCode {
 	if _, ok := viewStreamReasonSet[reason]; ok {
 		return reason
 	}
+	if _, ok := schedulerDecisionReasonSet[reason]; ok {
+		return reason
+	}
+	if _, ok := effectiveMaintenanceReasonSet[reason]; ok {
+		return reason
+	}
+	if _, ok := absentCloseReasonSet[reason]; ok {
+		return reason
+	}
 	return ReasonOther
 }
 
@@ -2901,6 +3399,7 @@ func normalizeCounts(counts Counts) Counts {
 
 var metricComponentStages = []ComponentStage{
 	{ComponentRuntime, StageStartup}, {ComponentRuntime, StageConfigLoaded},
+	{ComponentRuntime, StageEffectiveTimeMaintenance},
 	{ComponentRuntime, StageShutdown}, {ComponentRuntime, StageFatal},
 	{ComponentRuntime, StageRestartRecovered},
 	// Registered on the generic catalog rather than the phase-two one because
@@ -2933,11 +3432,32 @@ var metricComponentStages = []ComponentStage{
 
 var phaseTwoComponentStages = []ComponentStage{
 	{ComponentRuntime, StageLegacyPodCache},
+	// The absent-strategy difference reports through its own metric family,
+	// which has a cell per outcome and per denominator. Registered here
+	// rather than on the generic catalog so that it does not also buy a
+	// slice of the duration histogram's cross product, which would be
+	// ninety more series for a loop that runs twelve times an hour on one
+	// replica and is fully answered by its own family.
+	{ComponentControlPlane, StageAbsentStrategyClose},
 	{ComponentControlPlane, StageSnapshotRefreshed}, {ComponentControlPlane, StageSnapshotUnavailable},
 	{ComponentControlPlane, StageActivationFailed},
+	// The catalog's three stages were emitted from the day the catalog
+	// existed and listed nowhere, so NormalizeComponentStage folded every one
+	// of them to (_other, _other) and the generic counter admitted them as
+	// such: object_read fires once per catalog object read, hit included, and
+	// on a live replica that was 300 lines a second into the one cell of
+	// observation_total that exists to say "an emitter nobody classified is
+	// running" -- with 822,000 in it, a real unclassified emitter would not
+	// have moved the needle. Listed here they keep their names and stay out
+	// of the generic family, as every other phase-two stage does; their own
+	// families (object_read_total, object_catalog_objects_total,
+	// schedule_cutover_total) were counting them all along.
+	{ComponentControlPlane, StageObjectCatalog}, {ComponentControlPlane, StageObjectRead},
+	{ComponentControlPlane, StageScheduleCutover},
 	{ComponentControlPlane, StageActiveQGSet}, {ComponentControlPlane, StageLegacyQGMigration},
 	{ComponentControlPlane, StageDrainingQGReconciled},
 	{ComponentControlPlane, StageFrozenPlanGeneration}, {ComponentControlPlane, StageActivationHold},
+	{ComponentControlPlane, StageStateCarryDecided}, {ComponentState, StageStateCarried},
 	{ComponentOwnership, StageAssignmentAcquired}, {ComponentOwnership, StageAssignmentLost},
 	{ComponentOwnership, StageRebalancePlanned},
 	{ComponentOwnership, StageControlReadsSpent},
@@ -2963,8 +3483,11 @@ var phaseTwoComponentStages = []ComponentStage{
 	{ComponentState, StageStatePreflight}, {ComponentState, StageGapLoaded},
 	{ComponentState, StageGapGuardProgress},
 	{ComponentEvaluation, StageNoDataDecided},
+	{ComponentAccess, StageTargetResolved},
 	{ComponentProgress, StageExecutionEvidenceWritten},
 	{ComponentState, StageNoDataMemoryRead},
+	{ComponentState, StageDimensionCensus},
+	{ComponentControlPlane, StageSplitPlanned},
 	{ComponentState, StageNoDataMemoryRenewed},
 	{ComponentState, StageFrozenStateRenewed},
 	{ComponentState, StageNoDataMemoryRefused},
@@ -3005,6 +3528,80 @@ var allDirections = []Direction{DirectionInput, DirectionOutput, DirectionIntern
 // did not say. They are listed once and shared, so adding one cannot silently
 // change what counts as a resource reason.
 var unclassifiedReasons = []ReasonCode{ReasonNone, ReasonInternalUnknown, ReasonNotReported}
+
+// The effective-time maintenance's outcomes: the closed list of what one
+// maintenance step does to a Query Group, an alert or a close batch. They
+// are the reason of its log line and the outcome label of
+// effective_close_total, which pre-creates every cell; before the counter
+// existed the whole close chain normalized to reason_code=other on the
+// metrics side and had no cell of its own.
+const (
+	// EffectiveCloseAcked counts alerts closed, one per alert the broker
+	// acknowledged.
+	EffectiveCloseAcked ReasonCode = "close_acked"
+	// EffectiveClosePrecheckFailed is the owner and content check before a
+	// send refusing: the fence, the content scope or the timeline moved.
+	EffectiveClosePrecheckFailed ReasonCode = "close_precheck_failed"
+	// EffectiveCloseSendFailed is the producer not acknowledging a batch.
+	EffectiveCloseSendFailed ReasonCode = "close_send_failed"
+	// EffectiveCloseMaintenanceBusy is a close that could not take the Query
+	// Group's flight because a Slot was executing. Once is nothing; on every
+	// tick it is a Query Group whose close never happens, which used to be
+	// the same silence as a Query Group with nothing to close.
+	EffectiveCloseMaintenanceBusy ReasonCode = "maintenance_busy"
+	// EffectiveClosePlanUncompilable counts activated Plans the maintenance
+	// read could not compile and so cannot judge.
+	EffectiveClosePlanUncompilable ReasonCode = "maintenance_plan_uncompilable"
+	EffectiveCloseIdentityInvalid  ReasonCode = "close_identity_invalid"
+	// EffectiveCloseEffectiveTimeUnknown is a Plan whose effective time could
+	// not be resolved at all.
+	EffectiveCloseEffectiveTimeUnknown ReasonCode = "effective_time_unknown"
+	EffectiveCloseLegacyUnavailable    ReasonCode = "legacy_effective_time_unavailable"
+	// EffectiveCloseUnavailable is the Query Group's Plans not readable, or
+	// its owner not accepting.
+	EffectiveCloseUnavailable       ReasonCode = "unavailable"
+	EffectiveCloseUnsupportedRunner ReasonCode = "unsupported_runner"
+	// EffectiveCloseViewNotExecutable is a Query Group whose Plans the loop
+	// could not read because the executable view does not allow it yet:
+	// the view not installed, or the lease behind it. A rollout's shape -
+	// every owned Query Group, once or twice, in the seconds after a
+	// replica starts - and not a store failure, which is what "unavailable"
+	// read as when the two were one word.
+	EffectiveCloseViewNotExecutable ReasonCode = "view_not_executable"
+)
+
+// EffectiveCloseOutcomes is every outcome, for the metric to pre-create each
+// cell and for a reader to bound the family by.
+var EffectiveCloseOutcomes = []ReasonCode{
+	EffectiveCloseAcked, EffectiveClosePrecheckFailed, EffectiveCloseSendFailed,
+	EffectiveCloseMaintenanceBusy, EffectiveClosePlanUncompilable, EffectiveCloseIdentityInvalid,
+	EffectiveCloseEffectiveTimeUnknown, EffectiveCloseLegacyUnavailable, EffectiveCloseUnavailable, EffectiveCloseUnsupportedRunner,
+	EffectiveCloseViewNotExecutable,
+}
+
+// Maintenance details are bounded log reasons, not new metric label dimensions.
+var effectiveMaintenanceReasons = EffectiveCloseOutcomes
+
+// AbsentCloseReasons is the absent-strategy difference's vocabulary as
+// observability reason codes. The words are the difference's own - one
+// vocabulary, declared where the decision is made - so that a log line, the
+// metric cell and the code branch cannot drift into three spellings.
+var AbsentCloseReasons = absentCloseReasons()
+
+func absentCloseReasons() []ReasonCode {
+	reasons := make([]ReasonCode, 0, len(absentalerts.Outcomes)+len(absentalerts.Refusals))
+	for _, outcome := range absentalerts.Outcomes {
+		reasons = append(reasons, ReasonCode(outcome))
+	}
+	for _, refusal := range absentalerts.Refusals {
+		if refusal == absentalerts.RefusalNone {
+			continue
+		}
+		reasons = append(reasons, ReasonCode(refusal))
+	}
+	return reasons
+}
+
 var contractClassReasons = []ReasonCode{
 	ReasonContractDeterministic, ReasonContractRetryable, ReasonContractCoverage,
 }
@@ -3059,10 +3656,30 @@ func ViewStreamReasonCode(reason string) ReasonCode {
 	return ""
 }
 
+// SchedulerDecisionReasons is the closed list of words the scheduler's own
+// decisions carry as their reason_code: why a round gave up on a Slot at the
+// range gate (RangeGateOutcomes) and why a replay expired
+// (ReplayExpiryReasons). Both words already travelled on their lines, in the
+// facts (range_gate, replay_expiry_reason), with the reason field left empty
+// -- which a degraded result normalizes to reason_not_reported, the word for
+// a site that failed to report, on lines whose site had reported one level
+// down, where a count by reason cannot reach it. The lists are the same ones
+// the metric partitions pre-create, so a word here is a word a series counts.
+var SchedulerDecisionReasons = func() []ReasonCode {
+	reasons := make([]ReasonCode, 0, len(RangeGateOutcomes)+len(ReplayExpiryReasons))
+	for _, outcome := range RangeGateOutcomes {
+		reasons = append(reasons, ReasonCode(outcome))
+	}
+	for _, reason := range ReplayExpiryReasons {
+		reasons = append(reasons, ReasonCode(reason))
+	}
+	return reasons
+}()
+
 var allCommonReasons = joinReasons(unclassifiedReasons, contractClassReasons, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation})
 var allResourceReasons = joinReasons(
 	unclassifiedReasons, resourceOnlyReasons, contractClassReasons, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation})
-var allLogReasons = joinReasons(unclassifiedReasons, resourceOnlyReasons, activationFailureReasons, ViewStreamReasons, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation})
+var allLogReasons = joinReasons(unclassifiedReasons, resourceOnlyReasons, activationFailureReasons, ViewStreamReasons, SchedulerDecisionReasons, effectiveMaintenanceReasons, AbsentCloseReasons, []ReasonCode{ReasonOther, ReasonStateAlreadyAppliedBeforeEvaluation})
 
 var componentStageSet = makeComponentStageSet(allComponentStages)
 var metricComponentStageSet = makeComponentStageSet(metricComponentStages)
@@ -3074,6 +3691,9 @@ var commonReasonSet = makeReasonSet(joinReasons(unclassifiedReasons, []ReasonCod
 var resourceReasonSet = makeReasonSet(resourceOnlyReasons)
 var activationFailureReasonSet = makeReasonSet(activationFailureReasons)
 var viewStreamReasonSet = makeReasonSet(ViewStreamReasons)
+var schedulerDecisionReasonSet = makeReasonSet(SchedulerDecisionReasons)
+var effectiveMaintenanceReasonSet = makeReasonSet(effectiveMaintenanceReasons)
+var absentCloseReasonSet = makeReasonSet(AbsentCloseReasons)
 var contractObservationReasons, contractObservationReasonSet, contractObservationMetricReasonByCode = loadContractObservationReasons()
 
 func makeComponentStageSet(values []ComponentStage) map[ComponentStage]struct{} {

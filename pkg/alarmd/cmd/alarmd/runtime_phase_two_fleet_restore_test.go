@@ -158,3 +158,23 @@ func TestRestoredRoundIsMappedFromTheCommittedSummary(t *testing.T) {
 		t.Fatalf("restored round with an unparsable clock = %+v, want the clock dropped and the reason kept", round)
 	}
 }
+
+// The two facts about records come off the record as Slot times, and a zero
+// -- a record from before the fields, or one a build without them wrote back
+// during a mixed-version roll -- comes off as no time at all, not as the
+// epoch: an object restored with "empty since 1970" would be listed on the
+// spot with an age of decades.
+func TestTheTwoFactsAboutRecordsAreMappedAndZeroIsNotTheEpoch(t *testing.T) {
+	record := execution.ScheduleProgress{NextSlot: 1_700_000_120, LastFullSlot: 1_700_000_060,
+		LastCompletionKind: execution.CompletionFullEmpty, LastDataSlot: 1_699_990_000, EmptyRunSinceSlot: 1_699_996_400}
+	restored := restoredStateOf(record)
+	if !restored.LastDataSlot.Equal(time.Unix(1_699_990_000, 0)) || !restored.EmptyRunSince.Equal(time.Unix(1_699_996_400, 0)) ||
+		restored.LastCompletion != "FULL_EMPTY_COMPLETED" || !restored.LastFullSlot.Equal(time.Unix(1_700_000_060, 0)) {
+		t.Fatalf("restored = %+v, want both facts as the Slots the record names", restored)
+	}
+	record.LastDataSlot, record.EmptyRunSinceSlot = 0, 0
+	restored = restoredStateOf(record)
+	if !restored.LastDataSlot.IsZero() || !restored.EmptyRunSince.IsZero() {
+		t.Fatalf("restored from a record that names neither = %+v, want both zero, not the epoch", restored)
+	}
+}

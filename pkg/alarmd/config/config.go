@@ -18,12 +18,14 @@ import (
 	"os"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
 )
 
@@ -50,6 +52,44 @@ type HTTPConfig struct {
 	// loopback so routing the query surface cannot expose it. An empty value
 	// serves no diagnostics at all; pprof is never folded back into Listen.
 	DiagnosticsListen string `yaml:"diagnostics_listen"`
+	// InternalListen carries /metrics, /healthz and /readyz for the cluster
+	// alone. A restricted public surface (PublicSurfaceRestrictionRequested,
+	// once the CLI is up) stops serving /metrics on Listen, so the scrape
+	// needs this port; without it the process still runs and reports that
+	// its metrics have no way out. Empty otherwise serves nothing extra: an
+	// unrestricted Listen still carries all three.
+	InternalListen string `yaml:"internal_listen"`
+}
+
+// CLIConfig enables the deployment-operator evidence channel. AdminKey authorizes
+// grant issuance directly in alarmd; it is not a CLI session token or user identity.
+// The key must never be included in runtime configuration evidence.
+type CLIConfig struct {
+	Enabled         bool   `yaml:"enabled"`
+	EnvironmentID   string `yaml:"environment_id"`
+	EnvironmentName string `yaml:"environment_name"`
+	PublicBaseURL   string `yaml:"public_base_url"`
+	AdminKey        string `yaml:"admin_key" json:"-"`
+}
+
+// CLIAdminKeyEnvironment carries the administrator key when the deployment
+// keeps it in a Secret of its own rather than in the rendered configuration:
+// a chart then references the Secret and the key never appears in values.
+const CLIAdminKeyEnvironment = "ALARMD_CLI_ADMIN_KEY"
+
+// resolveAdminKeyFromEnvironment fills the administrator key from the
+// environment. A key stated in both places is refused: two sources for one
+// secret is a deployment that can rotate one and keep using the other.
+func (c *CLIConfig) resolveAdminKeyFromEnvironment() error {
+	env, ok := os.LookupEnv(CLIAdminKeyEnvironment)
+	if !ok || env == "" {
+		return nil
+	}
+	if c.AdminKey != "" {
+		return errors.New("cli admin_key is set both in the file and in " + CLIAdminKeyEnvironment)
+	}
+	c.AdminKey = env
+	return nil
 }
 
 // DiagnosticsFact renders the diagnostics surface for startup logging. Every
@@ -159,11 +199,34 @@ type PlatformCacheConfig struct {
 	// platform settings copy says not_configured rather than reading the
 	// wrong instance as "nothing published".
 	DynamicConfig *RedisConnectionConfig `yaml:"dynamic_config,omitempty"`
+	// TargetGroup locates the dynamic target group cache. Prefix-only legacy
+	// configurations retain their historical CMDB connection.
+	TargetGroup *RedisConnectionConfig `yaml:"target_group,omitempty"`
+	// DynamicGroupKeyPrefix is the fork's own Redis key prefix, under which
+	// its dynamic group module writes "<prefix>dynamic_group:<id>" on the
+	// instance selected by TargetGroup (historically CMDB). It is a deployment
+	// coordinate rendered from the fork's setting, spelled exactly as the writer spells
+	// it, separator included; alarmd derives nothing from it and has no
+	// default for it. Absent means the deployment has no such writer and no
+	// group is read (every dynamic group selector resolves unavailable by
+	// name); present and empty is a rendering that went wrong and is
+	// refused rather than read as a prefix.
+	DynamicGroupKeyPrefix *string `yaml:"dynamic_group_key_prefix,omitempty"`
+}
+
+// DynamicGroupKeyPrefix is the fork's key prefix for its dynamic group
+// cache, and whether the deployment renders one.
+func (c Config) DynamicGroupKeyPrefix() (string, bool) {
+	if c.PlatformCache.DynamicGroupKeyPrefix == nil {
+		return "", false
+	}
+	return *c.PlatformCache.DynamicGroupKeyPrefix, true
 }
 
 type Config struct {
 	Input           PhaseTwoInputConfig   `yaml:"input"`
 	HTTP            HTTPConfig            `yaml:"http"`
+	CLI             CLIConfig             `yaml:"cli"`
 	Kafka           KafkaConfig           `yaml:"kafka"`
 	Redis           RedisConfig           `yaml:"redis"`
 	PlatformCache   PlatformCacheConfig   `yaml:"platform_cache"`
@@ -270,7 +333,7 @@ func redisPoolCPUBudget() int {
 func (c Config) WithResolvedRedisPoolSize() Config {
 	cpuBudget := redisPoolCPUBudget()
 	c.Redis.PoolSize = c.Redis.Connection().EffectivePoolSize(cpuBudget)
-	for _, platform := range []**RedisConnectionConfig{&c.PlatformCache.Strategy, &c.PlatformCache.CMDB} {
+	for _, platform := range []**RedisConnectionConfig{&c.PlatformCache.Strategy, &c.PlatformCache.CMDB, &c.PlatformCache.DynamicConfig, &c.PlatformCache.TargetGroup} {
 		if *platform == nil {
 			continue
 		}
@@ -329,6 +392,32 @@ func (c Config) OutputProtocol() string {
 	return c.PhaseTwo.Output.protocol()
 }
 
+// NoDataTrackingHorizonSeconds is the horizon the deployment's values state,
+// and whether they state one at all.
+//
+// It is the values layer and nothing more. The effective platform horizon is
+// resolved by the platform settings copy: a dynamic value, else this one,
+// else the contract's one day. Absent here therefore no longer means "track
+// indefinitely" - that reading is withdrawn; the approved contract gives every
+// group a finite horizon by default. A strategy stating its own overrides all
+// three.
+func (c Config) NoDataTrackingHorizonSeconds() (int64, bool) {
+	if c.PhaseTwo.NoData.TrackingHorizonSeconds == nil {
+		return 0, false
+	}
+	return *c.PhaseTwo.NoData.TrackingHorizonSeconds, true
+}
+
+// PlatformSettingsLayer is the deployment's layer of the platform settings:
+// the platform_settings group, and the no-data horizon from its own leaf.
+func (c Config) PlatformSettingsLayer() platformsettings.Layer {
+	layer := c.PhaseTwo.PlatformSettings.Layer()
+	if horizon, stated := c.NoDataTrackingHorizonSeconds(); stated {
+		layer.NoDataTrackingHorizonSeconds = &horizon
+	}
+	return layer
+}
+
 // CMDBCacheRedis is where the platform's host cache is read from.
 func (c Config) CMDBCacheRedis() RedisConnectionConfig {
 	if c.PlatformCache.CMDB != nil {
@@ -346,6 +435,18 @@ func (c Config) DynamicConfigRedis() (RedisConnectionConfig, bool) {
 	return c.PlatformCache.DynamicConfig.clone(), true
 }
 
+// TargetGroupRedis returns the explicit location, or the historical CMDB
+// location for prefix-only configurations. Without a prefix no groups are read.
+func (c Config) TargetGroupRedis() (RedisConnectionConfig, bool) {
+	if c.PlatformCache.DynamicGroupKeyPrefix == nil {
+		return RedisConnectionConfig{}, false
+	}
+	if c.PlatformCache.TargetGroup != nil {
+		return c.PlatformCache.TargetGroup.clone(), true
+	}
+	return c.CMDBCacheRedis(), true
+}
+
 // resolvePlatformCacheRedis writes down which connection each platform cache
 // actually resolved to, rather than leaving it to be worked out again at every
 // call site. The resolved configuration is what a release check reads and what
@@ -355,9 +456,9 @@ func (c *Config) resolvePlatformCacheRedis() {
 	if c == nil || c.Input.Mode != InputModeGoAccess {
 		return
 	}
-	for _, cache := range []**RedisConnectionConfig{&c.PlatformCache.Strategy, &c.PlatformCache.CMDB, &c.PlatformCache.DynamicConfig} {
+	for _, cache := range []**RedisConnectionConfig{&c.PlatformCache.Strategy, &c.PlatformCache.CMDB, &c.PlatformCache.DynamicConfig, &c.PlatformCache.TargetGroup} {
 		if *cache == nil {
-			if cache == &c.PlatformCache.DynamicConfig {
+			if cache == &c.PlatformCache.DynamicConfig || cache == &c.PlatformCache.TargetGroup {
 				continue
 			}
 			resolved := c.Redis.Connection()
@@ -485,6 +586,12 @@ func Load(path string) (Config, error) {
 	cfg.resolveCompatibilityServiceTimeouts()
 	cfg.resolveCompatibilityPodCache()
 	cfg.resolvePhaseTwoWorkerIDFromEnvironment()
+	if err := cfg.PhaseTwo.Linkd.resolveCredentialsFromEnvironment(); err != nil {
+		return Config{}, err
+	}
+	if err := cfg.CLI.resolveAdminKeyFromEnvironment(); err != nil {
+		return Config{}, err
+	}
 	if err := cfg.PhaseTwo.migratePlatformSettings(); err != nil {
 		return Config{}, err
 	}
@@ -492,6 +599,19 @@ func Load(path string) (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+// PublicSurfaceRestrictionRequested is the configuration's half of the one
+// switch for the public surface: the process serves the CLI with a
+// deployment administrator key. The key is what makes a CLI session
+// available, and only then do the routes that carry deployment coordinates
+// have somewhere else to be read from; a key on a process with the CLI
+// switched off opens no session. The other half is the runtime's: the
+// surface is restricted only once the CLI has actually come up, since
+// restricting without it would leave no way in. No separate setting exists,
+// so the two cannot disagree.
+func (c Config) PublicSurfaceRestrictionRequested() bool {
+	return c.CLI.Enabled && c.CLI.AdminKey != ""
 }
 
 func (c Config) Validate() error {
@@ -571,6 +691,17 @@ func (c Config) validateCommon() error {
 		}
 	}
 
+	if c.HTTP.InternalListen != "" {
+		if err := validateListenAddress("http internal_listen", c.HTTP.InternalListen); err != nil {
+			return err
+		}
+		for _, other := range []struct{ field, address string }{{"http listen", c.HTTP.Listen}, {"http diagnostics_listen", c.HTTP.DiagnosticsListen}} {
+			if other.address != "" && listenAddressesCollide(c.HTTP.InternalListen, other.address) {
+				return fmt.Errorf("http internal_listen %q must differ from %s %q", c.HTTP.InternalListen, other.field, other.address)
+			}
+		}
+	}
+
 	if c.ShutdownTimeout.Duration() <= 0 {
 		return errors.New("shutdown_timeout must be positive")
 	}
@@ -578,6 +709,9 @@ func (c Config) validateCommon() error {
 }
 
 func (c Config) validateGoAccessRuntime() error {
+	if err := c.PhaseTwo.Linkd.Validate(); err != nil {
+		return err
+	}
 	if c.Kafka.InputTopic != "" || c.Kafka.GroupID != "" || c.Kafka.InitialOffset != "" {
 		return errors.New("phase-two Go Access must not configure phase-one Kafka input coordinates")
 	}
@@ -598,6 +732,17 @@ func (c Config) validateGoAccessRuntime() error {
 	}
 	if err := c.CMDBCacheRedis().validate("platform_cache.cmdb"); err != nil {
 		return err
+	}
+	if prefix, rendered := c.DynamicGroupKeyPrefix(); rendered && strings.TrimSpace(prefix) == "" {
+		return errors.New("platform_cache.dynamic_group_key_prefix is rendered but empty; leave it out where no dynamic group cache is written")
+	}
+	if c.PlatformCache.TargetGroup != nil && c.PlatformCache.DynamicGroupKeyPrefix == nil {
+		return errors.New("platform_cache.target_group requires platform_cache.dynamic_group_key_prefix")
+	}
+	if connection, configured := c.TargetGroupRedis(); configured {
+		if err := connection.validate("platform_cache.target_group"); err != nil {
+			return err
+		}
 	}
 	if err := validateRuntimePrefixIsolation(c.Redis.StatePrefix, c.PhaseTwo.Control.StrategyCachePrefix); err != nil {
 		return err

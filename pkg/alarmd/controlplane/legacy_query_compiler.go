@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package controlplane
 
 import (
@@ -33,6 +24,10 @@ type QueryPlanCompileError struct {
 	Disposition Disposition
 	Reason      string
 	Err         error
+	// FieldPath is where in the item the refusal happened, relative to the
+	// item ("query_configs[1]"), when the refusal is about one field. The
+	// catalog prefixes the item's own path. Empty when it is not about one.
+	FieldPath string
 }
 
 func (failure *QueryPlanCompileError) Error() string {
@@ -233,13 +228,16 @@ func (compiler *LegacyPrimaryQueryCompiler) CompilePrimaryQuery(_ context.Contex
 		return execution.QueryPlanFacts{}, queryConfigRejected("QUERY_SOURCE_INCOMPLETE", err)
 	}
 	configs := make([]legacyQueryConfig, 0, len(source.QueryConfigs))
-	for _, raw := range source.QueryConfigs {
+	for index, raw := range source.QueryConfigs {
 		config, err := decodeLegacyQueryConfig(raw)
 		if err != nil {
-			return execution.QueryPlanFacts{}, queryConfigRejected("QUERY_CONFIG_INVALID", err)
+			// Which config and what was wrong with it travel with the word:
+			// a strategy refused as QUERY_CONFIG_INVALID alone left a reader
+			// with a document of a few hundred keys and a word.
+			return execution.QueryPlanFacts{}, atQueryConfig(queryConfigRejected("QUERY_CONFIG_INVALID", err), index)
 		}
 		if !pollingSourceSupported(config) {
-			return execution.QueryPlanFacts{}, queryUnsupported("QUERY_SOURCE_NOT_MIGRATED", nil)
+			return execution.QueryPlanFacts{}, atQueryConfig(queryUnsupported("QUERY_SOURCE_NOT_MIGRATED", nil), index)
 		}
 		config.AggDimensions = canonicalDimensionStrings(config.AggDimensions)
 		// Python alarm Access does not pass cached query_config.filter_dict to
@@ -952,6 +950,17 @@ func containsString(values []string, target string) bool {
 
 func queryConfigRejected(reason string, err error) error {
 	return &QueryPlanCompileError{Disposition: DispositionConfigRejected, Reason: reason, Err: err}
+}
+
+// atQueryConfig names the query config a refusal is about. The refusal is
+// built by the two constructors above so the fleet's vocabulary guard, which
+// reads their calls, keeps seeing every word; this only adds where.
+func atQueryConfig(err error, index int) error {
+	var failure *QueryPlanCompileError
+	if errors.As(err, &failure) {
+		failure.FieldPath = fmt.Sprintf("query_configs[%d]", index)
+	}
+	return err
 }
 
 func queryUnsupported(reason string, err error) error {

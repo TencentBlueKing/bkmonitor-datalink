@@ -1,0 +1,171 @@
+// Throwaway writer for the runtime state upgrade fixture: dropped into an
+// earlier release's pkg/alarmd/state, it writes Runtime State through that
+// release's own store into a real redis-server, loads it back with the same
+// release, and saves every key's raw bytes and the loaded views to XV_OUT.
+
+package state
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"os"
+	"os/exec"
+	"sort"
+	"testing"
+	"time"
+
+	"github.com/go-redis/redis/v8"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+)
+
+func TestWriteRuntimeStateUpgradeFixture(t *testing.T) {
+	out := os.Getenv("XV_OUT")
+	if out == "" {
+		t.Skip("XV_OUT is not set")
+	}
+	executable, err := exec.LookPath("redis-server")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := reserveTCPAddress(t)
+	startRedisServer(t, executable, address)
+	backend, err := NewRedisBackend(RedisBackendOptions{Address: address, DialTimeout: time.Second, ReadTimeout: time.Second, WriteTimeout: time.Second, PoolSize: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = backend.Close() })
+	waitRedisReady(t, backend)
+	router, err := NewFixedRouter("redis", backend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd-upgrade", Router: router, MaxValueBytes: 1 << 20,
+		MaxItemsPerCall: 64, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Late enough that every point of a thirty-minute history has a positive
+	// source time.
+	version := applyVersion()
+	version.EvaluationTime = 7200
+	at := int64(version.EvaluationTime)
+	// Series digests and record ids as production forms them: a SHA-256
+	// digest, and each record id derived from it and the source time.
+	build := func(series string, mutation execution.StateMutation) execution.StateMutation {
+		sum := sha256.Sum256([]byte(series))
+		mutation.Identity = seriesIdentity(0)
+		mutation.Identity.SeriesIdentityDigest = execution.SeriesIdentityDigest(hex.EncodeToString(sum[:]))
+		mutation.ApplyVersion = version
+		derive := func(at int64) string {
+			id, err := contract.DeriveRecordIDV2(string(mutation.Identity.SeriesIdentityDigest), at)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return id
+		}
+		for index := range mutation.AffectedRecords {
+			mutation.AffectedRecords[index].RecordID = derive(mutation.AffectedRecords[index].SourceTime)
+		}
+		for index := range mutation.Points {
+			mutation.Points[index].RecordID = derive(mutation.Points[index].SourceTime)
+		}
+		built, err := execution.BuildStateMutation(mutation)
+		if err != nil {
+			t.Fatalf("%s: %v", series, err)
+		}
+		return built
+	}
+	var history []execution.StateHistoryPoint
+	for index := int64(0); index < 30; index++ {
+		result := execution.LevelFactNormal
+		if index%3 == 0 {
+			result = execution.LevelFactAnomalous
+		}
+		history = append(history, execution.StateHistoryPoint{RecordID: "long", SourceTime: at - 60*(29-index),
+			Levels: []execution.StateLevelFact{{LevelID: 1, DetectFingerprint: "detect-1", Result: result}, {LevelID: 2, DetectFingerprint: "detect-2", Result: execution.LevelFactNormal}}})
+	}
+	mutations := []execution.StateMutation{
+		build("one-level-normal", execution.StateMutation{
+			AffectedRecords: []execution.RecordAnchor{{RecordID: "r1", SourceTime: at}},
+			Levels: []execution.RuntimeLevelStateMutation{{LevelID: 1, LevelStateCompatibility: "compat", HistoryCompleteness: execution.HistoryFull,
+				WarmupRequirementRef: "warm", LastProcessedEventTime: at}},
+			Points: []execution.StateHistoryPoint{{RecordID: "r1", SourceTime: at,
+				Levels: []execution.StateLevelFact{{LevelID: 1, DetectFingerprint: "detect", Result: execution.LevelFactNormal}}}}}),
+		build("two-levels-guarded", execution.StateMutation{
+			AffectedRecords: []execution.RecordAnchor{{RecordID: "r2", SourceTime: at - 60}, {RecordID: "r2", SourceTime: at}},
+			SeriesGuard:     &execution.StateGuardFact{Status: execution.HistoryWarming, ReasonCode: "HISTORY_WARMING", WarmupRequirementRef: "warm-guard"},
+			Levels: []execution.RuntimeLevelStateMutation{
+				{LevelID: 1, LevelStateCompatibility: "compat-1", HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm-1", LastProcessedEventTime: at},
+				{LevelID: 2, LevelStateCompatibility: "compat-2", HistoryCompleteness: execution.HistoryGapped, GapReasonCode: "HISTORY_GAPPED", WarmupRequirementRef: "warm-2", LastProcessedEventTime: at - 60}},
+			Points: []execution.StateHistoryPoint{
+				{RecordID: "r2", SourceTime: at - 60, Levels: []execution.StateLevelFact{{LevelID: 1, DetectFingerprint: "d1", Result: execution.LevelFactAnomalous}, {LevelID: 2, DetectFingerprint: "d2", Result: execution.LevelFactUnavailable}}},
+				{RecordID: "r2", SourceTime: at, Levels: []execution.StateLevelFact{{LevelID: 1, DetectFingerprint: "d1", Result: execution.LevelFactNormal}, {LevelID: 2, DetectFingerprint: "d2", Result: execution.LevelFactError}}}}}),
+		build("long-history", execution.StateMutation{
+			AffectedRecords: []execution.RecordAnchor{{RecordID: "long", SourceTime: at}},
+			Levels: []execution.RuntimeLevelStateMutation{
+				{LevelID: 1, LevelStateCompatibility: "compat-1", HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm-1", LastProcessedEventTime: at},
+				{LevelID: 2, LevelStateCompatibility: "compat-2", HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm-2", LastProcessedEventTime: at}},
+			Points: history}),
+		build("warming-level", execution.StateMutation{
+			AffectedRecords: []execution.RecordAnchor{{RecordID: "r4", SourceTime: at}},
+			Levels: []execution.RuntimeLevelStateMutation{{LevelID: 3, LevelStateCompatibility: "compat-3", HistoryCompleteness: execution.HistoryWarming,
+				GapReasonCode: "HISTORY_WARMING", WarmupRequirementRef: "warm-3", LastProcessedEventTime: at}},
+			Points: []execution.StateHistoryPoint{{RecordID: "r4", SourceTime: at,
+				Levels: []execution.StateLevelFact{{LevelID: 3, DetectFingerprint: "detect-3", Result: execution.LevelFactAnomalous}}}}}),
+	}
+	ctx := context.Background()
+	applied, err := store.ApplyRuntime(ctx, execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: mutations})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, item := range applied.Items {
+		if item.Status != execution.StateApplied {
+			t.Fatalf("mutation %d: %+v", index, item)
+		}
+	}
+	items := preflightItems(mutations)
+	loaded, err := store.LoadRuntime(ctx, execution.StatePreflightRequest{Contract: frozenRef(), Items: items})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := redis.NewClient(&redis.Options{Addr: address})
+	t.Cleanup(func() { _ = client.Close() })
+	keys, err := client.Keys(ctx, "*").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(keys)
+	type storedKey struct {
+		Key    string `json:"key"`
+		Type   string `json:"type"`
+		Value  string `json:"value_base64"`
+		TTLMin int64  `json:"ttl_ms"`
+	}
+	var stored []storedKey
+	for _, key := range keys {
+		kind := client.Type(ctx, key).Val()
+		if kind != "string" {
+			t.Fatalf("key %s is a %s; the fixture keeps strings only", key, kind)
+		}
+		value, err := client.Get(ctx, key).Bytes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		stored = append(stored, storedKey{Key: key, Type: kind, Value: base64.StdEncoding.EncodeToString(value), TTLMin: client.PTTL(ctx, key).Val().Milliseconds()})
+	}
+	fixture := map[string]any{"source_commit": os.Getenv("XV_SOURCE"), "prefix": "alarmd-upgrade", "contract": frozenRef(),
+		"items": items, "views": loaded.Items, "keys": stored}
+	data, err := json.MarshalIndent(fixture, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(out, append(data, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("wrote %d keys and %d views to %s", len(stored), len(loaded.Items), out)
+}

@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package scheduler
 
 import (
@@ -91,7 +82,7 @@ func TestWorkflowPermitWaitCountsEveryReturnOnce(t *testing.T) {
 }
 
 func TestWorkflowRunnerActualExits(t *testing.T) {
-	for _, name := range []string{"single_flight_busy", "ownership_rejected", "source_backoff", "source_retry", "source_blocked", "source_not_due", "source_error", "operation_not_ready", "admission_denied", "execute_returned", "cancelled", "other_error"} {
+	for _, name := range []string{"single_flight_busy", "ownership_rejected", "source_backoff", "source_retry", "source_blocked", "view_not_executable", "source_not_due", "source_error", "operation_not_ready", "admission_denied", "execute_returned", "cancelled", "other_error"} {
 		t.Run(name, func(t *testing.T) {
 			now := time.Unix(100, 0)
 			slot := frozenSlot("query-group-1")
@@ -124,6 +115,9 @@ func TestWorkflowRunnerActualExits(t *testing.T) {
 				expectedAttempted = true
 			case "source_blocked":
 				source.err = &SourceBlockedError{Err: errors.New("blocked")}
+				expectedAttempted = true
+			case "view_not_executable":
+				source.err = &ViewNotExecutableError{Reason: "not_in_view"}
 				expectedAttempted = true
 			case "source_not_due":
 				source.slot = FrozenSlot{}

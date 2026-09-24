@@ -187,6 +187,20 @@ func (session *Session) Deadline() time.Time {
 	return session.lease.Deadline
 }
 
+// Current is the lease as the last acquire or renewal left it, and whether
+// the session is still accepting. It is the record's side of the Worker's
+// executable-view check (decision-016 batch 4): the content scope and the
+// timeline revision the renewal brought back, read here rather than from
+// the view that previews them.
+func (session *Session) Current() (Lease, bool) {
+	if session == nil {
+		return Lease{}, false
+	}
+	session.mu.RLock()
+	defer session.mu.RUnlock()
+	return session.lease, session.accepting
+}
+
 func (session *Session) Release(ctx context.Context) error {
 	if session == nil {
 		return nil

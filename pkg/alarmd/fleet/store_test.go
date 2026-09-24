@@ -251,3 +251,56 @@ func TestPublishRequiresIdentityAndCaptureTime(t *testing.T) {
 		t.Fatal("snapshot without a capture time was accepted")
 	}
 }
+
+// storeMeterRecord is what the store told its meter.
+type storeMeterRecord struct {
+	published   []int
+	loads       int
+	loadedCount int
+	loadedBytes int
+}
+
+func (m *storeMeterRecord) SnapshotPublished(bytes int) { m.published = append(m.published, bytes) }
+func (m *storeMeterRecord) SnapshotsLoaded(loaded int, bytes int) {
+	m.loads, m.loadedCount, m.loadedBytes = m.loads+1, m.loadedCount+loaded, m.loadedBytes+bytes
+}
+
+// The store reports its own traffic. A fleet view is one read of every
+// replica's snapshot and it happens on every page load and every OB channel
+// invocation, but it rides a connection the rest of the runtime is using:
+// on a running deployment two hundred views a minute could not be told from
+// that connection's own drift. These are written by the store alone, so a
+// difference over a window is the views' -- which is the whole point of
+// counting them here rather than reading a shared connection's counters.
+//
+// A read that finds nothing still counts as a read: a view was built, and a
+// zero-byte one is a fact about the fleet, not a read that did not happen.
+func TestTheStoreReportsWhatItPublishedAndWhatEachViewRead(t *testing.T) {
+	client := newFakeRedis()
+	store := mustStore(t, client, time.Minute, 10)
+	meter := &storeMeterRecord{}
+	store.Meter(meter)
+	if err := store.Publish(context.Background(), snapshotWith(0)); err != nil {
+		t.Fatal(err)
+	}
+	if len(meter.published) != 1 || meter.published[0] != len(client.values[store.snapshotKey("pod-a")]) {
+		t.Fatalf("published = %v, want the bytes actually written", meter.published)
+	}
+	if _, err := store.Load(context.Background(), []string{"pod-a", "pod-gone"}); err != nil {
+		t.Fatal(err)
+	}
+	if meter.loads != 1 || meter.loadedCount != 1 || meter.loadedBytes != meter.published[0] {
+		t.Fatalf("meter = %+v, want one read of one snapshot of %d bytes", meter, meter.published[0])
+	}
+	if _, err := store.Load(context.Background(), []string{"pod-gone"}); err != nil {
+		t.Fatal(err)
+	}
+	if meter.loads != 2 || meter.loadedCount != 1 || meter.loadedBytes != meter.published[0] {
+		t.Fatalf("meter = %+v, want a second read that found nothing and still counted", meter)
+	}
+	// An unmetered store is the ordinary case for a tool or a test.
+	plain := mustStore(t, newFakeRedis(), time.Minute, 10)
+	if err := plain.Publish(context.Background(), snapshotWith(0)); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -164,3 +164,25 @@ func TestTheRetentionWithheldReasonsArePublishedAtZero(t *testing.T) {
 			"partition, or it stops adding up against catalog_objects", total)
 	}
 }
+
+// The composition names the strategies the source listed this round, once
+// each and sorted, beside the withheld records: every disposition but the
+// two that mean the source no longer lists the strategy. A reader keeping
+// the strategies the source dropped needs the round's listed set to tell
+// "listed again" from "gone" -- a removed strategy has no disposition at all
+// the round after -- and a strategy back in the list that compiles no Plan
+// this round is listed all the same.
+func TestCompositionNamesTheListedStrategiesOnceEach(t *testing.T) {
+	composition := ComposeCatalog(Catalog{Dispositions: []ObjectDisposition{
+		{SourceID: "s-2", Scope: "STRATEGY", Disposition: DispositionAccepted},
+		{SourceID: "s-2", Scope: "PLAN", Disposition: DispositionAccepted},
+		{SourceID: "s-1", Scope: "STRATEGY", Disposition: DispositionAccepted},
+		{SourceID: "s-3", Scope: "STRATEGY", Disposition: DispositionPendingRemoval, Reason: "REMOVED_FROM_ACTIVE_SET"},
+		{SourceID: "s-4", Scope: "STRATEGY", Disposition: DispositionRemoved, Reason: "ABSENT_FROM_ACTIVE_SET"},
+		{SourceID: "s-5", Scope: "STRATEGY", Disposition: DispositionStaleConfig, Reason: "LEVEL_INVALID"},
+		{SourceID: "s-6", Scope: "PLAN", Disposition: DispositionConfigRejected, Reason: "PLAN_INVALID"},
+	}})
+	if got := composition.ListedStrategies; len(got) != 4 || got[0] != "s-1" || got[1] != "s-2" || got[2] != "s-5" || got[3] != "s-6" {
+		t.Fatalf("listed = %v, want s-1, s-2, s-5, s-6 once each and sorted: the graced and the removed are not listed, the stale and the rejected are", got)
+	}
+}

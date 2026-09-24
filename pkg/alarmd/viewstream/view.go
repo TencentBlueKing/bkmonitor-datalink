@@ -71,6 +71,49 @@ type Assignment struct {
 	ContentScope        string `json:"content_scope,omitempty"`
 	PendingContentScope string `json:"pending_content_scope,omitempty"`
 	EffectiveAtMs       int64  `json:"effective_at_ms,omitempty"`
+	// TimelineRecordRevision is the record's word on which Schedule timeline
+	// revision the Query Group is on, previewed here. The holder's renewal
+	// brings the same number from the record, and the Worker executes from
+	// this view only while the two agree and match the timeline it holds
+	// (decision-016 batch 4). Zero when the record has not said.
+	TimelineRecordRevision uint64 `json:"timeline_record_revision,omitempty"`
+}
+
+// QueryGroupCost is one Query Group's cost as its Worker measured it, sent
+// on the heartbeat for placement to read (decision-020 section 5). The two
+// numbers are read differently and are not folded into one: the retained
+// peak is against the replica's pool, a limit; the per-second cost is across
+// replicas, a balance.
+type QueryGroupCost struct {
+	QueryGroup execution.QueryGroupIdentity `json:"query_group"`
+	// RetainedBytesPeak is the largest retained_bytes one Slot of the Query
+	// Group held in the last round, from the Slot completion's budget usage.
+	RetainedBytesPeak uint64 `json:"retained_bytes_peak"`
+	// CostPerSecondMilli is evaluation and query wall time per second of
+	// schedule, in thousandths, smoothed by the Worker.
+	CostPerSecondMilli uint64 `json:"cost_per_second_milli"`
+}
+
+// CostSource is what a Worker's heartbeat asks for what to report: the
+// entries whose reading moved by a tenth or more since last reported, and
+// always the first reading of a Query Group on this Worker, bounded by the
+// owned count. The Worker's side of decision-020 section 5.2; nil reports
+// nothing.
+type CostSource interface {
+	Costs() []QueryGroupCost
+	// SessionStarted is told once per stream, after the Hello went out and
+	// before the first heartbeat: the Leader listening now may not be the
+	// one anything was reported to, so every reading is unreported again.
+	SessionStarted()
+}
+
+// CostSink is what the Leader hands each heartbeat's costs to, with the
+// Worker they came from. A Query Group the Worker no longer owns is absent
+// from every later heartbeat, which says nothing: the sink clears it by the
+// assignment roster, never by absence. The Leader's side of decision-020
+// section 5.2; nil discards.
+type CostSink interface {
+	RecordCosts(workerID string, costs []QueryGroupCost)
 }
 
 // Entry is one Query Group in a Worker's view. Content is nil for a Query

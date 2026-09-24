@@ -12,6 +12,7 @@ package fleet
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -241,5 +242,91 @@ func TestRecoveriesMergeAcrossReplicasByFold(t *testing.T) {
 	if merged.Objects != 85 || !merged.FirstFailure.Equal(now.Add(-22*time.Minute)) || !merged.LastFailure.Equal(now.Add(-5*time.Minute)) ||
 		!merged.FirstRecovery.Equal(now.Add(-5*time.Minute)) || !merged.LastRecovery.Equal(now.Add(-3*time.Minute)) {
 		t.Fatalf("merged = %+v, want 85 objects, earliest onset and first recovery, latest failure and recovery", merged)
+	}
+}
+
+// A recovered fold names its objects: the two that recovered are two
+// identities with their strategies, most recent first, and across replicas
+// the samples join, one entry per object, cut to the bound while the count
+// stays the sum. A fold that has ended used to be a count and four clocks,
+// and "which two, and what failed" was answered from the logs or not at all.
+func TestARecoveredFoldNamesItsObjects(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	for _, group := range []string{"qg-first", "qg-second"} {
+		for round := 0; round < DefaultDegradedRounds; round++ {
+			at.at = at.at.Add(time.Minute)
+			tracker.Observe(context.Background(), completion(group, "COMPLETED_WITH_UNAVAILABLE", "4101"))
+		}
+	}
+	at.at = at.at.Add(time.Minute)
+	tracker.Observe(context.Background(), completion("qg-first", "FULL_COMPLETED", "4101"))
+	firstAt := at.at
+	at.at = at.at.Add(time.Minute)
+	tracker.Observe(context.Background(), completion("qg-second", "FULL_COMPLETED", "4101"))
+	recovered := tracker.Recovered()
+	if len(recovered) != 1 || recovered[0].Objects != 2 {
+		t.Fatalf("recovered = %+v, want one fold of two objects", recovered)
+	}
+	samples := recovered[0].Samples
+	if len(samples) != 2 || samples[0].QueryGroup != "qg-second" || samples[1].QueryGroup != "qg-first" ||
+		!samples[1].RecoveredAt.Equal(firstAt) || len(samples[0].Strategies) != 1 || samples[0].Strategies[0].StrategyID != "4101" {
+		t.Fatalf("samples = %+v, want both objects, most recent first, each with its strategy", samples)
+	}
+	// Across replicas: the same object seen on two replicas is named once,
+	// the bound holds, the count is still the sum.
+	sample := func(group string, ago time.Duration) RecoveredSample {
+		return RecoveredSample{QueryGroup: group, RecoveredAt: now.Add(-ago), Strategies: []StrategyRef{{StrategyID: "4101", BusinessID: "2"}}}
+	}
+	snapshots := healthySnapshots()
+	snapshots[0].Recovered = []RecoveredProblem{{Check: CheckDefect, Key: "COMMIT/NONE/CONTRACT", Objects: 3, FirstRecovery: now, LastRecovery: now,
+		Samples: []RecoveredSample{sample("qg-a", time.Minute), sample("qg-b", 2*time.Minute), sample("qg-c", 3*time.Minute)}}}
+	snapshots[1].Recovered = []RecoveredProblem{{Check: CheckDefect, Key: "COMMIT/NONE/CONTRACT", Objects: 3, FirstRecovery: now, LastRecovery: now,
+		Samples: []RecoveredSample{sample("qg-a", 30*time.Second), sample("qg-d", 4*time.Minute), sample("qg-e", 5*time.Minute)}}}
+	view := Aggregate(Expectation{QueryGroups: 949, Known: true}, snapshots, replicas(), now, freshness)
+	var fold *RecoveredProblem
+	for index := range view.Recovered {
+		if view.Recovered[index].Check == CheckDefect {
+			fold = &view.Recovered[index]
+		}
+	}
+	// Both replicas named every object they counted, so the merge counts
+	// distinct identities: five, not the sum of six, with qg-a once.
+	if fold == nil || fold.Objects != 5 || len(fold.Samples) != MaxRecoveredSample {
+		t.Fatalf("merged fold = %+v, want five distinct objects and %d samples", fold, MaxRecoveredSample)
+	}
+	order := []string{}
+	for _, entry := range fold.Samples {
+		order = append(order, entry.QueryGroup)
+	}
+	if strings.Join(order, ",") != "qg-a,qg-b,qg-c,qg-d" || !fold.Samples[0].RecoveredAt.Equal(now.Add(-30*time.Second)) {
+		t.Fatalf("merged samples = %v (qg-a at %v), want qg-a once at its most recent recovery, then b, c, d and the bound", order, fold.Samples[0].RecoveredAt)
+	}
+	// A fold larger than the bound on either side is not fully named, and
+	// its count stays the sum the field says it is.
+	snapshots = healthySnapshots()
+	snapshots[0].Recovered = []RecoveredProblem{{Check: CheckDefect, Key: "COMMIT/NONE/CONTRACT", Objects: 40, FirstRecovery: now, LastRecovery: now,
+		Samples: []RecoveredSample{sample("qg-a", time.Minute), sample("qg-b", 2*time.Minute), sample("qg-c", 3*time.Minute), sample("qg-d", 4*time.Minute)}}}
+	snapshots[1].Recovered = []RecoveredProblem{{Check: CheckDefect, Key: "COMMIT/NONE/CONTRACT", Objects: 2, FirstRecovery: now, LastRecovery: now,
+		Samples: []RecoveredSample{sample("qg-a", 30*time.Second), sample("qg-z", 5*time.Minute)}}}
+	view = Aggregate(Expectation{QueryGroups: 949, Known: true}, snapshots, replicas(), now, freshness)
+	for _, candidate := range view.Recovered {
+		if candidate.Check == CheckDefect && candidate.Objects != 42 {
+			t.Fatalf("large fold merged to %d objects, want the sum 42: forty objects are not named and cannot be made distinct", candidate.Objects)
+		}
+	}
+	// A recovery that names no strategies does not erase the names an
+	// earlier recovery of the same object recorded: the fold is asked
+	// directly, because a tracker row always carries the names once it has
+	// seen them, and the case is a row that never did.
+	tracker = newTracker(t, at)
+	tracker.recordRecoveryUnder("qg-named", CheckDefect, "COMMIT/NONE/CONTRACT", now, now, now, []StrategyRef{{StrategyID: "4101", BusinessID: "2"}})
+	tracker.recordRecoveryUnder("qg-named", CheckDefect, "COMMIT/NONE/CONTRACT", now, now, now.Add(time.Minute), nil)
+	for _, problem := range tracker.Recovered() {
+		for _, entry := range problem.Samples {
+			if entry.QueryGroup == "qg-named" && (len(entry.Strategies) != 1 || !entry.RecoveredAt.Equal(now.Add(time.Minute))) {
+				t.Fatalf("a second recovery with no strategy names erased the first's, or the recovery time did not move: %+v", entry)
+			}
+		}
 	}
 }

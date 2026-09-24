@@ -8,10 +8,13 @@ package main
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
@@ -115,6 +118,56 @@ func TestAReconcileRoundReportsWhatItsControlReadsSpent(t *testing.T) {
 		}
 		if facts.AssignmentMilliseconds < 0 || facts.RegistryMilliseconds < 0 {
 			t.Fatalf("negative durations reported: %+v", facts)
+		}
+	})
+
+	// Where the round's time goes, stage by stage: every stage in the order
+	// the round runs them, on the fleet snapshot, and the process's totals
+	// with the whole round beside them, so a stage's share is one division.
+	t.Run("the round keeps each stage's duration", func(t *testing.T) {
+		production, _, _ := newRound(t)
+		if production.LastLeaderRound() != nil || production.LeaderRoundStats().Leading {
+			t.Fatal("a runtime that has led no round reports one")
+		}
+		for range 2 {
+			if err := production.PublishAssignments(context.Background(), groups, now); err != nil {
+				t.Fatalf("PublishAssignments() error = %v", err)
+			}
+		}
+		round := production.LastLeaderRound()
+		if round == nil || round.Result != fleet.LeaderRoundCompleted || round.FailedStage != "" || !round.At.Equal(now) {
+			t.Fatalf("round = %+v, want a completed round at the round's time", round)
+		}
+		stages := make([]string, 0, len(round.Stages))
+		sum := 0.0
+		for _, stage := range round.Stages {
+			stages = append(stages, stage.Stage)
+			sum += stage.Seconds
+		}
+		if !slices.Equal(stages, fleet.LeaderRoundStages) || sum > round.TotalSeconds || round.TotalSeconds <= 0 {
+			t.Fatalf("stages %v summing to %v of %v, want every stage in order within the total", stages, sum, round.TotalSeconds)
+		}
+		stats := production.LeaderRoundStats()
+		if !stats.Leading || stats.Rounds[fleet.LeaderRoundCompleted] != 2 || stats.Rounds[fleet.LeaderRoundFailed] != 0 ||
+			stats.Seconds[metric.LeaderRoundStageTotal] < round.TotalSeconds ||
+			stats.Seconds[fleet.LeaderRoundStageAssignmentSweep] > stats.Seconds[metric.LeaderRoundStageTotal] {
+			t.Fatalf("stats = %+v, want two completed rounds with the sweep inside the total", stats)
+		}
+	})
+
+	t.Run("a round that failed names the stage it failed in", func(t *testing.T) {
+		production, store, _ := newRound(t)
+		store.readErr = errors.New("assignment read unavailable")
+		if err := production.PublishAssignments(context.Background(), groups, now); err == nil {
+			t.Fatal("PublishAssignments() succeeded, want the read failure")
+		}
+		round := production.LastLeaderRound()
+		if round == nil || round.Result != fleet.LeaderRoundFailed || round.FailedStage != fleet.LeaderRoundStageReconcileRecords ||
+			len(round.Stages) != 3 {
+			t.Fatalf("round = %+v, want failed in reconcile_records after three finished stages", round)
+		}
+		if stats := production.LeaderRoundStats(); stats.Rounds[fleet.LeaderRoundFailed] != 1 {
+			t.Fatalf("stats = %+v, want one failed round", stats)
 		}
 	})
 

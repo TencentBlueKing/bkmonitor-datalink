@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package controlplane
 
 import (
@@ -131,6 +122,20 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 	}
 	failureClass = ActivationFailureClassDependencyIO
 	previous, err := reconciler.repository.LoadActivation(ctx)
+	if errors.Is(err, ErrActivationBodyMissing) {
+		// The header is here without its body. The first activation refuses
+		// any header, so taking that path left every round refused for as
+		// long as the header stayed - it has no TTL. The body is recovered
+		// instead, then this round goes on as it would have.
+		outcome, rebuildErr := reconciler.repository.RebuildActivationBody(ctx)
+		if outcome != "" {
+			reconciler.repository.rebuilds.add(outcome)
+		}
+		if rebuildErr != nil {
+			return ActivationState{}, rebuildErr
+		}
+		previous, err = reconciler.repository.LoadActivation(ctx)
+	}
 	if errors.Is(err, ErrActivationUnavailable) {
 		failureStage, failureClass = ActivationFailureStageCompile, ActivationFailureClassOther
 		initial, buildErr := NewInitialScheduleActivator(
@@ -155,7 +160,14 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 		}
 		return reconciler.Ensure(ctx, publication)
 	}
-	if previous.Current == publication {
+	// A cutover a later build committed in pieces and did not finish leaves
+	// the current publication named while the Query Groups past its cursor
+	// still run the one before. That is not "already active": it is finished
+	// here, as one cutover to the same publication, on the first tick rather
+	// than whenever the source next changes - a Query Group not yet added
+	// would detect nothing until then.
+	finishing := previous.CutoverProgress != nil && previous.Current == publication
+	if previous.Current == publication && !finishing {
 		failureStage, failureClass = ActivationFailureStageCurrentRecovery, ActivationFailureClassProjectionConflict
 		if _, loadErr := reconciler.repository.LoadActiveQueryGroupSet(ctx, previous.ActiveQGSetRef); loadErr != nil {
 			return ActivationState{}, loadErr
@@ -169,7 +181,7 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 	if publication.PublicationEpoch < previous.Current.PublicationEpoch {
 		return previous, nil
 	}
-	if publication.PublicationEpoch == previous.Current.PublicationEpoch {
+	if publication.PublicationEpoch == previous.Current.PublicationEpoch && !finishing {
 		return ActivationState{}, ErrActivationEpochCollision
 	}
 	failureStage, failureClass = ActivationFailureStageCandidateLoad, ActivationFailureClassDependencyIO
@@ -239,11 +251,33 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 	if err != nil {
 		return ActivationState{}, err
 	}
+	changedPlans := make(map[execution.PlanKey]changedPlan)
+	for _, group := range changed {
+		for _, plan := range group.Plans {
+			changedPlans[plan.Key()] = changedPlan{plan: plan, group: group.Identity, dataset: group.QueryPlan.Normalization.DatasetContract}
+		}
+	}
+	carries := make(map[int]*execution.StateCarry)
 	for index := range records {
-		previousRecord, continuouslyActive := previousRecords[records[index].Fact.Plan]
+		previousRecord, continuouslyActive := previousRecords[records[index].Fact.Key()]
 		if !continuouslyActive ||
 			previousRecord.Fact.Selected.StateGeneration != records[index].Fact.Selected.StateGeneration {
 			records[index].Fact.Selected.ForceWarming = true
+		}
+		// A generation that moved under a Plan that stayed active: what of
+		// its state is still the same facts. See stateCarry.
+		if continuouslyActive && previousRecord.Fact.Selected.StateGeneration != records[index].Fact.Selected.StateGeneration {
+			current, compiledHere := changedPlans[records[index].Fact.Key()]
+			if !compiledHere {
+				reconciler.observeStateCarry(ctx, StateCarryPreviousUnreadable)
+				continue
+			}
+			carry, outcome := reconciler.stateCarry(ctx, previousRecord, previousContent, current)
+			if carry != nil {
+				carries[index] = carry
+				continue
+			}
+			reconciler.observeStateCarry(ctx, outcome)
 		}
 	}
 	// A Query Group that reopens a retired timeline restarts every Plan it
@@ -252,18 +286,27 @@ func (reconciler *ScheduleActivationReconciler) Ensure(
 	// read from the persisted timelines rather than from the Draining
 	// projection, which forgets a drained Query Group before its timeline
 	// expires; the CAS side appends to the same timelines.
+	returned := make(map[int]struct{})
 	if len(returning) > 0 {
-		planGroups := make(map[execution.PlanIdentity]execution.QueryGroupIdentity)
+		planGroups := make(map[execution.PlanKey]execution.QueryGroupIdentity)
 		for identity, group := range newGroups {
 			for _, plan := range group.Plans {
-				planGroups[plan.Identity] = identity
+				planGroups[plan.Key()] = identity
 			}
 		}
 		for index := range records {
-			if _, returned := returning[planGroups[records[index].Fact.Plan]]; returned {
+			if _, back := returning[planGroups[records[index].Fact.Key()]]; back {
 				records[index].Fact.Selected.ForceWarming = true
+				returned[index] = struct{}{}
 			}
 		}
+	}
+	carried, discontinuous := applyStateCarries(records, carries, returned)
+	for ; carried > 0; carried-- {
+		reconciler.observeStateCarry(ctx, StateCarryCarried)
+	}
+	for ; discontinuous > 0; discontinuous-- {
+		reconciler.observeStateCarry(ctx, StateCarryDiscontinuous)
 	}
 	sort.Slice(records, func(i, j int) bool { return lessPlanIdentity(records[i].Fact.Plan, records[j].Fact.Plan) })
 	next := ActivationState{RecordRevision: previous.RecordRevision + 1, Current: publication,
@@ -320,7 +363,7 @@ func (reconciler *ScheduleActivationReconciler) upgradeLegacyActivation(
 		return ActivationState{}, err
 	}
 	identities := make([]execution.QueryGroupIdentity, 0, len(groups))
-	covered := make(map[execution.PlanIdentity]struct{}, len(previous.Plans))
+	covered := make(map[execution.PlanKey]struct{}, len(previous.Plans))
 	for identity := range groups {
 		timeline, loadErr := reconciler.repository.loadScheduleTimeline(ctx, identity)
 		if loadErr != nil {
@@ -338,11 +381,11 @@ func (reconciler *ScheduleActivationReconciler) upgradeLegacyActivation(
 			return ActivationState{}, err
 		}
 		for _, record := range open.Plans {
-			if _, duplicate := covered[record.Fact.Plan]; duplicate {
+			if _, duplicate := covered[record.Fact.Key()]; duplicate {
 				failureClass = ActivationFailureClassCoverageConflict
 				return ActivationState{}, ErrSnapshotUnavailable
 			}
-			covered[record.Fact.Plan] = struct{}{}
+			covered[record.Fact.Key()] = struct{}{}
 		}
 		identities = append(identities, identity)
 	}
@@ -442,20 +485,22 @@ func (reconciler *ScheduleActivationReconciler) reactivateHeld(
 	if err != nil {
 		return ActivationState{}, err
 	}
-	returningPlans := make(map[execution.PlanIdentity]struct{})
+	returningPlans := make(map[execution.PlanKey]struct{})
 	for identity := range reactivating {
 		for _, plan := range groups[identity].Plans {
-			returningPlans[plan.Identity] = struct{}{}
+			returningPlans[plan.Key()] = struct{}{}
 		}
 	}
 	next := previous
 	next.RecordRevision = previous.RecordRevision + 1
 	next.Plans = append([]PlanActivationRecord(nil), previous.Plans...)
 	for _, record := range compiled {
-		if _, returning := returningPlans[record.Fact.Plan]; !returning {
+		if _, returning := returningPlans[record.Fact.Key()]; !returning {
 			continue
 		}
 		record.Fact.Selected.ForceWarming = true
+		// Held and back: the hold is a hole, so nothing is carried across it.
+		record.Fact.Selected.Carry = nil
 		next.Plans = append(next.Plans, record)
 	}
 	sort.Slice(next.Plans, func(i, j int) bool { return lessPlanIdentity(next.Plans[i].Fact.Plan, next.Plans[j].Fact.Plan) })

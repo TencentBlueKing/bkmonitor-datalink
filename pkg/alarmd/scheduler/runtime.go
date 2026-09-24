@@ -35,6 +35,20 @@ func (err *SourceBlockedError) Error() string {
 }
 func (err *SourceBlockedError) Unwrap() error { return err.Err }
 
+// ViewNotExecutableError is a Slot source, or the executor, refusing a
+// Query Group its Worker's installed executable view does not yet allow
+// (decision-016 batch 4b): the view does not carry it, or the Assignment
+// record the renewal brought does not agree with the view on its content
+// or timeline. Reason is the gate's own word for which. The Runner ends
+// the round as view_not_executable and comes back on the same backoff a
+// blocked source gets - the record's word arrives by renewal and the view's
+// by delta, so the next round asks again.
+type ViewNotExecutableError struct{ Reason string }
+
+func (err *ViewNotExecutableError) Error() string {
+	return "alarmd scheduler: the executable view does not allow this Query Group: " + err.Reason
+}
+
 type FrozenSlot struct {
 	ExpiredRange                   *execution.ExpiredRangeProjectionV1
 	ShortPeriodCohort              string
@@ -346,6 +360,12 @@ func (coordinator *FlightCoordinator) QueryPermitOccupancy() QueryPermitOccupanc
 	return occupancy
 }
 
+// TryMaintenance shares the QG's existing flight exclusion with detection.
+// It never queues: maintenance yields to an executing Slot and retries later.
+func (coordinator *FlightCoordinator) TryMaintenance(queryGroup execution.QueryGroupIdentity) (func(), bool) {
+	return coordinator.tryAcquire(queryGroup)
+}
+
 func (coordinator *FlightCoordinator) tryAcquire(queryGroup execution.QueryGroupIdentity) (func(), bool) {
 	if coordinator == nil {
 		return nil, false
@@ -377,6 +397,14 @@ type Runner struct {
 	sourceNextAt   time.Time
 	dueBound       RunnerDueBound
 	queryCooldown  queryCooldownState
+	// cooldownMemory, cooldownStore, cooldownLoaded and cooldownFence carry
+	// the pool membership across Runners: what it remembers of the pool, the
+	// store it is kept in, whether it has been read back, and the fence the
+	// writes go under.
+	cooldownMemory queryCooldownMemory
+	cooldownStore  QueryCooldownStore
+	cooldownLoaded bool
+	cooldownFence  execution.OwnerFence
 	// heldBy is what the previous round did, carried forward so the next
 	// round's Slot can report what kept it from running. It is the Runner's
 	// own word -- the same one run_one_return_total counts -- and is read on
@@ -467,7 +495,7 @@ func (runner *Runner) recordDueBound(decision string, facts SlotDueFacts) {
 		bound.Verdict = DueVerdictNotDue
 		bound.Deferred = true
 		bound.NotDueUntilUnix = runnerBoundSecond(runner.NextReadyAt())
-	case "source_retry", "source_blocked":
+	case "source_retry", "source_blocked", "view_not_executable":
 		// A failed read says nothing about the schedule, so there is no verdict
 		// to compare against. The retry backoff is still a real bound.
 		bound.Deferred = true
@@ -695,10 +723,15 @@ func (runner *Runner) runOneTracked(
 		return execution.SlotExecutionResult{}, false, err
 	}
 	ctx = withVerifiedOwnership(ctx, runner.queryGroup, confirmedAssignment, confirmedFence)
+	runner.restoreQueryCooldown(ctx, confirmedFence)
 	decision = "source_next"
 	slot, due, facts, err := runner.source.Next(ctx, runner.queryGroup)
 	sourceFacts = facts
 	if err != nil {
+		if isViewNotExecutable(err) {
+			decision = "view_not_executable"
+			return runner.refuseViewNotExecutable(), true, nil
+		}
 		var retry *SourceRetryError
 		var blocked *SourceBlockedError
 		if errors.As(err, &retry) || errors.As(err, &blocked) {
@@ -784,6 +817,15 @@ func (runner *Runner) runOneTracked(
 	decision = "execute"
 	result, err := runner.executor.Execute(execution.ContextWithLeaseAuthority(ctx, runner.session), request)
 	if err != nil {
+		// The gate is asked again at execution, and a lease that moved
+		// between the source's reads and here is refused by the same name:
+		// not an attempt of this Slot that failed, the round did not run.
+		// The Slot stays due, with its deadline held, for when the view and
+		// the records agree again.
+		if isViewNotExecutable(err) {
+			decision = "view_not_executable"
+			return runner.refuseViewNotExecutable(), true, nil
+		}
 		var deferred interface{ ReadinessReadyAt() time.Time }
 		if errors.As(err, &deferred) {
 			decision = "query_readiness_deferred"
@@ -803,6 +845,23 @@ func (runner *Runner) runOneTracked(
 	}
 	decision = "execution_returned"
 	return result, true, err
+}
+
+func isViewNotExecutable(err error) bool {
+	var notExecutable *ViewNotExecutableError
+	return errors.As(err, &notExecutable)
+}
+
+// refuseViewNotExecutable ends a round the executable view did not allow,
+// from the source or from the executor alike: retrying by name, on the
+// backoff a blocked source gets, counted against neither the Slot's attempts
+// nor its execution backoff - the record's word arrives by renewal and the
+// view's by delta, and the next round asks again.
+func (runner *Runner) refuseViewNotExecutable() execution.SlotExecutionResult {
+	runner.sourceFailures++
+	runner.sourceNextAt = runner.now().Add(retryDelay(runner.flights.limits, runner.queryGroup, runner.sourceFailures))
+	return execution.SlotExecutionResult{Result: observability.ResultRetrying,
+		ReasonCode: execution.ReasonCode(contract.ReasonViewNotExecutable), SourceRetry: true}
 }
 
 // executionErrorBacksOff reports whether a Go error returned by Execute counts

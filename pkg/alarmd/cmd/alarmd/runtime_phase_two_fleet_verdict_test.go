@@ -280,9 +280,17 @@ func TestAStandingReachesTheExportUnderItsOwnCode(t *testing.T) {
 		Anomalies: []fleet.Anomaly{
 			{QueryGroup: "parked", Kind: fleet.KindOverdueWake, ReasonCode: fleet.ReasonWakeMissed, Since: at.Add(-9 * time.Minute)},
 		},
-		// A record of past loss under DETECTION_ABANDONED: on the page's
-		// history fold, not a current line, so not on the series.
-		GapSkips: map[string]fleet.SkippedSpan{"lost": {At: at.Add(-50 * time.Minute), Replica: "pod-b"}},
+		// Records of loss under DETECTION_ABANDONED: one on the page's
+		// history fold (not a current line, so not on fleet_checks), one a
+		// cooldown's after the object left the pool, one in progress -- the
+		// three kinds fleet_checks cannot tell apart and fleet_losses does.
+		PerReplica: []fleet.ReplicaView{{Replica: "pod-b", StartedAt: at.Add(-2 * time.Hour)}},
+		GapSkips: map[string]fleet.SkippedSpan{
+			"lost":       {At: at.Add(-50 * time.Minute), Replica: "pod-b"},
+			"after-cool": {At: at.Add(-time.Minute), Replica: "pod-b", HeldBy: "query_cooldown"},
+			"losing-now": {At: at.Add(-time.Minute), Replica: "pod-b"},
+			"no-anchor":  {At: at.Add(-time.Minute), Replica: "pod-c"},
+		},
 	}
 	// Aggregate attributes every row before the view leaves it; the fixture
 	// skips Aggregate, so it does the same.
@@ -296,10 +304,18 @@ func TestAStandingReachesTheExportUnderItsOwnCode(t *testing.T) {
 		string(fleet.CheckReplicaDegraded):    2,
 		string(fleet.CheckOwnershipSkewed):    2,
 		string(fleet.CheckSlotsOverdue):       1,
-		string(fleet.CheckDetectionAbandoned): 0,
+		string(fleet.CheckDetectionAbandoned): 3,
 	} {
 		if got := countOf(verdict.Checks, code).Count; got != want {
 			t.Errorf("fleet_checks{code=%s} = %d, want %d", code, got, want)
+		}
+	}
+	for loss, want := range map[string]int{
+		string(fleet.LossHistorical): 1, string(fleet.LossAfterCooldown): 1, string(fleet.LossOngoing): 2,
+		string(fleet.LossAfterRestart): 0, string(fleet.LossWhileDemoted): 0, "GRACE_UNKNOWN": 1,
+	} {
+		if got := countOf(verdict.Losses, loss).Count; got != want {
+			t.Errorf("fleet_losses{loss=%s} = %d, want %d", loss, got, want)
 		}
 	}
 	for kind, want := range map[string]int{

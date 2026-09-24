@@ -8,6 +8,8 @@ package worker
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -93,6 +95,8 @@ func (coordinator *SlotExecutionCoordinator) observeChunk(
 	counts observability.Counts,
 	err error,
 	conflicts *observability.StateVersionConflictFacts,
+	refusalRules []string,
+	legacyRecordIDs int,
 	extensions ...*observability.GapExtensionFacts,
 ) {
 	coordinator.emitObservation(ctx, observability.Observation{
@@ -102,7 +106,8 @@ func (coordinator *SlotExecutionCoordinator) observeChunk(
 		GapExtensions: extensions, StateVersionConflict: conflicts,
 		StateApplyChunk: &observability.StateApplyChunkFacts{
 			Index: chunk.index, Count: chunk.count, AppliedKeys: totals.keys, AppliedBytes: totals.bytes,
-			ElapsedMillis: time.Since(applyStarted).Milliseconds(),
+			ElapsedMillis: time.Since(applyStarted).Milliseconds(), RefusalRules: refusalRules,
+			LegacyRecordIDs: legacyRecordIDs,
 		},
 	})
 }
@@ -113,4 +118,26 @@ func stateIdentities(mutations []execution.StateMutation) []execution.StateKeyId
 		identities[index] = mutation.Identity
 	}
 	return identities
+}
+
+// addRefusalRule keeps the chunk's refusal rules sorted and without repeats.
+//
+// Distinct rather than one entry per mutation: a chunk of five hundred series
+// refused by one rule is one fact about one producer, and five hundred copies
+// of it on the line would push out everything else the line carries. The empty
+// rule is dropped - a refusal this build cannot name is the case the closed
+// list exists to make visible, and it shows up as a reason with no rule beside
+// it rather than as an empty entry in the list.
+func addRefusalRule(rules []string, rule string) []string {
+	if rule == "" {
+		return rules
+	}
+	position, found := sort.Find(len(rules), func(index int) int { return strings.Compare(rule, rules[index]) })
+	if found {
+		return rules
+	}
+	rules = append(rules, "")
+	copy(rules[position+1:], rules[position:])
+	rules[position] = rule
+	return rules
 }

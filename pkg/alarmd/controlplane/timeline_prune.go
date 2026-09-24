@@ -238,6 +238,17 @@ func (facts *cutoverFacts) decided(decision contentCutoverDecision) {
 	facts.decisions[string(decision)]++
 }
 
+// redecided moves one decision already counted under from to to.
+func (facts *cutoverFacts) redecided(from, to contentCutoverDecision) {
+	if facts == nil {
+		return
+	}
+	if facts.decisions[string(from)] > 0 {
+		facts.decisions[string(from)]--
+	}
+	facts.decisions[string(to)]++
+}
+
 func (facts *cutoverFacts) prune(dropped int, skipped string) {
 	if facts == nil {
 		return

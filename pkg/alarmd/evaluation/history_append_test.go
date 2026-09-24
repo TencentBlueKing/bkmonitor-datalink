@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package evaluation
 
 import (
@@ -61,17 +52,18 @@ func TestReEvaluatingAStoredRecordDoesNotBreakItsOwnHistory(t *testing.T) {
 	for _, evaluated := range result.Plans {
 		for _, state := range evaluated.StateResults {
 			mutations++
+			record := recordLeftBehind(t, state.Mutation)
 			previous, previousID := int64(-1), ""
-			for index, p := range state.Mutation.Points {
+			for index, p := range record {
 				if index > 0 && (p.SourceTime < previous ||
 					(p.SourceTime == previous && p.RecordID <= previousID)) {
 					t.Fatalf("history is not strictly increasing at index %d: source %d after %d", index, p.SourceTime, previous)
 				}
 				previous, previousID = p.SourceTime, p.RecordID
 			}
-			if len(state.Mutation.Points) != len(stored) {
+			if len(record) != len(stored) {
 				t.Fatalf("re-evaluating a stored record changed the point count: got %d, want %d",
-					len(state.Mutation.Points), len(stored))
+					len(record), len(stored))
 			}
 		}
 	}
@@ -370,5 +362,73 @@ func TestEvaluationSaysWhichLevelsCouldNotUseTheRecordAndWhy(t *testing.T) {
 	}
 	if got := result.Plans[0].HistoryCoverage; got.Unusable != 0 || got.UnusableReason != "" {
 		t.Fatalf("a usable record reports unusable = %d (%q)", got.Unusable, got.UnusableReason)
+	}
+}
+
+// recordLeftBehind is the record this mutation writes: the history it was
+// built against with the round's points merged in, bounded by the retention
+// it carries. The mutation names the addition, so a test about what the
+// history looks like afterwards has to ask for the merge rather than read
+// Points - reading Points would be asking what the round evaluated, which is
+// a different question that happens to have had the same answer before.
+func recordLeftBehind(t testing.TB, mutation execution.StateMutation) []execution.StateHistoryPoint {
+	t.Helper()
+	record, err := execution.MergedHistory(mutation.BaseHistory, mutation.Points, mutation.RetentionPoints)
+	if err != nil {
+		t.Fatalf("merge the record the mutation leaves behind: %v", err)
+	}
+	return record
+}
+
+// A Slot with more than one record advances a provisional window record by
+// record, and that window is the loaded record plus what the Slot has added so
+// far - not what the Slot has added on its own.
+//
+// The mutation names the addition now, so the provisional view has to merge it
+// back before the next record reads it. Feeding the addition through as if it
+// were the whole record leaves the second record of a Slot looking at a window
+// that starts at this Slot: every series with more than one record per Slot
+// would report a short window on every round but the first, and warm for ever.
+//
+// The fixture needs a loaded history and two records, and the assertion needs
+// to be the second record's own window. With no loaded history the two shapes
+// agree, which is what the batch-bounding test upstream of this one has - it
+// starts from a missing record, so it cannot see this at all.
+func TestTheSecondRecordOfASlotSeesTheLoadedWindowAndNotOnlyTheSlotsOwnPoints(t *testing.T) {
+	plan := compiledWindow(t, 3, 2)
+	fingerprint := plan.Levels()[0].Fingerprints().Detect
+	stored := func(sourceTime int64) execution.StateHistoryPoint {
+		id, err := contract.DeriveRecordIDV2(strings.Repeat("c", 64), sourceTime)
+		if err != nil {
+			t.Fatalf("derive record id: %v", err)
+		}
+		return execution.StateHistoryPoint{RecordID: id, SourceTime: sourceTime,
+			Levels: []execution.StateLevelFact{{LevelID: 5, DetectFingerprint: fingerprint, Result: execution.LevelFactNormal}}}
+	}
+	history := []execution.StateHistoryPoint{stored(60), stored(120)}
+	records := make([]contract.CanonicalRecordV2, 0, 2)
+	for _, sourceTime := range []int64{180, 240} {
+		id, err := contract.DeriveRecordIDV2(strings.Repeat("c", 64), sourceTime)
+		if err != nil {
+			t.Fatalf("derive record id: %v", err)
+		}
+		records = append(records, contract.CanonicalRecordV2{RecordID: id, SourceTime: sourceTime, BusinessID: "2",
+			DimensionIdentity: contract.DimensionIdentityV2{Digest: strings.Repeat("c", 64)},
+			Values:            map[string]json.RawMessage{"value": json.RawMessage(`10`)},
+			Dimensions:        map[string]json.RawMessage{}, ReceivedTime: sourceTime})
+	}
+	result, err := newEvaluator(t).Evaluate(context.Background(), requestFixtureForPlan(t, plan, records, history))
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+	coverage := result.Plans[0].HistoryCoverage
+	if coverage.Levels != 2 {
+		t.Fatalf("the Slot summarised %d windows, want one per record: the fixture must evaluate both "+
+			"records or it cannot say what the second one saw", coverage.Levels)
+	}
+	if coverage.Short != 0 {
+		t.Fatalf("%d of the Slot's windows were short (worst %d of %d); both records have three positions "+
+			"behind them once the loaded record is counted, and only the second one can lose them",
+			coverage.Short, coverage.WorstValid, coverage.WorstRequired)
 	}
 }

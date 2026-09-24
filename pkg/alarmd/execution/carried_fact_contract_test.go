@@ -52,6 +52,10 @@ func TestStateFactCarriedFromTheLoadedHistoryIsNotJudgedByThisRoundsThinnerOutco
 	// The round's point for the record is the held point unchanged: nothing
 	// fresh was written for the Level, the carried fact is all it has.
 	mutation.Points = []execution.StateHistoryPoint{heldPoint}
+	// The one slice the loaded view also carries: the base is a reference to
+	// the history that was read, and the contract compares it by identity.
+	heldHistory := []execution.StateHistoryPoint{heldPoint}
+	mutation.BaseHistory = heldHistory
 	mutation.MutationDigest = ""
 	state.Mutation = mustStateMutation(mutation)
 	outcome := normalLevelOutcome()
@@ -69,7 +73,7 @@ func TestStateFactCarriedFromTheLoadedHistoryIsNotJudgedByThisRoundsThinnerOutco
 			GapReasonCode:           execution.ReasonCode(contract.ReasonHistoryWarming),
 			WarmupRequirementRef:    state.Mutation.Levels[0].WarmupRequirementRef,
 		}},
-		History: []execution.StateHistoryPoint{heldPoint},
+		History: heldHistory,
 	}
 	gaps := execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
 		Identity: input.GapPreflight[0].Identity, Status: execution.GapMissing,
@@ -93,21 +97,31 @@ func TestStateFactCarriedFromTheLoadedHistoryIsNotJudgedByThisRoundsThinnerOutco
 	// contradiction.
 	freshView := loadedView
 	freshView.History = nil
+	freshResult := result
+	freshResult.Plans = append([]execution.PlanEvaluationResult(nil), result.Plans...)
+	freshResult.Plans[0].StateResults = append([]execution.StateEvaluation(nil), result.Plans[0].StateResults...)
+	// The base follows the loaded view, and the seal does not: BaseHistory is
+	// outside the digest payload, so the mutation built above still answers for
+	// its own content with a different base.
+	freshResult.Plans[0].StateResults[0].Mutation.BaseHistory = nil
 	fresh := evaluationRequest(input, execution.StatePreflightResult{Items: []execution.RuntimeStateView{freshView}}, gaps)
-	err := result.Validate(fresh)
+	err := freshResult.Validate(fresh)
 	if err == nil || !strings.Contains(err.Error(), "State Level fact contradicts its Level outcome") {
 		t.Fatalf("a fresh contradicting fact was accepted: %v", err)
 	}
 
 	// A held fact that differs from the one the round carries is not the same
-	// statement: the round changed a loaded point, and the history replacement
-	// rule refuses that before the fact is ever compared with an outcome.
+	// statement: the mutation was built against a record the store does not
+	// hold, and that is refused before the fact is ever compared with an
+	// outcome. It used to be caught as a replacement that changed a loaded
+	// point; now the base and the loaded history are compared directly, which
+	// is the same disagreement read one step earlier.
 	changedView := loadedView
 	changedView.History = []execution.StateHistoryPoint{{RecordID: anchor.RecordID, SourceTime: anchor.SourceTime,
 		Levels: []execution.StateLevelFact{{LevelID: 5, DetectFingerprint: carried.DetectFingerprint, Result: execution.LevelFactNormal}}}}
 	changed := evaluationRequest(input, execution.StatePreflightResult{Items: []execution.RuntimeStateView{changedView}}, gaps)
 	err = result.Validate(changed)
-	if err == nil || !strings.Contains(err.Error(), "State history replacement changes a loaded point") {
+	if err == nil || !strings.Contains(err.Error(), "State mutation base is not the loaded history") {
 		t.Fatalf("a carried fact that differs from the held one was accepted: %v", err)
 	}
 }

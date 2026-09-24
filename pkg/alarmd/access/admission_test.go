@@ -189,7 +189,7 @@ func TestNoAdmissionGateDeliversEverySeries(t *testing.T) {
 // a plan compiled with a target actually filters at runtime.
 func TestPlanScopesComeFromTheCompiledPlan(t *testing.T) {
 	_, frozen := frozenExecution(t)
-	scopes := buildPlanScopes(frozen.DuePlans)
+	scopes := buildPlanScopes(frozen.DuePlans, nil)
 	if len(scopes) != len(frozen.DuePlans) {
 		t.Fatalf("scopes = %d, due plans = %d", len(scopes), len(frozen.DuePlans))
 	}

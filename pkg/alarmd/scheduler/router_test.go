@@ -224,6 +224,7 @@ func readyWorker(workerID string, now time.Time) ownership.WorkerRegistration {
 }
 
 type fakeAssignmentStore struct {
+	publishedTimeline  uint64
 	workers            []ownership.WorkerRegistration
 	current            ownership.AssignmentRecord
 	publishedWorker    string
@@ -273,6 +274,7 @@ func (store *fakeAssignmentStore) PublishAssignment(
 	store.publishedAuthority = authority
 	store.publishedWorker = decision.DesiredWorkerID
 	store.expectedRevision = decision.ExpectedRecordRevision
+	store.publishedTimeline = decision.TimelineRecordRevision
 	store.publishCalls++
 	return ownership.AssignmentRecord{
 		QueryGroup: decision.QueryGroup, DesiredWorkerID: decision.DesiredWorkerID, AssignmentGeneration: 1, RecordRevision: 1,
@@ -288,4 +290,71 @@ func (store *fakeAssignmentStore) ReadAssignment(
 		return ownership.AssignmentRecord{}, ownership.ErrAssignmentAbsent
 	}
 	return store.current, nil
+}
+
+type scriptedTimelines struct {
+	revisions map[execution.QueryGroupIdentity]uint64
+	asked     int
+}
+
+func (source *scriptedTimelines) TimelineRecordRevision(_ context.Context, queryGroup execution.QueryGroupIdentity) (uint64, error) {
+	source.asked++
+	return source.revisions[queryGroup], nil
+}
+
+// A placement names the Query Group's timeline revision; a record that
+// already says it is not asked about again, and one that does not say gets
+// one publish that says it and nothing else.
+func TestAPlacementNamesTheTimelineRevisionAndARecordThatSaysItIsLeftAlone(t *testing.T) {
+	now := time.UnixMilli(1_700_000_000_000)
+	authority := ownership.PublicationAuthority{
+		Fence: execution.OwnerFence{
+			QueryGroup: ownership.ControlLeaderIdentity, OwnerID: "control-1", OwnerEpoch: 3, LeaseToken: "leader-token",
+		},
+		Deadline: now.Add(time.Minute),
+	}
+	timelines := &scriptedTimelines{revisions: map[execution.QueryGroupIdentity]uint64{"query-group-1": 12}}
+	store := &fakeAssignmentStore{workers: []ownership.WorkerRegistration{readyWorker("worker-1", now)}}
+	reconciler, err := NewReconciler(NewRouter(nil), store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciler.WithTimelineRevisions(timelines)
+	if _, err := reconciler.Reconcile(context.Background(), authority, "query-group-1", now); err != nil {
+		t.Fatal(err)
+	}
+	if store.publishCalls != 1 || store.publishedTimeline != 12 {
+		t.Fatalf("placement published %d time(s) naming timeline revision %d, want once naming 12", store.publishCalls, store.publishedTimeline)
+	}
+
+	// The record from before the field: kept worker, one publish that says
+	// the revision, and no rendezvous rerun.
+	current := ownership.AssignmentRecord{
+		QueryGroup: "query-group-1", DesiredWorkerID: "worker-1", AssignmentGeneration: 2, RecordRevision: 4,
+		ControlEpoch: 2, PlacementReason: ownership.PlacementRendezvous, AssignedAt: now.Add(-time.Minute),
+	}
+	store = &fakeAssignmentStore{workers: []ownership.WorkerRegistration{readyWorker("worker-1", now)}, current: current}
+	reconciler, _ = NewReconciler(NewRouter(nil), store)
+	reconciler.WithTimelineRevisions(timelines)
+	if _, err := reconciler.Reconcile(context.Background(), authority, "query-group-1", now); err != nil {
+		t.Fatal(err)
+	}
+	if store.publishCalls != 1 || store.publishedTimeline != 12 || store.publishedWorker != "worker-1" || store.expectedRevision != 4 {
+		t.Fatalf("a record that did not say got publishes=%d timeline=%d worker=%q expected=%d; want one publish naming 12 for the incumbent at revision 4",
+			store.publishCalls, store.publishedTimeline, store.publishedWorker, store.expectedRevision)
+	}
+
+	// A record that says is not asked about and not published.
+	current.TimelineRecordRevision = 12
+	asked := timelines.asked
+	store = &fakeAssignmentStore{workers: []ownership.WorkerRegistration{readyWorker("worker-1", now)}, current: current}
+	reconciler, _ = NewReconciler(NewRouter(nil), store)
+	reconciler.WithTimelineRevisions(timelines)
+	if _, err := reconciler.Reconcile(context.Background(), authority, "query-group-1", now); err != nil {
+		t.Fatal(err)
+	}
+	if store.publishCalls != 0 || timelines.asked != asked {
+		t.Fatalf("a record that already says the revision got publishes=%d and %d more timeline reads; want neither",
+			store.publishCalls, timelines.asked-asked)
+	}
 }

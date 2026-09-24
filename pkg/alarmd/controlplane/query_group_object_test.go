@@ -283,15 +283,30 @@ func TestPublishedPlanFieldsAreEachPlacedInOneDigest(t *testing.T) {
 		reflect.TypeOf(controlplane.Catalog{}): {
 			split: []string{"QueryGroups"},
 			// RetainedStaleRevisions is a build count reported on the round;
-			// nothing persists or digests it.
-			neither: []string{"ObservationID", "SnapshotRevision", "Dispositions", "RetainedStaleRevisions"},
+			// nothing persists or digests it. Retention is the same kind of
+			// thing: a measurement of what this build's compiled Levels ask
+			// the store to keep, reported and then discarded. Digesting it
+			// would make every object's digest move when a Level's window
+			// changed anywhere in the deployment, which is a republication
+			// and a Segment recut for a number no consumer reads.
+			// ObjectRetention is how long the content is kept, not what it is:
+			// digested, a strategy's cadence change elsewhere would move every
+			// object's digest. It is stored beside the manifest instead.
+			neither: []string{"ObservationID", "SnapshotRevision", "Dispositions", "RetainedStaleRevisions", "Retention", "ObjectRetention"},
 		},
 		reflect.TypeOf(controlplane.QueryGroup{}): {
 			execution: []string{"Identity", "QueryPlan", "MembershipDigest", "ScheduleRevision"},
 			split:     []string{"Plans"},
 		},
 		reflect.TypeOf(controlplane.FrozenPlan{}): {
-			execution: []string{"Identity", "StateGeneration", "ScheduleSpec", "ScheduleRevision", "RequirementTemplates", "QueryPlans"},
+			// Shard is execution content: the Slot names the Plan's gap marker
+			// and no-data memory by it. Nil, and so absent from the digest,
+			// for every Plan that is not split.
+			// LevelContractRefs are execution content beside the generation
+			// they were derived with: a Worker holds the Plan's records to
+			// them. Nil, and so absent from the digest, for an object
+			// published before the field.
+			execution: []string{"Identity", "StateGeneration", "ScheduleSpec", "ScheduleRevision", "RequirementTemplates", "QueryPlans", "Shard", "LevelContractRefs", "NoDataLevelContractRefs"},
 			split:     []string{"Plan"},
 			// PlanRevision digests the whole EvaluationPlanV2, update_time and
 			// source document included, and nothing reads it.
@@ -311,7 +326,7 @@ func TestPublishedPlanFieldsAreEachPlacedInOneDigest(t *testing.T) {
 			// level it also carries is read at output, but a fact is placed
 			// where it is decided, not everywhere it is read.
 			execution: []string{
-				"plan_id", "input_projection", "output_identity", "target_scope", "no_data", "terminal_reason_code",
+				"plan_id", "input_projection", "output_identity", "target_scope", "target_plan", "no_data", "terminal_reason_code", "effective_time_snapshot",
 			},
 			// signal_type sits with wire_format: both describe the event this
 			// Plan publishes rather than what the Slot executes, and both are

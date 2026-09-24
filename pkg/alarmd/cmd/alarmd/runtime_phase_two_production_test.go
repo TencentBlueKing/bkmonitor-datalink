@@ -665,15 +665,13 @@ func TestPhaseTwoCatalogRetentionAdmissionUsesTheCandidatesOwnScheduleOffset(t *
 	if err != nil || len(admitted.QueryGroups) != 1 {
 		t.Fatalf("admission(default) = (%+v, %v), want the Plan kept", admitted.QueryGroups, err)
 	}
-	// The retention is derived from the longest cadence the deployment
-	// supports, so shortening the configured floor no longer shortens it;
-	// the way to need more retention than there is, is a Plan evaluated less
-	// often than that bound. The property under test is unchanged: the
-	// candidate's own schedule offset decides whether it fits -- only the
-	// consequence moved, from refusing the Catalog to withholding the Plan.
+	// The candidate's own schedule offset decides whether it fits. The only
+	// Plan that does not is one whose frozen Slot would need its content kept
+	// past the state store's own ceiling; everything short of that is given
+	// the retention it needs.
 	beyond := controlplane.Catalog{QueryGroups: []controlplane.QueryGroup{{Plans: []controlplane.FrozenPlan{{
 		ScheduleSpec: execution.ScheduleSpec{
-			EvaluationIntervalSeconds: int64(phaseTwoMaxSupportedEvaluationInterval/time.Second) + 60, Timezone: "UTC"},
+			EvaluationIntervalSeconds: int64(phaseTwoObjectRetentionLimit(cfg)/time.Second) + 60, Timezone: "UTC"},
 	}}}}}
 	admitted, err = phaseTwoCatalogRetentionAdmission(cfg)(beyond)
 	if err != nil {
@@ -836,6 +834,10 @@ func TestProductionPhaseTwoControlConfirmsColdStartBeforeInitialActivation(t *te
 	}
 }
 
+// A follower tick loads the active set and, first, steps the reconciler's
+// catalog memory down: a process on this path is not the Leader, and what
+// it published in an earlier term is not its to answer strategy lookups
+// from.
 func TestProductionPhaseTwoControlLoadsAllActiveQueryGroups(t *testing.T) {
 	publication := controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot-1", PublicationEpoch: 1}
 	repository := &fakeProductionCatalogRepository{
@@ -844,8 +846,9 @@ func TestProductionPhaseTwoControlLoadsAllActiveQueryGroups(t *testing.T) {
 			{Identity: "query-group-2"}, {Identity: "query-group-1"},
 		}},
 	}
+	reconciler := &fakeSourceReconciler{}
 	control, err := newProductionPhaseTwoControl(productionPhaseTwoControlDependencies{
-		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: &fakeSourceReconciler{},
+		Source: fakeStrategySource{}, Planner: fakePrimaryQueryCompiler{}, Reconciler: reconciler,
 		Activator: &fakeInitialScheduleActivator{}, Repository: repository, Schedules: &fakeScheduleProjection{},
 		Progress: &fakeProductionProgressReader{}, RefreshInterval: time.Second,
 		Wait: func(context.Context, time.Duration) error { return nil },
@@ -857,6 +860,9 @@ func TestProductionPhaseTwoControlLoadsAllActiveQueryGroups(t *testing.T) {
 	if err != nil || result.Status != phaseTwoControlHealthy ||
 		!reflect.DeepEqual(result.QueryGroups, []execution.QueryGroupIdentity{"query-group-1", "query-group-2"}) {
 		t.Fatalf("LoadActive() = %#v, %v", result, err)
+	}
+	if reconciler.stepDowns != 1 || reconciler.calls != 0 {
+		t.Fatalf("a follower tick stepped the reconciler down %d times and refreshed %d times, want 1 and 0", reconciler.stepDowns, reconciler.calls)
 	}
 }
 
@@ -1725,10 +1731,13 @@ func TestProductionPhaseTwoControlKeepsLastGoodAcrossFailedCutoverAndRecovery(t 
 }
 
 type fakeSourceReconciler struct {
-	results []controlplane.SourceRefreshResult
-	errs    []error
-	calls   int
+	results   []controlplane.SourceRefreshResult
+	errs      []error
+	calls     int
+	stepDowns int
 }
+
+func (reconciler *fakeSourceReconciler) StepDown() { reconciler.stepDowns++ }
 
 func (reconciler *fakeSourceReconciler) Refresh(
 	context.Context,
@@ -1808,7 +1817,7 @@ func sourceRefreshObservations(
 	return matches
 }
 
-func (repository *fakeProductionCatalogRepository) LoadActivation(
+func (repository *fakeProductionCatalogRepository) LoadActivationHead(
 	context.Context,
 ) (controlplane.ActivationState, error) {
 	return repository.activation, repository.activationErr
@@ -2017,11 +2026,11 @@ func TestProductionPhaseTwoActivationChecksExactPersistedStateEpoch(t *testing.T
 				ScheduleRevision: "plan-schedule-1", RequiredFullSlots: 2}}},
 	}}
 	activation := productionPhaseTwoActivation{source: source}
-	active, err := activation.IsPlanActive(context.Background(), contractRef, plan, 7)
+	active, err := activation.IsPlanActive(context.Background(), contractRef, execution.PlanKey{PlanIdentity: plan}, 7)
 	if err != nil || !active {
 		t.Fatalf("IsPlanActive(exact epoch) = %v, %v", active, err)
 	}
-	active, err = activation.IsPlanActive(context.Background(), contractRef, plan, 8)
+	active, err = activation.IsPlanActive(context.Background(), contractRef, execution.PlanKey{PlanIdentity: plan}, 8)
 	if err != nil || active {
 		t.Fatalf("IsPlanActive(stale epoch) = %v, %v", active, err)
 	}
@@ -2045,8 +2054,10 @@ func TestProductionPhaseTwoOwnershipUsesAssignmentAndLeaseBeforeRunner(t *testin
 		t.Fatal(err)
 	}
 	var observations []observability.Observation
+	cooldowns := &countingCooldownStore{}
 	production, err := newProductionPhaseTwoOwnership(productionPhaseTwoOwnershipDependencies{
-		Store: store, WorkerID: "worker-1", Catalog: unavailableSlotCatalog{},
+		QueryCooldowns: cooldowns,
+		Store:          store, WorkerID: "worker-1", Catalog: unavailableSlotCatalog{},
 		Progress: unavailableScheduleProgress{}, Executor: rejectingSlotExecutor{}, Now: func() time.Time { return now },
 		ControlLeaderTTL: time.Minute, Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 			observations = append(observations, observation)
@@ -2095,6 +2106,13 @@ func TestProductionPhaseTwoOwnershipUsesAssignmentAndLeaseBeforeRunner(t *testin
 	}
 	if !hasObservedStage(observations, observability.StageLeaseRenewed) {
 		t.Fatalf("ownership observations = %+v, want lease_renewed", observations)
+	}
+	// The Query Group's pool record is read on its first round, so a Query
+	// Group that was in the pool before a restart or a change of owner is
+	// still in it.
+	_, _, _ = runner.RunOne(context.Background())
+	if cooldowns.loads != 1 {
+		t.Fatalf("pool record read %d times on the first round, want once", cooldowns.loads)
 	}
 	store.checkErr = ownership.ErrStaleFence
 	if _, attempted, err := runner.RunOne(context.Background()); !errors.Is(err, ownership.ErrStaleFence) || attempted {
@@ -2178,7 +2196,7 @@ func TestProductionSlotObservationsBracketRealExecutionWithFrozenProvenance(t *t
 				Contract: contractRef,
 				DuePlanTargets: execution.FrozenDuePlanTargets{
 					DuePlanSetDigest: contractRef.DuePlanSetDigest,
-					Plans:            []execution.PlanIdentity{{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}},
+					Plans:            []execution.PlanKey{{PlanIdentity: execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}}},
 				},
 				EarliestQueryDeadlineUnixMilli: 121_000,
 				RecoveryUntilUnixMilli:         721_000,
@@ -2331,9 +2349,24 @@ func TestObservedProductionSlotExecutorDoesNotReportReadinessDeferralAsFailure(t
 		t.Fatalf("Execute() error=%v, want wrapped readiness error", err)
 	}
 	if len(observations) != 2 || observations[1].Stage != observability.StageSlotCompleted ||
-		observations[1].Result != observability.ResultRetrying ||
-		observations[1].ReasonCode != observability.ReasonNone || observations[1].Err != nil {
+		observations[1].Result != observability.ResultRetrying || observations[1].Err != nil {
 		t.Fatalf("readiness observations=%+v, want non-failure retrying completion", observations)
+	}
+	// A deferral is the normal pacing of a Slot, and it has to say so on the
+	// completion line as the query line does. It used to carry no reason,
+	// which on a retrying result normalizes to reason_not_reported: on a live
+	// deployment that was every Query Group's most frequent slot_completed
+	// line, and the reason label of the stage counter with it, reading as a
+	// site that failed to report.
+	completed := observability.NormalizeObservation(observations[1])
+	if completed.ReasonCode != observability.ReasonCode(contract.ReasonQueryNotReady) {
+		t.Fatalf("deferral reason=%q, want %s as the query stage says it", completed.ReasonCode, contract.ReasonQueryNotReady)
+	}
+	if completed.ReasonCode == observability.ReasonNotReported || completed.ReasonCode == observability.ReasonInternalUnknown || completed.ReasonCode == observability.ReasonOther {
+		t.Fatalf("deferral normalizes to %q: the line reads as a fault", completed.ReasonCode)
+	}
+	if metricReason := observability.NormalizeMetricReason(observability.ComponentScheduler, observations[1].ReasonCode, observations[1].Result); metricReason == observability.ReasonNotReported {
+		t.Fatalf("deferral metric reason=%q, want a named class", metricReason)
 	}
 }
 
@@ -2992,4 +3025,16 @@ func TestProductionPhaseTwoControlReportsEveryRoundAndPersistsSuccess(t *testing
 	if !reported {
 		t.Fatal("the failed mark write was not reported")
 	}
+}
+
+// countingCooldownStore holds no records and counts the reads.
+type countingCooldownStore struct{ loads int }
+
+func (store *countingCooldownStore) LoadQueryCooldown(context.Context, execution.QueryGroupIdentity) (scheduler.QueryCooldownRecord, bool, error) {
+	store.loads++
+	return scheduler.QueryCooldownRecord{}, false, nil
+}
+
+func (*countingCooldownStore) SaveQueryCooldown(context.Context, execution.OwnerFence, scheduler.QueryCooldownRecord) error {
+	return nil
 }

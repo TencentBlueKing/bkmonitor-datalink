@@ -199,11 +199,29 @@ func TestSlotExecutionCoordinatorIsolatesReadinessInvalidConsumerOnSharedPhysica
 	}
 	assertQueryAvailability(t, result, execution.QueryAvailabilityAvailable)
 	assertCompletionGapBeforeProgress(t, fixture, execution.CompletenessUnavailable, execution.CompletionUnavailable, reason, 1)
-	if len(fixture.ports.gapMutations) != 1 || fixture.ports.gapMutations[0].Identity.Plan != invalidPlan.Identity {
-		t.Fatalf("gap mutations=%+v, want only readiness-invalid Plan", fixture.ports.gapMutations)
+	// One physical query, two Plans, opposite directions: the readiness-invalid
+	// consumer has its own Level scope strengthened, and the healthy one --
+	// which completed FULL EMPTY on the same query -- recovers its Plan scope.
+	// The isolation this case exists for is that neither reaches the other:
+	// the healthy Plan is never widened into the readiness gap, and the
+	// invalid Plan never recovers on a round it did not complete.
+	var opened, recovered []execution.GapScopeMutation
+	for _, mutation := range fixture.ports.gapMutations {
+		switch mutation.Identity.Plan {
+		case invalidPlan.Identity:
+			opened = append(opened, mutation.Scopes...)
+		case healthyPlan.Identity:
+			recovered = append(recovered, mutation.Scopes...)
+		default:
+			t.Fatalf("gap mutation for an unrelated Plan: %+v", mutation)
+		}
 	}
-	if fixture.ports.gapMutations[0].Identity.Plan == healthyPlan.Identity {
-		t.Fatal("healthy consumer was widened into readiness gap")
+	if len(opened) != 1 || opened[0].Kind != execution.GapStrengthen || opened[0].ReasonCode != reason ||
+		!opened[0].Scope.HasLevel || opened[0].Scope.LevelID != 5 {
+		t.Fatalf("readiness-invalid Plan scopes=%+v, want its own Level scope strengthened", opened)
+	}
+	if len(recovered) != 1 || recovered[0].Kind != execution.GapClear || recovered[0].Scope.HasLevel {
+		t.Fatalf("healthy Plan scopes=%+v, want its Plan scope recovered and no Level scope touched", recovered)
 	}
 }
 
@@ -241,10 +259,16 @@ func assertCompletionGapBeforeProgress(
 		t.Fatalf("completion-only gap produced Event/State: state_load=%d state_admit=%d state_apply=%d events=%d",
 			fixture.ports.stateLoadCalls, fixture.ports.stateAdmissionCalls, fixture.ports.stateApplyCalls, fixture.ports.eventCount)
 	}
-	if len(fixture.ports.gapMutations) != wantGaps {
+	// wantGaps counts the markers this completion opened. A Plan on the same
+	// Slot that completed FULL EMPTY writes a recovery of its own Plan scopes,
+	// which is not one of these and is held to its own rule rather than
+	// silently admitted into the count.
+	opened, recovered := splitGapRecoveries(fixture.ports.gapMutations)
+	assertOnlyPlanScopeRecoveries(t, recovered)
+	if len(opened) != wantGaps {
 		t.Fatalf("gap mutations=%+v", fixture.ports.gapMutations)
 	}
-	for _, mutation := range fixture.ports.gapMutations {
+	for _, mutation := range opened {
 		if len(mutation.Scopes) != 1 || mutation.Scopes[0].ReasonCode != reason ||
 			mutation.Scopes[0].RequiredFullSlots == 0 {
 			t.Fatalf("gap mutation=%+v", mutation)
@@ -359,9 +383,9 @@ func newCompletionOnlyFixture(
 	}
 	request := slotRequest(execution.OperationNormal)
 	request.Contract = contractRef
-	request.DuePlanTargets = execution.FrozenDuePlanTargets{DuePlanSetDigest: digest, Plans: make([]execution.PlanIdentity, len(plans))}
+	request.DuePlanTargets = execution.FrozenDuePlanTargets{DuePlanSetDigest: digest, Plans: make([]execution.PlanKey, len(plans))}
 	for index := range plans {
-		request.DuePlanTargets.Plans[index] = plans[index].Identity
+		request.DuePlanTargets.Plans[index] = plans[index].Key()
 	}
 	request.ExpectedNextSlot = contractRef.Slot.EvaluationTime
 	return fixture{trace: &trace, observations: &observations, ports: ports, coordinator: coordinator}, request
@@ -384,14 +408,58 @@ func assertFullEmptyProgress(t *testing.T, fixture fixture, request execution.Sl
 	}
 }
 
+// splitGapRecoveries separates what a Slot opened from what it recovered. A
+// mutation every scope of which clears or warms is a recovery; anything that
+// opens or strengthens a scope is not.
+func splitGapRecoveries(mutations []execution.PlanGapMutation) (opened, recovered []execution.PlanGapMutation) {
+	for _, mutation := range mutations {
+		recovery := len(mutation.Scopes) > 0
+		for _, scope := range mutation.Scopes {
+			if scope.Kind != execution.GapClear && scope.Kind != execution.GapWarmup {
+				recovery = false
+				break
+			}
+		}
+		if recovery {
+			recovered = append(recovered, mutation)
+			continue
+		}
+		opened = append(opened, mutation)
+	}
+	return opened, recovered
+}
+
+// assertOnlyPlanScopeRecoveries is the one gap mutation a Slot with no series
+// may write: the recovery of its own Plan scopes.
+//
+// The assertions here used to read "no gap mutation at all", which held only
+// because the recovery rode on a state mutation and an empty Slot has none --
+// the mechanism, not the rule it stood for. Stated as what is allowed rather
+// than as a count, so an empty Slot that opens a gap, strengthens one, or
+// reaches a Level scope still fails.
+func assertOnlyPlanScopeRecoveries(t *testing.T, mutations []execution.PlanGapMutation) {
+	t.Helper()
+	for _, mutation := range mutations {
+		for _, scope := range mutation.Scopes {
+			if scope.Scope.HasLevel {
+				t.Fatalf("a Slot with no series reached a Level scope: %+v", scope)
+			}
+			if scope.Kind != execution.GapClear && scope.Kind != execution.GapWarmup {
+				t.Fatalf("a Slot with no series wrote a gap mutation that is not a recovery: %+v", scope)
+			}
+		}
+	}
+}
+
 func assertNoFullEmptyBusinessSideEffects(t *testing.T, fixture fixture) {
 	t.Helper()
 	if fixture.ports.stateLoadCalls != 0 || fixture.ports.stateAdmissionCalls != 0 ||
-		fixture.ports.stateApplyCalls != 0 || fixture.ports.eventCount != 0 || len(fixture.ports.gapMutations) != 0 {
-		t.Fatalf("FULL+EMPTY produced business side effects: state_load=%d state_admit=%d state_apply=%d events=%d gaps=%d",
+		fixture.ports.stateApplyCalls != 0 || fixture.ports.eventCount != 0 {
+		t.Fatalf("FULL+EMPTY produced business side effects: state_load=%d state_admit=%d state_apply=%d events=%d",
 			fixture.ports.stateLoadCalls, fixture.ports.stateAdmissionCalls, fixture.ports.stateApplyCalls,
-			fixture.ports.eventCount, len(fixture.ports.gapMutations))
+			fixture.ports.eventCount)
 	}
+	assertOnlyPlanScopeRecoveries(t, fixture.ports.gapMutations)
 	for _, stage := range *fixture.trace {
 		if stage == "evaluate" {
 			t.Fatal("FULL+EMPTY called Evaluator")

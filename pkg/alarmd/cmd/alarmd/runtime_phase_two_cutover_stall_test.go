@@ -234,13 +234,13 @@ func startCutoverFixtureWith(
 	if fixture.initialSchedule.Segment.Start != execution.EvaluationTime(base) || fixture.initialSchedule.Plans[0].Spec.EvaluationIntervalSeconds != 60 {
 		t.Fatalf("initial Segment = %+v, want start %d on a 60s grid", fixture.initialSchedule.Segment, base)
 	}
-	fixture.runner = bundle.runners[fixture.queryGroup].runner
+	fixture.runner = settledRunner(bundle, fixture.queryGroup)
 	progressStore, ok := fixture.production.dependencies.Progress.(*progress.Store)
 	if !ok {
 		t.Fatalf("production Progress store type = %T", fixture.production.dependencies.Progress)
 	}
 	fixture.progressStore = progressStore
-	fixture.session = fixture.runner.(*productionPhaseTwoQueryGroup).session
+	fixture.session = fixture.runner.(*settlingRuntime).phaseTwoQueryGroupRuntime.(*productionPhaseTwoQueryGroup).session
 
 	// Step 1: the first Slot of the initial Segment completes FULL.
 	fixture.clock.Store((base + 1) * 1000)

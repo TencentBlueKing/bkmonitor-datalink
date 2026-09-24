@@ -107,7 +107,7 @@ type EventSink interface {
 // consumer's publication is unavailable.
 type OpenAlertCopy interface {
 	contract.OpenAlertSet
-	TrackPlans([]PlanIdentity)
+	TrackPlans(QueryGroupIdentity, []PlanIdentity)
 	Acknowledged([]contract.TriggerEventV1)
 }
 

@@ -30,6 +30,11 @@ func resumedSeriesResult(header execution.InternalExecutionHeader, due execution
 	}
 	result := execution.EvaluationResult{Contract: header.Contract, Result: observability.ResultSuccess, ReasonCode: observability.ReasonNone}
 	plan := execution.PlanEvaluationResult{Plan: due.Identity, Disposition: execution.PlanDecided, ReasonCode: observability.ReasonNone}
+	// The one coverage fact a resumed series can honestly report: that it was
+	// resumed. The window counts stay absent for the reason above, but their
+	// absence is now counted, so a Slot that resumed most of its series does
+	// not report the few it evaluated as though they were the whole object.
+	plan.HistoryCoverage.Resumed = 1
 	for _, level := range view.Levels {
 		reason := execution.ReasonCode("")
 		switch level.HistoryCompleteness {
@@ -65,7 +70,7 @@ func resumedSeriesResult(header execution.InternalExecutionHeader, due execution
 			}
 		}
 	}
-	gap, found := gaps.Find(execution.PlanGapIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration})
+	gap, found := gaps.Find(due.GapIdentity())
 	if found && gap.Status != execution.GapMissing {
 		if gap.Status != execution.GapFound && gap.Status != execution.GapClearedTombstone {
 			return execution.EvaluationResult{}, fmt.Errorf("alarmd worker: resumed Plan gap is not readable: %s", gap.Status)

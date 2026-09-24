@@ -50,6 +50,8 @@ type RuntimeStorageFacts struct {
 	// Preflight evidence: a deployment that meant to read the platform and
 	// renders nothing reads as not_configured here before it runs.
 	DynamicConfig             string `json:"dynamic_config"`
+	TargetGroup               string `json:"target_group"`
+	DynamicGroupKeyPrefix     string `json:"dynamic_group_key_prefix"`
 	PlatformSettingsKeyPrefix string `json:"platform_settings_key_prefix"`
 }
 

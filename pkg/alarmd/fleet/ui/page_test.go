@@ -12,8 +12,11 @@ package ui
 import (
 	"reflect"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/absentalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/targetplan"
 	"regexp"
 	"strings"
 	"testing"
@@ -447,8 +450,12 @@ func TestTheAnomalyColumnIsCalledOneThingEverywhere(t *testing.T) {
 // live deployment for as long as it took someone to read the JSON by hand.
 //
 // It answers with a type now, so this is the same check as the other two.
+//
+// The route answers HealthResponse, or on a restricted public surface the
+// summary PublicHealthResponse -- the same fields plus restricted, which is
+// the one the page reads to know the rest were withheld.
 func TestEveryVerdictFieldThePageReadsExistsInTheAPI(t *testing.T) {
-	assertFieldsExist(t, "deployment", reflect.TypeOf(fleet.HealthResponse{}))
+	assertFieldsExist(t, "deployment", reflect.TypeOf(fleet.PublicHealthResponse{}))
 }
 
 // The impact line is the only thing on the page that answers "what is affected"
@@ -761,6 +768,9 @@ func TestThePageHasWordingForEveryLoadState(t *testing.T) {
 		// stored shape a read of one found.
 		{"MEMORY_REFUSAL_KIND", fleet.NoDataMemoryRefusalKinds},
 		{"MEMORY_REPRESENTATION", fleet.NoDataMemoryRepresentations},
+		// And where a Plan's no-data tracking horizon is read as coming from.
+		{"HORIZON_SOURCE", fleet.NoDataHorizonSources},
+		{"HORIZON_SOURCE_BASIS", fleet.NoDataHorizonSourceBases},
 		// And what a query-free completion found about an earlier attempt.
 		{"EXECUTION_EVIDENCE", fleet.ExecutionEvidenceReadings},
 	}
@@ -831,10 +841,120 @@ func TestThePageHasWordingForEveryGuardProgress(t *testing.T) {
 	}
 }
 
+// The resolver's two closed lists have words on the page, and the page has
+// words for nothing the resolver does not produce: a selector that could not
+// be resolved reaches the object row as its reason word, and a word with no
+// entry renders as the word.
+func TestThePageHasWordingForEveryTargetResolutionStateAndSelectorReason(t *testing.T) {
+	body := string(page)
+	for _, table := range []struct {
+		name   string
+		values []string
+	}{
+		{"RESOLUTION_STATE", stringsOf(targetplan.ResolutionStates)},
+		{"SELECTOR_REASON", targetplan.SelectorReasons},
+	} {
+		found := regexp.MustCompile(`var ` + table.name + ` = \{([\s\S]*?)\};`).FindStringSubmatch(body)
+		if found == nil {
+			t.Fatalf("the page has no %s wording table", table.name)
+		}
+		worded := map[string]bool{}
+		for _, entry := range regexp.MustCompile(`(?m)^  ([A-Za-z_]+):`).FindAllStringSubmatch(found[1], -1) {
+			worded[entry[1]] = true
+			if !containsString(table.values, entry[1]) {
+				t.Errorf("%s has words for %s, which the resolver never produces", table.name, entry[1])
+			}
+		}
+		for _, value := range table.values {
+			if !worded[value] {
+				t.Errorf("%s has no words for %s: the row would render the word itself", table.name, value)
+			}
+		}
+	}
+}
+
 func stringsOf[T ~string](values []T) []string {
 	out := make([]string, 0, len(values))
 	for _, value := range values {
 		out = append(out, string(value))
 	}
 	return out
+}
+
+// Every answer the recovery gate can give has a word on the page.
+//
+// The page's answer table is hand-listed and the renderer counts only the
+// keys in it, so an answer missing here is not merely unworded: it does not
+// count towards the total, and the row then says the gate has not been asked
+// at all. That shipped -- a deployment whose every lookup came back under the
+// index protocol's answer read as "the recovery gate has not been asked yet"
+// while it was holding a hundred and sixty-eight recoveries, because the two
+// index answers were added to the server and not to the table.
+//
+// Pinned against the closed list rather than against the two that were
+// missing, so the next answer added in Go fails here instead of on a
+// deployment.
+func TestThePageHasWordingForEveryOpenAlertGateAnswer(t *testing.T) {
+	if len(openalerts.Answers) == 0 {
+		t.Fatal("no gate answers declared in Go; the check would pass vacuously")
+	}
+	found := regexp.MustCompile(`var OPEN_ALERT_ANSWER = \{([\s\S]*?)\};`).FindStringSubmatch(string(page))
+	if found == nil {
+		t.Fatal("the page no longer declares OPEN_ALERT_ANSWER")
+	}
+	for _, answer := range openalerts.Answers {
+		if !regexp.MustCompile(`\b` + string(answer) + `:`).MatchString(found[1]) {
+			t.Errorf("the recovery gate can answer %q and the page has no word for it: the row will not count it, "+
+				"and with only such answers it reads as though the gate was never asked", answer)
+		}
+	}
+}
+
+// The dependency table's role words, the Console's states, its operations
+// and the link's own health words are each hand-listed on the page, and the
+// Go side says each list is closed and the page is held to it. Nothing held
+// it: a role or a state added in Go reaches the page as its raw word, and
+// the first-screen Console sentence drops the part it has no word for.
+func TestThePageHasWordingForEveryDependencyRoleAndConsoleReading(t *testing.T) {
+	var unhealthy []string
+	for _, word := range absentalerts.LinkHealthWords {
+		if word != absentalerts.LinkHealthy {
+			unhealthy = append(unhealthy, word)
+		}
+	}
+	tables := map[string][]string{
+		"ENDPOINT":        fleet.EndpointRoles,
+		"CONSOLE_STATE":   fleet.LinkdConsoleStates,
+		"CONSOLE_OP":      openalerts.ConsoleOps,
+		"LINK_HEALTH":     unhealthy,
+		"LINKD_DISCOVERY": fleet.LinkdDiscoveryOutcomes,
+	}
+	for table, words := range tables {
+		if len(words) == 0 {
+			t.Fatalf("%s: no words declared in Go; the check would pass vacuously", table)
+		}
+		found := regexp.MustCompile(`var ` + table + ` = \{([\s\S]*?)\};`).FindStringSubmatch(string(page))
+		if found == nil {
+			t.Fatalf("the page no longer declares %s", table)
+		}
+		for _, word := range words {
+			if !regexp.MustCompile(`\b` + word + `:`).MatchString(found[1]) {
+				t.Errorf("%s has no word for %q", table, word)
+			}
+		}
+	}
+}
+
+// The first-screen Console line is shown from the server's decision and
+// nothing else: a page that decided from the state alone would put a
+// permanently true sentence on every deployment whose events all go the
+// Python-compatible way.
+func TestTheFirstScreenConsoleLineReadsTheServersAttention(t *testing.T) {
+	body := regexp.MustCompile(`function consoleBrief\(standing, deployment\) \{\n  if \(!standing \|\| !standing\.attention\) return '';`)
+	if !body.MatchString(string(page)) {
+		t.Fatal("consoleBrief no longer returns nothing unless the server set attention")
+	}
+	if !strings.Contains(string(page), "consoleBrief(deployment.linkd_console, deployment)") {
+		t.Fatal("the brief no longer renders the Console line from deployment.linkd_console")
+	}
 }

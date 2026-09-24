@@ -8,7 +8,9 @@ package viewstream_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -17,6 +19,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream"
@@ -187,7 +190,7 @@ func (ws *workerStream) recvSnapshot() *pb.Snapshot {
 	ws.t.Helper()
 	message := ws.recv()
 	if message.GetSnapshot() == nil {
-		ws.t.Fatalf("want a snapshot, got %+v", message)
+		ws.t.Fatalf("want a snapshot, got %s", describe(message))
 	}
 	return message.GetSnapshot()
 }
@@ -196,9 +199,22 @@ func (ws *workerStream) recvDelta() *pb.Delta {
 	ws.t.Helper()
 	message := ws.recv()
 	if message.GetDelta() == nil {
-		ws.t.Fatalf("want a delta, got %+v", message)
+		ws.t.Fatalf("want a delta, got %s", describe(message))
 	}
 	return message.GetDelta()
+}
+
+// describe names a message by kind and size. A view of thousands of entries
+// printed whole is a failure nobody reads.
+func describe(message *pb.LeaderMessage) string {
+	if message == nil {
+		return "nothing"
+	}
+	size := proto.Size(message)
+	if size > 4096 {
+		return fmt.Sprintf("%T of %d bytes", message.Body, size)
+	}
+	return fmt.Sprintf("%+v", message)
 }
 
 func (ws *workerStream) recvRefusal() string {
@@ -213,6 +229,13 @@ func (ws *workerStream) recvRefusal() string {
 func (ws *workerStream) receipt(incarnation string, version *pb.Version, installed bool) {
 	ws.send(&pb.WorkerMessage{Body: &pb.WorkerMessage_Receipt{Receipt: &pb.Receipt{
 		Incarnation: incarnation, Version: version, Acked: true, Installed: installed,
+	}}})
+}
+
+// probedReceipt is an installed receipt that carries what the probe found.
+func (ws *workerStream) probedReceipt(incarnation string, version *pb.Version, missing uint32) {
+	ws.send(&pb.WorkerMessage{Body: &pb.WorkerMessage_Receipt{Receipt: &pb.Receipt{
+		Incarnation: incarnation, Version: version, Acked: true, Installed: true, ObjectsProbed: true, ObjectsMissing: missing,
 	}}})
 }
 
@@ -554,5 +577,152 @@ func TestTheServerKeepsOneSessionPerWorkerAndDropsTheSilent(t *testing.T) {
 	}
 	if harness.observer.count("closed", viewstream.RefusalIdle) != 1 || harness.observer.count("closed", viewstream.RefusalReplaced) != 1 {
 		t.Fatalf("events = %+v", harness.observer.events)
+	}
+}
+
+// A Worker's claim at its Hello says nothing about its objects. The Worker
+// reports a probe that found three missing, loses its stream, and comes
+// back claiming the version it holds: the claim credits the install and
+// leaves the probe's count where it was. Read as a receipt -- which is what
+// the same claim looks like on the wire, an installed receipt with the
+// probe flag unset -- it would have turned the count into "could not
+// probe" on every reconnect, until the next heartbeat's probe put it back.
+func TestAHelloClaimLeavesTheProbedCountWhereItWas(t *testing.T) {
+	harness := startServer(t)
+	ctx := context.Background()
+	if err := harness.server.Lead(7); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := harness.server.Publish(ctx, desiredAt(publicationA, map[string]string{"qg-1": "w1"},
+		map[string]viewstream.Content{"qg-1": content("obj-1", "s1")})); err != nil {
+		t.Fatal(err)
+	}
+	w1 := harness.connect("w1", "t1", "i1", nil)
+	snapshot := w1.recvSnapshot()
+	w1.probedReceipt("i1", snapshot.Version, 3)
+	eventually(t, "the probed receipt is on the account", func() bool {
+		objects := harness.server.Stats().Objects
+		return objects.Probed == 1 && objects.Missing == 3
+	})
+	w1.cancel()
+	again := harness.connect("w1", "t1", "i1", snapshot.Version)
+	eventually(t, "the claim is credited", func() bool { return harness.server.Stats().Counts.Installed == 1 })
+	if objects := harness.server.Stats().Objects; objects.Probed != 1 || objects.Missing != 3 || objects.Unprobed != 0 {
+		t.Fatalf("objects after the Hello claim = %+v, want the probe's 3 missing over one probed Worker left as it was", objects)
+	}
+	// The same Worker's next receipt says its probe failed: that is the
+	// Worker's word on its objects and it stands.
+	again.send(&pb.WorkerMessage{Body: &pb.WorkerMessage_Receipt{Receipt: &pb.Receipt{
+		Incarnation: "i1", Version: snapshot.Version, Acked: true, Installed: true, ObjectsProbed: false}}})
+	eventually(t, "the failed probe is on the account", func() bool {
+		objects := harness.server.Stats().Objects
+		return objects.Probed == 0 && objects.Unprobed == 1 && objects.Missing == 0
+	})
+	again.cancel()
+}
+
+// A step that adds more than one message's worth of view is not sent as a
+// delta: the receiver would refuse the message, and on reconnect the same
+// delta would be built again. The Worker gets the chunked snapshot of the
+// same revision instead, and the page counts the delta it did not get. A
+// small step to the same Worker is still one delta, so the bound and not
+// the stage decides.
+func TestAStepLargerThanOneMessageIsSentAsAChunkedSnapshot(t *testing.T) {
+	harness := startServer(t)
+	ctx := context.Background()
+	if err := harness.server.Lead(7); err != nil {
+		t.Fatal(err)
+	}
+	assign := map[string]string{"qg-0": "w1"}
+	published := map[string]viewstream.Content{"qg-0": content("obj-0", "s0")}
+	if _, err := harness.server.Publish(ctx, desiredAt(publicationA, assign, published)); err != nil {
+		t.Fatal(err)
+	}
+	w1 := harness.connect("w1", "t1", "i1", nil)
+	snap := w1.recvSnapshot()
+	w1.receipt("i1", snap.Version, true)
+	eventually(t, "installed", func() bool { return harness.server.Stats().Counts.Installed == 1 })
+
+	// One more Query Group: a step, and a small one.
+	assign["qg-1"], published["qg-1"] = "w1", content("obj-1", "s1")
+	if _, err := harness.server.Publish(ctx, desiredAt(publicationA, assign, published)); err != nil {
+		t.Fatal(err)
+	}
+	small := w1.recvDelta()
+	if small.Target.Revision != 2 || len(small.Upserts) != 1 {
+		t.Fatalf("small step = %+v, want one upsert at revision 2", small)
+	}
+	w1.receipt("i1", small.Target, true)
+	eventually(t, "installed revision 2", func() bool {
+		return harness.server.Stats().Revision == 2 && harness.server.Stats().Counts.Installed == 1
+	})
+
+	// grow adds Query Groups to the Worker until their wire size passes
+	// bytes. The size is measured from the entries as they would go on the
+	// wire, not guessed from a count, so the two steps below land on the
+	// sides of the bound they are meant to.
+	grow := func(prefix string, bytes int) {
+		for index, wireBytes := 0, 0; wireBytes < bytes; index++ {
+			name := prefix + strconv.Itoa(index)
+			assign[name], published[name] = "w1", content("obj-"+name, "s-"+name)
+			one, err := desiredAt(publicationA, map[string]string{name: "w1"}, map[string]viewstream.Content{name: published[name]}).Project("w1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			wireBytes += proto.Size(viewstream.SnapshotChunks(one, 0)[0].Entries[0])
+		}
+	}
+
+	// A step well past half a message is still one delta: the bound, not
+	// the size of the step, decides.
+	grow("qg-medium-", 3*viewstream.MessageBytes/4)
+	if _, err := harness.server.Publish(ctx, desiredAt(publicationA, assign, published)); err != nil {
+		t.Fatal(err)
+	}
+	medium := w1.recvDelta()
+	if size := proto.Size(medium); medium.Target.Revision != 3 || size < viewstream.MessageBytes/2 || size > viewstream.MessageBytes {
+		t.Fatalf("medium step: revision %d, %d bytes; the fixture meant a delta between half a message and one", medium.Target.Revision, size)
+	}
+	w1.receipt("i1", medium.Target, true)
+	eventually(t, "installed revision 3", func() bool {
+		return harness.server.Stats().Revision == 3 && harness.server.Stats().Counts.Installed == 1
+	})
+
+	// A step larger than a message is not a delta: the Worker gets the
+	// snapshot of the same revision, in chunks.
+	grow("qg-large-", 2*viewstream.MessageBytes)
+	if _, err := harness.server.Publish(ctx, desiredAt(publicationA, assign, published)); err != nil {
+		t.Fatal(err)
+	}
+	first := w1.recvSnapshot()
+	if first.Version.Revision != 4 || first.Chunks < 3 {
+		t.Fatalf("large step came as %d chunk(s) of revision %d, want a chunked snapshot of revision 4", first.Chunks, first.Version.Revision)
+	}
+	for chunk := uint32(2); chunk <= first.Chunks; chunk++ {
+		if next := w1.recvSnapshot(); next.Chunk != chunk {
+			t.Fatalf("chunk %d arrived as %d", chunk, next.Chunk)
+		}
+	}
+	stats := harness.server.Stats()
+	if stats.DeltasSent != 2 || stats.DeltasOversized != 1 || stats.SnapshotChunksSent != 1+uint64(first.Chunks) {
+		t.Fatalf("stats = %+v, want two deltas sent, one oversized, and the first snapshot plus %d chunks", stats, first.Chunks)
+	}
+
+	// The snapshot moved the session on: once the Worker installs it, the
+	// next small step is one delta from revision 4, not a snapshot again.
+	// A session that replaced the delta but did not record the snapshot as
+	// sent would answer this step with the snapshot a second time.
+	w1.receipt("i1", first.Version, true)
+	eventually(t, "installed revision 4", func() bool {
+		return harness.server.Stats().Revision == 4 && harness.server.Stats().Counts.Installed == 1
+	})
+	assign["qg-after"], published["qg-after"] = "w1", content("obj-after", "s-after")
+	if _, err := harness.server.Publish(ctx, desiredAt(publicationA, assign, published)); err != nil {
+		t.Fatal(err)
+	}
+	after := w1.recvDelta()
+	if after.Base.Revision != 4 || after.Target.Revision != 5 || len(after.Upserts) != 1 {
+		t.Fatalf("step after the snapshot = base %d target %d with %d upserts, want one delta 4 -> 5",
+			after.Base.Revision, after.Target.Revision, len(after.Upserts))
 	}
 }

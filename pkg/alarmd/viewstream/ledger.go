@@ -38,6 +38,11 @@ type Receipt struct {
 	Failure        string
 	ObjectsMissing int
 	ObjectsProbed  bool
+	// SwitchedQueryGroups is how many of the version's Query Groups the
+	// Worker executes from the view; Switched is this reaching the version's
+	// entry count. Carried so the Leader can say how many are not, per
+	// Worker, rather than only that some are.
+	SwitchedQueryGroups int
 }
 
 // Counts are the four numbers of one version, with the receivers the
@@ -89,6 +94,9 @@ type receiverState struct {
 	failure                          string
 	objectsMissing                   int
 	objectsProbed                    bool
+	// switchedQueryGroups is the Worker's latest count of Query Groups it
+	// executes from the view, whether or not that reached switched.
+	switchedQueryGroups int
 }
 
 type versionLedger struct {
@@ -225,7 +233,26 @@ type Recorded struct {
 // could not. Stages are recorded as asserted and counted in order, so a
 // receipt asserting a later stage without an earlier one moves nothing the
 // earlier gates; a Worker's later complete receipt does.
+//
+// An installed receipt speaks for the receiver's objects, one way or the
+// other: every one the Worker sends carries what its probe found -- the
+// count, or that it could not probe.
 func (ledger *Ledger) Record(receipt Receipt) Recorded {
+	return ledger.record(receipt, true)
+}
+
+// RecordClaimed attributes what a Worker claims at its Hello: that it has
+// installed the version, so acked and installed. A Hello cannot say what the
+// Worker's probe found, and a claim that says nothing about the objects leaves
+// what is in hand where it is -- the Worker's next probe speaks. It is a
+// separate entry point rather than a receipt with a flag unset, because on
+// the wire an unset flag is a probe that failed, and the two must not read
+// the same.
+func (ledger *Ledger) RecordClaimed(receiver Receiver, version Version) Recorded {
+	return ledger.record(Receipt{Receiver: receiver, Version: version, Acked: true, Installed: true}, false)
+}
+
+func (ledger *Ledger) record(receipt Receipt, objectsReported bool) Recorded {
 	ledger.mu.Lock()
 	defer ledger.mu.Unlock()
 	entry := ledger.find(receipt.Version.Key())
@@ -250,14 +277,21 @@ func (ledger *Ledger) Record(receipt Receipt) Recorded {
 	state.acked = state.acked || receipt.Acked
 	state.installed = state.installed || receipt.Installed
 	state.switched = state.switched || receipt.Switched
+	if receipt.Installed {
+		state.switchedQueryGroups = receipt.SwitchedQueryGroups
+	}
 	if receipt.Failure != "" {
 		state.failure = receipt.Failure
 	}
-	// An installed receipt that probed the objects is the current count; one
-	// that did not -- a Hello standing in for a lost receipt -- says nothing
-	// about them and leaves a count already in hand where it is.
-	if receipt.Installed && receipt.ObjectsProbed {
-		state.objectsMissing, state.objectsProbed = receipt.ObjectsMissing, true
+	// An installed receipt is the receiver's current word on its objects:
+	// the count it probed, or that it could not probe. A Worker whose probe
+	// failed has no count, and the count it had from a probe that succeeded
+	// earlier is not one now -- read on, it made "cannot tell" look like
+	// "nothing missing" for as long as the probe kept failing. Only a claim
+	// at a Hello, which cannot speak for the objects, leaves what is in
+	// hand where it is.
+	if receipt.Installed && objectsReported {
+		state.objectsProbed, state.objectsMissing = receipt.ObjectsProbed, receipt.ObjectsMissing
 	}
 	recorded := Recorded{Attributed: true, Version: entry.version, Expected: len(entry.receivers)}
 	if entry.installedByAllAt.IsZero() {
@@ -281,12 +315,16 @@ func (ledger *Ledger) countDigestMismatch() {
 // ObjectsSummary is what the installed receivers of a version said about
 // their objects: how many receivers probed, how many could not, and the
 // missing objects summed over those that probed. Unprobed receivers add
-// nothing to the sum and are counted apart, so a sum of 0 over a fleet
-// that mostly could not probe is not read as a fleet with its objects.
+// nothing to the sum and are counted apart -- and named, since the page's
+// question is which Worker cannot tell -- so a sum of 0 over a fleet that
+// mostly could not probe is not read as a fleet with its objects.
 type ObjectsSummary struct {
 	Missing  int
 	Probed   int
 	Unprobed int
+	// UnprobedWorkers are the installed receivers whose latest word was
+	// that they could not probe, sorted.
+	UnprobedWorkers []string
 }
 
 // Objects summarizes the object counts of a version's installed receivers.
@@ -298,7 +336,7 @@ func (ledger *Ledger) Objects(version Key) (ObjectsSummary, bool) {
 		return ObjectsSummary{}, false
 	}
 	summary := ObjectsSummary{}
-	for _, state := range entry.receivers {
+	for worker, state := range entry.receivers {
 		if !(state.sent && state.acked && state.installed) {
 			continue
 		}
@@ -307,8 +345,10 @@ func (ledger *Ledger) Objects(version Key) (ObjectsSummary, bool) {
 			summary.Missing += state.objectsMissing
 		} else {
 			summary.Unprobed++
+			summary.UnprobedWorkers = append(summary.UnprobedWorkers, worker)
 		}
 	}
+	sort.Strings(summary.UnprobedWorkers)
 	return summary, true
 }
 
@@ -360,7 +400,7 @@ func (ledger *Ledger) Lagging(stage string) []LaggingReceiver {
 			continue
 		}
 		lagging = append(lagging, LaggingReceiver{WorkerID: worker, Incarnation: state.incarnation, Failure: state.failure,
-			ObjectsMissing: state.objectsMissing, ObjectsProbed: state.objectsProbed})
+			SwitchedQueryGroups: state.switchedQueryGroups})
 	}
 	sort.Slice(lagging, func(left, right int) bool { return lagging[left].WorkerID < lagging[right].WorkerID })
 	return lagging
@@ -369,13 +409,19 @@ func (ledger *Ledger) Lagging(stage string) []LaggingReceiver {
 // LaggingReceiver is one Worker short of a stage. Connected is filled by
 // the server from its session table: a lagging Worker with no stream is a
 // Worker that is gone or cannot reach the Leader, not one that is slow.
-// ObjectsMissing is read only when ObjectsProbed; a page renders the pair
-// as a number or as unknown, never 0 for unknown.
+//
+// It says nothing about the Worker's objects: a Worker short of installed
+// has not probed anything. The pair of object fields that used to sit here
+// was written for every lagging Worker and true for none, and read as a
+// probe that had happened; what the installed receivers found is
+// ObjectsSummary.
 type LaggingReceiver struct {
-	WorkerID       string
-	Incarnation    string
-	Failure        string
-	ObjectsMissing int
-	ObjectsProbed  bool
-	Connected      bool
+	WorkerID    string
+	Incarnation string
+	Failure     string
+	Connected   bool
+	// SwitchedQueryGroups is the Worker's latest count of Query Groups it
+	// executes from the view; read against the Worker's entry count on the
+	// switched stage, it is how far short of switched the Worker is.
+	SwitchedQueryGroups int
 }

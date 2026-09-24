@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package execution
 
 import (
@@ -128,9 +119,13 @@ func (p ExpiredRangeProjectionV1) validateFacts() error {
 		return bad()
 	}
 	for _, projection := range []UnfinishedSlotProjection{p.First, p.Last} {
+		// Compared by identity: the Schedule's Plans are one Query Group's,
+		// and a Query Group holds one piece of a strategy, so within it the
+		// identity names the piece. The Schedule entry does not carry the
+		// piece; the targets do, and only the identity half is read here.
 		targets := make(map[PlanIdentity]struct{}, len(projection.DuePlanTargets.Plans))
 		for _, target := range projection.DuePlanTargets.Plans {
-			targets[target] = struct{}{}
+			targets[target.PlanIdentity] = struct{}{}
 		}
 		ref := projection.Contract
 		segment := p.Schedule.Segment

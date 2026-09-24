@@ -46,7 +46,7 @@ func (candidate HostCandidate) Key() string {
 // walked the target itself would be deriving the same thing a second time, and
 // the two would agree until a target shape came along where they did not.
 func HostCandidates(request RosterRequest) ([]HostCandidate, error) {
-	class, err := ClassifyRoster(request.Scope, request.AggDimension)
+	class, err := ClassifyTarget(request.Scope, request.Plan, request.AggDimension)
 	if err != nil {
 		return nil, err
 	}

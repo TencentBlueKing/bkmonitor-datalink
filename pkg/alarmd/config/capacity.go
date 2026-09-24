@@ -405,29 +405,48 @@ func DeriveControlTimelineCache(inputs CapacityInputs) DerivedControlTimelineCac
 
 // DeriveCoordinator sizes the process budgets from the memory limit. Retained
 // bytes take a quarter of it, leaving the rest for the Go heap's own overhead,
-// non-retained allocation and collection headroom; the remaining budgets are
-// that retained figure divided by what one series or one mutation costs.
+// non-retained allocation and collection headroom, and they are the working
+// limit: what bounds how much of a Slot this process will hold at once.
 //
-// The mutation, event and reservation budgets are additionally held at what a
-// chunked Store apply can carry. A process budget above that product would
-// admit a Slot no apply could ever complete, which is the cross-check a
-// hand-written combination once failed.
-// The budget is additionally floored at one Store call. A process that cannot
-// hold a single batch's worth of mutations cannot complete the smallest Slot
-// the chunked apply is built around, so a very small container runs with less
+// The counts are not a second memory budget. They were one - every count was
+// retained bytes divided by an assumed 32 KiB per mutation - and measuring what
+// a mutation actually costs found 3.5 KiB for a light shape against 28.9 KiB
+// for a heavy one, a 9x spread around a single constant. A count derived that
+// way stops a light Slot at a ninth of the memory it was allowed and lets a
+// heavy one through at nearly all of it, so the number that was supposed to
+// protect memory was the one deciding throughput, and the memory budget it was
+// standing in for was never reached. Bytes are measured per object, so they do
+// the memory work directly and the counts stop pretending to.
+//
+// What the counts are now is a runaway guardrail: the point past which a Slot
+// cannot be delivered whatever memory says. For State and Gap mutations that
+// point is what a chunked Store apply can carry - max_keys_per_batch items per
+// call, StateApplyMaxChunks calls - because a Slot above it admits work no
+// apply could ever complete. Events do not take that path: one WriteBatch
+// carries a Slot's events with no chunking, so their own wall is what a single
+// output batch can push, which nothing has measured. Until it is, they are held
+// at the same guardrail, which is sound in the safe direction - every event
+// hangs off a State result, and those are capped there - and is called out
+// rather than left looking derived. That measurement and the retained-bytes
+// divisor are the same kind of open question, and both wait on the first real
+// readings of what a Slot uses.
+//
+// The guardrail is floored at one Store call. A process that cannot hold a
+// single batch's worth of mutations cannot complete the smallest Slot the
+// chunked apply is built around, so a very small container runs with less
 // headroom rather than with a budget no apply can use.
 func DeriveCoordinator(inputs CapacityInputs, storeItemsPerBatch, chunkedApplyBudget uint64) PhaseTwoCoordinatorConfig {
 	retained := max(inputs.MemoryLimitBytes/retainedMemoryDivisor, uint64(bytesPerMutation))
-	mutations := max(retained/bytesPerMutation, storeItemsPerBatch, 1)
-	if chunkedApplyBudget > 0 && mutations > chunkedApplyBudget {
-		mutations = chunkedApplyBudget
-	}
+	guardrail := max(chunkedApplyBudget, storeItemsPerBatch, 1)
 	return PhaseTwoCoordinatorConfig{
-		MaxRetainedBytes:         retained,
-		MaxSeries:                max(retained/bytesPerSeries, 1),
-		MaxStateMutations:        mutations,
-		MaxGapMutations:          mutations,
-		MaxEvents:                mutations,
-		MaxSequencerReservations: int(mutations),
+		MaxRetainedBytes:  retained,
+		MaxSeries:         max(retained/bytesPerSeries, 1),
+		MaxStateMutations: guardrail,
+		MaxGapMutations:   guardrail,
+		MaxEvents:         guardrail,
+		// Sequencer reservations are held with the mutations they sequence, so
+		// the guardrail bounds them too. It is an int, and a guardrail beyond
+		// what an int holds is not a guardrail on this platform.
+		MaxSequencerReservations: int(min(guardrail, uint64(math.MaxInt))),
 	}
 }

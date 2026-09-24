@@ -11,6 +11,7 @@ package ownership
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -109,6 +110,12 @@ type WorkerLoad struct {
 	Waiting          int     `json:"waiting"`
 	MemoryUsedBytes  uint64  `json:"memory_used_bytes,omitempty"`
 	MemoryLimitBytes uint64  `json:"memory_limit_bytes,omitempty"`
+	// RetainedPoolBytes is this Worker's retained-byte pool, the limit its
+	// Slots' retained bytes are held under, as the Worker derived it: what
+	// the Control Leader judges the byte constraint against (decision-020
+	// section 5.7). Zero from a Worker that does not report it, which the
+	// Leader reads as "not judged", not as "no pool".
+	RetainedPoolBytes uint64 `json:"retained_pool_bytes,omitempty"`
 }
 
 func (load *WorkerLoad) validate() error {
@@ -179,6 +186,51 @@ type ControlLeader struct {
 // and the fleet it could be elected from is the ready set.
 const CapabilityContentScope = "content-scope.v1"
 
+// CapabilityShardAware is the decision-020 split contract (section 4.7.7): a
+// worker that declares it indexes activations by (Plan, shard index) and
+// executes a strategy split into pieces; one that does not refuses an
+// activation naming the same Plan twice, whole, and executes nothing until
+// the split is withdrawn. A Leader publishes a split only while every ready
+// worker declares it, and withdraws every split to one piece when one that
+// does not joins: a rollback is the ordinary case, and a rollback into a
+// split fleet without this would stop every rolled-back replica at once.
+// The gate is a runtime fact, not a release discipline.
+const CapabilityShardAware = "shard-aware.v1"
+
+// ShardSplitHeld is the word for a split the Leader was asked for and did not
+// publish because a ready worker does not declare CapabilityShardAware. It
+// names the replica; the count of them on a fleet that asked for no split
+// is zero, which is the reading a rollout is judged by.
+const ShardSplitHeld = "SHARD_SPLIT_HELD"
+
+// ShardSplitGate is the split contract's answer for one ready set.
+type ShardSplitGate struct {
+	// Admitted says every ready worker declares the contract, so a split
+	// may be published. False for an empty set: a split is admitted for a
+	// fleet, not for nobody.
+	Admitted bool
+	// Ready is how many workers were asked; Unaware the ids of those that
+	// do not declare the contract, in id order. Unaware is what the page
+	// shows while a rollout is in flight and what a rollback puts back.
+	Ready   int
+	Unaware []string
+}
+
+// ShardSplitAdmission decides the gate for a ready set, the same set the
+// round's placements use; a registration that has expired is not in it, so
+// a replica that is gone does not hold a split.
+func ShardSplitAdmission(workers []WorkerRegistration) ShardSplitGate {
+	gate := ShardSplitGate{Ready: len(workers)}
+	for _, worker := range workers {
+		if !worker.Declares(CapabilityShardAware) {
+			gate.Unaware = append(gate.Unaware, worker.WorkerID)
+		}
+	}
+	sort.Strings(gate.Unaware)
+	gate.Admitted = len(workers) > 0 && len(gate.Unaware) == 0
+	return gate
+}
+
 // Declares reports whether the registration names the capability.
 func (worker WorkerRegistration) Declares(capability string) bool {
 	for _, declared := range worker.Capabilities {
@@ -215,10 +267,17 @@ type PlacementReason string
 const (
 	PlacementRendezvous PlacementReason = "RENDEZVOUS"
 	PlacementRebalance  PlacementReason = "REBALANCE"
+	// PlacementByteConstraint is a move the Control Leader makes because
+	// the holder's Query Groups' retained-byte peaks summed past its pool's
+	// share (decision-020 section 5.7). Accepted by readers first; the
+	// writer still says REBALANCE until every reader accepts this word,
+	// so a rollout never has a new Leader publish a record an old Worker
+	// refuses.
+	PlacementByteConstraint PlacementReason = "BYTE_CONSTRAINT"
 )
 
 func (reason PlacementReason) valid() bool {
-	return reason == PlacementRendezvous || reason == PlacementRebalance
+	return reason == PlacementRendezvous || reason == PlacementRebalance || reason == PlacementByteConstraint
 }
 
 type AssignmentRecord struct {
@@ -249,6 +308,15 @@ type AssignmentRecord struct {
 	// its own clock reads it from the Lease its renewal returned.
 	PendingContentScope string
 	EffectiveAt         time.Time
+	// TimelineRecordRevision is the revision of this Query Group's Schedule
+	// timeline record as the leader last wrote it, copied here so a holder
+	// learns it from the same renewal that brings its content scope. The
+	// timeline is the authority on which Segment is open; this is the
+	// record's word on which timeline that is, and the executable view the
+	// holder installed previews the same number (decision-016 batch 4). Zero
+	// on a record no leader has written it to yet: a reader treats zero as
+	// "not said", never as revision zero, which no timeline has.
+	TimelineRecordRevision uint64
 }
 
 // ContentChangePending reports whether the record carries a content change
@@ -280,6 +348,11 @@ type AssignmentDecision struct {
 	// content contract and what a leader writes when a worker that does not
 	// declare the contract joins the fleet. Exclusive with ContentScope.
 	WithdrawContentScope bool
+	// TimelineRecordRevision, when not zero, is written to the record as the
+	// revision of the Query Group's timeline; zero leaves whatever the record
+	// holds. A placement names it so a Query Group's first record carries
+	// the number the cutover would otherwise have been the only writer of.
+	TimelineRecordRevision uint64
 }
 
 func (decision AssignmentDecision) Validate() error {
@@ -326,6 +399,10 @@ type Lease struct {
 	ContentScope        string
 	PendingContentScope string
 	EffectiveAt         time.Time
+	// TimelineRecordRevision is the record's word on which timeline revision
+	// the Query Group is on, as of this renewal; zero when the record does
+	// not say. See AssignmentRecord.TimelineRecordRevision.
+	TimelineRecordRevision uint64
 }
 
 // ContentChangePending reports whether the lease was renewed under a content

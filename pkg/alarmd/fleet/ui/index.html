@@ -164,6 +164,7 @@ details.group table{margin:6px 0 0 12px}
     <input id="every" type="number" min="5" step="5" size="3">
     <span>秒</span>
     <button id="refreshNow">立即刷新</button>
+    <a id="cliAuthorization" href="./cli">CLI 授权</a>
     <span class="basis" id="refreshNote"></span>
   </div>
 
@@ -188,6 +189,7 @@ details.group table{margin:6px 0 0 12px}
       <p id="briefSchedule"></p>
       <p id="briefTodo"></p>
       <p id="briefBlind"></p>
+      <p id="briefConsole" hidden></p>
     </div>
     <!-- The badge answers "is alarmd well". Nobody opens this page to ask that:
          they ask whether alerting is working, what is affected and whether to
@@ -229,6 +231,11 @@ details.group table{margin:6px 0 0 12px}
         <div class="k">出过降级池</div>
         <div class="v" id="poolExits">–</div>
         <div class="k" id="poolFlowHint"></div>
+      </div>
+      <div class="cell wide" id="noDataTrackingCell" hidden>
+        <div class="k">无数据追踪期限压着的组</div>
+        <div class="v" id="noDataSuppressed">–</div>
+        <div class="k" id="noDataTrackingHint"></div>
       </div>
     </div>
     <ul class="gaps" id="gaps"></ul>
@@ -431,6 +438,8 @@ var BASE = (function () {
   return p.charAt(p.length - 1) === '/' ? p : p + '/';
 })();
 
+document.getElementById('cliAuthorization').href = BASE.replace(/index\.html\/$/, '') + 'cli';
+
 var LIMIT = 20;
 // Which line of the first screen is open, and which of its groups are
 // expanded. Navigation, not filters: the server decides which objects are
@@ -456,8 +465,17 @@ function api(path, init) {
         // response, not an explanation. Pasting the whole JSON into a sentence
         // is not a message -- it is the raw response with a prefix on it, which
         // is what a reader saw whenever a route answered in its own shape.
-        var reason = (body && body.error) || (body ? 'HTTP ' + r.status : (text || ('HTTP ' + r.status)));
+        //
+        // An error may itself be structured -- the restricted public surface
+        // answers {code, message, login_href} -- and an object pasted into a
+        // sentence reads "[object Object]". Its words are its message, else
+        // its code.
+        var error = body && body.error;
+        var reason = error
+          ? (typeof error === 'object' ? (error.message || error.code || 'HTTP ' + r.status) : error)
+          : (body ? 'HTTP ' + r.status : (text || ('HTTP ' + r.status)));
         var failure = new Error(reason);
+        failure.restricted = !!(error && typeof error === 'object' && error.code === RESTRICTED_CODE);
         // Carried rather than matched out of the text later: a provider message
         // that happens to contain "404" is not a missing route, and deciding
         // that from the sentence gets it wrong in whichever direction is worse.
@@ -474,8 +492,37 @@ function text(id, v) { document.getElementById(id).textContent = v; }
 
 function fail(errId, err) {
   var el = document.getElementById(errId);
+  // A route the public surface no longer serves is not a failure to read: the
+  // data is behind the CLI, and the block says so and where to log in.
+  if (err && err.restricted) {
+    restrictedNotice(el);
+    return;
+  }
   // Never a blank panel and never a zero: say which channel could not answer.
   el.textContent = '这一块读不到：' + err.message;
+  el.hidden = false;
+}
+
+// The restricted public surface: the refusal's code, and the one notice every
+// block whose data moved behind the CLI shows in its place.
+var RESTRICTED_CODE = 'public_surface_restricted';
+var RESTRICTED_NOTICE = '公开面已收紧，完整数据请用 CLI 读';
+
+// The login page, built from the page's own base. A refusal's login_href is
+// relative to the refused API path, not to this page; the page knows its base
+// already, and its login page is the one the header's authorization link
+// points at, whatever prefix the host adds.
+function loginHref() { return BASE.replace(/index\.html\/$/, '') + 'cli'; }
+
+// Replaces el's content with the notice, an optional lead sentence before it,
+// and a link to the login page. Never inferred from the absent data.
+function restrictedNotice(el, lead) {
+  el.textContent = '';
+  el.appendChild(document.createTextNode((lead || '') + RESTRICTED_NOTICE + '：'));
+  var link = document.createElement('a');
+  link.href = loginHref();
+  link.textContent = '登录页';
+  el.appendChild(link);
   el.hidden = false;
 }
 
@@ -535,7 +582,8 @@ var GAP_MEANING = {
   COVERAGE_INCONSISTENT: '覆盖数超过应有数，两边对不上',
   NO_REPLICAS: '没有就绪副本，没有任何证据',
   DENOMINATOR_UNAVAILABLE: '读不到应有对象集，没有分母',
-  REGISTRY_UNAVAILABLE: '读不到副本清单，不知道本应有谁上报'
+  REGISTRY_UNAVAILABLE: '读不到副本清单，不知道本应有谁上报',
+  SNAPSHOTS_UNREADABLE: '本副本这一次没读到任何快照；不等于别的副本没上报'
 };
 
 // The pipeline's own bounded classification of where a round failed. Rendered
@@ -614,6 +662,7 @@ var SINCE_SOURCE = {
   PROCESS_START: '本副本接手时它就已经这样了——"已持续"是本进程看了多久，不是它坏了多久，只会更久',
   RESTORED_LAST_FULL: '上次完整跑完的时刻；真正变坏的时刻没保留，所以实际没这么久',
   RESTORED_AT_RESTART: '本进程接手的时刻；之前有多久没人知道，只会比这更久',
+  RESTORED_EMPTY_RUN: '对象记录里空跑起始的 Slot（源时间），重启后接着算；记录若只能证到更晚的一轮就取那一轮，所以实际只会更早',
   REFUSED_FUTURE: '记录的时刻比现在还晚，已拒绝——这是缺陷，请上报'
 };
 
@@ -631,6 +680,7 @@ var SINCE_BOUND = {
   PROCESS_START: '≥ ',
   RESTORED_AT_RESTART: '≥ ',
   RESTORED_LAST_FULL: '≤ ',
+  RESTORED_EMPTY_RUN: '≥ ',
   REFUSED_FUTURE: '? '
 };
 
@@ -669,8 +719,16 @@ var CHECK = {
   // not accept, before any became an object. {s} is withheld records, {g}
   // reasons; there is no {n}, because none of these is an object.
   SOURCE_INCOMPLETE:     '策略缓存里 {s} 条策略的文档不满足合同，没有进入检测（{g} 种原因）——是写入方写的内容缺东西，不是策略配置错',
-  CAPABILITY_UNSUPPORTED: '{s} 条策略这个部署跑不了（{g} 种原因）——快照保留期或完成偏移不够，是 alarmd 部署参数',
+  // Composed by the server (report.line): how many hours of the last day the
+  // platform's list dropped strategies and listed them again, and what is
+  // under grace now. {s} is strategy-returns, {g} hours. Fallback only.
+  SOURCE_SET_FLAPPING:   '上游活动集近 24 小时有 {g} 个小时掉过策略又列回来，共 {s} 条次——是上游列表在抖，不是策略被删；抖动期间这些策略的对象被移除再重新放置，中间的 Slot 没有检测',
+  // The sentence for this line is composed by the server (report.line) by
+  // kind of cause under it; this template is the fallback for a server that
+  // did not send one, and names no cause -- the reasons under the line do.
+  CAPABILITY_UNSUPPORTED: '{s} 条策略这个部署跑不了（{g} 种原因）——处理办法按原因组看',
   CONFIG_REJECTED:       '{s} 条策略的定义编译不过（{g} 种原因）——按原因组看是哪个字段；带 STALE_CONFIG 的那组仍按上一版配置在跑',
+  CONFIG_NORMALIZED:     '{s} 条策略在检测，但有一部分配置的读法和写的不同（{g} 种原因，各原因的说明见下）——不是被扣',
   // The three standings. {since}, {c}, {applied} and {published} come from
   // the leader's activation facts on the report, not from counts; the split
   // line's numbers come from the leader's rebalance round on the report.
@@ -693,18 +751,21 @@ var CHECK = {
   BACKEND_NOT_ANSWERING: '查询没有得到应答，{n} 个对象受影响（{g} 种症状，{s} 条策略）——客户端超时或 5xx，查询预算、网络、后端耗时哪一环还分不出',
   QUERY_REFUSED:         '后端拒绝了 {n} 个对象的查询（{g} 种原因，{b} 个业务）——后端读了查询并回了状态码，是查询构造、策略引用还是后端规则还分不出',
   QUERY_TARGET_MISSING:  '{n} 个对象的查询被后端回"表或字段不存在"（{g} 种回答，{s} 条策略，{b} 个业务）——按策略引用核，未逐个核过实际请求与元数据前不认定是策略写错',
+  RETAINED_SHARE_APPROACHING: '{n} 个对象最近一轮的留存字节已逼近单对象份额（阈值见对象行 threshold_percent；{s} 条策略）：检测照常，但再涨一点，这些对象的每一轮都会被按名拒掉、整条停检',
   NO_DATA_PERSISTENT:    '{n} 个对象持续没有数据（{s} 条策略）',
-  EMPTY_EVERY_ROUND:     '{n} 个对象每一轮都查不到数据、从未有过数据（{s} 条策略）：检测在跑，但没有任何东西可判',
+  EMPTY_EVERY_ROUND:     '{n} 个对象每一轮都查不到数据、没有任何一轮已知有过数据（{s} 条策略）：检测在跑，但没有任何东西可判',
   SERIES_CHURNING:       '{n} 个对象的序列活不过检测窗口（{s} 条策略），恢复判不了',
   SERIES_DATA_MISSING:   '{n} 个对象恢复所需的老序列数据不完整（{s} 条策略），恢复判不了——是数据没到还是 alarmd 没取到还分不出',
   WINDOW_UNDECIDED:      '{n} 个对象的窗口填不满，还分不出是谁的（{g} 种情况，{s} 条策略）',
+  COVERAGE_READING_REFUSED: '{n} 个对象的窗口计数被观察器拒收，窗口满没满说不出（{g} 条规则，{s} 条策略）',
   PLAN_UNEVALUABLE:      '{s} 条策略按现在的定义算不了，{n} 个对象不检测',
   CONFIG_UNRESOLVED:     '{n} 个对象的配置状态说不清（{s} 条策略）'
 };
 
 // What the objects of a check are folded on, in words.
 var GROUP_BY = {replica: '副本', reason_code: '原因码', detail: '后端症状', strategy: '策略', gap_kind: '缺口', cause: '情况',
-                degradation: '超界的状态', loss: '损失是什么', blocked: '卡在哪一步 · 依赖 · 类型（原因码在组内计数）'};
+                degradation: '超界的状态', loss: '损失是什么', blocked: '卡在哪一步 · 依赖 · 类型（原因码在组内计数）',
+                hour: '回到活动集的那个小时（UTC）'};
 
 // Where a problem is between failing and fixed, from the server's reading
 // of its objects' rows -- never from the dependency's own health. Held to
@@ -714,6 +775,7 @@ var GROUP_BY = {replica: '副本', reason_code: '原因码', detail: '后端症�
 var RECOVERY_STATE = {
   BLOCKED: '仍然受阻（最近窗口内还在失败）',
   RECOVERING: '正在恢复（窗口内没有新失败；轮次在结束或只是迟到，结果还没补齐）',
+  STALLED: '卡住了（窗口内没有新失败、轮次也在结束，但至少一个对象的守卫计数或最差窗口的有效点数连续 3 轮没动——等不来，要看那个对象为什么没进展）',
   UNCONFIRMED: '恢复待确认（窗口内没有新失败，也没观察到任何一轮成功——不算已恢复）',
   RECOVERED: '已恢复（这一组的对象都在之后成功完成过，现在没有对象在这一组；对象数是各副本观察到的合计）',
   HISTORICAL: '留有历史影响（历史检测缺口，那段未检测的时间不补）'
@@ -726,6 +788,7 @@ var RECOVERY_STATE = {
 function problemClause(report, group) {
   if (!group || !group.recovery) return '';
   var parts = [RECOVERY_STATE[group.recovery] || group.recovery];
+  if (group.stalled) parts.push(group.stalled + ' 个对象守卫/窗口连续 3 轮以上没进展');
   if (group.overdue) parts.push('其中 ' + group.overdue + ' 个已超期');
   if (group.retrying) parts.push(group.retrying + ' 个在重试');
   if (group.recovered) parts.push(recoveredWords(group));
@@ -767,8 +830,9 @@ function blockedKeyLabel(key, group) {
 // The window the first two are decided on comes from the response.
 var LOSS = {
   WHILE_DEMOTED: '在被拒期间跳过（冷却让旧轮次超出重放范围，首要原因是查询不可用）',
-  AFTER_RESTART: '滚动后的追赶（副本启动 {g} 分钟内跳过；每次滚动都有，通常几分钟内结束——是否结束看这一组还有没有新增）',
-  ONGOING: '仍在发生（最近 {w} 分钟内跳过）',
+  AFTER_RESTART: '滚动后的追赶（副本启动或首次接手该对象 {g} 分钟内跳过；每次滚动都有，通常几分钟内结束——是否结束看这一组还有没有新增）',
+  AFTER_COOLDOWN: '冷却期间跳过、对象现已出冷却池（记录自带 held_by=query_cooldown：是冷却让旧轮次超出重放范围，首要原因是查询不可用，不是容量；对象已恢复查询，不会再新增）',
+  ONGOING: '仍在发生（最近 {w} 分钟内跳过，且不是冷却、不是滚动追赶）',
   HISTORICAL: '已停止（{w} 分钟以上没有再跳过）'
 };
 
@@ -790,8 +854,14 @@ var DEGRADATION = {
   CONTROL_SOURCE_STALE: '策略源超过设计允许的时间没有刷新成功，跑的是上一份好的目录',
   CONTROL_LEADER_ABSENT: '副本拿不到控制面 leader 租约、也不知道谁持有，超过设计允许的时间——可能没人在刷新',
   OPEN_ALERT_SET_STALE: '已开告警集合的副本超过设计允许的时间没拿到消费者的发布，恢复门在用旧知识',
+  OPEN_ALERT_SET_DISJOINT: '本副本发出的告警一条都不在 linkd 的已开告警集合里，集合的键和本副本查的不是一种；恢复门改按本副本发过的告警放行，本副本没发过的告警的恢复仍会被扣住，请核对 linkd 告警源的指纹配置',
   PLATFORM_SETTINGS_STALE: '平台设置的副本超过设计允许的时间没拿到平台的发布，检测在用可能已变的设置',
-  OUTPUT_NOT_READY: '副本连不上告警输出：进程活着但不就绪，不接检测任务，由其余副本顶着——少一个副本的容量'
+  OUTPUT_NOT_READY: '副本连不上告警输出：进程活着但不就绪，不接检测任务，由其余副本顶着——少一个副本的容量',
+  VIEW_PUBLISH_FAILING: 'leader 超过一分钟发不出视图：已有视图的副本照常检测，这期间重启的副本没有视图、什么都不执行；原因见说明',
+  VIEW_STREAM_NO_SESSIONS: 'leader 超过一分钟有待连的副本却没有一个连上视图流：视图谁都收不到，重启的副本会拿不到视图',
+  METRICS_INTERNAL_LISTEN_MISSING: '副本配了 CLI 管理凭据，对外端口不再给 /metrics，又没配集群内端口：检测不受影响，但这个副本的自监控指标抓不到',
+  CLI_AUTH_UNAVAILABLE: '副本配了 CLI 管理凭据，但 CLI 没起来、发不出会话：为了不把路堵死，公开面没有收紧，依赖地址等仍然公开；检测不受影响',
+  ACTIVATION_BLOCKED: '上一次发布有 QG 被扣住：它们的时间轴被发布流程之外的写入改过，保持原来的内容照常执行（没有可执行段的不执行），其余策略已按新配置生效；用修复子命令或查外部写入后会自动切过去；哪些 QG、什么原因见说明'
 };
 
 // What each line owes past its sentence, per check and held to the Go list:
@@ -803,9 +873,11 @@ var DEGRADATION = {
 // not log the full request text, so it says what exists instead of sending
 // the reader to look for something that does not.
 var EVIDENCE = {
+  SOURCE_SET_FLAPPING:   '展开按小时看：每组是那个小时回到活动集的策略数、最长缺席时长与策略样本；首屏"来源"块的 set.pending_removal / pending_removal_samples[].absent_since 是此刻宽限中的策略与各自缺席起点，set.hours[] 是整份按小时的账（自 set.since 起，leader 进程重启后重新计）；日志 snapshot_refreshed 行的 retired/added_query_groups 与 assignment_swept 行是同一件事在对象层的样子',
   SOURCE_INCOMPLETE:     '展开按原因看策略样本：SOURCE_IDENTITY_UNAVAILABLE = 文档顶层缺 bk_tenant_id / space_uid；SOURCE_OBJECT_INCOMPLETE = ID 在 strategy_ids 里但 strategy_<id> 不存在；依赖面板"策略缓存"行给缓存 Redis 地址与 last_updated；指标 catalog_withheld_objects{disposition="SOURCE_INCOMPLETE",reason}；日志 source_withheld',
-  CAPABILITY_UNSUPPORTED: '展开按原因看策略样本与要求的值：SNAPSHOT_RETENTION_INSUFFICIENT / COMPLETION_OFFSET_BELOW_RESERVE = 策略要的窗口或完成偏移超出本部署的保留/预留；*_NOT_MIGRATED = 该算法/时间条件/查询字段还没迁到 Go 侧；UNSUPPORTED_TARGET_PLAN = 文档 items[i] 带了 target_plan 字段（field_path 指到它），本构建不解释这个字段，整条策略具名拒绝、不回退旧 target、不保留旧 Plan——写入方上线目标计划之前这格应恒为 0，出现即写入方先于本构建。指标 catalog_withheld_objects{disposition="UNSUPPORTED_PHASE2_CAPABILITY",reason}，reason 原样显示不落 other',
+  CAPABILITY_UNSUPPORTED: '展开按原因看：每组带服务端给的"这是什么 / 谁能处理 / 下一步"（words.kind ∈ DEPLOYMENT_PARAMETER 部署参数不够 · BUILD_CAPABILITY 本构建不支持 · WRITER_AHEAD 写入方超前于本构建 · STRATEGY_DEFINITION 策略定义超出护栏 · UNKNOWN_REASON 页面还没有说明）与策略样本、field_path。指标 catalog_withheld_objects{disposition="UNSUPPORTED_PHASE2_CAPABILITY",reason}，reason 原样显示不落 other',
   CONFIG_REJECTED:       '展开按原因看策略样本与字段路径（field_path 是编译器拒绝的那个字段）；指标 catalog_withheld_objects{disposition="CONFIG_REJECTED",reason}',
+  CONFIG_NORMALIZED:     '展开按原因看策略与级别，每组带服务端给的"读成了什么 / 下一步"；指标 catalog_withheld_objects{disposition="CONFIG_NORMALIZED",reason}（零也可读）',
   CUTOVER_FAILING:       '展开这一行：最近一次激活失败原文、阶段/类别、连续轮数；日志 activation_failed（reason_code = 阶段/类别）',
   OWNERSHIP_SKEWED:      '副本表的"持有"列与"已运行"列（持有少的那个若比同构建的其它副本晚启动很久，就是中途重启过，原因看容器上一次退出）；Leader 的再平衡这一轮（计划/发出/暂停）在这一行的句子里；指标 worker_owned_query_groups{pod}、rebalance_gap、assignment_moves_total{reason=rebalance}、rebalance_paused_total{reason=set_unstable}',
   REPLICA_DEGRADED:      '展开按种类看是哪个副本；策略源过期的组直接带最近一次刷新失败的阶段与原文（下面组名后）；输出未就绪的组带该副本的未就绪时长、重试次数与最近一次失败原文；副本表里该副本的策略源/告警集合/平台设置时钟；依赖面板"告警输出"行',
@@ -821,20 +893,24 @@ var EVIDENCE = {
   OBSERVATION_GAP:       '对象行"等下次 · 预计 HH:MM"；副本级缺口看副本表里该副本的快照年龄',
   QUERY_REFUSED:         '分组的后端回答只有状态码/状态词（非 200 的响应正文当前不保留，"最近一次错误"是结束这一轮的 alarmd 错误，不是后端原文）；请求本身 = 该策略的查询定义（行上策略链接），alarmd 不落完整请求文本',
   WINDOW_UNDECIDED:      '对象行的窗口计数：短窗/满窗、保护与最初触发',
+  COVERAGE_READING_REFUSED: '对象行上的拒收规则与系列（coverage_rejected），以及这段运行被拒的轮数',
   CONFIG_UNRESOLVED:     '对象行 config_changed 与快照/查询/调度三版本是否变了',
   BACKEND_NOT_ANSWERING: '分组的症状（超时/5xx）；对象行的冷却到期时刻与失败次数；超时的还要看查询预算与后端耗时，这两样不在页面上',
-  NO_DATA_PERSISTENT:    '对象行连续空轮数，与"有过数据"（进过索引）',
-  EMPTY_EVERY_ROUND:     '对象行"每轮都空"：连续空轮数、起始时刻、评估周期（interval_seconds）、never_saw_data=true、原因 CAUSE_UNKNOWN（本版不猜）；与 NO_DATA_PERSISTENT 的区别只在"有没有过数据"。JSON：no_data[].kind=EMPTY_EVERY_ROUND、empty_every_round{rounds, since, interval_seconds, never_saw_data, cause}、首屏 empty_every_round_total',
+  NO_DATA_PERSISTENT:    '对象行连续空轮数 ≥3，且源时间上"最近一次空轮的 Slot − 最后一次有数据的 Slot" ≥ 1 h（与 EMPTY_EVERY_ROUND 同一把尺：一个时钟一个阈值，只差"有没有过数据"）；只看轮数会把每 10 min 上报一次的源在三分钟内列成"数据停了"，只看小时会把慢周期对象两轮就列上。最后一次有数据的 Slot 随对象记录跨重启恢复',
+  EMPTY_EVERY_ROUND:     '对象行"每轮都空"：连续空轮数（重启后只从恢复的那一轮起数，是下界）、空跑起始 Slot（源时间）、评估周期（interval_seconds）、never_saw_data=true（没有任何一轮已知有过数据——本进程没见过、对象记录里也没有）、原因 CAUSE_UNKNOWN（本版不猜）；与 NO_DATA_PERSISTENT 的区别只在"有没有已知有数据的轮"。一小时的门按 Slot 对 Slot 量：最近一次空轮的 Slot 减空跑起始 Slot ≥ 1 h，不掺墙钟——问的是"这个源在它自己的时间上空了一小时没有"，不是"我们看了多久"；两种时钟混在一条判据里，落后两小时正在追赶的对象恢复后第一轮就过门，恰是最该判对的场景。反过来，两小时的空 Slot 一分钟回放完也会列出，那一小时源时间确实是空的。JSON：no_data[].kind=EMPTY_EVERY_ROUND、empty_every_round{rounds, since, interval_seconds, never_saw_data, cause}、首屏 empty_every_round_total',
   SERIES_DATA_MISSING:   '对象行窗口计数：老序列缺点的比例；同一行若带超时或保护，缺点可能是 alarmd 没取到而不是数据没到',
   SERIES_CHURNING:       '对象行窗口计数：新序列占比与活不过窗口的轮数',
   PLAN_UNEVALUABLE:      '分组的策略与原因码',
-  QUERY_TARGET_MISSING:  '分组的后端回答（表/字段不存在的状态词）；策略引用的表与字段看行上策略链接，与元数据逐个核'
+  QUERY_TARGET_MISSING:  '分组的后端回答（表/字段不存在的状态词）；策略引用的表与字段看行上策略链接，与元数据逐个核',
+  RETAINED_SHARE_APPROACHING: '对象行"逼近份额"：最近一个完成 Slot 的留存字节 retained_bytes、它被判的单对象份额 share_bytes、两者之比 percent_of_share、阈值 threshold_percent、从何时起一直在阈值以上（since），以及按相位拆开的 retained_input/state/output/gap_bytes；按策略分组，最满的在前。指标 state_retained_share_approaching_slots_total 数的是这样的完成 Slot'
 };
 
 var NEXT = {
+  SOURCE_SET_FLAPPING:   '交平台侧：找上游 strategy_ids 列表的写入方，问为什么这些小时的列表少了这批策略又回来（每小时同一分钟出现是定时任务的形状）；alarmd 这边不改策略、不改配置——宽限期（目录 AbsenceGracePeriod）已让 ≤10 分钟的缺席不再移除 Plan，超过宽限的缺席仍按删除处理',
   SOURCE_INCOMPLETE:     '找策略缓存的写入方（bk-monitor 后台的 cache 进程，或替代它的模块）：缺身份字段的要写方按合同补 bk_tenant_id / space_uid（bk-monitor 主线 2026-08-31 起的缓存刷新才写）；ID 列表残留的要写方清掉已删除策略的 ID（2026-09-11 起的刷新会清）。Pod 外一句判据：在缓存 Redis 上 GET <前缀>.strategy_<任一 id>，顶层有 "space_uid" 才算过。alarmd 这边不用改，写方修好后下一轮刷新（最多 6 分钟）自动接受',
-  CAPABILITY_UNSUPPORTED: '改 alarmd 部署参数：按原因组看是快照保留期还是完成偏移不够，调到要求的值后下一轮刷新自动接受',
+  CAPABILITY_UNSUPPORTED: '按原因组各自的"下一步"：部署参数不够的调参数、下一轮刷新自动接受；本构建不支持的等带该能力的构建，改参数没有用；写入方超前的等解释该字段的构建或写入方改文档；策略定义超出护栏的先收策略，护栏不是工作上限',
   CONFIG_REJECTED:       '交策略侧：按原因组与字段路径改策略定义；alarmd 这边不用改，改好后下一轮刷新自动接受。STALE_CONFIG 组的策略仍在按上一版跑，不算漏检',
+  CONFIG_NORMALIZED:     '按原因组的"下一步"处理；有的要策略侧改写法，有的不需要处理。策略一直在检测，不算漏检',
   CUTOVER_FAILING:       '先修激活：看展开里最近一次失败文本与 activation_failed 日志；修好前所有策略变更都不生效',
   OWNERSHIP_SKEWED:      '不要手动重启持有多的副本来均衡——重启只会把它的对象整批搬到剩下的副本，不会均分。{rebalance}；在均分回来之前，持有多的那个副本上的漏检与超时不按容量处理、不据此扩副本或加资源',
   REPLICA_DEGRADED:      '按种类处理：源过期看策略源刷新，leader 缺席看租约，告警集合/平台设置过期看对应发布者；输出未就绪看该副本所在节点到告警输出的网络（它自己在重试，最多 30 秒一次，通了就就绪），不用重启它',
@@ -850,6 +926,7 @@ var NEXT = {
   OBSERVATION_GAP:       '等下一轮完成以补齐原因（行上有预计时刻；到点后仍可能在等待、重试或取消）；超过预计完成时间仍未补齐，它会落到"到期没跑"那一行（alarmd 的），再查该副本的调度与执行；副本级缺口看该副本快照',
   QUERY_REFUSED:         '展开看后端回答的状态词：说表/字段不存在的已单列到策略侧；只有状态码的，页面上没有后端原文可核，先留待归因，拿行上策略链接里的查询定义与后端侧日志对',
   WINDOW_UNDECIDED:      '按"情况"分组看，再看行上最差窗口的进展：在补的（上一轮更少）等；连续多轮没进展的不能只等——看每一轮不完整的原因（那才是根因，多半是查询不可用或冷却）；保护未解除的等它解除，不改策略——它要求的完整轮数是这份持久化保护的，可能大于策略配置值，别拿策略里的数去核',
+  COVERAGE_READING_REFUSED: '这是本部署自己的计数不自洽：按规则分组，把规则与系列交给 alarmd 修；这期间不能靠等窗口满来判断',
   CONFIG_UNRESOLVED:     '按策略看：config_changed 为真才是最近改过，下一轮按新配置跑；为假的不在这一行',
   BACKEND_NOT_ANSWERING: '先查查询链路：超时看查询预算、网络、后端耗时哪一环超了；5xx 看后端；核实是后端的再交数据侧。alarmd 已降频不再反复查',
   NO_DATA_PERSISTENT:    '交数据侧：按策略看是数据停了还是采集停了',
@@ -857,7 +934,8 @@ var NEXT = {
   SERIES_DATA_MISSING:   '先看同一行有没有超时或保护：有的先按那个查（缺点可能是 alarmd 没取到）；没有的再按策略给数据负责人',
   SERIES_CHURNING:       '交策略侧：序列活不过检测窗口，通常是聚合维度太细',
   PLAN_UNEVALUABLE:      '交策略侧：按现在的定义算不了，改策略',
-  QUERY_TARGET_MISSING:  '按策略核引用的表与字段是否真不存在（对元数据）：是就改策略或接入数据，不是就是查询构造或元数据问题回 alarmd；已降级的对象修好后会自动重试'
+  QUERY_TARGET_MISSING:  '按策略核引用的表与字段是否真不存在（对元数据）：是就改策略或接入数据，不是就是查询构造或元数据问题回 alarmd；已降级的对象修好后会自动重试',
+  RETAINED_SHARE_APPROACHING: '先看对象行上哪个相位占大头，再决定找谁：state 占大头是策略的留存窗口与序列数，交策略侧（收聚合维度、缩短窗口，或分片 decision-020）；output 占大头是本服务每轮在内存里留着的产出（这一轮要发出去的事件与写回的状态；兼容协议下没有消息的 RECOVERY 已不再占用），不是策略写错了，交 alarmd 处理。份额本身不随争用调，调参解决不了'
 };
 
 // What state counts as recovered, per check: the thing to look at after
@@ -865,9 +943,11 @@ var NEXT = {
 // not go to zero, and a refusal recovers by being handed to its owner, not
 // by disappearing.
 var RECOVERY = {
+  SOURCE_SET_FLAPPING:   '上游列表稳定后：24 小时内不再有新的小时组出现，这一行随最后一组滚出 24 小时窗而消失；宽限中的计数回到 0',
   SOURCE_INCOMPLETE:     '写方修好后一轮刷新：这一行的策略数降到 0、"应有"从 0 涨上来、对象开始出现在各栏；这一行消失',
-  CAPABILITY_UNSUPPORTED: '参数改好后一轮刷新：这一行消失，"应有"涨上来',
+  CAPABILITY_UNSUPPORTED: '参数调好或新构建上线后一轮刷新：该原因组消失，"应有"涨上来',
   CONFIG_REJECTED:       '策略改好后一轮刷新：该策略离开这一组；这一行只在全部改好后消失',
+  CONFIG_NORMALIZED:     '配置改好后一轮刷新：该策略离开这一组，按写的范围检测；这一行只在全部改好后消失',
   CUTOVER_FAILING:       '执行版本追上目标发布（两者一致）且之后一轮激活成功；这一行消失',
   OWNERSHIP_SKEWED:      'Leader 的再平衡计划移动数归零（最多与最少之差回到均分的 {stop}% 以内，这是调度器自己的容差）；这一行消失',
   REPLICA_DEGRADED:      '该副本的那个时钟回到设计界内；策略源的 = 一轮刷新成功、新目录发布；输出的 = 该副本打开告警输出成功、变为就绪并开始接任务，这一行消失',
@@ -883,14 +963,16 @@ var RECOVERY = {
   OBSERVATION_GAP:       '各对象下一轮完成后补上成因、离开这一行——只是补齐证据，不等于这几个对象当前有新故障；副本级缺口随该副本重新发布快照消失',
   QUERY_REFUSED:         '分出归属后转到对应行（策略侧或 alarmd）；不是等它消失',
   WINDOW_UNDECIDED:      '行上最差窗口的有效点逐轮上涨直到填满，或保护解除；对象归到某一行或离开列表。连续多轮不涨不算在恢复',
+  COVERAGE_READING_REFUSED: '读数不再被拒：行上重新出现窗口计数，对象按计数归到窗口相关的行或离开列表',
   CONFIG_UNRESOLVED:     '下一轮按新配置完成，对象离开这一行',
   BACKEND_NOT_ANSWERING: '分出是哪一环后转到对应行；应答恢复后冷却到期自动重试成功，对象离开降级池（降级池"出过"数在涨）',
   NO_DATA_PERSISTENT:    '数据恢复后下一轮非空',
-  EMPTY_EVERY_ROUND:     '任一轮查到数据即消失（此后再空就走 NO_DATA_PERSISTENT）；副本重启后重新起算一小时——重启只恢复最后一轮的结论，最后一轮非空才算"有过数据"',
+  EMPTY_EVERY_ROUND:     '任一轮查到数据即消失（此后再空就走 NO_DATA_PERSISTENT）。副本重启不再清零：对象记录带着"最近一次有数据的 Slot"和"本轮空跑起始 Slot"，恢复时接着算，起算来源标 RESTORED_EMPTY_RUN；只有引入这两个字段之前写的记录、或混版滚动期被旧二进制回写过的记录，才退回"只按最后一轮起算"，最后一轮非空才算已知有过数据',
   SERIES_DATA_MISSING:   '分出是没到还是没取到后转到对应行；老序列补上点后窗口填满',
   SERIES_CHURNING:       '序列稳定活过窗口后窗口填满',
   PLAN_UNEVALUABLE:      '策略改定义后下一轮可算',
-  QUERY_TARGET_MISSING:  '策略改好或表接入后，冷却到期自动重试成功，对象离开降级池'
+  QUERY_TARGET_MISSING:  '策略改好或表接入后，冷却到期自动重试成功，对象离开降级池',
+  RETAINED_SHARE_APPROACHING: '最近一个完成 Slot 的留存降到阈值以下即消失；某一轮被份额拒掉时，这个对象在那一轮转到"策略本身不可用"那一行（QG_BUDGET_SHARE_EXCEEDED），不在这一行重复出现，下一轮完成后如仍在阈值以上会回到这一行，since 保持不变'
 };
 
 // The next step for the two record lines in the history fold, where the
@@ -910,6 +992,9 @@ var RESULT = {COMPLETED: '完成', ERROR: '失败', REFUSED: '被拒绝', NO_DAT
 // now, or what is on record. The same line can be in both sections with a
 // different number in each.
 function checkSentence(report, count) {
+  // A sentence the server composed from what is under the line wins over
+  // the template: the template can only say one thing of every reason.
+  if (report.line) return report.line;
   var words = CHECK[report.code];
   if (!words) {
     // Loudly. A check this table has no words for is a defect, and a blank
@@ -1007,7 +1092,14 @@ function standingClause(report) {
   var parts = [];
   (report.groups || []).forEach(function (group) {
     if (group.key === 'CONTROL_SOURCE_STALE' && group.text) {
-      parts.push('策略配置刷新失败' + (group.stage ? '于 ' + group.stage : '') + '：' + group.text + '，新配置尚未发布，跑的是上一份好的目录');
+      // The consequence a reader hits next and has no way to connect to
+      // this row: while nothing has published, the point read by strategy
+      // id is refused, and its refusal names this same failure. The row
+      // names no strategy at all -- it counts zero of them -- so without
+      // this sentence the page holds the symptom and the cause with no
+      // edge between them.
+      parts.push('策略配置刷新失败' + (group.stage ? '于 ' + group.stage : '') + '：' + group.text
+        + '，新配置尚未发布，跑的是上一份好的目录；此期间按策略 ID 点查会被拒，拒的就是这条原因');
     }
     // One clause per replica whose output is not open: which one, for how
     // long, how many tries. A node with no route to the output used to be
@@ -1074,6 +1166,57 @@ function windowProgress(coverage) {
   return text;
 }
 
+// A flat short window, in words: the shortfall and the window, then the one
+// of two readings the flat run supports. Sliding is holes moving through the
+// window with the latest they leave -- an upper bound that recedes by a
+// rollout's worth each time a rollout punches a new hole, and the words say
+// so rather than counting down as if nothing could move it. Not sliding is
+// the same positions missing for longer than the window is long, which no
+// waiting fills. Both end with what the shortfall costs, and that depends
+// on the Plans' wire format: anomalies fire on a short window whatever the
+// format; recovery waits for the window only on the standard raw event
+// line, because the Python-compatible exit carries anomaly points and
+// nothing else -- alarmd's recovery never leaves it, and the consumer
+// decides recovery from the absence of anomalies. On a Python-compatible
+// strategy a short window therefore changes nothing downstream, and a line
+// that said "recovery waits" would send somebody to wait for something the
+// consumer never receives.
+function windowFillWords(fill, wireFormats) {
+  var shape = '窗内 ' + fill.holes + ' 个空位（窗长 ' + fill.required + ' 个点 = ' + elapsedLabel(fill.span_seconds)
+    + '，周期 ' + fill.period_seconds + ' s），最差窗口的有效点数已连续 ' + fill.unchanged_rounds + ' 轮没变';
+  var reading = fill.sliding
+    ? '：是滚动重启打的洞在随窗口滑动，最晚 ' + momentLabel(fill.latest_fill_by) + ' 滑出补齐（上界；再滚动一次会再打洞、这个时刻往后退——窗长比两次滚动的间隔长，就一直到不了）'
+    : '，已超过窗长 ' + fill.required + ' 轮：不是洞在滑，是最新的点持续没到（数据晚到或稀疏源），等不满';
+  return shape + reading + '；' + shortfallCostWords(wireFormats);
+}
+
+// What a short window costs the row's Plans, by their wire format. Every
+// branch is decided by a word it names: all Python-compatible, nothing
+// downstream; any standard raw event, recovery waits; anything else --
+// no format seen yet, or a word this page does not know -- "cannot say".
+// Not "not standard, therefore Python": that reads a word the page has never
+// heard of as the one branch that tells the reader to stop looking, which
+// is the branch a wrong answer costs the most on. The same rule the metric
+// side keeps with _other.
+function shortfallCostWords(wireFormats) {
+  var formats = (wireFormats || []).map(function (entry) { return entry.wire_format; });
+  var python = formats.filter(function (f) { return f === 'python_compatible'; }).length;
+  var standard = formats.filter(function (f) { return f === 'standard_raw_event'; }).length;
+  if (formats.length && python === formats.length) {
+    return '异常照常触发；这些策略走 Python 兼容路径，alarmd 不发恢复、下游按异常点缺席判恢复——窗口没补齐对下游没有影响';
+  }
+  if (standard && standard === formats.length) {
+    return '异常照常触发，只有恢复要等窗口补齐（标准原始事件线由 alarmd 发恢复）';
+  }
+  if (standard) {
+    return '异常照常触发；' + standard + '/' + formats.length + ' 条策略走标准原始事件线、恢复要等窗口补齐，'
+      + (python ? python + ' 条走 Python 兼容路径、窗口没补齐对下游没有影响' : '')
+      + (python + standard < formats.length ? '，另有 ' + (formats.length - python - standard) + ' 条格式这一页不认识、说不出' : '');
+  }
+  return '异常照常触发；恢复是否要等窗口补齐取决于输出格式（'
+    + (formats.length ? '这些策略的格式这一页不认识' : '这一行还没见到该策略的评估行') + '，说不出）';
+}
+
 // The last step before a skip, in words. Held to nothing: the codes are the
 // emitters' and a new one prints as itself.
 var SKIP_REASON = {
@@ -1110,6 +1253,7 @@ var GUARD_REASON = {
   SNAPSHOT_UNAVAILABLE: '之前有轮次没拿到策略快照、没查就收尾',
   HISTORY_WARMING: '窗口从头预热',
   CONFIG_DRIFT: '配置变过',
+  PLAN_REACTIVATED: '策略离开活动集后回来了，重新预热（配置没变）',
   QUERY_UNAVAILABLE: '查询不可用',
   QUERY_TIMEOUT: '查询超时',
   QUERY_PARTIAL: '查询结果不完整',
@@ -1135,6 +1279,74 @@ var MEMORY_REPRESENTATION = {
   WHOLE_MEMORY: '整份存的旧格式（升级后还没写过）',
   PER_GROUP: '按组存的新格式'
 };
+
+// The wire format a Plan's events go out as, in words. Held to nothing: the
+// words are the contract's and a new one prints as itself.
+var WIRE_FORMAT = {
+  python_compatible: 'Python 兼容事件（走 Python 告警构建器）',
+  standard_raw_event: '标准原始事件（走告警流水线标准线）'
+};
+
+// Where a Plan's no-data tracking horizon is read as coming from. Held to
+// the Go list. PLATFORM is the deployment's leaf; a strategy stating exactly
+// the platform's value reads as PLATFORM until the platform's changes.
+var HORIZON_SOURCE = {
+  NONE: '没有期限（无限期追踪：旧编译的 Plan，重编译后会带上平台期限）',
+  PLATFORM: '平台设定',
+  STRATEGY: '策略自己设的',
+  UNKNOWN: '本副本没被告知平台默认，说不清来源'
+};
+// How the row read the source. Held to the Go list. FROZEN is the word
+// compilation put beside the horizon; INFERRED_BY_VALUE is the fallback for
+// a Plan compiled before that word existed or a line from an older Worker:
+// the value compared with the platform's leaf, which reads a strategy set to
+// exactly the platform's value as PLATFORM until the platform's moves.
+// Which layer the platform's horizon came from, for a PLATFORM row. Held to
+// platformsettings.HorizonSources: the contract's one-day default, the
+// deployment's values, or the dynamic configuration published by the base.
+var HORIZON_LAYER = {
+  DEFAULT: '默认 1 天',
+  VALUES: '部署 values',
+  DYNAMIC: '动态配置'
+};
+var HORIZON_SOURCE_BASIS = {
+  FROZEN: '编译时冻进 Plan 的',
+  INFERRED_BY_VALUE: '按值推断的（旧编译或旧副本：策略的值等于平台叶子就读作平台），重编译后变为冻结'
+};
+
+// One Plan's last deciding no-data round, in the round's own counts: which
+// horizon it decided against, what it expected and saw, and the three the
+// horizon is read from. "Still tracked" is the absences still producing;
+// "stopped this round" and "held down" are what the horizon did and is doing.
+function noDataTrackingWords(tracking) {
+  var parts = [];
+  parts.push('策略 ' + tracking.plan.strategy_id
+    + '：期限 ' + (tracking.horizon_seconds ? elapsedLabel(tracking.horizon_seconds) : '无')
+    + '（' + (HORIZON_SOURCE[tracking.horizon_source] || tracking.horizon_source)
+    + (tracking.horizon_source === 'PLATFORM' && latestDeployment && latestDeployment.no_data_horizon
+        ? '：' + (HORIZON_LAYER[latestDeployment.no_data_horizon.source] || latestDeployment.no_data_horizon.source) : '')
+    + (tracking.horizon_source !== 'NONE' && tracking.horizon_source_basis
+        ? '，来源' + (HORIZON_SOURCE_BASIS[tracking.horizon_source_basis] || tracking.horizon_source_basis) : '')
+    + '）');
+  parts.push('期待 ' + tracking.expected + ' 个组' + (tracking.roster_source ? '（名册来源 ' + tracking.roster_source + '）' : '')
+    + '，那一轮到了 ' + tracking.present + '，在追踪的缺失 ' + tracking.absent + absentAgesWords(tracking.absent_ages)
+    + '，那一轮到期停追 ' + tracking.expired_this_round + '，已停追压着 ' + tracking.suppressed
+    + (tracking.dropped ? '，维度不匹配丢弃 ' + tracking.dropped : ''));
+  parts.push('判定于 ' + momentLabel(tracking.evaluation_time * 1000));
+  return parts.join('；');
+}
+
+// The absences by how long each has been open. This is what a horizon is
+// read against: a one-day horizon stops what sits in the last bucket and
+// nothing else, so a first wave of thirty expiries out of four thousand
+// absences is not the horizon failing to reach them when the four thousand
+// are all under an hour old -- groups that report every few rounds and
+// reset their clock each time.
+function absentAgesWords(ages) {
+  if (!ages) return '';
+  return '（本轮起 ' + (ages.this_round || 0) + '、不到 1 h ' + (ages.under_hour || 0)
+    + '、不到 1 天 ' + (ages.under_day || 0) + '、满 1 天 ' + (ages.day_or_more || 0) + '）';
+}
 
 function memoryUpkeepWords(upkeep) {
   var parts = [];
@@ -1199,18 +1411,31 @@ function guardScopeWords(guard) {
   return scope + (guard.plan && guard.plan.strategy_id ? '（策略 ' + guard.plan.strategy_id + '）' : '');
 }
 
+// What the guard's Plan had to work with, beside the guard. A guard at 0 of
+// N is warming only if its Plan is being evaluated on something; a Plan the
+// round bound no series to evaluates nothing, writes no state and advances
+// no guard, and the two read the same without the count. Said in the words
+// of the reading, not of the mechanism: "nothing to warm on".
+function guardInputWords(guard) {
+  if (!guard.series_matched_known) return '';
+  if (guard.series_matched === 0) {
+    return '，这条策略最近一轮没有匹配到任何序列——守卫不是在预热，是没有输入可推进（查策略的目标/过滤是否还有数据）';
+  }
+  return '，最近一轮匹配到 ' + guard.series_matched + ' 条序列';
+}
+
 function guardWords(guard) {
   var reason = guard.reason ? '，起因：' + (GUARD_REASON[guard.reason] || guard.reason) : '';
   if (guard.status === 'GAPPED') {
     // No count against a gapped scope. What a reader can know of it is how
     // long it has held without the release condition moving.
     return guardScopeWords(guard) + '：' + GUARD_STATUS.GAPPED + reason + '，解除前不计进度；本进程见它 ' + (guard.rounds || 0) + ' 轮'
-      + (guard.unchanged_rounds ? '，连续 ' + guard.unchanged_rounds + ' 轮没变化' : '');
+      + (guard.unchanged_rounds ? '，连续 ' + guard.unchanged_rounds + ' 轮没变化' : '') + guardInputWords(guard);
   }
   return guardScopeWords(guard) + '：' + (GUARD_STATUS[guard.status] || guard.status)
     + '，完整轮次 ' + (guard.observed || 0) + '/' + (guard.required || 0) + reason
     + '，' + (GUARD_PROGRESS[guard.progress] || guard.progress || '')
-    + (guard.progress !== 'ready' && guard.unchanged_rounds ? '，连续 ' + guard.unchanged_rounds + ' 轮没进展' : '');
+    + (guard.progress !== 'ready' && guard.unchanged_rounds ? '，连续 ' + guard.unchanged_rounds + ' 轮没进展' : '') + guardInputWords(guard);
 }
 
 function guardsWords(anomaly) {
@@ -1339,7 +1564,89 @@ function renderBrief(deployment) {
   var detail = truncated.length
     ? '明细不全：' + truncated.length + ' 个副本的异常清单被截断，下面的分组数和策略数是样本'
     : '异常明细完整';
-  text('briefBlind', '状态覆盖：' + (blind.length ? blind.join('；') : '全部对象都有结论') + '。' + detail);
+  // "Every object has a conclusion" over zero objects is true of nothing;
+  // said as what it is.
+  var covered = deployment.covered || 0;
+  text('briefBlind', '状态覆盖：' + (blind.length ? blind.join('；') : (covered ? '全部对象都有结论' : '没有对象在检测（0 个），无所谓结论')) + '。' + detail);
+  var consoleLine = consoleBrief(deployment.linkd_console, deployment);
+  text('briefConsole', consoleLine);
+  show('briefConsole', consoleLine !== '');
+}
+
+// The alert link's Console on the first screen, only where the server says
+// the deployment needs it and it is not working: events go to the link as
+// the standard raw event, so their alerts can be closed only through the
+// Console. A deployment whose events all go the Python-compatible way hands
+// its alerts to the Python backend; its Console is unconfigured by design
+// and the line stays off -- that decision is the server's (attention), not
+// this page's.
+var CONSOLE_STATE = {
+  not_configured: '未配置告警链路 Console（phase_two.linkd.console_url）：集合校准、已停用/删除策略的告警关闭都不运行',
+  not_called: '已配置，本副本还没调用过',
+  unreadable: '已配置但读不到：两项关闭每轮都在尝试、都没成',
+  link_unhealthy: '读得到，但 linkd 自报集合维护不健康：已停用/删除策略的关闭每轮拒绝（link_unhealthy）',
+  reachable: '可达'
+};
+var CONSOLE_OP = { roster: '名册', reconcile: '校准对账', alert_record: '单条告警记录', event_source: '事件源键规则' };
+var LINK_HEALTH = {
+  discovery_failing: '最近一次全量发现失败',
+  discovery_never_succeeded: '从未成功完成全量发现',
+  discovery_stale: '距上次成功的全量发现已超过界限'
+};
+// The startup question "where does the link write", and what came of it.
+var LINKD_DISCOVERY = {
+  adopted: '已按 Console 给出的位置读取',
+  connection_stated: '部署自己配置了集合所在的 Redis，未向 Console 询问',
+  no_held_connection: 'Console 给出的 Redis 不是本进程已持有连接的任何一个，仍按原位置读取，每轮对账会拒绝并写出两处位置',
+  failed: '启动时向 Console 询问失败，仍按原位置读取'
+};
+function linkdTargetWords(t) {
+  return t.event_source_id + '/' + t.hook_name + ' 写在 ' + t.address + ' db ' + t.database + ' 前缀 ' + t.key_prefix;
+}
+function consoleFailureHint(text) {
+  if (/status 401/.test(text || '')) return '；401 是 Console 拒绝了账号口令（phase_two.linkd 的 username/password 或对应环境变量），不是接口不存在';
+  if (/status 403/.test(text || '')) return '；403 是账号没有该接口的权限';
+  return '';
+}
+function consoleWords(c) {
+  var words = CONSOLE_STATE[c.state] || c.state;
+  if (c.state === 'unreadable') {
+    var failing = (c.calls || []).filter(function (call) { return call.op === c.reason; })[0];
+    words += '（' + (CONSOLE_OP[c.reason] || c.reason) + '最近一次失败'
+      + (failing && failing.last_failure ? '：' + failing.last_failure : '') + '）';
+    // A link older than the roster answers every reconciliation and refuses
+    // every browse; the status says which of the two this is.
+    if (c.reason === 'roster' && failing && /status 404/.test(failing.last_failure || '')) {
+      words += '；名册接口 404，多半是 linkd 版本早于名册接口';
+    }
+    words += consoleFailureHint(failing && failing.last_failure);
+  } else if (c.state === 'link_unhealthy') {
+    words += '（' + (LINK_HEALTH[c.reason] || c.reason)
+      + (c.link_health_age_seconds != null ? '，上次成功在 ' + elapsedLabel(c.link_health_age_seconds) + '前，界限 ' + elapsedLabel(c.max_link_health_age_seconds) : '')
+      + (c.link_error ? '：' + c.link_error : '') + '）';
+  }
+  if (c.target) {
+    words += '；目标 ' + linkdTargetWords(c.target)
+      + (c.target_age_seconds != null ? '（' + elapsedLabel(c.target_age_seconds) + '前解析）' : '');
+  }
+  var d = c.discovery;
+  if (d) {
+    words += '；启动时：' + (LINKD_DISCOVERY[d.outcome] || d.outcome)
+      + (d.target && d.outcome !== 'adopted' ? '（Console 说 ' + linkdTargetWords(d.target) + '）' : '')
+      + (d.error ? '（试了 ' + d.attempts + ' 次：' + d.error + consoleFailureHint(d.error) + '）' : '');
+  }
+  return words;
+}
+function consoleBrief(standing, deployment) {
+  if (!standing || !standing.attention) return '';
+  // The entry the server decided from, for the failure text and the link's
+  // ages; the standing's own two words when that replica's list is not here.
+  var own = (deployment.per_replica || []).filter(function (r) { return r.replica === standing.replica; })[0];
+  var deps = (own && own.dependencies) || (standing.replica === deployment.dependencies_replica ? deployment.dependencies || [] : []);
+  var dep = deps.filter(function (d) { return d.role === 'linkd_console'; })[0];
+  var c = dep && dep.console ? dep.console : { state: standing.state, reason: standing.reason };
+  return standing.standard_plans + ' 条计划的事件发往告警链路，但告警链路 Console ' + consoleWords(c)
+    + '——这些告警在策略停用/删除后不会被 alarmd 关闭。';
 }
 
 // Which build the numbers came from. Held to the Go grouping: one group per
@@ -1467,6 +1774,11 @@ function scheduleSentence(deployment) {
   if (census.never) now.push(census.never + ' 个接管后还没跑第一轮');
   if (now.length) parts.push('现在 ' + now.join('、'));
   if (census.missing_period) parts.push(census.missing_period + ' 个对象周期未知，迟到没法判超期');
+  // Nothing to keep up with: no object is detecting, and "keeping up" would
+  // claim a pace of work that is not happening.
+  if (!(deployment.covered || 0) && !census.completed_1h && !census.overdue && !census.waiting && !census.late && !census.never) {
+    return '执行情况：没有对象在检测（应有 ' + (deployment.expected === null || deployment.expected === undefined ? '未知' : deployment.expected) + '）——过去 1 小时没有轮次返回' + activationClause(deployment.activation);
+  }
   return '执行情况：' + (behind ? '跟不上' : (census.overdue ? '有超期但在追' : '跟得上')) + '——' + parts.join('；')
     + activationClause(deployment.activation);
 }
@@ -1498,7 +1810,8 @@ function loadChecks() {
 // Held to the Go list of standings by a test.
 function isStanding(report) {
   return report.code === 'CUTOVER_FAILING' || report.code === 'REPLICA_DEGRADED' || report.code === 'OWNERSHIP_SKEWED'
-    || report.code === 'SOURCE_INCOMPLETE' || report.code === 'CAPABILITY_UNSUPPORTED' || report.code === 'CONFIG_REJECTED';
+    || report.code === 'SOURCE_INCOMPLETE' || report.code === 'CAPABILITY_UNSUPPORTED' || report.code === 'CONFIG_REJECTED'
+    || report.code === 'SOURCE_SET_FLAPPING' || report.code === 'CONFIG_NORMALIZED';
 }
 
 // The first screen: the checks this reader acts on now; folded away, the
@@ -1585,7 +1898,11 @@ function todoSentence(todo, pending, governance, t) {
   // owned by the platform's cache writer has been told the wrong thing. The
   // split is the server's, on the todo, so the JSON says what the page says.
   var platform = t.platform_checks || 0;
-  var parts = ['现在要处理 ' + (todo.length ? t.checks + ' 类（' + t.objects + ' 个对象，去重'
+  // Lines counted by strategy have no objects: said in strategies, so a
+  // reader is not told "0 objects" of five strategies that cannot run.
+  var byStrategy = 0;
+  todo.forEach(function (report) { if (!report.objects && report.strategies) byStrategy += report.strategies; });
+  var parts = ['现在要处理 ' + (todo.length ? t.checks + ' 类（' + (t.objects ? t.objects + ' 个对象，去重' : (byStrategy ? byStrategy + ' 条策略、0 个对象' : '0 个对象'))
                  + (platform ? '；其中平台写入方 ' + platform + ' 类（' + (t.platform_strategies || 0) + ' 条策略），按策略计不按对象计' : '') + '）' : '没有'),
                '待归因 ' + (pending.length ? t.undetermined + ' 类（' + t.undetermined_objects + ' 个对象）' : '没有'),
                '业务侧已确认 ' + (governance.length ? t.governance + ' 类（' + t.governance_objects + ' 个对象）在运营治理' : '没有')];
@@ -1595,7 +1912,13 @@ function todoSentence(todo, pending, governance, t) {
       + (t.ongoing_newest ? '，最近一次 ' + momentLabel(t.ongoing_newest) : '') + '）');
   }
   if (t.after_restart) {
-    loss.push('另有 ' + t.after_restart + ' 个是滚动后的追赶漏检（副本启动 ' + restartGraceMinutes() + ' 分钟内），看它还有没有新增');
+    loss.push('另有 ' + t.after_restart + ' 个是滚动后的追赶漏检（副本启动或首次接手 ' + restartGraceMinutes() + ' 分钟内），看它还有没有新增');
+  }
+  if (t.after_cooldown) {
+    loss.push('另有 ' + t.after_cooldown + ' 个是冷却期间的跳过、对象现已出冷却池（不是容量，不会再新增）');
+  }
+  if (t.restart_grace_unknown) {
+    loss.push(t.restart_grace_unknown + ' 条记录没有副本启动/接手时刻可对照，按时间窗直接判了（旧副本没发这两个时刻）');
   }
   if (t.while_demoted) {
     loss.push('被拒的对象里 ' + t.while_demoted + ' 个在冷却期间跳过了检测'
@@ -1855,6 +2178,9 @@ function renderGroups() {
     details.appendChild(label);
     var body = document.createElement('div');
     details.appendChild(body);
+    if (group.words) {
+      body.appendChild(reasonWords(group.words));
+    }
     if (group.samples) {
       body.appendChild(sampleList(group));
     }
@@ -1870,6 +2196,62 @@ function renderGroups() {
     }
     host.appendChild(details);
   });
+}
+
+// A target plan's resolution in words: the plan-level state, each selector
+// that did not answer whole with the resolver's reason, the dangling
+// topology nodes and the stale age. Both tables are held to the resolver's
+// closed lists (targetplan.ResolutionStates, SelectorReasons).
+var RESOLUTION_STATE = {
+  Complete: '目标完整解析',
+  Incomplete: '目标不完整——有 selector 丢了成员，检测只覆盖解析到的部分',
+  Unavailable: '目标不可用——有 selector 解析不出，这一轮不做无数据判定'
+};
+var SELECTOR_REASON = {
+  none: '正常',
+  key_missing: '分组缓存里没有这个键（写入方没渲染或键名不对）',
+  json_invalid: '分组缓存的值不是合法 JSON',
+  structure_invalid: '分组缓存的值结构不符合合同',
+  model_mismatch: '分组成员的模型与计划不一致',
+  read_failed: '读分组缓存失败（Redis 读错误）',
+  stale: '分组缓存刷新失败，用的是保留的旧快照（超过 10 分钟即不可用）',
+  index_unavailable: '主机索引不可用，拓扑节点无法核对',
+  node_missing: '拓扑节点在主机索引里不存在',
+  node_in_other_business: '拓扑节点下的主机只属于别的业务',
+  members_dropped: '成员逐条校验有丢弃（模型、实例、汇总列出、host_id 规则）',
+  source_unwired: '本部署没有接这种 selector 的来源',
+  model_representation_unresolved: '按模型实例（model_inst_id）给出的静态成员，主机缓存里查不到对应主机身份——不是主机模型，或缓存没带规范身份字段'
+};
+function targetResolutionWords(resolution) {
+  var parts = [RESOLUTION_STATE[resolution.state] || resolution.state];
+  (resolution.failures || []).forEach(function (failure) {
+    var words = failure.kind + ' ' + failure.id + '：' + (SELECTOR_REASON[failure.reason] || failure.reason);
+    if (failure.dropped) words += '（丢弃 ' + failure.dropped + '，保留 ' + (failure.kept || 0) + '）';
+    parts.push(words);
+  });
+  if (resolution.nodes_missing && resolution.nodes_missing.length) parts.push('索引里不存在的节点：' + resolution.nodes_missing.join('、'));
+  if (resolution.nodes_foreign && resolution.nodes_foreign.length) parts.push('只属于别的业务的节点：' + resolution.nodes_foreign.join('、'));
+  if (resolution.stale_age_seconds) parts.push('用的快照已过期 ' + elapsedLabel(resolution.stale_age_seconds));
+  return parts.join('；');
+}
+
+// What a withheld reason means, who can act and the next step, as the
+// server decided per reason. The kind is a closed word with its own label;
+// an unknown reason says so and sends nobody to a parameter.
+var WITHHELD_KIND = {
+  DEPLOYMENT_PARAMETER: 'alarmd 部署参数',
+  BUILD_CAPABILITY: '本构建能力（等新构建，改参数没有用）',
+  WRITER_AHEAD: '写入方超前于本构建',
+  STRATEGY_DEFINITION: '策略侧（先收策略；护栏不是工作上限）',
+  UNKNOWN_REASON: '原因待查（页面还没有说明）'
+};
+function reasonWords(words) {
+  var wrap = document.createElement('div');
+  wrap.className = 'basis';
+  var p = document.createElement('p');
+  p.textContent = '这是什么：' + words.what + '。谁处理：' + (WITHHELD_KIND[words.kind] || words.kind) + '。下一步：' + words.next;
+  wrap.appendChild(p);
+  return wrap;
 }
 
 // The strategies a source standing's group names: a bounded sample with the
@@ -2100,6 +2482,26 @@ function objectRow(anomaly, check, group) {
   line('结果码', anomaly.reason_code);
   line('成因', anomaly.cause);
   line('下一层原因', anomaly.cause_reason);
+  // Two lines for a guarded window, because its one word says two things
+  // that were read as one: the reason is the word the guard was raised
+  // under -- history, stamped onto every completion since -- and the window
+  // is what is short now. A GAP_SKIPPED carried for two hours read as "skipped
+  // again this round" twice over before the two were pulled apart.
+  if (coverage && coverage.guarded > 0 && anomaly.cause_reason) {
+    var raisedSince = anomaly.since_from === 'PROCESS_START'
+      ? '自本进程接手时就已立起（' + momentLabel(anomaly.since) + '，真正立起更早）'
+      : anomaly.since_from === 'RESTORED_AT_RESTART' || anomaly.since_from === 'RESTORED_EMPTY_RUN'
+        ? '不晚于 ' + momentLabel(anomaly.since) + '（重启后恢复的记录）'
+        : anomaly.since ? '立起于 ' + momentLabel(anomaly.since) : '';
+    line('守卫立起的原因（历史）', anomaly.cause_reason + (raisedSince ? '，' + raisedSince : '')
+      + '；这个词是守卫立起那一次的原因，之后每一轮完成都沿用它，不代表这一轮又发生了它',
+      '完成行上的原因码来自持久化守卫存的 GapReasonCode（守卫立起时写入），滚动重启会重置"自何时"，起点只会更早');
+  }
+  if (anomaly.window_fill) {
+    line('窗口当前状态', windowFillWords(anomaly.window_fill, anomaly.wire_formats),
+      '从"最差窗口有效点数连续几轮没变"推：k 轮没变说明这 k 轮没打新洞，最新的洞至少 k 轮前打的、最多再过 required−k 轮滑出——是上界；'
+      + '每次滚动重启会再打洞、k 归零、这个时刻往后退。连续不变的轮数已 ≥ 窗长时不是洞在滑，是最新点持续没到');
+  }
   if (f) {
     line('后端症状', symptomText(f.detail), f.detail);
     line('失败在哪', FAILURE_CATEGORY[f.category] || f.category,
@@ -2136,6 +2538,16 @@ function objectRow(anomaly, check, group) {
       + (restored.completed_at && new Date(restored.completed_at).getTime() > 0 ? '（提交于 ' + momentLabel(restored.completed_at) + '）' : '')
       + nextNote + configNote,
       '进度提交时留下的上一轮摘要；本进程跑完一轮后这一行换成自己的');
+    // What each target-plan Plan's target resolved to in that round: the
+    // composed state, every selector that did not answer whole with why,
+    // the topology nodes the cache does not list or lists under another
+    // business, and how stale the newest snapshot was. The words are the
+    // resolver's closed lists; a reader who sees "Unavailable" needs the
+    // selector and the reason, not the state alone.
+    (restored.target_resolutions || []).forEach(function (resolution) {
+      line('目标解析（策略 ' + resolution.strategy_id + '）', targetResolutionWords(resolution),
+        '上一轮按 target_plan 解析目标的结果；指标 target_plan_resolution_total{state} 与 target_selector_resolutions_total{kind,state,reason}');
+    });
   }
   // What the latest completion found about an earlier attempt at its Slot,
   // when it was closed without a query. A row that reads GAP_SKIPPED with
@@ -2191,6 +2603,37 @@ function objectRow(anomaly, check, group) {
     line('无数据记忆维护', memoryUpkeepWords(anomaly.no_data_memory_upkeep),
       '记忆有有效期，靠每次读到时续期保活：每隔有效期的四分之一问一次存储，剩余不到一半才真的续。"最近一次问"在前进就是维护在工作；写入次数不涨是正常的（组不变就不写），别拿它判断记忆是否还活着。'
       + '指标 worker_no_data_memory_renewals_total{result,reason}、worker_no_data_memory_reads_total{representation}');
+  }
+  // How many series each Plan was bound to in its latest evaluated round:
+  // the per-Plan input evidence. Zero is the reading this line exists for.
+  if (anomaly.plan_series && anomaly.plan_series.length) {
+    line('每条策略匹配到的序列', anomaly.plan_series.map(function (entry) {
+      return '策略 ' + entry.plan.strategy_id + '：' + entry.matched + (entry.matched ? ' 条' : ' 条（没有输入：这条策略这一轮什么都没检测，状态不写、守卫不推进）');
+    }).join('；') + '（最近一轮 ' + momentLabel(anomaly.plan_series[0].evaluation_time * 1000) + '）',
+      '同一个对象（查询组）下各条策略各自匹配到的 PRIMARY 序列数，取自该策略最近一次评估行；0 条的策略要查目标/过滤条件是否还有数据。日志 evaluation_completed 行 series_matched');
+  }
+  // Which way each Plan's events go out, from the Plan's own evaluation
+  // line. Readable without the object catalog, which is what makes it the
+  // answer on a deployment that keeps none.
+  if (anomaly.wire_formats && anomaly.wire_formats.length) {
+    line('输出格式', anomaly.wire_formats.map(function (entry) {
+      return '策略 ' + entry.plan.strategy_id + '：' + (WIRE_FORMAT[entry.wire_format] || entry.wire_format);
+    }).join('；'),
+      '每条策略的事件按哪种格式发出，取自该策略最近一次评估行（冻进 Plan、按 snapshot revision 解析后的词）：python_compatible 走 Python 告警构建器兼容路径，standard_raw_event 走标准原始事件线。'
+      + '指标 catalog_plans_by_wire_format{format}（leader 数 Plan）、output_events_by_wire_format_total{format}（副本数事件）；日志 evaluation_completed 行 wire_format、event_acked 行 wire_format_events_*');
+  }
+  // What each no-data Plan's last deciding round counted. This is the line
+  // that says whether a tracking horizon is doing anything: the number it
+  // decided against, how many absences it stopped this round and how many it
+  // is holding down. A horizon nothing reached reads 0 / 0 here, which is
+  // the reading -- not the absence of a line.
+  if (anomaly.no_data_tracking && anomaly.no_data_tracking.length) {
+    anomaly.no_data_tracking.forEach(function (tracking) {
+      line('无数据追踪', noDataTrackingWords(tracking),
+        '每条无数据策略最近一次判定的原样计数，不做前后轮相减。"在追踪的缺失"是还在产出无数据异常的组，括号里按缺席多久分四档（期限只够得到"满 1 天"那一档；前两档多的是隔几轮就报一次、来了就重置计时的稀疏上报）；"那一轮到期停追"是那一轮追踪期限到了、停止产出的组；"已停追压着"是之前就停了、那一轮又遇到的组，就是期限正压着的规模。'
+        + '停追不会发恢复：数据再来才会重新开始追踪。期限为"无"时后两个数恒为 0。来源写"按值推断"的是旧编译或旧副本的行，重编译后会变为冻结词。'
+        + '指标 worker_no_data_absences_total{outcome}');
+    });
   }
   // A failure of this deployment's own making beside the finding the column
   // decided: the row is on its line for the column's reason and under
@@ -2275,6 +2718,12 @@ function loadHealth() {
 function renderDeployment(deployment) {
     show('healthErr', false);
     latestDeployment = deployment;
+    // The restricted public surface sends the verdict and the counts and
+    // nothing that names a replica, a place or an object. Every block below
+    // that reads one of the withheld fields shows the notice instead: an empty
+    // list here is "not sent", and reading it as "none" is how the page said
+    // "没有副本被计入" beside a verdict one replica had decided.
+    var restricted = deployment.restricted === true;
     var h = deployment.health || 'UNKNOWN';
     var badge = document.getElementById('health');
     badge.textContent = h;
@@ -2314,7 +2763,11 @@ function renderDeployment(deployment) {
       var decidesVerdict = h === 'UNKNOWN' && !(deployment.gaps || []).length;
       text('unattributedHint', '重启后从记录里恢复的：记录留了"这一轮没跑成"，没留为什么，'
         + '所以还说不清是不是 alarmd 自己的问题。'
-        + (decidesVerdict
+        // Whether it decides the verdict turns on the gaps, which a restricted
+        // surface does not send.
+        + (restricted
+            ? ''
+            : decidesVerdict
             ? '本次判定就是停在这里。'
             : '本次判定不是停在这里——原因见上面的"证据不全"那一句。')
         + '已经计入左边的"没跑成待查"，不另占一栏。'
@@ -2324,7 +2777,11 @@ function renderDeployment(deployment) {
     // on the verdict response, which is fetched first and refreshed on the same
     // timer, so a console configured after a restart appears without a reload.
     consoleBase = deployment.strategy_link_base || '';
-    renderImpact(deployment.impact);
+    if (restricted) {
+      restrictedNotice(document.getElementById('impact'));
+    } else {
+      renderImpact(deployment.impact);
+    }
     // The equation is printed with its own arithmetic rather than asserted in
     // prose. A reader who can only be told the columns partition the objects has
     // no way to notice the day they stop doing so.
@@ -2400,10 +2857,15 @@ function renderDeployment(deployment) {
     }
     flow.push('计数从本次进程启动起算，重启归零');
     text('poolFlowHint', flow.join('；'));
-    renderCoverage(deployment.coverage);
-    renderReplicas(deployment.per_replica);
-    renderSource(deployment.source, deployment.expected, deployment.source_standing);
-    renderDependencies(deployment.dependencies || [], deployment.dependencies_replica, deployment.dependencies_replicas);
+    if (restricted) {
+      renderRestrictedBlocks();
+    } else {
+      renderCoverage(deployment.coverage);
+      renderReplicas(deployment.per_replica);
+      renderSource(deployment.source, deployment.expected, deployment.source_standing);
+      renderNoDataTracking(deployment.no_data_tracking);
+      renderDependencies(deployment.dependencies || [], deployment.dependencies_replica, deployment.dependencies_replicas);
+    }
     text('demotedHint', deployment.demoted_total
       ? '后端持续查不到，已降级不再反复查；不计入部署健康判定'
       : '当前没有对象被降级');
@@ -2428,8 +2890,11 @@ function renderDeployment(deployment) {
     // deployment that holds none would report "nothing is being missed" for one
     // where nothing is watching, which is the failure this whole cell is for.
     var overdue = deployment.overdue;
-    show('overdueCell', !!overdue);
-    if (overdue) {
+    show('overdueCell', !!overdue || restricted);
+    if (restricted) {
+      text('overdue', '—');
+      restrictedNotice(document.getElementById('overdueHint'));
+    } else if (overdue) {
       // Three states, not two. While the due index runs in shadow it decides
       // nothing, so no object is ever held back, so this count cannot be
       // anything but zero -- and printing "0，每个对象都在按自己的周期被处理"
@@ -2467,7 +2932,11 @@ function renderDeployment(deployment) {
         }
       }
     }
-    renderPrunedSkips(deployment.pruned_skips || []);
+    if (restricted) {
+      restrictedNotice(document.getElementById('prunedSkips'));
+    } else {
+      renderPrunedSkips(deployment.pruned_skips || []);
+    }
     var gaps = deployment.gaps || [];
     // UNKNOWN has two ways in and the wording used to describe only one.
     //
@@ -2479,7 +2948,11 @@ function renderDeployment(deployment) {
     // the reader "证据齐全" underneath it: the page asserting the opposite of
     // its own badge, with nothing on it that could settle the argument.
     var degradations = deployment.degradations || [];
-    text('why', gaps.length
+    // Restricted: the verdict is the server's, and why it holds is in the
+    // gaps, the degradations and the object lists -- none of them sent.
+    if (restricted) {
+      restrictedNotice(document.getElementById('why'), '判定 ' + h + ' 来自服务端；原因与明细不在公开面上（CLI 读 fleet.get）。');
+    } else text('why', gaps.length
       ? '证据不全：' + (GAP_MEANING[gaps[0].kind] || gaps[0].kind) +
         (gaps.length > 1 ? '，另有 ' + (gaps.length - 1) + ' 项' : '')
       : (h === 'UNKNOWN' && unattributed
@@ -2521,9 +2994,60 @@ function renderDeployment(deployment) {
     // from the same read rather than fetched separately: two reads would let
     // the page show a verdict from one moment beside occupancy from another.
     show('capErr', false);
-    renderLoad(deployment.load);
-    renderCapacity(deployment.capacity, gaps, deployment.schedule);
-    renderBrief(deployment);
+    if (restricted) {
+      document.getElementById('loadLines').textContent = '';
+      text('loadLimits', '');
+      restrictedNotice(document.getElementById('loadLines'));
+      document.getElementById('capCards').textContent = '';
+      show('capEmpty', false);
+      restrictedNotice(document.getElementById('capNote'));
+      renderRestrictedBrief(deployment);
+    } else {
+      renderLoad(deployment.load);
+      renderCapacity(deployment.capacity, gaps, deployment.schedule);
+      renderBrief(deployment);
+    }
+}
+
+// The blocks of the health panel that read only withheld fields: the
+// replicas, their dependencies, the coverage comparison, the source and the
+// no-data tracking. Each shows the notice where its content would be.
+function renderRestrictedBlocks() {
+  show('coverWrap', true);
+  restrictedNotice(document.getElementById('coverBasis'));
+  show('replicaPanel', true);
+  var rows = document.getElementById('repRows');
+  rows.textContent = '';
+  var row = document.createElement('tr');
+  var cell = document.createElement('td');
+  cell.colSpan = 99;
+  restrictedNotice(cell);
+  row.appendChild(cell);
+  rows.appendChild(row);
+  document.getElementById('depRows').textContent = '';
+  restrictedNotice(document.getElementById('depBasis'));
+  restrictedNotice(document.getElementById('expectedHint'));
+  show('noDataTrackingCell', true);
+  restrictedNotice(document.getElementById('noDataTrackingHint'));
+}
+
+// The first screen's brief on a restricted surface: the state coverage from
+// the counts that are sent, and the notice where the version, the schedule,
+// the blocked lines and the detail's completeness would be -- each read from
+// a withheld field or from the object list, which is not public.
+function renderRestrictedBrief(deployment) {
+  var buildLine = document.getElementById('buildLine');
+  buildLine.className = 'basis';
+  restrictedNotice(buildLine, '版本：');
+  restrictedNotice(document.getElementById('briefSchedule'), '执行情况：');
+  restrictedNotice(document.getElementById('briefBlocked'));
+  var unknown = deployment.unknown || 0, unattributed = deployment.unattributed || 0;
+  var blind = [];
+  if (unknown) blind.push(unknown + ' 个对象现在说不出结论');
+  if (unattributed) blind.push(unattributed + ' 个对象没留下成因，还说不清归谁');
+  restrictedNotice(document.getElementById('briefBlind'), '状态覆盖：' + (blind.length ? blind.join('；') : '各栏计数见下')
+    + '。明细是否完整：');
+  show('briefConsole', false);
 }
 
 // What the verdict costs, in the unit the work is done in.
@@ -2768,8 +3292,16 @@ function renderSource(source, expected, standing) {
   } else {
     parts.push('策略缓存列出 ' + source.listed + ' 条，接受 ' + source.accepted + ' 条');
   }
-  if (withheld.length) {
-    parts.push('扣住 ' + withheld.map(function (g) { return g.count + ' 条 ' + g.disposition + '/' + g.reason; }).join('、'));
+  // A normalized item is not withheld: the strategy runs, read otherwise
+  // than written. It gets its own verb, or the hint counts a running
+  // strategy among the held ones.
+  var held = withheld.filter(function (g) { return g.disposition !== 'CONFIG_NORMALIZED'; });
+  var widened = withheld.filter(function (g) { return g.disposition === 'CONFIG_NORMALIZED'; });
+  if (held.length) {
+    parts.push('扣住 ' + held.map(function (g) { return g.count + ' 条 ' + g.disposition + '/' + g.reason; }).join('、'));
+  }
+  if (widened.length) {
+    parts.push('读法和写的不同、在检测 ' + widened.map(function (g) { return g.count + ' 条 ' + g.disposition + '/' + g.reason; }).join('、') + '（不是被扣）');
   }
   if (!standing && source.listed && !source.accepted) {
     parts.push('不是没负载，是全部被扣在配置获取环节——看首屏第一行');
@@ -2783,6 +3315,44 @@ function renderSource(source, expected, standing) {
   text('expectedHint', parts.join('；'));
 }
 
+// The one line on the no-data tracking horizon: how many Plans decide against
+// which kind of horizon, and what their last deciding rounds counted. Hidden
+// while no replica has a deciding round on record -- a build before the fact,
+// or a fleet with no no-data Plan -- rather than shown as zeros, because zeros
+// here are a reading: a horizon switched on that reaches nothing.
+function renderNoDataTracking(tracking) {
+  var cell = document.getElementById('noDataTrackingCell');
+  if (!tracking || !tracking.plans) {
+    cell.hidden = true;
+    return;
+  }
+  cell.hidden = false;
+  text('noDataSuppressed', String(tracking.suppressed));
+  var sources = [];
+  if (tracking.horizon_platform) sources.push(tracking.horizon_platform + ' 条用平台默认期限');
+  if (tracking.horizon_strategy) sources.push(tracking.horizon_strategy + ' 条用策略自己设的期限');
+  if (tracking.horizon_none) sources.push(tracking.horizon_none + ' 条没有期限（无限期追踪）');
+  if (tracking.horizon_unknown) sources.push(tracking.horizon_unknown + ' 条来源说不清（副本没被告知平台默认）');
+  var parts = [tracking.plans + ' 条无数据策略有过判定：' + sources.join('、')
+    + (tracking.horizon_source_inferred
+        ? '（其中 ' + tracking.horizon_source_inferred + ' 条的来源仍是按值推断的——旧编译或旧副本，重编译后会变为冻结词；为 0 才全是合同冻的）'
+        : '（来源全部是编译时冻进 Plan 的）')];
+  parts.push('各策略最近一轮合计（不同周期的策略"最近一轮"落在不同时刻，这不是某一个时间窗）：期待 ' + tracking.expected
+    + ' 个组，在追踪的缺失 ' + tracking.absent + absentAgesWords(tracking.absent_ages)
+    + '，最近一轮到期停追 ' + tracking.expired_this_round + '，已停追压着 ' + tracking.suppressed);
+  if (tracking.absent_ages && tracking.absent && !tracking.absent_ages.day_or_more && (tracking.horizon_platform || tracking.horizon_strategy)) {
+    parts.push('缺失里没有满一天的：期限够不到任何一个——这些组是隔几轮就报一次、来了就重置计时的稀疏上报，不是长期缺席');
+  }
+  if (tracking.horizon_none === tracking.plans) {
+    parts.push('全部无期限，后两个数恒为 0——特性没开，不是没起作用');
+  } else if (!tracking.expired_this_round && !tracking.suppressed) {
+    parts.push('有期限而两个数都是 0：期限还没有够到任何一个缺失（缺失都比期限年轻），或者刚开');
+  }
+  if (tracking.last_decided_at) parts.push('最近判定 ' + momentLabel(tracking.last_decided_at));
+  parts.push('对象页每条策略一行原样计数；指标 worker_no_data_absences_total{outcome}');
+  text('noDataTrackingHint', parts.join('；'));
+}
+
 // The dependency table: one line per role, in the server's order, with the
 // role in words and the raw address beside it. What the process has seen of
 // the connection and what it found of the writer are two different columns
@@ -2793,6 +3363,9 @@ var ENDPOINT = {
   strategy_cache: '策略缓存（平台写、alarmd 读）',
   cmdb_cache: 'CMDB 主机缓存（平台写、alarmd 读）',
   dynamic_config: '平台动态配置（平台写、alarmd 读）',
+  target_group: '目标分组成员缓存（平台写、alarmd 读）',
+  open_alert_set: '未恢复时序指纹集合（告警消费方写、alarmd 读；恢复门据此判有没有可恢复的告警）',
+  linkd_console: '告警链路 Console（HTTP；集合校准、已停用/删除策略的告警关闭都靠它）',
   query_backend: '查询后端（unify-query）',
   output_kafka: '告警输出 Kafka（topic 在前缀列）',
   compat_output_redis: '兼容输出用的服务 Redis（策略快照）'
@@ -2848,6 +3421,22 @@ function renderDependencies(list, replica, replicasWithList) {
       seenParts.push('脚本缓存未命中 ' + dep.script_cache_misses + ' 次（最近 '
         + elapsedLabel(dep.last_script_cache_miss_age_seconds) + '前；不是失败——启动后首次 EVALSHA 的正常装载，若发生在运行很久之后则是 Redis 重启或切主）');
     }
+    // The Console keeps one record per operation, because they fail apart:
+    // a link older than the roster answers every reconciliation and refuses
+    // every browse.
+    if (dep.configured && dep.console && dep.console.calls) {
+      dep.console.calls.forEach(function (call) {
+        var bits = (CONSOLE_OP[call.op] || call.op) + ' ' + call.calls + ' 次';
+        if (!call.calls) {
+          bits += call.op === 'roster' ? '（只有控制 leader 走名册）' : '';
+        } else {
+          if (call.failures) bits += '、失败 ' + call.failures;
+          if (call.last_success_age_seconds != null) bits += '，成功 ' + elapsedLabel(call.last_success_age_seconds) + '前';
+          if (call.last_failure_age_seconds != null) bits += '，失败 ' + elapsedLabel(call.last_failure_age_seconds) + '前：' + (call.last_failure || '（无文本）');
+        }
+        seenParts.push(bits);
+      });
+    }
     if (!seenParts.length) {
       seenParts.push(dep.kind === 'redis' && dep.configured ? '本进程还没对它发过命令' : '这一列只对 Redis 连接与告警输出有记录；查询后端的失败在检查项里按对象归因');
     }
@@ -2878,6 +3467,15 @@ function addressWords(dep) {
 // nothing was, or that the role has no writer to speak of.
 function writerWords(dep) {
   var w = dep.writer;
+  // A role that carries its own account answers from it whether or not there
+  // is a writer summary beside it. The open alert set under the index
+  // protocol has none on purpose -- that protocol has no publisher heartbeat,
+  // so the server clears the summary -- and this early return then rendered
+  // the whole column as a dash: the members, the gate's answers, the
+  // subscription and the calibration were all on the response and none of
+  // them reached the page.
+  if (dep.open_alert_set) return openAlertSetWords(dep);
+  if (dep.console) return consoleWords(dep.console);
   if (!w) {
     return dep.role === 'strategy_cache' ? '（这个副本不是 leader，没读过策略缓存）' : '—';
   }
@@ -2891,8 +3489,144 @@ function writerWords(dep) {
         + (w.state && w.state !== 'loaded' ? '（' + w.state + '）' : '');
     case 'dynamic_config':
       return (w.present ? '有：已加载' + (age ? '，' + age : '') : '没有') + (w.state ? '（' + w.state + '）' : '');
+    case 'open_alert_set':
+      return openAlertSetWords(dep);
   }
   return w.present ? '有' : '没有';
+}
+
+// The reader's account of the alert consumer's publication, as one sentence:
+// whether it has ever been read, the publisher's own heartbeat and cycle,
+// the fingerprint version on both sides (a mismatch is a publication every
+// lookup misses, which reads exactly like "no open alert"), what is held,
+// and -- the part the object list never shows -- whether the recovery gate
+// has been answering on the consumer's word or on the copy's own.
+var OPEN_ALERT_MODE = {
+  never_loaded: '从未读到发布',
+  authoritative: '以消费方的发布为准',
+  self_maintained: '发布不可用，按本副本自己的记录放行/扣留'
+};
+var OPEN_ALERT_UNAVAILABLE = {
+  read_error: '读不到（Redis 读失败）',
+  heartbeat_missing: '心跳键不存在——消费方没有在这个地址、这个前缀下发布',
+  heartbeat_unreadable: '心跳字段读不出',
+  heartbeat_stale: '心跳过期（超过 3 个发布周期没更新）',
+  fingerprint_version: '指纹版本与本端不同——每次查询都会落空，读起来像"没有未恢复告警"'
+};
+// Every answer the gate can give. A key missing here is not rendered and
+// does not count towards the total, so the row said "the gate has not been
+// asked yet" on a deployment where it had answered 168 times and held every
+// recovery: the index protocol's two answers were added to the server and
+// not to this table. The table is hand-listed, so it is the thing to check
+// whenever the server gains an answer.
+var OPEN_ALERT_ANSWER = {
+  authoritative_member: '发布里有',
+  authoritative_absent: '发布里没有',
+  index_member: '索引里有',
+  index_absent: '索引里没有',
+  recently_sent: '本副本刚发过',
+  not_yet_loaded: '首轮未装载',
+  self_maintained: '按本副本记录',
+  passed_through: '直接放行'
+};
+// What the numbers above mean for the deployment, said once rather than left
+// for the reader to derive. The gate holds a recovery when the series is not
+// in the consumer's set, so a set that is loaded and holds nothing while
+// every lookup comes back "not in it" means no recovery event leaves this
+// deployment -- which the row could not be read to say: it showed the set as
+// available and not stale, both true, and neither of them the answer.
+//
+// Two things produce it and this cannot tell them apart, so it names both:
+// the consumer genuinely holds no open alert (nothing is alarming), or it is
+// not recording what this deployment sends it. The count of held recoveries
+// is what separates them in practice -- a consumer with nothing open is one
+// this deployment also sent nothing to.
+function openAlertConsequence(a, lookups) {
+  if (!lookups || a.members !== 0 || a.loaded_sets === 0) return '';
+  var absent = (a.lookups && (a.lookups.index_absent || 0) + (a.lookups.authoritative_absent || 0)) || 0;
+  if (absent < lookups) return '';
+  return '这套部署现在发不出恢复：集合装载了但一条未恢复指纹都没有，' + lookups
+    + ' 次全部落空、恢复被扣住——要么消费方此刻确实没有未恢复告警，要么它没有把本部署发过去的告警记进这个集合';
+}
+
+var KEY_SHAPE = { hex32: '32 位十六进制', hex64: '64 位十六进制', hex_other: '其他长度十六进制', non_hex: '非十六进制' };
+
+function shapeWords(shapes) {
+  var out = [];
+  Object.keys(shapes || {}).sort().forEach(function (key) {
+    if (shapes[key]) out.push((KEY_SHAPE[key] || key) + ' ' + shapes[key]);
+  });
+  return out.length ? out.join('、') : '无';
+}
+
+// The recovery gate's side-by-side reading, in counts and shapes only: the
+// keys themselves stay in the API sample. Which of the three misses it is
+// reads off the three clauses -- member shape, whose alerts, and whether our
+// keys are there as an alert id or as a fingerprint.
+function openAlertComparisonWords(c) {
+  if (!c) return '';
+  var own = c.own_event_source_id ? (c.alert_sources || {})[c.own_event_source_id] || 0 : null;
+  var others = 0;
+  Object.keys(c.alert_sources || {}).forEach(function (key) {
+    if (key !== c.own_event_source_id) others += c.alert_sources[key];
+  });
+  return '恢复闸对照：本端发出未恢复 ' + c.sent + ' 个（' + shapeWords(c.sent_shapes) + '），集合成员 ' + shapeWords(c.member_shapes)
+    + '；校准列出的活动告警' + (own === null ? '来源 ' + others + ' 条（本部署来源尚未读到）' : '本部署来源 ' + own + ' 条、其他来源 ' + others + ' 条')
+    + '；在已校准策略里的 ' + c.sent_in_calibrated + ' 个发出键中，等于某条活动告警 ID 的 ' + c.sent_matching_alert_id
+    + ' 个、等于其指纹的 ' + c.sent_matching_fingerprint + ' 个';
+}
+
+// The close of alerts whose target left the strategy's scope, in counts
+// only: the fingerprint samples stay in the API. Unarmed, would_send is the
+// count arming would send, which is what has to be read before arming.
+function targetScopeCloseWords(c) {
+  if (!c) return '';
+  var o = c.outcomes || {};
+  var n = function (k) { return o[k] || 0; };
+  return '目标移出范围关闭（' + (c.armed ? '已开启' : '未开启，只计算不发送') + '）：等第二轮确认 ' + (c.pending || 0)
+    + ' 个、已确认待关 ' + (c.confirmed || 0) + ' 个；累计已关 ' + n('closed') + '、本应发送 ' + n('would_send')
+    + '、首次观测 ' + n('unconfirmed') + '、目标缓存不确定未判 ' + n('cache_unavailable') + '、不在集合 ' + n('not_member')
+    + '、集合不可判 ' + n('set_unavailable') + '、他源告警 ' + n('producer_foreign') + '、发送失败 ' + n('send_failed')
+    + '、观测表满 ' + n('memory_full') + '、多输入无法算指纹 ' + n('fingerprint_unsupported') + '、观测过旧暂缓 ' + n('stale_deferred') + '、拒绝本身不确定 ' + n('indefinite');
+}
+
+function openAlertSetWords(dep) {
+  var a = dep.open_alert_set;
+  var w = dep.writer;
+  if (!a) return w && w.present ? '有' : '没有';
+  var parts = [];
+  // The index protocol is its own publication and has no heartbeat, so the
+  // heartbeat branch below read it as "nothing published" -- on a deployment
+  // whose index was configured, subscribed, read 27 s ago and covering 60
+  // strategies, the row said there was no consumer publication at all.
+  if (a.index_protocol) {
+    parts.push('有：消费方按索引协议发布'
+      + (a.index_read_age_seconds != null ? '，本端 ' + elapsedLabel(a.index_read_age_seconds) + '前读到' : '，本端还没读到过')
+      + (a.subscription_ready ? '' : '，订阅未就绪'));
+    parts.push('跟踪 ' + a.tracked_sets + ' 条策略、索引覆盖 ' + a.loaded_sets + ' 条、未恢复指纹 ' + a.members + ' 个'
+      + (a.calibration_configured ? '' : '（未配校准）'));
+  } else if (a.heartbeat_age_seconds !== undefined && a.heartbeat_age_seconds !== null) {
+    parts.push('有：消费方心跳 ' + elapsedLabel(a.heartbeat_age_seconds) + '前（周期 ' + a.cycle_seconds + ' s，指纹版本 ' + a.fingerprint_version
+      + (a.fingerprint_version !== a.reader_fingerprint_version ? '≠本端 ' + a.reader_fingerprint_version : '') + '）');
+    parts.push('跟踪 ' + a.tracked_sets + ' 条策略、发布覆盖 ' + a.loaded_sets + ' 条、未恢复指纹 ' + a.members + ' 个');
+  } else {
+    parts.push('没有：' + (OPEN_ALERT_MODE[a.mode] || a.mode) + '（心跳键 alarmd:open_alerts:heartbeat）');
+  }
+  var mode = OPEN_ALERT_MODE[a.mode] || a.mode;
+  if (a.unavailable_reason) mode += '：' + (OPEN_ALERT_UNAVAILABLE[a.unavailable_reason] || a.unavailable_reason);
+  if (a.stale_beyond_bound) mode += '，已超过设计的暴露时长';
+  parts.push('当前 ' + mode);
+  var answers = [];
+  var total = 0;
+  Object.keys(OPEN_ALERT_ANSWER).forEach(function (key) {
+    var n = a.lookups && a.lookups[key];
+    if (n) { answers.push(OPEN_ALERT_ANSWER[key] + ' ' + n); total += n; }
+  });
+  parts.push(total ? '恢复门查过 ' + total + ' 次：' + answers.join('、') : '恢复门还没查过');
+  parts.push(openAlertConsequence(a, total));
+  parts.push(openAlertComparisonWords(a.comparison));
+  parts.push(targetScopeCloseWords(a.target_scope_close));
+  return parts.filter(Boolean).join('；');
 }
 
 function renderReplicas(rows) {
@@ -3044,7 +3778,8 @@ var KIND_TEXT = {
   OVERDUE_WAKE: '没被调度',
   SKIPPED_SPAN: '留存的漏检记录',
   NO_DATA: '持续无数据',
-  EMPTY_EVERY_ROUND: '每轮都无数据'
+  EMPTY_EVERY_ROUND: '每轮都无数据',
+  RETAINED_SHARE_APPROACHING: '逼近单对象份额'
 };
 function kindText(kind) { return KIND_TEXT[kind] || kind || '—'; }
 
@@ -3122,8 +3857,9 @@ function renderLoad(load) {
     (LOSS_STATE[loss.state] || '漏检：（页面没有这个状态的文案：' + loss.state + '，请上报）')
       .replace('{ongoing}', String(loss.ongoing || 0)).replace('{w}', w)
       .replace('{restart}', loss.after_restart
-        ? '，另有 ' + loss.after_restart + ' 个是滚动后的追赶（副本启动 '
+        ? '，另有 ' + loss.after_restart + ' 个是滚动后的追赶（副本启动或首次接手 '
           + Math.round((loss.restart_grace_seconds || 300) / 60) + ' 分钟内），看它还有没有新增、不由它问容量' : '')
+      + (loss.after_cooldown ? '；另有 ' + loss.after_cooldown + ' 个是冷却期间的跳过、对象已出冷却池（不是容量）' : '')
       + (loss.while_demoted_recent ? '；另有 ' + loss.while_demoted_recent + ' 个被拒的对象在冷却期间跳过（首要原因是查询不可用，不是容量）' : ''),
     rebalanceWords(BOTTLENECK[bottleneck.resource] || '瓶颈：（页面没有这个状态的文案：' + bottleneck.resource + '，请上报）', bottleneck.skew)
       .replace('{rejections}', String(bottleneck.budget_rejections || 0))

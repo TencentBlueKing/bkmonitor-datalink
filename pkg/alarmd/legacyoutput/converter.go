@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 // Package legacyoutput emits the existing Python monitor-event protocol using
 // Go only. It never invokes Python or reevaluates detection rules.
 package legacyoutput
@@ -76,75 +67,177 @@ func (c *Converter) ConvertBatch(ctx context.Context, events []contract.TriggerE
 	if c.Store == nil {
 		return nil, fmt.Errorf("legacy snapshot store required")
 	}
-	now := time.Now()
-	if c.Now != nil {
-		now = c.Now()
-	}
-	configs := map[string]preparedStrategy{}
-	snapshots := make([]Snapshot, 0)
+	judged := c.convertAll(ctx, events)
 	output := make([]Event, 0, len(events))
-	pods := NewBatchPodResolver(c.Pods)
-	for _, event := range events {
-		if event.StrategyRef != nil || event.LegacyOutput == nil || event.LegacyOutput.Configuration == nil {
-			return nil, fmt.Errorf("legacy event requires frozen context and no strategy_ref")
-		}
-		metadata := event.LegacyOutput.Configuration
-		frozen, exists := configs[metadata.StrategyKey()]
-		if !exists {
-			frozen.raw = metadata.StrategyJSON()
-			if err := json.Unmarshal(frozen.raw, &frozen.config); err != nil {
-				return nil, err
-			}
-			var err error
-			frozen.target, err = PrepareTarget(frozen.raw)
-			if err != nil {
-				return nil, err
-			}
-			s := frozen.config
-			if s.ID <= 0 || s.BusinessID == 0 || s.UpdateTime <= 0 || s.Name == "" || len(s.Items) == 0 || len(s.Items[0].Queries) == 0 {
-				return nil, fmt.Errorf("incomplete frozen legacy strategy")
-			}
-			frozen.snapshot = strings.TrimSuffix(c.SnapshotPrefix, ".") + ".cache.strategy.snapshot." + strconv.FormatInt(s.ID, 10) + "." + strconv.FormatInt(s.UpdateTime, 10)
-			if c.SnapshotPrefix == "" {
-				frozen.snapshot = strings.TrimPrefix(frozen.snapshot, ".")
-			}
-			seen := map[string]bool{}
-			addMetric := func(value string) {
-				if !seen[value] {
-					seen[value] = true
-					frozen.metrics = append(frozen.metrics, value)
-				}
-			}
-			for _, item := range s.Items {
-				for _, query := range item.Queries {
-					addMetric(query.MetricID)
-				}
-			}
-			for _, item := range s.Items {
-				addMetric(item.Name)
-			}
-			for _, item := range s.Items {
-				for _, query := range item.Queries {
-					if query.PromQL != "" {
-						addMetric(query.PromQL)
-					}
-				}
-			}
-			configs[metadata.StrategyKey()] = frozen
-			snapshots = append(snapshots, Snapshot{StrategyID: s.ID, Key: frozen.snapshot, Value: frozen.raw})
-		}
-		converted, err := convertEvent(ctx, event, frozen, now.Unix(), pods, c.PluginID)
+	for index, err := range judged.failures {
 		if err != nil {
 			return nil, err
 		}
-		output = append(output, converted)
+		output = append(output, judged.events[index])
 	}
 	// Validate every event before one bounded, de-duplicated snapshot write.
-	if err := c.Store.SaveBatch(ctx, snapshots); err != nil {
+	if err := c.Store.SaveBatch(ctx, judged.snapshots); err != nil {
 		return nil, &SnapshotStoreError{Err: fmt.Errorf("save legacy snapshots: %w", err)}
 	}
 	return output, nil
 }
+
+// ConvertEach converts every event on its own account: the events and the
+// failures it returns are aligned with the events it was given, and an event
+// the converter will not write fails alone instead of taking the batch with
+// it. A strategy whose frozen configuration cannot be prepared fails each of
+// its own events and no other strategy's. The snapshots of the strategies
+// that converted at least one event are written once, after every event has
+// been judged, so isolating a bad event costs no extra write. That write is
+// the one failure that says nothing about the events; it comes back as the
+// third result, a SnapshotStoreError, and so does a cancelled context.
+func (c *Converter) ConvertEach(ctx context.Context, events []contract.TriggerEventV1) ([]Event, []error, error) {
+	if len(events) == 0 {
+		return []Event{}, []error{}, nil
+	}
+	if c.Store == nil {
+		return nil, nil, fmt.Errorf("legacy snapshot store required")
+	}
+	judged := c.convertAll(ctx, events)
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	used := make([]bool, len(judged.snapshots))
+	for index, err := range judged.failures {
+		if err == nil && judged.snapshotOf[index] >= 0 {
+			used[judged.snapshotOf[index]] = true
+		}
+	}
+	kept := make([]Snapshot, 0, len(judged.snapshots))
+	for index, snapshot := range judged.snapshots {
+		if used[index] {
+			kept = append(kept, snapshot)
+		}
+	}
+	if len(kept) > 0 {
+		if err := c.Store.SaveBatch(ctx, kept); err != nil {
+			return nil, nil, &SnapshotStoreError{Err: fmt.Errorf("save legacy snapshots: %w", err)}
+		}
+	}
+	return judged.events, judged.failures, nil
+}
+
+// judgedBatch is every event of a batch judged and nothing written: events
+// and failures are aligned with the batch, snapshots holds one record per
+// strategy that could be prepared, and snapshotOf says which of them each
+// event converted against (-1 when its strategy could not be prepared).
+type judgedBatch struct {
+	events     []Event
+	failures   []error
+	snapshots  []Snapshot
+	snapshotOf []int
+}
+
+func (c *Converter) convertAll(ctx context.Context, events []contract.TriggerEventV1) judgedBatch {
+	now := time.Now()
+	if c.Now != nil {
+		now = c.Now()
+	}
+	type prepared struct {
+		strategy preparedStrategy
+		snapshot int
+		err      error
+	}
+	configs := map[string]prepared{}
+	judged := judgedBatch{
+		events: make([]Event, len(events)), failures: make([]error, len(events)),
+		snapshots: make([]Snapshot, 0), snapshotOf: make([]int, len(events)),
+	}
+	pods := NewBatchPodResolver(c.Pods)
+	for index, event := range events {
+		judged.snapshotOf[index] = -1
+		if event.StrategyRef != nil || event.LegacyOutput == nil || event.LegacyOutput.Configuration == nil {
+			judged.failures[index] = fmt.Errorf("legacy event requires frozen context and no strategy_ref")
+			continue
+		}
+		metadata := event.LegacyOutput.Configuration
+		entry, exists := configs[metadata.StrategyKey()]
+		if !exists {
+			entry.snapshot = -1
+			entry.strategy, entry.err = prepareStrategy(metadata, c.SnapshotPrefix)
+			if entry.err != nil {
+				entry.err = &StrategyConfigError{Err: entry.err}
+			}
+			if entry.err == nil {
+				entry.snapshot = len(judged.snapshots)
+				judged.snapshots = append(judged.snapshots, Snapshot{
+					StrategyID: entry.strategy.config.ID, Key: entry.strategy.snapshot, Value: entry.strategy.raw,
+				})
+			}
+			configs[metadata.StrategyKey()] = entry
+		}
+		if entry.err != nil {
+			judged.failures[index] = entry.err
+			continue
+		}
+		judged.snapshotOf[index] = entry.snapshot
+		judged.events[index], judged.failures[index] = convertEvent(ctx, event, entry.strategy, now.Unix(), pods, c.PluginID)
+	}
+	return judged
+}
+
+// prepareStrategy reads one frozen strategy configuration into what every
+// event of it converts against. A failure here is the strategy's, and every
+// event of that strategy shares it.
+func prepareStrategy(metadata *contract.FrozenLegacyOutput, snapshotPrefix string) (preparedStrategy, error) {
+	var frozen preparedStrategy
+	frozen.raw = metadata.StrategyJSON()
+	if err := json.Unmarshal(frozen.raw, &frozen.config); err != nil {
+		return preparedStrategy{}, err
+	}
+	var err error
+	frozen.target, err = PrepareTarget(frozen.raw)
+	if err != nil {
+		return preparedStrategy{}, err
+	}
+	s := frozen.config
+	if s.ID <= 0 || s.BusinessID == 0 || s.UpdateTime <= 0 || s.Name == "" || len(s.Items) == 0 || len(s.Items[0].Queries) == 0 {
+		return preparedStrategy{}, fmt.Errorf("incomplete frozen legacy strategy")
+	}
+	frozen.snapshot = strings.TrimSuffix(snapshotPrefix, ".") + ".cache.strategy.snapshot." + strconv.FormatInt(s.ID, 10) + "." + strconv.FormatInt(s.UpdateTime, 10)
+	if snapshotPrefix == "" {
+		frozen.snapshot = strings.TrimPrefix(frozen.snapshot, ".")
+	}
+	seen := map[string]bool{}
+	addMetric := func(value string) {
+		if !seen[value] {
+			seen[value] = true
+			frozen.metrics = append(frozen.metrics, value)
+		}
+	}
+	for _, item := range s.Items {
+		for _, query := range item.Queries {
+			addMetric(query.MetricID)
+		}
+	}
+	for _, item := range s.Items {
+		addMetric(item.Name)
+	}
+	for _, item := range s.Items {
+		for _, query := range item.Queries {
+			if query.PromQL != "" {
+				addMetric(query.PromQL)
+			}
+		}
+	}
+	return frozen, nil
+}
+
+// StrategyConfigError is a refusal whose cause is the frozen strategy
+// configuration itself: it cannot be read, is incomplete, or names no item
+// or level the event was decided for. The strategy's owner fixes it; every
+// other refusal is alarmd's own.
+type StrategyConfigError struct {
+	Err error
+}
+
+func (err *StrategyConfigError) Error() string { return err.Err.Error() }
+func (err *StrategyConfigError) Unwrap() error { return err.Err }
 
 // SnapshotStoreError is the snapshot store not taking the batch. It is the
 // one failure ConvertBatch returns that says nothing about the events: every
@@ -183,15 +276,25 @@ func convertEvent(ctx context.Context, event contract.TriggerEventV1, frozen pre
 	if strconv.FormatInt(s.ID, 10) != event.PlanRef.StrategyID || strconv.FormatInt(s.BusinessID, 10) != event.BusinessID || (s.TenantID != "" && s.TenantID != event.TenantID) {
 		return Event{}, fmt.Errorf("frozen legacy strategy identity mismatch")
 	}
-	itemName := ""
+	itemName, itemFound := "", false
 	for _, item := range s.Items {
 		if strconv.FormatInt(item.ID, 10) == metadata.ItemID() {
-			itemName = item.Name
+			itemName, itemFound = item.Name, true
 			break
 		}
 	}
-	if itemName == "" || event.PrimaryLevelID < 1 || event.PrimaryLevelID > 3 {
-		return Event{}, fmt.Errorf("invalid legacy item/severity")
+	// The item id and the strategy are frozen together, so an item the
+	// strategy does not hold is the freeze disagreeing with itself: alarmd's.
+	// An item with no name, or a level the Python protocol has no severity
+	// for, is the strategy as configured.
+	if !itemFound {
+		return Event{}, fmt.Errorf("frozen legacy item %s is not in its frozen strategy", metadata.ItemID())
+	}
+	if itemName == "" {
+		return Event{}, &StrategyConfigError{Err: fmt.Errorf("legacy item %s has no name", metadata.ItemID())}
+	}
+	if event.PrimaryLevelID < 1 || event.PrimaryLevelID > 3 {
+		return Event{}, &StrategyConfigError{Err: fmt.Errorf("legacy protocol has no severity for level %d", event.PrimaryLevelID)}
 	}
 	// The Python protocol represents anomaly points only. Anything else
 	// reaching the converter is a routing mistake, and a loud one is better

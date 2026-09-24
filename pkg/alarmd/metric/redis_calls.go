@@ -35,7 +35,7 @@ import (
 // series nobody notices. The values match the pool metrics so command load and
 // connection load join on the same label.
 var redisClientNames = map[string]struct{}{
-	"source": {}, "runtime": {}, "cmdb": {}, "dynamic_config": {}, "legacy_output": {}, "legacy_pod_cache": {}, "diagnostics": {},
+	"source": {}, "runtime": {}, "cmdb": {}, "dynamic_config": {}, "target_group": {}, "legacy_output": {}, "legacy_pod_cache": {}, "diagnostics": {},
 }
 
 // RedisClientHealth is what this process has last seen of one Redis client:

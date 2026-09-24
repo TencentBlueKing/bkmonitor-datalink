@@ -148,6 +148,10 @@ func TestCostProjectionAdmissionBoundIncludesEscapingAndAllScalarFields(t *testi
 	snapshot := projectionSnapshot(at)
 	snapshot.Contributors = []observability.CostContributor{{Scope: "strategy_owned", Group: observability.CostGroup{QueryGroupKey: "\"<&\n中", Members: []observability.CostPlanIdentity{{TenantID: "t", BusinessID: "b", StrategyID: "s"}}}, Current: observability.CostScalars{EvaluationRecords: ^uint64(0)}}}
 	snapshot.Rankings = []observability.CostRanking{{Scope: "strategy_owned", Dimension: "evaluation_records", Indexes: []int{0}}}
+	// The one float the schema carries, at the length the encoder gives a
+	// share that does not round: the bound has to hold for it too.
+	snapshot.Retained = observability.CostRetainedReading{PeakSumBytes: 1_003_487_232, GroupsWithPeak: 3, LimitBytes: 1 << 30, LimitKnown: true,
+		PeakShare: float64(1_003_487_232) / float64(1<<30), HardStops: 13, ShareStops: 1}
 	wire := costProjectionWire{Version: 1, ReplicaHash: costReplicaHash("a"), ObservedAt: at, Status: "AVAILABLE", Cost: &snapshot}
 	encoded, err := json.Marshal(wire)
 	if err != nil {

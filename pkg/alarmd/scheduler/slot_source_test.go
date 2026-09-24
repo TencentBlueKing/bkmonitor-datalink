@@ -47,7 +47,7 @@ func TestProductionSlotSourceColdStartUsesFirstSegment(t *testing.T) {
 	if got := catalog.requests[0]; got.QueryGroup != "query-group-1" || got.ScheduleSegmentStart != 60 || got.EvaluationTime != 60 {
 		t.Fatalf("FreezeSlotContract request = %+v", got)
 	}
-	if len(slot.DuePlanTargets.Plans) != 1 || slot.DuePlanTargets.Plans[0] != schedule.Plans[0].Identity ||
+	if len(slot.DuePlanTargets.Plans) != 1 || slot.DuePlanTargets.Plans[0] != schedule.Plans[0].Key() ||
 		slot.DuePlanTargets.DuePlanSetDigest != slot.Contract.DuePlanSetDigest ||
 		slot.EarliestQueryDeadlineUnixMilli <= int64(slot.Contract.Slot.EvaluationTime)*1000 {
 		t.Fatalf("frozen execution facts = targets=%+v deadline=%d", slot.DuePlanTargets, slot.EarliestQueryDeadlineUnixMilli)

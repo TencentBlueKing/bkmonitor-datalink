@@ -42,6 +42,14 @@ func noDataPreflightContract(t *testing.T, plans []execution.DuePlan) execution.
 
 func noDataPreflightPlan(t *testing.T, strategyID string, noData *contract.NoDataConfigV1) *strategy.CompiledPlan {
 	t.Helper()
+	return noDataPreflightPlanWithRef(t, contract.StrategyRefV2{TenantID: "tenant", StrategyID: strategyID, Revision: "strategy-v1"}, noData)
+}
+
+// noDataPreflightPlanWithRef compiles the same test Plan under the given
+// strategy reference, for a case that needs a revisioned strategy.
+func noDataPreflightPlanWithRef(t *testing.T, ref contract.StrategyRefV2, noData *contract.NoDataConfigV1) *strategy.CompiledPlan {
+	t.Helper()
+	strategyID := ref.StrategyID
 	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), strategy.Limits{
 		MaxPlanBytes: 64 << 10, MaxLevelsPerPlan: 16, MaxAlgorithmsPerLevel: 8, MaxGroupsPerAlgorithm: 16,
 		MaxConditionsPerAlgorithm: 64, MaxASTNodesPerLevel: 256, MaxTriggerWindowSize: 4096,
@@ -52,7 +60,6 @@ func noDataPreflightPlan(t *testing.T, strategyID string, noData *contract.NoDat
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref := contract.StrategyRefV2{TenantID: "tenant", StrategyID: strategyID, Revision: "strategy-v1"}
 	projection := contract.InputProjectionV2{
 		ValueFields: []string{"value"}, DimensionFields: []string{"host"}, BusinessIdentityField: "bk_biz_id",
 		MultiValueAlignment: "SINGLE_VALUE", DataUnit: "percent", MissingValuePolicy: contract.MissingValuePolicyRequired,

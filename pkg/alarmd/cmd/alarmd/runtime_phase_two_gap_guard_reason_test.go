@@ -113,7 +113,7 @@ func gapGuardSlotRequest(plan execution.PlanIdentity) execution.SlotExecutionReq
 			SnapshotRevision: "snapshot-v1", QueryRevision: "query-v1", ScheduleRevision: "schedule-v1",
 			ScheduleSegmentStart: 1_700_123_940, DuePlanSetDigest: "due-v1",
 		},
-		DuePlanTargets: execution.FrozenDuePlanTargets{DuePlanSetDigest: "due-v1", Plans: []execution.PlanIdentity{plan}},
+		DuePlanTargets: execution.FrozenDuePlanTargets{DuePlanSetDigest: "due-v1", Plans: []execution.PlanKey{{PlanIdentity: plan}}},
 		Operation:      execution.OperationNormal, AttemptNo: 1,
 	}
 }

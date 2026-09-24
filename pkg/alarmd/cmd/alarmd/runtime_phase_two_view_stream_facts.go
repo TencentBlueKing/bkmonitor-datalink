@@ -38,13 +38,32 @@ func viewStreamFacts(stats viewstream.Stats, at time.Time) *fleet.ViewStreamFact
 		Ignored: fleet.ViewStreamIgnored{UnknownVersion: stats.Ignored.UnknownVersion, UnexpectedReceiver: stats.Ignored.UnexpectedReceiver,
 			DigestMismatch: stats.Ignored.DigestMismatch, StaleIncarnation: stats.Ignored.StaleIncarnation},
 		Publications: stats.Publications, PublicationsSkipped: stats.PublicationsSkipped, SnapshotChunksSent: stats.SnapshotChunksSent,
-		DeltasSent: stats.DeltasSent, EmptyDeltasSent: stats.EmptyDeltasSent, Refusals: stats.Refusals,
+		DeltasSent: stats.DeltasSent, EmptyDeltasSent: stats.EmptyDeltasSent, DeltasOversized: stats.DeltasOversized,
+		Refusals:        stats.Refusals,
+		PublishFailures: stats.PublishFailures, PublishFailureReason: stats.PublishFailureReason,
+	}
+	if !stats.PublishFailingSince.IsZero() {
+		age := at.Sub(stats.PublishFailingSince).Seconds()
+		facts.PublishFailingSeconds, facts.PublishFailingBeyondBound = &age, at.Sub(stats.PublishFailingSince) > fleet.ViewStreamStallBound
+	}
+	if !stats.NoSessionsSince.IsZero() {
+		age := at.Sub(stats.NoSessionsSince).Seconds()
+		facts.NoSessionsSeconds, facts.NoSessionsBeyondBound = &age, at.Sub(stats.NoSessionsSince) > fleet.ViewStreamStallBound
 	}
 	facts.Lagging = make([]fleet.ViewStreamLagging, 0, len(stats.Lagging))
 	for _, lagging := range stats.Lagging {
 		facts.Lagging = append(facts.Lagging, fleet.ViewStreamLagging{WorkerID: lagging.WorkerID, Incarnation: lagging.Incarnation,
-			Failure: lagging.Failure, ObjectsMissing: lagging.ObjectsMissing, Connected: lagging.Connected})
+			Failure: lagging.Failure, Connected: lagging.Connected})
 	}
+	facts.NotSwitched = make([]fleet.ViewStreamLagging, 0, len(stats.NotSwitched))
+	for _, receiver := range stats.NotSwitched {
+		facts.NotSwitched = append(facts.NotSwitched, fleet.ViewStreamLagging{WorkerID: receiver.WorkerID, Incarnation: receiver.Incarnation,
+			Connected: receiver.Connected, SwitchedQueryGroups: receiver.SwitchedQueryGroups})
+	}
+	// The installed Workers' word on their objects, names included; the
+	// list is empty rather than null when every one of them probed.
+	facts.Objects = fleet.ViewStreamObjects{Probed: stats.Objects.Probed, Unprobed: stats.Objects.Unprobed, Missing: stats.Objects.Missing,
+		UnprobedWorkers: append(make([]string, 0, len(stats.Objects.UnprobedWorkers)), stats.Objects.UnprobedWorkers...)}
 	facts.Line = fleet.ViewStreamLine(facts)
 	return facts
 }

@@ -454,7 +454,7 @@ func TestBeginSlotSupersedesDifferingProjectionOnSameSegment(t *testing.T) {
 func twoPlanProjectionAt(evaluationTime execution.EvaluationTime) execution.UnfinishedSlotProjection {
 	projection := progressProjectionAt(evaluationTime)
 	projection.DuePlanTargets.Plans = append(projection.DuePlanTargets.Plans,
-		execution.PlanIdentity{TenantID: "tenant", BusinessID: "business", StrategyID: "strategy-2"})
+		execution.PlanKey{PlanIdentity: execution.PlanIdentity{TenantID: "tenant", BusinessID: "business", StrategyID: "strategy-2"}})
 	return projection
 }
 
@@ -1091,7 +1091,7 @@ func progressProjectionAt(evaluationTime execution.EvaluationTime) execution.Unf
 		Contract: contractRef,
 		DuePlanTargets: execution.FrozenDuePlanTargets{
 			DuePlanSetDigest: contractRef.DuePlanSetDigest,
-			Plans:            []execution.PlanIdentity{{TenantID: "tenant", BusinessID: "business", StrategyID: "strategy"}},
+			Plans:            []execution.PlanKey{{PlanIdentity: execution.PlanIdentity{TenantID: "tenant", BusinessID: "business", StrategyID: "strategy"}}},
 		},
 		EarliestQueryDeadlineUnixMilli: int64(evaluationTime)*1000 + 1_000,
 		KeepUntilUnixMilli:             int64(evaluationTime)*1000 + 601_000,

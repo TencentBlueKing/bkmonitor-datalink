@@ -64,8 +64,21 @@ func TestResumedSeriesKeepsPersistedCompletionFacts(t *testing.T) {
 					t.Fatalf("persisted protection lost: %+v", plan)
 				}
 			}
-			if !reflect.DeepEqual(plan.HistoryCoverage, execution.HistoryCoverage{}) {
+			// No window counts, and the one count a resumed series may carry:
+			// that it was resumed. The assertion used to read "the whole
+			// struct is zero", which was the mechanism -- a resumed series
+			// reported nothing at all -- and not the rule, which is that
+			// State does not retain the original window counts so none may be
+			// invented from it. Saying "no window count" rather than "no
+			// count" keeps the rule and admits the fact that explains a
+			// round's low Levels.
+			windowCounts := plan.HistoryCoverage
+			windowCounts.Resumed = 0
+			if !reflect.DeepEqual(windowCounts, execution.HistoryCoverage{}) {
 				t.Fatal("resume manufactured window counts")
+			}
+			if plan.HistoryCoverage.Resumed != 1 {
+				t.Fatalf("resumed series did not count itself: %+v", plan.HistoryCoverage)
 			}
 		})
 	}

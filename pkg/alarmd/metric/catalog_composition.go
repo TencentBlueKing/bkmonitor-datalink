@@ -28,14 +28,18 @@ import (
 // answers the other half of it: of the strategies that did not become Query
 // Groups, what became of them instead.
 type catalogCompositionCollector struct {
-	mu          sync.Mutex
-	source      func() *controlplane.CatalogComposition
-	queryGroups *prometheus.Desc
-	plans       *prometheus.Desc
-	objects     *prometheus.Desc
-	withheld    *prometheus.Desc
-	noDataPlans *prometheus.Desc
-	inertPlans  *prometheus.Desc
+	mu                sync.Mutex
+	source            func() *controlplane.CatalogComposition
+	queryGroups       *prometheus.Desc
+	plans             *prometheus.Desc
+	objects           *prometheus.Desc
+	withheld          *prometheus.Desc
+	noDataPlans       *prometheus.Desc
+	plansByWireFormat *prometheus.Desc
+	inertPlans        *prometheus.Desc
+	retentionPoints   *prometheus.Desc
+	requiredPoints    *prometheus.Desc
+	slackLevels       *prometheus.Desc
 }
 
 func newCatalogCompositionCollector() *catalogCompositionCollector {
@@ -94,6 +98,38 @@ func newCatalogCompositionCollector() *catalogCompositionCollector {
 				"strategy refused for the first time is CONFIG_REJECTED and the same one is STALE_CONFIG "+
 				"once its last good Plan is retained, so reading one disposition loses it on the round it "+
 				"changes state. Reported by the leader only.", "source"),
+		plansByWireFormat: descriptor("catalog_plans_by_wire_format",
+			"Plans in the Catalog the leader last built, by the wire format their events are published as, "+
+				"resolved the way the output sink resolves it from the frozen word and the strategy's snapshot "+
+				"revision: python_compatible is the event the Python alert builder reads, standard_raw_event "+
+				"the raw event the alert pipeline consumes, _other a word this build does not name. A "+
+				"partition of sum(catalog_plans), every format present at zero. This is the number that "+
+				"answers how many strategies publish the standard raw event; before it the word lived in "+
+				"the Plan and on every event and reached no log, no metric and no page, and a reader who "+
+				"searched the logs for standard_raw_event found zero lines and nearly filed that none do. "+
+				"Read standard_raw_event against catalog_plans_by_wire_format{format=\"python_compatible\"} "+
+				"and the source's revisions: a source that publishes no revisions sends every event the "+
+				"Python-compatible way whatever the sink is wired for. Reported by the leader only.", "format"),
+		requiredPoints: descriptor("catalog_required_history_points",
+			"History points the Levels of the Catalog the leader last built require, summed over every "+
+				"accepted Level including the no-data one. The denominator of the retention measurement: read "+
+				"catalog_retained_history_points over this one for what decision-022 R5's recovery slack costs "+
+				"the deployment. Both are points and not bytes -- bytes are what the retention pool is budgeted "+
+				"in, and are read from the store's own retained-bytes metric across a release; points are their "+
+				"proxy and the only one the leader can publish without reading the store. Reported by the leader only."),
+		retentionPoints: descriptor("catalog_retained_history_points",
+			"History points the Levels of the Catalog the leader last built retain, summed the same way. It "+
+				"exceeds catalog_required_history_points by the recovery slack: the positions a recovery walk "+
+				"needs to step over a rollout's hole and still reach the run of answered windows it requires. "+
+				"Equal to it on a deployment where no Level passes both R5 gates, which is a real state and not "+
+				"a broken one. Reported by the leader only."),
+		slackLevels: descriptor("catalog_levels_with_retention_slack",
+			"Levels of the Catalog the leader last built that retain more than they require, by which term of "+
+				"their window dominates: window for a Level whose trigger window is the larger, recovery for one "+
+				"whose consecutive-window run is. Both are counted because the slack's leading term is the trigger "+
+				"window while the required size is the sum of both, so two Levels of the same required size cost "+
+				"very differently and one count would hide it. Their sum is every Level both R5 gates admitted; "+
+				"read it against catalog_plans for how much of the deployment pays. Reported by the leader only.", "dominant"),
 		inertPlans: descriptor("catalog_inert_plans",
 			"Plans in the Catalog the leader last built whose schedule cannot hold the wait their data "+
 				"needs to land: their readiness boundary falls past their own completion deadline, so every "+
@@ -113,7 +149,11 @@ func (c *catalogCompositionCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.objects
 	ch <- c.withheld
 	ch <- c.noDataPlans
+	ch <- c.plansByWireFormat
 	ch <- c.inertPlans
+	ch <- c.requiredPoints
+	ch <- c.retentionPoints
+	ch <- c.slackLevels
 }
 
 func (c *catalogCompositionCollector) Collect(ch chan<- prometheus.Metric) {
@@ -144,7 +184,14 @@ func (c *catalogCompositionCollector) Collect(ch chan<- prometheus.Metric) {
 	for source, count := range composition.NoDataPlans {
 		ch <- prometheus.MustNewConstMetric(c.noDataPlans, prometheus.GaugeValue, float64(count), string(source))
 	}
+	for format, count := range composition.PlansByWireFormat {
+		ch <- prometheus.MustNewConstMetric(c.plansByWireFormat, prometheus.GaugeValue, float64(count), format)
+	}
 	ch <- prometheus.MustNewConstMetric(c.inertPlans, prometheus.GaugeValue, float64(composition.InertPlans))
+	ch <- prometheus.MustNewConstMetric(c.requiredPoints, prometheus.GaugeValue, float64(composition.Retention.RequiredPoints))
+	ch <- prometheus.MustNewConstMetric(c.retentionPoints, prometheus.GaugeValue, float64(composition.Retention.RetentionPoints))
+	ch <- prometheus.MustNewConstMetric(c.slackLevels, prometheus.GaugeValue, float64(composition.Retention.LevelsWithSlackWindowDominant), "window")
+	ch <- prometheus.MustNewConstMetric(c.slackLevels, prometheus.GaugeValue, float64(composition.Retention.LevelsWithSlackRecoveryDominant), "recovery")
 }
 
 // SetCatalogCompositionSource binds the process's last built Catalog

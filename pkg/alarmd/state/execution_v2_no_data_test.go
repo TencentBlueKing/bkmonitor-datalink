@@ -12,10 +12,13 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
@@ -326,6 +329,233 @@ func TestNoDataKeyIsItsOwnKey(t *testing.T) {
 	}
 	if strings.HasPrefix(hash, "alarmd:nodata:v2:") {
 		t.Fatalf("the hash key %q matches the cleanup pattern; the cleanup would delete live memory", hash)
+	}
+}
+
+// A piece of a split strategy has its own gap marker and its own no-data
+// memory, apart from its siblings' and apart from the unsplit record.
+//
+// The three Plan-level keys carry the PlanIdentity, which is the same for
+// every piece of a strategy because the identity goes into the event
+// identity and cannot carry the split. Without a segment of their own N
+// pieces would share one no-data memory and one gap marker, and the sharing
+// is not a degradation: each piece would load a roster made of the other
+// pieces' groups and report every one of them absent, every round. So the
+// piece's matcher digest fills the suffix slot, and the kind changes with it
+// so that a glob over the unsplit kind cannot reach a piece's record.
+//
+// An unsplit Plan's keys do not move: the zero shard produces exactly the
+// key it produced before there were shards, which is what keeps every record
+// already written where its reader looks.
+func TestAPieceOfASplitStrategyHasItsOwnPlanLevelKeys(t *testing.T) {
+	unsplit := noDataIdentityV2()
+	pieceOf := func(index int, matcher string) execution.PlanNoDataIdentity {
+		piece := unsplit
+		piece.Shard = execution.ShardRef{Dimension: "bk_target_ip", Index: index, Count: 2, MatcherDigest: string(seriesDigest(matcher))}
+		return piece
+	}
+	first, second := pieceOf(0, "matcher-0"), pieceOf(1, "matcher-1")
+
+	type keyed struct {
+		name string
+		key  func(execution.PlanNoDataIdentity) (string, error)
+		kind string
+	}
+	for _, record := range []keyed{
+		{name: "no-data memory", key: func(id execution.PlanNoDataIdentity) (string, error) { return PlanNoDataKeyV2("alarmd", id) }, kind: "nodata"},
+		{name: "no-data hash", key: func(id execution.PlanNoDataIdentity) (string, error) { return PlanNoDataHashKeyV2("alarmd", id) }, kind: "nodata-hash"},
+		{name: "gap marker", key: func(id execution.PlanNoDataIdentity) (string, error) {
+			return PlanGapKeyV2("alarmd", execution.PlanGapIdentity{Plan: id.Plan, StateGeneration: id.StateGeneration, Shard: id.Shard})
+		}, kind: "gap"},
+	} {
+		t.Run(record.name, func(t *testing.T) {
+			whole, err := record.key(unsplit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(whole, "alarmd:"+record.kind+":v2:") || strings.Count(whole, ":") != 6 {
+				t.Fatalf("the unsplit key is %q, want the seven-segment %q key with an empty suffix slot", whole, record.kind)
+			}
+			one, err := record.key(first)
+			if err != nil {
+				t.Fatal(err)
+			}
+			two, err := record.key(second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if one == two {
+				t.Fatalf("two pieces of one strategy share the key %q: only one of them would ever write it, "+
+					"and each would read the other's groups as absent", one)
+			}
+			if one == whole || two == whole {
+				t.Fatalf("a piece shares the unsplit key %q; the unsplit record would be read as a piece's", whole)
+			}
+			if !strings.HasPrefix(one, "alarmd:"+record.kind+"-shard:v2:") || strings.Count(one, ":") != 7 {
+				t.Fatalf("a piece's key is %q, want the %q kind with the matcher digest in the suffix slot", one, record.kind+"-shard")
+			}
+			if strings.HasPrefix(one, "alarmd:"+record.kind+":v2:") {
+				t.Fatalf("a piece's key %q matches the glob over unsplit records; a cleanup of those would reach it", one)
+			}
+			// The suffix is the matcher, not the index: a re-split that hands a
+			// piece the same index with a different matcher is a different piece
+			// with fresh records, and one that keeps the matcher keeps them.
+			resplit, err := record.key(pieceOf(0, "matcher-0-resplit"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if resplit == one {
+				t.Fatalf("a piece whose matcher changed keeps the key %q, so it would inherit records decided for other series", one)
+			}
+		})
+	}
+}
+
+// A piece that does not know its own coordinate cannot name its records, and
+// says so by name rather than by producing the unsplit key: a piece written
+// under the unsplit key is the sharing the sharded kinds exist to end.
+func TestAnIncompleteShardIsRefusedRatherThanKeyedAsUnsplit(t *testing.T) {
+	for name, shard := range map[string]execution.ShardRef{
+		"no dimension":       {Index: 0, Count: 2, MatcherDigest: string(seriesDigest("m"))},
+		"one piece":          {Dimension: "d", Index: 0, Count: 1, MatcherDigest: string(seriesDigest("m"))},
+		"index past count":   {Dimension: "d", Index: 2, Count: 2, MatcherDigest: string(seriesDigest("m"))},
+		"negative index":     {Dimension: "d", Index: -1, Count: 2, MatcherDigest: string(seriesDigest("m"))},
+		"no matcher digest":  {Dimension: "d", Index: 0, Count: 2},
+		"matcher not sha256": {Dimension: "d", Index: 0, Count: 2, MatcherDigest: "piece-0"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			identity := noDataIdentityV2()
+			identity.Shard = shard
+			var identityErr *IdentityError
+			if key, err := PlanNoDataHashKeyV2("alarmd", identity); !errors.As(err, &identityErr) {
+				t.Fatalf("PlanNoDataHashKeyV2() = %q, %v; want a deterministic identity refusal", key, err)
+			}
+			if key, err := PlanGapKeyV2("alarmd", execution.PlanGapIdentity{Plan: identity.Plan, StateGeneration: identity.StateGeneration, Shard: shard}); !errors.As(err, &identityErr) {
+				t.Fatalf("PlanGapKeyV2() = %q, %v; want a deterministic identity refusal", key, err)
+			}
+		})
+	}
+}
+
+// Two pieces of one strategy write their no-data memory in the same round and
+// each reads back its own.
+//
+// This is the failure the sharded kinds exist to prevent, run through the
+// store rather than asserted on key strings: under one key the second write
+// of a round is a conflict on the first's marker revision, and the loads
+// hand each piece the other's groups.
+func TestTwoPiecesOfOneStrategyKeepSeparateNoDataMemories(t *testing.T) {
+	backend := &casMemoryBackend{values: make(map[string][]byte)}
+	store := generationStore(t, backend)
+	ctx := context.Background()
+
+	pieceOf := func(index int) execution.PlanNoDataIdentity {
+		piece := noDataIdentityV2()
+		piece.Shard = execution.ShardRef{Dimension: "bk_target_ip", Index: index, Count: 2, MatcherDigest: string(seriesDigest("matcher-" + strconv.Itoa(index)))}
+		return piece
+	}
+	write := func(identity execution.PlanNoDataIdentity, group string) {
+		t.Helper()
+		mutation := noDataMutationFrom(t, execution.PlanNoDataMemoryUpdate{
+			DerivedFrom: execution.NoDataRepresentationNone,
+			Identity:    identity, ExpectedMarkerRevision: 0, ApplyVersion: applyVersion(),
+			ScheduleRevision: "plan-r1", RosterVersion: "TARGET_STATIC/1",
+			PresentAsOf: noDataPresentAsOf, Memory: []execution.NoDataGroupMemory{{GroupKey: group, FirstAbsent: 940}},
+		})
+		applied, err := store.ApplyNoData(ctx, execution.NoDataApplyRequest{
+			Contract: frozenRef(), Items: []execution.PlanNoDataMutation{mutation},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if applied.Items[0].Status != execution.NoDataApplied {
+			t.Fatalf("piece %d apply = %+v, want it applied: under a shared key the second piece's first write "+
+				"conflicts with the first piece's", identity.Shard.Index, applied.Items[0])
+		}
+	}
+	write(pieceOf(0), "ip=192.0.2.1")
+	write(pieceOf(1), "ip=192.0.2.2")
+
+	for index, want := range []string{"ip=192.0.2.1", "ip=192.0.2.2"} {
+		loaded, err := store.LoadNoData(ctx, execution.NoDataLoadRequest{
+			Contract: frozenRef(), Items: []execution.PlanNoDataLoadItem{{
+				Identity: pieceOf(index), ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1",
+			}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot := loaded.Items[0]
+		if snapshot.Status != execution.NoDataMemoryFound || len(snapshot.Groups) != 1 || snapshot.Groups[0].GroupKey != want {
+			t.Fatalf("piece %d loaded %+v, want only its own group %q: a piece that loads another's groups "+
+				"reports every one of them absent", index, snapshot, want)
+		}
+	}
+	// And the unsplit Plan's memory is untouched by either: nothing was written
+	// where a build that does not split would look.
+	loaded, err := store.LoadNoData(ctx, execution.NoDataLoadRequest{
+		Contract: frozenRef(), Items: []execution.PlanNoDataLoadItem{noDataLoadItemV2()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Items[0].Status != execution.NoDataMemoryMissing {
+		t.Fatalf("the unsplit Plan loaded %+v, want nothing: a piece wrote where the unsplit record lives", loaded.Items[0])
+	}
+}
+
+// Two pieces of one strategy open gap markers in the same round with
+// different reasons, and each reads back its own. Under one key the second
+// open would be a conflict on the first's marker revision, and a piece
+// warming for its own gap would find the other's scopes.
+func TestTwoPiecesOfOneStrategyKeepSeparateGapMarkers(t *testing.T) {
+	backend := &casMemoryBackend{values: make(map[string][]byte)}
+	store := generationStore(t, backend)
+	ctx := context.Background()
+
+	pieceOf := func(index int) execution.PlanGapIdentity {
+		base := noDataIdentityV2()
+		return execution.PlanGapIdentity{Plan: base.Plan, StateGeneration: base.StateGeneration, Shard: execution.ShardRef{
+			Dimension: "bk_target_ip", Index: index, Count: 2, MatcherDigest: string(seriesDigest("matcher-" + strconv.Itoa(index))),
+		}}
+	}
+	reasons := []execution.ReasonCode{execution.ReasonCode(contract.ReasonHistoryGapped), execution.ReasonCode(contract.ReasonConfigDrift)}
+	for index, reason := range reasons {
+		opened, err := execution.BuildPlanGapMutation(execution.PlanGapMutation{
+			Identity: pieceOf(index), ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1",
+			Scopes: []execution.GapScopeMutation{{Scope: execution.GapScope{LevelID: 1, HasLevel: true}, Kind: execution.GapOpen,
+				ReasonCode: reason, RequiredFullSlots: 2}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		applied, err := store.ApplyGap(ctx, execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{opened}})
+		if err != nil || applied.Items[0].Status != execution.GapGuardApplied {
+			t.Fatalf("piece %d ApplyGap(open) = (%+v, %v); under a shared key the second piece's open conflicts with the first's",
+				index, applied, err)
+		}
+	}
+	for index, reason := range reasons {
+		loaded, err := store.LoadGaps(ctx, execution.GapLoadRequest{Contract: frozenRef(), Items: []execution.PlanGapLoadItem{{
+			Identity: pieceOf(index), ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1",
+		}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		marker := loaded.Items[0]
+		if marker.Status != execution.GapFound || marker.MarkerRevision != 1 || len(marker.Scopes) != 1 || marker.Scopes[0].ReasonCode != reason {
+			t.Fatalf("piece %d loaded %+v, want its own marker at revision 1 with reason %q", index, marker, reason)
+		}
+	}
+	unsplit := noDataIdentityV2()
+	loaded, err := store.LoadGaps(ctx, execution.GapLoadRequest{Contract: frozenRef(), Items: []execution.PlanGapLoadItem{{
+		Identity: execution.PlanGapIdentity{Plan: unsplit.Plan, StateGeneration: unsplit.StateGeneration}, ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1",
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Items[0].Status != execution.GapMissing {
+		t.Fatalf("the unsplit Plan loaded %+v, want no marker: a piece wrote where the unsplit marker lives", loaded.Items[0])
 	}
 }
 

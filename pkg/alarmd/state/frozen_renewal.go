@@ -57,7 +57,7 @@ func (store *ExecutionStore) RenewFrozenRuntime(
 	if len(request.Items) > store.options.MaxItemsPerCall {
 		return execution.FrozenStateRenewalResult{}, errors.New("state: too many frozen series in one renewal request")
 	}
-	ttl, err := store.runtimeTTL(request.Retention)
+	ttl, err := store.runtimeTTL(request.Retention, request.HorizonSeconds)
 	if err != nil {
 		// A retention no configured TTL can serve is the apply path's refusal
 		// to make, and it makes it per Plan with a named reason. Repeating it
@@ -86,7 +86,11 @@ func (store *ExecutionStore) RenewFrozenRuntime(
 			result.Items[index].Outcome = execution.FrozenRenewalFresh
 			continue
 		}
-		key, err := RuntimeStateKeyV2(store.options.Prefix, item.Identity)
+		// The key the record was read from. A framed record lives under
+		// runtime3 and an envelope under runtime; renewing the other key
+		// keeps nothing alive, and a frozen series is never written, so the
+		// key it was read from is the key it stays under.
+		key, err := frozenRecordKey(store.options.Prefix, item)
 		if err == nil {
 			var target StorageTarget
 			target, err = store.options.Router.Route(item.Identity.Plan.TenantID, item.Identity.Plan.StrategyID)
@@ -188,4 +192,20 @@ func (store *ExecutionStore) FrozenRenewalGateResets() uint64 {
 		return 0
 	}
 	return store.frozenRenewals.Resets()
+}
+
+// frozenRecordKey names the key a frozen series' record lives under, by the
+// representation it was read in. An item that does not say is refused by
+// name rather than renewed under a guessed key: a guess that lands on the
+// other key returns "renewed" while the record it meant to keep alive runs
+// out, which is a loss nothing reports. Every view LoadRuntime finds carries
+// the representation, and frozen items are built from found views only.
+func frozenRecordKey(prefix string, item execution.FrozenSeriesState) (string, error) {
+	switch item.Representation {
+	case execution.StateRepresentationFramed:
+		return RuntimeStateKeyV3(prefix, item.Identity)
+	case execution.StateRepresentationEnvelope:
+		return RuntimeStateKeyV2(prefix, item.Identity)
+	}
+	return "", identityError("frozen series state does not say which representation its record is in")
 }

@@ -122,6 +122,11 @@ func TestAScopeTheRoundDidNotReportIsReleased(t *testing.T) {
 	if len(rows) != 1 || rows[0].GuardsTotal != 1 || rows[0].Guards[0].Scope != "plan" || rows[0].Guards[0].Observed != 4 || rows[0].Guards[0].Rounds != 4 {
 		t.Fatalf("rows = %+v / %+v, want only the plan scope, still counted from its first report", rows, rows[0].Guards)
 	}
+	// The count says what it counts, beside the window count on the same
+	// row that counts something else against the same required.
+	if rows[0].Guards[0].Measure != GuardObservedMeasure {
+		t.Fatalf("guard measure = %q, want %q", rows[0].Guards[0].Measure, GuardObservedMeasure)
+	}
 	// Reported again before the round completes: still on the row.
 	guardProgress(ctx, tracker, "s-1", "plan", "WARMING", "GAP_SKIPPED", 9, 5)
 	if rows := anyColumn(tracker); len(rows) != 1 || rows[0].GuardsTotal != 1 || rows[0].Guards[0].Observed != 5 {

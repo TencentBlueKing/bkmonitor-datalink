@@ -88,6 +88,18 @@ func (client *hashClient) Get(_ context.Context, _ string) *redis.StringCmd {
 	return redis.NewStringResult("", redis.Nil)
 }
 
+// HKeys serves the field names of a hash, which is how the topology cache
+// is read: the node set and nothing else.
+func (client *hashClient) HKeys(_ context.Context, key string) *redis.StringSliceCmd {
+	client.scans = append(client.scans, key)
+	fields := client.hashes[key]
+	names := make([]string, 0, len(fields)/2)
+	for position := 0; position+1 < len(fields); position += 2 {
+		names = append(names, fields[position])
+	}
+	return redis.NewStringSliceResult(names, nil)
+}
+
 // Both caches hang off the platform prefix and are read into one snapshot:
 // an instance resolved against a host index from another refresh would sit
 // under a module the host has since left.
@@ -95,6 +107,7 @@ func TestLoadReadsHostsAndServiceInstancesIntoOneSnapshot(t *testing.T) {
 	client := &hashClient{hashes: map[string][]string{
 		"bk_monitorv3.ce.cache.cmdb.host":             {"10.0.0.7|0", disabledByAddressHost, "700001", disabledByAddressHost},
 		"bk_monitorv3.ce.cache.cmdb.service_instance": {"7", instanceOnSpareHost},
+		"bk_monitorv3.ce.cache.cmdb.topo":             {"set|12", `{"bk_obj_id":"set","bk_inst_id":12}`},
 	}}
 	reader, err := NewReader(client, "bk_monitorv3.ce")
 	if err != nil {
@@ -107,8 +120,11 @@ func TestLoadReadsHostsAndServiceInstancesIntoOneSnapshot(t *testing.T) {
 	if index.Hosts() != 1 || index.ServiceInstances() != 1 {
 		t.Fatalf("index holds %d hosts and %d instances", index.Hosts(), index.ServiceInstances())
 	}
-	if !reflect.DeepEqual(client.scans, []string{"bk_monitorv3.ce.cache.cmdb.host", "bk_monitorv3.ce.cache.cmdb.service_instance"}) {
+	if !reflect.DeepEqual(client.scans, []string{"bk_monitorv3.ce.cache.cmdb.host", "bk_monitorv3.ce.cache.cmdb.service_instance", "bk_monitorv3.ce.cache.cmdb.topo"}) {
 		t.Fatalf("scanned %v", client.scans)
+	}
+	if index.TopologyNodes() != 1 {
+		t.Fatalf("topology nodes = %d, want the one the cache lists", index.TopologyNodes())
 	}
 	store := &Store{index: index, now: time.Now, maxAge: time.Hour, interval: time.Minute}
 	if health := store.Health(); health.Hosts != 1 || health.ServiceInstances != 1 {

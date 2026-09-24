@@ -35,6 +35,12 @@ type ControlSourceStats struct {
 	// succeeded under this store, by any process. Zero means no round is
 	// known to have; the age is then not emitted rather than made up.
 	LastSuccessAt time.Time
+	// Leading is whether this process runs the refresh, and
+	// PendingConfirmationAgeSeconds how long that refresh has been answering
+	// PENDING_CONFIRMATION, zero when nothing is pending. Emitted by the
+	// leader only.
+	Leading                       bool
+	PendingConfirmationAgeSeconds float64
 }
 
 // controlSourceCollector reads the process's control source state at scrape
@@ -42,11 +48,12 @@ type ControlSourceStats struct {
 // only when something happens stops moving when things stop happening,
 // which is the moment it is read.
 type controlSourceCollector struct {
-	mu     sync.Mutex
-	source func() ControlSourceStats
-	now    func() time.Time
-	mode   *prometheus.Desc
-	age    *prometheus.Desc
+	mu      sync.Mutex
+	source  func() ControlSourceStats
+	now     func() time.Time
+	mode    *prometheus.Desc
+	age     *prometheus.Desc
+	pending *prometheus.Desc
 }
 
 func newControlSourceCollector() *controlSourceCollector {
@@ -75,12 +82,20 @@ func newControlSourceCollector() *controlSourceCollector {
 				"read as just now. Past "+controlplane.SourceStalenessBound.String()+", the staleness the "+
 				"design accepts for the catalog, fleet health degrades. Reported by every replica from the "+
 				"same persisted fact, so a deployment with no leader still reports it rising."),
+		pending: descriptor("source_pending_confirmation_age_seconds",
+			"Seconds the leader's source refresh has been answering PENDING_CONFIRMATION with no PUBLISHED or "+
+				"UNCHANGED since; 0 when nothing is pending. A candidate is published only when two whole "+
+				"observations agree, and every pending round counts as a successful refresh, so "+
+				"control_source_last_success_age_seconds stays young while a change waits to go live; this is "+
+				"the reading that rises. Emitted by the leader only, from this process's rounds: a new leader "+
+				"starts it again."),
 	}
 }
 
 func (c *controlSourceCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.mode
 	ch <- c.age
+	ch <- c.pending
 }
 
 func (c *controlSourceCollector) Collect(ch chan<- prometheus.Metric) {
@@ -109,6 +124,9 @@ func (c *controlSourceCollector) Collect(ch chan<- prometheus.Metric) {
 			age = 0
 		}
 		ch <- prometheus.MustNewConstMetric(c.age, prometheus.GaugeValue, age)
+	}
+	if stats.Leading {
+		ch <- prometheus.MustNewConstMetric(c.pending, prometheus.GaugeValue, stats.PendingConfirmationAgeSeconds)
 	}
 }
 

@@ -30,7 +30,7 @@ import (
 // count of rounds, which is the reading that already exists and cannot be
 // acted on.
 func TestAStallIsReportedOnceAndAgainOnlyAfterItRecovers(t *testing.T) {
-	plan := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}
+	plan := execution.PlanKey{PlanIdentity: execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}}
 	var streaks noDataSkipStreaks
 	skip := nodata.OutcomeSkippedHostsUnresolved
 
@@ -74,7 +74,7 @@ func TestStreaksAreCountedPerPlan(t *testing.T) {
 	var streaks noDataSkipStreaks
 	skip := nodata.OutcomeSkippedQueryNotFull
 	for index := 0; index < noDataPersistentSkipRounds*2; index++ {
-		plan := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: string(rune('a' + index))}
+		plan := execution.PlanKey{PlanIdentity: execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: string(rune('a' + index))}}
 		if streaks.record(plan, skip) {
 			t.Fatalf("Plan %s reported a stall on its first skipped round", plan.StrategyID)
 		}

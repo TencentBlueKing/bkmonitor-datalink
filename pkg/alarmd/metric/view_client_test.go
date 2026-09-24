@@ -7,7 +7,10 @@ package metric
 
 import (
 	"math"
+	"reflect"
 	"testing"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream"
 )
 
 // The Worker's view gauges: installs and failures by closed word with other,
@@ -58,5 +61,14 @@ func TestTheWorkerPublishesObjectsMissingAsUnknownWhenItCouldNotProbe(t *testing
 	unprobed := gather(ViewClientCounts{Connected: true, ObjectsMissing: 0, ObjectsProbed: false})
 	if value := unprobed["bkmonitor_alarmd_view_objects_missing"][""]; !math.IsNaN(value) {
 		t.Fatalf("objects missing without a probe = %v, want NaN", value)
+	}
+}
+
+// The discovery miss words are spelled once, in the client; the metric's
+// closed set is that list, so a word added to one cannot land on other in
+// the other.
+func TestTheDiscoveryMissWordsAreTheClientsList(t *testing.T) {
+	if !reflect.DeepEqual(viewClientDiscoveryMisses, viewstream.DiscoveryMissReasons) {
+		t.Fatalf("metric %v, client %v", viewClientDiscoveryMisses, viewstream.DiscoveryMissReasons)
 	}
 }

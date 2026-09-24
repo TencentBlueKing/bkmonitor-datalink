@@ -37,7 +37,8 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	ControlService_Connect_FullMethodName = "/alarmd.control.v1.ControlService/Connect"
+	ControlService_Connect_FullMethodName      = "/alarmd.control.v1.ControlService/Connect"
+	ControlService_ReadEvidence_FullMethodName = "/alarmd.control.v1.ControlService/ReadEvidence"
 )
 
 // ControlServiceClient is the client API for ControlService service.
@@ -47,6 +48,10 @@ type ControlServiceClient interface {
 	// Connect is the one stream. The Worker speaks first with Hello; the
 	// Leader answers with a Snapshot, or a Refusal and the end of the stream.
 	Connect(ctx context.Context, opts ...grpc.CallOption) (ControlService_ConnectClient, error)
+	// ReadEvidence is an independent bounded diagnostic call. It does not use
+	// the Connect queues or carry CLI session credentials. The runtime handler
+	// authenticates the calling Worker and authorizes the requested operation.
+	ReadEvidence(ctx context.Context, in *EvidenceRequest, opts ...grpc.CallOption) (*EvidenceResult, error)
 }
 
 type controlServiceClient struct {
@@ -88,6 +93,15 @@ func (x *controlServiceConnectClient) Recv() (*LeaderMessage, error) {
 	return m, nil
 }
 
+func (c *controlServiceClient) ReadEvidence(ctx context.Context, in *EvidenceRequest, opts ...grpc.CallOption) (*EvidenceResult, error) {
+	out := new(EvidenceResult)
+	err := c.cc.Invoke(ctx, ControlService_ReadEvidence_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ControlServiceServer is the server API for ControlService service.
 // All implementations must embed UnimplementedControlServiceServer
 // for forward compatibility
@@ -95,6 +109,10 @@ type ControlServiceServer interface {
 	// Connect is the one stream. The Worker speaks first with Hello; the
 	// Leader answers with a Snapshot, or a Refusal and the end of the stream.
 	Connect(ControlService_ConnectServer) error
+	// ReadEvidence is an independent bounded diagnostic call. It does not use
+	// the Connect queues or carry CLI session credentials. The runtime handler
+	// authenticates the calling Worker and authorizes the requested operation.
+	ReadEvidence(context.Context, *EvidenceRequest) (*EvidenceResult, error)
 	mustEmbedUnimplementedControlServiceServer()
 }
 
@@ -104,6 +122,9 @@ type UnimplementedControlServiceServer struct {
 
 func (UnimplementedControlServiceServer) Connect(ControlService_ConnectServer) error {
 	return status.Errorf(codes.Unimplemented, "method Connect not implemented")
+}
+func (UnimplementedControlServiceServer) ReadEvidence(context.Context, *EvidenceRequest) (*EvidenceResult, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReadEvidence not implemented")
 }
 func (UnimplementedControlServiceServer) mustEmbedUnimplementedControlServiceServer() {}
 
@@ -144,13 +165,36 @@ func (x *controlServiceConnectServer) Recv() (*WorkerMessage, error) {
 	return m, nil
 }
 
+func _ControlService_ReadEvidence_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(EvidenceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ControlServiceServer).ReadEvidence(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ControlService_ReadEvidence_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ControlServiceServer).ReadEvidence(ctx, req.(*EvidenceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ControlService_ServiceDesc is the grpc.ServiceDesc for ControlService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var ControlService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "alarmd.control.v1.ControlService",
 	HandlerType: (*ControlServiceServer)(nil),
-	Methods:     []grpc.MethodDesc{},
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ReadEvidence",
+			Handler:    _ControlService_ReadEvidence_Handler,
+		},
+	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "Connect",

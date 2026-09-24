@@ -101,8 +101,13 @@ func storedAfter(
 			}
 			continue
 		}
+		// Every field the absence form carries, because this helper is a writer
+		// of the stored memory like any other: one it forgets is a field the
+		// next round reads as zero, and a suppression read as zero is a stopped
+		// absence that starts producing again.
 		memory[group.GroupKey] = execution.NoDataGroupMemory{
 			GroupKey: group.GroupKey, LastSeen: group.Absent.LastSeen, FirstAbsent: group.Absent.FirstAbsent,
+			SuppressedAt: group.Absent.SuppressedAt,
 		}
 	}
 	for _, key := range mutation.Del {
@@ -117,6 +122,7 @@ func storedAfter(
 	snapshot.MarkerRevision = mutation.ExpectedMarkerRevision + 1
 	snapshot.PersistedMutationDigest = mutation.MutationDigest
 	snapshot.RosterVersion = mutation.RosterVersion
+	snapshot.TrackingExhaustedAt = mutation.TrackingExhaustedAt
 	return snapshot
 }
 

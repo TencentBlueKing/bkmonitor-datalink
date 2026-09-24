@@ -36,6 +36,12 @@ import (
 type appliedPlanRecorder struct {
 	mutex sync.Mutex
 	plans map[execution.PlanIdentity]struct{}
+	// incomplete is the Plans this attempt did not write whole: a key failed,
+	// was refused, was never sent, or was already there from an earlier
+	// attempt. A Plan here is never applied whatever else was counted for it:
+	// a mark that said otherwise would have the Slot finalized as evaluated
+	// with some of the Plan's series one Slot behind.
+	incomplete map[execution.PlanIdentity]struct{}
 	// committed is set when Progress was written. An attempt that got that far
 	// has recorded the Slot properly and must leave no mark: the mark exists
 	// only to answer a question the Progress would otherwise have answered.
@@ -46,7 +52,7 @@ type appliedPlanContextKey struct{}
 
 // withAppliedPlans starts recording for one attempt.
 func withAppliedPlans(ctx context.Context) (context.Context, *appliedPlanRecorder) {
-	recorder := &appliedPlanRecorder{plans: map[execution.PlanIdentity]struct{}{}}
+	recorder := &appliedPlanRecorder{plans: map[execution.PlanIdentity]struct{}{}, incomplete: map[execution.PlanIdentity]struct{}{}}
 	return context.WithValue(ctx, appliedPlanContextKey{}, recorder), recorder
 }
 
@@ -55,19 +61,36 @@ func appliedPlansFrom(ctx context.Context) *appliedPlanRecorder {
 	return recorder
 }
 
-// recordApplied notes a Plan whose state this attempt wrote.
+// recordApplied notes a Plan whose every key this attempt wrote. The caller
+// decides that from the count of APPLIED keys against the Plan's list, once
+// every chunk has run; a Plan with any key failed, refused, unsent, or
+// already applied by an earlier attempt goes to recordIncomplete instead, and
+// stays there.
 //
-// Only APPLIED, never ALREADY_APPLIED. An already-applied key was written by an
-// earlier attempt, and if that attempt also failed to commit Progress then it
-// left its own mark; counting it here would let an attempt claim credit for
-// work it did not do, which matters because the count is compared against the
-// whole due set to decide whether a Slot still owes a gap.
+// Only APPLIED counts, never ALREADY_APPLIED. An already-applied key was
+// written by an earlier attempt, and if that attempt also failed to commit
+// Progress then it left its own mark; counting it here would let an attempt
+// claim credit for work it did not do, which matters because the count is
+// compared against the whole due set to decide whether a Slot still owes a
+// gap.
 func (recorder *appliedPlanRecorder) recordApplied(plan execution.PlanIdentity) {
 	if recorder == nil {
 		return
 	}
 	recorder.mutex.Lock()
 	recorder.plans[plan] = struct{}{}
+	recorder.mutex.Unlock()
+}
+
+// recordIncomplete notes a Plan that this attempt did not get whole into the
+// store. It is final for the attempt: nothing recorded for the Plan before or
+// after makes it applied.
+func (recorder *appliedPlanRecorder) recordIncomplete(plan execution.PlanIdentity) {
+	if recorder == nil {
+		return
+	}
+	recorder.mutex.Lock()
+	recorder.incomplete[plan] = struct{}{}
 	recorder.mutex.Unlock()
 }
 
@@ -99,7 +122,13 @@ func (recorder *appliedPlanRecorder) unrecorded() []execution.PlanIdentity {
 	}
 	plans := make([]execution.PlanIdentity, 0, len(recorder.plans))
 	for plan := range recorder.plans {
+		if _, partial := recorder.incomplete[plan]; partial {
+			continue
+		}
 		plans = append(plans, plan)
+	}
+	if len(plans) == 0 {
+		return nil
 	}
 	sort.Slice(plans, func(left, right int) bool { return lessPlanIdentity(plans[left], plans[right]) })
 	return plans
@@ -130,9 +159,12 @@ func (coordinator *SlotExecutionCoordinator) recordExecutionEvidence(
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), executionEvidenceWriteTimeout)
 	defer cancel()
 	now := time.Now()
+	// The mark lives to the Slot's keep-until, not its recovery-until: the
+	// finalization that reads it runs after the replay window closes, and a
+	// mark that ended where its reader begins was never there to be read.
 	err := coordinator.ports.ExecutionEvidence.Record(
-		writeCtx, request.Contract.Slot, request.DuePlanTargets.Plans, applied,
-		time.UnixMilli(request.RecoveryUntilUnixMilli), now,
+		writeCtx, request.Contract.Slot, execution.PlanIdentitiesOf(request.DuePlanTargets.Plans), applied,
+		time.UnixMilli(request.KeepUntilUnixMilli), now,
 	)
 	result := observability.Result(observability.ResultSuccess)
 	reason := observability.ReasonCode(observability.ReasonNone)

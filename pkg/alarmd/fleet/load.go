@@ -98,12 +98,16 @@ const (
 // its own; and the demoted objects that skipped within the window -- the
 // refusal's consequence, apart because no capacity changes it.
 type LoadLoss struct {
-	State               LossState `json:"state"`
-	Ongoing             int       `json:"ongoing"`
-	AfterRestart        int       `json:"after_restart"`
-	WhileDemotedRecent  int       `json:"while_demoted_recent"`
-	WindowSeconds       int       `json:"window_seconds"`
-	RestartGraceSeconds int       `json:"restart_grace_seconds"`
+	State        LossState `json:"state"`
+	Ongoing      int       `json:"ongoing"`
+	AfterRestart int       `json:"after_restart"`
+	// AfterCooldown is the recent records a cooldown held on an object that
+	// has since left the pool: with the restart's, a loss that names its
+	// mechanism and asks no capacity question. In progress all the same.
+	AfterCooldown       int `json:"after_cooldown"`
+	WhileDemotedRecent  int `json:"while_demoted_recent"`
+	WindowSeconds       int `json:"window_seconds"`
+	RestartGraceSeconds int `json:"restart_grace_seconds"`
 }
 
 // Bottleneck is the resource the evidence points at, or that it points at
@@ -293,19 +297,21 @@ func backlogOf(census *ScheduleCensus) LoadBacklog {
 func lossOfView(view *View, now time.Time) LoadLoss {
 	reading := LoadLoss{State: LossNone, WindowSeconds: int(RecentSkipWindow / time.Second),
 		RestartGraceSeconds: int(RestartCatchUpGrace / time.Second)}
-	lossRecords(view, now, func(_ string, _, _ Check, _ string, skip SkippedSpan, loss Loss) {
+	lossRecords(view, now, func(_ string, _, _ Check, _ string, skip SkippedSpan, loss Loss, _ bool) {
 		switch loss {
 		case LossOngoing:
 			reading.Ongoing++
 		case LossAfterRestart:
 			reading.AfterRestart++
+		case LossAfterCooldown:
+			reading.AfterCooldown++
 		case LossWhileDemoted:
 			if now.Sub(skip.At) <= RecentSkipWindow {
 				reading.WhileDemotedRecent++
 			}
 		}
 	})
-	if reading.Ongoing > 0 || reading.AfterRestart > 0 {
+	if reading.Ongoing > 0 || reading.AfterRestart > 0 || reading.AfterCooldown > 0 {
 		reading.State = LossInProgress
 	}
 	return reading

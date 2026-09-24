@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream/pb"
 )
@@ -77,17 +79,61 @@ type Stats struct {
 	Ignored Ignored
 	// Lagging lists the Workers that have not installed the current version.
 	Lagging []LaggingReceiver
+	// NotSwitched lists the Workers that installed the current version but
+	// do not yet execute every one of its Query Groups from it, each with
+	// the count it does (decision-016 batch 4). Empty is every installed
+	// Worker switched; in the shadow step it is every installed Worker.
+	NotSwitched []LaggingReceiver
 	// Counters since the process started.
 	Publications        uint64
 	PublicationsSkipped uint64
 	SnapshotChunksSent  uint64
 	DeltasSent          uint64
 	EmptyDeltasSent     uint64
-	Refusals            uint64
+	// DeltasOversized counts the deltas that were not sent because one
+	// message of them would have exceeded MessageBytes; each was replaced
+	// by the chunked snapshot of the same revision.
+	DeltasOversized uint64
+	Refusals        uint64
+	// PublishFailingSince is when the Leader's desired set last failed to
+	// be published with no success since; zero while publishing works.
+	// PublishFailures counts the failures since then, PublishFailureReason
+	// names the latest (PublishFailureReasons), and PublishFailuresByReason
+	// counts every failure since the process started.
+	PublishFailingSince     time.Time
+	PublishFailures         uint64
+	PublishFailureReason    string
+	PublishFailuresByReason map[string]uint64
+	// NoSessionsSince is when this Leader was first seen with Workers
+	// expected and none of them holding a stream; zero otherwise. Read by
+	// Stats, so it is as fresh as the last read.
+	NoSessionsSince time.Time
+}
+
+// Why a desired set could not be published, closed: a metric label.
+const (
+	PublishFailureActivationUnreadable  = "activation_unreadable"
+	PublishFailureContentUnreadable     = "content_unreadable"
+	PublishFailureDrainingUnreadable    = "draining_unreadable"
+	PublishFailureActiveSetUnreadable   = "active_set_unreadable"
+	PublishFailureAssignmentsUnreadable = "assignments_unreadable"
+	PublishFailureRejected              = "publish_rejected"
+)
+
+// PublishFailureReasons lists every reason, for the metric that pre-creates
+// them all.
+var PublishFailureReasons = []string{PublishFailureActivationUnreadable, PublishFailureContentUnreadable,
+	PublishFailureDrainingUnreadable, PublishFailureActiveSetUnreadable, PublishFailureAssignmentsUnreadable, PublishFailureRejected}
+
+type publishFailures struct {
+	since    time.Time
+	run      uint64
+	reason   string
+	byReason map[string]uint64
 }
 
 type serverCounters struct {
-	publications, publicationsSkipped, snapshotChunks, deltas, emptyDeltas, refusals uint64
+	publications, publicationsSkipped, snapshotChunks, deltas, emptyDeltas, deltasOversized, refusals uint64
 }
 
 // Server implements pb.ControlServiceServer for the Leader.
@@ -95,6 +141,7 @@ type Server struct {
 	pb.UnimplementedControlServiceServer
 	admission Admission
 	observer  observability.Observer
+	costs     CostSink
 	now       func() time.Time
 	// tick is how often a session checks for idleness; HeartbeatInterval in
 	// production, shorter in a test that drives the clock.
@@ -105,6 +152,15 @@ type Server struct {
 	sessions  map[string]*session
 	counters  serverCounters
 	closed    bool
+	failures  publishFailures
+	// noSessionsSince backs Stats.NoSessionsSince.
+	noSessionsSince time.Time
+
+	// Diagnostics have their own admission slots and handler lock. A slow
+	// evidence reader must not hold the control stream's session lock or queue.
+	evidenceMu      sync.RWMutex
+	evidenceHandler func(context.Context, *pb.EvidenceRequest) (*pb.EvidenceResult, error)
+	evidenceSlots   chan struct{}
 }
 
 // ServerOptions are the seams a test needs: a clock, and how often the
@@ -112,6 +168,9 @@ type Server struct {
 type ServerOptions struct {
 	Now  func() time.Time
 	Tick time.Duration
+	// Costs receives each heartbeat's Query Group costs with the Worker they
+	// came from; nil discards them (decision-020 section 5.2).
+	Costs CostSink
 }
 
 func NewServer(admission Admission, observer observability.Observer, options ServerOptions) (*Server, error) {
@@ -129,7 +188,8 @@ func NewServer(admission Admission, observer observability.Observer, options Ser
 	if tick <= 0 {
 		tick = HeartbeatInterval
 	}
-	return &Server{admission: admission, observer: observer, now: now, tick: tick, sessions: map[string]*session{}}, nil
+	return &Server{admission: admission, observer: observer, costs: options.Costs, now: now, tick: tick,
+		sessions: map[string]*session{}, evidenceSlots: make(chan struct{}, EvidenceConcurrency)}, nil
 }
 
 // Lead starts a term: a new publisher, and every open session is woken so
@@ -187,13 +247,16 @@ func (server *Server) Publish(ctx context.Context, desired Desired) (Published, 
 	publisher := server.publisher
 	server.mu.Unlock()
 	if publisher == nil {
+		server.NotePublishFailure(PublishFailureRejected)
 		return Published{}, errors.New("alarmd viewstream: not leading")
 	}
 	published, err := publisher.Publish(desired)
 	if err != nil {
+		server.NotePublishFailure(PublishFailureRejected)
 		return Published{}, err
 	}
 	server.mu.Lock()
+	server.failures.since, server.failures.run, server.failures.reason = time.Time{}, 0, ""
 	if published.Changed {
 		server.counters.publications++
 	} else {
@@ -227,15 +290,40 @@ func (server *Server) Publish(ctx context.Context, desired Desired) (Published, 
 	return published, nil
 }
 
+// NotePublishFailure records that the Leader could not publish its desired
+// set, by why (one of PublishFailureReasons). It is how a Leader that cannot
+// publish is told from one with nothing new to publish: both leave the
+// revision where it was. The next successful Publish clears the run.
+func (server *Server) NotePublishFailure(reason string) {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if server.failures.byReason == nil {
+		server.failures.byReason = make(map[string]uint64, len(PublishFailureReasons))
+	}
+	if server.failures.run == 0 {
+		server.failures.since = server.now()
+	}
+	server.failures.run++
+	server.failures.reason = reason
+	server.failures.byReason[reason]++
+}
+
 // Stats for the page and the metrics.
 func (server *Server) Stats() Stats {
 	server.mu.Lock()
 	defer server.mu.Unlock()
 	stats := Stats{Sessions: len(server.sessions),
+		PublishFailingSince: server.failures.since, PublishFailures: server.failures.run,
+		PublishFailureReason: server.failures.reason, PublishFailuresByReason: make(map[string]uint64, len(PublishFailureReasons)),
 		Publications: server.counters.publications, PublicationsSkipped: server.counters.publicationsSkipped,
 		SnapshotChunksSent: server.counters.snapshotChunks, DeltasSent: server.counters.deltas,
-		EmptyDeltasSent: server.counters.emptyDeltas, Refusals: server.counters.refusals}
+		EmptyDeltasSent: server.counters.emptyDeltas, DeltasOversized: server.counters.deltasOversized,
+		Refusals: server.counters.refusals}
+	for _, reason := range PublishFailureReasons {
+		stats.PublishFailuresByReason[reason] = server.failures.byReason[reason]
+	}
 	if server.publisher == nil {
+		server.noSessionsSince = time.Time{}
 		return stats
 	}
 	stats.Leading, stats.ControlEpoch, stats.Revision = true, server.publisher.epoch, server.publisher.Revision()
@@ -243,13 +331,43 @@ func (server *Server) Stats() Stats {
 		stats.Current, stats.Counts = key, counts
 		stats.Objects, _ = server.publisher.ledger.Objects(key)
 		stats.Lagging = server.publisher.ledger.Lagging("installed")
+		installed := make(map[string]struct{}, len(stats.Lagging))
+		for _, lagging := range stats.Lagging {
+			installed[lagging.WorkerID] = struct{}{}
+		}
+		for _, receiver := range server.publisher.ledger.Lagging("switched") {
+			if _, short := installed[receiver.WorkerID]; short {
+				continue
+			}
+			stats.NotSwitched = append(stats.NotSwitched, receiver)
+		}
 		for index := range stats.Lagging {
 			_, connected := server.sessions[stats.Lagging[index].WorkerID]
 			stats.Lagging[index].Connected = connected
 		}
 	}
 	stats.Ignored = server.publisher.ledger.Ignored()
+	// Workers are expected and none holds a stream: a Leader whose view
+	// reaches nobody. Dated from the first read that saw it.
+	if stats.Counts.Expected > 0 && stats.Sessions == 0 {
+		if server.noSessionsSince.IsZero() {
+			server.noSessionsSince = server.now()
+		}
+	} else {
+		server.noSessionsSince = time.Time{}
+	}
+	stats.NoSessionsSince = server.noSessionsSince
 	return stats
+}
+
+// Snapshot is the view the current version gives one Worker, as a Worker
+// that connected now would receive it; false while nothing is published.
+func (server *Server) Snapshot(workerID string) (View, bool) {
+	publisher := server.currentPublisher()
+	if publisher == nil {
+		return View{}, false
+	}
+	return publisher.Snapshot(workerID)
 }
 
 func (server *Server) currentPublisher() *Publisher {
@@ -343,7 +461,7 @@ func (server *Server) recordClaimedInstall(ctx context.Context, receiver Receive
 	if !publisher.ledger.MarkSent(installed.Key(), receiver) {
 		return false
 	}
-	recorded := publisher.ledger.Record(Receipt{Receiver: receiver, Version: installed, Acked: true, Installed: true})
+	recorded := publisher.ledger.RecordClaimed(receiver, installed)
 	if recorded.InstalledByAll {
 		server.observeInstalledByAll(ctx, recorded)
 	}
@@ -520,6 +638,11 @@ func (sess *session) receive() {
 			sess.mu.Unlock()
 			sess.poke()
 		case *pb.WorkerMessage_Heartbeat:
+			if sink := sess.server.costs; sink != nil {
+				if costs := CostsFromWire(body.Heartbeat.Costs); len(costs) > 0 {
+					sink.RecordCosts(sess.receiver.WorkerID, costs)
+				}
+			}
 			sess.enqueue(&pb.LeaderMessage{Body: &pb.LeaderMessage_Heartbeat{Heartbeat: &pb.Heartbeat{
 				SentAtMs: sess.server.now().UnixMilli(), Installed: versionToWire(sess.currentSent())}}})
 		case *pb.WorkerMessage_ObjectRequest:
@@ -614,21 +737,34 @@ func (sess *session) publish(publisher *Publisher) error {
 	}
 	if !wantSnapshot && installed.ControlEpoch == publisher.epoch && installed == sent {
 		if delta, ok := publisher.Step(sess.receiver.WorkerID, installed); ok {
-			if err := sess.stream.Send(&pb.LeaderMessage{Body: &pb.LeaderMessage_Delta{Delta: DeltaToWire(delta)}}); err != nil {
-				return err
-			}
-			publisher.ledger.MarkSent(delta.Target.Key(), sess.receiver)
-			sess.server.count(func(c *serverCounters) {
-				if delta.Empty() {
-					c.emptyDeltas++
-				} else {
-					c.deltas++
+			if wire := DeltaToWire(delta); proto.Size(wire) > MessageBytes {
+				// A delta is one message, and a snapshot is as many as its
+				// size needs. A step that adds most of a large view - the
+				// first publication after a Worker joins, a rebalance that
+				// hands it thousands of Query Groups - is a delta larger than
+				// the receiver accepts; sending it would be refused there,
+				// and on reconnect the Worker still holds the previous
+				// revision, so the same delta would be built and refused
+				// again, and the Worker never advances. The snapshot below
+				// carries the same target in chunks the receiver takes.
+				sess.server.count(func(c *serverCounters) { c.deltasOversized++ })
+			} else {
+				if err := sess.stream.Send(&pb.LeaderMessage{Body: &pb.LeaderMessage_Delta{Delta: wire}}); err != nil {
+					return err
 				}
-			})
-			sess.mu.Lock()
-			sess.sent = delta.Target
-			sess.mu.Unlock()
-			return nil
+				publisher.ledger.MarkSent(delta.Target.Key(), sess.receiver)
+				sess.server.count(func(c *serverCounters) {
+					if delta.Empty() {
+						c.emptyDeltas++
+					} else {
+						c.deltas++
+					}
+				})
+				sess.mu.Lock()
+				sess.sent = delta.Target
+				sess.mu.Unlock()
+				return nil
+			}
 		}
 	}
 	snapshot, ok := publisher.Snapshot(sess.receiver.WorkerID)

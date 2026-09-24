@@ -23,25 +23,25 @@ func TestTheSinksCountTravelsThroughTheCallersContext(t *testing.T) {
 	if read() != nil {
 		t.Fatal("a count nobody reported read as a count")
 	}
-	ReportOutputWrite(ctx, 0, 14)
+	ReportOutputWrite(ctx, 0, 14, nil)
 	facts := read()
 	if facts == nil || facts.Published != 0 || facts.WithoutMessage != 14 {
 		t.Fatalf("facts = %+v, want zero messages and fourteen events without one", facts)
 	}
 	// The sink reporting again -- a retry inside one call -- replaces, and the
 	// copy a reader took stands.
-	ReportOutputWrite(ctx, 3, 0)
+	ReportOutputWrite(ctx, 3, 0, nil)
 	if facts.Published != 0 || read().Published != 3 {
 		t.Fatalf("earlier copy %+v, latest %+v", facts, read())
 	}
 	// A derived context still reaches the same report.
 	child := ContextWithTraceFields(ctx, TraceFields{StrategyID: "1"})
-	ReportOutputWrite(child, 5, 1)
+	ReportOutputWrite(child, 5, 1, nil)
 	if read().Published != 5 || read().WithoutMessage != 1 {
 		t.Fatalf("report through a derived context = %+v", read())
 	}
-	ReportOutputWrite(context.Background(), 9, 9)
-	ReportOutputWrite(nil, 9, 9) //nolint:staticcheck // a nil context is the case under test
+	ReportOutputWrite(context.Background(), 9, 9, nil)
+	ReportOutputWrite(nil, 9, 9, nil) //nolint:staticcheck // a nil context is the case under test
 }
 
 // On the line, both numbers are present with their zeros: a success that

@@ -221,6 +221,31 @@ func TestBlockedRoundsUseTheLowerThreshold(t *testing.T) {
 	}
 }
 
+// A round the Worker's executable view did not allow produced nothing, like
+// a source it could not read: the object gets a blocked-run row under that
+// word after the blocked threshold, and a healthy round clears it. Without
+// the word in the vocabulary the tracker said nothing, and a Query Group
+// refused on every round (decision-016 batch 4b) had no row.
+func TestRoundsTheViewDidNotAllowAreBlockedRuns(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	for round := 0; round < DefaultBlockedRounds; round++ {
+		tracker.Observe(context.Background(), runOutcome("qg-1", "view_not_executable"))
+	}
+	anomalies := tracker.Anomalies()
+	if len(anomalies) != 1 || anomalies[0].Kind != KindBlockedRun || anomalies[0].ReasonCode != "view_not_executable" {
+		t.Fatalf("anomalies = %+v, want one blocked run under view_not_executable", anomalies)
+	}
+	Attribute(anomalies, now)
+	if anomalies[0].Finding.Check != CheckDependencyDown {
+		t.Fatalf("a round the view did not allow is under %s, want %s", anomalies[0].Finding.Check, CheckDependencyDown)
+	}
+	tracker.Observe(context.Background(), completion("qg-1", "FULL_COMPLETED", "8930"))
+	if anomalies := tracker.Anomalies(); len(anomalies) != 0 {
+		t.Fatalf("anomalies = %+v, want the run cleared once the view allowed a round", anomalies)
+	}
+}
+
 // Rounds that were simply not due say nothing about health and must neither
 // start nor clear a run, or a quiet query group would look broken.
 func TestRoundsThatSayNothingDoNotAffectTheRun(t *testing.T) {
@@ -624,6 +649,55 @@ func TestARoundWithoutCoverageEndsTheShortRun(t *testing.T) {
 		t.Fatalf("coverage = %+v, want none carried from an earlier round: a shortfall left over "+
 			"from a round that is no longer on display reads as describing the one that is",
 			*listed[0].Coverage)
+	}
+}
+
+// A round whose coverage the observer refused leaves the rule on the row
+// where the coverage would be, and a later round that reads clean clears it:
+// the row says one of three things -- the windows, "the server refused the
+// reading", or nothing -- and never lets a refusal look like every window
+// complete.
+func TestARefusedCoverageStandsOnTheRowWhereTheReadingWouldBe(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	// The tracker sits behind the observer's normalize in production
+	// (Multi.Observe normalizes before fanning out), so the fixture hands
+	// it what normalize would: no facts, the rule.
+	refused := coverageCompletion("qg-refused", 3, 1, 6, 9)
+	refused.HistoryCoverage = nil
+	refused.HistoryCoverageRejected = &observability.CoverageRejection{Rule: observability.CoverageRejectWindowHoleArithmetic, Series: "abc"}
+	for round := 0; round < DefaultDegradedRounds+1; round++ {
+		tracker.Observe(context.Background(), refused)
+	}
+	rows := append(tracker.Anomalies(), tracker.Undecidable()...)
+	if len(rows) != 1 || rows[0].Coverage != nil || rows[0].CoverageRejected == nil ||
+		rows[0].CoverageRejected.Rule != string(observability.CoverageRejectWindowHoleArithmetic) || rows[0].CoverageRejected.Series != "abc" {
+		t.Fatalf("rows = %+v, want the object listed with the refusal and no coverage", rows)
+	}
+	tracker.Observe(context.Background(), coverageCompletion("qg-refused", 3, 1, 6, 9))
+	rows = append(tracker.Anomalies(), tracker.Undecidable()...)
+	if len(rows) != 1 || rows[0].Coverage == nil || rows[0].CoverageRejected != nil {
+		t.Fatalf("rows after a clean round = %+v, want the coverage back and the refusal gone", rows)
+	}
+	// A refusal, then a healthy round, then a degraded round that reports
+	// no coverage at all: the refusal ended with the run it belonged to and
+	// does not come back on the new one.
+	for round := 0; round < DefaultDegradedRounds+1; round++ {
+		tracker.Observe(context.Background(), refused)
+	}
+	tracker.Observe(context.Background(), completion("qg-refused", "FULL_COMPLETED", "8930"))
+	if listed := append(tracker.Anomalies(), tracker.Undecidable()...); len(listed) != 0 {
+		t.Fatalf("rows after a healthy round = %+v, want the object gone", listed)
+	}
+	// Blocked rounds never reach the site that reads a round's coverage, so
+	// the refusal from the earlier run can only be gone if the healthy round
+	// that ended that run cleared it.
+	for round := 0; round < DefaultBlockedRounds; round++ {
+		tracker.Observe(context.Background(), runOutcome("qg-refused", "source_blocked"))
+	}
+	rows = tracker.Anomalies()
+	if len(rows) != 1 || rows[0].Kind != KindBlockedRun || rows[0].CoverageRejected != nil {
+		t.Fatalf("rows on a new blocked run = %+v, want the old refusal not carried onto it", rows)
 	}
 }
 
@@ -1130,39 +1204,54 @@ func TestGapSkipsAreRetainedPastTheRoundsThatFollow(t *testing.T) {
 	}
 }
 
-// An object whose query returns no records for the degraded-rounds threshold,
-// after having returned some, is listed as no-data: healthy for the equation,
-// the data side's to look at. One that never returned records is not on that
-// line -- a source that only speaks when something happens looks the same
-// until it speaks -- and a round with records ends the run. (Never having
-// spoken for an hour is its own line; empty_every_round_test.go.)
+// An object whose query returns no records for the degraded-rounds threshold
+// and for an hour of the source's clock since records were last seen, after
+// having returned some, is listed as no-data: healthy for the equation, the
+// data side's to look at. Both gates, because either alone lists a source that
+// is fine: a source that reports every ten minutes over a sixty-second object
+// completes nine empty rounds between two with records, and a slow object
+// spans the hour in two. One that never returned records is not on this line
+// -- a source that only speaks when something happens looks the same until it
+// speaks -- and a round with records ends the run. (Never having spoken for an
+// hour is its own line; empty_every_round_test.go.)
 func TestNoDataIsListedOnlyAfterDataStopped(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
-	empty := func(queryGroup string) {
-		tracker.Observe(context.Background(), completion(queryGroup, "FULL_EMPTY_COMPLETED", "8930"))
-	}
+	minute := time.Minute
 	// Never had data: not on the data side's line however many rounds.
 	for round := 0; round < DefaultDegradedRounds+2; round++ {
-		empty("qg-silent-by-nature")
+		tracker.Observe(context.Background(), emptyAt("qg-silent-by-nature", "8930", at.at.Add(time.Duration(round)*minute)))
 	}
-	// Had data, then stopped.
-	tracker.Observe(context.Background(), completion("qg-stopped", "FULL_COMPLETED", "8930"))
-	at.at = at.at.Add(time.Minute)
-	for round := 0; round < DefaultDegradedRounds; round++ {
-		empty("qg-stopped")
+	// Had data, then stopped: sixty-one empty minutes.
+	tracker.Observe(context.Background(), dataAt("qg-stopped", "8930", at.at))
+	at.at = at.at.Add(minute)
+	stoppedSince := at.at
+	for round := 0; round <= 60; round++ {
+		tracker.Observe(context.Background(), emptyAt("qg-stopped", "8930", stoppedSince.Add(time.Duration(round)*minute)))
 	}
 	// Had data, empty for one round short of the threshold.
-	tracker.Observe(context.Background(), completion("qg-blip", "FULL_COMPLETED", "8930"))
+	tracker.Observe(context.Background(), dataAt("qg-blip", "8930", at.at))
 	for round := 0; round < DefaultDegradedRounds-1; round++ {
-		empty("qg-blip")
+		tracker.Observe(context.Background(), emptyAt("qg-blip", "8930", at.at.Add(time.Duration(round+1)*minute)))
 	}
+	// Had data, empty for the threshold of rounds, three minutes: the count
+	// is met and the hour is not. This is the source that reports every ten
+	// minutes, three minutes after a report.
+	tracker.Observe(context.Background(), dataAt("qg-three-minutes", "8930", at.at))
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		tracker.Observe(context.Background(), emptyAt("qg-three-minutes", "8930", at.at.Add(time.Duration(round+1)*minute)))
+	}
+	// Had data, two empty rounds spanning the hour: a slow object, the hour
+	// is met and the count is not.
+	tracker.Observe(context.Background(), dataAt("qg-slow", "8930", at.at))
+	tracker.Observe(context.Background(), emptyAt("qg-slow", "8930", at.at.Add(35*minute)))
+	tracker.Observe(context.Background(), emptyAt("qg-slow", "8930", at.at.Add(70*minute)))
 	listed := tracker.NoData()
 	if len(listed) != 1 || listed[0].QueryGroup != "qg-stopped" {
-		t.Fatalf("no-data = %+v, want only qg-stopped", listed)
+		t.Fatalf("no-data = %+v, want only qg-stopped: the count alone (qg-three-minutes) and the hour alone (qg-slow) list nothing", listed)
 	}
 	if listed[0].Kind != KindNoData || listed[0].ReasonCode != "FULL_EMPTY_COMPLETED" ||
-		!listed[0].Since.Equal(now.Add(time.Minute)) || listed[0].SinceFrom != SinceSnapshotContinuity {
+		!listed[0].Since.Equal(stoppedSince) || listed[0].SinceFrom != SinceSnapshotContinuity {
 		t.Errorf("no-data row = %+v, want kind NO_DATA since the first empty round", listed[0])
 	}
 	if len(listed[0].Strategies) != 1 {
@@ -1172,19 +1261,51 @@ func TestNoDataIsListedOnlyAfterDataStopped(t *testing.T) {
 	if len(tracker.Anomalies())+len(tracker.Undecidable())+len(tracker.ByDesign())+len(tracker.Demoted()) != 0 {
 		t.Error("a no-data object is in a column of the health equation")
 	}
+
+	// A source that reports every ten minutes over a sixty-second object,
+	// for two hours: nine empty rounds between reports, never an hour
+	// without records, on neither line. Then the reports stop: an hour
+	// later it is the data side's, measured from the last report.
+	slot := at.at
+	for report := 0; report < 12; report++ {
+		tracker.Observe(context.Background(), dataAt("qg-every-ten-minutes", "8931", slot))
+		for round := 1; round < 10; round++ {
+			tracker.Observe(context.Background(), emptyAt("qg-every-ten-minutes", "8931", slot.Add(time.Duration(round)*minute)))
+		}
+		slot = slot.Add(10 * minute)
+		rows := tracker.NoData()
+		if _, listed := rowsOfKind(rows, KindNoData)["qg-every-ten-minutes"]; listed {
+			t.Fatalf("report %d: a source that reports every ten minutes is on the data side's line", report)
+		}
+		if _, listed := rowsOfKind(rows, KindEmptyEveryRound)["qg-every-ten-minutes"]; listed {
+			t.Fatalf("report %d: a source that reports every ten minutes is listed as never having", report)
+		}
+	}
+	lastReport := slot.Add(-10 * minute)
+	for round := 1; round <= 60; round++ {
+		tracker.Observe(context.Background(), emptyAt("qg-every-ten-minutes", "8931", lastReport.Add(time.Duration(round)*minute)))
+		_, listed := rowsOfKind(tracker.NoData(), KindNoData)["qg-every-ten-minutes"]
+		if want := round >= 60; listed != want {
+			t.Fatalf("%d minutes after the last report: listed = %v, want %v -- the hour is measured from the Slot records were last seen at", round, listed, want)
+		}
+	}
+
 	// Records coming back end the run.
-	tracker.Observe(context.Background(), completion("qg-stopped", "FULL_COMPLETED", "8930"))
-	if len(tracker.NoData()) != 0 {
-		t.Errorf("no-data = %+v after records returned, want none", tracker.NoData())
+	tracker.Observe(context.Background(), dataAt("qg-stopped", "8930", stoppedSince.Add(61*minute)))
+	if len(tracker.NoData()) != 1 {
+		t.Errorf("no-data = %+v after records returned, want only the ten-minute source that stopped", tracker.NoData())
 	}
 	// A degraded round with records ends it too: the query answered with
 	// something, and that something is what the degraded row is about.
-	for round := 0; round < DefaultDegradedRounds; round++ {
-		empty("qg-stopped")
+	for round := 0; round <= 60; round++ {
+		tracker.Observe(context.Background(), emptyAt("qg-stopped", "8930", stoppedSince.Add(time.Duration(62+round)*minute)))
+	}
+	if _, listed := rowsOfKind(tracker.NoData(), KindNoData)["qg-stopped"]; !listed {
+		t.Fatal("qg-stopped is not listed after another hour of empty rounds")
 	}
 	tracker.Observe(context.Background(), completion("qg-stopped", "COMPLETED_WITH_UNAVAILABLE", "8930"))
-	if len(tracker.NoData()) != 0 {
-		t.Errorf("no-data = %+v after a degraded round with records, want none", tracker.NoData())
+	if _, listed := rowsOfKind(tracker.NoData(), KindNoData)["qg-stopped"]; listed {
+		t.Errorf("no-data = %+v after a degraded round with records, want qg-stopped off the line", tracker.NoData())
 	}
 }
 
@@ -1209,6 +1330,14 @@ func TestEveryPublishedWindowCountReachesTheRow(t *testing.T) {
 			field.SetUint(uint64(90 + i))
 		case reflect.String:
 			field.SetString("REASON_" + source.Type().Field(i).Name)
+		case reflect.Int64:
+			field.SetInt(int64(1000 + i))
+		case reflect.Slice:
+			// The named windows cross into the row's own richer rows, read
+			// against the object's rounds; window_holes_test.go holds that.
+			if source.Type().Field(i).Name != "Windows" {
+				t.Fatalf("%s is a slice this test has no fixture for; decide how it crosses", source.Type().Field(i).Name)
+			}
 		default:
 			t.Fatalf("%s is neither a uint32 nor a string; decide how it crosses", source.Type().Field(i).Name)
 		}
@@ -1225,11 +1354,17 @@ func TestEveryPublishedWindowCountReachesTheRow(t *testing.T) {
 	if len(rows) != 1 || rows[0].Coverage == nil {
 		t.Fatalf("rows = %+v, want one undecidable object carrying coverage", rows)
 	}
+	if rows[0].Coverage.Measure != CoverageValidMeasure {
+		t.Fatalf("coverage measure = %q, want %q on every row that carries a window count", rows[0].Coverage.Measure, CoverageValidMeasure)
+	}
 	published := reflect.ValueOf(rows[0].Coverage).Elem()
 	// The run counters and the round-over-round progress are the tracker's
-	// own: one round cannot supply them.
-	rowOnly := map[string]bool{"ShortRounds": true, "EmptyRounds": true, "FreshRounds": true, "HeldFullRounds": true,
-		"PreviousWorstValid": true, "PreviousKnown": true, "NoProgressRounds": true}
+	// own: one round cannot supply them. Measure is the row's word for what
+	// WorstValid counts, a constant of the field and not of the round.
+	rowOnly := map[string]bool{"ShortRounds": true, "RefusedRounds": true, "Held": true, "EmptyRounds": true, "FreshRounds": true, "HeldFullRounds": true,
+		"ConstrainedRounds": true, "ResumedRounds": true,
+		"PreviousWorstValid": true, "PreviousKnown": true, "NoProgressRounds": true, "UnchangedRounds": true, "Measure": true,
+		"WorstWindow": true, "WorstWindowChanged": true, "Windows": true, "RoundsRemembered": true, "RoundsKept": true}
 	for i := 0; i < published.NumField(); i++ {
 		name := published.Type().Field(i).Name
 		if rowOnly[name] {
@@ -1247,6 +1382,11 @@ func TestEveryPublishedWindowCountReachesTheRow(t *testing.T) {
 	}
 	for i := 0; i < source.NumField(); i++ {
 		name := source.Type().Field(i).Name
+		// End is read into the object's round ring, where every hole is
+		// matched against it, and not rendered on its own.
+		if name == "End" {
+			continue
+		}
 		if !published.FieldByName(name).IsValid() {
 			t.Errorf("the observation's %s has no field on the row: published and never rendered", name)
 		}
@@ -1590,10 +1730,12 @@ func TestTheWindowSaysWhetherItIsFilling(t *testing.T) {
 }
 
 // A failure of this deployment's own making -- a contract or evaluation
-// error -- stays on the row until a healthy completion, beside the finding
-// the column decided: a pool object filed under the refusal that also hit an
-// aggregation conflict is listed under DEFECT as well, by that conflict, and
-// the refusal line still has it. A backend failure is not internal.
+// error -- stays on the row until the stage it failed in passes (here, a
+// healthy completion; the rounds carry no Slot, so the same round completing
+// degraded is not that), beside the finding the column decided: a pool
+// object filed under the refusal that also hit an aggregation conflict is
+// listed under DEFECT as well, by that conflict, and the refusal line still
+// has it. A backend failure is not internal.
 func TestAnInternalFailureIsASecondFactUnderDefect(t *testing.T) {
 	at := &clock{at: now}
 	tracker := newTracker(t, at)
@@ -1640,5 +1782,180 @@ func TestAnInternalFailureIsASecondFactUnderDefect(t *testing.T) {
 	}
 	if listed[0].Internal != nil {
 		t.Fatalf("after a healthy completion the row still carries %+v", listed[0].Internal)
+	}
+}
+
+// partialRound is a round that summarised no window and says why: every
+// series already applied at this Slot's version, or none of their State
+// loadable.
+func partialRound(queryGroup string, resumed, constrained uint32) observability.Observation {
+	observation := completion(queryGroup, "COMPLETED_WITH_UNAVAILABLE", "8930")
+	observation.ProgressCompletionCause = "LEVEL_OUTCOME_UNKNOWN"
+	observation.ProgressCompletionReason = "HISTORY_WARMING"
+	observation.HistoryCoverage = &observability.HistoryCoverageFacts{Resumed: resumed, Constrained: constrained}
+	return observation
+}
+
+// The two partial-round counts are this round's and the next round replaces
+// them, so a round that could load no State left no trace once the next one
+// landed: on a running deployment the only way to see one was to be reading
+// the interface at the moment it happened, and six consecutive samples of an
+// object that fails a State read every ten minutes caught none. The runs are
+// counted here for the same reason the short-window run is -- one round
+// cannot tell a blip from a state -- and each ends on the first round that
+// is not of its kind.
+func TestThePartialRoundRunsAreCountedAndEndOnTheFirstOrdinaryRound(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	for round := 0; round < 3; round++ {
+		tracker.Observe(context.Background(), partialRound("qg-partial", 0, 249))
+	}
+	coverage := func() *HistoryCoverage {
+		listed := tracker.Undecidable()
+		if len(listed) != 1 || listed[0].Coverage == nil {
+			t.Fatalf("undecidable = %+v, want one object carrying coverage", listed)
+		}
+		return listed[0].Coverage
+	}
+	if got := coverage(); got.ConstrainedRounds != 3 || got.ResumedRounds != 0 {
+		t.Fatalf("constrained rounds = %d, resumed = %d, want three constrained and no resumed", got.ConstrainedRounds, got.ResumedRounds)
+	}
+	// The other kind of partial round: the constrained run ends, the resumed
+	// one starts. They are separate runs because they are separate
+	// statements -- everything was already applied, against nothing could be
+	// read -- and a reader acts differently on each.
+	tracker.Observe(context.Background(), partialRound("qg-partial", 227, 0))
+	if got := coverage(); got.ConstrainedRounds != 0 || got.ResumedRounds != 1 {
+		t.Fatalf("constrained rounds = %d, resumed = %d, want the constrained run ended and the resumed one begun", got.ConstrainedRounds, got.ResumedRounds)
+	}
+	// An ordinary round ends both.
+	tracker.Observe(context.Background(), coverageCompletion("qg-partial", 3, 1, 2, 14))
+	if got := coverage(); got.ConstrainedRounds != 0 || got.ResumedRounds != 0 {
+		t.Fatalf("constrained rounds = %d, resumed = %d after a round that summarised its windows, want both runs ended",
+			got.ConstrainedRounds, got.ResumedRounds)
+	}
+	// A round can be both at once -- some series resumed, the State of
+	// others unreadable -- and then the two runs advance together and
+	// separately. One counter derived from the other would read the same
+	// while only one kind occurs, and differently here.
+	for round := 0; round < 2; round++ {
+		tracker.Observe(context.Background(), partialRound("qg-partial", 100, 149))
+	}
+	if got := coverage(); got.ConstrainedRounds != 2 || got.ResumedRounds != 2 {
+		t.Fatalf("constrained rounds = %d, resumed = %d on two rounds that were both, want two and two", got.ConstrainedRounds, got.ResumedRounds)
+	}
+
+	// A healthy round resets the object's run, and the next partial round
+	// starts its count over rather than continuing the one before it.
+	tracker.Observe(context.Background(), completion("qg-partial", "FULL_COMPLETED", "8930"))
+	for round := 0; round < DefaultDegradedRounds; round++ {
+		tracker.Observe(context.Background(), partialRound("qg-partial", 0, 249))
+	}
+	if got := coverage(); got.ConstrainedRounds != uint32(DefaultDegradedRounds) || got.ResumedRounds != 0 {
+		t.Fatalf("constrained rounds = %d, resumed = %d after a healthy round, want the run started over at %d rather than continuing the earlier one",
+			got.ConstrainedRounds, got.ResumedRounds, DefaultDegradedRounds)
+	}
+}
+
+// A round whose window reading the observer refused says nothing about the
+// windows, so it neither extends the short run nor ends it: the counts hold
+// over it and the row says how many rounds of the run were refused. Ending
+// the run there made a window that never fills read as one still filling
+// for as long as every few rounds were refused -- the run never reached the
+// window's own length, SERIES_DATA_MISSING never held, and the object sat
+// on no line at all. The run still has to be consecutive in the rounds that
+// were read: a refused round is not a short one.
+func TestARefusedReadingHoldsTheShortRunRatherThanEndingIt(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	const required = 14
+	refused := coverageCompletion("qg-refused", 3, 1, 2, required)
+	refused.HistoryCoverage = nil
+	refused.HistoryCoverageRejected = &observability.CoverageRejection{Rule: observability.CoverageRejectWindowHoleArithmetic, Series: "abc"}
+	read := 0
+	for round := 0; round < 2*(required+2); round++ {
+		if round%2 == 1 {
+			tracker.Observe(context.Background(), refused)
+			continue
+		}
+		tracker.Observe(context.Background(), coverageCompletion("qg-refused", 3, 1, 2, required))
+		read++
+	}
+	rows := append(tracker.Anomalies(), tracker.Undecidable()...)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v, want the object listed", rows)
+	}
+	// The last round was refused: the row carries the refusal beside the
+	// run's last reading, marked held, and the judgement the held counts
+	// reach stays on the row -- it does not flip to the refusal's line on
+	// every refused round.
+	if held := rows[0].Coverage; held == nil || !held.Held || rows[0].CoverageRejected == nil ||
+		held.ShortRounds != uint32(read) || held.RefusedRounds != uint32(read) {
+		t.Fatalf("row after a refused round = %+v coverage %+v, want the held reading beside the refusal", rows[0], rows[0].Coverage)
+	}
+	if check, _, _ := checkOf(rows[0], Schedule("")); check != CheckSeriesDataMissing {
+		t.Fatalf("check on a refused round = %q, want the held judgement", check)
+	}
+	tracker.Observe(context.Background(), coverageCompletion("qg-refused", 3, 1, 2, required))
+	read++
+	rows = append(tracker.Anomalies(), tracker.Undecidable()...)
+	coverage := rows[0].Coverage
+	if coverage == nil || coverage.Held || rows[0].CoverageRejected != nil || coverage.ShortRounds != uint32(read) || coverage.RefusedRounds != uint32(read-1) {
+		t.Fatalf("coverage = %+v, want %d short rounds held over %d refused ones", coverage, read, read-1)
+	}
+	// The round-over-round comparison is held too: it compares with the last
+	// round that was read, not with the refused one between them.
+	if coverage.UnchangedRounds != uint32(read-1) || coverage.NoProgressRounds != uint32(read-1) || !coverage.PreviousKnown {
+		t.Fatalf("coverage = %+v, want %d unchanged rounds compared across the refusals", coverage, read-1)
+	}
+	if check, under, _ := checkOf(rows[0], Schedule("")); !under || check != CheckSeriesDataMissing {
+		t.Fatalf("check = %q under %v, want the persistent shortfall on its line", check, under)
+	}
+	// A round that carried no reading at all -- not refused, just none --
+	// still breaks the comparison, as it always did: the next read round has
+	// nothing to compare with.
+	plain := completion("qg-refused", "COMPLETED_WITH_UNAVAILABLE", "8930")
+	plain.ProgressCompletionCause, plain.ProgressCompletionReason = "LEVEL_OUTCOME_UNKNOWN", "HISTORY_WARMING"
+	tracker.Observe(context.Background(), plain)
+	tracker.Observe(context.Background(), coverageCompletion("qg-refused", 3, 1, 2, required))
+	rows = append(tracker.Anomalies(), tracker.Undecidable()...)
+	if coverage := rows[0].Coverage; coverage == nil || coverage.PreviousKnown || coverage.ShortRounds != 1 || coverage.RefusedRounds != 0 {
+		t.Fatalf("coverage after a round with no reading = %+v, want the run and the comparison started over", coverage)
+	}
+	// A refused round right after a round with no reading has no reading of
+	// the run to hold: the refusal stands alone.
+	tracker.Observe(context.Background(), plain)
+	tracker.Observe(context.Background(), refused)
+	rows = append(tracker.Anomalies(), tracker.Undecidable()...)
+	if rows[0].Coverage != nil || rows[0].CoverageRejected == nil {
+		t.Fatalf("row = coverage %+v rejected %+v, want the refusal alone", rows[0].Coverage, rows[0].CoverageRejected)
+	}
+	tracker.Observe(context.Background(), coverageCompletion("qg-refused", 3, 1, 2, required))
+	// A read round with every window full still ends the run, refusals and
+	// all.
+	tracker.Observe(context.Background(), coverageCompletion("qg-refused", 3, 0, 0, 0))
+	rows = append(tracker.Anomalies(), tracker.Undecidable()...)
+	if coverage := rows[0].Coverage; coverage == nil || coverage.ShortRounds != 0 || coverage.RefusedRounds != 0 {
+		t.Fatalf("coverage after a full round = %+v, want the run ended", coverage)
+	}
+}
+
+// An object whose every reading is refused stands on the refusal's own line,
+// naming the rule -- not on the line for a window whose counts are known.
+func TestAnObjectRefusedEveryRoundStandsOnTheRefusalsLine(t *testing.T) {
+	at := &clock{at: now}
+	tracker := newTracker(t, at)
+	refused := coverageCompletion("qg-refused", 3, 1, 2, 14)
+	refused.HistoryCoverage = nil
+	refused.HistoryCoverageRejected = &observability.CoverageRejection{Rule: observability.CoverageRejectWindowHoleArithmetic, Series: "abc"}
+	for round := 0; round < 40; round++ {
+		tracker.Observe(context.Background(), refused)
+	}
+	rows := append(tracker.Anomalies(), tracker.Undecidable()...)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if check, under, _ := checkOf(rows[0], Schedule("")); check != CheckCoverageReadingRefused || !under {
+		t.Fatalf("check = %q under %v, want the refusal's line", check, under)
 	}
 }

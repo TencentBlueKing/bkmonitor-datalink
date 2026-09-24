@@ -64,6 +64,10 @@ type queryGroupIdentityFacts struct {
 	SourceSemantics []string                            `json:"source_semantics,omitempty"`
 	PromQL          *execution.PromQLQuery              `json:"promql,omitempty"`
 	TSDBMap         map[string][]execution.QueryStorage `json:"tsdb_map,omitempty"`
+	// Shard makes each piece of a split strategy its own group. Omitted for
+	// a Plan that is not split, so every identity in the deployment stays
+	// where it was.
+	Shard *execution.ShardRef `json:"shard,omitempty"`
 }
 
 // queryGroupIdentityFactsOf projects a Plan's facts onto the identity. The
@@ -77,6 +81,7 @@ func queryGroupIdentityFactsOf(facts execution.QueryPlanFacts) queryGroupIdentit
 		DownSample: facts.DownSampleRange, Timezone: facts.Timezone, NotTimeAlign: facts.NotTimeAlign,
 		Normalization: facts.Normalization, QueryDelay: facts.QueryDelaySeconds,
 		SourceSemantics: facts.SourceSemantics, PromQL: facts.PromQL, TSDBMap: facts.TSDBMap,
+		Shard: facts.Shard,
 	}
 }
 

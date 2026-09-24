@@ -13,6 +13,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
@@ -46,6 +47,11 @@ type controlSourceState struct {
 	// line that does not scroll away, cleared when a round succeeds.
 	lastFailureExit string
 	lastFailure     string
+	// set is the account of the source's active set across this process's
+	// rounds -- which strategies it dropped, since when, and whether they
+	// came back -- what one round's composition cannot say. Nil until the
+	// first composition, so a follower publishes no account of its own.
+	set *fleet.SourceSetLedger
 	// composition is what the Catalog this process last saw built is made
 	// of. Kept from the last round that built one: a degraded round and an
 	// activation load compose nothing, and reporting empty then would read
@@ -60,6 +66,17 @@ type controlSourceState struct {
 	// is known. Read on every refresh tick by every replica, so the age it
 	// yields is the same fact everywhere and survives every process.
 	persistedSuccessAt time.Time
+	// pendingSince is when this leader's refresh last began answering
+	// PENDING_CONFIRMATION without a PUBLISHED or UNCHANGED since, and
+	// pendingRounds how many rounds it has answered so. A candidate is
+	// published only when two whole observations agree, so a source whose
+	// writer moves something between every pair of rounds keeps a change
+	// pending indefinitely -- while every one of those rounds counts as a
+	// successful refresh and the success age stays young. This is the one
+	// reading that rises then. Zero when nothing is pending, and cleared when
+	// the process stops leading: a follower refreshes nothing.
+	pendingSince  time.Time
+	pendingRounds int
 }
 
 // controlSourceFailureTextLimit bounds the failure text the state keeps: it
@@ -91,6 +108,9 @@ func (bundle *phaseTwoWorkerBundle) setControlRoleLocked(role observability.Cont
 	} else {
 		state.unacquiredSince = time.Time{}
 	}
+	if role != observability.ControlSourceRoleLeader {
+		state.pendingSince, state.pendingRounds = time.Time{}, 0
+	}
 	state.role = role
 }
 
@@ -118,9 +138,26 @@ func (bundle *phaseTwoWorkerBundle) noteControlRoundLocked(result phaseTwoContro
 		state.lastFailureExit = ""
 		state.lastFailure = ""
 	}
+	switch result.SourceRefreshStatus {
+	case controlplane.SourceRefreshPendingConfirmation:
+		if state.pendingSince.IsZero() {
+			state.pendingSince = bundle.dependencies.Now()
+		}
+		state.pendingRounds++
+	case controlplane.SourceRefreshPublished, controlplane.SourceRefreshUnchanged:
+		state.pendingSince, state.pendingRounds = time.Time{}, 0
+	}
 	if result.Composition != nil {
 		state.composition = result.Composition
-		state.source = sourceFactsOf(result, bundle.dependencies.Now())
+		at := bundle.dependencies.Now()
+		if state.set == nil {
+			state.set = fleet.NewSourceSetLedger(bundle.dependencies.Now)
+		}
+		if returned := state.set.NoteRound(sourceSetRoundOf(result.Composition, at)); returned > 0 {
+			bundle.dependencies.Recorder.AddStrategiesReturnedAfterRemoval(returned)
+		}
+		state.source = sourceFactsOf(result, at)
+		state.source.Set = state.set.Facts(at)
 	}
 	bundle.noteActivationLocked(result.Activation)
 }
@@ -152,6 +189,8 @@ type controlSourceView struct {
 	unacquiredSince time.Time
 	lastFailureExit string
 	lastFailure     string
+	pendingSince    time.Time
+	pendingRounds   int
 	now             time.Time
 }
 
@@ -164,6 +203,7 @@ func (bundle *phaseTwoWorkerBundle) controlSourceView() controlSourceView {
 		known: state.known, role: state.role, lastSuccessAt: state.persistedSuccessAt,
 		degradedSince: state.degradedSince, unacquiredSince: state.unacquiredSince,
 		lastFailureExit: state.lastFailureExit, lastFailure: state.lastFailure,
+		pendingSince: state.pendingSince, pendingRounds: state.pendingRounds,
 		now: bundle.dependencies.Now(),
 	}
 	if view.role == "" {
@@ -208,10 +248,25 @@ func (view controlSourceView) leaderAbsentBeyondBound() bool {
 		view.now.Sub(view.unacquiredSince) > controlplane.SourceStalenessBound
 }
 
+// pendingAge is how long the leader's refresh has been answering
+// PENDING_CONFIRMATION, zero when it is not, and false on a process that is
+// not leading, which refreshes nothing and so has no pending to report.
+func (view controlSourceView) pendingAge() (float64, bool) {
+	if view.role != observability.ControlSourceRoleLeader {
+		return 0, false
+	}
+	if view.pendingSince.IsZero() {
+		return 0, true
+	}
+	return max(view.now.Sub(view.pendingSince).Seconds(), 0), true
+}
+
 // controlSourceStats is what the metric collector scrapes.
 func (bundle *phaseTwoWorkerBundle) controlSourceStats() metric.ControlSourceStats {
 	view := bundle.controlSourceView()
-	return metric.ControlSourceStats{Known: view.known, Role: view.role, Mode: view.mode, LastSuccessAt: view.lastSuccessAt}
+	stats := metric.ControlSourceStats{Known: view.known, Role: view.role, Mode: view.mode, LastSuccessAt: view.lastSuccessAt}
+	stats.PendingConfirmationAgeSeconds, stats.Leading = view.pendingAge()
+	return stats
 }
 
 // catalogComposition is the last Catalog composition this process built, for
@@ -243,12 +298,46 @@ func sourceFactsOf(result phaseTwoControlRefreshResult, at time.Time) *fleet.Sou
 	}
 	facts := fleet.NewSourceFacts(at, objects, withheld)
 	facts.Plans, facts.RevisionedPlans, facts.PlansKnown = composition.PlansTotal, composition.RevisionedPlans, true
+	facts.StandardPlans = composition.PlansByWireFormat[contract.WireFormatStandardRawEvent]
 	facts.ChangeSignalPresent = result.ChangeSignalPresent
 	if result.ChangeSignalPresent {
 		age := result.ChangeSignalAgeSeconds
 		facts.ChangeSignalAgeSeconds = &age
 	}
 	return facts
+}
+
+// sourceSetRoundOf is the composition's word on the active set for the
+// ledger: the strategies the source listed, and the ones the grace cycle
+// holds or has removed, by their dispositions.
+//
+// The two sides are disjoint by construction: the catalog gives
+// PENDING_REMOVAL and REMOVED only to a strategy the round did not observe
+// in the source (catalog.go, the grace loop starts with "observed ->
+// continue"), and every observed strategy gets its own disposition and so
+// lands in Listed. The ledger relies on that: it clears an absence on Listed
+// after it records one on PendingRemoval, and a strategy on both sides would
+// have its grace quietly erased -- the page then says a strategy about to be
+// dropped is fine. Anyone changing that loop changes this too.
+func sourceSetRoundOf(composition *controlplane.CatalogComposition, at time.Time) fleet.SourceSetRound {
+	round := fleet.SourceSetRound{At: at, Listed: composition.ListedStrategies}
+	for _, object := range composition.WithheldObjects {
+		absent := fleet.AbsentStrategy{StrategyID: object.SourceID}
+		if object.AbsentSince > 0 {
+			// The catalog's own word on when the strategy was first found
+			// absent: the true start, kept on the published audit across
+			// leader restarts, where this process's first sight is only a
+			// lower bound.
+			absent.AbsentSince = time.Unix(object.AbsentSince, 0).UTC()
+		}
+		switch object.Disposition {
+		case controlplane.DispositionPendingRemoval:
+			round.PendingRemoval = append(round.PendingRemoval, absent)
+		case controlplane.DispositionRemoved:
+			round.Removed = append(round.Removed, absent)
+		}
+	}
+	return round
 }
 
 // sourceFleetFacts is what the fleet publishes about the source: the last
@@ -276,6 +365,10 @@ func (bundle *phaseTwoWorkerBundle) controlSourceFleetFacts() *fleet.ControlSour
 	if !view.degradedSince.IsZero() {
 		degraded := view.now.Sub(view.degradedSince).Seconds()
 		facts.DegradedSecondsThisProcess = &degraded
+	}
+	if age, leading := view.pendingAge(); leading {
+		facts.PendingConfirmationAgeSeconds = &age
+		facts.PendingConfirmationRounds = view.pendingRounds
 	}
 	return facts
 }

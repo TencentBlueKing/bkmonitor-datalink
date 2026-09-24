@@ -33,6 +33,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/lifecycle"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/publicsurface"
 )
 
 // The query surface answers health, metrics and, later, the observability API.
@@ -50,10 +51,37 @@ type Server struct {
 	grpcHandler        atomic.Pointer[http.Handler]
 	diagnosticsHandler http.Handler
 	diagnosticsAddress string
-	ready              atomic.Bool
-	source             lifecycle.Source
-	healthSource       observability.HealthSource
+	// internalHandler serves /metrics and the probes to the cluster alone,
+	// on internalAddress; restricted says the query surface has stopped
+	// serving /metrics and the readiness body to the public. It is read per
+	// request: the runtime settles it once the CLI is built.
+	internalHandler http.Handler
+	internalAddress string
+	restricted      atomic.Bool
+	ready           atomic.Bool
+	source          lifecycle.Source
+	healthSource    observability.HealthSource
+	liveness        atomic.Pointer[livenessHolder]
 }
+
+// Stall is one reason the process is not making progress: a named loop that
+// has not finished a turn within its bound, or every execution slot held by
+// an execution far past its deadline. Age is how long the condition has held
+// against Bound.
+type Stall struct {
+	Loop  string        `json:"loop"`
+	Age   time.Duration `json:"-"`
+	Bound time.Duration `json:"-"`
+}
+
+// LivenessSource says what, if anything, has stopped making progress. It is
+// read on every liveness probe, which the kubelet times out after a second,
+// so it must answer from memory.
+type LivenessSource interface {
+	Stalls() []Stall
+}
+
+type livenessHolder struct{ source LivenessSource }
 
 // Option configures a Server. Options are variadic so callers that do not care
 // about the diagnostics surface keep compiling unchanged.
@@ -64,6 +92,32 @@ type Option func(*Server)
 // query surface.
 func WithDiagnosticsAddress(address string) Option {
 	return func(server *Server) { server.diagnosticsAddress = address }
+}
+
+// WithInternalAddress serves /metrics, /healthz and /readyz on a listener of
+// their own, for the cluster alone. An empty address serves no such listener.
+func WithInternalAddress(address string) Option {
+	return func(server *Server) { server.internalAddress = address }
+}
+
+// WithRestrictedPublicSurface starts the query surface restricted: /metrics
+// is refused as moved, /readyz answers its status code alone, and the probes
+// and the scrape read the internal listener. The page, /healthz and the API
+// mount are unchanged here; what the API serves in public is the API
+// handler's to decide. The runtime passes it when the configuration asks for
+// a restricted surface and settles it with SetPublicSurfaceRestricted once
+// it knows whether the CLI came up. Until then -- the startup window -- the
+// surface is restricted exactly when the configuration asks for it, so no
+// coordinate is public before the CLI is known to be there or not.
+func WithRestrictedPublicSurface() Option {
+	return func(server *Server) { server.restricted.Store(true) }
+}
+
+// SetPublicSurfaceRestricted settles whether the query surface is restricted.
+// The runtime calls it once the CLI is built: restricted only when a CLI
+// session can actually be had, since restricting without one leaves no way in.
+func (s *Server) SetPublicSurfaceRestricted(restricted bool) {
+	s.restricted.Store(restricted)
 }
 
 // SetAPI installs the observability API served under /api/ on the query
@@ -94,6 +148,13 @@ func (s *Server) SetAPI(handler http.Handler) {
 // listener sets the policy to match.
 func (s *Server) SetGRPC(handler http.Handler) {
 	s.grpcHandler.Store(&handler)
+}
+
+// SetLiveness installs what /healthz judges. Until it is called, and for a
+// runtime that never calls it, /healthz answers 200 as it always has: the
+// process is up, and nothing has yet started that could stop.
+func (s *Server) SetLiveness(source LivenessSource) {
+	s.liveness.Store(&livenessHolder{source: source})
 }
 
 // isGRPC tells a gRPC request from the rest by what gRPC guarantees: HTTP/2
@@ -175,10 +236,37 @@ func NewWithHealth(recorder *metric.Recorder, source observability.HealthSource,
 
 func newServer(recorder *metric.Recorder, source lifecycle.Source, options ...Option) *Server {
 	server := &Server{source: source}
+	for _, option := range options {
+		if option != nil {
+			option(server)
+		}
+	}
+	metrics := promhttp.HandlerFor(recorder.Gatherer(), promhttp.HandlerOpts{})
+	internal := http.NewServeMux()
+	internal.HandleFunc("/healthz", server.health)
+	internal.HandleFunc("/readyz", server.readiness)
+	internal.Handle("/metrics", metrics)
+	server.internalHandler = internal
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", server.health)
-	mux.HandleFunc("/readyz", server.readiness)
-	mux.Handle("/metrics", promhttp.HandlerFor(recorder.Gatherer(), promhttp.HandlerOpts{}))
+	mux.HandleFunc("/readyz", func(response http.ResponseWriter, request *http.Request) {
+		// The kubelet may still probe this port, so a restricted readiness
+		// keeps its status code; its body lists dependencies and errors,
+		// which are not public.
+		if server.restricted.Load() {
+			server.readinessStatus(response, request)
+			return
+		}
+		server.readiness(response, request)
+	})
+	mux.HandleFunc("/metrics", func(response http.ResponseWriter, request *http.Request) {
+		if server.restricted.Load() {
+			publicsurface.Refuse(response, request)
+			return
+		}
+		metrics.ServeHTTP(response, request)
+	})
 	mux.HandleFunc("/api/", server.serveAPI)
 	// The page is static and carries no runtime dependency, so it is mounted
 	// unconditionally: when the runtime is not open yet the page still loads and
@@ -200,12 +288,6 @@ func newServer(recorder *metric.Recorder, source lifecycle.Source, options ...Op
 	diagnostics.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	diagnostics.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	server.diagnosticsHandler = diagnostics
-
-	for _, option := range options {
-		if option != nil {
-			option(server)
-		}
-	}
 	return server
 }
 
@@ -217,6 +299,12 @@ func (s *Server) Handler() http.Handler {
 // serve it themselves. It is never mounted on the query surface.
 func (s *Server) DiagnosticsHandler() http.Handler {
 	return s.diagnosticsHandler
+}
+
+// InternalHandler is what the internal listener serves, for tests and for
+// callers that serve it themselves.
+func (s *Server) InternalHandler() http.Handler {
+	return s.internalHandler
 }
 
 func (s *Server) SetReady(ready bool) {
@@ -233,10 +321,24 @@ func (s *Server) Run(ctx context.Context, address string, shutdownTimeout time.D
 	// The address is deterministic configuration, not a runtime dependency: it
 	// either binds every time or never. Losing pprof silently would only be
 	// discovered during the next incident, when it is needed and gone.
-	stop, err := s.serveDiagnostics()
+	stopDiagnosticsListener, err := serveSide("diagnostics", s.diagnosticsAddress, s.diagnosticsHandler)
 	if err != nil {
 		_ = listener.Close()
 		return err
+	}
+	// The internal listener fails startup the same way: on a restricted
+	// surface it is the only place the scrape can read.
+	stopInternal, err := serveSide("internal", s.internalAddress, s.internalHandler)
+	if err != nil {
+		stopDiagnosticsListener(context.Background())
+		_ = listener.Close()
+		return err
+	}
+	stop := func(stopCtx context.Context) {
+		done := make(chan struct{})
+		go func() { defer close(done); stopInternal(stopCtx) }()
+		stopDiagnosticsListener(stopCtx)
+		<-done
 	}
 	// Both surfaces share one shutdown deadline. Giving the diagnostics
 	// listener a second full budget would let a long in-flight profile push the
@@ -304,20 +406,21 @@ func (s *Server) Run(ctx context.Context, address string, shutdownTimeout time.D
 	}
 }
 
-// serveDiagnostics starts the pprof listener and returns the function that
-// stops it. An unset address serves nothing and stops nothing; pprof is never
-// folded back onto the query surface as a fallback.
-func (s *Server) serveDiagnostics() (func(context.Context), error) {
-	if s.diagnosticsAddress == "" {
+// serveSide starts one of the side listeners -- diagnostics or internal --
+// and returns the function that stops it. An unset address serves nothing
+// and stops nothing; neither is ever folded back onto the query surface as a
+// fallback.
+func serveSide(name, address string, handler http.Handler) (func(context.Context), error) {
+	if address == "" {
 		return func(context.Context) {}, nil
 	}
-	listener, err := net.Listen("tcp", s.diagnosticsAddress)
+	listener, err := net.Listen("tcp", address)
 	if err != nil {
-		return nil, fmt.Errorf("listen for diagnostics on %s: %w", s.diagnosticsAddress, err)
+		return nil, fmt.Errorf("listen for %s on %s: %w", name, address, err)
 	}
 	server := &http.Server{
-		Addr:              s.diagnosticsAddress,
-		Handler:           s.diagnosticsHandler,
+		Addr:              address,
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	done := make(chan struct{})
@@ -334,7 +437,58 @@ func (s *Server) serveDiagnostics() (func(context.Context), error) {
 }
 
 func (s *Server) health(response http.ResponseWriter, _ *http.Request) {
-	response.WriteHeader(http.StatusOK)
+	holder := s.liveness.Load()
+	if holder == nil || holder.source == nil {
+		response.WriteHeader(http.StatusOK)
+		return
+	}
+	stalls := holder.source.Stalls()
+	if len(stalls) == 0 {
+		response.WriteHeader(http.StatusOK)
+		return
+	}
+	type stalled struct {
+		Loop         string  `json:"loop"`
+		AgeSeconds   float64 `json:"age_seconds"`
+		BoundSeconds float64 `json:"bound_seconds"`
+	}
+	body := struct {
+		Alive   bool      `json:"alive"`
+		Stalled []stalled `json:"stalled"`
+	}{}
+	for _, stall := range stalls {
+		body.Stalled = append(body.Stalled, stalled{Loop: stall.Loop, AgeSeconds: stall.Age.Seconds(), BoundSeconds: stall.Bound.Seconds()})
+	}
+	response.Header().Set("Content-Type", "application/json")
+	response.WriteHeader(http.StatusServiceUnavailable)
+	_ = json.NewEncoder(response).Encode(body)
+}
+
+// readinessStatus is readiness with its body discarded: the status code the
+// kubelet reads, nothing about why.
+func (s *Server) readinessStatus(response http.ResponseWriter, request *http.Request) {
+	recorder := &statusOnly{header: http.Header{}}
+	s.readiness(recorder, request)
+	response.WriteHeader(recorder.status())
+}
+
+type statusOnly struct {
+	header http.Header
+	code   int
+}
+
+func (w *statusOnly) Header() http.Header         { return w.header }
+func (w *statusOnly) Write(b []byte) (int, error) { return len(b), nil }
+func (w *statusOnly) WriteHeader(code int) {
+	if w.code == 0 {
+		w.code = code
+	}
+}
+func (w *statusOnly) status() int {
+	if w.code == 0 {
+		return http.StatusOK
+	}
+	return w.code
 }
 
 func (s *Server) readiness(response http.ResponseWriter, _ *http.Request) {

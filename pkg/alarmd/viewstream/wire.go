@@ -15,11 +15,17 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream/pb"
 )
 
-// SnapshotChunkBytes bounds one Snapshot message. A view larger than it is
-// sent in chunks that share the version and are installed together. Well
-// under gRPC's default 4 MiB message bound; on the deployment measured a
-// whole view is a few hundred kilobytes and travels as one chunk.
-const SnapshotChunkBytes = 1 << 20
+// MessageBytes bounds one message of the stream, whichever kind. A view
+// larger than it is sent as snapshot chunks that share the version and are
+// installed together; a delta larger than it is not sent at all, the
+// Worker gets the snapshot instead. Well under gRPC's default 4 MiB receive
+// bound, which is the wall this one keeps every message away from; on the
+// deployment measured a whole view is a few hundred kilobytes and travels
+// as one chunk.
+const MessageBytes = 1 << 20
+
+// SnapshotChunkBytes is the bound a snapshot chunk is cut to.
+const SnapshotChunkBytes = MessageBytes
 
 func versionToWire(version Version) *pb.Version {
 	return &pb.Version{ControlEpoch: version.ControlEpoch, Revision: version.Revision, Digest: version.Digest}
@@ -49,7 +55,7 @@ func entryToWire(entry Entry) *pb.Entry {
 	wire := &pb.Entry{QueryGroup: string(entry.QueryGroup), Assignment: &pb.Assignment{
 		DesiredWorkerId: entry.Assignment.DesiredWorkerID, Revision: entry.Assignment.Revision,
 		ContentScope: entry.Assignment.ContentScope, PendingContentScope: entry.Assignment.PendingContentScope,
-		EffectiveAtMs: entry.Assignment.EffectiveAtMs,
+		EffectiveAtMs: entry.Assignment.EffectiveAtMs, TimelineRecordRevision: entry.Assignment.TimelineRecordRevision,
 	}}
 	if entry.Content != nil {
 		content := &pb.Content{ObjectDigest: string(entry.Content.ObjectDigest)}
@@ -73,7 +79,7 @@ func entryFromWire(wire *pb.Entry) (Entry, error) {
 		entry.Assignment = Assignment{
 			DesiredWorkerID: wire.Assignment.DesiredWorkerId, Revision: wire.Assignment.Revision,
 			ContentScope: wire.Assignment.ContentScope, PendingContentScope: wire.Assignment.PendingContentScope,
-			EffectiveAtMs: wire.Assignment.EffectiveAtMs,
+			EffectiveAtMs: wire.Assignment.EffectiveAtMs, TimelineRecordRevision: wire.Assignment.TimelineRecordRevision,
 		}
 	}
 	if wire.Content != nil {
@@ -223,6 +229,7 @@ func ReceiptToWire(receipt Receipt) *pb.Receipt {
 		Incarnation: receipt.Receiver.Incarnation, Version: versionToWire(receipt.Version),
 		Acked: receipt.Acked, Installed: receipt.Installed, Switched: receipt.Switched,
 		Failure: receipt.Failure, ObjectsMissing: uint32(receipt.ObjectsMissing), ObjectsProbed: receipt.ObjectsProbed,
+		SwitchedQueryGroups: uint32(receipt.SwitchedQueryGroups),
 	}
 }
 
@@ -234,5 +241,36 @@ func ReceiptFromWire(workerID string, wire *pb.Receipt) (Receipt, error) {
 		Receiver: Receiver{WorkerID: workerID, Incarnation: wire.Incarnation}, Version: versionFromWire(wire.Version),
 		Acked: wire.Acked, Installed: wire.Installed, Switched: wire.Switched,
 		Failure: wire.Failure, ObjectsMissing: int(wire.ObjectsMissing), ObjectsProbed: wire.ObjectsProbed,
+		SwitchedQueryGroups: int(wire.SwitchedQueryGroups),
 	}, nil
+}
+
+// CostsToWire encodes a heartbeat's costs.
+func CostsToWire(costs []QueryGroupCost) []*pb.QueryGroupCost {
+	if len(costs) == 0 {
+		return nil
+	}
+	wire := make([]*pb.QueryGroupCost, 0, len(costs))
+	for _, cost := range costs {
+		wire = append(wire, &pb.QueryGroupCost{QueryGroup: string(cost.QueryGroup),
+			RetainedBytesPeak: cost.RetainedBytesPeak, CostPerSecondMilli: cost.CostPerSecondMilli})
+	}
+	return wire
+}
+
+// CostsFromWire decodes a heartbeat's costs, dropping entries that name no
+// Query Group: a cost with no owner is not a reading.
+func CostsFromWire(wire []*pb.QueryGroupCost) []QueryGroupCost {
+	if len(wire) == 0 {
+		return nil
+	}
+	costs := make([]QueryGroupCost, 0, len(wire))
+	for _, cost := range wire {
+		if cost == nil || cost.QueryGroup == "" {
+			continue
+		}
+		costs = append(costs, QueryGroupCost{QueryGroup: execution.QueryGroupIdentity(cost.QueryGroup),
+			RetainedBytesPeak: cost.RetainedBytesPeak, CostPerSecondMilli: cost.CostPerSecondMilli})
+	}
+	return costs
 }

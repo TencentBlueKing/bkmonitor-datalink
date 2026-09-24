@@ -21,7 +21,7 @@ type ActivationReader interface {
 	IsPlanActive(
 		context.Context,
 		execution.FrozenExecutionContractRef,
-		execution.PlanIdentity,
+		execution.PlanKey,
 		execution.StateApplyEpoch,
 	) (bool, error)
 }

@@ -237,6 +237,13 @@ func TestValidateRejectsInvalidRedisAndRuntimeBudgets(t *testing.T) {
 		},
 		"zero codec budget": func(cfg *Config) { cfg.Limits.Codec.MaxLevels = 0 },
 		"zero store budget": func(cfg *Config) { cfg.Limits.Store.MaxKeysPerBatch = 0 },
+		// The dynamic group key prefix is a deployment coordinate rendered
+		// from the fork's setting: rendered empty is a rendering that went
+		// wrong, refused rather than read as a prefix.
+		"rendered but empty dynamic group key prefix": func(cfg *Config) {
+			empty := "  "
+			cfg.PlatformCache.DynamicGroupKeyPrefix = &empty
+		},
 	}
 
 	for name, mutate := range tests {
@@ -247,6 +254,23 @@ func TestValidateRejectsInvalidRedisAndRuntimeBudgets(t *testing.T) {
 				t.Fatalf("Validate() accepted %s", name)
 			}
 		})
+	}
+}
+
+// Absent means the deployment writes no dynamic group cache and nothing is
+// read; present names the writer's prefix exactly as it spells it.
+func TestTheDynamicGroupKeyPrefixIsAbsentOrSpelledAsTheWriterSpellsIt(t *testing.T) {
+	cfg := validGoAccessConfigObject()
+	if prefix, rendered := cfg.DynamicGroupKeyPrefix(); rendered || prefix != "" {
+		t.Fatalf("absent prefix = %q rendered=%v", prefix, rendered)
+	}
+	spelled := "cw_prefix:"
+	cfg.PlatformCache.DynamicGroupKeyPrefix = &spelled
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if prefix, rendered := cfg.DynamicGroupKeyPrefix(); !rendered || prefix != "cw_prefix:" {
+		t.Fatalf("rendered prefix = %q rendered=%v, want the writer's spelling untouched", prefix, rendered)
 	}
 }
 

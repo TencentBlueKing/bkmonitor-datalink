@@ -1,0 +1,40 @@
+{
+  "_comment": [
+    "What one Runtime State record costs in the representation the store writes.",
+    "",
+    "This file is a baseline, not a fixture: the numbers are produced by the real",
+    "encoder over the fixture in runtime_record_baseline_test.go, and they are",
+    "recorded here so that a change in the representation shows up as a diff",
+    "instead of silently moving the point ceiling underneath the compiler.",
+    "",
+    "A failure here is not a reason to regenerate the file. It means the record",
+    "changed shape, and the ceilings in config.retainedPointCeilings() changed",
+    "with it - which is the event this baseline exists to make visible. Update",
+    "these numbers only together with the change that moved them, and say in the",
+    "commit which change that was."
+  ],
+  "fixture": {
+    "points": 1469,
+    "digest_hex_chars": 64,
+    "value_budget_bytes": 524288
+  },
+  "levels": [
+    {"count": 1, "bytes": 344206, "bytes_per_point": 234.3, "ceiling_points": 2087},
+    {"count": 2, "bytes": 519171, "bytes_per_point": 353.4, "ceiling_points": 1395},
+    {"count": 3, "bytes": 694136, "bytes_per_point": 472.5, "ceiling_points": 1047},
+    {"count": 4, "bytes": 869101, "bytes_per_point": 591.6, "ceiling_points": 838},
+    {"count": 8, "bytes": 1568961, "bytes_per_point": 1068.0, "ceiling_points": 464}
+  ],
+  "cluster_reading": {
+    "_comment": [
+      "One production reading, kept so the encoder can be checked against the",
+      "deployment rather than only against itself. A model that is only ever",
+      "compared with its own output cannot report that it has drifted."
+    ],
+    "observed_on": "2026-09-21",
+    "series": 249,
+    "points_per_series": 1469,
+    "levels": 1,
+    "bytes_read_per_slot": 85900000
+  }
+}

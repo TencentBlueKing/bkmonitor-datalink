@@ -1,15 +1,7 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package controlplane
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -26,7 +18,26 @@ const parsedActivationMaxPayloadBytes = 2 << 20
 type parsedActivation struct {
 	payload string
 	state   ActivationState
-	byPlan  map[execution.PlanIdentity]execution.PlanActivationFact
+	byPlan  map[execution.PlanKey]execution.PlanActivationFact
+	// withPlans is a head body's state with its records read back from the
+	// open Segments, computed once for the entry; see LoadActivation.
+	withPlansMu sync.Mutex
+	withPlans   *ActivationState
+}
+
+// materialized is the entry's state with its Plan records, for a head body.
+// A failed read is not remembered: the next call reads again.
+func (entry *parsedActivation) materialized(ctx context.Context, repository *RedisCatalogRepository, version controlVersion) (ActivationState, error) {
+	entry.withPlansMu.Lock()
+	defer entry.withPlansMu.Unlock()
+	if entry.withPlans == nil {
+		state, err := repository.materializeActivationPlans(ctx, entry.cloneState(), version)
+		if err != nil {
+			return ActivationState{}, err
+		}
+		entry.withPlans = &state
+	}
+	return (&parsedActivation{state: *entry.withPlans}).cloneState(), nil
 }
 
 // The single entry is immutable after publication and never leaves this package.
@@ -90,9 +101,9 @@ func parseActivation(payload string) (*parsedActivation, error) {
 	if err := validateActivationState(state); err != nil {
 		return nil, &PersistedActivationCorruptError{Err: err}
 	}
-	entry := &parsedActivation{state: state, byPlan: make(map[execution.PlanIdentity]execution.PlanActivationFact, len(state.Plans))}
+	entry := &parsedActivation{state: state, byPlan: make(map[execution.PlanKey]execution.PlanActivationFact, len(state.Plans))}
 	for _, record := range state.Plans {
-		entry.byPlan[record.Fact.Plan] = record.Fact
+		entry.byPlan[record.Fact.Key()] = record.Fact
 	}
 	return entry, nil
 }
@@ -102,6 +113,10 @@ func (entry *parsedActivation) cloneState() ActivationState {
 	if state.Pending != nil {
 		pending := *state.Pending
 		state.Pending = &pending
+	}
+	if state.CutoverProgress != nil {
+		progress := *state.CutoverProgress
+		state.CutoverProgress = &progress
 	}
 	state.Plans = slices.Clone(state.Plans)
 	state.Draining = slices.Clone(state.Draining)

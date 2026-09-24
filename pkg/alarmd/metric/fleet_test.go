@@ -6,6 +6,7 @@
 package metric
 
 import (
+	"github.com/prometheus/client_golang/prometheus"
 	"testing"
 )
 
@@ -92,12 +93,23 @@ func TestFleetVerdictOmitsTheDenominatorItCouldNotRead(t *testing.T) {
 
 // A scrape that reached no judgment must publish none. A default would export
 // "healthy" for a deployment nobody managed to ask.
+//
+// The verdict's own collector, not every metric whose name starts with
+// fleet: the fleet store's meters share the prefix and are written by
+// publishing and reading snapshots, which has nothing to do with whether a
+// judgment was reached -- and a counter that publishes no zero is one a
+// reader cannot tell from an absent build.
 func TestFleetVerdictPublishesNothingWithoutAJudgment(t *testing.T) {
-	gathered := gatherFleet(t, FleetVerdict{})
-	for name := range gathered {
-		if len(name) > 22 && name[:22] == "bkmonitor_alarmd_fleet" {
-			t.Fatalf("published %s without a judgment", name)
-		}
+	registry := prometheus.NewRegistry()
+	if err := registry.Register(newFleetCollector(func() FleetVerdict { return FleetVerdict{} })); err != nil {
+		t.Fatal(err)
+	}
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(families) != 0 {
+		t.Fatalf("the verdict collector published %d families without a judgment: %+v", len(families), families)
 	}
 }
 
@@ -221,6 +233,7 @@ func TestCheckLinesAndDegradationKindsAreExportedAtZero(t *testing.T) {
 		Degradations: []FleetCount{
 			{Value: "ACTIVATION_BEHIND", Count: 1}, {Value: "OPEN_ALERT_SET_STALE", Count: 0},
 		},
+		Losses: []FleetCount{{Value: "ONGOING", Count: 3}, {Value: "AFTER_COOLDOWN", Count: 0}, {Value: "GRACE_UNKNOWN", Count: 1}},
 	})
 
 	checks := gathered["bkmonitor_alarmd_fleet_checks"]
@@ -237,6 +250,15 @@ func TestCheckLinesAndDegradationKindsAreExportedAtZero(t *testing.T) {
 		got, present := degradations[kind]
 		if !present || got != want {
 			t.Errorf("fleet_degradations{kind=%s} = %v (present=%v), want %v as a series", kind, got, present, want)
+		}
+	}
+	// The loss kinds likewise, zero included: DETECTION_ABANDONED's count
+	// alone cannot tell a rollout's tail from a loss in progress.
+	losses := gathered["bkmonitor_alarmd_fleet_losses"]
+	for loss, want := range map[string]float64{"ONGOING": 3, "AFTER_COOLDOWN": 0, "GRACE_UNKNOWN": 1} {
+		got, present := losses[loss]
+		if !present || got != want {
+			t.Errorf("fleet_losses{loss=%s} = %v (present=%v), want %v as a series", loss, got, present, want)
 		}
 	}
 }

@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -126,6 +128,10 @@ func (l *Logger) Info(stage, result string, records int, duration time.Duration,
 	l.log(slog.LevelInfo, stage, result, records, duration, attrs...)
 }
 
+func (l *Logger) Warn(stage, result string, records int, duration time.Duration, attrs ...slog.Attr) {
+	l.log(slog.LevelWarn, stage, result, records, duration, attrs...)
+}
+
 func (l *Logger) Error(stage, result string, records int, duration time.Duration, attrs ...slog.Attr) {
 	l.log(slog.LevelError, stage, result, records, duration, attrs...)
 }
@@ -146,6 +152,14 @@ func (l *LoggingObserver) Observe(ctx context.Context, observation Observation) 
 				return
 			}
 		}
+	}
+	// A catalog object read is the same kind of fact: one per read, hit
+	// included, three hundred a second on a live replica, and complete in
+	// object_read_total{kind,result}. It was never written before it had a
+	// name -- an unlisted stage is not a workflow stage -- and getting its
+	// name must not turn it into the largest line in the log.
+	if observation.Component == ComponentControlPlane && observation.Stage == StageObjectRead {
+		return
 	}
 	if l == nil || l.logger == nil || l.logger.next == nil || l.policy == nil {
 		return
@@ -202,6 +216,102 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 		// Both numbers, zero included: a success that handed the broker
 		// nothing is the case this exists to tell from a write.
 		attributes = append(attributes, slog.Int64("messages_published", w.Published), slog.Int64("events_without_message", w.WithoutMessage))
+		// The breakdown under its own keys, only the buckets that counted:
+		// which protocol dropped which kind, readable from the line itself.
+		for _, bucket := range w.WithoutMessageBy {
+			if bucket.Events > 0 {
+				attributes = append(attributes, slog.Int64("events_without_message_"+bucket.Format+"_"+strings.ToLower(bucket.EventKind), bucket.Events))
+			}
+		}
+	}
+	if observation.OutputWireFormat != "" {
+		attributes = append(attributes, slog.String("wire_format", observation.OutputWireFormat))
+	}
+	if matched := observation.PlanSeriesMatched; matched != nil {
+		// Zero rendered: a Plan bound to no series is the reading this key
+		// exists for, and it is the line a search for the strategy finds.
+		attributes = append(attributes, slog.Int("series_matched", *matched))
+	}
+	if p := observation.PrimaryInput; p != nil {
+		// What the query answered, on the completion line: the fact a hole on
+		// a window is read against. EMPTY is rendered, not omitted -- it is
+		// the reading that says every series was absent from this minute.
+		attributes = append(attributes, slog.String("primary_completeness", p.Completeness))
+		if p.DataState != "" {
+			attributes = append(attributes, slog.String("primary_data_state", p.DataState))
+		}
+	}
+	// How much of the object this round described, on the line, whenever it
+	// described less than all of it. Gated on the two counts and not on the
+	// named windows: the round these exist for is the one that summarised no
+	// window at all -- every series resumed, or none of their State loadable
+	// -- and the block below is gated on a named window, so that round is
+	// silent there by construction. A count visible only when the thing whose
+	// absence it explains is present explains nothing.
+	//
+	// Levels rides along so the identity a reader checks -- levels plus these
+	// two against the series the Slot handled -- is on one line rather than a
+	// join across three.
+	if c := observation.HistoryCoverage; c != nil && (c.Resumed > 0 || c.Constrained > 0) {
+		attributes = append(attributes,
+			slog.Uint64("history_levels", uint64(c.Levels)),
+			slog.Uint64("history_resumed", uint64(c.Resumed)),
+			slog.Uint64("history_constrained", uint64(c.Constrained)))
+	}
+	if c := observation.HistoryCoverage; c != nil && len(c.Windows) > 0 {
+		// The worst named window, on the line: which series, and which minutes
+		// it lacks. One window rather than all of them, because the line is
+		// read by a person searching for one strategy and the rest are on the
+		// row; the count says how many more were named.
+		worst := c.Windows[0]
+		attributes = append(attributes,
+			slog.String("history_worst_series", worst.Series),
+			slog.Int64("history_worst_end", worst.End),
+			slog.Int("history_windows_named", len(c.Windows)))
+		if len(worst.Missing) > 0 {
+			attributes = append(attributes, slog.String("history_worst_missing", joinInt64(worst.Missing)))
+		}
+		if len(worst.Unusable) > 0 {
+			attributes = append(attributes, slog.String("history_worst_unusable", joinInt64(worst.Unusable)))
+		}
+		if worst.GuardReason != "" {
+			attributes = append(attributes, slog.String("history_worst_guard", worst.GuardReason))
+		}
+	}
+	if rejected := observation.HistoryCoverageRejected; rejected != nil {
+		// The reading the server declined, on the line where the reading
+		// would have been: the rule, and the window's series when the rule
+		// is about one. A grep for the rule finds every round it refused.
+		attributes = append(attributes, slog.String("history_coverage_rejected", string(rejected.Rule)))
+		if rejected.Series != "" {
+			attributes = append(attributes, slog.String("history_coverage_rejected_series", rejected.Series))
+		}
+	}
+	if counts := observation.OutputWireFormats; len(counts) > 0 {
+		// One key per format the batch carried, under the format's own
+		// name: a grep for standard_raw_event finds the batches that sent
+		// one, and finds nothing only when none did.
+		for _, format := range sortedWireFormats(counts) {
+			attributes = append(attributes, slog.Int64("wire_format_events_"+format, counts[format]))
+		}
+	}
+	if counts := observation.OutputEventKinds; len(counts) > 0 {
+		// The same events once more by kind, under the format's and the
+		// kind's own names, so a search for the recovery that should have
+		// left on the standard line finds the batch it left in.
+		keys := make([]OutputEventKindKey, 0, len(counts))
+		for key := range counts {
+			keys = append(keys, key)
+		}
+		sort.Slice(keys, func(i, j int) bool {
+			if keys[i].Format != keys[j].Format {
+				return keys[i].Format < keys[j].Format
+			}
+			return keys[i].EventKind < keys[j].EventKind
+		})
+		for _, key := range keys {
+			attributes = append(attributes, slog.Int64("wire_format_events_"+key.Format+"_"+strings.ToLower(key.EventKind), counts[key]))
+		}
 	}
 	if f := observation.FrozenStateRenewal; f != nil {
 		// The eight numbers on the line, not only on the metric: the line is
@@ -234,12 +344,48 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 	if f := observation.StateApplyChunk; f != nil {
 		attributes = append(attributes, slog.Int("chunk_index", f.Index), slog.Int("chunk_count", f.Count),
 			slog.Int64("applied_keys", f.AppliedKeys), slog.Int64("applied_bytes", f.AppliedBytes), slog.Int64("elapsed_ms", f.ElapsedMillis))
+		if len(f.RefusalRules) > 0 {
+			attributes = append(attributes, slog.String("state_refusal_rules", strings.Join(f.RefusalRules, ",")))
+		}
+		if f.LegacyRecordIDs > 0 {
+			attributes = append(attributes, slog.Int("state_legacy_record_ids", f.LegacyRecordIDs))
+		}
 	}
 	if f := observation.CapacityRejection; f != nil {
 		attributes = append(attributes, slog.String("capacity_phase", f.Phase), slog.Uint64("capacity_shared_used", f.SharedUsed), slog.Uint64("capacity_requested", f.Requested), slog.Uint64("capacity_limit", f.Limit))
 		if f.OwnUsed != nil {
 			attributes = append(attributes, slog.Uint64("capacity_own_used", *f.OwnUsed))
 		}
+		// Every budget's own usage, so the refusal can be read against the ones
+		// that did not refuse. capacity_budget names which was reached; without
+		// these the line cannot say whether the rest were anywhere near theirs.
+		for _, usage := range f.Usage {
+			attributes = append(attributes,
+				slog.Uint64("capacity_own_"+string(usage.Budget), usage.OwnUsed),
+				slog.Uint64("capacity_limit_"+string(usage.Budget), usage.Limit))
+		}
+	}
+	if f := observation.SlotBudgetUsage; f != nil {
+		attributes = append(attributes, slog.Any("slot_budget_usage", f))
+	}
+	// Flat keys rather than an object, under its own condition: the two
+	// answer different questions and a row can carry either without the
+	// other.
+	//
+	// Flat because this line has already paid for the other choice once. A
+	// nested held_by shipped here and was invisible to anything filtering the
+	// line, and the rows that most needed it carried no cause at all. This
+	// field exists to be filtered on -- "which Slots spent their period
+	// waiting for records" is the question -- so it is written the way the
+	// rest of the line is. The neighbour above is the known exception: it
+	// predates this and is nested, so its members are readable on a row and
+	// not selectable by one.
+	if f := observation.SlotTiming; f != nil {
+		attributes = append(attributes,
+			slog.Uint64("slot_millis", f.Slot),
+			slog.Uint64("input_millis", f.Input),
+			slog.Uint64("preflight_millis", f.Preflight),
+			slog.Uint64("evaluate_millis", f.Evaluate))
 	}
 	if observation.CapacityBudget != "" {
 		attributes = append(attributes, slog.String("capacity_budget", string(observation.CapacityBudget)))
@@ -248,6 +394,7 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 		attributes = append(attributes, slog.String("source_kind", string(observation.SourceKind)))
 	}
 	attributes = appendObservationCounts(attributes, observation.Counts)
+	attributes = appendEnvelopePassCounts(attributes, observation)
 	attributes = appendTraceFields(attributes, observation.Trace)
 	if f := observation.QueryFailure; f != nil {
 		attributes = append(attributes, slog.String("failure_stage", f.Stage), slog.String("failure_category", f.Category), slog.String("failure_code", f.Code))
@@ -339,6 +486,7 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 		attributes = appendHeldByAttributes(attributes, facts.HeldBy)
 	}
 	attributes = appendHeldByAttributes(attributes, observation.HeldBy)
+	attributes = appendSlotCompletionKind(attributes, observation.SlotCompletionKind)
 	if facts := observation.SegmentContent; facts != nil {
 		attributes = append(attributes, slog.String("segment_content", facts.State))
 	}
@@ -347,6 +495,62 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			slog.String("no_data_outcome", facts.Outcome),
 			slog.Int("no_data_outcome_plans", facts.Plans),
 		)
+	}
+	if facts := observation.NoDataAbsence; facts != nil {
+		// Every count, zeros included: the horizon a deployment has switched
+		// on shows up here as expired and suppressed moving off zero, and a
+		// line that omitted the zeros would leave "nothing expired" and "this
+		// build does not report expiry" indistinguishable.
+		attributes = append(attributes,
+			slog.String("no_data_outcome", facts.Outcome),
+			slog.Int64("no_data_horizon_seconds", facts.HorizonSeconds),
+			slog.String("no_data_horizon_source", facts.HorizonSource),
+			slog.String("no_data_roster_source", facts.RosterSource),
+			slog.Uint64("no_data_expected", facts.Expected),
+			slog.Uint64("no_data_present", facts.Present),
+			slog.Uint64("no_data_absent", facts.Absent),
+			slog.Uint64("no_data_unavailable", facts.Unavailable),
+			slog.Uint64("no_data_dropped", facts.Dropped),
+			slog.Uint64("no_data_expired", facts.Expired),
+			slog.Uint64("no_data_suppressed", facts.Suppressed),
+			// The ages beside the count, zeros included, for the same reason
+			// as the counts: whether the horizon can reach anything is read
+			// from the last bucket being zero or not.
+			slog.Uint64("no_data_absent_this_round", facts.AbsentAges.ThisRound),
+			slog.Uint64("no_data_absent_under_hour", facts.AbsentAges.UnderHour),
+			slog.Uint64("no_data_absent_under_day", facts.AbsentAges.UnderDay),
+			slog.Uint64("no_data_absent_day_or_more", facts.AbsentAges.DayOrMore),
+		)
+	}
+	if facts := observation.TargetResolution; facts != nil {
+		attributes = append(attributes,
+			slog.String("strategy_id", facts.StrategyID),
+			slog.String("target_resolution", facts.State),
+			slog.Int("target_selectors", len(facts.Selectors)),
+		)
+		if facts.StaleAgeSeconds > 0 {
+			attributes = append(attributes, slog.Int64("resolved_from_stale_snapshot_age_seconds", facts.StaleAgeSeconds))
+		}
+		for _, selector := range facts.Selectors {
+			if selector.State == "OK" && !selector.NodeMissing && !selector.NodeForeign {
+				continue
+			}
+			// Only the selectors with something to say are on the line: an
+			// unavailable or incomplete one, an empty one, a dangling node.
+			attributes = append(attributes, slog.String("target_selector",
+				selector.Kind+" "+selector.ID+" "+selector.State+" "+selector.Reason+
+					" kept="+strconv.Itoa(selector.Kept)+" dropped="+strconv.Itoa(selector.Dropped)))
+		}
+	}
+	if observation.GapApplySite != "" {
+		attributes = append(attributes, slog.String("gap_apply_site", observation.GapApplySite))
+	}
+	if facts := observation.GapStatements; facts != nil {
+		attributes = append(attributes,
+			slog.String("gap_statements_shape", facts.Shape),
+			slog.Int("gap_statements", facts.Statements),
+			slog.String("gap_statements_before_events", strings.Join(facts.BeforeEvents, ",")),
+			slog.String("gap_statements_after_state", strings.Join(facts.AfterState, ",")))
 	}
 	if facts := observation.GapProgress; facts != nil {
 		// Both numbers, on every line. The question these answer is "how far
@@ -411,6 +615,13 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			slog.String("state_generation_skew_strategy_id", facts.StrategyID),
 		)
 	}
+	if facts := observation.StateCarry; facts != nil {
+		attributes = append(attributes,
+			slog.String("state_carry_scope", facts.Scope),
+			slog.String("state_carry_result", facts.Result),
+			slog.Int("state_carry_count", facts.Count),
+		)
+	}
 	if facts := observation.ActivationHold; facts != nil {
 		attributes = append(attributes,
 			slog.Int("activation_reappeared", facts.Reappeared),
@@ -449,6 +660,37 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 			slog.Bool("rebalance_moves_truncated", facts.MovesTruncated),
 			slog.Any("rebalance_moves", facts.Moves),
 		)
+		if bytes := facts.Bytes; bytes != nil {
+			// The byte-constraint round's counts, zeros included, for the
+			// same reason: judged and unread together say whether the round
+			// could judge at all, and a round that moved nothing because it
+			// judged nothing reads identically to one that found nothing to
+			// move without them. The per-Worker lists stay on the page; the
+			// overloaded one is here because it is the actionable half and
+			// is bounded by the fleet.
+			attributes = append(attributes,
+				slog.Int("byte_constraint_judged", bytes.Judged),
+				slog.Int("byte_constraint_unread", bytes.Unread),
+				slog.Int("byte_constraint_pool_unknown", len(bytes.PoolUnknown)),
+				slog.Int("byte_constraint_unsettled", len(bytes.Unsettled)),
+				slog.Any("byte_constraint_overloaded", bytes.Overloaded),
+				slog.Int("byte_constraint_planned_moves", bytes.PlannedMoves),
+				slog.Int("byte_constraint_published_moves", bytes.PublishedMoves),
+			)
+		}
+		if gate := facts.ShardAware; gate != nil {
+			// All three whenever the gate ran, zeros included: a round that
+			// admits a split and one from a build that has no gate read the
+			// same otherwise, and "how many ready workers did it ask" is the
+			// denominator of the other two. The list stays beside the count
+			// because a rollout reader wants the replica, not the number.
+			attributes = append(attributes,
+				slog.Int("shard_aware_ready", gate.Ready),
+				slog.Int("shard_unaware_replicas", len(gate.Unaware)),
+				slog.Any("shard_unaware", gate.Unaware),
+				slog.Int("shard_splits_held", gate.SplitsHeld),
+			)
+		}
 	}
 	if facts := observation.AssignmentSweep; facts != nil {
 		// The five numbers of a sweep, zeros included: the line existed for a
@@ -581,13 +823,103 @@ func (l *Logger) logObservation(ctx context.Context, observation Observation, ad
 	if len(observation.AlgorithmInputs) > 0 {
 		attributes = append(attributes, slog.Any("algorithm_inputs", observation.AlgorithmInputs))
 	}
+	if len(observation.LevelOutcomes) > 0 {
+		attributes = append(attributes, slog.Any("level_outcomes", observation.LevelOutcomes))
+	}
+	if facts := observation.Shardability; facts != nil {
+		// The denominator first: a count of strategies that cannot be split
+		// says nothing without how many there are.
+		attributes = append(attributes,
+			slog.Int("shardable_plans", facts.Plans),
+			slog.Int("shardable_splittable", facts.Splittable),
+			slog.Int("shardable_disjunctive", facts.Disjunctive),
+			slog.Int("shardable_not_structured", facts.NotStructured),
+			slog.Int("shardable_no_queries", facts.NoQueries),
+		)
+	}
+	if facts := observation.SplitPlan; facts != nil {
+		// The decision and every reading it was judged from. "This object was
+		// not split" is the same line for an object under its share and one
+		// whose heaviest value cannot be divided, and those call for opposite
+		// answers, so the numbers travel with the word.
+		attributes = append(attributes,
+			slog.String("split_outcome", facts.Outcome),
+			slog.Uint64("split_peak_bytes", facts.PeakBytes),
+			slog.Uint64("split_share_bytes", facts.ShareBytes),
+			slog.Int("split_shards", facts.Shards),
+			slog.Int("split_carrying_shards", facts.Carrying),
+			slog.Bool("split_shards_capped", facts.ShardsCapped),
+			slog.String("split_dimension", facts.Dimension),
+			slog.Int("split_dimension_candidates", facts.Candidates),
+			slog.Uint64("split_series", uint64(facts.Series)),
+			slog.Int64("split_census_age_seconds", facts.CensusAgeSeconds),
+			slog.Int64("split_census_age_bound_seconds", facts.CensusAgeBoundSeconds),
+			slog.String("split_census_age_bound_source", facts.CensusAgeBoundSource),
+			slog.String("split_census_source", facts.CensusSource),
+			slog.Uint64("split_heaviest_value_series", uint64(facts.HeaviestValueSeries)),
+			slog.Uint64("split_target_series", uint64(facts.TargetSeries)),
+			slog.Uint64("split_tail_series", uint64(facts.TailSeries)),
+			slog.Int("split_skew_percent", facts.SkewPercent),
+			slog.Uint64("split_largest_shard_series", uint64(facts.LargestShardSeries)),
+			slog.Uint64("split_smallest_shard_series", uint64(facts.SmallestShardSeries)),
+			slog.Int("split_plans_in_group", facts.PlansInGroup),
+			slog.Bool("split_dry_run", facts.DryRun),
+		)
+	}
+	if facts := observation.ShardQuery; facts != nil {
+		attributes = append(attributes,
+			slog.String("shard_query_outcome", facts.Outcome),
+			slog.Int("shard_query_shards", facts.Shards),
+			slog.Int("shard_query_built", facts.Built),
+			slog.Int("shard_query_values", facts.Values),
+			slog.Int("shard_query_fallback_values", facts.FallbackValues),
+			slog.Int("shard_query_queries", facts.Queries),
+		)
+		if facts.Detail != "" {
+			attributes = append(attributes, slog.String("shard_query_detail", facts.Detail))
+		}
+	}
+	if facts := observation.SplitRound; facts != nil {
+		// The round's own three, with their denominator: skipped alone
+		// cannot say whether a zero means nothing was left out or nothing
+		// was looked at.
+		attributes = append(attributes,
+			slog.Int("split_round_over_share", facts.OverShare),
+			slog.Int("split_round_examined", facts.Examined),
+			slog.Int("split_round_skipped", facts.Skipped),
+		)
+	}
+	if facts := observation.DimensionCensus; facts != nil {
+		// The gate's two numbers go out with the census itself: a census that
+		// appears, or stops appearing, is a candidate decision, and the
+		// decision cannot be checked afterwards from the census alone.
+		attributes = append(attributes,
+			slog.String("census_source", facts.Source),
+			slog.String("census_status", facts.Status),
+			slog.Uint64("census_series", uint64(facts.Series)),
+			slog.Int("census_dimensions", facts.Dimensions),
+			slog.Int("census_values", facts.Values),
+			slog.Uint64("census_overflow_values", uint64(facts.OverflowValues)),
+			slog.Uint64("census_overflow_series", uint64(facts.OverflowSeries)),
+			slog.Int("census_bytes", facts.Bytes),
+			slog.Int("census_limit", facts.Limit),
+			slog.Uint64("census_peak_bytes", facts.PeakBytes),
+			slog.Uint64("census_share_bytes", facts.ShareBytes),
+		)
+	}
 	if observation.Err != nil {
 		attributes = append(attributes,
 			slog.String("error_type", fmt.Sprintf("%T", observation.Err)),
 			slog.String("error", SanitizeErrorText(observation.Err.Error())),
 		)
 	}
-	if admission.Suppressed > 0 {
+	if admission.Sampled {
+		// The one line a pacing bucket keeps per window says it is that line,
+		// and carries the merged count even when it is zero: on this line a
+		// missing count would read the same as "not counted", and the count is
+		// what the line is kept for.
+		attributes = append(attributes, slog.Bool("sampled", true), slog.Uint64("suppressed_logs", admission.Suppressed))
+	} else if admission.Suppressed > 0 {
 		attributes = append(attributes, slog.Uint64("suppressed_logs", admission.Suppressed))
 	}
 	if admission.SuppressedEvicted > 0 {
@@ -714,7 +1046,8 @@ func appendObservationCounts(attributes []slog.Attr, counts Counts) []slog.Attr 
 	}{
 		{"messages", counts.Messages}, {"records", counts.Records}, {"plans", counts.Plans},
 		{"levels", counts.Levels}, {"events", counts.Events}, {"bytes", counts.Bytes},
-		{"keys", counts.Keys}, {"state_bytes", counts.StateBytes},
+		{"keys", counts.Keys}, {"state_bytes", counts.StateBytes}, {"envelope_reads", counts.EnvelopeReads},
+		{"envelope_reads_apply", counts.EnvelopeReadsApply},
 	}
 	for _, value := range values {
 		if value.value > 0 {
@@ -722,6 +1055,36 @@ func appendObservationCounts(attributes []slog.Attr, counts Counts) []slog.Attr 
 		}
 	}
 	return attributes
+}
+
+// appendEnvelopePassCounts writes the four the state preflight's second pass
+// splits into, at every value including zero.
+//
+// Zero included, unlike every other count on the line, because these are the
+// only ones whose zero is the answer: the migration is over when
+// envelope_answered is zero and stays there, and the two corruption counts
+// are read to confirm they are zero. A count that appears only when non-zero
+// cannot say "none of these happened" -- it reads identically to "nobody
+// counted", which is how envelope_reads spent a release being invisible on
+// every line where it was zero.
+//
+// Gated on the stage rather than on the values, because gating on the values
+// is the same omission in another shape. Only the preflight line produces
+// them, so only it carries them: four keys on every observation in the
+// process would be most of a log line spent restating zeros nobody asked.
+func appendEnvelopePassCounts(attributes []slog.Attr, observation Observation) []slog.Attr {
+	if observation.Stage != StageStatePreflight {
+		return attributes
+	}
+	return append(attributes,
+		slog.Int64("envelope_answered", observation.Counts.EnvelopeAnswered),
+		slog.Int64("envelope_corrupt", observation.Counts.EnvelopeCorrupt),
+		slog.Int64("no_record_yet", observation.Counts.NoRecordYet),
+		slog.Int64("frame_corrupt_rescued", observation.Counts.FrameCorruptRescued),
+		slog.Int64("frame_corrupt_lost", observation.Counts.FrameCorruptLost),
+		slog.Int64("unclassified", observation.Counts.Unclassified),
+		slog.Int64("fetch_ms", observation.Counts.StateFetchMillis),
+		slog.Int64("decode_ms", observation.Counts.StateDecodeMillis))
 }
 
 func appendTraceFields(attributes []slog.Attr, trace TraceFields) []slog.Attr {
@@ -842,6 +1205,19 @@ func (w *serializedLogWriter) Write(p []byte) (int, error) {
 // filtering the line. It first shipped nested inside one cohort's bundle and
 // the lines that most needed it -- the sixty-second and slower Query Groups
 // being skipped -- had no bundle and therefore no cause on them at all.
+// appendSlotCompletionKind writes the completion the Slot reached, when it is
+// a word this build publishes.
+//
+// Guarded rather than written through: the line carries a closed vocabulary
+// everywhere else, and a value nobody can enumerate turns a filterable key
+// into free text.
+func appendSlotCompletionKind(attributes []slog.Attr, kind string) []slog.Attr {
+	if !ValidProgressCompletionKind(kind) {
+		return attributes
+	}
+	return append(attributes, slog.String("completion_kind", kind))
+}
+
 func appendHeldByAttributes(attributes []slog.Attr, held *HeldByFacts) []slog.Attr {
 	if held == nil {
 		return attributes
@@ -860,4 +1236,26 @@ func appendHeldByAttributes(attributes []slog.Attr, held *HeldByFacts) []slog.At
 		attributes = append(attributes, slog.Int64("held_by_ready_at", held.ReadyAtUnixMilli))
 	}
 	return attributes
+}
+
+// sortedWireFormats is the batch's formats in one order, so two lines with
+// the same counts read the same.
+func sortedWireFormats(counts OutputWireFormatCounts) []string {
+	formats := make([]string, 0, len(counts))
+	for format := range counts {
+		formats = append(formats, format)
+	}
+	sort.Strings(formats)
+	return formats
+}
+
+// joinInt64 renders source times as one comma-separated value, so the
+// minutes a window lacks are one key a search for the strategy finds rather
+// than sixteen numbered ones.
+func joinInt64(values []int64) string {
+	parts := make([]string, len(values))
+	for i, value := range values {
+		parts[i] = strconv.FormatInt(value, 10)
+	}
+	return strings.Join(parts, ",")
 }

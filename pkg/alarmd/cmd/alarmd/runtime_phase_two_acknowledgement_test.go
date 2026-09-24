@@ -79,7 +79,7 @@ func TestProductionPhaseTwoWorkerAcknowledgesTheActivationItExecutesBy(t *testin
 	}
 	defer func() { _ = bundle.Shutdown(ctx) }()
 	control := bundle.dependencies.Control.(*productionPhaseTwoControl)
-	activation, err := control.dependencies.Repository.LoadActivation(ctx)
+	activation, err := control.dependencies.Repository.LoadActivationHead(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

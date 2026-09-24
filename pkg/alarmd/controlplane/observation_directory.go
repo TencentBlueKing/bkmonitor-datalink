@@ -252,11 +252,11 @@ func (d *ObservationDirectory) Refresh(ctx context.Context, at time.Time) {
 	}
 	s.Current, s.ActivationRevision = activation.Current, activation.RecordRevision
 	s.Revision = fmt.Sprintf("%s:%d:%d", s.Published.SnapshotRevision, s.Published.PublicationEpoch, activation.RecordRevision)
-	active := make(map[execution.PlanIdentity]PlanActivationRecord, len(activation.Plans))
+	active := make(map[execution.PlanKey]PlanActivationRecord, len(activation.Plans))
 	publications := []SnapshotPublicationRef{s.Published}
 	seen := map[SnapshotPublicationRef]bool{s.Published: true}
 	for _, a := range activation.Plans {
-		active[a.Fact.Plan] = a
+		active[a.Fact.Key()] = a
 		if !seen[a.Publication] && a.Publication.validate() == nil {
 			publications = append(publications, a.Publication)
 			seen[a.Publication] = true
@@ -327,7 +327,7 @@ func (d *ObservationDirectory) Refresh(ctx context.Context, at time.Time) {
 			}
 			if !ok {
 				var obj QueryGroupObject
-				if cachedObject, _, hit := d.repository.objectCache.lookup(d.repository.queryGroupObjectKey(ref.ObjectDigest)); hit {
+				if cachedObject, _, hit := d.repository.objects().lookup(d.repository.queryGroupObjectKey(ref.ObjectDigest)); hit {
 					obj = cachedObject.(storedQueryGroupObject).object
 					err = nil
 				} else {
@@ -352,7 +352,7 @@ func (d *ObservationDirectory) Refresh(ctx context.Context, at time.Time) {
 				}
 				entry = catalogIndexEntry{Group: obj.Identity, Digest: ref.ObjectDigest, QueryRevision: obj.QueryPlan.QueryRevision, ScheduleRevision: obj.ScheduleRevision}
 				for _, p := range obj.Plans {
-					entry.Plans = append(entry.Plans, p.Identity)
+					entry.Plans = append(entry.Plans, p.Key())
 				}
 			}
 			if entry.Group != ref.QueryGroup {
@@ -370,7 +370,8 @@ func (d *ObservationDirectory) Refresh(ctx context.Context, at time.Time) {
 			}
 			if !alreadyRetained {
 				entryBytes := len(string(ref.QueryGroup)) + len(string(ref.ObjectDigest))
-				for _, id := range entry.Plans {
+				for _, key := range entry.Plans {
+					id := key.PlanIdentity
 					entryBytes += DirectoryEntryReservationBytes() + len(id.TenantID) + len(id.BusinessID) + len(id.StrategyID) + len(string(contexts[id]))
 				}
 				if retainedBytes+entryBytes > d.limits.Entries*DirectoryEntryReservationBytes() {
@@ -382,10 +383,11 @@ func (d *ObservationDirectory) Refresh(ctx context.Context, at time.Time) {
 			}
 			nextKnown[ref.ObjectDigest] = entry
 			s.GroupsKnown++
-			for _, id := range entry.Plans {
+			for _, key := range entry.Plans {
+				id := key.PlanIdentity
 				row := StrategyDirectoryRow{Identity: id, QueryGroup: ref.QueryGroup, ObjectDigest: ref.ObjectDigest, Publication: pub, Role: "PUBLISHED",
 					QueryRevision: entry.QueryRevision, ScheduleRevision: entry.ScheduleRevision, OutputContext: contexts[id]}
-				if a, exists := active[id]; exists && a.Publication == pub {
+				if a, exists := active[key]; exists && a.Publication == pub {
 					fact := a.Fact
 					row.Activation = &fact
 					row.Role = string(fact.Selection)
@@ -558,7 +560,7 @@ func (d *ObservationDirectory) EffectiveOutput(ctx context.Context, row Strategy
 	}
 	key := d.repository.outputContextKey(row.OutputContext)
 	var object OutputContextObject
-	if cached, _, hit := d.repository.objectCache.lookup(key); hit {
+	if cached, _, hit := d.repository.objects().lookup(key); hit {
 		object, hit = cached.(OutputContextObject)
 		if !hit {
 			return OutputFormatFacts{Reason: OutputContextCorrupt, OutputContextDigest: row.OutputContext}
@@ -601,12 +603,19 @@ func (d *ObservationDirectory) readGroup(ctx context.Context, r *directoryRead, 
 	if err != nil {
 		return QueryGroupObject{}, err
 	}
-	hash, err := contract.DeriveCanonicalDigestV2OverCanonical(queryGroupObjectContractVersion, payload)
+	domain, err := queryGroupObjectDomain(payload)
+	if errors.Is(err, ErrCatalogObjectContractNewer) {
+		return QueryGroupObject{}, err
+	}
+	if err != nil {
+		return QueryGroupObject{}, ErrCatalogObjectCorrupt
+	}
+	hash, err := contract.DeriveCanonicalDigestV2OverCanonical(domain, payload)
 	if err != nil || hash != string(digest) {
 		return QueryGroupObject{}, ErrCatalogObjectCorrupt
 	}
 	var obj QueryGroupObject
-	if err = json.Unmarshal(payload, &obj); err != nil || obj.ContractVersion != queryGroupObjectContractVersion {
+	if err = json.Unmarshal(payload, &obj); err != nil || !knownQueryGroupObjectVersion(obj.ContractVersion) {
 		return QueryGroupObject{}, ErrCatalogObjectCorrupt
 	}
 	return obj, nil

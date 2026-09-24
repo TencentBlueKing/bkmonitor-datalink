@@ -50,7 +50,7 @@ func TestProductionSlotSourceFinalizesExpiredSlotQueryFreeWhenSegmentSnapshotIsU
 		slot.Recovery.Disposition != ReplayExpired || slot.ExpiredRange != nil {
 		t.Fatalf("slot dispatch=%+v recovery=%+v range=%v, want an expired normal Slot", slot.Dispatch, slot.Recovery, slot.ExpiredRange)
 	}
-	if !slot.DuePlanTargets.Equal(execution.FrozenDuePlanTargets{DuePlanSetDigest: contractRef.DuePlanSetDigest, Plans: []execution.PlanIdentity{planIdentity("1")}}) {
+	if !slot.DuePlanTargets.Equal(execution.FrozenDuePlanTargets{DuePlanSetDigest: contractRef.DuePlanSetDigest, Plans: []execution.PlanKey{{PlanIdentity: planIdentity("1")}}}) {
 		t.Fatalf("due Plan targets = %+v, want the Segment's due Plan", slot.DuePlanTargets)
 	}
 	if err := slot.Validate("query-group-1"); err != nil {

@@ -38,6 +38,18 @@ import (
 // digest that names them.
 var ErrCatalogObjectCorrupt = errors.New("alarmd controlplane: catalog object does not match its digest")
 
+// ErrCatalogObjectContractNewer reports stored bytes of a contract version
+// this build does not read but recognizes as a later one of the same
+// contract: an object a newer build published. It is kept apart from
+// ErrCatalogObjectCorrupt because the two mean opposite things to a reader.
+// A corrupt object is a defect in the store; an object of a newer contract
+// is this replica being the old one in a rollout, which every version bump
+// of the object produces for exactly as long as the rollout takes. Read as
+// corruption, a rollout looks like every strategy's object breaking at once,
+// and that is what the v3 bump would have looked like on every replica
+// still on v2.
+var ErrCatalogObjectContractNewer = errors.New("alarmd controlplane: catalog object is of a contract newer than this build")
+
 const (
 	objectReadKindQueryGroup    = "query_group"
 	objectReadKindOutputContext = "output_context"
@@ -48,12 +60,16 @@ const (
 	objectReadShare   = "share"
 	objectReadMissing = "missing"
 	objectReadInvalid = "invalid"
+	// objectReadNewer is an object of a contract this build does not read
+	// yet: the outcome of being the older replica in a rollout.
+	objectReadNewer = "newer"
 
 	segmentReadObject         = "object"
 	segmentReadLegacySegment  = "legacy_segment"
 	segmentReadWithoutRef     = "segment_without_ref"
 	segmentReadObjectMissing  = "object_missing"
 	segmentReadObjectInvalid  = "object_invalid"
+	segmentReadObjectNewer    = "object_newer"
 	segmentReadObjectMismatch = "object_mismatch"
 )
 
@@ -131,12 +147,27 @@ type objectReadFlights struct {
 }
 
 // ConfigureObjectCache bounds the decoded catalog objects this process keeps.
+//
+// Safe to call while objects are being read: the new cache replaces the old
+// one in one atomic store, and a reader holds whichever it loaded for the one
+// lookup or store it makes. The process configures it once, before anything
+// reads; a caller that configures it again while the loops run -- a test
+// dropping what this process has kept, to read a lost object from Redis --
+// used to race every reader of the field. A read already in flight when the
+// cache is replaced stores into the new one: the key is the content's digest,
+// so what it stores is right, and the new cache simply does not start empty.
 func (repository *RedisCatalogRepository) ConfigureObjectCache(maxEntries, maxBytes int) error {
 	if repository == nil || maxEntries <= 0 || maxBytes <= 0 {
 		return errors.New("alarmd controlplane: invalid catalog object cache budget")
 	}
-	repository.objectCache = newObjectReadCache(maxEntries, maxBytes)
+	repository.objectCache.Store(newObjectReadCache(maxEntries, maxBytes))
 	return nil
+}
+
+// objects is the object cache in force, nil before one is configured; every
+// method of the cache treats nil as empty.
+func (repository *RedisCatalogRepository) objects() *objectReadCache {
+	return repository.objectCache.Load()
 }
 
 func (repository *RedisCatalogRepository) observeObjectRead(ctx context.Context, kind, result string) {
@@ -153,13 +184,13 @@ func (repository *RedisCatalogRepository) observeObjectRead(ctx context.Context,
 // it and a hit is by far the common path.
 func (repository *RedisCatalogRepository) loadObject(
 	ctx context.Context,
-	kind, key, domain, digest string,
+	kind, key string, domain func([]byte) (string, error), digest string,
 	decode func([]byte) (any, error),
 ) (any, int, error) {
 	if repository == nil || repository.client == nil || digest == "" {
 		return nil, 0, errors.New("alarmd controlplane: catalog object digest is required")
 	}
-	if value, size, ok := repository.objectCache.lookup(key); ok {
+	if value, size, ok := repository.objects().lookup(key); ok {
 		repository.observeObjectRead(ctx, kind, objectReadHit)
 		return value, size, nil
 	}
@@ -198,14 +229,14 @@ func (repository *RedisCatalogRepository) loadObject(
 	flights.mu.Unlock()
 	close(flight.done)
 	if flight.err == nil {
-		repository.objectCache.store(key, flight.value, flight.bytes)
+		repository.objects().store(key, flight.value, flight.bytes)
 	}
 	return flight.value, flight.bytes, flight.err
 }
 
 func (repository *RedisCatalogRepository) readObject(
 	ctx context.Context,
-	kind, key, domain, digest string,
+	kind, key string, domain func([]byte) (string, error), digest string,
 	decode func([]byte) (any, error),
 ) (any, int, error) {
 	payload, err := repository.client.Get(ctx, key).Bytes()
@@ -216,7 +247,19 @@ func (repository *RedisCatalogRepository) readObject(
 	if err != nil {
 		return nil, 0, activationDependencyIO(err)
 	}
-	hashed, err := contract.DeriveCanonicalDigestV2OverCanonical(domain, payload)
+	// The domain is read off the bytes for an object whose contract has more
+	// than one version, so an object of a version this build does not know
+	// is refused by name here rather than failing the digest check.
+	name, err := domain(payload)
+	if errors.Is(err, ErrCatalogObjectContractNewer) {
+		repository.observeObjectRead(ctx, kind, objectReadNewer)
+		return nil, 0, err
+	}
+	if err != nil {
+		repository.observeObjectRead(ctx, kind, objectReadInvalid)
+		return nil, 0, fmt.Errorf("%w: %v", ErrCatalogObjectCorrupt, err)
+	}
+	hashed, err := contract.DeriveCanonicalDigestV2OverCanonical(name, payload)
 	if err != nil || hashed != digest {
 		repository.observeObjectRead(ctx, kind, objectReadInvalid)
 		return nil, 0, ErrCatalogObjectCorrupt
@@ -275,13 +318,13 @@ func (repository *RedisCatalogRepository) LoadQueryGroupObject(ctx context.Conte
 func (repository *RedisCatalogRepository) loadStoredQueryGroupObject(
 	ctx context.Context, digest execution.ObjectDigest,
 ) (storedQueryGroupObject, int, error) {
-	value, size, err := repository.loadObject(ctx, objectReadKindQueryGroup, repository.queryGroupObjectKey(digest), queryGroupObjectContractVersion, string(digest),
+	value, size, err := repository.loadObject(ctx, objectReadKindQueryGroup, repository.queryGroupObjectKey(digest), queryGroupObjectDomain, string(digest),
 		func(payload []byte) (any, error) {
 			var object QueryGroupObject
 			if err := json.Unmarshal(payload, &object); err != nil {
 				return nil, err
 			}
-			if object.ContractVersion != queryGroupObjectContractVersion || object.Identity == "" {
+			if !knownQueryGroupObjectVersion(object.ContractVersion) || object.Identity == "" {
 				return nil, errors.New("not a Query Group object of this contract")
 			}
 			return storedQueryGroupObject{
@@ -302,7 +345,7 @@ func (repository *RedisCatalogRepository) LoadOutputContext(ctx context.Context,
 
 // loadOutputContext returns the decoded context and its stored size.
 func (repository *RedisCatalogRepository) loadOutputContext(ctx context.Context, digest execution.OutputContextDigest) (OutputContextObject, int, error) {
-	value, size, err := repository.loadObject(ctx, objectReadKindOutputContext, repository.outputContextKey(digest), outputContextContractVersion, string(digest),
+	value, size, err := repository.loadObject(ctx, objectReadKindOutputContext, repository.outputContextKey(digest), outputContextDomain, string(digest),
 		func(payload []byte) (any, error) {
 			var object OutputContextObject
 			if err := json.Unmarshal(payload, &object); err != nil {
@@ -324,7 +367,7 @@ func (repository *RedisCatalogRepository) loadOutputContext(ctx context.Context,
 // each of its Plans back together into the QueryGroup the rest of the module
 // reads. PlanRevision is left empty; nothing reads it.
 func AssembleQueryGroup(object QueryGroupObject, contexts map[execution.PlanIdentity]OutputContextObject) (QueryGroup, error) {
-	if object.ContractVersion != queryGroupObjectContractVersion || object.Identity == "" {
+	if !knownQueryGroupObjectVersion(object.ContractVersion) || object.Identity == "" {
 		return QueryGroup{}, errors.New("alarmd controlplane: not a Query Group object of this contract")
 	}
 	group := QueryGroup{Identity: object.Identity, QueryPlan: object.QueryPlan, MembershipDigest: object.MembershipDigest,
@@ -345,16 +388,30 @@ func AssembleQueryGroup(object QueryGroupObject, contexts map[execution.PlanIden
 			Plan: contract.EvaluationPlanV2{
 				PlanID: plan.PlanID, StrategyRef: context.StrategyRef, InputProjection: plan.InputProjection,
 				SourceCompatibility: context.SourceCompatibility, OutputIdentity: plan.OutputIdentity,
-				SubjectFacts: context.SubjectFacts, LegacyOutput: context.LegacyOutput, TargetScope: plan.TargetScope,
-				NoData:     plan.NoData,
-				StrategyIR: strategyIR, WireFormat: context.WireFormat, SignalType: context.SignalType,
+				SubjectFacts: context.SubjectFacts, LegacyOutput: context.LegacyOutput, TargetScope: plan.TargetScope, TargetPlan: plan.TargetPlan,
+				NoData:                plan.NoData,
+				EffectiveTimeSnapshot: append(json.RawMessage(nil), plan.EffectiveTimeSnapshot...),
+				StrategyIR:            strategyIR, WireFormat: context.WireFormat, SignalType: context.SignalType,
 				TerminalReasonCode: plan.TerminalReasonCode,
 			},
 			StateGeneration: plan.StateGeneration, ScheduleSpec: plan.ScheduleSpec, ScheduleRevision: plan.ScheduleRevision,
 			RequirementTemplates: plan.RequirementTemplates, QueryPlans: plan.QueryPlans,
+			Shard: plan.Shard, LevelContractRefs: levelContractRefsOf(plan.LevelContractRefs),
+			NoDataLevelContractRefs: levelContractRefsOf(plan.NoDataLevelContractRefs),
 		})
 	}
 	return group, nil
+}
+
+// LoadObservedSegmentQueryGroup reads only the content explicitly named by a
+// retained Segment. It neither falls back to another publication nor updates
+// the Worker's installed local view. Use a diagnostic repository with no observer.
+func (repository *RedisCatalogRepository) LoadObservedSegmentQueryGroup(ctx context.Context, segment execution.ScheduleSegmentFact, at execution.EvaluationTime) (QueryGroup, error) {
+	if repository == nil || segment.ObjectDigest == "" || !segment.Contains(at) {
+		return QueryGroup{}, ErrCatalogObjectUnavailable
+	}
+	group, _, _, err := repository.loadSegmentQueryGroupByContent(ctx, segment.At(at))
+	return group, err
 }
 
 // LoadSegmentQueryGroup reads the Query Group a Slot at the evaluation time
@@ -410,6 +467,8 @@ func (repository *RedisCatalogRepository) loadSegmentQueryGroupByContent(
 	switch {
 	case errors.Is(err, ErrCatalogObjectUnavailable):
 		return QueryGroup{}, entry, segmentReadObjectMissing, err
+	case errors.Is(err, ErrCatalogObjectContractNewer):
+		return QueryGroup{}, entry, segmentReadObjectNewer, err
 	case errors.Is(err, ErrCatalogObjectCorrupt):
 		return QueryGroup{}, entry, segmentReadObjectInvalid, err
 	case err != nil:
@@ -430,6 +489,8 @@ func (repository *RedisCatalogRepository) loadSegmentQueryGroupByContent(
 		switch {
 		case errors.Is(err, ErrCatalogObjectUnavailable):
 			return QueryGroup{}, entry, segmentReadObjectMissing, err
+		case errors.Is(err, ErrCatalogObjectContractNewer):
+			return QueryGroup{}, entry, segmentReadObjectNewer, err
 		case errors.Is(err, ErrCatalogObjectCorrupt):
 			return QueryGroup{}, entry, segmentReadObjectInvalid, err
 		case err != nil:
@@ -475,4 +536,10 @@ func (repository *RedisCatalogRepository) observeAssembledBytes(
 			Hop: observability.NoDataHopAssembledBytes, Plans: occurrences,
 		},
 	})
+}
+
+// constantDomain is the digest domain of an object whose contract has one
+// version.
+func constantDomain(version string) func([]byte) (string, error) {
+	return func([]byte) (string, error) { return version, nil }
 }

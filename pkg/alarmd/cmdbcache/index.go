@@ -31,6 +31,7 @@ import (
 const (
 	hostCacheSuffix            = "cache.cmdb.host"
 	serviceInstanceCacheSuffix = "cache.cmdb.service_instance"
+	topoCacheSuffix            = "cache.cmdb.topo"
 	hostTopoRefreshedField     = "cache.cmdb_last_refresh_all_time.host_topo"
 	scanBatch                  = int64(1000)
 )
@@ -56,6 +57,10 @@ type HostFacts struct {
 	// attribute costs the filter a lookup, not a decode; no target reads
 	// them yet.
 	Attributes map[string]string
+	// ModelID and ModelInstID are the canonical instance identity the writer
+	// adds beside the host id. Empty on a record written before it did.
+	ModelID     string
+	ModelInstID string
 }
 
 // ServiceInstanceFacts is what enrichment knows about one service instance:
@@ -73,11 +78,94 @@ type ServiceInstanceFacts struct {
 // Index is an immutable snapshot. Refreshes publish a new one; readers keep
 // using the one they hold, so a refresh never leaves a half-built view visible.
 type Index struct {
-	byIdentity        map[string]*HostFacts
-	hosts             int
-	serviceInstances  map[string]*ServiceInstanceFacts
+	byIdentity       map[string]*HostFacts
+	hosts            int
+	serviceInstances map[string]*ServiceInstanceFacts
+	// byNode is the reverse of every host's topology links, keyed by
+	// "biz|obj|inst": the hosts a dynamic topology reference resolves to.
+	// Built once per load so a resolution is a lookup, never a scan.
+	byNode map[string][]*HostFacts
+	// hostedNodes are the "obj|inst" nodes that hold a host under any
+	// business, so a reference under the wrong business can be told from a
+	// node that holds no host anywhere.
+	hostedNodes map[string]struct{}
+	// topoNodes are the "obj|inst" fields of the topology cache, read so a
+	// reference to a node that does not exist can be told apart from a node
+	// that exists and holds no host. Nil when the topology cache was not
+	// read; empty when it was read and holds nothing.
+	topoNodes map[string]struct{}
+	// byModelInstance is every host that carries the canonical (model,
+	// instance) identity, keyed "model|instance": how a model_inst_id target
+	// read by host identity finds the host a static member names.
+	// modelledHosts counts them, so a cache the writer has not put the
+	// identity on can be told from a model the cache knows no host of.
+	byModelInstance   map[string]*HostFacts
+	modelledHosts     int
 	builtAt           time.Time
 	sourceRefreshedAt time.Time
+}
+
+// LookupModelInstance finds the host carrying the canonical (model,
+// instance) identity, and false when the cache lists none.
+func (index *Index) LookupModelInstance(model, instance string) (*HostFacts, bool) {
+	if index == nil || model == "" || instance == "" {
+		return nil, false
+	}
+	facts, found := index.byModelInstance[model+"|"+instance]
+	return facts, found
+}
+
+// ModelledHosts is how many hosts carry the canonical (model, instance)
+// identity. Zero on a cache whose writer does not put it on hosts.
+func (index *Index) ModelledHosts() int {
+	if index == nil {
+		return 0
+	}
+	return index.modelledHosts
+}
+
+// TopologyAnswer is what the index says about one dynamic topology
+// reference.
+type TopologyAnswer struct {
+	// Resolved says the index can answer at all: it holds hosts and it read
+	// the topology cache. Without it Hosts being empty means nothing.
+	Resolved bool
+	// NodeKnown says the topology cache lists the node. A reference to a
+	// node the cache does not list is a dangling configuration, not an
+	// empty node.
+	NodeKnown bool
+	// HostedElsewhere says the node holds hosts, but under another business
+	// than the reference names: a node belongs to exactly one business, so
+	// this is a reference written against the wrong business, not an empty
+	// node either.
+	HostedElsewhere bool
+	Hosts           []*HostFacts
+}
+
+// Topology answers a dynamic topology reference from the reverse index. The
+// hosts are read under the reference's business: the same node id under two
+// businesses holds two host sets, and the reference names which. Whether
+// the node exists is answered without the business, because the topology
+// cache's field is "obj|inst" alone; a reference to a node that exists in
+// another business therefore reads as a known node with no host here, not
+// as a dangling one.
+func (index *Index) Topology(businessID, objectID, instanceID string) TopologyAnswer {
+	if index == nil || index.hosts == 0 || index.topoNodes == nil {
+		return TopologyAnswer{}
+	}
+	node := objectID + "|" + instanceID
+	_, known := index.topoNodes[node]
+	hosts := index.byNode[businessID+"|"+node]
+	_, hosted := index.hostedNodes[node]
+	return TopologyAnswer{Resolved: true, NodeKnown: known, HostedElsewhere: len(hosts) == 0 && hosted, Hosts: hosts}
+}
+
+// TopologyNodes is how many nodes the topology cache listed, for health.
+func (index *Index) TopologyNodes() int {
+	if index == nil {
+		return 0
+	}
+	return len(index.topoNodes)
 }
 
 func (index *Index) Hosts() int {
@@ -163,6 +251,10 @@ func (reader *Reader) refreshedKey() string {
 	return reader.prefix + "." + hostTopoRefreshedField
 }
 
+func (reader *Reader) topoKey() string {
+	return reader.prefix + "." + topoCacheSuffix
+}
+
 // Load builds a fresh index. It streams the hash rather than reading it whole:
 // the host cache is a single large hash shared with the platform, and a
 // blocking full read of it would stall every other reader.
@@ -180,6 +272,14 @@ func (reader *Reader) Load(ctx context.Context, now time.Time) (*Index, error) {
 	if err := reader.scan(ctx, reader.serviceInstanceKey(), builder.addServiceInstanceFields); err != nil {
 		return nil, fmt.Errorf("alarmd cmdbcache: scan service instance cache: %w", err)
 	}
+	// The topology cache is read for its field names only: the node set a
+	// dynamic topology reference is checked against. HKEYS is one round
+	// trip over a hash of thousands of nodes, small beside the host scan.
+	nodes, err := reader.client.HKeys(ctx, reader.topoKey()).Result()
+	if err != nil {
+		return nil, fmt.Errorf("alarmd cmdbcache: read topology cache: %w", err)
+	}
+	builder.addTopologyNodes(nodes)
 	index := builder.index
 
 	if refreshed, err := reader.client.Get(ctx, reader.refreshedKey()).Result(); err == nil {
@@ -215,9 +315,33 @@ func newIndexBuilder(now time.Time) *indexBuilder {
 	return &indexBuilder{
 		index: &Index{
 			byIdentity: make(map[string]*HostFacts), serviceInstances: make(map[string]*ServiceInstanceFacts),
-			builtAt: now,
+			byNode: make(map[string][]*HostFacts), hostedNodes: make(map[string]struct{}), builtAt: now,
+			byModelInstance: make(map[string]*HostFacts),
 		},
 		seen: make(map[string]*HostFacts),
+	}
+}
+
+// addTopologyNodes records the node set the topology cache lists.
+func (builder *indexBuilder) addTopologyNodes(fields []string) {
+	builder.index.topoNodes = make(map[string]struct{}, len(fields))
+	for _, field := range fields {
+		if field == "" {
+			continue
+		}
+		builder.index.topoNodes[field] = struct{}{}
+	}
+}
+
+// addToNodes files a host under every node it sits on, under its business.
+func (builder *indexBuilder) addToNodes(facts *HostFacts) {
+	if facts.BusinessID == "" {
+		return
+	}
+	for _, node := range facts.TopoNodes {
+		key := facts.BusinessID + "|" + node
+		builder.index.byNode[key] = append(builder.index.byNode[key], facts)
+		builder.index.hostedNodes[node] = struct{}{}
 	}
 }
 
@@ -261,6 +385,11 @@ func (builder *indexBuilder) addFields(fields []string) {
 		}
 		builder.index.hosts++
 		builder.index.byIdentity[identity] = facts
+		builder.addToNodes(facts)
+		if facts.ModelID != "" && facts.ModelInstID != "" && facts.HostID != "" {
+			builder.index.modelledHosts++
+			builder.index.byModelInstance[facts.ModelID+"|"+facts.ModelInstID] = facts
+		}
 	}
 }
 
@@ -272,6 +401,11 @@ type wireHost struct {
 	State       string                       `json:"bk_state"`
 	DisplayName string                       `json:"display_name"`
 	TopoLinks   map[string][]json.RawMessage `json:"topo_link"`
+	// ModelID and ModelInstID are the canonical instance identity the
+	// writer adds beside the host id, for a target plan whose rule reads
+	// records by model and instance.
+	ModelID     string          `json:"model_id"`
+	ModelInstID json.RawMessage `json:"model_inst_id"`
 }
 
 type wireServiceInstance struct {
@@ -303,6 +437,8 @@ func decodeHost(payload string) (*HostFacts, error) {
 		DisplayName: wire.DisplayName,
 		TopoNodes:   topoNodes(wire.TopoLinks),
 		Attributes:  scalarAttributes(payload),
+		ModelID:     wire.ModelID,
+		ModelInstID: rawScalarText(wire.ModelInstID),
 	}
 	if facts.CloudID == "" {
 		facts.CloudID = "0"
@@ -426,4 +562,26 @@ func parseRefreshedAt(value string) time.Time {
 		return stamp.UTC()
 	}
 	return time.Time{}
+}
+
+// rawScalarText reads a JSON string or number as text, without the "zero is
+// absent" rule numberText applies and without failing the record: a model
+// instance id may be any text, the platform emits it as a string, and a
+// shape this reader does not expect is an empty identity, not a lost host.
+func rawScalarText(raw json.RawMessage) string {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return strings.TrimSpace(text)
+	}
+	var number json.Number
+	decoder := json.NewDecoder(strings.NewReader(trimmed))
+	decoder.UseNumber()
+	if err := decoder.Decode(&number); err != nil {
+		return ""
+	}
+	return numberText(number)
 }

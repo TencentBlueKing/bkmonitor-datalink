@@ -125,7 +125,7 @@ func (repository *RedisCatalogRepository) MissingObjects(
 			return
 		}
 		seen[key] = struct{}{}
-		if _, _, cached := repository.objectCache.lookup(key); cached {
+		if _, _, cached := repository.objects().lookup(key); cached {
 			return
 		}
 		keys = append(keys, key)

@@ -223,7 +223,7 @@ func TestAFailedRenewalIsCountedAndCannotFailTheSlot(t *testing.T) {
 			frozen := frozenSeriesFixture(3)
 			coordinator.renewFrozenState(context.Background(), execution.SlotExecutionRequest{
 				Contract: frozenRenewalContract(), Operation: execution.OperationNormal,
-			}, frozenRenewalRetention(), frozen, &facts)
+			}, frozenRenewalRetention(), 0, frozen, &facts)
 			if facts.Failed != len(frozen) || facts.Renewed != 0 || facts.Missing != 0 || facts.Fresh != 0 {
 				t.Fatalf("facts = %+v, want every series counted as failed", facts)
 			}
@@ -247,7 +247,7 @@ func TestRenewalsAreChunkedAtTheStoresPerCallBound(t *testing.T) {
 	frozen := frozenSeriesFixture(5)
 	coordinator.renewFrozenState(context.Background(), execution.SlotExecutionRequest{
 		Contract: frozenRenewalContract(), Operation: execution.OperationNormal,
-	}, frozenRenewalRetention(), frozen, &facts)
+	}, frozenRenewalRetention(), 0, frozen, &facts)
 	sizes := make([]int, len(store.requests))
 	asked := make([]execution.StateKeyIdentity, 0, len(frozen))
 	for index, request := range store.requests {
@@ -286,9 +286,14 @@ func TestARenewalCarriesTheSameRetentionTheWriteWould(t *testing.T) {
 	retention := frozenRenewalRetention()
 	coordinator.renewFrozenState(context.Background(), execution.SlotExecutionRequest{
 		Contract: frozenRenewalContract(), Operation: execution.OperationNormal,
-	}, retention, frozenSeriesFixture(1), &facts)
+	}, retention, 3600, frozenSeriesFixture(1), &facts)
 	if len(store.requests) != 1 {
 		t.Fatalf("requests = %d, want one", len(store.requests))
+	}
+	// And the same horizon: a renewal to an uncapped life would keep a frozen
+	// series' state past H the moment it froze.
+	if store.requests[0].HorizonSeconds != 3600 {
+		t.Fatalf("horizon = %d, want the 3600 the write carries", store.requests[0].HorizonSeconds)
 	}
 	if !reflect.DeepEqual(store.requests[0].Retention, retention) {
 		t.Fatalf("retention = %+v, want the Plan's own (%+v)", store.requests[0].Retention, retention)

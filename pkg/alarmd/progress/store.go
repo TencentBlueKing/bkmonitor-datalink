@@ -301,11 +301,12 @@ func (store *Store) CommitProgress(ctx context.Context, request execution.Progre
 		// merge with what was stored: a summary of the previous round kept
 		// beside this one would be two answers to a question that has one.
 		LastCompletion: &execution.LastCompletionSummary{
-			Slot:        request.ExpectedNextSlot,
-			CompletedAt: store.options.Now().UTC().Format(time.RFC3339),
-			Kind:        request.Completion.Kind,
-			ReasonCode:  request.Completion.ReasonCode,
-			Contract:    request.Completion.Contract,
+			Slot:              request.ExpectedNextSlot,
+			CompletedAt:       store.options.Now().UTC().Format(time.RFC3339),
+			Kind:              request.Completion.Kind,
+			ReasonCode:        request.Completion.ReasonCode,
+			Contract:          request.Completion.Contract,
+			TargetResolutions: request.Completion.TargetResolutions,
 		}}
 	if !missing {
 		next.LastFullSlot = current.LastFullSlot
@@ -314,6 +315,7 @@ func (store *Store) CommitProgress(ctx context.Context, request execution.Progre
 	if request.Completion.Primary != nil && request.Completion.Primary.Completeness == execution.CompletenessFull {
 		next.LastFullSlot = request.ExpectedNextSlot
 	}
+	noteDataAndEmptyRun(&next, current, request.Completion.Kind, request.ExpectedNextSlot)
 	if shouldFoldRecentGap(current, request.Completion) {
 		next.CurrentOrRecentGap = foldRecentGap(current, request)
 	}
@@ -352,6 +354,46 @@ func validateEnabledCompletion(completion execution.SlotCompletion) error {
 		return nil
 	default:
 		return fmt.Errorf("progress: store does not accept completion kind %q in the current Gate", completion.Kind)
+	}
+}
+
+// noteDataAndEmptyRun writes onto next the two facts the fleet page restores a
+// no-data object from: the last Slot that completed with records, and the
+// first Slot of the run of empty completions the cursor is in.
+//
+// It reads the completion's kind and nothing else. The Completeness the
+// LastFullSlot rule reads is Full for an empty round too -- an empty round is
+// a complete one -- which is exactly why LastFullSlot cannot answer "when did
+// this object last have records".
+//
+// Only records end the run. A gap, an unavailable or a terminal round between
+// two empty ones is not evidence of records either, so the run's start stands
+// through it and the fleet page measures the span from first empty Slot to
+// last empty Slot across it. The pruned skip that drops the continuity anchors
+// keeps both facts for the same reason: whether the object ever had records
+// is not an anchor on the timeline.
+//
+// A run that the record cannot date -- the last round was empty but the field
+// is zero, which is what a build without the field wrote back when it
+// committed the object during a mixed-version roll -- starts at the earliest
+// empty Slot the record can still prove, the summary's Slot, rather than at
+// this one. Either way the start is a lower bound on the run and the hour the
+// page waits fires late, never early.
+func noteDataAndEmptyRun(next *execution.ScheduleProgress, current execution.ScheduleProgress,
+	kind execution.CompletionKind, slot execution.EvaluationTime) {
+	next.LastDataSlot, next.EmptyRunSinceSlot = current.LastDataSlot, current.EmptyRunSinceSlot
+	switch kind {
+	case execution.CompletionFull:
+		next.LastDataSlot, next.EmptyRunSinceSlot = slot, 0
+	case execution.CompletionFullEmpty:
+		if next.EmptyRunSinceSlot != 0 {
+			return
+		}
+		next.EmptyRunSinceSlot = slot
+		if current.LastCompletionKind == execution.CompletionFullEmpty && current.LastCompletion != nil &&
+			current.LastCompletion.Slot > 0 && current.LastCompletion.Slot < slot {
+			next.EmptyRunSinceSlot = current.LastCompletion.Slot
+		}
 	}
 }
 
@@ -635,6 +677,10 @@ func (store *Store) SkipPrunedRange(ctx context.Context, request execution.Progr
 		Identity: request.Identity, NextSlot: request.ResumeAt, LastCompletionKind: execution.CompletionGapSkipped,
 		CurrentOrRecentGap: execution.PrunedSkipGap(request.ExpectedNextSlot, request.ResumeAt),
 	}
+	// The pruned skip drops the continuity anchors on purpose: the Slots
+	// before the cursor are gone from the timeline. The two facts about
+	// records are not anchors and survive it, as they survive any skip.
+	noteDataAndEmptyRun(&next, current, execution.CompletionGapSkipped, request.ExpectedNextSlot)
 	encoded, err := encode(next)
 	if err != nil {
 		return execution.ProgressSkipResult{}, err

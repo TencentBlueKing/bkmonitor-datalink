@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"time"
 	"unsafe"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
 // CostPlanIdentity is supplied by the executing consumer, never inferred from
@@ -60,9 +62,11 @@ func CostSummaryCapacityBytes(o CostSummaryOptions) int64 {
 		return 0
 	}
 	groups, plans := int64(o.GroupCapacity), int64(o.PlanCapacity)
-	rows := min(groups+plans, 12*int64(o.TopN))
+	// Two scopes times the dimensions, TopN rows each.
+	rankingRows := int64(2 * len(costDimensions) * o.TopN)
+	rows := min(groups+plans, rankingRows)
 	return 2*(groups*(int64(unsafe.Sizeof(costGroupState{}))+256)+plans*(int64(unsafe.Sizeof(costPlanState{}))+256)+int64(o.MetadataBytes)) +
-		3*(rows*int64(unsafe.Sizeof(CostContributor{}))+plans*int64(unsafe.Sizeof(CostPlanIdentity{}))+12*int64(o.TopN)*8)
+		3*(rows*int64(unsafe.Sizeof(CostContributor{}))+plans*int64(unsafe.Sizeof(CostPlanIdentity{}))+rankingRows*8)
 }
 
 type CostWall struct {
@@ -91,12 +95,34 @@ type CostScalars struct {
 	StateCalls               uint64   `json:"state_calls"`
 	StateKeys                uint64   `json:"state_keys"`
 	StateKeysUnknown         uint64   `json:"state_keys_unknown"`
-	StateWall                CostWall `json:"state_wall"`
-	RunWall                  CostWall `json:"run_wall"`
-	MaxLagNS                 int64    `json:"max_lag_ns"`
-	LagMeasured              uint64   `json:"lag_measured"`
-	LagUnknown               uint64   `json:"lag_unknown"`
-	LastProgressUnix         int64    `json:"last_progress_unix"`
+	// StateBytes is the encoded state the calls carried, as the store
+	// measured it; a call that reported keys and no bytes counts under
+	// StateBytesUnknown rather than as zero bytes. The dimension that says
+	// which object is the 86 MB one: keys alone read 249 keys as small.
+	StateBytes        uint64   `json:"state_bytes"`
+	StateBytesUnknown uint64   `json:"state_bytes_unknown"`
+	StateWall         CostWall `json:"state_wall"`
+	// RetainedBytesPeak is the largest retained-byte usage one Slot of the
+	// object reported in the window: from the completion row's own account of
+	// the five budgets, and from a refusal of the retained-byte budget, what
+	// the Slot held plus the addition it was refused -- a refused Slot has no
+	// completion row, and without its refusal the object that fills the pool
+	// every round would be the one object with no peak. A peak, not a sum or
+	// a mean: the pool is broken by peaks, and a mean over a bimodal object
+	// is the wrong statistic. Zero when no row in the window carried either.
+	RetainedBytesPeak uint64 `json:"retained_bytes_peak"`
+	// RetainedHardStops and RetainedShareStops are this object's refusals on
+	// the retained-byte budget in the window: the pool full of everyone's
+	// bytes (RESOURCE_HARD_STOP), and this object alone over the share any
+	// one of them may hold (QG_BUDGET_SHARE_EXCEEDED). The two ask for
+	// different actions -- move a neighbour, or shard this one.
+	RetainedHardStops  uint64   `json:"retained_hard_stops"`
+	RetainedShareStops uint64   `json:"retained_share_stops"`
+	RunWall            CostWall `json:"run_wall"`
+	MaxLagNS           int64    `json:"max_lag_ns"`
+	LagMeasured        uint64   `json:"lag_measured"`
+	LagUnknown         uint64   `json:"lag_unknown"`
+	LastProgressUnix   int64    `json:"last_progress_unix"`
 }
 
 type costWindows struct {
@@ -169,19 +195,53 @@ type CostRanking struct {
 	Indexes   []int  `json:"indexes"`
 }
 
+// CostRetainedReading is one process's answer to the placement question:
+// if every object this replica evaluated in the window peaked in the same
+// round, how much of the retained-byte pool would they hold. It is the sum
+// over those objects of each one's largest per-Slot retained bytes -- the
+// bytes a refused Slot asked for included -- against the pool: an upper
+// bound on the simultaneous peak, not a utilization.
+// The peaks need not coincide, so the share can pass 1 with no refusal, and
+// the pool can refuse at a share under 1 when the ones that do coincide are
+// enough. What the pool actually held when it refused is capacity_shared_used
+// on the refusal line; this reading is what decides whether these objects
+// belong on one replica at all. Three objects of one strategy landed on one
+// replica at 175-404 MB each, every one inside its own share, and together
+// filled a 1 GiB pool for thirteen refusals every ten minutes; the budget
+// held each object and nobody read the sum.
+type CostRetainedReading struct {
+	PeakSumBytes uint64 `json:"retained_bytes_peak_sum"`
+	// GroupsWithPeak is how many objects contributed a non-zero peak: the
+	// denominator of "how many would have to move".
+	GroupsWithPeak int `json:"groups_with_peak"`
+	// LimitBytes is the pool, MaxRetainedBytes, as the completion rows carry
+	// it; LimitKnown false before any row has, and the share is then 0 rather
+	// than a division by nothing read as "no pressure".
+	LimitBytes uint64  `json:"retained_bytes_limit"`
+	LimitKnown bool    `json:"retained_bytes_limit_known"`
+	PeakShare  float64 `json:"retained_bytes_peak_share"`
+	// HardStops and ShareStops are the window's refusals on this budget in
+	// this process, pool-full and over-share, counted where they are raised
+	// whether or not the object is tracked here, so "93% and 13 refusals" can
+	// be read off one row.
+	HardStops  uint64 `json:"resource_hard_stops"`
+	ShareStops uint64 `json:"share_stops"`
+}
+
 type CostSnapshot struct {
-	Enabled                bool              `json:"enabled"`
-	DisabledReason         string            `json:"disabled_reason,omitempty"`
-	ProcessID              string            `json:"process_id"`
-	Scope                  string            `json:"scope"`
-	GeneratedAt            time.Time         `json:"generated_at"`
-	WindowStart            time.Time         `json:"window_start"`
-	CurrentWindowStart     time.Time         `json:"current_window_start"`
-	WindowEnd              time.Time         `json:"window_end"`
-	CapacityBytesEstimated int64             `json:"capacity_bytes_estimated"`
-	Coverage               CostCoverage      `json:"coverage"`
-	Contributors           []CostContributor `json:"contributors"`
-	Rankings               []CostRanking     `json:"rankings"`
+	Enabled                bool                `json:"enabled"`
+	DisabledReason         string              `json:"disabled_reason,omitempty"`
+	ProcessID              string              `json:"process_id"`
+	Scope                  string              `json:"scope"`
+	GeneratedAt            time.Time           `json:"generated_at"`
+	WindowStart            time.Time           `json:"window_start"`
+	CurrentWindowStart     time.Time           `json:"current_window_start"`
+	WindowEnd              time.Time           `json:"window_end"`
+	CapacityBytesEstimated int64               `json:"capacity_bytes_estimated"`
+	Coverage               CostCoverage        `json:"coverage"`
+	Contributors           []CostContributor   `json:"contributors"`
+	Rankings               []CostRanking       `json:"rankings"`
+	Retained               CostRetainedReading `json:"retained"`
 }
 
 // CostSummary observes live events only. It never consumes diagnostic records
@@ -189,12 +249,16 @@ type CostSnapshot struct {
 // (including different owners) remain separate attempts. No run/series set is
 // retained. Reconcile and Publish belong to existing control/report ticks.
 type CostSummary struct {
-	mu                sync.Mutex
-	options           CostSummaryOptions
-	enabled           bool
-	groups            map[string]*costGroupState
-	coverage          CostCoverage
-	dropped           costWindows
+	mu       sync.Mutex
+	options  CostSummaryOptions
+	enabled  bool
+	groups   map[string]*costGroupState
+	coverage CostCoverage
+	dropped  costWindows
+	// retained holds the process-level refusal counts of the retained-byte
+	// budget and, once a completion row has carried it, the pool's size.
+	retained          costWindows
+	retainedLimit     uint64
 	snapshot          CostSnapshot
 	contentionDropped atomic.Uint64
 }
@@ -277,6 +341,10 @@ func (c *CostSummary) Observe(ctx context.Context, o Observation) {
 	}
 	switch o.Stage {
 	case StageSlotStarted, StageSlotCompleted, StageProgressCommitted, StageEvaluationCompleted, StageQueryCompleted, StageStatePreflight, StageStateApplied:
+	case StageResourceHard:
+		if o.Component != ComponentResource || o.CapacityBudget != CapacityBudgetRetainedBytes {
+			return
+		}
 	default:
 		return
 	}
@@ -288,6 +356,20 @@ func (c *CostSummary) Observe(ctx context.Context, o Observation) {
 		return
 	}
 	defer c.mu.Unlock()
+	// Counted where it is raised, before the object lookup: a refusal on an
+	// object this summary does not track is still a refusal of this pool.
+	if o.Stage == StageResourceHard {
+		c.retained.rotate(epoch)
+		addRetainedStop(&c.retained.current, o)
+	}
+	// Learned only from a row that carries it: a completion whose stream was
+	// never built reports the zero account, and a zero read as the pool would
+	// clear a limit already learned and collapse the share to nothing in the
+	// very round a Slot failed to start. Under real configuration the pool is
+	// never zero, so zero can only be that row.
+	if usage := o.SlotBudgetUsage; usage != nil && usage.RetainedBytesLimit > 0 {
+		c.retainedLimit = usage.RetainedBytesLimit
+	}
 	g := c.groups[trace.QueryGroupKey]
 	if g == nil || (trace.SnapshotRevision != "" && trace.SnapshotRevision != g.group.SnapshotRevision) || (trace.QueryRevision != "" && trace.QueryRevision != g.group.QueryRevision) || (trace.ScheduleRevision != "" && trace.ScheduleRevision != g.group.ScheduleRevision) {
 		c.dropped.rotate(epoch)
@@ -325,6 +407,9 @@ func addCost(s *CostScalars, o Observation, trace TraceFields, now time.Time) {
 		if o.Err != nil || o.Result == ResultFailed {
 			s.FailedRunReturns++
 		}
+		if usage := o.SlotBudgetUsage; usage != nil {
+			s.RetainedBytesPeak = max(s.RetainedBytesPeak, usage.RetainedBytes)
+		}
 		addWall(&s.RunWall, o)
 		if trace.EvaluationTime > 0 {
 			s.LagMeasured++
@@ -351,6 +436,25 @@ func addCost(s *CostScalars, o Observation, trace TraceFields, now time.Time) {
 	case StageQueryCompleted:
 		s.QueryScopes++
 		addWall(&s.QueryWall, o)
+	case StageResourceHard:
+		if !addRetainedStop(s, o) {
+			return
+		}
+		// A Slot the pool refused has no completion row, so read from
+		// completions alone the object that fills the pool every round is the
+		// one object with no peak. The refusal names what the Slot held and
+		// the addition that crossed the line; their sum is the least it would
+		// have retained had it run through, and it is that Slot's peak.
+		//
+		// OwnUsed absent is not zero and not unknown: it is a nested holder
+		// of a query-free finalization, whose figure does not describe the
+		// execution (ownReservation withholds it for that reason), and an
+		// increment folded in without it is not the same quantity as the
+		// other samples. Skipped, rather than folded as a smaller number that
+		// the max happens to hide.
+		if f := o.CapacityRejection; f != nil && f.OwnUsed != nil {
+			s.RetainedBytesPeak = max(s.RetainedBytesPeak, *f.OwnUsed+f.Requested)
+		}
 	case StageStatePreflight, StageStateApplied:
 		s.StateCalls++
 		if o.Counts.Keys > 0 {
@@ -358,11 +462,43 @@ func addCost(s *CostScalars, o Observation, trace TraceFields, now time.Time) {
 		} else {
 			s.StateKeysUnknown++
 		}
+		if o.Counts.StateBytes > 0 {
+			s.StateBytes += uint64(o.Counts.StateBytes)
+		} else {
+			s.StateBytesUnknown++
+		}
 		addWall(&s.StateWall, o)
 	}
 }
 
-var costDimensions = [...]string{"evaluation_records", "evaluation_wall_observed", "state_calls", "state_keys", "run_wall", "lag"}
+// addRetainedStop counts one refusal of the retained-byte budget by which
+// refusal it was: the pool full, or this object over its share. A refusal
+// under any other word on this budget is neither, and reports so.
+func addRetainedStop(s *CostScalars, o Observation) bool {
+	switch string(o.ReasonCode) {
+	case contract.ReasonResourceHardStop:
+		s.RetainedHardStops++
+	case contract.ReasonQGBudgetShareExceeded:
+		s.RetainedShareStops++
+	default:
+		return false
+	}
+	return true
+}
+
+// costDimensions are the rankings a snapshot carries, per scope. query_wall
+// and state_bytes were added for the two questions the others could not
+// answer: which object's query is the slow one (run wall contains the wait
+// for readiness and the state work), and which object's state is the big
+// one (state_keys read a 249-key, 86 MB object as small).
+//
+// retained_bytes_peak ranks by the largest per-Slot retained bytes in the
+// window: the objects that make up the replica's peak sum, in the order a
+// placement decision would move them.
+var costDimensions = [...]string{"evaluation_records", "evaluation_wall_observed", "state_calls", "state_keys", "run_wall", "lag", "query_wall", "state_bytes", "retained_bytes_peak"}
+
+// CostDimensions is the closed list, for readers that bound a ranking by it.
+func CostDimensions() []string { return append([]string(nil), costDimensions[:]...) }
 
 func costRank(w costWindows, dimension int) int64 {
 	a, b := w.current, w.previous
@@ -377,8 +513,14 @@ func costRank(w costWindows, dimension int) int64 {
 		return int64(a.StateKeys + b.StateKeys)
 	case 4:
 		return a.RunWall.ObservedNS + b.RunWall.ObservedNS
-	default:
+	case 5:
 		return max(a.MaxLagNS, b.MaxLagNS)
+	case 6:
+		return a.QueryWall.ObservedNS + b.QueryWall.ObservedNS
+	case 7:
+		return int64(a.StateBytes + b.StateBytes)
+	default:
+		return int64(max(a.RetainedBytesPeak, b.RetainedBytesPeak))
 	}
 }
 
@@ -444,6 +586,10 @@ func (c *CostSummary) Publish(now time.Time) {
 			snapshot.Coverage.UnknownWallObservations += s.EvaluationWall.Unknown + s.StateWall.Unknown + s.QueryWall.Unknown + s.RunWall.Unknown
 		}
 		snapshot.Coverage.UnattributedEvaluations += g.windows.current.UnattributedEvaluations + g.windows.previous.UnattributedEvaluations
+		if peak := max(g.windows.current.RetainedBytesPeak, g.windows.previous.RetainedBytesPeak); peak > 0 {
+			snapshot.Retained.PeakSumBytes += peak
+			snapshot.Retained.GroupsWithPeak++
+		}
 		add(g, nil, g.windows)
 		for _, p := range g.plans {
 			p.windows.rotate(epoch)
@@ -455,6 +601,13 @@ func (c *CostSummary) Publish(now time.Time) {
 			}
 			add(g, p, p.windows)
 		}
+	}
+	c.retained.rotate(epoch)
+	snapshot.Retained.HardStops = c.retained.current.RetainedHardStops + c.retained.previous.RetainedHardStops
+	snapshot.Retained.ShareStops = c.retained.current.RetainedShareStops + c.retained.previous.RetainedShareStops
+	if c.retainedLimit > 0 {
+		snapshot.Retained.LimitBytes, snapshot.Retained.LimitKnown = c.retainedLimit, true
+		snapshot.Retained.PeakShare = float64(snapshot.Retained.PeakSumBytes) / float64(c.retainedLimit)
 	}
 	snapshot.Coverage.Incomplete = snapshot.Coverage.Incomplete || snapshot.Coverage.ContentionDroppedTotal > 0 || snapshot.Coverage.UntrackedObservations > 0 || snapshot.Coverage.UnattributedEvaluations > 0 || snapshot.Coverage.UnknownWallObservations > 0 || snapshot.Coverage.PartialWindowGroups > 0 || snapshot.Coverage.ObservedGroups != snapshot.Coverage.TrackedGroups || snapshot.Coverage.ObservedPlans != snapshot.Coverage.TrackedPlans
 	indexes := make(map[costCandidate]int)
@@ -523,4 +676,61 @@ func (c *CostSummary) Snapshot() CostSnapshot {
 		out.Rankings[i].Indexes = append([]int(nil), out.Rankings[i].Indexes...)
 	}
 	return out
+}
+
+// CostRetainedPeak is one observed Query Group's cost reading over the window,
+// by the key the caller reconciled it under.
+type CostRetainedPeak struct {
+	QueryGroupKey     string
+	RetainedBytesPeak uint64
+	// ComputeWallNS is the evaluation and state wall this object spent: the
+	// work this replica did for it. Query wall is deliberately not in it -
+	// it contains the streaming callbacks and overlaps evaluation, so adding
+	// the two double counts, and what it measures is the backend waiting
+	// rather than this replica working. Run wall is not either: it contains
+	// the readiness wait, which would report an object that spends half its
+	// period waiting for data as the most expensive thing on the replica.
+	ComputeWallNS int64
+	// ComputeWallUnknown is how many of those observations carried no
+	// duration. A window with any of them cannot be divided into a rate: the
+	// numerator is short by an unknown amount, and a rate that is quietly low
+	// is the one that leaves an object where it is.
+	ComputeWallUnknown uint64
+}
+
+// RetainedPeaks is every observed group's retained-byte peak over the window.
+//
+// The same number Publish sums into Retained.PeakSumBytes, taken the same way
+// -- the larger of the two windows, because the window the reading is for is
+// the one that has not finished rotating. Exposed per group so the Worker's
+// heartbeat reports what the read-only column shows, from one derivation
+// rather than two: a second accumulator over the same observations would
+// answer the same question with a different number, and the difference would
+// be invisible on both pages.
+//
+// Read-only. It does not rotate the windows, so calling it between Publish
+// ticks neither advances nor disturbs them.
+func (c *CostSummary) RetainedPeaks() []CostRetainedPeak {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.enabled {
+		return nil
+	}
+	peaks := make([]CostRetainedPeak, 0, len(c.groups))
+	for key, g := range c.groups {
+		reading := CostRetainedPeak{QueryGroupKey: key,
+			RetainedBytesPeak: max(g.windows.current.RetainedBytesPeak, g.windows.previous.RetainedBytesPeak)}
+		for _, s := range [2]CostScalars{g.windows.current, g.windows.previous} {
+			reading.ComputeWallNS += s.EvaluationWall.ObservedNS + s.StateWall.ObservedNS
+			reading.ComputeWallUnknown += s.EvaluationWall.Unknown + s.StateWall.Unknown
+		}
+		if reading.RetainedBytesPeak > 0 || reading.ComputeWallNS > 0 {
+			peaks = append(peaks, reading)
+		}
+	}
+	sort.Slice(peaks, func(i, j int) bool { return peaks[i].QueryGroupKey < peaks[j].QueryGroupKey })
+	return peaks
 }

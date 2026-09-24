@@ -50,8 +50,27 @@ func (err *StateConflictError) Error() string {
 	return text
 }
 
-// StateConflictReason recognizes only the two version refusals. Other state
-// errors retain their existing classification rather than being guessed from text.
+// StateConflictReason names the statuses this build has a word for, from the
+// status value rather than from the error's text.
+//
+// Reading the text is the thing this must never do: an error that merely says
+// "STATE_VERSION_CONFLICT" in a sentence is not a state conflict, and naming it
+// one would let any wrapped message anywhere claim the word. That rule is why
+// the unnamed cases below are unnamed, and it is unchanged.
+//
+// What changed is which statuses have words. The preflight produces two; the
+// apply path reuses this error with a wider set, and RETRYABLE_IO and
+// CAS_CONFLICT went unnamed only because they were not in the preflight's two -
+// not because either is unclassifiable.
+//
+// Both report as STATE_WRITE_RETRYABLE because that is the word the store
+// itself already attached to them: it sets the status and this reason code
+// together, at every site that produces a CAS conflict
+// (state/execution_v2_batch.go:225, :250, :506). Reading them as anything else
+// here would be this layer disagreeing with the layer that decided, and
+// leaving them unnamed put "the store refused this write" and "a site that
+// could not classify its own failure" under one word.
+
 func StateConflictReason(err error) (execution.ReasonCode, bool) {
 	var conflict *StateConflictError
 	if !errors.As(err, &conflict) || conflict == nil {
@@ -62,6 +81,12 @@ func StateConflictReason(err error) (execution.ReasonCode, bool) {
 		return execution.ReasonCode(contract.ReasonStateVersionConflict), true
 	case string(execution.StateStaleVersion):
 		return execution.ReasonCode(contract.ReasonStateStaleVersion), true
+	// The apply path reaches here with statuses the preflight never produces.
+	// RETRYABLE_IO had a name in the vocabulary already and still arrived as
+	// internal_unknown, because nothing mapped it: a transient write failure
+	// and a site that could not classify its own failure were the same word.
+	case string(execution.StateApplyRetryable), string(execution.StateApplyCASConflict):
+		return execution.ReasonCode(contract.ReasonStateWriteRetryable), true
 	default:
 		return "", false
 	}

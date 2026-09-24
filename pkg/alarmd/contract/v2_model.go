@@ -48,6 +48,40 @@ const (
 	ReasonPlanDuplicateLevelID       = "PLAN_DUPLICATE_LEVEL_ID"
 	ReasonPlanBudgetExceeded         = "PLAN_BUDGET_EXCEEDED"
 	ReasonNoDataConfigInvalid        = "NO_DATA_CONFIG_INVALID"
+	// ReasonNoDataPlanUncompilable names the shape the config layer cannot
+	// see: a no-data setting that passes validation and then runs its trigger
+	// window past a compile limit. It refuses the whole definition, where
+	// NO_DATA_CONFIG_INVALID leaves the strategy detecting its thresholds and
+	// suspends only its absence detection - which is why the two cannot share
+	// a code. A reader meeting one has a strategy that detects nothing; a
+	// reader meeting the other has a strategy that detects.
+	ReasonNoDataPlanUncompilable = "NO_DATA_PLAN_UNCOMPILABLE"
+	// The reasons a Plan's effective time refuses to compile. They are
+	// declared here, with every other code a reader can meet, because a code
+	// that exists only as a literal inside the compiler is one nothing
+	// downstream can be written against: the catalog classifies a terminal by
+	// its code, and the first of these to reach a deployment took every config
+	// refresh with it.
+	//
+	// EFFECTIVE_TIME_INVALID is the definition's own window. The SNAPSHOT_ and
+	// CALENDAR_ ones are about the snapshot the source hands over: whether it
+	// arrived, whether this build can read it, and whether it carries the
+	// calendars the definition names.
+	ReasonEffectiveTimeInvalid               = "EFFECTIVE_TIME_INVALID"
+	ReasonEffectiveTimeSnapshotInvalid       = "EFFECTIVE_TIME_SNAPSHOT_INVALID"
+	ReasonEffectiveTimeSnapshotStatusInvalid = "EFFECTIVE_TIME_SNAPSHOT_STATUS_INVALID"
+	ReasonEffectiveTimeSnapshotUnavailable   = "EFFECTIVE_TIME_SNAPSHOT_UNAVAILABLE"
+	ReasonEffectiveTimeSchemaUnsupported     = "EFFECTIVE_TIME_SCHEMA_UNSUPPORTED"
+	ReasonEffectiveTimeCalendarsMissing      = "EFFECTIVE_TIME_CALENDARS_MISSING"
+	ReasonEffectiveTimeCalendarMissing       = "EFFECTIVE_TIME_CALENDAR_MISSING"
+	ReasonEffectiveTimeCalendarNotPresent    = "EFFECTIVE_TIME_CALENDAR_NOT_PRESENT"
+	ReasonEffectiveTimeCalendarIdentity      = "EFFECTIVE_TIME_CALENDAR_IDENTITY_INVALID"
+	ReasonEffectiveTimeCalendarDuplicate     = "EFFECTIVE_TIME_CALENDAR_DUPLICATE"
+	ReasonEffectiveTimeCalendarItemsMissing  = "EFFECTIVE_TIME_CALENDAR_ITEMS_MISSING"
+	// ReasonCompilerTerminalUnclassified files a compiler terminal this build
+	// has no classification for. It is declared here so the tables that walk
+	// the catalogue can see it; the compiler's own code travels beside it.
+	ReasonCompilerTerminalUnclassified = "COMPILER_TERMINAL_UNCLASSIFIED"
 	// ReasonNoDataRosterUnsupported names an item whose target shape this
 	// build cannot turn into an expected set. Like the one above it, it
 	// suspends that Plan's no-data detection and nothing else: the strategy's
@@ -88,13 +122,100 @@ const (
 	// ReasonSchedulePruned names a Progress cursor moved past a part of the
 	// Schedule timeline that was pruned before the cursor could be evaluated.
 	// The skipped Slots were never observed, which is a coverage fact.
-	ReasonSchedulePruned        = "SCHEDULE_PRUNED"
+	ReasonSchedulePruned = "SCHEDULE_PRUNED"
+	// ReasonPlanNotActive names Slots the cursor moved past because no Plan was
+	// due at them: the schedule held those times and the timeline still does,
+	// but the Plan had left the activation and came back, so for that stretch
+	// there was nothing to run.
+	//
+	// Separate from SCHEDULE_PRUNED, which it used to arrive as, because the
+	// two send a reader to opposite places. Pruned means the times are gone
+	// from the timeline and no read will ever find them - a retention answer.
+	// This means the times are there and the Plan was not, which is a question
+	// about the active set, and it reads as data loss when it is not: the
+	// Slots are not replayed on purpose, because replaying them would produce
+	// alerts for a strategy that did not exist while they passed.
+	//
+	// The Slot the stretch ends at - the one that ran with the Plan back -
+	// carries PLAN_REACTIVATED below: the other half of this skip. The two
+	// words tell one story at its two Slots, and neither is the whole of it.
+	ReasonPlanNotActive = "PLAN_NOT_ACTIVE"
+	// ReasonPlanReactivated names a Slot that ran while its Plan's activation
+	// changed under it with the Plan itself unchanged: the same identity,
+	// schedule revision and state generation, only the activation epoch
+	// moved, which is a Plan that left the active set and came back - the
+	// Slot after a PLAN_NOT_ACTIVE stretch. The Slot completes as a partial
+	// gap the way CONFIG_DRIFT does, and is told apart from it because the
+	// two send a reader to different places: drift is an edit someone made
+	// and the next Slot runs under the new selection; this is the same
+	// selection returning, and the stretch before it is the PLAN_NOT_ACTIVE
+	// skip, not something to look for in the strategy.
+	ReasonPlanReactivated       = "PLAN_REACTIVATED"
 	ReasonEffectiveTimeInactive = "EFFECTIVE_TIME_INACTIVE"
 	ReasonEffectiveTimeUnknown  = "EFFECTIVE_TIME_UNKNOWN"
 	ReasonHistoryWarming        = "HISTORY_WARMING"
 	ReasonHistoryGapped         = "HISTORY_GAPPED"
 	ReasonKafkaUnavailable      = "KAFKA_UNAVAILABLE"
 	ReasonRedisUnavailable      = "REDIS_UNAVAILABLE"
+	// ReasonStateReadTimeout names a Runtime State read this process issued
+	// that did not come back inside its own timeout. It is not
+	// REDIS_UNAVAILABLE, and the difference is the whole point: the dependency
+	// answered every other caller on the same connection that second. What
+	// happened is that one read of ours was too big to finish in the time we
+	// gave it, which is our shape to fix and not the dependency's health.
+	//
+	// Named because the refusal it replaced sent every reader to the wrong
+	// place. The state read that produced it was 86 MB for a single Query
+	// Group, it timed out identically on every attempt, and it arrived in the
+	// fleet view as a Redis outage - so the investigation began at a
+	// dependency that was fine, while the row carried nothing about how much
+	// had been asked for.
+	ReasonStateReadTimeout = "STATE_READ_TIMEOUT"
+	// ReasonStateReadDeadline names a Runtime State read that was still in
+	// flight when a deadline on the call expired, rather than one the
+	// connection gave up on.
+	//
+	// Split from STATE_READ_TIMEOUT because the two have different fixes and
+	// one word could not tell them apart. The connection's own read timeout
+	// fires when a reply is too large to arrive in the time the client allows
+	// a single command; a deadline on the context fires when the work above
+	// this read has already spent the time the Slot had. The first is fixed by
+	// reading less per call, the second by what the Slot spent before it got
+	// here -- and a build that called both STATE_READ_TIMEOUT sent every
+	// reader to the first.
+	//
+	// The reading that forced the split: one Query Group timed out the same
+	// way at 85.9 MB per round and again at 1.75 MB, after the stored
+	// representation changed from 344,206 to 7,049 bytes a record. At the
+	// first size the connection timeout is a sufficient explanation -- it
+	// needs 28.6 MB/s to land inside three seconds. At the second it is not:
+	// 0.58 MB/s, against a store answering every other caller that second.
+	// Something other than the byte volume ends these reads, and one word
+	// could not say so.
+	//
+	// A cancelled call is not this. Cancellation is the work above being
+	// stopped -- a replica shutting down, a sibling batch's failure bringing
+	// the parent context with it -- and not the time running out, so it keeps
+	// the dependency's word rather than taking a third meaning into this one.
+	// The word lands on a defect row, and a deployment that ships several
+	// times a day would file one per replica per release for doing exactly
+	// what it was told.
+	ReasonStateReadDeadline = "STATE_READ_DEADLINE"
+	// ReasonQGBudgetShareExceeded names one Query Group's Slot asking for more
+	// of the process pool than any single object may hold.
+	//
+	// Separate from RESOURCE_HARD_STOP because the two call for different work
+	// and one word made them indistinguishable. A hard stop is somebody else
+	// having filled the pool: this Slot unwinds and the next attempt succeeds
+	// once capacity frees. This is the object being too large for one replica
+	// whoever else is running - waiting changes nothing, and what has to change
+	// is the strategy's shape.
+	//
+	// Without a share at all, one object may legitimately take the whole pool
+	// and starve every other Query Group on the replica. Placement spreads
+	// large objects across replicas; nothing stops one from filling the replica
+	// it lands on.
+	ReasonQGBudgetShareExceeded = "QG_BUDGET_SHARE_EXCEEDED"
 	ReasonProviderUnavailable   = "PROVIDER_UNAVAILABLE"
 	ReasonProgressBeginRejected = "PROGRESS_BEGIN_REJECTED"
 	ReasonProgressBeginFailed   = "PROGRESS_BEGIN_FAILED"
@@ -110,12 +231,60 @@ const (
 	ReasonSnapshotRetryPending       = "SNAPSHOT_RETRY_PENDING"
 	ReasonSlotSourceRetry            = "SLOT_SOURCE_RETRY"
 	ReasonBlockedExactSetUnavailable = "BLOCKED_EXACT_SET_UNAVAILABLE"
+	// ReasonViewNotExecutable names a round the Worker did not run because
+	// its installed executable view does not yet agree with the Assignment
+	// record on the Query Group's content or timeline, or does not carry it
+	// (decision-016 batch 4b). The record's word arrives by renewal and the
+	// view's by delta, so the next round asks again; a Worker held here past
+	// the view's propagation delay is one the stream is not reaching.
+	ReasonViewNotExecutable = "VIEW_NOT_EXECUTABLE"
 	// ReasonGapGuardConflict names a Slot refused because the Plan gap marker
 	// already persisted for its ApplyVersion neither matches what this Slot
 	// proposes nor already protects it. Without a name of its own the refusal
 	// left the attempt reading as an unclassified internal error, on every
 	// round, for a Query Group that would never get past it.
 	ReasonGapGuardConflict = "GAP_GUARD_CONFLICT"
+	// The gap marker store's three refusals at apply time, named apart from
+	// GAP_GUARD_CONFLICT above. That one is this Slot comparing the persisted
+	// marker against what it proposes and refusing before it writes; these are
+	// the store refusing the write itself, which means the marker moved
+	// between this Slot's read and its write - a different question with a
+	// different answer, because it names a second writer rather than a
+	// disagreement this Slot could see on its own.
+	//
+	// Until these existed all three returned a bare error, so every one of
+	// them was observed as internal_unknown: an unclassified defect that a
+	// same-Slot retry then "recovered" from, which is how a Query Group
+	// conflicting on every other Slot for half an hour read as healthy.
+	// Observation-only; the store's statuses and the retry decision are
+	// unchanged.
+	// ReasonGapGuardDuplicatedAcrossBatches names one Plan carrying more than
+	// one gap marker statement in a single Slot, which the evaluation contract
+	// forbids and the accumulation across series batches can nonetheless
+	// assemble: EvaluationResult.Validate runs on each batch's result, and
+	// appendProvisional then appends to the two guard lists independently, so
+	// two batches contributing one statement each produce a shape no single
+	// batch could. Recorded rather than refused, so the shape can be counted
+	// before anything is changed on its account.
+	ReasonGapGuardDuplicatedAcrossBatches = "GAP_GUARD_DUPLICATED_ACROSS_BATCHES"
+	// ReasonGapGuardDisagree names two series batches of one Slot saying
+	// different things about one Plan's gap marker: clearing it with different
+	// content, or expecting it at different revisions.
+	//
+	// It is the one refusal the Slot-wide merge cannot resolve. A clear is
+	// derived from the marker the Slot loaded rather than from the batch, so
+	// every batch that proposes one proposes the same one; two that differ
+	// mean two batches read different markers for one Plan in one Slot, and
+	// there is no winner to pick - whichever were kept, the other batch's
+	// series were evaluated against a marker the Slot then denies.
+	//
+	// Named because it reaches the completion line, and a refusal with no word
+	// arrives there as an error nobody can group, count, or tell apart from
+	// the next unnamed one.
+	ReasonGapGuardDisagree     = "GAP_GUARD_DISAGREE"
+	ReasonGapApplyConflict     = "GAP_APPLY_CONFLICT"
+	ReasonGapApplyStaleVersion = "GAP_APPLY_STALE_VERSION"
+	ReasonGapWriteRetryable    = "GAP_WRITE_RETRYABLE"
 	// State version refusals are observation-only names; they do not change
 	// the state store's status contract or the scheduler's retry decision.
 	ReasonStateVersionConflict = "STATE_VERSION_CONFLICT"
@@ -155,7 +324,24 @@ const (
 	ReasonStateCorrupt           = "STATE_CORRUPT"
 	ReasonStateSchemaUnsupported = "STATE_SCHEMA_UNSUPPORTED"
 	ReasonStateBudgetExceeded    = "STATE_BUDGET_EXCEEDED"
-	ReasonAuditDrop              = "AUDIT_DROP"
+	// Two evaluation failures that had no observation word, so the line they
+	// reach classified them as internal_unknown -- the word for a site that
+	// looked at a failure and could not name it. Both already named themselves
+	// one level down and the classification simply did not ask.
+	//
+	// STATE_LEVEL_CONTRACT_MISMATCH is loaded Runtime State whose Level
+	// contract is not the compiled Plan's. It is the word the query failure
+	// facts already carry for it, reused rather than a second one invented:
+	// the same failure counted under two names on two lines is a failure a
+	// reader cannot add up.
+	ReasonStateLevelContractMismatch = "STATE_LEVEL_CONTRACT_MISMATCH"
+	// TRIGGER_INVARIANT is the trigger evaluator refusing its own state: an
+	// invariant it checks before deciding did not hold. Which operation found
+	// it travels as a field rather than in the word, because the word is what
+	// a reader groups by and one invariant per word would make a vocabulary
+	// nobody can hold.
+	ReasonTriggerInvariant = "TRIGGER_INVARIANT"
+	ReasonAuditDrop        = "AUDIT_DROP"
 	// Ownership refusals, observation-only. The ownership store answers a
 	// fence check, a lease acquire or renew, or a fenced write with one of
 	// four typed errors; until these names existed every one of them was
@@ -288,11 +474,13 @@ type SourceCompatibilityV2 struct {
 }
 
 type EvaluationPlanV2 struct {
-	PlanID              string                 `json:"plan_id"`
-	StrategyRef         StrategyRefV2          `json:"strategy_ref"`
-	InputProjection     InputProjectionV2      `json:"input_projection"`
-	SourceCompatibility *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
-	OutputIdentity      *MonitorOutputIdentity `json:"output_identity,omitempty"`
+	// EffectiveTimeSnapshot freezes the publisher's complete calendar rules.
+	EffectiveTimeSnapshot json.RawMessage        `json:"effective_time_snapshot,omitempty"`
+	PlanID                string                 `json:"plan_id"`
+	StrategyRef           StrategyRefV2          `json:"strategy_ref"`
+	InputProjection       InputProjectionV2      `json:"input_projection"`
+	SourceCompatibility   *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
+	OutputIdentity        *MonitorOutputIdentity `json:"output_identity,omitempty"`
 	// SubjectFacts are the strategy facts the subject projection reads when a
 	// record's own dimensions do not name its object. Absent means the
 	// projection answers from the dimensions alone.
@@ -303,6 +491,10 @@ type EvaluationPlanV2 struct {
 	// means "a scope existed and was dropped" - compilation rejects the Plan
 	// in that case rather than publish one that alerts outside its target.
 	TargetScope *TargetScopeV2 `json:"target_scope,omitempty"`
+	// TargetPlan is the same target in its second frozen form, compiled from
+	// the strategy cache's target_plan document. A Plan carries at most one
+	// of the two; both absent means the strategy names no target.
+	TargetPlan *TargetPlanV1 `json:"target_plan,omitempty"`
 	// NoData is the item's no-data detection setting. Absent means the item
 	// does not detect no-data; see NoDataConfigV1 for why enablement is the
 	// presence of the section rather than a field inside it.
@@ -357,6 +549,45 @@ const (
 // ResolveOutputWireFormat interprets historical frozen Plans without changing
 // their serialized identity. Evaluation (including recovery gating) and the
 // output sink use the same rule. Unknown formats remain unknown for rejection.
+// EventHasMessage reports whether an event of this kind becomes a message
+// under this resolved wire format. The Python-compatible protocol carries
+// anomalies and nothing else: its consumer decides recovery from the absence
+// of anomalies, so an event of any other kind has no message there. Every
+// other format carries every kind.
+//
+// One rule with two readers: the sink, which leaves such an event without a
+// message, and the evaluation, which does not keep one it knows the sink
+// would drop. Two copies of it could disagree, and the way they would
+// disagree is silent - an event kept that goes nowhere, or dropped that
+// should have gone.
+func EventHasMessage(format, eventKind string) bool {
+	return format != WireFormatPythonCompatible || eventKind == TriggerEventAbnormal
+}
+
+// DroppedAtSink reports whether the sink would take this event and leave it
+// without a message, raising nothing: a kind its resolved protocol has no
+// message for, and nothing about the event the sink would refuse first. An
+// event the sink would refuse is not dropped silently, and is not reported
+// here, so that whoever acts on this answer leaves the refusal where it was.
+func DroppedAtSink(event *TriggerEventV1) bool {
+	if event == nil {
+		return false
+	}
+	if EventHasMessage(OutputWireFormatOf(event), event.EventKind) {
+		return false
+	}
+	return event.LegacyOutput != nil && event.LegacyOutput.Configuration != nil
+}
+
+// OutputWireFormatOf is the wire format the sink resolves this event to.
+func OutputWireFormatOf(event *TriggerEventV1) string {
+	var revision int64
+	if event.StrategyRef != nil {
+		revision = event.StrategyRef.Revision
+	}
+	return ResolveOutputWireFormat(event.WireFormat, revision)
+}
+
 func ResolveOutputWireFormat(format string, snapshotRevision int64) string {
 	switch format {
 	case WireFormatTriggerEvent:
@@ -382,18 +613,20 @@ func (plan EvaluationPlanV2) MarshalJSON() ([]byte, error) {
 		}{plan.PlanID, plan.StrategyRef, plan.TerminalReasonCode})
 	}
 	return json.Marshal(struct {
-		PlanID              string                 `json:"plan_id"`
-		StrategyRef         StrategyRefV2          `json:"strategy_ref"`
-		InputProjection     InputProjectionV2      `json:"input_projection"`
-		SourceCompatibility *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
-		OutputIdentity      *MonitorOutputIdentity `json:"output_identity,omitempty"`
-		SubjectFacts        *MonitorSubjectFacts   `json:"subject_facts,omitempty"`
-		LegacyOutput        *LegacyOutputContext   `json:"legacy_output,omitempty"`
-		TargetScope         *TargetScopeV2         `json:"target_scope,omitempty"`
-		NoData              *NoDataConfigV1        `json:"no_data,omitempty"`
-		StrategyIR          StrategyIRV2           `json:"strategy_ir"`
-		WireFormat          string                 `json:"wire_format,omitempty"`
-	}{plan.PlanID, plan.StrategyRef, plan.InputProjection, plan.SourceCompatibility, plan.OutputIdentity, plan.SubjectFacts, plan.LegacyOutput, plan.TargetScope, plan.NoData, plan.StrategyIR, plan.WireFormat})
+		EffectiveTimeSnapshot json.RawMessage        `json:"effective_time_snapshot,omitempty"`
+		PlanID                string                 `json:"plan_id"`
+		StrategyRef           StrategyRefV2          `json:"strategy_ref"`
+		InputProjection       InputProjectionV2      `json:"input_projection"`
+		SourceCompatibility   *SourceCompatibilityV2 `json:"source_compatibility,omitempty"`
+		OutputIdentity        *MonitorOutputIdentity `json:"output_identity,omitempty"`
+		SubjectFacts          *MonitorSubjectFacts   `json:"subject_facts,omitempty"`
+		LegacyOutput          *LegacyOutputContext   `json:"legacy_output,omitempty"`
+		TargetScope           *TargetScopeV2         `json:"target_scope,omitempty"`
+		TargetPlan            *TargetPlanV1          `json:"target_plan,omitempty"`
+		NoData                *NoDataConfigV1        `json:"no_data,omitempty"`
+		StrategyIR            StrategyIRV2           `json:"strategy_ir"`
+		WireFormat            string                 `json:"wire_format,omitempty"`
+	}{plan.EffectiveTimeSnapshot, plan.PlanID, plan.StrategyRef, plan.InputProjection, plan.SourceCompatibility, plan.OutputIdentity, plan.SubjectFacts, plan.LegacyOutput, plan.TargetScope, plan.TargetPlan, plan.NoData, plan.StrategyIR, plan.WireFormat})
 }
 
 type PlanSetV2 struct {
@@ -559,6 +792,23 @@ type RecoveryWindowEvidenceV1 struct {
 	RequiredConsecutiveWindows uint32 `json:"required_consecutive_windows"`
 	ObservedConsecutiveMisses  uint32 `json:"observed_consecutive_misses"`
 	OldestWindowStart          int64  `json:"oldest_window_start"`
+	// SkippedWindows is how many windows the walk stepped over because they
+	// held too little to answer: their observed anomalies plus their holes
+	// reached the trigger's threshold, so an anomaly in the holes could have
+	// fired them and "did not trigger" is not something they said.
+	//
+	// Windows, the unit the walk moves in, not positions - one per offset the
+	// walk passed over. A single missing position can put several consecutive
+	// windows out of reach, so the two counts are not interchangeable and the
+	// name has to say which one this is.
+	//
+	// A skipped window is neither a miss nor an anomaly. Counting them as
+	// misses, which is what happened before decision-022, built recoveries on
+	// absence; breaking on them would let one hole cost the whole run. Saying
+	// how many were stepped over is what keeps the other two numbers readable:
+	// without it, a run of five misses spanning an hour and one spanning a
+	// week look the same on the evidence.
+	SkippedWindows uint32 `json:"skipped_windows,omitempty"`
 }
 
 type WindowEvidenceV1 struct {

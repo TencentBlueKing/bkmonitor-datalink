@@ -45,7 +45,7 @@ func TestCompilerCompilesEffectiveTimeRequirements(t *testing.T) {
 
 	calendarPlan := validPlan()
 	calendarPlan.StrategyIR.Levels[0].TriggerPlan.Config = triggerConfigWithUptime("BUSINESS_LOCAL", map[string]any{
-		"time_ranges":      []any{},
+		"time_ranges":      []any{map[string]any{"start": "00:00", "end": "23:59"}},
 		"active_calendars": []any{int64(9), int64(3)},
 		"calendars":        []any{int64(8)},
 	})
@@ -123,15 +123,55 @@ func TestCompilerIncludesTimeRangeContentInEffectiveTimeDigest(t *testing.T) {
 	}
 }
 
-func TestCompilerIsolatesInvalidEffectiveTimeRequirement(t *testing.T) {
+// A range whose start or end does not parse is read as Python reads it:
+// the start as 00:00, the end as 23:59, each on its own, and the Level runs
+// on the range that comes out. Refusing the Level instead turned a malformed
+// range into a strategy that never detected, when Python had it detect all
+// day; the widening is the direction of more detection, and the Leader
+// names it (UptimeTimeRangesNormalized) so it is not silent.
+func TestAMalformedTimeRangeIsReadAsPythonReadsIt(t *testing.T) {
 	compiler := newTestCompiler(t)
-	plan := validPlan()
-	plan.StrategyIR.Levels[0].TriggerPlan.Config = triggerConfigWithUptime("BUSINESS_LOCAL", map[string]any{
-		"time_ranges": []any{map[string]any{"start": "25:00", "end": "17:00"}},
-	})
-	result := mustCompileResult(t, compiler, plan)
-	if terminals := result.LevelTerminals(); len(terminals) != 1 || terminals[0].LevelID != 1 {
-		t.Fatalf("invalid uptime terminals = %+v", terminals)
+	for name, tt := range map[string]struct {
+		start, end string
+		wantStart  uint16
+		wantEnd    uint16
+		always     bool
+	}{
+		"start does not parse":      {"25:00", "17:00", 0, 17 * 60, false},
+		"end does not parse":        {"09:00", "17:61", 9 * 60, 24*60 - 1, false},
+		"neither parses, whole day": {"", "x", 0, 24*60 - 1, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			plan := validPlan()
+			uptime := map[string]any{"time_ranges": []any{map[string]any{"start": tt.start, "end": tt.end}}}
+			plan.StrategyIR.Levels[0].TriggerPlan.Config = triggerConfigWithUptime("BUSINESS_LOCAL", uptime)
+			result := mustCompileResult(t, compiler, plan)
+			if terminals := result.LevelTerminals(); len(terminals) != 0 {
+				t.Fatalf("a malformed range refused the Level: %+v", terminals)
+			}
+			compiled, _ := result.Plan()
+			requirement := compiled.Levels()[0].EffectiveTimeRequirement()
+			if tt.always {
+				// The whole day with no calendar is no schedule at all, as a
+				// configured 00:00-23:59 is.
+				if requirement.Kind() != EffectiveTimeAlways {
+					t.Fatalf("a range read as the whole day compiled to %s, want ALWAYS", requirement.Kind())
+				}
+				return
+			}
+			ranges := requirement.TimeRanges()
+			if len(ranges) != 1 || ranges[0].StartMinute() != tt.wantStart || ranges[0].EndMinute() != tt.wantEnd {
+				t.Fatalf("ranges = %+v, want %d..%d", ranges, tt.wantStart, tt.wantEnd)
+			}
+			raw, _ := json.Marshal(uptime)
+			if !UptimeTimeRangesNormalized(raw) {
+				t.Fatal("the widening is not reported, so the Leader cannot name it")
+			}
+		})
+	}
+	if UptimeTimeRangesNormalized(json.RawMessage(`{"time_ranges":[{"start":"09:00","end":"17:00"}]}`)) ||
+		UptimeTimeRangesNormalized(nil) || UptimeTimeRangesNormalized(json.RawMessage(`null`)) {
+		t.Fatal("a range that parses, or no uptime at all, was reported as widened")
 	}
 }
 
@@ -220,4 +260,17 @@ func equalInt64s(left, right []int64) bool {
 		}
 	}
 	return true
+}
+
+// A writer that defaults every detect's uptime to an empty object states no
+// schedule: the level compiles to the same ALWAYS requirement as no uptime.
+func TestAnEmptyUptimeIsAlwaysInEffect(t *testing.T) {
+	compiler := newTestCompiler(t)
+	want := mustCompilePlan(t, compiler, validPlan()).Levels()[0].EffectiveTimeRequirement()
+	plan := validPlan()
+	plan.StrategyIR.Levels[0].TriggerPlan.Config = triggerConfigWithUptime("BUSINESS_LOCAL", map[string]any{})
+	requirement := mustCompilePlan(t, compiler, plan).Levels()[0].EffectiveTimeRequirement()
+	if requirement.Kind() != EffectiveTimeAlways || requirement.Digest() != want.Digest() {
+		t.Fatalf("empty uptime compiled to %q %q, want ALWAYS %q", requirement.Kind(), requirement.Digest(), want.Digest())
+	}
 }

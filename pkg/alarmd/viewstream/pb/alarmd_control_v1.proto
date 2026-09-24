@@ -26,6 +26,31 @@ service ControlService {
   // Connect is the one stream. The Worker speaks first with Hello; the
   // Leader answers with a Snapshot, or a Refusal and the end of the stream.
   rpc Connect(stream WorkerMessage) returns (stream LeaderMessage);
+  // ReadEvidence is an independent bounded diagnostic call. It does not use
+  // the Connect queues or carry CLI session credentials. The runtime handler
+  // authenticates the calling Worker and authorizes the requested operation.
+  rpc ReadEvidence(EvidenceRequest) returns (EvidenceResult);
+}
+
+message EvidenceRequest {
+  string worker_id = 1;
+  string stream_token = 2;
+  string phase = 3;
+  string environment_id = 4;
+  string request_id = 5;
+  string channel_version = 6;
+  string catalog_revision = 7;
+  string operation = 8;
+  bytes params_json = 9;
+  string target_worker_id = 10;
+  string expected_incarnation = 11;
+  string owner_query_group = 12;
+  uint64 owner_epoch = 13;
+  uint64 control_epoch = 14;
+}
+
+message EvidenceResult {
+  bytes response_json = 1;
 }
 
 message WorkerMessage {
@@ -116,6 +141,12 @@ message Assignment {
   string content_scope = 3;
   string pending_content_scope = 4;
   int64 effective_at_ms = 5;
+  // The record's word on which Schedule timeline revision the Query Group
+  // is on, previewed here; the holder's renewal brings the same number from
+  // the record, and the Worker executes from this view only while the two
+  // agree and match the timeline it holds (decision-016 batch 4). Zero when
+  // the record has not said.
+  uint64 timeline_record_revision = 6;
 }
 
 // Entry is one Query Group of the Worker's view. content is absent for a
@@ -173,6 +204,13 @@ message Receipt {
   string failure = 6;
   uint32 objects_missing = 7;
   bool objects_probed = 8;
+  // How many of this version's Query Groups the Worker executes from the
+  // view: the entry is in the view with content, the renewal's content scope
+  // is the entry's object digest, and the renewal's timeline revision is the
+  // entry's and the timeline the Worker holds. switched above is this count
+  // reaching the version's entry count. Reported as the count rather than
+  // the bool alone so the Leader can say how many are not, per Worker.
+  uint32 switched_query_groups = 9;
 }
 
 // Heartbeat keeps the stream known alive in both directions and carries the
@@ -180,6 +218,26 @@ message Receipt {
 message Heartbeat {
   int64 sent_at_ms = 1;
   Version installed = 2;
+  // What the Worker's Query Groups have been costing, for placement to read
+  // (decision-020 section 5): only entries whose reading moved by a tenth or
+  // more since last reported, and always the first reading of a Query Group
+  // on this Worker; bounded by the Worker's owned count. The two numbers are
+  // read differently - the retained peak against the replica's pool, a hard
+  // limit; the per-second cost across replicas, a balance - and are not to
+  // be folded into one. A Query Group the Worker no longer owns is absent
+  // here, which says nothing; the Leader clears it by the assignment roster.
+  repeated QueryGroupCost costs = 3;
+}
+
+// QueryGroupCost is one Query Group's cost as its Worker measured it.
+message QueryGroupCost {
+  string query_group = 1;
+  // The largest retained_bytes one Slot of the Query Group held in the last
+  // round, from the Slot completion's budget usage; the pool dimension.
+  uint64 retained_bytes_peak = 2;
+  // Evaluation and query wall time per second of schedule, in
+  // thousandths, smoothed by the Worker; the balance dimension.
+  uint64 cost_per_second_milli = 3;
 }
 
 // ObjectRequest asks for one immutable object by its digest, on this stream,

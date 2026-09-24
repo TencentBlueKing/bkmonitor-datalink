@@ -118,10 +118,19 @@ func checkOf(anomaly Anomaly, schedule Schedule) (check Check, under bool, uncla
 		return CheckEmptyEveryRound, true, false
 	case anomaly.Kind == KindNoDataMemoryRefused:
 		return CheckNoDataMemoryRefused, true, false
-	case anomaly.Kind == KindQueryCooldown:
+	case anomaly.Kind == KindRetainedShareApproaching:
+		return CheckRetainedShareApproaching, true, false
+	case anomaly.Kind == KindQueryCooldown, anomaly.HeldBy == heldByCooldown:
 		// Cooldown is what this deployment does about a backend that keeps not
 		// answering; the line is the backend's, unless the backend answered and
-		// refused.
+		// refused. A round the cooldown held until its Slot fell past the
+		// replay range is the same line: the skip is the cooldown's
+		// consequence and the cooldown is the failure's. Read by the round's
+		// own outcome it was "detection abandoned", this deployment's, for
+		// capacity -- and the same object moved back to the failure's line on
+		// the next probe and out again on the next skip. The failure is read
+		// whatever Slot it was seen on, because the holder says the skip is
+		// its doing.
 		if queryRejected(anomaly.Failure) {
 			return refusalCheck(anomaly.Failure), true, false
 		}
@@ -137,6 +146,12 @@ func checkOf(anomaly Anomaly, schedule Schedule) (check Check, under bool, uncla
 		if anomaly.CauseReason == "HISTORY_WARMING" || anomaly.CauseReason == "HISTORY_GAPPED" {
 			if check, under, decided := windowCheck(anomaly.CauseReason, anomaly.Coverage); decided {
 				return check, under, false
+			}
+			// No counts because the observer refused them, not because the
+			// round had none: the refusal is the finding, not the coarse
+			// reading of a reason whose counts are missing.
+			if anomaly.Coverage == nil && anomaly.CoverageRejected != nil {
+				return CheckCoverageReadingRefused, true, false
 			}
 		}
 		// A reason carried by a durable history guard is not this round's
@@ -229,11 +244,17 @@ func decisionCodes(anomaly Anomaly) []string {
 	if anomaly.Failure != nil {
 		failureCode = anomaly.Failure.Code
 	}
+	if !failureThisRound(anomaly) {
+		// The comment above promised this for both branches and the code
+		// kept it for one: a completed round read the failure's code
+		// whatever Slot it was from, so one failed round's word decided
+		// every degraded round after it until a healthy completion cleared
+		// the failure -- a state-version conflict that failed one Slot kept
+		// the object on DEFECT for as long as its series stayed short.
+		failureCode = ""
+	}
 	if failedExecution(anomaly.ReasonCode) {
-		if failureThisRound(anomaly) {
-			return []string{failureCode, anomaly.ReasonCode}
-		}
-		return []string{anomaly.ReasonCode}
+		return []string{failureCode, anomaly.ReasonCode}
 	}
 	return []string{anomaly.CauseReason, string(anomaly.Cause), failureCode, anomaly.ReasonCode}
 }
@@ -420,16 +441,33 @@ var codeChecks = map[string]verdict{
 	// itself, and it is the retention's doing rather than the capacity's.
 	"GAP_SKIPPED":     lands(CheckDetectionAbandoned),
 	"SCHEDULE_PRUNED": lands(CheckTimelinePruned),
+	// Under no line. The Plan was not in the active set while those Slots went
+	// by, so there was nothing to run and nothing was lost: replaying them
+	// would produce alerts for a strategy that did not exist at the time.
+	// Putting it under a line would ask somebody to act on a stretch that is
+	// already over and was correct while it lasted. It still carries its own
+	// word rather than the pruned one, because a reader asking where the
+	// rounds went is owed the active set and not retention.
+	"PLAN_NOT_ACTIVE": isNormal,
 
 	// This deployment's own stores and infrastructure did not answer. Retrying
 	// may help, and nobody outside can help.
-	"REDIS_UNAVAILABLE":      lands(CheckDependencyDown),
-	"KAFKA_UNAVAILABLE":      lands(CheckDependencyDown),
-	"STATE_WRITE_RETRYABLE":  lands(CheckDependencyDown),
-	"OUTPUT_ACK_UNKNOWN":     lands(CheckDependencyDown),
-	"SNAPSHOT_UNAVAILABLE":   lands(CheckDependencyDown),
-	"SNAPSHOT_RETRY_PENDING": lands(CheckDependencyDown),
-	"ACTIVATION_READ_FAILED": lands(CheckDependencyDown),
+	"REDIS_UNAVAILABLE": lands(CheckDependencyDown),
+	// Not DEPENDENCY_DOWN: this deployment asked for more than it left time to
+	// receive, and the fix is the size of the read rather than the health of
+	// the store. Landing it with the dependencies is what made 163 of these in
+	// one day read as a Redis incident.
+	"STATE_READ_TIMEOUT":  lands(CheckDefect),
+	"STATE_READ_DEADLINE": lands(CheckDefect),
+	// Not a defect and not a dependency: this strategy asks for more of one
+	// replica than any single object may hold, and the answer is to shard it.
+	"QG_BUDGET_SHARE_EXCEEDED": lands(CheckPlanUnevaluable),
+	"KAFKA_UNAVAILABLE":        lands(CheckDependencyDown),
+	"STATE_WRITE_RETRYABLE":    lands(CheckDependencyDown),
+	"OUTPUT_ACK_UNKNOWN":       lands(CheckDependencyDown),
+	"SNAPSHOT_UNAVAILABLE":     lands(CheckDependencyDown),
+	"SNAPSHOT_RETRY_PENDING":   lands(CheckDependencyDown),
+	"ACTIVATION_READ_FAILED":   lands(CheckDependencyDown),
 	// The store answered and the activation record was not in it. That is the
 	// infrastructure losing state rather than refusing a read, but it lands
 	// here for the same reason the rest do: nobody outside this deployment can
@@ -456,6 +494,16 @@ var codeChecks = map[string]verdict{
 	"STATE_CORRUPT":            lands(CheckDefect),
 	"STATE_SCHEMA_UNSUPPORTED": lands(CheckDefect),
 	"AUDIT_DROP":               lands(CheckDefect),
+	// The Level contract on the record this deployment stored is not the one
+	// its compiled Plan asks for. Both sides are this system's own -- it wrote
+	// the record and it compiled the Plan -- and retrying compares the same two
+	// again, so the Query Group does not complete until one of them changes.
+	// Nothing about the data or the strategy is wrong.
+	"STATE_LEVEL_CONTRACT_MISMATCH": lands(CheckDefect),
+	// The trigger evaluator refused its own state before deciding. Which
+	// invariant is on the line as a field; that it failed at all is this
+	// deployment's.
+	"TRIGGER_INVARIANT": lands(CheckDefect),
 	// The store this deployment routed to cannot do what the write needs. It is
 	// wiring rather than weather: retrying reaches the same backend and gets the
 	// same answer. It used to arrive as REDIS_UNAVAILABLE, which sent the reader
@@ -479,6 +527,31 @@ var codeChecks = map[string]verdict{
 	// rounds reached here as internal_unknown and the row carried no code.
 	"STATE_VERSION_CONFLICT": lands(CheckDefect),
 	"STATE_STALE_VERSION":    lands(CheckDefect),
+	// The Plan gap marker moved between this Slot's read and its write. Same
+	// reading as the two above and for the same reason: both sides of the
+	// comparison are this system's own writes, so the question the row should
+	// send a reader to is which two Slots were writing the same Plan-level
+	// marker. A defect rather than a dependency - the store answered, it
+	// answered no.
+	//
+	// These are what a same-Slot retry then clears, which is why they need a
+	// name more than most: the round completes, the object looks recovered,
+	// and the only trace that a second writer exists is this code.
+	// A reading, not a refusal: the Slot completed, and what this says is that
+	// its evaluation produced a shape the contract forbids. It puts the object
+	// under no line, deliberately -- until the shape is understood, counting
+	// it against the deployment would put objects on the page for something
+	// nobody has decided is their problem.
+	"GAP_GUARD_DUPLICATED_ACROSS_BATCHES": isNormal,
+	// A refusal, unlike the reading above, and deterministic: the Slot did not
+	// complete, and re-running it from the same markers reaches the same
+	// disagreement. The object is not detecting, so it belongs on the page.
+	"GAP_GUARD_DISAGREE":      lands(CheckDefect),
+	"GAP_APPLY_CONFLICT":      lands(CheckDefect),
+	"GAP_APPLY_STALE_VERSION": lands(CheckDefect),
+	// The write did not land at all. That is the store not answering, which is
+	// the dependency's line, beside STATE_WRITE_RETRYABLE above.
+	"GAP_WRITE_RETRYABLE": lands(CheckDependencyDown),
 	// The ownership store refused this deployment's own worker: its fence
 	// went stale, the assignment names another worker, another owner holds
 	// the lease, or the content scope moved under a fenced write. Each is a
@@ -518,6 +591,7 @@ var codeChecks = map[string]verdict{
 	// inside the system and never reached the runner.
 	"BLOCKED_EXACT_SET_UNAVAILABLE": lands(CheckDependencyDown),
 	"SLOT_SOURCE_RETRY":             lands(CheckDependencyDown),
+	"VIEW_NOT_EXECUTABLE":           lands(CheckDependencyDown),
 	"PROGRESS_BEGIN_FAILED":         lands(CheckDependencyDown),
 	"PROGRESS_BEGIN_REJECTED":       lands(CheckDependencyDown),
 
@@ -532,6 +606,19 @@ var codeChecks = map[string]verdict{
 	"READINESS_BUDGET_INVALID":   lands(CheckDetectionAbandoned),
 	"RECORD_TOO_LARGE":           lands(CheckDetectionAbandoned),
 	"RESOURCE_HARD_STOP":         lands(CheckDetectionAbandoned),
+	// The per-Slot capacity budgets, as the query failure names the one that
+	// rejected: observability.CapacityBudgetFailureCode, one word per budget
+	// and OTHER for a budget it does not know. The round's own reason for
+	// the same rejection is RESOURCE_HARD_STOP above; the failure's word is
+	// read first and used to fall through the table -- the row landed on
+	// the fault line as "EVALUATE/UNLOCATED/UNLOCATED" and marked the
+	// deployment degraded, for a rejection this deployment decided.
+	"BUDGET_SERIES":          lands(CheckDetectionAbandoned),
+	"BUDGET_RETAINED_BYTES":  lands(CheckDetectionAbandoned),
+	"BUDGET_STATE_MUTATIONS": lands(CheckDetectionAbandoned),
+	"BUDGET_EVENTS":          lands(CheckDetectionAbandoned),
+	"BUDGET_GAP_MUTATIONS":   lands(CheckDetectionAbandoned),
+	"BUDGET_OTHER":           lands(CheckDetectionAbandoned),
 
 	// Budgets the strategy compiler applies to a definition. The compiler is
 	// their only producer, emitting them when a definition does not fit within
@@ -560,7 +647,10 @@ var codeChecks = map[string]verdict{
 
 	// The strategy's own configuration, or a change to it. Outside its own
 	// effective time is the configuration doing what it was written to do.
-	"CONFIG_DRIFT":            lands(CheckConfigUnresolved),
+	"CONFIG_DRIFT": lands(CheckConfigUnresolved),
+	// The same selection coming back after a PLAN_NOT_ACTIVE stretch: nothing
+	// changed for anyone to resolve, and the next Slot runs as before.
+	"PLAN_REACTIVATED":        isNormal,
 	"EFFECTIVE_TIME_INACTIVE": isNormal,
 	"EFFECTIVE_TIME_UNKNOWN":  lands(CheckConfigUnresolved),
 
@@ -586,9 +676,41 @@ var codeChecks = map[string]verdict{
 	// first-screen line.
 	"NO_DATA_CONFIG_INVALID":     isNormal,
 	"NO_DATA_ROSTER_UNSUPPORTED": isNormal,
+	// The shape the config layer cannot see: a no-data setting that passes
+	// validation and then runs its trigger window past a compile limit refuses
+	// the whole definition. A reader met by this has a strategy that detects
+	// nothing, which is the line above rather than the one beside it. A reading
+	// keyed by code alone cannot tell two states apart under one code, which is
+	// why this shape has its own.
+	"NO_DATA_PLAN_UNCOMPILABLE": lands(CheckPlanUnevaluable),
 	// The definition's input projection, not this deployment's state
 	// projection: the compiler emits it for a plan whose input_projection is
 	// invalid, and the catalog files it as CONFIG_REJECTED beside PLAN_INVALID.
+	// The Plan's effective time. The definition names a window or a calendar
+	// the compiler cannot turn into a rule, so the strategy detects nothing
+	// until it is fixed - the same line as any other definition that cannot be
+	// evaluated. The two that are not the definition's fault are below.
+	"EFFECTIVE_TIME_INVALID":                   lands(CheckPlanUnevaluable),
+	"EFFECTIVE_TIME_SNAPSHOT_INVALID":          lands(CheckPlanUnevaluable),
+	"EFFECTIVE_TIME_SNAPSHOT_STATUS_INVALID":   lands(CheckPlanUnevaluable),
+	"EFFECTIVE_TIME_CALENDAR_IDENTITY_INVALID": lands(CheckPlanUnevaluable),
+	"EFFECTIVE_TIME_CALENDAR_DUPLICATE":        lands(CheckPlanUnevaluable),
+	"EFFECTIVE_TIME_CALENDAR_ITEMS_MISSING":    lands(CheckPlanUnevaluable),
+	// This build cannot read the snapshot's schema: a newer writer, and
+	// nothing in the definition or the deployment to change.
+	"EFFECTIVE_TIME_SCHEMA_UNSUPPORTED": lands(CheckPlanUnevaluable),
+	// The snapshot did not arrive, or arrived without the calendar the
+	// strategy names. The definition is not wrong and this build is not
+	// lacking anything; a piece of the source is missing, and the strategy
+	// detects nothing until it comes.
+	"EFFECTIVE_TIME_SNAPSHOT_UNAVAILABLE": lands(CheckPlanUnevaluable),
+	"EFFECTIVE_TIME_CALENDARS_MISSING":    lands(CheckPlanUnevaluable),
+	"EFFECTIVE_TIME_CALENDAR_NOT_PRESENT": lands(CheckPlanUnevaluable),
+	"EFFECTIVE_TIME_CALENDAR_MISSING":     lands(CheckPlanUnevaluable),
+	// A terminal this build's table has no entry for. It is one strategy's
+	// refusal like any other, and the compiler's own code travels in the
+	// disposition's detail so the next reader is not guessing.
+	"COMPILER_TERMINAL_UNCLASSIFIED":      lands(CheckPlanUnevaluable),
 	"PROJECTION_INVALID":                  lands(CheckPlanUnevaluable),
 	"PLAN_SET_CONFLICT":                   lands(CheckPlanUnevaluable),
 	"LEVEL_INVALID":                       lands(CheckPlanUnevaluable),

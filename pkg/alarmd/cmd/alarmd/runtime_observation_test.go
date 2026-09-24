@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package main
 
 import (
@@ -105,5 +96,27 @@ func TestObservationRedisHasIndependentPoolAndNoHiddenRetries(t *testing.T) {
 	o := observationRedisOptions(config.RedisConnectionConfig{PoolSize: 100, ReadTimeout: config.Duration(5 * time.Second), WriteTimeout: config.Duration(5 * time.Second)})
 	if o.MaxRetries != -1 || o.PoolSize != phaseTwoDiagnosticsPoolSize || o.ReadTimeout > time.Second || o.WriteTimeout > time.Second || o.PoolTimeout > time.Second {
 		t.Fatalf("diagnostics can consume unbounded attempts or execution pool %+v", o)
+	}
+}
+
+// TopN is derived from the rankings the summary publishes -- two scopes
+// times its dimensions -- not from a count of the dimensions it once had:
+// at a budget where the literal for six dimensions gave one row more than
+// the eight the summary has, the derived TopN follows the list.
+func TestCostTopNFollowsTheSummarysDimensionCount(t *testing.T) {
+	rankings := 2 * len(observability.CostDimensions())
+	// A CostBytes chosen so that CostBytes/16 is exactly 20 rows of the true
+	// ranking count: fewer rows under any larger ranking count, more under
+	// the old literal of twelve rankings.
+	costBytes := 16 * rankings * 4096 * 20
+	capacity := config.ObservationCapacity{CostBytes: costBytes, DirectoryCommands: 64, SampleRecordsPerMinute: 60, SampleBytesPerMinute: 1 << 20, SampleBufferBytes: 1 << 20}
+	o := observationCostOptions(capacity, "process-a", time.Now)
+	if o.TopN != 20 {
+		t.Fatalf("TopN=%d at a budget of exactly 20 rows per ranking (%d rankings), want 20", o.TopN, rankings)
+	}
+	smaller := capacity
+	smaller.CostBytes = costBytes - 16*rankings*4096
+	if o := observationCostOptions(smaller, "process-a", time.Now); o.TopN != 19 {
+		t.Fatalf("TopN=%d one ranking-row short of 20, want 19: the derivation does not follow the dimension count", o.TopN)
 	}
 }

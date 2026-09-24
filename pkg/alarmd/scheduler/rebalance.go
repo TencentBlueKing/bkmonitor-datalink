@@ -104,6 +104,22 @@ func (router *Router) PlanRebalance(
 	workers []ownership.WorkerRegistration,
 	at time.Time,
 ) RebalancePlan {
+	return router.PlanRebalanceWithBytes(owners, workers, ByteReadings{}, at)
+}
+
+// PlanRebalanceWithBytes is PlanRebalance under the byte constraint
+// (decision-020 section 5.7): a Query Group is not moved to a destination
+// its peak would take past the destination's share, judged on the same
+// readings the byte-constraint moves were. That is also what keeps the
+// count correction from taking back a byte move: the Worker it left was
+// over the share with it and would be again. The batch is still cut before
+// this applies, as before the destination's eligibility.
+func (router *Router) PlanRebalanceWithBytes(
+	owners map[execution.QueryGroupIdentity]string,
+	workers []ownership.WorkerRegistration,
+	readings ByteReadings,
+	at time.Time,
+) RebalancePlan {
 	plan := RebalancePlan{Owned: map[string]int{}}
 	if router == nil || at.IsZero() {
 		return plan
@@ -153,9 +169,13 @@ func (router *Router) PlanRebalance(
 		return plan
 	}
 	candidates := make([]execution.QueryGroupIdentity, 0, plan.MostOwned)
+	var destinationSum uint64
 	for queryGroup, owner := range owners {
 		if owner == most {
 			candidates = append(candidates, queryGroup)
+		}
+		if owner == least {
+			destinationSum += readings.Peak[queryGroup]
 		}
 	}
 	sort.Slice(candidates, func(left, right int) bool { return candidates[left] < candidates[right] })
@@ -167,6 +187,11 @@ func (router *Router) PlanRebalance(
 		if router.additionalEligibility != nil && !router.additionalEligibility.Eligible(queryGroup, destination, at) {
 			continue
 		}
+		peak := readings.Peak[queryGroup]
+		if !readings.fits(least, destinationSum, peak) {
+			continue
+		}
+		destinationSum += peak
 		plan.Moves = append(plan.Moves, RebalanceMove{QueryGroup: queryGroup, From: most, To: least})
 	}
 	return plan
@@ -190,8 +215,19 @@ func (reconciler *Reconciler) PlanRebalance(
 	workers []ownership.WorkerRegistration,
 	at time.Time,
 ) RebalancePlan {
+	return reconciler.PlanRebalanceWithBytes(owners, workers, ByteReadings{}, at)
+}
+
+// PlanRebalanceWithBytes exposes the byte-aware count rebalance to the
+// owner of the reconcile loop.
+func (reconciler *Reconciler) PlanRebalanceWithBytes(
+	owners map[execution.QueryGroupIdentity]string,
+	workers []ownership.WorkerRegistration,
+	readings ByteReadings,
+	at time.Time,
+) RebalancePlan {
 	if reconciler == nil {
 		return RebalancePlan{Owned: map[string]int{}}
 	}
-	return reconciler.router.PlanRebalance(owners, workers, at)
+	return reconciler.router.PlanRebalanceWithBytes(owners, workers, readings, at)
 }

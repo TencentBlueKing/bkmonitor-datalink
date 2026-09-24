@@ -506,6 +506,7 @@ func (store *ExecutionStore) applyOneNoData(
 		MarkerRevision: nextRevision, ApplyVersion: mutation.ApplyVersion,
 		MemoryDigest: mutation.MemoryDigest, ScheduleRevision: mutation.ScheduleRevision,
 		RosterVersion: mutation.RosterVersion, PresentAsOf: mutation.PresentAsOf,
+		TrackingExhaustedAt: mutation.TrackingExhaustedAt,
 	})
 	if encodeErr != nil {
 		return reject(contract.ReasonStateCorrupt)

@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package execution
 
 import (
@@ -40,7 +31,8 @@ func sealTestMutation(points int) StateMutation {
 			{LevelID: 1, LevelStateCompatibility: "2f6c1d9e4a7b0c3d5e8f1a2b3c4d5e6f", WarmupRequirementRef: "8b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e", HistoryCompleteness: HistoryFull, LastProcessedEventTime: 1757462400},
 			{LevelID: 2, LevelStateCompatibility: "3a7d2e0f5b8c1d4e7f0a3b6c9d2e5f8a", WarmupRequirementRef: "9c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f", HistoryCompleteness: HistoryFull, LastProcessedEventTime: 1757462400},
 		},
-		Points: history,
+		Points:          history,
+		RetentionPoints: 1440,
 	}
 }
 
@@ -61,7 +53,8 @@ func TestStateMutationDigestIsStable(t *testing.T) {
 		SeriesGuard     *StateGuardFact             `json:"series_guard,omitempty"`
 		Levels          []RuntimeLevelStateMutation `json:"levels"`
 		Points          []StateHistoryPoint         `json:"points"`
-	}{mutation.Identity, mutation.ApplyVersion, mutation.AffectedRecords, mutation.SeriesGuard, mutation.Levels, mutation.Points})
+		RetentionPoints uint32                      `json:"retention_points"`
+	}{mutation.Identity, mutation.ApplyVersion, mutation.AffectedRecords, mutation.SeriesGuard, mutation.Levels, mutation.Points, mutation.RetentionPoints})
 	if err != nil {
 		t.Fatalf("derive from the declared wire shape: %v", err)
 	}
@@ -69,7 +62,19 @@ func TestStateMutationDigestIsStable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build mutation: %v", err)
 	}
-	const pinned = MutationDigest("8ccd6c96a1b02afef2e1b124b73e37c705a813277de2e6d8b7fd181fb13adc79")
+	// Moved once, deliberately, when the payload took RetentionPoints: the
+	// bound decides the bytes the write leaves behind, so a digest that does
+	// not cover it answers "same statement" for two different records.
+	//
+	// What that costs is bounded and was decided before it was done. Nothing
+	// recomputes a stored digest from stored content - every reader compares
+	// the persisted string against the one the mutation in hand carries - so
+	// during a rolling upgrade the only consequence is that a repeated write of
+	// one series across two binaries compares unequal and is classified a
+	// version conflict rather than already-applied. That retries with a new
+	// version and moves forward: once per series, only for Slots in flight at
+	// the moment a replica restarts.
+	const pinned = MutationDigest("7d44c72ed5f17b4f42b2974fb347a8c49e4c13bbd7c4f5fa0783518201744f79")
 	if built.MutationDigest != MutationDigest(independent) {
 		t.Fatalf("state mutation digest left its declared wire shape:\n got %s\nwant %s", built.MutationDigest, independent)
 	}

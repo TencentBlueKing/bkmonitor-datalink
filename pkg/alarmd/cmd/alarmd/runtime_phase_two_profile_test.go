@@ -37,6 +37,8 @@ func TestPhaseTwoRuntimeProfileUsesEffectiveCapacityAndExcludesSecrets(t *testin
 			want.Capacity.DerivedActiveExecutions, want.Capacity.EffectiveActiveExecutions)
 	}
 	cfg.Redis.Password = "DO_NOT_LOG_PASSWORD"
+	cfg.PhaseTwo.Linkd.Password = "DO_NOT_LOG_LINKD_PASSWORD"
+	cfg.PhaseTwo.Linkd.Username = "DO_NOT_LOG_LINKD_USER"
 	cfg.PhaseTwo.Access.UQEndpoint = "DO_NOT_LOG_ENDPOINT"
 	cfg.PhaseTwo.Worker.ID = "DO_NOT_LOG_WORKER"
 	got, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
@@ -94,7 +96,7 @@ func TestPhaseTwoCPUInitializationFailsBeforeOpeningServices(t *testing.T) {
 			t.Fatal("opened bundle after CPU failure")
 			return nil, nil
 		},
-		newHTTP: func(*metric.Recorder, observability.HealthSource, string) (httpRuntime, error) {
+		newHTTP: func(*metric.Recorder, observability.HealthSource, httpSurface) (httpRuntime, error) {
 			t.Fatal("opened HTTP after CPU failure")
 			return nil, nil
 		},

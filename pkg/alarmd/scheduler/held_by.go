@@ -11,39 +11,26 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
-type heldByContextKey struct{}
-
 // withHeldBy carries what the previous round did into this one.
 //
-// A context value rather than a parameter because the two places that report
-// it -- the Slot source, which decides to give a Slot up, and the executor,
-// which reports the completion -- are reached through interfaces the Runner
-// does not own. Threading it through both signatures would put a diagnostic
-// field in two contracts that have nothing else to do with it, and every
-// implementation of those interfaces would have to carry it whether or not it
-// reports anything.
+// A context value rather than a parameter because the places that report it
+// -- the Slot source, which decides to give a Slot up, the executor, which
+// reports the completion, and the Coordinator's Progress commit, which is
+// the completion the fleet reads -- are reached through interfaces the
+// Runner does not own. Threading it through those signatures would put a
+// diagnostic field in contracts that have nothing else to do with it, and
+// every implementation of those interfaces would have to carry it whether
+// or not it reports anything. The key lives in observability so the worker,
+// which cannot import the scheduler, reads the same one.
 func withHeldBy(ctx context.Context, facts observability.HeldByFacts) context.Context {
-	return context.WithValue(ctx, heldByContextKey{}, facts)
+	return observability.ContextWithHeldBy(ctx, facts)
 }
 
-// HeldByFromContext is what the previous round did with this Query Group.
-//
-// Never nil: a round that held nothing reports the word for that, and so does
-// the first round of all, which has no round before it. Returning nil for
-// those was the bug -- the claim was that "none" is a word and not a missing
-// key, and production showed the key simply absent on every line that should
-// have carried it, which is the state a reader cannot tell from "this build
-// does not report held_by at all". A distribution needs its commonest value
-// present to be a distribution.
-//
-// Exported because the runtime's executor reports the completion line and
-// lives in another package.
+// HeldByFromContext is what the previous round did with this Query Group;
+// see observability.HeldByFromContext, which it is. Kept exported here for
+// the runtime's executor wrapper, which reports the completion line.
 func HeldByFromContext(ctx context.Context) *observability.HeldByFacts {
-	facts, ok := ctx.Value(heldByContextKey{}).(observability.HeldByFacts)
-	if !ok || facts.Decision == "" {
-		return &observability.HeldByFacts{Decision: observability.HeldByNothing}
-	}
-	return &facts
+	return observability.HeldByFromContext(ctx)
 }
 
 // rememberHeldBy stores this round's decision for the next one.

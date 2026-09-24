@@ -41,6 +41,11 @@ func PlanViewFor(due DuePlan, kind SeriesKind) (DuePlan, error) {
 			return DuePlan{}, errors.New("alarmd execution: no-data series for a Plan with no no-data level")
 		}
 		due.CompiledPlan = view
+		// The view's records are held to the no-data Level's refs, which
+		// are published as their own set; the declared Levels' refs would
+		// name the source Level this one shares an ID with.
+		due.LevelContractRefs = due.NoDataLevelContractRefs
+		due.NoDataLevelContractRefs = nil
 		return due, nil
 	default:
 		return DuePlan{}, errors.New("alarmd execution: unknown series kind")

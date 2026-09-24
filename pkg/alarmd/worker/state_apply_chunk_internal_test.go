@@ -28,7 +28,9 @@ var chunkRetention = []execution.StateRetentionRequirement{
 // chunkStore is a State and Gap store that records every call it receives
 // and can fail or reject one call, so the chunk loop is observed exactly.
 type chunkStore struct {
-	stateCalls   [][]execution.StateKeyIdentity
+	stateCalls [][]execution.StateKeyIdentity
+	// horizons is the horizon each apply request carried, in call order.
+	horizons     []int64
 	admitCalls   int
 	gapCalls     [][]execution.PlanGapIdentity
 	fences       []execution.StateApplyFence
@@ -48,6 +50,9 @@ type chunkStore struct {
 	// third with the key missing, the second moved two revisions ahead under
 	// a newer ApplyVersion, the fourth without saying which comparison.
 	conflictCall int
+	// envelopeReads is what each call reports as its per-key path's envelope
+	// count, by call; a call past the end reports none.
+	envelopeReads []int
 }
 
 func (store *chunkStore) LoadRuntime(context.Context, execution.StatePreflightRequest) (execution.StatePreflightResult, error) {
@@ -67,6 +72,7 @@ func (store *chunkStore) AdmitRuntime(_ context.Context, request execution.State
 func (store *chunkStore) ApplyRuntime(ctx context.Context, request execution.StateApplyRequest) (execution.StateApplyResult, error) {
 	time.Sleep(store.delay)
 	store.stateCalls = append(store.stateCalls, stateIdentities(request.Items))
+	store.horizons = append(store.horizons, request.HorizonSeconds)
 	call := len(store.stateCalls)
 	if call == store.failCall {
 		return execution.StateApplyResult{}, errors.New("injected transport failure")
@@ -77,6 +83,9 @@ func (store *chunkStore) ApplyRuntime(ctx context.Context, request execution.Sta
 	result := execution.StateApplyResult{Items: make([]execution.StateApplyItemResult, len(request.Items))}
 	for index, mutation := range request.Items {
 		result.Items[index] = execution.StateApplyItemResult{Identity: mutation.Identity, Status: execution.StateApplied}
+	}
+	if call <= len(store.envelopeReads) {
+		result.EnvelopeReads = store.envelopeReads[call-1]
 	}
 	switch call {
 	case store.retryableCall:
@@ -178,7 +187,7 @@ func TestApplyStateChunksAtTheStoreCallBound(t *testing.T) {
 			store := &chunkStore{delay: time.Millisecond}
 			fixture := newChunkFixture(store, 8192)
 			mutations := chunkMutations(total)
-			rejected, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, "", chunkRetention, mutations, nil)
+			rejected, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, "", chunkRetention, 0, mutations, nil)
 			if err != nil || len(rejected) != 0 {
 				t.Fatalf("applyState() rejected=%v error=%v", rejected, err)
 			}
@@ -231,7 +240,7 @@ func TestApplyStateStopsAtTheFirstFailedChunk(t *testing.T) {
 	t.Run("transport failure in chunk 2", func(t *testing.T) {
 		store := &chunkStore{failCall: 2}
 		fixture := newChunkFixture(store, 8192)
-		_, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, "", chunkRetention, mutations, nil)
+		_, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, "", chunkRetention, 0, mutations, nil)
 		if err == nil || !strings.Contains(err.Error(), "injected transport failure") || len(store.stateCalls) != 2 {
 			t.Fatalf("applyState() error=%v calls=%d, want the failure after two calls", err, len(store.stateCalls))
 		}
@@ -243,7 +252,7 @@ func TestApplyStateStopsAtTheFirstFailedChunk(t *testing.T) {
 	t.Run("retryable item in chunk 2", func(t *testing.T) {
 		store := &chunkStore{retryableCall: 2}
 		fixture := newChunkFixture(store, 8192)
-		_, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, "", chunkRetention, mutations, nil)
+		_, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, "", chunkRetention, 0, mutations, nil)
 		if err == nil || !strings.Contains(err.Error(), "did not complete: RETRYABLE_IO") || len(store.stateCalls) != 2 {
 			t.Fatalf("applyState() error=%v calls=%d, want retryable stop after two calls", err, len(store.stateCalls))
 		}
@@ -255,7 +264,7 @@ func TestApplyStateStopsAtTheFirstFailedChunk(t *testing.T) {
 	t.Run("deterministic item in chunk 3", func(t *testing.T) {
 		store := &chunkStore{deterministicCall: 3}
 		fixture := newChunkFixture(store, 8192)
-		rejected, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, "", chunkRetention, mutations, nil)
+		rejected, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, "", chunkRetention, 0, mutations, nil)
 		if err != nil || len(store.stateCalls) != 3 {
 			t.Fatalf("applyState() error=%v calls=%d, want every chunk sent", err, len(store.stateCalls))
 		}
@@ -274,7 +283,7 @@ func TestApplyStateStopsBetweenChunksOnCancellation(t *testing.T) {
 	defer cancel()
 	store := &chunkStore{cancelCall: 1, cancel: cancel}
 	fixture := newChunkFixture(store, 8192)
-	_, err := fixture.coordinator.applyState(ctx, execution.OperationNormal, fixture.contract, fixture.fence, "", chunkRetention, chunkMutations(2*8192), nil)
+	_, err := fixture.coordinator.applyState(ctx, execution.OperationNormal, fixture.contract, fixture.fence, "", chunkRetention, 0, chunkMutations(2*8192), nil)
 	if !errors.Is(err, context.Canceled) || len(store.stateCalls) != 1 {
 		t.Fatalf("applyState() error=%v calls=%d, want cancellation before chunk 2", err, len(store.stateCalls))
 	}
@@ -302,7 +311,7 @@ func TestAdmitStateChunksAndMeasuresEncodedBytes(t *testing.T) {
 	store := &chunkStore{encodedBytes: 10}
 	fixture := newChunkFixture(store, 8192)
 	mutations := chunkMutations(8193)
-	rejected, encodedBytes, err := fixture.coordinator.admitState(context.Background(), execution.OperationNormal, fixture.contract, chunkRetention, mutations)
+	rejected, encodedBytes, err := fixture.coordinator.admitState(context.Background(), execution.OperationNormal, fixture.contract, chunkRetention, 0, mutations)
 	if err != nil || len(rejected) != 0 || store.admitCalls != 2 || len(encodedBytes) != len(mutations) {
 		t.Fatalf("admitState() rejected=%v bytes=%d calls=%d error=%v", rejected, len(encodedBytes), store.admitCalls, err)
 	}
@@ -390,7 +399,7 @@ func TestApplyStateCountsAlreadyAppliedBySiteAndKindAndKeepsTheSkew(t *testing.T
 	for index := range mutations {
 		mutations[index].ExpectedBlobRevision = 7
 	}
-	rejected, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, "", chunkRetention, mutations, nil)
+	rejected, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, "", chunkRetention, 0, mutations, nil)
 	if err != nil || len(rejected) != 0 {
 		t.Fatalf("applyState() rejected=%v error=%v: ALREADY_APPLIED items complete the apply", rejected, err)
 	}
@@ -437,7 +446,7 @@ func TestApplyStateCountsVersionConflictsByKindAndNamesTheFirst(t *testing.T) {
 	for index := range mutations {
 		mutations[index].ExpectedBlobRevision = 7
 	}
-	_, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, "", chunkRetention, mutations, nil)
+	_, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract, fixture.fence, "", chunkRetention, 0, mutations, nil)
 	var refusal *StateConflictError
 	if !errors.As(err, &refusal) {
 		t.Fatalf("applyState() error = %v, want a StateConflictError", err)
@@ -482,4 +491,36 @@ func (store *chunkStore) RenewFrozenRuntime(
 	_ context.Context, request execution.FrozenStateRenewalRequest,
 ) (execution.FrozenStateRenewalResult, error) {
 	return freshFrozenRenewals(request), nil
+}
+
+// Each chunk's row carries the envelope count its own store call reported,
+// under its own name and not the preflight's.
+//
+// The count is decided in the store and put on the row here, and a test of
+// the store alone cannot reach this line: dropping it leaves the store's
+// count right and the row empty, which reads as "nothing on this path
+// depends on the envelope" - the one reading the envelope's deletion waits
+// for. Two chunks with different counts, so a row that took another chunk's
+// number or the sum fails.
+func TestEachAppliedChunkCarriesItsOwnEnvelopeCount(t *testing.T) {
+	store := &chunkStore{envelopeReads: []int{3, 0}}
+	fixture := newChunkFixture(store, 8192)
+	if _, err := fixture.coordinator.applyState(context.Background(), execution.OperationNormal, fixture.contract,
+		fixture.fence, "", chunkRetention, 0, chunkMutations(8192+1), nil); err != nil {
+		t.Fatal(err)
+	}
+	applied := fixture.chunkObservations(observability.StageStateApplied)
+	if len(applied) != 2 {
+		t.Fatalf("state_applied observations = %d, want 2", len(applied))
+	}
+	for index, want := range []int64{3, 0} {
+		counts := applied[index].Counts
+		if counts.EnvelopeReadsApply != want {
+			t.Fatalf("chunk %d envelope_reads_apply = %d, want %d", index, counts.EnvelopeReadsApply, want)
+		}
+		if counts.EnvelopeReads != 0 {
+			t.Fatalf("chunk %d moved the preflight's envelope count to %d: two consumers of one key, two numbers",
+				index, counts.EnvelopeReads)
+		}
+	}
 }

@@ -29,7 +29,13 @@ type pipelineMemoryBackend struct {
 	casCalls     int
 	staleOwner   bool
 	failPipeline error
+	failMGet     error
 	guards       []*FenceGuard
+	// recordKeyCounts keeps how many keys each MGET carried, for the tests
+	// that assert on the batch bound rather than on the number of calls.
+	recordKeyCounts bool
+	keyCounts       []int
+	byteCounts      []int
 }
 
 func newPipelineMemoryBackend() *pipelineMemoryBackend {
@@ -38,6 +44,17 @@ func newPipelineMemoryBackend() *pipelineMemoryBackend {
 
 func (backend *pipelineMemoryBackend) MGet(ctx context.Context, keys []string) ([][]byte, error) {
 	backend.mgetCalls++
+	if backend.recordKeyCounts {
+		backend.keyCounts = append(backend.keyCounts, len(keys))
+		bytes := 0
+		for _, key := range keys {
+			bytes += len(backend.values[key])
+		}
+		backend.byteCounts = append(backend.byteCounts, bytes)
+	}
+	if backend.failMGet != nil {
+		return nil, backend.failMGet
+	}
 	values, err := backend.casMemoryBackend.MGet(ctx, keys)
 	for index, key := range keys {
 		if _, found := backend.values[key]; !found {
@@ -123,7 +140,7 @@ func testApplyFence() execution.StateApplyFence {
 
 func seriesIdentity(index int) execution.StateKeyIdentity {
 	identity := stateIdentityV2()
-	identity.SeriesIdentityDigest = execution.SeriesIdentityDigest(fmt.Sprintf("series-%05d", index))
+	identity.SeriesIdentityDigest = seriesDigest(fmt.Sprintf("series-%05d", index))
 	return identity
 }
 
@@ -131,11 +148,10 @@ func seriesMutation(t *testing.T, identity execution.StateKeyIdentity, version e
 	t.Helper()
 	at := int64(version.EvaluationTime)
 	mutation, err := execution.BuildStateMutation(execution.StateMutation{Identity: identity, ExpectedBlobRevision: revision, ApplyVersion: version,
-		AffectedRecords: []execution.RecordAnchor{{RecordID: "r1", SourceTime: at}},
+		AffectedRecords: []execution.RecordAnchor{derivedAnchor(t, identity, at)},
 		Levels: []execution.RuntimeLevelStateMutation{{LevelID: 1, LevelStateCompatibility: "compat", HistoryCompleteness: execution.HistoryFull,
 			WarmupRequirementRef: "warm" + padding, LastProcessedEventTime: at}},
-		Points: []execution.StateHistoryPoint{{RecordID: "r1", SourceTime: at,
-			Levels: []execution.StateLevelFact{{LevelID: 1, DetectFingerprint: "detect", Result: execution.LevelFactNormal}}}}})
+		Points: []execution.StateHistoryPoint{derivedPoint(t, identity, at, "detect", execution.LevelFactNormal)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,8 +213,27 @@ func TestLoadRuntimeBatchesReadsAndIsolatesInvalidItems(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadRuntime() error = %v", err)
 	}
-	if backend.mgetCalls != 3 {
-		t.Fatalf("MGET round trips = %d, want ceil(600/256) = 3", backend.mgetCalls)
+	// One safe batch, then the item bound. A Query Group nothing has been read
+	// for yet is bounded by the batch budget over the largest value the store
+	// accepts, because that is the only bound that holds whatever its records
+	// turn out to be; the first batch teaches their real size and the rest run
+	// at the item bound. The extra round trip is that one call, per Query
+	// Group, and it is what stops a Query Group whose records grew to 345 KiB
+	// from asking for 86 MB in one MGET.
+	//
+	// Twice over here, because every series in this fixture holds an envelope
+	// and no frame: the first pass reads 600 frames and finds none, the second
+	// reads the 600 envelopes that answer. A fleet that has finished the
+	// migration pays the first pass only - which is the point of the split -
+	// and this fixture is what the middle of the migration costs.
+	// The envelope pass runs at the value bound throughout - eight keys per
+	// call in this fixture, sixteen under the production limit - because a
+	// bound learned from its own earlier batches is the trap the sibling
+	// bound is protected from by a committed measurement this pass does not
+	// have. Empty replies are what those calls cost while the migration is
+	// unfinished, and the pass disappears when the older keys do.
+	if backend.mgetCalls != 79 {
+		t.Fatalf("MGET round trips = %d, want the frame pass (1 safe batch of 16 + ceil(584/256) = 4) and the envelope pass (600 / 8 = 75)", backend.mgetCalls)
 	}
 	for index, view := range loaded.Items {
 		want := execution.StateMissingWarming
@@ -264,15 +299,33 @@ func TestApplyRuntimePipelinesWitnessedItemsAndStoresSequentialBytes(t *testing.
 	if _, err := batchedStore.LoadRuntime(context.Background(), execution.StatePreflightRequest{Contract: frozenRef(), Items: preflightItems(mutations)}); err != nil {
 		t.Fatalf("LoadRuntime() error = %v", err)
 	}
-	if batched.mgetCalls != 4 {
-		t.Fatalf("preflight MGET round trips = %d, want ceil(1000/256) = 4", batched.mgetCalls)
+	// One safe batch, then the item bound. A Query Group nothing has been read
+	// for yet is bounded by the batch budget over the largest value the store
+	// accepts, because that is the only bound that holds whatever its records
+	// turn out to be; the first batch teaches their real size and the rest run
+	// at the item bound. The extra round trip is that one call, per Query
+	// Group, and it is what stops a Query Group whose records grew to 345 KiB
+	// from asking for 86 MB in one MGET.
+	// Plus the envelope pass: every series here is missing from both keys, so
+	// the frame pass answers none of them and the second asks the older key.
+	// Its first call is bounded by what the store accepts as a value, because
+	// nothing has measured an envelope yet; that call comes back empty, which
+	// is a measurement of this representation, and the rest run at the item
+	// bound. A missing key costs a reply and no bytes, which is what makes
+	// paying it for a cold Query Group acceptable; what it buys is never
+	// reading a 345 KiB envelope for a series whose frame answers.
+	if batched.mgetCalls != 130 {
+		t.Fatalf("preflight MGET round trips = %d, want the frame pass (5) and the envelope pass at the value bound (1000 / 8 = 125)", batched.mgetCalls)
 	}
 	result, err := batchedStore.ApplyRuntimeFenced(context.Background(), request, testApplyFence())
 	if err != nil {
 		t.Fatalf("ApplyRuntimeFenced() error = %v", err)
 	}
 	requireAllStatus(t, result, execution.StateApplied)
-	if batched.pipelines != 4 || batched.pipelineKeys != 1000 || batched.casCalls != 0 || batched.mgetCalls != 4 {
+	// The MGETs are the preflight's 130 above - its frame pass and its
+	// envelope pass; the apply itself re-reads nothing, which is what this
+	// counts.
+	if batched.pipelines != 4 || batched.pipelineKeys != 1000 || batched.casCalls != 0 || batched.mgetCalls != 130 {
 		t.Fatalf("apply round trips: pipelines=%d keys=%d cas=%d mget=%d, want 4 pipelines carrying 1000 keys and no re-read",
 			batched.pipelines, batched.pipelineKeys, batched.casCalls, batched.mgetCalls)
 	}
@@ -343,27 +396,27 @@ func TestApplyRuntimeClassifiesValueChangedBetweenPreflightAndApply(t *testing.T
 	vanished := seriesMutation(t, seriesIdentity(3), newer, 1, "")
 	recreated := seriesMutation(t, seriesIdentity(4), newer, 3, "")
 	for _, mutation := range []execution.StateMutation{movedRevision, movedBytes, vanished} {
-		key, _ := RuntimeStateKeyV2("alarmd", mutation.Identity)
-		backend.values[key], _ = encodeRuntime(seriesMutation(t, mutation.Identity, version, 0, ""), 1)
+		key, _ := RuntimeStateKeyV3("alarmd", mutation.Identity)
+		backend.values[key], _ = encodeRuntimePacked(seriesMutation(t, mutation.Identity, version, 0, ""), 1)
 	}
-	key4, _ := RuntimeStateKeyV2("alarmd", recreated.Identity)
-	backend.values[key4], _ = encodeRuntime(seriesMutation(t, recreated.Identity, version, 2, ""), 3)
+	key4, _ := RuntimeStateKeyV3("alarmd", recreated.Identity)
+	backend.values[key4], _ = encodeRuntimePacked(seriesMutation(t, recreated.Identity, version, 2, ""), 3)
 	items := preflightItems([]execution.StateMutation{missingThenWritten, movedRevision, movedBytes, vanished, recreated})
 	if _, err := store.LoadRuntime(context.Background(), execution.StatePreflightRequest{Contract: frozenRef(), Items: items}); err != nil {
 		t.Fatalf("LoadRuntime() error = %v", err)
 	}
 
 	// Another writer moves every key after preflight.
-	key0, _ := RuntimeStateKeyV2("alarmd", missingThenWritten.Identity)
-	backend.values[key0], _ = encodeRuntime(seriesMutation(t, missingThenWritten.Identity, version, 0, "other"), 1)
-	key1, _ := RuntimeStateKeyV2("alarmd", movedRevision.Identity)
-	backend.values[key1], _ = encodeRuntime(seriesMutation(t, movedRevision.Identity, version, 1, ""), 2)
-	key2, _ := RuntimeStateKeyV2("alarmd", movedBytes.Identity)
-	backend.values[key2], _ = encodeRuntime(seriesMutation(t, movedBytes.Identity, older, 0, "other"), 1)
-	key3, _ := RuntimeStateKeyV2("alarmd", vanished.Identity)
+	key0, _ := RuntimeStateKeyV3("alarmd", missingThenWritten.Identity)
+	backend.values[key0], _ = encodeRuntimePacked(seriesMutation(t, missingThenWritten.Identity, version, 0, "other"), 1)
+	key1, _ := RuntimeStateKeyV3("alarmd", movedRevision.Identity)
+	backend.values[key1], _ = encodeRuntimePacked(seriesMutation(t, movedRevision.Identity, version, 1, ""), 2)
+	key2, _ := RuntimeStateKeyV3("alarmd", movedBytes.Identity)
+	backend.values[key2], _ = encodeRuntimePacked(seriesMutation(t, movedBytes.Identity, older, 0, "other"), 1)
+	key3, _ := RuntimeStateKeyV3("alarmd", vanished.Identity)
 	delete(backend.values, key3)
 	// The key was gone and written fresh: revision 3 at preflight, 1 now.
-	backend.values[key4], _ = encodeRuntime(seriesMutation(t, recreated.Identity, version, 0, "other"), 1)
+	backend.values[key4], _ = encodeRuntimePacked(seriesMutation(t, recreated.Identity, version, 0, "other"), 1)
 	snapshot := map[string]string{}
 	for key, value := range backend.values {
 		snapshot[key] = string(value)
@@ -434,7 +487,7 @@ func TestApplyRuntimeRepeatedKeyFallsBackToSequentialPath(t *testing.T) {
 	if backend.pipelines != 0 || backend.casCalls != 3 {
 		t.Fatalf("repeated key must use the sequential path: pipelines=%d cas=%d", backend.pipelines, backend.casCalls)
 	}
-	key, _ := RuntimeStateKeyV2("alarmd", first.Identity)
+	key, _ := RuntimeStateKeyV3("alarmd", first.Identity)
 	view := decodeRuntime(backend.values[key], first.Identity, frozenRef(), second.ApplyVersion)
 	if view.BlobRevision != 2 || view.PersistedMutationDigest != second.MutationDigest {
 		t.Fatalf("later duplicate did not observe the earlier write: %+v", view)
@@ -626,8 +679,8 @@ func TestApplyRuntimeTheSameWriteSentAgainUnchangedIsAlreadyApplied(t *testing.T
 		// witness from preflight still says missing, so the re-sent copy goes
 		// to the pipeline and meets them there.
 		for _, mutation := range mutations {
-			key, _ := RuntimeStateKeyV2("alarmd", mutation.Identity)
-			backend.values[key], _ = encodeRuntime(mutation, 1)
+			key, _ := RuntimeStateKeyV3("alarmd", mutation.Identity)
+			backend.values[key], _ = encodeRuntimePacked(mutation, 1)
 		}
 		snapshot := snapshotOf(backend)
 		result, err := store.ApplyRuntimeFenced(context.Background(), request, testApplyFence())
@@ -705,7 +758,7 @@ func TestApplyRuntimeRepeatedKeyWithTheSameStatementIsNamedRepeatedKey(t *testin
 	if later.Status != execution.StateApplyAlreadyApplied || later.AlreadyApplied != execution.StateAlreadyAppliedRepeatedKey || later.StoredBlobRevision != 1 {
 		t.Fatalf("later copy = %+v, want ALREADY_APPLIED kind repeated_key at stored revision 1: the request itself wrote this key, no client re-sent it", later)
 	}
-	key, _ := RuntimeStateKeyV2("alarmd", first.Identity)
+	key, _ := RuntimeStateKeyV3("alarmd", first.Identity)
 	view := decodeRuntime(backend.values[key], first.Identity, frozenRef(), first.ApplyVersion)
 	if view.BlobRevision != 1 {
 		t.Fatalf("the later copy rewrote the key: revision %d, want 1", view.BlobRevision)
@@ -757,12 +810,12 @@ func TestApplyRuntimeSequentialAndWitnessedConflictsNameTheComparison(t *testing
 		reset := seriesMutation(t, seriesIdentity(1), version, 3, "")
 		moved := seriesMutation(t, seriesIdentity(2), version, 1, "")
 		otherStatement := seriesMutation(t, seriesIdentity(3), version, 1, "")
-		keyReset, _ := RuntimeStateKeyV2("alarmd", reset.Identity)
-		backend.values[keyReset], _ = encodeRuntime(seriesMutation(t, reset.Identity, version, 0, "fresh"), 1)
-		keyMoved, _ := RuntimeStateKeyV2("alarmd", moved.Identity)
-		backend.values[keyMoved], _ = encodeRuntime(seriesMutation(t, moved.Identity, version, 1, "theirs"), 2)
-		keyOther, _ := RuntimeStateKeyV2("alarmd", otherStatement.Identity)
-		backend.values[keyOther], _ = encodeRuntime(seriesMutation(t, otherStatement.Identity, version, 0, "theirs"), 1)
+		keyReset, _ := RuntimeStateKeyV3("alarmd", reset.Identity)
+		backend.values[keyReset], _ = encodeRuntimePacked(seriesMutation(t, reset.Identity, version, 0, "fresh"), 1)
+		keyMoved, _ := RuntimeStateKeyV3("alarmd", moved.Identity)
+		backend.values[keyMoved], _ = encodeRuntimePacked(seriesMutation(t, moved.Identity, version, 1, "theirs"), 2)
+		keyOther, _ := RuntimeStateKeyV3("alarmd", otherStatement.Identity)
+		backend.values[keyOther], _ = encodeRuntimePacked(seriesMutation(t, otherStatement.Identity, version, 0, "theirs"), 1)
 		result, err := store.ApplyRuntime(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(),
 			Items: []execution.StateMutation{expired, reset, moved, otherStatement}})
 		if err != nil {

@@ -38,7 +38,7 @@ func (source controlPlaneExpectation) Expectation(ctx context.Context) (fleet.Ex
 	if source.repository == nil {
 		return fleet.Expectation{}, errors.New("alarmd fleet: control plane repository is required")
 	}
-	activation, err := source.repository.LoadActivation(ctx)
+	activation, err := source.repository.LoadActivationHead(ctx)
 	if err != nil {
 		return fleet.Expectation{}, err
 	}
@@ -239,12 +239,18 @@ type fleetPublisher struct {
 	// assignmentSweep reports the control leader's last sweep of retired
 	// Assignment records. Nil on a follower.
 	assignmentSweep func() *fleet.AssignmentSweepFacts
+	// leaderRound reports the control leader's last reconcile round, stage
+	// by stage; nil on a follower.
+	leaderRound func() *fleet.LeaderRoundFacts
 	// viewStream reports this replica's account of the view stream: the
 	// Leader's ledger, or Leading false. Nil on a runtime without the stream.
 	viewStream func() *fleet.ViewStreamFacts
 	// platformSettings reports the state of this replica's copy of the
 	// platform's settings. Nil on a bundle that has none.
 	platformSettings func() *fleet.PlatformSettingsFacts
+	// publicSurface is how the public surface came out at assembly; it does
+	// not change under a running process.
+	publicSurface publicSurfaceStanding
 	// outputProtocol is the wire format choice this process runs with, read
 	// once from its configuration at assembly: the configuration does not
 	// change under a running process, and what it decides is frozen into
@@ -407,6 +413,7 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	// which is why that number does not depend on this list at all.
 	parked, overdue := publisherOverdue(publisher.overdue, at, publisher.replica, publisher.strategies)
 	anomalies = append(anomalies, onlyUnlisted(parked, anomalies, demoted)...)
+	awaiting, awaitingTotal := publisher.awaitingFirstRound(owned, at)
 	snapshot := fleet.Snapshot{
 		Replica:   publisher.replica,
 		TakenAt:   at,
@@ -417,6 +424,9 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 		// The difference between the two is what the replica owns but cannot
 		// speak for, which the aggregate counts as unknown rather than healthy.
 		Determined: publisher.tracker.Determined(),
+		// The undetermined objects that are only waiting for their first
+		// round, which the aggregate says as such rather than as unknown.
+		AwaitingFirstRound: awaiting, AwaitingFirstRoundTotal: awaitingTotal,
 		// Which objects, not only how many. A sum cannot tell two replicas
 		// holding distinct shares from two replicas holding the same object,
 		// and that ambiguity sat unresolved on a running deployment for over a
@@ -442,6 +452,8 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	if publisher.platformSettings != nil {
 		snapshot.PlatformSettings = publisher.platformSettings()
 	}
+	snapshot.MetricsUnexported = publisher.publicSurface.MetricsUnexported
+	snapshot.CLIUnavailable = publisher.publicSurface.CLIUnavailable
 	if publisher.activation != nil {
 		snapshot.Activation = publisher.activation()
 	}
@@ -453,6 +465,9 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	}
 	if publisher.assignmentSweep != nil {
 		snapshot.AssignmentSweep = publisher.assignmentSweep()
+	}
+	if publisher.leaderRound != nil {
+		snapshot.LeaderRound = publisher.leaderRound()
 	}
 	if publisher.viewStream != nil {
 		snapshot.ViewStream = publisher.viewStream()
@@ -482,8 +497,11 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	byDesign := publisher.tracker.ByDesign()
 	snapshot.ByDesign = byDesign
 	snapshot.TotalByDesign = len(byDesign)
-	snapshot.DemotionEntries, snapshot.DemotionExtensions, snapshot.DemotionExits,
-		snapshot.LastDemotionExit = publisher.tracker.DemotionFlow()
+	flow := publisher.tracker.DemotionFlow()
+	snapshot.DemotionEntries, snapshot.DemotionExtensions, snapshot.DemotionExits, snapshot.LastDemotionExit =
+		flow.Entries, flow.Extensions, flow.Exits, flow.LastExit
+	snapshot.DemotionRestored, snapshot.DemotionHandovers, snapshot.DemotionReentries =
+		flow.Restored, flow.Handovers, flow.Reentries
 	// The spans nothing ever evaluated. Not folded into any column: those
 	// objects are running normally now, and the loss is in their past.
 	snapshot.PrunedSkips = publisher.tracker.PrunedSkips()
@@ -507,6 +525,9 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	// completing, results going out, and what they learn about absence not
 	// written down. In no column, on its own line.
 	snapshot.NoDataMemory = publisher.tracker.NoDataMemory()
+	// And the objects nearing their one-object share of the retained pool:
+	// rounds completing, and the next few percent of growth refused whole.
+	snapshot.RetainedShare = publisher.tracker.RetainedShare()
 	// And the problems whose objects recovered within the hour: the evidence
 	// the RECOVERED reading is made of, which nothing on the current lines
 	// carries once the objects have left them.
@@ -514,13 +535,16 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 	// And the running count of Slots executed and then closed without their
 	// Progress: the records keep one span per object and cannot carry it.
 	snapshot.BookkeepingAbandoned = publisher.tracker.BookkeepingAbandoned()
+	// And what the no-data Plans' last deciding rounds counted, over every
+	// tracked object: whether the tracking horizon is doing anything.
+	snapshot.NoDataTracking = publisher.tracker.NoDataTrackingSummary()
 	// Where every listed object is in its cycle, and the census over all of
 	// them. From the same index and the same instant as the overdue facts, so
 	// the row and the sentence above it cannot read two clocks.
 	if publisher.schedule != nil {
 		census := publisher.schedule.Census(at, len(owned))
 		snapshot.Schedule = &census
-		for _, column := range [][]fleet.Anomaly{snapshot.Anomalies, snapshot.Demoted, snapshot.Undecidable, snapshot.ByDesign, snapshot.NoData, snapshot.NoDataMemory} {
+		for _, column := range [][]fleet.Anomaly{snapshot.Anomalies, snapshot.Demoted, snapshot.Undecidable, snapshot.ByDesign, snapshot.NoData, snapshot.NoDataMemory, snapshot.RetainedShare} {
 			for index := range column {
 				wake := publisher.schedule.WakeOf(column[index].QueryGroup)
 				column[index].Wake = &wake
@@ -530,6 +554,10 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 				if facts := column[index].EmptyEveryRound; facts != nil {
 					facts.IntervalSeconds = wake.IntervalSeconds
 				}
+				// What a flat short window says about itself, given the
+				// period: holes sliding through with the latest they leave,
+				// or the same points missing for longer than the window.
+				column[index].WindowFill = fleet.WindowFillOf(column[index], wake.IntervalSeconds, at)
 			}
 		}
 		// And the period behind each retained record, from the same index: a
@@ -564,6 +592,38 @@ func (publisher *fleetPublisher) snapshot(ctx context.Context) fleet.Snapshot {
 // The cost is bounded and small -- a replica of this deployment holds a few
 // hundred objects, so the list is tens of kilobytes against the snapshot's
 // megabyte budget.
+// awaitingFirstRound names the owned objects without a conclusion that are
+// only waiting for their first round (fleet.AwaitingFirstRound), soonest due
+// first and bounded, with the total. Nothing is exempted without a schedule
+// to ask.
+func (publisher *fleetPublisher) awaitingFirstRound(owned []execution.QueryGroupIdentity, at time.Time) ([]fleet.FirstRoundWait, int) {
+	if publisher.schedule == nil {
+		return nil, 0
+	}
+	var waits []fleet.FirstRoundWait
+	for _, queryGroup := range owned {
+		id := string(queryGroup)
+		if publisher.tracker.HasConclusion(id) {
+			continue
+		}
+		wake := publisher.schedule.WakeOf(id)
+		if fleet.AwaitingFirstRound(wake, at) {
+			waits = append(waits, fleet.FirstRoundWait{QueryGroup: id, IntervalSeconds: wake.IntervalSeconds, DueAt: wake.DueAt})
+		}
+	}
+	total := len(waits)
+	sort.Slice(waits, func(i, j int) bool {
+		if !waits[i].DueAt.Equal(waits[j].DueAt) {
+			return waits[i].DueAt.Before(waits[j].DueAt)
+		}
+		return waits[i].QueryGroup < waits[j].QueryGroup
+	})
+	if len(waits) > fleet.MaxFirstRoundWaits {
+		waits = waits[:fleet.MaxFirstRoundWaits]
+	}
+	return waits, total
+}
+
 func ownedObjectIDs(owned []execution.QueryGroupIdentity) []string {
 	if len(owned) == 0 {
 		return nil
@@ -631,6 +691,9 @@ func fleetVerdictSource(
 		// differently: it used to mark stalling on the anomaly list alone
 		// while the page marked every column.
 		fleet.Decide(&view, at, stallAfter)
+		// A scrape decides the verdict too, and it is the one that runs
+		// whether or not anybody is looking: it keeps the record current.
+		service.RecordVerdict(&view, at)
 		return fleetVerdictOf(view, at)
 	}
 }
@@ -712,6 +775,14 @@ func fleetVerdictOf(view fleet.View, at time.Time) metric.FleetVerdict {
 	for _, kind := range fleet.DegradationKinds {
 		verdict.Degradations = append(verdict.Degradations, metric.FleetCount{Value: string(kind), Count: replicas[kind]})
 	}
+	// The retained records by what each is, the same walk the lines make,
+	// every kind at least at zero; and how many recent ones were judged
+	// against no restart anchor.
+	losses, graceUnknown := fleet.LossCensus(&view, at)
+	for _, loss := range fleet.Losses {
+		verdict.Losses = append(verdict.Losses, metric.FleetCount{Value: string(loss), Count: losses[loss]})
+	}
+	verdict.Losses = append(verdict.Losses, metric.FleetCount{Value: "GRACE_UNKNOWN", Count: graceUnknown})
 	return verdict
 }
 

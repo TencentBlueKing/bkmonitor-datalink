@@ -208,7 +208,7 @@ func startShortPeriodFixture(t *testing.T) *shortPeriodFixture {
 		t.Fatalf("Query Groups/runners = %v/%d, want one", bundle.queryGroups, len(bundle.runners))
 	}
 	fixture.queryGroup = bundle.queryGroups[0]
-	fixture.runner = bundle.runners[fixture.queryGroup].runner
+	fixture.runner = settledRunner(bundle, fixture.queryGroup)
 
 	production := bundle.dependencies.Ownership.(*productionPhaseTwoOwnership)
 	schedule, err := production.dependencies.Catalog.ReadInitialFrozenSchedule(ctx, fixture.queryGroup)

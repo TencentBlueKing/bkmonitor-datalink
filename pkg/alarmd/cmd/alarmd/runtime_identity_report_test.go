@@ -28,8 +28,8 @@ func TestObjectIdentityReportsAreWrittenAsLogLines(t *testing.T) {
 	clock := time.Unix(1700000000, 0)
 	reporter := newIdentityReporter(logger, func() time.Time { return clock })
 	filters := seriesAdmissionFilters(nil, reporter)
-	if len(filters) != 1 {
-		t.Fatalf("filters = %d", len(filters))
+	if len(filters) != 2 {
+		t.Fatalf("filters = %d, want the two target forms' filters", len(filters))
 	}
 	target, ok := filters[0].(admission.TargetScopeFilter)
 	if !ok || target.Reporter != reporter {

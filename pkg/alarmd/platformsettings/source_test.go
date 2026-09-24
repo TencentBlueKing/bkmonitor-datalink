@@ -73,7 +73,8 @@ func TestRedisSourceReadsPlatformDomainSettings(t *testing.T) {
 		root + "{tenant-a}:base_config.metadata.host_disable_monitor_states": `["other-tenant"]`,
 	})
 	want := Settings{HostDisableMonitorStates: []string{"maintenance"}, IsAccessBKData: true,
-		BKDataCMDBLevelTables: []string{"system.cpu_summary"}, FileSystemTypeIgnore: []string{"tmpfs"}}
+		BKDataCMDBLevelTables: []string{"system.cpu_summary"}, FileSystemTypeIgnore: []string{"tmpfs"},
+		NoDataTrackingHorizonSeconds: DefaultNoDataTrackingHorizonSeconds, NoDataTrackingHorizonSource: HorizonSourceDefault}
 	if got := cache.Current(); !reflect.DeepEqual(got, want) || cache.Stats().Mode != ModeAuthoritative {
 		t.Fatalf("published settings = %+v (%s), want %+v", got, cache.Stats().Mode, want)
 	}

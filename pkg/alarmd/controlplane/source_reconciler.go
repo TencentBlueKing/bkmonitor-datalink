@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package controlplane
 
 import (
@@ -75,6 +66,10 @@ const (
 // whatever the publisher rewrites, the next periodic read sees, so the number
 // does not follow how often the publisher runs and need not move with it.
 const sourceFullReadInterval = 6 * time.Minute
+
+// SourceFullReadInterval is that bound, for the callers whose own freshness
+// bound has to follow it rather than repeat it as a second number.
+const SourceFullReadInterval = sourceFullReadInterval
 
 type SourceRefreshResult struct {
 	Status      SourceRefreshStatus
@@ -146,6 +141,13 @@ type persistedSourceCandidate struct {
 	ConfirmationKey  string `json:"confirmation_key"`
 	ObservationID    string `json:"observation_id"`
 	SnapshotRevision string `json:"snapshot_revision"`
+	// Absences is the candidate's removal-grace memory: when each strategy
+	// it holds under PENDING_REMOVAL was first found absent. The round that
+	// confirms the candidate rebuilds the Catalog and must stamp the same
+	// moments, or its dispositions differ from the candidate's and nothing
+	// ever confirms. Absent from a candidate written before the grace was a
+	// period, which the next round reads as no memory.
+	Absences map[string]int64 `json:"absences,omitempty"`
 }
 
 // SourceReconciler confirms changed Legacy observations across independent
@@ -158,6 +160,16 @@ type SourceReconciler struct {
 	stateSemantics  strategy.StateSemantics
 	validateCatalog CatalogAdmission
 	outputProtocol  string
+	targetSources   TargetSources
+	// noDataPolicy is read once per round rather than held as a value, so the
+	// deployment can decide whether the horizon is fixed for the process or
+	// follows something that moves while it runs. The round key covers it
+	// either way, which is what makes a changed horizon reach Plans whose own
+	// document did not change.
+	//
+	// Nil means the zero policy, which is a horizon of zero: absence tracked
+	// indefinitely, the behaviour every Plan had before the horizon existed.
+	noDataPolicy func() NoDataPolicy
 	// candidates carries the compiler's output from one round to the next,
 	// so a round compiles only the documents that changed. It lives on the
 	// reconciler because that is the object that survives between rounds; a
@@ -187,6 +199,15 @@ type SourceReconciler struct {
 	namedWithheld []ObjectDisposition
 	// namedSuspended is the same memory for suspended no-data halves.
 	namedSuspended []ObjectDisposition
+	// strategies is the last publication indexed by strategy id, for
+	// LookupStrategy; replaced whole at the end of each round that published
+	// or confirmed one.
+	strategies strategyLookupState
+	// departed remembers the strategies this catalog let go, with the
+	// identity each had while it still existed. Nothing else in the process
+	// can supply that identity once the strategy is gone; see
+	// DepartedStrategy.
+	departed *departedMemory
 }
 
 // ConfigureClock sets the clock the reconciler paces its periodic full reads
@@ -219,6 +240,51 @@ func (reconciler *SourceReconciler) ConfigureOutputProtocol(protocol string) err
 	default:
 		return errors.New("alarmd controlplane: unknown output protocol")
 	}
+}
+
+// ConfigureTargetSources says which sources the deployment renders for a
+// target plan's dynamic references, once, at assembly, for the same reason
+// the output protocol is set rather than passed.
+func (reconciler *SourceReconciler) ConfigureTargetSources(sources TargetSources) error {
+	if reconciler == nil {
+		return errors.New("alarmd controlplane: no source reconciler")
+	}
+	reconciler.targetSources = sources
+	return nil
+}
+
+// ConfigureNoDataPolicy says what the deployment's no-data settings are for
+// every Plan that does not state its own.
+//
+// A function rather than a value because the horizon is the deployment's to
+// change, and decision-018 section 5.1 is about a horizon that moves while the
+// process runs: the candidate cache is keyed by the strategy document, so a
+// changed default that is not in the round key reaches only the strategies
+// whose own document happens to change next, and reads as applied while doing
+// nothing. Reading it per round is what lets the round key see the change.
+//
+// Configuring nothing leaves the zero policy, whose horizon of zero means the
+// deployment set none, so absence is tracked indefinitely - what every Plan
+// did before the horizon existed. The deployment says that by not writing the
+// setting rather than by writing a zero, which its own configuration refuses;
+// the zero only ever stands for absence by the time it reaches here. So a
+// deployment that says nothing is not opted in, which is the direction that
+// cannot surprise anyone: a horizon stops no-data alerts after it, and one
+// arrived at by default would silence a real outage.
+func (reconciler *SourceReconciler) ConfigureNoDataPolicy(policy func() NoDataPolicy) error {
+	if reconciler == nil {
+		return errors.New("alarmd controlplane: no source reconciler")
+	}
+	reconciler.noDataPolicy = policy
+	return nil
+}
+
+// effectiveNoDataPolicy is the policy this round builds under.
+func (reconciler *SourceReconciler) effectiveNoDataPolicy() NoDataPolicy {
+	if reconciler == nil || reconciler.noDataPolicy == nil {
+		return NoDataPolicy{}
+	}
+	return reconciler.noDataPolicy()
 }
 
 // CatalogAdmission is the deployment's say over a Catalog the compiler built.
@@ -257,7 +323,7 @@ func NewSourceReconciler(
 	}
 	return &SourceReconciler{repository: repository, publisher: publisher, compiler: compiler,
 		stateSemantics: stateSemantics, validateCatalog: validateCatalog, candidates: NewCandidateCache(),
-		now: time.Now}, nil
+		departed: newDepartedMemory(), now: time.Now}, nil
 }
 
 func (reconciler *SourceReconciler) Refresh(
@@ -306,9 +372,23 @@ func (reconciler *SourceReconciler) Refresh(
 	if audit != nil {
 		previousDispositions = audit.Dispositions
 	}
+	// The candidate the previous round left unconfirmed, read before the
+	// build: its grace memory is what the build stamps again so the two
+	// rounds agree and the candidate can confirm. A missing candidate is no
+	// memory, and the confirmation below reads the same load.
+	pending, pendingErr := reconciler.loadPending(ctx)
+	if pendingErr != nil && !errors.Is(pendingErr, redis.Nil) {
+		return SourceRefreshResult{}, exitAt(SourceRefreshExitCandidate, pendingErr)
+	}
+	var pendingAbsences map[string]int64
+	if pendingErr == nil {
+		pendingAbsences = pending.Absences
+	}
 	catalog, err := BuildCatalog(ctx, BuildRequest{
 		Strategies: cycle.strategies, Planner: planner, LastGood: current, PreviousDispositions: previousDispositions,
-		OutputProtocol: reconciler.outputProtocol, Cache: reconciler.candidates,
+		PendingAbsences: pendingAbsences, Now: reconciler.now(),
+		OutputProtocol: reconciler.outputProtocol, TargetSources: reconciler.targetSources, Cache: reconciler.candidates,
+		NoDataPolicy: reconciler.effectiveNoDataPolicy(),
 	})
 	if err != nil {
 		return SourceRefreshResult{}, exitAt(SourceRefreshExitBuildCatalog, err)
@@ -358,7 +438,7 @@ func (reconciler *SourceReconciler) Refresh(
 	// at a stranded candidate. Restore its occurrence directly; requiring two
 	// identical source observations here can leave the active Snapshot expired
 	// forever when non-semantic observation details change between refreshes.
-	activation, activationErr := reconciler.repository.LoadActivation(ctx)
+	activation, activationErr := reconciler.repository.LoadActivationHead(ctx)
 	if activationErr == nil && activation.Current.SnapshotRevision == catalog.SnapshotRevision {
 		return reconciler.publish(ctx, current, catalog, SourceRefreshUnchanged)
 	}
@@ -379,15 +459,12 @@ func (reconciler *SourceReconciler) Refresh(
 		}
 	}
 
-	pending, err := reconciler.loadPending(ctx)
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return SourceRefreshResult{}, exitAt(SourceRefreshExitCandidate, err)
-	}
-	if err == nil && pending.ConfirmationKey == confirmationKey {
+	if pendingErr == nil && pending.ConfirmationKey == confirmationKey {
 		return reconciler.publish(ctx, current, catalog, SourceRefreshPublished)
 	}
 	if err := reconciler.savePending(ctx, persistedSourceCandidate{SchemaVersion: sourceCandidateSchemaVersion,
-		ConfirmationKey: confirmationKey, ObservationID: catalog.ObservationID, SnapshotRevision: string(catalog.SnapshotRevision)}); err != nil {
+		ConfirmationKey: confirmationKey, ObservationID: catalog.ObservationID, SnapshotRevision: string(catalog.SnapshotRevision),
+		Absences: AbsencesOf(catalog.Dispositions)}); err != nil {
 		return SourceRefreshResult{}, exitAt(SourceRefreshExitCandidate, err)
 	}
 	pendingResult := SourceRefreshResult{Status: SourceRefreshPendingConfirmation, Observation: catalog.ObservationID}
@@ -485,7 +562,7 @@ func (reconciler *SourceReconciler) publish(
 	catalog Catalog,
 	status SourceRefreshStatus,
 ) (SourceRefreshResult, error) {
-	activation, activationErr := reconciler.repository.LoadActivation(ctx)
+	activation, activationErr := reconciler.repository.LoadActivationHead(ctx)
 	if activationErr == nil && activation.Current.SnapshotRevision == catalog.SnapshotRevision {
 		snapshot, _, loadErr := reconciler.publisher.restoreIfActivationCurrent(ctx, activation, catalog)
 		if loadErr != nil {
@@ -604,8 +681,15 @@ func (repository *RedisCatalogRepository) sourceCandidateKey() string {
 // rememberLastGood keeps the content of a publication this process just
 // made, so the next round's last-good catalog costs no read at all.
 func (reconciler *SourceReconciler) rememberLastGood(publication SnapshotPublicationRef, catalog Catalog) {
-	reconciler.lastGood = &PublishedSnapshot{SchemaVersion: snapshotSchemaVersion, Publication: publication,
-		QueryGroups: append([]QueryGroup(nil), catalog.QueryGroups...)}
+	groups := append([]QueryGroup(nil), catalog.QueryGroups...)
+	// Before the new publication replaces the old one, record what left. The
+	// two publications are the only moment both the strategy's absence and
+	// its identity are in hand at once.
+	if reconciler.lastGood != nil {
+		reconciler.departed.record(reconciler.lastGood.QueryGroups, groups, reconciler.now())
+	}
+	reconciler.lastGood = &PublishedSnapshot{SchemaVersion: snapshotSchemaVersion, Publication: publication, QueryGroups: groups}
+	reconciler.strategies.replace(buildStrategyIndex(publication, groups, catalog.Dispositions))
 }
 
 // currentSnapshot is the content of the latest publication: from memory
@@ -625,5 +709,10 @@ func (reconciler *SourceReconciler) currentSnapshot(ctx context.Context, publica
 		return PublishedSnapshot{}, err
 	}
 	reconciler.lastGood = &snapshot
+	// Assembled from the objects, so the dispositions of the round that
+	// published it are not known here, and a lookup index without them
+	// would answer "the source never listed it" for every strategy that
+	// round withheld. No index is published from here: this process answers
+	// nothing until a round it completes builds one with the dispositions.
 	return snapshot, nil
 }

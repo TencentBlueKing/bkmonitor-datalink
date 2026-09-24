@@ -21,7 +21,7 @@ func decodeTarget(t *testing.T, document string) [][]legacyTargetCondition {
 	if err := decoder.Decode(&item); err != nil {
 		t.Fatalf("decode item: %v", err)
 	}
-	return item.Target
+	return item.Target.groups
 }
 
 // The production shape: a set of sets, minus some modules under them.
@@ -305,7 +305,7 @@ func TestTheCatalogDecoderReadsTheItemTarget(t *testing.T) {
 	if err := decoder.Decode(&strategy); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(strategy.Items) != 1 || len(strategy.Items[0].Target) != 1 {
+	if len(strategy.Items) != 1 || len(strategy.Items[0].Target.groups) != 1 {
 		t.Fatalf("decoded items = %+v", strategy.Items)
 	}
 }

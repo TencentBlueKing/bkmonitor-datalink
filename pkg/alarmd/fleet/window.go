@@ -39,6 +39,15 @@ const (
 	MaxOpenWindows = observability.TargetFlowMaxGroups
 )
 
+// windowCapError is the shared cap refusing a request. It is typed so the
+// public surface can tell the caller's refusal from a store failure, whose
+// text may name the store.
+type windowCapError struct{ open int }
+
+func (e windowCapError) Error() string {
+	return fmt.Sprintf("at most %d objects may be observed at once; %d would be open", MaxOpenWindows, e.open)
+}
+
 // Window is one object being observed, and who asked for it.
 //
 // OpenedBy is recorded because a window costs shared diagnostic budget and
@@ -144,7 +153,7 @@ func (store *WindowStore) open(ctx context.Context, queryGroups []string, opened
 		seen[window.QueryGroup] = struct{}{}
 	}
 	if len(seen) > MaxOpenWindows {
-		return nil, fmt.Errorf("at most %d objects may be observed at once; %d would be open", MaxOpenWindows, len(seen))
+		return nil, windowCapError{open: len(seen)}
 	}
 
 	expiresAt := now.Add(ttl)

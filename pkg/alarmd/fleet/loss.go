@@ -41,6 +41,15 @@ const (
 	// no mechanism named. It is a loss; it is also expected to stop on its
 	// own, and it asks no capacity question.
 	LossAfterRestart Loss = "AFTER_RESTART"
+	// LossAfterCooldown: not demoted now, within the window, and the record
+	// itself says a query cooldown held the Slot until it fell past the
+	// replay range. The object has since left the pool -- its cooldown ran
+	// out, or the backend answered -- and its record used to be read from
+	// where it sits now: not demoted, recent, so "losing rounds now" on this
+	// deployment's line. It is the cooldown's consequence like WHILE_DEMOTED,
+	// only with no line left to fold onto; it asks no capacity question and
+	// stops on its own.
+	LossAfterCooldown Loss = "AFTER_COOLDOWN"
 	// LossOngoing: not demoted, within the window, and not the restart's.
 	// The object is losing rounds now; it is a current line, and this
 	// deployment's.
@@ -52,7 +61,11 @@ const (
 )
 
 // Losses lists every kind, for the page's completeness test.
-var Losses = []Loss{LossWhileDemoted, LossAfterRestart, LossOngoing, LossHistorical}
+var Losses = []Loss{LossWhileDemoted, LossAfterRestart, LossAfterCooldown, LossOngoing, LossHistorical}
+
+// heldByCooldown is the held-by word on a record that means the cooldown's
+// doing, as the completion wrote it.
+const heldByCooldown = "query_cooldown"
 
 // RestartCatchUpGrace is how long after a replica's process start a skip is
 // read as the restart's catch-up. The spike is over within the first
@@ -74,13 +87,18 @@ const RecentSkipWindow = 10 * time.Minute
 const GroupByLoss GroupBy = "loss"
 
 // lossOf decides a record's kind from the object's column, the record's
-// age, and whether it was made in its replica's restart grace.
-func lossOf(demoted, afterRestart bool, at, now time.Time) Loss {
+// own held-by, its age, and whether it was made in its replica's restart
+// grace. Order: the pool first (the record is its line's consequence),
+// then the window (a stopped loss is history whatever held it), then what
+// the record says held the Slot, then the restart, then what is left.
+func lossOf(demoted, heldByCooldown, afterRestart bool, at, now time.Time) Loss {
 	switch {
 	case demoted:
 		return LossWhileDemoted
 	case now.Sub(at) > RecentSkipWindow:
 		return LossHistorical
+	case heldByCooldown:
+		return LossAfterCooldown
 	case afterRestart:
 		return LossAfterRestart
 	default:
@@ -99,11 +117,35 @@ func replicaStarts(view *View) map[string]time.Time {
 	return starts
 }
 
-// inRestartGrace reports whether a record made at by replica falls within
-// the grace after that replica's start. Unknown start: no.
-func inRestartGrace(starts map[string]time.Time, replica string, at time.Time) bool {
-	start, known := starts[replica]
-	return known && !at.Before(start) && at.Sub(start) <= RestartCatchUpGrace
+// restartGrace is the restart-grace judgment of one record, with the two
+// offsets it was judged on. The grace is anchored twice: at the replica's
+// process start, and at the moment the replica first saw the object -- a
+// rollout's catch-up begins when a replica gets an object, which is a lease
+// expiry, a catalog load and a reconcile round after its process started,
+// and four replicas rolling in turn put that a minute or two out, so the
+// tail of a real catch-up fell past a grace anchored at start alone and read
+// as a loss in progress. Either anchor within the grace is the restart's.
+// Known is false when neither anchor is available: an older publisher that
+// sends no process start and no first sight. That is not "not the
+// restart's"; it is not judged, and the caller counts it as such.
+type restartGrace struct {
+	inGrace, known                bool
+	restartOffset, takeoverOffset *float64
+}
+
+func restartGraceOf(starts map[string]time.Time, skip SkippedSpan) restartGrace {
+	judged := restartGrace{}
+	if start, known := starts[skip.Replica]; known && !skip.At.Before(start) {
+		offset := skip.At.Sub(start).Seconds()
+		judged.restartOffset, judged.known = &offset, true
+		judged.inGrace = judged.inGrace || offset <= RestartCatchUpGrace.Seconds()
+	}
+	if !skip.FirstSeenAt.IsZero() && !skip.At.Before(skip.FirstSeenAt) {
+		offset := skip.At.Sub(skip.FirstSeenAt).Seconds()
+		judged.takeoverOffset, judged.known = &offset, true
+		judged.inGrace = judged.inGrace || offset <= RestartCatchUpGrace.Seconds()
+	}
+	return judged
 }
 
 // Consequence is what a line's objects lost while under it: how many also
@@ -165,7 +207,10 @@ func demotedObjects(view *View) map[string]demotedObject {
 // demoted object it is almost always the cooldown's. A demoted object under
 // no line -- which the tracker does not produce -- is read by its age like
 // any other, rather than counted on a line that does not exist.
-func lossRecords(view *View, now time.Time, visit func(queryGroup string, check, line Check, code string, skip SkippedSpan, loss Loss)) {
+//
+// The record handed to visit carries the two restart offsets it was judged
+// on, filled here; graceUnknown is true when neither anchor was available.
+func lossRecords(view *View, now time.Time, visit func(queryGroup string, check, line Check, code string, skip SkippedSpan, loss Loss, graceUnknown bool)) {
 	if view == nil {
 		return
 	}
@@ -174,12 +219,14 @@ func lossRecords(view *View, now time.Time, visit func(queryGroup string, check,
 	each := func(queryGroup string, check Check, code string, skip SkippedSpan) {
 		object, isDemoted := demoted[queryGroup]
 		consequence := isDemoted && object.line != "" && !skip.At.Before(object.since)
-		loss := lossOf(consequence, inRestartGrace(starts, skip.Replica, skip.At), skip.At, now)
+		grace := restartGraceOf(starts, skip)
+		skip.RestartOffsetSeconds, skip.TakeoverOffsetSeconds = grace.restartOffset, grace.takeoverOffset
+		loss := lossOf(consequence, skip.HeldBy == heldByCooldown, grace.inGrace, skip.At, now)
 		line := Check("")
 		if loss == LossWhileDemoted {
 			line = object.line
 		}
-		visit(queryGroup, check, line, code, skip, loss)
+		visit(queryGroup, check, line, code, skip, loss, !grace.known)
 	}
 	for queryGroup, skip := range view.GapSkips {
 		check := CheckDetectionAbandoned
@@ -194,4 +241,27 @@ func lossRecords(view *View, now time.Time, visit func(queryGroup string, check,
 		each(queryGroup, CheckTimelinePruned, "SCHEDULE_PRUNED", SkippedSpan{FirstSlot: pruned.From, LastSlot: pruned.To,
 			At: pruned.At, Replica: pruned.Replica, Strategies: pruned.Strategies, IntervalSeconds: pruned.IntervalSeconds})
 	}
+}
+
+// LossCensus counts the view's retained records by what each is, every kind
+// present at zero, and how many could not be judged against a restart for
+// want of an anchor. Distinct records, one per object per record kind, the
+// same walk the lines make -- so the family a scrape exports and the counts
+// the page prints come from one reading. Bookkeeping records are not losses
+// of detection and are left out, as the lines leave them out.
+func LossCensus(view *View, now time.Time) (byLoss map[Loss]int, graceUnknown int) {
+	byLoss = make(map[Loss]int, len(Losses))
+	for _, loss := range Losses {
+		byLoss[loss] = 0
+	}
+	lossRecords(view, now, func(_ string, check, _ Check, _ string, skip SkippedSpan, loss Loss, unknown bool) {
+		if check == CheckBookkeepingAbandoned {
+			return
+		}
+		byLoss[loss]++
+		if unknown && now.Sub(skip.At) <= RecentSkipWindow {
+			graceUnknown++
+		}
+	})
+	return byLoss, graceUnknown
 }

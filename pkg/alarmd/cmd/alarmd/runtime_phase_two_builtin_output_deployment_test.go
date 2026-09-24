@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -73,12 +74,15 @@ func TestBuiltInPythonOutputWithoutServiceRedisIsRejected(t *testing.T) {
 }
 
 // Configuration alone cannot prove the service Redis answers. The bundle opens
-// it before any Slot runs, so an unreachable node stops the process at startup
-// rather than at the first converted event.
-func TestBuiltInPythonOutputUnreachableServiceRedisStopsStartup(t *testing.T) {
+// it before any Slot runs, so an unreachable node holds startup - not ready,
+// under the dependency's name - rather than being found at the first
+// converted event. It used to end the process; it now waits in place, which
+// keeps the same "no Slot without it" and joins when the node answers.
+func TestBuiltInPythonOutputUnreachableServiceRedisHoldsStartup(t *testing.T) {
 	sourceAddress, sourceClient := startPhaseTwoRedis(t)
 	runtimeAddress, _ := startPhaseTwoRedis(t)
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 	strategyDocument, err := os.ReadFile("testdata/g1_full_threshold_strategy.json")
 	if err != nil {
 		t.Fatal(err)
@@ -115,14 +119,15 @@ func TestBuiltInPythonOutputUnreachableServiceRedisStopsStartup(t *testing.T) {
 		t.Fatalf("the configuration itself must stay valid: %v", err)
 	}
 
+	recorder := metric.NewRecorder(metric.BuildInfo{})
 	bundle, err := openProductionPhaseTwoBundleWithDependencies(
-		ctx, cfg, metric.NewRecorder(metric.BuildInfo{}), observability.Discard(observability.ComponentRuntime),
+		ctx, cfg, recorder, observability.Discard(observability.ComponentRuntime),
 		newPhaseTwoApplicationHealth(),
 		func(client redis.Cmdable, prefix string) (controlplane.StrategySource, error) {
 			return controlplane.NewLegacyRedisStrategySource(client, prefix)
 		},
 		phaseTwoProductionExternalDependencies{
-			Now: time.Now, HTTPClient: uqServer.Client(),
+			Now: time.Now, HTTPClient: uqServer.Client(), StartupWaitInitial: 20 * time.Millisecond,
 			OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) {
 				return &recordingPhaseTwoEventSink{}, nil
 			},
@@ -130,8 +135,13 @@ func TestBuiltInPythonOutputUnreachableServiceRedisStopsStartup(t *testing.T) {
 	)
 	if bundle != nil {
 		t.Cleanup(func() { _ = bundle.Shutdown(context.Background()) })
+		t.Fatal("a bundle was assembled without its compatibility service Redis")
 	}
-	if err == nil {
-		t.Fatal("an unreachable compatibility service Redis must stop startup")
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "redis_legacy_output") {
+		t.Fatalf("err = %v, want startup held on the service Redis until the process stopped", err)
+	}
+	if got := counterValue(t, recorder, "bkmonitor_alarmd_startup_dependency_wait_total",
+		map[string]string{"dependency": "redis_legacy_output"}); got < 2 {
+		t.Fatalf("startup_dependency_wait_total{redis_legacy_output} = %v, want the wait counted", got)
 	}
 }

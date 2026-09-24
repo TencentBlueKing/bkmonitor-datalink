@@ -66,7 +66,7 @@ HTTP `scope=request` 的空批次记 `empty`，所有子查询失败记 `failed`
 `topology-state/topology-materialize/topology-convert/topology-encode/`
 `apply-relation/apply-source-info/apply-target-info/matrix-validation/`
 `topology-propagation/cleanup/admission/admission-release`。
-错误原文、租户、资源类型、关系名称、matcher、trace ID 不作为指标标签；trace exemplar
+上述原有指标不以错误原文、租户、资源类型、关系名称、matcher、trace ID 作为标签；trace exemplar
 仍按现有机制关联。构图规模在失败时也记录；响应和 Matrix 规模只记录成功返回的数据，
 不会用失败时的零值污染结果规模分布。响应节点/边总数不是跨时间去重数量，也不是堆内存。
 
@@ -92,7 +92,49 @@ HTTP `scope=request` 的空批次记 `empty`，所有子查询失败记 `failed`
 
 不要在每个请求执行 `runtime.ReadMemStats`、强制 GC 或用进程堆差值估计单请求内存。
 容量验收仍需结合进程 RSS/Go heap、GC 和隔离探针。上述新增指标描述存储与工作量，
-没有声称测出精确请求峰值。指标不包含租户、请求 ID、节点、关系名或错误全文标签。
+没有声称测出精确请求峰值。上述原有指标不包含租户、请求 ID、节点、关系名或错误全文标签。
+
+## 按实际加载指标观察容量
+
+新增 `unify_query_cmdb_timegraph_load_*` 计数器和最近调用时间 Gauge，覆盖共用 Matrix 查询入口，
+因此同时包含共享拓扑、旧路径的 source-info / relation-edge / target-info。
+`metric_name` 来自服务端生成的 QueryTs FieldName，既包含默认关系指标，也包含
+Schema 中的自定义指标和资源信息指标；不会枚举仅注册但未执行取数的指标。
+
+| 指标 | 标签 | 口径 |
+| --- | --- | --- |
+| `load_operations_total` | stage, metric_name, result | Matrix 调用次数，包括空结果、partial、失败、拒绝、取消及超时；不是 HTTP 请求数 |
+| `load_seconds_total` | stage, metric_name, result | 累计 Matrix 调用墙钟，包含准备、取数、转换、校验；不是 CPU 时间 |
+| `load_size_total` | stage, metric_name, kind | kind 为 series / points / label_bytes；后端成功返回的 Matrix，即使后续预算或时间网格校验拒绝，也计入已经取得的输入 |
+| `load_last_timestamp_seconds` | stage, metric_name | 最近一次 Matrix 调用完成的 Unix 秒时间，包含失败；帮助区分历史加载名称和当前窗口活动 |
+
+`label_bytes` 为每条返回序列的标签名和值的字符串长度之和，按字节计。
+它不包含 map/slice/对象开销，不是 HTTP 响应字节，更不是 heap 分配量。
+点数包括所有返回样本，不只正值样本；同一序列重复读取或正反向分别查询时重复计数。
+后端直接失败、未获得可信 Matrix 时只记录调用与耗时，不伪造输入大小。
+该计数仍不覆盖后端解码失败之前已发生但未形成 Matrix 的全部分配。
+
+名称级统计不包含业务或模式标签，不能跟随仪表盘的业务筛选，也不应按指标名
+分摊 Pod RSS。不同业务使用相同 metric_name 时汇总；不能据此证明某一业务的全量覆盖。
+精确请求归因使用同一个 `timegraph-query-matrix` span 上的 metric-name、
+matrix-returned、matrix-returned-series、matrix-returned-points、matrix-label-bytes。
+
+每个进程最多保留 1024 个不同指标名，超过 256 字节的名称或超出基数后的新名称
+聚合到 `__overflow__`，不会拒绝用户查询。原有名称继续独立记录。
+`__unknown__` 表示缺少可归因名称；`__mixed__` 表示一个 Matrix 来源于多个不同指标，
+不把整份输入重复记给每个名称。这些名称为观测保留值。基数保护按进程生命周期生效，
+重启后重新收集；诊断大规模自定义 Schema 时应检查 overflow 是否出现。
+
+BKOP 容量仪表盘配置为 [timegraph-capacity-dashboard.json](timegraph-capacity-dashboard.json)。
+它按输入账本、构图、输出、Pod 资源、普通查询影响组织，移除旧候选路径、
+返回目标和估算并发等偏离容量主线的面板。
+逐指标行在新埋点部署前保持折叠并明确标记待部署；展开后可以看到累计调用、序列、
+样本、标签字节、耗时、最近加载时间和输入 Top 20。窗口 increase 为抓取样本外推，可能有小数；
+首次出现的新名称在抓取前没有基线，不能靠 increase 精确还原第一笔调用。
+无样本不补零，也不将新指标缺失当成未加载。
+
+评估新增关联指标时，固定窗口、step、lookBack、种子、H、版本和并发，对照新指标的
+输入成本、全图与输出放大、Pod 峰值及普通查询影响；不能仅由点数或标签字节推算内存。
 
 ## Trace
 

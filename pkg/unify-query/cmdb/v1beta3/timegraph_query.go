@@ -319,6 +319,9 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 	}
 	queryStarted := time.Now()
 	stage := timeGraphQueryStage(queryCtx)
+	loadMetricName := timeGraphLoadMetricName(queryTs)
+	var loadSize metric.TimeGraphLoadSize
+	span.Set("metric-name", loadMetricName)
 	defer func() {
 		outcome := metric.CMDBTimeGraphErrorResult(err)
 		if err == nil {
@@ -333,6 +336,11 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 		span.Set("matrix-cumulative-point-count", loader.pointCount)
 		SetTimeGraphLimitTrace(span, err)
 		metric.CMDBTimeGraphStageObserve(queryCtx, stage, outcome, duration)
+		metric.CMDBTimeGraphLoadObserve(queryCtx, stage, loadMetricName, outcome, duration, loadSize)
+		span.Set("matrix-returned", loadSize.Returned)
+		span.Set("matrix-returned-series", loadSize.Series)
+		span.Set("matrix-returned-points", loadSize.Points)
+		span.Set("matrix-label-bytes", loadSize.LabelBytes)
 	}()
 	loader.queryCount++
 	span.Set("query-mode", map[bool]string{true: "instant", false: "range"}[instant])
@@ -419,6 +427,11 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 				)
 			}
 		}
+	}
+	// Capture the returned Matrix before validation can reject it and clear the
+	// named return value. A budget rejection still incurred this input cost.
+	if err == nil {
+		loadSize = timeGraphReturnedMatrixSize(matrix)
 	}
 	pointCount, err := loader.validateMatrix(queryCtx, matrix, err)
 	// Prometheus 聚合后端通过子查询 metadata 报告部分成功，VM 则返回 partial 位。

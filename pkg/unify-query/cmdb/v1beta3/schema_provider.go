@@ -256,6 +256,7 @@ func (a *v1beta3SchemaProviderAdapter) ListRelationSchemas(namespace string) []R
 			ToType:        ResourceType(schema.ToType),
 			IsDirectional: schema.IsDirectional,
 			IsBelongsTo:   schema.IsBelongsTo,
+			MetricName:    schema.MetricName,
 		}
 	}
 	sort.SliceStable(result, func(i, j int) bool {
@@ -328,6 +329,7 @@ func (a *v1beta3SchemaProviderAdapter) GetRelationSchema(relationType RelationTy
 		ToType:        ResourceType(schema.ToType),
 		IsDirectional: schema.IsDirectional,
 		IsBelongsTo:   schema.IsBelongsTo,
+		MetricName:    schema.MetricName,
 	}, nil
 }
 

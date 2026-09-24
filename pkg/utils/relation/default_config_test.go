@@ -46,3 +46,14 @@ func TestDefaultStaticProviderConfigKeepsInfoFields(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, host.Fields, FieldDefinition{Name: "env_name", Required: false})
 }
+
+func TestDefaultStaticProviderConfigKeepsRelationMetricName(t *testing.T) {
+	config := DefaultStaticProviderConfig()
+	for _, schema := range config.RelationSchemas {
+		if schema.RelationName == "pod_to_system" {
+			assert.Equal(t, "pod_to_system_flow", schema.MetricName)
+			return
+		}
+	}
+	t.Fatal("pod_to_system relation schema not found")
+}

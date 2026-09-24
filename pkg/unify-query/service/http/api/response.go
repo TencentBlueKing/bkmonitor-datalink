@@ -42,7 +42,7 @@ func (r *response) failed(ctx context.Context, err error) {
 		return
 	}
 
-	r.c.JSON(http.StatusBadRequest, ErrResponse{
+	proxy.WriteJSON(ctx, r.c, http.StatusBadRequest, ErrResponse{
 		Err: err.Error(),
 	})
 }
@@ -56,7 +56,7 @@ func (r *response) success(ctx context.Context, data any) {
 		r.c.Set(proxy.ContextKeyResponseData, data)
 		return
 	}
-	r.c.JSON(http.StatusOK, data)
+	proxy.WriteJSON(ctx, r.c, http.StatusOK, data)
 }
 
 func (r *response) isConfigUnifyRespProcess(c *gin.Context) bool {

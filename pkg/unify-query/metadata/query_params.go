@@ -16,6 +16,19 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 )
 
+type exactTimeGridKey struct{}
+
+// WithExactTimeGrid 要求查询严格保留评估网格，禁止查询层或后端缓存重新对齐。
+func WithExactTimeGrid(ctx context.Context) context.Context {
+	return context.WithValue(ctx, exactTimeGridKey{}, true)
+}
+
+// IsExactTimeGrid 表示调用方按精确时间戳消费结果，不能接受采样点偏移。
+func IsExactTimeGrid(ctx context.Context) bool {
+	exact, _ := ctx.Value(exactTimeGridKey{}).(bool)
+	return exact
+}
+
 // QueryParams 查询信息
 type QueryParams struct {
 	ctx context.Context

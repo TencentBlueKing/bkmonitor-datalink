@@ -251,7 +251,10 @@ func spanSetVmQueryClusterIfPresent(span *trace.Span, prefix string, v *metadata
 	span.Set(key, string(b))
 }
 
-func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Vector, error) {
+func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (result promql.Vector, err error) {
+	_, formatSpan := trace.NewSpan(ctx, "victoria-metrics-vectorFormat")
+	defer formatSpan.End(&err)
+	defer func() { formatSpan.Set("output-series-count", len(result)) }()
 	if !resp.Result || resp.Code != OK {
 		return nil, metadata.NewMessage(
 			metadata.MsgQueryVictoriaMetrics,
@@ -317,7 +320,10 @@ func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *tra
 	return nil, nil
 }
 
-func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Matrix, bool, error) {
+func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (result promql.Matrix, partial bool, err error) {
+	_, formatSpan := trace.NewSpan(ctx, "victoria-metrics-matrixFormat")
+	defer formatSpan.End(&err)
+	defer func() { formatSpan.Set("output-series-count", len(result)) }()
 	if !resp.Result || resp.Code != OK {
 		return nil, false, metadata.NewMessage(
 			metadata.MsgQueryVictoriaMetrics,
@@ -476,6 +482,13 @@ func (i *Instance) InstanceType() string {
 // This behaviour can be disabled by passing -search.disableCache command-line flag to VictoriaMetrics. Another option is to pass nocache=1 query arg to /api/v1/query_range.
 // 在一些场景下，如果 step 不能被 start 整除，会导致返回的数据跟我们的开始时间无法对其，所以需要增肌 no-cache=1 参数，避免性能消耗过大，只处理 1m 以上的
 func (i *Instance) noCache(ctx context.Context, start, step int64) int {
+	// 精确网格查询不能使用会调整采样点的缓存，即使步长不足一分钟。
+	if metadata.IsExactTimeGrid(ctx) {
+		return 1
+	}
+	if step <= 0 {
+		return 0
+	}
 	if start%step > 0 && step > 60 {
 		return 1
 	}
@@ -524,9 +537,10 @@ func (i *Instance) vmQuery(
 	size, err := i.curl.Request(
 		ctx, curl.Post,
 		curl.Options{
-			UrlPath: i.url,
-			Body:    body,
-			Headers: headers,
+			UrlPath:          i.url,
+			Body:             body,
+			Headers:          headers,
+			MaxResponseBytes: metadata.BackendResponseLimit(ctx),
 		},
 		data,
 	)
@@ -563,6 +577,7 @@ func (i *Instance) DirectQueryRange(
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-query-range")
 	defer span.End(&err)
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
 
 	vmExpand = metadata.GetExpand(ctx)
 
@@ -654,6 +669,7 @@ func (i *Instance) DirectQueryWithPartial(
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-query")
 	defer span.End(&err)
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
 
 	vmExpand = metadata.GetExpand(ctx)
 
@@ -715,6 +731,7 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-query-series")
 	defer span.End(&err)
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
 
 	span.Set("query-info", query)
 	span.Set("query-start", start)
@@ -770,6 +787,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-query")
 	defer span.End(&err)
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
 
 	span.Set("query-info", query)
 	span.Set("query-start", start)
@@ -820,6 +838,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-label-values")
 	defer span.End(&err)
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
 
 	span.Set("query-info", query)
 	span.Set("query-name", name)
@@ -923,6 +942,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-direct-label-values")
 	defer span.End(&err)
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
 
 	vmExpand = metadata.GetExpand(ctx)
 	if vmExpand == nil {

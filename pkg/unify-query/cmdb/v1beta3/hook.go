@@ -22,22 +22,18 @@ func setDefaultConfig() {
 	viper.SetDefault(MaxAllowedHopsConfigPath, 5)
 	viper.SetDefault(DefaultLimitConfigPath, 100)
 	viper.SetDefault(MaxRangePointsConfigPath, 11000)
-	viper.SetDefault(MaxEdgesPerHopConfigPath, 1000)
 	viper.SetDefault(MaxTargetsConfigPath, 5000)
-	viper.SetDefault(MaxResponseBytesConfigPath, 10*1024*1024)
-	viper.SetDefault(RootRecordIDEnabledConfigPath, false)
+	viper.SetDefault(MaxGraphNodesConfigPath, 100000)
+	viper.SetDefault(MaxGraphEdgesConfigPath, 200000)
+	viper.SetDefault(MaxGraphResultsConfigPath, 10000)
+	viper.SetDefault(MaxGraphNodeInfosConfigPath, 1000000)
+	viper.SetDefault(MaxSharedTopologyPointsConfigPath, 60)
+	viper.SetDefault(MaxSharedTopologyBackendBytesConfigPath, 16*1024*1024)
+	viper.SetDefault(MaxSharedTopologyMatrixPointsConfigPath, 1000000)
+	viper.SetDefault(MaxSharedTopologyOutputElementsConfigPath, 200000)
+	viper.SetDefault(MaxSharedTopologyOutputBytesConfigPath, 64*1024*1024)
+	viper.SetDefault(YoloModeConfigPath, false)
 	viper.SetDefault(DefaultLookBackDeltaConfigPath, 86400000) // 24小时（毫秒）
-	viper.SetDefault(ActiveEdgeServingRelationsConfigPath, []string{})
-	viper.SetDefault(FlatOneHopActiveEdgeServingRelationsConfigPath, []string{})
-	viper.SetDefault(FlatMultiHopActiveEdgeServingRelationsConfigPath, []string{})
-	viper.SetDefault(VMPreferredRelationsConfigPath, []string{})
-
-	viper.SetDefault(BKBaseSurrealDBResultTableIDConfigPath, DefaultBKBaseSurrealDBResultTableID)
-	viper.SetDefault(BKBaseSurrealDBTimeoutConfigPath, DefaultBKBaseSurrealDBTimeout)
-	viper.SetDefault(BKBaseSurrealDBQueryURLConfigPath, "")
-	viper.SetDefault(BindingCacheTTLConfigPath, DefaultBindingCacheTTL)
-	viper.SetDefault(BindingCacheMaxSizeConfigPath, DefaultBindingCacheMaxSize)
-	viper.SetDefault(BindingRedisKeyConfigPath, DefaultBindingRedisKey)
 }
 
 func LoadConfig() {
@@ -45,25 +41,18 @@ func LoadConfig() {
 	MaxAllowedHops = viper.GetInt(MaxAllowedHopsConfigPath)
 	DefaultLimit = viper.GetInt(DefaultLimitConfigPath)
 	MaxRangePoints = viper.GetInt(MaxRangePointsConfigPath)
-	MaxEdgesPerHop = viper.GetInt(MaxEdgesPerHopConfigPath)
 	MaxTargets = viper.GetInt(MaxTargetsConfigPath)
-	MaxResponseBytes = viper.GetInt(MaxResponseBytesConfigPath)
-	RootRecordIDEnabled = viper.GetBool(RootRecordIDEnabledConfigPath)
+	MaxGraphNodes = viper.GetInt(MaxGraphNodesConfigPath)
+	MaxGraphEdges = viper.GetInt(MaxGraphEdgesConfigPath)
+	MaxGraphResults = viper.GetInt(MaxGraphResultsConfigPath)
+	MaxGraphNodeInfos = viper.GetInt(MaxGraphNodeInfosConfigPath)
+	MaxSharedTopologyPoints = viper.GetInt(MaxSharedTopologyPointsConfigPath)
+	MaxSharedTopologyBackendBytes = viper.GetInt(MaxSharedTopologyBackendBytesConfigPath)
+	MaxSharedTopologyMatrixPoints = viper.GetInt(MaxSharedTopologyMatrixPointsConfigPath)
+	MaxSharedTopologyOutputElements = viper.GetInt(MaxSharedTopologyOutputElementsConfigPath)
+	MaxSharedTopologyOutputBytes = viper.GetInt(MaxSharedTopologyOutputBytesConfigPath)
+	yoloMode = viper.GetBool(YoloModeConfigPath)
 	DefaultLookBackDelta = viper.GetInt64(DefaultLookBackDeltaConfigPath)
-	ActiveEdgeServingRelations = viper.GetStringSlice(ActiveEdgeServingRelationsConfigPath)
-	FlatOneHopActiveEdgeServingRelations = viper.GetStringSlice(FlatOneHopActiveEdgeServingRelationsConfigPath)
-	FlatMultiHopActiveEdgeServingRelations = viper.GetStringSlice(FlatMultiHopActiveEdgeServingRelationsConfigPath)
-	VMPreferredRelations = viper.GetStringSlice(VMPreferredRelationsConfigPath)
-
-	BKBaseSurrealDBResultTableID = viper.GetString(BKBaseSurrealDBResultTableIDConfigPath)
-	BKBaseSurrealDBTimeout = viper.GetDuration(BKBaseSurrealDBTimeoutConfigPath)
-	BKBaseSurrealDBQueryURL = viper.GetString(BKBaseSurrealDBQueryURLConfigPath)
-	BindingCacheTTL = viper.GetDuration(BindingCacheTTLConfigPath)
-	BindingCacheMaxSize = viper.GetInt(BindingCacheMaxSizeConfigPath)
-	BindingRedisKey = viper.GetString(BindingRedisKeyConfigPath)
-	if BindingRedisKey == "" {
-		BindingRedisKey = DefaultBindingRedisKey
-	}
 }
 
 func init() {

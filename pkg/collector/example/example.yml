@@ -171,6 +171,7 @@ bk-collector:
   # - attribute_filter: [as_string]
   # - metrics_filter: [drop, replace]
   # - rate_limiter: [noop, token_bucket]
+  # - traffic_limiter: [gcra]
   # - resource_filter: [drop, add, replace, assemble]
   # - sampler: [random]
   # - service_discover
@@ -355,6 +356,24 @@ bk-collector:
         type: token_bucket
         qps: 500
         burst: 1000
+
+    # TrafficLimiter: 按 Token 和服务限制 Traces、Metrics、Logs 的逻辑字节流量。
+    # Redis 运行时不可用时才临时降级到从满桶开始的本地 GCRA。
+    - name: "traffic_limiter/gcra"
+      config:
+        bytes_per_second: 10485760
+        burst_bytes: 52428800
+        # 各信号的计费单价，扣减额度时按「逻辑字节 × 权重」折算，未配置为 1
+        weights:
+          traces: 1.0
+          metrics: 1.0
+          logs: 1.0
+        redis:
+          mode: standalone
+          db: 0
+          key: bkcollector.traffic_limiter
+          addrs: ["127.0.0.1:6379"]
+          password: ""
 
     # RateLimiter: 流控处理器
     # Noop: 放行所有请求
@@ -1042,6 +1061,7 @@ bk-collector:
       processors:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
+        - "traffic_limiter/gcra"
         #- "license_checker/common"
         #- "forwarder/traces"
         #- "sampler/status_code"
@@ -1069,6 +1089,7 @@ bk-collector:
       processors:
         - "token_checker/aes256"
         - "rate_limiter/token_bucket"
+        - "traffic_limiter/gcra"
 
     - name: "pushgateway_pipeline/common"
       type: "pushgateway"
@@ -1099,6 +1120,7 @@ bk-collector:
       type: "metrics"
       processors:
         - "token_checker/aes256"
+        - "traffic_limiter/gcra"
         - "resource_filter/metrics"
         - "metrics_filter/relabel"
 #        - "rate_limiter/token_bucket"

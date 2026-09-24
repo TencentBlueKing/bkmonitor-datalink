@@ -15,8 +15,8 @@ import (
 	"linkd/internal/enrich/assembly"
 )
 
-func validateEnricherConfig(source config.EventSource) error {
-	if _, err := source.Enrich.SelectDataSources(); err != nil {
+func validateEnricherConfig(source config.EventSource, resources config.ResourcesConfig) error {
+	if _, err := source.Enrich.SelectResources(resources); err != nil {
 		return err
 	}
 	_, err := assembly.NewRouter([]config.EventSource{source}, enrich.Sources{})

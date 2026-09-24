@@ -98,9 +98,11 @@ import {
   type EntityStats,
 } from "../shared/contracts";
 
-export async function getDynamicConfig() {
+export async function getDynamicConfig({
+  signal,
+}: { signal?: AbortSignal } = {}) {
   return dynamicConfigResponseSchema.parse(
-    await request("/local-api/dynamic-config"),
+    await request("/local-api/dynamic-config", signal),
   );
 }
 
@@ -156,6 +158,7 @@ export async function getLifecycleRuntime(): Promise<RuntimeResponse> {
 }
 
 export async function getControlPlaneRuntime(input: {
+  signal?: AbortSignal;
   rangeSeconds: number;
   instance?: string;
 }): Promise<ControlPlaneRuntime> {
@@ -164,7 +167,7 @@ export async function getControlPlaneRuntime(input: {
   });
   if (input.instance) query.set("instance", input.instance);
   return controlPlaneRuntimeSchema.parse(
-    await request(`/local-api/runtime/control-plane?${query}`),
+    await request(`/local-api/runtime/control-plane?${query}`, input.signal),
   );
 }
 

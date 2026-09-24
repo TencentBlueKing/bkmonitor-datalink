@@ -46,10 +46,10 @@ func TestSimulatedEnrichUsesObservedDataSource(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			source := config.EventSource{EventSourceID: "source", Enrich: config.EnrichConfig{Processors: []config.EnrichProcessorConfig{{Type: "test", Config: map[string]any{"fields": map[string]any{"sample": true}, "datasource": tc.options}}}}}
-			if err := validateEnricherConfig(source); err != nil {
+			if err := validateEnricherConfig(source, config.ResourcesConfig{}); err != nil {
 				t.Fatal(err)
 			}
-			opened, err := assembly.Open(t.Context(), source, 8, time.Second, runtime)
+			opened, err := assembly.Open(t.Context(), source, config.ResourcesConfig{}, 8, time.Second, runtime)
 			if err != nil {
 				t.Fatal(err)
 			}

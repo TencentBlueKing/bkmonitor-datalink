@@ -1,10 +1,11 @@
+import { registerOneModelRoutes } from "./onemodel.js";
 import { registerSourceRoutes } from "./sources.js";
 import { registerCloseAlert } from "./close-alert.js";
 import Fastify, { type FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import {
-  type ControlPlaneTaskDefinition,
+  controlPlaneCatalogSchema,
   entityKindSchema,
   type EntityKind,
   type EntityPage,
@@ -217,6 +218,7 @@ async function registerConsoleRoutes(
     return new RedisConnector(selected);
   }
   registerSourceRoutes(app, config);
+  registerOneModelRoutes(app, config);
   app.get("/local-api/capabilities", async () => publicConfig(config));
   app.get("/local-api/config", async () => redactedConfig(config));
   app.get("/local-api/runtime/processes", async () =>
@@ -250,54 +252,71 @@ async function registerConsoleRoutes(
       redis,
     };
   });
-  app.get("/local-api/runtime/control-plane", async (request) => {
+  app.get("/local-api/runtime/control-plane", async (request, reply) => {
     const query = controlPlaneQuerySchema.parse(request.query);
     if (query.range_seconds > config.query.maxRangeSeconds) {
       throw new Error(
         `range_seconds must not exceed ${config.query.maxRangeSeconds}`,
       );
     }
-    const tasks = controlPlaneTasks(config);
-    const elasticsearchEnabled = tasks
-      .filter((task) => task.id.startsWith("elasticsearch-"))
-      .some((task) => task.enabled);
-    const redisEnabled = tasks.some(
-      (task) => task.id === "redis-stream-manager" && task.enabled,
-    );
-    const [allProcesses, metrics, archive, redis] = await Promise.all([
-      prometheusConnector.processes(),
-      prometheusConnector.controlPlaneSnapshot(
-        query.range_seconds,
-        query.instance,
-      ),
-      elasticsearchEnabled && elasticsearchConnector
-        ? elasticsearchConnector.archiveBacklog()
-        : Promise.resolve({
-            status: "unavailable" as const,
-            message: "Elasticsearch 控制面任务未启用",
-            backlog: null,
-          }),
-      redisEnabled
-        ? (await sourceRedis(request.query)).inspect()
-        : Promise.resolve(undefined),
-    ]);
-    const processes = controlPlaneProcesses(allProcesses);
-    const redisSummary = redisTaskSummary(redis, redisEnabled);
-    const enabledSources: Array<Record<string, unknown>> = [processes, metrics];
-    if (elasticsearchEnabled) enabledSources.push(archive);
-    if (redisEnabled) enabledSources.push(redisSummary);
-    return {
-      status:
-        tasks.some((task) => task.enabled) && enabledSources.length > 0
-          ? combinedStatus(...enabledSources)
-          : "unavailable",
-      snapshotAt: new Date().toISOString(),
-      tasks,
-      processes,
-      metrics,
-      archive,
-      redis: redisSummary,
+    reply.header("Cache-Control", "no-store");
+    if (!config.dispatch?.apiToken)
+      return reply
+        .code(503)
+        .send({ error: { message: "请配置 dispatch.url 与 api_token" } });
+    const abort = new AbortController();
+    const disconnected = () => {
+      if (!reply.raw.writableEnded) abort.abort();
     };
+    reply.raw.once("close", disconnected);
+    try {
+      const response = await fetch(
+        `${config.dispatch.url.replace(/\/$/, "")}/api/v1/control-plane/tasks`,
+        {
+          headers: { Authorization: `Bearer ${config.dispatch.apiToken}` },
+          signal: AbortSignal.any([
+            abort.signal,
+            AbortSignal.timeout(config.query.timeoutMilliseconds),
+          ]),
+        },
+      );
+      if (!response.ok)
+        return reply.code(502).send({
+          error: {
+            message: `控制面任务状态不可用（${response.status}），请确认控制面版本与连接配置`,
+          },
+        });
+      const catalog = controlPlaneCatalogSchema.parse(await response.json());
+      const elasticsearchEnabled = catalog.tasks.some(
+        (task) => task.id === "elasticsearch-alert-archiver" && task.enabled,
+      );
+      const [allProcesses, metrics, archive] = await Promise.all([
+        prometheusConnector.processes(),
+        prometheusConnector.controlPlaneSnapshot(query.range_seconds),
+        elasticsearchEnabled && elasticsearchConnector
+          ? elasticsearchConnector.archiveBacklog()
+          : Promise.resolve({
+              status: "unavailable" as const,
+              message: "待归档查询未配置",
+              backlog: null,
+            }),
+      ]);
+      return {
+        ...catalog,
+        status: "available",
+        processes: controlPlaneProcesses(allProcesses),
+        metrics,
+        archive,
+      };
+    } catch {
+      return reply.code(502).send({
+        error: {
+          message: "控制面任务状态读取失败或响应不完整，保留上次快照",
+        },
+      });
+    } finally {
+      reply.raw.off("close", disconnected);
+    }
   });
   app.get("/local-api/infrastructure/kafka", async () =>
     kafkaConnector.inspect(),
@@ -420,102 +439,6 @@ function combinedStatus(
   return "partial";
 }
 
-function controlPlaneTasks(
-  config: ConsoleConfig,
-): ControlPlaneTaskDefinition[] {
-  const elasticsearchEnabled =
-    config.entities.events === "elasticsearch" && Boolean(config.elasticsearch);
-  const elasticsearch = config.elasticsearchControlPlane ?? {
-    explicit: false,
-    schemaAndActiveReconcileIntervalSeconds: 3600,
-    bucketReconcileIntervalSeconds: 21600,
-    archiveIntervalSeconds: 5,
-    archiveBatchSize: 1000,
-    archiveWorkerCount: 1,
-  };
-  const partition = config.elasticsearch?.timePartition ?? {
-    eventBucketDays: 7,
-    alertHistoryBucketDays: 7,
-    alertLogBucketDays: 7,
-    precreatePastBuckets: 1,
-    precreateFutureBuckets: 1,
-    maxBucketsPerEntity: 512,
-    maxFutureSkewSeconds: 300,
-  };
-  const elasticsearchSource = elasticsearchEnabled
-    ? elasticsearch.explicit
-      ? ("explicit" as const)
-      : ("default" as const)
-    : ("disabled" as const);
-  const redis = config.redisStreamManager ?? {
-    reconcileIntervalSeconds: 10,
-    operationTimeoutSeconds: 3,
-    maxEntries: 100000,
-    trimBatchSize: 10000,
-    maxTrimEntriesPerCycle: 100000,
-  };
-  return [
-    {
-      id: "elasticsearch-schema-and-active-reconciler",
-      enabled: elasticsearchEnabled,
-      dependsOn: [],
-      intervalSeconds: elasticsearch.schemaAndActiveReconcileIntervalSeconds,
-      configSource: elasticsearchSource,
-      settings: {
-        schemaAndActiveReconcileIntervalSeconds:
-          elasticsearch.schemaAndActiveReconcileIntervalSeconds,
-      },
-    },
-    {
-      id: "elasticsearch-bucket-manager",
-      enabled: elasticsearchEnabled,
-      dependsOn: ["elasticsearch-schema-and-active-reconciler"],
-      intervalSeconds: elasticsearch.bucketReconcileIntervalSeconds,
-      configSource: elasticsearchSource,
-      settings: {
-        eventBucketDays: partition.eventBucketDays,
-        alertHistoryBucketDays: partition.alertHistoryBucketDays,
-        alertLogBucketDays: partition.alertLogBucketDays,
-        precreatePastBuckets: partition.precreatePastBuckets,
-        precreateFutureBuckets: partition.precreateFutureBuckets,
-        maxBucketsPerEntity: partition.maxBucketsPerEntity,
-      },
-    },
-    {
-      id: "elasticsearch-alert-archiver",
-      enabled: elasticsearchEnabled,
-      dependsOn: ["elasticsearch-bucket-manager"],
-      intervalSeconds: elasticsearch.archiveIntervalSeconds,
-      configSource: elasticsearchSource,
-      settings: {
-        archiveIntervalSeconds: elasticsearch.archiveIntervalSeconds,
-        archiveBatchSize: elasticsearch.archiveBatchSize,
-        archiveWorkerCount: elasticsearch.archiveWorkerCount,
-      },
-    },
-    {
-      id: "redis-stream-manager",
-      enabled: Boolean(config.redisStreamManager),
-      dependsOn: [],
-      intervalSeconds: redis.reconcileIntervalSeconds,
-      configSource: config.redisStreamManager
-        ? config.redisStreamManager.explicit
-          ? "explicit"
-          : "default"
-        : "disabled",
-      settings: {
-        reconcileIntervalSeconds: redis.reconcileIntervalSeconds,
-        operationTimeoutSeconds: redis.operationTimeoutSeconds,
-        maxEntries: redis.maxEntries,
-        trimBatchSize: redis.trimBatchSize,
-        maxTrimEntriesPerCycle: redis.maxTrimEntriesPerCycle,
-        stream: config.lifecycle?.signal.stream ?? "",
-        group: config.lifecycle?.signal.group ?? "",
-      },
-    },
-  ];
-}
-
 function controlPlaneProcesses(value: Record<string, unknown>) {
   const items = Array.isArray(value.items)
     ? value.items.filter((item) => {
@@ -525,51 +448,6 @@ function controlPlaneProcesses(value: Record<string, unknown>) {
       })
     : [];
   return { ...value, items };
-}
-
-function redisTaskSummary(
-  value: Awaited<ReturnType<RedisConnector["inspect"]>> | undefined,
-  enabled: boolean,
-) {
-  if (!enabled || !value) {
-    return {
-      status: "unavailable" as const,
-      message: "Redis Stream 管理任务未启用",
-      streamExists: null,
-      expectedGroupPresent: null,
-      entries: null,
-      maxEntries: null,
-      entriesAboveMax: null,
-      pending: null,
-      maxLag: null,
-    };
-  }
-  const groups = value.signalQueue.groups;
-  const stream = value.signalQueue.stream;
-  const knownLags = groups.map((group) => group.lag);
-  const maxLag = knownLags.some((lag) => lag === null)
-    ? null
-    : Math.max(0, ...knownLags.map((lag) => lag ?? 0));
-  return {
-    status:
-      value.signalQueue.status === "unavailable"
-        ? ("unavailable" as const)
-        : value.signalQueue.status === "partial"
-          ? ("partial" as const)
-          : ("available" as const),
-    message: value.signalQueue.message,
-    streamExists: stream?.exists ?? null,
-    expectedGroupPresent: stream
-      ? groups.some((group) => group.expected)
-      : null,
-    entries: stream?.length ?? null,
-    maxEntries: stream?.maxEntries ?? null,
-    entriesAboveMax: stream?.entriesAboveMax ?? null,
-    pending: stream
-      ? groups.reduce((total, group) => total + group.pending, 0)
-      : null,
-    maxLag,
-  };
 }
 
 async function searchEntity(

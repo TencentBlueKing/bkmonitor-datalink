@@ -33,3 +33,11 @@ Chart 版本为 `0.1.11`。Linkd 与 Console 的默认镜像分别为 `ghcr.io/t
 共享目标 Redis 必须允许内部队列、租约、临时集合和发布操作；连接独立于 `storage.redis`。
 升级此行为时先停止旧版本直接写集合的 Worker，避免滚动期间混用两种写入职责；新控制面会回填当前 Active Alert。
 现有集合 key、成员和两字段 Pub/Sub 协议保持不变。详见[缓存指南](../../../docs/guides/active-alert-by-strategy.md)。
+
+### 公共第三方资源
+
+在 `configuration.resources` 中统一配置 `mysql`、`onemodel`、`kingeye_display`，参见
+[外部服务示例](examples/external-services.yaml)。这些连接用于 Kingeye 元数据、OneModel 与展示缓存，
+不等同于 `storage` 中的 Linkd Repository。各角色读取同一资源定义，按实际需求创建连接。
+更新资源后重启控制面与 Lifecycle；采用已有 Secret 时也需保持两者配置一致。
+EventSource 仅保存丰富规则，不再保存资源连接。Console OneModel 查询通过控制面执行。

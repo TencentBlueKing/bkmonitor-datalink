@@ -1,751 +1,633 @@
 import { useQuery } from "@tanstack/react-query";
-import {
-  type RefObject,
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
-import { createPortal } from "react-dom";
+import { useState } from "react";
 import { Link } from "react-router-dom";
-
 import type {
   ControlPlaneRuntime,
   ControlPlaneTaskDefinition,
-  ControlPlaneTaskId,
 } from "../../shared/contracts";
-import { getControlPlaneRuntime, getMetrics } from "../api";
+import { getControlPlaneRuntime, getDynamicConfig } from "../api";
 import { JsonViewer } from "../components/JsonViewer";
-import { MetricPanelCard } from "../components/MetricPanelCard";
-import { MetricQueryControls } from "../components/MetricQueryControls";
 import { RefreshControls } from "../components/RefreshControls";
-import { DynamicConfigPanel } from "./DynamicConfigPanel";
-import {
-  defaultMetricCalculationWindowSeconds,
-  defaultMetricRangeSeconds,
-  metricRanges,
-  metricStep,
-} from "../metricRange";
+import { metricRanges } from "../metricRange";
 import { useReportPageQueryFailure } from "../navigation";
 import { formatTime, useTimeMode } from "../time";
+import { DynamicConfigPanel } from "./DynamicConfigPanel";
+import "./control-plane.css";
 
-const taskOrder: ControlPlaneTaskId[] = [
-  "elasticsearch-schema-and-active-reconciler",
-  "elasticsearch-bucket-manager",
-  "elasticsearch-alert-archiver",
-  "redis-stream-manager",
-];
-
-const taskMeta: Record<
-  ControlPlaneTaskId,
-  { title: string; short: string; description: string }
-> = {
-  "elasticsearch-schema-and-active-reconciler": {
-    title: "Schema & Active Reconciler",
-    short: "Schema / Active",
-    description: "对账 index template、Active Alert 索引和静态 alias。",
-  },
-  "elasticsearch-bucket-manager": {
-    title: "Bucket Manager",
-    short: "Bucket",
-    description: "维护 Event、AlertHistory 和 AlertLog 的当前预创建窗口。",
-  },
-  "elasticsearch-alert-archiver": {
-    title: "Alert Archiver",
-    short: "Archiver",
-    description: "连续批量归档 Active 索引中的终态 Alert，并隔离单项失败。",
+type Task = ControlPlaneTaskDefinition;
+const labels: Record<string, string> = {
+  healthy: "正常",
+  running: "执行中",
+  idle: "空闲",
+  failed: "执行异常",
+  overdue: "逾期",
+  pending: "等待首次执行",
+  stopped: "已停止",
+  disabled: "未启用",
+  succeeded: "成功",
+  canceled: "已取消",
+};
+const kinds: Record<string, string> = {
+  periodic: "周期执行",
+  continuous: "连续处理",
+  notification: "通知 + 周期",
+  service: "常驻服务",
+};
+const origins: Record<string, string> = {
+  default: "默认配置",
+  explicit: "显式配置",
+  injected: "启动注入",
+};
+const links: Record<string, { to: string; label: string }> = {
+  scheduler: { to: "/event-sources", label: "查看来源与任务分配" },
+  "source-providers": { to: "/event-sources", label: "查看来源" },
+  "active-alert-indexes": {
+    to: "/strategy-index",
+    label: "查看逐策略刷新状态",
   },
   "redis-stream-manager": {
-    title: "Redis Stream Manager",
-    short: "Redis Stream",
-    description: "采集 Signal Stream 状态并裁剪所有 Group 已确认的安全前缀。",
+    to: "/infrastructure/redis?tab=signal",
+    label: "查看 Signal Stream",
   },
 };
 
-type TaskState =
-  "healthy" | "warning" | "stale" | "unobserved" | "unavailable" | "disabled";
-
 export function ControlPlanePage() {
-  const [rangeSeconds, setRangeSeconds] = useState(defaultMetricRangeSeconds);
-  const [calculationWindowSeconds, setCalculationWindowSeconds] = useState(
-    defaultMetricCalculationWindowSeconds,
-  );
-  const [instance, setInstance] = useState("");
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [configOpen, setConfigOpen] = useState(false);
-  const configButtonRef = useRef<HTMLButtonElement>(null);
-  const closeConfig = useCallback(() => setConfigOpen(false), []);
-  const interval = autoRefresh ? 15_000 : false;
+  const [rangeSeconds, setRangeSeconds] = useState(3600);
+  const [search, setSearch] = useState("");
+  const [group, setGroup] = useState("");
+  const [filter, setFilter] = useState("all");
+  const [selected, setSelected] = useState("scheduler");
+  const [tab, setTab] = useState("runtime");
   const runtime = useQuery({
-    queryKey: ["runtime-control-plane", rangeSeconds, instance],
-    queryFn: () =>
-      getControlPlaneRuntime({
-        rangeSeconds,
-        instance: instance || undefined,
-      }),
-    refetchInterval: interval,
+    queryKey: ["runtime-control-plane", rangeSeconds],
+    queryFn: ({ signal }) => getControlPlaneRuntime({ rangeSeconds, signal }),
+    refetchInterval: autoRefresh ? 15000 : false,
   });
-  const metrics = useQuery({
-    queryKey: [
-      "control-plane-metrics",
-      rangeSeconds,
-      calculationWindowSeconds,
-      instance,
-    ],
-    queryFn: () => {
-      const to = new Date();
-      return getMetrics({
-        from: new Date(to.getTime() - rangeSeconds * 1000),
-        to,
-        step: metricStep(rangeSeconds),
-        calculationWindowSeconds,
-        instance: instance || undefined,
-      });
-    },
-    refetchInterval: interval,
+  const dynamic = useQuery({
+    queryKey: ["dynamic-config"],
+    queryFn: getDynamicConfig,
+    refetchInterval: autoRefresh ? 15000 : false,
   });
-  useReportPageQueryFailure(runtime.isError || metrics.isError);
-
+  useReportPageQueryFailure(runtime.isError || dynamic.isError);
   const data = runtime.data;
-  const tasks = taskOrder.flatMap((id) => {
-    const task = data?.tasks.find((item) => item.id === id);
-    return task ? [task] : [];
-  });
-  const states = tasks.map((task) => taskState(data, task));
-  const attentionCount = states.filter((state) =>
-    ["warning", "stale", "unobserved", "unavailable"].includes(state),
-  ).length;
-  const processes = data?.processes.items ?? [];
-  const scopedProcesses = instance
-    ? processes.filter((item) => item.instance === instance)
-    : processes;
-  const processInstances = [...new Set(processes.map((item) => item.instance))];
-  const enabledCount = tasks.filter((task) => task.enabled).length;
-  const failureCount = tasks.reduce(
-    (total, task) => total + taskRunCount(data, task.id, "failed"),
-    0,
+  const tasks = data?.tasks ?? [];
+  const visible = tasks.filter(
+    (t) =>
+      (!group || t.group === group) &&
+      `${t.name} ${t.id}`.toLowerCase().includes(search.toLowerCase()) &&
+      (filter === "all" ||
+        (filter === "enabled" ? t.enabled : attention(t, data))),
   );
-  const panels = (metrics.data?.panels ?? []).filter((panel) =>
-    [
-      "control-plane-task-runs",
-      "control-plane-task-average",
-      "control-plane-task-p95",
-      "control-plane-archive-rate",
-      "control-plane-redis-trim-rate",
-    ].includes(panel.id),
-  );
-  const refreshing = runtime.isFetching || metrics.isFetching;
-  const lastSuccessfulAt =
-    runtime.dataUpdatedAt && metrics.dataUpdatedAt
-      ? Math.min(runtime.dataUpdatedAt, metrics.dataUpdatedAt)
-      : undefined;
-
-  function refresh(): void {
-    void Promise.all([runtime.refetch(), metrics.refetch()]);
-  }
-
+  const task = visible.find((t) => t.id === selected) ?? visible[0];
+  const timeMode = useTimeMode();
+  const fetching = runtime.isFetching || dynamic.isFetching;
+  const refresh = () => {
+    void Promise.all([runtime.refetch(), dynamic.refetch()]);
+  };
   return (
-    <section className="control-plane-page">
-      <div className="page-heading control-plane-page-heading">
+    <section className="cp-page">
+      <header className="cp-header">
         <div>
-          <p className="eyebrow">MANAGEMENT TASKS</p>
+          <p className="eyebrow">SYSTEM / CONTROL PLANE</p>
           <h1>Control Plane</h1>
-          <p>查看单例管理任务的归属、依赖、执行新鲜度和收敛工作量。</p>
+          <p>查看控制面的任务执行、处理结果与生效配置。</p>
         </div>
-        <div className="control-plane-controls">
-          <label>
-            <span>INSTANCE</span>
+        <RefreshControls
+          isFetching={fetching}
+          autoRefresh={autoRefresh}
+          intervalSeconds={15}
+          lastSuccessfulAt={runtime.dataUpdatedAt || undefined}
+          onRefresh={refresh}
+          onToggleAutoRefresh={() => setAutoRefresh((v) => !v)}
+        />
+      </header>
+      {runtime.isError && (
+        <div role="alert" className="error-banner">
+          {runtime.error instanceof Error
+            ? runtime.error.message
+            : "任务状态加载失败"}
+          {data &&
+            `。当前展示 ${formatTime(data.snapshotAt, timeMode)} 的旧快照。`}
+        </div>
+      )}
+      {!data && !runtime.isError && (
+        <p role="status">正在读取控制面任务目录…</p>
+      )}
+      {data && (
+        <>
+          <div className="cp-summary">
+            <Summary
+              title="已启用任务"
+              value={`${tasks.filter((t) => t.enabled).length} / ${tasks.length}`}
+              note="任务目录由控制面注册"
+            />
+            <Summary
+              title="需要关注"
+              value={String(tasks.filter((t) => attention(t, data)).length)}
+              note="异常、停止或观测信息不完整"
+            />
+            <Summary
+              title="空闲任务"
+              value={String(tasks.filter((t) => t.state === "idle").length)}
+              note="本轮没有待处理工作"
+            />
+            <Summary
+              title="当前控制面"
+              value={data.owner}
+              note={`启动于 ${formatTime(data.startedAt, timeMode)}`}
+            />
+          </div>
+          <div className="cp-service-strip">
+            {data.services.map((s) => (
+              <span key={s.id}>
+                <i className={`cp-dot ${s.state}`} aria-hidden="true" />
+                <strong>{s.name}</strong> {labels[s.state] ?? s.state}
+              </span>
+            ))}
+            <span>快照 {formatTime(data.snapshotAt, timeMode)}</span>
+          </div>
+          <p className="cp-boundary">
+            当前状态来自上述单个控制面进程，历史指标来自
+            Prometheus。任务共享进程监督；调度中心通过 Redis
+            租约保持独占。页面刷新只读取状态。
+          </p>
+          <div className="cp-toolbar">
+            <label>
+              <span className="visually-hidden">搜索任务</span>
+              <input
+                aria-label="搜索任务"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="搜索任务名称或 ID"
+              />
+            </label>
             <select
-              aria-label="Control Plane instance"
-              value={instance}
-              onChange={(event) => setInstance(event.target.value)}
+              aria-label="任务分组"
+              value={group}
+              onChange={(e) => setGroup(e.target.value)}
             >
-              <option value="">全部控制面实例</option>
-              {processInstances.map((value) => (
-                <option key={value} value={value}>
-                  {value}
-                </option>
+              <option value="">全部分组</option>
+              {[...new Set(tasks.map((t) => t.group))].map((g) => (
+                <option key={g}>{g}</option>
               ))}
             </select>
-          </label>
-          <MetricQueryControls
-            rangeSeconds={rangeSeconds}
-            calculationWindowSeconds={calculationWindowSeconds}
-            onRangeChange={setRangeSeconds}
-            onCalculationWindowChange={setCalculationWindowSeconds}
-          />
-          <RefreshControls
-            status={data?.status}
-            lastSuccessfulAt={lastSuccessfulAt}
-            isFetching={refreshing}
-            autoRefresh={autoRefresh}
-            intervalSeconds={15}
-            onRefresh={refresh}
-            onToggleAutoRefresh={() => setAutoRefresh((value) => !value)}
-          >
-            <button
-              ref={configButtonRef}
-              type="button"
-              onClick={() => setConfigOpen(true)}
-            >
-              任务配置 <span aria-hidden="true">↗</span>
-            </button>
-          </RefreshControls>
-        </div>
-      </div>
-
-      {runtime.isError && (
-        <div className="error-banner">
-          控制面状态加载失败：{errorMessage(runtime.error)}
-        </div>
-      )}
-
-      <DynamicConfigPanel autoRefresh={autoRefresh} />
-
-      <div className="control-plane-summary">
-        <SummaryCard
-          label="控制面进程"
-          value={`${scopedProcesses.filter((item) => item.up).length}/${scopedProcesses.length || "—"}`}
-          detail="up / discovered"
-        />
-        <SummaryCard
-          label="已启用任务"
-          value={data ? String(enabledCount) : "—"}
-          detail="3 个 ES 任务 + Redis Stream"
-        />
-        <SummaryCard
-          label="需要关注"
-          value={data ? String(attentionCount) : "—"}
-          detail="stale、未采样、异常或重复 owner"
-          tone={attentionCount > 0 ? "warning" : "normal"}
-        />
-        <SummaryCard
-          label="时间窗失败"
-          value={data ? formatCount(failureCount) : "—"}
-          detail={`最近 ${rangeLabel(rangeSeconds)}`}
-          tone={failureCount > 0 ? "danger" : "normal"}
-        />
-      </div>
-
-      <div className="control-plane-fault-boundary" role="note">
-        <strong>共享监督与故障域</strong>
-        <span>
-          当前没有 Leader Election，只允许一个控制面
-          owner；任一任务失败会取消同进程其他任务。 all-in-one 模式还会使
-          Cleaner 与 Lifecycle 一并退出。
-        </span>
-      </div>
-
-      <TaskDependencyMap tasks={tasks} />
-
-      <div className="control-plane-task-grid">
-        {tasks.map((task) => (
-          <TaskCard key={task.id} runtime={data} task={task} />
-        ))}
-      </div>
-
-      {metrics.isError && (
-        <div className="warning-banner">
-          任务历史指标加载失败：{errorMessage(metrics.error)}
-        </div>
-      )}
-      <div className="chart-grid control-plane-charts">
-        {panels.map((panel) => (
-          <MetricPanelCard key={panel.id} panel={panel} />
-        ))}
-      </div>
-
-      {configOpen && data && (
-        <ControlPlaneConfigDialog
-          tasks={data.tasks}
-          returnFocusRef={configButtonRef}
-          onClose={closeConfig}
-        />
+            <div className="cp-filter" role="group" aria-label="任务筛选">
+              {[
+                ["all", "全部"],
+                ["enabled", "已启用"],
+                ["attention", "需要关注"],
+              ].map(([id, label]) => (
+                <button
+                  key={id}
+                  aria-pressed={filter === id}
+                  onClick={() => setFilter(id)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <span className="cp-result-count">{visible.length} 个任务</span>
+          </div>
+          <div className="cp-workspace">
+            <div className="cp-list" aria-label="任务列表">
+              {visible.length === 0 && (
+                <p className="cp-empty">没有匹配的任务。</p>
+              )}
+              {[...new Set(visible.map((t) => t.group))].map((g) => (
+                <section className="cp-group" key={g}>
+                  <h2>{g}</h2>
+                  {visible
+                    .filter((t) => t.group === g)
+                    .map((t) => (
+                      <button
+                        className={`cp-task-row ${task?.id === t.id ? "selected" : ""}`}
+                        key={t.id}
+                        onClick={() => setSelected(t.id)}
+                        aria-pressed={task?.id === t.id}
+                      >
+                        <div className="cp-task-row-title">
+                          <strong>{t.name}</strong>
+                          <Badge state={t.state} />
+                        </div>
+                        <span>
+                          {t.enabled
+                            ? `${kinds[t.kind] ?? t.kind}${t.intervalSeconds ? ` · ${t.intervalSeconds}s` : ""}`
+                            : t.disabledReason}
+                        </span>
+                        <div className="cp-task-row-bottom">
+                          <span>
+                            {t.execution.lastSuccess
+                              ? `最近成功 ${formatTime(t.execution.lastSuccess, timeMode)}`
+                              : "尚无成功记录"}
+                          </span>
+                          {t.enabled && (
+                            <small
+                              className={
+                                observed(data, t.id) ? "" : "cp-warning"
+                              }
+                            >
+                              {observation(data, t.id)}
+                            </small>
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                </section>
+              ))}
+            </div>
+            {task && (
+              <article className="cp-detail" aria-label="任务详情">
+                <header>
+                  <p className="eyebrow">{task.id}</p>
+                  <div className="cp-detail-title">
+                    <h2>{task.name}</h2>
+                    <Badge state={task.state} />
+                  </div>
+                  <p>{task.description}</p>
+                  {!task.enabled && (
+                    <p className="cp-disabled-reason">
+                      未启用：{task.disabledReason}
+                    </p>
+                  )}
+                </header>
+                <div
+                  className="cp-tabs"
+                  role="tablist"
+                  aria-label="任务详情视图"
+                >
+                  {[
+                    ["runtime", "运行详情"],
+                    ["execution", "执行情况"],
+                    ["config", "生效配置"],
+                  ].map(([id, label]) => (
+                    <button
+                      key={id}
+                      id={`cp-tab-${id}`}
+                      role="tab"
+                      aria-selected={tab === id}
+                      aria-controls="cp-task-panel"
+                      onClick={() => setTab(id)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div
+                  role="tabpanel"
+                  id="cp-task-panel"
+                  aria-labelledby={`cp-tab-${tab}`}
+                  className="cp-detail-body"
+                >
+                  {tab === "runtime" && (
+                    <>
+                      <dl className="cp-facts">
+                        <Fact
+                          label="当前 Owner"
+                          value={task.active ? data.owner : "未运行"}
+                        />
+                        <Fact
+                          label="执行方式"
+                          value={kinds[task.kind] ?? task.kind}
+                        />
+                        <Fact
+                          label="最近完成"
+                          value={
+                            task.execution.finishedAt
+                              ? formatTime(task.execution.finishedAt, timeMode)
+                              : "尚无记录"
+                          }
+                        />
+                        <Fact
+                          label="最近耗时"
+                          value={
+                            task.execution.finishedAt
+                              ? `${task.execution.durationSeconds.toFixed(3)}s`
+                              : "—"
+                          }
+                        />
+                      </dl>
+                      {task.enabled && !observed(data, task.id) && (
+                        <p className="cp-notice">
+                          {observation(data, task.id)}
+                          。当前运行状态以控制面快照为准，历史数据暂不能完整归属到该进程。
+                        </p>
+                      )}
+                      {duplicateOwners(data, task.id) > 1 && (
+                        <p className="cp-notice">
+                          历史指标发现 {duplicateOwners(data, task.id)} 个活跃
+                          Owner，请检查是否存在重复控制面。
+                        </p>
+                      )}
+                      <h3>最近子流程结果</h3>
+                      <p className="cp-caption">
+                        展示最近一轮及有限目标详情，时间是各子流程自己的完成时间。
+                      </p>
+                      {task.steps.length > 0 ? (
+                        <div className="cp-table-scroll">
+                          <table>
+                            <thead>
+                              <tr>
+                                <th>子流程 / 目标</th>
+                                <th>结果</th>
+                                <th>工作量 / 失败项</th>
+                                <th>完成时间</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {task.steps.map((s) => (
+                                <tr key={s.id}>
+                                  <td>
+                                    {s.name}
+                                    <small>{s.errorCode}</small>
+                                  </td>
+                                  <td>
+                                    <Badge state={s.outcome} />
+                                  </td>
+                                  <td>
+                                    {s.work < 0 ? "—" : s.work} / {s.failures}
+                                  </td>
+                                  <td>
+                                    {s.finishedAt
+                                      ? formatTime(s.finishedAt, timeMode)
+                                      : "—"}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <p className="cp-empty">
+                          {task.enabled
+                            ? "暂无子流程结果，主任务的执行记录见“执行情况”。"
+                            : "启用后开始记录执行结果。"}
+                        </p>
+                      )}
+                      {task.detailsTruncated && (
+                        <p className="cp-notice">
+                          目标详情达到 64 项上限，列表不代表全部目标。
+                        </p>
+                      )}
+                      {task.id === "redis-stream-manager" && (
+                        <p className="cp-caption">
+                          每轮最多展示 16 个来源；单条 Stream
+                          的历史执行次数与来源扫描轮次分别统计。
+                        </p>
+                      )}
+                      {task.id === "active-alert-indexes" && (
+                        <p className="cp-caption">
+                          目标名称是无凭据的身份摘要；逐策略错误及待刷新队列可在策略索引页查看。
+                        </p>
+                      )}
+                      {task.id === "dynamic-config" && (
+                        <DynamicConfigPanel
+                          autoRefresh={false}
+                          managed={dynamic}
+                        />
+                      )}
+                      <Drilldown task={task} />
+                    </>
+                  )}
+                  {tab === "execution" && (
+                    <>
+                      <h3>当前进程累计</h3>
+                      <p className="cp-caption">
+                        从本次启动开始，重启后重置。取消单独计数。
+                      </p>
+                      <dl className="cp-facts">
+                        <Fact
+                          label="成功轮次"
+                          value={String(task.execution.succeeded)}
+                        />
+                        <Fact
+                          label="失败轮次"
+                          value={String(task.execution.failed)}
+                        />
+                        <Fact
+                          label="取消轮次"
+                          value={String(task.execution.canceled)}
+                        />
+                        <Fact
+                          label="最近工作量"
+                          value={
+                            task.execution.work < 0
+                              ? "—"
+                              : String(task.execution.work)
+                          }
+                        />
+                      </dl>
+                      {task.execution.errorCode && (
+                        <p className="cp-notice">
+                          最近错误：{task.execution.errorCode}
+                          。详细原因请按进程与时间查看日志。
+                        </p>
+                      )}
+                      <div className="cp-history-heading">
+                        <h3>历史指标</h3>
+                        <select
+                          aria-label="历史时间范围"
+                          value={rangeSeconds}
+                          onChange={(e) =>
+                            setRangeSeconds(Number(e.target.value))
+                          }
+                        >
+                          {metricRanges.map((r) => (
+                            <option key={r.seconds} value={r.seconds}>
+                              {r.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <p className="cp-caption">
+                        仅统计能与当前 Owner 对应的 Prometheus
+                        实例；未采集显示“—”。
+                      </p>
+                      <dl className="cp-facts">
+                        <Fact
+                          label="窗口成功"
+                          value={history(
+                            data,
+                            task.id,
+                            "runCount",
+                            "succeeded",
+                          )}
+                        />
+                        <Fact
+                          label="窗口失败"
+                          value={history(data, task.id, "runCount", "failed")}
+                        />
+                        <Fact
+                          label="平均耗时"
+                          value={history(data, task.id, "averageDuration")}
+                        />
+                        <Fact
+                          label="P95 耗时"
+                          value={history(data, task.id, "p95Duration")}
+                        />
+                      </dl>
+                      {task.id === "elasticsearch-alert-archiver" && (
+                        <p>
+                          当前待归档：{data.archive.backlog ?? "—"}。
+                          {data.archive.message}
+                        </p>
+                      )}
+                      <p className="cp-caption">
+                        这是执行计数与最近结果，不提供持久化执行日志。连续归档的等待间隔不作为整轮超时。
+                      </p>
+                    </>
+                  )}
+                  {tab === "config" && (
+                    <>
+                      <dl className="cp-facts">
+                        <Fact
+                          label="配置来源"
+                          value={
+                            origins[task.configSource] ?? task.configSource
+                          }
+                        />
+                        <Fact
+                          label={
+                            task.kind === "continuous"
+                              ? "空闲 / 重试等待"
+                              : "周期"
+                          }
+                          value={
+                            task.intervalSeconds
+                              ? `${task.intervalSeconds}s`
+                              : "—"
+                          }
+                        />
+                        <Fact
+                          label="整轮观测预算"
+                          value={
+                            task.deadlineSeconds
+                              ? `${task.deadlineSeconds}s`
+                              : "未设置"
+                          }
+                        />
+                        <Fact
+                          label="启动依赖"
+                          value={
+                            task.dependsOn
+                              .map(
+                                (id) =>
+                                  tasks.find((t) => t.id === id)?.name ?? id,
+                              )
+                              .join(" → ") || "无"
+                          }
+                        />
+                      </dl>
+                      <JsonViewer
+                        value={task.settings}
+                        description="控制面返回的生效参数；连接凭据不进入任务快照。启动配置变更需重启。"
+                      />
+                    </>
+                  )}
+                </div>
+              </article>
+            )}
+          </div>
+        </>
       )}
     </section>
   );
 }
-
-function TaskDependencyMap({ tasks }: { tasks: ControlPlaneTaskDefinition[] }) {
-  const byID = new Map(tasks.map((task) => [task.id, task]));
-  return (
-    <article className="control-plane-dependencies">
-      <header>
-        <div>
-          <p className="eyebrow">TASK OWNERSHIP</p>
-          <h2>任务依赖与故障边界</h2>
-        </div>
-        <span>同一进程监督</span>
-      </header>
-      <div className="control-plane-dependency-layout">
-        <div className="control-plane-es-chain">
-          {taskOrder.slice(0, 3).map((id, index) => (
-            <div key={id} className="control-plane-chain-step">
-              {index > 0 && (
-                <span className="control-plane-chain-arrow" aria-hidden="true">
-                  ↓
-                </span>
-              )}
-              <div className={byID.get(id)?.enabled ? "enabled" : "disabled"}>
-                <strong>{taskMeta[id].short}</strong>
-                <small>
-                  {index === 0
-                    ? "Schema 与 Active 资源"
-                    : index === 1
-                      ? "当前及相邻时间桶"
-                      : "消费已有 History write alias"}
-                </small>
-              </div>
-            </div>
-          ))}
-        </div>
-        <div
-          className={`control-plane-redis-node ${byID.get("redis-stream-manager")?.enabled ? "enabled" : "disabled"}`}
-        >
-          <strong>Redis Stream</strong>
-          <small>逻辑独立，仍共享进程退出边界</small>
-        </div>
-      </div>
-    </article>
-  );
+function Badge({ state }: { state: string }) {
+  return <span className={`cp-badge ${state}`}>{labels[state] ?? state}</span>;
 }
-
-function TaskCard({
-  runtime,
-  task,
-}: {
-  runtime?: ControlPlaneRuntime;
-  task: ControlPlaneTaskDefinition;
-}) {
-  const timeMode = useTimeMode();
-  const state = taskState(runtime, task);
-  const owners = taskOwners(runtime, task.id);
-  const lastSuccess = taskLastSuccess(runtime, task.id);
-  const successCount = taskRunCount(runtime, task.id, "succeeded");
-  const failureCount = taskRunCount(runtime, task.id, "failed");
-  const average = taskMetric(runtime, "averageDuration", task.id);
-  const p95 = taskMetric(runtime, "p95Duration", task.id);
-  return (
-    <article className={`control-plane-task-card state-${state}`}>
-      <header>
-        <div>
-          <p className="eyebrow">{task.id}</p>
-          <h2>{taskMeta[task.id].title}</h2>
-          <p>{taskMeta[task.id].description}</p>
-        </div>
-        <span className={`control-plane-task-state ${state}`}>
-          {taskStateLabel(state)}
-        </span>
-      </header>
-
-      <dl className="control-plane-task-facts">
-        <TaskFact
-          label="OWNER"
-          value={
-            !task.enabled
-              ? "未启用"
-              : owners.length > 0
-                ? owners.join(", ")
-                : "尚未发现"
-          }
-          detail={
-            owners.length > 1
-              ? `${owners.length} 个 owner，当前不安全`
-              : undefined
-          }
-        />
-        <TaskFact
-          label={
-            task.id === "elasticsearch-alert-archiver"
-              ? "IDLE / RETRY"
-              : "INTERVAL"
-          }
-          value={formatDuration(task.intervalSeconds)}
-        />
-        <TaskFact
-          label="LAST SUCCESS"
-          value={
-            lastSuccess
-              ? formatTime(new Date(lastSuccess * 1000).toISOString(), timeMode)
-              : "尚未采样"
-          }
-          detail={lastSuccess ? `${formatAge(lastSuccess)}前` : undefined}
-        />
-        <TaskFact
-          label="RUNS"
-          value={`${formatCount(successCount)} 成功 / ${formatCount(failureCount)} 失败`}
-        />
-        <TaskFact label="AVERAGE" value={formatSeconds(average)} />
-        <TaskFact label="P95" value={formatSeconds(p95)} />
-      </dl>
-
-      {task.id === "elasticsearch-schema-and-active-reconciler" && (
-        <div className="control-plane-task-note">
-          <strong>对账范围</strong>
-          <span>Schema、index template、Active Alert 索引与静态 alias。</span>
-        </div>
-      )}
-      {task.id === "elasticsearch-bucket-manager" && (
-        <BucketWorkload task={task} />
-      )}
-      {task.id === "elasticsearch-alert-archiver" && (
-        <ArchiveWorkload runtime={runtime} task={task} />
-      )}
-      {task.id === "redis-stream-manager" && (
-        <RedisWorkload runtime={runtime} task={task} />
-      )}
-
-      <footer>
-        <span>
-          配置来源：
-          {task.configSource === "explicit"
-            ? "显式配置"
-            : task.configSource === "default"
-              ? "Repository 默认启用"
-              : "未启用"}
-        </span>
-        {task.id.startsWith("elasticsearch-") ? (
-          <Link to="/storage/elasticsearch">查看 ES 资源 →</Link>
-        ) : (
-          <Link to="/infrastructure/redis?tab=signal">
-            查看 Signal Stream →
-          </Link>
-        )}
-      </footer>
-    </article>
-  );
-}
-
-function BucketWorkload({ task }: { task: ControlPlaneTaskDefinition }) {
-  return (
-    <div className="control-plane-task-note">
-      <strong>预创建窗口</strong>
-      <span>
-        Event {task.settings.eventBucketDays}d · AlertHistory{" "}
-        {task.settings.alertHistoryBucketDays}d · AlertLog{" "}
-        {task.settings.alertLogBucketDays}d
-      </span>
-      <small>
-        past {task.settings.precreatePastBuckets} / future{" "}
-        {task.settings.precreateFutureBuckets}· 每类最多{" "}
-        {task.settings.maxBucketsPerEntity} 桶
-      </small>
-    </div>
-  );
-}
-
-function ArchiveWorkload({
-  runtime,
-  task,
-}: {
-  runtime?: ControlPlaneRuntime;
-  task: ControlPlaneTaskDefinition;
-}) {
-  const backlog = runtime?.archive.backlog ?? null;
-  const batchSize = Number(task.settings.archiveBatchSize);
-  const workerCount = Number(task.settings.archiveWorkerCount);
-  const lastScanned = firstMetric(runtime, "archiveLastScanned");
-  const lastArchived = firstMetric(runtime, "archiveLastBatch");
-  const lastFailed = firstMetric(runtime, "archiveLastFailed");
-  const batches = backlog === null ? null : Math.ceil(backlog / batchSize);
-  return (
-    <div className="control-plane-workload">
-      <TaskFact label="待归档" value={nullableCount(backlog)} />
-      <TaskFact label="最近扫描" value={nullableCount(lastScanned)} />
-      <TaskFact label="最近归档" value={nullableCount(lastArchived)} />
-      <TaskFact label="最近失败" value={nullableCount(lastFailed)} />
-      <TaskFact label="批量上限" value={formatCount(batchSize)} />
-      <TaskFact label="并发 Worker" value={formatCount(workerCount)} />
-      <TaskFact label="至少剩余批次" value={nullableCount(batches)} />
-      {runtime?.archive.status === "unavailable" && (
-        <p>{runtime.archive.message ?? "待归档工作量不可用"}</p>
-      )}
-      {backlog !== null && backlog >= batchSize && (
-        <p>任务将连续处理后续批次，批次之间不会等待空闲间隔。</p>
-      )}
-    </div>
-  );
-}
-
-function RedisWorkload({
-  runtime,
-  task,
-}: {
-  runtime?: ControlPlaneRuntime;
-  task: ControlPlaneTaskDefinition;
-}) {
-  const required = firstMetric(runtime, "trimRequired");
-  const safe = firstMetric(runtime, "trimSafe");
-  const lastEntries = firstMetric(runtime, "trimLastEntries");
-  const oldestPending = firstMetric(runtime, "oldestPendingAge");
-  const redis = runtime?.redis;
-  return (
-    <div className="control-plane-workload redis-workload">
-      <TaskFact
-        label="裁剪决策"
-        value={trimDecision(required, safe, redis?.expectedGroupPresent)}
-      />
-      <TaskFact label="最近裁剪" value={nullableCount(lastEntries)} />
-      <TaskFact
-        label="ENTRIES / MAX"
-        value={`${nullableCount(redis?.entries)} / ${nullableCount(redis?.maxEntries ?? Number(task.settings.maxEntries))}`}
-      />
-      <TaskFact label="超限" value={nullableCount(redis?.entriesAboveMax)} />
-      <TaskFact label="PENDING" value={nullableCount(redis?.pending)} />
-      <TaskFact label="MAX LAG" value={nullableCount(redis?.maxLag)} />
-      {required === 1 && safe !== 1 && (
-        <p>
-          {redis?.expectedGroupPresent === false
-            ? "预期 Consumer Group 缺失，控制面不会裁剪。"
-            : `当前未形成安全边界；最老 Pending ${formatSeconds(oldestPending)}。`}
-        </p>
-      )}
-    </div>
-  );
-}
-
-function ControlPlaneConfigDialog({
-  tasks,
-  returnFocusRef,
-  onClose,
-}: {
-  tasks: ControlPlaneTaskDefinition[];
-  returnFocusRef: RefObject<HTMLButtonElement | null>;
-  onClose: () => void;
-}) {
-  const closeButtonRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    const returnFocus = returnFocusRef.current;
-    const previousOverflow = document.body.style.overflow;
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.body.style.overflow = "hidden";
-    window.addEventListener("keydown", closeOnEscape);
-    closeButtonRef.current?.focus();
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener("keydown", closeOnEscape);
-      returnFocus?.focus();
-    };
-  }, [onClose, returnFocusRef]);
-
-  return createPortal(
-    <div className="lifecycle-dialog-layer">
-      <div
-        className="lifecycle-dialog-backdrop"
-        aria-hidden="true"
-        onMouseDown={onClose}
-      />
-      <section
-        className="lifecycle-config-dialog control-plane-config-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="control-plane-config-title"
-      >
-        <header>
-          <div>
-            <p className="eyebrow">EFFECTIVE CONFIG</p>
-            <h2 id="control-plane-config-title">控制面任务配置</h2>
-            <span>只展示生效周期、批次和资源边界，不包含凭据</span>
-          </div>
-          <button
-            ref={closeButtonRef}
-            type="button"
-            aria-label="关闭控制面任务配置"
-            onClick={onClose}
-          >
-            ×
-          </button>
-        </header>
-        <div className="lifecycle-config-dialog-content">
-          <JsonViewer
-            value={tasks}
-            description="Elasticsearch Repository 会自动启用三个任务并使用默认配置；Redis Stream 任务必须显式声明。"
-          />
-        </div>
-      </section>
-    </div>,
-    document.body,
-  );
-}
-
-function SummaryCard({
-  label,
+function Summary({
+  title,
   value,
-  detail,
-  tone = "normal",
+  note,
 }: {
-  label: string;
+  title: string;
   value: string;
-  detail: string;
-  tone?: "normal" | "warning" | "danger";
+  note: string;
 }) {
   return (
-    <article className={`control-plane-summary-card ${tone}`}>
-      <span>{label}</span>
+    <article>
+      <span>{title}</span>
       <strong>{value}</strong>
-      <small>{detail}</small>
+      <small>{note}</small>
     </article>
   );
 }
-
-function TaskFact({
-  label,
-  value,
-  detail,
-}: {
-  label: string;
-  value: string;
-  detail?: string;
-}) {
+function Fact({ label, value }: { label: string; value: string }) {
   return (
-    <div className="control-plane-task-fact">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      {detail && <small>{detail}</small>}
+    <div>
+      <dt>{label}</dt>
+      <dd>{value}</dd>
     </div>
   );
 }
-
-function taskState(
-  runtime: ControlPlaneRuntime | undefined,
-  task: ControlPlaneTaskDefinition,
-): TaskState {
-  if (!task.enabled) return "disabled";
-  if (!runtime || runtime.metrics.status === "unavailable")
-    return "unavailable";
-  const owners = taskOwners(runtime, task.id);
-  const lastSuccess = taskLastSuccess(runtime, task.id);
-  if (owners.length === 0 || !lastSuccess) return "unobserved";
-  if (Date.now() / 1000 - lastSuccess > Math.max(task.intervalSeconds * 2, 30))
-    return "stale";
-  if (owners.length > 1 || taskRunCount(runtime, task.id, "failed") > 0)
-    return "warning";
-  return "healthy";
+function Drilldown({ task }: { task: Task }) {
+  const link =
+    links[task.id] ??
+    (task.id.startsWith("elasticsearch-")
+      ? { to: "/storage/elasticsearch", label: "查看 ES 资源" }
+      : undefined);
+  return link ? (
+    <Link className="cp-drilldown" to={link.to}>
+      {link.label} →
+    </Link>
+  ) : null;
 }
-
-function taskOwners(
-  runtime: ControlPlaneRuntime | undefined,
-  task: ControlPlaneTaskId,
-): string[] {
-  const values = metricSeries(runtime, "active")
-    .filter((sample) => sample.labels.linkd_task === task && sample.value === 1)
-    .map((sample) => sample.labels.instance)
-    .filter((value): value is string => Boolean(value));
-  return [...new Set(values)].sort();
+function instances(data: ControlPlaneRuntime) {
+  return data.processes.items
+    .filter((p) => p.serviceInstanceId === data.owner)
+    .map((p) => p.instance);
 }
-
-function taskLastSuccess(
-  runtime: ControlPlaneRuntime | undefined,
-  task: ControlPlaneTaskId,
-): number | undefined {
-  return maximumMetric(runtime, "lastSuccess", task);
+function duplicateOwners(data: ControlPlaneRuntime, id: string) {
+  return new Set(
+    (data.metrics.series.active ?? [])
+      .filter((s) => s.labels.linkd_task === id && s.value === 1)
+      .map((s) => s.labels.instance),
+  ).size;
 }
-
-function taskRunCount(
-  runtime: ControlPlaneRuntime | undefined,
-  task: ControlPlaneTaskId,
-  outcome: "succeeded" | "failed",
-): number {
-  return metricSeries(runtime, "runCount")
-    .filter(
-      (sample) =>
-        sample.labels.linkd_task === task &&
-        sample.labels.linkd_outcome === outcome,
+function observed(data: ControlPlaneRuntime, id: string) {
+  const owners = instances(data);
+  return (
+    data.metrics.status !== "unavailable" &&
+    (data.metrics.series.active ?? []).some(
+      (s) =>
+        s.labels.linkd_task === id &&
+        s.value === 1 &&
+        owners.includes(s.labels.instance),
     )
-    .reduce((total, sample) => total + (sample.value ?? 0), 0);
-}
-
-function taskMetric(
-  runtime: ControlPlaneRuntime | undefined,
-  key: string,
-  task: ControlPlaneTaskId,
-): number | undefined {
-  return maximumMetric(runtime, key, task);
-}
-
-function maximumMetric(
-  runtime: ControlPlaneRuntime | undefined,
-  key: string,
-  task?: ControlPlaneTaskId,
-): number | undefined {
-  const values = metricSeries(runtime, key)
-    .filter((sample) => !task || sample.labels.linkd_task === task)
-    .map((sample) => sample.value)
-    .filter((value): value is number => value !== null);
-  return values.length > 0 ? Math.max(...values) : undefined;
-}
-
-function firstMetric(
-  runtime: ControlPlaneRuntime | undefined,
-  key: string,
-): number | undefined {
-  return maximumMetric(runtime, key);
-}
-
-function metricSeries(runtime: ControlPlaneRuntime | undefined, key: string) {
-  return runtime?.metrics.series[key] ?? [];
-}
-
-function taskStateLabel(state: TaskState): string {
-  const labels: Record<TaskState, string> = {
-    healthy: "正常",
-    warning: "需关注",
-    stale: "STALE",
-    unobserved: "未采样",
-    unavailable: "不可用",
-    disabled: "未启用",
-  };
-  return labels[state];
-}
-
-function trimDecision(
-  required: number | undefined,
-  safe: number | undefined,
-  expectedGroupPresent: boolean | null | undefined,
-): string {
-  if (required === undefined) return "尚未采样";
-  if (required === 0) return "无需裁剪";
-  if (safe === 1) return "可安全裁剪";
-  if (expectedGroupPresent === false) return "Group 缺失，已阻止";
-  return "安全边界不可用";
-}
-
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return `${seconds / 60}m`;
-  return `${seconds / 3600}h`;
-}
-
-function formatSeconds(value: number | undefined): string {
-  return value === undefined ? "—" : `${value.toFixed(value < 1 ? 3 : 2)}s`;
-}
-
-function formatAge(timestampSeconds: number): string {
-  const seconds = Math.max(0, Math.round(Date.now() / 1000 - timestampSeconds));
-  if (seconds < 60) return `${seconds} 秒`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分钟`;
-  return `${Math.floor(seconds / 3600)} 小时`;
-}
-
-function nullableCount(value: number | null | undefined): string {
-  return value === null || value === undefined ? "—" : formatCount(value);
-}
-
-function formatCount(value: number): string {
-  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 }).format(
-    value,
   );
 }
-
-function rangeLabel(seconds: number): string {
+function observation(data: ControlPlaneRuntime, id: string) {
+  return observed(data, id) ? "指标已关联" : "观测不完整";
+}
+function attention(task: Task, data?: ControlPlaneRuntime) {
   return (
-    metricRanges.find((range) => range.seconds === seconds)?.label ??
-    `${seconds}s`
+    task.enabled &&
+    (["failed", "overdue", "stopped"].includes(task.state) ||
+      (!!data &&
+        (!observed(data, task.id) || duplicateOwners(data, task.id) > 1)))
   );
 }
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "未知错误";
+function history(
+  data: ControlPlaneRuntime,
+  id: string,
+  key: string,
+  outcome?: string,
+) {
+  const owners = instances(data);
+  const samples = (data.metrics.series[key] ?? [])
+    .filter(
+      (s) =>
+        s.labels.linkd_task === id &&
+        owners.includes(s.labels.instance) &&
+        (!outcome || s.labels.linkd_outcome === outcome),
+    )
+    .map((s) => s.value)
+    .filter((v): v is number => v !== null);
+  if (!samples.length) return "—";
+  const value =
+    key === "runCount"
+      ? samples.reduce((a, b) => a + b, 0)
+      : Math.max(...samples);
+  return key === "runCount" ? value.toLocaleString() : `${value.toFixed(3)}s`;
 }

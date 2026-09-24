@@ -29,7 +29,6 @@ function record() {
         },
       ],
       enrich: {
-        datasources: { mysql: { password: "******", database: "alarm" } },
         processors: [{ type: "fields", config: { rules: [] } }],
       },
       storage: {

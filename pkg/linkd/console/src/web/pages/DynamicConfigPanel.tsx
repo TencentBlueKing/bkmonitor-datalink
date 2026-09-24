@@ -16,19 +16,32 @@ const origins: Record<string, string> = {
   upstream: "上游配置",
 };
 
-export function DynamicConfigPanel({ autoRefresh }: { autoRefresh: boolean }) {
+export function DynamicConfigPanel({
+  autoRefresh,
+  managed,
+}: {
+  autoRefresh: boolean;
+  managed?: {
+    data?: Awaited<ReturnType<typeof getDynamicConfig>>;
+    dataUpdatedAt: number;
+    isError: boolean;
+    isFetching: boolean;
+  };
+}) {
   const query = useQuery({
     queryKey: ["dynamic-config"],
     queryFn: getDynamicConfig,
-    refetchInterval: autoRefresh ? 15_000 : false,
+    refetchInterval: !managed && autoRefresh ? 15_000 : false,
+    enabled: !managed,
   });
-  const data = query.data;
+  const state = managed ?? query;
+  const data = state.data;
   const config = data?.config;
   const age = config?.persisted_at
     ? Math.max(
         0,
         Math.floor(
-          (query.dataUpdatedAt - Date.parse(config.persisted_at)) / 1000,
+          (state.dataUpdatedAt - Date.parse(config.persisted_at)) / 1000,
         ),
       )
     : undefined;
@@ -39,14 +52,21 @@ export function DynamicConfigPanel({ autoRefresh }: { autoRefresh: boolean }) {
           <h2>动态配置</h2>
           <p>查看当前等级、持久化恢复与进程应用状态。</p>
         </div>
-        <button type="button" onClick={() => void query.refetch()}>
-          刷新配置状态
-        </button>
+        {!managed && (
+          <button
+            type="button"
+            disabled={query.isFetching}
+            aria-busy={query.isFetching}
+            onClick={() => void query.refetch()}
+          >
+            {query.isFetching ? "正在刷新…" : "刷新配置状态"}
+          </button>
+        )}
       </div>
-      {query.isError && (
+      {state.isError && (
         <p role="alert">动态配置状态读取失败，请检查控制面连接。</p>
       )}
-      {!data && !query.isError && <p>正在读取配置状态…</p>}
+      {!data && !state.isError && <p>正在读取配置状态…</p>}
       {config && (
         <>
           <p>

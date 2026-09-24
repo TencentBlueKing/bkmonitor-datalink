@@ -81,7 +81,7 @@ func (c *Client) Search(ctx context.Context, tenant string, q Query) ([]Instance
 		return nil, err
 	}
 	if len(rows) > q.Limit {
-		return nil, fmt.Errorf("onemodel result limit exceeded")
+		return nil, fmt.Errorf("%w: onemodel result limit exceeded", ErrResultLimit)
 	}
 	out := make([]Instance, 0, len(rows))
 	seen := map[string]bool{}
@@ -132,7 +132,7 @@ func (c *Client) Related(ctx context.Context, tenant string, roots []Instance, r
 			return nil, err
 		}
 		if len(rows) > 1024 {
-			return nil, fmt.Errorf("relation edge limit exceeded")
+			return nil, fmt.Errorf("%w: relation edge limit exceeded", ErrResultLimit)
 		}
 		for _, row := range rows {
 			fromUID, _ := row[from+"_entity_uid"].(string)
@@ -148,7 +148,7 @@ func (c *Client) Related(ctx context.Context, tenant string, roots []Instance, r
 		return []Instance{}, nil
 	}
 	if len(ids) > 1024 {
-		return nil, fmt.Errorf("related instance limit exceeded")
+		return nil, fmt.Errorf("%w: related instance limit exceeded", ErrResultLimit)
 	}
 	values := make([]string, 0, len(ids))
 	for id := range ids {
@@ -166,7 +166,7 @@ func (c *Client) Related(ctx context.Context, tenant string, roots []Instance, r
 
 // Empty 判断是否没有附加过滤。
 func (f Filter) Empty() bool {
-	return f.Field == "" && len(f.All) == 0 && len(f.Any) == 0 && f.Not == nil
+	return f.Field == "" && len(f.All) == 0 && len(f.Any) == 0 && f.Not == nil && f.Type == "" && f.Operator == "" && f.Value == nil
 }
 
 // Compile 校验过滤树并生成后端条件；不允许配置包含租户字段。

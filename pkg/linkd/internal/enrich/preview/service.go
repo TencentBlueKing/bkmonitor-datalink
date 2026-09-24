@@ -153,7 +153,7 @@ func (s *Service) Preview(ctx context.Context, request Request) (Response, error
 		return Response{}, &Error{400, "tenant does not match event source"}
 	}
 	if request.Enrich != nil {
-		source.Enrich = request.Enrich.WithPreservedSecrets(source.Enrich)
+		source.Enrich = *request.Enrich
 	}
 	if err := source.Enrich.Validate(); err != nil {
 		return Response{}, &Error{422, "invalid enrich configuration: " + safeConfigError(source.Enrich, err)}
@@ -246,7 +246,7 @@ func safeConfigError(c config.EnrichConfig, _ error) string {
 			}
 		}
 	}
-	return "check duplicate processor types and required datasources"
+	return "check processor configuration"
 }
 
 func compose(original map[string]any, payload domain.JSONObject) (map[string]any, []ProcessorTrace, error) {

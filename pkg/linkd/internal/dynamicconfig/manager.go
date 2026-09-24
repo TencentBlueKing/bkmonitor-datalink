@@ -234,8 +234,24 @@ func (m *Manager) failed(ctx context.Context, code string) {
 	m.logger.WarnContext(ctx, "dynamic config synchronization failed; retaining current configuration", "source", m.status.Source, "stage", code)
 }
 
+// RunObserver 只接收串行同步的开始与完整结果；实现不得执行外部 I/O。
+type RunObserver interface {
+	SyncStarted()
+	SyncFinished(context.Context, time.Duration, Status)
+}
+
 // Run 合并通知并周期补读；单来源失败只更新状态，取消后等待 watch 退出。
-func (m *Manager) Run(ctx context.Context) error {
+func (m *Manager) Run(ctx context.Context, observers ...RunObserver) error {
+	syncOnce := func() {
+		started := time.Now()
+		for _, o := range observers {
+			o.SyncStarted()
+		}
+		m.Sync(ctx)
+		for _, observe := range observers {
+			observe.SyncFinished(ctx, time.Since(started), m.Status())
+		}
+	}
 	notifications := make(chan struct{}, 1)
 	notify := func() {
 		select {
@@ -254,15 +270,15 @@ func (m *Manager) Run(ctx context.Context) error {
 	ticker := time.NewTicker(m.settings.Interval())
 	defer ticker.Stop()
 	// Bootstrap 恢复快照后立即后台尝试同步，不让恢复依赖上游可用。
-	m.Sync(ctx)
+	syncOnce()
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-notifications:
-			m.Sync(ctx)
+			syncOnce()
 		case <-ticker.C:
-			m.Sync(ctx)
+			syncOnce()
 		}
 	}
 }

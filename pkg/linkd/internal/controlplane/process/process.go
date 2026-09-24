@@ -179,6 +179,7 @@ func openRuntime(
 	telemetryRuntime *telemetry.Runtime,
 	providers ...eventsource.Provider,
 ) (*runtime, error) {
+	registry := taskCatalog(cfg, len(providers))
 	tasks := make([]taskgroup.Task, 0, 4)
 	closers := make([]func() error, 0, 2)
 	closeAll := func() error {
@@ -216,28 +217,35 @@ func openRuntime(
 				logger,
 				"elasticsearch-schema-and-active-reconciler",
 				settings.SchemaAndActiveReconcileInterval(),
-				telemetryRuntime.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskElasticsearchSchemaAndActiveReconciler),
+				taskObserver{registry, "elasticsearch-schema-and-active-reconciler", telemetryRuntime.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskElasticsearchSchemaAndActiveReconciler)},
 				elasticsearchRuntime.Manager.ReconcileSchemaAndActive,
 			),
 			newPeriodicTask(
 				logger,
 				"elasticsearch-bucket-manager",
 				settings.BucketReconcileInterval(),
-				telemetryRuntime.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskElasticsearchBucketManager),
+				taskObserver{registry, "elasticsearch-bucket-manager", telemetryRuntime.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskElasticsearchBucketManager)},
 				elasticsearchRuntime.Manager.ReconcileBuckets,
 			),
 			newAlertArchiveTask(
 				logger,
 				settings,
-				telemetryRuntime.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskElasticsearchAlertArchiver),
-				telemetryRuntime.ObserveElasticsearchArchiveBatch,
+				taskObserver{registry, "elasticsearch-alert-archiver", telemetryRuntime.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskElasticsearchAlertArchiver)},
+				func(ctx context.Context, scanned, archived, failed int) {
+					telemetryRuntime.ObserveElasticsearchArchiveBatch(ctx, scanned, archived, failed)
+					registry.Workload("elasticsearch-alert-archiver", scanned, failed)
+					registry.Finish(ctx, "elasticsearch-alert-archiver", "batch", "归档批次", 0, scanned, failed, "")
+				},
 				elasticsearchRuntime.Manager.ArchiveTerminalAlerts,
 			),
 		)
 	}
 
+	for i := range tasks {
+		tasks[i] = registry.Wrap(tasks[i].Name, tasks[i])
+	}
 	tasks = append(tasks, taskgroup.Task{Name: "event-source-dispatch", Run: func(taskCtx context.Context) error {
-		return runDispatch(taskCtx, cfg, logger, telemetryRuntime, providers...)
+		return runDispatch(taskCtx, cfg, logger, telemetryRuntime, registry, providers...)
 	}})
 
 	return &runtime{tasks: tasks, closeAll: closeAll}, nil
@@ -295,6 +303,9 @@ func runPeriodicTaskOnce(
 	runOnce func(context.Context) error,
 ) error {
 	startedAt := time.Now()
+	if o, ok := observer.(interface{ RunStarted() }); ok {
+		o.RunStarted()
+	}
 	err := runOnce(ctx)
 	observer.RunFinished(ctx, time.Since(startedAt), err == nil)
 	return err
@@ -334,10 +345,18 @@ func newAlertArchiveTask(
 			effectiveLimit := settings.ArchiveBatchSize
 			for {
 				startedAt := time.Now()
+				if o, ok := observer.(interface{ RunStarted() }); ok {
+					o.RunStarted()
+				}
 				result, err := runBatch(ctx, elasticsearchstore.ArchiveBatchRequest{
 					Limit: effectiveLimit, WorkerCount: min(settings.ArchiveWorkerCount, effectiveLimit), AfterAlertID: cursor,
 				})
 				if ctx.Err() != nil {
+					if o, ok := observer.(interface {
+						RunCanceled(context.Context, time.Duration)
+					}); ok {
+						o.RunCanceled(ctx, time.Since(startedAt))
+					}
 					return nil
 				}
 				observer.RunFinished(ctx, time.Since(startedAt), err == nil && result.Failed == 0)

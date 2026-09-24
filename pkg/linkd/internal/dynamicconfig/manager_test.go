@@ -260,3 +260,33 @@ func TestRunCancellationAndConcurrentSnapshotReaders(t *testing.T) {
 		t.Fatal("snapshot not isolated")
 	}
 }
+
+type syncRecorder struct {
+	started bool
+	status  Status
+	cancel  context.CancelFunc
+}
+
+func (o *syncRecorder) SyncStarted() { o.started = true }
+
+func (o *syncRecorder) SyncFinished(_ context.Context, _ time.Duration, status Status) {
+	o.status = status
+	o.cancel()
+}
+
+func TestRunObserverReportsValidationFailureWithRetainedConfiguration(t *testing.T) {
+	source := &fakeSource{raw: initialLevels}
+	m, state := testManager(t, source, newMemoryStore(), testSettings())
+	m.Sync(t.Context())
+	digest := state.SeveritySnapshot().Digest
+	source.raw = `[]`
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	o := &syncRecorder{cancel: cancel}
+	if err := m.Run(ctx, o); err != nil {
+		t.Fatal(err)
+	}
+	if !o.started || o.status.Error != "invalid_config" || o.status.Current.Digest != digest {
+		t.Fatalf("observation lost retained config %+v", o)
+	}
+}

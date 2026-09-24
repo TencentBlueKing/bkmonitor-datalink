@@ -52,11 +52,16 @@ func NewManager(reader Reader, cache Cache, sources []string, settings Settings,
 }
 
 // Run 保留失败提示并持续校准；正常取消返回 nil，普通存储错误不会退出控制面。
-func (m *Manager) Run(ctx context.Context) error {
+func (m *Manager) Run(ctx context.Context, observers ...func(context.Context, time.Duration, int, int, error)) error {
 	ticker := time.NewTicker(m.settings.PollInterval)
 	defer ticker.Stop()
 	for {
-		if err := m.Step(ctx); err != nil && ctx.Err() == nil {
+		started := time.Now()
+		work, failed, err := m.step(ctx)
+		for _, observe := range observers {
+			observe(ctx, time.Since(started), work, failed, err)
+		}
+		if err != nil && ctx.Err() == nil {
 			m.logger.WarnContext(ctx, "active index reconciliation failed")
 		}
 		select {
@@ -69,6 +74,11 @@ func (m *Manager) Run(ctx context.Context) error {
 
 // Step 先周期发现，再处理有界到期策略；发现失败仍允许其他已排队策略修复。
 func (m *Manager) Step(ctx context.Context) error {
+	_, _, err := m.step(ctx)
+	return err
+}
+
+func (m *Manager) step(ctx context.Context) (int, int, error) {
 	var discoveryErr error
 	if time.Now().After(m.nextDiscovery) {
 		call, cancel := context.WithTimeout(ctx, m.settings.OperationTimeout)
@@ -87,17 +97,19 @@ func (m *Manager) Step(ctx context.Context) error {
 	pending, err := m.cache.Pending(call, m.settings.BatchSize)
 	cancel()
 	if err != nil {
-		return errors.Join(discoveryErr, err)
+		return 0, 0, errors.Join(discoveryErr, err)
 	}
+	failed := 0
 	for _, p := range pending {
 		if err := ctx.Err(); err != nil {
-			return err
+			return len(pending), failed, err
 		}
 		if err := m.reconcile(ctx, p); err != nil && ctx.Err() == nil {
+			failed++
 			m.logger.WarnContext(ctx, "active index strategy refresh failed", "bk_tenant_id", p.Scope.BKTenantID, "strategy_id", p.Scope.StrategyID)
 		}
 	}
-	return discoveryErr
+	return len(pending), failed, discoveryErr
 }
 
 func (m *Manager) query(scope *Scope) Query {

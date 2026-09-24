@@ -108,7 +108,6 @@ func TestEventSourceDefaultsAndValidation(t *testing.T) {
 		t.Fatalf("legacy cleaner type error = %v", err)
 	}
 	source.Enrich.Processors = []EnrichProcessorConfig{{Type: "strategy"}, {Type: "display"}}
-	source.Enrich.DataSources = validEnrichDataSources()
 	if err := ValidateEventSources([]EventSource{source}, SeverityConfig{}); err != nil {
 		t.Fatalf("ValidateEventSources() enrich error = %v", err)
 	}
@@ -179,26 +178,20 @@ func TestEventSourceCloneAndRedaction(t *testing.T) {
 	source.SeverityMapping = map[string]string{"P1": "critical"}
 	source.Storage.Kafka.Security.SASL = &kafkaclient.SASLConfig{Mechanism: "plain", Username: "user", Password: "secret"}
 	source.Enrich.Processors = []EnrichProcessorConfig{{Type: "strategy"}}
-	source.Enrich.DataSources = validEnrichDataSources()
-	source.Enrich.DataSources.Elasticsearch.APIKey = "api-secret"
 	redacted := source.Redacted()
 	redacted.Enrich.Processors[0].Type = "display"
-	redacted.Enrich.DataSources.MySQL.Database = "changed"
 	redacted.FingerprintFields[0] = "subject_id"
 	redacted.SeverityMapping["P1"] = "info"
 	redacted.Storage.Kafka.Brokers[0] = "changed"
-	if reflect.DeepEqual(source, redacted) || source.Enrich.Processors[0].Type != "strategy" || source.Enrich.DataSources.MySQL.Database != "kingeye" || source.FingerprintFields[0] != "source_alert_id" || source.SeverityMapping["P1"] != "critical" {
+	if reflect.DeepEqual(source, redacted) || source.Enrich.Processors[0].Type != "strategy" || source.FingerprintFields[0] != "source_alert_id" || source.SeverityMapping["P1"] != "critical" {
 		t.Fatalf("Redacted changed original: %#v", source)
-	}
-	if redacted.Enrich.DataSources.MySQL.Password != redactedSecret || redacted.Enrich.DataSources.Elasticsearch.APIKey != redactedSecret {
-		t.Fatalf("Redacted leaked enrich credentials: %#v", redacted.Enrich.DataSources)
 	}
 }
 
 func TestEnrichAcceptsTopologyIndexPrefix(t *testing.T) {
 	t.Parallel()
-	var dataSource EnrichDataSources
-	decoder := yaml.NewDecoder(strings.NewReader(`elasticsearch:
+	var dataSource ResourcesConfig
+	decoder := yaml.NewDecoder(strings.NewReader(`onemodel:
   addresses: [http://onemodel.example.com:9200]
   index_prefix: custom_base_
 `))
@@ -206,7 +199,7 @@ func TestEnrichAcceptsTopologyIndexPrefix(t *testing.T) {
 	if err := decoder.Decode(&dataSource); err != nil {
 		t.Fatal(err)
 	}
-	if dataSource.Elasticsearch == nil || dataSource.Elasticsearch.IndexPrefix != "custom_base_" {
+	if dataSource.OneModel == nil || dataSource.OneModel.IndexPrefix != "custom_base_" {
 		t.Fatalf("datasource=%#v", dataSource)
 	}
 }
@@ -214,43 +207,37 @@ func TestEnrichAcceptsTopologyIndexPrefix(t *testing.T) {
 func TestEnrichSelectsOnlyProcessorDependencies(t *testing.T) {
 	t.Parallel()
 	enrich := EnrichConfig{
-		Processors:  []EnrichProcessorConfig{{Type: "source"}},
-		DataSources: validEnrichDataSources(),
+		Processors: []EnrichProcessorConfig{{Type: "source"}},
 	}
-	selected, err := enrich.SelectDataSources()
+	selected, err := enrich.SelectResources(*validResourcesConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if selected.MySQL == nil || selected.Elasticsearch != nil {
+	if selected.MySQL == nil || selected.OneModel != nil {
 		t.Fatalf("SelectDataSources()=%#v", selected)
 	}
 }
 
-func TestEnrichPreservesOmittedSecrets(t *testing.T) {
-	t.Parallel()
-	previous := EnrichConfig{DataSources: validEnrichDataSources()}
-	previous.DataSources.Elasticsearch.APIKey = "api-secret"
-	omitted := (EnrichConfig{}).WithPreservedSecrets(previous)
-	if omitted.DataSources == nil || omitted.DataSources.Elasticsearch.APIKey != "api-secret" {
-		t.Fatalf("omitted datasources were not preserved: %#v", omitted.DataSources)
+func TestResourcesCloneAndRedact(t *testing.T) {
+	resources := *validResourcesConfig()
+	resources.OneModel.APIKey = "api-secret"
+	resources.KingeyeDisplay = &DisplayResource{Redis: RedisConfig{Address: "localhost:6379", Password: "redis-secret"}}
+	cfg := Config{Resources: resources}
+	redacted := cfg.Redacted().Resources
+	redacted.MySQL.Database = "changed"
+	redacted.OneModel.Addresses[0] = "http://changed:9200"
+	if resources.MySQL.Database != "kingeye" || resources.OneModel.Addresses[0] != "http://onemodel.example.com:9200" {
+		t.Fatal("shared resource clone")
 	}
-	current := previous.clone()
-	current.DataSources.MySQL.Password = redactedSecret
-	current.DataSources.Elasticsearch.APIKey = redactedSecret
-	merged := current.WithPreservedSecrets(previous)
-	if merged.DataSources.MySQL.Password != "secret" || merged.DataSources.Elasticsearch.APIKey != "api-secret" {
-		t.Fatalf("WithPreservedSecrets()=%#v", merged.DataSources)
-	}
-	merged.DataSources.MySQL.Password = "changed"
-	if previous.DataSources.MySQL.Password != "secret" {
-		t.Fatal("WithPreservedSecrets shares datasource pointers")
+	if redacted.MySQL.Password != redactedSecret || redacted.OneModel.APIKey != redactedSecret || redacted.KingeyeDisplay.Redis.Password != redactedSecret {
+		t.Fatal("resource secret exposed")
 	}
 }
 
-func validEnrichDataSources() *EnrichDataSources {
-	return &EnrichDataSources{
-		MySQL:         &EnrichMySQLDataSource{Address: "mysql.example.com:3306", Database: "kingeye", Username: "reader", Password: "secret"},
-		Elasticsearch: &EnrichElasticsearchDataSource{Addresses: []string{"http://onemodel.example.com:9200"}},
+func validResourcesConfig() *ResourcesConfig {
+	return &ResourcesConfig{
+		MySQL:    &MySQLResource{Address: "mysql.example.com:3306", Database: "kingeye", Username: "reader", Password: "secret"},
+		OneModel: &OneModelResource{Addresses: []string{"http://onemodel.example.com:9200"}},
 	}
 }
 
@@ -264,8 +251,8 @@ func TestTestEnrichDoesNotRequireDataSources(t *testing.T) {
 	if err := ValidateEventSources([]EventSource{source}, SeverityConfig{}); err != nil {
 		t.Fatal(err)
 	}
-	selected, err := source.Enrich.SelectDataSources()
-	if err != nil || selected.MySQL != nil || selected.Elasticsearch != nil {
+	selected, err := source.Enrich.SelectResources(ResourcesConfig{})
+	if err != nil || selected.MySQL != nil || selected.OneModel != nil {
 		t.Fatalf("selected=%#v error=%v", selected, err)
 	}
 }
@@ -282,15 +269,6 @@ func TestCustomEnrichCompileReleaseAndSecretBoundary(t *testing.T) {
 	source.Enrich = enrich
 	if err := ValidateEventSources([]EventSource{source}, SeverityConfig{}); err != nil {
 		t.Fatal(err)
-	}
-	previous := EnrichConfig{DataSources: &EnrichDataSources{Elasticsearch: &EnrichElasticsearchDataSource{Addresses: []string{"http://old:9200"}, APIKey: "private"}}}
-	current := EnrichConfig{DataSources: &EnrichDataSources{Elasticsearch: &EnrichElasticsearchDataSource{Addresses: []string{"http://changed:9200"}}}}
-	if current.WithPreservedSecrets(previous).DataSources.Elasticsearch.APIKey != "" {
-		t.Fatal("credential reused for changed endpoint")
-	}
-	current.DataSources = nil
-	if current.WithPreservedSecrets(previous).DataSources.Elasticsearch.APIKey != "private" {
-		t.Fatal("same-source connection not inherited")
 	}
 	for _, target := range []string{"$.severity", "$.extra_data.cw_labels", "$.labels.dynamic_group_id"} {
 		var invalid EnrichConfig

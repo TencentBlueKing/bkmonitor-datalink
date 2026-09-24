@@ -1,9 +1,18 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  cleanup,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DynamicConfigPanel } from "./DynamicConfigPanel";
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 function show(value: unknown) {
   vi.stubGlobal(
     "fetch",
@@ -64,4 +73,30 @@ describe("DynamicConfigPanel", () => {
     expect(screen.getByText(/应用失败：fetch_failed/)).toBeInTheDocument();
     expect(screen.getByText(/快照年龄/)).toBeInTheDocument();
   });
+});
+
+it("disables duplicate refreshes while fetching and enables retry after failure", async () => {
+  const value = {
+    config: { enabled: false, origin: "yaml", sync_state: "disabled" },
+    workers: {},
+  };
+  show(value);
+  await screen.findByText("未启用");
+  const fetcher = vi.mocked(fetch);
+  let reject: ((error: Error) => void) | undefined;
+  fetcher.mockImplementationOnce(
+    () =>
+      new Promise<Response>((_resolve, fail) => {
+        reject = fail;
+      }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "刷新配置状态" }));
+  const refreshing = await screen.findByRole("button", { name: "正在刷新…" });
+  expect(refreshing).toBeDisabled();
+  expect(refreshing).toHaveAttribute("aria-busy", "true");
+  reject?.(new Error("failed"));
+  await screen.findByRole("alert");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "刷新配置状态" })).toBeEnabled(),
+  );
 });

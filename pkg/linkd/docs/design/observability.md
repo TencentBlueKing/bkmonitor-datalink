@@ -157,8 +157,8 @@ Lifecycle 的 `find_active` 和 `find_terminal_by_event` 会把 `store.ErrNotFou
 不改变标签集合、基数或指标口径。
 
 Cleaner 和 Lifecycle 在拆分部署时继续输出上述职责指标。Control Plane 当前提供独立 endpoint、Resource、
-Go/process 指标，以及三个 Elasticsearch 管理任务和 Redis Stream 管理任务的职责指标；Leader Election
-尚未实现，因此 `linkd_control_plane_task_active_ratio` 同一任务出现多个 owner 时属于部署错误。
+Go/process 指标，以及八类后台管理任务的职责指标。调度中心通过 Redis 租约保持独占；其他管理任务没有
+独立选主，`linkd_control_plane_task_active_ratio` 同一任务出现多个 owner 时仍需检查重复部署。
 
 `linkd.event_source_id` 只来自已校验配置或 StoredEvent。Kafka partition 只进入 received、settled
 和 lane gauge，不进入 histogram。reason code 使用封闭枚举，未知值归入 `other`。tenant、实体 ID、
@@ -196,11 +196,22 @@ Enrich 使用 `linkd_enrich_attempts_total`、`linkd_enrich_attempt_duration_sec
 EventSource ID、固定 Processor、固定 DataSource/operation、状态和原因枚举；租户、实体 ID、查询字段、
 错误全文和 payload 不进入指标。
 
-四个固定任务使用 `linkd_control_plane_task_active_ratio`、`linkd_control_plane_task_runs_total`、
+八类固定任务使用 `linkd_control_plane_task_active_ratio`、`linkd_control_plane_task_runs_total`、
 `linkd_control_plane_task_run_duration_seconds` 和 `linkd_control_plane_task_last_success_seconds`。`linkd_task`
 只允许 `elasticsearch-schema-and-active-reconciler`、`elasticsearch-bucket-manager`、
-`elasticsearch-alert-archiver`、`redis-stream-manager`；`linkd_outcome` 只允许 `succeeded/failed`。
+`elasticsearch-alert-archiver`、`redis-stream-manager`、`scheduler`、`source-providers`、
+`active-alert-indexes`、`dynamic-config`；`linkd_outcome` 只允许 `succeeded/failed`。
 最近成功时间是 Unix 秒；未执行成功时不生成虚假零值。
+
+当前任务状态由 `internal/controlplane/taskstate` 显式注入装配和管理 API，使用有锁、有界的内存快照；
+最多每任务 64 个子流程，不保存原始错误、凭据或业务载荷。API 返回单进程 owner、启动和采样时间，
+启用配置、生命周期、完整轮次和子流程结果彼此独立。Prometheus 负责跨重启的历史趋势，不作为当前 owner
+唯一来源。具体展示和缺失值语义见 [Console 指南](../guides/console.md)。
+
+轮次口径：调度为一次 tick；Provider 为一次 Pull 与完整 Apply；动态配置为读取到安装完整轮次；
+策略索引主任务为目标发现/初始化轮次，目标子项保留逐策略刷新数量与失败数；Redis 主任务为来源分页扫描，
+其历史指标沿用逐 Stream reconcile 口径。管理 API 只展示服务生命周期，不伪造周期执行计数。
+
 
 Alert Archiver 通过 `linkd_elasticsearch_alert_archiver_scanned_alerts_total`、
 `linkd_elasticsearch_alert_archiver_archived_alerts_total` 和

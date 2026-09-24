@@ -87,7 +87,7 @@ docker run --rm --name linkd-console \
 - 系统总览：按完成速率与积压、等待位置、失败恢复分组诊断；各阶段延迟单独展示，不合计 P99。
 - Cleaner：EventSource、Kafka partition、transform、Event store、Mailbox 和 Kafka confirm。
 - Lifecycle：Event 处理与 Signal 调度分离；独立 Enrich 区域展示同步丰富总体状态、在途调用、平均/P95/P99、Processor 状态与 P99、诊断、DataSource 调用与 P99、payload 大小；独立 ES 合批区展示范围执行次数、提交/成功/失败操作数、每批大小、字节数、排队与执行耗时，并显示配置推导值。
-- Control Plane：四个固定管理任务的 owner、依赖、周期、最近结果、耗时和收敛工作量。
+- Control Plane：控制面注册的全量任务、运行状态、有限子流程结果、历史计数与生效配置。
 - Events、Alerts、AlertLogs：分对象查询、结构化详情、关联列表与流水、当前 schema 能力内的统计；Alert 详情支持通过控制面主动关闭。
 - Kafka、Redis、Elasticsearch：实时只读基础设施状态；ES 节点快照单独显示 CPU、heap、write active/queue、累计 rejected、当前 merge 和未提交 translog，不把累计量解释为待处理队列。
 - Configuration：Linkd YAML 的脱敏有效摘要。
@@ -97,7 +97,7 @@ docker run --rm --name linkd-console \
 
 历史处理趋势来自 Prometheus。Kafka assignment/offset/lag、Redis PEL、目标 Signal Group 的
 `lag + pending` 和 Mailbox List 扫描是 Console 请求时读取的当前快照，不会被伪装成历史时序。
-处理状态、Cleaner、Lifecycle、Control Plane 和 Kafka 的 Prometheus 图表统一提供 `15m`、`1h`、`6h`、
+处理状态、Cleaner、Lifecycle 和 Kafka 的 Prometheus 图表统一提供 `15m`、`1h`、`6h`、
 `24h` 和 `7d` 查询时间范围，默认 `1h`；采样步长随所选范围调整。页面同时提供独立的“计算窗口”，
 默认 1 分钟，可选择 30 秒、1 分钟、2 分钟、5 分钟或 15 分钟；该窗口直接用于 `rate()`、`increase()`
 和 histogram quantile。计算窗口建议不小于 Prometheus scrape interval 的两倍，窗口越短越及时，但更容易抖动或因样本不足无数据。
@@ -115,12 +115,10 @@ Signal 页面分别呈现 Stream length、Group lag、PEL pending 与两者之�
 lease token，也不会依据 Consumer idle 推断实例离线。部分 Redis 查询失败时，无法确认的计数返回
 `null`，页面显示为未知，不会补成 `0`。
 
-Control Plane 页面按 `elasticsearch-schema-and-active-reconciler`、`elasticsearch-bucket-manager`、
-`elasticsearch-alert-archiver` 和 `redis-stream-manager` 展示真实任务。页面不复制 ES 集群健康或索引容量，
-只读取固定 Active alias 的终态 Alert 数作为归档 backlog；Archiver 展示空闲/重试间隔、批量上限、Worker 数和
-最近批次结果，并把 Redis 的 Pending/lag 作为安全裁剪决策依据。
-Elasticsearch Repository 即使没有显式 `control_plane.elasticsearch` 也会使用默认周期启用前三个任务；
-Redis Stream 任务必须显式配置。
+Control Plane 的任务目录与当前执行状态来自管理 API，按调度与来源、消息与存储维护、投影与配置分组，
+管理 API 自身单独展示。详情提供运行、执行计数和生效配置视图；目录读取失败不会用本地 YAML 猜测状态。
+Prometheus 缺失显示观测不完整，刷新失败保留旧快照；所有刷新均为只读。配置凭据不进入任务快照。
+需要同步更新控制面与 Console；完整口径见 [Console 指南](../docs/guides/console.md)。
 
 ## 本地 API
 
@@ -226,3 +224,14 @@ Redis 页面可按来源选择派生 Stream、Mailbox 和 lease。Kafka 输入�
 「系统 → 指标目录」支持按模块、类型和用途筛选，搜索中文名、OTel/Prometheus 指标名及维度，展开说明并复制查询序列。页面读取控制面的完整只读目录，不要求连接 Prometheus；新增业务指标随注册声明自动进入目录。
 
 配置要求、接口字段和采集边界统一见 [Console 指标边界](../docs/guides/console.md#指标边界)。
+
+## OneModel 调试
+
+访问 `/onemodel`，指定租户和模型执行实例分页查询，或按起点实例、关系、方向查询关联对象。
+表格支持实例详情和 JSON 复制；默认每页 50 条、最大 200 条。关联查询保持最多 1024 个实例的完整结果语义。
+控制面复用 Go OneModel 查询模块；Console 通过管理 token 代理请求，不直连 OneModel。
+
+连接统一配置在 Linkd 顶层 `resources.mysql`、`resources.onemodel`、`resources.kingeye_display`，
+不再接受 EventSource 的 `enrich.datasources`。配置页展示脱敏的本机资源配置。
+查询只要求控制面配置 `resources.onemodel`，不要求启用丰富处理器或配置其他第三方资源。
+协议与错误说明见 [OneModel 查询 API](../docs/reference/contracts/onemodel-query.md)。

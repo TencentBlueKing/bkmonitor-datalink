@@ -240,8 +240,33 @@ const redisStreamManagerSchema = z
     }
   });
 
+const resourcesSchema = z.object({
+  mysql: z
+    .object({
+      address: z.string(),
+      database: z.string(),
+      username: z.string(),
+      password: z.string().optional(),
+    })
+    .optional(),
+  onemodel: z
+    .object({
+      addresses: z.array(z.string()),
+      index_prefix: z.string().optional(),
+      api_key: z.string().optional(),
+      basic_auth: z
+        .object({ username: z.string(), password: z.string().optional() })
+        .optional(),
+    })
+    .optional(),
+  kingeye_display: z
+    .object({ redis: redisConfigSchema, key_prefix: z.string().optional() })
+    .optional(),
+});
+
 const linkdConfigSchema = z
   .object({
+    resources: resourcesSchema.optional(),
     storage: z
       .object({
         repository: z.enum(["mysql", "elasticsearch"]),
@@ -489,6 +514,7 @@ export interface EventSourceConfig {
 }
 
 export interface ConsoleConfig {
+  resources?: z.infer<typeof resourcesSchema>;
   dispatch?: { url: string; apiToken: string; deployment: string };
   configPath?: string;
   server: {
@@ -664,6 +690,7 @@ export async function loadConfig(
     })
     .parse(decoded.dispatch ?? {});
   const config: ConsoleConfig = {
+    resources: decoded.resources,
     dispatch: {
       url: process.env.LINKD_CONTROL_PLANE_URL ?? dispatch.url,
       apiToken: process.env.LINKD_API_TOKEN ?? dispatch.api_token,
@@ -1082,7 +1109,17 @@ export function publicConfig(config: ConsoleConfig) {
 }
 
 export function redactedConfig(config: ConsoleConfig) {
+  const resources = structuredClone(config.resources);
+  if (resources?.mysql?.password) resources.mysql.password = "******";
+  if (resources?.onemodel?.api_key) resources.onemodel.api_key = "******";
+  if (resources?.onemodel?.basic_auth?.password)
+    resources.onemodel.basic_auth.password = "******";
+  if (resources?.kingeye_display?.redis.password)
+    resources.kingeye_display.redis.password = "******";
+  if (resources?.kingeye_display?.redis.sentinel?.password)
+    resources.kingeye_display.redis.sentinel.password = "******";
   return {
+    resources,
     configPath: config.configPath,
     repository: config.entities.events,
     telemetry: config.telemetry,

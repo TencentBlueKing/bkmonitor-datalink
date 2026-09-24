@@ -23,9 +23,11 @@ import (
 
 	"linkd/internal/activeindex"
 	"linkd/internal/config"
+	"linkd/internal/controlplane/taskstate"
 	"linkd/internal/eventsource"
 	"linkd/internal/redisclient"
 	repositoryassembly "linkd/internal/store/assembly"
+	"linkd/internal/telemetry"
 )
 
 var errIndexPrefixOverlap = errors.New("active index prefixes overlap on the same Redis target")
@@ -146,7 +148,7 @@ type runningIndex struct {
 
 // runActiveIndexes 按目标隔离生命周期；配置或凭据变化时先取消旧任务再装配。
 // 未配置策略 Hook 时不会打开告警仓储或目标 Redis；初始化故障在任务内部重试。
-func runActiveIndexes(ctx context.Context, cfg config.Config, sources indexSources, logger *slog.Logger) error {
+func runActiveIndexes(ctx context.Context, cfg config.Config, sources indexSources, logger *slog.Logger, registry *taskstate.Registry, metrics *telemetry.Runtime) error {
 	settings := config.ActiveIndexConfig{}.WithDefaults()
 	if cfg.ControlPlane != nil && cfg.ControlPlane.ActiveIndex != nil {
 		settings = cfg.ControlPlane.ActiveIndex.WithDefaults()
@@ -170,8 +172,18 @@ func runActiveIndexes(ctx context.Context, cfg config.Config, sources indexSourc
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
+		started := time.Now()
+		registry.Begin("active-alert-indexes", "", "")
 		call, cancel := context.WithTimeout(ctx, 10*time.Second)
 		targets, err := loadIndexTargets(call, sources)
+		initFailures := 0
+		stepIDs := []string{}
+		for id := range targets {
+			stepIDs = append(stepIDs, id)
+		}
+		if err == nil {
+			registry.RetainSteps("active-alert-indexes", stepIDs)
+		}
 		if err == nil && len(targets) > 0 && repository == nil {
 			repository, err = repositoryassembly.Open(call, *cfg.Storage, 4)
 		}
@@ -199,6 +211,8 @@ func runActiveIndexes(ctx context.Context, cfg config.Config, sources indexSourc
 				}
 				reader, ok := repository.Repository.(activeindex.Reader)
 				if !ok {
+					initFailures++
+					registry.Finish(ctx, "active-alert-indexes", id, "目标 "+id[:12], 0, 0, 1, "reader_unavailable")
 					logger.WarnContext(ctx, "active index repository reader unavailable")
 					continue
 				}
@@ -207,6 +221,8 @@ func runActiveIndexes(ctx context.Context, cfg config.Config, sources indexSourc
 				options.PoolSize = 4
 				client, err := redisclient.New(options)
 				if err != nil {
+					initFailures++
+					registry.Finish(ctx, "active-alert-indexes", id, "目标 "+id[:12], 0, 0, 1, "client_initialization_failed")
 					logger.WarnContext(ctx, "active index client initialization failed")
 					continue
 				}
@@ -214,13 +230,25 @@ func runActiveIndexes(ctx context.Context, cfg config.Config, sources indexSourc
 				manager, err := activeindex.NewManager(reader, cache, target.Sources, activeindex.Settings{PollInterval: time.Duration(settings.PollIntervalSeconds) * time.Second, ReconcileInterval: time.Duration(settings.ReconcileIntervalSeconds) * time.Second, OperationTimeout: time.Duration(settings.OperationTimeoutSeconds) * time.Second, BatchSize: settings.BatchSize, MaxRows: settings.MaxRows, MaxBytes: settings.MaxBytes}, logger.With("index_target", id))
 				if err != nil {
 					_ = client.Close()
+					initFailures++
+					registry.Finish(ctx, "active-alert-indexes", id, "目标 "+id[:12], 0, 0, 1, "manager_initialization_failed")
 					continue
 				}
 				taskCtx, stop := context.WithCancel(ctx)
 				done := make(chan struct{})
 				data, _ := json.Marshal(target)
 				managed[id] = runningIndex{sha256.Sum256(data), stop, done}
-				go func() { defer close(done); defer func() { _ = client.Close() }(); _ = manager.Run(taskCtx) }()
+				go func() {
+					defer close(done)
+					defer func() { _ = client.Close() }()
+					_ = manager.Run(taskCtx, func(ctx context.Context, d time.Duration, work, failed int, err error) {
+						code := ""
+						if err != nil {
+							code = "target_refresh_failed"
+						}
+						registry.Finish(ctx, "active-alert-indexes", id, "目标 "+id[:12], d, work, failed, code)
+					})
+				}()
 			}
 		}
 		if err != nil {
@@ -229,6 +257,14 @@ func runActiveIndexes(ctx context.Context, cfg config.Config, sources indexSourc
 				<-r.done
 				delete(managed, id)
 			}
+		}
+		code := ""
+		if err != nil {
+			code = "target_discovery_failed"
+		}
+		registry.Finish(ctx, "active-alert-indexes", "", "", time.Since(started), len(targets), initFailures, code)
+		if ctx.Err() == nil {
+			metrics.ControlPlaneTaskObserver(telemetry.ControlPlaneTaskActiveIndexes).RunFinished(ctx, time.Since(started), err == nil && initFailures == 0)
 		}
 		select {
 		case <-ctx.Done():

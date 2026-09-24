@@ -11,3 +11,5 @@
 输入 Cleaner、Kafka V1 输出和 KAC Alarm 输出分别维护自己的协议边界。当前实现支持 `standard`、
 Kafka Alert V1、KAC Alarm 兼容输出与策略索引变更通知 v1；后续只有在出现真实外部消费者变更后才滚动对应协议版本，并同步更新
 实现、测试和本文索引。
+
+- [OneModel 调试查询 API](onemodel-query.md)：实例分页、关联查询与快照释放。

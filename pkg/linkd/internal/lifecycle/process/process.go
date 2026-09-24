@@ -129,7 +129,7 @@ func Run(
 		defer func() { taskErr = taskdispatch.WithTaskStage(stage, taskErr) }()
 		openCtx, cancelOpen := context.WithTimeout(taskCtx, startupTimeout)
 		enrichRuntime, err := assembly.Open(
-			openCtx, source, lifecycleConfig.Concurrency+4,
+			openCtx, source, cfg.Resources, lifecycleConfig.Concurrency+4,
 			time.Duration(lifecycleConfig.ProcessTimeoutSeconds)*time.Second, telemetryRuntime,
 		)
 		cancelOpen()

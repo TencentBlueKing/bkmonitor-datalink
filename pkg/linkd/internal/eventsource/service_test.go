@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"linkd/internal/config"
 )
@@ -187,20 +188,14 @@ func TestConcurrentRecoveryReturnsCommittedPublication(t *testing.T) {
 
 func TestPublicationPreservesEnrichAcrossReleases(t *testing.T) {
 	ctx := context.Background()
-	service := New(newDocs(), config.SeverityConfig{})
+	service := New(newDocs(), config.SeverityConfig{}, Options{Resources: config.ResourcesConfig{MySQL: &config.MySQLResource{Address: "mysql.example.com:3306", Database: "kingeye", Username: "reader", Password: "secret"}}})
 	spec := sample()
 	spec.Enrich.Processors = []config.EnrichProcessorConfig{{Type: "source"}}
-	spec.Enrich.DataSources = &config.EnrichDataSources{MySQL: &config.EnrichMySQLDataSource{
-		Address: "mysql.example.com:3306", Database: "kingeye", Username: "reader", Password: "secret",
-	}}
 	record, err := service.Apply(ctx, spec, 0, false, "test")
 	if err != nil {
 		t.Fatal(err)
 	}
 	spec.Enrich.Processors[0].Type = "metric"
-	spec.Enrich.DataSources = &config.EnrichDataSources{MySQL: &config.EnrichMySQLDataSource{
-		Address: "mysql.example.com:3306", Database: "kingeye", Username: "reader",
-	}}
 	if _, err := service.Apply(ctx, spec, record.Revision, false, "test"); err != nil {
 		t.Fatal(err)
 	}
@@ -220,12 +215,9 @@ func TestPublicationPreservesEnrichAcrossReleases(t *testing.T) {
 		if err := json.Unmarshal(encoded, &body); err != nil {
 			t.Fatal(err)
 		}
-		if release.Spec.Enrich.DataSources == nil {
-			t.Fatalf("release %d lost enrich datasources", version)
-		}
 		enrichJSON := string(body["enrich"])
-		if strings.Contains(enrichJSON, `"Address"`) || !strings.Contains(enrichJSON, `"address"`) {
-			t.Fatalf("invalid datasource JSON schema: %s", body["enrich"])
+		if strings.Contains(enrichJSON, "datasources") || strings.Contains(enrichJSON, "secret") {
+			t.Fatal("release contains resources")
 		}
 		if !strings.Contains(enrichJSON, fmt.Sprintf(`"processors":[{"type":%q}]`, want)) {
 			t.Fatalf("invalid API enrich schema: %s", body["enrich"])
@@ -261,5 +253,46 @@ func TestPublicationPreservesHookParametersAndIsolation(t *testing.T) {
 	spec.Hooks[0].Type = "unknown"
 	if _, err := service.Apply(ctx, spec, 2, false, "api"); err == nil {
 		t.Fatal("published unknown hook")
+	}
+}
+
+type observingProvider struct {
+	changes []Change
+	err     error
+}
+
+func (p observingProvider) Pull(context.Context, Reader) ([]Change, error) { return p.changes, p.err }
+
+type providerRoundRecorder struct {
+	started bool
+	ok      bool
+	count   int
+	cancel  context.CancelFunc
+}
+
+func (o *providerRoundRecorder) RoundStarted() { o.started = true }
+
+func (o *providerRoundRecorder) RoundFinished(_ context.Context, _ time.Duration, n int, ok bool) {
+	o.ok = ok
+	o.count = n
+	o.cancel()
+}
+
+func TestProviderObservationIncludesApplyFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		p       observingProvider
+		success bool
+	}{{"empty", observingProvider{}, true}, {"apply fails", observingProvider{changes: []Change{{}}}, false}, {"pull fails", observingProvider{err: errors.New("upstream failure")}, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			o := &providerRoundRecorder{cancel: cancel}
+			s := New(newDocs(), config.SeverityConfig{})
+			err := s.RunProvider(ctx, tc.p, time.Second, nil, o)
+			if !errors.Is(err, context.Canceled) || !o.started || o.ok != tc.success || o.count != len(tc.p.changes) {
+				t.Fatalf("observer=%+v error=%v", o, err)
+			}
+		})
 	}
 }

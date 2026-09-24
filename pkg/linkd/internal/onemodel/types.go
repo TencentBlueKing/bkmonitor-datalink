@@ -15,6 +15,9 @@ import "errors"
 // ErrInvalidDataSourceResponse 表示后端返回不完整或违反身份契约的数据。
 var ErrInvalidDataSourceResponse = errors.New("invalid onemodel datasource response")
 
+// ErrResultLimit 表示完整查询结果超过调用方或 SDK 的硬上限。
+var ErrResultLimit = errors.New("onemodel result limit exceeded")
+
 // InstanceAttributeType 是 OneModel attribute_values 使用的固定类型槽。
 type InstanceAttributeType string
 

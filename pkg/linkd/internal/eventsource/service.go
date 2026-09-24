@@ -63,18 +63,25 @@ type Service struct {
 	docs            Documents
 	severity        config.SeverityConfig
 	cleaner         config.CleanerRuntimeConfig
+	resources       config.ResourcesConfig
 }
 
 // UseSeverity 注入控制面统一配置，必须在服务开始接受并发请求前调用。
 func (s *Service) UseSeverity(state *runtimeconfig.Severity) { s.runtimeSeverity = state }
 
+// Options 注入进程级处理预算和共享资源；服务只保存隔离副本。
+type Options struct {
+	Cleaner   config.CleanerRuntimeConfig
+	Resources config.ResourcesConfig
+}
+
 // New 创建来源服务，不隐式导入配置。
-func New(d Documents, severity config.SeverityConfig, defaults ...config.CleanerRuntimeConfig) *Service {
-	cleaner := config.DefaultCleanerRuntimeConfig()
-	if len(defaults) > 0 {
-		cleaner = defaults[0].WithDefaults()
+func New(d Documents, severity config.SeverityConfig, options ...Options) *Service {
+	var settings Options
+	if len(options) > 0 {
+		settings = options[0]
 	}
-	return &Service{docs: d, severity: severity, cleaner: cleaner}
+	return &Service{docs: d, severity: severity, cleaner: settings.Cleaner.WithDefaults(), resources: settings.Resources.Clone()}
 }
 
 // Get 读取当前编辑记录。
@@ -136,6 +143,11 @@ func (s *Service) Apply(ctx context.Context, spec config.EventSource, expected i
 	}
 	if e := config.ValidateEventSources([]config.EventSource{spec}, severity); e != nil {
 		return Record{}, e
+	}
+	if !deleted {
+		if _, err := spec.Enrich.SelectResources(s.resources); err != nil {
+			return Record{}, err
+		}
 	}
 	r, t, e := s.get(ctx, spec.EventSourceID)
 	if errors.Is(e, ErrNotFound) {
@@ -251,12 +263,22 @@ type Provider interface {
 	Pull(context.Context, Reader) ([]Change, error)
 }
 
+// ProviderObserver 接收完整 Pull 与 Apply 轮次；错误用布尔值表达，避免暴露连接信息。
+type ProviderObserver interface {
+	RoundStarted()
+	RoundFinished(context.Context, time.Duration, int, bool)
+}
+
 // RunProvider 仅在本轮全部成功后开始下一轮，限制单轮操作数并传播取消。
-func (s *Service) RunProvider(ctx context.Context, p Provider, interval time.Duration, onError func(error)) error {
+func (s *Service) RunProvider(ctx context.Context, p Provider, interval time.Duration, onError func(error), observers ...ProviderObserver) error {
 	if interval <= 0 {
 		return fmt.Errorf("provider interval must be positive")
 	}
 	for {
+		started := time.Now()
+		for _, o := range observers {
+			o.RoundStarted()
+		}
 		call, cancel := context.WithTimeout(ctx, 30*time.Second)
 		changes, e := p.Pull(call, s)
 		if e == nil && len(changes) > 1000 {
@@ -271,6 +293,9 @@ func (s *Service) RunProvider(ctx context.Context, p Provider, interval time.Dur
 			}
 		}
 		cancel()
+		for _, observe := range observers {
+			observe.RoundFinished(ctx, time.Since(started), len(changes), e == nil)
+		}
 		if e != nil && onError != nil {
 			onError(e)
 		}

@@ -39,6 +39,7 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | log（丰富分组） | 丰富结果中的日志专用信息，包含日志主题、检索语句和关联信息；日志指标与日志关键字共用适用字段，加工后的告警文案仍属于展示分组 |
 | apm（丰富分组） | 丰富结果中的 APM 专用信息，包含应用标识、名称、别名，以及服务、实例、接口和对端名称；派生模型与实例标识仍属于资源分组 |
 | k8s（丰富分组） | 丰富结果中的 K8s 专用信息，包含集群、命名空间、服务、工作负载、Pod、容器和节点上下文；集群标识保留 bcs_cluster_id 命名，资源所属业务与派生模型实例标识仍属于资源分组 |
+| 公共资源配置 | Linkd 顶层 `resources` 中的第三方只读连接，供丰富和调试查询复用；启动时加载，不进入 EventSource 发布快照 |
 | OneModel 实例存储 | Kingeye 当前统一实例来源；Elasticsearch 逻辑入口固定为 `kingeye_all_instance` alias，实例根身份为 `bk_tenant_id/model_id/model_inst_id/entity_uid`，来源原始属性位于 `attributes`，可检索动态属性位于 nested `attribute_values` |
 | strategy（丰富分组） | 丰富结果中的策略补充信息，包含 bk_strategy_id、monitor_template_id、strategy_config_id 三种独立身份，以及展示名称、跳转链接和鲸眼配置数据源；monitor_template_id 沿用旧 clean_strategy_id 的模板名称/策略名称回退行为 |
 | source（丰富分组） | 丰富结果中的来源补充信息，保存 Alert.EventSourceID 对应的 source_id、从 alarm_collect_alarmsource 查询的 source_name，以及承载来源事件标识的 meta_info；不替代 Linkd 的 EventSourceID |

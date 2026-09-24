@@ -21,6 +21,14 @@ import (
 type ControlPlaneTask string
 
 const (
+	// ControlPlaneTaskScheduler 记录调度轮次。
+	ControlPlaneTaskScheduler ControlPlaneTask = "scheduler"
+	// ControlPlaneTaskProviders 记录来源提供方完整应用轮次。
+	ControlPlaneTaskProviders ControlPlaneTask = "source-providers"
+	// ControlPlaneTaskActiveIndexes 记录策略索引目标发现轮次。
+	ControlPlaneTaskActiveIndexes ControlPlaneTask = "active-alert-indexes"
+	// ControlPlaneTaskDynamicConfig 记录配置同步轮次。
+	ControlPlaneTaskDynamicConfig ControlPlaneTask = "dynamic-config"
 	// ControlPlaneTaskElasticsearchSchemaAndActiveReconciler 对账 Schema 与 Active Alert 资源。
 	ControlPlaneTaskElasticsearchSchemaAndActiveReconciler ControlPlaneTask = "elasticsearch-schema-and-active-reconciler"
 	// ControlPlaneTaskElasticsearchBucketManager 维护当前预创建窗口内的时间桶。

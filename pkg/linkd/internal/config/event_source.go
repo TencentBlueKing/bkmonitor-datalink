@@ -12,7 +12,6 @@ package config
 import (
 	"encoding/json"
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -48,45 +47,9 @@ type EventSource struct {
 	Storage           EventSourceStorageConfig `yaml:"storage" json:"storage"`
 }
 
-// EnrichConfig 定义该来源创建新 Alert 时按顺序执行的丰富处理链及其数据源。
+// EnrichConfig 定义该来源创建新 Alert 时按顺序执行的丰富处理链；资源由部署配置注入。
 type EnrichConfig struct {
-	Processors  []EnrichProcessorConfig `yaml:"processors,omitempty" json:"processors,omitempty"`
-	DataSources *EnrichDataSources      `yaml:"datasources,omitempty" json:"datasources,omitempty"`
-}
-
-// EnrichDataSources 定义该来源的丰富处理器可复用的物理数据源连接。
-type EnrichDataSources struct {
-	KingeyeDisplay *EnrichDisplayDataSource       `yaml:"kingeye_display,omitempty" json:"kingeye_display,omitempty"`
-	MySQL          *EnrichMySQLDataSource         `yaml:"mysql,omitempty" json:"mysql,omitempty"`
-	Elasticsearch  *EnrichElasticsearchDataSource `yaml:"elasticsearch,omitempty" json:"elasticsearch,omitempty"`
-}
-
-// EnrichDisplayDataSource 只读取 Kingeye 已有展示缓存；KeyPrefix 与该环境缓存前缀一致。
-type EnrichDisplayDataSource struct {
-	Redis     RedisConfig `yaml:"redis" json:"redis"`
-	KeyPrefix string      `yaml:"key_prefix,omitempty" json:"key_prefix,omitempty"`
-}
-
-// EnrichMySQLDataSource 定义 Enrich 使用的 MySQL 只读连接。
-type EnrichMySQLDataSource struct {
-	Address  string `yaml:"address" json:"address"`
-	Database string `yaml:"database" json:"database"`
-	Username string `yaml:"username" json:"username"`
-	Password string `yaml:"password" json:"password"`
-}
-
-// EnrichElasticsearchDataSource 定义 Enrich 使用的 Elasticsearch 只读连接。
-type EnrichElasticsearchDataSource struct {
-	Addresses   []string               `yaml:"addresses" json:"addresses"`
-	IndexPrefix string                 `yaml:"index_prefix,omitempty" json:"index_prefix,omitempty"`
-	APIKey      string                 `yaml:"api_key,omitempty" json:"api_key,omitempty"`
-	BasicAuth   *EnrichBasicAuthSource `yaml:"basic_auth,omitempty" json:"basic_auth,omitempty"`
-}
-
-// EnrichBasicAuthSource 定义 Enrich Elasticsearch 的 Basic Auth 凭据。
-type EnrichBasicAuthSource struct {
-	Username string `yaml:"username" json:"username"`
-	Password string `yaml:"password" json:"password"`
+	Processors []EnrichProcessorConfig `yaml:"processors,omitempty" json:"processors,omitempty"`
 }
 
 func (c EnrichConfig) clone() EnrichConfig {
@@ -95,126 +58,10 @@ func (c EnrichConfig) clone() EnrichConfig {
 	for index, processor := range c.Processors {
 		cloned.Processors[index] = processor.clone()
 	}
-	if c.DataSources != nil {
-		dataSources := c.DataSources.clone()
-		cloned.DataSources = &dataSources
-	}
 	return cloned
-}
-
-func (c EnrichDataSources) clone() EnrichDataSources {
-	cloned := c
-	if c.KingeyeDisplay != nil {
-		value := *c.KingeyeDisplay
-		value.Redis = value.Redis.clone()
-		cloned.KingeyeDisplay = &value
-	}
-	if c.MySQL != nil {
-		value := *c.MySQL
-		cloned.MySQL = &value
-	}
-	if c.Elasticsearch != nil {
-		value := *c.Elasticsearch
-		value.Addresses = append([]string(nil), c.Elasticsearch.Addresses...)
-		if c.Elasticsearch.BasicAuth != nil {
-			basicAuth := *c.Elasticsearch.BasicAuth
-			value.BasicAuth = &basicAuth
-		}
-		cloned.Elasticsearch = &value
-	}
-	return cloned
-}
-
-// WithPreservedSecrets 用已有配置补齐管理接口中省略或脱敏的数据源凭据。
-func (c EnrichConfig) WithPreservedSecrets(previous EnrichConfig) EnrichConfig {
-	merged := c.clone()
-	if merged.DataSources == nil && previous.DataSources != nil {
-		dataSources := previous.DataSources.clone()
-		merged.DataSources = &dataSources
-	}
-	if merged.DataSources == nil || previous.DataSources == nil {
-		return merged
-	}
-	if merged.DataSources.MySQL != nil && previous.DataSources.MySQL != nil && merged.DataSources.MySQL.Address == previous.DataSources.MySQL.Address && merged.DataSources.MySQL.Username == previous.DataSources.MySQL.Username && merged.DataSources.MySQL.Database == previous.DataSources.MySQL.Database &&
-		(merged.DataSources.MySQL.Password == "" || merged.DataSources.MySQL.Password == redactedSecret) {
-		merged.DataSources.MySQL.Password = previous.DataSources.MySQL.Password
-	}
-	if merged.DataSources.KingeyeDisplay != nil && previous.DataSources.KingeyeDisplay != nil {
-		current := &merged.DataSources.KingeyeDisplay.Redis
-		old := previous.DataSources.KingeyeDisplay.Redis
-		sameTarget := current.Address == old.Address && current.Username == old.Username && current.Mode == old.Mode
-		if (current.Sentinel == nil) != (old.Sentinel == nil) {
-			sameTarget = false
-		}
-		if current.Sentinel != nil && old.Sentinel != nil {
-			sameTarget = sameTarget && current.Sentinel.MasterName == old.Sentinel.MasterName && slices.Equal(current.Sentinel.Addresses, old.Sentinel.Addresses)
-		}
-		if sameTarget && (current.Password == "" || current.Password == redactedSecret) {
-			current.Password = old.Password
-		}
-		if current.Sentinel != nil && old.Sentinel != nil && current.Sentinel.MasterName == old.Sentinel.MasterName && slices.Equal(current.Sentinel.Addresses, old.Sentinel.Addresses) && current.Sentinel.Username == old.Sentinel.Username && (current.Sentinel.Password == "" || current.Sentinel.Password == redactedSecret) {
-			current.Sentinel.Password = old.Sentinel.Password
-		}
-	}
-	currentElasticsearch, oldElasticsearch := merged.DataSources.Elasticsearch, previous.DataSources.Elasticsearch
-	if currentElasticsearch != nil && oldElasticsearch != nil && slices.Equal(currentElasticsearch.Addresses, oldElasticsearch.Addresses) {
-		if currentElasticsearch.APIKey == "" || currentElasticsearch.APIKey == redactedSecret {
-			currentElasticsearch.APIKey = oldElasticsearch.APIKey
-		}
-		if currentElasticsearch.BasicAuth != nil && oldElasticsearch.BasicAuth != nil && currentElasticsearch.BasicAuth.Username == oldElasticsearch.BasicAuth.Username &&
-			(currentElasticsearch.BasicAuth.Password == "" || currentElasticsearch.BasicAuth.Password == redactedSecret) {
-			currentElasticsearch.BasicAuth.Password = oldElasticsearch.BasicAuth.Password
-		}
-	}
-	return merged
-}
-
-func (c EnrichDataSources) redacted() EnrichDataSources {
-	redacted := c.clone()
-	if redacted.KingeyeDisplay != nil {
-		redacted.KingeyeDisplay.Redis = *(StorageConfig{Redis: &redacted.KingeyeDisplay.Redis}).Redacted().Redis
-	}
-	if redacted.MySQL != nil && redacted.MySQL.Password != "" {
-		redacted.MySQL.Password = redactedSecret
-	}
-	if redacted.Elasticsearch != nil {
-		if redacted.Elasticsearch.APIKey != "" {
-			redacted.Elasticsearch.APIKey = redactedSecret
-		}
-		if redacted.Elasticsearch.BasicAuth != nil && redacted.Elasticsearch.BasicAuth.Password != "" {
-			redacted.Elasticsearch.BasicAuth.Password = redactedSecret
-		}
-	}
-	return redacted
-}
-
-func (c EnrichMySQLDataSource) validate() error {
-	return MySQLConfig(c).Validate()
-}
-
-func (c EnrichElasticsearchDataSource) validate() error {
-	var basicAuth *BasicAuthConfig
-	if c.BasicAuth != nil {
-		basicAuth = &BasicAuthConfig{Username: c.BasicAuth.Username, Password: c.BasicAuth.Password}
-	}
-	if c.IndexPrefix == "" {
-		c.IndexPrefix = "bk_monitor_base_"
-	}
-	return (ElasticsearchConfig{
-		Addresses: c.Addresses, IndexPrefix: c.IndexPrefix,
-		APIKey: c.APIKey, BasicAuth: basicAuth,
-	}).Validate()
 }
 
 func (c EnrichConfig) validate() error {
-	if c.DataSources != nil && c.DataSources.KingeyeDisplay != nil {
-		if err := c.DataSources.KingeyeDisplay.Redis.Validate(); err != nil {
-			return fmt.Errorf("invalid kingeye_display redis configuration")
-		}
-		if len(c.DataSources.KingeyeDisplay.KeyPrefix) > 128 {
-			return fmt.Errorf("display key prefix too long")
-		}
-	}
 	seenProcessors := make(map[string]int, len(c.Processors))
 	for index, processor := range c.Processors {
 		if strings.TrimSpace(processor.Type) == "" {
@@ -231,56 +78,44 @@ func (c EnrichConfig) validate() error {
 				return fmt.Errorf("enrich.processors[%d]: %w", index, err)
 			}
 		}
+		switch processor.Type {
+		case "cmdb", "fields", "test", "strategy", "resource", "display", "metric", "source", "log", "cloud_resource", "k8s", "apm":
+		default:
+			return fmt.Errorf("enrich processor type is not registered: %q", processor.Type)
+		}
 		if previous, exists := seenProcessors[processor.Type]; exists {
 			return fmt.Errorf("enrich.processors[%d].type duplicates enrich.processors[%d]: %q", index, previous, processor.Type)
 		}
 		seenProcessors[processor.Type] = index
 	}
-	_, err := c.SelectDataSources()
-	if err != nil {
-		return err
-	}
-	if c.DataSources != nil && c.DataSources.MySQL != nil {
-		if err := c.DataSources.MySQL.validate(); err != nil {
-			return fmt.Errorf("enrich.datasources.mysql: %w", err)
-		}
-	}
-	if c.DataSources != nil && c.DataSources.Elasticsearch != nil {
-		if err := c.DataSources.Elasticsearch.validate(); err != nil {
-			return fmt.Errorf("enrich.datasources.elasticsearch: %w", err)
-		}
-	}
+
 	return nil
 }
 
-// SelectDataSources 按 Processor Chain 返回实际需要绑定的物理连接。
+// SelectResources 按 Processor Chain 返回实际需要绑定的物理连接。
 // 全部 Processor 共享一个 MySQL 连接池；Strategy 和 Resource 额外共享 Elasticsearch Transport。
-func (c EnrichConfig) SelectDataSources() (EnrichDataSources, error) {
-	configured := EnrichDataSources{}
-	if c.DataSources != nil {
-		configured = *c.DataSources
-	}
-	selected := EnrichDataSources{}
+func (c EnrichConfig) SelectResources(configured ResourcesConfig) (ResourcesConfig, error) {
+	selected := ResourcesConfig{}
 	for _, processor := range c.Processors {
 		switch processor.Type {
 		case "cmdb", "fields":
 			program, err := custom.Compile(processor.Type, processor.Config)
 			if err != nil {
-				return EnrichDataSources{}, err
+				return ResourcesConfig{}, err
 			}
 			if processor.Type == "cmdb" {
-				if configured.Elasticsearch == nil {
-					return EnrichDataSources{}, fmt.Errorf("enrich.datasources.elasticsearch is required by cmdb")
+				if configured.OneModel == nil {
+					return ResourcesConfig{}, fmt.Errorf("resources.onemodel is required by cmdb")
 				}
-				selected.Elasticsearch = configured.Elasticsearch
+				selected.OneModel = configured.OneModel
 			}
 			if program.NeedsDisplay() {
 				if configured.MySQL == nil {
-					return EnrichDataSources{}, fmt.Errorf("enrich.datasources.mysql required by display transform")
+					return ResourcesConfig{}, fmt.Errorf("resources.mysql required by display transform")
 				}
 				selected.MySQL = configured.MySQL
 				if configured.KingeyeDisplay == nil {
-					return EnrichDataSources{}, fmt.Errorf("enrich.datasources.kingeye_display required by display transform")
+					return ResourcesConfig{}, fmt.Errorf("resources.kingeye_display required by display transform")
 				}
 				selected.KingeyeDisplay = configured.KingeyeDisplay
 			}
@@ -288,22 +123,22 @@ func (c EnrichConfig) SelectDataSources() (EnrichDataSources, error) {
 			// 测试处理器只生成固定字段和等待，不需要外部连接。
 		case "strategy", "resource":
 			if configured.MySQL == nil {
-				return EnrichDataSources{}, fmt.Errorf("enrich.datasources.mysql is required by configured enrich processors")
+				return ResourcesConfig{}, fmt.Errorf("resources.mysql is required by configured enrich processors")
 			}
-			if configured.Elasticsearch == nil {
-				return EnrichDataSources{}, fmt.Errorf("enrich.datasources.elasticsearch is required by configured enrich processors")
+			if configured.OneModel == nil {
+				return ResourcesConfig{}, fmt.Errorf("resources.onemodel is required by configured enrich processors")
 			}
-			selected.MySQL, selected.Elasticsearch = configured.MySQL, configured.Elasticsearch
+			selected.MySQL, selected.OneModel = configured.MySQL, configured.OneModel
 		case "display", "metric", "source", "log", "cloud_resource", "k8s", "apm":
 			if configured.MySQL == nil {
-				return EnrichDataSources{}, fmt.Errorf("enrich.datasources.mysql is required by configured enrich processors")
+				return ResourcesConfig{}, fmt.Errorf("resources.mysql is required by configured enrich processors")
 			}
 			selected.MySQL = configured.MySQL
 		default:
-			return EnrichDataSources{}, fmt.Errorf("enrich processor type is not registered: %q", processor.Type)
+			return ResourcesConfig{}, fmt.Errorf("enrich processor type is not registered: %q", processor.Type)
 		}
 	}
-	return selected, nil
+	return selected.Clone(), selected.Validate()
 }
 
 // EnrichProcessorConfig 通过稳定注册名选择丰富处理器，并保存该处理器独占的配置。
@@ -422,10 +257,6 @@ func (s EventSource) Redacted() EventSource {
 	redacted.Storage.Kafka.Security = redacted.Storage.Kafka.Security.Redacted()
 	for i := range redacted.Hooks {
 		redacted.Hooks[i] = redacted.Hooks[i].Redacted()
-	}
-	if redacted.Enrich.DataSources != nil {
-		dataSources := redacted.Enrich.DataSources.redacted()
-		redacted.Enrich.DataSources = &dataSources
 	}
 	return redacted
 }

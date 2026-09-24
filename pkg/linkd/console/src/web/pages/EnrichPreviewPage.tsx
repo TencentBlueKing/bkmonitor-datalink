@@ -206,7 +206,7 @@ export function EnrichPreviewPage() {
         ) : (
           <p>执行时使用该告警源的当前已发布配置。</p>
         )}
-        <p>省略 datasources 时使用告警源配置的连接。</p>
+        <p>连接由控制面的公共 resources 配置提供，预览只编辑处理规则。</p>
         <button
           className="primary-button"
           disabled={busy || !tenant || !source || (mode === "id" && !id)}

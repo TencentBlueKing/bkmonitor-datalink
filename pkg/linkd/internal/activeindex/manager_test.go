@@ -249,3 +249,25 @@ func TestGroupUsesEnrichedStrategyInsteadOfRawLabel(t *testing.T) {
 		t.Fatal("original label changed")
 	}
 }
+
+func TestRunObserverIncludesIsolatedStrategyFailures(t *testing.T) {
+	scope := Scope{"tenant", "123"}
+	cache := &fakeCache{values: map[Scope][]string{scope: {"old"}}, pending: map[Scope]string{scope: "token"}, failure: true}
+	manager := testManager(t, &fakeReader{rows: []Row{activeRow("source-a", "tenant", "123", "new")}}, cache)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	observed := false
+	err := manager.Run(ctx, func(_ context.Context, _ time.Duration, work, failed int, err error) {
+		observed = true
+		if work != 1 || failed != 1 || err != nil {
+			t.Errorf("work=%d failed=%d error=%v", work, failed, err)
+		}
+		cancel()
+	})
+	if err != nil || !observed {
+		t.Fatal("missing full round observation", err)
+	}
+	if cache.values[scope][0] != "old" {
+		t.Fatal("instrumentation changed failure isolation")
+	}
+}

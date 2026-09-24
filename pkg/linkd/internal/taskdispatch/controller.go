@@ -334,6 +334,9 @@ func (c *Controller) Run(ctx context.Context) error {
 
 func (c *Controller) tick(ctx context.Context) (runErr error) {
 	started := time.Now()
+	if o, ok := c.observer.(interface{ OperationStarted(string) }); ok {
+		o.OperationStarted("reconcile")
+	}
 	defer func() { c.observer.Operation(ctx, "reconcile", runErr == nil, time.Since(started)) }()
 	call, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -341,7 +344,9 @@ func (c *Controller) tick(ctx context.Context) (runErr error) {
 	if e != nil || n != 1 {
 		return fmt.Errorf("scheduler lease lost: %w", errors.Join(e, context.Canceled))
 	}
+	recoveryStarted := time.Now()
 	releases, e := c.releases(call)
+	c.observer.Operation(ctx, "release_recovery", e == nil, time.Since(recoveryStarted))
 	if e != nil {
 		return e
 	}

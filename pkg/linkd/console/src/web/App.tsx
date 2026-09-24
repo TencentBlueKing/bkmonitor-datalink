@@ -1,3 +1,4 @@
+import { OneModelPage } from "./pages/OneModelPage";
 import { EnrichPreviewPage } from "./pages/EnrichPreviewPage";
 import { EventSourcesPage } from "./pages/EventSourcesPage";
 import { useQuery } from "@tanstack/react-query";
@@ -123,6 +124,7 @@ const navigationGroups: Array<{
     label: "系统",
     items: [
       { to: "/metrics/catalog", label: "指标目录", glyph: "M" },
+      { to: "/onemodel", label: "OneModel 查询", glyph: "O" },
       { to: "/enrich-preview", label: "丰富调试", glyph: "✧" },
       { to: "/event-sources", label: "Event Sources", glyph: "◈" },
       { to: "/config", label: "Configuration", glyph: "⚙" },
@@ -366,6 +368,7 @@ function PageRoutes() {
             </Suspense>
           }
         />
+        <Route path="/onemodel" element={<OneModelPage />} />
         <Route path="/enrich-preview" element={<EnrichPreviewPage />} />
         <Route path="/event-sources" element={<EventSourcesPage />} />
         <Route

@@ -134,7 +134,15 @@ func TestLoadLayers(t *testing.T) {
 func TestLoadEventSources(t *testing.T) {
 	t.Parallel()
 
-	path := writeConfig(t, `event_sources:
+	path := writeConfig(t, `resources:
+  mysql:
+    address: mysql.example.com:3306
+    database: kingeye
+    username: reader
+    password: secret
+  onemodel:
+    addresses: [http://onemodel.example.com:9200]
+event_sources:
   - event_source_id: source-a
     enabled: false
     storage:
@@ -160,14 +168,6 @@ func TestLoadEventSources(t *testing.T) {
     severity_mapping:
       P1: critical
     enrich:
-      datasources:
-        mysql:
-          address: mysql.example.com:3306
-          database: kingeye
-          username: reader
-          password: secret
-        elasticsearch:
-          addresses: [http://onemodel.example.com:9200]
       processors:
         - type: strategy
         - type: resource
@@ -199,8 +199,8 @@ func TestLoadEventSources(t *testing.T) {
 	if cfg.EventSources[1].Storage.Kafka.Security.Protocol != kafkaclient.SecurityProtocolPlaintext {
 		t.Fatalf("load() default protocol = %q", cfg.EventSources[1].Storage.Kafka.Security.Protocol)
 	}
-	if cfg.EventSources[1].Enrich.DataSources == nil || cfg.EventSources[1].Enrich.DataSources.MySQL == nil || cfg.EventSources[1].Enrich.DataSources.MySQL.Password != "secret" || cfg.EventSources[1].Enrich.DataSources.Elasticsearch == nil {
-		t.Fatalf("load() enrich datasources = %#v", cfg.EventSources[1].Enrich.DataSources)
+	if cfg.Resources.MySQL == nil || cfg.Resources.MySQL.Password != "secret" || cfg.Resources.OneModel == nil {
+		t.Fatalf("load() enrich datasources = %#v", cfg.Resources)
 	}
 	if got := cfg.EventSources[1].Enrich.Processors; !reflect.DeepEqual(got, []EnrichProcessorConfig{{Type: "strategy"}, {Type: "resource"}, {Type: "display"}, {Type: "metric"}, {Type: "source"}}) {
 		t.Fatalf("load() enrich processors = %#v", got)

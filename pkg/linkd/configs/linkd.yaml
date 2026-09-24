@@ -113,3 +113,7 @@ control_plane:
     max_trim_entries_per_cycle: 100000
 
 event_sources: []
+
+# 公共第三方只读连接：按需配置 mysql / onemodel / kingeye_display。
+# 处理规则属于 EventSource，连接配置不随来源发布。
+resources: {}

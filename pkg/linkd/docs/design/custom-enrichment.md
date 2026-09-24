@@ -13,7 +13,7 @@
 3. 原始 Alert/Event 不修改；enrich 记录各 Processor 的有序 JSONPath 补丁，读取时动态合成。
 4. 不保存最终 values，不把 enrich 当成另一份业务数据空间。
 5. 正式执行仅在新建 Alert 时发生；普通更新、update_current 升级、恢复和关闭沿用已保存结果。
-6. 配置随 EventSource Release 动态发布，API/YAML/Provider 共用校验。
+6. 处理规则随 EventSource Release 动态发布；连接来自顶层 resources 启动配置，API/YAML/Provider 共用校验。
 7. 新建独立内部 OneModel SDK，第一版读 ES，接口支持后续替换后端。
 8. 提供不保存的 API 预览，支持 Alert ID 和 Alert JSON；Console 提供专用调试页。
 9. 暂不读取 Kingeye 丰富配置表；离线转换器供后续同步复用，不自动发布。
@@ -82,13 +82,15 @@ succeeded/partial 中已提交补丁参与合成，failed/skipped 不应用补�
 
 ## 4. EventSource 配置
 
+连接示例中的 `resources` 位于启动 YAML 顶层，`enrich` 位于具体 EventSource；两者不属于同一个发布对象。
+
 每种 Processor 类型最多一次；rule ID 在 Processor 内唯一，operation ID 在规则内唯一。
 
 ```yaml
+resources:
+  onemodel:
+    addresses: [http://onemodel-es:9200]
 enrich:
-  datasources:
-    elasticsearch:
-      addresses: [http://onemodel-es:9200]
   processors:
     - type: cmdb
       config:
@@ -237,7 +239,7 @@ input.alert_id 与 input.alert 二选一；直接 JSON 支持完整 Alert 或只
 ```
 
 ID 模式按租户读取并核对来源；JSON 模式不要求入库，不伪造业务 ID、时间或状态。输入内租户/来源若存在必须一致。
-未提交 enrich 使用当前已发布来源配置；临时配置省略连接时继承同来源连接，凭据只在服务器内使用。修改连接目标时不继承旧目标密码。
+未提交 enrich 使用当前已发布来源规则；临时 enrich 只包含 processors。正式执行和预览都使用顶层 resources，不能在预览请求中覆盖连接。
 请求固定 Release，响应给实际版本和排除凭据后的配置摘要。清除历史 enrich 后重跑；旧结果仅作差异对比。
 查询当前 CMDB 数据，不承诺历史 as-of 重放。
 
@@ -283,12 +285,11 @@ go run ./cmd/linkd enrich convert-kingeye --file kingeye-enrich.json > converted
 ### 8.2 展示转换与 KAC 输出连接示例
 
 ```yaml
-enrich:
-  datasources:
-    mysql: {address: kingeye-mysql:3306, database: kingeye, username: reader, password: '<secret>'}
-    kingeye_display:
-      redis: {address: kingeye-redis:6379, database: 0, password: '<secret>'}
-      key_prefix: ''
+resources:
+  mysql: {address: kingeye-mysql:3306, database: kingeye, username: reader, password: '<secret>'}
+  kingeye_display:
+    redis: {address: kingeye-redis:6379, database: 0, password: '<secret>'}
+    key_prefix: ''
 ```
 
 在相应 Value 中配置 `transforms: [{type: display, model_id: cw-Host, field: operator}]`。

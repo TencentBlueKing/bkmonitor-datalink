@@ -136,6 +136,14 @@ severity:
     - { name: warning, priority: 2 }
     - { name: info, priority: 3 }
 
+resources:
+  mysql:
+    address: kingeye-mysql.example.com:3306
+    database: kingeye
+    username: reader
+    password: ""
+  onemodel:
+    addresses: [http://onemodel.example.com:9200]
 event_sources:
   - event_source_id: source-a
     related_tenant_id: ""
@@ -151,14 +159,6 @@ event_sources:
       P2: warning
     default_severity: warning
     enrich:
-      datasources:
-        mysql:
-          address: kingeye-mysql.example.com:3306
-          database: kingeye
-          username: reader
-          password: ""
-        elasticsearch:
-          addresses: [http://onemodel.example.com:9200]
       processors:
         - type: strategy
           config:
@@ -229,12 +229,17 @@ enrich:
 每个新 Alert 的调用与字段副本独立；计划持久化后的重试沿用冻结结果，不重新模拟。
 无丰富基线测试使用 `processors: []`。原临时顶层 `sleep_milliseconds` 已移入 datasource 分布配置。
 
-丰富数据源由 `event_sources[].enrich.datasources` 随来源 Release 发布。`mysql` 表示 Enrich 范围内
-共享的数据库连接，策略、业务空间、告警源和指标等 Reader 在同一连接池上查询各自的表；`elasticsearch` 表示
-共享的统一实例连接；OneModel Reader 固定查询 `kingeye_all_instance` alias，投影边固定读取 `kingeye_topo`，CMDB 业务拓扑按 `index_prefix` 读取 `<prefix>cmdb_biz_topo_node` 与 `<prefix>cmdb_biz_topo_host_membership`。`index_prefix` 默认 `bk_monitor_base_`。Lifecycle 启动来源任务时只为当前
-Processor Chain 选择所需的物理连接，任务停止时关闭连接；数据源配置变化会产生新 Release 并重启该来源
-任务。管理接口默认隐藏 MySQL 密码、Elasticsearch API Key 和 Basic Auth 密码；授权 worker 获取完整
-Release。真实依赖的联调结果需单独验证，普通单元测试使用 mock 不代表生产链路已验证。
+第三方只读资源统一由顶层 `resources` 配置：`mysql` 供 Kingeye 元数据 Reader 使用，
+`onemodel` 供统一实例、关联和业务拓扑查询使用，`kingeye_display` 供展示缓存转换使用。
+所有 EventSource、丰富预览及 OneModel 查询复用同一套资源定义；连接仍按实际依赖初始化，来源任务退出时关闭。
+OneModel 实例固定读取 `kingeye_all_instance`，关联边固定读取 `kingeye_topo`；业务拓扑读取
+`<index_prefix>cmdb_biz_topo_node` 和 `<index_prefix>cmdb_biz_topo_host_membership`，前缀默认 `bk_monitor_base_`。
+
+资源是静态启动配置，更新后同步重启控制面和 Lifecycle。Helm 使用 `configuration.resources` 为各角色提供一致配置。
+来源导入文件只需包含处理规则，无需复制资源凭据；控制面发布和运行时装配检查实际所需资源。
+旧 `event_sources[].enrich.datasources` 输入已移除；历史 Release 不改写，读取后也不再使用其内嵌连接。
+配置展示隐藏 MySQL、Redis、Elasticsearch API Key 和 Basic Auth 密码；新发布的 Record/Release 不包含公共资源。
+真实依赖的联调结果需单独验证，普通 mock 单元测试不代表生产链路已验证。
 
 顶层 `cleaner` 是每条 EventSource Flow 的默认预算；`event_sources[].cleaner.runtime` 只覆盖非零
 字段。每条 Flow 内共享清洗 worker pool，但 Event 持久化、Mailbox 入队和原消息确认始终按 lane 独立推进，
@@ -381,21 +386,23 @@ linkd run control-plane --config /etc/linkd/linkd.yaml
 linkd run all-in-one --config /etc/linkd/linkd.yaml
 ```
 
-`event_sources[].enrich.datasources` 按 Processor 的实际依赖选择物理连接：
+`resources` 按 Processor 的实际依赖选择物理连接：
 
 | Processor | 必需连接 | 逻辑 Reader |
 | --- | --- | --- |
-| `strategy` | `mysql`、`elasticsearch` | CW Strategy、OneModel |
-| `resource` | `mysql`、`elasticsearch` | CW Strategy、OneModel |
+| `strategy` | `mysql`、`onemodel` | CW Strategy、OneModel |
+| `resource` | `mysql`、`onemodel` | CW Strategy、OneModel |
 | `display` | `mysql` | CW Strategy、MetricLibrary |
 | `metric` | `mysql` | CW Strategy、MetricLibrary |
 | `source` | `mysql` | AlarmSource |
+| `cmdb` | `onemodel` | 实例与关联查询 |
+| `cmdb` / `fields` 的 display 转换 | 额外需要 `mysql`、`kingeye_display` | 模型元数据与展示缓存 |
 
 `mysql` 使用 `address/database/username/password`。各 Reader 共享同一个连接池，并在所配置数据库中
 查询各自的表；AlarmSource 按 `bk_tenant_id + EventSourceID` 查询
 `alarm_collect_alarmsource.name`。
 
-`event_sources[].enrich.datasources.elasticsearch` 配置 Strategy/Resource Processor 使用的 OneModel
+`resources.onemodel` 配置 Strategy/Resource Processor 使用的 OneModel
 Elasticsearch 读连接。OneModel Client 固定读取 `kingeye_all_instance` alias 和 `kingeye_topo` 投影边；
 `index_prefix` 默认 `bk_monitor_base_`，用于读取 `<prefix>cmdb_biz_topo_node` 与
 `<prefix>cmdb_biz_topo_host_membership`。实例查询使用根字段

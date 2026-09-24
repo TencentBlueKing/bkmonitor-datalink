@@ -19,7 +19,7 @@ import (
 	"linkd/internal/config"
 	"linkd/internal/enrich"
 	"linkd/internal/enrich/datasources"
-	"linkd/internal/onemodel"
+	onemodelassembly "linkd/internal/onemodel/assembly"
 	"linkd/internal/redisclient"
 	elasticsearchstore "linkd/internal/store/elasticsearch"
 	"linkd/internal/telemetry"
@@ -56,11 +56,12 @@ func (r *Runtime) Close() error {
 func Open(
 	ctx context.Context,
 	source config.EventSource,
+	resources config.ResourcesConfig,
 	maxConnections int,
 	timeout time.Duration,
 	telemetryRuntime *telemetry.Runtime,
 ) (*Runtime, error) {
-	dataSources, err := source.Enrich.SelectDataSources()
+	dataSources, err := source.Enrich.SelectResources(resources)
 	if err != nil {
 		return nil, err
 	}
@@ -75,25 +76,14 @@ func Open(
 		runtime.dataSources = dataSourceRuntime
 		sources = dataSourceRuntime.Sources()
 	}
-	if dataSources.Elasticsearch != nil {
-		oneModelConfig := dataSources.Elasticsearch
-		transport, err := NewOneModelTransport(
-			oneModelConfig,
-			maxConnections,
-			timeout,
-		)
+	if dataSources.OneModel != nil {
+		oneModelConfig := dataSources.OneModel
+		client, transport, err := onemodelassembly.Open(oneModelConfig, maxConnections, timeout)
 		if err != nil {
 			_ = runtime.Close()
-			return nil, fmt.Errorf("create onemodel transport: %w", err)
+			return nil, err
 		}
 		runtime.transport = transport
-		client, err := onemodel.NewClient(onemodel.ClientConfig{
-			Transport: transport, IndexPrefix: oneModelConfig.IndexPrefix,
-		})
-		if err != nil {
-			_ = runtime.Close()
-			return nil, fmt.Errorf("create onemodel client: %w", err)
-		}
 		sources.OneModel = client
 		sources.CMDB = client
 		k8sReader, err := datasources.NewOneModelK8sReader(client)
@@ -136,26 +126,7 @@ func (r *Runtime) Router(source config.EventSource, telemetryRuntime *telemetry.
 	return NewRouter([]config.EventSource{source}, r.sources, WithEnrichObserver(telemetryRuntime.EnrichProcessorObserver()))
 }
 
-// NewOneModelTransport 为同一来源复用有界、支持取消的 ES HTTP 连接池。
-func NewOneModelTransport(
-	dataSource *config.EnrichElasticsearchDataSource,
-	maxConnections int,
-	timeout time.Duration,
-) (*elasticsearchstore.HTTPTransport, error) {
-	transportConfig := elasticsearchstore.HTTPTransportConfig{
-		Addresses:             append([]string(nil), dataSource.Addresses...),
-		APIKey:                dataSource.APIKey,
-		Timeout:               timeout,
-		MaxConnectionsPerHost: maxConnections,
-	}
-	if dataSource.BasicAuth != nil {
-		transportConfig.BasicUsername = dataSource.BasicAuth.Username
-		transportConfig.BasicPassword = dataSource.BasicAuth.Password
-	}
-	return elasticsearchstore.NewHTTPTransport(transportConfig)
-}
-
-func mysqlDataSourceConfig(value *config.EnrichMySQLDataSource) *datasources.MySQLConfig {
+func mysqlDataSourceConfig(value *config.MySQLResource) *datasources.MySQLConfig {
 	if value == nil {
 		return nil
 	}

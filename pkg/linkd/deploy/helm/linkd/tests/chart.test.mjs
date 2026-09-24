@@ -400,3 +400,12 @@ test("ServiceMonitor remains opt-in and rejects invalid configuration", () => {
     assert.notEqual(result.status,0,JSON.stringify(serviceMonitor));
   }
 });
+
+test("shared resources reach control plane and lifecycle without source credentials", () => {
+  const docs = render();
+  for (const role of ["control-plane", "lifecycle"]) {
+    const cfg = parse(configFor(docs, byComponent(docs, role)));
+    assert.deepEqual(cfg.resources, base.configuration.resources);
+    assert.deepEqual(cfg.event_sources, []);
+  }
+});

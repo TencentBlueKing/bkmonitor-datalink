@@ -77,7 +77,7 @@ func TestNoIndexHooksDoesNotOpenStorage(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
-		done <- runActiveIndexes(ctx, config.Config{}, indexSourceStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		done <- runActiveIndexes(ctx, config.Config{}, indexSourceStub{}, slog.New(slog.NewTextHandler(io.Discard, nil)), taskCatalog(config.Config{}, 0), nil)
 	}()
 	cancel()
 	select {

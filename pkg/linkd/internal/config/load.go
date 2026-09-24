@@ -27,6 +27,7 @@ const (
 )
 
 type fileConfig struct {
+	Resources    ResourcesConfig      `yaml:"resources,omitempty"`
 	Dispatch     DispatchConfig       `yaml:"dispatch"`
 	Worker       WorkerConfig         `yaml:"worker"`
 	Logging      logging.Config       `yaml:"logging"`
@@ -126,7 +127,8 @@ func load(path string, overrides Overrides, lookupEnv func(string) (string, bool
 		controlPlane = &normalized
 	}
 	cfg := Config{
-		Dispatch: decoded.Dispatch, Worker: decoded.Worker,
+		Resources: decoded.Resources.Clone(),
+		Dispatch:  decoded.Dispatch, Worker: decoded.Worker,
 		Logging:      decoded.Logging,
 		Storage:      storage,
 		Lifecycle:    lifecycle,

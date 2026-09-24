@@ -466,28 +466,54 @@ export const redisLeaseResponseSchema = redisSectionBaseSchema.extend({
 });
 export type RedisLeaseResponse = z.infer<typeof redisLeaseResponseSchema>;
 
-export const controlPlaneTaskIdSchema = z.enum([
-  "elasticsearch-schema-and-active-reconciler",
-  "elasticsearch-bucket-manager",
-  "elasticsearch-alert-archiver",
-  "redis-stream-manager",
-]);
-export type ControlPlaneTaskId = z.infer<typeof controlPlaneTaskIdSchema>;
-
+export const controlPlaneExecutionSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  startedAt: z.string().optional(),
+  finishedAt: z.string().optional(),
+  lastSuccess: z.string().optional(),
+  running: z.boolean(),
+  outcome: z.string(),
+  errorCode: z.string().optional(),
+  durationSeconds: z.number(),
+  succeeded: z.number(),
+  failed: z.number(),
+  canceled: z.number(),
+  work: z.number(),
+  failures: z.number(),
+});
 export const controlPlaneTaskDefinitionSchema = z.object({
-  id: controlPlaneTaskIdSchema,
+  id: z.string(),
+  name: z.string(),
+  group: z.string(),
+  description: z.string(),
+  kind: z.string(),
   enabled: z.boolean(),
-  dependsOn: z.array(controlPlaneTaskIdSchema),
-  intervalSeconds: z.number().int().positive(),
-  configSource: z.enum(["explicit", "default", "disabled"]),
+  disabledReason: z.string().optional(),
+  intervalSeconds: z.number(),
+  deadlineSeconds: z.number(),
+  configSource: z.string(),
+  dependsOn: z.array(z.string()),
   settings: z.record(
     z.string(),
     z.union([z.string(), z.number(), z.boolean()]),
   ),
+  active: z.boolean(),
+  state: z.string(),
+  execution: controlPlaneExecutionSchema,
+  steps: z.array(controlPlaneExecutionSchema),
+  detailsTruncated: z.boolean(),
 });
 export type ControlPlaneTaskDefinition = z.infer<
   typeof controlPlaneTaskDefinitionSchema
 >;
+export const controlPlaneCatalogSchema = z.object({
+  owner: z.string(),
+  startedAt: z.string(),
+  snapshotAt: z.string(),
+  tasks: z.array(controlPlaneTaskDefinitionSchema).max(64),
+  services: z.array(controlPlaneTaskDefinitionSchema).max(16),
+});
 
 const runtimeSeriesValueSchema = z.object({
   labels: z.record(z.string(), z.string()),
@@ -495,7 +521,7 @@ const runtimeSeriesValueSchema = z.object({
   timestamp: z.number(),
 });
 
-export const controlPlaneRuntimeSchema = z.object({
+export const controlPlaneRuntimeSchema = controlPlaneCatalogSchema.extend({
   status: availabilitySchema,
   snapshotAt: z.string().datetime(),
   tasks: z.array(controlPlaneTaskDefinitionSchema),
@@ -522,17 +548,6 @@ export const controlPlaneRuntimeSchema = z.object({
     status: availabilitySchema,
     message: z.string().optional(),
     backlog: z.number().int().nonnegative().nullable(),
-  }),
-  redis: z.object({
-    status: availabilitySchema,
-    message: z.string().optional(),
-    streamExists: z.boolean().nullable(),
-    expectedGroupPresent: z.boolean().nullable(),
-    entries: z.number().int().nonnegative().nullable(),
-    maxEntries: z.number().int().positive().nullable(),
-    entriesAboveMax: z.number().int().nonnegative().nullable(),
-    pending: z.number().int().nonnegative().nullable(),
-    maxLag: z.number().int().nullable(),
   }),
 });
 export type ControlPlaneRuntime = z.infer<typeof controlPlaneRuntimeSchema>;

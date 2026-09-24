@@ -97,20 +97,20 @@ Lifecycle 构造并 Normalize 新 Alert
 
 ## 4. 配置与装配
 
-Enrich 配置属于 EventSource Release：
+公共连接属于顶层 `resources` 启动配置；以下 `enrich` 片段属于 EventSource Release：
 
 ```yaml
+resources:
+  mysql:
+    address: mysql.example.com:3306
+    database: kingeye
+    username: reader
+    password: "..."
+  onemodel:
+    addresses:
+      - http://onemodel.example.com:9200
+    api_key: "..."
 enrich:
-  datasources:
-    mysql:
-      address: mysql.example.com:3306
-      database: kingeye
-      username: reader
-      password: "..."
-    elasticsearch:
-      addresses:
-        - http://onemodel.example.com:9200
-      api_key: "..."
   processors:
     - type: strategy
       config:
@@ -128,8 +128,8 @@ enrich:
 - 空列表使用 Noop，结果为 succeeded 且 `processors` 为空。
 - 未注册 Processor、缺少必需物理连接或非法配置使 Release 校验失败。
 - `strategy`、`resource` 当前要求 MySQL 与 Elasticsearch；`display`、`metric`、`source` 要求 MySQL。
-- 凭据只进入 DataSource 配置，redaction 后输出。
-- `configs/linkd.pm2.yaml` 当前示例使用空链；生产启用需要在 EventSource Release 中显式配置处理器和数据源。
+- 凭据只进入顶层 resources，展示时脱敏，不进入新发布的 Record/Release。
+- `configs/linkd.pm2.yaml` 当前示例使用空链；生产启用需要在 EventSource Release 中配置处理器，并在启动 YAML 中配置公共资源。
 
 当前 Router 注册：
 
@@ -339,7 +339,7 @@ meta_info
 
 ### 7.3 OneModel 实例协议
 
-`event_sources[].enrich.datasources.elasticsearch.index_prefix` 配置 CMDB 业务拓扑索引前缀，默认 `bk_monitor_base_`；实例 alias `kingeye_all_instance` 与投影边 `kingeye_topo` 使用固定契约名。
+`resources.onemodel.index_prefix` 配置 CMDB 业务拓扑索引前缀，默认 `bk_monitor_base_`；实例 alias `kingeye_all_instance` 与投影边 `kingeye_topo` 使用固定契约名。
 
 当前 `onemodel.Client` 固定查询：
 

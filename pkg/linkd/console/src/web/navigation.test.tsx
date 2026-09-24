@@ -80,7 +80,13 @@ describe("sidebar navigation", () => {
       ],
       [
         "系统",
-        ["/metrics/catalog", "/enrich-preview", "/event-sources", "/config"],
+        [
+          "/metrics/catalog",
+          "/onemodel",
+          "/enrich-preview",
+          "/event-sources",
+          "/config",
+        ],
       ],
     ] as const;
 

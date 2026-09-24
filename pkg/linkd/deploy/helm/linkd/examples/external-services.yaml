@@ -2,6 +2,14 @@
 auth:
   existingSecret: linkd-auth
 configuration:
+  # 各角色共用；仅启用相应处理器或 OneModel 调试时才连接。
+  resources:
+    mysql: {address: kingeye-mysql:3306, database: kingeye, username: reader, password: ""}
+    onemodel:
+      addresses: [http://onemodel:9200]
+    kingeye_display:
+      redis: {address: kingeye-redis:6379, database: 0}
+      key_prefix: ""
   logging:
     level: info
     format: json

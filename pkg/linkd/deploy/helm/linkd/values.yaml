@@ -25,6 +25,7 @@ auth:
   apiTokenKey: api-token
   workerTokenKey: worker-token
 ## 完整 Linkd YAML 对象。请按示例配置外部存储；凭据也可放到已有 Secret。
+## resources.mysql / resources.onemodel / resources.kingeye_display 在此统一配置；更新后重启相关角色。
 configuration: {}
 
 ## @section 通用 Pod 参数

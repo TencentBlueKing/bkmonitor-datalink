@@ -48,3 +48,55 @@ func TestElasticsearchOneModelContract(t *testing.T) {
 		t.Fatalf("cross-tenant found=%t err=%v", found, err)
 	}
 }
+
+// TestElasticsearchOneModelPagination 只读验证真实 ES 的 PIT 排序及翻页。
+// 不创建或清理业务文档；测试最多读取两个实例，并释放未读完的快照。
+func TestElasticsearchOneModelPagination(t *testing.T) {
+	endpoint := os.Getenv("LINKD_TEST_ELASTICSEARCH_URL")
+	tenant := os.Getenv("LINKD_TEST_ONEMODEL_TENANT_ID")
+	model := os.Getenv("LINKD_TEST_ONEMODEL_MODEL_ID")
+	if endpoint == "" || tenant == "" || model == "" {
+		t.Skip("set LINKD_TEST_ELASTICSEARCH_URL, LINKD_TEST_ONEMODEL_TENANT_ID and LINKD_TEST_ONEMODEL_MODEL_ID to run PIT integration")
+	}
+	transport, err := es.NewHTTPTransport(es.HTTPTransportConfig{Addresses: []string{endpoint}, APIKey: os.Getenv("LINKD_TEST_ELASTICSEARCH_API_KEY"), MaxConnectionsPerHost: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer transport.Close()
+	client, err := NewClient(ClientConfig{Transport: transport})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pager, err := NewPager(client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := PageQuery{ModelID: model, Limit: 1}
+	page, err := pager.Search(t.Context(), tenant, query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Instances) != 1 {
+		t.Fatal("integration model must contain at least one instance")
+	}
+	if page.NextCursor == "" {
+		t.Log("single-instance model: verified PIT and terminal page only")
+		return
+	}
+	firstID := page.Instances[0].InstanceID
+	query.Cursor = page.NextCursor
+	page, err = pager.Search(t.Context(), tenant, query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.NextCursor != "" {
+		defer func() {
+			if err := pager.Close(t.Context(), tenant, page.NextCursor); err != nil {
+				t.Error(err)
+			}
+		}()
+	}
+	if len(page.Instances) != 1 || page.Instances[0].TenantID != tenant || page.Instances[0].InstanceID <= firstID {
+		t.Fatalf("unexpected second page %+v", page)
+	}
+}

@@ -78,9 +78,6 @@ func TestEnrichChangeRestartsSourceTasks(t *testing.T) {
 	release.Version = 2
 	release.Spec.Enrich = config.EnrichConfig{
 		Processors: []config.EnrichProcessorConfig{{Type: "source"}},
-		DataSources: &config.EnrichDataSources{MySQL: &config.EnrichMySQLDataSource{
-			Address: "mysql.example.com:3306", Database: "kingeye", Username: "reader",
-		}},
 	}
 	Reconcile(&s, []eventsource.Release{release}, now)
 	for _, task := range s.Tasks {

@@ -466,3 +466,43 @@ event_sources:
     }
   });
 });
+
+it("loads and redacts shared resources without mutating their credentials", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "linkd-resources-"));
+  try {
+    const configPath = path.join(directory, "linkd.yaml");
+    await writeFile(
+      configPath,
+      `storage:
+  repository: mysql
+  mysql: {address: '127.0.0.1:3306', database: linkd, username: reader}
+resources:
+  mysql: {address: 'kingeye:3306', database: kingeye, username: reader, password: mysql-private}
+  onemodel:
+    addresses: ['http://onemodel:9200']
+    api_key: es-private
+    basic_auth: {username: reader, password: basic-private}
+  kingeye_display:
+    redis:
+      mode: sentinel
+      password: redis-private
+      sentinel: {master_name: master, addresses: ['sentinel:26379'], password: sentinel-private}
+`,
+    );
+    const config = await loadConfig(configPath);
+    expect(config.resources?.mysql?.password).toBe("mysql-private");
+    const text = JSON.stringify(redactedConfig(config));
+    for (const secret of [
+      "mysql-private",
+      "es-private",
+      "basic-private",
+      "redis-private",
+      "sentinel-private",
+    ])
+      expect(text).not.toContain(secret);
+    expect(config.resources?.onemodel?.api_key).toBe("es-private");
+    expect(text).toContain("resources");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { controlPlaneFixture } from "../../src/test-fixtures/control-plane";
 
 const prefix = (process.env.LINKD_CONSOLE_AUTH_TEST_BASE_PATH ?? "").replace(
   /\/$/,
@@ -63,6 +64,29 @@ test("browser authenticates, loads production assets and refreshes SPA route", a
     ).toBe(true);
     expect(
       applicationRequests.every((path) => path.startsWith(prefix + "/")),
+    ).toBe(true);
+    await page.route(`**${prefix}/local-api/runtime/control-plane?*`, (route) =>
+      route.fulfill({ json: controlPlaneFixture() }),
+    );
+    await page.route(`**${prefix}/local-api/dynamic-config`, (route) =>
+      route.fulfill({
+        json: {
+          config: { enabled: false, origin: "yaml", sync_state: "disabled" },
+          workers: {},
+        },
+      }),
+    );
+    await page
+      .getByRole("link", { name: "Control Plane", exact: false })
+      .click();
+    await expect(page).toHaveURL(new RegExp(prefix + "/control-plane$"));
+    await expect(page.locator(".cp-task-row")).toHaveCount(8);
+    await page.reload();
+    await expect(page.locator(".cp-task-row")).toHaveCount(8);
+    expect(
+      applicationRequests
+        .filter((path) => path.includes("local-api"))
+        .every((path) => path.startsWith(prefix + "/")),
     ).toBe(true);
     const api = await context.request.get(prefix + "/local-api/capabilities");
     expect(api.status()).toBe(200);

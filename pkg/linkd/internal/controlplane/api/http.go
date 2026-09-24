@@ -22,14 +22,19 @@ import (
 	"time"
 
 	"linkd/internal/config"
+	"linkd/internal/controlplane/taskstate"
 	"linkd/internal/dynamicconfig"
 	"linkd/internal/enrich/preview"
 	"linkd/internal/eventsource"
+	"linkd/internal/onemodel/queryservice"
 	"linkd/internal/taskdispatch"
 )
 
 // API 提供来源管理和 worker 协议；两类请求使用不同 token。
 type API struct {
+	// Tasks 提供当前进程的只读任务目录及执行快照。
+	Tasks       interface{ Snapshot() taskstate.Snapshot }
+	OneModel    *queryservice.Service
 	AlertCloser AlertCloser
 	Previewer   interface {
 		Preview(context.Context, preview.Request) (preview.Response, error)
@@ -44,6 +49,15 @@ type API struct {
 // Handler 创建有身份校验的正式接口。
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/control-plane/tasks", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		if a.Tasks == nil {
+			http.Error(w, "task status unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		output(w, a.Tasks.Snapshot())
+	})
+	mux.HandleFunc("POST /api/v1/onemodel/{operation}", a.queryOneModel)
 	mux.Handle("GET /api/v1/metrics/catalog", metricCatalogHandler())
 	mux.HandleFunc("POST /api/v1/enrich/preview", a.previewEnrich)
 	mux.HandleFunc("POST /api/v1/alerts/{id}/close", a.closeAlert)
@@ -202,7 +216,6 @@ func (a *API) put(w http.ResponseWriter, r *http.Request) {
 		if m.Spec.Storage.Kafka.Security.Protocol == "" && m.Spec.Storage.Kafka.Security.SASL == nil {
 			m.Spec.Storage.Kafka.Security = old.Spec.Storage.Kafka.Security
 		}
-		m.Spec.Enrich = m.Spec.Enrich.WithPreservedSecrets(old.Spec.Enrich)
 		m.Spec = m.Spec.WithPreservedHookSecrets(old.Spec)
 	}
 	record, e := a.Sources.Apply(r.Context(), m.Spec, m.Expected, false, "api")

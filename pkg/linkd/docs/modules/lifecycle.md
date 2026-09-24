@@ -144,7 +144,7 @@ Enricher 输入只包含已完成基础构造和 Normalize 的 Alert 深拷贝�
 不依赖外部数据库。参数与范围见[配置指南](../guides/configuration.md)。
 
 当前 `strategy → resource → display → metric → source` 链已经提供 MySQL 和 Elasticsearch 数据源装配，
-由来源 Release 的 enrich.datasources 和实际 Processor 依赖选择连接；不回查监控平台策略历史表。
+由进程顶层 resources 和来源 Release 的实际 Processor 依赖选择连接；不回查监控平台策略历史表。
 单元测试中的 mock 不表示目标业务环境已经联调，接入示例见[主机告警丰富](../guides/host-alert-enrich-example.md)。
 
 FinalHook 在 Alert 真实变化后按当前任务 Release 的 `EventSource.hooks` 顺序执行。

@@ -21,6 +21,7 @@ const MaxFileSize = 1 << 20
 
 // Config 是 Linkd 本地进程配置的聚合根对象。
 type Config struct {
+	Resources    ResourcesConfig      `yaml:"resources,omitempty"`
 	Dispatch     DispatchConfig       `yaml:"dispatch"`
 	Worker       WorkerConfig         `yaml:"worker"`
 	Logging      logging.Config       `yaml:"logging"`
@@ -52,6 +53,9 @@ func Default() Config {
 
 // Validate 校验完整的 Linkd 本地进程配置。
 func (c Config) Validate() error {
+	if err := c.Resources.Validate(); err != nil {
+		return err
+	}
 	workers, bytes := c.Worker.Limits()
 	if workers < 1 || workers > 65536 || bytes < 1 || bytes > 64<<30 {
 		return fmt.Errorf("invalid worker resource budgets")
@@ -118,6 +122,7 @@ func (c Config) Validate() error {
 // Redacted 返回可安全展示的配置副本。
 func (c Config) Redacted() Config {
 	redacted := c
+	redacted.Resources = c.Resources.Redacted()
 	redacted.Dispatch.APIToken = "[redacted]"
 	redacted.Dispatch.WorkerToken = "[redacted]"
 	redacted.Worker = c.Worker.Clone()

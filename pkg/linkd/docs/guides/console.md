@@ -37,11 +37,27 @@ Kafka 和 Redis 页面展示请求时的当前快照；历史趋势只来自 Pro
 Prometheus 图表页面统一提供 15 分钟到 7 天的查询时间范围，默认 1 小时；采样步长随所选范围调整。
 页面另行提供独立的“计算窗口”，默认 1 分钟，并直接用于速率、增量与直方图分位计算。
 
-Control Plane 页面不展示 ES 集群、分片或索引容量，而是按当前四个 management task 展示 owner、依赖、
-执行新鲜度和工作量。三个 ES 任务依次依赖 Schema/Active 资源、时间桶和 History write alias；Redis Stream
-任务在逻辑上独立，但与它们共享进程监督和退出故障域。Archiver backlog 来自固定 Active alias 的只读
-`_count`；页面同时展示连续归档的空闲/重试间隔、批量上限、Worker 数及最近扫描、成功和失败数量，历史执行和
-归档/裁剪速率来自 Prometheus。
+Control Plane 使用“运行概况 → 全量任务列表 → 任务详情”。目录和生效参数来自控制面
+`GET /api/v1/control-plane/tasks`，受管理 token 保护；Console 通过 `/local-api/runtime/control-plane`
+代理读取，浏览器不接触 token。需要同时更新控制面和 Console；接口缺失时明确报错，不从 Console YAML
+推断任务启停。当前列出调度、来源 Provider、三个 ES 维护任务、Redis Stream、策略索引和动态配置，管理 API
+作为常驻服务单独展示。未启用项目保留在列表并解释原因；支持搜索、分组和需要关注筛选。
+
+运行详情以当前响应进程为准，显示 owner、执行状态和有限子流程结果；执行情况区分本次启动累计与
+Prometheus 时间窗数据，生效配置只包含显式挑选的无凭据预算。统一刷新每 15 秒读取任务与动态配置状态，
+可暂停；刷新失败保留有时间戳的旧快照。刷新不触发对账、归档、裁剪或重试。
+
+任务生命周期、执行结果和指标采样分别判断。缺少 Prometheus owner 映射显示“观测不完整”，不改写控制面
+已经确认的运行状态；只有能按 `serviceInstanceId` 关联到当前 owner 的历史指标才进入详情，无数据保持未知。
+其他 owner 的活跃指标仍参与重复部署提示。周期任务只在存在明确整轮观测预算时推导逾期；连续归档的空闲
+间隔不作为执行超时，常驻 API 不要求周期成功记录。控制面共享任务监督，调度中心通过 Redis 租约保持独占。
+
+调度子流程包含发布恢复、Kafka 探测和分配；Provider 统计完整 Pull/Apply，动态配置统计读取、校验、持久化
+和发布完整轮次，并展示现有 Worker 配置应用状态。策略索引展示目标发现、初始化和各目标刷新结果，逐策略
+状态从已有策略索引页下钻。目标失败不会被其他目标成功覆盖；没有 Hook 目标是正常空闲。
+每项任务最多保留 64 个子流程的最近结果；Redis 每轮最多展示 16 个来源的一页扫描结果，不表示全部来源健康。
+当前状态是内存快照，重启会清空累计计数；没有新增持久化执行日志。Archiver backlog 仍来自 Console 所配置
+同一部署的固定 Active alias 只读 `_count`，连接未配置时保持未知。
 
 ## 实体查询与关联排障
 
@@ -75,6 +91,14 @@ Console 与控制面的 Repository 必须属于同一 Linkd 部署；功能需�
 服务模式的操作方来自 Basic Auth 用户名，本地模式记为 `console-local`；不接受浏览器自报操作方。
 
 协议字段、错误与重试边界见 [Alert 主动关闭 API](../reference/contracts/alert-close.md)。
+
+### Redis Stream Manager 的 owner 指标
+
+Redis Stream 的真实 owner 由控制面任务生命周期提供，历史
+`linkd_control_plane_task_active_ratio{linkd_task="redis-stream-manager"}` 由整个来源循环在启动时记录 1、退出时记录 0。
+单条 Stream 的历史执行次数和耗时继续分别累计；当前状态 API 则统计完整来源扫描轮次，包括来源列表读取失败。
+因此这两类计数不能直接比较。只有成功次数而缺少 owner 指标时，页面标记观测不完整。
+Redis 与 Lifecycle 均已配置时任务默认启用，`control_plane.redis_stream.enabled: false` 可显式关闭。
 
 ## 动态来源的 Kafka 查询
 
@@ -168,3 +192,18 @@ control-plane 和 all-in-one 不拥有各自的配置字段，但每个实际进
   背后的时间桶元数据按有界批次读取。
 - Alert 列表和详情会折叠归档瞬间同时存在于 Active/History 的相同副本；聚合统计无法原子去重，可能在
   该短暂窗口重复计数，并会在响应中返回 warning。
+
+## OneModel 查询
+
+「系统 → OneModel 查询」（`/onemodel`）提供独立的实例与关联查询，无需选择 EventSource。
+控制面读取顶层 `resources.onemodel`；Console 只需已有的 `dispatch.url` 和管理 token。
+此功能是复用 Go OneModel SDK 的领域查询，普通中间件诊断仍由 Console 的 Node 连接层执行。
+
+实例查询填写租户、模型，可叠加实例 ID 和类型化属性条件；高级 JSON 支持 `all/any/not`。
+结果提供表格、属性详情、JSON 复制及游标翻页。默认每页 50 条，最多 200 条，改变条件后重新开始。
+快照一分钟无访问即过期，页面会提示重新查询。实例结果可带入关联查询，选择目标模型、关系和方向；
+关联结果有 1024 条硬上限，超限需要收窄条件。
+
+公共资源的地址和认证由部署配置统一管理，修改后重启控制面和 Lifecycle；来源编辑和丰富预览只编辑规则。
+配置页展示本机启动配置的脱敏资源副本，并不证明控制面或各 Worker 已加载相同配置。
+接口、预算和错误语义见 [OneModel 查询 API](../reference/contracts/onemodel-query.md)。

@@ -348,7 +348,7 @@ func baseCollectEventSource() config.EventSource {
 		Cleaner:         config.CleanerConfig{Type: config.CleanerTypeStandard},
 		FingerprintMode: config.FingerprintModeField, FingerprintField: "source_alert_id",
 		DefaultSeverity: "warning",
-		Enrich: config.EnrichConfig{DataSources: testEnrichDataSources(), Processors: []config.EnrichProcessorConfig{
+		Enrich: config.EnrichConfig{Processors: []config.EnrichProcessorConfig{
 			{Type: "strategy"}, {Type: "resource"}, {Type: "display"}, {Type: "metric"}, {Type: "source"},
 		}},
 		Storage: config.EventSourceStorageConfig{Type: config.StorageTypeKafka, Kafka: config.KafkaStorageConfig{
@@ -358,10 +358,10 @@ func baseCollectEventSource() config.EventSource {
 	}.WithDefaults()
 }
 
-func testEnrichDataSources() *config.EnrichDataSources {
-	return &config.EnrichDataSources{
-		MySQL:         &config.EnrichMySQLDataSource{Address: "mysql.example.com:3306", Database: "kingeye", Username: "reader"},
-		Elasticsearch: &config.EnrichElasticsearchDataSource{Addresses: []string{"http://onemodel.example.com:9200"}},
+func testResourcesConfig() *config.ResourcesConfig {
+	return &config.ResourcesConfig{
+		MySQL:    &config.MySQLResource{Address: "mysql.example.com:3306", Database: "kingeye", Username: "reader"},
+		OneModel: &config.OneModelResource{Addresses: []string{"http://onemodel.example.com:9200"}},
 	}
 }
 
@@ -631,7 +631,7 @@ func baseCollectAlert(source string) domain.Alert {
 
 func TestRouterTestProcessorHasNoDataSourceDependency(t *testing.T) {
 	source := config.EventSource{EventSourceID: "test-source", Enrich: config.EnrichConfig{Processors: []config.EnrichProcessorConfig{{Type: "test", Config: map[string]any{"fields": map[string]any{"region": "local", "nested": map[string]any{"enabled": true}}, "datasource": map[string]any{"calls": 2}}}}}}
-	if _, err := source.Enrich.SelectDataSources(); err != nil {
+	if _, err := source.Enrich.SelectResources(*testResourcesConfig()); err != nil {
 		t.Fatal(err)
 	}
 	sources := panicSources{}.Sources()

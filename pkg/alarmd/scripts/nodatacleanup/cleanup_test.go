@@ -11,6 +11,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"path"
@@ -129,6 +131,13 @@ func keysFor(t *testing.T, strategy string) (string, string) {
 	return blob, hash
 }
 
+// matcherDigest is a piece's matcher digest for the fixtures: any canonical
+// sha256 digest, distinct per name.
+func matcherDigest(name string) string {
+	sum := sha256.Sum256([]byte(name))
+	return hex.EncodeToString(sum[:])
+}
+
 func version(rounds int64) execution.ApplyVersion {
 	return execution.ApplyVersion{
 		StateApplyEpoch: 1, EvaluationTime: execution.EvaluationTime(1700000000 + rounds*60), SlotDigest: "slot",
@@ -168,12 +177,27 @@ func perGroupHeaderBytes(t *testing.T, applied execution.ApplyVersion) []byte {
 // from being deleted.
 func TestTheWalkReachesOnlyTheRecordsItReplaces(t *testing.T) {
 	blob, hash := keysFor(t, "7")
+	// A piece of a split strategy keeps its records under the sharded kinds.
+	// Both shapes are live memory as far as this walk is concerned: neither
+	// is the whole-memory record it replaces.
+	piece := planIdentity("7")
+	piece.Shard = execution.ShardRef{Dimension: "bk_target_ip", Index: 0, Count: 2, MatcherDigest: matcherDigest("piece-0")}
+	shardBlob, err := state.PlanNoDataKeyV2(testPrefix, piece)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shardHash, err := state.PlanNoDataHashKeyV2(testPrefix, piece)
+	if err != nil {
+		t.Fatal(err)
+	}
 	store := &fakeStore{values: map[string][]byte{
 		blob: wholeMemory(t, version(0)),
 		// The live record, in the keyspace the walk runs over. Put here as a
 		// value rather than a hash on purpose: the fake offers Scan every key
 		// it holds, so if the pattern matched this one the walk would see it.
-		hash: []byte("the memory this build writes"),
+		hash:      []byte("the memory this build writes"),
+		shardBlob: []byte("a piece's record under the sharded kind"),
+		shardHash: []byte("a piece's memory"),
 	}}
 	counts, err := Run(context.Background(), store, Options{Prefix: testPrefix})
 	if err != nil {

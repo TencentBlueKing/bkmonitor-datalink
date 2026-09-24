@@ -136,7 +136,12 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 		normalizers:         make(map[string]NumericNormalizerSpec),
 		datasetDigest:       datasetDigest,
 		targetScope:         request.Plan.TargetScope,
+		targetPlan:          request.Plan.TargetPlan,
 		noData:              request.Plan.NoData,
+	}
+	compiled.effectiveRules, err = compileEffectiveRules(request.Plan.EffectiveTimeSnapshot, request.Plan.StrategyRef.TenantID)
+	if err != nil {
+		return CompileResult{planTerminal: &Terminal{ReasonCode: err.Error(), FieldPath: "effective_time_snapshot"}}, nil
 	}
 	terminals := make([]Terminal, 0)
 	if request.Plan.OutputIdentity != nil {
@@ -199,11 +204,14 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 			// that passes validation can still run the trigger window past a
 			// compiler limit.
 			//
-			// The reason is the config layer's, because this is the same setting
-			// failing a later check: enabled, but it produces no decision. The
-			// path keeps the no_data prefix to say which part of it.
+			// The code is this shape's own, not the config layer's. They are
+			// the same setting failing two different checks, but they leave the
+			// strategy in opposite states - one detects its thresholds and the
+			// other detects nothing - and a reader downstream has only the code
+			// to tell them apart. The path keeps the no_data prefix to say
+			// which part of the definition it was.
 			return CompileResult{planTerminal: &Terminal{
-				ReasonCode: contract.ReasonNoDataConfigInvalid,
+				ReasonCode: contract.ReasonNoDataPlanUncompilable,
 				FieldPath:  "no_data." + terminal.FieldPath,
 			}}, nil
 		default:
@@ -221,6 +229,44 @@ func (c *PlanCompiler) compileUncached(ctx context.Context, request CompileReque
 	sort.Slice(compiled.levels, func(left, right int) bool {
 		return compiled.levels[left].definition.LevelID < compiled.levels[right].definition.LevelID
 	})
+	if compiled.noDataLevel != nil && len(request.Plan.StrategyIR.Levels) > 0 {
+		// No-data follows its corresponding source level's uptime, even when
+		// that level's detector was rejected. Missing levels use the first
+		// source trigger, as the legacy strategy-wide uptime fallback does.
+		raw := request.Plan.StrategyIR.Levels[0]
+		for _, candidate := range request.Plan.StrategyIR.Levels {
+			if candidate.Definition.LevelID == compiled.noDataLevel.definition.LevelID {
+				raw = candidate
+				break
+			}
+		}
+		var config triggerPlanConfigV1
+		if json.Unmarshal(raw.TriggerPlan.Config, &config) != nil {
+			return CompileResult{planTerminal: &Terminal{ReasonCode: ReasonEffectiveTimeInvalid, FieldPath: "strategy_ir.levels.trigger_plan"}}, nil
+		}
+		requirement, err := compileEffectiveTimeRequirement(config.Uptime, config.TimezoneRef)
+		if err != nil {
+			return CompileResult{planTerminal: &Terminal{ReasonCode: ReasonEffectiveTimeInvalid, FieldPath: "strategy_ir.levels.trigger_plan.uptime"}}, nil
+		}
+		compiled.noDataLevel.effectiveTime = requirement
+	}
+	if compiled.effectiveRules != nil {
+		levels := append([]CompiledLevel(nil), compiled.levels...)
+		if compiled.noDataLevel != nil {
+			levels = append(levels, *compiled.noDataLevel)
+		}
+		for _, level := range levels {
+			requirement := level.effectiveTime
+			for _, id := range append(requirement.ActiveCalendarIDs(), requirement.InactiveCalendarIDs()...) {
+				if _, exists := compiled.effectiveRules.calendars[id]; !exists {
+					return CompileResult{planTerminal: &Terminal{ReasonCode: ReasonEffectiveTimeCalendarMissing, FieldPath: "effective_time_snapshot.calendars"}}, nil
+				}
+			}
+		}
+	}
+	if terminal := c.checkRetainedPointsFit(compiled); terminal != nil {
+		return CompileResult{planTerminal: terminal}, nil
+	}
 	stateHash, err := c.deriveStateCompatibilityHash(request, compiled.levels)
 	if err != nil {
 		return CompileResult{}, fmt.Errorf("strategy: derive state compatibility: %w", err)
@@ -254,6 +300,15 @@ func (c *PlanCompiler) validatePlan(request CompileRequest) *Terminal {
 	}
 	if plan.OutputIdentity != nil && (plan.OutputIdentity.DimensionFields == nil || plan.OutputIdentity.DynamicDimensions != request.DatasetContract.DynamicDimensions) {
 		return &Terminal{ReasonCode: contract.ReasonPlanInvalid, FieldPath: "output_identity.dimension_fields"}
+	}
+	// A target has one frozen form. A Plan carrying both would be filtered
+	// by whichever the worker happened to read first, and a target plan that
+	// does not validate is a compiler defect this side must not run.
+	if plan.TargetScope != nil && plan.TargetPlan != nil {
+		return &Terminal{ReasonCode: contract.ReasonPlanInvalid, FieldPath: "target_plan"}
+	}
+	if err := plan.TargetPlan.Validate(); err != nil {
+		return &Terminal{ReasonCode: contract.ReasonPlanInvalid, FieldPath: "target_plan"}
 	}
 	strategy := plan.StrategyIR
 	if plan.PlanID == "" || plan.PlanID != plan.StrategyRef.StrategyID || plan.StrategyRef != strategy.StrategyRef || plan.StrategyRef.SnapshotRevision < 0 ||
@@ -319,7 +374,7 @@ func (c *PlanCompiler) deriveStateCompatibilityHash(request CompileRequest, leve
 		}
 		levelClosure[levelIndex].DetectFingerprint = level.fingerprints.Detect
 		levelClosure[levelIndex].TriggerFingerprint = level.fingerprints.Trigger
-		levelClosure[levelIndex].StateRequirement = level.stateRequirement
+		levelClosure[levelIndex].StateRequirement = level.stateRequirement.StateIdentityView()
 	}
 	identityAndAlgorithmDigest, err := contract.DeriveCanonicalDigestV2("strategy-state-input-closure-v2", struct {
 		IdentitySchemaDigest  string   `json:"identity_schema_digest"`
@@ -435,15 +490,22 @@ func (c *PlanCompiler) compileLevel(
 	if requiredPoints > c.limits.MaxRequiredHistoryPoints {
 		return terminal(contract.ReasonLevelBudgetExceeded, "level.state_requirement")
 	}
+	retentionPoints := requiredPoints + retentionSlack(requiredPoints, trigger, recovery, execution.EvaluationInterval)
+	if retentionPoints < requiredPoints {
+		return terminal(contract.ReasonLevelBudgetExceeded, "level.state_requirement")
+	}
 	level := CompiledLevel{
 		definition: raw.Definition, connector: raw.Connector, algorithms: algorithms,
 		detectors: detectors, trigger: trigger, recovery: recovery,
 		effectiveTime:    effectiveTime,
-		stateRequirement: StateRequirement{RequiredDetectHistoryPoints: requiredPoints, RetentionPoints: requiredPoints},
+		stateRequirement: StateRequirement{RequiredDetectHistoryPoints: requiredPoints, RetentionPoints: retentionPoints},
 	}
 	level.resourceEstimate.Algorithms = len(algorithms)
 	level.resourceEstimate.ASTNodes = astNodes
-	level.resourceEstimate.StatePointsPerSeries = uint64(requiredPoints)
+	// The pool pays for what is retained, not for what the window requires.
+	// Since the slack those are different numbers, and the smaller one would
+	// under-count every Level the slack applies to.
+	level.resourceEstimate.StatePointsPerSeries = uint64(retentionPoints)
 	level.resourceEstimate.FixedComputeCost = 1
 	for _, algorithm := range raw.DetectPlan.Algorithms {
 		registration, _ := c.registry.lookup(algorithm.Type, algorithm.Version)
@@ -477,6 +539,83 @@ func (c *PlanCompiler) compileLevel(
 		return CompiledLevel{}, nil, nil, fmt.Errorf("strategy: derive Level trigger fingerprint: %w", err)
 	}
 	return level, normalizers, nil, nil
+}
+
+// RecoveryHoleToleranceSeconds is the longest run of missing positions the
+// recovery walk is built to step over: one rollout bounce, which is what
+// punches the holes it exists for.
+//
+// A duration and not a count of points, because a bounce is a length of time
+// and the same bounce is a different number of points at every evaluation
+// interval. It is the one constant in the derivation below, and it is a
+// program constant rather than configuration: an operator knows the release
+// cadence, not how a walk spends its retained window.
+const RecoveryHoleToleranceSeconds = 600
+
+// retentionSlack is how many positions a Level retains beyond the ones its
+// window requires, so the recovery walk can step over a hole and still reach
+// the run of answered windows it needs.
+//
+// Why any is needed: the walk reaches back over WindowSize+ConsecutiveWindows-1
+// offsets, but only the newest ConsecutiveWindows of them lie wholly inside a
+// window retained at exactly the required size - the rest run off the end and
+// read as holes. The usable margin is therefore RequiredAnomalies-1, while a
+// run of H holes puts WindowSize+H-2*RequiredAnomalies+1 windows out of reach.
+// At the common RequiredAnomalies of one the margin is zero: a single hole
+// anywhere leaves the recovery unreachable until it ages out of the window,
+// which for a day-long window is a day. Retaining the difference is what makes
+// the rule reachable at all rather than a rule that reads well and never fires.
+//
+// Why it is gated twice: the slack is paid per series in retained memory, and
+// two different Levels get nothing for the money, at opposite ends.
+//
+// A Level whose whole window is shorter than the tolerance is the first. The
+// hole ages out of such a window within the tolerance on its own, so the wait
+// the slack removes is shorter than the wait it is built to remove - the
+// benefit is below a delay already accepted. Charging every Level cost 22% of
+// the fleet's retained bytes to shorten nine-minute waits.
+//
+// A Level whose slack would come to more than its own window is the second.
+// The wait removed is requiredPoints long and the memory costs slack points,
+// so once slack reaches requiredPoints the cheaper trade is to let the hole
+// age out. This is the case the first gate cannot see: the slack's leading
+// term is the trigger window, and requiredPoints is that window plus the
+// recovery run, so two Levels with the same requiredPoints cost differently
+// depending on which term dominates. A Level at window 1469 and one anomaly
+// retains 2947 points against 1469 - double - while a Level of the same
+// required size built from a short window and a long recovery run retains
+// 1508.
+//
+// Neither gate subsumes the other and neither adds a constant. A Level at
+// window 3, threshold 3, recovery run 8 on a one minute interval spans exactly
+// the tolerance and is refused by the first while the second would admit it;
+// the window 1469 Level is refused by the second while the first admits it.
+func retentionSlack(requiredPoints uint32, trigger TriggerPlan, recovery RecoveryPlan, intervalSeconds uint32) uint32 {
+	if !recovery.Enabled || intervalSeconds == 0 || trigger.RequiredAnomalies == 0 {
+		return 0
+	}
+	// The wait this buys out: how long the hole takes to leave the window on
+	// its own. Compared in seconds so it does not depend on how the interval
+	// divides the tolerance.
+	if uint64(requiredPoints)*uint64(intervalSeconds) <= RecoveryHoleToleranceSeconds {
+		return 0
+	}
+	tolerancePoints := (RecoveryHoleToleranceSeconds + uint64(intervalSeconds) - 1) / uint64(intervalSeconds)
+	// WindowSize + tolerancePoints - 3*RequiredAnomalies + 2, in a width that
+	// cannot wrap while the subtraction is taken.
+	slack := int64(trigger.WindowSize) + int64(tolerancePoints) + 2 - 3*int64(trigger.RequiredAnomalies)
+	if slack < 1 {
+		// A Level whose threshold is high enough to absorb the holes on its
+		// own still retains one spare position: the arithmetic says it needs
+		// none, and one keeps "retains more than it requires" true for every
+		// Level both gates admit, so a count of those Levels is a count of the
+		// Levels the rule reaches rather than an arithmetic artefact.
+		slack = 1
+	}
+	if slack >= int64(requiredPoints) {
+		return 0
+	}
+	return uint32(slack)
 }
 
 func triggerComputeCostForLevel(trigger TriggerPlan, recovery RecoveryPlan) uint64 {
@@ -526,8 +665,7 @@ func validateAlgorithmCompileResult(
 	sort.Strings(reasons)
 	canonicalReasons := reasons[:0]
 	for _, reason := range reasons {
-		if !contract.ReasonAllowedForV2(reason, contract.ReasonDomainReceipt) ||
-			!contract.ReasonAllowedForV2(reason, contract.ReasonDomainObservation) {
+		if !contract.LevelUnavailableReasonV2(reason) {
 			return fmt.Errorf("strategy: invalid compiler output for %s@%d", raw.Type, raw.Version)
 		}
 		if len(canonicalReasons) == 0 || canonicalReasons[len(canonicalReasons)-1] != reason {
@@ -743,6 +881,9 @@ func compileResourceEstimate(plan *CompiledPlan) error {
 		return fmt.Errorf("strategy: estimate compiled Plan bytes: %w", err)
 	}
 	aggregate.CompiledBytes = len(encoded)
+	if plan.effectiveRules != nil {
+		aggregate.CompiledBytes += plan.effectiveRules.bytes
+	}
 	if plan.legacyOutput != nil {
 		aggregate.CompiledBytes += plan.legacyOutput.SizeBytes()
 	}
@@ -821,4 +962,40 @@ func contains(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+// checkRetainedPointsFit refuses a Plan whose retained window cannot be stored
+// in the representation the store actually writes.
+//
+// The ceiling depends on the Level count, so it cannot be decided while
+// compiling one Level: every Level's facts are recorded on every point of one
+// shared record, so a window that fits alone may not fit beside a second Level.
+//
+// Refused here rather than discovered at write time. Nothing above this stops
+// it: MaxRequiredHistoryPoints is 4096 and the representation runs out at about
+// 2100 for one Level, so a Plan configured between the two compiles cleanly,
+// activates, evaluates - and has every state write refused as budget exceeded,
+// per series, with no alert and nothing in the strategy to suggest why. A
+// deterministic refusal at compile time is the same verdict delivered where
+// someone can act on it.
+func (c *PlanCompiler) checkRetainedPointsFit(compiled *CompiledPlan) *Terminal {
+	levels := compiled.levels
+	if compiled.noDataLevel != nil {
+		levels = append(append([]CompiledLevel(nil), levels...), *compiled.noDataLevel)
+	}
+	if len(levels) == 0 || len(levels) >= len(c.limits.MaxRetainedPointsByLevels) {
+		return nil
+	}
+	ceiling := c.limits.MaxRetainedPointsByLevels[len(levels)]
+	if ceiling == 0 {
+		return nil
+	}
+	for _, level := range levels {
+		if level.stateRequirement.RetentionPoints > ceiling {
+			// The window is what an operator set, so the path names it rather
+			// than the storage arithmetic that decided it does not fit.
+			return &Terminal{ReasonCode: contract.ReasonPlanBudgetExceeded, FieldPath: "level.state_requirement"}
+		}
+	}
+	return nil
 }

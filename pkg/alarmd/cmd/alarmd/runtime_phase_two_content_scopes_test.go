@@ -92,14 +92,20 @@ func TestTheContentContractIsGatedOnTheWholeReadySet(t *testing.T) {
 }
 
 type fakeContentScopeSource struct {
+	running  map[execution.QueryGroupIdentity]controlplane.ContentEntry
 	state    controlplane.ActivationState
 	manifest controlplane.CatalogManifest
+	blocked  []controlplane.BlockedQueryGroup
 	err      error
 	asked    []execution.SnapshotRevision
 }
 
-func (source *fakeContentScopeSource) LoadActivation(context.Context) (controlplane.ActivationState, error) {
+func (source *fakeContentScopeSource) LoadActivationHead(context.Context) (controlplane.ActivationState, error) {
 	return source.state, source.err
+}
+
+func (source *fakeContentScopeSource) ActivationBlocked(context.Context) ([]controlplane.BlockedQueryGroup, error) {
+	return source.blocked, nil
 }
 
 func (source *fakeContentScopeSource) LoadCatalogManifest(_ context.Context, revision execution.SnapshotRevision) (controlplane.CatalogManifest, error) {
@@ -336,5 +342,125 @@ func TestTheLastSweepIsKeptForTheFleetWithItsNumbersAndItsFailure(t *testing.T) 
 	}
 	if string(observed[len(observed)-1].ReasonCode) != failed.Reason {
 		t.Fatalf("fleet reason %q differs from the line's %q", failed.Reason, observed[len(observed)-1].ReasonCode)
+	}
+}
+
+// A sweep that found records a lease still held has not reclaimed them, and
+// nothing about the set will ask for the sweep that does: the next round is
+// asked, round after round, until a sweep finds nothing held. A sweep that
+// failed is owed the same way. A Query Group that arrived after a sweep and
+// left before the next is measured against the last round's set, not the
+// last swept set, so its leaving is seen and its record reclaimed.
+func TestASweepThatLeftRecordsHeldOrFailedIsOwedAndAnArrivalThatLeavesIsSwept(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	store := &fakePhaseTwoOwnershipStore{now: now}
+	runtime := &productionPhaseTwoOwnership{dependencies: productionPhaseTwoOwnershipDependencies{
+		Store: store, WorkerID: "worker-1", Now: func() time.Time { return now }, Observer: observability.NopObserver{},
+	}}
+	authority := ownership.PublicationAuthority{Fence: execution.OwnerFence{
+		QueryGroup: ownership.ControlLeaderIdentity, OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "t",
+	}, Deadline: now.Add(time.Minute)}
+	set := func(groups ...execution.QueryGroupIdentity) []execution.QueryGroupIdentity { return groups }
+
+	// The first sweep of the term finds one retired record a lease still
+	// holds. The set does not change, and the next two rounds sweep anyway;
+	// the third finds it reclaimed and the rounds after it stop.
+	store.sweep = ownership.AssignmentSweep{Scanned: 3, Retired: 1, HeldByLease: 1}
+	runtime.sweepRetiredAssignments(context.Background(), authority, set("a", "b"))
+	runtime.sweepRetiredAssignments(context.Background(), authority, set("a", "b"))
+	if len(store.sweeps) != 2 {
+		t.Fatalf("a round after a sweep that left a record held swept %d times in total, want 2: the record is reclaimed only by a later sweep", len(store.sweeps))
+	}
+	store.sweep = ownership.AssignmentSweep{Scanned: 3, Retired: 1, Reclaimed: 1}
+	runtime.sweepRetiredAssignments(context.Background(), authority, set("a", "b"))
+	store.sweep = ownership.AssignmentSweep{Scanned: 2}
+	runtime.sweepRetiredAssignments(context.Background(), authority, set("a", "b"))
+	runtime.sweepRetiredAssignments(context.Background(), authority, set("a", "b"))
+	if len(store.sweeps) != 3 {
+		t.Fatalf("rounds after the held record was reclaimed swept; %d sweeps in total, want 3", len(store.sweeps))
+	}
+
+	// c arrives (no sweep: nothing left) and leaves the next round: the
+	// leaving is seen against the last round's set, and c is not kept.
+	runtime.sweepRetiredAssignments(context.Background(), authority, set("a", "b", "c"))
+	if len(store.sweeps) != 3 {
+		t.Fatalf("an arrival swept; %d sweeps in total, want still 3", len(store.sweeps))
+	}
+	runtime.sweepRetiredAssignments(context.Background(), authority, set("a", "b"))
+	if len(store.sweeps) != 4 {
+		t.Fatalf("a Query Group that arrived after the last sweep and left was not swept; %d sweeps in total, want 4", len(store.sweeps))
+	}
+	if _, kept := store.sweeps[3]["c"]; kept {
+		t.Fatal("the sweep was asked to keep the Query Group that left")
+	}
+
+	// A sweep that fails is owed: the next round, same set, sweeps again.
+	store.sweepErr = errors.New("the store did not answer")
+	runtime.sweepRetiredAssignments(context.Background(), authority, set("a"))
+	store.sweepErr = nil
+	store.sweep = ownership.AssignmentSweep{Scanned: 1}
+	runtime.sweepRetiredAssignments(context.Background(), authority, set("a"))
+	if len(store.sweeps) != 6 {
+		t.Fatalf("a failed sweep was not retried by the next round; %d sweeps in total, want 6", len(store.sweeps))
+	}
+	runtime.sweepRetiredAssignments(context.Background(), authority, set("a"))
+	if len(store.sweeps) != 6 {
+		t.Fatalf("a round after a sweep that found nothing held swept; %d sweeps in total, want still 6", len(store.sweeps))
+	}
+}
+
+// A Query Group a cutover held back is scoped to what its open Segment
+// names, not the manifest's new content: scoped to the manifest, a Worker
+// running it would be refused on a scope mismatch. One with no Segment that
+// can run has no scope at all.
+func TestContentScopesFollowAHeldBackQueryGroupsOpenSegment(t *testing.T) {
+	source := &fakeContentScopeSource{
+		state: controlplane.ActivationState{Current: controlplane.SnapshotPublicationRef{SnapshotRevision: "snap-9", PublicationEpoch: 2}},
+		manifest: controlplane.CatalogManifest{QueryGroups: []controlplane.ManifestQueryGroup{
+			{QueryGroup: "qg-a", ObjectDigest: "da"}, {QueryGroup: "qg-b", ObjectDigest: "db-new"}, {QueryGroup: "qg-c", ObjectDigest: "dc-new"},
+		}},
+		blocked: []controlplane.BlockedQueryGroup{
+			{QueryGroup: "qg-b", Reason: controlplane.CutoverReasonOpenDigestMismatch, OpenDigest: "db-open"},
+			{QueryGroup: "qg-c", Reason: controlplane.CutoverReasonOpenSegmentClosed},
+		},
+	}
+	digests, err := currentContentScopes(source)(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(digests) != 2 || digests["qg-a"] != "da" || digests["qg-b"] != "db-open" {
+		t.Fatalf("digests = %v, want qg-a from the manifest, qg-b from its open Segment and no qg-c", digests)
+	}
+}
+
+// ApplyCutoverProgress gives what the open Segments run while a cutover is
+// in progress, and the content as given otherwise.
+func (source *fakeContentScopeSource) ApplyCutoverProgress(
+	_ context.Context, state controlplane.ActivationState, content map[execution.QueryGroupIdentity]controlplane.ContentEntry,
+) (map[execution.QueryGroupIdentity]controlplane.ContentEntry, error) {
+	if state.CutoverProgress == nil {
+		return content, nil
+	}
+	return source.running, nil
+}
+
+// While a cutover is in progress the scopes are what each open Segment runs,
+// not what the manifest names: a Query Group past the cursor still runs the
+// publication before, and a scope naming the manifest's content would stop
+// it on a scope mismatch. The manifest is not read at all then.
+func TestContentScopesFollowTheOpenSegmentsWhileACutoverIsInProgress(t *testing.T) {
+	source := &fakeContentScopeSource{
+		state: controlplane.ActivationState{Current: controlplane.SnapshotPublicationRef{SnapshotRevision: "snap-9", PublicationEpoch: 2},
+			CutoverProgress: &controlplane.CutoverProgress{}},
+		manifest: controlplane.CatalogManifest{QueryGroups: []controlplane.ManifestQueryGroup{
+			{QueryGroup: "qg-a", ObjectDigest: "new-a"}, {QueryGroup: "qg-c", ObjectDigest: "new-c"}}},
+		running: map[execution.QueryGroupIdentity]controlplane.ContentEntry{"qg-a": {Digest: "old-a"}},
+	}
+	digests, err := currentContentScopes(source)(context.Background())
+	if err != nil {
+		t.Fatalf("currentContentScopes() error = %v", err)
+	}
+	if len(digests) != 1 || digests["qg-a"] != "old-a" || len(source.asked) != 0 {
+		t.Fatalf("digests = %v, manifest reads %v; want qg-a on what its open Segment runs and no manifest read", digests, source.asked)
 	}
 }

@@ -19,7 +19,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
-// A held record reaches the Worker as RECOVERY outcomes with no envelope. The
+// A record the open alert set held reaches the Worker as RECOVERY outcomes
+// with no envelope; it also carries the Level it was decided beside. The
 // Worker runs the result contract on it before anything is written; on the
 // first build with the gate that check refused every held record, the Slot
 // retried the same refusal until its budget ran out, the record's state was
@@ -47,7 +48,7 @@ func TestHeldRecoveryRecordCompletesThroughTheWorkerAndReachesTheObserver(t *tes
 		for index := range result.Plans[0].StateResults {
 			result.Plans[0].StateResults[index].Events = nil
 		}
-		result.Plans[0].RecoveryGate.HeldLevelUnavailable = 1
+		result.Plans[0].RecoveryGate.BesideLevelUnavailable = 1
 		return converted
 	}
 

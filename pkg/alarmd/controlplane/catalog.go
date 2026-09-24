@@ -1,15 +1,7 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package controlplane
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,11 +11,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/nodata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/targetplan"
 )
 
 const SourceAlgorithmTypePingUnreachable = "PingUnreachable"
@@ -89,13 +83,52 @@ type BuildRequest struct {
 	// Plan this build produces. Empty means the revision decides, which is what
 	// the process did before the choice existed.
 	OutputProtocol string
-	LastGood       *PublishedSnapshot
-	// PreviousDispositions is the published source audit of LastGood. It is the
-	// only memory of the removal grace cycle: a strategy absent from the
-	// observed set is retained once with PENDING_REMOVAL and dropped when the
-	// previous audit already carries that fact. Nil means no grace history.
+	// TargetSources says which sources the deployment has for a target
+	// plan's dynamic references. A Plan that references a source the
+	// deployment does not have is withheld by name at compile time
+	// (DYNAMIC_GROUP_SOURCE_UNCONFIGURED): a deployment fact is not a
+	// runtime fact, and reporting it every Slot as an unavailable selector
+	// would dress a configuration gap up as a cache outage.
+	TargetSources TargetSources
+	// NoDataPolicy is the deployment's no-data settings, frozen into every Plan
+	// that does not override them. The zero value is what the process did
+	// before the settings existed.
+	NoDataPolicy NoDataPolicy
+	LastGood     *PublishedSnapshot
+	// PreviousDispositions is the published source audit of LastGood: the
+	// memory of the removal grace, which is where a strategy absent from the
+	// observed set was first found absent (PENDING_REMOVAL.AbsentSince). Nil
+	// means no grace history.
 	PreviousDispositions []ObjectDisposition
+	// PendingAbsences is the same memory from the candidate the previous
+	// round left unconfirmed, by source id: the first round of an absence
+	// publishes a candidate, and the round that confirms it has to stamp the
+	// same moment or the candidate never confirms. Nil means none pending.
+	PendingAbsences map[string]int64
+	// Now is the round's clock, what an absence is measured against. Zero
+	// means the wall clock.
+	Now time.Time
 }
+
+// AbsenceGracePeriod is how long a LastGood strategy absent from the
+// observed active set keeps executing before its Plan leaves the Catalog.
+//
+// A period rather than one round because the active set is read from a
+// list another program writes, and that list has been seen to lose entries
+// for minutes at a time with the strategies unchanged: one deployment's
+// hourly full refresh dropped 99 ids for about six and a half minutes every
+// hour, and a one-round grace removed 22 Plans, swept their assignments and
+// re-acquired them five minutes later, with every Slot in between missing
+// and written off as CONFIG_DRIFT - eight percent of the hour blind, for a
+// configuration that never changed. The writer's flutter is the writer's to
+// fix; the reader still must not turn it into a detection gap, because the
+// next writer will flutter too.
+//
+// Ten minutes is the observed flutter with room to spare, and a program
+// constant rather than a setting: an operator does not know this number
+// better than the program. What it costs is that a strategy really removed
+// runs for up to ten minutes longer.
+const AbsenceGracePeriod = 10 * time.Minute
 
 type FrozenPlan struct {
 	Identity        execution.PlanIdentity
@@ -116,6 +149,86 @@ type FrozenPlan struct {
 	ScheduleRevision     execution.PlanScheduleRevision
 	RequirementTemplates []execution.DataRequirementTemplate                    `json:"RequirementTemplates,omitempty"`
 	QueryPlans           map[execution.LogicalQueryRef]execution.QueryPlanFacts `json:"QueryPlans,omitempty"`
+	// Shard is the piece of a split strategy this Plan is, nil for a Plan
+	// that is not split. It is execution content: the Slot names its gap
+	// marker and no-data memory by it. Omitted when nil for the same reason
+	// NoDataSuspended is - this struct is inside the object digest.
+	Shard *execution.ShardRef `json:",omitempty"`
+	// LevelContractRefs are the Level contract references the Leader derived
+	// from the same compilation that produced StateGeneration, published so
+	// every Worker validates and writes the Plan's records with the Leader's
+	// refs rather than its own build's derivation (decision-020 section
+	// 4.7.9). Execution content, inside the object digest: a Plan whose refs
+	// moved is a Plan whose records mean something else. Omitted when nil so
+	// an object published before the field keeps every digest it had.
+	LevelContractRefs []execution.RuntimeLevelContractRef `json:",omitempty"`
+	// NoDataLevelContractRefs are the same for the Plan's no-data view, whose
+	// Level shares an ID with a declared Level and has refs of its own.
+	NoDataLevelContractRefs []execution.RuntimeLevelContractRef `json:",omitempty"`
+}
+
+// Key is this Plan's index key: the strategy and the piece. Two pieces of one
+// strategy are two Plans in every index the control plane keeps.
+func (plan FrozenPlan) Key() execution.PlanKey {
+	return execution.PlanKeyOf(plan.Identity, execution.ShardOf(plan.Shard))
+}
+
+// shardPointerOf is the carried form of a key's piece for a placeholder Plan
+// built from an index entry: the index keeps only the piece's index, so the
+// placeholder carries only that. Nil for a Plan that is not split.
+func shardPointerOf(key execution.PlanKey) *execution.ShardRef {
+	if key.ShardIndex == 0 {
+		return nil
+	}
+	return &execution.ShardRef{Index: key.ShardIndex}
+}
+
+// TargetSources is what the deployment renders for a target plan's dynamic
+// references: a dynamic group cache prefix, or not. Topology references
+// resolve against the CMDB host cache every deployment has.
+type TargetSources struct {
+	DynamicGroups bool
+}
+
+func (sources TargetSources) key() string {
+	if sources.DynamicGroups {
+		return "dynamic_groups"
+	}
+	return ""
+}
+
+// NoDataPolicy is what the deployment says about no-data detection for every
+// item that does not say it itself. Today that is one setting: how long an
+// absence goes on being tracked.
+//
+// It is its own build input rather than part of the compiler's identity. The
+// compiler identity closes over query compilation facts - event storage, data
+// access, CMDB tables, the disk and network filters - and a tracking horizon
+// changes no query's compiled result. Folding it in would buy cache
+// invalidation by giving "query compiler identity" a second meaning, and tie a
+// no-data policy to whichever compiler the deployment happens to use.
+type NoDataPolicy struct {
+	// TrackingHorizonSeconds is the platform default horizon. Zero means no
+	// horizon, which is what every deployment had before the setting existed.
+	TrackingHorizonSeconds int64
+}
+
+// key is this policy's contribution to the round key, in the same shape as
+// TargetSources.key.
+//
+// A platform default that changed has to empty the candidate cache, because
+// the cache is keyed by the strategy document and the document is exactly what
+// did not change. Without this the new default reaches only the strategies
+// whose own document happens to change next - every other Plan keeps compiling
+// with the old horizon, the object bytes stay put, the digest does not move,
+// and the setting reads as applied while doing nothing. That is the default
+// way to configure it, so without this key the feature is off by default and
+// looks on.
+func (policy NoDataPolicy) key() string {
+	if policy.TrackingHorizonSeconds == 0 {
+		return ""
+	}
+	return "no_data_horizon=" + strconv.FormatInt(policy.TrackingHorizonSeconds, 10)
 }
 
 // planCompileFacts is what compiling one item produced besides the Plan: the
@@ -151,7 +264,71 @@ const (
 	DispositionRemoved              Disposition = "REMOVED"
 	DispositionUnsupported          Disposition = "UNSUPPORTED_PHASE2_CAPABILITY"
 	DispositionCompatibilityIgnored Disposition = "COMPATIBILITY_IGNORED"
+	// DispositionConfigNormalized is an object accepted with a part of its
+	// configuration read as something other than what was written, the way
+	// Python reads it: the Plan runs, and this says what was widened. It
+	// is not withheld from anything; it is listed with the withheld
+	// dispositions because that is the list a reader looks at for "what did
+	// the catalog do to my strategy", and a widening that is not there is a
+	// widening nobody finds.
+	DispositionConfigNormalized Disposition = "CONFIG_NORMALIZED"
 )
+
+// ReasonEffectiveTimeRangeInvalid names a Level whose uptime has a range
+// with a start or end that does not parse, read as 00:00 or 23:59 as Python
+// reads it.
+const ReasonEffectiveTimeRangeInvalid = "EFFECTIVE_TIME_RANGE_INVALID"
+
+// ReasonPriorityIgnored names a Plan compiled from a strategy that takes
+// part in priority arbitration, run as the standalone strategy it is. The
+// arbitration belongs to the platform's alert pipeline, so a lower-priority
+// strategy detects and alerts beside a higher one on the same target.
+const ReasonPriorityIgnored = "PRIORITY_IGNORED"
+
+// ReasonLevelTriggerBorrowed names a Level whose algorithms sit at a level
+// the strategy wrote no trigger for, run on the strategy's first trigger as
+// the platform runs it.
+const ReasonLevelTriggerBorrowed = "LEVEL_TRIGGER_BORROWED"
+
+// legacyDefaultRecoveryWindows is the recovery window the platform uses when
+// an alert's level has no recovery configured (its recovery checker's
+// DEFAULT_CHECK_WINDOW_SIZE).
+const legacyDefaultRecoveryWindows = 5
+
+// borrowedLegacyDetect is the detect a level without one runs on, read the
+// way the platform reads it. Its trigger checker, finding no trigger for the
+// level, falls back to the strategy's first: the count, the window and the
+// effective time that travels with them. Its recovery checker finds no
+// recovery for the level and takes its default window, so the recovery here
+// is that default rather than the first detect's. The priority and the
+// connector are the level's own defaults, not the first detect's: they
+// belong to that detect's level.
+//
+// The platform goes further than this. Its recovery check also looks up the
+// trigger for the level, fails, and falls back to a required count of zero,
+// so an alert raised at the borrowed level is always still triggering and
+// never recovers the ordinary way. That is a side effect of two fallbacks
+// meeting, not a reading of the strategy, and it is not reproduced: the
+// level here recovers after the default window like any other.
+func borrowedLegacyDetect(first legacyDetect) legacyDetect {
+	return legacyDetect{
+		Level:    first.Level,
+		Trigger:  first.Trigger,
+		Recovery: json.RawMessage(fmt.Sprintf(`{"check_window":%d}`, legacyDefaultRecoveryWindows)),
+	}
+}
+
+// dispositionDetailMaxBytes bounds the text a disposition carries: enough
+// for a decoder's sentence, not for a document.
+const dispositionDetailMaxBytes = 256
+
+// dispositionDetail bounds a refusal's text for the audit.
+func dispositionDetail(text string) string {
+	if len(text) <= dispositionDetailMaxBytes {
+		return text
+	}
+	return text[:dispositionDetailMaxBytes]
+}
 
 type ObjectDisposition struct {
 	SourceID    string
@@ -166,6 +343,20 @@ type ObjectDisposition struct {
 	// came from the same field, and finding out which took compiling the
 	// documents again offline. Empty when the refusal is not about a field.
 	FieldPath string
+	// Detail is what the refusal said about the field, in the compiler's
+	// words and bounded, when a word and a path are not enough to act on:
+	// "query interval is invalid" beside items[0].query_configs[1] is what a
+	// strategy owner can fix; QUERY_CONFIG_INVALID alone is not. Empty for
+	// every refusal that carries no text. Omitted when empty, so a published
+	// audit written before the field keeps its bytes.
+	Detail string `json:",omitempty"`
+	// AbsentSince is when a strategy under PENDING_REMOVAL was first found
+	// absent from the observed active set, in Unix seconds; the removal
+	// grace is measured from it. Zero on every other disposition, and on a
+	// PENDING_REMOVAL written by a build before the grace was a period -
+	// which the next build reads as absent since now, so a rollout can only
+	// lengthen a grace, never cut one short.
+	AbsentSince int64 `json:",omitempty"`
 }
 
 type Catalog struct {
@@ -177,6 +368,52 @@ type Catalog struct {
 	// retain because their persisted facts no longer hold under this binary,
 	// under either refusal. Zero on every build within one release.
 	RetainedStaleRevisions int
+	// Retention is what this build's Levels ask the state store to keep,
+	// measured off the compiled Levels rather than modelled from the shapes in
+	// the strategy documents. It is the only place the whole compiled
+	// population is in hand at once, which is what makes it a measurement.
+	Retention CatalogRetention
+	// ObjectRetention is how long this build's content objects and output
+	// contexts are kept once no manifest names them any more: the longest a
+	// frozen Slot of any of its Plans may still read them by content, which a
+	// Plan evaluated every sixty hours needs for sixty hours. Decided by the
+	// deployment's admission, which knows the Slot timings; zero keeps the
+	// catalog TTL. It is stored beside the manifest, not in it: the manifest
+	// is decoded strictly, and a field an older reader does not know would
+	// make it refuse the whole publication.
+	ObjectRetention time.Duration
+}
+
+// CatalogRetention sums the retained window of every Level the runtime
+// executable Catalog accepted.
+//
+// The two point sums exist to be divided: decision-022 R5 retains a slack
+// past the window a Level requires so a recovery can step over a rollout's
+// hole, and how much that costs the deployment is RetentionPoints over
+// RequiredPoints. It was estimated at between four and twenty-two percent
+// depending on which shapes the population actually holds, and the estimate
+// could not be narrowed from outside - nothing publishes a strategy's window
+// and threshold in bulk. Compiling every Plan is the measurement, and this is
+// where every Plan is compiled.
+//
+// Points, not bytes: bytes are what the retention pool is budgeted in, and
+// points are their proxy here. The bytes are read from the store's own
+// retained-bytes metric across the release rather than derived from these.
+type CatalogRetention struct {
+	// RequiredPoints and RetentionPoints are summed over every accepted
+	// Level, the no-data Level included, because the store retains its points
+	// on the same records.
+	RequiredPoints  uint64
+	RetentionPoints uint64
+	// LevelsWithSlack is the Levels that retain more than they require: the
+	// ones both R5 gates admitted. The rest retain exactly their window.
+	LevelsWithSlack int
+	// The same Levels split by which term of the window dominates, because
+	// the cost follows the trigger window while the size follows the sum of
+	// both. Two Levels with the same required window cost differently, and a
+	// single count of paying Levels hides that.
+	LevelsWithSlackWindowDominant   int
+	LevelsWithSlackRecoveryDominant int
 }
 
 func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
@@ -187,20 +424,22 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 	if err != nil {
 		return Catalog{}, err
 	}
-	request.Cache.beginRound(request.OutputProtocol, compilerIdentity)
+	request.Cache.beginRound(request.OutputProtocol, compilerIdentity, request.TargetSources.key(), request.NoDataPolicy.key())
 	observationID, err := deriveObservationID(request.Strategies)
 	if err != nil {
 		return Catalog{}, err
 	}
 	catalog := Catalog{ObservationID: observationID, QueryGroups: []QueryGroup{}, Dispositions: []ObjectDisposition{}}
 	groups := make(map[execution.QueryGroupIdentity]*QueryGroup)
-	seenPlans := make(map[execution.PlanIdentity]struct{}, len(request.Strategies))
+	// Keyed by strategy and piece: a split strategy is one Plan per piece,
+	// and the same piece twice is the duplicate.
+	seenPlans := make(map[execution.PlanKey]struct{}, len(request.Strategies))
 	lastGood := indexLastGoodPlans(request.LastGood)
 	addPlan := func(facts execution.QueryPlanFacts, plan FrozenPlan) error {
-		if _, duplicate := seenPlans[plan.Identity]; duplicate {
+		if _, duplicate := seenPlans[plan.Key()]; duplicate {
 			return errors.New("alarmd controlplane: duplicate Plan identity")
 		}
-		seenPlans[plan.Identity] = struct{}{}
+		seenPlans[plan.Key()] = struct{}{}
 		identity, err := deriveQueryGroupIdentity(facts)
 		if err != nil {
 			return err
@@ -272,8 +511,8 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 				(disposition.Disposition != DispositionSourceIncomplete && disposition.Disposition != DispositionConfigRejected) {
 				return Catalog{}, errors.New("alarmd controlplane: invalid source disposition")
 			}
-			if refusal := unsupportedTargetPlan(source); refusal != nil {
-				catalog.Dispositions = append(catalog.Dispositions, disposition, *refusal)
+			if compiled := compileTargetPlanDocument(source); compiled.refusal != nil {
+				catalog.Dispositions = append(catalog.Dispositions, disposition, *compiled.refusal)
 				continue
 			}
 			retained, err := retainLastGood(source.SourceID)
@@ -286,7 +525,7 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 			catalog.Dispositions = append(catalog.Dispositions, disposition)
 			continue
 		}
-		candidate, err := request.Cache.build(ctx, planner, source, request.OutputProtocol)
+		candidate, err := request.Cache.build(ctx, planner, source, request.OutputProtocol, request.TargetSources, request.NoDataPolicy)
 		if err != nil {
 			if len(candidate.dispositions) > 0 {
 				catalog.Dispositions = append(catalog.Dispositions, candidate.dispositions...)
@@ -304,8 +543,7 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 			}
 			continue
 		}
-		planIdentity := candidate.plan.Identity
-		if _, duplicate := seenPlans[planIdentity]; duplicate {
+		if _, duplicate := seenPlans[candidate.plan.Key()]; duplicate {
 			catalog.Dispositions = append(catalog.Dispositions, ObjectDisposition{SourceID: source.SourceID, Scope: "PLAN", Disposition: DispositionConfigRejected, Reason: "DUPLICATE_STRATEGY_IDENTITY"})
 			continue
 		}
@@ -317,16 +555,27 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 	}
 	// Reaching this point means the upstream strategy id list was read
 	// completely; per-source incompleteness is already expressed above through
-	// SourceDisposition. A LastGood strategy absent from the observed set gets
-	// exactly one published grace cycle before its Plan leaves the Catalog.
-	pendingRemoval := indexPendingRemoval(request.PreviousDispositions)
+	// SourceDisposition. A LastGood strategy absent from the observed set
+	// keeps executing under PENDING_REMOVAL until it has been absent for the
+	// whole grace period, and only then leaves the Catalog with REMOVED. The
+	// moment it was first found absent travels on the disposition, so every
+	// round of the grace publishes the same audit and the candidate confirms.
+	now := request.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	absentSince := indexAbsentSince(request.PreviousDispositions, request.PendingAbsences)
 	for sourceID := range lastGood {
 		if _, found := observed[sourceID]; found {
 			continue
 		}
-		if _, graced := pendingRemoval[sourceID]; graced {
+		since, graced := absentSince[sourceID]
+		if !graced {
+			since = now.Unix()
+		}
+		if now.Unix()-since >= int64(AbsenceGracePeriod/time.Second) {
 			catalog.Dispositions = append(catalog.Dispositions, ObjectDisposition{SourceID: sourceID, Scope: "STRATEGY",
-				Disposition: DispositionRemoved, Reason: "ABSENT_FROM_ACTIVE_SET"})
+				Disposition: DispositionRemoved, Reason: "ABSENT_FROM_ACTIVE_SET", AbsentSince: since})
 			continue
 		}
 		retained, err := retainLastGood(sourceID)
@@ -335,7 +584,7 @@ func BuildCatalog(ctx context.Context, request BuildRequest) (Catalog, error) {
 		}
 		if retained {
 			catalog.Dispositions = append(catalog.Dispositions, ObjectDisposition{SourceID: sourceID, Scope: "STRATEGY",
-				Disposition: DispositionPendingRemoval, Reason: "REMOVED_FROM_ACTIVE_SET"})
+				Disposition: DispositionPendingRemoval, Reason: "REMOVED_FROM_ACTIVE_SET", AbsentSince: since})
 		}
 	}
 
@@ -414,13 +663,15 @@ func compilerForRound(planner PrimaryQueryCompiler) (PrimaryQueryCompiler, strin
 // loop); the mutex only keeps a stray concurrent build from corrupting the
 // maps.
 type CandidateCache struct {
-	mu       sync.Mutex
-	protocol string
-	compiler string
-	entries  map[string]cachedCandidate
-	seen     map[string]struct{}
-	compiled int
-	reused   int
+	mu           sync.Mutex
+	protocol     string
+	compiler     string
+	sources      string
+	noDataPolicy string
+	entries      map[string]cachedCandidate
+	seen         map[string]struct{}
+	compiled     int
+	reused       int
 }
 
 type cachedCandidate struct {
@@ -441,15 +692,17 @@ func NewCandidateCache() *CandidateCache {
 // and the full round is exactly what that change asks for: every strategy
 // recompiled under the new setting, so every plan's revision moves and the
 // cutover carries the new Catalog out.
-func (cache *CandidateCache) beginRound(protocol, compiler string) {
+func (cache *CandidateCache) beginRound(protocol, compiler, sources, noDataPolicy string) {
 	if cache == nil {
 		return
 	}
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	if cache.protocol != protocol || cache.compiler != compiler {
+	if cache.protocol != protocol || cache.compiler != compiler || cache.sources != sources ||
+		cache.noDataPolicy != noDataPolicy {
 		cache.entries = make(map[string]cachedCandidate)
-		cache.protocol, cache.compiler = protocol, compiler
+		cache.protocol, cache.compiler, cache.sources = protocol, compiler, sources
+		cache.noDataPolicy = noDataPolicy
 	}
 	cache.seen = make(map[string]struct{}, len(cache.entries))
 	cache.compiled, cache.reused = 0, 0
@@ -460,13 +713,13 @@ func (cache *CandidateCache) beginRound(protocol, compiler string) {
 // candidate: a document the compiler rejects is rejected the same way every
 // round, and recompiling it each time only to reject it again is the cost
 // this cache exists to remove.
-func (cache *CandidateCache) build(ctx context.Context, planner PrimaryQueryCompiler, source SourceStrategy, protocol string) (sourceCandidate, error) {
+func (cache *CandidateCache) build(ctx context.Context, planner PrimaryQueryCompiler, source SourceStrategy, protocol string, sources TargetSources, policy NoDataPolicy) (sourceCandidate, error) {
 	if cache == nil {
-		return buildCandidate(ctx, planner, source, protocol)
+		return buildCandidate(ctx, planner, source, protocol, sources, policy)
 	}
 	digest, err := strategyDigest(source)
 	if err != nil {
-		return buildCandidate(ctx, planner, source, protocol)
+		return buildCandidate(ctx, planner, source, protocol, sources, policy)
 	}
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
@@ -477,7 +730,7 @@ func (cache *CandidateCache) build(ctx context.Context, planner PrimaryQueryComp
 		cache.reused++
 		return entry.candidate, entry.err
 	}
-	candidate, err := buildCandidate(ctx, planner, source, protocol)
+	candidate, err := buildCandidate(ctx, planner, source, protocol, sources, policy)
 	cache.entries[digest] = cachedCandidate{candidate: candidate, err: err}
 	cache.compiled++
 	return candidate, err
@@ -567,19 +820,59 @@ func lastGoodRefusal(facts execution.QueryPlanFacts) string {
 	}
 }
 
-func indexPendingRemoval(dispositions []ObjectDisposition) map[string]struct{} {
-	result := make(map[string]struct{})
+// indexAbsentSince is when each strategy under grace was first found
+// absent: from the published audit's PENDING_REMOVAL dispositions, and from
+// the unconfirmed candidate where the audit does not say. A PENDING_REMOVAL
+// without a moment - written by a build before the grace was a period - is
+// left out, and the caller stamps it absent since now.
+func indexAbsentSince(dispositions []ObjectDisposition, pending map[string]int64) map[string]int64 {
+	result := make(map[string]int64, len(dispositions)+len(pending))
+	for sourceID, since := range pending {
+		if sourceID != "" && since > 0 {
+			result[sourceID] = since
+		}
+	}
 	for _, disposition := range dispositions {
-		if disposition.Scope == "STRATEGY" && disposition.Disposition == DispositionPendingRemoval && disposition.SourceID != "" {
-			result[disposition.SourceID] = struct{}{}
+		if disposition.Scope == "STRATEGY" && disposition.Disposition == DispositionPendingRemoval &&
+			disposition.SourceID != "" && disposition.AbsentSince > 0 {
+			result[disposition.SourceID] = disposition.AbsentSince
 		}
 	}
 	return result
 }
 
+// AbsencesOf is the removal-grace memory of an audit, by source id: what a
+// candidate built from it carries into the next round.
+func AbsencesOf(dispositions []ObjectDisposition) map[string]int64 {
+	absences := indexAbsentSince(dispositions, nil)
+	if len(absences) == 0 {
+		return nil
+	}
+	return absences
+}
+
+// RetainsLastGoodDefinition says whether a refusal leaves the strategy running
+// the last definition that compiled.
+//
+// One predicate, called from both places that decide it. They used to say it
+// in two ways that happened to agree: the source audit retained under anything
+// but UNSUPPORTED, and the executable catalog retained under CONFIG_REJECTED,
+// which were the only two dispositions a compiler terminal could carry. The
+// first terminal filed as something else - a snapshot that had not arrived,
+// which is neither the definition's fault nor this build's - would have been
+// retained by one and dropped by the other, and dropped means the strategy
+// stops detecting for as long as the source is missing a piece.
+//
+// UNSUPPORTED is the one that does not retain, and for a reason that does not
+// generalise: this build cannot evaluate that definition at all, so an older
+// one of it is not a safer answer, it is the same refusal one revision back.
+func RetainsLastGoodDefinition(disposition Disposition) bool {
+	return disposition != DispositionUnsupported
+}
+
 func shouldRetainLastGood(dispositions []ObjectDisposition) bool {
 	for _, disposition := range dispositions {
-		if disposition.Disposition == DispositionUnsupported {
+		if !RetainsLastGoodDefinition(disposition.Disposition) {
 			return false
 		}
 	}
@@ -621,10 +914,21 @@ type sourceCandidate struct {
 	dispositions []ObjectDisposition
 }
 
-func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source SourceStrategy, outputProtocol string) (sourceCandidate, error) {
+func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source SourceStrategy, outputProtocol string, sources TargetSources, policy NoDataPolicy) (sourceCandidate, error) {
 	candidate := sourceCandidate{}
-	if refusal := unsupportedTargetPlan(source); refusal != nil {
-		return sourceCandidate{dispositions: []ObjectDisposition{*refusal}}, errors.New("alarmd controlplane: target_plan is not supported")
+	targetPlanDocument := compileTargetPlanDocument(source)
+	if targetPlanDocument.refusal != nil {
+		return sourceCandidate{dispositions: []ObjectDisposition{*targetPlanDocument.refusal}}, errors.New("alarmd controlplane: target_plan refused: " + targetPlanDocument.refusal.Reason)
+	}
+	if targetPlanDocument.plan != nil && len(targetPlanDocument.plan.DynamicGroups) > 0 && !sources.DynamicGroups {
+		// The plan reads a dynamic group cache this deployment does not
+		// render a prefix for. Withheld here, once, as a deployment fact;
+		// the Plans that reference no group are untouched.
+		refusal := ObjectDisposition{
+			SourceID: source.SourceID, Scope: "PLAN", Disposition: DispositionUnsupported,
+			Reason: "DYNAMIC_GROUP_SOURCE_UNCONFIGURED", FieldPath: fmt.Sprintf("items[%d].target_plan.dynamic_groups", targetPlanDocument.position),
+		}
+		return sourceCandidate{dispositions: []ObjectDisposition{refusal}}, errors.New("alarmd controlplane: target_plan references dynamic groups and the deployment renders no dynamic group cache prefix")
 	}
 	if err := source.Identity.validate(); err != nil {
 		return sourceCandidate{}, err
@@ -639,9 +943,13 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 	if source.SourceID == "" || source.SourceID != strconv.FormatInt(legacy.ID, 10) {
 		return sourceCandidate{}, errors.New("SOURCE_IDENTITY_MISMATCH")
 	}
-	if hasJSONValue(legacy.Priority) || legacy.PriorityGroupKey != "" {
-		return sourceCandidate{dispositions: []ObjectDisposition{{SourceID: source.SourceID, Scope: "PLAN", Disposition: DispositionUnsupported, Reason: "UNSUPPORTED_PRIORITY_SEMANTICS"}}}, errors.New("alarmd controlplane: priority semantics unsupported")
-	}
+	// Priority is how the platform's alert pipeline arbitrates between the
+	// strategies of one priority group: the highest one watching a dimension
+	// keeps the lower ones from detecting it, and closes their alerts. That
+	// is coordination across strategies, not a fact about this one, so the
+	// strategy is compiled as the standalone strategy it is and the Plan is
+	// named as having had its priority ignored.
+	priorityIgnored := legacyPriorityApplies(legacy)
 	if len(legacy.Items) > 1 {
 		return sourceCandidate{dispositions: []ObjectDisposition{{SourceID: source.SourceID, Scope: "PLAN", Disposition: DispositionUnsupported, Reason: "UNSUPPORTED_MULTI_ITEM_STRATEGY"}}}, errors.New("alarmd controlplane: multiple Item strategies unsupported in phase two")
 	}
@@ -655,12 +963,40 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 	// the outcome: a rejected configuration retains the last good Plan, and
 	// that Plan predates the target filter, so the strategy would go on
 	// alerting outside its target with nothing to show for it.
-	targetScope, err := compileTargetScope(item.Target, item.QueryConfigs)
-	if err != nil {
+	var targetScope *contract.TargetScopeV2
+	var targetPlan *contract.TargetPlanV1
+	switch {
+	case targetPlanDocument.present:
+		// The new protocol is the whole target: the item's old target, whatever
+		// shape it now has, is display data and is not read.
+		targetPlan = targetPlanDocument.plan
+	case item.Target.selection:
+		// The strategy's target has moved to the selection protocol without a
+		// target_plan beside it. That is the writer switching protocols out
+		// of order, and it is refused by name rather than compiled as a
+		// strategy with no target, or kept on the last Plan of the old one.
 		return sourceCandidate{dispositions: []ObjectDisposition{{
 			SourceID: source.SourceID, Scope: "PLAN", Disposition: DispositionUnsupported,
-			Reason: targetScopeDispositionReason(err),
-		}}}, err
+			Reason: "TARGET_PLAN_MISSING", FieldPath: "items[0].target",
+		}}}, errors.New("TARGET_PLAN_MISSING: the item's target is a selection document and no target_plan accompanies it")
+	case item.Target.unreadable:
+		// A target this reader cannot make out is refused the way a target
+		// value it cannot read is, and for the same reason: kept on the last
+		// good Plan, the strategy would go on alerting on a target nobody
+		// can show it was pointed at.
+		return sourceCandidate{dispositions: []ObjectDisposition{{
+			SourceID: source.SourceID, Scope: "PLAN", Disposition: DispositionUnsupported,
+			Reason: "UNSUPPORTED_TARGET_SCOPE", FieldPath: "items[0].target",
+		}}}, errors.New("TARGET_SCOPE_UNSUPPORTED: the item's target could not be decoded")
+	default:
+		scope, err := compileTargetScope(item.Target.groups, item.QueryConfigs)
+		if err != nil {
+			return sourceCandidate{dispositions: []ObjectDisposition{{
+				SourceID: source.SourceID, Scope: "PLAN", Disposition: DispositionUnsupported,
+				Reason: targetScopeDispositionReason(err),
+			}}}, err
+		}
+		targetScope = scope
 	}
 	primaryExpression, identityFields := primaryQueryContract(item)
 	functions := append([]json.RawMessage(nil), item.Functions...)
@@ -676,7 +1012,14 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 	if err != nil {
 		var compileFailure *QueryPlanCompileError
 		if errors.As(err, &compileFailure) && compileFailure.Disposition != "" && compileFailure.Reason != "" {
-			candidate.dispositions = append(candidate.dispositions, ObjectDisposition{SourceID: source.SourceID, Scope: "PLAN", Disposition: compileFailure.Disposition, Reason: compileFailure.Reason})
+			disposition := ObjectDisposition{SourceID: source.SourceID, Scope: "PLAN", Disposition: compileFailure.Disposition, Reason: compileFailure.Reason}
+			if compileFailure.FieldPath != "" {
+				disposition.FieldPath = "items[0]." + compileFailure.FieldPath
+			}
+			if compileFailure.Err != nil {
+				disposition.Detail = dispositionDetail(compileFailure.Err.Error())
+			}
+			candidate.dispositions = append(candidate.dispositions, disposition)
 		}
 		return candidate, fmt.Errorf("QUERY_PLAN_INVALID: %w", err)
 	}
@@ -704,7 +1047,7 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 		compiledInputs.osRestartHistory = &history
 	}
 	plan, compiled, dispositions, err := compilePlan(
-		legacy, item, source.Identity, facts.Normalization.DatasetContract, source.SourceID, &compiledInputs, targetScope,
+		legacy, item, source.Identity, facts.Normalization.DatasetContract, source.SourceID, &compiledInputs, targetScope, targetPlan, policy,
 	)
 	if err != nil {
 		candidate.dispositions = append(candidate.dispositions, dispositions...)
@@ -747,7 +1090,7 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 		return candidate, errors.New("OUTPUT_PROTOCOL_REQUIRES_OUTPUT_IDENTITY")
 	}
 	if format == contract.WireFormatPythonCompatible {
-		plan.LegacyOutput = &contract.LegacyOutputContext{DynamicDimensions: facts.Normalization.DatasetContract.DynamicDimensions, Strategy: append(json.RawMessage(nil), source.Document...), DimensionFields: append([]string{}, facts.Normalization.DatasetContract.IdentityFields...), ItemID: strconv.FormatInt(item.ID, 10)}
+		plan.LegacyOutput = &contract.LegacyOutputContext{DynamicDimensions: facts.Normalization.DatasetContract.DynamicDimensions, Strategy: legacyOutputStrategyDocument(source.Document), DimensionFields: append([]string{}, facts.Normalization.DatasetContract.IdentityFields...), ItemID: strconv.FormatInt(item.ID, 10)}
 	}
 	revision, err := contract.DeriveCanonicalDigestV2("alarmd-plan-semantics-v1", plan)
 	if err != nil {
@@ -762,7 +1105,140 @@ func buildCandidate(ctx context.Context, planner PrimaryQueryCompiler, source So
 		RequirementTemplates: compiledInputs.requirements, QueryPlans: compiledInputs.queryPlans,
 	}
 	candidate.dispositions = append(candidate.dispositions, dispositions...)
+	if priorityIgnored {
+		candidate.dispositions = append(candidate.dispositions, ObjectDisposition{SourceID: source.SourceID, Scope: "PLAN", Disposition: DispositionConfigNormalized, Reason: ReasonPriorityIgnored})
+	}
 	return candidate, nil
+}
+
+// legacyOutputStrategyDocument is the strategy document a Python-compatible
+// Plan carries for its output, less what the platform's strategy cache writes
+// differently from one refresh to the next without the strategy changing.
+//
+// The document is copied into the Plan, so every byte of it is part of the
+// snapshot revision, and the cache rewrites two things round after round: an
+// invalid strategy's invalid_type, which its two refresh paths write as empty
+// and as the reason in turn, and the order of the hosts a dynamic target
+// resolves to. Measured on the verification deployment, every one of the
+// Plans that differed between two readings minutes apart differed only
+// there, and each such round published a whole new catalog for content that
+// executes exactly as before.
+//
+// is_invalid and invalid_type are dropped: nothing that reads the output
+// snapshot reads either. Each target condition's value list is put in the
+// order of its elements' canonical bytes: a target matches as a set, and the
+// elements take several shapes (a host, a topology node, a dynamic group), so
+// no one field orders them all. No other list is touched: the order of a
+// condition list or a dimension list means something to the platform, which
+// compares an alert's snapshot with the current strategy in order. A document
+// that does not have the expected shape is carried as it was.
+func legacyOutputStrategyDocument(document json.RawMessage) json.RawMessage {
+	verbatim := append(json.RawMessage(nil), document...)
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(document, &fields) != nil || fields == nil {
+		return verbatim
+	}
+	delete(fields, "is_invalid")
+	delete(fields, "invalid_type")
+	if raw, present := fields["items"]; present {
+		if items, ok := orderedTargetValues(raw); ok {
+			fields["items"] = items
+		}
+	}
+	normalized, err := marshalJSONUnescaped(fields)
+	if err != nil {
+		return verbatim
+	}
+	return normalized
+}
+
+// orderedTargetValues is the items list with each target condition's value
+// list in canonical order; false leaves the list as it was.
+func orderedTargetValues(raw json.RawMessage) (json.RawMessage, bool) {
+	var items []map[string]json.RawMessage
+	if json.Unmarshal(raw, &items) != nil {
+		return nil, false
+	}
+	for _, item := range items {
+		targetRaw, present := item["target"]
+		if !present {
+			continue
+		}
+		var target [][]map[string]json.RawMessage
+		if json.Unmarshal(targetRaw, &target) != nil {
+			continue
+		}
+		for _, group := range target {
+			for _, condition := range group {
+				valuesRaw, present := condition["value"]
+				if !present {
+					continue
+				}
+				var values []json.RawMessage
+				if json.Unmarshal(valuesRaw, &values) != nil {
+					continue
+				}
+				keys := make([]string, len(values))
+				canonical := true
+				for index, value := range values {
+					key, err := contract.CanonicalJSONV2(value)
+					if err != nil {
+						canonical = false
+						break
+					}
+					keys[index] = string(key)
+				}
+				if !canonical {
+					continue
+				}
+				order := make([]int, len(values))
+				for index := range order {
+					order[index] = index
+				}
+				sort.SliceStable(order, func(left, right int) bool { return keys[order[left]] < keys[order[right]] })
+				sorted := make([]json.RawMessage, len(values))
+				for index, from := range order {
+					sorted[index] = values[from]
+				}
+				encoded, err := marshalJSONUnescaped(sorted)
+				if err != nil {
+					return nil, false
+				}
+				condition["value"] = encoded
+			}
+		}
+		encoded, err := marshalJSONUnescaped(target)
+		if err != nil {
+			return nil, false
+		}
+		item["target"] = encoded
+	}
+	encoded, err := marshalJSONUnescaped(items)
+	if err != nil {
+		return nil, false
+	}
+	return encoded, true
+}
+
+// marshalJSONUnescaped is json.Marshal without HTML escaping, so a strategy
+// name with an ampersand reads back as the platform wrote it.
+func marshalJSONUnescaped(value any) (json.RawMessage, error) {
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(value); err != nil {
+		return nil, err
+	}
+	return json.RawMessage(bytes.TrimSuffix(buffer.Bytes(), []byte{'\n'})), nil
+}
+
+// legacyPriorityApplies is the platform's own test for a strategy taking part
+// in priority arbitration: a priority is set, zero included, and the strategy
+// belongs to a priority group. Either one alone arbitrates nothing there, so
+// it is not named here either.
+func legacyPriorityApplies(legacy legacyStrategy) bool {
+	value := strings.TrimSpace(string(legacy.Priority))
+	return value != "" && value != "null" && legacy.PriorityGroupKey != ""
 }
 
 // itemUnit is the item's data unit, derived the way Python derives it: the
@@ -856,15 +1332,16 @@ func lessPlanIdentity(left, right execution.PlanIdentity) bool {
 }
 
 type legacyStrategy struct {
-	ID               int64           `json:"id"`
-	BusinessID       int64           `json:"bk_biz_id"`
-	UpdateTime       json.Number     `json:"update_time"`
-	SnapshotRevision json.RawMessage `json:"strategy_revision,omitempty"`
-	Priority         json.RawMessage `json:"priority"`
-	PriorityGroupKey string          `json:"priority_group_key"`
-	Labels           []string        `json:"labels"`
-	Items            []legacyItem    `json:"items"`
-	Detects          []legacyDetect  `json:"detects"`
+	EffectiveTimeSnapshot json.RawMessage `json:"effective_time_snapshot,omitempty"`
+	ID                    int64           `json:"id"`
+	BusinessID            int64           `json:"bk_biz_id"`
+	UpdateTime            json.Number     `json:"update_time"`
+	SnapshotRevision      json.RawMessage `json:"strategy_revision,omitempty"`
+	Priority              json.RawMessage `json:"priority"`
+	PriorityGroupKey      string          `json:"priority_group_key"`
+	Labels                []string        `json:"labels"`
+	Items                 []legacyItem    `json:"items"`
+	Detects               []legacyDetect  `json:"detects"`
 }
 type legacyItem struct {
 	TimeDelay    int64             `json:"time_delay"`
@@ -889,12 +1366,51 @@ type legacyItem struct {
 	// Target is the strategy's monitoring scope. It was silently ignored here
 	// until 2026-09-09, which is how alarmd came to alert on hosts outside
 	// every scoped strategy's target while Python filtered them out.
-	Target [][]legacyTargetCondition `json:"target"`
+	Target legacyTarget `json:"target"`
 	// NoDataConfig is the item's no-data setting. A pointer so that "the
 	// strategy cache carried no section" is distinguishable from "it carried
 	// one with everything at zero"; the two mean different things and the
 	// second is a malformed entry rather than a disabled item.
 	NoDataConfig json.RawMessage `json:"no_data_config"`
+}
+
+// legacyTarget is the item's target as the strategy cache stores it: the
+// platform's list of condition groups, or, once the writer has moved the
+// strategy to the selection protocol, an object, or something this reader
+// cannot make out. None of the three fails the decode of the whole
+// strategy: a decode failure retains the strategy's last good Plan, and
+// that Plan was compiled from the old target - the one outcome a target
+// change must never produce. What each shape means is decided where the
+// target is compiled, and only when no target_plan stands in for it.
+type legacyTarget struct {
+	groups [][]legacyTargetCondition
+	// selection is true when the target was an object: the new selection
+	// protocol, which this compiler reads only through target_plan.
+	selection bool
+	// unreadable is true when the target was neither absent, an object nor
+	// a list this reader could decode.
+	unreadable bool
+}
+
+func (target *legacyTarget) UnmarshalJSON(raw []byte) error {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		*target = legacyTarget{}
+		return nil
+	}
+	if strings.HasPrefix(trimmed, "{") {
+		*target = legacyTarget{selection: true}
+		return nil
+	}
+	var groups [][]legacyTargetCondition
+	decoder := json.NewDecoder(strings.NewReader(trimmed))
+	decoder.UseNumber()
+	if err := decoder.Decode(&groups); err != nil {
+		*target = legacyTarget{unreadable: true}
+		return nil
+	}
+	*target = legacyTarget{groups: groups}
+	return nil
 }
 
 // legacyNoDataConfig is the no_data_config the strategy cache stores.
@@ -918,6 +1434,10 @@ type legacyNoDataConfig struct {
 	Continuous   json.RawMessage   `json:"continuous"`
 	AggDimension []json.RawMessage `json:"agg_dimension"`
 	Level        json.RawMessage   `json:"level"`
+	// TrackingHorizonSeconds is this item's own horizon, overriding the
+	// deployment's. Absent means the deployment's applies; a stated zero is an
+	// opt-out and is not the same as absent.
+	TrackingHorizonSeconds json.RawMessage `json:"tracking_horizon_seconds"`
 }
 
 // legacyNoDataEnabled reads is_enabled the way the backend's truthiness test
@@ -1012,11 +1532,11 @@ const defaultNoDataLevel uint32 = 2
 // second predicate that agrees today is a predicate that can drift tomorrow,
 // and the drift is silent in both directions: a Plan that errors every round,
 // or a Plan that quietly expects nothing.
-func noDataRosterUnsupported(scope *contract.TargetScopeV2, config *contract.NoDataConfigV1) string {
+func noDataRosterUnsupported(scope *contract.TargetScopeV2, plan *contract.TargetPlanV1, config *contract.NoDataConfigV1) string {
 	if config == nil {
 		return ""
 	}
-	if _, err := nodata.ClassifyRoster(scope, config.AggDimension); err != nil {
+	if _, err := nodata.ClassifyTarget(scope, plan, config.AggDimension); err != nil {
 		var unsupported *nodata.RosterUnsupportedError
 		if errors.As(err, &unsupported) {
 			return unsupported.Reason
@@ -1031,7 +1551,7 @@ func noDataRosterUnsupported(scope *contract.TargetScopeV2, config *contract.NoD
 // cannot be validated is an error rather than a silent disable: the strategy
 // asked for the detection, and dropping it quietly is the failure mode that
 // looks like nothing happened.
-func frozenNoDataConfig(item legacyItem) (*contract.NoDataConfigV1, error) {
+func frozenNoDataConfig(item legacyItem, policy NoDataPolicy) (*contract.NoDataConfigV1, error) {
 	raw := strings.TrimSpace(string(item.NoDataConfig))
 	if raw == "" || raw == "null" {
 		return nil, nil
@@ -1071,6 +1591,37 @@ func frozenNoDataConfig(item legacyItem) (*contract.NoDataConfigV1, error) {
 	}
 	if stated {
 		config.Level = level
+	}
+	// The effective horizon is frozen here, so a Slot reads one number and
+	// never has to know whether it came from the item or the deployment. An
+	// item that states its own uses it; stating nothing inherits the
+	// deployment's.
+	//
+	// A stated zero is refused rather than taken as an opt-out. The contract
+	// is to give every group a finite horizon, so there is no opting out to
+	// express, and the horizon has no value meaning "forever" for a zero to
+	// stand in for. An item that wants the platform's horizon says nothing,
+	// which is already how it is said - so a written zero is a mistake worth
+	// naming where the configuration is checked, rather than a silent switch
+	// back to the unbounded tracking this whole decision exists to end.
+	config.TrackingHorizonSeconds = policy.TrackingHorizonSeconds
+	if policy.TrackingHorizonSeconds > 0 {
+		config.TrackingHorizonSource = contract.NoDataHorizonSourcePlatform
+	}
+	horizon, stated, err := legacyNoDataNumber("tracking_horizon_seconds", source.TrackingHorizonSeconds)
+	if err != nil {
+		return nil, fmt.Errorf("alarmd controlplane: item %d %w", item.ID, err)
+	}
+	if stated {
+		if horizon == 0 {
+			return nil, fmt.Errorf("alarmd controlplane: item %d no_data_config tracking_horizon_seconds "+
+				"must be a positive number of seconds; remove the field to inherit the platform's", item.ID)
+		}
+		// The source is frozen beside the number: a reader of the Plan does
+		// not have to compare it against the platform's current value to
+		// know whose it is.
+		config.TrackingHorizonSeconds = int64(horizon)
+		config.TrackingHorizonSource = contract.NoDataHorizonSourceStrategy
 	}
 	if err := config.Validate(); err != nil {
 		return nil, fmt.Errorf("alarmd controlplane: item %d no_data_config: %w", item.ID, err)
@@ -1126,32 +1677,55 @@ func decodeLegacyStrategy(document json.RawMessage) (legacyStrategy, error) {
 	return value, nil
 }
 
-// Presence selects the new target protocol, even for null or malformed values.
-// Until that protocol is supported, refusing it must precede legacy decoding:
-// its display-only target may be an object, which the legacy decoder rejects
-// as a configuration error and would otherwise retain the old target's Plan.
-// Ordinary sources are checked inside the candidate cache; incomplete sources
-// also check before their separate last-good retention path.
-func unsupportedTargetPlan(source SourceStrategy) *ObjectDisposition {
+// compiledTargetPlan is what the target_plan document of one strategy came
+// to: the frozen form when it read, the disposition refusing it when it did
+// not, and neither when the strategy carries no such field.
+type compiledTargetPlan struct {
+	present  bool
+	plan     *contract.TargetPlanV1
+	refusal  *ObjectDisposition
+	position int
+}
+
+// compileTargetPlanDocument reads the strategy's target_plan, if it has one.
+//
+// Presence selects the new target protocol, even for null or malformed
+// values, and it is read before the legacy decoder sees the document: the
+// item's display-only target may by then be an object, which the legacy
+// decoder rejects as a configuration error and would otherwise retain the
+// old target's Plan. A target_plan that does not read is refused by name and
+// field, and the strategy is never compiled from its old target instead.
+// Ordinary sources are checked inside the candidate cache; incomplete
+// sources also check before their separate last-good retention path.
+func compileTargetPlanDocument(source SourceStrategy) compiledTargetPlan {
 	var document struct {
 		Items []json.RawMessage `json:"items"`
 	}
 	if err := json.Unmarshal(source.Document, &document); err != nil {
-		return nil // An unreadable source keeps its existing failure semantics.
+		return compiledTargetPlan{} // An unreadable source keeps its existing failure semantics.
 	}
 	for index, raw := range document.Items {
 		var item struct {
-			TargetPlan json.RawMessage `json:"target_plan"`
+			TargetPlan   json.RawMessage   `json:"target_plan"`
+			QueryConfigs []json.RawMessage `json:"query_configs"`
 		}
 		if err := json.Unmarshal(raw, &item); err != nil || len(item.TargetPlan) == 0 {
 			continue
 		}
-		return &ObjectDisposition{
-			SourceID: source.SourceID, Scope: "PLAN", Disposition: DispositionUnsupported,
-			Reason: "UNSUPPORTED_TARGET_PLAN", FieldPath: fmt.Sprintf("items[%d].target_plan", index),
+		field := fmt.Sprintf("items[%d].target_plan", index)
+		plan, refusal := targetplan.Decode(item.TargetPlan, targetplan.Options{ObjectIdentities: objectIdentityPairs(item.QueryConfigs)})
+		if refusal != nil {
+			if refusal.Path != "" {
+				field += "." + refusal.Path
+			}
+			return compiledTargetPlan{present: true, position: index, refusal: &ObjectDisposition{
+				SourceID: source.SourceID, Scope: "PLAN", Disposition: DispositionUnsupported,
+				Reason: refusal.Reason, FieldPath: field,
+			}}
 		}
+		return compiledTargetPlan{present: true, position: index, plan: plan}
 	}
-	return nil
+	return compiledTargetPlan{}
 }
 
 type compiledPlanInputs struct {
@@ -1195,10 +1769,9 @@ func compilePlan(
 	sourceID string,
 	inputs *compiledPlanInputs,
 	targetScope *contract.TargetScopeV2,
+	targetPlan *contract.TargetPlanV1,
+	policy NoDataPolicy,
 ) (contract.EvaluationPlanV2, planCompileFacts, []ObjectDisposition, error) {
-	if hasJSONValue(source.Priority) || source.PriorityGroupKey != "" {
-		return contract.EvaluationPlanV2{}, planCompileFacts{}, nil, errors.New("alarmd controlplane: G1 does not support priority semantics")
-	}
 	interval, err := itemInterval(item)
 	if err != nil {
 		return contract.EvaluationPlanV2{}, planCompileFacts{}, nil, err
@@ -1249,11 +1822,11 @@ func compilePlan(
 		levelIDs = append(levelIDs, int(level))
 	}
 	sort.Ints(levelIDs)
-	for _, rawLevel := range levelIDs {
-		detect, ok := detectByLevel[uint32(rawLevel)]
-		if ok && !isAlwaysActiveUptime(detect.Trigger.Uptime) {
-			disposition := ObjectDisposition{SourceID: sourceID, Scope: "PLAN", Disposition: DispositionUnsupported, Reason: "EFFECTIVE_TIME_NOT_MIGRATED"}
-			return contract.EvaluationPlanV2{}, planCompileFacts{}, []ObjectDisposition{disposition}, errors.New("alarmd controlplane: non-default uptime unsupported")
+	for _, detect := range source.Detects {
+		_, err := strategy.CompileUptime(detect.Trigger.Uptime)
+		if err != nil {
+			reason := "EFFECTIVE_TIME_INVALID"
+			return contract.EvaluationPlanV2{}, planCompileFacts{}, []ObjectDisposition{{SourceID: sourceID, Scope: "PLAN", Disposition: DispositionConfigRejected, Reason: reason}}, fmt.Errorf("alarmd controlplane: %s", reason)
 		}
 	}
 	levels := make([]contract.LevelIRV2, 0, len(levelIDs))
@@ -1262,6 +1835,19 @@ func compilePlan(
 		levelID := uint32(rawLevel)
 		detect, ok := detectByLevel[levelID]
 		_, duplicate := duplicateDetect[levelID]
+		borrowed := false
+		if !ok && !duplicate && len(source.Detects) > 0 {
+			// The platform's trigger reads a level with no trigger of its own
+			// with the strategy's first one; its recovery finds none for the
+			// level and takes its default. See borrowedLegacyDetect. The first
+			// one is taken whatever it holds, and one that cannot trigger is
+			// refused below as the missing trigger it is, not lent. Nor is one
+			// whose own level is written twice: the platform would lend the
+			// last of the two, and two triggers at one level are refused here.
+			if _, twice := duplicateDetect[source.Detects[0].Level]; !twice {
+				detect, ok, borrowed = borrowedLegacyDetect(source.Detects[0]), true, true
+			}
+		}
 		if !ok || detect.Level == 0 || detect.Trigger.Count == 0 || detect.Trigger.CheckWindow == 0 || duplicate {
 			dispositions = append(dispositions, ObjectDisposition{SourceID: sourceID, Scope: "LEVEL", LevelID: levelID, Disposition: DispositionConfigRejected, Reason: "TRIGGER_CONFIG_MISSING"})
 			continue
@@ -1316,11 +1902,26 @@ func compilePlan(
 			dispositions = append(dispositions, ObjectDisposition{SourceID: sourceID, Scope: "LEVEL", LevelID: levelID, Disposition: DispositionConfigRejected, Reason: "RECOVERY_CONFIG_INVALID"})
 			continue
 		}
-		trigger, _ := json.Marshal(map[string]any{"required_anomalies": detect.Trigger.Count, "step_seconds": interval, "window_size": detect.Trigger.CheckWindow})
+		triggerFields := map[string]any{"required_anomalies": detect.Trigger.Count, "step_seconds": interval, "window_size": detect.Trigger.CheckWindow}
+		if len(detect.Trigger.Uptime) > 0 && string(detect.Trigger.Uptime) != "null" {
+			triggerFields["uptime"] = detect.Trigger.Uptime
+			triggerFields["timezone_ref"] = "BUSINESS_LOCAL"
+			// Named here, where the Leader can say which strategy and Level;
+			// the compiler reads the range as Python does and does not know
+			// whose it is.
+			if strategy.UptimeTimeRangesNormalized(detect.Trigger.Uptime) {
+				dispositions = append(dispositions, ObjectDisposition{SourceID: sourceID, Scope: "LEVEL", LevelID: levelID, Disposition: DispositionConfigNormalized, Reason: ReasonEffectiveTimeRangeInvalid})
+			}
+		}
+		trigger, _ := json.Marshal(triggerFields)
 		recovery, _ := json.Marshal(map[string]any{"consecutive_windows": recoveryConfig.CheckWindow, "enabled": recoveryEnabled})
 		connector := contract.LevelConnectorAND
 		if strings.EqualFold(detect.Connector, "or") {
 			connector = contract.LevelConnectorOR
+		}
+		if borrowed {
+			dispositions = append(dispositions, ObjectDisposition{SourceID: sourceID, Scope: "LEVEL", LevelID: levelID, Disposition: DispositionConfigNormalized, Reason: ReasonLevelTriggerBorrowed,
+				Detail: fmt.Sprintf("trigger_from_level=%d", detect.Level)})
 		}
 		levels = append(levels, contract.LevelIRV2{Definition: contract.LevelDefinitionV2{LevelID: levelID, Priority: priority}, Connector: connector, DetectPlan: contract.DetectPlanV2{Algorithms: compiledAlgorithms}, TriggerPlan: contract.TypedPlanV1{Type: "N_OF_M", Version: 1, Config: trigger}, RecoveryPlan: contract.TypedPlanV1{Type: "CONTINUOUS_TRIGGER_MISS", Version: 1, Config: recovery}})
 		inputs.merge(levelInputs)
@@ -1332,6 +1933,8 @@ func compilePlan(
 	ir := contract.StrategyIRV2{Schema: contract.Schema{Name: contract.StrategyIRSchemaV2, Major: 2, Minor: 0}, RequiredFeatures: []string{}, StrategyRef: ref, ExecutionSemantics: semantics, InputProjection: projection, Levels: levels}
 	plan := contract.EvaluationPlanV2{PlanID: strategyID, StrategyRef: ref, InputProjection: projection, SourceCompatibility: &contract.SourceCompatibilityV2{ItemID: strconv.FormatInt(item.ID, 10)}, StrategyIR: ir}
 	plan.TargetScope = targetScope
+	plan.EffectiveTimeSnapshot = append(json.RawMessage(nil), source.EffectiveTimeSnapshot...)
+	plan.TargetPlan = targetPlan
 	// A no-data configuration this build cannot compile suspends no-data
 	// detection for this Plan and nothing else.
 	//
@@ -1343,12 +1946,12 @@ func compilePlan(
 	// over the half they may not have known was configured. The half that is
 	// off is named here, counted in the composition, and listed by strategy.
 	suspended := ""
-	noData, err := frozenNoDataConfig(item)
+	noData, err := frozenNoDataConfig(item, policy)
 	if err != nil {
 		suspended, noData = contract.ReasonNoDataConfigInvalid, nil
 	}
 	plan.NoData = noData
-	if reason := noDataRosterUnsupported(targetScope, noData); suspended == "" && reason != "" {
+	if reason := noDataRosterUnsupported(targetScope, targetPlan, noData); suspended == "" && reason != "" {
 		// Decided here rather than every round. The expected set is a function
 		// of the target's shape and the no-data dimensions, both frozen here,
 		// so a Slot would reach the same answer with no new information - and
@@ -1364,10 +1967,50 @@ func compilePlan(
 		plan.OutputIdentity = &contract.MonitorOutputIdentity{DynamicDimensions: dataset.DynamicDimensions, DimensionFields: append([]string{}, dataset.IdentityFields...)}
 		plan.SubjectFacts = frozenSubjectFacts(source, item)
 	}
-	scheduleSpec := execution.DeriveScheduleSpec(interval)
+	scheduleSpec, refusal, err := planScheduleSpec(sourceID, plan, interval)
+	if err != nil {
+		if refusal != nil {
+			dispositions = append(dispositions, *refusal)
+		}
+		return contract.EvaluationPlanV2{}, planCompileFacts{}, dispositions, err
+	}
 	schedule, err := execution.DerivePlanScheduleRevision(scheduleSpec)
 	return plan, planCompileFacts{ScheduleSpec: scheduleSpec, ScheduleRevision: schedule, NoDataSuspended: suspended},
 		dispositions, err
+}
+
+// planScheduleSpec derives the Plan's schedule and holds the three copies of
+// its evaluation step to one another: the schedule's cadence, the execution
+// semantics' evaluation interval, and each Level's trigger step. Today all
+// three are the item's aggregation interval, written from one variable, and
+// the state grid, the trigger windows and the Slot cadence only line up
+// because they are. A change that moves one of them -- the day the step is
+// separated from the aggregation interval -- has to answer for the others,
+// and this is where it finds out: the Plan is withheld by name rather than
+// run on a schedule its windows do not count in.
+func planScheduleSpec(sourceID string, plan contract.EvaluationPlanV2, intervalSeconds int64) (execution.ScheduleSpec, *ObjectDisposition, error) {
+	spec := execution.DeriveScheduleSpec(intervalSeconds)
+	step := int64(plan.StrategyIR.ExecutionSemantics.EvaluationInterval)
+	mismatch := func(what string, value int64) (execution.ScheduleSpec, *ObjectDisposition, error) {
+		detail := fmt.Sprintf("%s=%d evaluation_interval=%d", what, value, step)
+		return execution.ScheduleSpec{}, &ObjectDisposition{SourceID: sourceID, Scope: "PLAN", Disposition: DispositionUnsupported, Reason: "EVALUATION_STEP_INCONSISTENT",
+			Detail: detail}, errors.New("alarmd controlplane: evaluation step copies disagree: " + detail)
+	}
+	if spec.EvaluationIntervalSeconds != step {
+		return mismatch("schedule_interval", spec.EvaluationIntervalSeconds)
+	}
+	for _, level := range plan.StrategyIR.Levels {
+		var trigger struct {
+			StepSeconds int64 `json:"step_seconds"`
+		}
+		if err := json.Unmarshal(level.TriggerPlan.Config, &trigger); err != nil {
+			return execution.ScheduleSpec{}, nil, err
+		}
+		if trigger.StepSeconds != step {
+			return mismatch(fmt.Sprintf("level_%d_step_seconds", level.Definition.LevelID), trigger.StepSeconds)
+		}
+	}
+	return spec, nil, nil
 }
 
 func supportedAlgorithmKind(kind string) bool {

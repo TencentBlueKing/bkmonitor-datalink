@@ -292,3 +292,24 @@ func TestATerminalOutcomeUnderABrokenMarkerMustNameItsReason(t *testing.T) {
 // discriminate it, the two predicates are pinned directly in
 // execution/result_contract_internal_test.go -- outcome kind, load status and
 // reason, one cell each.
+
+// A series whose State could not be read produces Level outcomes and no
+// window summary, and says so: the round that handled it counts it, so
+// levels plus the two reasons reconciles against the series the Slot handled.
+//
+// Without the count, a round where most series failed their State load
+// reports the few that did not as though they were the whole object -- the
+// same shape on the page as a small object with nothing wrong.
+func TestASeriesWhoseStateCouldNotBeReadIsCountedByTheRoundThatHandledIt(t *testing.T) {
+	plan := evaluateAndValidate(t, retryableStateRequest(t))
+	coverage := plan.HistoryCoverage
+	if coverage.Constrained == 0 {
+		t.Fatalf("coverage = %+v, want the series counted as one this round could not evaluate", coverage)
+	}
+	if coverage.Levels != 0 || coverage.Short != 0 {
+		t.Fatalf("coverage = %+v, want no window counts: nothing was evaluated to summarise", coverage)
+	}
+	if len(plan.LevelOutcomes) == 0 {
+		t.Fatalf("the round produced no Level outcome for a series it counted: %+v", plan)
+	}
+}

@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package execution
 
 import (
@@ -190,7 +181,7 @@ func buildSeriesInternalExecution(header InternalExecutionHeader, batch SeriesEx
 			return InternalExecution{}, err
 		}
 		input.GapPreflight = append(input.GapPreflight, PlanGapLoadItem{
-			Identity:     PlanGapIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration},
+			Identity:     due.GapIdentity(),
 			ApplyVersion: version, ScheduleRevision: due.ScheduleRevision,
 		})
 	}
@@ -273,7 +264,24 @@ type ProviderSeriesSink interface {
 type QueryExecutionConsumer interface {
 	Begin(context.Context, InternalExecutionHeader) error
 	ConsumeSeries(context.Context, SeriesExecutionBatch) error
+	// ResolvedTargets is what this execution resolved each target-plan Plan's
+	// target to, by Plan, read by the source after Begin so the admission
+	// filter and the consumer's own absence judgement see one resolution. It
+	// is part of the interface rather than an optional one: a consumer that
+	// silently lacked it would have every target-plan Plan admit nothing,
+	// and the only trace would be a rejection counter.
+	ResolvedTargets() TargetMemberships
 }
+
+// TargetMembership answers whether a record key is among the members a
+// target plan resolved to in one execution.
+type TargetMembership interface {
+	Contains(key string) bool
+}
+
+// TargetMemberships is one execution's target resolutions by Plan. An
+// absent Plan, and a nil entry, both mean the target was not resolved.
+type TargetMemberships map[PlanIdentity]TargetMembership
 
 type SeriesDelivery struct {
 	PhysicalQuery PhysicalQueryDigest

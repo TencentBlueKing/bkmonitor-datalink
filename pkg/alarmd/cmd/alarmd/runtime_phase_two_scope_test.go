@@ -332,7 +332,7 @@ func scopeTestFrozenSlot(queryGroup execution.QueryGroupIdentity) scheduler.Froz
 		},
 		DuePlanTargets: execution.FrozenDuePlanTargets{
 			DuePlanSetDigest: contractRef.DuePlanSetDigest,
-			Plans:            []execution.PlanIdentity{{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}},
+			Plans:            []execution.PlanKey{{PlanIdentity: execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}}},
 		},
 		EarliestQueryDeadlineUnixMilli: 101_000, RecoveryUntilUnixMilli: 701_000, KeepUntilUnixMilli: 777_000,
 		ExpectedNextSlot: contractRef.Slot.EvaluationTime,

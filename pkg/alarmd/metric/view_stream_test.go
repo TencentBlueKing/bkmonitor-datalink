@@ -47,7 +47,7 @@ func TestTheLeaderPublishesTheFourNumbersAndAFollowerOnlyItsCounters(t *testing.
 		return ViewStreamCounts{Leading: true, Revision: 12, Sessions: 63,
 			Expected: 64, Sent: 64, Acked: 63, Installed: 61, Switched: 0,
 			IgnoredUnknownVersion: 1, IgnoredDigestMismatch: 2,
-			Publications: 12, PublicationsSkipped: 700, SnapshotChunksSent: 64, DeltasSent: 30, EmptyDeltasSent: 600, Refusals: 3}
+			Publications: 12, PublicationsSkipped: 700, SnapshotChunksSent: 64, DeltasSent: 30, EmptyDeltasSent: 600, DeltasOversized: 2, Refusals: 3}
 	})
 	if got := leader["bkmonitor_alarmd_view_version_receivers"]; got["expected"] != 64 || got["sent"] != 64 || got["acked"] != 63 || got["installed"] != 61 || got["switched"] != 0 || len(got) != 5 {
 		t.Fatalf("receivers = %v", got)
@@ -66,6 +66,9 @@ func TestTheLeaderPublishesTheFourNumbersAndAFollowerOnlyItsCounters(t *testing.
 	}
 	if leader["bkmonitor_alarmd_view_stream_refusals_total"][""] != 3 {
 		t.Fatalf("refusals = %v", leader["bkmonitor_alarmd_view_stream_refusals_total"])
+	}
+	if leader["bkmonitor_alarmd_view_deltas_oversized_total"][""] != 2 {
+		t.Fatalf("oversized deltas = %v", leader["bkmonitor_alarmd_view_deltas_oversized_total"])
 	}
 	follower := gatherViewStream(t, func() ViewStreamCounts { return ViewStreamCounts{Refusals: 1, PublicationsSkipped: 5} })
 	if follower["bkmonitor_alarmd_view_stream_leading"][""] != 0 || follower["bkmonitor_alarmd_view_stream_refusals_total"][""] != 1 {

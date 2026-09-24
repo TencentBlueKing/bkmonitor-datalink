@@ -204,6 +204,10 @@ func TestEveryRecoveryStateIsProducedOrNamedAsWaiting(t *testing.T) {
 		{{QueryGroup: "a", Kind: KindDegradedRun, ReasonCode: "error", ReasonLastAt: fresh, LastError: &LastError{Text: "x", At: fresh}}},
 		{{QueryGroup: "a", Kind: KindDegradedRun, Cause: "LEVEL_OUTCOME_UNKNOWN", CauseReason: "QUERY_TIMEOUT", ReasonLastAt: fresh}},
 		{{QueryGroup: "a", Kind: KindDegradedRun, ReasonCode: "error", ReasonLastAt: stale, LastError: &LastError{Text: "x", At: stale}}},
+		// A completing object whose held guard has not moved for StalledRounds.
+		{{QueryGroup: "a", Kind: KindDegradedRun, Cause: "LEVEL_OUTCOME_UNKNOWN", CauseReason: "CONFIG_DRIFT", ReasonLastAt: fresh,
+			Coverage: &HistoryCoverage{Levels: 5, Short: 1, WorstValid: 6, WorstRequired: 9, Guarded: 1},
+			Guards:   []GapGuard{{Scope: "plan", Status: "GAPPED", Reason: "CONFIG_DRIFT", Required: 9, Observed: 0, Progress: "none", UnchangedRounds: StalledRounds, Rounds: StalledRounds + 1}}}},
 	} {
 		Attribute(rows, now)
 		for _, report := range ReportChecks([][]Anomaly{rows}, nil, nil, now) {

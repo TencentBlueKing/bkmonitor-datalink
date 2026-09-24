@@ -61,6 +61,29 @@ type RedisStore struct {
 	prefix          string
 	ttl             time.Duration
 	maxAnomalyBytes int
+	meter           StoreMeter
+}
+
+// StoreMeter is what the store reports its own Redis traffic to. A fleet
+// view is one MGET over every replica's snapshot and it runs on every page
+// load and every OB channel invocation, but it rides the state store's
+// connection: on a running deployment the per-connection counters could not
+// tell two hundred views a minute from the baseline's own drift. These are
+// written by this store alone, so a difference over a window is the views'.
+type StoreMeter interface {
+	// SnapshotPublished is the size of the snapshot just written.
+	SnapshotPublished(bytes int)
+	// SnapshotsLoaded is one view's read: how many snapshots came back and
+	// how many bytes they were.
+	SnapshotsLoaded(loaded int, bytes int)
+}
+
+// Meter attaches a meter to the store. Nil leaves it unmetered, which is
+// what a test or a tool that is not a running replica gets.
+func (store *RedisStore) Meter(meter StoreMeter) {
+	if store != nil {
+		store.meter = meter
+	}
 }
 
 // NewRedisStore builds a store. A non-positive ttl or cap falls back to the
@@ -177,6 +200,9 @@ func (store *RedisStore) Publish(ctx context.Context, snapshot Snapshot) error {
 	if err := store.client.Set(ctx, store.snapshotKey(snapshot.Replica), payload, store.ttl).Err(); err != nil {
 		return fmt.Errorf("alarmd fleet: publish snapshot: %w", err)
 	}
+	if store.meter != nil {
+		store.meter.SnapshotPublished(len(payload))
+	}
 	return nil
 }
 
@@ -200,11 +226,22 @@ func (store *RedisStore) Load(ctx context.Context, replicas []string) ([]Snapsho
 		return nil, fmt.Errorf("alarmd fleet: read snapshots: %w", err)
 	}
 	snapshots := make([]Snapshot, 0, len(values))
+	// Counted whatever the outcome below: a read that decodes badly still
+	// cost the round trip and the bytes.
+	bytes := 0
+	defer func() {
+		if store.meter != nil {
+			store.meter.SnapshotsLoaded(len(snapshots), bytes)
+		}
+	}()
 	for index, value := range values {
 		if value == nil {
 			continue
 		}
 		text, ok := value.(string)
+		if ok {
+			bytes += len(text)
+		}
 		if !ok {
 			return nil, fmt.Errorf("alarmd fleet: snapshot for %s has an unexpected type", replicas[index])
 		}

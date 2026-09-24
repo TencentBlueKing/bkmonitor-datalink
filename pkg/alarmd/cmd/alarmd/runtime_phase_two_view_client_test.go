@@ -8,66 +8,41 @@ package main
 import (
 	"context"
 	"net"
-	"net/http"
 	"os/exec"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
-
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 // The production Worker finds its own Leader from the records, connects
-// over the listener's port, installs the view and reports it -- and none
-// of it touches execution (decision-016 section 7.1, the shadow; the
-// Leader's hard condition one). The stream is then taken away, refused,
-// and given back, and through all of it Slots complete FULL and the cursor
-// advances exactly as they did with the stream up.
-func TestTheProductionWorkerShadowsTheViewAndExecutionNeverNotices(t *testing.T) {
-	// The listener the registration will advertise, served here: h2c to the
-	// bundle's control stream once the bundle exists, refused or gone when
-	// the test says so.
+// over the listener's port, installs the view and executes from it
+// (decision-016 batch 4b). With the stream up Slots complete FULL. When the
+// stream is taken away the installed view remains and, with nothing changed
+// under it, the next Slot completes FULL from it: the view is what the
+// Worker runs from, not the connection. When the records then move on
+// without it -- a cutover of its own Query Group, brought by the lease
+// renewal -- the round is refused by name and the cursor stays. Given back,
+// the Worker reconnects, installs the new view by snapshot and completes
+// the Slot on the new Segment.
+func TestTheProductionWorkerExecutesFromTheViewAndRefusesWhenItGoesStale(t *testing.T) {
+	// The registration advertises this listener; the settling runner serves
+	// the bundle's control stream on it from the first round.
 	address := reserveAddressForBundle(t)
-	var stream atomic.Pointer[http.Handler]
-	var refuse atomic.Bool
-	handler := h2c.NewHandler(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if refuse.Load() {
-			http.Error(response, "gone", http.StatusServiceUnavailable)
-			return
-		}
-		if current := stream.Load(); current != nil && request.ProtoMajor == 2 && strings.HasPrefix(request.Header.Get("Content-Type"), "application/grpc") {
-			(*current).ServeHTTP(response, request)
-			return
-		}
-		http.NotFound(response, request)
-	}), &http2.Server{})
-	// Connections are tracked so the test can cut them: h2c hijacks the
-	// connection, and http.Server.Close does not reach a hijacked one.
-	tracked, err := listenTracked(address)
-	if err != nil {
-		t.Fatal(err)
-	}
-	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
-	go func() { _ = server.Serve(tracked) }()
-	t.Cleanup(func() { _ = server.Close(); tracked.closeAll() })
-
 	fixture := startCutoverFixture(t, func(cfg *config.Config) { cfg.HTTP.Listen = address })
 	ctx := context.Background()
 	bundle := fixture.bundle
-	stream.Store(&bundle.dependencies.ControlStream)
 	client := bundle.dependencies.ViewClient
 	if client == nil {
 		t.Fatal("the production bundle has no view client")
 	}
-	// The registration advertises this listener; the Worker finds itself as
-	// Leader there and installs its own projection: both Query Groups.
+	// The Worker found itself as Leader there and installed its own
+	// projection: both Query Groups.
 	waitFor(t, "the Worker installs the view from its own Leader", func() bool {
 		view, ok := client.Installed()
 		return ok && view.Version.Revision >= 1 && len(view.Entries) == 2
@@ -84,40 +59,90 @@ func TestTheProductionWorkerShadowsTheViewAndExecutionNeverNotices(t *testing.T)
 	// Execution with the stream up: the next Slot completes FULL.
 	withStream := runOneSlotFull(t, fixture)
 
-	// The stream is taken away: the Worker is disconnected and keeps trying;
-	// the next Slot completes FULL all the same, the cursor moves the same.
-	stream.Store(nil)
-	refuse.Store(true)
-	_ = server.Close()
-	tracked.closeAll()
+	// The stream is taken away: the Worker is disconnected and keeps
+	// trying. The view it installed stays, nothing under it changed, and
+	// the next Slot completes FULL from it, the cursor moving the same.
+	withholdControlStreamForTest(bundle)
 	waitFor(t, "the Worker notices the stream is gone", func() bool { return !client.Stats().Connected })
+	installed, held := client.Installed()
+	if !held {
+		t.Fatal("the installed view went with the connection")
+	}
 	withoutStream := runOneSlotFull(t, fixture)
 	if withoutStream.CompletionKind != withStream.CompletionKind || withoutStream.Result != withStream.Result || withoutStream.ReasonCode != withStream.ReasonCode {
-		t.Fatalf("Slot without the stream = %+v, with it %+v: the stream changed execution", withoutStream, withStream)
+		t.Fatalf("Slot without the stream = %+v, with it %+v: the connection, not the view, decided execution", withoutStream, withStream)
 	}
 	if progress := fixture.progress(ctx); progress.NextSlot <= withStream.slot {
 		t.Fatalf("the cursor did not advance past the Slot run with the stream: %+v", progress)
 	}
-	// The listener returns but refuses: still nothing changes for execution.
-	tracked, err = listenTracked(address)
+
+	// The records move on without the Worker: its own Query Group is cut
+	// over, which stamps a new timeline revision on the assignment; the
+	// lease renewal brings it. The view still says the old one, so the
+	// round is refused by name and the cursor stays.
+	installCutoverStallStrategies(t, ctx, fixture.redisClient, "system.disk", 1725000600)
+	stripSegmentContent(t, ctx, fixture.redisClient, productionPhaseTwoPrefix(fixture.cfg.Redis.StatePrefix, "catalog"), fixture.queryGroup)
+	for round := 0; round < 2; round++ {
+		if err := bundle.refreshAndReconcile(ctx, true); err != nil {
+			t.Fatalf("cutover refresh %d error = %v", round, err)
+		}
+	}
+	record, err := fixture.production.dependencies.Store.ReadAssignment(ctx, fixture.queryGroup)
 	if err != nil {
 		t.Fatal(err)
 	}
-	server = &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second}
-	go func() { _ = server.Serve(tracked) }()
-	t.Cleanup(func() { _ = server.Close(); tracked.closeAll() })
-	waitFor(t, "the Worker keeps trying", func() bool { return client.Stats().Connections >= 1 && !client.Stats().Connected })
-	refused := runOneSlotFull(t, fixture)
-	if refused.CompletionKind != withStream.CompletionKind {
-		t.Fatalf("Slot while refused = %+v, want %+v", refused, withStream)
+	staleEntry, inView := client.Entry(fixture.queryGroup)
+	if !inView || record.TimelineRecordRevision == 0 || staleEntry.Assignment.TimelineRecordRevision == record.TimelineRecordRevision {
+		t.Fatalf("assignment revision %d, view revision %d in view %t: the cutover did not move the records past the installed view %d", record.TimelineRecordRevision, staleEntry.Assignment.TimelineRecordRevision, inView, installed.Version.Revision)
 	}
-	// Given back: the Worker reconnects and installs again, by snapshot.
-	refuse.Store(false)
-	stream.Store(&bundle.dependencies.ControlStream)
-	waitFor(t, "the Worker reconnects", func() bool {
+	if err := fixture.session.Renew(ctx, fixture.now(), fixture.cfg.PhaseTwo.Ownership.LeaseTTL.Duration()); err != nil {
+		t.Fatal(err)
+	}
+	before := fixture.progress(ctx)
+	unsettled := fixture.runner.(*settlingRuntime).phaseTwoQueryGroupRuntime
+	stale := runOneAttempt(t, fixture, unsettled)
+	if stale.Completed || stale.Result != observability.ResultRetrying || stale.ReasonCode != execution.ReasonCode(contract.ReasonViewNotExecutable) {
+		t.Fatalf("Slot on a stale view = %+v, want a retrying %s", stale, contract.ReasonViewNotExecutable)
+	}
+	if progress := fixture.progress(ctx); progress.NextSlot != before.NextSlot || progress.LastFullSlot != before.LastFullSlot {
+		t.Fatalf("the cursor moved on a stale view: %+v, was %+v", progress, before)
+	}
+	if counts := fixture.production.viewGate.Counts(); counts["timeline_stale"] != 1 {
+		t.Fatalf("gate outcomes after the stale round = %v, want this Query Group counted timeline_stale", counts)
+	}
+	// The refusal reached the log by name with the gate's word, and the
+	// Runner's outcome the fleet reads says the same.
+	var dueLines, runnerLines int
+	for _, observation := range fixture.observed() {
+		switch {
+		case observation.Stage == observability.StageScheduleDue && observation.ReasonCode == observability.ReasonCode(contract.ReasonViewNotExecutable):
+			if observation.Result != observability.ResultRetrying || observation.Err == nil || !strings.Contains(observation.Err.Error(), "timeline_stale") {
+				t.Fatalf("schedule_due refusal line = %+v, want retrying with the gate's word timeline_stale", observation)
+			}
+			dueLines++
+		case observation.Stage == observability.StageRunnerReturned && observation.RunOutcome == "view_not_executable":
+			runnerLines++
+		}
+	}
+	if dueLines != 1 || runnerLines != 1 {
+		t.Fatalf("refusal lines: schedule_due %d, runner_returned{view_not_executable} %d, want one each", dueLines, runnerLines)
+	}
+
+	// Given back: the Worker reconnects, installs the new view by snapshot
+	// and the Slot completes on the new Segment.
+	restoreControlStreamForTest(bundle)
+	waitFor(t, "the Worker reconnects and installs the new view", func() bool {
 		stats := client.Stats()
-		return stats.Connected && stats.Connections >= 2
+		entry, inView := client.Entry(fixture.queryGroup)
+		return stats.Connected && stats.Connections >= 2 && inView && entry.Assignment.TimelineRecordRevision == record.TimelineRecordRevision
 	})
+	restored := runOneSlotFull(t, fixture)
+	if restored.CompletionKind != withStream.CompletionKind {
+		t.Fatalf("Slot after the stream returned = %+v, want %+v", restored, withStream)
+	}
+	if counts := fixture.production.viewGate.Counts(); counts["timeline_stale"] != 0 || counts["executable"] == 0 {
+		t.Fatalf("gate outcomes after the stream returned = %v, want the Query Group executable again", counts)
+	}
 }
 
 type slotOutcome struct {
@@ -153,6 +178,30 @@ func runOneSlotFull(t *testing.T, fixture *cutoverStallFixture) slotOutcome {
 	}
 	t.Fatal("no FULL Slot within 200 attempts")
 	return slotOutcome{}
+}
+
+// runOneAttempt advances the fixture's clock until the runner attempts a
+// round and returns what that one round said, whatever it was.
+func runOneAttempt(t *testing.T, fixture *cutoverStallFixture, runner phaseTwoQueryGroupRuntime) execution.SlotExecutionResult {
+	t.Helper()
+	ctx := context.Background()
+	for attempt := 0; attempt < 200; attempt++ {
+		if nextAt := runner.NextReadyAt(); nextAt.After(fixture.now()) {
+			fixture.clock.Store(nextAt.UnixMilli() + 1)
+		}
+		at := fixture.now()
+		result, attempted, err := runner.RunOne(ctx)
+		if err != nil {
+			t.Fatalf("RunOne: %v", err)
+		}
+		if attempted {
+			return result
+		}
+		next := at.Unix() - at.Unix()%60 + 60
+		fixture.clock.Store(next*1000 + 1500)
+	}
+	t.Fatal("no attempted round within 200 tries")
+	return execution.SlotExecutionResult{}
 }
 
 func waitFor(t *testing.T, what string, condition func() bool) {

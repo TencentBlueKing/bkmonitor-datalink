@@ -170,10 +170,11 @@ func TestRecoveryEnvelopeGoesOnlyToAnOpenAlert(t *testing.T) {
 	}
 }
 
-// The two gates are asked in order and a record is counted by at most one:
-// when a Level holds the envelope the set is not asked, and its outcome
-// stays empty rather than reading as "passed" or "not configured".
-func TestOpenAlertSetIsNotAskedWhenALevelHolds(t *testing.T) {
+// Another Level's state no longer holds the envelope, so the set is asked
+// for a RECOVERY decided beside an unavailable Level too, and its verdict
+// keeps the Level the record went beside: the set holds for no open alert,
+// and the record still says what it was decided beside.
+func TestOpenAlertSetIsAskedBesideAnUnavailableLevel(t *testing.T) {
 	const source = int64(300)
 	identity := &contract.MonitorOutputIdentity{DimensionFields: []string{"host"}}
 	plan := nativePlanV2(t, []contract.LevelIRV2{levelV2(1, 1, 1, 1, 1, nil), levelV2(2, 2, 1, 1, 1, nil)}, identity)
@@ -190,12 +191,13 @@ func TestOpenAlertSetIsNotAskedWhenALevelHolds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EvaluateV2() error = %v", err)
 	}
-	want := RecoveryGateV2{Held: true, Cause: RecoveryHeldLevelUnavailable, LevelID: 1}
+	want := RecoveryGateV2{Held: true, Cause: RecoveryHeldNoOpenAlert, Beside: RecoveryBesideLevelUnavailable, BesideLevelID: 1,
+		OpenAlertGate: OpenAlertGateHeldNoOpenAlert}
 	if result.RecoveryGate != want {
 		t.Fatalf("gate = %+v, want %+v", result.RecoveryGate, want)
 	}
-	if len(set.asked) != 0 {
-		t.Fatalf("the set was asked %v although a Level held the envelope", set.asked)
+	if len(set.asked) != 1 || result.TriggerEvent != nil {
+		t.Fatalf("the set was asked %v, envelope %+v; want it asked once and no envelope for a series with no open alert", set.asked, result.TriggerEvent)
 	}
 }
 

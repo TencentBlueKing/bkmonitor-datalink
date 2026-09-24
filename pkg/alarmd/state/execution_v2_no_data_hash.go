@@ -46,6 +46,11 @@ type noDataHashHeader struct {
 	ScheduleRevision execution.PlanScheduleRevision `json:"schedule_revision"`
 	RosterVersion    string                         `json:"roster_version"`
 	PresentAsOf      int64                          `json:"present_as_of"`
+	// TrackingExhaustedAt is the Plan-level fact of decision-018: the round the
+	// history roster was emptied by the tracking horizon, zero when it was not.
+	// It lives in the header rather than in a group field because there is no
+	// group left to hold it - being empty is the state it describes.
+	TrackingExhaustedAt int64 `json:"tracking_exhausted_at,omitempty"`
 }
 
 // noDataHashVersion is the part of the header that has to be read before the
@@ -63,6 +68,11 @@ type noDataHashVersion struct {
 type noDataGroupAbsenceValue struct {
 	LastSeen    int64 `json:"last_seen,omitempty"`
 	FirstAbsent int64 `json:"first_absent,omitempty"`
+	// SuppressedAt is the round this group's absence stopped being tracked.
+	// This decoder is lenient, so a build that does not know this field would
+	// drop it and write the group back as still tracked; what stops that is the
+	// schema gate in the header, which runs before any group value is read.
+	SuppressedAt int64 `json:"suppressed_at,omitempty"`
 }
 
 // decodeNoDataHash reads a hash record into the same snapshot shape the
@@ -144,7 +154,7 @@ func decodeNoDataHashHeader(
 		PersistedApplyVersion: header.ApplyVersion, PersistedMutationDigest: header.MemoryDigest,
 		Status: execution.NoDataMemoryFound, SchemaVersion: header.Version,
 		LastScheduleRevision: header.ScheduleRevision, RosterVersion: header.RosterVersion,
-		PresentAsOf: header.PresentAsOf,
+		PresentAsOf: header.PresentAsOf, TrackingExhaustedAt: header.TrackingExhaustedAt,
 	}, header, true
 }
 
@@ -163,7 +173,7 @@ func decodeNoDataGroupValue(
 	if err := json.Unmarshal(value, &absent); err != nil {
 		return execution.NoDataGroupMemory{}, false
 	}
-	if absent.LastSeen < 0 || absent.FirstAbsent < 0 {
+	if absent.LastSeen < 0 || absent.FirstAbsent < 0 || absent.SuppressedAt < 0 {
 		return execution.NoDataGroupMemory{}, false
 	}
 	// A group that remembers nothing is not rejected here. The load contract
@@ -171,6 +181,7 @@ func decodeNoDataGroupValue(
 	// checks of one rule leave a mutation that deletes either of them green.
 	return execution.NoDataGroupMemory{
 		GroupKey: key, LastSeen: absent.LastSeen, FirstAbsent: absent.FirstAbsent,
+		SuppressedAt: absent.SuppressedAt,
 	}, true
 }
 
@@ -186,6 +197,7 @@ func encodeNoDataDelta(mutation execution.PlanNoDataMutation) ([]HashField, []st
 		}
 		encoded, err := json.Marshal(noDataGroupAbsenceValue{
 			LastSeen: group.Absent.LastSeen, FirstAbsent: group.Absent.FirstAbsent,
+			SuppressedAt: group.Absent.SuppressedAt,
 		})
 		if err != nil {
 			return nil, nil, err

@@ -393,6 +393,11 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 		return err
 	}
 	messages := make([]*sarama.ProducerMessage, len(events))
+	formats := make([]string, len(events))
+	// refused holds, per event, the rule it broke and why; a zero entry is an
+	// event the sink will write or that the protocol has no message for.
+	// Each refusal is about that event alone: the others of the batch go on.
+	refused := make([]refusal, len(events))
 	groups := make(map[string][]int)
 	for index := range events {
 		// Standard events have already been validated when built; retain the
@@ -401,7 +406,8 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 		// EncodeTriggerEventV1, but no longer encode that internal structure.
 		if events[index].WireFormat != contract.WireFormatStandardRawEvent {
 			if err := contract.ValidateTriggerEventV1(&events[index]); err != nil {
-				return fmt.Errorf("kafka trigger event sink: validate event %d: %w", index, err)
+				refused[index] = refusal{rule: observability.OutputRejectEventInvalid, detail: fmt.Sprintf("validate event %d: %v", index, err)}
+				continue
 			}
 		}
 		var revision int64
@@ -409,8 +415,10 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 			revision = events[index].StrategyRef.Revision
 		}
 		format := contract.ResolveOutputWireFormat(events[index].WireFormat, revision)
+		formats[index] = format
 		if format != contract.WireFormatStandardRawEvent && format != contract.WireFormatPythonCompatible {
-			return fmt.Errorf("kafka trigger event sink: unsupported output format %q", format)
+			refused[index] = refusal{rule: observability.OutputRejectFormatUnsupported, detail: fmt.Sprintf("unsupported output format %q", format)}
+			continue
 		}
 		if format == contract.WireFormatStandardRawEvent {
 			if !sink.headersSupported() {
@@ -419,14 +427,20 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 				// negotiated protocol has none. Named with the brokers'
 				// own answers, so the reader sees which cluster and why;
 				// the Python-compatible output on the same sink is not
-				// affected, it carries no header.
+				// affected, it carries no header. It is the deployment's,
+				// the same for every event, so it refuses the batch whole.
 				return outputRejected(contract.ReasonOutputClientRejected,
 					"the standard RawEvent carries the tenant in a record header and the brokers accept no Produce version that carries headers: "+sink.protocol.String(),
 					format, &events[index])
 			}
 			converted, convertErr := sink.standardConverter.Convert(&events[index])
 			if convertErr != nil {
-				return outputRejected(contract.ReasonOutputConversionRejected, convertErr.Error(), format, &events[index])
+				rule, named := linkdoutput.RuleOf(convertErr)
+				if !named {
+					rule = observability.OutputRejectOther
+				}
+				refused[index] = refusal{rule: rule, detail: convertErr.Error()}
+				continue
 			}
 			// Keyed by the alert identity, so one alert's history stays on one
 			// partition and its trigger and its resolution arrive in order.
@@ -443,7 +457,8 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 		}
 		if format == contract.WireFormatPythonCompatible {
 			if events[index].LegacyOutput == nil || events[index].LegacyOutput.Configuration == nil {
-				return errors.New("legacy event has no frozen compatibility context")
+				refused[index] = refusal{rule: observability.OutputRejectLegacyContextMissing, detail: "legacy event has no frozen compatibility context"}
+				continue
 			}
 			// The Python protocol carries anomaly points and nothing else: its
 			// producer builds every message from the anomaly list and stamps
@@ -455,7 +470,7 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 			// message here and no snapshot; the native protocol still carries
 			// it, because the choice of protocol is the revision's, not the
 			// event kind's.
-			if events[index].EventKind != contract.TriggerEventAbnormal {
+			if !contract.EventHasMessage(format, events[index].EventKind) {
 				messages[index] = nil
 				continue
 			}
@@ -468,30 +483,85 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 		for i, index := range indices {
 			batch[i] = events[index]
 		}
-		converted, err := sink.legacyConverter.ConvertBatch(ctx, batch)
+		converted, failures, err := sink.legacyConverter.ConvertEach(ctx, batch)
 		if err != nil {
-			// The legacy converter writes its snapshot store on the way, and
-			// says so when that is what failed (legacyoutput.SnapshotStoreError
-			// marks RetryableOutputDependency); a cancelled context is the
-			// caller's. Everything else is the converter's own answer about
-			// these events, which it gives again on every retry.
+			// The legacy converter writes its snapshot store once, after it
+			// has judged every event, and says so when that is what failed
+			// (legacyoutput.SnapshotStoreError marks RetryableOutputDependency);
+			// a cancelled context is the caller's. Anything else it returns
+			// for the whole group is its own answer about these events, which
+			// it gives again on every retry.
 			if ctx.Err() != nil || isRetryableDependency(err) {
 				return &triggerEventDependencyError{err: fmt.Errorf("legacy conversion failed: %w", err)}
 			}
-			return outputRejected(contract.ReasonOutputConversionRejected, "legacy conversion failed: "+err.Error(), contract.WireFormatPythonCompatible, &batch[0])
+			for _, index := range indices {
+				refused[index] = refusal{rule: observability.OutputRejectLegacyConversion, detail: "legacy conversion failed: " + err.Error()}
+			}
+			continue
 		}
-		if len(converted) != len(batch) {
-			return outputRejected(contract.ReasonOutputConversionRejected, "legacy conversion result count mismatch", contract.WireFormatPythonCompatible, &batch[0])
+		if len(converted) != len(batch) || len(failures) != len(batch) {
+			for _, index := range indices {
+				refused[index] = refusal{rule: observability.OutputRejectLegacyOutputInvalid, detail: "legacy conversion result count mismatch"}
+			}
+			continue
 		}
 		for i, item := range converted {
-			if item.EventID != batch[i].EventID || len(item.Payload) == 0 || len(item.Payload) > sink.maxLegacyBytes || !json.Valid(item.Payload) || len(item.DedupeMD5) != 32 || strings.ToLower(item.DedupeMD5) != item.DedupeMD5 {
-				return outputRejected(contract.ReasonOutputConversionRejected, "legacy conversion returned invalid event identity/payload", contract.WireFormatPythonCompatible, &batch[i])
+			index := indices[i]
+			switch {
+			case failures[i] != nil:
+				rule := observability.OutputRejectLegacyConversion
+				var config *legacyoutput.StrategyConfigError
+				if errors.As(failures[i], &config) {
+					rule = observability.OutputRejectLegacyStrategyInvalid
+				}
+				refused[index] = refusal{rule: rule, detail: "legacy conversion failed: " + failures[i].Error()}
+			case len(item.Payload) > sink.maxLegacyBytes:
+				refused[index] = refusal{rule: observability.OutputRejectLegacyPayloadTooLarge,
+					detail: fmt.Sprintf("legacy payload of %d bytes exceeds %d", len(item.Payload), sink.maxLegacyBytes)}
+			case item.EventID != batch[i].EventID || len(item.Payload) == 0 || !json.Valid(item.Payload) || len(item.DedupeMD5) != 32 || strings.ToLower(item.DedupeMD5) != item.DedupeMD5:
+				refused[index] = refusal{rule: observability.OutputRejectLegacyOutputInvalid, detail: "legacy conversion returned invalid event identity/payload"}
+			default:
+				if _, err := hex.DecodeString(item.DedupeMD5); err != nil {
+					refused[index] = refusal{rule: observability.OutputRejectLegacyOutputInvalid, detail: "legacy conversion returned a non-hex dedupe identity: " + err.Error()}
+					continue
+				}
+				messages[index] = &sarama.ProducerMessage{Topic: sink.legacyTopic, Key: sarama.StringEncoder(item.DedupeMD5), Value: sarama.ByteEncoder(item.Payload)}
 			}
-			if _, err := hex.DecodeString(item.DedupeMD5); err != nil {
-				return outputRejected(contract.ReasonOutputConversionRejected, "legacy conversion returned a non-hex dedupe identity: "+err.Error(), contract.WireFormatPythonCompatible, &batch[i])
-			}
-			messages[indices[i]] = &sarama.ProducerMessage{Topic: sink.legacyTopic, Key: sarama.StringEncoder(item.DedupeMD5), Value: sarama.ByteEncoder(item.Payload)}
 		}
+	}
+	// A series goes out whole or not at all: its State moves as one, so an
+	// event of it that was written while its sibling was refused would sit
+	// at the consumer with no State behind it -- an alert whose recovery
+	// this process could never decide. Every event of a series with a
+	// refused event is withheld beside it.
+	withheld := withholdSeriesOf(events, refused)
+	for index := range events {
+		if refused[index].rule != "" || withheld[index] {
+			messages[index] = nil
+		}
+	}
+	partial := partialRejection(events, formats, refused, withheld)
+	if partial != nil {
+		observability.ReportOutputRejected(ctx, partial.facts(), len(partial.Withheld))
+		if partial.whole {
+			first := partial.Rejected[0]
+			rejected := outputRejected(contract.ReasonOutputConversionRejected, first.Detail, first.Format, &events[first.index])
+			return rejected
+		}
+	}
+	// Which events the protocol had no message for, by format and kind, before
+	// the nil slots are compacted away: this is the only place that knows
+	// which slot stayed empty and why, and the caller must not re-derive the
+	// protocol's rule to find out.
+	withoutMessageBy := map[withoutMessageKey]int64{}
+	for index, message := range messages {
+		if message == nil && refused[index].rule == "" && !withheld[index] {
+			withoutMessageBy[withoutMessageKey{format: formats[index], eventKind: events[index].EventKind}]++
+		}
+	}
+	buckets := make([]observability.OutputWithoutMessage, 0, len(withoutMessageBy))
+	for key, count := range withoutMessageBy {
+		buckets = append(buckets, observability.OutputWithoutMessage{Format: key.format, EventKind: key.eventKind, Events: count})
 	}
 	published := messages[:0]
 	for _, message := range messages {
@@ -504,9 +574,13 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 	// and how many events the protocol had no message for. A batch of
 	// recoveries under the Python-compatible protocol is zero messages and
 	// a success, and the caller's line has to be able to say so.
-	observability.ReportOutputWrite(ctx, len(messages), len(events)-len(messages))
+	withoutMessage := 0
+	for _, bucket := range buckets {
+		withoutMessage += int(bucket.Events)
+	}
+	observability.ReportOutputWrite(ctx, len(messages), withoutMessage, buckets)
 	if len(messages) == 0 {
-		return nil
+		return partial.err()
 	}
 	if err := sink.core.writeMessages(ctx, messages); err != nil {
 		publishErr := fmt.Errorf("kafka trigger event sink: publish batch: %w", err)
@@ -521,7 +595,7 @@ func (sink *TriggerEventSink) WriteBatch(ctx context.Context, events []contract.
 		}
 		return &triggerEventDependencyError{err: publishErr}
 	}
-	return nil
+	return partial.err()
 }
 
 func isRetryableDependency(err error) bool {
@@ -548,4 +622,16 @@ func (sink *TriggerEventSink) Close() error {
 		return nil
 	}
 	return sink.core.Close()
+}
+
+// withoutMessageKey is what an event the protocol had no message for is
+// bucketed by: its resolved format and its kind, and nothing else. A type of
+// its own rather than the reported bucket with the count left zero, so that
+// which fields take part in the bucketing is said by the type -- a field
+// added to the reported bucket later cannot split the buckets, and the sum
+// over them would go on equalling the total while the buckets quietly
+// multiplied, which no assertion on the total would catch.
+type withoutMessageKey struct {
+	format    string
+	eventKind string
 }

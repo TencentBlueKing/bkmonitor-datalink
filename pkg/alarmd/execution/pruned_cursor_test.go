@@ -26,6 +26,26 @@ func TestScheduleProgressContinuityAnchorIgnoresAPrunedSkip(t *testing.T) {
 	if anchor, ok := skipped.ContinuityAnchor(); ok || anchor != 0 {
 		t.Fatalf("pruned skip anchor = (%d, %v), want none", anchor, ok)
 	}
+	// The plan-not-active skip has to answer this question the same way. It is
+	// the same forward move over Slots that were never evaluated, so it
+	// carries no completion to anchor on either; reading only the pruned
+	// reason here would have navigation resume inside the stretch it just
+	// moved past. The reasons differ, and only the reasons.
+	inactive := ScheduleProgress{Identity: ProgressIdentity{QueryGroup: "q"}, NextSlot: 600,
+		LastCompletionKind: CompletionGapSkipped, CurrentOrRecentGap: PlanNotActiveSkipGap(120, 180)}
+	if err := inactive.Validate(); err != nil {
+		t.Fatalf("a plan-not-active skip does not validate: %v", err)
+	}
+	if !inactive.SkippedPrunedRange() {
+		t.Fatal("plan-not-active skip not recognized as a forward skip, so navigation would anchor on a Slot nobody ran")
+	}
+	if anchor, ok := inactive.ContinuityAnchor(); ok || anchor != 0 {
+		t.Fatalf("plan-not-active skip anchor = (%d, %v), want none", anchor, ok)
+	}
+	if inactive.CurrentOrRecentGap.ReasonCode == skipped.CurrentOrRecentGap.ReasonCode {
+		t.Fatal("the two skips carry the same reason, so a reader cannot tell retention from the active set")
+	}
+
 	for _, test := range []struct {
 		name     string
 		progress ScheduleProgress

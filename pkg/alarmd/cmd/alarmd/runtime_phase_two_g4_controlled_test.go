@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package main
 
 import (
@@ -16,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -163,7 +155,7 @@ func TestProductionPhaseTwoG4UnavailableQueryGroupDoesNotStopHealthySibling(t *t
 		t.Fatal(err)
 	}
 	clock.Store(base + 1)
-	if err := bundle.runScheduledOnce(ctx); err != nil {
+	if err := runScheduledOnceSettled(ctx, bundle); err != nil {
 		t.Fatalf("run controlled sibling Slot: %v", err)
 	}
 
@@ -299,13 +291,25 @@ func runControlledG4Golden(
 	}
 	for _, evaluationTime := range []int64{base, base + 60} {
 		clock.Store(evaluationTime + 1)
-		if err := bundle.runScheduledOnce(ctx); err != nil {
+		if err := runScheduledOnceSettled(ctx, bundle); err != nil {
 			t.Fatalf("run controlled Slot %d: %v", evaluationTime, err)
 		}
 	}
 
 	written := events.snapshot()
-	if len(written) != 2 || written[0].EventKind != "ABNORMAL" || written[1].EventKind != "RECOVERY" {
+	observationsMu.Lock()
+	decided := decidedEventKinds(observations)
+	observationsMu.Unlock()
+	// What the rounds decided is read off the output lines, which count every
+	// event the rounds decided whether or not it became a message. What the
+	// sink receives then depends on the protocol: the standard one carries
+	// both, the Python-compatible one has no message for a RECOVERY, which
+	// stays behind as its identity and never reaches the sink.
+	wantWritten := []string{"ABNORMAL", "RECOVERY"}
+	if len(snapshotRevision) == 0 {
+		wantWritten = []string{"ABNORMAL"}
+	}
+	if !reflect.DeepEqual(decided, []string{"ABNORMAL", "RECOVERY"}) || !reflect.DeepEqual(controlledEventKinds(written), wantWritten) {
 		observationsMu.Lock()
 		captured := append([]observability.Observation(nil), observations...)
 		observationsMu.Unlock()
@@ -317,7 +321,7 @@ func runControlledG4Golden(
 			inputFacts = append(inputFacts, observation.AlgorithmInputs...)
 			stages = append(stages, fmt.Sprintf("%s/%s/%s/%v", observation.Stage, observation.Result, observation.ReasonCode, observation.Err))
 		}
-		t.Fatalf("controlled TriggerEvent kinds=%v algorithm facts=%+v input facts=%+v stages=%v, want ABNORMAL then RECOVERY", controlledEventKinds(written), facts, inputFacts, stages)
+		t.Fatalf("decided kinds=%v written kinds=%v (want written %v) algorithm facts=%+v input facts=%+v stages=%v, want ABNORMAL then RECOVERY decided", decided, controlledEventKinds(written), wantWritten, facts, inputFacts, stages)
 	}
 	for index, event := range written {
 		if len(snapshotRevision) > 0 {
@@ -350,7 +354,7 @@ func runControlledG4Golden(
 	if progress.LastFullSlot != execution.EvaluationTime(base+60) || progress.NextSlot != execution.EvaluationTime(base+120) {
 		t.Fatalf("controlled Progress=%+v", progress)
 	}
-	stateKeys, err := redisClient.Keys(ctx, cfg.Redis.StatePrefix+":runtime:v2:*").Result()
+	stateKeys, err := redisClient.Keys(ctx, cfg.Redis.StatePrefix+":runtime3:v2:*").Result()
 	if err != nil || len(stateKeys) == 0 {
 		t.Fatalf("controlled Runtime State keys=%v error=%v", stateKeys, err)
 	}
@@ -359,6 +363,30 @@ func runControlledG4Golden(
 	captured := append([]observability.Observation(nil), observations...)
 	observationsMu.Unlock()
 	assertControlledG4Observations(t, captured, family, detector, wantInputs)
+}
+
+// decidedEventKinds is the kinds the rounds decided, in order, as the output
+// lines count them: one line per written batch, its kinds in a fixed order
+// within it. It counts an event the protocol had no message for as well as one
+// that went out, which is what an operator reads off the metric.
+func decidedEventKinds(observations []observability.Observation) []string {
+	var kinds []string
+	for _, observation := range observations {
+		if observation.Stage != observability.StageEventACKed {
+			continue
+		}
+		for _, kind := range []string{"ABNORMAL", "RECOVERY"} {
+			for key, count := range observation.OutputEventKinds {
+				if key.EventKind != kind {
+					continue
+				}
+				for range count {
+					kinds = append(kinds, kind)
+				}
+			}
+		}
+	}
+	return kinds
 }
 
 func controlledEventKinds(events []contract.TriggerEventV1) []string {

@@ -164,3 +164,68 @@ func TestADeltaAndAReceiptSurviveTheWire(t *testing.T) {
 		t.Fatalf("receipt back = %+v (%v), want %+v", got, err, receipt)
 	}
 }
+
+// The record's timeline revision rides on the assignment across the wire and
+// into the view's digest: two views that differ only in it are two versions,
+// which is what lets the Worker learn a timeline moved from a delta rather
+// than from probing. The receipt's switched count and the heartbeat's costs
+// come back field for field, and a cost that names no Query Group is not a
+// reading.
+func TestTheTimelineRevisionTheSwitchedCountAndTheCostsSurviveTheWire(t *testing.T) {
+	desired := desiredAt(publicationA, map[string]string{"qg-1": "w1"}, map[string]viewstream.Content{"qg-1": content("obj-1", "s1")})
+	plain, err := desired.Project("w1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assignment := desired.Assignments["qg-1"]
+	assignment.TimelineRecordRevision = 41
+	desired.Assignments["qg-1"] = assignment
+	revised, err := desired.Project("w1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revised.Version.Digest == plain.Version.Digest {
+		t.Fatal("a view whose only change is the timeline revision has the same digest, so the Worker would never be told")
+	}
+	revised.Version.Revision = 1
+	chunks := viewstream.SnapshotChunks(revised, 0)
+	payload, err := proto.Marshal(chunks[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire := &pb.Snapshot{}
+	if err := proto.Unmarshal(payload, wire); err != nil {
+		t.Fatal(err)
+	}
+	back, err := viewstream.AssembleSnapshot("w1", []*pb.Snapshot{wire})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(back.Entries) != 1 || back.Entries[0].Assignment.TimelineRecordRevision != 41 {
+		t.Fatalf("entries back = %+v, want the timeline revision 41 on the assignment", back.Entries)
+	}
+
+	receipt := viewstream.Receipt{Receiver: viewstream.Receiver{WorkerID: "w1", Incarnation: "i1"}, Version: revised.Version,
+		Acked: true, Installed: true, Switched: false, ObjectsProbed: true, SwitchedQueryGroups: 597}
+	receiptPayload, err := proto.Marshal(viewstream.ReceiptToWire(receipt))
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiptWire := &pb.Receipt{}
+	if err := proto.Unmarshal(receiptPayload, receiptWire); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := viewstream.ReceiptFromWire("w1", receiptWire); err != nil || got != receipt {
+		t.Fatalf("receipt back = %+v (%v), want %+v", got, err, receipt)
+	}
+
+	costs := []viewstream.QueryGroupCost{{QueryGroup: "qg-1", RetainedBytesPeak: 404 << 20, CostPerSecondMilli: 1330}}
+	wireCosts := viewstream.CostsToWire(costs)
+	wireCosts = append(wireCosts, &pb.QueryGroupCost{RetainedBytesPeak: 7})
+	if got := viewstream.CostsFromWire(wireCosts); !reflect.DeepEqual(got, costs) {
+		t.Fatalf("costs back = %+v, want %+v with the unnamed one dropped", got, costs)
+	}
+	if viewstream.CostsToWire(nil) != nil || viewstream.CostsFromWire(nil) != nil {
+		t.Fatal("no costs is nil both ways, so a heartbeat without them carries nothing")
+	}
+}

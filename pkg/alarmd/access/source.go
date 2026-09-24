@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 // Package access implements the phase-two Go query execution source. It owns
 // query planning and provider adaptation, but no evaluation or side effects.
 package access
@@ -120,6 +111,9 @@ type Config struct {
 	Admission SeriesAdmission
 	// ObserveAdmission counts decisions. Optional.
 	ObserveAdmission AdmissionObserver
+	// ScopeDrops receives the series the target filters turned away, for
+	// the target-scope close; see ScopeDropSink. Optional.
+	ScopeDrops ScopeDropSink
 	// ObserveSeriesPulled counts what this process actually read: one call per
 	// series handed into the pipeline, carrying the datapoints it held. It is
 	// the load figure the per-Slot ceilings have to be read against -- a limit
@@ -249,12 +243,19 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 	// The monitoring targets of this execution's plans are indexed once, not
 	// per series: one query commonly delivers thousands of series and every
 	// one of them would otherwise repeat the same lookup.
-	scopes := buildPlanScopes(prepared.Header.DuePlans)
+	scopes := buildPlanScopes(prepared.Header.DuePlans, consumer.ResolvedTargets())
+	var outputs planOutputs
+	if source.config.ScopeDrops != nil {
+		outputs = buildPlanOutputs(prepared.Header.DuePlans, prepared.Queries)
+	}
 	// Only one permit acquisition per Source is pending at a time. Queries
 	// already admitted run independently; all attempts join before returning.
 	queryCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var running sync.WaitGroup
+	// The adapters are kept so that the target rejections of the whole
+	// attempt are handed over once, after every query has ended.
+	adapters := make([]*seriesAdapter, len(prepared.Queries))
 	var queryFailure sync.Once
 	var firstQueryErr error
 	consumer = &serializedQueryConsumer{QueryExecutionConsumer: consumer}
@@ -319,7 +320,9 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 			defer running.Done()
 			adapter := &seriesAdapter{consumer: consumer, query: query, attemptNo: attempt.AttemptNo,
 				admission: source.config.Admission, observe: source.config.ObserveAdmission,
-				pulled: source.config.ObserveSeriesPulled, scopes: scopes}
+				pulled: source.config.ObserveSeriesPulled, scopes: scopes,
+				scopeSink: source.config.ScopeDrops, outputs: outputs, round: int64(request.Contract.Slot.EvaluationTime)}
+			adapters[index] = adapter
 			completion, err := source.executeWithPermit(queryCtx, attempt, adapter, permit)
 			if err != nil {
 				err = fmt.Errorf("alarmd access: execute physical query: %w", err)
@@ -341,6 +344,7 @@ func (source *Source) Execute(ctx context.Context, request execution.QueryExecut
 		cancel()
 	}
 	running.Wait()
+	flushScopeDrops(source.config.ScopeDrops, adapters, request.Contract.Slot, outputs)
 	if firstQueryErr != nil {
 		return execution.QueryExecutionCompletion{}, firstQueryErr
 	}
@@ -820,6 +824,15 @@ type seriesAdapter struct {
 	// pulled counts the series this query actually handed on. Optional.
 	pulled func(records uint64)
 	scopes planScopes
+	// scopeSink, outputs and round serve the target-scope close; see
+	// ScopeDropSink. scopeScreens and scopeTallies are this query's own
+	// memory of it: one Screen per Plan, and the bulk counts handed over
+	// when the query ends. Empty when nothing listens.
+	scopeSink    ScopeDropSink
+	outputs      planOutputs
+	round        int64
+	scopeScreens map[execution.PlanIdentity]string
+	scopeTallies map[scopeTallyKey]int
 
 	// forwarded accumulates the delivery proofs of the batches that actually
 	// reached the consumer, and withheld counts the ones the monitoring target
@@ -923,6 +936,9 @@ func (adapter *seriesAdapter) admittedPlans(batch execution.ProviderSeriesBatch)
 			}
 			admit, filter, reason := adapter.admission.Admit(plan, &facts)
 			decisions[identity] = admit
+			if !admit {
+				adapter.reportScopeDrop(identity, plan, &facts, filter, reason)
+			}
 			if adapter.observe != nil {
 				switch {
 				case !admit:
@@ -932,6 +948,11 @@ func (adapter *seriesAdapter) admittedPlans(batch execution.ProviderSeriesBatch)
 					// That is the case worth separating from an ordinary
 					// admission: it is what a degraded CMDB cache looks like.
 					adapter.observe(filter, "admitted", reason)
+				case plan.TargetPlan != nil:
+					// Admitted by the target plan filter: counted under its
+					// own name so the two forms' admission ratios can be read
+					// apart.
+					adapter.observe("target_plan", "admitted", "in_target")
 				default:
 					adapter.observe("target_scope", "admitted", "in_scope")
 				}

@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package worker_test
 
 import (
@@ -53,9 +44,16 @@ func TestSlotExecutionCoordinatorCompletesFullEmptyWhenPrimaryIsEmptyAndDependen
 	if err != nil || !result.Completed || result.Result != observability.ResultSuccess {
 		t.Fatalf("Execute() result=%+v error=%v, want FULL EMPTY completion without error", result, err)
 	}
-	if len(evaluator.results) != 0 || ports.eventCount != 0 || ports.stateApplyCalls != 0 || ports.stateLoadCalls != 0 || len(ports.gapMutations) != 0 {
-		t.Fatalf("no-series Plan produced business effects: evaluations=%d events=%d state_apply=%d state_load=%d gaps=%d",
-			len(evaluator.results), ports.eventCount, ports.stateApplyCalls, ports.stateLoadCalls, len(ports.gapMutations))
+	if len(evaluator.results) != 0 || ports.eventCount != 0 || ports.stateApplyCalls != 0 || ports.stateLoadCalls != 0 {
+		t.Fatalf("no-series Plan produced business effects: evaluations=%d events=%d state_apply=%d state_load=%d",
+			len(evaluator.results), ports.eventCount, ports.stateApplyCalls, ports.stateLoadCalls)
+	}
+	// The dependency delivered data and no PRIMARY record consumed it, so
+	// every binding this Plan is judged on was whole: the round is evidence
+	// the input is whole, and the Plan scope recovers on it.
+	assertOnlyPlanScopeRecoveries(t, ports.gapMutations)
+	if len(ports.gapMutations) != 1 {
+		t.Fatalf("gap mutations=%+v, want the Plan scope recovered once", ports.gapMutations)
 	}
 	progress := ports.lastProgress
 	if progress.Completion.Kind != execution.CompletionFullEmpty || progress.Completion.Primary == nil ||
@@ -125,6 +123,11 @@ func TestSlotExecutionCoordinatorCompletesFullEmptyWhenPrimaryIsEmptyAndDependen
 			if err != nil || !result.Completed || result.Result != observability.ResultSuccess {
 				t.Fatalf("Execute() result=%+v error=%v, want FULL EMPTY completion without error", result, err)
 			}
+			// The zero gap mutations are the second half of this case: the
+			// round completes FULL EMPTY, and it is still not evidence that
+			// the dependency is answering again, so it does not advance the
+			// Plan scope's warmup. A round that never asked the question the
+			// guard is waiting on cannot count towards lifting it.
 			if len(evaluator.results) != 0 || ports.eventCount != 0 || ports.stateApplyCalls != 0 || ports.stateLoadCalls != 0 || len(ports.gapMutations) != 0 {
 				t.Fatalf("no-series Plan produced business effects: evaluations=%d events=%d state_apply=%d state_load=%d gaps=%d",
 					len(evaluator.results), ports.eventCount, ports.stateApplyCalls, ports.stateLoadCalls, len(ports.gapMutations))

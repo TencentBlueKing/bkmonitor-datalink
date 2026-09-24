@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package controlplane
 
 import (
@@ -15,7 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"slices"
 	"sort"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -73,6 +67,13 @@ func canonicalActiveQueryGroupSet(identities []execution.QueryGroupIdentity) (Ac
 	return ref, payload, nil
 }
 
+// persistAndVerifyActiveQGSet makes sure the set is stored under its digest
+// and returns its reference. The key is named by the digest of its content,
+// so a key of that name and length already there is the set: it is not sent
+// again, which for a set that did not change is every publication (N15).
+// The cutover scripts check the key and its length; they are no longer
+// handed the set to compare, and the second return value - what they are
+// handed - is the length.
 func (repository *RedisCatalogRepository) persistAndVerifyActiveQGSet(ctx context.Context, identities []execution.QueryGroupIdentity) (ActiveQueryGroupSetRef, []byte, error) {
 	encodeStarted := time.Now()
 	ref, payload, err := canonicalActiveQueryGroupSet(identities)
@@ -88,23 +89,38 @@ func (repository *RedisCatalogRepository) persistAndVerifyActiveQGSet(ctx contex
 			Result: observability.Result(writeResult), ActiveQGSet: &observability.ActiveQGSetFacts{Operation: "write", Result: writeResult, Duration: time.Since(redisStarted)}})
 	}()
 	key := repository.activeQGSetKey(ref.Digest)
-	created, err := repository.client.SetNX(ctx, key, payload, repository.ttl).Result()
+	stored, err := repository.client.StrLen(ctx, key).Result()
 	if err != nil {
 		return ref, nil, activationDependencyIO(err)
 	}
-	stored, err := repository.client.Get(ctx, key).Bytes()
-	if err != nil {
-		return ref, nil, activationDependencyIO(err)
+	if stored == 0 {
+		created, err := repository.client.SetNX(ctx, key, payload, repository.ttl).Result()
+		if err != nil {
+			return ref, nil, activationDependencyIO(err)
+		}
+		if created {
+			writeResult = "success"
+			return ref, []byte(strconv.Itoa(len(payload))), nil
+		}
+		// Written by another process between the two reads: it is the same
+		// digest, so it is the same set, if it is the same length.
+		if stored, err = repository.client.StrLen(ctx, key).Result(); err != nil {
+			return ref, nil, activationDependencyIO(err)
+		}
 	}
-	if !created && string(stored) != string(payload) {
+	if stored != int64(len(payload)) {
 		return ref, nil, &ActiveQueryGroupSetConflictError{Err: errors.New("active Query Group set collision")}
 	}
-	loadedRef, _, err := decodeActiveQGSet(stored)
-	if err != nil || loadedRef != ref {
-		return ref, nil, &ActiveQueryGroupSetConflictError{Err: errors.New("active Query Group set verification failed")}
-	}
 	writeResult = "success"
-	return ref, payload, nil
+	return ref, []byte(strconv.Itoa(len(payload))), nil
+}
+
+// activeSetCache is the last set read, by digest: a set's content never
+// changes under its digest, so a replica reads each set once.
+type activeSetCache struct {
+	mu     sync.Mutex
+	digest string
+	groups []execution.QueryGroupIdentity
 }
 
 func decodeActiveQGSet(payload []byte) (ActiveQueryGroupSetRef, []execution.QueryGroupIdentity, error) {
@@ -129,6 +145,28 @@ func (repository *RedisCatalogRepository) LoadActiveQueryGroupSet(ctx context.Co
 	if err := ref.validate(); err != nil {
 		return nil, &ActiveQueryGroupSetConflictError{Err: err}
 	}
+	// Asked of the store every time, cached or not: a set that is gone must
+	// read as gone - the round that finds it missing is what restores it -
+	// and its length costs a few bytes where the set costs all of them.
+	stored, err := repository.client.StrLen(ctx, repository.activeQGSetKey(ref.Digest)).Result()
+	if err != nil {
+		return nil, activationDependencyIO(err)
+	}
+	cache := &repository.activeSets
+	if stored == 0 {
+		cache.mu.Lock()
+		cache.digest, cache.groups = "", nil
+		cache.mu.Unlock()
+		return nil, ErrSnapshotUnavailable
+	}
+	cache.mu.Lock()
+	if cache.digest == ref.Digest {
+		groups := slices.Clone(cache.groups)
+		cache.mu.Unlock()
+		result = "success"
+		return groups, nil
+	}
+	cache.mu.Unlock()
 	payload, err := repository.client.Get(ctx, repository.activeQGSetKey(ref.Digest)).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return nil, ErrSnapshotUnavailable
@@ -140,6 +178,9 @@ func (repository *RedisCatalogRepository) LoadActiveQueryGroupSet(ctx context.Co
 	if err != nil || actual != ref {
 		return nil, &ActiveQueryGroupSetConflictError{Err: errors.New("corrupt active Query Group set")}
 	}
+	cache.mu.Lock()
+	cache.digest, cache.groups = ref.Digest, slices.Clone(groups)
+	cache.mu.Unlock()
 	result = "success"
 	return groups, nil
 }

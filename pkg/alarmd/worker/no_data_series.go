@@ -34,6 +34,14 @@ type noDataRound struct {
 	series   []completedSeries
 	mutation *execution.PlanNoDataMutation
 	outcome  nodata.SlotOutcome
+	// facts is what the round counted about the Plan's groups, and horizon
+	// the Plan's frozen tracking horizon it counted them against. Carried out
+	// for the observation line; the decision itself is in the outcome.
+	facts   nodata.AbsenceFacts
+	horizon int64
+	// horizonSource is where that horizon came from, as compilation froze it
+	// beside the number; empty for none.
+	horizonSource string
 }
 
 // seriesDimensionsFor is the dimensions of every series this Slot saw for one
@@ -94,7 +102,7 @@ func (stream *streamedExecution) noDataRoundFor(
 	if config == nil {
 		return noDataRound{outcome: nodata.OutcomeNone}, nil
 	}
-	identity := execution.PlanNoDataIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration}
+	identity := due.NoDataIdentity()
 	snapshot, found := stream.noData.Find(identity)
 	if !found {
 		return noDataRound{}, derivationFailed(fmt.Errorf(
@@ -112,6 +120,8 @@ func (stream *streamedExecution) noDataRoundFor(
 	decided, err := nodata.EvaluatePlanSlot(nodata.PlanSlotInput{
 		NoData:           config,
 		Scope:            due.CompiledPlan.TargetScope(),
+		Plan:             due.CompiledPlan.TargetPlan(),
+		TargetResolution: stream.targetResolutions[identity.Plan].absenceView(),
 		Identity:         identity,
 		Snapshot:         snapshot,
 		ApplyVersion:     version,
@@ -123,11 +133,20 @@ func (stream *streamedExecution) noDataRoundFor(
 		KnownHosts:       hosts.Known,
 		HostsResolved:    hosts.Resolved,
 		OutOfBusiness:    hosts.OutOfBusiness,
+		// Forwarded from the Plan, not resolved here. Compilation has already
+		// settled the deployment default against the item's override and
+		// frozen the one number, so this Slot reads what was in force when the
+		// Plan was built rather than what the deployment says right now -
+		// which is what lets a retried Slot reach the same answer.
+		TrackingHorizonSeconds: config.TrackingHorizonSeconds,
 	})
 	if err != nil {
 		return noDataRound{}, derivationFailed(err)
 	}
-	round := noDataRound{mutation: decided.Mutation, outcome: decided.Outcome}
+	round := noDataRound{
+		mutation: decided.Mutation, outcome: decided.Outcome,
+		facts: decided.Facts, horizon: config.TrackingHorizonSeconds, horizonSource: string(config.TrackingHorizonSource),
+	}
 	if len(decided.Series) == 0 {
 		return round, nil
 	}
@@ -169,12 +188,28 @@ func (stream *streamedExecution) noDataCompletedSeries(
 	if err != nil {
 		return completedSeries{}, fmt.Errorf("alarmd worker: derive no-data series identity: %w", err)
 	}
+	// The record id comes from the same derivation a real record's does, for
+	// the same reason the identity digest above does.
+	//
+	// Every record that reaches the platform through the reader carries
+	// DeriveRecordIDV2(dimension identity digest, source time), and the reader
+	// refuses one that does not. A synthetic record is built here rather than
+	// read, so nothing was enforcing it, and this one used to carry the
+	// dimension digest itself - a value that is the same for every source time
+	// of the series. That makes the invariant "within one state key the record
+	// id is a function of the source time" false for exactly these series, and
+	// anything that derives an id rather than storing it would refuse every
+	// no-data write.
+	recordID, err := contract.DeriveRecordIDV2(digest, synthetic.SourceTime)
+	if err != nil {
+		return completedSeries{}, fmt.Errorf("alarmd worker: derive no-data record id: %w", err)
+	}
 	level := view.CompiledPlan.Levels()[0]
 	consumer := execution.ConsumerRef{
 		Plan: view.Identity, LevelID: level.Definition().LevelID, HasLevel: true,
 	}
 	record := contract.CanonicalRecordV2{
-		RecordID:          digest,
+		RecordID:          recordID,
 		SourceTime:        synthetic.SourceTime,
 		BusinessID:        view.Identity.BusinessID,
 		DimensionIdentity: contract.DimensionIdentityV2{Fields: identityFields, Digest: digest},
@@ -278,6 +313,7 @@ func (stream *streamedExecution) evaluateNoData(
 		}
 		stream.noDataStateMutations += uint64(len(round.series))
 		stream.recordNoDataOutcome(ctx, due, round.outcome)
+		stream.observeNoDataAbsence(ctx, due, round)
 		if round.mutation != nil {
 			stream.noDataMutations = append(stream.noDataMutations, *round.mutation)
 		}
@@ -480,6 +516,46 @@ func (stream *streamedExecution) observeNoDataOutcomes(ctx context.Context) {
 			NoDataSlot: &observability.NoDataSlotFacts{Outcome: string(outcome), Plans: plans},
 		})
 	}
+}
+
+// observeNoDataAbsence reports what one Plan's round decided about its groups,
+// on the round it decided.
+//
+// Only a round that judged has anything to say: the skipped outcomes have
+// their partition line and counted nothing, and a line of zeros under them
+// would read as a Plan with no groups. One line per judging Plan per Slot,
+// the same volume as the memory write beside it, bounded the same way.
+//
+// The counts are the evaluation's own, counted where each group was decided.
+// This is what turns a horizon that has been switched on into a number: how
+// many absences it stopped this round, how many it is holding down, and
+// against which horizon -- which before this line lived only inside the
+// persisted memory and the alerts that stopped arriving.
+func (stream *streamedExecution) observeNoDataAbsence(
+	ctx context.Context, due execution.DuePlan, round noDataRound,
+) {
+	if round.outcome != nodata.OutcomeEvaluated {
+		return
+	}
+	facts := round.facts
+	stream.coordinator.emitObservation(ctx, observability.Observation{
+		Component: observability.ComponentEvaluation, Stage: observability.StageNoDataDecided,
+		Operation: observability.Operation(stream.request.Operation),
+		Direction: observability.DirectionInternal, Result: observability.ResultSuccess,
+		Trace: observability.TraceFields{
+			StrategyID: due.Identity.StrategyID, BusinessID: due.Identity.BusinessID,
+		},
+		NoDataAbsence: &observability.NoDataAbsenceFacts{
+			Outcome: string(round.outcome), HorizonSeconds: round.horizon, HorizonSource: round.horizonSource,
+			RosterSource: string(facts.RosterSource),
+			Expected:     facts.Expected, Present: facts.Present, Absent: facts.Absent, Unavailable: facts.Unavailable,
+			Dropped: facts.Dropped, Expired: facts.Expired, Suppressed: facts.Suppressed,
+			AbsentAges: observability.NoDataAbsentAges{
+				ThisRound: facts.AbsentAges.ThisRound, UnderHour: facts.AbsentAges.UnderHour,
+				UnderDay: facts.AbsentAges.UnderDay, DayOrMore: facts.AbsentAges.DayOrMore,
+			},
+		},
+	})
 }
 
 // noDataPointGrid refuses a Slot whose synthetic points would not land on the

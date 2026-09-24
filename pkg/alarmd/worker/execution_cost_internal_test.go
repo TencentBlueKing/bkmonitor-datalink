@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package worker
 
 import (
@@ -29,13 +20,13 @@ func TestIncrementalEffectsKeepLoadedFactsAndRejectedMergeSeparate(t *testing.T)
 	if err := stream.mergeProvisional(context.Background(), first, 0); err != nil {
 		t.Fatal(err)
 	}
-	beforeBytes := stream.retained
+	beforeBytes := stream.retainedTotal()
 	tooMany := sideEffectTestResult("state", "qg")
 	tooMany.Plans[0].StateResults = append(tooMany.Plans[0].StateResults, execution.StateEvaluation{})
 	if err := stream.mergeProvisional(context.Background(), tooMany, 100); err == nil {
 		t.Fatal("local limit accepted")
 	}
-	if stream.effects.states != 1 || co.reservations.states != 1 || stream.retained != beforeBytes || len(stream.evaluated.Plans[0].StateResults) != 1 {
+	if stream.effects.states != 1 || co.reservations.states != 1 || stream.retainedTotal() != beforeBytes || len(stream.evaluated.Plans[0].StateResults) != 1 {
 		t.Fatal("failed reservation mutated owner")
 	}
 	if err := stream.mergeProvisional(context.Background(), first, 0); err != nil {
@@ -51,7 +42,18 @@ func TestIncrementalEffectsKeepLoadedFactsAndRejectedMergeSeparate(t *testing.T)
 	}
 }
 
-func TestIncrementalEffectsPreserveGapIdentityAndDigest(t *testing.T) {
+// Repeating a Plan's gap statement across batches leaves one statement, and
+// the running effect count follows it.
+//
+// This used to assert the opposite half: statements differing by digest or by
+// state generation each survived, three of them here. That was the dedup this
+// merge replaces - three statements for one marker is the shape the result
+// contract forbids Slot-wide, so keeping them was keeping the defect and
+// counting it accurately. What has to survive is the counting property: the
+// incremental count and a count of the merged result must not diverge,
+// whatever the merge decides, because the reservation released at the end is
+// the incremental one.
+func TestIncrementalEffectsFollowTheMergedGapStatement(t *testing.T) {
 	co := &SlotExecutionCoordinator{budget: sideEffectTestBudget("state")}
 	stream := &streamedExecution{coordinator: co}
 	defer stream.releaseProvisional()
@@ -60,18 +62,16 @@ func TestIncrementalEffectsPreserveGapIdentityAndDigest(t *testing.T) {
 	if err := stream.mergeProvisional(context.Background(), first, 0); err != nil {
 		t.Fatal(err)
 	}
-	next := sideEffectTestResult("gap", "qg")
 	one := first.Plans[0].GuardBeforeEvents[0]
-	two := one
-	two.MutationDigest = "two"
-	other := one
-	other.Identity.StateGeneration = "another"
-	next.Plans[0].GuardBeforeEvents = []execution.PlanGapMutation{one, one, two, two, other}
+	next := sideEffectTestResult("gap", "qg")
+	next.Plans[0].GuardBeforeEvents = []execution.PlanGapMutation{one, one}
 	if err := stream.mergeProvisional(context.Background(), next, 0); err != nil {
 		t.Fatal(err)
 	}
-	if stream.effects.gaps != 3 || !reflect.DeepEqual(stream.evaluated.Plans[0].GuardBeforeEvents, []execution.PlanGapMutation{one, two, other}) {
-		t.Fatal("identity/digest dedup changed")
+	if stream.effects.gaps != 1 ||
+		!reflect.DeepEqual(stream.evaluated.Plans[0].GuardBeforeEvents, []execution.PlanGapMutation{one}) {
+		t.Fatalf("Slot carries %+v after three statements of one marker, want the one they agree on",
+			stream.evaluated.Plans[0].GuardBeforeEvents)
 	}
 	if stream.effects != countEffects(stream.evaluated) {
 		t.Fatal("increment diverged")
@@ -160,7 +160,7 @@ func TestSlotWindowCoverageAccumulatesAcrossSeriesRatherThanBeingReplaced(t *tes
 
 	got := stream.evaluated.Plans[0].HistoryCoverage
 	want := execution.HistoryCoverage{Levels: 9, Short: 3, WorstValid: 2, WorstRequired: 14}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("slot coverage = %+v, want %+v", got, want)
 	}
 }

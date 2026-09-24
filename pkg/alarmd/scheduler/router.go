@@ -171,8 +171,54 @@ type AssignmentStore interface {
 }
 
 type Reconciler struct {
-	router *Router
-	store  AssignmentStore
+	router    *Router
+	store     AssignmentStore
+	timelines TimelineRevisionSource
+}
+
+// TimelineRevisionSource answers which revision a Query Group's Schedule
+// timeline record is at, for a placement to write onto the record it
+// creates (decision-016 batch 4). Zero, and no error, is "no timeline yet":
+// the record then says nothing until a cutover stamps it.
+type TimelineRevisionSource interface {
+	TimelineRecordRevision(context.Context, execution.QueryGroupIdentity) (uint64, error)
+}
+
+// WithTimelineRevisions gives the reconciler where to read a timeline's
+// revision from. It is asked only for a Query Group whose record does not
+// exist or does not say - a placement, a record from before the field, or a
+// Query Group with no timeline yet, which is asked again each round until
+// it has one. The reads go through the control cache, and the Query Groups
+// in that state are few.
+func (reconciler *Reconciler) WithTimelineRevisions(source TimelineRevisionSource) *Reconciler {
+	if reconciler != nil {
+		reconciler.timelines = source
+	}
+	return reconciler
+}
+
+// timelineRevisionFor is the revision a decision for queryGroup names: the
+// record's own when it says, otherwise what the source says, otherwise zero.
+// A source that fails leaves zero; the record then keeps saying nothing and
+// the next round asks again, which is the self-correcting side to be on - a
+// wrong number here would be believed by every renewal.
+func (reconciler *Reconciler) timelineRevisionFor(
+	ctx context.Context,
+	queryGroup execution.QueryGroupIdentity,
+	current ownership.AssignmentRecord,
+	hasCurrent bool,
+) uint64 {
+	if hasCurrent && current.TimelineRecordRevision != 0 {
+		return 0
+	}
+	if reconciler.timelines == nil {
+		return 0
+	}
+	revision, err := reconciler.timelines.TimelineRecordRevision(ctx, queryGroup)
+	if err != nil {
+		return 0
+	}
+	return revision
 }
 
 // ContentScopePolicy is what a reconcile round does about the content
@@ -369,16 +415,17 @@ func (reconciler *Reconciler) settle(
 	if hasCurrent {
 		expectedRevision = current.RecordRevision
 	}
+	timeline := reconciler.timelineRevisionFor(ctx, queryGroup, current, hasCurrent)
 	if hasCurrent && reconciler.router.incumbentEligibleIn(queryGroup, current.DesiredWorkerID, workers, at) {
 		scope, withdraw, needed := scopes.wanted(queryGroup, current)
-		if !needed {
+		if !needed && timeline == 0 {
 			return current, nil
 		}
 		return reconciler.store.PublishAssignment(
 			ctx, authority, ownership.AssignmentDecision{
 				QueryGroup: queryGroup, DesiredWorkerID: current.DesiredWorkerID,
 				ExpectedRecordRevision: expectedRevision, PlacementReason: current.PlacementReason, DecidedAt: at,
-				ContentScope: scope, WithdrawContentScope: withdraw,
+				ContentScope: scope, WithdrawContentScope: withdraw, TimelineRecordRevision: timeline,
 			},
 		)
 	}
@@ -389,6 +436,7 @@ func (reconciler *Reconciler) settle(
 	decision := ownership.AssignmentDecision{
 		QueryGroup: queryGroup, DesiredWorkerID: selected.WorkerID,
 		ExpectedRecordRevision: expectedRevision, PlacementReason: ownership.PlacementRendezvous, DecidedAt: at,
+		TimelineRecordRevision: timeline,
 	}
 	// A placement carries the content it places onto when the round
 	// declares scopes, so a Query Group is never placed without one and

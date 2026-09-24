@@ -6,7 +6,6 @@
 package execution
 
 import (
-	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,12 +49,11 @@ type LevelOutcome struct {
 	ReasonCode           ReasonCode
 	PartialProofs        []PartialDecisionProof
 	// EnvelopeHeld marks a RECOVERY outcome whose record's RECOVERY envelope
-	// the trigger held back, because a sibling Level had not agreed: its
-	// state was unknown, or its recovery span still held a triggering
-	// window. The outcome is a fact about this Level and still reaches the
-	// state; the envelope is a statement about the whole series' alert and
-	// waits for a later round. The result contract expects no TriggerEvent
-	// for such a record, and only for such a record.
+	// the open alert gate held back: the consumer holds no open alert on the
+	// series, or the identity it keys alerts by could not be built. The
+	// outcome is a fact about this Level and still reaches the state. The
+	// result contract expects no TriggerEvent for such a record, and only for
+	// such a record.
 	EnvelopeHeld bool
 }
 
@@ -208,10 +206,27 @@ func validateLevelOutcome(
 	guardReasons := loadedGuardReasons(plan.Identity, outcome.LevelID, stateIdentity, states, gaps)
 	if len(guardReasons) != 0 {
 		switch outcome.Outcome {
-		case LevelOutcomeNormal, LevelOutcomeRecovery:
+		case LevelOutcomeNormal:
 			if !loadedSeriesWarmingCompleted(outcome, plan, stateResults, states, gaps) {
-				return resultContractViolation(codeOutcomeBusinessUnderActiveGuard, "active Runtime State or Plan gap guard forbids NORMAL and RECOVERY")
+				return resultContractViolation(codeOutcomeBusinessUnderActiveGuard, "active Runtime State or Plan gap guard forbids NORMAL")
 			}
+		case LevelOutcomeRecovery:
+			// A guard forbids calling the Level normal. It does not forbid
+			// closing what was opened, and it used to: a Level under a guard
+			// could not recover until its window was FULL again, which for a
+			// strategy whose window outlasts the interval between releases is
+			// never (decision-022).
+			//
+			// Nothing is checked here in its place, deliberately. The evidence
+			// for a recovery is counted where it is observed -- the trigger
+			// walks the positions it actually saw -- and checked again on the
+			// event contract, which refuses a RECOVERY whose own window
+			// evidence does not carry it. A third reading here would have to
+			// re-derive the same relation from the loaded state, and the one
+			// it used to derive was "the mutation writes the Level FULL",
+			// which is the very condition a hole in the window makes
+			// unreachable. Removing it takes away a check that was reading the
+			// wrong quantity, not a check of this.
 		case LevelOutcomeUnknown:
 			if !loadedSeriesWarmingCompleted(outcome, plan, stateResults, states, gaps) {
 				// Either the reason the guard is already up for, or the
@@ -615,64 +630,98 @@ func stateRetentionPoints(plan DuePlan) uint32 {
 	return retention
 }
 
-// validateStateHistoryReplacement proves that Points is the complete bounded
-// replacement snapshot obtained from the loaded history plus this batch's
-// affected anchors. Retention may evict only the oldest points.
+// validateStateHistoryReplacement proves that Points is this round's addition
+// to the loaded record and nothing else: every point anchored in this batch,
+// ordered and unique, and where it lands on a position the loaded history
+// already holds, the same record carrying at least the facts that were stored.
+// BaseHistory must be the history that was loaded, and the retention bound the
+// one the compiled Plan asks for.
+//
+// It used to prove that Points was the whole bounded window. The window is
+// still what gets written; it is now assembled at serialization from these two
+// fields, so what has to be proved here is that the pair describes it.
 func validateStateHistoryReplacement(loaded []StateHistoryPoint, mutation StateMutation, retention uint32) error {
 	if retention == 0 {
 		return resultContractViolation(codeHistoryRetentionBoundMissing, "State history replacement lacks a retention bound")
 	}
-	affected := make(map[RecordAnchor]struct{}, len(mutation.AffectedRecords))
-	for _, anchor := range mutation.AffectedRecords {
-		affected[anchor] = struct{}{}
+	// Derived by the producer, derived again here from the compiled Plan, and
+	// compared. One derivation would let the bound the write uses drift from
+	// the bound the Plan asks for with nothing to notice.
+	if mutation.RetentionPoints != retention {
+		return resultContractViolation(codeHistoryRetentionBoundMissing, "State mutation carries a retention bound the Plan does not ask for")
 	}
-	loadedPoints := make(map[RecordAnchor]StateHistoryPoint, len(loaded))
-	allAnchors := make(map[RecordAnchor]struct{}, len(loaded)+len(affected))
-	for _, point := range loaded {
-		anchor := RecordAnchor{RecordID: point.RecordID, SourceTime: point.SourceTime}
-		loadedPoints[anchor] = point
-		allAnchors[anchor] = struct{}{}
+	if !isLoadedHistoryItself(mutation.BaseHistory, loaded) {
+		return resultContractViolation(codeHistoryLoadedPointChanged, "State mutation base is not the loaded history")
 	}
-	if len(mutation.Points) != 0 {
-		for anchor := range affected {
-			allAnchors[anchor] = struct{}{}
+	// Both lookups are over the addition, which is one point in an ordinary
+	// round, so neither indexes the loaded record: a map keyed by every stored
+	// point would cost per retained point, in time and in memory, which is the
+	// per-round window cost this shape removed. The addition's anchors are
+	// found by scanning the anchors this batch names, and the loaded position a
+	// point lands on by binary search over a record the loader keeps ordered.
+	for index, point := range mutation.Points {
+		if index > 0 && StateHistoryOrder(mutation.Points[index-1], point) >= 0 {
+			return resultContractViolation(codeHistorySnapshotIncomplete, "State history addition is not ordered and unique")
 		}
-	}
-	for _, point := range mutation.Points {
 		anchor := RecordAnchor{RecordID: point.RecordID, SourceTime: point.SourceTime}
-		if loadedPoint, ok := loadedPoints[anchor]; ok {
-			if !reflect.DeepEqual(loadedPoint, point) {
-				return resultContractViolation(codeHistoryLoadedPointChanged, "State history replacement changes a loaded point")
+		current := false
+		for _, candidate := range mutation.AffectedRecords {
+			if candidate == anchor {
+				current = true
+				break
 			}
+		}
+		if !current {
+			return resultContractViolation(codeHistoryLoadedPointInvented, "State history addition carries a point this batch did not evaluate")
+		}
+		position := sort.Search(len(loaded), func(index int) bool { return loaded[index].SourceTime >= point.SourceTime })
+		if position == len(loaded) || loaded[position].SourceTime != point.SourceTime ||
+			loaded[position].RecordID != point.RecordID {
 			continue
 		}
-		if _, current := affected[anchor]; !current {
-			return resultContractViolation(codeHistoryLoadedPointInvented, "State history replacement changes or invents a loaded point")
-		}
-	}
-	expectedAnchors := make([]RecordAnchor, 0, len(allAnchors))
-	for anchor := range allAnchors {
-		expectedAnchors = append(expectedAnchors, anchor)
-	}
-	sort.Slice(expectedAnchors, func(left, right int) bool {
-		if expectedAnchors[left].SourceTime != expectedAnchors[right].SourceTime {
-			return expectedAnchors[left].SourceTime < expectedAnchors[right].SourceTime
-		}
-		return expectedAnchors[left].RecordID < expectedAnchors[right].RecordID
-	})
-	if len(expectedAnchors) > int(retention) {
-		expectedAnchors = expectedAnchors[len(expectedAnchors)-int(retention):]
-	}
-	if len(expectedAnchors) != len(mutation.Points) {
-		return resultContractViolation(codeHistorySnapshotIncomplete, "State history replacement is not the complete bounded snapshot")
-	}
-	for index, point := range mutation.Points {
-		anchor := RecordAnchor{RecordID: point.RecordID, SourceTime: point.SourceTime}
-		if anchor != expectedAnchors[index] {
-			return resultContractViolation(codeHistorySnapshotIncomplete, "State history replacement is not the complete bounded snapshot")
+		stored := loaded[position]
+		// The addition replaces the stored point at that position, so it has to
+		// carry what was stored there. A fact that disappears this way is a
+		// silent history rewrite: the point stays, the Level's past does not.
+		for _, fact := range stored.Levels {
+			if !containsStateLevelFact(point.Levels, fact) {
+				return resultContractViolation(codeHistoryLoadedPointChanged, "State history addition drops a stored Level fact")
+			}
 		}
 	}
 	return nil
+}
+
+// isLoadedHistoryItself reports whether base is the loaded history, not a copy
+// of it: the same length and the same backing array.
+//
+// Identity rather than equality, for two reasons. The property the mutation
+// claims is that it references the record the Slot loaded - the whole point of
+// carrying a base instead of a rebuilt window - and a copy with equal content
+// is precisely the thing this shape exists to remove, so accepting one would
+// leave the cost in place and the check reporting success. And comparing the
+// content costs what the copy cost: over a 1469 point window a per-point deep
+// comparison measured 310 us, 155 KB and 3085 allocations for one series in one
+// round, which is the window allocation again under another name, moved from
+// the producer into the contract check where the benchmark on the producer
+// cannot see it.
+func isLoadedHistoryItself(base, loaded []StateHistoryPoint) bool {
+	if len(base) != len(loaded) {
+		return false
+	}
+	if len(loaded) == 0 {
+		return true
+	}
+	return &base[0] == &loaded[0]
+}
+
+func containsStateLevelFact(facts []StateLevelFact, fact StateLevelFact) bool {
+	for _, candidate := range facts {
+		if candidate == fact {
+			return true
+		}
+	}
+	return false
 }
 
 func stateUnknownMayAdvance(input InternalExecution, mutation StateMutation, outcome LevelOutcome) bool {
@@ -1275,6 +1324,27 @@ func validateEventOutcomes(input InternalExecution, result PlanEvaluationResult,
 					}
 				}
 			}
+		}
+	}
+	// An event decided and not kept, because its protocol has no message for
+	// its kind, stands for the record's envelope as an event would: the same
+	// record identity, the same kind, never both. It carries no content to
+	// check - that is what not keeping it means - so what is checked is that
+	// the protocol really has no message for it: a kept identity in place of
+	// an event the consumer would have received is a lost event.
+	for _, state := range result.StateResults {
+		for _, dropped := range state.WithoutMessage {
+			if contract.EventHasMessage(dropped.Format, dropped.EventKind) {
+				return resultContractViolation(codeEventKindMismatch, "an event its protocol has a message for was not kept")
+			}
+			record := recordIdentity{Series: state.Mutation.Identity.SeriesIdentityDigest, Record: dropped.Record}
+			if _, duplicate := actualEvents[record]; duplicate {
+				return resultContractViolation(codeEventDuplicate, "duplicate TriggerEvent for one Plan series record")
+			}
+			if expectedEvents[record] == "" || dropped.EventKind != expectedEvents[record] {
+				return resultContractViolation(codeEventKindMismatch, "TriggerEvent kind does not match Level outcomes")
+			}
+			actualEvents[record] = struct{}{}
 		}
 	}
 	if len(actualEvents) != len(expectedEvents) {

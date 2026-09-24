@@ -49,12 +49,23 @@ type Limits struct {
 	MaxTriggerWindowSize          uint32
 	MaxRecoveryConsecutiveWindows uint32
 	MaxRequiredHistoryPoints      uint32
-	MaxTriggerComputeCost         uint64
-	MaxCompiledPlanBytes          int
-	MaxCacheEntries               int
-	MaxCacheBytes                 int
-	NegativeCacheTTL              time.Duration
-	BudgetRevision                string
+	// MaxRetainedPointsByLevels is the most retained points a Plan may keep,
+	// indexed by how many Levels share one stored record. Index 0 is unused;
+	// an index past the end means no ceiling is stated for that shape.
+	//
+	// It is a table rather than one number because the stored record holds
+	// every Level's facts on every point, so what fits depends on the Level
+	// count: about 2100 points for one Level and about 1400 for two, against a
+	// MaxRequiredHistoryPoints of 4096 that neither shape can reach. Derived
+	// from the representation by whoever builds these limits, so the two move
+	// together instead of one being written down beside the other.
+	MaxRetainedPointsByLevels []uint32
+	MaxTriggerComputeCost     uint64
+	MaxCompiledPlanBytes      int
+	MaxCacheEntries           int
+	MaxCacheBytes             int
+	NegativeCacheTTL          time.Duration
+	BudgetRevision            string
 }
 
 type StateSemantics struct {
@@ -123,6 +134,34 @@ type RecoveryPlan struct {
 type StateRequirement struct {
 	RequiredDetectHistoryPoints uint32
 	RetentionPoints             uint32
+}
+
+// StateIdentityView is this requirement as the two hashes that decide state
+// identity see it: the retention filled in as the required count.
+//
+// Retention is not part of what makes stored state compatible with a Plan. It
+// decides how many positions are kept beyond the ones detection reads, so a
+// Level that raises it keeps more and one that lowers it trims more, and
+// either way the record it was already keeping is still readable by the Plan
+// that asks. Hashing it made raising the retention indistinguishable from
+// changing what the Level detects: the Plan's state generation moved, so the
+// record moved to a new key and started from zero, and the Level contract
+// stored on the old record no longer matched the compiled one, so what could
+// still be read was refused and dropped.
+//
+// Filling the field rather than removing it from the hashed shape is what
+// keeps this byte-compatible. Until retention could differ from the required
+// count it was always equal to it, so every hash a deployment has stored was
+// derived over a value shaped exactly like this one. A Level that never took
+// any slack hashes to the same string it already had; a Level that took some
+// goes back to the string it had before it did.
+//
+// Both sites derive this from here rather than each filling the field: the
+// two hashes have to agree about what state identity means, and a rule stated
+// twice is a rule that will be changed once.
+func (requirement StateRequirement) StateIdentityView() StateRequirement {
+	requirement.RetentionPoints = requirement.RequiredDetectHistoryPoints
+	return requirement
 }
 
 type ResourceEstimate struct {
@@ -483,6 +522,7 @@ func (l CompiledLevel) Fingerprints() LevelFingerprints {
 func (l CompiledLevel) ResourceEstimate() ResourceEstimate { return l.resourceEstimate }
 
 type CompiledPlan struct {
+	effectiveRules      *compiledEffectiveRules
 	planRef             contract.RuntimePlanRefV1
 	strategyRef         contract.StrategyRefV2
 	outputIdentity      *contract.MonitorOutputIdentity
@@ -498,6 +538,7 @@ type CompiledPlan struct {
 	resourceEstimate    ResourceEstimate
 	datasetDigest       string
 	targetScope         *contract.TargetScopeV2
+	targetPlan          *contract.TargetPlanV1
 	noData              *contract.NoDataConfigV1
 	noDataLevel         *CompiledLevel
 }
@@ -567,6 +608,17 @@ func (p *CompiledPlan) TargetScope() *contract.TargetScopeV2 {
 		return nil
 	}
 	return p.targetScope
+}
+
+// TargetPlan is the target's second frozen form, for a Plan compiled from a
+// target_plan document. Nil for every other Plan. A Plan with neither this
+// nor TargetScope names no target; a Plan with this and no resolution for
+// it admits nothing, which is the filter's rule, not this accessor's.
+func (p *CompiledPlan) TargetPlan() *contract.TargetPlanV1 {
+	if p == nil {
+		return nil
+	}
+	return p.targetPlan
 }
 
 func (p *CompiledPlan) StrategyRef() contract.StrategyRefV2 {

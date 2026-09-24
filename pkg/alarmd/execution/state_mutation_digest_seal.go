@@ -21,6 +21,12 @@ type stateMutationDigestPayload struct {
 	SeriesGuard     *StateGuardFact             `json:"series_guard,omitempty"`
 	Levels          []RuntimeLevelStateMutation `json:"levels"`
 	Points          []StateHistoryPoint         `json:"points"`
+	// The retention bound decides how much of the merged record survives the
+	// write, so two mutations that carry the same points under different bounds
+	// leave different bytes behind. A field that decides the stored content and
+	// is not in the digest is a digest that answers "same statement" for two
+	// different outcomes.
+	RetentionPoints uint32 `json:"retention_points"`
 }
 
 // One evaluated series derives its mutation digest once and is then asked for
@@ -66,7 +72,7 @@ func stateMutationDigestPayloadOf(mutation StateMutation) stateMutationDigestPay
 	return stateMutationDigestPayload{
 		Identity: mutation.Identity, ApplyVersion: mutation.ApplyVersion,
 		AffectedRecords: mutation.AffectedRecords, SeriesGuard: mutation.SeriesGuard,
-		Levels: mutation.Levels, Points: mutation.Points,
+		Levels: mutation.Levels, Points: mutation.Points, RetentionPoints: mutation.RetentionPoints,
 	}
 }
 

@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package access
 
 import (
@@ -754,6 +745,7 @@ func (consumer *recordingConsumer) ConsumeSeries(_ context.Context, batch execut
 	consumer.batches = append(consumer.batches, batch)
 	return batch.Validate(consumer.header)
 }
+func (consumer *recordingConsumer) ResolvedTargets() execution.TargetMemberships { return nil }
 
 func frozenExecution(t *testing.T) (execution.FrozenExecutionContractRef, FrozenPlan) {
 	t.Helper()
@@ -819,13 +811,23 @@ func compilePlan(t *testing.T) *strategy.CompiledPlan {
 
 func compilePlanForStrategy(t *testing.T, strategyID string, scope ...*contract.TargetScopeV2) *strategy.CompiledPlan {
 	t.Helper()
-	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), strategy.Limits{MaxPlanBytes: 64 << 10, MaxLevelsPerPlan: 4,
-		MaxAlgorithmsPerLevel: 4, MaxGroupsPerAlgorithm: 4, MaxConditionsPerAlgorithm: 8, MaxASTNodesPerLevel: 32,
-		MaxTriggerWindowSize: 64, MaxRecoveryConsecutiveWindows: 64, MaxRequiredHistoryPoints: 64, MaxTriggerComputeCost: 1 << 16,
-		MaxCompiledPlanBytes: 64 << 10, MaxCacheEntries: 4, MaxCacheBytes: 1 << 20, NegativeCacheTTL: time.Minute, BudgetRevision: "test"})
-	if err != nil {
-		t.Fatal(err)
+	plan := evaluationPlanForStrategy(strategyID)
+	if len(scope) == 1 {
+		plan.TargetScope = scope[0]
 	}
+	return compileEvaluationPlan(t, plan)
+}
+
+// compilePlanWithTargetPlan is compilePlanForStrategy for a Plan carrying
+// the target's second frozen form.
+func compilePlanWithTargetPlan(t *testing.T, strategyID string, target *contract.TargetPlanV1) *strategy.CompiledPlan {
+	t.Helper()
+	plan := evaluationPlanForStrategy(strategyID)
+	plan.TargetPlan = target
+	return compileEvaluationPlan(t, plan)
+}
+
+func evaluationPlanForStrategy(strategyID string) contract.EvaluationPlanV2 {
 	ref := contract.StrategyRefV2{TenantID: "tenant", StrategyID: strategyID, Revision: "r1"}
 	projection := contract.InputProjectionV2{ValueFields: []string{"value"}, DimensionFields: []string{"host"}, BusinessIdentityField: "bk_biz_id", MultiValueAlignment: "SINGLE_VALUE", DataUnit: "percent", MissingValuePolicy: contract.MissingValuePolicyRequired}
 	level := contract.LevelIRV2{
@@ -838,13 +840,21 @@ func compilePlanForStrategy(t *testing.T, strategyID string, scope ...*contract.
 		TriggerPlan:  contract.TypedPlanV1{Type: "N_OF_M", Version: 1, Config: json.RawMessage(`{"window_size":1,"required_anomalies":1,"step_seconds":60}`)},
 		RecoveryPlan: contract.TypedPlanV1{Type: "CONTINUOUS_TRIGGER_MISS", Version: 1, Config: json.RawMessage(`{"enabled":true,"consecutive_windows":1}`)},
 	}
-	plan := contract.EvaluationPlanV2{PlanID: strategyID, StrategyRef: ref, InputProjection: projection,
+	return contract.EvaluationPlanV2{PlanID: strategyID, StrategyRef: ref, InputProjection: projection,
 		StrategyIR: contract.StrategyIRV2{Schema: contract.Schema{Name: contract.StrategyIRSchemaV2, Major: 2},
 			StrategyRef: ref, InputProjection: projection,
 			ExecutionSemantics: contract.ExecutionSemanticsV2{EvaluationScope: contract.EvaluationScopeSeries, QueryWindow: 60, AggregationInterval: 60, EvaluationInterval: 60},
 			Levels:             []contract.LevelIRV2{level}}}
-	if len(scope) == 1 {
-		plan.TargetScope = scope[0]
+}
+
+func compileEvaluationPlan(t *testing.T, plan contract.EvaluationPlanV2) *strategy.CompiledPlan {
+	t.Helper()
+	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), strategy.Limits{MaxPlanBytes: 64 << 10, MaxLevelsPerPlan: 4,
+		MaxAlgorithmsPerLevel: 4, MaxGroupsPerAlgorithm: 4, MaxConditionsPerAlgorithm: 8, MaxASTNodesPerLevel: 32,
+		MaxTriggerWindowSize: 64, MaxRecoveryConsecutiveWindows: 64, MaxRequiredHistoryPoints: 64, MaxTriggerComputeCost: 1 << 16,
+		MaxCompiledPlanBytes: 64 << 10, MaxCacheEntries: 4, MaxCacheBytes: 1 << 20, NegativeCacheTTL: time.Minute, BudgetRevision: "test"})
+	if err != nil {
+		t.Fatal(err)
 	}
 	result, err := compiler.Compile(context.Background(), strategy.CompileRequest{Plan: plan, DatasetContract: contract.DatasetContractV2{SchemaDigest: strings.Repeat("a", 64), NormalizationDigest: strings.Repeat("b", 64), IdentityFields: []string{"host"}, SourceTimeField: "_time", ReceivedTimeField: "_received_time"},
 		StateSemantics: strategy.StateSemantics{StateSchemaVersion: "v1", CodecSemanticsVersion: "v1", IdentitySchemaDigest: strings.Repeat("c", 64), SourceTimeSemanticsVersion: "seconds-v1", HistoryCellSemanticsVersion: "v1"}})

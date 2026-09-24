@@ -261,6 +261,13 @@ func costJSONBudget(v reflect.Value, remaining *int) bool {
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 		var buf [20]byte
 		return charge(len(strconv.AppendUint(buf[:0], v.Uint(), 10)))
+	case reflect.Float32, reflect.Float64:
+		// encoding/json writes the shortest representation that round-trips,
+		// in 'f' or 'e' form: at most a sign, seventeen significant digits, a
+		// point and a four-character exponent. Charged at that bound rather
+		// than formatted here, so the admission stays a count and not an
+		// encoding.
+		return charge(24)
 	case reflect.String:
 		if !charge(2) {
 			return false

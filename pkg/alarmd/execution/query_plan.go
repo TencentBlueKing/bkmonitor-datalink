@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package execution
 
 import (
@@ -174,11 +165,25 @@ type QueryPlanFacts struct {
 	Timezone          string
 	NotTimeAlign      bool
 	Normalization     DatasetNormalizationSpec
+	// Shard is the piece of a split strategy these facts query, nil for a
+	// strategy that is not split. It is part of the Query Group's identity:
+	// each piece is its own group, so a re-split that changes a piece's
+	// matcher is a cutover of that group and nothing else. A pointer so that
+	// the facts of an unsplit Plan serialize exactly as they did.
+	Shard *ShardRef `json:"Shard,omitempty"`
 }
 
 func BuildQueryPlanFacts(facts QueryPlanFacts) (QueryPlanFacts, error) {
 	if facts.QueryRevision != "" {
 		return QueryPlanFacts{}, errors.New("alarmd execution: QueryPlanFacts builder owns query revision")
+	}
+	if facts.Shard != nil {
+		if err := facts.Shard.Validate(); err != nil {
+			return QueryPlanFacts{}, err
+		}
+		if facts.Shard.IsZero() {
+			return QueryPlanFacts{}, errors.New("alarmd execution: a zero shard is carried as no shard")
+		}
 	}
 	if facts.Provider != ProviderUQ || facts.ProviderRouteRef == "" || facts.TenantID == "" ||
 		facts.BusinessID == "" || facts.SpaceScope == "" || facts.StepMillis <= 0 || facts.AlignmentMillis <= 0 {

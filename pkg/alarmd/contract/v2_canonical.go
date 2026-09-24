@@ -17,6 +17,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"math"
 	"reflect"
 	"sort"
@@ -396,6 +397,69 @@ func DeriveRecordIDV2(dimensionIdentityDigest string, sourceTime int64) (string,
 	return deriveLengthPrefixedSHA256(
 		"record_id", "record-id-v2", []byte(dimensionIdentityDigest), []byte(strconv.FormatInt(sourceTime, 10)),
 	)
+}
+
+// RecordIDDeriverV2 derives the record ids of one series: DeriveRecordIDV2
+// with the series fixed.
+//
+// A stored history is read and written one point at a time, and every point's
+// id is derived from the series and its source time. Derived one call at a
+// time, each point hashed the version and the series again and allocated for
+// every field on the way; for a Plan that retains fourteen hundred points a
+// series, that was most of what reading and writing its state cost. The
+// version and the series are the same for every point of one series, so they
+// are hashed once here, and each point only continues from that state with
+// its own time. The ids are the same bytes DeriveRecordIDV2 gives -- a test
+// holds the two to each other across the range of times.
+//
+// It keeps a hash of its own and is not for concurrent use: one deriver per
+// series being read or written. The saved hash state lives in memory only and
+// is never persisted, so a Go release that changes how that state is encoded
+// changes nothing here.
+type RecordIDDeriverV2 struct {
+	prefix []byte
+	digest hash.Hash
+	// The buffers each point is hashed through. The hash is reached through
+	// an interface, so a buffer declared per call escapes and is allocated
+	// per point; kept here, it is allocated once per series.
+	length [4 + 20]byte
+	sum    [sha256.Size]byte
+}
+
+// NewRecordIDDeriverV2 fixes the series, refused as DeriveRecordIDV2 refuses
+// it.
+func NewRecordIDDeriverV2(dimensionIdentityDigest string) (*RecordIDDeriverV2, error) {
+	if !sha256Pattern.MatchString(dimensionIdentityDigest) {
+		return nil, invalid("record_id.dimension_identity_digest", "must be 64 lowercase hexadecimal characters")
+	}
+	digest := sha256.New()
+	var length [4]byte
+	for _, value := range [][]byte{[]byte("record-id-v2"), []byte(dimensionIdentityDigest)} {
+		binary.BigEndian.PutUint32(length[:], uint32(len(value)))
+		_, _ = digest.Write(length[:])
+		_, _ = digest.Write(value)
+	}
+	prefix, err := digest.(encoding.BinaryMarshaler).MarshalBinary()
+	if err != nil {
+		return nil, fmt.Errorf("record id deriver: %w", err)
+	}
+	return &RecordIDDeriverV2{prefix: prefix, digest: digest}, nil
+}
+
+// Derive is DeriveRecordIDV2(the deriver's series, sourceTime).
+func (deriver *RecordIDDeriverV2) Derive(sourceTime int64) (string, error) {
+	if sourceTime < 0 {
+		return "", invalid("record_id.source_time", "must be non-negative")
+	}
+	if err := deriver.digest.(encoding.BinaryUnmarshaler).UnmarshalBinary(deriver.prefix); err != nil {
+		return "", fmt.Errorf("record id deriver: %w", err)
+	}
+	text := strconv.AppendInt(deriver.length[4:4], sourceTime, 10)
+	binary.BigEndian.PutUint32(deriver.length[:4], uint32(len(text)))
+	_, _ = deriver.digest.Write(deriver.length[:4+len(text)])
+	var encoded [2 * sha256.Size]byte
+	hex.Encode(encoded[:], deriver.digest.Sum(deriver.sum[:0]))
+	return string(encoded[:]), nil
 }
 
 func DeriveQueryGroupKafkaKeyV2(tenantID, queryGroupKey string) ([]byte, error) {

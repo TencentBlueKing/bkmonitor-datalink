@@ -294,17 +294,34 @@ func TestTheLedgerCountsEachReceiverOncePerStageInOrder(t *testing.T) {
 	if counts, _ = ledger.Counts(v1); counts != (viewstream.Counts{Expected: 3, Sent: 1, Acked: 1, Installed: 1}) {
 		t.Fatalf("after complete receipts = %+v", counts)
 	}
-	// The object count of an installed receiver is what its probed receipts
-	// said; a receipt that did not probe -- a Hello standing in for a lost
-	// one -- leaves it where it was, and a receiver that never probed is
-	// counted apart from the sum, not as 0 in it.
+	// The object count of an installed receiver is its latest word, one way
+	// or the other. Three states in a row: a probe that found 3 missing; a
+	// probe that failed, which takes the receiver out of the sum and names it
+	// -- the 3 it found earlier is not a count now, and reading it on made
+	// "cannot tell" look like "3 missing" (or, at 0, "nothing missing") for
+	// as long as the probe kept failing; and a probe that succeeded again.
+	// Only the claim at a Hello, which cannot speak for the objects, leaves
+	// the word in hand where it is.
 	ledger.Record(viewstream.Receipt{Receiver: w1, Version: version("w1", "d1"), Acked: true, Installed: true, ObjectsMissing: 3, ObjectsProbed: true})
-	if objects, ok := ledger.Objects(v1); !ok || objects != (viewstream.ObjectsSummary{Missing: 3, Probed: 1}) {
+	if objects, ok := ledger.Objects(v1); !ok || !reflect.DeepEqual(objects, viewstream.ObjectsSummary{Missing: 3, Probed: 1}) {
 		t.Fatalf("objects after a probed receipt = %+v ok=%t, want 3 missing over one probed receiver", objects, ok)
 	}
-	ledger.Record(viewstream.Receipt{Receiver: w1, Version: version("w1", "d1"), Acked: true, Installed: true})
-	if objects, _ := ledger.Objects(v1); objects != (viewstream.ObjectsSummary{Missing: 3, Probed: 1}) {
-		t.Fatalf("objects after an unprobed receipt = %+v, want the probed count kept", objects)
+	ledger.Record(viewstream.Receipt{Receiver: w1, Version: version("w1", "d1"), Acked: true, Installed: true, ObjectsProbed: false})
+	if objects, _ := ledger.Objects(v1); !reflect.DeepEqual(objects, viewstream.ObjectsSummary{Unprobed: 1, UnprobedWorkers: []string{"w1"}}) {
+		t.Fatalf("objects after a failed probe = %+v, want the receiver unprobed and named, its earlier count gone", objects)
+	}
+	ledger.RecordClaimed(w1, version("w1", "d1"))
+	if objects, _ := ledger.Objects(v1); !reflect.DeepEqual(objects, viewstream.ObjectsSummary{Unprobed: 1, UnprobedWorkers: []string{"w1"}}) {
+		t.Fatalf("objects after a Hello claim = %+v, want the failed probe left where it was", objects)
+	}
+	ledger.Record(viewstream.Receipt{Receiver: w1, Version: version("w1", "d1"), Acked: true, Installed: true, ObjectsMissing: 0, ObjectsProbed: true})
+	if objects, _ := ledger.Objects(v1); !reflect.DeepEqual(objects, viewstream.ObjectsSummary{Missing: 0, Probed: 1}) {
+		t.Fatalf("objects after the probe succeeds again = %+v, want one probed receiver with nothing missing", objects)
+	}
+	ledger.Record(viewstream.Receipt{Receiver: w1, Version: version("w1", "d1"), Acked: true, Installed: true, ObjectsMissing: 3, ObjectsProbed: true})
+	ledger.RecordClaimed(w1, version("w1", "d1"))
+	if objects, _ := ledger.Objects(v1); !reflect.DeepEqual(objects, viewstream.ObjectsSummary{Missing: 3, Probed: 1}) {
+		t.Fatalf("objects after a Hello claim over a probed count = %+v, want the count kept", objects)
 	}
 	// A receipt before sent: acked is recorded but not counted until sent.
 	w2 := viewstream.Receiver{WorkerID: "w2", Incarnation: "i2"}
@@ -364,8 +381,8 @@ func TestTheLedgerCountsEachReceiverOncePerStageInOrder(t *testing.T) {
 	// w1 restarted after its probed receipt, so its count went with the old
 	// process; nobody in the final round probed: three unprobed, sum 0 --
 	// and the sum is not read as three fleets with their objects.
-	if objects, _ := ledger.Objects(v1); objects != (viewstream.ObjectsSummary{Missing: 0, Probed: 0, Unprobed: 3}) {
-		t.Fatalf("objects at completion = %+v, want three unprobed and no sum", objects)
+	if objects, _ := ledger.Objects(v1); !reflect.DeepEqual(objects, viewstream.ObjectsSummary{Missing: 0, Probed: 0, Unprobed: 3, UnprobedWorkers: []string{"w1", "w2", "w3"}}) {
+		t.Fatalf("objects at completion = %+v, want three unprobed, named, and no sum", objects)
 	}
 	// Two more versions: the first is closed complete, the second, opened
 	// and never reported, is closed superseded with its counts, and neither

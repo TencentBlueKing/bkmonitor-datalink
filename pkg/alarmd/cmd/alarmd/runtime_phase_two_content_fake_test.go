@@ -30,9 +30,9 @@ func (repository *fakeProductionCatalogRepository) LoadPublishedContent(_ contex
 	}
 	content := controlplane.PublishedContent{Publication: publication, Groups: make(map[execution.QueryGroupIdentity]controlplane.ContentEntry, len(snapshot.QueryGroups))}
 	for _, group := range snapshot.QueryGroups {
-		plans := make([]execution.PlanIdentity, 0, len(group.Plans))
+		plans := make([]execution.PlanKey, 0, len(group.Plans))
 		for _, plan := range group.Plans {
-			plans = append(plans, plan.Identity)
+			plans = append(plans, plan.Key())
 		}
 		content.Groups[group.Identity] = controlplane.ContentEntry{Plans: plans}
 	}

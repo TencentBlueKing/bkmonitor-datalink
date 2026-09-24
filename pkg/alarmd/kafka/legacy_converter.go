@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package kafka
 
 import (
@@ -16,6 +7,11 @@ import (
 )
 
 type LegacyConvertedEvent = legacyoutput.Event
+
+// LegacyEventConverter converts a group of events one by one: the events
+// and errors it returns are aligned with the group, an event it will not
+// write fails alone, and the third result is a failure that says nothing
+// about the events (legacyoutput.SnapshotStoreError, a cancelled context).
 type LegacyEventConverter interface {
-	ConvertBatch(context.Context, []contract.TriggerEventV1) ([]LegacyConvertedEvent, error)
+	ConvertEach(context.Context, []contract.TriggerEventV1) ([]LegacyConvertedEvent, []error, error)
 }

@@ -105,15 +105,25 @@ func (store *SlotAppliedMarkStore) routeFor(plans []execution.PlanIdentity) (Sto
 }
 
 // Record writes that these Plans of this Slot had their state applied, with a
-// lifetime ending when the Slot stops being finalizable.
+// lifetime ending at the Slot's keep-until.
 //
-// After that moment nothing reads the mark, so keeping it would be keeping a
-// key nobody asks about. The lifetime is derived from the Slot rather than
-// configured: a second knob would let the two drift, and the only right answer
-// is the one the finalization rule already uses.
+// The reader is the query-free finalization, and the rule that decides it
+// (ResolveFinalization) sends a Slot down that path once the replay window has
+// closed: at recovery-until, or later if the owner that should have run it
+// was being taken over or drained. The Slot's keep-until is that latest
+// moment as the scheduler derives it -- recovery-until plus the deployment's
+// own post-recovery terminal delay -- and after it nothing about the Slot is
+// read, so keeping the mark longer would be keeping a key nobody asks about.
+//
+// The lifetime is derived from the Slot rather than configured: a second knob
+// would let the two drift, and the only right answer is the one the
+// finalization rule already uses. It used to end at recovery-until, which is
+// where the reader begins, not where it ends: a mark written at any point
+// before the boundary was gone by the time the finalization arrived, and a
+// Slot that had evaluated and alerted was recorded as a gap.
 func (store *SlotAppliedMarkStore) Record(
 	ctx context.Context, slot execution.SlotIdentity, duePlans []execution.PlanIdentity,
-	applied []execution.PlanIdentity, recoveryUntil time.Time, now time.Time,
+	applied []execution.PlanIdentity, keepUntil time.Time, now time.Time,
 ) error {
 	if len(applied) == 0 {
 		return nil
@@ -122,7 +132,7 @@ func (store *SlotAppliedMarkStore) Record(
 	if err != nil {
 		return err
 	}
-	ttl := recoveryUntil.Sub(now)
+	ttl := keepUntil.Sub(now)
 	if ttl <= 0 {
 		// The Slot can no longer be finalized, so nothing will ever read this.
 		return nil

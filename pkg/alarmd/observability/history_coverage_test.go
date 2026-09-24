@@ -49,7 +49,7 @@ func TestCoverageCountsThatCannotDescribeOneRoundAreDropped(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			facts := testCase.facts
-			if got := normalizeHistoryCoverageFacts(&facts); got != nil {
+			if got, rejected := normalizeHistoryCoverageFacts(&facts); got != nil || rejected == nil || rejected.Rule == "" {
 				t.Fatalf("normalised to %+v, want the facts dropped: a count that could not have "+
 					"come from these windows makes every number beside it unreadable, and a "+
 					"plausible-looking clamp is what hides that", got)
@@ -70,8 +70,8 @@ func TestCoverageCountsThatCannotDescribeOneRoundAreDropped(t *testing.T) {
 func TestCountsNotAboutShortWindowsSurviveARoundWithNoneShort(t *testing.T) {
 	facts := HistoryCoverageFacts{Levels: 9, Short: 0, Empty: 0, WorstValid: 3, WorstRequired: 9,
 		Guarded: 2, Fresh: 4, ShortFresh: 0}
-	got := normalizeHistoryCoverageFacts(&facts)
-	if got == nil {
+	got, rejected := normalizeHistoryCoverageFacts(&facts)
+	if got == nil || rejected != nil {
 		t.Fatal("facts dropped: a round where every window filled is a measurement, and its absence " +
 			"reads as a round nobody measured")
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream"
 )
 
@@ -64,9 +65,9 @@ func (admission viewStreamAdmission) Admit(ctx context.Context, workerID, token 
 }
 
 // viewStreamIdentity is what this process advertises in its registration
-// for the stream: where it serves it and the token a Worker must present
-// to it. Minted once per process; the token never leaves the registration
-// and the Hello.
+// for the stream: where it serves it and the token a Worker must present.
+// Minted once per process; only registration and authenticated control RPCs
+// (Hello and ReadEvidence) carry it. It never appears in OB evidence.
 type viewStreamIdentity struct {
 	Endpoint string
 	Token    string
@@ -178,8 +179,56 @@ func interfaceAddress() string {
 // viewSource is what the round needs of the catalog to build the desired
 // set: the activation and the published content it names.
 type viewSource interface {
-	LoadActivation(context.Context) (controlplane.ActivationState, error)
+	LoadActivationHead(context.Context) (controlplane.ActivationState, error)
 	LoadPublishedContent(context.Context, controlplane.SnapshotPublicationRef) (controlplane.PublishedContent, error)
+	// DrainingContent is what a Query Group the publication no longer
+	// carries still executes from its timeline's last Segment; false when
+	// there is nothing left to execute.
+	DrainingContent(context.Context, execution.QueryGroupIdentity) (execution.ObjectDigest, []execution.OutputContextRef, bool, error)
+	// ActivationBlocked is the Query Groups a cutover held back: the view
+	// gives each the content its open Segment names, not the manifest's.
+	ActivationBlocked(context.Context) ([]controlplane.BlockedQueryGroup, error)
+	// ApplyCutoverProgress is the content the Query Groups run while a
+	// cutover is in progress: what each open Segment names. Without
+	// progress it returns the content as given.
+	ApplyCutoverProgress(context.Context, controlplane.ActivationState, map[execution.QueryGroupIdentity]controlplane.ContentEntry) (map[execution.QueryGroupIdentity]controlplane.ContentEntry, error)
+}
+
+// runningViewContent is what each Query Group of the activation runs, which
+// is what the view gives it: the published content, a held-back Query Group
+// on its open Segment instead, and every Query Group on its open Segment
+// while a cutover is in progress.
+func runningViewContent(
+	ctx context.Context, source viewSource, state controlplane.ActivationState,
+) (map[execution.QueryGroupIdentity]controlplane.ContentEntry, error) {
+	published, err := source.LoadPublishedContent(ctx, state.Current)
+	if err != nil {
+		return nil, fmt.Errorf("read published content %s: %w", state.Current.SnapshotRevision, err)
+	}
+	blocked, err := source.ActivationBlocked(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read held-back Query Groups: %w", err)
+	}
+	running := controlplane.ApplyBlockedToContent(published.Groups, blocked)
+	if running, err = source.ApplyCutoverProgress(ctx, state, running); err != nil {
+		return nil, fmt.Errorf("read the content a cutover in progress runs: %w", err)
+	}
+	return running, nil
+}
+
+// costLedgerSink hands each heartbeat's costs to the Leader's ledger: the
+// stream's CostSink over the scheduler's ledger, so the scheduler package
+// never imports the stream.
+type costLedgerSink struct{ ledger *scheduler.CostLedger }
+
+func (sink costLedgerSink) RecordCosts(workerID string, costs []viewstream.QueryGroupCost) {
+	reports := make([]scheduler.QueryGroupCostReport, 0, len(costs))
+	for _, cost := range costs {
+		reports = append(reports, scheduler.QueryGroupCostReport{
+			QueryGroup: cost.QueryGroup, RetainedBytesPeak: cost.RetainedBytesPeak, CostPerSecondMilli: cost.CostPerSecondMilli,
+		})
+	}
+	sink.ledger.Record(workerID, reports)
 }
 
 // viewLead and viewStepDown follow the control leader authority: a term
@@ -221,26 +270,52 @@ func (runtime *productionPhaseTwoOwnership) publishView(
 			ViewStream: &observability.ViewStreamFacts{Event: "publish_failed", ControlEpoch: authority.Fence.OwnerEpoch, Reason: err.Error()},
 		})
 	}
-	state, err := source.LoadActivation(ctx)
+	state, err := source.LoadActivationHead(ctx)
 	if err != nil {
+		stream.NotePublishFailure(viewstream.PublishFailureActivationUnreadable)
 		report(fmt.Errorf("read activation: %w", err))
 		return
 	}
-	published, err := source.LoadPublishedContent(ctx, state.Current)
+	running, err := runningViewContent(ctx, source, state)
 	if err != nil {
-		report(fmt.Errorf("read published content %s: %w", state.Current.SnapshotRevision, err))
+		stream.NotePublishFailure(viewstream.PublishFailureContentUnreadable)
+		report(err)
 		return
 	}
 	desired := viewstream.Desired{
 		ControlEpoch: authority.Fence.OwnerEpoch,
 		Publication: viewstream.Publication{SnapshotRevision: state.Current.SnapshotRevision, PublicationEpoch: state.Current.PublicationEpoch,
 			ActivationRecordRevision: state.RecordRevision},
-		Content:     make(map[execution.QueryGroupIdentity]viewstream.Content, len(published.Groups)),
+		Content:     make(map[execution.QueryGroupIdentity]viewstream.Content, len(running)),
 		Assignments: make(map[execution.QueryGroupIdentity]viewstream.Assignment, len(records)),
 	}
-	for identity, entry := range published.Groups {
+	for identity, entry := range running {
 		content := viewstream.Content{ObjectDigest: entry.Digest, OutputContexts: make([]viewstream.OutputContextRef, 0, len(entry.Refs))}
 		for _, ref := range entry.Refs {
+			content.OutputContexts = append(content.OutputContexts, viewstream.OutputContextRef{Plan: ref.Plan, Digest: ref.Digest})
+		}
+		desired.Content[identity] = content
+	}
+	// A Query Group assigned but no longer published is draining: its
+	// timeline keeps the Segment its remaining Slots run in, and the view
+	// previews that Segment's content so a Worker executing from the view
+	// finishes them (decision-016 batch 4b). Read only for the draining
+	// ones, which are few and go away as their timelines retire.
+	for identity := range records {
+		if _, published := desired.Content[identity]; published {
+			continue
+		}
+		digest, refs, draining, err := source.DrainingContent(ctx, identity)
+		if err != nil {
+			stream.NotePublishFailure(viewstream.PublishFailureDrainingUnreadable)
+			report(fmt.Errorf("read draining content %s: %w", identity, err))
+			return
+		}
+		if !draining {
+			continue
+		}
+		content := viewstream.Content{ObjectDigest: digest, OutputContexts: make([]viewstream.OutputContextRef, 0, len(refs))}
+		for _, ref := range refs {
 			content.OutputContexts = append(content.OutputContexts, viewstream.OutputContextRef{Plan: ref.Plan, Digest: ref.Digest})
 		}
 		desired.Content[identity] = content
@@ -249,6 +324,7 @@ func (runtime *productionPhaseTwoOwnership) publishView(
 		assignment := viewstream.Assignment{
 			DesiredWorkerID: record.DesiredWorkerID, Revision: record.RecordRevision,
 			ContentScope: record.ContentScope, PendingContentScope: record.PendingContentScope,
+			TimelineRecordRevision: record.TimelineRecordRevision,
 		}
 		if !record.EffectiveAt.IsZero() {
 			assignment.EffectiveAtMs = record.EffectiveAt.UnixMilli()
@@ -323,4 +399,88 @@ func newViewStreamIncarnation() (string, error) {
 func (bundle *phaseTwoWorkerBundle) runViewClient() {
 	defer bundle.maintenanceWG.Done()
 	_ = bundle.dependencies.ViewClient.Run(bundle.maintenanceCtx)
+}
+
+// activeQueryGroupSetSource is the view source's reader of the activation's
+// active set. Optional: a source without it publishes no view before the
+// first assignment round, which is what every source did before.
+type activeQueryGroupSetSource interface {
+	LoadActiveQueryGroupSet(context.Context, controlplane.ActiveQueryGroupSetRef) ([]execution.QueryGroupIdentity, error)
+}
+
+// PublishStoredView is the first view of a new term, published from what
+// is already stored: the activation in force, its active set and Draining
+// Query Groups, and their Assignment records as the last leader left them.
+// Before it the first view of a term waited for a whole control refresh -
+// read the source, compile, publish, activate - and every Worker that
+// restarted in that time executed nothing, having no view to execute from.
+//
+// The records are the ownership facts the view is derived from, so a view
+// published from them is never further from the truth than the last view of
+// the previous term. A Worker still holds its own lease before it executes;
+// nothing here widens what may run. It is published under this term's
+// control epoch, and the first assignment round of the term publishes again
+// under the same epoch, which supersedes it.
+//
+// Nothing is published when the active set cannot be read or is empty: an
+// empty view under a newer epoch would take every Query Group off every
+// Worker that already holds a view.
+func (runtime *productionPhaseTwoOwnership) PublishStoredView(ctx context.Context) {
+	if runtime == nil {
+		return
+	}
+	runtime.mu.Lock()
+	authority := runtime.authority
+	runtime.mu.Unlock()
+	stream, source := runtime.dependencies.ViewStream, runtime.dependencies.ViewSource
+	active, readsActive := source.(activeQueryGroupSetSource)
+	if stream == nil || source == nil || !readsActive || authority.Fence.QueryGroup == "" {
+		return
+	}
+	report := func(err error) {
+		observeRuntime(ctx, runtime.dependencies.Observer, observability.Observation{
+			Component: observability.ComponentOwnership, Stage: observability.StageViewPublished,
+			Result: observability.ResultDegraded, ReasonCode: observability.ReasonInternalUnknown, Err: err,
+			ViewStream: &observability.ViewStreamFacts{Event: "publish_failed", ControlEpoch: authority.Fence.OwnerEpoch, Reason: err.Error()},
+		})
+	}
+	state, err := source.LoadActivationHead(ctx)
+	if err != nil {
+		stream.NotePublishFailure(viewstream.PublishFailureActivationUnreadable)
+		report(fmt.Errorf("stored view: read activation: %w", err))
+		return
+	}
+	identities, err := active.LoadActiveQueryGroupSet(ctx, state.ActiveQGSetRef)
+	if err != nil {
+		stream.NotePublishFailure(viewstream.PublishFailureActiveSetUnreadable)
+		report(fmt.Errorf("stored view: read active set: %w", err))
+		return
+	}
+	seen := make(map[execution.QueryGroupIdentity]struct{}, len(identities)+len(state.Draining))
+	unique := make([]execution.QueryGroupIdentity, 0, len(identities)+len(state.Draining))
+	for _, identity := range identities {
+		if _, dup := seen[identity]; !dup {
+			seen[identity] = struct{}{}
+			unique = append(unique, identity)
+		}
+	}
+	for _, draining := range state.Draining {
+		if _, dup := seen[draining.QueryGroup]; !dup {
+			seen[draining.QueryGroup] = struct{}{}
+			unique = append(unique, draining.QueryGroup)
+		}
+	}
+	if len(unique) == 0 {
+		return
+	}
+	records, _, err := runtime.dependencies.Store.ReadAssignments(ctx, unique)
+	if err != nil {
+		stream.NotePublishFailure(viewstream.PublishFailureAssignmentsUnreadable)
+		report(fmt.Errorf("stored view: read assignments: %w", err))
+		return
+	}
+	if len(records) == 0 {
+		return
+	}
+	runtime.publishView(ctx, authority, records, nil)
 }

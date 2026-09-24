@@ -55,7 +55,7 @@ func TestProductionPhaseTwoDrainingViewReportsACursorTheTimelineNoLongerHolds(t 
 		return &execution.UnfinishedSlotProjection{
 			Contract: contract,
 			DuePlanTargets: execution.FrozenDuePlanTargets{DuePlanSetDigest: contract.DuePlanSetDigest,
-				Plans: []execution.PlanIdentity{{TenantID: "tenant", BusinessID: "business", StrategyID: "strategy"}}},
+				Plans: []execution.PlanKey{{PlanIdentity: execution.PlanIdentity{TenantID: "tenant", BusinessID: "business", StrategyID: "strategy"}}}},
 			EarliestQueryDeadlineUnixMilli: int64(slot)*1000 + 1_000, KeepUntilUnixMilli: int64(slot)*1000 + 601_000,
 		}
 	}

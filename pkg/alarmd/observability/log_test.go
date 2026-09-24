@@ -457,3 +457,172 @@ func TestTheViewSessionLineCarriesTheStreamsWordAsItsReasonCode(t *testing.T) {
 		}
 	}
 }
+
+// The completion line carries the completion the Slot reached as its own
+// top-level key, one word for each completion the store knows, and no key at
+// all when the Slot reached none. The Observation field was pinned by the
+// executor's case; this one pins the line, because a word the line drops is
+// absent in exactly the way an older build's silence is, and the two cannot
+// be told apart by the reader.
+func TestLoggingObserverWritesTheCompletionKindTheSlotReached(t *testing.T) {
+	t.Parallel()
+
+	render := func(kind string) map[string]any {
+		var output bytes.Buffer
+		limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		policy, err := NewBoundedLogPolicy(limiter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+			Component: ComponentScheduler, Stage: StageSlotCompleted, Operation: OperationRetry, Result: ResultSuccess,
+			SlotCompletionKind: kind,
+		})
+		var event map[string]any
+		if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+			t.Fatalf("decode completion log: %v; log=%s", err, output.String())
+		}
+		return event
+	}
+	for _, kind := range []string{
+		"FULL_COMPLETED", "FULL_EMPTY_COMPLETED", "COMPLETED_WITH_PARTIAL_GAP", "COMPLETED_WITH_UNAVAILABLE",
+		"COMPLETED_WITH_TERMINAL", "GAP_SKIPPED", "SNAPSHOT_UNAVAILABLE",
+	} {
+		if got := render(kind)["completion_kind"]; got != kind {
+			t.Errorf("a completion of kind %s rendered completion_kind=%v; the key is absent for the reader exactly "+
+				"as it is on a build that does not report it", kind, got)
+		}
+	}
+	if got, present := render("")["completion_kind"]; present {
+		t.Errorf("a Slot that reached no completion rendered completion_kind=%v; the key is for completions, "+
+			"and a word here would be one the store never produced", got)
+	}
+}
+
+// The split gate is on the rebalance line, zeros included. Every round the
+// gate runs says how many ready workers it asked and how many of them do not
+// declare the split contract; a clear fleet reads zero rather than reading
+// like a build that has no gate. The list is beside the count because the
+// question a rolling release asks is which replica, not how many.
+func TestLoggingObserverWritesTheSplitGateOnTheRebalanceLine(t *testing.T) {
+	t.Parallel()
+
+	line := func(gate *ShardAwareFacts) map[string]any {
+		t.Helper()
+		var output bytes.Buffer
+		limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 8})
+		if err != nil {
+			t.Fatal(err)
+		}
+		policy, err := NewBoundedLogPolicy(limiter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+			Component: ComponentOwnership, Stage: StageRebalancePlanned, Result: ResultSuccess,
+			Rebalance: &RebalanceFacts{ReadyWorkers: 4, ShardAware: gate},
+		})
+		var event map[string]any
+		if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+			t.Fatalf("decode rebalance observation log: %v; log=%s", err, output.String())
+		}
+		return event
+	}
+
+	clear := line(&ShardAwareFacts{Ready: 4})
+	for field, value := range map[string]any{
+		"shard_aware_ready":      float64(4),
+		"shard_unaware_replicas": float64(0),
+		"shard_splits_held":      float64(0),
+	} {
+		if clear[field] != value {
+			t.Fatalf("a clear gate reads %q = %#v, want %#v; event=%#v", field, clear[field], value, clear)
+		}
+	}
+
+	held := line(&ShardAwareFacts{Ready: 4, Unaware: []string{"worker-2", "worker-3"}, SplitsHeld: 1})
+	if held["shard_unaware_replicas"] != float64(2) || held["shard_splits_held"] != float64(1) {
+		t.Fatalf("a held gate reads %#v", held)
+	}
+	names, ok := held["shard_unaware"].([]any)
+	if !ok || len(names) != 2 || names[0] != "worker-2" || names[1] != "worker-3" {
+		t.Fatalf("the replicas are not named on the line: %#v", held["shard_unaware"])
+	}
+
+	// A round from a build with no gate says nothing about it, rather than
+	// saying a fleet of nobody is clear.
+	if absent := line(nil); absent["shard_aware_ready"] != nil || absent["shard_unaware_replicas"] != nil {
+		t.Fatalf("a round with no gate carried gate fields: %#v", absent)
+	}
+}
+
+// The byte-constraint round's counts are on the same line, zeros included:
+// judged and unread together say whether the round could judge at all, and
+// a round that moved nothing because it judged nothing read identically to
+// one that found nothing to move. Both were attached to the round and
+// rendered nowhere - the page had them, the line did not.
+func TestLoggingObserverWritesTheByteConstraintCountsOnTheRebalanceLine(t *testing.T) {
+	t.Parallel()
+
+	var output bytes.Buffer
+	limiter, err := NewWindowLogLimiter(WindowLogLimiterConfig{Window: time.Hour, MaxEvents: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := NewBoundedLogPolicy(limiter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	NewLoggingObserver(New("alarmd", &output), policy).Observe(context.Background(), Observation{
+		Component: ComponentOwnership, Stage: StageRebalancePlanned, Result: ResultSuccess,
+		Rebalance: &RebalanceFacts{ReadyWorkers: 4, Bytes: &ByteConstraintFacts{
+			SharePercent: 80, Judged: 4, Unread: 2046, Unsettled: []string{"w1", "w2", "w3", "w4"},
+			Overloaded: []string{"w1"}, PlannedMoves: 0,
+		}},
+	})
+	var event map[string]any
+	if err := json.Unmarshal(output.Bytes(), &event); err != nil {
+		t.Fatalf("decode rebalance observation log: %v; log=%s", err, output.String())
+	}
+	for field, value := range map[string]any{
+		"byte_constraint_judged":        float64(4),
+		"byte_constraint_unread":        float64(2046),
+		"byte_constraint_unsettled":     float64(4),
+		"byte_constraint_planned_moves": float64(0),
+	} {
+		if event[field] != value {
+			t.Fatalf("event[%q] = %#v, want %#v; event=%#v", field, event[field], value, event)
+		}
+	}
+	overloaded, ok := event["byte_constraint_overloaded"].([]any)
+	if !ok || len(overloaded) != 1 || overloaded[0] != "w1" {
+		t.Fatalf("the overloaded replica is not named: %#v", event["byte_constraint_overloaded"])
+	}
+}
+
+// The gate's list is copied and bounded like every other per-replica sample
+// the round carries: the observation is read after the round moves on, and
+// one enormous fleet must not make one enormous line.
+func TestTheSplitGatesReplicaListIsCopiedAndBounded(t *testing.T) {
+	t.Parallel()
+
+	unaware := make([]string, MaxRebalanceOwnedSamples+3)
+	for index := range unaware {
+		unaware[index] = "worker"
+	}
+	facts := &RebalanceFacts{ReadyWorkers: len(unaware), ShardAware: &ShardAwareFacts{Ready: len(unaware), Unaware: unaware}}
+	normalized := normalizeRebalanceFacts(facts)
+	if normalized.ShardAware == nil || len(normalized.ShardAware.Unaware) != MaxRebalanceOwnedSamples {
+		t.Fatalf("the list was not bounded: %+v", normalized.ShardAware)
+	}
+	if normalized.ShardAware.Ready != len(unaware) {
+		t.Fatalf("the ready count was truncated with the list: %+v", normalized.ShardAware)
+	}
+	unaware[0] = "changed after the round"
+	if normalized.ShardAware.Unaware[0] != "worker" {
+		t.Fatal("the observation shares the round's slice")
+	}
+}

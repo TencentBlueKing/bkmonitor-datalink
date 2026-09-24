@@ -58,6 +58,7 @@ func buildSeriesAdmission(
 	recorder *metric.Recorder,
 	logger *observability.Logger,
 	hostStatus *dynamicHostStatusFilter,
+	wait startupWaiter,
 ) (*admission.Chain, *cmdbcache.Store, error) {
 	// The platform states its key prefix once and both of its caches hang off
 	// it, so the CMDB cache key comes from that one spelling.
@@ -77,8 +78,10 @@ func buildSeriesAdmission(
 	// worker that started without one would decide every scoped strategy's
 	// series to be out of scope and silently stop alerting for them. This is
 	// not a new dependency to fail on: the cache is on the database alarmd
-	// already needs to run at all.
-	if err := store.Refresh(ctx); err != nil {
+	// already needs to run at all. A cache that does not answer is waited on
+	// in place: the replica stays not ready, which is the same "no
+	// evaluation without an index" this line exists for.
+	if err := wait.await(ctx, "cmdb_index", store.Refresh); err != nil {
 		return nil, nil, fmt.Errorf("alarmd: build the CMDB host index the target filter decides on: %w", err)
 	}
 	publishCMDBIndexHealth(recorder, store)
@@ -180,7 +183,9 @@ func publishCMDBIndexHealth(recorder *metric.Recorder, store *cmdbcache.Store) {
 // here is the list in force there. It follows the copy when the platform
 // changes it, through the filter's own swap, without a restart.
 func seriesAdmissionFilters(hostStatus *dynamicHostStatusFilter, reporter *admission.IdentityReporter) []admission.Filter {
-	filters := []admission.Filter{admission.TargetScopeFilter{Reporter: reporter}}
+	// The two target filters are told apart by which frozen form the Plan
+	// carries; a Plan carries at most one, so at most one of them decides.
+	filters := []admission.Filter{admission.TargetScopeFilter{Reporter: reporter}, admission.TargetPlanFilter{}}
 	if hostStatus != nil {
 		filters = append(filters, hostStatus)
 	}
@@ -198,4 +203,31 @@ func hostDisableMonitorStateCount(filters []admission.Filter) int {
 		}
 	}
 	return 0
+}
+
+// buildTargetResolver assembles what resolves a target plan's dynamic
+// references (decision-017): the dynamic group store, when the deployment
+// renders the fork's key prefix, and the host index for topology nodes.
+// Without the prefix there is no group store, and every dynamic group
+// selector resolves unavailable by name rather than empty; topology
+// references still resolve against the host index.
+//
+// The group store reads its configured target group connection and refreshes the
+// referenced groups on the host index's cadence with its staleness bound.
+func buildTargetResolver(cfg config.Config, client redis.Cmdable, hosts *cmdbcache.Store) (*cmdbcache.TargetResolver, *cmdbcache.GroupStore, error) {
+	prefix, rendered := cfg.DynamicGroupKeyPrefix()
+	if !rendered {
+		return cmdbcache.NewTargetResolver(nil, hosts, time.Now), nil, nil
+	}
+	reader, err := cmdbcache.NewGroupReader(client, prefix)
+	if err != nil {
+		return nil, nil, err
+	}
+	groups, err := cmdbcache.NewGroupStore(reader, cmdbcache.GroupStoreOptions{
+		RefreshInterval: cmdbIndexRefreshInterval, MaxAge: cmdbIndexStalenessBound,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return cmdbcache.NewTargetResolver(groups, hosts, time.Now), groups, nil
 }

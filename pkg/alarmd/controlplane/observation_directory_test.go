@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package controlplane_test
 
 import (
@@ -25,6 +16,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 func directoryFixture(t *testing.T, commands int) (*objectCatalogHarness, *controlplane.ObservationDirectory, time.Time) {
@@ -592,5 +584,52 @@ func TestTheCompositionCountsRevisionedPlansFromTheFrozenPlans(t *testing.T) {
 	with := controlplane.ComposeCatalog(revisionedCatalog(t, ""))
 	if with.PlansTotal != 2 || with.RevisionedPlans != 2 {
 		t.Fatalf("revisioned source = %d plans, %d revisioned; want 2 and 2", with.PlansTotal, with.RevisionedPlans)
+	}
+}
+
+// The composition counts every Plan by the wire format its events go out
+// as, resolved the way the sink resolves it, every format present at zero:
+// an unrevisioned source composes to all Python-compatible and none standard,
+// and a revisioned one to the reverse. The number that answers "how many
+// strategies publish the standard raw event" is this one; before it the
+// answer was a Kafka read, and a log search for the word found no line.
+func TestTheCompositionCountsPlansByTheWireFormatTheSinkResolves(t *testing.T) {
+	without := controlplane.ComposeCatalog(objectCatalogTwoGroups(t, 80))
+	if got := without.PlansByWireFormat; got[contract.WireFormatPythonCompatible] != 2 || got[contract.WireFormatStandardRawEvent] != 0 ||
+		got[observability.WireFormatOther] != 0 || len(got) != len(observability.WireFormats) {
+		t.Fatalf("unrevisioned source by wire format = %v, want 2 python_compatible and every other format at zero", got)
+	}
+	with := controlplane.ComposeCatalog(revisionedCatalog(t, ""))
+	if got := with.PlansByWireFormat; got[contract.WireFormatStandardRawEvent] != 2 || got[contract.WireFormatPythonCompatible] != 0 {
+		t.Fatalf("revisioned source by wire format = %v, want 2 standard_raw_event and 0 python_compatible", got)
+	}
+	total := 0
+	for _, count := range with.PlansByWireFormat {
+		total += count
+	}
+	if total != with.PlansTotal {
+		t.Fatalf("by-format counts sum to %d, want the %d Plans: the counts must partition", total, with.PlansTotal)
+	}
+	// Plans frozen before the word existed carry none, and one frozen under
+	// the historical spelling carries a word the sink never writes: both are
+	// counted under what the sink resolves them to, not under _other and not
+	// under the historical word.
+	historical := revisionedCatalog(t, "")
+	for index := range historical.QueryGroups {
+		for planIndex := range historical.QueryGroups[index].Plans {
+			historical.QueryGroups[index].Plans[planIndex].Plan.WireFormat = contract.WireFormatTriggerEvent
+		}
+	}
+	unworded := objectCatalogTwoGroups(t, 80)
+	for index := range unworded.QueryGroups {
+		for planIndex := range unworded.QueryGroups[index].Plans {
+			unworded.QueryGroups[index].Plans[planIndex].Plan.WireFormat = ""
+		}
+	}
+	if got := controlplane.ComposeCatalog(historical).PlansByWireFormat; got[contract.WireFormatStandardRawEvent] != 2 || got[observability.WireFormatOther] != 0 {
+		t.Fatalf("historical word by wire format = %v, want 2 standard_raw_event and nothing under _other", got)
+	}
+	if got := controlplane.ComposeCatalog(unworded).PlansByWireFormat; got[contract.WireFormatPythonCompatible] != 2 || got[observability.WireFormatOther] != 0 {
+		t.Fatalf("no word, no revision by wire format = %v, want 2 python_compatible and nothing under _other", got)
 	}
 }

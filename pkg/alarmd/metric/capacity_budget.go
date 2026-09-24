@@ -59,10 +59,17 @@ func newCapacityLoadCollector(source CapacityLoadSource) *capacityLoadCollector 
 	return &capacityLoadCollector{
 		source: source,
 		budget: descriptor("capacity_budget",
-			"The derived ceiling for each per-Slot budget, labelled the same way capacity_transition_total "+
-				"labels its rejections, so a rejection can be read against the limit it hit. These are "+
-				"per-Slot caps, not a pool: a Slot above its cap completes UNAVAILABLE, and the right "+
-				"reading is 'how close did the largest Slot get', never a utilization ratio.",
+			"The derived ceiling for each budget, labelled the same way capacity_transition_total labels "+
+				"its rejections, so a rejection can be read against the limit it hit. Two kinds are "+
+				"reported here and they are read differently. state_mutations, gap_mutations and events "+
+				"are per-Slot caps: a Slot above its own cap completes UNAVAILABLE whatever else is "+
+				"running, and the right reading is 'how close did the largest Slot get', never a "+
+				"utilization ratio. retained_bytes and series are a shared pool across the Slots running "+
+				"on this replica: a Slot is refused when the replica's outstanding total would cross the "+
+				"ceiling, so a utilization ratio is the right reading for those two, and a Slot can be "+
+				"refused while its own usage is a small fraction of the limit. A RECOVERY under the "+
+				"Python-compatible protocol, which that protocol has no message for, is not held and does "+
+				"not use the events budget; the output lines still count it among the events without a message.",
 			[]string{"budget"}),
 		memoryLimit: descriptor("container_memory_limit_bytes",
 			"The memory limit every budget above was derived from, labelled with where it was read. A "+

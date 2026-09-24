@@ -17,6 +17,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
@@ -296,6 +297,22 @@ func (sink *lazyOutputSink) WriteBatch(ctx context.Context, events []contract.Tr
 		return &outputSinkNotOpenError{}
 	}
 	return inner.WriteBatch(ctx, events)
+}
+
+func (sink *lazyOutputSink) WriteCloseBatch(ctx context.Context, requests []linkdoutput.CloseRequest) error {
+	sink.mu.Lock()
+	inner := sink.inner
+	sink.mu.Unlock()
+	if inner == nil {
+		return &outputSinkNotOpenError{}
+	}
+	writer, ok := inner.(interface {
+		WriteCloseBatch(context.Context, []linkdoutput.CloseRequest) error
+	})
+	if !ok {
+		return errors.New("output sink does not support native closure")
+	}
+	return writer.WriteCloseBatch(ctx, requests)
 }
 
 func (sink *lazyOutputSink) ConfigureStandardOutput(converter enginekafka.StandardEventConverter) error {

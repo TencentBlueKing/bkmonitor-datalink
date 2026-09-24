@@ -32,6 +32,8 @@ type memoryEvidenceStore struct {
 	// reports to the scheduler.
 	writeErr error
 	writes   int
+	// lastKeepUntil is the lifetime end the last write asked for.
+	lastKeepUntil time.Time
 }
 
 func newMemoryEvidenceStore() *memoryEvidenceStore {
@@ -40,15 +42,16 @@ func newMemoryEvidenceStore() *memoryEvidenceStore {
 
 func (store *memoryEvidenceStore) Record(
 	_ context.Context, slot execution.SlotIdentity, _ []execution.PlanIdentity,
-	applied []execution.PlanIdentity, recoveryUntil time.Time, now time.Time,
+	applied []execution.PlanIdentity, keepUntil time.Time, now time.Time,
 ) error {
 	store.mutex.Lock()
 	defer store.mutex.Unlock()
 	store.writes++
+	store.lastKeepUntil = keepUntil
 	if store.writeErr != nil {
 		return store.writeErr
 	}
-	if !recoveryUntil.After(now) {
+	if !keepUntil.After(now) {
 		return nil
 	}
 	marked := store.marks[slot]
@@ -93,7 +96,7 @@ func (store *memoryEvidenceStore) markedPlans(slot execution.SlotIdentity) int {
 
 // liveSlotRequest is the fixture request with its windows placed around now, so
 // the Slot is one that can still be finalized. The mark's lifetime ends at
-// RecoveryUntil, so a request whose windows sit in the past writes no mark --
+// KeepUntil, so a request whose windows sit in the past writes no mark --
 // correctly, and it would make this test pass for the wrong reason.
 func liveSlotRequest(contractRef execution.FrozenExecutionContractRef) execution.SlotExecutionRequest {
 	request := workerSlotRequest(contractRef)
@@ -129,6 +132,13 @@ func TestASlotThatWroteStateAndLostItsBookkeepingIsNotAGap(t *testing.T) {
 	if marked := evidence.markedPlans(header.Contract.Slot); marked != 1 {
 		t.Fatalf("marked %d Plans, want the one this attempt applied: without the mark the second "+
 			"attempt has nothing to find", marked)
+	}
+	// The mark is asked to live to the Slot's keep-until. The finalization
+	// below runs after recovery-until, so a lifetime ending there is a mark
+	// that expired the moment its reader arrived.
+	if got := evidence.lastKeepUntil.UnixMilli(); got != request.KeepUntilUnixMilli {
+		t.Fatalf("the mark was written to live until %d, want the Slot's keep-until %d (recovery-until is %d, "+
+			"where the reader begins rather than ends)", got, request.KeepUntilUnixMilli, request.RecoveryUntilUnixMilli)
 	}
 
 	// The retry, past the replay window, finishing without a query.

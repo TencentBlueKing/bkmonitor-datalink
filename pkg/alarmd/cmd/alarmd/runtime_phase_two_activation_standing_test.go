@@ -254,3 +254,46 @@ func TestFleetPublisherNamesTheStrategiesOnRetainedRecords(t *testing.T) {
 		t.Fatalf("retained record strategies = %+v, want strategy 1854 of business 7", skip.Strategies)
 	}
 }
+
+// The standing names the Query Groups the last cutover held back - how many,
+// why and which - from the repository's reading, and says nothing when none
+// were.
+func TestActivationStandingNamesQueryGroupsTheCutoverHeldBack(t *testing.T) {
+	bundle := mustPhaseTwoWorkerBundle(t, validGoAccessRuntimeConfig(), newPhaseTwoApplicationHealth(), &fakePhaseTwoControl{}, &fakePhaseTwoOwnership{})
+	reading := controlplane.ActivationBlockedReading{
+		ByReason: map[string]int{controlplane.CutoverReasonOpenSegmentClosed: 1, controlplane.CutoverReasonOpenDigestMismatch: 2},
+		Samples:  []string{"qg-a:open_digest_mismatch", "qg-b:open_digest_mismatch", "qg-c:open_segment_closed_or_ahead"},
+	}
+	bundle.dependencies.ActivationBlocked = func() controlplane.ActivationBlockedReading { return reading }
+	bundle.activation.attempted = true
+	facts := bundle.activationFleetFacts()
+	if facts == nil || facts.BlockedQueryGroups != 3 ||
+		facts.BlockedReasons != "open_digest_mismatch=2,open_segment_closed_or_ahead=1" ||
+		facts.BlockedSamples != "qg-a:open_digest_mismatch,qg-b:open_digest_mismatch,qg-c:open_segment_closed_or_ahead" {
+		t.Fatalf("facts = %+v", facts)
+	}
+	reading = controlplane.ActivationBlockedReading{}
+	if facts := bundle.activationFleetFacts(); facts.BlockedQueryGroups != 0 || facts.BlockedReasons != "" || facts.BlockedSamples != "" {
+		t.Fatalf("nothing held back, facts = %+v", facts)
+	}
+}
+
+// The publisher puts the leader's round, stage by stage, on the snapshot,
+// and none on a replica that led none.
+func TestFleetPublisherCarriesTheLeaderRound(t *testing.T) {
+	clock := &dueIndexClock{at: time.Unix(20_000, 0)}
+	facts := &fleet.LeaderRoundFacts{At: clock.now(), Result: fleet.LeaderRoundCompleted, TotalSeconds: 0.4,
+		Stages: []fleet.LeaderRoundStage{{Stage: fleet.LeaderRoundStageAssignmentSweep, Seconds: 0.1}}}
+	publisher := fleetPublisher{
+		tracker: fleet.NewTracker(nil, "replica-1", clock.now), replica: "replica-1", now: clock.now,
+		owned:       func() []execution.QueryGroupIdentity { return nil },
+		leaderRound: func() *fleet.LeaderRoundFacts { return facts },
+	}
+	if snapshot := publisher.snapshot(context.Background()); snapshot.LeaderRound != facts {
+		t.Fatalf("snapshot leader round = %+v, want the round as given", snapshot.LeaderRound)
+	}
+	publisher.leaderRound = func() *fleet.LeaderRoundFacts { return nil }
+	if snapshot := publisher.snapshot(context.Background()); snapshot.LeaderRound != nil {
+		t.Fatalf("a replica that led no round published %+v", snapshot.LeaderRound)
+	}
+}

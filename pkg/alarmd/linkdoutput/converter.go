@@ -36,7 +36,8 @@ import (
 
 // The two actions this process produces, out of the consumer's three.
 //
-// closed is deliberately never written: closing is a lifetime decision made on
+// Detector conversion does not emit closed; ConvertClose handles explicit
+// effective-time maintenance separately. Closing is a lifetime decision made on
 // a timeout this process does not observe. A repeated triggered is how a
 // continuing anomaly is stated.
 const (
@@ -203,25 +204,25 @@ func NewConverter(onUnmappedSeverity func(level uint32)) (*Converter, error) {
 // than a message with holes in it.
 func (converter *Converter) Convert(event *contract.TriggerEventV1) (Event, error) {
 	if converter == nil || event == nil {
-		return Event{}, errors.New("alarmd linkdoutput: a decision is required")
+		return Event{}, reject(RuleIdentityMissing, errors.New("alarmd linkdoutput: a decision is required"))
 	}
 	if event.StrategyRef == nil {
-		return Event{}, errors.New("alarmd linkdoutput: a decision without a frozen strategy revision has no alert identity")
+		return Event{}, reject(RuleIdentityMissing, errors.New("alarmd linkdoutput: a decision without a frozen strategy revision has no alert identity"))
 	}
 	if event.DedupeMD5 == "" {
-		return Event{}, errors.New("alarmd linkdoutput: a decision without a series identity has no alert identity")
+		return Event{}, reject(RuleIdentityMissing, errors.New("alarmd linkdoutput: a decision without a series identity has no alert identity"))
 	}
 	action, err := actionFor(event.EventKind)
 	if err != nil {
-		return Event{}, err
+		return Event{}, reject(RuleActionUnknown, err)
 	}
 	primary, err := primaryLevel(event)
 	if err != nil {
-		return Event{}, err
+		return Event{}, reject(RuleLevelsInvalid, err)
 	}
 	businessID, err := strconv.ParseInt(event.BusinessID, 10, 64)
 	if err != nil {
-		return Event{}, fmt.Errorf("alarmd linkdoutput: business identity %q: %w", event.BusinessID, err)
+		return Event{}, reject(RuleBusinessIdentity, fmt.Errorf("alarmd linkdoutput: business identity %q: %w", event.BusinessID, err))
 	}
 	evaluations, err := converter.evaluations(event)
 	if err != nil {
@@ -287,7 +288,7 @@ func (converter *Converter) Convert(event *contract.TriggerEventV1) (Event, erro
 	}
 	payload, err := json.Marshal(message)
 	if err != nil {
-		return Event{}, fmt.Errorf("alarmd linkdoutput: encode decision: %w", err)
+		return Event{}, reject(RuleEncode, fmt.Errorf("alarmd linkdoutput: encode decision: %w", err))
 	}
 	kind := ""
 	if subject != nil {
@@ -333,19 +334,19 @@ func (converter *Converter) evaluations(event *contract.TriggerEventV1) ([]wireE
 			// consumer. It cannot happen with the platform's levels, whose
 			// names are distinct by construction; refusing here keeps it
 			// from happening silently with a level code that repeats one.
-			return nil, fmt.Errorf("alarmd linkdoutput: two levels of one decision share the severity %q", severity)
+			return nil, reject(RuleLevelsInvalid, fmt.Errorf("alarmd linkdoutput: two levels of one decision share the severity %q", severity))
 		}
 		seen[severity] = struct{}{}
 		evaluations = append(evaluations, wireEvaluation{Severity: severity, Action: action})
 	}
 	if len(evaluations) == 0 {
-		return nil, errors.New("alarmd linkdoutput: a decision with no decided level has nothing to say")
+		return nil, reject(RuleLevelsInvalid, errors.New("alarmd linkdoutput: a decision with no decided level has nothing to say"))
 	}
 	if len(evaluations) > MaxEvaluations {
 		// Unreachable for a compiled Plan: the level budget is held below
 		// this at configuration time. Refused here so that it stays a
 		// contract violation rather than a message the consumer drops.
-		return nil, fmt.Errorf("alarmd linkdoutput: %d decided levels exceed the %d evaluations one message carries", len(evaluations), MaxEvaluations)
+		return nil, reject(RuleTooManyLevels, fmt.Errorf("alarmd linkdoutput: %d decided levels exceed the %d evaluations one message carries", len(evaluations), MaxEvaluations))
 	}
 	return evaluations, nil
 }

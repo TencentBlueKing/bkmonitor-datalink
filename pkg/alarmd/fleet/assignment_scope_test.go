@@ -135,3 +135,19 @@ func TestTheVerdictRouteCarriesTheNewestSweepBesideTheCensus(t *testing.T) {
 		t.Fatal("Consistent() on the sweep does not check retired == reclaimed + held + changed")
 	}
 }
+
+// The leader's round, stage by stage, reaches the verdict route from the
+// newest leader's snapshot, so where the round's time goes is one read.
+func TestTheVerdictRouteCarriesTheNewestLeaderRound(t *testing.T) {
+	snapshots := healthySnapshots()
+	snapshots[0].LeaderRound = &LeaderRoundFacts{At: now.Add(-3 * time.Minute), Result: LeaderRoundCompleted, TotalSeconds: 9}
+	snapshots[1].LeaderRound = &LeaderRoundFacts{At: now.Add(-time.Minute), Result: LeaderRoundCompleted, TotalSeconds: 0.5,
+		Stages: []LeaderRoundStage{{Stage: LeaderRoundStageAssignmentSweep, Seconds: 0.2}}}
+	handler := handlerWith(t, snapshots, Expectation{QueryGroups: 949, Known: true}, replicas())
+	_, health := get(t, handler, "/api/health")
+	round, _ := health["leader_round"].(map[string]any)
+	stages, _ := round["stages"].([]any)
+	if round == nil || round["total_seconds"] != 0.5 || len(stages) != 1 || health["leader_round_replica"] != snapshots[1].Replica {
+		t.Fatalf("leader_round = %v from %v, want the newer leader's round", health["leader_round"], health["leader_round_replica"])
+	}
+}

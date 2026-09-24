@@ -143,13 +143,14 @@ func TestEndpointFactsReadTheSharedConnectionAndTheSourceRound(t *testing.T) {
 	// and the age is asserted small rather than exact.
 	sinkState := outputSinkState{Ready: false, Attempts: 3, LastFailureAt: time.Now().Add(-2 * time.Second),
 		LastFailure: "kafka trigger event sink: open producer: client has run out of available brokers"}
-	facts := endpointFactsSource(cfg, sharing, recorder, nil, nil, source, func() outputSinkState { return sinkState }, time.Now)()
+	facts := endpointFactsSource(cfg, sharing, recorder, nil, nil, source, func() outputSinkState { return sinkState }, nil, time.Now)()
 	byRole := map[string]fleet.Endpoint{}
 	for _, entry := range facts {
 		byRole[entry.Role] = entry
 	}
-	// Three roles on one connection: all three read the one record.
-	for _, role := range []string{fleet.EndpointStateRedis, fleet.EndpointStrategyCache, fleet.EndpointCMDBCache} {
+	// Four roles on one connection: all four read the one record -- the
+	// consumer's publication is read through the state store's client.
+	for _, role := range []string{fleet.EndpointStateRedis, fleet.EndpointStrategyCache, fleet.EndpointCMDBCache, fleet.EndpointOpenAlertSet} {
 		entry := byRole[role]
 		if entry.LastSuccessAgeSeconds == nil || *entry.LastSuccessAgeSeconds < 0 || *entry.LastSuccessAgeSeconds > 5 {
 			t.Errorf("%s last success age = %v, want a few seconds from the shared source record", role, entry.LastSuccessAgeSeconds)
@@ -175,7 +176,7 @@ func TestEndpointFactsReadTheSharedConnectionAndTheSourceRound(t *testing.T) {
 	// age: opening is not a message acknowledged, and on the field that means
 	// one it read as a producer that last succeeded when it started.
 	sinkState = outputSinkState{Ready: true, Since: time.Now().Add(-40 * time.Second), Attempts: 4}
-	opened := endpointFactsSource(cfg, sharing, recorder, nil, nil, source, func() outputSinkState { return sinkState }, time.Now)()
+	opened := endpointFactsSource(cfg, sharing, recorder, nil, nil, source, func() outputSinkState { return sinkState }, nil, time.Now)()
 	for _, entry := range opened {
 		if entry.Role != fleet.EndpointOutputKafka {
 			continue
@@ -191,7 +192,7 @@ func TestEndpointFactsReadTheSharedConnectionAndTheSourceRound(t *testing.T) {
 		t.Errorf("strategy cache writer = %+v, want 81 listed with a 95-second-old marker", writer)
 	}
 	// A follower has no round and says nothing about the writer.
-	none := endpointFactsSource(cfg, sharing, recorder, nil, nil, func() *fleet.SourceFacts { return nil }, nil,
+	none := endpointFactsSource(cfg, sharing, recorder, nil, nil, func() *fleet.SourceFacts { return nil }, nil, nil,
 		func() time.Time { return moment })()
 	for _, entry := range none {
 		if entry.Role == fleet.EndpointStrategyCache && entry.Writer != nil {
@@ -479,7 +480,7 @@ func TestEndpointFactsCarryTheBrokersAnswerFromTheSink(t *testing.T) {
 			return outputSinkState{Attempts: 2, LastFailure: "dial tcp: refused", LastFailureAt: now()}
 		},
 	} {
-		endpoints := endpointFactsSource(cfg, endpointSharing{}, nil, nil, nil, func() *fleet.SourceFacts { return nil }, state, now)()
+		endpoints := endpointFactsSource(cfg, endpointSharing{}, nil, nil, nil, func() *fleet.SourceFacts { return nil }, state, nil, now)()
 		var output *fleet.Endpoint
 		for index := range endpoints {
 			if endpoints[index].Role == fleet.EndpointOutputKafka {
@@ -523,7 +524,7 @@ func TestEndpointFactsKeepScriptCacheMissesOutOfTheFailureColumn(t *testing.T) {
 	sharing := endpointSharing{runtimeIsSource: true, cmdbSharedWith: fleet.EndpointStrategyCache}
 	// The hook stamps with the wall clock, so the facts read the same clock
 	// and the age is asserted small rather than exact.
-	facts := endpointFactsSource(cfg, sharing, recorder, nil, nil, func() *fleet.SourceFacts { return nil }, nil, time.Now)()
+	facts := endpointFactsSource(cfg, sharing, recorder, nil, nil, func() *fleet.SourceFacts { return nil }, nil, nil, time.Now)()
 	for _, entry := range facts {
 		if entry.Kind != "redis" || !entry.Configured {
 			continue
@@ -541,9 +542,86 @@ func TestEndpointFactsKeepScriptCacheMissesOutOfTheFailureColumn(t *testing.T) {
 	cleanHook := clean.RedisHook("source")
 	cctx, _ := cleanHook.BeforeProcess(context.Background(), nil)
 	_ = cleanHook.AfterProcess(cctx, redis.NewStringCmd(cctx, "get", "a"))
-	for _, entry := range endpointFactsSource(cfg, sharing, clean, nil, nil, func() *fleet.SourceFacts { return nil }, nil, time.Now)() {
+	for _, entry := range endpointFactsSource(cfg, sharing, clean, nil, nil, func() *fleet.SourceFacts { return nil }, nil, nil, time.Now)() {
 		if entry.Kind == "redis" && entry.Configured && (entry.ScriptCacheMisses != 0 || entry.LastScriptCacheMissAgeSeconds != nil) {
 			t.Errorf("%s reports script cache misses nobody recorded: %+v", entry.Role, entry)
 		}
 	}
+}
+
+// The consumer's open alert publication has a row of its own: the state
+// Redis under the contract's fixed prefix, shared with the state role, and
+// the reader's account of the publisher beside it -- present once read,
+// the members as the count, the publisher's heartbeat as the age, and the
+// mode or why it is unavailable as the state, with the full account on the
+// row. A deployment whose dependency list named every Redis and Kafka it
+// touched had no row for this, and whether the recovery gate was working on
+// the consumer's word or its own could not be read anywhere. No source --
+// a publisher built without the copy -- publishes the coordinates and no
+// account, not an invented one.
+func TestTheOpenAlertPublicationHasADependencyRowWithTheReadersAccount(t *testing.T) {
+	cfg := config.Default()
+	cfg.Redis.Address = "redis:6379"
+	cfg.Redis.DB = 8
+	cfg.Redis.StatePrefix = "alarmd:phase2:g2:runtime:v1"
+	sharing := endpointSharing{runtimeIsSource: false}
+	heartbeat, members := 42.0, 517
+	account := &fleet.OpenAlertSetFacts{Mode: "self_maintained", Available: false, UnavailableReason: "heartbeat_stale",
+		HeartbeatAgeSeconds: &heartbeat, CycleSeconds: 60, FingerprintVersion: "md5_v1", ReaderFingerprintVersion: "md5_v1",
+		TrackedSets: 6, LoadedSets: 6, Members: members, Lookups: map[string]uint64{"authoritative_member": 3, "self_maintained": 1}}
+	loaded := 300.0
+	account.AuthoritativeAgeSeconds = &loaded
+	facts := endpointFactsSource(cfg, sharing, nil, nil, nil, func() *fleet.SourceFacts { return nil }, nil,
+		func() *fleet.OpenAlertSetFacts { return account }, time.Now)()
+	var row *fleet.Endpoint
+	for index := range facts {
+		if facts[index].Role == fleet.EndpointOpenAlertSet {
+			row = &facts[index]
+		}
+	}
+	if row == nil {
+		t.Fatalf("no row for %s among %d endpoints", fleet.EndpointOpenAlertSet, len(facts))
+	}
+	if row.Kind != "redis" || !row.Configured || row.Address != "redis:6379" || row.DB == nil || *row.DB != 8 ||
+		row.Prefix != cfg.PhaseTwo.Linkd.Prefix() || row.SharedWith != fleet.EndpointStateRedis {
+		t.Fatalf("row = %+v, want the state Redis, db 8, the contract's prefix %q, shared with the state role", row, cfg.PhaseTwo.Linkd.Prefix())
+	}
+	if row.Prefix == cfg.Redis.StatePrefix || strings.HasPrefix(row.Prefix, cfg.Redis.StatePrefix) {
+		t.Fatalf("prefix %q is derived from the state prefix; the contract's prefix is fixed so the writer need not learn this deployment's configuration", row.Prefix)
+	}
+	if row.Writer == nil || !row.Writer.Present || row.Writer.Count != members || row.Writer.AgeSeconds == nil || *row.Writer.AgeSeconds != heartbeat ||
+		row.Writer.State != "self_maintained:heartbeat_stale" {
+		t.Fatalf("writer = %+v, want present, %d members, the publisher's heartbeat %.0f s old, the mode with why it is unavailable", row.Writer, members, heartbeat)
+	}
+	if row.OpenAlertSet != account {
+		t.Fatalf("the full account is not on the row: %+v", row.OpenAlertSet)
+	}
+	never := &fleet.OpenAlertSetFacts{Mode: "never_loaded", ReaderFingerprintVersion: "md5_v1", Lookups: map[string]uint64{"passed_through": 9}}
+	for _, entry := range endpointFactsSource(cfg, sharing, nil, nil, nil, func() *fleet.SourceFacts { return nil }, nil,
+		func() *fleet.OpenAlertSetFacts { return never }, time.Now)() {
+		if entry.Role == fleet.EndpointOpenAlertSet && (entry.Writer == nil || entry.Writer.Present || entry.Writer.AgeSeconds != nil || entry.Writer.State != "never_loaded") {
+			t.Fatalf("a copy that never loaded = %+v, want absent, no age, the mode as the state", entry.Writer)
+		}
+	}
+	for _, entry := range endpointFactsSource(cfg, sharing, nil, nil, nil, func() *fleet.SourceFacts { return nil }, nil, nil, time.Now)() {
+		if entry.Role == fleet.EndpointOpenAlertSet && (entry.Writer != nil || entry.OpenAlertSet != nil || !entry.Configured) {
+			t.Fatalf("without a source the row = %+v, want the coordinates and no account", entry)
+		}
+	}
+}
+
+func TestOpenAlertIndexReadDoesNotBecomeWriterHeartbeat(t *testing.T) {
+	cfg := config.Default()
+	age := 2.0
+	account := &fleet.OpenAlertSetFacts{IndexProtocol: true, IndexReadAgeSeconds: &age, SubscriptionReady: true, Members: 3}
+	rows := endpointFactsSource(cfg, endpointSharing{}, nil, nil, nil, func() *fleet.SourceFacts { return nil }, nil, func() *fleet.OpenAlertSetFacts { return account }, time.Now)()
+	for _, row := range rows {
+		if row.Role == fleet.EndpointOpenAlertSet {
+			if row.Writer != nil || row.OpenAlertSet != account {
+				t.Fatalf("reader evidence claimed a writer: %+v", row)
+			}
+			return
+		}
+	}
+	t.Fatal("missing open alert endpoint")
 }

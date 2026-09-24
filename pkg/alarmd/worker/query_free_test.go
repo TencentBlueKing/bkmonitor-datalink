@@ -405,11 +405,11 @@ func TestSlotExecutionCoordinatorHandlesMixedAndFullyReusedQueryFreePlans(t *tes
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{activation})
-			plans := []execution.PlanIdentity{first, second}
-			fixture.ports.expectedTargets.Plans = append([]execution.PlanIdentity(nil), plans...)
-			fixture.ports.finalization.Targets.Plans = append([]execution.PlanIdentity(nil), plans...)
+			plans := []execution.PlanKey{{PlanIdentity: first}, {PlanIdentity: second}}
+			fixture.ports.expectedTargets.Plans = append([]execution.PlanKey(nil), plans...)
+			fixture.ports.finalization.Targets.Plans = append([]execution.PlanKey(nil), plans...)
 			request := slotRequest(execution.OperationReplay)
-			request.DuePlanTargets.Plans = append([]execution.PlanIdentity(nil), plans...)
+			request.DuePlanTargets.Plans = append([]execution.PlanKey(nil), plans...)
 			for index, fact := range activation.Facts {
 				if index == 1 && !test.reuseSecond {
 					continue
@@ -677,11 +677,11 @@ func TestSlotExecutionCoordinatorOnlyReprotectsChangedPlanBeforeProgress(t *test
 		activation("stable-v1", "changed-v1", 2),
 		activation("stable-v1", "changed-v2", 3),
 	})
-	fixture.ports.expectedTargets.Plans = []execution.PlanIdentity{stablePlan, changedPlan}
-	fixture.ports.finalization.Targets.Plans = append([]execution.PlanIdentity(nil), fixture.ports.expectedTargets.Plans...)
+	fixture.ports.expectedTargets.Plans = []execution.PlanKey{{PlanIdentity: stablePlan}, {PlanIdentity: changedPlan}}
+	fixture.ports.finalization.Targets.Plans = append([]execution.PlanKey(nil), fixture.ports.expectedTargets.Plans...)
 
 	request := slotRequest(execution.OperationReplay)
-	request.DuePlanTargets.Plans = []execution.PlanIdentity{stablePlan, changedPlan}
+	request.DuePlanTargets.Plans = []execution.PlanKey{{PlanIdentity: stablePlan}, {PlanIdentity: changedPlan}}
 	result, err := fixture.coordinator.Execute(context.Background(), request)
 	if err != nil || result.Completed || result.Result != observability.ResultRetrying ||
 		result.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) {
@@ -803,7 +803,7 @@ func newQueryFreeFixture(t *testing.T, activations []execution.PlanActivationRes
 	base := &recordingPorts{trace: &trace}
 	expectedTargets := execution.FrozenDuePlanTargets{
 		DuePlanSetDigest: frozenContract().DuePlanSetDigest,
-		Plans:            []execution.PlanIdentity{planIdentity()},
+		Plans:            []execution.PlanKey{{PlanIdentity: planIdentity()}},
 	}
 	ports := &queryFreePorts{
 		recordingPorts: base,
@@ -812,7 +812,7 @@ func newQueryFreeFixture(t *testing.T, activations []execution.PlanActivationRes
 			ReasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable),
 			Targets: execution.FrozenDuePlanTargets{
 				DuePlanSetDigest: expectedTargets.DuePlanSetDigest,
-				Plans:            append([]execution.PlanIdentity(nil), expectedTargets.Plans...),
+				Plans:            append([]execution.PlanKey(nil), expectedTargets.Plans...),
 			},
 		},
 		expectedTargets: expectedTargets,

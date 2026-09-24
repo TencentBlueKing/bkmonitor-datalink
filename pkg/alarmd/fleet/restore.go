@@ -55,9 +55,41 @@ type RestoredState struct {
 	// cause" until the next round; without it the object waits a round, as
 	// before.
 	LastRound *RestoredRound
+	// LastDataSlot is the latest Slot the record knows to have completed with
+	// records; EmptyRunSince is the first empty Slot of the run of empty
+	// rounds the record's last round belongs to. Both are Slot times on the
+	// source's clock, and both are zero when the record has nothing to say --
+	// which is what a record from before the fields existed says, and what a
+	// build without them wrote back when it committed the object during a
+	// mixed-version roll. So a zero LastDataSlot is "no Slot known to have
+	// had records", not "never had records": the two are not told apart, and
+	// the tracker reads the first. Neither zero is a timestamp.
+	LastDataSlot  time.Time
+	EmptyRunSince time.Time
 }
 
 // RestoredRound is the persisted summary of the last committed round.
+// RestoredTargetResolution is one Plan's target plan resolution as the
+// round's summary recorded it: the composed state, the selectors that did
+// not answer whole, the dangling topology nodes and the stale age.
+type RestoredTargetResolution struct {
+	StrategyID      string                    `json:"strategy_id"`
+	State           string                    `json:"state"`
+	Failures        []RestoredSelectorFailure `json:"failures,omitempty"`
+	NodesMissing    []string                  `json:"nodes_missing,omitempty"`
+	NodesForeign    []string                  `json:"nodes_foreign,omitempty"`
+	StaleAgeSeconds int64                     `json:"stale_age_seconds,omitempty"`
+}
+
+// RestoredSelectorFailure names one selector that did not answer whole.
+type RestoredSelectorFailure struct {
+	Kind    string `json:"kind"`
+	ID      string `json:"id"`
+	Reason  string `json:"reason"`
+	Dropped int    `json:"dropped,omitempty"`
+	Kept    int    `json:"kept,omitempty"`
+}
+
 type RestoredRound struct {
 	// Slot is the evaluation time the round completed, not the one it moved
 	// to; CompletedAt is the commit's clock -- how long ago anything last
@@ -66,6 +98,12 @@ type RestoredRound struct {
 	CompletedAt time.Time `json:"completed_at"`
 	Kind        string    `json:"kind"`
 	ReasonCode  string    `json:"reason_code,omitempty"`
+	// TargetResolutions is what each target-plan Plan's target resolved to
+	// in that round (decision-017): the data the object row reads its
+	// target facts from -- state, each failed selector with its reason and
+	// counts, the nodes missing or foreign, the stale age. Empty for rounds
+	// without such a Plan.
+	TargetResolutions []RestoredTargetResolution `json:"target_resolutions,omitempty"`
 	// Revisions the round ran under. They seed the tracker's "last completed
 	// round" triple, so the first round this process completes under other
 	// revisions reports the configuration as changed since, the same way a
@@ -116,10 +154,41 @@ func (tracker *Tracker) Restore(queryGroup string, restored RestoredState, at ti
 	// A committed round that completed with records is records seen, as far
 	// as this process can vouch for anything it did not watch: it is what
 	// keeps a sparse source from being listed as never having spoken an hour
-	// after every release. A committed empty round says nothing either way
-	// about the rounds before it, and leaves "seen" unset.
+	// after every release. So is a record that names a Slot known to have
+	// had records, whichever round was its last. A committed empty round on a
+	// record that names none says nothing either way about the rounds before
+	// it, and leaves "seen" unset -- "no Slot known to have had records" is
+	// the most such a record can say.
 	if round := restored.LastRound; round != nil && round.Kind == "FULL_COMPLETED" {
 		state.sawData = true
+		if !round.Slot.IsZero() {
+			state.lastDataSlot = round.Slot.Unix()
+		}
+	}
+	if !restored.LastDataSlot.IsZero() {
+		state.sawData = true
+		if slot := restored.LastDataSlot.Unix(); slot > state.lastDataSlot {
+			state.lastDataSlot = slot
+		}
+	}
+	// The run of empty rounds the record's last round belongs to, dated by the
+	// record on the source's clock. Restoring it is what lets the hour the
+	// "every round" line waits survive a release instead of starting again at
+	// each one. The run is at least one round long -- the restored round --
+	// which is what the count says; the rounds before it were not watched by
+	// this process and are not counted. The latest empty Slot is the restored
+	// round's when the summary carries it; without the summary the first
+	// empty round this process watches supplies it, and the gate waits for
+	// that round.
+	if restored.LastCompletion == "FULL_EMPTY_COMPLETED" && !restored.EmptyRunSince.IsZero() {
+		state.emptyRuns = 1
+		state.emptySince = restored.EmptyRunSince
+		state.emptySinceFrom = SinceRestoredEmptyRun
+		state.emptySinceSlot = restored.EmptyRunSince.Unix()
+		state.emptySlotFrom = SinceRestoredEmptyRun
+		if round := restored.LastRound; round != nil && round.Kind == "FULL_EMPTY_COMPLETED" && !round.Slot.IsZero() {
+			state.lastEmptySlot = round.Slot.Unix()
+		}
 	}
 	if round := restored.LastRound; round != nil && healthyCompletion(restored.LastCompletion) && !round.CompletedAt.IsZero() {
 		// The commit recorded a healthy round: that is a success this process

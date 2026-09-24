@@ -37,10 +37,15 @@ import (
 //     seconds, or when the retention horizon would overflow. So a window that
 //     exists has already satisfied every condition in that first refusal except
 //     the comparison against the argument.
-//   - strategy/compiler.go sets RetentionPoints and RequiredDetectHistoryPoints
-//     from one variable, so they are equal by construction, not merely ordered.
-//   - Both callers pass that same RequiredDetectHistoryPoints as the argument,
-//     so the comparison is a value against itself.
+//   - strategy/compiler.go derives RetentionPoints from RequiredDetectHistoryPoints
+//     and never below it: equal for a Level the recovery slack does not reach,
+//     larger for one it does. Ordered by construction, which is what this
+//     comparison needs. It was equality until decision-022 R5 began retaining a
+//     slack past the required window, and the comparison held across that change
+//     because it was written as an ordering and not as an equality.
+//   - Both callers pass RequiredDetectHistoryPoints as the argument, so the
+//     comparison is the required window against a retention that is at least
+//     as large.
 //
 // Any one of those three changing turns a dead branch into a live one that
 // reports a permanent misconfiguration as a data outage, and nothing in the
@@ -57,13 +62,16 @@ func TestASummaryWalksEveryWindowAlignAccepts(t *testing.T) {
 		// The smallest window, which the record fills by itself.
 		{LevelID: 1, DetectFingerprint: fingerprint, RequiredPoints: 1, RetentionPoints: 1,
 			EvaluationInterval: time.Minute},
-		// The shape the compiler actually produces: retention equal to the
-		// requirement, not merely above it. Zero slack is the design, and it is
-		// what makes the comparison in the refusal an equality test.
+		// One of the two shapes the compiler produces: retention equal to the
+		// requirement, for a Level the recovery slack does not reach - its
+		// window is shorter than the hole tolerance, so retaining more buys it
+		// nothing.
 		{LevelID: 1, DetectFingerprint: fingerprint, RequiredPoints: 9, RetentionPoints: 9,
 			EvaluationInterval: time.Minute},
-		// Retention above the requirement, which Align also accepts, so the
-		// case does not depend on the compiler's equality holding.
+		// The other: retention above the requirement, for a Level the slack does
+		// reach. Both are compiler output since decision-022 R5, so the refusal
+		// has to be an ordering and not an equality, and both shapes are here
+		// rather than one standing in for the other.
 		{LevelID: 1, DetectFingerprint: fingerprint, RequiredPoints: 9, RetentionPoints: 30,
 			EvaluationInterval: time.Minute},
 		// A long window on a long interval: the largest span these limits allow

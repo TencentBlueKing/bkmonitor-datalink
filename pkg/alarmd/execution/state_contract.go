@@ -169,6 +169,23 @@ type RuntimeLevelContractRef struct {
 
 // DeriveRuntimeLevelContractRefs closes persisted state identities over the
 // Compiler-owned state and Level semantics.
+//
+// Every input here - the Plan's state compatibility hash, the Level ID, the
+// detect and trigger fingerprints, the state requirement's identity view -
+// is also an input of the state generation (strategy.deriveStateCompatibilityHash,
+// the level closure), and has to stay one. A record is keyed by the
+// generation and held to these refs; a change that moved the refs without
+// moving the generation would meet the records under the same key with
+// another contract, on every build alike, with no formula skew to name it -
+// a refusal of every loaded record for good, not for a rollout. The test
+// beside this file changes each input and asserts both move.
+//
+// That covers what the two formulas read. What they are is covered by a
+// second test, which freezes both digests of a fixed Plan: a new digest
+// domain here, or a field added to or renamed in either hashed shape,
+// moves these references without moving the generation, and no input
+// change can catch it. Change either formula and move the generation in
+// the same release.
 func DeriveRuntimeLevelContractRefs(plan *strategy.CompiledPlan) ([]RuntimeLevelContractRef, error) {
 	if plan == nil || plan.StateCompatibilityHash() == "" {
 		return nil, errors.New("alarmd execution: compiled state contract is required")
@@ -190,7 +207,7 @@ func DeriveRuntimeLevelContractRefs(plan *strategy.CompiledPlan) ([]RuntimeLevel
 		warmup, err := contract.DeriveCanonicalDigestV2("alarmd-level-warmup-requirement-v1", struct {
 			LevelID          uint32                    `json:"level_id"`
 			StateRequirement strategy.StateRequirement `json:"state_requirement"`
-		}{definition.LevelID, level.StateRequirement()})
+		}{definition.LevelID, level.StateRequirement().StateIdentityView()})
 		if err != nil {
 			return nil, fmt.Errorf("alarmd execution: derive Level warmup requirement: %w", err)
 		}
@@ -205,12 +222,32 @@ func DeriveRuntimeLevelContractRefs(plan *strategy.CompiledPlan) ([]RuntimeLevel
 
 // One validator owns this lazy lookup. It must not outlive that call or cache
 // validation of a mutable StateMutation. Unused contracts remain unexamined.
+//
+// The refs are the published ones when the Plan carries them and this
+// process's own derivation otherwise; verifiable says whether a loaded
+// record's refs can be held to them at all, which they cannot when they are
+// this process's own and the Plan's generation shows this process derives by
+// another formula than the Leader that published it.
 type runtimeLevelContracts struct {
-	plan   *strategy.CompiledPlan
-	loaded bool
-	refs   []RuntimeLevelContractRef
-	index  map[uint32]RuntimeLevelContractRef
-	err    error
+	plan      *strategy.CompiledPlan
+	published []RuntimeLevelContractRef
+	skew      bool
+	loaded    bool
+	refs      []RuntimeLevelContractRef
+	index     map[uint32]RuntimeLevelContractRef
+	err       error
+}
+
+func levelContractsOf(plan DuePlan) runtimeLevelContracts {
+	return runtimeLevelContracts{plan: plan.CompiledPlan, published: plan.LevelContractRefs, skew: plan.StateGenerationFormulaSkew}
+}
+
+// verifiable reports whether the refs are ones a stored record can be held
+// to: published by the Leader, or derived here by the same formula the
+// Leader used. Under a formula skew with nothing published they are neither,
+// and a mismatch against them says nothing about the record.
+func (contracts *runtimeLevelContracts) verifiable() bool {
+	return len(contracts.published) > 0 || !contracts.skew
 }
 
 func indexRuntimeLevelContracts(refs []RuntimeLevelContractRef) map[uint32]RuntimeLevelContractRef {
@@ -228,10 +265,42 @@ func (contracts *runtimeLevelContracts) load() {
 		return
 	}
 	contracts.loaded = true
-	contracts.refs, contracts.err = DeriveRuntimeLevelContractRefs(contracts.plan)
+	if len(contracts.published) > 0 {
+		contracts.refs = append([]RuntimeLevelContractRef(nil), contracts.published...)
+	} else {
+		contracts.refs, contracts.err = DeriveRuntimeLevelContractRefs(contracts.plan)
+	}
 	if contracts.err == nil {
 		contracts.index = indexRuntimeLevelContracts(contracts.refs)
 	}
+}
+
+// LevelContractRefsFor is what a mutation of the Plan's records is written
+// with: the published refs, else this process's derivation. Under a formula
+// skew with nothing published, a Level the loaded record already has keeps
+// the refs it has, so the record is not rewritten under a contract the
+// build that keyed it would refuse; a Level the record does not have yet
+// gets this process's derivation, there being nothing else to carry.
+func LevelContractRefsFor(plan DuePlan, loaded []RuntimeLevelStateView) ([]RuntimeLevelContractRef, error) {
+	contracts := levelContractsOf(plan)
+	contracts.load()
+	if contracts.err != nil {
+		return nil, contracts.err
+	}
+	refs := append([]RuntimeLevelContractRef(nil), contracts.refs...)
+	if contracts.verifiable() {
+		return refs, nil
+	}
+	for index := range refs {
+		for _, stored := range loaded {
+			if stored.LevelID == refs[index].LevelID {
+				refs[index].LevelStateCompatibility = stored.LevelStateCompatibility
+				refs[index].WarmupRequirementRef = stored.WarmupRequirementRef
+				break
+			}
+		}
+	}
+	return refs, nil
 }
 
 func (contracts *runtimeLevelContracts) find(levelID uint32) (RuntimeLevelContractRef, bool) {

@@ -55,6 +55,7 @@ var GapReasonFoldOrder = []string{
 	ReasonQueryTimeout,
 	ReasonExecutionBudgetExhausted,
 	ReasonConfigDrift,
+	ReasonPlanReactivated,
 	ReasonQueryPartial,
 	// Last: the query succeeded and returned nothing. It asks the least
 	// protection of any of these -- the Level is starved, not misinformed --

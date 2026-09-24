@@ -43,11 +43,10 @@ func frozenRenewalFixture(t *testing.T) (*ExecutionStore, *casMemoryBackend, str
 	}
 	mutation, err := execution.BuildStateMutation(execution.StateMutation{
 		Identity: stateIdentityV2(), ApplyVersion: applyVersion(),
-		AffectedRecords: []execution.RecordAnchor{{RecordID: "r1", SourceTime: 60}},
+		AffectedRecords: []execution.RecordAnchor{derivedAnchor(t, stateIdentityV2(), 60)},
 		Levels: []execution.RuntimeLevelStateMutation{{LevelID: 1, LevelStateCompatibility: "compat",
 			HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm", LastProcessedEventTime: 60}},
-		Points: []execution.StateHistoryPoint{{RecordID: "r1", SourceTime: 60,
-			Levels: []execution.StateLevelFact{{LevelID: 1, DetectFingerprint: "detect", Result: execution.LevelFactNormal}}}},
+		Points: []execution.StateHistoryPoint{derivedPoint(t, stateIdentityV2(), 60, "detect", execution.LevelFactNormal)},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -78,6 +77,7 @@ func frozenRequest(now time.Time) execution.FrozenStateRenewalRequest {
 		Contract: frozenRef(), Retention: testRetention(), Now: now,
 		Items: []execution.FrozenSeriesState{{
 			Identity: stateIdentityV2(), LastApplied: applyVersion().EvaluationTime,
+			Representation: execution.StateRepresentationFramed,
 		}},
 	}
 }
@@ -252,9 +252,10 @@ func TestAFrozenRenewalAnswersForEverySeries(t *testing.T) {
 	store, _, _, ttl := frozenRenewalFixture(t)
 	request := frozenRequest(writtenAt().Add(ttl - time.Second))
 	second := stateIdentityV2()
-	second.SeriesIdentityDigest = "second-series"
+	second.SeriesIdentityDigest = seriesDigest("second-series")
 	request.Items = append(request.Items, execution.FrozenSeriesState{
 		Identity: second, LastApplied: applyVersion().EvaluationTime,
+		Representation: execution.StateRepresentationFramed,
 	})
 	result, err := store.RenewFrozenRuntime(context.Background(), request)
 	if err != nil {

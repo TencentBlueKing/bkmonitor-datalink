@@ -10,6 +10,7 @@
 package fleet
 
 import (
+	"fmt"
 	"sort"
 	"time"
 )
@@ -79,7 +80,13 @@ const (
 	// page's pool card already called these "策略本身不可用" while the line
 	// under it said 待确认 -- one page, two verdicts on the same objects.
 	CheckQueryTargetMissing Check = "QUERY_TARGET_MISSING"
-	CheckNoDataPersistent   Check = "NO_DATA_PERSISTENT"
+	// RetainedShareApproaching is an object whose latest completed Slot held
+	// at least RetainedShareApproachPercent of the retained pool's
+	// one-object share. It is detecting; the line is the warning before
+	// QG_BUDGET_SHARE_EXCEEDED, which refuses the object's every round and
+	// stops the strategy whole, and which nothing announced before it came.
+	CheckRetainedShareApproaching Check = "RETAINED_SHARE_APPROACHING"
+	CheckNoDataPersistent         Check = "NO_DATA_PERSISTENT"
 	// EmptyEveryRound is the strategy's half of no-data: an object this
 	// process has never seen return records and whose every round for an
 	// hour completed empty. Kept apart from NO_DATA_PERSISTENT -- data that
@@ -93,8 +100,16 @@ const (
 	CheckSeriesChurning    Check = "SERIES_CHURNING"
 	CheckSeriesDataMissing Check = "SERIES_DATA_MISSING"
 	CheckWindowUndecided   Check = "WINDOW_UNDECIDED"
-	CheckPlanUnevaluable   Check = "PLAN_UNEVALUABLE"
-	CheckConfigUnresolved  Check = "CONFIG_UNRESOLVED"
+	// CoverageReadingRefused is a window reason whose counts the observer
+	// refused: the round's own window facts broke one of the observer's
+	// rules, so nothing can say whether the window is filling. It is this
+	// deployment's -- the counts are its own -- and it names the rule. Such
+	// a row used to read as "the window cannot be decided", the line for a
+	// window whose counts are known and say nothing yet, which sent a reader
+	// to wait for a window whose counts would never arrive.
+	CheckCoverageReadingRefused Check = "COVERAGE_READING_REFUSED"
+	CheckPlanUnevaluable        Check = "PLAN_UNEVALUABLE"
+	CheckConfigUnresolved       Check = "CONFIG_UNRESOLVED"
 	// The three source standings: strategies the control leader's round
 	// listed and did not accept, before any of them could be an object. They
 	// fold the source's withheld groups rather than object rows, one line per
@@ -106,6 +121,22 @@ const (
 	CheckSourceIncomplete      Check = "SOURCE_INCOMPLETE"
 	CheckCapabilityUnsupported Check = "CAPABILITY_UNSUPPORTED"
 	CheckConfigRejected        Check = "CONFIG_REJECTED"
+	// A strategy the source accepted with part of its configuration read as
+	// something other than what was written -- a time range that does not
+	// parse, read as the whole day the way the platform's own reader reads
+	// it. The Plan runs, wider than written; it is the strategy's to fix and
+	// it is not a refusal. It has its own line because the disposition was
+	// otherwise dropped on the floor (sourceChecks did not know it, so the
+	// walk skipped it) while the page's hint counted it among the withheld.
+	CheckConfigNormalized Check = "CONFIG_NORMALIZED"
+	// The source's active set dropping strategies and listing them again:
+	// the platform's list, read across rounds. One round's dispositions say
+	// REMOVED, which reads as a strategy deleted; the account across rounds
+	// said the list lost 99 entries for six minutes at the top of every hour,
+	// 22 strategies removed and re-placed each time with four Slots of each
+	// lost. Folded by the hour the strategies came back, over the last day,
+	// so "every hour" is one line and not a word on one round.
+	CheckSourceSetFlapping Check = "SOURCE_SET_FLAPPING"
 )
 
 // sourceChecks maps a withheld disposition to the standing that carries it.
@@ -116,6 +147,7 @@ var sourceChecks = map[string]Check{
 	dispositionCapabilityUnsupported: CheckCapabilityUnsupported,
 	dispositionConfigRejected:        CheckConfigRejected,
 	dispositionStaleConfig:           CheckConfigRejected,
+	dispositionConfigNormalized:      CheckConfigNormalized,
 }
 
 // GroupBy is the key a check's objects are folded on. One backend not
@@ -126,9 +158,11 @@ type GroupBy string
 const (
 	GroupByReplica    GroupBy = "replica"
 	GroupByReasonCode GroupBy = "reason_code"
-	GroupByDetail     GroupBy = "detail"
-	GroupByStrategy   GroupBy = "strategy"
-	GroupByGapKind    GroupBy = "gap_kind"
+	// GroupByHour folds by the clock hour an event fell in, UTC.
+	GroupByHour     GroupBy = "hour"
+	GroupByDetail   GroupBy = "detail"
+	GroupByStrategy GroupBy = "strategy"
+	GroupByGapKind  GroupBy = "gap_kind"
 	// GroupByCause folds on what the window counts say happened: the reason
 	// the detection could not use the record, or that the series are a mix of
 	// new and old. It is the fold for the one check whose objects share a
@@ -149,7 +183,7 @@ const (
 // GroupBys is the closed list of folds, for the page's completeness test:
 // a fold the page has no words for renders as its key on the line a reader
 // opens a check with.
-var GroupBys = []GroupBy{GroupByReplica, GroupByReasonCode, GroupByDetail, GroupByStrategy, GroupByGapKind, GroupByCause, GroupByDegradation, GroupByLoss, GroupByBlocked}
+var GroupBys = []GroupBy{GroupByReplica, GroupByReasonCode, GroupByDetail, GroupByStrategy, GroupByGapKind, GroupByCause, GroupByDegradation, GroupByLoss, GroupByBlocked, GroupByHour}
 
 // checkAnswers is the closed table: who acts on each check and what its
 // objects fold on. Twenty rows, and a test holds the count there. A check
@@ -161,8 +195,10 @@ var checkAnswers = map[Check]struct {
 	GroupBy GroupBy
 }{
 	CheckSourceIncomplete:      {OwnerPlatform, GroupByReasonCode},
+	CheckSourceSetFlapping:     {OwnerPlatform, GroupByHour},
 	CheckCapabilityUnsupported: {OwnerAlarmd, GroupByReasonCode},
 	CheckConfigRejected:        {OwnerStrategy, GroupByReasonCode},
+	CheckConfigNormalized:      {OwnerStrategy, GroupByReasonCode},
 	CheckCutoverFailing:        {OwnerAlarmd, GroupByReasonCode},
 	CheckReplicaDegraded:       {OwnerAlarmd, GroupByDegradation},
 	CheckOwnershipSkewed:       {OwnerAlarmd, GroupByReplica},
@@ -176,6 +212,8 @@ var checkAnswers = map[Check]struct {
 	CheckDependencyDown:        {OwnerAlarmd, GroupByBlocked},
 	CheckDefect:                {OwnerAlarmd, GroupByBlocked},
 	CheckObservationGap:        {OwnerAlarmd, GroupByGapKind},
+	// Folded on the rule the counts broke (the detail fold reads it).
+	CheckCoverageReadingRefused: {OwnerAlarmd, GroupByDetail},
 
 	CheckNoDataPersistent: {OwnerData, GroupByStrategy},
 
@@ -183,6 +221,9 @@ var checkAnswers = map[Check]struct {
 	CheckSeriesChurning:     {OwnerStrategy, GroupByStrategy},
 	CheckPlanUnevaluable:    {OwnerStrategy, GroupByStrategy},
 	CheckQueryTargetMissing: {OwnerStrategy, GroupByDetail},
+	// The strategy's, as the refusal it warns of is: what fits in a share is
+	// the strategy's size, and the remedy is to shard or reshape it.
+	CheckRetainedShareApproaching: {OwnerStrategy, GroupByStrategy},
 
 	CheckQueryRefused:     {OwnerUndetermined, GroupByBlocked},
 	CheckWindowUndecided:  {OwnerUndetermined, GroupByCause},
@@ -208,6 +249,7 @@ var checkOrder = []Check{
 	// never reaches anything below, and a reader who starts at the bottom
 	// would find nothing there to explain an empty deployment.
 	CheckSourceIncomplete,
+	CheckSourceSetFlapping,
 	CheckCapabilityUnsupported,
 	CheckCutoverFailing,
 	CheckReplicaDegraded,
@@ -222,6 +264,7 @@ var checkOrder = []Check{
 	CheckDependencyDown,
 	CheckDefect,
 	CheckObservationGap,
+	CheckCoverageReadingRefused,
 	CheckQueryRefused,
 	CheckWindowUndecided,
 	CheckConfigUnresolved,
@@ -233,6 +276,12 @@ var checkOrder = []Check{
 	CheckPlanUnevaluable,
 	CheckQueryTargetMissing,
 	CheckConfigRejected,
+	// Below every line that stops detection: this one only says a line that
+	// would is near.
+	CheckRetainedShareApproaching,
+	// Last: the strategy runs. A reader who starts at the top meets every
+	// line that stops detection before the one that only widens it.
+	CheckConfigNormalized,
 }
 
 // Standing is whether a check is a fact about the whole deployment rather
@@ -250,7 +299,8 @@ func (check Check) Standing() bool {
 // samples; nothing under it can be listed as an object, because none of
 // these ever became one.
 func (check Check) SourceStanding() bool {
-	return check == CheckSourceIncomplete || check == CheckCapabilityUnsupported || check == CheckConfigRejected
+	return check == CheckSourceIncomplete || check == CheckCapabilityUnsupported || check == CheckConfigRejected ||
+		check == CheckSourceSetFlapping || check == CheckConfigNormalized
 }
 
 // Checks lists every check the table answers, in the order the page lists
@@ -308,11 +358,21 @@ func groupKeyOf(anomaly Anomaly, check Check) string {
 		if anomaly.Failure != nil && anomaly.Failure.Detail != "" {
 			return anomaly.Failure.Detail
 		}
+		if anomaly.Coverage == nil && anomaly.CoverageRejected != nil {
+			return anomaly.CoverageRejected.Rule
+		}
 		if code := decidingCode(anomaly); code != "" {
 			return code
 		}
 		return groupNoDetail
 	case GroupByStrategy:
+		// The strategy the row's evidence is about when it names one;
+		// otherwise the smallest id, so the same row always folds under the
+		// same key. On an object running six Plans the fold had named the
+		// smallest id while every guard on the row belonged to another.
+		if key := strategyGroupKey(anomaly, check); key != "" {
+			return key
+		}
 		key := ""
 		for _, strategy := range anomaly.Strategies {
 			if key == "" || strategy.StrategyID < key {
@@ -407,8 +467,9 @@ func resultOf(anomaly Anomaly) Result {
 		return ""
 	case anomaly.Kind == KindNoData, anomaly.Kind == KindEmptyEveryRound:
 		return ResultNoData
-	case anomaly.Kind == KindNoDataMemoryRefused:
-		// The round completed; what was refused was the memory beside it.
+	case anomaly.Kind == KindNoDataMemoryRefused, anomaly.Kind == KindRetainedShareApproaching:
+		// The round completed; what was refused was the memory beside it,
+		// or nothing yet.
 		return ResultCompleted
 	case queryRejected(anomaly.Failure):
 		return ResultRefused
@@ -461,6 +522,17 @@ type CheckReport struct {
 	// rejection, or nothing tried. It is what replaced inferring the
 	// mechanism from the object's period.
 	SkipReasons map[string]int `json:"skip_reasons,omitempty"`
+	// Onsets, on the two no-data lines, is the objects by the minute their
+	// run began, largest minutes first and at most MaxOnsetFold of them with
+	// the rest summed under Other and the rows with no start under
+	// WithoutOnset, so the fold adds up to the line: a reader who subtracts
+	// the minutes from the count must not read the remainder as a sample
+	// dropped. The strategy fold cannot show that many
+	// runs began together; this is the fold that separates one event from
+	// many quiet sources. A minute that is the minute a release began
+	// recording the runs is a lower bound, not an event, and the rows say
+	// so (EmptyEveryRoundFacts.SinceIsLowerBound).
+	Onsets *OnsetFold `json:"onsets,omitempty"`
 	// Recovered is the objects that recovered from this line within
 	// RecoveredRetention, over its folds; RecoveredLast the latest of them.
 	// Not in Objects or Current: they are not under the line now. A line with
@@ -488,6 +560,58 @@ type CheckReport struct {
 	// count of Slots executed and then closed without their Progress, the
 	// objects, and the latest -- the trend the records cannot carry.
 	Bookkeeping *BookkeepingFacts `json:"bookkeeping,omitempty"`
+	// Line is the line's sentence, composed here for the lines whose
+	// sentence depends on what is under them rather than on the line alone:
+	// the capability line names how many strategies fall under each kind of
+	// cause, so the page cannot state one cause for every reason.
+	Line string `json:"line,omitempty"`
+}
+
+// OnsetFold is the objects of a line by the minute their run began.
+type OnsetFold struct {
+	Minutes []OnsetMinute `json:"minutes"`
+	// Other is the objects in minutes past the bound, summed.
+	Other int `json:"other,omitempty"`
+	// WithoutOnset is the line's objects whose row carries no start. With
+	// Minutes and Other it adds up to the line's objects.
+	WithoutOnset int `json:"without_onset,omitempty"`
+	// Distinct is how many different minutes there were, bound or not: one
+	// is one event, hundreds are hundreds of quiet sources.
+	Distinct int `json:"distinct"`
+}
+
+// OnsetMinute is one minute of an onset fold.
+type OnsetMinute struct {
+	Minute  time.Time `json:"minute"`
+	Objects int       `json:"objects"`
+}
+
+// MaxOnsetFold bounds the minutes an onset fold lists.
+const MaxOnsetFold = 8
+
+// onsetFold orders the minutes by objects, then by time, and cuts to the
+// bound; nil when the line has no rows of the kinds that carry a start.
+func onsetFold(onsets map[time.Time]int, withoutOnset int) *OnsetFold {
+	if len(onsets) == 0 && withoutOnset == 0 {
+		return nil
+	}
+	fold := &OnsetFold{Distinct: len(onsets), WithoutOnset: withoutOnset}
+	for minute, objects := range onsets {
+		fold.Minutes = append(fold.Minutes, OnsetMinute{Minute: minute, Objects: objects})
+	}
+	sort.Slice(fold.Minutes, func(i, j int) bool {
+		if fold.Minutes[i].Objects != fold.Minutes[j].Objects {
+			return fold.Minutes[i].Objects > fold.Minutes[j].Objects
+		}
+		return fold.Minutes[i].Minute.Before(fold.Minutes[j].Minute)
+	})
+	if len(fold.Minutes) > MaxOnsetFold {
+		for _, minute := range fold.Minutes[MaxOnsetFold:] {
+			fold.Other += minute.Objects
+		}
+		fold.Minutes = fold.Minutes[:MaxOnsetFold]
+	}
+	return fold
 }
 
 // CheckGroup is one fold of a check's objects: the objects sharing one key.
@@ -513,9 +637,14 @@ type CheckGroup struct {
 	// Disposition and Samples are on a source standing's fold: which
 	// disposition the control plane gave the strategies in it, and a bounded
 	// sample of which strategies. Strategies above holds the count; there are
-	// no objects to open, because none of these became one.
-	Disposition string           `json:"disposition,omitempty"`
-	Samples     []WithheldSample `json:"samples,omitempty"`
+	// no objects to open, because none of these became one. Words is what
+	// the fold's reason means and what to do about it, decided per reason;
+	// on the line of strategies this deployment cannot run, where one
+	// sentence for every reason once sent an operator to a parameter no
+	// reason under it was about.
+	Disposition string               `json:"disposition,omitempty"`
+	Samples     []WithheldSample     `json:"samples,omitempty"`
+	Words       *WithheldReasonWords `json:"words,omitempty"`
 	// Codes counts the reason codes under a fold on the Blocked reading: the
 	// secondary key, so "commit, Redis, unavailable" can still say it was
 	// REDIS_UNAVAILABLE 60 and STATE_WRITE_RETRYABLE 26.
@@ -537,6 +666,11 @@ type CheckGroup struct {
 	CompletingNow int `json:"completing_now,omitempty"`
 	Delayed       int `json:"delayed,omitempty"`
 	Silent        int `json:"silent,omitempty"`
+	// Stalled is the objects among CompletingNow whose way out has not moved
+	// for StalledRounds rounds: a held guard's count or a short window's
+	// valid count. It is what turns the fold's reading from recovering to
+	// stalled, and it is on the wire so the page can say how many.
+	Stalled int `json:"stalled,omitempty"`
 	// Recovered is the objects that completed healthily after being listed
 	// under this fold, within RecoveredRetention: the positive evidence. On a
 	// fold with objects still under it, it is how far the problem has come
@@ -560,6 +694,13 @@ const (
 	// RecoveryRecovering: no failure within the window; rounds are ending
 	// again (with results nobody can use yet) or are only late.
 	RecoveryRecovering Recovery = "RECOVERING"
+	// RecoveryStalled: no failure within the window and rounds are ending,
+	// but what the fold is waiting on -- a held guard's count, a short
+	// window's valid count -- has not moved for StalledRounds rounds on at
+	// least one object. Rounds ending is not progress: a guard at 0 of 9 for
+	// twenty rounds read as "recovering" for twenty rounds, and the reader
+	// who took that at its word waited for something no round was bringing.
+	RecoveryStalled Recovery = "STALLED"
 	// RecoveryUnconfirmed: no failure within the window, and nothing heard
 	// from any object within it either -- a cooldown, a round not yet due.
 	// Not recovered: recovery needs a success, and none was seen.
@@ -575,7 +716,33 @@ const (
 )
 
 // RecoveryStates is the closed list, for the page's completeness test.
-var RecoveryStates = []Recovery{RecoveryBlocked, RecoveryRecovering, RecoveryUnconfirmed, RecoveryRecovered, RecoveryHistorical}
+var RecoveryStates = []Recovery{RecoveryBlocked, RecoveryRecovering, RecoveryStalled, RecoveryUnconfirmed, RecoveryRecovered, RecoveryHistorical}
+
+// StalledRounds is how many consecutive rounds a guard's count or a short
+// window's valid count must have stayed put before a completing object is
+// read as stalled rather than recovering: one is a round, two a coincidence,
+// three a run.
+const StalledRounds = 3
+
+// stalled reports an object whose rounds end but whose way out has not moved:
+// a held guard whose observed count has been the same for StalledRounds
+// rounds, or a short window whose worst valid count has. A guard that has
+// already reached its requirement is not stalled -- it is a release that has
+// not happened yet, which HeldFullRounds reads. Read from the row's own
+// counters, never from how long the object has been listed: an object listed
+// for an hour whose count rose last round is recovering, slowly.
+func stalled(anomaly *Anomaly) bool {
+	for _, guard := range anomaly.Guards {
+		if guard.Required > 0 && guard.Observed < guard.Required && guard.UnchangedRounds >= StalledRounds {
+			return true
+		}
+	}
+	if coverage := anomaly.Coverage; coverage != nil && coverage.Short > 0 &&
+		coverage.WorstValid < coverage.WorstRequired && coverage.UnchangedRounds >= StalledRounds {
+		return true
+	}
+	return false
+}
 
 // RecoveryStatesWithoutAProducer names the states nothing decides yet. Empty
 // since the trackers began recording recoveries: every state has a producer,
@@ -644,6 +811,9 @@ func noteProblem(group *CheckGroup, anomaly *Anomaly, code string, now time.Time
 		group.Delayed++
 	default:
 		group.CompletingNow++
+		if stalled(anomaly) {
+			group.Stalled++
+		}
 	}
 }
 
@@ -656,6 +826,8 @@ func recoveryOf(group *CheckGroup, historical bool) Recovery {
 		return RecoveryHistorical
 	case group.FailingNow > 0:
 		return RecoveryBlocked
+	case group.Stalled > 0:
+		return RecoveryStalled
 	case group.CompletingNow > 0 || group.Delayed > 0:
 		return RecoveryRecovering
 	default:
@@ -695,6 +867,12 @@ func ReportChecks(columns [][]Anomaly, truncated map[string]bool, view *View, no
 		// summed over its groups, where the object lines count distinct
 		// strategies behind objects.
 		sourceStrategies int
+		// onsets is the no-data lines' objects by the minute their run
+		// began, for the fold that tells one event from many; withoutOnset
+		// the rows of those lines that carry no start, so the fold's sum
+		// and the line's count can be read against each other.
+		onsets       map[time.Time]int
+		withoutOnset int
 	}
 	tallies := map[Check]*tally{}
 	ensure := func(check Check) *tally {
@@ -796,7 +974,7 @@ func ReportChecks(columns [][]Anomaly, truncated map[string]bool, view *View, no
 		for _, row := range rows {
 			entry := ensure(row.Finding.Check)
 			add(entry, row.Finding.Group, &row)
-			if (row.Loss == LossOngoing || row.Loss == LossAfterRestart) && row.Finding.Check != CheckBookkeepingAbandoned {
+			if (row.Loss == LossOngoing || row.Loss == LossAfterRestart || row.Loss == LossAfterCooldown) && row.Finding.Check != CheckBookkeepingAbandoned {
 				entry.current++
 				if entry.reasons == nil {
 					entry.reasons = map[string]int{}
@@ -821,14 +999,34 @@ func ReportChecks(columns [][]Anomaly, truncated map[string]bool, view *View, no
 		for check, consequence := range consequences {
 			ensure(check).skipped = consequence
 		}
-		for _, list := range [][]Anomaly{view.NoData, view.NoDataMemory} {
+		for _, list := range [][]Anomaly{view.NoData, view.NoDataMemory, view.RetainedShare} {
 			for index := range list {
 				row := &list[index]
 				if row.Finding.Check == "" {
 					continue
 				}
-				add(ensure(row.Finding.Check), row.Finding.Group, row)
-				ensure(row.Finding.Check).current++
+				entry := ensure(row.Finding.Check)
+				add(entry, row.Finding.Group, row)
+				entry.current++
+				// These lines fold by strategy, one object to a group, and
+				// three hundred groups of one cannot show that three
+				// hundred runs began in the same two minutes. The onset
+				// fold can: a platform event is one minute with hundreds,
+				// a population of quiet sources is hundreds of minutes with
+				// one. On a live deployment 327 of 366 empty runs began in
+				// two minutes -- the minutes a release began recording
+				// them, a lower bound and not an event, and the fold is
+				// what shows either.
+				if row.Kind == KindEmptyEveryRound || row.Kind == KindNoData {
+					if row.Since.IsZero() {
+						entry.withoutOnset++
+					} else {
+						if entry.onsets == nil {
+							entry.onsets = map[time.Time]int{}
+						}
+						entry.onsets[row.Since.UTC().Truncate(time.Minute)]++
+					}
+				}
 			}
 		}
 	}
@@ -960,8 +1158,13 @@ func ReportChecks(columns [][]Anomaly, truncated map[string]bool, view *View, no
 					// strategies not detecting is not inflated by ones that are.
 					key = withheld.Disposition + "/" + withheld.Reason
 				}
-				entry.groups[key] = &CheckGroup{Key: key, Strategies: withheld.Count, Replicas: []string{view.SourceReplica},
+				group := &CheckGroup{Key: key, Strategies: withheld.Count, Replicas: []string{view.SourceReplica},
 					Disposition: withheld.Disposition, Samples: withheld.Samples}
+				if check == CheckCapabilityUnsupported || check == CheckConfigNormalized {
+					words := WithheldWordsOf(withheld.Reason)
+					group.Words = &words
+				}
+				entry.groups[key] = group
 			}
 		}
 	}
@@ -970,6 +1173,29 @@ func ReportChecks(columns [][]Anomaly, truncated map[string]bool, view *View, no
 	if view != nil && view.BookkeepingAbandoned != nil && view.BookkeepingAbandoned.Slots > 0 {
 		ensure(CheckBookkeepingAbandoned)
 	}
+	// The set flapping: the hours of the last day in which the source listed
+	// strategies again after dropping them, one fold per hour with the
+	// strategies that came back. A standing over the leader's account, not
+	// over object rows; the strategies under grace right now are on the
+	// source facts for the first screen, not a fold here -- a fold is a
+	// thing that happened, and grace is a thing that is happening.
+	if view != nil && view.Source != nil && view.Source.Set != nil {
+		for _, hour := range view.Source.Set.Hours {
+			if hour.Reactivated == 0 || now.Sub(hour.Hour) > 24*time.Hour {
+				continue
+			}
+			entry := ensure(CheckSourceSetFlapping)
+			entry.replica = view.SourceReplica
+			entry.sourceStrategies += hour.Reactivated
+			key := hour.Hour.UTC().Format("2006-01-02T15Z")
+			group := &CheckGroup{Key: key, Strategies: hour.Reactivated, Replicas: []string{view.SourceReplica},
+				Text: sourceSetHourText(hour)}
+			for _, strategyID := range hour.Samples {
+				group.Samples = append(group.Samples, WithheldSample{StrategyID: strategyID, Scope: "STRATEGY"})
+			}
+			entry.groups[key] = group
+		}
+	}
 	reports := make([]CheckReport, 0, len(tallies))
 	for check, entry := range tallies {
 		report := CheckReport{Code: check, Owner: checkAnswers[check].Owner, GroupBy: checkAnswers[check].GroupBy,
@@ -977,7 +1203,7 @@ func ReportChecks(columns [][]Anomaly, truncated map[string]bool, view *View, no
 			Partial: entry.partial, Demoted: entry.demoted, Activation: entry.activation, Replica: entry.replica,
 			Current: entry.current, Retained: entry.retained, RetainedLastHour: entry.lastHour,
 			Consequence: entry.skipped, SkipReasons: entry.reasons, Rebalance: entry.rebalance,
-			Recovered: entry.recovered}
+			Recovered: entry.recovered, Onsets: onsetFold(entry.onsets, entry.withoutOnset)}
 		if check.SourceStanding() {
 			report.Strategies = entry.sourceStrategies
 		}
@@ -1017,6 +1243,17 @@ func ReportChecks(columns [][]Anomaly, truncated map[string]bool, view *View, no
 			}
 			return report.Groups[i].Key < report.Groups[j].Key
 		})
+		if check == CheckCapabilityUnsupported {
+			report.Line = capabilityLine(report.Strategies, report.Groups)
+		}
+		if check == CheckConfigNormalized {
+			report.Owner = normalizedOwner(report.Groups)
+		}
+		if check == CheckSourceSetFlapping && view != nil && view.Source != nil && view.Source.Set != nil {
+			// Newest hour first: the question is "is it still happening".
+			sort.Slice(report.Groups, func(i, j int) bool { return report.Groups[i].Key > report.Groups[j].Key })
+			report.Line = sourceSetLine(report.Strategies, len(report.Groups), view.Source.Set)
+		}
 		reports = append(reports, report)
 	}
 	sort.Slice(reports, func(i, j int) bool {
@@ -1064,6 +1301,16 @@ type Todo struct {
 	OngoingNewest       *time.Time `json:"ongoing_newest,omitempty"`
 	AfterRestart        int        `json:"after_restart"`
 	RestartGraceSeconds int        `json:"restart_grace_seconds"`
+	// AfterCooldown is the recent records whose Slot a query cooldown held
+	// on an object that has since left the pool: the cooldown's consequence
+	// with no line to fold onto, named apart from Ongoing because it asks
+	// no capacity question.
+	AfterCooldown int `json:"after_cooldown"`
+	// RestartGraceUnknown is the recent records judged against no anchor --
+	// a publisher that sent neither its process start nor when it first saw
+	// the object -- and so read by age alone. Counted rather than silent:
+	// such a publisher would otherwise make every recent skip read ONGOING.
+	RestartGraceUnknown int `json:"restart_grace_unknown"`
 	// WhileDemoted is the distinct objects in the demoted pool that also
 	// skipped detection there, and how many within the window: the
 	// cooldown's consequence, counted on the lines the objects are under.
@@ -1127,6 +1374,7 @@ func SummarizeTodo(reports []CheckReport, columns [][]Anomaly, view *View, now t
 	if view != nil {
 		count(view.NoData)
 		count(view.NoDataMemory)
+		count(view.RetainedShare)
 	}
 	if view != nil {
 		// One walk over the records, the same one the lines make. A loss in
@@ -1135,11 +1383,17 @@ func SummarizeTodo(reports []CheckReport, columns [][]Anomaly, view *View, now t
 		// stopped loss is the record.
 		var ongoingNewest, retainedNewest time.Time
 		whileDemoted := map[string]struct{}{}
-		lossRecords(view, now, func(queryGroup string, check, _ Check, _ string, skip SkippedSpan, loss Loss) {
+		lossRecords(view, now, func(queryGroup string, check, _ Check, _ string, skip SkippedSpan, loss Loss, graceUnknown bool) {
 			if check == CheckBookkeepingAbandoned {
 				// Not a loss of detection in progress or on record: the
 				// bookkeeping line counts these itself.
 				return
+			}
+			if graceUnknown && now.Sub(skip.At) <= RecentSkipWindow {
+				// Judged without an anchor: counted, so a publisher that
+				// sends none cannot make every recent skip read ONGOING in
+				// silence.
+				todo.RestartGraceUnknown++
 			}
 			switch loss {
 			case LossOngoing:
@@ -1151,6 +1405,11 @@ func SummarizeTodo(reports []CheckReport, columns [][]Anomaly, view *View, now t
 			case LossAfterRestart:
 				ours[queryGroup] = struct{}{}
 				todo.AfterRestart++
+			case LossAfterCooldown:
+				// The cooldown's, like WHILE_DEMOTED, with no line left to
+				// fold onto: on the record line, named apart, not this
+				// deployment's work.
+				todo.AfterCooldown++
 			case LossWhileDemoted:
 				whileDemoted[queryGroup] = struct{}{}
 				if now.Sub(skip.At) <= RecentSkipWindow {
@@ -1277,7 +1536,7 @@ func walkObjectRows(check Check, group, queryGroup string, view *View, now time.
 		}
 	}
 	demoted := demotedObjects(&selected)
-	for _, column := range [][]Anomaly{view.Anomalies, view.Demoted, view.Undecidable, view.ByDesign, view.NoData, view.NoDataMemory} {
+	for _, column := range [][]Anomaly{view.Anomalies, view.Demoted, view.Undecidable, view.ByDesign, view.NoData, view.NoDataMemory, view.RetainedShare} {
 		for _, anomaly := range column {
 			if queryGroup != "" && anomaly.QueryGroup != queryGroup {
 				continue
@@ -1288,6 +1547,8 @@ func walkObjectRows(check Check, group, queryGroup string, view *View, now time.
 			if check == CheckDefect && anomaly.Finding.Check != check && anomaly.Internal != nil {
 				listed[underKey(check, anomaly.QueryGroup)] = struct{}{}
 				if group == "" || anomaly.Internal.Code == group {
+					standing := standingOf(anomaly)
+					anomaly.Standing = &standing
 					visit(anomaly)
 				}
 				continue
@@ -1310,6 +1571,8 @@ func walkObjectRows(check Check, group, queryGroup string, view *View, now time.
 					anomaly.Skip, anomaly.Loss = &record, LossWhileDemoted
 				}
 			}
+			standing := standingOf(anomaly)
+			anomaly.Standing = &standing
 			visit(anomaly)
 		}
 	}
@@ -1318,6 +1581,8 @@ func walkObjectRows(check Check, group, queryGroup string, view *View, now time.
 		if (check != "" && row.Finding.Check != check) || (group != "" && row.Finding.Group != group) {
 			continue
 		}
+		standing := standingOf(row)
+		row.Standing = &standing
 		visit(row)
 	}
 }
@@ -1346,7 +1611,7 @@ func underKey(check Check, queryGroup string) string {
 func skippedRows(view *View, listed map[string]struct{}, now time.Time) ([]Anomaly, map[Check]*Consequence) {
 	rows := []Anomaly{}
 	consequences := map[Check]*Consequence{}
-	lossRecords(view, now, func(queryGroup string, check, line Check, reason string, skip SkippedSpan, loss Loss) {
+	lossRecords(view, now, func(queryGroup string, check, line Check, reason string, skip SkippedSpan, loss Loss, _ bool) {
 		if loss == LossWhileDemoted {
 			if consequences[line] == nil {
 				consequences[line] = &Consequence{}
@@ -1378,4 +1643,49 @@ func skippedRows(view *View, listed map[string]struct{}, now time.Time) ([]Anoma
 	})
 	sort.Slice(rows, func(i, j int) bool { return rows[i].QueryGroup < rows[j].QueryGroup })
 	return rows, consequences
+}
+
+// sourceSetHourText is one hour's fold as a sentence fragment: how many
+// came back and how long the longest was gone.
+func sourceSetHourText(hour SourceSetHour) string {
+	text := fmt.Sprintf("%d 条策略回到活动集", hour.Reactivated)
+	if hour.LongestAbsentSeconds > 0 {
+		text += fmt.Sprintf("，最长缺席 %.0f 分钟", hour.LongestAbsentSeconds/60)
+	}
+	// Removed counts the Plans that left the Catalog in the hour; the ones
+	// that came back after it are their own count.
+	if hour.ReturnedAfterRemoval > 0 {
+		text += fmt.Sprintf("，其中 %d 条是已被移除后重新放置", hour.ReturnedAfterRemoval)
+	}
+	return text
+}
+
+// sourceSetLine is the line's sentence: how often in the last day the
+// source's list dropped strategies and listed them again, and what is under
+// grace right now.
+func sourceSetLine(strategies, hours int, set *SourceSetFacts) string {
+	line := fmt.Sprintf("上游活动集近 24 小时有 %d 个小时掉过策略又列回来，共 %d 条次", hours, strategies)
+	if set.PendingRemoval > 0 {
+		line += fmt.Sprintf("；此刻 %d 条在宽限中", set.PendingRemoval)
+	}
+	if set.ReactivatedThisHour > 0 {
+		line += fmt.Sprintf("；本小时已回来 %d 条", set.ReactivatedThisHour)
+	}
+	return line + fmt.Sprintf("（账自 %s 起）", set.Since.UTC().Format("01-02 15:04Z"))
+}
+
+// normalizedOwner is whose the CONFIG_NORMALIZED line is: the strategy's when
+// any of its reasons asks the strategy to change what it wrote, nobody's when
+// none does. The strategies under it are all detecting, and a line that asks
+// for an edit nobody should make teaches its reader to skip the line, the
+// reasons that do need one included. A reason with no action of its own is
+// taken as asking for the edit, which is what the line asked before reasons
+// carried one.
+func normalizedOwner(groups []CheckGroup) Owner {
+	for _, group := range groups {
+		if group.Words == nil || group.Words.Action != ActionNone {
+			return OwnerStrategy
+		}
+	}
+	return OwnerNobody
 }

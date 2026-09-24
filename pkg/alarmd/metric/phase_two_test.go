@@ -9,11 +9,13 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
@@ -604,5 +606,98 @@ func TestPhaseTwoScheduleCursorAdvanceCountsByOutcome(t *testing.T) {
 	// Every refusal publishes from the start, so a zero is a fact.
 	if got := testutil.ToFloat64(recorder.phaseTwo.scheduleCursorAdvances.WithLabelValues(observability.CursorAdvanceConflict, observability.CursorRefusalCursorMoved)); got != 0 {
 		t.Fatalf("schedule_cursor_advance_total{conflict,CURSOR_MOVED} = %v, want a published zero", got)
+	}
+}
+
+// The Leader's round says how many ready replicas do not declare the split
+// contract, and the gauge follows it: a rolling release reads 0, n, 0 here.
+func TestTheUnawareReplicaGaugeFollowsTheRoundsSplitGate(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	observe := func(unaware []string) {
+		recorder.Observe(context.Background(), observability.Observation{
+			Component: observability.ComponentOwnership, Stage: observability.StageRebalancePlanned, Result: observability.ResultSuccess,
+			Operation: observability.OperationLoad,
+			Rebalance: &observability.RebalanceFacts{ShardAware: &observability.ShardAwareFacts{Ready: 3, Unaware: unaware}},
+		})
+	}
+	observe([]string{"worker-2", "worker-3"})
+	if got := testutil.ToFloat64(recorder.phaseTwo.shardUnawareReadyReplicas); got != 2 {
+		t.Fatalf("shard_unaware_ready_replicas = %v after two unaware replicas, want 2", got)
+	}
+	observe(nil)
+	if got := testutil.ToFloat64(recorder.phaseTwo.shardUnawareReadyReplicas); got != 0 {
+		t.Fatalf("shard_unaware_ready_replicas = %v after the roll, want 0", got)
+	}
+}
+
+// Level outcomes reach the counter by kind and, for the kinds that carry a
+// reason, by reason - a coverage reason by name, any other as other, so the
+// label set stays the closed list the metric pre-creates.
+func TestLevelOutcomesAreCountedByKindAndCoverageReason(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentEvaluation, Stage: observability.StageEvaluationCompleted, Result: observability.ResultDegraded,
+		Operation: observability.OperationLoad, ReasonCode: observability.ReasonCode(contract.ReasonEffectiveTimeInactive),
+		LevelOutcomes: []observability.LevelOutcomeFact{
+			{Outcome: "UNKNOWN", Reason: contract.ReasonEffectiveTimeInactive, Count: 2},
+			{Outcome: "TERMINAL", Reason: contract.ReasonStateCorrupt, Count: 1},
+			{Outcome: "ABNORMAL", Count: 3},
+		},
+	})
+	if got := testutil.ToFloat64(recorder.phaseTwo.levelOutcomes.WithLabelValues("UNKNOWN", contract.ReasonEffectiveTimeInactive)); got != 2 {
+		t.Fatalf("UNKNOWN/EFFECTIVE_TIME_INACTIVE = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(recorder.phaseTwo.levelOutcomes.WithLabelValues("TERMINAL", observability.LevelOutcomeReasonOther)); got != 1 {
+		t.Fatalf("TERMINAL/other = %v, want the deterministic reason folded to other", got)
+	}
+	if got := testutil.ToFloat64(recorder.phaseTwo.levelOutcomes.WithLabelValues("ABNORMAL", "")); got != 3 {
+		t.Fatalf("ABNORMAL = %v, want 3", got)
+	}
+	for _, line := range strings.Split(scrape(t, recorder), "\n") {
+		if strings.HasPrefix(line, "bkmonitor_alarmd_level_outcome_total{") && strings.Contains(line, contract.ReasonStateCorrupt) {
+			t.Fatalf("a deterministic reason leaked into the level outcome labels: %s", line)
+		}
+	}
+}
+
+// A replica that stops being the Control Leader takes its leader-round
+// readings off the scrape. They are aggregated across replicas with max, so
+// a replica that kept its last reading outranks the Leader that has a
+// current one - a fleet whose split gate has cleared would still read as
+// held, and a rebalance that is done would still read as planning moves.
+// Its own per-replica readings stay: those are still true.
+func TestSteppingDownAsLeaderTakesTheLeaderReadingsOffTheScrape(t *testing.T) {
+	recorder := NewRecorder(BuildInfo{})
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentOwnership, Stage: observability.StageRebalancePlanned, Result: observability.ResultSuccess,
+		Operation: observability.OperationLoad,
+		Rebalance: &observability.RebalanceFacts{PlannedMoves: 3, MostOwned: 9, LeastOwned: 4,
+			ShardAware: &observability.ShardAwareFacts{Ready: 3, Unaware: []string{"worker-2"}}},
+	})
+	recorder.phaseTwo.undrainedDrainingQueryGroups.Set(2)
+	leaderReadings := []string{"bkmonitor_alarmd_rebalance_planned_moves", "bkmonitor_alarmd_rebalance_gap", "bkmonitor_alarmd_shard_unaware_ready_replicas"}
+	scraped := scrape(t, recorder)
+	for _, reading := range leaderReadings {
+		if !strings.Contains(scraped, reading+" ") {
+			t.Fatalf("%s is absent while this replica leads:\n%s", reading, scraped)
+		}
+	}
+	recorder.ControlLeaderStepDown()
+	scraped = scrape(t, recorder)
+	for _, reading := range leaderReadings {
+		if strings.Contains(scraped, reading+" ") {
+			t.Fatalf("%s survived the step-down; a stale leader reading wins a max across replicas:\n%s", reading, scraped)
+		}
+	}
+	if !strings.Contains(scraped, "bkmonitor_alarmd_undrained_draining_query_groups ") {
+		t.Fatalf("a per-replica reading was taken off with the leader's:\n%s", scraped)
+	}
+	// Leading again publishes them again.
+	recorder.Observe(context.Background(), observability.Observation{
+		Component: observability.ComponentOwnership, Stage: observability.StageRebalancePlanned, Result: observability.ResultSuccess,
+		Operation: observability.OperationLoad, Rebalance: &observability.RebalanceFacts{PlannedMoves: 1},
+	})
+	if scraped = scrape(t, recorder); !strings.Contains(scraped, "bkmonitor_alarmd_rebalance_planned_moves ") {
+		t.Fatalf("a replica that leads again does not publish its readings:\n%s", scraped)
 	}
 }

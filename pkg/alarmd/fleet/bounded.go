@@ -32,7 +32,7 @@ const (
 // is silent -- a kind the page has no word for renders as whichever word the
 // fallback happens to be, which reads as an ordinary row of a familiar kind.
 // That is worse than showing the raw name, so the page is checked against this.
-var AnomalyKinds = []string{KindDegradedRun, KindBlockedRun, KindOverdueWake, KindQueryCooldown, KindSkippedSpan, KindNoData, KindEmptyEveryRound}
+var AnomalyKinds = []string{KindDegradedRun, KindBlockedRun, KindOverdueWake, KindQueryCooldown, KindSkippedSpan, KindNoData, KindEmptyEveryRound, KindRetainedShareApproaching}
 
 // SinceSources is the closed set of start-time provenances this build produces.
 //
@@ -47,6 +47,7 @@ var SinceSources = []SinceSource{
 	SinceProcessStart,
 	SinceRestoredLastFull,
 	SinceRestoredAtRestart,
+	SinceRestoredEmptyRun,
 	SinceRefusedFuture,
 }
 
@@ -61,6 +62,7 @@ var SinceSources = []SinceSource{
 var RestoredSinceSources = []SinceSource{
 	SinceRestoredLastFull,
 	SinceRestoredAtRestart,
+	SinceRestoredEmptyRun,
 }
 
 // BoundedSinceSources are the provenances whose timestamp is a bound rather
@@ -82,6 +84,7 @@ var BoundedSinceSources = []SinceSource{
 	SinceProcessStart,
 	SinceRestoredAtRestart,
 	SinceRestoredLastFull,
+	SinceRestoredEmptyRun,
 	SinceRefusedFuture,
 }
 
@@ -110,7 +113,7 @@ func MetricGapKind(kind GapKind) string {
 	switch kind {
 	case GapDenominatorUnavailable, GapReplicaMissing, GapSnapshotStale, GapListTruncated,
 		GapOwnershipShortfall, GapCoverageInconsistent, GapNoReplicas, GapUndetermined,
-		GapRegistryUnavailable:
+		GapRegistryUnavailable, GapSnapshotsUnreadable:
 		return string(kind)
 	default:
 		return LabelOther

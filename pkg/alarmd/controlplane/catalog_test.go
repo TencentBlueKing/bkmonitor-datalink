@@ -1,15 +1,7 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package controlplane_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -156,26 +148,95 @@ func TestCatalogRevisionIsIndependentFromSourceTraversalOrder(t *testing.T) {
 	}
 }
 
-func TestG1DoesNotSilentlyDropUnsupportedLegacySemantics(t *testing.T) {
-	base := `{"id":1,"bk_biz_id":2,"update_time":1,%s"items":[{"id":1,"query_md5":"q","expression":"a","query_configs":[{"agg_interval":60}],"algorithms":[{"level":1,"type":"Threshold","config":[[{"method":"gt","threshold":1}]]}]}],"detects":[{"level":1,"trigger_config":{"count":1,"check_window":1%s}}]}`
+// A strategy in a priority group is compiled as the standalone strategy it
+// is. The arbitration between the group's strategies is the platform alert
+// pipeline's, so nothing of it reaches the Plan: the Plan is the one the same
+// strategy compiles to without the two fields, save for the verbatim strategy
+// document the output carries, and the only trace is a record naming it.
+func TestPriorityGroupStrategyRunsStandaloneAndIsNamed(t *testing.T) {
+	base := `{"id":1,"bk_biz_id":2,"update_time":1,%s"items":[{"id":1,"query_md5":"q","expression":"a","query_configs":[{"agg_interval":60}],"algorithms":[{"level":1,"type":"Threshold","config":[[{"method":"gt","threshold":1}]]}]}],"detects":[{"level":1,"trigger_config":{"count":1,"check_window":1}}]}`
 	identity := controlplane.SourceIdentity{TenantID: "tenant-a", BusinessID: "2", SpaceScope: "bkcc__2"}
-	for _, test := range []struct{ name, prefix, trigger string }{
-		{name: "priority semantics", prefix: `"priority":1,"priority_group_key":"group",`, trigger: ""},
-		{name: "non-default uptime", prefix: "", trigger: `,"uptime":{"time_ranges":[{"start":"09:00","end":"18:00"}]}`},
+	build := func(t *testing.T, prefix string) controlplane.Catalog {
+		t.Helper()
+		document := json.RawMessage(fmt.Sprintf(base, prefix))
+		catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{Strategies: []controlplane.SourceStrategy{{SourceID: "1", Document: document, Identity: identity}}, Planner: &recordingPlanner{facts: queryFacts(t)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(catalog.QueryGroups) != 1 || len(catalog.QueryGroups[0].Plans) != 1 {
+			t.Fatalf("strategy did not become a Plan: %#v", catalog.Dispositions)
+		}
+		return catalog
+	}
+	ignoredRecords := func(catalog controlplane.Catalog) []controlplane.ObjectDisposition {
+		var records []controlplane.ObjectDisposition
+		for _, disposition := range catalog.Dispositions {
+			if disposition.Reason == controlplane.ReasonPriorityIgnored {
+				records = append(records, disposition)
+			}
+		}
+		return records
+	}
+	standalone := build(t, "")
+	for _, test := range []struct {
+		name, prefix string
+		named        bool
+	}{
+		{name: "priority in a group", prefix: `"priority":100,"priority_group_key":"PGK:group",`, named: true},
+		// Zero is a priority there: it never claims a dimension, and a higher
+		// strategy of its group still keeps it from detecting one.
+		{name: "zero priority in a group", prefix: `"priority":0,"priority_group_key":"0123456789abcdef",`, named: true},
+		{name: "group without a priority", prefix: `"priority":null,"priority_group_key":"0123456789abcdef",`},
+		{name: "priority without a group", prefix: `"priority":1,"priority_group_key":"",`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			document := json.RawMessage(fmt.Sprintf(base, test.prefix, test.trigger))
-			catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{Strategies: []controlplane.SourceStrategy{{SourceID: "1", Document: document, Identity: identity}}, Planner: &recordingPlanner{facts: queryFacts(t)}})
-			if err != nil {
-				t.Fatal(err)
+			catalog := build(t, test.prefix)
+			records := ignoredRecords(catalog)
+			if !test.named {
+				if len(records) != 0 {
+					t.Fatalf("a strategy the platform does not arbitrate was named: %#v", records)
+				}
+				return
 			}
-			if len(catalog.QueryGroups) != 0 || len(catalog.Dispositions) != 1 {
-				t.Fatalf("unsupported semantics were silently accepted: %#v", catalog)
+			want := controlplane.ObjectDisposition{SourceID: "1", Scope: "PLAN", Disposition: controlplane.DispositionConfigNormalized, Reason: controlplane.ReasonPriorityIgnored}
+			if len(records) != 1 || records[0] != want {
+				t.Fatalf("records=%#v, want one %#v", records, want)
 			}
-			if test.name == "non-default uptime" && catalog.Dispositions[0].Scope != "PLAN" {
-				t.Fatalf("uptime scope=%s", catalog.Dispositions[0].Scope)
+			accepted := 0
+			for _, disposition := range catalog.Dispositions {
+				if disposition.Disposition == controlplane.DispositionAccepted {
+					accepted++
+				}
+			}
+			if accepted != 1 {
+				t.Fatalf("dispositions=%#v, want the Plan accepted", catalog.Dispositions)
+			}
+			got, alone := catalog.QueryGroups[0], standalone.QueryGroups[0]
+			if got.Identity != alone.Identity {
+				t.Fatalf("Query Group identity moved with the priority fields: %s != %s", got.Identity, alone.Identity)
+			}
+			gotPlan, alonePlan := got.Plans[0].Plan, alone.Plans[0].Plan
+			if gotPlan.LegacyOutput == nil || !bytes.Contains(gotPlan.LegacyOutput.Strategy, []byte(`"priority_group_key"`)) {
+				t.Fatalf("the output lost the strategy document as written: %#v", gotPlan.LegacyOutput)
+			}
+			gotPlan.LegacyOutput, alonePlan.LegacyOutput = nil, nil
+			gotBytes, _ := json.Marshal(gotPlan)
+			aloneBytes, _ := json.Marshal(alonePlan)
+			if !bytes.Equal(gotBytes, aloneBytes) {
+				t.Fatalf("priority reached the Plan:\n%s\n%s", gotBytes, aloneBytes)
 			}
 		})
+	}
+	if records := ignoredRecords(standalone); len(records) != 0 {
+		t.Fatalf("a strategy without priority was named: %#v", records)
+	}
+	// The zero is a reading: no strategy here is arbitrated by priority.
+	key := controlplane.WithheldKey{Disposition: controlplane.DispositionConfigNormalized, Reason: controlplane.ReasonPriorityIgnored}
+	if count, reported := controlplane.ComposeCatalog(standalone).Withheld[key]; !reported || count != 0 {
+		t.Fatalf("PRIORITY_IGNORED reported=%v count=%d, want a zero that is published", reported, count)
+	}
+	if count := controlplane.ComposeCatalog(build(t, `"priority":1,"priority_group_key":"PGK:group",`)).Withheld[key]; count != 1 {
+		t.Fatalf("PRIORITY_IGNORED count=%d, want the one named Plan", count)
 	}
 }
 
@@ -397,7 +458,7 @@ func TestBuildCatalogRejectsMultipleItemsWithoutSilentlySelectingFirst(t *testin
 	}
 }
 
-func TestBuildCatalogAbsentSourceGetsOneGraceCycleBeforeRemoval(t *testing.T) {
+func TestBuildCatalogAbsentSourceKeepsExecutingThroughTheGracePeriod(t *testing.T) {
 	payload, err := os.ReadFile("testdata/two_threshold_strategies.json")
 	if err != nil {
 		t.Fatal(err)
@@ -422,48 +483,80 @@ func TestBuildCatalogAbsentSourceGetsOneGraceCycleBeforeRemoval(t *testing.T) {
 		Publication: controlplane.SnapshotPublicationRef{SnapshotRevision: previous.SnapshotRevision, PublicationEpoch: 1},
 		QueryGroups: previous.QueryGroups,
 	}
-	pendingRemoval := controlplane.ObjectDisposition{SourceID: "1002", Scope: "STRATEGY",
+	// The grace is a period, not a round: the active set is a list another
+	// program writes, and it has been seen to lose entries for minutes with
+	// the strategies unchanged. A strategy absent from it keeps executing
+	// under PENDING_REMOVAL, stamped with when it was first found absent,
+	// until it has been absent for the whole period; only then is it REMOVED.
+	t0 := time.Unix(1_700_000_000, 0)
+	within := t0.Add(controlplane.AbsenceGracePeriod - time.Minute)
+	expired := t0.Add(controlplane.AbsenceGracePeriod)
+	pendingAt := func(since time.Time) controlplane.ObjectDisposition {
+		return controlplane.ObjectDisposition{SourceID: "1002", Scope: "STRATEGY",
+			Disposition: controlplane.DispositionPendingRemoval, Reason: "REMOVED_FROM_ACTIVE_SET", AbsentSince: since.Unix()}
+	}
+	removedAt := func(since time.Time) controlplane.ObjectDisposition {
+		return controlplane.ObjectDisposition{SourceID: "1002", Scope: "STRATEGY",
+			Disposition: controlplane.DispositionRemoved, Reason: "ABSENT_FROM_ACTIVE_SET", AbsentSince: since.Unix()}
+	}
+	// A PENDING_REMOVAL written by a build before the grace was a period
+	// carries no moment.
+	pendingUnstamped := controlplane.ObjectDisposition{SourceID: "1002", Scope: "STRATEGY",
 		Disposition: controlplane.DispositionPendingRemoval, Reason: "REMOVED_FROM_ACTIVE_SET"}
-	removed := controlplane.ObjectDisposition{SourceID: "1002", Scope: "STRATEGY",
-		Disposition: controlplane.DispositionRemoved, Reason: "ABSENT_FROM_ACTIVE_SET"}
 	sourceIncomplete := controlplane.ObjectDisposition{SourceID: "1002", Scope: "STRATEGY",
 		Disposition: controlplane.DispositionSourceIncomplete, Reason: "SOURCE_READ_INCOMPLETE"}
+	withPrevious := func(extra ...controlplane.ObjectDisposition) []controlplane.ObjectDisposition {
+		return append(append([]controlplane.ObjectDisposition(nil), previous.Dispositions...), extra...)
+	}
 	for _, test := range []struct {
 		name         string
 		strategies   []controlplane.SourceStrategy
 		previous     []controlplane.ObjectDisposition
+		pending      map[string]int64
+		now          time.Time
 		wantPlans    []string
 		wantStrategy *controlplane.ObjectDisposition
 	}{
 		{
-			name: "absent once is retained with PENDING_REMOVAL", strategies: onlyFirst,
-			previous: previous.Dispositions, wantPlans: []string{"1001", "1002"}, wantStrategy: &pendingRemoval,
+			name: "first found absent is retained with PENDING_REMOVAL stamped now", strategies: onlyFirst,
+			previous: previous.Dispositions, now: t0, wantPlans: []string{"1001", "1002"}, wantStrategy: ptr(pendingAt(t0)),
 		},
 		{
-			name: "absent without any audit history is retained with PENDING_REMOVAL", strategies: onlyFirst,
-			previous: nil, wantPlans: []string{"1001", "1002"}, wantStrategy: &pendingRemoval,
+			name: "absent without any audit history is retained with PENDING_REMOVAL stamped now", strategies: onlyFirst,
+			previous: nil, now: t0, wantPlans: []string{"1001", "1002"}, wantStrategy: ptr(pendingAt(t0)),
 		},
 		{
-			name: "absent twice leaves the Catalog with REMOVED", strategies: onlyFirst,
-			previous:  append(append([]controlplane.ObjectDisposition(nil), previous.Dispositions...), pendingRemoval),
-			wantPlans: []string{"1001"}, wantStrategy: &removed,
+			name: "still absent inside the grace keeps executing under the same stamp", strategies: onlyFirst,
+			previous: withPrevious(pendingAt(t0)), now: within, wantPlans: []string{"1001", "1002"}, wantStrategy: ptr(pendingAt(t0)),
 		},
 		{
-			name: "present again after PENDING_REMOVAL is accepted without a removal fact", strategies: both,
-			previous:  append(append([]controlplane.ObjectDisposition(nil), previous.Dispositions...), pendingRemoval),
-			wantPlans: []string{"1001", "1002"},
+			name: "absent for the whole grace leaves the Catalog with REMOVED", strategies: onlyFirst,
+			previous: withPrevious(pendingAt(t0)), now: expired, wantPlans: []string{"1001"}, wantStrategy: ptr(removedAt(t0)),
+		},
+		{
+			name: "the unconfirmed candidate's stamp counts where the audit has none", strategies: onlyFirst,
+			previous: previous.Dispositions, pending: map[string]int64{"1002": t0.Unix()}, now: expired,
+			wantPlans: []string{"1001"}, wantStrategy: ptr(removedAt(t0)),
+		},
+		{
+			name: "a grace stamped by an older build restarts from now rather than expiring", strategies: onlyFirst,
+			previous: withPrevious(pendingUnstamped), now: expired, wantPlans: []string{"1001", "1002"}, wantStrategy: ptr(pendingAt(expired)),
+		},
+		{
+			name: "present again inside the grace is accepted without a removal fact", strategies: both,
+			previous: withPrevious(pendingAt(t0)), now: within, wantPlans: []string{"1001", "1002"},
 		},
 		{
 			name:       "SOURCE_INCOMPLETE still retains even after PENDING_REMOVAL",
 			strategies: []controlplane.SourceStrategy{both[0], {SourceID: "1002", Identity: identity, SourceDisposition: &sourceIncomplete}},
-			previous:   append(append([]controlplane.ObjectDisposition(nil), previous.Dispositions...), pendingRemoval),
-			wantPlans:  []string{"1001", "1002"}, wantStrategy: &sourceIncomplete,
+			previous:   withPrevious(pendingAt(t0)), now: expired,
+			wantPlans: []string{"1001", "1002"}, wantStrategy: &sourceIncomplete,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			catalog, err := controlplane.BuildCatalog(context.Background(), controlplane.BuildRequest{
 				Strategies: test.strategies, Planner: &recordingPlanner{facts: queryFacts(t)},
-				LastGood: lastGood, PreviousDispositions: test.previous,
+				LastGood: lastGood, PreviousDispositions: test.previous, PendingAbsences: test.pending, Now: test.now,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -488,7 +581,15 @@ func TestBuildCatalogAbsentSourceGetsOneGraceCycleBeforeRemoval(t *testing.T) {
 			}
 		})
 	}
+	// The two answers the grace separates: with the period gone the strategy
+	// absent for nine minutes would already have left. Pinned here so the
+	// constant cannot be shortened to a round without this case saying so.
+	if controlplane.AbsenceGracePeriod < 2*time.Minute {
+		t.Fatalf("AbsenceGracePeriod = %s: a grace shorter than the observed flutter is the one-round grace back", controlplane.AbsenceGracePeriod)
+	}
 }
+
+func ptr[T any](value T) *T { return &value }
 
 func catalogStrategyIDs(catalog controlplane.Catalog) []string {
 	ids := make([]string, 0)

@@ -10,8 +10,12 @@
 package controlplane
 
 import (
+	"slices"
+	"sort"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/nodata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 // SupportedSourceSemantics is every data source a query can be compiled from,
@@ -106,6 +110,19 @@ type CatalogComposition struct {
 	// the shape where the page says forty and the log names thirty-nine and
 	// nothing is wrong with either.
 	WithheldObjects []ObjectDisposition
+	// ListedStrategies names every strategy the source listed this round,
+	// once each, sorted: every disposition but the two that mean the source
+	// no longer lists the strategy (PENDING_REMOVAL, REMOVED). A reader that
+	// keeps the strategies the source dropped needs the round's listed set
+	// to tell "back in the list" from "gone for good" -- a strategy the grace
+	// cycle removed has no disposition at all the round after, and its
+	// absence from the withheld records reads the same as its return.
+	// Listed rather than accepted, because a strategy that is back but
+	// compiles no Plan this round (STALE_CONFIG running its last good one,
+	// CONFIG_REJECTED, a compatibility word) is back in the list all the
+	// same, and a disposition added later lands on this side by default --
+	// the side that clears an absence, not the side that invents one.
+	ListedStrategies []string
 	// NoDataPlans counts the Plans that detect no-data, by where their expected
 	// set comes from. Only accepted Plans are in it - a Plan that was withheld
 	// is in Withheld under the reason that withheld it.
@@ -150,6 +167,14 @@ type CatalogComposition struct {
 	// read to establish, from a gate counter that only ever said not gated.
 	RevisionedPlans int
 	PlansTotal      int
+	// PlansByWireFormat counts the accepted Plans by the wire format their
+	// events are published as, resolved the way the sink resolves it from
+	// the frozen word and the revision. Every format the build names is
+	// present at zero, and a word it does not name lands under _other, so
+	// the counts partition PlansTotal. This is the number that answers "how
+	// many strategies publish the standard raw event"; before it the answer
+	// was a Kafka read.
+	PlansByWireFormat map[string]int
 	// InertPlans counts the Plans whose schedule cannot hold the wait their
 	// data needs to land. Such a Plan is ACCEPTED, is scheduled, and executes
 	// -- and every round every one of its consumers is bound unavailable,
@@ -163,6 +188,11 @@ type CatalogComposition struct {
 	// it is what makes the residual readable from outside instead of only
 	// from the test that pins it.
 	InertPlans int
+	// Retention is the Catalog's own measurement of what its Levels ask the
+	// store to keep, carried through unchanged. It is summed where the
+	// compiled Levels are in hand; recomputing it here from the frozen
+	// strategy documents would be the same relation derived twice.
+	Retention CatalogRetention
 }
 
 // SourceSemanticsLabel is the partition key for one Query Group's query: the
@@ -207,6 +237,7 @@ func ComposeCatalog(catalog Catalog) CatalogComposition {
 		Objects:     make(map[Disposition]int, len(CatalogDispositions)+1),
 		Withheld:    make(map[WithheldKey]int),
 		NoDataPlans: make(map[nodata.RosterSource]int, 3),
+		Retention:   catalog.Retention,
 	}
 	for _, semantics := range SupportedSourceSemantics {
 		composition.QueryGroups[semantics] = 0
@@ -223,6 +254,10 @@ func ComposeCatalog(catalog Catalog) CatalogComposition {
 	for _, source := range NoDataRosterSources {
 		composition.NoDataPlans[source] = 0
 	}
+	composition.PlansByWireFormat = make(map[string]int, len(observability.WireFormats))
+	for _, format := range observability.WireFormats {
+		composition.PlansByWireFormat[format] = 0
+	}
 	for _, key := range AlwaysReportedWithheld {
 		composition.Withheld[key] = 0
 	}
@@ -235,6 +270,8 @@ func ComposeCatalog(catalog Catalog) CatalogComposition {
 			if plan.Plan.StrategyRef.SnapshotRevision > 0 {
 				composition.RevisionedPlans++
 			}
+			composition.PlansByWireFormat[observability.NormalizeWireFormat(
+				contract.ResolveOutputWireFormat(plan.Plan.WireFormat, plan.Plan.StrategyRef.SnapshotRevision))]++
 			if !plan.ScheduleSpec.AffordsSettlingWait() {
 				composition.InertPlans++
 			}
@@ -269,7 +306,7 @@ func ComposeCatalog(catalog Catalog) CatalogComposition {
 			case plan.Plan.NoData == nil:
 				composition.NoDataNotConfigured++
 			default:
-				class, err := nodata.ClassifyRoster(plan.Plan.TargetScope, plan.Plan.NoData.AggDimension)
+				class, err := nodata.ClassifyTarget(plan.Plan.TargetScope, plan.Plan.TargetPlan, plan.Plan.NoData.AggDimension)
 				if err != nil {
 					composition.NoDataPlansUnclassified++
 					continue
@@ -288,6 +325,9 @@ func ComposeCatalog(catalog Catalog) CatalogComposition {
 			kind = DispositionOther
 		}
 		composition.Objects[kind]++
+		if kind != DispositionPendingRemoval && kind != DispositionRemoved && disposition.SourceID != "" {
+			composition.ListedStrategies = append(composition.ListedStrategies, disposition.SourceID)
+		}
 		if kind == DispositionAccepted {
 			continue
 		}
@@ -299,6 +339,10 @@ func ComposeCatalog(catalog Catalog) CatalogComposition {
 		withheld.Disposition = kind
 		composition.WithheldObjects = append(composition.WithheldObjects, withheld)
 	}
+	// Once each: a strategy has a disposition at the strategy scope and one
+	// for each of its Plans or levels.
+	sort.Strings(composition.ListedStrategies)
+	composition.ListedStrategies = slices.Compact(composition.ListedStrategies)
 	return composition
 }
 
@@ -306,6 +350,7 @@ func ComposeCatalog(catalog Catalog) CatalogComposition {
 // the partition to pre-create and for a reader to bound the family by.
 var NoDataRosterSources = []nodata.RosterSource{
 	nodata.RosterTargetStatic,
+	nodata.RosterTargetPlan,
 	nodata.RosterHistory,
 	nodata.RosterWhole,
 	SuspendedNoDataConfigInvalid,
@@ -358,6 +403,15 @@ func suspendedNoDataSource(reason string) (nodata.RosterSource, bool) {
 var AlwaysReportedWithheld = []WithheldKey{
 	{Disposition: DispositionUnsupported, Reason: contract.ReasonSnapshotRetentionInsufficient},
 	{Disposition: DispositionUnsupported, Reason: contract.ReasonCompletionOffsetBelowReserve},
+	// "No strategy's effective time was widened to the whole day because a
+	// range did not parse" is a claim a reader acts on: the widening is the
+	// direction of more detection, and the only way to see it is this pair.
+	{Disposition: DispositionConfigNormalized, Reason: ReasonEffectiveTimeRangeInvalid},
+	// "No strategy here takes part in priority arbitration" is the zero that
+	// says every strategy detects exactly as it would alone on the platform.
+	{Disposition: DispositionConfigNormalized, Reason: ReasonPriorityIgnored},
+	// "No strategy here runs a level on another level's trigger."
+	{Disposition: DispositionConfigNormalized, Reason: ReasonLevelTriggerBorrowed},
 }
 
 // NoDataReasons is the set of reasons that withhold a Plan from no-data
@@ -413,4 +467,5 @@ var CatalogDispositions = []Disposition{
 	DispositionRemoved,
 	DispositionUnsupported,
 	DispositionCompatibilityIgnored,
+	DispositionConfigNormalized,
 }

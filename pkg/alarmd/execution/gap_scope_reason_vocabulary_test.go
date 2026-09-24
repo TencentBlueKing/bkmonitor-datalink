@@ -35,7 +35,7 @@ func TestEveryFinalizationModesGapScopeReasonIsNamedByTheVocabulary(t *testing.T
 	contractRef := frozenContract()
 	targets := execution.FrozenDuePlanTargets{
 		DuePlanSetDigest: contractRef.DuePlanSetDigest,
-		Plans:            []execution.PlanIdentity{{TenantID: "tenant", BusinessID: "2", StrategyID: "9"}},
+		Plans:            []execution.PlanKey{{PlanIdentity: execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "9"}}},
 	}
 	request := execution.SlotExecutionRequest{
 		Contract: contractRef, Operation: execution.OperationNormal, AttemptNo: 1,

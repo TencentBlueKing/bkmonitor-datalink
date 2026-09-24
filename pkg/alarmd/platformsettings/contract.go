@@ -108,11 +108,34 @@ const (
 	FieldBKDataCMDBLevelTables Field = "bkdata_cmdb_level_tables"
 	// FieldFileSystemTypeIgnore: file system types the disk metrics exclude.
 	FieldFileSystemTypeIgnore Field = "file_system_type_ignore"
+	// FieldNoDataTrackingHorizonSeconds: how long one absent group goes on
+	// being reported before no-data detection stops tracking it, for every
+	// Plan that does not state its own. Read by presence, unlike the four
+	// above: a JSON null is no override, and a value equal to the default
+	// still overrides the layer below it.
+	FieldNoDataTrackingHorizonSeconds Field = "no_data_tracking_horizon_seconds"
 )
+
+// DefaultNoDataTrackingHorizonSeconds is the effective horizon when no layer
+// states one: one day, as the approved no-data tracking contract fixes it.
+const DefaultNoDataTrackingHorizonSeconds int64 = 86400
+
+// HorizonSource is which layer the effective no-data horizon came from.
+type HorizonSource string
+
+const (
+	HorizonSourceDefault HorizonSource = "DEFAULT"
+	HorizonSourceValues  HorizonSource = "VALUES"
+	HorizonSourceDynamic HorizonSource = "DYNAMIC"
+)
+
+// HorizonSources is the closed list, for the page's wording table.
+var HorizonSources = []HorizonSource{HorizonSourceDefault, HorizonSourceValues, HorizonSourceDynamic}
 
 // Fields is every field in the order they are read.
 var Fields = []Field{
 	FieldHostDisableMonitorStates, FieldIsAccessBKData, FieldBKDataCMDBLevelTables, FieldFileSystemTypeIgnore,
+	FieldNoDataTrackingHorizonSeconds,
 }
 
 // DBKey is the field's full DB key in the publishing platform's dynamic
@@ -122,7 +145,7 @@ func (field Field) DBKey() string {
 	switch field {
 	case FieldHostDisableMonitorStates, FieldIsAccessBKData:
 		return "base_config.metadata." + string(field)
-	case FieldBKDataCMDBLevelTables:
+	case FieldBKDataCMDBLevelTables, FieldNoDataTrackingHorizonSeconds:
 		return "base_config.domains.strategy." + string(field)
 	case FieldFileSystemTypeIgnore:
 		return "base_config.domains.dataview." + string(field)
@@ -147,6 +170,11 @@ type Settings struct {
 	IsAccessBKData           bool
 	BKDataCMDBLevelTables    []string
 	FileSystemTypeIgnore     []string
+	// NoDataTrackingHorizonSeconds is the platform horizon every Plan that
+	// does not state its own inherits, and NoDataTrackingHorizonSource the
+	// layer it came from.
+	NoDataTrackingHorizonSeconds int64
+	NoDataTrackingHorizonSource  HorizonSource
 }
 
 // CodeDefaults is the bottom of the protocol's fallback chain: the value a
@@ -164,6 +192,10 @@ func CodeDefaults() Settings {
 		BKDataCMDBLevelTables: []string{},
 		// config/default.py FILE_SYSTEM_TYPE_IGNORE
 		FileSystemTypeIgnore: []string{"iso9660", "tmpfs", "udf"},
+		// The no-data tracking contract's effective default; the platform
+		// declares no default of its own for this field.
+		NoDataTrackingHorizonSeconds: DefaultNoDataTrackingHorizonSeconds,
+		NoDataTrackingHorizonSource:  HorizonSourceDefault,
 	}
 }
 
@@ -175,6 +207,11 @@ type Layer struct {
 	IsAccessBKData           *bool
 	BKDataCMDBLevelTables    *[]string
 	FileSystemTypeIgnore     *[]string
+	// NoDataTrackingHorizonSeconds is present when this layer states a
+	// horizon, and Origin says which layer this is, so the resolved horizon
+	// can say where it came from.
+	NoDataTrackingHorizonSeconds *int64
+	Origin                       HorizonSource
 }
 
 // Resolve applies the protocol's fallback rule to the layers, highest
@@ -185,10 +222,24 @@ type Layer struct {
 // platform reaches its YAML. Absent everywhere, the code default stands.
 func Resolve(defaults Settings, layers ...Layer) Settings {
 	resolved := Settings{
-		HostDisableMonitorStates: cloneStrings(defaults.HostDisableMonitorStates),
-		IsAccessBKData:           defaults.IsAccessBKData,
-		BKDataCMDBLevelTables:    cloneStrings(defaults.BKDataCMDBLevelTables),
-		FileSystemTypeIgnore:     cloneStrings(defaults.FileSystemTypeIgnore),
+		HostDisableMonitorStates:     cloneStrings(defaults.HostDisableMonitorStates),
+		IsAccessBKData:               defaults.IsAccessBKData,
+		BKDataCMDBLevelTables:        cloneStrings(defaults.BKDataCMDBLevelTables),
+		FileSystemTypeIgnore:         cloneStrings(defaults.FileSystemTypeIgnore),
+		NoDataTrackingHorizonSeconds: defaults.NoDataTrackingHorizonSeconds,
+		NoDataTrackingHorizonSource:  defaults.NoDataTrackingHorizonSource,
+	}
+	// The horizon by presence: the first layer that states one wins, whatever
+	// its value. The fall-through-on-default rule below would let a dynamic
+	// value equal to the default leave a deployment's larger one in force -
+	// "set it back to a day" reading as applied while a week stayed - which
+	// is the second meaning of a default the no-data contract rules out.
+	for _, layer := range layers {
+		if layer.NoDataTrackingHorizonSeconds != nil {
+			resolved.NoDataTrackingHorizonSeconds = *layer.NoDataTrackingHorizonSeconds
+			resolved.NoDataTrackingHorizonSource = layer.Origin
+			break
+		}
 	}
 	for _, layer := range layers {
 		if layer.HostDisableMonitorStates != nil && equalStrings(resolved.HostDisableMonitorStates, defaults.HostDisableMonitorStates) {
@@ -212,7 +263,9 @@ func (settings Settings) Equal(other Settings) bool {
 	return equalStrings(settings.HostDisableMonitorStates, other.HostDisableMonitorStates) &&
 		settings.IsAccessBKData == other.IsAccessBKData &&
 		equalStrings(settings.BKDataCMDBLevelTables, other.BKDataCMDBLevelTables) &&
-		equalStrings(settings.FileSystemTypeIgnore, other.FileSystemTypeIgnore)
+		equalStrings(settings.FileSystemTypeIgnore, other.FileSystemTypeIgnore) &&
+		settings.NoDataTrackingHorizonSeconds == other.NoDataTrackingHorizonSeconds &&
+		settings.NoDataTrackingHorizonSource == other.NoDataTrackingHorizonSource
 }
 
 // ChangedFields names the fields on which two settings differ.
@@ -229,6 +282,10 @@ func (settings Settings) ChangedFields(other Settings) []Field {
 	}
 	if !equalStrings(settings.FileSystemTypeIgnore, other.FileSystemTypeIgnore) {
 		changed = append(changed, FieldFileSystemTypeIgnore)
+	}
+	if settings.NoDataTrackingHorizonSeconds != other.NoDataTrackingHorizonSeconds ||
+		settings.NoDataTrackingHorizonSource != other.NoDataTrackingHorizonSource {
+		changed = append(changed, FieldNoDataTrackingHorizonSeconds)
 	}
 	return changed
 }

@@ -314,7 +314,7 @@ func TestExecutionStoreDoesNotResetCorruptRuntimeState(t *testing.T) {
 	if string(backend.values[key]) != "not-json" {
 		t.Fatal("corrupt value was overwritten")
 	}
-	mutation, buildErr := execution.BuildStateMutation(execution.StateMutation{Identity: identity, ApplyVersion: applyVersion(), AffectedRecords: []execution.RecordAnchor{{RecordID: "r1", SourceTime: 60}}, Levels: []execution.RuntimeLevelStateMutation{{LevelID: 1, LevelStateCompatibility: "compat", HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm", LastProcessedEventTime: 60}}, Points: []execution.StateHistoryPoint{{RecordID: "r1", SourceTime: 60, Levels: []execution.StateLevelFact{{LevelID: 1, DetectFingerprint: "detect", Result: execution.LevelFactNormal}}}}})
+	mutation, buildErr := execution.BuildStateMutation(execution.StateMutation{Identity: identity, ApplyVersion: applyVersion(), AffectedRecords: []execution.RecordAnchor{derivedAnchor(t, stateIdentityV2(), 60)}, Levels: []execution.RuntimeLevelStateMutation{{LevelID: 1, LevelStateCompatibility: "compat", HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm", LastProcessedEventTime: 60}}, Points: []execution.StateHistoryPoint{derivedPoint(t, stateIdentityV2(), 60, "detect", execution.LevelFactNormal)}})
 	if buildErr != nil {
 		t.Fatal(buildErr)
 	}
@@ -328,7 +328,7 @@ func TestExecutionStoreDoesNotResetCorruptRuntimeState(t *testing.T) {
 }
 
 func TestRuntimeSeriesGuardDeterminesPersistedStatus(t *testing.T) {
-	mutation, err := execution.BuildStateMutation(execution.StateMutation{Identity: stateIdentityV2(), ApplyVersion: applyVersion(), AffectedRecords: []execution.RecordAnchor{{RecordID: "r1", SourceTime: 60}}, SeriesGuard: &execution.StateGuardFact{Status: execution.HistoryWarming, ReasonCode: execution.ReasonCode(contract.ReasonHistoryWarming), WarmupRequirementRef: "series-warm"}, Levels: []execution.RuntimeLevelStateMutation{{LevelID: 1, LevelStateCompatibility: "compat", HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm", LastProcessedEventTime: 60}}, Points: []execution.StateHistoryPoint{{RecordID: "r1", SourceTime: 60, Levels: []execution.StateLevelFact{{LevelID: 1, DetectFingerprint: "detect", Result: execution.LevelFactNormal}}}}})
+	mutation, err := execution.BuildStateMutation(execution.StateMutation{Identity: stateIdentityV2(), ApplyVersion: applyVersion(), AffectedRecords: []execution.RecordAnchor{derivedAnchor(t, stateIdentityV2(), 60)}, SeriesGuard: &execution.StateGuardFact{Status: execution.HistoryWarming, ReasonCode: execution.ReasonCode(contract.ReasonHistoryWarming), WarmupRequirementRef: "series-warm"}, Levels: []execution.RuntimeLevelStateMutation{{LevelID: 1, LevelStateCompatibility: "compat", HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm", LastProcessedEventTime: 60}}, Points: []execution.StateHistoryPoint{derivedPoint(t, stateIdentityV2(), 60, "detect", execution.LevelFactNormal)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,9 +364,9 @@ func TestExecutionStoreExactCASAndReplay(t *testing.T) {
 	router, _ := NewFixedRouter("state-01", backend)
 	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
 	mutation, err := execution.BuildStateMutation(execution.StateMutation{Identity: stateIdentityV2(), ApplyVersion: applyVersion(),
-		AffectedRecords: []execution.RecordAnchor{{RecordID: "r1", SourceTime: 60}},
+		AffectedRecords: []execution.RecordAnchor{derivedAnchor(t, stateIdentityV2(), 60)},
 		Levels:          []execution.RuntimeLevelStateMutation{{LevelID: 1, LevelStateCompatibility: "compat", HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm", LastProcessedEventTime: 60}},
-		Points:          []execution.StateHistoryPoint{{RecordID: "r1", SourceTime: 60, Levels: []execution.StateLevelFact{{LevelID: 1, DetectFingerprint: "detect", Result: execution.LevelFactNormal}}}},
+		Points:          []execution.StateHistoryPoint{derivedPoint(t, stateIdentityV2(), 60, "detect", execution.LevelFactNormal)},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -386,7 +386,7 @@ func TestExecutionStoreExactCASAndReplay(t *testing.T) {
 func TestExecutionStoreAdmissionAndCASBudgetStatuses(t *testing.T) {
 	backend := &casMemoryBackend{values: make(map[string][]byte), conflict: true}
 	router, _ := NewFixedRouter("state-01", backend)
-	mutation, err := execution.BuildStateMutation(execution.StateMutation{Identity: stateIdentityV2(), ApplyVersion: applyVersion(), AffectedRecords: []execution.RecordAnchor{{RecordID: "r1", SourceTime: 60}}, Levels: []execution.RuntimeLevelStateMutation{{LevelID: 1, LevelStateCompatibility: "compat", HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm", LastProcessedEventTime: 60}}, Points: []execution.StateHistoryPoint{{RecordID: "r1", SourceTime: 60, Levels: []execution.StateLevelFact{{LevelID: 1, DetectFingerprint: "detect", Result: execution.LevelFactNormal}}}}})
+	mutation, err := execution.BuildStateMutation(execution.StateMutation{Identity: stateIdentityV2(), ApplyVersion: applyVersion(), AffectedRecords: []execution.RecordAnchor{derivedAnchor(t, stateIdentityV2(), 60)}, Levels: []execution.RuntimeLevelStateMutation{{LevelID: 1, LevelStateCompatibility: "compat", HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm", LastProcessedEventTime: 60}}, Points: []execution.StateHistoryPoint{derivedPoint(t, stateIdentityV2(), 60, "detect", execution.LevelFactNormal)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,10 +407,10 @@ func TestRuntimeOversizeIsLocalAndApplyDoesNotOverwrite(t *testing.T) {
 	backend := &casMemoryBackend{values: make(map[string][]byte)}
 	router, _ := NewFixedRouter("state-01", backend)
 	goodIdentity := stateIdentityV2()
-	goodIdentity.SeriesIdentityDigest = "good"
+	goodIdentity.SeriesIdentityDigest = seriesDigest("good")
 	badIdentity := stateIdentityV2()
-	badIdentity.SeriesIdentityDigest = "oversize"
-	goodMutation, err := execution.BuildStateMutation(execution.StateMutation{Identity: goodIdentity, ApplyVersion: applyVersion(), AffectedRecords: []execution.RecordAnchor{{RecordID: "r1", SourceTime: 60}}, Levels: []execution.RuntimeLevelStateMutation{{LevelID: 1, LevelStateCompatibility: "compat", HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm", LastProcessedEventTime: 60}}, Points: []execution.StateHistoryPoint{{RecordID: "r1", SourceTime: 60, Levels: []execution.StateLevelFact{{LevelID: 1, DetectFingerprint: "detect", Result: execution.LevelFactNormal}}}}})
+	badIdentity.SeriesIdentityDigest = seriesDigest("oversize")
+	goodMutation, err := execution.BuildStateMutation(execution.StateMutation{Identity: goodIdentity, ApplyVersion: applyVersion(), AffectedRecords: []execution.RecordAnchor{derivedAnchor(t, stateIdentityV2(), 60)}, Levels: []execution.RuntimeLevelStateMutation{{LevelID: 1, LevelStateCompatibility: "compat", HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm", LastProcessedEventTime: 60}}, Points: []execution.StateHistoryPoint{derivedPoint(t, stateIdentityV2(), 60, "detect", execution.LevelFactNormal)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -546,5 +546,5 @@ func applyVersion() execution.ApplyVersion {
 	return execution.ApplyVersion{StateApplyEpoch: 1, EvaluationTime: 60, SlotDigest: "slot"}
 }
 func stateIdentityV2() execution.StateKeyIdentity {
-	return execution.StateKeyIdentity{Plan: execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "9"}, StateGeneration: "generation", SeriesIdentityDigest: "series"}
+	return execution.StateKeyIdentity{Plan: execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "9"}, StateGeneration: "generation", SeriesIdentityDigest: seriesDigest("series")}
 }

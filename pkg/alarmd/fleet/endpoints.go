@@ -75,6 +75,15 @@ type Endpoint struct {
 	// Writer is what the replica found of the platform's writing under this
 	// role, for the roles that read a platform cache.
 	Writer *WriterEvidence `json:"writer,omitempty"`
+	// OpenAlertSet is the reader's full account of the consumer's open alert
+	// publication, on the role that reads it; Writer above is the short form
+	// every reading role has.
+	OpenAlertSet *OpenAlertSetFacts `json:"open_alert_set,omitempty"`
+	// Console is the replica's account of the alert link's Console, on the
+	// role that calls it: present on that role whether or not it is
+	// configured, because "not configured" is the reading that says neither
+	// of the two closes that need it can run.
+	Console *LinkdConsoleFacts `json:"console,omitempty"`
 	// ProtocolVersion is the protocol version this replica's client speaks to
 	// the role, as configured, and HeadersSupported whether that version can
 	// carry record headers -- which the standard raw event does. Present on
@@ -172,15 +181,174 @@ const (
 	EndpointStrategyCache = "strategy_cache"
 	EndpointCMDBCache     = "cmdb_cache"
 	EndpointDynamicConfig = "dynamic_config"
-	EndpointOutputKafka   = "output_kafka"
-	EndpointQueryBackend  = "query_backend"
-	EndpointCompatOutput  = "compat_output_redis"
+	EndpointTargetGroup   = "target_group"
+	// EndpointOpenAlertSet is the consumer's publication of the series it
+	// holds open alerts on, read under a fixed key contract on the state
+	// Redis: the recovery gate's word on whether there is anything to
+	// recover. Written by the alert consumer, not the platform.
+	EndpointOpenAlertSet = "open_alert_set"
+	// EndpointLinkdConsole is the alert link's Console, over HTTP with Basic
+	// Auth. Two closes need it and nothing else does: the calibration of the
+	// open alert set against the link's alert store, and the control
+	// leader's close of the alerts of strategies that no longer exist.
+	EndpointLinkdConsole = "linkd_console"
+	EndpointOutputKafka  = "output_kafka"
+	EndpointQueryBackend = "query_backend"
+	EndpointCompatOutput = "compat_output_redis"
 )
 
 // EndpointRoles is the closed list, in the order the page shows them: the
-// replica's own storage first, then what it reads of the platform's, then
-// where its work goes and where its queries go.
+// replica's own storage first, then what it reads of the platform's and the
+// consumer's, then where its work goes and where its queries go.
 var EndpointRoles = []string{
-	EndpointStateRedis, EndpointStrategyCache, EndpointCMDBCache, EndpointDynamicConfig,
-	EndpointQueryBackend, EndpointOutputKafka, EndpointCompatOutput,
+	EndpointStateRedis, EndpointStrategyCache, EndpointCMDBCache, EndpointDynamicConfig, EndpointTargetGroup, EndpointOpenAlertSet,
+	EndpointLinkdConsole, EndpointQueryBackend, EndpointOutputKafka, EndpointCompatOutput,
 }
+
+// LinkdConsoleFacts is what a replica has seen of the alert link's Console.
+//
+// State is one word from a closed list, and the three ways the Console can
+// fail a deployment are three words: not configured (neither close runs),
+// configured and not answering (every attempt fails), and answering while
+// the link says its own maintenance is behind (the roster is read and not
+// trusted). Before this the first was told from the rest only by the
+// absent_strategy families being missing from /metrics altogether.
+type LinkdConsoleFacts struct {
+	// State is one of LinkdConsoleStates.
+	State string `json:"state"`
+	// Reason says which part: for unreadable the first failing operation,
+	// for link_unhealthy the link's own word (discovery_failing,
+	// discovery_never_succeeded, discovery_stale).
+	Reason string `json:"reason,omitempty"`
+	// Calls is each operation this replica calls, every one listed from the
+	// start: an operation never called reads as calls 0, not as a missing
+	// row. Only the control leader walks the roster.
+	Calls []ConsoleCallFacts `json:"calls"`
+	// LinkHealthAgeSeconds is how long ago the link's last successful full
+	// discovery was, by the last roster page read, beside the bound the
+	// close judges it against. Absent until a roster page has been read, or
+	// when the link reports none.
+	LinkHealthAgeSeconds    *float64 `json:"link_health_age_seconds,omitempty"`
+	MaxLinkHealthAgeSeconds int      `json:"max_link_health_age_seconds"`
+	LinkError               string   `json:"link_error,omitempty"`
+	// LinkPending is the link's own refresh backlog; LinkReadAgeSeconds how
+	// old that reading is. Absent until a roster page has been read.
+	LinkPending        *int     `json:"link_pending,omitempty"`
+	LinkReadAgeSeconds *float64 `json:"link_read_age_seconds,omitempty"`
+	// Target is the link's target this replica resolved last -- where the
+	// link writes the sets this replica reads -- and TargetAgeSeconds how
+	// long ago. Absent until a call has resolved one.
+	Target           *LinkdTargetFacts `json:"target,omitempty"`
+	TargetAgeSeconds *float64          `json:"target_age_seconds,omitempty"`
+	// Discovery is what startup learned from the Console about where the
+	// link writes: whether this process adopted that location and, when it
+	// did not, why. Absent without a Console.
+	Discovery *LinkdDiscoveryFacts `json:"discovery,omitempty"`
+	// EventSource is how the link keys this deployment's alerts, as its
+	// Console last answered: the fingerprint mode and field(s) a recovery
+	// lookup's key has to agree with. Absent until read; the control leader
+	// reads it at the start of each roster walk.
+	EventSource *LinkdEventSourceFacts `json:"event_source,omitempty"`
+}
+
+// LinkdEventSourceFacts is the link's definition of this deployment's
+// event source as far as keying goes, and how long ago it was read.
+type LinkdEventSourceFacts struct {
+	EventSourceID     string   `json:"event_source_id"`
+	FingerprintMode   string   `json:"fingerprint_mode"`
+	FingerprintField  string   `json:"fingerprint_field,omitempty"`
+	FingerprintFields []string `json:"fingerprint_fields,omitempty"`
+	Revision          int64    `json:"revision"`
+	Published         int64    `json:"published"`
+	Pending           bool     `json:"pending,omitempty"`
+	Deleted           bool     `json:"deleted,omitempty"`
+	// InEffect is false for a source never released: no keying runs yet.
+	InEffect bool `json:"in_effect"`
+	// KeyedByAlertID says the link keys these alerts by the alert id this
+	// deployment sends (field mode on source_alert_id); fields mode hashes.
+	KeyedByAlertID bool    `json:"keyed_by_alert_id"`
+	ReadAgeSeconds float64 `json:"read_age_seconds"`
+}
+
+// LinkdTargetFacts is one of the link's targets as its Console names it:
+// the event source and hook it serves, and the Redis, database and prefix
+// its sets are written to. Credentials are never part of it.
+type LinkdTargetFacts struct {
+	EventSourceID string `json:"event_source_id"`
+	HookName      string `json:"hook_name"`
+	Address       string `json:"address"`
+	Database      int    `json:"database"`
+	KeyPrefix     string `json:"key_prefix"`
+}
+
+// LinkdDiscoveryFacts is the startup question "where does the link write",
+// asked of the Console before anything connects. Its answer used to change
+// the configuration or, on any failure, nothing -- and a Console refusing the
+// credentials looked afterwards exactly like one never asked.
+type LinkdDiscoveryFacts struct {
+	// Outcome is one of LinkdDiscoveryOutcomes.
+	Outcome  string            `json:"outcome"`
+	Attempts int               `json:"attempts"`
+	Error    string            `json:"error,omitempty"`
+	Target   *LinkdTargetFacts `json:"target,omitempty"`
+}
+
+// The startup discovery outcomes, closed; the page's wording table is held
+// to this list.
+const (
+	// LinkdDiscoveryAdopted: the link writes to a Redis this process already
+	// holds a connection to, and the sets are read there.
+	LinkdDiscoveryAdopted = "adopted"
+	// LinkdDiscoveryConnectionStated: the deployment states the link's Redis
+	// itself; the Console was not asked.
+	LinkdDiscoveryConnectionStated = "connection_stated"
+	// LinkdDiscoveryNoHeldConnection: the Console answered with a Redis this
+	// process holds no connection to. The sets are read where they would
+	// have been, and every reconciliation refuses with both places named.
+	LinkdDiscoveryNoHeldConnection = "no_held_connection"
+	// LinkdDiscoveryFailed: the Console did not answer the question within
+	// the startup attempts; Error says what it answered instead.
+	LinkdDiscoveryFailed = "failed"
+)
+
+// LinkdDiscoveryOutcomes is every word Outcome can carry.
+var LinkdDiscoveryOutcomes = []string{LinkdDiscoveryAdopted, LinkdDiscoveryConnectionStated,
+	LinkdDiscoveryNoHeldConnection, LinkdDiscoveryFailed}
+
+// ConsoleCallFacts is one Console operation as this replica has called it.
+// Calls and Failures answer "how many" and are never omitted; the ages are
+// absent until there is something to be old.
+type ConsoleCallFacts struct {
+	Op                    string   `json:"op"`
+	Calls                 uint64   `json:"calls"`
+	Failures              uint64   `json:"failures"`
+	Failing               bool     `json:"failing"`
+	LastSuccessAgeSeconds *float64 `json:"last_success_age_seconds,omitempty"`
+	LastFailureAgeSeconds *float64 `json:"last_failure_age_seconds,omitempty"`
+	LastFailure           string   `json:"last_failure,omitempty"`
+}
+
+// The Console states, closed. The page's wording table is held to this
+// list.
+const (
+	// LinkdConsoleNotConfigured: the deployment names no Console. Neither
+	// close runs.
+	LinkdConsoleNotConfigured = "not_configured"
+	// LinkdConsoleNotCalled: configured, and this replica has not called it
+	// yet.
+	LinkdConsoleNotCalled = "not_called"
+	// LinkdConsoleUnreadable: the latest call of some operation failed.
+	// Reason names the first such operation in the order of the calls list.
+	LinkdConsoleUnreadable = "unreadable"
+	// LinkdConsoleLinkUnhealthy: the Console answered and the link says its
+	// set maintenance is failing, never succeeded or is behind. The close
+	// refuses every round in this state.
+	LinkdConsoleLinkUnhealthy = "link_unhealthy"
+	// LinkdConsoleReachable: every operation called answered on its latest
+	// call, and the link's own account, where read, is healthy.
+	LinkdConsoleReachable = "reachable"
+)
+
+// LinkdConsoleStates is every word State can carry.
+var LinkdConsoleStates = []string{LinkdConsoleNotConfigured, LinkdConsoleNotCalled, LinkdConsoleUnreadable,
+	LinkdConsoleLinkUnhealthy, LinkdConsoleReachable}

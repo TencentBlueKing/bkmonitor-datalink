@@ -47,9 +47,12 @@ const noDataPersistentSkipRounds = 3
 // requires the Plan to run here again, so a stale one costs a map entry and
 // nothing else. The map is bounded by the Plans this replica has owned.
 type noDataSkipStreaks struct {
-	mu      sync.Mutex
-	rounds  map[execution.PlanIdentity]int
-	crossed map[execution.PlanIdentity]bool
+	mu sync.Mutex
+	// Keyed by strategy and piece: the streaks live on the process-wide
+	// coordinator, across Query Groups, so two pieces of one strategy on
+	// this Worker are two streaks.
+	rounds  map[execution.PlanKey]int
+	crossed map[execution.PlanKey]bool
 }
 
 // record takes one Plan's outcome for one Slot and reports whether this is the
@@ -60,12 +63,12 @@ type noDataSkipStreaks struct {
 // times would turn the count of stalls into a count of rounds -- which is the
 // reading the outcome buckets already give and the one that cannot be acted
 // on. It becomes reportable again only after the Plan evaluates.
-func (streaks *noDataSkipStreaks) record(plan execution.PlanIdentity, outcome nodata.SlotOutcome) bool {
+func (streaks *noDataSkipStreaks) record(plan execution.PlanKey, outcome nodata.SlotOutcome) bool {
 	streaks.mu.Lock()
 	defer streaks.mu.Unlock()
 	if streaks.rounds == nil {
-		streaks.rounds = map[execution.PlanIdentity]int{}
-		streaks.crossed = map[execution.PlanIdentity]bool{}
+		streaks.rounds = map[execution.PlanKey]int{}
+		streaks.crossed = map[execution.PlanKey]bool{}
 	}
 	if outcome == nodata.OutcomeEvaluated {
 		delete(streaks.rounds, plan)
@@ -89,7 +92,7 @@ func (stream *streamedExecution) recordNoDataOutcome(
 	ctx context.Context, due execution.DuePlan, outcome nodata.SlotOutcome,
 ) {
 	stream.noDataOutcomes = append(stream.noDataOutcomes, outcome)
-	if !stream.coordinator.noDataSkips.record(due.Identity, outcome) {
+	if !stream.coordinator.noDataSkips.record(due.Key(), outcome) {
 		return
 	}
 	stream.coordinator.emitObservation(ctx, observability.Observation{

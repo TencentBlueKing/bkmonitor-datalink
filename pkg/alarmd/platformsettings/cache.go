@@ -251,13 +251,21 @@ func (cache *Cache) StaleBeyondBound() bool {
 // JSON null is present: for a list field it is the empty list, for a bool
 // it is not a bool and the publication is refused.
 func decodeLayer(values map[Field]json.RawMessage) (Layer, error) {
-	var layer Layer
+	layer := Layer{Origin: HorizonSourceDynamic}
 	for _, field := range Fields {
 		raw, present := values[field]
 		if !present {
 			continue
 		}
 		switch field {
+		case FieldNoDataTrackingHorizonSeconds:
+			value, stated, err := decodeHorizon(raw)
+			if err != nil {
+				return Layer{}, fmt.Errorf("alarmd platformsettings: field %s: %w", field, err)
+			}
+			if stated {
+				layer.NoDataTrackingHorizonSeconds = &value
+			}
 		case FieldIsAccessBKData:
 			value, err := decodeBool(raw)
 			if err != nil {
@@ -283,6 +291,23 @@ func decodeLayer(values map[Field]json.RawMessage) (Layer, error) {
 }
 
 var jsonNull = []byte("null")
+
+// decodeHorizon reads the horizon by presence: a JSON null states nothing
+// (no override), and anything else must be a positive whole number of
+// seconds. Zero, a negative, a fraction and a string are refused, and a
+// refused publication keeps the last good settings: there is no value meaning
+// "track forever" for any of them to stand in for.
+func decodeHorizon(raw json.RawMessage) (int64, bool, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if bytes.Equal(trimmed, jsonNull) {
+		return 0, false, nil
+	}
+	var value int64
+	if err := json.Unmarshal(trimmed, &value); err != nil || value < 1 {
+		return 0, false, fmt.Errorf("%q is not a positive whole number of seconds", shorten(trimmed))
+	}
+	return value, true, nil
+}
 
 func decodeBool(raw json.RawMessage) (bool, error) {
 	trimmed := bytes.TrimSpace(raw)

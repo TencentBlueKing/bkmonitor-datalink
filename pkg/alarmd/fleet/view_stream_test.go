@@ -39,6 +39,25 @@ func TestTheViewStreamLineNamesTheLaggingWorkersAndWhy(t *testing.T) {
 		"five lagging names two and counts all": {&ViewStreamFacts{Leading: true, Revision: 12, Expected: 64, Installed: 59,
 			Lagging: []ViewStreamLagging{{WorkerID: "w01"}, {WorkerID: "w02"}, {WorkerID: "w03"}, {WorkerID: "w04"}, {WorkerID: "w05"}}},
 			"视图已装载 59/64，版本 12；落后：w01（未连接）、w02（未连接） 等 5 个"},
+		// The installed Workers' objects: silent when every one probed and
+		// found its objects; the missing count over the Workers that probed;
+		// and the Workers that could not probe, by name -- "cannot tell",
+		// said apart from "nothing missing", which is what a silent clause
+		// would claim for them. Two of the three cells give a number the
+		// third does not, so a clause that read Missing alone fails both.
+		"everyone probed, nothing missing": {&ViewStreamFacts{Leading: true, Revision: 8, Expected: 4, Installed: 4,
+			Objects: ViewStreamObjects{Probed: 4, UnprobedWorkers: []string{}}},
+			"视图已装载 4/4，版本 8"},
+		"objects missing on the workers that probed": {&ViewStreamFacts{Leading: true, Revision: 8, Expected: 4, Installed: 4,
+			Objects: ViewStreamObjects{Probed: 4, Missing: 7, UnprobedWorkers: []string{}}},
+			"视图已装载 4/4，版本 8；缺对象 7（4 个副本探到）"},
+		"one worker could not probe, named": {&ViewStreamFacts{Leading: true, Revision: 8, Expected: 4, Installed: 4,
+			Objects: ViewStreamObjects{Probed: 3, Unprobed: 1, UnprobedWorkers: []string{"w03"}}},
+			"视图已装载 4/4，版本 8；1 个副本未探到对象（w03）"},
+		"three could not probe, two named, and one lagging after": {&ViewStreamFacts{Leading: true, Revision: 8, Expected: 5, Installed: 4,
+			Objects: ViewStreamObjects{Probed: 1, Unprobed: 3, Missing: 2, UnprobedWorkers: []string{"w01", "w02", "w03"}},
+			Lagging: []ViewStreamLagging{{WorkerID: "w05", Connected: true}}},
+			"视图已装载 4/5，版本 8；缺对象 2（1 个副本探到）；3 个副本未探到对象（w01、w02）；落后：w05（未回执）"},
 	} {
 		if got := ViewStreamLine(test.facts); got != test.want {
 			t.Fatalf("%s: line = %q, want %q", name, got, test.want)
@@ -83,6 +102,13 @@ func TestTheVerdictRouteCarriesTheLeadersViewStream(t *testing.T) {
 	_, health = get(t, handler, "/api/health")
 	if stream, _ := health["view_stream"].(map[string]any); stream["installed"] != 64.0 || health["view_stream_replica"] != snapshots[0].Replica {
 		t.Fatalf("view_stream = %v replica %v, want the newer Leader's", health["view_stream"], health["view_stream_replica"])
+	}
+	// Nobody lagging is an empty list on the wire, not null: the copy the
+	// aggregate makes must stay a list when there is nothing to copy.
+	if stream, _ := health["view_stream"].(map[string]any); stream["lagging"] == nil {
+		t.Fatalf("view_stream.lagging = null with nobody lagging: %v", health["view_stream"])
+	} else if list, ok := stream["lagging"].([]any); !ok || len(list) != 0 {
+		t.Fatalf("view_stream.lagging = %v, want an empty list", stream["lagging"])
 	}
 
 	// No Leader among the counted replicas: the newest follower's account.

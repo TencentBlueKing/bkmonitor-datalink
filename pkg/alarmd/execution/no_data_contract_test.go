@@ -435,7 +435,7 @@ func TestNoDataMemoryReadableRefusesAFutureSchema(t *testing.T) {
 	if !NoDataMemoryReadable(0) {
 		t.Fatal("schema 0 is the absence of a record, not a record this build cannot read")
 	}
-	for _, schema := range []NoDataMemorySchema{NoDataMemorySchemaV1, NoDataMemorySchemaV2} {
+	for _, schema := range []NoDataMemorySchema{NoDataMemorySchemaV1, NoDataMemorySchemaV2, NoDataMemorySchemaV3} {
 		if !NoDataMemoryReadable(schema) {
 			t.Fatalf("this build cannot read schema %d, which it is expected to", schema)
 		}
@@ -445,13 +445,14 @@ func TestNoDataMemoryReadableRefusesAFutureSchema(t *testing.T) {
 	}
 }
 
-// This build reads two shapes and writes one. That asymmetry is the whole
+// This build reads three shapes and writes one. That asymmetry is the whole
 // coexistence rule, and it is asserted rather than described: a build that
-// wrote both would leave two records per Plan with no rule for which is the
-// memory, and one that wrote the old shape would undo the change.
-func TestThisBuildWritesOneSchemaAndReadsTwo(t *testing.T) {
-	if WrittenNoDataMemorySchema != NoDataMemorySchemaV2 {
-		t.Fatalf("this build writes schema %d, want the per-group one", WrittenNoDataMemorySchema)
+// wrote two would leave two records per Plan with no rule for which is the
+// memory, and one that wrote an older shape would undo the change.
+func TestThisBuildWritesOneSchemaAndReadsThree(t *testing.T) {
+	if WrittenNoDataMemorySchema != NoDataMemorySchemaV3 {
+		t.Fatalf("this build writes schema %d, want the one that carries the tracking facts",
+			WrittenNoDataMemorySchema)
 	}
 	built, err := BuildPlanNoDataMutation(noDataUpdate(NoDataGroupMemory{GroupKey: "a", LastSeen: 90}))
 	if err != nil {
@@ -462,7 +463,9 @@ func TestThisBuildWritesOneSchemaAndReadsTwo(t *testing.T) {
 	}
 	// The builder owns the version as well as the digest. A caller that could
 	// state one could write the shape this build no longer maintains.
-	for _, schema := range []NoDataMemorySchema{0, NoDataMemorySchemaV1, MaxSupportedNoDataMemorySchema + 1} {
+	for _, schema := range []NoDataMemorySchema{
+		0, NoDataMemorySchemaV1, NoDataMemorySchemaV2, MaxSupportedNoDataMemorySchema + 1,
+	} {
 		other := built
 		other.SchemaVersion = schema
 		if err := other.ValidateDigest(); err == nil {
@@ -491,6 +494,14 @@ func TestNoDataGroupMemoryRemembersTimestampsAndNothingElse(t *testing.T) {
 		{"GroupKey", "string"},
 		{"LastSeen", "int64"},
 		{"FirstAbsent", "int64"},
+		// SuppressedAt was added for the limited tracking horizon
+		// (decision-018). It names a round, like the two above it, so a build
+		// that skipped rounds still reads the same answer out of it; a field
+		// counting rounds is what this test exists to stop, and this is not
+		// one. It is stored rather than recomputed from FirstAbsent against the
+		// current horizon, because the horizon is a setting and recomputing
+		// would reopen every stopped absence the moment somebody raised it.
+		{"SuppressedAt", "int64"},
 	}
 	recordType := reflect.TypeOf(NoDataGroupMemory{})
 	if recordType.NumField() != len(want) {

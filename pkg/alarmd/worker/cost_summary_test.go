@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package worker_test
 
 import (
@@ -38,8 +29,21 @@ func TestCostSummaryObservesRealWorkerWithoutChangingExecution(t *testing.T) {
 			disabled := newFixtureWithObserver(t, true, failure, observability.NopObserver{})
 			got, gotErr := enabled.coordinator.Execute(context.Background(), request)
 			want, wantErr := disabled.coordinator.Execute(context.Background(), request)
+			// The wall clock is the one thing two runs of the same Slot cannot
+			// be expected to agree on, so it is taken out of the comparison by
+			// name rather than by loosening it. Everything else -- including
+			// every budget the Slot used -- is a count of work and is still
+			// compared exactly: that is what makes this a statement about the
+			// observer and not about the machine's speed.
+			gotTiming, wantTiming := got.Timing, want.Timing
+			got.Timing, want.Timing = execution.SlotTiming{}, execution.SlotTiming{}
 			if (gotErr != nil) != (wantErr != nil) || !reflect.DeepEqual(got, want) || !reflect.DeepEqual(*enabled.trace, *disabled.trace) || !reflect.DeepEqual(enabled.ports.lastProgress, disabled.ports.lastProgress) || enabled.ports.eventCount != disabled.ports.eventCount || enabled.ports.stateApplyCalls != disabled.ports.stateApplyCalls {
 				t.Fatalf("summary changed execution: got=%+v/%v want=%+v/%v", got, gotErr, want, wantErr)
+			}
+			// And the exclusion does not get to hide the field going away: a
+			// Slot that ran reports a duration for having run.
+			if got.Completed && (gotTiming == execution.SlotTiming{} || wantTiming == execution.SlotTiming{}) {
+				t.Fatalf("a completed Slot reported no timing at all: with=%+v without=%+v", gotTiming, wantTiming)
 			}
 			if len(evaluations) != 1 || evaluations[0].EvaluationOwner != owner || !evaluations[0].DurationKnown || evaluations[0].EvaluationRecordsKnown != (failure != "evaluate") {
 				t.Fatalf("real consumer/time facts missing: %+v", evaluations)

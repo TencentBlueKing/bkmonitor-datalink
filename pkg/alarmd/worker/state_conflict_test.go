@@ -20,6 +20,17 @@ func TestStateConflictReasonSurvivesWrappers(t *testing.T) {
 		for _, test := range []struct{ status, want string }{
 			{string(execution.StateVersionConflict), contract.ReasonStateVersionConflict},
 			{string(execution.StateStaleVersion), contract.ReasonStateStaleVersion},
+			// The apply path's transient write failure. It went unnamed only
+			// because it is not one of the preflight's two statuses, and
+			// arrived on the completion line as internal_unknown - the word
+			// for a site that could not classify its own failure - which is
+			// not what a retryable IO error is.
+			{string(execution.StateApplyRetryable), contract.ReasonStateWriteRetryable},
+			// The store sets this status and this reason code together at
+			// every site that produces a CAS conflict, so reading it as
+			// anything else here is this layer disagreeing with the layer
+			// that decided.
+			{string(execution.StateApplyCASConflict), contract.ReasonStateWriteRetryable},
 		} {
 			t.Run(stage+"/"+test.status, func(t *testing.T) {
 				cause := &worker.StateConflictError{Stage: stage, Status: test.status}
@@ -33,9 +44,16 @@ func TestStateConflictReasonSurvivesWrappers(t *testing.T) {
 			})
 		}
 	}
+	// The rule that has not changed: a name comes from the status value, never
+	// from the error's text. An error that merely says the words is not the
+	// thing, or any wrapped message anywhere could claim the word.
+	//
+	// A status this build does not know stays here rather than borrowing a
+	// name, so a status added later is a decision somebody has to take rather
+	// than one that quietly never got named. Every status this build does know
+	// is in the table above.
 	for _, err := range []error{nil, errors.New("STATE_VERSION_CONFLICT"),
-		&worker.StateConflictError{Status: string(execution.StateApplyCASConflict)},
-		&worker.StateConflictError{Status: string(execution.StateApplyRetryable)}} {
+		&worker.StateConflictError{Status: "A_STATUS_THIS_BUILD_DOES_NOT_KNOW"}} {
 		if got, ok := worker.StateConflictReason(err); ok || got != "" {
 			t.Fatalf("unclassified error %v was named %q", err, got)
 		}

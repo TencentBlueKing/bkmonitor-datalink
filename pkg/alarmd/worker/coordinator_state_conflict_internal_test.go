@@ -41,7 +41,7 @@ func TestCoordinatorNamesStateRefusalsWithoutCommittingProgress(t *testing.T) {
 			}
 			result, err := fixture.coordinator.finalizePreparedWithGaps(context.Background(), fixture.request,
 				fixture.header, fixture.bindings, fixture.loaded, execution.GapLoadResult{}, fixture.evaluated,
-				nil, execution.QueryAvailabilityUnknown, seriesCensus{})
+				nil, execution.QueryAvailabilityUnknown, seriesCensus{}, nil)
 			if err == nil || result.Completed || fixture.base.progressCommits != 0 {
 				t.Fatalf("refusal advanced Progress: result=%+v commits=%d err=%v", result, fixture.base.progressCommits, err)
 			}

@@ -96,6 +96,7 @@ func frozenSeriesOf(
 		}
 		frozen = append(frozen, execution.FrozenSeriesState{
 			Identity: view.Identity, LastApplied: view.PersistedApplyVersion.EvaluationTime,
+			Representation: view.Representation,
 		})
 	}
 	if len(frozen) == 0 {
@@ -118,6 +119,7 @@ func (coordinator *SlotExecutionCoordinator) renewFrozenState(
 	ctx context.Context,
 	request execution.SlotExecutionRequest,
 	retention []execution.StateRetentionRequirement,
+	horizon int64,
 	frozen []execution.FrozenSeriesState,
 	facts *observability.FrozenStateRenewalFacts,
 ) {
@@ -139,13 +141,12 @@ func (coordinator *SlotExecutionCoordinator) renewFrozenState(
 			end = len(frozen)
 		}
 		chunk := frozen[start:end]
-		result, err := coordinator.ports.State.RenewFrozenRuntime(ctx, execution.FrozenStateRenewalRequest{
-			Contract: request.Contract, Retention: retention, Items: chunk, Now: now,
-		})
+		renewal := execution.FrozenStateRenewalRequest{
+			Contract: request.Contract, Retention: retention, Items: chunk, Now: now, HorizonSeconds: horizon,
+		}
+		result, err := coordinator.ports.State.RenewFrozenRuntime(ctx, renewal)
 		if err == nil {
-			err = execution.ValidateFrozenStateRenewal(execution.FrozenStateRenewalRequest{
-				Contract: request.Contract, Retention: retention, Items: chunk, Now: now,
-			}, result)
+			err = execution.ValidateFrozenStateRenewal(renewal, result)
 		}
 		if err != nil {
 			facts.Record(0, 0, 0, len(chunk))

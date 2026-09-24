@@ -85,8 +85,12 @@ func TestResolveAppliesTheProtocolFallbackRule(t *testing.T) {
 	} {
 		t.Run(arm.name, func(t *testing.T) {
 			got := Resolve(defaults, arm.platform, arm.deployment)
-			if !reflect.DeepEqual(got, arm.want) {
-				t.Fatalf("Resolve() = %+v, want %+v", got, arm.want)
+			// No arm of this table states a horizon, so each resolves the
+			// contract's default; the horizon's own rule is tested apart.
+			want := arm.want
+			want.NoDataTrackingHorizonSeconds, want.NoDataTrackingHorizonSource = DefaultNoDataTrackingHorizonSeconds, HorizonSourceDefault
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("Resolve() = %+v, want %+v", got, want)
 			}
 		})
 	}

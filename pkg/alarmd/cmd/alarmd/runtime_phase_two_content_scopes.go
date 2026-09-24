@@ -21,8 +21,14 @@ import (
 // name each Query Group's content: the activation that says which
 // publication the fleet executes, and that publication's manifest.
 type contentScopeSource interface {
-	LoadActivation(context.Context) (controlplane.ActivationState, error)
+	LoadActivationHead(context.Context) (controlplane.ActivationState, error)
 	LoadCatalogManifest(context.Context, execution.SnapshotRevision) (controlplane.CatalogManifest, error)
+	// ActivationBlocked is the Query Groups a cutover held back; their scope
+	// is what their open Segment names, not what the manifest names.
+	ActivationBlocked(context.Context) ([]controlplane.BlockedQueryGroup, error)
+	// ApplyCutoverProgress is what each Query Group runs while a cutover is
+	// in progress; see viewSource.
+	ApplyCutoverProgress(context.Context, controlplane.ActivationState, map[execution.QueryGroupIdentity]controlplane.ContentEntry) (map[execution.QueryGroupIdentity]controlplane.ContentEntry, error)
 }
 
 // currentContentScopes reads the content each Query Group is published with
@@ -35,9 +41,22 @@ func currentContentScopes(source contentScopeSource) func(context.Context) (map[
 		if source == nil {
 			return nil, errors.New("phase-two content scopes: catalog repository is required")
 		}
-		state, err := source.LoadActivation(ctx)
+		state, err := source.LoadActivationHead(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("phase-two content scopes: read activation: %w", err)
+		}
+		if state.CutoverProgress != nil {
+			// The manifest names content the Query Groups past the cursor are
+			// not running yet; each open Segment names what it runs.
+			running, err := source.ApplyCutoverProgress(ctx, state, nil)
+			if err != nil {
+				return nil, fmt.Errorf("phase-two content scopes: read the content a cutover in progress runs: %w", err)
+			}
+			digests := make(map[execution.QueryGroupIdentity]string, len(running))
+			for identity, entry := range running {
+				digests[identity] = string(entry.Digest)
+			}
+			return digests, nil
 		}
 		manifest, err := source.LoadCatalogManifest(ctx, state.Current.SnapshotRevision)
 		if err != nil {
@@ -49,6 +68,20 @@ func currentContentScopes(source contentScopeSource) func(context.Context) (map[
 				continue
 			}
 			digests[entry.QueryGroup] = string(entry.ObjectDigest)
+		}
+		blocked, err := source.ActivationBlocked(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("phase-two content scopes: read held-back Query Groups: %w", err)
+		}
+		for _, group := range blocked {
+			if _, present := digests[group.QueryGroup]; !present {
+				continue
+			}
+			if group.OpenDigest == "" {
+				delete(digests, group.QueryGroup)
+				continue
+			}
+			digests[group.QueryGroup] = string(group.OpenDigest)
 		}
 		return digests, nil
 	}

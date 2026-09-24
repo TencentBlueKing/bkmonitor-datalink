@@ -1,15 +1,76 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package worker
 
-import "reflect"
+import (
+	"reflect"
+	"unsafe"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+)
+
+// retainedStateResultBytes is what a Slot's pending state results cost it,
+// counting the memory this round allocated rather than every byte reachable
+// from them.
+//
+// The generic sizer below is wrong for exactly one field, and that field is
+// the largest one in the Slot. A mutation's Points is the whole retained
+// window: appendHistoryPoint rebuilds the window on every record, so the
+// point array and the fact arrays inside it are allocated here. The strings
+// are not. RecordID is copied from the loaded history as a header, and
+// DetectFingerprint and Result are Plan level constants that every point of
+// every series shares one backing array for. Charging their contents once per
+// point charges the Slot for bytes nothing allocated, and the overcharge grows
+// with retention times series while the memory does not.
+//
+// Measured on the shape that drove this: a two-level Plan retaining 1469
+// points was charged 989,739 bytes per mutation, of which 564 KiB was string
+// content shared with the loaded history. Two hundred mutations of that put a
+// Slot near a pool limit it was nowhere close to, and the refusal lands on
+// RESOURCE_HARD_STOP - which is to say the accounting stopped detection on
+// memory that was never held.
+//
+// What remains is deliberately still conservative: every point's fact array is
+// counted, though only the newest point's was allocated this round - the older
+// ones are headers into the loaded history. Distinguishing them here would
+// mean knowing which point is new, which this layer does not, and a budget is
+// the wrong place to guess low.
+func retainedStateResultBytes(results []execution.StateEvaluation) uint64 {
+	total := uint64(cap(results)) * uint64(unsafe.Sizeof(execution.StateEvaluation{}))
+	for index := range results {
+		total += retainedStateMutationBytes(results[index].Mutation)
+		total += retainedObjectBytes(results[index].Events)
+		total += retainedObjectBytes(results[index].WithoutMessage)
+	}
+	return total
+}
+
+func retainedStateMutationBytes(mutation execution.StateMutation) uint64 {
+	// Every field but the history, counted exactly as it always was. Blanking
+	// the one field rather than listing the others keeps this from silently
+	// dropping a field somebody adds later.
+	withoutHistory := mutation
+	withoutHistory.Points = nil
+	// BaseHistory is blanked and never charged, which is the one place this
+	// accounting deliberately counts zero for something that is reachable.
+	//
+	// It is the history the Slot loaded, held by the StatePreflightResult for
+	// as long as the Slot runs - the result contract reads it after every
+	// series is evaluated, and the apply needs it. The mutation points at that
+	// slice; referencing it allocates nothing and frees nothing sooner. Before
+	// this field existed the mutation carried a rebuilt copy of the same window
+	// and that copy was charged, correctly, because it was a second array.
+	//
+	// So the charge dropping is the copy going away, not a window escaping the
+	// budget. What has to stay true for that to hold is that nobody makes
+	// BaseHistory a slice of its own; two tests pin the pair - a long base
+	// costs no more than an empty one, and the round's own points still cost.
+	withoutHistory.BaseHistory = nil
+	total := retainedObjectBytes(withoutHistory)
+	total += uint64(cap(mutation.Points)) * uint64(unsafe.Sizeof(execution.StateHistoryPoint{}))
+	for index := range mutation.Points {
+		total += uint64(cap(mutation.Points[index].Levels)) * uint64(unsafe.Sizeof(execution.StateLevelFact{}))
+	}
+	return total
+}
 
 // retainedObjectBytes accounts for the acyclic State/Gap/Event DTOs, without
 // serializing and copying their payloads. It includes slice capacity and map

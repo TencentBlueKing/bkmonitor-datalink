@@ -79,7 +79,7 @@ func TestDispatcherFanoutComesFromTheDerivedLimit(t *testing.T) {
 	}
 
 	done := make(chan error, 1)
-	go func() { done <- bundle.runScheduledOnce(context.Background()) }()
+	go func() { done <- runScheduledOnceSettled(context.Background(), bundle) }()
 
 	select {
 	case <-observed:

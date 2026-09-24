@@ -27,6 +27,16 @@ import (
 //go:embed index.html
 var page []byte
 
+// The second page: strategies, one line each, in the product vocabulary the
+// server sends. Served beside the first at /v2 until the first is retired;
+// both read the same /api, and neither decides anything the server did not.
+//
+//go:embed v2.html
+var pageV2 []byte
+
+//go:embed cli.html
+var pageCLI []byte
+
 // Modified is the timestamp served for caching. Build time is not available
 // here, so a fixed instant is used: the page changes only when the binary does,
 // and the binary's own version is what an operator checks.
@@ -40,7 +50,15 @@ var modified = time.Unix(0, 0)
 // JSON and reports as a decode error rather than as a 404.
 func Handler() http.Handler {
 	return http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
-		if path := strings.TrimSuffix(request.URL.Path, "/"); path != "" && path != "/index.html" {
+		body, name := page, "index.html"
+		switch path := strings.TrimSuffix(request.URL.Path, "/"); path {
+		case "", "/index.html":
+		case "/v2", "/v2.html":
+			body, name = pageV2, "v2.html"
+		case "/cli", "/cli.html":
+			body, name = pageCLI, "cli.html"
+			response.Header().Set("Cache-Control", "no-store")
+		default:
 			http.NotFound(response, request)
 			return
 		}
@@ -53,6 +71,6 @@ func Handler() http.Handler {
 		// No frame-busting header: being embedded by a host is the delivery
 		// model, and a host that must not be framed enforces that on its own
 		// route rather than here.
-		http.ServeContent(response, request, "index.html", modified, strings.NewReader(string(page)))
+		http.ServeContent(response, request, name, modified, strings.NewReader(string(body)))
 	})
 }

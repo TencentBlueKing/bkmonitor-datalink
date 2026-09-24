@@ -136,7 +136,7 @@ func TestTheContentScopeTakesNoPartInProjectionIdentity(t *testing.T) {
 			SnapshotRevision: "snapshot-1", QueryRevision: "query-1", ScheduleRevision: "schedule-1", ScheduleSegmentStart: 60,
 			DuePlanSetDigest: "due-1",
 		},
-		DuePlanTargets:                 execution.FrozenDuePlanTargets{DuePlanSetDigest: "due-1", Plans: []execution.PlanIdentity{planIdentity("1")}},
+		DuePlanTargets:                 execution.FrozenDuePlanTargets{DuePlanSetDigest: "due-1", Plans: []execution.PlanKey{{PlanIdentity: planIdentity("1")}}},
 		EarliestQueryDeadlineUnixMilli: 61_000, KeepUntilUnixMilli: 700_000,
 	}
 	declared := base

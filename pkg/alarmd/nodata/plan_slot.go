@@ -24,8 +24,12 @@ type PlanSlotInput struct {
 	// worker holds the compiled form rather than the frozen one, and passing a
 	// half-filled Plan across so this could read two fields off it would put an
 	// object in the code that looks like a Plan and is not one.
-	NoData           *contract.NoDataConfigV1
-	Scope            *contract.TargetScopeV2
+	NoData *contract.NoDataConfigV1
+	Scope  *contract.TargetScopeV2
+	// Plan is the target's second frozen form, and TargetResolution what the
+	// worker resolved it to this Slot; both nil for a Plan without one.
+	Plan             *contract.TargetPlanV1
+	TargetResolution *TargetResolution
 	Identity         execution.PlanNoDataIdentity
 	Snapshot         execution.NoDataMemorySnapshot
 	ApplyVersion     execution.ApplyVersion
@@ -37,6 +41,19 @@ type PlanSlotInput struct {
 	KnownHosts       map[string]struct{}
 	HostsResolved    bool
 	OutOfBusiness    map[string]struct{}
+	// TrackingHorizonSeconds is the limited tracking horizon in force for this
+	// Plan, in seconds, zero meaning the deployment configured none and
+	// tracking is unlimited.
+	//
+	// It arrives as its own field rather than being read off NoData here
+	// because the horizon is resolved from several layers - deployment default
+	// and the item's own override - and that resolution belongs in exactly one
+	// place. Compilation is that place: it settles the layers once and freezes
+	// the effective number into the Plan, and the caller forwards it. Reading
+	// the field off the Plan here as well would make this a second place that
+	// decides what the effective horizon is, and the two would disagree the
+	// moment either changed.
+	TrackingHorizonSeconds int64
 }
 
 // PlanSlotResult is everything the worker needs from one Plan's no-data round.
@@ -77,15 +94,21 @@ func EvaluatePlanSlot(input PlanSlotInput) (PlanSlotResult, error) {
 
 	memory := loadedMemory(input.Snapshot)
 	result, outcome, err := EvaluateSlot(SlotInput{
-		Plan:           &contract.EvaluationPlanV2{NoData: input.NoData, TargetScope: input.Scope},
-		EvaluationTime: input.EvaluationTime,
-		PeriodSeconds:  input.PeriodSeconds,
-		Completeness:   input.Completeness,
-		Series:         input.Series,
-		KnownHosts:     input.KnownHosts,
-		HostsResolved:  input.HostsResolved,
-		OutOfBusiness:  input.OutOfBusiness,
-		Memory:         memory,
+		Plan:             &contract.EvaluationPlanV2{NoData: input.NoData, TargetScope: input.Scope, TargetPlan: input.Plan},
+		EvaluationTime:   input.EvaluationTime,
+		PeriodSeconds:    input.PeriodSeconds,
+		Completeness:     input.Completeness,
+		Series:           input.Series,
+		KnownHosts:       input.KnownHosts,
+		HostsResolved:    input.HostsResolved,
+		OutOfBusiness:    input.OutOfBusiness,
+		TargetResolution: input.TargetResolution,
+		Memory:           memory,
+		// The Plan-level fact comes out of the record, never out of the groups:
+		// the round it describes is one where there are no groups left to
+		// derive it from.
+		TrackingHorizonSeconds: input.TrackingHorizonSeconds,
+		TrackingExhaustedAt:    input.Snapshot.TrackingExhaustedAt,
 	})
 	if err != nil {
 		return PlanSlotResult{}, err
@@ -108,9 +131,10 @@ func EvaluatePlanSlot(input PlanSlotInput) (PlanSlotResult, error) {
 	})
 
 	groups := storedGroups(result.Memory)
-	presentAsOf := presentAsOf(groups, input.Snapshot.PresentAsOf, input.EvaluationTime)
+	presentAsOf := presentAsOf(groups, input.Snapshot.PresentAsOf, input.EvaluationTime, result.WholeItemPresent)
 	if sameStoredGroups(groups, input.Snapshot.Groups) && input.Snapshot.RosterVersion == result.Roster.Version &&
-		presentAsOf == input.Snapshot.PresentAsOf {
+		presentAsOf == input.Snapshot.PresentAsOf &&
+		result.TrackingExhaustedAt == input.Snapshot.TrackingExhaustedAt {
 		// Nothing moved. Sending the mutation anyway would be correct and
 		// idempotent - the digest would match and the store would say so - but
 		// it costs a round trip per Plan per Slot for a write that changes
@@ -120,6 +144,14 @@ func EvaluatePlanSlot(input PlanSlotInput) (PlanSlotResult, error) {
 		// the memory: it is the last-seen time of every group stored without
 		// an absence, so a round where it advanced changed what those groups
 		// say even though their own entries are unchanged.
+		//
+		// The tracking fact is part of it for the same reason and one more: it
+		// is the only part of the memory that can move while the groups do not.
+		// The round that exhausts a roster empties the memory, so the groups
+		// move with it - but the round that clears the fact need not, and a
+		// comparison of three that left it out would read "nothing moved" on a
+		// round whose whole content was the fact, drop the write, and leave the
+		// store stating an exhaustion the evaluation had already ended.
 		return slot, nil
 	}
 	mutation, err := execution.BuildPlanNoDataMutation(execution.PlanNoDataMemoryUpdate{
@@ -138,6 +170,11 @@ func EvaluatePlanSlot(input PlanSlotInput) (PlanSlotResult, error) {
 		Memory:                 groups,
 		Loaded:                 input.Snapshot.Groups,
 		LoadedPresentAsOf:      input.Snapshot.PresentAsOf,
+		// Both halves, for the same reason PresentAsOf has both: the delta has
+		// to know whether the fact moved, and the contract's two invariants are
+		// stated against what was loaded rather than against this round alone.
+		TrackingExhaustedAt:       result.TrackingExhaustedAt,
+		LoadedTrackingExhaustedAt: input.Snapshot.TrackingExhaustedAt,
 	})
 	if err != nil {
 		return PlanSlotResult{}, err
@@ -155,14 +192,26 @@ func EvaluatePlanSlot(input PlanSlotInput) (PlanSlotResult, error) {
 // have to decide what "had data" means for a series that arrived for a group
 // the roster had already dropped, and the memory has already decided that.
 //
+// The one group the memory cannot answer for is the whole-item group. It is
+// never written - it is not a series, and a LastSeen would carry it into a
+// history roster as one - so a round whose only data arrived under it produces
+// an empty memory and would read as a round with no data at all. For that
+// group the round's own present count is the only witness there is, and it has
+// to be used: the contract layer refuses a memory that cleared the exhaustion
+// mark without the present-as-of advancing, so a Plan exhausted as history
+// whose data comes back under the whole-item group could never write again.
+//
 // With nothing seen, the stored value is carried forward. It must never go
 // backwards: it is the last-seen time of every group stored as present, so
 // moving it back would move those groups' clocks back with it.
-func presentAsOf(groups []execution.NoDataGroupMemory, stored int64, evaluationTime int64) int64 {
+func presentAsOf(groups []execution.NoDataGroupMemory, stored int64, evaluationTime int64, wholeItemPresent bool) int64 {
 	for _, group := range groups {
 		if group.FirstAbsent == 0 && group.LastSeen == evaluationTime {
 			return evaluationTime
 		}
+	}
+	if wholeItemPresent {
+		return evaluationTime
 	}
 	return stored
 }
@@ -173,7 +222,9 @@ func presentAsOf(groups []execution.NoDataGroupMemory, stored int64, evaluationT
 func loadedMemory(snapshot execution.NoDataMemorySnapshot) map[string]GroupMemory {
 	memory := make(map[string]GroupMemory, len(snapshot.Groups))
 	for _, group := range snapshot.Groups {
-		memory[group.GroupKey] = GroupMemory{LastSeen: group.LastSeen, FirstAbsent: group.FirstAbsent}
+		memory[group.GroupKey] = GroupMemory{
+			LastSeen: group.LastSeen, FirstAbsent: group.FirstAbsent, SuppressedAt: group.SuppressedAt,
+		}
 	}
 	return memory
 }
@@ -183,11 +234,12 @@ func loadedMemory(snapshot execution.NoDataMemorySnapshot) map[string]GroupMemor
 func storedGroups(memory map[string]GroupMemory) []execution.NoDataGroupMemory {
 	groups := make([]execution.NoDataGroupMemory, 0, len(memory))
 	for key, entry := range memory {
-		if entry.LastSeen == 0 && entry.FirstAbsent == 0 {
+		if entry.LastSeen == 0 && entry.FirstAbsent == 0 && entry.SuppressedAt == 0 {
 			continue
 		}
 		groups = append(groups, execution.NoDataGroupMemory{
 			GroupKey: key, LastSeen: entry.LastSeen, FirstAbsent: entry.FirstAbsent,
+			SuppressedAt: entry.SuppressedAt,
 		})
 	}
 	sort.Slice(groups, func(left, right int) bool { return groups[left].GroupKey < groups[right].GroupKey })

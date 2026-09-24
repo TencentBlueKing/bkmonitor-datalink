@@ -32,26 +32,28 @@ func gatherFamily(t *testing.T, r *Recorder, name string) []*dto.Metric {
 	return nil
 }
 
-// The two causes a RECOVERY envelope is held for exist at zero before anything
-// is held, so a zero can be read as "never held" rather than "never exported";
-// a held record adds under its cause, and a record sent past a Level without
-// recovery adds to its own counter and not to a held cause.
-func TestRecoveryGateCountersStartAtZeroAndAddByCause(t *testing.T) {
-	const held = "bkmonitor_alarmd_trigger_recovery_held_total"
-	const passed = "bkmonitor_alarmd_trigger_recovery_past_level_without_recovery_total"
+// The three states a RECOVERY can be decided beside exist at zero before
+// anything is observed, so a zero reads as "never happened" rather than "never
+// exported", and each adds under its own label. The families this replaced,
+// held and past-without-recovery, are gone: the gate no longer holds on
+// another Level, and a family that could only read zero would be misread.
+func TestRecoveryBesideLevelCounterStartsAtZeroAndAddsByState(t *testing.T) {
+	const beside = "bkmonitor_alarmd_trigger_recovery_beside_level_total"
 	r := NewRecorder(BuildInfo{})
 
-	initial := gatherFamily(t, r, held)
-	if len(initial) != 2 {
-		t.Fatalf("held causes before any observation = %d series, want both created at zero", len(initial))
-	}
-	for _, m := range initial {
-		if m.GetCounter().GetValue() != 0 || len(m.Label) != 1 || m.Label[0].GetName() != "cause" {
-			t.Fatalf("held cause before any observation = %v, want cause=... 0", m)
+	for _, gone := range []string{"bkmonitor_alarmd_trigger_recovery_held_total", "bkmonitor_alarmd_trigger_recovery_past_level_without_recovery_total"} {
+		if got := gatherFamily(t, r, gone); got != nil {
+			t.Fatalf("%s is still exported: %v", gone, got)
 		}
 	}
-	if got := gatherFamily(t, r, passed); len(got) != 1 || got[0].GetCounter().GetValue() != 0 {
-		t.Fatalf("passed counter before any observation = %v, want one series at zero", got)
+	initial := gatherFamily(t, r, beside)
+	if len(initial) != 3 {
+		t.Fatalf("states before any observation = %d series, want all three created at zero", len(initial))
+	}
+	for _, m := range initial {
+		if m.GetCounter().GetValue() != 0 || len(m.Label) != 1 || m.Label[0].GetName() != "beside" {
+			t.Fatalf("state before any observation = %v, want beside=... 0", m)
+		}
 	}
 
 	r.Observe(context.Background(), observability.Observation{
@@ -63,14 +65,17 @@ func TestRecoveryGateCountersStartAtZeroAndAddByCause(t *testing.T) {
 			{Cause: observability.RecoveryGateCause("qg-secret"), Records: 9},
 		},
 	})
-	byCause := map[string]float64{}
-	for _, m := range gatherFamily(t, r, held) {
-		byCause[m.Label[0].GetValue()] = m.GetCounter().GetValue()
+	byState := map[string]float64{}
+	for _, m := range gatherFamily(t, r, beside) {
+		byState[m.Label[0].GetValue()] = m.GetCounter().GetValue()
 	}
-	if len(byCause) != 2 || byCause["level_unavailable"] != 2 || byCause["level_recovering"] != 1 {
-		t.Fatalf("held by cause = %v, want level_unavailable 2 and level_recovering 1 and nothing else", byCause)
+	want := map[string]float64{"level_unavailable": 2, "level_recovering": 1, "level_without_recovery": 3}
+	if len(byState) != len(want) {
+		t.Fatalf("beside by state = %v, want %v and nothing else", byState, want)
 	}
-	if got := gatherFamily(t, r, passed); len(got) != 1 || got[0].GetCounter().GetValue() != 3 {
-		t.Fatalf("passed counter = %v, want 3", got)
+	for state, value := range want {
+		if byState[state] != value {
+			t.Fatalf("beside by state = %v, want %v", byState, want)
+		}
 	}
 }

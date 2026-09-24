@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
@@ -161,6 +162,112 @@ func TestRunnerBacksOffQGLocalSourceFailureAndAutomaticallyRechecks(t *testing.T
 	}
 }
 
+// A source refusing because the executable view does not yet allow the
+// Query Group (decision-016 batch 4b) ends the round by name: retrying,
+// VIEW_NOT_EXECUTABLE, on the blocked source's backoff, executing nothing.
+// Once the view allows it the next round runs the Slot as normal.
+func TestRunnerNamesARoundTheViewDoesNotAllowAndComesBack(t *testing.T) {
+	clock := newMutableClock(time.Unix(200, 0))
+	fence := execution.OwnerFence{QueryGroup: "query-group-1", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "token-1"}
+	source := &fakeSlotSource{err: &ViewNotExecutableError{Reason: "timeline_stale"}}
+	flights, err := NewFlightCoordinatorWithRecovery(testRecoveryLimits(), clock.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := &blockingExecutor{}
+	runner, err := NewRunner("query-group-1", &fakeSession{fence: fence}, source, executor, flights, clock.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, attempted, err := runner.RunOne(context.Background())
+	if err != nil || !attempted || result.Completed || result.Result != observability.ResultRetrying ||
+		result.ReasonCode != execution.ReasonCode(contract.ReasonViewNotExecutable) || !result.SourceRetry {
+		t.Fatalf("RunOne(view not executable) = (%+v, %t, %v), want a retrying %s", result, attempted, err, contract.ReasonViewNotExecutable)
+	}
+	if executor.calls != 0 {
+		t.Fatalf("executor calls = %d, want none while the view does not allow the Query Group", executor.calls)
+	}
+	if bound := runner.DueBound(); !bound.Deferred || bound.NotDueUntilUnix <= clock.Now().Unix() {
+		t.Fatalf("due bound after the refusal = %+v, want deferred to the backoff", bound)
+	}
+	if _, attempted, err = runner.RunOne(context.Background()); err != nil || attempted || source.calls != 1 {
+		t.Fatalf("RunOne(within backoff) attempted=%t calls=%d err=%v, want no second ask inside the backoff", attempted, source.calls, err)
+	}
+	clock.Advance(testRecoveryLimits().RetryMinDelay)
+	source.err = nil
+	source.slot = frozenSlot("query-group-1")
+	var operation execution.Operation
+	if _, attempted, denied, runErr := runner.RunOneAdmitted(context.Background(), func(actual execution.Operation) (func(), bool) {
+		operation = actual
+		return func() {}, true
+	}); runErr != nil || denied || !attempted || source.calls != 2 {
+		t.Fatalf("RunOne(view allows) attempted=%t denied=%t calls=%d err=%v", attempted, denied, source.calls, runErr)
+	}
+	if operation != execution.OperationNormal {
+		t.Fatalf("operation once the view allows = %s, want %s", operation, execution.OperationNormal)
+	}
+}
+
+// The same refusal from the executor - the lease moved between the source's
+// reads and execution - ends the round by the same name, on the source's
+// backoff, without counting an attempt of the Slot; once the view allows it
+// the Slot runs as attempt one.
+func TestRunnerNamesAnExecutionTheViewDoesNotAllowWithoutCountingAnAttempt(t *testing.T) {
+	clock := newMutableClock(time.Unix(200, 0))
+	slot := frozenSlot("query-group-1")
+	source := &fakeSlotSource{slot: slot}
+	executor := &refusingExecutor{err: &ViewNotExecutableError{Reason: "scope_mismatch"}}
+	flights, err := NewFlightCoordinatorWithRecovery(testRecoveryLimits(), clock.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var outcomes []string
+	flights.observer = observability.ObserverFunc(func(_ context.Context, o observability.Observation) {
+		if o.Stage == observability.StageRunnerReturned {
+			outcomes = append(outcomes, o.RunOutcome)
+		}
+	})
+	runner, err := NewRunner("query-group-1", &fakeSession{fence: slot.Dispatch.OwnerFence}, source, executor, flights, clock.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, attempted, err := runner.RunOne(context.Background())
+	if err != nil || !attempted || result.Completed || result.Result != observability.ResultRetrying ||
+		result.ReasonCode != execution.ReasonCode(contract.ReasonViewNotExecutable) || !result.SourceRetry {
+		t.Fatalf("RunOne(executor refuses) = (%+v, %t, %v), want a retrying %s", result, attempted, err, contract.ReasonViewNotExecutable)
+	}
+	if executor.calls != 1 || runner.attempt != nil {
+		t.Fatalf("executor calls = %d, attempt = %+v: a round the view did not allow must not count as a failed attempt of the Slot", executor.calls, runner.attempt)
+	}
+	if len(outcomes) != 1 || outcomes[0] != "view_not_executable" {
+		t.Fatalf("runner outcomes = %v, want view_not_executable", outcomes)
+	}
+	if _, attempted, err = runner.RunOne(context.Background()); err != nil || attempted || executor.calls != 1 {
+		t.Fatalf("RunOne(within backoff) attempted=%t calls=%d err=%v, want no second execution inside the backoff", attempted, executor.calls, err)
+	}
+	clock.Advance(testRecoveryLimits().RetryMinDelay)
+	executor.err = nil
+	if _, attempted, err = runner.RunOne(context.Background()); err != nil || !attempted || executor.calls != 2 || executor.lastAttempt != 1 {
+		t.Fatalf("RunOne(view allows) attempted=%t calls=%d attempt=%d err=%v, want the Slot run as attempt one", attempted, executor.calls, executor.lastAttempt, err)
+	}
+}
+
+// refusingExecutor returns its error until it is cleared, then completes.
+type refusingExecutor struct {
+	err         error
+	calls       int
+	lastAttempt uint32
+}
+
+func (executor *refusingExecutor) Execute(_ context.Context, request execution.SlotExecutionRequest) (execution.SlotExecutionResult, error) {
+	executor.calls++
+	executor.lastAttempt = request.AttemptNo
+	if executor.err != nil {
+		return execution.SlotExecutionResult{}, executor.err
+	}
+	return execution.SlotExecutionResult{Completed: true, CompletionKind: execution.CompletionFull, Result: observability.ResultSuccess}, nil
+}
+
 func TestRunnerNextReadyAtUsesLatestSourceOrExecutionBackoff(t *testing.T) {
 	base := time.Unix(200, 0)
 	tests := []struct {
@@ -287,7 +394,7 @@ func frozenSlot(queryGroup execution.QueryGroupIdentity) FrozenSlot {
 		AssignmentGeneration: 1,
 	}, DuePlanTargets: execution.FrozenDuePlanTargets{
 		DuePlanSetDigest: contract.DuePlanSetDigest,
-		Plans:            []execution.PlanIdentity{{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}},
+		Plans:            []execution.PlanKey{{PlanIdentity: execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}}},
 	}, EarliestQueryDeadlineUnixMilli: 101_000, RecoveryUntilUnixMilli: 701_000,
 		KeepUntilUnixMilli: 777_000, ExpectedNextSlot: contract.Slot.EvaluationTime}
 }

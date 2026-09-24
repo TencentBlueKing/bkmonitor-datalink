@@ -11,6 +11,7 @@ package main
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -29,11 +30,13 @@ import (
 // says so beside the address, and reads that connection's health for the
 // role, because a role with no client of its own has no health of its own.
 type endpointSharing struct {
-	runtimeIsSource     bool
-	cmdbSharedWith      string
-	dynamicSharedWith   string
-	dynamicConfigured   bool
-	compatOutputPresent bool
+	runtimeIsSource       bool
+	linkdDedicated        bool
+	cmdbSharedWith        string
+	dynamicSharedWith     string
+	targetGroupSharedWith string
+	dynamicConfigured     bool
+	compatOutputPresent   bool
 }
 
 // redisClientForRole is the hook client name whose health a role reads.
@@ -56,6 +59,16 @@ func (sharing endpointSharing) redisClientForRole(role string) string {
 			return sharing.redisClientForRole(sharing.dynamicSharedWith)
 		}
 		return "dynamic_config"
+	case fleet.EndpointTargetGroup:
+		if sharing.targetGroupSharedWith != "" {
+			return sharing.redisClientForRole(sharing.targetGroupSharedWith)
+		}
+		return "target_group"
+	case fleet.EndpointOpenAlertSet:
+		if sharing.linkdDedicated {
+			return "linkd"
+		}
+		return sharing.redisClientForRole(fleet.EndpointStateRedis)
 	case fleet.EndpointCompatOutput:
 		return "legacy_output"
 	}
@@ -92,6 +105,14 @@ func resolveEndpoints(cfg config.Config, sharing endpointSharing) []fleet.Endpoi
 		endpoints[0].SharedWith = fleet.EndpointStrategyCache
 	}
 	endpoints[2].SharedWith = sharing.cmdbSharedWith
+	if groups, configured := cfg.TargetGroupRedis(); configured {
+		prefix, _ := cfg.DynamicGroupKeyPrefix()
+		entry := redisEndpoint(fleet.EndpointTargetGroup, groups, prefix)
+		entry.SharedWith = sharing.targetGroupSharedWith
+		endpoints = append(endpoints, entry)
+	} else {
+		endpoints = append(endpoints, fleet.Endpoint{Role: fleet.EndpointTargetGroup, Kind: "redis"})
+	}
 	if dynamic, configured := cfg.DynamicConfigRedis(); configured {
 		entry := redisEndpoint(fleet.EndpointDynamicConfig, dynamic, cfg.PhaseTwo.PlatformSettings.RedisKeyPrefix)
 		entry.SharedWith = sharing.dynamicSharedWith
@@ -99,7 +120,15 @@ func resolveEndpoints(cfg config.Config, sharing endpointSharing) []fleet.Endpoi
 	} else {
 		endpoints = append(endpoints, fleet.Endpoint{Role: fleet.EndpointDynamicConfig, Kind: "redis"})
 	}
-	endpoints = append(endpoints,
+	linkdConnection := cfg.RuntimeStoreRedis()
+	if cfg.PhaseTwo.Linkd.Connection != nil {
+		linkdConnection = *cfg.PhaseTwo.Linkd.Connection
+	}
+	openAlerts := redisEndpoint(fleet.EndpointOpenAlertSet, linkdConnection, cfg.PhaseTwo.Linkd.Prefix())
+	if reflect.DeepEqual(linkdConnection, cfg.RuntimeStoreRedis()) {
+		openAlerts.SharedWith = fleet.EndpointStateRedis
+	}
+	endpoints = append(endpoints, openAlerts, linkdConsoleEndpoint(cfg),
 		fleet.Endpoint{Role: fleet.EndpointQueryBackend, Kind: "http", Address: cfg.PhaseTwo.Access.UQEndpoint,
 			Configured: cfg.PhaseTwo.Access.UQEndpoint != ""},
 		outputKafkaEndpoint(cfg),
@@ -121,8 +150,10 @@ func resolveEndpoints(cfg config.Config, sharing endpointSharing) []fleet.Endpoi
 func endpointFactsSource(
 	cfg config.Config, sharing endpointSharing, recorder *metric.Recorder,
 	cmdb *cmdbcache.Store, settings *platformsettings.Cache,
-	source func() *fleet.SourceFacts, outputSink func() outputSinkState, now func() time.Time,
+	source func() *fleet.SourceFacts, outputSink func() outputSinkState, openAlerts func() *fleet.OpenAlertSetFacts,
+	now func() time.Time,
 ) func() []fleet.Endpoint {
+	sharing.linkdDedicated = cfg.PhaseTwo.Linkd.Connection != nil && !reflect.DeepEqual(*cfg.PhaseTwo.Linkd.Connection, cfg.RuntimeStoreRedis())
 	static := resolveEndpoints(cfg, sharing)
 	return func() []fleet.Endpoint {
 		at := now()
@@ -216,6 +247,28 @@ func endpointFactsSource(
 						writer.AgeSeconds = &age
 					}
 					entry.Writer = writer
+				}
+			case fleet.EndpointOpenAlertSet:
+				if openAlerts != nil {
+					if facts := openAlerts(); facts != nil {
+						// The short form every reading role has: present once
+						// a publication was read, the members as the count,
+						// the publisher's own heartbeat as the age, the mode
+						// -- or why it is unavailable -- as the state. The
+						// full account rides beside it.
+						writer := &fleet.WriterEvidence{Present: facts.AuthoritativeAgeSeconds != nil, Count: facts.Members,
+							AgeSeconds: facts.HeartbeatAgeSeconds, State: facts.Mode}
+						if facts.UnavailableReason != "" {
+							writer.State = facts.Mode + ":" + facts.UnavailableReason
+						}
+						entry.Writer = writer
+						// A successful read is not evidence of a recent writer.
+						// The index protocol has no publisher heartbeat.
+						if facts.IndexProtocol {
+							entry.Writer = nil
+						}
+						entry.OpenAlertSet = facts
+					}
 				}
 			}
 		}

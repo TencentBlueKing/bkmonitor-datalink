@@ -448,10 +448,10 @@ type g3aActivePlanReader struct{}
 func (g3aActivePlanReader) IsPlanActive(
 	_ context.Context,
 	contractRef execution.FrozenExecutionContractRef,
-	plan execution.PlanIdentity,
+	plan execution.PlanKey,
 	epoch execution.StateApplyEpoch,
 ) (bool, error) {
-	return contractRef == frozenContract() && plan == planIdentity() && epoch == 1, nil
+	return contractRef == frozenContract() && plan.PlanIdentity == planIdentity() && plan.ShardIndex == 0 && epoch == 1, nil
 }
 
 type g3aFixedSlotResolver struct{}

@@ -30,7 +30,8 @@ func TestFrozenContractKeepsScheduleAsProvenance(t *testing.T) {
 
 func TestScheduleProgressUsesQueryGroupIdentity(t *testing.T) {
 	fields := fieldNames(reflect.TypeOf(execution.ScheduleProgress{}))
-	want := []string{"Identity", "NextSlot", "LastFullSlot", "LastCompletionKind", "CurrentOrRecentGap", "UnfinishedSlot", "UnfinishedRange", "LastCompletion"}
+	want := []string{"Identity", "NextSlot", "LastFullSlot", "LastCompletionKind", "CurrentOrRecentGap", "UnfinishedSlot", "UnfinishedRange", "LastCompletion",
+		"LastDataSlot", "EmptyRunSinceSlot"}
 	if !reflect.DeepEqual(fields, want) {
 		t.Fatalf("ScheduleProgress fields = %v, want %v", fields, want)
 	}
@@ -57,7 +58,7 @@ func TestSlotExecutionRequestCarriesValidatedNonIdentityFrozenExecutionFacts(t *
 		Contract: contractRef,
 		DuePlanTargets: execution.FrozenDuePlanTargets{
 			DuePlanSetDigest: contractRef.DuePlanSetDigest,
-			Plans:            []execution.PlanIdentity{{TenantID: "tenant-a", BusinessID: "2", StrategyID: "1001"}},
+			Plans:            []execution.PlanKey{{PlanIdentity: execution.PlanIdentity{TenantID: "tenant-a", BusinessID: "2", StrategyID: "1001"}}},
 		},
 		EarliestQueryDeadlineUnixMilli: 175_000,
 		RecoveryUntilUnixMilli:         775_000,

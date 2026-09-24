@@ -1,0 +1,815 @@
+{
+  "contract": {
+    "Slot": {
+      "QueryGroup": "q",
+      "EvaluationTime": 60
+    },
+    "SnapshotRevision": "snapshot",
+    "QueryRevision": "query",
+    "ScheduleRevision": "schedule",
+    "ScheduleSegmentStart": 60,
+    "DuePlanSetDigest": "plans"
+  },
+  "items": [
+    {
+      "Identity": {
+        "Plan": {
+          "TenantID": "tenant",
+          "BusinessID": "2",
+          "StrategyID": "9"
+        },
+        "StateGeneration": "generation",
+        "SeriesIdentityDigest": "bfa775fa937e267345d4f6c4cde605f83456efad28d8536e82cde60ac250b2ba"
+      },
+      "ApplyVersion": {
+        "StateApplyEpoch": 1,
+        "EvaluationTime": 7200,
+        "SlotDigest": "slot"
+      },
+      "CarryFrom": ""
+    },
+    {
+      "Identity": {
+        "Plan": {
+          "TenantID": "tenant",
+          "BusinessID": "2",
+          "StrategyID": "9"
+        },
+        "StateGeneration": "generation",
+        "SeriesIdentityDigest": "ba70afc8caa7b3cb02a670a27f9b14a2e0b279985d56468ca0a9d330c14329ae"
+      },
+      "ApplyVersion": {
+        "StateApplyEpoch": 1,
+        "EvaluationTime": 7200,
+        "SlotDigest": "slot"
+      },
+      "CarryFrom": ""
+    },
+    {
+      "Identity": {
+        "Plan": {
+          "TenantID": "tenant",
+          "BusinessID": "2",
+          "StrategyID": "9"
+        },
+        "StateGeneration": "generation",
+        "SeriesIdentityDigest": "198fd8d59e6f3123e7636454e81776503fa130b9a8cb243a3db267d7f13cbf54"
+      },
+      "ApplyVersion": {
+        "StateApplyEpoch": 1,
+        "EvaluationTime": 7200,
+        "SlotDigest": "slot"
+      },
+      "CarryFrom": ""
+    },
+    {
+      "Identity": {
+        "Plan": {
+          "TenantID": "tenant",
+          "BusinessID": "2",
+          "StrategyID": "9"
+        },
+        "StateGeneration": "generation",
+        "SeriesIdentityDigest": "5d88211ea433ecbcb353bf8e63c4d8441786efa5b4c93a0768985e456b57ab88"
+      },
+      "ApplyVersion": {
+        "StateApplyEpoch": 1,
+        "EvaluationTime": 7200,
+        "SlotDigest": "slot"
+      },
+      "CarryFrom": ""
+    }
+  ],
+  "keys": [
+    {
+      "key": "alarmd-upgrade:runtime3:v2:63b4c0476f5aa004794df8453c4d90a6:2:9:460f4e23194b12e06e68789d9d81564d:415e68cc2c6c6172c59a0ce2da42b4eb",
+      "type": "string",
+      "value_base64": "QUxEMgEA7wZ7InNjaGVtYSI6ImFsYXJtZC1ydW50aW1lLXN0YXRlLXYzIiwiaWRlbnRpdHkiOnsiUGxhbiI6eyJUZW5hbnRJRCI6InRlbmFudCIsIkJ1c2luZXNzSUQiOiIyIiwiU3RyYXRlZ3lJRCI6IjkifSwiU3RhdGVHZW5lcmF0aW9uIjoiZ2VuZXJhdGlvbiIsIlNlcmllc0lkZW50aXR5RGlnZXN0IjoiMTk4ZmQ4ZDU5ZTZmMzEyM2U3NjM2NDU0ZTgxNzc2NTAzZmExMzBiOWE4Y2IyNDNhM2RiMjY3ZDdmMTNjYmY1NCJ9LCJibG9iX3JldmlzaW9uIjoxLCJhcHBseV92ZXJzaW9uIjp7IlN0YXRlQXBwbHlFcG9jaCI6MSwiRXZhbHVhdGlvblRpbWUiOjcyMDAsIlNsb3REaWdlc3QiOiJzbG90In0sIm11dGF0aW9uX2RpZ2VzdCI6Ijk1YjMwMGU1YjVjMjVkZWFlMWQ1OTA4ZTNiMDlhY2Y3NWRlNjcyYzYzMWU3YzNmM2Q0YjQ0YmM5M2E5NzMyMzYiLCJsYXN0X2V2ZW50X3RpbWUiOjcyMDAsImxldmVscyI6W3sibXV0YXRpb24iOnsiTGV2ZWxJRCI6MSwiTGV2ZWxTdGF0ZUNvbXBhdGliaWxpdHkiOiJjb21wYXQtMSIsIkhpc3RvcnlDb21wbGV0ZW5lc3MiOiJGVUxMIiwiR2FwUmVhc29uQ29kZSI6IiIsIldhcm11cFJlcXVpcmVtZW50UmVmIjoid2FybS0xIiwiTGFzdFByb2Nlc3NlZEV2ZW50VGltZSI6NzIwMH0sImRldGVjdF9maW5nZXJwcmludCI6ImRldGVjdC0xIn0seyJtdXRhdGlvbiI6eyJMZXZlbElEIjoyLCJMZXZlbFN0YXRlQ29tcGF0aWJpbGl0eSI6ImNvbXBhdC0yIiwiSGlzdG9yeUNvbXBsZXRlbmVzcyI6IkZVTEwiLCJHYXBSZWFzb25Db2RlIjoiIiwiV2FybXVwUmVxdWlyZW1lbnRSZWYiOiJ3YXJtLTIiLCJMYXN0UHJvY2Vzc2VkRXZlbnRUaW1lIjo3MjAwfSwiZGV0ZWN0X2ZpbmdlcnByaW50IjoiZGV0ZWN0LTIifV0sInBvaW50X2NvdW50IjozMH3UKgMDATwDAwA8AwMAPAMDATwDAwA8AwMAPAMDATwDAwA8AwMAPAMDATwDAwA8AwMAPAMDATwDAwA8AwMAPAMDATwDAwA8AwMAPAMDATwDAwA8AwMAPAMDATwDAwA8AwMAPAMDATwDAwA8AwMAPAMDATwDAwA8AwMA",
+      "ttl_ms": 389994
+    },
+    {
+      "key": "alarmd-upgrade:runtime3:v2:63b4c0476f5aa004794df8453c4d90a6:2:9:460f4e23194b12e06e68789d9d81564d:62f4c6e7d638ee47dac0fba7d7111d5a",
+      "type": "string",
+      "value_base64": "QUxEMgEAmgV7InNjaGVtYSI6ImFsYXJtZC1ydW50aW1lLXN0YXRlLXYzIiwiaWRlbnRpdHkiOnsiUGxhbiI6eyJUZW5hbnRJRCI6InRlbmFudCIsIkJ1c2luZXNzSUQiOiIyIiwiU3RyYXRlZ3lJRCI6IjkifSwiU3RhdGVHZW5lcmF0aW9uIjoiZ2VuZXJhdGlvbiIsIlNlcmllc0lkZW50aXR5RGlnZXN0IjoiYmZhNzc1ZmE5MzdlMjY3MzQ1ZDRmNmM0Y2RlNjA1ZjgzNDU2ZWZhZDI4ZDg1MzZlODJjZGU2MGFjMjUwYjJiYSJ9LCJibG9iX3JldmlzaW9uIjoxLCJhcHBseV92ZXJzaW9uIjp7IlN0YXRlQXBwbHlFcG9jaCI6MSwiRXZhbHVhdGlvblRpbWUiOjcyMDAsIlNsb3REaWdlc3QiOiJzbG90In0sIm11dGF0aW9uX2RpZ2VzdCI6ImM2N2IxMmI5ZDExNzM0MWMzMDlkOGI1NGEwZjhmNDE1Yzk5MGVkYjc1OTMxOTQzY2UxNzkwNmVlMWQyMWQ3ZTgiLCJsYXN0X2V2ZW50X3RpbWUiOjcyMDAsImxldmVscyI6W3sibXV0YXRpb24iOnsiTGV2ZWxJRCI6MSwiTGV2ZWxTdGF0ZUNvbXBhdGliaWxpdHkiOiJjb21wYXQiLCJIaXN0b3J5Q29tcGxldGVuZXNzIjoiRlVMTCIsIkdhcFJlYXNvbkNvZGUiOiIiLCJXYXJtdXBSZXF1aXJlbWVudFJlZiI6Indhcm0iLCJMYXN0UHJvY2Vzc2VkRXZlbnRUaW1lIjo3MjAwfSwiZGV0ZWN0X2ZpbmdlcnByaW50IjoiZGV0ZWN0In1dLCJwb2ludF9jb3VudCI6MX2gOAEBAA==",
+      "ttl_ms": 389992
+    },
+    {
+      "key": "alarmd-upgrade:runtime3:v2:63b4c0476f5aa004794df8453c4d90a6:2:9:460f4e23194b12e06e68789d9d81564d:acdb9fa0436d1d3114d7b319c3876fad",
+      "type": "string",
+      "value_base64": "QUxEMgEA2Qd7InNjaGVtYSI6ImFsYXJtZC1ydW50aW1lLXN0YXRlLXYzIiwiaWRlbnRpdHkiOnsiUGxhbiI6eyJUZW5hbnRJRCI6InRlbmFudCIsIkJ1c2luZXNzSUQiOiIyIiwiU3RyYXRlZ3lJRCI6IjkifSwiU3RhdGVHZW5lcmF0aW9uIjoiZ2VuZXJhdGlvbiIsIlNlcmllc0lkZW50aXR5RGlnZXN0IjoiYmE3MGFmYzhjYWE3YjNjYjAyYTY3MGEyN2Y5YjE0YTJlMGIyNzk5ODVkNTY0NjhjYTBhOWQzMzBjMTQzMjlhZSJ9LCJibG9iX3JldmlzaW9uIjoxLCJhcHBseV92ZXJzaW9uIjp7IlN0YXRlQXBwbHlFcG9jaCI6MSwiRXZhbHVhdGlvblRpbWUiOjcyMDAsIlNsb3REaWdlc3QiOiJzbG90In0sIm11dGF0aW9uX2RpZ2VzdCI6IjVjMDgxZmI2NTJiNWUzZDk1ZDAxZTdhM2QyYzI1MGZjODg4ODNmYmU0YTJjZDE1Nzk3OGJhOTAzYTUxNDcwMDgiLCJsYXN0X2V2ZW50X3RpbWUiOjcyMDAsInNlcmllc19ndWFyZCI6eyJTdGF0dXMiOiJXQVJNSU5HIiwiUmVhc29uQ29kZSI6IkhJU1RPUllfV0FSTUlORyIsIldhcm11cFJlcXVpcmVtZW50UmVmIjoid2FybS1ndWFyZCJ9LCJsZXZlbHMiOlt7Im11dGF0aW9uIjp7IkxldmVsSUQiOjEsIkxldmVsU3RhdGVDb21wYXRpYmlsaXR5IjoiY29tcGF0LTEiLCJIaXN0b3J5Q29tcGxldGVuZXNzIjoiRlVMTCIsIkdhcFJlYXNvbkNvZGUiOiIiLCJXYXJtdXBSZXF1aXJlbWVudFJlZiI6Indhcm0tMSIsIkxhc3RQcm9jZXNzZWRFdmVudFRpbWUiOjcyMDB9LCJkZXRlY3RfZmluZ2VycHJpbnQiOiJkMSJ9LHsibXV0YXRpb24iOnsiTGV2ZWxJRCI6MiwiTGV2ZWxTdGF0ZUNvbXBhdGliaWxpdHkiOiJjb21wYXQtMiIsIkhpc3RvcnlDb21wbGV0ZW5lc3MiOiJHQVBQRUQiLCJHYXBSZWFzb25Db2RlIjoiSElTVE9SWV9HQVBQRUQiLCJXYXJtdXBSZXF1aXJlbWVudFJlZiI6Indhcm0tMiIsIkxhc3RQcm9jZXNzZWRFdmVudFRpbWUiOjcxNDB9LCJkZXRlY3RfZmluZ2VycHJpbnQiOiJkMiJ9XSwicG9pbnRfY291bnQiOjJ95DcDAQE8AwEC",
+      "ttl_ms": 389993
+    },
+    {
+      "key": "alarmd-upgrade:runtime3:v2:63b4c0476f5aa004794df8453c4d90a6:2:9:460f4e23194b12e06e68789d9d81564d:d9b4fd19fd6c64ebbb8ff483ca925d6f",
+      "type": "string",
+      "value_base64": "QUxEMgEAsgV7InNjaGVtYSI6ImFsYXJtZC1ydW50aW1lLXN0YXRlLXYzIiwiaWRlbnRpdHkiOnsiUGxhbiI6eyJUZW5hbnRJRCI6InRlbmFudCIsIkJ1c2luZXNzSUQiOiIyIiwiU3RyYXRlZ3lJRCI6IjkifSwiU3RhdGVHZW5lcmF0aW9uIjoiZ2VuZXJhdGlvbiIsIlNlcmllc0lkZW50aXR5RGlnZXN0IjoiNWQ4ODIxMWVhNDMzZWNiY2IzNTNiZjhlNjNjNGQ4NDQxNzg2ZWZhNWI0YzkzYTA3Njg5ODVlNDU2YjU3YWI4OCJ9LCJibG9iX3JldmlzaW9uIjoxLCJhcHBseV92ZXJzaW9uIjp7IlN0YXRlQXBwbHlFcG9jaCI6MSwiRXZhbHVhdGlvblRpbWUiOjcyMDAsIlNsb3REaWdlc3QiOiJzbG90In0sIm11dGF0aW9uX2RpZ2VzdCI6IjhmYzM0NmEwOTgwZGQzY2UxOWZhOGQyNzk2OTMwMzgxNzg0OWY1ZmIwMDk2MWZlOTVkNzlkZjBmOWJiMzRiYjQiLCJsYXN0X2V2ZW50X3RpbWUiOjcyMDAsImxldmVscyI6W3sibXV0YXRpb24iOnsiTGV2ZWxJRCI6MywiTGV2ZWxTdGF0ZUNvbXBhdGliaWxpdHkiOiJjb21wYXQtMyIsIkhpc3RvcnlDb21wbGV0ZW5lc3MiOiJXQVJNSU5HIiwiR2FwUmVhc29uQ29kZSI6IkhJU1RPUllfV0FSTUlORyIsIldhcm11cFJlcXVpcmVtZW50UmVmIjoid2FybS0zIiwiTGFzdFByb2Nlc3NlZEV2ZW50VGltZSI6NzIwMH0sImRldGVjdF9maW5nZXJwcmludCI6ImRldGVjdC0zIn1dLCJwb2ludF9jb3VudCI6MX2gOAEBAQ==",
+      "ttl_ms": 389993
+    }
+  ],
+  "prefix": "alarmd-upgrade",
+  "source_commit": "8f786756",
+  "views": [
+    {
+      "Identity": {
+        "Plan": {
+          "TenantID": "tenant",
+          "BusinessID": "2",
+          "StrategyID": "9"
+        },
+        "StateGeneration": "generation",
+        "SeriesIdentityDigest": "bfa775fa937e267345d4f6c4cde605f83456efad28d8536e82cde60ac250b2ba"
+      },
+      "BlobRevision": 1,
+      "Representation": "framed",
+      "PersistedApplyVersion": {
+        "StateApplyEpoch": 1,
+        "EvaluationTime": 7200,
+        "SlotDigest": "slot"
+      },
+      "PersistedMutationDigest": "c67b12b9d117341c309d8b54a0f8f415c990edb75931943ce17906ee1d21d7e8",
+      "LastProcessedEventTime": 7200,
+      "SeriesGuard": null,
+      "Levels": [
+        {
+          "LevelID": 1,
+          "LevelStateCompatibility": "compat",
+          "HistoryCompleteness": "FULL",
+          "GapReasonCode": "",
+          "WarmupRequirementRef": "warm",
+          "LastProcessedEventTime": 7200
+        }
+      ],
+      "History": [
+        {
+          "RecordID": "cec8b0bb11a83428011b7726574dced32351d8db3bfc79b3543a47ac9a5d37cb",
+          "SourceTime": 7200,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect",
+              "Result": "NORMAL"
+            }
+          ]
+        }
+      ],
+      "Status": "FOUND_READY",
+      "ReasonCode": "",
+      "VersionComparison": "PERSISTED_EQUAL",
+      "Carried": null
+    },
+    {
+      "Identity": {
+        "Plan": {
+          "TenantID": "tenant",
+          "BusinessID": "2",
+          "StrategyID": "9"
+        },
+        "StateGeneration": "generation",
+        "SeriesIdentityDigest": "ba70afc8caa7b3cb02a670a27f9b14a2e0b279985d56468ca0a9d330c14329ae"
+      },
+      "BlobRevision": 1,
+      "Representation": "framed",
+      "PersistedApplyVersion": {
+        "StateApplyEpoch": 1,
+        "EvaluationTime": 7200,
+        "SlotDigest": "slot"
+      },
+      "PersistedMutationDigest": "5c081fb652b5e3d95d01e7a3d2c250fc88883fbe4a2cd157978ba903a5147008",
+      "LastProcessedEventTime": 7200,
+      "SeriesGuard": {
+        "Status": "WARMING",
+        "ReasonCode": "HISTORY_WARMING",
+        "WarmupRequirementRef": "warm-guard"
+      },
+      "Levels": [
+        {
+          "LevelID": 1,
+          "LevelStateCompatibility": "compat-1",
+          "HistoryCompleteness": "FULL",
+          "GapReasonCode": "",
+          "WarmupRequirementRef": "warm-1",
+          "LastProcessedEventTime": 7200
+        },
+        {
+          "LevelID": 2,
+          "LevelStateCompatibility": "compat-2",
+          "HistoryCompleteness": "GAPPED",
+          "GapReasonCode": "HISTORY_GAPPED",
+          "WarmupRequirementRef": "warm-2",
+          "LastProcessedEventTime": 7140
+        }
+      ],
+      "History": [
+        {
+          "RecordID": "6d30eca9b648c37d9c66a4fba01ec7beff99e5abf3ab9eb83bc5e7ba175b7d07",
+          "SourceTime": 7140,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "d1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "d2",
+              "Result": "UNAVAILABLE"
+            }
+          ]
+        },
+        {
+          "RecordID": "a8626d28638b7562539135a4845557cea62f56c20f8d4d6195031a93ea880ac4",
+          "SourceTime": 7200,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "d1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "d2",
+              "Result": "ERROR"
+            }
+          ]
+        }
+      ],
+      "Status": "FOUND_GAPPED",
+      "ReasonCode": "",
+      "VersionComparison": "PERSISTED_EQUAL",
+      "Carried": null
+    },
+    {
+      "Identity": {
+        "Plan": {
+          "TenantID": "tenant",
+          "BusinessID": "2",
+          "StrategyID": "9"
+        },
+        "StateGeneration": "generation",
+        "SeriesIdentityDigest": "198fd8d59e6f3123e7636454e81776503fa130b9a8cb243a3db267d7f13cbf54"
+      },
+      "BlobRevision": 1,
+      "Representation": "framed",
+      "PersistedApplyVersion": {
+        "StateApplyEpoch": 1,
+        "EvaluationTime": 7200,
+        "SlotDigest": "slot"
+      },
+      "PersistedMutationDigest": "95b300e5b5c25deae1d5908e3b09acf75de672c631e7c3f3d4b44bc93a973236",
+      "LastProcessedEventTime": 7200,
+      "SeriesGuard": null,
+      "Levels": [
+        {
+          "LevelID": 1,
+          "LevelStateCompatibility": "compat-1",
+          "HistoryCompleteness": "FULL",
+          "GapReasonCode": "",
+          "WarmupRequirementRef": "warm-1",
+          "LastProcessedEventTime": 7200
+        },
+        {
+          "LevelID": 2,
+          "LevelStateCompatibility": "compat-2",
+          "HistoryCompleteness": "FULL",
+          "GapReasonCode": "",
+          "WarmupRequirementRef": "warm-2",
+          "LastProcessedEventTime": 7200
+        }
+      ],
+      "History": [
+        {
+          "RecordID": "bcbd905a6500ad8ce932c5bfe448df71ea45e995dff88b9da90b6e3aeb81ec66",
+          "SourceTime": 5460,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "66876a1307bdb95eb28c7978fced57c8bd42dd1aa4e8e8f323a92a1426371e6c",
+          "SourceTime": 5520,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "a4ebee45e9b74ac9299692a5608357ed872e4d608d172bdd3803f883fde88023",
+          "SourceTime": 5580,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "14706c175ce56f3f57e7482379ca6013bf1a1eea17e61d0be342cae95b492e04",
+          "SourceTime": 5640,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "05d60fd4df0dab34d276689021a745c7822027b3b4b31d0664247f2313630663",
+          "SourceTime": 5700,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "38d15fcaa4437fe5ced8809d968c199ded51460505afe884b9bf179f836928b8",
+          "SourceTime": 5760,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "d12b09dfcc03abdf2f68760c761c8efc2cc765e73868673bfe6160dd21a59b17",
+          "SourceTime": 5820,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "75ca86cec7161f20b552188cfbfa46874eaaf264a2e1546efdbf2065d2fb38fc",
+          "SourceTime": 5880,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "446e87a5bd1d7bfea5d838d7d7bfbda97be49a55cd64ef7c0382f0ebfd2bdd40",
+          "SourceTime": 5940,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "5d7dfedeaddeaa64496cc8131dda0cafbec35c106e436712dee772c13069e7b9",
+          "SourceTime": 6000,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "cf9279b883b692aad4c922ca216052b0711d271b513f6bd5e0992e2beccf61c4",
+          "SourceTime": 6060,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "d68050dace4e5438887518c6b4df357464a0bf0fa1bbb1d5304dbbd9bb56534f",
+          "SourceTime": 6120,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "3aca02d5e817a7c1e50c55de1047fb00b3b9dcbc1d7d9e97ea1e651e12c37626",
+          "SourceTime": 6180,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "724719f1906b05103c692d826867d86a261cafc9300ad5d6daada756825eb6fa",
+          "SourceTime": 6240,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "a0cea04642b831ee6f7bf8b7486f2f8c53d4d779181d03b4c218a31936c3d9e3",
+          "SourceTime": 6300,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "610e3cffe7dca60292f32c5fa1a8b74bbfd607dfe3c7b7736ae6202a0dfc99d8",
+          "SourceTime": 6360,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "05c92ba7a09ecfe68a5f5915f32811b6d290c494d1525ddc286bfb71ddede7d4",
+          "SourceTime": 6420,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "6c714995a33c582730a01ab236ae92c73650de51893af65438d211093c99d47b",
+          "SourceTime": 6480,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "b2f478ba558d6f55300600de4d6a8a844b6b5bf5223de00fc5d088a0564c24a2",
+          "SourceTime": 6540,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "13f4685786cf7e926f2f91b8b2a2ba3c803cdd1947bc6bac1b114d2f904c5766",
+          "SourceTime": 6600,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "92fcad0055de138aee5f45bba58a3350ecc04dd207b46041657ba4eab32de919",
+          "SourceTime": 6660,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "738fa0d88767935b4501502319bf52b194d47d7c1be5073eae50de5c3b08c35e",
+          "SourceTime": 6720,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "02e11ecf42385b94a562c953a77be0aff422bc8fed738eedca99257ac04c423e",
+          "SourceTime": 6780,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "c09eacacd2104ea410f03ab3a4816ec0393d4100a7453e426af0123d2fbfaa73",
+          "SourceTime": 6840,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "f38b2beff994852812bd35f18d9dbafee31ee68d44b0d558890978e02e76369e",
+          "SourceTime": 6900,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "3926811e6d6c4aab1c557fcbd040edd60746d1aabaf59f01613862eb32c78202",
+          "SourceTime": 6960,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "8af95d064ec41bd59ab8c48cb71c61ca1722c57746bbb768e0beb29189ddccc1",
+          "SourceTime": 7020,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "15b4a1d2cbc182d8cd5a008320cf1f84a3c279dec76f6f1d6bd4b990d1f1dcaa",
+          "SourceTime": 7080,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "c1f626aca820610dbe550073e9bcf14175e6a2d05134c6e98d413da8d1a2b082",
+          "SourceTime": 7140,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "7058ebb8828666cec16c88b162435283aaed318790fba9af3435aad6c74aa4d1",
+          "SourceTime": 7200,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        }
+      ],
+      "Status": "FOUND_READY",
+      "ReasonCode": "",
+      "VersionComparison": "PERSISTED_EQUAL",
+      "Carried": null
+    },
+    {
+      "Identity": {
+        "Plan": {
+          "TenantID": "tenant",
+          "BusinessID": "2",
+          "StrategyID": "9"
+        },
+        "StateGeneration": "generation",
+        "SeriesIdentityDigest": "5d88211ea433ecbcb353bf8e63c4d8441786efa5b4c93a0768985e456b57ab88"
+      },
+      "BlobRevision": 1,
+      "Representation": "framed",
+      "PersistedApplyVersion": {
+        "StateApplyEpoch": 1,
+        "EvaluationTime": 7200,
+        "SlotDigest": "slot"
+      },
+      "PersistedMutationDigest": "8fc346a0980dd3ce19fa8d27969303817849f5fb00961fe95d79df0f9bb34bb4",
+      "LastProcessedEventTime": 7200,
+      "SeriesGuard": null,
+      "Levels": [
+        {
+          "LevelID": 3,
+          "LevelStateCompatibility": "compat-3",
+          "HistoryCompleteness": "WARMING",
+          "GapReasonCode": "HISTORY_WARMING",
+          "WarmupRequirementRef": "warm-3",
+          "LastProcessedEventTime": 7200
+        }
+      ],
+      "History": [
+        {
+          "RecordID": "83560b0fb126e94ef928eaf1127c9b6e1bf97178ee37e783629a8b2f8adfff0c",
+          "SourceTime": 7200,
+          "Levels": [
+            {
+              "LevelID": 3,
+              "DetectFingerprint": "detect-3",
+              "Result": "ANOMALOUS"
+            }
+          ]
+        }
+      ],
+      "Status": "FOUND_WARMING",
+      "ReasonCode": "",
+      "VersionComparison": "PERSISTED_EQUAL",
+      "Carried": null
+    }
+  ]
+}

@@ -42,14 +42,17 @@ import (
 
 // catalogIndexEntry is what the index keeps per Query Group.
 type catalogIndexEntry struct {
-	Group            execution.QueryGroupIdentity
-	Digest           execution.ObjectDigest
-	Plans            []execution.PlanIdentity
+	Group  execution.QueryGroupIdentity
+	Digest execution.ObjectDigest
+	// Plans are keyed by strategy and piece: the index is where a Query
+	// Group's Plans are looked up against activation records, and two pieces
+	// of one strategy are two records.
+	Plans            []execution.PlanKey
 	QueryRevision    execution.QueryRevision
 	ScheduleRevision execution.ScheduleRevision
 }
 
-func (entry catalogIndexEntry) samePlans(plans []execution.PlanIdentity) bool {
+func (entry catalogIndexEntry) samePlans(plans []execution.PlanKey) bool {
 	if len(entry.Plans) != len(plans) {
 		return false
 	}
@@ -81,10 +84,10 @@ func (index *catalogIndex) replace(revision execution.SnapshotRevision, groups m
 
 // planIdentities lists a Query Group's Plans in catalog order, which is the
 // order the object stores them in.
-func planIdentities(group QueryGroup) []execution.PlanIdentity {
-	plans := make([]execution.PlanIdentity, 0, len(group.Plans))
+func planKeys(group QueryGroup) []execution.PlanKey {
+	plans := make([]execution.PlanKey, 0, len(group.Plans))
 	for _, plan := range group.Plans {
-		plans = append(plans, plan.Identity)
+		plans = append(plans, plan.Key())
 	}
 	return plans
 }
@@ -105,7 +108,7 @@ func indexFromCatalog(catalog Catalog) (map[execution.QueryGroupIdentity]catalog
 		if err != nil {
 			return nil, err
 		}
-		groups[group.Identity] = catalogIndexEntry{Group: group.Identity, Digest: digest, Plans: planIdentities(group), QueryRevision: group.QueryPlan.QueryRevision, ScheduleRevision: group.ScheduleRevision}
+		groups[group.Identity] = catalogIndexEntry{Group: group.Identity, Digest: digest, Plans: planKeys(group), QueryRevision: group.QueryPlan.QueryRevision, ScheduleRevision: group.ScheduleRevision}
 	}
 	return groups, nil
 }
@@ -115,7 +118,7 @@ func indexFromCatalog(catalog Catalog) (map[execution.QueryGroupIdentity]catalog
 // context each Plan references, in the order the cutover compares them.
 type ContentEntry struct {
 	Digest execution.ObjectDigest
-	Plans  []execution.PlanIdentity
+	Plans  []execution.PlanKey
 	Refs   []execution.OutputContextRef
 }
 
@@ -251,16 +254,24 @@ func contentFromManifest(
 	content := PublishedContent{Publication: publication, Groups: make(map[execution.QueryGroupIdentity]ContentEntry, len(manifest.QueryGroups))}
 	for _, entry := range manifest.QueryGroups {
 		indexed := entries[entry.QueryGroup]
+		// The output context is the strategy's, shared by every piece of it,
+		// so the refs are one per strategy however many pieces the group
+		// holds - and a group holds at most one piece of a strategy anyway.
 		refs := make([]execution.OutputContextRef, 0, len(indexed.Plans))
+		referenced := make(map[execution.PlanIdentity]struct{}, len(indexed.Plans))
 		for _, plan := range indexed.Plans {
-			digest, ok := contexts[plan]
+			if _, done := referenced[plan.PlanIdentity]; done {
+				continue
+			}
+			referenced[plan.PlanIdentity] = struct{}{}
+			digest, ok := contexts[plan.PlanIdentity]
 			if !ok || digest == "" {
 				return PublishedContent{}, fmt.Errorf("alarmd controlplane: catalog manifest names no output context for Plan %s", plan.StrategyID)
 			}
-			refs = append(refs, execution.OutputContextRef{Plan: plan, Digest: digest})
+			refs = append(refs, execution.OutputContextRef{Plan: plan.PlanIdentity, Digest: digest})
 		}
 		sort.Slice(refs, func(i, j int) bool { return lessPlanIdentity(refs[i].Plan, refs[j].Plan) })
-		content.Groups[entry.QueryGroup] = ContentEntry{Digest: entry.ObjectDigest, Plans: append([]execution.PlanIdentity(nil), indexed.Plans...), Refs: refs}
+		content.Groups[entry.QueryGroup] = ContentEntry{Digest: entry.ObjectDigest, Plans: append([]execution.PlanKey(nil), indexed.Plans...), Refs: refs}
 	}
 	return content, nil
 }
@@ -321,9 +332,9 @@ func (repository *RedisCatalogRepository) ensureCatalogIndex(
 			if object.Identity != entry.QueryGroup {
 				return ensuredCatalogIndex{}, fmt.Errorf("alarmd controlplane: catalog object of %s belongs to another Query Group", entry.QueryGroup)
 			}
-			plans := make([]execution.PlanIdentity, 0, len(object.Plans))
+			plans := make([]execution.PlanKey, 0, len(object.Plans))
 			for _, plan := range object.Plans {
-				plans = append(plans, plan.Identity)
+				plans = append(plans, plan.Key())
 			}
 			ensured.entries[entry.QueryGroup] = catalogIndexEntry{Group: object.Identity, Digest: entry.ObjectDigest, Plans: plans, QueryRevision: object.QueryPlan.QueryRevision, ScheduleRevision: object.ScheduleRevision}
 			repository.controlReads.index.misses.Add(1)
@@ -359,13 +370,22 @@ func (repository *RedisCatalogRepository) loadQueryGroupObjects(
 		if err != nil {
 			return nil, activationDependencyIO(err)
 		}
-		hashed, err := contract.DeriveCanonicalDigestV2OverCanonical(queryGroupObjectContractVersion, payload)
+		domain, err := queryGroupObjectDomain(payload)
+		if errors.Is(err, ErrCatalogObjectContractNewer) {
+			repository.observeObjectRead(ctx, objectReadKindQueryGroup, objectReadNewer)
+			return nil, err
+		}
+		if err != nil {
+			repository.observeObjectRead(ctx, objectReadKindQueryGroup, objectReadInvalid)
+			return nil, fmt.Errorf("%w: %v", ErrCatalogObjectCorrupt, err)
+		}
+		hashed, err := contract.DeriveCanonicalDigestV2OverCanonical(domain, payload)
 		if err != nil || hashed != string(entry.ObjectDigest) {
 			repository.observeObjectRead(ctx, objectReadKindQueryGroup, objectReadInvalid)
 			return nil, ErrCatalogObjectCorrupt
 		}
 		var object QueryGroupObject
-		if err := json.Unmarshal(payload, &object); err != nil || object.ContractVersion != queryGroupObjectContractVersion || object.Identity == "" {
+		if err := json.Unmarshal(payload, &object); err != nil || !knownQueryGroupObjectVersion(object.ContractVersion) || object.Identity == "" {
 			repository.observeObjectRead(ctx, objectReadKindQueryGroup, objectReadInvalid)
 			return nil, fmt.Errorf("%w: not a Query Group object of this contract", ErrCatalogObjectCorrupt)
 		}
@@ -374,7 +394,7 @@ func (repository *RedisCatalogRepository) loadQueryGroupObjects(
 		// write this key. Storing a bare object here and a decorated one there
 		// made the cache hold two types under one key, which the reader only
 		// finds out about by panicking on whichever it did not expect.
-		repository.objectCache.store(repository.queryGroupObjectKey(entry.ObjectDigest), storedQueryGroupObject{
+		repository.objects().store(repository.queryGroupObjectKey(entry.ObjectDigest), storedQueryGroupObject{
 			object: object, noDataOccurrences: noDataOccurrencesIn(payload),
 		}, len(payload))
 		objects[entry.ObjectDigest] = object

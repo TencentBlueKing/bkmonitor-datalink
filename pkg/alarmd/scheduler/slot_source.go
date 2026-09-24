@@ -18,8 +18,13 @@ import (
 )
 
 var (
-	ErrScheduleFactsInvalid          = errors.New("alarmd scheduler: frozen schedule facts are invalid")
-	ErrProgressOffSchedule           = errors.New("alarmd scheduler: Progress next Slot is outside the frozen schedule")
+	ErrScheduleFactsInvalid = errors.New("alarmd scheduler: frozen schedule facts are invalid")
+	ErrProgressOffSchedule  = errors.New("alarmd scheduler: Progress next Slot is outside the frozen schedule")
+	// ErrNoPlanDueInSegment is the segment holding the cursor's time and no
+	// Plan being due at it, which is not the cursor being off the schedule.
+	// The two shared one error until a Plan that left the activation and came
+	// back had its missed Slots recorded as pruned by retention.
+	ErrNoPlanDueInSegment            = errors.New("alarmd scheduler: frozen schedule holds the Slot but no Plan is due at it")
 	ErrSlotContractDrift             = errors.New("alarmd scheduler: frozen Slot contract differs from requested facts")
 	ErrSlotOwnershipChanged          = errors.New("alarmd scheduler: ownership changed while freezing Slot")
 	ErrSnapshotRetentionInsufficient = errors.New("alarmd scheduler: Snapshot retention cannot cover recovery contract")
@@ -766,9 +771,9 @@ func (source *ProductionSlotSource) snapshotUnavailableSlot(
 	if err != nil {
 		return FrozenSlot{}, false, &SourceBlockedError{Err: err}
 	}
-	targets := execution.FrozenDuePlanTargets{DuePlanSetDigest: digest, Plans: make([]execution.PlanIdentity, len(duePlans))}
+	targets := execution.FrozenDuePlanTargets{DuePlanSetDigest: digest, Plans: make([]execution.PlanKey, len(duePlans))}
 	for index, due := range duePlans {
-		targets.Plans[index] = due.Identity
+		targets.Plans[index] = due.Key()
 	}
 	contractRef := execution.FrozenExecutionContractRef{
 		Slot:             execution.SlotIdentity{QueryGroup: source.queryGroup, EvaluationTime: nextSlot},
@@ -907,10 +912,14 @@ func (source *ProductionSlotSource) observeReplayExpiry(
 	}
 	// Observability is a fail-open side channel, as everywhere else.
 	defer func() { _ = recover() }()
+	// The reason is the line's reason_code as well as a fact: left empty, a
+	// degraded result read as reason_not_reported on a line that had named
+	// its reason one level down.
 	source.observer.Observe(ctx, observability.Observation{
 		Component: observability.ComponentScheduler, Stage: observability.StageReplayExpired,
-		Result: observability.ResultDegraded, Direction: observability.DirectionInternal,
-		Trace: observability.TraceFields{QueryGroupKey: string(source.queryGroup), EvaluationTime: int64(evaluationTime)},
+		Result: observability.ResultDegraded, ReasonCode: observability.ReasonCode(facts.Reason),
+		Direction: observability.DirectionInternal,
+		Trace:     observability.TraceFields{QueryGroupKey: string(source.queryGroup), EvaluationTime: int64(evaluationTime)},
 		ReplayExpiry: &observability.ReplayExpiryFacts{
 			Reason: string(facts.Reason), Distance: facts.Distance, AgeSeconds: facts.Age.Seconds(),
 			ReadyAtUnixMilli: facts.ReadyAtUnixMilli, DistanceBoundaryUnixMilli: facts.DistanceBoundaryUnixMilli,
@@ -1040,10 +1049,10 @@ func frozenSlotExecutionFacts(
 	}
 	targets := execution.FrozenDuePlanTargets{
 		DuePlanSetDigest: fact.Contract.DuePlanSetDigest,
-		Plans:            make([]execution.PlanIdentity, len(fact.DuePlans)),
+		Plans:            make([]execution.PlanKey, len(fact.DuePlans)),
 	}
 	for index := range fact.DuePlans {
-		targets.Plans[index] = fact.DuePlans[index].Identity
+		targets.Plans[index] = fact.DuePlans[index].Key()
 	}
 	if deadline <= int64(fact.Contract.Slot.EvaluationTime)*1000 || targets.Validate(fact.Contract) != nil {
 		return execution.FrozenDuePlanTargets{}, 0, ErrSlotContractDrift
@@ -1139,7 +1148,12 @@ func (source *ProductionSlotSource) nextSlotAfterProgress(
 		return execution.FrozenQueryGroupSchedule{}, 0, failClosedScheduleNavigation(err)
 	}
 	if len(schedule.DuePlanRefs(next)) == 0 {
-		return execution.FrozenQueryGroupSchedule{}, 0, &SourceBlockedError{Err: ErrProgressOffSchedule}
+		// The segment holds this time and validated; what it does not hold is a
+		// Plan due at it. That is a different fact from the cursor being off
+		// the schedule, and it used to arrive as the same error - which sent it
+		// down the pruned-cursor path and recorded the stretch as retention
+		// loss.
+		return execution.FrozenQueryGroupSchedule{}, 0, &SourceBlockedError{Err: ErrNoPlanDueInSegment}
 	}
 	return schedule, next, nil
 }
@@ -1160,8 +1174,18 @@ func (source *ProductionSlotSource) advancePrunedCursor(
 ) (execution.ScheduleProgress, bool, error) {
 	var blocked *SourceBlockedError
 	if !errors.As(cause, &blocked) ||
-		(!errors.Is(cause, controlplane.ErrScheduleUnavailable) && !errors.Is(cause, ErrProgressOffSchedule)) {
+		(!errors.Is(cause, controlplane.ErrScheduleUnavailable) && !errors.Is(cause, ErrProgressOffSchedule) &&
+			!errors.Is(cause, ErrNoPlanDueInSegment)) {
 		return progress, false, nil
+	}
+	// Both causes move the cursor the same way, and only the recorded reason
+	// differs. Advancing is right for either: the Slots behind the cursor were
+	// never evaluated and no later read makes them evaluable - pruned because
+	// the timeline dropped them, plan-not-active because replaying them would
+	// alert for a strategy that was not there while they passed.
+	skipGap := execution.PrunedSkipGap
+	if errors.Is(cause, ErrNoPlanDueInSegment) {
+		skipGap = execution.PlanNotActiveSkipGap
 	}
 	advancer, ok := source.progress.(PrunedCursorAdvancer)
 	if !ok {
@@ -1217,7 +1241,9 @@ func (source *ProductionSlotSource) advancePrunedCursor(
 	}
 	resumed := execution.ScheduleProgress{
 		Identity: request.Identity, NextSlot: earliest, LastCompletionKind: execution.CompletionGapSkipped,
-		CurrentOrRecentGap: execution.PrunedSkipGap(progress.NextSlot, earliest),
+		CurrentOrRecentGap: skipGap(progress.NextSlot, earliest),
+		// What the store wrote: a skip keeps both facts about records.
+		LastDataSlot: progress.LastDataSlot, EmptyRunSinceSlot: progress.EmptyRunSinceSlot,
 	}
 	return resumed, true, nil
 }

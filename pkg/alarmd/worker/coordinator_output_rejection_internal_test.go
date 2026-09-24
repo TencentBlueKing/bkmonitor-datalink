@@ -55,7 +55,7 @@ func TestFinalizePreparedFinishesAPlanWhoseOutputWasRefusedByName(t *testing.T) 
 			evaluationMillis := int64(fixture.request.Contract.Slot.EvaluationTime) * 1000
 			fixture.request.DuePlanTargets = execution.FrozenDuePlanTargets{
 				DuePlanSetDigest: fixture.request.Contract.DuePlanSetDigest,
-				Plans:            []execution.PlanIdentity{fixture.header.DuePlans[0].Identity, fixture.header.DuePlans[1].Identity},
+				Plans:            []execution.PlanKey{fixture.header.DuePlans[0].Key(), fixture.header.DuePlans[1].Key()},
 			}
 			fixture.request.EarliestQueryDeadlineUnixMilli = evaluationMillis + 1_000
 			fixture.request.RecoveryUntilUnixMilli = evaluationMillis + 601_000

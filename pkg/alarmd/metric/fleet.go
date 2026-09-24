@@ -92,6 +92,15 @@ type FleetVerdict struct {
 	// every kind present and zero when none is. Any non-zero kind decides the
 	// verdict DEGRADED before the object list is consulted.
 	Degradations []FleetCount
+	// Losses counts the retained skip records by what each is -- the
+	// cooldown's consequence while demoted or after, the restart's catch-up,
+	// a loss in progress, a loss that stopped -- every kind present and zero
+	// when none is, plus how many recent records were judged against no
+	// restart anchor. fleet_checks{code="DETECTION_ABANDONED"} carries the
+	// line's current count and cannot say whether it is a rollout's tail
+	// or a loss in progress: the kind was only on the group name, which no
+	// series carried.
+	Losses []FleetCount
 }
 
 // FleetVerdictSource returns the current judgment. Reading it costs one control
@@ -113,6 +122,7 @@ type fleetCollector struct {
 	workers      *prometheus.Desc
 	checks       *prometheus.Desc
 	degradations *prometheus.Desc
+	losses       *prometheus.Desc
 }
 
 func newFleetCollector(source FleetVerdictSource) *fleetCollector {
@@ -198,6 +208,19 @@ func newFleetCollector(source FleetVerdictSource) *fleetCollector {
 				"replicas within one scrape interval, and for those the comparison is within one replica over "+
 				"time. Aggregate with max, not sum.",
 			[]string{"code"}),
+		losses: descriptor("fleet_losses",
+			"Retained skip records by what each is: WHILE_DEMOTED (the object is in the cooldown pool now; "+
+				"the skip is the cooldown's consequence), AFTER_COOLDOWN (the record says a cooldown held the "+
+				"Slot and the object has since left the pool), AFTER_RESTART (within the grace after the "+
+				"replica's process start or after it first saw the object -- a rollout's catch-up), ONGOING "+
+				"(recent and none of those: a loss in progress on this deployment), HISTORICAL (older than "+
+				"the window). Plus GRACE_UNKNOWN: recent records judged against no restart anchor because the "+
+				"publisher sent neither its process start nor its first sight of the object; they are counted "+
+				"under ONGOING as well, so this says how much of ONGOING was not actually judged. Every kind "+
+				"is emitted, zero when none. fleet_checks{code=\"DETECTION_ABANDONED\"} is the line's current "+
+				"count and cannot tell these apart. Same shared snapshots as the rest of the family; "+
+				"aggregate with max.",
+			[]string{"loss"}),
 		degradations: descriptor("fleet_degradations",
 			"Replicas under each closed degradation kind. Any non-zero kind decides fleet_health DEGRADED "+
 				"before the object list is consulted, and fleet_health cannot say which: a deployment with "+
@@ -220,6 +243,7 @@ func (c *fleetCollector) Describe(descriptions chan<- *prometheus.Desc) {
 	descriptions <- c.failures
 	descriptions <- c.checks
 	descriptions <- c.degradations
+	descriptions <- c.losses
 }
 
 func (c *fleetCollector) Collect(metrics chan<- prometheus.Metric) {
@@ -295,6 +319,12 @@ func (c *fleetCollector) Collect(metrics chan<- prometheus.Metric) {
 			continue
 		}
 		metrics <- prometheus.MustNewConstMetric(c.degradations, prometheus.GaugeValue, float64(count.Count), count.Value)
+	}
+	for _, count := range verdict.Losses {
+		if count.Value == "" {
+			continue
+		}
+		metrics <- prometheus.MustNewConstMetric(c.losses, prometheus.GaugeValue, float64(count.Count), count.Value)
 	}
 }
 

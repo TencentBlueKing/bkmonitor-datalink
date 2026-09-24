@@ -37,15 +37,30 @@ const (
 	// group is the shape the platform's own Python cache has always had, and it
 	// has no such ceiling.
 	NoDataMemorySchemaV2 NoDataMemorySchema = 2
+	// NoDataMemorySchemaV3 adds the two facts a limited tracking horizon needs:
+	// per group when tracking of its absence stopped, and per Plan when the
+	// history roster was exhausted by that stopping.
+	//
+	// They are stored rather than derived because deriving them would mean
+	// comparing each group's first-absent time against the horizon in force
+	// right now, and the horizon is a setting somebody changes. Raising it from
+	// a day to a week would then reopen every absence that had already been
+	// stopped, which is the one thing the ruling says must not happen. A record
+	// of what was decided does not move when the rule that decided it moves.
+	//
+	// A v2 record read by this build has neither field, which reads as not yet
+	// suppressed and not yet exhausted - correct, because no build that wrote a
+	// v2 record had a horizon to stop anything with.
+	NoDataMemorySchemaV3 NoDataMemorySchema = 3
 	// MaxSupportedNoDataMemorySchema is the newest record shape this build can
 	// read. A record above it was written by a newer build than this one, which
 	// happens during a rollback, and the rule for it is in NoDataMemoryReadable.
-	MaxSupportedNoDataMemorySchema = NoDataMemorySchemaV2
-	// WrittenNoDataMemorySchema is the one shape this build writes. Reading two
-	// and writing one is the whole coexistence rule: a Plan whose record is
-	// still v1 is read from it and written to v2, and no build ever writes both
-	// so no reader has to merge them.
-	WrittenNoDataMemorySchema = NoDataMemorySchemaV2
+	MaxSupportedNoDataMemorySchema = NoDataMemorySchemaV3
+	// WrittenNoDataMemorySchema is the one shape this build writes. Reading
+	// three and writing one is the whole coexistence rule: a Plan whose record
+	// is still v1 or v2 is read from it and written to v3, and no build ever
+	// writes two shapes so no reader has to merge them.
+	WrittenNoDataMemorySchema = NoDataMemorySchemaV3
 )
 
 // NoDataMemoryReadable says whether this build may load and replace a stored
@@ -105,6 +120,13 @@ type PlanNoDataMemoryUpdate struct {
 	// PresentAsOf is the round this Plan last had data in: this round's time
 	// when anything reported, and otherwise LoadedPresentAsOf carried forward.
 	PresentAsOf int64
+	// TrackingExhaustedAt is this round's Plan-level fact and
+	// LoadedTrackingExhaustedAt the one the record held. The second is not
+	// decoration: the builder refuses a round that clears the fact without data
+	// having arrived, and that question cannot be asked without knowing what
+	// was there before. See the checks in BuildPlanNoDataMutation.
+	TrackingExhaustedAt       int64
+	LoadedTrackingExhaustedAt int64
 	// Memory is the whole memory after this round, in any order.
 	Memory []NoDataGroupMemory
 	// Loaded and LoadedPresentAsOf are the record this round read. Both are
@@ -135,6 +157,51 @@ func BuildPlanNoDataMutation(update PlanNoDataMemoryUpdate) (PlanNoDataMutation,
 	}
 	if update.PresentAsOf < 0 || update.LoadedPresentAsOf < 0 {
 		return PlanNoDataMutation{}, errors.New("alarmd execution: no-data present-as-of must not be negative")
+	}
+	if update.TrackingExhaustedAt < 0 || update.LoadedTrackingExhaustedAt < 0 {
+		return PlanNoDataMutation{}, errors.New(
+			"alarmd execution: no-data tracking-exhausted-at must not be negative")
+	}
+	if update.TrackingExhaustedAt != 0 && len(memory) != 0 {
+		// Exhausted means the roster was emptied by the horizon, and emptied is
+		// the whole of what the fact says. A history roster expires by deleting
+		// its groups, and an explicitly expected group is suppressed rather than
+		// deleted and so never exhausts anything - which leaves no round that
+		// legitimately states both.
+		//
+		// It follows that a round which finds groups must clear the fact, and
+		// not only a round that saw data: a Plan whose roster was exhausted and
+		// which then gains an explicit target has groups again while nothing has
+		// reported. Clearing it there costs nothing, because with a non-empty
+		// roster the fact has no reader - it exists to tell an emptied roster
+		// from a Plan that never had groups, and that question is only asked
+		// when the roster is empty. This refusal is what makes forgetting that
+		// loud: the Plan's every write fails by name instead of the fact
+		// quietly outliving what it described.
+		return PlanNoDataMutation{}, fmt.Errorf(
+			"alarmd execution: a Plan no-data memory exhausted at %d still holds %d groups",
+			update.TrackingExhaustedAt, len(memory))
+	}
+	if update.LoadedTrackingExhaustedAt != 0 && update.TrackingExhaustedAt == 0 &&
+		update.PresentAsOf <= update.LoadedPresentAsOf && len(memory) == 0 {
+		// Raising the horizon must not revive what it stopped, and the Plan-level
+		// fact is stopped the same way a group is. There are exactly two rounds
+		// that legitimately clear it: one where data arrived, which moves the
+		// round this Plan last had data in, and one where the roster has groups
+		// again, which is where the check above requires it to be cleared and
+		// where the fact has no reader left anyway. What remains - a memory
+		// still empty, no data, and the fact gone - is a round that recomputed
+		// it from a setting instead of reading what was decided.
+		//
+		// The group clause is not decoration. Without it this refusal and the
+		// one above close on the same round: a Plan whose roster was exhausted
+		// and which gains an explicit target has groups and no data, so keeping
+		// the fact is refused there and clearing it was refused here, and the
+		// Plan could never write again.
+		return PlanNoDataMutation{}, fmt.Errorf(
+			"alarmd execution: a Plan no-data memory exhausted at %d was cleared while still empty and "+
+				"without data arriving (present-as-of stayed at %d)",
+			update.LoadedTrackingExhaustedAt, update.PresentAsOf)
 	}
 	if update.PresentAsOf < update.LoadedPresentAsOf {
 		// The Plan cannot have last had data earlier than the record already
@@ -170,6 +237,7 @@ func BuildPlanNoDataMutation(update PlanNoDataMemoryUpdate) (PlanNoDataMutation,
 		ScheduleRevision:       update.ScheduleRevision,
 		RosterVersion:          update.RosterVersion,
 		PresentAsOf:            update.PresentAsOf,
+		TrackingExhaustedAt:    update.TrackingExhaustedAt,
 		GroupCount:             uint32(len(memory)),
 	}
 	if mutation.ReplacesWholeRecord() {
@@ -239,6 +307,7 @@ func derivePlanNoDataStatementDigest(mutation PlanNoDataMutation) (MutationDiges
 		ScheduleRevision       PlanScheduleRevision `json:"schedule_revision"`
 		RosterVersion          string               `json:"roster_version"`
 		PresentAsOf            int64                `json:"present_as_of"`
+		TrackingExhaustedAt    int64                `json:"tracking_exhausted_at"`
 		MemoryDigest           MutationDigest       `json:"memory_digest"`
 		GroupCount             uint32               `json:"group_count"`
 		Set                    []NoDataGroupDelta   `json:"set"`
@@ -246,8 +315,8 @@ func derivePlanNoDataStatementDigest(mutation PlanNoDataMutation) (MutationDiges
 	}{
 		mutation.Identity, mutation.SchemaVersion, mutation.DerivedFrom, mutation.ExpectedMarkerRevision,
 		mutation.LoadedApplyVersion, mutation.ApplyVersion,
-		mutation.ScheduleRevision, mutation.RosterVersion, mutation.PresentAsOf, mutation.MemoryDigest,
-		mutation.GroupCount, mutation.Set, mutation.Del,
+		mutation.ScheduleRevision, mutation.RosterVersion, mutation.PresentAsOf, mutation.TrackingExhaustedAt,
+		mutation.MemoryDigest, mutation.GroupCount, mutation.Set, mutation.Del,
 	})
 	if err != nil {
 		return "", fmt.Errorf("alarmd execution: derive Plan no-data statement digest: %w", err)
@@ -404,12 +473,19 @@ func noDataMemoryDelta(
 // - an absence, and equally a group the roster stopped expecting while it was
 // present and which therefore kept an older last-seen - is written in full.
 func noDataGroupValue(group NoDataGroupMemory, presentAsOf int64) NoDataGroupDelta {
-	if group.FirstAbsent == 0 && presentAsOf > 0 && group.LastSeen == presentAsOf {
+	// Suppression joins the absence in the guard rather than riding on
+	// FirstAbsent being set. A suppressed group always carries a first-absent
+	// today, so the two conditions agree; spelling both means that if they ever
+	// stop agreeing the group is written in full rather than compressed into
+	// "present", which is the direction that loses the fact.
+	if group.FirstAbsent == 0 && group.SuppressedAt == 0 && presentAsOf > 0 && group.LastSeen == presentAsOf {
 		return NoDataGroupDelta{GroupKey: group.GroupKey}
 	}
 	return NoDataGroupDelta{
 		GroupKey: group.GroupKey,
-		Absent:   &NoDataGroupAbsence{LastSeen: group.LastSeen, FirstAbsent: group.FirstAbsent},
+		Absent: &NoDataGroupAbsence{
+			LastSeen: group.LastSeen, FirstAbsent: group.FirstAbsent, SuppressedAt: group.SuppressedAt,
+		},
 	}
 }
 
@@ -471,10 +547,17 @@ func derivePlanNoDataMemoryDigest(
 		ScheduleRevision PlanScheduleRevision `json:"schedule_revision"`
 		RosterVersion    string               `json:"roster_version"`
 		PresentAsOf      int64                `json:"present_as_of"`
-		Groups           []NoDataGroupMemory  `json:"groups"`
+		// Every fact the record stores is covered here, the Plan-level ones
+		// included. A stored field left out would let two records that differ
+		// only in it carry one digest, and the store answers "already applied"
+		// on a digest match - so the write that set the field would be dropped,
+		// silently, on exactly the same-Slot retry the frozen horizon makes
+		// routine.
+		TrackingExhaustedAt int64               `json:"tracking_exhausted_at"`
+		Groups              []NoDataGroupMemory `json:"groups"`
 	}{
 		mutation.Identity, mutation.SchemaVersion, mutation.ScheduleRevision,
-		mutation.RosterVersion, mutation.PresentAsOf, memory,
+		mutation.RosterVersion, mutation.PresentAsOf, mutation.TrackingExhaustedAt, memory,
 	})
 	if err != nil {
 		return "", fmt.Errorf("alarmd execution: derive Plan no-data memory digest: %w", err)

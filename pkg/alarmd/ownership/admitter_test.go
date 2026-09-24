@@ -24,7 +24,7 @@ func TestAdmitterRequiresCurrentFenceAndCurrentPlanActivation(t *testing.T) {
 			ScheduleSegmentStart: 100,
 			DuePlanSetDigest:     "plans-1",
 		},
-		Plan:            execution.PlanIdentity{TenantID: "tenant", BusinessID: "business", StrategyID: "strategy"},
+		Plan:            execution.PlanKey{PlanIdentity: execution.PlanIdentity{TenantID: "tenant", BusinessID: "business", StrategyID: "strategy"}},
 		StateApplyEpoch: 1,
 		OwnerFence:      execution.OwnerFence{QueryGroup: "query-group-1", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "token-1"},
 	}
@@ -66,7 +66,7 @@ type fakeActivationReader struct {
 func (reader *fakeActivationReader) IsPlanActive(
 	context.Context,
 	execution.FrozenExecutionContractRef,
-	execution.PlanIdentity,
+	execution.PlanKey,
 	execution.StateApplyEpoch,
 ) (bool, error) {
 	return reader.active, reader.err

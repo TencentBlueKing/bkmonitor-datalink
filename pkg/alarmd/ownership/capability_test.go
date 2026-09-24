@@ -43,3 +43,29 @@ func TestAllDeclareIsTrueOnlyForAWholeFleetThatTakesPart(t *testing.T) {
 		t.Fatalf("round-tripped registration = %+v, %v; want the capability kept", decoded, err)
 	}
 }
+
+// The split gate admits a split only for a fleet every ready member of which
+// declares the split contract, and names the members that do not, in id
+// order: the reading a roll is watched by (0 -> n -> 0) and the reason a
+// split is held. A registration written by a binary from before the field
+// declares nothing, so the gate closes on it, which is what a rollback into
+// a split fleet needs.
+func TestTheSplitGateNamesEveryReadyWorkerThatDoesNotDeclare(t *testing.T) {
+	aware := func(id string) WorkerRegistration {
+		return WorkerRegistration{WorkerID: id, Capabilities: []string{CapabilityContentScope, CapabilityShardAware}}
+	}
+	if gate := ShardSplitAdmission(nil); gate.Admitted || gate.Ready != 0 {
+		t.Fatalf("an empty fleet admitted a split: %+v", gate)
+	}
+	if gate := ShardSplitAdmission([]WorkerRegistration{aware("a"), aware("b")}); !gate.Admitted || gate.Ready != 2 || len(gate.Unaware) != 0 {
+		t.Fatalf("a fleet that declares throughout was not admitted: %+v", gate)
+	}
+	var old WorkerRegistration
+	if err := json.Unmarshal([]byte(`{"worker_id":"old","assignment_readiness":"READY","capabilities":["content-scope.v1"]}`), &old); err != nil {
+		t.Fatal(err)
+	}
+	gate := ShardSplitAdmission([]WorkerRegistration{aware("z"), old, aware("a"), {WorkerID: "m"}})
+	if gate.Admitted || gate.Ready != 4 || len(gate.Unaware) != 2 || gate.Unaware[0] != "m" || gate.Unaware[1] != "old" {
+		t.Fatalf("gate = %+v, want held with the two that do not declare, in id order", gate)
+	}
+}

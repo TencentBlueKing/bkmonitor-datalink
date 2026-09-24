@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package observability
 
 const (
@@ -75,7 +66,7 @@ type PermitWaitFacts struct{ Recovery bool }
 var RunOutcomes = []string{
 	"query_cooldown", "single_flight_busy", "ownership_rejected", "source_backoff", "source_retry",
 	"source_blocked", "source_not_due", "source_error", "operation_not_ready", "admission_denied",
-	"execute_returned", "cancelled", "panic", "other_error",
+	"execute_returned", "cancelled", "panic", "other_error", "view_not_executable",
 }
 
 func ValidRunOutcome(value string) bool {
@@ -86,9 +77,15 @@ func ValidRunOutcome(value string) bool {
 	}
 	return false
 }
+
+// ValidExecuteOutcome is every word an executor return is classified as.
+// view_not_executable is a return the executable view refused (decision-016
+// batch 4b): the round did not run, and it is not among the fleet's failed
+// executions - the Runner's own outcome says blocked - nor among the
+// errors, which a reader may count as this deployment failing.
 func ValidExecuteOutcome(value string) bool {
 	switch value {
-	case "completed", "readiness_deferred", "retrying", "cancelled", "error", "incomplete":
+	case "completed", "readiness_deferred", "view_not_executable", "retrying", "cancelled", "error", "incomplete":
 		return true
 	}
 	return false

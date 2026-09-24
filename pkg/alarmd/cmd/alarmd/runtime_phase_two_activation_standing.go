@@ -10,6 +10,9 @@
 package main
 
 import (
+	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
@@ -116,6 +119,21 @@ func (bundle *phaseTwoWorkerBundle) activationFleetFacts() *fleet.ActivationFact
 	if !state.lastSuccessAt.IsZero() {
 		age := now.Sub(state.lastSuccessAt).Seconds()
 		facts.LastSuccessAgeSeconds = &age
+	}
+	if bundle.dependencies.ActivationBlocked != nil {
+		reading := bundle.dependencies.ActivationBlocked()
+		for _, count := range reading.ByReason {
+			facts.BlockedQueryGroups += count
+		}
+		if facts.BlockedQueryGroups > 0 {
+			reasons := make([]string, 0, len(reading.ByReason))
+			for reason, count := range reading.ByReason {
+				reasons = append(reasons, fmt.Sprintf("%s=%d", reason, count))
+			}
+			sort.Strings(reasons)
+			facts.BlockedReasons = strings.Join(reasons, ",")
+			facts.BlockedSamples = strings.Join(reading.Samples, ",")
+		}
 	}
 	if !state.failingSince.IsZero() {
 		failing := now.Sub(state.failingSince).Seconds()

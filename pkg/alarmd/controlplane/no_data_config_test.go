@@ -11,10 +11,25 @@ package controlplane
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
+
+// noDataItem decodes one item carrying this no_data_config section, through
+// the same decoder the strategy cache goes through.
+func noDataItem(t *testing.T, section string) legacyItem {
+	t.Helper()
+	document := json.RawMessage(`{"id":1,"bk_biz_id":2,"update_time":1700000000,"items":[{"id":11,` +
+		`"query_md5":"m","expression":"a","query_configs":[{}],` +
+		`"algorithms":[{"level":1,"type":"Threshold"}],"no_data_config":` + section + `}]}`)
+	decoded, err := decodeLegacyStrategy(document)
+	if err != nil {
+		t.Fatalf("decode strategy = %v", err)
+	}
+	return decoded.Items[0]
+}
 
 // The item's setting is read off the strategy cache exactly as the backend
 // reads it. Each case names the read site it mirrors, so a change here has to
@@ -40,7 +55,7 @@ func TestAStatedNumberDoesNotCostTheStrategyItsOtherDetection(t *testing.T) {
 	if len(strategy.Items) != 1 || len(strategy.Items[0].Algorithms) != 1 {
 		t.Fatalf("decoded items = %+v, want the item and its algorithm intact", strategy.Items)
 	}
-	config, err := frozenNoDataConfig(strategy.Items[0])
+	config, err := frozenNoDataConfig(strategy.Items[0], NoDataPolicy{})
 	if err != nil || config == nil || config.Continuous != 5 {
 		t.Fatalf("frozenNoDataConfig() = %+v, %v, want continuous 5", config, err)
 	}
@@ -58,7 +73,7 @@ func TestAStatedNumberDoesNotCostTheStrategyItsOtherDetection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode strategy = %v; a malformed no-data number took the whole strategy with it", err)
 	}
-	if _, err := frozenNoDataConfig(decoded.Items[0]); err == nil {
+	if _, err := frozenNoDataConfig(decoded.Items[0], NoDataPolicy{}); err == nil {
 		t.Fatal("frozenNoDataConfig() accepted a continuous that is not a number")
 	}
 
@@ -89,7 +104,7 @@ func TestAStatedNumberDoesNotCostTheStrategyItsOtherDetection(t *testing.T) {
 			if len(decoded.Items) != 1 || len(decoded.Items[0].Algorithms) != 1 {
 				t.Fatalf("decoded items = %+v, want the item and its algorithm intact", decoded.Items)
 			}
-			config, err := frozenNoDataConfig(decoded.Items[0])
+			config, err := frozenNoDataConfig(decoded.Items[0], NoDataPolicy{})
 			if shape.wantItemError {
 				if err == nil {
 					t.Fatalf("frozenNoDataConfig() = %+v, want the shape refused by name", config)
@@ -167,7 +182,7 @@ func TestFrozenNoDataConfigFollowsTheBackendReadSites(t *testing.T) {
 			if err := json.Unmarshal([]byte(test.payload), &item); err != nil {
 				t.Fatalf("Unmarshal() error = %v", err)
 			}
-			config, err := frozenNoDataConfig(item)
+			config, err := frozenNoDataConfig(item, NoDataPolicy{})
 			if test.wantError {
 				if err == nil {
 					t.Fatalf("frozenNoDataConfig() = %+v, want an error", config)
@@ -256,7 +271,7 @@ func TestNoDataRosterUnsupportedNamesOnlyWhatThisBuildCannotDerive(t *testing.T)
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			reason := noDataRosterUnsupported(test.scope, test.config)
+			reason := noDataRosterUnsupported(test.scope, nil, test.config)
 			if test.unsupported && reason == "" {
 				t.Fatal("noDataRosterUnsupported() said this build can derive an expected set it cannot")
 			}
@@ -264,5 +279,106 @@ func TestNoDataRosterUnsupportedNamesOnlyWhatThisBuildCannotDerive(t *testing.T)
 				t.Fatalf("noDataRosterUnsupported() = %q, want this build to derive it", reason)
 			}
 		})
+	}
+}
+
+// The effective horizon is settled at compile time from the deployment default
+// and the item's own override, and frozen into the Plan with the word saying
+// which of the two it came from.
+//
+// Settled here so that exactly one place decides it. Every layer below - the
+// worker, the slot, the evaluator - takes the number it is given; if any of
+// them also consulted a setting, two of them would answer differently the
+// moment either input changed, and the one that wins would depend on which
+// layer a reader happened to look at.
+//
+// The source is frozen for the same reason and one more: the number alone
+// cannot say. An item that states exactly the platform's value and one that
+// inherited it carry the same number, and a reader inferring the source by
+// comparison reads both as the platform's - until the platform's value
+// moves, when it reads every Plan compiled under the old value as the
+// strategy's own. The row where the item states the platform's exact value
+// is the one that comparison can never get right.
+func TestTheEffectiveHorizonIsSettledWhereThePlanIsFrozen(t *testing.T) {
+	item := func(section string) legacyItem { return noDataItem(t, section) }
+
+	for name, test := range map[string]struct {
+		section    string
+		platform   int64
+		want       int64
+		wantSource contract.NoDataHorizonSource
+		because    string
+	}{
+		"the deployment's default applies to an item that says nothing": {
+			section: `{"is_enabled":true,"continuous":5}`, platform: 600, want: 600,
+			wantSource: contract.NoDataHorizonSourcePlatform,
+			because:    "configuring the horizon platform-wide is the ordinary way to configure it",
+		},
+		"the item's own horizon wins over the deployment's": {
+			section: `{"is_enabled":true,"continuous":5,"tracking_horizon_seconds":120}`, platform: 600, want: 120,
+			wantSource: contract.NoDataHorizonSourceStrategy,
+			because:    "an item that states one has said what it wants",
+		},
+		"the item's own horizon is its own even at exactly the deployment's value": {
+			section: `{"is_enabled":true,"continuous":5,"tracking_horizon_seconds":600}`, platform: 600, want: 600,
+			wantSource: contract.NoDataHorizonSourceStrategy,
+			because:    "the item will keep 600 when the deployment moves to 1200; a reader comparing values would say PLATFORM",
+		},
+		"no horizon anywhere is what every deployment had before the setting": {
+			section: `{"is_enabled":true,"continuous":5}`, platform: 0, want: 0,
+			wantSource: "",
+			because:    "a deployment that set none leaves tracking unlimited, the behaviour this replaces",
+		},
+		"the item's own horizon while the deployment has none": {
+			section: `{"is_enabled":true,"continuous":5,"tracking_horizon_seconds":120}`, platform: 0, want: 120,
+			wantSource: contract.NoDataHorizonSourceStrategy,
+			because:    "the source names whose number it is, not whether the platform had one to compare against",
+		},
+		"a quoted horizon is read as a number like every other number here": {
+			section: `{"is_enabled":true,"continuous":5,"tracking_horizon_seconds":"900"}`, platform: 600, want: 900,
+			wantSource: contract.NoDataHorizonSourceStrategy,
+			because:    "the section is a bare dict and the backend reads its numbers with int()",
+		},
+	} {
+		test := test
+		t.Run(name, func(t *testing.T) {
+			config, err := frozenNoDataConfig(item(test.section), NoDataPolicy{TrackingHorizonSeconds: test.platform})
+			if err != nil || config == nil {
+				t.Fatalf("frozenNoDataConfig() = %+v, %v", config, err)
+			}
+			if config.TrackingHorizonSeconds != test.want {
+				t.Fatalf("frozen horizon = %d, want %d: %s",
+					config.TrackingHorizonSeconds, test.want, test.because)
+			}
+			if config.TrackingHorizonSource != test.wantSource {
+				t.Fatalf("frozen horizon source = %q, want %q: %s",
+					config.TrackingHorizonSource, test.wantSource, test.because)
+			}
+		})
+	}
+}
+
+// An item stating a zero horizon is refused by name.
+//
+// It is not an opt-out, because there is nothing to opt out of: the decision
+// is to give every group a finite horizon, and the horizon has no value
+// meaning "forever" for a zero to stand in for. An item that wants the
+// platform's horizon states nothing, which is already how that is said - so a
+// written zero is a mistake, and taking it as a request would switch that item
+// back to the unbounded tracking this decision exists to end, silently and on
+// the strength of a character.
+//
+// The platform horizon is set here so the case cannot pass by there being no
+// horizon to fall back to.
+func TestAnItemStatingAZeroHorizonIsRefused(t *testing.T) {
+	config, err := frozenNoDataConfig(
+		noDataItem(t, `{"is_enabled":true,"continuous":5,"tracking_horizon_seconds":0}`),
+		NoDataPolicy{TrackingHorizonSeconds: 600},
+	)
+	if err == nil {
+		t.Fatalf("frozenNoDataConfig() = %+v, want a refusal: a zero horizon is not an opt-out", config)
+	}
+	if !strings.Contains(err.Error(), "tracking_horizon_seconds") {
+		t.Fatalf("refusal = %v, want it to name the field whoever wrote it has to fix", err)
 	}
 }

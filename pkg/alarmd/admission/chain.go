@@ -257,8 +257,11 @@ type PlanContext struct {
 	BusinessID string
 	StrategyID string
 	// TargetScope is the strategy's monitoring target, frozen at compile time.
-	// Nil means the strategy names no target.
+	// Nil means the strategy names no target - unless TargetPlan is set.
 	TargetScope *TargetScope
+	// TargetPlan is the same target in its second frozen form, with what this
+	// Slot resolved it to. A Plan carries at most one of the two forms.
+	TargetPlan *TargetPlanContext
 }
 
 // Fuller derives facts from a series' dimensions.

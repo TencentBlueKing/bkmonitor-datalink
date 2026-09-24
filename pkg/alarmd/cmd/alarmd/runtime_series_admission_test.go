@@ -29,8 +29,8 @@ import (
 func TestHostStatusFilterFollowsThePlatformSettingsCopy(t *testing.T) {
 	defaults := platformsettings.CodeDefaults()
 	hostStatus := newDynamicHostStatusFilter(defaults.HostDisableMonitorStates)
-	if names := filterNames(seriesAdmissionFilters(hostStatus, nil)); !reflect.DeepEqual(names, []string{"target_scope", "host_status"}) {
-		t.Fatalf("filters = %v, want the target then the host state", names)
+	if names := filterNames(seriesAdmissionFilters(hostStatus, nil)); !reflect.DeepEqual(names, []string{"target_scope", "target_plan", "host_status"}) {
+		t.Fatalf("filters = %v, want the two target forms then the host state", names)
 	}
 	if got := hostDisableMonitorStateCount(seriesAdmissionFilters(hostStatus, nil)); got != len(defaults.HostDisableMonitorStates) {
 		t.Fatalf("states in force = %d, want the code default's %d", got, len(defaults.HostDisableMonitorStates))
@@ -63,7 +63,7 @@ func TestHostStatusFilterFollowsThePlatformSettingsCopy(t *testing.T) {
 	if decision := hostStatus.Admit(admission.PlanContext{}, facts); decision.Admit {
 		t.Fatalf("a host in a newly disabled state was admitted: %+v", decision)
 	}
-	if names := filterNames(seriesAdmissionFilters(nil, nil)); !reflect.DeepEqual(names, []string{"target_scope"}) {
+	if names := filterNames(seriesAdmissionFilters(nil, nil)); !reflect.DeepEqual(names, []string{"target_scope", "target_plan"}) {
 		t.Fatalf("filters without a host filter = %v", names)
 	}
 }

@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package controlplane
 
 import (
@@ -28,6 +19,41 @@ var errRuntimeCatalogClosureInvalid = errors.New("alarmd controlplane: runtime C
 // retainRuntimeExecutableCatalog applies the Evaluation Core compiler before
 // publication. Deterministic Plan and Level terminals remain source-audit
 // facts; only terminal-free Plans enter the immutable scheduling Catalog.
+// observeRetention sums one accepted Plan's retained window into the
+// Catalog's measurement.
+//
+// Taken here because this is the one place the compiled Level is in hand for
+// every Plan the deployment runs: the composition downstream sees the frozen
+// strategy document, and deriving the window from it a second time would put
+// the same relation in two places with nothing comparing them.
+//
+// The no-data Level counts with the rest. Its facts are written on the same
+// records, so its retention is retention the store pays for.
+func observeRetention(retention *CatalogRetention, compiled *strategy.CompiledPlan) {
+	levels := compiled.Levels()
+	if noData := compiled.NoDataLevel(); noData != nil {
+		levels = append(append([]strategy.CompiledLevel(nil), levels...), *noData)
+	}
+	for _, level := range levels {
+		requirement := level.StateRequirement()
+		retention.RequiredPoints += uint64(requirement.RequiredDetectHistoryPoints)
+		retention.RetentionPoints += uint64(requirement.RetentionPoints)
+		if requirement.RetentionPoints <= requirement.RequiredDetectHistoryPoints {
+			continue
+		}
+		retention.LevelsWithSlack++
+		// Which term of the required window is the larger one. The slack's
+		// leading term is the trigger window, so a Level whose window
+		// dominates pays far more for the same required size than one whose
+		// recovery run does.
+		if level.Trigger().WindowSize > level.Recovery().ConsecutiveWindows {
+			retention.LevelsWithSlackWindowDominant++
+			continue
+		}
+		retention.LevelsWithSlackRecoveryDominant++
+	}
+}
+
 func retainRuntimeExecutableCatalog(
 	ctx context.Context,
 	catalog Catalog,
@@ -42,7 +68,7 @@ func retainRuntimeExecutableCatalog(
 	result.QueryGroups = make([]QueryGroup, 0, len(catalog.QueryGroups))
 	result.Dispositions = append([]ObjectDisposition(nil), catalog.Dispositions...)
 	groups := make(map[execution.QueryGroupIdentity]*QueryGroup, len(catalog.QueryGroups))
-	seenPlans := make(map[execution.PlanIdentity]struct{})
+	seenPlans := make(map[execution.PlanKey]struct{})
 	lastGoodPlans := indexLastGoodPlans(lastGood)
 	rejectClosure := func(sourceID string, dispositions ...ObjectDisposition) {
 		result.Dispositions = append(result.Dispositions, dispositions...)
@@ -56,10 +82,25 @@ func retainRuntimeExecutableCatalog(
 			return errors.New("alarmd controlplane: runtime executable Plan has no state compatibility")
 		}
 		plan.StateGeneration = execution.StateGeneration(compiled.StateCompatibilityHash())
-		if _, duplicate := seenPlans[plan.Identity]; duplicate {
+		// The refs from the same compilation as the generation, so the key
+		// and the contract a Worker holds a record to were derived by one
+		// build.
+		refs, err := execution.DeriveRuntimeLevelContractRefs(compiled)
+		if err != nil {
+			return err
+		}
+		plan.LevelContractRefs = refs
+		plan.NoDataLevelContractRefs = nil
+		if view := compiled.NoDataView(); view != nil {
+			if plan.NoDataLevelContractRefs, err = execution.DeriveRuntimeLevelContractRefs(view); err != nil {
+				return err
+			}
+		}
+		observeRetention(&result.Retention, compiled)
+		if _, duplicate := seenPlans[plan.Key()]; duplicate {
 			return errors.New("alarmd controlplane: duplicate runtime executable Plan identity")
 		}
-		seenPlans[plan.Identity] = struct{}{}
+		seenPlans[plan.Key()] = struct{}{}
 		identity, err := deriveQueryGroupIdentity(facts)
 		if err != nil {
 			return err
@@ -87,12 +128,9 @@ func retainRuntimeExecutableCatalog(
 				return Catalog{}, err
 			}
 			if terminal := compiledResult.PlanTerminal(); terminal != nil {
-				disposition, err := terminalDisposition(sourcePlan.Identity.StrategyID, "PLAN", *terminal)
-				if err != nil {
-					return Catalog{}, err
-				}
+				disposition := terminalDisposition(sourcePlan.Identity.StrategyID, "PLAN", *terminal)
 				result.Dispositions = withoutAcceptedPlanDisposition(result.Dispositions, sourcePlan.Identity.StrategyID)
-				if disposition.Disposition == DispositionConfigRejected {
+				if RetainsLastGoodDefinition(disposition.Disposition) {
 					if entry, ok := lastGoodPlans[sourcePlan.Identity.StrategyID]; ok {
 						lastGoodCompiled, executable, err := runtimePlanIsTerminalFree(ctx, entry, compiler, stateSemantics)
 						if err != nil {
@@ -124,14 +162,14 @@ func retainRuntimeExecutableCatalog(
 			}
 			levelTerminals := compiledResult.LevelTerminals()
 			terminalDispositions := make([]ObjectDisposition, 0, len(levelTerminals))
-			hasConfigRejected := false
+			// Any refusal that keeps the last good definition, not only a
+			// config one: the Levels this round could not compile are
+			// supplemented from the definition that did.
+			retainsLastGood := false
 			for _, terminal := range levelTerminals {
-				disposition, err := terminalDisposition(sourcePlan.Identity.StrategyID, "LEVEL", terminal)
-				if err != nil {
-					return Catalog{}, err
-				}
+				disposition := terminalDisposition(sourcePlan.Identity.StrategyID, "LEVEL", terminal)
 				terminalDispositions = append(terminalDispositions, disposition)
-				hasConfigRejected = hasConfigRejected || disposition.Disposition == DispositionConfigRejected
+				retainsLastGood = retainsLastGood || RetainsLastGoodDefinition(disposition.Disposition)
 			}
 			plan, err := retainCompiledLevels(sourcePlan, compiled)
 			if err != nil {
@@ -142,7 +180,7 @@ func retainRuntimeExecutableCatalog(
 				return Catalog{}, err
 			}
 			supplementedLevels := map[uint32]struct{}{}
-			if hasConfigRejected {
+			if retainsLastGood {
 				if entry, ok := lastGoodPlans[sourcePlan.Identity.StrategyID]; ok {
 					_, executable, err := runtimePlanIsTerminalFree(ctx, entry, compiler, stateSemantics)
 					if err != nil {
@@ -484,11 +522,7 @@ func runtimeRequirementTemplate(requirement strategy.AlgorithmInputRequirement) 
 
 func compileResultDispositions(sourceID string, result strategy.CompileResult) ([]ObjectDisposition, error) {
 	if terminal := result.PlanTerminal(); terminal != nil {
-		disposition, err := terminalDisposition(sourceID, "PLAN", *terminal)
-		if err != nil {
-			return nil, err
-		}
-		return []ObjectDisposition{disposition}, nil
+		return []ObjectDisposition{terminalDisposition(sourceID, "PLAN", *terminal)}, nil
 	}
 	terminals := result.LevelTerminals()
 	if len(terminals) == 0 {
@@ -496,11 +530,7 @@ func compileResultDispositions(sourceID string, result strategy.CompileResult) (
 	}
 	dispositions := make([]ObjectDisposition, 0, len(terminals))
 	for _, terminal := range terminals {
-		disposition, err := terminalDisposition(sourceID, "LEVEL", terminal)
-		if err != nil {
-			return nil, err
-		}
-		dispositions = append(dispositions, disposition)
+		dispositions = append(dispositions, terminalDisposition(sourceID, "LEVEL", terminal))
 	}
 	return dispositions, nil
 }
@@ -552,22 +582,52 @@ func refreshQueryGroupDigests(group *QueryGroup) error {
 // ok is false for a code the compiler does not produce as a terminal.
 func CompilerTerminalDisposition(reasonCode string) (Disposition, bool) {
 	switch reasonCode {
-	case contract.ReasonAlgorithmUnsupported, contract.ReasonPlanBudgetExceeded, contract.ReasonLevelBudgetExceeded:
+	case contract.ReasonAlgorithmUnsupported, contract.ReasonPlanBudgetExceeded, contract.ReasonLevelBudgetExceeded,
+		strategy.ReasonEffectiveTimeSchemaUnsupported:
 		return DispositionUnsupported, true
-	case contract.ReasonPlanInvalid, contract.ReasonPlanDuplicateLevelID, contract.ReasonProjectionInvalid, contract.ReasonLevelInvalid:
+	case contract.ReasonPlanInvalid, contract.ReasonPlanDuplicateLevelID, contract.ReasonProjectionInvalid, contract.ReasonLevelInvalid,
+		contract.ReasonNoDataPlanUncompilable,
+		strategy.ReasonEffectiveTimeInvalid, strategy.ReasonEffectiveTimeSnapshotInvalid,
+		strategy.ReasonEffectiveTimeSnapshotStatusInvalid, strategy.ReasonEffectiveTimeCalendarIdentity,
+		strategy.ReasonEffectiveTimeCalendarDuplicate, strategy.ReasonEffectiveTimeCalendarItemsMissing:
 		return DispositionConfigRejected, true
+	case strategy.ReasonEffectiveTimeSnapshotUnavailable, strategy.ReasonEffectiveTimeCalendarsMissing,
+		strategy.ReasonEffectiveTimeCalendarNotPresent, strategy.ReasonEffectiveTimeCalendarMissing:
+		// The strategy names a calendar the snapshot did not carry, or the
+		// snapshot did not arrive. The definition is not wrong and this build
+		// is not lacking anything: what is missing is a piece of the source,
+		// which is the one disposition that says so.
+		return DispositionSourceIncomplete, true
 	default:
 		return "", false
 	}
 }
 
-func terminalDisposition(sourceID, scope string, terminal strategy.Terminal) (ObjectDisposition, error) {
+// ReasonCompilerTerminalUnclassified files a terminal this build's table has no
+// entry for. It carries the compiler's own reason code and field path so the
+// strategy can still be named, which is the half that mattered: the code this
+// replaces failed the whole refresh and dropped all three.
+const ReasonCompilerTerminalUnclassified = contract.ReasonCompilerTerminalUnclassified
+
+func terminalDisposition(sourceID, scope string, terminal strategy.Terminal) ObjectDisposition {
 	disposition, known := CompilerTerminalDisposition(terminal.ReasonCode)
 	if !known {
-		return ObjectDisposition{}, errors.New("alarmd controlplane: runtime compiler returned an unclassified terminal reason")
+		// One strategy's compile refusal is one strategy's refusal. Failing
+		// the round here is what a live deployment met: a reason the compiler
+		// had gained and the table had not took every config refresh with it,
+		// fifty-three rounds with none published, every strategy left on a
+		// catalog from before - and the error carried neither the strategy nor
+		// the reason, so nothing could say which definition to look at.
+		//
+		// The unknown code travels in the detail rather than the disposition,
+		// because a code this build cannot classify is exactly the one a
+		// reader needs to see verbatim.
+		return ObjectDisposition{SourceID: sourceID, Scope: scope, LevelID: terminal.LevelID,
+			Disposition: DispositionConfigRejected, Reason: ReasonCompilerTerminalUnclassified,
+			FieldPath: terminal.FieldPath, Detail: dispositionDetail(terminal.ReasonCode)}
 	}
 	return ObjectDisposition{SourceID: sourceID, Scope: scope, LevelID: terminal.LevelID,
-		Disposition: disposition, Reason: terminal.ReasonCode, FieldPath: terminal.FieldPath}, nil
+		Disposition: disposition, Reason: terminal.ReasonCode, FieldPath: terminal.FieldPath}
 }
 
 func withoutAcceptedPlanDisposition(dispositions []ObjectDisposition, sourceID string) []ObjectDisposition {

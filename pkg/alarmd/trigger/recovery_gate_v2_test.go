@@ -17,20 +17,18 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
-// A RECOVERY envelope resolves the alert on its series at the consumer,
-// whatever Level that alert stands at. So the envelope goes only once every
-// Level has agreed: a Level whose state is unknown, or whose recovery span
-// still holds a triggering window, holds it. Two shapes are not consulted
-// because a hold on them would never lift: a Level suppressed by its
-// effective time, and a NORMAL Level whose recovery is disabled. In every
-// case the Level results themselves are unchanged and still reach the state.
-func TestRecoveryEnvelopeWaitsForEveryLevel(t *testing.T) {
+// A RECOVERY speaks for its own Level: the envelope carries that Level's
+// result and the consumer ends only an alert of that Level's severity. So
+// another Level's state does not hold it. Whatever that Level is -- unknown,
+// NORMAL with a triggering window still in its recovery span, NORMAL without
+// recovery -- the envelope goes, with the recovering Level as its primary
+// and the other Level never reading RECOVERY in it, and the gate names the
+// Level it went beside. The Level results themselves are unchanged.
+func TestARecoveryIsNotHeldOnAnotherLevel(t *testing.T) {
 	const source = int64(300)
 	type verdict struct {
-		held                       bool
-		cause                      string
-		levelID                    uint32
-		passedLevelWithoutRecovery bool
+		beside        string
+		besideLevelID uint32
 	}
 	tests := []struct {
 		name      string
@@ -38,12 +36,12 @@ func TestRecoveryEnvelopeWaitsForEveryLevel(t *testing.T) {
 		facts     func(levels []strategy.CompiledLevel) []DetectionFact
 		histories []LevelHistory
 		want      verdict
-		// primary is the Level the sent envelope is aggregated to: the lowest
+		// primary is the Level the envelope is aggregated to: the lowest
 		// priority among the Levels that said RECOVERY.
 		primary uint32
 	}{
 		{
-			name:   "a Level whose detect fact is unavailable holds the envelope",
+			name:   "beside a Level whose detect fact is unavailable",
 			levels: []contract.LevelIRV2{levelV2(1, 1, 1, 1, 1, nil), levelV2(2, 2, 1, 1, 1, nil)},
 			facts: func(levels []strategy.CompiledLevel) []DetectionFact {
 				return []DetectionFact{unavailableFactV2(levels[0], contract.ReasonRequiredValueMissing), factV2(levels[1], DetectionNormal)}
@@ -52,10 +50,11 @@ func TestRecoveryEnvelopeWaitsForEveryLevel(t *testing.T) {
 				{LevelID: 1, View: pointHistory{step: 60, points: map[int64]bool{source - 60: true}}},
 				{LevelID: 2, View: pointHistory{step: 60, points: map[int64]bool{source: false}}},
 			},
-			want: verdict{held: true, cause: RecoveryHeldLevelUnavailable, levelID: 1},
+			want:    verdict{beside: RecoveryBesideLevelUnavailable, besideLevelID: 1},
+			primary: 2,
 		},
 		{
-			name:   "a Level whose history is still warming holds the envelope",
+			name:   "beside a Level whose history is still warming",
 			levels: []contract.LevelIRV2{levelV2(1, 1, 1, 1, 2, nil), levelV2(2, 2, 1, 1, 1, nil)},
 			facts: func(levels []strategy.CompiledLevel) []DetectionFact {
 				return []DetectionFact{factV2(levels[0], DetectionNormal), factV2(levels[1], DetectionNormal)}
@@ -64,10 +63,11 @@ func TestRecoveryEnvelopeWaitsForEveryLevel(t *testing.T) {
 				{LevelID: 1, View: pointHistory{step: 60, points: map[int64]bool{source: false}}},
 				{LevelID: 2, View: pointHistory{step: 60, points: map[int64]bool{source: false}}},
 			},
-			want: verdict{held: true, cause: RecoveryHeldLevelUnavailable, levelID: 1},
+			want:    verdict{beside: RecoveryBesideLevelUnavailable, besideLevelID: 1},
+			primary: 2,
 		},
 		{
-			name:   "a NORMAL Level whose recovery span still triggers holds the envelope",
+			name:   "beside a NORMAL Level whose recovery span still triggers",
 			levels: []contract.LevelIRV2{levelV2(1, 1, 1, 1, 2, nil), levelV2(2, 2, 1, 1, 1, nil)},
 			facts: func(levels []strategy.CompiledLevel) []DetectionFact {
 				return []DetectionFact{factV2(levels[0], DetectionNormal), factV2(levels[1], DetectionNormal)}
@@ -76,10 +76,11 @@ func TestRecoveryEnvelopeWaitsForEveryLevel(t *testing.T) {
 				{LevelID: 1, View: pointHistory{step: 60, points: map[int64]bool{source - 60: true, source: false}}},
 				{LevelID: 2, View: pointHistory{step: 60, points: map[int64]bool{source: false}}},
 			},
-			want: verdict{held: true, cause: RecoveryHeldLevelRecovering, levelID: 1},
+			want:    verdict{beside: RecoveryBesideLevelRecovering, besideLevelID: 1},
+			primary: 2,
 		},
 		{
-			name:   "a NORMAL Level without recovery is passed and counted, never held on",
+			name:   "beside a NORMAL Level without recovery",
 			levels: []contract.LevelIRV2{levelWithoutRecoveryV2(1, 1, 1, 1), levelV2(2, 2, 1, 1, 1, nil)},
 			facts: func(levels []strategy.CompiledLevel) []DetectionFact {
 				return []DetectionFact{factV2(levels[0], DetectionNormal), factV2(levels[1], DetectionNormal)}
@@ -88,11 +89,11 @@ func TestRecoveryEnvelopeWaitsForEveryLevel(t *testing.T) {
 				{LevelID: 1, View: pointHistory{step: 60, points: map[int64]bool{source: false}}},
 				{LevelID: 2, View: pointHistory{step: 60, points: map[int64]bool{source: false}}},
 			},
-			want:    verdict{passedLevelWithoutRecovery: true},
+			want:    verdict{beside: RecoveryBesideLevelWithoutRecovery, besideLevelID: 1},
 			primary: 2,
 		},
 		{
-			name:   "every Level recovered sends the envelope",
+			name:   "every Level recovered",
 			levels: []contract.LevelIRV2{levelV2(1, 1, 1, 1, 1, nil), levelV2(2, 2, 1, 1, 1, nil)},
 			facts: func(levels []strategy.CompiledLevel) []DetectionFact {
 				return []DetectionFact{factV2(levels[0], DetectionNormal), factV2(levels[1], DetectionNormal)}
@@ -118,21 +119,20 @@ func TestRecoveryEnvelopeWaitsForEveryLevel(t *testing.T) {
 			if result.LevelOutcomes[1].Result != contract.LevelResultRecovery {
 				t.Fatalf("the recovering Level reads %q, want RECOVERY: the Level result must not change", result.LevelOutcomes[1].Result)
 			}
-			got := verdict{
-				held: result.RecoveryGate.Held, cause: result.RecoveryGate.Cause, levelID: result.RecoveryGate.LevelID,
-				passedLevelWithoutRecovery: result.RecoveryGate.PassedLevelWithoutRecovery,
+			got := verdict{beside: result.RecoveryGate.Beside, besideLevelID: result.RecoveryGate.BesideLevelID}
+			if got != test.want || result.RecoveryGate.Held {
+				t.Fatalf("gate = %+v, want %+v and not held", result.RecoveryGate, test.want)
 			}
-			if got != test.want {
-				t.Fatalf("gate = %+v, want %+v", got, test.want)
+			event := result.TriggerEvent
+			if event == nil || event.EventKind != contract.TriggerEventRecovery || event.PrimaryLevelID != test.primary {
+				t.Fatalf("envelope = %+v, want RECOVERY with primary Level %d", event, test.primary)
 			}
-			if test.want.held {
-				if result.TriggerEvent != nil {
-					t.Fatalf("a held record still produced an envelope: %+v", result.TriggerEvent)
+			// The envelope says RECOVERY only for the Levels that recovered:
+			// the other Level is absent or NORMAL in it, never RECOVERY.
+			for _, level := range event.LevelResults {
+				if level.LevelID == test.want.besideLevelID && level.Result == contract.LevelResultRecovery {
+					t.Fatalf("the envelope reads RECOVERY for Level %d, which did not recover: %+v", level.LevelID, event.LevelResults)
 				}
-				return
-			}
-			if result.TriggerEvent == nil || result.TriggerEvent.EventKind != contract.TriggerEventRecovery || result.TriggerEvent.PrimaryLevelID != test.primary {
-				t.Fatalf("envelope = %+v, want RECOVERY with primary Level %d", result.TriggerEvent, test.primary)
 			}
 		})
 	}
@@ -159,7 +159,7 @@ func TestRecoveryEnvelopeIsNotHeldOnASuppressedLevel(t *testing.T) {
 	if result.LevelOutcomes[0].SuppressedReason != contract.ReasonEffectiveTimeInactive {
 		t.Fatalf("the part-time Level was not suppressed: %+v", result.LevelOutcomes[0])
 	}
-	if result.RecordResult != contract.LevelResultRecovery || result.RecoveryGate.Held || result.TriggerEvent == nil ||
+	if result.RecordResult != contract.LevelResultRecovery || result.RecoveryGate.Held || result.RecoveryGate.Beside != "" || result.TriggerEvent == nil ||
 		result.TriggerEvent.EventKind != contract.TriggerEventRecovery || result.TriggerEvent.PrimaryLevelID != 5 {
 		t.Fatalf("result = %+v gate = %+v, want the envelope sent past the suppressed Level", result.TriggerEvent, result.RecoveryGate)
 	}
@@ -215,5 +215,31 @@ func TestRecoveryGateDoesNotTouchAnAbnormalRecord(t *testing.T) {
 	if result.RecordResult != contract.LevelResultAbnormal || result.TriggerEvent == nil ||
 		result.TriggerEvent.EventKind != contract.TriggerEventAbnormal || result.RecoveryGate != (RecoveryGateV2{}) {
 		t.Fatalf("result = %q event = %+v gate = %+v, want an ABNORMAL envelope and an empty gate", result.RecordResult, result.TriggerEvent, result.RecoveryGate)
+	}
+}
+
+// The Level a RECOVERY is counted beside is the first that used to hold it --
+// unavailable or still recovering -- even when a NORMAL Level without recovery
+// comes earlier in Level order: that shape never held, and counting under it
+// would hide exactly the records the change is read by.
+func TestARecoveryIsCountedBesideTheLevelThatUsedToHoldIt(t *testing.T) {
+	const source = int64(300)
+	plan := compilePlanV2(t, []contract.LevelIRV2{levelWithoutRecoveryV2(1, 1, 1, 1), levelV2(2, 2, 1, 1, 1, nil), levelV2(3, 3, 1, 1, 1, nil)})
+	levels := plan.Levels()
+	result, err := EvaluateV2(requestV2(t, plan, source,
+		[]DetectionFact{factV2(levels[0], DetectionNormal), unavailableFactV2(levels[1], contract.ReasonRequiredValueMissing), factV2(levels[2], DetectionNormal)},
+		[]LevelHistory{
+			{LevelID: 1, View: pointHistory{step: 60, points: map[int64]bool{source: false}}},
+			{LevelID: 2, View: pointHistory{step: 60, points: map[int64]bool{source - 60: true}}},
+			{LevelID: 3, View: pointHistory{step: 60, points: map[int64]bool{source: false}}},
+		}, activeFactsV2(t, plan, source)))
+	if err != nil {
+		t.Fatalf("EvaluateV2() error = %v", err)
+	}
+	if result.RecordResult != contract.LevelResultRecovery || result.LevelOutcomes[2].Result != contract.LevelResultRecovery {
+		t.Fatalf("record %q outcomes %+v: the fixture does not exercise the gate", result.RecordResult, result.LevelOutcomes)
+	}
+	if result.RecoveryGate.Beside != RecoveryBesideLevelUnavailable || result.RecoveryGate.BesideLevelID != 2 || result.TriggerEvent == nil {
+		t.Fatalf("gate = %+v event = %+v, want counted beside the unavailable Level 2 and sent", result.RecoveryGate, result.TriggerEvent)
 	}
 }

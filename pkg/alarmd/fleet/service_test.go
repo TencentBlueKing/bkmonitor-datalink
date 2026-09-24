@@ -138,7 +138,7 @@ func TestDependencyFailuresBecomeGapsRatherThanErrors(t *testing.T) {
 		},
 		{
 			name: "snapshots unreadable",
-			want: GapReplicaMissing,
+			want: GapSnapshotsUnreadable,
 			make: func() *Service {
 				return mustService(t,
 					stubExpectations{expectation: Expectation{QueryGroups: 949, Known: true}},
@@ -158,6 +158,46 @@ func TestDependencyFailuresBecomeGapsRatherThanErrors(t *testing.T) {
 				t.Fatalf("gaps = %+v, want one of kind %s", view.Gaps, testCase.want)
 			}
 		})
+	}
+}
+
+// A read that failed establishes nothing about any replica. The view that
+// read nothing says the read failed, once, and does not list each running
+// replica as missing -- on a verification cluster that listing said four
+// replicas were gone while the leader's own account had all four healthy.
+func TestAnUnreadableSnapshotStoreIsNotFourMissingReplicas(t *testing.T) {
+	service := mustService(t,
+		stubExpectations{expectation: Expectation{QueryGroups: 949, Known: true}},
+		stubRegistry{replicas: replicas()},
+		stubSnapshots{err: context.DeadlineExceeded},
+	)
+	view := service.View(context.Background())
+	unreadable, missing := 0, 0
+	for _, gap := range view.Gaps {
+		switch gap.Kind {
+		case GapSnapshotsUnreadable:
+			unreadable++
+			if gap.Detail != "timed out" {
+				t.Fatalf("detail = %q, want the classified cause", gap.Detail)
+			}
+		case GapReplicaMissing:
+			missing++
+		}
+	}
+	if unreadable != 1 || missing != 0 {
+		t.Fatalf("gaps = %+v, want one SNAPSHOTS_UNREADABLE and no REPLICA_MISSING", view.Gaps)
+	}
+	if MetricGapKind(GapSnapshotsUnreadable) != string(GapSnapshotsUnreadable) {
+		t.Fatalf("the new gap kind folds to %q on the metric label", MetricGapKind(GapSnapshotsUnreadable))
+	}
+	// A store that answers keeps saying which replica is missing.
+	answered := mustService(t,
+		stubExpectations{expectation: Expectation{QueryGroups: 949, Known: true}},
+		stubRegistry{replicas: replicas()},
+		stubSnapshots{snapshots: healthySnapshots()[:1]},
+	)
+	if view := answered.View(context.Background()); !hasGap(view, GapReplicaMissing) || hasGap(view, GapSnapshotsUnreadable) {
+		t.Fatalf("gaps = %+v, want the missing replica named and no unreadable gap", view.Gaps)
 	}
 }
 

@@ -51,7 +51,7 @@ func (repository *RedisCatalogRepository) loadPublishedGroups(
 	for identity, entry := range content.Groups {
 		plans := make([]FrozenPlan, 0, len(entry.Plans))
 		for _, plan := range entry.Plans {
-			plans = append(plans, FrozenPlan{Identity: plan})
+			plans = append(plans, FrozenPlan{Identity: plan.PlanIdentity, Shard: shardPointerOf(plan)})
 		}
 		published.groups[identity] = QueryGroup{Identity: identity, Plans: plans}
 	}
@@ -163,7 +163,7 @@ func (repository *RedisCatalogRepository) loadQueryGroupObjectsCached(
 	objects := make(map[execution.ObjectDigest]QueryGroupObject, len(batch))
 	missing := make([]ManifestQueryGroup, 0, len(batch))
 	for _, entry := range batch {
-		if value, _, ok := repository.objectCache.lookup(repository.queryGroupObjectKey(entry.ObjectDigest)); ok {
+		if value, _, ok := repository.objects().lookup(repository.queryGroupObjectKey(entry.ObjectDigest)); ok {
 			if stored, ok := value.(storedQueryGroupObject); ok {
 				repository.observeObjectRead(ctx, objectReadKindQueryGroup, objectReadHit)
 				objects[entry.ObjectDigest] = stored.object
@@ -198,7 +198,7 @@ func (repository *RedisCatalogRepository) loadOutputContexts(
 		if _, done := contexts[ref.Digest]; done {
 			continue
 		}
-		if value, _, ok := repository.objectCache.lookup(repository.outputContextKey(ref.Digest)); ok {
+		if value, _, ok := repository.objects().lookup(repository.outputContextKey(ref.Digest)); ok {
 			if context, ok := value.(OutputContextObject); ok {
 				repository.observeObjectRead(ctx, objectReadKindOutputContext, objectReadHit)
 				contexts[ref.Digest] = context
@@ -228,7 +228,16 @@ func (repository *RedisCatalogRepository) loadOutputContexts(
 			if err != nil {
 				return nil, activationDependencyIO(err)
 			}
-			hashed, err := contract.DeriveCanonicalDigestV2OverCanonical(outputContextContractVersion, payload)
+			domain, err := outputContextDomain(payload)
+			if errors.Is(err, ErrCatalogObjectContractNewer) {
+				repository.observeObjectRead(ctx, objectReadKindOutputContext, objectReadNewer)
+				return nil, err
+			}
+			if err != nil {
+				repository.observeObjectRead(ctx, objectReadKindOutputContext, objectReadInvalid)
+				return nil, fmt.Errorf("%w: %v", ErrCatalogObjectCorrupt, err)
+			}
+			hashed, err := contract.DeriveCanonicalDigestV2OverCanonical(domain, payload)
 			if err != nil || hashed != string(digest) {
 				repository.observeObjectRead(ctx, objectReadKindOutputContext, objectReadInvalid)
 				return nil, ErrCatalogObjectCorrupt
@@ -239,7 +248,7 @@ func (repository *RedisCatalogRepository) loadOutputContexts(
 				return nil, fmt.Errorf("%w: not an output context of this contract", ErrCatalogObjectCorrupt)
 			}
 			repository.observeObjectRead(ctx, objectReadKindOutputContext, objectReadMiss)
-			repository.objectCache.store(repository.outputContextKey(digest), context, len(payload))
+			repository.objects().store(repository.outputContextKey(digest), context, len(payload))
 			contexts[digest] = context
 		}
 	}

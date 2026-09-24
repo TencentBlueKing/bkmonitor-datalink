@@ -61,8 +61,11 @@ func TestTheProductionLeaderServesItsDesiredSetOverTheViewStream(t *testing.T) {
 		t.Fatalf("control leader = %+v found=%t err=%v, want this replica with a term", leader, found, err)
 	}
 
+	// The fixture serves the control stream once it runs a Slot, so this
+	// replica's own Worker may already hold a session; the manual stream
+	// below replaces it under the same Worker id.
 	stats := bundle.dependencies.ViewStreamStats()
-	if !stats.Leading || stats.ControlEpoch != leader.OwnerEpoch || stats.Revision == 0 || stats.Counts.Expected != 1 || stats.Sessions != 0 {
+	if !stats.Leading || stats.ControlEpoch != leader.OwnerEpoch || stats.Revision == 0 || stats.Counts.Expected != 1 || stats.Sessions > 1 {
 		t.Fatalf("stream stats after the first round = %+v, want leading in term %d with a revision and one expected receiver", stats, leader.OwnerEpoch)
 	}
 
@@ -134,6 +137,21 @@ func TestTheProductionLeaderServesItsDesiredSetOverTheViewStream(t *testing.T) {
 		if entry.QueryGroup == string(fixture.queryGroup) && entry.Content.ObjectDigest != string(fixture.initialSchedule.Segment.ObjectDigest) {
 			t.Fatalf("entry %s names %s, its open Segment names %s", entry.QueryGroup, entry.Content.ObjectDigest, fixture.initialSchedule.Segment.ObjectDigest)
 		}
+		// The view previews the record's timeline revision, and the record
+		// says the timeline's own: the two the Worker compares are one
+		// number from the day the Query Group is placed (decision-016
+		// batch 4).
+		timeline, err := fixture.repository.TimelineRecordRevision(ctx, execution.QueryGroupIdentity(entry.QueryGroup))
+		if err != nil || timeline == 0 {
+			t.Fatalf("timeline revision of %s = (%d, %v), want the activated timeline's", entry.QueryGroup, timeline, err)
+		}
+		if entry.Assignment.TimelineRecordRevision != timeline {
+			t.Fatalf("entry %s previews timeline revision %d, the timeline is at %d", entry.QueryGroup, entry.Assignment.TimelineRecordRevision, timeline)
+		}
+		record, err := store.ReadAssignment(ctx, execution.QueryGroupIdentity(entry.QueryGroup))
+		if err != nil || record.TimelineRecordRevision != timeline {
+			t.Fatalf("record of %s says timeline revision %d (%v), the timeline is at %d", entry.QueryGroup, record.TimelineRecordRevision, err, timeline)
+		}
 	}
 	// The receipt is counted for the one expected receiver.
 	if err := stream.Send(&pb.WorkerMessage{Body: &pb.WorkerMessage_Receipt{Receipt: &pb.Receipt{
@@ -188,6 +206,9 @@ func TestAViewPublishFailureIsReportedAndTheRoundStands(t *testing.T) {
 		observed[0].ViewStream == nil || observed[0].ViewStream.Event != "publish_failed" || !strings.Contains(observed[0].ViewStream.Reason, "redis gone") {
 		t.Fatalf("observed = %+v, want one degraded view_published naming the failure", observed)
 	}
+	if stats := server.Stats(); stats.PublishFailures != 1 || stats.PublishFailureReason != viewstream.PublishFailureActivationUnreadable {
+		t.Fatalf("server stats = %+v, want the failure recorded by its reason", stats)
+	}
 	// Not leading is a failure of the same kind, not a panic and not a stall.
 	runtime.dependencies.ViewSource = staticViewSource{}
 	runtime.publishView(context.Background(), authority, nil, nil)
@@ -198,7 +219,7 @@ func TestAViewPublishFailureIsReportedAndTheRoundStands(t *testing.T) {
 
 type failingViewSource struct{ err error }
 
-func (source failingViewSource) LoadActivation(context.Context) (controlplane.ActivationState, error) {
+func (source failingViewSource) LoadActivationHead(context.Context) (controlplane.ActivationState, error) {
 	return controlplane.ActivationState{}, source.err
 }
 
@@ -206,12 +227,86 @@ func (source failingViewSource) LoadPublishedContent(context.Context, controlpla
 	return controlplane.PublishedContent{}, source.err
 }
 
+func (source failingViewSource) ActivationBlocked(context.Context) ([]controlplane.BlockedQueryGroup, error) {
+	return nil, nil
+}
+
+func (source failingViewSource) DrainingContent(context.Context, execution.QueryGroupIdentity) (execution.ObjectDigest, []execution.OutputContextRef, bool, error) {
+	return "", nil, false, source.err
+}
+
 type staticViewSource struct{}
 
-func (staticViewSource) LoadActivation(context.Context) (controlplane.ActivationState, error) {
+func (staticViewSource) LoadActivationHead(context.Context) (controlplane.ActivationState, error) {
 	return controlplane.ActivationState{RecordRevision: 1, Current: controlplane.SnapshotPublicationRef{SnapshotRevision: "snap", PublicationEpoch: 1}}, nil
 }
 
 func (staticViewSource) LoadPublishedContent(context.Context, controlplane.SnapshotPublicationRef) (controlplane.PublishedContent, error) {
 	return controlplane.PublishedContent{}, nil
+}
+
+func (staticViewSource) ActivationBlocked(context.Context) ([]controlplane.BlockedQueryGroup, error) {
+	return nil, nil
+}
+
+func (staticViewSource) DrainingContent(context.Context, execution.QueryGroupIdentity) (execution.ObjectDigest, []execution.OutputContextRef, bool, error) {
+	return "", nil, false, nil
+}
+
+// ApplyCutoverProgress passes the content through: this fixture has no
+// cutover in progress.
+func (_ failingViewSource) ApplyCutoverProgress(
+	_ context.Context, _ controlplane.ActivationState, content map[execution.QueryGroupIdentity]controlplane.ContentEntry,
+) (map[execution.QueryGroupIdentity]controlplane.ContentEntry, error) {
+	return content, nil
+}
+
+// ApplyCutoverProgress passes the content through: this fixture has no
+// cutover in progress.
+func (_ staticViewSource) ApplyCutoverProgress(
+	_ context.Context, _ controlplane.ActivationState, content map[execution.QueryGroupIdentity]controlplane.ContentEntry,
+) (map[execution.QueryGroupIdentity]controlplane.ContentEntry, error) {
+	return content, nil
+}
+
+// progressViewSource publishes new content for qg while its open Segment
+// still runs old, as during a cutover in progress.
+type progressViewSource struct{ staticViewSource }
+
+func (progressViewSource) LoadActivationHead(context.Context) (controlplane.ActivationState, error) {
+	return controlplane.ActivationState{RecordRevision: 2, Current: controlplane.SnapshotPublicationRef{SnapshotRevision: "snap", PublicationEpoch: 2},
+		CutoverProgress: &controlplane.CutoverProgress{}}, nil
+}
+
+func (progressViewSource) LoadPublishedContent(context.Context, controlplane.SnapshotPublicationRef) (controlplane.PublishedContent, error) {
+	return controlplane.PublishedContent{Groups: map[execution.QueryGroupIdentity]controlplane.ContentEntry{"qg": {Digest: "new"}, "added": {Digest: "fresh"}}}, nil
+}
+
+func (progressViewSource) ApplyCutoverProgress(
+	_ context.Context, state controlplane.ActivationState, content map[execution.QueryGroupIdentity]controlplane.ContentEntry,
+) (map[execution.QueryGroupIdentity]controlplane.ContentEntry, error) {
+	if state.CutoverProgress == nil {
+		return content, nil
+	}
+	return map[execution.QueryGroupIdentity]controlplane.ContentEntry{"qg": {Digest: "old"}}, nil
+}
+
+// While a cutover is in progress the view gives each Query Group what its
+// open Segment runs: a Query Group past the cursor keeps its old content,
+// and one not added yet is not in the view. Given the manifest's, the first
+// would stop on a scope mismatch and the second would be told to run what
+// it has no timeline for.
+func TestTheViewFollowsTheOpenSegmentsWhileACutoverIsInProgress(t *testing.T) {
+	source := progressViewSource{}
+	state, err := source.LoadActivationHead(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	running, err := runningViewContent(context.Background(), source, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(running) != 1 || running["qg"].Digest != "old" {
+		t.Fatalf("view content = %+v, want only qg on the content its open Segment runs", running)
+	}
 }

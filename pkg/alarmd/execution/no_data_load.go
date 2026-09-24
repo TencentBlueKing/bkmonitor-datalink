@@ -268,8 +268,13 @@ type NoDataMemorySnapshot struct {
 	// instead, as the newest last-seen time the record holds, which is what the
 	// field means and what the v2 record would have stored.
 	PresentAsOf int64
-	Groups      []NoDataGroupMemory
-	ReasonCode  ReasonCode
+	// TrackingExhaustedAt is the round the record says this Plan's history
+	// roster was emptied by the tracking horizon, zero when it was not. A v1 or
+	// v2 record does not hold the field and zero is the right reading for it:
+	// no build that wrote one had a horizon to exhaust a roster with.
+	TrackingExhaustedAt int64
+	Groups              []NoDataGroupMemory
+	ReasonCode          ReasonCode
 }
 
 // NoDataMemoryRenewal is one renewal that actually reached the store.
@@ -323,7 +328,8 @@ func noDataSnapshotHasPayload(snapshot NoDataMemorySnapshot) bool {
 	namesARecord := snapshot.Representation != "" && snapshot.Representation != NoDataRepresentationNone
 	return snapshot.MarkerRevision != 0 || snapshot.PersistedMutationDigest != "" ||
 		snapshot.PersistedApplyVersion != (ApplyVersion{}) || snapshot.LastScheduleRevision != "" ||
-		snapshot.RosterVersion != "" || snapshot.PresentAsOf != 0 || namesARecord ||
+		snapshot.RosterVersion != "" || snapshot.PresentAsOf != 0 ||
+		snapshot.TrackingExhaustedAt != 0 || namesARecord ||
 		len(snapshot.Groups) != 0
 }
 

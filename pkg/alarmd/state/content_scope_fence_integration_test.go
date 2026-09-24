@@ -58,7 +58,7 @@ func TestRedisFencedBatchApplyRefusesAMovedContentScopeByName(t *testing.T) {
 	request := execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: mutations}
 	keys := make([]string, len(mutations))
 	for index, mutation := range mutations {
-		keys[index], _ = RuntimeStateKeyV2("scoped", mutation.Identity)
+		keys[index], _ = RuntimeStateKeyV3("scoped", mutation.Identity)
 	}
 	cases := []struct {
 		name  string

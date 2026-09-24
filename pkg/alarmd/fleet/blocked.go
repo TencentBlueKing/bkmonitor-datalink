@@ -172,15 +172,35 @@ var failureFacets = map[string]facets{
 	// Skipped and pruned spans: the scheduler's decision about time.
 	"GAP_SKIPPED":     {StageSchedule, ClassCapacity, DependencyNone},
 	"SCHEDULE_PRUNED": {StageSchedule, ClassRetention, DependencyNone},
+	// Also the scheduler's decision about time, but neither retention nor
+	// capacity: the times were there and the Plan was not. CONFIG, because
+	// what decided it was the active set - which Plans this deployment was
+	// told to run.
+	"PLAN_NOT_ACTIVE": {StageSchedule, ClassConfig, DependencyNone},
 
 	// The stores and infrastructure this deployment depends on.
-	"REDIS_UNAVAILABLE":      {StageCommit, ClassUnavailable, DependencyRedis},
-	"KAFKA_UNAVAILABLE":      {StageCommit, ClassUnavailable, DependencyKafka},
-	"STATE_WRITE_RETRYABLE":  {StageCommit, ClassUnavailable, ""},
-	"OUTPUT_ACK_UNKNOWN":     {StageCommit, ClassUnavailable, DependencyKafka},
-	"SNAPSHOT_UNAVAILABLE":   {StageConfig, ClassUnavailable, ""},
-	"SNAPSHOT_RETRY_PENDING": {StageConfig, ClassUnavailable, ""},
-	"ACTIVATION_READ_FAILED": {StageConfig, ClassUnavailable, ""},
+	"REDIS_UNAVAILABLE": {StageCommit, ClassUnavailable, DependencyRedis},
+	// Deliberately not a dependency. The store answered every other caller on
+	// the same connection that second; what ran out was the time this process
+	// gave one of its own reads. Attributing it to Redis is what sent an
+	// investigation to a healthy dependency while the read that caused it went
+	// unmeasured, so it is named for the stage that issued it and carries no
+	// dependency at all.
+	"STATE_READ_TIMEOUT": {StageEvaluate, ClassCapacity, DependencyNone},
+	// Same stage and no dependency, and deliberately not ClassCapacity: a
+	// deadline spent before this read is not this read asking for too much, and
+	// filing it under capacity would send the reader to the read size --
+	// which is the misattribution splitting the word exists to end.
+	"STATE_READ_DEADLINE": {StageEvaluate, ClassTimeout, DependencyNone},
+	// The object is too big for one replica's share; no dependency is involved
+	// and waiting does not help.
+	"QG_BUDGET_SHARE_EXCEEDED": {StageEvaluate, ClassCapacity, DependencyNone},
+	"KAFKA_UNAVAILABLE":        {StageCommit, ClassUnavailable, DependencyKafka},
+	"STATE_WRITE_RETRYABLE":    {StageCommit, ClassUnavailable, ""},
+	"OUTPUT_ACK_UNKNOWN":       {StageCommit, ClassUnavailable, DependencyKafka},
+	"SNAPSHOT_UNAVAILABLE":     {StageConfig, ClassUnavailable, ""},
+	"SNAPSHOT_RETRY_PENDING":   {StageConfig, ClassUnavailable, ""},
+	"ACTIVATION_READ_FAILED":   {StageConfig, ClassUnavailable, ""},
 	// The store answered and the activation record was not in it: the
 	// configuration step with nothing to load. The code names the record
 	// and the store it lives in, so the dependency is named by it; whether
@@ -208,15 +228,42 @@ var failureFacets = map[string]facets{
 	"STATE_SCHEMA_UNSUPPORTED":   {StageCommit, ClassContract, DependencyNone},
 	"AUDIT_DROP":                 {StageCommit, ClassContract, DependencyNone},
 	"BACKEND_CAPABILITY_MISSING": {StageCommit, ClassContract, DependencyNone},
-	"GAP_GUARD_CONFLICT":         {StageEvaluate, ClassContract, DependencyNone},
-	"GAP_SCOPE_REASON_CONFLICT":  {StageEvaluate, ClassContract, DependencyNone},
-	"EVALUATION_FAILED":          {StageEvaluate, ClassContract, DependencyNone},
+	// Read at the evaluation, not the commit: the record was loaded and
+	// refused before anything was decided, so nothing of this round reached a
+	// write. Sending a reader to the commit would send them to a step that
+	// never ran.
+	"STATE_LEVEL_CONTRACT_MISMATCH": {StageEvaluate, ClassContract, DependencyNone},
+	"TRIGGER_INVARIANT":             {StageEvaluate, ClassContract, DependencyNone},
+	"GAP_GUARD_CONFLICT":            {StageEvaluate, ClassContract, DependencyNone},
+	"GAP_SCOPE_REASON_CONFLICT":     {StageEvaluate, ClassContract, DependencyNone},
+	"EVALUATION_FAILED":             {StageEvaluate, ClassContract, DependencyNone},
 	// The series state moved under the Slot writing it. The step is the
 	// state write -- the apply and its preflight are the commit of the
 	// round's result -- so a reader is sent to what was committing against
 	// what, not to the evaluation, which had finished.
 	"STATE_VERSION_CONFLICT": {StageCommit, ClassContract, DependencyNone},
 	"STATE_STALE_VERSION":    {StageCommit, ClassContract, DependencyNone},
+	// The Plan gap marker moved under the Slot writing it. Commit rather than
+	// evaluate, for the same reason the two state refusals above are: the
+	// evaluation had finished and what is in conflict is the write, so a
+	// reader is sent to what was committing against what.
+	//
+	// Apart from GAP_GUARD_CONFLICT above, which stays at evaluate: that one is
+	// this Slot comparing the persisted marker against what it proposes and
+	// refusing before it writes, and the answer to it is in the evaluation. The
+	// two below say the marker changed between this Slot's read and its write,
+	// so the question is who else wrote it.
+	// Read at evaluate: it is what the evaluation produced, whatever the
+	// commit then did with it.
+	"GAP_GUARD_DUPLICATED_ACROSS_BATCHES": {StageEvaluate, ClassContract, DependencyNone},
+	// Also read at evaluate, and for the same reason: this is the Slot's own
+	// merge of what its batches produced, before anything is written.
+	"GAP_GUARD_DISAGREE":      {StageEvaluate, ClassContract, DependencyNone},
+	"GAP_APPLY_CONFLICT":      {StageCommit, ClassContract, DependencyNone},
+	"GAP_APPLY_STALE_VERSION": {StageCommit, ClassContract, DependencyNone},
+	// The write did not land. Unavailable rather than contract, and against
+	// Redis: nothing here disagreed with anything, the store did not answer.
+	"GAP_WRITE_RETRYABLE": {StageCommit, ClassUnavailable, DependencyRedis},
 	// The ownership store refused this worker: at the commit step, since the
 	// fence is checked on the way to the writes (the admission before them,
 	// the fenced write itself), and REFUSED because the store answered and
@@ -236,6 +283,7 @@ var failureFacets = map[string]facets{
 	// The control plane did not hand the runner something to run.
 	"BLOCKED_EXACT_SET_UNAVAILABLE": {StageConfig, ClassUnavailable, ""},
 	"SLOT_SOURCE_RETRY":             {StageConfig, ClassUnavailable, ""},
+	"VIEW_NOT_EXECUTABLE":           {StageConfig, ClassUnavailable, ""},
 	"PROGRESS_BEGIN_FAILED":         {StageSchedule, ClassUnavailable, ""},
 	"PROGRESS_BEGIN_REJECTED":       {StageSchedule, ClassRefused, DependencyNone},
 
@@ -248,7 +296,16 @@ var failureFacets = map[string]facets{
 	"READINESS_BUDGET_INVALID":   {StageSchedule, ClassCapacity, DependencyNone},
 	"RECORD_TOO_LARGE":           {StageEvaluate, ClassCapacity, DependencyNone},
 	"RESOURCE_HARD_STOP":         {StageEvaluate, ClassCapacity, DependencyNone},
-	"QUERY_PERMIT_DEADLINE":      {StageQuery, ClassTimeout, DependencyNone},
+	// The budget's own word for the same rejection (finding.go has the why).
+	// Series and retained bytes are bounds on what the query returns, hit on
+	// the stream; the other three on what evaluating it would write.
+	"BUDGET_SERIES":          {StageQuery, ClassCapacity, DependencyNone},
+	"BUDGET_RETAINED_BYTES":  {StageQuery, ClassCapacity, DependencyNone},
+	"BUDGET_STATE_MUTATIONS": {StageEvaluate, ClassCapacity, DependencyNone},
+	"BUDGET_EVENTS":          {StageEvaluate, ClassCapacity, DependencyNone},
+	"BUDGET_GAP_MUTATIONS":   {StageEvaluate, ClassCapacity, DependencyNone},
+	"BUDGET_OTHER":           {StageEvaluate, ClassCapacity, DependencyNone},
+	"QUERY_PERMIT_DEADLINE":  {StageQuery, ClassTimeout, DependencyNone},
 
 	// Budgets the compiler applies to a definition.
 	"PLAN_BUDGET_EXCEEDED":  {StageConfig, ClassConfig, DependencyNone},
@@ -273,8 +330,28 @@ var failureFacets = map[string]facets{
 
 	// The strategy's own configuration.
 	"CONFIG_DRIFT":            {StageConfig, ClassConfig, DependencyNone},
+	"PLAN_REACTIVATED":        {StageConfig, ClassConfig, DependencyNone},
 	"EFFECTIVE_TIME_INACTIVE": {StageConfig, ClassConfig, DependencyNone},
 	"EFFECTIVE_TIME_UNKNOWN":  {StageConfig, ClassConfig, DependencyNone},
+	// The compiler's refusals over a Plan's effective time. The definition's
+	// own window is the config's; the snapshot ones are the control source's,
+	// because what is missing or unreadable arrived from it and no change to
+	// this strategy or this deployment produces it.
+	"EFFECTIVE_TIME_INVALID":                   {StageConfig, ClassConfig, DependencyNone},
+	"EFFECTIVE_TIME_SNAPSHOT_INVALID":          {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_SNAPSHOT_STATUS_INVALID":   {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_SNAPSHOT_UNAVAILABLE":      {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_SCHEMA_UNSUPPORTED":        {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_CALENDARS_MISSING":         {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_CALENDAR_MISSING":          {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_CALENDAR_NOT_PRESENT":      {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_CALENDAR_IDENTITY_INVALID": {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_CALENDAR_DUPLICATE":        {StageConfig, ClassConfig, DependencyControlSource},
+	"EFFECTIVE_TIME_CALENDAR_ITEMS_MISSING":    {StageConfig, ClassConfig, DependencyControlSource},
+	// A terminal this build cannot classify. Config's stage, because it is a
+	// definition this build refused; the compiler's own code travels with the
+	// disposition for the reader who has to find out which part.
+	"COMPILER_TERMINAL_UNCLASSIFIED": {StageConfig, ClassConfig, DependencyNone},
 
 	// The definition cannot be evaluated as written.
 	"ALGORITHM_UNSUPPORTED":                 {StageConfig, ClassConfig, DependencyNone},
@@ -288,6 +365,7 @@ var failureFacets = map[string]facets{
 	// to be classified, not because either blocks the strategy -- its
 	// thresholds are detected either way.
 	"NO_DATA_CONFIG_INVALID":              {StageConfig, ClassConfig, DependencyNone},
+	"NO_DATA_PLAN_UNCOMPILABLE":           {StageConfig, ClassConfig, DependencyNone},
 	"NO_DATA_ROSTER_UNSUPPORTED":          {StageConfig, ClassConfig, DependencyNone},
 	"PROJECTION_INVALID":                  {StageConfig, ClassConfig, DependencyNone},
 	"PLAN_SET_CONFLICT":                   {StageConfig, ClassConfig, DependencyNone},
@@ -346,7 +424,7 @@ var dependencySignatures = []struct {
 // no failure: a normal object, or one whose data stopped, which is not
 // this deployment stuck anywhere.
 func blockedOf(anomaly Anomaly, schedule Schedule) *Blocked {
-	if anomaly.Kind == KindNoData || anomaly.Kind == KindEmptyEveryRound {
+	if anomaly.Kind == KindNoData || anomaly.Kind == KindEmptyEveryRound || anomaly.Kind == KindRetainedShareApproaching {
 		return nil
 	}
 	// A span every Slot of which an earlier attempt executed, or an object
@@ -376,6 +454,43 @@ func blockedOf(anomaly Anomaly, schedule Schedule) *Blocked {
 			// Kept so the row says which code nobody has read, even though
 			// every axis stays UNLOCATED for it.
 			blocked.Code = code
+		}
+	}
+	// A completed round whose completeness a durable guard held is the
+	// window's, as checkOf reads it, and not the guard's trigger word's: the
+	// trigger is the reason every UNKNOWN outcome reports until the guard
+	// releases, and read through the code table a round that ran, queried
+	// and wrote its state under a guard set off by one skipped Slot said
+	// SCHEDULE / capacity for the eighty rounds the window took to refill --
+	// the reader was sent to the scheduler for a Level that was counting up.
+	// The window words already read EVALUATE and unlocated; the trigger
+	// stays as the code so the row says which guard. A code the table files
+	// as this deployment's own defect keeps its reading, as it keeps the
+	// line.
+	if verdict, decided := codeVerdict(anomaly); !failedExecution(anomaly.ReasonCode) && !(decided && verdict == CheckDefect) {
+		if held, _ := guardHeld(anomaly); held {
+			blocked.Stage, blocked.Class = StageEvaluate, ClassUnlocated
+			blocked.Dependency, blocked.DependencyEvidence = DependencyNone, dependencyByCode
+		}
+	}
+	// A Slot the query cooldown held until it fell past the replay range is
+	// the cooldown's, and the cooldown is the query failure's: the reading
+	// the KindQueryCooldown row gets, whatever Slot the failure was seen on,
+	// because the holder says the skip is its doing. By its own outcome the
+	// round read SCHEDULE / capacity, which is where the check sent the
+	// reader while the backend was answering every probe with a status
+	// saying the field did not exist.
+	if anomaly.HeldBy == heldByCooldown {
+		blocked.Stage, blocked.Class = StageQuery, ClassUnavailable
+		blocked.Dependency, blocked.DependencyEvidence = DependencyQueryBackend, dependencyByCode
+		if queryRejected(anomaly.Failure) {
+			blocked.Class = ClassRefused
+		}
+		if anomaly.Failure != nil {
+			blocked.Code, blocked.Text = anomaly.Failure.Code, anomaly.Failure.Detail
+			if blocked.Text == "" {
+				blocked.Text = anomaly.Failure.Text
+			}
 		}
 	}
 	// A failure the pipeline classified but no code read: the category says

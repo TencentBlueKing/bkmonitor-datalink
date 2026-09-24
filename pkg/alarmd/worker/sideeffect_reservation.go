@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package worker
 
 import (
@@ -108,21 +99,29 @@ func (stream *streamedExecution) mergeProvisional(ctx context.Context, next exec
 		}
 		return err
 	}
-	retained += newEffectBytes(stream.evaluated, next)
-	if err := stream.coordinator.acquireEffects(delta, retained, stream, stream.reservationPhase("normal_output")); err != nil {
+	effects := newEffectBytes(stream.evaluated, next)
+	if err := stream.coordinator.acquireEffects(delta, retained+effects, stream, stream.reservationPhase("normal_output")); err != nil {
 		var exceeded *provisionalBudgetExceededError
 		if errors.As(err, &exceeded) {
 			stream.coordinator.observeCapacityRejection(ctx, stream.request.Operation, exceeded.budget, err)
 		}
 		return err
 	}
-	// The contract check and shared reservation make this append infallible.
+	// The contract check and shared reservation cover everything this append
+	// can refuse except one: two batches disagreeing about a Plan's gap
+	// marker, which is a shape neither batch's own result contains.
 	// Loaded Gap facts remain independently accounted in stream.gapFacts.
-	appendProvisional(&stream.evaluated, next)
+	if err := appendProvisional(&stream.evaluated, next); err != nil {
+		return err
+	}
 	stream.effects.states += delta.states
 	stream.effects.events += delta.events
 	stream.effects.gaps += delta.gaps
-	stream.retained += retained
+	// Split where it was summed: the loaded State the caller measured under
+	// its own phase, the effects this call adds under the output's. One
+	// reservation, the same total, two answers instead of one.
+	stream.retainBytes(retainPhaseState, retained)
+	stream.retainBytes(retainPhaseOutput, effects)
 	return nil
 }
 
@@ -137,14 +136,19 @@ func newEffectBytes(current, next execution.EvaluationResult) uint64 {
 			}
 		}
 		if previous == nil {
-			retained += 2 * retainedObjectBytes(plan)
+			// Split the same way the incremental branch below is, so the first
+			// series of a Slot is charged for its history on the same terms as
+			// every series after it.
+			withoutState := plan
+			withoutState.StateResults = nil
+			retained += 2 * (retainedObjectBytes(withoutState) + retainedStateResultBytes(plan.StateResults))
 			continue
 		}
 		if len(plan.LevelOutcomes) != 0 {
 			retained += 2 * retainedObjectBytes(plan.LevelOutcomes)
 		}
 		if len(plan.StateResults) != 0 {
-			retained += 2 * retainedObjectBytes(plan.StateResults)
+			retained += 2 * retainedStateResultBytes(plan.StateResults)
 		}
 		for _, pair := range []struct{ previous, next []execution.PlanGapMutation }{{previous.GuardBeforeEvents, plan.GuardBeforeEvents}, {previous.GuardAfterState, plan.GuardAfterState}} {
 			for index, candidate := range pair.next {
@@ -175,12 +179,24 @@ func (coordinator *SlotExecutionCoordinator) acquireEffects(delta effectCounts, 
 			case observability.CapacityBudgetGapMutations:
 				used, requested, limit = reservation.gaps, delta.gaps, coordinator.budget.MaxGapMutations
 			}
-			return budgetRejection(exceeded.budget, phase, used, requested, limit, stream.ownBudget(exceeded.budget))
+			return budgetRejection(exceeded.budget, phase, used, requested, limit, stream.ownBudget(exceeded.budget), stream.ownBudgetUsage(coordinator.budget))
 		}
 		return err
 	}
+	// The share is checked before the pool, and against this execution's own
+	// total rather than against what is left.
+	//
+	// Order matters: with the pool nearly full, an object over its share is
+	// refused by the pool first and reported as somebody else's doing, which is
+	// the attribution this whole distinction exists to fix. Own total rather
+	// than remaining, because a share measured against what happens to be free
+	// means a different thing every round - the same object would fit or not by
+	// the luck of who else is running, and nobody could act on the answer.
+	if share := coordinator.qgShareBytes(); share > 0 && stream.retainedTotal()+retained > share {
+		return shareRejection(phase, stream.retainedTotal(), retained, share, stream.ownBudgetUsage(coordinator.budget))
+	}
 	if retained > coordinator.budget.MaxRetainedBytes-reservation.retainedBytes {
-		return budgetRejection(observability.CapacityBudgetRetainedBytes, phase, reservation.retainedBytes, retained, coordinator.budget.MaxRetainedBytes, stream.ownBudget(observability.CapacityBudgetRetainedBytes))
+		return budgetRejection(observability.CapacityBudgetRetainedBytes, phase, reservation.retainedBytes, retained, coordinator.budget.MaxRetainedBytes, stream.ownBudget(observability.CapacityBudgetRetainedBytes), stream.ownBudgetUsage(coordinator.budget))
 	}
 	reservation.states += delta.states
 	reservation.events += delta.events

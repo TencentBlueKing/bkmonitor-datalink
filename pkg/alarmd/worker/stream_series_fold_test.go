@@ -1,12 +1,3 @@
-// Tencent is pleased to support the open source community by making
-// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
-// Copyright (C) 2026 Tencent. All rights reserved.
-// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at http://opensource.org/licenses/MIT
-// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
-// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
-// specific language governing permissions and limitations under the License.
-
 package worker_test
 
 import (
@@ -155,10 +146,20 @@ func TestSlotExecutionCoordinatorFoldsProcPortRowsPreservingEveryAnomalousRow(t 
 				t.Fatalf("evaluation results=%+v, want one Level outcome", evaluator.results)
 			}
 			plan := evaluator.results[0].Plans[0]
-			// The fixture's series state is cold, so a healthy first Slot is a
-			// WARMING UNKNOWN outcome; the detect fact written to State shows the
-			// folded record's verdict for every case, the outcome for ABNORMAL.
-			wantFact, wantEvents := execution.LevelFactNormal, 0
+			// The fixture's series state is cold. A healthy first Slot used to be
+			// a WARMING UNKNOWN outcome and produce nothing; since decision-022
+			// the Slot's own window is answered by the record it just folded, so
+			// the Level recovers and an envelope is built. The detect fact
+			// written to State shows the folded record's verdict for every case,
+			// the outcome for ABNORMAL.
+			//
+			// One envelope, not zero, because this Plan publishes the compatible
+			// protocol: the open-alert gate only runs on the standard raw event,
+			// so nothing here asks whether this series has anything open, and the
+			// output sink drops the recovery when it converts. That is the
+			// existing protocol routing, not this case's subject, which is that
+			// folding keeps every anomalous row.
+			wantFact, wantEvents := execution.LevelFactNormal, 1
 			if test.wantOutcome == execution.LevelOutcomeAbnormal {
 				wantFact, wantEvents = execution.LevelFactAnomalous, 1
 				if plan.LevelOutcomes[0].Outcome != execution.LevelOutcomeAbnormal {

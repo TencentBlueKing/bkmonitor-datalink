@@ -1,0 +1,328 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flink
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flink-config
+  namespace: flink
+data:
+  config.yaml: |-
+    # 显式使用 G1GC + 200ms 停顿目标 + 并行引用处理 + String 去重，降低长跑 GC 抖动。
+    # (RUM 事件中 sessionId/view.url 等相同值会大量出现)。
+    env.java.opts.taskmanager: "--add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ParallelRefProcEnabled -XX:+UseStringDeduplication"
+    # ========================== JobManager & 基础网络 ==========================
+    jobmanager.rpc.address: flink-jobmanager
+    jobmanager.rpc.port: 6123
+    taskmanager.rpc.port: 6122
+    blob.server.port: 33833
+    rest.bind-address: 0.0.0.0
+    high-availability.cluster-id: /flink-cluster
+    # ========================== JobManager 内存配置 ==========================
+    # JobManager总进程内存，包含JVM堆、元空间及其他开销
+    jobmanager.memory.process.size: 1024m
+    # JobManager的JVM元空间大小
+    jobmanager.memory.jvm-metaspace.size: 384m
+
+    # ========================== TaskManager 内存配置 ==========================
+    # Pod 资源为 2C/4Gi。预留约 512Mi 给 JVM/Flink 进程之外的容器开销，避免触发 cgroup OOM。
+    taskmanager.memory.process.size: 3584m
+
+    # --- JVM 元空间与堆外内存 ---
+    # Flink 会根据 process.size 自动计算堆，不在这里手工设置 -Xms/-Xmx。
+    taskmanager.memory.jvm-metaspace.size: 256m
+    taskmanager.memory.jvm-overhead.fraction: 0.15
+    taskmanager.memory.jvm-overhead.min: 256m
+    taskmanager.memory.jvm-overhead.max: 768m
+
+    # --- 网络内存 (Network Memory) ---
+    # 2 个 slot 的流处理拓扑使用 10% 网络内存，并限制上限，避免挤压堆和 RocksDB 内存。
+    taskmanager.memory.network.fraction: 0.10
+    taskmanager.memory.network.max: 512mb
+    taskmanager.memory.network.min: 128mb
+
+    # --- 托管内存 (Managed Memory) ---
+    # RocksDB 使用托管内存，给状态后端保留更稳定的内存预算。
+    taskmanager.memory.managed.fraction: 0.30
+
+    # ========================== 并行度 & Slot ==========================
+    # 每个TaskManager的Slot数量，根据实际CPU和并行度需求调整
+    taskmanager.numberOfTaskSlots: 2
+    
+    slotmanager.resource-allocation-strategy: DEFAULT
+    # 开启均衡调度
+    taskmanager.load-balance.mode: tasks
+    cluster.evenly-spread-out-slots: true    
+
+    # 默认并行度
+    parallelism.default: 1
+    # ========================== 关键！添加心跳配置（解决断开连接问题）==========================
+    # 心跳配置
+    heartbeat.interval: 10000           # 10秒心跳间隔
+    heartbeat.timeout: 60000            # 60秒超时（从默认50秒增加）
+    heartbeat.rpc-failure-threshold: 3   # 允许3次失败
+    
+    # TaskManager注册配置
+    taskmanager.registration.timeout: 600000       # 10分钟
+    taskmanager.initial-registration-backoff: 5000  # 5秒初始退避
+    taskmanager.registration.max-backoff: 300000   # 5分钟最大退避
+    taskmanager.registration.refused-backoff: 30000 # 30秒拒绝后退避
+    execution.checkpointing.storage: filesystem
+    # 该目录必须由 JobManager 与所有 TaskManager 共享；下方 RWX PVC 提供持久化存储。
+    execution.checkpointing.dir: file:///opt/flink/state/checkpoints
+    execution.checkpointing.savepoint-dir: file:///opt/flink/state/savepoints
+    # ========================== 状态后端与 Checkpoint（生产核心）==========================
+    state.backend.type: rocksdb
+    state.backend.rocksdb.timer-service.factory: ROCKSDB
+    state.backend.rocksdb.memory.managed: true
+    state.backend.rocksdb.metrics.estimate-num-keys: true
+    state.backend.rocksdb.metrics.total-sst-files-size: true
+    state.backend.rocksdb.metrics.live-sst-files-size: true
+    state.backend.rocksdb.metrics.estimate-live-data-size: true
+    state.backend.rocksdb.metrics.cur-size-all-mem-tables: true
+    state.backend.rocksdb.writebuffer.size: 64mb
+    state.backend.rocksdb.writebuffer.count: 2
+    state.backend.rocksdb.block.cache-size: 128mb
+    state.backend.rocksdb.max-open-files: 1000
+    
+    # 提高 Kafka 拉取吞吐
+    kafka.consumer.fetch.min.bytes: 102400
+    kafka.consumer.fetch.max.wait.ms: 500
+    # ========================== Checkpoint 策略 ==========================
+    # interval / timeout / min-pause / mode 由 RumPrecomputeJob 的 checkpoint.* 参数统一配置。
+    execution.checkpointing.unaligned.enabled: true
+    execution.checkpointing.incremental: true
+    execution.checkpointing.externalized-checkpoint-retention: RETAIN_ON_CANCELLATION
+    execution.checkpointing.max-concurrent-checkpoints: 1
+    # ========================== 重启策略 ==========================
+    # 启用 checkpoint 时，默认指数退避重启策略适合生产 [citation:4]
+    restart-strategy.type: exponential-delay
+    restart-strategy.exponential-delay.initial-backoff: 10s
+    restart-strategy.exponential-delay.max-backoff: 2min
+    restart-strategy.exponential-delay.backoff-multiplier: 1.5
+    # ========================== JVM 优化 ==========================
+    # 通用 JVM 参数
+    env.java.opts.all: --add-opens=java.base/java.util=ALL-UNNAMED
+    # TaskManager 使用 G1GC 减少停顿，适合中等内存场景
+    io.tmp.dirs: /opt/flink/tmp
+    # ========================== 指标报告 ==========================
+    # 每 60s 把指标打印到 TM/JM 日志，用于观察状态大小趋势（RocksDB estimate-num-keys / total-sst-files-size）与 QPS（numRecordsInPerSecond / numRecordsOutPerSecond）
+    metrics.reporters: log,prom
+    metrics.reporter.log.factory.class: org.apache.flink.metrics.slf4j.Slf4jReporterFactory
+    metrics.reporter.log.interval: 60 SECONDS
+    # 不配 filter.includes/excludes = 全量暴露;如需瘦身可按 <scope>[:<name>[:<type>]] 语法配置(Flink 2.x 新语法)
+    # Prometheus 报告器：在 TM 上按端口范围（9249 起）暴露 /metrics，供 Prometheus 抓取 QPS 等指标
+    metrics.reporter.prom.factory.class: org.apache.flink.metrics.prometheus.PrometheusReporterFactory
+    metrics.reporter.prom.port: 9249-9250
+
+  log4j-console.properties: |-
+    rootLogger.level = INFO
+    rootLogger.appenderRef.console.ref = ConsoleAppender
+    appender.console.name = ConsoleAppender
+    appender.console.type = CONSOLE
+    appender.console.layout.type = PatternLayout
+    appender.console.layout.pattern = %d{yyyy-MM-dd HH:mm:ss,SSS} %-5p %-60c %x - %m%n
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flink-jobmanager
+  namespace: flink
+spec:
+  type: ClusterIP
+  selector:
+    app: flink
+    component: jobmanager
+  ports:
+    - name: rpc
+      port: 6123           # ✅ Service端口
+      targetPort: 6123     # ✅ 目标Pod端口
+      protocol: TCP
+    - name: blob
+      port: 33833          # ✅ Service端口
+      targetPort: 33833    # ✅ 目标Pod端口
+      protocol: TCP
+    - name: webui
+      port: 8081           # ✅ Service端口
+      targetPort: 8081     # ✅ 目标Pod端口
+      protocol: TCP
+    - name: metrics        # Prometheus 抓取端口(JM 自身指标;TM 的 QPS 指标在其 Pod 侧暴露)
+      port: 9249
+      targetPort: 9249
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flink-jobmanager
+  namespace: flink
+  labels:
+    app: flink
+    component: jobmanager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flink
+      component: jobmanager
+  template:
+    metadata:
+      labels:
+        app: flink
+        component: jobmanager
+    spec:
+      containers:
+        - name: jobmanager
+          image: flink:2.2.1-scala_2.12-java17
+          imagePullPolicy: IfNotPresent
+          args: ["jobmanager"]
+          ports:
+            - name: rpc
+              containerPort: 6123    # ✅ Deployment使用containerPort
+              protocol: TCP
+            - name: blob
+              containerPort: 33833   # ✅ Deployment使用containerPort
+              protocol: TCP
+            - name: webui
+              containerPort: 8081    # ✅ Deployment使用containerPort
+              protocol: TCP
+          env:
+            - name: FLINK_CONF_DIR
+              value: /opt/flink/conf
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          livenessProbe:
+            tcpSocket:
+              port: rpc
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /overview
+              port: webui
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          volumeMounts:
+            - name: flink-config
+              mountPath: /opt/flink/conf
+            - name: flink-tmp
+              mountPath: /opt/flink/tmp
+            - name: flink-state
+              mountPath: /opt/flink/state
+      volumes:
+        - name: flink-config
+          configMap:
+            name: flink-config
+        - name: flink-tmp
+          emptyDir: {}
+        - name: flink-state
+          persistentVolumeClaim:
+            claimName: flink-state
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flink-taskmanager
+  namespace: flink
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: flink
+      component: taskmanager
+  template:
+    metadata:
+      labels:
+        app: flink
+        component: taskmanager
+    spec:
+      containers:
+        - name: taskmanager
+          image: flink:2.2.1-scala_2.12-java17
+          imagePullPolicy: IfNotPresent
+          args: ["taskmanager"]
+          ports:
+            - name: rpc
+              containerPort: 6122
+              protocol: TCP
+            - name: metrics
+              containerPort: 9249
+              protocol: TCP
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          livenessProbe:
+            tcpSocket:
+              port: rpc
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            tcpSocket:
+              port: rpc
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          volumeMounts:
+            - name: flink-config
+              mountPath: /opt/flink/conf
+            - name: flink-tmp
+              mountPath: /opt/flink/tmp
+            - name: flink-state
+              mountPath: /opt/flink/state
+      volumes:
+        - name: flink-config
+          configMap:
+            name: flink-config
+        - name: flink-tmp
+          emptyDir: {}
+        - name: flink-state
+          persistentVolumeClaim:
+            claimName: flink-state
+
+---
+# JobManager 和所有 TaskManager 必须能同时挂载该卷；部署前确认默认 StorageClass 支持 ReadWriteMany。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: flink-state
+  namespace: flink
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 100Gi
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: flink-web
+  namespace: flink
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "1g"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: flink.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: flink-jobmanager
+                port:
+                  number: 8081

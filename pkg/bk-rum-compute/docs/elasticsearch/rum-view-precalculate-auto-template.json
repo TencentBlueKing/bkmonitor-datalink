@@ -1,0 +1,68 @@
+{
+  "priority": 200,
+  "index_patterns": [
+    "rum_global_view_precalculate_auto_*",
+    "write_*_rum_global_view_precalculate_auto_*"
+  ],
+  "template": {
+    "settings": {
+      "number_of_shards": 3,
+      "number_of_replicas": 0,
+      "refresh_interval": "10s"
+    },
+    "mappings": {
+      "dynamic": false,
+      "properties": {
+        "time": { "type": "long" },
+        "bk_biz_id": { "type": "integer" },
+        "app_name": { "type": "keyword" },
+        "window_id": { "type": "keyword" },
+        "attributes.session.id": { "type": "keyword" },
+        "attributes.user.id": { "type": "keyword" },
+        "attributes.session.has_replay": { "type": "boolean" },
+        "resource.service.name": { "type": "keyword" },
+        "resource.service.version": { "type": "keyword" },
+        "resource.deployment.environment.name": { "type": "keyword" },
+        "resource.telemetry.sdk.name": { "type": "keyword" },
+        "resource.telemetry.sdk.language": { "type": "keyword" },
+        "resource.telemetry.sdk.version": { "type": "keyword" },
+        "resource.user_agent.name": { "type": "keyword" },
+        "resource.user_agent.version": { "type": "keyword" },
+        "resource.user_agent.os.name": { "type": "keyword" },
+        "resource.device.type": { "type": "keyword" },
+        "attributes.network.effective_type": { "type": "keyword" },
+        "trace_count": { "type": "integer" },
+        "end_reason": { "type": "keyword" },
+        "duration": { "type": "long" },
+        "updated_at_ts": { "type": "long" },
+        "close_time": { "type": "long" },
+        "closed": { "type": "boolean" },
+        "is_active": { "type": "boolean" },
+        "attributes.view.id": { "type": "keyword" },
+        "attributes.view.name": { "type": "keyword", "ignore_above": 512 },
+        "attributes.view.url_template": { "type": "keyword", "ignore_above": 2048 },
+        "attributes.view.loading_type": { "type": "keyword" },
+        "attributes.view.loading_time": { "type": "long" },
+        "attributes.view.previous_url_template": { "type": "keyword", "ignore_above": 2048 },
+        "view_loading_time_source": { "type": "keyword" },
+        "close_reason": { "type": "keyword" },
+        "action_count": { "type": "long" },
+        "resource_count": { "type": "long" },
+        "error_count": { "type": "long" },
+        "request_count": { "type": "long" },
+        "request_error_count": { "type": "integer" },
+        "long_task_count": { "type": "long" },
+        "frustration_count": { "type": "long" },
+        "version": { "type": "long" },
+        "web_vitals.fcp": { "type": "long" },
+        "web_vitals.lcp": { "type": "long" },
+        "web_vitals.inp": { "type": "long" },
+        "web_vitals.ttfb": { "type": "long" },
+        "web_vitals.cls": { "type": "double" },
+        "min_start_time": { "type": "long" },
+        "max_end_time": { "type": "long" },
+        "date": { "type": "date", "format": "strict_date" }
+      }
+    }
+  }
+}

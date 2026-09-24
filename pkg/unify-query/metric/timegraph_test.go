@@ -78,7 +78,7 @@ func TestTopologyRejectionReasonsAreBounded(t *testing.T) {
 func timeGraphFamilies(t *testing.T) []*dto.MetricFamily {
 	t.Helper()
 	registry := prometheus.NewRegistry()
-	registry.MustRegister(cmdbTopologyOperationsTotal, cmdbTopologyOperationSeconds, cmdbTopologyInFlight, cmdbTopologySize, cmdbTopologyRejectionsTotal, cmdbTimeGraphStageSeconds, cmdbTimeGraphSize, cmdbTimeGraphStorageSize, cmdbTimeGraphBuildPhaseSeconds, cmdbTopologyAdmissionActive, cmdbTopologyAdmissionLimit, cmdbTopologyPayloadBytes)
+	registry.MustRegister(cmdbTopologyOperationsTotal, cmdbTopologyOperationSeconds, cmdbTopologyInFlight, cmdbTopologySize, cmdbTopologyRejectionsTotal, cmdbTimeGraphStageSeconds, cmdbTimeGraphSize, cmdbTimeGraphStorageSize, cmdbTimeGraphBuildPhaseSeconds, cmdbTopologyAdmissionActive, cmdbTopologyPayloadBytes)
 	families, err := registry.Gather()
 	require.NoError(t, err)
 	return families

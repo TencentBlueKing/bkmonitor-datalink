@@ -64,18 +64,14 @@ type topologyAdmissionWriter struct {
 func (w *topologyAdmissionWriter) Write(body []byte) (int, error) {
 	require.Equal(w.t, 1.0, topologyObservation(w.t, "cmdb_topology_admission_active", nil).GetGauge().GetValue())
 	_, release, err := v1beta3.AcquireSharedTopology(context.Background())
-	if err == nil {
-		release()
-	}
-	require.ErrorContains(w.t, err, "max_topology_concurrency", "响应写出前必须仍占有准入名额")
+	require.NoError(w.t, err)
+	defer release()
+	require.Equal(w.t, 2.0, topologyObservation(w.t, "cmdb_topology_admission_active", nil).GetGauge().GetValue())
 	return w.ResponseRecorder.Write(body)
 }
 
-func TestTopologyAdmissionHeldThroughProxyResponse(t *testing.T) {
+func TestTopologyActivityTrackedThroughProxyResponse(t *testing.T) {
 	log.InitTestLogger()
-	old := v1beta3.MaxSharedTopologyConcurrency
-	v1beta3.MaxSharedTopologyConcurrency = 1
-	t.Cleanup(func() { v1beta3.MaxSharedTopologyConcurrency = old })
 	const route = "/test-topology-proxy-admission"
 	metadata.AddHandler(route, HandlerAPIRelationV1Beta3Topology)
 	w := &topologyAdmissionWriter{ResponseRecorder: httptest.NewRecorder(), t: t}
@@ -83,9 +79,59 @@ func TestTopologyAdmissionHeldThroughProxyResponse(t *testing.T) {
 	c.Request = httptest.NewRequest(http.MethodPost, "/proxy", strings.NewReader(`{"path":"`+route+`","data":{"query_list":[]}}`))
 	proxy.HandleProxy(c)
 	require.Equal(t, http.StatusOK, w.Code)
-	_, release, err := v1beta3.AcquireSharedTopology(context.Background())
-	require.NoError(t, err)
-	release()
+	require.Zero(t, topologyObservation(t, "cmdb_topology_admission_active", nil).GetGauge().GetValue())
+}
+
+func TestTopologyHTTPRequestsContinueWhileOthersAreActive(t *testing.T) {
+	log.InitTestLogger()
+	for _, test := range []struct {
+		name    string
+		handler gin.HandlerFunc
+	}{
+		{name: "instant", handler: HandlerAPIRelationV1Beta3Topology},
+		{name: "range", handler: HandlerAPIRelationV1Beta3TopologyRange},
+	} {
+		for _, proxied := range []bool{false, true} {
+			t.Run(test.name+map[bool]string{false: "/direct", true: "/proxy"}[proxied], func(t *testing.T) {
+				for i := 0; i < 2; i++ {
+					_, release, err := v1beta3.AcquireSharedTopology(context.Background())
+					require.NoError(t, err)
+					t.Cleanup(release)
+				}
+				body := `{"query_list":[]}`
+				if proxied {
+					route := "/test-topology-concurrent-" + test.name
+					metadata.AddHandler(route, test.handler)
+					body = `{"path":"` + route + `","data":` + body + `}`
+				}
+				w := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(w)
+				c.Request = httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(body))
+				if proxied {
+					proxy.HandleProxy(c)
+				} else {
+					test.handler(c)
+				}
+				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+				require.Equal(t, 2.0, topologyObservation(t, "cmdb_topology_admission_active", nil).GetGauge().GetValue())
+			})
+		}
+	}
+	require.Zero(t, topologyObservation(t, "cmdb_topology_admission_active", nil).GetGauge().GetValue())
+}
+
+func TestTopologyCanceledRequestDoesNotReportConcurrencyRejection(t *testing.T) {
+	log.InitTestLogger()
+	labels := map[string]string{"scope": "request", "query_mode": "instant", "result": "canceled"}
+	before := topologyObservation(t, "cmdb_topology_operations_total", labels).GetCounter().GetValue()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{"query_list":[]}`)).WithContext(ctx)
+	HandlerAPIRelationV1Beta3Topology(c)
+	require.Equal(t, before+1, topologyObservation(t, "cmdb_topology_operations_total", labels).GetCounter().GetValue())
+	require.Zero(t, topologyObservation(t, "cmdb_topology_admission_active", nil).GetGauge().GetValue())
 }
 
 func topologyObservation(t *testing.T, name string, labels map[string]string) *dto.Metric {

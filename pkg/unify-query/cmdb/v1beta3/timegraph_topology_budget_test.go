@@ -8,7 +8,9 @@ package v1beta3
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -66,44 +68,89 @@ func TestSharedTopologyResourceRejections(t *testing.T) {
 	}
 }
 
-func TestSharedTopologyConcurrentAdmissionAndRecovery(t *testing.T) {
-	initTimeGraphQueryTestEnvironment()
-	old := MaxSharedTopologyConcurrency
-	MaxSharedTopologyConcurrency = 2
-	t.Cleanup(func() { MaxSharedTopologyConcurrency = old })
-	entered := make(chan struct{}, 2)
-	model := sharedTopologyQueryModel(nil)
-	model.timeGraphVMQuery = func(ctx context.Context, _ *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, error) {
-		entered <- struct{}{}
-		<-ctx.Done()
-		return nil, ctx.Err()
-	}
-	request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, Timestamp: 1700000000, MaxHops: 1}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	done := make(chan error, 2)
-	for i := 0; i < 2; i++ {
-		go func() { _, err := model.QuerySharedTopology(metadata.InitHashID(ctx), request); done <- err }()
-	}
-	for i := 0; i < 2; i++ {
-		select {
-		case <-entered:
-		case <-time.After(5 * time.Second):
-			t.Fatal("backend was not reached")
+func TestSharedTopologyConcurrentLoadingAndRecovery(t *testing.T) {
+	for _, mode := range []struct {
+		name string
+		yolo bool
+	}{
+		{name: "normal"},
+		{name: "yolo", yolo: true},
+	} {
+		for _, outcome := range []string{"success", "canceled", "backend failure"} {
+			t.Run(mode.name+"/"+outcome, func(t *testing.T) {
+				initTimeGraphQueryTestEnvironment()
+				oldYolo := yoloMode
+				yoloMode = mode.yolo
+				t.Cleanup(func() { yoloMode = oldYolo })
+
+				const concurrency = 8
+				entered := make(chan struct{}, concurrency)
+				resume := make(chan struct{})
+				done := make(chan error, concurrency)
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				var workers sync.WaitGroup
+				t.Cleanup(func() { cancel(); workers.Wait() })
+				backendErr := errors.New("backend unavailable")
+				model := sharedTopologyQueryModel(nil)
+				model.timeGraphVMQuery = func(ctx context.Context, query *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, error) {
+					if query.QueryList[0].FieldName == "source_info_relation" {
+						entered <- struct{}{}
+						select {
+						case <-ctx.Done():
+							return nil, ctx.Err()
+						case <-resume:
+						}
+						if outcome == "backend failure" {
+							return nil, backendErr
+						}
+					}
+					return nil, nil
+				}
+				request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, Timestamp: 1700000000, MaxHops: 1}
+				for i := 0; i < concurrency; i++ {
+					workers.Add(1)
+					go func() {
+						defer workers.Done()
+						_, err := model.QuerySharedTopology(metadata.InitHashID(ctx), request)
+						done <- err
+					}()
+				}
+				for i := 0; i < concurrency; i++ {
+					select {
+					case <-entered:
+					case err := <-done:
+						t.Fatalf("query completed before all requests reached the backend: %v", err)
+					case <-ctx.Done():
+						t.Fatal("concurrent requests did not all reach the backend")
+					}
+				}
+				require.Equal(t, float64(concurrency), readTimeGraphMetric(t, "cmdb_topology_admission_active", nil, "gauge"))
+				if outcome == "canceled" {
+					cancel()
+				} else {
+					close(resume)
+				}
+				for i := 0; i < concurrency; i++ {
+					err := <-done
+					switch outcome {
+					case "success":
+						require.NoError(t, err)
+					case "canceled":
+						require.ErrorIs(t, err, context.Canceled)
+					case "backend failure":
+						require.ErrorIs(t, err, backendErr)
+					}
+				}
+				require.Zero(t, readTimeGraphMetric(t, "cmdb_topology_admission_active", nil, "gauge"))
+			})
 		}
 	}
-	require.Equal(t, 2.0, readTimeGraphMetric(t, "cmdb_topology_admission_active", nil, "gauge"))
-	require.Equal(t, 2.0, readTimeGraphMetric(t, "cmdb_topology_admission_limit", nil, "gauge"))
-	_, err := model.QuerySharedTopology(metadata.InitHashID(context.Background()), request)
-	var limit *ResultLimitError
-	require.ErrorAs(t, err, &limit)
-	require.Equal(t, "max_topology_concurrency", limit.Reason)
-	cancel()
-	for i := 0; i < 2; i++ {
-		require.ErrorIs(t, <-done, context.Canceled)
-	}
+}
+
+func TestSharedTopologyActivityNestedAndCanceled(t *testing.T) {
 	admitted, release, err := AcquireSharedTopology(context.Background())
 	require.NoError(t, err)
+	t.Cleanup(release)
 	_, nestedRelease, err := AcquireSharedTopology(admitted)
 	require.NoError(t, err)
 	require.Equal(t, 1.0, readTimeGraphMetric(t, "cmdb_topology_admission_active", nil, "gauge"))
@@ -115,6 +162,11 @@ func TestSharedTopologyConcurrentAdmissionAndRecovery(t *testing.T) {
 	active := topologyAdmission.active
 	topologyAdmission.Unlock()
 	require.Zero(t, active)
+	require.Zero(t, readTimeGraphMetric(t, "cmdb_topology_admission_active", nil, "gauge"))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err = AcquireSharedTopology(ctx)
+	require.ErrorIs(t, err, context.Canceled)
 	require.Zero(t, readTimeGraphMetric(t, "cmdb_topology_admission_active", nil, "gauge"))
 }
 

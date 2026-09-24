@@ -20,7 +20,6 @@ const (
 	MaxGraphResultsConfigPath                 = "cmdb.v1beta3.max_graph_results"
 	MaxGraphNodeInfosConfigPath               = "cmdb.v1beta3.max_graph_node_infos"
 	MaxSharedTopologyPointsConfigPath         = "cmdb.v1beta3.max_shared_topology_points"
-	MaxSharedTopologyConcurrencyConfigPath    = "cmdb.v1beta3.max_shared_topology_concurrency"
 	MaxSharedTopologyBackendBytesConfigPath   = "cmdb.v1beta3.max_shared_topology_backend_bytes"
 	MaxSharedTopologyMatrixPointsConfigPath   = "cmdb.v1beta3.max_shared_topology_matrix_points"
 	MaxSharedTopologyOutputElementsConfigPath = "cmdb.v1beta3.max_shared_topology_output_elements"
@@ -40,7 +39,6 @@ var (
 	MaxGraphResults                 = 10000
 	MaxGraphNodeInfos               = 1000000
 	MaxSharedTopologyPoints         = 60
-	MaxSharedTopologyConcurrency    = 2
 	MaxSharedTopologyBackendBytes   = 16 * 1024 * 1024
 	MaxSharedTopologyMatrixPoints   = 1000000
 	MaxSharedTopologyOutputElements = 200000

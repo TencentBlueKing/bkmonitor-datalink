@@ -657,7 +657,7 @@
     {
       "id": 23,
       "type": "timeseries",
-      "title": "共享拓扑实际准入占用与限制",
+      "title": "共享拓扑活跃请求数",
       "gridPos": {
         "x": 0,
         "y": 93,
@@ -693,19 +693,9 @@
             "type": "bkmonitor-timeseries-datasource",
             "uid": "000000002"
           }
-        },
-        {
-          "refId": "B",
-          "format": "time_series",
-          "source": "unify_query_cmdb_topology_admission_limit",
-          "type": "range",
-          "datasource": {
-            "type": "bkmonitor-timeseries-datasource",
-            "uid": "000000002"
-          }
         }
       ],
-      "description": "保留各采集实例标签，按进程比较；名额持有到 HTTP/代理响应写完。limit 首次请求前为零。"
+      "description": "保留各采集实例标签，按进程比较；请求计数覆盖 HTTP/代理响应写出。普通模式和 YOLO 模式均不限制并发，此指标仅观测实际活动数。"
     },
     {
       "id": 24,

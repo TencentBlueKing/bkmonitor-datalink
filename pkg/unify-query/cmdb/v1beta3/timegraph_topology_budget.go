@@ -32,8 +32,8 @@ func positiveTopologyLimit(value, fallback int) int {
 	return fallback
 }
 
-// AcquireSharedTopology 在进程内限制拓扑请求并发，超限立即拒绝，不在内存中
-// 排队。HTTP 层可持有名额到响应完成，模型入口复用同一名额；内部调用单独准入。
+// AcquireSharedTopology 仅跟踪活跃拓扑请求，不限制并发，也不排队。
+// HTTP 层计数持续到响应写完；嵌套模型调用复用计数，直接模型调用单独计数。
 func AcquireSharedTopology(ctx context.Context) (admittedCtx context.Context, releaseFn func(), err error) {
 	_, span := trace.NewSpan(ctx, "timegraph-admission")
 	defer finishTimeGraphStage(ctx, span, "admission", time.Now(), &err)
@@ -46,15 +46,10 @@ func AcquireSharedTopology(ctx context.Context) (admittedCtx context.Context, re
 	}
 	topologyAdmission.Lock()
 	defer topologyAdmission.Unlock()
-	limit := positiveTopologyLimit(MaxSharedTopologyConcurrency, 2)
 	defer func() {
-		metric.CMDBTopologyAdmissionSet(topologyAdmission.active, limit)
+		metric.CMDBTopologyAdmissionSet(topologyAdmission.active)
 		span.Set("admission-active", topologyAdmission.active)
-		span.Set("admission-limit", limit)
 	}()
-	if !yoloMode && topologyAdmission.active >= limit {
-		return ctx, nil, &ResultLimitError{Reason: "max_topology_concurrency", Count: topologyAdmission.active + 1, Limit: limit}
-	}
 	topologyAdmission.active++
 	var once sync.Once
 	release := func() {
@@ -66,7 +61,7 @@ func AcquireSharedTopology(ctx context.Context) (admittedCtx context.Context, re
 			defer topologyAdmission.Unlock()
 			topologyAdmission.active--
 			releaseSpan.Set("admission-active", topologyAdmission.active)
-			metric.CMDBTopologyAdmissionSet(topologyAdmission.active, positiveTopologyLimit(MaxSharedTopologyConcurrency, 2))
+			metric.CMDBTopologyAdmissionSet(topologyAdmission.active)
 		})
 	}
 	return context.WithValue(ctx, topologyAdmissionKey{}, true), release, nil

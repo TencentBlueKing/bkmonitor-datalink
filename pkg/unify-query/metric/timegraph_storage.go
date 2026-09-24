@@ -26,11 +26,7 @@ var (
 	}, []string{"storage", "phase", "result"})
 	cmdbTopologyAdmissionActive = promauto.NewGauge(prometheus.GaugeOpts{
 		Namespace: "unify_query", Name: "cmdb_topology_admission_active",
-		Help: "occupied topology admission slots, including HTTP response writing",
-	})
-	cmdbTopologyAdmissionLimit = promauto.NewGauge(prometheus.GaugeOpts{
-		Namespace: "unify_query", Name: "cmdb_topology_admission_limit",
-		Help: "effective process topology slot limit at the latest admission attempt; zero before first attempt",
+		Help: "active topology requests, including HTTP response writing; observation only, no concurrency limit",
 	})
 	cmdbTopologyPayloadBytes = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "unify_query", Name: "cmdb_topology_payload_bytes",
@@ -58,10 +54,9 @@ func CMDBTimeGraphBuildPhaseObserve(ctx context.Context, storage, phase, result 
 	observe(ctx, cmdbTimeGraphBuildPhaseSeconds.WithLabelValues(storage, phase, result), duration.Seconds())
 }
 
-// CMDBTopologyAdmissionSet 由准入锁保护更新，复用已有名额的模型调用不重复计数。
-func CMDBTopologyAdmissionSet(active, limit int) {
+// CMDBTopologyAdmissionSet 由活动计数锁保护更新，嵌套模型调用不重复计数。
+func CMDBTopologyAdmissionSet(active int) {
 	cmdbTopologyAdmissionActive.Set(float64(active))
-	cmdbTopologyAdmissionLimit.Set(float64(limit))
 }
 
 func CMDBTopologyPayloadObserve(ctx context.Context, stage, result string, bytes int) {

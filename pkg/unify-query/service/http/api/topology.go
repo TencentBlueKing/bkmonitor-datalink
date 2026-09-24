@@ -87,8 +87,6 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 	ctx, release, err := v1beta3.AcquireSharedTopology(ctx)
 	if err != nil {
 		handlerErr = err
-		requestResult = metric.CMDBRelationResultRejected
-		metric.CMDBTopologyRejectInc(ctx, queryMode, "max_topology_concurrency")
 		resp.failed(ctx, err)
 		return
 	}

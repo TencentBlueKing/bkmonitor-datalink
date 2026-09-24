@@ -74,6 +74,9 @@ func AcquireSharedTopology(ctx context.Context) (admittedCtx context.Context, re
 
 // TopologyOutputByteLimit 同时用于单查询物化预算与 HTTP 批次响应预算。
 func TopologyOutputByteLimit() int {
+	if yoloMode {
+		return int(^uint(0) >> 1)
+	}
 	return positiveTopologyLimit(MaxSharedTopologyOutputBytes, 64*1024*1024)
 }
 
@@ -85,7 +88,11 @@ type topologyOutputBudget struct {
 }
 
 func newTopologyOutputBudget(grid TopologyGrid, partial map[int64]string) *topologyOutputBudget {
-	b := &topologyOutputBudget{maxElements: positiveTopologyLimit(MaxSharedTopologyOutputElements, 200000), maxBytes: int64(TopologyOutputByteLimit()), bytes: 512}
+	maxElements := positiveTopologyLimit(MaxSharedTopologyOutputElements, 200000)
+	if yoloMode {
+		maxElements = int(^uint(0) >> 1)
+	}
+	b := &topologyOutputBudget{maxElements: maxElements, maxBytes: int64(TopologyOutputByteLimit()), bytes: 512}
 	for _, ts := range grid.Timestamps {
 		b.bytes += 128 + jsonStringByteBound(partial[ts])
 	}

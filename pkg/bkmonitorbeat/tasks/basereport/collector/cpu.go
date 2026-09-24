@@ -12,6 +12,7 @@ package collector
 import (
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/shirou/gopsutil/v3/cpu"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bkmonitorbeat/configs"
@@ -25,6 +26,8 @@ type CpuReport struct {
 	Stat       []cpu.TimesStat `json:"per_stat"`
 	TotalStat  cpu.TimesStat   `json:"total_stat"`
 }
+
+var errInvalidCPUStat = errors.New("invalid cpu stat sample")
 
 func GetCPUInfo(config configs.CpuConfig) (*CpuReport, error) {
 	var report CpuReport
@@ -43,14 +46,16 @@ func GetCPUInfo(config configs.CpuConfig) (*CpuReport, error) {
 		var once CpuReport
 		err := getCPUStatUsage(&once)
 		if err != nil {
-			logger.Errorf("get cpu usage stat fail")
-			return nil, err
-		}
-
-		// select max cpu total usage report
-		if once.TotalUsage >= maxTotalUsage {
-			report = once
-			maxTotalUsage = report.TotalUsage
+			if errors.Is(err, errInvalidCPUStat) {
+				logger.Warn("CPU idle counter rollback, discard invalid sample")
+			} else {
+				logger.Errorf("get cpu usage stat fail: %v", err)
+			}
+		} else {
+			if once.TotalUsage >= maxTotalUsage {
+				report = once
+				maxTotalUsage = once.TotalUsage
+			}
 		}
 
 		count--
@@ -101,4 +106,18 @@ func calcTimeState(t1, t2 cpu.TimesStat) cpu.TimesStat {
 		Guest:     t2.Guest - t1.Guest,
 		GuestNice: t2.GuestNice - t1.GuestNice,
 	}
+}
+
+// 判断 CPU 累计时间差是否有效
+func isValidCPUTimeState(state cpu.TimesStat) bool {
+	return state.User >= 0 &&
+		state.System >= 0 &&
+		state.Idle >= 0 &&
+		state.Nice >= 0 &&
+		state.Iowait >= 0 &&
+		state.Irq >= 0 &&
+		state.Softirq >= 0 &&
+		state.Steal >= 0 &&
+		state.Guest >= 0 &&
+		state.GuestNice >= 0
 }

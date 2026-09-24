@@ -25,13 +25,12 @@ import (
 
 func TestSurrealDBQuerySync(t *testing.T) {
 	tests := []struct {
-		name                       string
-		request                    QueryRequest
-		provider                   SchemaProvider
-		binding                    BindingInfo
-		activeEdgeServingRelations []string
-		queryMode                  graphQueryMode
-		expectedSQL                string
+		name        string
+		request     QueryRequest
+		provider    SchemaProvider
+		binding     BindingInfo
+		queryMode   graphQueryMode
+		expectedSQL string
 	}{
 		{
 			name: "host to module query uses runtime binding schema and bkbase query_sync payload",
@@ -61,14 +60,9 @@ func TestSurrealDBQuerySync(t *testing.T) {
 					},
 				},
 			),
-			binding:                    *tableMockBindingInfo(),
-			activeEdgeServingRelations: []string{string(RelationNodeWithPod)},
-			queryMode:                  graphQueryModeInstant,
-			expectedSQL: `LET $timestamp = 1776910000000;
-LET $look_back_delta = 7000000000;
-LET $start = 1769910000;
-LET $end = 1776910000;
-LET $start_ms = 1769910000000;
+			binding:   *tableMockBindingInfo(),
+			queryMode: graphQueryModeInstant,
+			expectedSQL: `LET $start_ms = 1769910000000;
 LET $end_ms = 1776910000000;
 
 SELECT {
@@ -81,29 +75,17 @@ SELECT {
     },
 
     hop1: {
-        host_module_link: (SELECT VALUE {
-            hop: 1,
-            relation_type: 'host_module_link',
-            relation_category: 'static',
-            relation_id: <string>id,
-            target: {
-                entity_type: 'module',
-                entity_id: <string>out,
-                entity_data: { bk_module_id: out.bk_module_id }
-            }
-        } FROM host_module_link WHERE in = $parent.id
-          AND (SELECT * FROM host_module_link_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
-          AND (SELECT * FROM module_liveness_record WHERE reference_id = $parent.out AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
-          LIMIT 1001)
+host_module_link: (SELECT VALUE { hop: 1, relation_type: 'host_module_link', relation_category: 'static', relation_id: <string>type::record('host_module_link', relation_id), target: { entity_type: 'module', entity_id: <string>target_id, entity_data: { bk_module_id: target_id.bk_module_id } } } FROM host_module_link WHERE source_id = $parent.id
+ AND active_period_start_ms <= active_period_end_ms
+ AND active_period_start_ms <= $end_ms AND active_period_end_ms >= $start_ms LIMIT 1001)
     }
 } AS result
 FROM host
 WHERE bk_host_id = '38268'
-  AND (SELECT * FROM host_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
 LIMIT 10;`,
 		},
 		{
-			name: "node to pod query uses active edge serving table",
+			name: "node to pod query uses single relation table",
 			request: QueryRequest{
 				SpaceUID:           tableMockSpaceUID,
 				Timestamp:          300000,
@@ -126,14 +108,9 @@ LIMIT 10;`,
 					},
 				},
 			),
-			binding:                    *tableMockBindingInfo(),
-			activeEdgeServingRelations: []string{string(RelationNodeWithPod)},
-			queryMode:                  graphQueryModeInstant,
-			expectedSQL: `LET $timestamp = 300000;
-LET $look_back_delta = 86400000;
-LET $start = 0;
-LET $end = 300;
-LET $start_ms = 0;
+			binding:   *tableMockBindingInfo(),
+			queryMode: graphQueryModeInstant,
+			expectedSQL: `LET $start_ms = 0;
 LET $end_ms = 300000;
 
 SELECT {
@@ -146,29 +123,17 @@ SELECT {
     },
 
     hop1: {
-        node_with_pod: (SELECT VALUE {
-                hop: 1,
-                relation_type: 'node_with_pod',
-                relation_category: 'static',
-                relation_id: <string>relation_id,
-                target: {
-                    entity_type: target_type,
-                    entity_id: <string>target_id,
-                    entity_data: target_data
-                }
-            } FROM node_with_pod_active_edge_view WHERE source_id = $parent.id
-              AND active_period_start_ms <= active_period_end_ms
-              AND active_period_start_ms <= $end_ms
-              AND active_period_end_ms >= $start_ms
-              LIMIT 1001)
+node_with_pod: (SELECT VALUE { hop: 1, relation_type: 'node_with_pod', relation_category: 'static', relation_id: <string>type::record('node_with_pod', relation_id), target: { entity_type: 'pod', entity_id: <string>target_id, entity_data: { bcs_cluster_id: target_id.bcs_cluster_id, namespace: target_id.namespace, pod: target_id.pod } } } FROM node_with_pod WHERE source_id = $parent.id
+ AND active_period_start_ms <= active_period_end_ms
+ AND active_period_start_ms <= $end_ms AND active_period_end_ms >= $start_ms LIMIT 1001)
     }
 } AS result
 FROM node
-WHERE (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
+
 LIMIT 100;`,
 		},
 		{
-			name: "pod to node query uses active edge serving table in reverse",
+			name: "pod to node query uses single relation table in reverse",
 			request: QueryRequest{
 				SpaceUID:           tableMockSpaceUID,
 				Timestamp:          300000,
@@ -189,14 +154,9 @@ LIMIT 100;`,
 					ToType:       ResourceTypePod,
 				}},
 			),
-			binding:                    *tableMockBindingInfo(),
-			activeEdgeServingRelations: []string{string(RelationNodeWithPod)},
-			queryMode:                  graphQueryModeInstant,
-			expectedSQL: `LET $timestamp = 300000;
-LET $look_back_delta = 86400000;
-LET $start = 0;
-LET $end = 300;
-LET $start_ms = 0;
+			binding:   *tableMockBindingInfo(),
+			queryMode: graphQueryModeInstant,
+			expectedSQL: `LET $start_ms = 0;
 LET $end_ms = 300000;
 
 SELECT {
@@ -209,37 +169,19 @@ SELECT {
     },
 
     hop1: {
-        node_with_pod: (SELECT VALUE {
-                hop: 1,
-                relation_type: 'node_with_pod',
-                relation_category: 'static',
-                relation_id: <string>relation_id,
-                target: {
-                    entity_type: source_type,
-                    entity_id: <string>source_id,
-                    entity_data: source_data
-                }
-            } FROM node_with_pod_active_edge_view WHERE target_id = $parent.id
-              AND active_period_start_ms <= active_period_end_ms
-              AND active_period_start_ms <= $end_ms
-              AND active_period_end_ms >= $start_ms
-              LIMIT 1001)
+node_with_pod: (SELECT VALUE { hop: 1, relation_type: 'node_with_pod', relation_category: 'static', relation_id: <string>type::record('node_with_pod', relation_id), target: { entity_type: 'node', entity_id: <string>source_id, entity_data: { bcs_cluster_id: source_id.bcs_cluster_id, node: source_id.node } } } FROM node_with_pod WHERE target_id = $parent.id
+ AND active_period_start_ms <= active_period_end_ms
+ AND active_period_start_ms <= $end_ms AND active_period_end_ms >= $start_ms LIMIT 1001)
     }
 } AS result
 FROM pod
-WHERE (SELECT * FROM pod_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
+
 LIMIT 100;`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			oldRelations := ActiveEdgeServingRelations
-			ActiveEdgeServingRelations = append([]string(nil), tt.activeEdgeServingRelations...)
-			t.Cleanup(func() {
-				ActiveEdgeServingRelations = oldRelations
-			})
-
 			req := tt.request
 			builder := NewSurrealQueryBuilderWithSchemaProvider(&req, tt.provider)
 			configureBuilderForGraphQueryMode(builder, tt.queryMode)
@@ -274,222 +216,6 @@ LIMIT 100;`,
 			assert.Equal(t, tt.binding.Database, payload.ResultTableID)
 		})
 	}
-}
-
-func TestActiveEdgeServingSurrealQLFallbackContract(t *testing.T) {
-	provider := newTableSchemaProvider(
-		map[ResourceType]tableResourceDefinition{
-			ResourceTypeNode: {primaryKeys: []string{"bcs_cluster_id", "node"}},
-			ResourceTypePod:  {primaryKeys: []string{"bcs_cluster_id", "namespace", "pod"}},
-		},
-		[]RelationSchema{{
-			RelationType: RelationNodeWithPod,
-			Category:     RelationCategoryStatic,
-			FromType:     ResourceTypeNode,
-			ToType:       ResourceTypePod,
-		}},
-	)
-	req := QueryRequest{
-		Timestamp:          300000,
-		SourceType:         ResourceTypeNode,
-		TargetType:         ResourceTypePod,
-		TargetTypeExplicit: true,
-		MaxHops:            1,
-	}
-	tests := []struct {
-		name             string
-		mode             graphQueryMode
-		servingRelations []string
-		expectedSQL      string
-	}{
-		{
-			name: "instant falls back when relation is not enabled",
-			mode: graphQueryModeInstant,
-			expectedSQL: `LET $timestamp = 300000;
-LET $look_back_delta = 86400000;
-LET $start = 0;
-LET $end = 300;
-LET $start_ms = 0;
-LET $end_ms = 300000;
-
-SELECT {
-    root: {
-        entity_type: meta::tb(id),
-        entity_id: <string>id,
-        entity_data: { bcs_cluster_id: bcs_cluster_id, node: node },
-        created_at: created_at,
-        updated_at: updated_at
-    },
-
-    hop1: {
-        node_with_pod: (SELECT VALUE {
-            hop: 1,
-            relation_type: 'node_with_pod',
-            relation_category: 'static',
-            relation_id: <string>id,
-            target: {
-                entity_type: 'pod',
-                entity_id: <string>out,
-                entity_data: { bcs_cluster_id: out.bcs_cluster_id, namespace: out.namespace, pod: out.pod }
-            }
-        } FROM node_with_pod WHERE in = $parent.id
-          AND (SELECT * FROM node_with_pod_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
-          AND (SELECT * FROM pod_liveness_record WHERE reference_id = $parent.out AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
-          LIMIT 1001)
-    }
-} AS result
-FROM node
-WHERE (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
-LIMIT 100;`,
-		},
-		{
-			name:             "range ignores enabled serving relation",
-			mode:             graphQueryModeRange,
-			servingRelations: []string{string(RelationNodeWithPod)},
-			expectedSQL: `LET $timestamp = 300000;
-LET $look_back_delta = 86400000;
-LET $start = 0;
-LET $end = 300;
-LET $start_ms = 0;
-LET $end_ms = 300000;
-
-SELECT {
-    root: {
-        entity_type: meta::tb(id),
-        entity_id: <string>id,
-        entity_data: { bcs_cluster_id: bcs_cluster_id, node: node },
-        created_at: created_at,
-        updated_at: updated_at,
-        liveness: (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND period_end >= $start AND period_start <= $end AND period_start <= period_end)
-    },
-
-    hop1: {
-        node_with_pod: (SELECT VALUE {
-            hop: 1,
-            relation_type: 'node_with_pod',
-            relation_category: 'static',
-            relation_id: <string>id,
-            relation_liveness: (SELECT * FROM node_with_pod_liveness_record WHERE relation_id = $parent.id AND period_end >= $start_ms AND period_start <= $end_ms AND period_start <= period_end),
-            target: {
-                entity_type: 'pod',
-                entity_id: <string>out,
-                entity_data: { bcs_cluster_id: out.bcs_cluster_id, namespace: out.namespace, pod: out.pod },
-                liveness: (SELECT * FROM pod_liveness_record WHERE reference_id = $parent.out AND period_end >= $start AND period_start <= $end AND period_start <= period_end)
-            }
-        } FROM node_with_pod WHERE in = $parent.id
-          AND (SELECT * FROM node_with_pod_liveness_record WHERE relation_id = $parent.id AND $end_ms >= period_start AND $start_ms <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
-          AND (SELECT * FROM pod_liveness_record WHERE reference_id = $parent.out AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
-          LIMIT 1001)
-    }
-} AS result
-FROM node
-WHERE (SELECT * FROM node_liveness_record WHERE reference_id = $parent.id AND $end >= period_start AND $start <= period_end AND period_start <= period_end LIMIT 1)[0] != NONE
-LIMIT 100;`,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			oldRelations := ActiveEdgeServingRelations
-			ActiveEdgeServingRelations = append([]string(nil), tt.servingRelations...)
-			t.Cleanup(func() { ActiveEdgeServingRelations = oldRelations })
-
-			query := req
-			builder := NewSurrealQueryBuilderWithSchemaProvider(&query, provider)
-			configureBuilderForGraphQueryMode(builder, tt.mode)
-
-			actualSQL := builder.Build()
-			if tt.mode == graphQueryModeRange && len(tt.servingRelations) > 0 {
-				assert.Contains(t, actualSQL, "FROM node_with_pod_active_edge_view")
-				assert.NotContains(t, actualSQL, "FROM node_with_pod WHERE")
-				return
-			}
-			assert.Equal(t, tt.expectedSQL, actualSQL)
-		})
-	}
-
-	t.Run("multi hop follows serving relation configuration", func(t *testing.T) {
-		multiHopProvider := newTableSchemaProvider(
-			map[ResourceType]tableResourceDefinition{
-				ResourceTypeNode:       {primaryKeys: []string{"bcs_cluster_id", "node"}},
-				ResourceTypePod:        {primaryKeys: []string{"bcs_cluster_id", "namespace", "pod"}},
-				ResourceTypeReplicaSet: {primaryKeys: []string{"bcs_cluster_id", "namespace", "replicaset"}},
-			},
-			[]RelationSchema{
-				{RelationType: RelationNodeWithPod, Category: RelationCategoryStatic, FromType: ResourceTypeNode, ToType: ResourceTypePod},
-				{RelationType: RelationPodWithReplicaSet, Category: RelationCategoryStatic, FromType: ResourceTypePod, ToType: ResourceTypeReplicaSet},
-			},
-		)
-		multiHopReq := QueryRequest{
-			Timestamp:          300000,
-			SourceType:         ResourceTypeNode,
-			TargetType:         ResourceTypeReplicaSet,
-			TargetTypeExplicit: true,
-			MaxHops:            2,
-		}
-		path := resourcePath{Steps: []resourcePathStep{
-			{ResourceType: string(ResourceTypeNode)},
-			{ResourceType: string(ResourceTypePod), RelationType: string(RelationNodeWithPod), Category: string(RelationCategoryStatic), Direction: string(DirectionOutbound)},
-			{ResourceType: string(ResourceTypeReplicaSet), RelationType: string(RelationPodWithReplicaSet), Category: string(RelationCategoryStatic), Direction: string(DirectionOutbound)},
-		}}
-
-		cases := []struct {
-			name                  string
-			servingRelations      []string
-			expectedRoute         string
-			expectedSQLContains   []string
-			expectedSQLNotContain []string
-		}{
-			{
-				name:             "all hops use serving",
-				servingRelations: []string{string(RelationNodeWithPod), string(RelationPodWithReplicaSet)},
-				expectedRoute:    "active_edge_serving",
-				expectedSQLContains: []string{
-					"FROM node_with_pod_active_edge_view",
-					"entity_id: <string>target_id",
-					"FROM pod_with_replicaset_active_edge_view WHERE source_id = $parent.target_id",
-				},
-			},
-			{
-				name:             "configured hop uses serving and remaining hop uses raw",
-				servingRelations: []string{string(RelationNodeWithPod)},
-				expectedRoute:    "mixed",
-				expectedSQLContains: []string{
-					"FROM node_with_pod_active_edge_view",
-					"FROM pod_with_replicaset WHERE in = $parent.target_id",
-				},
-				expectedSQLNotContain: []string{"FROM pod_with_replicaset_active_edge_view"},
-			},
-			{
-				name:             "raw hop followed by serving",
-				servingRelations: []string{string(RelationPodWithReplicaSet)},
-				expectedRoute:    "mixed",
-				expectedSQLContains: []string{
-					"FROM node_with_pod WHERE in = $parent.id",
-					"FROM pod_with_replicaset_active_edge_view WHERE source_id = $parent.out",
-				},
-				expectedSQLNotContain: []string{"FROM node_with_pod_active_edge_view"},
-			},
-		}
-
-		for _, tc := range cases {
-			t.Run(tc.name, func(t *testing.T) {
-				oldRelations := ActiveEdgeServingRelations
-				ActiveEdgeServingRelations = append([]string(nil), tc.servingRelations...)
-				t.Cleanup(func() { ActiveEdgeServingRelations = oldRelations })
-
-				builder := NewSurrealQueryBuilderForPath(&multiHopReq, multiHopProvider, path)
-				sql := builder.Build()
-				assert.Equal(t, tc.expectedRoute, builder.routeName())
-				for _, expected := range tc.expectedSQLContains {
-					assert.Contains(t, sql, expected)
-				}
-				for _, unexpected := range tc.expectedSQLNotContain {
-					assert.NotContains(t, sql, unexpected)
-				}
-			})
-		}
-	})
 }
 
 func TestSurrealDBResponseParsing(t *testing.T) {
@@ -745,8 +471,8 @@ func TestSurrealDBPathSplitQuerySyncRequestsTableDriven(t *testing.T) {
 			bkbaseResponseOverrides: map[string]string{
 				"node/pod": tableEmptyBKBaseResponseJSON,
 			},
-			expectedResponseJSON: `{"path":["node","system","pod"],"matchers":[{"pod":"pod-via-system"}],"query_sync_requests":[{"path":["node","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_pod"],"not_contains_relations":["node_with_system","system_to_pod"]},{"path":["node","system","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_system","system_to_pod"],"not_contains_relations":["node_with_pod"]}]}`,
-			expectedRequestCount: 2,
+			expectedResponseJSON: `{"path":["node","system","pod"],"matchers":[{"pod":"pod-via-system"}],"query_sync_requests":[{"path":["node","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_pod"],"not_contains_relations":["node_with_system","system_to_pod"]},{"path":["node","system"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["node_with_system"],"not_contains_relations":["node_with_pod","system_to_pod"]},{"path":["system","pod"],"prefer_storage":"surrealdb","properties":{"cluster_name":"mock_surrealdb_cluster"},"result_table_id":"mock_graph_result_table","contains_relations":["system_to_pod"],"not_contains_relations":["node_with_pod","node_with_system"]}]}`,
+			expectedRequestCount: 3,
 		},
 	}
 
@@ -809,7 +535,7 @@ func TestSurrealDBPathSplitQuerySyncRequestsTableDriven(t *testing.T) {
 	}
 }
 
-func TestActiveEdgeServingQuerySyncTableDriven(t *testing.T) {
+func TestSingleTableQuerySyncTableDriven(t *testing.T) {
 	provider := newTableSchemaProvider(
 		map[ResourceType]tableResourceDefinition{
 			ResourceTypeHost: {
@@ -829,7 +555,7 @@ func TestActiveEdgeServingQuerySyncTableDriven(t *testing.T) {
 		}},
 	)
 
-	forwardResponse := tableActiveEdgeServingResponseJSON(
+	forwardResponse := tableSingleTableResponseJSON(
 		t,
 		ResourceTypeHost,
 		"host:⟨bk_host_id=38268⟩",
@@ -839,7 +565,7 @@ func TestActiveEdgeServingQuerySyncTableDriven(t *testing.T) {
 		"module:⟨bk_module_id=10259⟩",
 		map[string]string{"bk_module_id": "10259"},
 	)
-	reverseResponse := tableActiveEdgeServingResponseJSON(
+	reverseResponse := tableSingleTableResponseJSON(
 		t,
 		ResourceTypeModule,
 		"module:⟨bk_module_id=10259⟩",
@@ -865,27 +591,27 @@ func TestActiveEdgeServingQuerySyncTableDriven(t *testing.T) {
 		expectedDataProjection string
 	}{
 		{
-			name:                   "forward serving response returns module primary key matcher",
+			name:                   "forward single-table response returns module primary key matcher",
 			requestJSON:            `{"space_uid":"` + tableMockSpaceUID + `","timestamp":600000,"source_type":"host","source_info":{"bk_host_id":"38268"},"target_type":"module","look_back_delta":600000}`,
 			responseJSON:           forwardResponse,
 			mode:                   graphQueryModeInstant,
 			expectedPath:           []string{"host", "module"},
 			expectedMatchers:       cmdb.Matchers{{"bk_module_id": "10259"}},
-			expectedMatchClause:    "source_id = $parent.id",
-			expectedDataProjection: "entity_data: target_data",
+			expectedMatchClause:    "source_id IN $source_ids",
+			expectedDataProjection: "entity_data: { bk_module_id: target_id.bk_module_id }",
 		},
 		{
-			name:                   "reverse serving response returns host primary key matcher",
+			name:                   "reverse single-table response returns host primary key matcher",
 			requestJSON:            `{"space_uid":"` + tableMockSpaceUID + `","timestamp":600000,"source_type":"module","source_info":{"bk_module_id":"10259"},"target_type":"host","look_back_delta":600000}`,
 			responseJSON:           reverseResponse,
 			mode:                   graphQueryModeInstant,
 			expectedPath:           []string{"module", "host"},
 			expectedMatchers:       cmdb.Matchers{{"bk_host_id": "38268"}},
-			expectedMatchClause:    "target_id = $parent.id",
-			expectedDataProjection: "entity_data: source_data",
+			expectedMatchClause:    "target_id IN $source_ids",
+			expectedDataProjection: "entity_data: { bk_host_id: source_id.bk_host_id }",
 		},
 		{
-			name:         "range serving response produces target buckets from active period",
+			name:         "range single-table response produces target buckets from active period",
 			requestJSON:  `{"space_uid":"` + tableMockSpaceUID + `","timestamp":600000,"source_type":"host","source_info":{"bk_host_id":"38268"},"target_type":"module","look_back_delta":600000}`,
 			responseJSON: forwardResponse,
 			mode:         graphQueryModeRange,
@@ -898,29 +624,15 @@ func TestActiveEdgeServingQuerySyncTableDriven(t *testing.T) {
 				{Timestamp: 300000, Matchers: cmdb.Matchers{{"bk_module_id": "10259"}}},
 				{Timestamp: 600000, Matchers: cmdb.Matchers{{"bk_module_id": "10259"}}},
 			},
-			expectedMatchClause:    "source_data.bk_host_id = '38268'",
-			expectedDataProjection: "entity_data: target_data",
+			expectedMatchClause:    "SELECT VALUE id FROM host WHERE bk_host_id = '38268'",
+			expectedDataProjection: "entity_data: { bk_module_id: target_id.bk_module_id }",
 		},
 	}
 
-	oldRelations := ActiveEdgeServingRelations
-	oldFlatRelations := FlatOneHopActiveEdgeServingRelations
-	ActiveEdgeServingRelations = []string{string(RelationHostWithModule)}
-	t.Cleanup(func() {
-		ActiveEdgeServingRelations = oldRelations
-		FlatOneHopActiveEdgeServingRelations = oldFlatRelations
-	})
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if tt.mode == graphQueryModeRange {
-				FlatOneHopActiveEdgeServingRelations = []string{string(RelationHostWithModule)}
-			} else {
-				FlatOneHopActiveEdgeServingRelations = nil
-			}
-
 			req := decodeTableQueryRequestJSON(t, tt.requestJSON)
-			responses := tableActiveEdgeServingResponsesBySurrealQL(t, req, provider, tt.mode, tt.responseJSON)
+			responses := tableSingleTableResponsesBySurrealQL(t, req, provider, tt.mode, tt.responseJSON)
 			server := newSurrealDBMockServer(t, responses)
 			t.Cleanup(server.Close)
 
@@ -971,7 +683,8 @@ func TestActiveEdgeServingQuerySyncTableDriven(t *testing.T) {
 			assert.Equal(t, tableMockDatabase, requests[0].SQLPayload.ResultTableID)
 
 			dsl := requests[0].SQLPayload.DSL
-			assert.Contains(t, dsl, "FROM host_with_module_active_edge_view")
+			assert.Contains(t, dsl, "FROM host_with_module\n")
+			assert.NotContains(t, dsl, "_active_edge_view")
 			assert.Contains(t, dsl, tt.expectedMatchClause)
 			assert.Contains(t, dsl, tt.expectedDataProjection)
 			assert.Contains(t, dsl, "active_period_start_ms <= $end_ms")
@@ -1011,31 +724,28 @@ func TestSurrealQueryBuilderForPathUsesRelationOnlyLiveness(t *testing.T) {
 		},
 	}}
 
-	oldRelations := ActiveEdgeServingRelations
-	t.Cleanup(func() { ActiveEdgeServingRelations = oldRelations })
-
-	ActiveEdgeServingRelations = nil
 	rawSQL := NewSurrealQueryBuilderForPath(req, provider, path).Build()
-	assert.Contains(t, rawSQL, "node_with_pod_liveness_record")
+	assert.Contains(t, rawSQL, "FROM node_with_pod\n")
+	assert.NotContains(t, rawSQL, "_liveness_record")
 	assert.NotContains(t, rawSQL, "FROM node_liveness_record")
 	assert.NotContains(t, rawSQL, "FROM pod_liveness_record")
 	assert.Contains(t, rawSQL, ResponseFieldRelationLiveness+":")
 
-	ActiveEdgeServingRelations = []string{string(RelationNodeWithPod)}
 	servingBuilder := NewSurrealQueryBuilderForPath(req, provider, path)
 	servingSQL := servingBuilder.Build()
-	assert.Equal(t, "active_edge_serving", servingBuilder.routeName())
-	assert.Contains(t, servingSQL, "FROM node_with_pod_active_edge_view")
+	assert.Equal(t, "single_table_flat_one_hop", servingBuilder.routeName())
+	assert.Contains(t, servingSQL, "FROM node_with_pod\n")
 	assert.NotContains(t, servingSQL, "FROM node_liveness_record")
 	assert.NotContains(t, servingSQL, "FROM pod_liveness_record")
 	assert.Contains(t, servingSQL, ResponseFieldRelationLiveness+":")
 
 	rootOnlyPath := resourcePath{Steps: []resourcePathStep{{ResourceType: string(ResourceTypeNode)}}}
 	rootOnlySQL := NewSurrealQueryBuilderForPath(req, provider, rootOnlyPath).Build()
-	assert.Contains(t, rootOnlySQL, "node_liveness_record")
+	assert.Contains(t, rootOnlySQL, "FROM node\nWHERE node = 'node-1'")
+	assert.NotContains(t, rootOnlySQL, "_liveness_record")
 }
 
-func tableActiveEdgeServingResponsesBySurrealQL(
+func tableSingleTableResponsesBySurrealQL(
 	t *testing.T,
 	req QueryRequest,
 	provider SchemaProvider,
@@ -1045,7 +755,6 @@ func tableActiveEdgeServingResponsesBySurrealQL(
 	t.Helper()
 
 	req.Normalize()
-	adjustMaxHopsForUnconstrainedPath(&req, provider)
 	pFinder := NewPathFinder(
 		WithAllowedCategories(req.AllowedRelationTypes...),
 		WithDynamicDirection(req.DynamicRelationDirection),
@@ -1064,7 +773,7 @@ func tableActiveEdgeServingResponsesBySurrealQL(
 	}
 }
 
-func tableActiveEdgeServingResponseJSON(
+func tableSingleTableResponseJSON(
 	t *testing.T,
 	rootType ResourceType,
 	rootID string,

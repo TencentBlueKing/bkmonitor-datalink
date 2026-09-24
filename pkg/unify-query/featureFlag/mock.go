@@ -24,10 +24,12 @@ func (m mockRetriever) Retrieve(ctx context.Context) ([]byte, error) {
 }
 
 func MockFeatureFlag(ctx context.Context, flags string) error {
-	ffclient.Close()
-	return ffclient.Init(ffclient.Config{
-		Context:    ctx,
-		FileFormat: "json",
-		Retriever:  &mockRetriever{flags: flags},
+	return WithClientLock(func() error {
+		ffclient.Close()
+		return ffclient.Init(ffclient.Config{
+			Context:    ctx,
+			FileFormat: "json",
+			Retriever:  &mockRetriever{flags: flags},
+		})
 	})
 }

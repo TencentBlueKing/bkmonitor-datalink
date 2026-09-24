@@ -33,6 +33,7 @@ func setDefaultConfig() {
 	viper.SetDefault(ServiceNameConfigPath, "bkmonitorv3:spaces")
 
 	viper.SetDefault(SchemaProviderTypeConfigPath, "static")
+	viper.SetDefault(KVBasePathConfigPath, "bkmonitorv3:unify-query")
 }
 
 func LoadConfig() {
@@ -51,6 +52,7 @@ func LoadConfig() {
 	ServiceName = viper.GetString(ServiceNameConfigPath)
 
 	SchemaProviderType = viper.GetString(SchemaProviderTypeConfigPath)
+	KVBasePath = viper.GetString(KVBasePathConfigPath)
 }
 
 func init() {

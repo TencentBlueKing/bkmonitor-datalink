@@ -20,7 +20,9 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/utils"
 )
 
 var (
@@ -36,24 +38,40 @@ func StorageMapHash() string {
 	return storageMapHash
 }
 
+// getStorageFields 从存储结构体中提取字段，支持 consul.Storage 和 redis.Storage
+func getStorageFields(storage any) (storageType, address, username, password string) {
+	switch s := storage.(type) {
+	case *consul.Storage:
+		return s.Type, s.Address, s.Username, s.Password
+	case *redis.Storage:
+		return s.Type, s.Address, s.Username, s.Password
+	default:
+		panic(fmt.Sprintf("unsupported storage type: %T", storage))
+	}
+}
+
 // ReloadTsDBStorage 重新加载存储实例到内存里面
-func ReloadTsDBStorage(ctx context.Context, hash string, tsDBs map[string]*consul.Storage, opt *Options) error {
+// 支持 consul.Storage 和 redis.Storage
+func ReloadTsDBStorage(ctx context.Context, tsDBs map[string]any, opt *Options) error {
 	var err error
 	ctx, span := trace.NewSpan(ctx, "reload-tsdb-storage")
 	defer span.End(&err)
 
+	hash := StorageConfigHash(tsDBs, opt)
 	newStorageMap := make(map[string]*Storage, len(tsDBs))
 	oldHash := storageMapHash
 
 	for storageID, tsDB := range tsDBs {
+		storageType, address, username, password := getStorageFields(tsDB)
+
 		storage := &Storage{
-			Type:     tsDB.Type,
-			Address:  tsDB.Address,
-			Username: tsDB.Username,
-			Password: tsDB.Password,
+			Type:     storageType,
+			Address:  address,
+			Username: username,
+			Password: password,
 		}
 
-		switch tsDB.Type {
+		switch storageType {
 		case metadata.ElasticsearchStorageType:
 			storage.Timeout = opt.Es.Timeout
 			storage.MaxRouting = opt.Es.MaxRouting
@@ -106,12 +124,32 @@ func ReloadTsDBStorage(ctx context.Context, hash string, tsDBs map[string]*consu
 	return nil
 }
 
+// StorageConfigHash 计算包含存储记录和运行时查询参数的稳定指纹。
+func StorageConfigHash(tsDBs map[string]any, opt *Options) string {
+	return utils.HashItDeterministic(struct {
+		Storage map[string]any
+		Options *Options
+	}{
+		Storage: tsDBs,
+		Options: opt,
+	})
+}
+
 func Print() string {
 	storageLock.RLock()
 	defer storageLock.RUnlock()
 	str := "--------------------------- storage list --------------------------------------\n"
 	for k, s := range storageMap {
-		str += fmt.Sprintf("%s: %+v \n", k, s)
+		str += fmt.Sprintf(
+			"%s: type=%s address=%s username=%s password=****** timeout=%s max_limit=%d max_slimit=%d\n",
+			k,
+			s.Type,
+			s.Address,
+			s.Username,
+			s.Timeout,
+			s.MaxLimit,
+			s.MaxSLimit,
+		)
 	}
 	return str
 }
@@ -160,4 +198,16 @@ func sortStorageIDKeysAsc(keys []string) {
 		}
 		return keys[i] < keys[j]
 	})
+}
+
+// GetAllStorageFromMemory 从内存中获取所有存储配置
+func GetAllStorageFromMemory() map[string]*Storage {
+	storageLock.RLock()
+	defer storageLock.RUnlock()
+
+	result := make(map[string]*Storage, len(storageMap))
+	for k, v := range storageMap {
+		result[k] = v
+	}
+	return result
 }

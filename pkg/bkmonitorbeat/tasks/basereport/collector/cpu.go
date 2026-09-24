@@ -10,6 +10,8 @@
 package collector
 
 import (
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -26,13 +28,20 @@ type CpuReport struct {
 	TotalStat  cpu.TimesStat   `json:"total_stat"`
 }
 
+var errInvalidCPUSample = errors.New("invalid CPU sample")
+
 func GetCPUInfo(config configs.CpuConfig) (*CpuReport, error) {
+	return getCPUInfoWithSampler(config, getCPUStatUsage)
+}
+
+func getCPUInfoWithSampler(config configs.CpuConfig, sample func(*CpuReport) error) (*CpuReport, error) {
 	var report CpuReport
 	var err error
 
 	// 采样多次，取最大值
 	// 规定的采集时间和采集次数，优先达到的为准
 	var maxTotalUsage float64
+	hasValidSample := false
 	count := config.StatTimes
 	ticker := time.NewTicker(config.StatPeriod)
 	defer ticker.Stop()
@@ -41,14 +50,19 @@ func GetCPUInfo(config configs.CpuConfig) (*CpuReport, error) {
 		logger.Debug("collect cpu stat")
 
 		var once CpuReport
-		err := getCPUStatUsage(&once)
-		if err != nil {
-			logger.Errorf("get cpu usage stat fail")
+		err := sample(&once)
+		if err != nil && !errors.Is(err, errInvalidCPUSample) {
+			logger.Errorf("get cpu usage stat fail: %v", err)
 			return nil, err
 		}
 
-		// select max cpu total usage report
-		if once.TotalUsage >= maxTotalUsage {
+		if errors.Is(err, errInvalidCPUSample) {
+			logger.Debugf("drop invalid CPU sample: %v", err)
+		}
+
+		// 从有效样本中选择整机 CPU 使用率最高的一次报告
+		if err == nil && (!hasValidSample || once.TotalUsage >= maxTotalUsage) {
+			hasValidSample = true
 			report = once
 			maxTotalUsage = report.TotalUsage
 		}
@@ -63,7 +77,11 @@ func GetCPUInfo(config configs.CpuConfig) (*CpuReport, error) {
 		}
 	}
 
-	// collect once
+	if !hasValidSample {
+		return nil, fmt.Errorf("%w: no valid CPU sample in collection window", errInvalidCPUSample)
+	}
+
+	// 查询一次 CPU 基础信息
 	err = queryCpuInfo(&report, config.InfoPeriod, config.InfoTimeout)
 	if err != nil {
 		logger.Errorf("get CPU Info fail for->[%#v] but will still upload cpu usage info.", err)

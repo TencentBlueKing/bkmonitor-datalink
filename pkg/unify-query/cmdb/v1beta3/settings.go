@@ -107,6 +107,9 @@ func effectiveMaxGraphNodeInfos() int {
 }
 
 func effectiveMaxSharedTopologyPoints() int {
+	if yoloMode {
+		return int(^uint(0) >> 1)
+	}
 	if MaxSharedTopologyPoints > 0 && MaxSharedTopologyPoints <= 60 {
 		return MaxSharedTopologyPoints
 	}

@@ -17,6 +17,8 @@ NODE_BUILD_OPTIONS ?= --max-old-space-size=3072
 CONSOLE_BUILD_FLAGS ?= --memory 4G
 EVENTGEN_IMAGE ?= linkd-eventgen
 EVENTGEN_VERSION ?= 0.1.1
+FORMAT_CONSOLE ?= 1
+CLI_INSTALL_DIR ?= $(HOME)/.local/bin
 
 GO_FILES := $(shell find . -type f -name '*.go' \
 	-not -path './vendor/*' \
@@ -24,11 +26,20 @@ GO_FILES := $(shell find . -type f -name '*.go' \
 	-not -path './console/dist/*' \
 	-not -path './console/dist-server/*' | LC_ALL=C sort)
 
-.PHONY: fmt fmt-check test race vet lint console-check console-e2e helm-check release-check check image console-image eventgen-image
+.PHONY: fmt fmt-check test race vet lint console-check console-e2e helm-check release-check check image console-image eventgen-image cli cli-install
 
 fmt:
 	$(GOFMT) -w $(GO_FILES)
+ifeq ($(FORMAT_CONSOLE),1)
 	cd $(CONSOLE_DIR) && ./node_modules/.bin/prettier --write .
+endif
+
+cli:
+	$(GO) build -trimpath -ldflags "-X main.version=$(VERSION) -X main.gitCommit=$(GIT_COMMIT)" -o bin/linkd-cli ./cmd/linkd-cli
+
+cli-install: cli
+	install -d "$(CLI_INSTALL_DIR)"
+	install -m 0755 bin/linkd-cli "$(CLI_INSTALL_DIR)/linkd-cli"
 
 fmt-check:
 	@unformatted="$$( $(GOFMT) -l $(GO_FILES) )"; \

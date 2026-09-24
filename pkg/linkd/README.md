@@ -62,6 +62,8 @@ tests/       数据生成和 all-in-one E2E
 `all-in-one`，以及 Cleaner、Lifecycle、控制面（API / Leader / Manager）三进程模式；本次多级别事件改造的测试环境升级见[重置升级指南](docs/guides/multilevel-event-upgrade.md)。当前实现与目标
 边界见 [`docs/design/deployment.md`](docs/design/deployment.md)。
 
+开发维护人员可使用 [AI 调试运维 CLI 与 Skill](docs/guides/ai-cli.md) 连接 Console 排障，默认只读，操作前由 AI 展示最终方案并取得确认。
+
 ## 动态来源与任务调度
 
 EventSource 通过控制面 API/自定义 provider 管理，显式 `linkd event-source import --file <yaml>` 导入；常驻进程不自动加载文件中的来源。

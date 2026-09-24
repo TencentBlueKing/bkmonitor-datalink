@@ -17,6 +17,7 @@
 - [Standard Event 模拟器](event-generator.md)；
 - [使用 PM2 托管本地 Linkd 拓扑](pm2.md)；
 - [Linkd Console 运维调试工具](console.md)；
+- [AI 调试运维 CLI 与 Skill](ai-cli.md)：独立客户端、多环境凭据、默认只读接口和最终人工确认流程；
 - [主机推送告警 Enrich 示例](host-alert-enrich-example.md)；
 - [核心任务调度验证流程](task-scheduling-validation.md)。
 

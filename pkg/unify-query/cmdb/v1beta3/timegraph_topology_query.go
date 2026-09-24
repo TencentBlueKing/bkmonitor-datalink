@@ -129,9 +129,11 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		return cmdb.SharedTopologyResult{}, err
 	}
 	defer release()
-	queryCtx = metadata.WithBackendResponseLimit(queryCtx, int64(positiveTopologyLimit(MaxSharedTopologyBackendBytes, 16*1024*1024)))
-	span.Set("backend-response-byte-limit", metadata.BackendResponseLimit(queryCtx))
-	span.Set("matrix-point-limit", positiveTopologyLimit(MaxSharedTopologyMatrixPoints, 1000000))
+	if !yoloMode {
+		queryCtx = metadata.WithBackendResponseLimit(queryCtx, int64(positiveTopologyLimit(MaxSharedTopologyBackendBytes, 16*1024*1024)))
+		span.Set("backend-response-byte-limit", metadata.BackendResponseLimit(queryCtx))
+		span.Set("matrix-point-limit", positiveTopologyLimit(MaxSharedTopologyMatrixPoints, 1000000))
+	}
 
 	graph, err := m.buildTimeGraph(
 		queryCtx,

@@ -25,6 +25,7 @@ const (
 	MaxSharedTopologyMatrixPointsConfigPath   = "cmdb.v1beta3.max_shared_topology_matrix_points"
 	MaxSharedTopologyOutputElementsConfigPath = "cmdb.v1beta3.max_shared_topology_output_elements"
 	MaxSharedTopologyOutputBytesConfigPath    = "cmdb.v1beta3.max_shared_topology_output_bytes"
+	YoloModeConfigPath                        = "cmdb.v1beta3.yolo_mode"
 	DefaultLookBackDeltaConfigPath            = "cmdb.v1beta3.look_back_delta"
 )
 
@@ -45,6 +46,10 @@ var (
 	MaxSharedTopologyOutputElements = 200000
 	MaxSharedTopologyOutputBytes    = 64 * 1024 * 1024
 	DefaultLookBackDelta            = int64(86400000) // 24小时（毫秒）
+
+	// yoloMode is an explicit capacity-test switch. It defaults to false and
+	// can be enabled for an isolated test Pod through configuration.
+	yoloMode bool
 )
 
 func effectiveMaxRangePoints() int {
@@ -62,6 +67,9 @@ func effectiveMaxTargets() int {
 }
 
 func effectiveMaxGraphNodes() int {
+	if yoloMode {
+		return 0
+	}
 	if MaxGraphNodes > 0 {
 		return MaxGraphNodes
 	}
@@ -69,6 +77,9 @@ func effectiveMaxGraphNodes() int {
 }
 
 func effectiveMaxGraphEdges() int {
+	if yoloMode {
+		return 0
+	}
 	if MaxGraphEdges > 0 {
 		return MaxGraphEdges
 	}
@@ -76,6 +87,9 @@ func effectiveMaxGraphEdges() int {
 }
 
 func effectiveMaxGraphResults() int {
+	if yoloMode {
+		return 0
+	}
 	if MaxGraphResults > 0 {
 		return MaxGraphResults
 	}
@@ -83,6 +97,9 @@ func effectiveMaxGraphResults() int {
 }
 
 func effectiveMaxGraphNodeInfos() int {
+	if yoloMode {
+		return 0
+	}
 	if MaxGraphNodeInfos > 0 {
 		return MaxGraphNodeInfos
 	}

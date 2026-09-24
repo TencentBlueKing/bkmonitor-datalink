@@ -545,10 +545,10 @@ func (loader *timeGraphMatrixLoader) validateMatrix(queryCtx context.Context, ma
 	}()
 	tg := loader.graph
 	start, end, queryStep := loader.start, loader.end, loader.step
-	if loader.topology && metadata.BackendResponseLimitExceeded(queryCtx) {
+	if loader.topology && !yoloMode && metadata.BackendResponseLimitExceeded(queryCtx) {
 		err = &ResultLimitError{Reason: "max_response_bytes", Count: int(metadata.BackendResponseLimit(queryCtx)) + 1, Limit: int(metadata.BackendResponseLimit(queryCtx))}
 	}
-	if loader.topology && err == nil && len(matrix) > tg.maxNodes {
+	if loader.topology && err == nil && tg.maxNodes > 0 && len(matrix) > tg.maxNodes {
 		err = &ResultLimitError{Reason: "max_topology_matrix_series", Count: len(matrix), Limit: tg.maxNodes}
 	}
 	pointCount = 0
@@ -560,7 +560,7 @@ func (loader *timeGraphMatrixLoader) validateMatrix(queryCtx context.Context, ma
 			break
 		}
 		pointCount += len(series.Points)
-		if loader.topology && err == nil {
+		if loader.topology && err == nil && !yoloMode {
 			loader.pointCount += len(series.Points)
 			limit := positiveTopologyLimit(MaxSharedTopologyMatrixPoints, 1000000)
 			if loader.pointCount > limit {

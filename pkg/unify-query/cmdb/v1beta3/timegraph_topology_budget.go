@@ -23,6 +23,9 @@ var topologyAdmission struct {
 type topologyAdmissionKey struct{}
 
 func positiveTopologyLimit(value, fallback int) int {
+	if yoloMode {
+		return 0
+	}
 	if value > 0 {
 		return value
 	}
@@ -49,7 +52,7 @@ func AcquireSharedTopology(ctx context.Context) (admittedCtx context.Context, re
 		span.Set("admission-active", topologyAdmission.active)
 		span.Set("admission-limit", limit)
 	}()
-	if topologyAdmission.active >= limit {
+	if !yoloMode && topologyAdmission.active >= limit {
 		return ctx, nil, &ResultLimitError{Reason: "max_topology_concurrency", Count: topologyAdmission.active + 1, Limit: limit}
 	}
 	topologyAdmission.active++
@@ -106,6 +109,9 @@ func topologyEdgeByteBound(edge timeGraphTopologyEdgeKey) int64 {
 }
 
 func (b *topologyOutputBudget) checkBytes(size int64) error {
+	if b.maxBytes <= 0 {
+		return nil
+	}
 	if size > b.maxBytes-b.bytes {
 		return &ResultLimitError{Reason: "max_topology_output_bytes", Count: int(b.bytes + size), Limit: int(b.maxBytes)}
 	}
@@ -113,7 +119,7 @@ func (b *topologyOutputBudget) checkBytes(size int64) error {
 }
 
 func (b *topologyOutputBudget) add(size int64) error {
-	if b.elements >= b.maxElements {
+	if b.maxElements > 0 && b.elements >= b.maxElements {
 		return &ResultLimitError{Reason: "max_topology_output_elements", Count: b.elements + 1, Limit: b.maxElements}
 	}
 	if err := b.checkBytes(size); err != nil {

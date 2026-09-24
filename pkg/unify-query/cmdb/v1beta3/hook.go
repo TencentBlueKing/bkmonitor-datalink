@@ -33,6 +33,7 @@ func setDefaultConfig() {
 	viper.SetDefault(MaxSharedTopologyMatrixPointsConfigPath, 1000000)
 	viper.SetDefault(MaxSharedTopologyOutputElementsConfigPath, 200000)
 	viper.SetDefault(MaxSharedTopologyOutputBytesConfigPath, 64*1024*1024)
+	viper.SetDefault(YoloModeConfigPath, false)
 	viper.SetDefault(DefaultLookBackDeltaConfigPath, 86400000) // 24小时（毫秒）
 }
 
@@ -52,6 +53,7 @@ func LoadConfig() {
 	MaxSharedTopologyMatrixPoints = viper.GetInt(MaxSharedTopologyMatrixPointsConfigPath)
 	MaxSharedTopologyOutputElements = viper.GetInt(MaxSharedTopologyOutputElementsConfigPath)
 	MaxSharedTopologyOutputBytes = viper.GetInt(MaxSharedTopologyOutputBytesConfigPath)
+	yoloMode = viper.GetBool(YoloModeConfigPath)
 	DefaultLookBackDelta = viper.GetInt64(DefaultLookBackDeltaConfigPath)
 }
 

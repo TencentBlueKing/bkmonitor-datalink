@@ -29,6 +29,7 @@ type StaticTaskConfig struct {
 	ReportPeriod          time.Duration `config:"report_period"`
 	VirtualIfaceWhitelist []string      `config:"virtual_iface_whitelist"`
 	VirtualIfaceBlacklist []string      `config:"virtual_iface_blacklist"`
+	ReportFields          []string      `config:"report_fields"`
 }
 
 // InitIdent :
@@ -44,6 +45,9 @@ func (c *StaticTaskConfig) InitIdent() error {
 func (c *StaticTaskConfig) Clean() error {
 	err := utils.CleanCompositeParamList(&c.BaseTaskParam)
 	if err != nil {
+		return err
+	}
+	if _, err = NormalizeStaticReportFields(c.ReportFields); err != nil {
 		return err
 	}
 	// 小于1分钟按1分钟算

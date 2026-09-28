@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
@@ -196,8 +197,11 @@ func queryFirstTimeGraphPath(ctx context.Context, paths []resourcePath, query fu
 			return results, nil
 		}
 	}
-	if len(failures) > 0 && len(failures) == len(paths) {
-		return nil, fmt.Errorf("all relation paths failed: %w", errors.Join(failures...))
+	if len(failures) > 0 {
+		if len(failures) == len(paths) {
+			return nil, fmt.Errorf("all relation paths failed: %w", errors.Join(failures...))
+		}
+		return nil, fmt.Errorf("relation paths failed without an alternative hit: %w", errors.Join(failures...))
 	}
 	return nil, nil
 }
@@ -246,6 +250,9 @@ func timeGraphQueryTimestamp(ts string) (string, error) {
 	timestampMs, err := parseTimestamp(ts)
 	if err != nil {
 		return "", err
+	}
+	if ts != "" && timestampMs%1000 != 0 {
+		return "", fmt.Errorf("TimeGraph timestamp must have whole-second precision")
 	}
 	return strconv.FormatInt(timestampMs/1000, 10), nil
 }
@@ -479,16 +486,29 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	if err != nil {
 		return timeGraphRangeResult{}, fmt.Errorf("parse TimeGraph end timestamp: %w", err)
 	}
-	stepMs, err := parseStep(step)
+	stepDuration, err := parseStepDuration(step)
 	if err != nil {
 		return timeGraphRangeResult{}, err
 	}
+	if err := validateTimeGraphPrecision(time.UnixMilli(startMs), time.UnixMilli(endMs), stepDuration); err != nil {
+		return timeGraphRangeResult{}, err
+	}
+	stepMs := stepDuration.Milliseconds()
 	// 使用解析后的步长继续调用 TimeGraph；不能把调用方传入的空字符串再次
 	// 传到底层，否则底层会重新解析空 duration 并报错。
-	normalizedStep := (time.Duration(stepMs) * time.Millisecond).String()
-	if lookBackDelta == "" {
-		lookBackDelta = normalizedStep
+	normalizedStep := stepDuration.String()
+	if lookBackDelta != "" {
+		lookBack, err := time.ParseDuration(lookBackDelta)
+		if err != nil {
+			return timeGraphRangeResult{}, fmt.Errorf("parse look back delta: %w", err)
+		}
+		if lookBack <= 0 {
+			return timeGraphRangeResult{}, fmt.Errorf("look back delta must be positive")
+		}
 	}
+	// Legacy lookback bounded raw-data retrieval, not per-bucket liveness.
+	// VM evaluates each bucket directly, so its window must always equal step.
+	lookBackDelta = normalizedStep
 	if _, err := validateRangeBuckets(startMs, endMs, stepMs); err != nil {
 		return timeGraphRangeResult{}, err
 	}
@@ -505,6 +525,8 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 		return timeGraphRangeResult{}, err
 	}
 	ctx = withTimeGraphTargetInfoShow(ctx, req.TargetInfoShow)
+	ctx = metadata.WithExactTimeGrid(ctx)
+	ctx = metadata.WithLeftOpenTimeWindow(ctx)
 
 	candidatePaths := resourcePathsToTimeGraphPaths(paths)
 	result.candidatePathCount = len(candidatePaths)

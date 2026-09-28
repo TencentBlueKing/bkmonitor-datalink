@@ -83,6 +83,11 @@ func TestTimeGraphPublicExplicitSelfRelations(t *testing.T) {
 	}{
 		{"both-directions", []cmdb.Resource{"service", "service"}, [][2]string{{"a", "b"}, {"c", "a"}}, [][]string{{"a", "b"}, {"a", "c"}}},
 		{"repeated-relation", []cmdb.Resource{"service", "service", "service"}, [][2]string{{"a", "b"}, {"b", "c"}}, [][]string{{"a", "b", "c"}}},
+		{"real-self-loop", []cmdb.Resource{"service", "service"}, [][2]string{{"a", "a"}}, [][]string{{"a", "a"}}},
+		{"repeated-self-loop", []cmdb.Resource{"service", "service", "service"}, [][2]string{{"a", "a"}}, [][]string{{"a", "a", "a"}}},
+		{"self-loop-before-next-hop", []cmdb.Resource{"service", "service", "service"}, [][2]string{{"a", "a"}, {"a", "b"}}, [][]string{{"a", "a", "a"}, {"a", "a", "b"}}},
+		{"no-zero-hop-match", []cmdb.Resource{"service", "service"}, nil, nil},
+		{"no-backtracking-cycle", []cmdb.Resource{"service", "service", "service"}, [][2]string{{"a", "b"}}, nil},
 	} {
 		for _, mode := range []string{"instant", "range"} {
 			t.Run(tc.name+"/"+mode, func(t *testing.T) {

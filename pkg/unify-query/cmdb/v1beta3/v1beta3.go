@@ -208,21 +208,6 @@ func parseTimestamp(ts string) (int64, error) {
 	return value, nil
 }
 
-func parseStep(step string) (int64, error) {
-	if step == "" {
-		return 60000, nil
-	}
-	duration, err := time.ParseDuration(step)
-	if err != nil {
-		return 0, err
-	}
-	stepMs := duration.Milliseconds()
-	if stepMs <= 0 {
-		return 0, fmt.Errorf("step must be greater than 0, got %q", step)
-	}
-	return stepMs, nil
-}
-
 func parseStepDuration(step string) (time.Duration, error) {
 	// 旧接口允许省略 step，统一按一分钟处理，并把规范化后的 duration 继续
 	// 传给底层查询，避免校验和实际执行使用两套步长。

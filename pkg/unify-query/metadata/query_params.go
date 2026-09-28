@@ -29,6 +29,18 @@ func IsExactTimeGrid(ctx context.Context) bool {
 	return exact
 }
 
+type leftOpenTimeWindowKey struct{}
+
+// WithLeftOpenTimeWindow preserves (start, end] bucket semantics in the local engine.
+func WithLeftOpenTimeWindow(ctx context.Context) context.Context {
+	return context.WithValue(ctx, leftOpenTimeWindowKey{}, true)
+}
+
+func IsLeftOpenTimeWindow(ctx context.Context) bool {
+	leftOpen, _ := ctx.Value(leftOpenTimeWindowKey{}).(bool)
+	return leftOpen
+}
+
 // QueryParams 查询信息
 type QueryParams struct {
 	ctx context.Context

@@ -19,7 +19,7 @@ HTTP 的请求体和批次条数也使用同一模式判断，不再存在固定
 2. 只将当前候选路径交给 TimeGraph 取数、构图和遍历，保留关系身份与 source_expand_info。
 3. 当前路径有结果则立即返回，不执行后续路径。
 4. 空结果或普通后端错误继续尝试下一条路径。
-5. 全部路径报错时返回聚合错误；至少一条成功但均无数据时返回空结果。
+5. 没有任何命中时，只要存在失败路径就返回聚合错误；只有全部路径成功且均无数据才返回空结果。
 6. 取消或 deadline 错误直接终止，不进入后续路径。
 
 例如同时存在 A -> C 与 A -> B -> C 时，优先执行直连；直连失败后才执行两跳路径。
@@ -28,10 +28,28 @@ HTTP 的请求体和批次条数也使用同一模式判断，不再存在固定
 
 ## Range 时间桶
 
-旧 `QueryResourceMatcherRange` 在未传 look_back_delta 时，将已解析的 step 作为回溯窗口，
-然后交给底层生成 count_over_time。step=1m 会生成一分钟窗口，而不是默认一天。
-显式指定 look_back_delta 时继续遵循现有显式窗口；新 topology 的独立 lookback 语义不变。
-因此只有一小时前样本的关系不会再出现在当前一分钟桶中。
+旧 `QueryResourceMatcherRange` 始终以 step 作为每个桶的关系存活窗口。
+原实现的 look_back_delta 影响整段原始数据的检索范围，不扩大或缩小单个桶；
+现在后端直接评估每个桶，因此显式 look_back_delta 仍校验，但不传作单桶窗口。
+`path_resources` 和 topology 的独立 lookback 语义不变。
+
+旧 range 通过 `WithExactTimeGrid` 保留调用者的起点，源信息、关系、目标信息查询均不向下对齐；
+VM 禁用会重对齐的结果缓存，并校验返回样本的网格。不能靠结果阶段重新分桶修复评估窗口的偏移。
+
+旧 range 的每个桶为 `(timestamp-step, timestamp]`。VM 原生采用左开窗口；
+内嵌旧 PromQL 引擎是双闭窗口，因此只在旧 range 上启用 `WithLeftOpenTimeWindow`，
+由本地 Prometheus 适配器在查询 AST 中将 range selector 缩短 1ms（其样本精度为毫秒）。
+普通查询和发送给 VM 的表达式不修改；start=end 的单桶请求也启用此处理。
+VM 边界实现参考 [rollup.go](https://github.com/VictoriaMetrics/VictoriaMetrics/blob/master/app/vmselect/promql/rollup.go)。
+
+当前 QueryTs 和 VM 网关以整数秒传输时间，TimeGraph 在取数前拒绝非整秒时间戳或 step，
+不再静默截断。整秒的毫秒格式仍受支持；此校验在 YOLO 下也生效。
+
+## 显式自环
+
+类型路径中的一次 hop 可以消费真实的 `a -> a` 自环，不能把它当成零跳根节点结果过滤。
+遍历仍按显式路径长度逐层推进，并保留结果预算、方向和关系身份匹配；
+经过不同节点再回到之前节点的普通回溯环仍被排除，不进行无界环路扩展。
 
 ## 有向指标名
 
@@ -54,6 +72,9 @@ union、intersect、subtract 返回独立结果，不修改已有版本的底层
 ## 回归验证
 
 - `timegraph_review_regression_test.go`：候选失败隔离、短路与取消、短路径优先、缺省有向指标、真实 PromQL range 窗口、65 点公开接口。
+- `timegraph_legacy_contract_test.go`：真实引擎验证桶边界、非整步起点和末桶、显式宽/窄 lookback、混合失败与空路径、全部加载阶段的网格和精度校验。
+- `timegraph_self_relation_test.go` / `timegraph_differential_test.go`：真实自环、多次显式自环、普通环路保护、方向和随机路径独立枚举。
+- `tsdb/prometheus/time_window_test.go`：左开窗口仅按需启用，覆盖 instant/range，原有默认行为不变。
 - `timegraph_bitmap_test.go`：字边界和随机布尔集合对照，覆盖至 11001 点。
 - `timegraph_shared_test.go`：共享图与逐时间点图的差分，包含 64、65、129、257 点、历史属性和 partial。
 - `timegraph_yolo_test.go`：普通模式拒绝、YOLO 放行、关闭后恢复，及后端响应预算传播。
@@ -64,9 +85,25 @@ union、intersect、subtract 返回独立结果，不修改已有版本的底层
 2026-09-28 本地验证通过，在 `pkg/unify-query` 目录执行：
 
 ```bash
-GOTOOLCHAIN=go1.24.4 make test
-GOTOOLCHAIN=go1.24.4 go vet -tags=jsonsonic ./cmdb/... ./service/http/api ./service/http/proxy ./metric ./curl ./metadata ./tsdb/victoriaMetrics
-GOTOOLCHAIN=go1.24.4 go test -race -tags=jsonsonic ./cmdb/v1beta3 ./service/http/api
+GOTOOLCHAIN=go1.24.4 GOFLAGS=-count=1 make test
+GOTOOLCHAIN=go1.24.4 go vet -stdmethods=false -tags=jsonsonic ./cmdb/... ./service/http/api ./service/http/proxy ./metric ./curl ./metadata ./tsdb/prometheus ./tsdb/victoriaMetrics
+GOTOOLCHAIN=go1.24.4 go test -race -tags=jsonsonic -count=1 ./cmdb ./cmdb/v1beta3 ./service/http/api ./service/http/proxy ./curl ./metric ./metadata ./tsdb/prometheus ./tsdb/victoriaMetrics
 ```
 
-`git diff --check` 通过。本次没有修改线上配置或部署服务。
+`pkg/utils/relation` 测试、Linux amd64 无 CGO 发布构建、增量 golangci-lint v1.64.8、
+`git diff --check`、两个 dashboard 的 PromQL/面板 ID 校验、Swagger JSON/YAML 一致性校验通过。
+构建使用 `make -o tidy build`，避免非必要的依赖文件改写。
+
+默认 `go vet` 在未修改的 `tsdb/prometheus/selector_cache.go` 及其测试中仍有两条
+`stdmethods` 告警：Prometheus 迭代器的 `Seek(int64) chunkenc.ValueType` 不符合标准库
+`io.Seeker` 签名。上述命令只关闭这一项，其余分析器正常执行。race 验证范围不包含
+旧 bbolt 依赖的 v1beta1 包；其常规测试包含在全量测试中。
+
+## 环境验收
+
+本次没有修改线上配置或部署服务。共享 test 正被其他人使用，待确认可用后再发布。
+本地验证不替代以下验收：
+
+- 用真实 VM 数据核对非整步起点、末桶、桶边界、自关联和首条命中路径。
+- 默认模式核对批次、时间点和数据预算；在隔离 Pod 开启 `cmdb.v1beta3.yolo_mode` 后核对超预算查询，再关闭确认保护恢复。
+- 对照仪表盘检查结果完整性、超时、内存和响应大小；YOLO 不解除下游自身限制，不作为生产容量保证。

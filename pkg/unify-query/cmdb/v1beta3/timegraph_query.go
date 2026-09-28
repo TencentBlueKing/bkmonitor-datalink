@@ -141,6 +141,17 @@ func (m *Model) buildTimeGraphFromRelationsWithQueryAndRootRelations(ctx context
 	return m.buildTimeGraph(ctx, spaceUID, start, end, step, sourceType, sourceInfo, sourceExpandInfo, rootRelations, relations, lookBackDelta, matrixQuery, nil)
 }
 
+func validateTimeGraphPrecision(start, end time.Time, step time.Duration) error {
+	// QueryTs and the VM gateway transport timestamps and step as integer seconds.
+	if start.Nanosecond() != 0 || end.Nanosecond() != 0 {
+		return errors.New("TimeGraph timestamp must have whole-second precision")
+	}
+	if step < time.Second || step%time.Second != 0 {
+		return errors.New("TimeGraph step must be a positive whole number of seconds")
+	}
+	return nil
+}
+
 func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end time.Time, step time.Duration, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher, rootRelations map[timeGraphRelationKey]struct{}, relations []cmdb.Relation, lookBackDelta string, matrixQuery timeGraphMatrixQuery, topologyGrid *TopologyGrid) (graph *TimeGraph, err error) {
 	ctx, span := trace.NewSpan(ctx, "build-time-graph-from-relations")
 	defer span.End(&err)
@@ -157,6 +168,9 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	span.Set("source-matcher-count", len(sourceInfo))
 	span.Set("source-expand-matcher-count", len(sourceExpandInfo))
 	span.Set("root-relation-count", len(rootRelations))
+	if err := validateTimeGraphPrecision(start, end, step); err != nil {
+		return nil, err
+	}
 
 	_, configSpan := trace.NewSpan(ctx, "timegraph-build-config")
 	config := m.timeGraphConfig(spaceUID)

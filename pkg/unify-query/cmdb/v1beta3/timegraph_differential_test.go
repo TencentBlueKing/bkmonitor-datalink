@@ -148,7 +148,8 @@ func TestTimeGraphRandomizedPathsMatchIndependentEnumeration(t *testing.T) {
 							for _, id := range ids {
 								seen = seen || id == next
 							}
-							if !seen {
+							// Self-edges consume a hop; revisiting another node is backtracking.
+							if !seen || e.from == e.to {
 								visit(at, append(append([]string(nil), ids...), next))
 							}
 						}

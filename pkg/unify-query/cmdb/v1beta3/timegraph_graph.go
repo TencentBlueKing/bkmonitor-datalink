@@ -1098,7 +1098,9 @@ func (q *TimeGraph) findTypedRelationNodePaths(
 					return nil, err
 				}
 				resourceType, _ := q.nodeBuilder.Info(neighbor)
-				if resourceType != expectedPath[index].ResourceType || containsNode(currentPath, neighbor) {
+				// An actual self-edge consumes one explicit hop; it is not a zero-hop
+				// result. Keep excluding cycles through earlier, distinct nodes.
+				if resourceType != expectedPath[index].ResourceType || (neighbor != current && containsNode(currentPath, neighbor)) {
 					continue
 				}
 				if !relationEdgeMatches(edgeTypes, timeGraphEdgeKey{source: current, target: neighbor}, expectedPath[index]) {

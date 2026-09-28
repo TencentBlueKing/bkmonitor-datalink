@@ -22,16 +22,6 @@ var topologyAdmission struct {
 
 type topologyAdmissionKey struct{}
 
-func positiveTopologyLimit(value, fallback int) int {
-	if yoloMode {
-		return 0
-	}
-	if value > 0 {
-		return value
-	}
-	return fallback
-}
-
 // AcquireSharedTopology 仅跟踪活跃拓扑请求，不限制并发，也不排队。
 // HTTP 层计数持续到响应写完；嵌套模型调用复用计数，直接模型调用单独计数。
 func AcquireSharedTopology(ctx context.Context) (admittedCtx context.Context, releaseFn func(), err error) {
@@ -69,10 +59,7 @@ func AcquireSharedTopology(ctx context.Context) (admittedCtx context.Context, re
 
 // TopologyOutputByteLimit 同时用于单查询物化预算与 HTTP 批次响应预算。
 func TopologyOutputByteLimit() int {
-	if yoloMode {
-		return int(^uint(0) >> 1)
-	}
-	return positiveTopologyLimit(MaxSharedTopologyOutputBytes, 64*1024*1024)
+	return effectiveTimeGraphLimit(MaxSharedTopologyOutputBytes, 64*1024*1024)
 }
 
 type topologyOutputBudget struct {
@@ -83,10 +70,7 @@ type topologyOutputBudget struct {
 }
 
 func newTopologyOutputBudget(grid TopologyGrid, partial map[int64]string) *topologyOutputBudget {
-	maxElements := positiveTopologyLimit(MaxSharedTopologyOutputElements, 200000)
-	if yoloMode {
-		maxElements = int(^uint(0) >> 1)
-	}
+	maxElements := effectiveTimeGraphLimit(MaxSharedTopologyOutputElements, 200000)
 	b := &topologyOutputBudget{maxElements: maxElements, maxBytes: int64(TopologyOutputByteLimit()), bytes: 512}
 	for _, ts := range grid.Timestamps {
 		b.bytes += 128 + jsonStringByteBound(partial[ts])

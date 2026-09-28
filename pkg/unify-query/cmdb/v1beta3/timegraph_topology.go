@@ -27,7 +27,7 @@ func NewTopologyGrid(timestamps []int64) (TopologyGrid, error) {
 	if len(timestamps) == 0 {
 		return TopologyGrid{}, fmt.Errorf("topology time grid must contain at least one point")
 	}
-	if len(timestamps) > maxPoints {
+	if maxPoints > 0 && len(timestamps) > maxPoints {
 		return TopologyGrid{}, fmt.Errorf("topology time grid contains %d points, maximum is %d", len(timestamps), maxPoints)
 	}
 	for i := 1; i < len(timestamps); i++ {
@@ -85,10 +85,10 @@ type timeGraphTopologyEdgeKey struct {
 
 type sharedTopologyEdgeState struct {
 	key        timeGraphTopologyEdgeKey
-	activeBits uint64
+	activeBits timeBitmap
 }
 
-func (q *TimeGraph) sharedTopologyState(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery) (map[uint64]uint64, []sharedTopologyEdgeState, error) {
+func (q *TimeGraph) sharedTopologyState(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery) (map[uint64]timeBitmap, []sharedTopologyEdgeState, error) {
 	if query.SourceType == "" {
 		return nil, nil, fmt.Errorf("topology source type is required")
 	}
@@ -103,23 +103,22 @@ func (q *TimeGraph) sharedTopologyState(ctx context.Context, grid TopologyGrid, 
 		return q.shared.state(ctx, grid, query)
 	}
 
-	timestampIndex := make(map[int64]uint8, len(grid.Timestamps))
+	timestampIndex := make(map[int64]int, len(grid.Timestamps))
 	for i, timestamp := range grid.Timestamps {
-		timestampIndex[timestamp] = uint8(i)
+		timestampIndex[timestamp] = i
 	}
-	gridMask := (uint64(1) << len(grid.Timestamps)) - 1
-
-	nodeBits := make(map[uint64]uint64, len(q.topologyNodes))
+	nodeBits := make(map[uint64]timeBitmap, len(q.topologyNodes))
 	for node, timestamps := range q.topologyNodes {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
+		var active timeBitmap
 		for timestamp := range timestamps {
 			if index, ok := timestampIndex[timestamp]; ok {
-				nodeBits[node] |= uint64(1) << index
+				active.set(index)
 			}
 		}
-		nodeBits[node] &= gridMask
+		nodeBits[node] = active
 	}
 
 	categorySet := make(map[string]struct{}, len(query.AllowedCategories))
@@ -153,14 +152,14 @@ func (q *TimeGraph) sharedTopologyState(ctx context.Context, grid TopologyGrid, 
 		if key.relation.category == string(RelationCategoryDynamic) && direction != DirectionBoth && key.relation.direction != "" && key.relation.direction != string(direction) {
 			continue
 		}
-		var activeBits uint64
+		var activeBits timeBitmap
 		for timestamp := range timestamps {
 			if index, ok := timestampIndex[timestamp]; ok {
-				activeBits |= uint64(1) << index
+				activeBits.set(index)
 			}
 		}
-		if activeBits != 0 {
-			edges = append(edges, sharedTopologyEdgeState{key: key, activeBits: activeBits & gridMask})
+		if !activeBits.empty() {
+			edges = append(edges, sharedTopologyEdgeState{key: key, activeBits: activeBits})
 		}
 	}
 	return nodeBits, edges, nil
@@ -252,12 +251,12 @@ func (q *TimeGraph) FindSharedTopology(ctx context.Context, grid TopologyGrid, q
 	return snapshots, nil
 }
 
-func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, nodeBits map[uint64]uint64, edges []sharedTopologyEdgeState) (result map[uint64]uint64, seedCount int, err error) {
+func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, nodeBits map[uint64]timeBitmap, edges []sharedTopologyEdgeState) (result map[uint64]timeBitmap, seedCount int, err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-propagate-topology")
 	defer finishTimeGraphStage(ctx, span, "topology-propagation", time.Now(), &err)
 	span.Set("max-hops", query.MaxHops)
-	reachable := make(map[uint64]uint64)
-	frontier := make(map[uint64]uint64)
+	reachable := make(map[uint64]timeBitmap)
+	frontier := make(map[uint64]timeBitmap)
 	frontierSizes := make([]int64, 0, 8)
 	completed := 0
 	defer func() {
@@ -274,17 +273,17 @@ func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGr
 		if resourceType != query.SourceType {
 			continue
 		}
-		matchedBits := uint64(0)
+		var matchedBits timeBitmap
 		for index, timestamp := range grid.Timestamps {
-			if bits&(uint64(1)<<index) == 0 {
+			if !bits.has(index) {
 				continue
 			}
 			_, timestampInfo := q.nodeInfoAt(timestamp, node, info)
 			if q.matchesPartial(timestampInfo, query.SourceMatcher) {
-				matchedBits |= uint64(1) << index
+				matchedBits.set(index)
 			}
 		}
-		if matchedBits != 0 {
+		if !matchedBits.empty() {
 			reachable[node] = matchedBits
 			frontier[node] = matchedBits
 		}
@@ -295,25 +294,25 @@ func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGr
 		frontierSizes = append(frontierSizes, int64(len(frontier)))
 	}
 
-	for level := 0; level < query.MaxHops; level++ {
+	for level := 0; level < query.MaxHops && len(frontier) > 0; level++ {
 		if err := ctx.Err(); err != nil {
 			return nil, seedCount, err
 		}
-		discovered := make(map[uint64]uint64)
+		discovered := make(map[uint64]timeBitmap)
 		for _, edge := range edges {
 			if err := ctx.Err(); err != nil {
 				return nil, seedCount, err
 			}
-			candidate := frontier[edge.key.source] & edge.activeBits & nodeBits[edge.key.target]
-			if candidate != 0 {
-				discovered[edge.key.target] |= candidate
+			candidate := frontier[edge.key.source].intersect(edge.activeBits).intersect(nodeBits[edge.key.target])
+			if !candidate.empty() {
+				discovered[edge.key.target] = discovered[edge.key.target].union(candidate)
 			}
 		}
-		nextFrontier := make(map[uint64]uint64)
+		nextFrontier := make(map[uint64]timeBitmap)
 		for node, candidate := range discovered {
-			newBits := candidate &^ reachable[node]
-			if newBits != 0 {
-				reachable[node] |= newBits
+			newBits := candidate.subtract(reachable[node])
+			if !newBits.empty() {
+				reachable[node] = reachable[node].union(newBits)
 				nextFrontier[node] = newBits
 			}
 		}
@@ -330,7 +329,7 @@ func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGr
 }
 
 // materializeSharedTopology 在预算内生成独立快照；调用方持有图的读锁。
-func (q *TimeGraph) materializeSharedTopology(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, reachable map[uint64]uint64, edges []sharedTopologyEdgeState) (snapshots []SharedTopologySnapshot, err error) {
+func (q *TimeGraph) materializeSharedTopology(ctx context.Context, grid TopologyGrid, query SharedTopologyQuery, reachable map[uint64]timeBitmap, edges []sharedTopologyEdgeState) (snapshots []SharedTopologySnapshot, err error) {
 	ctx, span := trace.NewSpan(ctx, "timegraph-materialize-topology")
 	defer span.End(&err)
 	started := time.Now()
@@ -359,7 +358,7 @@ func (q *TimeGraph) materializeSharedTopology(ctx context.Context, grid Topology
 			return nil, err
 		}
 		for index := range grid.Timestamps {
-			if bits&(uint64(1)<<index) == 0 {
+			if !bits.has(index) {
 				continue
 			}
 			_, info := q.nodeBuilder.Info(node)
@@ -378,12 +377,12 @@ func (q *TimeGraph) materializeSharedTopology(ctx context.Context, grid Topology
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		activeBits := edge.activeBits & reachable[edge.key.source] & reachable[edge.key.target]
-		if activeBits == 0 {
+		activeBits := edge.activeBits.intersect(reachable[edge.key.source]).intersect(reachable[edge.key.target])
+		if activeBits.empty() {
 			continue
 		}
 		for index := range grid.Timestamps {
-			if activeBits&(uint64(1)<<index) == 0 {
+			if !activeBits.has(index) {
 				continue
 			}
 			if err := budget.add(topologyEdgeByteBound(edge.key)); err != nil {
@@ -431,9 +430,12 @@ func (q *TimeGraph) materializeSharedTopology(ctx context.Context, grid Topology
 func (q *TimeGraph) nodeInfoAt(timestamp int64, node uint64, fallback cmdb.Matcher) (cmdb.Resource, cmdb.Matcher) {
 	resourceType, _ := q.nodeBuilder.Info(node)
 	if q.shared != nil {
-		bit := q.shared.timestampBits[timestamp]
+		index, ok := q.shared.timestampIndex[timestamp]
+		if !ok {
+			return resourceType, fallback
+		}
 		for _, version := range q.shared.nodeInfos[node] {
-			if version.activeBits&bit != 0 {
+			if version.activeBits.has(index) {
 				return resourceType, cloneMatcher(version.dimensions)
 			}
 		}

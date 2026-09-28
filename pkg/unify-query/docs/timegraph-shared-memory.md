@@ -1,8 +1,10 @@
 # TimeGraph 共享构图与资源边界
 
 `topology` / `topology_range` 从 Matrix 直接写入共享节点、关系和时间位。
-同一条关系在 60 个评估点出现时，只保留一个关系身份及一个 uint64 状态，
+同一条关系在 60 个评估点出现时，只保留一个关系身份及一个内联 uint64 状态，
 不创建 60 个 `graph.Graph`，也不先建立每个节点/关系的 timestamp map。
+YOLO 模式超过 64 个评估点时，时间位图自动扩展为多个 uint64，不丢弃高位时间点；
+节点身份、关系身份和相同属性版本仍在整个查询内共享。
 已有 path / multi_resource 接口继续使用逐时间点图。
 
 属性不能只保存最后一次值。同一节点的相同属性版本共享一份 matcher，
@@ -22,14 +24,40 @@
 | `max_shared_topology_matrix_points` | 1000000 | 一个拓扑查询所有取数阶段的 Matrix 点数总和 |
 | `max_shared_topology_output_elements` | 200000 | 物化的全部快照节点与边之和，包含之后可能被目标类型过滤的候选输出 |
 | `max_shared_topology_output_bytes` | 67108864（64 MiB） | 快照物化前的 JSON 大小保守上界，以及 HTTP 整批响应大小 |
+| `max_shared_topology_request_bytes` | 1048576（1 MiB） | HTTP 请求体大小，直连和代理入口均生效 |
+| `max_shared_topology_queries` | 16 | 单个 HTTP 批次的查询条数 |
 
 既有 `max_graph_nodes`、`max_graph_edges`、`max_graph_node_infos` 继续约束构图。
 Matrix 单次序列数也受 `max_graph_nodes` 限制。边预算保留“端点对 × 有效时间点”
 口径，节点属性预算保留“节点 × 有效时间点”口径，避免改为共享存储时意外放宽取数范围。
 这些逻辑计数不能直接换算为堆大小；多关系身份仍分别保留在共享关系表中。
 
-HTTP 请求体最多 1 MiB，`query_list` 最多 16 项。批次串行执行，响应累计也受预算限制，
+普通模式默认 HTTP 请求体最多 1 MiB，`query_list` 最多 16 项。批次串行执行，响应累计也受预算限制，
 不能用更多子查询放大单请求输出上限。
+
+## YOLO 开关
+
+默认 `yolo_mode: false`，保留上述保护。仅在需要绕过容量限制的实例上配置：
+
+```yaml
+cmdb:
+  v1beta3:
+    yolo_mode: true
+```
+
+配置加载后，YOLO 模式统一忽略请求体、批量查询条数、共享拓扑时间点、后端响应字节、
+Matrix 点数、图节点/边/结果/节点属性数量、物化输出元素和响应字节上限。
+旧 `multi_resource` 的 range 点数和每桶目标数量限制也忽略。
+不需要把各个上限逐个调大；改回 `false` 并重新加载配置即可恢复正常模式保护。
+
+YOLO 不改变查询语义：时间戳/步长、方向和 schema 等参数仍须合法，
+`max_hops` 仍决定局部拓扑深度并遵守现有最大跳数配置；取消和查询超时仍生效。
+该开关只控制本服务的上述预算，不绕过 VM、网关或容器自身的限制。
+它不会自动扩容，开启后大范围查询仍可能耗尽内存，应在隔离实例上使用。
+
+`TestTopologyYoloBypassesHTTPBudgets` 覆盖直连/代理及开关恢复；
+`TestYoloSharedTopologyBypassesConfiguredBudgets` 覆盖加载、构图和输出限制；
+`TestDirectSharedGraphDifferential` 在 64、65、129、257 点验证关系、历史属性与 partial 状态。
 
 ## 并发请求与活动计数
 

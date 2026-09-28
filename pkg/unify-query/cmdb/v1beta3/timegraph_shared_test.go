@@ -79,8 +79,11 @@ func TestDirectSharedGraphStorageAndOwnership(t *testing.T) {
 
 func TestDirectSharedGraphDifferential(t *testing.T) {
 	// 同一输入顺序保持 ID 一致，比较完整结果（包括历史属性、partial 和边身份）。
-	for _, k := range []int{1, 3, 30, 60} {
+	for _, k := range []int{1, 3, 30, 60, 64, 65, 129, 257} {
 		t.Run(fmt.Sprintf("K%d", k), func(t *testing.T) {
+			oldYolo := yoloMode
+			yoloMode = k > 60
+			t.Cleanup(func() { yoloMode = oldYolo })
 			ctx := context.Background()
 			times := sharedGraphTestTimes(k)
 			grid, err := NewTopologyGrid(times)

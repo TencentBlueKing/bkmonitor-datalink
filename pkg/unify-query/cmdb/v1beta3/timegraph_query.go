@@ -575,7 +575,7 @@ func (loader *timeGraphMatrixLoader) validateMatrix(queryCtx context.Context, ma
 		pointCount += len(series.Points)
 		if loader.topology && err == nil && !yoloMode {
 			loader.pointCount += len(series.Points)
-			limit := positiveTopologyLimit(MaxSharedTopologyMatrixPoints, 1000000)
+			limit := effectiveTimeGraphLimit(MaxSharedTopologyMatrixPoints, 1000000)
 			if loader.pointCount > limit {
 				err = &ResultLimitError{Reason: "max_topology_matrix_points", Count: loader.pointCount, Limit: limit}
 			}

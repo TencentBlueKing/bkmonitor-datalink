@@ -7,9 +7,11 @@ package v1beta3
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
@@ -153,7 +155,51 @@ func (m *Model) buildTimeGraphRequest(
 	if err != nil {
 		return nil, nil, err
 	}
-	return req, paths, nil
+	return req, sortPathsForQuery(paths), nil
+}
+
+func sortPathsForQuery(paths []resourcePath) []resourcePath {
+	ordered := append([]resourcePath(nil), paths...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		if len(ordered[i].Steps) != len(ordered[j].Steps) {
+			return len(ordered[i].Steps) < len(ordered[j].Steps)
+		}
+		return resourcePathSortKey(ordered[i]) < resourcePathSortKey(ordered[j])
+	})
+	return ordered
+}
+
+func resourcePathSortKey(path resourcePath) string {
+	parts := make([]string, 0, len(path.Steps))
+	for _, step := range path.Steps {
+		parts = append(parts, strings.Join([]string{step.ResourceType, step.RelationType, step.Category, step.Direction, step.MetricName}, "/"))
+	}
+	return strings.Join(parts, "|")
+}
+
+// Legacy queries stop at the first hit and isolate failures of alternative paths.
+func queryFirstTimeGraphPath(ctx context.Context, paths []resourcePath, query func(resourcePath) ([]cmdb.PathResourcesResult, error)) ([]cmdb.PathResourcesResult, error) {
+	var failures []error
+	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		results, err := query(path)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, err
+			}
+			failures = append(failures, err)
+			continue
+		}
+		if len(results) > 0 {
+			return results, nil
+		}
+	}
+	if len(failures) > 0 && len(failures) == len(paths) {
+		return nil, fmt.Errorf("all relation paths failed: %w", errors.Join(failures...))
+	}
+	return nil, nil
 }
 
 func resourcePathsToTimeGraphPaths(paths []resourcePath) [][]cmdb.Resource {
@@ -256,7 +302,7 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 				ctx,
 				metric.CMDBRelationRouteTimeGraph,
 				metric.CMDBRelationQueryModeInstant,
-				"all_paths",
+				"first_path",
 				result.candidatePathCount,
 			)
 		}
@@ -286,42 +332,44 @@ func (m *Model) queryResourceMatcherWithTimeGraph(
 
 	candidatePaths := resourcePathsToTimeGraphPaths(paths)
 	result.candidatePathCount = len(candidatePaths)
-	var results []cmdb.PathResourcesResult
-	if expandedQuerier, ok := querier.(sourceExpandRelationTimeGraphQuerier); ok {
-		results, err = expandedQuerier.queryRelationPathResourcesWithSourceExpand(
-			ctx,
-			lookBackDelta,
-			spaceUID,
-			queryTimestamp,
-			cmdb.Resource(req.SourceType),
-			[]cmdb.Resource{cmdb.Resource(req.TargetType)},
-			resourcePathsToTimeGraphRelationPaths(paths),
-			cmdb.Matcher(req.SourceInfo),
-			cmdb.Matcher(req.SourceExpandInfo),
-		)
-	} else if relationQuerier, ok := querier.(relationPathTimeGraphQuerier); ok {
-		results, err = relationQuerier.QueryRelationPathResources(
-			ctx,
-			lookBackDelta,
-			spaceUID,
-			queryTimestamp,
-			cmdb.Resource(req.SourceType),
-			[]cmdb.Resource{cmdb.Resource(req.TargetType)},
-			resourcePathsToTimeGraphRelationPaths(paths),
-			cmdb.Matcher(req.SourceInfo),
-		)
-	} else {
-		results, err = querier.QueryPathResources(
-			ctx,
-			lookBackDelta,
-			spaceUID,
-			queryTimestamp,
-			cmdb.Resource(req.SourceType),
-			[]cmdb.Resource{cmdb.Resource(req.TargetType)},
-			candidatePaths,
-			cmdb.Matcher(req.SourceInfo),
-		)
-	}
+	results, err := queryFirstTimeGraphPath(ctx, paths, func(path resourcePath) ([]cmdb.PathResourcesResult, error) {
+		paths := []resourcePath{path}
+		if expandedQuerier, ok := querier.(sourceExpandRelationTimeGraphQuerier); ok {
+			return expandedQuerier.queryRelationPathResourcesWithSourceExpand(
+				ctx,
+				lookBackDelta,
+				spaceUID,
+				queryTimestamp,
+				cmdb.Resource(req.SourceType),
+				[]cmdb.Resource{cmdb.Resource(req.TargetType)},
+				resourcePathsToTimeGraphRelationPaths(paths),
+				cmdb.Matcher(req.SourceInfo),
+				cmdb.Matcher(req.SourceExpandInfo),
+			)
+		} else if relationQuerier, ok := querier.(relationPathTimeGraphQuerier); ok {
+			return relationQuerier.QueryRelationPathResources(
+				ctx,
+				lookBackDelta,
+				spaceUID,
+				queryTimestamp,
+				cmdb.Resource(req.SourceType),
+				[]cmdb.Resource{cmdb.Resource(req.TargetType)},
+				resourcePathsToTimeGraphRelationPaths(paths),
+				cmdb.Matcher(req.SourceInfo),
+			)
+		} else {
+			return querier.QueryPathResources(
+				ctx,
+				lookBackDelta,
+				spaceUID,
+				queryTimestamp,
+				cmdb.Resource(req.SourceType),
+				[]cmdb.Resource{cmdb.Resource(req.TargetType)},
+				resourcePathsToTimeGraphPaths(paths),
+				cmdb.Matcher(req.SourceInfo),
+			)
+		}
+	})
 	if err != nil {
 		return timeGraphLegacyResult{}, err
 	}
@@ -404,7 +452,7 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 				ctx,
 				metric.CMDBRelationRouteTimeGraph,
 				metric.CMDBRelationQueryModeRange,
-				"all_paths",
+				"first_path",
 				result.candidatePathCount,
 			)
 		}
@@ -438,6 +486,9 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 	// 使用解析后的步长继续调用 TimeGraph；不能把调用方传入的空字符串再次
 	// 传到底层，否则底层会重新解析空 duration 并报错。
 	normalizedStep := (time.Duration(stepMs) * time.Millisecond).String()
+	if lookBackDelta == "" {
+		lookBackDelta = normalizedStep
+	}
 	if _, err := validateRangeBuckets(startMs, endMs, stepMs); err != nil {
 		return timeGraphRangeResult{}, err
 	}
@@ -457,48 +508,50 @@ func (m *Model) queryResourceMatcherRangeWithTimeGraph(
 
 	candidatePaths := resourcePathsToTimeGraphPaths(paths)
 	result.candidatePathCount = len(candidatePaths)
-	var results []cmdb.PathResourcesResult
-	if expandedQuerier, ok := querier.(sourceExpandRelationTimeGraphQuerier); ok {
-		results, err = expandedQuerier.queryRelationPathResourcesRangeWithSourceExpand(
-			ctx,
-			lookBackDelta,
-			spaceUID,
-			normalizedStep,
-			start,
-			end,
-			cmdb.Resource(req.SourceType),
-			[]cmdb.Resource{cmdb.Resource(req.TargetType)},
-			resourcePathsToTimeGraphRelationPaths(paths),
-			cmdb.Matcher(req.SourceInfo),
-			cmdb.Matcher(req.SourceExpandInfo),
-		)
-	} else if relationQuerier, ok := querier.(relationPathTimeGraphQuerier); ok {
-		results, err = relationQuerier.QueryRelationPathResourcesRange(
-			ctx,
-			lookBackDelta,
-			spaceUID,
-			normalizedStep,
-			start,
-			end,
-			cmdb.Resource(req.SourceType),
-			[]cmdb.Resource{cmdb.Resource(req.TargetType)},
-			resourcePathsToTimeGraphRelationPaths(paths),
-			cmdb.Matcher(req.SourceInfo),
-		)
-	} else {
-		results, err = querier.QueryPathResourcesRange(
-			ctx,
-			lookBackDelta,
-			spaceUID,
-			step,
-			start,
-			end,
-			cmdb.Resource(req.SourceType),
-			[]cmdb.Resource{cmdb.Resource(req.TargetType)},
-			candidatePaths,
-			cmdb.Matcher(req.SourceInfo),
-		)
-	}
+	results, err := queryFirstTimeGraphPath(ctx, paths, func(path resourcePath) ([]cmdb.PathResourcesResult, error) {
+		paths := []resourcePath{path}
+		if expandedQuerier, ok := querier.(sourceExpandRelationTimeGraphQuerier); ok {
+			return expandedQuerier.queryRelationPathResourcesRangeWithSourceExpand(
+				ctx,
+				lookBackDelta,
+				spaceUID,
+				normalizedStep,
+				start,
+				end,
+				cmdb.Resource(req.SourceType),
+				[]cmdb.Resource{cmdb.Resource(req.TargetType)},
+				resourcePathsToTimeGraphRelationPaths(paths),
+				cmdb.Matcher(req.SourceInfo),
+				cmdb.Matcher(req.SourceExpandInfo),
+			)
+		} else if relationQuerier, ok := querier.(relationPathTimeGraphQuerier); ok {
+			return relationQuerier.QueryRelationPathResourcesRange(
+				ctx,
+				lookBackDelta,
+				spaceUID,
+				normalizedStep,
+				start,
+				end,
+				cmdb.Resource(req.SourceType),
+				[]cmdb.Resource{cmdb.Resource(req.TargetType)},
+				resourcePathsToTimeGraphRelationPaths(paths),
+				cmdb.Matcher(req.SourceInfo),
+			)
+		} else {
+			return querier.QueryPathResourcesRange(
+				ctx,
+				lookBackDelta,
+				spaceUID,
+				normalizedStep,
+				start,
+				end,
+				cmdb.Resource(req.SourceType),
+				[]cmdb.Resource{cmdb.Resource(req.TargetType)},
+				resourcePathsToTimeGraphPaths(paths),
+				cmdb.Matcher(req.SourceInfo),
+			)
+		}
+	})
 	if err != nil {
 		return timeGraphRangeResult{}, err
 	}

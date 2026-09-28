@@ -37,8 +37,8 @@ type Model struct {
 	// timeGraphVMQueryWithPartial 是共享拓扑测试使用的带状态 VM 查询入口；
 	// 生产查询直接从 tsdb.Instance.DirectQueryRange 获取相同状态。
 	timeGraphVMQueryWithPartial timeGraphVMQueryWithPartial
-	schemaProvider          SchemaProvider
-	schemaProviderMu        sync.RWMutex
+	schemaProvider              SchemaProvider
+	schemaProviderMu            sync.RWMutex
 }
 
 // GetModel 返回 v1beta3 HTTP handler 使用的服务模型。
@@ -249,8 +249,11 @@ func validateRangeBuckets(start, end, stepMs int64) (int, error) {
 	maxPoints := effectiveMaxRangePoints()
 	distance := uint64(end) - uint64(start)
 	quotient := distance / uint64(stepMs)
-	if quotient >= uint64(maxPoints) {
+	if maxPoints > 0 && quotient >= uint64(maxPoints) {
 		return 0, fmt.Errorf("range query has more than %d points", maxPoints)
+	}
+	if quotient >= uint64(^uint(0)>>1) {
+		return 0, fmt.Errorf("range point count overflows int")
 	}
 	return int(quotient) + 1, nil
 }
@@ -426,7 +429,7 @@ func filterTargetMatcher(
 
 func validateTargetCount(count int) error {
 	limit := effectiveMaxTargets()
-	if count <= limit {
+	if limit <= 0 || count <= limit {
 		return nil
 	}
 	return &ResultLimitError{Reason: "max_targets", Count: count, Limit: limit}

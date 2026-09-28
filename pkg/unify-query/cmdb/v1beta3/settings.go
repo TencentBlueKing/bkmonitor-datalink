@@ -24,6 +24,8 @@ const (
 	MaxSharedTopologyMatrixPointsConfigPath   = "cmdb.v1beta3.max_shared_topology_matrix_points"
 	MaxSharedTopologyOutputElementsConfigPath = "cmdb.v1beta3.max_shared_topology_output_elements"
 	MaxSharedTopologyOutputBytesConfigPath    = "cmdb.v1beta3.max_shared_topology_output_bytes"
+	MaxSharedTopologyRequestBytesConfigPath   = "cmdb.v1beta3.max_shared_topology_request_bytes"
+	MaxSharedTopologyQueriesConfigPath        = "cmdb.v1beta3.max_shared_topology_queries"
 	YoloModeConfigPath                        = "cmdb.v1beta3.yolo_mode"
 	DefaultLookBackDeltaConfigPath            = "cmdb.v1beta3.look_back_delta"
 )
@@ -43,6 +45,8 @@ var (
 	MaxSharedTopologyMatrixPoints   = 1000000
 	MaxSharedTopologyOutputElements = 200000
 	MaxSharedTopologyOutputBytes    = 64 * 1024 * 1024
+	MaxSharedTopologyRequestBytes   = 1024 * 1024
+	MaxSharedTopologyQueries        = 16
 	DefaultLookBackDelta            = int64(86400000) // 24小时（毫秒）
 
 	// yoloMode is an explicit capacity-test switch. It defaults to false and
@@ -51,65 +55,51 @@ var (
 )
 
 func effectiveMaxRangePoints() int {
-	if MaxRangePoints > 0 {
-		return MaxRangePoints
-	}
-	return 11000
+	return effectiveTimeGraphLimit(MaxRangePoints, 11000)
 }
 
 func effectiveMaxTargets() int {
-	if MaxTargets > 0 {
-		return MaxTargets
-	}
-	return 5000
+	return effectiveTimeGraphLimit(MaxTargets, 5000)
 }
 
 func effectiveMaxGraphNodes() int {
-	if yoloMode {
-		return 0
-	}
-	if MaxGraphNodes > 0 {
-		return MaxGraphNodes
-	}
-	return 100000
+	return effectiveTimeGraphLimit(MaxGraphNodes, 100000)
 }
 
 func effectiveMaxGraphEdges() int {
-	if yoloMode {
-		return 0
-	}
-	if MaxGraphEdges > 0 {
-		return MaxGraphEdges
-	}
-	return 200000
+	return effectiveTimeGraphLimit(MaxGraphEdges, 200000)
 }
 
 func effectiveMaxGraphResults() int {
-	if yoloMode {
-		return 0
-	}
-	if MaxGraphResults > 0 {
-		return MaxGraphResults
-	}
-	return 10000
+	return effectiveTimeGraphLimit(MaxGraphResults, 10000)
 }
 
 func effectiveMaxGraphNodeInfos() int {
-	if yoloMode {
-		return 0
-	}
-	if MaxGraphNodeInfos > 0 {
-		return MaxGraphNodeInfos
-	}
-	return 1000000
+	return effectiveTimeGraphLimit(MaxGraphNodeInfos, 1000000)
 }
 
 func effectiveMaxSharedTopologyPoints() int {
 	if yoloMode {
-		return int(^uint(0) >> 1)
+		return 0
 	}
 	if MaxSharedTopologyPoints > 0 && MaxSharedTopologyPoints <= 60 {
 		return MaxSharedTopologyPoints
 	}
 	return 60
 }
+
+func effectiveTimeGraphLimit(value, fallback int) int {
+	if yoloMode {
+		return 0
+	}
+	if value > 0 {
+		return value
+	}
+	return fallback
+}
+
+func TopologyRequestByteLimit() int {
+	return effectiveTimeGraphLimit(MaxSharedTopologyRequestBytes, 1024*1024)
+}
+
+func TopologyQueryLimit() int { return effectiveTimeGraphLimit(MaxSharedTopologyQueries, 16) }

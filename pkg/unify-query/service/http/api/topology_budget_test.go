@@ -15,13 +15,70 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb/v1beta3"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/proxy"
 )
+
+func TestTopologyYoloBypassesHTTPBudgets(t *testing.T) {
+	log.InitTestLogger()
+	const route = "/test-topology-yolo"
+	metadata.AddHandler(route, HandlerAPIRelationV1Beta3Topology)
+	oldYolo := viper.GetBool(v1beta3.YoloModeConfigPath)
+	t.Cleanup(func() {
+		viper.Set(v1beta3.YoloModeConfigPath, oldYolo)
+		v1beta3.LoadConfig()
+	})
+	for _, enabled := range []bool{false, true, false} {
+		viper.Set(v1beta3.YoloModeConfigPath, enabled)
+		v1beta3.LoadConfig()
+		for _, test := range []struct {
+			name, body  string
+			count       int
+			outputLimit int
+		}{
+			{name: "large body", body: `{"padding":"` + strings.Repeat("x", 1024*1024) + `","query_list":[]}`},
+			{name: "large batch", body: `{"query_list":[` + strings.Repeat(`{},`, 16) + `{}]}`, count: 17},
+			{name: "large response", body: `{"query_list":[{}]}`, count: 1, outputLimit: 1024},
+		} {
+			oldOutputLimit := v1beta3.MaxSharedTopologyOutputBytes
+			if test.outputLimit > 0 {
+				v1beta3.MaxSharedTopologyOutputBytes = test.outputLimit
+			}
+			for _, proxied := range []bool{false, true} {
+				body := test.body
+				if proxied {
+					body = `{"path":"` + route + `","data":` + body + `}`
+				}
+				w := httptest.NewRecorder()
+				c, _ := gin.CreateTestContext(w)
+				c.Request = httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(body))
+				if proxied {
+					proxy.HandleProxy(c)
+				} else {
+					HandlerAPIRelationV1Beta3Topology(c)
+				}
+				if !enabled {
+					require.Equal(t, http.StatusBadRequest, w.Code, test.name)
+					continue
+				}
+				require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+				if !proxied {
+					var response cmdb.SharedTopologyResponse
+					require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+					require.Len(t, response.Data, test.count)
+				}
+			}
+			v1beta3.MaxSharedTopologyOutputBytes = oldOutputLimit
+		}
+	}
+}
 
 func TestTopologyHandlerBudgets(t *testing.T) {
 	log.InitTestLogger()

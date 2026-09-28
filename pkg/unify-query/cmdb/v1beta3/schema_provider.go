@@ -245,6 +245,9 @@ func (a *v1beta3SchemaProviderAdapter) ListRelationSchemas(namespace string) []R
 	schemas := make([]relation.RelationSchema, 0, len(definitions))
 	for _, definition := range definitions {
 		schema := relation.ToRelationSchema(definition)
+		if schema.MetricName == "" && schema.IsDirectional {
+			schema.MetricName = definition.GetRelationName()
+		}
 		schemas = append(schemas, schema)
 	}
 	result := make([]RelationSchema, len(schemas))

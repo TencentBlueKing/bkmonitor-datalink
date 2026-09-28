@@ -130,9 +130,9 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	}
 	defer release()
 	if !yoloMode {
-		queryCtx = metadata.WithBackendResponseLimit(queryCtx, int64(positiveTopologyLimit(MaxSharedTopologyBackendBytes, 16*1024*1024)))
+		queryCtx = metadata.WithBackendResponseLimit(queryCtx, int64(effectiveTimeGraphLimit(MaxSharedTopologyBackendBytes, 16*1024*1024)))
 		span.Set("backend-response-byte-limit", metadata.BackendResponseLimit(queryCtx))
-		span.Set("matrix-point-limit", positiveTopologyLimit(MaxSharedTopologyMatrixPoints, 1000000))
+		span.Set("matrix-point-limit", effectiveTimeGraphLimit(MaxSharedTopologyMatrixPoints, 1000000))
 	}
 
 	graph, err := m.buildTimeGraph(
@@ -251,7 +251,7 @@ func normalizeSharedTopologyTime(request cmdb.SharedTopologyQuery) (time.Time, t
 	}
 	maxPoints := effectiveMaxSharedTopologyPoints()
 	pointCount := distance/stepMs + 1
-	if pointCount > int64(maxPoints) {
+	if maxPoints > 0 && pointCount > int64(maxPoints) {
 		return time.Time{}, time.Time{}, 0, "", TopologyGrid{}, &topologyGridLimitError{count: pointCount, limit: maxPoints}
 	}
 	timestamps := make([]int64, pointCount)

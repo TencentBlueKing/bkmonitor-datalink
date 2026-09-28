@@ -356,12 +356,14 @@ func TestPathFinderFindAllPathsSameResourceWithPathResourceSearchesConstrainedPa
 			RelationType: "system_to_pod",
 			Category:     "dynamic",
 			Direction:    "outbound",
+			MetricName:   "system_to_pod_flow",
 		},
 		{
 			ResourceType: "system",
 			RelationType: "pod_to_system",
 			Category:     "dynamic",
 			Direction:    "outbound",
+			MetricName:   "pod_to_system_flow",
 		},
 	}}}, paths)
 }
@@ -581,6 +583,7 @@ func TestPathFinderSkipsReverseTraversalForDirectionalStaticRelations(t *testing
 			RelationType: "pod_to_system_static",
 			Category:     "static",
 			Direction:    "outbound",
+			MetricName:   "pod_to_system_flow",
 		},
 	}}}, paths)
 

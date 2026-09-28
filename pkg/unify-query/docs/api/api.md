@@ -374,6 +374,30 @@
 
 **响应格式**: 同结构体查询（返回 `PromData` 格式，包含 `result_table_id`）
 
+#### PromQL 命名多输出（可选）
+
+告警策略需要在通知中同时展示判定结果和参与计算的 PromQL 值时，可在原请求上增加 `response_contract`、`legacy_output_ref`、`output_list`。每个 `output_list[].expression` 都是完整 PromQL，使用同一组时间、步长及其他查询参数；`legacy_output_ref` 指向的表达式必须与顶层 `promql` 等价。未添加这些字段时，响应仍是原来的单输出 `PromData`。
+
+```json
+{
+  "promql": "(sum(rate(error_count[5m])) / sum(rate(request_count[5m]))) * 100",
+  "response_contract": "named_outputs/v1",
+  "legacy_output_ref": "C",
+  "output_list": [
+    {"reference_name": "A", "expression": "sum(rate(error_count[5m]))"},
+    {"reference_name": "B", "expression": "sum(rate(request_count[5m]))"},
+    {"reference_name": "C", "expression": "(sum(rate(error_count[5m])) / sum(rate(request_count[5m]))) * 100"}
+  ],
+  "start": "1724490000",
+  "end": "1724490060",
+  "step": "60s"
+}
+```
+
+响应沿用上述 `named_outputs/v1` 的 `contract_version`、`outputs[].reference_name/state/series`、`is_partial` 和 `result_table_id` 结构；不直接返回 `ref_values`。最多 4 个输出，所有输出共享截止时间、Selector 缓存、Series/点数和响应大小预算；Selector 缓存仅在路由和选择器键相同时复用，不保证不同 PromQL 之间命中。服务先执行判定值 `C`，再执行其他输出，响应仍按 `output_list` 顺序排列。单个输出失败时遵循同一 partial 规则。一个 HTTP 请求不保证只发生一次底层存储读取。
+
+`response_contract` 缺失但带有其他命名输出字段、未知契约、重复或非法引用名、错误的 PromQL、`C` 与顶层 `promql` 不等价，均在查询前拒绝。部署旧版 UQ 时，旧服务可能忽略新增字段并返回原 `PromData`；调用方应检查响应中的 `contract_version` 后再读取 `outputs`。
+
 ### 2.3 引用查询
 
 **接口**: `POST /query/ts/reference`

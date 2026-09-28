@@ -564,6 +564,98 @@ func TestHandlerQueryTsReturnsNamedOutputsV1ForConstantInstantQuery(t *testing.T
 	require.Empty(t, response.ResultTableID)
 }
 
+func TestHandlerQueryPromQLNamedOutputsKeepsLegacyOptIn(t *testing.T) {
+	metadata.InitMetadata()
+	uqPromql.MockEngine()
+	gin.SetMode(gin.TestMode)
+	ctx := metadata.InitHashID(context.Background())
+	request := func(body string) *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		ginContext, _ := gin.CreateTestContext(recorder)
+		ginContext.Request = httptest.NewRequest(http.MethodPost, "/query/ts/promql", bytes.NewBufferString(body)).WithContext(ctx)
+		HandlerQueryPromQL(ginContext)
+		return recorder
+	}
+	base := `"promql":"vector(1) + vector(2)","start":"1717027200","end":"1717027200","step":"60s","instant":true`
+	named := request(`{` + base + `,"response_contract":"named_outputs/v1","legacy_output_ref":"C","output_list":[{"reference_name":"A","expression":"vector(1)"},{"reference_name":"B","expression":"vector(2)"},{"reference_name":"C","expression":"vector(1)+vector(2)"}]}`)
+	require.Equal(t, http.StatusOK, named.Code, named.Body.String())
+	var namedData struct {
+		ContractVersion string `json:"contract_version"`
+		Outputs         []struct {
+			ReferenceName string      `json:"reference_name"`
+			State         OutputState `json:"state"`
+			Tables        []struct {
+				Values [][]float64 `json:"values"`
+			} `json:"series"`
+		} `json:"outputs"`
+	}
+	require.NoError(t, json.Unmarshal(named.Body.Bytes(), &namedData))
+	require.Equal(t, structured.NamedOutputsV1, namedData.ContractVersion)
+	require.Equal(t, []string{"A", "B", "C"}, []string{namedData.Outputs[0].ReferenceName, namedData.Outputs[1].ReferenceName, namedData.Outputs[2].ReferenceName})
+	for _, output := range namedData.Outputs {
+		require.Equal(t, OutputStateSuccess, output.State)
+		require.Len(t, output.Tables, 1)
+	}
+	require.Equal(t, float64(1), namedData.Outputs[0].Tables[0].Values[0][1])
+	require.Equal(t, float64(2), namedData.Outputs[1].Tables[0].Values[0][1])
+	require.Equal(t, float64(3), namedData.Outputs[2].Tables[0].Values[0][1])
+
+	legacy := request(`{` + base + `}`)
+	require.Equal(t, http.StatusOK, legacy.Code, legacy.Body.String())
+	var legacyData map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(legacy.Body.Bytes(), &legacyData))
+	require.Contains(t, legacyData, "series")
+	require.NotContains(t, legacyData, "outputs")
+	var namedRaw struct {
+		Outputs []struct {
+			Series json.RawMessage `json:"series"`
+		} `json:"outputs"`
+	}
+	require.NoError(t, json.Unmarshal(named.Body.Bytes(), &namedRaw))
+	require.JSONEq(t, string(legacyData["series"]), string(namedRaw.Outputs[2].Series), "C must match the old single output")
+
+	invalid := request(`{` + base + `,"response_contract":"named_outputs/v1","legacy_output_ref":"C","output_list":[{"reference_name":"C","expression":"vector(3)"}]}`)
+	require.Equal(t, http.StatusBadRequest, invalid.Code)
+	now := request(`{"promql":"vector(now())","response_contract":"named_outputs/v1","legacy_output_ref":"C","output_list":[{"reference_name":"C","expression":"vector(now())"}],"start":"1717027200","end":"1717027200","step":"60s","instant":true}`)
+	require.Equal(t, http.StatusOK, now.Code, now.Body.String())
+}
+
+func TestPromQLNamedOutputsPreservesCWhenOptionalOutputFails(t *testing.T) {
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+	query := &structured.QueryTs{
+		LegacyOutputRef: "C",
+		OutputList: []structured.QueryOutput{
+			{ReferenceName: "A", Expression: "vector(1)"},
+			{ReferenceName: "C", Expression: "vector(2)"},
+		},
+	}
+	data, err := executeNamedOutputsWithRoutes(ctx, query, defaultNamedOutputSettings(), func() []metadata.RouteInfo { return nil }, "", func(_ context.Context, output structured.QueryOutput) (any, bool, error) {
+		if output.ReferenceName == "A" {
+			return nil, false, errors.New("optional output failed")
+		}
+		return promPromql.Vector{{Point: promPromql.Point{T: 1000, V: 2}}}, false, nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, OutputStateError, data.Outputs[0].State)
+	require.Equal(t, OutputStateSuccess, data.Outputs[1].State)
+	require.True(t, data.IsPartial)
+	require.Equal(t, float64(2), data.Outputs[1].Tables[0].Values[0][1])
+}
+
+func TestExecuteNamedOutputsIncludesRoutesDiscoveredDuringExecution(t *testing.T) {
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+	query := &structured.QueryTs{LegacyOutputRef: "C", OutputList: []structured.QueryOutput{{ReferenceName: "C", Expression: "vector(1)"}}}
+	var routes []metadata.RouteInfo
+	data, err := executeNamedOutputsWithRoutes(ctx, query, defaultNamedOutputSettings(), func() []metadata.RouteInfo { return routes }, "", func(context.Context, structured.QueryOutput) (any, bool, error) {
+		routes = append(routes, metadata.RouteInfo{TableID: "system.cpu"})
+		return promPromql.Vector{{Point: promPromql.Point{T: 1000, V: 1}}}, false, nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, []string{"system.cpu"}, data.ResultTableID)
+}
+
 func TestHandlerQueryTsWithoutContractKeepsLegacyResponseShape(t *testing.T) {
 	metadata.InitMetadata()
 	uqPromql.MockEngine()

@@ -408,10 +408,21 @@ func executeNamedOutputsWith(
 	traceID string,
 	execute namedOutputExecutor,
 ) (*NamedOutputsData, error) {
+	return executeNamedOutputsWithRoutes(ctx, query, settings, func() []metadata.RouteInfo { return routeInfo }, traceID, execute)
+}
+
+func executeNamedOutputsWithRoutes(
+	ctx context.Context,
+	query *structured.QueryTs,
+	settings namedOutputSettings,
+	routeInfo func() []metadata.RouteInfo,
+	traceID string,
+	execute namedOutputExecutor,
+) (*NamedOutputsData, error) {
 	response := &NamedOutputsData{
 		ContractVersion: structured.NamedOutputsV1,
 		Outputs:         make([]NamedOutputData, len(query.OutputList)),
-		ResultTableID:   resultTableIDFromRouteInfo(routeInfo),
+		ResultTableID:   resultTableIDFromRouteInfo(routeInfo()),
 		TraceID:         traceID,
 	}
 	for index, output := range query.OutputList {
@@ -565,6 +576,7 @@ func executeNamedOutputsWith(
 		}
 		return nil, fmt.Errorf("all named outputs failed")
 	}
+	response.ResultTableID = resultTableIDFromRouteInfo(routeInfo())
 	var encoded []byte
 	var err error
 	if deadlineConverged {

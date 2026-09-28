@@ -1049,6 +1049,23 @@ func negativeLookaheadQuery(field string, regexp elastic.Query) elastic.Query {
 		MustNot(regexp)
 }
 
+func (f *FormatFactory) canUseKeywordTerms(key string, con metadata.ConditionField) bool {
+	if key == "" || con.Operator != structured.ConditionEqual || len(con.Value) < 2 ||
+		con.IsPrefix || con.IsSuffix || con.IsWildcard {
+		return false
+	}
+	field := f.fieldsMap[key]
+	if field.FieldType != KeyWord || field.IsAnalyzed || field.HasMixedTypes || field.IsMixedCaseSensitivity {
+		return false
+	}
+	for _, value := range con.Value {
+		if value == "" {
+			return false
+		}
+	}
+	return true
+}
+
 // Query 把 ts 的 conditions 转换成 es 查询
 func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Query, error) {
 	if len(f.sourceConditions) > 0 && f.fieldSemantics != metadata.FTAEventTagsV1 {
@@ -1122,6 +1139,11 @@ func (f *FormatFactory) Query(allConditions metadata.AllConditions) (elastic.Que
 					}
 					q = f.getQuery(MustNot, q)
 				default:
+					if f.canUseKeywordTerms(key, con) {
+						// keyword 精确多值过滤使用一个 terms，避免每个值生成一个 Boolean 子句。
+						q = elastic.NewTermsQueryFromStrings(key, con.Value...)
+						return nil
+					}
 					// 根据字段类型，判断是否使用 isExistsQuery 方法判断非空
 					fieldType := f.GetFieldType(key)
 					isExistsQuery := true

@@ -256,6 +256,7 @@ func (f *IndexOptionFormat) esToFieldMap(k string, data map[string]any) metadata
 }
 
 func mergeFieldOption(existing, next metadata.FieldOption) metadata.FieldOption {
+	existing.HasMixedTypes = existing.HasMixedTypes || next.HasMixedTypes || existing.FieldType != next.FieldType
 	existingAffectsWildcard := fieldCaseSensitivityAffectsWildcard(existing)
 	nextAffectsWildcard := fieldCaseSensitivityAffectsWildcard(next)
 	if !existingAffectsWildcard || !nextAffectsWildcard {

@@ -111,3 +111,53 @@ func TestTimeGraphLoadAttributionAcrossSourceAndRelationQueries(t *testing.T) {
 	}
 	require.Equal(t, "__mixed__", timeGraphLoadMetricName(&structured.QueryTs{QueryList: []*structured.Query{{FieldName: "a"}, {FieldName: "b"}}}))
 }
+
+func TestTimeGraphCumulativePointsIndependentOfBudgetMode(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		topology bool
+		yolo     bool
+	}{
+		{name: "topology_default", topology: true},
+		{name: "topology_yolo", topology: true, yolo: true},
+		{name: "legacy_default"},
+		{name: "legacy_yolo", yolo: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			oldYolo, oldLimit := yoloMode, MaxSharedTopologyMatrixPoints
+			t.Cleanup(func() { yoloMode, MaxSharedTopologyMatrixPoints = oldYolo, oldLimit })
+			yoloMode, MaxSharedTopologyMatrixPoints = test.yolo, 3
+			loader := timeGraphMatrixLoader{graph: NewTimeGraph(), topology: test.topology}
+			matrix := contractMatrix(map[string]string{"id": "a"}, 1700000000000, 1700000060000)
+			for call := 1; call <= 2; call++ {
+				count, err := loader.validateMatrix(context.Background(), matrix, nil)
+				require.Equal(t, 2, count)
+				require.Equal(t, call*2, loader.pointCount)
+				if test.topology && !test.yolo && call == 2 {
+					var limit *ResultLimitError
+					require.ErrorAs(t, err, &limit)
+					require.Equal(t, "max_topology_matrix_points", limit.Reason)
+					require.Equal(t, 4, limit.Count)
+					require.Equal(t, 3, limit.Limit)
+				} else {
+					require.NoError(t, err)
+				}
+			}
+			count, err := loader.validateMatrix(context.Background(), nil, nil)
+			require.NoError(t, err)
+			require.Zero(t, count)
+			require.Equal(t, 4, loader.pointCount)
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			count, err = loader.validateMatrix(ctx, matrix, nil)
+			require.ErrorIs(t, err, context.Canceled)
+			require.Zero(t, count)
+			require.Equal(t, 4, loader.pointCount)
+			backendErr := fmt.Errorf("backend query failed")
+			count, err = loader.validateMatrix(context.Background(), matrix, backendErr)
+			require.ErrorIs(t, err, backendErr)
+			require.Zero(t, count)
+			require.Equal(t, 4, loader.pointCount)
+		})
+	}
+}

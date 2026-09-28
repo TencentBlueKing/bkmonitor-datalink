@@ -69,6 +69,17 @@ union、intersect、subtract 返回独立结果，不修改已有版本的底层
 遍历通过时间位相交传播可达节点；物化阶段按位读取各快照并复制属性。
 因此时间点扩展同时覆盖边、可达性、历史属性、逻辑预算计数和最终响应，而非只修改网格校验。
 
+## Matrix 累计计数
+
+`timeGraphMatrixLoader.validateMatrix` 对每次校验遍历到的 Matrix 点累计计数，
+与是否启用 topology 预算或 YOLO 无关。只有预算拒绝判断受模式控制；
+空结果、已取消请求和已有后端错误不会增加计数。这样 legacy 和 YOLO 的
+`matrix-cumulative-point-count` 不再错误地保持为 0，默认模式仍按跨次查询的总量拒绝超限。
+该值是校验过程中已计数的点数，不替代按指标记录的完整后端返回规模。
+
+`TestTimeGraphCumulativePointsIndependentOfBudgetMode` 覆盖 topology/legacy 与
+默认/YOLO 四种组合、两次累计取数、默认累计预算拒绝、空结果、取消和后端错误。
+
 ## 回归验证
 
 - `timegraph_review_regression_test.go`：候选失败隔离、短路与取消、短路径优先、缺省有向指标、真实 PromQL range 窗口、65 点公开接口。

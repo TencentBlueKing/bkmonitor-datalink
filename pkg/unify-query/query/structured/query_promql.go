@@ -73,14 +73,20 @@ func (q *QueryPromQL) ValidateNamedOutputs(maxOutputs int) error {
 	if len(q.OutputList) == 0 || len(q.OutputList) > maxOutputs {
 		return fmt.Errorf("output_list length must be between 1 and %d", maxOutputs)
 	}
-	// The PromQL converter replaces UQ's now() extension with a timestamp before parsing.
-	// Use one fixed placeholder here so equivalent C expressions compare independently of clock ticks.
-	parseExpression := func(expression string) (parser.Expr, error) {
-		return parser.ParseExpr(strings.ReplaceAll(expression, "now()", "0"))
+	// The PromQL converter replaces UQ's now() extension before parsing. Two
+	// placeholders distinguish now() from a fixed numeric literal while keeping
+	// equivalent expressions independent of clock ticks.
+	placeholders := [...]string{"0", "1"}
+	parseExpression := func(expression, placeholder string) (parser.Expr, error) {
+		return parser.ParseExpr(strings.ReplaceAll(expression, "now()", placeholder))
 	}
-	legacyExpression, err := parseExpression(q.PromQL)
-	if err != nil {
-		return fmt.Errorf("promql expression is invalid: %w", err)
+	var legacyExpressions [2]parser.Expr
+	for index, placeholder := range placeholders {
+		expr, err := parseExpression(q.PromQL, placeholder)
+		if err != nil {
+			return fmt.Errorf("promql expression is invalid: %w", err)
+		}
+		legacyExpressions[index] = expr
 	}
 	seen := make(map[string]struct{}, len(q.OutputList))
 	legacyFound := false
@@ -92,15 +98,17 @@ func (q *QueryPromQL) ValidateNamedOutputs(maxOutputs int) error {
 			return fmt.Errorf("duplicate output reference: %s", output.ReferenceName)
 		}
 		seen[output.ReferenceName] = struct{}{}
-		expr, parseErr := parseExpression(output.Expression)
-		if parseErr != nil {
-			return fmt.Errorf("output %s expression is invalid: %w", output.ReferenceName, parseErr)
+		for index, placeholder := range placeholders {
+			expr, parseErr := parseExpression(output.Expression, placeholder)
+			if parseErr != nil {
+				return fmt.Errorf("output %s expression is invalid: %w", output.ReferenceName, parseErr)
+			}
+			if output.ReferenceName == q.LegacyOutputRef && expr.String() != legacyExpressions[index].String() {
+				return fmt.Errorf("legacy output expression must be equivalent to promql")
+			}
 		}
 		if output.ReferenceName == q.LegacyOutputRef {
 			legacyFound = true
-			if expr.String() != legacyExpression.String() {
-				return fmt.Errorf("legacy output expression must be equivalent to promql")
-			}
 		}
 	}
 	if !legacyFound {

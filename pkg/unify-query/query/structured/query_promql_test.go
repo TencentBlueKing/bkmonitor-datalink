@@ -67,6 +67,22 @@ func TestQueryPromQLValidateNamedOutputs(t *testing.T) {
 	}
 }
 
+func TestQueryPromQLValidateNamedOutputsRejectsNowLiteralCollision(t *testing.T) {
+	for _, expressions := range [][2]string{
+		{"vector(now())", "vector(0)"},
+		{"vector(0)", "vector(now())"},
+		{"vector(now()) + vector(0)", "vector(0) + vector(0)"},
+	} {
+		query := QueryPromQL{
+			PromQL:           expressions[0],
+			ResponseContract: NamedOutputsV1,
+			LegacyOutputRef:  "C",
+			OutputList:       []QueryOutput{{ReferenceName: "C", Expression: expressions[1]}},
+		}
+		require.ErrorContains(t, query.ValidateNamedOutputs(4), "legacy output expression must be equivalent to promql")
+	}
+}
+
 func TestQueryPromQLExpr(t *testing.T) {
 	log.InitTestLogger()
 

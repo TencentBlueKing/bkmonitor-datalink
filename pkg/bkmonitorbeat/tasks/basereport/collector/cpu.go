@@ -36,6 +36,9 @@ func GetCPUInfo(config configs.CpuConfig) (*CpuReport, error) {
 	// 采样多次，取最大值
 	// 规定的采集时间和采集次数，优先达到的为准
 	var maxTotalUsage float64
+	var hasValidSample bool
+	var lastSampleErr error
+
 	count := config.StatTimes
 	ticker := time.NewTicker(config.StatPeriod)
 	defer ticker.Stop()
@@ -46,12 +49,15 @@ func GetCPUInfo(config configs.CpuConfig) (*CpuReport, error) {
 		var once CpuReport
 		err := getCPUStatUsage(&once)
 		if err != nil {
+			lastSampleErr = err
 			if errors.Is(err, errInvalidCPUStat) {
 				logger.Warn("CPU idle counter rollback, discard invalid sample")
 			} else {
 				logger.Errorf("get cpu usage stat fail: %v", err)
 			}
 		} else {
+			hasValidSample = true
+
 			if once.TotalUsage >= maxTotalUsage {
 				report = once
 				maxTotalUsage = once.TotalUsage
@@ -66,6 +72,14 @@ func GetCPUInfo(config configs.CpuConfig) (*CpuReport, error) {
 		select {
 		case <-ticker.C:
 		}
+	}
+
+	// 无有效 CPU usage 返回错误
+	if !hasValidSample {
+		if lastSampleErr != nil {
+			return nil, lastSampleErr
+		}
+		return nil, errors.New("no valid CPU usage sample")
 	}
 
 	// collect once

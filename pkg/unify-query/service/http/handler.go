@@ -562,9 +562,9 @@ func HandlerQueryTs(c *gin.Context) {
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      structured.QueryPromQL  		true   "json data"
-// @Success  200                   	{object}  PromData
+// @Success  200                   	{object}  QueryTsResponse
 // @Failure  400                   	{object}  ErrResponse
-// @Router   /query/promql [post]
+// @Router   /query/ts/promql [post]
 func HandlerQueryPromQL(c *gin.Context) {
 	var (
 		ctx = c.Request.Context()
@@ -611,6 +611,15 @@ func HandlerQueryPromQL(c *gin.Context) {
 			metadata.MsgQueryPromQL,
 			"查询语句不能为空",
 		).Error(ctx, err))
+		return
+	}
+	if queryPromQL.ResponseContract != "" || queryPromQL.LegacyOutputRef != "" || len(queryPromQL.OutputList) > 0 {
+		res, queryErr := queryPromQLNamedOutputs(ctx, queryPromQL)
+		if queryErr != nil {
+			resp.failed(ctx, queryErr)
+			return
+		}
+		resp.success(ctx, res)
 		return
 	}
 

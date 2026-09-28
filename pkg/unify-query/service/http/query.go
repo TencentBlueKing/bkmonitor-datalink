@@ -1235,6 +1235,12 @@ func queryPromQLNamedOutputs(ctx context.Context, request *structured.QueryPromQ
 		MaxBytes:  settings.MaxCacheBytes,
 	})
 	var routeInfo []metadata.RouteInfo
+	var outputMu sync.Mutex
+	currentRoutes := func() []metadata.RouteInfo {
+		outputMu.Lock()
+		defer outputMu.Unlock()
+		return append([]metadata.RouteInfo(nil), routeInfo...)
+	}
 	directCalls := 0
 	directOutputs := 0
 	engineOutputs := 0
@@ -1260,7 +1266,9 @@ func queryPromQLNamedOutputs(ctx context.Context, request *structured.QueryPromQ
 		// Routing storage types belong to this output, not a preceding PromQL output.
 		metadata.GetQueryParams(outputCtx).StorageType.Clean()
 		instance, stmt, outputRoutes, queryErr := queryTsToInstanceAndStmtWithCache(outputCtx, queryTs, selectorCache)
+		outputMu.Lock()
 		routeInfo = append(routeInfo, outputRoutes...)
+		outputMu.Unlock()
 		if queryErr != nil {
 			return nil, false, queryErr
 		}
@@ -1268,10 +1276,14 @@ func queryPromQLNamedOutputs(ctx context.Context, request *structured.QueryPromQ
 			return nil, false, err
 		}
 		if metadata.GetQueryParams(outputCtx).IsDirectQuery() {
+			outputMu.Lock()
 			directOutputs++
 			directCalls++
+			outputMu.Unlock()
 		} else {
+			outputMu.Lock()
 			engineOutputs++
+			outputMu.Unlock()
 		}
 		params := metadata.GetQueryParams(outputCtx)
 		result, partial, release, queryErr := executeQueryWithClose(
@@ -1283,7 +1295,7 @@ func queryPromQLNamedOutputs(ctx context.Context, request *structured.QueryPromQ
 		return &ownedQueryResult{value: result, release: release}, partial, nil
 	}
 
-	data, executeErr := executeNamedOutputsWithRoutes(ctx, query, settings, func() []metadata.RouteInfo { return routeInfo }, span.TraceID(), execute)
+	data, executeErr := executeNamedOutputsWithRoutesMode(ctx, query, settings, currentRoutes, span.TraceID(), execute, true)
 	if executeErr != nil {
 		var outputLimit *namedOutputLimitError
 		var selectorLimit *prometheus.SelectorCacheLimitError

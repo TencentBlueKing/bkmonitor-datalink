@@ -18,7 +18,9 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	clientPrometheus "github.com/prometheus/client_golang/prometheus"
@@ -134,6 +136,140 @@ func TestExecuteNamedOutputsLegacyFirstResponseInRequestOrder(t *testing.T) {
 	require.True(t, data.IsPartial)
 	require.Equal(t, "trace", data.TraceID)
 	require.Equal(t, "ROUTE_PARTIAL", metadata.GetStatus(ctx).Code, "output status must not overwrite the request status")
+}
+
+func TestExecuteNamedOutputsParallelOptionalAfterLegacy(t *testing.T) {
+	metadata.InitMetadata()
+	ctx := metadata.InitHashID(context.Background())
+	query := namedOutputQuery()
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	finished := make(chan struct{})
+	var callsMu sync.Mutex
+	var calls []string
+	var response *NamedOutputsData
+	var executeErr error
+	go func() {
+		defer close(finished)
+		response, executeErr = executeNamedOutputsWithRoutesMode(
+			ctx, query, defaultNamedOutputSettings(), func() []metadata.RouteInfo { return nil }, "",
+			func(outputCtx context.Context, output structured.QueryOutput) (any, bool, error) {
+				callsMu.Lock()
+				calls = append(calls, output.ReferenceName)
+				callsMu.Unlock()
+				if output.ReferenceName != "C" {
+					lookBack := time.Minute
+					if output.ReferenceName == "B" {
+						lookBack = 2 * time.Minute
+					}
+					metadata.GetQueryParams(outputCtx).SetLookBackDelta(lookBack)
+					started <- output.ReferenceName
+					<-release
+					if metadata.GetQueryParams(outputCtx).LookBackDelta != lookBack {
+						return nil, false, errors.New("output query params crossed")
+					}
+				}
+				return promPromql.Vector{{Point: promPromql.Point{T: 1, V: 1}}}, false, nil
+			}, true,
+		)
+	}()
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(3 * time.Second):
+			close(release)
+			t.Fatal("A and B should start concurrently after C")
+		}
+	}
+	callsMu.Lock()
+	require.Equal(t, "C", calls[0])
+	callsMu.Unlock()
+	close(release)
+	<-finished
+	require.NoError(t, executeErr)
+	require.Equal(t, []string{"A", "B", "C"}, []string{
+		response.Outputs[0].ReferenceName,
+		response.Outputs[1].ReferenceName,
+		response.Outputs[2].ReferenceName,
+	})
+}
+
+func TestExecuteNamedOutputsParallelKeepsCompletedOptionalOnDeadline(t *testing.T) {
+	metadata.InitMetadata()
+	ctx, cancel := context.WithCancel(metadata.InitHashID(context.Background()))
+	defer cancel()
+	convertedA := make(chan struct{})
+	finished := make(chan struct{})
+	var response *NamedOutputsData
+	var executeErr error
+	go func() {
+		defer close(finished)
+		response, executeErr = executeNamedOutputsWithRoutesMode(
+			ctx, namedOutputQuery(), defaultNamedOutputSettings(), func() []metadata.RouteInfo { return nil }, "",
+			func(outputCtx context.Context, output structured.QueryOutput) (any, bool, error) {
+				if output.ReferenceName == "B" {
+					<-outputCtx.Done()
+					return nil, false, outputCtx.Err()
+				}
+				vector := promPromql.Vector{{Point: promPromql.Point{T: 1, V: 1}}}
+				if output.ReferenceName == "A" {
+					return &ownedQueryResult{value: vector, release: func() { close(convertedA) }}, false, nil
+				}
+				return vector, false, nil
+			}, true,
+		)
+	}()
+	select {
+	case <-convertedA:
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("completed A should be converted while B is still running")
+	}
+	cancel()
+	<-finished
+	require.NoError(t, executeErr)
+	require.Equal(t, OutputStateSuccess, response.Outputs[0].State)
+	require.Equal(t, OutputStateError, response.Outputs[1].State)
+	require.Equal(t, OutputStateSuccess, response.Outputs[2].State)
+}
+
+func TestExecuteNamedOutputsParallelKeepsLaterCompletedOptionalOnDeadline(t *testing.T) {
+	metadata.InitMetadata()
+	ctx, cancel := context.WithCancel(metadata.InitHashID(context.Background()))
+	defer cancel()
+	convertedB := make(chan struct{})
+	finished := make(chan struct{})
+	var response *NamedOutputsData
+	var executeErr error
+	go func() {
+		defer close(finished)
+		response, executeErr = executeNamedOutputsWithRoutesMode(
+			ctx, namedOutputQuery(), defaultNamedOutputSettings(), func() []metadata.RouteInfo { return nil }, "",
+			func(outputCtx context.Context, output structured.QueryOutput) (any, bool, error) {
+				if output.ReferenceName == "A" {
+					<-outputCtx.Done()
+					return nil, false, outputCtx.Err()
+				}
+				vector := promPromql.Vector{{Point: promPromql.Point{T: 1, V: 1}}}
+				if output.ReferenceName == "B" {
+					return &ownedQueryResult{value: vector, release: func() { close(convertedB) }}, false, nil
+				}
+				return vector, false, nil
+			}, true,
+		)
+	}()
+	select {
+	case <-convertedB:
+	case <-time.After(3 * time.Second):
+		cancel()
+		t.Fatal("completed B should be converted while A is still running")
+	}
+	cancel()
+	<-finished
+	require.NoError(t, executeErr)
+	require.Equal(t, OutputStateError, response.Outputs[0].State)
+	require.Equal(t, OutputStateSuccess, response.Outputs[1].State)
+	require.Equal(t, OutputStateSuccess, response.Outputs[2].State)
 }
 
 func TestExecuteNamedOutputsReleasesOwnedResultAfterConversion(t *testing.T) {
@@ -630,12 +766,12 @@ func TestPromQLNamedOutputsPreservesCWhenOptionalOutputFails(t *testing.T) {
 			{ReferenceName: "C", Expression: "vector(2)"},
 		},
 	}
-	data, err := executeNamedOutputsWithRoutes(ctx, query, defaultNamedOutputSettings(), func() []metadata.RouteInfo { return nil }, "", func(_ context.Context, output structured.QueryOutput) (any, bool, error) {
+	data, err := executeNamedOutputsWithRoutesMode(ctx, query, defaultNamedOutputSettings(), func() []metadata.RouteInfo { return nil }, "", func(_ context.Context, output structured.QueryOutput) (any, bool, error) {
 		if output.ReferenceName == "A" {
 			return nil, false, errors.New("optional output failed")
 		}
 		return promPromql.Vector{{Point: promPromql.Point{T: 1000, V: 2}}}, false, nil
-	})
+	}, true)
 	require.NoError(t, err)
 	require.Equal(t, OutputStateError, data.Outputs[0].State)
 	require.Equal(t, OutputStateSuccess, data.Outputs[1].State)

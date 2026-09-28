@@ -55,14 +55,16 @@ func pipelineMem() runtime.MemStats {
 func TestSharedTopologyPipelineProbe(t *testing.T) {
 	mode := os.Getenv("TG_PIPELINE_MODE")
 	if mode == "" {
-		t.Skip("set TG_PIPELINE_MODE=legacy or shared for isolated capacity measurement")
+		t.Skip("set TG_PIPELINE_MODE=legacy, shared or compact for isolated capacity measurement")
 	}
-	require.Contains(t, []string{"legacy", "shared"}, mode)
+	require.Contains(t, []string{"legacy", "shared", "compact"}, mode)
 	n, k, concurrency := pipelineInt("TG_EDGES", 1000), pipelineInt("TG_POINTS", 60), pipelineInt("TG_CONCURRENCY", 1)
-	require.LessOrEqual(t, k, 60)
-	require.LessOrEqual(t, concurrency, 4)
-	require.LessOrEqual(t, n*k*concurrency, 300000)
 	mock.Init()
+	if os.Getenv("TG_PIPELINE_YOLO") == "true" {
+		oldYolo := yoloMode
+		yoloMode = true
+		t.Cleanup(func() { yoloMode = oldYolo })
+	}
 	httpmock.Deactivate()
 	t.Cleanup(httpmock.Activate)
 	initTimeGraphQueryTestEnvironment()
@@ -96,6 +98,12 @@ func TestSharedTopologyPipelineProbe(t *testing.T) {
 	require.NoError(t, f.Close())
 	stat, err := os.Stat(fixture)
 	require.NoError(t, err)
+	fixtureFile, err := os.Open(fixture)
+	require.NoError(t, err)
+	fixtureHash := sha256.New()
+	_, err = io.Copy(fixtureHash, fixtureFile)
+	require.NoError(t, err)
+	require.NoError(t, fixtureFile.Close())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, readErr := io.ReadAll(r.Body)
 		if readErr != nil {
@@ -168,7 +176,7 @@ func TestSharedTopologyPipelineProbe(t *testing.T) {
 			row := map[string]any{}
 			result, runErr := func() (cmdb.SharedTopologyResult, error) {
 				var directGrid *TopologyGrid
-				if mode == "shared" {
+				if mode != "legacy" {
 					directGrid = &grid
 				}
 				relations := model.sharedTopologyRelations("space", nil, nil, DirectionOutbound)
@@ -187,6 +195,17 @@ func TestSharedTopologyPipelineProbe(t *testing.T) {
 				}
 				row["after_build_heap"] = pipelineMem().HeapAlloc
 				began = time.Now()
+				if mode == "compact" {
+					compact, err := graph.FindCompactTopology(ctx, grid, SharedTopologyQuery{SourceType: "source", SourceMatcher: cmdb.Matcher{"source_id": "a"}, MaxHops: 1}, nil)
+					if err != nil {
+						return cmdb.SharedTopologyResult{}, err
+					}
+					if compact.NodeOccurrences != (n+1)*k || compact.EdgeOccurrences != n*k {
+						return cmdb.SharedTopologyResult{}, fmt.Errorf("unexpected compact shape")
+					}
+					row["traverse_convert_ms"] = float64(time.Since(began).Microseconds()) / 1000
+					return cmdb.SharedTopologyResult{StartTime: times[0], EndTime: times[k-1], Step: "1s", PointCount: k, Compact: compact}, nil
+				}
 				snapshots, err := graph.FindSharedTopology(ctx, grid, SharedTopologyQuery{SourceType: "source", SourceMatcher: cmdb.Matcher{"source_id": "a"}, MaxHops: 1})
 				if err != nil {
 					return cmdb.SharedTopologyResult{}, err
@@ -229,6 +248,8 @@ func TestSharedTopologyPipelineProbe(t *testing.T) {
 	runtime.GC()
 	after := pipelineMem()
 	record := map[string]any{"mode": mode, "edges": n, "points": k, "concurrency": concurrency, "fixture_bytes": stat.Size(), "go": runtime.Version(), "gomaxprocs": runtime.GOMAXPROCS(0), "wall_ms": float64(elapsed.Microseconds()) / 1000, "base_heap": base.HeapAlloc, "sampled_peak_heap": peak.Load(), "held_heap": held.HeapAlloc, "retained_output_heap": retained.HeapAlloc, "post_gc_heap": after.HeapAlloc, "total_alloc_delta": held.TotalAlloc - base.TotalAlloc, "gc_count": held.NumGC - base.NumGC, "gc_pause_ns": held.PauseTotalNs - base.PauseTotalNs, "workers": rows, "output_elements_limit": MaxSharedTopologyOutputElements, "output_byte_limit": MaxSharedTopologyOutputBytes}
+	record["yolo_mode"] = yoloMode
+	record["fixture_sha256"] = fmt.Sprintf("%x", fixtureHash.Sum(nil))
 	encoded, err := json.Marshal(record)
 	require.NoError(t, err)
 	fmt.Println("PIPELINE_PROBE " + string(encoded))

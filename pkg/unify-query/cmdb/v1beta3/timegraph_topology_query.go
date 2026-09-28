@@ -52,6 +52,10 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	if request.SourceType == "" {
 		return cmdb.SharedTopologyResult{}, errors.New("source type is empty")
 	}
+	if request.ResponseFormat != "" && request.ResponseFormat != "snapshots" && request.ResponseFormat != cmdb.CompactTopologyFormat {
+		return cmdb.SharedTopologyResult{}, fmt.Errorf("unsupported topology response format %q", request.ResponseFormat)
+	}
+	span.Set("response-format", request.ResponseFormat)
 
 	maxHops := request.MaxHops
 	if maxHops == 0 {
@@ -115,6 +119,11 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	_, planSpan := trace.NewSpan(ctx, "timegraph-plan-topology-fetch")
 	rootRelations := sharedTopologyRootRelationKeys(request.SourceType, maxHops, relations)
 	planSpan.Set("relation-count", len(relations))
+	if SharedTopologyPlanCandidates {
+		relations = planSharedTopologyCandidates(request.SourceType, maxHops, relations)
+	}
+	planSpan.Set("candidate-planning-enabled", SharedTopologyPlanCandidates)
+	planSpan.Set("planned-relation-count", len(relations))
 	planSpan.Set("root-filter-relation-count", len(rootRelations))
 	planSpan.Set("max-hops", maxHops)
 	planSpan.End(&relationErr)
@@ -129,6 +138,10 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		return cmdb.SharedTopologyResult{}, err
 	}
 	defer release()
+	defer func() {
+		_ = ReserveTopologyStage(queryCtx, "matrix", 0)
+		_ = ReserveTopologyStage(queryCtx, "graph", 0)
+	}()
 	if !yoloMode {
 		queryCtx = metadata.WithBackendResponseLimit(queryCtx, int64(effectiveTimeGraphLimit(MaxSharedTopologyBackendBytes, 16*1024*1024)))
 		span.Set("backend-response-byte-limit", metadata.BackendResponseLimit(queryCtx))
@@ -164,6 +177,19 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		AllowedRelationTypes: append([]string(nil), request.AllowedRelationTypes...),
 		Direction:            direction,
 		PartialTimestamps:    graph.partialTimesCopy(),
+	}
+	if request.ResponseFormat == cmdb.CompactTopologyFormat {
+		compact, compactErr := graph.FindCompactTopology(queryCtx, grid, topologyQuery, request.TargetTypes)
+		if compactErr != nil {
+			return cmdb.SharedTopologyResult{}, errors.WithMessage(compactErr, "export compact topology")
+		}
+		return cmdb.SharedTopologyResult{
+			StartTime:  grid.Timestamps[0],
+			EndTime:    grid.Timestamps[len(grid.Timestamps)-1],
+			Step:       responseStep,
+			PointCount: len(grid.Timestamps),
+			Compact:    compact,
+		}, nil
 	}
 	snapshots, err := graph.FindSharedTopology(queryCtx, grid, topologyQuery)
 	if err != nil {
@@ -448,7 +474,8 @@ func convertSharedTopologySnapshots(snapshots []SharedTopologySnapshot) []cmdb.S
 			result[i].Nodes[j] = cmdb.SharedTopologyNode{
 				ID:           node.ID,
 				ResourceType: node.ResourceType,
-				Dimensions:   cloneMatcher(node.Dimensions),
+				// Materialization already owns this map, independently of graph pools.
+				Dimensions: node.Dimensions,
 			}
 		}
 		for j, edge := range snapshot.Edges {

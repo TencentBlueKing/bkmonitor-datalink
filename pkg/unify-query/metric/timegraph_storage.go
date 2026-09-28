@@ -26,8 +26,9 @@ var (
 	}, []string{"storage", "phase", "result"})
 	cmdbTopologyAdmissionActive = promauto.NewGauge(prometheus.GaugeOpts{
 		Namespace: "unify_query", Name: "cmdb_topology_admission_active",
-		Help: "active topology requests, including HTTP response writing; observation only, no concurrency limit",
+		Help: "active topology requests, including HTTP response writing",
 	})
+	cmdbTopologyReserved     = promauto.NewGauge(prometheus.GaugeOpts{Namespace: "unify_query", Name: "cmdb_topology_reserved_bytes", Help: "estimated memory reserved by topology requests, not measured RSS"})
 	cmdbTopologyPayloadBytes = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "unify_query", Name: "cmdb_topology_payload_bytes",
 		Help:    "bytes read from request/backend bodies or encoded response items; not complete wire response bytes",
@@ -58,6 +59,8 @@ func CMDBTimeGraphBuildPhaseObserve(ctx context.Context, storage, phase, result 
 func CMDBTopologyAdmissionSet(active int) {
 	cmdbTopologyAdmissionActive.Set(float64(active))
 }
+
+func CMDBTopologyReservedSet(bytes int64) { cmdbTopologyReserved.Set(float64(bytes)) }
 
 func CMDBTopologyPayloadObserve(ctx context.Context, stage, result string, bytes int) {
 	if !timeGraphResult(result) || bytes < 0 {

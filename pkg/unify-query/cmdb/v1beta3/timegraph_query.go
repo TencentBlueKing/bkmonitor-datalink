@@ -318,9 +318,19 @@ type timeGraphMatrixLoader struct {
 	topology               bool
 	queryCount, pointCount int
 	queryDuration          time.Duration
+	physicalQueryCount     int
+	reusedQueryCount       int
+	lastMatrix             timeGraphMatrixSlot
+	graphEstimatedBytes    int64
 }
 
 func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *structured.QueryTs) (matrix pl.Matrix, partial bool, err error) {
+	if loader.topology {
+		// Include response buffers, decoding and Matrix conversion before fetch.
+		if err := ReserveTopologyStage(queryCtx, "matrix", metadata.BackendResponseLimit(queryCtx)*8); err != nil {
+			return nil, false, err
+		}
+	}
 	m, tg := loader.model, loader.graph
 	start, end, queryStep, lookBack := loader.start, loader.end, loader.step, loader.lookBack
 	instant, matrixQuery := start.Equal(end), loader.override
@@ -335,6 +345,8 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 	stage := timeGraphQueryStage(queryCtx)
 	loadMetricName := timeGraphLoadMetricName(queryTs)
 	var loadSize metric.TimeGraphLoadSize
+	reuseBefore := loader.reusedQueryCount
+	physicalBefore := loader.physicalQueryCount
 	span.Set("metric-name", loadMetricName)
 	defer func() {
 		outcome := metric.CMDBTimeGraphErrorResult(err)
@@ -350,7 +362,12 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 		span.Set("matrix-cumulative-point-count", loader.pointCount)
 		SetTimeGraphLimitTrace(span, err)
 		metric.CMDBTimeGraphStageObserve(queryCtx, stage, outcome, duration)
-		metric.CMDBTimeGraphLoadObserve(queryCtx, stage, loadMetricName, outcome, duration, loadSize)
+		if loader.physicalQueryCount > physicalBefore {
+			metric.CMDBTimeGraphLoadObserve(queryCtx, stage, loadMetricName, outcome, duration, loadSize)
+		} else if loader.reusedQueryCount > reuseBefore {
+			metric.CMDBTimeGraphMatrixReuse(queryCtx, stage, loadMetricName)
+		}
+		span.Set("matrix-reused", loader.reusedQueryCount != reuseBefore)
 		span.Set("matrix-returned", loadSize.Returned)
 		span.Set("matrix-returned-series", loadSize.Series)
 		span.Set("matrix-returned-points", loadSize.Points)
@@ -375,79 +392,96 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 	switch {
 	case matrixQuery != nil:
 		span.Set("query-source", "test-matrix")
+		loader.lastMatrix = timeGraphMatrixSlot{}
+		loader.physicalQueryCount++
 		matrix, err = matrixQuery(queryCtx, queryTs)
 	case m.timeGraphVMQueryWithPartial != nil:
 		span.Set("query-source", "test-vm-with-partial")
 		var expr string
 		expr, relationQueryParams, err = m.prepareTimeGraphVMQuery(queryCtx, queryTs)
 		if err == nil {
-			matrix, partial, err = m.timeGraphVMQueryWithPartial(
-				queryCtx,
-				queryTs,
-				expr,
-				instant,
-				relationQueryParams.AlignStart,
-				relationQueryParams.End,
-				relationQueryParams.Step,
-			)
+			matrix, partial, err = loader.loadPrepared(queryCtx, queryTs, expr, relationQueryParams, func() (pl.Matrix, bool, error) {
+				return m.timeGraphVMQueryWithPartial(
+					queryCtx,
+					queryTs,
+					expr,
+					instant,
+					relationQueryParams.AlignStart,
+					relationQueryParams.End,
+					relationQueryParams.Step,
+				)
+			})
 		}
 	case m.timeGraphVMQuery != nil:
 		span.Set("query-source", "test-vm")
 		var expr string
 		expr, relationQueryParams, err = m.prepareTimeGraphVMQuery(queryCtx, queryTs)
 		if err == nil {
-			matrix, err = m.timeGraphVMQuery(
-				queryCtx,
-				queryTs,
-				expr,
-				instant,
-				relationQueryParams.AlignStart,
-				relationQueryParams.End,
-				relationQueryParams.Step,
-			)
+			matrix, partial, err = loader.loadPrepared(queryCtx, queryTs, expr, relationQueryParams, func() (pl.Matrix, bool, error) {
+				value, queryErr := m.timeGraphVMQuery(
+					queryCtx,
+					queryTs,
+					expr,
+					instant,
+					relationQueryParams.AlignStart,
+					relationQueryParams.End,
+					relationQueryParams.Step,
+				)
+				return value, false, queryErr
+			})
 		}
 	default:
 		wrapQueryErr = true
 		var expr string
 		expr, relationQueryParams, err = m.prepareTimeGraphVMQuery(queryCtx, queryTs)
 		if err == nil {
-			var instance tsdb.Instance
-			if relationQueryParams.IsDirectQuery() {
-				instance = prometheus.GetTsDbInstance(queryCtx, &metadata.Query{
-					StorageType: metadata.VictoriaMetricsStorageType,
-				})
-				if instance == nil {
-					err = fmt.Errorf("%s storage get error", metadata.VictoriaMetricsStorageType)
+			matrix, partial, err = loader.loadPrepared(queryCtx, queryTs, expr, relationQueryParams, func() (pl.Matrix, bool, error) {
+				var instance tsdb.Instance
+				if relationQueryParams.IsDirectQuery() {
+					instance = prometheus.GetTsDbInstance(queryCtx, &metadata.Query{
+						StorageType: metadata.VictoriaMetricsStorageType,
+					})
+					if instance == nil {
+						err = fmt.Errorf("%s storage get error", metadata.VictoriaMetricsStorageType)
+					}
+				} else {
+					instance = prometheus.NewInstance(queryCtx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
+						QueryMaxRouting: timeGraphQueryMaxRouting,
+						Timeout:         timeGraphQueryTimeout,
+					}, lookBack, timeGraphQueryMaxRouting)
 				}
-			} else {
-				instance = prometheus.NewInstance(queryCtx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
-					QueryMaxRouting: timeGraphQueryMaxRouting,
-					Timeout:         timeGraphQueryTimeout,
-				}, lookBack, timeGraphQueryMaxRouting)
-			}
-			if err == nil && instant {
-				var vector pl.Vector
-				vector, partial, err = queryTimeGraphInstant(queryCtx, instance, expr, relationQueryParams.End)
-				if err == nil {
-					matrix = vectorToMatrix(vector)
+				if err == nil && instant {
+					var vector pl.Vector
+					vector, partial, err = queryTimeGraphInstant(queryCtx, instance, expr, relationQueryParams.End)
+					if err == nil {
+						matrix = vectorToMatrix(vector)
+					}
+				} else if err == nil {
+					matrix, partial, err = instance.DirectQueryRange(
+						queryCtx,
+						expr,
+						relationQueryParams.AlignStart,
+						relationQueryParams.End,
+						relationQueryParams.Step,
+					)
 				}
-			} else if err == nil {
-				matrix, partial, err = instance.DirectQueryRange(
-					queryCtx,
-					expr,
-					relationQueryParams.AlignStart,
-					relationQueryParams.End,
-					relationQueryParams.Step,
-				)
-			}
+				return matrix, partial, err
+			})
 		}
 	}
 	// Capture the returned Matrix before validation can reject it and clear the
 	// named return value. A budget rejection still incurred this input cost.
-	if err == nil {
+	if err == nil && loader.reusedQueryCount == reuseBefore {
 		loadSize = timeGraphReturnedMatrixSize(matrix)
 	}
 	pointCount, err := loader.validateMatrix(queryCtx, matrix, err)
+	if err == nil && loader.topology {
+		size := timeGraphReturnedMatrixSize(matrix)
+		// Budget both direction applications, including maps, versions and
+		// target-info indexes. Coefficients are conservative calibration inputs.
+		loader.graphEstimatedBytes += int64(size.Points)*256 + int64(size.Series)*1024 + int64(size.LabelBytes)*8
+		err = ReserveTopologyStage(queryCtx, "graph", loader.graphEstimatedBytes)
+	}
 	// Prometheus 聚合后端通过子查询 metadata 报告部分成功，VM 则返回 partial 位。
 	// 合并当前子查询的两种信号，让空结果的快照、指标和 trace 同样保留不完整状态。
 	if status := metadata.GetStatus(queryCtx); status != nil {
@@ -471,6 +505,7 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 		metric.CMDBTimeGraphSizeObserve(queryCtx, stage, "points", pointCount)
 	}
 	if err != nil {
+		loader.lastMatrix = timeGraphMatrixSlot{}
 		if wrapQueryErr {
 			if instant {
 				err = errors.WithMessage(err, "direct query")

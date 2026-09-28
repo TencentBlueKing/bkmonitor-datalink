@@ -76,6 +76,7 @@ type PathResourcesResult struct {
 // 请求分离：目标类型只过滤返回节点，遍历仍使用完整的候选关系图。
 // 时间支持秒或整秒对应的毫秒格式；VM 协议仅支持整数秒，step 也必须是正整秒。
 type SharedTopologyQuery struct {
+	ResponseFormat           string     `json:"response_format,omitempty"`
 	SpaceUID                 string     `json:"-"`
 	Timestamp                int64      `json:"timestamp,omitempty"`
 	StartTime                int64      `json:"start_time,omitempty"`
@@ -102,6 +103,7 @@ type SharedTopologyResult struct {
 	Step       string
 	PointCount int
 	Snapshots  []SharedTopologySnapshot
+	Compact    *CompactTopology
 }
 
 // SharedTopologyNode 是响应中的节点身份和维度信息。

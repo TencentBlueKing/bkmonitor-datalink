@@ -115,12 +115,17 @@ func TestTopologyHandlerBudgets(t *testing.T) {
 
 type topologyAdmissionWriter struct {
 	*httptest.ResponseRecorder
-	t *testing.T
+	t          *testing.T
+	rejectNext bool
 }
 
 func (w *topologyAdmissionWriter) Write(body []byte) (int, error) {
 	require.Equal(w.t, 1.0, topologyObservation(w.t, "cmdb_topology_admission_active", nil).GetGauge().GetValue())
 	_, release, err := v1beta3.AcquireSharedTopology(context.Background())
+	if w.rejectNext {
+		require.ErrorContains(w.t, err, "max_topology_concurrent_requests")
+		return w.ResponseRecorder.Write(body)
+	}
 	require.NoError(w.t, err)
 	defer release()
 	require.Equal(w.t, 2.0, topologyObservation(w.t, "cmdb_topology_admission_active", nil).GetGauge().GetValue())
@@ -137,6 +142,22 @@ func TestTopologyActivityTrackedThroughProxyResponse(t *testing.T) {
 	proxy.HandleProxy(c)
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Zero(t, topologyObservation(t, "cmdb_topology_admission_active", nil).GetGauge().GetValue())
+}
+
+func TestTopologyAdmissionHeldThroughProxyWrite(t *testing.T) {
+	log.InitTestLogger()
+	old := v1beta3.MaxSharedTopologyConcurrent
+	v1beta3.MaxSharedTopologyConcurrent = 1
+	t.Cleanup(func() { v1beta3.MaxSharedTopologyConcurrent = old })
+	const route = "/test-topology-proxy-admission-limit"
+	metadata.AddHandler(route, HandlerAPIRelationV1Beta3Topology)
+	w := &topologyAdmissionWriter{ResponseRecorder: httptest.NewRecorder(), t: t, rejectNext: true}
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/proxy", strings.NewReader(`{"path":"`+route+`","data":{"query_list":[]}}`))
+	proxy.HandleProxy(c)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Zero(t, topologyObservation(t, "cmdb_topology_admission_active", nil).GetGauge().GetValue())
+	require.Zero(t, topologyObservation(t, "cmdb_topology_reserved_bytes", nil).GetGauge().GetValue())
 }
 
 func TestTopologyHTTPRequestsContinueWhileOthersAreActive(t *testing.T) {

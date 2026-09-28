@@ -27,14 +27,18 @@ import (
 
 type topologyTraceWriter struct {
 	*httptest.ResponseRecorder
-	t        *testing.T
-	recorder *tracetest.SpanRecorder
-	fail     bool
+	t          *testing.T
+	recorder   *tracetest.SpanRecorder
+	fail       bool
+	shortWrite bool
 }
 
 func (w *topologyTraceWriter) Write(body []byte) (int, error) {
 	for _, span := range w.recorder.Ended() {
 		require.NotEqual(w.t, "handler-api-relation-v1beta3-topology", span.Name(), "root must remain open through write")
+	}
+	if w.shortWrite {
+		return len(body) - 1, nil
 	}
 	if w.fail {
 		return 0, errors.New("test writer failed")
@@ -48,11 +52,13 @@ func TestTopologyFullHTTPTraceLifecycle(t *testing.T) {
 		for _, test := range []struct {
 			name, body   string
 			writeFailure bool
+			shortWrite   bool
 		}{
 			{name: "empty", body: `{"query_list":[]}`},
 			{name: "item validation", body: `{"query_list":[{}]}`},
 			{name: "decode rejection", body: `{"query_list":"invalid"}`},
 			{name: "write failure", body: `{"query_list":[]}`, writeFailure: true},
+			{name: "short write", body: `{"query_list":[]}`, writeFailure: true, shortWrite: true},
 		} {
 			t.Run(test.name+map[bool]string{false: "/direct", true: "/proxy"}[proxied], func(t *testing.T) {
 				recorder := tracetest.NewSpanRecorder()
@@ -60,7 +66,7 @@ func TestTopologyFullHTTPTraceLifecycle(t *testing.T) {
 				old := otel.GetTracerProvider()
 				otel.SetTracerProvider(provider)
 				t.Cleanup(func() { otel.SetTracerProvider(old); require.NoError(t, provider.Shutdown(context.Background())) })
-				w := &topologyTraceWriter{ResponseRecorder: httptest.NewRecorder(), t: t, recorder: recorder, fail: test.writeFailure}
+				w := &topologyTraceWriter{ResponseRecorder: httptest.NewRecorder(), t: t, recorder: recorder, fail: test.writeFailure, shortWrite: test.shortWrite}
 				c, _ := gin.CreateTestContext(w)
 				body := test.body
 				if proxied {
@@ -81,7 +87,7 @@ func TestTopologyFullHTTPTraceLifecycle(t *testing.T) {
 					spans[span.Name()] = span
 					byID[span.SpanContext().SpanID().String()] = span
 				}
-				for _, name := range []string{"handler-api-relation-v1beta3-topology", "timegraph-admission", "topology-read-request-body", "topology-decode-request", "http-response-encode-write", "timegraph-release-admission"} {
+				for _, name := range []string{"handler-api-relation-v1beta3-topology", "timegraph-admission", "topology-read-request-body", "topology-decode-request", "http-response-encode-write", "http-response-encode", "http-response-write", "timegraph-release-admission"} {
 					require.NotNil(t, spans[name], name)
 				}
 				root := spans["handler-api-relation-v1beta3-topology"]
@@ -106,6 +112,7 @@ func TestTopologyFullHTTPTraceLifecycle(t *testing.T) {
 					require.NotNil(t, spans["timegraph-encode-topology-item"])
 				}
 				require.Zero(t, topologyObservation(t, "cmdb_topology_admission_active", nil).GetGauge().GetValue())
+				require.Zero(t, topologyObservation(t, "cmdb_topology_reserved_bytes", nil).GetGauge().GetValue())
 			})
 		}
 	}

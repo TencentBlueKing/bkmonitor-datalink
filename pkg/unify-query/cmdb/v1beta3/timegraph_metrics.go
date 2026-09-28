@@ -36,6 +36,9 @@ func observeSharedTopologyResult(ctx context.Context, mode string, started time.
 				partial++
 			}
 		}
+		if result.Compact != nil {
+			nodes, edges, partial = result.Compact.NodeOccurrences, result.Compact.EdgeOccurrences, len(result.Compact.Partial)
+		}
 		if partial > 0 {
 			outcome = metric.CMDBRelationResultPartial
 		} else if nodes == 0 {
@@ -96,6 +99,8 @@ func observeTimeGraphBuild(ctx context.Context, span *trace.Span, graph *TimeGra
 	span.Set("graph-timepoint-count", graph.timepointCount())
 	span.Set("graph-partial-point-count", len(graph.partialTimes))
 	span.Set("matrix-query-count", loader.queryCount)
+	span.Set("matrix-physical-query-count", loader.physicalQueryCount)
+	span.Set("matrix-reused-query-count", loader.reusedQueryCount)
 	span.Set("matrix-cumulative-point-count", loader.pointCount)
 	SetTimeGraphLimitTrace(span, err)
 }

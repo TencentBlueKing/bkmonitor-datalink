@@ -61,21 +61,23 @@ YOLO 不改变查询语义：时间戳/步长、方向和 schema 等参数仍须
 
 ## 并发请求与活动计数
 
-普通模式和 YOLO 模式均不设置共享拓扑并发上限，也不在此层排队。
-`max_shared_topology_concurrency` 配置已移除，旧配置中保留该键不会启用限制。
-多个请求可同时进入后端取数和构图；单请求的其他资源预算仍按各自配置生效。
+普通模式使用可配置的并发、进程预留量与可见内存余量保护，立即拒绝、不排队。
+YOLO 绕过这些预算；多个请求可同时取数和构图，并不是固定只能两个查询。
+新键为 `max_shared_topology_concurrent_requests`；旧的
+`max_shared_topology_concurrency` 不再生效。默认值和估算边界见
+[输出与资源优化](timegraph-output-optimization.md)。
 
-`AcquireSharedTopology` 保留原函数名，但仅用于活动计数和取消检查：
+`AcquireSharedTopology` 负责准入、预留、活动计数和取消检查：
 
 1. HTTP 入口检查 context；已经取消的请求直接结束，并记录 canceled/timeout。
 2. 每个 HTTP 批次增加一次活动计数，模型内部通过 context 复用，不重复增加。
-   直接调用模型时独立计数。例如已有两个活动请求时，第三个请求仍进入取数，计数变为 3。
+   直接调用模型时独立计数；已有两个请求并不意味着第三个必然拒绝，取决于配置和资源。
 3. HTTP/代理响应写完后减少计数；直接模型调用在返回时减少计数。
    成功、失败、取消均清理，重复调用 release 只清理一次。
 
-`cmdb_topology_admission_active` 继续观测实际活动数；历史名称中的 admission
-不再表示准入限制。`cmdb_topology_admission_limit` 和 `max_topology_concurrency`
-拒绝原因已移除。`TestSharedTopologyConcurrentLoadingAndRecovery` 覆盖普通/YOLO
+`cmdb_topology_admission_active` 观测实际活动数，`cmdb_topology_reserved_bytes`
+观测估算预留量，而非 RSS。旧 `cmdb_topology_admission_limit` 和
+`max_topology_concurrency` 未恢复。`TestSharedTopologyConcurrentLoadingAndRecovery` 覆盖普通/YOLO
 模式下 8 个请求同时到达后端，以及成功、取消、后端失败后的计数恢复；HTTP 回归还覆盖
 已有两个活动请求时 instant/range 及代理入口继续处理请求。
 

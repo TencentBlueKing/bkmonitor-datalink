@@ -136,6 +136,9 @@ func TestDirectSharedGraphDifferential(t *testing.T) {
 						got, err := direct.FindSharedTopology(ctx, grid, query)
 						require.NoError(t, err)
 						require.Equal(t, want, got)
+						compact, err := direct.FindCompactTopology(ctx, grid, query, nil)
+						require.NoError(t, err)
+						require.Equal(t, convertSharedTopologySnapshots(want), decodeCompactForTest(t, compact))
 					}
 				}
 			}

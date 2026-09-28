@@ -334,6 +334,7 @@ func (q *TimeGraph) materializeSharedTopology(ctx context.Context, grid Topology
 	defer span.End(&err)
 	started := time.Now()
 	budget := newTopologyOutputBudget(grid, query.PartialTimestamps)
+	budget.ctx = ctx
 	defer func() {
 		span.Set("output-budget-elements-used", budget.elements)
 		span.Set("output-budget-elements-limit", budget.maxElements)

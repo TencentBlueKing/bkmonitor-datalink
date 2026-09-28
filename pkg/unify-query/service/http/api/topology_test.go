@@ -69,6 +69,24 @@ func TestSharedTopologyHandlerValidationCases(t *testing.T) {
 	}
 }
 
+func TestCompactTopologyHTTPValidationContract(t *testing.T) {
+	log.InitTestLogger()
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{"query_list":[{"response_format":"compact-v1"}]}`))
+	HandlerAPIRelationV1Beta3Topology(ctx)
+	require.Equal(t, http.StatusOK, w.Code)
+	var response struct {
+		Data []map[string]json.RawMessage `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.Len(t, response.Data, 1)
+	require.Equal(t, `"compact-v1"`, string(response.Data[0]["response_format"]))
+	require.Equal(t, "400", string(response.Data[0]["code"]))
+	require.Equal(t, "null", string(response.Data[0]["compact"]))
+	require.NotContains(t, response.Data[0], "snapshots")
+}
+
 func topologyOperationCounter(t *testing.T, scope, mode, result string) float64 {
 	t.Helper()
 	families, err := prometheus.DefaultGatherer.Gather()

@@ -6,6 +6,8 @@
 package api
 
 import (
+	stdjson "encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -52,6 +54,7 @@ func HandlerAPIRelationV1Beta3TopologyRange(c *gin.Context) {
 }
 
 func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
+	proxy.TraceJSONEncoding(c)
 	spanName := "handler-api-relation-v1beta3-topology"
 	if rangeQuery {
 		spanName += "-range"
@@ -87,6 +90,11 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 	ctx, release, err := v1beta3.AcquireSharedTopology(ctx)
 	if err != nil {
 		handlerErr = err
+		var limit interface{ TruncationReason() string }
+		if errors.As(err, &limit) {
+			requestResult = metric.CMDBRelationResultRejected
+			metric.CMDBTopologyRejectInc(ctx, queryMode, limit.TruncationReason())
+		}
 		resp.failed(ctx, err)
 		return
 	}
@@ -96,6 +104,11 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		defer release()
 	}
 	maxRequestBytes := v1beta3.TopologyRequestByteLimit()
+	if err := v1beta3.ReserveTopologyStage(ctx, "request", int64(maxRequestBytes)*6); err != nil {
+		handlerErr = err
+		resp.failed(ctx, err)
+		return
+	}
 	_, readSpan := trace.NewSpan(ctx, "topology-read-request-body")
 	var reader io.Reader = c.Request.Body
 	if maxRequestBytes > 0 && maxRequestBytes < int(^uint(0)>>1) {
@@ -156,9 +169,12 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		return
 	}
 
-	data := &cmdb.SharedTopologyResponse{
+	data := &struct {
+		TraceID string               `json:"trace_id"`
+		Data    []stdjson.RawMessage `json:"data"`
+	}{
 		TraceID: span.TraceID(),
-		Data:    make([]cmdb.SharedTopologyResponseData, len(request.QueryList)),
+		Data:    make([]stdjson.RawMessage, len(request.QueryList)),
 	}
 	responseBytes := 1024
 	defer func() {
@@ -232,7 +248,25 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		}
 		_, encodeSpan := trace.NewSpan(queryCtx, "timegraph-encode-topology-item")
 		encodeStarted := time.Now()
-		encoded, encodeErr := json.Marshal(item)
+		var payload any = item
+		if query.ResponseFormat == cmdb.CompactTopologyFormat {
+			payload = cmdb.CompactTopologyResponseData{
+				Code:           item.Code,
+				StartTime:      item.StartTime,
+				EndTime:        item.EndTime,
+				Step:           item.Step,
+				PointCount:     item.PointCount,
+				Message:        item.Message,
+				ResponseFormat: cmdb.CompactTopologyFormat,
+				Compact:        result.Compact,
+			}
+		}
+		// Reserve retained item buffers plus outer encoding/write buffers.
+		encodeErr := v1beta3.ReserveTopologyStage(ctx, "encoded", int64(responseBytes+v1beta3.TopologyOutputByteLimit())*3)
+		var encoded []byte
+		if encodeErr == nil {
+			encoded, encodeErr = json.Marshal(payload)
+		}
 		encodeSpan.Set("encoded-item-bytes", len(encoded))
 		encodeSpan.End(&encodeErr)
 		metric.CMDBTimeGraphStageObserve(queryCtx, "topology-encode", metric.CMDBTimeGraphErrorResult(encodeErr), time.Since(encodeStarted))
@@ -255,6 +289,8 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 			return
 		}
 		responseBytes += len(encoded) + 1
+		_ = v1beta3.ReserveTopologyStage(ctx, "output", 0)
+		_ = v1beta3.ReserveTopologyStage(ctx, "encoded", int64(responseBytes)*3)
 		querySpan.Set("query-index", index)
 		querySpan.Set("point-count", item.PointCount)
 		querySpan.Set("response-code", item.Code)
@@ -267,6 +303,11 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 				partialCount++
 			}
 		}
+		if result.Compact != nil {
+			nodeCount, edgeCount, partialCount = result.Compact.NodeOccurrences, result.Compact.EdgeOccurrences, len(result.Compact.Partial)
+			querySpan.Set("node-version-count", len(result.Compact.Nodes))
+			querySpan.Set("edge-version-count", len(result.Compact.Edges))
+		}
 		querySpan.Set("response-node-count", nodeCount)
 		querySpan.Set("response-edge-count", edgeCount)
 		querySpan.Set("partial-snapshot-count", partialCount)
@@ -275,7 +316,7 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		}
 		v1beta3.SetTimeGraphLimitTrace(querySpan, queryErr)
 		querySpan.End(&queryErr)
-		data.Data[index] = item
+		data.Data[index] = encoded
 	}
 	span.Set("query-count", len(request.QueryList))
 	span.Set("failed-query-count", failedQueryCount)

@@ -35,6 +35,12 @@ func setDefaultConfig() {
 	viper.SetDefault(MaxSharedTopologyRequestBytesConfigPath, 1024*1024)
 	viper.SetDefault(MaxSharedTopologyQueriesConfigPath, 16)
 	viper.SetDefault(YoloModeConfigPath, false)
+	viper.SetDefault(SharedTopologyReuseMatrixConfigPath, true)
+	viper.SetDefault(SharedTopologyPlanCandidatesConfigPath, false)
+	viper.SetDefault(MaxSharedTopologyConcurrentConfigPath, 8)
+	viper.SetDefault(MaxSharedTopologyReservedBytesConfigPath, 4*1024*1024*1024)
+	viper.SetDefault(SharedTopologyRequestMemoryBytesConfigPath, 512*1024*1024)
+	viper.SetDefault(SharedTopologyMemoryHeadroomConfigPath, 512*1024*1024)
 	viper.SetDefault(DefaultLookBackDeltaConfigPath, 86400000) // 24小时（毫秒）
 }
 
@@ -56,6 +62,12 @@ func LoadConfig() {
 	MaxSharedTopologyRequestBytes = viper.GetInt(MaxSharedTopologyRequestBytesConfigPath)
 	MaxSharedTopologyQueries = viper.GetInt(MaxSharedTopologyQueriesConfigPath)
 	yoloMode = viper.GetBool(YoloModeConfigPath)
+	SharedTopologyReuseMatrix = viper.GetBool(SharedTopologyReuseMatrixConfigPath)
+	SharedTopologyPlanCandidates = viper.GetBool(SharedTopologyPlanCandidatesConfigPath)
+	MaxSharedTopologyConcurrent = viper.GetInt(MaxSharedTopologyConcurrentConfigPath)
+	MaxSharedTopologyReservedBytes = viper.GetInt(MaxSharedTopologyReservedBytesConfigPath)
+	SharedTopologyRequestMemoryBytes = viper.GetInt(SharedTopologyRequestMemoryBytesConfigPath)
+	SharedTopologyMemoryHeadroom = viper.GetInt(SharedTopologyMemoryHeadroomConfigPath)
 	DefaultLookBackDelta = viper.GetInt64(DefaultLookBackDeltaConfigPath)
 }
 

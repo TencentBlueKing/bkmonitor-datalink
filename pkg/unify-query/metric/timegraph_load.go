@@ -33,8 +33,18 @@ var (
 		Namespace: "unify_query", Name: "cmdb_timegraph_load_last_timestamp_seconds",
 		Help: "Unix timestamp of the last completed Matrix call, including failed calls",
 	}, []string{"stage", "metric_name"})
-	timeGraphLoadNames = timeGraphMetricNames{names: make(map[string]struct{})}
+	timeGraphLoadNames        = timeGraphMetricNames{names: make(map[string]struct{})}
+	cmdbTimeGraphMatrixReuses = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "unify_query", Name: "cmdb_timegraph_matrix_reuses_total",
+		Help: "Request-local Matrix reuse hits; logical validation and application still run",
+	}, []string{"stage", "metric_name"})
 )
+
+func CMDBTimeGraphMatrixReuse(ctx context.Context, stage, metricName string) {
+	if stage == "relation-edge" {
+		counterInc(ctx, cmdbTimeGraphMatrixReuses.WithLabelValues(stage, timeGraphLoadNames.label(metricName)))
+	}
+}
 
 type timeGraphMetricNames struct {
 	sync.Mutex

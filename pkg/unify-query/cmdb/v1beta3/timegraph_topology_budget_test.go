@@ -69,6 +69,9 @@ func TestSharedTopologyResourceRejections(t *testing.T) {
 }
 
 func TestSharedTopologyConcurrentLoadingAndRecovery(t *testing.T) {
+	oldHeadroom := topologyMemoryHeadroom
+	topologyMemoryHeadroom = func() (int64, bool) { return 16 * 1024 * 1024 * 1024, true }
+	t.Cleanup(func() { topologyMemoryHeadroom = oldHeadroom })
 	for _, mode := range []struct {
 		name string
 		yolo bool

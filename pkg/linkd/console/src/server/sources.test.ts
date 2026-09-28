@@ -14,7 +14,7 @@ it("serves the metric catalog through a fixed read-only destination with server 
   registerSourceRoutes(app, {
     dispatch: {
       url: "http://control-plane/",
-      apiToken: "private-admin-token",
+      jwt: { secretKey: "private-admin-token", username: "admin" },
       deployment: "test",
     },
     query: { timeoutMilliseconds: 1000 },
@@ -30,7 +30,9 @@ it("serves the metric catalog through a fixed read-only destination with server 
       expect.objectContaining({
         method: "GET",
         headers: expect.objectContaining({
-          Authorization: "Bearer private-admin-token",
+          "Internal-Token": expect.stringMatching(
+            /^Bearer [^.]+\.[^.]+\.[^.]+$/,
+          ),
         }),
       }),
     );
@@ -80,7 +82,7 @@ it("never forwards browser requests for full credentials to the control plane", 
   registerSourceRoutes(app, {
     dispatch: {
       url: "http://control-plane",
-      apiToken: "private-admin-token",
+      jwt: { secretKey: "private-admin-token", username: "admin" },
       deployment: "test",
     },
     query: { timeoutMilliseconds: 1000 },
@@ -114,7 +116,7 @@ it("proxies preview with server token and rejects a foreign origin", async () =>
   registerSourceRoutes(app, {
     dispatch: {
       url: "http://control-plane",
-      apiToken: "private-token",
+      jwt: { secretKey: "private-token", username: "admin" },
       deployment: "test",
     },
     query: { timeoutMilliseconds: 1000 },
@@ -141,7 +143,9 @@ it("proxies preview with server token and rejects a foreign origin", async () =>
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({
-          Authorization: "Bearer private-token",
+          "Internal-Token": expect.stringMatching(
+            /^Bearer [^.]+\.[^.]+\.[^.]+$/,
+          ),
         }),
       }),
     );

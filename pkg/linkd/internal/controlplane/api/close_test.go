@@ -19,6 +19,7 @@ import (
 
 	"linkd/internal/config"
 	"linkd/internal/domain"
+	"linkd/internal/internaltoken"
 	"linkd/internal/lifecycle"
 	lifecycleprocess "linkd/internal/lifecycle/process"
 )
@@ -32,8 +33,11 @@ func (f closeFunc) CloseAlert(ctx context.Context, command lifecycle.CloseAlertC
 func TestCloseAlertManagementBoundary(t *testing.T) {
 	calls := 0
 	var failure error
-	api := &API{Config: config.DispatchConfig{APIToken: "admin-token", WorkerToken: "worker-token"}, AlertCloser: closeFunc(func(ctx context.Context, command lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
+	api := &API{Config: config.DispatchConfig{JWT: config.JWTConfig{SecretKey: "admin-token"}, WorkerToken: "worker-token"}, AlertCloser: closeFunc(func(ctx context.Context, command lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
 		calls++
+		if internaltoken.Username(ctx) != "test-caller" || command.OperatorID != "admin" {
+			t.Fatal("caller identity changed business operator")
+		}
 		if _, ok := ctx.Deadline(); !ok {
 			t.Fatal("request has no deadline")
 		}
@@ -45,7 +49,7 @@ func TestCloseAlertManagementBoundary(t *testing.T) {
 	body := `{"bk_tenant_id":"tenant-a","operation_id":"stable-operation","operator_id":"admin","reason":"verified","effective_at":"2026-09-23T00:00:00Z"}`
 	request := func(token, payload string) *httptest.ResponseRecorder {
 		r := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "/api/v1/alerts/alert-a/close", strings.NewReader(payload))
-		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("Internal-Token", testJWT(t, token))
 		w := httptest.NewRecorder()
 		api.Handler().ServeHTTP(w, r)
 		return w

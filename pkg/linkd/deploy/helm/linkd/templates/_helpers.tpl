@@ -73,7 +73,9 @@ linkd/eventgen-instance: {{ .workload.eventgenInstance | quote }}
 {{- $_ := set $dispatch "deployment" (include "linkd.deployment" $root) -}}
 {{- $_ := set $dispatch "listen" "0.0.0.0:8090" -}}
 {{- $_ := set $dispatch "url" (printf "http://%s-control-plane:%v" (include "linkd.fullname" $root) $root.Values.service.port) -}}
-{{- $_ := unset $dispatch "api_token" -}}
+{{- $jwt := $dispatch.jwt | default dict -}}
+{{- $_ := unset $jwt "secret_key" -}}
+{{- $_ := set $dispatch "jwt" $jwt -}}
 {{- $_ := unset $dispatch "worker_token" -}}
 {{- $_ := set $config "dispatch" $dispatch -}}
 {{- if $w.group -}}
@@ -93,7 +95,7 @@ linkd/eventgen-instance: {{ .workload.eventgenInstance | quote }}
 {{- define "linkd.validate" -}}
 {{- if .Values.migrate.enabled -}}
 {{- if le (int .Values.migrate.activeDeadlineSeconds) (int .Values.migrate.timeoutSeconds) }}{{ fail "migrate.activeDeadlineSeconds 必须大于 migrate.timeoutSeconds" }}{{ end -}}
-{{- $reserved := list "LINKD_CONTROL_PLANE_URL" "LINKD_API_TOKEN" "LINKD_WORKER_TOKEN" "LINKD_WORKER_LABELS" "LINKD_CONFIG" -}}
+{{- $reserved := list "LINKD_CONTROL_PLANE_URL" "LINKD_JWT_SECRET_KEY" "LINKD_WORKER_TOKEN" "LINKD_WORKER_LABELS" "LINKD_CONFIG" -}}
 {{- $settings := mergeOverwrite (deepCopy .Values.controlPlane) (deepCopy .Values.migrate) -}}
 {{- $seen := dict -}}
 {{- range $env := concat .Values.extraEnvVars ($settings.extraEnvVars | default list) -}}
@@ -112,7 +114,7 @@ linkd/eventgen-instance: {{ .workload.eventgenInstance | quote }}
 {{- end -}}
 {{- if and .Values.metrics.serviceMonitor.enabled (not .Values.metrics.enabled) }}{{ fail "ServiceMonitor 要求 metrics.enabled=true" }}{{ end -}}
 {{- range $w := (include "linkd.workloads" . | fromYaml).items -}}
-{{- $reserved := list "LINKD_CONTROL_PLANE_URL" "LINKD_API_TOKEN" "LINKD_WORKER_TOKEN" "LINKD_WORKER_LABELS" "LINKD_CONFIG" "LINKD_CONSOLE_MODE" "LINKD_CONSOLE_HOST" "LINKD_CONSOLE_PORT" "LINKD_CONSOLE_BASIC_AUTH_ENABLED" "LINKD_CONSOLE_BASIC_AUTH_USERNAME" "LINKD_CONSOLE_BASIC_AUTH_PASSWORD" "LINKD_CONSOLE_PROMETHEUS_URL" -}}
+{{- $reserved := list "LINKD_CONTROL_PLANE_URL" "LINKD_JWT_SECRET_KEY" "LINKD_WORKER_TOKEN" "LINKD_WORKER_LABELS" "LINKD_CONFIG" "LINKD_CONSOLE_MODE" "LINKD_CONSOLE_HOST" "LINKD_CONSOLE_PORT" "LINKD_CONSOLE_BASIC_AUTH_ENABLED" "LINKD_CONSOLE_BASIC_AUTH_USERNAME" "LINKD_CONSOLE_BASIC_AUTH_PASSWORD" "LINKD_CONSOLE_PROMETHEUS_URL" -}}
 {{- $seen := dict -}}
 {{- range $env := concat $.Values.extraEnvVars ($w.settings.extraEnvVars | default list) -}}
 {{- if or (has $env.name $reserved) (hasKey $seen $env.name) }}{{ fail (printf "%s: extraEnvVars 不得覆盖保留变量或重复声明 %s" $w.name $env.name) }}{{ end -}}

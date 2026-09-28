@@ -93,7 +93,7 @@ func TestSchedulingDrillE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("evidence=%s deployment=%s es=%s raw_topic=%s", evidence, names.Token, esVersion, names.RawTopic)
-	d := &schedulingDrill{t: t, ctx: ctx, root: root, binary: binary, temp: temp, evidence: evidence, cfg: cfg, source: cfg.EventSources[0], workers: map[string]*drillWorker{}, client: taskdispatch.Client{URL: cfg.Dispatch.URL, Token: cfg.Dispatch.APIToken}}
+	d := &schedulingDrill{t: t, ctx: ctx, root: root, binary: binary, temp: temp, evidence: evidence, cfg: cfg, source: cfg.EventSources[0], workers: map[string]*drillWorker{}, client: taskdispatch.Client{URL: cfg.Dispatch.URL, JWTSecretKey: cfg.Dispatch.JWT.SecretKey, JWTUsername: cfg.Dispatch.JWT.Username}}
 	d.snapshots = d.file("states.jsonl")
 	defer func() { _ = d.snapshots.Close() }()
 	d.steps = d.file("steps.jsonl")
@@ -464,7 +464,7 @@ func (d *schedulingDrill) start(name, role, pool string, explicit bool) {
 	//nolint:gosec // G204: binary 是本测试编译结果，role 来自固定枚举，configPath 属于本轮 TempDir。
 	// 子进程由 stop 的 SIGTERM/强杀预算回收，不能让测试 Context 取消绕过正常退出断言。
 	command := exec.CommandContext(context.WithoutCancel(d.ctx), d.binary, "run", role, "--config", configPath)
-	command.Env = append(os.Environ(), "LINKD_CONTROL_PLANE_URL="+w.proxy.URL, "LINKD_API_TOKEN="+cfg.Dispatch.APIToken, "LINKD_WORKER_TOKEN="+cfg.Dispatch.WorkerToken)
+	command.Env = append(os.Environ(), "LINKD_CONTROL_PLANE_URL="+w.proxy.URL, "LINKD_JWT_SECRET_KEY="+cfg.Dispatch.JWT.SecretKey, "LINKD_WORKER_TOKEN="+cfg.Dispatch.WorkerToken)
 	command.Dir = d.root
 	command.Stdout = log
 	command.Stderr = log

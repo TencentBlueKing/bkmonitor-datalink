@@ -99,11 +99,11 @@ spec:
           securityContext:
             {{- toYaml ($s.containerSecurityContext | default .Values.containerSecurityContext) | nindent 12 }}
           env:
-            - name: LINKD_API_TOKEN
+            - name: LINKD_JWT_SECRET_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.auth.existingSecret }}
-                  key: {{ .Values.auth.apiTokenKey }}
+                  key: {{ .Values.auth.jwtSecretKey }}
             - name: LINKD_WORKER_TOKEN
               valueFrom:
                 secretKeyRef:

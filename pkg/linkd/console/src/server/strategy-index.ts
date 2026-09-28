@@ -72,7 +72,7 @@ export class StrategyIndexConnector {
 
   private async sources(signal: AbortSignal) {
     const result = bindings(
-      this.config.dispatch?.apiToken
+      this.config.dispatch?.jwt.secretKey
         ? await this.loadSources(this.config, signal)
         : (this.config.eventSources ?? []),
     );

@@ -1,0 +1,9 @@
+{
+  "generator": "PyJWT 2.13.0",
+  "secret_key": "linkd-interop-test-secret-32-bytes-minimum",
+  "username": "admin",
+  "unix": 1800000000,
+  "python_legacy": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6ImFkbWluIn0.HWG2h10czi8e7vD_TmJqmUlZdNdsFxkHY3YH6EYYbHI",
+  "python_timed": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6ImFkbWluIiwiaWF0IjoxODAwMDAwMDAwLCJleHAiOjE4MDAwMDAzMDB9.hjMkImx4abV5stb8MZN-qp7c6AoHga5xIGcHNS9LRnc",
+  "go_timed": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE4MDAwMDAzMDAsImlhdCI6MTgwMDAwMDAwMCwidXNlcm5hbWUiOiJhZG1pbiJ9.qQBI9jwPah9MH5iLOrBK993Gwpn37juM4P1hfqtacjg"
+}

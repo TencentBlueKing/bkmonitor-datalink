@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"linkd/internal/config"
@@ -116,8 +117,8 @@ func prepareMigrationSources(ctx context.Context, cfg config.Config) error {
 // validateDispatchConfig 与正式控制面共用启动认证前提，不能让 Job 使用有效但不可启动的配置。
 func validateDispatchConfig(cfg config.Config) error {
 	d := cfg.Dispatch.WithDefaults()
-	if d.APIToken == "" || d.WorkerToken == "" || d.APIToken == d.WorkerToken {
-		return fmt.Errorf("dispatch requires distinct api_token and worker_token")
+	if strings.TrimSpace(d.JWT.SecretKey) == "" || d.WorkerToken == "" || d.JWT.SecretKey == d.WorkerToken {
+		return fmt.Errorf("dispatch requires distinct jwt.secret_key and worker_token")
 	}
 	if cfg.Storage == nil || cfg.Storage.Redis == nil {
 		return fmt.Errorf("dispatch requires source storage and Redis")

@@ -45,7 +45,7 @@ export class KafkaConnector {
   }
 
   private async queryRuntime() {
-    const sources = this.config.dispatch?.apiToken
+    const sources = this.config.dispatch?.jwt.secretKey
       ? await loadRuntimeSources(this.config)
       : (this.config.eventSources ?? []);
     const queries = sources.flatMap((source) => [
@@ -204,7 +204,10 @@ export class KafkaConnector {
     } catch (error) {
       return {
         ...base,
-        message: safeMessage(error, Boolean(this.config.dispatch?.apiToken)),
+        message: safeMessage(
+          error,
+          Boolean(this.config.dispatch?.jwt.secretKey),
+        ),
       };
     } finally {
       await admin?.disconnect().catch(() => undefined);

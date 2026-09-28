@@ -1,3 +1,4 @@
+import { internalTokenHeaders } from "./internal-token.js";
 import path from "node:path";
 import { z } from "zod";
 import {
@@ -20,14 +21,15 @@ export async function loadRuntimeSources(
   published = false,
 ): Promise<EventSourceConfig[]> {
   const dispatch = config.dispatch;
-  if (!dispatch?.apiToken) throw new Error("dispatch is not configured");
+  if (!dispatch?.jwt.secretKey) throw new Error("dispatch is not configured");
   const records: z.infer<typeof recordSchema>[] = [];
   let after = "";
   for (let page = 0; page < 100; page++) {
     const response = await fetch(
       `${dispatch.url.replace(/\/$/, "")}/api/v1/event-sources?limit=100&after=${encodeURIComponent(after)}&include_secrets=true${published ? "&published=true" : ""}`,
       {
-        headers: { Authorization: `Bearer ${dispatch.apiToken}` },
+        headers: { ...internalTokenHeaders(dispatch.jwt) },
+        redirect: "error",
         signal: signal
           ? AbortSignal.any([
               signal,

@@ -12,6 +12,7 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 
 | 术语            | 定义                                                                                              |
 | --------------- | ------------------------------------------------------------------------------------------------- |
+| Internal-Token | Kingeye 兼容的内部 HTTP JWT 认证头，认证调用身份；不替代租户授权或业务幂等，详见 [协议](contracts/internal-token.md) |
 | RawEventMessage | MQ 无关的接入信封，保存稳定 record ID、租户、来源、接收时间和原始 payload                         |
 | lane            | 消息队列的确认与所有权分片；Kafka 中对应 topic partition，不表达 fingerprint 业务串行范围         |
 | Mailbox         | 按租户、来源和 fingerprint 标识的 Redis 待处理 Event ID 队列                                      |

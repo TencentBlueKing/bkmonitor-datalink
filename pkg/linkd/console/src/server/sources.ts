@@ -1,3 +1,4 @@
+import { internalTokenHeaders } from "./internal-token.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { ConsoleConfig } from "./config.js";
@@ -85,14 +86,15 @@ export function registerSourceRoutes(
   );
   app.get("/local-api/enrich/config/:id", async (request, reply) => {
     const { id } = params.parse(request.params);
-    if (!config.dispatch?.apiToken)
+    if (!config.dispatch?.jwt.secretKey)
       return reply.code(503).send({ error: { message: "控制面未配置" } });
     try {
       const get = async (path: string) => {
         const response = await fetch(
           `${config.dispatch!.url.replace(/\/$/, "")}${path}`,
           {
-            headers: { Authorization: `Bearer ${config.dispatch!.apiToken}` },
+            headers: { ...internalTokenHeaders(config.dispatch!.jwt) },
+            redirect: "error",
             signal: AbortSignal.timeout(config.query.timeoutMilliseconds),
           },
         );
@@ -126,9 +128,12 @@ export function registerSourceRoutes(
     body: unknown,
     reply: { code(value: number): { send(value: unknown): unknown } },
   ) {
-    if (!config.dispatch?.apiToken)
+    if (!config.dispatch?.jwt.secretKey)
       return reply.code(503).send({
-        error: { message: "请在 Linkd 配置中设置 dispatch.url 与 api_token" },
+        error: {
+          message:
+            "请在 Linkd 配置中设置 dispatch.url 与 dispatch.jwt.secret_key",
+        },
       });
     try {
       const response = await fetch(
@@ -136,10 +141,11 @@ export function registerSourceRoutes(
         {
           method,
           headers: {
-            Authorization: `Bearer ${config.dispatch.apiToken}`,
+            ...internalTokenHeaders(config.dispatch.jwt),
             "Content-Type": "application/json",
           },
           body: body === undefined ? undefined : JSON.stringify(body),
+          redirect: "error",
           signal: AbortSignal.timeout(config.query.timeoutMilliseconds),
         },
       );

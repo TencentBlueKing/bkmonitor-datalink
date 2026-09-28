@@ -122,6 +122,7 @@ func TestLoadLayers(t *testing.T) {
 			if err != nil {
 				t.Fatalf("load() error = %v", err)
 			}
+			test.want.Dispatch.JWT.Username = "admin"
 			test.want.Severity = DefaultSeverityConfig()
 			test.want.Cleaner = DefaultCleanerRuntimeConfig()
 			if !reflect.DeepEqual(cfg, test.want) {

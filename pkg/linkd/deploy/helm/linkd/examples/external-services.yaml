@@ -1,6 +1,8 @@
 # 仅示例：使用 Chart 默认 GHCR 镜像，替换外部服务地址。认证 Secret 需预先创建。
 auth:
+  # Secret 包含 jwt-secret-key（与 Kingeye 共享）及独立的 worker-token。
   existingSecret: linkd-auth
+  jwtSecretKey: jwt-secret-key
 configuration:
   # 各角色共用；仅启用相应处理器或 OneModel 调试时才连接。
   resources:

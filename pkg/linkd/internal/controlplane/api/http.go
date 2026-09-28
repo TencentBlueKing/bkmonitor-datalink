@@ -26,11 +26,12 @@ import (
 	"linkd/internal/dynamicconfig"
 	"linkd/internal/enrich/preview"
 	"linkd/internal/eventsource"
+	"linkd/internal/internaltoken"
 	"linkd/internal/onemodel/queryservice"
 	"linkd/internal/taskdispatch"
 )
 
-// API 提供来源管理和 worker 协议；两类请求使用不同 token。
+// API 提供 JWT 管理接口和使用独立 Worker Token 的调度协议。
 type API struct {
 	// Tasks 提供当前进程的只读任务目录及执行快照。
 	Tasks       interface{ Snapshot() taskstate.Snapshot }
@@ -48,6 +49,7 @@ type API struct {
 
 // Handler 创建有身份校验的正式接口。
 func (a *API) Handler() http.Handler {
+	verifier, verifierErr := internaltoken.New(a.Config.JWT.SecretKey, nil)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/control-plane/tasks", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -72,14 +74,24 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /internal/heartbeat", a.beat)
 	mux.HandleFunc("GET /internal/releases/{id}/{version}", a.workerRelease)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token := a.Config.APIToken
 		if strings.HasPrefix(r.URL.Path, "/internal/") {
-			token = a.Config.WorkerToken
-		}
-		provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(provided)) != 1 {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
+			// 调度接口不能因共享管理 JWT 而绕过 Worker 的独立身份边界。
+			provided := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			if a.Config.WorkerToken == "" || subtle.ConstantTimeCompare([]byte(a.Config.WorkerToken), []byte(provided)) != 1 {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+		} else {
+			if verifierErr != nil {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			username, err := verifier.VerifyHeader(r.Header)
+			if err != nil {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			r = r.WithContext(internaltoken.WithUsername(r.Context(), username))
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
@@ -118,7 +130,7 @@ func decode(r *http.Request, v any) error {
 	return nil
 }
 
-// includeSecrets 仅允许已通过管理 token 鉴权的显式读取；默认接口继续脱敏。
+// includeSecrets 仅允许已通过管理 JWT 鉴权的显式读取；默认接口继续脱敏。
 func includeSecrets(w http.ResponseWriter, r *http.Request) (bool, error) {
 	raw := r.URL.Query().Get("include_secrets")
 	if raw == "" || raw == "false" {

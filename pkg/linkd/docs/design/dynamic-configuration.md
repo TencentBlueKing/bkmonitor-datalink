@@ -52,7 +52,7 @@ ID 由 deployment、配置项、非敏感来源身份散列生成。来源身份
 
 ## 分发和生效
 
-`GET /api/v1/dynamic-config` 使用管理 token 返回当前配置、同步状态和 Worker 反馈；
+`GET /api/v1/dynamic-config` 使用管理 JWT 返回当前配置、同步状态和 Worker 反馈；
 `GET /internal/settings/severity` 使用 Worker token 返回当前完整等级快照。
 控制面在心跳响应头 `X-Linkd-Dynamic-Config` 提供当前摘要或 `disabled`。
 Worker 仅在启用且摘要变化时获取配置，以原子指针替换；已有快照的拉取失败不会丢失有效值，首次加载未成功则暂不启动任务。

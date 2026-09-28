@@ -18,12 +18,14 @@ import (
 	"testing"
 
 	controlapi "linkd/internal/controlplane/api"
+	"linkd/internal/internaltoken"
 )
 
 func TestImportSourceWithDynamicKACSeverity(t *testing.T) {
 	puts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer admin" {
+		verifier, _ := internaltoken.New("admin", nil)
+		if username, err := verifier.VerifyHeader(r.Header); err != nil || username != "admin" || r.Header.Get("Authorization") != "" {
 			t.Error("wrong token")
 		}
 		switch {
@@ -46,7 +48,7 @@ func TestImportSourceWithDynamicKACSeverity(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	path := writeCLIConfig(t, fmt.Sprintf("dispatch:\n  url: %s\n  api_token: admin\n", server.URL))
+	path := writeCLIConfig(t, fmt.Sprintf("dispatch:\n  url: %s\n  jwt:\n    secret_key: admin\n", server.URL))
 	source := writeCLIConfig(t, `event_sources:
   - event_source_id: source
     related_tenant_id: system

@@ -42,7 +42,7 @@ func (apiRelations) Related(context.Context, string, []onemodel.Instance, string
 
 func TestOneModelAPIAuthenticationAndStrictInput(t *testing.T) {
 	pages := &apiPages{}
-	handler := (&API{OneModel: queryservice.New(pages, apiRelations{}), Config: config.DispatchConfig{APIToken: "admin", WorkerToken: "worker"}}).Handler()
+	handler := (&API{OneModel: queryservice.New(pages, apiRelations{}), Config: config.DispatchConfig{JWT: config.JWTConfig{SecretKey: "admin"}, WorkerToken: "worker"}}).Handler()
 	for _, tc := range []struct {
 		name, path, token, body string
 		code                    int
@@ -58,7 +58,7 @@ func TestOneModelAPIAuthenticationAndStrictInput(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/onemodel/"+tc.path, strings.NewReader(tc.body))
-			r.Header.Set("Authorization", "Bearer "+tc.token)
+			r.Header.Set("Internal-Token", testJWT(t, tc.token))
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, r)
 			if w.Code != tc.code {
@@ -75,10 +75,10 @@ func TestOneModelAPIAuthenticationAndStrictInput(t *testing.T) {
 }
 
 func TestOneModelAPIRejectsMissingResourceAndOversizedInput(t *testing.T) {
-	handler := (&API{OneModel: queryservice.New(nil, nil), Config: config.DispatchConfig{APIToken: "admin"}}).Handler()
+	handler := (&API{OneModel: queryservice.New(nil, nil), Config: config.DispatchConfig{JWT: config.JWTConfig{SecretKey: "admin"}}}).Handler()
 	for _, body := range []string{`{"bk_tenant_id":"t","model_id":"host"}`, `{"model_id":"` + strings.Repeat("x", 1<<20) + `"}`} {
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/onemodel/search", strings.NewReader(body))
-		r.Header.Set("Authorization", "Bearer admin")
+		r.Header.Set("Internal-Token", testJWT(t, "admin"))
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
 		want := 503

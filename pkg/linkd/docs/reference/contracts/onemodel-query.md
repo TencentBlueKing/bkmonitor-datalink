@@ -1,8 +1,8 @@
 # OneModel 调试查询 API
 
 控制面提供 OneModel 领域查询，复用正式 CMDB 丰富的类型化过滤、关联和租户校验。
-Console 通过 `/local-api/onemodel/*` 代理以下接口，管理 token 只保留在服务端。
-所有接口要求 `Authorization: Bearer <dispatch.api_token>`；worker token 无权访问。
+Console 通过 `/local-api/onemodel/*` 代理以下接口，管理 JWT 只保留在服务端。
+所有接口要求 `Internal-Token: Bearer <JWT>`；worker token 无权访问。
 响应使用 `Cache-Control: no-store`，不允许客户端指定资源连接、索引或原生 ES DSL。
 
 ## 实例分页

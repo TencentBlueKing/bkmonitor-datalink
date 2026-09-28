@@ -6,7 +6,7 @@ afterEach(() => vi.unstubAllGlobals());
 const config = {
   dispatch: {
     url: "http://localhost:8080",
-    apiToken: "admin-token",
+    jwt: { secretKey: "admin-token", username: "admin" },
     deployment: "test",
   },
   query: { timeoutMilliseconds: 1000 },
@@ -77,7 +77,10 @@ it("loads complete input and output credentials only on the server", async () =>
   expect(fetcher).toHaveBeenCalledWith(
     expect.stringContaining("include_secrets=true"),
     expect.objectContaining({
-      headers: { Authorization: "Bearer admin-token" },
+      redirect: "error",
+      headers: {
+        "Internal-Token": expect.stringMatching(/^Bearer [^.]+\.[^.]+\.[^.]+$/),
+      },
       cache: "no-store",
     }),
   );

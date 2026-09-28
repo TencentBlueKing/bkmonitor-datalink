@@ -2,8 +2,8 @@
 
 状态：当前 v1 实现，2026-09-23。接口复用 Lifecycle 的 `CloseAlert`，只允许显式人工关闭。
 
-`POST /api/v1/alerts/{alert_id}/close` 使用控制面管理 Bearer token；worker token 无权调用。
-Console 代理为 `POST /local-api/alerts/{alert_id}/close`，浏览器无需也不能获取管理 token。
+`POST /api/v1/alerts/{alert_id}/close` 使用控制面管理 JWT（`Internal-Token: Bearer <JWT>`）；worker token 无权调用。
+Console 代理为 `POST /local-api/alerts/{alert_id}/close`，浏览器无需也不能获取管理 JWT。
 
 ```json
 {

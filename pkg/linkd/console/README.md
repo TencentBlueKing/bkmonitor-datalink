@@ -214,7 +214,7 @@ Event Sources 页面通过正式控制面 API 管理来源，分为事件来源�
 须主动重新载入最新配置。关闭有修改的抽屉、重新载入或删除来源时会确认；删除不依赖草稿 JSON。
 已删除来源可通过状态筛选查看并恢复发布，恢复时按表单中的启停配置运行。
 发布成功显示控制面返回的版本，是否已运行仍以任务快照为准。草稿只保留在内存中。
-需要设置 Linkd YAML 的 dispatch.url（或 LINKD_CONTROL_PLANE_URL）和服务端 LINKD_API_TOKEN；token 不下发浏览器。
+需要设置 Linkd YAML 的 dispatch.url（或 LINKD_CONTROL_PLANE_URL）和服务端 LINKD_JWT_SECRET_KEY；token 不下发浏览器。
 来源配置不再以启动 YAML 为运行权威，编辑时省略 security 保留旧凭据，禁止把脱敏占位内容提交为凭据。
 Redis 页面可按来源选择派生 Stream、Mailbox 和 lease。Kafka 输入诊断采用中心元数据和 worker ownership 报告，未重复采集的 offset/ISR 显示未知。
 来源配置写入和主动关闭告警均代理控制面，Console 不直接写实体存储；其他运维查询仍只读。
@@ -229,7 +229,7 @@ Redis 页面可按来源选择派生 Stream、Mailbox 和 lease。Kafka 输入�
 
 访问 `/onemodel`，指定租户和模型执行实例分页查询，或按起点实例、关系、方向查询关联对象。
 表格支持实例详情和 JSON 复制；默认每页 50 条、最大 200 条。关联查询保持最多 1024 个实例的完整结果语义。
-控制面复用 Go OneModel 查询模块；Console 通过管理 token 代理请求，不直连 OneModel。
+控制面复用 Go OneModel 查询模块；Console 通过管理 JWT 代理请求，不直连 OneModel。
 
 连接统一配置在 Linkd 顶层 `resources.mysql`、`resources.onemodel`、`resources.kingeye_display`，
 不再接受 EventSource 的 `enrich.datasources`。配置页展示脱敏的本机资源配置。

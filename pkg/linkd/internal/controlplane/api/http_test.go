@@ -47,10 +47,10 @@ func TestPublishedSourceListPreservesScopeAndRedaction(t *testing.T) {
 	released.Hooks[0].Config.KeyPrefix = "published"
 	released.Hooks[0].Config.Redis.Password = "release-secret"
 	docs := publishedDocuments{configurationDocuments: configurationDocuments{record: eventsource.Record{ID: "source", Published: 1, Deleted: true, Spec: draft}}, release: eventsource.Release{ID: "source", Version: 1, Spec: released}}
-	handler := (&API{Sources: eventsource.New(docs, config.SeverityConfig{}), Config: config.DispatchConfig{APIToken: "admin", WorkerToken: "worker"}}).Handler()
+	handler := (&API{Sources: eventsource.New(docs, config.SeverityConfig{}), Config: config.DispatchConfig{JWT: config.JWTConfig{SecretKey: "admin"}, WorkerToken: "worker"}}).Handler()
 	for _, query := range []string{"?published=true", "?published=true&include_secrets=true"} {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/event-sources"+query, nil)
-		req.Header.Set("Authorization", "Bearer admin")
+		req.Header.Set("Internal-Token", testJWT(t, "admin"))
 		out := httptest.NewRecorder()
 		handler.ServeHTTP(out, req)
 		var records []eventsource.Record
@@ -101,7 +101,7 @@ func TestReleaseForRoleLimitsEnrichCredentials(t *testing.T) {
 func TestSourceConfigurationSecrets(t *testing.T) {
 	spec := config.EventSource{EventSourceID: "source", Storage: config.EventSourceStorageConfig{Type: "kafka", Kafka: config.KafkaStorageConfig{Brokers: []string{"kafka:9092"}, Topic: "raw", ConsumerGroup: "cleaner", Security: kafkaclient.SecurityConfig{Protocol: "sasl_plaintext", SASL: &kafkaclient.SASLConfig{Mechanism: "plain", Username: "reader", Password: "private-kafka-secret"}}}}}
 	record := eventsource.Record{ID: "source", Spec: spec, Pending: &eventsource.Release{ID: "source", Spec: spec}}
-	api := (&API{Sources: eventsource.New(configurationDocuments{record}, config.SeverityConfig{}), Config: config.DispatchConfig{APIToken: "admin", WorkerToken: "worker"}}).Handler()
+	api := (&API{Sources: eventsource.New(configurationDocuments{record}, config.SeverityConfig{}), Config: config.DispatchConfig{JWT: config.JWTConfig{SecretKey: "admin"}, WorkerToken: "worker"}}).Handler()
 	for _, endpoint := range []string{"/api/v1/event-sources", "/api/v1/event-sources/source"} {
 		for _, test := range []struct {
 			name, query, token string
@@ -117,7 +117,7 @@ func TestSourceConfigurationSecrets(t *testing.T) {
 		} {
 			t.Run(endpoint+"/"+test.name, func(t *testing.T) {
 				req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, endpoint+test.query, nil)
-				req.Header.Set("Authorization", "Bearer "+test.token)
+				req.Header.Set("Internal-Token", testJWT(t, test.token))
 				out := httptest.NewRecorder()
 				api.ServeHTTP(out, req)
 				if out.Code != test.code {
@@ -150,14 +150,14 @@ func TestPreviewHTTPUsesProductionRulesWithoutPublishing(t *testing.T) {
 	handler := (&API{Sources: sources, Previewer: preview.New(sources, nil, func(_ context.Context, source config.EventSource) (preview.Enricher, func() error, error) {
 		r, err := assembly.NewRouter([]config.EventSource{source}, enrichengine.Sources{})
 		return r, func() error { return nil }, err
-	}), Config: config.DispatchConfig{APIToken: "admin", WorkerToken: "worker"}}).Handler()
+	}), Config: config.DispatchConfig{JWT: config.JWTConfig{SecretKey: "admin"}, WorkerToken: "worker"}}).Handler()
 	body := `{"bk_tenant_id":"t","event_source_id":"host","input":{"alert":{"title":"raw"}}}`
 	for _, tc := range []struct {
 		token, body string
 		status      int
 	}{{"worker", body, 401}, {"admin", body, 200}, {"admin", `{"bk_tenant_id":"t","event_source_id":"host","input":{"alert":{},"alert_id":"a"}}`, 400}, {"admin", `{"bk_tenant_id":"t","event_source_id":"host","input":{"alert":{}},"enrich":{"processors":[{"type":"fields","config":{"rules":[{"id":"bad","operations":[{"id":"x","type":"assign","assignments":[{"target":"$.severity","value":{"literal":"fatal"}}]}]}]}}]}}`, 422}} {
 		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/enrich/preview", strings.NewReader(tc.body))
-		request.Header.Set("Authorization", "Bearer "+tc.token)
+		request.Header.Set("Internal-Token", testJWT(t, tc.token))
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
 		if response.Code != tc.status {

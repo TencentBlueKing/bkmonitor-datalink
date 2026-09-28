@@ -17,7 +17,10 @@ it("forwards a bounded close command with server-only credentials and authentica
   const app = Fastify();
   registerCloseAlert(app, {
     server: { access: { basicAuth: { username: "operator-a" } } },
-    dispatch: { url: "http://control-plane", apiToken: "secret" },
+    dispatch: {
+      url: "http://control-plane",
+      jwt: { secretKey: "secret", username: "admin" },
+    },
     query: { timeoutMilliseconds: 1000 },
   } as ConsoleConfig);
   try {
@@ -31,7 +34,12 @@ it("forwards a bounded close command with server-only credentials and authentica
     expect(fetcher).toHaveBeenCalledWith(
       "http://control-plane/api/v1/alerts/alert-a/close",
       expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: "Bearer secret" }),
+        redirect: "error",
+        headers: expect.objectContaining({
+          "Internal-Token": expect.stringMatching(
+            /^Bearer [^.]+\.[^.]+\.[^.]+$/,
+          ),
+        }),
         body: JSON.stringify({ ...command, operator_id: "operator-a" }),
       }),
     );

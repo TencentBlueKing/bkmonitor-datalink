@@ -13,20 +13,33 @@ import (
 	"fmt"
 	"maps"
 	"net/url"
+	"strings"
 )
 
 // DispatchConfig 定义静态中心连接和控制协议预算；业务配置不从启动 YAML 导入。
 type DispatchConfig struct {
-	Deployment  string `yaml:"deployment" json:"deployment"`
-	Listen      string `yaml:"listen" json:"listen"`
-	URL         string `yaml:"url" json:"url"`
-	APIToken    string `yaml:"api_token" json:"-"`
-	WorkerToken string `yaml:"worker_token" json:"-"`
-	MaxTasks    int    `yaml:"max_tasks" json:"max_tasks"`
+	Deployment string `yaml:"deployment" json:"deployment"`
+	Listen     string `yaml:"listen" json:"listen"`
+	URL        string `yaml:"url" json:"url"`
+	// JWT 配置内部调用签名；密钥仅由管理调用方和控制面持有。
+	JWT         JWTConfig `yaml:"jwt" json:"jwt"`
+	WorkerToken string    `yaml:"worker_token" json:"-"`
+	MaxTasks    int       `yaml:"max_tasks" json:"max_tasks"`
+}
+
+// JWTConfig 定义 Kingeye 兼容的内部 HTTP 身份，不属于租户授权配置。
+type JWTConfig struct {
+	// SecretKey 与 Kingeye BKAPP_JWT_SECRET_KEY 相同，不得展示给浏览器或写入日志。
+	SecretKey string `yaml:"secret_key" json:"-"`
+	// Username 用于本地签发，空值默认 admin；不限制接收端允许的用户名。
+	Username string `yaml:"username" json:"username"`
 }
 
 // WithDefaults 补齐单中心地址和进程任务上限。
 func (d DispatchConfig) WithDefaults() DispatchConfig {
+	if d.JWT.Username == "" {
+		d.JWT.Username = "admin"
+	}
 	if d.Deployment == "" {
 		d.Deployment = "default"
 	}
@@ -42,9 +55,12 @@ func (d DispatchConfig) WithDefaults() DispatchConfig {
 	return d
 }
 
-// Validate 校验启动控制连接，正式运行另外要求分别配置认证 token。
+// Validate 校验启动控制连接，正式控制面另外要求 JWT 密钥和独立 Worker Token。
 func (d DispatchConfig) Validate() error {
 	d = d.WithDefaults()
+	if strings.TrimSpace(d.JWT.Username) == "" {
+		return fmt.Errorf("dispatch.jwt.username must not be blank")
+	}
 	u, e := url.Parse(d.URL)
 	if e != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return fmt.Errorf("invalid dispatch URL")

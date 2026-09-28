@@ -566,7 +566,17 @@ worker:
   max_inflight_bytes: 268435456
 ```
 
-`LINKD_API_TOKEN` 与 `LINKD_WORKER_TOKEN` 必须显式设置且不同；也可在受保护的本地 YAML 中配置 `dispatch.api_token` 和 `dispatch.worker_token`。
+`LINKD_JWT_SECRET_KEY` 与 `LINKD_WORKER_TOKEN` 必须显式设置且不同；也可在受保护的本地 YAML 中配置 `dispatch.jwt.secret_key` 和 `dispatch.worker_token`。控制面和迁移 Job 要求这两个凭据；纯 Worker 只需要 Worker Token。
+
+```yaml
+dispatch:
+  jwt:
+    secret_key: "<与 Kingeye BKAPP_JWT_SECRET_KEY 相同的密钥>"
+    username: admin
+  worker_token: "<独立 Worker Token>"
+```
+
+`LINKD_JWT_USERNAME` 覆盖签发用户名，默认 `admin`。密钥通过 `LINKD_JWT_SECRET_KEY` 覆盖；环境变量优先于 YAML。更改后重启对应进程。旧 `dispatch.api_token` 已移除，旧 `LINKD_API_TOKEN` 不再生效。协议、有效期及双向调用示例见 [内部 HTTP JWT 认证](../reference/contracts/internal-token.md)。
 `LINKD_CONTROL_PLANE_URL` 可覆盖 worker/CLI 的控制面地址。不要把 token 提交到仓库。
 
 ```bash

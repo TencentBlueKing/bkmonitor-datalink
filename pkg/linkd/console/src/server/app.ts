@@ -1,3 +1,4 @@
+import { internalTokenHeaders } from "./internal-token.js";
 import { registerOneModelRoutes } from "./onemodel.js";
 import { registerSourceRoutes } from "./sources.js";
 import { registerCloseAlert } from "./close-alert.js";
@@ -184,14 +185,16 @@ async function registerConsoleRoutes(
   });
 
   async function sourceRedis(query: unknown): Promise<RedisConnector> {
-    if (!config.dispatch?.apiToken || !config.lifecycle) return redisConnector;
+    if (!config.dispatch?.jwt.secretKey || !config.lifecycle)
+      return redisConnector;
     const { event_source_id } = z
       .object({ event_source_id: z.string().optional() })
       .parse(query ?? {});
     const response = await fetch(
       `${config.dispatch.url.replace(/\/$/, "")}/api/v1/runtime`,
       {
-        headers: { Authorization: `Bearer ${config.dispatch.apiToken}` },
+        headers: { ...internalTokenHeaders(config.dispatch.jwt) },
+        redirect: "error",
         signal: AbortSignal.timeout(config.query.timeoutMilliseconds),
       },
     );
@@ -260,10 +263,10 @@ async function registerConsoleRoutes(
       );
     }
     reply.header("Cache-Control", "no-store");
-    if (!config.dispatch?.apiToken)
-      return reply
-        .code(503)
-        .send({ error: { message: "请配置 dispatch.url 与 api_token" } });
+    if (!config.dispatch?.jwt.secretKey)
+      return reply.code(503).send({
+        error: { message: "请配置 dispatch.url 与 dispatch.jwt.secret_key" },
+      });
     const abort = new AbortController();
     const disconnected = () => {
       if (!reply.raw.writableEnded) abort.abort();
@@ -273,7 +276,8 @@ async function registerConsoleRoutes(
       const response = await fetch(
         `${config.dispatch.url.replace(/\/$/, "")}/api/v1/control-plane/tasks`,
         {
-          headers: { Authorization: `Bearer ${config.dispatch.apiToken}` },
+          headers: { ...internalTokenHeaders(config.dispatch.jwt) },
+          redirect: "error",
           signal: AbortSignal.any([
             abort.signal,
             AbortSignal.timeout(config.query.timeoutMilliseconds),

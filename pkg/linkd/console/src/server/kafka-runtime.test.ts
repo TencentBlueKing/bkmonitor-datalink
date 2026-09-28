@@ -23,7 +23,7 @@ vi.mock("kafkajs", async (importOriginal) => {
 const config = {
   dispatch: {
     url: "http://control-plane:8080",
-    apiToken: "admin-token",
+    jwt: { secretKey: "admin-token", username: "admin" },
     deployment: "test",
   },
   query: { timeoutMilliseconds: 1000 },

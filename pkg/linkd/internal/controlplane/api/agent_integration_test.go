@@ -73,7 +73,7 @@ func TestAgentStopHandshakeIntegration(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer client.Del(context.Background(), c.key, c.leader)
-	cfg := config.DispatchConfig{APIToken: "test-admin", WorkerToken: "test-worker"}
+	cfg := config.DispatchConfig{JWT: config.JWTConfig{SecretKey: "test-admin"}, WorkerToken: "test-worker"}
 	server := httptest.NewServer((&API{Sources: sources, Controller: c, Config: cfg}).Handler())
 	defer server.Close()
 	cfg.URL = server.URL
@@ -149,7 +149,7 @@ func TestAgentDisconnectSelfStopIntegration(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer client.Del(context.Background(), c.key, c.leader)
-	cfg := config.DispatchConfig{APIToken: "test-admin", WorkerToken: "test-worker"}
+	cfg := config.DispatchConfig{JWT: config.JWTConfig{SecretKey: "test-admin"}, WorkerToken: "test-worker"}
 	var offline atomic.Bool
 	api := (&API{Sources: sources, Controller: c, Config: cfg}).Handler()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -826,7 +826,7 @@ func writeConfig(
 	}
 	address := listener.Addr().String()
 	_ = listener.Close()
-	configText += fmt.Sprintf("\ndispatch:\n  deployment: %s\n  listen: %s\n  url: http://%s\n  api_token: e2e-admin-%s\n  worker_token: e2e-worker-%s\n", names.Token, address, address, names.Token, names.Token)
+	configText += fmt.Sprintf("\ndispatch:\n  deployment: %s\n  listen: %s\n  url: http://%s\n  jwt:\n    secret_key: e2e-admin-%s\n  worker_token: e2e-worker-%s\n", names.Token, address, address, names.Token, names.Token)
 	path := filepath.Join(directory, "linkd-e2e.yaml")
 	// path 位于 testing.T.TempDir 创建的隔离目录中。
 	//nolint:gosec // G703: 不包含外部可控路径片段。
@@ -1556,7 +1556,7 @@ func importSources(ctx context.Context, t *testing.T, process *linkdProcess, pat
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := taskdispatch.Client{URL: cfg.Dispatch.URL, Token: cfg.Dispatch.APIToken}
+	client := taskdispatch.Client{URL: cfg.Dispatch.URL, JWTSecretKey: cfg.Dispatch.JWT.SecretKey, JWTUsername: cfg.Dispatch.JWT.Username}
 	for {
 		var records []any
 		e := client.Call(ctx, http.MethodGet, "/api/v1/event-sources", nil, &records)
@@ -1615,7 +1615,7 @@ func startExtraWorkers(ctx context.Context, t *testing.T, root, binary, configPa
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := taskdispatch.Client{URL: cfg.Dispatch.URL, Token: cfg.Dispatch.APIToken}
+	client := taskdispatch.Client{URL: cfg.Dispatch.URL, JWTSecretKey: cfg.Dispatch.JWT.SecretKey, JWTUsername: cfg.Dispatch.JWT.Username}
 	for {
 		var state taskdispatch.State
 		if err := client.Call(ctx, http.MethodGet, "/api/v1/runtime", nil, &state); err == nil {
@@ -1658,7 +1658,7 @@ func verifySourceMutationCycle(ctx context.Context, t *testing.T, path string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := taskdispatch.Client{URL: cfg.Dispatch.URL, Token: cfg.Dispatch.APIToken}
+	client := taskdispatch.Client{URL: cfg.Dispatch.URL, JWTSecretKey: cfg.Dispatch.JWT.SecretKey, JWTUsername: cfg.Dispatch.JWT.Username}
 	spec := cfg.EventSources[0]
 	endpoint := "/api/v1/event-sources/" + spec.EventSourceID
 	var record eventsource.Record

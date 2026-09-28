@@ -69,9 +69,9 @@ func TestHookSecretsSurviveConsoleEdit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	api := (&API{Sources: svc, Config: config.DispatchConfig{APIToken: "synthetic-admin"}}).Handler()
+	api := (&API{Sources: svc, Config: config.DispatchConfig{JWT: config.JWTConfig{SecretKey: "synthetic-admin"}}}).Handler()
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/event-sources/review-source", nil)
-	req.Header.Set("Authorization", "Bearer synthetic-admin")
+	req.Header.Set("Internal-Token", testJWT(t, "synthetic-admin"))
 	rr := httptest.NewRecorder()
 	api.ServeHTTP(rr, req)
 	if rr.Code != 200 {
@@ -90,7 +90,7 @@ func TestHookSecretsSurviveConsoleEdit(t *testing.T) {
 		t.Fatal(err)
 	}
 	req = httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/api/v1/event-sources/review-source", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer synthetic-admin")
+	req.Header.Set("Internal-Token", testJWT(t, "synthetic-admin"))
 	rr = httptest.NewRecorder()
 	api.ServeHTTP(rr, req)
 	if rr.Code != 202 {
@@ -115,13 +115,13 @@ func TestAPIRejectsUnmatchedMaskedHookCredentials(t *testing.T) {
 	docs := &hookDocuments{map[string]json.RawMessage{}, map[string]int{}}
 	svc := eventsource.New(docs, config.SeverityConfig{})
 	spec := config.EventSource{EventSourceID: "source", Enabled: true, Storage: config.EventSourceStorageConfig{Type: "kafka", Kafka: config.KafkaStorageConfig{Brokers: []string{"kafka:9092"}, Topic: "raw", ConsumerGroup: "review"}}, Hooks: []config.HookConfig{{Name: "index", Type: config.HookTypeActiveAlertByStrategy, Config: config.HookParameters{Redis: &config.RedisConfig{Address: "redis:6379", Password: "******"}, KeyPrefix: "review"}}}}.WithDefaults()
-	api := (&API{Sources: svc, Config: config.DispatchConfig{APIToken: "synthetic-admin"}}).Handler()
+	api := (&API{Sources: svc, Config: config.DispatchConfig{JWT: config.JWTConfig{SecretKey: "synthetic-admin"}}}).Handler()
 	body, err := json.Marshal(Mutation{Spec: spec})
 	if err != nil {
 		t.Fatal(err)
 	}
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPut, "/api/v1/event-sources/source", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer synthetic-admin")
+	req.Header.Set("Internal-Token", testJWT(t, "synthetic-admin"))
 	rr := httptest.NewRecorder()
 	api.ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest || len(docs.data) != 0 {

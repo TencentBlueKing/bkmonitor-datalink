@@ -184,7 +184,7 @@ describe("strategy index reconciliation", () => {
         ...config,
         dispatch: {
           url: "http://control",
-          apiToken: "private",
+          jwt: { secretKey: "private", username: "admin" },
           deployment: "test",
         },
       },

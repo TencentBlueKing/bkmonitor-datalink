@@ -18,12 +18,18 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"linkd/internal/internaltoken"
 )
 
 // Client 是 CLI、worker 和嵌入方使用的有界控制面客户端。
 type Client struct {
 	URL, Token, WorkerID string
-	HTTP                 *http.Client
+	// JWTSecretKey 与 Token 互斥；配置它时为管理调用，每次请求重新签发。
+	JWTSecretKey string
+	// JWTUsername 是管理调用身份，空值默认 admin。
+	JWTUsername string
+	HTTP        *http.Client
 	// OnResponse 在调用 goroutine 同步观察响应头，不读取远端错误载荷。
 	OnResponse func(http.Header)
 }
@@ -42,12 +48,38 @@ func (c Client) Call(ctx context.Context, method, path string, in, out any) erro
 	if e != nil {
 		return e
 	}
-	r.Header.Set("Authorization", "Bearer "+c.Token)
+	if c.JWTSecretKey != "" {
+		if c.Token != "" {
+			return fmt.Errorf("management JWT and worker token are mutually exclusive")
+		}
+		signer, err := internaltoken.New(c.JWTSecretKey, nil)
+		if err != nil {
+			return err
+		}
+		username := c.JWTUsername
+		if username == "" {
+			username = "admin"
+		}
+		value, err := signer.Sign(username)
+		if err != nil {
+			return err
+		}
+		r.Header.Set(internaltoken.HeaderName, value)
+	} else {
+		r.Header.Set("Authorization", "Bearer "+c.Token)
+	}
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("X-Worker-ID", c.WorkerID)
 	h := c.HTTP
 	if h == nil {
 		h = &http.Client{Timeout: 10 * time.Second}
+	}
+	if c.JWTSecretKey != "" {
+		// Internal-Token 是自定义头，默认重定向策略不会像 Authorization 那样剥离它。
+		// 管理调用禁止重定向，防止签名身份被转发到另一个目标。
+		client := *h
+		client.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+		h = &client
 	}
 	response, e := h.Do(r)
 	if e != nil {

@@ -515,7 +515,11 @@ export interface EventSourceConfig {
 
 export interface ConsoleConfig {
   resources?: z.infer<typeof resourcesSchema>;
-  dispatch?: { url: string; apiToken: string; deployment: string };
+  dispatch?: {
+    url: string;
+    jwt: { secretKey: string; username: string };
+    deployment: string;
+  };
   configPath?: string;
   server: {
     host: string;
@@ -685,15 +689,29 @@ export async function loadConfig(
   const dispatch = z
     .object({
       url: z.string().url().default("http://127.0.0.1:8090"),
-      api_token: z.string().default(""),
+      // 已移除静态管理 Token，避免旧配置被静默忽略。
+      api_token: z.never().optional(),
+      jwt: z
+        .object({
+          secret_key: z.string().default(""),
+          username: z.string().default("admin"),
+        })
+        .default({ secret_key: "", username: "admin" }),
       deployment: z.string().default("default"),
     })
     .parse(decoded.dispatch ?? {});
+  const jwtUsername =
+    (process.env.LINKD_JWT_USERNAME ?? dispatch.jwt.username) || "admin";
+  if (!jwtUsername.trim())
+    throw new Error("dispatch.jwt.username must not be blank");
   const config: ConsoleConfig = {
     resources: decoded.resources,
     dispatch: {
       url: process.env.LINKD_CONTROL_PLANE_URL ?? dispatch.url,
-      apiToken: process.env.LINKD_API_TOKEN ?? dispatch.api_token,
+      jwt: {
+        secretKey: process.env.LINKD_JWT_SECRET_KEY ?? dispatch.jwt.secret_key,
+        username: jwtUsername,
+      },
       deployment: dispatch.deployment,
     },
     configPath,

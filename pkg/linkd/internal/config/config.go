@@ -123,7 +123,7 @@ func (c Config) Validate() error {
 func (c Config) Redacted() Config {
 	redacted := c
 	redacted.Resources = c.Resources.Redacted()
-	redacted.Dispatch.APIToken = "[redacted]"
+	redacted.Dispatch.JWT.SecretKey = "[redacted]"
 	redacted.Dispatch.WorkerToken = "[redacted]"
 	redacted.Worker = c.Worker.Clone()
 	if c.Storage != nil {

@@ -22,7 +22,7 @@ const config: ConsoleConfig = {
   entities: { alerts: "mysql", events: "mysql", alertLogs: "mysql" },
   dispatch: {
     url: "http://control-plane:8090",
-    apiToken: "private-token",
+    jwt: { secretKey: "private-token", username: "admin" },
     deployment: "test",
   },
 };
@@ -57,7 +57,12 @@ describe("control-plane runtime proxy", () => {
       expect(fetch).toHaveBeenCalledWith(
         "http://control-plane:8090/api/v1/control-plane/tasks",
         expect.objectContaining({
-          headers: { Authorization: "Bearer private-token" },
+          redirect: "error",
+          headers: {
+            "Internal-Token": expect.stringMatching(
+              /^Bearer [^.]+\.[^.]+\.[^.]+$/,
+            ),
+          },
         }),
       );
     } finally {

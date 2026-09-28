@@ -1,3 +1,4 @@
+import { internalTokenHeaders } from "./internal-token.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { ConsoleConfig } from "./config.js";
@@ -30,10 +31,12 @@ export function registerOneModelRoutes(
               .send({ error: { message: "请求来源不匹配" } });
           }
         }
-        if (!config.dispatch?.apiToken)
-          return reply
-            .code(503)
-            .send({ error: { message: "请配置 dispatch.url 与 api_token" } });
+        if (!config.dispatch?.jwt.secretKey)
+          return reply.code(503).send({
+            error: {
+              message: "请配置 dispatch.url 与 dispatch.jwt.secret_key",
+            },
+          });
         const abort = new AbortController();
         const canceled = () => abort.abort();
         const disconnected = () => {
@@ -47,10 +50,11 @@ export function registerOneModelRoutes(
             {
               method: "POST",
               headers: {
-                Authorization: `Bearer ${config.dispatch.apiToken}`,
+                ...internalTokenHeaders(config.dispatch.jwt),
                 "Content-Type": "application/json",
               },
               body: JSON.stringify(request.body),
+              redirect: "error",
               signal: AbortSignal.any([
                 abort.signal,
                 AbortSignal.timeout(

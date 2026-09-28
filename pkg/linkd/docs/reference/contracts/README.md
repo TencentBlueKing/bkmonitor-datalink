@@ -13,3 +13,5 @@ Kafka Alert V1、KAC Alarm 兼容输出与策略索引变更通知 v1；后续�
 实现、测试和本文索引。
 
 - [OneModel 调试查询 API](onemodel-query.md)：实例分页、关联查询与快照释放。
+
+- [内部 HTTP JWT 认证](internal-token.md)：Kingeye 互信协议、签发示例和升级配置。

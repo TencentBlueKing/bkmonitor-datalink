@@ -1,3 +1,4 @@
+import { internalTokenHeaders } from "./internal-token.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { ConsoleConfig } from "./config.js";
@@ -53,7 +54,7 @@ export function registerCloseAlert(
         return reply
           .code(400)
           .send({ error: { message: "关闭参数无效，原因须为 1–256 字节" } });
-      if (!config.dispatch?.apiToken)
+      if (!config.dispatch?.jwt.secretKey)
         return reply
           .code(503)
           .send({ error: { message: "未配置控制面管理接口，无法关闭告警" } });
@@ -63,7 +64,7 @@ export function registerCloseAlert(
           {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${config.dispatch.apiToken}`,
+              ...internalTokenHeaders(config.dispatch.jwt),
               "content-type": "application/json",
             },
             body: JSON.stringify({
@@ -71,6 +72,7 @@ export function registerCloseAlert(
               operator_id:
                 config.server.access?.basicAuth?.username ?? "console-local",
             }),
+            redirect: "error",
             signal: AbortSignal.timeout(
               Math.max(12000, config.query.timeoutMilliseconds),
             ),

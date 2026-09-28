@@ -6,7 +6,7 @@ afterEach(() => vi.unstubAllGlobals());
 const config = {
   dispatch: {
     url: "http://control-plane/",
-    apiToken: "private-token",
+    jwt: { secretKey: "private-token", username: "admin" },
     deployment: "test",
   },
   query: { timeoutMilliseconds: 1000 },
@@ -32,8 +32,11 @@ it("proxies only fixed OneModel operations with server credentials and no cachin
       expect(fetcher).toHaveBeenLastCalledWith(
         `http://control-plane/api/v1/onemodel/${operation}`,
         expect.objectContaining({
+          redirect: "error",
           headers: expect.objectContaining({
-            Authorization: "Bearer private-token",
+            "Internal-Token": expect.stringMatching(
+              /^Bearer [^.]+\.[^.]+\.[^.]+$/,
+            ),
           }),
           signal: expect.any(AbortSignal),
         }),

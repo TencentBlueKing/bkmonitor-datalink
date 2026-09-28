@@ -144,9 +144,13 @@ func load(path string, overrides Overrides, lookupEnv func(string) (string, bool
 		}
 		cfg.ControlPlane.RedisStream = settings
 	}
-	if value, ok := lookupEnv("LINKD_API_TOKEN"); ok {
-		cfg.Dispatch.APIToken = value
+	if value, ok := lookupEnv("LINKD_JWT_SECRET_KEY"); ok {
+		cfg.Dispatch.JWT.SecretKey = value
 	}
+	if value, ok := lookupEnv("LINKD_JWT_USERNAME"); ok {
+		cfg.Dispatch.JWT.Username = value
+	}
+	cfg.Dispatch.JWT.Username = cfg.Dispatch.WithDefaults().JWT.Username
 	if value, ok := lookupEnv("LINKD_WORKER_TOKEN"); ok {
 		cfg.Dispatch.WorkerToken = value
 	}

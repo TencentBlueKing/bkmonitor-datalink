@@ -19,13 +19,13 @@ import (
 )
 
 func TestTaskStatusUsesManagementAuthentication(t *testing.T) {
-	a := &API{Config: config.DispatchConfig{APIToken: "management", WorkerToken: "worker"}, Tasks: taskstate.New("test", []taskstate.Definition{{ID: "scheduler", Enabled: true, Settings: map[string]any{}}})}
+	a := &API{Config: config.DispatchConfig{JWT: config.JWTConfig{SecretKey: "management"}, WorkerToken: "worker"}, Tasks: taskstate.New("test", []taskstate.Definition{{ID: "scheduler", Enabled: true, Settings: map[string]any{}}})}
 	for _, tc := range []struct {
 		token  string
 		status int
 	}{{"", 401}, {"worker", 401}, {"management", 200}} {
 		r := httptest.NewRequestWithContext(t.Context(), "GET", "/api/v1/control-plane/tasks", nil)
-		r.Header.Set("Authorization", "Bearer "+tc.token)
+		r.Header.Set("Internal-Token", testJWT(t, tc.token))
 		w := httptest.NewRecorder()
 		a.Handler().ServeHTTP(w, r)
 		if w.Code != tc.status {
@@ -37,7 +37,7 @@ func TestTaskStatusUsesManagementAuthentication(t *testing.T) {
 	}
 	a.Tasks = nil
 	r := httptest.NewRequestWithContext(t.Context(), "GET", "/api/v1/control-plane/tasks", nil)
-	r.Header.Set("Authorization", "Bearer management")
+	r.Header.Set("Internal-Token", testJWT(t, "management"))
 	w := httptest.NewRecorder()
 	a.Handler().ServeHTTP(w, r)
 	if w.Code != 503 {

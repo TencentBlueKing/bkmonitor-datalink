@@ -23,7 +23,7 @@ import (
 func TestMetricCatalogManagementAPI(t *testing.T) {
 	t.Parallel()
 	// Sources、Controller、Previewer 均为空，目录不能依赖已启动的业务模块。
-	handler := (&API{Config: config.DispatchConfig{APIToken: "admin", WorkerToken: "worker"}}).Handler()
+	handler := (&API{Config: config.DispatchConfig{JWT: config.JWTConfig{SecretKey: "admin"}, WorkerToken: "worker"}}).Handler()
 	for _, tc := range []struct {
 		token, method string
 		status        int
@@ -31,7 +31,7 @@ func TestMetricCatalogManagementAPI(t *testing.T) {
 		{"", "GET", 401}, {"worker", "GET", 401}, {"admin", "GET", 200}, {"admin", "POST", 405},
 	} {
 		r := httptest.NewRequestWithContext(context.Background(), tc.method, "/api/v1/metrics/catalog", nil)
-		r.Header.Set("Authorization", "Bearer "+tc.token)
+		r.Header.Set("Internal-Token", testJWT(t, tc.token))
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
 		if w.Code != tc.status {

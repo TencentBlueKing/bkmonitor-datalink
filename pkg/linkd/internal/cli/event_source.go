@@ -35,7 +35,7 @@ func newEventSourceCommand(options *commandOptions) *cobra.Command {
 			return fmt.Errorf("--file is required")
 		}
 		d := cfg.Dispatch.WithDefaults()
-		client := taskdispatch.Client{URL: d.URL, Token: d.APIToken}
+		client := taskdispatch.Client{URL: d.URL, JWTSecretKey: d.JWT.SecretKey, JWTUsername: d.JWT.Username}
 		var dynamic struct {
 			Config struct {
 				Enabled bool                   `json:"enabled"`

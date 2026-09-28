@@ -337,7 +337,7 @@ test("migration mounts pre-existing config and account without creating hook rep
 test("migration validates bounds and prevents reserved environment overrides", () => {
   for(const migrate of [
     {watch: "false"}, {timeoutSeconds: 0}, {timeoutSeconds: 301}, {backoffLimit: -1},
-    {extraEnvVars:[{name:"LINKD_API_TOKEN",value:"bad"}]},
+    {extraEnvVars:[{name:"LINKD_JWT_SECRET_KEY",value:"bad"}]},
   ]) {
     const result = spawnSync("helm", ["template","test",chart,"-f","-"], {input:stringify({...base,migrate}),encoding:"utf8"});
     assert.notEqual(result.status,0,JSON.stringify(migrate));
@@ -408,4 +408,27 @@ test("shared resources reach control plane and lifecycle without source credenti
     assert.deepEqual(cfg.resources, base.configuration.resources);
     assert.deepEqual(cfg.event_sources, []);
   }
+});
+
+
+test("JWT secret is injected only into management consumers", () => {
+  const values = structuredClone(base);
+  values.console = {...values.console, enabled:true, basicAuth:{...values.console?.basicAuth, existingSecret:"console-auth"}};
+  values.auth.jwtSecretKey = "custom-jwt-key";
+  values.configuration.dispatch = {jwt:{secret_key:"must-not-render", username:"service"}};
+  const docs = render(values);
+  for (const deploy of deployments(docs)) {
+    const role = deploy.metadata.labels["app.kubernetes.io/component"];
+    const env = deploy.spec.template.spec.containers[0].env;
+    const jwt = env.find(e => e.name === "LINKD_JWT_SECRET_KEY");
+    assert.equal(Boolean(jwt), ["control-plane", "console"].includes(role));
+    if (jwt) assert.deepEqual(jwt.valueFrom.secretKeyRef, {name:values.auth.existingSecret, key:"custom-jwt-key"});
+    assert.equal(env.some(e => e.name === "LINKD_API_TOKEN"), false);
+    const config = parse(configFor(docs, deploy));
+    assert.equal(config.dispatch.jwt.secret_key, undefined);
+    assert.equal(config.dispatch.jwt.username, "service");
+  }
+  const job = docs.find(doc => doc.kind === "Job" && doc.metadata.annotations?.["helm.sh/hook"]);
+  const jwt = job.spec.template.spec.containers[0].env.find(e => e.name === "LINKD_JWT_SECRET_KEY");
+  assert.equal(jwt.valueFrom.secretKeyRef.key, "custom-jwt-key");
 });

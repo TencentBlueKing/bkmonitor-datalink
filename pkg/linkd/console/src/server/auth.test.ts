@@ -17,7 +17,7 @@ const config: ConsoleConfig = {
   },
   dispatch: {
     url: "http://control-plane:8090",
-    apiToken: "upstream-test-token",
+    jwt: { secretKey: "upstream-test-token", username: "admin" },
     deployment: "default",
   },
   query: {
@@ -158,8 +158,11 @@ describe("Basic Auth boundary", () => {
       expect(fetch).toHaveBeenCalledWith(
         "http://control-plane:8090/api/v1/event-sources/test",
         expect.objectContaining({
+          redirect: "error",
           headers: {
-            Authorization: "Bearer upstream-test-token",
+            "Internal-Token": expect.stringMatching(
+              /^Bearer [^.]+\.[^.]+\.[^.]+$/,
+            ),
             "Content-Type": "application/json",
           },
         }),

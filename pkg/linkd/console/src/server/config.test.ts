@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { loadConfig, redactedConfig } from "./config.js";
 
@@ -505,4 +505,46 @@ resources:
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+describe("internal JWT configuration", () => {
+  it("loads defaults, overrides YAML and excludes secrets from browser config", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "linkd-jwt-"));
+    const configPath = path.join(directory, "linkd.yaml");
+    try {
+      vi.stubEnv("LINKD_JWT_SECRET_KEY", undefined);
+      vi.stubEnv("LINKD_JWT_USERNAME", undefined);
+      await writeFile(
+        configPath,
+        "storage:\n  repository: elasticsearch\n  elasticsearch:\n    addresses: [http://localhost:9200]\ndispatch:\n  jwt:\n    secret_key: yaml-secret\n",
+      );
+      expect((await loadConfig(configPath)).dispatch?.jwt).toEqual({
+        secretKey: "yaml-secret",
+        username: "admin",
+      });
+      vi.stubEnv("LINKD_JWT_SECRET_KEY", "env-secret");
+      vi.stubEnv("LINKD_JWT_USERNAME", "service");
+      const config = await loadConfig(configPath);
+      expect(config.dispatch?.jwt).toEqual({
+        secretKey: "env-secret",
+        username: "service",
+      });
+      expect(JSON.stringify(redactedConfig(config))).not.toContain(
+        "env-secret",
+      );
+      vi.stubEnv("LINKD_JWT_SECRET_KEY", "");
+      expect((await loadConfig(configPath)).dispatch?.jwt.secretKey).toBe("");
+      vi.stubEnv("LINKD_JWT_USERNAME", " ");
+      await expect(loadConfig(configPath)).rejects.toThrow("username");
+      vi.stubEnv("LINKD_JWT_USERNAME", undefined);
+      await writeFile(
+        configPath,
+        "storage:\n  repository: elasticsearch\n  elasticsearch:\n    addresses: [http://localhost:9200]\ndispatch:\n  api_token: old-token\n",
+      );
+      await expect(loadConfig(configPath)).rejects.toThrow("api_token");
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 });

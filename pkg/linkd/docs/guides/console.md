@@ -38,7 +38,7 @@ Prometheus 图表页面统一提供 15 分钟到 7 天的查询时间范围，�
 页面另行提供独立的“计算窗口”，默认 1 分钟，并直接用于速率、增量与直方图分位计算。
 
 Control Plane 使用“运行概况 → 全量任务列表 → 任务详情”。目录和生效参数来自控制面
-`GET /api/v1/control-plane/tasks`，受管理 token 保护；Console 通过 `/local-api/runtime/control-plane`
+`GET /api/v1/control-plane/tasks`，受管理 JWT 保护；Console 通过 `/local-api/runtime/control-plane`
 代理读取，浏览器不接触 token。需要同时更新控制面和 Console；接口缺失时明确报错，不从 Console YAML
 推断任务启停。当前列出调度、来源 Provider、三个 ES 维护任务、Redis Stream、策略索引和动态配置，管理 API
 作为常驻服务单独展示。未启用项目保留在列表并解释原因；支持搜索、分组和需要关注筛选。
@@ -80,7 +80,7 @@ MySQL Alert 统计现在也应用 JSON `update_at` 时间条件，但不提供�
 ### 主动关闭告警
 
 Alert 详情中的“主动关闭”要求填写原因并确认当前租户和 Alert；仅 active 告警可发起新关闭。
-Console 通过管理 token 调用正式控制面关闭接口，不修改 Node 查询连接所指向的数据库。
+Console 通过管理 JWT 调用正式控制面关闭接口，不修改 Node 查询连接所指向的数据库。
 Console 与控制面的 Repository 必须属于同一 Linkd 部署；功能需要同时部署包含关闭接口的新控制面与 Console。
 控制面使用当前已发布来源配置执行 `CloseAlert`，完成 CAS、近期缓存、close 流水和 FinalHook；不会生成伪 Event。
 来源被停用或删除后，仍可使用其已保留的最近发布配置关闭既有告警。
@@ -102,7 +102,7 @@ Redis 与 Lifecycle 均已配置时任务默认启用，`control_plane.redis_str
 
 ## 动态来源的 Kafka 查询
 
-配置 `dispatch.url` 和 `dispatch.api_token` 后，Console 服务端通过控制面来源列表接口读取完整配置，
+配置 `dispatch.url` 和 `dispatch.jwt.secret_key` 后，Console 服务端通过控制面来源列表接口读取完整配置，
 再用 Kafka Admin 查询输入 topic 和各个 Kafka hook 的输出 topic。Leader、replicas/ISR 来自 topic metadata，
 High/Low 来自 topic offset 查询，Committed 来自 consumer group 的已提交位点；Lag 使用整数精度计算
 `max(High - Committed, 0)`。Owner 来自 Kafka consumer group 的实际成员分配，不再用调度器分区数拼接健康快照。
@@ -110,7 +110,7 @@ High/Low 来自 topic offset 查询，Committed 来自 consumer group 的已提�
 
 控制面的 `GET /api/v1/event-sources` 和 `GET /api/v1/event-sources/{id}` 默认脱敏；显式添加
 `include_secrets=true` 可返回含认证材料的完整记录，响应设置 `Cache-Control: no-store`。
-两种读取均需要管理 `api_token`，worker token 不能访问。此参数只由 Console 服务端使用，
+两种读取均需要管理 JWT，worker token 不能访问。此参数只由 Console 服务端使用，
 浏览器侧来源管理代理不转发该参数，运行状态响应也只包含查询结果和脱敏配置摘要。
 
 Console 必须能够访问 Kafka bootstrap 地址及 broker 的 advertised 地址，并拥有 topic/group 的查询权限。
@@ -126,14 +126,16 @@ Console 必须能够访问 Kafka bootstrap 地址及 broker 的 advertised 地�
 完整统计口径、维度说明和可复制的查询序列。筛选条件保存在 URL 中，可收藏或分享同一查询。
 
 目录由控制面 `GET /api/v1/metrics/catalog` 提供，经 Console 的 `GET /local-api/metrics/catalog`
-代理读取。配置 `dispatch.url` 与 `dispatch.api_token` 即可使用；不要求配置 Prometheus，也不要求
-开启 `telemetry.metrics`。管理 token 只留在 Console 服务端，worker token 无权读取此接口。
+代理读取。配置 `dispatch.url` 与 `dispatch.jwt.secret_key` 即可使用；不要求配置 Prometheus，也不要求
+开启 `telemetry.metrics`。管理 JWT 只留在 Console 服务端，worker token 无权读取此接口。
 
 ```bash
 curl --fail --silent --show-error \
-  -H "Authorization: Bearer ${LINKD_API_TOKEN}" \
+  -H "Internal-Token: Bearer ${LINKD_INTERNAL_JWT}" \
   "${LINKD_CONTROL_PLANE_URL}/api/v1/metrics/catalog"
 ```
+
+`LINKD_INTERNAL_JWT` 是已签发的 JWT，不是共享密钥；签发示例见 [内部认证协议](../reference/contracts/internal-token.md)。
 
 API 返回完整只读目录，不分页、不查询历史样本、不接受修改；Console 在浏览器中筛选并按 20 项分页。
 响应字段如下：
@@ -196,7 +198,7 @@ control-plane 和 all-in-one 不拥有各自的配置字段，但每个实际进
 ## OneModel 查询
 
 「系统 → OneModel 查询」（`/onemodel`）提供独立的实例与关联查询，无需选择 EventSource。
-控制面读取顶层 `resources.onemodel`；Console 只需已有的 `dispatch.url` 和管理 token。
+控制面读取顶层 `resources.onemodel`；Console 只需已有的 `dispatch.url` 和管理 JWT。
 此功能是复用 Go OneModel SDK 的领域查询，普通中间件诊断仍由 Console 的 Node 连接层执行。
 
 实例查询填写租户、模型，可叠加实例 ID 和类型化属性条件；高级 JSON 支持 `all/any/not`。

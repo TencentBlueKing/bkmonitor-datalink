@@ -27,7 +27,7 @@ func migrationTestConfig() config.Config {
 		Redis:      &config.RedisConfig{Address: "127.0.0.1:6379"},
 	}).WithDefaults()
 	cfg.Storage = &storage
-	cfg.Dispatch.APIToken = "test-api-token"
+	cfg.Dispatch.JWT.SecretKey = "test-jwt-key"
 	cfg.Dispatch.WorkerToken = "test-worker-token"
 	return cfg
 }
@@ -88,8 +88,10 @@ func TestMigrationChecksConfigurationBeforeIO(t *testing.T) {
 		name   string
 		change func(*config.Config)
 	}{
-		{"missing API token", func(c *config.Config) { c.Dispatch.APIToken = "" }},
-		{"same tokens", func(c *config.Config) { c.Dispatch.WorkerToken = c.Dispatch.APIToken }},
+		{"missing JWT key", func(c *config.Config) { c.Dispatch.JWT.SecretKey = "" }},
+		{"blank JWT key", func(c *config.Config) { c.Dispatch.JWT.SecretKey = "  " }},
+		{"missing worker token", func(c *config.Config) { c.Dispatch.WorkerToken = "" }},
+		{"same tokens", func(c *config.Config) { c.Dispatch.WorkerToken = c.Dispatch.JWT.SecretKey }},
 		{"missing Redis", func(c *config.Config) { c.Storage.Redis = nil }},
 		{"missing storage", func(c *config.Config) { c.Storage = nil }},
 		{"invalid repository", func(c *config.Config) { c.Storage.Repository = "invalid" }},
@@ -104,7 +106,7 @@ func TestMigrationChecksConfigurationBeforeIO(t *testing.T) {
 			if err == nil || invoked {
 				t.Fatalf("error=%v, invoked=%v", err, invoked)
 			}
-			if strings.Contains(err.Error(), "test-api-token") {
+			if strings.Contains(err.Error(), "test-jwt-key") {
 				t.Fatal("credential leaked")
 			}
 		})

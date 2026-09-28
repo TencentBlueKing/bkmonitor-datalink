@@ -47,11 +47,11 @@ GitHub Actions 支持单独打包 Chart 并下载 `.tgz`，见[手动构建与�
 ```bash
 kubectl create namespace linkd
 kubectl -n linkd create secret generic linkd-auth \
-  --from-file=api-token=/secure/linkd-api-token \
+  --from-file=jwt-secret-key=/secure/linkd-jwt-secret-key \
   --from-file=worker-token=/secure/linkd-worker-token
 ```
 
-API token 与 worker token 必须非空且不同。Chart 引用已有 Secret，不自动生成或轮换 token。
+JWT 共享密钥与 Worker Token 必须非空且不同。Chart 引用已有 Secret，不自动生成或轮换这些凭据。
 
 ## Worker 分组
 
@@ -462,3 +462,5 @@ Helm 测试检查渲染、配置加载、组隔离和错误参数，不连接真
 动态配置最后有效快照使用已有 Linkd MySQL/Elasticsearch，升级初始化仅在开关启用时创建独立快照集合，
 不探测 Kingeye 上游。数据库故障时可从快照恢复；关闭开关后不读取这些快照，也不会删除它们。
 来源示例见[配置指南](configuration.md#动态配置)。
+
+管理认证 Secret 使用 `jwt-secret-key`（可通过 `auth.jwtSecretKey` 指定已有 key），其值与 Kingeye 的 `BKAPP_JWT_SECRET_KEY` 相同。Chart 仅向控制面、Console 和迁移 Job 注入 `LINKD_JWT_SECRET_KEY`；Worker 继续独立使用 `worker-token`。`configuration.dispatch.jwt.username` 可设置签发用户名，默认 `admin`。升级时同步更新 Secret、Chart、控制面、Console 和来源导入 CLI；旧 `auth.apiTokenKey` 已移除，不支持混用旧管理 Token。修改 Secret 后需重启消费它的进程。

@@ -16,12 +16,13 @@ import (
 
 	"linkd/internal/domain"
 	"linkd/internal/enrich"
+	"linkd/internal/enrich/models"
 )
 
 func TestEventSourceUsesEventSourceIDForLookupAndSourceEventIDForMeta(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	reader := &recordingAlarmSourceReader{name: "自定义告警源"}
+	reader := &recordingAlarmSourceReader{id: "kac-alarm-source-1", name: "自定义告警源"}
 	scope, err := enrich.NewScope(domain.Alert{
 		EventSourceVersion: 1,
 		AlertID:            "alert-1", BKTenantID: "tenant-a", EventSourceID: "alarm-source-1", Fingerprint: "fp",
@@ -41,7 +42,7 @@ func TestEventSourceUsesEventSourceIDForLookupAndSourceEventIDForMeta(t *testing
 	if reader.tenantID != "tenant-a" || reader.sourceID != "alarm-source-1" {
 		t.Fatalf("lookup tenant=%q source=%q", reader.tenantID, reader.sourceID)
 	}
-	if string(result.Value["source_id"]) != `"alarm-source-1"` ||
+	if string(result.Value["source_id"]) != `"kac-alarm-source-1"` ||
 		string(result.Value["source_name"]) != `"自定义告警源"` ||
 		string(result.Value["meta_info"]) != `"source-event-1"` {
 		t.Fatalf("result=%#v", result)
@@ -49,14 +50,15 @@ func TestEventSourceUsesEventSourceIDForLookupAndSourceEventIDForMeta(t *testing
 }
 
 type recordingAlarmSourceReader struct {
+	id                 string
 	name               string
 	tenantID, sourceID string
 }
 
-func (r *recordingAlarmSourceReader) GetAlarmSourceName(
+func (r *recordingAlarmSourceReader) GetAlarmSource(
 	_ context.Context,
 	tenantID, sourceID string,
-) (string, bool, error) {
+) (models.AlarmSource, bool, error) {
 	r.tenantID, r.sourceID = tenantID, sourceID
-	return r.name, true, nil
+	return models.AlarmSource{Id: r.id, Name: r.name}, true, nil
 }

@@ -329,8 +329,8 @@ func (r apmTestReader) FindInstance(context.Context, string, enrich.InstanceQuer
 	return enrich.Instance{}, false, nil
 }
 
-func (r apmTestReader) GetAlarmSourceName(context.Context, string, string) (string, bool, error) {
-	return "source", true, nil
+func (r apmTestReader) GetAlarmSource(context.Context, string, string) (models.AlarmSource, bool, error) {
+	return models.AlarmSource{Id: "source", Name: "Source"}, true, nil
 }
 
 func (r apmTestReader) FindAPMApplications(context.Context, string, int64, string) ([]models.APMApplication, error) {

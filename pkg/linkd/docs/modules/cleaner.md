@@ -16,7 +16,7 @@ MQ Delivery
 
 输入信封包含稳定 `record_id`、租户、`event_source_id`、`received_at`、headers 和原始 payload。
 payload 不能覆盖来源、稳定接收时间或内部消息身份。租户支持 payload/header 输入：两处非空时须一致；来源 related_tenant_id 可强制覆盖。EventSource 的详细边界见
-[EventSource](event-source.md)，当前 `standard` payload 见[输入契约](../reference/contracts/raw-event.md)。
+[EventSource](event-source.md)，当前 `standard` payload 见[Linkd 标准事件](../reference/contracts/standard-event.md)。
 
 Cleaner 的成功终态有三种：
 

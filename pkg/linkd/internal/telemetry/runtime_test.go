@@ -23,6 +23,7 @@ import (
 	controlplaneredisstream "linkd/internal/controlplane/redisstream"
 	"linkd/internal/domain"
 	"linkd/internal/enrich"
+	"linkd/internal/enrich/models"
 	"linkd/internal/enrich/rules"
 	"linkd/internal/lifecycle"
 )
@@ -82,7 +83,7 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 		Diagnostics: []enrich.Diagnostic{{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyOneModel}},
 	})
 	observedSources := runtime.ObserveEnrichSources(enrich.Sources{AlarmSource: testAlarmSourceReader{}})
-	_, _, _ = observedSources.AlarmSource.GetAlarmSourceName(ctx, "sensitive-tenant", "source-a")
+	_, _, _ = observedSources.AlarmSource.GetAlarmSource(ctx, "sensitive-tenant", "source-a")
 	runtime.RecentAlertCacheObserver().Operation(ctx, "get_current", "hit")
 	panicRecovered := false
 	func() {
@@ -203,8 +204,8 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 
 type testAlarmSourceReader struct{}
 
-func (testAlarmSourceReader) GetAlarmSourceName(context.Context, string, string) (string, bool, error) {
-	return "", false, nil
+func (testAlarmSourceReader) GetAlarmSource(context.Context, string, string) (models.AlarmSource, bool, error) {
+	return models.AlarmSource{}, false, nil
 }
 
 type panickingFinalHook struct{}

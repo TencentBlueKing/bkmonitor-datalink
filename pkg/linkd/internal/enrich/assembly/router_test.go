@@ -460,17 +460,17 @@ func (baseCollectMetric) FindMetricLibrary(
 
 type baseCollectAlarmSource struct{}
 
-func (baseCollectAlarmSource) GetAlarmSourceName(
+func (baseCollectAlarmSource) GetAlarmSource(
 	ctx context.Context,
 	tenantID, sourceID string,
-) (string, bool, error) {
+) (models.AlarmSource, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return "", false, err
+		return models.AlarmSource{}, false, err
 	}
 	if tenantID != datasources.SampleTenantID || sourceID != "built_in_bk" {
-		return "", false, nil
+		return models.AlarmSource{}, false, nil
 	}
-	return "鲸眼监控", true, nil
+	return models.AlarmSource{Id: "built_in_bk", Name: "鲸眼监控"}, true, nil
 }
 
 type baseCollectModel struct{}
@@ -547,17 +547,17 @@ func (sampleMetric) FindMetricLibrary(
 
 type sampleAlarmSource struct{}
 
-func (sampleAlarmSource) GetAlarmSourceName(
+func (sampleAlarmSource) GetAlarmSource(
 	ctx context.Context,
 	tenantID, sourceID string,
-) (string, bool, error) {
+) (models.AlarmSource, bool, error) {
 	if err := ctx.Err(); err != nil {
-		return "", false, err
+		return models.AlarmSource{}, false, err
 	}
 	if tenantID != datasources.SampleTenantID || sourceID != "built_in_bk" {
-		return "", false, nil
+		return models.AlarmSource{}, false, nil
 	}
-	return "鲸眼监控", true, nil
+	return models.AlarmSource{Id: "built_in_bk", Name: "鲸眼监控"}, true, nil
 }
 
 type sampleOneModel struct{}
@@ -595,7 +595,7 @@ func (panicSources) GetByBKStrategyID(context.Context, string, int64) (models.CW
 	panic("data source called")
 }
 
-func (panicSources) GetAlarmSourceName(context.Context, string, string) (string, bool, error) {
+func (panicSources) GetAlarmSource(context.Context, string, string) (models.AlarmSource, bool, error) {
 	panic("data source called")
 }
 

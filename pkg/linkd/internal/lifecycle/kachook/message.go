@@ -12,17 +12,17 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/google/uuid"
 	"linkd/internal/domain"
 	"linkd/internal/enrich/kingeye"
 	"linkd/internal/enrich/models"
 	"linkd/internal/enrich/view"
 	"linkd/internal/lifecycle"
+
+	"github.com/google/uuid"
 )
 
 const (
 	identityPrefix = "linkd-"
-	sourceName     = "鲸眼监控"
 	kacTimeLayout  = "2006-01-02 15:04:05"
 )
 
@@ -77,7 +77,7 @@ func convertMessageWithLevel(input lifecycle.FinalHookInput, resolve func(string
 	eventIdentity := identityPrefix + input.Alert.AlertID
 	message := kingeye.AlarmMessage{
 		AlarmID: kacAlarmID(input), EventID: eventIdentity,
-		SourceID: input.Alert.EventSourceID, SourceName: sourceName,
+		SourceID: values.source.SourceID, SourceName: values.source.SourceName,
 		Item: firstNonEmpty(values.metric.DisplayName, values.strategy.StrategyName), MetricName: values.metric.MetricName,
 		Name: input.Alert.Title, Content: input.Alert.Content,
 		AlarmTime: input.Alert.BeginAt.In(kacTimeZone).Format(kacTimeLayout), Action: action, Level: level,

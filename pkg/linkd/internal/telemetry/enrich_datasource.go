@@ -14,10 +14,11 @@ import (
 	"errors"
 	"time"
 
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
 	"linkd/internal/enrich"
 	"linkd/internal/enrich/models"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 const (
@@ -181,10 +182,10 @@ func (r *observedAPMApplicationReader) FindAPMApplications(ctx context.Context, 
 	return values, err
 }
 
-func (r *observedAlarmSourceReader) GetAlarmSourceName(ctx context.Context, tenantID, sourceID string) (string, bool, error) {
+func (r *observedAlarmSourceReader) GetAlarmSource(ctx context.Context, tenantID, sourceID string) (models.AlarmSource, bool, error) {
 	startedAt := time.Now()
-	value, found, err := r.next.GetAlarmSourceName(ctx, tenantID, sourceID)
-	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceAlarmSource, "get_alarm_source_name", startedAt, found, err)
+	value, found, err := r.next.GetAlarmSource(ctx, tenantID, sourceID)
+	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceAlarmSource, "get_alarm_source", startedAt, found, err)
 	return value, found, err
 }
 

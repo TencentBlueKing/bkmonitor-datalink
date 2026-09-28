@@ -1,5 +1,8 @@
 # 主机推送告警 Enrich 示例
 
+> **说明：** 本文仅保留为 Linkd 对接 alarmd 告警事件，以及内置 Enrich 所需数据源依赖的场景示例。
+> 标准告警事件的字段、必填规则和默认值请参考 [Linkd 标准事件](../reference/contracts/standard-event.md)。
+
 本文以 BASE_COLLECT 主机 CPU 告警为例，按照当前 `standard` 输入格式，展示消息如何经过 Cleaner、Lifecycle 和 Enrich，最终关联平台策略、鲸眼策略、OneModel 主机实例、指标库和告警源。
 
 本示例供 alarmd 推送给 Linkd 时参考，alarmd 生产者的实际接入状态需单独验证。Linkd 侧对应实现与回归测试位于：
@@ -37,62 +40,7 @@ Enrich 在新 Alert 持久化前同步执行。同等级更新、恢复和关闭
 
 ### 2.1 RawEventMessage 信封
 
-Kafka Adapter 会形成以下等价信封：
-
-```go
-cleaner.RawEventMessage{
-    RecordID:      "kafka-linkd-base-collect-0001",
-    BKTenantID:    "tenant-1",
-    EventSourceID: "built_in_bk",
-    ReceivedAt:    time.Date(2026, 9, 1, 0, 0, 2, 0, time.UTC),
-    Headers: map[string][]byte{
-        "bk_tenant_id": []byte("tenant-1"),
-    },
-    Payload: []byte(`{
-      "bk_tenant_id": "tenant-1",
-      "event_id": "source-event-1",
-      "alert_id": "source-alert-1",
-      "title": "CPU usage is high",
-      "content": "Host 10.0.0.1 CPU usage reached 92.5%",
-      "values": {
-        "value": 92.5
-      },
-      "evaluations": [
-        {
-          "severity": "warning",
-          "action": "triggered",
-          "action_reason": ""
-        }
-      ],
-      "dimensions": {
-        "bk_inst_id": 101,
-        "bk_target_ip": "10.0.0.1",
-        "bk_target_cloud_id": 0
-      },
-      "subject": {
-        "system": "cmdb",
-        "type": "host",
-        "id": "101",
-        "name": "host-101"
-      },
-      "occurred_at": "2026-09-01T00:00:00Z",
-      "produced_at": "2026-09-01T00:00:01Z",
-      "labels": {
-        "strategy_id": 123,
-        "strategy_version": 1,
-        "bk_biz_id": 2
-      },
-      "extra_data": {
-        "anomaly_begin_time": "2026-09-01T00:00:00Z",
-        "additional_dimensions": {
-          "bk_host_id": 101
-        }
-      }
-    }`),
-}
-```
-
-信封字段来源：
+Kafka Adapter 将下节的 Kafka Value 放入 `RawEventMessage.Payload`，并形成以下信封字段：
 
 | 字段 | 示例 | 来源 |
 | --- | --- | --- |
@@ -100,7 +48,7 @@ cleaner.RawEventMessage{
 | `BKTenantID` | `tenant-1` | Kafka Header `bk_tenant_id`；Adapter 读取后写入信封 |
 | `EventSourceID` | `built_in_bk` | 消费该 Topic 的 EventSource 配置 |
 | `ReceivedAt` | `2026-09-01T00:00:02Z` | Kafka Record timestamp |
-| `Payload` | 标准事件 JSON | Kafka Value |
+| `Payload` | 下节的 JSON | Kafka Value |
 
 `StandardCleaner` 还会读取 Value 中的 `bk_tenant_id`。本例的 `related_tenant_id` 为空，
 Header 与 Value 同时提供租户时必须一致；只提供其中一处也可。若配置了非空 `related_tenant_id`，
@@ -166,10 +114,8 @@ EventFactory 使用该配置覆盖租户；最终租户不能为空。
 本例使用默认等级表和同名映射，因此 Kafka Value、Event 的判定项和新 Alert 的 severity 均为 `warning`。
 使用其他来源标识符时，在 EventSource 的 `severity_mapping` 中配置对应关系。
 
-- `evaluations` 必填，包含 1–32 项；映射后的标准级别不能重复。
-- 每项 `action` 必填，只允许 `triggered`、`resolved`、`closed`；`action_reason` 可省略或为空，最多 256 bytes。
-- 同一事件的所有级别共享 `values`、`dimensions` 和 `occurred_at`；数组顺序不决定裁决顺序。
-- 恢复或关闭时发送对应级别的 `resolved` 或 `closed`；未出现的级别不隐含恢复或关闭。
+`evaluations` 的通用数量、动作和来源等级映射约束见[Linkd 标准事件](../reference/contracts/standard-event.md#linkd-standard-通用输入规则)。
+本例恢复或关闭时，对应等级分别发送 `resolved` 或 `closed`。
 
 旧格式顶层的 `severity`、`action` 和 `action_reason` 不再用于构造判定，发送方需改用 `evaluations`。
 
@@ -191,12 +137,10 @@ EventFactory 使用该配置覆盖租户；最终租户不能为空。
 `extra_data.additional_dimensions` 保存 alarmd 在原始数据维度之外补充的维度。字段名沿用现有监控链路的
 `additional_dimensions`，并与顶层 `dimensions` 的来源事实边界保持清晰。
 
-契约约束如下：
-
-- `additional_dimensions` 是 JSON object，value 只允许字符串、有限数字和布尔值；
-- 告警检测维度写入顶层 `dimensions`，alarmd 补充的展示与资源维度写入 `extra_data.additional_dimensions`；
-- 两处维度的 key 保持互斥，alarmd 在发送前完成重复 key 的归一化；
-- 以维度构造 fingerprint 时只读取顶层 `dimensions`，不读取 `additional_dimensions`；本例直接使用 `source_alert_id` 作为 fingerprint。
+本例将告警检测维度写入顶层 `dimensions`，仅用于展示与资源丰富的补充维度写入
+`extra_data.additional_dimensions`；两处的 key 保持互斥。通用类型与关联规则见
+[Linkd 标准事件](../reference/contracts/standard-event.md#dimensions严格完整的告警维度)。本例直接使用
+`source_alert_id` 作为 fingerprint。
 
 ### 2.5 时间语义
 
@@ -214,9 +158,8 @@ Kafka 发布时间时使用 `published_at`，以区分消息生产时间和传�
 
 ### 2.6 观测数值
 
-`values` 保存本次事件的扁平数值快照，默认示例为 `{"value": 92.5}`。该字段可省略；缺失、null 和空对象
-统一为空对象。最多 256 项，key 为 1–256 bytes，字段值必须是有限数字，不能使用字符串、布尔值、
-null 或嵌套对象。缺失的数值字段不补零。
+本例的 `values` 为 `{"value": 92.5}`，表示本次判定的 CPU 使用率数值快照；格式与缺失时的
+处理见[Linkd 标准事件](../reference/contracts/standard-event.md#linkd-standard-通用输入规则)。
 
 `values` 不参与 fingerprint，也不替代 `dimensions`、`labels` 或 `extra_data`。
 当前数值快照保存在 Event 中，Alert 没有 `values` 或 `evaluations` 字段；本例的 Metric Processor
@@ -670,6 +613,6 @@ go test ./internal/enrich/assembly \
 
 相关契约：
 
-- [Standard Raw Event](../reference/contracts/raw-event.md)
+- [Linkd 标准事件](../reference/contracts/standard-event.md)
 - [Lifecycle 模块](../modules/lifecycle.md)
 - [Alert Enrich 现行设计](../design/enrich.md)

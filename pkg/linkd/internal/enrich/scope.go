@@ -95,9 +95,9 @@ type LogThemeReader interface {
 	GetLogTheme(ctx context.Context, tenantID string, themeID int64) (models.LogTheme, bool, error)
 }
 
-// AlarmSourceReader 按租户和告警源 ID 读取告警源名称。
+// AlarmSourceReader 按租户和 Linkd EventSourceID 读取 KAC 告警源。
 type AlarmSourceReader interface {
-	GetAlarmSourceName(ctx context.Context, tenantID, sourceID string) (string, bool, error)
+	GetAlarmSource(ctx context.Context, tenantID, sourceID string) (models.AlarmSource, bool, error)
 }
 
 // CollectConfigReader 按租户和采集任务身份读取声明式采集配置。
@@ -150,7 +150,7 @@ type businessResult struct {
 }
 
 type alarmSourceResult struct {
-	name  string
+	value models.AlarmSource
 	found bool
 	err   error
 }
@@ -394,20 +394,20 @@ func (s *Scope) LogTheme(ctx context.Context, themeID int64) (models.LogTheme, b
 	return result.value, result.found, result.err
 }
 
-// AlarmSourceName 惰性读取并复用本次调用的告警源名称。
-func (s *Scope) AlarmSourceName(ctx context.Context) (string, bool, error) {
+// AlarmSource 惰性读取并复用本次调用的告警源。
+func (s *Scope) AlarmSource(ctx context.Context) (models.AlarmSource, bool, error) {
 	s.alarmSourceOnce.Do(func() {
 		if s.sources.AlarmSource == nil {
 			s.alarmSource.err = fmt.Errorf("alarm source reader is unavailable")
 			return
 		}
-		s.alarmSource.name, s.alarmSource.found, s.alarmSource.err = s.sources.AlarmSource.GetAlarmSourceName(
+		s.alarmSource.value, s.alarmSource.found, s.alarmSource.err = s.sources.AlarmSource.GetAlarmSource(
 			ctx,
 			s.alert.BKTenantID,
 			s.alert.EventSourceID,
 		)
 	})
-	return s.alarmSource.name, s.alarmSource.found, s.alarmSource.err
+	return s.alarmSource.value, s.alarmSource.found, s.alarmSource.err
 }
 
 // Scenario 在一次丰富调用内缓存场景解析结果，供 Resource 与 Display 共享。

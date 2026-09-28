@@ -2,7 +2,7 @@
 
 | 契约                               | 内容                                                     |
 | ---------------------------------- | -------------------------------------------------------- |
-| [raw-event.md](raw-event.md) | `RawEventMessage` 信封与 `standard` payload |
+| [Linkd 标准事件](standard-event.md) | `RawEventMessage` 信封、`standard` payload 与 KAC V2 发布前校验 |
 | [kac-alarm-output.md](kac-alarm-output.md) | KAC alarm_collect_topic 扁平 Alarm JSON、身份和固定映射 |
 | [alert-output.md](alert-output.md) | Kafka Alert V1 完整快照、cause 和确定性 message ID       |
 | [alert-close.md](alert-close.md) | 管理 API 主动关闭 Alert、操作身份与部分成功重试 |

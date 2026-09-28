@@ -11,11 +11,15 @@ package datasources
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
-	"gorm.io/gorm"
 	"linkd/internal/enrich"
+	"linkd/internal/enrich/models"
+
+	"gorm.io/datatypes"
+	"gorm.io/gorm"
 )
 
 var _ enrich.AlarmSourceReader = (*AlarmSourceClient)(nil)
@@ -23,7 +27,10 @@ var _ enrich.AlarmSourceReader = (*AlarmSourceClient)(nil)
 const alarmSourceTable = "alarm_collect_alarmsource"
 
 type alarmSourceRow struct {
-	Name string `gorm:"column:name"`
+	Id            string         `gorm:"column:id"`
+	Name          string         `gorm:"column:name"`
+	LinkdSourceId string         `gorm:"column:linkd_source_id"`
+	LinkdChannel  datatypes.JSON `gorm:"column:linkd_channel"`
 }
 
 // AlarmSourceClientConfig 注入已经选择 Kingeye schema 的 GORM 连接。
@@ -44,28 +51,40 @@ func NewAlarmSourceClient(config AlarmSourceClientConfig) (*AlarmSourceClient, e
 	return &AlarmSourceClient{db: config.DB}, nil
 }
 
-// GetAlarmSourceName 按 bk_tenant_id 与主键 id 查询告警源名称。
-func (c *AlarmSourceClient) GetAlarmSourceName(
+// GetAlarmSource 按 bk_tenant_id 与 KAC 的 linkd_source_id 查询告警源。
+func (c *AlarmSourceClient) GetAlarmSource(
 	ctx context.Context,
 	tenantID, sourceID string,
-) (string, bool, error) {
+) (models.AlarmSource, bool, error) {
 	if ctx == nil {
-		return "", false, fmt.Errorf("get alarm source name: context must not be nil")
+		return models.AlarmSource{}, false, fmt.Errorf("get alarm source: context must not be nil")
 	}
 	if tenantID == "" || sourceID == "" {
-		return "", false, fmt.Errorf("get alarm source name: tenant ID and source ID are required")
+		return models.AlarmSource{}, false, fmt.Errorf("get alarm source: tenant ID and source ID are required")
 	}
 	var row alarmSourceRow
 	err := c.db.WithContext(ctx).
 		Table(alarmSourceTable).
-		Select("name").
-		Where("bk_tenant_id = ? AND id = ?", tenantID, sourceID).
+		Select("id, name, linkd_source_id, linkd_channel").
+		Where("bk_tenant_id = ? AND linkd_source_id = ?", tenantID, sourceID).
 		Take(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return "", false, nil
+		return models.AlarmSource{}, false, nil
 	}
 	if err != nil {
-		return "", false, fmt.Errorf("query alarm source name: %w", err)
+		return models.AlarmSource{}, false, fmt.Errorf("query alarm source: %w", err)
 	}
-	return row.Name, true, nil
+	linkdChannel := models.LinkdChannelConfig{}
+
+	alarmSource := models.AlarmSource{
+		Id:            row.Id,
+		Name:          row.Name,
+		LinkdSourceId: row.LinkdSourceId,
+		LinkdChannel:  linkdChannel,
+	}
+	err = json.Unmarshal(row.LinkdChannel, &alarmSource.LinkdChannel)
+	if err != nil {
+		return models.AlarmSource{}, false, fmt.Errorf("unmarshal alarm source linkd_channel: %w", err)
+	}
+	return alarmSource, true, nil
 }

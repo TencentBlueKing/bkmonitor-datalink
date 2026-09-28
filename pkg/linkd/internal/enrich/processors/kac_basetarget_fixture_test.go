@@ -379,8 +379,8 @@ func (r *kacFixtureReader) FindMetricLibrary(context.Context, models.MetricLibra
 	return metadata, true, nil
 }
 
-func (*kacFixtureReader) GetAlarmSourceName(context.Context, string, string) (string, bool, error) {
-	return "基础监控", true, nil
+func (*kacFixtureReader) GetAlarmSource(_ context.Context, _, sourceID string) (models.AlarmSource, bool, error) {
+	return models.AlarmSource{Id: sourceID, Name: "基础监控"}, true, nil
 }
 
 func assertKACProjection(t *testing.T, payload enrich.Payload, expected map[string]map[string]any) {

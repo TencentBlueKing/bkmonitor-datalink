@@ -42,7 +42,7 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | 公共资源配置 | Linkd 顶层 `resources` 中的第三方只读连接，供丰富和调试查询复用；启动时加载，不进入 EventSource 发布快照 |
 | OneModel 实例存储 | Kingeye 当前统一实例来源；Elasticsearch 逻辑入口固定为 `kingeye_all_instance` alias，实例根身份为 `bk_tenant_id/model_id/model_inst_id/entity_uid`，来源原始属性位于 `attributes`，可检索动态属性位于 nested `attribute_values` |
 | strategy（丰富分组） | 丰富结果中的策略补充信息，包含 bk_strategy_id、monitor_template_id、strategy_config_id 三种独立身份，以及展示名称、跳转链接和鲸眼配置数据源；monitor_template_id 沿用旧 clean_strategy_id 的模板名称/策略名称回退行为 |
-| source（丰富分组） | 丰富结果中的来源补充信息，保存 Alert.EventSourceID 对应的 source_id、从 alarm_collect_alarmsource 查询的 source_name，以及承载来源事件标识的 meta_info；不替代 Linkd 的 EventSourceID |
+| source（丰富分组） | 丰富结果中的来源补充信息：按租户和 Alert.EventSourceID（KAC 的 linkd_source_id）回查 alarm_collect_alarmsource，source_id 保存该表的 id，source_name 保存名称，meta_info 承载来源事件标识；不替代 Linkd 的 EventSourceID |
 | meta_info（丰富字段） | 迁移后承载 Event.SourceEventID 中的来源事件标识，保存到 enrich.source.meta_info；旧实现使用内部转换对象 ID，本次已确认调整其取值来源 |
 | metric（丰富分组） | 丰富结果中的指标补充信息，包含监控项展示名称、按原分类解释的指标名称、单位及本次告警观测数据的查询参数；指标名称不统一定义为指标 ID，多个丰富分类共用该分组 |
 | 来源策略身份 | Event.Labels 中 `strategy_id` 与 `strategy_version`；前者关联鲸眼声明式策略，后者记录来源声明的策略版本并原样进入 enrich.strategy，不用于运行时回查蓝鲸策略表 |

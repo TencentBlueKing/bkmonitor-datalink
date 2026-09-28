@@ -22,7 +22,7 @@ import (
 
 func TestLogInvalidRelatedInfoReturnsPartial(t *testing.T) {
 	t.Parallel()
-	reader := &logTestReader{strategy: logStrategy(models.CWMonitorItemTypeLogKeyword, "error"), sourceName: "日志源"}
+	reader := &logTestReader{strategy: logStrategy(models.CWMonitorItemTypeLogKeyword, "error"), source: models.AlarmSource{Id: "log_source", Name: "日志源"}}
 	alert := processorBaseTargetAlert(t, domain.DimensionMap{})
 	alert.ExtraData = domain.JSONObject{"log_related_info": json.RawMessage(`"text"`)}
 	chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Log{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader})
@@ -58,7 +58,7 @@ func TestLogThemeReaderOverridesAndValidatesStrategyFallback(t *testing.T) {
 		{name: "missing", found: false, wantName: "日志主题", wantStatus: domain.EnrichStatusSucceeded},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			reader := &logTestReader{strategy: logStrategy(models.CWMonitorItemTypeLog, "error"), sourceName: "日志源", theme: tc.theme, themeFound: tc.found}
+			reader := &logTestReader{strategy: logStrategy(models.CWMonitorItemTypeLog, "error"), source: models.AlarmSource{Id: "log_source", Name: "日志源"}, theme: tc.theme, themeFound: tc.found}
 			chain, err := enrich.NewChain([]enrich.Processor{Strategy{}, Resource{}, Display{}, Log{}, Metric{}, EventSource{}}, enrich.Sources{CWStrategy: reader, Metric: reader, Model: reader, OneModel: reader, AlarmSource: reader, LogTheme: reader})
 			if err != nil {
 				t.Fatal(err)
@@ -104,7 +104,7 @@ func TestLogContentProjection(t *testing.T) {
 
 func TestLogSkipsNonLogStrategy(t *testing.T) {
 	t.Parallel()
-	reader := &logTestReader{strategy: logStrategy("", ""), sourceName: "基础监控"}
+	reader := &logTestReader{strategy: logStrategy("", ""), source: models.AlarmSource{Id: "basic_monitoring", Name: "基础监控"}}
 	reader.strategy.Spec.MetricSource = "bk_monitor"
 	chain, err := enrich.NewChain([]enrich.Processor{Log{}}, enrich.Sources{CWStrategy: reader})
 	if err != nil {
@@ -126,7 +126,7 @@ func TestLogSkipsNonLogStrategy(t *testing.T) {
 
 func TestLogMetricFixtureProjection(t *testing.T) {
 	t.Parallel()
-	reader := &logTestReader{strategy: logStrategy(models.CWMonitorItemTypeLog, ""), sourceName: "基础监控"}
+	reader := &logTestReader{strategy: logStrategy(models.CWMonitorItemTypeLog, ""), source: models.AlarmSource{Id: "basic_monitoring", Name: "基础监控"}}
 	alert := processorBaseTargetAlert(t, domain.DimensionMap{})
 	alert.Content = "AVG(服务器发送字节数) >= 2.0, 当前值1189.352608,关联信息：host=web"
 	alert.SubjectName = "寒江孤影"
@@ -176,7 +176,7 @@ func TestLogMetricAndKeywordProjection(t *testing.T) {
 		{name: "keyword fallback", itemType: models.CWMonitorItemTypeLogKeyword, expected: "--", wantTitle: "日志主题发生了【】关键字告警", wantContent: "日志主题匹配到【】关键字次数 source content"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			reader := &logTestReader{strategy: logStrategy(tc.itemType, tc.query), sourceName: "日志源"}
+			reader := &logTestReader{strategy: logStrategy(tc.itemType, tc.query), source: models.AlarmSource{Id: "log_source", Name: "日志源"}}
 			alert := processorBaseTargetAlert(t, domain.DimensionMap{})
 			alert.SubjectName = "日志主题"
 			alert.ExtraData = domain.JSONObject{}
@@ -244,7 +244,7 @@ func logStrategy(itemType models.CWMonitorItemType, query string) models.CWStrat
 
 type logTestReader struct {
 	strategy   models.CWStrategy
-	sourceName string
+	source     models.AlarmSource
 	theme      models.LogTheme
 	themeFound bool
 }
@@ -269,6 +269,6 @@ func (r *logTestReader) GetLogTheme(context.Context, string, int64) (models.LogT
 	return r.theme, r.themeFound, nil
 }
 
-func (r *logTestReader) GetAlarmSourceName(context.Context, string, string) (string, bool, error) {
-	return r.sourceName, true, nil
+func (r *logTestReader) GetAlarmSource(context.Context, string, string) (models.AlarmSource, bool, error) {
+	return r.source, true, nil
 }

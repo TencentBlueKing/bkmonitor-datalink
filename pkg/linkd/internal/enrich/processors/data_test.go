@@ -642,6 +642,6 @@ func (r *dataSliceReader) GetUptimeTask(_ context.Context, _, id string) (models
 	return r.task, true, nil
 }
 
-func (*dataSliceReader) GetAlarmSourceName(context.Context, string, string) (string, bool, error) {
-	return "鲸眼监控", true, nil
+func (*dataSliceReader) GetAlarmSource(context.Context, string, string) (models.AlarmSource, bool, error) {
+	return models.AlarmSource{Id: "built_in_bk", Name: "鲸眼监控"}, true, nil
 }

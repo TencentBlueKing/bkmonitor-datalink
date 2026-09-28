@@ -1,10 +1,15 @@
 # alarm_callback 回调输入字段盘点
 
+> 归档说明：本文引用的“迁移执行计划 / 迁移设计”原文已不在当前 Linkd 文档目录，
+> 原有失效链接在整合时移除，章节号仅供历史追溯。当前输入与丰富行为请以
+> [Linkd 标准事件](../reference/contracts/standard-event.md)、
+> [主机告警示例](../guides/host-alert-enrich-example.md)和[丰富设计](../design/enrich.md)为准。
+
 > 库外证据使用 Kingeye 源码路径引用，按本文记录的提交或取证日期查看；这些路径不是本仓库的相对链接，也不保证当前 Kingeye checkout 仍有相同文件。
 
 日期：2026-09-02。状态：源码输入盘点；用户后续映射方案见迁移计划第 5.19 节，完整输入 schema 尚未冻结。
 
-关联：[迁移执行计划](../design/alarm-callback-enrichment-migration.md)。
+关联：迁移执行计划。
 
 ## 1. 本轮约束与证据范围
 
@@ -14,19 +19,19 @@
 
 下文所有路径都描述**旧回调**，不是 `Event.SourceRawData` 路径，也不是对 Event 新字段的命名建议。
 本盘点保留旧代码的输入路径；用户后续已指定的 Event 字段来源和待收敛问题统一记录在
-[迁移计划第 5.19 节](../design/alarm-callback-enrichment-migration.md#519-用户输入映射方案与落地评估待收敛)，
+迁移计划第 5.19 节，
 不在旧路径表中混入新路径。旧默认值、回退和失败行为仅作为取证，不自动成为 Linkd 契约。
 用户进一步明确可决定上游推送数据的字段落点，因此旧路径不是新输入设计的兼容性边界；
 字段按 Linkd 职责重新分配的建议见迁移计划第 5.19.5 节。
 策略输入已区分为两份数据。最新决策为完整 bk_strategy_id/bk_strategy_history_id 标签引用触发监控平台策略历史内容
 与鲸眼 StrategyConfig 两份读取，任一缺失按 partial 处理，见
-[迁移设计第 5.23 节](../design/alarm-callback-enrichment-migration.md#523-已确认完整平台策略引用触发两份策略读取)。
+迁移设计第 5.23 节。
 输入标签已确认是 Event.Labels.bk_strategy_id 与 Event.Labels.bk_strategy_history_id，均为正整数；
 已启用本套丰富的来源必须同时提供两者。缺失返回 failed 与 missing_field；字符串、布尔值、非整数、
 0 或负数返回 failed 与 invalid_field。两类输入错误都在依赖查询前结束，详见迁移设计第 5.23.4–5.23.5 节。
 引用合法后的策略记录缺失及超时、连接失败、权限拒绝、响应无法解析均按 partial 处理；
 上述依赖问题的诊断码已统一为 dependency_invalid，暂不细分故障类型，见
-[迁移设计第 5.9.1 节](../design/alarm-callback-enrichment-migration.md#591-已确认诊断原因码与受影响分组)。
+迁移设计第 5.9.1 节。
 bk_strategy_history_id 已进一步明确为 alarm_strategy_history.id，不是旧内容中的固定 version="v2"。
 以下旧路径表保留原回调字段名，不把新标签名写回旧实现证据。
 下列 S 字段保留旧消费来源；用户已确认重叠字段沿用旧来源，见迁移设计第 5.23.3 节。
@@ -88,32 +93,32 @@ bk_strategy_history_id 已进一步明确为 alarm_strategy_history.id，不是�
 最终维度展示；Converter 使用维度 key/value 与指标库、Meta 等依赖重新生成展示条目。
 因此它们暂不列为必须提供的丰富输入。用户后续已将 F03/F04 合为 Event.Severity、F05–F07
 合为 Labels.bk_biz_id；表中的分处读取是旧事实。算法等级的显式映射已确认，见
-[迁移设计第 5.22 节](../design/alarm-callback-enrichment-migration.md#522-已确认内容文案算法等级显式映射到-eventseverity)。
+迁移设计第 5.22 节。
 业务 ID 按来源、观测维度与资源归属分别使用的决定见
-[迁移设计第 5.24 节](../design/alarm-callback-enrichment-migration.md#524-已确认业务-id-按来源业务观测维度与资源归属分别使用)。
+迁移设计第 5.24 节。
 新输入的 Labels.bk_biz_id 已确认为必填数字 Scalar 正整数；缺失返回 missing_field + failed，
 字符串、布尔值、小数、0 或负数返回 invalid_field + failed，且不查询依赖，详见
-[第 5.24.1 节](../design/alarm-callback-enrichment-migration.md#5241-已确认来源业务标签使用数字-scalar-正整数)。
+第 5.24.1 节。
 这是迁移后的契约，不改变上表记录的旧整数样本事实。F08 空值及其他字段类型仍见映射评估。
 F11 已确认改从 Event.ExtraData["log_related_info"] 读取，仅接受 JSON 字符串。缺失沿用旧空字符串；
 错误 JSON 类型按 log 分组记录 invalid_field + partial，display.content 继续基于 Event.Content 加工，见
-[迁移设计第 5.25 节](../design/alarm-callback-enrichment-migration.md#525-已确认日志关联信息从-extradata-读取)。
+迁移设计第 5.25 节。
 表中的 R.log_related_info 仍是旧读取证据，不代表新输入位置。
 F09 已确认改用 Event.Dimensions.bk_target_ip 与 bk_target_cloud_id 两个独立维度；
 主机定位不再解析组合 target，拨测 target 保留原语义，见
-[迁移设计第 5.26 节](../design/alarm-callback-enrichment-migration.md#526-已确认主机-ip-与云区域使用独立维度)。
+迁移设计第 5.26 节。
 旧路径表和 D 的构造步骤仍保留原代码证据，不作为新输入的别名回退规则。
 B01/F10/B06 三种实例标识已确认保留各自语义，统一从 Event.Dimensions 读取，按
 bk_inst_id → bk_host_id → bk_target_host_id 回退；适用链的三项均缺失时按 partial，见
-[迁移设计第 5.27 节](../design/alarm-callback-enrichment-migration.md#527-已确认保留三种实例标识及其维度回退顺序)。
+迁移设计第 5.27 节。
 已确认仅在 HOST_OBJECT_MODEL_CODE 下使用完整三段回退；非主机保留原有实例定位逻辑，
 不将后两个主机字段当作该模型的实例 ID，也不套用三项缺失的 partial。
 主机三项 ID 缺失时仍继续可用的 IP/云区域查询；查得资源进入丰富结果，整体保持 partial
 及来源 ID 缺失诊断，不回填 Event。查询返回多个主机候选时沿用旧逻辑使用底层结果第一条，见
-[迁移设计第 5.27.1 节](../design/alarm-callback-enrichment-migration.md#5271-已确认三个-id-缺失时继续-ip-查询并保持-partial)。
+迁移设计第 5.27.1 节。
 地址维度的取值、缺省和转换已确认按旧分支处理，不增加统一成对必填门槛；基础分支保留
 空 IP、云区域 -1 的缺省，DATA 分支缺云区域时的转换失败不解释为支持只按 IP 检索，见
-[迁移设计第 5.27.2 节](../design/alarm-callback-enrichment-migration.md#5272-已确认地址查询输入沿用旧分支处理)。
+迁移设计第 5.27.2 节。
 旧代码的其他分支差异继续保留在下表中。
 
 ## 4. 策略快照的具体输入字段
@@ -185,7 +190,7 @@ F09 查询优先使用 event.target，但 SystemMetricMixin 保存匹配键仍�
 
 旧 APM 的应用名称来自外查策略/模板形成的 data_source 或 S07/S09 派生的结果表，不是默认读取
 回调中的 apm_app_id。迁移时 data_source 统一读取 StrategyConfig.spec.data_source，见
-[迁移设计第 5.16.4 节](../design/alarm-callback-enrichment-migration.md#5164-已确认所有分类的数据源统一读取鲸眼策略配置)。
+迁移设计第 5.16.4 节。
 其专用原始维度列在第 6 节。
 
 ### 5.3 日志指标、日志关键字
@@ -283,9 +288,9 @@ Reader 装配（Kingeye 源码 `src/kingeye/base/domains/onemodel/fabric_storage
 仓库的 InstanceStorageFabricReader（Kingeye 源码 `src/kingeye/base/candidacy/infras/instance_storage/onemodel.py`）
 （367）使用统一实例存储 SDK。这与 KAC k8s_field_add 直接使用 ResourceIndex 查询 ES 的路径
 应分别记录；当前只核对源码，未验证实际部署配置、存储后端或接口可用性。输出字段已在
-[迁移设计第 5.29 节](../design/alarm-callback-enrichment-migration.md#529-已确认k8s-专用输出归入-enrichk8s保留-bcs_cluster_id)
+迁移设计第 5.29 节
 确认；查询来源已按
-[迁移设计第 5.30 节](../design/alarm-callback-enrichment-migration.md#530-已确认k8s-查询统一对齐当前-onemodel-实例存储)
+迁移设计第 5.30 节
 统一为当前 OneModel 实例存储，Go 侧对接其 Elasticsearch 后端。
 
 已有调用示例位于
@@ -308,7 +313,7 @@ BKAPP_INSTANCE_STORAGE_READ_BACKEND 配置选择，源码默认 elasticsearch。
 进一步核对 ES 读取路径：runtime.resolve_elasticsearch_instance_write_target 虽名称包含
 write，但当前适配器读写均使用该目标解析器；带模型过滤的 K8s 查询读取相应 kingeye_k8s_*
 目标，而不是无条件使用 kingeye_all_instance。模型路由、扁平字段和租户过滤证据收敛在
-[迁移设计第 5.30.1 节](../design/alarm-callback-enrichment-migration.md#5301-已确认本次接入-onemodel-的-elasticsearch-读后端)。
+迁移设计第 5.30.1 节。
 
 2026-09-03，经用户指出后重新核对：不能仅因标准 bk_biz_ids 是列表，就认定旧 bk_biz_id
 无法继续读取或必须修改消费规则。search_k8s_instance_document（588）查询 page_size=1，
@@ -327,7 +332,7 @@ write，但当前适配器读写均使用该目标解析器；带模型过滤的
 当前 common k8s_field_add（560）仍可按 namespace_info.get("bk_biz_id") or
 cluster_info.get("bk_biz_id") 消费。该证据不保证每条真实记录均有此属性，但足以撤回
 “接入 OneModel 必须改为 bk_biz_ids 列表”的推导；沿用旧消费规则见
-[迁移设计第 5.30.2 节](../design/alarm-callback-enrichment-migration.md#5302-取证澄清单实例文档保留-bk_biz_id沿用旧消费规则)。
+迁移设计第 5.30.2 节。
 
 ## 7. 不应要求回调提供的查询结果与中间字段
 
@@ -343,8 +348,8 @@ cluster_info.get("bk_biz_id") 消费。该证据不保证每条真实记录均�
 | strategy_detail.monitor_template_id | 下游有可选读取并回退 event_data.strategy_id；该字段未在 14 个原始策略样本中出现 | 后者已由外查配置标签注入，不要求上游为回退分支补字段 |
 | 业务/集群/模块名称、模型名称、实例显示名、云区域名 | CMDB、Meta、实例/拓扑查询和名称映射 | 业务 ID 仍有多处回调输入，不能连同名称一并排除 |
 | APM 应用信息、K8s 集群/namespace 业务、云平台/资源详情 | APM、K8s 查询、Cloud/CloudResource | 缺失应依迁移的局部失败契约处理，不能用回调同名字段伪造查询成功 |
-| dynamic_group_id、cw_labels、strategy URL | Redis 投影读取、已定位资源/业务派生、配置及 Web 基础地址 | 属于输出或依赖结果，不是回调必填值；动态分组读取键已确认对齐当前写入端，见[迁移设计第 5.16.5 节](../design/alarm-callback-enrichment-migration.md#5165-已确认动态分组读取键对齐当前写入规则) |
-| source_id、source_name | 旧来源 ID 为固定值 built_in_bk；旧名称从 KMC_NAME 配置读取并默认“鲸眼监控” | 已确认保留 ID 原逻辑，名称本次默认“鲸眼监控”并在实现处留 TODO，后续读取配置；不新增回调输入，见[迁移设计第 5.33 节](../design/alarm-callback-enrichment-migration.md#533-已确认保留旧来源标识与名称名称配置读取暂留-todo) |
+| dynamic_group_id、cw_labels、strategy URL | Redis 投影读取、已定位资源/业务派生、配置及 Web 基础地址 | 属于输出或依赖结果，不是回调必填值；动态分组读取键已确认对齐当前写入端，见迁移设计第 5.16.5 节 |
+| source_id、source_name | 旧来源 ID 为固定值 built_in_bk；旧名称从 KMC_NAME 配置读取并默认“鲸眼监控” | 已确认保留 ID 原逻辑，名称本次默认“鲸眼监控”并在实现处留 TODO，后续读取配置；不新增回调输入，见迁移设计第 5.33 节 |
 | alarm_dimension_display、metric_query_params | Converter/图表参数构造结果 | 下文 S/F/D 才是要盘点的输入；不要求来源预先构造完整结果 |
 
 ## 8. 读取过但不直接列为本次必需输入的字段
@@ -352,14 +357,14 @@ cluster_info.get("bk_biz_id") 消费。该证据不保证每条真实记录均�
 | 旧路径/行为 | 本次处理与原因 |
 | --- | --- |
 | `R.id`、`R.event.id`；`R.begin_time/create_time`；`R.status` | 旧身份/时间/状态装配及日志定位。Linkd 已有 Event 与生命周期，不因迁移旧 AlarmEvent 构造函数而重复要求输入或覆盖核心事实 |
-| `clean_meta_info()` | 返回旧 event_data.id 的字符串；BaseProcessor.process_alarms（Kingeye 源码 `src/kingeye/kac/alarm_callback/processors/base.py`）（162–180）按当前时间生成批次 ID 池并赋给转换对象，该值不是回调中的业务 ID。已确认保留 meta_info 并改从 Event.SourceEventID 取值，见[迁移设计第 5.34 节](../design/alarm-callback-enrichment-migration.md#534-已确认meta_info-从-eventsourceeventid-取值) |
+| `clean_meta_info()` | 返回旧 event_data.id 的字符串；BaseProcessor.process_alarms（Kingeye 源码 `src/kingeye/kac/alarm_callback/processors/base.py`）（162–180）按当前时间生成批次 ID 池并赋给转换对象，该值不是回调中的业务 ID。已确认保留 meta_info 并改从 Event.SourceEventID 取值，见迁移设计第 5.34 节 |
 | `R.end_time`、`R.event.end_time`、`R.description` | 旧终态时间/原因分支；已明确排除恢复/关闭丰富，不加入本次输入需求 |
-| `clean_bk_service_id()`、`clean_Namespace()` | 两项方法固定返回空字符串，没有来源读取需求；已确认不迁移这两个空占位输出，实际 K8s namespace 继续保留，见[迁移设计第 5.31 节](../design/alarm-callback-enrichment-migration.md#531-已确认不迁移-bk_service_id-与-namespace-空占位字段) |
+| `clean_bk_service_id()`、`clean_Namespace()` | 两项方法固定返回空字符串，没有来源读取需求；已确认不迁移这两个空占位输出，实际 K8s namespace 继续保留，见迁移设计第 5.31 节 |
 | `R.event.tags[].key/value` 中 `__NO_DATA_DIMENSION__` | 旧接入过滤判断；过滤已排除。日志无数据文案另由 F02 识别，不据此要求迁移整份 tags |
 | `R.event.bk_topo_node`、`D.bk_host_id` | 旧适配过程写入后又被部分 Converter/where 流程移除；保留处理证据，不把拓扑名称/关系误认为由它直接提供。F10 主机 ID 的真实用途另列 |
 | `R.related_info` | 通用 Converter 写入 event.related_info；通用内容函数只读 description，日志关键字又用 F11 覆盖。当前跟踪未见它对本次丰富输出的独立必要性 |
 | `R.dimensions[].display_key/display_value` | 样本存在，但当前维度展示从 key/value 与依赖重新生成，见第 3 节 |
-| `R.event.anomaly[旧等级].anomaly_time` | 旧 BaseClear 读取并输出 anomaly_begin_time，14 个原始样本均缺少 anomaly。已确认改为可选输入 Event.ExtraData.anomaly_begin_time，保存到 enrich.metric.anomaly_begin_time；缺失时省略，不回退 Event.OccurredAt，见[迁移设计第 5.32 节](../design/alarm-callback-enrichment-migration.md#532-已确认首次异常点时间作为可选补充信息) |
+| `R.event.anomaly[旧等级].anomaly_time` | 旧 BaseClear 读取并输出 anomaly_begin_time，14 个原始样本均缺少 anomaly。已确认改为可选输入 Event.ExtraData.anomaly_begin_time，保存到 enrich.metric.anomaly_begin_time；缺失时省略，不回退 Event.OccurredAt，见迁移设计第 5.32 节 |
 | `R.strategy.item.name/metric`、`R.strategy.item_list[0].metric_field` | Cleaner 的公有云/缺配置兼容分支有读取；指定 VmwareConverter 主路径却要求 items/query_configs，未取得能贯通这些形态的样本。暂列条件证据，不宣称可达或擅自删除能力 |
 | `Q.raw_query_config` | 图表函数仅在 use_raw_query_config=true 时读取；当前 Converter 调用未开启，故不作为本次直接输入 |
 | `R.alert_name/dedupe_md5` | 图表的无策略计数回退使用；当前分类前已要求成功查到策略，且 BaseConverter 先读取 strategy.items，不宣称此回退在迁移主链路可达 |
@@ -441,7 +446,7 @@ QC 与旧 S 表里的监控平台 Q 不是同一个结构；尤其 SI.query_conf
 两份都读不代表上述鲸眼字段改从监控平台取得，读取完整性与字段来源须分别验收。
 
 2026-09-03，查询用途已由用户确认为“查询本次告警对应的观测数据”，来源原则与范围示例见
-[迁移设计第 5.21 节](../design/alarm-callback-enrichment-migration.md#521-已确认指标查询参数定位本次告警的观测数据)。
+迁移设计第 5.21 节。
 本表的旧源码事实保持不变，S10/S11 的目标设计判断按该决策收窄；转换实现仍未验证。
 
 ### 11.1 不能直接宣称等价的转换
@@ -515,7 +520,7 @@ condition=or 时，也改写了前一组已追加的同一字典。因此告警�
 这是原纯函数样例可复现的范围扩大；本次没有修复 Kingeye。
 
 2026-09-03，用户确认 OR 问题保留并在迁移实现中增加代码注释，其余条件合并行为依旧迁移。
-具体要求见[迁移设计第 5.21.4 节](../design/alarm-callback-enrichment-migration.md#5214-已确认沿用旧条件合并将-or-范围扩大标记为已知迁移风险)。
+具体要求见迁移设计第 5.21.4 节。
 此前提出的“条件取交集，冲突则 partial”不采用；已经确认的“必要定位维度缺失且无法补齐时
 partial”仍以迁移设计第 5.21.3 节为准。上表作为后续输出对照基线，不代表 Go 实现已完成。
 
@@ -524,7 +529,7 @@ partial”仍以迁移设计第 5.21.3 节为准。上表作为后续输出对�
 2026-09-03，继续按本文源码基线核对平台版本读取。仅检查本地源码与测试夹具，未访问监控平台
 数据库、部署配置或业务接口。随后用户确认 alarm_strategy_v2 与 alarm_strategy_history
 就是所指的监控平台策略读取目标，见
-[迁移设计第 5.23.7 节](../design/alarm-callback-enrichment-migration.md#5237-已确认监控平台策略读取目标表)；
+迁移设计第 5.23.7 节；
 用户进一步明确 bk_strategy_history_id 为历史表主键 id，并确认按 id 与 strategy_id 联合定位，
 直接读取 content 作为平台策略结果。主表没有 history_id 是用户认定事实，不再继续查表验证。
 

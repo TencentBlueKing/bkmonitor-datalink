@@ -33,8 +33,8 @@ func (EventSource) Process(ctx context.Context, scope *enrich.Scope) (enrich.Pro
 		return enrich.ProcessorResult{}, err
 	}
 	alert := scope.Alert()
-	values := models.SourceValues{SourceID: alert.EventSourceID, MetaInfo: alert.SourceEventID}
-	sourceName, found, err := scope.AlarmSourceName(ctx)
+	values := models.SourceValues{MetaInfo: alert.SourceEventID}
+	source, found, err := scope.AlarmSource(ctx)
 	if err != nil || !found {
 		scope.Context().Source.Set(values)
 		value, encodeErr := scope.Context().Source.JSONObject()
@@ -45,7 +45,8 @@ func (EventSource) Process(ctx context.Context, scope *enrich.Scope) (enrich.Pro
 		result.Value = value
 		return result, nil
 	}
-	values.SourceName = sourceName
+	values.SourceID = source.Id
+	values.SourceName = source.Name
 	scope.Context().Source.Set(values)
 	value, err := scope.Context().Source.JSONObject()
 	if err != nil {

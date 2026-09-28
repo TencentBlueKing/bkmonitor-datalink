@@ -18,6 +18,12 @@ EventSource 是由控制面管理并持久化发布的来源配置。Record/Rele
 
 EventSource 不负责 Alert 状态裁决、Event/Alert 持久化实现或 Lifecycle lease。
 
+KAC 新建告警源时只生成 `linkd_source_id` 和 `linkd_channel.config.topic`，不会自动向 Linkd 发布 EventSource。
+要启用消费，需通过 Linkd 控制面 API 或配置导入发布 EventSource，令 `event_source_id` 等于
+`linkd_source_id`，`storage.kafka.topic` 等于 `linkd_channel.config.topic`，并配置 brokers、consumer_group
+等必填项。运行时先按发布的 EventSource 订阅 Kafka；`source` 丰富处理器在生成 Alert 后才按租户与
+`event_source_id` 回查 KAC 告警源，读取其原始 `id` 和名称。该回查不负责创建或更新 Kafka 订阅。
+
 ## 2. 配置模型
 
 | 字段                 | 约束                                     | 语义                                            |

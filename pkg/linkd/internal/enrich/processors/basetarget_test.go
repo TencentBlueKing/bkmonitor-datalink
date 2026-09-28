@@ -269,8 +269,8 @@ func (r processorBaseTargetStrategy) GetByBKStrategyID(context.Context, string, 
 
 type processorBaseTargetAlarmSource struct{}
 
-func (processorBaseTargetAlarmSource) GetAlarmSourceName(context.Context, string, string) (string, bool, error) {
-	return "鲸眼监控", true, nil
+func (processorBaseTargetAlarmSource) GetAlarmSource(context.Context, string, string) (models.AlarmSource, bool, error) {
+	return models.AlarmSource{Id: "built_in_bk", Name: "鲸眼监控"}, true, nil
 }
 
 type processorBaseTargetMetric struct{}

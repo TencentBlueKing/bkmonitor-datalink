@@ -35,6 +35,8 @@ type Report struct {
 	Disk   *Disk
 	Net    *Net
 	System *System
+
+	reportFields map[string]struct{}
 }
 
 // NewReport :
@@ -52,19 +54,25 @@ func NewReport(cpu *CPU, mem *Memory, disk *Disk, net *Net, system *System) *Rep
 func (r *Report) AsMapStr() common.MapStr {
 	result := make(common.MapStr)
 	if r.CPU != nil {
-		result["cpu"] = common.MapStr{
-			"total": r.CPU.Total,
-			"model": r.CPU.Model,
+		cpu := make(common.MapStr)
+		if r.includeReportField(configs.StaticReportFieldCPUTotal) {
+			cpu["total"] = r.CPU.Total
+		}
+		if r.includeReportField(configs.StaticReportFieldCPUModel) {
+			cpu["model"] = r.CPU.Model
+		}
+		if len(cpu) > 0 {
+			result["cpu"] = cpu
 		}
 	}
 
-	if r.Disk != nil {
+	if r.Disk != nil && r.includeReportField(configs.StaticReportFieldDiskTotal) {
 		result["disk"] = common.MapStr{
 			"total": r.Disk.Total,
 		}
 	}
 
-	if r.Memory != nil {
+	if r.Memory != nil && r.includeReportField(configs.StaticReportFieldMemTotal) {
 		result["mem"] = common.MapStr{
 			"total": r.Memory.Total,
 		}
@@ -73,34 +81,79 @@ func (r *Report) AsMapStr() common.MapStr {
 	if r.Net != nil {
 		interfaces := make([]common.MapStr, 0, len(r.Net.Interface))
 		for _, inter := range r.Net.Interface {
-			interfaces = append(interfaces, common.MapStr{
-				"addrs": inter.Addrs,
-				"mac":   inter.Mac,
-				"name":  inter.Name,
-			})
+			item := make(common.MapStr)
+			if r.includeReportField(configs.StaticReportFieldNetInterfaceAddrs) {
+				item["addrs"] = inter.Addrs
+			}
+			if r.includeReportField(configs.StaticReportFieldNetInterfaceMac) {
+				item["mac"] = inter.Mac
+			}
+			if r.includeReportField(configs.StaticReportFieldNetInterfaceName) {
+				item["name"] = inter.Name
+			}
+			if len(item) > 0 {
+				interfaces = append(interfaces, item)
+			}
 		}
-		result["net"] = common.MapStr{
-			"interface": interfaces,
+		if r.includeReportField(configs.StaticReportFieldNetInterfaceAddrs) ||
+			r.includeReportField(configs.StaticReportFieldNetInterfaceMac) ||
+			r.includeReportField(configs.StaticReportFieldNetInterfaceName) {
+			result["net"] = common.MapStr{
+				"interface": interfaces,
+			}
 		}
-	}
-
-	arch := "x86"
-	if r.System.Arch == "arm" || r.System.Arch == "aarch64" {
-		arch = "arm"
 	}
 
 	if r.System != nil {
-		result["system"] = common.MapStr{
-			"hostname":      r.System.HostName,
-			"os":            r.System.OS,
-			"arch":          arch,
-			"platform":      r.System.Platform,
-			"platVer":       r.System.PlatVer,
-			"sysType":       r.System.SysType,
-			"kernelVersion": r.System.KernelVersion,
+		system := make(common.MapStr)
+		if r.includeReportField(configs.StaticReportFieldSystemHostname) {
+			system["hostname"] = r.System.HostName
+		}
+		if r.includeReportField(configs.StaticReportFieldSystemOS) {
+			system["os"] = r.System.OS
+		}
+		if r.includeReportField(configs.StaticReportFieldSystemArch) {
+			arch := "x86"
+			if r.System.Arch == "arm" || r.System.Arch == "aarch64" {
+				arch = "arm"
+			}
+			system["arch"] = arch
+		}
+		if r.includeReportField(configs.StaticReportFieldSystemPlatform) {
+			system["platform"] = r.System.Platform
+		}
+		if r.includeReportField(configs.StaticReportFieldSystemPlatVer) {
+			system["platVer"] = r.System.PlatVer
+		}
+		if r.includeReportField(configs.StaticReportFieldSystemSysType) {
+			system["sysType"] = r.System.SysType
+		}
+		if r.includeReportField(configs.StaticReportFieldSystemKernelVersion) {
+			system["kernelVersion"] = r.System.KernelVersion
+		}
+		if len(system) > 0 {
+			result["system"] = system
 		}
 	}
 	return result
+}
+
+// SetReportFields 设置需要上报的字段。传空或包含 * 时上报全部字段。
+func (r *Report) SetReportFields(fields []string) error {
+	selected, err := configs.NormalizeStaticReportFields(fields)
+	if err != nil {
+		return err
+	}
+	r.reportFields = selected
+	return nil
+}
+
+func (r *Report) includeReportField(field string) bool {
+	if r.reportFields == nil {
+		return true
+	}
+	_, ok := r.reportFields[field]
+	return ok
 }
 
 // CPU :
@@ -170,7 +223,13 @@ var GetData = func(ctx context.Context, cfg *configs.StaticTaskConfig) (*Report,
 		logger.Errorf("failed to get system status: %v", err)
 	}
 	logger.Debug("collect report data success")
-	return NewReport(cpu, mem, disk, net, system), nil
+	report := NewReport(cpu, mem, disk, net, system)
+	if cfg != nil {
+		if err = report.SetReportFields(cfg.ReportFields); err != nil {
+			return nil, err
+		}
+	}
+	return report, nil
 }
 
 // GetCPUStatus :

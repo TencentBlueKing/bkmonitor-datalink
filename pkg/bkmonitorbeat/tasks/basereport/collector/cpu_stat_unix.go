@@ -13,6 +13,8 @@ package collector
 
 import (
 	"fmt"
+	"math"
+	"runtime"
 	"sync"
 	"time"
 
@@ -37,79 +39,97 @@ func init() {
 	lastCPUTimeSlice.Unlock()
 }
 
+// cpuTimesReader 用于替换 CPU 快照读取函数，便于测试时注入固定数据而不读取 /proc/stat。
+var cpuTimesReader = cpu.Times
+
 func getCPUStatUsage(report *CpuReport) error {
-	var err error
-	perCPUTimes, err := cpu.Times(true)
-	if err != nil {
-		return err
-	}
-	// 比较两次获取的时间片的内容的长度,如果不对等直接退出
+	// 将快照读取和基线更新一起加锁，避免并发读取的旧快照覆盖较新的基线。
 	lastCPUTimeSlice.Lock()
 	defer lastCPUTimeSlice.Unlock()
-
-	// 判断lastPerCPUTimes长度，增加重写避免init方法失效的情况
-	if len(lastCPUTimeSlice.lastPerCPUTimes) <= 0 || len(perCPUTimes) != len(lastCPUTimeSlice.lastPerCPUTimes) {
-		lastCPUTimeSlice.lastPerCPUTimes, err = cpu.Times(true)
+	per, err := cpuTimesReader(true)
+	if err != nil {
+		return err
+	}
+	total, err := cpuTimesReader(false)
+	if err != nil {
+		return err
+	}
+	previousPer, previousTotal := lastCPUTimeSlice.lastPerCPUTimes, lastCPUTimeSlice.lastCPUTimes
+	// 即使本次采样区间无效，也更新基线，便于下一次采样恢复正常计算。
+	lastCPUTimeSlice.lastPerCPUTimes = per
+	lastCPUTimeSlice.lastCPUTimes = total
+	if len(total) != 1 || len(previousTotal) != 1 || len(per) == 0 || len(per) != len(previousPer) {
+		return fmt.Errorf("%w: empty snapshot or CPU topology changed", errInvalidCPUSample)
+	}
+	previous := make(map[string]cpu.TimesStat, len(previousPer))
+	for _, stat := range previousPer {
+		previous[stat.CPU] = stat
+	}
+	if len(previous) != len(previousPer) {
+		return fmt.Errorf("%w: duplicate CPU names", errInvalidCPUSample)
+	}
+	seen := make(map[string]bool, len(per))
+	for _, stat := range per {
+		if _, ok := previous[stat.CPU]; !ok || seen[stat.CPU] {
+			return fmt.Errorf("%w: CPU topology changed", errInvalidCPUSample)
+		}
+		seen[stat.CPU] = true
+	}
+	var sample CpuReport
+	sample.TotalStat, sample.TotalUsage, err = diffCPUUsage(previousTotal[0], total[0])
+	if err != nil {
+		return err
+	}
+	for _, current := range per {
+		stat, usage, err := diffCPUUsage(previous[current.CPU], current)
 		if err != nil {
-			return err
+			// 跳过异常核心，保留健康核心和已独立校验通过的整机数据。
+			// stat 和 usage 同步追加，确保下游按位置关联时保持一致。
+			logger.Debugf("drop invalid per-CPU sample: %v", err)
+			continue
 		}
+		sample.Stat = append(sample.Stat, stat)
+		sample.Usage = append(sample.Usage, usage)
 	}
-
-	l1, l2 := len(perCPUTimes), len(lastCPUTimeSlice.lastPerCPUTimes)
-	if l1 != l2 {
-		err = fmt.Errorf("received two CPU counts %d != %d", l1, l2)
-		return err
-	}
-
-	for index, value := range perCPUTimes {
-		item := lastCPUTimeSlice.lastPerCPUTimes[index]
-		tmp := calcTimeState(item, value)
-		report.Stat = append(report.Stat, tmp)
-	}
-
-	cpuTimes, err := cpu.Times(false)
-	if err != nil {
-		return err
-	}
-
-	// 判断lastCPUTimes的长度，增加重写避免init方法失效的情况
-	if len(lastCPUTimeSlice.lastCPUTimes) <= 0 {
-		lastCPUTimeSlice.lastCPUTimes, err = cpu.Times(false)
-		if err != nil {
-			return err
-		}
-	}
-
-	cpuTimeStat := cpuTimes[0]
-	lastCpuTimeStat := lastCPUTimeSlice.lastCPUTimes[0]
-	report.TotalStat = calcTimeState(lastCpuTimeStat, cpuTimeStat)
-
-	// 将此次获取的timeState重新写入公共变量
-	lastCPUTimeSlice.lastCPUTimes = cpuTimes
-	lastCPUTimeSlice.lastPerCPUTimes = perCPUTimes
-
-	// per usage
-	report.Usage, err = cpu.Percent(0, true)
-	if err != nil {
-		return err
-	}
-
-	for i := range report.Usage {
-		if report.Usage[i] < 0 || int(report.Usage[i]) > 100 {
-			report.Usage[i] = 0.0
-		}
-	}
-	// total usage
-	total, err := cpu.Percent(0, false)
-	if err != nil {
-		return err
-	}
-
-	report.TotalUsage = total[0]
-	if report.TotalUsage < 0 || report.TotalUsage > 100 {
-		report.TotalUsage = 0.0
-	}
+	*report = sample
 	return nil
+}
+
+// diffCPUUsage 保持 gopsutil 的忙碌时间口径（不包含 iowait），
+// 对无效采样区间返回错误，不将其伪装成有效的 0% 或 100%。
+func diffCPUUsage(previous, current cpu.TimesStat) (cpu.TimesStat, float64, error) {
+	delta := calcTimeState(previous, current)
+	invalid := func(reason string) (cpu.TimesStat, float64, error) {
+		return cpu.TimesStat{}, 0, fmt.Errorf("%w: cpu=%s %s previous=%+v current=%+v", errInvalidCPUSample, current.CPU, reason, previous, current)
+	}
+	if previous.CPU != current.CPU {
+		return invalid("CPU name changed")
+	}
+	fields := func(s cpu.TimesStat) []float64 {
+		return []float64{s.User, s.System, s.Idle, s.Nice, s.Iowait, s.Irq, s.Softirq, s.Steal, s.Guest, s.GuestNice}
+	}
+	for _, s := range []cpu.TimesStat{previous, current, delta} {
+		for _, v := range fields(s) {
+			// 对 iowait 回退也采取保守丢弃策略，不引入任意的修正阈值，
+			// 也不改变正常样本的指标计算口径。
+			if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+				return invalid("non-finite or regressed counter")
+			}
+		}
+	}
+	total := delta.User + delta.System + delta.Idle + delta.Nice + delta.Iowait + delta.Irq + delta.Softirq + delta.Steal
+	if runtime.GOOS != "linux" {
+		total += delta.Guest + delta.GuestNice
+	}
+	busy := total - delta.Idle - delta.Iowait
+	if total <= 0 || busy < 0 || busy > total || math.IsInf(total, 0) {
+		return invalid("invalid total/busy delta")
+	}
+	usage := busy / total * 100
+	if math.IsNaN(usage) || math.IsInf(usage, 0) || usage < 0 || usage > 100 {
+		return invalid("invalid usage")
+	}
+	return delta, usage, nil
 }
 
 // queryCpuInfo: 查询获取机器的CPU信息

@@ -84,6 +84,7 @@ func (c *HttpCurl) WithDecoder(decoder func(ctx context.Context, reader io.Reade
 func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res any) (size int, err error) {
 	ctx, span := trace.NewSpan(ctx, "http-curl")
 	defer span.End(&err)
+	ctx = withHTTPClientTrace(ctx, span)
 	if limit := metadata.BackendResponseLimit(ctx); limit > 0 && (opt.MaxResponseBytes <= 0 || opt.MaxResponseBytes > limit) {
 		opt.MaxResponseBytes = limit
 	}

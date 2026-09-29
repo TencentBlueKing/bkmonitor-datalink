@@ -7,18 +7,23 @@ package curl
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httptrace"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
 func TestCurlFullResponsePhases(t *testing.T) {
@@ -62,4 +67,74 @@ func TestCurlFullResponsePhases(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCurlConnectionTraceAttributes(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	old := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() { otel.SetTracerProvider(old); require.NoError(t, provider.Shutdown(context.Background())) })
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(server.Close)
+
+	for range 2 {
+		var result map[string]bool
+		_, err := (&HttpCurl{}).Request(context.Background(), Get, Options{UrlPath: server.URL}, &result)
+		require.NoError(t, err)
+		require.True(t, result["ok"])
+	}
+
+	var curlSpans []sdktrace.ReadOnlySpan
+	for _, span := range recorder.Ended() {
+		if span.Name() == "http-curl" {
+			curlSpans = append(curlSpans, span)
+		}
+	}
+	sort.Slice(curlSpans, func(i, j int) bool { return curlSpans[i].StartTime().Before(curlSpans[j].StartTime()) })
+	require.Len(t, curlSpans, 2)
+
+	attributes := func(span sdktrace.ReadOnlySpan) map[string]attribute.Value {
+		values := make(map[string]attribute.Value)
+		for _, attr := range span.Attributes() {
+			values[string(attr.Key)] = attr.Value
+		}
+		return values
+	}
+	first, second := attributes(curlSpans[0]), attributes(curlSpans[1])
+	require.Contains(t, first, "outbound.connection.fingerprint")
+	firstFingerprint := first["outbound.connection.fingerprint"].AsString()
+	require.Regexp(t, `^[0-9a-f]{32}$`, firstFingerprint)
+	require.Equal(t, firstFingerprint, second["outbound.connection.fingerprint"].AsString())
+	require.False(t, first["outbound.connection.reused"].AsBool())
+	require.True(t, second["outbound.connection.reused"].AsBool())
+	require.True(t, first["outbound.request.write_complete"].AsBool())
+	require.True(t, second["outbound.request.write_complete"].AsBool())
+}
+
+func TestCurlTraceRecordsRequestWriteError(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	old := otel.GetTracerProvider()
+	otel.SetTracerProvider(provider)
+	t.Cleanup(func() { otel.SetTracerProvider(old); require.NoError(t, provider.Shutdown(context.Background())) })
+
+	ctx, span := trace.NewSpan(context.Background(), "http-curl")
+	clientTrace := httptrace.ContextClientTrace(withHTTPClientTrace(ctx, span))
+	require.NotNil(t, clientTrace)
+	clientTrace.WroteRequest(httptrace.WroteRequestInfo{Err: errors.New("write: broken pipe")})
+	var err error
+	span.End(&err)
+
+	ended := recorder.Ended()
+	require.Len(t, ended, 1)
+	attributes := make(map[string]attribute.Value)
+	for _, attr := range ended[0].Attributes() {
+		attributes[string(attr.Key)] = attr.Value
+	}
+	require.False(t, attributes["outbound.request.write_complete"].AsBool())
+	require.Equal(t, "write: broken pipe", attributes["outbound.request.write_error"].AsString())
 }

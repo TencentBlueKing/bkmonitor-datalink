@@ -188,10 +188,7 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		return
 	}
 
-	data := &struct {
-		TraceID string               `json:"trace_id"`
-		Data    []stdjson.RawMessage `json:"data"`
-	}{
+	data := &topologyResponse{
 		TraceID: span.TraceID(),
 		Data:    make([]stdjson.RawMessage, len(request.QueryList)),
 	}
@@ -281,22 +278,36 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		// Reserve retained item buffers plus outer encoding/write buffers.
 		encodeErr := v1beta3.ReserveTopologyStage(ctx, "encoded", int64(responseBytes+v1beta3.TopologyOutputByteLimit())*3)
 		var encoded []byte
+		var chunks [][]byte
+		encodedBytes := 0
 		if encodeErr == nil {
-			encoded, encodeErr = json.Marshal(payload)
+			// The usual element budget already bounds small snapshots. Large
+			// snapshots encode frame by frame to bound encoder buffers.
+			var elements int
+			for _, snapshot := range item.Snapshots {
+				elements += len(snapshot.Nodes) + len(snapshot.Edges)
+			}
+			if query.ResponseFormat != cmdb.CompactTopologyFormat && elements > largeTopologyEncodingElementThreshold {
+				chunks, encodedBytes, encodeErr = marshalLargeTopologySnapshots(item)
+			} else {
+				encoded, encodeErr = marshalTopologyItem(payload)
+				encodedBytes = len(encoded)
+			}
 		}
-		encodeSpan.Set("encoded-item-bytes", len(encoded))
+		encodeSpan.Set("encoded-item-bytes", encodedBytes)
+		encodeSpan.Set("segmented", len(chunks) > 0)
 		encodeSpan.End(&encodeErr)
 		metric.CMDBTimeGraphStageObserve(queryCtx, "topology-encode", metric.CMDBTimeGraphErrorResult(encodeErr), time.Since(encodeStarted))
-		metric.CMDBTopologyPayloadObserve(queryCtx, "response-item", metric.CMDBTimeGraphErrorResult(encodeErr), len(encoded))
-		querySpan.Set("encoded-item-bytes", len(encoded))
+		metric.CMDBTopologyPayloadObserve(queryCtx, "response-item", metric.CMDBTimeGraphErrorResult(encodeErr), encodedBytes)
+		querySpan.Set("encoded-item-bytes", encodedBytes)
 		if encodeErr != nil {
 			querySpan.End(&encodeErr)
 			handlerErr = encodeErr
 			resp.failed(ctx, encodeErr)
 			return
 		}
-		if limit := v1beta3.TopologyOutputByteLimit(); limit > 0 && len(encoded) > limit-responseBytes {
-			queryErr = &v1beta3.ResultLimitError{Reason: "max_topology_output_bytes", Count: responseBytes + len(encoded), Limit: v1beta3.TopologyOutputByteLimit()}
+		if limit := v1beta3.TopologyOutputByteLimit(); limit > 0 && encodedBytes > limit-responseBytes {
+			queryErr = &v1beta3.ResultLimitError{Reason: "max_topology_output_bytes", Count: responseBytes + encodedBytes, Limit: v1beta3.TopologyOutputByteLimit()}
 			v1beta3.SetTimeGraphLimitTrace(querySpan, queryErr)
 			querySpan.End(&queryErr)
 			handlerErr = queryErr
@@ -305,7 +316,7 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 			resp.failed(ctx, queryErr)
 			return
 		}
-		responseBytes += len(encoded) + 1
+		responseBytes += encodedBytes + 1
 		_ = v1beta3.ReserveTopologyStage(ctx, "output", 0)
 		_ = v1beta3.ReserveTopologyStage(ctx, "encoded", int64(responseBytes)*3)
 		querySpan.Set("query-index", index)
@@ -334,6 +345,12 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 		v1beta3.SetTimeGraphLimitTrace(querySpan, queryErr)
 		querySpan.End(&queryErr)
 		data.Data[index] = encoded
+		if len(chunks) > 0 {
+			if data.chunks == nil {
+				data.chunks = make([][][]byte, len(request.QueryList))
+			}
+			data.chunks[index] = chunks
+		}
 	}
 	span.Set("query-count", len(request.QueryList))
 	span.Set("failed-query-count", failedQueryCount)

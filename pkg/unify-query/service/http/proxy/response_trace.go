@@ -7,6 +7,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 
@@ -30,6 +31,31 @@ type tracedJSON struct {
 	data any
 }
 
+// JSONSegmenter supplies a complete JSON value as pre-encoded fragments.
+// A nil result uses the regular encoder.
+type JSONSegmenter interface {
+	JSONSegments() ([][]byte, error)
+}
+
+func responseJSONSegments(data any) ([][]byte, error) {
+	if segmented, ok := data.(JSONSegmenter); ok {
+		return segmented.JSONSegments()
+	}
+	if envelope, ok := data.(*apiGwResponse); ok && envelope.Result && envelope.Message == SuccessMessage {
+		if segmented, ok := envelope.Data.(JSONSegmenter); ok {
+			parts, err := segmented.JSONSegments()
+			if err != nil || len(parts) == 0 {
+				return parts, err
+			}
+			result := make([][]byte, 0, len(parts)+2)
+			result = append(result, []byte(`{"result":true,"data":`))
+			result = append(result, parts...)
+			return append(result, []byte(`,"message":"success"}`)), nil
+		}
+	}
+	return nil, nil
+}
+
 func (r tracedJSON) WriteContentType(w http.ResponseWriter) {
 	render.JSON{}.WriteContentType(w)
 }
@@ -38,11 +64,28 @@ func (r tracedJSON) Render(w http.ResponseWriter) error {
 	r.WriteContentType(w)
 	_, encodeSpan := trace.NewSpan(r.ctx, "http-response-encode")
 	var body []byte
+	var parts [][]byte
+	var size int
 	err := r.ctx.Err()
 	if err == nil {
-		body, err = json.Marshal(r.data)
+		parts, err = responseJSONSegments(r.data)
+		if err == nil {
+			if len(parts) == 0 {
+				body, err = json.Marshal(r.data)
+				size = len(body)
+			} else {
+				for _, part := range parts {
+					if len(part) > int(^uint(0)>>1)-size {
+						err = errors.New("JSON response size overflows int")
+						break
+					}
+					size += len(part)
+				}
+			}
+		}
 	}
-	encodeSpan.Set("encoded-body-bytes", len(body))
+	encodeSpan.Set("encoded-body-bytes", size)
+	encodeSpan.Set("segmented", len(parts) > 0)
 	encodeSpan.End(&err)
 	if err != nil {
 		return err
@@ -51,9 +94,26 @@ func (r tracedJSON) Render(w http.ResponseWriter) error {
 	err = r.ctx.Err()
 	var written int
 	if err == nil {
-		written, err = w.Write(body)
-		if err == nil && written != len(body) {
-			err = io.ErrShortWrite
+		if len(parts) == 0 {
+			written, err = w.Write(body)
+			if err == nil && written != len(body) {
+				err = io.ErrShortWrite
+			}
+		} else {
+			for _, part := range parts {
+				if err = r.ctx.Err(); err != nil {
+					break
+				}
+				var n int
+				n, err = w.Write(part)
+				written += n
+				if err == nil && n != len(part) {
+					err = io.ErrShortWrite
+				}
+				if err != nil {
+					break
+				}
+			}
 		}
 	}
 	writeSpan.Set("writer-body-bytes", written)

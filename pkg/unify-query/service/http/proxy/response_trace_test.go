@@ -6,6 +6,9 @@ package proxy
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
@@ -14,6 +17,57 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+type responseSegments [][]byte
+
+func (s responseSegments) JSONSegments() ([][]byte, error) { return s, nil }
+
+type segmentErrorWriter struct {
+	*httptest.ResponseRecorder
+	short bool
+}
+
+func (w *segmentErrorWriter) Write(data []byte) (int, error) {
+	if w.short {
+		return len(data) - 1, nil
+	}
+	return 0, errors.New("test writer failed")
+}
+
+func TestSegmentedResponseDirectAndProxyEnvelope(t *testing.T) {
+	value := responseSegments{[]byte(`{"trace_id":"abc","data":`), []byte(`["中文","<&>"]}`)}
+	for _, proxied := range []bool{false, true} {
+		writer := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(writer)
+		ctx.Request = httptest.NewRequest(http.MethodPost, "/test", nil)
+		TraceJSONEncoding(ctx)
+		var data any = value
+		want := `{"trace_id":"abc","data":["中文","<&>"]}`
+		if proxied {
+			data = &apiGwResponse{Result: true, Data: value, Message: SuccessMessage}
+			want = `{"result":true,"data":` + want + `,"message":"success"}`
+		}
+		WriteJSON(context.Background(), ctx, http.StatusOK, data)
+		require.NoError(t, ResponseWriteError(ctx))
+		require.Equal(t, want, writer.Body.String())
+		require.Equal(t, "application/json; charset=utf-8", writer.Header().Get("Content-Type"))
+	}
+}
+
+func TestSegmentedResponseWriteErrors(t *testing.T) {
+	for _, short := range []bool{false, true} {
+		writer := &segmentErrorWriter{ResponseRecorder: httptest.NewRecorder(), short: short}
+		ctx, _ := gin.CreateTestContext(writer)
+		ctx.Request = httptest.NewRequest(http.MethodPost, "/test", nil)
+		TraceJSONEncoding(ctx)
+		WriteJSON(context.Background(), ctx, http.StatusOK, responseSegments{[]byte("{}")})
+		if short {
+			require.ErrorIs(t, ResponseWriteError(ctx), io.ErrShortWrite)
+		} else {
+			require.ErrorContains(t, ResponseWriteError(ctx), "test writer failed")
+		}
+	}
+}
 
 func TestPreencodedTopologyEnvelopePreservesExactJSON(t *testing.T) {
 	item := struct {

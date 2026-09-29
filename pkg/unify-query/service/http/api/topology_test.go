@@ -6,14 +6,42 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
+	uqjson "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
+
+func TestTruncateTopologyErrorMessagePreservesValidJSON(t *testing.T) {
+	message := strings.Repeat("界", 1364) + string([]byte{0xff}) + strings.Repeat("错误", 1000)
+	truncated := truncateTopologyErrorMessage(message, topologyErrorMessageMaxBytes)
+	require.LessOrEqual(t, len(truncated), topologyErrorMessageMaxBytes)
+	require.True(t, utf8.ValidString(truncated))
+
+	item, err := uqjson.Marshal(struct {
+		Message string `json:"message"`
+	}{Message: truncated})
+	require.NoError(t, err)
+	outer, err := uqjson.Marshal(struct {
+		Data []json.RawMessage `json:"data"`
+	}{Data: []json.RawMessage{item}})
+	require.NoError(t, err)
+	require.True(t, json.Valid(outer))
+
+	var decoded struct {
+		Data []struct {
+			Message string `json:"message"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(outer, &decoded))
+	require.Len(t, decoded.Data, 1)
+	require.Equal(t, truncated, decoded.Data[0].Message)
+}
 
 func TestSharedTopologyHandlerValidationCases(t *testing.T) {
 	log.InitTestLogger()

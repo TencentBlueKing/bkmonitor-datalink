@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 
@@ -23,6 +25,23 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/proxy"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
+
+const topologyErrorMessageMaxBytes = 4096
+
+func truncateTopologyErrorMessage(message string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	message = strings.ToValidUTF8(message, "\uFFFD")
+	if len(message) <= maxBytes {
+		return message
+	}
+	cut := maxBytes
+	for cut > 0 && !utf8.RuneStart(message[cut]) {
+		cut--
+	}
+	return message[:cut]
+}
 
 // HandlerAPIRelationV1Beta3Topology 查询单个时间点的完整局部拓扑。
 // 该接口与旧 path/multi_resource 接口分离，返回每个快照的节点和关系。
@@ -243,9 +262,7 @@ func handleAPIRelationV1Beta3Topology(c *gin.Context, rangeQuery bool) {
 			item.Snapshots = make([]cmdb.SharedTopologySnapshot, 0)
 		}
 		// 批次内结果累计也必须有界，不能用 query_list 倍增单查询预算。
-		if len(item.Message) > 4096 {
-			item.Message = item.Message[:4096]
-		}
+		item.Message = truncateTopologyErrorMessage(item.Message, topologyErrorMessageMaxBytes)
 		_, encodeSpan := trace.NewSpan(queryCtx, "timegraph-encode-topology-item")
 		encodeStarted := time.Now()
 		var payload any = item

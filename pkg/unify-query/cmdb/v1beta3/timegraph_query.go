@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -234,7 +235,6 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	// 回溯窗口；两者必须分开，否则稀疏的 range 查询会产生错误的采样结果。
 	queryStep := step
 	loader.lookBack = lookBack
-	queryMatrix := loader.query
 
 	if len(sourceExpandInfo) > 0 || len(relations) == 0 || timeGraphForceSourceInfo(ctx) {
 		sourceInfoQueryCount, err = loader.addSourceInfo(ctx, spaceUID, sourceType, sourceInfo, sourceExpandInfo)
@@ -288,11 +288,9 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 		}
 
 		relationEdgeQueryCount++
-		matrix, _, queryErr := queryMatrix(withTimeGraphQueryStage(relationCtx, "relation-edge"), queryTs)
-		if queryErr != nil {
-			return nil, queryErr
-		}
-		if err = tg.applyRelationMatrix(relationCtx, matrix, relation, targetMatchersByType, targetIDsByTimestamp); err != nil {
+		if err = loader.queryAndApply(withTimeGraphQueryStage(relationCtx, "relation-edge"), queryTs, func(shardCtx context.Context, matrix pl.Matrix) error {
+			return tg.applyRelationMatrix(shardCtx, matrix, relation, targetMatchersByType, targetIDsByTimestamp)
+		}); err != nil {
 			return nil, err
 		}
 	}
@@ -518,8 +516,100 @@ func (loader *timeGraphMatrixLoader) query(queryCtx context.Context, queryTs *st
 	return matrix, partial, nil
 }
 
+// queryAndApply keeps oversized-range recovery bounded to one shard Matrix at a
+// time. Only the explicitly enabled YOLO path may split, and only for exact
+// time-grid requests rejected by the VM response-size guard.
+func (loader *timeGraphMatrixLoader) queryAndApply(ctx context.Context, queryTs *structured.QueryTs, apply func(context.Context, pl.Matrix) error) error {
+	return loader.queryAndApplyShard(ctx, queryTs, apply, 0)
+}
+
+func (loader *timeGraphMatrixLoader) queryAndApplyShard(ctx context.Context, queryTs *structured.QueryTs, apply func(context.Context, pl.Matrix) error, depth int) (err error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	shardCtx := ctx
+	if depth > 0 {
+		shardCtx = newTimeGraphSubqueryContext(ctx)
+		metadata.GetQueryParams(shardCtx).SetIsSkipK8s(metadata.GetQueryParams(ctx).IsSkipK8s)
+	}
+	shardCtx = withTimeGraphQueryStage(shardCtx, timeGraphQueryStage(ctx))
+	shardCtx, span := trace.NewSpan(shardCtx, "timegraph-query-shard")
+	span.Set("shard-depth", depth)
+	span.Set("shard-start", queryTs.Start)
+	span.Set("shard-end", queryTs.End)
+	span.Set("shard-step", queryTs.Step)
+	defer span.End(&err)
+
+	matrix, _, queryErr := loader.query(shardCtx, queryTs)
+	if queryErr == nil {
+		if err = apply(shardCtx, matrix); err != nil {
+			return err
+		}
+		if depth > 0 {
+			loader.lastMatrix = timeGraphMatrixSlot{}
+		}
+		return nil
+	}
+	if !loader.topology || !yoloMode || !metadata.IsExactTimeGrid(shardCtx) || !errors.Is(queryErr, metadata.ErrBackendResponseTooLarge) {
+		return queryErr
+	}
+	left, right, ok := splitTimeGraphQueryRange(queryTs)
+	if !ok {
+		return queryErr
+	}
+	span.Set("shard-split", true)
+	span.Set("left-start", left.Start)
+	span.Set("left-end", left.End)
+	span.Set("right-start", right.Start)
+	span.Set("right-end", right.End)
+	if err = loader.queryAndApplyShard(shardCtx, left, apply, depth+1); err != nil {
+		return err
+	}
+	if err = loader.queryAndApplyShard(shardCtx, right, apply, depth+1); err != nil {
+		return err
+	}
+	return nil
+}
+
+func splitTimeGraphQueryRange(query *structured.QueryTs) (left, right *structured.QueryTs, ok bool) {
+	if query == nil || query.Instant || query.Start == "" || query.End == "" || query.Step == "" {
+		return nil, nil, false
+	}
+	startMs, err := parseTimestamp(query.Start)
+	if err != nil {
+		return nil, nil, false
+	}
+	endMs, err := parseTimestamp(query.End)
+	if err != nil || endMs <= startMs {
+		return nil, nil, false
+	}
+	step, err := time.ParseDuration(query.Step)
+	if err != nil || step < time.Second || step%time.Second != 0 || step.Milliseconds() <= 0 {
+		return nil, nil, false
+	}
+	distance := endMs - startMs
+	stepMs := step.Milliseconds()
+	if distance%stepMs != 0 {
+		return nil, nil, false
+	}
+	pointCount := distance/stepMs + 1
+	if pointCount < 2 || startMs%1000 != 0 || endMs%1000 != 0 {
+		return nil, nil, false
+	}
+	leftCount := pointCount / 2
+	leftEnd := startMs + (leftCount-1)*stepMs
+	rightStart := leftEnd + stepMs
+	left, right = new(structured.QueryTs), new(structured.QueryTs)
+	*left, *right = *query, *query
+	left.Start = strconv.FormatInt(startMs/1000, 10)
+	left.End = strconv.FormatInt(leftEnd/1000, 10)
+	right.Start = strconv.FormatInt(rightStart/1000, 10)
+	right.End = query.End
+	return left, right, true
+}
+
 func (loader *timeGraphMatrixLoader) addSourceInfo(ctx context.Context, spaceUID string, sourceType cmdb.Resource, sourceInfo, sourceExpandInfo cmdb.Matcher) (queryCount int, err error) {
-	tg, queryMatrix := loader.graph, loader.query
+	tg := loader.graph
 	start, end, queryStep, lookBack := loader.start, loader.end, loader.step, loader.lookBack
 
 	infoCtx := newTimeGraphSubqueryContext(ctx)
@@ -540,12 +630,10 @@ func (loader *timeGraphMatrixLoader) addSourceInfo(ctx context.Context, spaceUID
 	}
 	if queryTs != nil {
 		queryCount++
-		matrix, _, queryErr := queryMatrix(withTimeGraphQueryStage(infoCtx, "source-info"), queryTs)
-		if queryErr != nil {
-			return queryCount, errors.WithMessage(queryErr, "query source info relation")
-		}
-		if err = tg.applySourceMatrix(infoCtx, matrix, sourceType); err != nil {
-			return queryCount, err
+		if err = loader.queryAndApply(withTimeGraphQueryStage(infoCtx, "source-info"), queryTs, func(shardCtx context.Context, matrix pl.Matrix) error {
+			return tg.applySourceMatrix(shardCtx, matrix, sourceType)
+		}); err != nil {
+			return queryCount, errors.WithMessage(err, "query source info relation")
 		}
 	}
 
@@ -553,7 +641,7 @@ func (loader *timeGraphMatrixLoader) addSourceInfo(ctx context.Context, spaceUID
 }
 
 func (loader *timeGraphMatrixLoader) addTargetInfo(ctx context.Context, spaceUID string, targetMatchersByType map[cmdb.Resource]map[string]cmdb.Matcher, targetIDsByTimestamp map[int64]map[cmdb.Resource]map[string]struct{}) (queryCount int, err error) {
-	tg, queryMatrix := loader.graph, loader.query
+	tg := loader.graph
 	start, end, queryStep, lookBack := loader.start, loader.end, loader.step, loader.lookBack
 
 	for targetType, matchers := range targetMatchersByType {
@@ -585,12 +673,10 @@ func (loader *timeGraphMatrixLoader) addTargetInfo(ctx context.Context, spaceUID
 			continue
 		}
 		queryCount++
-		matrix, _, queryErr := queryMatrix(withTimeGraphQueryStage(infoCtx, "target-info"), queryTs)
-		if queryErr != nil {
-			return queryCount, errors.WithMessage(queryErr, "query target info relation")
-		}
-		if err = tg.applyTargetMatrix(infoCtx, matrix, targetType, targetIDsByTimestamp); err != nil {
-			return queryCount, err
+		if err = loader.queryAndApply(withTimeGraphQueryStage(infoCtx, "target-info"), queryTs, func(shardCtx context.Context, matrix pl.Matrix) error {
+			return tg.applyTargetMatrix(shardCtx, matrix, targetType, targetIDsByTimestamp)
+		}); err != nil {
+			return queryCount, errors.WithMessage(err, "query target info relation")
 		}
 	}
 

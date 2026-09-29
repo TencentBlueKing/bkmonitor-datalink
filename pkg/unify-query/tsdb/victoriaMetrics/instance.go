@@ -325,11 +325,15 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 	defer formatSpan.End(&err)
 	defer func() { formatSpan.Set("output-series-count", len(result)) }()
 	if !resp.Result || resp.Code != OK {
+		cause := errors.New(resp.Errors.Error)
+		if isResponseBodyTooLarge(resp.Message) || isResponseBodyTooLarge(resp.Errors.Error) {
+			cause = &metadata.BackendResponseTooLargeError{Message: resp.Message}
+		}
 		return nil, false, metadata.NewMessage(
 			metadata.MsgQueryVictoriaMetrics,
 			"查询异常 %s",
 			resp.Message,
-		).Error(ctx, errors.New(resp.Errors.Error))
+		).Error(ctx, cause)
 	}
 
 	prefix := "vm-data"
@@ -406,6 +410,10 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 	}
 
 	return nil, false, nil
+}
+
+func isResponseBodyTooLarge(message string) bool {
+	return strings.Contains(strings.ToLower(message), "response body size exceeds")
 }
 
 func (i *Instance) labelFormat(ctx context.Context, resp *VmLableValuesResponse, span *trace.Span) ([]string, error) {

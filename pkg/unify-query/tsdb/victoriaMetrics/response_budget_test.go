@@ -44,3 +44,21 @@ func TestVMRequestPropagatesResponseBudget(t *testing.T) {
 		require.Equal(t, limit, client.limit)
 	}
 }
+
+func TestMatrixFormatClassifiesBackendResponseSizeLimit(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	ctx, span := trace.NewSpan(ctx, "response-size-limit-test")
+	response := &VmResponse{Message: "Response body size exceeds 100 MB, estimatedSize: 135 MB", Code: "400"}
+	_, _, err := (&Instance{}).matrixFormat(ctx, response, span)
+	span.End(&err)
+	require.ErrorIs(t, err, metadata.ErrBackendResponseTooLarge)
+	require.ErrorContains(t, err, "estimatedSize: 135 MB")
+
+	response = &VmResponse{Message: "query timed out", Code: "400"}
+	ctx = metadata.InitHashID(context.Background())
+	ctx, span = trace.NewSpan(ctx, "response-size-limit-non-match-test")
+	_, _, err = (&Instance{}).matrixFormat(ctx, response, span)
+	span.End(&err)
+	require.NotErrorIs(t, err, metadata.ErrBackendResponseTooLarge)
+}

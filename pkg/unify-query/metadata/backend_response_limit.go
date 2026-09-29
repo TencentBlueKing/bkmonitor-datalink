@@ -7,8 +7,27 @@ package metadata
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync/atomic"
 )
+
+var ErrBackendResponseTooLarge = errors.New("backend response exceeds its maximum size")
+
+type BackendResponseTooLargeError struct {
+	Message string
+}
+
+func (e *BackendResponseTooLargeError) Error() string {
+	if e == nil || e.Message == "" {
+		return ErrBackendResponseTooLarge.Error()
+	}
+	return fmt.Sprintf("%s: %s", ErrBackendResponseTooLarge, e.Message)
+}
+
+func (e *BackendResponseTooLargeError) Unwrap() error {
+	return ErrBackendResponseTooLarge
+}
 
 type backendResponseLimitKey struct{}
 

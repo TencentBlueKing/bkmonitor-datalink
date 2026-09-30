@@ -31,6 +31,24 @@ config_templates:
             grpc_max_bytes:
               title: grpc_max_bytes
               type: string
+            traffic_limiter_redis_mode:
+              title: traffic_limiter_redis_mode
+              type: string
+            traffic_limiter_redis_db:
+              title: traffic_limiter_redis_db
+              type: integer
+            traffic_limiter_redis_key:
+              title: traffic_limiter_redis_key
+              type: string
+            traffic_limiter_redis_addrs:
+              title: traffic_limiter_redis_addrs
+              type: array
+              items:
+                title: address
+                type: string
+            traffic_limiter_redis_password:
+              title: traffic_limiter_redis_password
+              type: string
 
   - plugin_version: "*"
     name: bk-collector-platform.conf

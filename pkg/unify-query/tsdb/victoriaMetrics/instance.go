@@ -342,6 +342,7 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 	span.Set(fmt.Sprintf("%s-sql", prefix), resp.Data.SQL)
 	span.Set(fmt.Sprintf("%s-device", prefix), resp.Data.Device)
 	span.Set(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime)
+	span.Set(fmt.Sprintf("%s-timetaken", prefix), resp.Data.Timetaken)
 	span.Set(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords)
 	span.Set(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds)
 	span.Set(fmt.Sprintf("%s-bk-biz-ids", prefix), resp.Data.BkBizIDs)

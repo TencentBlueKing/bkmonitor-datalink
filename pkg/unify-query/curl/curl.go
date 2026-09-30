@@ -51,6 +51,9 @@ type Options struct {
 	// MaxResponseBytes 限制响应体最大字节数，在 JSON 解码前拒绝超限响应；
 	// 非正数表示不限制，以兼容未配置该选项的现有调用方。
 	MaxResponseBytes int64
+
+	// Attempt 由需要显式重试的调用方设置，仅用于区分同一逻辑查询的出站 span。
+	Attempt int
 }
 
 type Curl interface {
@@ -90,6 +93,9 @@ func (c *HttpCurl) Request(ctx context.Context, method string, opt Options, res 
 	}
 
 	span.Set("response-body-byte-limit", opt.MaxResponseBytes)
+	if opt.Attempt > 0 {
+		span.Set("outbound.request.attempt", opt.Attempt)
+	}
 	readBody := false
 	defer func() {
 		if readBody && metadata.BackendResponseLimit(ctx) > 0 {

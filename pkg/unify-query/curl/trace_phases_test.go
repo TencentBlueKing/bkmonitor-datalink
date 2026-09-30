@@ -81,9 +81,9 @@ func TestCurlConnectionTraceAttributes(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	for range 2 {
+	for attempt := 1; attempt <= 2; attempt++ {
 		var result map[string]bool
-		_, err := (&HttpCurl{}).Request(context.Background(), Get, Options{UrlPath: server.URL}, &result)
+		_, err := (&HttpCurl{}).Request(context.Background(), Get, Options{UrlPath: server.URL, Attempt: attempt}, &result)
 		require.NoError(t, err)
 		require.True(t, result["ok"])
 	}
@@ -113,6 +113,8 @@ func TestCurlConnectionTraceAttributes(t *testing.T) {
 	require.True(t, second["outbound.connection.reused"].AsBool())
 	require.True(t, first["outbound.request.write_complete"].AsBool())
 	require.True(t, second["outbound.request.write_complete"].AsBool())
+	require.Equal(t, int64(1), first["outbound.request.attempt"].AsInt64())
+	require.Equal(t, int64(2), second["outbound.request.attempt"].AsInt64())
 }
 
 func TestCurlTraceRecordsRequestWriteError(t *testing.T) {

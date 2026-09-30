@@ -32,6 +32,7 @@ const (
 	enrichDataSourceUptime          = "uptime"
 	enrichDataSourceOneModel        = "onemodel"
 	enrichDataSourceAPMApplication  = "apm_application"
+	enrichDataSourceDynamicGroup    = "dynamic_group"
 )
 
 // ObserveEnrichSources 为全部已配置 Reader 增加调用结果和耗时指标。
@@ -65,6 +66,9 @@ func (r *Runtime) ObserveEnrichSources(sources enrich.Sources) enrich.Sources {
 	}
 	if sources.CollectTopology != nil {
 		sources.CollectTopology = &observedCollectTopologyReader{next: sources.CollectTopology, metrics: r.metrics}
+	}
+	if sources.DynamicGroup != nil {
+		sources.DynamicGroup = &observedDynamicGroupReader{next: sources.DynamicGroup, metrics: r.metrics}
 	}
 	if sources.Uptime != nil {
 		sources.Uptime = &observedUptimeReader{next: sources.Uptime, metrics: r.metrics}
@@ -216,6 +220,18 @@ func (r *observedCollectConfigReader) GetCollectConfig(ctx context.Context, tena
 type observedCollectTopologyReader struct {
 	next    enrich.CollectTopologyReader
 	metrics *instruments
+}
+
+type observedDynamicGroupReader struct {
+	next    enrich.DynamicGroupReader
+	metrics *instruments
+}
+
+func (r *observedDynamicGroupReader) GetDynamicGroupIDs(ctx context.Context, tenantID, modelCode, instanceID string) ([]string, error) {
+	startedAt := time.Now()
+	ids, err := r.next.GetDynamicGroupIDs(ctx, tenantID, modelCode, instanceID)
+	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceDynamicGroup, "get_dynamic_group_ids", startedAt, len(ids) != 0, err)
+	return ids, err
 }
 
 func (r *observedCollectTopologyReader) FindRelatedHost(ctx context.Context, tenantID, modelCode, instanceID, relation string) (enrich.Instance, bool, error) {

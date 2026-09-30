@@ -290,37 +290,21 @@ KAC converter 先调用 `enrich.DecodePayload(Alert.Enrich)`，再按 Processor 
 
 ### 5.4 场景扩展字段
 
-KAC ES 模型允许动态字段，旧 Cleaner 会追加日志、APM、K8s 和云平台字段。Linkd KAC Hook 当前读取
-`log` 和 `apm` Processor 的类型化输出；对应 Processor 未配置、失败或跳过时保留固定默认值。K8s 专用字段
-仍使用默认值，云平台 ID 由 `resource.cloud_plat_id` 提供。稳定输出形状如下：
+KAC ES 模型允许动态字段，旧 Cleaner 按告警场景追加日志、APM、K8s 和云平台字段。
+Linkd KAC Hook 当前读取 `log` 和 `apm` Processor 的类型化输出，只发送其中非零、非空的扩展字段。
+Processor 未配置、失败、跳过或没有对应值时，这些字段不进入 Kafka payload，KAC 也不会因收到占位空值而将其展示在详情中。
+例如日志 Processor 提供有效值时，可发送：
 
 ```json
 {
-  "log_theme_id": 0,
-  "log_theme_name": "",
-  "log_query_string": "",
-  "log_relate_info": "",
-  "apm_app_id": 0,
-  "apm_app_name": "",
-  "apm_app_alias": "",
-  "apm_service_name": "",
-  "apm_instance_name": "",
-  "apm_interface_name": "",
-  "apm_net_peer_name": "",
-  "bcs_cluster_id": "",
-  "cluster_name": "",
-  "namespace": "",
-  "service": "",
-  "workload_kind": "",
-  "workload_name": "",
-  "pod_name": "",
-  "container_name": "",
-  "cloud_plat_id": ""
+  "log_theme_id": 36,
+  "log_theme_name": "应用日志",
+  "log_query_string": "error"
 }
 ```
 
-默认值按字段类型固定：数值 ID `log_theme_id`、`apm_app_id` 使用 `0`，其余扩展字段使用空字符串，
-保证 payload 字段形状和类型稳定。`log/apm` Processor 成功或 partial 且携带有效值时，Hook 写入真实字段；
+APM 扩展字段同样按值输出；目前 Hook 尚未映射 K8s 专用字段和 `resource.cloud_plat_id`，因此不会发送这些字段。
+基础字段沿用各自约定，例如有效的 `bk_cloud_id="0"` 仍发送，`dynamic_group_id` 和 `cw_labels` 空数组仍发送。
 诊断、Processor status、完整 Alert、ExtraData 和任意未知 Enrich 字段保持在 Linkd 内部。
 
 ### 5.5 当前字段缺口
@@ -631,6 +615,8 @@ python3 scripts/publish_host_alert.py \
 - `log_theme_id=0`、`apm_app_id=0`，K8s/云平台字符串扩展字段为空；
 - `metric_query_params` 是可解析 JSON object 的字符串；
 - KAC Schema 的八个最低必需字段全部存在。
+
+上述为当时版本的 Kafka 观测记录。扩展字段现已改为无值时省略；这一变化尚需重新进行 Kafka 与 KAC 联调验证。
 
 该验证覆盖 Linkd 到 Kafka record。目标 KAC consumer、AlarmSource 注册、ES 持久化、恢复/关闭关联和
 重复消息处理仍需在 KAC 联调环境验证。

@@ -11,6 +11,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -58,5 +59,61 @@ func TestSourceImportsDoNotNeedResourcesAndOldInputIsRejected(t *testing.T) {
 	}
 	if strings.Contains(string(encoded), "historical-secret") || strings.Contains(string(encoded), "datasources") {
 		t.Fatal("historical resource survived typed boundary")
+	}
+}
+
+func TestDynamicGroupResourceTenantKeyspacesAndRedaction(t *testing.T) {
+	resources := *validResourcesConfig()
+	resources.DynamicGroup = &DynamicGroupResource{Tenants: map[string]DynamicGroupTenantResource{
+		"tenant-a": {Redis: RedisConfig{Address: "redis.example.com:6379", Password: "secret", Database: 1}, KeyPrefix: "bk_monitor:"},
+		"tenant-b": {Redis: RedisConfig{Address: "redis.example.com:6379", Password: "other", Database: 2}, KeyPrefix: "bk_monitor:"},
+	}}
+	selected, err := (EnrichConfig{Processors: []EnrichProcessorConfig{{Type: "resource"}}}).SelectResources(resources)
+	if err != nil || selected.DynamicGroup == nil {
+		t.Fatalf("selected=%#v error=%v", selected, err)
+	}
+	selected.DynamicGroup.Tenants["tenant-a"] = DynamicGroupTenantResource{}
+	if resources.DynamicGroup.Tenants["tenant-a"].KeyPrefix == "" {
+		t.Fatal("tenant resource was shared")
+	}
+	redacted := resources.Redacted()
+	if redacted.DynamicGroup.Tenants["tenant-a"].Redis.Password != redactedSecret {
+		t.Fatal("dynamic group password exposed")
+	}
+	resource := resources.DynamicGroup.Tenants["tenant-b"]
+	resource.Redis.Database = 1
+	resources.DynamicGroup.Tenants["tenant-b"] = resource
+	if err := resources.Validate(); err == nil || !strings.Contains(err.Error(), "share a keyspace") {
+		t.Fatalf("shared tenant keyspace accepted: %v", err)
+	}
+}
+
+func TestLoadDynamicGroupResource(t *testing.T) {
+	path := writeConfig(t, `resources:
+  dynamic_group:
+    tenants:
+      tenant-a:
+        redis: {address: 'redis.example.com:6379', database: 2, password: private}
+        key_prefix: 'bk_monitor:'
+`)
+	cfg, err := Load(path, Overrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource := cfg.Resources.DynamicGroup.Tenants["tenant-a"]
+	if resource.Redis.Database != 2 || resource.Redis.Password != "private" || resource.KeyPrefix != "bk_monitor:" {
+		t.Fatalf("dynamic group resource=%#v", cfg.Resources.Redacted().DynamicGroup)
+	}
+}
+
+func TestDynamicGroupResourceTenantLimit(t *testing.T) {
+	tenants := make(map[string]DynamicGroupTenantResource, maxDynamicGroupTenants+1)
+	for index := range maxDynamicGroupTenants + 1 {
+		tenants[fmt.Sprintf("tenant-%d", index)] = DynamicGroupTenantResource{
+			Redis: RedisConfig{Address: "redis.example.com:6379", Database: index}, KeyPrefix: "bk_monitor:",
+		}
+	}
+	if err := (ResourcesConfig{DynamicGroup: &DynamicGroupResource{Tenants: tenants}}).Validate(); err == nil || !strings.Contains(err.Error(), "1 to 32") {
+		t.Fatalf("tenant limit accepted: %v", err)
 	}
 }

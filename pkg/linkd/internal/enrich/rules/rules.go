@@ -45,6 +45,7 @@ const (
 	DependencyAPMApplication  = "apm_application"
 	DependencyCollectConfig   = "collect_config"
 	DependencyCollectTopology = "collect_topology"
+	DependencyDynamicGroup    = "dynamic_group"
 	DependencyUptime          = "uptime"
 )
 

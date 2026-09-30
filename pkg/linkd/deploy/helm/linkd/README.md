@@ -36,7 +36,7 @@ Chart 版本为 `0.1.11`。Linkd 与 Console 的默认镜像分别为 `ghcr.io/t
 
 ### 公共第三方资源
 
-在 `configuration.resources` 中统一配置 `mysql`、`onemodel`、`kingeye_display`，参见
+在 `configuration.resources` 中统一配置所需的 `mysql`、`onemodel`、`kingeye_display`、`dynamic_group`，参见
 [外部服务示例](examples/external-services.yaml)。这些连接用于 Kingeye 元数据、OneModel 与展示缓存，
 不等同于 `storage` 中的 Linkd Repository。各角色读取同一资源定义，按实际需求创建连接。
 更新资源后重启控制面与 Lifecycle；采用已有 Secret 时也需保持两者配置一致。

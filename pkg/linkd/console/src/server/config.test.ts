@@ -487,6 +487,11 @@ resources:
       mode: sentinel
       password: redis-private
       sentinel: {master_name: master, addresses: ['sentinel:26379'], password: sentinel-private}
+  dynamic_group:
+    tenants:
+      tenant-a:
+        key_prefix: 'bk_monitor:'
+        redis: {address: 'redis:6379', database: 1, password: group-private}
 `,
     );
     const config = await loadConfig(configPath);
@@ -498,6 +503,7 @@ resources:
       "basic-private",
       "redis-private",
       "sentinel-private",
+      "group-private",
     ])
       expect(text).not.toContain(secret);
     expect(config.resources?.onemodel?.api_key).toBe("es-private");

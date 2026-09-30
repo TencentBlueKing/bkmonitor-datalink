@@ -230,7 +230,8 @@ enrich:
 无丰富基线测试使用 `processors: []`。原临时顶层 `sleep_milliseconds` 已移入 datasource 分布配置。
 
 第三方只读资源统一由顶层 `resources` 配置：`mysql` 供 Kingeye 元数据 Reader 使用，
-`onemodel` 供统一实例、关联和业务拓扑查询使用，`kingeye_display` 供展示缓存转换使用。
+`onemodel` 供统一实例、关联和业务拓扑查询使用，`kingeye_display` 供展示缓存转换使用，
+`dynamic_group` 供 Resource 从 Kingeye 已物化的 Redis hash 读取分组归属。
 所有 EventSource、丰富预览及 OneModel 查询复用同一套资源定义；连接仍按实际依赖初始化，来源任务退出时关闭。
 OneModel 实例固定读取 `kingeye_all_instance`，关联边固定读取 `kingeye_topo`；业务拓扑读取
 `<index_prefix>cmdb_biz_topo_node` 和 `<index_prefix>cmdb_biz_topo_host_membership`，前缀默认 `bk_monitor_base_`。
@@ -239,7 +240,37 @@ OneModel 实例固定读取 `kingeye_all_instance`，关联边固定读取 `king
 来源导入文件只需包含处理规则，无需复制资源凭据；控制面发布和运行时装配检查实际所需资源。
 旧 `event_sources[].enrich.datasources` 输入已移除；历史 Release 不改写，读取后也不再使用其内嵌连接。
 配置展示隐藏 MySQL、Redis、Elasticsearch API Key 和 Basic Auth 密码；新发布的 Record/Release 不包含公共资源。
-真实依赖的联调结果需单独验证，普通 mock 单元测试不代表生产链路已验证。
+
+### 动态分组 Redis 投影
+
+启用 `resource` Processor 时可选配置 `resources.dynamic_group`。当前读端对齐 Kingeye
+`get_dynamic_inst_group_cache_key` 写入格式：Redis hash key 为
+`<key_prefix>dynamic_inst_group:<model_id>`，field 为 canonical `model_inst_id`，
+value 为 `{"group_ids":[整数分组 ID...]}`。Linkd 只读取该投影，不计算成员关系。
+
+```yaml
+resources:
+  dynamic_group:
+    tenants:
+      tenant-a:
+        redis:
+          address: tenant-a-redis.example.com:6379
+          database: 0
+        key_prefix: "bk_monitor_base:"
+```
+
+每个租户必须明确绑定其写入端 Redis 逻辑数据库或专属前缀，最多配置 32 个租户；
+同一 keyspace 不允许配置给两个租户。
+这是因为当前写入端的键不含租户 ID。未配置 `dynamic_group` 时保持空数组；配置后若某租户
+没有对应连接、Redis 读取失败或值格式错误，Resource 结果为部分成功并保留已确定的资源字段。
+未命中返回空数组。分组 ID 输出为十进制字符串数组，按数字升序去重；单条值限制为 64 KiB、
+最多 1024 个 ID。Kingeye 当前代码的默认 `redis_key_prefix` 为 `bk_monitor_base:`，实际配置
+必须与目标写入端一致。2026-09-30 在 test-bkee5 Redis DB0 上对 `cw-Host` 投影完成只读校验，
+覆盖非空成员、缺失 field 与未配置租户；完整事件处理链路和目标租户绑定仍需单独验证。
+
+旧 `link_pipeline` 的 `META_DYNAMIC_INST_GROUP_CACHE_KEY` 与当前 Kingeye 写入端的键格式不同；
+此处读取当前写入端投影，旧键不作为 Linkd 兼容契约。
+普通 mock 单元测试和上述只读校验都不代表生产链路已验证。
 
 顶层 `cleaner` 是每条 EventSource Flow 的默认预算；`event_sources[].cleaner.runtime` 只覆盖非零
 字段。每条 Flow 内共享清洗 worker pool，但 Event 持久化、Mailbox 入队和原消息确认始终按 lane 独立推进，

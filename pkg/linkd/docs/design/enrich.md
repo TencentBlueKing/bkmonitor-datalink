@@ -255,7 +255,9 @@ dynamic_group_id
 cw_labels
 ```
 
-当前 `dynamic_group_id` 的代码类型为 `[]string`，值为空数组。后续接入动态分组前需先确认最终类型；旧迁移设计曾记录 `[]int64`，该差异仍未收敛。
+`dynamic_group_id` 的代码类型为 `[]string`。配置 `resources.dynamic_group` 后，Resource 按租户、
+`model_id` 和 `model_inst_id` 读取当前 Kingeye 写入端的 Redis 投影，将整数 ID 转为十进制字符串；
+未配置或未命中时为空数组。旧迁移设计曾记录 `[]int64`，目前以已实现的输出类型为准。
 
 ### 6.3 display
 
@@ -330,7 +332,7 @@ meta_info
 
 | 能力 | 当前事实 | 影响 |
 | --- | --- | --- |
-| DynamicGroup Redis | 缺失 | `dynamic_group_id` 固定为空数组 |
+| DynamicGroup Redis | Reader 与生产装配已实现，本地测试已覆盖；目标环境未验证 | 需配置每租户 Redis keyspace；未配置或未命中时为空数组，读取失败使 Resource 部分成功 |
 | LogTheme 生产 Reader | 已装配 | MySQL Reader 查询 `log_theme_logtheme`，使用调用方传入的 `bk_tenant_id`，只投影 `bk_tenant_id`、`log_theme_id`、`log_theme_name`；生产装配接入 `enrich.Sources.LogTheme` | |
 | CloudResource | 已装配 | MySQL Reader 已接入 `enrich.Sources.CloudResource`，按接口入参租户和 `cloud_id + type + instanceid` 查询并关联云平台名称；当前 CloudResource 表为空 |
 | CloudPlugin / SysSetting | 已移出当前 Cloud 主链 | 当前 Cloud/VMWARE 契约不依赖 CloudPlugin、SysSetting，不阻塞资源丰富 |
@@ -432,7 +434,7 @@ Resource 与 Display 共享同一个场景解析结果。MonitorSource、NoData�
 | 场景 | 当前完成度 | 已实现 | 主要差距 |
 | --- | ---: | --- | --- |
 | `BASE_COLLECT/MONITOR_SOURCE` | 90% | 独立 Resolver、两类身份、模型/实例/拓扑、Resource/Display、`cw_labels`、五 Processor payload、KAC `base_collect_monitor_source_01` 脱敏差异 fixture | 服务实例真实样本 |
-| `BASE_COLLECT/COLLECT_TASK` | 90% | CollectConfig、实例定位、模型/拓扑生产 Reader、OneModel 执行主机云区域回填、Resource/Display、`cw_labels`、KAC 远程 MySQL 脱敏 fixture | 动态分组、其他采集类型样本 |
+| `BASE_COLLECT/COLLECT_TASK` | 90% | CollectConfig、实例定位、模型/拓扑生产 Reader、OneModel 执行主机云区域回填、Resource/Display、`cw_labels`、动态分组 Redis Reader、KAC 远程 MySQL 脱敏 fixture | 动态分组目标 Redis 实测、其他采集类型样本 |
 | `BASE_COLLECT/NO_DATA` | 90% | `__NO_DATA_DIMENSION__` 分类、`model_id + model_inst_id` 规范身份、策略模型一致性校验、实例/拓扑、通用 KAC title/content/object、五 Processor payload 与失败矩阵 | 真实来源样本复核 |
 | `BASE_COLLECT/SYSTEM_METRIC` | 90% | 主机 ID/地址定位、实例唯一性、模型/拓扑、多 membership 稳定首路径、Resource/Display、`cw_labels`、两份 KAC 脱敏差异 fixture | 组合 `event.target` 差异样本 |
 | BaseTarget `UPTIME_CHECK` | 85%～90% | Task/Node 双 ID、协议维度、删除任务回退、OneModel 业务名称与可信目标主机云区域名称、业务/任务 `cw_labels`、两份 KAC 脱敏 fixture | 非主机目标的云区域名称、真实外部样本 |
@@ -482,7 +484,7 @@ Alert.Dimensions.bk_collect_config_id
 生产限制：
 
 - 云区域名称全部来自 OneModel 资源实例或执行主机实例；不引入 CMDB API。身份不完整、主机未命中、查询错误或区域 ID 冲突时保持空名称；
-- 动态分组进入独立后续能力；
+- 动态分组需要按租户配置 Redis keyspace 并用目标环境真实键验证；
 - CollectConfig namespace 和前导零身份规则保留真实样本确认；
 - 服务实例 `cw_biz_id` 属性槽保留真实样本确认。
 
@@ -644,7 +646,7 @@ K8s 已完成 OneModel Reader 主流程接入，复用统一实例索引 `kingey
 当前缺口分为“代码边界已存在、生产适配待补”和“契约尚未确认”两类。派生 fixture 与 Reader 契约测试用于固定确定性行为，不代表真实环境验证。
 
 1. **真实协议验证**：BaseTarget 的 ModelReader、OneModel 实例、投影边和 CMDB 拓扑已完成真实环境第一轮核验；K8s `kingeye_all_instance` 已完成 system 租户模型分布和代表性 Cluster 文档核验；服务实例、双租户和更多反向关系样本保留后续验证。
-2. **动态分组**：Redis Reader、租户连接、key 查询、类型与失败语义作为独立后续能力。
+2. **动态分组**：Redis Reader、租户连接、key 查询、类型与失败语义已有本地实现和测试；目标环境的写入键、租户 keyspace 隔离及真实成员样本仍需验证。
 3. **`cw_labels`**：BaseTarget 六个分支和 APM 已覆盖业务与确定资源身份；日志已输出业务/主题标签，Cloud 已输出确定资源标签；K8s Reader 已获得真实业务字段，完整标签投影和优先级仍待 Kafka 回放确认。
 4. **Display 内容**：BaseTarget/DATA 已覆盖主要阈值、枚举、算法和日志内容分支；其他专用场景仍需要真实模板或产品规则确认。
 5. **fixture**：BaseTarget、Collect、Uptime、DATA 已有 KAC 脱敏或派生 fixture；日志、Cloud、K8s、APM 已有 Processor 级和链路级派生测试，完整 JSON fixture 与真实外部样例继续补充。所有派生 fixture 均标记为迁移推导依据。
@@ -889,7 +891,7 @@ K8s OneModel Reader 已接入主流程，并已用本机 ES system 租户真实�
 1. 真实上游 NoData `event.tags → dimensions` 映射契约与端到端样本；
 2. 双租户、关联主机恢复及其余外部失败样本；
 3. 其他采集类型 KAC fixture；
-4. 动态分组 Redis 独立任务。
+4. 动态分组 Redis 的目标环境键和双租户实测。
 
 ## 15. 每个场景的完成标准
 

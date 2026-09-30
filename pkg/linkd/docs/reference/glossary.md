@@ -61,7 +61,7 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | 目标主机 ID（bk_target_host_id） | 来源提供的目标主机标识，位于 Event.Dimensions.bk_target_host_id；可能对应远程采集下发的主机，不能预先等同于告警对象的 bk_inst_id 或 bk_host_id；具体来源语义仍按场景取证 |
 | resource（丰富分组） | 丰富结果中的资源上下文，分别保留 CMDB 与 Meta 的模型实例信息，包含业务、CMDB 业务集群、模块和云区域的标识与名称，以及动态分组和派生范围标签，不改写 Event/Alert 的核心主体或标签 |
 | cw_labels       | 旧告警规则生成的业务或资源范围字符串标签列表；迁移后作为资源丰富信息保存，不等同于 Event/Alert.labels 或授权结果 |
-| 动态分组（dynamic_group_id） | 按旧模型与实例关系查询得到的分组归属，丰富结果保留旧字段名并保存查询时的分组 ID 列表；字段名为单数不表示单个分组，不表达分组成员的实时状态 |
+| 动态分组（dynamic_group_id） | 按租户和 canonical `model_id`、`model_inst_id` 查询 Kingeye 预写入的 Redis 关系投影；丰富结果保留旧字段名，将整数分组 ID 保存为十进制字符串数组。字段名为单数不表示单个分组，也不表达分组成员的实时状态 |
 | active          | Alert 当前仍成立                                                                                  |
 | values | Event 本次观测的有限数字对象，不参与 fingerprint，不包含单位等元信息 |
 | evaluations | Event 中按标准 severity 唯一的判定列表，动作是 triggered/resolved/closed；顺序无语义 |

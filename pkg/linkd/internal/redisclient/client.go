@@ -22,7 +22,7 @@ import (
 type Options struct {
 	// PoolSize 非零时限制目标专属客户端的连接池，零值沿用既有默认。
 	PoolSize int
-	// ContextTimeoutEnabled 使 socket deadline 服从调用方截止时间；仅毫秒级输出插件启用。
+	// ContextTimeoutEnabled 使 socket deadline 服从调用方截止时间；供有界输出及丰富读取使用。
 	ContextTimeoutEnabled bool
 	Address               string
 	Username              string

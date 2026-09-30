@@ -57,6 +57,74 @@ func TestConvertMessageMapsAlertAndEnrichToKACAlarm(t *testing.T) {
 	}
 }
 
+func TestKACPayloadOmitsAbsentContextFields(t *testing.T) {
+	alert := testAlert()
+	message, err := convertMessage(lifecycle.FinalHookInput{
+		Cause: lifecycle.AlertChangeCause{Type: lifecycle.AlertChangeCauseSourceEvent, ID: "event-1"},
+		Alert: alert, Outcome: lifecycle.OutcomeAlertCreated,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := mappedPayload(message, alert, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{
+		"log_theme_id", "log_theme_name", "log_query_string", "log_relate_info",
+		"apm_app_id", "apm_app_name", "apm_app_alias", "apm_service_name",
+		"apm_instance_name", "apm_interface_name", "apm_net_peer_name",
+		"bcs_cluster_id", "cluster_name", "namespace", "service", "workload_kind",
+		"workload_name", "pod_name", "container_name", "cloud_plat_id",
+	} {
+		if _, exists := fields[name]; exists {
+			t.Errorf("absent context field %q was sent to KAC: %s", name, fields[name])
+		}
+	}
+	if string(fields["bk_cloud_id"]) != `"0"` {
+		t.Errorf("meaningful bk_cloud_id must be preserved: %s", fields["bk_cloud_id"])
+	}
+	if string(fields["metric_name"]) != `"usage"` {
+		t.Errorf("metric_name=%s", fields["metric_name"])
+	}
+}
+
+func TestKACPayloadPreservesPresentContextFields(t *testing.T) {
+	alert := testAlert()
+	message, err := convertMessage(lifecycle.FinalHookInput{
+		Cause: lifecycle.AlertChangeCause{Type: lifecycle.AlertChangeCauseSourceEvent, ID: "event-1"},
+		Alert: alert, Outcome: lifecycle.OutcomeAlertCreated,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	message.LogThemeID = 36
+	message.LogThemeName = "应用日志"
+	message.APMAppID = 29
+	message.APMAppName = "test223"
+	message.CloudPlatformID = "cloud-1"
+	payload, err := mappedPayload(message, alert, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]any{
+		"log_theme_id": float64(36), "log_theme_name": "应用日志",
+		"apm_app_id": float64(29), "apm_app_name": "test223", "cloud_plat_id": "cloud-1",
+	} {
+		if fields[key] != want {
+			t.Errorf("%s=%v, want %v", key, fields[key], want)
+		}
+	}
+}
+
 func TestConvertMessageMapsLogEnrichToKACAlarm(t *testing.T) {
 	alert := testAlert()
 	alert.Enrich = jsonObject(`{"processors":[

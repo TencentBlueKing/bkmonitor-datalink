@@ -262,6 +262,14 @@ const resourcesSchema = z.object({
   kingeye_display: z
     .object({ redis: redisConfigSchema, key_prefix: z.string().optional() })
     .optional(),
+  dynamic_group: z
+    .object({
+      tenants: z.record(
+        z.string(),
+        z.object({ redis: redisConfigSchema, key_prefix: z.string().min(1) }),
+      ),
+    })
+    .optional(),
 });
 
 const linkdConfigSchema = z
@@ -1136,6 +1144,11 @@ export function redactedConfig(config: ConsoleConfig) {
     resources.kingeye_display.redis.password = "******";
   if (resources?.kingeye_display?.redis.sentinel?.password)
     resources.kingeye_display.redis.sentinel.password = "******";
+  for (const tenant of Object.values(resources?.dynamic_group?.tenants ?? {})) {
+    if (tenant.redis.password) tenant.redis.password = "******";
+    if (tenant.redis.sentinel?.password)
+      tenant.redis.sentinel.password = "******";
+  }
   return {
     resources,
     configPath: config.configPath,

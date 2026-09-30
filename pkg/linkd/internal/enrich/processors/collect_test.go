@@ -14,6 +14,7 @@ package processors
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -46,6 +47,7 @@ func TestCollectScenarioFlowsThroughResourceAndDisplay(t *testing.T) {
 		enrich.Sources{
 			CWStrategy: processorCollectStrategy{}, Metric: processorCollectMetric{},
 			CollectConfig: reader, Model: reader, OneModel: reader,
+			DynamicGroup: processorDynamicGroups{ids: []string{"21", "34"}},
 		},
 	)
 	if err != nil {
@@ -70,6 +72,9 @@ func TestCollectScenarioFlowsThroughResourceAndDisplay(t *testing.T) {
 		string(resource.Value["cw_labels"]) != `["bk_biz_id","bk_biz_id|3","cw-Service","cw-Service|2"]` {
 		t.Fatalf("resource=%#v", resource)
 	}
+	if string(resource.Value["dynamic_group_id"]) != `["21","34"]` {
+		t.Fatalf("dynamic groups=%s", resource.Value["dynamic_group_id"])
+	}
 	display := payload.Processors[1][rules.DisplayProcessor]
 	if display.Status != domain.EnrichStatusSucceeded ||
 		string(display.Value["object"]) != `"订单服务"` ||
@@ -79,6 +84,45 @@ func TestCollectScenarioFlowsThroughResourceAndDisplay(t *testing.T) {
 	if reader.configCalls != 1 || reader.instanceCalls != 1 || reader.modelCalls != 1 {
 		t.Fatalf("calls config=%d instance=%d model=%d", reader.configCalls, reader.instanceCalls, reader.modelCalls)
 	}
+}
+
+type processorDynamicGroups struct {
+	ids []string
+	err error
+}
+
+func TestCollectDynamicGroupFailureKeepsResource(t *testing.T) {
+	reader := &processorCollectReader{
+		config:   models.CollectConfig{UID: "collect-uid", BKTenantID: "tenant-a", BKCollectTaskID: "collect-1", BKObjectCode: "cw-Service", BKInstID: 2},
+		instance: enrich.Instance{TenantID: "tenant-a", ModelCode: "cw-Service", InstanceID: "2", Fields: map[string]any{rules.FieldBKBizID: int64(3)}},
+	}
+	chain, err := enrich.NewChain([]enrich.Processor{Resource{}}, enrich.Sources{
+		CWStrategy: processorCollectStrategy{}, CollectConfig: reader, Model: reader, OneModel: reader,
+		DynamicGroup: processorDynamicGroups{err: errors.New("redis unavailable")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := chain.Enrich(t.Context(), enrich.Input{Alert: collectProcessorAlert(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := enrich.DecodePayload(result.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource := payload.Processors[0][rules.ResourceProcessor]
+	if resource.Status != domain.EnrichStatusPartial || string(resource.Value["model_inst_id"]) != `"2"` || string(resource.Value["dynamic_group_id"]) != `[]` ||
+		len(resource.Diagnostics) == 0 || resource.Diagnostics[len(resource.Diagnostics)-1].Dependency != rules.DependencyDynamicGroup {
+		t.Fatalf("resource=%#v", resource)
+	}
+}
+
+func (r processorDynamicGroups) GetDynamicGroupIDs(_ context.Context, tenant, model, instance string) ([]string, error) {
+	if tenant != "tenant-a" || model != "cw-Service" || instance != "2" {
+		return nil, errors.New("wrong dynamic group identity")
+	}
+	return r.ids, r.err
 }
 
 func collectProcessorAlert(t *testing.T) domain.Alert {

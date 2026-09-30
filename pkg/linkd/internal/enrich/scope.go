@@ -64,10 +64,16 @@ type Sources struct {
 	APMApplication  APMApplicationReader
 	CollectConfig   CollectConfigReader
 	CollectTopology CollectTopologyReader
+	DynamicGroup    DynamicGroupReader
 	Uptime          UptimeReader
 	UptimeNode      UptimeNodeReader
 	// Test 仅用于显式启用的测试处理器。
 	Test TestSource
+}
+
+// DynamicGroupReader 按显式租户和 canonical 模型实例身份读取预先物化的分组归属。
+type DynamicGroupReader interface {
+	GetDynamicGroupIDs(ctx context.Context, tenantID, modelCode, instanceID string) ([]string, error)
 }
 
 // CWStrategyReader 按全租户唯一的关联 ID 读取鲸眼声明式策略。
@@ -301,6 +307,14 @@ func (s *Scope) Context() *EnrichContext {
 // 自定义规则通过 EffectiveAlert 显式读取前序补丁，两个视图都不共享可变字段。
 func (s *Scope) Alert() domain.Alert {
 	return s.original.Clone()
+}
+
+// DynamicGroupIDs 只使用原始 Alert 的租户身份；未配置投影时保持空列表。
+func (s *Scope) DynamicGroupIDs(ctx context.Context, modelCode, instanceID string) ([]string, error) {
+	if s.sources.DynamicGroup == nil {
+		return []string{}, nil
+	}
+	return s.sources.DynamicGroup.GetDynamicGroupIDs(ctx, s.alert.BKTenantID, modelCode, instanceID)
 }
 
 // CWStrategyByBKStrategyID 惰性读取并复用按平台策略 ID 关联的鲸眼声明式策略。

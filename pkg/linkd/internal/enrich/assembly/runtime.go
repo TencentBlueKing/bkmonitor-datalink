@@ -27,10 +27,11 @@ import (
 
 // Runtime 持有来源发布所需的只读外部连接。
 type Runtime struct {
-	display     *redis.Client
-	dataSources *datasources.Runtime
-	transport   *elasticsearchstore.HTTPTransport
-	sources     enrich.Sources
+	display       *redis.Client
+	dynamicGroups map[string]*redis.Client
+	dataSources   *datasources.Runtime
+	transport     *elasticsearchstore.HTTPTransport
+	sources       enrich.Sources
 }
 
 // Close 释放本运行时的 MySQL、Redis 和 HTTP 连接。
@@ -41,6 +42,9 @@ func (r *Runtime) Close() error {
 	var result error
 	if r.display != nil {
 		result = errors.Join(result, r.display.Close())
+	}
+	for _, client := range r.dynamicGroups {
+		result = errors.Join(result, client.Close())
 	}
 	if r.dataSources != nil {
 		result = errors.Join(result, r.dataSources.Close())
@@ -105,6 +109,30 @@ func Open(
 		}
 		runtime.display = client
 		sources.Display = datasources.NewDisplayClient(client, sources.Model, dataSources.KingeyeDisplay.KeyPrefix)
+	}
+	if dataSources.DynamicGroup != nil {
+		runtime.dynamicGroups = make(map[string]*redis.Client, len(dataSources.DynamicGroup.Tenants))
+		caches := make(map[string]datasources.DynamicGroupTenantCache, len(dataSources.DynamicGroup.Tenants))
+		// 按租户分摊来源连接预算，每租户至少 1 条；总上限不超过 maxConnections 与租户数的较大值。
+		poolSize := max(1, maxConnections/len(dataSources.DynamicGroup.Tenants))
+		for tenant, resource := range dataSources.DynamicGroup.Tenants {
+			options := resource.Redis.ClientOptions()
+			options.PoolSize = poolSize
+			options.ContextTimeoutEnabled = true
+			client, err := redisclient.New(options)
+			if err != nil {
+				_ = runtime.Close()
+				return nil, fmt.Errorf("open dynamic group cache: %w", err)
+			}
+			runtime.dynamicGroups[tenant] = client
+			caches[tenant] = datasources.DynamicGroupTenantCache{Client: client, KeyPrefix: resource.KeyPrefix}
+		}
+		reader, err := datasources.NewDynamicGroupClient(caches)
+		if err != nil {
+			_ = runtime.Close()
+			return nil, err
+		}
+		sources.DynamicGroup = reader
 	}
 	for _, processor := range source.Enrich.Processors {
 		if processor.Type == "test" {

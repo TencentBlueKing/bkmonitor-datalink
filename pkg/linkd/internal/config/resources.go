@@ -9,12 +9,19 @@
 
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
+
+const maxDynamicGroupTenants = 32
 
 // ResourcesConfig 定义部署内共享的第三方只读资源；不进入 EventSource Release。
 type ResourcesConfig struct {
 	// KingeyeDisplay 提供展示转换所需的 Redis 缓存。
 	KingeyeDisplay *DisplayResource `yaml:"kingeye_display,omitempty" json:"kingeye_display,omitempty"`
+	// DynamicGroup 将 Kingeye 无租户后缀的投影 keyspace 显式绑定到租户。
+	DynamicGroup *DynamicGroupResource `yaml:"dynamic_group,omitempty" json:"dynamic_group,omitempty"`
 	// MySQL 指向 Kingeye schema，供元数据 Reader 共用。
 	MySQL *MySQLResource `yaml:"mysql,omitempty" json:"mysql,omitempty"`
 	// OneModel 指向统一实例、关系和业务拓扑存储，独立于 Linkd Repository。
@@ -25,6 +32,17 @@ type ResourcesConfig struct {
 type DisplayResource struct {
 	Redis     RedisConfig `yaml:"redis" json:"redis"`
 	KeyPrefix string      `yaml:"key_prefix,omitempty" json:"key_prefix,omitempty"`
+}
+
+// DynamicGroupResource 为每个租户配置其动态分组物化缓存所在的 Redis keyspace。
+type DynamicGroupResource struct {
+	Tenants map[string]DynamicGroupTenantResource `yaml:"tenants" json:"tenants"`
+}
+
+// DynamicGroupTenantResource 描述当前 Kingeye 写入端使用的 Redis 与 key 前缀。
+type DynamicGroupTenantResource struct {
+	Redis     RedisConfig `yaml:"redis" json:"redis"`
+	KeyPrefix string      `yaml:"key_prefix" json:"key_prefix"`
 }
 
 // MySQLResource 定义公共资源使用的 MySQL 只读连接。
@@ -57,6 +75,14 @@ func (c ResourcesConfig) Clone() ResourcesConfig {
 		value.Redis = value.Redis.clone()
 		cloned.KingeyeDisplay = &value
 	}
+	if c.DynamicGroup != nil {
+		value := DynamicGroupResource{Tenants: make(map[string]DynamicGroupTenantResource, len(c.DynamicGroup.Tenants))}
+		for tenant, resource := range c.DynamicGroup.Tenants {
+			resource.Redis = resource.Redis.clone()
+			value.Tenants[tenant] = resource
+		}
+		cloned.DynamicGroup = &value
+	}
 	if c.MySQL != nil {
 		value := *c.MySQL
 		cloned.MySQL = &value
@@ -78,6 +104,12 @@ func (c ResourcesConfig) Redacted() ResourcesConfig {
 	redacted := c.Clone()
 	if redacted.KingeyeDisplay != nil {
 		redacted.KingeyeDisplay.Redis = *(StorageConfig{Redis: &redacted.KingeyeDisplay.Redis}).Redacted().Redis
+	}
+	if redacted.DynamicGroup != nil {
+		for tenant, resource := range redacted.DynamicGroup.Tenants {
+			resource.Redis = *(StorageConfig{Redis: &resource.Redis}).Redacted().Redis
+			redacted.DynamicGroup.Tenants[tenant] = resource
+		}
 	}
 	if redacted.MySQL != nil && redacted.MySQL.Password != "" {
 		redacted.MySQL.Password = redactedSecret
@@ -129,6 +161,32 @@ func (c ResourcesConfig) Validate() error {
 		}
 		if len(c.KingeyeDisplay.KeyPrefix) > 128 {
 			return fmt.Errorf("resources.kingeye_display key prefix too long")
+		}
+	}
+	if c.DynamicGroup != nil {
+		if len(c.DynamicGroup.Tenants) == 0 || len(c.DynamicGroup.Tenants) > maxDynamicGroupTenants {
+			return fmt.Errorf("resources.dynamic_group requires 1 to %d tenant caches", maxDynamicGroupTenants)
+		}
+		keyspaces := map[string]string{}
+		for tenant, resource := range c.DynamicGroup.Tenants {
+			if strings.TrimSpace(tenant) != tenant || tenant == "" || strings.ContainsAny(tenant, "\r\n") {
+				return fmt.Errorf("resources.dynamic_group contains invalid tenant")
+			}
+			if resource.KeyPrefix == "" || len(resource.KeyPrefix) > 128 {
+				return fmt.Errorf("resources.dynamic_group tenant %q requires a valid key_prefix", tenant)
+			}
+			if err := resource.Redis.Validate(); err != nil {
+				return fmt.Errorf("resources.dynamic_group tenant %q has invalid redis configuration: %w", tenant, err)
+			}
+			connection := resource.Redis.WithDefaults()
+			keyspace := fmt.Sprintf("%s|%s|%d|%s", connection.Mode, connection.Address, connection.Database, resource.KeyPrefix)
+			if connection.Sentinel != nil {
+				keyspace += "|" + connection.Sentinel.MasterName
+			}
+			if previous, exists := keyspaces[keyspace]; exists {
+				return fmt.Errorf("resources.dynamic_group tenants %q and %q share a keyspace", previous, tenant)
+			}
+			keyspaces[keyspace] = tenant
 		}
 	}
 	return nil

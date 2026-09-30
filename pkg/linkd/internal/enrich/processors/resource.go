@@ -37,6 +37,30 @@ func (Resource) Match(context.Context, *enrich.Scope) (bool, error) { return tru
 
 // Process 查询资源依赖并生成资源上下文。
 func (Resource) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
+	result, err := processResource(ctx, scope)
+	if err != nil || result.Status == domain.EnrichStatusFailed {
+		return result, err
+	}
+	values := scope.Context().Resource.Values
+	if values.ModelID == "" || values.ModelInstID == "" {
+		return result, nil
+	}
+	groupIDs, err := scope.DynamicGroupIDs(ctx, values.ModelID, values.ModelInstID)
+	if ctx.Err() != nil {
+		return enrich.ProcessorResult{}, ctx.Err()
+	}
+	if err != nil {
+		// 资源身份已确定时，动态分组投影失败仅使该 Processor 部分成功。
+		result.Status = domain.EnrichStatusPartial
+		result.Diagnostics = append(result.Diagnostics, enrich.Diagnostic{Code: enrich.DiagnosticCodeDependencyInvalid, Dependency: rules.DependencyDynamicGroup})
+		return result, nil
+	}
+	values.DynamicGroupID = groupIDs
+	result.Value, err = resourceContextValue(scope, values)
+	return result, err
+}
+
+func processResource(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
 	alert := scope.Alert()
 	ids, diagnostics := enrich.ValidateRequiredIDs(alert)
 	if len(diagnostics) != 0 {

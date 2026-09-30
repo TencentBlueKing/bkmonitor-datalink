@@ -59,7 +59,6 @@ func projectResource(resolution Resolution, fallbackBizID int64) resourceProject
 			diagnostics = appendDependency(diagnostics, rules.DependencyCollectTopology)
 		}
 		values.CWLabels = enrich.ResourceLabels(values)
-		values.DynamicGroupID = dynamicGroupIDs(resolution)
 	}
 	return resourceProjection{Values: values, Diagnostics: diagnostics}
 }
@@ -124,10 +123,6 @@ func applyRelatedHostCloudContext(values *models.ResourceValues, host enrich.Ins
 		}
 	}
 }
-
-// dynamicGroupIDs 是动态分组的稳定投影点。Redis key 与租户连接映射尚待实现，
-// 当前返回已确认的合法空列表；接入后保持 ResourceProjector 调用点不变。
-func dynamicGroupIDs(Resolution) []string { return []string{} }
 
 func validInstance(resolution Resolution) bool {
 	return resolution.instance.TenantID == resolution.tenantID &&

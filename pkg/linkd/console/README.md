@@ -231,7 +231,7 @@ Redis 页面可按来源选择派生 Stream、Mailbox 和 lease。Kafka 输入�
 表格支持实例详情和 JSON 复制；默认每页 50 条、最大 200 条。关联查询保持最多 1024 个实例的完整结果语义。
 控制面复用 Go OneModel 查询模块；Console 通过管理 JWT 代理请求，不直连 OneModel。
 
-连接统一配置在 Linkd 顶层 `resources.mysql`、`resources.onemodel`、`resources.kingeye_display`，
+连接统一配置在 Linkd 顶层 `resources.mysql`、`resources.onemodel`、`resources.kingeye_display`、`resources.dynamic_group`，
 不再接受 EventSource 的 `enrich.datasources`。配置页展示脱敏的本机资源配置。
 查询只要求控制面配置 `resources.onemodel`，不要求启用丰富处理器或配置其他第三方资源。
 协议与错误说明见 [OneModel 查询 API](../docs/reference/contracts/onemodel-query.md)。

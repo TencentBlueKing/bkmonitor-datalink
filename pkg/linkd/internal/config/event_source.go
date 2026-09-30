@@ -129,6 +129,9 @@ func (c EnrichConfig) SelectResources(configured ResourcesConfig) (ResourcesConf
 				return ResourcesConfig{}, fmt.Errorf("resources.onemodel is required by configured enrich processors")
 			}
 			selected.MySQL, selected.OneModel = configured.MySQL, configured.OneModel
+			if processor.Type == "resource" {
+				selected.DynamicGroup = configured.DynamicGroup
+			}
 		case "display", "metric", "source", "log", "cloud_resource", "k8s", "apm":
 			if configured.MySQL == nil {
 				return ResourcesConfig{}, fmt.Errorf("resources.mysql is required by configured enrich processors")

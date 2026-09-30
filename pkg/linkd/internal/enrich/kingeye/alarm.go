@@ -18,6 +18,7 @@ import (
 )
 
 // AlarmMessage 是发送给 KAC alarm_collect_topic 的扁平 Alarm JSON。
+// 日志、APM、K8s 和云平台扩展字段无值时不发送，避免 KAC 将占位空值作为告警详情展示。
 type AlarmMessage struct {
 	AlarmID           string         `json:"alarm_id"`
 	SourceID          string         `json:"source_id"`
@@ -65,26 +66,26 @@ type AlarmMessage struct {
 	MetricQueryParams string         `json:"metric_query_params"`
 	DynamicGroupID    []string       `json:"dynamic_group_id"`
 	CWLabels          []string       `json:"cw_labels"`
-	LogThemeID        int64          `json:"log_theme_id"`
-	LogThemeName      string         `json:"log_theme_name"`
-	LogQueryString    string         `json:"log_query_string"`
-	LogRelateInfo     string         `json:"log_relate_info"`
-	APMAppID          int64          `json:"apm_app_id"`
-	APMAppName        string         `json:"apm_app_name"`
-	APMAppAlias       string         `json:"apm_app_alias"`
-	APMServiceName    string         `json:"apm_service_name"`
-	APMInstanceName   string         `json:"apm_instance_name"`
-	APMInterfaceName  string         `json:"apm_interface_name"`
-	APMNetPeerName    string         `json:"apm_net_peer_name"`
-	BCSClusterID      string         `json:"bcs_cluster_id"`
-	ClusterName       string         `json:"cluster_name"`
-	K8sNamespace      string         `json:"namespace"`
-	Service           string         `json:"service"`
-	WorkloadKind      string         `json:"workload_kind"`
-	WorkloadName      string         `json:"workload_name"`
-	PodName           string         `json:"pod_name"`
-	ContainerName     string         `json:"container_name"`
-	CloudPlatformID   string         `json:"cloud_plat_id"`
+	LogThemeID        int64          `json:"log_theme_id,omitempty"`
+	LogThemeName      string         `json:"log_theme_name,omitempty"`
+	LogQueryString    string         `json:"log_query_string,omitempty"`
+	LogRelateInfo     string         `json:"log_relate_info,omitempty"`
+	APMAppID          int64          `json:"apm_app_id,omitempty"`
+	APMAppName        string         `json:"apm_app_name,omitempty"`
+	APMAppAlias       string         `json:"apm_app_alias,omitempty"`
+	APMServiceName    string         `json:"apm_service_name,omitempty"`
+	APMInstanceName   string         `json:"apm_instance_name,omitempty"`
+	APMInterfaceName  string         `json:"apm_interface_name,omitempty"`
+	APMNetPeerName    string         `json:"apm_net_peer_name,omitempty"`
+	BCSClusterID      string         `json:"bcs_cluster_id,omitempty"`
+	ClusterName       string         `json:"cluster_name,omitempty"`
+	K8sNamespace      string         `json:"namespace,omitempty"`
+	Service           string         `json:"service,omitempty"`
+	WorkloadKind      string         `json:"workload_kind,omitempty"`
+	WorkloadName      string         `json:"workload_name,omitempty"`
+	PodName           string         `json:"pod_name,omitempty"`
+	ContainerName     string         `json:"container_name,omitempty"`
+	CloudPlatformID   string         `json:"cloud_plat_id,omitempty"`
 }
 
 // FieldExtraInfo 保存 KAC 固定字段的附加展示信息。

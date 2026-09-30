@@ -10,75 +10,108 @@
 package v1beta3
 
 const (
-	MaxHopsConfigPath                                = "cmdb.v1beta3.max_hops"
-	MaxAllowedHopsConfigPath                         = "cmdb.v1beta3.max_allowed_hops"
-	DefaultLimitConfigPath                           = "cmdb.v1beta3.default_limit"
-	MaxRangePointsConfigPath                         = "cmdb.v1beta3.max_range_points"
-	MaxEdgesPerHopConfigPath                         = "cmdb.v1beta3.max_edges_per_hop"
-	MaxTargetsConfigPath                             = "cmdb.v1beta3.max_targets"
-	MaxResponseBytesConfigPath                       = "cmdb.v1beta3.max_response_bytes"
-	RootRecordIDEnabledConfigPath                    = "cmdb.v1beta3.root_record_id.enabled"
-	DefaultLookBackDeltaConfigPath                   = "cmdb.v1beta3.look_back_delta"
-	ActiveEdgeServingRelationsConfigPath             = "cmdb.v1beta3.active_edge_serving.relations"
-	FlatOneHopActiveEdgeServingRelationsConfigPath   = "cmdb.v1beta3.active_edge_serving.flat_one_hop_relations"
-	FlatMultiHopActiveEdgeServingRelationsConfigPath = "cmdb.v1beta3.active_edge_serving.flat_multi_hop_relations"
-	VMPreferredRelationsConfigPath                   = "cmdb.v1beta3.vm_preferred.relations"
+	MaxHopsConfigPath                          = "cmdb.v1beta3.max_hops"
+	MaxAllowedHopsConfigPath                   = "cmdb.v1beta3.max_allowed_hops"
+	DefaultLimitConfigPath                     = "cmdb.v1beta3.default_limit"
+	MaxRangePointsConfigPath                   = "cmdb.v1beta3.max_range_points"
+	MaxTargetsConfigPath                       = "cmdb.v1beta3.max_targets"
+	MaxGraphNodesConfigPath                    = "cmdb.v1beta3.max_graph_nodes"
+	MaxGraphEdgesConfigPath                    = "cmdb.v1beta3.max_graph_edges"
+	MaxGraphResultsConfigPath                  = "cmdb.v1beta3.max_graph_results"
+	MaxGraphNodeInfosConfigPath                = "cmdb.v1beta3.max_graph_node_infos"
+	MaxSharedTopologyPointsConfigPath          = "cmdb.v1beta3.max_shared_topology_points"
+	MaxSharedTopologyBackendBytesConfigPath    = "cmdb.v1beta3.max_shared_topology_backend_bytes"
+	MaxSharedTopologyMatrixPointsConfigPath    = "cmdb.v1beta3.max_shared_topology_matrix_points"
+	MaxSharedTopologyOutputElementsConfigPath  = "cmdb.v1beta3.max_shared_topology_output_elements"
+	MaxSharedTopologyOutputBytesConfigPath     = "cmdb.v1beta3.max_shared_topology_output_bytes"
+	MaxSharedTopologyRequestBytesConfigPath    = "cmdb.v1beta3.max_shared_topology_request_bytes"
+	MaxSharedTopologyQueriesConfigPath         = "cmdb.v1beta3.max_shared_topology_queries"
+	YoloModeConfigPath                         = "cmdb.v1beta3.yolo_mode"
+	SharedTopologyReuseMatrixConfigPath        = "cmdb.v1beta3.shared_topology_reuse_matrix"
+	SharedTopologyPlanCandidatesConfigPath     = "cmdb.v1beta3.shared_topology_plan_candidates"
+	MaxSharedTopologyConcurrentConfigPath      = "cmdb.v1beta3.max_shared_topology_concurrent_requests"
+	MaxSharedTopologyReservedBytesConfigPath   = "cmdb.v1beta3.max_shared_topology_reserved_bytes"
+	SharedTopologyRequestMemoryBytesConfigPath = "cmdb.v1beta3.shared_topology_request_memory_bytes"
+	SharedTopologyMemoryHeadroomConfigPath     = "cmdb.v1beta3.shared_topology_memory_headroom_bytes"
+	DefaultLookBackDeltaConfigPath             = "cmdb.v1beta3.look_back_delta"
 )
 
 var (
-	DefaultMaxHops = 2
-	MaxAllowedHops = 5
-	DefaultLimit   = 100
-	MaxRangePoints = 11000
-	// MaxEdgesPerHop 限制单个节点在每一跳可展开的关系边数量。
-	MaxEdgesPerHop = 1000
-	// MaxTargets 限制单个时间点可返回的目标数量。
-	MaxTargets = 5000
-	// MaxResponseBytes 限制 BKBase 查询响应体大小，防止超大响应占用过多内存。
-	MaxResponseBytes = 10 * 1024 * 1024
-	// RootRecordIDEnabled 控制是否使用完整主键生成 Record ID 定点查询根资源。
-	RootRecordIDEnabled        = false
-	DefaultLookBackDelta       = int64(86400000) // 24小时（毫秒）
-	ActiveEdgeServingRelations = []string{}
-	// FlatOneHopActiveEdgeServingRelations 仅允许已完成主键投影和复合索引验证的 Event relation
-	// 使用单跳扁平查询。raw relation 和多跳查询不受该配置影响。
-	FlatOneHopActiveEdgeServingRelations = []string{}
-	// FlatMultiHopActiveEdgeServingRelations 仅允许所有 hop 均完成主键投影和复合索引验证的
-	// Event relation。多跳由 UQ 分层并发执行，避免在 SurrealQL 中以 $parent 相关查询展开下一跳。
-	FlatMultiHopActiveEdgeServingRelations = []string{}
-	VMPreferredRelations                   = []string{}
+	DefaultMaxHops                   = 2
+	MaxAllowedHops                   = 5
+	DefaultLimit                     = 100
+	MaxRangePoints                   = 11000
+	MaxTargets                       = 5000
+	MaxGraphNodes                    = 100000
+	MaxGraphEdges                    = 200000
+	MaxGraphResults                  = 10000
+	MaxGraphNodeInfos                = 1000000
+	MaxSharedTopologyPoints          = 60
+	MaxSharedTopologyBackendBytes    = 16 * 1024 * 1024
+	MaxSharedTopologyMatrixPoints    = 1000000
+	MaxSharedTopologyOutputElements  = 200000
+	MaxSharedTopologyOutputBytes     = 64 * 1024 * 1024
+	MaxSharedTopologyRequestBytes    = 1024 * 1024
+	MaxSharedTopologyQueries         = 16
+	SharedTopologyReuseMatrix        = true
+	SharedTopologyPlanCandidates     = false
+	MaxSharedTopologyConcurrent      = 8
+	MaxSharedTopologyReservedBytes   = 4 * 1024 * 1024 * 1024
+	SharedTopologyRequestMemoryBytes = 512 * 1024 * 1024
+	SharedTopologyMemoryHeadroom     = 512 * 1024 * 1024
+	DefaultLookBackDelta             = int64(86400000) // 24小时（毫秒）
+
+	// yoloMode is an explicit capacity-test switch. It defaults to false and
+	// can be enabled for an isolated test Pod through configuration.
+	yoloMode bool
 )
 
-// effectiveMaxEdgesPerHop 返回单个节点每跳允许展开的最大边数，并为非法配置提供安全默认值。
-func effectiveMaxEdgesPerHop() int {
-	if MaxEdgesPerHop > 0 {
-		return MaxEdgesPerHop
-	}
-	return 1000
+func effectiveMaxRangePoints() int {
+	return effectiveTimeGraphLimit(MaxRangePoints, 11000)
 }
 
-// maxEdgesPerHopQueryLimit 在配置上限之外额外查询一条边，使解析器能够明确识别结果超限，
-// 避免把被静默截断的不完整关系数据当作正常结果返回。
-func maxEdgesPerHopQueryLimit() int {
-	limit := effectiveMaxEdgesPerHop()
-	if limit == int(^uint(0)>>1) {
-		return limit
-	}
-	return limit + 1
-}
-
-// effectiveMaxTargets 返回单次查询允许返回的最大目标数，并为非法配置提供安全默认值。
 func effectiveMaxTargets() int {
-	if MaxTargets > 0 {
-		return MaxTargets
-	}
-	return 5000
+	return effectiveTimeGraphLimit(MaxTargets, 5000)
 }
 
-// effectiveMaxResponseBytes 返回 BKBase 响应体大小上限，并为非法配置提供安全默认值。
-func effectiveMaxResponseBytes() int {
-	if MaxResponseBytes > 0 {
-		return MaxResponseBytes
-	}
-	return 10 * 1024 * 1024
+func effectiveMaxGraphNodes() int {
+	return effectiveTimeGraphLimit(MaxGraphNodes, 100000)
 }
+
+func effectiveMaxGraphEdges() int {
+	return effectiveTimeGraphLimit(MaxGraphEdges, 200000)
+}
+
+func effectiveMaxGraphResults() int {
+	return effectiveTimeGraphLimit(MaxGraphResults, 10000)
+}
+
+func effectiveMaxGraphNodeInfos() int {
+	return effectiveTimeGraphLimit(MaxGraphNodeInfos, 1000000)
+}
+
+func effectiveMaxSharedTopologyPoints() int {
+	if yoloMode {
+		return 0
+	}
+	if MaxSharedTopologyPoints > 0 && MaxSharedTopologyPoints <= 60 {
+		return MaxSharedTopologyPoints
+	}
+	return 60
+}
+
+func effectiveTimeGraphLimit(value, fallback int) int {
+	if yoloMode {
+		return 0
+	}
+	if value > 0 {
+		return value
+	}
+	return fallback
+}
+
+func TopologyRequestByteLimit() int {
+	return effectiveTimeGraphLimit(MaxSharedTopologyRequestBytes, 1024*1024)
+}
+
+func TopologyQueryLimit() int { return effectiveTimeGraphLimit(MaxSharedTopologyQueries, 16) }

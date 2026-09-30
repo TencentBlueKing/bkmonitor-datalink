@@ -91,6 +91,9 @@ func NewStaticSchemaProvider(config StaticProviderConfig) *StaticSchemaProvider 
 			Labels:        make(map[string]string),
 			Spec:          make(map[string]interface{}),
 		}
+		if schema.MetricName != "" {
+			rd.Labels["metric_name"] = schema.MetricName
+		}
 		provider.relationDefinitions[rd.Name] = rd
 	}
 

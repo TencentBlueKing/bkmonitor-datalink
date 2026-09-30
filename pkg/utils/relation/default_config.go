@@ -286,13 +286,18 @@ func DefaultStaticProviderConfig() StaticProviderConfig {
 
 	relationSchemas := make([]RelationSchema, 0, len(defaultRelationDefinitions))
 	for _, rd := range defaultRelationDefinitions {
+		schema := ToRelationSchema(rd)
 		relationSchemas = append(relationSchemas, RelationSchema{
+			// Keep the static provider's historical lookup key. Namespace is
+			// selected by the provider map, while RelationName is the bare
+			// relation name in the default config.
 			RelationName:  RelationName(rd.Name),
-			Category:      ToRelationCategory(rd.Category),
-			FromType:      ResourceType(rd.FromResource),
-			ToType:        ResourceType(rd.ToResource),
-			IsDirectional: rd.IsDirectional,
-			IsBelongsTo:   rd.IsBelongsTo,
+			Category:      schema.Category,
+			FromType:      schema.FromType,
+			ToType:        schema.ToType,
+			IsDirectional: schema.IsDirectional,
+			IsBelongsTo:   schema.IsBelongsTo,
+			MetricName:    schema.MetricName,
 		})
 	}
 

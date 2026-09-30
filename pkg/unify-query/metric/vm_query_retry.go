@@ -15,13 +15,18 @@ import (
 var vmQuerySyncHTTP2RetryEvents = promauto.NewCounterVec(prometheus.CounterOpts{
 	Namespace: "unify_query",
 	Name:      "vm_query_sync_http2_retry_events_total",
-	Help:      "VM query_sync retries after HTTP/2 ClientConn.Close, by bounded outcome event",
-}, []string{"event"})
+	Help:      "VM query_sync retries after recognized HTTP/2 connection closures, by reason and bounded outcome event",
+}, []string{"event", "reason"})
 
-// VMQuerySyncHTTP2RetryInc 只接受固定事件名，避免将 URL、错误原文或请求字段写进标签。
-func VMQuerySyncHTTP2RetryInc(ctx context.Context, event string) {
+// VMQuerySyncHTTP2RetryInc 只接受固定事件与原因，避免将 URL、错误原文或请求字段写进标签。
+func VMQuerySyncHTTP2RetryInc(ctx context.Context, event, reason string) {
 	switch event {
 	case "attempted", "recovered", "failed", "canceled":
-		counterInc(ctx, vmQuerySyncHTTP2RetryEvents.WithLabelValues(event))
+	default:
+		return
+	}
+	switch reason {
+	case "client_conn_close", "goaway_no_error":
+		counterInc(ctx, vmQuerySyncHTTP2RetryEvents.WithLabelValues(event, reason))
 	}
 }

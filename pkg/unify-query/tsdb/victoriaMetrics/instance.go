@@ -554,11 +554,12 @@ func (i *Instance) vmQuery(
 		Attempt:          1,
 	}
 	size, err := i.curl.Request(ctx, curl.Post, requestOptions, data)
-	if isVMQuerySyncHTTP2Close(err) && ctx.Err() != nil {
+	retryReason := vmQuerySyncHTTP2RetryReason(err)
+	if retryReason != "" && ctx.Err() != nil {
 		err = ctx.Err()
 	}
-	if isVMQuerySyncHTTP2Close(err) && ctx.Err() == nil {
-		span.Set("query-sync-retry.reason", "http2_client_connection_closed")
+	if retryReason != "" && ctx.Err() == nil {
+		span.Set("query-sync-retry.reason", retryReason)
 		span.Set("query-sync-retry.first-response-bytes", size)
 
 		// 仍使用同一查询截止时间；等待可被取消，避免超时后额外发起请求。
@@ -567,17 +568,17 @@ func (i *Instance) vmQuery(
 		select {
 		case <-ctx.Done():
 			span.Set("query-sync-retry.outcome", "canceled")
-			metric.VMQuerySyncHTTP2RetryInc(ctx, "canceled")
+			metric.VMQuerySyncHTTP2RetryInc(ctx, "canceled", retryReason)
 			return metadata.NewMessage(metadata.MsgQueryVictoriaMetrics, "查询异常").Error(ctx, ctx.Err())
 		case <-timer.C:
 		}
 		if ctx.Err() != nil {
 			span.Set("query-sync-retry.outcome", "canceled")
-			metric.VMQuerySyncHTTP2RetryInc(ctx, "canceled")
+			metric.VMQuerySyncHTTP2RetryInc(ctx, "canceled", retryReason)
 			return metadata.NewMessage(metadata.MsgQueryVictoriaMetrics, "查询异常").Error(ctx, ctx.Err())
 		}
 
-		metric.VMQuerySyncHTTP2RetryInc(ctx, "attempted")
+		metric.VMQuerySyncHTTP2RetryInc(ctx, "attempted", retryReason)
 		requestOptions.Attempt = 2
 		span.Set("query-sync-retry.attempts", 2)
 		size, err = i.curl.Request(ctx, curl.Post, requestOptions, data)
@@ -586,13 +587,13 @@ func (i *Instance) vmQuery(
 		}
 		if err == nil {
 			span.Set("query-sync-retry.outcome", "recovered")
-			metric.VMQuerySyncHTTP2RetryInc(ctx, "recovered")
+			metric.VMQuerySyncHTTP2RetryInc(ctx, "recovered", retryReason)
 		} else if ctx.Err() != nil {
 			span.Set("query-sync-retry.outcome", "canceled")
-			metric.VMQuerySyncHTTP2RetryInc(ctx, "canceled")
+			metric.VMQuerySyncHTTP2RetryInc(ctx, "canceled", retryReason)
 		} else {
 			span.Set("query-sync-retry.outcome", "failed")
-			metric.VMQuerySyncHTTP2RetryInc(ctx, "failed")
+			metric.VMQuerySyncHTTP2RetryInc(ctx, "failed", retryReason)
 		}
 	}
 	if err != nil {

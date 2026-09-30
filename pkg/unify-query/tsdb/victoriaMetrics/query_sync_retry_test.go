@@ -50,9 +50,10 @@ func (c *vmRetryCurl) Request(_ context.Context, method string, opt curl.Options
 	return step.size, step.err
 }
 
-func TestVMQuerySyncHTTP2CloseRetry(t *testing.T) {
+func TestVMQuerySyncHTTP2Retry(t *testing.T) {
 	mock.Init()
 	http2Close := errors.New(http2ClientConnCloseError)
+	http2GoAway := errors.New(`http2: server sent GOAWAY and closed the connection; LastStreamID=1999, ErrCode=NO_ERROR, debug=""`)
 	for _, tc := range []struct {
 		name        string
 		steps       []vmRetryStep
@@ -63,7 +64,10 @@ func TestVMQuerySyncHTTP2CloseRetry(t *testing.T) {
 		wantErrIs   error
 	}{
 		{name: "recovers after partial body", steps: []vmRetryStep{{size: 51308, err: http2Close}, {size: 78888}}, wantCalls: 2},
+		{name: "recovers after GOAWAY with full body", steps: []vmRetryStep{{size: 78888, err: http2GoAway}, {size: 78888}}, wantCalls: 2},
 		{name: "second attempt fails again", steps: []vmRetryStep{{err: http2Close}, {err: http2Close}}, wantCalls: 2, wantErr: http2ClientConnCloseError},
+		{name: "GOAWAY retry remains bounded", steps: []vmRetryStep{{err: http2GoAway}, {err: http2GoAway}}, wantCalls: 2, wantErr: "ErrCode=NO_ERROR"},
+		{name: "GOAWAY with server error is not retried", steps: []vmRetryStep{{err: errors.New(`http2: server sent GOAWAY and closed the connection; LastStreamID=1999, ErrCode=ENHANCE_YOUR_CALM, debug=""`)}}, wantCalls: 1, wantErr: "ENHANCE_YOUR_CALM"},
 		{name: "ordinary error is not retried", steps: []vmRetryStep{{err: errors.New("backend unavailable")}}, wantCalls: 1, wantErr: "backend unavailable"},
 		{name: "response limit is not retried", steps: []vmRetryStep{{err: &curl.ResponseBodyLimitError{Limit: 1024}}}, wantCalls: 1, wantErr: "response body exceeds"},
 		{name: "canceled request is not retried", steps: []vmRetryStep{{err: http2Close}}, cancel: true, wantCalls: 1, wantErrIs: context.Canceled},

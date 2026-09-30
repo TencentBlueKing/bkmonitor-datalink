@@ -5,12 +5,27 @@
 
 package victoriaMetrics
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 const http2ClientConnCloseError = "http2: client connection force closed via ClientConn.Close"
 
-// isVMQuerySyncHTTP2Close 只识别这次复现的连接级错误；HTTP 状态、业务错误、
-// JSON 解析错误和响应上限错误均不应触发重复查询。
-func isVMQuerySyncHTTP2Close(err error) bool {
-	return err != nil && strings.Contains(err.Error(), http2ClientConnCloseError)
+var http2GoAwayNoError = regexp.MustCompile("http2: server sent GOAWAY and closed the connection; LastStreamID=[0-9]+, ErrCode=NO_ERROR, debug=")
+
+// vmQuerySyncHTTP2RetryReason 仅识别已复现的连接关闭错误。query_sync 是只读查询，
+// 但 HTTP 状态、业务错误、JSON 解析错误及响应上限错误不能重复请求。
+func vmQuerySyncHTTP2RetryReason(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := err.Error()
+	if strings.Contains(message, http2ClientConnCloseError) {
+		return "client_conn_close"
+	}
+	if http2GoAwayNoError.MatchString(message) {
+		return "goaway_no_error"
+	}
+	return ""
 }

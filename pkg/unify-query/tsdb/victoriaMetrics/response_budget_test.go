@@ -55,6 +55,14 @@ func TestMatrixFormatClassifiesBackendResponseSizeLimit(t *testing.T) {
 	require.ErrorIs(t, err, metadata.ErrBackendResponseTooLarge)
 	require.ErrorContains(t, err, "estimatedSize: 135 MB")
 
+	response = &VmResponse{Code: "400"}
+	response.Errors.Error = "response body size exceeds backend limit"
+	ctx = metadata.InitHashID(context.Background())
+	ctx, span = trace.NewSpan(ctx, "response-size-limit-errors-field-test")
+	_, _, err = (&Instance{}).matrixFormat(ctx, response, span)
+	span.End(&err)
+	require.ErrorIs(t, err, metadata.ErrBackendResponseTooLarge)
+
 	response = &VmResponse{Message: "query timed out", Code: "400"}
 	ctx = metadata.InitHashID(context.Background())
 	ctx, span = trace.NewSpan(ctx, "response-size-limit-non-match-test")

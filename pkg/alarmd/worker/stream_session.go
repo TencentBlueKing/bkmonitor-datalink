@@ -28,6 +28,11 @@ type streamedExecution struct {
 	prepared      preparedNamedInputIndex
 	streamed      map[streamedInputKey]execution.NamedInputBinding
 	planSeries    map[execution.PlanIdentity]map[execution.SeriesIdentityDigest]struct{}
+	// planSeriesCounts is len(planSeries[plan]) once per Plan, for the
+	// evaluation lines: the number is constant for a Plan within a Slot and
+	// the lines are one per series, so it is counted on the first line and
+	// the same pointer rides on the rest.
+	planSeriesCounts map[execution.PlanIdentity]*int
 	// completionOnly holds, per Plan without streamed PRIMARY series, the exact
 	// set validated by validateCompletionOnlyExactSet: one completion binding
 	// per frozen (consumer, requirement). It decides the no-series result.
@@ -41,6 +46,23 @@ type streamedExecution struct {
 	noData         execution.NoDataLoadResult
 	noDataHosts    map[execution.PlanNoDataIdentity]nodata.HostResolution
 	noDataOutcomes []nodata.SlotOutcome
+	// targetResolutions is what this Slot resolved each target-plan Plan's
+	// target to, by Plan. Absence and admission both read it, so one Slot
+	// cannot admit a record under one view of the target and judge absence
+	// under another. A Plan with a target plan and no entry here is read as
+	// unresolved by both, never as unscoped or as empty.
+	targetResolutions map[execution.PlanIdentity]*resolvedTarget
+	// seriesCensus is where this Slot's series went, counted where each
+	// decision is made rather than inferred afterwards. See seriesCensus.
+	seriesCensus seriesCensus
+	// censuses are the dimension censuses this Slot is taking, one per
+	// candidate Plan, and the two numbers the candidacy was decided on.
+	// Empty on every Slot whose Query Group is not heavy enough to be worth
+	// one, which is nearly all of them.
+	censuses         censusBuilders
+	censusPeakBytes  uint64
+	censusShareBytes uint64
+	censusCandidate  bool
 	// noDataPlansSeen is how many of this Slot's Plans detect no-data,
 	// counted where they are found rather than where they are judged.
 	noDataPlansSeen      int
@@ -50,10 +72,130 @@ type streamedExecution struct {
 	evaluated            execution.EvaluationResult
 	delivered            []execution.SeriesDelivery
 	series               uint64
-	retained             uint64
-	effects              effectCounts
-	gapFacts             uint64
-	began                bool
+	// retainedByPhase is this execution's retained bytes split by what they
+	// were retained for. The total is the sum rather than a counter of its
+	// own: a sixth budget's worth of memory arriving with no phase attached
+	// is the failure this split exists to prevent, and a parallel total can
+	// be incremented by a site that names no phase while every assertion on
+	// the total still passes.
+	retainedByPhase [retainPhaseCount]uint64
+	// spentByPhase is this execution's wall clock split the same way, in
+	// nanoseconds, summed over every call of each phase.
+	spentByPhase [slotPhaseCount]uint64
+	// beganAt is when this execution started, for the total the phases are
+	// read against. Zero on an execution that never began, which reports no
+	// duration rather than the time since the epoch.
+	beganAt  time.Time
+	effects  effectCounts
+	gapFacts uint64
+	began    bool
+}
+
+// slotPhase says which part of a Slot a stretch of wall clock was spent in.
+//
+// The three are the parts a Slot can be slow in for unrelated causes: waiting
+// for its records, reading State, and deciding. They are not a partition of
+// the Slot -- the completion does more than these three -- and the total is
+// carried beside them so the remainder is visible rather than implied.
+type slotPhase int
+
+const (
+	// slotPhaseInput runs from Begin to the completion arriving: this Slot
+	// waiting for its records and consuming them, the wait before the first
+	// one included.
+	//
+	// From Begin and not from the first record, deliberately: a Slot that
+	// waited its turn spent that time, and charging from the first record
+	// would hide exactly the stretch this field is read to find. It contains
+	// the query's own latency and is not it, which is why it is not named for
+	// the query -- the query runs on the view stream's side.
+	slotPhaseInput slotPhase = iota
+	slotPhasePreflight
+	slotPhaseEvaluate
+	slotPhaseCount
+)
+
+// spend records wall clock against the phase that spent it, from since to now.
+//
+// The only way to add to this execution's clock, for the same reason
+// retainBytes is: a phase's time arriving with no phase attached is the
+// failure the split exists to prevent. A zero since is a call that was never
+// started and adds nothing.
+func (stream *streamedExecution) spend(phase slotPhase, since time.Time) {
+	if since.IsZero() {
+		return
+	}
+	elapsed := time.Since(since)
+	if elapsed < 0 {
+		return
+	}
+	stream.spentByPhase[phase] += uint64(elapsed)
+}
+
+// spentMillis is what one phase took, rounded to milliseconds.
+func (stream *streamedExecution) spentMillis(phase slotPhase) uint64 {
+	if stream == nil {
+		return 0
+	}
+	return uint64(time.Duration(stream.spentByPhase[phase]).Milliseconds())
+}
+
+// slotMillis is how long this execution has been running, zero if it never
+// began.
+func (stream *streamedExecution) slotMillis() uint64 {
+	if stream == nil || stream.beganAt.IsZero() {
+		return 0
+	}
+	elapsed := time.Since(stream.beganAt)
+	if elapsed < 0 {
+		return 0
+	}
+	return uint64(elapsed.Milliseconds())
+}
+
+// retainPhase says which part of a Slot a retained byte was held for. The
+// three names are the ones the reservation path already reports on a refusal
+// (normal_input / normal_gap / normal_output), so a rejection line and a
+// completion row describe the same three quantities.
+type retainPhase int
+
+const (
+	retainPhaseInput retainPhase = iota
+	retainPhaseGap
+	retainPhaseOutput
+	// retainPhaseState is the Runtime State this Slot loaded and holds: the
+	// retained window, per series, for as long as the Slot runs.
+	//
+	// Its own phase because it is neither of the two it used to be read as.
+	// It was charged to the output phase, where it dominated -- a 1,466-point
+	// window costs 48 + len(RecordID) + 40 x levels per point, per series, and
+	// every effect this Slot will write is small beside it. So
+	// retained_output_bytes tracked the retention bound rather than the
+	// output, and no number anywhere answered "how much will this Slot
+	// write". The total is unchanged; only which of the three it is counted
+	// under.
+	retainPhaseState
+	retainPhaseCount
+)
+
+// retainBytes records retained bytes against the phase that retained them.
+//
+// The only way to add to this execution's retention. An out-of-range phase
+// panics here rather than being dropped into the total unattributed.
+func (stream *streamedExecution) retainBytes(phase retainPhase, retained uint64) {
+	stream.retainedByPhase[phase] += retained
+}
+
+// retainedTotal is what this execution holds across all phases.
+func (stream *streamedExecution) retainedTotal() uint64 {
+	if stream == nil {
+		return 0
+	}
+	var total uint64
+	for _, retained := range stream.retainedByPhase {
+		total += retained
+	}
+	return total
 }
 
 type streamedInputKey struct {
@@ -98,16 +240,25 @@ func (stream *streamedExecution) Begin(ctx context.Context, header execution.Int
 	}
 	prepared.inputBuilder = inputBuilder
 	stream.began = true
+	// Started here rather than at the Slot's evaluation time: this is when
+	// this replica began working on it, and the gap between the two is the
+	// scheduler's to answer for, not the Slot's.
+	stream.beganAt = time.Now()
 	stream.header = header
 	stream.prepared = prepared
 	stream.streamed = make(map[streamedInputKey]execution.NamedInputBinding)
 	stream.planSeries = make(map[execution.PlanIdentity]map[execution.SeriesIdentityDigest]struct{})
 	stream.completionOnly = make(map[execution.PlanIdentity][]execution.NamedInputBinding)
-	effective, err := prepareAlwaysEffectiveTimeFacts(ctx, header)
+	effective, err := PrepareEffectiveTimeFacts(ctx, header, stream.coordinator.ports.EffectiveTime)
 	if err != nil {
 		return fmt.Errorf("alarmd worker: prepare EffectiveTime facts: %w", err)
 	}
 	stream.effective = effective
+	stream.openCensusGate(header.Contract.Slot.QueryGroup)
+	// The target plans are resolved here, before any series arrives: the
+	// source reads the memberships right after Begin to filter the records,
+	// and the absence judgement at completion reads the same resolutions.
+	stream.resolveTargetPlans(ctx)
 	execution.CaptureSlotCoverage(ctx, func(c *execution.SlotCoverageCapture) {
 		if c.Prepared != nil {
 			c.Prepared(header, effective)
@@ -132,7 +283,7 @@ func (stream *streamedExecution) ConsumeSeries(ctx context.Context, batch execut
 		return err
 	}
 	stream.series += batch.Delivery.Series
-	stream.retained += retained
+	stream.retainBytes(retainPhaseInput, retained)
 	folded := make(map[*execution.Dataset]foldedDataset)
 	for _, binding := range batch.Inputs {
 		key := streamedInputKey{consumer: binding.Consumer, series: series, requirement: binding.RequirementID}
@@ -208,17 +359,19 @@ func (stream *streamedExecution) releaseProvisional() {
 	stream.header = execution.InternalExecutionHeader{}
 	stream.prepared = preparedNamedInputIndex{}
 	stream.streamed, stream.planSeries, stream.completionOnly, stream.effective = nil, nil, nil, nil
+	stream.planSeriesCounts = nil
 	stream.bindings, stream.stateItems, stream.gapItems, stream.delivered = nil, nil, nil, nil
 	stream.state, stream.gaps = execution.StatePreflightResult{}, execution.GapLoadResult{}
 	stream.evaluated = execution.EvaluationResult{}
+	stream.seriesCensus = seriesCensus{}
 	stream.coordinator.reservations.mu.Lock()
 	stream.coordinator.reservations.gapFacts -= stream.gapFacts
 	stream.coordinator.reservations.mu.Unlock()
 	stream.gapFacts = 0
 	stream.coordinator.releaseEffects(stream.effects)
 	stream.effects = effectCounts{}
-	stream.coordinator.releaseProvisional(stream.series, stream.retained)
-	stream.series, stream.retained = 0, 0
+	stream.coordinator.releaseProvisional(stream.series, stream.retainedTotal())
+	stream.series, stream.retainedByPhase = 0, [retainPhaseCount]uint64{}
 }
 
 func streamedRetainedSize(bindings []execution.NamedInputBinding, delivery execution.SeriesDelivery) (uint64, error) {
@@ -397,7 +550,7 @@ func noDataPreflightForHeader(header execution.InternalExecutionHeader) ([]execu
 			return nil, err
 		}
 		items = append(items, execution.PlanNoDataLoadItem{
-			Identity:     execution.PlanNoDataIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration},
+			Identity:     due.NoDataIdentity(),
 			ApplyVersion: version, ScheduleRevision: due.ScheduleRevision, Retention: retention,
 		})
 	}
@@ -412,7 +565,7 @@ func gapPreflightForHeader(header execution.InternalExecutionHeader) ([]executio
 			return nil, err
 		}
 		items = append(items, execution.PlanGapLoadItem{
-			Identity:     execution.PlanGapIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration},
+			Identity:     due.GapIdentity(),
 			ApplyVersion: version, ScheduleRevision: due.ScheduleRevision,
 		})
 	}
@@ -427,12 +580,15 @@ func mergeProvisional(target *execution.EvaluationResult, next execution.Evaluat
 	if err := checkEffectCounts(effectCounts{previous.states + delta.states, previous.events + delta.events, previous.gaps + delta.gaps}, budget); err != nil {
 		return err
 	}
-	appendProvisional(target, next)
-	return nil
+	return appendProvisional(target, next)
 }
 
 // appendProvisional is called only after contract and capacity checks succeed.
-func appendProvisional(target *execution.EvaluationResult, next execution.EvaluationResult) {
+//
+// It can still refuse, for the one thing those checks cannot see: they run on
+// each batch's own result, and two batches disagreeing about a Plan's gap
+// marker is a shape no single batch has.
+func appendProvisional(target *execution.EvaluationResult, next execution.EvaluationResult) error {
 	if target.Contract == (execution.FrozenExecutionContractRef{}) {
 		target.Contract, target.Result, target.ReasonCode = next.Contract, next.Result, next.ReasonCode
 	} else if resultRank(next.Result) > resultRank(target.Result) {
@@ -461,9 +617,11 @@ func appendProvisional(target *execution.EvaluationResult, next execution.Evalua
 		// the whole Slot's, and reporting only the final series would make a
 		// query group of five hundred series look like a query group of one.
 		plan.HistoryCoverage.Merge(nextPlan.HistoryCoverage)
-		plan.GuardBeforeEvents = appendUniqueGapMutations(plan.GuardBeforeEvents, nextPlan.GuardBeforeEvents)
-		plan.GuardAfterState = appendUniqueGapMutations(plan.GuardAfterState, nextPlan.GuardAfterState)
+		if err := mergeGapGuardStatements(plan, nextPlan); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 type provisionalBudgetExceededError struct {
@@ -473,6 +631,11 @@ type provisionalBudgetExceededError struct {
 	// retry in this process can satisfy; a shared reservation rejection is
 	// left false because concurrent Slots free their share.
 	slot bool
+	// share marks this Query Group's Slot exceeding the share one object may
+	// hold of the pool. Like slot it is not a pause - no amount of freed
+	// capacity makes this object fit - but the action differs: the strategy has
+	// to be sharded rather than the process resized.
+	share bool
 }
 
 func (err *provisionalBudgetExceededError) Error() string {
@@ -531,6 +694,11 @@ func (stream *streamedExecution) complete(ctx context.Context, completion execut
 	if !stream.began {
 		return completionContractError(codeCompletionBeforeBegin, "alarmd worker: QueryExecutionSource returned completion before Begin")
 	}
+	// The input phase ends the moment the completion arrives, whatever this
+	// call goes on to decide about it: a completion this Slot refuses still
+	// waited for its records, and charging that wait to nothing would make a
+	// refused Slot look instantaneous.
+	stream.spend(slotPhaseInput, stream.beganAt)
 	if err := completion.Validate(stream.header, stream.delivered); err != nil {
 		return wrapCompletionContractError(codeCompletionInvalid, err)
 	}
@@ -681,6 +849,9 @@ func (stream *streamedExecution) evaluateSeries(
 		pending = pending[:0]
 		return err
 	}
+	// Counted here, before the first branch that can drop a series: this is
+	// the Slot's intent, and every later count is measured against it.
+	stream.seriesCensus.Due += len(preparedSeriesEvaluations)
 	for _, prepared := range preparedSeriesEvaluations {
 		if incomplete := primaryIncompleteBindings(prepared.inputs); len(incomplete) != 0 {
 			if err := flush(); err != nil {
@@ -695,10 +866,11 @@ func (stream *streamedExecution) evaluateSeries(
 		if err != nil {
 			return err
 		}
+		stream.seriesCensus.Read++
 		pending = append(pending, completedSeries{due: prepared.due, series: prepared.identity, inputs: prepared.inputs,
 			item: execution.StatePreflightItem{Identity: execution.StateKeyIdentity{
 				Plan: prepared.due.Identity, StateGeneration: prepared.due.StateGeneration, SeriesIdentityDigest: prepared.identity,
-			}, ApplyVersion: version}})
+			}, ApplyVersion: version, CarryFrom: carryFrom(prepared.due)}})
 		if len(pending) >= batchLimit {
 			if err := flush(); err != nil {
 				return err
@@ -781,7 +953,7 @@ func (stream *streamedExecution) validateCompletionOnlyExactSet(
 func (stream *streamedExecution) loadGaps(ctx context.Context) error {
 	var targetBytes uint64
 	for _, due := range stream.header.DuePlans {
-		targetBytes += retainedObjectBytes(execution.PlanGapLoadItem{Identity: execution.PlanGapIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration}})
+		targetBytes += retainedObjectBytes(execution.PlanGapLoadItem{Identity: due.GapIdentity()})
 	}
 	if err := stream.retainTargetBytes(ctx, len(stream.header.DuePlans), targetBytes); err != nil {
 		return err
@@ -805,6 +977,7 @@ func (stream *streamedExecution) loadGaps(ctx context.Context) error {
 	result, reason := summarizeGapLoad(stream.gaps)
 	stream.coordinator.observeWithCounts(ctx, observability.ComponentState, observability.StageGapLoaded,
 		stream.request.Operation, started, result, reason, observability.Counts{Keys: int64(len(stream.gaps.Items))}, nil)
+	stream.observeGapProgress(ctx)
 	return nil
 }
 
@@ -849,7 +1022,68 @@ func (stream *streamedExecution) loadNoDataMemory(ctx context.Context) error {
 	stream.coordinator.observeWithCounts(ctx, observability.ComponentState, observability.StageGapLoaded,
 		stream.request.Operation, started, observability.ResultSuccess, observability.ReasonNone,
 		observability.Counts{Keys: int64(len(stream.noData.Items))}, nil)
+	stream.observeNoDataRepresentations(ctx)
+	stream.observeNoDataRenewals(ctx)
 	return stream.resolveNoDataRosterHosts()
+}
+
+// observeNoDataRenewals reports every renewal that reached the store.
+//
+// Only those: the gate answers most loads from what this process already knows,
+// and counting the skips would bury the attempts that say whether renewal
+// works. A failure is a failure of the renewal and not of the load -- the
+// record was read and the round goes on -- so it is reported here rather than
+// turned into a load status, and it is the only signal there is for it.
+func (stream *streamedExecution) observeNoDataRenewals(ctx context.Context) {
+	for _, renewal := range stream.noData.Renewals {
+		result := observability.Result(observability.ResultSuccess)
+		reason := observability.ReasonCode(observability.ReasonNone)
+		if renewal.ReasonCode != "" {
+			result = observability.ResultDegraded
+			reason = observability.ReasonCode(renewal.ReasonCode)
+		}
+		stream.coordinator.emitObservation(ctx, observability.Observation{
+			Component: observability.ComponentState, Stage: observability.StageNoDataMemoryRenewed,
+			Operation: observability.Operation(stream.request.Operation),
+			Direction: observability.DirectionInternal, Result: result, ReasonCode: reason,
+			Trace: observability.TraceFields{
+				StrategyID: renewal.Identity.Plan.StrategyID, BusinessID: renewal.Identity.Plan.BusinessID,
+			},
+			NoDataMemoryRenewal: &observability.NoDataMemoryRenewalFacts{
+				Renewed: renewal.Renewed, TTLSeconds: renewal.TTLSeconds,
+			},
+		})
+	}
+}
+
+// observeNoDataRepresentations reports which stored shape each Plan's memory
+// came from, one per Plan per round.
+//
+// Unconditionally, and at the point the answer is known rather than where
+// something is decided on it. Every Plan that was asked for is counted,
+// including the ones with no memory yet, so the three counts add up to the
+// Plans in the request and a reader can check that rather than assume it. A
+// signal emitted only when the shape changed would say nothing at all about a
+// fleet that has been half migrated for a week, which is the question this
+// exists to answer.
+func (stream *streamedExecution) observeNoDataRepresentations(ctx context.Context) {
+	for _, snapshot := range stream.noData.Items {
+		// The store stamps NONE on a snapshot that read no record, so this
+		// reads the value rather than deciding it. It used to decide it, and
+		// the empty spelling then reached a reader that had no way to tell
+		// "no record" from "nobody said".
+		representation := snapshot.Representation
+		stream.coordinator.emitObservation(ctx, observability.Observation{
+			Component: observability.ComponentState, Stage: observability.StageNoDataMemoryRead,
+			Operation: observability.Operation(stream.request.Operation),
+			Direction: observability.DirectionInternal, Result: observability.ResultSuccess,
+			ReasonCode: observability.ReasonNone,
+			Trace: observability.TraceFields{
+				StrategyID: snapshot.Identity.Plan.StrategyID, BusinessID: snapshot.Identity.Plan.BusinessID,
+			},
+			NoDataMemoryRead: &observability.NoDataMemoryReadFacts{Representation: string(representation)},
+		})
+	}
 }
 
 // resolveNoDataRosterHosts asks the CMDB index about every host each no-data
@@ -874,7 +1108,7 @@ func (stream *streamedExecution) resolveNoDataRosterHosts() error {
 		if config == nil {
 			continue
 		}
-		identity := execution.PlanNoDataIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration}
+		identity := due.NoDataIdentity()
 		snapshot, found := stream.noData.Find(identity)
 		if !found {
 			continue
@@ -888,6 +1122,7 @@ func (stream *streamedExecution) resolveNoDataRosterHosts() error {
 		candidates, err := nodata.HostCandidates(nodata.RosterRequest{
 			AggDimension: config.AggDimension,
 			Scope:        due.CompiledPlan.TargetScope(),
+			Plan:         due.CompiledPlan.TargetPlan(),
 			Memory:       memory,
 		})
 		if err != nil {
@@ -947,6 +1182,15 @@ func (stream *streamedExecution) observeCompletionOnlyProbe(ctx context.Context)
 // completion of every consumer must be FULL for the Plan to complete FULL
 // EMPTY; a PARTIAL or UNAVAILABLE PRIMARY completion opens the Plan gap with
 // the completion reasons of that same set.
+//
+// A FULL EMPTY Plan also recovers its standing marker's Plan scopes. That is
+// the only place it can happen: with no series the evaluator is never called,
+// so the recovery that rides on a state mutation never runs, and a Plan whose
+// source has gone empty keeps a marker for as long as it stays empty --
+// holding every Level at UNKNOWN with the marker's reason on the first round
+// the data comes back, for the whole warmup, after a source that was healthy
+// the entire time. Level scopes are left alone: they ask for that series'
+// history to have moved, and an empty source has no such thing to show.
 func (stream *streamedExecution) noSeriesPlanResult(due execution.DuePlan) (execution.EvaluationResult, error) {
 	bindings := stream.noSeriesBindings(due)
 	primary, found := firstNonFullPrimary(bindings)
@@ -954,11 +1198,21 @@ func (stream *streamedExecution) noSeriesPlanResult(due execution.DuePlan) (exec
 		if !planCompletedFullEmpty(bindings, due.Identity) {
 			return execution.EvaluationResult{}, completionContractError(codeNoSeriesPlanResultInvalid, "alarmd worker: trustworthy completion produced no series or FULL EMPTY Plan")
 		}
+		plan := execution.PlanEvaluationResult{Plan: due.Identity, Disposition: execution.PlanDecided}
+		if emptySourceSlotIsWholeInput(bindings, due.Identity) {
+			recovery, err := execution.PlanGapRecoveryMutation(stream.header.Contract, due, stream.gaps, execution.GapRecoverPlanScopeOnly)
+			if err != nil {
+				return execution.EvaluationResult{}, err
+			}
+			if recovery != nil {
+				plan.GuardAfterState = []execution.PlanGapMutation{*recovery}
+			}
+		}
 		return execution.EvaluationResult{Contract: stream.header.Contract, Result: observability.ResultSuccess,
 			ReasonCode: observability.ReasonNone,
-			Plans:      []execution.PlanEvaluationResult{{Plan: due.Identity, Disposition: execution.PlanDecided}}}, nil
+			Plans:      []execution.PlanEvaluationResult{plan}}, nil
 	}
-	mutation, err := stream.completionGapMutationFor(due, bindings, nil, primary.ReasonCode)
+	mutation, err := stream.completionGapMutationFor(due, bindings)
 	if err != nil {
 		return execution.EvaluationResult{}, err
 	}
@@ -1234,7 +1488,7 @@ func (stream *streamedExecution) mergePrimaryIncompleteSeries(
 			break
 		}
 	}
-	mutation, err := stream.completionGapMutationFor(due, primaryIncomplete, nil, reason)
+	mutation, err := stream.completionGapMutationFor(due, primaryIncomplete)
 	if err != nil {
 		return err
 	}
@@ -1255,20 +1509,49 @@ func (stream *streamedExecution) evaluateCompletedSeriesBatch(ctx context.Contex
 	}
 	stateRequest := execution.StatePreflightRequest{Contract: stream.request.Contract, Items: stateItems}
 	started := time.Now()
-	loaded, err := stream.coordinator.ports.State.LoadRuntime(ctx, stateRequest)
+	timedCtx, timing := execution.WithPreflightTiming(ctx)
+	loaded, err := stream.coordinator.ports.State.LoadRuntime(timedCtx, stateRequest)
 	if err == nil {
 		loaded, err = execution.ClassifyStatePreflight(stateRequest, loaded)
 	}
+	// Both outcomes: a read that did not come back is the one that took the
+	// longest, and leaving it out would make the phase's total fall exactly
+	// when the reads started timing out.
+	stream.spend(slotPhasePreflight, started)
 	if err != nil {
-		stream.coordinator.observe(ctx, observability.ComponentState, observability.StageStatePreflight,
-			stream.request.Operation, started, "", "", err)
+		// The read's own facts, because they are the ones that decide what to
+		// do. A read that did not come back has no byte count - that is why the
+		// size is reported on the rounds that succeed - so the line carries how
+		// many keys were asked for and how long the attempt took, which is what
+		// separates "the dependency is down" from "we asked for too much".
+		//
+		// This branch is for a request the store refused outright. A read that
+		// timed out arrives instead as per-item views the store has already
+		// named, and summarizeStateLoad carries that name onto the row below,
+		// which is why the naming lives with the classification rather than
+		// being decided a second time here.
+		stream.coordinator.observeWithCounts(ctx, observability.ComponentState, observability.StageStatePreflight,
+			stream.request.Operation, started, "", "",
+			observability.Counts{Keys: int64(len(stateItems))}, err)
 		return fmt.Errorf("alarmd worker: series state preflight: %w", err)
 	}
 	stateResult, stateReason := summarizeStateLoad(loaded)
 	stream.coordinator.observeWithCounts(ctx, observability.ComponentState, observability.StageStatePreflight,
-		stream.request.Operation, started, stateResult, stateReason, observability.Counts{Keys: int64(len(loaded.Items))}, nil)
+		stream.request.Operation, started, stateResult, stateReason,
+		observability.Counts{Keys: int64(len(loaded.Items)), StateBytes: loaded.LoadedBytes,
+			EnvelopeReads: int64(loaded.EnvelopeReads), EnvelopeAnswered: int64(loaded.EnvelopeAnswered),
+			EnvelopeCorrupt: int64(loaded.EnvelopeCorrupt),
+			NoRecordYet:     int64(loaded.NoRecordYet), FrameCorruptRescued: int64(loaded.FrameCorruptRescued),
+			FrameCorruptLost: int64(loaded.FrameCorruptLost), Unclassified: int64(loaded.Unclassified),
+			StateFetchMillis: timing.Fetch.Milliseconds(), StateDecodeMillis: timing.Decode.Milliseconds()}, nil)
+	outcomes := make(map[string]int)
+	defer stream.observeCarries(ctx, outcomes)
 	for index, entry := range batch {
-		if err := stream.evaluateLoadedSeries(ctx, entry, loaded.Items[index]); err != nil {
+		view, outcome := carryHistory(entry.due, loaded.Items[index])
+		if outcome != "" {
+			outcomes[outcome]++
+		}
+		if err := stream.evaluateLoadedSeries(ctx, entry, view); err != nil {
 			return err
 		}
 	}
@@ -1277,6 +1560,29 @@ func (stream *streamedExecution) evaluateCompletedSeriesBatch(ctx context.Contex
 
 func (stream *streamedExecution) evaluateLoadedSeries(ctx context.Context, entry completedSeries, view execution.RuntimeStateView) error {
 	due, series, inputs := entry.due, entry.series, entry.inputs
+	// Counted before the round decides anything about this series: the census
+	// is of the series the Query Group has, and a series whose State is
+	// already applied or whose evaluation is refused is one of them. Only for
+	// a candidate Query Group; every other Slot does nothing here.
+	stream.countSeriesForCensus(due, inputs)
+	if view.VersionComparison == execution.ApplyVersionEqual {
+		resumed, err := resumedSeriesResult(stream.header, due, view, stream.gaps)
+		if err != nil {
+			return err
+		}
+		if err := stream.mergeProvisional(ctx, resumed, 0); err != nil {
+			return err
+		}
+		execution.CaptureSlotCoverage(ctx, func(c *execution.SlotCoverageCapture) {
+			if c.PriorStateApplied != nil {
+				c.PriorStateApplied()
+			}
+		})
+		stream.coordinator.observe(ctx, observability.ComponentState, observability.StageMutationCompared,
+			stream.request.Operation, time.Now(), observability.ResultSuccess,
+			observability.ReasonStateAlreadyAppliedBeforeEvaluation, nil)
+		return nil
+	}
 	stateItems := []execution.StatePreflightItem{entry.item}
 	loaded := execution.StatePreflightResult{Items: []execution.RuntimeStateView{view}}
 	evaluationHeader, err := bindAlwaysEffectiveTimeFacts(stream.header, stateItems, stream.effective, entry.kind())
@@ -1288,20 +1594,22 @@ func (stream *streamedExecution) evaluateLoadedSeries(ctx context.Context, entry
 	// even if no record of this round asks about it. The constructor requires
 	// the port; the guard is for tests that build the struct.
 	if openAlerts := stream.coordinator.ports.OpenAlerts; openAlerts != nil {
-		openAlerts.TrackPlans([]execution.PlanIdentity{due.Identity})
+		openAlerts.TrackPlans(stream.header.Contract.Slot.QueryGroup, []execution.PlanIdentity{due.Identity})
 		request.OpenAlerts = openAlerts
 	}
 	started := time.Now()
 	evaluated, err := stream.coordinator.ports.Evaluator.Evaluate(ctx, request)
+	stream.spend(slotPhaseEvaluate, started)
 	if err != nil {
-		stream.coordinator.observe(ctx, observability.ComponentEvaluation, observability.StageEvaluationCompleted,
-			stream.request.Operation, started, "", "", err)
+		stream.observeEvaluationFailure(ctx, started, due, err)
 		return wrapEvaluationError(codeEvaluationFailed, fmt.Errorf("alarmd worker: evaluate series: %w", err))
 	}
 	incomplete := make([]execution.NamedInputBinding, 0)
 	for _, input := range inputs {
 		for _, binding := range input.Inputs {
-			if binding.Completeness != execution.CompletenessFull {
+			// The same predicate the fold reads, so the marker proposed here
+			// covers exactly the Levels whose outcomes will name its reason.
+			if execution.InputIncompleteForGuard(binding) {
 				incomplete = append(incomplete, binding)
 			}
 		}
@@ -1310,7 +1618,7 @@ func (stream *streamedExecution) evaluateLoadedSeries(ctx context.Context, entry
 		if len(evaluated.Plans) != 1 || evaluated.Plans[0].Plan != due.Identity {
 			return errors.New("alarmd worker: incomplete named input produced an invalid Plan result")
 		}
-		mutation, mutationErr := stream.completionGapMutationFor(due, incomplete, evaluated.Plans[0].LevelOutcomes, evaluated.Plans[0].ReasonCode)
+		mutation, mutationErr := stream.completionGapMutationFor(due, incomplete)
 		if mutationErr != nil {
 			return mutationErr
 		}
@@ -1318,8 +1626,7 @@ func (stream *streamedExecution) evaluateLoadedSeries(ctx context.Context, entry
 		evaluated.Plans[0].GuardAfterState = nil
 	}
 	if err := evaluated.Validate(request); err != nil {
-		stream.coordinator.observe(ctx, observability.ComponentEvaluation, observability.StageEvaluationCompleted,
-			stream.request.Operation, started, "", "", err)
+		stream.observeEvaluationFailure(ctx, started, due, err)
 		return wrapEvaluationError(codeEvaluationResultInvalid, fmt.Errorf("alarmd worker: invalid series evaluation: %w", err))
 	}
 	stream.observeEvaluationCompleted(ctx, started, due, series, inputs, evaluated)
@@ -1333,6 +1640,20 @@ func (stream *streamedExecution) evaluateLoadedSeries(ctx context.Context, entry
 	stream.state.Items = append(stream.state.Items, loaded.Items...)
 	stream.stateItems = append(stream.stateItems, stateItems...)
 	return nil
+}
+
+func uncommittedGapMutations(gaps execution.GapLoadResult, mutations []execution.PlanGapMutation) []execution.PlanGapMutation {
+	pending := mutations[:0]
+	for _, mutation := range mutations {
+		marker, found := gaps.Find(mutation.Identity)
+		if found && (marker.Status == execution.GapFound || marker.Status == execution.GapClearedTombstone) &&
+			marker.LastScheduleRevision == mutation.ScheduleRevision &&
+			execution.CompareApplyVersion(marker.PersistedApplyVersion, mutation.ApplyVersion) == execution.ApplyVersionEqual {
+			continue
+		}
+		pending = append(pending, mutation)
+	}
+	return pending
 }
 
 func (stream *streamedExecution) observeEvaluationCompleted(
@@ -1350,15 +1671,95 @@ func (stream *streamedExecution) observeEvaluationCompleted(
 		Result: evaluated.Result, Operation: observability.Operation(stream.request.Operation),
 		Direction: observability.DirectionInternal, ReasonCode: evaluated.ReasonCode,
 		Duration: time.Since(started), Counts: observability.Counts{Records: evaluationRecordCount(inputs)},
+		DurationKnown: true, EvaluationOwner: costEvaluationOwner(due.Identity), EvaluationRecordsKnown: true,
 		Trace:                observability.TraceFields{StrategyID: due.Identity.StrategyID, BusinessID: due.Identity.BusinessID, DimensionIdentityDigest: string(series)},
 		AlgorithmEvaluations: evaluations, AlgorithmInputs: namedInputs,
 		RecoveryGates: recoveryGateFacts(due, evaluated), OpenAlertGates: openAlertGateFacts(due, evaluated),
+		LevelOutcomes:    levelOutcomeFacts(due, evaluated),
+		OutputWireFormat: planWireFormat(due), PlanSeriesMatched: stream.planSeriesMatched(due),
 	}
 	stream.coordinator.ports.Observer.Observe(ctx, observation)
 }
 
-// openAlertGateFacts carries what the second recovery gate did with the
+// planSeriesMatched is how many PRIMARY series the Slot bound to the Plan,
+// for the line: the number that separates a guard warming from a guard on a
+// Plan with nothing to warm on. Counted from what the stream bound, which is
+// what the evaluation ran on -- and final by the first line, because
+// evaluation starts at complete, after every delivery has been joined.
+func (stream *streamedExecution) planSeriesMatched(due execution.DuePlan) *int {
+	if cached := stream.planSeriesCounts[due.Identity]; cached != nil {
+		return cached
+	}
+	matched := len(stream.planSeries[due.Identity])
+	if stream.planSeriesCounts == nil {
+		stream.planSeriesCounts = make(map[execution.PlanIdentity]*int)
+	}
+	stream.planSeriesCounts[due.Identity] = &matched
+	return &matched
+}
+
+// planWireFormat is the format the Plan's events go out as, for the
+// evaluation line: the word was frozen into the Plan and carried on every
+// event and reached no log, so the one question "how many strategies
+// publish the standard raw event" had no line to answer it from.
+//
+// Already resolved: CompiledPlan.WireFormat is
+// contract.ResolveOutputWireFormat over the frozen word and the revision,
+// the same call the sink and the leader's composition make, so an empty or
+// historical frozen word never reaches the line as itself.
+func planWireFormat(due execution.DuePlan) string {
+	if due.CompiledPlan == nil {
+		return ""
+	}
+	return due.CompiledPlan.WireFormat()
+}
+
+func costEvaluationOwner(identity execution.PlanIdentity) observability.CostPlanIdentity {
+	return observability.CostPlanIdentity{TenantID: identity.TenantID, BusinessID: identity.BusinessID, StrategyID: identity.StrategyID}
+}
+
+func (stream *streamedExecution) observeEvaluationFailure(ctx context.Context, started time.Time, due execution.DuePlan, err error) {
+	stream.coordinator.emitObservation(ctx, observability.Observation{
+		Component: observability.ComponentEvaluation, Stage: observability.StageEvaluationCompleted,
+		Operation: observability.Operation(stream.request.Operation), Direction: observability.DirectionInternal,
+		Duration: time.Since(started), DurationKnown: true, Err: err,
+		EvaluationOwner: costEvaluationOwner(due.Identity),
+	})
+}
+
+// openAlertGateFacts carries what the open alert gate did with the
 // Plan's RECOVERY records, one fact per outcome that counted something.
+// levelOutcomeFacts is what the evaluation concluded per Level outcome and,
+// for the outcomes that carry one, per reason: the line's own reason is the
+// Plan's fold, one word for the worst Level, so a Level suppressed by its
+// effective time or held on a warming window had no name on the line unless
+// it was that word. Sorted by outcome then reason so the line is stable.
+func levelOutcomeFacts(due execution.DuePlan, evaluated execution.EvaluationResult) []observability.LevelOutcomeFact {
+	if len(evaluated.Plans) != 1 || evaluated.Plans[0].Plan != due.Identity {
+		return nil
+	}
+	type cell struct{ outcome, reason string }
+	counts := make(map[cell]uint64)
+	for _, outcome := range evaluated.Plans[0].LevelOutcomes {
+		key := cell{outcome: string(outcome.Outcome)}
+		if outcome.Outcome == execution.LevelOutcomeUnknown || outcome.Outcome == execution.LevelOutcomeTerminal {
+			key.reason = string(outcome.ReasonCode)
+		}
+		counts[key]++
+	}
+	facts := make([]observability.LevelOutcomeFact, 0, len(counts))
+	for key, count := range counts {
+		facts = append(facts, observability.LevelOutcomeFact{Outcome: key.outcome, Reason: key.reason, Count: count})
+	}
+	sort.Slice(facts, func(i, j int) bool {
+		if facts[i].Outcome != facts[j].Outcome {
+			return facts[i].Outcome < facts[j].Outcome
+		}
+		return facts[i].Reason < facts[j].Reason
+	})
+	return facts
+}
+
 func openAlertGateFacts(due execution.DuePlan, evaluated execution.EvaluationResult) []observability.OpenAlertGateFact {
 	if len(evaluated.Plans) != 1 || evaluated.Plans[0].Plan != due.Identity {
 		return nil
@@ -1379,9 +1780,9 @@ func openAlertGateFacts(due execution.DuePlan, evaluated execution.EvaluationRes
 	return facts
 }
 
-// recoveryGateFacts carries what became of the Plan's RECOVERY envelopes:
-// how many records were held, by cause, and how many were sent past a Level
-// without recovery. Zero counts are left out; the observer drops them anyway.
+// recoveryGateFacts carries the Plan's RECOVERY records by the state of the
+// other Level each was decided beside. Zero counts are left out; the observer
+// drops them anyway.
 func recoveryGateFacts(due execution.DuePlan, evaluated execution.EvaluationResult) []observability.RecoveryGateFact {
 	if len(evaluated.Plans) != 1 || evaluated.Plans[0].Plan != due.Identity {
 		return nil
@@ -1389,9 +1790,9 @@ func recoveryGateFacts(due execution.DuePlan, evaluated execution.EvaluationResu
 	gate := evaluated.Plans[0].RecoveryGate
 	var facts []observability.RecoveryGateFact
 	for _, fact := range []observability.RecoveryGateFact{
-		{Cause: observability.RecoveryGateLevelUnavailable, Records: gate.HeldLevelUnavailable},
-		{Cause: observability.RecoveryGateLevelRecovering, Records: gate.HeldLevelRecovering},
-		{Cause: observability.RecoveryGateLevelWithoutRecovery, Records: gate.SentPastLevelWithoutRecovery},
+		{Cause: observability.RecoveryGateLevelUnavailable, Records: gate.BesideLevelUnavailable},
+		{Cause: observability.RecoveryGateLevelRecovering, Records: gate.BesideLevelRecovering},
+		{Cause: observability.RecoveryGateLevelWithoutRecovery, Records: gate.BesideLevelWithoutRecovery},
 	} {
 		if fact.Records > 0 {
 			facts = append(facts, fact)
@@ -1410,8 +1811,11 @@ func (stream *streamedExecution) observeCompletionOnlyPlan(
 		Component: observability.ComponentEvaluation, Stage: observability.StageEvaluationCompleted,
 		Result: evaluated.Result, Operation: observability.Operation(stream.request.Operation),
 		Direction: observability.DirectionInternal, ReasonCode: evaluated.ReasonCode,
-		Trace:           observability.TraceFields{StrategyID: due.Identity.StrategyID, BusinessID: due.Identity.BusinessID},
-		AlgorithmInputs: stream.completionOnlyAlgorithmInputFacts(due),
+		EvaluationOwner: costEvaluationOwner(due.Identity), EvaluationRecordsKnown: true,
+		Trace:             observability.TraceFields{StrategyID: due.Identity.StrategyID, BusinessID: due.Identity.BusinessID},
+		AlgorithmInputs:   stream.completionOnlyAlgorithmInputFacts(due),
+		OutputWireFormat:  planWireFormat(due),
+		PlanSeriesMatched: stream.planSeriesMatched(due),
 	}
 	stream.coordinator.ports.Observer.Observe(ctx, observation)
 }
@@ -1801,69 +2205,41 @@ func planCompletedFullEmpty(bindings []execution.NamedInputBinding, plan executi
 	return found
 }
 
-// gapScopeReasonConflictError is the rejection of a Plan whose incomplete
-// named inputs of one gap scope carry different completion reasons and
-// neither the scope's evaluated outcome nor the Plan's own reason decides
-// between them, or a PARTIAL input disagrees with what would; see
-// completionGapReasons. It names the scope, the two inputs, their reasons
-// and which of the two refusals it is.
-type gapScopeReasonConflictError struct {
-	plan          execution.PlanIdentity
-	scope         execution.GapScope
-	first, second execution.NamedInputBinding
-	why           string
-}
-
-// The two refusals a gapScopeReasonConflictError names in its detail:
-// undecided, nothing the contract compares the marker with named one of the
-// inputs' reasons; partial, a PARTIAL input carries a reason other than the
-// one decided, and the contract would compare its marker with that input.
-const (
-	gapScopeConflictUndecided = "undecided"
-	gapScopeConflictPartial   = "partial"
-)
-
-func (e *gapScopeReasonConflictError) Error() string {
-	level := "plan"
-	if e.scope.HasLevel {
-		level = strconv.FormatUint(uint64(e.scope.LevelID), 10)
+// emptySourceSlotIsWholeInput says whether a Plan that produced no series is
+// evidence that its input was whole this round. That is what a Plan scope's
+// warmup counts, and it is a narrower question than the one that decides the
+// Plan completed: a round whose dependency query was UNAVAILABLE still
+// completes FULL EMPTY, because with no PRIMARY record there was nothing for
+// the dependency to feed and this round's conclusions do not rest on it -- but
+// it is not evidence that the dependency is answering again, and the first
+// round that does return series will need it. Counting such a round towards
+// the warmup would lift a guard on the strength of rounds that never asked the
+// question the guard is waiting on.
+//
+// So: FULL EMPTY as the completion judged it, and on top of that every binding
+// of this Plan whole and available, dependencies included.
+func emptySourceSlotIsWholeInput(bindings []execution.NamedInputBinding, plan execution.PlanIdentity) bool {
+	if !planCompletedFullEmpty(bindings, plan) {
+		return false
 	}
-	return fmt.Sprintf("alarmd worker: one gap scope has conflicting completion reasons (%s): strategy %s level %s: %s/%s %s %s vs %s/%s %s %s",
-		e.why, e.plan.StrategyID, level,
-		e.first.RequirementID, e.first.DatasetName, e.first.Completeness, e.first.ReasonCode,
-		e.second.RequirementID, e.second.DatasetName, e.second.Completeness, e.second.ReasonCode)
-}
-
-func (e *gapScopeReasonConflictError) QueryFailure() (string, string) {
-	return observability.QueryFailureCategoryNamedInput, codeGapScopeReasonConflict
-}
-
-// QueryFailureDetail is the scope, the two reasons and which refusal it is,
-// in the bounded detail grammar (lower case, at most 96 bytes), so the shape
-// survives rate limiting and the branch that refused can be read off the line.
-func (e *gapScopeReasonConflictError) QueryFailureDetail() string {
-	level := "plan"
-	if e.scope.HasLevel {
-		level = strconv.FormatUint(uint64(e.scope.LevelID), 10)
+	for _, binding := range bindings {
+		if binding.Consumer.Plan != plan {
+			continue
+		}
+		if binding.Completeness != execution.CompletenessFull || binding.Disposition != execution.AccessAvailable {
+			return false
+		}
 	}
-	detail := "level=" + level + "-first=" + strings.ToLower(string(e.first.ReasonCode)) + "-second=" + strings.ToLower(string(e.second.ReasonCode)) + "-why=" + e.why
-	if len(detail) > 96 {
-		detail = detail[:96]
-	}
-	return detail
+	return true
 }
 
 // completionGapMutationFor builds the Plan gap mutation for a set of
-// incomplete bindings, deciding each scope's reason against the Level
-// outcomes the evaluator produced for the same Slot and the reason the Plan
-// result itself carries.
+// incomplete bindings.
 func (stream *streamedExecution) completionGapMutationFor(
 	due execution.DuePlan,
 	bindings []execution.NamedInputBinding,
-	outcomes []execution.LevelOutcome,
-	planReason execution.ReasonCode,
 ) (execution.PlanGapMutation, error) {
-	reasons, err := completionGapReasons(due, bindings, outcomes, planReason)
+	reasons, err := completionGapReasons(due, bindings)
 	if err != nil {
 		return execution.PlanGapMutation{}, err
 	}
@@ -1871,117 +2247,25 @@ func (stream *streamedExecution) completionGapMutationFor(
 }
 
 // completionGapReasons decides the one reason each gap scope carries for a
-// set of incomplete bindings. A marker carries one reason per scope, and the
-// result contract reads it in two places: a degraded Level outcome needs a
-// marker of its scope with the outcome's own reason, and a PARTIAL input
-// needs a marker of its scope with that input's reason. Inputs of one scope
-// that agree decide the scope directly. Inputs that disagree, which two
-// inputs of one Level failing for different transient reasons do on every
-// Slot of an outage and on the replay after a restart, are decided by what
-// the contract will compare the marker with, or by what the Plan result
-// itself says when the contract compares nothing: first the reason of the
-// Level's UNKNOWN outcome, which the evaluator took from one of these same
-// inputs; then, when the Level has no outcome, as on the no-series and
-// PRIMARY paths, the reason the Plan result carries, which those paths take
-// from the PRIMARY input. Either is taken only when it is one an input of
-// the scope gave, and no PARTIAL input of the scope carries another. Anything
-// else is the conflict, named with the two inputs it saw and which of the
-// two refusals it is, since a marker that satisfies one of the contract's
-// comparisons would fail the other.
+// set of incomplete bindings: the incomplete inputs of the scope, folded by
+// GapReasonFoldOrder.
+//
+// A marker carries one reason per scope, and the result contract reads it in
+// two places -- a degraded Level outcome needs a marker of its scope with the
+// outcome's own reason, and a PARTIAL input needs a marker of its scope with
+// that input's reason. The fold is what makes those comparisons hold by
+// construction: the marker's reason and the Level's UNKNOWN reason are the
+// same function of the same inputs, so there is no second derivation for the
+// first to disagree with.
 func completionGapReasons(
 	due execution.DuePlan,
 	bindings []execution.NamedInputBinding,
-	outcomes []execution.LevelOutcome,
-	planReason execution.ReasonCode,
 ) (map[execution.GapScope]execution.ReasonCode, error) {
-	members := make(map[execution.GapScope][]execution.NamedInputBinding)
-	order := make([]execution.GapScope, 0)
-	for _, binding := range bindings {
-		if binding.Consumer.Plan != due.Identity || binding.Completeness == execution.CompletenessFull {
-			continue
-		}
-		scope := execution.GapScope{LevelID: binding.Consumer.LevelID, HasLevel: binding.Consumer.HasLevel}
-		if _, seen := members[scope]; !seen {
-			order = append(order, scope)
-		}
-		members[scope] = append(members[scope], binding)
-	}
-	if len(order) == 0 {
+	reasons := execution.RoundGapScopeReasons(bindings, due.Identity)
+	if len(reasons) == 0 {
 		return nil, errors.New("alarmd worker: incomplete named input requires a gap scope")
 	}
-	reasons := make(map[execution.GapScope]execution.ReasonCode, len(order))
-	for _, scope := range order {
-		inputs := members[scope]
-		first := inputs[0]
-		disagreeing, found := firstDisagreeingReason(inputs)
-		if !found {
-			reasons[scope] = first.ReasonCode
-			continue
-		}
-		conflict := &gapScopeReasonConflictError{plan: due.Identity, scope: scope, first: first, second: disagreeing, why: gapScopeConflictUndecided}
-		decided, ok := unknownOutcomeReason(due.Identity, outcomes, scope)
-		if !ok && planReason != "" && planReason != execution.ReasonCode(observability.ReasonNone) {
-			decided, ok = planReason, true
-		}
-		if !ok {
-			return nil, conflict
-		}
-		var carrier *execution.NamedInputBinding
-		for index := range inputs {
-			if inputs[index].ReasonCode == decided {
-				carrier = &inputs[index]
-				break
-			}
-		}
-		if carrier == nil {
-			return nil, conflict
-		}
-		for _, input := range inputs {
-			if input.Completeness == execution.CompletenessPartial && input.ReasonCode != decided {
-				return nil, &gapScopeReasonConflictError{plan: due.Identity, scope: scope, first: input, second: *carrier, why: gapScopeConflictPartial}
-			}
-		}
-		reasons[scope] = decided
-	}
 	return reasons, nil
-}
-
-func firstDisagreeingReason(inputs []execution.NamedInputBinding) (execution.NamedInputBinding, bool) {
-	for _, input := range inputs[1:] {
-		if input.ReasonCode != inputs[0].ReasonCode {
-			return input, true
-		}
-	}
-	return execution.NamedInputBinding{}, false
-}
-
-// unknownOutcomeReason is the reason of the one UNKNOWN outcome the evaluator
-// gave a Level scope, if the outcomes of that Level all say the same thing. A
-// Plan scope has no outcome of its own, and a Level whose series were given
-// different reasons decides nothing.
-func unknownOutcomeReason(
-	plan execution.PlanIdentity,
-	outcomes []execution.LevelOutcome,
-	scope execution.GapScope,
-) (execution.ReasonCode, bool) {
-	if !scope.HasLevel {
-		return "", false
-	}
-	decided := execution.ReasonCode("")
-	for _, outcome := range outcomes {
-		if outcome.Plan != plan || outcome.LevelID != scope.LevelID {
-			continue
-		}
-		if outcome.Outcome != execution.LevelOutcomeUnknown || outcome.ReasonCode == "" ||
-			outcome.ReasonCode == execution.ReasonCode(observability.ReasonNone) {
-			return "", false
-		}
-		if decided != "" && decided != outcome.ReasonCode {
-			return "", false
-		}
-		decided = outcome.ReasonCode
-	}
-	return decided, decided != ""
 }
 
 // gapMutationForReasons builds the Plan gap mutation that opens or
@@ -1990,7 +2274,7 @@ func (stream *streamedExecution) gapMutationForReasons(
 	due execution.DuePlan,
 	reasons map[execution.GapScope]execution.ReasonCode,
 ) (execution.PlanGapMutation, error) {
-	identity := execution.PlanGapIdentity{Plan: due.Identity, StateGeneration: due.StateGeneration}
+	identity := due.GapIdentity()
 	marker, found := stream.gaps.Find(identity)
 	if !found {
 		return execution.PlanGapMutation{}, errors.New("alarmd worker: Plan gap marker is absent from validated result")

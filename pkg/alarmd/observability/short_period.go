@@ -53,6 +53,35 @@ type ShortPeriodCompletionFacts struct {
 	Cohort         string  `json:"cohort"`
 	CompletionKind string  `json:"completion_kind"`
 	LagSeconds     float64 `json:"lag_seconds"`
+	// AttemptNo is which attempt at the Slot this completion was, from the
+	// request that ran it. A lag over the deadline reads two ways -- the
+	// first attempt was dispatched late, or an earlier attempt failed and
+	// this one is the retry -- and the lag alone cannot tell them apart; the
+	// live tail past fifteen seconds could not be attributed for want of it.
+	// Zero is an emitter that did not say.
+	AttemptNo uint32 `json:"attempt_no"`
+}
+
+// ShortPeriodCompletionKinds is every completion kind a short-period Slot's
+// acknowledged commit may carry: the executed kinds and the two query-free
+// closures. Declared once so the normalizer and the metric labels agree, and
+// so the lag histogram can be told apart by kind: a GAP_SKIPPED closure's lag
+// is how late the skip was booked, not how long an execution took, and mixed
+// into one histogram the two made the 15s and 30s cohorts' p99 a statistic
+// of skips.
+var ShortPeriodCompletionKinds = []string{
+	"FULL_COMPLETED", "FULL_EMPTY_COMPLETED", "COMPLETED_WITH_PARTIAL_GAP", "COMPLETED_WITH_UNAVAILABLE",
+	"COMPLETED_WITH_TERMINAL", "GAP_SKIPPED", "SNAPSHOT_UNAVAILABLE",
+}
+
+// IsShortPeriodCompletionKind reports whether kind is one of them.
+func IsShortPeriodCompletionKind(kind string) bool {
+	for _, known := range ShortPeriodCompletionKinds {
+		if kind == known {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeTimingFacts(o Observation) *QueryTimingFacts {
@@ -73,9 +102,7 @@ func normalizeShortPeriodCompletion(o Observation) *ShortPeriodCompletionFacts {
 		!IsShortPeriodCohort(f.Cohort) || f.LagSeconds < 0 || math.IsNaN(f.LagSeconds) || math.IsInf(f.LagSeconds, 0) || o.Err != nil {
 		return nil
 	}
-	switch f.CompletionKind {
-	case "FULL_COMPLETED", "FULL_EMPTY_COMPLETED", "COMPLETED_WITH_PARTIAL_GAP", "COMPLETED_WITH_UNAVAILABLE", "COMPLETED_WITH_TERMINAL", "GAP_SKIPPED", "SNAPSHOT_UNAVAILABLE":
-	default:
+	if !IsShortPeriodCompletionKind(f.CompletionKind) {
 		return nil
 	}
 	switch o.Operation {

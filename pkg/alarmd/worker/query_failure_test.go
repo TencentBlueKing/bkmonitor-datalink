@@ -21,7 +21,10 @@ func TestQueryFailureBoundaryAndHealthySibling(t *testing.T) {
 	for _, tc := range []struct{ name, stage, category, code string }{
 		{"provider", "execute", "series_identity", "IDENTITY_FIELD_MISSING"},
 		{"stream", "stream_complete", "other", "OTHER"},
-		{"budget", "execute", "budget", "series"},
+		// The budget's own value is a metric label and the code grammar is
+		// upper case. Taken from the one place that maps between them, so a
+		// code that stops parsing cannot pass here by being copied twice.
+		{"budget", "execute", "budget", observability.CapacityBudgetFailureCode(observability.CapacityBudgetSeries)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixtureWithBudget(t, worker.ProvisionalBudget{MaxSeries: 1, MaxRetainedBytes: 1 << 20, MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10})

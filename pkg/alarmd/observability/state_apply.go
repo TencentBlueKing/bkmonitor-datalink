@@ -19,6 +19,17 @@ type StateApplyChunkFacts struct {
 	// ElapsedMillis is the wall time from the first chunk start to the end of
 	// this chunk, the measured apply time of the Plan so far.
 	ElapsedMillis int64 `json:"elapsed_ms"`
+	// RefusalRules names which of the store's bounded rules refused the
+	// deterministically invalid mutations in this chunk, sorted and without
+	// repeats. The reason says the record could not be stored; this says which
+	// of the ways it could not, which is which producer to go and read.
+	RefusalRules []string `json:"refusal_rules,omitempty"`
+	// LegacyRecordIDs is how many points across this chunk's records carried an
+	// id the derivation could not rebuild. Zero on every chunk whose state was
+	// written by a build that derived them, which is the population this says
+	// nothing about; non-zero says how much state predates that and, with the
+	// object on the same line, which objects hold it.
+	LegacyRecordIDs int `json:"legacy_record_ids,omitempty"`
 }
 
 func normalizeStateApplyChunk(o Observation) *StateApplyChunkFacts {
@@ -34,6 +45,10 @@ func normalizeStateApplyChunk(o Observation) *StateApplyChunkFacts {
 	if f.Count <= 0 || f.Index < 0 || f.Index >= f.Count || f.AppliedKeys < 0 || f.AppliedBytes < 0 || f.ElapsedMillis < 0 {
 		return nil
 	}
-	copy := *f
-	return &copy
+	copied := *f
+	// The slice too, not just the struct around it. A shallow copy leaves the
+	// observer sharing the caller's backing array, which is the thing this
+	// function exists to prevent.
+	copied.RefusalRules = append([]string(nil), f.RefusalRules...)
+	return &copied
 }

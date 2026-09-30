@@ -155,8 +155,16 @@ func TestReconcilerPlanRebalanceDelegatesToItsRouter(t *testing.T) {
 
 type fakeAssignmentStoreForPlan struct{}
 
-func (fakeAssignmentStoreForPlan) ListReadyWorkers(context.Context, time.Time) ([]ownership.WorkerRegistration, error) {
-	return nil, nil
+func (fakeAssignmentStoreForPlan) ListReadyWorkers(
+	context.Context, time.Time,
+) ([]ownership.WorkerRegistration, ownership.ControlReadStats, error) {
+	return nil, ownership.ControlReadStats{}, nil
+}
+
+func (fakeAssignmentStoreForPlan) ReadAssignments(
+	context.Context, []execution.QueryGroupIdentity,
+) (map[execution.QueryGroupIdentity]ownership.AssignmentRecord, ownership.ControlReadStats, error) {
+	return nil, ownership.ControlReadStats{}, nil
 }
 
 func (fakeAssignmentStoreForPlan) ReadAssignment(context.Context, execution.QueryGroupIdentity) (ownership.AssignmentRecord, error) {

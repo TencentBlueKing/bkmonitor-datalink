@@ -101,7 +101,7 @@ func TestTargetBudgetRejectsBeforeCopiesOrGapReads(t *testing.T) {
 	if err := owner.retainTargets(context.Background(), len(targets), targets); err == nil {
 		t.Fatal("oversized target list accepted")
 	}
-	if store.reads != 0 || owner.retained != 0 {
+	if store.reads != 0 || owner.retainedTotal() != 0 {
 		t.Fatal("rejected targets reached read/retention")
 	}
 }

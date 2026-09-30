@@ -58,6 +58,10 @@ func TestTheScrapeMarksStallingOnEveryColumnLikeThePage(t *testing.T) {
 	}
 
 	verdict := fleetVerdictSource(service, func() time.Time { return at }, time.Hour, time.Second)()
+	// The scrape decides the verdict too, and records it.
+	if history, _ := service.VerdictHistory(); len(history) != 1 || string(history[0].To) != verdict.Health {
+		t.Fatalf("verdict record after a scrape = %+v, want the verdict the scrape decided (%s)", history, verdict.Health)
+	}
 
 	if got := countOf(verdict.Checks, string(fleet.CheckRoundsStalled)).Count; got != 1 {
 		t.Fatalf("fleet_checks{code=ROUNDS_STALLED} = %d from the scrape, want the demoted object the page files there", got)

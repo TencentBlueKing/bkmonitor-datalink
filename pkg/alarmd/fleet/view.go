@@ -23,6 +23,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	model "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
@@ -97,6 +99,13 @@ const (
 	// starts at the handover, so the duration is a lower bound -- possibly a
 	// far lower one -- rather than a measurement.
 	SinceRestoredAtRestart SinceSource = "RESTORED_AT_RESTART"
+	// SinceRestoredEmptyRun is the first empty Slot of the object's run of
+	// empty rounds as its record kept it, read back after a restart. It is a
+	// Slot on the source's clock, not a moment this process watched, and it
+	// is a lower bound on the run: a record that could not date the run took
+	// the earliest empty Slot it could still prove, which is no earlier than
+	// the run really began.
+	SinceRestoredEmptyRun SinceSource = "RESTORED_EMPTY_RUN"
 	// SinceRefusedFuture marks a row whose start time was later than the moment
 	// it was read. Nothing can have started after now, so the timestamp was
 	// refused and the clock reset to the read.
@@ -228,6 +237,328 @@ type FailureRef struct {
 	// [a-z0-9_=.-], so URLs, messages and response bodies are refused upstream
 	// rather than trimmed here.
 	Detail string `json:"detail,omitempty"`
+	// Text is the error's own words for a failure whose emitter reports an
+	// error and no detail -- the write of the round's events. Bounded and
+	// sanitized the way the row's last error is, and kept apart from Detail
+	// because Detail has a grammar (a bounded token the backend answered
+	// with) and this does not. It is the field that decides the reading of
+	// an output failure: the client refusing to send is not the broker
+	// failing to answer, and on a live deployment the two read identically
+	// for an afternoon because neither the row nor the window carried the
+	// sentence that told them apart.
+	Text string `json:"text,omitempty"`
+	// At is when this failure was observed. The reference is kept until a
+	// healthy completion, so on a row whose latest round ended some other
+	// way it describes an earlier round; the reading that names the current
+	// round's evidence uses this to tell the two apart. Absent on rows from
+	// a publisher that predates it.
+	At *time.Time `json:"at,omitempty"`
+	// Slot is the Slot the failure was observed on, and the first thing the
+	// reading compares with the row's RoundSlot: a failure on the latest
+	// round's Slot is that round's, whatever the clocks say. Zero when the
+	// observation carried no Slot.
+	Slot int64 `json:"slot,omitempty"`
+}
+
+// NoDataMemoryRefusal is what the store said when it would not take a Plan's
+// absence memory, on the object row that lists it: the store's reason, and
+// for a refusal about size which record was measured and the two numbers it
+// compared -- a record a little over the bound and one many times it are
+// different situations, and a bound that moved under an unchanged record a
+// third. Refusals counts the rounds refused since FirstAt; LastAt is the
+// latest. Plan is the strategy whose memory it is. On an object row the
+// refusal shown is the latest among the object's refused Plans and Plans
+// says how many of them are refused; the row's strategies name them all.
+type NoDataMemoryRefusal struct {
+	// Kind is which upkeep the store refused, WRITE or RENEWAL; Reason is
+	// the store's reason code for it.
+	Kind   string `json:"kind"`
+	Reason string `json:"reason"`
+	Record string `json:"record,omitempty"`
+	// Groups and Limit are the measurement behind a bound refusal. It used to
+	// be a byte count, which a memory held one field per group no longer has.
+	Groups   int         `json:"groups,omitempty"`
+	Limit    int         `json:"limit,omitempty"`
+	FirstAt  time.Time   `json:"first_at"`
+	LastAt   time.Time   `json:"last_at"`
+	Refusals int         `json:"refusals"`
+	Plan     StrategyRef `json:"plan"`
+	Plans    int         `json:"plans,omitempty"`
+}
+
+// Memory upkeep the store refused, as this row names it. The write is the
+// refusal the row was made for: the round's memory was not taken, and the
+// store keeps the last one it did. The renewal is the one a memory kept one
+// field per group can lose: such a Plan writes nothing while its groups are
+// steady, so the renewal on every read is all that keeps its key alive, and
+// a renewal the store will not do is a memory on its way to expiring whole
+// -- after which every group starts again with no history. Different loss,
+// same line: detection that stopped remembering, silently.
+const (
+	NoDataMemoryRefusalWrite   = "WRITE"
+	NoDataMemoryRefusalRenewal = "RENEWAL"
+)
+
+// NoDataMemoryRefusalKinds is the closed list, for the page's wording table.
+var NoDataMemoryRefusalKinds = []string{NoDataMemoryRefusalWrite, NoDataMemoryRefusalRenewal}
+
+// NoDataMemoryRepresentations is every stored shape a read can name, as the
+// emitter defines them; for the page's wording table.
+var NoDataMemoryRepresentations = func() []string {
+	names := make([]string, 0, len(model.NoDataRepresentations))
+	for _, representation := range model.NoDataRepresentations {
+		names = append(names, string(representation))
+	}
+	return names
+}()
+
+// NoDataMemoryUpkeep is the last this process saw of a Plan's absence memory
+// being kept alive, on the object row: which stored shape the last read came
+// from, when a renewal last reached the store and whether it renewed, and the
+// lifetime a renewal sets. This is the positive evidence. A memory that is
+// alive reads exactly like one about to expire, and the write family is
+// silent for a steady Plan by design, so neither says whether upkeep works;
+// a renewal that reached the store and answered does.
+type NoDataMemoryUpkeep struct {
+	Plan StrategyRef `json:"plan"`
+	// Representation is what the last read said the memory was stored as:
+	// NONE, WHOLE_MEMORY or PER_GROUP, as the emitter names them.
+	Representation string     `json:"representation,omitempty"`
+	LastReadAt     *time.Time `json:"last_read_at,omitempty"`
+	// LastAttemptAt is the last renewal that reached the store, whatever it
+	// answered; LastRenewedAt the last that set a new lifetime. The store
+	// answers "enough life left" to most, which is not a failure. Pointers,
+	// so a clock nothing has set is absent rather than the zero time.
+	LastAttemptAt *time.Time `json:"last_attempt_at,omitempty"`
+	LastRenewedAt *time.Time `json:"last_renewed_at,omitempty"`
+	TTLSeconds    int64      `json:"ttl_seconds,omitempty"`
+	// Plans is how many of the object's Plans this process has seen memory
+	// upkeep for; the row carries the one attempted most recently.
+	Plans int `json:"plans,omitempty"`
+}
+
+// PlanSeriesMatched is how many PRIMARY series the latest evaluated round
+// bound to one Plan, with the Slot it was counted on and when this process
+// saw it. Zero is the reading this exists for.
+type PlanSeriesMatched struct {
+	Plan           StrategyRef `json:"plan"`
+	Matched        int         `json:"matched"`
+	EvaluationTime int64       `json:"evaluation_time"`
+	LastSeenAt     time.Time   `json:"last_seen_at"`
+}
+
+// PlanWireFormat is the wire format one Plan's events are published as, as
+// the Plan's last evaluation line said it, with when this process last saw
+// it. The word is the sink's resolved one -- python_compatible or
+// standard_raw_event -- never the historical spelling frozen in the Plan.
+type PlanWireFormat struct {
+	Plan       StrategyRef `json:"plan"`
+	WireFormat string      `json:"wire_format"`
+	LastSeenAt time.Time   `json:"last_seen_at"`
+}
+
+// NoDataTracking is what one Plan's last deciding no-data round counted, on
+// the object row: the horizon it decided against and where that came from,
+// the roster it judged, and the three counts the horizon is read from --
+// the groups still tracked and reported absent, the absences the round
+// stopped, and the groups it met already stopped.
+//
+// It answers the question a deployment that switched the horizon on has no
+// other way to ask: is it doing anything, to which Plans, against which
+// number. Before this the answer lived in the persisted memory and in the
+// alerts that stopped arriving, and a horizon that reached nothing read
+// exactly like one that was never configured.
+type NoDataTracking struct {
+	Plan StrategyRef `json:"plan"`
+	// HorizonSeconds is the Plan's effective horizon as compilation froze it,
+	// zero when it has none; HorizonSource says where the tracker reads it
+	// as coming from, one of NoDataHorizonSources; HorizonSourceBasis how it
+	// read it, one of NoDataHorizonSourceBases -- off the word compilation
+	// froze, or by comparing the value with the platform's leaf.
+	HorizonSeconds     int64  `json:"horizon_seconds"`
+	HorizonSource      string `json:"horizon_source"`
+	HorizonSourceBasis string `json:"horizon_source_basis"`
+	// RosterSource is the derivation of the expected set, as the round
+	// declared it; Expected its size and Present how many arrived.
+	RosterSource string `json:"roster_source,omitempty"`
+	Expected     uint64 `json:"expected"`
+	Present      uint64 `json:"present"`
+	// Absent is the groups still tracked and reported absent by that round;
+	// ExpiredThisRound the absences it stopped tracking; Suppressed the
+	// groups it met already stopped -- what the horizon is holding down.
+	Absent           uint64 `json:"absent"`
+	ExpiredThisRound uint64 `json:"expired_this_round"`
+	Suppressed       uint64 `json:"suppressed"`
+	// Dropped is the series the round refused as not matching the item.
+	Dropped uint64 `json:"dropped,omitempty"`
+	// AbsentAges is Absent by how long each absence has been open, as the
+	// round filed them: what the horizon can reach is the last bucket.
+	AbsentAges NoDataAbsentAges `json:"absent_ages"`
+	// EvaluationTime is the Slot that decided; DecidedAt when this process
+	// saw it.
+	EvaluationTime int64     `json:"evaluation_time"`
+	DecidedAt      time.Time `json:"decided_at"`
+}
+
+// NoDataAbsentAges is the age buckets of the absences a round reported: the
+// absence began this round, is under an hour old, under a day, a day or
+// more. They sum to the row's Absent. A deployment reads its horizon against
+// them: a day-long horizon stops what sits in DayOrMore and nothing else,
+// and thousands of absences all in the first two buckets are groups that
+// report every few rounds and reset their clock -- which no horizon reaches.
+type NoDataAbsentAges struct {
+	ThisRound uint64 `json:"this_round"`
+	UnderHour uint64 `json:"under_hour"`
+	UnderDay  uint64 `json:"under_day"`
+	DayOrMore uint64 `json:"day_or_more"`
+}
+
+func (ages *NoDataAbsentAges) add(other NoDataAbsentAges) {
+	ages.ThisRound += other.ThisRound
+	ages.UnderHour += other.UnderHour
+	ages.UnderDay += other.UnderDay
+	ages.DayOrMore += other.DayOrMore
+}
+
+// Where a Plan's effective horizon is read as coming from. Compilation
+// freezes the source beside the number (contract.NoDataConfigV1
+// TrackingHorizonSource), and a line that carries it is read as it says.
+// A line that does not -- a Plan compiled before the source was frozen, or
+// a Worker from before the line carried it -- is read against the
+// platform's own horizon: none when the Plan has no horizon, platform when
+// it equals the deployment's, strategy otherwise. Under that fallback a
+// strategy that states exactly the platform's value reads as platform --
+// the same number, the same behaviour -- until the platform's changes, at
+// which point the Plan keeps its own and reads as strategy; a Plan
+// inheriting the platform's is recompiled to the new value and goes on
+// reading as platform. Unknown is a tracker that was not told the
+// platform's horizon, and says so rather than guessing.
+//
+// That last step -- the inheriting Plan being recompiled -- is not this
+// package's to guarantee. It holds because the platform's horizon is part of
+// the control leader's candidate-cache round key (controlplane
+// NoDataPolicy.key(), read into beginRound): a changed leaf changes the key,
+// empties the cache and recompiles every Plan, so a Plan can carry a stale
+// inherited value for one compilation round at most. Take the horizon out of
+// that key and inherited Plans keep the old value for as long as they live,
+// and every one of them reads under the fallback as STRATEGY -- the page
+// would say these strategies set their own horizon when none of them did.
+// Each row says which way it was read (HorizonSourceBasis), so a reader does
+// not take an inferred source for a frozen one, and the fleet counts the
+// rows still read by inference: a rollout that has recompiled every Plan
+// reads zero there.
+const (
+	NoDataHorizonNone     = "NONE"
+	NoDataHorizonPlatform = "PLATFORM"
+	NoDataHorizonStrategy = "STRATEGY"
+	NoDataHorizonUnknown  = "UNKNOWN"
+)
+
+// NoDataHorizonSources is the closed list, for the page's wording table.
+var NoDataHorizonSources = []string{NoDataHorizonNone, NoDataHorizonPlatform, NoDataHorizonStrategy, NoDataHorizonUnknown}
+
+// How a row's horizon source was decided: read off the word compilation
+// froze beside the horizon, or inferred by comparing the Plan's value with
+// the platform's leaf. Stated on every row rather than implied, so an
+// inferred source is not taken for a frozen one.
+const (
+	NoDataHorizonSourceFrozen   = "FROZEN"
+	NoDataHorizonSourceInferred = "INFERRED_BY_VALUE"
+)
+
+// NoDataHorizonSourceBases is the closed list, for the page's wording table.
+var NoDataHorizonSourceBases = []string{NoDataHorizonSourceFrozen, NoDataHorizonSourceInferred}
+
+// NoDataTrackingSummary is the fleet's one line on the tracking horizon: over
+// every no-data Plan whose last deciding round this process (or, merged, the
+// counted replicas) saw, how many Plans decide against which kind of horizon,
+// and the sum of what those last rounds counted. The counts are the latest
+// round of each Plan and not a running total, so they say what the horizon
+// is holding down now, not what it ever did; the counter family says that.
+type NoDataTrackingSummary struct {
+	// Plans is the no-data Plans with a deciding round on record; the
+	// three by-source counts partition them, with Unknown for a tracker not
+	// told the platform's horizon.
+	Plans           int `json:"plans"`
+	HorizonNone     int `json:"horizon_none"`
+	HorizonPlatform int `json:"horizon_platform"`
+	HorizonStrategy int `json:"horizon_strategy"`
+	HorizonUnknown  int `json:"horizon_unknown,omitempty"`
+	// Expected, Absent, ExpiredThisRound and Suppressed are the sums of the
+	// same fields over each Plan's last deciding round.
+	Expected         uint64           `json:"expected"`
+	Absent           uint64           `json:"absent"`
+	ExpiredThisRound uint64           `json:"expired_this_round"`
+	Suppressed       uint64           `json:"suppressed"`
+	AbsentAges       NoDataAbsentAges `json:"absent_ages"`
+	// LastDecidedAt is the latest deciding round seen.
+	LastDecidedAt time.Time `json:"last_decided_at,omitempty"`
+	// HorizonSourceInferred is how many of the Plans' sources were read by
+	// inference rather than off the frozen word: Plans compiled before the
+	// source was frozen, or lines from a Worker before it carried the word.
+	// Zero once every Plan has been recompiled and every Worker rolled; a
+	// count above zero says how much of the by-source partition still rests
+	// on the comparison.
+	//
+	// A pointer, because the count exists for the rollout and a rollout is
+	// when a replica from before the count publishes a summary without it:
+	// read as zero, that replica's Plans -- every one of them inferred, since
+	// its build knew no frozen word -- would be the ones missing from exactly
+	// the number that is meant to say how many are left. Absent is therefore
+	// read as "all of this replica's Plans", and only a replica that counted
+	// says a number.
+	HorizonSourceInferred *int `json:"horizon_source_inferred,omitempty"`
+}
+
+// add folds one Plan's word, or another replica's whole summary, in.
+func (summary *NoDataTrackingSummary) add(other NoDataTrackingSummary) {
+	summary.Plans += other.Plans
+	summary.HorizonNone += other.HorizonNone
+	summary.HorizonPlatform += other.HorizonPlatform
+	summary.HorizonStrategy += other.HorizonStrategy
+	summary.HorizonUnknown += other.HorizonUnknown
+	summary.Expected += other.Expected
+	summary.Absent += other.Absent
+	summary.ExpiredThisRound += other.ExpiredThisRound
+	summary.Suppressed += other.Suppressed
+	summary.AbsentAges.add(other.AbsentAges)
+	if other.LastDecidedAt.After(summary.LastDecidedAt) {
+		summary.LastDecidedAt = other.LastDecidedAt
+	}
+	inferred := other.Plans
+	if other.HorizonSourceInferred != nil {
+		inferred = *other.HorizonSourceInferred
+	}
+	total := inferred
+	if summary.HorizonSourceInferred != nil {
+		total += *summary.HorizonSourceInferred
+	}
+	summary.HorizonSourceInferred = &total
+}
+
+// summaryOf is one Plan's word as a summary of one.
+func (tracking NoDataTracking) summaryOf() NoDataTrackingSummary {
+	summary := NoDataTrackingSummary{
+		Plans: 1, Expected: tracking.Expected, Absent: tracking.Absent,
+		ExpiredThisRound: tracking.ExpiredThisRound, Suppressed: tracking.Suppressed, LastDecidedAt: tracking.DecidedAt,
+		AbsentAges: tracking.AbsentAges,
+	}
+	inferred := 0
+	if tracking.HorizonSourceBasis != NoDataHorizonSourceFrozen {
+		inferred = 1
+	}
+	summary.HorizonSourceInferred = &inferred
+	switch tracking.HorizonSource {
+	case NoDataHorizonNone:
+		summary.HorizonNone = 1
+	case NoDataHorizonPlatform:
+		summary.HorizonPlatform = 1
+	case NoDataHorizonStrategy:
+		summary.HorizonStrategy = 1
+	default:
+		summary.HorizonUnknown = 1
+	}
+	return summary
 }
 
 // LastError is the last error a round of this object returned.
@@ -250,6 +581,14 @@ type LastError struct {
 	Operation string `json:"operation,omitempty"`
 }
 
+// CoverageRejected is the fleet's copy of the observer's coverage rejection:
+// the rule name from observability.CoverageRejectionRules and the series when
+// the rule is about one window.
+type CoverageRejected struct {
+	Rule   string `json:"rule"`
+	Series string `json:"series,omitempty"`
+}
+
 // HistoryCoverage is how far short of the required detection window this
 // object's series were, and for how many consecutive rounds.
 //
@@ -270,6 +609,80 @@ type LastError struct {
 // It is a strategy whose series identity contains something that churns, and
 // what it needs is a change to the strategy, not to alarmd. But a reader
 // cannot reach that conclusion from a label both cases share.
+// GapGuard is one held gap scope of one of the object's Plans, as the round
+// that read it reported it: which scope, whether it is counting up (WARMING)
+// or holding a gap (GAPPED), why, and where its count stands. A warming
+// scope has a k/N; a gapped one has no count to show, and a page that showed
+// k/N against it would read a stalled count where there is none. Rounds is
+// how many rounds this process saw the scope held; UnchangedRounds how many
+// in a row its count did not move, which for a gapped scope at zero is how
+// long the guard has held without the release condition advancing.
+type GapGuard struct {
+	Plan     StrategyRef `json:"plan"`
+	Scope    string      `json:"scope"`
+	Status   string      `json:"status"`
+	Reason   string      `json:"reason,omitempty"`
+	Required uint32      `json:"required"`
+	Observed uint32      `json:"observed"`
+	// Progress is the emitter's word for where Observed stands against
+	// Required -- none, partial, ready -- carried as reported rather than
+	// derived again here, so the row and the metric label say the same thing
+	// of the same round. A held scope reading ready is a guard whose release
+	// condition is met and which has not released: the emitter's third word
+	// exists to tell that apart from part way, and a reader deriving two words
+	// from the counts would fold it back into them.
+	Progress        string    `json:"progress"`
+	FirstAt         time.Time `json:"first_at"`
+	LastAt          time.Time `json:"last_at"`
+	Rounds          int       `json:"rounds"`
+	UnchangedRounds int       `json:"unchanged_rounds"`
+	// SeriesMatched is how many PRIMARY series the latest evaluated round
+	// bound to the guard's Plan, and SeriesMatchedKnown whether a round has
+	// said: a guard at 0 of N whose Plan bound no series is not warming, it
+	// has nothing to warm on, and the two look the same without this.
+	SeriesMatched      int  `json:"series_matched"`
+	SeriesMatchedKnown bool `json:"series_matched_known"`
+	// Measure says what Observed counts: the points that arrived since the
+	// guard's trigger, so it climbs one per round while the window beside it
+	// on the row (HistoryCoverage.WorstValid) holds points from either side
+	// of the trigger and can stand still as one leaves for each that
+	// arrives. Two numbers on one row against the same Required, one moving
+	// and one not, read as a contradiction until each says what it counts;
+	// a note beside them is copied away and the numbers are not.
+	Measure string `json:"observed_measure"`
+}
+
+// GuardObservedMeasure is the word GapGuard.Measure carries.
+const GuardObservedMeasure = "points_since_trigger"
+
+// CoverageValidMeasure is the word HistoryCoverage.Measure carries.
+const CoverageValidMeasure = "points_in_window"
+
+// GapGuardStatuses and GapProgressValues are the closed vocabularies a held
+// scope's Status and Progress take, as the emitter defines them; here for the
+// page's completeness test, which holds its words to these lists.
+var (
+	GapGuardStatuses  = []string{string(model.GapStatusGapped), string(model.GapStatusWarming)}
+	GapProgressValues = contract.GapScopeProgressValues
+)
+
+// GapGuardReasons is every reason a held scope has been seen to carry: the
+// contract's own set -- the query-result reasons and HISTORY_WARMING -- and
+// the two a query-free completion writes on the marker it leaves
+// (execution.ExpiredRangeProjectionV1.CompletionReason), which the contract
+// does not list and the metric folds into "other". The page holds its words
+// to this list, so a reason reaching the row prints as words and not as its
+// code: on a live deployment SNAPSHOT_UNAVAILABLE and EXECUTION_BUDGET_EXHAUSTED
+// were both on rows, and neither had words.
+var GapGuardReasons = append(contract.GapScopeReasons(),
+	contract.ReasonGapSkipped, contract.ReasonSnapshotUnavailable)
+
+// MaxGuardsPerRow bounds how many held scopes a row carries: the worst few,
+// gapped before warming, the least advanced first. A Query Group with many
+// Plans and levels can hold dozens, and the row is read for whether the
+// object is waiting on a guard that is moving, not for the list.
+const MaxGuardsPerRow = 4
+
 type HistoryCoverage struct {
 	// Levels and Short are the counts from the last round: how many Level
 	// windows were summarised, and how many held fewer points than required.
@@ -280,9 +693,13 @@ type HistoryCoverage struct {
 	// arriving", which report the same reason and need opposite responses.
 	Empty uint32 `json:"empty"`
 	// WorstValid and WorstRequired are one window's pair -- the worst one --
-	// never a minimum of one field beside a maximum of the other.
+	// never a minimum of one field beside a maximum of the other. Measure
+	// says what WorstValid counts: the valid points in the window as it
+	// stands, either side of any guard's trigger, which is why it can hold
+	// still while a guard on the same row counts up (see GapGuard.Measure).
 	WorstValid    uint32 `json:"worst_valid"`
 	WorstRequired uint32 `json:"worst_required"`
+	Measure       string `json:"valid_measure"`
 	// ShortRounds is how many consecutive rounds have reported a short window,
 	// counted by this process and therefore no older than it.
 	//
@@ -290,6 +707,15 @@ type HistoryCoverage struct {
 	// tell a filling window from a permanently short one; both are short. Only
 	// the sequence separates them, and a filling window converges.
 	ShortRounds uint32 `json:"short_rounds"`
+	// RefusedRounds is how many rounds of that run had their window reading
+	// refused by the observer. The run counts are held over such a round,
+	// neither extended nor ended, so a run with refusals in it is longer in
+	// time than ShortRounds rounds, and this says by how many.
+	RefusedRounds uint32 `json:"refused_rounds,omitempty"`
+	// Held says this is the last reading of the run, kept on a row whose
+	// latest round was refused (CoverageRejected is beside it). The counts
+	// are the run's as they stood; the per-round facts are that reading's.
+	Held bool `json:"held,omitempty"`
 	// EmptyRounds is the same count for windows holding nothing at all. It is
 	// tracked separately rather than inferred from ShortRounds: a window can
 	// be short for an hour and empty only for the last two rounds, and those
@@ -337,6 +763,31 @@ type HistoryCoverage struct {
 	// not carry, the value has the wrong shape, or an algorithm declined it.
 	Unusable       uint32 `json:"unusable,omitempty"`
 	UnusableReason string `json:"unusable_reason,omitempty"`
+	// Resumed and Constrained are the series this round handled without
+	// summarising a window for them: Resumed because their State was already
+	// applied at this Slot's version, so the round was bookkeeping and not an
+	// evaluation; Constrained because their State could not be loaded.
+	//
+	// They are the denominator Levels lacks. Levels answers "how many windows
+	// did this round summarise", and a round that resumed 227 of 249 series
+	// reports 22 -- which on the page, without these, is the same shape as an
+	// object that has 22. Not omitempty on purpose: a zero here is the
+	// statement that every series was evaluated, and it is the reading a
+	// reader needs to see before trusting Levels as a size.
+	Resumed     uint32 `json:"resumed"`
+	Constrained uint32 `json:"constrained"`
+	// ConstrainedRounds is how many consecutive rounds could load no State
+	// for any series, and ResumedRounds the same for rounds that summarised
+	// no window because every series was already applied at the Slot's
+	// version. The two counts above are this round's and nothing keeps
+	// them: a round that could load nothing leaves no trace once the next
+	// round replaces it, so a run of them and a single one read the same on
+	// the row -- and on a live deployment the only way to see one was to
+	// sample the interface at the moment it happened. Counted here for the
+	// same reason ShortRounds is: one round cannot tell a blip from a
+	// state.
+	ConstrainedRounds uint32 `json:"constrained_rounds"`
+	ResumedRounds     uint32 `json:"resumed_rounds"`
 	// Abnormal is how many Level verdicts in the last round were ABNORMAL and
 	// AbnormalOnIncomplete how many of those were reached on a window that was
 	// not full. The trigger decides ABNORMAL before it reads completeness, so
@@ -379,6 +830,261 @@ type HistoryCoverage struct {
 	PreviousWorstValid uint32 `json:"previous_worst_valid,omitempty"`
 	PreviousKnown      bool   `json:"previous_known,omitempty"`
 	NoProgressRounds   uint32 `json:"no_progress_rounds,omitempty"`
+	// UnchangedRounds is how many consecutive rounds the worst valid count
+	// has been exactly the count before -- flat, as against not risen. A
+	// falling count is a window being emptied one hole per round; a flat
+	// short count is a fixed set of holes sliding through a window that
+	// fills as fast as it drains. NoProgressRounds reads the same for both.
+	UnchangedRounds uint32 `json:"unchanged_rounds,omitempty"`
+	// WorstWindow names the window the worst pair belongs to (series and
+	// Level, as WindowRow.Key), and WorstWindowChanged says it is not the
+	// window the pair belonged to the round before. The round-over-round
+	// counters above compare the worst pair across rounds, and the pair
+	// moves between series: on a live object it read 8 of 9, then 6, then
+	// 4, over a round with one series, then two, then three -- three
+	// windows, read as one losing points. The counters reset when the
+	// window changes, and this says when they did.
+	WorstWindow        string `json:"worst_window,omitempty"`
+	WorstWindowChanged bool   `json:"worst_window_changed,omitempty"`
+	// Windows names the worst short windows of the last round, each hole
+	// read against the rounds this process remembers for the object: whose
+	// minute it is. It is the answer to the question the counts leave open
+	// -- which minutes, and did this side ask for them.
+	Windows []WindowRow `json:"windows,omitempty"`
+	// RoundsRemembered is how many recent rounds the holes were read against,
+	// and RoundsKept the most this process keeps per object. A hole older
+	// than the remembered rounds reads NOT_IN_MEMORY, which is a limit of
+	// the reader, not a finding about the round.
+	RoundsRemembered int `json:"rounds_remembered,omitempty"`
+	RoundsKept       int `json:"rounds_kept,omitempty"`
+}
+
+// HoleCause is whose a missing position is, read from the round of that
+// minute as this process remembers it. The closed list the page words.
+type HoleCause string
+
+const (
+	// The round of that minute ran, its query answered whole and carried
+	// records, and this series was not among them: the data's, as far as the
+	// query could see at the time. Late-arriving data reads the same until
+	// it arrives.
+	HoleAnsweredWithoutSeries HoleCause = "ROUND_ANSWERED_WITHOUT_SERIES"
+	// The round ran, the query answered whole and carried no record at all:
+	// the whole object had no data that minute, not this series alone.
+	HoleAnsweredEmpty HoleCause = "ROUND_ANSWERED_EMPTY"
+	// The round's query did not answer whole -- partial, unavailable, or the
+	// Slot skipped without a query -- so the minute was never seen whole.
+	// This side's or its dependency's, and the reason names which.
+	HoleInputIncomplete HoleCause = "ROUND_INPUT_INCOMPLETE"
+	// A record arrived at that minute and the Level could not use it: the
+	// strategy's or the detection's, and the row's unusable reason says why.
+	HolePointUnusable HoleCause = "POINT_UNUSABLE"
+	// The round of that minute is remembered and ran a query, but what its
+	// primary answered is not on record: the completion carried no primary
+	// fact, or carried a word outside the contract's list. Not knowing what
+	// the round said is its own reading, apart from the round saying
+	// PARTIAL -- folding the two would make "the dependency did not answer"
+	// and "this side did not write it down" one name, the strongest one.
+	HolePrimaryUnrecorded HoleCause = "ROUND_PRIMARY_UNRECORDED"
+	// No round this process remembers evaluated that minute: before this
+	// process took the object, older than the rounds kept, or a hole listed
+	// beyond the listing bound. A limit of the reader, not a finding.
+	HoleNotInMemory HoleCause = "NOT_IN_MEMORY"
+)
+
+// HoleCauses is the closed list, for the page's completeness check.
+var HoleCauses = []HoleCause{HoleAnsweredWithoutSeries, HoleAnsweredEmpty, HoleInputIncomplete, HolePointUnusable, HolePrimaryUnrecorded, HoleNotInMemory}
+
+// WindowVerdict is what a window's holes say together about whose the
+// shortfall is. Decided here from the causes, so the page states a verdict
+// the code reached and not a distinction it leaves the reader to draw.
+type WindowVerdict string
+
+const (
+	// Every hole is a minute the query answered whole without this series:
+	// the data was not there when asked for.
+	VerdictDataAbsentWhenQueried WindowVerdict = "DATA_ABSENT_WHEN_QUERIED"
+	// At least one hole is a minute this side did not see whole. Outranks
+	// the rest: a window with one such hole cannot be handed to the data
+	// owner as theirs.
+	VerdictInputIncomplete WindowVerdict = "INPUT_INCOMPLETE"
+	// No incomplete round, and at least one hole is a record the Level
+	// could not use.
+	VerdictPointsUnusable WindowVerdict = "POINTS_UNUSABLE"
+	// Nothing this side did wrong is on record, and at least one hole is a
+	// minute this process cannot speak for -- not remembered, or remembered
+	// without what the query answered.
+	VerdictUnknown WindowVerdict = "UNKNOWN"
+)
+
+// WindowVerdicts is the closed list, for the page's completeness check.
+var WindowVerdicts = []WindowVerdict{VerdictDataAbsentWhenQueried, VerdictInputIncomplete, VerdictPointsUnusable, VerdictUnknown}
+
+// WindowRow is one short window of the last round, by identity, with each
+// listed hole read against the object's remembered rounds.
+type WindowRow struct {
+	// Key is the Plan, series digest and Level joined, the identity a reader
+	// follows across rounds; Strategy, Business, Series and Level are the
+	// same parts apart. The Plan is in it because Level is an ordinal inside
+	// a Plan -- two strategies sharing a Query Group both call theirs Level
+	// 1 -- and because the reader of this table goes and changes a strategy,
+	// which a series digest and a number do not name.
+	Key      string    `json:"key"`
+	Strategy string    `json:"strategy_id,omitempty"`
+	Business string    `json:"business_id,omitempty"`
+	Series   string    `json:"series"`
+	Level    uint32    `json:"level"`
+	Valid    uint32    `json:"valid"`
+	Required uint32    `json:"required"`
+	End      time.Time `json:"end"`
+	Guarded  bool      `json:"guarded,omitempty"`
+	// GuardReason is the reason the guard holding this window was raised
+	// with -- per window, which is what "最初触发" on a row of several
+	// windows could not be.
+	GuardReason string `json:"guard_reason,omitempty"`
+	Fresh       bool   `json:"fresh,omitempty"`
+	// Holes are the listed empty positions, oldest first, each with whose
+	// minute it is. MissingTotal and UnusableTotal count every hole, listed
+	// or not.
+	Holes         []WindowHole     `json:"holes,omitempty"`
+	MissingTotal  uint32           `json:"missing_total"`
+	UnusableTotal uint32           `json:"unusable_total"`
+	HolesBy       WindowHoleCounts `json:"holes_by"`
+	Verdict       WindowVerdict    `json:"verdict"`
+}
+
+// WindowHole is one empty position and the round of its minute.
+type WindowHole struct {
+	At    time.Time `json:"at"`
+	Cause HoleCause `json:"cause"`
+	// Round is the completion kind of the remembered round at that minute
+	// and Reason its reason, when one is remembered; Inferred says the
+	// round was matched by the object's fixed offset between Slot and
+	// record time rather than by a record time it reported -- a round that
+	// carried no record reports none.
+	Round    string `json:"round,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+	Inferred bool   `json:"inferred,omitempty"`
+}
+
+// WindowHoleCounts is the holes of one window by cause, over every hole:
+// the listed ones by their cause, the unlisted as NotInMemory.
+type WindowHoleCounts struct {
+	AnsweredWithoutSeries uint32 `json:"answered_without_series"`
+	AnsweredEmpty         uint32 `json:"answered_empty"`
+	InputIncomplete       uint32 `json:"input_incomplete"`
+	Unusable              uint32 `json:"unusable"`
+	PrimaryUnrecorded     uint32 `json:"primary_unrecorded"`
+	NotInMemory           uint32 `json:"not_in_memory"`
+}
+
+// verdictOf reads the counts into the one word: this side's incomplete
+// rounds first, then unusable records, then the data's only when every hole
+// is accounted for as the data's, else unknown. A hole whose round is
+// remembered without its primary's answer is unknown, never this side's:
+// the strongest word is not the fallback for a word that is missing.
+func verdictOf(counts WindowHoleCounts) WindowVerdict {
+	switch {
+	case counts.InputIncomplete > 0:
+		return VerdictInputIncomplete
+	case counts.Unusable > 0:
+		return VerdictPointsUnusable
+	case counts.NotInMemory > 0 || counts.PrimaryUnrecorded > 0:
+		return VerdictUnknown
+	default:
+		return VerdictDataAbsentWhenQueried
+	}
+}
+
+// WindowFill is what the row can say about a short window whose worst valid
+// count has been flat for WindowFillSteadyRounds rounds: how many positions
+// it is short by, how long the window is, and -- from the flatness alone --
+// the latest the shortfall can last if it is holes sliding through.
+//
+// The projection rests on one fact and reads no history: a count flat for k
+// rounds means no new hole was punched in those k rounds, so the newest hole
+// is at least k rounds old and leaves the window within required − k more.
+// It is an upper bound, stated as one, and it moves in exactly one
+// direction unless a new hole is punched -- at which point the count drops,
+// k resets, and the bound moves back by as much. That is the honest shape
+// of it: a window longer than the gap between rollouts gets a new hole per
+// rollout and the bound recedes each time, and the row shows that happening
+// rather than a countdown that quietly restarts.
+//
+// A count flat for at least as many rounds as the window is long is not
+// holes sliding: a hole punched that long ago has left. That is the other
+// reading, and it is on the row as Sliding false: the same positions have
+// been missing every round for longer than the window, which is the newest
+// points not arriving -- data late or sparse -- and no amount of waiting
+// fills it.
+//
+// Beside either reading: an anomaly still fires on a short window -- the
+// trigger decides ABNORMAL before it reads completeness -- and only the
+// recovery waits for the window to fill. What that costs depends on the
+// Plans' wire format, which the row carries beside this: the
+// Python-compatible exit publishes anomaly points and nothing else, so on
+// such a Plan alarmd's recovery never leaves and the consumer decides
+// recovery from the absence of anomalies -- a short window changes nothing
+// downstream. Only a standard raw event Plan waits. The page words the cost
+// per row from WireFormats; this struct states the mechanism.
+type WindowFill struct {
+	// Holes is required − valid on the worst window; Required the window's
+	// length in positions; PeriodSeconds the object's evaluation period, so
+	// SpanSeconds = Required × PeriodSeconds is how long the window is in
+	// time. Measure names what the positions are.
+	Holes         uint32 `json:"holes"`
+	Required      uint32 `json:"required"`
+	PeriodSeconds int64  `json:"period_seconds"`
+	SpanSeconds   int64  `json:"span_seconds"`
+	Measure       string `json:"measure"`
+	// UnchangedRounds is how many rounds the count has been flat.
+	UnchangedRounds uint32 `json:"unchanged_rounds"`
+	// Sliding says the flat run is shorter than the window, so the shortfall
+	// can still be holes sliding through; LatestFillBy is then the latest the
+	// last of them leaves, from the flatness alone. Absent when not sliding.
+	Sliding      bool       `json:"sliding"`
+	LatestFillBy *time.Time `json:"latest_fill_by,omitempty"`
+	// AnomaliesStillFire is stated rather than left to the reader: the
+	// trigger decides ABNORMAL before completeness, so a short window holds
+	// up recovery and nothing else.
+	AnomaliesStillFire bool `json:"anomalies_still_fire"`
+}
+
+// WindowFillSteadyRounds is how many rounds the worst valid count must have
+// been flat before the row projects from it: one round says nothing, two is
+// a coincidence, three is a run.
+const WindowFillSteadyRounds = 3
+
+// WindowFillMinSpan is the shortest window the row bothers to project for:
+// a window that fills within the hour fills before anyone reads the row.
+const WindowFillMinSpan = time.Hour
+
+// WindowFillOf reads the fill projection off a row, given the object's
+// period, or nil when the row has nothing to project from: no coverage,
+// nothing short, a count not flat for WindowFillSteadyRounds, no period, or
+// a window shorter than WindowFillMinSpan.
+func WindowFillOf(anomaly Anomaly, periodSeconds int64, now time.Time) *WindowFill {
+	coverage := anomaly.Coverage
+	if coverage == nil || coverage.Short == 0 || coverage.WorstValid >= coverage.WorstRequired ||
+		coverage.UnchangedRounds < WindowFillSteadyRounds || periodSeconds <= 0 {
+		return nil
+	}
+	span := int64(coverage.WorstRequired) * periodSeconds
+	if time.Duration(span)*time.Second < WindowFillMinSpan {
+		return nil
+	}
+	fill := &WindowFill{
+		Holes: coverage.WorstRequired - coverage.WorstValid, Required: coverage.WorstRequired,
+		PeriodSeconds: periodSeconds, SpanSeconds: span, Measure: coverage.Measure,
+		UnchangedRounds: coverage.UnchangedRounds, AnomaliesStillFire: true,
+	}
+	if coverage.UnchangedRounds < coverage.WorstRequired {
+		fill.Sliding = true
+		remaining := int64(coverage.WorstRequired-coverage.UnchangedRounds) * periodSeconds
+		by := now.Add(time.Duration(remaining) * time.Second)
+		fill.LatestFillBy = &by
+	}
+	return fill
 }
 
 // Churning reports series that have never survived long enough to be seen
@@ -485,20 +1191,50 @@ type Anomaly struct {
 	// wrong -- or the retryable class, which clears on its own. Neither is what
 	// the column heading claims, and the cause alone cannot tell them apart.
 	CauseReason string `json:"cause_reason,omitempty"`
+	// HeldBy is what held the latest round's Slot, on a row whose latest
+	// round gave the Slot up (GAP_SKIPPED): the completion's own word, the
+	// vocabulary of run_one_return_total{outcome} plus the readiness
+	// deferral. query_cooldown is the one the check reads -- a Slot the
+	// cooldown held until it fell past the replay range is the cooldown's
+	// consequence, and the cooldown is the failure's, so the row stays on
+	// the failure's line instead of moving to "detection abandoned" on every
+	// round the object is skipped and back on every round it is probed.
+	// Empty on a row whose latest round ran, and on one from a completion
+	// that named no holder.
+	HeldBy string `json:"held_by,omitempty"`
 	// Coverage is how short the detection windows were, when the reason was
 	// about the window. It is here because HISTORY_WARMING describes two
 	// situations that need opposite responses and reads identically in both:
 	// a window a round or two from converging, and a window whose series do
 	// not live long enough to ever fill it. Only the shortfall separates them,
 	// and it used to be discarded in state/window.go.
-	Coverage  *HistoryCoverage `json:"coverage,omitempty"`
-	Since     time.Time        `json:"since"`
-	SinceFrom SinceSource      `json:"since_from"`
+	Coverage *HistoryCoverage `json:"coverage,omitempty"`
+	// CoverageRejected is on the row when the latest round's coverage facts
+	// did not pass the observer's checks. It stands where Coverage would
+	// when the run has no reading; beside a held one (Coverage.Held) when it
+	// has. It carries the rule they broke
+	// and, for a rule about one window, that window's series. Nothing the
+	// rule judged untrustworthy comes with it. Without this the row's
+	// coverage was simply absent, which reads exactly like every window
+	// complete; the server declining a reading has to be said where the
+	// reading would have been.
+	CoverageRejected *CoverageRejected `json:"coverage_rejected,omitempty"`
+	Since            time.Time         `json:"since"`
+	SinceFrom        SinceSource       `json:"since_from"`
 	// Wake is where the object is in its cycle, from the due index, attached
 	// by the publisher. Absent on a replica with no index; Known false when
 	// the index has no entry, which means no round has returned since that
 	// replica took the object over.
 	Wake *WakeFacts `json:"wake,omitempty"`
+	// WindowFill is on rows whose worst window has been short by a flat
+	// count for WindowFillSteadyRounds rounds and is at least
+	// WindowFillMinSpan long: the shortfall, the window, and whether it can
+	// still be holes sliding through with the latest they leave, or the same
+	// points missing for longer than the window. Read beside CauseReason,
+	// which is the word the guard was raised under -- history -- while this
+	// is the window now. Attached at publication, from the same index the
+	// period comes from.
+	WindowFill *WindowFill `json:"window_fill,omitempty"`
 	// Skip is the span of Slots never evaluated, on a row of KindSkippedSpan
 	// -- and on an object row whose object also holds a record, so the row
 	// says what the object lost while under its line. Slots is zero when the
@@ -527,6 +1263,11 @@ type Anomaly struct {
 	// from it, which is what keeps the verdict and the first screen from
 	// classifying one object two ways.
 	Finding Finding `json:"finding"`
+	// Standing is the row in the product vocabulary: the two words a reader
+	// sees, decided from the finding and the row's facts by the rules in
+	// words.go, with the check as their coordinate. Set when the row is
+	// listed, after every fact it reads is on the row.
+	Standing *Standing `json:"standing,omitempty"`
 	// Unclassified says this object is counted against the deployment because
 	// no rule matched, not because a rule said so. A release that adds a
 	// vocabulary of failure codes puts every one of them here until somebody
@@ -550,7 +1291,19 @@ type Anomaly struct {
 	// been anomalous at all, since when it has been saying this -- and the one
 	// that says whether a reason is settled or just arrived. Left off the wire
 	// while zero, like FailingSince, by MarshalJSON.
-	ReasonSince time.Time   `json:"reason_since"`
+	ReasonSince time.Time `json:"reason_since"`
+	// ReasonLastAt is the latest round that said the current reason: the
+	// other end of ReasonSince's clock, and the end a group's "still
+	// happening" is read from. Left off the wire while zero.
+	ReasonLastAt time.Time `json:"reason_last_at"`
+	// RoundSlot is the Slot of the row's latest round -- the one that most
+	// recently ended, however it ended. It is what says whether a failure or
+	// an error the row keeps belongs to this round: the two are observed on
+	// their way to the round's end, so they are stamped a moment before it,
+	// and telling them apart by clock dropped a real failure filed one
+	// millisecond before its own Slot completed. Zero on rows from a
+	// publisher that predates it, or for a round with no Slot in its trace.
+	RoundSlot   int64       `json:"round_slot,omitempty"`
 	Consecutive int         `json:"consecutive,omitempty"`
 	Replica     string      `json:"replica"`
 	Failure     *FailureRef `json:"failure,omitempty"`
@@ -574,6 +1327,60 @@ type Anomaly struct {
 	// finding from the same evidence. Absent on a row that records no
 	// failure.
 	Blocked *Blocked `json:"blocked,omitempty"`
+	// Restored is the persisted summary of the last committed round this
+	// row was rebuilt from after a restart or a change of owner: the round
+	// before this process took over, with its Slot, commit time, ending and
+	// reason. Present until this process completes a round of its own, so a
+	// reader knows the row's cause is from before the takeover.
+	Restored *RestoredRound `json:"restored,omitempty"`
+	// Guards is the held gap scopes of the object's Plans as of its latest
+	// round, the worst MaxGuardsPerRow of them; GuardsTotal how many there
+	// are. Absent when no scope is held. A scope not reported by the round
+	// that just completed was released, and is gone.
+	Guards []GapGuard `json:"guards,omitempty"`
+	// ExecutionEvidence is what the object's latest query-free completion
+	// found about an earlier attempt at that Slot, as the emitter read it:
+	// STATE_APPLIED / MIXED / NONE_FOUND / UNREADABLE with the Plan counts.
+	// Absent when the latest completion carried none. A row whose latest
+	// round was GAP_SKIPPED and fully executed is interrupted bookkeeping,
+	// not abandoned detection, and checkOf files it so.
+	ExecutionEvidence *ExecutionEvidence `json:"execution_evidence,omitempty"`
+	GuardsTotal       int                `json:"guards_total,omitempty"`
+	// NoDataMemory is on rows of KindNoDataMemoryRefused: the refusal the
+	// row lists, whole.
+	NoDataMemory *NoDataMemoryRefusal `json:"no_data_memory,omitempty"`
+	// RetainedShare is on rows of KindRetainedShareApproaching: the latest
+	// completed Slot's retained bytes against the one-object share it was
+	// admitted under.
+	RetainedShare *RetainedShareFacts `json:"retained_share,omitempty"`
+	// NoDataMemoryUpkeep is on every row of an object whose Plans this
+	// process has seen the store keep a memory alive for: the last read's
+	// stored shape and the last renewal. Absent until a renewal reached the
+	// store or a read said what it read.
+	NoDataMemoryUpkeep *NoDataMemoryUpkeep `json:"no_data_memory_upkeep,omitempty"`
+	// WireFormats is on every row of an object whose Plans this process has
+	// seen evaluate: the wire format each Plan's events are published as, by
+	// Plan, smallest strategy first, from the Plan's own evaluation line.
+	// Absent until a Plan evaluates. This is the one place the word is
+	// readable without the object catalog: the directory route's
+	// effective_output needs the catalog in memory, and a deployment that
+	// keeps none had no way to answer which strategies publish which way.
+	WireFormats []PlanWireFormat `json:"wire_formats,omitempty"`
+	// PlanSeries is how many PRIMARY series the latest evaluated round bound
+	// to each of the object's Plans, by Plan, smallest strategy first, from
+	// the Plan's own evaluation lines. Absent until a Plan evaluates. This is
+	// the per-Plan input evidence the row otherwise lacks: a Plan bound to no
+	// series evaluates nothing and advances no guard, and a held guard at 0
+	// of N on such a Plan is not warming -- it has nothing to warm on.
+	PlanSeries []PlanSeriesMatched `json:"plan_series,omitempty"`
+	// NoDataTracking is on every row of an object one of whose Plans this
+	// process has seen a no-data round decide: what the last deciding round
+	// of each such Plan counted, by Plan, smallest strategy first. Absent
+	// until a round decides.
+	NoDataTracking []NoDataTracking `json:"no_data_tracking,omitempty"`
+	// EmptyEveryRound is on rows of KindEmptyEveryRound: the run of empty
+	// completions, whole, with what the row can say about why.
+	EmptyEveryRound *EmptyEveryRoundFacts `json:"empty_every_round,omitempty"`
 	// ConfigChanged says the object's snapshot, query or schedule revision
 	// differs between its last two completed rounds: the configuration it
 	// runs under actually changed. It is the one fact that tells a
@@ -606,6 +1413,7 @@ func (anomaly Anomaly) MarshalJSON() ([]byte, error) {
 		wire
 		FailingSince  *time.Time `json:"failing_since,omitempty"`
 		ReasonSince   *time.Time `json:"reason_since,omitempty"`
+		ReasonLastAt  *time.Time `json:"reason_last_at,omitempty"`
 		LastHealthyAt *time.Time `json:"last_healthy_at,omitempty"`
 	}{wire: wire(anomaly)}
 	if !anomaly.FailingSince.IsZero() {
@@ -613,6 +1421,9 @@ func (anomaly Anomaly) MarshalJSON() ([]byte, error) {
 	}
 	if !anomaly.ReasonSince.IsZero() {
 		encoded.ReasonSince = &anomaly.ReasonSince
+	}
+	if !anomaly.ReasonLastAt.IsZero() {
+		encoded.ReasonLastAt = &anomaly.ReasonLastAt
 	}
 	if !anomaly.LastHealthyAt.IsZero() {
 		encoded.LastHealthyAt = &anomaly.LastHealthyAt
@@ -657,10 +1468,19 @@ type Snapshot struct {
 	// question about any number that looks wrong after a release is which
 	// build produced it. Absent on a build before this field existed, which the
 	// aggregate keeps apart from any version.
-	Build          *BuildFacts `json:"build,omitempty"`
-	Determined     int         `json:"determined"`
-	Anomalies      []Anomaly   `json:"anomalies"`
-	TotalAnomalies int         `json:"total_anomalies"`
+	Build      *BuildFacts `json:"build,omitempty"`
+	Determined int         `json:"determined"`
+	// AwaitingFirstRound are the owned objects Determined does not count
+	// because their first round has not come yet: their period is longer
+	// than the restart grace and their next due time is ahead within one
+	// period (see AwaitingFirstRound).
+	// A day-long or sixty-hour strategy has nothing to say for up to that
+	// long after every restart or handover; counted as unknown it held the
+	// whole deployment at UNKNOWN for as long. Bounded; the total counts all.
+	AwaitingFirstRound      []FirstRoundWait `json:"awaiting_first_round,omitempty"`
+	AwaitingFirstRoundTotal int              `json:"awaiting_first_round_total,omitempty"`
+	Anomalies               []Anomaly        `json:"anomalies"`
+	TotalAnomalies          int              `json:"total_anomalies"`
 	// Demoted are the objects held back because their backend kept answering
 	// unavailable. They are published apart from Anomalies, not folded into
 	// them, because they answer a different question: Anomalies is what this
@@ -691,6 +1511,14 @@ type Snapshot struct {
 	DemotionEntries    int `json:"demotion_entries"`
 	DemotionExtensions int `json:"demotion_extensions"`
 	DemotionExits      int `json:"demotion_exits"`
+	// DemotionRestored, DemotionHandovers and DemotionReentries close the
+	// pool's arithmetic across restarts and owners: objects restored into the
+	// pool from their record are not entries, objects handed to another
+	// replica while in it are not exits, and a re-entry is an entry within
+	// the re-entry window of an exit. Absent (zero) on a build before them.
+	DemotionRestored  int `json:"demotion_restored,omitempty"`
+	DemotionHandovers int `json:"demotion_handovers,omitempty"`
+	DemotionReentries int `json:"demotion_reentries,omitempty"`
 	// LastDemotionExit is when this replica last saw an object leave the pool.
 	// Zero means it has not seen one, which is not the same as "none left
 	// recently" and must not be rendered as a duration.
@@ -704,10 +1532,23 @@ type Snapshot struct {
 	// GapSkips are the objects that skipped a run of Slots past the replay
 	// window, retained for the same reason.
 	GapSkips map[string]SkippedSpan `json:"gap_skips,omitempty"`
-	// NoData is the objects whose query has returned no records for a run of
-	// rounds after having returned some. In no column -- their rounds complete
-	// -- and listed so the data side's line can name them.
+	// NoData is the objects whose query is returning no records, in two kinds
+	// the rows carry: KindNoData, records returned once and none for a run
+	// of rounds since, and KindEmptyEveryRound, never any in this process and
+	// none for an hour. In no column -- their rounds complete -- and listed
+	// so the data side's line can name the first and the strategy's line the
+	// second.
 	NoData []Anomaly `json:"no_data,omitempty"`
+	// NoDataMemory is the objects one of whose Plans the store refused an
+	// absence memory for. In no column -- the rounds complete -- and listed
+	// so the line that says detection stopped silently can name them.
+	NoDataMemory []Anomaly `json:"no_data_memory,omitempty"`
+	// RetainedShare is the objects whose latest completed Slot held at least
+	// RetainedShareApproachPercent of the one-object share of the retained
+	// pool. In no column -- the rounds complete -- and listed because the
+	// refusal at the share stops the strategy whole, and this is the only
+	// place it can be seen coming.
+	RetainedShare []Anomaly `json:"retained_share,omitempty"`
 	// Capacity is how close this replica is to its own limits. Absent on a
 	// replica that does not report it, which is why the aggregate counts the
 	// replicas it actually heard from rather than assuming every one answered.
@@ -745,6 +1586,12 @@ type Snapshot struct {
 	// PlatformSettings is the state of this replica's copy of the platform's
 	// settings it evaluates by. Absent on a build before it existed.
 	PlatformSettings *PlatformSettingsFacts `json:"platform_settings,omitempty"`
+	// MetricsUnexported says this replica serves /metrics nowhere: its
+	// public surface is restricted and it has no internal listener.
+	MetricsUnexported bool `json:"metrics_unexported,omitempty"`
+	// CLIUnavailable says this replica is configured for a restricted public
+	// surface and its CLI did not come up, so the surface stayed open.
+	CLIUnavailable bool `json:"cli_unavailable,omitempty"`
 	// Activation is the standing of bringing the fleet's activation to the
 	// current publication, as the control leader reports it. Absent on every
 	// replica that has not attempted it, which is every follower, and on a
@@ -754,6 +1601,37 @@ type Snapshot struct {
 	// the ready replicas hold the assigned objects and what the round would
 	// move. Absent on every follower and on a build before this fact existed.
 	Rebalance *RebalanceFacts `json:"rebalance,omitempty"`
+	// AssignmentScope is the control leader's last reconcile round's census
+	// of the content scope on the Assignment records. Absent on every
+	// follower and on a build before this fact existed.
+	AssignmentScope *AssignmentScopeFacts `json:"assignment_scope,omitempty"`
+	// AssignmentSweep is the control leader's last sweep of the Assignment
+	// records for retired Query Groups. Absent on every follower and on a
+	// leader that has not swept.
+	AssignmentSweep *AssignmentSweepFacts `json:"assignment_sweep,omitempty"`
+	// LeaderRound is the control leader's last reconcile round, stage by
+	// stage. Absent on every follower and on a build before it.
+	LeaderRound *LeaderRoundFacts `json:"leader_round,omitempty"`
+	// ViewStream is this replica's account of the view stream: the Leader's
+	// ledger when it leads, Leading false otherwise. Absent on a build before
+	// the stream existed.
+	ViewStream *ViewStreamFacts `json:"view_stream,omitempty"`
+	// Recovered is the problems whose listed objects completed healthily
+	// within RecoveredRetention, by line and fold: the positive evidence a
+	// RECOVERED reading is made of. Absent on a build before it existed.
+	Recovered []RecoveredProblem `json:"recovered,omitempty"`
+	// BookkeepingAbandoned is this replica's running count of Slots that an
+	// earlier attempt fully executed and a query-free completion then closed:
+	// detection done, alert sent, the Progress write lost. A record keeps
+	// one span per object, so the records cannot count these over time; a
+	// run of them is what a control-plane store failing writes looks like,
+	// and the trend has to be readable. Absent before the fact existed.
+	BookkeepingAbandoned *BookkeepingFacts `json:"bookkeeping_abandoned,omitempty"`
+	// NoDataTracking is this replica's account of what its no-data Plans'
+	// last deciding rounds counted, over every tracked object and not only
+	// the listed ones. Absent before the fact existed or while no Plan has
+	// decided.
+	NoDataTracking *NoDataTrackingSummary `json:"no_data_tracking,omitempty"`
 	// Source is what the control leader's last refresh round found at the
 	// strategy source: how many strategies it listed, how many were accepted,
 	// and what kept the rest out. Absent on every follower and on a build
@@ -762,6 +1640,81 @@ type Snapshot struct {
 	// Dependencies is every external system this replica resolved, with what
 	// it has seen of each. Absent on a build before this fact existed.
 	Dependencies []Endpoint `json:"dependencies,omitempty"`
+	// Readiness is this replica's own readiness, bit by bit, as its readiness
+	// endpoint answers it. Absent on a build before this fact existed.
+	Readiness *ReadinessFacts `json:"readiness,omitempty"`
+	// OutputProtocol is the wire format choice this process runs with, as it
+	// read it from its configuration. Absent on a build before this fact
+	// existed, which the aggregate keeps apart from any choice.
+	OutputProtocol *OutputProtocolFacts `json:"output_protocol,omitempty"`
+}
+
+// OutputProtocolFacts is one process's output protocol choice: the word in
+// force -- auto, legacy or native, from controlplane.OutputProtocolChoices --
+// and whether the deployment spelled it or the process fell back to the
+// default. On the snapshot because the question "what protocol is this
+// deployment running" had, on a live deployment, no answer but the operator's
+// own values file on a machine the reader could not reach: the process knew,
+// and nothing published it.
+//
+// This is what the process was told, per replica; what any strategy publishes
+// as is decided once by the control leader when it builds the Plan and frozen
+// there, and read per strategy from the directory. Two replicas disagreeing
+// here is a rollout, or a values file that changed under one; neither is
+// folded into one deployment-level word.
+type OutputProtocolFacts struct {
+	Configured string `json:"configured"`
+	// Explicit is whether the configuration named the word, as against the
+	// process defaulting to it. Two deployments both running auto are not the
+	// same when one chose it and the other never chose.
+	Explicit bool `json:"explicit"`
+}
+
+// OutputProtocolGroup is one distinct choice and the counted replicas
+// running it, grouped the way builds are and for the same reason: a
+// deployment agreeing with itself shows one line, a rollout two. A replica
+// that reported no choice is its own group with an empty Configured, never
+// folded into a word it may not be running.
+type OutputProtocolGroup struct {
+	Protocol OutputProtocolFacts `json:"protocol"`
+	Replicas []string            `json:"replicas"`
+}
+
+// ReadinessFacts is one replica's readiness as its process reports it: the
+// state word, the one bit the probe answers on, and the bits that bit is made
+// of. The same facts the process serves on its readiness endpoint, on the
+// snapshot, so the question "is every replica ready, and which bit is the one
+// that is not" is answered from the fleet and not by asking each process --
+// which, on a live deployment, was the only way to read four of the six.
+//
+// Field names are the readiness endpoint's, so a reader who knows one knows
+// the other.
+type ReadinessFacts struct {
+	State string `json:"state"`
+	Ready bool   `json:"ready"`
+	// Reasons is what the process says stands between it and ready, bounded
+	// by the process; empty when ready.
+	Reasons           []string `json:"reasons,omitempty"`
+	ConfigLoaded      bool     `json:"config_loaded"`
+	SchemaReady       bool     `json:"schema_ready"`
+	AssignmentReady   bool     `json:"assignment_ready"`
+	RuntimeStateReady bool     `json:"runtime_state_ready"`
+	OutputSinkReady   bool     `json:"output_sink_ready"`
+	SnapshotReady     bool     `json:"snapshot_ready"`
+	// Draining is a replica on its way out: not ready by choice, and not a
+	// fault.
+	Draining bool `json:"draining"`
+}
+
+// copyReadiness is the facts as their own value, so a row cannot alias the
+// snapshot's.
+func copyReadiness(facts *ReadinessFacts) *ReadinessFacts {
+	if facts == nil {
+		return nil
+	}
+	copied := *facts
+	copied.Reasons = append([]string(nil), facts.Reasons...)
+	return &copied
 }
 
 // RebalanceFacts is one rebalance planning round on the control leader, as
@@ -803,6 +1756,58 @@ type RebalanceFacts struct {
 	Conflicts        int     `json:"conflicts,omitempty"`
 	Paused           bool    `json:"paused,omitempty"`
 	PausedForSeconds float64 `json:"paused_for_seconds,omitempty"`
+	// Bytes is the same round's byte-constraint planning (decision-020
+	// section 5.7): each judged Worker's sum of its Query Groups' per-Slot
+	// retained-byte peaks, who was over the share, and what moved for it.
+	Bytes *ByteConstraintFacts `json:"bytes,omitempty"`
+	// ShardAware is the same round's split gate (decision-020 section
+	// 4.7.7): the ready workers that do not declare the split contract, by
+	// id, and how many splits were held for it. Across a roll the list
+	// goes 0 -> n -> 0; after it, empty for good, and a rollback puts the
+	// rolled-back replica back on it.
+	ShardAware *ShardAwareFacts `json:"shard_aware,omitempty"`
+}
+
+// ShardAwareFacts is the Leader's split gate for the page.
+type ShardAwareFacts struct {
+	Ready      int      `json:"ready"`
+	Unaware    []string `json:"unaware,omitempty"`
+	SplitsHeld int      `json:"splits_held"`
+}
+
+// ByteConstraintFacts is the Leader's byte-constraint round for the page:
+// retained bytes are a capacity constraint on placement, judged only where
+// the numbers are known. PoolUnknown Workers registered no pool and Unread
+// Query Groups have no reported peak; both are said rather than read as
+// "no pressure".
+type ByteConstraintFacts struct {
+	SharePercent   int              `json:"share_percent"`
+	Judged         int              `json:"judged"`
+	PoolUnknown    []string         `json:"pool_unknown,omitempty"`
+	Unread         int              `json:"unread"`
+	Unsettled      []string         `json:"unsettled,omitempty"`
+	Sums           []ByteSumSample  `json:"sums,omitempty"`
+	Overloaded     []string         `json:"overloaded,omitempty"`
+	Unplaceable    []string         `json:"unplaceable,omitempty"`
+	PlannedMoves   int              `json:"planned_moves"`
+	PublishedMoves int              `json:"published_moves"`
+	Conflicts      int              `json:"conflicts"`
+	Paused         bool             `json:"paused"`
+	Moves          []ByteMoveSample `json:"moves,omitempty"`
+}
+
+// ByteSumSample is one judged Worker's sum of peaks before the round's moves.
+type ByteSumSample struct {
+	WorkerID     string `json:"worker_id"`
+	PeakSumBytes uint64 `json:"retained_bytes_peak_sum"`
+}
+
+// ByteMoveSample is one byte-constraint move with the peak it was judged by.
+type ByteMoveSample struct {
+	QueryGroup string `json:"query_group"`
+	From       string `json:"from"`
+	To         string `json:"to"`
+	Bytes      uint64 `json:"bytes"`
 }
 
 // Skewed is the one reading the fleet takes: the scheduler would move
@@ -846,6 +1851,14 @@ type ActivationFacts struct {
 	FailureStage string `json:"failure_stage,omitempty"`
 	FailureClass string `json:"failure_class,omitempty"`
 	LastFailure  string `json:"last_failure,omitempty"`
+	// BlockedQueryGroups is how many Query Groups the last cutover held back:
+	// each keeps what it ran and the rest of the publication went ahead.
+	// BlockedReasons says why as reason=count pairs, sorted; BlockedSamples
+	// which, as query_group:reason, at most eight. Strings so the facts stay
+	// comparable.
+	BlockedQueryGroups int    `json:"blocked_query_groups,omitempty"`
+	BlockedReasons     string `json:"blocked_reasons,omitempty"`
+	BlockedSamples     string `json:"blocked_samples,omitempty"`
 }
 
 // Reason is the classification as one word, for grouping: the same word the
@@ -876,6 +1889,20 @@ type PlatformSettingsFacts struct {
 	// beside the mode because a decode error names the field and the value
 	// and nothing else does.
 	LastUnavailable string `json:"last_unavailable,omitempty"`
+	// NoDataTrackingHorizonSeconds is the platform no-data horizon this
+	// replica's copy resolves - the one every Plan that states none has
+	// frozen - and NoDataTrackingHorizonSource the layer it came from:
+	// DEFAULT, VALUES or DYNAMIC.
+	NoDataTrackingHorizonSeconds int64  `json:"no_data_tracking_horizon_seconds,omitempty"`
+	NoDataTrackingHorizonSource  string `json:"no_data_tracking_horizon_source,omitempty"`
+}
+
+// NoDataHorizonFacts is the platform no-data horizon as the deployment
+// resolves it, and the replica that said so.
+type NoDataHorizonFacts struct {
+	Seconds int64  `json:"seconds"`
+	Source  string `json:"source"`
+	Replica string `json:"replica"`
 }
 
 // ControlSourceFacts is what a replica says about the control plane's
@@ -906,22 +1933,192 @@ type ControlSourceFacts struct {
 	// once per limiter window; this is the copy that does not scroll away.
 	LastFailureExit string `json:"last_failure_exit,omitempty"`
 	LastFailure     string `json:"last_failure,omitempty"`
+	// PendingConfirmationAgeSeconds is how long the leader's refresh has
+	// been answering PENDING_CONFIRMATION with no PUBLISHED or UNCHANGED
+	// since, 0 when nothing is pending, and PendingConfirmationRounds how
+	// many rounds. Those rounds count as successes, so LastSuccessAgeSeconds
+	// stays young while a change waits; this is what rises. Absent on a
+	// process that is not leading.
+	PendingConfirmationAgeSeconds *float64 `json:"pending_confirmation_age_seconds,omitempty"`
+	PendingConfirmationRounds     int      `json:"pending_confirmation_rounds,omitempty"`
 }
 
 // OpenAlertSetFacts is what a replica says about its copy of the consumer's
-// open alert set. Mode is one of never_loaded, authoritative and
-// self_maintained. StaleBeyondBound is the one fact the verdict reads: the
-// copy had the consumer's publication and has been without it for longer
-// than the staleness bound, so the gate has been working from the replica's
-// own knowledge past the exposure it was designed for. A copy that never
-// loaded is not stale -- the publisher may not be deployed -- and the mode
-// says so without degrading anything.
+// open alert set -- the fingerprints of the series the consumer holds an
+// open alert on, published by the consumer under a fixed key contract and
+// read by every replica to decide whether a recovery has anything to
+// recover. Mode is one of never_loaded, authoritative and self_maintained.
+// StaleBeyondBound is the one fact the verdict reads: the copy had the
+// consumer's publication and has been without it for longer than the
+// staleness bound, so the gate has been working from the replica's own
+// knowledge past the exposure it was designed for. A copy that never loaded
+// is not stale -- the publisher may not be deployed -- and the mode says so
+// without degrading anything.
+//
+// The rest is the reader's account of the publisher, for the dependency
+// table: a deployment whose dependency list named every Redis and Kafka it
+// touched had no row for this one, so whether the consumer's publication was
+// there at all -- and whether the gate was passing recoveries on the
+// consumer's word or on its own -- could not be read anywhere.
+// GateLookupFact is one recovery-gate lookup as the replica kept it: the
+// key it was asked, its answer and decision, whether it was the replica's
+// own open alert, and, for a "not open", other strategies whose sets carry
+// the same fingerprint.
+type GateLookupFact struct {
+	At          time.Time `json:"at"`
+	TenantID    string    `json:"tenant_id"`
+	StrategyID  string    `json:"strategy_id"`
+	Fingerprint string    `json:"fingerprint"`
+	Answer      string    `json:"answer"`
+	Open        bool      `json:"open"`
+	Own         bool      `json:"own"`
+	InOtherSets []string  `json:"in_other_sets,omitempty"`
+}
+
 type OpenAlertSetFacts struct {
-	Mode             string `json:"mode"`
-	StaleBeyondBound bool   `json:"stale_beyond_bound"`
+	IndexProtocol bool `json:"index_protocol,omitempty"`
+	// CalibrationConfigured is whether a reconciler is bound; false is a
+	// reading, not an absence: with the index protocol and no calibration,
+	// membership is known and no close is ever sent.
+	CalibrationConfigured bool     `json:"calibration_configured"`
+	IndexReadAgeSeconds   *float64 `json:"index_read_age_seconds,omitempty"`
+	SubscriptionReady     bool     `json:"subscription_ready,omitempty"`
+	CalibratedSets        int      `json:"calibrated_sets,omitempty"`
+	PendingReads          int      `json:"pending_reads,omitempty"`
+	PendingReconciles     int      `json:"pending_reconciles,omitempty"`
+	MemberBytes           int      `json:"member_bytes,omitempty"`
+	Mode                  string   `json:"mode"`
+	StaleBeyondBound      bool     `json:"stale_beyond_bound"`
 	// AuthoritativeAgeSeconds is how long ago the last publication was read.
 	// Absent until there has been one; a zero here would read as "just now".
 	AuthoritativeAgeSeconds *float64 `json:"authoritative_age_seconds,omitempty"`
+	// Available says the copy is answering from a fresh publication now;
+	// UnavailableReason why not, in the reader's closed words (read_error,
+	// heartbeat_missing, heartbeat_unreadable, heartbeat_stale,
+	// fingerprint_version), empty while available or never loaded.
+	Available         bool   `json:"available"`
+	UnavailableReason string `json:"unavailable_reason,omitempty"`
+	// The publisher's heartbeat as last read: how old its last cycle is by
+	// its own clock, its cycle length, and the fingerprint version it
+	// computed the members under -- beside the version this reader computes
+	// under, because the two disagreeing is a publication every lookup
+	// misses, which reads exactly like "no open alert". Absent until a
+	// heartbeat has been read.
+	HeartbeatAgeSeconds      *float64 `json:"heartbeat_age_seconds,omitempty"`
+	CycleSeconds             int64    `json:"cycle_seconds,omitempty"`
+	FingerprintVersion       string   `json:"fingerprint_version,omitempty"`
+	ReaderFingerprintVersion string   `json:"reader_fingerprint_version"`
+	// TrackedSets is how many strategies this replica asks the publication
+	// about, LoadedSets how many of those the last publication covered, and
+	// Members the fingerprints held across them.
+	TrackedSets int `json:"tracked_sets"`
+	LoadedSets  int `json:"loaded_sets"`
+	Members     int `json:"members"`
+	// SentInSet and SentNotInSet are the alerts this replica sent ABNORMAL
+	// for, old enough for the consumer to have opened them, by whether the
+	// sets carry them. Disjoint is none of them carried: the
+	// sets are keyed differently from this replica's lookups, and it
+	// degrades the verdict with DegradationOpenAlertSetDisjoint.
+	SentInSet    int  `json:"sent_in_set"`
+	SentNotInSet int  `json:"sent_not_in_set"`
+	Disjoint     bool `json:"disjoint"`
+	// GateOwnLookups is Lookups for the gate's lookups of this replica's
+	// own open alerts, every answer word present; GateOwnHeld how many of
+	// those the gate answered "not open". A healthy series asks the gate
+	// every round and has no alert, so the plain counts are mostly "not
+	// open" by design; a "not open" for an alert this replica opened is a
+	// RECOVERY held while its alert stays open. GateRecent and
+	// GateRecentOwnHeld are the last lookups of each, whole.
+	GateOwnLookups map[string]uint64 `json:"gate_own_lookups,omitempty"`
+	GateOwnHeld    uint64            `json:"gate_own_held,omitempty"`
+	// GateSince is when the own split started. What the replica sent is
+	// held in memory and starts empty at every start, so an alert opened
+	// before GateSince is not "own" here: no own lookup says only that no
+	// alert sent since then reached the gate.
+	GateSince         *time.Time       `json:"gate_since,omitempty"`
+	GateRecent        []GateLookupFact `json:"gate_recent,omitempty"`
+	GateRecentOwnHeld []GateLookupFact `json:"gate_recent_own_held,omitempty"`
+	// Lookups counts how the gate's questions were answered since the process
+	// started, by the reader's closed answer words: the authoritative ones
+	// against the copy's own. A gate that has answered every question on its
+	// own knowledge reads here, and nowhere on the object list.
+	Lookups map[string]uint64 `json:"lookups,omitempty"`
+	// Comparison puts what this replica sent beside what the link holds for
+	// the same strategies. Absent on a copy that does not read the index.
+	Comparison *OpenAlertComparison `json:"comparison,omitempty"`
+	// TargetScopeClose is the close of alerts whose target left the
+	// strategy's monitoring scope, read beside the set it acts on. Absent
+	// on a replica that does not run it.
+	TargetScopeClose *TargetScopeCloseFacts `json:"target_scope_close,omitempty"`
+}
+
+// TargetScopeCloseFacts is what the target-scope close decided and holds:
+// the outcome totals (every outcome present, zeros included), how many
+// fingerprints wait for a second Slot and how many are confirmed, and up
+// to eight strategies with at most three fingerprint prefixes per list.
+// Armed false means every decision is counted as would_send and none sent.
+type TargetScopeCloseFacts struct {
+	Armed      bool                       `json:"armed"`
+	Pending    int                        `json:"pending"`
+	Confirmed  int                        `json:"confirmed"`
+	MaxEntries int                        `json:"max_entries"`
+	Outcomes   map[string]uint64          `json:"outcomes"`
+	Strategies []TargetScopeCloseStrategy `json:"strategies,omitempty"`
+}
+
+// TargetScopeCloseStrategy is one strategy's reading.
+type TargetScopeCloseStrategy struct {
+	TenantID      string            `json:"tenant_id"`
+	StrategyID    string            `json:"strategy_id"`
+	Pending       int               `json:"pending"`
+	Confirmed     int               `json:"confirmed"`
+	Outcomes      map[string]uint64 `json:"outcomes,omitempty"`
+	PendingSample []string          `json:"pending_sample,omitempty"`
+	DecidedSample []string          `json:"decided_sample,omitempty"`
+}
+
+// OpenAlertComparison is the recovery gate's side-by-side reading: the keys
+// this replica sent and still holds as open, the link's members for the
+// strategies it tracks, and the active alerts the link's calibration listed.
+// Every list is a bounded sample of fingerprint prefixes; nothing of an
+// alert's content is carried.
+//
+// How it is read: members of a shape other than the sent keys' is a link
+// fingerprinting on another rule; active alerts mostly from a source other
+// than own_event_source_id is a set holding someone else's alerts; sent keys
+// matching active alert ids but not their fingerprints is our alerts held
+// under another fingerprint.
+type OpenAlertComparison struct {
+	OwnEventSourceID        string                        `json:"own_event_source_id,omitempty"`
+	Sent                    int                           `json:"sent"`
+	SentShapes              map[string]int                `json:"sent_shapes"`
+	MemberShapes            map[string]int                `json:"member_shapes"`
+	AlertSources            map[string]int                `json:"alert_sources"`
+	SentInCalibrated        int                           `json:"sent_in_calibrated"`
+	SentMatchingAlertID     int                           `json:"sent_matching_alert_id"`
+	SentMatchingFingerprint int                           `json:"sent_matching_fingerprint"`
+	Strategies              []OpenAlertComparisonStrategy `json:"strategies,omitempty"`
+}
+
+// OpenAlertComparisonStrategy is one strategy's sample.
+type OpenAlertComparisonStrategy struct {
+	TenantID     string                     `json:"tenant_id"`
+	StrategyID   string                     `json:"strategy_id"`
+	Sent         int                        `json:"sent"`
+	Members      int                        `json:"members"`
+	Alerts       int                        `json:"alerts"`
+	Calibrated   bool                       `json:"calibrated"`
+	SentSample   []string                   `json:"sent_sample,omitempty"`
+	MemberSample []string                   `json:"member_sample,omitempty"`
+	AlertSample  []OpenAlertComparisonAlert `json:"alert_sample,omitempty"`
+}
+
+// OpenAlertComparisonAlert is one active alert reduced to its keys, each a
+// prefix.
+type OpenAlertComparisonAlert struct {
+	AlertID       string `json:"alert_id"`
+	Fingerprint   string `json:"fingerprint"`
+	EventSourceID string `json:"event_source_id"`
 }
 
 // DegradationKind names a replica-level condition that degrades the verdict
@@ -935,6 +2132,13 @@ const (
 	// knowledge is an alert that stays open past its due, and nothing on the
 	// object list shows that.
 	DegradationOpenAlertSetStale DegradationKind = "OPEN_ALERT_SET_STALE"
+	// DegradationOpenAlertSetDisjoint: the consumer's open alert sets carry
+	// none of the alerts this replica sent, out of enough of them that the
+	// sets cannot be keyed the way the replica asks. Every recovery would be
+	// held as "no open alert"; the replica answers from what it sent
+	// instead, and this names that, because a series it did not send the
+	// ABNORMAL for itself still waits.
+	DegradationOpenAlertSetDisjoint DegradationKind = "OPEN_ALERT_SET_DISJOINT"
 	// DegradationControlSourceStale: no refresh round of the control plane's
 	// strategy source has succeeded for longer than the staleness bound. The
 	// deployment executes the last good catalog and every strategy saved
@@ -969,6 +2173,40 @@ const (
 	// platform was writing 81 strategies and the round withheld all 81 for
 	// want of the identity fields the contract requires.
 	DegradationSourceBlocked DegradationKind = "SOURCE_BLOCKED"
+	// DegradationOutputNotReady: the replica could not open its output sink
+	// and is up, not ready and assigned nothing, retrying on its own. Before
+	// the sink was opened lazily the process exited instead, the rollout
+	// stalled on a crash loop, and the only diagnosis was the log of a
+	// container that kept restarting. Now the replica says so on its own
+	// output_kafka endpoint entry every snapshot; this is the line that reads
+	// it, since a replica holding nothing has no object row to be seen on.
+	DegradationOutputNotReady DegradationKind = "OUTPUT_NOT_READY"
+	// DegradationViewPublishFailing: the Leader has been failing to publish
+	// its desired set past the bound. Workers that hold a view keep
+	// executing from it; a Worker that restarts meanwhile has none and
+	// executes nothing.
+	DegradationViewPublishFailing DegradationKind = "VIEW_PUBLISH_FAILING"
+	// DegradationActivationBlocked: the last cutover held one or more Query
+	// Groups back - a precondition only a write outside the cutover could
+	// break failed on each - and they run what they ran before it. The rest
+	// of the publication is active. The repair subcommand, or finding what
+	// wrote the timeline, is what clears it.
+	DegradationActivationBlocked DegradationKind = "ACTIVATION_BLOCKED"
+	// DegradationViewStreamNoSessions: the Leader has had Workers expected
+	// and none holding a stream past the bound: its view reaches nobody.
+	// Read before deciding whether a Leader should give way; it does not
+	// today (N2 design, section 2c).
+	DegradationViewStreamNoSessions DegradationKind = "VIEW_STREAM_NO_SESSIONS"
+	// DegradationMetricsUnexported: the replica holds a CLI admin key, so its
+	// public listener no longer serves /metrics, and it has no internal
+	// listener to serve them on. Detection is unaffected; every alert rule
+	// the host writes against the process's own metrics reads nothing.
+	DegradationMetricsUnexported DegradationKind = "METRICS_INTERNAL_LISTEN_MISSING"
+	// DegradationCLIAuthUnavailable: the replica holds a CLI admin key and its
+	// CLI did not come up, so no session can be had through it. Its public
+	// surface stays unrestricted rather than leave no way in, and the
+	// coordinates that surface carries are public until the CLI is repaired.
+	DegradationCLIAuthUnavailable DegradationKind = "CLI_AUTH_UNAVAILABLE"
 )
 
 // DegradationKinds is the closed set, for the page's wording table and the
@@ -976,6 +2214,31 @@ const (
 var DegradationKinds = []DegradationKind{
 	DegradationActivationBehind, DegradationControlSourceStale, DegradationControlLeaderAbsent,
 	DegradationOpenAlertSetStale, DegradationPlatformSettingsStale, DegradationSourceBlocked,
+	DegradationOutputNotReady, DegradationOpenAlertSetDisjoint, DegradationViewPublishFailing, DegradationViewStreamNoSessions, DegradationActivationBlocked,
+	DegradationMetricsUnexported, DegradationCLIAuthUnavailable,
+}
+
+// endpointByRole is the entry under role in a replica's list, or nil.
+// viewStreamPreferred is whether a snapshot's account of the view stream
+// displaces the one the view holds: a Leader's over a non-Leader's, and
+// among equals the newer.
+func viewStreamPreferred(held, candidate *ViewStreamFacts) bool {
+	if held == nil {
+		return true
+	}
+	if candidate.Leading != held.Leading {
+		return candidate.Leading
+	}
+	return candidate.At.After(held.At)
+}
+
+func endpointByRole(endpoints []Endpoint, role string) *Endpoint {
+	for index := range endpoints {
+		if endpoints[index].Role == role {
+			return &endpoints[index]
+		}
+	}
+	return nil
 }
 
 // Degradation is one replica-level reason the deployment is degraded.
@@ -990,6 +2253,13 @@ type Degradation struct {
 	// the one that failed at activation, and the facts say which.
 	Stage string `json:"stage,omitempty"`
 	Text  string `json:"text,omitempty"`
+	// AgeSeconds and Attempts are on the standings whose facts say how long
+	// they have held and how many times the replica has tried: for an output
+	// that is not ready, since the process started -- a sink once open stays
+	// open, so not ready is not ready since start -- and the attempts the
+	// sink has made. Absent where the standing has no such facts.
+	AgeSeconds *float64 `json:"age_seconds,omitempty"`
+	Attempts   *int     `json:"attempts,omitempty"`
 }
 
 // Truncated reports whether the replica had more anomalies than it published.
@@ -1118,6 +2388,24 @@ type ReplicaView struct {
 	// Build is what this replica reported running. Absent when it reported
 	// none, which the page says rather than filling in.
 	Build *BuildFacts `json:"build,omitempty"`
+	// Dependencies is what this replica has seen of each external system: its
+	// own connection record and, for the output it opens, whether it is open.
+	// The deployment-level list is one replica's -- the newest snapshot's --
+	// and a question about one replica cannot be answered from it: on a live
+	// deployment the question "is every replica's output open" had to be put
+	// to each process's readiness endpoint, because the one list shown was
+	// the replica that happened to publish last. Absent when the replica
+	// published none (an older build). On the verdict route only; the list
+	// route drops it with the other rows it is not about.
+	Dependencies []Endpoint `json:"dependencies,omitempty"`
+	// Readiness is this replica's own, bit by bit, as its readiness endpoint
+	// answers. Absent when it published none (an older build), which is not
+	// "not ready": the count beside the rows leaves it out.
+	Readiness *ReadinessFacts `json:"readiness,omitempty"`
+	// OutputProtocol is the choice this replica runs with, as it published
+	// it. Absent when it published none (an older build), which the page says
+	// rather than filling in.
+	OutputProtocol *OutputProtocolFacts `json:"output_protocol,omitempty"`
 }
 
 // BuildFacts is one process's build: the three labels of its build_info
@@ -1156,15 +2444,30 @@ type WorkerAcknowledgement struct {
 
 // View is the aggregated answer returned to callers.
 type View struct {
-	Health   Health `json:"health"`
-	Expected *int   `json:"expected"`
-	Covered  int    `json:"covered"`
+	// ownerOf is which counted replica listed each object as owned, for a
+	// reader asking about one object by name. Built from the same owned sets
+	// the coverage comparison reads; an object no complete set lists is not
+	// in it, which the strategy standing reports as such rather than as
+	// nobody's.
+	ownerOf map[string]string
+	// expectation is the already-read authoritative active set. It is kept
+	// off the wire and shared read-only, so detail can distinguish a quiet
+	// active object from an absent one without another control-plane read.
+	expectation Expectation
+	Health      Health `json:"health"`
+	Expected    *int   `json:"expected"`
+	Covered     int    `json:"covered"`
 	// Determined is the subset of Covered whose owning replica has actually
 	// observed a conclusive round. Covered minus Determined is counted into
 	// Unknown, not into health.
 	Determined int   `json:"determined"`
 	Unknown    int   `json:"unknown"`
 	Gaps       []Gap `json:"gaps,omitempty"`
+	// AwaitingFirstRound is the undetermined objects that are only waiting for
+	// their first round (see Snapshot.AwaitingFirstRound), by period. They are
+	// not in Unknown and do not make the verdict UNKNOWN; they are said here
+	// instead, so a reader sees how many and until when.
+	AwaitingFirstRound *FirstRoundWaits `json:"awaiting_first_round,omitempty"`
 	// Degradations are replica-level conditions that make the verdict
 	// DEGRADED on their own, beside the anomalies: what is wrong is a replica's
 	// standing, not any object it evaluates.
@@ -1223,12 +2526,40 @@ type View struct {
 	// keyed by Query Group. In no column and in no total: the objects are
 	// running now and every signal about their current round says so, which is
 	// exactly why this needs somewhere of its own to be said.
-	PrunedSkips        map[string]PrunedSkip  `json:"pruned_skips,omitempty"`
-	GapSkips           map[string]SkippedSpan `json:"gap_skips,omitempty"`
-	NoData             []Anomaly              `json:"no_data,omitempty"`
+	PrunedSkips map[string]PrunedSkip  `json:"pruned_skips,omitempty"`
+	GapSkips    map[string]SkippedSpan `json:"gap_skips,omitempty"`
+	NoData      []Anomaly              `json:"no_data,omitempty"`
+	// EmptyEveryRoundTotal is how many distinct objects in NoData are of
+	// KindEmptyEveryRound: the first screen's one number for the strategies
+	// whose every round is empty. Counted here rather than left to the page,
+	// so the number beside the line and the rows under it cannot disagree.
+	EmptyEveryRoundTotal int `json:"empty_every_round_total"`
+	// NoDataMemory is the objects whose absence memory the store refuses,
+	// from every counted replica. In no column and in no total, like NoData.
+	NoDataMemory []Anomaly `json:"no_data_memory,omitempty"`
+	// RetainedShare is the objects nearing the one-object share of the
+	// retained pool, from every counted replica. In no column and in no
+	// total, like NoData.
+	RetainedShare []Anomaly `json:"retained_share,omitempty"`
+	// Recovered is the problems whose objects completed healthily within the
+	// retention, merged over the counted replicas by line and fold. In no
+	// column and in no total, like the skips: the objects are running now.
+	Recovered []RecoveredProblem `json:"recovered,omitempty"`
+	// BookkeepingAbandoned sums the replicas' running counts: Slots fully
+	// executed and then closed without their Progress, distinct objects as
+	// each replica counted them (an object that moved counts on both), and
+	// the latest. Absent when no replica reports the fact.
+	BookkeepingAbandoned *BookkeepingFacts `json:"bookkeeping_abandoned,omitempty"`
+	// NoDataTracking sums the replicas' accounts of what their no-data Plans
+	// last counted: the first screen's one line on whether the tracking
+	// horizon is doing anything. Absent when no replica reports the fact.
+	NoDataTracking     *NoDataTrackingSummary `json:"no_data_tracking,omitempty"`
 	DemotionEntries    int                    `json:"demotion_entries"`
 	DemotionExtensions int                    `json:"demotion_extensions"`
 	DemotionExits      int                    `json:"demotion_exits"`
+	DemotionRestored   int                    `json:"demotion_restored"`
+	DemotionHandovers  int                    `json:"demotion_handovers"`
+	DemotionReentries  int                    `json:"demotion_reentries"`
 	LastDemotionExit   time.Time              `json:"last_demotion_exit,omitempty"`
 	// DemotedDue counts pooled objects whose own cooldown window has already
 	// elapsed at the moment of this read: they are due to be tried again and are
@@ -1279,28 +2610,73 @@ type View struct {
 	// first. One entry is a deployment that agrees with itself; more is a
 	// rollout, finished or not, and every total above is then a mix.
 	Builds []BuildGroup `json:"builds"`
+	// OutputProtocols is the distinct output protocol choices the counted
+	// replicas run with, grouped like Builds: one entry is a deployment that
+	// agrees with itself, more is a rollout or a values file that changed
+	// under some of them. A replica that published no choice is its own
+	// group with an empty word. What a given strategy publishes as is not
+	// here -- it is frozen per Plan and read from the directory.
+	OutputProtocols []OutputProtocolGroup `json:"output_protocols"`
 	// Activation is the control leader's standing on bringing the fleet's
 	// activation to the current publication, and ActivationReplica which
 	// replica said so. Absent when no counted replica has attempted it.
 	Activation        *ActivationFacts `json:"activation,omitempty"`
 	ActivationReplica string           `json:"activation_replica,omitempty"`
+	// NoDataHorizon is the platform no-data horizon and the layer it came
+	// from, as a counted replica resolves it. Absent when no replica reports
+	// one.
+	NoDataHorizon *NoDataHorizonFacts `json:"no_data_horizon,omitempty"`
 	// Rebalance is the newest rebalance planning round any counted replica
 	// published, and RebalanceReplica which one. Newest rather than "the one
 	// that has it": a replica that stopped being the leader keeps its last
 	// plan, and after a leader change two replicas carry one each.
 	Rebalance        *RebalanceFacts `json:"rebalance,omitempty"`
 	RebalanceReplica string          `json:"rebalance_replica,omitempty"`
+	// AssignmentScope is the newest content-scope census any counted replica
+	// published, and AssignmentScopeReplica which one; newest for the same
+	// reason Rebalance is.
+	AssignmentScope        *AssignmentScopeFacts `json:"assignment_scope,omitempty"`
+	AssignmentScopeReplica string                `json:"assignment_scope_replica,omitempty"`
+	// AssignmentSweep is the newest sweep any counted replica published, and
+	// AssignmentSweepReplica which one.
+	AssignmentSweep        *AssignmentSweepFacts `json:"assignment_sweep,omitempty"`
+	AssignmentSweepReplica string                `json:"assignment_sweep_replica,omitempty"`
+	// LeaderRound is the newest leader round any counted replica published,
+	// and LeaderRoundReplica which one.
+	LeaderRound        *LeaderRoundFacts `json:"leader_round,omitempty"`
+	LeaderRoundReplica string            `json:"leader_round_replica,omitempty"`
+	// ViewStream is the Leader's account of the view stream -- the newest
+	// snapshot that says it leads; failing any, the newest that says it does
+	// not, so the page can say "no Leader is serving the stream" -- and
+	// ViewStreamReplica which replica.
+	ViewStream        *ViewStreamFacts `json:"view_stream,omitempty"`
+	ViewStreamReplica string           `json:"view_stream_replica,omitempty"`
 	// Source is the newest source round any counted replica published, and
 	// SourceReplica which one. Newest for the same reason Rebalance is: a
 	// replica that stopped being the leader keeps its last round.
 	Source        *SourceFacts `json:"source,omitempty"`
 	SourceReplica string       `json:"source_replica,omitempty"`
+	// SourceStanding is Source read against what the deployment executes,
+	// with the two sentences for the first screen. Nil without a round.
+	SourceStanding *SourceStanding `json:"source_standing,omitempty"`
 	// Dependencies is what one counted replica resolved its external systems
 	// to, and DependenciesReplica which one: the newest snapshot's. Every
 	// replica renders the same coordinates; what differs is what each has
 	// seen of them, and the one shown is the one that published last.
-	Dependencies        []Endpoint `json:"dependencies,omitempty"`
-	DependenciesReplica string     `json:"dependencies_replica,omitempty"`
+	// DependenciesReplicas is how many counted replicas published a list, so
+	// the one shown is read as one of that many and not as the deployment's;
+	// each replica's own is on its PerReplica row.
+	Dependencies         []Endpoint `json:"dependencies,omitempty"`
+	DependenciesReplica  string     `json:"dependencies_replica,omitempty"`
+	DependenciesReplicas int        `json:"dependencies_replicas,omitempty"`
+	// LinkdConsole is the alert link's Console read against whether this
+	// deployment needs it. Nil until the leader has published a round.
+	LinkdConsole *LinkdConsoleStanding `json:"linkd_console,omitempty"`
+	// ReplicasNotReady counts the counted replicas whose own readiness says
+	// not ready: up and publishing, and answering the probe with no. Which
+	// bit is on each replica's row. A replica that published no readiness is
+	// not counted -- an older build is not a replica that is not ready.
+	ReplicasNotReady int `json:"replicas_not_ready"`
 }
 
 // Aggregate folds the published snapshots into one view.
@@ -1311,7 +2687,7 @@ type View struct {
 // the denominator locally would make three replicas out of four report full
 // coverage of nothing.
 func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas []string, now time.Time, freshness time.Duration) View {
-	view := View{Health: HealthHealthy, Anomalies: []Anomaly{}, Demoted: []Anomaly{},
+	view := View{expectation: expectation, Health: HealthHealthy, Anomalies: []Anomaly{}, Demoted: []Anomaly{},
 		Undecidable: []Anomaly{}, ByDesign: []Anomaly{},
 		Replicas: []string{}, PerReplica: []ReplicaView{}, Builds: []BuildGroup{}}
 	ownedByReplica := make([]string, 0, len(expectedReplicas))
@@ -1356,8 +2732,16 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 			// A replica that published a short set cannot be compared, and a
 			// zero from an incomparable read is not "none".
 			setsComplete = false
+		} else {
+			if view.ownerOf == nil {
+				view.ownerOf = make(map[string]string, snapshot.Owned)
+			}
+			for _, object := range snapshot.OwnedObjects {
+				view.ownerOf[object] = replica
+			}
 		}
 		view.Determined += snapshot.Determined
+		view.AwaitingFirstRound = view.AwaitingFirstRound.add(snapshot)
 		view.AnomaliesTotal += snapshot.TotalAnomalies
 		view.Anomalies = append(view.Anomalies, snapshot.Anomalies...)
 		view.DemotedTotal += snapshot.TotalDemoted
@@ -1369,6 +2753,9 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		view.DemotionEntries += snapshot.DemotionEntries
 		view.DemotionExtensions += snapshot.DemotionExtensions
 		view.DemotionExits += snapshot.DemotionExits
+		view.DemotionRestored += snapshot.DemotionRestored
+		view.DemotionHandovers += snapshot.DemotionHandovers
+		view.DemotionReentries += snapshot.DemotionReentries
 		for queryGroup, skip := range snapshot.PrunedSkips {
 			if view.PrunedSkips == nil {
 				view.PrunedSkips = make(map[string]PrunedSkip, len(snapshot.PrunedSkips))
@@ -1389,6 +2776,25 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 			}
 		}
 		view.NoData = append(view.NoData, snapshot.NoData...)
+		view.NoDataMemory = append(view.NoDataMemory, snapshot.NoDataMemory...)
+		view.RetainedShare = append(view.RetainedShare, snapshot.RetainedShare...)
+		mergeRecovered(&view, snapshot.Recovered)
+		if facts := snapshot.BookkeepingAbandoned; facts != nil && facts.Slots > 0 {
+			if view.BookkeepingAbandoned == nil {
+				view.BookkeepingAbandoned = &BookkeepingFacts{}
+			}
+			view.BookkeepingAbandoned.Slots += facts.Slots
+			view.BookkeepingAbandoned.Objects += facts.Objects
+			if facts.LastAt.After(view.BookkeepingAbandoned.LastAt) {
+				view.BookkeepingAbandoned.LastAt = facts.LastAt
+			}
+		}
+		if summary := snapshot.NoDataTracking; summary != nil && summary.Plans > 0 {
+			if view.NoDataTracking == nil {
+				view.NoDataTracking = &NoDataTrackingSummary{}
+			}
+			view.NoDataTracking.add(*summary)
+		}
 		if snapshot.LastDemotionExit.After(view.LastDemotionExit) {
 			view.LastDemotionExit = snapshot.LastDemotionExit
 		}
@@ -1398,8 +2804,24 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 		if snapshot.OpenAlertSet != nil && snapshot.OpenAlertSet.StaleBeyondBound {
 			view.Degradations = append(view.Degradations, Degradation{Kind: DegradationOpenAlertSetStale, Replica: replica})
 		}
+		if snapshot.OpenAlertSet != nil && snapshot.OpenAlertSet.Disjoint {
+			view.Degradations = append(view.Degradations, Degradation{Kind: DegradationOpenAlertSetDisjoint, Replica: replica})
+		}
 		if snapshot.PlatformSettings != nil && snapshot.PlatformSettings.StaleBeyondBound {
 			view.Degradations = append(view.Degradations, Degradation{Kind: DegradationPlatformSettingsStale, Replica: replica})
+		}
+		if snapshot.MetricsUnexported {
+			view.Degradations = append(view.Degradations, Degradation{Kind: DegradationMetricsUnexported, Replica: replica})
+		}
+		if snapshot.CLIUnavailable {
+			view.Degradations = append(view.Degradations, Degradation{Kind: DegradationCLIAuthUnavailable, Replica: replica})
+		}
+		// The horizon every replica resolves from the same layers; the first
+		// counted replica that reports one speaks for the deployment, and
+		// its name travels with it so a disagreement can be traced.
+		if facts := snapshot.PlatformSettings; facts != nil && facts.NoDataTrackingHorizonSeconds > 0 && view.NoDataHorizon == nil {
+			view.NoDataHorizon = &NoDataHorizonFacts{Seconds: facts.NoDataTrackingHorizonSeconds,
+				Source: facts.NoDataTrackingHorizonSource, Replica: replica}
 		}
 		if snapshot.ControlSource != nil {
 			if snapshot.ControlSource.StaleBeyondBound {
@@ -1420,18 +2842,73 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 			if snapshot.Activation.BehindBeyondBound {
 				view.Degradations = append(view.Degradations, Degradation{Kind: DegradationActivationBehind, Replica: replica})
 			}
+			if snapshot.Activation.BlockedQueryGroups > 0 {
+				view.Degradations = append(view.Degradations, Degradation{Kind: DegradationActivationBlocked, Replica: replica,
+					Text: fmt.Sprintf("%d held back (%s): %s", snapshot.Activation.BlockedQueryGroups,
+						snapshot.Activation.BlockedReasons, snapshot.Activation.BlockedSamples)})
+			}
 		}
 		if snapshot.Rebalance != nil && (view.Rebalance == nil || snapshot.Rebalance.PlannedAt.After(view.Rebalance.PlannedAt)) {
 			facts := *snapshot.Rebalance
 			view.Rebalance, view.RebalanceReplica = &facts, replica
 		}
+		if snapshot.AssignmentScope != nil && (view.AssignmentScope == nil || snapshot.AssignmentScope.At.After(view.AssignmentScope.At)) {
+			facts := *snapshot.AssignmentScope
+			view.AssignmentScope, view.AssignmentScopeReplica = &facts, replica
+		}
+		if snapshot.AssignmentSweep != nil && (view.AssignmentSweep == nil || snapshot.AssignmentSweep.At.After(view.AssignmentSweep.At)) {
+			facts := *snapshot.AssignmentSweep
+			view.AssignmentSweep, view.AssignmentSweepReplica = &facts, replica
+		}
+		if snapshot.LeaderRound != nil && (view.LeaderRound == nil || snapshot.LeaderRound.At.After(view.LeaderRound.At)) {
+			facts := *snapshot.LeaderRound
+			view.LeaderRound, view.LeaderRoundReplica = &facts, replica
+		}
+		if snapshot.ViewStream != nil && snapshot.ViewStream.Leading {
+			if snapshot.ViewStream.PublishFailingBeyondBound {
+				view.Degradations = append(view.Degradations, Degradation{Kind: DegradationViewPublishFailing, Replica: replica,
+					Text: snapshot.ViewStream.PublishFailureReason})
+			}
+			if snapshot.ViewStream.NoSessionsBeyondBound {
+				view.Degradations = append(view.Degradations, Degradation{Kind: DegradationViewStreamNoSessions, Replica: replica})
+			}
+		}
+		if snapshot.ViewStream != nil && viewStreamPreferred(view.ViewStream, snapshot.ViewStream) {
+			facts := *snapshot.ViewStream
+			// A copy that stays a list: appending nothing to a nil slice is
+			// nil, and nil is null on the wire, which a page reading
+			// lagging.length cannot use. Nobody lagging is an empty list.
+			facts.Lagging = append(make([]ViewStreamLagging, 0, len(snapshot.ViewStream.Lagging)), snapshot.ViewStream.Lagging...)
+			view.ViewStream, view.ViewStreamReplica = &facts, replica
+		}
 		if snapshot.Source != nil && (view.Source == nil || snapshot.Source.At.After(view.Source.At)) {
 			facts := *snapshot.Source
 			view.Source, view.SourceReplica = &facts, replica
 		}
-		if len(snapshot.Dependencies) > 0 && (view.Dependencies == nil || snapshot.TakenAt.After(dependenciesTakenAt)) {
-			view.Dependencies = append([]Endpoint(nil), snapshot.Dependencies...)
-			view.DependenciesReplica, dependenciesTakenAt = replica, snapshot.TakenAt
+		if len(snapshot.Dependencies) > 0 {
+			view.DependenciesReplicas++
+			if view.Dependencies == nil || snapshot.TakenAt.After(dependenciesTakenAt) {
+				view.Dependencies = append([]Endpoint(nil), snapshot.Dependencies...)
+				view.DependenciesReplica, dependenciesTakenAt = replica, snapshot.TakenAt
+			}
+		}
+		// Every replica's own output entry, not only the newest list's: a
+		// replica that cannot open its output is up, ready for nothing and
+		// assigned nothing, and the one place it says so is this entry on its
+		// own snapshot. An entry without the readiness fact is an older
+		// build's, and says nothing either way.
+		if output := endpointByRole(snapshot.Dependencies, EndpointOutputKafka); output != nil &&
+			output.Ready != nil && !*output.Ready {
+			degradation := Degradation{Kind: DegradationOutputNotReady, Replica: replica, Stage: "output", Text: output.LastFailure}
+			if output.Attempts != nil {
+				attempts := *output.Attempts
+				degradation.Attempts = &attempts
+			}
+			if !snapshot.StartedAt.IsZero() {
+				age := now.Sub(snapshot.StartedAt).Seconds()
+				degradation.AgeSeconds = &age
+			}
+			view.Degradations = append(view.Degradations, degradation)
 		}
 		perReplica := ReplicaView{
 			Replica: replica, Owned: snapshot.Owned, Determined: snapshot.Determined,
@@ -1445,6 +2922,25 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 			Truncated: snapshot.Truncated(), Capacity: snapshot.Capacity,
 			Build: snapshot.Build,
 		}
+		// This replica's own record of its dependencies, copied so a later
+		// read cannot alias the snapshot's slice.
+		if len(snapshot.Dependencies) > 0 {
+			perReplica.Dependencies = append([]Endpoint(nil), snapshot.Dependencies...)
+		}
+		// And its own readiness, the same way. Counted as not ready only on
+		// its own word: a snapshot without the fact is an older build's.
+		perReplica.Readiness = copyReadiness(snapshot.Readiness)
+		if snapshot.Readiness != nil && !snapshot.Readiness.Ready {
+			view.ReplicasNotReady++
+		}
+		// And the protocol choice it runs with, as its own value and grouped
+		// with the replicas that agree; a snapshot without it is an older
+		// build's and groups with the others that said nothing.
+		if snapshot.OutputProtocol != nil {
+			facts := *snapshot.OutputProtocol
+			perReplica.OutputProtocol = &facts
+		}
+		view.OutputProtocols = addToOutputProtocolGroup(view.OutputProtocols, snapshot.OutputProtocol, replica)
 		view.Builds = addToBuildGroup(view.Builds, snapshot.Build, replica)
 		view.Workers.Ready++
 		switch {
@@ -1527,8 +3023,8 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 	case view.Determined > view.Covered:
 		view.Gaps = append(view.Gaps, Gap{Kind: GapCoverageInconsistent,
 			Detail: "more objects reported as determined than owned"})
-	case view.Covered > view.Determined:
-		view.Unknown += view.Covered - view.Determined
+	case view.Covered > view.Determined+view.AwaitingFirstRound.count():
+		view.Unknown += view.Covered - view.Determined - view.AwaitingFirstRound.count()
 		view.Gaps = append(view.Gaps, Gap{Kind: GapUndetermined})
 	}
 
@@ -1606,16 +3102,40 @@ func Aggregate(expectation Expectation, snapshots []Snapshot, expectedReplicas [
 	Attribute(view.Undecidable, now)
 	Attribute(view.ByDesign, now)
 	Attribute(view.NoData, now)
+	Attribute(view.NoDataMemory, now)
+	Attribute(view.RetainedShare, now)
+	view.EmptyEveryRoundTotal = countEmptyEveryRound(view.NoData)
 	// Decided on the newest source round rather than inside the replica loop:
 	// a source is one thing, and after a leader change two replicas carry a
-	// round each, of which only the newest says what the source is now.
-	if view.Source.Blocked() {
+	// round each, of which only the newest says what the source is now. And
+	// decided against what the deployment executes: a source accepting
+	// nothing degrades the verdict only when nothing runs because of it. A
+	// deployment running its last accepted configuration is detecting; what
+	// it has is a cache that cannot update the run, which the standing says
+	// and the badge does not.
+	view.SourceStanding = sourceStandingOf(view.Source, executingObjects(&view))
+	view.LinkdConsole = linkdConsoleStandingOf(&view)
+	if view.SourceStanding != nil && view.SourceStanding.Kind == SourceBlocked {
 		view.Degradations = append(view.Degradations, Degradation{Kind: DegradationSourceBlocked,
 			Replica: view.SourceReplica, Stage: "catalog", Text: sourceBlockedText(view.Source)})
 	}
 	Settle(&view)
 	sortBuildGroups(view.Builds)
+	sortOutputProtocolGroups(view.OutputProtocols)
 	return view
+}
+
+// executingObjects is how many objects the deployment runs, for the source
+// standing: the catalogue's count when it is known, or what the replicas
+// own, whichever is more -- an object owned but not in the catalogue is
+// still being run, and one in the catalogue nobody owns yet is still going
+// to be.
+func executingObjects(view *View) int {
+	executing := view.Covered
+	if view.Expected != nil && *view.Expected > executing {
+		executing = *view.Expected
+	}
+	return executing
 }
 
 // sourceBlockedText is the one sentence a blocked source's degradation
@@ -1651,6 +3171,36 @@ func addToBuildGroup(groups []BuildGroup, build *BuildFacts, replica string) []B
 		}
 	}
 	return append(groups, BuildGroup{Build: facts, Replicas: []string{replica}})
+}
+
+// addToOutputProtocolGroup files a replica under the choice it published, or
+// under the empty one when it published none.
+func addToOutputProtocolGroup(groups []OutputProtocolGroup, protocol *OutputProtocolFacts, replica string) []OutputProtocolGroup {
+	facts := OutputProtocolFacts{}
+	if protocol != nil {
+		facts = *protocol
+	}
+	for index := range groups {
+		if groups[index].Protocol == facts {
+			groups[index].Replicas = append(groups[index].Replicas, replica)
+			return groups
+		}
+	}
+	return append(groups, OutputProtocolGroup{Protocol: facts, Replicas: []string{replica}})
+}
+
+// sortOutputProtocolGroups puts the choice most replicas run first, then
+// orders by word so two reads of an evenly split deployment list the same way.
+func sortOutputProtocolGroups(groups []OutputProtocolGroup) {
+	sort.SliceStable(groups, func(i, j int) bool {
+		if len(groups[i].Replicas) != len(groups[j].Replicas) {
+			return len(groups[i].Replicas) > len(groups[j].Replicas)
+		}
+		if groups[i].Protocol.Configured != groups[j].Protocol.Configured {
+			return groups[i].Protocol.Configured < groups[j].Protocol.Configured
+		}
+		return groups[i].Protocol.Explicit && !groups[j].Protocol.Explicit
+	})
 }
 
 // sortBuildGroups puts the build most replicas run first, then orders by
@@ -1958,6 +3508,89 @@ type SkippedSpan struct {
 	// mechanism with a name; the row says the period so a reader does not
 	// have to look the strategy up to know which conversation this is.
 	IntervalSeconds int64 `json:"interval_seconds,omitempty"`
+	// Evidence is what the query-free completions of this span found about
+	// earlier attempts at the same Slots: how many Slots an earlier attempt
+	// had fully executed (events sent, state written) before failing to write
+	// the Progress, how many partly, how many nobody could say, and the last
+	// Slot's reading whole. Absent on a span from a build before the fact
+	// existed. A span every Slot of which was fully executed is not a gap in
+	// detection at all -- it is bookkeeping that was interrupted -- and is
+	// filed as such.
+	Evidence *SkipEvidence `json:"evidence,omitempty"`
+	// HeldBy is what the skipped Slot's previous round decided, as the
+	// completion that gave the Slot up reported it: query_cooldown is a
+	// Slot the cooldown held until it fell past the replay range, which is
+	// the cooldown's consequence whether or not the object is still in the
+	// pool when the record is read. Empty on a record from a build before
+	// the field, or a skip nothing held. It is the record's own fact, so
+	// the loss is decided from it rather than from where the object sits
+	// now: an object whose cooldown ended thirty seconds ago carried a
+	// cooldown's skip that read as detection lost to capacity.
+	HeldBy string `json:"held_by,omitempty"`
+	// FirstSeenAt is when this replica first saw a round of this object in
+	// this process -- when it actually started working it, which after a
+	// rollout is a lease expiry, a catalog load and a reconcile round later
+	// than the process start. The restart's catch-up is judged from here as
+	// well as from the process start; zero on a record from a build before
+	// the field.
+	FirstSeenAt time.Time `json:"first_seen_at,omitempty"`
+	// RestartOffsetSeconds and TakeoverOffsetSeconds are how long after the
+	// replica's process start, and after it first saw the object, this
+	// record was made: filled when the record is read, so a reader can see
+	// which anchor the restart grace was judged against and by how much.
+	// Absent when the anchor is unknown.
+	RestartOffsetSeconds  *float64 `json:"restart_offset_seconds,omitempty"`
+	TakeoverOffsetSeconds *float64 `json:"takeover_offset_seconds,omitempty"`
+}
+
+// ExecutionEvidence is one completion's reading of an earlier attempt, as
+// the emitter reported it and as execution.ReadEvidence names it.
+type ExecutionEvidence struct {
+	Kind         string `json:"kind"`
+	Reading      string `json:"reading"`
+	PlansApplied int    `json:"plans_applied"`
+	PlansTotal   int    `json:"plans_total"`
+}
+
+// ExecutionEvidenceReadings is every reading a completion's evidence can take,
+// as the emitter names them; for the page's wording table.
+var ExecutionEvidenceReadings = model.ExecutionEvidenceReadings
+
+// BookkeepingFacts is the running count of interrupted bookkeeping: Slots an
+// earlier attempt fully executed that a query-free completion then closed,
+// the distinct objects it happened to, and when it last did.
+type BookkeepingFacts struct {
+	Slots   int       `json:"slots"`
+	Objects int       `json:"objects"`
+	LastAt  time.Time `json:"last_at"`
+}
+
+// SkipEvidence is a span's execution evidence, folded from one reading per
+// GAP_SKIPPED Slot. Each Slot's reading is the emitter's --
+// execution.ReadEvidence over the completion's evidence -- so the row, the
+// gap fold and the counter say the same thing of the same Slot; only the
+// count over the span is this package's.
+type SkipEvidence struct {
+	// SlotsApplied, SlotsPartial and SlotsUnreadable partition the span's
+	// Slots that carried evidence: fully executed, partly executed, and read
+	// failures. Slots with NONE_FOUND or no evidence are the remainder.
+	SlotsApplied    int `json:"slots_applied"`
+	SlotsPartial    int `json:"slots_partial"`
+	SlotsUnreadable int `json:"slots_unreadable"`
+	// Reading, PlansApplied and PlansTotal are the last Slot's, as the
+	// emitter read them: STATE_APPLIED, MIXED, NONE_FOUND, UNREADABLE or
+	// ABSENT, and the counts behind the first two.
+	Reading      string `json:"reading"`
+	PlansApplied int    `json:"plans_applied,omitempty"`
+	PlansTotal   int    `json:"plans_total,omitempty"`
+}
+
+// FullyApplied reports whether every Slot of the span was found fully
+// executed by an earlier attempt: the span is interrupted bookkeeping, not
+// abandoned detection. One Slot short of that and some Plan really was not
+// evaluated, and the span still owes it a gap.
+func (skip SkippedSpan) FullyApplied() bool {
+	return skip.Evidence != nil && skip.Slots > 0 && skip.Evidence.SlotsApplied == skip.Slots
 }
 
 // Spanning is how long the skipped span covers. It is a duration rather than a

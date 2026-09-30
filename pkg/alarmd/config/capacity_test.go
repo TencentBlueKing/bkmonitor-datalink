@@ -245,3 +245,110 @@ func TestGoRuntimeBudgetRefusesAGuessedContainer(t *testing.T) {
 		t.Fatalf("go runtime budget from an unnamed memory source = %+v, want none", derived)
 	}
 }
+
+// The mutation guardrail does not come from memory any more, and the only way
+// to state that is to show it not moving when memory does.
+//
+// It used to be retained bytes divided by an assumed 32 KiB per mutation, so a
+// container with twice the memory admitted twice the mutations. Measuring what
+// a mutation actually costs found 3.5 KiB for a light shape against 28.9 KiB
+// for a heavy one - a 9x spread around that one constant - which made the
+// count, not the byte budget, the thing deciding throughput, and made it decide
+// differently for shapes that use the same memory.
+//
+// The bound that reads "between one Store call and the chunked product" is
+// satisfied by both the old derivation and the new one, so it cannot say which
+// is in force. This can: every container shape gets the same guardrail while
+// the byte budget it used to be derived from keeps tracking the container.
+func TestTheMutationGuardrailIsNotDerivedFromMemory(t *testing.T) {
+	shapes := containerShapes()
+	if len(shapes) < 2 {
+		t.Fatal("this case needs two container shapes to compare")
+	}
+	var guardrail uint64
+	retainedSeen := make(map[uint64]struct{}, len(shapes))
+	for _, inputs := range shapes {
+		cfg := completePhaseTwoProductionConfig(validGoAccessConfigObject().withDerivedCapacity(inputs))
+		budgets := cfg.PhaseTwo.Coordinator
+		chunked := uint64(cfg.Limits.Store.MaxKeysPerBatch) * execution.StateApplyMaxChunks
+		if budgets.MaxStateMutations != chunked {
+			t.Fatalf("%d MiB: state guardrail %d, want the chunked apply product %d",
+				inputs.MemoryLimitBytes>>20, budgets.MaxStateMutations, chunked)
+		}
+		if guardrail == 0 {
+			guardrail = budgets.MaxStateMutations
+		} else if budgets.MaxStateMutations != guardrail {
+			t.Fatalf("%d MiB: state guardrail %d, want the same %d every shape derives; "+
+				"a guardrail that moves with the container is still a memory budget",
+				inputs.MemoryLimitBytes>>20, budgets.MaxStateMutations, guardrail)
+		}
+		retainedSeen[budgets.MaxRetainedBytes] = struct{}{}
+	}
+	// The other half: the working limit does still follow the container, so the
+	// case above is about where the count comes from rather than about a
+	// derivation that stopped reading its inputs altogether.
+	if len(retainedSeen) < 2 {
+		t.Fatalf("retained byte budgets %v, want them to differ across container shapes: "+
+			"that is the budget that is supposed to track memory", retainedSeen)
+	}
+}
+
+// The compile-time point ceiling comes from the representation the store
+// writes, and under the framed record the configured limit is the binding one.
+//
+// The original finding was a gap the other way: max_required_history_points is
+// 4096, the JSON envelope ran out around 2100 points for one Level, and nothing
+// anywhere held the smaller number - so a Plan configured between them compiled
+// cleanly and then had every state write refused, per series, with nothing to
+// say why. Deriving the ceiling here rather than writing it beside the
+// configured one is what let it follow the representation when the store
+// started writing framed records, which is what closed the gap.
+//
+// So the assertion is now that 4096 is reachable at every Level count a Plan
+// may compile. It is not a formality: if a later representation change put the
+// ceiling back under the configured limit, the silent per-series refusal comes
+// back exactly as it was, and this is the case that would say so.
+func TestTheRetainedPointCeilingComesFromTheRepresentation(t *testing.T) {
+	cfg := completePhaseTwoProductionConfig(validGoAccessConfigObject().withDerivedCapacity(containerShapes()[0]))
+	limits := cfg.CompilerLimits()
+	if len(limits.MaxRetainedPointsByLevels) <= limits.MaxLevelsPerPlan {
+		t.Fatalf("ceilings %v do not cover every Level count a Plan may compile, including the extra "+
+			"Level a no-data Plan adds", limits.MaxRetainedPointsByLevels)
+	}
+	single := limits.MaxRetainedPointsByLevels[1]
+	if single == 0 {
+		t.Fatal("no ceiling derived for a single-Level Plan")
+	}
+	// Every Level count, not just one: the binding ceiling is the lowest, which
+	// is the most crowded record, and a case that only reads the single-Level
+	// number would pass while a Plan at the configured limit was refused for
+	// having more Levels than the case looked at.
+	for count := 1; count < len(limits.MaxRetainedPointsByLevels); count++ {
+		ceiling := limits.MaxRetainedPointsByLevels[count]
+		if ceiling == 0 {
+			continue
+		}
+		if ceiling < limits.MaxRequiredHistoryPoints {
+			t.Fatalf("ceiling for %d Levels is %d, below the configured %d: a Plan asking for the limit it "+
+				"is allowed to ask for would compile and then have every state write refused per series",
+				count, ceiling, limits.MaxRequiredHistoryPoints)
+		}
+	}
+	// More Levels share one record, so each one leaves room for fewer points.
+	for count := 2; count < len(limits.MaxRetainedPointsByLevels); count++ {
+		previous, current := limits.MaxRetainedPointsByLevels[count-1], limits.MaxRetainedPointsByLevels[count]
+		if current == 0 || previous == 0 {
+			continue
+		}
+		if current >= previous {
+			t.Fatalf("ceiling for %d Levels (%d) is not below the one for %d (%d); every Level writes its "+
+				"facts on every point, so it has to fall", count, current, count-1, previous)
+		}
+	}
+	// The strategy behind decision-019 retains 1469 points on one Level, and
+	// this must not stop it: a bound that refuses what runs today is a worse
+	// failure than the one it prevents.
+	if single < 1469 {
+		t.Fatalf("single-Level ceiling %d would refuse a 1469-point window that stores cleanly today", single)
+	}
+}

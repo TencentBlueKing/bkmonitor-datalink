@@ -1,0 +1,803 @@
+{
+  "contract": {
+    "Slot": {
+      "QueryGroup": "q",
+      "EvaluationTime": 60
+    },
+    "SnapshotRevision": "snapshot",
+    "QueryRevision": "query",
+    "ScheduleRevision": "schedule",
+    "ScheduleSegmentStart": 60,
+    "DuePlanSetDigest": "plans"
+  },
+  "items": [
+    {
+      "Identity": {
+        "Plan": {
+          "TenantID": "tenant",
+          "BusinessID": "2",
+          "StrategyID": "9"
+        },
+        "StateGeneration": "generation",
+        "SeriesIdentityDigest": "bfa775fa937e267345d4f6c4cde605f83456efad28d8536e82cde60ac250b2ba"
+      },
+      "ApplyVersion": {
+        "StateApplyEpoch": 1,
+        "EvaluationTime": 7200,
+        "SlotDigest": "slot"
+      }
+    },
+    {
+      "Identity": {
+        "Plan": {
+          "TenantID": "tenant",
+          "BusinessID": "2",
+          "StrategyID": "9"
+        },
+        "StateGeneration": "generation",
+        "SeriesIdentityDigest": "ba70afc8caa7b3cb02a670a27f9b14a2e0b279985d56468ca0a9d330c14329ae"
+      },
+      "ApplyVersion": {
+        "StateApplyEpoch": 1,
+        "EvaluationTime": 7200,
+        "SlotDigest": "slot"
+      }
+    },
+    {
+      "Identity": {
+        "Plan": {
+          "TenantID": "tenant",
+          "BusinessID": "2",
+          "StrategyID": "9"
+        },
+        "StateGeneration": "generation",
+        "SeriesIdentityDigest": "198fd8d59e6f3123e7636454e81776503fa130b9a8cb243a3db267d7f13cbf54"
+      },
+      "ApplyVersion": {
+        "StateApplyEpoch": 1,
+        "EvaluationTime": 7200,
+        "SlotDigest": "slot"
+      }
+    },
+    {
+      "Identity": {
+        "Plan": {
+          "TenantID": "tenant",
+          "BusinessID": "2",
+          "StrategyID": "9"
+        },
+        "StateGeneration": "generation",
+        "SeriesIdentityDigest": "5d88211ea433ecbcb353bf8e63c4d8441786efa5b4c93a0768985e456b57ab88"
+      },
+      "ApplyVersion": {
+        "StateApplyEpoch": 1,
+        "EvaluationTime": 7200,
+        "SlotDigest": "slot"
+      }
+    }
+  ],
+  "keys": [
+    {
+      "key": "alarmd-upgrade:runtime:v2:63b4c0476f5aa004794df8453c4d90a6:2:9:460f4e23194b12e06e68789d9d81564d:415e68cc2c6c6172c59a0ce2da42b4eb",
+      "type": "string",
+      "value_base64": "eyJzY2hlbWEiOiJhbGFybWQtcnVudGltZS1zdGF0ZS12MiIsImlkZW50aXR5Ijp7IlBsYW4iOnsiVGVuYW50SUQiOiJ0ZW5hbnQiLCJCdXNpbmVzc0lEIjoiMiIsIlN0cmF0ZWd5SUQiOiI5In0sIlN0YXRlR2VuZXJhdGlvbiI6ImdlbmVyYXRpb24iLCJTZXJpZXNJZGVudGl0eURpZ2VzdCI6IjE5OGZkOGQ1OWU2ZjMxMjNlNzYzNjQ1NGU4MTc3NjUwM2ZhMTMwYjlhOGNiMjQzYTNkYjI2N2Q3ZjEzY2JmNTQifSwiYmxvYl9yZXZpc2lvbiI6MSwiYXBwbHlfdmVyc2lvbiI6eyJTdGF0ZUFwcGx5RXBvY2giOjEsIkV2YWx1YXRpb25UaW1lIjo3MjAwLCJTbG90RGlnZXN0Ijoic2xvdCJ9LCJtdXRhdGlvbl9kaWdlc3QiOiI0NGEzNjE0YzNlMGI0ZThhNzU3ODNhODFlMzZhYTBjZThlNmIzNDJkN2UyYjg0YTdhZDMyYjBhZjE3Mjg5OTU1IiwibGFzdF9ldmVudF90aW1lIjo3MjAwLCJsZXZlbHMiOlt7IkxldmVsSUQiOjEsIkxldmVsU3RhdGVDb21wYXRpYmlsaXR5IjoiY29tcGF0LTEiLCJIaXN0b3J5Q29tcGxldGVuZXNzIjoiRlVMTCIsIkdhcFJlYXNvbkNvZGUiOiIiLCJXYXJtdXBSZXF1aXJlbWVudFJlZiI6Indhcm0tMSIsIkxhc3RQcm9jZXNzZWRFdmVudFRpbWUiOjcyMDB9LHsiTGV2ZWxJRCI6MiwiTGV2ZWxTdGF0ZUNvbXBhdGliaWxpdHkiOiJjb21wYXQtMiIsIkhpc3RvcnlDb21wbGV0ZW5lc3MiOiJGVUxMIiwiR2FwUmVhc29uQ29kZSI6IiIsIldhcm11cFJlcXVpcmVtZW50UmVmIjoid2FybS0yIiwiTGFzdFByb2Nlc3NlZEV2ZW50VGltZSI6NzIwMH1dLCJoaXN0b3J5IjpbeyJSZWNvcmRJRCI6ImJjYmQ5MDVhNjUwMGFkOGNlOTMyYzViZmU0NDhkZjcxZWE0NWU5OTVkZmY4OGI5ZGE5MGI2ZTNhZWI4MWVjNjYiLCJTb3VyY2VUaW1lIjo1NDYwLCJMZXZlbHMiOlt7IkxldmVsSUQiOjEsIkRldGVjdEZpbmdlcnByaW50IjoiZGV0ZWN0LTEiLCJSZXN1bHQiOiJBTk9NQUxPVVMifSx7IkxldmVsSUQiOjIsIkRldGVjdEZpbmdlcnByaW50IjoiZGV0ZWN0LTIiLCJSZXN1bHQiOiJOT1JNQUwifV19LHsiUmVjb3JkSUQiOiI2Njg3NmExMzA3YmRiOTVlYjI4Yzc5NzhmY2VkNTdjOGJkNDJkZDFhYTRlOGU4ZjMyM2E5MmExNDI2MzcxZTZjIiwiU291cmNlVGltZSI6NTUyMCwiTGV2ZWxzIjpbeyJMZXZlbElEIjoxLCJEZXRlY3RGaW5nZXJwcmludCI6ImRldGVjdC0xIiwiUmVzdWx0IjoiTk9STUFMIn0seyJMZXZlbElEIjoyLCJEZXRlY3RGaW5nZXJwcmludCI6ImRldGVjdC0yIiwiUmVzdWx0IjoiTk9STUFMIn1dfSx7IlJlY29yZElEIjoiYTRlYmVlNDVlOWI3NGFjOTI5OTY5MmE1NjA4MzU3ZWQ4NzJlNGQ2MDhkMTcyYmRkMzgwM2Y4ODNmZGU4ODAyMyIsIlNvdXJjZVRpbWUiOjU1ODAsIkxldmVscyI6W3siTGV2ZWxJRCI6MSwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkZXRlY3QtMSIsIlJlc3VsdCI6Ik5PUk1BTCJ9LHsiTGV2ZWxJRCI6MiwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkZXRlY3QtMiIsIlJlc3VsdCI6Ik5PUk1BTCJ9XX0seyJSZWNvcmRJRCI6IjE0NzA2YzE3NWNlNTZmM2Y1N2U3NDgyMzc5Y2E2MDEzYmYxYTFlZWExN2U2MWQwYmUzNDJjYWU5NWI0OTJlMDQiLCJTb3VyY2VUaW1lIjo1NjQwLCJMZXZlbHMiOlt7IkxldmVsSUQiOjEsIkRldGVjdEZpbmdlcnByaW50IjoiZGV0ZWN0LTEiLCJSZXN1bHQiOiJBTk9NQUxPVVMifSx7IkxldmVsSUQiOjIsIkRldGVjdEZpbmdlcnByaW50IjoiZGV0ZWN0LTIiLCJSZXN1bHQiOiJOT1JNQUwifV19LHsiUmVjb3JkSUQiOiIwNWQ2MGZkNGRmMGRhYjM0ZDI3NjY4OTAyMWE3NDVjNzgyMjAyN2IzYjRiMzFkMDY2NDI0N2YyMzEzNjMwNjYzIiwiU291cmNlVGltZSI6NTcwMCwiTGV2ZWxzIjpbeyJMZXZlbElEIjoxLCJEZXRlY3RGaW5nZXJwcmludCI6ImRldGVjdC0xIiwiUmVzdWx0IjoiTk9STUFMIn0seyJMZXZlbElEIjoyLCJEZXRlY3RGaW5nZXJwcmludCI6ImRldGVjdC0yIiwiUmVzdWx0IjoiTk9STUFMIn1dfSx7IlJlY29yZElEIjoiMzhkMTVmY2FhNDQzN2ZlNWNlZDg4MDlkOTY4YzE5OWRlZDUxNDYwNTA1YWZlODg0YjliZjE3OWY4MzY5MjhiOCIsIlNvdXJjZVRpbWUiOjU3NjAsIkxldmVscyI6W3siTGV2ZWxJRCI6MSwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkZXRlY3QtMSIsIlJlc3VsdCI6Ik5PUk1BTCJ9LHsiTGV2ZWxJRCI6MiwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkZXRlY3QtMiIsIlJlc3VsdCI6Ik5PUk1BTCJ9XX0seyJSZWNvcmRJRCI6ImQxMmIwOWRmY2MwM2FiZGYyZjY4NzYwYzc2MWM4ZWZjMmNjNzY1ZTczODY4NjczYmZlNjE2MGRkMjFhNTliMTciLCJTb3VyY2VUaW1lIjo1ODIwLCJMZXZlbHMiOlt7IkxldmVsSUQiOjEsIkRldGVjdEZpbmdlcnByaW50IjoiZGV0ZWN0LTEiLCJSZXN1bHQiOiJBTk9NQUxPVVMifSx7IkxldmVsSUQiOjIsIkRldGVjdEZpbmdlcnByaW50IjoiZGV0ZWN0LTIiLCJSZXN1bHQiOiJOT1JNQUwifV19LHsiUmVjb3JkSUQiOiI3NWNhODZjZWM3MTYxZjIwYjU1MjE4OGNmYmZhNDY4NzRlYWFmMjY0YTJlMTU0NmVmZGJmMjA2NWQyZmIzOGZjIiwiU291cmNlVGltZSI6NTg4MCwiTGV2ZWxzIjpbeyJMZXZlbElEIjoxLCJEZXRlY3RGaW5nZXJwcmludCI6ImRldGVjdC0xIiwiUmVzdWx0IjoiTk9STUFMIn0seyJMZXZlbElEIjoyLCJEZXRlY3RGaW5nZXJwcmludCI6ImRldGVjdC0yIiwiUmVzdWx0IjoiTk9STUFMIn1dfSx7IlJlY29yZElEIjoiNDQ2ZTg3YTViZDFkN2JmZWE1ZDgzOGQ3ZDdiZmJkYTk3YmU0OWE1NWNkNjRlZjdjMDM4MmYwZWJmZDJiZGQ0MCIsIlNvdXJjZVRpbWUiOjU5NDAsIkxldmVscyI6W3siTGV2ZWxJRCI6MSwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkZXRlY3QtMSIsIlJlc3VsdCI6Ik5PUk1BTCJ9LHsiTGV2ZWxJRCI6MiwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkZXRlY3QtMiIsIlJlc3VsdCI6Ik5PUk1BTCJ9XX0seyJSZWNvcmRJRCI6IjVkN2RmZWRlYWRkZWFhNjQ0OTZjYzgxMzFkZGEwY2FmYmVjMzVjMTA2ZTQzNjcxMmRlZTc3MmMxMzA2OWU3YjkiLCJTb3VyY2VUaW1lIjo2MDAwLCJMZXZlbHMiOlt7IkxldmVsSUQiOjEsIkRldGVjdEZpbmdlcnByaW50IjoiZGV0ZWN0LTEiLCJSZXN1bHQiOiJBTk9NQUxPVVMifSx7IkxldmVsSUQiOjIsIkRldGVjdEZpbmdlcnByaW50IjoiZGV0ZWN0LTIiLCJSZXN1bHQiOiJOT1JNQUwifV19LHsiUmVjb3JkSUQiOiJjZjkyNzliODgzYjY5MmFhZDRjOTIyY2EyMTYwNTJiMDcxMWQyNzFiNTEzZjZiZDVlMDk5MmUyYmVjY2Y2MWM0IiwiU291cmNlVGltZSI6NjA2MCwiTGV2ZWxzIjpbeyJMZXZlbElEIjoxLCJEZXRlY3RGaW5nZXJwcmludCI6ImRldGVjdC0xIiwiUmVzdWx0IjoiTk9STUFMIn0seyJMZXZlbElEIjoyLCJEZXRlY3RGaW5nZXJwcmludCI6ImRldGVjdC0yIiwiUmVzdWx0IjoiTk9STUFMIn1dfSx7IlJlY29yZElEIjoiZDY4MDUwZGFjZTRlNTQzODg4NzUxOGM2YjRkZjM1NzQ2NGEwYmYwZmExYmJiMWQ1MzA0ZGJiZDliYjU2NTM0ZiIsIlNvdXJjZVRpbWUiOjYxMjAsIkxldmVscyI6W3siTGV2ZWxJRCI6MSwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkZXRlY3QtMSIsIlJlc3VsdCI6Ik5PUk1BTCJ9LHsiTGV2ZWxJRCI6MiwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkZXRlY3QtMiIsIlJlc3VsdCI6Ik5PUk1BTCJ9XX0seyJSZWNvcmRJRCI6IjNhY2EwMmQ1ZTgxN2E3YzFlNTBjNTVkZTEwNDdmYjAwYjNiOWRjYmMxZDdkOWU5N2VhMWU2NTFlMTJjMzc2MjYiLCJTb3VyY2VUaW1lIjo2MTgwLCJMZXZlbHMiOlt7IkxldmVsSUQiOjEsIkRldGVjdEZpbmdlcnByaW50IjoiZGV0ZWN0LTEiLCJSZXN1bHQiOiJBTk9NQUxPVVMifSx7IkxldmVsSUQiOjIsIkRldGVjdEZpbmdlcnByaW50IjoiZGV0ZWN0LTIiLCJSZXN1bHQiOiJOT1JNQUwifV19LHsiUmVjb3JkSUQiOiI3MjQ3MTlmMTkwNmIwNTEwM2M2OTJkODI2ODY3ZDg2YTI2MWNhZmM5MzAwYWQ1ZDZkYWFkYTc1NjgyNWViNmZhIiwiU291cmNlVGltZSI6NjI0MCwiTGV2ZWxzIjpbeyJMZXZlbElEIjoxLCJEZXRlY3RGaW5nZXJwcmludCI6ImRldGVjdC0xIiwiUmVzdWx0IjoiTk9STUFMIn0seyJMZXZlbElEIjoyLCJEZXRlY3RGaW5nZXJwcmludCI6ImRldGVjdC0yIiwiUmVzdWx0IjoiTk9STUFMIn1dfSx7IlJlY29yZElEIjoiYTBjZWEwNDY0MmI4MzFlZTZmN2JmOGI3NDg2ZjJmOGM1M2Q0ZDc3OTE4MWQwM2I0YzIxOGEzMTkzNmMzZDllMyIsIlNvdXJjZVRpbWUiOjYzMDAsIkxldmVscyI6W3siTGV2ZWxJRCI6MSwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkZXRlY3QtMSIsIlJlc3VsdCI6Ik5PUk1BTCJ9LHsiTGV2ZWxJRCI6MiwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkZXRlY3QtMiIsIlJlc3VsdCI6Ik5PUk1BTCJ9XX0seyJSZWNvcmRJRCI6IjYxMGUzY2ZmZTdkY2E2MDI5MmYzMmM1ZmExYThiNzRiYmZkNjA3ZGZlM2M3Yjc3MzZhZTYyMDJhMGRmYzk5ZDgiLCJTb3VyY2VUaW1lIjo2MzYwLCJMZXZlbHMiOlt7IkxldmVsSUQiOjEsIkRldGVjdEZpbmdlcnByaW50IjoiZGV0ZWN0LTEiLCJSZXN1bHQiOiJBTk9NQUxPVVMifSx7IkxldmVsSUQiOjIsIkRldGVjdEZpbmdlcnByaW50IjoiZGV0ZWN0LTIiLCJSZXN1bHQiOiJOT1JNQUwifV19LHsiUmVjb3JkSUQiOiIwNWM5MmJhN2EwOWVjZmU2OGE1ZjU5MTVmMzI4MTFiNmQyOTBjNDk0ZDE1MjVkZGMyODZiZmI3MWRkZWRlN2Q0IiwiU291cmNlVGltZSI6NjQyMCwiTGV2ZWxzIjpbeyJMZXZlbElEIjoxLCJEZXRlY3RGaW5nZXJwcmludCI6ImRldGVjdC0xIiwiUmVzdWx0IjoiTk9STUFMIn0seyJMZXZlbElEIjoyLCJEZXRlY3RGaW5nZXJwcmludCI6ImRldGVjdC0yIiwiUmVzdWx0IjoiTk9STUFMIn1dfSx7IlJlY29yZElEIjoiNmM3MTQ5OTVhMzNjNTgyNzMwYTAxYWIyMzZhZTkyYzczNjUwZGU1MTg5M2FmNjU0MzhkMjExMDkzYzk5ZDQ3YiIsIlNvdXJjZVRpbWUiOjY0ODAsIkxldmVscyI6W3siTGV2ZWxJRCI6MSwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkZXRlY3QtMSIsIlJlc3VsdCI6Ik5PUk1BTCJ9LHsiTGV2ZWxJRCI6MiwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkZXRlY3QtMiIsIlJlc3VsdCI6Ik5PUk1BTCJ9XX0seyJSZWNvcmRJRCI6ImIyZjQ3OGJhNTU4ZDZmNTUzMDA2MDBkZTRkNmE4YTg0NGI2YjViZjUyMjNkZTAwZmM1ZDA4OGEwNTY0YzI0YTIiLCJTb3VyY2VUaW1lIjo2NTQwLCJMZXZlbHMiOlt7IkxldmVsSUQiOjEsIkRldGVjdEZpbmdlcnByaW50IjoiZGV0ZWN0LTEiLCJSZXN1bHQiOiJBTk9NQUxPVVMifSx7IkxldmVsSUQiOjIsIkRldGVjdEZpbmdlcnByaW50IjoiZGV0ZWN0LTIiLCJSZXN1bHQiOiJOT1JNQUwifV19LHsiUmVjb3JkSUQiOiIxM2Y0Njg1Nzg2Y2Y3ZTkyNmYyZjkxYjhiMmEyYmEzYzgwM2NkZDE5NDdiYzZiYWMxYjExNGQyZjkwNGM1NzY2IiwiU291cmNlVGltZSI6NjYwMCwiTGV2ZWxzIjpbeyJMZXZlbElEIjoxLCJEZXRlY3RGaW5nZXJwcmludCI6ImRldGVjdC0xIiwiUmVzdWx0IjoiTk9STUFMIn0seyJMZXZlbElEIjoyLCJEZXRlY3RGaW5nZXJwcmludCI6ImRldGVjdC0yIiwiUmVzdWx0IjoiTk9STUFMIn1dfSx7IlJlY29yZElEIjoiOTJmY2FkMDA1NWRlMTM4YWVlNWY0NWJiYTU4YTMzNTBlY2MwNGRkMjA3YjQ2MDQxNjU3YmE0ZWFiMzJkZTkxOSIsIlNvdXJjZVRpbWUiOjY2NjAsIkxldmVscyI6W3siTGV2ZWxJRCI6MSwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkZXRlY3QtMSIsIlJlc3VsdCI6Ik5PUk1BTCJ9LHsiTGV2ZWxJRCI6MiwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkZXRlY3QtMiIsIlJlc3VsdCI6Ik5PUk1BTCJ9XX0seyJSZWNvcmRJRCI6IjczOGZhMGQ4ODc2NzkzNWI0NTAxNTAyMzE5YmY1MmIxOTRkNDdkN2MxYmU1MDczZWFlNTBkZTVjM2IwOGMzNWUiLCJTb3VyY2VUaW1lIjo2NzIwLCJMZXZlbHMiOlt7IkxldmVsSUQiOjEsIkRldGVjdEZpbmdlcnByaW50IjoiZGV0ZWN0LTEiLCJSZXN1bHQiOiJBTk9NQUxPVVMifSx7IkxldmVsSUQiOjIsIkRldGVjdEZpbmdlcnByaW50IjoiZGV0ZWN0LTIiLCJSZXN1bHQiOiJOT1JNQUwifV19LHsiUmVjb3JkSUQiOiIwMmUxMWVjZjQyMzg1Yjk0YTU2MmM5NTNhNzdiZTBhZmY0MjJiYzhmZWQ3MzhlZWRjYTk5MjU3YWMwNGM0MjNlIiwiU291cmNlVGltZSI6Njc4MCwiTGV2ZWxzIjpbeyJMZXZlbElEIjoxLCJEZXRlY3RGaW5nZXJwcmludCI6ImRldGVjdC0xIiwiUmVzdWx0IjoiTk9STUFMIn0seyJMZXZlbElEIjoyLCJEZXRlY3RGaW5nZXJwcmludCI6ImRldGVjdC0yIiwiUmVzdWx0IjoiTk9STUFMIn1dfSx7IlJlY29yZElEIjoiYzA5ZWFjYWNkMjEwNGVhNDEwZjAzYWIzYTQ4MTZlYzAzOTNkNDEwMGE3NDUzZTQyNmFmMDEyM2QyZmJmYWE3MyIsIlNvdXJjZVRpbWUiOjY4NDAsIkxldmVscyI6W3siTGV2ZWxJRCI6MSwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkZXRlY3QtMSIsIlJlc3VsdCI6Ik5PUk1BTCJ9LHsiTGV2ZWxJRCI6MiwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkZXRlY3QtMiIsIlJlc3VsdCI6Ik5PUk1BTCJ9XX0seyJSZWNvcmRJRCI6ImYzOGIyYmVmZjk5NDg1MjgxMmJkMzVmMThkOWRiYWZlZTMxZWU2OGQ0NGIwZDU1ODg5MDk3OGUwMmU3NjM2OWUiLCJTb3VyY2VUaW1lIjo2OTAwLCJMZXZlbHMiOlt7IkxldmVsSUQiOjEsIkRldGVjdEZpbmdlcnByaW50IjoiZGV0ZWN0LTEiLCJSZXN1bHQiOiJBTk9NQUxPVVMifSx7IkxldmVsSUQiOjIsIkRldGVjdEZpbmdlcnByaW50IjoiZGV0ZWN0LTIiLCJSZXN1bHQiOiJOT1JNQUwifV19LHsiUmVjb3JkSUQiOiIzOTI2ODExZTZkNmM0YWFiMWM1NTdmY2JkMDQwZWRkNjA3NDZkMWFhYmFmNTlmMDE2MTM4NjJlYjMyYzc4MjAyIiwiU291cmNlVGltZSI6Njk2MCwiTGV2ZWxzIjpbeyJMZXZlbElEIjoxLCJEZXRlY3RGaW5nZXJwcmludCI6ImRldGVjdC0xIiwiUmVzdWx0IjoiTk9STUFMIn0seyJMZXZlbElEIjoyLCJEZXRlY3RGaW5nZXJwcmludCI6ImRldGVjdC0yIiwiUmVzdWx0IjoiTk9STUFMIn1dfSx7IlJlY29yZElEIjoiOGFmOTVkMDY0ZWM0MWJkNTlhYjhjNDhjYjcxYzYxY2ExNzIyYzU3NzQ2YmJiNzY4ZTBiZWIyOTE4OWRkY2NjMSIsIlNvdXJjZVRpbWUiOjcwMjAsIkxldmVscyI6W3siTGV2ZWxJRCI6MSwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkZXRlY3QtMSIsIlJlc3VsdCI6Ik5PUk1BTCJ9LHsiTGV2ZWxJRCI6MiwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkZXRlY3QtMiIsIlJlc3VsdCI6Ik5PUk1BTCJ9XX0seyJSZWNvcmRJRCI6IjE1YjRhMWQyY2JjMTgyZDhjZDVhMDA4MzIwY2YxZjg0YTNjMjc5ZGVjNzZmNmYxZDZiZDRiOTkwZDFmMWRjYWEiLCJTb3VyY2VUaW1lIjo3MDgwLCJMZXZlbHMiOlt7IkxldmVsSUQiOjEsIkRldGVjdEZpbmdlcnByaW50IjoiZGV0ZWN0LTEiLCJSZXN1bHQiOiJBTk9NQUxPVVMifSx7IkxldmVsSUQiOjIsIkRldGVjdEZpbmdlcnByaW50IjoiZGV0ZWN0LTIiLCJSZXN1bHQiOiJOT1JNQUwifV19LHsiUmVjb3JkSUQiOiJjMWY2MjZhY2E4MjA2MTBkYmU1NTAwNzNlOWJjZjE0MTc1ZTZhMmQwNTEzNGM2ZTk4ZDQxM2RhOGQxYTJiMDgyIiwiU291cmNlVGltZSI6NzE0MCwiTGV2ZWxzIjpbeyJMZXZlbElEIjoxLCJEZXRlY3RGaW5nZXJwcmludCI6ImRldGVjdC0xIiwiUmVzdWx0IjoiTk9STUFMIn0seyJMZXZlbElEIjoyLCJEZXRlY3RGaW5nZXJwcmludCI6ImRldGVjdC0yIiwiUmVzdWx0IjoiTk9STUFMIn1dfSx7IlJlY29yZElEIjoiNzA1OGViYjg4Mjg2NjZjZWMxNmM4OGIxNjI0MzUyODNhYWVkMzE4NzkwZmJhOWFmMzQzNWFhZDZjNzRhYTRkMSIsIlNvdXJjZVRpbWUiOjcyMDAsIkxldmVscyI6W3siTGV2ZWxJRCI6MSwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkZXRlY3QtMSIsIlJlc3VsdCI6Ik5PUk1BTCJ9LHsiTGV2ZWxJRCI6MiwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkZXRlY3QtMiIsIlJlc3VsdCI6Ik5PUk1BTCJ9XX1dfQ==",
+      "ttl_ms": 389994
+    },
+    {
+      "key": "alarmd-upgrade:runtime:v2:63b4c0476f5aa004794df8453c4d90a6:2:9:460f4e23194b12e06e68789d9d81564d:62f4c6e7d638ee47dac0fba7d7111d5a",
+      "type": "string",
+      "value_base64": "eyJzY2hlbWEiOiJhbGFybWQtcnVudGltZS1zdGF0ZS12MiIsImlkZW50aXR5Ijp7IlBsYW4iOnsiVGVuYW50SUQiOiJ0ZW5hbnQiLCJCdXNpbmVzc0lEIjoiMiIsIlN0cmF0ZWd5SUQiOiI5In0sIlN0YXRlR2VuZXJhdGlvbiI6ImdlbmVyYXRpb24iLCJTZXJpZXNJZGVudGl0eURpZ2VzdCI6ImJmYTc3NWZhOTM3ZTI2NzM0NWQ0ZjZjNGNkZTYwNWY4MzQ1NmVmYWQyOGQ4NTM2ZTgyY2RlNjBhYzI1MGIyYmEifSwiYmxvYl9yZXZpc2lvbiI6MSwiYXBwbHlfdmVyc2lvbiI6eyJTdGF0ZUFwcGx5RXBvY2giOjEsIkV2YWx1YXRpb25UaW1lIjo3MjAwLCJTbG90RGlnZXN0Ijoic2xvdCJ9LCJtdXRhdGlvbl9kaWdlc3QiOiIyNWU0NDI5YTAyMjAxMzI5YjQwNGI4ZWU4YmM3OTRiYzQ2YWFhMDUwYWRiOTAxZjBiNGUxNjA3ZmQ5ZGRkNWZjIiwibGFzdF9ldmVudF90aW1lIjo3MjAwLCJsZXZlbHMiOlt7IkxldmVsSUQiOjEsIkxldmVsU3RhdGVDb21wYXRpYmlsaXR5IjoiY29tcGF0IiwiSGlzdG9yeUNvbXBsZXRlbmVzcyI6IkZVTEwiLCJHYXBSZWFzb25Db2RlIjoiIiwiV2FybXVwUmVxdWlyZW1lbnRSZWYiOiJ3YXJtIiwiTGFzdFByb2Nlc3NlZEV2ZW50VGltZSI6NzIwMH1dLCJoaXN0b3J5IjpbeyJSZWNvcmRJRCI6ImNlYzhiMGJiMTFhODM0MjgwMTFiNzcyNjU3NGRjZWQzMjM1MWQ4ZGIzYmZjNzliMzU0M2E0N2FjOWE1ZDM3Y2IiLCJTb3VyY2VUaW1lIjo3MjAwLCJMZXZlbHMiOlt7IkxldmVsSUQiOjEsIkRldGVjdEZpbmdlcnByaW50IjoiZGV0ZWN0IiwiUmVzdWx0IjoiTk9STUFMIn1dfV19",
+      "ttl_ms": 389993
+    },
+    {
+      "key": "alarmd-upgrade:runtime:v2:63b4c0476f5aa004794df8453c4d90a6:2:9:460f4e23194b12e06e68789d9d81564d:acdb9fa0436d1d3114d7b319c3876fad",
+      "type": "string",
+      "value_base64": "eyJzY2hlbWEiOiJhbGFybWQtcnVudGltZS1zdGF0ZS12MiIsImlkZW50aXR5Ijp7IlBsYW4iOnsiVGVuYW50SUQiOiJ0ZW5hbnQiLCJCdXNpbmVzc0lEIjoiMiIsIlN0cmF0ZWd5SUQiOiI5In0sIlN0YXRlR2VuZXJhdGlvbiI6ImdlbmVyYXRpb24iLCJTZXJpZXNJZGVudGl0eURpZ2VzdCI6ImJhNzBhZmM4Y2FhN2IzY2IwMmE2NzBhMjdmOWIxNGEyZTBiMjc5OTg1ZDU2NDY4Y2EwYTlkMzMwYzE0MzI5YWUifSwiYmxvYl9yZXZpc2lvbiI6MSwiYXBwbHlfdmVyc2lvbiI6eyJTdGF0ZUFwcGx5RXBvY2giOjEsIkV2YWx1YXRpb25UaW1lIjo3MjAwLCJTbG90RGlnZXN0Ijoic2xvdCJ9LCJtdXRhdGlvbl9kaWdlc3QiOiJjNmI3NWY5YTUwNTg4ZTE3MmJhYjA1N2Q1ZDE4OGI2MDVjMDQzNjMyYTQzMzNkYWJjZWMyNTM1MzgyYTk4NDBlIiwibGFzdF9ldmVudF90aW1lIjo3MjAwLCJzZXJpZXNfZ3VhcmQiOnsiU3RhdHVzIjoiV0FSTUlORyIsIlJlYXNvbkNvZGUiOiJISVNUT1JZX1dBUk1JTkciLCJXYXJtdXBSZXF1aXJlbWVudFJlZiI6Indhcm0tZ3VhcmQifSwibGV2ZWxzIjpbeyJMZXZlbElEIjoxLCJMZXZlbFN0YXRlQ29tcGF0aWJpbGl0eSI6ImNvbXBhdC0xIiwiSGlzdG9yeUNvbXBsZXRlbmVzcyI6IkZVTEwiLCJHYXBSZWFzb25Db2RlIjoiIiwiV2FybXVwUmVxdWlyZW1lbnRSZWYiOiJ3YXJtLTEiLCJMYXN0UHJvY2Vzc2VkRXZlbnRUaW1lIjo3MjAwfSx7IkxldmVsSUQiOjIsIkxldmVsU3RhdGVDb21wYXRpYmlsaXR5IjoiY29tcGF0LTIiLCJIaXN0b3J5Q29tcGxldGVuZXNzIjoiR0FQUEVEIiwiR2FwUmVhc29uQ29kZSI6IkhJU1RPUllfR0FQUEVEIiwiV2FybXVwUmVxdWlyZW1lbnRSZWYiOiJ3YXJtLTIiLCJMYXN0UHJvY2Vzc2VkRXZlbnRUaW1lIjo3MTQwfV0sImhpc3RvcnkiOlt7IlJlY29yZElEIjoiNmQzMGVjYTliNjQ4YzM3ZDljNjZhNGZiYTAxZWM3YmVmZjk5ZTVhYmYzYWI5ZWI4M2JjNWU3YmExNzViN2QwNyIsIlNvdXJjZVRpbWUiOjcxNDAsIkxldmVscyI6W3siTGV2ZWxJRCI6MSwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkMSIsIlJlc3VsdCI6IkFOT01BTE9VUyJ9LHsiTGV2ZWxJRCI6MiwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkMiIsIlJlc3VsdCI6IlVOQVZBSUxBQkxFIn1dfSx7IlJlY29yZElEIjoiYTg2MjZkMjg2MzhiNzU2MjUzOTEzNWE0ODQ1NTU3Y2VhNjJmNTZjMjBmOGQ0ZDYxOTUwMzFhOTNlYTg4MGFjNCIsIlNvdXJjZVRpbWUiOjcyMDAsIkxldmVscyI6W3siTGV2ZWxJRCI6MSwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkMSIsIlJlc3VsdCI6Ik5PUk1BTCJ9LHsiTGV2ZWxJRCI6MiwiRGV0ZWN0RmluZ2VycHJpbnQiOiJkMiIsIlJlc3VsdCI6IkVSUk9SIn1dfV19",
+      "ttl_ms": 389994
+    },
+    {
+      "key": "alarmd-upgrade:runtime:v2:63b4c0476f5aa004794df8453c4d90a6:2:9:460f4e23194b12e06e68789d9d81564d:d9b4fd19fd6c64ebbb8ff483ca925d6f",
+      "type": "string",
+      "value_base64": "eyJzY2hlbWEiOiJhbGFybWQtcnVudGltZS1zdGF0ZS12MiIsImlkZW50aXR5Ijp7IlBsYW4iOnsiVGVuYW50SUQiOiJ0ZW5hbnQiLCJCdXNpbmVzc0lEIjoiMiIsIlN0cmF0ZWd5SUQiOiI5In0sIlN0YXRlR2VuZXJhdGlvbiI6ImdlbmVyYXRpb24iLCJTZXJpZXNJZGVudGl0eURpZ2VzdCI6IjVkODgyMTFlYTQzM2VjYmNiMzUzYmY4ZTYzYzRkODQ0MTc4NmVmYTViNGM5M2EwNzY4OTg1ZTQ1NmI1N2FiODgifSwiYmxvYl9yZXZpc2lvbiI6MSwiYXBwbHlfdmVyc2lvbiI6eyJTdGF0ZUFwcGx5RXBvY2giOjEsIkV2YWx1YXRpb25UaW1lIjo3MjAwLCJTbG90RGlnZXN0Ijoic2xvdCJ9LCJtdXRhdGlvbl9kaWdlc3QiOiI5NGNiNWE0NTBiZGMwNGRiZDUzNjEyZDZjZmIyNTE4NGQyNzMzZGJlZGI1ZmM2MDQxNmU0ZWU2MzkyMjQwNTUwIiwibGFzdF9ldmVudF90aW1lIjo3MjAwLCJsZXZlbHMiOlt7IkxldmVsSUQiOjMsIkxldmVsU3RhdGVDb21wYXRpYmlsaXR5IjoiY29tcGF0LTMiLCJIaXN0b3J5Q29tcGxldGVuZXNzIjoiV0FSTUlORyIsIkdhcFJlYXNvbkNvZGUiOiJISVNUT1JZX1dBUk1JTkciLCJXYXJtdXBSZXF1aXJlbWVudFJlZiI6Indhcm0tMyIsIkxhc3RQcm9jZXNzZWRFdmVudFRpbWUiOjcyMDB9XSwiaGlzdG9yeSI6W3siUmVjb3JkSUQiOiI4MzU2MGIwZmIxMjZlOTRlZjkyOGVhZjExMjdjOWI2ZTFiZjk3MTc4ZWUzN2U3ODM2MjlhOGIyZjhhZGZmZjBjIiwiU291cmNlVGltZSI6NzIwMCwiTGV2ZWxzIjpbeyJMZXZlbElEIjozLCJEZXRlY3RGaW5nZXJwcmludCI6ImRldGVjdC0zIiwiUmVzdWx0IjoiQU5PTUFMT1VTIn1dfV19",
+      "ttl_ms": 389995
+    }
+  ],
+  "prefix": "alarmd-upgrade",
+  "source_commit": "e12486ee",
+  "views": [
+    {
+      "Identity": {
+        "Plan": {
+          "TenantID": "tenant",
+          "BusinessID": "2",
+          "StrategyID": "9"
+        },
+        "StateGeneration": "generation",
+        "SeriesIdentityDigest": "bfa775fa937e267345d4f6c4cde605f83456efad28d8536e82cde60ac250b2ba"
+      },
+      "BlobRevision": 1,
+      "PersistedApplyVersion": {
+        "StateApplyEpoch": 1,
+        "EvaluationTime": 7200,
+        "SlotDigest": "slot"
+      },
+      "PersistedMutationDigest": "25e4429a02201329b404b8ee8bc794bc46aaa050adb901f0b4e1607fd9ddd5fc",
+      "LastProcessedEventTime": 7200,
+      "SeriesGuard": null,
+      "Levels": [
+        {
+          "LevelID": 1,
+          "LevelStateCompatibility": "compat",
+          "HistoryCompleteness": "FULL",
+          "GapReasonCode": "",
+          "WarmupRequirementRef": "warm",
+          "LastProcessedEventTime": 7200
+        }
+      ],
+      "History": [
+        {
+          "RecordID": "cec8b0bb11a83428011b7726574dced32351d8db3bfc79b3543a47ac9a5d37cb",
+          "SourceTime": 7200,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect",
+              "Result": "NORMAL"
+            }
+          ]
+        }
+      ],
+      "Status": "FOUND_READY",
+      "ReasonCode": "",
+      "VersionComparison": "PERSISTED_EQUAL"
+    },
+    {
+      "Identity": {
+        "Plan": {
+          "TenantID": "tenant",
+          "BusinessID": "2",
+          "StrategyID": "9"
+        },
+        "StateGeneration": "generation",
+        "SeriesIdentityDigest": "ba70afc8caa7b3cb02a670a27f9b14a2e0b279985d56468ca0a9d330c14329ae"
+      },
+      "BlobRevision": 1,
+      "PersistedApplyVersion": {
+        "StateApplyEpoch": 1,
+        "EvaluationTime": 7200,
+        "SlotDigest": "slot"
+      },
+      "PersistedMutationDigest": "c6b75f9a50588e172bab057d5d188b605c043632a4333dabcec2535382a9840e",
+      "LastProcessedEventTime": 7200,
+      "SeriesGuard": {
+        "Status": "WARMING",
+        "ReasonCode": "HISTORY_WARMING",
+        "WarmupRequirementRef": "warm-guard"
+      },
+      "Levels": [
+        {
+          "LevelID": 1,
+          "LevelStateCompatibility": "compat-1",
+          "HistoryCompleteness": "FULL",
+          "GapReasonCode": "",
+          "WarmupRequirementRef": "warm-1",
+          "LastProcessedEventTime": 7200
+        },
+        {
+          "LevelID": 2,
+          "LevelStateCompatibility": "compat-2",
+          "HistoryCompleteness": "GAPPED",
+          "GapReasonCode": "HISTORY_GAPPED",
+          "WarmupRequirementRef": "warm-2",
+          "LastProcessedEventTime": 7140
+        }
+      ],
+      "History": [
+        {
+          "RecordID": "6d30eca9b648c37d9c66a4fba01ec7beff99e5abf3ab9eb83bc5e7ba175b7d07",
+          "SourceTime": 7140,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "d1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "d2",
+              "Result": "UNAVAILABLE"
+            }
+          ]
+        },
+        {
+          "RecordID": "a8626d28638b7562539135a4845557cea62f56c20f8d4d6195031a93ea880ac4",
+          "SourceTime": 7200,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "d1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "d2",
+              "Result": "ERROR"
+            }
+          ]
+        }
+      ],
+      "Status": "FOUND_GAPPED",
+      "ReasonCode": "",
+      "VersionComparison": "PERSISTED_EQUAL"
+    },
+    {
+      "Identity": {
+        "Plan": {
+          "TenantID": "tenant",
+          "BusinessID": "2",
+          "StrategyID": "9"
+        },
+        "StateGeneration": "generation",
+        "SeriesIdentityDigest": "198fd8d59e6f3123e7636454e81776503fa130b9a8cb243a3db267d7f13cbf54"
+      },
+      "BlobRevision": 1,
+      "PersistedApplyVersion": {
+        "StateApplyEpoch": 1,
+        "EvaluationTime": 7200,
+        "SlotDigest": "slot"
+      },
+      "PersistedMutationDigest": "44a3614c3e0b4e8a75783a81e36aa0ce8e6b342d7e2b84a7ad32b0af17289955",
+      "LastProcessedEventTime": 7200,
+      "SeriesGuard": null,
+      "Levels": [
+        {
+          "LevelID": 1,
+          "LevelStateCompatibility": "compat-1",
+          "HistoryCompleteness": "FULL",
+          "GapReasonCode": "",
+          "WarmupRequirementRef": "warm-1",
+          "LastProcessedEventTime": 7200
+        },
+        {
+          "LevelID": 2,
+          "LevelStateCompatibility": "compat-2",
+          "HistoryCompleteness": "FULL",
+          "GapReasonCode": "",
+          "WarmupRequirementRef": "warm-2",
+          "LastProcessedEventTime": 7200
+        }
+      ],
+      "History": [
+        {
+          "RecordID": "bcbd905a6500ad8ce932c5bfe448df71ea45e995dff88b9da90b6e3aeb81ec66",
+          "SourceTime": 5460,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "66876a1307bdb95eb28c7978fced57c8bd42dd1aa4e8e8f323a92a1426371e6c",
+          "SourceTime": 5520,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "a4ebee45e9b74ac9299692a5608357ed872e4d608d172bdd3803f883fde88023",
+          "SourceTime": 5580,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "14706c175ce56f3f57e7482379ca6013bf1a1eea17e61d0be342cae95b492e04",
+          "SourceTime": 5640,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "05d60fd4df0dab34d276689021a745c7822027b3b4b31d0664247f2313630663",
+          "SourceTime": 5700,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "38d15fcaa4437fe5ced8809d968c199ded51460505afe884b9bf179f836928b8",
+          "SourceTime": 5760,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "d12b09dfcc03abdf2f68760c761c8efc2cc765e73868673bfe6160dd21a59b17",
+          "SourceTime": 5820,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "75ca86cec7161f20b552188cfbfa46874eaaf264a2e1546efdbf2065d2fb38fc",
+          "SourceTime": 5880,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "446e87a5bd1d7bfea5d838d7d7bfbda97be49a55cd64ef7c0382f0ebfd2bdd40",
+          "SourceTime": 5940,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "5d7dfedeaddeaa64496cc8131dda0cafbec35c106e436712dee772c13069e7b9",
+          "SourceTime": 6000,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "cf9279b883b692aad4c922ca216052b0711d271b513f6bd5e0992e2beccf61c4",
+          "SourceTime": 6060,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "d68050dace4e5438887518c6b4df357464a0bf0fa1bbb1d5304dbbd9bb56534f",
+          "SourceTime": 6120,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "3aca02d5e817a7c1e50c55de1047fb00b3b9dcbc1d7d9e97ea1e651e12c37626",
+          "SourceTime": 6180,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "724719f1906b05103c692d826867d86a261cafc9300ad5d6daada756825eb6fa",
+          "SourceTime": 6240,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "a0cea04642b831ee6f7bf8b7486f2f8c53d4d779181d03b4c218a31936c3d9e3",
+          "SourceTime": 6300,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "610e3cffe7dca60292f32c5fa1a8b74bbfd607dfe3c7b7736ae6202a0dfc99d8",
+          "SourceTime": 6360,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "05c92ba7a09ecfe68a5f5915f32811b6d290c494d1525ddc286bfb71ddede7d4",
+          "SourceTime": 6420,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "6c714995a33c582730a01ab236ae92c73650de51893af65438d211093c99d47b",
+          "SourceTime": 6480,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "b2f478ba558d6f55300600de4d6a8a844b6b5bf5223de00fc5d088a0564c24a2",
+          "SourceTime": 6540,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "13f4685786cf7e926f2f91b8b2a2ba3c803cdd1947bc6bac1b114d2f904c5766",
+          "SourceTime": 6600,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "92fcad0055de138aee5f45bba58a3350ecc04dd207b46041657ba4eab32de919",
+          "SourceTime": 6660,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "738fa0d88767935b4501502319bf52b194d47d7c1be5073eae50de5c3b08c35e",
+          "SourceTime": 6720,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "02e11ecf42385b94a562c953a77be0aff422bc8fed738eedca99257ac04c423e",
+          "SourceTime": 6780,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "c09eacacd2104ea410f03ab3a4816ec0393d4100a7453e426af0123d2fbfaa73",
+          "SourceTime": 6840,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "f38b2beff994852812bd35f18d9dbafee31ee68d44b0d558890978e02e76369e",
+          "SourceTime": 6900,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "3926811e6d6c4aab1c557fcbd040edd60746d1aabaf59f01613862eb32c78202",
+          "SourceTime": 6960,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "8af95d064ec41bd59ab8c48cb71c61ca1722c57746bbb768e0beb29189ddccc1",
+          "SourceTime": 7020,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "15b4a1d2cbc182d8cd5a008320cf1f84a3c279dec76f6f1d6bd4b990d1f1dcaa",
+          "SourceTime": 7080,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "ANOMALOUS"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "c1f626aca820610dbe550073e9bcf14175e6a2d05134c6e98d413da8d1a2b082",
+          "SourceTime": 7140,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        },
+        {
+          "RecordID": "7058ebb8828666cec16c88b162435283aaed318790fba9af3435aad6c74aa4d1",
+          "SourceTime": 7200,
+          "Levels": [
+            {
+              "LevelID": 1,
+              "DetectFingerprint": "detect-1",
+              "Result": "NORMAL"
+            },
+            {
+              "LevelID": 2,
+              "DetectFingerprint": "detect-2",
+              "Result": "NORMAL"
+            }
+          ]
+        }
+      ],
+      "Status": "FOUND_READY",
+      "ReasonCode": "",
+      "VersionComparison": "PERSISTED_EQUAL"
+    },
+    {
+      "Identity": {
+        "Plan": {
+          "TenantID": "tenant",
+          "BusinessID": "2",
+          "StrategyID": "9"
+        },
+        "StateGeneration": "generation",
+        "SeriesIdentityDigest": "5d88211ea433ecbcb353bf8e63c4d8441786efa5b4c93a0768985e456b57ab88"
+      },
+      "BlobRevision": 1,
+      "PersistedApplyVersion": {
+        "StateApplyEpoch": 1,
+        "EvaluationTime": 7200,
+        "SlotDigest": "slot"
+      },
+      "PersistedMutationDigest": "94cb5a450bdc04dbd53612d6cfb25184d2733dbedb5fc60416e4ee6392240550",
+      "LastProcessedEventTime": 7200,
+      "SeriesGuard": null,
+      "Levels": [
+        {
+          "LevelID": 3,
+          "LevelStateCompatibility": "compat-3",
+          "HistoryCompleteness": "WARMING",
+          "GapReasonCode": "HISTORY_WARMING",
+          "WarmupRequirementRef": "warm-3",
+          "LastProcessedEventTime": 7200
+        }
+      ],
+      "History": [
+        {
+          "RecordID": "83560b0fb126e94ef928eaf1127c9b6e1bf97178ee37e783629a8b2f8adfff0c",
+          "SourceTime": 7200,
+          "Levels": [
+            {
+              "LevelID": 3,
+              "DetectFingerprint": "detect-3",
+              "Result": "ANOMALOUS"
+            }
+          ]
+        }
+      ],
+      "Status": "FOUND_WARMING",
+      "ReasonCode": "",
+      "VersionComparison": "PERSISTED_EQUAL"
+    }
+  ]
+}

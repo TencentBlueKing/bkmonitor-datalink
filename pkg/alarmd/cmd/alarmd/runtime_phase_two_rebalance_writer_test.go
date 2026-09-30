@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
@@ -35,6 +36,7 @@ type rebalanceOwnershipStore struct {
 	publishErr    error
 
 	reads            int
+	readErr          error
 	indexRounds      [][]ownership.AssignedSetWrite
 	indexMissingOnce []string
 	indexErr         error
@@ -42,12 +44,35 @@ type rebalanceOwnershipStore struct {
 	sets             map[string]ownership.AssignedSet
 }
 
-func (store *rebalanceOwnershipStore) ListReadyWorkers(context.Context, time.Time) ([]ownership.WorkerRegistration, error) {
+func (store *rebalanceOwnershipStore) ListReadyWorkers(
+	context.Context, time.Time,
+) ([]ownership.WorkerRegistration, ownership.ControlReadStats, error) {
 	store.listCalls++
 	if store.listErr != nil {
-		return nil, store.listErr
+		return nil, ownership.ControlReadStats{}, store.listErr
 	}
-	return append([]ownership.WorkerRegistration(nil), store.workers...), nil
+	return append([]ownership.WorkerRegistration(nil), store.workers...),
+		ownership.ControlReadStats{Keys: len(store.workers), RoundTrips: 1}, nil
+}
+
+// reads counts what the round spent on Assignment records, so the batched
+// read adds one rather than one per Query Group: a round that stopped
+// batching reads as the old number, which is the thing worth noticing.
+func (store *rebalanceOwnershipStore) ReadAssignments(
+	_ context.Context,
+	queryGroups []execution.QueryGroupIdentity,
+) (map[execution.QueryGroupIdentity]ownership.AssignmentRecord, ownership.ControlReadStats, error) {
+	store.reads++
+	if store.readErr != nil {
+		return nil, ownership.ControlReadStats{}, store.readErr
+	}
+	found := make(map[execution.QueryGroupIdentity]ownership.AssignmentRecord, len(queryGroups))
+	for _, queryGroup := range queryGroups {
+		if record, ok := store.assignments[queryGroup]; ok {
+			found[queryGroup] = record
+		}
+	}
+	return found, ownership.ControlReadStats{Keys: len(queryGroups), RoundTrips: 1}, nil
 }
 
 func (store *rebalanceOwnershipStore) ReadAssignment(_ context.Context, queryGroup execution.QueryGroupIdentity) (ownership.AssignmentRecord, error) {
@@ -152,7 +177,7 @@ func TestProductionPhaseTwoOwnershipPublishesRebalanceMovesOnceTheReadySetIsStab
 				*observations = append(*observations, observation)
 			}), Reconcile: reconciler, Flights: flights, RecoveryLimits: limits, PostRecoveryTerminalDelay: time.Minute,
 			QueryDeadlineReserve: 5 * time.Second, SnapshotRetention: time.Hour, PublicationDelayAllowance: time.Minute,
-			SettlingWait: 30 * time.Second, LeaseTTL: 30 * time.Second, ReconcileInterval: 5 * time.Second,
+			SettlingWait: 30 * time.Second, LeaseTTL: 30 * time.Second, ReconcileInterval: 5 * time.Second, ContentScopes: noContentScopes,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -203,6 +228,13 @@ func TestProductionPhaseTwoOwnershipPublishesRebalanceMovesOnceTheReadySetIsStab
 		}
 		if store.published != 0 || !reflect.DeepEqual(owners(store), map[string]int{"worker-1": 3}) {
 			t.Fatalf("round 1 published %d, owners %v: a Leader's first round must not move anything", store.published, owners(store))
+		}
+		// The same round's census of the content scope, from the records it
+		// read: workers that declare no capability make it a withdrawing
+		// round, and none of the three records names a content.
+		if scope := production.LastAssignmentScope(); scope == nil || scope.Policy != fleet.AssignmentScopePolicyWithdrawn ||
+			scope.Total != 3 || scope.Declared != 0 || scope.Undeclared != 3 || !scope.At.Equal(now) || !scope.Consistent() {
+			t.Fatalf("round 1 assignment scope = %+v, want a withdrawing round over three undeclared records", scope)
 		}
 
 		at := now.Add(stabilisation)

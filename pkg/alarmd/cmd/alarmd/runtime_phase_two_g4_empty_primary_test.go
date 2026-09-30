@@ -100,7 +100,7 @@ func TestProductionPhaseTwoG4OsRestartEmptyPrimaryWithHistoryDataCompletesFullEm
 	}
 	for _, evaluationTime := range []int64{base, base + 60} {
 		clock.Store(evaluationTime + 1)
-		if err := bundle.runScheduledOnce(ctx); err != nil {
+		if err := runScheduledOnceSettled(ctx, bundle); err != nil {
 			t.Fatalf("run controlled Slot %d: %v", evaluationTime, err)
 		}
 	}

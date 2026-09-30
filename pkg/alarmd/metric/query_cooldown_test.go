@@ -10,7 +10,7 @@ import (
 
 func TestQueryCooldownMetricHasOnlyBoundedEvent(t *testing.T) {
 	r := NewRecorder(BuildInfo{})
-	for _, event := range []string{"entered", "extended", "recovered", "config_changed", "disabled", "qg-secret"} {
+	for _, event := range []string{"entered", "extended", "recovered", "query_revision_changed", "disabled", "qg-secret"} {
 		r.Observe(context.Background(), observability.Observation{Component: observability.ComponentScheduler, Stage: observability.StageQueryCooldown, Trace: observability.TraceFields{QueryGroupKey: "qg-secret"}, QueryCooldown: &observability.QueryCooldownFacts{Event: event}})
 	}
 	families, err := r.registry.Gather()

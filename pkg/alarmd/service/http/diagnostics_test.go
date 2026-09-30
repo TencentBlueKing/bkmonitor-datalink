@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -212,34 +213,81 @@ func TestQueryListenerDrainsWhileTheDiagnosticsDrainIsStillWaiting(t *testing.T)
 	queryAddress := reserveAddress(t)
 	diagnosticsAddress := reserveAddress(t)
 	server := New(metric.NewRecorder(metric.BuildInfo{}), WithDiagnosticsAddress(diagnosticsAddress))
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseRequest := func() { releaseOnce.Do(func() { close(release) }) }
+	defer releaseRequest()
+	// Keep a real diagnostics request in flight until the query listener has
+	// stopped. Pprof routing is covered separately; shutdown depends on an
+	// active handler, not on the time required to collect a CPU profile.
+	server.diagnosticsHandler = http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		close(entered)
+		<-release
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	runErrors := make(chan error, 1)
 	go func() { runErrors <- server.Run(ctx, queryAddress, 10*time.Second) }()
 	waitForStatus(t, "http://"+queryAddress+"/healthz", http.StatusOK)
 
-	profileDone := make(chan struct{})
+	requestDone := make(chan error, 1)
 	go func() {
-		defer close(profileDone)
-		// A real profile, so the diagnostics drain waits on the same thing it
-		// waits on in production.
 		response, err := http.Get("http://" + diagnosticsAddress + "/debug/pprof/profile?seconds=2") //nolint:noctx // probe
 		if err == nil {
 			response.Body.Close()
 		}
+		requestDone <- err
 	}()
-	time.Sleep(300 * time.Millisecond)
-	cancel()
-	time.Sleep(700 * time.Millisecond)
-
-	response, err := http.Get("http://" + queryAddress + "/healthz") //nolint:noctx // probe
-	if err == nil {
-		response.Body.Close()
-		t.Fatal("the query listener was still accepting while the diagnostics drain waited on a profile")
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("diagnostics request did not enter its handler")
 	}
-
-	<-profileDone
-	if err := <-runErrors; err != nil {
-		t.Fatalf("run: %v", err)
+	cancel()
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	client := &http.Client{Timeout: time.Second}
+	for {
+		response, err := client.Get("http://" + queryAddress + "/healthz") //nolint:noctx // probe
+		if err != nil {
+			break
+		}
+		response.Body.Close()
+		select {
+		case <-ticker.C:
+		case <-deadline.C:
+			t.Fatal("query listener kept accepting while the diagnostics handler was blocked")
+		}
+	}
+	select {
+	case err := <-requestDone:
+		t.Fatalf("diagnostics request ended before release: %v", err)
+	default:
+	}
+	select {
+	case err := <-runErrors:
+		t.Fatalf("Run returned before the diagnostics request drained: %v", err)
+	default:
+	}
+	releaseRequest()
+	select {
+	case err := <-requestDone:
+		if err != nil {
+			t.Fatalf("diagnostics request: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("diagnostics request did not finish after release")
+	}
+	select {
+	case err := <-runErrors:
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not finish after diagnostics drained")
 	}
 }

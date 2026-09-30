@@ -8,6 +8,7 @@ package controlplane_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -218,6 +219,30 @@ func TestFreezeSlotContractExecutesUnderTheRecordedGenerationAcrossAFormulaMove(
 	}
 	if reported := movedSink.reported(); len(reported) != 1 || reported[0] != "formula" {
 		t.Fatalf("formula skew must be reported once for the one due Plan: %v", reported)
+	}
+	// The due Plan says so, and carries the Leader's Level contract refs:
+	// the ones the Plan's records are held to and written with, derived by
+	// the Leader beside the generation, not by this Worker's formula. The
+	// Worker on the Leader's formula derives the same refs; the Worker whose
+	// formula moved derives others and must not use them.
+	if !fact.DuePlans[0].StateGenerationFormulaSkew {
+		t.Fatal("the due Plan does not say its generation was derived by another formula")
+	}
+	sameFact, err := same.FreezeSlotContract(ctx, publication.request())
+	if err != nil || sameFact.DuePlans[0].StateGenerationFormulaSkew {
+		t.Fatalf("the Worker on the Leader's formula reports a skew: %+v %v", sameFact.DuePlans, err)
+	}
+	published := fact.DuePlans[0].LevelContractRefs
+	if len(published) == 0 || !reflect.DeepEqual(published, sameFact.DuePlans[0].LevelContractRefs) {
+		t.Fatalf("the published refs %+v are not carried to every Worker alike (%+v)", published, sameFact.DuePlans[0].LevelContractRefs)
+	}
+	agreeing, err := execution.DeriveRuntimeLevelContractRefs(sameFact.DuePlans[0].CompiledPlan)
+	if err != nil || !reflect.DeepEqual(agreeing, published) {
+		t.Fatalf("the Leader's refs %+v are not what a Worker on its formula derives %+v (%v)", published, agreeing, err)
+	}
+	moving, err := execution.DeriveRuntimeLevelContractRefs(fact.DuePlans[0].CompiledPlan)
+	if err != nil || reflect.DeepEqual(moving, published) {
+		t.Fatalf("this test needs the moved Worker to derive other refs than the Leader published: %+v (%v)", moving, err)
 	}
 	// The same Slot freezes the same way again; this is what the Progress
 	// cursor relies on to move past it.

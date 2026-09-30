@@ -262,9 +262,31 @@ func workerG4Coordinator(t *testing.T) (*recordingPorts, *recordingEvaluator, *w
 	return workerG4CoordinatorWithObserver(t, observability.ObserverFunc(func(context.Context, observability.Observation) {}))
 }
 
+// workerG4CoordinatorWithEvidence is the same fixture with the mark store the
+// query-free completion reads. It is separate rather than always-on so the
+// other fixtures keep exercising the port being absent, which is a real
+// deployment and the one every earlier test already covers.
+func workerG4CoordinatorWithEvidence(
+	t *testing.T,
+	evidence *memoryEvidenceStore,
+) (*recordingPorts, *recordingEvaluator, *worker.SlotExecutionCoordinator) {
+	t.Helper()
+	ports, recorder, coordinator := workerG4CoordinatorWith(t,
+		observability.ObserverFunc(func(context.Context, observability.Observation) {}), evidence)
+	return ports, recorder, coordinator
+}
+
 func workerG4CoordinatorWithObserver(
 	t *testing.T,
 	observer observability.Observer,
+) (*recordingPorts, *recordingEvaluator, *worker.SlotExecutionCoordinator) {
+	return workerG4CoordinatorWith(t, observer, nil)
+}
+
+func workerG4CoordinatorWith(
+	t *testing.T,
+	observer observability.Observer,
+	evidence *memoryEvidenceStore,
 ) (*recordingPorts, *recordingEvaluator, *worker.SlotExecutionCoordinator) {
 	t.Helper()
 	detector, err := detect.NewEvaluator(detect.NewDefaultRegistry(), nil)
@@ -280,12 +302,16 @@ func workerG4CoordinatorWithObserver(
 	}
 	recorder := &recordingEvaluator{inner: inner}
 	trace := make([]string, 0)
-	ports := &recordingPorts{trace: &trace, ready: true}
-	coordinator, err := worker.NewSlotExecutionCoordinator(worker.Ports{OpenAlerts: ports,
+	ports := &recordingPorts{trace: &trace, ready: true, evidence: evidence}
+	workerPorts := worker.Ports{OpenAlerts: ports,
 		Finalization: ports, Activation: ports, Query: ports, Sequencer: ports, Evaluator: recorder,
 		Admission: ports, GapGuard: ports, NoData: worker.SharedNoDataStore, Hosts: worker.SharedHostBusiness, Events: ports, State: ports, Progress: ports,
 		Observer: observer,
-	}, worker.ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20,
+	}
+	if evidence != nil {
+		workerPorts.ExecutionEvidence = evidence
+	}
+	coordinator, err := worker.NewSlotExecutionCoordinator(workerPorts, worker.ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20,
 		MaxStateMutations: 100, MaxEvents: 100, MaxGapMutations: 10})
 	if err != nil {
 		t.Fatal(err)
@@ -316,7 +342,7 @@ func workerSlotRequest(contractRef execution.FrozenExecutionContractRef) executi
 		Contract: contractRef,
 		DuePlanTargets: execution.FrozenDuePlanTargets{
 			DuePlanSetDigest: contractRef.DuePlanSetDigest,
-			Plans:            []execution.PlanIdentity{planIdentity()},
+			Plans:            []execution.PlanKey{{PlanIdentity: planIdentity()}},
 		},
 		EarliestQueryDeadlineUnixMilli: int64(contractRef.Slot.EvaluationTime)*1000 + 1_000,
 		RecoveryUntilUnixMilli:         int64(contractRef.Slot.EvaluationTime)*1000 + 601_000,

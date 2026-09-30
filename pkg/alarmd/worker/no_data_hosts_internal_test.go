@@ -105,7 +105,8 @@ func (store *rememberingNoDataStore) LoadNoData(
 			Identity: item.Identity, Status: execution.NoDataMemoryFound, MarkerRevision: 1,
 			SchemaVersion: execution.NoDataMemorySchemaV1, PersistedApplyVersion: item.ApplyVersion,
 			PersistedMutationDigest: "digest", LastScheduleRevision: item.ScheduleRevision,
-			RosterVersion: "HISTORY/1", Groups: store.groups,
+			RosterVersion: "HISTORY/1", Representation: execution.NoDataRepresentationPerGroup,
+			Groups: store.groups,
 		}
 	}
 	return result, nil

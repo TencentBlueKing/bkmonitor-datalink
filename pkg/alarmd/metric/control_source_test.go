@@ -126,3 +126,19 @@ func TestControlSourceCollectorReportsStateAtScrapeTime(t *testing.T) {
 		t.Fatalf("age a minute later = %v, want 480", age[0].GetGauge().GetValue())
 	}
 }
+
+// The pending age is the leader's: a follower refreshes nothing and emits no
+// series, rather than a zero that reads as "nothing waiting"; the leader
+// emits it, zero included.
+func TestThePendingAgeIsEmittedByTheLeaderOnly(t *testing.T) {
+	r := NewRecorder(BuildInfo{})
+	stats := ControlSourceStats{Known: true, Role: observability.ControlSourceRoleFollower, Mode: observability.ControlSourceModeHealthy}
+	r.SetControlSourceSource(func() ControlSourceStats { return stats })
+	if series := gatherFamily(t, r, "bkmonitor_alarmd_source_pending_confirmation_age_seconds"); len(series) != 0 {
+		t.Fatalf("a follower emitted %v", series)
+	}
+	stats.Role, stats.Leading = observability.ControlSourceRoleLeader, true
+	if series := gatherFamily(t, r, "bkmonitor_alarmd_source_pending_confirmation_age_seconds"); len(series) != 1 || series[0].GetGauge().GetValue() != 0 {
+		t.Fatalf("the leader emitted %v, want one series at 0", series)
+	}
+}

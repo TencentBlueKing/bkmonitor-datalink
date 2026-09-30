@@ -43,7 +43,7 @@ func TestRedisBackendStoreRoundTripTTLAndReconnect(t *testing.T) {
 		t.Fatalf("MGet(cancelled) error = %v, want context.Canceled", err)
 	}
 
-	router, err := NewFixedRouter("monitor-01", backend)
+	router, err := NewFixedRouter("state-01", backend)
 	if err != nil {
 		t.Fatalf("NewFixedRouter() error = %v", err)
 	}
@@ -54,7 +54,7 @@ func TestRedisBackendStoreRoundTripTTLAndReconnect(t *testing.T) {
 	store, err := NewStore(StoreOptions{
 		Prefix: "alarmd-integration", Codec: codec, Router: router,
 		Limits: StoreLimits{MaxKeysPerBatch: 4, MaxKeyBytesPerBatch: 4096, MaxLoadedBytes: 16 << 10, MaxWrittenBytes: 16 << 10},
-		MinTTL: time.Second, MaxTTL: time.Minute,
+		MinTTL: time.Second, MaxTTL: 2 * time.Minute,
 	})
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)

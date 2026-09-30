@@ -426,3 +426,45 @@ func TestALongErrorIsBoundedAndSaysItWasCut(t *testing.T) {
 		t.Error("no error rendered as something")
 	}
 }
+
+// A window opened on an object records the failed writes of its events, with
+// the error's words: the one observation whose text says why the events did
+// not go. Successful ACKs are not recorded -- the completion line already
+// carries that, and a record per ACK would be the completion's volume again.
+// Six objects on a live deployment failed every event write for an
+// afternoon and a window on them recorded nothing of it.
+func TestTargetFlowRecordsFailedEventWritesWithTheirWords(t *testing.T) {
+	f, b := newTestFlow(t)
+	ctx := f.Context(context.Background(), flowQG)
+	for i := 0; i < 50; i++ {
+		f.Observe(ctx, Observation{Component: ComponentOutput, Stage: StageEventACKed, Result: ResultSuccess, Trace: TraceFields{QueryGroupKey: flowQG}})
+	}
+	if f.records != 0 {
+		t.Fatalf("successful event writes were recorded: %d", f.records)
+	}
+	refusal := errors.New("kafka trigger event sink: publish batch: kafka decision sink: send batch: 1 of 1 messages failed, first: kafka: invalid configuration (Producing headers requires Kafka at least v0.11)")
+	f.Observe(ctx, Observation{Component: ComponentOutput, Stage: StageEventACKed, Result: ResultFailed, ReasonCode: "OUTPUT_ACK_UNKNOWN",
+		Err: refusal, Trace: TraceFields{QueryGroupKey: flowQG, EvaluationTime: 1_700_000_000}})
+	if f.records != 1 {
+		t.Fatalf("the failed event write was not recorded: %d records", f.records)
+	}
+	var record targetFlowRecord
+	lines := bytes.Split(bytes.TrimSpace(b.Bytes()), []byte("\n"))
+	if e := json.Unmarshal(lines[len(lines)-1], &record); e != nil {
+		t.Fatal(e)
+	}
+	if record.Stage != string(StageEventACKed) || record.Result != string(ResultFailed) || record.Reason != "OUTPUT_ACK_UNKNOWN" ||
+		!strings.Contains(record.Failure, "Producing headers requires Kafka at least v0.11") {
+		t.Fatalf("record = %+v, want the failed write with the client's own sentence", record)
+	}
+	// A failed write on an object the window is not open on is not recorded.
+	f.Observe(ctx, Observation{Component: ComponentOutput, Stage: StageEventACKed, Result: ResultFailed, Err: refusal, Trace: TraceFields{QueryGroupKey: "brother"}})
+	if f.records != 1 {
+		t.Fatalf("a brother's failed write was recorded: %d", f.records)
+	}
+	// And the failed write is a critical record: it is what the window was
+	// opened to see, so it holds its place when the budget is spent.
+	if !targetFlowCritical(string(StageEventACKed), TargetFlowFacts{}) {
+		t.Fatal("a failed event write is not reserved a place in the budget")
+	}
+}

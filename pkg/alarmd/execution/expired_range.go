@@ -119,9 +119,13 @@ func (p ExpiredRangeProjectionV1) validateFacts() error {
 		return bad()
 	}
 	for _, projection := range []UnfinishedSlotProjection{p.First, p.Last} {
+		// Compared by identity: the Schedule's Plans are one Query Group's,
+		// and a Query Group holds one piece of a strategy, so within it the
+		// identity names the piece. The Schedule entry does not carry the
+		// piece; the targets do, and only the identity half is read here.
 		targets := make(map[PlanIdentity]struct{}, len(projection.DuePlanTargets.Plans))
 		for _, target := range projection.DuePlanTargets.Plans {
-			targets[target] = struct{}{}
+			targets[target.PlanIdentity] = struct{}{}
 		}
 		ref := projection.Contract
 		segment := p.Schedule.Segment
@@ -166,6 +170,11 @@ func (p ExpiredRangeProjectionV1) validateFacts() error {
 type ExpiredRangeRequest struct {
 	OwnerFence OwnerFence
 	Projection ExpiredRangeProjectionV1
+	// ContentScope is declared to the fence of this write: the ObjectDigest
+	// of the Segment the range lies on (Projection.Schedule.Segment), which
+	// the sealed projection already carries -- it is not a second sealed
+	// field, so proofs sealed before this existed still verify.
+	ContentScope string
 }
 
 func (r ExpiredRangeRequest) Validate() error {

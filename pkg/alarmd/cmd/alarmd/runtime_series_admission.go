@@ -8,6 +8,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -16,6 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/cmdbcache"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 // How often the CMDB host index is rebuilt, and how old it may get before the
@@ -34,6 +37,12 @@ const (
 	cmdbIndexStalenessBound  = 10 * cmdbIndexRefreshInterval
 )
 
+// How often one plan may describe its object-identity rejections in the log.
+// The counter carries the volume; the line carries the two sides that
+// disagreed, and one such line per plan per minute is enough to read the
+// mismatch off and few enough not to be the log.
+const identityReportWindow = time.Minute
+
 // buildSeriesAdmission assembles the access-path decision: enrich a series with
 // the CMDB facts its strategy filters on, then admit it only inside that
 // strategy's monitoring target.
@@ -47,7 +56,9 @@ func buildSeriesAdmission(
 	cfg config.Config,
 	client redis.Cmdable,
 	recorder *metric.Recorder,
+	logger *observability.Logger,
 	hostStatus *dynamicHostStatusFilter,
+	wait startupWaiter,
 ) (*admission.Chain, *cmdbcache.Store, error) {
 	// The platform states its key prefix once and both of its caches hang off
 	// it, so the CMDB cache key comes from that one spelling.
@@ -67,19 +78,69 @@ func buildSeriesAdmission(
 	// worker that started without one would decide every scoped strategy's
 	// series to be out of scope and silently stop alerting for them. This is
 	// not a new dependency to fail on: the cache is on the database alarmd
-	// already needs to run at all.
-	if err := store.Refresh(ctx); err != nil {
+	// already needs to run at all. A cache that does not answer is waited on
+	// in place: the replica stays not ready, which is the same "no
+	// evaluation without an index" this line exists for.
+	if err := wait.await(ctx, "cmdb_index", store.Refresh); err != nil {
 		return nil, nil, fmt.Errorf("alarmd: build the CMDB host index the target filter decides on: %w", err)
 	}
 	publishCMDBIndexHealth(recorder, store)
 
-	filters := seriesAdmissionFilters(hostStatus)
+	filters := seriesAdmissionFilters(hostStatus, newIdentityReporter(logger, time.Now))
 	recorder.SetHostDisableMonitorStates(hostDisableMonitorStateCount(filters))
+	// Python's order: the record's own identities, then the host it names,
+	// then the service instance it names - which may re-place it under the
+	// instance's module and host.
 	chain := admission.NewChain(
-		[]admission.Fuller{admission.IdentityFuller{}, cmdbcache.NewHostTopologyFuller(store)},
+		[]admission.Fuller{
+			admission.IdentityFuller{},
+			cmdbcache.NewHostTopologyFuller(store),
+			cmdbcache.NewServiceInstanceTopologyFuller(store),
+		},
 		filters,
 	)
 	return chain, store, nil
+}
+
+// newIdentityReporter writes one plan's object-identity rejections as a log
+// line with the two sides that disagreed, at most once per plan, reason and
+// window. Both sides are coordinates - dimension names, and the model and
+// instance identifiers a target and a record name each other by - which the
+// log envelope admits; no metric value or payload reaches the line.
+func newIdentityReporter(logger *observability.Logger, now func() time.Time) *admission.IdentityReporter {
+	if logger == nil {
+		return nil
+	}
+	return admission.NewIdentityReporter(now, identityReportWindow, func(report admission.IdentityReport) {
+		attributes := []slog.Attr{
+			slog.String("reason", report.Reason),
+			slog.String("bk_tenant_id", report.TenantID),
+			slog.String("bk_biz_id", report.BusinessID),
+			slog.String("strategy_id", report.StrategyID),
+			slog.Uint64("rejections", report.Count),
+		}
+		if len(report.ExpectedPairs) > 0 {
+			attributes = append(attributes,
+				slog.String("expected_dimension_pairs", identityPairsText(report.ExpectedPairs)),
+				slog.String("record_dimensions", strings.Join(report.DimensionNames, ",")),
+			)
+		}
+		if len(report.CandidateKeys) > 0 || len(report.TargetKeys) > 0 {
+			attributes = append(attributes,
+				slog.String("record_keys", strings.Join(report.CandidateKeys, ",")),
+				slog.String("target_keys_sample", strings.Join(report.TargetKeys, ",")),
+			)
+		}
+		logger.Info("series_admission", "rejected", int(report.Count), 0, attributes...)
+	})
+}
+
+func identityPairsText(pairs [][2]string) string {
+	parts := make([]string, 0, len(pairs))
+	for _, pair := range pairs {
+		parts = append(parts, pair[0]+"|"+pair[1])
+	}
+	return strings.Join(parts, ",")
 }
 
 // maintainCMDBIndex keeps the index fresh for as long as the process runs and
@@ -108,6 +169,7 @@ func publishCMDBIndexHealth(recorder *metric.Recorder, store *cmdbcache.Store) {
 	recorder.SetCMDBHostIndex(
 		health.Hosts, health.Age.Seconds(), health.SourceAge.Seconds(), health.Degraded, health.DegradedReason,
 	)
+	recorder.SetCMDBServiceInstanceIndex(health.ServiceInstances)
 }
 
 // seriesAdmissionFilters is the access-path filter chain, in Python's order:
@@ -120,8 +182,10 @@ func publishCMDBIndexHealth(recorder *metric.Recorder, store *cmdbcache.Store) {
 // same resolution the platform's own consumers apply, so the list in force
 // here is the list in force there. It follows the copy when the platform
 // changes it, through the filter's own swap, without a restart.
-func seriesAdmissionFilters(hostStatus *dynamicHostStatusFilter) []admission.Filter {
-	filters := []admission.Filter{admission.TargetScopeFilter{}}
+func seriesAdmissionFilters(hostStatus *dynamicHostStatusFilter, reporter *admission.IdentityReporter) []admission.Filter {
+	// The two target filters are told apart by which frozen form the Plan
+	// carries; a Plan carries at most one, so at most one of them decides.
+	filters := []admission.Filter{admission.TargetScopeFilter{Reporter: reporter}, admission.TargetPlanFilter{}}
 	if hostStatus != nil {
 		filters = append(filters, hostStatus)
 	}
@@ -139,4 +203,31 @@ func hostDisableMonitorStateCount(filters []admission.Filter) int {
 		}
 	}
 	return 0
+}
+
+// buildTargetResolver assembles what resolves a target plan's dynamic
+// references (decision-017): the dynamic group store, when the deployment
+// renders the fork's key prefix, and the host index for topology nodes.
+// Without the prefix there is no group store, and every dynamic group
+// selector resolves unavailable by name rather than empty; topology
+// references still resolve against the host index.
+//
+// The group store reads its configured target group connection and refreshes the
+// referenced groups on the host index's cadence with its staleness bound.
+func buildTargetResolver(cfg config.Config, client redis.Cmdable, hosts *cmdbcache.Store) (*cmdbcache.TargetResolver, *cmdbcache.GroupStore, error) {
+	prefix, rendered := cfg.DynamicGroupKeyPrefix()
+	if !rendered {
+		return cmdbcache.NewTargetResolver(nil, hosts, time.Now), nil, nil
+	}
+	reader, err := cmdbcache.NewGroupReader(client, prefix)
+	if err != nil {
+		return nil, nil, err
+	}
+	groups, err := cmdbcache.NewGroupStore(reader, cmdbcache.GroupStoreOptions{
+		RefreshInterval: cmdbIndexRefreshInterval, MaxAge: cmdbIndexStalenessBound,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return cmdbcache.NewTargetResolver(groups, hosts, time.Now), groups, nil
 }

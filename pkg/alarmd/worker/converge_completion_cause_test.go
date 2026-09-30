@@ -66,7 +66,7 @@ func convergeDriftedSlot(t *testing.T, completeness execution.Completeness) (exe
 		OwnerFence:       execution.OwnerFence{QueryGroup: "query-group", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "lease-1"},
 		ExpectedNextSlot: contractRef.Slot.EvaluationTime,
 		DuePlanTargets: execution.FrozenDuePlanTargets{
-			DuePlanSetDigest: contractRef.DuePlanSetDigest, Plans: []execution.PlanIdentity{plan},
+			DuePlanSetDigest: contractRef.DuePlanSetDigest, Plans: []execution.PlanKey{{PlanIdentity: plan}},
 		},
 		EarliestQueryDeadlineUnixMilli: 1_788_000_060_000,
 		KeepUntilUnixMilli:             1_788_000_600_000,
@@ -89,6 +89,7 @@ func convergeDriftedSlot(t *testing.T, completeness execution.Completeness) (exe
 			Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 				if observation.Stage == observability.StageProgressCommitted {
 					ports.committedCauses = append(ports.committedCauses, observation.ProgressCompletionCause)
+					ports.committedPrimary = append(ports.committedPrimary, observation.PrimaryInput)
 				}
 			}),
 		},
@@ -97,7 +98,7 @@ func convergeDriftedSlot(t *testing.T, completeness execution.Completeness) (exe
 	// The Plan is no longer activated, which is what drift means here: nothing
 	// is left to protect, so convergence goes straight to the commit that
 	// carries the completion. That is the branch under test.
-	activationRequest := execution.PlanActivationRequest{Contract: contractRef, Plans: []execution.PlanIdentity{plan}}
+	activationRequest := execution.PlanActivationRequest{Contract: contractRef, Plans: []execution.PlanKey{{PlanIdentity: plan}}}
 	deselected := execution.PlanActivationResult{
 		Contract: contractRef,
 		Facts:    []execution.PlanActivationFact{{Plan: plan, Selection: execution.ActivationNone}},
@@ -113,11 +114,20 @@ func convergeDriftedSlot(t *testing.T, completeness execution.Completeness) (exe
 	if err != nil {
 		t.Fatalf("convergeNormalActivation() error: %v", err)
 	}
+	// What the primary answered rides the same line as the cause: it is
+	// the fact a hole on a later window is read against, and a line that
+	// carries the cause and not the answer sends every such hole to
+	// "not in memory".
+	if len(ports.committedPrimary) != 1 || ports.committedPrimary[0] == nil ||
+		ports.committedPrimary[0].Completeness != string(completeness) || ports.committedPrimary[0].DataState != string(primary.DataState) {
+		t.Fatalf("committed primary=%+v, want %s with %q on the completion line", ports.committedPrimary, completeness, primary.DataState)
+	}
 	return result, ports.committedCauses
 }
 
 type convergeObservingPorts struct {
-	committedCauses []string
+	committedCauses  []string
+	committedPrimary []*observability.PrimaryInputFacts
 }
 
 func (*convergeObservingPorts) Sequence(ctx context.Context, _ execution.SequencingScope, run func(context.Context) error) error {
@@ -127,7 +137,7 @@ func (*convergeObservingPorts) Sequence(ctx context.Context, _ execution.Sequenc
 func (*convergeObservingPorts) LoadActivations(_ context.Context, request execution.PlanActivationRequest) (execution.PlanActivationResult, error) {
 	result := execution.PlanActivationResult{Contract: request.Contract}
 	for _, plan := range request.Plans {
-		result.Facts = append(result.Facts, execution.PlanActivationFact{Plan: plan, Selection: execution.ActivationNone})
+		result.Facts = append(result.Facts, execution.PlanActivationFact{Plan: plan.PlanIdentity, Selection: execution.ActivationNone})
 	}
 	return result, nil
 }
@@ -174,4 +184,10 @@ func (*convergeObservingPorts) BeginSlot(context.Context, execution.ProgressBegi
 
 func (*convergeObservingPorts) CommitProgress(context.Context, execution.ProgressCommitRequest) (execution.ProgressCommitResult, error) {
 	return execution.ProgressCommitResult{Status: execution.ProgressCommitted}, nil
+}
+
+func (*convergeObservingPorts) RenewFrozenRuntime(
+	_ context.Context, request execution.FrozenStateRenewalRequest,
+) (execution.FrozenStateRenewalResult, error) {
+	return freshFrozenRenewals(request), nil
 }

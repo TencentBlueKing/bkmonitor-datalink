@@ -20,7 +20,11 @@ func TestMissingHistoryFromFullPersistsCurrentFactAndConvergesAfterReplay(t *tes
 	}
 	request := requestFixtureForPlan(t, plan, []contract.CanonicalRecordV2{g4Record(720, "80", nil)}, history)
 	request.State.Items[0].Levels[0].LastProcessedEventTime = 660
-	request.Inputs = []execution.SeriesEvaluationInputRequest{g4Input(t, request, map[string][]contract.CanonicalRecordV2{"primary": {g4Record(720, "80", nil)}})}
+	// The dependency holds this series' data at a time the algorithm does not
+	// ask for: the per-series missing point, guarded by the Level state
+	// written for the series.
+	request.Inputs = []execution.SeriesEvaluationInputRequest{g4Input(t, request, map[string][]contract.CanonicalRecordV2{
+		"primary": {g4Record(720, "80", nil)}, "previous": {g4OffsetMissRecord(660, "100")}})}
 	evaluator := newEvaluator(t)
 	evaluate := func(request execution.EvaluationRequest) execution.PlanEvaluationResult {
 		t.Helper()
@@ -41,8 +45,9 @@ func TestMissingHistoryFromFullPersistsCurrentFactAndConvergesAfterReplay(t *tes
 	if len(result.StateResults[0].Events) != 0 || len(result.GuardAfterState) != 0 || mutation.SeriesGuard != nil || len(mutation.Levels) != 1 || mutation.Levels[0].HistoryCompleteness != execution.HistoryGapped || mutation.Levels[0].GapReasonCode != execution.ReasonCode(contract.ReasonHistoryGapped) {
 		t.Fatalf("gap scope or reason %+v", result)
 	}
-	if len(mutation.Points) != 2 || !reflect.DeepEqual(mutation.Points[0], history[1]) || mutation.Points[1].SourceTime != 720 || len(mutation.Points[1].Levels) != 1 || mutation.Points[1].Levels[0].Result != execution.LevelFactUnavailable {
-		t.Fatalf("retained history/current unavailable %+v", mutation.Points)
+	record := recordLeftBehind(t, mutation)
+	if len(record) != 2 || !reflect.DeepEqual(record[0], history[1]) || record[1].SourceTime != 720 || len(record[1].Levels) != 1 || record[1].Levels[0].Result != execution.LevelFactUnavailable {
+		t.Fatalf("retained history/current unavailable %+v", record)
 	}
 	if err := mutation.ValidateDigest(); err != nil {
 		t.Fatal(err)
@@ -85,7 +90,13 @@ func TestMissingHistoryFromFullPersistsCurrentFactAndConvergesAfterReplay(t *tes
 		}
 		currentMutation := current.StateResults[0].Mutation
 		if i < 2 {
-			if current.LevelOutcomes[0].Outcome != execution.LevelOutcomeUnknown || currentMutation.Levels[0].HistoryCompleteness != execution.HistoryGapped {
+			// The guard is what this case is about and it is unchanged: the
+			// Level stays GAPPED until its detection window is whole again.
+			// The business outcome is a separate question - these rounds each
+			// answer their own recovery window, so since decision-022 they
+			// close what is open while staying guarded. Before, the guard
+			// answered both and this read UNKNOWN.
+			if current.LevelOutcomes[0].Outcome != execution.LevelOutcomeRecovery || currentMutation.Levels[0].HistoryCompleteness != execution.HistoryGapped {
 				t.Fatalf("guard cleared before window refilled %+v", current)
 			}
 		} else if current.LevelOutcomes[0].Outcome == execution.LevelOutcomeUnknown || currentMutation.Levels[0].HistoryCompleteness != execution.HistoryFull || currentMutation.Levels[0].GapReasonCode != "" {

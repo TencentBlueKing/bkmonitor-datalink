@@ -105,7 +105,15 @@ func (evaluator *Evaluator) evaluateLevel(
 		if !projection.view.Available {
 			truths = append(truths, algorithmTruthUnknown)
 			unknown = true
-			if unknownReason == "" {
+			// Folded over every unavailable input of this Level rather than
+			// taken from the first one in algorithm order. The reason chosen
+			// here becomes the Level's UNKNOWN reason, which the gap marker's
+			// reason has to match; taking the first meant two derivations
+			// walking the same inputs in different orders, and a Level whose
+			// inputs failed differently made them disagree -- which refused
+			// the Plan's whole evaluation, every round, for as long as the two
+			// inputs kept failing differently.
+			if strongerUnknownReason(unknownReason, projection.view.ReasonCode) {
 				unknownReason = projection.view.ReasonCode
 				unknownEvidence = ThresholdEvidence{
 					ProjectedValueOrdinal: projectionOrdinal, HasProjectedValue: true, ResultReason: projection.view.ReasonCode,
@@ -125,7 +133,7 @@ func (evaluator *Evaluator) evaluateLevel(
 			unknown = true
 			terminal = true
 			truths = append(truths, algorithmTruthUnknown)
-			if unknownReason == "" {
+			if strongerUnknownReason(unknownReason, controlled.ReasonCode) {
 				unknownReason = controlled.ReasonCode
 				unknownEvidence = ThresholdEvidence{
 					ProjectedValueOrdinal: projectionOrdinal, HasProjectedValue: true, ResultReason: controlled.ReasonCode,
@@ -300,4 +308,20 @@ func checkedMul(left, right uint64) (uint64, bool) {
 		return 0, false
 	}
 	return left * right, true
+}
+
+// strongerUnknownReason reports whether a newly met unavailable input's reason
+// replaces the one this Level has so far.
+//
+// The Level's UNKNOWN reason used to be the first one met, in algorithm order.
+// The gap marker for the same scope is folded over the same inputs, and the
+// result contract requires the two to be equal, so "first in algorithm order"
+// and "the fold" disagreeing was a Plan that could not finish a round -- on
+// every round, for as long as two of its inputs kept failing differently.
+//
+// It is one function rather than the same condition written at each site it is
+// needed: the two are one rule about one Level, and a rule stated twice is a
+// rule that can come to be stated differently.
+func strongerUnknownReason(current, candidate string) bool {
+	return candidate != current && contract.FoldGapReason([]string{candidate, current}) == candidate
 }

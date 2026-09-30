@@ -11,6 +11,7 @@ package metadata
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
@@ -39,6 +40,18 @@ func WithLeftOpenTimeWindow(ctx context.Context) context.Context {
 func IsLeftOpenTimeWindow(ctx context.Context) bool {
 	leftOpen, _ := ctx.Value(leftOpenTimeWindowKey{}).(bool)
 	return leftOpen
+}
+
+type namedOutputScopeContextKey struct{}
+
+// WithNamedOutputScope isolates mutable query metadata while retaining request metadata.
+func WithNamedOutputScope(ctx context.Context, index int) context.Context {
+	scoped := context.WithValue(ctx, namedOutputScopeContextKey{}, strconv.Itoa(index))
+	params := *GetQueryParams(ctx)
+	params.ctx = scoped
+	params.StorageType = set.New[string]()
+	params.set()
+	return scoped
 }
 
 // QueryParams 查询信息

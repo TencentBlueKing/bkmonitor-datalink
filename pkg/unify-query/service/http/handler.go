@@ -177,11 +177,6 @@ func HandlerQueryExemplar(c *gin.Context) {
 		return
 	}
 
-	if err = rejectFieldSemantics(query); err != nil {
-		resp.failed(ctx, err)
-		return
-	}
-
 	// metadata 中的 spaceUid 是从 header 头信息中获取
 	if user.SpaceUID != "" {
 		query.SpaceUid = user.SpaceUID
@@ -256,11 +251,6 @@ func HandlerQueryRaw(c *gin.Context) {
 	decoder.UseNumber()
 	err = decoder.Decode(queryTs)
 	if err != nil {
-		resp.failed(ctx, err)
-		return
-	}
-
-	if err = rejectFieldSemantics(queryTs); err != nil {
 		resp.failed(ctx, err)
 		return
 	}
@@ -357,10 +347,6 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	decoder.UseNumber()
 	err = decoder.Decode(queryTs)
 	if err != nil {
-		return
-	}
-
-	if err = rejectFieldSemantics(queryTs); err != nil {
 		return
 	}
 
@@ -478,11 +464,6 @@ func HandlerQueryTs(c *gin.Context) {
 		return
 	}
 
-	if err = validateFieldSemanticsRequest(query); err != nil {
-		resp.failed(ctx, err)
-		return
-	}
-
 	// metadata 中的 spaceUid 是从 header 头信息中获取，header 如果有的话，覆盖参数里的
 	if user.SpaceUID != "" {
 		query.SpaceUid = user.SpaceUID
@@ -538,16 +519,6 @@ func HandlerQueryTs(c *gin.Context) {
 		return
 	}
 
-	ack, ackErr := fieldSemanticsAcknowledgement(ctx, query, res)
-	if ackErr != nil {
-		err = ackErr
-		resp.failed(ctx, err)
-		return
-	}
-	if ack {
-		c.Header(fieldSemanticsHeader, metadata.FTAEventTagsV1)
-	}
-
 	span.Set("resp-size", fmt.Sprint(unsafe.Sizeof(res)))
 
 	resp.success(ctx, res)
@@ -562,9 +533,9 @@ func HandlerQueryTs(c *gin.Context) {
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      structured.QueryPromQL  		true   "json data"
-// @Success  200                   	{object}  PromData
+// @Success  200                   	{object}  QueryTsResponse
 // @Failure  400                   	{object}  ErrResponse
-// @Router   /query/promql [post]
+// @Router   /query/ts/promql [post]
 func HandlerQueryPromQL(c *gin.Context) {
 	var (
 		ctx = c.Request.Context()
@@ -611,6 +582,15 @@ func HandlerQueryPromQL(c *gin.Context) {
 			metadata.MsgQueryPromQL,
 			"查询语句不能为空",
 		).Error(ctx, err))
+		return
+	}
+	if queryPromQL.ResponseContract != "" || queryPromQL.LegacyOutputRef != "" || len(queryPromQL.OutputList) > 0 {
+		res, queryErr := queryPromQLNamedOutputs(ctx, queryPromQL)
+		if queryErr != nil {
+			resp.failed(ctx, queryErr)
+			return
+		}
+		resp.success(ctx, res)
 		return
 	}
 
@@ -673,11 +653,6 @@ func HandlerQueryReference(c *gin.Context) {
 			metadata.MsgQueryReference,
 			"json 格式解析异常",
 		).Error(ctx, err))
-		return
-	}
-
-	if err = rejectFieldSemantics(query); err != nil {
-		resp.failed(ctx, err)
 		return
 	}
 
@@ -751,11 +726,6 @@ func HandlerQueryTsClusterMetrics(c *gin.Context) {
 		).Error(ctx, err))
 		return
 	}
-	if err = rejectFieldSemantics(query); err != nil {
-		resp.failed(ctx, err)
-		return
-	}
-
 	queryStr, _ := json.Marshal(query)
 
 	metadata.NewMessage(

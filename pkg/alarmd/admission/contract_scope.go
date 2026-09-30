@@ -26,10 +26,15 @@ func TargetScopeFromContract(source *contract.TargetScopeV2) *TargetScope {
 			for _, key := range condition.Keys {
 				keys[key] = struct{}{}
 			}
+			var pairs [][2]string
+			if len(condition.IdentityFields) > 0 {
+				pairs = append([][2]string(nil), condition.IdentityFields...)
+			}
 			converted.Conditions = append(converted.Conditions, TargetScopeCondition{
-				Field:  TargetScopeField(condition.Field),
-				Method: TargetScopeMethod(condition.Method),
-				Keys:   keys,
+				Field:          TargetScopeField(condition.Field),
+				Method:         TargetScopeMethod(condition.Method),
+				Keys:           keys,
+				IdentityFields: pairs,
 			})
 		}
 		scope.Groups = append(scope.Groups, converted)

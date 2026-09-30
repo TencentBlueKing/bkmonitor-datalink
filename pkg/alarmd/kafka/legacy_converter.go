@@ -7,6 +7,11 @@ import (
 )
 
 type LegacyConvertedEvent = legacyoutput.Event
+
+// LegacyEventConverter converts a group of events one by one: the events
+// and errors it returns are aligned with the group, an event it will not
+// write fails alone, and the third result is a failure that says nothing
+// about the events (legacyoutput.SnapshotStoreError, a cancelled context).
 type LegacyEventConverter interface {
-	ConvertBatch(context.Context, []contract.TriggerEventV1) ([]LegacyConvertedEvent, error)
+	ConvertEach(context.Context, []contract.TriggerEventV1) ([]LegacyConvertedEvent, []error, error)
 }

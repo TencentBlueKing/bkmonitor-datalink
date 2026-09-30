@@ -82,7 +82,7 @@ func TestWorkflowPermitWaitCountsEveryReturnOnce(t *testing.T) {
 }
 
 func TestWorkflowRunnerActualExits(t *testing.T) {
-	for _, name := range []string{"single_flight_busy", "ownership_rejected", "source_backoff", "source_retry", "source_blocked", "source_not_due", "source_error", "operation_not_ready", "admission_denied", "execute_returned", "cancelled", "other_error"} {
+	for _, name := range []string{"single_flight_busy", "ownership_rejected", "source_backoff", "source_retry", "source_blocked", "view_not_executable", "source_not_due", "source_error", "operation_not_ready", "admission_denied", "execute_returned", "cancelled", "other_error"} {
 		t.Run(name, func(t *testing.T) {
 			now := time.Unix(100, 0)
 			slot := frozenSlot("query-group-1")
@@ -115,6 +115,9 @@ func TestWorkflowRunnerActualExits(t *testing.T) {
 				expectedAttempted = true
 			case "source_blocked":
 				source.err = &SourceBlockedError{Err: errors.New("blocked")}
+				expectedAttempted = true
+			case "view_not_executable":
+				source.err = &ViewNotExecutableError{Reason: "not_in_view"}
 				expectedAttempted = true
 			case "source_not_due":
 				source.slot = FrozenSlot{}

@@ -107,9 +107,16 @@ func RepairOpenSegments(
 		return OpenSegmentRepairReport{}, errors.New(
 			"alarmd controlplane: applying a repair requires an evidence directory")
 	}
-	activation, err := repository.LoadActivation(ctx)
+	activation, err := repository.LoadActivationHead(ctx)
 	if err != nil {
 		return OpenSegmentRepairReport{}, err
+	}
+	// It repairs open Segments towards the current publication's manifest.
+	// While a cutover is in progress the Query Groups past its cursor are
+	// meant to run the one before, and repairing them would cut them over
+	// behind the cutover's back.
+	if activation.CutoverProgress != nil {
+		return OpenSegmentRepairReport{}, ErrCutoverInProgress
 	}
 	revision := activation.Current.SnapshotRevision
 	if revision == "" {

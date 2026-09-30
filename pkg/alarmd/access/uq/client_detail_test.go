@@ -85,8 +85,7 @@ func TestClientRecordsClosedConnectionDetail(t *testing.T) {
 }
 
 func TestClientRecordsTimeoutDetail(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { time.Sleep(200 * time.Millisecond) }))
-	defer server.Close()
+	server := stalledResponseServer(t)
 	client, err := NewClient(server.URL, "alarmd-shadow", server.Client())
 	if err != nil {
 		t.Fatal(err)

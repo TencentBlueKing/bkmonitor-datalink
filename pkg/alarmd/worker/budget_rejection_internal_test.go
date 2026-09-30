@@ -21,7 +21,7 @@ func TestBudgetRejectionLogsSnapshotWithoutMutatingSibling(t *testing.T) {
 	if err := sibling.reserveProvisional(context.Background(), 1, 60); err != nil {
 		t.Fatal(err)
 	}
-	sibling.series, sibling.retained = 1, 60
+	sibling.series, sibling.retainedByPhase = 1, retainedSeed(60)
 	defer sibling.releaseProvisional()
 	failing := &streamedExecution{coordinator: co, began: true, request: execution.SlotExecutionRequest{Operation: execution.OperationNormal}}
 	err := failing.reserveProvisional(context.Background(), 1, 50)
@@ -29,7 +29,7 @@ func TestBudgetRejectionLogsSnapshotWithoutMutatingSibling(t *testing.T) {
 	if !errors.As(err, &exceeded) || err.Error() != "alarmd worker: provisional retained_bytes budget exceeded" {
 		t.Fatalf("error=%v", err)
 	}
-	if co.reservations.series != 1 || co.reservations.retainedBytes != 60 || failing.retained != 0 {
+	if co.reservations.series != 1 || co.reservations.retainedBytes != 60 || failing.retainedTotal() != 0 {
 		t.Fatal("failed reservation mutated state")
 	}
 	var event map[string]any
@@ -46,7 +46,7 @@ func TestBudgetRejectionLogsSnapshotWithoutMutatingSibling(t *testing.T) {
 		t.Fatal(err)
 	}
 	sibling.series++
-	sibling.retained += 40
+	sibling.retainBytes(retainPhaseInput, 40)
 	sibling.releaseProvisional()
 	if co.reservations.series != 0 || co.reservations.retainedBytes != 0 {
 		t.Fatal("sibling completion did not release")
@@ -60,7 +60,10 @@ func TestBudgetRejectionOutputAndQueryFreeOwnership(t *testing.T) {
 	for _, normal := range []bool{true, false} {
 		co := &SlotExecutionCoordinator{budget: ProvisionalBudget{MaxSeries: 10, MaxRetainedBytes: 100, MaxStateMutations: 10, MaxEvents: 10, MaxGapMutations: 10}}
 		co.reservations.retainedBytes = 80
-		stream := &streamedExecution{coordinator: co, began: normal, retained: 30}
+		// Twenty rather than thirty: one Query Group may hold half the pool, so
+		// at thirty this execution crosses its own share and the shared-pool
+		// rejection this case is about never happens.
+		stream := &streamedExecution{coordinator: co, began: normal, retainedByPhase: retainedSeed(20)}
 		err := co.acquireEffects(effectCounts{states: 1}, 25, stream, stream.reservationPhase("normal_output"))
 		var exceeded *provisionalBudgetExceededError
 		if !errors.As(err, &exceeded) {
@@ -71,7 +74,7 @@ func TestBudgetRejectionOutputAndQueryFreeOwnership(t *testing.T) {
 			t.Fatalf("facts=%+v", facts)
 		}
 		if normal {
-			if facts.Phase != "normal_output" || facts.OwnUsed == nil || *facts.OwnUsed != 30 {
+			if facts.Phase != "normal_output" || facts.OwnUsed == nil || *facts.OwnUsed != 20 {
 				t.Fatalf("normal=%+v", facts)
 			}
 		} else if facts.Phase != "query_free" || facts.OwnUsed != nil {

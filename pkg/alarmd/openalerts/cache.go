@@ -49,14 +49,46 @@ const (
 	UnavailableHeartbeatUnreadable UnavailableReason = "heartbeat_unreadable"
 	UnavailableHeartbeatStale      UnavailableReason = "heartbeat_stale"
 	UnavailableFingerprintVersion  UnavailableReason = "fingerprint_version"
+	// UnavailableMembersDisjoint: the consumer's sets hold members, or were
+	// read, but none of the alerts this process sent ABNORMAL for is in
+	// them once the consumer has had time to open it. The sets are then not
+	// keyed the way this process asks, and every lookup would miss; see
+	// DisjointMinimum.
+	UnavailableMembersDisjoint UnavailableReason = "members_disjoint"
 )
 
 // UnavailableReasons lists every reason, for the metric that pre-creates
 // them all: a reason at zero has to be readable as "never happened".
 var UnavailableReasons = []UnavailableReason{
 	UnavailableReadError, UnavailableHeartbeatMissing, UnavailableHeartbeatUnreadable,
-	UnavailableHeartbeatStale, UnavailableFingerprintVersion,
+	UnavailableHeartbeatStale, UnavailableFingerprintVersion, UnavailableMembersDisjoint,
 }
+
+// SentConfirmAfter is how long after this process first sent an alert's
+// ABNORMAL a read of the consumer's set is expected to carry it. The
+// consumer opens the alert on the message and rebuilds the set on a hint
+// it batches for about a second; five minutes covers that and a slow
+// rebuild several times over. An alert younger than this at the read is
+// not counted either way.
+const SentConfirmAfter = 5 * time.Minute
+
+// DisjointMinimum is how many alerts this process sent, each past
+// SentConfirmAfter at the latest read and none of them found, before the
+// sets are taken to be keyed differently from this process's lookups.
+//
+// One is enough. An alert the consumer closed on its own can put a quiet
+// deployment into the state wrongly, and the price of that is the gate as
+// it was before it existed: a RECOVERY for an alert the consumer no longer
+// holds, which it records as orphaned and changes nothing for. A higher
+// bar would leave a deployment with one or two alerts outside the fallback
+// for good, holding exactly the recoveries it exists to release.
+//
+// Leaving the state takes positive evidence only: an alert of ours found
+// in a set, or nothing of ours left open. The count dropping does not end
+// it, because the recoveries the fallback lets through are what make it
+// drop; ending on that would hold the last few again against sets that
+// still carry none of ours.
+const DisjointMinimum = 1
 
 // Answer is how a lookup was answered. Closed: a metric label. The first
 // three are authoritative answers; the rest say the copy answered on its
@@ -84,10 +116,12 @@ const (
 	// AnswerPassedThrough: the publication is unavailable and the policy is
 	// to let every recovery go, as before the gate existed.
 	AnswerPassedThrough Answer = "passed_through"
+	AnswerIndexMember   Answer = "index_member"
+	AnswerIndexAbsent   Answer = "index_absent"
 )
 
 // Answers lists every Answer, for the metric that pre-creates them all.
-var Answers = []Answer{AnswerMember, AnswerAbsent, AnswerRecentlySent, AnswerNotYetLoaded, AnswerSelfMaintained, AnswerPassedThrough}
+var Answers = []Answer{AnswerMember, AnswerAbsent, AnswerRecentlySent, AnswerNotYetLoaded, AnswerSelfMaintained, AnswerPassedThrough, AnswerIndexMember, AnswerIndexAbsent}
 
 // UnavailablePolicy is what the copy answers while the publication is
 // unavailable. It is one decision point on purpose, because the two answers
@@ -117,17 +151,49 @@ type Stats struct {
 	UnavailableReason UnavailableReason
 	// LoadedAt is when the last authoritative publication was read; zero if
 	// never. A metric derived from it must not be emitted while zero.
-	LoadedAt    time.Time
-	Heartbeat   Heartbeat
-	Tracked     int
-	Loaded      int
-	Members     int
-	Added       int
-	Removed     int
-	Evictions   uint64
-	Refreshes   map[string]uint64
-	Unavailable map[UnavailableReason]uint64
-	Lookups     map[Answer]uint64
+	LoadedAt                        time.Time
+	Heartbeat                       Heartbeat
+	Tracked                         int
+	Loaded                          int
+	Members                         int
+	Added                           int
+	Removed                         int
+	Evictions                       uint64
+	Refreshes                       map[string]uint64
+	Unavailable                     map[UnavailableReason]uint64
+	Lookups                         map[Answer]uint64
+	IndexReadAt                     time.Time
+	PendingReads, PendingReconciles int
+	OldestPendingAt                 time.Time
+	SubscriptionReady               bool
+	MemberBytes                     int
+	IndexProtocol                   bool
+	// CalibrationConfigured says a reconciler is bound: without one the
+	// index knows members but never their severity, so no close is ever
+	// sent, and a deployment has to be able to read that as "off" rather
+	// than wonder why nothing closes.
+	CalibrationConfigured bool
+	Calibrated            int
+	// SentInSet and SentNotInSet split the alerts this process sent
+	// ABNORMAL for, and has not sent RECOVERY for, by whether the latest
+	// read of their strategy's set carries them. Only alerts first sent at
+	// least SentConfirmAfter before that read count. Disjoint is the state
+	// DisjointMinimum describes.
+	SentInSet, SentNotInSet int
+	Disjoint                bool
+	// OwnLookups is Lookups for the lookups of this process's own open
+	// alerts; OwnHeld how many of those the gate answered "not open", which
+	// holds a RECOVERY whose alert stays open. RecentLookups and
+	// RecentOwnHeld are the last RecentGateLookups of each, whole.
+	OwnLookups    map[Answer]uint64
+	OwnHeld       uint64
+	RecentLookups []GateLookup
+	RecentOwnHeld []GateLookup
+	// GateSince is when the own split started: what this process sent is
+	// held in memory and starts empty at every start, so an alert opened
+	// before it is not "own" here, and "no own lookup" says only that none
+	// of the alerts sent since reached the gate.
+	GateSince time.Time
 }
 
 type member struct {
@@ -142,6 +208,7 @@ type stamped struct {
 // Cache is this process's copy of the consumer's open alert set. It
 // implements contract.OpenAlertSet.
 type Cache struct {
+	index  *indexState
 	mu     sync.Mutex
 	source Source
 	now    func() time.Time
@@ -172,6 +239,17 @@ type Cache struct {
 	refreshes   map[string]uint64
 	unavailable map[UnavailableReason]uint64
 	lookups     map[Answer]uint64
+	// lastAnswer, ownLookups, ownHeld and the two samples are the gate's
+	// lookups as recordGate keeps them.
+	lastAnswer    Answer
+	ownLookups    map[Answer]uint64
+	ownHeld       uint64
+	recentLookups gateRing
+	recentOwnHeld gateRing
+	// gateSince is when this copy was made: the own split rests on what
+	// this process sent (index.opened, added), which lives in memory and
+	// starts empty with the process.
+	gateSince time.Time
 }
 
 // Options configure a Cache. Zero values take the defaults below.
@@ -210,7 +288,8 @@ func New(options Options) (*Cache, error) {
 		maxLocal: options.MaxLocalEntries, trackingWindow: options.TrackingWindow,
 		tracked: map[StrategyKey]time.Time{}, loaded: map[StrategyKey]bool{}, sets: map[StrategyKey]map[string]struct{}{},
 		added: map[member]stamped{}, removed: map[member]stamped{},
-		refreshes: map[string]uint64{}, unavailable: map[UnavailableReason]uint64{}, lookups: map[Answer]uint64{},
+		refreshes: map[string]uint64{}, unavailable: map[UnavailableReason]uint64{}, lookups: map[Answer]uint64{}, ownLookups: map[Answer]uint64{},
+		gateSince: options.Now(),
 	}, nil
 }
 
@@ -219,6 +298,10 @@ func New(options Options) (*Cache, error) {
 // lookup tracks its strategy as well; this only moves that forward.
 func (cache *Cache) Track(keys ...StrategyKey) {
 	if cache == nil {
+		return
+	}
+	if cache.index != nil {
+		_ = cache.TrackOwned(keys...)
 		return
 	}
 	now := cache.now()
@@ -230,6 +313,7 @@ func (cache *Cache) Track(keys ...StrategyKey) {
 }
 
 // Contains implements contract.OpenAlertSet. See Answer for how it answers.
+// Every answer is also recorded for reading (see recordGate).
 func (cache *Cache) Contains(tenantID, strategyID, fingerprint string) bool {
 	if cache == nil {
 		return false
@@ -239,21 +323,32 @@ func (cache *Cache) Contains(tenantID, strategyID, fingerprint string) bool {
 	now := cache.now()
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
+	open := cache.contains(m, now)
+	cache.recordGate(m, now, open)
+	return open
+}
+
+// contains is Contains with the lock held.
+func (cache *Cache) contains(m member, now time.Time) bool {
+	key, fingerprint := m.key, m.fingerprint
+	if cache.index != nil {
+		return cache.indexGate(m, now)
+	}
 	cache.tracked[key] = now
 	if cache.available && cache.loaded[key] {
 		if _, ok := cache.sets[key][fingerprint]; ok {
-			cache.lookups[AnswerMember]++
+			cache.countLookup(AnswerMember)
 			return true
 		}
 		if sent, ok := cache.added[m]; ok && now.Sub(sent.at) <= cache.localRetention() && !cache.removedAfter(m, sent.at) {
-			cache.lookups[AnswerRecentlySent]++
+			cache.countLookup(AnswerRecentlySent)
 			return true
 		}
-		cache.lookups[AnswerAbsent]++
+		cache.countLookup(AnswerAbsent)
 		return false
 	}
 	if cache.available {
-		cache.lookups[AnswerNotYetLoaded]++
+		cache.countLookup(AnswerNotYetLoaded)
 	}
 	return cache.answerUnavailable(m)
 }
@@ -263,10 +358,10 @@ func (cache *Cache) Contains(tenantID, strategyID, fingerprint string) bool {
 func (cache *Cache) answerUnavailable(m member) bool {
 	switch cache.policy {
 	case PolicyPassThrough:
-		cache.lookups[AnswerPassedThrough]++
+		cache.countLookup(AnswerPassedThrough)
 		return true
 	default:
-		cache.lookups[AnswerSelfMaintained]++
+		cache.countLookup(AnswerSelfMaintained)
 		return cache.selfMaintainedOpen(m)
 	}
 }
@@ -294,6 +389,9 @@ func (cache *Cache) removedAfter(m member, at time.Time) bool {
 // is only consulted with an authoritative publication in hand, so the cycle
 // is known; the fallback exists for the type's sake, not for a path.
 func (cache *Cache) localRetention() time.Duration {
+	if cache.index != nil {
+		return cache.index.options.LocalRetention
+	}
 	if cache.heartbeat.Cycle > 0 {
 		return LocalRetentionCycles * cache.heartbeat.Cycle
 	}
@@ -318,13 +416,20 @@ func (cache *Cache) Acknowledged(events []contract.TriggerEventV1) {
 			continue
 		}
 		m := member{key: StrategyKey{TenantID: event.TenantID, StrategyID: event.PlanRef.StrategyID}, fingerprint: event.DedupeMD5}
+		if cache.index != nil && cache.index.entries[m.key] == nil {
+			continue
+		}
 		switch event.EventKind {
 		case contract.TriggerEventAbnormal:
 			cache.added[m] = stamped{at: now}
 			delete(cache.removed, m)
+			cache.noteOpened(m, now)
 		case contract.TriggerEventRecovery:
 			cache.removed[m] = stamped{at: now}
 			delete(cache.added, m)
+			if cache.index != nil {
+				delete(cache.index.opened, m)
+			}
 		}
 	}
 	cache.boundLocal()
@@ -366,6 +471,10 @@ func (cache *Cache) boundLocal() {
 // place, which is what self-maintained mode answers from.
 func (cache *Cache) Refresh(ctx context.Context) {
 	if cache == nil {
+		return
+	}
+	if cache.index != nil {
+		cache.refreshIndex(ctx)
 		return
 	}
 	keys := cache.readSet()
@@ -461,6 +570,9 @@ func (cache *Cache) Stats() Stats {
 	if cache == nil {
 		return Stats{}
 	}
+	if cache.index != nil {
+		return cache.indexStats()
+	}
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	stats := Stats{
@@ -489,6 +601,7 @@ func (cache *Cache) Stats() Stats {
 	for k, v := range cache.lookups {
 		stats.Lookups[k] = v
 	}
+	cache.gateStats(&stats)
 	return stats
 }
 
@@ -500,6 +613,16 @@ func (cache *Cache) Stats() Stats {
 // deployed, and the Mode says so on its own.
 func (cache *Cache) StaleBeyondBound() bool {
 	if cache == nil {
+		return false
+	}
+	if cache.index != nil {
+		cache.mu.Lock()
+		defer cache.mu.Unlock()
+		for _, entry := range cache.index.entries {
+			if !entry.calibratedAt.IsZero() && !cache.calibrated(entry, cache.now()) {
+				return true
+			}
+		}
 		return false
 	}
 	now := cache.now()

@@ -9,14 +9,12 @@ import (
 	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
 func TestAdmitterRequiresCurrentFenceAndCurrentPlanActivation(t *testing.T) {
-	now := time.UnixMilli(1_700_000_000_000)
 	request := execution.SideEffectAdmissionRequest{
 		Contract: execution.FrozenExecutionContractRef{
 			Slot:                 execution.SlotIdentity{QueryGroup: "query-group-1", EvaluationTime: 100},
@@ -26,13 +24,13 @@ func TestAdmitterRequiresCurrentFenceAndCurrentPlanActivation(t *testing.T) {
 			ScheduleSegmentStart: 100,
 			DuePlanSetDigest:     "plans-1",
 		},
-		Plan:            execution.PlanIdentity{TenantID: "tenant", BusinessID: "business", StrategyID: "strategy"},
+		Plan:            execution.PlanKey{PlanIdentity: execution.PlanIdentity{TenantID: "tenant", BusinessID: "business", StrategyID: "strategy"}},
 		StateApplyEpoch: 1,
 		OwnerFence:      execution.OwnerFence{QueryGroup: "query-group-1", OwnerID: "worker-1", OwnerEpoch: 1, LeaseToken: "token-1"},
 	}
 	fence := &fakeFenceChecker{}
 	activation := &fakeActivationReader{active: true}
-	admitter, err := NewAdmitter(fence, activation, func() time.Time { return now })
+	admitter, err := NewAdmitter(fence, activation)
 	if err != nil {
 		t.Fatalf("NewAdmitter() error = %v", err)
 	}
@@ -56,7 +54,7 @@ func TestAdmitterRequiresCurrentFenceAndCurrentPlanActivation(t *testing.T) {
 
 type fakeFenceChecker struct{ err error }
 
-func (checker *fakeFenceChecker) CheckFence(context.Context, execution.OwnerFence, time.Time) error {
+func (checker *fakeFenceChecker) CheckFence(context.Context, execution.OwnerFence) error {
 	return checker.err
 }
 
@@ -68,7 +66,7 @@ type fakeActivationReader struct {
 func (reader *fakeActivationReader) IsPlanActive(
 	context.Context,
 	execution.FrozenExecutionContractRef,
-	execution.PlanIdentity,
+	execution.PlanKey,
 	execution.StateApplyEpoch,
 ) (bool, error) {
 	return reader.active, reader.err

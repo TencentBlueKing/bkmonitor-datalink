@@ -56,6 +56,9 @@ type redisBatchFixture struct {
 	owners  *ownership.RedisStore
 	fence   execution.OwnerFence
 	leased  time.Time
+	// authority is the control leader lease the fixture published under,
+	// for tests that publish again.
+	authority ownership.PublicationAuthority
 }
 
 func newRedisBatchFixture(t *testing.T) *redisBatchFixture {
@@ -94,7 +97,7 @@ func newRedisBatchFixture(t *testing.T) *redisBatchFixture {
 		t.Fatal(err)
 	}
 	client.reset()
-	return &redisBatchFixture{address: address, client: client, backend: backend, owners: owners, fence: lease.Fence, leased: now}
+	return &redisBatchFixture{address: address, client: client, backend: backend, owners: owners, fence: lease.Fence, leased: now, authority: authority}
 }
 
 func (fixture *redisBatchFixture) store(t *testing.T, prefix string, fenced bool) *ExecutionStore {
@@ -115,7 +118,20 @@ func (fixture *redisBatchFixture) store(t *testing.T, prefix string, fenced bool
 }
 
 func (fixture *redisBatchFixture) applyFence(at time.Time) execution.StateApplyFence {
-	return execution.StateApplyFence{Fence: fixture.fence, At: at}
+	return execution.StateApplyFence{Fence: fixture.fence}
+}
+
+// lapseLease makes the fixture's lease look as Redis would hold it after
+// its minute had passed on the server's clock: the deadline is moved back
+// past now. The fence judges expiry on that clock and no other, so this is
+// the only way a test against a real server can produce a lapsed lease
+// without waiting for it.
+func (fixture *redisBatchFixture) lapseLease(t *testing.T) {
+	t.Helper()
+	key := fixture.owners.FenceKeys(fixture.fence.QueryGroup).OwnershipKey
+	if err := fixture.client.HIncrBy(context.Background(), key, "deadline_ms", -(2 * time.Minute).Milliseconds()).Err(); err != nil {
+		t.Fatalf("lapse lease: %v", err)
+	}
 }
 
 // loadInStreamBatches reads the way the worker does: one LoadRuntime per
@@ -159,8 +175,16 @@ func TestRedisFencedBatchApplyStoresSequentialBytesWithinBoundedRoundTrips(t *te
 	batched := fixture.store(t, "batched", true)
 	fixture.client.reset()
 	loaded := loadInStreamBatches(t, batched, items)
-	if fixture.client.mgets != 4 {
-		t.Fatalf("preflight MGET round trips = %d, want ceil(1000/256) = 4", fixture.client.mgets)
+	// One safe batch of 16 for a Query Group nothing has been read for, then
+	// the item bound once its record size is known - and the same again for
+	// the envelope pass, because every series here is missing from both keys
+	// so the frame pass answers none of them.
+	// Each pass opens with a call bounded by what the store accepts as a value,
+	// because neither representation has been measured yet, and runs at the
+	// item bound once this round has a reading of its own; the load is issued
+	// in stream-sized batches, so that opening call is paid per batch per pass.
+	if fixture.client.mgets != 130 {
+		t.Fatalf("preflight MGET round trips = %d, want the frame pass and the envelope pass at the value bound", fixture.client.mgets)
 	}
 	for index, view := range loaded.Items {
 		if view.Status != execution.StateMissingWarming {
@@ -177,25 +201,7 @@ func TestRedisFencedBatchApplyStoresSequentialBytesWithinBoundedRoundTrips(t *te
 		t.Fatalf("fenced apply round trips: pipelines=%d mget=%d eval=%d, want 4 pipelines only", fixture.client.pipelines, fixture.client.mgets, fixture.client.evals)
 	}
 
-	for _, mutation := range mutations {
-		sequentialKey, _ := RuntimeStateKeyV2("sequential", mutation.Identity)
-		batchedKey, _ := RuntimeStateKeyV2("batched", mutation.Identity)
-		want, err := fixture.client.Get(ctx, sequentialKey).Bytes()
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, err := fixture.client.Get(ctx, batchedKey).Bytes()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(got) != string(want) {
-			t.Fatalf("stored bytes differ for %s", mutation.Identity.SeriesIdentityDigest)
-		}
-		ttl := fixture.client.PTTL(ctx, batchedKey).Val()
-		if ttl <= 0 || ttl > time.Hour {
-			t.Fatalf("batched TTL = %v", ttl)
-		}
-	}
+	requireMatchingRedisState(t, fixture, mutations, true)
 
 	// Crash between State apply and Progress commit: the replay preflights
 	// again and short-circuits with ALREADY_APPLIED without touching storage.
@@ -235,24 +241,30 @@ func TestRedisFencedBatchApplyRejectsStaleOwnerLikeCheckFence(t *testing.T) {
 		name  string
 		fence execution.OwnerFence
 		at    time.Time
+		lapse bool
 		stale bool
 	}{
 		{name: "live lease", fence: fixture.fence, at: valid, stale: false},
 		{name: "different token", fence: wrongToken, at: valid, stale: true},
 		{name: "different epoch", fence: wrongEpoch, at: valid, stale: true},
-		{name: "expired deadline", fence: fixture.fence, at: fixture.leased.Add(2 * time.Minute), stale: true},
+		// Last, because it changes the record: the lease runs out on the
+		// server.
+		{name: "expired deadline", fence: fixture.fence, at: valid, lapse: true, stale: true},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			checked := fixture.owners.CheckFence(ctx, test.fence, test.at)
+			if test.lapse {
+				fixture.lapseLease(t)
+			}
+			checked := fixture.owners.CheckFence(ctx, test.fence)
 			if errors.Is(checked, ownership.ErrStaleFence) != test.stale {
 				t.Fatalf("CheckFence() = %v, want stale=%t", checked, test.stale)
 			}
 			loadInStreamBatches(t, store, preflightItems(mutations))
-			result, err := store.ApplyRuntimeFenced(ctx, request, execution.StateApplyFence{Fence: test.fence, At: test.at})
+			result, err := store.ApplyRuntimeFenced(ctx, request, execution.StateApplyFence{Fence: test.fence})
 			keys := make([]string, len(mutations))
 			for index, mutation := range mutations {
-				keys[index], _ = RuntimeStateKeyV2("fenced", mutation.Identity)
+				keys[index], _ = RuntimeStateKeyV3("fenced", mutation.Identity)
 			}
 			exists := fixture.client.Exists(ctx, keys...).Val()
 			if test.stale {
@@ -278,8 +290,8 @@ func TestRedisFencedBatchApplyDetectsValueChangedAfterPreflight(t *testing.T) {
 	store := fixture.store(t, "fenced", true)
 	mutations := seriesMutations(t, 2, applyVersion(), 0)
 	loadInStreamBatches(t, store, preflightItems(mutations))
-	key, _ := RuntimeStateKeyV2("fenced", mutations[1].Identity)
-	other, _ := encodeRuntime(seriesMutation(t, mutations[1].Identity, applyVersion(), 0, "other"), 1)
+	key, _ := RuntimeStateKeyV3("fenced", mutations[1].Identity)
+	other, _ := encodeRuntimePacked(seriesMutation(t, mutations[1].Identity, applyVersion(), 0, "other"), 1)
 	if err := fixture.client.Set(ctx, key, other, 0).Err(); err != nil {
 		t.Fatal(err)
 	}
@@ -372,17 +384,69 @@ func TestRedisRuntimeStateHotModelRoundTrips(t *testing.T) {
 	newTrips := fixture.client.mgets + fixture.client.evals + fixture.client.pipelines
 	t.Logf("hot model %d series: old path %d round trips in %v; batched fenced path %d round trips (mget=%d pipelines=%d) in %v",
 		series, oldTrips, oldElapsed, newTrips, fixture.client.mgets, fixture.client.pipelines, newElapsed)
-	if oldTrips != 3*series {
-		t.Fatalf("old path round trips = %d, want %d", oldTrips, 3*series)
+	// Four per series on the sequential path: the load's frame pass and
+	// envelope pass, then the apply's re-read and its EVAL.
+	if oldTrips != 4*series {
+		t.Fatalf("old path round trips = %d, want %d", oldTrips, 4*series)
 	}
-	if fixture.client.mgets != 16 || fixture.client.pipelines != 16 || fixture.client.evals != 0 {
-		t.Fatalf("batched round trips: mget=%d pipelines=%d eval=%d, want 16 + 16", fixture.client.mgets, fixture.client.pipelines, fixture.client.evals)
+	// One safe batch, then the item bound. A Query Group nothing has been read
+	// for yet is bounded by the batch budget over the largest value the store
+	// accepts, because that is the only bound that holds whatever its records
+	// turn out to be; the first batch teaches their real size and the rest run
+	// at the item bound. The extra round trip is that one call, per Query
+	// Group, and it is what stops a Query Group whose records grew to 345 KiB
+	// from asking for 86 MB in one MGET.
+	// Plus the envelope pass, at the value bound throughout, while every
+	// series is missing from both keys. That is this fixture and it is the
+	// first Slot of a new state generation; the same Slot writes the frames,
+	// so the pass that follows it asks for nothing. A fleet whose series all
+	// have frames pays the first pass only. The calls are empty replies - the
+	// cost is round trips, not bytes - and the alternative is a bound that
+	// cannot be held on a mixed population.
+	if fixture.client.mgets != 526 || fixture.client.pipelines != 16 || fixture.client.evals != 0 {
+		t.Fatalf("batched round trips: mget=%d pipelines=%d eval=%d, want the frame pass and the envelope pass plus 16 pipelines",
+			fixture.client.mgets, fixture.client.pipelines, fixture.client.evals)
 	}
+	requireMatchingRedisState(t, fixture, mutations, false)
+}
+
+// Verification reads are batched independently of the measured production
+// calls. Every series still has its exact persisted bytes checked.
+func requireMatchingRedisState(t *testing.T, fixture *redisBatchFixture, mutations []execution.StateMutation, checkTTL bool) {
+	t.Helper()
+	ctx := context.Background()
+	keys := make([]string, 0, 2*len(mutations))
 	for _, mutation := range mutations {
-		sequentialKey, _ := RuntimeStateKeyV2("sequential", mutation.Identity)
-		batchedKey, _ := RuntimeStateKeyV2("batched", mutation.Identity)
-		if fixture.client.Get(ctx, sequentialKey).Val() != fixture.client.Get(ctx, batchedKey).Val() {
-			t.Fatalf("stored bytes differ for %s", mutation.Identity.SeriesIdentityDigest)
+		sequentialKey, _ := RuntimeStateKeyV3("sequential", mutation.Identity)
+		batchedKey, _ := RuntimeStateKeyV3("batched", mutation.Identity)
+		keys = append(keys, sequentialKey, batchedKey)
+	}
+	values, err := fixture.client.UniversalClient.MGet(ctx, keys...).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, mutation := range mutations {
+		want, got := values[2*index], values[2*index+1]
+		if want == nil || got == nil || got != want {
+			t.Fatalf("stored bytes differ or are missing for %s: sequential=%v batched=%v", mutation.Identity.SeriesIdentityDigest, want, got)
+		}
+	}
+	if !checkTTL {
+		return
+	}
+	ttls := make([]*redis.DurationCmd, len(mutations))
+	_, err = fixture.client.UniversalClient.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for index := range mutations {
+			ttls[index] = pipe.PTTL(ctx, keys[2*index+1])
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, reply := range ttls {
+		if ttl := reply.Val(); ttl <= 0 || ttl > time.Hour {
+			t.Fatalf("batched TTL for %s = %v", mutations[index].Identity.SeriesIdentityDigest, ttl)
 		}
 	}
 }

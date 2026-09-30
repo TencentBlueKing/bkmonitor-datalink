@@ -219,7 +219,7 @@ func TestBoundedRunnerRecoveryWaitDoesNotBlockNormal(t *testing.T) {
 	clock.Store(time.Unix(base+1, 0).Add(500 * time.Millisecond).UnixMilli())
 
 	tickDone := make(chan error, 1)
-	go func() { tickDone <- bundle.runScheduledOnce(ctx) }()
+	go func() { tickDone <- runScheduledOnceSettled(ctx, bundle) }()
 	select {
 	case <-firstEntered:
 	case err := <-tickDone:

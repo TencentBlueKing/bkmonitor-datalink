@@ -165,11 +165,25 @@ type QueryPlanFacts struct {
 	Timezone          string
 	NotTimeAlign      bool
 	Normalization     DatasetNormalizationSpec
+	// Shard is the piece of a split strategy these facts query, nil for a
+	// strategy that is not split. It is part of the Query Group's identity:
+	// each piece is its own group, so a re-split that changes a piece's
+	// matcher is a cutover of that group and nothing else. A pointer so that
+	// the facts of an unsplit Plan serialize exactly as they did.
+	Shard *ShardRef `json:"Shard,omitempty"`
 }
 
 func BuildQueryPlanFacts(facts QueryPlanFacts) (QueryPlanFacts, error) {
 	if facts.QueryRevision != "" {
 		return QueryPlanFacts{}, errors.New("alarmd execution: QueryPlanFacts builder owns query revision")
+	}
+	if facts.Shard != nil {
+		if err := facts.Shard.Validate(); err != nil {
+			return QueryPlanFacts{}, err
+		}
+		if facts.Shard.IsZero() {
+			return QueryPlanFacts{}, errors.New("alarmd execution: a zero shard is carried as no shard")
+		}
 	}
 	if facts.Provider != ProviderUQ || facts.ProviderRouteRef == "" || facts.TenantID == "" ||
 		facts.BusinessID == "" || facts.SpaceScope == "" || facts.StepMillis <= 0 || facts.AlignmentMillis <= 0 {

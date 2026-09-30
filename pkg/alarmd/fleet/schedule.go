@@ -9,7 +9,10 @@
 
 package fleet
 
-import "time"
+import (
+	"sort"
+	"time"
+)
 
 // The schedule dimension: where each object is in its own cycle, and whether
 // the deployment as a whole is keeping up.
@@ -70,6 +73,22 @@ type ScheduleCensus struct {
 	// sample.
 	OverdueAgo        *int    `json:"overdue_ago,omitempty"`
 	OverdueAgoSeconds float64 `json:"overdue_ago_seconds,omitempty"`
+	// Cohorts is the same entries counted by their period, so a number read
+	// per cohort elsewhere -- a lag histogram's 15 s series, a skip rate --
+	// has the population it is over and a way to the objects in it. Absent
+	// from a build before this field existed. An entry whose period is not
+	// known is counted under IntervalSeconds 0.
+	Cohorts []ScheduleCohort `json:"cohorts,omitempty"`
+}
+
+// ScheduleCohort is the objects of one evaluation period on one replica, as
+// the due index holds them: how many, how many are waiting in a query
+// cooldown, how many are past due by more than one period.
+type ScheduleCohort struct {
+	IntervalSeconds int64 `json:"interval_seconds"`
+	Objects         int   `json:"objects"`
+	Cooling         int   `json:"cooling"`
+	Overdue         int   `json:"overdue"`
 }
 
 // Add folds another replica's census into this one. Counts add; the oldest
@@ -102,6 +121,33 @@ func (census *ScheduleCensus) Add(other ScheduleCensus) {
 	if other.OldestLateSeconds > census.OldestLateSeconds {
 		census.OldestLateSeconds = other.OldestLateSeconds
 	}
+	census.Cohorts = addCohorts(census.Cohorts, other.Cohorts)
+}
+
+// addCohorts sums two replicas' cohorts by period, keeping the list ordered
+// by period so two reads of the same deployment list the same way.
+func addCohorts(into, other []ScheduleCohort) []ScheduleCohort {
+	if len(other) == 0 {
+		return into
+	}
+	merged := make(map[int64]ScheduleCohort, len(into)+len(other))
+	for _, cohort := range into {
+		merged[cohort.IntervalSeconds] = cohort
+	}
+	for _, cohort := range other {
+		sum := merged[cohort.IntervalSeconds]
+		sum.IntervalSeconds = cohort.IntervalSeconds
+		sum.Objects += cohort.Objects
+		sum.Cooling += cohort.Cooling
+		sum.Overdue += cohort.Overdue
+		merged[cohort.IntervalSeconds] = sum
+	}
+	result := make([]ScheduleCohort, 0, len(merged))
+	for _, cohort := range merged {
+		result = append(result, cohort)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].IntervalSeconds < result[j].IntervalSeconds })
+	return result
 }
 
 // aggregateSchedule sums the replicas' censuses. Absent on every replica means

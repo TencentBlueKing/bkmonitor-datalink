@@ -80,14 +80,17 @@ func publishedStrategies(catalog controlplane.Catalog) []string {
 func TestAPlanBeyondTheDeploymentsReachIsWithheldAndItsSiblingsPublish(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
 	reserve := cfg.PhaseTwo.Access.DownstreamExecutionReserve.Duration()
-	supported := int64(phaseTwoMaxSupportedEvaluationInterval / time.Second)
+	// Past the state store's ceiling: the only cadence no retention is given for.
+	beyond := int64(phaseTwoObjectRetentionLimit(cfg) / time.Second)
 	// A cadence the retention cannot cover, one whose completion does not
 	// clear the reserve, and two ordinary ones on either side of them.
 	catalog := retentionTestCatalog(
 		retentionTestPlan("4710", 60),
 		retentionTestPlan("4711", int64(reserve/time.Second)),
-		retentionTestPlan("4713", supported+60),
-		retentionTestPlan("4714", supported),
+		retentionTestPlan("4713", beyond+60),
+		retentionTestPlan("4714", int64(phaseTwoMaxSupportedEvaluationInterval/time.Second)),
+		// Sixty hours: once refused for a retention the deployment can give it.
+		retentionTestPlan("4715", 216000),
 	)
 
 	admitted, err := phaseTwoCatalogRetentionAdmission(cfg)(catalog)
@@ -96,8 +99,8 @@ func TestAPlanBeyondTheDeploymentsReachIsWithheldAndItsSiblingsPublish(t *testin
 	}
 
 	published := publishedStrategies(admitted)
-	if len(published) != 2 || published[0] != "4710" || published[1] != "4714" {
-		t.Fatalf("published %v, want the two Plans this deployment can serve. One Plan it cannot must not "+
+	if len(published) != 3 || published[0] != "4710" || published[1] != "4714" || published[2] != "4715" {
+		t.Fatalf("published %v, want the three Plans this deployment can serve. One Plan it cannot must not "+
 			"stop the others: that is a whole deployment not detecting anything because of one strategy",
 			published)
 	}
@@ -115,11 +118,9 @@ func TestAPlanBeyondTheDeploymentsReachIsWithheldAndItsSiblingsPublish(t *testin
 		t.Fatalf("an ordinary Plan was withheld: %+v", withheld["4710"])
 	}
 
-	// Both numbers, because the two readings are different actions: shorten
-	// the strategy's cadence, or raise the deployment's retention. A refusal
-	// naming one of them leaves the reader to work out which it was.
+	// Both numbers: what the Plan needs, and the ceiling it is past.
 	field := withheld["4713"].FieldPath
-	for _, want := range []string{"required_retention=", "catalog_retention="} {
+	for _, want := range []string{"required_retention=", "retention_limit="} {
 		if !strings.Contains(field, want) {
 			t.Fatalf("withheld field %q does not carry %q", field, want)
 		}
@@ -164,9 +165,10 @@ func TestAPlanBeyondTheDeploymentsReachIsWithheldAndItsSiblingsPublish(t *testin
 // do nothing with -- work that looks like work and detects nothing.
 func TestAQueryGroupWithNothingLeftIsNotPublished(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
-	supported := int64(phaseTwoMaxSupportedEvaluationInterval / time.Second)
+	// Past the state store's ceiling: the only cadence no retention is given for.
+	beyond := int64(phaseTwoObjectRetentionLimit(cfg) / time.Second)
 	catalog := controlplane.Catalog{QueryGroups: []controlplane.QueryGroup{{
-		Plans: []controlplane.FrozenPlan{retentionTestPlan("4713", supported+60)},
+		Plans: []controlplane.FrozenPlan{retentionTestPlan("4713", beyond+60)},
 	}}}
 
 	admitted, err := phaseTwoCatalogRetentionAdmission(cfg)(catalog)
@@ -190,11 +192,12 @@ func TestAQueryGroupWithNothingLeftIsNotPublished(t *testing.T) {
 // replacement protects, just from the other direction.
 func TestASourceWithSeveralWithheldPlansIsCountedOnce(t *testing.T) {
 	cfg := validGoAccessRuntimeConfig()
-	supported := int64(phaseTwoMaxSupportedEvaluationInterval / time.Second)
+	// Past the state store's ceiling: the only cadence no retention is given for.
+	beyond := int64(phaseTwoObjectRetentionLimit(cfg) / time.Second)
 	catalog := controlplane.Catalog{
 		QueryGroups: []controlplane.QueryGroup{{Plans: []controlplane.FrozenPlan{
-			retentionTestPlan("4713", supported+60),
-			retentionTestPlan("4713", supported+120),
+			retentionTestPlan("4713", beyond+60),
+			retentionTestPlan("4713", beyond+120),
 		}}},
 		Dispositions: []controlplane.ObjectDisposition{{
 			SourceID: "4713", Scope: "PLAN", Disposition: controlplane.DispositionAccepted,

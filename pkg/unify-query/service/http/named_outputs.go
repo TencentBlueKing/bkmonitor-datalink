@@ -117,6 +117,46 @@ func getNamedOutputSettings() namedOutputSettings {
 
 type namedOutputExecutor func(context.Context, structured.QueryOutput) (any, bool, error)
 
+type prefetchedNamedOutput struct {
+	index   int
+	ctx     context.Context
+	result  any
+	partial bool
+	err     error
+}
+
+func prefetchOptionalNamedOutputs(
+	ctx context.Context,
+	query *structured.QueryTs,
+	order []int,
+	execute namedOutputExecutor,
+) chan prefetchedNamedOutput {
+	results := make(chan prefetchedNamedOutput, len(order))
+	semaphore := make(chan struct{}, 2)
+	for _, index := range order {
+		go func(index int) {
+			outputCtx := metadata.WithStatusScope(metadata.WithNamedOutputScope(ctx, index), index)
+			result := prefetchedNamedOutput{index: index, ctx: outputCtx}
+			select {
+			case semaphore <- struct{}{}:
+				defer func() { <-semaphore }()
+			case <-ctx.Done():
+				result.err = ctx.Err()
+				results <- result
+				return
+			}
+			if err := ctx.Err(); err != nil {
+				result.err = err
+				results <- result
+				return
+			}
+			result.result, result.partial, result.err = execute(outputCtx, query.OutputList[index])
+			results <- result
+		}(index)
+	}
+	return results
+}
+
 func compileAndExecuteNamedOutput(
 	ctx context.Context,
 	compile func() (fmt.Stringer, error),
@@ -408,10 +448,33 @@ func executeNamedOutputsWith(
 	traceID string,
 	execute namedOutputExecutor,
 ) (*NamedOutputsData, error) {
+	return executeNamedOutputsWithRoutes(ctx, query, settings, func() []metadata.RouteInfo { return routeInfo }, traceID, execute)
+}
+
+func executeNamedOutputsWithRoutes(
+	ctx context.Context,
+	query *structured.QueryTs,
+	settings namedOutputSettings,
+	routeInfo func() []metadata.RouteInfo,
+	traceID string,
+	execute namedOutputExecutor,
+) (*NamedOutputsData, error) {
+	return executeNamedOutputsWithRoutesMode(ctx, query, settings, routeInfo, traceID, execute, false)
+}
+
+func executeNamedOutputsWithRoutesMode(
+	ctx context.Context,
+	query *structured.QueryTs,
+	settings namedOutputSettings,
+	routeInfo func() []metadata.RouteInfo,
+	traceID string,
+	execute namedOutputExecutor,
+	parallelOptional bool,
+) (*NamedOutputsData, error) {
 	response := &NamedOutputsData{
 		ContractVersion: structured.NamedOutputsV1,
 		Outputs:         make([]NamedOutputData, len(query.OutputList)),
-		ResultTableID:   resultTableIDFromRouteInfo(routeInfo),
+		ResultTableID:   resultTableIDFromRouteInfo(routeInfo()),
 		TraceID:         traceID,
 	}
 	for index, output := range query.OutputList {
@@ -429,17 +492,64 @@ func executeNamedOutputsWith(
 	successCount := 0
 	deadlineConverged := false
 	executionOrder := namedOutputOrder(query)
-	for position, index := range executionOrder {
-		output := query.OutputList[index]
+	var prefetched chan prefetchedNamedOutput
+	pendingPrefetch := 0
+	var cancelPrefetch context.CancelFunc
+	drainPrefetch := func() {
+		if cancelPrefetch != nil {
+			cancelPrefetch()
+			cancelPrefetch = nil
+		}
+		for pendingPrefetch > 0 {
+			output := <-prefetched
+			pendingPrefetch--
+			if owned, ok := output.result.(*ownedQueryResult); ok && owned.release != nil {
+				owned.release()
+			}
+		}
+	}
+	defer drainPrefetch()
+	for position := range executionOrder {
+		if parallelOptional && position == 1 && ctx.Err() == nil {
+			var prefetchCtx context.Context
+			prefetchCtx, cancelPrefetch = context.WithCancel(ctx)
+			prefetched = prefetchOptionalNamedOutputs(prefetchCtx, query, executionOrder[1:], execute)
+			pendingPrefetch = len(executionOrder) - 1
+		}
+		index := executionOrder[position]
 		if err := ctx.Err(); err != nil {
 			markNamedOutputsRemainingError(ctx, response, executionOrder, position, err)
 			deadlineConverged = true
 			break
 		}
 
-		outputCtx := metadata.WithStatusScope(ctx, index)
-		result, isPartial, executeErr := execute(outputCtx, output)
+		var outputCtx context.Context
+		var result any
+		var isPartial bool
+		var executeErr error
+		if prefetched != nil && position > 0 {
+			outputResult := <-prefetched
+			pendingPrefetch--
+			for next := position; next < len(executionOrder); next++ {
+				if executionOrder[next] == outputResult.index {
+					executionOrder[position], executionOrder[next] = executionOrder[next], executionOrder[position]
+					break
+				}
+			}
+			index = outputResult.index
+			outputCtx, result, isPartial, executeErr = outputResult.ctx, outputResult.result, outputResult.partial, outputResult.err
+		} else {
+			outputCtx = metadata.WithStatusScope(ctx, index)
+			if parallelOptional {
+				outputCtx = metadata.WithStatusScope(metadata.WithNamedOutputScope(ctx, index), index)
+			}
+			result, isPartial, executeErr = execute(outputCtx, query.OutputList[index])
+		}
+		output := query.OutputList[index]
 		if executeErr != nil {
+			if owned, ok := result.(*ownedQueryResult); ok && owned.release != nil {
+				owned.release()
+			}
 			if err := ctx.Err(); err != nil {
 				markNamedOutputsRemainingError(ctx, response, executionOrder, position, err)
 				deadlineConverged = true
@@ -558,6 +668,7 @@ func executeNamedOutputsWith(
 			return nil, err
 		}
 	}
+	drainPrefetch()
 
 	if successCount == 0 {
 		if err := ctx.Err(); err != nil {
@@ -565,6 +676,7 @@ func executeNamedOutputsWith(
 		}
 		return nil, fmt.Errorf("all named outputs failed")
 	}
+	response.ResultTableID = resultTableIDFromRouteInfo(routeInfo())
 	var encoded []byte
 	var err error
 	if deadlineConverged {

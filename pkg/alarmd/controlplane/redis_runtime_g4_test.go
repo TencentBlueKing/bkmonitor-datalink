@@ -500,7 +500,7 @@ func TestRedisCatalogRuntimeReplaysPreG4HistoricalSegmentAfterG4StateGenerationU
 		t.Fatalf("historical Freeze repeat = (%+v, %v), want %+v", repeated, err, historical)
 	}
 	activations, err := repository.LoadActivations(ctx, execution.PlanActivationRequest{
-		Contract: historical.Contract, Plans: []execution.PlanIdentity{historical.DuePlans[0].Identity},
+		Contract: historical.Contract, Plans: []execution.PlanKey{historical.DuePlans[0].Key()},
 	})
 	if err != nil || len(activations.Facts) != 1 || activations.Facts[0].Selection != execution.ActivationNone {
 		t.Fatalf("historical activation admission = (%+v, %v), want NONE without a new-generation Guard", activations, err)

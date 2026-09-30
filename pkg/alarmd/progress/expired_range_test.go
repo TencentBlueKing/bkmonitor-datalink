@@ -29,7 +29,7 @@ func rangeFixture(t *testing.T) execution.ExpiredRangeProjectionV1 {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plans := []execution.FrozenPlanSchedule{{Identity: first.DuePlanTargets.Plans[0], ScheduleRevision: revision, Spec: spec}}
+	plans := []execution.FrozenPlanSchedule{{Identity: first.DuePlanTargets.Plans[0].PlanIdentity, ScheduleRevision: revision, Spec: spec}}
 	sched, err := execution.DeriveQueryGroupScheduleRevision(plans)
 	if err != nil {
 		t.Fatal(err)

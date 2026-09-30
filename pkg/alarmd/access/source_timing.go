@@ -56,7 +56,13 @@ func (source *Source) observeQueryTiming(ctx context.Context, request execution.
 						Result: observability.ResultSuccess, Operation: observability.Operation(request.Operation), Direction: observability.DirectionInternal, QueryTiming: &facts,
 						Trace: observability.TraceFields{QueryGroupKey: string(request.Contract.Slot.QueryGroup), EvaluationTime: int64(request.Contract.Slot.EvaluationTime),
 							ScheduleRevision: string(request.Contract.ScheduleRevision), SnapshotRevision: string(request.Contract.SnapshotRevision), QueryRevision: string(request.Contract.QueryRevision),
-							DuePlanSetDigest: string(request.Contract.DuePlanSetDigest), StrategyID: consumer.Consumer.Plan.StrategyID}})
+							DuePlanSetDigest: string(request.Contract.DuePlanSetDigest),
+							// Both halves of the strategy's identity, as every other
+							// observation of the round carries them: a trace that named
+							// the strategy alone made the fleet's per-object strategy
+							// list show one strategy twice, once with its business and
+							// once without.
+							StrategyID: consumer.Consumer.Plan.StrategyID, BusinessID: consumer.Consumer.Plan.BusinessID}})
 				}
 			}
 		}

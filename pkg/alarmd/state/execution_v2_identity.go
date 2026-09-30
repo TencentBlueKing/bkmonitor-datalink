@@ -39,11 +39,17 @@ func RuntimeStateKeyV2(prefix string, identity execution.StateKeyIdentity) (stri
 	return executionKey(prefix, "runtime", identity.Plan, identity.StateGeneration, series), nil
 }
 
+// PlanGapKeyV2 names one Plan's gap marker. A piece of a split strategy has
+// its own marker under its own kind, see shardedKind.
 func PlanGapKeyV2(prefix string, identity execution.PlanGapIdentity) (string, error) {
 	if err := validatePlanIdentity(prefix, identity.Plan, identity.StateGeneration); err != nil {
 		return "", err
 	}
-	return executionKey(prefix, "gap", identity.Plan, identity.StateGeneration, ""), nil
+	kind, suffix, err := shardedKind("gap", identity.Shard)
+	if err != nil {
+		return "", err
+	}
+	return executionKey(prefix, kind, identity.Plan, identity.StateGeneration, suffix), nil
 }
 
 // PlanNoDataKeyV2 names one Plan's no-data memory. Same shape and same level as
@@ -53,7 +59,65 @@ func PlanNoDataKeyV2(prefix string, identity execution.PlanNoDataIdentity) (stri
 	if err := validatePlanIdentity(prefix, identity.Plan, identity.StateGeneration); err != nil {
 		return "", err
 	}
-	return executionKey(prefix, "nodata", identity.Plan, identity.StateGeneration, ""), nil
+	kind, suffix, err := shardedKind("nodata", identity.Shard)
+	if err != nil {
+		return "", err
+	}
+	return executionKey(prefix, kind, identity.Plan, identity.StateGeneration, suffix), nil
+}
+
+// shardedKind is how a per-Plan record of a piece of a split strategy is
+// kept apart from its siblings' and from the unsplit record.
+//
+// A Plan that is not split keeps exactly the key it has: the kind unchanged
+// and the suffix slot empty, so nothing already written moves. A piece gets
+// the kind with "-shard" appended and its matcher digest in the suffix slot,
+// which is the slot Runtime State already fills with the series digest. The
+// suffix is what separates two pieces of one strategy; the kind is what
+// separates every piece from the unsplit record and, as much, from the
+// globs that enumerate unsplit records: a cleanup anchored on "<kind>:"
+// cannot match "<kind>-shard:", the way "nodata:" cannot match
+// "nodata-hash:".
+//
+// The Plan's identity segments are identical across the pieces - the
+// PlanIdentity does not carry the shard, and must not, since it goes into
+// the event identity - so without the suffix N pieces would write one
+// record: only the piece with the largest SlotDigest would win each round's
+// version comparison, and each piece would load a roster that is mostly
+// other pieces' groups and report every one of them absent.
+func shardedKind(kind string, shard execution.ShardRef) (string, string, error) {
+	if shard.IsZero() {
+		return kind, "", nil
+	}
+	if err := shard.Validate(); err != nil {
+		return "", "", &IdentityError{Err: err}
+	}
+	return kind + "-shard", shard.MatcherDigest, nil
+}
+
+// PlanNoDataHashKeyV2 names one Plan's no-data memory in the shape that holds
+// one field per group.
+//
+// It is a second key rather than a second shape under the first, because the
+// two coexist for a rollout: a build that only knows the whole-memory record
+// must go on finding it where it was, and a build that writes the hash must
+// not have to decide what an old value under a new key means. The kind segment
+// is what separates them, and it separates them under a glob as well: the
+// cleanup that enumerates the old records scans "<prefix>:nodata:v2:*", and no
+// hash key can match it because the character after "nodata" differs.
+//
+// The "v2" segment both keys carry is the execution key scheme's version. It
+// has nothing to do with the memory's schema version, which is a field inside
+// the record.
+func PlanNoDataHashKeyV2(prefix string, identity execution.PlanNoDataIdentity) (string, error) {
+	if err := validatePlanIdentity(prefix, identity.Plan, identity.StateGeneration); err != nil {
+		return "", err
+	}
+	kind, suffix, err := shardedKind("nodata-hash", identity.Shard)
+	if err != nil {
+		return "", err
+	}
+	return executionKey(prefix, kind, identity.Plan, identity.StateGeneration, suffix), nil
 }
 
 func validatePlanIdentity(prefix string, plan execution.PlanIdentity, generation execution.StateGeneration) error {
@@ -173,4 +237,32 @@ func executionKey(prefix, kind string, plan execution.PlanIdentity, generation e
 		parts = append(parts, suffix[:32])
 	}
 	return strings.Join(parts, ":")
+}
+
+// RuntimeStateKeyV3 names the same series' state in the framed representation.
+//
+// A second key name rather than a second value format under one name. An old
+// binary reads the value at the name it knows and hands it to a JSON decoder;
+// handed a framed record it would report STATE_CORRUPT for every series it
+// owns, every round, for as long as the rolling window lasted - a deterministic
+// failure rather than a recoverable one, and the binary that does it is already
+// deployed and cannot be taught otherwise. Under a second name it finds nothing
+// instead, which is StateMissingWarming: defined, self-healing, and the same
+// state a genuinely new series is in.
+//
+// The abandoned name needs no cleanup pass. Runtime keys carry a TTL derived
+// from the Plan's retention, so a key nothing writes any more expires on its
+// own.
+func RuntimeStateKeyV3(prefix string, identity execution.StateKeyIdentity) (string, error) {
+	if err := validatePlanIdentity(prefix, identity.Plan, identity.StateGeneration); err != nil {
+		return "", err
+	}
+	if identity.SeriesIdentityDigest == "" {
+		return "", identityError("series identity digest is required")
+	}
+	series, err := contract.DeriveCanonicalDigestV2("alarmd-runtime-series-v2", identity.SeriesIdentityDigest)
+	if err != nil {
+		return "", fmt.Errorf("state: derive series digest: %w", err)
+	}
+	return executionKey(prefix, "runtime3", identity.Plan, identity.StateGeneration, series), nil
 }

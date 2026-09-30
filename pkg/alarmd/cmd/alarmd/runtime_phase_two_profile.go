@@ -152,6 +152,8 @@ func phaseTwoRuntimeProfile(cfg config.Config, cpuSource string, procs int) (obs
 			OwnStorePrefix:      cfg.Redis.StatePrefix,
 
 			DynamicConfig:             dynamicConfigDestination(cfg),
+			TargetGroup:               targetGroupDestination(cfg),
+			DynamicGroupKeyPrefix:     targetGroupPrefix(cfg),
 			PlatformSettingsKeyPrefix: cfg.PhaseTwo.PlatformSettings.RedisKeyPrefix,
 		},
 	}
@@ -209,4 +211,17 @@ func dynamicConfigDestination(cfg config.Config) string {
 		return "not_configured"
 	}
 	return connection.Destination()
+}
+
+func targetGroupDestination(cfg config.Config) string {
+	connection, configured := cfg.TargetGroupRedis()
+	if !configured {
+		return "not_configured"
+	}
+	return connection.Destination()
+}
+
+func targetGroupPrefix(cfg config.Config) string {
+	prefix, _ := cfg.DynamicGroupKeyPrefix()
+	return prefix
 }

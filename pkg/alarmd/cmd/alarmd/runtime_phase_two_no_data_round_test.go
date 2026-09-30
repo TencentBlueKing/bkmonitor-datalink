@@ -13,6 +13,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -57,7 +58,11 @@ const noDataContinuous = 2
 // Two objects that differ by anything leave the alert open for ever, and
 // nothing anywhere reports it.
 func TestNoDataOpensAnAlertAndTheReturningDataClosesIt(t *testing.T) {
-	fixture := startNoDataFixture(t)
+	// The native protocol, stated: this is the case where the closing record
+	// is a message the consumer pairs by identity. Left to "auto" the
+	// fixture's unrevisioned strategy resolved to the compatible protocol,
+	// where there is no closing record to send; that case is the next one.
+	fixture := startNoDataFixtureOn(t, config.OutputProtocolNative)
 	abnormal, recovered := fixture.openAndClose(t)
 
 	if recovered.RecordRef.DimensionIdentityDigest != abnormal.RecordRef.DimensionIdentityDigest {
@@ -65,6 +70,42 @@ func TestNoDataOpensAnAlertAndTheReturningDataClosesIt(t *testing.T) {
 			"clear: the alert closes because the other side pairs the two by identity, so two digests "+
 			"leave it open for ever",
 			recovered.RecordRef.DimensionIdentityDigest, abnormal.RecordRef.DimensionIdentityDigest)
+	}
+}
+
+// On the compatible protocol the returning data still decides the closing: the
+// RECOVERY is decided and counted on the output line as an event the protocol
+// has no message for, and none reaches the sink - that protocol ends the alert
+// by the anomalies stopping, which the next case pins.
+func TestTheReturningDataDecidesTheClosingOnTheCompatibleProtocolToo(t *testing.T) {
+	fixture := startNoDataFixtureOn(t, config.OutputProtocolLegacy)
+	ctx := context.Background()
+	round := int64(1)
+	for ; round <= noDataContinuous+2 && len(fixture.noDataAnomalies()) == 0; round++ {
+		fixture.runSlot(ctx, round)
+	}
+	if len(fixture.noDataAnomalies()) == 0 {
+		t.Fatalf("no no-data anomaly after %d absent rounds", noDataContinuous+2)
+	}
+	fixture.dataReturns()
+	recovered := func() bool {
+		for _, kind := range fixture.decided() {
+			if kind == contract.TriggerEventRecovery {
+				return true
+			}
+		}
+		return false
+	}
+	for next := round + 1; next <= round+3 && !recovered(); next++ {
+		fixture.runSlot(ctx, next)
+	}
+	if !recovered() {
+		t.Fatalf("the returning data decided no RECOVERY on the compatible protocol: decided %v", fixture.decided())
+	}
+	for _, event := range fixture.events.recorded() {
+		if event.EventKind == contract.TriggerEventRecovery {
+			t.Fatalf("a RECOVERY reached the sink on a protocol that has no message for it: %+v", event.RecordRef)
+		}
 	}
 }
 
@@ -225,6 +266,17 @@ type noDataFixture struct {
 	runner   phaseTwoQueryGroupRuntime
 	events   *recordingPhaseTwoEventSink
 	interval int64
+	// acked is every event_acked line, for what the rounds decided whether
+	// or not their protocol had a message for it.
+	ackedMu sync.Mutex
+	acked   []observability.Observation
+}
+
+// decided is the kinds the rounds decided, as the output lines count them.
+func (fixture *noDataFixture) decided() []string {
+	fixture.ackedMu.Lock()
+	defer fixture.ackedMu.Unlock()
+	return decidedEventKinds(fixture.acked)
 }
 
 func (fixture *noDataFixture) dataReturns() { fixture.hasData.Store(true) }
@@ -311,7 +363,14 @@ func startNoDataFixtureOn(t *testing.T, protocol string) *noDataFixture {
 	t.Helper()
 	address, redisClient := startPhaseTwoRedis(t)
 	ctx := context.Background()
-	installNoDataStrategy(t, ctx, redisClient)
+	// The native protocol pairs a closing record with its alert by the
+	// frozen strategy revision, so its strategy carries one; the compatible
+	// protocol's does not need it and is left as the platform writes it.
+	var revision int64
+	if protocol == config.OutputProtocolNative {
+		revision = 7
+	}
+	installNoDataStrategy(t, ctx, redisClient, revision)
 
 	const interval = int64(60)
 	base := time.Now().Unix()
@@ -367,6 +426,14 @@ func startNoDataFixtureOn(t *testing.T, protocol string) *noDataFixture {
 		phaseTwoProductionExternalDependencies{
 			Now: now, HTTPClient: uqServer.Client(),
 			OpenEvents: func(enginekafka.DecisionSinkConfig) (productionPhaseTwoEventSink, error) { return events, nil },
+			AdditionalObserver: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+				if observation.Stage != observability.StageEventACKed {
+					return
+				}
+				fixture.ackedMu.Lock()
+				defer fixture.ackedMu.Unlock()
+				fixture.acked = append(fixture.acked, observation)
+			}),
 		},
 	)
 	if err != nil {
@@ -384,7 +451,7 @@ func startNoDataFixtureOn(t *testing.T, protocol string) *noDataFixture {
 		t.Fatalf("Query Groups = %v, want one", bundle.queryGroups)
 	}
 	queryGroup := bundle.queryGroups[0]
-	fixture.runner = bundle.runners[queryGroup].runner
+	fixture.runner = settledRunner(bundle, queryGroup)
 	fixture.events = events
 
 	// The Plan must actually carry no-data detection, or every round below
@@ -397,7 +464,7 @@ func startNoDataFixtureOn(t *testing.T, protocol string) *noDataFixture {
 	return fixture
 }
 
-func installNoDataStrategy(t *testing.T, ctx context.Context, redisClient *redis.Client) {
+func installNoDataStrategy(t *testing.T, ctx context.Context, redisClient *redis.Client, revision int64) {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/g1_full_threshold_strategy.json")
 	if err != nil {
@@ -408,6 +475,9 @@ func installNoDataStrategy(t *testing.T, ctx context.Context, redisClient *redis
 		t.Fatal(err)
 	}
 	document["update_time"] = 1725000000
+	if revision > 0 {
+		document["strategy_revision"] = revision
+	}
 	// A name and a scenario, because the Python-compatible conversion refuses a
 	// strategy without them and the shared document has neither. Nothing
 	// noticed while this fixture only ran on the native protocol, where none of

@@ -231,6 +231,10 @@ func fillNonZero(t *testing.T, value reflect.Value, path string, depth int) {
 		element := reflect.New(value.Type().Elem()).Elem()
 		fillNonZero(t, element, path+"[0]", depth+1)
 		value.Set(reflect.Append(reflect.MakeSlice(value.Type(), 0, 1), element))
+	case reflect.Array:
+		for index := 0; index < value.Len(); index++ {
+			fillNonZero(t, value.Index(index), fmt.Sprintf("%s[%d]", path, index), depth+1)
+		}
 	case reflect.Map:
 		key := reflect.New(value.Type().Key()).Elem()
 		fillNonZero(t, key, path+".key", depth+1)

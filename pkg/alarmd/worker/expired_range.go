@@ -40,7 +40,7 @@ func (coordinator *SlotExecutionCoordinator) executeExpiredRange(ctx context.Con
 	if !ok {
 		return execution.SlotExecutionResult{}, errors.New("alarmd worker: range-aware Progress Store is required")
 	}
-	begin, err := store.BeginRange(ctx, execution.ExpiredRangeRequest{OwnerFence: request.OwnerFence, Projection: *request.ExpiredRange})
+	begin, err := store.BeginRange(ctx, execution.ExpiredRangeRequest{OwnerFence: request.OwnerFence, Projection: *request.ExpiredRange, ContentScope: request.ContentScope})
 	if err != nil {
 		return activationRetry(execution.ReasonBlockedExactSetUnavailable), nil
 	}
@@ -78,7 +78,7 @@ func (coordinator *SlotExecutionCoordinator) commitExpiredRange(ctx context.Cont
 	if !ok {
 		return execution.SlotExecutionResult{}, errors.New("alarmd worker: range-aware Progress Store is required")
 	}
-	result, err := store.CommitRange(ctx, execution.ExpiredRangeRequest{OwnerFence: request.OwnerFence, Projection: *request.ExpiredRange})
+	result, err := store.CommitRange(ctx, execution.ExpiredRangeRequest{OwnerFence: request.OwnerFence, Projection: *request.ExpiredRange, ContentScope: request.ContentScope})
 	if err != nil {
 		return execution.SlotExecutionResult{}, err
 	}

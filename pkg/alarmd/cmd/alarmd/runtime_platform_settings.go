@@ -44,7 +44,7 @@ func buildPlatformSettings(ctx context.Context, cfg config.Config, client redis.
 		source = redisSource
 	}
 	cache, err := platformsettings.New(platformsettings.Options{
-		Source: source, Deployment: cfg.PhaseTwo.PlatformSettings.Layer(), Now: now,
+		Source: source, Deployment: cfg.PlatformSettingsLayer(), Now: now,
 	})
 	if err != nil {
 		return nil, err
@@ -156,8 +156,11 @@ func platformSettingsRefresher(cache *platformsettings.Cache, hostStatus *dynami
 func platformSettingsFactsSource(cache *platformsettings.Cache, now func() time.Time) func() *fleet.PlatformSettingsFacts {
 	return func() *fleet.PlatformSettingsFacts {
 		stats := cache.Stats()
+		current := cache.Current()
 		facts := &fleet.PlatformSettingsFacts{
 			Mode: string(stats.Mode), StaleBeyondBound: cache.StaleBeyondBound(), LastUnavailable: stats.LastUnavailable,
+			NoDataTrackingHorizonSeconds: current.NoDataTrackingHorizonSeconds,
+			NoDataTrackingHorizonSource:  string(current.NoDataTrackingHorizonSource),
 		}
 		if !stats.LoadedAt.IsZero() {
 			age := now().Sub(stats.LoadedAt).Seconds()

@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -19,7 +20,7 @@ func TestNormalizeObservationKeepsStateApplyChunkFactsOnlyForStateStages(t *test
 	facts := &StateApplyChunkFacts{Index: 1, Count: 2, AppliedKeys: 16384, AppliedBytes: 4096, ElapsedMillis: 12}
 	for _, stage := range []Stage{StageStateAdmission, StageStateApplied, StageGapGuardCommitted} {
 		kept := NormalizeObservation(Observation{Component: ComponentState, Stage: stage, Result: ResultSuccess, StateApplyChunk: facts})
-		if kept.StateApplyChunk == nil || *kept.StateApplyChunk != *facts || kept.StateApplyChunk == facts {
+		if kept.StateApplyChunk == nil || !reflect.DeepEqual(*kept.StateApplyChunk, *facts) || kept.StateApplyChunk == facts {
 			t.Fatalf("%s facts = %+v, want a copy of %+v", stage, kept.StateApplyChunk, facts)
 		}
 	}

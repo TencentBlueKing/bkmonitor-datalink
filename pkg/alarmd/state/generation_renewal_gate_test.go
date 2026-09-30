@@ -313,9 +313,16 @@ type failingRenewalBackend struct {
 
 func (backend *failingRenewalBackend) RenewIfBelow(
 	_ context.Context, _ string, _, _ time.Duration,
-) (bool, error) {
+) (RenewalOutcome, error) {
 	backend.attempts++
-	return false, errors.New("state: renewal failed")
+	return "", errors.New("state: renewal failed")
+}
+
+func (backend *failingRenewalBackend) RenewManyIfBelow(
+	_ context.Context, keys []string, _, _ time.Duration,
+) ([]RenewalOutcome, error) {
+	backend.attempts += len(keys)
+	return nil, errors.New("state: renewal failed")
 }
 
 // lifetimelessBackend is a routed backend with no lifetime support at all.

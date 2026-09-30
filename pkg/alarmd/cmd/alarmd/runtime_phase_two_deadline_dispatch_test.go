@@ -16,6 +16,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 )
 
@@ -200,4 +201,72 @@ func TestPhaseTwoDispatcherFullReadyQueueGivesUpTheLatestDeadlineForAnEarlierOne
 		t.Fatalf("next rotation dispatched %v first, want the evicted query-group-3", next)
 	}
 	stopDeadlineDispatcher(t, cancel, done)
+}
+
+// A short-period Query Group turned away from a full ready queue says which
+// clause of the deadline order kept it out and what it lost to. The counter
+// alone reads the same for an arrival with no deadline, a tail that expires
+// earlier and a lost tie, and the fix for each is different.
+func TestPhaseTwoDispatcherTurnedAwayShortPeriodSlotSaysWhatItLostTo(t *testing.T) {
+	cfg := validGoAccessRuntimeConfig()
+	cfg.PhaseTwo.Scheduler.ProcessQueryPermits = 1
+	cfg.PhaseTwo.Scheduler.RecoveryQueryPermits = 0
+	cfg.PhaseTwo.Scheduler.ActiveExecutionLimit = 1
+	cfg.PhaseTwo.Scheduler.ReadyQueueCapacity = 2
+	now := time.Unix(1_700_000_000, 0)
+	runners := []deadlineDispatchRunner{
+		{queryGroup: "short-a", deadline: now.Add(5 * time.Second), interval: 10},
+		{queryGroup: "short-b", deadline: now.Add(9 * time.Second), interval: 10},
+		// Arrives behind a full queue whose tail expires before it does.
+		{queryGroup: "short-c", deadline: now.Add(10 * time.Second), interval: 10},
+		// Arrives with no deadline at all; an unknown deadline never displaces a known one.
+		{queryGroup: "short-d", interval: 10},
+	}
+	bundle, started, _ := newDeadlineDispatchBundle(t, configForDeadlineDispatch{config: cfg, now: now, runners: runners})
+	turnaways := make(chan observability.Observation, 64)
+	bundle.dependencies.Observer = observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
+		if observation.Stage == observability.StageDispatchTurnaway {
+			turnaways <- observation
+		}
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	wake := make(chan struct{}, 1)
+	done := make(chan error, 1)
+	go func() { done <- bundle.runScheduler(ctx, wake, false) }()
+	wake <- struct{}{}
+	order := collectDispatches(t, started, 4)
+	want := []execution.QueryGroupIdentity{"short-a", "short-b", "short-c", "short-d"}
+	if !reflect.DeepEqual(order, want) {
+		t.Fatalf("dispatch order = %v, want %v", order, want)
+	}
+	stopDeadlineDispatcher(t, cancel, done)
+	close(turnaways)
+
+	byQueryGroup := map[string]*observability.DispatchTurnawayFacts{}
+	for observation := range turnaways {
+		if observation.DispatchTurnaway == nil || observation.Trace.QueryGroupKey == "" {
+			t.Fatalf("turnaway observation without facts or Query Group: %#v", observation)
+		}
+		if _, seen := byQueryGroup[observation.Trace.QueryGroupKey]; !seen {
+			byQueryGroup[observation.Trace.QueryGroupKey] = observation.DispatchTurnaway
+		}
+	}
+	for queryGroup, want := range map[string]observability.DispatchTurnawayFacts{
+		"short-c": {Outcome: "normal_queue_full", Cohort: "10s", Verdict: "tail_earlier",
+			DeadlineUnixMilli: now.Add(10 * time.Second).UnixMilli(), KeptQueryGroup: "short-b", KeptCohort: "10s",
+			KeptDeadlineUnixMilli: now.Add(9 * time.Second).UnixMilli(), QueueLength: 2, QueueCapacity: 2},
+		"short-d": {Outcome: "normal_queue_full", Cohort: "10s", Verdict: "deadline_unknown",
+			KeptQueryGroup: "short-c", KeptCohort: "10s",
+			KeptDeadlineUnixMilli: now.Add(10 * time.Second).UnixMilli(), QueueLength: 2, QueueCapacity: 2},
+	} {
+		got := byQueryGroup[queryGroup]
+		if got == nil {
+			t.Fatalf("%s was turned away and wrote no facts; observed %v", queryGroup, byQueryGroup)
+		}
+		if !reflect.DeepEqual(*got, want) {
+			t.Fatalf("%s turnaway facts = %+v, want %+v", queryGroup, *got, want)
+		}
+	}
 }

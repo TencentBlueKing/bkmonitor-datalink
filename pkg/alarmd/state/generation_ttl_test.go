@@ -228,14 +228,15 @@ func TestAnOldGenerationKeyIsNotTouchedByANewGenerationLoad(t *testing.T) {
 // A backend that cannot renew fails the load rather than loading and skipping
 // the renewal. Skipping would put every key back to never expiring, and the
 // only place that shows up is a Redis instance months later.
+//
+// The store no longer opens on such a backend at all -- see
+// TestAnExecutionStoreRefusesToOpenOnATargetLackingACapability -- so this
+// reaches the load through a router that listed a capable target and routed
+// to this one. That is the defense behind the probe, and it has to hold.
 func TestALoadRefusesABackendThatCannotRenew(t *testing.T) {
 	backend := &nonRenewingBackend{values: map[string][]byte{}}
-	router, err := NewFixedRouter("target", backend)
-	if err != nil {
-		t.Fatal(err)
-	}
 	store, err := NewExecutionStore(ExecutionStoreOptions{
-		Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4,
+		Prefix: "alarmd", Router: listedCapableRouter{routed: backend}, MaxValueBytes: 4096, MaxItemsPerCall: 4,
 		MinTTL: time.Minute, MaxTTL: 30 * 24 * time.Hour, RestartMargin: time.Minute,
 	})
 	if err != nil {

@@ -12,6 +12,8 @@
 package collector
 
 import (
+	"errors"
+	"fmt"
 	"regexp"
 	"testing"
 	"time"
@@ -61,6 +63,40 @@ func TestGetCPUStatUsageUnix(t *testing.T) {
 	assert.NotNil(t, report.Usage)
 }
 
+func TestCollectCPUPercentRollbackIsInvalid(t *testing.T) {
+	calls := make([]bool, 0, 2)
+	collect := func(_ time.Duration, percpu bool) ([]float64, error) {
+		calls = append(calls, percpu)
+		if percpu {
+			return nil, fmt.Errorf("wrapped: %w", cpu.ErrCPUTimesCounterRollback)
+		}
+		return []float64{20}, nil
+	}
+
+	perUsage, totalUsage, err := collectCPUPercent(collect)
+
+	assert.ErrorIs(t, err, errInvalidCPUStat)
+	assert.Nil(t, perUsage)
+	assert.Nil(t, totalUsage)
+	assert.Equal(t, []bool{true, false}, calls)
+}
+
+func TestCollectCPUPercentOrdinaryError(t *testing.T) {
+	expectedErr := errors.New("percent failed")
+	calls := make([]bool, 0, 2)
+	collect := func(_ time.Duration, percpu bool) ([]float64, error) {
+		calls = append(calls, percpu)
+		if percpu {
+			return nil, expectedErr
+		}
+		return []float64{20}, nil
+	}
+
+	_, _, err := collectCPUPercent(collect)
+	assert.ErrorIs(t, err, expectedErr)
+	assert.Equal(t, []bool{true, false}, calls)
+}
+
 func TestQueryCpuInfoUnix(t *testing.T) {
 	report := &CpuReport{}
 	cfg := configs.FastBasereportConfig
@@ -77,4 +113,21 @@ func TestCalcTimeState(t *testing.T) {
 	t2TimeState := t2[0]
 	res := calcTimeState(t1TimeState, t2TimeState)
 	assert.NotNil(t, res)
+}
+
+func TestIsValidCPUTimeState(t *testing.T) {
+	previous := cpu.TimesStat{
+		CPU:    "cpu0",
+		User:   10,
+		System: 20,
+		Idle:   30,
+	}
+	current := previous
+	current.User = 11
+	current.System = 21
+	current.Idle = 31
+	assert.True(t, isValidCPUTimeState(calcTimeState(previous, current)))
+
+	current.System = 19
+	assert.False(t, isValidCPUTimeState(calcTimeState(previous, current)))
 }

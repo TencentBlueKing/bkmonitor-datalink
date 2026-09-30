@@ -25,6 +25,13 @@ import (
 // instance that has been growing for months.
 var ErrLifetimeUnsupported = errors.New("state: routed backend cannot renew a key lifetime")
 
+// ErrSlotAppliedUnsupported is a routed backend that cannot hold the mark a
+// failed attempt leaves behind. It is named rather than reported as the store
+// being down, because nothing about a Slot depends on it: a deployment whose
+// backend cannot do this keeps exactly the behaviour it had before the mark
+// existed, which is to record such a Slot as a gap.
+var ErrSlotAppliedUnsupported = errors.New("state: routed backend cannot hold a slot-applied mark")
+
 // RenewGenerationKey extends the life of a generation-scoped key that is being
 // loaded, when it is running out.
 //
@@ -47,13 +54,37 @@ var ErrLifetimeUnsupported = errors.New("state: routed backend cannot renew a ke
 // So the gate answers first, from what this process already asked. See
 // renewalGate: it spends half of the guarantee an answered ask leaves behind,
 // and every way it can be wrong sends the ask.
+// RenewalAttempt is what one renewal did, for a caller that reports it.
+//
+// Asked is false when the gate answered from what this process already knows,
+// which is most loads: renewal hangs on the load and a Plan loads every Slot.
+// Only an attempt that reached the backend is worth reporting -- a signal that
+// counted the skips would be dominated by them and would say nothing about
+// whether renewal works.
+type RenewalAttempt struct {
+	Asked   bool
+	Renewed bool
+	TTL     time.Duration
+}
+
+// RenewGenerationKey renews a key and discards what it learned, for the callers
+// that only need the error.
 func RenewGenerationKey(
 	ctx context.Context, target StorageTarget, key string, retention []execution.StateRetentionRequirement,
 	restartMargin, minimum, maximum time.Duration, gate *renewalGate,
 ) error {
+	_, err := RenewGenerationKeyReporting(ctx, target, key, retention, restartMargin, minimum, maximum, gate)
+	return err
+}
+
+// RenewGenerationKeyReporting is the same renewal, and says what it did.
+func RenewGenerationKeyReporting(
+	ctx context.Context, target StorageTarget, key string, retention []execution.StateRetentionRequirement,
+	restartMargin, minimum, maximum time.Duration, gate *renewalGate,
+) (RenewalAttempt, error) {
 	backend, ok := target.Backend.(LifetimeBackend)
 	if !ok {
-		return ErrLifetimeUnsupported
+		return RenewalAttempt{}, ErrLifetimeUnsupported
 	}
 	requirements := make([]LevelRequirement, len(retention))
 	for index, level := range retention {
@@ -63,7 +94,7 @@ func RenewGenerationKey(
 	}
 	ttl, err := GenerationScopedTTL(requirements, restartMargin, minimum, maximum)
 	if err != nil {
-		return err
+		return RenewalAttempt{}, err
 	}
 	// The capability check stays ahead of the gate. A backend that cannot renew
 	// has to say so on every load, not on the first one and then once every
@@ -71,11 +102,16 @@ func RenewGenerationKey(
 	// where the keys leak, and a gate that hid it would restore the leak and
 	// the silence together.
 	if !gate.Ask(key) {
-		return nil
+		return RenewalAttempt{}, nil
 	}
-	if _, err = backend.RenewIfBelow(ctx, key, ttl, GenerationScopedRenewalThreshold(ttl)); err != nil {
-		return err
+	// Only RENEWED counts as renewed. MISSING reads as not renewed here, as it
+	// did when the backend answered with a bool: this path renews the memory a
+	// Plan is still loading, and a key that went missing between the read and
+	// the renewal is the runtime state renewal's subject, not this one's.
+	outcome, err := backend.RenewIfBelow(ctx, key, ttl, GenerationScopedRenewalThreshold(ttl))
+	if err != nil {
+		return RenewalAttempt{Asked: true, TTL: ttl}, err
 	}
 	gate.Answered(key, RenewalAskInterval(ttl))
-	return nil
+	return RenewalAttempt{Asked: true, Renewed: outcome == RenewalRenewed, TTL: ttl}, nil
 }

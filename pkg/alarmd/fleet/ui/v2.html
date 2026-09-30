@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>告警检测 · 策略视图</title>
+<style>
+  :root { color-scheme: light dark; --ink: #1d232b; --mute: #6b7480; --line: #d9dee5; --bg: #f7f8fa; --card: #fff;
+    --ok: #2f8f4e; --warn: #b9750c; --bad: #c0392b; --wait: #4a6fa5; }
+  @media (prefers-color-scheme: dark) { :root { --ink: #e6e9ee; --mute: #9aa3ad; --line: #3a414b; --bg: #15181c; --card: #1e2227; } }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 16px 20px 60px; }
+  header#top { display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px 20px; padding: 12px 0 8px; border-bottom: 1px solid var(--line); }
+  #health { font-size: 26px; font-weight: 700; }
+  #health.HEALTHY { color: var(--ok); } #health.DEGRADED { color: var(--bad); } #health.UNKNOWN { color: var(--warn); }
+  #lead { font-size: 16px; flex: 1 1 420px; }
+  #meta { color: var(--mute); font-size: 12px; width: 100%; }
+  #columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; margin-top: 14px; }
+  section.col { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-height: 80px; }
+  section.col h2 { margin: 0 0 6px; font-size: 15px; display: flex; justify-content: space-between; }
+  section.col h2 small { color: var(--mute); font-weight: 400; }
+  section.col.SERVICE_FIX h2 { color: var(--bad); } section.col.STRATEGY_EDIT h2, section.col.DATA_CHECK h2, section.col.CACHE_WRITER_FILL h2 { color: var(--warn); }
+  section.col.WATCH h2 { color: var(--wait); } section.col.NONE h2 { color: var(--mute); }
+  section.col ul { list-style: none; margin: 0; padding: 0; }
+  section.col li { padding: 6px 0; border-top: 1px solid var(--line); }
+  section.col li a { color: inherit; text-decoration: none; }
+  section.col li a:hover { text-decoration: underline; }
+  section.col li .clock { color: var(--mute); font-size: 12px; display: block; }
+  section.col .empty { color: var(--mute); }
+  #card { margin-top: 18px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; }
+  #card[hidden] { display: none; }
+  #card h2 { margin: 0 0 4px; font-size: 18px; }
+  #card h3 { margin: 14px 0 4px; font-size: 14px; color: var(--mute); font-weight: 600; }
+  #card p { margin: 4px 0; }
+  #card ul { margin: 4px 0 4px 18px; padding: 0; }
+  #card details { margin-top: 10px; color: var(--mute); font-size: 12px; }
+  #card details a { color: inherit; }
+  .word { display: inline-block; padding: 0 6px; border-radius: 4px; border: 1px solid var(--line); margin-right: 4px; }
+  .note { color: var(--mute); }
+  .err { color: var(--bad); }
+</style>
+</head>
+<body>
+<main>
+  <header id="top">
+    <div id="health" title="部署判定">…</div>
+    <div id="lead">读取中</div>
+    <div id="meta"></div>
+    <a id="cliAuthorization" href="./cli">CLI 授权</a>
+  </header>
+  <div id="columns"></div>
+  <section id="card" hidden></section>
+</main>
+<script>
+// Everything is fetched relative to where the page is mounted. This page is
+// served at <prefix>/v2 beside the first page at <prefix>/, so its base is
+// the prefix with the trailing "v2" removed; "/alarmd/v2" and "/alarmd/v2/"
+// are equivalent.
+var BASE = (function () {
+  var p = location.pathname.replace(/\/v2\/?$/, '/');
+  return p.charAt(p.length - 1) === '/' ? p : p + '/';
+})();
+
+document.getElementById('cliAuthorization').href = BASE.replace(/v2\.html\/$/, '') + 'cli';
+
+// No vocabulary lives here. Every word the page shows is looked up in the
+// words the server sent with the list; a code the server did not word is
+// shown as its code, which is the page saying "the server has no word for
+// this" rather than inventing one.
+var WORDS = null;
+var LATEST = null;
+
+function word(table, key) {
+  if (!key) return '';
+  return (WORDS && WORDS[table] && WORDS[table][key]) || String(key);
+}
+
+function ago(iso, now) {
+  if (!iso) return '';
+  var at = new Date(iso).getTime();
+  if (!(at > 0)) return '';
+  var seconds = Math.round(((now || Date.now()) - at) / 1000);
+  if (seconds < 0) return '刚刚';
+  if (seconds < 90) return seconds + ' 秒前';
+  if (seconds < 5400) return Math.round(seconds / 60) + ' 分钟前';
+  if (seconds < 172800) return Math.round(seconds / 3600) + ' 小时前';
+  return Math.round(seconds / 86400) + ' 天前';
+}
+
+function clockLabel(iso) {
+  if (!iso) return '';
+  var at = new Date(iso);
+  if (!(at.getTime() > 0)) return '';
+  var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+  return pad(at.getHours()) + ':' + pad(at.getMinutes()) + ':' + pad(at.getSeconds());
+}
+
+function text(tag, content, className) {
+  var node = document.createElement(tag);
+  node.textContent = content;
+  if (className) node.className = className;
+  return node;
+}
+
+// L0: the deployment's word, the one line to act on, the build and the
+// clock. The health word and the lead line are the server's; the page
+// places them.
+function renderTop(list, health) {
+  var healthEl = document.getElementById('health');
+  var code = (health && health.health) || '';
+  healthEl.textContent = word('health', code) || '读不到';
+  healthEl.className = code;
+  var lead = document.getElementById('lead');
+  var summary = (list && list.summary) || {};
+  if (summary.lead) {
+    lead.textContent = '现在要做的：' + summary.lead.line;
+  } else if (summary.strategies > 0) {
+    lead.textContent = '现在没有要动手的；' + summary.strategies + ' 条策略在等着看或不用处理';
+  } else {
+    lead.textContent = '现在没有要处理的策略';
+  }
+  var meta = document.getElementById('meta');
+  var parts = [];
+  var groups = (health && health.builds) || [];
+  if (groups.length === 1) {
+    var build = groups[0].build || {};
+    parts.push('版本 ' + (build.version || '未上报') + ' · ' + groups[0].replicas.length + ' 个副本');
+  } else if (groups.length > 1) {
+    parts.push(groups.length + ' 个构建同时在跑（滚动中）');
+  }
+  if (health && health.expected != null) parts.push('应有 ' + health.expected + ' 个对象，已知状态 ' + health.determined);
+  parts.push('读数 ' + clockLabel(new Date().toISOString()));
+  meta.textContent = parts.join(' · ');
+}
+
+// L1: one column per action word, in the server's order, each strategy on
+// one line. The sentence is the server's; the page adds the clocks.
+function renderColumns(list) {
+  var root = document.getElementById('columns');
+  root.textContent = '';
+  var lines = (list && list.strategies) || [];
+  var byAction = {};
+  lines.forEach(function (line) {
+    var action = line.standing && line.standing.action;
+    (byAction[action] = byAction[action] || []).push(line);
+  });
+  var order = (WORDS && WORDS.action_order) || Object.keys(byAction);
+  var now = Date.now();
+  order.forEach(function (action) {
+    var rows = byAction[action] || [];
+    var section = document.createElement('section');
+    section.className = 'col ' + action;
+    var title = document.createElement('h2');
+    title.appendChild(text('span', word('action', action)));
+    title.appendChild(text('small', rows.length + ' 条策略'));
+    section.appendChild(title);
+    if (!rows.length) {
+      section.appendChild(text('div', '没有', 'empty'));
+      root.appendChild(section);
+      return;
+    }
+    var ul = document.createElement('ul');
+    rows.forEach(function (line) {
+      var li = document.createElement('li');
+      var a = document.createElement('a');
+      a.href = '#s=' + encodeURIComponent(line.strategy_id);
+      a.textContent = line.line;
+      a.title = (line.standing.check || '') + (line.standing.refined_by ? ' · ' + line.standing.refined_by : '') + ' · ' + line.deciding_object;
+      li.appendChild(a);
+      var clocks = [];
+      if (line.since) clocks.push('自 ' + ago(line.since, now) + (line.since_basis && line.since_basis !== 'EXACT' ? '（' + word('since_basis', line.since_basis) + '）' : ''));
+      if (line.last_good_at) clocks.push('最近一次正常 ' + ago(line.last_good_at, now));
+      if (clocks.length) li.appendChild(text('span', clocks.join(' · '), 'clock'));
+      ul.appendChild(li);
+    });
+    section.appendChild(ul);
+    root.appendChild(section);
+  });
+  if (list && list.truncated) {
+    root.appendChild(text('p', '只列了 ' + list.listed + ' 条，共 ' + list.total + ' 条', 'note'));
+  }
+}
+
+// L2: one strategy's card, from the standing endpoint: the server's
+// sentence, the words, each object with its own standing and the holes of
+// its windows, the key configuration, and the developer's coordinates
+// folded away.
+function renderCard(standing, refusal) {
+  var card = document.getElementById('card');
+  card.textContent = '';
+  card.hidden = false;
+  if (!standing) {
+    card.appendChild(text('p', (refusal && refusal.detail) || '读不到这条策略', 'err'));
+    if (refusal && refusal.text) card.appendChild(text('p', refusal.text, 'note'));
+    return;
+  }
+  var line = lineFor(standing.strategy_id);
+  var head = document.createElement('h2');
+  head.textContent = '策略 ' + standing.strategy_id;
+  if (line) {
+    head.appendChild(text('span', ' '));
+    head.appendChild(text('span', word('state', line.standing.state), 'word'));
+    head.appendChild(text('span', word('action', line.standing.action) + (line.standing.watch ? '：' + word('watch', line.standing.watch) : ''), 'word'));
+  }
+  card.appendChild(head);
+  card.appendChild(text('p', standing.line));
+  if (line) card.appendChild(text('p', line.line));
+
+  card.appendChild(text('h3', '为什么'));
+  var plans = standing.plans || [];
+  if (!plans.length) card.appendChild(text('p', '没有对象在跑它', 'note'));
+  plans.forEach(function (plan) {
+    var rows = plan.rows || [];
+    var head = '对象 ' + String(plan.query_group).slice(0, 12) + (plan.replica ? '（' + plan.replica + ' 持有）' : '（' + plan.existence + '）');
+    card.appendChild(text('p', head));
+    if (!rows.length) { card.appendChild(text('p', '正常检测中', 'note')); return; }
+    var ul = document.createElement('ul');
+    rows.forEach(function (row) { ul.appendChild(objectLine(row, standing.strategy_id)); });
+    card.appendChild(ul);
+  });
+
+  card.appendChild(text('h3', '关键配置'));
+  var config = configLines(standing);
+  if (!config.length) card.appendChild(text('p', '没带配置（加 include=config 读）', 'note'));
+  else { var cu = document.createElement('ul'); config.forEach(function (c) { cu.appendChild(text('li', c)); }); card.appendChild(cu); }
+
+  card.appendChild(text('h3', '下一步'));
+  card.appendChild(text('p', line ? word('action', line.standing.action) + (line.standing.watch ? '：' + word('watch', line.standing.watch) : '') : '无'));
+  card.appendChild(text('h3', '恢复标准'));
+  card.appendChild(text('p', '服务端每轮重判；这条策略离开上面的栏目即为恢复', 'note'));
+
+  var details = document.createElement('details');
+  details.appendChild(text('summary', '研发坐标'));
+  var coords = [];
+  if (line) coords.push('检查项 ' + (line.standing.check || '无') + (line.standing.refined_by ? '，规则 ' + line.standing.refined_by : '') + '，判定对象 ' + line.deciding_object);
+  coords.push('发布 ' + ((standing.publication || {}).snapshot_revision || '').slice(0, 12) + ' 第 ' + ((standing.publication || {}).epoch || 0) + ' 轮，' + standing.answered_by + ' 作答');
+  coords.forEach(function (c) { details.appendChild(text('div', c)); });
+  var link = document.createElement('a');
+  link.href = BASE + 'api/strategies/' + encodeURIComponent(standing.strategy_id) + '?include=config';
+  link.textContent = '原始 JSON';
+  link.target = '_blank'; link.rel = 'noopener';
+  details.appendChild(link);
+  card.appendChild(details);
+}
+
+function lineFor(strategyID) {
+  var lines = (LATEST && LATEST.strategies) || [];
+  for (var i = 0; i < lines.length; i++) if (lines[i].strategy_id === strategyID) return lines[i];
+  return null;
+}
+
+// One object's line on the card: its own words, and for a short window
+// the windows named with their holes -- which minutes, whose. A row whose
+// words the server says are about other Plans on the same object
+// (standing.about, this strategy not among them) is shown as a pointer to
+// those strategies with no state or action word of its own -- the thing to
+// do is on their cards; the page only places what the server named.
+function objectLine(row, strategyID) {
+  var li = document.createElement('li');
+  var standing = row.standing || {};
+  var parts = [word('state', standing.state), word('action', standing.action) + (standing.watch ? '：' + word('watch', standing.watch) : '')];
+  var about = standing.about || [];
+  var mine = false, others = [];
+  about.forEach(function (ref) { if (ref.strategy_id === strategyID) mine = true; else others.push(ref.strategy_id); });
+  if (about.length && !mine) {
+    parts = ['本策略在检测；同对象上策略 ' + others.join('、') + ' 有它们自己的问题（见该策略）'];
+  }
+  if (row.since) parts.push('自 ' + ago(row.since));
+  li.appendChild(text('span', parts.join(' · ')));
+  li.title = (standing.check || '') + (row.cause_reason ? ' · ' + row.cause_reason : '');
+  // Whether there is anything to show is decided by what is there -- the
+  // named windows -- not by the parallel count of short windows, which
+  // only writes the summary sentence. This is a rule, not a repair: the
+  // server's contract already forbids more windows than the count (the
+  // evaluator names a window under the same condition it counts it, and
+  // normalize drops a coverage that says otherwise), so the two never
+  // disagreed in production. The page still does not gate a list on a
+  // number, because a block hidden behind the wrong field disappears
+  // rather than misreads.
+  // A reading the server refused stands where the windows would: the rule
+  // it broke, in the server's words, and nothing of the refused numbers.
+  // Without this line a refused reading and every-window-complete were the
+  // same absence.
+  if (row.coverage_rejected) {
+    var refused = text('li', '这一轮的窗口读数服务端判定不自洽（' + word('coverage_rejected', row.coverage_rejected.rule) + '），未展示');
+    refused.title = row.coverage_rejected.rule + (row.coverage_rejected.series ? ' · ' + row.coverage_rejected.series : '');
+    li.appendChild(refused);
+  }
+  var coverage = row.coverage || {};
+  // How much of the object this round actually describes. A round that
+  // resumed or could not load most of its series summarises a window for the
+  // few it evaluated, and the count of those few reads as the object's size
+  // unless the rest are said out loud. Rendered on existence of the coverage,
+  // not on either count being above zero: the reading that matters most is
+  // the one where levels is small and these are large, and a block hidden
+  // behind a number disappears rather than misreads.
+  if (row.coverage && (coverage.resumed > 0 || coverage.constrained > 0)) {
+    var parts = [];
+    if (coverage.resumed > 0) parts.push('已应用过、本轮未重算 ' + coverage.resumed + ' 条');
+    if (coverage.constrained > 0) parts.push('状态没加载上、本轮评估不了 ' + coverage.constrained + ' 条');
+    li.appendChild(text('li', '这一轮汇总了 ' + (coverage.levels || 0) + ' 扇窗；另有' + parts.join('、')
+      + '——上面的窗口读数只说这一轮算过的那些，不是这个对象的全部'));
+  }
+  var windows = coverage.windows || [];
+  if (windows.length > 0 || coverage.short > 0) {
+    var sub = document.createElement('ul');
+    if (coverage.short > 0) {
+      sub.appendChild(text('li', '最差窗口 ' + coverage.worst_valid + '/' + coverage.worst_required + '，短窗 ' + coverage.short + ' 个'
+        + (coverage.worst_window_changed ? '（最差的换了一条序列）' : '')));
+    }
+    windows.forEach(function (window) {
+      var holes = (window.holes || []).map(function (hole) { return clockLabel(hole.at) + ' ' + word('hole', hole.cause); });
+      var head = '序列 ' + String(window.series).slice(0, 8) + '：' + window.valid + '/' + window.required + '，' + word('verdict', window.verdict);
+      var item = text('li', head + (holes.length ? '；缺 ' + holes.join('、') : ''));
+      item.title = window.key + (window.guard_reason ? ' · ' + window.guard_reason : '');
+      sub.appendChild(item);
+    });
+    li.appendChild(sub);
+  }
+  return li;
+}
+
+// The key configuration, from the redacted Plan configs the standing
+// endpoint returns on include=config: one line each for the schedule, the
+// query, the target and every Level's trigger. Only fields that are there.
+function configLines(standing) {
+  var lines = [];
+  (standing.plans || []).forEach(function (plan) {
+    var items = (plan.config && plan.config.items) || [];
+    items.forEach(function (item) {
+      if (item.schedule) lines.push('每 ' + item.schedule.interval_seconds + ' 秒检测一次');
+      var query = item.query || {};
+      (query.clauses || []).forEach(function (clause) {
+        lines.push('查 ' + (clause.table_id || '') + ' 的 ' + (clause.field || '') + (clause.time_aggregation ? '，' + clause.time_aggregation.method + ' ' + clause.time_aggregation.window : ''));
+      });
+      var target = item.target || {};
+      if (target.scope) {
+        (target.scope.conditions || []).forEach(function (condition) {
+          lines.push('目标 ' + condition.keys + ' 个');
+        });
+      }
+      (item.levels || []).forEach(function (level) {
+        var trigger = level.trigger || {}, recovery = level.recovery || {};
+        lines.push('级别 ' + level.level_id + '：' + (trigger.window_size ? trigger.window_size + ' 个周期内 ' + trigger.required_anomalies + ' 次异常触发' : '')
+          + (recovery.consecutive_windows ? '，连续 ' + recovery.consecutive_windows + ' 个周期正常恢复' : ''));
+      });
+    });
+  });
+  return lines;
+}
+
+// A refused request carries the server's own sentence about why. Throwing
+// it away and showing "could not read this" is how a deployment whose
+// catalog had not published for half an hour told every reader nothing,
+// while the body said which step its rounds were stopping at.
+function getJSON(path) {
+  return fetch(BASE + path, {cache: 'no-store'}).then(function (response) {
+    if (response.ok) return response.json();
+    return response.json().catch(function () { return null; }).then(function (body) {
+      // A structured error says itself in its message; the restricted public
+      // surface's is one, and it is told apart so the page can say where the
+      // data went rather than that it could not be read.
+      var error = body && body.error;
+      var words = error && typeof error === 'object' ? (error.message || error.code) : error;
+      var refusal = new Error(path + ' ' + response.status + (words ? '：' + words : ''));
+      refusal.body = body;
+      refusal.restricted = !!(error && typeof error === 'object' && error.code === RESTRICTED_CODE);
+      throw refusal;
+    });
+  });
+}
+
+// The restricted public surface: the refusal's code and the one notice shown
+// where the data behind the CLI would be, with the login page -- the one the
+// header's authorization link points at, built from this page's base.
+var RESTRICTED_CODE = 'public_surface_restricted';
+var RESTRICTED_NOTICE = '公开面已收紧，完整数据请用 CLI 读';
+function loginHref() { return BASE.replace(/v2\.html\/$/, '') + 'cli'; }
+function restrictedNotice(el) {
+  el.textContent = '';
+  el.appendChild(document.createTextNode(RESTRICTED_NOTICE + '：'));
+  var link = document.createElement('a');
+  link.href = loginHref();
+  link.textContent = '登录页';
+  el.appendChild(link);
+  el.hidden = false;
+}
+
+function refresh() {
+  return Promise.all([getJSON('api/strategies'), getJSON('api/health')]).then(function (results) {
+    LATEST = results[0];
+    WORDS = LATEST.words;
+    renderTop(LATEST, results[1]);
+    renderColumns(LATEST);
+    openSelected();
+  }).catch(function (error) {
+    var lead = document.getElementById('lead');
+    if (error.restricted) {
+      lead.className = '';
+      restrictedNotice(lead);
+      return;
+    }
+    lead.textContent = '读不到：' + error.message;
+    lead.className = 'err';
+  });
+}
+
+function selectedStrategy() {
+  var match = /[#&]s=([^&]+)/.exec(location.hash || '');
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
+function openSelected() {
+  var id = selectedStrategy();
+  var card = document.getElementById('card');
+  if (!id) { card.hidden = true; return; }
+  getJSON('api/strategies/' + encodeURIComponent(id) + '?include=config')
+    .then(renderCard)
+    .catch(function (refusal) {
+      if (refusal && refusal.restricted) {
+        card.hidden = false;
+        restrictedNotice(card);
+        return;
+      }
+      renderCard(null, refusal && refusal.body);
+    });
+}
+
+window.addEventListener('hashchange', openSelected);
+refresh();
+setInterval(refresh, 30000);
+</script>
+</body>
+</html>

@@ -96,7 +96,7 @@ type PhaseTwoPlatformSettingsConfig struct {
 
 // Layer is the deployment layer as the platformsettings copy resolves it.
 func (c PhaseTwoPlatformSettingsConfig) Layer() platformsettings.Layer {
-	layer := platformsettings.Layer{IsAccessBKData: c.IsAccessBKData}
+	layer := platformsettings.Layer{IsAccessBKData: c.IsAccessBKData, Origin: platformsettings.HorizonSourceValues}
 	if c.HostDisableMonitorStates != nil {
 		values := append([]string{}, *c.HostDisableMonitorStates...)
 		layer.HostDisableMonitorStates = &values
@@ -227,10 +227,9 @@ type PhaseTwoCoordinatorConfig struct {
 // frozen with it, so a Slot that is retried cannot change wire format between
 // attempts.
 const (
-	// OutputProtocolAuto keeps the split the frozen revision already decides:
-	// a strategy with a revision publishes the native event, one without it
-	// publishes the Python-compatible event. It is the default because it is
-	// what the process already did.
+	// OutputProtocolAuto selects the standard raw event for a strategy with a
+	// frozen revision and the Python-compatible event for one without it.
+	// TriggerEvent remains an internal evaluation result, never a wire format.
 	OutputProtocolAuto = "auto"
 	// OutputProtocolLegacy publishes every strategy through the
 	// Python-compatible protocol, including strategies that have a revision.
@@ -335,6 +334,7 @@ func (c PhaseTwoCanonicalConfig) Stride() uint64 {
 func (c PhaseTwoCanonicalConfig) SelectedMode() string { return c.mode() }
 
 type PhaseTwoRuntimeConfig struct {
+	Linkd            LinkdConfig                    `yaml:"linkd"`
 	Worker           PhaseTwoWorkerConfig           `yaml:"worker"`
 	Control          PhaseTwoControlConfig          `yaml:"control"`
 	Output           PhaseTwoOutputConfig           `yaml:"output"`
@@ -344,6 +344,87 @@ type PhaseTwoRuntimeConfig struct {
 	Coordinator      PhaseTwoCoordinatorConfig      `yaml:"-"`
 	Canonical        PhaseTwoCanonicalConfig        `yaml:"canonical"`
 	PlatformSettings PhaseTwoPlatformSettingsConfig `yaml:"platform_settings"`
+	Observation      PhaseTwoObservationConfig      `yaml:"observation"`
+	NoData           PhaseTwoNoDataConfig           `yaml:"no_data"`
+}
+
+// PhaseTwoNoDataConfig is the deployment's say over how long one absent group
+// goes on being reported before detection stops tracking it.
+//
+// It is here rather than derived because nothing in the process knows the
+// answer. The horizon is a statement about how long a group that stopped
+// reporting stays interesting to the people carrying the pager - a host
+// decommissioned on purpose and one that fell over look identical to
+// detection, and only the deployment knows which its population is mostly
+// made of. Everything the horizon then costs is derived from it.
+type PhaseTwoNoDataConfig struct {
+	// TrackingHorizonSeconds is the platform default every Plan that does not
+	// state its own inherits. Positive seconds; there is no value meaning
+	// "track forever", so the leaf is read by presence and not by its value.
+	//
+	// A pointer for that reason. An absent leaf is a deployment that has not
+	// set a platform horizon, and absence is the only way to say so: with a
+	// plain integer, "not written" and "written as zero" are the same value,
+	// and the zero would be carrying a second meaning nobody wrote - which is
+	// how this feature spent three batches looking configured while never
+	// running. Present, it must be at least one second, and both zero and a
+	// negative are refused by name rather than read as an intention.
+	//
+	// Absent, the platform settings copy resolves the horizon: a dynamic
+	// value published under base_config.domains.strategy, else the approved
+	// contract's one day. An earlier ruling had absence mean "track
+	// indefinitely"; it is withdrawn in favour of the contract, which gives
+	// every group a finite horizon by default.
+	TrackingHorizonSeconds *int64 `yaml:"tracking_horizon_seconds,omitempty"`
+}
+
+// PhaseTwoObservationConfig is the operator's allocation to the strategy
+// directory, the cost candidates and the criterion samples: the diagnostics
+// that read the control plane and write the diagnostic store on their own
+// account, beyond what detection needs.
+//
+// MemoryPercent is the share of the container's memory limit they may hold,
+// from which every other bound of theirs is derived (config.DeriveObservationCapacity).
+// Zero -- the default -- leaves them off: the directory cold read of a
+// ten-thousand-Plan catalogue and the per-tick cost summary were measured
+// on synthetic populations only, and the ruling is that they are switched on
+// by an operator who has been given the measured budget for that deployment,
+// not by whichever container happens to know its limit. An operator turning
+// them on says how much, and nothing here says "unlimited".
+type PhaseTwoObservationConfig struct {
+	MemoryPercent int `yaml:"memory_percent"`
+}
+
+// ObservationMemoryPercentMax bounds the allocation: a quarter of the
+// container is the point past which the diagnostics are competing with the
+// detection they are supposed to describe.
+const ObservationMemoryPercentMax = 25
+
+func (c PhaseTwoObservationConfig) validate() error {
+	if c.MemoryPercent < 0 || c.MemoryPercent > ObservationMemoryPercentMax {
+		return fmt.Errorf("phase_two.observation.memory_percent %d must be between 0 (off) and %d", c.MemoryPercent, ObservationMemoryPercentMax)
+	}
+	return nil
+}
+
+func (c PhaseTwoNoDataConfig) validate() error {
+	// Refused here as well as in the contract because this is where an
+	// operator's typo is still a startup failure they can read. Reaching the
+	// contract means it is already inside a compiled Plan, where the same
+	// mistake is a refused strategy rather than a refused deployment.
+	//
+	// Zero is refused rather than read as "no horizon" because a deployment
+	// with no horizon says so by not writing the leaf. Accepting zero here
+	// would give the value a second meaning, and the operator who wrote it
+	// meant something - most likely "off", which is what deleting the leaf
+	// already says, and conceivably "immediately", which the horizon has no
+	// way to mean.
+	if c.TrackingHorizonSeconds != nil && *c.TrackingHorizonSeconds < 1 {
+		return fmt.Errorf("phase_two.no_data.tracking_horizon_seconds %d must be a positive number of "+
+			"seconds; omit the key entirely to leave absence tracked indefinitely",
+			*c.TrackingHorizonSeconds)
+	}
+	return nil
 }
 
 func defaultPhaseTwoRuntime() PhaseTwoRuntimeConfig {
@@ -505,6 +586,12 @@ func (c PhaseTwoRuntimeConfig) validate() error {
 	}
 	if err := platformsettings.ValidateKeyPrefix(c.PlatformSettings.RedisKeyPrefix); err != nil {
 		return fmt.Errorf("phase_two platform_settings.redis_key_prefix: %w", err)
+	}
+	if err := c.Observation.validate(); err != nil {
+		return err
+	}
+	if err := c.NoData.validate(); err != nil {
+		return err
 	}
 	for name, list := range map[string]*[]string{
 		"host_disable_monitor_states": c.PlatformSettings.HostDisableMonitorStates,

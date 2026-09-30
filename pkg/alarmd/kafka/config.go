@@ -80,15 +80,11 @@ func (c Config) Validate() error {
 			return fmt.Errorf("kafka: %s must be non-empty canonical text", name)
 		}
 	}
-	if _, err := sarama.ParseKafkaVersion(c.BrokerVersion); err != nil {
-		return fmt.Errorf("kafka: broker_version %q: %w", c.BrokerVersion, err)
+	if _, err := ValidateBrokerVersion("kafka", c.BrokerVersion); err != nil {
+		return err
 	}
 	if c.InitialOffset != "" && c.InitialOffset != InitialOffsetOldest && c.InitialOffset != InitialOffsetLatest {
 		return fmt.Errorf("kafka: initial_offset must be %q or %q", InitialOffsetOldest, InitialOffsetLatest)
-	}
-	version, _ := sarama.ParseKafkaVersion(c.BrokerVersion)
-	if !version.IsAtLeast(sarama.V0_10_2_0) || !sarama.MaxVersion.IsAtLeast(version) {
-		return fmt.Errorf("kafka: broker_version %q is outside consumer group range 0.10.2.0..%s", c.BrokerVersion, sarama.MaxVersion)
 	}
 	return nil
 }

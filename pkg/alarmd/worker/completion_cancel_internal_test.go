@@ -58,3 +58,9 @@ func TestShortCompletionDownstreamCancellationPreservesACKStateProgressOrder(t *
 		}
 	}
 }
+
+func (p *completionCancelPorts) RenewFrozenRuntime(
+	_ context.Context, request execution.FrozenStateRenewalRequest,
+) (execution.FrozenStateRenewalResult, error) {
+	return freshFrozenRenewals(request), nil
+}

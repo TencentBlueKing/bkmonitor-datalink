@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -139,7 +140,7 @@ func TestProductionRemainingAlgorithms(t *testing.T) {
 				}
 				for _, slot := range []int64{base, base + 60} {
 					clock.Store(slot + 1)
-					if err := bundle.runScheduledOnce(ctx); err != nil {
+					if err := runScheduledOnceSettled(ctx, bundle); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -170,9 +171,13 @@ func TestProductionRemainingAlgorithms(t *testing.T) {
 					}
 					return
 				}
-				if len(written) != 2 || written[0].EventKind != contract.TriggerEventAbnormal || written[1].EventKind != contract.TriggerEventRecovery {
+				// Decided, as the output lines count it; under the
+				// Python-compatible protocol the RECOVERY has no message and
+				// only the anomaly reaches the sink.
+				if decided := decidedEventKinds(captured); !reflect.DeepEqual(decided, []string{contract.TriggerEventAbnormal, contract.TriggerEventRecovery}) ||
+					!reflect.DeepEqual(controlledEventKinds(written), []string{contract.TriggerEventAbnormal}) {
 					encoded, _ := json.Marshal(captured)
-					t.Fatalf("events=%v; observations=%s", controlledEventKinds(written), encoded)
+					t.Fatalf("decided=%v written=%v; observations=%s", decided, controlledEventKinds(written), encoded)
 				}
 				progress := loadPhaseTwoProgress(t, ctx, bundle.dependencies.Ownership.(*productionPhaseTwoOwnership), bundle.queryGroups[0])
 				if progress.LastFullSlot != execution.EvaluationTime(base+60) || progress.NextSlot != execution.EvaluationTime(base+120) {

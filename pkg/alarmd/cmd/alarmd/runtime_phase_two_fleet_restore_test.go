@@ -133,3 +133,48 @@ func TestFleetRestoreFiltersRetiredRunnerDuringRead(t *testing.T) {
 		t.Fatalf("retired runner contaminated snapshot: %+v", snapshot)
 	}
 }
+
+// The commit's summary of the last round reaches the tracker with the keys
+// the contract fixed: the Slot that completed, the commit's clock, how it
+// ended and why, and the revisions it ran under. A record from before the
+// field existed has no round, and a clock that does not parse is dropped
+// rather than invented.
+func TestRestoredRoundIsMappedFromTheCommittedSummary(t *testing.T) {
+	summary := &execution.LastCompletionSummary{
+		Slot: 1_700_000_060, CompletedAt: "2026-09-16T08:00:05Z", Kind: execution.CompletionPartialGap, ReasonCode: "QUERY_TIMEOUT",
+		Contract: execution.FrozenExecutionContractRef{SnapshotRevision: "s1", QueryRevision: "q1", ScheduleRevision: "r1"},
+	}
+	round := restoredRoundOf(summary)
+	if round == nil || !round.Slot.Equal(time.Unix(1_700_000_060, 0)) || !round.CompletedAt.Equal(time.Date(2026, 9, 16, 8, 0, 5, 0, time.UTC)) ||
+		round.Kind != string(execution.CompletionPartialGap) || round.ReasonCode != "QUERY_TIMEOUT" ||
+		round.SnapshotRevision != "s1" || round.QueryRevision != "q1" || round.ScheduleRevision != "r1" {
+		t.Fatalf("restored round = %+v, want every field of the summary mapped", round)
+	}
+	if restoredRoundOf(nil) != nil {
+		t.Fatal("a record without a summary produced a round")
+	}
+	summary.CompletedAt = "not a clock"
+	if round := restoredRoundOf(summary); round == nil || !round.CompletedAt.IsZero() || round.ReasonCode != "QUERY_TIMEOUT" {
+		t.Fatalf("restored round with an unparsable clock = %+v, want the clock dropped and the reason kept", round)
+	}
+}
+
+// The two facts about records come off the record as Slot times, and a zero
+// -- a record from before the fields, or one a build without them wrote back
+// during a mixed-version roll -- comes off as no time at all, not as the
+// epoch: an object restored with "empty since 1970" would be listed on the
+// spot with an age of decades.
+func TestTheTwoFactsAboutRecordsAreMappedAndZeroIsNotTheEpoch(t *testing.T) {
+	record := execution.ScheduleProgress{NextSlot: 1_700_000_120, LastFullSlot: 1_700_000_060,
+		LastCompletionKind: execution.CompletionFullEmpty, LastDataSlot: 1_699_990_000, EmptyRunSinceSlot: 1_699_996_400}
+	restored := restoredStateOf(record)
+	if !restored.LastDataSlot.Equal(time.Unix(1_699_990_000, 0)) || !restored.EmptyRunSince.Equal(time.Unix(1_699_996_400, 0)) ||
+		restored.LastCompletion != "FULL_EMPTY_COMPLETED" || !restored.LastFullSlot.Equal(time.Unix(1_700_000_060, 0)) {
+		t.Fatalf("restored = %+v, want both facts as the Slots the record names", restored)
+	}
+	record.LastDataSlot, record.EmptyRunSinceSlot = 0, 0
+	restored = restoredStateOf(record)
+	if !restored.LastDataSlot.IsZero() || !restored.EmptyRunSince.IsZero() {
+		t.Fatalf("restored from a record that names neither = %+v, want both zero, not the epoch", restored)
+	}
+}

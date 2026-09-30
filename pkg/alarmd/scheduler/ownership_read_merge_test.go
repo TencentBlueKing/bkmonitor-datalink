@@ -62,7 +62,7 @@ func (store *countingOwnershipStore) Renew(
 	return ownership.Lease{Fence: fence, Deadline: store.deadline}, nil
 }
 
-func (store *countingOwnershipStore) CheckFence(_ context.Context, _ execution.OwnerFence, _ time.Time) error {
+func (store *countingOwnershipStore) CheckFence(_ context.Context, _ execution.OwnerFence) error {
 	store.commands++
 	store.fenceChecks++
 	return store.fenceErr
@@ -71,7 +71,6 @@ func (store *countingOwnershipStore) CheckFence(_ context.Context, _ execution.O
 func (store *countingOwnershipStore) CheckFenceWithAssignment(
 	_ context.Context,
 	_ execution.OwnerFence,
-	_ time.Time,
 ) (ownership.AssignmentRecord, error) {
 	store.commands++
 	store.mergedFenceChecks++

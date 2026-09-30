@@ -5,12 +5,13 @@ import (
 	"errors"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
 	"testing"
 	"time"
 )
 
 func TestWorkflowExecutorReturnClassifications(t *testing.T) {
-	for _, name := range []string{"completed", "readiness_deferred", "retrying", "cancelled", "error", "incomplete"} {
+	for _, name := range []string{"completed", "readiness_deferred", "view_not_executable", "retrying", "cancelled", "error", "incomplete"} {
 		t.Run(name, func(t *testing.T) {
 			result := execution.SlotExecutionResult{}
 			var cause error
@@ -19,6 +20,8 @@ func TestWorkflowExecutorReturnClassifications(t *testing.T) {
 				result.Completed = true
 			case "readiness_deferred":
 				cause = phaseTwoReadinessDeferredError{readyAt: time.Now().Add(time.Second)}
+			case "view_not_executable":
+				cause = &scheduler.ViewNotExecutableError{Reason: "no_lease"}
 			case "retrying":
 				result.Result = observability.ResultRetrying
 			case "cancelled":

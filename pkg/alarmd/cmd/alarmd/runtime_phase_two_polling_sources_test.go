@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -180,7 +181,7 @@ func TestProductionPollingSources(t *testing.T) {
 				}
 				for _, slot := range []int64{base, base + 60} {
 					clock.Store(slot + 1)
-					if err := bundle.runScheduledOnce(ctx); err != nil {
+					if err := runScheduledOnceSettled(ctx, bundle); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -193,17 +194,24 @@ func TestProductionPollingSources(t *testing.T) {
 				seen := append([]observability.Observation(nil), observations...)
 				queried := calls
 				mu.Unlock()
-				if len(written) != want || queried == 0 || len(bundle.queryGroups) != 1 {
-					t.Fatalf("events=%v calls=%d groups=%d stages=%v", controlledEventKinds(written), queried, len(bundle.queryGroups), observedStages(seen))
+				// Decided, as the output lines count it; the recoveries have
+				// no message under the Python-compatible protocol these
+				// sources run under, so only the anomalies reach the sink.
+				decided := decidedEventKinds(seen)
+				if len(decided) != want || queried == 0 || len(bundle.queryGroups) != 1 {
+					t.Fatalf("decided=%v written=%v calls=%d groups=%d stages=%v", decided, controlledEventKinds(written), queried, len(bundle.queryGroups), observedStages(seen))
 				}
-				for i, event := range written {
+				for i, kind := range decided {
 					expected := contract.TriggerEventAbnormal
 					if i >= 2 {
 						expected = contract.TriggerEventRecovery
 					}
-					if event.EventKind != expected {
-						t.Fatalf("event %d=%s want=%s", i, event.EventKind, expected)
+					if kind != expected {
+						t.Fatalf("decided %d=%s want=%s", i, kind, expected)
 					}
+				}
+				if got := controlledEventKinds(written); !reflect.DeepEqual(got, []string{contract.TriggerEventAbnormal, contract.TriggerEventAbnormal}) {
+					t.Fatalf("written=%v, want the two anomalies only: a Python-compatible RECOVERY has no message", got)
 				}
 				assertObservedOrder(t, observedStages(seen), []observability.Stage{observability.StageEventACKed, observability.StageStateApplied, observability.StageProgressCommitted})
 			})

@@ -21,25 +21,38 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
-// A held RECOVERY envelope has to reach the Plan's counts, because those
-// counts are the only way the metric can say the gate was ever exercised. A
-// count that stayed at zero because the evaluator never added to it would
-// read exactly like a gate that never had to hold, which is the reading that
-// tells nobody to look. So the two arms run through the evaluator: a sibling
-// Level still warming holds the envelope and counts once, and the same
-// record with both Levels' histories complete sends it and counts nothing.
-func TestEvaluatorCountsAHeldRecoveryEnvelopeOnThePlan(t *testing.T) {
+// A RECOVERY decided beside a Level that cannot answer sends its envelope
+// and reaches the Plan's counts under that Level's state, run through the
+// evaluator and the result contract the Worker applies to the same result.
+// The count is how the change is read in production: a count that stayed at
+// zero because the evaluator never added to it would read like a deployment
+// where no RECOVERY ever went beside such a Level. The same record with both
+// Levels' histories complete sends it too and counts nothing.
+func TestEvaluatorSendsARecoveryBesideAnUnavailableLevelAndCountsIt(t *testing.T) {
 	for _, arm := range []struct {
 		name          string
 		siblingWarm   bool
-		wantHeld      uint64
+		wantBeside    uint64
 		wantEnvelopes int
 	}{
-		{name: "sibling Level warming holds the envelope and counts it", siblingWarm: true, wantHeld: 1, wantEnvelopes: 0},
-		{name: "both Levels complete send the envelope and count nothing", siblingWarm: false, wantHeld: 0, wantEnvelopes: 1},
+		{name: "beside a sibling Level warming, sent and counted", siblingWarm: true, wantBeside: 1, wantEnvelopes: 1},
+		{name: "both Levels complete, sent and not counted", siblingWarm: false, wantBeside: 0, wantEnvelopes: 1},
 	} {
 		t.Run(arm.name, func(t *testing.T) {
-			plan := compiledTwoLevels(t)
+			// The beside arm needs a sibling that genuinely cannot answer, not
+			// merely one under a guard. Since decision-022 a guarded Level
+			// whose recovery window is fully observed recovers, so a sibling
+			// asking for one window would close the envelope rather than hold
+			// it. Asking for two consecutive windows is what the loaded
+			// history cannot give: the older of the two was anomalous, so the
+			// run of misses ends there and the Level stays unavailable, which
+			// is the state this gate is about.
+			plan := compiledTwoLevelsShaped(t, "50", "50", func(p *contract.EvaluationPlanV2) {
+				if !arm.siblingWarm {
+					return
+				}
+				p.StrategyIR.Levels[1].RecoveryPlan.Config = json.RawMessage(`{"enabled":true,"consecutive_windows":2}`)
+			})
 			history := []execution.StateHistoryPoint{{RecordID: strings.Repeat("a", 64), SourceTime: 40, Levels: []execution.StateLevelFact{
 				{LevelID: 5, DetectFingerprint: plan.Levels()[0].Fingerprints().Detect, Result: execution.LevelFactAnomalous},
 				{LevelID: 6, DetectFingerprint: plan.Levels()[1].Fingerprints().Detect, Result: execution.LevelFactAnomalous},
@@ -64,7 +77,7 @@ func TestEvaluatorCountsAHeldRecoveryEnvelopeOnThePlan(t *testing.T) {
 			if plan0.LevelOutcomes[1].Outcome != wantSibling {
 				t.Fatalf("sibling outcome=%s want %s", plan0.LevelOutcomes[1].Outcome, wantSibling)
 			}
-			want := execution.RecoveryGateCounts{HeldLevelUnavailable: arm.wantHeld}
+			want := execution.RecoveryGateCounts{BesideLevelUnavailable: arm.wantBeside}
 			if plan0.RecoveryGate != want {
 				t.Fatalf("gate counts=%+v want %+v", plan0.RecoveryGate, want)
 			}
@@ -74,13 +87,11 @@ func TestEvaluatorCountsAHeldRecoveryEnvelopeOnThePlan(t *testing.T) {
 			if got := len(plan0.StateResults[0].Events); got != arm.wantEnvelopes {
 				t.Fatalf("envelopes=%d want %d", got, arm.wantEnvelopes)
 			}
-			// The hold travels on the RECOVERY outcome and nowhere else, because
-			// the result contract, which the Worker runs on this very result,
-			// expects one envelope per record with a business outcome unless
-			// the record says its envelope was held. The first build with the
-			// gate did not say so, and the contract refused every held record.
-			if plan0.LevelOutcomes[0].EnvelopeHeld != arm.siblingWarm || plan0.LevelOutcomes[1].EnvelopeHeld {
-				t.Fatalf("EnvelopeHeld = (%t, %t), want (%t, false)", plan0.LevelOutcomes[0].EnvelopeHeld, plan0.LevelOutcomes[1].EnvelopeHeld, arm.siblingWarm)
+			// Nothing is held, so no outcome says it was: the result contract,
+			// which the Worker runs on this very result, then expects the
+			// envelope, and the record has it.
+			if plan0.LevelOutcomes[0].EnvelopeHeld || plan0.LevelOutcomes[1].EnvelopeHeld {
+				t.Fatalf("EnvelopeHeld = (%t, %t), want neither", plan0.LevelOutcomes[0].EnvelopeHeld, plan0.LevelOutcomes[1].EnvelopeHeld)
 			}
 			if err := result.Validate(req); err != nil {
 				t.Fatalf("the result contract refused the evaluator's own result: %v", err)

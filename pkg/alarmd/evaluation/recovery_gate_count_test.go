@@ -16,24 +16,24 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/trigger"
 )
 
-// Each record's gate lands in exactly one count, or in none: held records by
-// cause, a record sent past a Level without recovery on its own, and records
-// that were neither add nothing.
+// Each record lands in exactly one count, or in none, by the state of the
+// Level it was decided beside. Whether the open alert set then held its
+// envelope does not move it: that is the envelope's story, not the record's.
 func TestRecoveryGateCountsPartitionTheRecords(t *testing.T) {
 	var counts execution.RecoveryGateCounts
 	for _, gate := range []trigger.RecoveryGateV2{
-		{Held: true, Cause: trigger.RecoveryHeldLevelUnavailable, LevelID: 1},
-		{Held: true, Cause: trigger.RecoveryHeldLevelUnavailable, LevelID: 2},
-		{Held: true, Cause: trigger.RecoveryHeldLevelRecovering, LevelID: 1},
-		{PassedLevelWithoutRecovery: true},
-		{PassedLevelWithoutRecovery: true},
-		{PassedLevelWithoutRecovery: true},
+		{Beside: trigger.RecoveryBesideLevelUnavailable, BesideLevelID: 1},
+		{Beside: trigger.RecoveryBesideLevelUnavailable, BesideLevelID: 2, Held: true, Cause: trigger.RecoveryHeldNoOpenAlert},
+		{Beside: trigger.RecoveryBesideLevelRecovering, BesideLevelID: 1},
+		{Beside: trigger.RecoveryBesideLevelWithoutRecovery, BesideLevelID: 1},
+		{Beside: trigger.RecoveryBesideLevelWithoutRecovery, BesideLevelID: 1},
+		{Beside: trigger.RecoveryBesideLevelWithoutRecovery, BesideLevelID: 3},
 		{},
-		{},
+		{Held: true, Cause: trigger.RecoveryHeldNoOpenAlert},
 	} {
 		countRecoveryGate(&counts, gate)
 	}
-	want := execution.RecoveryGateCounts{HeldLevelUnavailable: 2, HeldLevelRecovering: 1, SentPastLevelWithoutRecovery: 3}
+	want := execution.RecoveryGateCounts{BesideLevelUnavailable: 2, BesideLevelRecovering: 1, BesideLevelWithoutRecovery: 3}
 	if counts != want {
 		t.Fatalf("counts = %+v, want %+v", counts, want)
 	}

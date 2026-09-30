@@ -7,4 +7,25 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package featureFlag
+package http
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/gin-gonic/gin"
+)
+
+func TestHandleFeatureFlagDoesNotRejectSourceParameter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	writer := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(writer)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/ff?r=1&source=consul", nil)
+
+	HandleFeatureFlag(ctx)
+
+	if writer.Code != http.StatusOK {
+		t.Fatalf("expected source parameter not to reject fallback refresh, got status %d", writer.Code)
+	}
+}

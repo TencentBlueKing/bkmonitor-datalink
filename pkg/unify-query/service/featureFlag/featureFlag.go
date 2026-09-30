@@ -11,6 +11,7 @@ package featureFlag
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -19,6 +20,8 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
+	redisService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/redis"
 )
 
 // Service
@@ -26,7 +29,48 @@ type Service struct {
 	ctx        context.Context
 	cancelFunc context.CancelFunc
 
-	wg *sync.WaitGroup
+	wg       *sync.WaitGroup
+	provider FeatureFlagProvider
+
+	refreshMu         sync.Mutex
+	clientMu          sync.Mutex
+	clientInitialized bool
+}
+
+var (
+	activeServiceMu sync.RWMutex
+	activeService   *Service
+)
+
+func (s *Service) registerAsActive() {
+	activeServiceMu.Lock()
+	activeService = s
+	activeServiceMu.Unlock()
+}
+
+func (s *Service) unregisterAsActive() {
+	activeServiceMu.Lock()
+	if activeService == s {
+		activeService = nil
+	}
+	activeServiceMu.Unlock()
+}
+
+// RefreshFeatureFlags 使用运行中的 Provider 强制读取并应用最新快照。
+// 诊断接口只应经由此入口更新运行时，不能自行注入其他来源的数据。
+func RefreshFeatureFlags(ctx context.Context) error {
+	activeServiceMu.RLock()
+	service := activeService
+	activeServiceMu.RUnlock()
+	if service == nil {
+		return fmt.Errorf("feature flag service is not running")
+	}
+	// 不能用 HTTP 请求上下文重新初始化客户端：请求结束后 Context 会取消，
+	// 会连带停止 go-feature-flag 的轮询。运行中的服务必须沿用自身生命周期上下文。
+	if service.ctx != nil {
+		ctx = service.ctx
+	}
+	return service.reconcileFeatureFlags(ctx)
 }
 
 // Type
@@ -40,40 +84,126 @@ func (s *Service) Start(ctx context.Context) {
 }
 
 // reloadFeatureFlags
-func (s *Service) reloadFeatureFlags(ctx context.Context) error {
-	data, err := consul.GetFeatureFlags()
+func (s *Service) reloadFeatureFlags(ctx context.Context) (bool, error) {
+	if s.provider == nil {
+		return false, fmt.Errorf("feature flag provider is not initialized")
+	}
+
+	data, err := s.provider.GetFeatureFlags(ctx)
 	if err != nil {
-		log.Errorf(context.TODO(), "get feature flags from consul failed,error:%s", err)
+		log.Errorf(ctx, "get feature flags failed, error: %s", err)
+		return false, err
+	}
+
+	return featureFlag.ReloadFeatureFlagsIfChanged(data)
+}
+
+func (s *Service) initFeatureFlagClientLocked(ctx context.Context) error {
+	err := ffclient.Init(ffclient.Config{
+		PollingInterval: 1 * time.Minute,
+		Context:         ctx,
+		Retriever:       &featureFlag.CustomRetriever{},
+		FileFormat:      "json",
+		DataExporter: ffclient.DataExporter{
+			FlushInterval:    5 * time.Second,
+			MaxEventInMemory: 100,
+			Exporter:         &featureFlag.CustomExport{},
+		},
+	})
+	if err != nil {
+		ffclient.Close()
 		return err
 	}
-	err = featureFlag.ReloadFeatureFlags(data)
-	return err
+	s.clientInitialized = true
+	return nil
+}
+
+func (s *Service) ensureFeatureFlagClient(ctx context.Context) error {
+	s.clientMu.Lock()
+	defer s.clientMu.Unlock()
+	return featureFlag.WithClientLock(func() error {
+		if s.clientInitialized {
+			return nil
+		}
+		return s.initFeatureFlagClientLocked(ctx)
+	})
+}
+
+// refreshFeatureFlagClient 立即让 go-feature-flag 重新读取已更新的 Retriever 快照。
+func (s *Service) refreshFeatureFlagClient(ctx context.Context) error {
+	s.clientMu.Lock()
+	defer s.clientMu.Unlock()
+	return featureFlag.WithClientLock(func() error {
+		if s.clientInitialized {
+			ffclient.Close()
+			s.clientInitialized = false
+		}
+		return s.initFeatureFlagClientLocked(ctx)
+	})
+}
+
+func (s *Service) reconcileFeatureFlags(ctx context.Context) error {
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+
+	changed, err := s.reloadFeatureFlags(ctx)
+	if err != nil {
+		return err
+	}
+	if changed {
+		return s.refreshFeatureFlagClient(ctx)
+	}
+	return s.ensureFeatureFlagClient(ctx)
 }
 
 // loopReloadFeatureFlags
 func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
-	err := s.reloadFeatureFlags(ctx)
-	if err != nil {
-		log.Errorf(ctx, "realod feature flags failed, error: %s", err)
-		return err
+	if s.provider == nil {
+		return fmt.Errorf("feature flag provider is not initialized")
 	}
-	ch, err := consul.WatchFeatureFlags(ctx)
+
+	// 先完成订阅，再读取一次全量配置，避免 GET 与订阅建立之间遗漏更新。
+	ch, err := s.provider.WatchFeatureFlags(ctx)
 	if err != nil {
-		return err
+		log.Errorf(ctx, "watch feature flags failed, will retry during periodic reconcile, error: %s", err)
 	}
+	if reconcileErr := s.reconcileFeatureFlags(ctx); reconcileErr != nil {
+		// 后端不可用或配置非法时仍保留调和循环，修正配置后自动完成客户端初始化。
+		log.Errorf(ctx, "initial reconcile feature flags failed, will retry, error: %s", reconcileErr)
+	}
+
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
+		reconcileTicker := time.NewTicker(time.Minute)
+		defer reconcileTicker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				log.Warnf(context.TODO(), "feature flags reload loop exit")
 				return
-			case <-ch:
+			case _, ok := <-ch:
+				if !ok {
+					log.Warnf(context.TODO(), "feature flags watch channel closed, continue with periodic reconcile")
+					ch = nil
+					continue
+				}
 				log.Debugf(context.TODO(), "get feature flags changed notify")
-				err = s.reloadFeatureFlags(ctx)
-				if err != nil {
-					log.Errorf(context.TODO(), "reload feature flags  failed,error:%s", err)
+				reloadErr := s.reconcileFeatureFlags(ctx)
+				if reloadErr != nil {
+					log.Errorf(context.TODO(), "reconcile feature flags failed, error: %s", reloadErr)
+				}
+			case <-reconcileTicker.C:
+				if ch == nil {
+					newCh, watchErr := s.provider.WatchFeatureFlags(ctx)
+					if watchErr != nil {
+						log.Errorf(context.TODO(), "retry watch feature flags failed, error: %s", watchErr)
+					} else {
+						ch = newCh
+					}
+				}
+				if reloadErr := s.reconcileFeatureFlags(ctx); reloadErr != nil {
+					log.Errorf(context.TODO(), "periodic feature flags reconcile failed, error: %s", reloadErr)
 				}
 			}
 		}
@@ -83,7 +213,6 @@ func (s *Service) loopReloadFeatureFlags(ctx context.Context) error {
 
 // Reload
 func (s *Service) Reload(ctx context.Context) {
-	var err error
 	if s.wg == nil {
 		s.wg = new(sync.WaitGroup)
 	}
@@ -95,39 +224,62 @@ func (s *Service) Reload(ctx context.Context) {
 	// 更新上下文控制方法
 	s.ctx, s.cancelFunc = context.WithCancel(ctx)
 
-	err = s.loopReloadFeatureFlags(s.ctx)
+	// Feature Flag 迁移期间优先读取 Redis，Redis 没有快照或不可用时回退到 Consul。
+	s.provider = newFeatureFlagProvider(s.ctx)
+
+	err := s.loopReloadFeatureFlags(s.ctx)
 	if err != nil {
 		log.Errorf(s.ctx, "start loop feature flags failed,error: %s", err)
 		return
 	}
-
-	err = ffclient.Init(ffclient.Config{
-		PollingInterval: 1 * time.Minute,
-		Context:         s.ctx,
-		Retriever:       &featureFlag.CustomRetriever{},
-		FileFormat:      "json",
-		DataExporter: ffclient.DataExporter{
-			FlushInterval:    5 * time.Second,
-			MaxEventInMemory: 100,
-			Exporter:         &featureFlag.CustomExport{},
-		},
-	})
-	if err != nil {
-		log.Errorf(s.ctx, "%s", err.Error())
-		return
-	}
+	s.registerAsActive()
 
 	log.Infof(s.ctx, "feature flag service reloaded or start success.")
 }
 
 // Wait
 func (s *Service) Wait() {
+	if s.wg != nil {
+		s.wg.Wait()
+	}
 }
 
 // Close
 func (s *Service) Close() {
-	ffclient.Close()
+	s.unregisterAsActive()
 	if s.cancelFunc != nil {
 		s.cancelFunc()
 	}
+	s.clientMu.Lock()
+	_ = featureFlag.WithClientLock(func() error {
+		if s.clientInitialized {
+			ffclient.Close()
+			s.clientInitialized = false
+		}
+		return nil
+	})
+	s.clientMu.Unlock()
+}
+
+// newFeatureFlagProvider 创建 Redis 优先、Consul 回退的 Feature Flag Provider。
+// Redis 尚未初始化或缺少 key 前缀时仍保留 Consul 读取能力，保证迁移期间现有
+// Consul 配置继续生效。
+func newFeatureFlagProvider(ctx context.Context) FeatureFlagProvider {
+	consulProvider := consul.NewFeatureFlagProvider()
+	redisClient := redis.Client()
+	if redisClient == nil {
+		log.Warnf(ctx, "redis client is not initialized, feature flags will use consul fallback")
+		return consulProvider
+	}
+
+	basePath := redisService.KVBasePath
+	if basePath == "" {
+		log.Warnf(ctx, "redis kv base path is not configured, feature flags will use consul fallback")
+		return consulProvider
+	}
+
+	return newFallbackFeatureFlagProvider(
+		redis.NewFeatureFlagClient(redisClient, basePath),
+		consulProvider,
+	)
 }

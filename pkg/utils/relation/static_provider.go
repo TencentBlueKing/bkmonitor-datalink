@@ -23,6 +23,8 @@ type StaticSchemaProvider struct {
 
 // StaticProviderConfig 静态提供器配置
 type StaticProviderConfig struct {
+	// ResourceDefinitions 完整资源定义配置，包含主键和 Info 字段。
+	ResourceDefinitions []*ResourceDefinition
 	// ResourcePrimaryKeys 资源类型的主键配置
 	// map[资源类型] -> []主键字段名
 	ResourcePrimaryKeys map[string][]string
@@ -37,8 +39,22 @@ func NewStaticSchemaProvider(config StaticProviderConfig) *StaticSchemaProvider 
 		relationDefinitions: make(map[string]*RelationDefinition),
 	}
 
+	for _, rd := range config.ResourceDefinitions {
+		if rd == nil {
+			continue
+		}
+		cloned := cloneResourceDefinition(rd)
+		if cloned.Namespace == "" {
+			cloned.Namespace = NamespaceAll
+		}
+		provider.resourceDefinitions[cloned.Name] = cloned
+	}
+
 	// 从 ResourcePrimaryKeys 初始化资源定义
 	for resourceType, keys := range config.ResourcePrimaryKeys {
+		if _, exists := provider.resourceDefinitions[resourceType]; exists {
+			continue
+		}
 		fields := make([]FieldDefinition, len(keys))
 		for i, key := range keys {
 			fields[i] = FieldDefinition{
@@ -65,19 +81,53 @@ func NewStaticSchemaProvider(config StaticProviderConfig) *StaticSchemaProvider 
 		}
 
 		rd := &RelationDefinition{
-			Namespace:    NamespaceAll,
-			Name:         string(schema.RelationName),
-			FromResource: string(schema.FromType),
-			ToResource:   string(schema.ToType),
-			Category:     category,
-			IsBelongsTo:  schema.IsBelongsTo,
-			Labels:       make(map[string]string),
-			Spec:         make(map[string]interface{}),
+			Namespace:     NamespaceAll,
+			Name:          string(schema.RelationName),
+			FromResource:  string(schema.FromType),
+			ToResource:    string(schema.ToType),
+			Category:      category,
+			IsDirectional: schema.IsDirectional,
+			IsBelongsTo:   schema.IsBelongsTo,
+			Labels:        make(map[string]string),
+			Spec:          make(map[string]interface{}),
 		}
 		provider.relationDefinitions[rd.Name] = rd
 	}
 
 	return provider
+}
+
+func cloneResourceDefinition(rd *ResourceDefinition) *ResourceDefinition {
+	if rd == nil {
+		return nil
+	}
+	cloned := *rd
+	cloned.Fields = append([]FieldDefinition(nil), rd.Fields...)
+	cloned.Labels = cloneStringMap(rd.Labels)
+	cloned.Spec = cloneAnyMap(rd.Spec)
+	return &cloned
+}
+
+func cloneStringMap(input map[string]string) map[string]string {
+	if input == nil {
+		return make(map[string]string)
+	}
+	output := make(map[string]string, len(input))
+	for k, v := range input {
+		output[k] = v
+	}
+	return output
+}
+
+func cloneAnyMap(input map[string]interface{}) map[string]interface{} {
+	if input == nil {
+		return make(map[string]interface{})
+	}
+	output := make(map[string]interface{}, len(input))
+	for k, v := range input {
+		output[k] = v
+	}
+	return output
 }
 
 // normalizeNamespace 将 "" 规范化为 NamespaceAll，统一全局 namespace 表示

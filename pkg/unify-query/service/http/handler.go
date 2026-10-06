@@ -11,6 +11,7 @@ package http
 
 import (
 	"fmt"
+	"time"
 	"unsafe"
 
 	"github.com/gin-gonic/gin"
@@ -18,6 +19,7 @@ import (
 	influxdbRouter "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/influxdb"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
@@ -245,7 +247,9 @@ func HandlerQueryRaw(c *gin.Context) {
 
 	// 解析请求 body
 	queryTs := &structured.QueryTs{}
-	err = json.NewDecoder(c.Request.Body).Decode(queryTs)
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.UseNumber()
+	err = decoder.Decode(queryTs)
 	if err != nil {
 		resp.failed(ctx, err)
 		return
@@ -262,6 +266,13 @@ func HandlerQueryRaw(c *gin.Context) {
 	listData.TraceID = span.TraceID()
 
 	if err = validateQueryTsDataSource(queryTs); err != nil {
+		resp.failed(ctx, metadata.NewMessage(
+			metadata.MsgQueryRaw,
+			"查询参数校验异常",
+		).Error(ctx, err))
+		return
+	}
+	if err = validateQueryTsRawPagination(queryTs); err != nil {
 		resp.failed(ctx, metadata.NewMessage(
 			metadata.MsgQueryRaw,
 			"查询参数校验异常",
@@ -332,7 +343,9 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	span.Set("query-space-uid", user.SpaceUID)
 
 	queryTs := &structured.QueryTs{}
-	err = json.NewDecoder(c.Request.Body).Decode(queryTs)
+	decoder := json.NewDecoder(c.Request.Body)
+	decoder.UseNumber()
+	err = decoder.Decode(queryTs)
 	if err != nil {
 		return
 	}
@@ -342,6 +355,10 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 	}
 
 	if err = validateQueryTsDataSource(queryTs); err != nil {
+		return
+	}
+	if queryTs.IsSearchAfter {
+		err = fmt.Errorf("is_search_after is not supported by query_raw_with_scroll")
 		return
 	}
 
@@ -411,7 +428,7 @@ func HandlerQueryRawWithScroll(c *gin.Context) {
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      structured.QueryTs  			true   "json data"
-// @Success  200                   	{object}  PromData
+// @Success  200                   	{object}  QueryTsResponse  "未指定 response_contract 时返回 legacy PromData；named_outputs/v1 返回命名多输出"
 // @Failure  400                   	{object}  ErrResponse
 // @Router   /query/ts [post]
 func HandlerQueryTs(c *gin.Context) {
@@ -461,7 +478,29 @@ func HandlerQueryTs(c *gin.Context) {
 		c.Request.URL.String(), c.Request.Header, string(queryStr),
 	).Info(ctx)
 
+	settings := getNamedOutputSettings()
+	namedOutputValidationStart := time.Now()
+	if err = query.ValidateNamedOutputs(settings.MaxOutputs); err != nil {
+		if query.ResponseContract != "" || query.LegacyOutputRef != "" || len(query.OutputList) > 0 {
+			metric.NamedOutputsRequestInc(ctx, metric.NamedOutputsRequestReceived)
+			metric.NamedOutputsRequestInc(ctx, metric.NamedOutputsRequestError)
+			metric.NamedOutputsRejectInc(ctx, namedOutputsValidationRejectReason(err))
+			metric.NamedOutputsDurationObserve(ctx, metric.NamedOutputsRequestError, time.Since(namedOutputValidationStart))
+		}
+		resp.failed(ctx, metadata.NewMessage(
+			metadata.MsgQueryTs,
+			"命名多输出参数校验异常",
+		).Error(ctx, err))
+		return
+	}
+
 	if err = validateQueryTsDataSource(query); err != nil {
+		if query.ResponseContract == structured.NamedOutputsV1 {
+			metric.NamedOutputsRequestInc(ctx, metric.NamedOutputsRequestReceived)
+			metric.NamedOutputsRequestInc(ctx, metric.NamedOutputsRequestError)
+			metric.NamedOutputsRejectInc(ctx, metric.NamedOutputsRejectValidation)
+			metric.NamedOutputsDurationObserve(ctx, metric.NamedOutputsRequestError, time.Since(namedOutputValidationStart))
+		}
 		resp.failed(ctx, metadata.NewMessage(
 			metadata.MsgQueryTs,
 			"查询参数校验异常",
@@ -469,7 +508,12 @@ func HandlerQueryTs(c *gin.Context) {
 		return
 	}
 
-	res, err := queryTsWithPromEngine(ctx, query)
+	var res any
+	if query.ResponseContract == structured.NamedOutputsV1 {
+		res, err = queryTsNamedOutputs(ctx, query)
+	} else {
+		res, err = queryTsWithPromEngine(ctx, query)
+	}
 	if err != nil {
 		resp.failed(ctx, err)
 		return
@@ -489,9 +533,9 @@ func HandlerQueryTs(c *gin.Context) {
 // @Param    X-Bk-Scope-Space-Uid   header    string                        false  "空间UID" default(bkcc__2)
 // @Param	 X-Bk-Scope-Skip-Space  header	  string						false  "是否跳过空间验证" default()
 // @Param    data                  	body      structured.QueryPromQL  		true   "json data"
-// @Success  200                   	{object}  PromData
+// @Success  200                   	{object}  QueryTsResponse
 // @Failure  400                   	{object}  ErrResponse
-// @Router   /query/promql [post]
+// @Router   /query/ts/promql [post]
 func HandlerQueryPromQL(c *gin.Context) {
 	var (
 		ctx = c.Request.Context()
@@ -538,6 +582,15 @@ func HandlerQueryPromQL(c *gin.Context) {
 			metadata.MsgQueryPromQL,
 			"查询语句不能为空",
 		).Error(ctx, err))
+		return
+	}
+	if queryPromQL.ResponseContract != "" || queryPromQL.LegacyOutputRef != "" || len(queryPromQL.OutputList) > 0 {
+		res, queryErr := queryPromQLNamedOutputs(ctx, queryPromQL)
+		if queryErr != nil {
+			resp.failed(ctx, queryErr)
+			return
+		}
+		resp.success(ctx, res)
 		return
 	}
 
@@ -715,6 +768,21 @@ func validateQueryTsDataSource(queryTs *structured.QueryTs) error {
 				ds, q.ReferenceName,
 			)
 		}
+	}
+	return nil
+}
+
+// validateQueryTsRawPagination validates options that are incompatible with
+// the raw SearchAfter execution path. Doris may fall back to per-result-table
+// offset pagination when a legacy table has neither __unique_key__ nor the
+// composite cursor fields, so from is intentionally validated by the query
+// factory after the storage schema is known.
+func validateQueryTsRawPagination(queryTs *structured.QueryTs) error {
+	if queryTs == nil || !queryTs.IsSearchAfter {
+		return nil
+	}
+	if queryTs.Scroll != "" {
+		return fmt.Errorf("is_search_after cannot be combined with scroll")
 	}
 	return nil
 }

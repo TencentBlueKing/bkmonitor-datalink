@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	elastic "github.com/olivere/elastic/v7"
 
@@ -29,7 +30,10 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
 
-const rawBatchContentType = "application/x-ndjson"
+const (
+	rawBatchContentType            = "application/x-ndjson"
+	rawBatchTraceQueryBodyMaxBytes = 16 * 1024
+)
 
 // RawBatchMember keeps the stable request ordinal together with the one
 // prepared-query pointer that owns the member's formatter and decoder state.
@@ -273,6 +277,7 @@ func (i *Instance) ExecuteRawBatch(
 	if err != nil {
 		return nil, err
 	}
+	recordRawBatchRequestTrace(span, batch)
 	claimedMembers := make([]*PreparedRawQuery, 0, len(batch.members))
 	for _, member := range batch.members {
 		if !member.Prepared.claimed.CompareAndSwap(false, true) {
@@ -325,6 +330,7 @@ func (i *Instance) ExecuteRawBatch(
 			Kind:   "response_count_mismatch",
 		}
 	}
+	recordRawBatchResponseTrace(span, batch.members, multiSearchResult.Responses)
 
 	results = make([]RawBatchMemberResult, len(batch.members))
 	childErrors := 0
@@ -388,6 +394,97 @@ func (i *Instance) ExecuteRawBatch(
 	}
 
 	return results, nil
+}
+
+func recordRawBatchRequestTrace(span *trace.Span, batch *RawBatch) {
+	members := batch.members
+	ordinals := make([]int64, len(members))
+	tableIDs := make([]string, len(members))
+	indexCounts := make([]int64, len(members))
+	sharedQueryBody := members[0].Prepared.body
+	for index, member := range members {
+		ordinals[index] = int64(member.Ordinal)
+		tableIDs[index] = member.Prepared.query.TableID
+		indexCounts[index] = int64(len(member.Prepared.queryOption.indexes))
+		if member.Prepared.body != sharedQueryBody {
+			sharedQueryBody = ""
+		}
+	}
+
+	span.Set("es_batch_member_ordinals", ordinals)
+	span.Set("es_batch_member_table_ids", tableIDs)
+	span.Set("es_batch_member_index_counts", indexCounts)
+	span.Set("es_batch_shared_query_body", sharedQueryBody != "")
+	if sharedQueryBody == "" {
+		return
+	}
+	span.Set("query-body-size", len([]byte(sharedQueryBody)))
+	queryBody, truncated := truncateRawBatchTraceQueryBody(sharedQueryBody)
+	span.Set("query-body-truncated", truncated)
+	span.Set("query-body", queryBody)
+}
+
+func truncateRawBatchTraceQueryBody(body string) (string, bool) {
+	if len(body) <= rawBatchTraceQueryBodyMaxBytes {
+		return body, false
+	}
+	end := rawBatchTraceQueryBodyMaxBytes
+	for end > 0 && !utf8.ValidString(body[:end]) {
+		end--
+	}
+	return body[:end], true
+}
+
+func recordRawBatchResponseTrace(
+	span *trace.Span,
+	members []RawBatchMember,
+	children []*elastic.SearchResult,
+) {
+	tookMillis := make([]int64, len(children))
+	statuses := make([]int64, len(children))
+	totalHits := make([]int64, len(children))
+	shardsTotal := make([]int64, len(children))
+	shardsSuccessful := make([]int64, len(children))
+	shardsFailed := make([]int64, len(children))
+	errorTypes := make([]string, len(children))
+	timedOutOrdinals := make([]int64, 0)
+
+	for index, child := range children {
+		errorTypes[index] = "none"
+		if child == nil {
+			errorTypes[index] = "nil_response"
+			continue
+		}
+		tookMillis[index] = child.TookInMillis
+		status := child.Status
+		if status == 0 && child.Error == nil {
+			// Successful _msearch responses may omit the status field.
+			status = http.StatusOK
+		}
+		statuses[index] = int64(status)
+		totalHits[index] = child.TotalHits()
+		if child.TimedOut {
+			timedOutOrdinals = append(timedOutOrdinals, int64(members[index].Ordinal))
+		}
+		if child.Shards != nil {
+			shardsTotal[index] = int64(child.Shards.Total)
+			shardsSuccessful[index] = int64(child.Shards.Successful)
+			shardsFailed[index] = int64(child.Shards.Failed)
+		}
+		var childError *RawBatchChildError
+		if errors.As(rawBatchChildError(child), &childError) {
+			errorTypes[index] = childError.Type
+		}
+	}
+
+	span.Set("es_batch_child_took_millis", tookMillis)
+	span.Set("es_batch_child_timed_out_ordinals", timedOutOrdinals)
+	span.Set("es_batch_child_statuses", statuses)
+	span.Set("es_batch_child_total_hits", totalHits)
+	span.Set("es_batch_child_shards_total", shardsTotal)
+	span.Set("es_batch_child_shards_successful", shardsSuccessful)
+	span.Set("es_batch_child_shards_failed", shardsFailed)
+	span.Set("es_batch_child_error_types", errorTypes)
 }
 
 func (i *Instance) executeRawBatchMember(

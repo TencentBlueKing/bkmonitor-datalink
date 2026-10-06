@@ -105,6 +105,11 @@ func TestQsToDsl(t *testing.T) {
 		err      error
 	}{
 		{
+			name:     "keyword field query string becomes term query",
+			q:        `level:error`,
+			expected: `{"term":{"level":"error"}}`,
+		},
+		{
 			q:        `log: "ERROR MSG"`,
 			expected: `{"match_phrase":{"log":{"query":"ERROR MSG"}}}`,
 		},

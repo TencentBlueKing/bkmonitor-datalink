@@ -438,7 +438,56 @@ func TestInstance_QueryRaw(t *testing.T) {
 	ctx := metadata.InitHashID(context.Background())
 	ins := createTestInstance(ctx)
 
+	const (
+		searchAfterTimestamp = 1730118700000
+		searchAfterBaseSQL   = "SELECT `message`, `dtEventTimeStamp` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_`, `gseIndex` AS `__search_after_0`, `dtEventTimeStamp` AS `__search_after_1`, `iterationIndex` AS `__search_after_2`, `__unique_key__` AS `__search_after_3` FROM `search_after_log`.doris WHERE `dtEventTimeStamp` >= 1730118589181 AND `dtEventTimeStamp` <= 1730118889181 AND `dtEventTime` >= '2024-10-28 20:29:49' AND `dtEventTime` <= '2024-10-28 20:34:50' AND `thedate` = '20241028'"
+		searchAfterOrderSQL  = " ORDER BY `gseIndex` ASC, `dtEventTimeStamp` DESC, `iterationIndex` DESC, `__unique_key__` DESC LIMIT 2"
+	)
+	searchAfterSQL := func(cursor string) string {
+		if cursor == "" {
+			return searchAfterBaseSQL + searchAfterOrderSQL
+		}
+		return searchAfterBaseSQL + fmt.Sprintf(" AND ((`gseIndex` > 7) OR (`gseIndex` = 7 AND (`dtEventTimeStamp` < %d OR `dtEventTimeStamp` IS NULL)) OR (`gseIndex` = 7 AND `dtEventTimeStamp` = %d AND (`iterationIndex` < 2 OR `iterationIndex` IS NULL)) OR (`gseIndex` = 7 AND `dtEventTimeStamp` = %d AND `iterationIndex` = 2 AND (`__unique_key__` < '%s' OR `__unique_key__` IS NULL)))", searchAfterTimestamp, searchAfterTimestamp, searchAfterTimestamp, cursor) + searchAfterOrderSQL
+	}
+	searchAfterResult := func(keys ...string) map[string]any {
+		list := make([]map[string]any, 0, len(keys))
+		for _, key := range keys {
+			list = append(list, map[string]any{
+				"message":          key,
+				"_value_":          searchAfterTimestamp,
+				"_timestamp_":      searchAfterTimestamp,
+				"__search_after_0": 7,
+				"__search_after_1": searchAfterTimestamp,
+				"__search_after_2": 2,
+				"__search_after_3": key,
+			})
+		}
+		return map[string]any{
+			"result":  true,
+			"message": "success",
+			"code":    "00",
+			"data": map[string]any{
+				"totalRecords": 6,
+				"list":         list,
+				"result_schema": []map[string]any{
+					{"field_alias": "message"},
+					{"field_alias": "_value_"},
+					{"field_alias": "_timestamp_"},
+					{"field_alias": "__search_after_0"},
+					{"field_alias": "__search_after_1"},
+					{"field_alias": "__search_after_2"},
+					{"field_alias": "__search_after_3"},
+				},
+			},
+		}
+	}
+
 	mock.BkSQL.Set(map[string]any{
+		"SHOW CREATE TABLE `search_after_log`.doris": `{"result":true,"message":"success","code":"00","data":{"list":[{"Field":"thedate","Type":"int","Null":"NO","Key":"YES"},{"Field":"dtEventTimeStamp","Type":"bigint","Null":"NO","Key":"YES"},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"NO"},{"Field":"gseIndex","Type":"double","Null":"YES","Key":"YES"},{"Field":"iterationIndex","Type":"bigint","Null":"YES","Key":"YES"},{"Field":"__unique_key__","Type":"varchar(512)","Null":"YES","Key":"YES"},{"Field":"message","Type":"text","Null":"YES","Key":"NO"}]}}`,
+		searchAfterSQL(""):                           searchAfterResult("log-6", "log-5"),
+		searchAfterSQL("log-5"):                      searchAfterResult("log-4", "log-3"),
+		searchAfterSQL("log-3"):                      searchAfterResult("log-2", "log-1"),
+
 		// query raw by doris use condition
 		"SHOW CREATE TABLE `2_bklog_pure_v4_log_doris_for_unify_query`.doris": `{"result":true,"message":"成功","code":"00","data":{"result_table_scan_range":{},"cluster":"doris-test","totalRecords":18,"external_api_call_time_mills":{"bkbase_auth_api":69,"bkbase_meta_api":9,"bkbase_apigw_api":25},"resource_use_summary":{"cpu_time_mills":0,"memory_bytes":0,"processed_bytes":0,"processed_rows":0},"source":"","list":[{"Field":"thedate","Type":"int","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"__shard_key__","Type":"bigint","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"cloudId","Type":"decimalv3(38, 6)","Null":"YES","Key":"YES","Default":null,"Extra":""},{"Field":"serverIp","Type":"varchar(512)","Null":"YES","Key":"YES","Default":null,"Extra":""},{"Field":"path","Type":"varchar(512)","Null":"YES","Key":"YES","Default":null,"Extra":""},{"Field":"gseIndex","Type":"decimalv3(38, 6)","Null":"YES","Key":"YES","Default":null,"Extra":""},{"Field":"bk_host_id","Type":"int","Null":"YES","Key":"YES","Default":null,"Extra":""},{"Field":"iterationIndex","Type":"decimalv3(38, 6)","Null":"YES","Key":"YES","Default":null,"Extra":""},{"Field":"dtEventTimeStamp","Type":"bigint","Null":"NO","Key":"YES","Default":null,"Extra":""},{"Field":"dtEventTime","Type":"varchar(32)","Null":"NO","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"localTime","Type":"varchar(32)","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"__ext","Type":"variant","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"file","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"level","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"log","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE","Analyzed":"true"},{"Field":"message","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"report_time","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"time","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"},{"Field":"trace_id","Type":"text","Null":"YES","Key":"NO","Default":null,"Extra":"NONE"}],"stage_elapsed_time_mills":{"check_query_syntax":1,"query_db":6,"get_query_driver":0,"match_query_forbidden_config":0,"convert_query_statement":6,"connect_db":66,"match_query_routing_rule":0,"check_permission":69,"check_query_semantic":0,"pick_valid_storage":0},"select_fields_order":["Field","Type","Null","Key","Default","Extra"],"sql":"SHOW COLUMNS FROM mapleleaf_2.bklog_pure_v4_log_doris_for_unify_query_2","total_record_size":11808,"timetaken":0.148,"result_schema":[{"field_type":"string","field_name":"Field","field_alias":"Field","field_index":0},{"field_type":"string","field_name":"Type","field_alias":"Type","field_index":1},{"field_type":"string","field_name":"Null","field_alias":"Null","field_index":2},{"field_type":"string","field_name":"Key","field_alias":"Key","field_index":3},{"field_type":"string","field_name":"Default","field_alias":"Default","field_index":4},{"field_type":"string","field_name":"Extra","field_alias":"Extra","field_index":5}],"bksql_call_elapsed_time":0,"device":"doris","result_table_ids":["2_bklog_pure_v4_log_doris_for_unify_query"]},"errors":null,"trace_id":"00000000000000000000000000000000","span_id":"0000000000000000"}`,
 
@@ -1025,6 +1074,82 @@ func TestInstance_QueryRaw(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("query raw with search after", func(t *testing.T) {
+		query := &metadata.Query{
+			TableID:       "search_after_log.doris",
+			DB:            "search_after_log",
+			Measurement:   "doris",
+			Field:         "dtEventTimeStamp",
+			DataLabel:     "search_after_log",
+			Size:          2,
+			Source:        []string{"message"},
+			IsSearchAfter: true,
+			Orders: metadata.Orders{
+				{Name: "gseIndex", Ast: true},
+				{Name: "dtEventTimeStamp", Ast: false},
+				{Name: "iterationIndex", Ast: false},
+			},
+		}
+		pages := []struct {
+			messages    []string
+			searchAfter string
+		}{
+			{messages: []string{"log-6", "log-5"}, searchAfter: "log-5"},
+			{messages: []string{"log-4", "log-3"}, searchAfter: "log-3"},
+			{messages: []string{"log-2", "log-1"}, searchAfter: "log-1"},
+		}
+		seenMessages := make(map[string]struct{})
+
+		for _, page := range pages {
+			dataCh := make(chan map[string]any)
+			resultCh := make(chan struct {
+				option *metadata.ResultTableOption
+				err    error
+			}, 1)
+			go func() {
+				defer close(dataCh)
+				_, _, option, err := ins.QueryRawData(ctx, query, start, end, dataCh)
+				resultCh <- struct {
+					option *metadata.ResultTableOption
+					err    error
+				}{option: option, err: err}
+			}()
+
+			messages := make([]string, 0, query.Size)
+			for data := range dataCh {
+				assert.NotContains(t, data, "__search_after_0")
+				assert.NotContains(t, data, "__search_after_1")
+				assert.NotContains(t, data, "__search_after_2")
+				assert.NotContains(t, data, "__search_after_3")
+
+				message, ok := data["message"].(string)
+				if assert.True(t, ok) {
+					assert.NotContains(t, seenMessages, message)
+					seenMessages[message] = struct{}{}
+					messages = append(messages, message)
+				}
+			}
+
+			result := <-resultCh
+			if !assert.NoError(t, result.err) || !assert.NotNil(t, result.option) {
+				return
+			}
+			assert.Equal(t, page.messages, messages)
+			assert.Equal(t, []map[string]any{
+				{"field_alias": "message"},
+				{"field_alias": "_value_"},
+				{"field_alias": "_timestamp_"},
+			}, result.option.ResultSchema)
+
+			actualSearchAfter, err := json.Marshal(result.option.SearchAfter)
+			assert.NoError(t, err)
+			assert.JSONEq(t, fmt.Sprintf(`[7,%d,2,%q]`, searchAfterTimestamp, page.searchAfter), string(actualSearchAfter))
+
+			// 首次请求没有游标，后续请求直接使用上一页返回的完整四元组游标。
+			query.ResultTableOption = result.option.Clone()
+		}
+	})
 }
 
 func TestInstance_bkSql(t *testing.T) {
@@ -1447,6 +1572,26 @@ func TestInstance_bkSql(t *testing.T) {
 			expected: "SELECT *, `value` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` <= 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' ORDER BY `dtEventTimeStamp` DESC, `gseIndex` DESC, `iterationIndex` DESC LIMIT 5",
 		},
 		{
+			name: "query raw with search after",
+			query: &metadata.Query{
+				DB:            "100133_ieod_logsearch4_errorlog_p",
+				Measurement:   "doris",
+				Field:         "value",
+				Size:          5,
+				IsSearchAfter: true,
+				Source:        []string{"message"},
+				ResultTableOption: &metadata.ResultTableOption{
+					SearchAfter: []any{json.Number("4281730"), json.Number("1745234704000"), json.Number("4"), "log-1"},
+				},
+				Orders: metadata.Orders{
+					{Name: "gseIndex", Ast: true},
+					{Name: "dtEventTimeStamp", Ast: false},
+					{Name: "iterationIndex", Ast: false},
+				},
+			},
+			expected: "SELECT `message`, `value` AS `_value_`, `dtEventTimeStamp` AS `_timestamp_`, `gseIndex` AS `__search_after_0`, `dtEventTimeStamp` AS `__search_after_1`, `iterationIndex` AS `__search_after_2`, `__unique_key__` AS `__search_after_3` FROM `100133_ieod_logsearch4_errorlog_p`.doris WHERE `dtEventTimeStamp` >= 1718189940000 AND `dtEventTimeStamp` <= 1718193555000 AND `dtEventTime` >= '2024-06-12 18:59:00' AND `dtEventTime` <= '2024-06-12 19:59:16' AND `thedate` = '20240612' AND ((`gseIndex` > 4281730) OR (`gseIndex` = 4281730 AND (`dtEventTimeStamp` < 1745234704000 OR `dtEventTimeStamp` IS NULL)) OR (`gseIndex` = 4281730 AND `dtEventTimeStamp` = 1745234704000 AND (`iterationIndex` < 4 OR `iterationIndex` IS NULL)) OR (`gseIndex` = 4281730 AND `dtEventTimeStamp` = 1745234704000 AND `iterationIndex` = 4 AND (`__unique_key__` < 'log-1' OR `__unique_key__` IS NULL))) ORDER BY `gseIndex` ASC, `dtEventTimeStamp` DESC, `iterationIndex` DESC, `__unique_key__` DESC LIMIT 5",
+		},
+		{
 			name: "query raw",
 			query: &metadata.Query{
 				DB:          "100133_ieod_logsearch4_errorlog_p",
@@ -1798,30 +1943,36 @@ WHERE
 			}
 
 			fieldsMap := metadata.FieldsMap{
-				"text":             {FieldType: sql_expr.DorisTypeText},
-				"log":              {FieldType: sql_expr.DorisTypeText},
-				"origin_field":     {AliasName: "alias_field", FieldType: sql_expr.DorisTypeText},
-				"path":             {FieldType: sql_expr.DorisTypeString},
-				"namespace":        {FieldType: sql_expr.DorisTypeString},
-				"process_name":     {FieldType: sql_expr.DorisTypeText},
-				"user_id":          {FieldType: sql_expr.DorisTypeText},
-				"partition_hour":   {FieldType: sql_expr.DorisTypeText},
-				"datacenter":       {FieldType: sql_expr.DorisTypeText},
-				"deployment":       {FieldType: sql_expr.DorisTypeText},
-				"sum_Sub8MsFrames": {FieldType: sql_expr.DorisTypeDouble},
-				"ip":               {FieldType: sql_expr.DorisTypeString},
-				"thedate":          {FieldType: sql_expr.DorisTypeString},
-				"dtEventTimeStamp": {FieldType: sql_expr.DorisTypeDate},
-				sql_expr.ShardKey:  {FieldType: sql_expr.DorisTypeBigInt},
-				"login_rate":       {FieldType: sql_expr.DorisTypeInt},
-				"err_count":        {FieldType: sql_expr.DorisTypeDouble},
-				"gseIndex":         {FieldType: sql_expr.DorisTypeInt},
-				"iterationIndex":   {FieldType: sql_expr.DorisTypeBigInt},
-				"value":            {FieldType: sql_expr.DorisTypeInt},
-				"trace_id":         {FieldType: sql_expr.DorisTypeString},
+				"message":                      {FieldType: sql_expr.DorisTypeText},
+				"text":                         {FieldType: sql_expr.DorisTypeText},
+				"log":                          {FieldType: sql_expr.DorisTypeText},
+				"origin_field":                 {AliasName: "alias_field", FieldType: sql_expr.DorisTypeText},
+				"path":                         {FieldType: sql_expr.DorisTypeString},
+				"namespace":                    {FieldType: sql_expr.DorisTypeString},
+				"process_name":                 {FieldType: sql_expr.DorisTypeText},
+				"user_id":                      {FieldType: sql_expr.DorisTypeText},
+				"partition_hour":               {FieldType: sql_expr.DorisTypeText},
+				"datacenter":                   {FieldType: sql_expr.DorisTypeText},
+				"deployment":                   {FieldType: sql_expr.DorisTypeText},
+				"sum_Sub8MsFrames":             {FieldType: sql_expr.DorisTypeDouble},
+				"ip":                           {FieldType: sql_expr.DorisTypeString},
+				"thedate":                      {FieldType: sql_expr.DorisTypeString},
+				"dtEventTimeStamp":             {FieldType: sql_expr.DorisTypeBigInt},
+				sql_expr.ShardKey:              {FieldType: sql_expr.DorisTypeBigInt},
+				sql_expr.SearchAfterTieBreaker: {FieldType: sql_expr.DorisTypeVarchar512},
+				"login_rate":                   {FieldType: sql_expr.DorisTypeInt},
+				"err_count":                    {FieldType: sql_expr.DorisTypeDouble},
+				"gseIndex":                     {FieldType: sql_expr.DorisTypeInt},
+				"iterationIndex":               {FieldType: sql_expr.DorisTypeBigInt},
+				"value":                        {FieldType: sql_expr.DorisTypeInt},
+				"trace_id":                     {FieldType: sql_expr.DorisTypeString},
 			}
 
-			fact := bksql.NewQueryFactory(ctx, c.query).WithFieldsMap(fieldsMap).WithTableFieldsMap(c.tableFieldsMap).WithRangeTime(c.start, c.end)
+			fact := bksql.NewQueryFactory(ctx, c.query).
+				WithFieldsMap(fieldsMap).
+				WithTableFieldsMap(c.tableFieldsMap).
+				WithKeepColumns(c.query.Source).
+				WithRangeTime(c.start, c.end)
 			sql, err := fact.SQL()
 			if c.errContains != "" {
 				assert.ErrorContains(t, err, c.errContains)

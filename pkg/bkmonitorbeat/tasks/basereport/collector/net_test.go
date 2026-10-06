@@ -114,6 +114,26 @@ func TestFIFOQueue(t *testing.T) {
 	assert.False(t, fifo.CheckMonotonicIncrease())
 }
 
+func TestGetStatByIOCounterStatAggregatesCountersWithoutNetInfo(t *testing.T) {
+	stats, err := getStatByIOCounterStat([]net.IOCountersStat{
+		{
+			Name:    "__missing_netinfo_for_dropped_test__",
+			Errin:   11,
+			Errout:  13,
+			Dropin:  17,
+			Dropout: 19,
+			Fifoin:  23,
+			Fifoout: 29,
+		},
+	})
+
+	assert.NoError(t, err)
+	assert.Len(t, stats, 1)
+	assert.Equal(t, uint64(24), stats[0].Errors)
+	assert.Equal(t, uint64(36), stats[0].Dropped)
+	assert.Equal(t, uint64(52), stats[0].Fifo)
+}
+
 // TestIsNetworkStatsMonotonic 测试新增的 isNetworkStatsMonotonic 辅助函数
 func TestIsNetworkStatsMonotonic(t *testing.T) {
 	fifo := NewNetFIFOQueue(4)

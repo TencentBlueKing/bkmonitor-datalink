@@ -370,4 +370,17 @@ func TestConvertRelationDefinition(t *testing.T) {
 		_, ok := convertRelationDefinition(rd)
 		assert.False(t, ok)
 	})
+
+	t.Run("dynamic relation", func(t *testing.T) {
+		rd := &relation.RelationDefinition{
+			Namespace:    "",
+			Name:         "system_to_pod",
+			FromResource: "system",
+			ToResource:   "pod",
+			Category:     string(relation.RelationCategoryDynamic),
+		}
+
+		_, ok := convertRelationDefinition(rd)
+		assert.False(t, ok)
+	})
 }

@@ -12,6 +12,7 @@
 package collector
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -35,6 +36,30 @@ func init() {
 	lastCPUTimeSlice.lastCPUTimes, _ = cpu.Times(false)
 	lastCPUTimeSlice.lastPerCPUTimes, _ = cpu.Times(true)
 	lastCPUTimeSlice.Unlock()
+}
+
+type cpuPercentCollector func(interval time.Duration, percpu bool) ([]float64, error)
+
+// 采集整机、逐核 CPU 使用率，计数回退时丢弃本轮数据，其他错误直接返回
+func collectCPUPercent(collect cpuPercentCollector) (perUsage, totalUsage []float64, err error) {
+	perUsage, perErr := collect(0, true)
+	totalUsage, totalErr := collect(0, false)
+
+	perRollback := errors.Is(perErr, cpu.ErrCPUTimesCounterRollback)
+	totalRollback := errors.Is(totalErr, cpu.ErrCPUTimesCounterRollback)
+
+	if perErr != nil && !perRollback {
+		return nil, nil, perErr
+	}
+	if totalErr != nil && !totalRollback {
+		return nil, nil, totalErr
+	}
+
+	if perRollback || totalRollback {
+		return nil, nil, errInvalidCPUStat
+	}
+
+	return perUsage, totalUsage, nil
 }
 
 func getCPUStatUsage(report *CpuReport) error {
@@ -61,9 +86,14 @@ func getCPUStatUsage(report *CpuReport) error {
 		return err
 	}
 
+	// 校验时间差后继续更新 gopsutil 基线，确保下一轮采样恢复
+	timeStateValid := true
 	for index, value := range perCPUTimes {
 		item := lastCPUTimeSlice.lastPerCPUTimes[index]
 		tmp := calcTimeState(item, value)
+		if !isValidCPUTimeState(tmp) {
+			timeStateValid = false
+		}
 		report.Stat = append(report.Stat, tmp)
 	}
 
@@ -83,29 +113,35 @@ func getCPUStatUsage(report *CpuReport) error {
 	cpuTimeStat := cpuTimes[0]
 	lastCpuTimeStat := lastCPUTimeSlice.lastCPUTimes[0]
 	report.TotalStat = calcTimeState(lastCpuTimeStat, cpuTimeStat)
+	if !isValidCPUTimeState(report.TotalStat) {
+		timeStateValid = false
+	}
 
-	// 将此次获取的timeState重新写入公共变量
+	// 无效样本也更新本地基线，避免下一轮继续使用回退前的旧基线
 	lastCPUTimeSlice.lastCPUTimes = cpuTimes
 	lastCPUTimeSlice.lastPerCPUTimes = perCPUTimes
 
-	// per usage
-	report.Usage, err = cpu.Percent(0, true)
+	perUsage, totalUsage, err := collectCPUPercent(cpu.Percent)
 	if err != nil {
 		return err
 	}
 
+	// CPU 时间差出现负数时，丢弃本轮样本；idle 回退已通过 errInvalidCPUStat 返回
+	if !timeStateValid {
+		return errInvalidCPUStat
+	}
+
+	report.Usage = perUsage
 	for i := range report.Usage {
-		if report.Usage[i] < 0 || int(report.Usage[i]) > 100 {
+		if report.Usage[i] < 0 || report.Usage[i] > 100 {
 			report.Usage[i] = 0.0
 		}
 	}
-	// total usage
-	total, err := cpu.Percent(0, false)
-	if err != nil {
-		return err
-	}
 
-	report.TotalUsage = total[0]
+	if len(totalUsage) == 0 {
+		return fmt.Errorf("empty total CPU usage")
+	}
+	report.TotalUsage = totalUsage[0]
 	if report.TotalUsage < 0 || report.TotalUsage > 100 {
 		report.TotalUsage = 0.0
 	}

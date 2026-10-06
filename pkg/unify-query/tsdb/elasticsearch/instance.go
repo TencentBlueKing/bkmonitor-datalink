@@ -162,6 +162,17 @@ func cloneStringMap(source map[string]string) map[string]string {
 	return cloned
 }
 
+func effectiveQuerySize(querySize, maxSize int) int {
+	// 聚合查询的 size 受存储侧最大值保护，避免请求值过大或缺省时退化为 ES 默认 10。
+	if maxSize <= 0 {
+		return querySize
+	}
+	if querySize <= 0 || querySize > maxSize {
+		return maxSize
+	}
+	return querySize
+}
+
 func (i *Instance) Check(ctx context.Context, promql string, start, end time.Time, step time.Duration) string {
 	return ""
 }
@@ -177,8 +188,24 @@ func (i *Instance) checkQuery(query *metadata.Query) error {
 	return nil
 }
 
+type esIndexMetadata struct {
+	settings        map[string]map[string]any
+	mappings        map[string]map[string]any
+	physicalIndexes []string
+	directQuerySafe map[string]bool
+}
+
 func resolveIndexMetadata(ctx context.Context, span *trace.Span, cli *elastic.Client, aliases ...string) (map[string]map[string]any, map[string]map[string]any, []string, error) {
+	snapshot, err := resolveIndexMetadataSnapshot(ctx, span, cli, aliases...)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return snapshot.settings, snapshot.mappings, snapshot.physicalIndexes, nil
+}
+
+func resolveIndexMetadataSnapshot(ctx context.Context, span *trace.Span, cli *elastic.Client, aliases ...string) (*esIndexMetadata, error) {
 	settings := make(map[string]map[string]any)
+	directQuerySafe := make(map[string]bool)
 	mappings := make(map[string]map[string]any)
 
 	span.Set("get-indexes", aliases)
@@ -199,7 +226,7 @@ func resolveIndexMetadata(ctx context.Context, span *trace.Span, cli *elastic.Cl
 		res, err := cli.GetMapping().Index(aliases...).Type("").Do(ctx)
 		if err != nil {
 			span.Set("get-mapping-error", truncateString(err.Error(), esIndexMetadataErrorMaxLength))
-			return nil, nil, nil, metadata.NewMessage(
+			return nil, metadata.NewMessage(
 				metadata.MsgQueryES,
 				"索引查询异常: %+v",
 				aliases,
@@ -215,6 +242,7 @@ func resolveIndexMetadata(ctx context.Context, span *trace.Span, cli *elastic.Cl
 		for index, indice := range indices {
 			settings[index] = indice.Settings
 			mappings[index] = indice.Mappings
+			directQuerySafe[index] = collapseDirectQuerySafe(index, indice.Aliases, aliases)
 		}
 	}
 
@@ -224,7 +252,7 @@ func resolveIndexMetadata(ctx context.Context, span *trace.Span, cli *elastic.Cl
 	}
 	sort.Strings(physicalIndexes)
 
-	return settings, mappings, physicalIndexes, nil
+	return &esIndexMetadata{settings: settings, mappings: mappings, physicalIndexes: physicalIndexes, directQuerySafe: directQuerySafe}, nil
 }
 
 // fieldMap 获取es索引的字段映射
@@ -234,8 +262,13 @@ func (i *Instance) fieldMap(ctx context.Context, fieldAlias metadata.FieldAlias,
 }
 
 func (i *Instance) fieldMapWithPhysicalIndexes(ctx context.Context, fieldAlias metadata.FieldAlias, aliases ...string) (metadata.FieldsMap, []string, error) {
+	fields, indexes, _, err := i.fieldMapWithIndexFields(ctx, fieldAlias, aliases...)
+	return fields, indexes, err
+}
+
+func (i *Instance) fieldMapWithIndexFields(ctx context.Context, fieldAlias metadata.FieldAlias, aliases ...string) (metadata.FieldsMap, []string, *collapseIndexMetadata, error) {
 	if len(aliases) == 0 {
-		return nil, nil, fmt.Errorf("query indexes is empty")
+		return nil, nil, nil, fmt.Errorf("query indexes is empty")
 	}
 
 	var err error
@@ -249,23 +282,25 @@ func (i *Instance) fieldMapWithPhysicalIndexes(ctx context.Context, fieldAlias m
 	span.Set("aliases", aliases)
 	cli, err := i.getClient(ctx, i.connect)
 	if err != nil {
-		return nil, nil, fmt.Errorf("get client error: %w", err)
+		return nil, nil, nil, fmt.Errorf("get client error: %w", err)
 	}
 	defer cli.Stop()
 
-	settings, mappings, physicalIndexes, err := resolveIndexMetadata(ctx, span, cli, aliases...)
+	snapshot, err := resolveIndexMetadataSnapshot(ctx, span, cli, aliases...)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
+	settings, mappings, physicalIndexes := snapshot.settings, snapshot.mappings, snapshot.physicalIndexes
 	span.Set("mapping-length", len(mappings))
 	span.Set("physical-index-length", len(physicalIndexes))
 
 	iof := NewIndexOptionFormat(fieldAlias)
+	indexFields := &collapseIndexMetadata{fields: make(map[string]map[string]bool, len(mappings)), directQuerySafe: snapshot.directQuerySafe}
 
 	// 忽略 mapping 为空的情况的报错
 	if len(mappings) == 0 {
 		span.Set("field-map-length", 0)
-		return iof.FieldsMap(), physicalIndexes, nil
+		return iof.FieldsMap(), physicalIndexes, indexFields, nil
 	}
 
 	indexes := make([]string, 0)
@@ -280,11 +315,12 @@ func (i *Instance) fieldMapWithPhysicalIndexes(ctx context.Context, fieldAlias m
 		index := indexes[idx]
 		if in, ok := mappings[index]; ok && in != nil {
 			iof.Parse(settings[index], in)
+			indexFields.fields[index] = mappingFieldNames(in)
 		}
 	}
 
 	span.Set("field-map-length", len(iof.FieldsMap()))
-	return iof.FieldsMap(), physicalIndexes, nil
+	return iof.FieldsMap(), physicalIndexes, indexFields, nil
 }
 
 func buildESQuerySource(ctx context.Context, qb *metadata.Query, fact *FormatFactory, forceUnmappedTypes map[string]string) (*elastic.SearchSource, elastic.Query, string, error) {
@@ -813,8 +849,26 @@ func (i *Instance) QuerySeriesSet(
 		size = i.maxSize
 	}
 
-	labelMap := function.LabelMap(ctx, query)
+	fact := newSeriesFormatFactory(ctx, query, fieldMap, qo.start, qo.end, unit, size)
 
+	if len(query.Aggregates) == 0 {
+		return storage.ErrSeriesSet(fmt.Errorf("aggregates is empty"))
+	}
+
+	return i.queryWithAgg(ctx, qo, fact)
+}
+
+// newSeriesFormatFactory 组装时序聚合查询的字段名转换：
+// 出端把 ES 字段名换成别名再做格式转换，入端反向；aliasFreeEncode 只做格式转换、不认别名，
+// 用于还原请求里写的维度名。这组不对称正是补键逻辑的前提，改动时需连同 agg_format_alias_test.go 一起看。
+func newSeriesFormatFactory(
+	ctx context.Context,
+	query *metadata.Query,
+	fieldMap metadata.FieldsMap,
+	start, end time.Time,
+	unit string,
+	size int,
+) *FormatFactory {
 	encodeFunc := metadata.GetFieldFormat(ctx).EncodeFunc()
 	decodeFunc := metadata.GetFieldFormat(ctx).DecodeFunc()
 
@@ -823,7 +877,7 @@ func (i *Instance) QuerySeriesSet(
 		reverseAlias[v] = k
 	}
 
-	fact := NewFormatFactory(ctx).
+	return NewFormatFactory(ctx).
 		WithTransform(func(s string) string {
 			// 别名替换
 			ns := s
@@ -850,17 +904,19 @@ func (i *Instance) QuerySeriesSet(
 			return ns
 		},
 		).
-		WithIncludeValues(labelMap).
+		// PromQL 的 by 子句只做格式转换、不认别名（见 structured.QueryTs 生成语句处），
+		// 出端若只留别名键，按原始字段名分组就会匹配不上而丢维度，这里补一份同口径的键。
+		WithAliasFreeEncode(func(s string) string {
+			if encodeFunc != nil {
+				return encodeFunc(s)
+			}
+			return s
+		}).
+		WithIncludeValues(function.LabelMap(ctx, query)).
 		WithIsReference(metadata.GetQueryParams(ctx).IsReference).
-		WithQuery(query.Field, query.TimeField, qo.start, qo.end, unit, size).
+		WithQuery(query.Field, query.TimeField, start, end, unit, size).
 		WithFieldMap(fieldMap).
 		WithOrders(query.Orders)
-
-	if len(query.Aggregates) == 0 {
-		return storage.ErrSeriesSet(fmt.Errorf("aggregates is empty"))
-	}
-
-	return i.queryWithAgg(ctx, qo, fact)
 }
 
 func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, start, end time.Time) ([]string, error) {
@@ -915,18 +971,21 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 	qo.physicalIndexes = physicalIndexes
 
 	unit := metadata.GetQueryParams(ctx).TimeUnit
+	// 根查询仍使用 size=0，枚举数量需要通过 terms.size 单独限制。
+	size := effectiveQuerySize(labelValuesQuery.Size, i.maxSize)
 	fact := NewFormatFactory(ctx).
-		WithQuery(name, labelValuesQuery.TimeField, start, end, unit, 0).
+		WithQuery(name, labelValuesQuery.TimeField, start, end, unit, size).
 		WithFieldMap(fieldMap)
 
-	// 添加 exists 条件确保字段存在
-	labelValuesQuery.AllConditions = append(labelValuesQuery.AllConditions, []metadata.ConditionField{
-		{
+	// 枚举字段存在性需要与完整业务条件表达式相与，而不是新增 OR 分支。
+	labelValuesQuery.AllConditions = metadata.MergeAllConditions(
+		labelValuesQuery.AllConditions,
+		metadata.AllConditions{{{
 			DimensionName: name,
 			Value:         []string{},
 			Operator:      metadata.ConditionExisted,
-		},
-	})
+		}}},
+	)
 
 	labelValuesQuery.Aggregates = append(labelValuesQuery.Aggregates, metadata.Aggregate{
 		Name:       Cardinality,

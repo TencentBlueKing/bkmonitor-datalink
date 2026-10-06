@@ -1,0 +1,276 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2017-2025 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
+package strategy
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestCompilerCompilesEffectiveTimeRequirements(t *testing.T) {
+	compiler := newTestCompiler(t)
+	always := mustCompilePlan(t, compiler, validPlan()).Levels()[0]
+	if requirement := always.EffectiveTimeRequirement(); requirement.Kind() != EffectiveTimeAlways || len(requirement.Digest()) != 64 {
+		t.Fatalf("ALWAYS requirement = %+v", requirement)
+	}
+
+	staticPlan := validPlan()
+	staticPlan.StrategyIR.Levels[0].TriggerPlan.Config = triggerConfigWithUptime("BUSINESS_LOCAL", map[string]any{
+		"time_ranges":      []any{map[string]any{"start": "09:00", "end": "17:00"}},
+		"active_calendars": []any{},
+		"calendars":        []any{},
+	})
+	staticLevel := mustCompilePlan(t, compiler, staticPlan).Levels()[0]
+	static := staticLevel.EffectiveTimeRequirement()
+	if static.Kind() != EffectiveTimeStaticSchedule || static.TimezoneRef() != "BUSINESS_LOCAL" || len(static.TimeRanges()) != 1 {
+		t.Fatalf("STATIC_SCHEDULE requirement = %+v", static)
+	}
+	if staticLevel.EffectiveTimeRequirementDigest() != static.Digest() {
+		t.Fatal("EffectiveTimeRequirementDigest() does not match the immutable requirement")
+	}
+	if staticLevel.Fingerprints() != always.Fingerprints() {
+		t.Fatal("uptime requirement unexpectedly changed Trigger state fingerprint")
+	}
+
+	calendarPlan := validPlan()
+	calendarPlan.StrategyIR.Levels[0].TriggerPlan.Config = triggerConfigWithUptime("BUSINESS_LOCAL", map[string]any{
+		"time_ranges":      []any{map[string]any{"start": "00:00", "end": "23:59"}},
+		"active_calendars": []any{int64(9), int64(3)},
+		"calendars":        []any{int64(8)},
+	})
+	calendar := mustCompilePlan(t, compiler, calendarPlan).Levels()[0].EffectiveTimeRequirement()
+	if calendar.Kind() != EffectiveTimeCalendar || !equalInt64s(calendar.ActiveCalendarIDs(), []int64{3, 9}) || !equalInt64s(calendar.InactiveCalendarIDs(), []int64{8}) {
+		t.Fatalf("CALENDAR requirement = %+v", calendar)
+	}
+	calendarIDs := calendar.ActiveCalendarIDs()
+	calendarIDs[0] = 99
+	if calendar.ActiveCalendarIDs()[0] != 3 {
+		t.Fatal("caller mutation changed immutable calendar requirement")
+	}
+}
+
+func TestCompilerCanonicalizesNoCalendarFullDayUptimeToAlways(t *testing.T) {
+	compiler := newTestCompiler(t)
+	want := mustCompilePlan(t, compiler, validPlan()).Levels()[0].EffectiveTimeRequirement()
+	tests := []struct {
+		name       string
+		timeRanges []any
+	}{
+		{name: "empty ranges", timeRanges: []any{}},
+		{name: "full day range", timeRanges: []any{map[string]any{"start": "00:00", "end": "23:59"}}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			plan := validPlan()
+			plan.StrategyIR.Levels[0].TriggerPlan.Config = triggerConfigWithUptime("BUSINESS_LOCAL", map[string]any{
+				"time_ranges":      test.timeRanges,
+				"active_calendars": []any{},
+				"calendars":        []any{},
+			})
+			requirement := mustCompilePlan(t, compiler, plan).Levels()[0].EffectiveTimeRequirement()
+			if requirement.Kind() != EffectiveTimeAlways {
+				t.Fatalf("effective-time kind = %q, want %q", requirement.Kind(), EffectiveTimeAlways)
+			}
+			if requirement.Digest() != want.Digest() {
+				t.Fatalf("ALWAYS digest = %q, want %q", requirement.Digest(), want.Digest())
+			}
+		})
+	}
+}
+
+func TestCompilerIncludesTimeRangeContentInEffectiveTimeDigest(t *testing.T) {
+	compiler := newTestCompiler(t)
+	first := validPlan()
+	first.StrategyIR.Levels[0].TriggerPlan.Config = triggerConfigWithUptime("BUSINESS_LOCAL", map[string]any{
+		"time_ranges": []any{map[string]any{"start": "09:00", "end": "17:00"}},
+	})
+	second := validPlan()
+	second.StrategyIR.Levels[0].TriggerPlan.Config = triggerConfigWithUptime("BUSINESS_LOCAL", map[string]any{
+		"time_ranges": []any{map[string]any{"start": "10:00", "end": "18:00"}},
+	})
+
+	firstRequirement := mustCompilePlan(t, compiler, first).Levels()[0].EffectiveTimeRequirement()
+	secondRequirement := mustCompilePlan(t, compiler, second).Levels()[0].EffectiveTimeRequirement()
+	if firstRequirement.Digest() == secondRequirement.Digest() {
+		t.Fatal("different time ranges produced the same effective-time requirement digest")
+	}
+	factRevision := strings.Repeat("a", 64)
+	firstFact, err := newEffectiveTimeFact(EffectiveTimeActive, firstRequirement.Digest(), factRevision, 100, 200)
+	if err != nil {
+		t.Fatalf("newEffectiveTimeFact(first) error = %v", err)
+	}
+	secondFact, err := newEffectiveTimeFact(EffectiveTimeActive, secondRequirement.Digest(), factRevision, 100, 200)
+	if err != nil {
+		t.Fatalf("newEffectiveTimeFact(second) error = %v", err)
+	}
+	if firstFact.FactDigest() == secondFact.FactDigest() {
+		t.Fatal("different time ranges produced the same effective-time fact digest")
+	}
+	if firstFact.RequirementDigest() != firstRequirement.Digest() || secondFact.RequirementDigest() != secondRequirement.Digest() {
+		t.Fatalf("fact requirement binding = %q / %q", firstFact.RequirementDigest(), secondFact.RequirementDigest())
+	}
+}
+
+// A range whose start or end does not parse is read as Python reads it:
+// the start as 00:00, the end as 23:59, each on its own, and the Level runs
+// on the range that comes out. Refusing the Level instead turned a malformed
+// range into a strategy that never detected, when Python had it detect all
+// day; the widening is the direction of more detection, and the Leader
+// names it (UptimeTimeRangesNormalized) so it is not silent.
+func TestAMalformedTimeRangeIsReadAsPythonReadsIt(t *testing.T) {
+	compiler := newTestCompiler(t)
+	for name, tt := range map[string]struct {
+		start, end string
+		wantStart  uint16
+		wantEnd    uint16
+		always     bool
+	}{
+		"start does not parse":      {"25:00", "17:00", 0, 17 * 60, false},
+		"end does not parse":        {"09:00", "17:61", 9 * 60, 24*60 - 1, false},
+		"neither parses, whole day": {"", "x", 0, 24*60 - 1, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			plan := validPlan()
+			uptime := map[string]any{"time_ranges": []any{map[string]any{"start": tt.start, "end": tt.end}}}
+			plan.StrategyIR.Levels[0].TriggerPlan.Config = triggerConfigWithUptime("BUSINESS_LOCAL", uptime)
+			result := mustCompileResult(t, compiler, plan)
+			if terminals := result.LevelTerminals(); len(terminals) != 0 {
+				t.Fatalf("a malformed range refused the Level: %+v", terminals)
+			}
+			compiled, _ := result.Plan()
+			requirement := compiled.Levels()[0].EffectiveTimeRequirement()
+			if tt.always {
+				// The whole day with no calendar is no schedule at all, as a
+				// configured 00:00-23:59 is.
+				if requirement.Kind() != EffectiveTimeAlways {
+					t.Fatalf("a range read as the whole day compiled to %s, want ALWAYS", requirement.Kind())
+				}
+				return
+			}
+			ranges := requirement.TimeRanges()
+			if len(ranges) != 1 || ranges[0].StartMinute() != tt.wantStart || ranges[0].EndMinute() != tt.wantEnd {
+				t.Fatalf("ranges = %+v, want %d..%d", ranges, tt.wantStart, tt.wantEnd)
+			}
+			raw, _ := json.Marshal(uptime)
+			if !UptimeTimeRangesNormalized(raw) {
+				t.Fatal("the widening is not reported, so the Leader cannot name it")
+			}
+		})
+	}
+	if UptimeTimeRangesNormalized(json.RawMessage(`{"time_ranges":[{"start":"09:00","end":"17:00"}]}`)) ||
+		UptimeTimeRangesNormalized(nil) || UptimeTimeRangesNormalized(json.RawMessage(`null`)) {
+		t.Fatal("a range that parses, or no uptime at all, was reported as widened")
+	}
+}
+
+func TestCompilerRequiresBusinessLocalTimezoneReference(t *testing.T) {
+	plan := validPlan()
+	plan.StrategyIR.Levels[0].TriggerPlan.Config = triggerConfigWithUptime("UTC", map[string]any{
+		"time_ranges": []any{map[string]any{"start": "09:00", "end": "17:00"}},
+	})
+	result := mustCompileResult(t, newTestCompiler(t), plan)
+	if terminals := result.LevelTerminals(); len(terminals) != 1 || terminals[0].ReasonCode == "" {
+		t.Fatalf("invalid timezone terminals = %+v", terminals)
+	}
+}
+
+func TestStaticScheduleProviderReturnsBoundedFacts(t *testing.T) {
+	plan := validPlan()
+	plan.StrategyIR.Levels[0].TriggerPlan.Config = triggerConfigWithUptime("BUSINESS_LOCAL", map[string]any{
+		"time_ranges": []any{map[string]any{"start": "09:00", "end": "17:00"}},
+	})
+	requirement := mustCompilePlan(t, newTestCompiler(t), plan).Levels()[0].EffectiveTimeRequirement()
+	provider := NewStaticScheduleProvider(TimezoneResolverFunc(func(_ context.Context, ref, _, _ string) (*time.Location, error) {
+		if ref != "BUSINESS_LOCAL" {
+			t.Fatalf("timezone ref = %q", ref)
+		}
+		return time.UTC, nil
+	}))
+	requests := []EffectiveTimeRequest{
+		{TenantID: "default", BusinessID: "2", EvaluationTime: time.Date(2026, 8, 26, 10, 0, 0, 0, time.UTC).Unix(), Requirement: requirement},
+		{TenantID: "default", BusinessID: "2", EvaluationTime: time.Date(2026, 8, 26, 18, 0, 0, 0, time.UTC).Unix(), Requirement: requirement},
+	}
+	facts, err := provider.Resolve(context.Background(), requests)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if len(facts) != 2 || facts[0].Status() != EffectiveTimeActive || facts[1].Status() != EffectiveTimeInactive {
+		t.Fatalf("Resolve() facts = %+v", facts)
+	}
+	for index, fact := range facts {
+		if len(fact.FactDigest()) != 64 || len(fact.FactRevision()) != 64 ||
+			fact.RequirementDigest() != requests[index].Requirement.Digest() || fact.ValidUntil() <= requests[index].EvaluationTime {
+			t.Fatalf("Resolve() fact[%d] = %+v", index, fact)
+		}
+	}
+}
+
+func TestStaticScheduleProviderSeparatesUnknownFromRetryableFailure(t *testing.T) {
+	plan := validPlan()
+	plan.StrategyIR.Levels[0].TriggerPlan.Config = triggerConfigWithUptime("BUSINESS_LOCAL", map[string]any{
+		"time_ranges": []any{map[string]any{"start": "09:00", "end": "17:00"}},
+	})
+	requirement := mustCompilePlan(t, newTestCompiler(t), plan).Levels()[0].EffectiveTimeRequirement()
+	request := []EffectiveTimeRequest{{
+		TenantID: "default", BusinessID: "2", EvaluationTime: 1725000000, Requirement: requirement,
+	}}
+	unknown := NewStaticScheduleProvider(TimezoneResolverFunc(func(context.Context, string, string, string) (*time.Location, error) {
+		return nil, ErrEffectiveTimeUnknown
+	}))
+	facts, err := unknown.Resolve(context.Background(), request)
+	if err != nil || len(facts) != 1 || facts[0].Status() != EffectiveTimeUnknown {
+		t.Fatalf("unknown Resolve() = %+v, %v", facts, err)
+	}
+
+	retryable := errors.New("redis unavailable")
+	failing := NewStaticScheduleProvider(TimezoneResolverFunc(func(context.Context, string, string, string) (*time.Location, error) {
+		return nil, retryable
+	}))
+	if _, err := failing.Resolve(context.Background(), request); !errors.Is(err, retryable) {
+		t.Fatalf("retryable Resolve() error = %v", err)
+	}
+}
+
+func triggerConfigWithUptime(timezoneRef string, uptime map[string]any) json.RawMessage {
+	return mustJSON(map[string]any{
+		"window_size": 1, "required_anomalies": 1, "step_seconds": 60,
+		"timezone_ref": timezoneRef, "uptime": uptime,
+	})
+}
+
+func equalInt64s(left, right []int64) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
+}
+
+// A writer that defaults every detect's uptime to an empty object states no
+// schedule: the level compiles to the same ALWAYS requirement as no uptime.
+func TestAnEmptyUptimeIsAlwaysInEffect(t *testing.T) {
+	compiler := newTestCompiler(t)
+	want := mustCompilePlan(t, compiler, validPlan()).Levels()[0].EffectiveTimeRequirement()
+	plan := validPlan()
+	plan.StrategyIR.Levels[0].TriggerPlan.Config = triggerConfigWithUptime("BUSINESS_LOCAL", map[string]any{})
+	requirement := mustCompilePlan(t, compiler, plan).Levels()[0].EffectiveTimeRequirement()
+	if requirement.Kind() != EffectiveTimeAlways || requirement.Digest() != want.Digest() {
+		t.Fatalf("empty uptime compiled to %q %q, want ALWAYS %q", requirement.Kind(), requirement.Digest(), want.Digest())
+	}
+}

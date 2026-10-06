@@ -1,0 +1,9 @@
+# Build output and release state never belong in the image context.
+.release/
+dist/
+alarmd
+alarmd-comparator
+alarmd-shadow-verify
+# Documentation does not change the binary; keeping it out keeps the
+# COPY layer cache stable across doc-only commits.
+docs/

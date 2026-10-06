@@ -1,0 +1,16 @@
+{
+  "seed": 20260831,
+  "event_source_id": "e2e-source",
+  "tenant_prefix": "tenant-e2e",
+  "tenant_count": 2,
+  "counts": {
+    "recovered": 1,
+    "severity_rotation": 1,
+    "cross_tenant": 1
+  },
+  "duplicate_records": 1,
+  "invalid_records": 1,
+  "min_updates": 1,
+  "max_updates": 1,
+  "start_time": "2026-08-31T02:00:00Z"
+}

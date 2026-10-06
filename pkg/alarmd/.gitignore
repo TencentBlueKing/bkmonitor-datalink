@@ -1,0 +1,6 @@
+# `go build ./...` drops one binary per main package into the working
+# directory. They are build output, not source, and a 32 MB blob committed by
+# accident is not something a review of a diff summary catches.
+/alarmd
+/alarmd-comparator
+/alarmd-shadow-verify

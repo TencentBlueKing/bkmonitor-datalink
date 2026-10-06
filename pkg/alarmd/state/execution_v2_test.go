@@ -1,0 +1,550 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2017-2025 Tencent. All rights reserved.
+// Licensed under the MIT License.
+
+package state
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+)
+
+type casMemoryBackend struct {
+	values map[string][]byte
+	// hashes is the second key space this backend holds: one map of fields per
+	// key, which is what the no-data memory moved to.
+	hashes map[string]map[string][]byte
+	// commands is which hash command each call used, so a test can say what a
+	// path read rather than only what it concluded. The difference between one
+	// field and every field is the whole cost argument.
+	commands []string
+	conflict bool
+	reads    int
+	// remaining models what PTTL would answer, in the same encoding: absent
+	// from the map means the key exists with no expiry, which is what a key
+	// written before lifetimes existed looks like.
+	remaining map[string]time.Duration
+	renewals  []renewalCall
+	// renewalErr makes the renewal path fail the way an unreachable Redis
+	// does: the batch's effect is unknown, so no key gets an outcome.
+	renewalErr error
+	// writeTTLs is the lifetime each write asked for, so a test can tell a key
+	// written with one from a key written to live forever.
+	writeTTLs map[string]time.Duration
+}
+
+type renewalCall struct {
+	Key       string
+	TTL       time.Duration
+	Threshold time.Duration
+	Renewed   bool
+	Outcome   RenewalOutcome
+}
+
+func (backend *casMemoryBackend) MGet(_ context.Context, keys []string) ([][]byte, error) {
+	backend.reads += len(keys)
+	result := make([][]byte, len(keys))
+	for i, key := range keys {
+		result[i] = append([]byte(nil), backend.values[key]...)
+	}
+	return result, nil
+}
+
+func (backend *casMemoryBackend) RenewIfBelow(
+	ctx context.Context, key string, ttl, threshold time.Duration,
+) (RenewalOutcome, error) {
+	outcomes, err := backend.RenewManyIfBelow(ctx, []string{key}, ttl, threshold)
+	if err != nil {
+		return "", err
+	}
+	return outcomes[0], nil
+}
+
+// RenewManyIfBelow answers a batch the way the pipeline does: one outcome per
+// key, in order, every key decided on its own. The script's three replies are
+// restated here rather than assumed -- a key that is not there is MISSING, one
+// with no expiry or less than the threshold left is renewed, and anything else
+// is FRESH -- so a test can tell the reading that names a lost record from the
+// reading that says there was nothing to do.
+func (backend *casMemoryBackend) RenewManyIfBelow(
+	_ context.Context, keys []string, ttl, threshold time.Duration,
+) ([]RenewalOutcome, error) {
+	if backend.renewalErr != nil {
+		return nil, backend.renewalErr
+	}
+	outcomes := make([]RenewalOutcome, len(keys))
+	for index, key := range keys {
+		call := renewalCall{Key: key, TTL: ttl, Threshold: threshold, Outcome: RenewalMissing}
+		_, isValue := backend.values[key]
+		_, isHash := backend.hashes[key]
+		if isValue || isHash {
+			call.Outcome = RenewalFresh
+			left, hasExpiry := backend.remaining[key]
+			if !hasExpiry || left < threshold {
+				call.Renewed, call.Outcome = true, RenewalRenewed
+				if backend.remaining == nil {
+					backend.remaining = make(map[string]time.Duration)
+				}
+				backend.remaining[key] = ttl
+			}
+		}
+		backend.renewals = append(backend.renewals, call)
+		outcomes[index] = call.Outcome
+	}
+	return outcomes, nil
+}
+
+func TestIncrementalGapLoadStopsBeforeNextReadOnRejectionAndCancel(t *testing.T) {
+	backend := &casMemoryBackend{values: make(map[string][]byte)}
+	router, _ := NewFixedRouter("target", backend)
+	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
+	loader, ok := any(store).(interface {
+		LoadGapsInto(context.Context, execution.GapLoadRequest, func(execution.GapGuardSnapshot) error) error
+	})
+	if !ok {
+		t.Fatal("Gap loader cannot admit facts before retaining the complete result")
+	}
+	first := execution.PlanGapLoadItem{Identity: execution.PlanGapIdentity{Plan: stateIdentityV2().Plan, StateGeneration: "generation"}, ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1"}
+	second := first
+	second.Identity.Plan.StrategyID = "10"
+	request := execution.GapLoadRequest{Contract: frozenRef(), Items: []execution.PlanGapLoadItem{first, second}}
+	denied := errors.New("budget denied")
+	err := loader.LoadGapsInto(context.Background(), request, func(execution.GapGuardSnapshot) error { return denied })
+	if !errors.Is(err, denied) || backend.reads != 1 {
+		t.Fatalf("rejection err=%v reads=%d", err, backend.reads)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	backend.reads = 0
+	err = loader.LoadGapsInto(ctx, request, func(execution.GapGuardSnapshot) error { cancel(); return nil })
+	if !errors.Is(err, context.Canceled) || backend.reads != 1 {
+		t.Fatalf("cancel err=%v reads=%d", err, backend.reads)
+	}
+}
+func (*casMemoryBackend) SetMany(context.Context, []BackendWrite) error { return nil }
+
+// ReadHash and ApplyHashDelta are the hash half of the backend, written to the
+// same rules the Lua script holds rather than to what the caller happens to do
+// with them. The header comparison in particular is the whole atomicity
+// argument, so a fake that applied unconditionally would let every test of the
+// conflict paths pass against a store that had none.
+func (backend *casMemoryBackend) ReadHashField(_ context.Context, key, field string) ([]byte, error) {
+	backend.commands = append(backend.commands, "HGET")
+	value, found := backend.hashes[key][field]
+	if !found {
+		return nil, nil
+	}
+	return append([]byte(nil), value...), nil
+}
+
+func (backend *casMemoryBackend) ReadHash(_ context.Context, key string) (map[string][]byte, error) {
+	backend.commands = append(backend.commands, "HGETALL")
+	backend.reads++
+	fields := backend.hashes[key]
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	copied := make(map[string][]byte, len(fields))
+	for name, value := range fields {
+		copied[name] = append([]byte(nil), value...)
+	}
+	return copied, nil
+}
+
+func (backend *casMemoryBackend) ApplyHashDelta(
+	_ context.Context, write HashDeltaWrite,
+) (HashDeltaOutcome, error) {
+	if backend.conflict {
+		return HashDeltaOutcome{Status: HashDeltaConflict}, nil
+	}
+	fields := backend.hashes[write.Key]
+	header, present := fields[write.HeaderField]
+	if write.ExpectedMissing {
+		if present {
+			return HashDeltaOutcome{Status: HashDeltaConflict, Current: header}, nil
+		}
+	} else {
+		if !present {
+			return HashDeltaOutcome{Status: HashDeltaConflict}, nil
+		}
+		if HeaderDigest(header) != write.ExpectedDigest {
+			return HashDeltaOutcome{Status: HashDeltaConflict, Current: header}, nil
+		}
+	}
+	if write.Replace {
+		// The script's DEL, restated rather than assumed. A double that laid a
+		// whole-memory statement on top of what the record held would leave the
+		// groups the statement no longer has -- which is exactly the mixture
+		// nobody wrote, and the reason this branch exists.
+		fields = nil
+		delete(backend.hashes, write.Key)
+	}
+	if fields == nil {
+		fields = make(map[string][]byte)
+		if backend.hashes == nil {
+			backend.hashes = make(map[string]map[string][]byte)
+		}
+		backend.hashes[write.Key] = fields
+	}
+	for _, field := range write.Set {
+		fields[field.Name] = append([]byte(nil), field.Value...)
+	}
+	for _, name := range write.Del {
+		delete(fields, name)
+	}
+	fields[write.HeaderField] = append([]byte(nil), write.Header...)
+	if backend.writeTTLs == nil {
+		backend.writeTTLs = make(map[string]time.Duration)
+	}
+	backend.writeTTLs[write.Key] = write.TTL
+	return HashDeltaOutcome{Status: HashDeltaApplied}, nil
+}
+func (backend *casMemoryBackend) CompareAndSet(_ context.Context, key string, expected []byte, missing bool, value []byte, ttl time.Duration) (bool, error) {
+	if backend.conflict {
+		return false, nil
+	}
+	current, found := backend.values[key]
+	if found == missing || (!missing && string(current) != string(expected)) {
+		return false, nil
+	}
+	backend.values[key] = append([]byte(nil), value...)
+	if backend.writeTTLs == nil {
+		backend.writeTTLs = make(map[string]time.Duration)
+	}
+	backend.writeTTLs[key] = ttl
+	return true, nil
+}
+
+func TestExecutionStateIdentityIsBoundedAndLevelIndependent(t *testing.T) {
+	identity := execution.StateKeyIdentity{
+		Plan:            execution.PlanIdentity{TenantID: strings.Repeat("tenant", 100), BusinessID: "2", StrategyID: "9"},
+		StateGeneration: "generation-1", SeriesIdentityDigest: execution.SeriesIdentityDigest(strings.Repeat("a", 64)),
+	}
+	key, err := RuntimeStateKeyV2("alarmd", identity)
+	if err != nil {
+		t.Fatalf("RuntimeStateKeyV2() error = %v", err)
+	}
+	if len(key) > 256 || !strings.Contains(key, ":runtime:v2:") {
+		t.Fatalf("RuntimeStateKeyV2() = %q", key)
+	}
+	if key2, _ := RuntimeStateKeyV2("alarmd", identity); key2 != key {
+		t.Fatalf("key is not deterministic: %q != %q", key, key2)
+	}
+}
+
+func TestExecutionStateIdentityRejectsAmbiguousNumericFields(t *testing.T) {
+	for _, plan := range []execution.PlanIdentity{
+		{TenantID: "tenant", BusinessID: "1:2", StrategyID: "3"},
+		{TenantID: "tenant", BusinessID: "01", StrategyID: "3"},
+		{TenantID: "tenant", BusinessID: "1", StrategyID: "2:3"},
+	} {
+		identity := stateIdentityV2()
+		identity.Plan = plan
+		if _, err := RuntimeStateKeyV2("alarmd", identity); err == nil {
+			t.Fatalf("RuntimeStateKeyV2(%+v) accepted ambiguous identity", plan)
+		}
+	}
+	left, right := stateIdentityV2(), stateIdentityV2()
+	left.Plan.BusinessID, left.Plan.StrategyID = "1", "23"
+	right.Plan.BusinessID, right.Plan.StrategyID = "12", "3"
+	leftKey, _ := RuntimeStateKeyV2("alarmd", left)
+	rightKey, _ := RuntimeStateKeyV2("alarmd", right)
+	if leftKey == rightKey {
+		t.Fatalf("numeric tuple collision: %q", leftKey)
+	}
+	if _, err := RuntimeStateKeyV2(strings.Repeat("p", 65), left); err == nil {
+		t.Fatal("oversized prefix was accepted")
+	}
+}
+
+func TestPlanGapIdentityHasNoSeriesOrLevel(t *testing.T) {
+	identity := execution.PlanGapIdentity{
+		Plan:            execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "9"},
+		StateGeneration: "generation-1",
+	}
+	key, err := PlanGapKeyV2("alarmd", identity)
+	if err != nil {
+		t.Fatalf("PlanGapKeyV2() error = %v", err)
+	}
+	if !strings.Contains(key, ":gap:v2:") || len(key) > 256 {
+		t.Fatalf("PlanGapKeyV2() = %q", key)
+	}
+}
+
+func TestApplyGapRejectsInvalidIdentityWithoutCallingStorage(t *testing.T) {
+	backend := &casMemoryBackend{values: make(map[string][]byte)}
+	router, _ := NewFixedRouter("state-01", backend)
+	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
+	identity := execution.PlanGapIdentity{Plan: execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "9:1"}, StateGeneration: "generation"}
+	mutation, err := execution.BuildPlanGapMutation(execution.PlanGapMutation{Identity: identity, ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1", Scopes: []execution.GapScopeMutation{{Kind: execution.GapOpen, ReasonCode: execution.ReasonCode(contract.ReasonHistoryGapped), RequiredFullSlots: 2}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{mutation}})
+	if err != nil || result.Items[0].Status != execution.GapGuardRejected {
+		t.Fatalf("ApplyGap(invalid identity) = (%+v, %v)", result, err)
+	}
+	if len(backend.values) != 0 {
+		t.Fatal("invalid identity reached storage")
+	}
+}
+
+func TestExecutionStoreDoesNotResetCorruptRuntimeState(t *testing.T) {
+	backend := &casMemoryBackend{values: make(map[string][]byte)}
+	router, _ := NewFixedRouter("state-01", backend)
+	store, err := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := stateIdentityV2()
+	key, _ := RuntimeStateKeyV2("alarmd", identity)
+	backend.values[key] = []byte("not-json")
+	request := execution.StatePreflightRequest{Contract: frozenRef(), Items: []execution.StatePreflightItem{{Identity: identity, ApplyVersion: applyVersion()}}}
+	loaded, err := store.LoadRuntime(context.Background(), request)
+	if err != nil || loaded.Items[0].Status != execution.StateDeterministicInvalid {
+		t.Fatalf("LoadRuntime() = (%+v, %v)", loaded, err)
+	}
+	if string(backend.values[key]) != "not-json" {
+		t.Fatal("corrupt value was overwritten")
+	}
+	mutation, buildErr := execution.BuildStateMutation(execution.StateMutation{Identity: identity, ApplyVersion: applyVersion(), AffectedRecords: []execution.RecordAnchor{derivedAnchor(t, stateIdentityV2(), 60)}, Levels: []execution.RuntimeLevelStateMutation{{LevelID: 1, LevelStateCompatibility: "compat", HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm", LastProcessedEventTime: 60}}, Points: []execution.StateHistoryPoint{derivedPoint(t, stateIdentityV2(), 60, "detect", execution.LevelFactNormal)}})
+	if buildErr != nil {
+		t.Fatal(buildErr)
+	}
+	applied, applyErr := store.ApplyRuntime(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: []execution.StateMutation{mutation}})
+	if applyErr != nil || applied.Items[0].Status != execution.StateApplyDeterministicInvalid {
+		t.Fatalf("ApplyRuntime(corrupt) = (%+v, %v)", applied, applyErr)
+	}
+	if string(backend.values[key]) != "not-json" {
+		t.Fatal("ApplyRuntime overwrote corrupt value")
+	}
+}
+
+func TestRuntimeSeriesGuardDeterminesPersistedStatus(t *testing.T) {
+	mutation, err := execution.BuildStateMutation(execution.StateMutation{Identity: stateIdentityV2(), ApplyVersion: applyVersion(), AffectedRecords: []execution.RecordAnchor{derivedAnchor(t, stateIdentityV2(), 60)}, SeriesGuard: &execution.StateGuardFact{Status: execution.HistoryWarming, ReasonCode: execution.ReasonCode(contract.ReasonHistoryWarming), WarmupRequirementRef: "series-warm"}, Levels: []execution.RuntimeLevelStateMutation{{LevelID: 1, LevelStateCompatibility: "compat", HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm", LastProcessedEventTime: 60}}, Points: []execution.StateHistoryPoint{derivedPoint(t, stateIdentityV2(), 60, "detect", execution.LevelFactNormal)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := encodeRuntime(mutation, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view := decodeRuntime(raw, mutation.Identity, frozenRef(), mutation.ApplyVersion)
+	if view.Status != execution.StateFoundWarming {
+		t.Fatalf("status = %s, want FOUND_WARMING", view.Status)
+	}
+}
+
+func TestGapWarmupCountsFullSlotsMonotonicallyAndResetsOnScheduleChange(t *testing.T) {
+	scope := execution.GapScope{LevelID: 1, HasLevel: true}
+	reason := execution.ReasonCode(contract.ReasonHistoryGapped)
+	previous := []execution.GapScopeState{{Scope: scope, Status: execution.GapStatusGapped, ReasonCode: reason, RequiredFullSlots: 2}}
+	mutation := []execution.GapScopeMutation{{Scope: scope, Kind: execution.GapWarmup, ReasonCode: reason, RequiredFullSlots: 2}}
+	first := applyGapScopes(previous, mutation, "r1", "r1")
+	second := applyGapScopes(first, mutation, "r1", "r1")
+	third := applyGapScopes(second, mutation, "r1", "r1")
+	if first[0].ObservedFullSlots != 1 || second[0].ObservedFullSlots != 2 || third[0].ObservedFullSlots != 2 {
+		t.Fatalf("warmup counts = %d,%d,%d", first[0].ObservedFullSlots, second[0].ObservedFullSlots, third[0].ObservedFullSlots)
+	}
+	reset := applyGapScopes(second, mutation, "r1", "r2")
+	if reset[0].ObservedFullSlots != 1 {
+		t.Fatalf("schedule change count = %d, want 1", reset[0].ObservedFullSlots)
+	}
+}
+
+func TestExecutionStoreExactCASAndReplay(t *testing.T) {
+	backend := &casMemoryBackend{values: make(map[string][]byte)}
+	router, _ := NewFixedRouter("state-01", backend)
+	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
+	mutation, err := execution.BuildStateMutation(execution.StateMutation{Identity: stateIdentityV2(), ApplyVersion: applyVersion(),
+		AffectedRecords: []execution.RecordAnchor{derivedAnchor(t, stateIdentityV2(), 60)},
+		Levels:          []execution.RuntimeLevelStateMutation{{LevelID: 1, LevelStateCompatibility: "compat", HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm", LastProcessedEventTime: 60}},
+		Points:          []execution.StateHistoryPoint{derivedPoint(t, stateIdentityV2(), 60, "detect", execution.LevelFactNormal)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: []execution.StateMutation{mutation}}
+	first, err := store.ApplyRuntime(context.Background(), request)
+	if err != nil || first.Items[0].Status != execution.StateApplied {
+		t.Fatalf("first ApplyRuntime() = (%+v, %v)", first, err)
+	}
+	request.Items[0].ExpectedBlobRevision = 1
+	replay, err := store.ApplyRuntime(context.Background(), request)
+	if err != nil || replay.Items[0].Status != execution.StateApplyAlreadyApplied {
+		t.Fatalf("replay ApplyRuntime() = (%+v, %v)", replay, err)
+	}
+}
+
+func TestExecutionStoreAdmissionAndCASBudgetStatuses(t *testing.T) {
+	backend := &casMemoryBackend{values: make(map[string][]byte), conflict: true}
+	router, _ := NewFixedRouter("state-01", backend)
+	mutation, err := execution.BuildStateMutation(execution.StateMutation{Identity: stateIdentityV2(), ApplyVersion: applyVersion(), AffectedRecords: []execution.RecordAnchor{derivedAnchor(t, stateIdentityV2(), 60)}, Levels: []execution.RuntimeLevelStateMutation{{LevelID: 1, LevelStateCompatibility: "compat", HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm", LastProcessedEventTime: 60}}, Points: []execution.StateHistoryPoint{derivedPoint(t, stateIdentityV2(), 60, "detect", execution.LevelFactNormal)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: []execution.StateMutation{mutation}}
+	small, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 1, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
+	admission, err := small.AdmitRuntime(context.Background(), request)
+	if err != nil || admission.Items[0].Status != execution.StateAdmissionDeterministicInvalid || admission.Items[0].ReasonCode != execution.ReasonCode(contract.ReasonStateBudgetExceeded) {
+		t.Fatalf("AdmitRuntime() = (%+v, %v)", admission, err)
+	}
+	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
+	applied, err := store.ApplyRuntime(context.Background(), request)
+	if err != nil || applied.Items[0].Status != execution.StateApplyCASConflict {
+		t.Fatalf("ApplyRuntime(conflict) = (%+v, %v)", applied, err)
+	}
+}
+
+func TestRuntimeOversizeIsLocalAndApplyDoesNotOverwrite(t *testing.T) {
+	backend := &casMemoryBackend{values: make(map[string][]byte)}
+	router, _ := NewFixedRouter("state-01", backend)
+	goodIdentity := stateIdentityV2()
+	goodIdentity.SeriesIdentityDigest = seriesDigest("good")
+	badIdentity := stateIdentityV2()
+	badIdentity.SeriesIdentityDigest = seriesDigest("oversize")
+	goodMutation, err := execution.BuildStateMutation(execution.StateMutation{Identity: goodIdentity, ApplyVersion: applyVersion(), AffectedRecords: []execution.RecordAnchor{derivedAnchor(t, stateIdentityV2(), 60)}, Levels: []execution.RuntimeLevelStateMutation{{LevelID: 1, LevelStateCompatibility: "compat", HistoryCompleteness: execution.HistoryFull, WarmupRequirementRef: "warm", LastProcessedEventTime: 60}}, Points: []execution.StateHistoryPoint{derivedPoint(t, stateIdentityV2(), 60, "detect", execution.LevelFactNormal)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	goodRaw, _ := encodeRuntime(goodMutation, 1)
+	limit := len(goodRaw) + 16
+	goodKey, _ := RuntimeStateKeyV2("alarmd", goodIdentity)
+	badKey, _ := RuntimeStateKeyV2("alarmd", badIdentity)
+	backend.values[goodKey], backend.values[badKey] = goodRaw, []byte(strings.Repeat("x", limit+1))
+	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: limit, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
+	loaded, err := store.LoadRuntime(context.Background(), execution.StatePreflightRequest{Contract: frozenRef(), Items: []execution.StatePreflightItem{{Identity: goodIdentity, ApplyVersion: applyVersion()}, {Identity: badIdentity, ApplyVersion: applyVersion()}}})
+	if err != nil || loaded.Items[0].Status != execution.StateFoundReady || loaded.Items[1].Status != execution.StateDeterministicInvalid {
+		t.Fatalf("LoadRuntime(mixed) = (%+v, %v)", loaded, err)
+	}
+	badMutation := goodMutation
+	badMutation.Identity, badMutation.MutationDigest = badIdentity, ""
+	badMutation, err = execution.BuildStateMutation(badMutation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := append([]byte(nil), backend.values[badKey]...)
+	applied, err := store.ApplyRuntime(context.Background(), execution.StateApplyRequest{Contract: frozenRef(), Retention: testRetention(), Items: []execution.StateMutation{badMutation}})
+	if err != nil || applied.Items[0].Status != execution.StateApplyDeterministicInvalid || string(backend.values[badKey]) != string(original) {
+		t.Fatalf("ApplyRuntime(oversize) = (%+v, %v)", applied, err)
+	}
+}
+
+func TestExecutionStorePlanGapRoundTripAndTombstone(t *testing.T) {
+	backend := &casMemoryBackend{values: make(map[string][]byte)}
+	router, _ := NewFixedRouter("state-01", backend)
+	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
+	identity := execution.PlanGapIdentity{Plan: stateIdentityV2().Plan, StateGeneration: "generation"}
+	opened, err := execution.BuildPlanGapMutation(execution.PlanGapMutation{Identity: identity, ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1",
+		Scopes: []execution.GapScopeMutation{{Scope: execution.GapScope{LevelID: 1, HasLevel: true}, Kind: execution.GapOpen,
+			ReasonCode: execution.ReasonCode(contract.ReasonHistoryGapped), RequiredFullSlots: 2}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply, err := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{opened}})
+	if err != nil || apply.Items[0].Status != execution.GapGuardApplied {
+		t.Fatalf("ApplyGap(open) = (%+v, %v)", apply, err)
+	}
+	conflicting := opened
+	conflicting.ExpectedMarkerRevision = 1
+	conflicting.MutationDigest = ""
+	conflicting.Scopes[0].ReasonCode = execution.ReasonCode(contract.ReasonConfigDrift)
+	conflicting, err = execution.BuildPlanGapMutation(conflicting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _ := PlanGapKeyV2("alarmd", identity)
+	original := append([]byte(nil), backend.values[key]...)
+	apply, err = store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{conflicting}})
+	if err != nil || apply.Items[0].Status != execution.GapGuardConflict || string(backend.values[key]) != string(original) {
+		t.Fatalf("ApplyGap(same version, different digest) = (%+v, %v)", apply, err)
+	}
+	loaded, err := store.LoadGaps(context.Background(), execution.GapLoadRequest{Contract: frozenRef(), Items: []execution.PlanGapLoadItem{{Identity: identity, ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1"}}})
+	if err != nil || loaded.Items[0].Status != execution.GapFound || len(loaded.Items[0].Scopes) != 1 {
+		t.Fatalf("LoadGaps() = (%+v, %v)", loaded, err)
+	}
+	warmVersion := execution.ApplyVersion{StateApplyEpoch: 1, EvaluationTime: 120, SlotDigest: "slot-2"}
+	warmed, err := execution.BuildPlanGapMutation(execution.PlanGapMutation{Identity: identity, ExpectedMarkerRevision: 1,
+		ApplyVersion: warmVersion, ScheduleRevision: "plan-r1", Scopes: []execution.GapScopeMutation{{Scope: execution.GapScope{LevelID: 1, HasLevel: true}, Kind: execution.GapWarmup, ReasonCode: execution.ReasonCode(contract.ReasonHistoryGapped), RequiredFullSlots: 2}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply, err = store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{warmed}})
+	if err != nil || apply.Items[0].Status != execution.GapGuardApplied {
+		t.Fatalf("ApplyGap(warmup) = (%+v, %v)", apply, err)
+	}
+	loaded, err = store.LoadGaps(context.Background(), execution.GapLoadRequest{Contract: frozenRef(), Items: []execution.PlanGapLoadItem{{Identity: identity, ApplyVersion: warmVersion, ScheduleRevision: "plan-r1"}}})
+	if err != nil || loaded.Items[0].Scopes[0].ObservedFullSlots != 1 {
+		t.Fatalf("LoadGaps(warmup) = (%+v, %v)", loaded, err)
+	}
+	clearVersion := execution.ApplyVersion{StateApplyEpoch: 1, EvaluationTime: 180, SlotDigest: "slot-3"}
+	cleared, err := execution.BuildPlanGapMutation(execution.PlanGapMutation{Identity: identity, ExpectedMarkerRevision: 2,
+		ApplyVersion: clearVersion, ScheduleRevision: "plan-r1", Scopes: []execution.GapScopeMutation{{Scope: execution.GapScope{LevelID: 1, HasLevel: true}, Kind: execution.GapClear}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apply, err = store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{cleared}})
+	if err != nil || apply.Items[0].Status != execution.GapGuardApplied {
+		t.Fatalf("ApplyGap(clear) = (%+v, %v)", apply, err)
+	}
+	loaded, err = store.LoadGaps(context.Background(), execution.GapLoadRequest{Contract: frozenRef(), Items: []execution.PlanGapLoadItem{{Identity: identity, ApplyVersion: clearVersion, ScheduleRevision: "plan-r1"}}})
+	if err != nil || loaded.Items[0].Status != execution.GapClearedTombstone {
+		t.Fatalf("LoadGaps(tombstone) = (%+v, %v)", loaded, err)
+	}
+}
+
+func TestGapOversizeIsLocalAndApplyDoesNotOverwrite(t *testing.T) {
+	backend := &casMemoryBackend{values: make(map[string][]byte)}
+	router, _ := NewFixedRouter("state-01", backend)
+	good := execution.PlanGapIdentity{Plan: stateIdentityV2().Plan, StateGeneration: "good"}
+	bad := execution.PlanGapIdentity{Plan: stateIdentityV2().Plan, StateGeneration: "bad"}
+	mutation, err := execution.BuildPlanGapMutation(execution.PlanGapMutation{Identity: good, ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1", Scopes: []execution.GapScopeMutation{{Kind: execution.GapOpen, ReasonCode: execution.ReasonCode(contract.ReasonHistoryGapped), RequiredFullSlots: 2}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	goodRaw, _ := json.Marshal(gapEnvelope{Schema: executionGapSchemaV2, Identity: good, MarkerRevision: 1, ApplyVersion: mutation.ApplyVersion, MutationDigest: mutation.MutationDigest, ScheduleRevision: mutation.ScheduleRevision, Scopes: []execution.GapScopeState{{Status: execution.GapStatusGapped, ReasonCode: execution.ReasonCode(contract.ReasonHistoryGapped), RequiredFullSlots: 2}}})
+	limit := len(goodRaw) + 16
+	goodKey, _ := PlanGapKeyV2("alarmd", good)
+	badKey, _ := PlanGapKeyV2("alarmd", bad)
+	backend.values[goodKey], backend.values[badKey] = goodRaw, []byte(strings.Repeat("x", limit+1))
+	store, _ := NewExecutionStore(ExecutionStoreOptions{Prefix: "alarmd", Router: router, MaxValueBytes: limit, MaxItemsPerCall: 4, MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute})
+	loaded, err := store.LoadGaps(context.Background(), execution.GapLoadRequest{Contract: frozenRef(), Items: []execution.PlanGapLoadItem{{Identity: good, ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1"}, {Identity: bad, ApplyVersion: applyVersion(), ScheduleRevision: "plan-r1"}}})
+	if err != nil || loaded.Items[0].Status != execution.GapFound || loaded.Items[1].Status != execution.GapTerminal {
+		t.Fatalf("LoadGaps(mixed) = (%+v, %v)", loaded, err)
+	}
+	badMutation := mutation
+	badMutation.Identity, badMutation.MutationDigest = bad, ""
+	badMutation, err = execution.BuildPlanGapMutation(badMutation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := append([]byte(nil), backend.values[badKey]...)
+	applied, err := store.ApplyGap(context.Background(), execution.GapGuardApplyRequest{Contract: frozenRef(), Items: []execution.PlanGapMutation{badMutation}})
+	if err != nil || applied.Items[0].Status != execution.GapGuardRejected || string(backend.values[badKey]) != string(original) {
+		t.Fatalf("ApplyGap(oversize) = (%+v, %v)", applied, err)
+	}
+}
+
+func frozenRef() execution.FrozenExecutionContractRef {
+	return execution.FrozenExecutionContractRef{Slot: execution.SlotIdentity{QueryGroup: "q", EvaluationTime: 60}, SnapshotRevision: "snapshot", QueryRevision: "query", ScheduleRevision: "schedule", ScheduleSegmentStart: 60, DuePlanSetDigest: "plans"}
+}
+
+// testRetention is the Plan retention the apply requests in these tests carry:
+// one Level keeping five one-minute points, so the derived TTL is five minutes
+// plus the store's restart margin.
+func testRetention() []execution.StateRetentionRequirement {
+	return []execution.StateRetentionRequirement{{LevelID: 1, RetentionPoints: 5, EvaluationInterval: time.Minute}}
+}
+func applyVersion() execution.ApplyVersion {
+	return execution.ApplyVersion{StateApplyEpoch: 1, EvaluationTime: 60, SlotDigest: "slot"}
+}
+func stateIdentityV2() execution.StateKeyIdentity {
+	return execution.StateKeyIdentity{Plan: execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "9"}, StateGeneration: "generation", SeriesIdentityDigest: seriesDigest("series")}
+}

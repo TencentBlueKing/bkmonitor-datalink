@@ -1,0 +1,7 @@
+{
+  "query_list": [
+    {"data_source":"bkmonitor","table_id":"system.cpu","field_name":"usage","driver":"influxdb","time_field":"time","is_regexp":false,"reference_name":"a","function":[{"method":"abs","position":0}],"time_aggregation":{"function":"avg","window":"60s","position":0},"conditions":{"field_list":[{"field_name":"host","op":"eq","value":["127.0.0.1"],"is_prefix":true}]},"query_string":""},
+    {"data_source":"bkmonitor","table_id":"system.mem","field_name":"usage","driver":"influxdb","time_field":"time","is_regexp":false,"reference_name":"b","function":[{"method":"abs","position":0}],"time_aggregation":{"function":"avg","window":"60s","position":0},"conditions":{"field_list":[{"field_name":"host","op":"eq","value":["127.0.0.1"],"is_prefix":true}]},"query_string":""}
+  ],
+  "metric_merge":"a or b","start_time":"1700123000","end_time":"1700124000","step":"60s","space_uid":"bkcc__2","down_sample_range":"","timezone":"UTC","not_time_align":false
+}

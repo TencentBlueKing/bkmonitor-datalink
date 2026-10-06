@@ -21,6 +21,68 @@ func LookupOnce(oid ObjectID, objs Refer, objsMap map[string]*Objects) *OwnerRef
 	return doLookup(oid, objs, objsMap, true)
 }
 
+// LookupController follows the controller owner chain to the topmost workload.
+// A broken or ambiguous known chain is rejected instead of reporting an intermediate owner.
+func LookupController(oid ObjectID, objs Refer, objsMap map[string]*Objects) *OwnerRef {
+	refs, ok := objs.GetRefs(oid)
+	if !ok {
+		return nil
+	}
+
+	ref, count := controllerRef(refs)
+	if count != 1 {
+		return nil
+	}
+	return lookupController(oid.Namespace, ref, objsMap, make(map[string]struct{}))
+}
+
+func controllerRef(refs []OwnerRef) (OwnerRef, int) {
+	var controller OwnerRef
+	count := 0
+	for _, ref := range refs {
+		if !ref.Controller {
+			continue
+		}
+		count++
+		if count == 1 {
+			controller = ref
+		}
+	}
+	return controller, count
+}
+
+func lookupController(namespace string, ref OwnerRef, objsMap map[string]*Objects, visited map[string]struct{}) *OwnerRef {
+	objs, ok := objsMap[ref.Kind]
+	if !ok {
+		return nil
+	}
+
+	oid := ObjectID{Name: ref.Name, Namespace: namespace}
+	key := ref.Kind + "/" + oid.String()
+	if _, ok := visited[key]; ok {
+		return nil
+	}
+	visited[key] = struct{}{}
+
+	found, ok := objs.Get(oid)
+	if !ok {
+		return nil
+	}
+	parent := &OwnerRef{Kind: objs.Kind(), Name: ref.Name}
+
+	next, count := controllerRef(found.OwnerRefs)
+	if count == 0 {
+		return parent
+	}
+	if count > 1 {
+		return nil
+	}
+	if _, known := objsMap[next.Kind]; !known {
+		return parent
+	}
+	return lookupController(namespace, next, objsMap, visited)
+}
+
 func doLookup(oid ObjectID, objs Refer, objsMap map[string]*Objects, once bool) *OwnerRef {
 	refs, ok := objs.GetRefs(oid)
 	if !ok {

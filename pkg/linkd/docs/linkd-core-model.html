@@ -1,0 +1,2441 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Linkd 当前核心模型、Cleaner、Lifecycle 与部署模式的实现说明。"
+    />
+    <title>Linkd 核心模型 · Runtime · Deployment</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #102027;
+        --muted: #5f6f75;
+        --soft: #879399;
+        --paper: #f6f8f5;
+        --surface: #ffffff;
+        --surface-2: #eef3ef;
+        --line: #d8e1dc;
+        --navy: #13333d;
+        --teal: #087f72;
+        --teal-2: #0fa899;
+        --mint: #dff4ec;
+        --amber: #d48318;
+        --amber-soft: #fff1d8;
+        --red: #b84b45;
+        --red-soft: #fbe9e6;
+        --blue: #316da6;
+        --blue-soft: #e9f2fa;
+        --violet: #7564a9;
+        --violet-soft: #f0edfa;
+        --shadow: 0 20px 60px rgba(20, 51, 61, 0.08);
+        --radius-lg: 28px;
+        --radius-md: 18px;
+        --radius-sm: 11px;
+        --mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        --sans:
+          Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background:
+          radial-gradient(
+            circle at 82% 6%,
+            rgba(15, 168, 153, 0.11),
+            transparent 28rem
+          ),
+          linear-gradient(180deg, #fbfcfa 0, var(--paper) 34rem);
+        color: var(--ink);
+        font-family: var(--sans);
+        font-size: 16px;
+        line-height: 1.7;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      code,
+      .mono {
+        font-family: var(--mono);
+      }
+
+      code {
+        padding: 0.12rem 0.38rem;
+        border: 1px solid rgba(19, 51, 61, 0.1);
+        border-radius: 6px;
+        background: rgba(19, 51, 61, 0.055);
+        color: #174b53;
+        font-size: 0.9em;
+      }
+
+      .topbar {
+        position: sticky;
+        z-index: 40;
+        top: 0;
+        display: flex;
+        min-height: 64px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 0 5vw;
+        border-bottom: 1px solid rgba(216, 225, 220, 0.9);
+        background: rgba(251, 252, 250, 0.88);
+        backdrop-filter: blur(16px);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        color: var(--navy);
+        font-weight: 800;
+        letter-spacing: -0.02em;
+      }
+
+      .brand-mark {
+        display: grid;
+        width: 34px;
+        height: 34px;
+        place-items: center;
+        border-radius: 11px;
+        background: var(--navy);
+        color: white;
+        font: 800 15px/1 var(--mono);
+        box-shadow: 0 8px 22px rgba(19, 51, 61, 0.18);
+      }
+
+      .top-meta {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .top-meta span {
+        padding: 5px 9px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: white;
+      }
+
+      .hero {
+        position: relative;
+        display: grid;
+        overflow: hidden;
+        min-height: 510px;
+        place-items: center;
+        padding: 76px 5vw 64px;
+        background: var(--navy);
+        color: white;
+      }
+
+      .hero::before,
+      .hero::after {
+        position: absolute;
+        border: 1px solid rgba(112, 237, 218, 0.2);
+        border-radius: 999px;
+        content: "";
+      }
+
+      .hero::before {
+        width: 640px;
+        height: 640px;
+        top: -380px;
+        right: -40px;
+      }
+
+      .hero::after {
+        width: 460px;
+        height: 460px;
+        bottom: -330px;
+        left: 9vw;
+      }
+
+      .hero-inner {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        width: min(1180px, 100%);
+        grid-template-columns: minmax(0, 1.12fr) minmax(380px, 0.88fr);
+        gap: 64px;
+        align-items: center;
+      }
+
+      .eyebrow {
+        margin: 0 0 14px;
+        color: #70edda;
+        font: 700 12px/1.2 var(--mono);
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        max-width: 760px;
+        margin-bottom: 22px;
+        font-size: clamp(43px, 6vw, 78px);
+        line-height: 1.02;
+        letter-spacing: -0.055em;
+      }
+
+      .hero-copy {
+        max-width: 700px;
+        margin-bottom: 28px;
+        color: #c5d7da;
+        font-size: clamp(16px, 1.5vw, 20px);
+      }
+
+      .hero-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .hero-tags span {
+        padding: 7px 12px;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.06);
+        color: #e8f5f2;
+        font: 600 12px/1.2 var(--mono);
+      }
+
+      .hero-map {
+        position: relative;
+        padding: 24px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 26px;
+        background: rgba(255, 255, 255, 0.055);
+        box-shadow: 0 30px 70px rgba(0, 0, 0, 0.18);
+        backdrop-filter: blur(8px);
+      }
+
+      .hero-map::before {
+        position: absolute;
+        top: 60px;
+        bottom: 60px;
+        left: 43px;
+        width: 1px;
+        background: linear-gradient(#70edda, rgba(112, 237, 218, 0.12));
+        content: "";
+      }
+
+      .map-row {
+        position: relative;
+        display: grid;
+        grid-template-columns: 40px 1fr auto;
+        gap: 14px;
+        align-items: center;
+        padding: 12px 0;
+      }
+
+      .map-index {
+        z-index: 1;
+        display: grid;
+        width: 38px;
+        height: 38px;
+        place-items: center;
+        border: 1px solid rgba(112, 237, 218, 0.36);
+        border-radius: 50%;
+        background: #173c45;
+        color: #70edda;
+        font: 700 12px/1 var(--mono);
+      }
+
+      .map-row strong {
+        display: block;
+        margin-bottom: 2px;
+        font-size: 14px;
+      }
+
+      .map-row small {
+        display: block;
+        color: #9fb5b9;
+        font-size: 12px;
+      }
+
+      .map-state {
+        color: #70edda;
+        font: 600 10px/1 var(--mono);
+        letter-spacing: 0.1em;
+      }
+
+      .layout {
+        display: grid;
+        width: min(1380px, calc(100% - 10vw));
+        margin: 0 auto;
+        grid-template-columns: 220px minmax(0, 1fr);
+        gap: 52px;
+        padding: 74px 0 110px;
+      }
+
+      .toc {
+        position: sticky;
+        top: 96px;
+        align-self: start;
+      }
+
+      .toc-label {
+        margin-bottom: 14px;
+        color: var(--soft);
+        font: 700 11px/1.2 var(--mono);
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+      }
+
+      .toc a {
+        display: block;
+        margin: 3px 0;
+        padding: 8px 12px;
+        border-left: 2px solid transparent;
+        color: var(--muted);
+        font-size: 13px;
+        text-decoration: none;
+        transition: 160ms ease;
+      }
+
+      .toc a:hover,
+      .toc a.active {
+        border-left-color: var(--teal-2);
+        color: var(--navy);
+        font-weight: 700;
+        transform: translateX(2px);
+      }
+
+      .toc-note {
+        margin-top: 24px;
+        padding: 13px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-sm);
+        background: rgba(255, 255, 255, 0.72);
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.6;
+      }
+
+      main {
+        min-width: 0;
+      }
+
+      section {
+        scroll-margin-top: 90px;
+        margin-bottom: 104px;
+      }
+
+      .section-heading {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(220px, 0.55fr);
+        gap: 40px;
+        align-items: end;
+        margin-bottom: 34px;
+        padding-bottom: 25px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .section-index {
+        margin-bottom: 10px;
+        color: var(--teal);
+        font: 800 12px/1 var(--mono);
+        letter-spacing: 0.14em;
+      }
+
+      h2 {
+        margin-bottom: 0;
+        color: var(--navy);
+        font-size: clamp(31px, 4vw, 48px);
+        line-height: 1.07;
+        letter-spacing: -0.04em;
+      }
+
+      .section-lead {
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      h3 {
+        margin-bottom: 12px;
+        color: var(--navy);
+        font-size: 19px;
+        line-height: 1.35;
+        letter-spacing: -0.015em;
+      }
+
+      .callout {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 15px;
+        align-items: start;
+        margin: 22px 0;
+        padding: 18px 20px;
+        border: 1px solid #c9e5dc;
+        border-radius: var(--radius-md);
+        background: var(--mint);
+        color: #214f4d;
+      }
+
+      .callout.warn {
+        border-color: #f0d3a0;
+        background: var(--amber-soft);
+        color: #704b18;
+      }
+
+      .callout.danger {
+        border-color: #efc7c3;
+        background: var(--red-soft);
+        color: #713b37;
+      }
+
+      .callout-mark {
+        display: grid;
+        width: 28px;
+        height: 28px;
+        place-items: center;
+        border-radius: 9px;
+        background: rgba(8, 127, 114, 0.1);
+        color: var(--teal);
+        font: 800 13px/1 var(--mono);
+      }
+
+      .callout p {
+        margin: 0;
+        font-size: 13px;
+      }
+
+      .object-flow {
+        display: grid;
+        grid-template-columns: 1fr 42px 1fr 42px 1fr;
+        gap: 9px;
+        align-items: stretch;
+        margin: 30px 0;
+      }
+
+      .object-node {
+        min-width: 0;
+        padding: 22px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-md);
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .object-node small {
+        display: block;
+        margin-bottom: 8px;
+        color: var(--teal);
+        font: 700 10px/1.3 var(--mono);
+        letter-spacing: 0.11em;
+        text-transform: uppercase;
+      }
+
+      .object-node strong {
+        display: block;
+        margin-bottom: 8px;
+        color: var(--navy);
+        font-size: 18px;
+      }
+
+      .object-node p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .flow-arrow {
+        display: grid;
+        place-items: center;
+        color: var(--teal-2);
+        font: 700 24px/1 var(--mono);
+      }
+
+      .model-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+        margin-top: 28px;
+      }
+
+      .model-card {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-lg);
+        background: var(--surface);
+        box-shadow: 0 12px 34px rgba(20, 51, 61, 0.055);
+      }
+
+      .model-card-head {
+        padding: 24px 25px 18px;
+      }
+
+      .model-kicker {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
+      .model-kicker span:first-child {
+        color: var(--teal);
+        font: 700 10px/1 var(--mono);
+        letter-spacing: 0.12em;
+      }
+
+      .field-count {
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: var(--surface-2);
+        color: var(--muted);
+        font: 700 10px/1 var(--mono);
+      }
+
+      .model-card h3 {
+        margin-bottom: 8px;
+        font-size: 25px;
+      }
+
+      .model-card p {
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .model-rule {
+        margin-top: 17px;
+        padding: 12px 13px;
+        border-radius: var(--radius-sm);
+        background: var(--surface-2);
+        color: #365159;
+        font-size: 12px;
+      }
+
+      details {
+        border-top: 1px solid var(--line);
+      }
+
+      summary {
+        display: flex;
+        cursor: pointer;
+        list-style: none;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 14px 25px;
+        color: var(--teal);
+        font: 700 12px/1.4 var(--mono);
+      }
+
+      summary::-webkit-details-marker {
+        display: none;
+      }
+
+      summary::after {
+        content: "+";
+        font-size: 18px;
+      }
+
+      details[open] summary::after {
+        content: "−";
+      }
+
+      .field-groups {
+        display: grid;
+        gap: 14px;
+        padding: 2px 25px 24px;
+      }
+
+      .field-group strong {
+        display: block;
+        margin-bottom: 7px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .chips code {
+        background: #f8faf8;
+        color: #274c52;
+        font-size: 10px;
+      }
+
+      .state-strip {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 8px;
+        margin: 18px 0;
+      }
+
+      .state-pill {
+        padding: 13px 10px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-sm);
+        background: white;
+        text-align: center;
+      }
+
+      .state-pill strong {
+        display: block;
+        margin-bottom: 4px;
+        font: 700 11px/1.3 var(--mono);
+      }
+
+      .state-pill small {
+        color: var(--muted);
+        font-size: 10px;
+      }
+
+      .state-pill.active strong {
+        color: var(--teal);
+      }
+
+      .state-pill.neutral strong {
+        color: var(--blue);
+      }
+
+      .state-pill.stop strong {
+        color: var(--red);
+      }
+
+      .subheading {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin: 38px 0 18px;
+      }
+
+      .subheading::after {
+        height: 1px;
+        flex: 1;
+        background: var(--line);
+        content: "";
+      }
+
+      .subheading h3 {
+        margin: 0;
+        white-space: nowrap;
+      }
+
+      .pipeline {
+        overflow-x: auto;
+        padding: 22px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-lg);
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .pipeline-row {
+        display: flex;
+        min-width: 860px;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .pipe-node {
+        position: relative;
+        min-width: 116px;
+        flex: 1;
+        padding: 16px 12px;
+        border: 1px solid var(--line);
+        border-radius: 13px;
+        background: #fbfcfa;
+        text-align: center;
+      }
+
+      .pipe-node.system {
+        border-color: #c8e7dd;
+        background: #eef9f5;
+      }
+
+      .pipe-node.side-effect {
+        border-color: #e8d2ab;
+        background: #fff8ea;
+      }
+
+      .pipe-node strong {
+        display: block;
+        margin-bottom: 5px;
+        color: var(--navy);
+        font: 700 11px/1.25 var(--mono);
+      }
+
+      .pipe-node small {
+        display: block;
+        color: var(--muted);
+        font-size: 10px;
+        line-height: 1.4;
+      }
+
+      .pipe-arrow {
+        flex: 0 0 auto;
+        color: var(--teal-2);
+        font: 700 16px/1 var(--mono);
+      }
+
+      .split-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+        margin: 22px 0;
+      }
+
+      .deployment-modes {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 18px;
+        margin: 26px 0;
+      }
+
+      .mode-card {
+        position: relative;
+        overflow: hidden;
+        padding: 25px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-lg);
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .mode-card::after {
+        position: absolute;
+        width: 140px;
+        height: 140px;
+        top: -82px;
+        right: -52px;
+        border: 24px solid rgba(8, 127, 114, 0.055);
+        border-radius: 50%;
+        content: "";
+      }
+
+      .mode-card.distributed {
+        border-color: #bddfd6;
+        background: linear-gradient(145deg, #ffffff, #f1faf7);
+      }
+
+      .mode-label {
+        display: inline-block;
+        margin-bottom: 12px;
+        padding: 5px 9px;
+        border-radius: 999px;
+        background: var(--amber-soft);
+        color: var(--amber);
+        font: 800 9px/1 var(--mono);
+        letter-spacing: 0.08em;
+      }
+
+      .distributed .mode-label {
+        background: var(--mint);
+        color: var(--teal);
+      }
+
+      .mode-card h3 {
+        margin-bottom: 5px;
+        font-size: 25px;
+      }
+
+      .mode-command {
+        display: block;
+        overflow-x: auto;
+        margin: 17px 0;
+        padding: 12px 14px;
+        border: 1px solid rgba(19, 51, 61, 0.11);
+        border-radius: 10px;
+        background: var(--navy);
+        color: #c8fff4;
+        font: 700 11px/1.4 var(--mono);
+        white-space: nowrap;
+      }
+
+      .mode-roles {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        margin-bottom: 17px;
+      }
+
+      .mode-roles span {
+        padding: 7px 9px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: var(--surface-2);
+        color: var(--navy);
+        font: 700 10px/1 var(--mono);
+      }
+
+      .mode-card p {
+        margin-bottom: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .process-topology {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin: 20px 0;
+      }
+
+      .process-card {
+        min-width: 0;
+        padding: 19px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-md);
+        background: white;
+      }
+
+      .process-card.control {
+        border-color: #b9ddd3;
+        background: #f2faf7;
+      }
+
+      .process-card .role-number {
+        display: block;
+        margin-bottom: 9px;
+        color: var(--teal);
+        font: 800 10px/1 var(--mono);
+        letter-spacing: 0.08em;
+      }
+
+      .process-card h3 {
+        margin-bottom: 7px;
+        font-size: 17px;
+      }
+
+      .process-card > code {
+        display: inline-block;
+        margin-bottom: 12px;
+        font-size: 10px;
+      }
+
+      .process-card p {
+        margin-bottom: 13px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .process-metrics {
+        padding-top: 11px;
+        border-top: 1px solid var(--line);
+        color: var(--teal);
+        font: 700 10px/1.45 var(--mono);
+      }
+
+      .management-tasks {
+        display: grid;
+        gap: 6px;
+        margin: 12px 0 13px;
+      }
+
+      .management-task {
+        padding: 8px 9px;
+        border: 1px solid #c5e2da;
+        border-radius: 9px;
+        background: white;
+        color: #31565c;
+        font: 700 9px/1.35 var(--mono);
+      }
+
+      .dependency-rail {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        justify-content: center;
+        margin-top: 18px;
+        padding: 15px;
+        border: 1px dashed #b8cbc5;
+        border-radius: var(--radius-md);
+        background: rgba(255, 255, 255, 0.64);
+        color: var(--muted);
+        font: 700 10px/1.4 var(--mono);
+      }
+
+      .dependency-rail span {
+        padding: 5px 8px;
+        border-radius: 7px;
+        background: var(--surface-2);
+        color: var(--navy);
+      }
+
+      .panel {
+        padding: 22px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-md);
+        background: var(--surface);
+      }
+
+      .panel > p:last-child {
+        margin-bottom: 0;
+      }
+
+      .clean-list {
+        margin: 0;
+        padding-left: 18px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .clean-list li + li {
+        margin-top: 7px;
+      }
+
+      .lane-board {
+        display: grid;
+        grid-template-columns: 128px minmax(0, 1fr) 150px;
+        gap: 10px 14px;
+        align-items: center;
+        padding: 24px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-lg);
+        background: #fff;
+      }
+
+      .lane-label,
+      .lane-result {
+        color: var(--muted);
+        font: 700 11px/1.3 var(--mono);
+      }
+
+      .lane-cells {
+        display: flex;
+        gap: 7px;
+        align-items: center;
+      }
+
+      .cell {
+        display: grid;
+        min-width: 48px;
+        height: 39px;
+        place-items: center;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: var(--surface-2);
+        color: var(--muted);
+        font: 700 10px/1 var(--mono);
+      }
+
+      .cell.done {
+        border-color: #a9d9ca;
+        background: var(--mint);
+        color: var(--teal);
+      }
+
+      .cell.wait {
+        border-color: #ebcf9f;
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+
+      .cell.blocked {
+        border-color: #ebc0bc;
+        background: var(--red-soft);
+        color: var(--red);
+      }
+
+      .lane-result.safe {
+        color: var(--teal);
+      }
+
+      .lane-result.hold {
+        color: var(--amber);
+      }
+
+      .table-wrap {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-md);
+        background: var(--surface);
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+
+      th,
+      td {
+        padding: 13px 15px;
+        border-bottom: 1px solid var(--line);
+        vertical-align: top;
+        text-align: left;
+      }
+
+      th {
+        background: var(--surface-2);
+        color: var(--muted);
+        font: 700 10px/1.3 var(--mono);
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      tbody tr:last-child td {
+        border-bottom: 0;
+      }
+
+      td:first-child {
+        color: var(--navy);
+        font-weight: 700;
+      }
+
+      .formula {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        margin: 22px 0;
+        padding: 22px;
+        border: 1px solid #c7e2da;
+        border-radius: var(--radius-md);
+        background: linear-gradient(135deg, #f2fbf7, #e8f6f2);
+        color: var(--navy);
+        font: 700 13px/1.5 var(--mono);
+        text-align: center;
+      }
+
+      .formula .token {
+        padding: 7px 10px;
+        border: 1px solid #b7d8ce;
+        border-radius: 8px;
+        background: white;
+        color: var(--teal);
+      }
+
+      .decision-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+
+      .decision-card {
+        padding: 17px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-md);
+        background: var(--surface);
+      }
+
+      .decision-card span {
+        display: block;
+        margin-bottom: 8px;
+        color: var(--soft);
+        font: 700 10px/1.3 var(--mono);
+      }
+
+      .decision-card strong {
+        display: block;
+        margin-bottom: 7px;
+        color: var(--navy);
+        font-size: 14px;
+      }
+
+      .decision-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .sequence-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .sequence-item {
+        display: grid;
+        grid-template-columns: 132px minmax(0, 1fr);
+        gap: 16px;
+        align-items: center;
+        padding: 14px 16px;
+        border: 1px solid var(--line);
+        border-radius: 13px;
+        background: white;
+      }
+
+      .sequence-item strong {
+        color: var(--navy);
+        font-size: 12px;
+      }
+
+      .sequence-code {
+        overflow-x: auto;
+        color: #31565c;
+        font: 600 11px/1.55 var(--mono);
+        white-space: nowrap;
+      }
+
+      .scope-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .scope-card {
+        padding: 21px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius-md);
+        background: white;
+      }
+
+      .scope-card .badge {
+        display: inline-block;
+        margin-bottom: 12px;
+        padding: 5px 8px;
+        border-radius: 999px;
+        background: var(--mint);
+        color: var(--teal);
+        font: 700 9px/1 var(--mono);
+        letter-spacing: 0.08em;
+      }
+
+      .scope-card.boundary .badge {
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+
+      .scope-card.future .badge {
+        background: var(--violet-soft);
+        color: var(--violet);
+      }
+
+      .scope-card h3 {
+        font-size: 16px;
+      }
+
+      .scope-card ul {
+        margin: 0;
+        padding-left: 17px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .source-links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 24px;
+      }
+
+      .source-links a {
+        padding: 8px 11px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: white;
+        color: var(--teal);
+        font: 700 10px/1.2 var(--mono);
+        text-decoration: none;
+      }
+
+      .source-links a:hover {
+        border-color: #9ccfc1;
+        transform: translateY(-1px);
+      }
+
+      footer {
+        padding: 28px 5vw 42px;
+        border-top: 1px solid var(--line);
+        background: #edf2ee;
+        color: var(--muted);
+        font-size: 11px;
+        text-align: center;
+      }
+
+      @media (max-width: 1040px) {
+        .hero-inner {
+          grid-template-columns: 1fr;
+        }
+
+        .hero-map {
+          display: none;
+        }
+
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        .toc {
+          display: none;
+        }
+
+        .decision-grid,
+        .scope-grid,
+        .process-topology {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 760px) {
+        .topbar {
+          padding: 0 20px;
+        }
+
+        .top-meta span:first-child {
+          display: none;
+        }
+
+        .hero {
+          min-height: auto;
+          padding: 62px 22px;
+        }
+
+        .layout {
+          width: min(100% - 36px, 1380px);
+          padding-top: 54px;
+        }
+
+        .section-heading {
+          grid-template-columns: 1fr;
+          gap: 15px;
+        }
+
+        .object-flow {
+          grid-template-columns: 1fr;
+        }
+
+        .flow-arrow {
+          transform: rotate(90deg);
+        }
+
+        .model-grid,
+        .split-grid,
+        .deployment-modes,
+        .process-topology,
+        .decision-grid,
+        .scope-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .state-strip {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .lane-board {
+          grid-template-columns: 1fr;
+        }
+
+        .lane-cells {
+          overflow-x: auto;
+        }
+
+        .sequence-item {
+          grid-template-columns: 1fr;
+          gap: 5px;
+        }
+
+        table {
+          min-width: 660px;
+        }
+
+        .table-wrap {
+          overflow-x: auto;
+        }
+      }
+
+      @media print {
+        .topbar,
+        .toc {
+          display: none;
+        }
+
+        body {
+          background: white;
+          font-size: 11px;
+        }
+
+        .hero {
+          min-height: auto;
+          padding: 34px;
+          print-color-adjust: exact;
+        }
+
+        .hero-inner,
+        .layout {
+          display: block;
+          width: 100%;
+        }
+
+        .hero-map {
+          display: none;
+        }
+
+        .layout {
+          padding: 34px;
+        }
+
+        section {
+          break-inside: avoid;
+          margin-bottom: 45px;
+        }
+
+        details {
+          break-inside: avoid;
+        }
+
+        details > *:not(summary) {
+          display: block;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">L</span>
+        <span>Linkd / Engineering Map</span>
+      </div>
+      <div class="top-meta">
+        <span>依据当前仓库代码与权威设计文档</span>
+        <span>2026-09-02</span>
+      </div>
+    </header>
+
+    <div class="hero">
+      <div class="hero-inner">
+        <div>
+          <p class="eyebrow">Core domain · Runtime · Deployment</p>
+          <h1>从原始消息到可恢复的告警生命周期</h1>
+          <p class="hero-copy">
+            Linkd
+            把“来源事实”“事件处理结果”“告警当前态”和“不可变操作流水”分开保存；
+            Cleaner 负责可靠落地事实，Lifecycle 负责幂等地推进状态。
+          </p>
+          <div class="hero-tags">
+            <span>tenant scoped</span>
+            <span>deterministic identity</span>
+            <span>lane-contiguous ACK</span>
+            <span>single-object CAS</span>
+            <span>two deployment modes</span>
+          </div>
+        </div>
+        <div class="hero-map" aria-label="Linkd 处理链路摘要">
+          <div class="map-row">
+            <span class="map-index">01</span>
+            <div>
+              <strong>Raw delivery</strong><small>MQ 信封 + 原始 payload</small>
+            </div>
+            <span class="map-state">INPUT</span>
+          </div>
+          <div class="map-row">
+            <span class="map-index">02</span>
+            <div>
+              <strong>Cleaner</strong><small>确定性清洗、持久化、Mailbox</small>
+            </div>
+            <span class="map-state">FACT</span>
+          </div>
+          <div class="map-row">
+            <span class="map-index">03</span>
+            <div>
+              <strong>Event</strong
+              ><small>不可变来源事实 + 独立处理元数据</small>
+            </div>
+            <span class="map-state">STORE</span>
+          </div>
+          <div class="map-row">
+            <span class="map-index">04</span>
+            <div>
+              <strong>Lifecycle</strong><small>关联、等级裁决、CAS、恢复</small>
+            </div>
+            <span class="map-state">DECIDE</span>
+          </div>
+          <div class="map-row">
+            <span class="map-index">05</span>
+            <div>
+              <strong>Alert + AlertLog</strong
+              ><small>当前投影 + 不可变流水</small>
+            </div>
+            <span class="map-state">OUTPUT</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="layout">
+      <aside class="toc" aria-label="页面目录">
+        <div class="toc-label">Contents</div>
+        <a href="#overview">全局视图</a>
+        <a href="#model">核心模型</a>
+        <a href="#cleaner">Cleaner</a>
+        <a href="#lifecycle">Lifecycle</a>
+        <a href="#deployment">部署模式</a>
+        <a href="#boundaries">实现边界</a>
+        <div class="toc-note">
+          本页描述当前实现，不把旧 <span class="mono">KingeyeAlertEvent</span>
+          或规划中的 API / Leader Election 当作现行能力。
+        </div>
+      </aside>
+
+      <main>
+        <section id="overview">
+          <div class="section-heading">
+            <div>
+              <div class="section-index">01 / OVERVIEW</div>
+              <h2>一条主线，四种数据职责</h2>
+            </div>
+            <p class="section-lead">
+              上游 MQ 负责确认前重投，Redis Mailbox
+              负责确认后的生命周期待办；Repository 中各对象通过稳定身份和单对象
+              CAS 收敛，而不是依赖跨对象事务。
+            </p>
+          </div>
+
+          <div class="object-flow">
+            <article class="object-node">
+              <small>Input</small>
+              <strong>RawEventMessage</strong>
+              <p>
+                稳定 record ID、租户、来源、received_at、headers 与原始
+                payload。
+              </p>
+            </article>
+            <div class="flow-arrow">→</div>
+            <article class="object-node">
+              <small>Cleaner output</small>
+              <strong>Event + EventProcessing</strong>
+              <p>Event 保存来源事实；Processing 独立记录生命周期裁决结果。</p>
+            </article>
+            <div class="flow-arrow">→</div>
+            <article class="object-node">
+              <small>Lifecycle output</small>
+              <strong>Alert + AlertLog</strong>
+              <p>Alert 是当前态，AlertLog 是状态操作与最终输出的不可变流水。</p>
+            </article>
+          </div>
+
+          <div class="callout">
+            <span class="callout-mark">!</span>
+            <p>
+              <strong>最重要的分界：</strong>Event 不是 Alert，Event 的
+              <code>action</code> 不是 Alert 的
+              <code>status</code>，EventProcessing 的 <code>state</code>
+              也不是 Enrich 的执行状态。它们解决的是不同问题，不能互相代替。
+            </p>
+          </div>
+        </section>
+
+        <section id="model">
+          <div class="section-heading">
+            <div>
+              <div class="section-index">02 / CORE MODEL</div>
+              <h2>核心模型与不变量</h2>
+            </div>
+            <p class="section-lead">
+              当前唯一演进基线是扁平的
+              <code>domain.Event</code>。所有查询、身份、锁、Mailbox
+              和流水都必须带稳定租户作用域。
+            </p>
+          </div>
+
+          <div class="model-grid">
+            <article class="model-card">
+              <div class="model-card-head">
+                <div class="model-kicker">
+                  <span>IMMUTABLE SOURCE FACT</span
+                  ><span class="field-count">26 fields</span>
+                </div>
+                <h3>Event</h3>
+                <p>
+                  来源消息经过 SourceCleaner 与 EventFactory
+                  后形成的标准事件事实。
+                </p>
+                <div class="model-rule">
+                  创建后只允许 Lifecycle 补写
+                  <code>related_alert_id</code>；其他事实不可覆盖。
+                </div>
+              </div>
+              <details>
+                <summary>查看字段分组</summary>
+                <div class="field-groups">
+                  <div class="field-group">
+                    <strong>租户、来源与身份</strong>
+                    <div class="chips">
+                      <code>bk_tenant_id</code><code>event_source_id</code
+                      ><code>event_id</code> <code>fingerprint</code
+                      ><code>related_alert_id</code>
+                    </div>
+                  </div>
+                  <div class="field-group">
+                    <strong>事件语义</strong>
+                    <div class="chips">
+                      <code>title</code><code>content</code><code>severity</code
+                      ><code>action</code> <code>action_reason</code
+                      ><code>condition_key</code><code>condition_name</code>
+                    </div>
+                  </div>
+                  <div class="field-group">
+                    <strong>对象与动态数据</strong>
+                    <div class="chips">
+                      <code>dimensions</code><code>subject_system</code
+                      ><code>subject_type</code> <code>subject_id</code
+                      ><code>subject_name</code><code>labels</code
+                      ><code>extra_data</code>
+                    </div>
+                  </div>
+                  <div class="field-group">
+                    <strong>时间与来源追溯</strong>
+                    <div class="chips">
+                      <code>occurred_at</code><code>produced_at</code
+                      ><code>received_at</code><code>create_at</code>
+                      <code>source_event_id</code><code>source_alert_id</code
+                      ><code>source_raw_data</code>
+                    </div>
+                  </div>
+                </div>
+              </details>
+            </article>
+
+            <article class="model-card">
+              <div class="model-card-head">
+                <div class="model-kicker">
+                  <span>PROCESS METADATA</span
+                  ><span class="field-count">4 fields</span>
+                </div>
+                <h3>EventProcessing</h3>
+                <p>
+                  位于 Event JSON 之外，描述 Lifecycle 对该 Event
+                  的一次终局裁决。
+                </p>
+                <div class="model-rule">
+                  只有 <code>accepted</code> 可以写
+                  <code>related_alert_id</code>；终态必须有 outcome 与
+                  processed_at。
+                </div>
+              </div>
+              <details>
+                <summary>查看状态与字段</summary>
+                <div class="field-groups">
+                  <div class="field-group">
+                    <strong>字段</strong>
+                    <div class="chips">
+                      <code>state</code><code>outcome</code
+                      ><code>reason_code</code><code>processed_at</code>
+                    </div>
+                  </div>
+                  <div class="field-group">
+                    <strong>状态</strong>
+                    <div class="chips">
+                      <code>unprocessed</code><code>accepted</code
+                      ><code>suppressed</code> <code>orphaned</code
+                      ><code>rejected</code>
+                    </div>
+                  </div>
+                </div>
+              </details>
+            </article>
+
+            <article class="model-card">
+              <div class="model-card-head">
+                <div class="model-kicker">
+                  <span>CURRENT PROJECTION</span
+                  ><span class="field-count">30 fields</span>
+                </div>
+                <h3>Alert</h3>
+                <p>同一关联键下，一次异常从发生到结束的当前生命周期快照。</p>
+                <div class="model-rule">
+                  opening Event 冻结继承字段；后续 Event
+                  只推进生命周期字段，终态不可重新打开。
+                </div>
+              </div>
+              <details>
+                <summary>查看字段分组</summary>
+                <div class="field-groups">
+                  <div class="field-group">
+                    <strong>锚点与继承事实</strong>
+                    <div class="chips">
+                      <code>alert_id</code><code>bk_tenant_id</code
+                      ><code>event_source_id</code><code>fingerprint</code>
+                      <code>title</code><code>content</code><code>severity</code
+                      ><code>condition_key</code> <code>condition_name</code
+                      ><code>dimensions</code><code>labels</code
+                      ><code>extra_data</code> <code>source_event_id</code
+                      ><code>source_alert_id</code>
+                    </div>
+                  </div>
+                  <div class="field-group">
+                    <strong>主体</strong>
+                    <div class="chips">
+                      <code>subject_system</code><code>subject_type</code
+                      ><code>subject_id</code><code>subject_name</code>
+                    </div>
+                  </div>
+                  <div class="field-group">
+                    <strong>生命周期</strong>
+                    <div class="chips">
+                      <code>status</code><code>latest_event_id</code
+                      ><code>trigger_event_id</code>
+                      <code>last_occurred_at</code><code>update_at</code
+                      ><code>begin_at</code><code>create_at</code>
+                      <code>end_at</code><code>end_type</code
+                      ><code>end_reason</code>
+                    </div>
+                  </div>
+                  <div class="field-group">
+                    <strong>丰富</strong>
+                    <div class="chips">
+                      <code>enrich_status</code><code>enrich</code>
+                    </div>
+                  </div>
+                </div>
+              </details>
+            </article>
+
+            <article class="model-card">
+              <div class="model-card-head">
+                <div class="model-kicker">
+                  <span>IMMUTABLE AUDIT LOG</span
+                  ><span class="field-count">7 fields</span>
+                </div>
+                <h3>AlertLog</h3>
+                <p>记录告警状态操作及 FinalHook 输出，不承担 Alert 当前态。</p>
+                <div class="model-rule">
+                  ID 由稳定输入生成，重复追加收敛为幂等；<code>params</code>
+                  保存操作上下文。
+                </div>
+              </div>
+              <details>
+                <summary>查看字段与枚举</summary>
+                <div class="field-groups">
+                  <div class="field-group">
+                    <strong>字段</strong>
+                    <div class="chips">
+                      <code>log_id</code><code>bk_tenant_id</code
+                      ><code>alert_id</code> <code>operator_kind</code
+                      ><code>operation_kind</code><code>params</code
+                      ><code>created_time</code>
+                    </div>
+                  </div>
+                  <div class="field-group">
+                    <strong>枚举</strong>
+                    <div class="chips">
+                      <code>source | user | system</code><code>trigger</code
+                      ><code>recover</code> <code>close</code
+                      ><code>suppress</code><code>push</code>
+                    </div>
+                  </div>
+                </div>
+              </details>
+            </article>
+          </div>
+
+          <div class="subheading"><h3>状态空间不要混用</h3></div>
+          <div class="state-strip">
+            <div class="state-pill neutral">
+              <strong>Event.action</strong
+              ><small>triggered / resolved / closed</small>
+            </div>
+            <div class="state-pill neutral">
+              <strong>Processing.state</strong><small>事件裁决结果</small>
+            </div>
+            <div class="state-pill active">
+              <strong>Alert.status</strong
+              ><small>active / recovered / closed</small>
+            </div>
+            <div class="state-pill stop">
+              <strong>Alert.end_type</strong
+              ><small>source / user / system / upgrade</small>
+            </div>
+            <div class="state-pill active">
+              <strong>Enrich.status</strong
+              ><small>pending / succeeded / partial / failed</small>
+            </div>
+          </div>
+
+          <div class="callout warn">
+            <span class="callout-mark">CAS</span>
+            <p>
+              <code>StoredEvent = Event + EventProcessing + VersionToken</code
+              >； <code>StoredAlert = Alert + VersionToken</code>。VersionToken
+              是存储专属、不透明、只供单对象 CAS 原样回传的令牌，不属于领域
+              JSON，也不意味着跨对象事务。
+            </p>
+          </div>
+        </section>
+
+        <section id="cleaner">
+          <div class="section-heading">
+            <div>
+              <div class="section-index">03 / CLEANER</div>
+              <h2>Cleaner：先落事实，再确认来源</h2>
+            </div>
+            <p class="section-lead">
+              Cleaner 不查询或修改
+              Alert，不做生命周期裁决。它只把一条来源消息确定性地变成 Event，
+              并在 Event 持久化和 Mailbox 入队之后确认原消息。
+            </p>
+          </div>
+
+          <div class="pipeline" aria-label="Cleaner 处理链路">
+            <div class="pipeline-row">
+              <div class="pipe-node">
+                <strong>MQ Delivery</strong
+                ><small>record / tenant / time</small>
+              </div>
+              <div class="pipe-arrow">→</div>
+              <div class="pipe-node">
+                <strong>RawEventMessage</strong><small>只读传输信封</small>
+              </div>
+              <div class="pipe-arrow">→</div>
+              <div class="pipe-node system">
+                <strong>SourceCleaner</strong><small>来源字段解释</small>
+              </div>
+              <div class="pipe-arrow">→</div>
+              <div class="pipe-node">
+                <strong>EventDraft</strong><small>仅来源事实</small>
+              </div>
+              <div class="pipe-arrow">→</div>
+              <div class="pipe-node system">
+                <strong>EventFactory</strong><small>受控字段 + 终检</small>
+              </div>
+              <div class="pipe-arrow">→</div>
+              <div class="pipe-node side-effect">
+                <strong>Create Event</strong
+                ><small>create-only / idempotent</small>
+              </div>
+              <div class="pipe-arrow">→</div>
+              <div class="pipe-node side-effect">
+                <strong>Mailbox</strong><small>Event ID 入队</small>
+              </div>
+              <div class="pipe-arrow">→</div>
+              <div class="pipe-node side-effect">
+                <strong>Confirm</strong><small>确认安全连续前缀</small>
+              </div>
+            </div>
+          </div>
+
+          <div class="split-grid">
+            <article class="panel">
+              <h3>SourceCleaner 负责什么</h3>
+              <ul class="clean-list">
+                <li>
+                  确定性解释某种来源 payload，输出 <code>EventDraft</code>。
+                </li>
+                <li>
+                  当前只注册 <code>standard</code>；输入必须是单个 JSON object。
+                </li>
+                <li>
+                  展开嵌套 subject、来源 event/alert ID、来源 severity
+                  等已知字段。
+                </li>
+                <li>
+                  重复 key、尾随 JSON、非法 action 或已知字段非法值确定性拒绝。
+                </li>
+                <li>
+                  不得访问 Repository、Mailbox、MQ Session 或产生外部副作用。
+                </li>
+              </ul>
+            </article>
+            <article class="panel">
+              <h3>EventFactory 独占什么</h3>
+              <ul class="clean-list">
+                <li>租户覆盖、EventSource、标准 severity 和接收时间。</li>
+                <li>
+                  确定性 Event ID；来源 Event ID 为空时使用稳定 record ID。
+                </li>
+                <li>按 EventSource 配置从展开字段计算 fingerprint。</li>
+                <li>
+                  保存完整
+                  <code>source_raw_data</code>，未知字段只在该快照中保留。
+                </li>
+                <li>时间稳定回退、动态对象深拷贝、UTC 规范化和领域终检。</li>
+              </ul>
+            </article>
+          </div>
+
+          <div class="callout danger">
+            <span class="callout-mark">ID</span>
+            <p>
+              <strong>fingerprint 不是消息输入字段。</strong>它由 EventSource
+              配置从已展开的稳定 Event 字段计算；<code>source_event_id</code>
+              是单条来源事件身份，<code>source_alert_id</code>
+              是来源告警实例身份，<code>source_raw_data</code>
+              是追溯快照，三者不能混为一谈。
+            </p>
+          </div>
+
+          <div class="subheading">
+            <h3><code>n → * → n</code>：并发纯计算，lane 内恢复连续顺序</h3>
+          </div>
+          <div class="lane-board" aria-label="Cleaner lane 连续前缀示意">
+            <div class="lane-label">partition-0</div>
+            <div class="lane-cells">
+              <span class="cell done">100 ✓</span
+              ><span class="cell wait">101 …</span>
+              <span class="cell done">102 ✓</span
+              ><span class="cell done">103 ✓</span>
+            </div>
+            <div class="lane-result safe">safe prefix: 100</div>
+
+            <div class="lane-label">partition-1</div>
+            <div class="lane-cells">
+              <span class="cell done">44 ✓</span
+              ><span class="cell done">45 ✓</span>
+              <span class="cell done">46 ✓</span>
+            </div>
+            <div class="lane-result safe">safe prefix: 44–46</div>
+
+            <div class="lane-label">partition-2</div>
+            <div class="lane-cells">
+              <span class="cell done">8 ✓</span
+              ><span class="cell blocked">9 retry</span>
+              <span class="cell done">10 ✓</span>
+            </div>
+            <div class="lane-result hold">gap at 9</div>
+          </div>
+
+          <div class="split-grid">
+            <article class="panel">
+              <h3>共享 worker pool</h3>
+              <p>
+                消息到达后立即进入共享 worker pool。纯清洗不按 fingerprint 或
+                OrderKey 串行，worker 可以乱序返回 Event、Discard 或暂时错误。
+              </p>
+            </article>
+            <article class="panel">
+              <h3>每个 lane 单独推进</h3>
+              <p>
+                每个 lane
+                只取队首连续完成前缀，按消息数、字节或等待时间成批执行副作用。一个慢
+                lane 不应阻塞其他 lane，但后续消息不能越过本 lane 的缺口。
+              </p>
+            </article>
+          </div>
+
+          <div class="subheading"><h3>确认条件与故障恢复</h3></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>位置 / 结果</th>
+                  <th>能否确认</th>
+                  <th>恢复方式</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>确定性无效输入 → Discard</td>
+                  <td>可以，且必须仍处于 lane 连续前缀</td>
+                  <td>无需业务重试</td>
+                </tr>
+                <tr>
+                  <td>Event 已存储 + Mailbox 已入队</td>
+                  <td>可以，且必须连续</td>
+                  <td>后续由 Redis Mailbox / Lifecycle 接管</td>
+                </tr>
+                <tr>
+                  <td>Event 存储失败</td>
+                  <td>不可以</td>
+                  <td>MQ 重投；稳定 Event ID 保证幂等</td>
+                </tr>
+                <tr>
+                  <td>Event 成功、Mailbox 失败</td>
+                  <td>不可以</td>
+                  <td>MQ 重投；Event create 收敛为已存在</td>
+                </tr>
+                <tr>
+                  <td>Mailbox 成功、Confirm 失败</td>
+                  <td>不可以视作完成</td>
+                  <td>允许重复引用，由 Event 终态短路收敛</td>
+                </tr>
+                <tr>
+                  <td>Retry / timeout / lost ownership</td>
+                  <td>不可以越过缺口</td>
+                  <td>保留未确认 Receipt，由当前或新 owner 重投</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="lifecycle">
+          <div class="section-heading">
+            <div>
+              <div class="section-index">04 / LIFECYCLE</div>
+              <h2>Lifecycle：按关联键串行裁决</h2>
+            </div>
+            <p class="section-lead">
+              Lifecycle 只处理已持久化且为 <code>unprocessed</code> 的
+              Event。它通过 Redis Signal 唤醒 Mailbox，在分布式 lease
+              保护下逐个处理队首事件。
+            </p>
+          </div>
+
+          <div class="formula" aria-label="Lifecycle 关联键">
+            <span>ActiveAlertKey / Mailbox correlation</span>
+            <span>=</span>
+            <span class="token">bk_tenant_id</span><span>+</span>
+            <span class="token">event_source_id</span><span>+</span>
+            <span class="token">fingerprint</span>
+          </div>
+
+          <div class="pipeline" aria-label="Lifecycle Signal 处理链路">
+            <div class="pipeline-row">
+              <div class="pipe-node">
+                <strong>Redis Signal</strong
+                ><small>Mailbox 唤醒，不绑定单 Event</small>
+              </div>
+              <div class="pipe-arrow">→</div>
+              <div class="pipe-node system">
+                <strong>Acquire lease</strong
+                ><small>同 Mailbox 跨进程串行</small>
+              </div>
+              <div class="pipe-arrow">→</div>
+              <div class="pipe-node">
+                <strong>Peek head</strong><small>读取 Event ID</small>
+              </div>
+              <div class="pipe-arrow">→</div>
+              <div class="pipe-node system">
+                <strong>ProcessEvent</strong
+                ><small>查找 / 比较 / CAS / 恢复</small>
+              </div>
+              <div class="pipe-arrow">→</div>
+              <div class="pipe-node side-effect">
+                <strong>AckHead</strong><small>成功后移除队首</small>
+              </div>
+              <div class="pipe-arrow">→</div>
+              <div class="pipe-node side-effect">
+                <strong>Empty check</strong
+                ><small>空则完成；新入队自带 Signal</small>
+              </div>
+              <div class="pipe-arrow">→</div>
+              <div class="pipe-node side-effect">
+                <strong>XACK Signal</strong><small>Mailbox 真正排空</small>
+              </div>
+            </div>
+          </div>
+
+          <div class="callout">
+            <span class="callout-mark">L</span>
+            <p>
+              Signal 只负责“唤醒这个 Mailbox”，真正待处理的 Event ID 存在 Redis
+              List 中；空到非空时写入 Signal，允许重复 Event 引用和冗余空唤醒。lease 使用
+              compare-token 的续租与释放，旧 owner 不能误删新 owner 的锁。
+            </p>
+          </div>
+
+          <div class="subheading"><h3>调整后的最终收口屏障</h3></div>
+          <div class="pipeline" aria-label="Lifecycle 最终落盘流程">
+            <div class="pipeline-row">
+              <div class="pipe-node system">
+                <strong>Lifecycle decision</strong
+                ><small>计算目标状态与输出</small>
+              </div>
+              <div class="pipe-arrow">→</div>
+              <div class="pipe-node side-effect">
+                <strong>Alert create / CAS</strong
+                ><small>ES: refresh=wait_for</small>
+              </div>
+              <div class="pipe-arrow">→</div>
+              <div class="pipe-node">
+                <strong>FinalHook</strong><small>执行输出，返回 push log</small>
+              </div>
+              <div class="pipe-arrow">→</div>
+              <div class="pipe-node system">
+                <strong>Collect AlertLogs</strong
+                ><small>状态 log + push log</small>
+              </div>
+              <div class="pipe-arrow">→</div>
+              <div class="pipe-node side-effect">
+                <strong>AppendAlertLogs</strong
+                ><small>一次 Bulk，逐项检查</small>
+              </div>
+              <div class="pipe-arrow">→</div>
+              <div class="pipe-node side-effect">
+                <strong>Event result CAS</strong
+                ><small>最后写终态 / refresh=false</small>
+              </div>
+            </div>
+          </div>
+
+          <div class="callout warn">
+            <span class="callout-mark">W</span>
+            <p>
+              <strong>“最后统一落盘”的准确含义：</strong>同一次裁决产生的
+              AlertLog 统一批量提交， 并把 EventProcessing CAS
+              放在全部日志项成功之后。Alert create/CAS 仍先发生，
+              Alert、AlertLog 与 Event 之间仍没有跨对象事务。
+            </p>
+          </div>
+
+          <div class="subheading"><h3>Event 状态裁决矩阵</h3></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Event</th>
+                  <th>active Alert</th>
+                  <th>EventProcessing</th>
+                  <th>Alert 结果</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>triggered</code></td>
+                  <td>不存在</td>
+                  <td><code>accepted</code></td>
+                  <td>创建 active Alert，执行 Enricher</td>
+                </tr>
+                <tr>
+                  <td><code>triggered</code> / 同等级</td>
+                  <td>存在</td>
+                  <td><code>accepted</code></td>
+                  <td>只推进 latest_event_id、last_occurred_at、update_at</td>
+                </tr>
+                <tr>
+                  <td><code>triggered</code> / 更高等级</td>
+                  <td>存在</td>
+                  <td><code>accepted</code></td>
+                  <td>旧 Alert closed/severity_upgrade，创建新 active Alert</td>
+                </tr>
+                <tr>
+                  <td><code>triggered</code> / 更低等级</td>
+                  <td>存在</td>
+                  <td><code>suppressed</code></td>
+                  <td>Alert 不变，写 suppress AlertLog</td>
+                </tr>
+                <tr>
+                  <td><code>resolved</code></td>
+                  <td>存在</td>
+                  <td><code>accepted</code></td>
+                  <td>Alert → recovered/source</td>
+                </tr>
+                <tr>
+                  <td><code>closed</code></td>
+                  <td>存在</td>
+                  <td><code>accepted</code></td>
+                  <td>Alert → closed/source</td>
+                </tr>
+                <tr>
+                  <td><code>resolved / closed</code></td>
+                  <td>不存在</td>
+                  <td><code>orphaned</code></td>
+                  <td>不创建 Alert</td>
+                </tr>
+                <tr>
+                  <td>非法组合</td>
+                  <td>任意</td>
+                  <td><code>rejected</code></td>
+                  <td>不修改 Alert</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="subheading"><h3>典型分支的副作用顺序</h3></div>
+          <div class="sequence-list">
+            <div class="sequence-item">
+              <strong>创建</strong>
+              <span class="sequence-code"
+                >stable Alert ID → Enrich → CreateAlert(wait_for) → FinalHook →
+                [trigger + push] Bulk(refresh=false) → Event CAS
+                accepted(refresh=false)</span
+              >
+            </div>
+            <div class="sequence-item">
+              <strong>同等级推进</strong>
+              <span class="sequence-code"
+                >Alert CAS(wait_for) → FinalHook → [push] Bulk(refresh=false) →
+                Event CAS accepted(refresh=false)</span
+              >
+            </div>
+            <div class="sequence-item">
+              <strong>来源终结</strong>
+              <span class="sequence-code"
+                >Alert CAS terminal(wait_for) → FinalHook → [recover/close +
+                push] Bulk(refresh=false) → Event CAS
+                accepted(refresh=false)</span
+              >
+            </div>
+            <div class="sequence-item">
+              <strong>等级抑制</strong>
+              <span class="sequence-code"
+                >[suppress] Bulk(refresh=false) → Event CAS
+                suppressed(refresh=false)</span
+              >
+            </div>
+            <div class="sequence-item">
+              <strong>等级升级</strong>
+              <span class="sequence-code"
+                >close old(wait_for) → create new(wait_for) → old/new FinalHook
+                → [close + push + trigger + push] Bulk(refresh=false) → Event
+                CAS accepted(refresh=false)</span
+              >
+            </div>
+            <div class="sequence-item">
+              <strong>直接关闭</strong>
+              <span class="sequence-code"
+                >Alert CAS closed(wait_for) → FinalHook → [close + push]
+                Bulk(refresh=false)</span
+              >
+            </div>
+          </div>
+
+          <div class="callout">
+            <span class="callout-mark">✓</span>
+            <p>
+              <code>AppendAlertLogs</code>
+              按输入顺序返回逐项结果。只有请求成功、结果数量一致且每一项
+              都没有错误，Processor 才继续写 Event 终态；Bulk 部分成功时保持
+              Event 为 <code>unprocessed</code>，由重试通过稳定
+              <code>log_id</code> 吸收已成功项。
+            </p>
+          </div>
+
+          <div class="subheading"><h3>Processor 如何收敛部分成功</h3></div>
+          <div class="decision-grid">
+            <article class="decision-card">
+              <span>ANCHOR 01</span><strong>Event 已终态</strong>
+              <p>日志批次已经全部成功，直接返回保存的 Processing 结果。</p>
+            </article>
+            <article class="decision-card">
+              <span>ANCHOR 02</span><strong>latest_event_id 命中</strong>
+              <p>说明 Alert CAS 已完成，补齐输出与 Event 终局即可。</p>
+            </article>
+            <article class="decision-card">
+              <span>ANCHOR 03</span><strong>trigger_event_id 命中</strong>
+              <p>说明 Alert 已由该 opening Event 创建，继续幂等收尾。</p>
+            </article>
+            <article class="decision-card">
+              <span>ANCHOR 04</span><strong>FindAlertEndedByEvent</strong>
+              <p>识别来源终结或等级升级已完成的旧 Alert。</p>
+            </article>
+            <article class="decision-card">
+              <span>ANCHOR 05</span><strong>确定性 ID</strong>
+              <p>
+                Bulk 部分成功或 FinalHook 重复时，AlertLog 与 Kafka message ID
+                仍可收敛。
+              </p>
+            </article>
+            <article class="decision-card">
+              <span>ANCHOR 06</span><strong>有界 CAS 重试</strong>
+              <p>最多 3 次；冲突后重读并重新裁决，不用旧 replacement 覆盖。</p>
+            </article>
+          </div>
+
+          <div class="split-grid">
+            <article class="panel">
+              <h3>Enricher</h3>
+              <p>
+                只在创建新 Alert 前同步执行。error、panic、非法状态或非法 JSON
+                降级为
+                <code>failed + {}</code>，不阻断 Alert 创建；当前 Noop
+                实现返回空的 succeeded。
+              </p>
+            </article>
+            <article class="panel">
+              <h3>FinalHook</h3>
+              <p>
+                在 Alert
+                真实变化后输出当前快照，但不立即写日志。成功或失败结果先转换为
+                push AlertLog，再与本次状态日志统一 Bulk；日志全部成功后才写
+                Event 终态。
+              </p>
+            </article>
+          </div>
+
+          <div class="callout danger">
+            <span class="callout-mark">ES</span>
+            <p>
+              Elasticsearch 的 Alert create/CAS 使用
+              <code>refresh=wait_for</code>，保证同 fingerprint 的后续 Event
+              能看到最新 Alert。AlertLog Bulk 和最终 Event CAS 使用
+              <code>refresh=false</code>，成功后仍可能在一个 refresh interval
+              内无法被 search 看见； 当前没有运行中的 Event
+              Replayer，未来扫描必须避开这段可见性窗口。
+            </p>
+          </div>
+        </section>
+
+        <section id="deployment">
+          <div class="section-heading">
+            <div>
+              <div class="section-index">05 / DEPLOYMENT</div>
+              <h2>两种部署模式，一套运行职责</h2>
+            </div>
+            <p class="section-lead">
+              两种模式共享同一套领域逻辑、存储结构和消息协议，只改变
+              Cleaner、Lifecycle 与控制面如何装配和扩缩容。外部
+              Kafka、Redis、MySQL 或 Elasticsearch 不包含在进程内。
+            </p>
+          </div>
+
+          <div class="deployment-modes">
+            <article class="mode-card">
+              <span class="mode-label">TEST / SMALL SCALE</span>
+              <h3>All-in-one</h3>
+              <code class="mode-command">linkd run all-in-one</code>
+              <div class="mode-roles" aria-label="All-in-one 内部职责">
+                <span>Cleaner</span><span>Lifecycle</span
+                ><span>Control Plane</span>
+              </div>
+              <p>
+                一个进程复用正式实现，适合本地测试、集成验证和小规模部署。共享
+                CPU、内存、连接预算、 telemetry endpoint
+                与故障域；任一内部任务异常会取消其他任务并整体退出。
+              </p>
+            </article>
+
+            <article class="mode-card distributed">
+              <span class="mode-label">SCALE / ISOLATION</span>
+              <h3>三进程模式</h3>
+              <code class="mode-command"
+                >linkd run cleaner · lifecycle · control-plane</code
+              >
+              <div class="mode-roles" aria-label="三进程职责">
+                <span>独立扩缩容</span><span>独立发布</span
+                ><span>故障隔离</span>
+              </div>
+              <p>
+                Cleaner、Lifecycle 和 Control Plane
+                成为三种逻辑进程角色，副本数与资源预算分别设置。 主数据流仍通过
+                MQ、Repository 和 Redis Mailbox 协作，不增加同步 RPC 捷径。
+              </p>
+            </article>
+          </div>
+
+          <div class="subheading"><h3>三进程职责与 Metrics</h3></div>
+          <div class="process-topology">
+            <article class="process-card">
+              <span class="role-number">ROLE 01</span>
+              <h3>Cleaner</h3>
+              <code>linkd run cleaner</code>
+              <p>
+                消费 Raw Event MQ，构造并持久化 Event，写入 Lifecycle Mailbox
+                后确认上游消息。
+              </p>
+              <div class="process-metrics">/metrics · linkd.role=cleaner</div>
+            </article>
+
+            <article class="process-card">
+              <span class="role-number">ROLE 02</span>
+              <h3>Lifecycle</h3>
+              <code>linkd run lifecycle</code>
+              <p>
+                消费 Mailbox Signal，按 fingerprint lease 串行裁决 Alert，落
+                AlertLog 并执行 FinalHook。
+              </p>
+              <div class="process-metrics">/metrics · linkd.role=lifecycle</div>
+            </article>
+
+            <article class="process-card control">
+              <span class="role-number">ROLE 03</span>
+              <h3>Control Plane</h3>
+              <code>linkd run control-plane</code>
+              <p>
+                统一装配低吞吐、需要单一所有权的管理任务；每个任务不是独立进程，也没有顶级
+                command。
+              </p>
+              <div class="management-tasks" aria-label="当前控制面管理任务">
+                <div class="management-task">elasticsearch-storage-manager</div>
+                <div class="management-task">redis-stream-manager</div>
+              </div>
+              <div class="process-metrics">
+                /metrics · linkd.role=control-plane
+              </div>
+            </article>
+          </div>
+
+          <div class="dependency-rail" aria-label="部署外部依赖">
+            <strong>SHARED EXTERNAL DEPENDENCIES</strong>
+            <span>Kafka</span><span>Redis</span
+            ><span>MySQL / Elasticsearch</span>
+          </div>
+
+          <div class="callout">
+            <span class="callout-mark">M</span>
+            <p>
+              <strong>Metrics 不是单独进程。</strong>每个常驻进程都会创建
+              telemetry runtime；拆分模式下 Cleaner、Lifecycle 和 Control Plane
+              分别暴露 <code>/metrics</code>。部署在独立 Pod 时可使用
+              相同端口，共享宿主网络时必须配置不同的
+              <code>listen_address</code>。
+            </p>
+          </div>
+
+          <div class="subheading"><h3>Command 边界</h3></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Command</th>
+                  <th>类型</th>
+                  <th>行为</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>linkd run all-in-one</code></td>
+                  <td>常驻</td>
+                  <td>单进程运行全部已配置职责</td>
+                </tr>
+                <tr>
+                  <td><code>linkd run cleaner</code></td>
+                  <td>常驻</td>
+                  <td>只运行 Cleaner 数据面</td>
+                </tr>
+                <tr>
+                  <td><code>linkd run lifecycle</code></td>
+                  <td>常驻</td>
+                  <td>只运行 Lifecycle 数据面</td>
+                </tr>
+                <tr>
+                  <td><code>linkd run control-plane</code></td>
+                  <td>常驻</td>
+                  <td>运行全部已配置控制面任务</td>
+                </tr>
+                <tr>
+                  <td><code>linkd storage prepare</code></td>
+                  <td>一次性</td>
+                  <td>调用 ES Manager 预建指定历史时间桶后退出</td>
+                </tr>
+                <tr>
+                  <td><code>linkd config ... / version</code></td>
+                  <td>辅助</td>
+                  <td>不启动长期服务或 metrics 端口</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="callout warn">
+            <span class="callout-mark">CP</span>
+            <p>
+              当前控制面已经实现 Elasticsearch 索引/归档管理任务与 Redis Stream
+              观测/安全裁剪任务； API 和 Leader Election 仍是规划。Leader
+              完成前，拆分模式的 Control Plane 只能部署单副本。 All-in-one
+              仅在配置了至少一个管理任务时启动控制面职责。
+            </p>
+          </div>
+        </section>
+
+        <section id="boundaries">
+          <div class="section-heading">
+            <div>
+              <div class="section-index">06 / BOUNDARIES</div>
+              <h2>当前实现边界</h2>
+            </div>
+            <p class="section-lead">
+              下面把“仓库里已经存在的能力”和“部署或架构仍需承担的责任”分开列出，避免把设计目标写成已完成事实。
+            </p>
+          </div>
+
+          <div class="scope-grid">
+            <article class="scope-card">
+              <span class="badge">IMPLEMENTED</span>
+              <h3>当前代码已有</h3>
+              <ul>
+                <li>Event / Processing / Alert / AlertLog 领域约束</li>
+                <li><code>standard</code> Cleaner 与 EventFactory</li>
+                <li>Kafka Cleaner Flow、Redis Mailbox 与 Signal</li>
+                <li>Lifecycle 状态矩阵、Enricher、FinalHook</li>
+                <li>同次裁决 AlertLog 批量追加，最后 CAS Event 结果</li>
+                <li>内存 / MySQL / Elasticsearch Repository</li>
+                <li>
+                  All-in-one 与 Cleaner / Lifecycle / Control Plane 进程入口
+                </li>
+                <li>Elasticsearch 与 Redis Stream 控制面管理任务</li>
+                <li>单元、race 与可显式启用的外部 E2E 入口</li>
+              </ul>
+            </article>
+            <article class="scope-card boundary">
+              <span class="badge">SAFETY BOUNDARY</span>
+              <h3>必须由部署保证</h3>
+              <ul>
+                <li>Event、Alert、AlertLog、Kafka 之间没有跨对象事务</li>
+                <li>AlertLog Bulk 返回逐项结果，不承诺整批事务</li>
+                <li>上游确认后，Lifecycle 待办依赖 Redis 持久化与复制</li>
+                <li>
+                  Redis Mailbox 整体丢失不能从已提交 Kafka offset 精确恢复
+                </li>
+                <li>ES refresh=false 写入存在短暂的 search 不可见窗口</li>
+                <li>Leader Election 完成前，Control Plane 只能部署单副本</li>
+                <li>生产并发、批次、超时与容量预算必须基于真实载荷压测</li>
+                <li>外部服务 E2E 未显式运行时不能表述为已验证</li>
+              </ul>
+            </article>
+            <article class="scope-card future">
+              <span class="badge">NOT IMPLIED</span>
+              <h3>本页不代表</h3>
+              <ul>
+                <li>旧 Kingeye / KAC 行为自动成为 Linkd 契约</li>
+                <li>历史嵌套 KingeyeAlertEvent 仍是目标模型</li>
+                <li>文档中的候选模块名已经定稿</li>
+                <li>存在通用跨对象事务或 durable inbox</li>
+                <li>直接关闭已有公开 HTTP / CLI / Kafka 入口</li>
+                <li>API、Leader Election、自动 retention 或分桶迁移已经落地</li>
+              </ul>
+            </article>
+          </div>
+
+          <div class="source-links" aria-label="权威资料入口">
+            <a href="./design/define.md">核心数据模型</a>
+            <a href="./modules/cleaner.md">Cleaner 模块</a>
+            <a href="./modules/lifecycle.md">Lifecycle 模块</a>
+            <a href="./reference/contracts/raw-event.md">standard 输入契约</a>
+            <a href="./design/core-storage-contract.md">核心存储契约</a>
+            <a href="./design/deployment.md">部署模式</a>
+            <a href="../internal/domain/event.go">domain.Event 代码</a>
+            <a href="../internal/lifecycle/processor.go"
+              >Lifecycle Processor 代码</a
+            >
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <footer>
+      Linkd core model map · 以当前代码、测试与权威文档为准 · 页面为本地静态
+      HTML，不依赖外部资源
+    </footer>
+
+    <script>
+      const links = [...document.querySelectorAll(".toc a")];
+      const sections = [...document.querySelectorAll("main section[id]")];
+      const activate = (id) => {
+        links.forEach((link) => {
+          link.classList.toggle(
+            "active",
+            link.getAttribute("href") === `#${id}`,
+          );
+        });
+      };
+
+      const observer = new IntersectionObserver(
+        (entries) => {
+          const visible = entries
+            .filter((entry) => entry.isIntersecting)
+            .sort(
+              (left, right) => right.intersectionRatio - left.intersectionRatio,
+            );
+          if (visible[0]) activate(visible[0].target.id);
+        },
+        { rootMargin: "-18% 0px -68% 0px", threshold: [0, 0.2, 0.6] },
+      );
+
+      sections.forEach((section) => observer.observe(section));
+      activate(sections[0]?.id ?? "overview");
+    </script>
+  </body>
+</html>

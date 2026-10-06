@@ -167,8 +167,7 @@ func getStatByIOCounterStat(stat []net.IOCountersStat) ([]Stat, error) {
 	for _, value := range stat {
 		netInfoItem, ok := netinfo[value.Name]
 		if !ok {
-			s = append(s, Stat{IOCountersStat: value})
-			continue
+			netInfoItem = NetInfo{}
 		}
 		// 计算网卡信息总和
 		netInfoItem.Errors += value.Errin

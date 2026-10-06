@@ -26,6 +26,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/bksql/sql_expr"
 )
@@ -33,6 +34,7 @@ import (
 const (
 	selectAll            = "*"
 	unionDummyProjection = "1"
+	searchAfterColumnTag = "__search_after_"
 
 	dtEventTimeStamp = "dtEventTimeStamp"
 	dtEventTime      = "dtEventTime"
@@ -80,6 +82,10 @@ type QueryFactory struct {
 
 	orders metadata.Orders
 
+	searchAfterPrepared bool
+	searchAfterMode     searchAfterMode
+	searchAfterColumns  []string
+
 	timeField string
 
 	expr sql_expr.SQLExpr
@@ -88,6 +94,22 @@ type QueryFactory struct {
 }
 
 type TableFieldsMap = doris_parser.TableFieldsMap
+
+type searchAfterMode uint8
+
+const (
+	searchAfterModeNone searchAfterMode = iota
+	searchAfterModeKeyset
+	searchAfterModeOffset
+)
+
+// searchAfterFallbackFields 是标准 Doris 日志表在强制要求 __unique_key__ 之前通常提供的
+// 兼容游标字段。显式包含时间字段，是为了让自定义排序场景在表具备完整旧结构时仍使用同一组组合游标。
+var searchAfterFallbackFields = []string{
+	dtEventTimeStamp,
+	"gseIndex",
+	"iterationIndex",
+}
 
 type shardKeyTimeBucketExpr interface {
 	WithShardKeyTimeBucket(enabled bool) sql_expr.SQLExpr
@@ -187,11 +209,21 @@ func (f *QueryFactory) FieldMap() metadata.FieldsMap {
 	return f.expr.FieldMap()
 }
 
+// SearchAfterUsesOffset reports whether the query had to fall back to
+// per-result-table offset pagination because neither __unique_key__ nor the
+// legacy composite cursor fields were available.
+func (f *QueryFactory) SearchAfterUsesOffset() bool {
+	return f.searchAfterMode == searchAfterModeOffset
+}
+
 func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimension bool) (newData map[string]any) {
 	newData = make(map[string]any)
 	fieldMap := f.FieldMap()
 
 	for k, d := range data {
+		if f.isSearchAfterColumn(k) {
+			continue
+		}
 		if d == nil {
 			// SQL 聚合首行常为 NULL。若直接 continue，首行 nd 会缺少 `_value_`/`_timestamp_` 键；
 			// FormatDataToQueryResult 只在首行推断 keys，缺 `_value_` 则后续行永远进不了 Value 分支，整列被当成 0。
@@ -228,8 +260,44 @@ func (f *QueryFactory) ReloadListData(data map[string]any, ignoreInternalDimensi
 	return newData
 }
 
-func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[string]any) (*prompb.QueryResult, error) {
-	res := &prompb.QueryResult{}
+func (f *QueryFactory) isSearchAfterColumn(field string) bool {
+	for _, column := range f.searchAfterColumns {
+		if strings.EqualFold(field, column) {
+			return true
+		}
+	}
+	return false
+}
+
+func (f *QueryFactory) FilterResultSchema(schema []map[string]any) []map[string]any {
+	if len(f.searchAfterColumns) == 0 {
+		return schema
+	}
+
+	filtered := make([]map[string]any, 0, len(schema))
+	for _, field := range schema {
+		var alias string
+		for key, value := range field {
+			if strings.EqualFold(key, "field_alias") {
+				alias, _ = value.(string)
+				break
+			}
+		}
+		if f.isSearchAfterColumn(alias) {
+			continue
+		}
+		filtered = append(filtered, field)
+	}
+	return filtered
+}
+
+func (f *QueryFactory) FormatDataToQueryResult(
+	ctx context.Context, list []map[string]any,
+) (res *prompb.QueryResult, err error) {
+	ctx, span := trace.NewSpan(ctx, "bksql-format-query-result")
+	defer span.End(&err)
+
+	res = &prompb.QueryResult{}
 
 	if len(list) == 0 {
 		return res, nil
@@ -389,6 +457,44 @@ func (f *QueryFactory) FormatDataToQueryResult(ctx context.Context, list []map[s
 		}
 	}
 
+	var points, labelBytes int
+	for _, ts := range res.Timeseries {
+		points += len(ts.Samples)
+		for _, label := range ts.Labels {
+			labelBytes += len(label.Name) + len(label.Value)
+		}
+	}
+	profile := f.query.CostProfile
+	span.Set("query-cost.rows", len(list))
+	span.Set("query-cost.series", len(res.Timeseries))
+	span.Set("query-cost.points", points)
+	span.Set("query-cost.label-bytes", labelBytes)
+	if len(list) > 0 {
+		span.Set("query-cost.series-rows-ratio", float64(len(res.Timeseries))/float64(len(list)))
+	}
+	if len(res.Timeseries) > 0 {
+		span.Set("query-cost.points-per-series", float64(points)/float64(len(res.Timeseries)))
+	}
+	span.Set("query-cost.select-all", profile.SelectAllCandidate)
+	span.Set("query-cost.range-function", profile.RangeFunction)
+	span.Set("query-cost.step-less-than-window", profile.StepLessThanWindow)
+	span.Set("query-cost.ast-branches", profile.ASTBranchCount)
+	span.Set("query-cost.sql-pushdown", profile.SQLPushdown)
+	metric.QueryCostProfileObserve(
+		ctx,
+		profile.SelectAllCandidate,
+		profile.RangeFunction,
+		profile.StepLessThanWindow,
+		profile.SQLPushdown,
+		profile.ASTBranchCount,
+		len(list),
+		len(res.Timeseries),
+		points,
+		labelBytes,
+		profile.Window,
+		profile.Step,
+	)
+
 	return res, nil
 }
 
@@ -456,7 +562,189 @@ func (f *QueryFactory) BuildWhere() (string, error) {
 		}
 	}
 
+	if f.searchAfterMode == searchAfterModeKeyset && f.query.ResultTableOption != nil && len(f.query.ResultTableOption.SearchAfter) > 0 {
+		searchAfter, err := f.expr.ParserSearchAfter(f.orders, f.query.ResultTableOption.SearchAfter)
+		if err != nil {
+			return "", err
+		}
+		if searchAfter != "" {
+			s = append(s, searchAfter)
+		}
+	}
+
 	return strings.Join(s, " AND "), nil
+}
+
+func (f *QueryFactory) SearchAfterValues(data map[string]any) ([]any, error) {
+	if f.searchAfterMode == searchAfterModeOffset {
+		return nil, nil
+	}
+	if len(f.orders) == 0 {
+		return nil, fmt.Errorf("search_after requires order fields")
+	}
+
+	values := make([]any, 0, len(f.orders))
+	for index, order := range f.orders {
+		if len(f.searchAfterColumns) == len(f.orders) {
+			value, ok := searchAfterDataValue(data, f.searchAfterColumns[index])
+			if !ok {
+				return nil, fmt.Errorf("search_after order field %s is missing from query result", order.Name)
+			}
+			values = append(values, value)
+			continue
+		}
+
+		candidates := []string{order.Name}
+		switch order.Name {
+		case sql_expr.FieldTime:
+			candidates = append(candidates, sql_expr.TimeStamp, f.timeField)
+		case sql_expr.FieldValue:
+			candidates = append(candidates, sql_expr.Value, f.query.Field)
+		default:
+			if originField := f.query.FieldAlias.OriginField(order.Name); originField != "" {
+				candidates = append(candidates, originField)
+			}
+		}
+
+		var value any
+		var ok bool
+		for _, candidate := range candidates {
+			value, ok = searchAfterDataValue(data, candidate)
+			if ok {
+				break
+			}
+		}
+		if !ok {
+			return nil, fmt.Errorf("search_after order field %s is missing from query result", order.Name)
+		}
+		values = append(values, value)
+	}
+
+	return values, nil
+}
+
+func searchAfterDataValue(data map[string]any, candidate string) (any, bool) {
+	if value, ok := data[candidate]; ok {
+		return value, true
+	}
+	for key, value := range data {
+		if strings.EqualFold(key, candidate) {
+			return value, true
+		}
+	}
+	return nil, false
+}
+
+func (f *QueryFactory) prepareSearchAfter() error {
+	if f.searchAfterPrepared {
+		return nil
+	}
+	if f.expr.Type() != sql_expr.Doris {
+		return fmt.Errorf("search_after is unsupported for %s", f.expr.Type())
+	}
+	if len(f.orders) == 0 {
+		return fmt.Errorf("search_after requires order fields")
+	}
+	if len(f.query.Aggregates) > 0 {
+		return fmt.Errorf("search_after does not support aggregate query")
+	}
+	if len(f.query.SelectDistinct) > 0 {
+		return fmt.Errorf("search_after does not support distinct query")
+	}
+	if f.query.SQL != "" {
+		return fmt.Errorf("search_after does not support custom SQL")
+	}
+
+	// 避免追加兜底排序字段时修改调用方传入的 Query.Orders。
+	f.orders = append(metadata.Orders(nil), f.orders...)
+
+	// search_after 依赖全序排序。业务排序字段相同时，优先追加由存储链路
+	// 生成的 __unique_key__ 作为稳定排序字段。
+	hasTieBreaker := false
+	for _, order := range f.orders {
+		if strings.EqualFold(order.Name, sql_expr.SearchAfterTieBreaker) {
+			hasTieBreaker = true
+			break
+		}
+	}
+	if !hasTieBreaker && f.FieldMap().Field(sql_expr.SearchAfterTieBreaker).Existed() {
+		// 沿用最后一个业务排序字段的方向，避免改变用户定义的结果排序。
+		f.orders = append(f.orders, metadata.Order{
+			Name: sql_expr.SearchAfterTieBreaker,
+			Ast:  f.orders[len(f.orders)-1].Ast,
+		})
+	} else if !hasTieBreaker {
+		// 兼容 __unique_key__ 缺失的存量 Doris 日志表。标准旧表通常同时
+		// 具备时间、gseIndex 和 iterationIndex，这三个字段组成的游标比
+		// 单独使用时间字段更稳定。缺少任一字段时再退到 offset 分页，
+		// 让首屏查询和导出预检查保持可用。
+		if !f.appendFallbackOrders() {
+			f.searchAfterMode = searchAfterModeOffset
+			f.searchAfterPrepared = true
+			return nil
+		}
+	}
+
+	fields, err := f.expr.ParserSearchAfterFields(f.orders)
+	if err != nil {
+		return err
+	}
+	f.searchAfterColumns = make([]string, len(fields))
+	for index := range fields {
+		f.searchAfterColumns[index] = fmt.Sprintf("%s%d", searchAfterColumnTag, index)
+	}
+	f.searchAfterMode = searchAfterModeKeyset
+	f.searchAfterPrepared = true
+	return nil
+}
+
+func (f *QueryFactory) appendFallbackOrders() bool {
+	for _, field := range searchAfterFallbackFields {
+		if !f.FieldMap().Field(field).Existed() {
+			return false
+		}
+	}
+
+	lastAst := f.orders[len(f.orders)-1].Ast
+	for _, field := range searchAfterFallbackFields {
+		if f.hasOrderField(field) {
+			continue
+		}
+		f.orders = append(f.orders, metadata.Order{Name: field, Ast: lastAst})
+	}
+	return true
+}
+
+func (f *QueryFactory) hasOrderField(field string) bool {
+	for _, order := range f.orders {
+		name := order.Name
+		switch name {
+		case sql_expr.FieldTime:
+			name = f.timeField
+		case sql_expr.FieldValue:
+			name = f.query.Field
+		}
+		if strings.EqualFold(name, field) {
+			return true
+		}
+	}
+	return false
+}
+
+func (f *QueryFactory) searchAfterSelectFields() ([]string, error) {
+	fields, err := f.expr.ParserSearchAfterFields(f.orders)
+	if err != nil {
+		return nil, err
+	}
+	if len(fields) != len(f.searchAfterColumns) {
+		return nil, fmt.Errorf("search_after order fields are not initialized")
+	}
+
+	selectFields := make([]string, 0, len(fields))
+	for index, field := range fields {
+		selectFields = append(selectFields, fmt.Sprintf("%s AS `%s`", field, f.searchAfterColumns[index]))
+	}
+	return selectFields, nil
 }
 
 func (f *QueryFactory) Tables() []string {
@@ -1178,6 +1466,18 @@ func isUnionQualifiedWildcardToken(s string, idx int) bool {
 }
 
 func (f *QueryFactory) SQL() (sql string, err error) {
+	if f.query.IsSearchAfter {
+		if f.query.From != 0 && f.expr.Type() != sql_expr.Doris {
+			return "", fmt.Errorf("from cannot be combined with is_search_after")
+		}
+		if err := f.prepareSearchAfter(); err != nil {
+			return "", err
+		}
+		if f.searchAfterMode == searchAfterModeKeyset && f.query.From != 0 {
+			return "", fmt.Errorf("from cannot be combined with is_search_after")
+		}
+	}
+
 	// sql 解析语法不一样需要重新拼写
 	if f.query.SQL != "" {
 		return f.parserSQL()
@@ -1194,6 +1494,13 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	selectFields, groupFields, orderFields, dimensionSet, timeAggregate, err := f.expr.ParserAggregatesAndOrders(f.query.SelectDistinct, f.query.Aggregates, f.orders)
 	if err != nil {
 		return sql, err
+	}
+	if f.searchAfterMode == searchAfterModeKeyset {
+		searchAfterFields, searchAfterErr := f.searchAfterSelectFields()
+		if searchAfterErr != nil {
+			return sql, searchAfterErr
+		}
+		selectFields = append(selectFields, searchAfterFields...)
 	}
 
 	// 用于判定字段是否需要删除
@@ -1253,7 +1560,9 @@ func (f *QueryFactory) SQL() (sql string, err error) {
 	}
 
 	if len(orderFields) > 0 {
-		sort.Strings(orderFields)
+		if !f.query.IsSearchAfter {
+			sort.Strings(orderFields)
+		}
 		sqlBuilder.WriteString(" ORDER BY ")
 		sqlBuilder.WriteString(strings.Join(orderFields, ", "))
 	}

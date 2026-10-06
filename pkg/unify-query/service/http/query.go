@@ -33,6 +33,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/query"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/set"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	uqMetric "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/promql"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	redisUtil "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
@@ -204,6 +205,10 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	ctx, span := trace.NewSpan(ctx, "query-raw-with-instance")
 	defer span.End(&err)
 
+	if err = validateQueryTsRawPagination(queryTs); err != nil {
+		return total, list, resultTableOptions, routeInfo, err
+	}
+
 	var (
 		receiveWg sync.WaitGroup
 		dataCh    = make(chan map[string]any)
@@ -224,6 +229,14 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		return total, list, resultTableOptions, routeInfo, err
 	}
 	queryRef = excludeElasticsearchIndexPrefixMissingQueries(ctx, queryRef, metadata.MsgQueryRaw, nil)
+	// IsSearchAfter is deliberately scoped to the raw execution path. QueryTs is
+	// also used by time-series/reference endpoints, where Doris must keep its
+	// normal aggregate/series query behavior.
+	if queryTs.IsSearchAfter {
+		queryRef.Range("", func(qry *metadata.Query) {
+			qry.IsSearchAfter = true
+		})
+	}
 	// routeInfo 只描述本次解析出的路由范围，不能从返回行或分页状态反推。
 	routeInfo = queryRef.CollectRouteInfo()
 
@@ -397,10 +410,13 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 		queryRef.Range("", func(qry *metadata.Query) {
 			localQry := *qry
 			localQry.ResultTableOption = qry.ResultTableOption.Clone()
+			if localQry.ResultTableOption != nil && localQry.ResultTableOption.From != nil && *localQry.ResultTableOption.From > 0 {
+				localQry.From = *localQry.ResultTableOption.From
+			}
 			// SearchAfter 模式下，跳过已完成的 RT
 			// RT 不在 ResultTableOptions 中（nil）或 SearchAfter 为空，表示该 RT 数据已查完
 			if queryTs.IsSearchAfter && len(queryTs.ResultTableOptions) > 0 {
-				if localQry.ResultTableOption == nil || len(localQry.ResultTableOption.SearchAfter) == 0 {
+				if !hasRawPaginationCursor(localQry.ResultTableOption) {
 					return
 				}
 			}
@@ -420,7 +436,7 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 			lock.Unlock()
 
 			// 如果是多数据合并，为了保证排序和Limit 的准确性，需要查询原始的所有数据，所以这里对 from 和 size 进行重写
-			if queryRef.Count() > 1 {
+			if queryRef.Count() > 1 && !hasRawOffsetCursor(localQry.ResultTableOption) {
 				if !queryTs.IsMultiFrom {
 					localQry.Size += localQry.From
 					localQry.From = 0
@@ -495,6 +511,14 @@ func queryRawWithInstance(ctx context.Context, queryTs *structured.QueryTs) (tot
 	}
 
 	return total, list, resultTableOptions, routeInfo, err
+}
+
+func hasRawPaginationCursor(option *metadata.ResultTableOption) bool {
+	return option != nil && ((option.From != nil && *option.From > 0) || len(option.SearchAfter) > 0)
+}
+
+func hasRawOffsetCursor(option *metadata.ResultTableOption) bool {
+	return option != nil && option.From != nil && *option.From > 0
 }
 
 func queryRawWithScroll(ctx context.Context, queryTs *structured.QueryTs, session *redisUtil.ScrollSession) (int64, []map[string]any, metadata.ResultTableOptions, []metadata.RouteInfo, bool, error) {
@@ -755,10 +779,21 @@ func queryReferenceWithPromEngine(ctx context.Context, queryTs *structured.Query
 		startTime = qb.Start
 	}
 
+	queryEnd := qb.End
 	if queryTs.Instant {
-		res, err = instance.DirectQuery(ctx, queryTs.MetricMerge, startTime)
-	} else {
-		res, isPartial, err = instance.DirectQueryRange(ctx, queryTs.MetricMerge, startTime, qb.End, qb.Step)
+		queryEnd = startTime
+	}
+	res, isPartial, releaseResult, err := executeQueryWithClose(
+		ctx,
+		instance,
+		queryTs.MetricMerge,
+		startTime,
+		queryEnd,
+		qb.Step,
+		queryTs.Instant,
+	)
+	if releaseResult != nil {
+		defer releaseResult()
 	}
 	if err != nil {
 		return nil, err
@@ -885,7 +920,11 @@ func queryTsToReference(ctx context.Context, queryTs *structured.QueryTs) (metad
 
 // queryTsToInstanceAndStmt query 结构体转换为 instance 以及 stmt
 func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) (instance tsdb.Instance, stmt string, routeInfo []metadata.RouteInfo, err error) {
-	var promExprOpt = &structured.PromExprOption{}
+	return queryTsToInstanceAndStmtWithCache(ctx, queryTs, nil)
+}
+
+func queryTsToInstanceAndStmtWithCache(ctx context.Context, queryTs *structured.QueryTs, selectorCache *prometheus.SelectorCache) (instance tsdb.Instance, stmt string, routeInfo []metadata.RouteInfo, err error) {
+	promExprOpt := &structured.PromExprOption{}
 
 	ctx, span := trace.NewSpan(ctx, "query-ts-to-instance")
 	defer func() {
@@ -921,6 +960,7 @@ func queryTsToInstanceAndStmt(ctx context.Context, queryTs *structured.QueryTs) 
 		instance = prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
 			QueryMaxRouting: QueryMaxRouting,
 			Timeout:         SingleflightTimeout,
+			SelectorCache:   selectorCache,
 		}, lookBackDelta, QueryMaxRouting)
 	}
 
@@ -972,10 +1012,17 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 	qb := metadata.GetQueryParams(ctx)
 	span.Set("query-params", qb)
 
-	if query.Instant {
-		res, err = instance.DirectQuery(ctx, stmt, qb.End)
-	} else {
-		res, isPartial, err = instance.DirectQueryRange(ctx, stmt, qb.AlignStart, qb.End, qb.Step)
+	res, isPartial, releaseResult, err := executeQueryWithClose(
+		ctx,
+		instance,
+		stmt,
+		qb.AlignStart,
+		qb.End,
+		qb.Step,
+		query.Instant,
+	)
+	if releaseResult != nil {
+		defer releaseResult()
 	}
 	if err != nil {
 		return nil, err
@@ -1034,6 +1081,235 @@ func queryTsWithPromEngine(ctx context.Context, query *structured.QueryTs) (any,
 	}
 
 	return resp, err
+}
+
+func queryTsNamedOutputs(ctx context.Context, queryTs *structured.QueryTs) (*NamedOutputsData, error) {
+	requestStarted := time.Now()
+	settings := getNamedOutputSettings()
+	requestCtx, cancel := context.WithTimeout(ctx, settings.Timeout)
+	defer cancel()
+	ctx = requestCtx
+	uqMetric.NamedOutputsRequestInc(ctx, uqMetric.NamedOutputsRequestReceived)
+	requestMetricResult := uqMetric.NamedOutputsRequestError
+	defer func() {
+		uqMetric.NamedOutputsRequestInc(ctx, requestMetricResult)
+		uqMetric.NamedOutputsDurationObserve(ctx, requestMetricResult, time.Since(requestStarted))
+	}()
+	if err := queryTs.ValidateNamedOutputs(settings.MaxOutputs); err != nil {
+		uqMetric.NamedOutputsRejectInc(ctx, namedOutputsValidationRejectReason(err))
+		return nil, err
+	}
+	uqMetric.NamedOutputsOutputCountObserve(ctx, len(queryTs.OutputList))
+
+	var err error
+	ctx, span := trace.NewSpan(ctx, "query-ts-named-outputs")
+	defer span.End(&err)
+
+	queryRef, lookBackDelta, err := queryTsToReference(ctx, queryTs)
+	if err != nil {
+		return nil, err
+	}
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
+	routeInfo := queryRef.CollectRouteInfo()
+	queryParams := metadata.GetQueryParams(ctx)
+
+	var instance tsdb.Instance
+	var selectorCache *prometheus.SelectorCache
+	executionMode := uqMetric.NamedOutputsModePromEngine
+	directCalls := 0
+	defer func() {
+		calls := directCalls
+		if selectorCache != nil {
+			calls = int(selectorCache.Stats().Misses)
+		}
+		uqMetric.NamedOutputsDownstreamCallsObserve(ctx, executionMode, calls)
+		uqMetric.NamedOutputsDownstreamAmplificationObserve(ctx, executionMode, calls, len(queryTs.OutputList))
+	}()
+	promExprOption := &structured.PromExprOption{}
+	if queryParams.IsDirectQuery() {
+		executionMode = uqMetric.NamedOutputsModeDirect
+		vmExpand := query.ToVmExpand(ctx, queryRef)
+		metadata.SetExpand(ctx, vmExpand)
+		instance = prometheus.GetTsDbInstance(ctx, &metadata.Query{
+			StorageID:   metadata.VictoriaMetricsStorageType,
+			StorageType: metadata.VictoriaMetricsStorageType,
+		})
+	} else {
+		promExprOption.IgnoreTimeAggregationEnable = true
+		selectorCache = prometheus.NewSelectorCache(prometheus.SelectorCacheLimits{
+			MaxSeries: settings.MaxSeries,
+			MaxPoints: settings.MaxPoints,
+			MaxBytes:  settings.MaxCacheBytes,
+		})
+		instance = prometheus.NewInstance(ctx, promql.GlobalEngine, &prometheus.QueryRangeStorage{
+			QueryMaxRouting: QueryMaxRouting,
+			Timeout:         SingleflightTimeout,
+			SelectorCache:   selectorCache,
+		}, lookBackDelta, QueryMaxRouting)
+	}
+	if instance == nil {
+		return nil, fmt.Errorf("storage get error")
+	}
+
+	execute := func(outputCtx context.Context, output structured.QueryOutput) (any, bool, error) {
+		return compileAndExecuteNamedOutput(
+			outputCtx,
+			func() (fmt.Stringer, error) {
+				return queryTs.ToPromExprFor(outputCtx, output.Expression, promExprOption)
+			},
+			func(executeCtx context.Context, stmt string) (any, bool, error) {
+				if executionMode == uqMetric.NamedOutputsModeDirect {
+					directCalls++
+				}
+				result, partial, releaseResult, queryErr := executeQueryWithClose(
+					executeCtx,
+					instance,
+					stmt,
+					queryParams.AlignStart,
+					queryParams.End,
+					queryParams.Step,
+					queryTs.Instant,
+				)
+				if queryErr != nil {
+					return nil, partial, queryErr
+				}
+				return &ownedQueryResult{value: result, release: releaseResult}, partial, nil
+			},
+		)
+	}
+
+	result, executeErr := executeNamedOutputsWith(ctx, queryTs, settings, routeInfo, span.TraceID(), execute)
+	if executeErr != nil {
+		var outputLimit *namedOutputLimitError
+		var selectorLimit *prometheus.SelectorCacheLimitError
+		switch {
+		case errors.Is(executeErr, context.DeadlineExceeded), errors.Is(executeErr, context.Canceled):
+			uqMetric.NamedOutputsRejectInc(ctx, uqMetric.NamedOutputsRejectDeadline)
+		case errors.As(executeErr, &outputLimit), errors.As(executeErr, &selectorLimit):
+			uqMetric.NamedOutputsRejectInc(ctx, uqMetric.NamedOutputsRejectCapacity)
+		}
+		err = executeErr
+		return nil, err
+	}
+	requestMetricResult = uqMetric.NamedOutputsRequestSuccess
+	return result, nil
+}
+
+func queryPromQLNamedOutputs(ctx context.Context, request *structured.QueryPromQL) (*NamedOutputsData, error) {
+	started := time.Now()
+	settings := getNamedOutputSettings()
+	ctx, cancel := context.WithTimeout(ctx, settings.Timeout)
+	defer cancel()
+	uqMetric.NamedOutputsRequestInc(ctx, uqMetric.NamedOutputsRequestReceived)
+	resultName := uqMetric.NamedOutputsRequestError
+	defer func() {
+		uqMetric.NamedOutputsRequestInc(ctx, resultName)
+		uqMetric.NamedOutputsDurationObserve(ctx, resultName, time.Since(started))
+	}()
+	if err := request.ValidateNamedOutputs(settings.MaxOutputs); err != nil {
+		uqMetric.NamedOutputsRejectInc(ctx, namedOutputsValidationRejectReason(err))
+		return nil, err
+	}
+	uqMetric.NamedOutputsOutputCountObserve(ctx, len(request.OutputList))
+
+	ctx, span := trace.NewSpan(ctx, "query-promql-named-outputs")
+	var err error
+	defer span.End(&err)
+
+	queries := make(map[string]*structured.QueryTs, len(request.OutputList))
+	for _, output := range request.OutputList {
+		outputRequest := *request
+		outputRequest.PromQL = output.Expression
+		queries[output.ReferenceName], err = promQLToStruct(ctx, &outputRequest)
+		if err != nil {
+			uqMetric.NamedOutputsRejectInc(ctx, uqMetric.NamedOutputsRejectValidation)
+			return nil, fmt.Errorf("output %s conversion failed: %w", output.ReferenceName, err)
+		}
+	}
+
+	selectorCache := prometheus.NewSelectorCache(prometheus.SelectorCacheLimits{
+		MaxSeries: settings.MaxSeries,
+		MaxPoints: settings.MaxPoints,
+		MaxBytes:  settings.MaxCacheBytes,
+	})
+	var routeInfo []metadata.RouteInfo
+	var outputMu sync.Mutex
+	currentRoutes := func() []metadata.RouteInfo {
+		outputMu.Lock()
+		defer outputMu.Unlock()
+		return append([]metadata.RouteInfo(nil), routeInfo...)
+	}
+	directCalls := 0
+	directOutputs := 0
+	engineOutputs := 0
+	defer func() {
+		if directOutputs > 0 {
+			uqMetric.NamedOutputsDownstreamCallsObserve(ctx, uqMetric.NamedOutputsModeDirect, directCalls)
+			uqMetric.NamedOutputsDownstreamAmplificationObserve(ctx, uqMetric.NamedOutputsModeDirect, directCalls, directOutputs)
+		}
+		if engineOutputs > 0 {
+			calls := int(selectorCache.Stats().Misses)
+			uqMetric.NamedOutputsDownstreamCallsObserve(ctx, uqMetric.NamedOutputsModePromEngine, calls)
+			uqMetric.NamedOutputsDownstreamAmplificationObserve(ctx, uqMetric.NamedOutputsModePromEngine, calls, engineOutputs)
+		}
+	}()
+
+	query := &structured.QueryTs{
+		LegacyOutputRef: request.LegacyOutputRef,
+		OutputList:      request.OutputList,
+		DownSampleRange: request.DownSampleRange,
+	}
+	execute := func(outputCtx context.Context, output structured.QueryOutput) (any, bool, error) {
+		queryTs := queries[output.ReferenceName]
+		// Routing storage types belong to this output, not a preceding PromQL output.
+		metadata.GetQueryParams(outputCtx).StorageType.Clean()
+		instance, stmt, outputRoutes, queryErr := queryTsToInstanceAndStmtWithCache(outputCtx, queryTs, selectorCache)
+		outputMu.Lock()
+		routeInfo = append(routeInfo, outputRoutes...)
+		outputMu.Unlock()
+		if queryErr != nil {
+			return nil, false, queryErr
+		}
+		if err := outputCtx.Err(); err != nil {
+			return nil, false, err
+		}
+		if metadata.GetQueryParams(outputCtx).IsDirectQuery() {
+			outputMu.Lock()
+			directOutputs++
+			directCalls++
+			outputMu.Unlock()
+		} else {
+			outputMu.Lock()
+			engineOutputs++
+			outputMu.Unlock()
+		}
+		params := metadata.GetQueryParams(outputCtx)
+		result, partial, release, queryErr := executeQueryWithClose(
+			outputCtx, instance, stmt, params.AlignStart, params.End, params.Step, queryTs.Instant,
+		)
+		if queryErr != nil {
+			return nil, partial, queryErr
+		}
+		return &ownedQueryResult{value: result, release: release}, partial, nil
+	}
+
+	data, executeErr := executeNamedOutputsWithRoutesMode(ctx, query, settings, currentRoutes, span.TraceID(), execute, true)
+	if executeErr != nil {
+		var outputLimit *namedOutputLimitError
+		var selectorLimit *prometheus.SelectorCacheLimitError
+		switch {
+		case errors.Is(executeErr, context.DeadlineExceeded), errors.Is(executeErr, context.Canceled):
+			uqMetric.NamedOutputsRejectInc(ctx, uqMetric.NamedOutputsRejectDeadline)
+		case errors.As(executeErr, &outputLimit), errors.As(executeErr, &selectorLimit):
+			uqMetric.NamedOutputsRejectInc(ctx, uqMetric.NamedOutputsRejectCapacity)
+		}
+		err = executeErr
+		return nil, err
+	}
+	resultName = uqMetric.NamedOutputsRequestSuccess
+	return data, nil
 }
 
 func structToPromQL(ctx context.Context, query *structured.QueryTs) (*structured.QueryPromQL, error) {

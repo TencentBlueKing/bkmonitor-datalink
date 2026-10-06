@@ -78,6 +78,8 @@ type FieldOption struct {
 	IsAgg           bool   `json:"is_agg"`
 	IsAnalyzed      bool   `json:"is_analyzed"`
 	IsCaseSensitive bool   `json:"is_case_sensitive"`
+	// HasMixedTypes 表示跨索引同名字段的类型不一致，不能按单一类型优化查询。
+	HasMixedTypes bool `json:"has_mixed_types,omitempty"`
 	// IsCaseInsensitive 只在 mapping 明确证明 keyword/text 会 lowercase 时置 true。
 	// 不能只用 IsCaseSensitive 的 false 值，因为历史/手写 FieldsMap 里的 keyword 零值仍应按大小写敏感处理。
 	IsCaseInsensitive bool `json:"is_case_insensitive,omitempty"`
@@ -134,6 +136,18 @@ type OffSetInfo struct {
 
 type Aggregates []Aggregate
 
+// QueryCostProfile describes structural query properties used for observation.
+// It must not be used as an environment-independent admission policy.
+type QueryCostProfile struct {
+	SelectAllCandidate bool
+	RangeFunction      bool
+	StepLessThanWindow bool
+	ASTBranchCount     int
+	SQLPushdown        bool
+	Window             time.Duration
+	Step               time.Duration
+}
+
 // Query 查询扩展信息，为后面查询提供定位
 type Query struct {
 	SourceType string `json:"source_type,omitempty"`
@@ -176,6 +190,8 @@ type Query struct {
 
 	Aggregates Aggregates `json:"aggregates,omitempty"` // 聚合方法列表，从内到外排序
 
+	CostProfile QueryCostProfile `json:"-"`
+
 	Condition string `json:"condition,omitempty"` // 过滤条件
 
 	// Vm 过滤条件
@@ -208,6 +224,7 @@ type Query struct {
 	Size   int      `json:"size,omitempty"`
 
 	Scroll            string             `json:"scroll,omitempty"`
+	IsSearchAfter     bool               `json:"is_search_after,omitempty"`
 	ResultTableOption *ResultTableOption `json:"result_table_option,omitempty"`
 
 	Orders      Orders    `json:"orders,omitempty"`
@@ -305,6 +322,28 @@ type Order struct {
 type Orders []Order
 
 type AllConditions [][]ConditionField
+
+// MergeAllConditions 将 source 和 target 做 AND 合并，并保持 AllConditions 的析取范式：
+// 外层分组表示 OR 分支，内层字段表示 AND 条件。
+func MergeAllConditions(source, target AllConditions) AllConditions {
+	if len(source) == 0 {
+		return target
+	}
+	if len(target) == 0 {
+		return source
+	}
+
+	merged := make(AllConditions, 0, len(source)*len(target))
+	for _, sourceGroup := range source {
+		for _, targetGroup := range target {
+			group := make([]ConditionField, 0, len(sourceGroup)+len(targetGroup))
+			group = append(group, sourceGroup...)
+			group = append(group, targetGroup...)
+			merged = append(merged, group)
+		}
+	}
+	return merged
+}
 
 type QueryList []*Query
 

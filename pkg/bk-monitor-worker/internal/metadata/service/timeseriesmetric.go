@@ -23,8 +23,21 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/jsonx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/mapx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/slicex"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/utils/stringx"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
 )
+
+// buildNewMetricConfig : 新发现指标的初始配置
+//
+// SDK 会把含中文等非法字符的指标名编码成 base62 标识符上报，查询必须继续使用编码后的名字，
+// 这里把解码出的原始名回填成别名，让各展示入口都能拿到可读的指标名。
+func buildNewMetricConfig(fieldName string) map[string]any {
+	originalName := stringx.DecodeMetricIdentifier(fieldName)
+	if originalName == fieldName {
+		return map[string]any{}
+	}
+	return map[string]any{"alias": originalName}
+}
 
 // TimeSeriesMetricSvc time series metric service
 type TimeSeriesMetricSvc struct {
@@ -180,12 +193,14 @@ func (s *TimeSeriesMetricSvc) BulkCreateMetricsByKeys(bkTenantId string, metricM
 		}
 		tagListStr, _ := jsonx.MarshalString(tagList)
 		realTableId := fmt.Sprintf("%s.%s", strings.Split(tableId, ".")[0], fieldName)
+		fieldConfigStr, _ := jsonx.MarshalString(buildNewMetricConfig(fieldName))
 		tsm := customreport.TimeSeriesMetric{
 			GroupID:        groupId,
 			TableID:        realTableId,
 			FieldName:      fieldName,
 			FieldScope:     fieldScope,
 			TagList:        tagListStr,
+			FieldConfig:    fieldConfigStr,
 			LastModifyTime: time.Now(),
 			IsActive:       isActive,
 		}
@@ -300,8 +315,8 @@ func (s *TimeSeriesMetricSvc) BulkUpdateMetricsByKeys(bkTenantId string, metricM
 				tsm.ScopeID = uint(v)
 			}
 			// 与 Python 逻辑保持一致：指标从 disabled 状态恢复时，
-			// 除了重新分配 scope_id，还需要清空包含 disabled=true 的字段配置。
-			tsm.FieldConfig = "{}"
+			// 除了重新分配 scope_id，还需要重置包含 disabled=true 的字段配置。
+			tsm.FieldConfig, _ = jsonx.MarshalString(buildNewMetricConfig(tsm.FieldName))
 			needUpdateFieldConfig = true
 			isNeedUpdate = true
 		}

@@ -180,6 +180,20 @@ func TestInstance_DirectQuery(t *testing.T) {
 	}
 }
 
+func TestInstance_DirectQueryWithPartialPreservesInstantStatus(t *testing.T) {
+	mock.Init()
+	ctx := metadata.InitHashID(context.Background())
+	metadata.SetExpand(ctx, &metadata.VmExpand{ResultTableList: []string{"partial_rt"}})
+	mock.Vm.Set(map[string]any{
+		`query:1730184058up`: `{"result":true,"message":"成功","code":"00","data":{"list":[{"status":"success","isPartial":true,"data":{"resultType":"vector","result":[{"metric":{"service":"api"},"value":[1730184058,"1"]}]}}],"device":"vm","result_table_ids":["partial_rt"]},"errors":null}`,
+	})
+
+	result, partial, err := instance.DirectQueryWithPartial(ctx, "up", time.Unix(1730184058, 0))
+	require.NoError(t, err)
+	require.True(t, partial)
+	require.Len(t, result, 1)
+}
+
 func TestInstance_QueryLabelValues(t *testing.T) {
 	ctx := t.Context()
 	testCases := map[string]struct {

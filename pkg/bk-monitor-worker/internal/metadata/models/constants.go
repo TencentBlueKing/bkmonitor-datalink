@@ -49,6 +49,7 @@ const RTFOInfluxdbDisabled = "influxdb_disabled" // influxdb_disabled: influxdb�
 const (
 	OptionCustomReportDimensionValues = "dimension_values"
 	OptionSegmentedQueryEnable        = "segmented_query_enable"
+	OptionQueryRouterConfig           = "query_router_config"
 )
 
 // MeasurementType
@@ -173,11 +174,12 @@ const (
 
 // space
 const (
-	SpaceTypeBKCC   = "bkcc"
-	SpaceTypeBCS    = "bcs"
-	SpaceTypeBKCI   = "bkci"
-	SpaceTypeBKSAAS = "bksaas"
-	SpaceTypeAll    = "all"
+	SpaceTypeBKCC    = "bkcc"
+	SpaceTypeBCS     = "bcs"
+	SpaceTypeBKCI    = "bkci"
+	SpaceTypeBKSAAS  = "bksaas"
+	SpaceTypeDefault = "default"
+	SpaceTypeAll     = "all"
 
 	Bkci1001TableIdPrefix       = "devx_system." // 1001 跨空间类型允许 bkci 访问的结果表前缀
 	P4SystemTableIdPrefixToBkCi = "perforce_system."

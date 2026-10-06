@@ -11,6 +11,7 @@ package sql_expr
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -52,6 +53,117 @@ func TestNormalizeDorisFieldName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.expected, normalizeDorisFieldName(tt.input))
+		})
+	}
+}
+
+func TestDorisSQLExpr_ParserSearchAfter(t *testing.T) {
+	expr := NewSQLExpr(Doris).
+		WithInternalFields("dtEventTimeStamp", "gseIndex").
+		WithFieldsMap(metadata.FieldsMap{
+			"dtEventTimeStamp": {FieldType: DorisTypeBigInt},
+			"level":            {FieldType: DorisTypeString},
+			"gseIndex":         {FieldType: DorisTypeDouble},
+			"enabled":          {FieldType: DorisTypeBoolean},
+			"eventDate":        {FieldType: "DATEV2"},
+			"eventTime":        {FieldType: "DATETIMEV2(6)"},
+		})
+
+	tests := []struct {
+		name   string
+		orders metadata.Orders
+		values []any
+		want   string
+		err    string
+	}{
+		{
+			name: "mixed order and scalar types",
+			orders: metadata.Orders{
+				{Name: FieldTime, Ast: false},
+				{Name: "level", Ast: false},
+				{Name: "gseIndex", Ast: true},
+			},
+			values: []any{json.Number("1743465646224"), "warning", 4281730.5},
+			want:   "((`dtEventTimeStamp` < 1743465646224 OR `dtEventTimeStamp` IS NULL) OR (`dtEventTimeStamp` = 1743465646224 AND (`level` < 'warning' OR `level` IS NULL)) OR (`dtEventTimeStamp` = 1743465646224 AND `level` = 'warning' AND `gseIndex` > 4.2817305e+06))",
+		},
+		{
+			name: "preserve large integer",
+			orders: metadata.Orders{
+				{Name: "dtEventTimeStamp", Ast: false},
+			},
+			values: []any{json.Number("11198970968214182562")},
+			want:   "((`dtEventTimeStamp` < 11198970968214182562 OR `dtEventTimeStamp` IS NULL))",
+		},
+		{
+			name: "boolean value",
+			orders: metadata.Orders{
+				{Name: "enabled", Ast: true},
+			},
+			values: []any{true},
+			want:   "((`enabled` > TRUE))",
+		},
+		{
+			name: "Doris V2 date values",
+			orders: metadata.Orders{
+				{Name: "eventDate", Ast: true},
+				{Name: "eventTime", Ast: false},
+			},
+			values: []any{"2026-08-28", "2026-08-28 13:05:42.123456"},
+			want:   "((`eventDate` > '2026-08-28') OR (`eventDate` = '2026-08-28' AND (`eventTime` < '2026-08-28 13:05:42.123456' OR `eventTime` IS NULL)))",
+		},
+		{
+			name: "ascending null cursor includes non-null values",
+			orders: metadata.Orders{
+				{Name: "level", Ast: true},
+			},
+			values: []any{nil},
+			want:   "((`level` IS NOT NULL))",
+		},
+		{
+			name: "descending cursor includes trailing null values",
+			orders: metadata.Orders{
+				{Name: "level", Ast: false},
+			},
+			values: []any{"warning"},
+			want:   "((`level` < 'warning' OR `level` IS NULL))",
+		},
+		{
+			name: "descending null cursor has no following values",
+			orders: metadata.Orders{
+				{Name: "level", Ast: false},
+			},
+			values: []any{nil},
+			want:   "FALSE",
+		},
+		{
+			name: "null cursor preserves following sort fields",
+			orders: metadata.Orders{
+				{Name: "level", Ast: true},
+				{Name: "gseIndex", Ast: true},
+			},
+			values: []any{nil, 7},
+			want:   "((`level` IS NOT NULL) OR (`level` IS NULL AND `gseIndex` > 7))",
+		},
+		{
+			name: "value count mismatch",
+			orders: metadata.Orders{
+				{Name: "level", Ast: true},
+				{Name: "gseIndex", Ast: true},
+			},
+			values: []any{"info"},
+			err:    "search_after values count 1 does not match order fields count 2",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := expr.ParserSearchAfter(test.orders, test.values)
+			if test.err != "" {
+				assert.EqualError(t, err, test.err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, test.want, got)
 		})
 	}
 }

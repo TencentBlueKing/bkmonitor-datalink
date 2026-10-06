@@ -52,7 +52,7 @@ func TestSpaceFilter_NewTsDBs(t *testing.T) {
 		"test_2_regex": {
 			fieldName: "kubelet_.+",
 			isRegexp:  true,
-			expected:  `[{"table_id":"result_table.influxdb","field":["kube_pod_info","kube_node_info","kube_node_status_condition","kubelet_cluster_request_total","merltrics_rest_request_status_200_count","merltrics_rest_request_status_500_count"],"measurement_type":"bk_split_measurement","data_label":"influxdb","storage_id":"2","cluster_name":"default","db":"result_table","measurement":"influxdb","metric_name":"kubelet_.+","expand_metric_names":["kubelet_cluster_request_total"],"time_field":{},"need_add_time":false,"storage_type":"influxdb"},{"table_id":"result_table.vm","field":["container_cpu_usage_seconds_total","kube_pod_info","node_with_pod_relation","node_with_system_relation","deployment_with_replicaset_relation","pod_with_replicaset_relation","apm_service_instance_with_pod_relation","apm_service_instance_with_system_relation","container_info_relation","host_info_relation","kubelet_info"],"measurement_type":"bk_split_measurement","data_label":"kubelet_info","storage_id":"2","db":"other","measurement":"kubelet_info","vm_rt":"2_bcs_prom_computation_result_table","metric_name":"kubelet_.+","expand_metric_names":["kubelet_info"],"time_field":{},"need_add_time":false,"storage_type":"victoria_metrics"}]`,
+			expected:  `[{"table_id":"result_table.influxdb","field":["kube_pod_info","kube_node_info","kube_node_status_condition","kubelet_cluster_request_total","merltrics_rest_request_status_200_count","merltrics_rest_request_status_500_count"],"measurement_type":"bk_split_measurement","data_label":"influxdb","storage_id":"2","cluster_name":"default","db":"result_table","measurement":"influxdb","metric_name":"kubelet_.+","expand_metric_names":["kubelet_cluster_request_total"],"time_field":{},"need_add_time":false,"storage_type":"influxdb"},{"table_id":"result_table.vm","field":["container_cpu_usage_seconds_total","kube_pod_info","node_with_pod_relation","node_with_system_relation","deployment_with_replicaset_relation","pod_with_replicaset_relation","apm_service_instance_with_pod_relation","apm_service_instance_with_system_relation","container_info_relation","host_info_relation","kubelet_info"],"measurement_type":"bk_split_measurement","data_label":"kubelet_info","storage_id":"2","db":"other","measurement":"kubelet_info","vm_rt":"2_bcs_prom_computation_result_table","metric_name":"kubelet_.+","expand_metric_names":["kubelet_info"],"time_field":{},"need_add_time":false,"storage_type":"victoria_metrics"},{"table_id":"result_table.vm","field":["container_cpu_usage_seconds_total","kube_pod_info","node_with_pod_relation","node_with_system_relation","deployment_with_replicaset_relation","pod_with_replicaset_relation","apm_service_instance_with_pod_relation","apm_service_instance_with_system_relation","container_info_relation","host_info_relation","kubelet_info"],"measurement_type":"bk_split_measurement","data_label":"vm","storage_id":"2","vm_rt":"2_bcs_prom_computation_result_table","metric_name":"kubelet_.+","expand_metric_names":["kubelet_info"],"time_field":{},"need_add_time":false,"storage_type":"victoria_metrics"}]`,
 		},
 		"test_3_regex": {
 			fieldName: "container_.+",
@@ -451,7 +451,7 @@ func TestE2E_DataList_FilterResultTableByLabel(t *testing.T) {
 	sf, err := NewSpaceFilter(ctx, &TsDBOption{SpaceUid: influxdb.SpaceUid})
 	require.NoError(t, err)
 
-	// 使用 kubelet_.+ 与 IsRegexp 使无过滤时返回 influxdb + vm（与 test_2_regex 一致）
+	// kubelet_.+ 命中 influxdb、vm 原路由及 vm 的独立指标补充路由（与 test_2_regex 一致）。
 	optBase := &TsDBOption{
 		SpaceUid:    influxdb.SpaceUid,
 		FieldName:   "kubelet_.+",
@@ -487,8 +487,10 @@ func TestE2E_DataList_FilterResultTableByLabel(t *testing.T) {
 		opt.TableIDConditions = AllConditions{{{DimensionName: "scene", Value: []string{"k8s"}, Operator: ConditionEqual}}}
 		tsdb, err := sf.DataList(&opt)
 		require.NoError(t, err)
-		require.Len(t, tsdb, 1, "scene=k8s 应只命中 result_table.vm，若为 0 请确认 mock 中 ResultTableVM 已设置 Labels scene=k8s")
-		assert.Equal(t, influxdb.ResultTableVM, tsdb[0].TableID)
+		require.Len(t, tsdb, 2, "scene=k8s 应保留 result_table.vm 原路由及其独立指标路由")
+		for _, route := range tsdb {
+			assert.Equal(t, influxdb.ResultTableVM, route.TableID)
+		}
 	})
 
 	t.Run("or_scene_log_or_k8s_returns_both", func(t *testing.T) {
@@ -499,13 +501,12 @@ func TestE2E_DataList_FilterResultTableByLabel(t *testing.T) {
 		}
 		tsdb, err := sf.DataList(&opt)
 		require.NoError(t, err)
-		require.Len(t, tsdb, 2, "scene=log or scene=k8s 应命中 influxdb 与 vm")
+		require.Len(t, tsdb, 3, "scene=log or scene=k8s 应命中 influxdb、vm 及其独立指标路由")
 		tableIDs := make([]string, 0, len(tsdb))
 		for _, d := range tsdb {
 			tableIDs = append(tableIDs, d.TableID)
 		}
-		assert.Contains(t, tableIDs, influxdb.ResultTableInfluxDB)
-		assert.Contains(t, tableIDs, influxdb.ResultTableVM)
+		assert.ElementsMatch(t, []string{influxdb.ResultTableInfluxDB, influxdb.ResultTableVM, influxdb.ResultTableVM}, tableIDs)
 	})
 
 	// AND 多标签：mock 中 influxdb=scene=log,cluster_id=1；vm=scene=k8s,cluster_id=2
@@ -551,8 +552,10 @@ func TestE2E_DataList_FilterResultTableByLabel(t *testing.T) {
 		}
 		tsdb, err := sf.DataList(&opt)
 		require.NoError(t, err)
-		require.Len(t, tsdb, 1, "scene!=log 应只命中 result_table.vm（scene=k8s）")
-		assert.Equal(t, influxdb.ResultTableVM, tsdb[0].TableID)
+		require.Len(t, tsdb, 2, "scene!=log 应保留 result_table.vm 原路由及其独立指标路由")
+		for _, route := range tsdb {
+			assert.Equal(t, influxdb.ResultTableVM, route.TableID)
+		}
 	})
 
 	// 正则：scene=~"log.*" 命中 influxdb；scene=~"k8s" 命中 vm；scene!~"metric.*" 两个都命中
@@ -574,8 +577,10 @@ func TestE2E_DataList_FilterResultTableByLabel(t *testing.T) {
 		}
 		tsdb, err := sf.DataList(&opt)
 		require.NoError(t, err)
-		require.Len(t, tsdb, 1, "scene=~\"k8s\" 应只命中 result_table.vm")
-		assert.Equal(t, influxdb.ResultTableVM, tsdb[0].TableID)
+		require.Len(t, tsdb, 2, "scene=~\"k8s\" 应保留 result_table.vm 原路由及其独立指标路由")
+		for _, route := range tsdb {
+			assert.Equal(t, influxdb.ResultTableVM, route.TableID)
+		}
 	})
 
 	t.Run("scene_nregex_metric_star_returns_both", func(t *testing.T) {
@@ -585,13 +590,12 @@ func TestE2E_DataList_FilterResultTableByLabel(t *testing.T) {
 		}
 		tsdb, err := sf.DataList(&opt)
 		require.NoError(t, err)
-		require.Len(t, tsdb, 2, "scene!~\"metric.*\" 应命中 log 与 k8s（两者均不匹配 metric.*）")
+		require.Len(t, tsdb, 3, "scene!~\"metric.*\" 应命中 log、k8s 及其独立指标路由")
 		tableIDs := make([]string, 0, len(tsdb))
 		for _, d := range tsdb {
 			tableIDs = append(tableIDs, d.TableID)
 		}
-		assert.Contains(t, tableIDs, influxdb.ResultTableInfluxDB)
-		assert.Contains(t, tableIDs, influxdb.ResultTableVM)
+		assert.ElementsMatch(t, []string{influxdb.ResultTableInfluxDB, influxdb.ResultTableVM, influxdb.ResultTableVM}, tableIDs)
 	})
 
 	// 已指定 table_id / data_label（Split 后 db 非空）时，不再套用 table_id_conditions，避免与显式选表互斥。

@@ -67,6 +67,10 @@ type SQLExpr interface {
 	ParserQueryString(ctx context.Context, qs string) (string, error)
 	// ParserAllConditions 解析全量条件生成SQL条件表达式
 	ParserAllConditions(allConditions metadata.AllConditions) (string, error)
+	// ParserSearchAfter 解析游标条件生成SQL条件表达式
+	ParserSearchAfter(orders metadata.Orders, values []any) (string, error)
+	// ParserSearchAfterFields 返回游标排序字段的 SQL 表达式，用于内部投影游标值。
+	ParserSearchAfterFields(orders metadata.Orders) ([]string, error)
 	// ParserAggregatesAndOrders 解析聚合条件生成SQL条件表达式
 	ParserAggregatesAndOrders(selectDistinct []string, aggregates metadata.Aggregates, orders metadata.Orders) ([]string, []string, []string, *set.Set[string], TimeAggregate, error)
 	// ParserSQL 解析 String 语句
@@ -173,6 +177,20 @@ func (d *DefaultSQLExpr) FieldMap() metadata.FieldsMap {
 // ParserQueryString 解析查询字符串（当前实现返回空）
 func (d *DefaultSQLExpr) ParserQueryString(ctx context.Context, _ string) (string, error) {
 	return "", nil
+}
+
+func (d *DefaultSQLExpr) ParserSearchAfter(_ metadata.Orders, values []any) (string, error) {
+	if len(values) == 0 {
+		return "", nil
+	}
+	return "", fmt.Errorf("search_after is unsupported for %s", d.Type())
+}
+
+func (d *DefaultSQLExpr) ParserSearchAfterFields(orders metadata.Orders) ([]string, error) {
+	if len(orders) == 0 {
+		return nil, fmt.Errorf("search_after requires order fields")
+	}
+	return nil, fmt.Errorf("search_after is unsupported for %s", d.Type())
 }
 
 // ParserAggregatesAndOrders 解析聚合函数，生成 select 和 group by 字段

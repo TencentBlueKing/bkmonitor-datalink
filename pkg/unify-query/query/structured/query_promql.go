@@ -25,17 +25,20 @@ const QueryBkLabelSelectorPrefix = "__bk_query_label_selector_"
 
 // QueryPromQL promql 查询结构体
 type QueryPromQL struct {
-	PromQL              string   `json:"promql"`
-	Start               string   `json:"start"`
-	End                 string   `json:"end"`
-	Step                string   `json:"step,omitempty"`
-	BKBizIDs            []string `json:"bk_biz_ids,omitempty"`
-	MaxSourceResolution string   `json:"max_source_resolution,omitempty"`
-	NotAlignInfluxdb    bool     `json:"not_align_influxdb,omitempty"` // 不与influxdb对齐
-	Limit               int      `json:"limit,omitempty"`
-	Slimit              int      `json:"slimit,omitempty"`
-	Match               string   `json:"match,omitempty"`
-	IsVerifyDimensions  bool     `json:"is_verify_dimensions,omitempty"`
+	PromQL              string        `json:"promql"`
+	ResponseContract    string        `json:"response_contract,omitempty"`
+	LegacyOutputRef     string        `json:"legacy_output_ref,omitempty"`
+	OutputList          []QueryOutput `json:"output_list,omitempty"`
+	Start               string        `json:"start"`
+	End                 string        `json:"end"`
+	Step                string        `json:"step,omitempty"`
+	BKBizIDs            []string      `json:"bk_biz_ids,omitempty"`
+	MaxSourceResolution string        `json:"max_source_resolution,omitempty"`
+	NotAlignInfluxdb    bool          `json:"not_align_influxdb,omitempty"` // 不与influxdb对齐
+	Limit               int           `json:"limit,omitempty"`
+	Slimit              int           `json:"slimit,omitempty"`
+	Match               string        `json:"match,omitempty"`
+	IsVerifyDimensions  bool          `json:"is_verify_dimensions,omitempty"`
 
 	Reference    bool `json:"reference,omitempty"`
 	NotTimeAlign bool `json:"not_time_align,omitempty"`
@@ -51,6 +54,67 @@ type QueryPromQL struct {
 
 	// AddDimensions 额外添加的聚合维度，会与每个 function.dimensions 合并
 	AddDimensions []string `json:"add_dimensions,omitempty"`
+}
+
+// ValidateNamedOutputs validates the opt-in PromQL contract before routing or storage access.
+func (q *QueryPromQL) ValidateNamedOutputs(maxOutputs int) error {
+	if q.ResponseContract == "" {
+		if q.LegacyOutputRef == "" && len(q.OutputList) == 0 {
+			return nil
+		}
+		return fmt.Errorf("response_contract is required when named output fields are present")
+	}
+	if q.ResponseContract != NamedOutputsV1 {
+		return fmt.Errorf("unsupported response_contract: %s", q.ResponseContract)
+	}
+	if strings.TrimSpace(q.LegacyOutputRef) == "" {
+		return fmt.Errorf("legacy_output_ref is required")
+	}
+	if len(q.OutputList) == 0 || len(q.OutputList) > maxOutputs {
+		return fmt.Errorf("output_list length must be between 1 and %d", maxOutputs)
+	}
+	// The PromQL converter replaces UQ's now() extension before parsing. Two
+	// placeholders distinguish now() from a fixed numeric literal while keeping
+	// equivalent expressions independent of clock ticks.
+	placeholders := [...]string{"0", "1"}
+	parseExpression := func(expression, placeholder string) (parser.Expr, error) {
+		return parser.ParseExpr(strings.ReplaceAll(expression, "now()", placeholder))
+	}
+	var legacyExpressions [2]parser.Expr
+	for index, placeholder := range placeholders {
+		expr, err := parseExpression(q.PromQL, placeholder)
+		if err != nil {
+			return fmt.Errorf("promql expression is invalid: %w", err)
+		}
+		legacyExpressions[index] = expr
+	}
+	seen := make(map[string]struct{}, len(q.OutputList))
+	legacyFound := false
+	for _, output := range q.OutputList {
+		if !outputReferencePattern.MatchString(output.ReferenceName) {
+			return fmt.Errorf("invalid output reference: %s", output.ReferenceName)
+		}
+		if _, ok := seen[output.ReferenceName]; ok {
+			return fmt.Errorf("duplicate output reference: %s", output.ReferenceName)
+		}
+		seen[output.ReferenceName] = struct{}{}
+		for index, placeholder := range placeholders {
+			expr, parseErr := parseExpression(output.Expression, placeholder)
+			if parseErr != nil {
+				return fmt.Errorf("output %s expression is invalid: %w", output.ReferenceName, parseErr)
+			}
+			if output.ReferenceName == q.LegacyOutputRef && expr.String() != legacyExpressions[index].String() {
+				return fmt.Errorf("legacy output expression must be equivalent to promql")
+			}
+		}
+		if output.ReferenceName == q.LegacyOutputRef {
+			legacyFound = true
+		}
+	}
+	if !legacyFound {
+		return fmt.Errorf("legacy_output_ref %s is missing from output_list", q.LegacyOutputRef)
+	}
+	return nil
 }
 
 // refMgr
@@ -416,6 +480,9 @@ func (sp *queryPromQLExpr) queryTs() (*QueryTs, error) {
 	}
 	if end > start {
 		metricMerge = append(metricMerge, sp.promqlByte[start:end]...)
+	}
+	for _, query := range queryList {
+		query.ASTBranchCount = len(queryList)
 	}
 
 	ret := &QueryTs{

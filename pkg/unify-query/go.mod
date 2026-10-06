@@ -174,4 +174,5 @@ require (
 replace (
 	github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils => ../utils
 	github.com/influxdata/influxdb => github.com/TencentBlueKing/influxdb v1.8.14
+	github.com/prometheus/prometheus => ./third_party/prometheus
 )

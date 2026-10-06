@@ -18,14 +18,10 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/likexian/gokit/assert"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 // TestGetStoragePath 测试获取存储路径
 func TestGetStoragePath(t *testing.T) {
-	log.InitTestLogger()
-
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf("failed to start miniredis: %v", err)
@@ -45,8 +41,6 @@ func TestGetStoragePath(t *testing.T) {
 
 // TestGetStorageChannel 测试获取存储 channel 路径
 func TestGetStorageChannel(t *testing.T) {
-	log.InitTestLogger()
-
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf("failed to start miniredis: %v", err)
@@ -66,7 +60,6 @@ func TestGetStorageChannel(t *testing.T) {
 
 // TestFormatStorageInfo 测试格式化存储配置信息
 func TestFormatStorageInfo(t *testing.T) {
-	log.InitTestLogger()
 	ctx := context.Background()
 
 	t.Run("正常解析单个存储配置", func(t *testing.T) {
@@ -268,8 +261,6 @@ func TestFormatStorageInfo(t *testing.T) {
 }
 
 func TestReplaceStorageClient(t *testing.T) {
-	log.InitTestLogger()
-
 	replaceStorageClient(nil, "first")
 	if getStorageClient() != nil {
 		t.Fatal("expected storage client cache to be cleared")
@@ -296,7 +287,6 @@ func TestReplaceStorageClient(t *testing.T) {
 
 // TestGetStorageInfo 测试从 Redis 获取存储配置信息
 func TestGetStorageInfo(t *testing.T) {
-	log.InitTestLogger()
 	ctx := context.Background()
 
 	t.Run("正常获取单个存储配置", func(t *testing.T) {
@@ -392,7 +382,6 @@ func TestGetStorageInfo(t *testing.T) {
 
 // TestWatchStorageInfo 测试监听存储配置变更
 func TestWatchStorageInfo(t *testing.T) {
-	log.InitTestLogger()
 	ctx := context.Background()
 
 	t.Run("正常启动监听", func(t *testing.T) {
@@ -526,7 +515,6 @@ func TestWatchStorageInfo(t *testing.T) {
 
 // TestSetStorage 测试设置存储配置
 func TestSetStorage(t *testing.T) {
-	log.InitTestLogger()
 	ctx := context.Background()
 
 	t.Run("正常设置存储配置", func(t *testing.T) {

@@ -278,8 +278,6 @@ func newFeatureFlagProvider(ctx context.Context) FeatureFlagProvider {
 		return consulProvider
 	}
 
-	return newFallbackFeatureFlagProvider(
-		redis.NewFeatureFlagClient(redisClient, basePath),
-		consulProvider,
-	)
+	provider := redis.NewFeatureFlagClient(redisClient, basePath)
+	return newFallbackFeatureFlagProvider(provider, consulProvider, provider.InitializeFeatureFlags)
 }

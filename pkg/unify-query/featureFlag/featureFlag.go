@@ -53,7 +53,8 @@ func (r snapshotRetriever) Retrieve(context.Context) ([]byte, error) {
 	return r.flags, nil
 }
 
-func validateFeatureFlagSnapshot(data []byte) error {
+// ValidateFeatureFlagSnapshot 校验完整的 JSON 快照，供配置读取、迁移和设置入口复用。
+func ValidateFeatureFlagSnapshot(data []byte) error {
 	if !stdjson.Valid(data) {
 		return fmt.Errorf("invalid feature flag JSON")
 	}
@@ -99,7 +100,7 @@ func ReloadFeatureFlagsIfChanged(data []byte) (bool, error) {
 	if data == nil {
 		return false, nil
 	}
-	if err := validateFeatureFlagSnapshot(data); err != nil {
+	if err := ValidateFeatureFlagSnapshot(data); err != nil {
 		return false, err
 	}
 	featureFlag.lock.Lock()

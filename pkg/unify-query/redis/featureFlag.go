@@ -116,7 +116,22 @@ func (f *FeatureFlagClient) WatchFeatureFlags(ctx context.Context) (<-chan any, 
 	return resultChan, nil
 }
 
-// SetFeatureFlags 设置特性开关配置到 Redis 并发布变更通知（主要用于测试）
+// InitializeFeatureFlags 仅在 Key 不存在时回填并返回是否创建，避免覆盖并发设置。
+func (f *FeatureFlagClient) InitializeFeatureFlags(ctx context.Context, data []byte) (bool, error) {
+	if f.client == nil {
+		return false, fmt.Errorf("redis client is not initialized")
+	}
+	created, err := f.client.SetNX(ctx, f.GetFeatureFlagsPath(), data, 0).Result()
+	if err != nil {
+		return false, fmt.Errorf("failed to initialize feature flags in redis: %w", err)
+	}
+	if created {
+		f.publishFeatureFlags(ctx, data)
+	}
+	return created, nil
+}
+
+// SetFeatureFlags 设置完整特性开关快照到 Redis 并发布变更通知。
 func (f *FeatureFlagClient) SetFeatureFlags(ctx context.Context, data []byte) error {
 	if f.client == nil {
 		return fmt.Errorf("redis client is not initialized")
@@ -130,13 +145,15 @@ func (f *FeatureFlagClient) SetFeatureFlags(ctx context.Context, data []byte) er
 		return fmt.Errorf("failed to set feature flags to redis: %w", err)
 	}
 
-	// 发布变更通知
+	f.publishFeatureFlags(ctx, data)
+	return nil
+}
+
+func (f *FeatureFlagClient) publishFeatureFlags(ctx context.Context, data []byte) {
 	channel := f.GetFeatureFlagsChannel()
-	err = f.client.Publish(ctx, channel, string(data)).Err()
+	err := f.client.Publish(ctx, channel, string(data)).Err()
 	if err != nil {
 		log.Errorf(ctx, "[redis] failed to publish feature flags change notification: %s", err)
 		// 不返回错误，因为数据已经设置成功
 	}
-
-	return nil
 }

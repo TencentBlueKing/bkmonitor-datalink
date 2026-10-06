@@ -11,6 +11,7 @@ package redis
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -21,10 +22,49 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
+func TestMain(m *testing.M) {
+	// 订阅退出时仍可能写日志，全包只初始化一次，避免各测试重建全局日志器。
+	log.InitTestLogger()
+	os.Exit(m.Run())
+}
+
+func TestInitializeFeatureFlagsNotifiesAndPreservesExistingSnapshot(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := goRedis.NewClient(&goRedis.Options{Addr: mr.Addr()})
+	defer client.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	flags := NewFeatureFlagClient(client, "test")
+	watch, err := flags.WatchFeatureFlags(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cancel()
+		for range watch {
+		}
+	}()
+	created, err := flags.InitializeFeatureFlags(ctx, []byte("{}"))
+	if err != nil || !created {
+		t.Fatalf("initialize snapshot: created %v, error: %v", created, err)
+	}
+	select {
+	case <-watch:
+	case <-time.After(time.Second):
+		t.Fatal("expected initialization to notify readers")
+	}
+	created, err = flags.InitializeFeatureFlags(ctx, []byte(`{"another-flag":{}}`))
+	if err != nil || created {
+		t.Fatalf("initialization must preserve the existing snapshot: created %v, error: %v", created, err)
+	}
+	persisted, err := mr.Get(flags.GetFeatureFlagsPath())
+	if err != nil || persisted != "{}" || mr.TTL(flags.GetFeatureFlagsPath()) != 0 {
+		t.Fatalf("unexpected persisted snapshot %q, error: %v", persisted, err)
+	}
+}
+
 // TestGetFeatureFlagsPath 测试获取特性开关路径
 func TestGetFeatureFlagsPath(t *testing.T) {
-	log.InitTestLogger()
-
 	// 使用 miniredis 创建 mock client
 	mr, err := miniredis.Run()
 	if err != nil {
@@ -45,8 +85,6 @@ func TestGetFeatureFlagsPath(t *testing.T) {
 
 // TestGetFeatureFlagsChannel 测试获取特性开关 channel 路径
 func TestGetFeatureFlagsChannel(t *testing.T) {
-	log.InitTestLogger()
-
 	// 使用 miniredis 创建 mock client
 	mr, err := miniredis.Run()
 	if err != nil {
@@ -67,7 +105,6 @@ func TestGetFeatureFlagsChannel(t *testing.T) {
 
 // TestGetFeatureFlags 测试从 Redis 获取特性开关配置
 func TestGetFeatureFlags(t *testing.T) {
-	log.InitTestLogger()
 	ctx := context.Background()
 
 	// 测试用例 1: 正常获取配置
@@ -161,7 +198,6 @@ func TestGetFeatureFlags(t *testing.T) {
 
 // TestWatchFeatureFlags 测试监听特性开关变更
 func TestWatchFeatureFlags(t *testing.T) {
-	log.InitTestLogger()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -234,7 +270,6 @@ func TestWatchFeatureFlags(t *testing.T) {
 
 // TestSetFeatureFlags 测试设置特性开关配置
 func TestSetFeatureFlags(t *testing.T) {
-	log.InitTestLogger()
 	ctx := context.Background()
 
 	// 测试用例 1: Redis client 未初始化
@@ -305,8 +340,6 @@ func TestSetFeatureFlags(t *testing.T) {
 
 // TestFeatureFlagsIntegration 集成测试：完整的特性开关流程
 func TestFeatureFlagsIntegration(t *testing.T) {
-	log.InitTestLogger()
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -396,7 +429,6 @@ func TestFeatureFlagsIntegration(t *testing.T) {
 
 // TestGetFeatureFlagsWithMultipleFlags 测试多个特性开关配置
 func TestGetFeatureFlagsWithMultipleFlags(t *testing.T) {
-	log.InitTestLogger()
 	ctx := context.Background()
 
 	mr, err := miniredis.Run()
@@ -468,8 +500,6 @@ func TestGetFeatureFlagsWithMultipleFlags(t *testing.T) {
 
 // TestGetFeatureFlagsPathWithCustomBasePath 测试自定义基础路径
 func TestGetFeatureFlagsPathWithCustomBasePath(t *testing.T) {
-	log.InitTestLogger()
-
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf("failed to start miniredis: %v", err)
@@ -495,7 +525,6 @@ func TestGetFeatureFlagsPathWithCustomBasePath(t *testing.T) {
 
 // TestWatchFeatureFlagsMultipleNotifications 测试多次通知
 func TestWatchFeatureFlagsMultipleNotifications(t *testing.T) {
-	log.InitTestLogger()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -541,8 +570,6 @@ func TestWatchFeatureFlagsMultipleNotifications(t *testing.T) {
 
 // TestGetFeatureFlagsChannelFormat 测试 channel 格式
 func TestGetFeatureFlagsChannelFormat(t *testing.T) {
-	log.InitTestLogger()
-
 	mr, err := miniredis.Run()
 	if err != nil {
 		t.Fatalf("failed to start miniredis: %v", err)

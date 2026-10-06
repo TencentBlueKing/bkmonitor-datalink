@@ -16,6 +16,18 @@
 
 ## 🚀 快速开始
 
+### 设置 Feature Flag
+
+服务优先读取 Redis，只有 Key 不存在时读取 Consul，校验成功后自动回填 Redis，无需手工迁移。回填采用 `SET NX`，已有或并发写入的 Redis 配置优先；回填失败会继续使用本次有效的 Consul 快照，并在后续调和时重试。回填后以 Redis 为准，后续 Consul 修改不再同步。Redis 读取失败或已有快照非法时保留运行中的最后有效配置，不重新读取 Consul；首次启动没有有效配置时持续重试。变更通过 Redis Pub/Sub 通知，通知丢失时由每分钟全量调和恢复。
+
+使用运行服务相同的配置文件，将完整的 go-feature-flag JSON 快照写入 Redis：
+
+```bash
+unify-query --config /path/to/unify-query.yaml config set-feature-flags --file flags.json
+```
+
+命令复用 `redis` 的连接、认证、数据库和 `kv_base_path` 配置，支持单机和哨兵模式；先校验文件，再写入 `<redis.kv_base_path>:data:feature_flag`，并发布变更通知。写入替换整份配置，不设过期时间；`{}` 可清空开关配置。文件必须是 JSON，仓库中的 `featureFlag.yaml` 仅为格式示例。命令不会输出配置内容或凭据，校验、配置读取或写入失败时返回非零退出码。
+
 ## 快速部署
 
 在docker desktop上安装consul，redis，influxdb

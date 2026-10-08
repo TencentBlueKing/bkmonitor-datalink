@@ -1,0 +1,27 @@
+.suppression-check {
+  border-top: 1px solid var(--line);
+  margin-top: 24px;
+  padding-top: 20px;
+  overflow-wrap: anywhere;
+}
+.suppression-check form {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0;
+}
+.suppression-check label {
+  display: grid;
+  gap: 8px;
+}
+.suppression-check textarea {
+  min-height: 80px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 10px;
+}
+.suppression-check-result {
+  padding: 16px;
+  border: 1px solid var(--line);
+  margin: 16px 0;
+}

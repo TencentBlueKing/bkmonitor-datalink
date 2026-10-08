@@ -133,7 +133,8 @@ export function EntityTable({
                         {Array.isArray(p.related_alert_ids)
                           ? p.related_alert_ids.length
                           : 0}{" "}
-                        个关联告警
+                        个关联告警 · 丰富{" "}
+                        <EntityState value={p.enrich_status} />
                       </span>
                     </>
                   ) : entity === "alerts" ? (

@@ -1,3 +1,12 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package processors
 
 import (
@@ -10,6 +19,7 @@ import (
 	"linkd/internal/enrich/models"
 	"linkd/internal/enrich/rules"
 	"linkd/internal/enrich/view"
+	"linkd/internal/store/storetest"
 )
 
 func TestDisplayPreservesCreatedContentForDataAndLogs(t *testing.T) {
@@ -38,15 +48,23 @@ func TestDisplayPreservesCreatedContentForDataAndLogs(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				result, err := chain.Enrich(t.Context(), enrich.Input{Alert: alert})
+				result, err := chain.Enrich(t.Context(), enrich.Input{Event: alert})
 				if err != nil {
 					t.Fatal(err)
 				}
-				payload, err := enrich.DecodePayload(result.Data)
+				payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 				if err != nil {
 					t.Fatal(err)
 				}
 				envelope := payload.Processors[2][rules.DisplayProcessor]
+				if preserve {
+					for _, patch := range envelope.Patches {
+						if patch.Path == "$.content" {
+							t.Fatal("created-content mode published a source content override")
+						}
+					}
+					continue
+				}
 				var got string
 				if err := json.Unmarshal(envelope.Value["content"], &got); err != nil {
 					t.Fatal(err)
@@ -106,31 +124,35 @@ func TestDisplayCreatedContentAcrossResourceScenes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := chain.Enrich(t.Context(), enrich.Input{Alert: alert})
+			result, err := chain.Enrich(t.Context(), enrich.Input{Event: alert})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if !reflect.DeepEqual(alert, original) {
 				t.Fatal("enrichment changed its input Alert")
 			}
-			payload, err := enrich.DecodePayload(result.Data)
+			payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 			if err != nil {
 				t.Fatal(err)
 			}
 			display := payload.Processors[2][rules.DisplayProcessor]
-			var displayedContent string
-			if err := json.Unmarshal(display.Value["content"], &displayedContent); err != nil {
-				t.Fatal(err)
+
+			if display.Status != domain.EnrichStatusSucceeded {
+				t.Fatalf("unexpected display status %s", display.Status)
 			}
-			if display.Status != domain.EnrichStatusSucceeded || displayedContent != original.Content {
-				t.Fatalf("display status=%s content=%s", display.Status, display.Value["content"])
+			for _, patch := range display.Patches {
+				if patch.Path == "$.content" {
+					t.Fatal("source content overrides generated Alert content")
+				}
 			}
-			alert.EnrichStatus, alert.Enrich = result.Status, result.Data
-			projected, err := view.EnrichedAlert(alert)
+			opening := storetest.Alert(alert.BKTenantID, "created", alert.EventID, alert.Fingerprint, alert.Evaluations[0].Severity)
+			opening.Content = "generated: immutable"
+			opening.EnrichStatus, opening.Enrich = result.Data.Evaluations[0].Status, result.Data.Evaluations[0].Data
+			projected, err := view.EnrichedAlert(opening)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if projected.Content != original.Content {
+			if projected.Content != opening.Content {
 				t.Fatalf("projected content=%q", projected.Content)
 			}
 		})

@@ -416,17 +416,14 @@ func collectNumber(t *testing.T, value float64) domain.Scalar {
 	return result
 }
 
-func collectAlert(t *testing.T, dimensions domain.DimensionMap) domain.Alert {
+func collectAlert(t *testing.T, dimensions domain.DimensionMap) domain.Event {
 	t.Helper()
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	return domain.Alert{
-		EventSourceVersion: 1, AlertID: "alert-collect-module", BKTenantID: "tenant-a",
+	return domain.Event{
+		EventSourceVersion: 1, EventID: "alert-collect-module", BKTenantID: "tenant-a",
 		EventSourceID: "built_in_bk", Fingerprint: "collect-module", Title: "source title",
-		Content: "source content", Severity: "warning", SubjectName: "source subject",
-		Dimensions: dimensions, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{},
-		Status: domain.AlertStatusActive, LatestEventID: "event-1", TriggerEventID: "event-1",
-		LastOccurredAt: now, UpdateAt: now, BeginAt: now, CreateAt: now,
-		EnrichStatus: domain.EnrichStatusPending, Enrich: domain.JSONObject{},
+		Content: "source content", Evaluations: []domain.EventEvaluation{{Severity: "warning", Action: domain.EventActionTriggered}}, SubjectName: "source subject",
+		Dimensions: dimensions, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, EventEnrichment: domain.EventEnrichment{EnrichStatus: domain.EnrichStatusPending}, Values: domain.EventValues{}, SourceRawData: domain.JSONObject{},
 	}
 }
 

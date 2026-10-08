@@ -34,7 +34,7 @@ func compileTest(t *testing.T, kind, config string) *Program {
 }
 
 func TestRuleMatchesOnceAndOperationsSeeEarlierWrites(t *testing.T) {
-	p := compileTest(t, "fields", `{"rules":[{"id":"normalize","when":{"left":{"jsonpath":"$.alert.content"},"operator":"contains","right":{"literal":"alarm"}},"operations":[{"id":"replace1","type":"replace","target":"$.content","replacements":[{"from":"alarm1","to":"alarm22"}]},{"id":"replace2","type":"replace","target":"$.content","replacements":[{"from":"alarm221","to":"success"}]}]},{"id":"title","when":{"left":{"jsonpath":"$.alert.content"},"operator":"eq","right":{"literal":"success"}},"operations":[{"id":"assign","type":"assign","assignments":[{"target":"$.title","value":{"template":"${content}-1","variables":{"content":{"jsonpath":"$.alert.content"}}}}]}]}]}`)
+	p := compileTest(t, "fields", `{"rules":[{"id":"normalize","when":{"left":{"jsonpath":"$.event.content"},"operator":"contains","right":{"literal":"alarm"}},"operations":[{"id":"replace1","type":"replace","target":"$.content","replacements":[{"from":"alarm1","to":"alarm22"}]},{"id":"replace2","type":"replace","target":"$.content","replacements":[{"from":"alarm221","to":"success"}]}]},{"id":"title","when":{"left":{"jsonpath":"$.event.content"},"operator":"eq","right":{"literal":"success"}},"operations":[{"id":"assign","type":"assign","assignments":[{"target":"$.title","value":{"template":"${content}-1","variables":{"content":{"jsonpath":"$.event.content"}}}}]}]}]}`)
 	input := map[string]any{"content": "alarm11", "title": "original"}
 	run, err := p.Execute(t.Context(), input, input, "tenant-a", Sources{})
 	if err != nil {
@@ -50,7 +50,7 @@ func TestRuleMatchesOnceAndOperationsSeeEarlierWrites(t *testing.T) {
 }
 
 func TestExtractGroupsMultipleTargetsAndAtomicFailure(t *testing.T) {
-	p := compileTest(t, "fields", `{"rules":[{"id":"extract","operations":[{"id":"parts","type":"extract","source":{"jsonpath":"$.alert.content"},"pattern":"host=([^,]+),zone=([0-9]+)","assignments":[{"target":"$.labels.host","value":{"jsonpath":"$.extraction.matches[0].groups[0]"}},{"target":"$.labels.zone","value":{"jsonpath":"$.extraction.matches[0].groups[1]","transforms":[{"type":"number"}]}}]},{"id":"atomic","type":"assign","assignments":[{"target":"$.labels.should_not_exist","value":{"literal":"no"}},{"target":"$.labels.bad","value":{"literal":{}}}]}]},{"id":"next","operations":[{"id":"bool","type":"assign","assignments":[{"target":"$.labels.enabled","value":{"literal":false}}]}]}]}`)
+	p := compileTest(t, "fields", `{"rules":[{"id":"extract","operations":[{"id":"parts","type":"extract","source":{"jsonpath":"$.event.content"},"pattern":"host=([^,]+),zone=([0-9]+)","assignments":[{"target":"$.labels.host","value":{"jsonpath":"$.extraction.matches[0].groups[0]"}},{"target":"$.labels.zone","value":{"jsonpath":"$.extraction.matches[0].groups[1]","transforms":[{"type":"number"}]}}]},{"id":"atomic","type":"assign","assignments":[{"target":"$.labels.should_not_exist","value":{"literal":"no"}},{"target":"$.labels.bad","value":{"literal":{}}}]}]},{"id":"next","operations":[{"id":"bool","type":"assign","assignments":[{"target":"$.labels.enabled","value":{"literal":false}}]}]}]}`)
 	input := map[string]any{"content": "host=node,zone=0", "labels": map[string]any{}}
 	result, err := p.Execute(t.Context(), input, input, "tenant-a", Sources{})
 	if err != nil {
@@ -67,7 +67,7 @@ func TestExtractGroupsMultipleTargetsAndAtomicFailure(t *testing.T) {
 }
 
 func TestJSONPathFiltersMissingNullAndConcurrency(t *testing.T) {
-	p := compileTest(t, "fields", `{"rules":[{"id":"read","operations":[{"id":"select","type":"assign","assignments":[{"target":"$.extra_data.selected","value":{"jsonpath":"$.alert.extra_data.items[?@.active == true].name","select":"all"}},{"target":"$.extra_data.null","value":{"literal":null}},{"target":"$.labels.zero","value":{"jsonpath":"$.alert.labels.absent","default":{"literal":0}}}]}]}]}`)
+	p := compileTest(t, "fields", `{"rules":[{"id":"read","operations":[{"id":"select","type":"assign","assignments":[{"target":"$.extra_data.selected","value":{"jsonpath":"$.event.extra_data.items[?@.active == true].name","select":"all"}},{"target":"$.extra_data.null","value":{"literal":null}},{"target":"$.labels.zero","value":{"jsonpath":"$.event.labels.absent","default":{"literal":0}}}]}]}]}`)
 	input := map[string]any{"labels": map[string]any{}, "extra_data": map[string]any{"items": []any{map[string]any{"name": "a", "active": true}, map[string]any{"name": "b", "active": false}}}}
 	var wg sync.WaitGroup
 	for range 8 {
@@ -122,7 +122,7 @@ func (f *fakeReader) Related(context.Context, string, []onemodel.Instance, strin
 }
 
 func TestCMDBTypedInputAndMultipleMatches(t *testing.T) {
-	p := compileTest(t, "cmdb", `{"rules":[{"id":"host","lookup":{"model_id":"cw-Host","expect":"one","where":{"field":"attributes.bk_cloud_id","type":"long","operator":"eq","value":{"jsonpath":"$.alert.labels.cloud"}}},"assignments":[{"target":"$.labels.owner","value":{"jsonpath":"$.lookup.attributes.operator"}}]}]}`)
+	p := compileTest(t, "cmdb", `{"rules":[{"id":"host","lookup":{"model_id":"cw-Host","expect":"one","where":{"field":"attributes.bk_cloud_id","type":"long","operator":"eq","value":{"jsonpath":"$.event.labels.cloud"}}},"assignments":[{"target":"$.labels.owner","value":{"jsonpath":"$.lookup.attributes.operator"}}]}]}`)
 	input := map[string]any{"labels": map[string]any{"cloud": 0}}
 	reader := &fakeReader{items: []onemodel.Instance{{TenantID: "tenant-a", ModelCode: "cw-Host", InstanceID: "1", Attributes: map[string]any{"operator": "alice"}}}}
 	result, err := p.Execute(t.Context(), input, input, "tenant-a", Sources{Instances: reader})

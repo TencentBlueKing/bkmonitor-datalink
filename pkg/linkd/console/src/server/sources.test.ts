@@ -175,7 +175,14 @@ it("proxies preview with server token and rejects a foreign origin", async () =>
     const response = await app.inject({
       method: "POST",
       url: "/local-api/enrich/preview",
-      payload: { input: { alert: { title: "raw" } } },
+      payload: {
+        input: {
+          event: {
+            title: "raw",
+            evaluations: [{ severity: "warning", action: "triggered" }],
+          },
+        },
+      },
     });
     expect(response.statusCode).toBe(422);
     expect(response.json().error.message).toContain("invalid target");

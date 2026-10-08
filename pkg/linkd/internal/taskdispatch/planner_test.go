@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"linkd/internal/config"
+	"linkd/internal/domain"
 	"linkd/internal/eventsource"
 )
 
@@ -216,5 +217,23 @@ func TestWorkerBudgetDoesNotSilentlyChangeDesiredCount(t *testing.T) {
 	}
 	if s.Statuses[0].Target != 3 {
 		t.Fatal("capacity silently reduced desired count")
+	}
+}
+
+func TestInternalMergeSchedulesOnlyLifecycleWithoutKafkaMetadata(t *testing.T) {
+	state, _, now := fixture()
+	source := config.EventSource{EventSourceID: domain.BuiltinMergeEventSourceID, Enabled: true, Storage: config.EventSourceStorageConfig{Type: config.StorageTypeInternalMerge}}.WithDefaults()
+	release := eventsource.Release{ID: source.EventSourceID, Version: 1, Spec: source}
+	Reconcile(&state, []eventsource.Release{release}, now)
+	if count(state, "cleaner") != 0 || count(state, "lifecycle") != 8 {
+		t.Fatal("internal source depended on Kafka metadata")
+	}
+	for _, status := range state.Statuses {
+		if status.Role == "cleaner" && (status.Target != 0 || status.Metadata != nil) {
+			t.Fatal("internal source requested external subscription")
+		}
+	}
+	if _, _, err := Probe(t.Context(), source); err == nil {
+		t.Fatal("internal source was probed as Kafka")
 	}
 }

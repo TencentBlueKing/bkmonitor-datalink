@@ -24,7 +24,7 @@ import (
 func TestTaskCatalogCoversResponsibilitiesAndRedacts(t *testing.T) {
 	cfg := config.Config{Storage: &config.StorageConfig{Repository: config.RepositoryTypeElasticsearch, Elasticsearch: &config.ElasticsearchConfig{}, Redis: &config.RedisConfig{Password: "private-secret"}}, Lifecycle: &config.LifecycleConfig{}}
 	s := taskCatalog(cfg, 0).Snapshot()
-	if len(s.Tasks) != 8 || len(s.Services) != 1 {
+	if len(s.Tasks) != 22 || len(s.Services) != 3 {
 		t.Fatalf("catalog %+v", s)
 	}
 	ids := map[string]bool{}
@@ -37,7 +37,7 @@ func TestTaskCatalogCoversResponsibilitiesAndRedacts(t *testing.T) {
 			t.Fatal("missing provider explanation")
 		}
 	}
-	for _, id := range []string{"scheduler", "source-providers", "elasticsearch-schema-and-active-reconciler", "elasticsearch-bucket-manager", "elasticsearch-alert-archiver", "redis-stream-manager", "active-alert-indexes", "dynamic-config"} {
+	for _, id := range []string{"scheduler", "source-providers", "elasticsearch-schema-and-active-reconciler", "elasticsearch-bucket-manager", "elasticsearch-alert-archiver", "redis-stream-manager", "active-alert-indexes", "dynamic-config", "policy-publication", "shield-check", "shield-hints", "shield-requests", "suppression-requests", "merge-judge", "merge-decisions", "merge-relations", "merge-requests"} {
 		if !ids[id] {
 			t.Fatal(id)
 		}

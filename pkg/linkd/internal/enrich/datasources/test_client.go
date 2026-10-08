@@ -31,7 +31,7 @@ func (TestClient) Call(ctx context.Context, request enrich.TestRequest) error {
 	if err := request.Config.Validate(); err != nil {
 		return err
 	}
-	if request.TenantID == "" || request.EventSourceID == "" || request.AlertID == "" || request.CallIndex < 0 || request.CallIndex >= request.Config.Calls {
+	if request.TenantID == "" || request.EventSourceID == "" || request.EventID == "" || request.CallIndex < 0 || request.CallIndex >= request.Config.Calls {
 		return fmt.Errorf("test datasource request requires stable identity and an in-range call index")
 	}
 	delay, fail := testSample(request.Config)

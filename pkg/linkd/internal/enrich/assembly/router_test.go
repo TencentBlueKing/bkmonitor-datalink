@@ -234,11 +234,11 @@ func TestRouterRunsConfiguredBaseCollectSlice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := router.Enrich(context.Background(), enrich.Input{Alert: baseCollectAlert("built_in_bk")})
+	result, err := router.Enrich(context.Background(), enrich.Input{Event: baseCollectAlert("built_in_bk")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,11 +267,11 @@ func TestRouterRunsConfiguredBaseCollectSlice(t *testing.T) {
 		string(source["meta_info"]) != `"source-event-1"` {
 		t.Fatalf("source=%#v", source)
 	}
-	noop, err := router.Enrich(context.Background(), enrich.Input{Alert: baseCollectAlert("disabled-source")})
+	noop, err := router.Enrich(context.Background(), enrich.Input{Event: baseCollectAlert("disabled-source")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	noopPayload, _ := enrich.DecodePayload(noop.Data)
+	noopPayload, _ := enrich.DecodePayload(noop.Data.Evaluations[0].Data)
 	if len(noopPayload.Processors) != 0 || noop.Status != domain.EnrichStatusSucceeded {
 		t.Fatalf("noop=%#v", noop)
 	}
@@ -314,7 +314,7 @@ func TestRouterRejectsUnknownSourceAndProcessor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := router.Enrich(context.Background(), enrich.Input{Alert: baseCollectAlert("unknown")}); err == nil {
+	if _, err := router.Enrich(context.Background(), enrich.Input{Event: baseCollectAlert("unknown")}); err == nil {
 		t.Fatal("unknown source was accepted")
 	}
 	_, err = NewRouter([]config.EventSource{{EventSourceID: "known", Enrich: config.EnrichConfig{Processors: []config.EnrichProcessorConfig{{Type: "unknown"}}}}}, enrich.Sources{})
@@ -331,11 +331,11 @@ func TestRouterInvalidInputFailsBeforeDataSources(t *testing.T) {
 	}
 	alert := baseCollectAlert("built_in_bk")
 	delete(alert.Labels, "strategy_id")
-	result, err := router.Enrich(context.Background(), enrich.Input{Alert: alert})
+	result, err := router.Enrich(context.Background(), enrich.Input{Event: alert})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, _ := enrich.DecodePayload(result.Data)
+	payload, _ := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	entry := payload.Processors[0]["strategy"]
 	if result.Status != domain.EnrichStatusFailed || entry.Diagnostics[0].Code != enrich.DiagnosticCodeMissingField {
 		t.Fatalf("result=%#v entry=%#v", result, entry)
@@ -611,21 +611,18 @@ func (p panicSources) Sources() enrich.Sources {
 	return enrich.Sources{CWStrategy: p, Business: p, Metric: p, OneModel: p, AlarmSource: p}
 }
 
-func baseCollectAlert(source string) domain.Alert {
+func baseCollectAlert(source string) domain.Event {
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	hostID, _ := domain.NewNumberScalar(101)
 	strategyID, _ := domain.NewNumberScalar(float64(datasources.SampleStrategyID))
 	strategyVersion, _ := domain.NewNumberScalar(float64(datasources.SampleStrategyVersion))
 	bizID, _ := domain.NewNumberScalar(float64(datasources.SampleBizID))
-	return domain.Alert{
-		EventSourceVersion: 1,
-		AlertID:            "alert-1", BKTenantID: datasources.SampleTenantID, EventSourceID: source, Fingerprint: "fp",
-		Title: "CPU high", Content: "CPU usage is high", Severity: "warning", SubjectName: "host-101",
+	return domain.Event{
+		EventSourceVersion: 1, EventID: "alert-1", BKTenantID: datasources.SampleTenantID, EventSourceID: source, Fingerprint: "fp",
+		Title: "CPU high", Content: "CPU usage is high", Evaluations: []domain.EventEvaluation{{Severity: "warning", Action: domain.EventActionTriggered}}, SubjectName: "host-101",
 		SourceEventID: "source-event-1", Dimensions: domain.DimensionMap{"bk_inst_id": hostID},
 		Labels:    domain.DimensionMap{"strategy_id": strategyID, "strategy_version": strategyVersion, "bk_biz_id": bizID},
-		ExtraData: domain.JSONObject{"sample": json.RawMessage(`true`)}, Status: domain.AlertStatusActive,
-		LatestEventID: "event-1", TriggerEventID: "event-1", LastOccurredAt: now, UpdateAt: now, BeginAt: now, CreateAt: now,
-		EnrichStatus: domain.EnrichStatusPending, Enrich: domain.JSONObject{},
+		ExtraData: domain.JSONObject{"sample": json.RawMessage(`true`)}, OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, EventEnrichment: domain.EventEnrichment{EnrichStatus: domain.EnrichStatusPending}, Values: domain.EventValues{}, SourceRawData: domain.JSONObject{},
 	}
 }
 
@@ -640,11 +637,11 @@ func TestRouterTestProcessorHasNoDataSourceDependency(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := router.Enrich(t.Context(), enrich.Input{Alert: baseCollectAlert(source.EventSourceID)})
+	result, err := router.Enrich(t.Context(), enrich.Input{Event: baseCollectAlert(source.EventSourceID)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -452,3 +452,45 @@ func (r *Repository) CompareAndSetEventResult(ctx context.Context, tenantID, eve
 	}
 	return store.StoredEvent{Event: updated, Processing: processing, Version: versionToken(newVersion)}, nil
 }
+
+// CompareAndSetEventEnrichment 使用同一行版本提交结果；JSON payload 中的来源字段保持不变。
+func (r *Repository) CompareAndSetEventEnrichment(ctx context.Context, tenantID, eventID string, expected store.VersionToken, result domain.EventEnrichment) (store.StoredEvent, error) {
+	if err := contextError(ctx); err != nil {
+		return store.StoredEvent{}, err
+	}
+	if err := validateIdentity(tenantID, "event_id", eventID); err != nil {
+		return store.StoredEvent{}, err
+	}
+	version, ok := parseVersion(expected)
+	if !ok {
+		return store.StoredEvent{}, store.ErrVersionConflict
+	}
+	current, err := r.GetEvent(ctx, tenantID, eventID)
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	if current.Version != expected {
+		return store.StoredEvent{}, store.ErrVersionConflict
+	}
+	updated, err := store.ApplyEventEnrichment(current, result)
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	payload, err := encodeEvent(updated)
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	// CAS 覆盖读取与写入之间的处理推进，避免覆盖已经冻结的计划或来源快照。
+	written, err := r.db.ExecContext(ctx, `UPDATE linkd_events SET payload=?,version=version+1 WHERE bk_tenant_id=? AND event_id=? AND version=?`, payload, tenantID, eventID, version)
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	affected, err := written.RowsAffected()
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	if affected != 1 {
+		return store.StoredEvent{}, store.ErrVersionConflict
+	}
+	return store.StoredEvent{Event: updated, Processing: current.Processing, Version: versionToken(version + 1)}, nil
+}

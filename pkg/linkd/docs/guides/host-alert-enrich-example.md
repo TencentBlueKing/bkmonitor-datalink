@@ -14,7 +14,7 @@ TestBaseCollectRawEventRunsLifecycleEnrichment
 
 ## 1. 处理路径
 
-当前 Enrich 接收 Lifecycle 创建的新 Alert，完整路径为：
+当前 Enrich 接收 Event，在策略与生命周期裁决前保存结果，完整路径为：
 
 ```text
 Kafka Record
@@ -23,18 +23,21 @@ Kafka Record
   → EventDraft
   → EventFactory
   → Event
-  → Lifecycle 创建 Alert
   → Enrich
       → strategy
       → resource
       → display
       → metric
       → source
+  → Event 丰富结果 CAS
+  → 策略与生命周期裁决
+  → 创建或更新 Alert
 ```
 
-Enrich 在新 Alert 持久化前同步执行。同等级更新、恢复和关闭沿用 Alert 已保存的丰富结果。
-等级升级时，`lifecycle.severity_upgrade_policy=update_current` 沿用当前 Alert 的丰富结果；
-默认策略 `close_and_create` 关闭旧 Alert、创建新 Alert，并为新 Alert 重新执行 Enrich。
+每条不同 Event（包括更新、恢复和关闭）都先执行并保存自己的丰富结果；已冻结结果的重投直接复用。
+新 Alert 复制 opening Event 对应等级的结果，已有 Alert 保留首次快照，不随后续 Event 刷新。
+`update_current` 升级也保留该快照；`close_and_create` 新建的 Alert 复制本次 Event 的丰富结果，
+不为新 Alert 再执行一遍 Enrich。
 
 ## 2. Kafka 输入
 
@@ -229,20 +232,22 @@ Event.SourceAlertID = "source-alert-1"
 同一生命周期关联范围。该范围最多有一个 active Alert；等级升级的 `close_and_create` 或告警终结后
 再次触发会创建新的 Alert ID，因此相同 fingerprint 可以先后关联多条 Alert。
 
-## 4. Enrich 输入 Alert
+## 4. Enrich 输入 Event
 
-Cleaner 和 EventFactory 生成 Event；Lifecycle 从 `evaluations` 中选择本次创建告警的级别，
-使用 opening Event 构造 Alert。本例只有 warning 触发，因此 Alert 的 `Severity` 为 `warning`。
-进入 Enrich 前的核心字段如下：
+Cleaner 和 EventFactory 生成 Event；Enrich 为各 evaluation 生成对应等级的结果，再由 Lifecycle
+裁决是否创建 Alert。本例只有 warning 触发。进入 Enrich 前的核心字段节选如下；完整身份、指纹与
+来源原文由 EventFactory 填入，不从 Alert 反向构造输入：
 
 ```go
-domain.Alert{
+domain.Event{
     BKTenantID:    "tenant-1",
     EventSourceID: "built_in_bk",
+    EventSourceVersion: 1,
+    EventEnrichment: domain.EventEnrichment{EnrichStatus: domain.EnrichStatusPending},
 
     Title:         "CPU usage is high",
     Content:       "Host 10.0.0.1 CPU usage reached 92.5%",
-    Severity:      "warning",
+    Evaluations: []domain.EventEvaluation{{Severity: "warning", Action: domain.EventActionTriggered}},
 
     Dimensions: domain.DimensionMap{
         "bk_inst_id":         numberScalar(101),
@@ -264,8 +269,9 @@ domain.Alert{
         "bk_biz_id":        numberScalar(2),
     },
 
-    LastOccurredAt: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
-    BeginAt:        time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+    OccurredAt:     time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+    ProducedAt:     time.Date(2026, 9, 1, 0, 0, 1, 0, time.UTC),
+    ReceivedAt:     time.Date(2026, 9, 1, 0, 0, 2, 0, time.UTC),
     CreateAt:       time.Date(2026, 9, 1, 0, 0, 2, 0, time.UTC),
 
     ExtraData: domain.JSONObject{
@@ -292,7 +298,7 @@ domain.Alert{
 
 ### 4.2 Processor 输入矩阵
 
-| Processor | 直接读取的 Alert 字段 | 共享 Context / 外部依赖 |
+| Processor | 直接读取的 Event 字段 | 共享 Context / 外部依赖 |
 | --- | --- | --- |
 | `strategy` | `labels.strategy_id`、`labels.strategy_version`、`labels.bk_biz_id` | BK Strategy Snapshot、CW Strategy；实例策略 URL 还使用 OneModel |
 | `resource` | 三个必需标签、`dimensions`、`extra_data.additional_dimensions` | CW Strategy、OneModel |
@@ -459,18 +465,31 @@ name          = 鲸眼监控
 
 ## 7. 预期 Enrich 结果
 
-成功时，顶层协议为：
+以下展示各 Processor 的结果片段。Event 按 `evaluations[].severity` 保存独立结果，完整信封见
+[Event 丰富模型](../design/enrich.md)；新 Alert 只复制其 opening Event 对应等级的结果。
+
+成功时，Event 的结果结构如下（省略完成时间和配置摘要，Processor value 在下文展开）：
 
 ```json
 {
-  "status": "succeeded",
-  "processors": [
-    { "strategy": { "status": "succeeded", "value": {} } },
-    { "resource": { "status": "succeeded", "value": {} } },
-    { "display": { "status": "succeeded", "value": {} } },
-    { "metric": { "status": "succeeded", "value": {} } },
-    { "source": { "status": "succeeded", "value": {} } }
-  ]
+  "enrich_status": "succeeded",
+  "enrich": {
+    "evaluations": [
+      {
+        "severity": "warning",
+        "status": "succeeded",
+        "data": {
+          "processors": [
+            { "strategy": { "status": "succeeded", "value": {} } },
+            { "resource": { "status": "succeeded", "value": {} } },
+            { "display": { "status": "succeeded", "value": {} } },
+            { "metric": { "status": "succeeded", "value": {} } },
+            { "source": { "status": "succeeded", "value": {} } }
+          ]
+        }
+      }
+    ]
+  }
 }
 ```
 
@@ -538,7 +557,7 @@ Strategy 输出沿用 Kafka labels 中的策略身份字段名：
 }
 ```
 
-标题优先使用鲸眼策略的 `alarm_alias`。主机对象优先使用 Alert 的 `subject_name`。
+标题优先使用鲸眼策略的 `alarm_alias`。主机对象优先使用 Event 的 `subject_name`。
 `extra_data.additional_dimensions` 中的 `bk_host_id` 进入维度展示；存在维度元数据时使用翻译后的名称，
 示例展示缺少元数据时的字段名回退结果。
 
@@ -584,7 +603,9 @@ Strategy 输出沿用 Kafka labels 中的策略身份字段名：
 | AlarmSource 查询失败 | source 产生 `dependency_invalid=alarm_source` |
 | 部分 Processor 成功、部分失败 | 顶层 `enrich_status=partial` |
 
-Processor error 和 panic 会被 Chain 隔离，后续 Processor 继续执行。Enricher error、panic 或非法 payload 会由 Lifecycle 降级为固定 failed payload，同时保留 Alert 创建流程。
+Processor error 和 panic 会被 Chain 隔离，后续 Processor 继续执行。Enricher error、panic 或非法 payload
+由 Lifecycle 降级为逐 evaluation 的 failed payload，保存到 Event 后继续裁决；不因此承诺一定创建 Alert。
+取消和核心存储/CAS 失败仍走原重试或取消路径。
 
 ## 9. 实现验证
 
@@ -608,11 +629,11 @@ go test ./internal/enrich/assembly \
 - OneModel 主机实例；
 - MonitorMetricLibrary；
 - AlarmSource；
-- Lifecycle 创建 Alert；
+- Event 丰富后由 Lifecycle 创建 Alert；
 - 五个 Enrich Processor 的关键输出断言。
 
 相关契约：
 
 - [Linkd 标准事件](../reference/contracts/standard-event.md)
 - [Lifecycle 模块](../modules/lifecycle.md)
-- [Alert Enrich 现行设计](../design/enrich.md)
+- [Event Enrich 现行设计](../design/enrich.md)

@@ -7,10 +7,18 @@ import {
   sourceRecordSchema,
   specToForm,
   validateSource,
+  type SourceSpec,
 } from "./event-sources";
 
+function kafkaSpec(
+  spec: SourceSpec,
+): SourceSpec & { storage: Extract<SourceSpec["storage"], { type: "kafka" }> } {
+  if (spec.storage.type !== "kafka") throw new Error("Kafka fixture required");
+  return { ...spec, storage: spec.storage };
+}
+
 function record() {
-  return sourceRecordSchema.parse({
+  const parsed = sourceRecordSchema.parse({
     id: "source-a",
     revision: 3,
     published: 3,
@@ -46,16 +54,19 @@ function record() {
       },
     },
   });
+  return { ...parsed, spec: kafkaSpec(parsed.spec) };
 }
 
 describe("EventSource editing contract", () => {
   it("preserves advanced fields and secret retention semantics through form and JSON", () => {
     const original = record();
-    const editable = editableSpec(original);
+    const editable = kafkaSpec(editableSpec(original));
     const form = specToForm(editable);
     expect(formToSpec(form, editable)).toEqual(editable);
     form.cleaner.replicas = "0";
-    const updated = parseSourceJSON(JSON.stringify(formToSpec(form, editable)));
+    const updated = kafkaSpec(
+      parseSourceJSON(JSON.stringify(formToSpec(form, editable))),
+    );
     validateSource(updated, original);
     expect(updated.scheduling.cleaner.replicas).toBe(0);
     expect(updated.storage.kafka.security).toBeUndefined();
@@ -68,7 +79,7 @@ describe("EventSource editing contract", () => {
   it.each(["-1", "1.5", "10001", "", "two", "1e2"])(
     "rejects invalid form replicas %s",
     (value) => {
-      const spec = editableSpec(record());
+      const spec = kafkaSpec(editableSpec(record()));
       const form = specToForm(spec);
       form.cleaner.replicas = value;
       expect(() => formToSpec(form, spec)).toThrow(/副本数/);
@@ -76,7 +87,7 @@ describe("EventSource editing contract", () => {
   );
   it.each(["all", "0", "10000"])("accepts replicas %s", (value) => {
     const original = record(),
-      spec = editableSpec(original),
+      spec = kafkaSpec(editableSpec(original)),
       form = specToForm(spec);
     form.cleaner.replicas = value;
     expect(() =>
@@ -84,7 +95,7 @@ describe("EventSource editing contract", () => {
     ).not.toThrow();
   });
   it("rejects duplicate selectors and byte/count limits without silently overwriting labels", () => {
-    const spec = editableSpec(record()),
+    const spec = kafkaSpec(editableSpec(record())),
       form = specToForm(spec);
     form.cleaner.selector = [
       { key: "pool", value: "a" },
@@ -109,35 +120,35 @@ describe("EventSource editing contract", () => {
     expect(() => validateSource(spec)).not.toThrow();
   });
   it.each([
-    (s: ReturnType<typeof editableSpec>) => {
+    (s: ReturnType<typeof kafkaSpec>) => {
       s.event_source_id = "other";
     },
-    (s: ReturnType<typeof editableSpec>) => {
+    (s: ReturnType<typeof kafkaSpec>) => {
       s.related_tenant_id = "other";
     },
-    (s: ReturnType<typeof editableSpec>) => {
+    (s: ReturnType<typeof kafkaSpec>) => {
       s.storage.kafka.brokers = ["other:9092"];
     },
-    (s: ReturnType<typeof editableSpec>) => {
+    (s: ReturnType<typeof kafkaSpec>) => {
       s.storage.kafka.topic = "other";
     },
-    (s: ReturnType<typeof editableSpec>) => {
+    (s: ReturnType<typeof kafkaSpec>) => {
       s.storage.kafka.consumer_group = "other";
     },
-    (s: ReturnType<typeof editableSpec>) => {
+    (s: ReturnType<typeof kafkaSpec>) => {
       s.cleaner = { type: "other" };
     },
-    (s: ReturnType<typeof editableSpec>) => {
+    (s: ReturnType<typeof kafkaSpec>) => {
       s.fingerprint_field = "subject_id";
     },
   ])("rejects immutable identity changes", (change) => {
     const original = record(),
-      spec = editableSpec(original);
+      spec = kafkaSpec(editableSpec(original));
     change(spec);
     expect(() => validateSource(spec, original)).toThrow(/不可修改/);
   });
   it("checks source ID, tenant, Kafka and numeric JSON boundaries", () => {
-    const valid = editableSpec(record());
+    const valid = kafkaSpec(editableSpec(record()));
     for (const spec of [
       { ...valid, event_source_id: "bad/id" },
       { ...valid, related_tenant_id: "x".repeat(65) },
@@ -184,7 +195,7 @@ describe("EventSource editing contract", () => {
     expect(() => parseSourceJSON("{}")).toThrow(/event_source_id/);
   });
   it("validates broker ports and canonical duplicates while preserving valid IPv6", () => {
-    const spec = editableSpec(record());
+    const spec = kafkaSpec(editableSpec(record()));
     for (const brokers of [
       ["kafka"],
       ["kafka:0"],
@@ -203,4 +214,33 @@ describe("EventSource editing contract", () => {
     expect(hasMetadataSuccess("not a date")).toBe(false);
     expect(hasMetadataSuccess("2026-09-22T00:00:00Z")).toBe(true);
   });
+});
+
+it("edits internal merge source without inventing Kafka or Cleaner input", () => {
+  const spec = parseSourceJSON(
+    JSON.stringify({
+      event_source_id: "builtin_alarm_merge",
+      enabled: true,
+      scheduling: {
+        cleaner: { replicas: 0, selector: {} },
+        lifecycle: { replicas: "all", selector: {} },
+      },
+      storage: { type: "internal_merge" },
+      enrich: { processors: [] },
+      hooks: [],
+    }),
+  );
+  expect(() => validateSource(spec)).not.toThrow();
+  const form = specToForm(spec);
+  form.lifecycle.replicas = "1";
+  const updated = formToSpec(form, spec);
+  expect(updated.storage).toEqual({ type: "internal_merge" });
+  expect(updated.cleaner).toBeUndefined();
+  expect(updated.enrich).toEqual(spec.enrich);
+  expect(() =>
+    validateSource({ ...updated, event_source_id: "external" }),
+  ).toThrow(/保留 ID/);
+  expect(() =>
+    validateSource({ ...updated, cleaner: { type: "standard" } }),
+  ).toThrow(/不配置 Cleaner/);
 });

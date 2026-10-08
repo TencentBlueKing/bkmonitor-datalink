@@ -17,7 +17,7 @@ import (
 )
 
 func TestEffectiveAlertReplaysLegacyAndPatchesInOrder(t *testing.T) {
-	alert := domain.Alert{Title: "original", Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Enrich: domain.JSONObject{"processors": json.RawMessage(`[{"display":{"status":"succeeded","value":{"title":"legacy"}}},{"fields":{"status":"partial","patches":[{"op":"set","path":"$.title","value":"custom"},{"op":"set","path":"$.labels.strategy_id","value":9001}]}},{"ignored":{"status":"failed","patches":[]}}]`)}}
+	alert := domain.Alert{Revision: 1, Title: "original", Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Enrich: domain.JSONObject{"processors": json.RawMessage(`[{"display":{"status":"succeeded","value":{"title":"legacy"}}},{"fields":{"status":"partial","patches":[{"op":"set","path":"$.title","value":"custom"},{"op":"set","path":"$.labels.strategy_id","value":9001}]}},{"ignored":{"status":"failed","patches":[]}}]`)}}
 	got, err := EnrichedAlert(alert)
 	if err != nil {
 		t.Fatal(err)

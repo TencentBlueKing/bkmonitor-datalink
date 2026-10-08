@@ -30,8 +30,8 @@ func (r *Repository) CreateAlert(ctx context.Context, alert domain.Alert) (store
 	if err != nil {
 		return store.CreateAlertResult{}, fmt.Errorf("%w: normalize alert: %w", store.ErrInvalidArgument, err)
 	}
-	if normalized.Status != domain.AlertStatusActive {
-		return store.CreateAlertResult{}, fmt.Errorf("%w: new alert must be active", store.ErrInvalidArgument)
+	if err := domain.ValidateAlertCreation(normalized); err != nil {
+		return store.CreateAlertResult{}, fmt.Errorf("%w: %w", store.ErrInvalidArgument, err)
 	}
 	if err := validateAlertIdentityColumns(normalized); err != nil {
 		return store.CreateAlertResult{}, err
@@ -40,7 +40,7 @@ func (r *Repository) CreateAlert(ctx context.Context, alert domain.Alert) (store
 	if err != nil {
 		return store.CreateAlertResult{}, err
 	}
-	_, err = r.db.ExecContext(ctx, `INSERT INTO linkd_alerts (bk_tenant_id,alert_id,version,status,event_source_id,fingerprint,severity,latest_event_id,end_type,end_at_ns,active_marker,payload) VALUES (?,?,1,?,?,?,?,?,NULL,NULL,1,?)`, normalized.BKTenantID, normalized.AlertID, normalized.Status, normalized.EventSourceID, normalized.Fingerprint, normalized.Severity, normalized.LatestEventID, payload)
+	_, err = r.db.ExecContext(ctx, `INSERT INTO linkd_alerts (bk_tenant_id,alert_id,version,status,event_source_id,fingerprint,severity,latest_event_id,end_type,end_at_ns,active_marker,policy_work,merge_work,projection_work,action_work,payload) VALUES (?,?,1,?,?,?,?,?,NULL,NULL,1,?,?,?,?,?)`, normalized.BKTenantID, normalized.AlertID, normalized.Status, normalized.EventSourceID, normalized.Fingerprint, normalized.Severity, normalized.LatestEventID, store.HasShieldWork(normalized), store.HasMergeWork(normalized), normalized.Projection.Pending(), normalized.ActionPending != nil, payload)
 	if err == nil {
 		return store.CreateAlertResult{StoredAlert: store.StoredAlert{Alert: normalized.Clone(), Version: versionToken(1)}, Created: true}, nil
 	}
@@ -178,10 +178,6 @@ func (r *Repository) CompareAndSetAlert(ctx context.Context, tenantID, alertID s
 	if err := validateAlertIdentityColumns(normalized); err != nil {
 		return store.StoredAlert{}, err
 	}
-	payload, err := encodeAlert(normalized)
-	if err != nil {
-		return store.StoredAlert{}, err
-	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return store.StoredAlert{}, err
@@ -197,8 +193,13 @@ func (r *Repository) CompareAndSetAlert(ctx context.Context, tenantID, alertID s
 	if current.Version != expected {
 		return store.StoredAlert{}, fmt.Errorf("%w: alert %q", store.ErrVersionConflict, alertID)
 	}
-	if err := domain.ValidateAlertReplacement(current.Alert, normalized); err != nil {
+	normalized, err = domain.PrepareAlertReplacement(current.Alert, normalized)
+	if err != nil {
 		return store.StoredAlert{}, fmt.Errorf("%w: %w", store.ErrInvalidTransition, err)
+	}
+	payload, err := encodeAlert(normalized)
+	if err != nil {
+		return store.StoredAlert{}, err
 	}
 	newVersion := expectedVersion + 1
 	var endType, endAt any
@@ -210,7 +211,7 @@ func (r *Repository) CompareAndSetAlert(ctx context.Context, tenantID, alertID s
 	if normalized.Status.Terminal() {
 		active = nil
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE linkd_alerts SET payload=?,version=?,status=?,latest_event_id=?,end_type=?,end_at_ns=?,active_marker=? WHERE bk_tenant_id=? AND alert_id=? AND version=?`, payload, newVersion, normalized.Status, normalized.LatestEventID, endType, endAt, active, tenantID, alertID, expectedVersion)
+	result, err := tx.ExecContext(ctx, `UPDATE linkd_alerts SET payload=?,version=?,status=?,latest_event_id=?,end_type=?,end_at_ns=?,active_marker=?,policy_work=?,merge_work=?,projection_work=?,action_work=? WHERE bk_tenant_id=? AND alert_id=? AND version=?`, payload, newVersion, normalized.Status, normalized.LatestEventID, endType, endAt, active, store.HasShieldWork(normalized), store.HasMergeWork(normalized), normalized.Projection.Pending(), normalized.ActionPending != nil, tenantID, alertID, expectedVersion)
 	if err != nil {
 		if isDuplicateKey(err) {
 			return store.StoredAlert{}, fmt.Errorf("%w: active fingerprint", store.ErrIdentityConflict)

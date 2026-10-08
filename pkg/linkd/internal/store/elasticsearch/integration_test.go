@@ -576,3 +576,87 @@ func TestElasticsearchScanPagination(t *testing.T) {
 		}
 	}
 }
+
+func TestElasticsearchAddsEnrichmentMappingPreservingExistingEvent(t *testing.T) {
+	endpoint := os.Getenv(elasticsearchIntegrationURLEnv)
+	if endpoint == "" {
+		t.Skip("set LINKD_TEST_ELASTICSEARCH_URL to run additive mapping contract")
+	}
+	baseURL, err := url.Parse(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := "linkd-enrich-mapping-" + strconv.Itoa(os.Getpid())
+	router, err := NewStaticRouter(prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := New(endpointTransport{baseURL: baseURL, client: &http.Client{Timeout: 15 * time.Second}, apiKey: os.Getenv("LINKD_TEST_ELASTICSEARCH_API_KEY")}, router, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	index := prefix + "-events"
+	properties := eventProperties()
+	processingProperties := properties["processing"].(map[string]any)["properties"].(map[string]any)
+	delete(processingProperties, "policy_context")
+	delete(processingProperties, "policy_decision")
+	for name := range eventEnrichmentProperties() {
+		delete(properties, name)
+	}
+	body, err := json.Marshal(map[string]any{"mappings": map[string]any{"dynamic": "strict", "_meta": schemaMetadata{ManagedBy: managedByLinkd, Entity: entityEvent, SchemaVersion: currentSchemaVersion}, "properties": properties}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.performJSON(ctx, http.MethodPut, "/"+index, nil, body, nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := repo.performJSON(cleanup, http.MethodDelete, "/"+index, nil, nil, nil); err != nil {
+			t.Error(err)
+		}
+	})
+	event := storetest.Event("tenant-preserved", "event-preserved", "fp-preserved", "warning")
+	data, err := encodeEventDocument(event, store.NewUnprocessedEventProcessing())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var old map[string]json.RawMessage
+	if err := json.Unmarshal(data, &old); err != nil {
+		t.Fatal(err)
+	}
+	for name := range eventEnrichmentProperties() {
+		delete(old, name)
+	}
+	data, err = json.Marshal(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.performJSON(ctx, http.MethodPut, "/"+index+"/_doc/"+documentID(event.BKTenantID, event.EventID), nil, data, nil); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := repo.EnsureIndex(ctx, index, entityEvent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	saved, err := repo.GetEvent(ctx, event.BKTenantID, event.EventID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enriched, err := repo.CompareAndSetEventEnrichment(ctx, event.BKTenantID, event.EventID, saved.Version, storetest.Enrichment(event))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enriched.Event.Title != event.Title || string(enriched.Event.SourceRawData["source"]) != string(event.SourceRawData["source"]) || enriched.Event.EnrichStatus != domain.EnrichStatusSucceeded {
+		t.Fatal("existing facts were not preserved")
+	}
+
+	frozen, err := repo.CompareAndSetEventResult(ctx, event.BKTenantID, event.EventID, enriched.Version, store.EventResult{State: domain.EventProcessStateUnprocessed, PolicyContext: &store.PolicyContext{EvaluatedAt: event.CreateAt.Add(time.Second), Releases: []store.PolicyReleaseRef{}}})
+	if err != nil || frozen.Processing.PolicyContext == nil || frozen.Event.Title != event.Title {
+		t.Fatalf("additive policy context mapping failed: %v", err)
+	}
+}

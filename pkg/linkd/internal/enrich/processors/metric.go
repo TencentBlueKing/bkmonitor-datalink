@@ -35,7 +35,7 @@ func (Metric) Match(context.Context, *enrich.Scope) (bool, error) { return true,
 
 // Process 使用鲸眼声明式策略查询投影生成指标信息。
 func (Metric) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
-	alert := scope.Alert()
+	alert := scope.Event()
 	values := models.MetricValues{}
 	status := domain.EnrichStatusSucceeded
 	diagnostics := make([]enrich.Diagnostic, 0, 1)
@@ -90,12 +90,12 @@ func (Metric) Process(ctx context.Context, scope *enrich.Scope) (enrich.Processo
 	}
 	aggregateFunc := cleanAggregateFunc(strategy)
 	timeInterval := cleanTimeInterval(strategy)
-	metricQueryParams := buildMetricQueryParams(projection, strategy, scope.Alert().Dimensions, ids.BizID)
+	metricQueryParams := buildMetricQueryParams(projection, strategy, scope.Event().Dimensions, ids.BizID)
 	displayName, err := cleanItem(ctx, scope, strategy, projection, query)
 	if err != nil {
 		return metricDependencyFailure(scope, values, diagnostics, rules.DependencyMetricLibrary)
 	}
-	whereCondition := cleanWhereCondition(scope.Alert().Dimensions)
+	whereCondition := cleanWhereCondition(scope.Event().Dimensions)
 	values.DisplayName = displayName
 	values.MetricName = metricName
 	values.Unit = unit

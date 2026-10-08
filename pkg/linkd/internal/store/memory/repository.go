@@ -471,8 +471,8 @@ func (r *Repository) CreateAlert(ctx context.Context, alert domain.Alert) (store
 	if err != nil {
 		return store.CreateAlertResult{}, fmt.Errorf("%w: normalize alert: %w", store.ErrInvalidArgument, err)
 	}
-	if normalized.Status != domain.AlertStatusActive {
-		return store.CreateAlertResult{}, fmt.Errorf("%w: new alert must be active", store.ErrInvalidArgument)
+	if err := domain.ValidateAlertCreation(normalized); err != nil {
+		return store.CreateAlertResult{}, fmt.Errorf("%w: %w", store.ErrInvalidArgument, err)
 	}
 	key := objectKey{tenantID: normalized.BKTenantID, objectID: normalized.AlertID}
 	r.mu.Lock()
@@ -637,7 +637,8 @@ func (r *Repository) CompareAndSetAlert(
 	if entry.version != expected {
 		return store.StoredAlert{}, fmt.Errorf("%w: alert %q", store.ErrVersionConflict, alertID)
 	}
-	if err := domain.ValidateAlertReplacement(entry.alert, normalized); err != nil {
+	normalized, err = domain.PrepareAlertReplacement(entry.alert, normalized)
+	if err != nil {
 		return store.StoredAlert{}, fmt.Errorf("%w: alert %q: %w", store.ErrInvalidTransition, alertID, err)
 	}
 	if entry.alert.Status == domain.AlertStatusActive && normalized.Status.Terminal() {
@@ -919,4 +920,34 @@ func contextError(ctx context.Context) error {
 		return fmt.Errorf("%w: context must not be nil", store.ErrInvalidArgument)
 	}
 	return ctx.Err()
+}
+
+// CompareAndSetEventEnrichment 原子冻结 Event 丰富，不改变来源字段和处理元数据。
+func (r *Repository) CompareAndSetEventEnrichment(ctx context.Context, tenantID, eventID string, expected store.VersionToken, result domain.EventEnrichment) (store.StoredEvent, error) {
+	if err := contextError(ctx); err != nil {
+		return store.StoredEvent{}, err
+	}
+	if err := validateIdentity(tenantID, "event_id", eventID); err != nil {
+		return store.StoredEvent{}, err
+	}
+	if expected.IsZero() {
+		return store.StoredEvent{}, fmt.Errorf("%w: expected event version required", store.ErrInvalidArgument)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	key := objectKey{tenantID: tenantID, objectID: eventID}
+	entry, ok := r.events[key]
+	if !ok {
+		return store.StoredEvent{}, store.ErrNotFound
+	}
+	if entry.version != expected {
+		return store.StoredEvent{}, store.ErrVersionConflict
+	}
+	updated, err := store.ApplyEventEnrichment(cloneStoredEvent(entry), result)
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	entry.event, entry.version = updated, r.newVersionLocked()
+	r.events[key] = entry
+	return cloneStoredEvent(entry), nil
 }

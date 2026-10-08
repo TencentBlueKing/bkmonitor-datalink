@@ -1,22 +1,30 @@
-# Alert Enrich 现行设计与 KAC 迁移基线
+# Event Enrich 现行设计与 KAC 迁移基线
+
+> Event Enrich 主流程已实现。三类策略、可靠投影的开发范围及验收进度见
+> [开发方案](event-enrich-and-alarm-policies.md)。
 
 状态：内置丰富场景与 KAC 迁移基线；自定义规则、补丁、预览和配置转换以[自定义丰富开发规格](custom-enrichment.md)为准。
 
 适用代码：`internal/enrich`、`internal/lifecycle/process`、`internal/config`、`internal/telemetry`
 事实基线：当前工作区代码、测试与 `go test ./...` 结果
 
-本文统一描述 Linkd Alert Enrich 的现行契约、实现边界、KAC 行为迁移状态和后续顺序。代码与本文发生差异时，以代码和测试判断当前已实现行为，并同步修正文档。
+本文统一描述 Linkd Event Enrich 的现行契约、实现边界、KAC 行为迁移状态和后续顺序。代码与本文发生差异时，以代码和测试判断当前已实现行为，并同步修正文档。
 
 ## 1. 定位与总体状态
 
-Enrich 在 Lifecycle 创建新 Alert 时同步执行，只读取已经 Normalize 的 `domain.Alert`，将补充信息写入：
+Enrich 在 Lifecycle 为每条不同 Event 同步执行，输入为 `domain.Event`。来源事实不被覆盖，结果保存为：
 
 ```text
-Alert.EnrichStatus
-Alert.Enrich
+Event.enrich_status / enriched_at / enrich_config_digest
+Event.enrich.evaluations[].{severity,status,data}
+data.processors[] = 有序处理器信封
 ```
 
-Alert 的标题、内容、标签、维度、主体、来源和生命周期字段保持来源事实，不由 Enrich 改写。等级升级产生的新 Alert 会重新执行 Enrich；同等级更新、`update_current` 等级升级、恢复和关闭沿用已有结果。
+每个 evaluation 有独立文案、补丁和诊断，同一 Event 共享只读查询缓存；不同 Event 不共享缓存。
+结果通过专用 CAS 完成后固定，包括 partial/failed；已完成处理的重投不重新丰富。
+创建 Alert 时复制 opening Event 对应等级的 data，`trigger_event_id` 同时标识丰富来源。
+后续触发、低等级抑制、原地升级和终态 Event 仍各自丰富，但不刷新该 Alert 的来源/展示/丰富快照。
+close_and_create 新 Alert 使用本次 Event 的新快照。
 
 当前可配置生产链由 EventSource 按需组合，核心链为：
 
@@ -43,12 +51,12 @@ strategy → resource → display → metric → source
 
 ### 2.1 输入与副作用
 
-- Enricher 输入固定为 `enrich.Input{Alert}`。
-- Scope 保存 `Alert.Clone()`，`Scope.Alert()` 继续返回隔离副本。
+- Enricher 输入固定为 `enrich.Input{Event}`。
+- Scope 保存 `Event.Clone()`，`Scope.Event()` 继续返回隔离副本。
 - Processor 只执行外部只读查询和确定性转换。
-- Processor 不写回 Alert，也不把查询响应塞入 `ExtraData`。
+- Processor 不写回 Event 或 Alert，也不把查询响应塞入 `ExtraData`。
 - `SourceRawData` 用于人工追溯，Enrich 不将其作为默认输入或缺字段兜底。
-- Enrich 可因消息重投、CAS 冲突或进程恢复重复执行，因此实现必须幂等且没有外部业务写入。
+- Enrich 在结果提交前可因 CAS 冲突或进程恢复重复执行，已提交结果重投直接复用，因此实现必须幂等且没有外部业务写入。
 
 ### 2.2 失败语义
 
@@ -57,7 +65,7 @@ strategy → resource → display → metric → source
 - 可预期输入错误和依赖故障通过 `ProcessorResult` 与 diagnostics 表达。
 - 场景已有核心身份但可选名称、拓扑或标签依赖失败：Processor 返回 `partial`，保留已确认字段。
 - 场景核心身份缺失、输入非法、实例未命中或响应身份不匹配：Resource 返回 `failed`，保留模型代码、来源业务和展示回退，禁止生成不可信实例标签。
-- Chain 最终状态按现有聚合规则计算：所有适用 Processor 成功为 `succeeded`，所有适用 Processor 失败为 `failed`，其余组合为 `partial`；因此单个 Resource failed 且其他 Processor succeeded 时，Alert 最终状态为 `partial`。
+- Chain 最终状态按现有聚合规则计算：所有适用 Processor 成功为 `succeeded`，所有适用 Processor 失败为 `failed`，其余组合为 `partial`；因此单个 Resource failed 且其他 Processor succeeded 时，该 evaluation 状态为 `partial`；Event 再汇总全部 evaluation。
 - Enrich failed 不阻断 Alert 创建；Lifecycle 会持久化合法失败 payload。
 - 当前不提供查询重试、Enrich 重试、后台补丰富或已创建 Alert 的重丰富接口。
 
@@ -68,15 +76,14 @@ KAC Converter/Cleaner 直接构造旧 Alarm 字段。Linkd 将对应业务含义
 ## 3. 运行架构
 
 ```text
-Lifecycle 构造并 Normalize 新 Alert
-  → Router 按 Alert.EventSourceID 选择不可变 Chain
-  → Scope 保存 Alert 深拷贝和 DataSource Readers
-  → 按配置顺序执行 Processor
-  → 每个 Processor 返回结果，统一持久化为 status/patches/trace/diagnostics
-  → Chain 聚合 EnrichStatus 并编码 Payload
-  → Lifecycle 校验、降级并写回 Alert.EnrichStatus / Alert.Enrich
-  → Repository 创建 Alert
-  → FinalHook 输出完整 Alert 快照
+Lifecycle 读取并 Normalize Event
+  → 按 EventSourceID + EventSourceVersion 读取该 Release 的丰富配置
+  → 当前任务版本复用运行时，历史版本最多 4 路临时运行时，用后关闭
+  → 逐 evaluation 执行 Processor，各等级共享请求缓存
+  → 保存完整 Event 丰富结果 CAS
+  → 冻结生命周期计划并创建/推进 Alert
+  → 新 Alert 复制 opening Event 的选中等级结果
+  → FinalHook 输出 Alert 快照
 ```
 
 主要代码位置：
@@ -138,7 +145,7 @@ source
 
 ## 5. Payload 契约
 
-`Alert.Enrich` 顶层固定为：
+每个 `Event.enrich.evaluations[].data`，以及复制到 `Alert.enrich` 的快照，固定为：
 
 ```json
 {
@@ -169,7 +176,7 @@ source
 | `diagnostics` | array，可省略 | 稳定、脱敏的输入或依赖诊断 |
 
 `value` 仅用于读取历史记录及内置处理器的内部 DTO；新结果不写 `value` 或最终 `values`。
-按处理器顺序应用补丁可得到临时有效视图，原始 Alert 不改变。详细目标白名单和顺序见[自定义丰富规格](custom-enrichment.md)。
+按处理器顺序应用补丁可得到临时有效视图，原始 Event 不改变。详细目标白名单和顺序见[自定义丰富规格](custom-enrichment.md)。
 
 总状态算法：
 
@@ -260,9 +267,9 @@ dimensions
 dimension_text
 ```
 
-结构化 dimensions 保留场景生成顺序；`dimension_text` 使用副本排序和格式化。当前大部分场景的 content 直接继承 `Alert.Content`。
+结构化 dimensions 保留场景生成顺序；`dimension_text` 使用副本排序和格式化。当前大部分场景的 content 直接继承 `Event.Content`。
 
-EventSource 的 `enrich.content_mode=bkmonitor_description` 已在创建准备阶段调用内容构建器，生成尚未持久化的 `Alert.content`；普通 Processor 的 Result 仍只保存 Status/Data。该模式的 Display 保留已生成内容，不再裁剪日志、拼接对象名或重复转换单位。`source` 模式维持既有来源文本处理。实现、事实缺口和验收范围集中见[告警内容生成方案](alert-content-generation.md)，后续 Enrich 不覆盖已有核心字段。
+EventSource 的 `enrich.content_mode=bkmonitor_description` 已在创建准备阶段调用内容构建器，生成尚未持久化的 `Alert.content`；普通 Processor 的 Result 仍只保存 Status/Data。该模式的 Display 不生成 content 覆盖补丁，不再裁剪日志、拼接对象名或重复转换单位，避免 Event 快照覆盖后续生成的 Alert 内容。`source` 模式维持既有来源文本处理。实现、事实缺口和验收范围集中见[告警内容生成方案](alert-content-generation.md)，后续 Enrich 不覆盖已有核心字段。
 
 ### 6.4 metric
 
@@ -281,7 +288,7 @@ metric_query_params
 anomaly_begin_time
 ```
 
-Metric 已支持 StrategyItem 投影、单/多 query config、部分衍生指标和查询参数翻译。`anomaly_begin_time` 从 `Alert.ExtraData` 的同名可选字段读取。
+Metric 已支持 StrategyItem 投影、单/多 query config、部分衍生指标和查询参数翻译。`anomaly_begin_time` 从 `Event.ExtraData` 的同名可选字段读取。
 
 ### 6.5 source
 
@@ -293,7 +300,7 @@ source_name
 meta_info
 ```
 
-`source_id` 来自 `Alert.EventSourceID`，`source_name` 按租户和来源 ID 查询 Kingeye，`meta_info` 来自 `Alert.SourceEventID`。
+`source_id` 来自 `Event.EventSourceID`，`source_name` 按租户和来源 ID 查询 Kingeye，`meta_info` 来自 `Event.SourceEventID`。
 
 ### 6.6 已注册的专用分组
 
@@ -373,7 +380,7 @@ Scope 当前按稳定查询键复用：
 
 `InstanceQuery.AttributeFilters` 排序后编码，字段顺序不影响缓存键；父 Context 已取消的查询结果不写缓存。`Scope.Scenario` 也不缓存 `context.Canceled` / `context.DeadlineExceeded` 错误，同一 Scope 后续调用能够重新解析。
 
-`collect.Enrich` 与 `uptime.Enrich` 使用 `Scope.Scenario`，使 Resource 与 Display 共享同一次解析和外部查询结果。当前不提供跨 Alert TTL 缓存、预热或刷新机制。
+`collect.Enrich` 与 `uptime.Enrich` 使用 `Scope.Scenario`，使 Resource 与 Display 共享同一次解析和外部查询结果。当前不提供跨 Event TTL 缓存、预热或刷新机制。
 
 ## 9. 场景覆盖与 KAC 差距
 
@@ -403,7 +410,7 @@ UPTIME_CHECK
 → BASIC
 ```
 
-Kingeye 原始 `event.tags` 与 Linkd 标准事件属于两个协议层。已通过本地 `RawEventMessage → StandardCleaner → Event → Lifecycle Alert → Enrich` 测试验证：当上游把 `__NO_DATA_DIMENSION__=true` 写入标准 `dimensions` 时，标记传至 `Alert.Dimensions` 并命中 NoData；原始 `event.tags` 单独携带该标记时，StandardCleaner 仅在 `SourceRawData` 留存原文，Enrich 仍按后续 BaseTarget 规则分类。真实上游的 tags → 标准 dimensions 映射契约和端到端样本仍待确认。
+Kingeye 原始 `event.tags` 与 Linkd 标准事件属于两个协议层。已通过本地 `RawEventMessage → StandardCleaner → Event → Lifecycle Event Enrich → Alert` 测试验证：当上游把 `__NO_DATA_DIMENSION__=true` 写入标准 `dimensions` 时，标记传至 `Event.Dimensions` 并命中 NoData；原始 `event.tags` 单独携带该标记时，StandardCleaner 仅在 `SourceRawData` 留存原文，Enrich 仍按后续 BaseTarget 规则分类。真实上游的 tags → 标准 dimensions 映射契约和端到端样本仍待确认。
 
 触发条件：
 
@@ -416,7 +423,7 @@ Kingeye 原始 `event.tags` 与 Linkd 标准事件属于两个协议层。已通
 | SystemMetric | 策略 `object_model_code == cw-Host`，按主机 ID 或 IP + 云区域定位 |
 | Basic | 其余 BaseTarget；保留模型和来源业务并跳过实例查询 |
 
-Resource 与 Display 共享同一个场景解析结果。MonitorSource、NoData、SystemMetric、Basic 进入 `basetarget.Enrich`，CollectTask 和 UptimeCheck 分别进入 `collect.Enrich` 与 `uptime.Enrich`。新增信息只写入 Processor Value，Alert 来源字段保持只读。
+Resource 与 Display 共享同一个场景解析结果。MonitorSource、NoData、SystemMetric、Basic 进入 `basetarget.Enrich`，CollectTask 和 UptimeCheck 分别进入 `collect.Enrich` 与 `uptime.Enrich`。新增信息只写入 Processor Value，Event 来源字段保持只读。
 
 ### 9.2 覆盖矩阵
 
@@ -451,7 +458,7 @@ Display ──┘
 当前链路：
 
 ```text
-Alert.Dimensions.bk_collect_config_id
+Event.Dimensions.bk_collect_config_id
 → CollectConfigReader
 → bk_object_code + bk_inst_id
 → OneModelReader.FindInstance
@@ -470,7 +477,7 @@ Alert.Dimensions.bk_collect_config_id
 - 主机实例从 OneModel `attributes.bk_cloud_id/bk_cloud_name` 投影云区域；
 - 需要拓扑的远程或非主机采集，可由相同云区域 ID 的关联主机补齐名称；
 - 非主机资源已有业务并跳过拓扑时，按告警 `bk_host_id/bk_target_host_id + bk_target_cloud_id`，或 `bk_target_ip + bk_target_cloud_id` 查询 OneModel `cw-Host`，补齐同云区域名称；
-- Alert 不可变、未命中和依赖故障测试。
+- Event 不可变、未命中和依赖故障测试。
 
 生产限制：
 
@@ -492,7 +499,7 @@ Display ──┘
 当前链路：
 
 ```text
-Alert.Dimensions.task_id
+Event.Dimensions.task_id
 → UptimeTaskReader
 → 数据库 task_id 查询
 → 记录主键 id 作为 model_inst_id
@@ -505,12 +512,12 @@ Alert.Dimensions.task_id
 - Task/Node 租户隔离；
 - Uptime 双 ID 语义；
 - HTTP、TCP、UDP、ICMP 专用目标维度；
-- 业务名称通过任务 `bk_biz_id`（任务缺失时用 Alert 来源业务）读取同租户 OneModel `cw-biz` 实例；
+- 业务名称通过任务 `bk_biz_id`（任务缺失时用 Event 来源业务）读取同租户 OneModel `cw-biz` 实例；
 - `bk_target_ip/target_host + bk_target_cloud_id` 同时提供可信 IP 和云区域时，读取同租户 OneModel `cw-Host`，校验 IP/区域后补充云区域名称；云区域 `0` 保留；
 - `cw_labels` 使用有效业务 ID，以及已定位任务的 `cw-web_service|<数据库任务主键>`；删除任务时只输出业务范围标签；
 - 两份 KAC 拨测脱敏 fixture 覆盖有任务和缺失任务的五 Processor payload；
 - 删除任务 `<task_id>（该拨测任务已被删除）` 回退；
-- Resource/Display 场景复用和 Alert 不可变测试。
+- Resource/Display 场景复用和 Event 不可变测试。
 
 生产限制：
 
@@ -532,7 +539,7 @@ Alert.Dimensions.task_id
 - KAC `basic_data` 转换 fixture 验证完整五 Processor payload；
 - system 主机按 `bk_target_host_id` 优先，随后以 `bk_target_ip + bk_target_cloud_id` 查询 OneModel `cw-Host`；
 - uptimecheck 结果表复用 `uptime.Enrich`，按 `task_id` 定位任务数据库主键；
-- 普通 OneModel 单模型在标准 Alert 明确提供 `model_id + model_inst_id` 且模型与 MetricLibrary 一致时查询 OneModel；`model_inst_id` 按不透明字符串原值使用，实例成功才生成实例标签；
+- 普通 OneModel 单模型在标准 Event 明确提供 `model_id + model_inst_id` 且模型与 MetricLibrary 一致时查询 OneModel；`model_inst_id` 按不透明字符串原值使用，实例成功才生成实例标签；
 - `data_ordinary_onemodel` 是依据统一实例身份规格构造的派生 fixture，真实普通实例 KAC 样例仍待取证；
 - 上游缺少显式 canonical 模型／实例身份时保留模型和业务并返回 Resource partial；身份冲突或查询未命中时 Resource failed。
 
@@ -559,7 +566,7 @@ Alert.Dimensions.task_id
 - 从策略 `source_config` 读取 `log_theme_id/log_theme_name/query_string`；有 `LogThemeReader` 时按租户读取主题名称并复核主题 ID，Reader 未配置时保留策略名称回退；
 - 日志指标使用查询语句作为 metric 展示名，日志关键字为空查询时回退 `--`；
 - 日志场景使用空 Resource 语义，Display 使用空 object；
-- 关键字从 `Alert.ExtraData.log_related_info` 读取关联信息；
+- 关键字从 `Event.ExtraData.log_related_info` 读取关联信息；
 - 日志 Display 内容先拼接 `Alert.SubjectName`，再执行日志内容裁剪：日志指标移除“关联信息”尾部；日志关键字命中内容生成“匹配到【query】关键字次数 ...”，无数据内容生成“【query】关键字 ...”；`Alert.SubjectName` 为空时保持原内容形态；
 - 输出日志主题、查询语句、关联信息和 `cw_labels`；
 - 已读取 KAC `log_metric_data.json` 与 `log_keyword.json` 的真实输入/清洗输出，补充同字段语义的完整 Processor 链测试；
@@ -804,7 +811,7 @@ Basic fixture 已完成：
 
 Uptime 业务名称、云区域名称和 `cw_labels` 已完成：
 
-1. 任务业务 ID 优先，删除任务回退 Alert 来源业务；业务名称读取同租户 OneModel `cw-biz` 实例；
+1. 任务业务 ID 优先，删除任务回退 Event 来源业务；业务名称读取同租户 OneModel `cw-biz` 实例；
 2. 仅在目标地址是可信 IP 且同时有 `bk_target_cloud_id` 时查询 OneModel `cw-Host`，复核 IP/区域后补名称，云区域 `0` 保留；
 3. 已定位任务时输出业务和 `cw-web_service|<任务数据库主键>` 标签，删除任务只输出业务标签；
 4. Reader 未命中、错误或身份冲突时保留 ID 与已有结果，不把可选名称故障升级为核心资源失败；
@@ -847,7 +854,7 @@ NoData 迁移已完成：
 13. 环比／同比内容按 Kingeye 分支识别可定位数值并进行枚举映射，无数据周期文案保留来源文本；custom event、alert、FTA 查询类型使用对应字段和结果表翻译。
 14. PromQL 查询保留原始表达式，并按 `segment:...:metric` 约定投影结果表与指标字段；真实 PromQL 形态仍待样例补充。
 15. 函数指标保留策略级和 query 级函数配置；Metric name 为空，函数和多指标场景关闭枚举映射，函数计算结果由上游查询链提供。
-16. DATA 派生失败矩阵覆盖策略、MetricLibrary、模型、实例、身份校验和 Context 取消；单个 Resource failed 与其他 Processor 成功时最终状态为 partial，Alert 输入保持不变。
+16. DATA 派生失败矩阵覆盖策略、MetricLibrary、模型、实例、身份校验和 Context 取消；单个 Resource failed 与其他 Processor 成功时最终状态为 partial，Event 输入保持不变。
 
 下一阶段：**在无真实场景数据的约束下，先补齐日志、Cloud、K8s、APM 的派生 fixture、跨场景失败矩阵和生产装配边界；真实外部 Reader 按契约确认结果接入。**
 
@@ -888,7 +895,7 @@ K8s OneModel Reader 已接入主流程，并已用本机 ES system 租户真实�
 
 每新增或收口一个场景，至少具备：
 
-1. 明确的 Alert 输入字段和类型；
+1. 明确的 Event 输入字段和类型；
 2. 类型化分类结果和 Processor 适用条件；
 3. 真实 DataSource Adapter 或明确复用的现有 Adapter；
 4. 每次外部查询显式携带 `bk_tenant_id`；
@@ -896,13 +903,13 @@ K8s OneModel Reader 已接入主流程，并已用本机 ES system 租户真实�
 6. 与受影响分组一致的 partial/failed diagnostics；
 7. 类型化完整 Value；
 8. RawEvent 或 Alert fixture 到最终 payload 的业务测试；
-9. Alert 原有字段保持不变；
+9. Event 来源字段保持不变；
 10. Observation 标签保持低基数；
 11. 配置、模块和示例文档同步更新。
 
 ## 16. 后续方向：共享读模型与 Enrich v2
 
-当前生产实现直接读取 Kingeye MySQL 和 OneModel ES。跨 Alert 缓存、Namespace、规则 DSL、可配置提取和版本化共享读模型均未实现。
+当前生产实现直接读取 Kingeye MySQL 和 OneModel ES。跨 Event 缓存、Namespace、规则 DSL、可配置提取和版本化共享读模型均未实现。
 
 后续若需要降低 Linkd 对旧存储的耦合，可采用“上游单写、Linkd 只读”的版本化物化读模型：
 

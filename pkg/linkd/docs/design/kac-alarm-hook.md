@@ -1,5 +1,9 @@
 # KAC Alarm Hook 设计
 
+> 本文描述现行逐 Alert 快照产生 KAC Alarm 消息的实现。后续已确认改为
+> [Alert 到 KAC alarm_event 的稳定兼容投影](event-enrich-and-alarm-policies.md#102-hook-分类与-kac-投影契约)，
+> 已由[全局 KAC 插件](kac-compatibility-plugin.md)实现直接写入、版本防回退与持久化重试；下面仅保留旧 Hook 说明。
+
 KAC 固定消息协议与字段映射校验位于 `internal/enrich/kingeye`，Kafka 发送运行时保留在 `internal/lifecycle/kachook`；配置包只依赖纯协议。
 
 > 状态：已实现首版，并完成本地 PM2/Docker Kafka 端到端验证；目标 KAC 环境的消费与持久化仍待联调。

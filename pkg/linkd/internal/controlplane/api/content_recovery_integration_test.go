@@ -1,3 +1,12 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package api
 
 import (
@@ -258,10 +267,18 @@ func TestContentFailureSignalResumeIntegration(t *testing.T) {
 	if !slices.Equal(order, []string{first.EventID, first.EventID, second.EventID}) {
 		t.Fatalf("mailbox order %v", order)
 	}
-	for _, event := range []domain.Event{first, second} {
+	for i, event := range []domain.Event{first, second} {
 		saved, err := repo.GetEvent(ctx, event.BKTenantID, event.EventID)
-		if err != nil || saved.Event.Content != event.Content || saved.Processing.State != domain.EventProcessStateAccepted {
-			t.Fatal("source Event changed or recovery incomplete", err)
+		expected := domain.EventProcessStateAccepted
+		if i == 1 {
+			expected = domain.EventProcessStateSuppressed
+		}
+		if err != nil || saved.Event.Content != event.Content || saved.Processing.State != expected || saved.Event.EnrichStatus != domain.EnrichStatusSucceeded || !slices.Equal(saved.Event.RelatedAlertIDs, []string{alert.Alert.AlertID}) {
+			t.Fatalf("source Event changed or recovery incomplete: event=%s state=%s error=%v", event.EventID, saved.Processing.State, err)
+		}
+		// 同级重复触发完成处理并关联原Alert，但不重复放行处置；不能将该抑制误判为恢复失败。
+		if i == 1 && saved.Processing.ReasonCode != "duplicate_trigger" {
+			t.Fatalf("unexpected repeated trigger reason %q", saved.Processing.ReasonCode)
 		}
 	}
 	if _, err := processor.ProcessEvent(ctx, stored); err != nil {

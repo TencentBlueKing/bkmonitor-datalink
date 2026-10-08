@@ -162,22 +162,22 @@ func TestKACBaseTargetFixtures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+			result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 			if err != nil {
 				t.Fatal(err)
 			}
 			if result.Status != fixture.ExpectedStatus {
-				t.Fatalf("status=%q, want %q data=%s", result.Status, fixture.ExpectedStatus, mustJSON(t, result.Data))
+				t.Fatalf("status=%q, want %q data=%s", result.Status, fixture.ExpectedStatus, mustJSON(t, result.Data.Evaluations[0].Data))
 			}
 			if !reflect.DeepEqual(alert, original) {
 				t.Fatalf("Alert changed: before=%#v after=%#v", original, alert)
 			}
-			payload, err := enrich.DecodePayload(result.Data)
+			payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 			if err != nil {
 				t.Fatal(err)
 			}
 			assertKACProjection(t, payload, fixture.ExpectedKAC)
-			assertJSONEqual(t, fixture.ExpectedData, mustJSON(t, result.Data))
+			assertJSONEqual(t, fixture.ExpectedData, mustJSON(t, result.Data.Evaluations[0].Data))
 		})
 	}
 }
@@ -201,19 +201,16 @@ func loadKACBaseTargetFixture(t *testing.T, path string) kacBaseTargetFixture {
 	return fixture
 }
 
-func (f kacBaseTargetFixture) alert(t *testing.T) domain.Alert {
+func (f kacBaseTargetFixture) alert(t *testing.T) domain.Event {
 	t.Helper()
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	return domain.Alert{
-		EventSourceVersion: 1, AlertID: "fixture-" + f.Name, BKTenantID: "tenant-a", EventSourceID: "built_in_bk",
-		Fingerprint: "fixture-" + f.Name, Title: f.Strategy.Name, Content: f.Alert.Content, Severity: "warning",
-		SubjectName: f.Alert.SubjectName, SourceEventID: f.Alert.SourceEventID,
+	return domain.Event{
+		EventSourceVersion: 1, EventID: "fixture-" + f.Name, BKTenantID: "tenant-a", EventSourceID: "built_in_bk",
+		Fingerprint: "fixture-" + f.Name, Title: f.Strategy.Name, Content: f.Alert.Content, Evaluations: []domain.EventEvaluation{{Severity: "warning", Action: domain.EventActionTriggered}}, SubjectName: f.Alert.SubjectName, SourceEventID: f.Alert.SourceEventID,
 		Dimensions: fixtureDimensions(t, f.Alert.Dimensions), Labels: domain.DimensionMap{
 			"strategy_id": numberScalar(t, f.Alert.StrategyID), "strategy_version": numberScalar(t, f.Alert.StrategyVersion),
 			"bk_biz_id": numberScalar(t, f.Alert.BKBizID),
-		}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive,
-		LatestEventID: "event-1", TriggerEventID: "event-1", LastOccurredAt: now, UpdateAt: now, BeginAt: now, CreateAt: now,
-		EnrichStatus: domain.EnrichStatusPending, Enrich: domain.JSONObject{},
+		}, ExtraData: domain.JSONObject{}, OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, EventEnrichment: domain.EventEnrichment{EnrichStatus: domain.EnrichStatusPending}, Values: domain.EventValues{}, SourceRawData: domain.JSONObject{},
 	}
 }
 

@@ -33,7 +33,7 @@ func (cmdbReader) Related(context.Context, string, []onemodel.Instance, string, 
 
 func TestCMDBThenFieldsShareEffectiveView(t *testing.T) {
 	var source config.EventSource
-	raw := `{"event_source_id":"host","enrich":{"processors":[{"type":"cmdb","config":{"rules":[{"id":"host","lookup":{"model_id":"cw-Host","where":{"field":"attributes.ip","type":"keyword","operator":"eq","value":{"literal":"10.0.0.1"}}},"assignments":[{"target":"$.labels.owner","value":{"jsonpath":"$.lookup.attributes.operator"}}]}]}},{"type":"fields","config":{"rules":[{"id":"title","operations":[{"id":"set","type":"assign","assignments":[{"target":"$.title","value":{"template":"${title}: ${owner}","variables":{"title":{"jsonpath":"$.original.title"},"owner":{"jsonpath":"$.alert.labels.owner"}}}}]}]}]}}]}}`
+	raw := `{"event_source_id":"host","enrich":{"processors":[{"type":"cmdb","config":{"rules":[{"id":"host","lookup":{"model_id":"cw-Host","where":{"field":"attributes.ip","type":"keyword","operator":"eq","value":{"literal":"10.0.0.1"}}},"assignments":[{"target":"$.labels.owner","value":{"jsonpath":"$.lookup.attributes.operator"}}]}]}},{"type":"fields","config":{"rules":[{"id":"title","operations":[{"id":"set","type":"assign","assignments":[{"target":"$.title","value":{"template":"${title}: ${owner}","variables":{"title":{"jsonpath":"$.original.title"},"owner":{"jsonpath":"$.event.labels.owner"}}}}]}]}]}}]}}`
 	if err := json.Unmarshal([]byte(raw), &source); err != nil {
 		t.Fatal(err)
 	}
@@ -41,13 +41,13 @@ func TestCMDBThenFieldsShareEffectiveView(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	alert := domain.Alert{BKTenantID: "t", EventSourceID: "host", Title: "CPU"}
-	result, err := router.Enrich(t.Context(), enrich.Input{Alert: alert, Preview: true})
+	alert := domain.Event{Evaluations: []domain.EventEvaluation{{Severity: "warning", Action: domain.EventActionTriggered}}, BKTenantID: "t", EventSourceID: "host", Title: "CPU"}
+	result, err := router.Enrich(t.Context(), enrich.Input{Event: alert, Preview: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	alert.Enrich = result.Data
-	view, err := view.EnrichedAlert(alert)
+	view, err := view.EnrichedEvent(alert, "warning")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestCMDBThenFieldsShareEffectiveView(t *testing.T) {
 	var payload struct {
 		Processors []map[string]map[string]json.RawMessage `json:"processors"`
 	}
-	if err := json.Unmarshal(result.Data["processors"], &payload.Processors); err != nil {
+	if err := json.Unmarshal(result.Data.Evaluations[0].Data["processors"], &payload.Processors); err != nil {
 		t.Fatal(err)
 	}
 	for _, entry := range payload.Processors {

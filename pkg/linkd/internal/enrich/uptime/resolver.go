@@ -108,7 +108,7 @@ func resolve(
 	dimensions domain.DimensionMap,
 	fallbackBizID int64,
 ) (Resolution, error) {
-	alert := scope.Alert()
+	alert := scope.Event()
 	resolution := Resolution{
 		tenantID: alert.BKTenantID, modelCode: modelCode, taskRaw: domain.NewStringScalar("0"),
 	}

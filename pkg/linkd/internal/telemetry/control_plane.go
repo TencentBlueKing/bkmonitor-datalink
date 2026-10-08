@@ -21,6 +21,38 @@ import (
 type ControlPlaneTask string
 
 const (
+	// ControlPlaneTaskKACIndexMaintenance 维护兼容索引并观测定义冲突或依赖故障。
+	ControlPlaneTaskKACIndexMaintenance ControlPlaneTask = "kac-index-maintenance"
+	// ControlPlaneTaskKACDelivery 监督可靠投影与动作循环的共享运行资源。
+	ControlPlaneTaskKACDelivery ControlPlaneTask = "kac-delivery"
+	// ControlPlaneTaskProjectionProducer 从持久 Alert 水位补齐投影任务。
+	ControlPlaneTaskProjectionProducer ControlPlaneTask = "projection-producer"
+	// ControlPlaneTaskProjectionDelivery 执行可靠投影及本地 ACK。
+	ControlPlaneTaskProjectionDelivery ControlPlaneTask = "projection-delivery"
+	// ControlPlaneTaskActionEnqueue 在正式指纹租约内补齐已持久化动作意图。
+	ControlPlaneTaskActionEnqueue ControlPlaneTask = "action-enqueue"
+	// ControlPlaneTaskActionDelivery 执行投影门槛、原顺序动作发送与受理确认。
+	ControlPlaneTaskActionDelivery ControlPlaneTask = "action-delivery"
+	// ControlPlaneTaskShieldHints 记录可丢失的依赖主终态提示与加速复查。
+	ControlPlaneTaskShieldHints ControlPlaneTask = "shield-hints"
+	// ControlPlaneTaskMergeRequests 记录显式合并接续和关系检查，不把业务条件失败等同于任务故障。
+	ControlPlaneTaskMergeRequests ControlPlaneTask = "merge-requests"
+	// ControlPlaneTaskSuppressionRequests 记录显式抑制对账请求的有界执行。
+	ControlPlaneTaskSuppressionRequests ControlPlaneTask = "suppression-requests"
+	// ControlPlaneTaskShieldRequests 记录显式屏蔽复查请求的执行轮次。
+	ControlPlaneTaskShieldRequests ControlPlaneTask = "shield-requests"
+	// ControlPlaneTaskMerge 记录共享合并任务运行时是否存活。
+	ControlPlaneTaskMerge ControlPlaneTask = "merge"
+	// ControlPlaneTaskMergeJudge 记录独立合并窗口裁决及丢失等待检查。
+	ControlPlaneTaskMergeJudge ControlPlaneTask = "merge-judge"
+	// ControlPlaneTaskMergeDecisions 记录持久化合并步骤与缓存提示清理。
+	ControlPlaneTaskMergeDecisions ControlPlaneTask = "merge-decisions"
+	// ControlPlaneTaskMergeRelations 记录父子终态检查和关系解除。
+	ControlPlaneTaskMergeRelations ControlPlaneTask = "merge-relations"
+	// ControlPlaneTaskShieldCheck 记录独立屏蔽解除检查轮次。
+	ControlPlaneTaskShieldCheck ControlPlaneTask = "shield-check"
+	// ControlPlaneTaskPolicyPublication 记录策略待发布记录恢复轮次。
+	ControlPlaneTaskPolicyPublication ControlPlaneTask = "policy-publication"
 	// ControlPlaneTaskScheduler 记录调度轮次。
 	ControlPlaneTaskScheduler ControlPlaneTask = "scheduler"
 	// ControlPlaneTaskProviders 记录来源提供方完整应用轮次。

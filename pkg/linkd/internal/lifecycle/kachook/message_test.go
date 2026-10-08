@@ -275,7 +275,7 @@ func TestConvertMessageRejectsUnknownSeverityAndRequiredText(t *testing.T) {
 
 func testAlert() domain.Alert {
 	begin := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	return domain.Alert{
+	return domain.Alert{Revision: 1,
 		EventSourceVersion: 1, AlertID: "alert-1", BKTenantID: "tenant-1", EventSourceID: "built_in_bk",
 		Fingerprint: "fp", Title: "source title", Content: "source content", Severity: "warning",
 		Dimensions: domain.DimensionMap{}, SubjectSystem: "cmdb", SubjectType: "host", SubjectID: "101", SubjectName: "host-101",

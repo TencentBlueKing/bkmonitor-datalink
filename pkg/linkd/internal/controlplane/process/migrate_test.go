@@ -35,7 +35,7 @@ func migrationTestConfig() config.Config {
 func TestMigrationStages(t *testing.T) {
 	t.Parallel()
 	sentinel := errors.New("test dependency failure")
-	for _, failedAt := range []string{"", "redis", "repository", "sources"} {
+	for _, failedAt := range []string{"", "redis", "repository", "sources", "policies"} {
 		t.Run("failure_"+failedAt, func(t *testing.T) {
 			var calls []string
 			makeStep := func(name string) func(context.Context, config.Config) error {
@@ -50,9 +50,9 @@ func TestMigrationStages(t *testing.T) {
 					return nil
 				}
 			}
-			steps := migrationSteps{makeStep("redis"), makeStep("repository"), makeStep("sources")}
+			steps := migrationSteps{makeStep("redis"), makeStep("repository"), makeStep("sources"), makeStep("policies")}
 			err := runMigration(t.Context(), migrationTestConfig(), steps)
-			expected := []string{"redis", "repository", "sources"}
+			expected := []string{"redis", "repository", "sources", "policies"}
 			if failedAt != "" {
 				for i, name := range expected {
 					if name == failedAt {
@@ -74,7 +74,7 @@ func TestMigrationStages(t *testing.T) {
 				if err := runMigration(t.Context(), migrationTestConfig(), steps); err != nil {
 					t.Fatal(err)
 				}
-				if len(calls) != 6 {
+				if len(calls) != 8 {
 					t.Fatal("second initialization not executed")
 				}
 			}
@@ -102,7 +102,7 @@ func TestMigrationChecksConfigurationBeforeIO(t *testing.T) {
 			tc.change(&cfg)
 			invoked := false
 			step := func(context.Context, config.Config) error { invoked = true; return nil }
-			err := runMigration(t.Context(), cfg, migrationSteps{step, step, step})
+			err := runMigration(t.Context(), cfg, migrationSteps{step, step, step, step})
 			if err == nil || invoked {
 				t.Fatalf("error=%v, invoked=%v", err, invoked)
 			}
@@ -119,7 +119,7 @@ func TestMigrationCancellation(t *testing.T) {
 	calls := 0
 	first := func(context.Context, config.Config) error { calls++; cancel(); return nil }
 	later := func(context.Context, config.Config) error { calls++; return nil }
-	err := runMigration(ctx, migrationTestConfig(), migrationSteps{first, later, later})
+	err := runMigration(ctx, migrationTestConfig(), migrationSteps{first, later, later, later})
 	if !errors.Is(err, context.Canceled) || calls != 1 {
 		t.Fatalf("error=%v calls=%d", err, calls)
 	}

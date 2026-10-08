@@ -55,7 +55,7 @@ func TestHookEmitsV1AlertChange(t *testing.T) {
 
 func testAlert() domain.Alert {
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	return domain.Alert{EventSourceVersion: 1, AlertID: "alert-1", BKTenantID: "tenant-1", EventSourceID: "source", Fingerprint: "fp", Title: "CPU high", Severity: "warning", Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: "event-1", LastOccurredAt: now, UpdateAt: now, TriggerEventID: "event-1", BeginAt: now, CreateAt: now, EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{"processors": json.RawMessage(`[]`)}}
+	return domain.Alert{Revision: 1, EventSourceVersion: 1, AlertID: "alert-1", BKTenantID: "tenant-1", EventSourceID: "source", Fingerprint: "fp", Title: "CPU high", Severity: "warning", Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: "event-1", LastOccurredAt: now, UpdateAt: now, TriggerEventID: "event-1", BeginAt: now, CreateAt: now, EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{"processors": json.RawMessage(`[]`)}}
 }
 
 type fakeProducer struct{ records []*kgo.Record }
@@ -70,3 +70,24 @@ func (p *fakeProducer) ProduceSync(_ context.Context, records ...*kgo.Record) kg
 }
 
 func (*fakeProducer) Close() {}
+
+func TestHookAcceptsPolicyStateAndSeverityChanges(t *testing.T) {
+	for _, outcome := range []lifecycle.ProcessOutcome{lifecycle.OutcomeAlertSeverityChanged, lifecycle.OutcomeAlertShieldChanged, lifecycle.OutcomeAlertMergeReleased} {
+		producer := &fakeProducer{}
+		hook := newHook(kafkaclient.ProducerConfig{Brokers: []string{"localhost:9092"}, Topic: "alerts", MaxMessageBytes: 1 << 20}, producer)
+		input := lifecycle.FinalHookInput{Cause: lifecycle.AlertChangeCause{Type: lifecycle.AlertChangeCauseSystemOperation, ID: "operation"}, Alert: testAlert(), Outcome: outcome}
+		first, err := hook.Execute(t.Context(), input)
+		if err != nil || len(producer.records) != 1 {
+			t.Fatal("policy output rejected", outcome, err)
+		}
+		again, err := hook.Execute(t.Context(), input)
+		if err != nil || first.MessageID != again.MessageID || string(producer.records[0].Value) != string(producer.records[1].Value) {
+			t.Fatal("policy retry changed envelope", err)
+		}
+	}
+	producer := &fakeProducer{}
+	hook := newHook(kafkaclient.ProducerConfig{Brokers: []string{"localhost:9092"}, Topic: "alerts", MaxMessageBytes: 1 << 20}, producer)
+	if _, err := hook.Execute(t.Context(), lifecycle.FinalHookInput{Cause: lifecycle.AlertChangeCause{Type: lifecycle.AlertChangeCauseSystemOperation, ID: "op"}, Alert: testAlert(), Outcome: "unknown"}); err == nil || len(producer.records) != 0 {
+		t.Fatal("unknown outcome published")
+	}
+}

@@ -621,7 +621,9 @@ export class PrometheusConnector {
   constructor(config: ConsoleConfig) {
     this.baseUrl = config.prometheus?.baseUrl.replace(/\/$/, "");
     this.timeoutMilliseconds = config.query.timeoutMilliseconds;
-    this.headers = config.prometheus ? authHeaders(config.prometheus.auth) : {};
+    this.headers = config.prometheus
+      ? prometheusAuthHeaders(config.prometheus.auth)
+      : {};
   }
 
   async panels(
@@ -969,7 +971,7 @@ function matcherSelector(matchers: string[]): string {
   return matchers.length ? `{${matchers.join(",")}}` : "";
 }
 
-function authHeaders(auth: {
+export function prometheusAuthHeaders(auth: {
   apiKey?: string;
   username?: string;
   password?: string;

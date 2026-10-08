@@ -200,6 +200,10 @@ console:
   existingSecret: ""
   secretKey: linkd.yaml
   prometheusUrl: ""
+  ## 按租户、策略类型配置 KAC 页面 URL；只用于导航，可包含 {policy_id}/{bk_tenant_id}/{space_code}。
+  kacPolicyLinks: {}
+  # 可选全局告警详情URL模板；为空时Console不显示KAC跳转。
+  kacAlertUrlTemplate: ""
   basicAuth:
     existingSecret: ""
     usernameKey: username

@@ -1,5 +1,19 @@
+import { registerPolicyDiagnostics } from "./policy-simulation.js";
+import { registerKACAlertLinkRoute } from "./kac-alert-link.js";
+import { registerDeliveryMetricRoutes } from "./delivery-metrics.js";
+import { registerPolicyLinkRoutes } from "./policy-links.js";
+import { registerMergeRetryRoutes } from "./merge-retries.js";
+import { registerSuppressionCheckRoutes } from "./suppression-checks.js";
+import { registerSuppressionCleanupRoutes } from "./suppression-cleanups.js";
+import { registerActionDeliveryRoutes } from "./action-deliveries.js";
+import { registerProjectionTaskRoutes } from "./projection-tasks.js";
+import { registerShieldCheckRoutes } from "./shield-checks.js";
 import { internalTokenHeaders } from "./internal-token.js";
 import { registerOneModelRoutes } from "./onemodel.js";
+import { createPolicyProxy, registerPolicyRoutes } from "./policies.js";
+import { registerMergeRuntimeRoutes } from "./merge-runtime.js";
+import { registerShieldRuntimeRoutes } from "./shield-runtime.js";
+import { registerSuppressionRuntimeRoutes } from "./suppression-runtime.js";
 import { registerSourceRoutes } from "./sources.js";
 import { registerCloseAlert } from "./close-alert.js";
 import Fastify, { type FastifyInstance } from "fastify";
@@ -76,6 +90,8 @@ export async function createApp(
   const app = Fastify({
     logger: { redact: ["req.headers.authorization"] },
     bodyLimit: 1024 * 1024,
+    // 实体身份允许 160 字节，防抖运行身份为 129 字符；路由不能先用默认 100 字符截断契约。
+    routerOptions: { maxParamLength: 160 },
   });
   registerBasicAuth(app, access);
   const basePath = normalizeBasePath(config.server.basePath);
@@ -93,6 +109,24 @@ async function registerConsoleRoutes(
 ): Promise<void> {
   app.get("/local-api/version", () => readBuildInfo());
   registerCloseAlert(app, config);
+  registerPolicyRoutes(app, config);
+  registerPolicyLinkRoutes(app, config);
+  registerPolicyDiagnostics(app, config);
+  registerKACAlertLinkRoute(app, config);
+  registerProjectionTaskRoutes(app, config);
+  registerActionDeliveryRoutes(app, config);
+  registerDeliveryMetricRoutes(app, config);
+  const mergeProxy = createPolicyProxy(config, 16, "合并");
+  registerMergeRuntimeRoutes(app, config, mergeProxy);
+  registerMergeRetryRoutes(app, config, mergeProxy);
+  // 当前状态、流水、诊断和请求由同一详情页并发读取，共用控制面的两并发预算。
+  const shieldProxy = createPolicyProxy(config, 16);
+  registerShieldRuntimeRoutes(app, config, shieldProxy);
+  registerShieldCheckRoutes(app, config, shieldProxy);
+  const suppressionProxy = createPolicyProxy(config, 16, "抑制");
+  registerSuppressionRuntimeRoutes(app, config, suppressionProxy);
+  registerSuppressionCheckRoutes(app, config, suppressionProxy);
+  registerSuppressionCleanupRoutes(app, config);
   const mysqlConnector = config.mysql ? new MysqlConnector(config) : undefined;
   const elasticsearchConnector = config.elasticsearch
     ? new ElasticsearchConnector(config)

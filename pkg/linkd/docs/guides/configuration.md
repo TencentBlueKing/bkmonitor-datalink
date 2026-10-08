@@ -181,7 +181,7 @@ Processor 自行校验字段和类型；每项最多 64 KiB，禁止空 key。�
 `web_saas_module_url`，值为可选的绝对 HTTP(S) 基础地址，禁止 query 和 fragment；配置后
 `strategy.url` 输出完整 URL，省略时继续输出站内相对路径。`test` 支持下述负载模拟参数；其余 Processor 当前只接受空 config。
 
-`event_sources[].enrich.processors` 是新 Alert 创建前的有序丰富链。当前注册名为
+`event_sources[].enrich.processors` 是每条 Event 在策略前执行的有序丰富链。当前注册名为
 `strategy/resource/display/metric/source/test`；空列表输出 `{"processors":[]}`。
 重复类型、空 type、未知处理器或缺少 Processor 所需的数据源会在来源发布时被拒绝。路由按任务
 固定的 Release 创建，来源发布后通过停止确认与重新调度生效。停用来源按调度协议停止任务，积压保留。
@@ -226,12 +226,13 @@ enrich:
 
 调用通过与真实数据源相同的观测层记录 `datasource=test`、`operation=call` 的次数和耗时。
 结果标签为 `found/failed/timeout/canceled`，租户、告警身份和模拟参数不进入指标标签。
-每个新 Alert 的调用与字段副本独立；计划持久化后的重试沿用冻结结果，不重新模拟。
+每条新 Event 的调用与字段副本独立；计划持久化后的重试沿用冻结结果，不重新模拟。
 无丰富基线测试使用 `processors: []`。原临时顶层 `sleep_milliseconds` 已移入 datasource 分布配置。
 
 第三方只读资源统一由顶层 `resources` 配置：`mysql` 供 Kingeye 元数据 Reader 使用，
 `onemodel` 供统一实例、关联和业务拓扑查询使用，`kingeye_display` 供展示缓存转换使用，
 `dynamic_group` 供 Resource 从 Kingeye 已物化的 Redis hash 读取分组归属。
+KAC 兼容存储与处置凭据使用下节的 `plugins.kac`，不参与丰富查询。
 所有 EventSource、丰富预览及 OneModel 查询复用同一套资源定义；连接仍按实际依赖初始化，来源任务退出时关闭。
 OneModel 实例固定读取 `kingeye_all_instance`，关联边固定读取 `kingeye_topo`；业务拓扑读取
 `<index_prefix>cmdb_biz_topo_node` 和 `<index_prefix>cmdb_biz_topo_host_membership`，前缀默认 `bk_monitor_base_`。
@@ -239,7 +240,7 @@ OneModel 实例固定读取 `kingeye_all_instance`，关联边固定读取 `king
 资源是静态启动配置，更新后同步重启控制面和 Lifecycle。Helm 使用 `configuration.resources` 为各角色提供一致配置。
 来源导入文件只需包含处理规则，无需复制资源凭据；控制面发布和运行时装配检查实际所需资源。
 旧 `event_sources[].enrich.datasources` 输入已移除；历史 Release 不改写，读取后也不再使用其内嵌连接。
-配置展示隐藏 MySQL、Redis、Elasticsearch API Key 和 Basic Auth 密码；新发布的 Record/Release 不包含公共资源。
+配置展示隐藏 MySQL、Redis、Elasticsearch API Key、Basic Auth 密码、蓝鲸应用密钥和 KAC 投递 Token；新发布的 Record/Release 不包含公共资源。
 
 ### 动态分组 Redis 投影
 
@@ -271,6 +272,108 @@ resources:
 旧 `link_pipeline` 的 `META_DYNAMIC_INST_GROUP_CACHE_KEY` 与当前 Kingeye 写入端的键格式不同；
 此处读取当前写入端投影，旧键不作为 Linkd 兼容契约。
 普通 mock 单元测试和上述只读校验都不代表生产链路已验证。
+
+### 蓝鲸全局配置与 CMDB 实时目标读取
+
+蓝鲸应用凭据、APIGW 公共地址和多租户模式统一在顶层 `blueking` 声明。`resources.cmdb: {}` 启用
+策略的显式服务实例、服务拓扑与主机回源；它与继续使用 OneModel 的丰富处理器 `type=cmdb` 分开。
+
+```yaml
+blueking:
+  enable_multi_tenant_mode: true
+  api_url: https://apigw.example.com
+  app_code: linkd
+  app_secret: replace-with-app-secret
+resources:
+  cmdb: {}
+```
+
+`enable_multi_tenant_mode` 缺省为 false：单租户直接使用 `admin`，不调用用户管理 API。
+多租户根据当前请求的租户查询并缓存 `bk_admin`。两种模式均保留调用者显式提供的 `X-Bk-Tenant-Id`，
+不会把 Event/Alert、管理 API、Redis 或存储中的租户改为默认租户。全租户应用只需一份凭据，无租户名单。
+
+只支持 APIGW。CMDB 默认地址为 `<blueking.api_url>/api/bk-cmdb/prod/`；需要独立地址时使用
+`resources.cmdb.base_url` 覆盖。应用凭据与公共地址必须成组配置，启用 CMDB 时三项均必填。
+原 `resources.cmdb.mode`、`identities` 已移除，启动时拒绝旧字段，不提供 ESB 或旧配置兼容分支。
+
+多租户查询使用同一应用凭据、固定 `admin` 和当前租户头，调用
+`GET /api/bk-user/prod/api/v3/open/tenant/virtual-users/-/lookup/`，参数为
+`lookup_field=login_name&lookups=bk_admin`。用户管理的 `code/data` 信封单独解析，不要求 `result`。
+只有唯一且非空的 `bk_username` 被缓存；空结果、歧义、格式错误、接口失败均不回退 `admin`。
+
+每个控制面/Lifecycle 运行时共享 1000 项租户 LRU 成功缓存，无 TTL、无 Redis、无后台刷新；Worker
+不同来源复用同一缓存。失败不缓存，同租户并发查询合并；一个等待者取消不取消其他等待者，全部
+等待者退出时取消共享查询。最多四个不同租户同时查询，超额按依赖失败处理；关闭客户端取消并等待
+未完成调用并清空缓存。切换模式、修改凭据或需要刷新身份时同步重启相关进程。
+
+单次用户查询或 CMDB HTTP 请求的排队与网络预算均为 3 秒，共用四个 HTTP 配额；身份解析先于
+CMDB 配额申请，不嵌套持有信号量。完整 CMDB 组合读取仍受 10 秒及上游更短截止时间限制。
+请求不跟随重定向，错误不回显凭据、URL 或响应体；Go/Console 配置展示隐藏 `blueking.app_secret`。
+
+配置 CMDB 时，主机缓存有成员沿用 OneModel；空集合、节点缺失或读取失败时回源。回源按真实业务树、
+内置空闲模块及租户模型目录验证 locator。服务实例直接读取服务详情与所属主机，显式选择要求具体
+业务；服务拓扑支持业务、集群、模块。动态组继续按 KAC strict fetcher 的定义与实例数据面执行。
+
+分页每页 200，最多 256 页/20000 条/32 MiB，单个 CMDB 响应 8 MiB；业务树最多 10000 节点/64 层，
+用户查询响应最多 1 MiB。总数变化、重复身份、缺主机、跨范围、超限均失败，不使用部分结果解除屏蔽。
+有效节点的完整零成员可解除；显式目标消失和身份查询失败保留既有屏蔽并记录 partial。新 Event
+按既定依赖故障规则跳过受影响策略；这些跨接口读取不承诺物理时刻一致的快照。
+
+Helm 使用公共 `configuration.blueking`，禁止角色/集群配置单独覆盖多租户开关；独立部署文件也需
+保持该开关一致。来源/策略发布只保存业务配置，不保存蓝鲸凭据。网关权限仍须在实际部署验证。
+
+### KAC 全局插件配置
+
+以下片段合入现有部署配置。一个开关同时启用 KAC `alarm_event` 直接维护和获准处置通知，
+对所有 EventSource、租户及内置合并来源生效，不需要来源发布配置或租户身份表。
+
+```yaml
+plugins:
+  kac:
+    enabled: true
+    alarm_event_index: cw_kac_saas_3.0_alarm_event
+    elasticsearch:
+      addresses: [https://kac-es.example.com:9200]
+      basic_auth:
+        username: linkd
+        password: replace-with-es-secret
+    action_endpoint: https://kac.example.com/internal/linkd/action
+    internal_token: replace-with-deployment-secret
+```
+
+`alarm_event_index` 必须填写目标 KAC 原 alias，不能从蓝鲸应用凭据或 Linkd Repository 索引前缀推导。
+ES 连接独立于 `storage.repository`，所以 Linkd 使用 MySQL 时也可维护 KAC 原 ES 索引。
+ES 认证可选 `api_key` 或 `basic_auth`，不能同时配置。
+
+| 配置 | 行为 |
+| --- | --- |
+| enabled | 缺省 false；生产部署显式开启，一并启用兼容存储与处置通知 |
+| alarm_event_index | 必填，原 KAC alias；支持小写字母、数字、点、下划线和连字符，最多 180 字符 |
+| elasticsearch.addresses | 必填 ES 节点列表；请求不跟随重定向 |
+| elasticsearch.number_of_shards | 首次创建模板时默认 3，范围 1..1024 |
+| elasticsearch.number_of_replicas | 首次创建模板时默认 2，范围 0..10，可显式设为 0 |
+| elasticsearch.max_result_window | 首次创建模板时默认 50000，范围 1..1000000 |
+| elasticsearch.total_fields_limit | 首次创建模板时默认 5000，范围 1..100000 |
+| action_endpoint | 完整 HTTP(S) 动作 V1 接口，不接受 userinfo、query、fragment，不使用旧 KAC pipeline |
+| internal_token | 公共 Internal-Token Bearer 凭据，1..16384 个非空白可打印 ASCII 字符；拒绝脱敏占位值 |
+
+控制面需要 ES 的模板、ILM、alias、mapping、索引创建、读写与 refresh 权限。新建索引沿用 KAC
+mapping、分析器和 30gb/60d 的 hot rollover；已有物理索引不重建，不重置其分片/副本；已有模板的运维参数不会被插件缺省值覆盖。
+版本、物理索引位置和暂存处置态保存在独立 `.linkd-kac-state-<alias摘要>` 索引中，不改变 KAC 原字段定义。
+
+普通同步保留 KAC 的处置字段和处置状态；屏蔽、合并和终态变化按兼容规则更新 status，
+解除关系后恢复保存的处置状态。同步达到搜索可见后才发送获准动作。失败保留持久任务，并提供有界重试。
+兼容索引未就绪时维护任务独立重试，不因 KAC ES 依赖失败停止告警主流程。
+生产按正常启用设计，不增加首次启用的历史补齐、旧目标迁移和启停切换流程。
+
+`resources.kac_delivery`、`event_sources[].kac_targets`、`projection_endpoint` 均已移除，旧字段明确拒绝。
+连接和凭据只保存在部署配置及运行时内存，Go/Console 展示均脱敏。
+Helm 仅允许公共 `configuration.plugins.kac`，不接受角色、Worker 组或 migrate 覆盖；独立配置文件需保持一致，
+变更后重启相关进程。KAC 侧仍须接入动作 V1 并停止旧告警状态写入，不能用协议模拟代替实际应用联调。
+
+设计见[KAC 全局兼容插件](../design/kac-compatibility-plugin.md)。
+
+### 其他运行边界
 
 顶层 `cleaner` 是每条 EventSource Flow 的默认预算；`event_sources[].cleaner.runtime` 只覆盖非零
 字段。每条 Flow 内共享清洗 worker pool，但 Event 持久化、Mailbox 入队和原消息确认始终按 lane 独立推进，
@@ -617,6 +720,39 @@ linkd event-source import --config configs/linkd.local.yaml --file configs/linkd
 
 来源新增 `scheduling.cleaner` / `scheduling.lifecycle`，各含 `replicas`（默认 all，或非负整数）与 `selector`（精确 AND 标签）。
 0 停止对应角色，enabled=false 停止整个来源。Cleaner 有 Kafka partition 上限，Lifecycle 无此上限。
+
+内部合并来源只调度 Lifecycle，配置无需 Kafka 或 Cleaner：
+
+```yaml
+event_sources:
+  - event_source_id: builtin_alarm_merge
+    enabled: true
+    storage:
+      type: internal_merge
+    scheduling:
+      lifecycle:
+        replicas: 1
+        selector: {}
+    enrich:
+      processors: []
+    hooks: []
+```
+
+该配置只能用于系统合并生产者，不能作为外部事件导入通道。配置 Lifecycle 的控制面在调度初始化后
+自动创建缺失的内置来源（默认空 Enrich/Hook），保留已有配置及停用/删除状态；可用上述配置显式调整。
+
+合并运行时共用四个执行名额，单项 10 秒，每页最多 16 项：
+
+| 控制任务 | 无待处理下一页时的间隔 | 职责 |
+| --- | --- | --- |
+| merge-judge | 1 秒 | 扫描持久化等待，独立冻结窗口，检查丢失窗口的原截止时间 |
+| merge-decisions | 1 秒 | 恢复快照、内部 Event、真实父、关系/释放和缓存提示清理步骤 |
+| merge-relations | 30 秒 | 检查父子终态；单关系有进展时最多连续推进 16 个持久化步骤 |
+
+三个循环共用窗口租约，不同时持有多个 Alert 锁；修改单 Alert 时另取其正式 fingerprint lease。
+控制面任务页同时显示合并运行时服务及三个循环的状态。生命周期配置缺失时不启动该运行时。
+完整约束及当前验收范围见 [合并开发方案](../design/event-enrich-and-alarm-policies.md#83-成功后的主告警与父子关系)。
+
 同一进程同源同角色最多一个 Flow；all-in-one 的两种角色允许共存。资源上限作用于整个 worker，不随来源数量无限增长。
 
 `lifecycle.signal.stream` 现在作为来源 Stream 的基础前缀；最终键由 deployment/EventSource 稳定派生。
@@ -663,7 +799,7 @@ Hook 只提交刷新提示，控制面完整查询已落库 Active Alert 并原�
 消息格式及 Redis DB 隔离要求见[策略索引变更通知 v1](../reference/contracts/active-alert-strategy-change-v1.md)。
 运行时输出 Redis 不可达不阻止来源装配，每次实际调用按超时记录失败。
 
-集合成员和失败边界以 [Lifecycle 插件行为](../modules/lifecycle.md#23-enricher-与-finalhook) 为准。
+集合成员和失败边界以 [Lifecycle 插件行为](../modules/lifecycle.md#24-enricher-与-finalhook) 为准。
 接入示例、Redis 查询和排障见 [Redis 策略活跃告警 hook](active-alert-by-strategy.md)。
 Console Kafka 页面按来源和实例展示输出目标；动态管理接口中的连接凭据已脱敏，因此该模式只展示
 目标声明，不使用脱敏凭据探测输出集群 metadata，也不将其标记为已验证可用。

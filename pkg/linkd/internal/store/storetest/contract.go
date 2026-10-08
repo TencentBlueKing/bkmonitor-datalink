@@ -27,6 +27,17 @@ type Factory func(t *testing.T) store.Repository
 // RunRepositoryContract 固定 Event/Alert/AlertLog 的跨后端行为。
 func RunRepositoryContract(t *testing.T, factory Factory) {
 	t.Helper()
+	runEventEnrichmentContract(t, factory)
+	runPolicyContextContract(t, factory)
+	runShieldWorkContract(t, factory)
+	runShieldQueryContract(t, factory)
+	runShieldDependentsContract(t, factory)
+	runActiveCandidatesContract(t, factory)
+	runMergeContract(t, factory)
+	runMergeWorkContract(t, factory)
+	runActionWorkContract(t, factory)
+	runProjectionRevisionContract(t, factory)
+	runMergeOriginContract(t, factory)
 	t.Run("event create and processing CAS", func(t *testing.T) {
 		repo := factory(t)
 		ctx := context.Background()
@@ -250,12 +261,13 @@ func waitForAlertLogs(
 // Event 返回一个有效的新 Event 测试夹具。
 func Event(tenantID, eventID, fingerprint, severity string) domain.Event {
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	return domain.Event{Evaluations: []domain.EventEvaluation{{Severity: severity, Action: domain.EventActionTriggered}}, EventSourceVersion: 1, BKTenantID: tenantID, EventSourceID: "source", EventID: eventID, Fingerprint: fingerprint, Title: "CPU high", Dimensions: domain.DimensionMap{"host": domain.NewStringScalar("host-1")}, OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, SourceEventID: "source-" + eventID, SourceAlertID: fingerprint, SourceRawData: domain.JSONObject{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}}
+	return domain.Event{
+		EventEnrichment: domain.EventEnrichment{EnrichStatus: domain.EnrichStatusPending}, Evaluations: []domain.EventEvaluation{{Severity: severity, Action: domain.EventActionTriggered}}, EventSourceVersion: 1, BKTenantID: tenantID, EventSourceID: "source", EventID: eventID, Fingerprint: fingerprint, Title: "CPU high", Dimensions: domain.DimensionMap{"host": domain.NewStringScalar("host-1")}, OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, SourceEventID: "source-" + eventID, SourceAlertID: fingerprint, SourceRawData: domain.JSONObject{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}}
 }
 
 // Alert 返回一个有效的 active Alert 测试夹具。
 func Alert(tenantID, alertID, eventID, fingerprint, severity string) domain.Alert {
 	event := Event(tenantID, eventID, fingerprint, severity)
 	now := event.CreateAt.Add(time.Second)
-	return domain.Alert{EventSourceVersion: 1, AlertID: alertID, BKTenantID: tenantID, EventSourceID: event.EventSourceID, Fingerprint: fingerprint, Title: event.Title, Severity: severity, Dimensions: event.Dimensions.Clone(), SourceEventID: event.SourceEventID, SourceAlertID: event.SourceAlertID, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: eventID, LastOccurredAt: event.OccurredAt, UpdateAt: now, TriggerEventID: eventID, BeginAt: event.OccurredAt, CreateAt: event.CreateAt, EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{"processors": json.RawMessage(`[]`)}}
+	return domain.Alert{Revision: 1, EventSourceVersion: 1, AlertID: alertID, BKTenantID: tenantID, EventSourceID: event.EventSourceID, Fingerprint: fingerprint, Title: event.Title, Severity: severity, Dimensions: event.Dimensions.Clone(), SourceEventID: event.SourceEventID, SourceAlertID: event.SourceAlertID, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: eventID, LastOccurredAt: event.OccurredAt, UpdateAt: now, TriggerEventID: eventID, BeginAt: event.OccurredAt, CreateAt: event.CreateAt, EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{"processors": json.RawMessage(`[]`)}}
 }

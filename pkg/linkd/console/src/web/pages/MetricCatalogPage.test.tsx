@@ -37,7 +37,7 @@ it("searches names and dimensions, filters categories and shows actual query ser
   );
   vi.stubGlobal("fetch", fetcher);
   setup();
-  await screen.findByRole("button", { name: "查看告警丰富总耗时详情" });
+  await screen.findByRole("button", { name: "查看事件丰富总耗时详情" });
   expect(fetcher.mock.calls).toHaveLength(1);
   fireEvent.click(screen.getByRole("button", { name: "告警丰富" }));
   expect(
@@ -47,7 +47,7 @@ it("searches names and dimensions, filters categories and shows actual query ser
     target: { value: "histogram" },
   });
   expect(
-    screen.queryByRole("button", { name: "查看告警丰富尝试结果详情" }),
+    screen.queryByRole("button", { name: "查看事件丰富尝试结果详情" }),
   ).not.toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("指标用途"), {
     target: { value: "throughput" },
@@ -64,16 +64,16 @@ it("searches names and dimensions, filters categories and shows actual query ser
       target: { value: query },
     });
     expect(
-      screen.getByRole("button", { name: "查看告警丰富总耗时详情" }),
+      screen.getByRole("button", { name: "查看事件丰富总耗时详情" }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "查看存储逻辑操作数详情" }),
     ).not.toBeInTheDocument();
   }
   fireEvent.click(
-    screen.getByRole("button", { name: "查看告警丰富总耗时详情" }),
+    screen.getByRole("button", { name: "查看事件丰富总耗时详情" }),
   );
-  const detail = screen.getByRole("region", { name: "告警丰富总耗时详情" });
+  const detail = screen.getByRole("region", { name: "事件丰富总耗时详情" });
   expect(
     within(detail).getByText("linkd_enrich_attempt_duration_seconds_bucket"),
   ).toBeInTheDocument();
@@ -90,7 +90,7 @@ it("restores URL filters and clamps malformed pagination", async () => {
   await screen.findByRole("button", { name: "查看存储逻辑操作数详情" });
   expect(screen.getByLabelText("搜索指标")).toHaveValue("operations");
   expect(
-    screen.queryByRole("button", { name: "查看告警丰富总耗时详情" }),
+    screen.queryByRole("button", { name: "查看事件丰富总耗时详情" }),
   ).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "下一页" })).toBeDisabled();
 });
@@ -110,6 +110,6 @@ it("shows an actionable error and can retry", async () => {
   setup();
   expect(await screen.findByRole("alert")).toHaveTextContent("控制面不可用");
   fireEvent.click(screen.getByRole("button", { name: "刷新目录" }));
-  await screen.findByRole("button", { name: "查看告警丰富总耗时详情" });
+  await screen.findByRole("button", { name: "查看事件丰富总耗时详情" });
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });

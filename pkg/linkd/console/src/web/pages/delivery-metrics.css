@@ -1,0 +1,47 @@
+.delivery-metrics {
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  min-width: 0;
+}
+.delivery-metrics-heading,
+.delivery-metrics-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+.delivery-metrics-heading h2 {
+  margin: 0;
+}
+.delivery-metrics-filter {
+  justify-content: start;
+  margin: 1rem 0;
+}
+.delivery-metrics-filter label {
+  display: grid;
+  gap: 0.35rem;
+}
+.delivery-metrics-filter input {
+  width: min(28rem, 65vw);
+}
+.delivery-metrics-time {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.delivery-metrics .metric-query-controls {
+  flex-wrap: wrap;
+}
+.action-log-locator {
+  margin: 1rem 0;
+}
+.action-log-locator pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.action-log-locator a {
+  display: inline-block;
+  margin-top: 0.5rem;
+}

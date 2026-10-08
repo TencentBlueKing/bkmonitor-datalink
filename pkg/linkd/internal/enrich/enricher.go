@@ -27,7 +27,7 @@ type Processor interface {
 	Process(ctx context.Context, scope *Scope) (ProcessorResult, error)
 }
 
-// Chain 按固定顺序执行一组 Processor，并编码为 Alert.enrich payload。
+// Chain 按固定顺序执行一组 Processor，并编码为 Event.enrich 的逐等级 payload。
 type Chain struct {
 	processors []Processor
 	sources    Sources
@@ -68,16 +68,38 @@ func (c *Chain) Enrich(ctx context.Context, input Input) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	scope, err := newScope(input.Alert, c.sources, input.Preview)
-	if err != nil {
+	event := input.Event.Clone()
+	if err := domain.ValidateEvaluations(event.Evaluations); err != nil {
 		return Result{}, err
 	}
+	result := Result{Data: domain.EventEnrichData{Evaluations: make([]domain.EvaluationEnrich, 0, len(event.Evaluations))}}
+	cache := newRequestCache()
+	budget := &chainBudget{}
+	statuses := make([]domain.EnrichStatus, 0, len(event.Evaluations))
+	for _, evaluation := range event.Evaluations {
+		scope, err := newScope(event, evaluation, c.sources, input.Preview, cache)
+		if err != nil {
+			return Result{}, err
+		}
+		evaluated, err := c.enrichEvaluation(ctx, scope, budget)
+		if err != nil {
+			return Result{}, err
+		}
+		result.Data.Evaluations = append(result.Data.Evaluations, evaluated)
+		statuses = append(statuses, evaluated.Status)
+	}
+	result.Status = domain.AggregateEnrichStatus(statuses)
+	return result, nil
+}
+
+type chainBudget struct{ patchCount, payloadBytes int }
+
+func (c *Chain) enrichEvaluation(ctx context.Context, scope *Scope, budget *chainBudget) (domain.EvaluationEnrich, error) {
 	results := make([]ProcessorResult, 0, len(c.processors))
 	entries := make([]ProcessorEntry, 0, len(c.processors))
-	patchCount, payloadBytes := 0, 0
 	for _, processor := range c.processors {
 		if err := ctx.Err(); err != nil {
-			return Result{}, err
+			return domain.EvaluationEnrich{}, err
 		}
 		startedAt := time.Now()
 		result, outcome := runProcessor(ctx, processor, scope)
@@ -93,13 +115,13 @@ func (c *Chain) Enrich(ctx context.Context, input Input) (Result, error) {
 		}
 		encoded, encodeErr := json.Marshal(ProcessorEnvelope{Status: result.Status, Patches: result.Patches, Trace: result.Trace, Diagnostics: result.Diagnostics})
 		// 整条链共享持久化预算，防止两个分别合法的处理器组合出超大告警。
-		if encodeErr != nil || patchCount+len(result.Patches) > 4096 || payloadBytes+len(encoded) > 900000 {
+		if encodeErr != nil || budget.patchCount+len(result.Patches) > 4096 || budget.payloadBytes+len(encoded) > 900000 {
 			result = invalidProcessorResult()
 			result.Patches = []domain.EnrichPatch{}
 			valid = false
 		} else {
-			patchCount += len(result.Patches)
-			payloadBytes += len(encoded)
+			budget.patchCount += len(result.Patches)
+			budget.payloadBytes += len(encoded)
 		}
 		if result.Status == domain.EnrichStatusSucceeded || result.Status == domain.EnrichStatusPartial {
 			if err := scope.applyPatches(result.Patches); err != nil {
@@ -119,7 +141,7 @@ func (c *Chain) Enrich(ctx context.Context, input Input) (Result, error) {
 			Duration: time.Since(startedAt), Diagnostics: cloneDiagnostics(result.Diagnostics),
 		})
 		if err := ctx.Err(); err != nil {
-			return Result{}, err
+			return domain.EvaluationEnrich{}, err
 		}
 		results = append(results, result)
 		entries = append(entries, ProcessorEntry{processor.Name(): ProcessorEnvelope{
@@ -130,9 +152,9 @@ func (c *Chain) Enrich(ctx context.Context, input Input) (Result, error) {
 	payload := Payload{Processors: entries}
 	data, err := payload.JSONObject()
 	if err != nil {
-		return Result{}, err
+		return domain.EvaluationEnrich{}, err
 	}
-	return Result{Status: status, Data: data}, nil
+	return domain.EvaluationEnrich{Severity: scope.evaluation.Severity, Status: status, Data: data}, nil
 }
 
 func runProcessor(ctx context.Context, processor Processor, scope *Scope) (result ProcessorResult, outcome string) {

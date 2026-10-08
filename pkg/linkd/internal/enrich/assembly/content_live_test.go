@@ -1,3 +1,12 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package assembly
 
 import (
@@ -10,7 +19,6 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-
 	"linkd/internal/cleaner"
 	"linkd/internal/config"
 	"linkd/internal/consume"
@@ -126,13 +134,13 @@ func TestContentLiveEventWithBoundConfiguration(t *testing.T) {
 			t.Fatal("encode opening preview failed")
 		}
 		closed := false
-		service := preview.New(contentLivePreviewSource{source}, func(context.Context, string, string) (domain.Alert, error) {
+		service := preview.New(contentLivePreviewSource{source}, func(context.Context, string, string) (domain.Event, error) {
 			t.Fatal("opening preview must not read stored Alert")
-			return domain.Alert{}, nil
+			return domain.Event{}, nil
 		}, func(context.Context, config.EventSource) (preview.Enricher, func() error, error) {
 			return router, func() error { closed = true; return nil }, nil
 		})
-		candidate, err := service.Preview(t.Context(), preview.Request{BKTenantID: event.BKTenantID, EventSourceID: source.EventSourceID, Input: preview.Input{Event: encodedEvent, Severity: selectedSeverity}})
+		candidate, err := service.Preview(t.Context(), preview.Request{BKTenantID: event.BKTenantID, EventSourceID: source.EventSourceID, Input: preview.Input{OpeningEvent: encodedEvent, Severity: selectedSeverity}})
 		if err != nil {
 			t.Fatalf("partition=%d offset=%d preview failed: %v", sample.Partition, sample.Offset, err)
 		}

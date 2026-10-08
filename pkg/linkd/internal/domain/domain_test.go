@@ -183,6 +183,7 @@ func TestAlertLifecycleValidation(t *testing.T) {
 
 	replacement.LatestEventID = "event-2"
 	replacement.LastOccurredAt = replacement.LastOccurredAt.Add(-time.Minute)
+	replacement.Revision++
 	replacement.UpdateAt = replacement.UpdateAt.Add(time.Nanosecond)
 	if err := domain.ValidateAlertReplacement(normalized, replacement); err != nil {
 		t.Fatal(err)
@@ -192,6 +193,7 @@ func TestAlertLifecycleValidation(t *testing.T) {
 	terminal.EndType = domain.AlertEndTypeSource
 	end := terminal.LastOccurredAt
 	terminal.EndAt = &end
+	terminal.Revision++
 	terminal.UpdateAt = terminal.UpdateAt.Add(time.Nanosecond)
 	if err := domain.ValidateAlertReplacement(replacement, terminal); err != nil {
 		t.Fatal(err)
@@ -200,6 +202,7 @@ func TestAlertLifecycleValidation(t *testing.T) {
 	reopened.Status = domain.AlertStatusActive
 	reopened.EndAt = nil
 	reopened.EndType = ""
+	reopened.Revision++
 	reopened.UpdateAt = reopened.UpdateAt.Add(time.Nanosecond)
 	if err := domain.ValidateAlertReplacement(terminal, reopened); err == nil {
 		t.Fatal("terminal alert reopened")
@@ -211,6 +214,7 @@ func TestAlertLifecycleValidation(t *testing.T) {
 	}
 	mutatedInherited := normalized.Clone()
 	mutatedInherited.Title = "changed"
+	mutatedInherited.Revision++
 	mutatedInherited.UpdateAt = mutatedInherited.UpdateAt.Add(time.Nanosecond)
 	if err := domain.ValidateAlertReplacement(normalized, mutatedInherited); err == nil {
 		t.Fatal("inherited field mutation was accepted")
@@ -268,5 +272,5 @@ func TestRedeliveryAfterDynamicSeverityMappingChange(t *testing.T) {
 func validAlert() domain.Alert {
 	event := validEvent()
 	now := event.CreateAt.Add(time.Second)
-	return domain.Alert{EventSourceVersion: 1, AlertID: "alert-1", BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID, Fingerprint: event.Fingerprint, Title: event.Title, Severity: event.Evaluations[0].Severity, Dimensions: event.Dimensions.Clone(), SourceEventID: event.SourceEventID, SourceAlertID: event.SourceAlertID, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: event.EventID, LastOccurredAt: event.OccurredAt, UpdateAt: now, TriggerEventID: event.EventID, BeginAt: event.OccurredAt, CreateAt: now, EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{"processors": json.RawMessage(`[]`)}}
+	return domain.Alert{Revision: 1, EventSourceVersion: 1, AlertID: "alert-1", BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID, Fingerprint: event.Fingerprint, Title: event.Title, Severity: event.Evaluations[0].Severity, Dimensions: event.Dimensions.Clone(), SourceEventID: event.SourceEventID, SourceAlertID: event.SourceAlertID, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: event.EventID, LastOccurredAt: event.OccurredAt, UpdateAt: now, TriggerEventID: event.EventID, BeginAt: event.OccurredAt, CreateAt: now, EnrichStatus: domain.EnrichStatusSucceeded, Enrich: domain.JSONObject{"processors": json.RawMessage(`[]`)}}
 }

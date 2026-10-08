@@ -12,6 +12,8 @@ package onemodel
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -33,6 +35,120 @@ func TestTypedFilterNegationAndInvalidValues(t *testing.T) {
 		if _, err := f.Compile(); err == nil {
 			t.Fatalf("accepted %+v", f)
 		}
+	}
+}
+
+func TestSearchRequiresCompleteResponseEnvelope(t *testing.T) {
+	for _, body := range []string{`{}`, `{"hits":{}}`, `{"hits":{"hits":null}}`, `{"hits":{"hits":[]}} {}`, `{"hits":{"hits":[{"_source":null}]}}`} {
+		t.Run(body, func(t *testing.T) {
+			c, err := NewClient(ClientConfig{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows, err := c.Search(t.Context(), "t", Query{ModelID: "cw-Host", Limit: 1})
+			if !errors.Is(err, ErrInvalidDataSourceResponse) || len(rows) != 0 {
+				t.Fatalf("malformed response became complete result: rows=%v err=%v", rows, err)
+			}
+		})
+	}
+}
+
+func TestSearchResponseByteBudget(t *testing.T) {
+	const empty = `{"hits":{"hits":[]}}`
+	for _, size := range []int{maxOneModelResponseBytes, maxOneModelResponseBytes + 1} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			body := empty + strings.Repeat(" ", size-len(empty))
+			c, err := NewClient(ClientConfig{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows, err := c.Search(t.Context(), "t", Query{ModelID: "cw-Host", Limit: 1})
+			if len(rows) != 0 || (size == maxOneModelResponseBytes && err != nil) || (size > maxOneModelResponseBytes && !errors.Is(err, ErrResultLimit)) {
+				t.Fatalf("response budget: rows=%v err=%v", rows, err)
+			}
+		})
+	}
+}
+
+func TestRelatedCancellationCannotBecomeEmptySuccess(t *testing.T) {
+	c, err := NewClient(ClientConfig{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("canceled query reached backend")
+		return nil, context.Canceled
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	rows, err := c.Related(ctx, "t", []Instance{{TenantID: "t", ModelCode: "cw-Host", InstanceID: "1"}}, "belongs", "both", Query{ModelID: "cw-Biz", Limit: 1})
+	if !errors.Is(err, context.Canceled) || len(rows) != 0 {
+		t.Fatalf("cancellation swallowed: rows=%v err=%v", rows, err)
+	}
+}
+
+func TestRelatedValidatesQueryBeforeEmptyResult(t *testing.T) {
+	for _, tc := range []struct {
+		name, tenant, relation string
+		root                   Instance
+		query                  Query
+	}{
+		{"blank tenant", " ", "belongs", Instance{TenantID: " ", ModelCode: "cw-Host", InstanceID: "1"}, Query{ModelID: "cw-Biz", Limit: 1}},
+		{"empty root", "t", "belongs", Instance{TenantID: "t", ModelCode: "cw-Host"}, Query{ModelID: "cw-Biz", Limit: 1}},
+		{"ambiguous root model", "t", "belongs", Instance{TenantID: "t", ModelCode: "cw|Host", InstanceID: "1"}, Query{ModelID: "cw-Biz", Limit: 1}},
+		{"relation control", "t", "belongs\n", Instance{TenantID: "t", ModelCode: "cw-Host", InstanceID: "1"}, Query{ModelID: "cw-Biz", Limit: 1}},
+		{"invalid limit", "t", "belongs", Instance{TenantID: "t", ModelCode: "cw-Host", InstanceID: "1"}, Query{ModelID: "cw-Biz", Limit: 1025}},
+		{"invalid filter", "t", "belongs", Instance{TenantID: "t", ModelCode: "cw-Host", InstanceID: "1"}, Query{ModelID: "cw-Biz", Where: Filter{Field: "bk_tenant_id", Type: InstanceAttributeKeyword, Operator: "eq", Value: "other"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			c, err := NewClient(ClientConfig{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+				calls++
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(`{"hits":{"hits":[]}}`))}, nil
+			})})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows, err := c.Related(t.Context(), tc.tenant, []Instance{tc.root}, tc.relation, "both", tc.query)
+			if !errors.Is(err, ErrInvalidQuery) || len(rows) != 0 || calls != 0 {
+				t.Fatalf("invalid query reached backend: calls=%d rows=%v err=%v", calls, rows, err)
+			}
+		})
+	}
+}
+
+func TestRelatedValidatesCompleteEdgesAndReturnedMembership(t *testing.T) {
+	for _, tc := range []struct {
+		name, fromModel, returnedID string
+		wantErr                     bool
+	}{
+		{"valid", "cw-Host", "2", false},
+		{"inconsistent origin", "cw-Other", "2", true},
+		{"instance outside edge set", "cw-Host", "3", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, err := NewClient(ClientConfig{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				body := fmt.Sprintf(`{"hits":{"hits":[{"_source":{"bk_tenant_id":"t","producer":"cmdb_fact","source_entity_uid":"cw-Host|1","source_model_id":%q,"target_entity_uid":"cw-Biz|2","target_model_id":"cw-Biz","relation_identity":"belongs"}}]}}`, tc.fromModel)
+				if strings.Contains(r.URL.Path, oneModelInstanceIndex) {
+					body = fmt.Sprintf(`{"hits":{"hits":[{"_source":{"bk_tenant_id":"t","model_id":"cw-Biz","model_inst_id":%q,"entity_uid":%q,"attributes":{}}}]}}`, tc.returnedID, "cw-Biz|"+tc.returnedID)
+				}
+				return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})})
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows, err := c.Related(t.Context(), "t", []Instance{{TenantID: "t", ModelCode: "cw-Host", InstanceID: "1"}}, "belongs", "out", Query{ModelID: "cw-Biz", Limit: 2})
+			if tc.wantErr {
+				if !errors.Is(err, ErrInvalidDataSourceResponse) || len(rows) != 0 {
+					t.Fatalf("partial relation accepted: rows=%v err=%v", rows, err)
+				}
+			} else if err != nil || len(rows) != 1 {
+				t.Fatalf("rows=%v err=%v", rows, err)
+			}
+		})
 	}
 }
 
@@ -71,7 +187,7 @@ func TestRelationDirectionAndIdentityValidation(t *testing.T) {
 			if !strings.Contains(string(b), `"target_entity_uid":["cw-Host|1"]`) {
 				t.Fatalf("reverse query=%s", b)
 			}
-			body = `{"hits":{"hits":[{"_source":{"bk_tenant_id":"t","producer":"cmdb_fact","target_entity_uid":"cw-Host|1","source_entity_uid":"cw-Biz|2","source_model_id":"cw-Biz","relation_identity":"belongs"}}]}}`
+			body = `{"hits":{"hits":[{"_source":{"bk_tenant_id":"t","producer":"cmdb_fact","target_entity_uid":"cw-Host|1","target_model_id":"cw-Host","source_entity_uid":"cw-Biz|2","source_model_id":"cw-Biz","relation_identity":"belongs"}}]}}`
 		} else {
 			body = `{"hits":{"hits":[{"_source":{"bk_tenant_id":"t","model_id":"cw-Biz","model_inst_id":"2","entity_uid":"cw-Biz|2","attributes":{}}}]}}`
 		}

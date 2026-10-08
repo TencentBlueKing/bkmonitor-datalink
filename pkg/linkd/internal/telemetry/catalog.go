@@ -61,7 +61,7 @@ type Catalog struct {
 func metricModules() []MetricCategory {
 	return []MetricCategory{
 		{"pipeline", "处理流水线"}, {"messaging", "消息消费"}, {"cleaner", "接入清洗"},
-		{"lifecycle", "告警生命周期"}, {"enrich", "告警丰富"}, {"final_hook", "结果输出"},
+		{"policy", "告警策略"}, {"lifecycle", "告警生命周期"}, {"enrich", "告警丰富"}, {"final_hook", "结果输出"}, {"action_delivery", "动作投递"}, {"projection", "告警投影"},
 		{"store", "存储访问"}, {"elasticsearch", "ES 批次读写"}, {"archiver", "告警归档"},
 		{"redis_stream", "Redis Stream"}, {"control_plane", "控制面任务"}, {"dispatch", "任务调度"},
 		{"go", "Go 运行时"}, {"process", "进程资源"}, {"exporter", "采集元信息"},
@@ -175,7 +175,7 @@ func metricSeries(name, kind string) []string {
 }
 
 func metricUnitLabel(unit string) string {
-	labels := map[string]string{"": "未声明", "1": "无量纲", "s": "秒", "By": "字节", "%": "百分比", "{attempt}": "次尝试", "{event}": "事件", "{retry}": "次重试", "{message}": "消息", "{operation}": "次操作", "{transition}": "次转换", "{item}": "项", "{signal}": "信号", "{diagnostic}": "条诊断", "{run}": "轮", "{alert}": "告警", "{entry}": "条目", "{group}": "消费组", "{consumer}": "消费者", "{conflict}": "次冲突", "{task}": "任务", "{worker}": "工作会话", "{source}": "来源", "{partition}": "分区", "{failure}": "次失败", "{check}": "次检查", "{batch}": "批次", "{goroutine}": "协程", "{thread}": "线程", "{object}": "对象", "{file_descriptor}": "文件描述符"}
+	labels := map[string]string{"": "未声明", "1": "无量纲", "s": "秒", "By": "字节", "%": "百分比", "{attempt}": "次尝试", "{event}": "事件", "{retry}": "次重试", "{message}": "消息", "{operation}": "次操作", "{transition}": "次转换", "{item}": "项", "{signal}": "信号", "{diagnostic}": "条诊断", "{run}": "轮", "{round}": "轮", "{runner}": "运行器", "{alert}": "告警", "{entry}": "条目", "{group}": "消费组", "{consumer}": "消费者", "{conflict}": "次冲突", "{task}": "任务", "{worker}": "工作会话", "{source}": "来源", "{partition}": "分区", "{failure}": "次失败", "{check}": "次检查", "{batch}": "批次", "{goroutine}": "协程", "{thread}": "线程", "{object}": "对象", "{file_descriptor}": "文件描述符"}
 	if label, ok := labels[unit]; ok {
 		return label
 	}

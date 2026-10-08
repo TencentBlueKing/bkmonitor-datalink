@@ -18,6 +18,9 @@ import (
 // EventStore 定义 Event 的创建、读取和处理结果单对象 CAS。
 // 创建成功不承诺列表或搜索立即可见；需要立即读取单个 Event 的调用方必须使用 GetEvent。
 type EventStore interface {
+	// CompareAndSetEventEnrichment 在处理计划冻结前提交完整丰富结果，返回最新 CAS 版本。
+	// 完成结果只可幂等核对；来源事实、处理状态和关联不受此操作影响。
+	CompareAndSetEventEnrichment(ctx context.Context, bkTenantID, eventID string, expected VersionToken, result domain.EventEnrichment) (StoredEvent, error)
 	CreateEvent(ctx context.Context, event domain.Event) (CreateEventResult, error)
 	CreateEvents(ctx context.Context, events []domain.Event) ([]CreateEventItemResult, error)
 	GetEvent(ctx context.Context, bkTenantID, eventID string) (StoredEvent, error)
@@ -55,6 +58,8 @@ type LifecycleEventStore interface {
 
 // AlertStore 定义逻辑 Alert 的创建、读取、活动关联查询和单对象 CAS。
 // 具体存储可以在内部使用多个物理集合，但不得向调用方暴露位置或归档编排状态。
+// 创建必须为 revision=1；业务 CAS 根据当前计数器推进 revision 和投影要求，元数据确认保持原业务版本。
+// replacement 可保留读取时的 revision，或携带已冻结的下一业务版本；返回值始终包含实际保存的版本。
 type AlertStore interface {
 	CreateAlert(ctx context.Context, alert domain.Alert) (CreateAlertResult, error)
 	GetAlert(ctx context.Context, bkTenantID, alertID string) (StoredAlert, error)

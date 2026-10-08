@@ -213,7 +213,7 @@ func errorCode(err error) string {
 }
 
 func (r *run) environment(extra map[string]any) map[string]any {
-	env := map[string]any{"original": r.original, "alert": r.current}
+	env := map[string]any{"original": r.original, "event": r.current, "evaluation": r.current["evaluation"]}
 	for k, v := range extra {
 		env[k] = v
 	}

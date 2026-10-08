@@ -76,6 +76,9 @@ func Run(
 	lifecycleConfig := cfg.Lifecycle.WithDefaults()
 	severityState := taskdispatch.SeverityState(ctx, cfg.Severity)
 	return taskdispatch.ServeWithSeverity(ctx, cfg, "cleaner", func(taskCtx context.Context, task taskdispatch.Task, source config.EventSource) (taskErr error) {
+		if source.Storage.Type == config.StorageTypeInternalMerge {
+			return fmt.Errorf("internal merge source cannot run cleaner task")
+		}
 		stage := "signal_group"
 		defer func() { taskErr = taskdispatch.WithTaskStage(stage, taskErr) }()
 		source.RuntimeClientID = taskdispatch.ConsumerName(task)

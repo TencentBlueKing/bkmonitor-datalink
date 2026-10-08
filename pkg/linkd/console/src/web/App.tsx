@@ -23,6 +23,43 @@ import { PageQueryFailureContext } from "./navigation";
 import { ExplorerPage } from "./pages/ExplorerPage";
 import { TimeContext, type TimeMode } from "./time";
 
+const PoliciesPage = lazy(() =>
+  import("./pages/PoliciesPage").then((module) => ({
+    default: module.PoliciesPage,
+  })),
+);
+
+const MergeRuntimePage = lazy(() =>
+  import("./pages/MergeRuntimePage").then((module) => ({
+    default: module.MergeRuntimePage,
+  })),
+);
+const SuppressionCleanupsPage = lazy(() =>
+  import("./pages/SuppressionCleanupsPage").then((module) => ({
+    default: module.SuppressionCleanupsPage,
+  })),
+);
+const ActionDeliveriesPage = lazy(() =>
+  import("./pages/ActionDeliveriesPage").then((module) => ({
+    default: module.ActionDeliveriesPage,
+  })),
+);
+const ProjectionTasksPage = lazy(() =>
+  import("./pages/ProjectionTasksPage").then((module) => ({
+    default: module.ProjectionTasksPage,
+  })),
+);
+const ShieldRuntimePage = lazy(() =>
+  import("./pages/ShieldRuntimePage").then((module) => ({
+    default: module.ShieldRuntimePage,
+  })),
+);
+const SuppressionRuntimePage = lazy(() =>
+  import("./pages/SuppressionRuntimePage").then((module) => ({
+    default: module.SuppressionRuntimePage,
+  })),
+);
+
 const MetricCatalogPage = lazy(() =>
   import("./pages/MetricCatalogPage").then((module) => ({
     default: module.MetricCatalogPage,
@@ -105,6 +142,13 @@ const navigationGroups: Array<{
       { to: "/explore/alerts", label: "Alerts", glyph: "A" },
       { to: "/explore/alert-logs", label: "Alert Logs", glyph: "L" },
       { to: "/strategy-index", label: "策略活跃索引", glyph: "I" },
+      { to: "/policies", label: "告警策略", glyph: "P" },
+      { to: "/suppression-cleanups", label: "抑制清理历史", glyph: "H" },
+      { to: "/suppression-runtime", label: "抑制运行态", glyph: "D" },
+      { to: "/merge-runtime", label: "合并运行态", glyph: "M" },
+      { to: "/shield-runtime", label: "屏蔽运行态", glyph: "S" },
+      { to: "/projection-tasks", label: "告警投影任务", glyph: "T" },
+      { to: "/action-deliveries", label: "告警动作投递", glyph: "D" },
     ],
   },
   {
@@ -229,7 +273,17 @@ export function App() {
                     ? "CONFIGURATION API"
                     : routeLocation.pathname === "/explore/alerts"
                       ? "ALERT OPERATIONS"
-                      : "READ ONLY"}
+                      : routeLocation.pathname === "/shield-runtime"
+                        ? "SHIELD OPERATIONS"
+                        : routeLocation.pathname === "/suppression-runtime"
+                          ? "SUPPRESSION OPERATIONS"
+                          : routeLocation.pathname === "/merge-runtime"
+                            ? "MERGE OPERATIONS"
+                            : routeLocation.pathname === "/action-deliveries"
+                              ? "ACTION OPERATIONS"
+                              : routeLocation.pathname === "/projection-tasks"
+                                ? "PROJECTION OPERATIONS"
+                                : "READ ONLY"}
                 </span>
                 <button
                   className="theme-button"
@@ -368,7 +422,53 @@ function PageRoutes() {
             </Suspense>
           }
         />
+        <Route
+          path="/policies"
+          element={
+            <Suspense
+              fallback={<div className="page-loading">正在加载告警策略…</div>}
+            >
+              <PoliciesPage />
+            </Suspense>
+          }
+        />
         <Route path="/onemodel" element={<OneModelPage />} />
+        <Route
+          path="/suppression-runtime"
+          element={
+            <Suspense
+              fallback={<div className="page-loading">正在加载抑制运行态…</div>}
+            >
+              <SuppressionRuntimePage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/suppression-cleanups"
+          element={<SuppressionCleanupsPage />}
+        />
+        <Route path="/projection-tasks" element={<ProjectionTasksPage />} />
+        <Route path="/action-deliveries" element={<ActionDeliveriesPage />} />
+        <Route
+          path="/shield-runtime"
+          element={
+            <Suspense
+              fallback={<div className="page-loading">正在加载屏蔽运行态…</div>}
+            >
+              <ShieldRuntimePage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/merge-runtime"
+          element={
+            <Suspense
+              fallback={<div className="page-loading">正在加载合并运行态…</div>}
+            >
+              <MergeRuntimePage />
+            </Suspense>
+          }
+        />
         <Route path="/enrich-preview" element={<EnrichPreviewPage />} />
         <Route path="/event-sources" element={<EventSourcesPage />} />
         <Route

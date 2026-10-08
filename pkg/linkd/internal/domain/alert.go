@@ -13,11 +13,18 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"time"
 )
 
 // Alert 表示一次异常从发生到结束的当前生命周期快照。
 type Alert struct {
+	// Revision 是业务快照的单调版本，首次为 1；与仓储 CAS token 及输出确认元数据无关。
+	Revision int64 `json:"revision"`
+	// Projection 保存可靠投影的目标要求及确认水位；ACK 不推进业务 Revision。
+	Projection AlertProjection `json:"projection"`
+	// ActionPending 保留同次业务写入的获准动作；入队确认前不得推进下一业务版本。
+	ActionPending *AlertActionIntent `json:"action_pending,omitempty"`
 	// EventSourceVersion 是创建时实际使用的不可变来源发布版本。
 	EventSourceVersion int64        `json:"event_source_version"`
 	AlertID            string       `json:"alert_id"`
@@ -37,6 +44,18 @@ type Alert struct {
 	Labels             DimensionMap `json:"labels"`
 	ExtraData          JSONObject   `json:"extra_data,omitempty"`
 
+	// Shield 只表示当前屏蔽关系，不替代 active/recovered/closed。
+	Shield AlertShield `json:"shield"`
+	// Merge 保存独立的合并角色、窗口等待和关系摘要；nil 表示原始告警未参与合并。
+	Merge *AlertMerge `json:"merge,omitempty"`
+	// PolicyChange 保存控制面状态变更尚待补齐的输出意图，完成时仅清除此元数据。
+	PolicyChange *AlertPolicyChange `json:"policy_change,omitempty"`
+	// MergeChange 保存合并状态变更后的待完成流水与输出意图。
+	MergeChange *AlertMergeChange `json:"merge_change,omitempty"`
+	// Admission 记录已发生的处置放行，解除屏蔽不会自动设置它。
+	Admission AlertAdmission `json:"admission"`
+	// PolicyTags 是策略明确追加的 KAC 标签 ID，与 opening Event 的普通标签分开。
+	PolicyTags     []int64      `json:"policy_tags,omitempty"`
 	Status         AlertStatus  `json:"status"`
 	LatestEventID  string       `json:"latest_event_id"`
 	LastOccurredAt time.Time    `json:"last_occurred_at"`
@@ -54,6 +73,16 @@ type Alert struct {
 
 // Normalize 深拷贝动态字段、规范时间并校验 Alert。
 func (a Alert) Normalize() (Alert, error) {
+	a.ActionPending = a.ActionPending.Clone()
+	a.Projection = a.Projection.Clone()
+	a.PolicyChange = a.PolicyChange.Clone()
+	a.MergeChange = a.MergeChange.Clone()
+	a.Shield = a.Shield.Clone()
+	a.Merge = a.Merge.Clone()
+	a.Admission = a.Admission.Clone()
+	a.PolicyTags = slices.Clone(a.PolicyTags)
+	slices.Sort(a.PolicyTags)
+	a.PolicyTags = slices.Compact(a.PolicyTags)
 	a.Dimensions = a.Dimensions.Normalize()
 	a.Labels = a.Labels.Normalize()
 	var err error
@@ -78,6 +107,14 @@ func (a Alert) Normalize() (Alert, error) {
 
 // Clone 返回不共享动态字段的 Alert 副本。
 func (a Alert) Clone() Alert {
+	a.ActionPending = a.ActionPending.Clone()
+	a.Projection = a.Projection.Clone()
+	a.PolicyChange = a.PolicyChange.Clone()
+	a.MergeChange = a.MergeChange.Clone()
+	a.Shield = a.Shield.Clone()
+	a.Merge = a.Merge.Clone()
+	a.Admission = a.Admission.Clone()
+	a.PolicyTags = slices.Clone(a.PolicyTags)
 	a.Dimensions = a.Dimensions.Clone()
 	a.Labels = a.Labels.Clone()
 	a.ExtraData = a.ExtraData.Clone()
@@ -93,6 +130,38 @@ func (a Alert) Validate() error {
 
 // Normalize 已校验并深拷贝动态 JSON；公共 Validate 不得走此跳过路径。
 func (a Alert) validate(validateJSON bool) error {
+	if err := a.Projection.Validate(a.Revision); err != nil {
+		return err
+	}
+	if err := a.ActionPending.Validate(a); err != nil {
+		return err
+	}
+	if a.Revision < 1 || a.Revision >= 1<<53 {
+		return fmt.Errorf("alert revision must be within 1..2^53-1")
+	}
+	if err := a.MergeChange.Validate(a); err != nil {
+		return err
+	}
+	if err := a.PolicyChange.Validate(a); err != nil {
+		return err
+	}
+	if err := a.Shield.Validate(a.AlertID, a.Status); err != nil {
+		return err
+	}
+	if err := a.Merge.Validate(a.Status); err != nil {
+		return err
+	}
+	if err := a.Admission.Validate(); err != nil {
+		return err
+	}
+	if len(a.PolicyTags) > 256 {
+		return fmt.Errorf("policy tags exceed budget")
+	}
+	for i, id := range a.PolicyTags {
+		if id < 1 || id >= 1<<53 || (i > 0 && a.PolicyTags[i-1] >= id) {
+			return fmt.Errorf("invalid or unordered policy tags")
+		}
+	}
 	if a.EventSourceVersion <= 0 {
 		return fmt.Errorf("event_source_version must be positive")
 	}
@@ -184,8 +253,10 @@ func (a Alert) validate(validateJSON bool) error {
 	if !a.EndType.Valid() {
 		return fmt.Errorf("terminal alert end_type is invalid: %q", a.EndType)
 	}
-	if a.Status == AlertStatusRecovered && a.EndType != AlertEndTypeSource {
-		return fmt.Errorf("recovered alert end_type must be source")
+	// 内部合并父没有外部恢复 Event；全部成员终结由控制面恢复，必须保留明确的系统原因。
+	mergeRecovery := a.EventSourceID == BuiltinMergeEventSourceID && a.Merge != nil && a.Merge.Role == "aggregate" && a.EndType == AlertEndTypeSystem && a.EndReason == "merge_members_ended"
+	if a.Status == AlertStatusRecovered && a.EndType != AlertEndTypeSource && !mergeRecovery {
+		return fmt.Errorf("recovered alert requires source end or system merge recovery")
 	}
 	return nil
 }
@@ -274,9 +345,36 @@ func ValidateAlertReplacement(current, replacement Alert) error {
 	if err := replacement.Validate(); err != nil {
 		return fmt.Errorf("replacement alert: %w", err)
 	}
+	if alertPolicyBookkeeping(current, replacement) {
+		return nil
+	}
+	if current.Revision >= 1<<53-1 || replacement.Revision != current.Revision+1 {
+		return fmt.Errorf("business alert replacement must increment revision exactly once")
+	}
+	if err := validateProjectionBusinessReplacement(current, replacement); err != nil {
+		return err
+	}
+	if current.PolicyChange != nil || current.MergeChange != nil || current.ActionPending != nil {
+		return fmt.Errorf("pending policy change must be completed before business mutation")
+	}
+	if err := validateActionTransition(&current, replacement); err != nil {
+		return err
+	}
+	if err := ValidateAlertPolicyReplacement(current, replacement); err != nil {
+		return err
+	}
 	left := current.Clone()
 	right := replacement.Clone()
 	clearLifecycle := func(alert *Alert) {
+		alert.Revision = 0
+		alert.Projection = AlertProjection{}
+		alert.ActionPending = nil
+		alert.PolicyChange = nil
+		alert.MergeChange = nil
+		alert.Shield = AlertShield{}
+		alert.Merge = nil
+		alert.Admission = AlertAdmission{}
+		alert.PolicyTags = nil
 		alert.Severity = ""
 		alert.Status = ""
 		alert.LatestEventID = ""

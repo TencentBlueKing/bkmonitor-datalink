@@ -28,7 +28,7 @@ import (
 
 // Display 丰富告警的展示信息。
 type Display struct {
-	// PreserveContent 保留创建阶段已生成的核心描述，避免二次单位换算或日志裁剪。
+	// PreserveContent 在创建内容模式下不发布 content 覆盖项；Event 丰富先于 Alert 内容生成。
 	PreserveContent bool
 }
 
@@ -40,7 +40,7 @@ func (Display) Match(context.Context, *enrich.Scope) (bool, error) { return true
 
 // Process 生成告警展示字段。
 func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
-	alert := scope.Alert()
+	alert := scope.Event()
 	ids, diagnostics := enrich.ValidateRequiredIDs(alert)
 	if len(diagnostics) != 0 {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: diagnostics}, nil
@@ -159,7 +159,7 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 		subjectName := logDisplaySubject(alert.SubjectName, sourceConfigString(strategy.Spec.SourceConfig, rules.FieldLogThemeName))
 		content = subjectName + logDisplayContent(content, classification.Main, sourceConfigString(strategy.Spec.SourceConfig, rules.FieldQueryString))
 	} else if !p.PreserveContent {
-		content = applyDataContentAlgorithm(content, strategy, metricMetadata, alert.Severity)
+		content = applyDataContentAlgorithm(content, strategy, metricMetadata, scope.Evaluation().Severity)
 	}
 	if !p.PreserveContent && classification.Main == rules.MainData {
 		content = enrichDataAlgorithmContent(content, metricMetadata.ValueMapping)
@@ -172,6 +172,9 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 	value, encodeErr := scope.Context().Display.JSONObject()
 	if encodeErr != nil {
 		return enrich.ProcessorResult{}, encodeErr
+	}
+	if p.PreserveContent {
+		delete(value, "content")
 	}
 	status := domain.EnrichStatusSucceeded
 	if len(displayDiagnostics) != 0 {
@@ -330,7 +333,7 @@ func replaceMetricValue(content, original, mapped string) string {
 func cleanDisplayTitle(
 	classification rules.DisplayClassification,
 	strategy models.CWStrategy,
-	alert domain.Alert,
+	alert domain.Event,
 	objectName, itemName string,
 ) string {
 	if strategy.Spec.AlarmAlias != "" {
@@ -351,7 +354,7 @@ func cleanDisplayTitle(
 }
 
 func cleanDisplayObject(
-	alert domain.Alert,
+	alert domain.Event,
 	strategy models.CWStrategy,
 	resource models.ResourceValues,
 ) string {

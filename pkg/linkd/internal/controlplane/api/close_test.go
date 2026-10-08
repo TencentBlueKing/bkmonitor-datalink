@@ -44,7 +44,7 @@ func TestCloseAlertManagementBoundary(t *testing.T) {
 		if command.BKTenantID != "tenant-a" || command.AlertID != "alert-a" || command.OperatorKind != domain.OperatorKindUser || command.OperationID != "stable-operation" || command.Reason != "verified" {
 			t.Fatalf("command = %#v", command)
 		}
-		return lifecycle.CloseAlertResult{Alert: domain.Alert{AlertID: command.AlertID, BKTenantID: command.BKTenantID, Status: domain.AlertStatusClosed}}, failure
+		return lifecycle.CloseAlertResult{Alert: domain.Alert{Revision: 1, AlertID: command.AlertID, BKTenantID: command.BKTenantID, Status: domain.AlertStatusClosed}}, failure
 	})}
 	body := `{"bk_tenant_id":"tenant-a","operation_id":"stable-operation","operator_id":"admin","reason":"verified","effective_at":"2026-09-23T00:00:00Z"}`
 	request := func(token, payload string) *httptest.ResponseRecorder {

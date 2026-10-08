@@ -241,20 +241,44 @@ type apmApplicationResult struct {
 	err    error
 }
 
-// Scope 保存单次 Enrich 调用的只读 Alert 快照和请求内数据。
+// Scope 保存单次 Enrich 调用的只读 Event 快照和请求内数据。
 func (s *Scope) CloudResource(ctx context.Context, cloudID, resourceType, instanceID string) (models.CloudResource, bool, error) {
 	if s.sources.CloudResource == nil {
 		return models.CloudResource{}, false, fmt.Errorf("cloud resource reader is unavailable")
 	}
-	return s.sources.CloudResource.GetCloudResource(ctx, s.alert.BKTenantID, cloudID, resourceType, instanceID)
+	key, err := queryCacheKey("cloud", s.event.BKTenantID, cloudID, resourceType, instanceID)
+	if err != nil {
+		return models.CloudResource{}, false, err
+	}
+	value, err := s.Scenario(key, func() (any, error) {
+		v, found, err := s.sources.CloudResource.GetCloudResource(ctx, s.event.BKTenantID, cloudID, resourceType, instanceID)
+		return struct {
+			Value models.CloudResource
+			Found bool
+		}{v, found}, err
+	})
+	if err != nil {
+		return models.CloudResource{}, false, err
+	}
+	result := value.(struct {
+		Value models.CloudResource
+		Found bool
+	})
+	return result.Value, result.Found, nil
 }
 
 type Scope struct {
-	original      domain.Alert
-	alert         domain.Alert
+	original      domain.Event
+	event         domain.Event
+	evaluation    domain.EventEvaluation
 	sources       Sources
 	enrichContext *EnrichContext
 
+	*requestCache
+}
+
+// requestCache 只在一条 Event 的串行 evaluation 之间共享，不跨 Event 或并发链复用。
+type requestCache struct {
 	strategyOnce    sync.Once
 	strategy        strategyResult
 	businessOnce    sync.Once
@@ -276,35 +300,46 @@ type Scope struct {
 	scenarios  map[string]scenarioResult
 }
 
-// NewScope 从已规范化 Alert 创建隔离的调用上下文。
 type scenarioResult struct {
 	value any
 	err   error
 }
 
-func NewScope(alert domain.Alert, sources Sources) (*Scope, error) {
-	return newScope(alert, sources, false)
+// NewScope 创建单 evaluation Event 的隔离上下文；多等级输入必须由 Chain 逐级执行。
+func NewScope(event domain.Event, sources Sources) (*Scope, error) {
+	if len(event.Evaluations) != 1 {
+		return nil, fmt.Errorf("standalone scope requires exactly one evaluation")
+	}
+	return newScope(event, event.Evaluations[0], sources, false, newRequestCache())
 }
 
-func newScope(alert domain.Alert, sources Sources, preview bool) (*Scope, error) {
-	normalized := alert.Clone()
-	var err error
-	if !preview {
-		normalized, err = alert.Normalize()
-	}
-	if err != nil {
-		return nil, fmt.Errorf("create enrich scope: %w", err)
-	}
-	return &Scope{
-		alert: normalized.Clone(), original: normalized.Clone(), sources: sources, enrichContext: &EnrichContext{},
+func newRequestCache() *requestCache {
+	return &requestCache{
 		instances: make(map[string]instanceResult), models: make(map[string]modelResult),
 		metrics: make(map[models.MetricLibraryQuery]metricResult), collectConfigs: make(map[string]collectConfigResult),
 		apmApplications: make(map[apmApplicationQuery]apmApplicationResult),
 		uptimeTasks:     make(map[string]uptimeTaskResult), uptimeNodes: make(map[string]uptimeNodeResult),
 		relatedHosts: make(map[string]instanceResult), topologies: make(map[string]topologyResult), logThemes: make(map[int64]logThemeResult),
 		scenarios: make(map[string]scenarioResult),
-	}, nil
+	}
 }
+
+func newScope(event domain.Event, evaluation domain.EventEvaluation, sources Sources, preview bool, cache *requestCache) (*Scope, error) {
+	normalized := event.Clone()
+	// 历史丰富只用于预览对比，不能成为新一轮处理器的来源事实。
+	normalized.EventEnrichment = domain.EventEnrichment{EnrichStatus: domain.EnrichStatusPending}
+	var err error
+	if !preview {
+		normalized, err = normalized.Normalize()
+	}
+	if err != nil {
+		return nil, fmt.Errorf("create enrich scope: %w", err)
+	}
+	return &Scope{event: normalized.Clone(), original: normalized.Clone(), evaluation: evaluation, sources: sources, enrichContext: &EnrichContext{}, requestCache: cache}, nil
+}
+
+// Evaluation 返回本轮处理的明确等级和动作，不从 Event 隐式推测严重性。
+func (s *Scope) Evaluation() domain.EventEvaluation { return s.evaluation }
 
 // Context 返回本次调用共享的类型化丰富上下文。
 // 各 Processor 只能写入与其输出分组对应的 ResourceContext。
@@ -312,18 +347,18 @@ func (s *Scope) Context() *EnrichContext {
 	return s.enrichContext
 }
 
-// Alert 为内置场景返回原始事实副本，保持其查询身份不受前序展示结果影响。
-// 自定义规则通过 EffectiveAlert 显式读取前序补丁，两个视图都不共享可变字段。
-func (s *Scope) Alert() domain.Alert {
+// Event 为内置场景返回原始事实副本，保持其查询身份不受前序展示结果影响。
+// 自定义规则通过 EffectiveEvent 显式读取前序补丁，两个视图都不共享可变字段。
+func (s *Scope) Event() domain.Event {
 	return s.original.Clone()
 }
 
-// DynamicGroupIDs 只使用原始 Alert 的租户身份；未配置投影时保持空列表。
+// DynamicGroupIDs 只使用原始 Event 的租户身份；未配置投影时保持空列表。
 func (s *Scope) DynamicGroupIDs(ctx context.Context, modelCode, instanceID string) ([]string, error) {
 	if s.sources.DynamicGroup == nil {
 		return []string{}, nil
 	}
-	return s.sources.DynamicGroup.GetDynamicGroupIDs(ctx, s.alert.BKTenantID, modelCode, instanceID)
+	return s.sources.DynamicGroup.GetDynamicGroupIDs(ctx, s.event.BKTenantID, modelCode, instanceID)
 }
 
 // CWStrategyByBKStrategyID 惰性读取并复用按平台策略 ID 关联的鲸眼声明式策略。
@@ -333,7 +368,7 @@ func (s *Scope) CWStrategyByBKStrategyID(ctx context.Context, strategyID int64) 
 			s.strategy.err = fmt.Errorf("strategy config reader is unavailable")
 			return
 		}
-		s.strategy.value, s.strategy.found, s.strategy.err = s.sources.CWStrategy.GetByBKStrategyID(ctx, s.alert.BKTenantID, strategyID)
+		s.strategy.value, s.strategy.found, s.strategy.err = s.sources.CWStrategy.GetByBKStrategyID(ctx, s.event.BKTenantID, strategyID)
 	})
 	return s.strategy.value, s.strategy.found, s.strategy.err
 }
@@ -347,7 +382,7 @@ func (s *Scope) IsGlobalBusiness(ctx context.Context, bizID int64) (bool, bool, 
 		}
 		s.business.isGlobal, s.business.found, s.business.err = s.sources.Business.IsGlobalBusiness(
 			ctx,
-			s.alert.BKTenantID,
+			s.event.BKTenantID,
 			bizID,
 		)
 	})
@@ -357,7 +392,7 @@ func (s *Scope) IsGlobalBusiness(ctx context.Context, bizID int64) (bool, bool, 
 // MetricLibrary 惰性读取并复用本次调用的指标库结果。
 // MonitorMetric 表已经废弃，指标展示名称统一通过该入口查询 MetricLibrary。
 func (s *Scope) MetricLibrary(ctx context.Context, query models.MetricLibraryQuery) (models.MetricMetadata, bool, error) {
-	query.TenantID = s.alert.BKTenantID
+	query.TenantID = s.event.BKTenantID
 	if result, exists := s.metrics[query]; exists {
 		return result.value, result.found, result.err
 	}
@@ -383,7 +418,7 @@ func (s *Scope) APMApplications(ctx context.Context, bizID int64, name string) (
 	if s.sources.APMApplication == nil {
 		result.err = fmt.Errorf("apm application reader is unavailable")
 	} else {
-		result.values, result.err = s.sources.APMApplication.FindAPMApplications(ctx, s.alert.BKTenantID, bizID, name)
+		result.values, result.err = s.sources.APMApplication.FindAPMApplications(ctx, s.event.BKTenantID, bizID, name)
 	}
 	if ctx.Err() == nil {
 		result.values = append([]models.APMApplication(nil), result.values...)
@@ -397,7 +432,19 @@ func (s *Scope) K8sInstance(ctx context.Context, modelCode string, dimensions do
 	if s.sources.K8s == nil {
 		return Instance{}, false, fmt.Errorf("k8s reader is unavailable")
 	}
-	return s.sources.K8s.FindK8sInstance(ctx, s.alert.BKTenantID, modelCode, dimensions)
+	key, err := queryCacheKey("k8s", s.event.BKTenantID, modelCode, dimensions)
+	if err != nil {
+		return Instance{}, false, err
+	}
+	value, err := s.Scenario(key, func() (any, error) {
+		v, found, err := s.sources.K8s.FindK8sInstance(ctx, s.event.BKTenantID, modelCode, dimensions)
+		return instanceResult{value: v, found: found}, err
+	})
+	if err != nil {
+		return Instance{}, false, err
+	}
+	result := value.(instanceResult)
+	return cloneQueryInstances([]Instance{result.value})[0], result.found, nil
 }
 
 // LogTheme 惰性读取并复用本次调用的日志主题结果。
@@ -409,7 +456,7 @@ func (s *Scope) LogTheme(ctx context.Context, themeID int64) (models.LogTheme, b
 	if s.sources.LogTheme == nil {
 		result.err = fmt.Errorf("log theme reader is unavailable")
 	} else {
-		result.value, result.found, result.err = s.sources.LogTheme.GetLogTheme(ctx, s.alert.BKTenantID, themeID)
+		result.value, result.found, result.err = s.sources.LogTheme.GetLogTheme(ctx, s.event.BKTenantID, themeID)
 	}
 	if ctx.Err() == nil {
 		s.logThemes[themeID] = result
@@ -426,8 +473,8 @@ func (s *Scope) AlarmSource(ctx context.Context) (models.AlarmSource, bool, erro
 		}
 		s.alarmSource.value, s.alarmSource.found, s.alarmSource.err = s.sources.AlarmSource.GetAlarmSource(
 			ctx,
-			s.alert.BKTenantID,
-			s.alert.EventSourceID,
+			s.event.BKTenantID,
+			s.event.EventSourceID,
 		)
 	})
 	return s.alarmSource.value, s.alarmSource.found, s.alarmSource.err
@@ -439,6 +486,9 @@ func (s *Scope) Scenario(key string, load func() (any, error)) (any, error) {
 	defer s.scenarioMu.Unlock()
 	if result, exists := s.scenarios[key]; exists {
 		return result.value, result.err
+	}
+	if len(s.scenarios) >= 512 {
+		return nil, fmt.Errorf("event enrich query budget exceeded")
 	}
 	value, err := load()
 	// 父 Context 取消意味着当前解析未完成；同一 Scope 的后续调用必须能重试，
@@ -458,7 +508,7 @@ func (s *Scope) CollectConfig(ctx context.Context, taskID string) (models.Collec
 	if s.sources.CollectConfig == nil {
 		result.err = fmt.Errorf("collect config reader is unavailable")
 	} else {
-		result.value, result.found, result.err = s.sources.CollectConfig.GetCollectConfig(ctx, s.alert.BKTenantID, taskID)
+		result.value, result.found, result.err = s.sources.CollectConfig.GetCollectConfig(ctx, s.event.BKTenantID, taskID)
 	}
 	if ctx.Err() == nil {
 		s.collectConfigs[taskID] = result
@@ -475,7 +525,7 @@ func (s *Scope) UptimeTask(ctx context.Context, taskID string) (models.UptimeTas
 	if s.sources.Uptime == nil {
 		result.err = fmt.Errorf("uptime reader is unavailable")
 	} else {
-		result.value, result.found, result.err = s.sources.Uptime.GetUptimeTask(ctx, s.alert.BKTenantID, taskID)
+		result.value, result.found, result.err = s.sources.Uptime.GetUptimeTask(ctx, s.event.BKTenantID, taskID)
 	}
 	if ctx.Err() == nil {
 		s.uptimeTasks[taskID] = result
@@ -492,7 +542,7 @@ func (s *Scope) UptimeNode(ctx context.Context, nodeID string) (models.UptimeNod
 	if s.sources.UptimeNode == nil {
 		result.err = fmt.Errorf("uptime node reader is unavailable")
 	} else {
-		result.value, result.found, result.err = s.sources.UptimeNode.GetUptimeNode(ctx, s.alert.BKTenantID, nodeID)
+		result.value, result.found, result.err = s.sources.UptimeNode.GetUptimeNode(ctx, s.event.BKTenantID, nodeID)
 	}
 	if ctx.Err() == nil {
 		s.uptimeNodes[nodeID] = result
@@ -510,7 +560,7 @@ func (s *Scope) ModelByCode(ctx context.Context, modelCode string) (Model, bool,
 	if s.sources.Model == nil {
 		result.err = fmt.Errorf("onemodel model reader is unavailable")
 	} else {
-		result.value, result.found, result.err = s.sources.Model.GetModelByCode(ctx, s.alert.BKTenantID, modelCode)
+		result.value, result.found, result.err = s.sources.Model.GetModelByCode(ctx, s.event.BKTenantID, modelCode)
 	}
 	if ctx.Err() == nil {
 		s.models[modelCode] = result
@@ -529,7 +579,7 @@ func (s *Scope) RelatedHost(ctx context.Context, modelCode, instanceID, relation
 		result.err = fmt.Errorf("collect topology reader is unavailable")
 	} else {
 		result.value, result.found, result.err = s.sources.CollectTopology.FindRelatedHost(
-			ctx, s.alert.BKTenantID, modelCode, instanceID, relation,
+			ctx, s.event.BKTenantID, modelCode, instanceID, relation,
 		)
 	}
 	if ctx.Err() == nil {
@@ -547,7 +597,7 @@ func (s *Scope) HostTopology(ctx context.Context, hostID string) (models.Resourc
 	if s.sources.CollectTopology == nil {
 		result.err = fmt.Errorf("collect topology reader is unavailable")
 	} else {
-		result.value, result.found, result.err = s.sources.CollectTopology.FindHostTopology(ctx, s.alert.BKTenantID, hostID)
+		result.value, result.found, result.err = s.sources.CollectTopology.FindHostTopology(ctx, s.event.BKTenantID, hostID)
 	}
 	if ctx.Err() == nil {
 		s.topologies[hostID] = result
@@ -593,7 +643,7 @@ func (s *Scope) Instance(ctx context.Context, query InstanceQuery) (Instance, bo
 	if s.sources.OneModel == nil {
 		result.err = fmt.Errorf("onemodel reader is unavailable")
 	} else {
-		result.value, result.found, result.err = s.sources.OneModel.FindInstance(ctx, s.alert.BKTenantID, query)
+		result.value, result.found, result.err = s.sources.OneModel.FindInstance(ctx, s.event.BKTenantID, query)
 	}
 	if ctx.Err() == nil {
 		s.instances[key] = result
@@ -601,16 +651,23 @@ func (s *Scope) Instance(ctx context.Context, query InstanceQuery) (Instance, bo
 	return result.value, result.found, result.err
 }
 
-// OriginalAlert 返回本次执行前的来源事实，不包含前序补丁。
-func (s *Scope) OriginalAlert() domain.Alert { return s.original.Clone() }
+// OriginalEvent 返回本次执行前的来源事实，不包含前序补丁。
+func (s *Scope) OriginalEvent() domain.Event { return s.original.Clone() }
 
 // RuleSources 返回规则引擎的显式只读端口。
 func (s *Scope) RuleSources() custom.Sources {
-	return custom.Sources{Instances: s.sources.CMDB, Display: s.sources.Display}
+	result := custom.Sources{}
+	if s.sources.CMDB != nil {
+		result.Instances = ruleInstanceReader{scope: s, next: s.sources.CMDB}
+	}
+	if s.sources.Display != nil {
+		result.Display = ruleDisplayReader{scope: s, next: s.sources.Display}
+	}
+	return result
 }
 
 func (s *Scope) applyPatches(patches []domain.EnrichPatch) error {
-	document, err := domain.AlertDocument(s.alert)
+	document, err := domain.EventDocument(s.event, s.evaluation)
 	if err != nil {
 		return err
 	}
@@ -622,15 +679,14 @@ func (s *Scope) applyPatches(patches []domain.EnrichPatch) error {
 	if err != nil {
 		return err
 	}
-	var alert domain.Alert
-	if err := json.Unmarshal(data, &alert); err != nil {
+	var event domain.Event
+	if err := json.Unmarshal(data, &event); err != nil {
 		return err
 	}
-	alert.Enrich = s.alert.Enrich
-	alert.EnrichStatus = s.alert.EnrichStatus
-	s.alert = alert
+	event.EventEnrichment = s.event.EventEnrichment.Clone()
+	s.event = event
 	return nil
 }
 
-// EffectiveAlert 返回应用本轮前序补丁后的隔离副本，供自定义规则顺序取值。
-func (s *Scope) EffectiveAlert() domain.Alert { return s.alert.Clone() }
+// EffectiveEvent 返回应用本轮前序补丁后的隔离副本，供自定义规则顺序取值。
+func (s *Scope) EffectiveEvent() domain.Event { return s.event.Clone() }

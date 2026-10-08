@@ -1,0 +1,897 @@
+[
+  {
+    "id": "clip-threshold",
+    "kind": "clip",
+    "steps": [
+      {
+        "at": 0,
+        "ids": [
+          "a"
+        ]
+      },
+      {
+        "at": 30,
+        "ids": [
+          "b"
+        ]
+      },
+      {
+        "at": 60,
+        "ids": [
+          "c"
+        ]
+      }
+    ],
+    "expected_kac": [
+      {
+        "admitted": [],
+        "at": 0,
+        "count": 1
+      },
+      {
+        "admitted": [],
+        "at": 30,
+        "count": 2
+      },
+      {
+        "admitted": [
+          "c"
+        ],
+        "at": 60,
+        "count": 3
+      }
+    ],
+    "expected_linkd": [
+      {
+        "admitted": [],
+        "at": 0,
+        "count": 1
+      },
+      {
+        "admitted": [],
+        "at": 30,
+        "count": 2
+      },
+      {
+        "admitted": [
+          "c"
+        ],
+        "at": 60,
+        "count": 3
+      }
+    ]
+  },
+  {
+    "id": "clip-sliding",
+    "kind": "clip",
+    "steps": [
+      {
+        "at": 0,
+        "ids": [
+          "a"
+        ]
+      },
+      {
+        "at": 50,
+        "ids": [
+          "b"
+        ]
+      },
+      {
+        "at": 70,
+        "ids": [
+          "c"
+        ]
+      },
+      {
+        "at": 80,
+        "ids": [
+          "d"
+        ]
+      }
+    ],
+    "expected_kac": [
+      {
+        "admitted": [],
+        "at": 0,
+        "count": 1
+      },
+      {
+        "admitted": [],
+        "at": 50,
+        "count": 2
+      },
+      {
+        "admitted": [],
+        "at": 70,
+        "count": 2
+      },
+      {
+        "admitted": [
+          "d"
+        ],
+        "at": 80,
+        "count": 3
+      }
+    ],
+    "expected_linkd": [
+      {
+        "admitted": [],
+        "at": 0,
+        "count": 1
+      },
+      {
+        "admitted": [],
+        "at": 50,
+        "count": 2
+      },
+      {
+        "admitted": [],
+        "at": 70,
+        "count": 2
+      },
+      {
+        "admitted": [
+          "d"
+        ],
+        "at": 80,
+        "count": 3
+      }
+    ]
+  },
+  {
+    "id": "clip-stale-event-time",
+    "kind": "clip",
+    "steps": [
+      {
+        "at": 0,
+        "ids": [
+          "a"
+        ],
+        "event_at": 0
+      },
+      {
+        "at": 50,
+        "ids": [
+          "b"
+        ],
+        "event_at": 0
+      },
+      {
+        "at": 70,
+        "ids": [
+          "c"
+        ],
+        "event_at": 0
+      }
+    ],
+    "difference": "processing_time_window",
+    "expected_kac": [
+      {
+        "admitted": [],
+        "at": 0,
+        "count": 1
+      },
+      {
+        "admitted": [],
+        "at": 50,
+        "count": 2
+      },
+      {
+        "admitted": [
+          "c"
+        ],
+        "at": 70,
+        "count": 3
+      }
+    ],
+    "expected_linkd": [
+      {
+        "admitted": [],
+        "at": 0,
+        "count": 1
+      },
+      {
+        "admitted": [],
+        "at": 50,
+        "count": 2
+      },
+      {
+        "admitted": [],
+        "at": 70,
+        "count": 2
+      }
+    ]
+  },
+  {
+    "id": "clip-replay",
+    "kind": "clip",
+    "steps": [
+      {
+        "at": 0,
+        "ids": [
+          "a"
+        ]
+      },
+      {
+        "at": 10,
+        "ids": [
+          "a"
+        ]
+      },
+      {
+        "at": 20,
+        "ids": [
+          "b"
+        ]
+      }
+    ],
+    "difference": "one_count_per_event",
+    "expected_kac": [
+      {
+        "admitted": [],
+        "at": 0,
+        "count": 1
+      },
+      {
+        "admitted": [],
+        "at": 10,
+        "count": 2
+      },
+      {
+        "admitted": [
+          "b"
+        ],
+        "at": 20,
+        "count": 3
+      }
+    ],
+    "expected_linkd": [
+      {
+        "admitted": [],
+        "at": 0,
+        "count": 1
+      },
+      {
+        "admitted": [],
+        "at": 10,
+        "count": 1
+      },
+      {
+        "admitted": [],
+        "at": 20,
+        "count": 2
+      }
+    ]
+  },
+  {
+    "id": "clip-batch",
+    "kind": "clip",
+    "steps": [
+      {
+        "at": 0,
+        "ids": [
+          "a",
+          "b",
+          "c"
+        ]
+      }
+    ],
+    "difference": "admit_current_nth_event",
+    "expected_kac": [
+      {
+        "admitted": [
+          "b"
+        ],
+        "at": 0,
+        "count": 3
+      }
+    ],
+    "expected_linkd": [
+      {
+        "admitted": [
+          "c"
+        ],
+        "at": 0,
+        "count": 3
+      }
+    ]
+  },
+  {
+    "id": "aggregation-fixed-window",
+    "kind": "aggregation",
+    "steps": [
+      {
+        "at": 0,
+        "ids": [
+          "a"
+        ]
+      },
+      {
+        "at": 10,
+        "ids": [
+          "b"
+        ]
+      },
+      {
+        "at": 60,
+        "ids": [
+          "c"
+        ]
+      },
+      {
+        "at": 61,
+        "ids": [
+          "d"
+        ]
+      }
+    ],
+    "expected_kac": [
+      {
+        "admitted": [
+          "a"
+        ],
+        "at": 0,
+        "owner": "a"
+      },
+      {
+        "admitted": [],
+        "at": 10,
+        "owner": "a"
+      },
+      {
+        "admitted": [],
+        "at": 60,
+        "owner": "a"
+      },
+      {
+        "admitted": [
+          "d"
+        ],
+        "at": 61,
+        "owner": "d"
+      }
+    ],
+    "expected_linkd": [
+      {
+        "admitted": [
+          "a"
+        ],
+        "at": 0,
+        "owner": "a"
+      },
+      {
+        "admitted": [],
+        "at": 10,
+        "owner": "a"
+      },
+      {
+        "admitted": [],
+        "at": 60,
+        "owner": "a"
+      },
+      {
+        "admitted": [
+          "d"
+        ],
+        "at": 61,
+        "owner": "d"
+      }
+    ]
+  },
+  {
+    "id": "aggregation-owner-close",
+    "kind": "aggregation",
+    "steps": [
+      {
+        "at": 0,
+        "ids": [
+          "a"
+        ]
+      },
+      {
+        "at": 10,
+        "ids": [
+          "b"
+        ],
+        "closed": [
+          "a"
+        ]
+      }
+    ],
+    "expected_kac": [
+      {
+        "admitted": [
+          "a"
+        ],
+        "at": 0,
+        "owner": "a"
+      },
+      {
+        "admitted": [
+          "b"
+        ],
+        "at": 10,
+        "owner": "b"
+      }
+    ],
+    "expected_linkd": [
+      {
+        "admitted": [
+          "a"
+        ],
+        "at": 0,
+        "owner": "a"
+      },
+      {
+        "admitted": [
+          "b"
+        ],
+        "at": 10,
+        "owner": "b"
+      }
+    ]
+  },
+  {
+    "id": "aggregation-duplicate",
+    "kind": "aggregation",
+    "steps": [
+      {
+        "at": 0,
+        "ids": [
+          "a"
+        ]
+      },
+      {
+        "at": 10,
+        "ids": [
+          "b"
+        ]
+      },
+      {
+        "at": 20,
+        "ids": [
+          "b"
+        ]
+      }
+    ],
+    "expected_kac": [
+      {
+        "admitted": [
+          "a"
+        ],
+        "at": 0,
+        "owner": "a"
+      },
+      {
+        "admitted": [],
+        "at": 10,
+        "owner": "a"
+      },
+      {
+        "admitted": [],
+        "at": 20,
+        "owner": "a"
+      }
+    ],
+    "expected_linkd": [
+      {
+        "admitted": [
+          "a"
+        ],
+        "at": 0,
+        "owner": "a"
+      },
+      {
+        "admitted": [],
+        "at": 10,
+        "owner": "a"
+      },
+      {
+        "admitted": [],
+        "at": 20,
+        "owner": "a"
+      }
+    ]
+  },
+  {
+    "id": "merge-early-complete",
+    "kind": "merge",
+    "steps": [
+      {
+        "at": 0,
+        "add": [
+          {
+            "id": "a",
+            "groups": [
+              0
+            ]
+          }
+        ]
+      },
+      {
+        "at": 5,
+        "add": [
+          {
+            "id": "b",
+            "groups": [
+              1
+            ]
+          }
+        ]
+      },
+      {
+        "at": 5,
+        "judge": true
+      }
+    ],
+    "expected_kac": [
+      {
+        "at": 5,
+        "members": [
+          "a",
+          "b"
+        ],
+        "outcome": "succeeded"
+      }
+    ],
+    "expected_linkd": [
+      {
+        "at": 5,
+        "members": [
+          "a",
+          "b"
+        ],
+        "outcome": "succeeded"
+      }
+    ]
+  },
+  {
+    "id": "merge-missing-group",
+    "kind": "merge",
+    "steps": [
+      {
+        "at": 0,
+        "add": [
+          {
+            "id": "a",
+            "groups": [
+              0
+            ]
+          }
+        ]
+      },
+      {
+        "at": 10,
+        "judge": true
+      },
+      {
+        "at": 60,
+        "judge": true
+      }
+    ],
+    "expected_kac": [
+      {
+        "at": 10,
+        "members": [],
+        "outcome": "waiting"
+      },
+      {
+        "at": 60,
+        "members": [
+          "a"
+        ],
+        "outcome": "failed"
+      }
+    ],
+    "expected_linkd": [
+      {
+        "at": 10,
+        "members": [],
+        "outcome": "waiting"
+      },
+      {
+        "at": 60,
+        "members": [
+          "a"
+        ],
+        "outcome": "failed"
+      }
+    ]
+  },
+  {
+    "id": "merge-single-both-groups",
+    "kind": "merge",
+    "steps": [
+      {
+        "at": 0,
+        "add": [
+          {
+            "id": "a",
+            "groups": [
+              0,
+              1
+            ]
+          }
+        ]
+      },
+      {
+        "at": 5,
+        "judge": true
+      },
+      {
+        "at": 60,
+        "judge": true
+      }
+    ],
+    "expected_kac": [
+      {
+        "at": 5,
+        "members": [],
+        "outcome": "waiting"
+      },
+      {
+        "at": 60,
+        "members": [
+          "a"
+        ],
+        "outcome": "failed"
+      }
+    ],
+    "expected_linkd": [
+      {
+        "at": 5,
+        "members": [],
+        "outcome": "waiting"
+      },
+      {
+        "at": 60,
+        "members": [
+          "a"
+        ],
+        "outcome": "failed"
+      }
+    ]
+  },
+  {
+    "id": "merge-cycle-wait",
+    "kind": "merge",
+    "steps": [
+      {
+        "at": 0,
+        "add": [
+          {
+            "id": "a",
+            "groups": [
+              0
+            ]
+          }
+        ]
+      },
+      {
+        "at": 5,
+        "add": [
+          {
+            "id": "b",
+            "groups": [
+              1
+            ]
+          }
+        ]
+      },
+      {
+        "at": 58,
+        "judge": true
+      }
+    ],
+    "cyclic": true,
+    "expected_kac": [
+      {
+        "at": 58,
+        "members": [],
+        "outcome": "waiting"
+      }
+    ],
+    "expected_linkd": [
+      {
+        "at": 58,
+        "members": [],
+        "outcome": "waiting"
+      }
+    ]
+  },
+  {
+    "id": "merge-cycle-last-second",
+    "kind": "merge",
+    "steps": [
+      {
+        "at": 0,
+        "add": [
+          {
+            "id": "a",
+            "groups": [
+              0
+            ]
+          }
+        ]
+      },
+      {
+        "at": 5,
+        "add": [
+          {
+            "id": "b",
+            "groups": [
+              1
+            ]
+          }
+        ]
+      },
+      {
+        "at": 59,
+        "judge": true
+      }
+    ],
+    "cyclic": true,
+    "difference": "exact_deadline_not_previous_second",
+    "expected_kac": [
+      {
+        "at": 59,
+        "members": [
+          "a",
+          "b"
+        ],
+        "outcome": "succeeded"
+      }
+    ],
+    "expected_linkd": [
+      {
+        "at": 59,
+        "members": [],
+        "outcome": "waiting"
+      }
+    ]
+  },
+  {
+    "id": "merge-cycle-deadline",
+    "kind": "merge",
+    "steps": [
+      {
+        "at": 0,
+        "add": [
+          {
+            "id": "a",
+            "groups": [
+              0
+            ]
+          }
+        ]
+      },
+      {
+        "at": 5,
+        "add": [
+          {
+            "id": "b",
+            "groups": [
+              1
+            ]
+          }
+        ]
+      },
+      {
+        "at": 60,
+        "judge": true
+      }
+    ],
+    "cyclic": true,
+    "expected_kac": [
+      {
+        "at": 60,
+        "members": [
+          "a",
+          "b"
+        ],
+        "outcome": "succeeded"
+      }
+    ],
+    "expected_linkd": [
+      {
+        "at": 60,
+        "members": [
+          "a",
+          "b"
+        ],
+        "outcome": "succeeded"
+      }
+    ]
+  },
+  {
+    "id": "merge-cycle-missing-group",
+    "kind": "merge",
+    "steps": [
+      {
+        "at": 0,
+        "add": [
+          {
+            "id": "a",
+            "groups": [
+              0
+            ]
+          }
+        ]
+      },
+      {
+        "at": 60,
+        "judge": true
+      }
+    ],
+    "cyclic": true,
+    "expected_kac": [
+      {
+        "at": 60,
+        "members": [
+          "a"
+        ],
+        "outcome": "failed"
+      }
+    ],
+    "expected_linkd": [
+      {
+        "at": 60,
+        "members": [
+          "a"
+        ],
+        "outcome": "failed"
+      }
+    ]
+  },
+  {
+    "id": "merge-next-window",
+    "kind": "merge",
+    "steps": [
+      {
+        "at": 0,
+        "add": [
+          {
+            "id": "a",
+            "groups": [
+              0
+            ]
+          }
+        ]
+      },
+      {
+        "at": 60,
+        "add": [
+          {
+            "id": "b",
+            "groups": [
+              1
+            ]
+          }
+        ]
+      },
+      {
+        "at": 60,
+        "judge": true
+      }
+    ],
+    "expected_kac": [
+      {
+        "at": 60,
+        "members": [
+          "a"
+        ],
+        "outcome": "failed"
+      }
+    ],
+    "expected_linkd": [
+      {
+        "at": 60,
+        "members": [
+          "a"
+        ],
+        "outcome": "failed"
+      }
+    ]
+  }
+]

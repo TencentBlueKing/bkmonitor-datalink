@@ -202,7 +202,11 @@ func TestPlanTenantIsolationAndLaterClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := processor.preparePlan(ctx, created.Event)
+	created.StoredEvent, err = processor.enrichEvent(ctx, created.StoredEvent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := processor.preparePlan(ctx, created.Event, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

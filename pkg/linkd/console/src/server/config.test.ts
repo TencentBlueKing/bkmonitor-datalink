@@ -7,6 +7,61 @@ import { describe, expect, it, vi } from "vitest";
 import { loadConfig, redactedConfig } from "./config.js";
 
 describe("Linkd config loader", () => {
+  it("redacts global KAC plugin credentials without mutating deployment configuration", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "linkd-kac-config-"));
+    try {
+      const configPath = path.join(directory, "linkd.yaml");
+      await writeFile(
+        configPath,
+        `storage:
+  repository: mysql
+  mysql:
+    address: 127.0.0.1:3306
+    database: linkd
+    username: linkd
+blueking:
+  enable_multi_tenant_mode: true
+  api_url: https://blueking.example
+  app_code: linkd
+  app_secret: private-cmdb-secret
+resources:
+  cmdb: {}
+plugins:
+  kac:
+    enabled: true
+    alarm_event_index: cw_kac_saas_3.0_alarm_event
+    elasticsearch:
+      addresses: [https://es.example]
+      basic_auth:
+        username: linkd
+        password: private-kac-es
+    action_endpoint: https://kac.example/action
+    internal_token: private-delivery-token
+`,
+      );
+      const config = await loadConfig(configPath);
+      const shown = redactedConfig(config);
+      expect(shown.blueking?.app_secret).toBe("******");
+      expect(JSON.stringify(shown)).not.toContain("private-cmdb-secret");
+      expect(config.blueking?.app_secret).toBe("private-cmdb-secret");
+      expect(shown.plugins?.kac?.internal_token).toBe("******");
+      expect(shown.plugins?.kac?.elasticsearch?.basic_auth?.password).toBe(
+        "******",
+      );
+      expect(JSON.stringify(shown)).not.toContain("private-delivery-token");
+      expect(JSON.stringify(shown)).not.toContain("private-kac-es");
+      expect(config.plugins?.kac?.internal_token).toBe(
+        "private-delivery-token",
+      );
+      shown.plugins!.kac!.elasticsearch!.addresses[0] =
+        "https://changed.example";
+      expect(config.plugins?.kac?.elasticsearch?.addresses).toEqual([
+        "https://es.example",
+      ]);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
   it.each([
     ["omitted control plane", "", true, true, true, false],
     ["empty control plane", "control_plane: {}\n", true, true, true, false],
@@ -554,3 +609,33 @@ describe("internal JWT configuration", () => {
     }
   });
 });
+
+it.each([
+  "resources:\n  kac_delivery: []\n",
+  "plugins:\n  kac:\n    enabled: true\n",
+  "plugins:\n  kac:\n    projection_endpoint: https://kac.example/projection\n",
+  "plugins:\n  kac:\n    identities: []\n",
+  "resources:\n  cmdb:\n    mode: apigw\n",
+  "resources:\n  cmdb:\n    identities: []\n",
+  "resources:\n  cmdb: {}\n",
+  "blueking:\n  app_code: linkd\n",
+  "blueking:\n  enable_multi_tenant_mode: 'true'\n",
+])(
+  "rejects invalid global BlueKing or old CMDB fields: %s",
+  async (fragment) => {
+    const directory = await mkdtemp(
+      path.join(tmpdir(), "linkd-blueking-config-"),
+    );
+    try {
+      const configPath = path.join(directory, "linkd.yaml");
+      await writeFile(
+        configPath,
+        "storage:\n  repository: mysql\n  mysql:\n    address: localhost:3306\n    database: linkd\n    username: linkd\n" +
+          fragment,
+      );
+      await expect(loadConfig(configPath)).rejects.toThrow();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);

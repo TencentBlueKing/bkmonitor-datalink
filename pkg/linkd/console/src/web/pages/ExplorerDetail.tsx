@@ -16,6 +16,8 @@ import {
   valueNames,
 } from "./explorer";
 import { EntityState, EntityTable, LogTimeline } from "./ExplorerRecords";
+import { AlertPolicyState } from "./AlertPolicyState";
+import { EventSuppressionState } from "./EventSuppressionState";
 import { CloseAlertPanel } from "./CloseAlertPanel";
 
 export function ExplorerDetail({
@@ -149,7 +151,57 @@ export function ExplorerDetail({
             {tab === "overview" && (
               <>
                 <RecordOverview entity={entity} item={item} />
+                {entity === "alerts" && (
+                  <AlertPolicyState payload={item.payload} />
+                )}
+                {entity === "events" && (
+                  <EventSuppressionState
+                    payload={item.payload}
+                    tenant={tenant}
+                    onNavigate={onClose}
+                  />
+                )}
                 <div className="explorer-relations">
+                  {entity === "alerts" && (
+                    <Link
+                      to={
+                        "/projection-tasks?" +
+                        new URLSearchParams({
+                          bk_tenant_id: tenant,
+                          alert_id: id,
+                        })
+                      }
+                      onClick={onClose}
+                    >
+                      查看告警投影任务 ↗
+                    </Link>
+                  )}
+                  {entity === "alerts" && (
+                    <Link
+                      to={
+                        "/shield-runtime?" +
+                        new URLSearchParams({ bk_tenant_id: tenant, id })
+                      }
+                      onClick={onClose}
+                    >
+                      查看屏蔽关系与历史 ↗
+                    </Link>
+                  )}
+                  {entity === "alerts" && Boolean(item.payload.merge) && (
+                    <Link
+                      to={
+                        "/merge-runtime?" +
+                        new URLSearchParams({
+                          bk_tenant_id: tenant,
+                          resource: "relations",
+                          alert_id: id,
+                        })
+                      }
+                      onClick={onClose}
+                    >
+                      查看合并关系历史 ↗
+                    </Link>
+                  )}
                   {relationLinks(entity, item, maxRange).map((link) => (
                     <Link
                       key={link.to + link.label}
@@ -202,6 +254,7 @@ export function ExplorerDetail({
                       "dimensions",
                       "labels",
                       "values",
+                      "enrich",
                       "source_raw_data",
                       "extra_data",
                     ]
@@ -277,6 +330,7 @@ function RecordOverview({
             ["produced_at", "生产时间"],
             ["received_at", "接收时间"],
             ["create_at", "入库时间"],
+            ["enriched_at", "丰富完成"],
           ]
         : [["created_time", "记录时间"]];
   return (
@@ -309,10 +363,16 @@ function RecordOverview({
           </span>
         )}
       </div>
+      {entity === "events" && (
+        <p className="explorer-context">
+          丰富 <EntityState value={p.enrich_status} /> · 配置摘要{" "}
+          {display(p.enrich_config_digest)}
+        </p>
+      )}
       {entity === "alerts" && (
         <p className="explorer-context">
           一个 Alert
-          表示一次持续生命周期；最近更新表示快照变化，创建时间才表示该告警何时产生。
+          表示一次持续生命周期；丰富固定使用首次触发事件，后续事件不会刷新该快照。最近更新表示生命周期快照变化。
         </p>
       )}
       <div className="explorer-milestones">

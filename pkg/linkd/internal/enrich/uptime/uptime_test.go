@@ -364,20 +364,18 @@ func (r *uptimeReader) FindInstance(_ context.Context, _ string, query enrich.In
 	return enrich.Instance{}, false, nil
 }
 
-func uptimeAlert(t *testing.T, dimensions domain.DimensionMap) domain.Alert {
+func uptimeAlert(t *testing.T, dimensions domain.DimensionMap) domain.Event {
 	t.Helper()
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	return domain.Alert{
-		EventSourceVersion: 1, AlertID: "alert-uptime-module", BKTenantID: "tenant-a",
+	return domain.Event{
+		EventSourceVersion: 1, EventID: "alert-uptime-module", BKTenantID: "tenant-a",
 		EventSourceID: "built_in_bk", Fingerprint: "uptime-module", Title: "source title",
-		Content: "source content", Severity: "warning", Dimensions: dimensions,
-		Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive,
-		LatestEventID: "event-1", TriggerEventID: "event-1", LastOccurredAt: now, UpdateAt: now,
-		BeginAt: now, CreateAt: now, EnrichStatus: domain.EnrichStatusPending, Enrich: domain.JSONObject{},
+		Content: "source content", Evaluations: []domain.EventEvaluation{{Severity: "warning", Action: domain.EventActionTriggered}}, Dimensions: dimensions,
+		Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{}, OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, EventEnrichment: domain.EventEnrichment{EnrichStatus: domain.EnrichStatusPending}, Values: domain.EventValues{}, SourceRawData: domain.JSONObject{},
 	}
 }
 
-func equalAlert(left, right domain.Alert) bool { return reflect.DeepEqual(left, right) }
+func equalAlert(left, right domain.Event) bool { return reflect.DeepEqual(left, right) }
 
 func status(diagnostics []enrich.Diagnostic) domain.EnrichStatus {
 	if len(diagnostics) == 0 {

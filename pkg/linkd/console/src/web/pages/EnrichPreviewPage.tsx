@@ -10,11 +10,19 @@ const previewSchema = z.object({
   config_digest: z.string(),
   enrich_status: z.string(),
   original: z.record(z.string(), z.unknown()),
-  effective_alert: z.record(z.string(), z.unknown()),
   enrich: z.record(z.string(), z.unknown()),
-  changes: z.array(z.unknown()),
-  previous_changes: z.array(z.unknown()),
-  trace: z.array(z.unknown()),
+  evaluations: z
+    .array(
+      z.object({
+        severity: z.string(),
+        action: z.string(),
+        effective_event: z.record(z.string(), z.unknown()),
+        changes: z.array(z.unknown()),
+        previous_changes: z.array(z.unknown()),
+        trace: z.array(z.unknown()),
+      }),
+    )
+    .min(1),
 });
 type Preview = z.infer<typeof previewSchema>;
 async function call(path: string, body?: unknown): Promise<unknown> {
@@ -52,25 +60,28 @@ export function EnrichPreviewPage() {
   const [params] = useSearchParams();
   const [tenant, setTenant] = useState(params.get("bk_tenant_id") ?? "");
   const [source, setSource] = useState(params.get("event_source_id") ?? "");
-  const [id, setID] = useState(params.get("alert_id") ?? "");
+  const [id, setID] = useState(params.get("event_id") ?? "");
   const [mode, setMode] = useState<"id" | "json" | "event">(id ? "id" : "json");
-  const [event, setEvent] = useState("{}");
-  const [severity, setSeverity] = useState("");
-  const [alert, setAlert] = useState(
-    '{\n  "title": "CPU 告警",\n  "content": "IP=10.0.0.8",\n  "labels": {}\n}',
+  const [contentSeverity, setContentSeverity] = useState("");
+  const [event, setEvent] = useState(
+    '{\n  "title": "CPU 告警",\n  "content": "IP=10.0.0.8",\n  "labels": {},\n  "evaluations": [{"severity": "warning", "action": "triggered"}]\n}',
   );
   const [custom, setCustom] = useState(false);
   const [config, setConfig] = useState(sample);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState<Preview>();
+  const [severity, setSeverity] = useState("");
+  const selected =
+    result?.evaluations.find((e) => e.severity === severity) ??
+    result?.evaluations[0];
   const [tab, setTab] = useState<
     | "changes"
     | "previous_changes"
     | "trace"
     | "enrich"
     | "original"
-    | "effective_alert"
+    | "effective_event"
   >("changes");
   async function preview() {
     setBusy(true);
@@ -79,13 +90,13 @@ export function EnrichPreviewPage() {
     try {
       const input =
         mode === "id"
-          ? { alert_id: id }
+          ? { event_id: id }
           : mode === "event"
             ? {
-                event: JSON.parse(event) as unknown,
-                ...(severity ? { severity } : {}),
+                opening_event: JSON.parse(event) as unknown,
+                ...(contentSeverity ? { severity: contentSeverity } : {}),
               }
-            : { alert: JSON.parse(alert) as unknown };
+            : { event: JSON.parse(event) as unknown };
       const enrich: unknown = custom
         ? parse(config, { maxAliasCount: 0 })
         : undefined;
@@ -134,7 +145,8 @@ export function EnrichPreviewPage() {
           <p className="eyebrow">ENRICH PREVIEW</p>
           <h1>丰富调试</h1>
           <p>
-            按已发布配置模拟告警丰富或创建时内容。结果仅供预览，不保存告警或配置。
+            使用当前 CMDB
+            数据重新模拟丰富。结果仅供预览，不保存事件、告警或配置。
           </p>
         </div>
       </header>
@@ -165,17 +177,17 @@ export function EnrichPreviewPage() {
                 setMode(e.target.value as "id" | "json" | "event")
               }
             >
-              <option value="id">Alert ID</option>
-              <option value="json">Alert JSON</option>
+              <option value="id">Event ID</option>
+              <option value="json">Event JSON</option>
               <option value="event">Opening Event JSON</option>
             </select>
           </label>
         </div>
         {mode === "id" ? (
           <label>
-            Alert ID
+            Event ID
             <input
-              aria-label="Alert ID"
+              aria-label="Event ID"
               value={id}
               onChange={(e) => setID(e.target.value)}
             />
@@ -196,8 +208,8 @@ export function EnrichPreviewPage() {
               触发级别（多个触发判定时必填）
               <input
                 aria-label="触发级别"
-                value={severity}
-                onChange={(e) => setSeverity(e.target.value)}
+                value={contentSeverity}
+                onChange={(e) => setContentSeverity(e.target.value)}
               />
             </label>
             <p>
@@ -207,12 +219,12 @@ export function EnrichPreviewPage() {
           </>
         ) : (
           <label>
-            Alert JSON
+            Event JSON
             <textarea
-              aria-label="Alert JSON"
+              aria-label="Event JSON"
               rows={12}
-              value={alert}
-              onChange={(e) => setAlert(e.target.value)}
+              value={event}
+              onChange={(e) => setEvent(e.target.value)}
               spellCheck={false}
             />
           </label>
@@ -265,6 +277,20 @@ export function EnrichPreviewPage() {
             来源版本 {result.event_source_version} · 配置摘要{" "}
             {result.config_digest.slice(0, 12)}
           </p>
+          <label>
+            等级结果
+            <select
+              aria-label="等级结果"
+              value={selected?.severity ?? ""}
+              onChange={(e) => setSeverity(e.target.value)}
+            >
+              {result.evaluations.map((e) => (
+                <option key={e.severity} value={e.severity}>
+                  {e.severity} · {e.action}
+                </option>
+              ))}
+            </select>
+          </label>
           <div
             className="enrich-preview-tabs"
             role="tablist"
@@ -277,7 +303,7 @@ export function EnrichPreviewPage() {
                 ["trace", "步骤详情"],
                 ["enrich", "处理器补丁"],
                 ["original", "原始输入"],
-                ["effective_alert", "合成结果"],
+                ["effective_event", "合成结果"],
               ] as const
             ).map(([key, label]) => (
               <button
@@ -290,7 +316,15 @@ export function EnrichPreviewPage() {
               </button>
             ))}
           </div>
-          <pre role="tabpanel">{JSON.stringify(result[tab], null, 2)}</pre>
+          <pre role="tabpanel">
+            {JSON.stringify(
+              tab === "original" || tab === "enrich"
+                ? result[tab]
+                : selected?.[tab],
+              null,
+              2,
+            )}
+          </pre>
         </section>
       )}
     </div>

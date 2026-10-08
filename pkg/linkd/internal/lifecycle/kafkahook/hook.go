@@ -160,6 +160,10 @@ func validateInput(input lifecycle.FinalHookInput) error {
 	}
 	switch input.Outcome {
 	case lifecycle.OutcomeAlertCreated,
+		lifecycle.OutcomeAlertSeverityChanged,
+		lifecycle.OutcomeAlertShieldChanged,
+		lifecycle.OutcomeAlertMergeReleased,
+		lifecycle.OutcomeAlertMergeChanged,
 		lifecycle.OutcomeAlertUpdated,
 		lifecycle.OutcomeAlertRecovered,
 		lifecycle.OutcomeAlertClosed:

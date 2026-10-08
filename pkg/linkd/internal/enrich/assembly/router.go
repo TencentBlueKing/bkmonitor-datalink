@@ -11,6 +11,9 @@ package assembly
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 
 	"linkd/internal/config"
@@ -21,11 +24,12 @@ import (
 	"linkd/internal/enrich/rules"
 )
 
-// Router 依据 Alert.EventSourceID 选择启动时冻结的 Processor Chain。
+// Router 依据 Event.EventSourceID 选择启动时冻结的 Processor Chain。
 type Router struct {
 	routes        map[string]executor
 	chainKinds    map[string]enrich.ChainKind
 	contentRoutes map[string]contentRoute
+	digests       map[string]string
 }
 
 type contentRoute struct {
@@ -45,6 +49,7 @@ func NewRouter(sources []config.EventSource, dataSources enrich.Sources, options
 	routes := make(map[string]executor, len(sources))
 	chainKinds := make(map[string]enrich.ChainKind, len(sources))
 	contentRoutes := make(map[string]contentRoute, len(sources))
+	digests := make(map[string]string, len(sources))
 	for sourceIndex, source := range sources {
 		if _, exists := routes[source.EventSourceID]; exists {
 			return nil, fmt.Errorf("event_sources[%d] duplicates event source %q", sourceIndex, source.EventSourceID)
@@ -64,6 +69,12 @@ func NewRouter(sources []config.EventSource, dataSources enrich.Sources, options
 			route.builder = builder
 		}
 		contentRoutes[source.EventSourceID] = route
+		encoded, err := json.Marshal(source.Enrich)
+		if err != nil {
+			return nil, fmt.Errorf("encode enrich config: %w", err)
+		}
+		digest := sha256.Sum256(encoded)
+		digests[source.EventSourceID] = hex.EncodeToString(digest[:])
 		chainProcessors := make([]enrich.Processor, 0, len(source.Enrich.Processors))
 		for processorIndex, processorConfig := range source.Enrich.Processors {
 			processor, err := newProcessor(processorConfig)
@@ -87,7 +98,7 @@ func NewRouter(sources []config.EventSource, dataSources enrich.Sources, options
 		routes[source.EventSourceID] = chain
 		chainKinds[source.EventSourceID] = enrich.ChainConfigured
 	}
-	return &Router{routes: routes, chainKinds: chainKinds, contentRoutes: contentRoutes}, nil
+	return &Router{routes: routes, chainKinds: chainKinds, contentRoutes: contentRoutes, digests: digests}, nil
 }
 
 // BuildContent 依据冻结来源配置生成新 Alert 的内容；已保存 Alert 不调用此入口。
@@ -133,11 +144,14 @@ func (r *Router) Enrich(ctx context.Context, input enrich.Input) (enrich.Result,
 	if err := ctx.Err(); err != nil {
 		return enrich.Result{}, err
 	}
-	enricher, exists := r.routes[input.Alert.EventSourceID]
+	enricher, exists := r.routes[input.Event.EventSourceID]
 	if !exists {
-		return enrich.Result{}, fmt.Errorf("event source %q has no enrich route", input.Alert.EventSourceID)
+		return enrich.Result{}, fmt.Errorf("event source %q has no enrich route", input.Event.EventSourceID)
 	}
-	return enricher.Enrich(ctx, input)
+	result, err := enricher.Enrich(ctx, input)
+	result.ConfigDigest = r.digests[input.Event.EventSourceID]
+	result.ChainKind = r.chainKinds[input.Event.EventSourceID]
+	return result, err
 }
 
 func newProcessor(config config.EnrichProcessorConfig) (enrich.Processor, error) {

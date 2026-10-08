@@ -48,14 +48,14 @@ func TestUptimeScenarioFlowsThroughResourceAndDisplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(alert, original) {
 		t.Fatalf("enrichment changed Alert: before=%#v after=%#v", original, alert)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,11 +106,11 @@ func TestUptimeMissingTaskKeepsDisplayFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,17 +129,16 @@ func TestUptimeMissingTaskKeepsDisplayFallback(t *testing.T) {
 	}
 }
 
-func uptimeProcessorAlert(t *testing.T) domain.Alert {
+func uptimeProcessorAlert(t *testing.T) domain.Event {
 	t.Helper()
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	strategyID, _ := domain.NewNumberScalar(123)
 	strategyVersion, _ := domain.NewNumberScalar(1)
 	bizID, _ := domain.NewNumberScalar(2)
-	return domain.Alert{
-		EventSourceVersion: 1, AlertID: "alert-uptime", BKTenantID: "tenant-a",
+	return domain.Event{
+		EventSourceVersion: 1, EventID: "alert-uptime", BKTenantID: "tenant-a",
 		EventSourceID: "built_in_bk", Fingerprint: "uptime-fingerprint", Title: "source title",
-		Content: "source content", Severity: "warning",
-		Dimensions: domain.DimensionMap{
+		Content: "source content", Evaluations: []domain.EventEvaluation{{Severity: "warning", Action: domain.EventActionTriggered}}, Dimensions: domain.DimensionMap{
 			rules.FieldTaskID:     domain.NewStringScalar("10079"),
 			rules.FieldNodeID:     domain.NewStringScalar("0:10.0.0.8"),
 			rules.FieldTarget:     domain.NewStringScalar("10.11.10.12"),
@@ -150,9 +149,7 @@ func uptimeProcessorAlert(t *testing.T) domain.Alert {
 		Labels: domain.DimensionMap{
 			"strategy_id": strategyID, "strategy_version": strategyVersion, "bk_biz_id": bizID,
 		},
-		ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive,
-		LatestEventID: "event-1", TriggerEventID: "event-1", LastOccurredAt: now, UpdateAt: now,
-		BeginAt: now, CreateAt: now, EnrichStatus: domain.EnrichStatusPending, Enrich: domain.JSONObject{},
+		ExtraData: domain.JSONObject{}, OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, EventEnrichment: domain.EventEnrichment{EnrichStatus: domain.EnrichStatusPending}, Values: domain.EventValues{}, SourceRawData: domain.JSONObject{},
 	}
 }
 

@@ -130,6 +130,18 @@ func (r *observedRepository) ListEventsByAlert(
 	return result, err
 }
 
+func (r *observedRepository) CompareAndSetEventEnrichment(
+	ctx context.Context,
+	bkTenantID, eventID string,
+	expected store.VersionToken,
+	result domain.EventEnrichment,
+) (store.StoredEvent, error) {
+	startedAt := time.Now()
+	stored, err := r.next.CompareAndSetEventEnrichment(ctx, bkTenantID, eventID, expected, result)
+	r.record(ctx, "event", "compare_and_set_enrichment", startedAt, err)
+	return stored, err
+}
+
 func (r *observedRepository) CompareAndSetEventResult(
 	ctx context.Context,
 	bkTenantID, eventID string,
@@ -401,3 +413,87 @@ var _ store.Repository = (*observedRepository)(nil)
 var _ store.LifecycleAlertStore = (*observedRepository)(nil)
 
 var _ store.LifecycleEventStore = (*observedRepository)(nil)
+
+// ListProjectionWork 保留归档后终态及逐目标补扫语义。
+func (r *observedRepository) ListProjectionWork(ctx context.Context, after store.ProjectionWorkCursor, limit int) (store.ProjectionWorkPage, error) {
+	next, ok := r.next.(store.ProjectionWorkStore)
+	if !ok {
+		return store.ProjectionWorkPage{}, store.ErrInvalidArgument
+	}
+	started := time.Now()
+	result, err := next.ListProjectionWork(ctx, after, limit)
+	r.record(ctx, "alert", "projection_work", started, err)
+	return result, err
+}
+
+// ListMergeWork 保留持久化窗口及意图的逐项分页语义。
+func (r *observedRepository) ListMergeWork(ctx context.Context, after store.MergeWorkCursor, limit int) (store.MergeWorkPage, error) {
+	next, ok := r.next.(store.MergeWorkStore)
+	if !ok {
+		return store.MergeWorkPage{}, store.ErrInvalidArgument
+	}
+	started := time.Now()
+	result, err := next.ListMergeWork(ctx, after, limit)
+	r.record(ctx, "alert", "merge_work", started, err)
+	return result, err
+}
+
+// ListActionWork 保留动作意图的有界分页语义。
+func (r *observedRepository) ListActionWork(ctx context.Context, after store.ActionWorkCursor, limit int) (store.ActionWorkPage, error) {
+	next, ok := r.next.(store.ActionWorkStore)
+	if !ok {
+		return store.ActionWorkPage{}, store.ErrInvalidArgument
+	}
+	started := time.Now()
+	result, err := next.ListActionWork(ctx, after, limit)
+	r.record(ctx, "alert", "action_work", started, err)
+	return result, err
+}
+
+// ListShieldAlerts 保留管理查询的明确租户范围及未来待检查绑定。
+func (r *observedRepository) ListShieldAlerts(ctx context.Context, tenant, after string, limit int) (store.ShieldAlertPage, error) {
+	next, ok := r.next.(store.ShieldAlertReader)
+	if !ok {
+		return store.ShieldAlertPage{}, store.ErrInvalidArgument
+	}
+	started := time.Now()
+	result, err := next.ListShieldAlerts(ctx, tenant, after, limit)
+	r.record(ctx, "alert", "shield_query", started, err)
+	return result, err
+}
+
+// ListShieldWork 保留控制面工作枚举的身份校验和分页语义。
+func (r *observedRepository) ListShieldWork(ctx context.Context, after store.ShieldWorkCursor, at time.Time, limit int) (store.ShieldWorkPage, error) {
+	next, ok := r.next.(store.ShieldWorkStore)
+	if !ok {
+		return store.ShieldWorkPage{}, store.ErrInvalidArgument
+	}
+	started := time.Now()
+	result, err := next.ListShieldWork(ctx, after, at, limit)
+	r.record(ctx, "alert", "shield_work", started, err)
+	return result, err
+}
+
+// ListActiveAlerts 保留租户分页和存储错误，不把部分候选当成完整结果。
+func (r *observedRepository) ListActiveAlerts(ctx context.Context, tenant, after string, limit int) (store.ActiveAlertPage, error) {
+	next, ok := r.next.(store.ActiveAlertReader)
+	if !ok {
+		return store.ActiveAlertPage{}, store.ErrInvalidArgument
+	}
+	started := time.Now()
+	result, err := next.ListActiveAlerts(ctx, tenant, after, limit)
+	r.record(ctx, "alert", "active_candidates", started, err)
+	return result, err
+}
+
+// ListShieldDependents 保留当前依赖主查询的租户边界与页面预算，不用提示冒充关系事实。
+func (r *observedRepository) ListShieldDependents(ctx context.Context, tenant, main, after string, limit int) (store.ShieldAlertPage, error) {
+	next, ok := r.next.(store.ShieldDependencyReader)
+	if !ok {
+		return store.ShieldAlertPage{}, store.ErrInvalidArgument
+	}
+	started := time.Now()
+	result, err := next.ListShieldDependents(ctx, tenant, main, after, limit)
+	r.record(ctx, "alert", "shield_dependents", started, err)
+	return result, err
+}

@@ -90,10 +90,15 @@ func (c Client) Call(ctx context.Context, method, path string, in, out any) erro
 		c.OnResponse(response.Header)
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("control plane HTTP %d", response.StatusCode)
+		return &ResponseError{StatusCode: response.StatusCode}
 	}
 	if out == nil {
 		return nil
 	}
 	return json.NewDecoder(io.LimitReader(response.Body, 8<<20)).Decode(out)
 }
+
+// ResponseError 只保留安全的 HTTP 状态，让 Worker 区分授权失败和依赖故障。
+type ResponseError struct{ StatusCode int }
+
+func (e *ResponseError) Error() string { return fmt.Sprintf("control plane HTTP %d", e.StatusCode) }

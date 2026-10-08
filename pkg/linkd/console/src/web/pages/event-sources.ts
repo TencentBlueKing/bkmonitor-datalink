@@ -21,19 +21,27 @@ export const sourceSpecSchema = z
     scheduling: z
       .object({ cleaner: placementSchema, lifecycle: placementSchema })
       .passthrough(),
-    storage: z
-      .object({
-        type: z.literal("kafka"),
-        kafka: z
-          .object({
-            brokers: z.array(z.string()),
-            topic: z.string(),
-            consumer_group: z.string(),
-            security: z.unknown().optional(),
-          })
-          .passthrough(),
-      })
-      .passthrough(),
+    storage: z.discriminatedUnion("type", [
+      z
+        .object({
+          type: z.literal("kafka"),
+          kafka: z
+            .object({
+              brokers: z.array(z.string()),
+              topic: z.string(),
+              consumer_group: z.string(),
+              security: z.unknown().optional(),
+            })
+            .passthrough(),
+        })
+        .passthrough(),
+      z
+        .object({
+          type: z.literal("internal_merge"),
+          kafka: z.never().optional(),
+        })
+        .passthrough(),
+    ]),
   })
   .passthrough();
 
@@ -177,7 +185,8 @@ export function editableSpec(record?: SourceRecord): SourceSpec {
         },
       };
   // 输入 Kafka 省略整个 security 才会保留原凭据。Hook/Enrich 使用各自已有的占位符保留契约。
-  if (record) delete spec.storage.kafka.security;
+  if (record && spec.storage.type === "kafka")
+    delete spec.storage.kafka.security;
   return spec;
 }
 
@@ -206,9 +215,9 @@ export function specToForm(spec: SourceSpec): SourceForm {
     id: spec.event_source_id,
     tenant: spec.related_tenant_id ?? "",
     enabled: spec.enabled,
-    brokers: spec.storage.kafka.brokers.join("\n"),
-    topic: spec.storage.kafka.topic,
-    group: spec.storage.kafka.consumer_group,
+    brokers: spec.storage.kafka?.brokers.join("\n") ?? "",
+    topic: spec.storage.kafka?.topic ?? "",
+    group: spec.storage.kafka?.consumer_group ?? "",
     cleaner: placement("cleaner"),
     lifecycle: placement("lifecycle"),
   };
@@ -261,15 +270,20 @@ export function formToSpec(form: SourceForm, original: SourceSpec): SourceSpec {
       ? { related_tenant_id: form.tenant }
       : {}),
     enabled: form.enabled,
-    storage: {
-      ...original.storage,
-      kafka: {
-        ...original.storage.kafka,
-        brokers: form.brokers.split(/\r?\n/).filter((line) => line !== ""),
-        topic: form.topic,
-        consumer_group: form.group,
-      },
-    },
+    storage:
+      original.storage.type === "internal_merge"
+        ? original.storage
+        : {
+            ...original.storage,
+            kafka: {
+              ...original.storage.kafka,
+              brokers: form.brokers
+                .split(/\r?\n/)
+                .filter((line) => line !== ""),
+              topic: form.topic,
+              consumer_group: form.group,
+            },
+          },
     scheduling: {
       ...original.scheduling,
       cleaner: placement("cleaner"),
@@ -322,56 +336,81 @@ export function validateSource(
       "related_tenant_id",
       "关联租户必须为至多 64 位字母、数字、下划线或连字符",
     );
-  const kafka = spec.storage.kafka;
-  if (
-    !kafka.brokers.length ||
-    kafka.brokers.some(
-      (b) => !b.trim() || b !== b.trim() || /\s|\p{Cc}/u.test(b),
+  if (spec.storage.type === "internal_merge") {
+    if (spec.event_source_id !== "builtin_alarm_merge")
+      invalid(
+        "event_source_id",
+        "内部合并来源必须使用保留 ID builtin_alarm_merge",
+      );
+    if (
+      (spec.cleaner && Object.keys(spec.cleaner).length) ||
+      spec.fingerprint_mode ||
+      spec.fingerprint_field ||
+      spec.fingerprint_fields?.length ||
+      spec.default_severity ||
+      (spec.severity_mapping &&
+        Object.keys(spec.severity_mapping as object).length)
     )
-  )
-    invalid(
-      "storage.kafka.brokers",
-      "至少填写一个有效 Broker，每行一个地址，不包含空白或控制字符",
-    );
-  const brokers = new Set<string>();
-  for (const broker of kafka.brokers) {
-    const parts = /^(?:\[([^\]]+)\]|([^:[\]]+)):(\+?\d+)$/.exec(broker);
-    if (!parts || Number(parts[3]) < 1 || Number(parts[3]) > 65535)
+      invalid("cleaner", "内部合并来源不配置 Cleaner、指纹或等级映射");
+    if (
+      spec.scheduling.cleaner.replicas !== 0 ||
+      Object.keys(spec.scheduling.cleaner.selector).length
+    )
+      invalid("scheduling.cleaner", "内部合并来源不运行 Cleaner");
+  } else {
+    if (spec.event_source_id === "builtin_alarm_merge")
+      invalid("event_source_id", "该来源 ID 保留给系统内部合并");
+    const kafka = spec.storage.kafka;
+    if (
+      !kafka.brokers.length ||
+      kafka.brokers.some(
+        (b) => !b.trim() || b !== b.trim() || /\s|\p{Cc}/u.test(b),
+      )
+    )
       invalid(
         "storage.kafka.brokers",
-        "Broker 必须为 host:port，端口范围为 1–65535；IPv6 地址使用方括号",
+        "至少填写一个有效 Broker，每行一个地址，不包含空白或控制字符",
       );
-    let host = (parts[1] ?? parts[2]).toLowerCase();
-    if (host.includes(":")) {
-      // URL 用于归一化标准 IPv6 写法；保留 Go 允许但 URL 不支持的 zone 等主机形式。
-      try {
-        host = new URL(`http://[${host}]:${Number(parts[3])}`).hostname;
-      } catch {
-        /* 以原主机名交给控制面做最终校验。 */
+    const brokers = new Set<string>();
+    for (const broker of kafka.brokers) {
+      const parts = /^(?:\[([^\]]+)\]|([^:[\]]+)):(\+?\d+)$/.exec(broker);
+      if (!parts || Number(parts[3]) < 1 || Number(parts[3]) > 65535)
+        invalid(
+          "storage.kafka.brokers",
+          "Broker 必须为 host:port，端口范围为 1–65535；IPv6 地址使用方括号",
+        );
+      let host = (parts[1] ?? parts[2]).toLowerCase();
+      if (host.includes(":")) {
+        // URL 用于归一化标准 IPv6 写法；保留 Go 允许但 URL 不支持的 zone 等主机形式。
+        try {
+          host = new URL(`http://[${host}]:${Number(parts[3])}`).hostname;
+        } catch {
+          /* 以原主机名交给控制面做最终校验。 */
+        }
       }
+      const canonical = `${host}:${Number(parts[3])}`;
+      if (brokers.has(canonical))
+        invalid("storage.kafka.brokers", "Broker 地址不能重复");
+      brokers.add(canonical);
     }
-    const canonical = `${host}:${Number(parts[3])}`;
-    if (brokers.has(canonical))
-      invalid("storage.kafka.brokers", "Broker 地址不能重复");
-    brokers.add(canonical);
+    if (
+      !/^[a-zA-Z0-9._-]{1,249}$/.test(kafka.topic) ||
+      [".", ".."].includes(kafka.topic)
+    )
+      invalid(
+        "storage.kafka.topic",
+        "Topic 必须为 1–249 位字母、数字、点、下划线或连字符，不能为 . 或 ..",
+      );
+    if (
+      !kafka.consumer_group ||
+      kafka.consumer_group !== kafka.consumer_group.trim() ||
+      /\p{Cc}/u.test(kafka.consumer_group)
+    )
+      invalid(
+        "storage.kafka.consumer_group",
+        "Consumer group 必填，不能包含首尾空白或控制字符",
+      );
   }
-  if (
-    !/^[a-zA-Z0-9._-]{1,249}$/.test(kafka.topic) ||
-    [".", ".."].includes(kafka.topic)
-  )
-    invalid(
-      "storage.kafka.topic",
-      "Topic 必须为 1–249 位字母、数字、点、下划线或连字符，不能为 . 或 ..",
-    );
-  if (
-    !kafka.consumer_group ||
-    kafka.consumer_group !== kafka.consumer_group.trim() ||
-    /\p{Cc}/u.test(kafka.consumer_group)
-  )
-    invalid(
-      "storage.kafka.consumer_group",
-      "Consumer group 必填，不能包含首尾空白或控制字符",
-    );
   for (const role of sourceRoles) {
     const { replicas, selector } = spec.scheduling[role];
     if (
@@ -406,9 +445,9 @@ export function validateSource(
           : ""),
       s.fingerprint_fields ?? [],
       s.storage.type,
-      s.storage.kafka.brokers,
-      s.storage.kafka.topic,
-      s.storage.kafka.consumer_group,
+      s.storage.kafka?.brokers,
+      s.storage.kafka?.topic,
+      s.storage.kafka?.consumer_group,
     ];
     if (
       JSON.stringify(identity(spec)) !== JSON.stringify(identity(previous.spec))

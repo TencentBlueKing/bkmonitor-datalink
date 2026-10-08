@@ -14,9 +14,11 @@ import "github.com/prometheus/otlptranslator"
 func metricDimension(key string) (MetricDimension, bool) {
 	// 公共词表说明维度含义；每个 instrument 在自身声明处选择实际使用的子集。
 	descriptions := map[string]string{
+		"linkd.policy.kind":         "策略类别：suppression、shield、merge",
 		"linkd.stage":               "处理阶段，例如 clean、lifecycle",
 		"messaging.system":          "消息或输出传输类型，例如 kafka、redis_stream、http；部分观察路径省略",
 		"linkd.event_source_id":     "告警源 ID；仅在观察器已知来源时携带，不包含租户或告警身份",
+		"linkd.scheme":              "策略执行阶段：match、clip、aggregation 或 cleanup",
 		"linkd.outcome":             "本次执行或操作的分类结果；枚举由各观察器约束",
 		"linkd.trigger":             "触发方式，当前为 queue",
 		"linkd.reason_code":         "结构化原因码；仅在有原因或背压转换时携带",

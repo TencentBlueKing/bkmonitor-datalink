@@ -25,6 +25,7 @@ Console 不再维护第二份基础设施 YAML。以下环境变量只覆盖 Con
 
 - `LINKD_CONSOLE_HOST`、`LINKD_CONSOLE_PORT`
 - `LINKD_CONSOLE_PROMETHEUS_URL`
+- `LINKD_CONSOLE_KAC_POLICY_LINKS`：按租户配置三类 KAC 页面入口的 JSON，见[配置入口](../docs/guides/console.md#kac-配置入口)。
 - `LINKD_CONSOLE_PROMETHEUS_API_KEY`
 - `LINKD_CONSOLE_PROMETHEUS_USERNAME`、`LINKD_CONSOLE_PROMETHEUS_PASSWORD`
 - `LINKD_CONSOLE_MYSQL_PASSWORD`
@@ -83,6 +84,39 @@ docker run --rm --name linkd-console \
 [Helm 指南](../docs/guides/helm.md)。
 
 ## 页面与数据来源
+
+“核心数据 → 告警策略”提供三类策略的租户分页查询、发布/待发布版本、精确版本对比和只读匹配预览。
+使用正式控制面策略 API，配置编辑仍在 KAC；具体边界与预算见
+[告警策略与只读匹配](../docs/guides/console.md#告警策略与只读匹配)。
+详情提供按租户配置的 KAC 导航入口，历史 Release 查看与 KAC 当前配置编辑分开；依赖屏蔽明确提示目标范围仅限制主告警。
+
+“核心数据 → 抑制运行态”展示当前防抖计数、聚合占位/登记主和当前保留成员，支持租户内分页筛选与精确查询。
+可填写原因请求受控对账，后台固定原 owner/代次复核，保留有效计数/占位；结果不确定时跨刷新重试原命令。
+窗口消失后仍可读取请求结果。观察时间、代次和历史 Event 裁决分开解释；具体边界见
+[抑制运行态](../docs/guides/console.md#抑制运行态)。
+
+“核心数据 → 抑制清理历史”独立展示终态清理意图和确认结果，区分零删除、Redis 失败与此前结果不确定，
+支持租户内筛选、已删窗口/代次明细、精确详情和原 Event/Alert 跳转；元信息丢失时显式显示代次未知。
+详见[清理历史](../docs/guides/console.md#抑制清理历史)。
+
+“核心数据 → 合并运行态”提供租户内窗口、持久化裁决和 Alert 历史父子关系查询，并可单独读取首次
+冻结的成员 Alert 快照。裁决接续和关系检查固定原持久版本，记录操作者、原因和异步结果；不确定时跨刷新
+重投原命令，自动任务已推进则旧请求失效，不重置业务结果。界面区分本次操作、执行阶段与生命周期，具体说明见
+[合并运行态](../docs/guides/console.md#合并运行态)。
+
+“核心数据 → 屏蔽运行态”展示当前绑定、固定依赖主、计划复查、状态输出待办及 Alert 屏蔽变更历史。
+详情支持独立复查诊断和带原版本的手动请求，结果不确定时复用原操作，操作者由服务端认证提供。
+解除关系与真实生命周期、历史放行分开显示；具体说明见[屏蔽运行态](../docs/guides/console.md#屏蔽运行态)。
+
+“核心数据 → 告警投影任务”提供任务筛选、冻结快照、远端确认、最近人工恢复记录及带原 CAS 的失败恢复。
+当前正式控制面尚未启动自动投递器，页面明确区分受理、远端确认和本地 ACK；具体说明见
+[告警投影任务](../docs/guides/console.md#告警投影任务)。
+投影任务页另提供七个按需进程观测面板，与动作观测共用有界查询和展示组件；不按业务租户查询 Prometheus，缺失时序不补零。
+
+“核心数据 → 告警动作投递”提供冻结请求、投影依据、接收端受理、排序阻塞和原版本失败恢复；
+Alert 详情分开展示入队意图及动作开关。动作页可按需查看进程指标，并提供日志定位字段和业务流水跳转。
+当前自动发送尚未装配，恢复只保存待办，详情见
+[告警动作投递](../docs/guides/console.md#告警动作投递)。
 
 - 系统总览：按完成速率与积压、等待位置、失败恢复分组诊断；各阶段延迟单独展示，不合计 P99。
 - Cleaner：EventSource、Kafka partition、transform、Event store、Mailbox 和 Kafka confirm。
@@ -150,7 +184,9 @@ POST /local-api/alerts/:id/close
 Event 新增 `fingerprint/outcome/subject_id/source_event_id/source_alert_id` 精确查询；Alert 新增
 `enrich_status/subject_id/source_event_id/source_alert_id` 精确查询。列表与统计使用同样的 ID、时间及业务筛选，统计仍是独立快照。
 
-Event 详情展示来源 values/evaluations，以及 `_processing.evaluations` 中的逐级处理结果；关联跳转遍历
+Event 详情展示来源 values/evaluations，以及 `_processing.evaluations` 中的逐级处理结果；另提供
+[历史抑制记录](../docs/guides/console.md#event-抑制记录)，展示当时计数/阈值、聚合主、策略版本和绕过原因，
+不把历史诊断当作当前 Redis 状态。关联跳转遍历
 related_alert_ids，可同时查看旧、新两个 Alert。页面的 related_alert_id 查询参数表示“查询关联此 Alert 的事件”，
 不是恢复旧的单值存储字段。severity 过滤和聚合针对 Alert 当前级别，values 不提供数值聚合。
 
@@ -235,3 +271,7 @@ Redis 页面可按来源选择派生 Stream、Mailbox 和 lease。Kafka 输入�
 不再接受 EventSource 的 `enrich.datasources`。配置页展示脱敏的本机资源配置。
 查询只要求控制面配置 `resources.onemodel`，不要求启用丰富处理器或配置其他第三方资源。
 协议与错误说明见 [OneModel 查询 API](../docs/reference/contracts/onemodel-query.md)。
+
+实际 Linkd 控制面与 ES/MySQL 的浏览器联调使用独立显式开关，不混入普通模拟浏览器测试。
+执行方式及验证边界见[真实后端浏览器验收](../tests/e2e/allinone/README.md#console-真实后端浏览器验收)；
+测试会清理临时服务和业务数据，保留截图及不含凭据的合成身份记录。

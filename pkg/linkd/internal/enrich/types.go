@@ -11,17 +11,19 @@ package enrich
 
 import "linkd/internal/domain"
 
-// Input 是丰富执行可读取但不得修改的 Alert 副本，由正式处理和预览复用。
+// Input 是丰富执行可读取但不得修改的 Event 副本，由正式处理和预览复用。
 type Input struct {
-	Alert domain.Alert
+	Event domain.Event
 	// Preview 只放宽未持久化调试输入的生命周期元数据校验，不放宽字段写入限制。
 	Preview bool
 }
 
-// Result 只允许设置 Alert 的 enrich_status 与 enrich。
+// Result 保存全部等级的丰富结果；完成时间由 Lifecycle 在提交时补齐。
 type Result struct {
-	Status domain.EnrichStatus
-	Data   domain.JSONObject
+	Status       domain.EnrichStatus
+	Data         domain.EventEnrichData
+	ConfigDigest string
+	ChainKind    ChainKind
 }
 
 // ChainKind 描述 EventSource 实际使用的丰富链类型。

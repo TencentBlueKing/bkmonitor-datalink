@@ -24,6 +24,25 @@ const config = {
 } satisfies ConsoleConfig;
 
 describe("local API", () => {
+  it("routes suppression runtime identities within the entity length budget", async () => {
+    const app = await createApp(config);
+    try {
+      const id = "a".repeat(64) + ":" + "b".repeat(64);
+      expect(
+        (await app.inject("/local-api/policy-runtime/suppression/clip/" + id))
+          .statusCode,
+      ).toBe(400);
+      expect(
+        (
+          await app.inject(
+            "/local-api/policy-runtime/suppression/clip/" + "a".repeat(161),
+          )
+        ).statusCode,
+      ).toBe(414);
+    } finally {
+      await app.close();
+    }
+  });
   it("requires explicit strategy scope and sends no-store for index reads", async () => {
     const app = await createApp(config);
     try {
@@ -66,6 +85,8 @@ describe("local API", () => {
     };
     try {
       for (const route of [
+        "/local-api/action-metrics?from=2026-10-06T01:00:00Z&to=2026-10-06T02:00:00Z&step=15",
+        "/local-api/projection-metrics?from=2026-10-06T01:00:00Z&to=2026-10-06T02:00:00Z&step=15",
         "/local-api/version",
         "/local-api/capabilities",
         "/local-api/config",

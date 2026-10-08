@@ -28,7 +28,7 @@ func (CloudResourceProcessor) Name() string { return "cloud_resource" }
 func (CloudResourceProcessor) Match(context.Context, *enrich.Scope) (bool, error) { return true, nil }
 
 func (CloudResourceProcessor) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
-	alert := scope.Alert()
+	alert := scope.Event()
 	ids, diagnostics := enrich.ValidateRequiredIDs(alert)
 	if len(diagnostics) != 0 {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: diagnostics}, nil

@@ -85,11 +85,13 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 	observedSources := runtime.ObserveEnrichSources(enrich.Sources{AlarmSource: testAlarmSourceReader{}})
 	_, _, _ = observedSources.AlarmSource.GetAlarmSource(ctx, "sensitive-tenant", "source-a")
 	runtime.RecentAlertCacheObserver().Operation(ctx, "get_current", "hit")
+	runtime.ObserveShieldHint(ctx, "published")
+	runtime.ObserveShieldHint(ctx, "private-invalid-outcome")
 	panicRecovered := false
 	func() {
 		defer func() { panicRecovered = recover() != nil }()
 		_, _ = runtime.ObserveFinalHook(lifecycle.NamedFinalHook{Name: "panic-instance", Hook: panickingFinalHook{}}).Execute(ctx, lifecycle.FinalHookInput{
-			Alert: domain.Alert{EventSourceID: "source-a"},
+			Alert: domain.Alert{Revision: 1, EventSourceID: "source-a"},
 		})
 	}()
 	if !panicRecovered {
@@ -162,6 +164,7 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 		`le="65536"`,
 		`le="262144"`,
 		"linkd_final_hook_duration_seconds_bucket",
+		"linkd_policy_shield_hints_total",
 		"linkd_lifecycle_recent_alert_cache_operations_total",
 		`linkd_lifecycle_recent_alert_cache_operations_total{linkd_operation="get_current",linkd_outcome="hit"`,
 		"linkd_redis_stream_entries",
@@ -195,7 +198,7 @@ func TestPrometheusScrapeUsesOTelNamesAndLowCardinalityAttributes(t *testing.T) 
 			t.Fatalf("metrics missing %q:\n%s", expected, text)
 		}
 	}
-	for _, forbidden := range []string{"bk_tenant_id", "event_id", "alert_id", "raw-events", `consumer_group="`, "sensitive-tenant"} {
+	for _, forbidden := range []string{"bk_tenant_id", "event_id", "alert_id", "raw-events", `consumer_group="`, "sensitive-tenant", "private-invalid-outcome"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("metrics contain forbidden attribute %q", forbidden)
 		}

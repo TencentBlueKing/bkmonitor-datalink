@@ -124,6 +124,14 @@ spec:
             - name: LINKD_CONSOLE_PROMETHEUS_URL
               value: {{ . | quote }}
             {{- end }}
+            {{- with $.Values.console.kacAlertUrlTemplate }}
+            - name: LINKD_CONSOLE_KAC_ALERT_URL_TEMPLATE
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $.Values.console.kacPolicyLinks }}
+            - name: LINKD_CONSOLE_KAC_POLICY_LINKS
+              value: {{ . | toJson | quote }}
+            {{- end }}
             {{- end }}
             {{- with concat $.Values.extraEnvVars ($s.extraEnvVars | default list) }}
             {{- toYaml . | nindent 12 }}

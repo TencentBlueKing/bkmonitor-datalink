@@ -1,0 +1,111 @@
+import { expect, test } from "@playwright/test";
+import { explorerCapabilities } from "../fixtures/explorer";
+import {
+  projectionFixture,
+  projectionID,
+  projectionTenant,
+} from "../../src/test-fixtures/projection-tasks";
+import { projectionMetricsFixture } from "../../src/test-fixtures/projection-metrics";
+
+test("projection runtime charts keep process scope and distinguish missing metrics from synchronization", async ({
+  page,
+}, info) => {
+  const calls: URL[] = [],
+    writes: string[] = [],
+    errors: string[] = [];
+  let empty = false;
+  const row = projectionFixture("succeeded");
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.route("**/local-api/**", async (route) => {
+    const r = route.request(),
+      u = new URL(r.url());
+    if (r.method() !== "GET") writes.push(r.method());
+    if (u.pathname.endsWith("/version"))
+      return route.fulfill({ json: { version: "test" } });
+    if (u.pathname.endsWith("/capabilities"))
+      return route.fulfill({ json: explorerCapabilities });
+    if (u.pathname.endsWith("/projection-metrics")) {
+      calls.push(u);
+      expect(u.searchParams.has("bk_tenant_id")).toBe(false);
+      expect(u.searchParams.has("alert_id")).toBe(false);
+      return route.fulfill({
+        json: projectionMetricsFixture(u.searchParams, empty),
+      });
+    }
+    expect(u.searchParams.get("bk_tenant_id")).toBe(projectionTenant);
+    return route.fulfill({
+      json: u.pathname.endsWith(projectionID)
+        ? row
+        : { bk_tenant_id: projectionTenant, items: [row], next: "" },
+    });
+  });
+  await page.setViewportSize({ width: 1440, height: 1050 });
+  await page.goto(
+    `/projection-tasks?bk_tenant_id=${projectionTenant}&id=${projectionID}`,
+  );
+  await expect(page.getByRole("heading", { name: "远端确认" })).toBeVisible();
+  expect(calls).toHaveLength(0);
+  await page.getByRole("button", { name: "查看投影运行观测" }).click();
+  await expect(
+    page.getByRole("heading", { name: "最近页观察距今", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.locator(".delivery-metrics .panel-state.available"),
+  ).toHaveCount(7);
+  await expect(page.locator(".delivery-metrics canvas")).toHaveCount(7);
+  await page.getByLabel("进程 instance").fill("worker-b");
+  await page.getByRole("button", { name: "应用进程筛选" }).click();
+  await expect
+    .poll(() => calls.at(-1)?.searchParams.get("instance"))
+    .toBe("worker-b");
+  await page.getByLabel("指标计算窗口").selectOption("300");
+  await expect
+    .poll(() => calls.at(-1)?.searchParams.get("calculation_window_seconds"))
+    .toBe("300");
+  await page.getByRole("button", { name: "15m", exact: true }).click();
+  await expect
+    .poll(
+      () =>
+        Date.parse(calls.at(-1)!.searchParams.get("to")!) -
+        Date.parse(calls.at(-1)!.searchParams.get("from")!),
+    )
+    .toBe(900000);
+  await page.screenshot({
+    path: info.outputPath("projection-metrics-dark.png"),
+    fullPage: true,
+  });
+  await page
+    .getByRole("button", { name: "切换为浅色模式", exact: true })
+    .click();
+  await page.setViewportSize({ width: 850, height: 1050 });
+  await page.screenshot({
+    path: info.outputPath("projection-metrics-light.png"),
+    fullPage: true,
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  empty = true;
+  await page.getByRole("button", { name: "刷新投影指标" }).click();
+  await expect(
+    page.locator(".delivery-metrics .panel-state.unavailable"),
+  ).toHaveCount(7);
+  await expect(
+    page.getByText("查询范围内没有投影运行时序；不能据此判定任务已完成", {
+      exact: true,
+    }),
+  ).toHaveCount(7);
+  await page.getByRole("button", { name: "收起投影运行观测" }).click();
+  await expect(page.getByRole("region", { name: "投影运行观测" })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByText(
+      "快照固定于排队版本；当前 Alert 可能已有更新。本任务完成不等于最新版本也已同步。",
+    ),
+  ).toBeVisible();
+  expect(writes).toEqual([]);
+  expect(errors).toEqual([]);
+});

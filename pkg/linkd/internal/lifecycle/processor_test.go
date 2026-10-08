@@ -38,7 +38,7 @@ func TestProcessEventCreateAndRepeatedTrigger(t *testing.T) {
 	second.Title = "changed title"
 	second.OccurredAt = second.OccurredAt.Add(-time.Minute)
 	updated := persistAndProcess(t, repo, processor, second)
-	if updated.Outcome != OutcomeAlertUpdated || updated.AlertIDs[len(updated.AlertIDs)-1] != created.AlertIDs[len(created.AlertIDs)-1] {
+	if updated.Outcome != OutcomeAlertSuppressed || updated.ReasonCode != "duplicate_trigger" || updated.AlertIDs[len(updated.AlertIDs)-1] != created.AlertIDs[len(created.AlertIDs)-1] {
 		t.Fatalf("updated=%#v", updated)
 	}
 	alert, err := repo.GetAlert(context.Background(), first.BKTenantID, created.AlertIDs[len(created.AlertIDs)-1])
@@ -170,6 +170,11 @@ func TestEnricherCreationResults(t *testing.T) {
 		{name: "reported failed", enrich: func(enrich.Input) (enrich.Result, error) {
 			return testEnrichResult(domain.EnrichStatusFailed, domain.JSONObject{}), nil
 		}, wantStatus: domain.EnrichStatusFailed},
+		{name: "invalid config digest is degraded", enrich: func(enrich.Input) (enrich.Result, error) {
+			result := testEnrichResult(domain.EnrichStatusSucceeded, domain.JSONObject{})
+			result.ConfigDigest = string(make([]byte, 129))
+			return result, nil
+		}, wantStatus: domain.EnrichStatusFailed},
 		{name: "pending is reserved", enrich: func(enrich.Input) (enrich.Result, error) {
 			return enrich.Result{Status: domain.EnrichStatusPending}, nil
 		}, wantStatus: domain.EnrichStatusFailed},
@@ -183,10 +188,10 @@ func TestEnricherCreationResults(t *testing.T) {
 			panic("broken enricher")
 		}, wantStatus: domain.EnrichStatusFailed},
 		{name: "input mutation is isolated", enrich: func(input enrich.Input) (enrich.Result, error) {
-			input.Alert.Dimensions["host"] = domain.NewStringScalar("changed")
-			input.Alert.Labels["changed"] = domain.NewBoolScalar(true)
-			input.Alert.ExtraData["changed"] = []byte(`true`)
-			input.Alert.Title = "changed"
+			input.Event.Dimensions["host"] = domain.NewStringScalar("changed")
+			input.Event.Labels["changed"] = domain.NewBoolScalar(true)
+			input.Event.ExtraData["changed"] = []byte(`true`)
+			input.Event.Title = "changed"
 			return testEnrichResult(domain.EnrichStatusSucceeded, domain.JSONObject{}), nil
 		}, wantStatus: domain.EnrichStatusSucceeded},
 	}
@@ -232,7 +237,7 @@ func TestEnrichObserverSeesFinalDegradedResult(t *testing.T) {
 	}
 	event := testEvent("event-enrich-observer", "warning")
 	result := persistAndProcess(t, repo, processor, event)
-	stored, err := repo.GetAlert(context.Background(), event.BKTenantID, result.AlertIDs[len(result.AlertIDs)-1])
+	_, err = repo.GetAlert(context.Background(), event.BKTenantID, result.AlertIDs[len(result.AlertIDs)-1])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +245,11 @@ func TestEnrichObserverSeesFinalDegradedResult(t *testing.T) {
 		t.Fatalf("started=%d finished=%d", observer.started, len(observer.finished))
 	}
 	observation := observer.finished[0]
-	encoded, _ := json.Marshal(stored.Alert.Enrich)
+	enrichedEvent, getErr := repo.GetEvent(context.Background(), event.BKTenantID, event.EventID)
+	if getErr != nil {
+		t.Fatal(getErr)
+	}
+	encoded, _ := json.Marshal(enrichedEvent.Event.Enrich)
 	if observation.Status != domain.EnrichStatusFailed || observation.Outcome != EnrichOutcomePanic ||
 		observation.ChainKind != enrich.ChainUnknown || observation.PayloadBytes != int64(len(encoded)) {
 		t.Fatalf("observation=%#v payload_bytes=%d", observation, len(encoded))
@@ -263,7 +272,8 @@ func TestResumePartiallyCreatedAlert(t *testing.T) {
 	processor := newTestProcessor(t, repo, &recordingHook{})
 	event := testEvent("event-1", "warning")
 	stored, _ := repo.CreateEvent(context.Background(), event)
-	plan, err := processor.preparePlan(context.Background(), event)
+	stored.StoredEvent, _ = processor.enrichEvent(context.Background(), stored.StoredEvent)
+	plan, err := processor.preparePlan(context.Background(), stored.Event, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +396,7 @@ func TestProcessEventBatchesLogsBeforeFinalEventCAS(t *testing.T) {
 		{
 			name: "update", setupSeverity: "warning", event: testEvent("event-batch-update", "warning"),
 			wantCalls: []string{"alert_cas", "hook", "logs", "event_cas"},
-			wantKinds: []domain.OperationKind{domain.OperationKindPush},
+			wantKinds: []domain.OperationKind{domain.OperationKindPush, domain.OperationKindSuppress},
 		},
 		{
 			name: "recover", setupSeverity: "warning", event: func() domain.Event {
@@ -566,7 +576,7 @@ func TestProcessEventResumesPersistedTerminalPlan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := processor.preparePlan(ctx, created.Event)
+	plan, err := processor.preparePlan(ctx, created.Event, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -941,7 +951,7 @@ func activeKeyForTest(value any) store.ActiveAlertKey {
 
 func storetestAlert(event domain.Event, alertID string) domain.Alert {
 	now := event.CreateAt.Add(time.Second)
-	return domain.Alert{EventSourceVersion: 1,
+	return domain.Alert{Revision: 1, EventSourceVersion: 1,
 		AlertID: alertID, BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
 		Fingerprint: event.Fingerprint, Title: event.Title, Severity: event.Evaluations[0].Severity,
 		Dimensions:    event.Dimensions.Clone(),
@@ -995,18 +1005,13 @@ func testEnrichResult(status domain.EnrichStatus, value domain.JSONObject) enric
 		processorStatus = domain.EnrichStatusPartial
 	}
 	processors, _ := json.Marshal([]map[string]any{{"test": map[string]any{"status": processorStatus, "value": json.RawMessage(valueData)}}})
-	return enrich.Result{Status: status, Data: domain.JSONObject{"processors": processors}}
+	return enrich.Result{Status: status, Data: domain.EventEnrichData{Evaluations: []domain.EvaluationEnrich{{Severity: "warning", Status: status, Data: domain.JSONObject{"processors": processors}}}}}
 }
 
 type testNoopEnricher struct{}
 
-func (testNoopEnricher) Enrich(ctx context.Context, _ enrich.Input) (enrich.Result, error) {
-	if err := ctx.Err(); err != nil {
-		return enrich.Result{}, err
-	}
-	return enrich.Result{Status: domain.EnrichStatusSucceeded, Data: domain.JSONObject{
-		"processors": []byte(`[]`),
-	}}, nil
+func (testNoopEnricher) Enrich(ctx context.Context, input enrich.Input) (enrich.Result, error) {
+	return (enrich.NoopEnricher{}).Enrich(ctx, input)
 }
 
 type stubEnricher struct {

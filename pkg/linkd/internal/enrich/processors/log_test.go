@@ -29,11 +29,11 @@ func TestLogInvalidRelatedInfoReturnsPartial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,11 +63,11 @@ func TestLogThemeReaderOverridesAndValidatesStrategyFallback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := chain.Enrich(context.Background(), enrich.Input{Alert: processorBaseTargetAlert(t, domain.DimensionMap{})})
+			result, err := chain.Enrich(context.Background(), enrich.Input{Event: processorBaseTargetAlert(t, domain.DimensionMap{})})
 			if err != nil {
 				t.Fatal(err)
 			}
-			payload, err := enrich.DecodePayload(result.Data)
+			payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -110,11 +110,11 @@ func TestLogSkipsNonLogStrategy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: processorBaseTargetAlert(t, domain.DimensionMap{})})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: processorBaseTargetAlert(t, domain.DimensionMap{})})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,11 +134,11 @@ func TestLogMetricFixtureProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,11 +187,11 @@ func TestLogMetricAndKeywordProjection(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+			result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 			if err != nil {
 				t.Fatal(err)
 			}
-			payload, err := enrich.DecodePayload(result.Data)
+			payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 			if err != nil {
 				t.Fatal(err)
 			}

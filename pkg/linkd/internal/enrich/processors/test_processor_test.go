@@ -101,9 +101,9 @@ func TestTestProcessorCallsAreScopedAndFailFast(t *testing.T) {
 	if !errors.Is(err, enrich.ErrInjectedTestFailure) || len(requests) != 2 || result.Value != nil {
 		t.Fatalf("result=%#v error=%v calls=%d", result, err, len(requests))
 	}
-	alert := scope.Alert()
+	alert := scope.Event()
 	for i, r := range requests {
-		if r.TenantID != alert.BKTenantID || r.EventSourceID != alert.EventSourceID || r.AlertID != alert.AlertID || r.CallIndex != i {
+		if r.TenantID != alert.BKTenantID || r.EventSourceID != alert.EventSourceID || r.EventID != alert.EventID || r.CallIndex != i {
 			t.Fatalf("request scope=%#v", r)
 		}
 	}

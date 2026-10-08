@@ -36,7 +36,7 @@ func (Log) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 	if err := ctx.Err(); err != nil {
 		return enrich.ProcessorResult{}, err
 	}
-	alert := scope.Alert()
+	alert := scope.Event()
 	ids, diagnostics := enrich.ValidateRequiredIDs(alert)
 	if len(diagnostics) != 0 {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: diagnostics}, nil

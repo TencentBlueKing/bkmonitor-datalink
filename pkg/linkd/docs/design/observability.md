@@ -99,10 +99,10 @@ Enricher 在创建 Alert 的 lifecycle attempt 内同步执行，不设计独立
 ```go
 meter.Int64Counter(
     "linkd.enrich.attempts",
-    describeMetric("告警丰富尝试结果", "enrich", "throughput",
+    describeMetric("事件丰富尝试结果", "enrich", "throughput",
         "linkd.event_source_id", "linkd.status", "linkd.outcome", "linkd.chain_kind"),
     metric.WithUnit("{attempt}"),
-    metric.WithDescription("新 Alert 同步丰富尝试结果"),
+    metric.WithDescription("Event 同步丰富尝试结果"),
 )
 ```
 
@@ -145,7 +145,7 @@ block、mutex 和 execution trace，不能用单张 CPU 火焰图代替因果分
 | `linkd.redis_stream.*`             | Stream 条目/内存、Group/Consumer、PEL、lag、年龄、软上限和安全裁剪        |
 | `linkd.store.*`                    | Repository 操作、耗时、幂等重放和冲突                                     |
 | `linkd.lifecycle.recent_alert_cache.*` | Recent Alert 命中、缺失、写入、解码失败和冲突修复                      |
-| `linkd.enrich.*`                 | 新 Alert 同步丰富的总体结果、Processor、DataSource、在途调用和载荷大小 |
+| `linkd.enrich.*`                 | Event 同步丰富的总体结果、Processor、DataSource、在途调用和载荷大小 |
 
 `linkd.store.operations` 对所有 Repository 调用统一计数，`not_found` 作为查询结果保留，便于分析查询命中率。
 Lifecycle 的 `find_active` 和 `find_terminal_by_event` 会把 `store.ErrNotFound` 作为正常控制流处理；它不会
@@ -157,7 +157,7 @@ Lifecycle 的 `find_active` 和 `find_terminal_by_event` 会把 `store.ErrNotFou
 不改变标签集合、基数或指标口径。
 
 Cleaner 和 Lifecycle 在拆分部署时继续输出上述职责指标。Control Plane 当前提供独立 endpoint、Resource、
-Go/process 指标，以及八类后台管理任务的职责指标。调度中心通过 Redis 租约保持独占；其他管理任务没有
+Go/process 指标，以及后台管理任务的职责指标。调度中心通过 Redis 租约保持独占；其他管理任务没有
 独立选主，`linkd_control_plane_task_active_ratio` 同一任务出现多个 owner 时仍需检查重复部署。
 
 `linkd.event_source_id` 只来自已校验配置或 StoredEvent。Kafka partition 只进入 received、settled
@@ -187,7 +187,7 @@ ended、terminal 和 repair 操作。Console 展示操作速率与读取命中�
 fingerprint、MailboxID 或缓存 key。
 
 Enrich 使用 `linkd_enrich_attempts_total`、`linkd_enrich_attempt_duration_seconds`、
-`linkd_enrich_inflight` 和 `linkd_enrich_payload_size_bytes` 记录新 Alert 丰富的最终状态、执行结果、并发占用与载荷大小；
+`linkd_enrich_inflight` 和 `linkd_enrich_payload_size_bytes` 记录 Event 丰富的最终状态、执行结果、并发占用与载荷大小；
 使用 `linkd_enrich_processor_attempts_total`、`linkd_enrich_processor_duration_seconds` 和
 `linkd_enrich_processor_diagnostics_total` 下钻到固定 Processor；使用
 `linkd_enrich_datasource_operations_total` 和 `linkd_enrich_datasource_duration_seconds` 区分 Reader 的
@@ -196,11 +196,15 @@ Enrich 使用 `linkd_enrich_attempts_total`、`linkd_enrich_attempt_duration_sec
 EventSource ID、固定 Processor、固定 DataSource/operation、状态和原因枚举；租户、实体 ID、查询字段、
 错误全文和 payload 不进入指标。
 
-八类固定任务使用 `linkd_control_plane_task_active_ratio`、`linkd_control_plane_task_runs_total`、
+丰富指标按实际调用尝试记录，不是新建 Alert 数量：尚未完成丰富的触发、恢复、关闭 Event 都会执行，
+已冻结结果的重投直接复用；多个 evaluation 的结果保存在同一 Event 信封。该结果指标不证明后续
+丰富 CAS、策略裁决或 Alert 持久化已经成功，完整处理仍看 Lifecycle 与 Repository 指标。
+
+固定任务使用 `linkd_control_plane_task_active_ratio`、`linkd_control_plane_task_runs_total`、
 `linkd_control_plane_task_run_duration_seconds` 和 `linkd_control_plane_task_last_success_seconds`。`linkd_task`
-只允许 `elasticsearch-schema-and-active-reconciler`、`elasticsearch-bucket-manager`、
-`elasticsearch-alert-archiver`、`redis-stream-manager`、`scheduler`、`source-providers`、
-`active-alert-indexes`、`dynamic-config`；`linkd_outcome` 只允许 `succeeded/failed`。
+使用 [ControlPlaneTask](../../internal/telemetry/control_plane.go) 的固定枚举，包括存储维护、调度、
+策略发布/复查、合并裁决/关系和可靠投影/动作循环；不接受任意任务名或业务身份。
+`linkd_outcome` 只允许 `succeeded/failed`。
 最近成功时间是 Unix 秒；未执行成功时不生成虚假零值。
 
 当前任务状态由 `internal/controlplane/taskstate` 显式注入装配和管理 API，使用有锁、有界的内存快照；
@@ -236,6 +240,76 @@ Prometheus endpoint 暴露以下 Redis Stream 指标：
 条目尚未被所有 Group 确认，控制面必须继续保留；应结合 `pending`、`max_lag` 和最老 Pending 年龄告警。
 `trim_last_entries` 记录整轮多批裁剪的累计量，不是最后一条 `XTRIM` 命令的返回值。
 
+## 动作运行器观测
+
+以下指标已注册在 `action_delivery` 模块，观察器由调用方为每个动作 Runner 单独创建。
+独立运行器测试已实际抓取；正式控制面在 Lifecycle 与非空 resources.kac_delivery 同时配置时启动循环。
+任务目录的四个阶段由实际开始/退出和页面回调驱动；注册在目录不等于已有运行数据。
+每个指标仅使用固定 `linkd.task`（action-enqueue/action-delivery），结果类另带固定 `linkd.outcome`。
+租户、Alert/任务 ID、目标、摘要及错误正文不进入标签。
+
+| OTel 指标 | 类型 | 口径 |
+| --- | --- | --- |
+| linkd.action.runner.active | up/down counter | 进程当前监督的阶段实例数；多个 Runner 累计，退出归零 |
+| linkd.action.runner.inflight | up/down counter | 正在扫描或处理页面的阶段实例数，不是 HTTP 并发数 |
+| linkd.action.runner.rounds | counter | 页面结束数，结果 succeeded/failed/cancelled |
+| linkd.action.runner.duration | histogram / 秒 | 一页墙钟耗时，包含有界清理，非纯 HTTP 耗时 |
+| linkd.action.work.observations | counter | 每页互斥工作观察结果，可重复统计同一个任务 |
+| linkd.action.last_page.items | gauge | 最近合法扫描页的项目数，0..16；不是全局队列总量 |
+| linkd.action.last_page.oldest_age | gauge / 秒 | 该页在观察时的最大待办年龄；不是全局最老积压 |
+| linkd.action.last_page.observed_at | gauge / Unix 秒 | 该页观察时间，扫描失败不覆盖；与页面年龄同时解读 |
+| linkd.action.work.unconfirmed | counter | 返回任务保留 previous_unconfirmed 的观察次数，非唯一任务数 |
+
+补扫年龄以 Alert.update_at 为起点，任务年龄以首次 created_at 为起点，均不因人工恢复而重新计算。
+页面样本按实例抓取；多个进程的最近页面不是同一个全局快照，不能相加得到全局队列长度。
+正常等待、锁忙、退避和预算满不伪装成已处置。accepted 表示返回任务已有持久受理确认，
+不保证该确认在本轮首次产生；同一失败屏障也可被不同后序工作项重复观察。
+
+每次失败页最多一条概况日志和四条业务定位样本，原因由固定集合归一化，不输出依赖错误正文、
+endpoint、token 或原请求。业务 ID 只用于日志定位；取消退出不写失败告警日志。非法观察值不记录
+计数，但仍清除已结束页的执行中水位。执行与游标约束见[动作运行器契约](../reference/contracts/kac-action-delivery-v1.md#自动补扫与发送运行器)。
+Console 动作页已提供按需进程指标面板、任务日志定位字段和业务流水入口，查询预算与缺失数据语义见
+[Console 运行观测](../reference/contracts/kac-action-delivery-v1.md#console-运行观测)。浏览器筛选不把租户或
+Alert ID 传给 Prometheus，进程日志尚无 Console 搜索后端。正式进程的本地真实时序与任务状态已通过
+ES/MySQL、临时 Prometheus 和 Chrome 联合验收；模拟接收端不代表真实 KAC，观察指标不能替代处置结果。
+
+## 投影运行器观测
+
+`projection` 模块的指标由每个投影 Runner 的独立观察器记录；运行器负责发出真实开始/退出回调，
+多个实例共享进程指标时活跃数叠加，停止后归零。目录注册不代表正式控制面已经启动可靠投影。
+标签只包含固定 `linkd.task=projection-producer/projection-delivery`，结果类另带固定 `linkd.outcome`。
+租户、Alert、任务 ID、目的端 URL、凭据和错误正文不进入指标或概况日志。
+
+| OTel 指标 | 类型 | 口径 |
+| --- | --- | --- |
+| linkd.projection.runner.active | up/down counter | 当前进程监督的生产/投递循环实例数 |
+| linkd.projection.runner.inflight | up/down counter | 正在扫描或执行一页工作的循环实例数，非 HTTP 并发 |
+| linkd.projection.runner.rounds | counter | 页面结束数，succeeded/failed/cancelled |
+| linkd.projection.runner.duration | histogram / 秒 | 页面墙钟耗时，包含有界退出清理 |
+| linkd.projection.work.observations | counter | 已读合法页的 advanced/deferred/capacity/failed 互斥观察结果 |
+| linkd.projection.last_page.items | gauge | 最近合法页的 0..16 项，非全局待办数量 |
+| linkd.projection.last_page.oldest_age | gauge / 秒 | 该页在观察时的最大年龄，非全局最老积压 |
+| linkd.projection.last_page.observed_at | gauge / Unix 秒 | 完整合法页面读取后的观察时间 |
+
+生产阶段的 advanced 只表示任务已创建或复用，复用已有失败任务也不等于已恢复发送；投递阶段表示
+返回任务已经完成本地 ACK，不等于本轮发出了新的 HTTP。deferred 排除已单列的容量不足 capacity；
+锁忙、未到期、等待可见性/ACK 仍可能出现在 deferred。failed 包含本轮执行失败以及取消时未开始的项，
+不能直接解释为永久失败任务数。同一任务可以跨轮次重复观察。
+
+生产页年龄从当前待同步业务的 update_at 计算，投递页从任务首次 created_at 计算；未来时间按零年龄。
+这不是“第一次出现未同步版本以来”的全程等待计时。空的合法页明确记录零条目/零年龄；读取失败或
+不完整页保留上一合法页及其观察时间，不补成零，也不把扫描失败伪造成一条 failed 业务项。
+每次异常页最多一条固定阶段/错误码/数量的概况日志；取消退出不写失败日志，页内超时单独分类。
+业务定位与原始失败原因仍从持久任务查询，观测值不能代替投影回执或修改业务水位。
+
+单元及真实双后端独立运行器测试直接抓取本机临时 Prometheus exporter，验证指标与运行器退出。
+Console 投影任务页已提供独立的七个进程面板，与动作观测共用查询限额和展示组件，接口见
+[投影运行观测](../reference/contracts/kac-alert-projection-v1.md#console-运行观测)。正式进程、真实存储、
+独立 Prometheus 与浏览器联合验收见 [可靠投递 Console E2E](../../tests/e2e/allinone/README.md#console-可靠投递的真实时序)。
+图表有数据时仍只表示本地运行观察；不把模拟接收端或合成业务称为生产 KAC 数据。孤立有限采样点
+（包括零）显示圆点，缺失样本不连线；时间标签自动避让，避免短窗口刻度重叠。投影/动作面板的横轴
+固定使用该次查询的 from/to，单点数据不能让图表自动扩展出未查询的历史或未来时间。
+
 ## 建议 Span
 
 | Span                         | 边界                                                    | 主要结果                         |
@@ -243,7 +317,7 @@ Prometheus endpoint 暴露以下 Redis Stream 指标：
 | `linkd.clean.process`        | 单条 RawEventMessage 的纯清洗尝试                       | cleaner type、outcome、reason    |
 | `linkd.clean.persist`        | 单 lane 连续前缀的 Event 批量创建、Mailbox 入队和确认   | batch size、outcome、reason      |
 | `linkd.lifecycle.process`    | 单条 Event 到 accepted/suppressed/orphaned 或可恢复失败 | action、outcome、CAS conflict    |
-| `linkd.enrich.process`       | 新 Alert 创建前的一次同步丰富                           | succeeded/partial/failed         |
+| `linkd.enrich.process`       | Event 策略裁决前的一次同步丰富                           | succeeded/partial/failed         |
 | `linkd.final_hook.process`   | Alert change 到 Kafka ACK 或 hook 失败流水              | cause type、destination、outcome |
 | `linkd.direct_close.process` | CloseAlert command 到 CAS、流水和 FinalHook             | actor type、outcome              |
 
@@ -259,3 +333,19 @@ Span、Metric 和默认日志不得包含完整 payload、凭据、未经脱敏�
 
 公共任务调度的中心与 worker 指标见 [任务调度可观测性](task-scheduling-observability.md)，
 包含心跳、授权、交接、元数据和副本缺额；它们与 Lifecycle fingerprint lease 指标分别统计。
+
+## 策略匹配、窗口与统计采样
+
+2026-10-08新增以下正式运行观察；模拟与只读预览不计入。
+
+| OTel 名称 | 类型 | 口径 |
+| --- | --- | --- |
+| `linkd.policy.match.duration` | 秒 Histogram | 单次条件/目标求值耗时，包括只读资源查询，不含 Redis 执行和统计写入；按 suppression/shield/merge 及 matched/not_matched/unavailable 分类 |
+| `linkd.policy.check.delay` | 秒 Histogram | 屏蔽 next_check_at 或合并 deadline 到实际检查时刻的非负差；复查重复观察，不等于解除/合并完成延迟 |
+| `linkd.policy.statistics.samples` | Counter | 逐策略 Redis 采样 recorded/failed/dropped；失败不改变业务处理结果 |
+| `linkd.policy.state.initializations` | Counter | clip/aggregation/merge 的 created，及可确认的防抖残缺 repaired；重放不再计创建 |
+
+完整缓存丢失与正常首次创建无法区分，均记录 created，不臆测故障恢复次数。
+所有 Prometheus 标签仅有有限类别；租户、策略和运行对象身份不作为标签。
+逐策略统计使用 Redis 有界小时桶，通过管理 API 查询，口径及预算以
+[执行观察 API](../reference/contracts/policy-api.md#逐策略执行观察)为准。

@@ -1,0 +1,64 @@
+.shield-runtime-page > .page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.shield-binding {
+  padding: 18px;
+  border: 1px solid var(--line);
+  margin: 12px 0;
+  background: var(--panel-2);
+}
+.shield-binding > header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.shield-binding dl {
+  display: grid;
+  grid-template-columns: 100px minmax(0, 1fr);
+  gap: 12px;
+  margin: 16px 0;
+  font-size: 13px;
+}
+.shield-binding dt {
+  color: var(--muted);
+}
+.shield-binding dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.shield-pending {
+  border: 1px solid var(--line);
+  padding: 12px;
+}
+.shield-runtime-page table[aria-label="屏蔽变更历史"] th:last-child {
+  width: auto;
+}
+
+.shield-check-panel {
+  margin: 20px 0;
+  padding: 18px;
+  border: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.shield-check-panel form label {
+  display: grid;
+  gap: 8px;
+}
+.shield-check-panel textarea {
+  min-height: 72px;
+  max-width: 100%;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  padding: 10px;
+}
+.shield-check-result,
+.shield-check-history {
+  border-left: 3px solid var(--line);
+  padding: 12px;
+  margin: 10px 0;
+}

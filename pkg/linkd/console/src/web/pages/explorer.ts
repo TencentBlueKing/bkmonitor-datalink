@@ -60,6 +60,12 @@ const identityFields: FilterSpec[] = [
 ];
 export const explorerFilters: Record<EntityKind, FilterSpec[]> = {
   events: [
+    {
+      key: "enrich_status",
+      capability: "enrichStatus",
+      label: "丰富状态",
+      options: ["pending", "succeeded", "partial", "failed", "skipped"],
+    },
     { key: "event_source_id", capability: "eventSourceId", label: "事件来源" },
     {
       key: "state",
@@ -127,6 +133,13 @@ export const explorerFilters: Record<EntityKind, FilterSpec[]> = {
         "recover",
         "close",
         "suppress",
+        "merge_wait",
+        "merge",
+        "merge_release",
+        "merge_end",
+        "shield",
+        "unshield",
+        "admit",
         "push",
       ],
     },
@@ -154,6 +167,13 @@ export const valueNames: Record<string, string> = {
   skipped: "已跳过",
   trigger: "触发",
   severity_change: "级别变更",
+  merge_wait: "等待合并",
+  merge: "合并",
+  merge_release: "合并释放",
+  merge_end: "解除合并关系",
+  shield: "屏蔽",
+  unshield: "解除屏蔽",
+  admit: "获准处置",
   recover: "恢复",
   close: "关闭",
   suppress: "抑制",
@@ -251,6 +271,10 @@ export function relationLinks(
       links.push({ label, to: entityURL(kind, item.tenantId, { id }) });
   };
   if (entity === "events") {
+    links.push({
+      label: "模拟事件丰富",
+      to: `/enrich-preview?${new URLSearchParams({ bk_tenant_id: item.tenantId, event_id: item.id, event_source_id: String(p.event_source_id ?? "") })}`,
+    });
     if (Array.isArray(p.related_alert_ids))
       for (const id of p.related_alert_ids)
         exact("alerts", id, `关联告警 · ${display(id)}`);
@@ -279,10 +303,11 @@ export function relationLinks(
         }),
       });
     }
-    links.push({
-      label: "模拟丰富",
-      to: `/enrich-preview?${new URLSearchParams({ bk_tenant_id: item.tenantId, alert_id: item.id, event_source_id: String(p.event_source_id ?? "") })}`,
-    });
+    if (typeof p.trigger_event_id === "string" && p.trigger_event_id)
+      links.push({
+        label: "模拟首次事件丰富",
+        to: `/enrich-preview?${new URLSearchParams({ bk_tenant_id: item.tenantId, event_id: p.trigger_event_id, event_source_id: String(p.event_source_id ?? "") })}`,
+      });
   } else {
     exact("alerts", p.alert_id, "所属告警");
     const params = record(p.params);

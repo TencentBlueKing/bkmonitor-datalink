@@ -1462,8 +1462,8 @@
                   后形成的标准事件事实。
                 </p>
                 <div class="model-rule">
-                  创建后只允许 Lifecycle 补写
-                  <code>related_alert_ids</code>；其他事实不可覆盖。
+                  来源事实不可覆盖；丰富结果通过独立 CAS 写入后冻结，
+                  裁决完成时再补写 <code>related_alert_ids</code>。
                 </div>
               </div>
               <details>
@@ -1475,6 +1475,13 @@
                       <code>bk_tenant_id</code><code>event_source_id</code
                       ><code>event_source_version</code><code>event_id</code> <code>fingerprint</code
                       ><code>related_alert_ids</code>
+                    </div>
+                  </div>
+                  <div class="field-group">
+                    <strong>冻结的丰富结果</strong>
+                    <div class="chips">
+                      <code>enrich_status</code><code>enrich</code>
+                      <code>enriched_at</code><code>enrich_config_digest</code>
                     </div>
                   </div>
                   <div class="field-group">
@@ -1587,9 +1594,16 @@
                     </div>
                   </div>
                   <div class="field-group">
-                    <strong>丰富</strong>
+                    <strong>opening Event 丰富快照</strong>
                     <div class="chips">
                       <code>enrich_status</code><code>enrich</code>
+                    </div>
+                  </div>
+                  <div class="field-group">
+                    <strong>独立控制状态</strong>
+                    <div class="chips">
+                      <code>shield</code><code>merge</code><code>admission</code>
+                      <code>revision</code><code>projection</code><code>action_pending</code>
                     </div>
                   </div>
                 </div>
@@ -1652,9 +1666,19 @@
               ><small>source / user / system / severity_upgrade</small>
             </div>
             <div class="state-pill active">
-              <strong>Enrich.status</strong
+              <strong>Event.enrich_status</strong
               ><small>pending / succeeded / partial / failed / skipped</small>
             </div>
+          </div>
+
+          <div class="callout">
+            <span class="callout-mark">≠</span>
+            <p>
+              <code>Alert.status</code> 只表示生命周期；屏蔽看 <code>shield</code>，
+              合并看 <code>merge</code>，处置资格看 <code>admission</code>，
+              同步水位与待入队动作分别看 <code>projection</code> 和 <code>action_pending</code>。
+              详细流程与当前未完成范围见 <a href="design/event-enrich-and-alarm-policies.md">Event 丰富与告警策略开发方案</a>。
+            </p>
           </div>
 
           <div class="callout warn">
@@ -1989,8 +2013,10 @@
           </p></div>
 
           <div class="subheading"><h3>典型分支的副作用顺序</h3></div>
+          <p>不同 Event 都先完成丰富 CAS，再冻结策略上下文并裁决；已丰富的重投复用原结果。
+            以下分支省略这一共同前置步骤。获准动作与业务 CAS 一同保存持久意图，可靠入队后再继续普通 Hook 和流水。</p>
           <div class="sequence-list">
-<div class="sequence-item"><strong>创建</strong><span class="sequence-code">稳定 ID → Enrich → 保存 plan → CreateAlert + 缓存 → Hook → 日志 → Event 终态</span></div>
+<div class="sequence-item"><strong>创建</strong><span class="sequence-code">稳定 ID → 策略裁决 → 保存 plan → CreateAlert + 缓存 → Hook → 日志 → Event 终态</span></div>
 <div class="sequence-item"><strong>同级推进</strong><span class="sequence-code">保存 plan → Alert CAS + 缓存 → Hook → 日志 → Event 终态</span></div>
 <div class="sequence-item"><strong>同级终结</strong><span class="sequence-code">保存 plan → 终态 CAS + 缓存 → Hook → 日志 → Event 终态</span></div>
 <div class="sequence-item"><strong>等级抑制</strong><span class="sequence-code">保存 plan → suppress 日志 → Event 终态及关联 Alert</span></div>
@@ -2045,8 +2071,9 @@
             <article class="panel">
               <h3>Enricher</h3>
               <p>
-                只在新 Alert 创建计划中执行；update_current 不重新丰富。失败形成规范 failed processors 信封，
-                不阻断创建；Noop 使用 succeeded 与 <code>{"processors":[]}</code>。已保存计划复用丰富快照。
+                每条 Event 在策略和生命周期裁决前执行并保存逐等级结果，已冻结结果的重投直接复用。
+                新 Alert 复制 opening Event 对应等级的结果，update_current 保留首次快照。
+                丰富失败保存规范 failed 结果后继续裁决；取消和核心存储失败仍返回错误。
               </p>
             </article>
             <article class="panel">
@@ -2056,6 +2083,7 @@
                 真实变化后输出当前快照，但不立即写日志。成功或失败结果先转换为
                 push AlertLog，再与本次状态日志统一 Bulk；日志全部成功后才写
                 Event 终态。
+                state Hook 输出状态，action Hook 还需本次准入；可靠投影与动作使用独立持久任务。
               </p>
             </article>
           </div>

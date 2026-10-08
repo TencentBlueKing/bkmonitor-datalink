@@ -253,7 +253,7 @@ func (c *Client) searchAll(ctx context.Context, index string, filters []any, siz
 		return nil, fmt.Errorf("read response: %w", err)
 	}
 	if len(data) > maxOneModelResponseBytes {
-		return nil, fmt.Errorf("response exceeds %d bytes", maxOneModelResponseBytes)
+		return nil, fmt.Errorf("%w: response exceeds %d bytes", ErrResultLimit, maxOneModelResponseBytes)
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("elasticsearch status %d", response.StatusCode)
@@ -274,11 +274,21 @@ func (c *Client) searchAll(ctx context.Context, index string, filters []any, siz
 	if err := decoder.Decode(&result); err != nil {
 		return nil, fmt.Errorf("%w: decode response: %w", ErrInvalidDataSourceResponse, err)
 	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		return nil, fmt.Errorf("%w: trailing search response data", ErrInvalidDataSourceResponse)
+	}
+	// 缺失 hits 不是合法空集合；否则依赖损坏会被解释成目标消失并解除屏蔽。
+	if result.Hits.Hits == nil || len(result.Hits.Hits) > size {
+		return nil, fmt.Errorf("%w: missing or oversized hits", ErrInvalidDataSourceResponse)
+	}
 	if result.TimedOut || result.Shards.Failed > 0 {
 		return nil, fmt.Errorf("%w: incomplete search timed_out=%t failed_shards=%d", ErrInvalidDataSourceResponse, result.TimedOut, result.Shards.Failed)
 	}
 	items := make([]map[string]any, len(result.Hits.Hits))
 	for index := range result.Hits.Hits {
+		if result.Hits.Hits[index].Source == nil {
+			return nil, fmt.Errorf("%w: missing hit source", ErrInvalidDataSourceResponse)
+		}
 		items[index] = result.Hits.Hits[index].Source
 	}
 	return items, nil

@@ -214,6 +214,10 @@ Console 可配置自己的 configuration / existingSecret、资源、调度参�
 通过既有只读凭据环境变量覆盖数据库或 Prometheus 连接凭据。其配置 Secret 需包含有效的存储配置，
 不需要 worker token。
 
+`console.kacPolicyLinks` 按租户设置抑制、屏蔽、合并的 KAC 页面入口，仅注入 Console 的
+`LINKD_CONSOLE_KAC_POLICY_LINKS`。配置结构、占位符及路由示例见
+[KAC 配置入口](console.md#kac-配置入口)。该变量不能通过 extraEnvVars 重复覆盖，不发送管理凭据到 KAC。
+
 ## 可选 Event Generator
 
 Chart `0.1.2` 增加 `eventgen`，默认 `enabled: false`，镜像独立使用 `linkd-eventgen:0.1.1`。
@@ -464,3 +468,25 @@ Helm 测试检查渲染、配置加载、组隔离和错误参数，不连接真
 来源示例见[配置指南](configuration.md#动态配置)。
 
 管理认证 Secret 使用 `jwt-secret-key`（可通过 `auth.jwtSecretKey` 指定已有 key），其值与 Kingeye 的 `BKAPP_JWT_SECRET_KEY` 相同。Chart 仅向控制面、Console 和迁移 Job 注入 `LINKD_JWT_SECRET_KEY`；Worker 继续独立使用 `worker-token`。`configuration.dispatch.jwt.username` 可设置签发用户名，默认 `admin`。升级时同步更新 Secret、Chart、控制面、Console 和来源导入 CLI；旧 `auth.apiTokenKey` 已移除，不支持混用旧管理 Token。修改 Secret 后需重启消费它的进程。
+
+## 蓝鲸全局调用配置
+
+将蓝鲸配置统一放到 `configuration.blueking`，并按需设置 `configuration.resources.cmdb: {}`。
+字段和示例见[配置指南](configuration.md#蓝鲸全局配置与-cmdb-实时目标读取)。模板向各角色传递公共值；
+`controlPlane.configuration`、`workerDefaults`、`clusters` 及角色配置不得声明自己的
+`blueking.enable_multi_tenant_mode`，即使值与公共值相同也会报错。外部 Secret 内容由部署方保持一致，
+修改模式或应用凭据后重启控制面和 Lifecycle；缓存不跨重启保留。
+
+## KAC 全局兼容插件
+
+将[KAC 插件配置](configuration.md#kac-全局插件配置)统一放在 `configuration.plugins.kac`。
+Chart 向各角色注入同一声明，禁止 Control Plane、workerDefaults、clusters、具体角色及 migrate
+单独覆盖该插件；角色配置中的 `plugins: null` 也不能清除公共插件。
+外部 `existingSecret` 的内容无法由模板验证，需由部署方保证控制面和 Lifecycle 使用同一配置。
+插件连接到原 KAC ES，并维护原 alias 与索引定义；不在各 EventSource 上配置目标。
+
+### 可选 KAC 告警跳转
+
+`console.kacAlertUrlTemplate` 默认空，仅向 Console 注入 `LINKD_CONSOLE_KAC_ALERT_URL_TEMPLATE`。
+省略时没有 KAC 告警跳转入口；不影响 `configuration.plugins.kac` 的兼容存储或动作投递。
+占位符、校验和登录租户边界见[可选告警详情入口](console.md#可选-kac-告警详情入口)。

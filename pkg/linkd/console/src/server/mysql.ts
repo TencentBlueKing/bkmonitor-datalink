@@ -365,6 +365,7 @@ export class MysqlConnector {
         addJSONEqual(where, values, field!, value);
     }
     if (entity === "events") {
+      addJSONEqual(where, values, "enrich_status", params.enrichStatus);
       addEqual(where, values, "processing_state", params.state);
       addJSONEqual(where, values, "event_source_id", params.eventSourceId);
       addJSONEqual(where, values, "fingerprint", params.fingerprint);
@@ -479,6 +480,7 @@ function summary(
       "event_source_id",
       "values",
       "related_alert_ids",
+      "enrich_status",
       "title",
     ]);
     const processing = payload._processing;

@@ -1,0 +1,9 @@
+.suppression-runtime-page .suppression-id {
+  overflow-wrap: anywhere;
+}
+.suppression-runtime-page .merge-table {
+  margin-bottom: 16px;
+}
+.suppression-runtime-page details {
+  margin: 18px 0;
+}

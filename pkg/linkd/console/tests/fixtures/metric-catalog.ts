@@ -22,14 +22,14 @@ export const metricCatalogFixture: MetricCatalog = {
     {
       name: "linkd.enrich.attempt.duration",
       prometheus_name: "linkd_enrich_attempt_duration_seconds",
-      display_name: "告警丰富总耗时",
+      display_name: "事件丰富总耗时",
       module: "enrich",
       purpose: "latency",
       type: "histogram",
       prometheus_type: "histogram",
       unit: "s",
       unit_label: "秒",
-      description: "新 Alert 同步丰富总耗时",
+      description: "Event 同步丰富总耗时",
       origin: "linkd",
       dimensions: [
         {
@@ -47,14 +47,14 @@ export const metricCatalogFixture: MetricCatalog = {
     {
       name: "linkd.enrich.attempts",
       prometheus_name: "linkd_enrich_attempts_total",
-      display_name: "告警丰富尝试结果",
+      display_name: "事件丰富尝试结果",
       module: "enrich",
       purpose: "throughput",
       type: "counter",
       prometheus_type: "counter",
       unit: "{attempt}",
       unit_label: "次尝试",
-      description: "新 Alert 同步丰富尝试结果",
+      description: "Event 同步丰富尝试结果",
       origin: "linkd",
       dimensions: [],
       series: ["linkd_enrich_attempts_total"],

@@ -18,11 +18,12 @@ import (
 
 	"linkd/internal/config"
 	sourcestore "linkd/internal/eventsource/storage"
+	policystore "linkd/internal/policy/storage"
 	"linkd/internal/redisclient"
 	repositoryassembly "linkd/internal/store/assembly"
 )
 
-// Migrate 执行控制面的有界一次性初始化：校验配置与认证、检查 Redis、初始化 Repository 和来源集合。
+// Migrate 执行控制面的有界一次性初始化：校验配置与认证、检查 Redis、初始化 Repository、来源和策略集合。
 // 可能部分生效，失败后可重试已有幂等初始化；不启动 API、任务、归档或调度，不申请中心资格，
 // 不导入来源或重建 Redis 协调历史。已有业务数据不会被清空；这不是历史 schema 自动升级器。
 func Migrate(ctx context.Context, cfg config.Config) error {
@@ -36,6 +37,7 @@ func Migrate(ctx context.Context, cfg config.Config) error {
 		checkRedis:        checkMigrationRedis,
 		prepareRepository: prepareMigrationRepository,
 		prepareSources:    prepareMigrationSources,
+		preparePolicies:   prepareMigrationPolicies,
 	})
 }
 
@@ -43,6 +45,7 @@ type migrationSteps struct {
 	checkRedis        func(context.Context, config.Config) error
 	prepareRepository func(context.Context, config.Config) error
 	prepareSources    func(context.Context, config.Config) error
+	preparePolicies   func(context.Context, config.Config) error
 }
 
 func runMigration(ctx context.Context, cfg config.Config, steps migrationSteps) error {
@@ -66,6 +69,7 @@ func runMigration(ctx context.Context, cfg config.Config, steps migrationSteps) 
 		{"check Redis", steps.checkRedis},
 		{"prepare repository", steps.prepareRepository},
 		{"prepare source collections", steps.prepareSources},
+		{"prepare policy collections", steps.preparePolicies},
 		{"prepare dynamic config snapshots", prepareDynamicConfigSnapshots},
 	} {
 		if err := ctx.Err(); err != nil {
@@ -124,4 +128,12 @@ func validateDispatchConfig(cfg config.Config) error {
 		return fmt.Errorf("dispatch requires source storage and Redis")
 	}
 	return nil
+}
+
+func prepareMigrationPolicies(ctx context.Context, cfg config.Config) error {
+	docs, err := policystore.Open(ctx, *cfg.Storage, cfg.Dispatch.WithDefaults().Deployment)
+	if err != nil {
+		return err
+	}
+	return docs.Close()
 }

@@ -49,11 +49,11 @@ func TestBaseTargetFullProcessorPayloads(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+			result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 			if err != nil {
 				t.Fatal(err)
 			}
-			payload, err := enrich.DecodePayload(result.Data)
+			payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -100,11 +100,11 @@ func TestBaseTargetBranchesFlowThroughResourceAndDisplay(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+			result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 			if err != nil {
 				t.Fatal(err)
 			}
-			payload, err := enrich.DecodePayload(result.Data)
+			payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -154,11 +154,11 @@ func TestNoDataFiveProcessorFailures(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+			result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 			if err != nil {
 				t.Fatal(err)
 			}
-			payload, err := enrich.DecodePayload(result.Data)
+			payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -226,11 +226,11 @@ func TestBaseTargetFiveProcessorFailureBoundaries(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+			result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 			if err != nil {
 				t.Fatal(err)
 			}
-			payload, err := enrich.DecodePayload(result.Data)
+			payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -332,18 +332,17 @@ func (r *processorBaseTargetReader) FindHostTopology(context.Context, string, st
 	return r.topology, r.topologyFound, r.topologyErr
 }
 
-func processorBaseTargetAlert(t *testing.T, dimensions domain.DimensionMap) domain.Alert {
+func processorBaseTargetAlert(t *testing.T, dimensions domain.DimensionMap) domain.Event {
 	t.Helper()
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	strategyID, _ := domain.NewNumberScalar(123)
 	strategyVersion, _ := domain.NewNumberScalar(1)
 	bizID, _ := domain.NewNumberScalar(2)
-	return domain.Alert{
-		EventSourceVersion: 1, AlertID: "alert-basetarget", BKTenantID: "tenant-a", EventSourceID: "built_in_bk",
-		Fingerprint: "basetarget", Title: "source title", Content: "source content", Severity: "warning", SubjectName: "source subject",
+	return domain.Event{
+		EventSourceVersion: 1, EventID: "alert-basetarget", BKTenantID: "tenant-a", EventSourceID: "built_in_bk",
+		Fingerprint: "basetarget", Title: "source title", Content: "source content", Evaluations: []domain.EventEvaluation{{Severity: "warning", Action: domain.EventActionTriggered}}, SubjectName: "source subject",
 		Dimensions: dimensions, Labels: domain.DimensionMap{"strategy_id": strategyID, "strategy_version": strategyVersion, "bk_biz_id": bizID},
-		ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: "event-1", TriggerEventID: "event-1",
-		LastOccurredAt: now, UpdateAt: now, BeginAt: now, CreateAt: now, EnrichStatus: domain.EnrichStatusPending, Enrich: domain.JSONObject{},
+		ExtraData: domain.JSONObject{}, OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, EventEnrichment: domain.EventEnrichment{EnrichStatus: domain.EnrichStatusPending}, Values: domain.EventValues{}, SourceRawData: domain.JSONObject{},
 	}
 }
 

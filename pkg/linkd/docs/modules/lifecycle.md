@@ -1,5 +1,11 @@
 # Lifecycle
 
+可靠动作现已提供与业务 CAS 同时持久的 action_pending、按序幂等入队和独立补扫端口。它与普通
+FinalHook 分开：入队失败保留原意图并向调用者返回错误，全部目标任务可被排序发现后才清除，随后
+允许下一业务版本。投影 ACK 不受此屏障阻塞；仅解联或定时解除屏蔽不生成新动作。Worker 与共享的
+人工关闭/屏蔽/合并控制入口已注入仅入队 Recorder，控制面后台投递与 Worker 自动目标绑定已接入。
+目标固定于 opening Release，来源修改不重绑已有 Alert，空绑定不补绑。详见 [Lifecycle 原子动作意图](../reference/contracts/kac-action-delivery-v1.md#lifecycle-原子动作意图)。
+
 Elasticsearch runtime 默认使用进程内共享合批器，将不同 Mailbox 已就绪的 Event result CAS、Alert
 CAS/create 和 AlertLog create 合并发送。现有校验、缓存修复和错误映射由 Repository 继续负责；
 调用方收到对应 item 成功后才进入下一步，不能提前输出或 ACK。批次内 CAS 校验与冲突核对使用
@@ -105,18 +111,64 @@ Mailbox 队首 Event 后把同一 `StoredEvent` 快照交给 Processor；Process
 - `RecentAlertCache`：Elasticsearch 最近 refresh 窗口内 Alert 写入和终态恢复锚点；
 - `AlertIDGenerator`：由 opening Event 生成稳定 Alert ID；
 - `SeverityTable`：比较 incoming Event 与 active Alert 等级；
-- `AlertEnricher`：创建新 Alert 前同步丰富；
-- `FinalHook`：Alert 真实变化后的外部输出；
+- `EventEnricher`：生成处理计划前同步丰富当前 Event；
+- `PolicySnapshotter`：在策略副作用前固定处理时间和精确配置版本；
+- `NewAlertSuppressor`：仅在本次入口未关联活动 Alert 时执行新告警门槛，返回计划诊断并负责计数 owner 绑定/终态清理；
+- `ProjectionTargetSelector`：新 Alert 按 opening Event 精确来源版本与租户选定可靠出口；
+- `ActionRecorder`：业务 CAS 后可靠保存已冻结的动作，失败传播并阻止覆盖原意图；
+- `FinalHook`：Alert 真实变化后的普通外部输出；
 - `Clock`：服务端状态时间；
 - `Logger`：记录降级和失败上下文。
 
 Processor 最多进行 3 次 CAS 循环。冲突后重新读取 Event，优先恢复已保存计划；仅第一项尚未生效、
 原版本已被其他操作推进时才撤销并重裁决，不能拿旧 replacement 覆盖并发状态。
 
-### 2.3 Enricher 与 FinalHook
+当前防抖已接入正式 Worker：按冻结时间在 Redis 统计不同 EventID，未达到阈值的 Event 完成处理但不创建 Alert。
+所有活动 Alert（包括后续屏蔽/合并状态）都绕过防抖与关联聚合，同级、低等级、升级以及同 Event 终态/触发组合继续沿用生命周期裁决。
+候选按严重程度依次判断；高等级未达阈值不覆盖低等级独立判定。选中一个放行等级后，其余未判定的触发仍按等级抑制处理。
+抑制计数和跳过原因先随 `EventPlan.policy_decision` 固定，最终保存到 `EventProcessing.policy_decision`，重投不再计算。
+无 Alert 的单独恢复/关闭会清理未绑定计数；实际告警终态和人工关闭按 owner 清理，旧告警不能删除新代次。
+关联聚合也已接入：跨来源候选先抢占 pending 窗口，真实主 Alert 创建后登记，其他来源实时复核活动性并原子确认关联。
+聚合候选不会提前抑制其他 Event；较后策略抑制时释放占位，旧 owner 清理不影响新窗口。多等级可以关联不同主，整体上限为 32。
+Redis 失败或有界争抢超时记录跳过和低基数指标，取消/身份/CAS 等错误仍使 Event 重试。
+时间、自定义依赖、CMDB 依赖屏蔽及合并准入均已接入；屏蔽候选只绑定/清理自身计数并撤销聚合占位，不能登记为抑制主。
+屏蔽、合并和处置资格/投影任务的进度见[开发方案](../design/event-enrich-and-alarm-policies.md#111-实施进度与验收记录2026-10-07)。
+
+### 2.3 屏蔽、放行与控制面检查
+
+`ShieldEvaluator` 使用本次 Event 的有效视图做新匹配，已建立关系使用其冻结的 SourceEventID/severity 和 Release 复查。
+KAC 策略顺序保持为首个匹配后停止；普通编辑不替换已有绑定版本，停用/删除会提前解除。自定义依赖
+与 CMDB 依赖按活动主优先、无主首次原子登记及固定关系处理。主目标集合仅限制主告警，子告警按业务、
+rely_policy、时间及实际关系匹配；主恢复/关闭通过提示和定时兜底解除，不主动给子告警补发处置。
+
+`admission` 记录最近实际放行的等级。已放行同级触发保存 `duplicate_trigger`，只推进最近事件和状态；
+warning 升级为 critical 若被屏蔽，保留 warning 的放行记录，解除后下一条 critical 仍能获得处置资格。
+来源恢复/关闭照常进入终态并清空屏蔽。
+
+控制面 `shield-check` 独立扫描 ES/MySQL 工作标记，每页 16 条、最多 4 路、单项 10 秒，循环间隔 5 秒。
+它复用来源 Hook、租户检查及 fingerprint lease；检查失败保留关系/待输出意图，不能把读取失败当作条件不匹配。
+解除或换绑先 CAS 保存状态及 `policy_change`，再尝试状态输出、写稳定流水，最后仅清除意图。无新 Event 时不会设置 admission 或进入合并。
+
+合并失败释放已实现独立用例：只移除指定 pending 窗口，保留其他等待和成功关系；符合当前状态与等级资格才放行。
+`merge_change` 与状态 CAS 一起保存；新 Event、直接关闭和屏蔽检查先完成它，流水/输出中断按原 cause 重试。
+逐成员裁决进度和完整边界见[失败释放设计](../design/event-enrich-and-alarm-policies.md#84-失败释放与生命周期联动)。
+
+合并成功时，成员在自己的 fingerprint lease 内复核真实父并记录关系，全部成员确认后才开放父处置。
+父被人工关闭后，只解除对应关系和等待；即使移除了活动成员的最后一条关系，也不设置 admission 或调用
+action Hook，下一条触发 Event 再判断。多父共享成员时保留其他关系，已终态成员保留历史摘要。
+全部真实成员终结才将内置父恢复为 recovered/system/merge_members_ended；已被人工关闭的父不改写原结束原因。
+建立、解除和恢复均保存稳定的 merge_change 意图，纯元数据清理不再次推进 UpdateAt。Worker 已装配合并
+入窗与确认；独立控制面的 merge-judge/merge-decisions/merge-relations 分别负责窗口、持久化步骤与终态。
+合并主只经过内置来源自己的 Lifecycle，不再入窗；关系未就绪时仍阻止处置。
+
+Hook 内部角色区分 `state/action`：通用 Kafka 快照与策略索引属于状态输出，现行 KAC 消息属于处置触发。
+动作只在本次 `EventPlan.mutations[].action_ready` 为真，或曾放行告警进入终态时发送；定时解除仅调用状态 Hook。
+可靠 KAC 投影与动作使用独立的持久任务、投影确认 Gate 和后台重试；旧 KAC Hook 不具备该保证。已有可靠动作目标的 Alert 跳过旧 KAC Hook，通用状态输出仍保留。
+
+### 2.4 Enricher 与 FinalHook
 
 ```go
-type AlertEnricher interface {
+type EventEnricher interface {
     Enrich(ctx context.Context, input enrich.Input) (enrich.Result, error)
 }
 
@@ -125,15 +177,14 @@ type FinalHook interface {
 }
 ```
 
-Enricher 在每次新 Alert 持久化前同步执行，允许 succeeded/partial/failed。首次创建与等级升级产生的
-新 Alert 都执行丰富；update_current 升级、同等级推进和终态转换保留已有丰富结果。
-计划保存前失败可重新丰富；计划保存后重试复用其中已冻结的丰富快照。error、panic、非法状态或
-非法 JSON/协议降级为 failed 的固定 payload，同时保留 Alert 创建流程。
+Enricher 对每条不同 Event 在计划保存前同步执行；逐 evaluation 保存结果，共享本次 Event 的查询缓存。
+结果专用 CAS 一旦成功，处理计划失败或重投均复用该结果。error、panic、非法状态/数据降级为 failed，父取消停止处理。
+恢复/关闭和低等级被抑制 Event 也保存丰富结果。创建 Alert 时直接复制 opening Event 对应等级的 data；
+后续 Event 不刷新既有 Alert。`trigger_event_id` 是稳定的首次丰富来源，无需再增加重复的 enrich_event_id。
 
-Enricher 输入只包含已完成基础构造和 Normalize 的 Alert 深拷贝。具体实现位于
-`internal/enrich`，Scope 保存 Alert 深拷贝并向每个 Processor 返回隔离副本；处理器只通过
-返回值追加丰富信息。Lifecycle 按 EventSource 路由有序链，单 Processor error/panic 会形成 failed
-信封并继续执行，父 Context 取消会立即停止。
+输入为 `enrich.Input{Event}`；Scope 返回隔离的 Event 与显式 evaluation，未构造虚拟 Alert。
+运行时读取 Event 记录的来源 Release。当前任务版本复用连接，历史版本在同来源授权范围内读取，
+用有界临时运行时执行并关闭连接，不能悄悄切换到当前配置。
 
 `Alert.enrich` 固定只包含 `processors` 顶层 key；每个 processors 元素是以稳定处理器名
 为唯一 key 的 envelope，包含 status、value 和可选 diagnostics。`Alert.enrich_status` 是总状态的
@@ -233,7 +284,7 @@ Processor 必须幂等。最后一次 `LPOP` 前发生的新入队会由当前 H
 - `update_current`：原 Alert 保持 active 和 alert_id，更新 severity/latest_event_id/last_occurred_at/update_at；
   保留 begin_at/create_at/trigger_event_id、来源版本、描述、维度和首次丰富结果。追加包含 from_severity、
   to_severity 的 severity_change 流水，只输出一个 active 快照。
-- `close_and_create`：旧 Alert 进入 closed/severity_upgrade，按本次 Event 创建新的高等级 Alert，重新丰富；
+- `close_and_create`：旧 Alert 进入 closed/severity_upgrade，按本次 Event 创建新的高等级 Alert，复制本次 Event 的丰富结果；
   先输出旧告警 closed，再输出新告警 active。一个 Event 关联旧、新两条 Alert。
 
 两种策略都不执行原地降级。当前高级别恢复且低级别再次触发时，结束旧 Alert 并创建新 Alert。
@@ -243,7 +294,7 @@ Processor 必须幂等。最后一次 `LPOP` 前发生的新入队会由当前 H
 
 ```text
 读取 Event / active Alert，完整裁决全部级别
-  → 构造稳定 Alert ID、目标快照与流水；必要时同步 Enrich
+  → 冻结 Event Enrich，构造稳定 Alert ID、目标快照与流水
   → Event CAS 保存 processing.plan（仍为 unprocessed）
   → 按计划执行最多两项 Alert CAS/create
   → 每项写入后更新 Recent Alert 缓存

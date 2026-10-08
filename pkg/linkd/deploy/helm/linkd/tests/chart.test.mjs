@@ -57,6 +57,24 @@ test("eventgen stays disabled by default and when instances are preconfigured", 
   const docs = render({...base, eventgen: {instances: {demo: {eventSourceId: "demo-source"}}}});
   assert.equal(docs.filter(d => d.metadata.labels?.["app.kubernetes.io/component"] === "eventgen").length, 0);
 });
+test("Console KAC links are tenant-scoped configuration, emitted only to Console", () => {
+  const links = {"tenant-a": {shield: "https://kac.example/#/kac/editAlarmShield?id={policy_id}"}};
+  const console = {enabled: true, basicAuth: {existingSecret: "console-auth"}, kacPolicyLinks: links};
+  const docs = render({...base, console});
+  for (const deployment of deployments(docs)) {
+    const env = deployment.spec.template.spec.containers[0].env.find(e => e.name === "LINKD_CONSOLE_KAC_POLICY_LINKS");
+    if (deployment.metadata.labels["app.kubernetes.io/component"] === "console") assert.deepEqual(JSON.parse(env.value), links);
+    else assert.equal(env, undefined);
+  }
+  for (const invalid of [{"tenant-a": {other: "https://kac.example/"}}, {"tenant/a": {}}, {"tenant-a": {merge: "javascript:alert(1)"}}]) {
+    const result = spawnSync("helm", ["template", "test", chart, "-f", "-"], {input: stringify({...base, console: {...console, kacPolicyLinks: invalid}}), encoding: "utf8"});
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /kacPolicyLinks/);
+  }
+  const conflict = spawnSync("helm", ["template", "test", chart, "-f", "-"], {input: stringify({...base, console, extraEnvVars: [{name: "LINKD_CONSOLE_KAC_POLICY_LINKS", value: "{}"}]}), encoding: "utf8"});
+  assert.notEqual(conflict.status, 0);
+  assert.match(conflict.stderr, /LINKD_CONSOLE_KAC_POLICY_LINKS/);
+});
 test("direct Kafka eventgen passes addresses and topic without mounting a config Secret", () => {
   const docs = render({...base, eventgen: {enabled: true, existingSecret: "only-for-file-mode", instances: {
     direct: {eventSourceId: "test", tenantId: "system", kafka: {brokers: ["kafka.example.com:9092", "kafka2.example.com:9092"], topic: "test_linkd"}, newAlertsPerMinute: 60, cycleDuration: "1s"},
@@ -410,6 +428,32 @@ test("shared resources reach control plane and lifecycle without source credenti
   }
 });
 
+test("global BlueKing mode and credentials reach every role", () => {
+  const values = structuredClone(base);
+  values.configuration.blueking = {enable_multi_tenant_mode:true,api_url:"https://apigw.example",app_code:"linkd",app_secret:"fixture-value"};
+  values.configuration.resources.cmdb = {};
+  values.controlPlane = {...values.controlPlane, configuration:{blueking:null}};
+  const docs = render(values);
+  for (const deploy of deployments(docs)) {
+    const cfg = parse(configFor(docs,deploy));
+    assert.deepEqual(cfg.blueking,values.configuration.blueking);
+    assert.deepEqual(cfg.resources.cmdb,{});
+  }
+  validateConfigs(docs);
+});
+
+test("role and cluster BlueKing mode overrides are rejected", () => {
+  for (const path of [["controlPlane"],["workerDefaults","cleaner"],["workerDefaults","lifecycle"],["clusters","default"],["clusters","default","cleaner"],["clusters","default","lifecycle"]]) {
+    const values = structuredClone(base);
+    let target=values;
+    for (const key of path) target = target[key] ??= {};
+    target.configuration = {blueking:{enable_multi_tenant_mode:false}};
+    const result=spawnSync("helm",["template","test",chart,"-f","-"],{input:stringify(values),encoding:"utf8"});
+    assert.notEqual(result.status,0,path.join("."));
+    assert.match(result.stderr,/多租户开关只能配置于 configuration.blueking/);
+  }
+});
+
 
 test("JWT secret is injected only into management consumers", () => {
   const values = structuredClone(base);
@@ -431,4 +475,34 @@ test("JWT secret is injected only into management consumers", () => {
   const job = docs.find(doc => doc.kind === "Job" && doc.metadata.annotations?.["helm.sh/hook"]);
   const jwt = job.spec.template.spec.containers[0].env.find(e => e.name === "LINKD_JWT_SECRET_KEY");
   assert.equal(jwt.valueFrom.secretKeyRef.key, "custom-jwt-key");
+});
+
+test("global KAC plugin reaches every role and cannot be overridden",()=>{
+ const values=structuredClone(base);
+ values.configuration.plugins={kac:{enabled:true,alarm_event_index:"cw_kac_saas_3.0_alarm_event",elasticsearch:{addresses:["http://kac-es:9200"]},action_endpoint:"https://kac.example/action",internal_token:"synthetic-kac-token"}};
+ values.controlPlane={...values.controlPlane,configuration:{plugins:null}};
+ const docs=render(values);
+ for(const deploy of deployments(docs)) assert.deepEqual(parse(configFor(docs,deploy)).plugins,values.configuration.plugins);
+ validateConfigs(docs);
+ for(const scope of ["controlPlane","worker","cluster"]){
+  const invalid=structuredClone(values);
+  invalid.clusters ??= {default:{}}; invalid.workerDefaults ??= {}; invalid.workerDefaults.lifecycle ??= {};
+  const group=Object.keys(invalid.clusters)[0];
+  const target=scope==="controlPlane"?invalid.controlPlane:scope==="worker"?invalid.workerDefaults.lifecycle:invalid.clusters[group];
+  target.configuration={plugins:{kac:{enabled:false}}};
+  const output=spawnSync("helm",["template","test",chart,"-f","-"],{input:stringify(invalid),encoding:"utf8"});
+  assert.notEqual(output.status,0);assert.match(output.stderr,/KAC 插件只能配置于公共 configuration.plugins.kac/);
+ }
+});
+
+test("optional global KAC alert navigation is only injected into Console", () => {
+  const url = "https://kac.example/#/kac/alarmDetail?type=all&id={alarm_id}&tenant={bk_tenant_id}";
+  for (const value of ["", url]) {
+    const docs = render({...base, console: {enabled: true, basicAuth: {existingSecret: "console-auth"}, kacAlertUrlTemplate: value}});
+    for (const deployment of deployments(docs)) {
+      const env = deployment.spec.template.spec.containers[0].env.find(e => e.name === "LINKD_CONSOLE_KAC_ALERT_URL_TEMPLATE");
+      if (value && deployment.metadata.labels["app.kubernetes.io/component"] === "console") assert.equal(env.value, value);
+      else assert.equal(env, undefined);
+    }
+  }
 });

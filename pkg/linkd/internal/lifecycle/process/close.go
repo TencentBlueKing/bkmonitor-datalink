@@ -23,6 +23,8 @@ import (
 	"linkd/internal/lifecycle/mailbox"
 	"linkd/internal/lifecycle/recentalert"
 	"linkd/internal/lifecycle/scheduler"
+	"linkd/internal/policy/redisstate"
+	policyruntime "linkd/internal/policy/runtime"
 	"linkd/internal/redisclient"
 	"linkd/internal/runtimeconfig"
 	"linkd/internal/store"
@@ -52,72 +54,97 @@ type AlertCloser struct {
 
 // NewAlertCloser 创建控制面专用的有界关闭入口，不启动消费者或修改存储 schema。
 func NewAlertCloser(cfg config.Config, sources closeSourceReader, severity *runtimeconfig.Severity, logger *slog.Logger, metrics *telemetry.Runtime) *AlertCloser {
-	return &AlertCloser{slots: make(chan struct{}, 4), run: func(ctx context.Context, command lifecycle.CloseAlertCommand) (result lifecycle.CloseAlertResult, runErr error) {
-		if cfg.Storage == nil || cfg.Lifecycle == nil || cfg.Storage.Redis == nil {
-			return result, &CloseError{503, "lifecycle is not configured"}
-		}
-		runtime, err := storeassembly.OpenExisting(ctx, *cfg.Storage, 4)
-		if err != nil {
-			return result, err
-		}
-		defer storeassembly.JoinCloseError(&runErr, runtime)
-		reader := runtime.Repository.GetAlert
-		if current, ok := runtime.Repository.(store.LifecycleAlertStore); ok {
-			reader = current.GetAlertCurrent
-		}
-		stored, err := reader(ctx, command.BKTenantID, command.AlertID)
-		if err != nil {
-			return result, err
-		}
-		source, err := sources.Get(ctx, stored.Alert.EventSourceID)
-		if err != nil {
-			return result, err
-		}
-		if source.Published <= 0 {
-			return result, &CloseError{409, "event source has no published configuration"}
-		}
-		release, err := sources.GetRelease(ctx, source.ID, source.Published)
-		if err != nil {
-			return result, err
-		}
-		if release.Spec.RelatedTenantID != "" && release.Spec.RelatedTenantID != command.BKTenantID {
-			return result, &CloseError{403, "event source tenant mismatch"}
-		}
-		hooks, closeHooks, err := openHooksWithSeverity(release.Spec.Hooks, metrics, severity)
-		if err != nil {
-			return result, err
-		}
-		defer func() { runErr = errors.Join(runErr, closeHooks()) }()
-		options := cfg.Storage.Redis.ClientOptions()
-		options.ContextTimeoutEnabled = true
-		options.PoolSize = 2
-		client, err := redisclient.New(options)
-		if err != nil {
-			return result, err
-		}
-		defer func() { runErr = errors.Join(runErr, client.Close()) }()
-		lockConfig := cfg.Lifecycle.ForSource(cfg.Dispatch.WithDefaults().Deployment, stored.Alert.EventSourceID).SchedulerConfig()
-		// 单次请求最多十秒，lease 至少三十秒；不启动额外续租 goroutine。
-		// 与 Worker 共用 tenant/source/fingerprint 锁，避免旧终态缓存覆盖新生命周期。
-		lockConfig.LockTTL = max(lockConfig.LockTTL, 30*time.Second)
-		locker, err := scheduler.NewRedisLocker(client, lockConfig)
-		if err != nil {
-			return result, err
-		}
-		cache := lifecycle.RecentAlertCache(lifecycle.NoopRecentAlertCache{})
-		if runtime.Backend == config.RepositoryTypeElasticsearch {
-			cache, err = recentalert.NewStore(client, recentalert.Config{KeyPrefix: cfg.Lifecycle.WithDefaults().Mailbox.KeyPrefix + ":recent-alert", RefreshInterval: cfg.Storage.Elasticsearch.ActiveAlertRefreshInterval()}, metrics.RecentAlertCacheObserver())
-			if err != nil {
-				return result, err
-			}
-		}
-		processor, err := lifecycle.NewProcessor(metrics.ObserveRepository(runtime.Repository), cache, lifecycle.DeterministicAlertIDGenerator{}, enrich.NoopEnricher{}, hooks, severity, lifecycle.SystemClock{}, logger)
-		if err != nil {
-			return result, err
-		}
-		key := mailbox.CorrelationKey(stored.Alert.BKTenantID, stored.Alert.EventSourceID, stored.Alert.Fingerprint)
-		return closeUnderLease(ctx, locker, key, func() (lifecycle.CloseAlertResult, error) { return processor.CloseAlert(ctx, command) })
+	return &AlertCloser{slots: make(chan struct{}, 4), run: func(ctx context.Context, command lifecycle.CloseAlertCommand) (result lifecycle.CloseAlertResult, err error) {
+		err = withAlertProcessor(ctx, cfg, sources, severity, logger, metrics, command.BKTenantID, command.AlertID, nil, func(p *lifecycle.Processor) error {
+			var err error
+			result, err = p.CloseAlert(ctx, command)
+			return err
+		})
+		return result, err
 	}}
+}
+
+// withAlertProcessor 为人工关闭、屏蔽检查和合并步骤共用实时读取、租户校验、Hook 与同一租约边界。
+func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSourceReader, severity *runtimeconfig.Severity, logger *slog.Logger, metrics *telemetry.Runtime, tenant, alertID string, configure func(store.Repository) []lifecycle.ProcessorOption, run func(*lifecycle.Processor) error) (runErr error) {
+
+	if cfg.Storage == nil || cfg.Lifecycle == nil || cfg.Storage.Redis == nil {
+		return &CloseError{503, "lifecycle is not configured"}
+	}
+	runtime, err := storeassembly.OpenExisting(ctx, *cfg.Storage, 4)
+	if err != nil {
+		return err
+	}
+	defer storeassembly.JoinCloseError(&runErr, runtime)
+	reader := runtime.Repository.GetAlert
+	if current, ok := runtime.Repository.(store.LifecycleAlertStore); ok {
+		reader = current.GetAlertCurrent
+	}
+	stored, err := reader(ctx, tenant, alertID)
+	if err != nil {
+		return err
+	}
+	source, err := sources.Get(ctx, stored.Alert.EventSourceID)
+	if err != nil {
+		return err
+	}
+	if source.Published <= 0 {
+		return &CloseError{409, "event source has no published configuration"}
+	}
+	version := source.Published
+	if source.Deleted {
+		version = stored.Alert.EventSourceVersion
+	}
+	release, err := sources.GetRelease(ctx, source.ID, version)
+	if err != nil {
+		return err
+	}
+	if release.Spec.RelatedTenantID != "" && release.Spec.RelatedTenantID != tenant {
+		return &CloseError{403, "event source tenant mismatch"}
+	}
+	hooks, closeHooks, err := openHooksWithSeverity(release.Spec.Hooks, metrics, severity)
+	if err != nil {
+		return err
+	}
+	defer func() { runErr = errors.Join(runErr, closeHooks()) }()
+	options := cfg.Storage.Redis.ClientOptions()
+	options.ContextTimeoutEnabled = true
+	options.PoolSize = 2
+	client, err := redisclient.New(options)
+	if err != nil {
+		return err
+	}
+	defer func() { runErr = errors.Join(runErr, client.Close()) }()
+	lockConfig := cfg.Lifecycle.ForSource(cfg.Dispatch.WithDefaults().Deployment, stored.Alert.EventSourceID).SchedulerConfig()
+	// 单次请求最多十秒，lease 至少三十秒；不启动额外续租 goroutine。
+	// 与 Worker 共用 tenant/source/fingerprint 锁，避免旧终态缓存覆盖新生命周期。
+	lockConfig.LockTTL = max(lockConfig.LockTTL, 30*time.Second)
+	locker, err := scheduler.NewRedisLocker(client, lockConfig)
+	if err != nil {
+		return err
+	}
+	cache := lifecycle.RecentAlertCache(lifecycle.NoopRecentAlertCache{})
+	if runtime.Backend == config.RepositoryTypeElasticsearch {
+		cache, err = recentalert.NewStore(client, recentalert.Config{KeyPrefix: cfg.Lifecycle.WithDefaults().Mailbox.KeyPrefix + ":recent-alert", RefreshInterval: cfg.Storage.Elasticsearch.ActiveAlertRefreshInterval()}, metrics.RecentAlertCacheObserver())
+		if err != nil {
+			return err
+		}
+	}
+	policyState, err := redisstate.New(client, cfg.Dispatch.WithDefaults().Deployment)
+	if err != nil {
+		return err
+	}
+	observed := metrics.ObserveRepository(runtime.Repository)
+	opts := []lifecycle.ProcessorOption{lifecycle.WithNewAlertSuppressor(&policyruntime.Suppressor{State: policyState, Aggregation: policyState, Observer: metrics, Logger: logger, CleanupRecorder: configuredCleanupRecorder{storage: *cfg.Storage, deployment: cfg.Dispatch.WithDefaults().Deployment}}), lifecycle.WithDependencyRegistry(&policyruntime.Shielder{Dependency: policyState, Hints: policyState, Observer: metrics, Logger: logger})}
+	opts = append(opts, lifecycle.WithActionRecorder(configuredActionRecorder{storage: *cfg.Storage, deployment: cfg.Dispatch.WithDefaults().Deployment, client: client}))
+	if configure != nil {
+		opts = append(opts, configure(observed)...)
+	}
+	processor, err := lifecycle.NewProcessor(observed, cache, lifecycle.DeterministicAlertIDGenerator{}, enrich.NoopEnricher{}, hooks, severity, lifecycle.SystemClock{}, logger, opts...)
+	if err != nil {
+		return err
+	}
+	key := mailbox.CorrelationKey(stored.Alert.BKTenantID, stored.Alert.EventSourceID, stored.Alert.Fingerprint)
+	return withAlertLease(ctx, locker, key, func() error { return run(processor) })
 }
 
 // CloseAlert 在固定预算内执行一次显式用户命令；失败可能发生在 CAS 已成功之后。
@@ -161,10 +188,10 @@ func (s *AlertCloser) CloseAlert(ctx context.Context, command lifecycle.CloseAle
 	return result, &CloseError{502, "close result uncertain; retry the same operation"}
 }
 
-func closeUnderLease(ctx context.Context, locker scheduler.Locker, key string, run func() (lifecycle.CloseAlertResult, error)) (result lifecycle.CloseAlertResult, err error) {
+func withAlertLease(ctx context.Context, locker scheduler.Locker, key string, run func() error) (err error) {
 	lease, err := locker.Acquire(ctx, key)
 	if err != nil {
-		return result, err
+		return err
 	}
 	defer func() {
 		// 即使请求取消仍归还 lease；释放失败不能伪装成确定成功。

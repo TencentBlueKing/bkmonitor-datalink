@@ -216,7 +216,9 @@ export function EventSourcesPage() {
       matchesState &&
       (!query ||
         source.id.toLowerCase().includes(query) ||
-        source.spec.storage.kafka.topic.toLowerCase().includes(query))
+        (source.spec.storage.kafka?.topic ?? "系统内部合并")
+          .toLowerCase()
+          .includes(query))
     );
   });
   const pageCount = Math.max(1, Math.ceil(filtered.length / 20));
@@ -382,7 +384,7 @@ export function EventSourcesPage() {
                   <tr>
                     <th>来源 ID</th>
                     <th>状态</th>
-                    <th>Kafka Topic</th>
+                    <th>输入来源</th>
                     <th>发布版本</th>
                     <th>Cleaner</th>
                     <th>Lifecycle</th>
@@ -405,8 +407,12 @@ export function EventSourcesPage() {
                         <SourceState source={source} />
                       </td>
                       <td>
-                        <span title={source.spec.storage.kafka.topic}>
-                          {source.spec.storage.kafka.topic}
+                        <span
+                          title={
+                            source.spec.storage.kafka?.topic ?? "系统内部合并"
+                          }
+                        >
+                          {source.spec.storage.kafka?.topic ?? "系统内部合并"}
                         </span>
                       </td>
                       <td>

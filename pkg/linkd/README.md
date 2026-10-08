@@ -7,7 +7,7 @@ Linkd 是独立的 Go 告警接入和生命周期处理项目。当前领域事�
 
 项目处于早期开发阶段，没有稳定 Go API 或历史版本兼容承诺。当前配置、领域身份和物理资源直接描述
 当前实现；早期草案中的 `AlertEvent`、固定 RawEvent 映射、
-`severity_priority`、`revision` 和 `terminal_event_id` 不属于当前模型。
+`severity_priority` 和 `terminal_event_id` 不属于当前模型。Alert 的业务 `revision` 已用于可靠同步和动作排序。
 
 ## 当前链路
 
@@ -21,16 +21,25 @@ MQ delivery
   → 各 lane 将仍为 unprocessed 的 Event ID 写入 Redis Mailbox
   → 确认原 MQ 消息
   → Mailbox Signal + fingerprint lease
+  → Event Enrich 并 CAS 冻结结果、策略版本与裁决上下文
   → Elasticsearch Recent Alert 缓存优先裁决
-  → Alert 创建/更新/升级/抑制/终态
-  → AlertLog + EventSource hooks（Kafka V1 / KAC Alarm / Redis 活跃策略索引）
+  → 新告警抑制 / Alert 生命周期 / 屏蔽判定 / 合并入窗 / 处置准入
+  → Alert / AlertLog / 状态输出及持久动作意图
+  → 控制面独立推进屏蔽复查、合并裁决及父子关系
+  → 全局 KAC 插件直接维护 alarm_event，确认可搜索后可靠通知获准动作
 ```
 
 - Event 使用 evaluations 记录多个级别的 `triggered | resolved | closed` 判定，values 记录本次数值。
 - Alert status 仅 `active | recovered | closed`，后两者不可重新打开。
 - 同一 fingerprint 最多一个活动 Alert；更高级别触发优先，可全局配置原地升级或关闭后新建；恢复/关闭只匹配当前级别。
-- accepted 与 suppressed Event 写入 `related_alert_ids`；suppressed 不推进 Alert，orphaned/rejected 保持为空。
-- Enricher 在 Alert 创建前同步执行一次；未配置规则视为 succeeded 空结果，错误降级为 failed。
+- Event 保存逐 evaluation 结果；防抖未达阈值时可为 suppressed 且没有关联 Alert，诊断仍可查询。
+- 每条不同 Event 在策略裁决前执行并冻结 Enrich，重投复用已保存结果；Alert 固定复制 opening Event
+  的丰富与展示快照。未配置规则视为 succeeded 空结果，错误降级为 failed。
+- 防抖与跨来源聚合只约束没有活动 Alert 的候选；活动 Alert 的更新与升级绕过这两项策略。
+  生命周期、屏蔽、合并、处置准入和同步水位分别保存。定时解除屏蔽或父关闭解联只更新关系，等待下一条触发 Event。
+- `plugins.kac` 全局开启兼容存储和处置通知，覆盖普通来源、内置合并来源及各租户；
+  `alarm_event` 沿用 KAC 原索引定义，一个 Alert 生命周期对应一条稳定文档。
+  普通来源 Hook（Kafka V1 / Redis 活跃策略索引等）保留自己的输出保证；已绑定可靠动作的 Alert 跳过旧 KAC Kafka Hook。
 - MySQL 和 Elasticsearch 都只承诺单对象 CAS；跨对象步骤依赖稳定身份和幂等流水恢复。Cleaner 确认
   原消息后不再扫描 Event 补发 Signal，因此 Redis Mailbox 必须依靠自身持久化和复制保证已确认数据。
 - Elasticsearch Event create 使用 `refresh=false`；Cleaner 在主分片确认后入 Mailbox，Lifecycle 和重复
@@ -42,6 +51,11 @@ MQ delivery
   Active 热索引幂等归档到 History，积压期间批次之间不等待固定周期。
 - 控制面可监控 Redis Signal Stream 的长度、内存、Consumer Group、PEL 和 lag，并在超过软上限时有界
   裁剪所有 Group 都已确认的连续前缀；未读和 Pending Signal 不会为满足长度目标而删除。
+
+Linkd 核心处理和 KAC 兼容插件已有本地验收；KAC 策略同步、真实处置接收端、生命周期命令转交及
+旧状态写入/索引维护退出仍需跨仓接入。Console 已有策略与运行态诊断、受控检查和可靠任务管理；
+状态序列模拟、逐策略统计及 KAC 告警详情直达尚未实现。当前能力与验收边界统一见
+[开发方案的差距清单](docs/design/event-enrich-and-alarm-policies.md#112-当前能力与剩余差距2026-10-08)。
 
 ## 目录
 

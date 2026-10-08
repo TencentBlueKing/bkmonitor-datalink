@@ -15,8 +15,10 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"linkd/internal/config"
+	"linkd/internal/domain"
 	"linkd/internal/lifecycle"
 	"linkd/internal/store/storetest"
 )
@@ -67,6 +69,34 @@ func TestOpenHookSupportsKAC(t *testing.T) {
 	}
 	if err := closeHook(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHookAssemblyPreservesStateAndActionOwnership(t *testing.T) {
+	specs := []config.HookConfig{
+		{Name: "state", Type: config.HookTypeKafka, Config: config.HookParameters{Brokers: []string{"127.0.0.1:1"}, Topic: "state"}},
+		{Name: "active", Type: config.HookTypeActiveAlertByStrategy, Config: config.HookParameters{Redis: &config.RedisConfig{Address: "127.0.0.1:1"}, KeyPrefix: "active"}},
+		{Name: "legacy", Type: config.HookTypeKAC, Config: config.HookParameters{Brokers: []string{"127.0.0.1:1"}, Topic: "actions"}},
+	}
+	hooks, closeHooks, err := openHooks(specs, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := closeHooks(); err != nil {
+			t.Error(err)
+		}
+	})
+	if len(hooks) != 3 || hooks[0].Purpose != "state" || hooks[1].Purpose != "state" || hooks[2].Purpose != "action" {
+		t.Fatal("source hook assembly lost state/action classification")
+	}
+	alert := storetest.Alert("tenant", "alert", "event", "fp", "warning")
+	alert.Projection.Targets = map[string]domain.ProjectionTargetState{"kac": {SourceVersion: 1, RequiredRevision: alert.Revision, ActionEnabled: true}}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	result, err := hooks[2].Execute(ctx, lifecycle.FinalHookInput{Cause: lifecycle.AlertChangeCause{Type: lifecycle.AlertChangeCauseSourceEvent, ID: "event"}, Alert: alert, Outcome: lifecycle.OutcomeAlertCreated})
+	if err != nil || !result.Skipped || result.Name != "legacy" {
+		t.Fatal("assembled legacy hook lost reliable ownership guard", result, err)
 	}
 }
 

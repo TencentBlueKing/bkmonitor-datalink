@@ -104,7 +104,7 @@ func resolve(
 	dimensions domain.DimensionMap,
 	fallbackBizID int64,
 ) (resolution, error) {
-	result := resolution{tenantID: scope.Alert().BKTenantID, branch: branch, inputState: inputValid}
+	result := resolution{tenantID: scope.Event().BKTenantID, branch: branch, inputState: inputValid}
 	if strategy.ObjectModelCode != nil {
 		result.modelCode = *strategy.ObjectModelCode
 	}

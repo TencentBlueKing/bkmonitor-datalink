@@ -24,6 +24,9 @@ const maxCASAttempts = 3
 type ProcessOutcome string
 
 const (
+	OutcomeAlertMergeChanged    ProcessOutcome = "alert_merge_changed"
+	OutcomeAlertMergeReleased   ProcessOutcome = "alert_merge_released"
+	OutcomeAlertShieldChanged   ProcessOutcome = "alert_shield_changed"
 	OutcomeAlertCreated         ProcessOutcome = "alert_created"
 	OutcomeAlertUpdated         ProcessOutcome = "alert_updated"
 	OutcomeAlertSeverityChanged ProcessOutcome = "alert_severity_changed"
@@ -98,26 +101,39 @@ func (NoopRecentAlertCache) PutTerminal(context.Context, store.StoredAlert) erro
 
 func (NoopRecentAlertCache) Repair(context.Context, store.StoredAlert) error { return nil }
 
+// PolicySnapshotter 固定一次 Event 的配置引用；普通配置依赖失败由实现记录跳过，授权失败仍返回 error。
+type PolicySnapshotter interface {
+	Snapshot(context.Context, domain.Event, time.Time) (*store.PolicyContext, error)
+}
+
 type Processor struct {
-	repository     store.Repository
-	recentAlerts   RecentAlertCache
-	idGenerator    AlertIDGenerator
-	enricher       AlertEnricher
-	contentBuilder AlertContentBuilder
-	enrichObserver EnrichObserver
-	finalHooks     []NamedFinalHook
-	severity       SeverityTable
-	configDigest   string
-	upgradePolicy  string
-	clock          Clock
-	logger         Logger
+	contentBuilder           AlertContentBuilder
+	actionRecorder           ActionRecorder
+	initialProjectionTargets map[string]bool
+	shielder                 ShieldEvaluator
+	merger                   MergeEvaluator
+	mergeRelations           MergeRelationReader
+	dependency               DependencyRegistry
+	suppressor               NewAlertSuppressor
+	policies                 PolicySnapshotter
+	repository               store.Repository
+	recentAlerts             RecentAlertCache
+	idGenerator              AlertIDGenerator
+	enricher                 EventEnricher
+	enrichObserver           EnrichObserver
+	finalHooks               []NamedFinalHook
+	severity                 SeverityTable
+	configDigest             string
+	upgradePolicy            string
+	clock                    Clock
+	logger                   Logger
 }
 
 func NewProcessor(
 	repository store.Repository,
 	recentAlerts RecentAlertCache,
 	idGenerator AlertIDGenerator,
-	enricher AlertEnricher,
+	enricher EventEnricher,
 	finalHooks []NamedFinalHook,
 	severity SeverityTable,
 	clock Clock,
@@ -134,7 +150,7 @@ func NewProcessor(
 	}
 	seen := make(map[string]bool, len(finalHooks))
 	for _, hook := range finalHooks {
-		if hook.Name == "" || seen[hook.Name] || hook.Hook == nil {
+		if hook.Name == "" || seen[hook.Name] || hook.Hook == nil || (hook.Purpose != "" && hook.Purpose != "state" && hook.Purpose != "action") {
 			return nil, fmt.Errorf("final hooks require unique names and non-nil implementations")
 		}
 		seen[hook.Name] = true
@@ -154,6 +170,15 @@ func NewProcessor(
 	}
 	if processor.contentBuilder == nil {
 		return nil, fmt.Errorf("lifecycle content builder must not be nil")
+	}
+	if len(processor.initialProjectionTargets) > 16 {
+		return nil, fmt.Errorf("projection target budget exceeded")
+	}
+
+	for id, actions := range processor.initialProjectionTargets {
+		if domain.ValidateIdentityPart("target", id, 64) != nil || (actions && processor.actionRecorder == nil) {
+			return nil, fmt.Errorf("invalid initial output target or missing action recorder")
+		}
 	}
 	return processor, nil
 }
@@ -205,4 +230,9 @@ func WithSeverityUpgradePolicy(policy string) ProcessorOption {
 			p.upgradePolicy = policy
 		}
 	}
+}
+
+// WithPolicySnapshotter 在 Enrich 后、计划和 Redis 副作用前固定策略裁决上下文。
+func WithPolicySnapshotter(policies PolicySnapshotter) ProcessorOption {
+	return func(p *Processor) { p.policies = policies }
 }

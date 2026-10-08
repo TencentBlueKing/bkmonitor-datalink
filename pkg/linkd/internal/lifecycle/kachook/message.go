@@ -12,19 +12,18 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"linkd/internal/domain"
 	"linkd/internal/enrich/kingeye"
 	"linkd/internal/enrich/models"
 	"linkd/internal/enrich/view"
 	"linkd/internal/lifecycle"
-
-	"github.com/google/uuid"
 )
 
 const (
 	identityPrefix = "linkd-"
 	kacTimeLayout  = "2006-01-02 15:04:05"
-	// KAC 输出契约固定此名称，不能随来源丰富结果改变。
+	// kacSourceName 由现行 KAC 输出契约固定，不随 Event 丰富的来源展示值变化。
 	kacSourceName = "鲸眼监控"
 )
 
@@ -45,6 +44,10 @@ func convertMessage(input lifecycle.FinalHookInput) (kingeye.AlarmMessage, error
 }
 
 func convertMessageWithLevel(input lifecycle.FinalHookInput, resolve func(string) (string, error)) (kingeye.AlarmMessage, error) {
+	return convertFieldsWithLevel(input, resolve, true)
+}
+
+func convertFieldsWithLevel(input lifecycle.FinalHookInput, resolve func(string) (string, error), requireContent bool) (kingeye.AlarmMessage, error) {
 	if err := input.Cause.Validate(); err != nil {
 		return kingeye.AlarmMessage{}, fmt.Errorf("KAC alarm cause: %w", err)
 	}
@@ -60,7 +63,16 @@ func convertMessageWithLevel(input lifecycle.FinalHookInput, resolve func(string
 	if err != nil {
 		return kingeye.AlarmMessage{}, err
 	}
-	action, err := kacAction(input.Alert.Status, input.Outcome)
+	actionOutcome := input.Outcome
+	if actionOutcome == lifecycle.OutcomeAlertMergeReleased || actionOutcome == lifecycle.OutcomeAlertMergeChanged {
+		// 旧协议把 firing 当作输入告警；只允许明确获准的释放触发，纯状态变化等待可靠投影协议。
+		intent := input.Alert.MergeChange
+		if intent == nil || !intent.ActionReady || (intent.Kind != "release" && intent.Kind != "parent_ready") || input.Cause.Type != lifecycle.AlertChangeCauseSystemOperation || input.Cause.ID != intent.OperationID {
+			return kingeye.AlarmMessage{}, fmt.Errorf("KAC legacy input requires admitted merge release")
+		}
+		actionOutcome = lifecycle.OutcomeAlertUpdated
+	}
+	action, err := kacAction(input.Alert.Status, actionOutcome)
 	if err != nil {
 		return kingeye.AlarmMessage{}, err
 	}
@@ -114,7 +126,7 @@ func convertMessageWithLevel(input lifecycle.FinalHookInput, resolve func(string
 	if message.Name == "" {
 		return kingeye.AlarmMessage{}, fmt.Errorf("KAC alarm name is required")
 	}
-	if message.Content == "" {
+	if requireContent && message.Content == "" {
 		return kingeye.AlarmMessage{}, fmt.Errorf("KAC alarm content is required")
 	}
 	return message, nil

@@ -1,3 +1,12 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package lifecycle
 
 import (
@@ -35,8 +44,8 @@ func TestGeneratedContentPersistsAndRemainsImmutable(t *testing.T) {
 				return "generated:" + event.EventID, nil
 			})
 			processor.enricher = stubEnricher{fn: func(input enrich.Input) (enrich.Result, error) {
-				if !strings.HasPrefix(input.Alert.Content, "generated:") {
-					t.Fatal("ordinary Enrich did not receive generated content")
+				if strings.HasPrefix(input.Event.Content, "generated:") {
+					t.Fatal("Event enrichment received generated Alert content")
 				}
 				return enrich.Result{}, errors.New("ordinary enrich may degrade")
 			}}
@@ -81,11 +90,15 @@ func TestSavedPlanFreezesGeneratedContentAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := processor.preparePlan(context.Background(), event)
+	enriched, err := processor.enrichEvent(context.Background(), created.StoredEvent)
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved, err := processor.writeEventResult(context.Background(), created.StoredEvent, store.EventResult{State: domain.EventProcessStateUnprocessed, Plan: plan})
+	plan, err := processor.preparePlan(context.Background(), enriched.Event, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := processor.writeEventResult(context.Background(), enriched, store.EventResult{State: domain.EventProcessStateUnprocessed, Plan: plan})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,10 +137,6 @@ func TestContentFailureDoesNotSavePlanOrCreateAlert(t *testing.T) {
 					return "", errors.New("unavailable")
 				}
 			})
-			processor.enricher = stubEnricher{fn: func(enrich.Input) (enrich.Result, error) {
-				t.Fatal("failure reached ordinary Enrich")
-				return enrich.Result{}, nil
-			}}
 			event := testEvent("content-failure", "warning")
 			created, err := repo.CreateEvent(ctx, event)
 			if err != nil {
@@ -137,7 +146,7 @@ func TestContentFailureDoesNotSavePlanOrCreateAlert(t *testing.T) {
 				t.Fatal("accepted failed content")
 			}
 			stored := mustGetStoredEvent(t, repo, event)
-			if stored.Processing.Plan != nil || stored.Processing.State != domain.EventProcessStateUnprocessed {
+			if stored.Processing.Plan != nil || stored.Processing.State != domain.EventProcessStateUnprocessed || stored.Event.EnrichStatus == domain.EnrichStatusPending {
 				t.Fatal("saved failed plan")
 			}
 			id, _ := processor.idGenerator.Generate(event)

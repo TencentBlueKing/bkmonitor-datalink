@@ -74,8 +74,8 @@ func (r *Repository) normalizeNewAlert(alert domain.Alert) (domain.Alert, error)
 	if err != nil {
 		return domain.Alert{}, fmt.Errorf("%w: normalize alert: %w", store.ErrInvalidArgument, err)
 	}
-	if normalized.Status != domain.AlertStatusActive {
-		return domain.Alert{}, fmt.Errorf("%w: new alert must be active", store.ErrInvalidArgument)
+	if err := domain.ValidateAlertCreation(normalized); err != nil {
+		return domain.Alert{}, fmt.Errorf("%w: %w", store.ErrInvalidArgument, err)
 	}
 	if err := validateAlertIdentity(normalized); err != nil {
 		return domain.Alert{}, err
@@ -412,7 +412,8 @@ func (r *Repository) compareAndSetAlert(
 	if err != nil {
 		return store.StoredAlert{}, fmt.Errorf("%w: normalize replacement alert: %w", store.ErrInvalidArgument, err)
 	}
-	if err := domain.ValidateAlertReplacement(current.Alert, normalized); err != nil {
+	normalized, err = domain.PrepareAlertReplacement(current.Alert, normalized)
+	if err != nil {
 		return store.StoredAlert{}, fmt.Errorf("%w: alert %q: %w", store.ErrInvalidTransition, alertID, err)
 	}
 	if err := validateAlertIdentity(normalized); err != nil {
@@ -538,6 +539,19 @@ func collapseAlertHits(hits []searchHit, bkTenantID, alertID string) (store.Stor
 			continue
 		}
 		if !reflect.DeepEqual(selected.Alert, stored.Alert) {
+			// 归档 create 与 Active 条件删除之间，投影 ACK 可能继续推进。仅水位不同可以选取
+			// 覆盖另一副本全部确认的实际文档；不合成没有真实 CAS token 的虚拟 Alert。
+			left := selected.Alert.Clone()
+			left.Projection = stored.Alert.Projection.Clone()
+			if reflect.DeepEqual(left, stored.Alert) {
+				if _, changed, err := selected.Alert.Projection.MergeAcknowledgments(stored.Alert.Projection); err == nil && !changed {
+					continue
+				}
+				if _, changed, err := stored.Alert.Projection.MergeAcknowledgments(selected.Alert.Projection); err == nil && !changed {
+					selected = stored
+					continue
+				}
+			}
 			return store.StoredAlert{}, fmt.Errorf(
 				"%w: alert %q exists with different content in multiple elasticsearch indices",
 				store.ErrIdentityConflict, alertID,

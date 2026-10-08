@@ -1,0 +1,303 @@
+{
+  "dynamic": true,
+  "dynamic_templates": [
+    {
+      "all_as_text": {
+        "match_mapping_type": "*",
+        "path_unmatch": "*.*",
+        "mapping": {
+          "analyzer": "split_by_whitespace_analyzer",
+          "type": "text",
+          "norms": false,
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 8191
+            }
+          }
+        }
+      }
+    }
+  ],
+  "properties": {
+    "alarm_id": {
+      "type": "keyword"
+    },
+    "source_id": {
+      "type": "keyword"
+    },
+    "source_name": {
+      "type": "keyword"
+    },
+    "item": {
+      "type": "text",
+      "analyzer": "split_by_whitespace_analyzer",
+      "norms": false,
+      "fields": {
+        "keyword": {
+          "type": "keyword",
+          "ignore_above": 8191
+        }
+      }
+    },
+    "name": {
+      "type": "text",
+      "analyzer": "split_by_whitespace_analyzer",
+      "norms": false,
+      "fields": {
+        "keyword": {
+          "type": "keyword",
+          "ignore_above": 8191
+        }
+      }
+    },
+    "event_id": {
+      "type": "keyword"
+    },
+    "alarm_time": {
+      "type": "date",
+      "format": "yyyy-MM-dd HH:mm:ss"
+    },
+    "close_time": {
+      "type": "date",
+      "format": "yyyy-MM-dd HH:mm:ss"
+    },
+    "storage_time": {
+      "type": "date",
+      "format": "yyyy-MM-dd HH:mm:ss"
+    },
+    "content": {
+      "type": "text",
+      "analyzer": "split_by_whitespace_analyzer",
+      "norms": false,
+      "fields": {
+        "keyword": {
+          "type": "keyword",
+          "ignore_above": 8191
+        }
+      }
+    },
+    "action": {
+      "type": "keyword"
+    },
+    "level": {
+      "type": "keyword"
+    },
+    "status": {
+      "type": "keyword"
+    },
+    "object": {
+      "type": "text",
+      "analyzer": "split_by_whitespace_analyzer",
+      "norms": false,
+      "fields": {
+        "keyword": {
+          "type": "keyword",
+          "ignore_above": 8191
+        }
+      }
+    },
+    "bk_biz_id": {
+      "type": "integer"
+    },
+    "bk_biz_name": {
+      "type": "keyword"
+    },
+    "bk_set_id": {
+      "type": "keyword"
+    },
+    "bk_set_name": {
+      "type": "text",
+      "analyzer": "split_by_whitespace_analyzer",
+      "norms": false,
+      "fields": {
+        "keyword": {
+          "type": "keyword",
+          "ignore_above": 8191
+        }
+      }
+    },
+    "bk_module_id": {
+      "type": "keyword"
+    },
+    "bk_module_name": {
+      "type": "text",
+      "analyzer": "split_by_whitespace_analyzer",
+      "norms": false,
+      "fields": {
+        "keyword": {
+          "type": "keyword",
+          "ignore_above": 8191
+        }
+      }
+    },
+    "bk_cloud_id": {
+      "type": "integer"
+    },
+    "bk_cloud_name": {
+      "type": "text",
+      "analyzer": "split_by_whitespace_analyzer",
+      "norms": false,
+      "fields": {
+        "keyword": {
+          "type": "keyword",
+          "ignore_above": 8191
+        }
+      }
+    },
+    "bk_obj_id": {
+      "type": "keyword"
+    },
+    "bk_inst_id": {
+      "type": "keyword"
+    },
+    "bk_service_id": {
+      "type": "integer"
+    },
+    "meta_info": {
+      "type": "text",
+      "analyzer": "split_by_whitespace_analyzer",
+      "norms": false,
+      "fields": {
+        "keyword": {
+          "type": "keyword",
+          "ignore_above": 8191
+        }
+      }
+    },
+    "tag_info": {
+      "type": "keyword"
+    },
+    "expansion_field_1": {
+      "type": "keyword"
+    },
+    "expansion_field_2": {
+      "type": "keyword"
+    },
+    "expansion_field_3": {
+      "type": "keyword"
+    },
+    "expansion_field_4": {
+      "type": "keyword"
+    },
+    "expansion_field_5": {
+      "type": "keyword"
+    },
+    "associate_alarm_id": {
+      "type": "keyword"
+    },
+    "associate_count": {
+      "type": "integer"
+    },
+    "conductor": {
+      "type": "keyword"
+    },
+    "notify_status": {
+      "type": "keyword"
+    },
+    "field_extra_info": {
+      "type": "object"
+    },
+    "strategy": {
+      "type": "text",
+      "analyzer": "split_by_whitespace_analyzer",
+      "norms": false,
+      "fields": {
+        "keyword": {
+          "type": "keyword",
+          "ignore_above": 8191
+        }
+      }
+    },
+    "strategy_id": {
+      "type": "text",
+      "analyzer": "split_by_whitespace_analyzer",
+      "norms": false,
+      "fields": {
+        "keyword": {
+          "type": "keyword",
+          "ignore_above": 8191
+        }
+      }
+    },
+    "strategy_config_uid": {
+      "type": "keyword"
+    },
+    "strategy_config_version": {
+      "type": "integer"
+    },
+    "dimension_info": {
+      "type": "text",
+      "analyzer": "split_by_whitespace_analyzer",
+      "norms": false,
+      "fields": {
+        "keyword": {
+          "type": "keyword",
+          "ignore_above": 8191
+        }
+      }
+    },
+    "model_id": {
+      "type": "text",
+      "analyzer": "split_by_whitespace_analyzer",
+      "norms": false,
+      "fields": {
+        "keyword": {
+          "type": "keyword",
+          "ignore_above": 8191
+        }
+      }
+    },
+    "model_inst_id": {
+      "type": "text",
+      "analyzer": "split_by_whitespace_analyzer",
+      "norms": false,
+      "fields": {
+        "keyword": {
+          "type": "keyword",
+          "ignore_above": 8191
+        }
+      }
+    },
+    "model_name": {
+      "type": "text",
+      "analyzer": "split_by_whitespace_analyzer",
+      "norms": false,
+      "fields": {
+        "keyword": {
+          "type": "keyword",
+          "ignore_above": 8191
+        }
+      }
+    },
+    "metric_unique_id": {
+      "type": "text",
+      "analyzer": "split_by_whitespace_analyzer",
+      "norms": false,
+      "fields": {
+        "keyword": {
+          "type": "keyword",
+          "ignore_above": 8191
+        }
+      }
+    },
+    "source_alarm_status": {
+      "type": "keyword"
+    },
+    "converge_reason": {
+      "type": "keyword"
+    },
+    "cw_labels": {
+      "type": "keyword"
+    },
+    "duration": {
+      "type": "integer"
+    },
+    "dynamic_group_id": {
+      "type": "keyword"
+    },
+    "bk_tenant_id": {
+      "type": "keyword"
+    }
+  }
+}

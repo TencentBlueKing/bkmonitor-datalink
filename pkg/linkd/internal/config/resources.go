@@ -16,8 +16,10 @@ import (
 
 const maxDynamicGroupTenants = 32
 
-// ResourcesConfig 定义部署内共享的第三方只读资源；不进入 EventSource Release。
+// ResourcesConfig 定义部署内共享的第三方资源和凭据；不进入 EventSource Release。
 type ResourcesConfig struct {
+	// CMDB 直连蓝鲸，只读服务实例及主机拓扑回源，不进入任何来源或策略发布。
+	CMDB *CMDBResource `yaml:"cmdb,omitempty" json:"cmdb,omitempty"`
 	// KingeyeDisplay 提供展示转换所需的 Redis 缓存。
 	KingeyeDisplay *DisplayResource `yaml:"kingeye_display,omitempty" json:"kingeye_display,omitempty"`
 	// DynamicGroup 将 Kingeye 无租户后缀的投影 keyspace 显式绑定到租户。
@@ -70,6 +72,10 @@ type ResourceBasicAuth struct {
 // Clone 返回不共享可变字段的资源配置副本。
 func (c ResourcesConfig) Clone() ResourcesConfig {
 	cloned := c
+	if c.CMDB != nil {
+		value := *c.CMDB
+		cloned.CMDB = &value
+	}
 	if c.KingeyeDisplay != nil {
 		value := *c.KingeyeDisplay
 		value.Redis = value.Redis.clone()
@@ -102,6 +108,7 @@ func (c ResourcesConfig) Clone() ResourcesConfig {
 // Redacted 返回可公开展示的资源副本，隐藏所有认证凭据。
 func (c ResourcesConfig) Redacted() ResourcesConfig {
 	redacted := c.Clone()
+
 	if redacted.KingeyeDisplay != nil {
 		redacted.KingeyeDisplay.Redis = *(StorageConfig{Redis: &redacted.KingeyeDisplay.Redis}).Redacted().Redis
 	}
@@ -145,6 +152,11 @@ func (c OneModelResource) validate() error {
 
 // Validate 校验已声明的资源结构，不探测连接；未声明资源由使用方按实际依赖检查。
 func (c ResourcesConfig) Validate() error {
+	if c.CMDB != nil {
+		if err := c.CMDB.Validate(); err != nil {
+			return fmt.Errorf("resources.cmdb: %w", err)
+		}
+	}
 	if c.MySQL != nil {
 		if err := c.MySQL.validate(); err != nil {
 			return fmt.Errorf("resources.mysql: %w", err)

@@ -30,6 +30,10 @@ type eventDocument struct {
 
 type alertDocument struct {
 	domain.Alert
+	ShieldMainAlertIDs []string `json:"shield_main_alert_ids,omitempty"`
+	MergeWork          bool     `json:"merge_work"`
+	ProjectionWork     bool     `json:"projection_work"`
+	ActionWork         bool     `json:"action_work"`
 }
 
 type alertLogDocument struct {
@@ -155,6 +159,14 @@ func decodeEventHit(hit searchHit) (store.StoredEvent, error) {
 }
 
 func validateNormalizedStoredEvent(stored store.StoredEvent) error {
+	if err := store.ValidatePolicyDecision(stored.Event, stored.Processing.PolicyContext, stored.Processing.PolicyDecision); err != nil {
+		return err
+	}
+	if stored.Processing.Plan != nil {
+		if err := store.ValidatePolicyDecision(stored.Event, stored.Processing.PolicyContext, stored.Processing.Plan.PolicyDecision); err != nil {
+			return err
+		}
+	}
 	if stored.Processing.Plan != nil {
 		if err := store.ValidateEventPlan(stored.Event, stored.Processing.Plan); err != nil {
 			return err
@@ -164,8 +176,8 @@ func validateNormalizedStoredEvent(stored store.StoredEvent) error {
 		return fmt.Errorf("stored event version must not be empty")
 	}
 	associated := stored.Processing.State == domain.EventProcessStateAccepted || stored.Processing.State == domain.EventProcessStateSuppressed
-	if associated && len(stored.Event.RelatedAlertIDs) == 0 {
-		return fmt.Errorf("associated event requires related_alert_ids")
+	if stored.Processing.State == domain.EventProcessStateAccepted && len(stored.Event.RelatedAlertIDs) == 0 {
+		return fmt.Errorf("accepted event requires related_alert_ids")
 	}
 	if !associated && len(stored.Event.RelatedAlertIDs) != 0 {
 		return fmt.Errorf("only accepted or suppressed event may contain related_alert_ids")
@@ -174,13 +186,16 @@ func validateNormalizedStoredEvent(stored store.StoredEvent) error {
 }
 
 func encodeAlertDocument(alert domain.Alert) ([]byte, error) {
-	return json.Marshal(alertDocument{Alert: alert})
+	return json.Marshal(alertDocument{Alert: alert, ShieldMainAlertIDs: store.ShieldMainAlertIDs(alert), MergeWork: store.HasMergeWork(alert), ProjectionWork: alert.Projection.Pending(), ActionWork: alert.ActionPending != nil})
 }
 
 func decodeAlertHit(hit searchHit) (store.StoredAlert, error) {
 	var document alertDocument
 	if err := json.Unmarshal(hit.Source, &document); err != nil {
 		return store.StoredAlert{}, err
+	}
+	if document.ActionWork != (document.ActionPending != nil) {
+		return store.StoredAlert{}, fmt.Errorf("alert action work index differs from durable intent")
 	}
 	normalized, err := document.Normalize()
 	if err != nil {

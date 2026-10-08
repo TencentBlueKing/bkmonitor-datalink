@@ -63,8 +63,10 @@ type FinalHook interface {
 // NamedFinalHook 将发布中的实例身份绑定到单插件实现。
 // Name 与列表顺序无关，供日志幂等身份和指标使用。
 type NamedFinalHook struct {
-	Name string
-	Hook FinalHook
+	// Purpose 默认为 state；action 只接收已获准的触发或曾放行告警的终态。
+	Purpose string
+	Name    string
+	Hook    FinalHook
 }
 
 // Execute 固定正常及错误返回结果中的实例名；panic 的身份由调度方保留。
@@ -85,11 +87,18 @@ func (NoopFinalHook) Execute(ctx context.Context, _ FinalHookInput) (FinalHookRe
 // runFinalHooks 顺序执行来源插件；普通失败生成各自流水后继续，父上下文取消则停止。
 // 每个实例拿到独立快照，避免插件修改动态字段影响后续插件和已持久化的 Alert。
 func (p *Processor) runFinalHooks(ctx context.Context, cause AlertChangeCause, alert domain.Alert, outcome ProcessOutcome) ([]domain.AlertLog, error) {
+	return p.runHooks(ctx, cause, alert, outcome, alert.Status.Terminal() && alert.Admission.AdmittedAt != nil)
+}
+
+func (p *Processor) runHooks(ctx context.Context, cause AlertChangeCause, alert domain.Alert, outcome ProcessOutcome, actionReady bool) ([]domain.AlertLog, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	logs := make([]domain.AlertLog, 0, len(p.finalHooks))
 	for _, hook := range p.finalHooks {
+		if hook.Purpose == "action" && !actionReady {
+			continue
+		}
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -111,7 +120,9 @@ func (p *Processor) runFinalHook(
 	alert domain.Alert,
 	outcome ProcessOutcome,
 ) (*domain.AlertLog, error) {
-	result, hookFailure := p.callFinalHook(ctx, hook, FinalHookInput{Cause: cause, Alert: alert.Clone(), Outcome: outcome})
+	public := alert.Clone()
+	public.PolicyChange = nil
+	result, hookFailure := p.callFinalHook(ctx, hook, FinalHookInput{Cause: cause, Alert: public, Outcome: outcome})
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

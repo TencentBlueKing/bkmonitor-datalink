@@ -9,24 +9,13 @@
 
 package enrich
 
-import (
-	"context"
-
-	"linkd/internal/domain"
-)
+import "context"
 
 // NoopEnricher 把已知来源的空处理链编码为成功的固定协议。
 type NoopEnricher struct{}
 
 // Enrich 返回 succeeded 和空 processors 列表。
-func (NoopEnricher) Enrich(ctx context.Context, _ Input) (Result, error) {
-	if err := ctx.Err(); err != nil {
-		return Result{}, err
-	}
-	payload := Payload{Processors: []ProcessorEntry{}}
-	data, err := payload.JSONObject()
-	if err != nil {
-		return Result{}, err
-	}
-	return Result{Status: domain.EnrichStatusSucceeded, Data: data}, nil
+func (NoopEnricher) Enrich(ctx context.Context, input Input) (Result, error) {
+	chain, _ := NewChain(nil, Sources{})
+	return chain.Enrich(ctx, input)
 }

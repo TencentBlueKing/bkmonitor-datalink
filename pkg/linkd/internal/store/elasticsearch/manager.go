@@ -296,7 +296,8 @@ func (m *Manager) ensureManagedIndex(ctx context.Context, index string, metadata
 func (m *Manager) verifyManagedIndex(ctx context.Context, index string, expected schemaMetadata) error {
 	var response map[string]struct {
 		Mappings struct {
-			Metadata schemaMetadata `json:"_meta"`
+			Metadata   schemaMetadata            `json:"_meta"`
+			Properties map[string]map[string]any `json:"properties"`
 		} `json:"mappings"`
 	}
 	if err := m.repository.performJSON(ctx, http.MethodGet, "/"+index+"/_mapping", nil, nil, &response); err != nil {
@@ -305,6 +306,15 @@ func (m *Manager) verifyManagedIndex(ctx context.Context, index string, expected
 	item, ok := response[index]
 	if !ok || len(response) != 1 || item.Mappings.Metadata != expected {
 		return fmt.Errorf("elasticsearch index %q has incompatible managed metadata; stop Linkd, delete managed indices and aliases, then restart linkd run control-plane or linkd run all-in-one", index)
+	}
+	if expected.Entity == entityEvent {
+		if err := m.repository.ensureEventEnrichmentMapping(ctx, index, item.Mappings.Properties); err != nil {
+			return err
+		}
+		return m.repository.ensureEventPolicyMapping(ctx, index, item.Mappings.Properties)
+	}
+	if expected.Entity == entityAlert || expected.Entity == entityAlertHistory {
+		return m.repository.ensureAlertPolicyMapping(ctx, index, item.Mappings.Properties)
 	}
 	return nil
 }
@@ -396,6 +406,9 @@ func (m *Manager) ArchiveTerminalAlerts(
 		"seq_no_primary_term": true,
 		"query": map[string]any{"bool": map[string]any{"must_not": []any{
 			map[string]any{"term": map[string]any{"status": domain.AlertStatusActive}},
+			map[string]any{"exists": map[string]any{"field": "merge_change.operation_id"}},
+			map[string]any{"exists": map[string]any{"field": "policy_change.operation_id"}},
+			map[string]any{"term": map[string]any{"action_work": true}},
 		}}},
 		"sort": []any{map[string]any{"alert_id": map[string]any{"order": "asc"}}},
 	}

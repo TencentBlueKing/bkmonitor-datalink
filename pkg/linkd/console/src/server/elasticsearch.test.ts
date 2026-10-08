@@ -348,7 +348,7 @@ describe("ElasticsearchConnector", () => {
     expect(JSON.stringify(searchBody)).toContain("fingerprint-a");
     expect(page.items).toHaveLength(1);
     expect(page.warnings).toContain(
-      "检测到归档过渡副本，已优先展示 AlertHistory。",
+      "检测到归档过渡副本，已展示确认水位较完整的副本。",
     );
   });
 
@@ -754,4 +754,93 @@ describe("Elasticsearch 7.10 compatible explorer", () => {
       new ElasticsearchConnector(config).detail("events", "system", "missing"),
     ).resolves.toBeUndefined();
   });
+});
+
+it.each([
+  "active newer",
+  "history newer",
+  "business conflict",
+  "incomparable confirmations",
+])("handles projection archive copies: %s", async (scenario) => {
+  const at = "2026-10-05T00:00:00Z";
+  const base = {
+    bk_tenant_id: "tenant-a",
+    alert_id: "alert-a",
+    update_at: at,
+    revision: 3,
+    status: "recovered",
+    title: "same",
+  };
+  const state = (synced: number) => ({
+    source_version: 2,
+    required_revision: 3,
+    synced_revision: synced,
+    ...(synced > 0 ? { synced_at: at } : {}),
+  });
+  const active = {
+    ...base,
+    projection_work: false,
+    projection: { targets: { kac: state(3), audit: state(3) } },
+  };
+  const history = {
+    ...base,
+    projection_work: true,
+    projection: { targets: { kac: state(1), audit: state(1) } },
+  };
+  if (scenario === "history newer") {
+    active.projection = { targets: { kac: state(1), audit: state(1) } };
+    history.projection = { targets: { kac: state(3), audit: state(3) } };
+  }
+  if (scenario === "business conflict") history.title = "different";
+  if (scenario === "incomparable confirmations") {
+    active.projection.targets.audit = state(1);
+    history.projection.targets.audit = state(3);
+  }
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      const url = new URL(String(input));
+      if (url.pathname.startsWith("/_resolve/index/"))
+        return jsonResponse({ indices: [{ name: "linkd-alerts" }] });
+      return jsonResponse({
+        hits: {
+          hits: [
+            {
+              _index: "linkd-alerts-active-000001",
+              _source: active,
+              sort: [at, "active"],
+            },
+            {
+              _index: "linkd-alert-history-20261005",
+              _source: history,
+              sort: [at, "history"],
+            },
+          ],
+        },
+      });
+    }),
+  );
+  const result = new ElasticsearchConnector(config).detail(
+    "alerts",
+    "tenant-a",
+    "alert-a",
+  );
+  if (
+    scenario.includes("conflict") ||
+    scenario === "incomparable confirmations"
+  ) {
+    await expect(result).rejects.toThrow("归档副本冲突");
+  } else {
+    await expect(result).resolves.toMatchObject({
+      payload: {
+        revision: 3,
+        projection: {
+          targets: {
+            kac: { synced_revision: 3 },
+            audit: { synced_revision: 3 },
+          },
+        },
+      },
+    });
+  }
 });

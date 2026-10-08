@@ -6,11 +6,13 @@ export function MetricSection({
   description,
   ids,
   panels,
+  range,
 }: {
   title: string;
   description: string;
   ids: string[];
   panels: MetricPanel[];
+  range?: { from: string; to: string };
 }) {
   return (
     <section className="diagnostic-section" aria-label={title}>
@@ -23,7 +25,7 @@ export function MetricSection({
           .map((id) => panels.find((p) => p.id === id))
           .filter((p): p is MetricPanel => Boolean(p))
           .map((panel) => (
-            <MetricPanelCard key={panel.id} panel={panel} />
+            <MetricPanelCard key={panel.id} panel={panel} range={range} />
           ))}
       </div>
     </section>

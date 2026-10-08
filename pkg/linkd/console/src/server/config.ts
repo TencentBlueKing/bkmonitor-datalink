@@ -1,3 +1,4 @@
+import { loadKACAlertLink } from "./kac-alert-link.js";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
@@ -5,6 +6,7 @@ import { parseArgs } from "node:util";
 import { parse } from "yaml";
 import { z } from "zod";
 import { normalizeBasePath } from "../shared/base-path.js";
+import { loadPolicyLinks, type PolicyLinksConfig } from "./policy-links.js";
 import {
   loadServerAccess,
   validateServerAccess,
@@ -240,40 +242,144 @@ const redisStreamManagerSchema = z
     }
   });
 
-const resourcesSchema = z.object({
-  mysql: z
-    .object({
-      address: z.string(),
-      database: z.string(),
-      username: z.string(),
-      password: z.string().optional(),
-    })
-    .optional(),
-  onemodel: z
-    .object({
-      addresses: z.array(z.string()),
-      index_prefix: z.string().optional(),
-      api_key: z.string().optional(),
-      basic_auth: z
-        .object({ username: z.string(), password: z.string().optional() })
-        .optional(),
-    })
-    .optional(),
-  kingeye_display: z
-    .object({ redis: redisConfigSchema, key_prefix: z.string().optional() })
-    .optional(),
-  dynamic_group: z
-    .object({
-      tenants: z.record(
-        z.string(),
-        z.object({ redis: redisConfigSchema, key_prefix: z.string().min(1) }),
-      ),
-    })
-    .optional(),
-});
+const bluekingSchema = z
+  .object({
+    enable_multi_tenant_mode: z.boolean().default(false),
+    api_url: z.string().url().max(2048).optional(),
+    app_code: z.string().min(1).max(128).optional(),
+    app_secret: z.string().min(1).max(4096).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    const any =
+      value.api_url !== undefined ||
+      value.app_code !== undefined ||
+      value.app_secret !== undefined;
+    if (any && (!value.api_url || !value.app_code || !value.app_secret))
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "blueking requires api_url, app_code and app_secret together",
+      });
+  });
+
+const resourcesSchema = z
+  .object({
+    dynamic_group: z
+      .object({
+        tenants: z.record(
+          z.string(),
+          z.object({ redis: redisConfigSchema, key_prefix: z.string().min(1) }),
+        ),
+      })
+      .optional(),
+    cmdb: z
+      .object({ base_url: z.string().url().max(2048).optional() })
+      .strict()
+      .optional(),
+    mysql: z
+      .object({
+        address: z.string(),
+        database: z.string(),
+        username: z.string(),
+        password: z.string().optional(),
+      })
+      .optional(),
+    onemodel: z
+      .object({
+        addresses: z.array(z.string()),
+        index_prefix: z.string().optional(),
+        api_key: z.string().optional(),
+        basic_auth: z
+          .object({ username: z.string(), password: z.string().optional() })
+          .optional(),
+      })
+      .optional(),
+    kingeye_display: z
+      .object({ redis: redisConfigSchema, key_prefix: z.string().optional() })
+      .optional(),
+  })
+  .strict();
+
+const kacEndpointSchema = z
+  .string()
+  .url()
+  .max(2048)
+  .refine((text) => {
+    try {
+      const url = new URL(text);
+      return (
+        ["http:", "https:"].includes(url.protocol) &&
+        !url.username &&
+        !url.password &&
+        !text.includes("?") &&
+        !text.includes("#") &&
+        !/[\s\\]/.test(text)
+      );
+    } catch {
+      return false;
+    }
+  }, "invalid KAC endpoint");
+const kacPluginSchema = z
+  .object({
+    enabled: z.boolean().default(false),
+    alarm_event_index: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9_.-]{0,179}$/)
+      .refine((v) => !v.includes(".."))
+      .optional(),
+    action_endpoint: kacEndpointSchema.optional(),
+    internal_token: z
+      .string()
+      .min(1)
+      .max(16384)
+      .regex(/^[!-~]+$/)
+      .refine((v) => v !== "******")
+      .optional(),
+    elasticsearch: z
+      .object({
+        addresses: z.array(kacEndpointSchema).min(1),
+        api_key: z.string().optional(),
+        basic_auth: z
+          .object({
+            username: z.string().min(1),
+            password: z.string().optional(),
+          })
+          .strict()
+          .optional(),
+        number_of_shards: z.number().int().min(1).max(1024).optional(),
+        number_of_replicas: z.number().int().min(0).max(10).optional(),
+        max_result_window: z.number().int().min(1).max(1000000).optional(),
+        total_fields_limit: z.number().int().min(1).max(100000).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (
+      value.enabled &&
+      (!value.alarm_event_index ||
+        !value.elasticsearch ||
+        !value.action_endpoint ||
+        !value.internal_token)
+    )
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "enabled KAC plugin requires Elasticsearch, alarm_event_index, action_endpoint and internal_token",
+      });
+    if (value.elasticsearch?.api_key && value.elasticsearch.basic_auth)
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "KAC Elasticsearch authentication is mutually exclusive",
+      });
+  });
+const pluginsSchema = z.object({ kac: kacPluginSchema.optional() }).strict();
 
 const linkdConfigSchema = z
   .object({
+    plugins: pluginsSchema.optional(),
+    blueking: bluekingSchema.optional(),
     resources: resourcesSchema.optional(),
     storage: z
       .object({
@@ -459,6 +565,7 @@ const linkdConfigSchema = z
         z
           .object({
             event_source_id: z.string().min(1),
+            kac_targets: z.never().optional(),
             hooks: hooksSchema,
             enabled: z.boolean(),
             cleaner: z
@@ -522,6 +629,10 @@ export interface EventSourceConfig {
 }
 
 export interface ConsoleConfig {
+  plugins?: z.infer<typeof pluginsSchema>;
+  blueking?: z.infer<typeof bluekingSchema>;
+  policyLinks?: PolicyLinksConfig;
+  kacAlertURLTemplate?: string;
   resources?: z.infer<typeof resourcesSchema>;
   dispatch?: {
     url: string;
@@ -659,6 +770,14 @@ export async function loadConfig(
   const decoded = linkdConfigSchema.parse(
     parse(await readFile(configPath, "utf8")) as unknown,
   );
+  if (
+    decoded.resources?.cmdb &&
+    (!decoded.blueking?.api_url ||
+      !decoded.blueking.app_code ||
+      !decoded.blueking.app_secret)
+  ) {
+    throw new Error("resources.cmdb requires complete blueking configuration");
+  }
   const configDir = path.dirname(configPath);
   const cleanerDefaults = withCleanerDefaults(decoded.cleaner);
   const repository = decoded.storage.repository;
@@ -713,6 +832,12 @@ export async function loadConfig(
   if (!jwtUsername.trim())
     throw new Error("dispatch.jwt.username must not be blank");
   const config: ConsoleConfig = {
+    policyLinks: loadPolicyLinks(process.env.LINKD_CONSOLE_KAC_POLICY_LINKS),
+    kacAlertURLTemplate: loadKACAlertLink(
+      process.env.LINKD_CONSOLE_KAC_ALERT_URL_TEMPLATE,
+    ),
+    plugins: decoded.plugins,
+    blueking: decoded.blueking,
     resources: decoded.resources,
     dispatch: {
       url: process.env.LINKD_CONTROL_PLANE_URL ?? dispatch.url,
@@ -1084,6 +1209,7 @@ export function publicConfig(config: ConsoleConfig) {
           "from",
           "to",
           "state",
+          "enrichStatus",
           "eventSourceId",
           "relatedAlertId",
           "fingerprint",
@@ -1136,6 +1262,20 @@ export function publicConfig(config: ConsoleConfig) {
 
 export function redactedConfig(config: ConsoleConfig) {
   const resources = structuredClone(config.resources);
+  const blueking = config.blueking
+    ? {
+        ...config.blueking,
+        app_secret: config.blueking.app_secret ? "******" : undefined,
+      }
+    : undefined;
+  const plugins = structuredClone(config.plugins);
+  if (plugins?.kac) {
+    if (plugins.kac.internal_token) plugins.kac.internal_token = "******";
+    if (plugins.kac.elasticsearch?.api_key)
+      plugins.kac.elasticsearch.api_key = "******";
+    if (plugins.kac.elasticsearch?.basic_auth?.password)
+      plugins.kac.elasticsearch.basic_auth.password = "******";
+  }
   if (resources?.mysql?.password) resources.mysql.password = "******";
   if (resources?.onemodel?.api_key) resources.onemodel.api_key = "******";
   if (resources?.onemodel?.basic_auth?.password)
@@ -1150,7 +1290,9 @@ export function redactedConfig(config: ConsoleConfig) {
       tenant.redis.sentinel.password = "******";
   }
   return {
+    plugins,
     resources,
+    blueking,
     configPath: config.configPath,
     repository: config.entities.events,
     telemetry: config.telemetry,

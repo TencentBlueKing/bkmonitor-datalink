@@ -29,7 +29,7 @@ func TestK8sWorkloadPodUsesPodModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: processorBaseTargetAlert(t, dimensions)})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: processorBaseTargetAlert(t, dimensions)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestK8sReaderUnavailableKeepsProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,11 +61,11 @@ func TestK8sMissingIdentityReturnsFailedWithProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestK8sIdentityResponseMismatchReturnsPartial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,11 +122,11 @@ func TestK8sFullProcessorPayload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,11 +154,11 @@ func TestK8sProjectsExplicitDimensions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}

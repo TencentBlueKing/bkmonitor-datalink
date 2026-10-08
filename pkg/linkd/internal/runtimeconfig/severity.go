@@ -99,5 +99,26 @@ func (s *Severity) Priority(name string) (int, bool) { return s.current.Load().S
 // FreezeSeverity 适配 Lifecycle 消费方的窄接口，不让领域处理器依赖配置装配包。
 func (s *Severity) FreezeSeverity() (lifecycle.SeverityTable, string) {
 	snapshot := s.SeveritySnapshot()
-	return snapshot.Severity, snapshot.Digest
+	return snapshot, snapshot.Digest
 }
+
+// KACLevel 使用本快照的 native_names 和等级表转换旧 KAC 级别，不在映射过程中读取新快照。
+func (s Snapshot) KACLevel(name string) (string, error) {
+	if !s.Severity.Has(name) {
+		return "", fmt.Errorf("unknown KAC severity")
+	}
+	if s.NativeNames {
+		return name, nil
+	}
+	switch name {
+	case "critical":
+		return "fatal", nil
+	case "info":
+		return "remind", nil
+	default:
+		return name, nil
+	}
+}
+
+// Priority 查询已经冻结的等级表，与 KACLevel 使用同一版本。
+func (s Snapshot) Priority(name string) (int, bool) { return s.Severity.Priority(name) }

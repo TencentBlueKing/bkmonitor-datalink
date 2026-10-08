@@ -35,7 +35,7 @@ type EnrichObservation struct {
 	PayloadBytes  int64
 }
 
-// EnrichObserver 观察新 Alert 的同步丰富调用。
+// EnrichObserver 观察 Event 在策略与生命周期裁决前的同步丰富调用。
 type EnrichObserver interface {
 	Started(ctx context.Context, eventSourceID string)
 	Finished(ctx context.Context, observation EnrichObservation)

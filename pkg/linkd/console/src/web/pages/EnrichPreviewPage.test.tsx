@@ -30,11 +30,38 @@ it("previews JSON and ID without saving and loads config without connections", a
                 config_digest: "abcdef",
                 enrich_status: "succeeded",
                 original: { title: "raw" },
-                effective_alert: { title: "new" },
-                enrich: { processors: [] },
-                changes: [{ path: "$.title", before: "raw", after: "new" }],
-                previous_changes: [],
-                trace: [],
+                enrich: {
+                  evaluations: [
+                    {
+                      severity: "warning",
+                      status: "succeeded",
+                      data: { processors: [] },
+                    },
+                    {
+                      severity: "critical",
+                      status: "succeeded",
+                      data: { processors: [] },
+                    },
+                  ],
+                },
+                evaluations: [
+                  {
+                    severity: "warning",
+                    action: "triggered",
+                    effective_event: { title: "new" },
+                    changes: [{ path: "$.title", before: "raw", after: "new" }],
+                    previous_changes: [],
+                    trace: [],
+                  },
+                  {
+                    severity: "critical",
+                    action: "resolved",
+                    effective_event: { title: "critical result" },
+                    changes: [],
+                    previous_changes: [],
+                    trace: [],
+                  },
+                ],
               },
         ),
       );
@@ -49,12 +76,17 @@ it("previews JSON and ID without saving and loads config without connections", a
   );
   fireEvent.click(screen.getByRole("button", { name: "执行预览" }));
   await screen.findByText("执行结果 · succeeded");
-  expect(calls[0].body?.input).toHaveProperty("alert");
+  fireEvent.click(screen.getByRole("tab", { name: "合成结果" }));
+  fireEvent.change(screen.getByLabelText("等级结果"), {
+    target: { value: "critical" },
+  });
+  expect(screen.getByRole("tabpanel")).toHaveTextContent("critical result");
+  expect(calls[0].body?.input).toHaveProperty("event");
   expect(calls[0].body).not.toHaveProperty("enrich");
   fireEvent.change(screen.getByLabelText("输入方式"), {
     target: { value: "id" },
   });
-  fireEvent.change(screen.getByLabelText("Alert ID"), {
+  fireEvent.change(screen.getByLabelText("Event ID"), {
     target: { value: "a" },
   });
   fireEvent.click(screen.getByRole("button", { name: "加载已发布配置" }));
@@ -65,7 +97,7 @@ it("previews JSON and ID without saving and loads config without connections", a
   );
   fireEvent.click(screen.getByRole("button", { name: "执行预览" }));
   await waitFor(() => expect(calls).toHaveLength(3));
-  expect(calls[2].body?.input).toEqual({ alert_id: "a" });
+  expect(calls[2].body?.input).toEqual({ event_id: "a" });
   expect(calls[2].body?.enrich).toEqual({ processors: [] });
   expect(calls.every((c) => c.path.includes("/enrich/"))).toBe(true);
 });
@@ -77,7 +109,7 @@ it("shows malformed JSON locally", async () => {
       <EnrichPreviewPage />
     </MemoryRouter>,
   );
-  fireEvent.change(screen.getByLabelText("Alert JSON"), {
+  fireEvent.change(screen.getByLabelText("Event JSON"), {
     target: { value: "{" },
   });
   fireEvent.click(screen.getByRole("button", { name: "执行预览" }));
@@ -98,7 +130,17 @@ it("previews an opening event at the selected severity and displays candidate co
           original: { content: "source" },
           effective_alert: { content: "generated" },
           candidate_content: "generated",
-          enrich: { processors: [] },
+          evaluations: [
+            {
+              severity: "critical",
+              action: "triggered",
+              effective_event: { content: "source" },
+              changes: [],
+              previous_changes: [],
+              trace: [],
+            },
+          ],
+          enrich: { evaluations: [] },
           changes: [],
           previous_changes: [],
           trace: [],
@@ -126,7 +168,7 @@ it("previews an opening event at the selected severity and displays candidate co
   expect(fetcher).toHaveBeenCalledOnce();
   const init = fetcher.mock.calls[0]?.[1] as RequestInit | undefined;
   expect(JSON.parse(String(init?.body)).input).toEqual({
-    event: { event_source_version: 7, content: "source" },
+    opening_event: { event_source_version: 7, content: "source" },
     severity: "critical",
   });
 });

@@ -69,7 +69,11 @@ func (t *managerTransport) Perform(request *http.Request) (*http.Response, error
 		if !exists {
 			return managerJSONResponse(http.StatusNotFound, `{"error":{"type":"index_not_found_exception","reason":"missing"}}`), nil
 		}
-		data, _ := json.Marshal(map[string]any{index: map[string]any{"mappings": map[string]any{"_meta": metadata}}})
+		properties := eventProperties()
+		if metadata.Entity == entityAlert || metadata.Entity == entityAlertHistory {
+			properties = alertProperties()
+		}
+		data, _ := json.Marshal(map[string]any{index: map[string]any{"mappings": map[string]any{"_meta": metadata, "properties": properties}}})
 		return managerBytesResponse(http.StatusOK, data), nil
 	case request.Method == http.MethodPut && strings.HasSuffix(path, "/_settings"):
 		index := strings.TrimSuffix(strings.TrimPrefix(path, "/"), "/_settings")
@@ -364,7 +368,7 @@ func TestManagerArchiveTerminalAlertsDoesNotManageBuckets(t *testing.T) {
 		t.Fatal(err)
 	}
 	endAt := now.Add(time.Minute)
-	alert := domain.Alert{EventSourceVersion: 1,
+	alert := domain.Alert{Revision: 1, EventSourceVersion: 1,
 		AlertID: alertID, BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
 		Fingerprint: event.Fingerprint, Severity: event.Evaluations[0].Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
 		ExtraData: domain.JSONObject{}, Status: domain.AlertStatusRecovered, LatestEventID: eventID,
@@ -408,7 +412,9 @@ func TestManagerArchiveTerminalAlertsDoesNotManageBuckets(t *testing.T) {
 		t.Fatalf("result=%#v indices=%#v aliases=%#v", result, transport.indices, transport.aliases)
 	}
 	if !strings.Contains(transport.lastSearch, `"search_after":["earlier-alert"]`) ||
-		!strings.Contains(transport.lastSearch, `"sort":[{"alert_id":{"order":"asc"}}]`) {
+		!strings.Contains(transport.lastSearch, `"sort":[{"alert_id":{"order":"asc"}}]`) ||
+		!strings.Contains(transport.lastSearch, `"field":"merge_change.operation_id"`) ||
+		!strings.Contains(transport.lastSearch, `"field":"policy_change.operation_id"`) {
 		t.Fatalf("search body=%s", transport.lastSearch)
 	}
 }

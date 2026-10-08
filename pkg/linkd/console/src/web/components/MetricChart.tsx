@@ -19,12 +19,25 @@ registerECharts([
   CanvasRenderer,
 ]);
 
-export function MetricChart({ panel }: { panel: MetricPanel }) {
+const finiteSample = (value: number | null | undefined) =>
+  typeof value === "number" && Number.isFinite(value);
+
+export function MetricChart({
+  panel,
+  range,
+}: {
+  panel: MetricPanel;
+  range?: { from: string; to: string };
+}) {
   const root = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!root.current || panel.status !== "available") return;
     const chart = init(root.current, undefined, { renderer: "canvas" });
+    const from = Date.parse(range?.from ?? ""),
+      to = Date.parse(range?.to ?? "");
+    const boundedRange =
+      Number.isFinite(from) && Number.isFinite(to) && from < to;
     chart.setOption({
       animationDuration: 240,
       backgroundColor: "transparent",
@@ -46,7 +59,10 @@ export function MetricChart({ panel }: { panel: MetricPanel }) {
       grid: { left: 52, right: 18, top: 48, bottom: 28 },
       xAxis: {
         type: "time",
-        axisLabel: { color: "#607187", fontSize: 10 },
+        // 显式查询窗口不能由稀疏样本自动扩成更长历史或未来时间。
+        min: boundedRange ? from : undefined,
+        max: boundedRange ? to : undefined,
+        axisLabel: { color: "#607187", fontSize: 10, hideOverlap: true },
         axisLine: { lineStyle: { color: "#263447" } },
         splitLine: { show: false },
       },
@@ -75,10 +91,17 @@ export function MetricChart({ panel }: { panel: MetricPanel }) {
         connectNulls: false,
         symbol: "none",
         areaStyle: panel.kind === "area" ? { opacity: 0.08 } : undefined,
-        data: series.points.map(([timestamp, value]) => [
-          timestamp * 1000,
-          value,
-        ]),
+        data: series.points.map(([timestamp, value], index) => ({
+          value: [timestamp * 1000, value],
+          // 启动后或缺采样两侧的孤立点没有可画的线段，必须显示点，不能让真实零值看起来像无数据。
+          symbol:
+            finiteSample(value) &&
+            !finiteSample(series.points[index - 1]?.[1]) &&
+            !finiteSample(series.points[index + 1]?.[1])
+              ? "circle"
+              : "none",
+          symbolSize: 6,
+        })),
       })),
     });
     const observer = new ResizeObserver(() => chart.resize());
@@ -87,10 +110,15 @@ export function MetricChart({ panel }: { panel: MetricPanel }) {
       observer.disconnect();
       chart.dispose();
     };
-  }, [panel]);
+  }, [panel, range?.from, range?.to]);
 
   if (panel.status === "unavailable") {
-    return <div className="chart-empty">{panel.message ?? "未接入"}</div>;
+    // ECharts.dispose 会清空原容器；状态切换须换 DOM，避免清除 React 刚写入的空态提示。
+    return (
+      <div key="unavailable" className="chart-empty">
+        {panel.message ?? "未接入"}
+      </div>
+    );
   }
   if (
     !panel.series.some((s) =>
@@ -98,10 +126,10 @@ export function MetricChart({ panel }: { panel: MetricPanel }) {
     )
   ) {
     return (
-      <div className="chart-empty">
+      <div key="empty" className="chart-empty">
         窗口内没有可计算样本；无调用时，成功率、均值和分位数均不补零。
       </div>
     );
   }
-  return <div ref={root} className="metric-chart" />;
+  return <div key="chart" ref={root} className="metric-chart" />;
 }

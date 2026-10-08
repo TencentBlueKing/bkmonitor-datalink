@@ -126,7 +126,8 @@ func (r *Repository) EnsureIndex(ctx context.Context, index, entity string) erro
 func (r *Repository) verifyIndexSchema(ctx context.Context, index, entity string) error {
 	var response map[string]struct {
 		Mappings struct {
-			Metadata schemaMetadata `json:"_meta"`
+			Metadata   schemaMetadata            `json:"_meta"`
+			Properties map[string]map[string]any `json:"properties"`
 		} `json:"mappings"`
 	}
 	if err := r.performJSON(ctx, http.MethodGet, "/"+index+"/_mapping", nil, nil, &response); err != nil {
@@ -145,6 +146,15 @@ func (r *Repository) verifyIndexSchema(ctx context.Context, index, entity string
 			metadata.Entity,
 			metadata.SchemaVersion,
 		)
+	}
+	if entity == entityEvent {
+		if err := r.ensureEventEnrichmentMapping(ctx, index, item.Mappings.Properties); err != nil {
+			return err
+		}
+		return r.ensureEventPolicyMapping(ctx, index, item.Mappings.Properties)
+	}
+	if entity == entityAlert || entity == entityAlertHistory {
+		return r.ensureAlertPolicyMapping(ctx, index, item.Mappings.Properties)
 	}
 	return nil
 }
@@ -221,7 +231,7 @@ func validateEntity(entity string) error {
 }
 
 func eventProperties() map[string]any {
-	return map[string]any{
+	properties := map[string]any{
 		"bk_tenant_id":         keywordProperty(),
 		"event_source_version": map[string]any{"type": "long"},
 		"event_source_id":      keywordProperty(),
@@ -245,22 +255,29 @@ func eventProperties() map[string]any {
 		"source_event_id": keywordProperty(),
 		"source_alert_id": keywordProperty(),
 		"source_raw_data": opaqueObjectProperty(),
+		"merge_origin":    opaqueObjectProperty(),
 		"values":          opaqueObjectProperty(),
 		"labels":          flattenedProperty(),
 		"extra_data":      opaqueObjectProperty(),
 		"processing": strictObjectProperty(map[string]any{
-			"plan":         opaqueObjectProperty(),
-			"evaluations":  map[string]any{"type": "object", "enabled": false},
-			"state":        keywordProperty(),
-			"outcome":      keywordProperty(),
-			"reason_code":  keywordProperty(),
-			"processed_at": dateNanosProperty(),
+			"policy_context":  opaqueObjectProperty(),
+			"policy_decision": opaqueObjectProperty(),
+			"plan":            opaqueObjectProperty(),
+			"evaluations":     map[string]any{"type": "object", "enabled": false},
+			"state":           keywordProperty(),
+			"outcome":         keywordProperty(),
+			"reason_code":     keywordProperty(),
+			"processed_at":    dateNanosProperty(),
 		}),
 	}
+	for name, property := range eventEnrichmentProperties() {
+		properties[name] = property
+	}
+	return properties
 }
 
 func alertProperties() map[string]any {
-	return map[string]any{
+	properties := map[string]any{
 		"alert_id":             keywordProperty(),
 		"bk_tenant_id":         keywordProperty(),
 		"event_source_version": map[string]any{"type": "long"},
@@ -291,6 +308,10 @@ func alertProperties() map[string]any {
 		"enrich_status":        keywordProperty(),
 		"enrich":               opaqueObjectProperty(),
 	}
+	for k, v := range alertPolicyProperties() {
+		properties[k] = v
+	}
+	return properties
 }
 
 func alertLogProperties() map[string]any {
@@ -335,4 +356,82 @@ func marshalRequest(value any) ([]byte, error) {
 		return nil, fmt.Errorf("encode elasticsearch request: %w", err)
 	}
 	return body, nil
+}
+
+// ensureEventEnrichmentMapping 只在已验证归属和 schema 的物理 Event 索引上追加缺失字段。
+// 模板更新不影响既有索引；不删除数据、不修改已有类型，也不将不兼容 schema 自动视为可升级。
+func (r *Repository) ensureEventEnrichmentMapping(ctx context.Context, index string, properties map[string]map[string]any) error {
+	expected := eventEnrichmentProperties()
+	missing := map[string]any{}
+	for field, wanted := range expected {
+		existing, ok := properties[field]
+		if !ok {
+			missing[field] = wanted
+			continue
+		}
+		for key, value := range wanted {
+			if existing[key] != value {
+				return fmt.Errorf("event index %q has incompatible enrichment mapping for %s", index, field)
+			}
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	body, err := json.Marshal(map[string]any{"properties": missing})
+	if err != nil {
+		return err
+	}
+	if err := r.performJSON(ctx, http.MethodPut, "/"+index+"/_mapping", nil, body, nil); err != nil {
+		return fmt.Errorf("add event enrichment mapping: %w", err)
+	}
+	return nil
+}
+
+func eventEnrichmentProperties() map[string]map[string]any {
+	return map[string]map[string]any{
+		"enrich_status":        keywordProperty(),
+		"enrich":               opaqueObjectProperty(),
+		"enriched_at":          dateNanosProperty(),
+		"enrich_config_digest": keywordProperty(),
+	}
+}
+
+// ensureEventPolicyMapping 为已验证的既有索引追加不参与搜索的裁决上下文，保留全部已有字段。
+func (r *Repository) ensureEventPolicyMapping(ctx context.Context, index string, properties map[string]map[string]any) error {
+	processing := properties["processing"]
+	if typ, ok := processing["type"]; ok && typ != "object" {
+		return fmt.Errorf("incompatible processing mapping")
+	}
+	missing := map[string]any{}
+	roots := map[string]any{}
+	if current, exists := properties["merge_origin"]; exists {
+		if !mappingContains(current, opaqueObjectProperty()) {
+			return fmt.Errorf("incompatible merge origin mapping")
+		}
+	} else {
+		roots["merge_origin"] = opaqueObjectProperty()
+	}
+	nested, _ := processing["properties"].(map[string]any)
+	for _, name := range []string{"policy_context", "policy_decision"} {
+		if current, exists := nested[name]; exists {
+			field, ok := current.(map[string]any)
+			if !ok || field["type"] != "object" || field["enabled"] != false {
+				return fmt.Errorf("incompatible %s mapping", name)
+			}
+		} else {
+			missing[name] = opaqueObjectProperty()
+		}
+	}
+	if len(missing) == 0 && len(roots) == 0 {
+		return nil
+	}
+	if len(missing) > 0 {
+		roots["processing"] = map[string]any{"properties": missing}
+	}
+	body, err := json.Marshal(map[string]any{"properties": roots})
+	if err != nil {
+		return err
+	}
+	return r.performJSON(ctx, http.MethodPut, "/"+index+"/_mapping", nil, body, nil)
 }

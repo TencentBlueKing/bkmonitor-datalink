@@ -1,0 +1,110 @@
+.merge-tabs,
+.merge-links,
+.merge-pagination,
+.merge-detail-summary,
+.merge-groups {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 16px 0;
+}
+.merge-tabs [aria-pressed="true"] {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+.merge-runtime-page > .page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.merge-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  align-items: end;
+  gap: 12px;
+  padding: 18px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+.merge-filters > button {
+  justify-self: start;
+}
+.merge-note {
+  padding: 16px;
+  border-left: 3px solid var(--blue);
+  color: var(--muted);
+  background: var(--panel);
+  line-height: 1.8;
+}
+.merge-table {
+  table-layout: fixed;
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--panel);
+  font-size: 12px;
+}
+.merge-table th,
+.merge-table td {
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line);
+  padding: 14px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+.merge-table th:first-child {
+  width: 36%;
+}
+.merge-table th:last-child {
+  width: 110px;
+}
+.merge-table code {
+  white-space: normal;
+  word-break: break-all;
+}
+.merge-table td :is(code, a) {
+  display: block;
+  margin-bottom: 8px;
+}
+.merge-table p {
+  color: var(--muted);
+  line-height: 1.7;
+}
+.merge-detail {
+  padding: 22px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  margin-top: 24px;
+  overflow-wrap: anywhere;
+}
+.merge-detail > code {
+  font-size: 12px;
+  color: var(--muted);
+}
+.merge-detail p {
+  line-height: 1.8;
+  color: var(--muted);
+}
+.merge-detail summary {
+  cursor: pointer;
+  margin: 16px 0;
+}
+.merge-groups span {
+  padding: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 12px;
+}
+@media (max-width: 1000px) {
+  .merge-filters {
+    grid-template-columns: 1fr 1fr;
+  }
+  .merge-filters button {
+    justify-self: start;
+  }
+}

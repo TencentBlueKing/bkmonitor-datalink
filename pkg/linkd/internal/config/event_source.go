@@ -12,19 +12,22 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"unicode"
 
+	"linkd/internal/domain"
 	"linkd/internal/enrich/custom"
 	"linkd/internal/kafkaclient"
 )
 
 const (
-	StorageTypeKafka      = "kafka"
-	FingerprintModeField  = "field"
-	FingerprintModeFields = "fields"
-	CleanerTypeStandard   = "standard"
+	StorageTypeKafka         = "kafka"
+	StorageTypeInternalMerge = "internal_merge"
+	FingerprintModeField     = "field"
+	FingerprintModeFields    = "fields"
+	CleanerTypeStandard      = "standard"
 )
 
 // EventSource 是一个全局唯一、供进程调度和事件标准化使用的事件源定义。
@@ -36,7 +39,7 @@ type EventSource struct {
 	EventSourceID     string                   `yaml:"event_source_id" json:"event_source_id"`
 	RelatedTenantID   string                   `yaml:"related_tenant_id,omitempty" json:"related_tenant_id,omitempty"`
 	Enabled           bool                     `yaml:"enabled" json:"enabled"`
-	Cleaner           CleanerConfig            `yaml:"cleaner" json:"cleaner"`
+	Cleaner           CleanerConfig            `yaml:"cleaner,omitempty" json:"cleaner,omitzero"`
 	FingerprintMode   string                   `yaml:"fingerprint_mode,omitempty" json:"fingerprint_mode,omitempty"`
 	FingerprintField  string                   `yaml:"fingerprint_field,omitempty" json:"fingerprint_field,omitempty"`
 	FingerprintFields []string                 `yaml:"fingerprint_fields,omitempty" json:"fingerprint_fields,omitempty"`
@@ -47,7 +50,7 @@ type EventSource struct {
 	Storage           EventSourceStorageConfig `yaml:"storage" json:"storage"`
 }
 
-// EnrichConfig 定义该来源创建新 Alert 时按顺序执行的丰富处理链；资源由部署配置注入。
+// EnrichConfig 定义该来源每条 Event 在策略裁决前执行的丰富链；资源由部署配置注入。
 type EnrichConfig struct {
 	// ContentMode 决定新 Alert 的初始内容来源；空值等价于 source。
 	// bkmonitor_description 必须显式启用，不以策略标签推断。
@@ -246,7 +249,7 @@ func (c CleanerConfig) RuntimeConfig(global CleanerRuntimeConfig) CleanerRuntime
 // EventSourceStorageConfig 定义 EventSource 当前使用的输入消息队列配置。
 type EventSourceStorageConfig struct {
 	Type  string             `yaml:"type" json:"type"`
-	Kafka KafkaStorageConfig `yaml:"kafka" json:"kafka"`
+	Kafka KafkaStorageConfig `yaml:"kafka,omitempty" json:"kafka,omitzero"`
 }
 
 // KafkaStorageConfig 定义 EventSource 的 Kafka subscription 与安全参数。
@@ -264,6 +267,16 @@ func (s EventSource) WithDefaults() EventSource {
 	s = s.clone()
 	if s.Version == 0 {
 		s.Version = 1
+	}
+	if s.Storage.Type == StorageTypeInternalMerge {
+		if s.Scheduling.Cleaner.Replicas.Number == nil {
+			zero := 0
+			s.Scheduling.Cleaner.Replicas.Number = &zero
+		}
+		for i := range s.Hooks {
+			s.Hooks[i] = s.Hooks[i].WithDefaults()
+		}
+		return s
 	}
 	if s.Cleaner.Type == "" {
 		s.Cleaner.Type = CleanerTypeStandard
@@ -337,6 +350,9 @@ func ValidateEventSources(sources []EventSource, severity SeverityConfig) error 
 			return fmt.Errorf("event_sources[%d].event_source_id duplicates event_sources[%d]: %q", index, previous, source.EventSourceID)
 		}
 		ids[source.EventSourceID] = index
+		if source.Storage.Type == StorageTypeInternalMerge {
+			continue
+		}
 		key := source.subscriptionKey()
 		if previous, exists := subscriptions[key]; exists {
 			return fmt.Errorf("event_sources[%d].storage.kafka duplicates event_sources[%d] subscription", index, previous)
@@ -367,6 +383,24 @@ func (s EventSource) validate(severity SeverityConfig) error {
 				return fmt.Errorf("related_tenant_id has invalid format: %q", s.RelatedTenantID)
 			}
 		}
+	}
+	if s.Storage.Type == StorageTypeInternalMerge {
+		if s.EventSourceID != domain.BuiltinMergeEventSourceID {
+			return fmt.Errorf("internal merge source must use reserved ID")
+		}
+		if !reflect.DeepEqual(s.Cleaner, CleanerConfig{}) || !reflect.DeepEqual(s.Storage.Kafka, KafkaStorageConfig{}) || s.FingerprintMode != "" || s.FingerprintField != "" || len(s.FingerprintFields) > 0 || len(s.SeverityMapping) > 0 || s.DefaultSeverity != "" {
+			return fmt.Errorf("internal merge source cannot configure external cleaner, subscription or field mapping")
+		}
+		if s.Scheduling.Cleaner.Replicas.Limit(1) != 0 || len(s.Scheduling.Cleaner.Selector) > 0 {
+			return fmt.Errorf("internal merge source cannot schedule cleaner")
+		}
+		if err := ValidateHooks(s.Hooks); err != nil {
+			return err
+		}
+		return s.Enrich.validate()
+	}
+	if s.EventSourceID == domain.BuiltinMergeEventSourceID {
+		return fmt.Errorf("builtin merge source ID is reserved")
 	}
 	if s.Cleaner.Type != CleanerTypeStandard {
 		return fmt.Errorf("cleaner.type is not registered: %q", s.Cleaner.Type)

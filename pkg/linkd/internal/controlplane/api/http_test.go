@@ -151,11 +151,11 @@ func TestPreviewHTTPUsesProductionRulesWithoutPublishing(t *testing.T) {
 		r, err := assembly.NewRouter([]config.EventSource{source}, enrichengine.Sources{})
 		return r, func() error { return nil }, err
 	}), Config: config.DispatchConfig{JWT: config.JWTConfig{SecretKey: "admin"}, WorkerToken: "worker"}}).Handler()
-	body := `{"bk_tenant_id":"t","event_source_id":"host","input":{"alert":{"title":"raw"}}}`
+	body := `{"bk_tenant_id":"t","event_source_id":"host","input":{"event":{"title":"raw","evaluations":[{"severity":"warning","action":"triggered"}]}}}`
 	for _, tc := range []struct {
 		token, body string
 		status      int
-	}{{"worker", body, 401}, {"admin", body, 200}, {"admin", `{"bk_tenant_id":"t","event_source_id":"host","input":{"alert":{},"alert_id":"a"}}`, 400}, {"admin", `{"bk_tenant_id":"t","event_source_id":"host","input":{"alert":{}},"enrich":{"processors":[{"type":"fields","config":{"rules":[{"id":"bad","operations":[{"id":"x","type":"assign","assignments":[{"target":"$.severity","value":{"literal":"fatal"}}]}]}]}}]}}`, 422}} {
+	}{{"worker", body, 401}, {"admin", body, 200}, {"admin", `{"bk_tenant_id":"t","event_source_id":"host","input":{"event":{},"event_id":"a"}}`, 400}, {"admin", `{"bk_tenant_id":"t","event_source_id":"host","input":{"event":{}},"enrich":{"processors":[{"type":"fields","config":{"rules":[{"id":"bad","operations":[{"id":"x","type":"assign","assignments":[{"target":"$.severity","value":{"literal":"fatal"}}]}]}]}}]}}`, 422}} {
 		request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/enrich/preview", strings.NewReader(tc.body))
 		request.Header.Set("Internal-Token", testJWT(t, tc.token))
 		response := httptest.NewRecorder()

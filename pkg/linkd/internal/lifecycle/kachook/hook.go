@@ -73,6 +73,7 @@ func newHook(config Config, name string, producer producer) *Hook {
 func (h *Hook) UseLevelResolver(resolve func(string) (string, error)) { h.levelResolver = resolve }
 
 // Execute 发送单个 KAC Alarm JSON；MessageID 在同一快照重试中保持稳定。
+// Alert 已绑定可靠动作目标时返回 Skipped，不再通过旧输入通道触发处置。
 func (h *Hook) Execute(ctx context.Context, input lifecycle.FinalHookInput) (lifecycle.FinalHookResult, error) {
 	result := lifecycle.FinalHookResult{
 		Name: h.name, Transport: "kafka", Destination: h.config.Topic,
@@ -80,6 +81,22 @@ func (h *Hook) Execute(ctx context.Context, input lifecycle.FinalHookInput) (lif
 	}
 	if err := ctx.Err(); err != nil {
 		return result, err
+	}
+	for _, target := range input.Alert.Projection.Targets {
+		if !target.ActionEnabled {
+			continue
+		}
+		// 以已保存的 Alert 绑定决定动作归属，不能因当前来源重新启用旧 Hook、
+		// 凭据移除或可靠投递失败而回退，否则同一动作可能沿两条通道重复执行。
+		// 跳过旧格式转换，但仍拒绝损坏的原因或绑定，避免把非法快照当作成功。
+		if err := input.Cause.Validate(); err != nil {
+			return result, fmt.Errorf("KAC alarm cause: %w", err)
+		}
+		if err := input.Alert.Validate(); err != nil {
+			return result, fmt.Errorf("KAC alarm alert: %w", err)
+		}
+		result.Skipped = true
+		return result, nil
 	}
 	message, err := convertMessageWithLevel(input, h.levelResolver)
 	if err != nil {

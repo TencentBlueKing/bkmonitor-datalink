@@ -21,6 +21,9 @@ const MaxFileSize = 1 << 20
 
 // Config 是 Linkd 本地进程配置的聚合根对象。
 type Config struct {
+	// Blueking 是所有蓝鲸 API 共用的部署配置，模式开关不改变业务数据的租户作用域。
+	Plugins      PluginsConfig        `yaml:"plugins,omitempty"`
+	Blueking     BluekingConfig       `yaml:"blueking"`
 	Resources    ResourcesConfig      `yaml:"resources,omitempty"`
 	Dispatch     DispatchConfig       `yaml:"dispatch"`
 	Worker       WorkerConfig         `yaml:"worker"`
@@ -53,6 +56,12 @@ func Default() Config {
 
 // Validate 校验完整的 Linkd 本地进程配置。
 func (c Config) Validate() error {
+	if err := c.Plugins.Validate(); err != nil {
+		return err
+	}
+	if err := c.Blueking.Validate(c.Resources.CMDB != nil); err != nil {
+		return err
+	}
 	if err := c.Resources.Validate(); err != nil {
 		return err
 	}
@@ -122,6 +131,8 @@ func (c Config) Validate() error {
 // Redacted 返回可安全展示的配置副本。
 func (c Config) Redacted() Config {
 	redacted := c
+	redacted.Plugins = c.Plugins.Redacted()
+	redacted.Blueking = c.Blueking.Redacted()
 	redacted.Resources = c.Resources.Redacted()
 	redacted.Dispatch.JWT.SecretKey = "[redacted]"
 	redacted.Dispatch.WorkerToken = "[redacted]"

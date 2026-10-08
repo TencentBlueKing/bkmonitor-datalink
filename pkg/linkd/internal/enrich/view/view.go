@@ -123,3 +123,40 @@ func EnrichedLabels(labels domain.DimensionMap, payload domain.JSONObject) (doma
 	}
 	return out, nil
 }
+
+// EnrichedEvent 返回指定等级的有效视图；没有该等级的已保存结果时明确报错。
+func EnrichedEvent(event domain.Event, severity string) (domain.Event, error) {
+	result, ok := event.ForSeverity(severity)
+	if !ok {
+		return domain.Event{}, fmt.Errorf("event has no enrichment for requested severity")
+	}
+	var evaluation domain.EventEvaluation
+	for _, candidate := range event.Evaluations {
+		if candidate.Severity == severity {
+			evaluation = candidate
+		}
+	}
+	document, err := domain.EventDocument(event, evaluation)
+	if err != nil {
+		return domain.Event{}, err
+	}
+	patches, err := EffectiveEnrichPatches(result.Data)
+	if err != nil {
+		return domain.Event{}, err
+	}
+	document, err = domain.ApplyEnrichPatches(document, patches)
+	if err != nil {
+		return domain.Event{}, err
+	}
+	data, err := json.Marshal(document)
+	if err != nil {
+		return domain.Event{}, err
+	}
+	var effective domain.Event
+	if err := json.Unmarshal(data, &effective); err != nil {
+		return domain.Event{}, err
+	}
+	effective.EventEnrichment = event.EventEnrichment.Clone()
+	effective.RelatedAlertIDs = append([]string(nil), event.RelatedAlertIDs...)
+	return effective, nil
+}

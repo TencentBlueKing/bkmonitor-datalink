@@ -45,6 +45,7 @@ import (
 	"linkd/internal/lifecycle/kafkahook"
 	"linkd/internal/lifecycle/mailbox"
 	"linkd/internal/lifecycle/scheduler"
+	"linkd/internal/policy"
 	"linkd/internal/store"
 	"linkd/internal/taskdispatch"
 	"linkd/internal/testkit/rawgen"
@@ -180,11 +181,13 @@ func TestAllInOneElasticsearchE2E(t *testing.T) {
 	})
 	importSources(ctx, t, process, configPath)
 	waitUntilReady(ctx, t, process, es, redisClient, names)
+	prepareDatasetBuckets(ctx, t, repoRoot, binaryPath, configPath, dataset)
 	startExtraWorkers(ctx, t, repoRoot, binaryPath, configPath, temporaryDirectory, dataset.Config.EventSourceID)
+	policyReleases := publishDatasetPolicies(ctx, t, configPath, dataset)
 
 	produceDataset(ctx, t, environment.KafkaBroker, names.RawTopic, dataset)
 	events := waitForAcceptedEvents(ctx, t, process, es, names.EventIndex, expected)
-	assertEvents(t, events, dataset)
+	assertEvents(t, events, dataset, policyReleases)
 	alerts := waitForAlertsVisible(ctx, t, process, es, names.AlertIndex, expected.Alerts)
 	assertAlerts(t, alerts, expected.Alerts)
 	logs := waitForAlertLogsVisible(ctx, t, process, es, names.AlertLogIndex, expected.OperationCounts)
@@ -284,12 +287,13 @@ func TestAllInOneMySQLE2E(t *testing.T) {
 	defer cancel()
 
 	adminDatabase, repositoryDatabase, version := createMySQLDatabase(ctx, t, environment, names.MySQLDatabase)
-	if !strings.HasPrefix(version, "8.4.10") {
-		t.Fatalf("MySQL version = %q, want 8.4.10", version)
-	}
 	t.Cleanup(func() {
 		cleanupMySQLDatabase(t, adminDatabase, repositoryDatabase, names.MySQLDatabase)
 	})
+	expectedVersion := envOrDefault("LINKD_E2E_MYSQL_VERSION", "8.4.10")
+	if !strings.HasPrefix(version, expectedVersion) {
+		t.Fatalf("MySQL version = %q, want %s", version, expectedVersion)
+	}
 
 	redisClient := redis.NewClient(&redis.Options{
 		Addr: environment.RedisAddress, Password: environment.RedisPassword, DB: environment.RedisDatabase,
@@ -348,10 +352,11 @@ func TestAllInOneMySQLE2E(t *testing.T) {
 	importSources(ctx, t, process, configPath)
 	waitUntilMySQLReady(ctx, t, process, repositoryDatabase, redisClient, names)
 	startExtraWorkers(ctx, t, repoRoot, binaryPath, configPath, temporaryDirectory, dataset.Config.EventSourceID)
+	policyReleases := publishDatasetPolicies(ctx, t, configPath, dataset)
 
 	produceDataset(ctx, t, environment.KafkaBroker, names.RawTopic, dataset)
 	events := waitForAcceptedMySQLEvents(ctx, t, process, repositoryDatabase, expected)
-	assertEvents(t, events, dataset)
+	assertEvents(t, events, dataset, policyReleases)
 	alerts := loadMySQLAlerts(ctx, t, repositoryDatabase)
 	assertAlerts(t, alerts, expected.Alerts)
 	logs := loadMySQLAlertLogs(ctx, t, repositoryDatabase)
@@ -813,13 +818,24 @@ func writeConfig(
 	for placeholder, value := range extra {
 		replacements[placeholder] = value
 	}
-	configText := string(template)
-	for placeholder, value := range replacements {
-		configText = strings.ReplaceAll(configText, placeholder, value)
+	// 空凭据仍为字符串；JSON 引号同时是合法 YAML，防止 null/数字推断和特殊字符改写。
+	for _, key := range []string{"{{REDIS_PASSWORD}}", "{{MYSQL_PASSWORD}}", "{{MYSQL_USERNAME}}"} {
+		if value, ok := replacements[key]; ok {
+			quoted, _ := json.Marshal(value)
+			replacements[key] = string(quoted)
+		}
 	}
-	if strings.Contains(configText, "{{") {
+	remaining := string(template)
+	pairs := make([]string, 0, len(replacements)*2)
+	for placeholder, value := range replacements {
+		remaining = strings.ReplaceAll(remaining, placeholder, "")
+		pairs = append(pairs, placeholder, value)
+	}
+	if strings.Contains(remaining, "{{") {
 		t.Fatal("E2E config contains unresolved placeholders")
 	}
+	// 单次替换不会把凭据中的字面模板文本再次解释成变量。
+	configText := strings.NewReplacer(pairs...).Replace(string(template))
 	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -1126,9 +1142,18 @@ func searchSources(
 	index string,
 ) []json.RawMessage {
 	t.Helper()
-	body := []byte(`{"size":100,"query":{"match_all":{}},"sort":[{"_id":"asc"}]}`)
+	// 测试场景有明确的输入规模；超出查询预算直接失败，不能把截断的结果当成全部事实。
+	body := []byte(`{"size":10000,"track_total_hits":true,"query":{"match_all":{}},"sort":[{"_id":"asc"}]}`)
 	var response struct {
+		TimedOut bool `json:"timed_out"`
+		Shards   struct {
+			Failed int `json:"failed"`
+		} `json:"_shards"`
 		Hits struct {
+			Total struct {
+				Value    int    `json:"value"`
+				Relation string `json:"relation"`
+			} `json:"total"`
 			Hits []struct {
 				Source json.RawMessage `json:"_source"`
 			} `json:"hits"`
@@ -1136,6 +1161,9 @@ func searchSources(
 	}
 	if _, err := es.do(ctx, http.MethodPost, "/"+index+"/_search", body, &response); err != nil {
 		t.Fatalf("search Elasticsearch index %s: %v", index, err)
+	}
+	if response.TimedOut || response.Shards.Failed != 0 || response.Hits.Total.Relation != "eq" || response.Hits.Total.Value != len(response.Hits.Hits) {
+		t.Fatalf("incomplete Elasticsearch fixture query %s: total=%d rows=%d timed_out=%t failed_shards=%d", index, response.Hits.Total.Value, len(response.Hits.Hits), response.TimedOut, response.Shards.Failed)
 	}
 	sources := make([]json.RawMessage, 0, len(response.Hits.Hits))
 	for _, hit := range response.Hits.Hits {
@@ -1151,23 +1179,17 @@ type storedEventView struct {
 
 func loadEvents(ctx context.Context, t *testing.T, es *elasticsearchClient, index string) []storedEventView {
 	t.Helper()
-	body := []byte(`{"size":100,"query":{"match_all":{}},"sort":[{"_id":"asc"}]}`)
-	var response struct {
-		Hits struct {
-			Hits []struct {
-				Source struct {
-					domain.Event
-					Processing store.EventProcessing `json:"processing"`
-				} `json:"_source"`
-			} `json:"hits"`
-		} `json:"hits"`
-	}
-	if _, err := es.do(ctx, http.MethodPost, "/"+index+"/_search", body, &response); err != nil {
-		t.Fatalf("search Elasticsearch Event index %s: %v", index, err)
-	}
-	events := make([]storedEventView, 0, len(response.Hits.Hits))
-	for _, hit := range response.Hits.Hits {
-		events = append(events, storedEventView{Event: hit.Source.Event, Processing: hit.Source.Processing})
+	sources := searchSources(ctx, t, es, index)
+	events := make([]storedEventView, 0, len(sources))
+	for _, source := range sources {
+		var saved struct {
+			domain.Event
+			Processing store.EventProcessing `json:"processing"`
+		}
+		if err := json.Unmarshal(source, &saved); err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, storedEventView{Event: saved.Event, Processing: saved.Processing})
 	}
 	return events
 }
@@ -1288,6 +1310,7 @@ func assertEvents(
 	t *testing.T,
 	events []storedEventView,
 	dataset rawgen.Dataset,
+	expectedPolicies ...map[string]policy.Release,
 ) {
 	t.Helper()
 	expected := dataset.Expected
@@ -1295,8 +1318,41 @@ func assertEvents(
 	wantIDs := append([]string(nil), expected.SourceEventIDs...)
 	sort.Strings(wantIDs)
 	gotIDs := make([]string, 0, len(events))
+	policyReleases := map[string]policy.Release{}
+	if len(expectedPolicies) > 0 {
+		policyReleases = expectedPolicies[0]
+	}
+	expectedReferences := 0
+	if len(policyReleases) > 0 {
+		expectedReferences = 1
+	}
 	for _, stored := range events {
 		event := stored.Event
+		if stored.Processing.PolicyContext == nil || stored.Processing.PolicyContext.ReasonCode != "" || len(stored.Processing.PolicyContext.Releases) != expectedReferences {
+			t.Fatalf("policy snapshot was not frozen through worker API: %s %+v", event.EventID, stored.Processing.PolicyContext)
+		}
+		if err := stored.Processing.PolicyContext.Validate(); err != nil {
+			t.Fatal(err)
+		}
+
+		if expectedReferences > 0 {
+			expectedPolicy, ok := policyReleases[event.BKTenantID]
+			if !ok {
+				t.Fatal("missing expected tenant policy")
+			}
+			ref := stored.Processing.PolicyContext.Releases[0]
+			if ref.ID != expectedPolicy.ID || ref.Version != expectedPolicy.Version || ref.Digest != expectedPolicy.Compiled.Digest || ref.Kind != string(expectedPolicy.Kind) {
+				t.Fatalf("worker froze another tenant/version: %+v", ref)
+			}
+
+		}
+		if event.EnrichStatus != domain.EnrichStatusSucceeded || event.EnrichedAt == nil || event.EnrichConfigDigest == "" || event.EnrichConfigDigest == "unavailable" || len(event.Enrich.Evaluations) != len(event.Evaluations) {
+			t.Fatalf("Event enrichment was not persisted before completion: %s", event.EventID)
+		}
+		if err := event.EventEnrichment.Validate(event.Evaluations); err != nil {
+			t.Fatalf("Event enrichment contract: %v", err)
+		}
+
 		gotIDs = append(gotIDs, event.SourceEventID)
 		rawRecord, exists := rawEvents[event.SourceEventID]
 		if !exists {
@@ -1304,6 +1360,9 @@ func assertEvents(
 		}
 		raw := rawRecord.Raw
 		wantState := expected.EventStates[event.SourceEventID]
+		if stored.Processing.ReasonCode != expected.EventReasons[event.SourceEventID] {
+			t.Fatalf("event reason=%q want %q", stored.Processing.ReasonCode, expected.EventReasons[event.SourceEventID])
+		}
 		if stored.Processing.State != wantState {
 			t.Fatalf("Event processing state = %q, want %q: %#v", stored.Processing.State, wantState, event)
 		}
@@ -1476,7 +1535,7 @@ func assertOutputs(
 	suppressedEventIDs := make(map[string]struct{})
 	for _, stored := range events {
 		eventIDs[stored.Event.EventID] = struct{}{}
-		if stored.Processing.State == domain.EventProcessStateSuppressed {
+		if stored.Processing.State == domain.EventProcessStateSuppressed && stored.Processing.ReasonCode != "duplicate_trigger" {
 			suppressedEventIDs[stored.Event.EventID] = struct{}{}
 		}
 	}
@@ -1609,6 +1668,11 @@ func startExtraWorkers(ctx context.Context, t *testing.T, root, binary, configPa
 			if err := p.stop(); err != nil {
 				t.Logf("stop extra %s worker: %v", role, err)
 			}
+			if t.Failed() {
+				if data, err := os.ReadFile(p.logPath); err == nil {
+					t.Logf("%s worker log:\n%s", role, data)
+				}
+			}
 		})
 	}
 	cfg, err := config.Load(configPath, config.Overrides{})
@@ -1667,16 +1731,33 @@ func verifySourceMutationCycle(ctx context.Context, t *testing.T, path string) {
 	if err := client.Call(ctx, http.MethodPut, endpoint, controlapi.Mutation{Expected: 1, Spec: spec}, &record); err != nil || record.Published != 2 {
 		t.Fatalf("zero replicas publication: %v %+v", err, record.Redacted())
 	}
-	waitTaskCounts(ctx, t, client, 0, 2)
+	waitTaskCounts(ctx, t, client, spec.EventSourceID, 0, 2)
 	spec.Scheduling.Cleaner.Replicas.Number = nil
 	if err := client.Call(ctx, http.MethodPut, endpoint, controlapi.Mutation{Expected: 2, Spec: spec}, &record); err != nil || record.Published != 3 {
 		t.Fatal("resume publication failed", err)
 	}
-	waitTaskCounts(ctx, t, client, 3, 2)
+	waitTaskCounts(ctx, t, client, spec.EventSourceID, 3, 2)
 	if err := client.Call(ctx, http.MethodDelete, endpoint, map[string]int{"expected_revision": 3}, &record); err != nil || !record.Deleted {
 		t.Fatal("delete publication failed", err)
 	}
-	waitTaskCounts(ctx, t, client, 0, 0)
+	waitTaskCounts(ctx, t, client, spec.EventSourceID, 0, 0)
+	var runtime taskdispatch.State
+	if err := client.Call(ctx, http.MethodGet, "/api/v1/runtime", nil, &runtime); err != nil {
+		t.Fatal(err)
+	}
+	builtinRunning := false
+	for _, task := range runtime.Tasks {
+		if task.Source != domain.BuiltinMergeEventSourceID || task.Phase != "running" {
+			continue
+		}
+		if task.Role != "lifecycle" {
+			t.Fatal("builtin merge source started an external Cleaner")
+		}
+		builtinRunning = true
+	}
+	if !builtinRunning {
+		t.Fatal("deleting ordinary source stopped builtin merge lifecycle")
+	}
 	var first eventsource.Release
 	if err := client.Call(ctx, http.MethodGet, endpoint+"/releases/1", nil, &first); err != nil || !first.Spec.Enabled {
 		t.Fatal("immutable release lost", err)
@@ -1684,13 +1765,17 @@ func verifySourceMutationCycle(ctx context.Context, t *testing.T, path string) {
 	t.Log("source API verified: replicas 0, resume all, tombstone delete and immutable old release")
 }
 
-func waitTaskCounts(ctx context.Context, t *testing.T, client taskdispatch.Client, cleanerCount, lifecycleCount int) {
+func waitTaskCounts(ctx context.Context, t *testing.T, client taskdispatch.Client, source string, cleanerCount, lifecycleCount int) {
 	t.Helper()
 	for {
 		var state taskdispatch.State
 		if err := client.Call(ctx, http.MethodGet, "/api/v1/runtime", nil, &state); err == nil {
 			c, l, pending := 0, 0, 0
 			for _, task := range state.Tasks {
+				// 内置合并来源独立运行；单个来源停用/删除不能把其他来源计入其收敛条件。
+				if task.Source != source {
+					continue
+				}
 				switch task.Phase {
 				case "running":
 					if task.Role == "cleaner" {
@@ -1713,4 +1798,54 @@ func waitTaskCounts(ctx context.Context, t *testing.T, client taskdispatch.Clien
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// prepareDatasetBuckets 为固定历史 fixture 显式准备桶，避免测试结果随日历推进失效。
+func prepareDatasetBuckets(ctx context.Context, t *testing.T, root, binary, configPath string, dataset rawgen.Dataset) {
+	t.Helper()
+	from, to := dataset.Config.StartTime, dataset.Config.StartTime
+	for _, record := range dataset.Records {
+		if record.KafkaTimestamp.Before(from) {
+			from = record.KafkaTimestamp
+		}
+		if record.KafkaTimestamp.After(to) {
+			to = record.KafkaTimestamp
+		}
+	}
+	//nolint:gosec // G204: binary/configPath 为测试临时目录内自产文件，时间来自固定 fixture。
+	command := exec.CommandContext(ctx, binary, "storage", "prepare", "--config", configPath, "--from", from.Add(-time.Second).Format(time.RFC3339), "--to", to.Add(time.Second).Format(time.RFC3339))
+	command.Dir = root
+	if data, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("prepare historical fixture buckets: %v\n%s", err, data)
+	}
+}
+
+// publishDatasetPolicies 发布租户内容不同的停用策略，验证真实 Worker 获取并固定正确版本，不改变原数据集业务结果。
+func publishDatasetPolicies(ctx context.Context, t *testing.T, path string, dataset rawgen.Dataset) map[string]policy.Release {
+	t.Helper()
+	cfg, err := config.Load(path, config.Overrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := taskdispatch.Client{URL: cfg.Dispatch.URL, JWTSecretKey: cfg.Dispatch.JWT.SecretKey, JWTUsername: cfg.Dispatch.JWT.Username}
+	releases := map[string]policy.Release{}
+	for _, record := range dataset.Records {
+		if !record.Valid {
+			continue
+		}
+		if _, ok := releases[record.BKTenantID]; ok {
+			continue
+		}
+		spec, err := json.Marshal(map[string]any{"name": "E2E " + record.BKTenantID, "is_enable": false, "updated_at": "2026-09-30T00:00:00Z", "space_code": "bkcc__2", "activate_times": []any{}, "policy": map[string]any{"expression": "A", "A": map[string]any{"condition": "term", "target_key": "name", "target_value": "test"}}, "scheme": []any{map[string]any{"type": "clip", "duration": 60, "duration_type": "second", "count": 2}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := policy.ApplyRequest{Scope: policy.Scope{TenantID: record.BKTenantID, Kind: policy.Suppression}, SchemaVersion: 1, ID: "e2e-policy", OperationID: "create-e2e-policy", Spec: spec}
+		var release policy.Release
+		if err := client.Call(ctx, http.MethodPut, "/api/v1/policies/suppression/e2e-policy", request, &release); err != nil {
+			t.Fatal(err)
+		}
+		releases[record.BKTenantID] = release
+	}
+	return releases
 }

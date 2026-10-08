@@ -38,7 +38,7 @@ test("browses catalog definitions, filters and copies a Prometheus query name", 
   await expect(
     page.getByRole("button", { name: "查看存储逻辑操作数详情" }),
   ).toHaveCount(0);
-  await page.getByRole("button", { name: "查看告警丰富总耗时详情" }).click();
+  await page.getByRole("button", { name: "查看事件丰富总耗时详情" }).click();
   await page
     .getByRole("button", {
       name: "复制 linkd_enrich_attempt_duration_seconds_bucket",

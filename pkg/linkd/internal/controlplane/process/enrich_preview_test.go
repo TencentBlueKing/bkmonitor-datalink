@@ -65,12 +65,12 @@ func TestEnrichPreviewUsesSharedOneModelWithoutOtherResources(t *testing.T) {
 	}
 	resources := config.ResourcesConfig{OneModel: &config.OneModelResource{Addresses: []string{backend.URL}}, MySQL: &config.MySQLResource{Address: "unused:1"}, KingeyeDisplay: &config.DisplayResource{}}
 	service := newEnrichPreview(eventsource.New(previewDocuments{spec}, config.SeverityConfig{}), config.StorageConfig{}, resources)
-	request := preview.Request{BKTenantID: "t", EventSourceID: "source-a", Input: preview.Input{Alert: json.RawMessage(`{"title":"test","labels":{}}`)}}
+	request := preview.Request{BKTenantID: "t", EventSourceID: "source-a", Input: preview.Input{Event: json.RawMessage(`{"title":"test","labels":{},"evaluations":[{"severity":"warning","action":"triggered"}]}`)}}
 	response, err := service.Preview(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls.Load() != 1 || response.EffectiveAlert["labels"].(map[string]any)["owner"] != "ops" {
+	if calls.Load() != 1 || response.Evaluations[0].EffectiveEvent["labels"].(map[string]any)["owner"] != "ops" {
 		t.Fatalf("preview=%+v calls=%d", response, calls.Load())
 	}
 	encoded, err := json.Marshal(response)

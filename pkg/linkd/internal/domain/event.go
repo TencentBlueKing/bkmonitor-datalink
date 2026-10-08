@@ -20,8 +20,11 @@ import (
 var eventSourceIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // Event 是来源消息经过 SourceCleaner 和通用事件工厂标准化后的事件事实。
-// Event 创建后只有 RelatedAlertIDs 可以由生命周期处理器写入，其他来源事实不可覆盖。
+// 来源事实创建后不可覆盖；Lifecycle 只能冻结 EventEnrichment 并追加 RelatedAlertIDs。
 type Event struct {
+	EventEnrichment
+	// MergeOrigin 只属于内置合并来源；外部来源即使提交相同字段也不能成为系统合并事件。
+	MergeOrigin *MergeOrigin `json:"merge_origin,omitempty"`
 	// EventSourceVersion 是创建时实际使用的不可变来源发布版本。
 	EventSourceVersion int64    `json:"event_source_version"`
 	BKTenantID         string   `json:"bk_tenant_id"`
@@ -53,6 +56,7 @@ type Event struct {
 
 // Normalize 深拷贝动态字段、规范 UTC 时间并校验 Event。
 func (e Event) Normalize() (Event, error) {
+	e.MergeOrigin = e.MergeOrigin.Clone()
 	e.Dimensions = e.Dimensions.Normalize()
 	e.Evaluations = slices.Clone(e.Evaluations)
 	slices.SortFunc(e.Evaluations, compareEvaluation)
@@ -68,6 +72,10 @@ func (e Event) Normalize() (Event, error) {
 	if err != nil {
 		return Event{}, fmt.Errorf("event extra_data: %w", err)
 	}
+	e.EventEnrichment, err = e.EventEnrichment.Normalize(e.Evaluations)
+	if err != nil {
+		return Event{}, err
+	}
 	e.OccurredAt = normalizeTime(e.OccurredAt)
 	e.ProducedAt = normalizeTime(e.ProducedAt)
 	e.ReceivedAt = normalizeTime(e.ReceivedAt)
@@ -80,6 +88,8 @@ func (e Event) Normalize() (Event, error) {
 
 // Clone 返回不共享 map 或 JSON 字节的 Event 副本。
 func (e Event) Clone() Event {
+	e.MergeOrigin = e.MergeOrigin.Clone()
+	e.EventEnrichment = e.EventEnrichment.Clone()
 	e.Dimensions = e.Dimensions.Clone()
 	e.Evaluations = slices.Clone(e.Evaluations)
 	e.RelatedAlertIDs = slices.Clone(e.RelatedAlertIDs)
@@ -98,6 +108,12 @@ func (e Event) Validate() error {
 // 只有 Normalize 完成所有动态 JSON 的校验和深拷贝后才跳过二次规范化。
 // 公共 Validate 仍必须检查任意调用方传入的动态字段，不能信任对象曾经被规范化。
 func (e Event) validate(validateJSON bool) error {
+	if err := e.MergeOrigin.Validate(e.EventSourceID); err != nil {
+		return err
+	}
+	if err := e.EventEnrichment.Validate(e.Evaluations); err != nil {
+		return err
+	}
 	if e.EventSourceVersion <= 0 {
 		return fmt.Errorf("event_source_version must be positive")
 	}
@@ -143,8 +159,8 @@ func (e Event) validate(validateJSON bool) error {
 	if err := ValidateEvaluations(e.Evaluations); err != nil {
 		return err
 	}
-	if len(e.RelatedAlertIDs) > 2 {
-		return fmt.Errorf("event may associate at most two alerts")
+	if len(e.RelatedAlertIDs) > MaxEventEvaluations {
+		return fmt.Errorf("event alert associations exceed evaluation limit")
 	}
 	for _, id := range e.RelatedAlertIDs {
 		if err := validateTextLength("related_alert_id", id, 1, EntityIDMaxBytes); err != nil {
@@ -199,6 +215,9 @@ func ValidateNormalizedNewEvent(event Event) error {
 }
 
 func validateNewEventState(event Event) error {
+	if event.EnrichStatus != "" && event.EnrichStatus != EnrichStatusPending {
+		return fmt.Errorf("new event enrich must be pending")
+	}
 	if len(event.RelatedAlertIDs) != 0 {
 		return fmt.Errorf("new event related_alert_ids must be empty")
 	}
@@ -265,6 +284,10 @@ func validateOptionalTextLength(name, value string, maxLength int) error {
 // ValidateEventRedelivery 允许跨发布或动态等级重映射的重投复用已保存 Event，不覆盖原始事实。
 // 这只用于 create 冲突核对；生命周期 CAS 仍使用 ValidateEventReplacement。
 func ValidateEventRedelivery(incoming, stored Event) error {
+	if err := validateNewEventState(incoming); err != nil {
+		return err
+	}
+	incoming.EventEnrichment = stored.EventEnrichment.Clone()
 	if incoming.EventID == stored.EventID && incoming.BKTenantID == stored.BKTenantID && incoming.EventSourceID == stored.EventSourceID && incoming.ReceivedAt.Equal(stored.ReceivedAt) && incoming.SourceEventID == stored.SourceEventID && incoming.SourceAlertID == stored.SourceAlertID && len(incoming.SourceRawData) > 0 && reflect.DeepEqual(incoming.SourceRawData, stored.SourceRawData) {
 		if incoming.EventSourceVersion != stored.EventSourceVersion {
 			return nil

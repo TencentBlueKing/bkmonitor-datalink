@@ -294,50 +294,64 @@ function SourceFormFields({
           </label>
         </div>
       </section>
-      <section className="event-source-form-section">
-        <h3>Kafka 输入</h3>
-        <SourceField
-          label="Brokers（每行一个）"
-          name="storage.kafka.brokers"
-          errorField={errorField}
-        >
-          <textarea
-            aria-label="Brokers（每行一个）"
-            rows={3}
-            value={form.brokers}
-            readOnly={existing}
-            aria-invalid={errorField === "storage.kafka.brokers"}
-            onChange={(e) => setForm({ ...form, brokers: e.target.value })}
-          />
-        </SourceField>
-        <div className="event-source-form-grid">
-          {field("Topic", "topic", "storage.kafka.topic")}
-          {field("Consumer group", "group", "storage.kafka.consumer_group")}
-        </div>
+      {spec.storage.type === "kafka" ? (
+        <section className="event-source-form-section">
+          <h3>Kafka 输入</h3>
+          <SourceField
+            label="Brokers（每行一个）"
+            name="storage.kafka.brokers"
+            errorField={errorField}
+          >
+            <textarea
+              aria-label="Brokers（每行一个）"
+              rows={3}
+              value={form.brokers}
+              readOnly={existing}
+              aria-invalid={errorField === "storage.kafka.brokers"}
+              onChange={(e) => setForm({ ...form, brokers: e.target.value })}
+            />
+          </SourceField>
+          <div className="event-source-form-grid">
+            {field("Topic", "topic", "storage.kafka.topic")}
+            {field("Consumer group", "group", "storage.kafka.consumer_group")}
+          </div>
+          <p className="event-source-hint">
+            {existing
+              ? "未提交输入 Kafka security 时保留原凭据；仅在轮换时通过高级 JSON 填写完整认证配置。"
+              : "需要认证时，可在高级 JSON 中填写 Kafka security。"}
+          </p>
+        </section>
+      ) : (
         <p className="event-source-hint">
-          {existing
-            ? "未提交输入 Kafka security 时保留原凭据；仅在轮换时通过高级 JSON 填写完整认证配置。"
-            : "需要认证时，可在高级 JSON 中填写 Kafka security。"}
+          系统内部合并事件，只运行 Lifecycle；Enrich 和 Hook
+          使用本来源自己的发布配置。
         </p>
-      </section>
-      {sourceRoles.map(placement)}
-      <details className="event-source-advanced-summary">
-        <summary>Cleaner、指纹与高级配置</summary>
-        <p>
-          Cleaner 类型：{spec.cleaner?.type || "standard"}；指纹模式：
-          {spec.fingerprint_mode || "field"}
-        </p>
-        <p>
-          指纹字段：
-          {spec.fingerprint_field ||
-            spec.fingerprint_fields?.join(", ") ||
-            "source_alert_id"}
-        </p>
-        <p className="event-source-hint">
-          Cleaner 预算、Enrich、Hooks 和其他完整配置在高级 JSON
-          中编辑，切换编辑方式会保留这些字段。
-        </p>
-      </details>
+      )}
+      {sourceRoles
+        .filter(
+          (role) =>
+            spec.storage.type !== "internal_merge" || role === "lifecycle",
+        )
+        .map(placement)}
+      {spec.storage.type === "kafka" && (
+        <details className="event-source-advanced-summary">
+          <summary>Cleaner、指纹与高级配置</summary>
+          <p>
+            Cleaner 类型：{spec.cleaner?.type || "standard"}；指纹模式：
+            {spec.fingerprint_mode || "field"}
+          </p>
+          <p>
+            指纹字段：
+            {spec.fingerprint_field ||
+              spec.fingerprint_fields?.join(", ") ||
+              "source_alert_id"}
+          </p>
+          <p className="event-source-hint">
+            Cleaner 预算、Enrich、Hooks 和其他完整配置在高级 JSON
+            中编辑，切换编辑方式会保留这些字段。
+          </p>
+        </details>
+      )}
     </>
   );
 }

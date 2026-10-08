@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type {
   ElasticsearchPerformance,
   ElasticsearchTopology,
@@ -328,7 +329,7 @@ export class ElasticsearchConnector {
         source: "elasticsearch",
         warnings:
           entity === "alerts" && groups.length < rawHits.length
-            ? ["检测到归档过渡副本，已优先展示 AlertHistory。"]
+            ? ["检测到归档过渡副本，已展示确认水位较完整的副本。"]
             : [],
       };
     } catch (error) {
@@ -810,6 +811,8 @@ function buildFilters(
     });
   }
   if (entity === "events") {
+    if (params.enrichStatus)
+      filters.push({ term: { enrich_status: params.enrichStatus } });
     if (params.fingerprint)
       filters.push({ term: { fingerprint: params.fingerprint } });
     if (params.outcome)
@@ -876,6 +879,7 @@ function hitToItem(entity: EntityKind, hit: SearchHit): EntityItem {
               "event_source_id",
               "values",
               "related_alert_ids",
+              "enrich_status",
               "title",
             ]),
             state: source.processing?.state,
@@ -914,9 +918,75 @@ function groupAlertHits(
       continue;
     }
     previous.cursorSort = hit.sort;
-    if (hit._index?.includes("-alert-history-")) previous.hit = hit;
+    previous.hit = selectAlertCopy(previous.hit, hit);
   }
   return groups.map(({ hit, cursorSort }) => ({ hit, cursorSort }));
+}
+
+// ACK 只改变元数据；归档期间优先选取逐目标水位覆盖另一副本的真实快照。
+// 不拼接虚拟记录，也不以 History 名称覆盖更晚到达 Active 的确认。
+function selectAlertCopy(left: SearchHit, right: SearchHit): SearchHit {
+  if (isDeepStrictEqual(left._source, right._source))
+    return right._index?.includes("-alert-history-") ? right : left;
+  const a = projectionComparable(left._source);
+  const b = projectionComparable(right._source);
+  if (a && b && isDeepStrictEqual(a.business, b.business)) {
+    const ids = Object.keys(a.confirmations);
+    if (ids.every((id) => a.confirmations[id] >= b.confirmations[id]))
+      return left;
+    if (ids.every((id) => b.confirmations[id] >= a.confirmations[id]))
+      return right;
+  }
+  throw new Error("Elasticsearch Alert 归档副本冲突，等待归档收敛后重试");
+}
+
+function projectionComparable(source: SearchHit["_source"]):
+  | {
+      business: Record<string, unknown>;
+      confirmations: Record<string, number>;
+    }
+  | undefined {
+  const object = (value: unknown): value is Record<string, unknown> =>
+    value !== null && typeof value === "object" && !Array.isArray(value);
+  if (
+    !object(source.projection) ||
+    (source.projection.targets !== undefined &&
+      !object(source.projection.targets))
+  )
+    return undefined;
+  const targets = source.projection.targets ?? {};
+  const clean: Record<string, unknown> = Object.create(null);
+  const confirmations: Record<string, number> = Object.create(null);
+  for (const [id, value] of Object.entries(targets)) {
+    if (!object(value)) return undefined;
+    const synced = value.synced_revision;
+    const required = value.required_revision;
+    if (
+      typeof synced !== "number" ||
+      !Number.isSafeInteger(synced) ||
+      synced < 0 ||
+      typeof required !== "number" ||
+      !Number.isSafeInteger(required) ||
+      required < 1 ||
+      synced > required ||
+      (synced === 0
+        ? value.synced_at != null
+        : typeof value.synced_at !== "string" ||
+          !Number.isFinite(Date.parse(value.synced_at)))
+    )
+      return undefined;
+    const binding = { ...value };
+    delete binding.synced_revision;
+    delete binding.synced_at;
+    clean[id] = binding;
+    confirmations[id] = synced;
+  }
+  const business: Record<string, unknown> = {
+    ...source,
+    projection: { ...source.projection, targets: clean },
+  };
+  delete business.projection_work;
+  return { business, confirmations };
 }
 
 function withoutProcessing(

@@ -11,6 +11,7 @@ package mysqlstore
 
 import (
 	"context"
+	"database/sql"
 	"embed"
 	"fmt"
 	"strings"
@@ -39,6 +40,69 @@ func (r *Repository) EnsureSchema(ctx context.Context) error {
 		if _, err := r.db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("execute mysql schema statement: %w", err)
 		}
+	}
+	for _, column := range []string{"policy_work", "merge_work", "projection_work", "action_work"} {
+		if err := r.ensureAlertWorkIndex(ctx, column); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// 已有表只追加未出现过的控制面工作标记与索引，保留原数据；并发初始化重读确认胜出结果。
+func (r *Repository) ensureAlertWorkIndex(ctx context.Context, column string) error {
+	if column != "policy_work" && column != "merge_work" && column != "projection_work" && column != "action_work" {
+		return fmt.Errorf("invalid alert work column")
+	}
+	indexName := "idx_linkd_alert_" + column
+	expectedColumns := column + ",bk_tenant_id,alert_id"
+	read := func() (bool, error) {
+		var kind, nullable string
+		err := r.db.QueryRowContext(ctx, `SELECT DATA_TYPE,IS_NULLABLE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='linkd_alerts' AND COLUMN_NAME=?`, column).Scan(&kind, &nullable)
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if kind != "tinyint" || nullable != "NO" {
+			return false, fmt.Errorf("incompatible %s column", column)
+		}
+		return true, nil
+	}
+	exists, err := read()
+	if err != nil {
+		return err
+	}
+	if !exists {
+		if _, err := r.db.ExecContext(ctx, "ALTER TABLE linkd_alerts ADD COLUMN "+column+" TINYINT NOT NULL DEFAULT 0"); err != nil {
+			if ok, checkErr := read(); checkErr != nil || !ok {
+				return fmt.Errorf("add %s: %w", column, err)
+			}
+		}
+	}
+	index := func() (string, error) {
+		var cols sql.NullString
+		err := r.db.QueryRowContext(ctx, `SELECT GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='linkd_alerts' AND INDEX_NAME=?`, indexName).Scan(&cols)
+		return cols.String, err
+	}
+	cols, err := index()
+	if err != nil {
+		return err
+	}
+	if cols == "" {
+		if _, err := r.db.ExecContext(ctx, "CREATE INDEX "+indexName+" ON linkd_alerts("+expectedColumns+")"); err != nil {
+			if actual, checkErr := index(); checkErr != nil || actual != expectedColumns {
+				return fmt.Errorf("add %s index: %w", column, err)
+			}
+		}
+		cols, err = index()
+		if err != nil {
+			return err
+		}
+	}
+	if cols != expectedColumns {
+		return fmt.Errorf("incompatible %s index", column)
 	}
 	return nil
 }

@@ -80,8 +80,12 @@ func assembleHooks(configs []config.HookConfig, runtime *telemetry.Runtime, fact
 			return nil, nil, errors.Join(fmt.Errorf("hook %s initialization failed: %w", spec.Name, err), closeAll())
 		}
 		closers = append(closers, closeHook)
-		named := lifecycle.NamedFinalHook{Name: spec.Name, Hook: hook}
-		hooks = append(hooks, lifecycle.NamedFinalHook{Name: spec.Name, Hook: runtime.ObserveFinalHook(named)})
+		purpose := "state"
+		if spec.Type == config.HookTypeKAC {
+			purpose = "action"
+		}
+		named := lifecycle.NamedFinalHook{Name: spec.Name, Hook: hook, Purpose: purpose}
+		hooks = append(hooks, lifecycle.NamedFinalHook{Name: spec.Name, Hook: runtime.ObserveFinalHook(named), Purpose: purpose})
 	}
 	return hooks, closeAll, nil
 }

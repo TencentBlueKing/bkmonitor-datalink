@@ -1,11 +1,11 @@
 # EventSource
 
 EventSource 是由控制面管理并持久化发布的来源配置。Record/Release 兼容 ES/MySQL，运行时按固定 Release
-创建 Cleaner/Lifecycle Flow；配置和调度详见[动态来源设计](../design/event-source-dynamic-configuration.md)。
+创建对应的 Cleaner/Lifecycle Flow；内部合并来源只创建 Lifecycle。配置和调度详见[动态来源设计](../design/event-source-dynamic-configuration.md)。
 
 ## 1. 职责
 
-一条 EventSource 同时决定：
+普通 Kafka EventSource 同时决定：
 
 - `event_source_id`：写入所有 Event 和 Alert 的稳定来源身份；
 - Event 归属租户来自消息，还是被 `related_tenant_id` 强制覆盖；
@@ -21,7 +21,7 @@ EventSource 不负责 Alert 状态裁决、Event/Alert 持久化实现或 Lifecy
 KAC 新建告警源时只生成 `linkd_source_id` 和 `linkd_channel.config.topic`，不会自动向 Linkd 发布 EventSource。
 要启用消费，需通过 Linkd 控制面 API 或配置导入发布 EventSource，令 `event_source_id` 等于
 `linkd_source_id`，`storage.kafka.topic` 等于 `linkd_channel.config.topic`，并配置 brokers、consumer_group
-等必填项。运行时先按发布的 EventSource 订阅 Kafka；`source` 丰富处理器在生成 Alert 后才按租户与
+等必填项。运行时先按发布的 EventSource 订阅 Kafka；`source` 丰富处理器在 Event 策略判定前按租户与
 `event_source_id` 回查 KAC 告警源，读取其原始 `id` 和名称。该回查不负责创建或更新 Kafka 订阅。
 
 ## 2. 配置模型
@@ -38,12 +38,12 @@ KAC 新建告警源时只生成 `linkd_source_id` 和 `linkd_channel.config.topi
 | `fingerprint_fields` | fields 模式 1–32 项                      | 多字段按路径排序后计算 SHA-256                  |
 | `severity_mapping`   | 来源值 → 已定义 Severity name            | 来源等级映射                                    |
 | `default_severity`   | 已定义 Severity name                     | 来源值无法映射为标准 name 时的兜底              |
-| `hooks` | 可选有序列表，最多 16 项，name 唯一 | 来源发布中的输出插件；空列表不输出，详见 [Lifecycle](lifecycle.md#23-enricher-与-finalhook) |
-| `enrich.processors`  | 有序且 type 不重复                       | 创建新 Alert 时执行的丰富处理链                 |
-| `storage.type`       | 当前必须为 `kafka`                       | 当前字段名表示输入 MQ 类型                      |
+| `hooks` | 可选有序列表，最多 16 项，name 唯一 | 来源发布中的输出插件；空列表不输出，详见 [Lifecycle](lifecycle.md#24-enricher-与-finalhook) |
+| `enrich.processors`  | 有序且 type 不重复                       | 每条 Event 在策略前执行的丰富链                 |
+| `storage.type`       | `kafka/internal_merge`                       | 外部订阅或系统内部合并输入                      |
 | `storage.kafka`      | brokers/topic/consumer_group/security    | Kafka subscription 与认证配置                   |
 
-当前文件配置要求每条 EventSource 都提供 storage，包括 disabled 来源。相同标准化 brokers、topic 和
+当前文件配置要求每条 EventSource 都提供 storage，包括 disabled 来源；只有 kafka 类型要求 storage.kafka。相同标准化 brokers、topic 和
 consumer_group 的 subscription 不允许在两个 EventSource 中重复，避免同一消费责任被重复装配。
 
 来源的 enrich 只保存处理链和规则。外部连接使用进程顶层 `resources.mysql`、`resources.onemodel`、
@@ -52,6 +52,39 @@ Lifecycle 为当前 Chain 按需建立连接，任务退出时关闭。处理规
 公共资源变化需要重启控制面和 Lifecycle。旧 `enrich.datasources` 配置入口已移除。
 
 完整 YAML 示例和 Cleaner 默认预算见[配置指南](../guides/configuration.md)。
+
+### KAC 全局插件
+
+KAC 兼容存储和处置通知统一由部署级 `plugins.kac` 启用。所有来源、所有租户以及
+`builtin_alarm_merge` 自动生效；EventSource 不保存 KAC 连接、Token、目标或启用开关。
+`kac_targets`、`resources.kac_delivery` 和 `projection_endpoint` 已移除，旧配置明确报错。
+
+Lifecycle 创建 Alert 时绑定固定插件目标 `kac`，同时启用状态同步和获准动作。
+目标的 `source_version` 只记录 opening Event 的来源版本，不再用于解析地址或凭据；
+来源改版不会改变既有任务的业务快照或处置资格。冻结计划重试不重新选择目标。
+
+全局插件直接维护 KAC 原 `alarm_event` 索引，兼容存储与处置通知共用同一租户/Alert/目标锁空间。
+普通状态 Hook 可并存；Alert 已绑定可靠动作时，旧 `type: kac` Kafka Hook 跳过输出，不进行故障回退。
+不设计首次启用时的 Alert 回填、旧目标迁移或切换流程。
+
+配置见[全局 KAC 插件](../guides/configuration.md#kac-全局插件配置)，可靠性见
+[兼容存储 V1](../reference/contracts/kac-alert-projection-v1.md)及
+[动作投递 V1](../reference/contracts/kac-action-delivery-v1.md)。
+
+### 内部合并来源
+
+`storage.type=internal_merge` 只允许保留 ID `builtin_alarm_merge`；普通 Kafka 来源不能占用该 ID。
+该类型禁止 Kafka、Cleaner、指纹选择器和 severity mapping，Cleaner 副本规范化为 0，不探测 Kafka
+元数据。Lifecycle 仍使用正常的来源 Release、Mailbox、租约和输出配置，默认 Enrich/Hook 为空。
+
+`EnsureMergeSource` 仅在不存在时创建发布，保留用户后续配置、停用与删除。配置 Lifecycle 的控制面
+在调度历史检查和首次初始化成功后调用它；已有来源而 Redis 调度历史丢失时，仍须显式停机初始化，
+不能借自动创建内置来源绕过该保护。内部 Event 的 `merge_origin`
+属于不可变事实，必须引用固定裁决；外部 EventFactory 不接受内部来源。Console 隐藏不适用的
+Kafka/Cleaner 表单，只编辑 Lifecycle 与该来源自己的 Enrich/Hook。
+
+下面第 3、4 节的外部映射规则仅适用于 Kafka 来源；内部合并身份和模板遵循
+[合并开发方案](../design/event-enrich-and-alarm-policies.md#83-成功后的主告警与父子关系)。
 
 ## 3. Fingerprint
 

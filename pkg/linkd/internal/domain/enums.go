@@ -116,6 +116,13 @@ func (k OperatorKind) Valid() bool {
 type OperationKind string
 
 const (
+	OperationKindMergeWait      OperationKind = "merge_wait"
+	OperationKindMerge          OperationKind = "merge"
+	OperationKindMergeEnd       OperationKind = "merge_end"
+	OperationKindMergeRelease   OperationKind = "merge_release"
+	OperationKindShield         OperationKind = "shield"
+	OperationKindUnshield       OperationKind = "unshield"
+	OperationKindAdmit          OperationKind = "admit"
 	OperationKindSeverityChange OperationKind = "severity_change"
 	OperationKindTrigger        OperationKind = "trigger"
 	OperationKindRecover        OperationKind = "recover"
@@ -126,7 +133,7 @@ const (
 
 func (k OperationKind) Valid() bool {
 	switch k {
-	case OperationKindSeverityChange, OperationKindTrigger, OperationKindRecover, OperationKindClose, OperationKindSuppress, OperationKindPush:
+	case OperationKindMergeWait, OperationKindMergeEnd, OperationKindMerge, OperationKindMergeRelease, OperationKindShield, OperationKindUnshield, OperationKindAdmit, OperationKindSeverityChange, OperationKindTrigger, OperationKindRecover, OperationKindClose, OperationKindSuppress, OperationKindPush:
 		return true
 	default:
 		return false

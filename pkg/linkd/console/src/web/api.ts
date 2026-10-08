@@ -1,3 +1,19 @@
+import {
+  deliveryMetricQuery,
+  deliveryMetricKindSchema,
+  deliveryMetricIDs,
+  type DeliveryMetricKind,
+  type DeliveryMetricQuery,
+} from "../shared/delivery-metrics";
+import {
+  policyPageSchema,
+  policyRecordSchema,
+  policyReleaseSchema,
+  policyPreviewSchema,
+  type PolicyKind,
+  type PolicyListQuery,
+  type PolicyPreviewRequest,
+} from "../shared/policies";
 import { metricCatalogSchema } from "../shared/metric-catalog";
 import { consoleURL } from "./base-path";
 import {
@@ -110,6 +126,27 @@ export async function getCapabilities(): Promise<Capabilities> {
   return capabilitySchema.parse(await request("/local-api/capabilities"));
 }
 
+export async function getPolicyLink(
+  query: import("../shared/policy-links").PolicyLinkQuery,
+  signal?: AbortSignal,
+) {
+  const { policyLinkSchema, policyLinkQuerySchema } =
+    await import("../shared/policy-links");
+  const input = policyLinkQuerySchema.parse(query);
+  const params = new URLSearchParams(
+    Object.entries(input).filter(([, v]) => v !== undefined) as [
+      string,
+      string,
+    ][],
+  );
+  const result = policyLinkSchema.parse(
+    await request("/local-api/policy-links?" + params, signal),
+  );
+  if (result.bk_tenant_id !== input.bk_tenant_id || result.type !== input.type)
+    throw new Error("配置入口作用域不一致");
+  return result;
+}
+
 export async function getMetrics(input: {
   from: Date;
   to: Date;
@@ -137,6 +174,32 @@ export async function getMetrics(input: {
   return metricsResponseSchema.parse(
     await request(`/local-api/metrics?${query}`),
   );
+}
+
+export async function getDeliveryMetrics(
+  kind: DeliveryMetricKind,
+  input: DeliveryMetricQuery,
+  signal?: AbortSignal,
+): Promise<MetricsResponse> {
+  deliveryMetricKindSchema.parse(kind);
+  const ids = deliveryMetricIDs[kind];
+  const subject = kind === "action" ? "动作" : "投影";
+  const query = deliveryMetricQuery.parse(input);
+  const params = new URLSearchParams(
+    Object.entries(query).map(([k, v]) => [k, String(v)]),
+  );
+  const data = metricsResponseSchema.parse(
+    await request(`/local-api/${kind}-metrics?${params}`, signal),
+  );
+  if (
+    Date.parse(data.from) !== Date.parse(query.from) ||
+    Date.parse(data.to) !== Date.parse(query.to) ||
+    data.step !== query.step ||
+    data.panels.length !== ids.length ||
+    ids.some((id) => data.panels.filter((p) => p.id === id).length !== 1)
+  )
+    throw new Error(`${subject}指标响应与查询范围不一致`);
+  return data;
 }
 
 export async function getRuntimeProcesses(): Promise<RuntimeResponse> {
@@ -316,4 +379,492 @@ export async function getMetricCatalog({
   return metricCatalogSchema.parse(
     await request("/local-api/metrics/catalog", signal),
   );
+}
+
+export async function listMergeRuntime(
+  query: import("../shared/merge-runtime").MergeQuery,
+  signal?: AbortSignal,
+) {
+  const { mergePage } = await import("../shared/merge-runtime");
+  const params = new URLSearchParams(
+    Object.entries(query)
+      .filter(([, v]) => v !== undefined)
+      .map(([k, v]) => [k, String(v)]),
+  );
+  return mergePage(query.resource).parse(
+    await request("/local-api/policy-runtime/merge?" + params, signal),
+  );
+}
+export async function getMergeRuntime(
+  tenant: string,
+  resource: import("../shared/merge-runtime").MergeResource,
+  id: string,
+  signal?: AbortSignal,
+) {
+  const { mergeRow } = await import("../shared/merge-runtime");
+  return mergeRow(resource).parse(
+    await request(
+      "/local-api/policy-runtime/merge/" +
+        resource +
+        "/" +
+        encodeURIComponent(id) +
+        "?" +
+        new URLSearchParams({ bk_tenant_id: tenant }),
+      signal,
+    ),
+  );
+}
+export async function getMergeMembers(
+  tenant: string,
+  id: string,
+  after: string,
+  signal?: AbortSignal,
+) {
+  const { mergeSnapshotPage } = await import("../shared/merge-runtime");
+  return mergeSnapshotPage.parse(
+    await request(
+      "/local-api/policy-runtime/merge/decisions/" +
+        encodeURIComponent(id) +
+        "/members?" +
+        new URLSearchParams({ bk_tenant_id: tenant, after }),
+      signal,
+    ),
+  );
+}
+
+export async function getMergeSnapshot(
+  tenant: string,
+  id: string,
+  alert: string,
+  signal?: AbortSignal,
+) {
+  const { frozenMergeSnapshot } = await import("../shared/merge-runtime");
+  return frozenMergeSnapshot.parse(
+    await request(
+      "/local-api/policy-runtime/merge/decisions/" +
+        encodeURIComponent(id) +
+        "/members/" +
+        encodeURIComponent(alert) +
+        "?" +
+        new URLSearchParams({ bk_tenant_id: tenant }),
+      signal,
+    ),
+  );
+}
+
+export async function listShieldRuntime(
+  query: import("../shared/shield-runtime").ShieldQuery,
+  signal?: AbortSignal,
+) {
+  const { shieldPage } = await import("../shared/shield-runtime");
+  const params = new URLSearchParams(
+    Object.entries(query)
+      .filter(([, v]) => v !== undefined)
+      .map(([k, v]) => [k, String(v)]),
+  );
+  return shieldPage.parse(
+    await request("/local-api/policy-runtime/shield/alerts?" + params, signal),
+  );
+}
+
+export async function listSuppressionRuntime(
+  kind: import("../shared/suppression-runtime").SuppressionKind,
+  query: import("../shared/suppression-runtime").SuppressionQuery,
+  signal?: AbortSignal,
+) {
+  const { suppressionPage } = await import("../shared/suppression-runtime");
+  const params = new URLSearchParams(
+    Object.entries(query)
+      .filter(([, v]) => v !== undefined)
+      .map(([k, v]) => [k, String(v)]),
+  );
+  return suppressionPage.parse(
+    await request(
+      "/local-api/policy-runtime/suppression/" + kind + "?" + params,
+      signal,
+    ),
+  );
+}
+export async function getSuppressionRuntime(
+  tenant: string,
+  kind: import("../shared/suppression-runtime").SuppressionKind,
+  id: string,
+  signal?: AbortSignal,
+) {
+  const { suppressionWindow } = await import("../shared/suppression-runtime");
+  return suppressionWindow.parse(
+    await request(
+      "/local-api/policy-runtime/suppression/" +
+        kind +
+        "/" +
+        encodeURIComponent(id) +
+        "?" +
+        new URLSearchParams({ bk_tenant_id: tenant }),
+      signal,
+    ),
+  );
+}
+export async function getSuppressionMembers(
+  tenant: string,
+  kind: import("../shared/suppression-runtime").SuppressionKind,
+  id: string,
+  epoch: string,
+  after: string,
+  signal?: AbortSignal,
+) {
+  const { suppressionMembers } = await import("../shared/suppression-runtime");
+  return suppressionMembers.parse(
+    await request(
+      "/local-api/policy-runtime/suppression/" +
+        kind +
+        "/" +
+        encodeURIComponent(id) +
+        "/members?" +
+        new URLSearchParams({ bk_tenant_id: tenant, epoch, after }),
+      signal,
+    ),
+  );
+}
+export async function getShieldRuntime(
+  tenant: string,
+  id: string,
+  signal?: AbortSignal,
+) {
+  const { shieldRecord } = await import("../shared/shield-runtime");
+  return shieldRecord.parse(
+    await request(
+      "/local-api/policy-runtime/shield/alerts/" +
+        encodeURIComponent(id) +
+        "?" +
+        new URLSearchParams({ bk_tenant_id: tenant }),
+      signal,
+    ),
+  );
+}
+export async function getShieldHistory(
+  tenant: string,
+  id: string,
+  after: string,
+  signal?: AbortSignal,
+) {
+  const { shieldHistory } = await import("../shared/shield-runtime");
+  return shieldHistory.parse(
+    await request(
+      "/local-api/policy-runtime/shield/alerts/" +
+        encodeURIComponent(id) +
+        "/history?" +
+        new URLSearchParams({ bk_tenant_id: tenant, after }),
+      signal,
+    ),
+  );
+}
+
+export async function listPolicies(
+  query: PolicyListQuery,
+  signal?: AbortSignal,
+) {
+  const params = new URLSearchParams({
+    bk_tenant_id: query.bk_tenant_id,
+    type: query.type,
+    after: query.after,
+    limit: String(query.limit),
+  });
+  if (query.is_enable !== undefined) params.set("is_enable", query.is_enable);
+  return policyPageSchema.parse(
+    await request("/local-api/policies?" + params, signal),
+  );
+}
+export async function getPolicy(
+  tenant: string,
+  type: PolicyKind,
+  id: string,
+  signal?: AbortSignal,
+) {
+  return policyRecordSchema.parse(
+    await request(
+      "/local-api/policies/" +
+        type +
+        "/" +
+        encodeURIComponent(id) +
+        "?" +
+        new URLSearchParams({ bk_tenant_id: tenant }),
+      signal,
+    ),
+  );
+}
+export async function getPolicyRelease(
+  tenant: string,
+  type: PolicyKind,
+  id: string,
+  version: number,
+  signal?: AbortSignal,
+) {
+  return policyReleaseSchema.parse(
+    await request(
+      "/local-api/policies/" +
+        type +
+        "/" +
+        encodeURIComponent(id) +
+        "/releases/" +
+        version +
+        "?" +
+        new URLSearchParams({ bk_tenant_id: tenant }),
+      signal,
+    ),
+  );
+}
+export async function previewPolicy(
+  body: PolicyPreviewRequest,
+  signal?: AbortSignal,
+) {
+  return policyPreviewSchema.parse(
+    await request("/local-api/policies/preview", signal, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  );
+}
+
+export async function getShieldCheck(
+  tenant: string,
+  id: string,
+  signal?: AbortSignal,
+) {
+  const { shieldLatestCheck } = await import("../shared/shield-checks");
+  return shieldLatestCheck.parse(
+    await request(
+      "/local-api/policy-runtime/shield/alerts/" +
+        encodeURIComponent(id) +
+        "/check?" +
+        new URLSearchParams({ bk_tenant_id: tenant }),
+      signal,
+    ),
+  );
+}
+export async function listShieldRequests(
+  tenant: string,
+  id: string,
+  after: string,
+  signal?: AbortSignal,
+) {
+  const { shieldCheckRequests } = await import("../shared/shield-checks");
+  return shieldCheckRequests.parse(
+    await request(
+      "/local-api/policy-runtime/shield/alerts/" +
+        encodeURIComponent(id) +
+        "/requests?" +
+        new URLSearchParams({ bk_tenant_id: tenant, after }),
+      signal,
+    ),
+  );
+}
+export async function getShieldRequest(
+  tenant: string,
+  id: string,
+  requestID: string,
+  signal?: AbortSignal,
+) {
+  const { shieldCheckRequest } = await import("../shared/shield-checks");
+  return shieldCheckRequest.parse(
+    await request(
+      "/local-api/policy-runtime/shield/alerts/" +
+        encodeURIComponent(id) +
+        "/requests/" +
+        requestID +
+        "?" +
+        new URLSearchParams({ bk_tenant_id: tenant }),
+      signal,
+    ),
+  );
+}
+
+export async function listProjectionTasks(
+  query: import("../shared/projection-tasks").ProjectionQuery,
+  signal?: AbortSignal,
+) {
+  const { projectionPage } = await import("../shared/projection-tasks");
+  return projectionPage.parse(
+    await request(
+      "/local-api/projection-tasks?" +
+        new URLSearchParams(
+          Object.entries(query)
+            .filter(([, v]) => v !== undefined)
+            .map(([k, v]) => [k, String(v)]),
+        ),
+      signal,
+    ),
+  );
+}
+export async function getProjectionTask(
+  tenant: string,
+  id: string,
+  signal?: AbortSignal,
+) {
+  const { projectionTask } = await import("../shared/projection-tasks");
+  return projectionTask.parse(
+    await request(
+      "/local-api/projection-tasks/" +
+        id +
+        "?" +
+        new URLSearchParams({ bk_tenant_id: tenant }),
+      signal,
+    ),
+  );
+}
+export async function getProjectionSnapshot(
+  tenant: string,
+  id: string,
+  signal?: AbortSignal,
+) {
+  const { projectionSnapshot } = await import("../shared/projection-tasks");
+  return projectionSnapshot.parse(
+    await request(
+      "/local-api/projection-tasks/" +
+        id +
+        "/snapshot?" +
+        new URLSearchParams({ bk_tenant_id: tenant }),
+      signal,
+    ),
+  );
+}
+
+export async function listActionDeliveries(
+  query: import("../shared/action-deliveries").ActionQuery,
+  signal?: AbortSignal,
+) {
+  const { actionPage } = await import("../shared/action-deliveries");
+  return actionPage.parse(
+    await request(
+      "/local-api/action-deliveries?" +
+        new URLSearchParams(
+          Object.entries(query)
+            .filter(([, v]) => v !== undefined)
+            .map(([k, v]) => [k, String(v)]),
+        ),
+      signal,
+    ),
+  );
+}
+export async function getActionDelivery(
+  tenant: string,
+  id: string,
+  signal?: AbortSignal,
+) {
+  const { actionDelivery } = await import("../shared/action-deliveries");
+  return actionDelivery.parse(
+    await request(
+      "/local-api/action-deliveries/" +
+        id +
+        "?" +
+        new URLSearchParams({ bk_tenant_id: tenant }),
+      signal,
+    ),
+  );
+}
+export async function getActionSnapshot(
+  tenant: string,
+  id: string,
+  signal?: AbortSignal,
+) {
+  const { actionSnapshot } = await import("../shared/action-deliveries");
+  return actionSnapshot.parse(
+    await request(
+      "/local-api/action-deliveries/" +
+        id +
+        "/snapshot?" +
+        new URLSearchParams({ bk_tenant_id: tenant }),
+      signal,
+    ),
+  );
+}
+
+export async function getActionOrder(
+  tenant: string,
+  id: string,
+  signal?: AbortSignal,
+) {
+  const { actionOrder } = await import("../shared/action-deliveries");
+  return actionOrder.parse(
+    await request(
+      "/local-api/action-deliveries/" +
+        id +
+        "/order?" +
+        new URLSearchParams({ bk_tenant_id: tenant }),
+      signal,
+    ),
+  );
+}
+
+export async function getKACAlertLink(
+  query: { bk_tenant_id: string; alarm_id: string },
+  signal?: AbortSignal,
+) {
+  const { kacAlertLinkQuery, kacAlertLinkResponse } =
+    await import("../shared/kac-alert-link");
+  const input = kacAlertLinkQuery.parse(query);
+  const result = kacAlertLinkResponse.parse(
+    await request(
+      "/local-api/kac-alert-link?" + new URLSearchParams(input),
+      signal,
+    ),
+  );
+  if (
+    result.bk_tenant_id !== input.bk_tenant_id ||
+    result.alarm_id !== input.alarm_id
+  )
+    throw new Error("告警入口作用域不一致");
+  return result;
+}
+
+export async function simulatePolicy(
+  input: import("../shared/policy-simulation").SimulationRequest,
+  signal?: AbortSignal,
+) {
+  const { simulationRequestSchema, simulationResponseSchema } =
+    await import("../shared/policy-simulation");
+  const q = simulationRequestSchema.parse(input);
+  const r = simulationResponseSchema.parse(
+    await request("/local-api/policies/simulate", signal, {
+      method: "POST",
+      body: JSON.stringify(q),
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  if (
+    r.bk_tenant_id !== q.bk_tenant_id ||
+    r.type !== q.type ||
+    r.id !== (q.spec ? "preview" : q.id) ||
+    r.version !== (q.spec ? 0 : q.version)
+  )
+    throw new Error("模拟作用域不一致");
+  return r;
+}
+export async function getPolicyStatistics(
+  input: import("../shared/policy-simulation").StatisticsQuery,
+  signal?: AbortSignal,
+) {
+  const { statisticsQuerySchema, statisticsResponseSchema } =
+    await import("../shared/policy-simulation");
+  const q = statisticsQuerySchema.parse(input);
+  const r = statisticsResponseSchema.parse(
+    await request(
+      "/local-api/policies/statistics?" +
+        new URLSearchParams({
+          bk_tenant_id: q.bk_tenant_id,
+          type: q.type,
+          ids: q.ids.join(","),
+          hours: String(q.hours),
+        }),
+      signal,
+    ),
+  );
+  if (
+    r.bk_tenant_id !== q.bk_tenant_id ||
+    r.type !== q.type ||
+    r.hours !== q.hours ||
+    r.items.length !== q.ids.length ||
+    r.items.some((v, i) => v.id !== q.ids[i])
+  )
+    throw new Error("统计作用域不一致");
+  return r;
 }

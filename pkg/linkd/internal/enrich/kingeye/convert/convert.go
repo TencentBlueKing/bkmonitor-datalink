@@ -182,7 +182,7 @@ func (c converter) source(field string) (custom.Value, error) {
 	if err != nil {
 		return custom.Value{}, err
 	}
-	return custom.Value{JSONPath: "$.alert" + strings.TrimPrefix(path, "$")}, nil
+	return custom.Value{JSONPath: "$.event" + strings.TrimPrefix(path, "$")}, nil
 }
 
 var variables = regexp.MustCompile(`\$\{([^}]+)\}|\$([0-9]+)`)
@@ -295,7 +295,7 @@ func (c converter) normal(raw json.RawMessage, id string) (custom.Rule, error) {
 					return rule, err
 				}
 				for _, v := range value.Variables {
-					if strings.HasPrefix(v.JSONPath, "$.alert") {
+					if strings.HasPrefix(v.JSONPath, "$.event") {
 						return rule, fmt.Errorf("extract field references alert state; split dependent assignments manually")
 					}
 				}

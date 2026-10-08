@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	redis "github.com/redis/go-redis/v9"
+	"linkd/internal/config"
 	"linkd/internal/eventsource"
 )
 
@@ -382,6 +383,9 @@ func (c *Controller) tick(ctx context.Context) (runErr error) {
 		return a.Attempt.Before(b.Attempt)
 	})
 	for _, rel := range probes {
+		if rel.Spec.Storage.Type == config.StorageTypeInternalMerge {
+			continue
+		}
 		previous := snapshot.Metadata[rel.ID]
 		if previous.Digest == digest(rel.Spec.Storage) && now.Sub(previous.Attempt) < 30*time.Second {
 			continue

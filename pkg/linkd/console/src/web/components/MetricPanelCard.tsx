@@ -50,9 +50,11 @@ const metricHelp: Record<string, string> = {
 export function MetricPanelCard({
   panel,
   className = "",
+  range,
 }: {
   panel: MetricPanel;
   className?: string;
+  range?: { from: string; to: string };
 }) {
   const help =
     panel.description ??
@@ -72,7 +74,7 @@ export function MetricPanelCard({
           {panel.status === "available" ? "DATA" : "NO DATA"}
         </span>
       </header>
-      <MetricChart panel={panel} />
+      <MetricChart panel={panel} range={range} />
     </article>
   );
 }

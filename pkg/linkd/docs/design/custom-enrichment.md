@@ -1,6 +1,6 @@
 # Linkd 自定义丰富开发规格
 
-日期：2026-09-22。状态：已确认开发目标；实现进度见文末。
+日期：2026-09-30。状态：已确认开发目标；实现进度见文末。
 
 本文是 CMDB/常规丰富、补丁、配置转换和执行预览的权威规格。代码职责与依赖边界见[包结构](package-structure.md)。已有业务场景见
 [Enrich 设计](enrich.md)，KAC 源码事实见[源码调研](../research/2026-09-22-kingeye-alarm-source-enrichment.md)。
@@ -12,10 +12,10 @@
 2. 自定义丰富只需一个 cmdb Processor、一个 fields Processor，各自包含多条 rules。
 3. 原始 Alert/Event 不修改；enrich 记录各 Processor 的有序 JSONPath 补丁，读取时动态合成。
 4. 不保存最终 values，不把 enrich 当成另一份业务数据空间。
-5. 正式执行仅在新建 Alert 时发生；普通更新、update_current 升级、恢复和关闭沿用已保存结果。
+5. 每条不同 Event 在裁决前执行并冻结；多等级共享查询、结果独立。Alert 固定复制 opening Event 的选中等级结果。
 6. 处理规则随 EventSource Release 动态发布；连接来自顶层 resources 启动配置，API/YAML/Provider 共用校验。
 7. 新建独立内部 OneModel SDK，第一版读 ES，接口支持后续替换后端。
-8. 提供不保存的 API 预览，支持 Alert ID 和 Alert JSON；Console 提供专用调试页。
+8. 提供不保存的 API 预览，支持 Event ID 和 Event JSON；Console 提供专用调试页。
 9. 暂不读取 Kingeye 丰富配置表；离线转换器供后续同步复用，不自动发布。
 
 ## 2. 输入与字段边界
@@ -24,8 +24,9 @@
 
 | 根节点 | 语义 |
 |---|---|
-| $.original | 原始 Alert 的隔离副本，排除历史 enrich，始终只读 |
-| $.alert | 原始 Alert 应用本次前序成功补丁后的当前视图 |
+| $.original | 原始 Event 的隔离副本，排除历史 enrich，始终只读 |
+| $.event | 原始 Event 应用本次前序成功补丁后的当前视图 |
+| $.evaluation | 当前等级的 severity/action/action_reason，只读，不隐式选取其他等级 |
 | $.lookup | 当前 CMDB 规则的查询结果，规则之间不残留上次结果 |
 | $.extraction | 当前提取操作的结果，操作间不共享，不默认持久化 |
 
@@ -104,11 +105,11 @@ enrich:
                   - field: attributes.bk_host_innerip
                     type: keyword
                     operator: eq
-                    value: {jsonpath: $.alert.labels.ip}
+                    value: {jsonpath: $.event.labels.ip}
                   - field: attributes.bk_cloud_id
                     type: long
                     operator: eq
-                    value: {jsonpath: $.alert.labels.bk_cloud_id}
+                    value: {jsonpath: $.event.labels.bk_cloud_id}
             assignments:
               - target: $.labels.business
                 value: {jsonpath: $.lookup.attributes.bk_biz_name}
@@ -120,13 +121,13 @@ enrich:
           - id: normalize
             when:
               all:
-                - left: {jsonpath: $.alert.content}
+                - left: {jsonpath: $.event.content}
                   operator: contains
                   right: {literal: 'IP='}
             operations:
               - id: extract_ip
                 type: extract
-                source: {jsonpath: $.alert.content}
+                source: {jsonpath: $.event.content}
                 pattern: 'IP=([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+)'
                 assignments:
                   - target: $.labels.extracted_ip
@@ -144,8 +145,8 @@ enrich:
                     value:
                       template: '[${ip}] ${content}'
                       variables:
-                        ip: {jsonpath: $.alert.labels.extracted_ip}
-                        content: {jsonpath: $.alert.content}
+                        ip: {jsonpath: $.event.labels.extracted_ip}
+                        content: {jsonpath: $.event.content}
           - id: business_labels
             operations:
               - id: assign_strategy
@@ -182,7 +183,7 @@ one 的零命中为 skipped，多命中为冲突；many 返回有界列表，超
 relations 描述有序关联读取，每项含 id/from/relation/direction/model_id/expect/where；from 只能引用主实例或
 之前结果，不允许前向引用。关联结果放入 $.lookup.relations.<id>，中间节点要求唯一，末节点可以多实例。
 主实例为 cw-Host 且 expect: one 时可配置 `topology: true`，结果位于 `$.lookup.topology`。
-业务、集群、模块赋值仍须在 assignments 中显式声明；用 `$.alert.labels.bk_biz_id` 加
+业务、集群、模块赋值仍须在 assignments 中显式声明；用 `$.event.labels.bk_biz_id` 加
 `default: {jsonpath: $.lookup.topology.bk_biz_id}` 只补缺失值，不隐式改写已有值。
 展示转换覆盖枚举、单位、时间、用户、组织、云区域。
 先逐个转换再合并，保留原始类型；组织 ID 使用完整值，不复制旧代码取首字符行为。
@@ -214,8 +215,8 @@ KAC Hook 读取合成视图，保持 monitor_template_id→KAC strategy_id 等�
 禁止覆盖协议身份/租户/动作/级别。策略索引使用合成后的 labels.strategy_id，不用原始字段提前过滤候选告警。
 原始数据查询仍返回原值及补丁，不额外持久化有效值。
 
-内置 strategy/resource/display 等仍从原始 Alert 识别其场景和查询身份，并共享现有类型化上下文，
-避免资源输出的业务标签改变旧场景查找条件。自定义 cmdb/fields 的 `$.alert` 读取前序全部成功补丁。
+内置 strategy/resource/display 等仍从原始 Event 识别其场景和查询身份，并共享现有类型化上下文，
+避免资源输出的业务标签改变旧场景查找条件。自定义 cmdb/fields 的 `$.event` 读取前序全部成功补丁。
 推荐顺序为已有内置处理器 → cmdb → fields；需要前序结果的自定义逻辑放在后面。
 
 策略索引和 Console 对账读取身份、原始策略标签及 enrich，按租户/来源限制候选集后再计算策略归属。
@@ -227,28 +228,28 @@ POST /api/v1/enrich/preview，使用现有管理 API 鉴权。
 
 ```json
 {"bk_tenant_id":"tenant-a","event_source_id":"host-alerts",
- "input":{"alert_id":"existing-alert-id"},"enrich":{"processors":[]}}
+ "input":{"event_id":"existing-event-id"},"enrich":{"processors":[]}}
 ```
 
-input.alert_id 与 input.alert 二选一；直接 JSON 支持完整 Alert 或只包含丰富输入的对象：
+input.event_id 与 input.event 二选一；直接 JSON 支持完整 Event 或只包含丰富输入的对象：
 
 ```json
 {"bk_tenant_id":"tenant-a","event_source_id":"host-alerts",
- "input":{"alert":{"title":"CPU","content":"IP=10.0.0.8","labels":{"bk_cloud_id":0}}},
+ "input":{"event":{"title":"CPU","content":"IP=10.0.0.8","labels":{"bk_cloud_id":0},"evaluations":[{"severity":"warning","action":"triggered"}]}},
  "enrich":{"processors":[]}}
 ```
 
-ID 模式按租户读取并核对来源；JSON 模式不要求入库，不伪造业务 ID、时间或状态。输入内租户/来源若存在必须一致。
+ID 模式按租户读取并核对来源；JSON 模式要求显式 evaluations，不要求入库，不伪造业务 ID、时间或状态。输入内租户/来源若存在必须一致。
 未提交 enrich 使用当前已发布来源规则；临时 enrich 只包含 processors。正式执行和预览都使用顶层 resources，不能在预览请求中覆盖连接。
 请求固定 Release，响应给实际版本和排除凭据后的配置摘要。清除历史 enrich 后重跑；旧结果仅作差异对比。
 查询当前 CMDB 数据，不承诺历史 as-of 重放。
 
-响应包括 original、enrich_status、enrich、effective_alert、changes、previous_changes 和 trace。
-不保存 Alert、AlertLog、配置或预览记录，不更新策略索引、不调用 Hook、不初始化 schema。
+响应包括 original、enrich_status、enrich 和 evaluations；每个 evaluation 返回 severity、action、effective_event、changes、previous_changes 和 trace。
+不保存 Event、Alert、AlertLog、配置或预览记录，不更新策略索引、不调用 Hook、不初始化 schema。
 错误：输入 400，配置 422，未找到 404，繁忙 429，超时 504；规则运行失败作为 200 的执行结果返回。
 
 Console “丰富调试”页面：ID/JSON 两模式，租户/来源选择，JSON/YAML 配置编辑，加载来源配置，执行，
-原始与合成结果、字段差异、规则/操作详情；支持从 Alert 详情带 ID 跳转。编辑只保存在页面内存，不隐式发布。
+原始与合成结果、字段差异、规则/操作详情；支持从 Event 详情带 Event ID 跳转；Alert 详情使用 opening Event ID 跳转。编辑只保存在页面内存，不隐式发布。
 所有管理调用经 Console 服务端代理，token 和数据源凭据不下发浏览器。
 
 ## 8. Kingeye 离线转换

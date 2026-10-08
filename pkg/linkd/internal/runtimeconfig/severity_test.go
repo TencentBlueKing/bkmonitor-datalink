@@ -46,3 +46,30 @@ func TestAtomicSeveritySnapshotsAreIsolatedAndValidated(t *testing.T) {
 	}
 	group.Wait()
 }
+
+func TestKACLevelUsesFrozenDefaultOrNativeNames(t *testing.T) {
+	state := NewSeverity(config.DefaultSeverityConfig())
+	before := state.SeveritySnapshot()
+	if level, err := before.KACLevel("critical"); err != nil || level != "fatal" {
+		t.Fatalf("default %q %v", level, err)
+	}
+	next := before
+	next.Digest = ""
+	next.NativeNames = true
+	if err := state.Install(next); err != nil {
+		t.Fatal(err)
+	}
+	if level, err := state.SeveritySnapshot().KACLevel("critical"); err != nil || level != "critical" {
+		t.Fatalf("native %q %v", level, err)
+	}
+	if level, err := before.KACLevel("critical"); err != nil || level != "fatal" {
+		t.Fatal("earlier snapshot changed mapping")
+	}
+	if _, err := state.SeveritySnapshot().KACLevel("unknown"); err == nil {
+		t.Fatal("unknown severity accepted")
+	}
+	custom := NewSeverity(config.SeverityConfig{DefaultSeverity: "severe", Levels: []config.SeverityLevel{{Name: "severe", Priority: 1}}})
+	if level, err := custom.SeveritySnapshot().KACLevel("severe"); err != nil || level != "severe" {
+		t.Fatalf("custom %q %v", level, err)
+	}
+}

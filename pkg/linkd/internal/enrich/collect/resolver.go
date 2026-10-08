@@ -93,7 +93,7 @@ func resolve(
 	scope *enrich.Scope,
 	dimensions domain.DimensionMap,
 ) (Resolution, error) {
-	resolution := Resolution{tenantID: scope.Alert().BKTenantID}
+	resolution := Resolution{tenantID: scope.Event().BKTenantID}
 	task, exists := dimensions[rules.FieldBKCollectConfigID]
 	resolution.taskIdentity, resolution.taskInputState = collectTaskIdentity(task, exists)
 	if resolution.taskInputState != taskInputValid {

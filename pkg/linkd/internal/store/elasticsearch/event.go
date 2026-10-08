@@ -337,7 +337,7 @@ func (r *Repository) GetEvent(
 }
 
 // GetLifecycleEvent realtime 读取 Lifecycle 所需的 Event 投影。
-// source_raw_data 只用于保留原始输入，Lifecycle 决策和输出不消费该字段。
+// Event Enrich 可读取来源原始字段，Lifecycle 读取必须包含完整来源事实。
 func (r *Repository) GetLifecycleEvent(
 	ctx context.Context,
 	bkTenantID, eventID string,
@@ -977,7 +977,7 @@ func (r *Repository) getLifecycleEventFromTarget(
 	ctx context.Context,
 	target, bkTenantID, eventID string,
 ) (store.StoredEvent, error) {
-	return r.getEventFromTargetQuery(ctx, target, bkTenantID, eventID, []string{"source_raw_data"})
+	return r.getEventFromTargetQuery(ctx, target, bkTenantID, eventID, nil)
 }
 
 func (r *Repository) getEventFromTargetQuery(
@@ -1058,4 +1058,62 @@ func storedEventFromIndexResponse(
 func isResponseStatus(err error, statusCode int) bool {
 	var response *responseError
 	return errors.As(err, &response) && response.StatusCode == statusCode
+}
+
+// CompareAndSetEventEnrichment 通过 realtime GET 与局部 CAS 更新冻结丰富；不覆盖被投影省略的来源字段。
+func (r *Repository) CompareAndSetEventEnrichment(ctx context.Context, tenantID, eventID string, expected store.VersionToken, result domain.EventEnrichment) (store.StoredEvent, error) {
+	if err := contextError(ctx); err != nil {
+		return store.StoredEvent{}, err
+	}
+	if err := validateIdentity(tenantID, "event_id", eventID); err != nil {
+		return store.StoredEvent{}, err
+	}
+	version, ok := decodeVersion(expected)
+	if !ok || version.DocumentID != documentID(tenantID, eventID) {
+		return store.StoredEvent{}, store.ErrVersionConflict
+	}
+	current, err := r.getEventFromTarget(ctx, version.Index, tenantID, eventID)
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	if current.Version != expected {
+		return store.StoredEvent{}, store.ErrVersionConflict
+	}
+	updated, err := store.ApplyEventEnrichment(current, result)
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	document, err := encodeEventDocument(updated, current.Processing)
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	if len(document) > r.config.MaxDocumentBytes {
+		return store.StoredEvent{}, fmt.Errorf("%w: enriched event exceeds document budget", store.ErrInvalidArgument)
+	}
+	body, err := json.Marshal(map[string]any{"doc": updated.EventEnrichment})
+	if err != nil {
+		return store.StoredEvent{}, err
+	}
+	if len(body) > r.config.MaxDocumentBytes {
+		return store.StoredEvent{}, fmt.Errorf("%w: event enrichment exceeds document budget", store.ErrInvalidArgument)
+	}
+	query := url.Values{
+		"if_seq_no":       []string{strconv.FormatInt(version.SeqNo, 10)},
+		"if_primary_term": []string{strconv.FormatInt(version.PrimaryTerm, 10)},
+		"refresh":         []string{"false"},
+	}
+	var response indexResponse
+	err = r.performJSON(ctx, http.MethodPost, "/"+version.Index+"/_update/"+version.DocumentID, query, body, &response)
+	if err != nil {
+		if responseErr, ok := asResponseError(err); ok {
+			switch responseErr.StatusCode {
+			case http.StatusConflict:
+				return store.StoredEvent{}, store.ErrVersionConflict
+			case http.StatusNotFound:
+				return store.StoredEvent{}, store.ErrNotFound
+			}
+		}
+		return store.StoredEvent{}, fmt.Errorf("update event enrichment: %w", err)
+	}
+	return storedEventFromIndexResponse(updated, current.Processing, version.DocumentID, response)
 }

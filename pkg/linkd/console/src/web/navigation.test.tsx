@@ -68,6 +68,13 @@ describe("sidebar navigation", () => {
           "/explore/alerts",
           "/explore/alert-logs",
           "/strategy-index",
+          "/policies",
+          "/suppression-cleanups",
+          "/suppression-runtime",
+          "/merge-runtime",
+          "/shield-runtime",
+          "/projection-tasks",
+          "/action-deliveries",
         ],
       ],
       [

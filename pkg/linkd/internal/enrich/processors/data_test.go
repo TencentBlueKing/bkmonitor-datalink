@@ -55,11 +55,11 @@ func TestDATAFailureMatrix(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+			result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 			if err != nil {
 				t.Fatal(err)
 			}
-			payload, err := enrich.DecodePayload(result.Data)
+			payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -104,11 +104,11 @@ func TestDATAFunctionMetricPreservesFunctionsAndDisablesEnumMapping(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,11 +207,11 @@ func TestDATAUnitAlgorithmUsesSeverityOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,11 +238,11 @@ func TestDATAEnumValueMappingEnrichesDisplayContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,11 +294,11 @@ func TestDATAHostIdentityAndFailure(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+			result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 			if err != nil {
 				t.Fatal(err)
 			}
-			payload, err := enrich.DecodePayload(result.Data)
+			payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -340,11 +340,11 @@ func TestDATAOrdinaryModelUsesCanonicalIdentity(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+			result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 			if err != nil {
 				t.Fatal(err)
 			}
-			payload, err := enrich.DecodePayload(result.Data)
+			payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -388,11 +388,11 @@ func TestDATAHardwareAndMultiModelUseCanonicalIdentity(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+			result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 			if err != nil {
 				t.Fatal(err)
 			}
-			payload, err := enrich.DecodePayload(result.Data)
+			payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -416,11 +416,11 @@ func TestDATAOrdinaryModelKeepsPartialUntilIdentityConfirmed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -439,11 +439,11 @@ func TestDATAUptimeUsesTaskID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,11 +479,11 @@ func TestDataDerivedAndMultiMetricQuerySemantics(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := chain.Enrich(context.Background(), enrich.Input{Alert: processorBaseTargetAlert(t, domain.DimensionMap{})})
+			result, err := chain.Enrich(context.Background(), enrich.Input{Event: processorBaseTargetAlert(t, domain.DimensionMap{})})
 			if err != nil {
 				t.Fatal(err)
 			}
-			payload, err := enrich.DecodePayload(result.Data)
+			payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 			if err != nil {
 				t.Fatal(err)
 			}

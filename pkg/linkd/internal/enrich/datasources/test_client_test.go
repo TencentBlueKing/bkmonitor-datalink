@@ -23,7 +23,7 @@ import (
 )
 
 func testRequest() enrich.TestRequest {
-	return enrich.TestRequest{TenantID: "tenant", EventSourceID: "source", AlertID: "alert", Config: enrich.DefaultTestSourceConfig()}
+	return enrich.TestRequest{TenantID: "tenant", EventSourceID: "source", EventID: "alert", Config: enrich.DefaultTestSourceConfig()}
 }
 
 func TestTestClientDelayFailureTimeoutAndCancellation(t *testing.T) {
@@ -105,7 +105,7 @@ func TestTestClientClampsExtremeSamples(t *testing.T) {
 	req.Config.SleepMaxMilliseconds = 40
 	low, high := false, false
 	for i := range 100 {
-		req.AlertID = fmt.Sprint(i)
+		req.EventID = fmt.Sprint(i)
 		d, _ := testSample(req.Config)
 		if d < 0 || d > 40*time.Millisecond {
 			t.Fatalf("unbounded delay=%v", d)

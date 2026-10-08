@@ -27,6 +27,8 @@ const (
 )
 
 type fileConfig struct {
+	Plugins      PluginsConfig        `yaml:"plugins,omitempty"`
+	Blueking     BluekingConfig       `yaml:"blueking"`
 	Resources    ResourcesConfig      `yaml:"resources,omitempty"`
 	Dispatch     DispatchConfig       `yaml:"dispatch"`
 	Worker       WorkerConfig         `yaml:"worker"`
@@ -127,6 +129,8 @@ func load(path string, overrides Overrides, lookupEnv func(string) (string, bool
 		controlPlane = &normalized
 	}
 	cfg := Config{
+		Plugins:   decoded.Plugins,
+		Blueking:  decoded.Blueking,
 		Resources: decoded.Resources.Clone(),
 		Dispatch:  decoded.Dispatch, Worker: decoded.Worker,
 		Logging:      decoded.Logging,
@@ -189,13 +193,17 @@ func decodeEventSources(decoded []fileEventSource) ([]EventSource, error) {
 		if source.Storage == nil {
 			return nil, fmt.Errorf("event_sources[%d].storage is required", index)
 		}
-		if source.Storage.Kafka == nil {
+		if source.Storage.Type != StorageTypeInternalMerge && source.Storage.Kafka == nil {
 			return nil, fmt.Errorf("event_sources[%d].storage.kafka is required", index)
 		}
 
 		cleaner := CleanerConfig{}
 		if source.Cleaner != nil {
 			cleaner = *source.Cleaner
+		}
+		kafka := KafkaStorageConfig{}
+		if source.Storage.Kafka != nil {
+			kafka = *source.Storage.Kafka
 		}
 		sources[index] = EventSource{
 			Hooks:             source.Hooks,
@@ -212,7 +220,7 @@ func decodeEventSources(decoded []fileEventSource) ([]EventSource, error) {
 			Enrich:            source.Enrich.clone(),
 			Storage: EventSourceStorageConfig{
 				Type:  source.Storage.Type,
-				Kafka: *source.Storage.Kafka,
+				Kafka: kafka,
 			},
 		}.WithDefaults()
 	}

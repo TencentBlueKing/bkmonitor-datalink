@@ -31,7 +31,7 @@ func (APM) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 	if err := ctx.Err(); err != nil {
 		return enrich.ProcessorResult{}, err
 	}
-	alert := scope.Alert()
+	alert := scope.Event()
 	ids, diagnostics := enrich.ValidateRequiredIDs(alert)
 	if len(diagnostics) != 0 {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: diagnostics}, nil
@@ -84,7 +84,7 @@ type apmApplicationProjection struct {
 // resolveAPMApplication 使用 alarmd 实际输入中的 additional_dimensions.app_name
 // 定位租户和业务内的 APM 应用；旧 dimensions.apm_app_id 仅保留为兼容回退。
 func resolveAPMApplication(ctx context.Context, scope *enrich.Scope, strategy models.CWStrategy, tableID string, bizID int64) (apmApplicationProjection, []enrich.Diagnostic, error) {
-	alert := scope.Alert()
+	alert := scope.Event()
 	projection := apmApplicationProjection{ID: dimensionText(alert.Dimensions, rules.FieldAPMAppID)}
 	diagnostics := []enrich.Diagnostic{}
 	additional, err := additionalDimensions(alert.ExtraData)

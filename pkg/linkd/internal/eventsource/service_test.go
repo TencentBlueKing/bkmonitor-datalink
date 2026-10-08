@@ -296,3 +296,32 @@ func TestProviderObservationIncludesApplyFailures(t *testing.T) {
 		})
 	}
 }
+
+func TestBuiltinMergeSourceRetainsUserConfigurationAndImmutableReleases(t *testing.T) {
+	s := New(newDocs(), config.DefaultSeverityConfig())
+	first, err := s.EnsureMergeSource(t.Context(), "system")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Published != 1 || first.Spec.Storage.Type != config.StorageTypeInternalMerge || len(first.Spec.Enrich.Processors) > 0 || len(first.Spec.Hooks) > 0 {
+		t.Fatal("wrong builtin defaults")
+	}
+	again, err := s.EnsureMergeSource(t.Context(), "system")
+	if err != nil || again.Revision != first.Revision {
+		t.Fatal("builtin recreated", err)
+	}
+	changed := first.Spec
+	changed.Enabled = false
+	disabled, err := s.Apply(t.Context(), changed, first.Revision, false, "operator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	retained, err := s.EnsureMergeSource(t.Context(), "system")
+	if err != nil || retained.Spec.Enabled || retained.Revision != disabled.Revision {
+		t.Fatal("ensure overwrote disable", err)
+	}
+	old, err := s.GetRelease(t.Context(), first.ID, 1)
+	if err != nil || !old.Spec.Enabled {
+		t.Fatal("old release was modified", err)
+	}
+}

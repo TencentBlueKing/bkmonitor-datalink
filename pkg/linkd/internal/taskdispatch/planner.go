@@ -51,7 +51,7 @@ func Reconcile(st *State, releases []eventsource.Release, now time.Time) {
 	subscriptionOwners := map[string]string{}
 	for _, rel := range releases {
 		for _, t := range st.Tasks {
-			if t.Source == rel.ID && t.Role == "cleaner" && t.Phase != "stopped" {
+			if rel.Spec.Storage.Type != config.StorageTypeInternalMerge && t.Source == rel.ID && t.Role == "cleaner" && t.Phase != "stopped" {
 				key := subscriptionIdentity(rel.Spec)
 				if owner := subscriptionOwners[key]; owner == "" || rel.ID < owner {
 					subscriptionOwners[key] = rel.ID
@@ -75,7 +75,14 @@ func Reconcile(st *State, releases []eventsource.Release, now time.Time) {
 			if !s.Enabled || rel.Deleted {
 				target = 0
 			}
+			internalCleaner := role == "cleaner" && s.Storage.Type == config.StorageTypeInternalMerge
+			if internalCleaner {
+				target = 0
+			}
 			status := Status{Source: rel.ID, Role: role, Matching: len(eligible), Target: target}
+			if internalCleaner {
+				status.Reason = "internal source has no cleaner"
+			}
 			allowNew := true
 			blocked := false
 			for _, task := range st.Tasks {
@@ -85,7 +92,7 @@ func Reconcile(st *State, releases []eventsource.Release, now time.Time) {
 				}
 			}
 			subscriptionConflict := false
-			if role == "cleaner" {
+			if role == "cleaner" && !internalCleaner {
 				m := st.Metadata[rel.ID]
 				status.Metadata = &m
 				key := subscriptionIdentity(s)

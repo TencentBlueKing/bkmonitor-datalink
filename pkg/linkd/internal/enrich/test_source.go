@@ -64,11 +64,11 @@ func (c TestSourceConfig) Validate() error {
 	return nil
 }
 
-// TestRequest 携带单次模拟调用的租户和告警作用域，不参与业务身份生成。
+// TestRequest 携带单次模拟调用的租户和事件作用域，不参与业务身份生成。
 type TestRequest struct {
 	TenantID      string
 	EventSourceID string
-	AlertID       string
+	EventID       string
 	CallIndex     int
 	Config        TestSourceConfig
 }
@@ -78,7 +78,7 @@ type TestSource interface {
 	Call(ctx context.Context, request TestRequest) error
 }
 
-// CallTestSource 执行一次真实计数的模拟调用，不使用 Scope 的请求内缓存。
+// CallTestSource 按调用序号模拟依赖；同一 Event 的多个 evaluation 复用同一序号结果。
 func (s *Scope) CallTestSource(ctx context.Context, config TestSourceConfig, index int) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -86,5 +86,12 @@ func (s *Scope) CallTestSource(ctx context.Context, config TestSourceConfig, ind
 	if s.sources.Test == nil {
 		return fmt.Errorf("test datasource is unavailable")
 	}
-	return s.sources.Test.Call(ctx, TestRequest{TenantID: s.alert.BKTenantID, EventSourceID: s.alert.EventSourceID, AlertID: s.alert.AlertID, CallIndex: index, Config: config})
+	key, err := queryCacheKey("test", s.event.BKTenantID, s.event.EventID, index, config)
+	if err != nil {
+		return err
+	}
+	_, err = s.Scenario(key, func() (any, error) {
+		return nil, s.sources.Test.Call(ctx, TestRequest{TenantID: s.event.BKTenantID, EventSourceID: s.event.EventSourceID, EventID: s.event.EventID, CallIndex: index, Config: config})
+	})
+	return err
 }

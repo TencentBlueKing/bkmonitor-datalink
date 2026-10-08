@@ -27,21 +27,26 @@ scheduling:
     selector: {}
 ```
 
-默认两角色均为 all，支持数字 0；enabled=false 覆盖两个角色。标签按键值精确 AND 匹配。
+Kafka 来源默认两角色均为 all，支持数字 0；enabled=false 覆盖两个角色。标签按键值精确 AND 匹配。
 worker 的 `require_explicit_selector=true` 排斥空选择器，其余 worker 接受空选择器。
 
 Cleaner 目标数量为 min(配置数量、匹配 worker 数、Kafka topic partition 总数)，all 省略配置数量约束。
 Lifecycle 不受 Kafka 分片上限限制。同一 worker 同源同角色只启动一个 Flow，all-in-one 两角色不冲突。
 同角色多副本共享消费组，副本 slot 不代表业务分片。进程按 max_tasks、总并发和 inflight 字节预算准入。
 
-Kafka 探测在控制面运行：30 秒目标周期、5 秒超时、最多 4 个并发，优先最久未探测的来源。
+内置 `builtin_alarm_merge` 来源使用 `storage.type=internal_merge`：Cleaner 固定 0，只调度 Lifecycle；
+不配置或探测 Kafka，不把空 Kafka 参数解释为合法订阅。它与普通来源使用相同 Record/Release 发布流程，
+配置和外部字段边界见 [EventSource](../modules/event-source.md#内部合并来源)。
+
+Kafka 探测只对外部来源在控制面运行：30 秒目标周期、5 秒超时、最多 4 个并发，优先最久未探测的来源。
 探测禁止自动创建 topic；不以在线 leader 或 ISR 数代替总 partition 数。
 首次失败不启动 Cleaner；后续失败保留既有任务与最后已知上限，禁止扩容；分片增加后补齐任务。
 topic 身份变化或分片异常减少报告错误，不当作普通缩容。大规模来源的实际探测间隔受有界并发限制，状态展示最近成功时间。
 
 ## 执行版本与重投
 
-Event.event_source_version 由 EventFactory 注入当前任务启动时固定的 Release 版本；新数据要求正整数。
+外部 Event.event_source_version 由 EventFactory 注入当前任务启动时固定的 Release 版本；
+内部合并 Event 由持久化合并裁决冻结其内置来源 Release，重试不切换到最新版本；新数据要求正整数。
 Alert 创建时继承触发 Event 的版本；同级更新和 update_current 升级不覆盖，close_and_create 升级的新 Alert 从本次 Event 继承。
 AlertLog 不添加独立顶层版本，Alert 输出快照自然携带版本。
 

@@ -2,12 +2,18 @@
 
 自定义丰富开发入口：[CMDB/常规规则、补丁、SDK 与预览](custom-enrichment.md)。
 
+图解入口：[整体架构图](architecture.md#整体架构) · [事件处理流程图](architecture.md#处理链路)。
+
+实施与验收记录：[Event 丰富与抑制、屏蔽、合并开发方案](event-enrich-and-alarm-policies.md)。该文档包含
+业务决策和阶段证据，带日期的历史记录不覆盖下列文档对当前代码的说明。
+
 | 文档                                                             | 定位                                                   |
 | ---------------------------------------------------------------- | ------------------------------------------------------ |
 | [package-structure.md](package-structure.md) | 当前 Go 包职责、依赖方向和装配边界 |
 | [define.md](define.md)                                           | Event、EventProcessing、Alert、AlertLog 的权威数据模型 |
 | [kac-alarm-hook.md](kac-alarm-hook.md)                           | KAC Alarm 兼容 Hook、字段映射与可靠性边界           |
-| [architecture.md](architecture.md)                               | 处理链路、模块边界和可靠性边界                         |
+| [kac-compatibility-plugin.md](kac-compatibility-plugin.md) | 全局 KAC 插件、原索引直接维护、字段所有权与验收边界 |
+| [architecture.md](architecture.md)                               | 整体架构图、事件处理流程图、模块与可靠性边界             |
 | [deployment.md](deployment.md)                                   | All-in-one 与三进程部署拓扑、职责和演进边界            |
 | [core-storage-contract.md](core-storage-contract.md)             | Repository、处理元数据、CAS 与物理资源                 |
 | [message-consumption-runtime.md](message-consumption-runtime.md) | MQ 通用消费端口、Cleaner `n → * → n`、确认和背压边界   |

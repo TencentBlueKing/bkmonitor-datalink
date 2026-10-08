@@ -147,6 +147,10 @@ func (r *Repository) prepareArchiveItem(
 	if !terminal.Alert.Status.Terminal() {
 		return preparedArchiveItem{}, fmt.Errorf("archive alert: alert is not terminal")
 	}
+	// 控制任务从 Active 索引发现待输出意图；完成前归档会使中断的终态输出失去补扫入口。
+	if terminal.Alert.MergeChange != nil || terminal.Alert.PolicyChange != nil || terminal.Alert.ActionPending != nil {
+		return preparedArchiveItem{}, fmt.Errorf("archive alert: pending policy output")
+	}
 	activeVersion, ok := decodeVersion(terminal.Version)
 	if !ok {
 		return preparedArchiveItem{}, fmt.Errorf("archive alert: active version is invalid")
@@ -329,6 +333,28 @@ func (r *Repository) verifyArchiveConflicts(
 		if err != nil {
 			results[resultIndex].stage, results[resultIndex].err = "history_verify", err
 			continue
+		}
+		// 终态业务快照相同而 ACK 更新较晚时，先把已确认水位 CAS 到 History，再删除对应 Active 版本。
+		// Active 的新 ACK 会使后面的条件删除失败，由下一轮继续；不能因此形成永久的归档冲突。
+		if !reflect.DeepEqual(stored.Alert, item.terminal.Alert) {
+			same := item.terminal.Alert.Clone()
+			same.Projection = stored.Alert.Projection.Clone()
+			if reflect.DeepEqual(same, stored.Alert) {
+				merged, changed, mergeErr := stored.Alert.Projection.MergeAcknowledgments(item.terminal.Alert.Projection)
+				if mergeErr == nil {
+					if changed {
+						next := stored.Alert.Clone()
+						next.Projection = merged
+						_, mergeErr = r.CompareAndSetAlert(ctx, next.BKTenantID, next.AlertID, stored.Version, next)
+					}
+					if mergeErr == nil {
+						verified = append(verified, resultIndex)
+						continue
+					}
+				}
+				results[resultIndex].stage, results[resultIndex].err = "history_metadata", mergeErr
+				continue
+			}
 		}
 		if !reflect.DeepEqual(stored.Alert, item.terminal.Alert) {
 			results[resultIndex].stage = "history_verify"

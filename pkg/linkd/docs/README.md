@@ -1,7 +1,17 @@
 # Linkd 文档中心
 
-Linkd 项目仍处于早期开发阶段，本文档只描述当前代码、测试和已确认契约，不为未发布的旧内部模型
-保留兼容说明页。
+Linkd 项目仍处于早期开发阶段。文档中心区分当前代码、测试和已确认契约与尚未实现的开发方案；
+不为未发布的旧内部模型保留兼容说明页。
+
+图解入口：[整体架构图](design/architecture.md#整体架构) · [事件处理流程图](design/architecture.md#处理链路)。
+两张图统一在总体架构文档维护，包含同步处理、控制面后台推进及外部系统边界。
+
+## 开发实施方案
+
+- [Event 丰富与抑制、屏蔽、合并开发方案](design/event-enrich-and-alarm-policies.md)：Event Enrich 前移、
+  字段变更、KAC 三类策略配置与行为、控制面任务、Console、可靠输出与降级及验收矩阵。
+  当前代码流程见上述图解；业务决策、历史实施证据和
+  [当前能力与剩余差距](design/event-enrich-and-alarm-policies.md#112-当前能力与剩余差距2026-10-08)分别标明。
 
 ## 阅读顺序
 
@@ -12,7 +22,7 @@ Linkd 项目仍处于早期开发阶段，本文档只描述当前代码、测�
 5. [Lifecycle](modules/lifecycle.md)：Mailbox、Signal、lease、状态裁决和恢复。
 6. [配置指南](guides/configuration.md)：YAML 配置、默认预算和校验规则。
 7. [Standard Event 模拟器](guides/event-generator.md)：持续生成常见告警并推送到指定 EventSource。
-8. [总体设计](design/architecture.md)：当前处理链路和模块边界。
+8. [总体设计](design/architecture.md)：整体架构图、事件处理流程图、模块和可靠性边界。
 9. [部署模式](design/deployment.md)：All-in-one 与三进程拓扑、职责和演进边界。
 10. [消息消费运行时](design/message-consumption-runtime.md)：MQ 通用端口、确认和背压。
 11. [核心存储契约](design/core-storage-contract.md)：Repository、CAS 和物理资源。
@@ -25,9 +35,9 @@ Kubernetes 部署入口：[Helm 部署与 worker 分组](guides/helm.md)。
 
 ## 当前文档与归档
 
-KAC 告警中心输出实现与边界见 [KAC Alarm Hook 设计](design/kac-alarm-hook.md)：保留通用 Kafka Alert V1，
-`type: kac` 完成 KAC Alarm 兼容转换和 Kafka 投递；本地 PM2/Docker 链路已验证，目标 KAC 消费与持久化
-仍待联调。
+KAC 当前出口见[全局兼容插件](design/kac-compatibility-plugin.md)：Linkd 直接维护 `alarm_event`，
+确认兼容文档可搜索后再可靠通知获准动作。外部 KAC 接入与生产切流需另行验证。
+原 Kafka 转换路径见 [KAC Alarm Hook 设计](design/kac-alarm-hook.md)，不能将旧 Hook 等同于全局插件的可靠性保证。
 
 EventSource 管理与部分全局配置动态化独立演进：
 

@@ -168,3 +168,28 @@ func ApplyEnrichPatches(original map[string]any, patches []EnrichPatch) (map[str
 	}
 	return result, nil
 }
+
+// EventDocument 返回来源事实与当前 evaluation 的隔离规则视图；不暴露旧丰富和处理关联。
+// 自定义规则使用 $.evaluation.severity/action；补丁仍只能写可丰富字段。
+func EventDocument(event Event, evaluation EventEvaluation) (map[string]any, error) {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return nil, err
+	}
+	var value map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	for _, key := range []string{"enrich", "enrich_status", "enriched_at", "enrich_config_digest", "related_alert_ids"} {
+		delete(value, key)
+	}
+	value["evaluation"] = map[string]any{"severity": evaluation.Severity, "action": string(evaluation.Action), "action_reason": evaluation.ActionReason}
+	for _, key := range []string{"labels", "extra_data"} {
+		if value[key] == nil {
+			value[key] = map[string]any{}
+		}
+	}
+	return value, nil
+}

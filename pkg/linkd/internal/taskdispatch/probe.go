@@ -23,6 +23,9 @@ import (
 
 // Probe 查询完整 topic 分片集合，显式禁止自动创建 topic。
 func Probe(ctx context.Context, s config.EventSource) (string, int, error) {
+	if s.Storage.Type == config.StorageTypeInternalMerge {
+		return "", 0, fmt.Errorf("internal merge source has no Kafka subscription")
+	}
 	options, e := kafkaclient.ClientOptions(s.Storage.Kafka.Brokers, "linkd-source-probe", s.Storage.Kafka.Security)
 	if e != nil {
 		return "", 0, e

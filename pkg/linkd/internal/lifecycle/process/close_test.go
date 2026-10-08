@@ -51,9 +51,9 @@ func (l *closeTestLocker) Release(ctx context.Context, _ scheduler.Lease) error 
 
 func TestCloseLeaseRefusesBusyAndReleasesAfterCancellation(t *testing.T) {
 	locker := &closeTestLocker{busy: true}
-	_, err := closeUnderLease(context.Background(), locker, "tenant-source-fingerprint", func() (lifecycle.CloseAlertResult, error) {
+	err := withAlertLease(context.Background(), locker, "tenant-source-fingerprint", func() error {
 		t.Fatal("busy close ran")
-		return lifecycle.CloseAlertResult{}, nil
+		return nil
 	})
 	if !errors.Is(err, scheduler.ErrLockBusy) || locker.released {
 		t.Fatalf("busy = %v release = %v", err, locker.released)
@@ -61,9 +61,9 @@ func TestCloseLeaseRefusesBusyAndReleasesAfterCancellation(t *testing.T) {
 	locker.busy = false
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	_, err = closeUnderLease(ctx, locker, "tenant-source-fingerprint", func() (lifecycle.CloseAlertResult, error) {
+	err = withAlertLease(ctx, locker, "tenant-source-fingerprint", func() error {
 		cancel()
-		return lifecycle.CloseAlertResult{}, context.Canceled
+		return context.Canceled
 	})
 	if !errors.Is(err, context.Canceled) || !locker.released || locker.key != "tenant-source-fingerprint" {
 		t.Fatalf("cancel = %v release = %v", err, locker.released)
@@ -164,7 +164,7 @@ func TestAlertCloserCapacityCancellationAndReuse(t *testing.T) {
 		t.Fatalf("canceled call = %v", err)
 	}
 	closer.run = func(_ context.Context, command lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
-		return lifecycle.CloseAlertResult{Alert: domain.Alert{BKTenantID: command.BKTenantID, AlertID: command.AlertID, Status: domain.AlertStatusClosed}}, nil
+		return lifecycle.CloseAlertResult{Alert: domain.Alert{Revision: 1, BKTenantID: command.BKTenantID, AlertID: command.AlertID, Status: domain.AlertStatusClosed}}, nil
 	}
 	result, err := closer.CloseAlert(context.Background(), validCloseCommand())
 	if err != nil || result.Alert.Status != domain.AlertStatusClosed {

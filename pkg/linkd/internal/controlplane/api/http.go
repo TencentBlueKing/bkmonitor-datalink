@@ -28,6 +28,8 @@ import (
 	"linkd/internal/eventsource"
 	"linkd/internal/internaltoken"
 	"linkd/internal/onemodel/queryservice"
+	"linkd/internal/policy"
+	"linkd/internal/policy/simulation"
 	"linkd/internal/taskdispatch"
 )
 
@@ -40,11 +42,25 @@ type API struct {
 	Previewer   interface {
 		Preview(context.Context, preview.Request) (preview.Response, error)
 	}
-	DynamicConfig *dynamicconfig.Manager
-	Lifecycle     config.LifecycleConfig
-	Sources       *eventsource.Service
-	Controller    Controller
-	Config        config.DispatchConfig
+	DynamicConfig       *dynamicconfig.Manager
+	Lifecycle           config.LifecycleConfig
+	Sources             *eventsource.Service
+	Policies            *policy.Service
+	PolicyStatistics    PolicyStatisticsReader
+	PolicySimulator     *simulation.Service
+	PolicyPreviewer     *policy.Previewer
+	MergeRuntime        *MergeRuntime
+	ShieldRuntime       *ShieldRuntime
+	ShieldDiagnostics   ShieldDiagnostics
+	ShieldRequests      ShieldRequests
+	SuppressionRuntime  *SuppressionRuntime
+	SuppressionCleanups *SuppressionCleanups
+	SuppressionChecks   *SuppressionChecks
+	MergeRetries        *MergeRetries
+	ProjectionTasks     *ProjectionTasks
+	ActionDeliveries    *ActionDeliveries
+	Controller          Controller
+	Config              config.DispatchConfig
 }
 
 // Handler 创建有身份校验的正式接口。
@@ -59,6 +75,15 @@ func (a *API) Handler() http.Handler {
 		}
 		output(w, a.Tasks.Snapshot())
 	})
+	mux.HandleFunc("GET /api/v1/action-deliveries", a.listActionDeliveries)
+	mux.HandleFunc("GET /api/v1/action-deliveries/{id}", a.getActionDelivery)
+	mux.HandleFunc("GET /api/v1/action-deliveries/{id}/snapshot", a.actionDeliverySnapshot)
+	mux.HandleFunc("GET /api/v1/action-deliveries/{id}/order", a.actionDeliveryOrder)
+	mux.HandleFunc("POST /api/v1/action-deliveries/{id}/retry", a.retryActionDelivery)
+	mux.HandleFunc("GET /api/v1/projection-tasks", a.listProjectionTasks)
+	mux.HandleFunc("GET /api/v1/projection-tasks/{id}", a.getProjectionTask)
+	mux.HandleFunc("GET /api/v1/projection-tasks/{id}/snapshot", a.projectionTaskSnapshot)
+	mux.HandleFunc("POST /api/v1/projection-tasks/{id}/retry", a.retryProjectionTask)
 	mux.HandleFunc("POST /api/v1/onemodel/{operation}", a.queryOneModel)
 	mux.Handle("GET /api/v1/metrics/catalog", metricCatalogHandler())
 	mux.HandleFunc("POST /api/v1/enrich/preview", a.previewEnrich)
@@ -69,8 +94,42 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/event-sources/{id}", a.delete)
 	mux.HandleFunc("GET /api/v1/event-sources/{id}/releases/{version}", a.release)
 	mux.HandleFunc("POST /api/v1/event-sources/{id}/tasks/{task}/resume", a.resumeTask)
+	mux.HandleFunc("POST /api/v1/policies/preview", a.previewPolicy)
+	mux.HandleFunc("POST /api/v1/policies/simulate", a.simulatePolicy)
+	mux.HandleFunc("GET /api/v1/policies/statistics", a.policyStatistics)
+	mux.HandleFunc("GET /api/v1/policies", a.listPolicies)
+	mux.HandleFunc("GET /api/v1/policies/{type}/{id}", a.getPolicy)
+	mux.HandleFunc("PUT /api/v1/policies/{type}/{id}", a.putPolicy)
+	mux.HandleFunc("DELETE /api/v1/policies/{type}/{id}", a.deletePolicy)
+	mux.HandleFunc("GET /api/v1/policies/{type}/{id}/releases/{version}", a.policyRelease)
 	mux.HandleFunc("GET /api/v1/runtime", a.status)
+	mux.HandleFunc("GET /api/v1/policy-runtime/merge/{resource}", a.listMergeRuntime)
+	mux.HandleFunc("GET /api/v1/policy-runtime/merge/{kind}/{id}/control", a.mergeRetryPoint)
+	mux.HandleFunc("POST /api/v1/policy-runtime/merge/{kind}/{id}/requests", a.requestMergeRetry)
+	mux.HandleFunc("GET /api/v1/policy-runtime/merge/{kind}/{id}/requests", a.listMergeRetries)
+	mux.HandleFunc("GET /api/v1/policy-runtime/merge/{kind}/{id}/requests/{request}", a.getMergeRetry)
+
+	mux.HandleFunc("GET /api/v1/policy-runtime/shield/alerts", a.listShieldRuntime)
+	mux.HandleFunc("GET /api/v1/policy-runtime/suppression/{kind}", a.listSuppressionRuntime)
+	mux.HandleFunc("GET /api/v1/policy-runtime/suppression/cleanups", a.listSuppressionCleanups)
+	mux.HandleFunc("GET /api/v1/policy-runtime/suppression/cleanups/{id}", a.getSuppressionCleanup)
+	mux.HandleFunc("GET /api/v1/policy-runtime/suppression/{kind}/{id}", a.getSuppressionRuntime)
+	mux.HandleFunc("GET /api/v1/policy-runtime/suppression/{kind}/{id}/members", a.suppressionRuntimeMembers)
+	mux.HandleFunc("POST /api/v1/policy-runtime/suppression/{kind}/{id}/reconcile", a.requestSuppressionCheck)
+	mux.HandleFunc("GET /api/v1/policy-runtime/suppression/{kind}/{id}/requests", a.listSuppressionChecks)
+	mux.HandleFunc("GET /api/v1/policy-runtime/suppression/{kind}/{id}/requests/{request}", a.getSuppressionCheck)
+	mux.HandleFunc("GET /api/v1/policy-runtime/shield/alerts/{id}", a.getShieldRuntime)
+	mux.HandleFunc("GET /api/v1/policy-runtime/shield/alerts/{id}/history", a.shieldRuntimeHistory)
+	mux.HandleFunc("GET /api/v1/policy-runtime/shield/alerts/{id}/check", a.shieldLatestCheck)
+	mux.HandleFunc("GET /api/v1/policy-runtime/shield/alerts/{id}/requests", a.shieldRequestHistory)
+	mux.HandleFunc("GET /api/v1/policy-runtime/shield/alerts/{id}/requests/{request}", a.shieldRequestDetail)
+	mux.HandleFunc("POST /api/v1/policy-runtime/shield/alerts/{id}/reconcile", a.requestShieldCheck)
+	mux.HandleFunc("GET /api/v1/policy-runtime/merge/{resource}/{id}", a.getMergeRuntime)
+	mux.HandleFunc("GET /api/v1/policy-runtime/merge/{resource}/{id}/members", a.mergeRuntimeMembers)
+	mux.HandleFunc("GET /api/v1/policy-runtime/merge/{resource}/{id}/members/{alert}", a.mergeRuntimeSnapshot)
 	mux.HandleFunc("GET /api/v1/dynamic-config", a.dynamicStatus)
+	mux.HandleFunc("GET /internal/policies", a.workerPolicies)
+	mux.HandleFunc("GET /internal/policies/{type}/{id}/releases/{version}", a.workerPolicyRelease)
 	mux.HandleFunc("GET /internal/settings/severity", a.workerSeverity)
 	mux.HandleFunc("POST /internal/heartbeat", a.beat)
 	mux.HandleFunc("GET /internal/releases/{id}/{version}", a.workerRelease)
@@ -331,13 +390,18 @@ func (a *API) workerRelease(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("task")
 	t, ok := state.Tasks[id]
 	version, e := strconv.ParseInt(r.PathValue("version"), 10, 64)
-	if e != nil || !ok || t.Worker != r.Header.Get("X-Worker-ID") || t.Source != r.PathValue("id") || t.Version != version || t.Phase == "stopped" {
+	purpose := r.URL.Query().Get("purpose")
+	if e != nil || !ok || !canReadWorkerRelease(t, r.Header.Get("X-Worker-ID"), r.PathValue("id"), version, purpose) {
 		http.Error(w, "assignment required", http.StatusForbidden)
 		return
 	}
-	rel, e := a.Sources.GetRelease(r.Context(), t.Source, t.Version)
+	rel, e := a.Sources.GetRelease(r.Context(), t.Source, version)
 	if e == nil {
 		rel = releaseForRole(rel, t.Role)
+		switch purpose {
+		case "enrich":
+			rel.Spec = config.EventSource{EventSourceID: rel.Spec.EventSourceID, Version: rel.Version, RelatedTenantID: rel.Spec.RelatedTenantID, Enrich: rel.Spec.Enrich}
+		}
 	}
 	if e != nil {
 		failure(w, e)
@@ -377,4 +441,16 @@ func (a *API) previewEnrich(w http.ResponseWriter, r *http.Request) {
 type Controller interface {
 	Snapshot(context.Context) (taskdispatch.State, error)
 	Beat(context.Context, taskdispatch.Heartbeat) ([]taskdispatch.Task, error)
+}
+
+// canReadWorkerRelease 保留普通任务的固定版本边界；只有 Lifecycle 可为同来源 Event 读取历史丰富或目标。
+// purpose=enrich 只返回对应元数据，移除 MQ、Cleaner 和 Hook，不能读取跨来源配置或部署凭据。
+func canReadWorkerRelease(task taskdispatch.Task, worker, source string, version int64, purpose string) bool {
+	if version <= 0 || version >= 1<<53 || task.Worker != worker || task.Source != source || task.Phase == "stopped" {
+		return false
+	}
+	if purpose == "enrich" {
+		return task.Role == "lifecycle"
+	}
+	return purpose == "" && task.Version == version
 }

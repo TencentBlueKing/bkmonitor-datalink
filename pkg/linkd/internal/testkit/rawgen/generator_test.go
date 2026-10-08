@@ -58,7 +58,7 @@ func TestGenerateIsDeterministicAndMatchesScenarioSemantics(t *testing.T) {
 		domain.OperationKindTrigger:  5,
 		domain.OperationKindRecover:  1,
 		domain.OperationKindClose:    2,
-		domain.OperationKindSuppress: 1,
+		domain.OperationKindSuppress: 3,
 		domain.OperationKindPush:     10,
 	}
 	if !reflect.DeepEqual(first.Expected.OperationCounts, wantOperations) {

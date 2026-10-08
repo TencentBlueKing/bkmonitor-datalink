@@ -1169,6 +1169,21 @@
         "prometheusUrl": {
           "type": "string"
         },
+        "kacAlertUrlTemplate": { "type": "string", "maxLength": 2048, "pattern": "^$|^[hH][tT][tT][pP][sS]?://" },
+        "kacPolicyLinks": {
+          "type": "object",
+          "maxProperties": 64,
+          "propertyNames": { "pattern": "^[a-zA-Z0-9_-]{1,64}$" },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "suppression": { "type": "string", "minLength": 1, "maxLength": 2048, "pattern": "^[hH][tT][tT][pP][sS]?://" },
+              "shield": { "type": "string", "minLength": 1, "maxLength": 2048, "pattern": "^[hH][tT][tT][pP][sS]?://" },
+              "merge": { "type": "string", "minLength": 1, "maxLength": 2048, "pattern": "^[hH][tT][tT][pP][sS]?://" }
+            }
+          }
+        },
         "basicAuth": {
           "type": "object",
           "additionalProperties": false,

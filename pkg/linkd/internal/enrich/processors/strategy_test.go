@@ -198,15 +198,11 @@ func TestBuildStrategyURLInstance(t *testing.T) {
 	isDefault := false
 	modelCode := "cw-Host"
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	alert := domain.Alert{
-		EventSourceVersion: 1,
-		AlertID:            "alert-1", BKTenantID: "tenant-a", EventSourceID: "built_in_bk", Fingerprint: "fp",
-		Title: "CPU", Severity: "warning", Status: domain.AlertStatusActive,
-		Dimensions: domain.DimensionMap{"bk_inst_id": mustNumberScalar(t, 101)}, Labels: domain.DimensionMap{},
+	alert := domain.Event{
+		EventSourceVersion: 1, EventID: "alert-1", BKTenantID: "tenant-a", EventSourceID: "built_in_bk", Fingerprint: "fp",
+		Title: "CPU", Evaluations: []domain.EventEvaluation{{Severity: "warning", Action: domain.EventActionTriggered}}, Dimensions: domain.DimensionMap{"bk_inst_id": mustNumberScalar(t, 101)}, Labels: domain.DimensionMap{},
 		ExtraData:     domain.JSONObject{"additional_dimensions": []byte(`{"ignored":true}`)},
-		LatestEventID: "event-1", TriggerEventID: "event-1", SourceEventID: "source-event-1",
-		LastOccurredAt: now, UpdateAt: now, BeginAt: now, CreateAt: now,
-		EnrichStatus: domain.EnrichStatusPending, Enrich: domain.JSONObject{},
+		SourceEventID: "source-event-1", OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, SourceRawData: domain.JSONObject{}, EventEnrichment: domain.EventEnrichment{EnrichStatus: domain.EnrichStatusPending}, Values: domain.EventValues{},
 	}
 	scope, err := enrich.NewScope(alert, enrich.Sources{OneModel: strategyURLInstanceReader{}})
 	if err != nil {
@@ -232,21 +228,17 @@ func TestBuildStrategyURLInstance(t *testing.T) {
 	}
 }
 
-func strategyTestAlert(t *testing.T, bizID int64) domain.Alert {
+func strategyTestAlert(t *testing.T, bizID int64) domain.Event {
 	t.Helper()
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	return domain.Alert{
-		EventSourceVersion: 1,
-		AlertID:            "alert-1", BKTenantID: "system", EventSourceID: "built_in_bk", Fingerprint: "fp",
-		Title: "CPU", Severity: "warning", Status: domain.AlertStatusActive,
-		Dimensions: domain.DimensionMap{},
+	return domain.Event{
+		EventSourceVersion: 1, EventID: "alert-1", BKTenantID: "system", EventSourceID: "built_in_bk", Fingerprint: "fp",
+		Title: "CPU", Evaluations: []domain.EventEvaluation{{Severity: "warning", Action: domain.EventActionTriggered}}, Dimensions: domain.DimensionMap{},
 		Labels: domain.DimensionMap{
 			"strategy_id": mustNumberScalar(t, 78), "strategy_version": mustNumberScalar(t, 1),
 			"bk_biz_id": mustNumberScalar(t, float64(bizID)),
 		},
-		ExtraData: domain.JSONObject{}, LatestEventID: "event-1", TriggerEventID: "event-1", SourceEventID: "source-event-1",
-		LastOccurredAt: now, UpdateAt: now, BeginAt: now, CreateAt: now,
-		EnrichStatus: domain.EnrichStatusPending, Enrich: domain.JSONObject{},
+		ExtraData: domain.JSONObject{}, SourceEventID: "source-event-1", OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, EventEnrichment: domain.EventEnrichment{EnrichStatus: domain.EnrichStatusPending}, Values: domain.EventValues{}, SourceRawData: domain.JSONObject{},
 	}
 }
 

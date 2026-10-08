@@ -29,7 +29,7 @@ func TestArchiveTerminalAlertsBulkCreatesHistoryThenConditionallyDeletesActive(t
 	event := eventForIDTest(t, eventID, now)
 	alertID, _ := domain.GenerateAlertID(event, event.CreateAt)
 	endAt := now.Add(time.Minute)
-	alert := domain.Alert{EventSourceVersion: 1,
+	alert := domain.Alert{Revision: 1, EventSourceVersion: 1,
 		AlertID: alertID, BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
 		Fingerprint: event.Fingerprint, Severity: event.Evaluations[0].Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
 		ExtraData: domain.JSONObject{}, Status: domain.AlertStatusRecovered, LatestEventID: eventID,
@@ -95,6 +95,24 @@ func TestArchiveTerminalAlertsBulkCreatesHistoryThenConditionallyDeletesActive(t
 	)
 	if len(results) != 1 || !results[0].archived || results[0].err != nil || requests != 2 {
 		t.Fatalf("results=%#v requests=%d", results, requests)
+	}
+}
+
+func TestArchiveRejectsTerminalMergeIntentBeforeAnyHistoryWrite(t *testing.T) {
+	a := archiveStoredAlert(t, "pending-merge-recovery", time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC))
+	a.Alert.EventSourceID = domain.BuiltinMergeEventSourceID
+	a.Alert.EndType = domain.AlertEndTypeSystem
+	a.Alert.EndReason = "merge_members_ended"
+	relation := strings.Repeat("a", 64)
+	a.Alert.Merge = &domain.AlertMerge{Role: "aggregate", State: "none", OperationID: relation}
+	a.Alert.MergeChange = &domain.AlertMergeChange{Kind: "parent_recover", OperationID: "recovery", RelationID: relation, WindowID: strings.Repeat("b", 64), EffectiveAt: a.Alert.UpdateAt, Before: a.Alert.Merge.Clone(), After: a.Alert.Merge.Clone()}
+	if err := a.Alert.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	repo := &Repository{}
+	// guard 必须在路由和外部 I/O 前执行；尚待输出的终态要留在 Active，供工作扫描发现。
+	if _, err := repo.prepareArchiveItem(t.Context(), a); err == nil {
+		t.Fatal("pending output was archived")
 	}
 }
 
@@ -280,7 +298,7 @@ func TestTerminalAlertCASLeavesPhysicalArchiveToManager(t *testing.T) {
 	eventID, _ := domain.GenerateEventID("tenant-1", "source-1", "event-1", now)
 	event := eventForIDTest(t, eventID, now)
 	alertID, _ := domain.GenerateAlertID(event, event.CreateAt)
-	active := domain.Alert{EventSourceVersion: 1,
+	active := domain.Alert{Revision: 1, EventSourceVersion: 1,
 		AlertID: alertID, BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
 		Fingerprint: event.Fingerprint, Severity: event.Evaluations[0].Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
 		ExtraData: domain.JSONObject{}, Status: domain.AlertStatusActive, LatestEventID: eventID,
@@ -364,7 +382,7 @@ func archiveStoredAlert(t *testing.T, stableID string, createAt time.Time) store
 		t.Fatal(err)
 	}
 	endAt := createAt.Add(time.Minute)
-	alert := domain.Alert{EventSourceVersion: 1,
+	alert := domain.Alert{Revision: 1, EventSourceVersion: 1,
 		AlertID: alertID, BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID,
 		Fingerprint: event.Fingerprint, Severity: event.Evaluations[0].Severity, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{},
 		ExtraData: domain.JSONObject{}, Status: domain.AlertStatusRecovered, LatestEventID: eventID,

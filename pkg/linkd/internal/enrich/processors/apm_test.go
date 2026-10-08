@@ -33,11 +33,11 @@ func TestAPMProjectsDimensionsAndIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,11 +54,11 @@ func TestAPMApplicationReaderProjectsAliasAndIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestAPMApplicationReaderTenantMismatchReturnsPartial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: processorBaseTargetAlert(t, domain.DimensionMap{})})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: processorBaseTargetAlert(t, domain.DimensionMap{})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,11 +91,11 @@ func TestAPMApplicationReaderErrorReturnsPartial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: processorBaseTargetAlert(t, domain.DimensionMap{})})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: processorBaseTargetAlert(t, domain.DimensionMap{})})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,11 +112,11 @@ func TestAPMApplicationReaderDuplicateExactMatchUsesFirstStableResult(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: processorBaseTargetAlert(t, domain.DimensionMap{})})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: processorBaseTargetAlert(t, domain.DimensionMap{})})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestAPMApplicationReaderNonExactMatchReturnsPartial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: processorBaseTargetAlert(t, domain.DimensionMap{})})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: processorBaseTargetAlert(t, domain.DimensionMap{})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,11 +149,11 @@ func TestAPMResourceProjectionFromDimensions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,11 +193,11 @@ func TestAPMRealAlarmResolvesApplicationFromAdditionalDimensions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,11 +244,11 @@ func TestAPMCompletePayloadCoversAllIdentityLevels(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result, err := chain.Enrich(context.Background(), enrich.Input{Alert: processorBaseTargetAlert(t, dimensions)})
+			result, err := chain.Enrich(context.Background(), enrich.Input{Event: processorBaseTargetAlert(t, dimensions)})
 			if err != nil {
 				t.Fatal(err)
 			}
-			payload, err := enrich.DecodePayload(result.Data)
+			payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -271,11 +271,11 @@ func TestAPMCompleteProcessorChainPreservesAPMContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: alert})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: alert})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := enrich.DecodePayload(result.Data)
+	payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestAPMMissingApplicationIdentityReturnsPartial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), enrich.Input{Alert: processorBaseTargetAlert(t, domain.DimensionMap{})})
+	result, err := chain.Enrich(context.Background(), enrich.Input{Event: processorBaseTargetAlert(t, domain.DimensionMap{})})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -29,7 +29,7 @@ type RequiredIDs struct {
 }
 
 // ValidateRequiredIDs 在外部查询前校验 BASE_COLLECT 必需的三个正整数标签。
-func ValidateRequiredIDs(alert domain.Alert) (RequiredIDs, []Diagnostic) {
+func ValidateRequiredIDs(alert domain.Event) (RequiredIDs, []Diagnostic) {
 	fields := []struct {
 		name string
 		dest *int64

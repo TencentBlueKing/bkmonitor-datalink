@@ -68,7 +68,10 @@ func (p *Processor) compareAndSetAlert(
 	replacement domain.Alert,
 ) (store.StoredAlert, error) {
 	var updated store.StoredAlert
-	var err error
+	replacement, err := domain.PrepareAlertReplacement(current.Alert, replacement)
+	if err != nil {
+		return store.StoredAlert{}, fmt.Errorf("%w: %w", store.ErrInvalidTransition, err)
+	}
 	if repository, ok := p.repository.(store.LifecycleAlertStore); ok {
 		updated, err = repository.CompareAndSetAlertAfterActiveLookup(
 			ctx,
@@ -150,6 +153,10 @@ func (p *Processor) CloseAlert(ctx context.Context, command CloseAlertCommand) (
 		if err != nil {
 			return CloseAlertResult{}, err
 		}
+		stored, err = p.finishPendingChanges(ctx, stored)
+		if err != nil {
+			return CloseAlertResult{}, err
+		}
 		endType := domain.AlertEndTypeUser
 		causeType := AlertChangeCauseUserOperation
 		if command.OperatorKind == domain.OperatorKindSystem {
@@ -165,6 +172,9 @@ func (p *Processor) CloseAlert(ctx context.Context, command CloseAlertCommand) (
 			// 否则旧 active 缓存会持续参与新事件裁决。
 			if err := p.repairClosedAlertCache(ctx, stored); err != nil {
 				return CloseAlertResult{}, fmt.Errorf("repair directly closed alert cache: %w", err)
+			}
+			if err := p.clearSuppression(ctx, stored.Alert); err != nil {
+				return CloseAlertResult{}, err
 			}
 			operationLog, err := operationCloseLog(command, stored.Alert)
 			if err != nil {
@@ -190,11 +200,17 @@ func (p *Processor) CloseAlert(ctx context.Context, command CloseAlertCommand) (
 		}
 		replacement := stored.Alert.Clone()
 		replacement.Status = domain.AlertStatusClosed
+		replacement.Shield = domain.AlertShield{}
+		replacement.Merge = replacement.Merge.EndWaiting()
 		replacement.UpdateAt = nextAlertUpdateTime(command.EffectiveAt, stored.Alert.UpdateAt)
+		replacement.PolicyChange = terminalShieldChange(stored.Alert, replacement.UpdateAt, command.OperationID)
 		endAt := command.EffectiveAt
 		replacement.EndAt = &endAt
 		replacement.EndType = endType
 		replacement.EndReason = command.Reason
+		if err := freezeAction(&replacement, stored.Alert.Revision+1, AlertChangeCause{Type: causeType, ID: command.OperationID}, replacement.Admission.AdmittedAt != nil); err != nil {
+			return CloseAlertResult{}, err
+		}
 		updated, err := p.compareAndSetAlert(ctx, stored, replacement)
 		if errors.Is(err, store.ErrVersionConflict) {
 			continue
@@ -202,8 +218,15 @@ func (p *Processor) CloseAlert(ctx context.Context, command CloseAlertCommand) (
 		if err != nil {
 			return CloseAlertResult{}, err
 		}
+		updated, err = p.finishPendingChanges(ctx, updated)
+		if err != nil {
+			return CloseAlertResult{}, err
+		}
 		if err := p.recentAlerts.PutCurrent(ctx, updated); err != nil {
 			return CloseAlertResult{}, fmt.Errorf("cache directly closed alert %q: %w", command.AlertID, err)
+		}
+		if err := p.clearSuppression(ctx, updated.Alert); err != nil {
+			return CloseAlertResult{}, err
 		}
 		operationLog, err := operationCloseLog(command, updated.Alert)
 		if err != nil {

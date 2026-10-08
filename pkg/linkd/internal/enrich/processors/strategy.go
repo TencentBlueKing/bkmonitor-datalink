@@ -59,7 +59,7 @@ func (Strategy) Match(context.Context, *enrich.Scope) (bool, error) { return tru
 
 // Process 查询策略依赖并生成策略信息。
 func (p Strategy) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
-	alert := scope.Alert()
+	alert := scope.Event()
 	ids, diagnostics := enrich.ValidateRequiredIDs(alert)
 	if len(diagnostics) != 0 {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: diagnostics}, nil
@@ -155,8 +155,8 @@ func (p Strategy) buildStrategyURL(
 	if strategy.ObjectModelCode == nil || *strategy.ObjectModelCode == "" {
 		return "", false
 	}
-	classification := rules.Classify(strategy, scope.Alert().Dimensions)
-	queryInstance, ok := strategyInstanceQuery(classification.BaseTarget, *strategy.ObjectModelCode, scope.Alert().Dimensions)
+	classification := rules.Classify(strategy, scope.Event().Dimensions)
+	queryInstance, ok := strategyInstanceQuery(classification.BaseTarget, *strategy.ObjectModelCode, scope.Event().Dimensions)
 	if !ok {
 		return "", false
 	}

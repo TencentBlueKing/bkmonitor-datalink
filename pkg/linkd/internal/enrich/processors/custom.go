@@ -40,15 +40,15 @@ func (p *Rules) Match(context.Context, *enrich.Scope) (bool, error) { return tru
 
 // Process 顺序执行规则并返回已提交补丁；不直接修改 Scope 或 Alert。
 func (p *Rules) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
-	original, err := domain.AlertDocument(scope.OriginalAlert())
+	original, err := domain.EventDocument(scope.OriginalEvent(), scope.Evaluation())
 	if err != nil {
 		return enrich.ProcessorResult{}, err
 	}
-	current, err := domain.AlertDocument(scope.EffectiveAlert())
+	current, err := domain.EventDocument(scope.EffectiveEvent(), scope.Evaluation())
 	if err != nil {
 		return enrich.ProcessorResult{}, err
 	}
-	result, err := p.program.Execute(ctx, original, current, scope.EffectiveAlert().BKTenantID, scope.RuleSources())
+	result, err := p.program.Execute(ctx, original, current, scope.EffectiveEvent().BKTenantID, scope.RuleSources())
 	if err != nil {
 		return enrich.ProcessorResult{}, err
 	}

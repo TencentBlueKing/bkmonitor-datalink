@@ -1,0 +1,41 @@
+.projection-tasks-page > .page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.projection-tasks-page .merge-detail {
+  overflow-wrap: anywhere;
+}
+.projection-facts {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 12px;
+  font-size: 13px;
+}
+.projection-facts dt {
+  color: var(--muted);
+}
+.projection-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.projection-receipt,
+.projection-retry,
+.projection-snapshot {
+  border: 1px solid var(--line);
+  padding: 16px;
+  margin: 16px 0;
+}
+.projection-retry label {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.projection-retry textarea {
+  min-height: 80px;
+  background: var(--panel-2);
+  color: var(--text);
+  padding: 10px;
+  border: 1px solid var(--line);
+}

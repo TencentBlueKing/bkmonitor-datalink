@@ -33,6 +33,8 @@ type HTTPTransportConfig struct {
 	Timeout       time.Duration
 	// MaxConnectionsPerHost 同时限制单节点总连接和可保留的 idle connection 数量。
 	MaxConnectionsPerHost int
+	// DisableRedirects 用于兼容存储等外部连接，禁止认证随重定向跨站发送。
+	DisableRedirects bool
 }
 
 // HTTPTransport 把 Repository 的相对请求轮询发送到一个或多个 Elasticsearch origin。
@@ -82,9 +84,13 @@ func NewHTTPTransport(config HTTPTransportConfig) (*HTTPTransport, error) {
 	transport.MaxConnsPerHost = config.MaxConnectionsPerHost
 	transport.MaxIdleConnsPerHost = config.MaxConnectionsPerHost
 	transport.MaxIdleConns = min(config.MaxConnectionsPerHost*len(baseURLs), maxHTTPIdleConnections)
+	client := &http.Client{Transport: transport, Timeout: config.Timeout}
+	if config.DisableRedirects {
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	}
 	return &HTTPTransport{
 		baseURLs:      baseURLs,
-		client:        &http.Client{Transport: transport, Timeout: config.Timeout},
+		client:        client,
 		transport:     transport,
 		apiKey:        config.APIKey,
 		basicUsername: config.BasicUsername,

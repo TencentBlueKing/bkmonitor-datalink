@@ -176,7 +176,7 @@ it("publishes form changes without losing advanced fields or submitting input Ka
   expect(writes).toHaveLength(1);
   expect(writes[0].body.expected_revision).toBe(1);
   expect(writes[0].body.spec?.scheduling.cleaner.replicas).toBe(0);
-  expect(writes[0].body.spec?.storage.kafka.security).toBeUndefined();
+  expect(writes[0].body.spec?.storage.kafka?.security).toBeUndefined();
   expect(writes[0].body.spec?.enrich).toEqual(json.enrich);
 });
 
@@ -377,4 +377,24 @@ it("shows unavailable runtime as unknown after an initial failure and can retry"
   fireEvent.click(screen.getByRole("tab", { name: "运行情况" }));
   expect(within(dialog).getByText("该来源暂无任务")).toBeInTheDocument();
   expect(within(dialog).getAllByText("未知").length).toBeGreaterThan(0);
+});
+
+it("shows internal merge input and edits Lifecycle without Kafka or Cleaner fields", async () => {
+  const row = source("builtin_alarm_merge");
+  row.spec.storage = { type: "internal_merge" };
+  delete row.spec.cleaner;
+  row.spec.scheduling.cleaner = { replicas: 0, selector: {} };
+  const { writes } = setup([row]);
+  await open("builtin_alarm_merge");
+  expect(
+    screen.queryByLabelText("Brokers（每行一个）"),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Cleaner 副本数")).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Lifecycle 副本数"), {
+    target: { value: "1" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "保存并发布" }));
+  await screen.findByText(/配置已发布 · 版本 2/);
+  expect(writes[0].body.spec?.storage).toEqual({ type: "internal_merge" });
+  expect(writes[0].body.spec?.scheduling.lifecycle.replicas).toBe(1);
 });

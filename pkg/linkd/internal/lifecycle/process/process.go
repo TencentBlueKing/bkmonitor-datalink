@@ -14,6 +14,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,13 +24,20 @@ import (
 	"linkd/internal/consume"
 	"linkd/internal/consume/redisstream"
 	"linkd/internal/enrich/assembly"
+	"linkd/internal/eventsource"
 	"linkd/internal/lifecycle"
 	"linkd/internal/lifecycle/mailbox"
 	"linkd/internal/lifecycle/recentalert"
 	"linkd/internal/lifecycle/scheduler"
+	"linkd/internal/policy"
+	"linkd/internal/policy/redisstate"
+	policyruntime "linkd/internal/policy/runtime"
+	policystore "linkd/internal/policy/storage"
 	"linkd/internal/redisclient"
+	"linkd/internal/store"
 	repositoryassembly "linkd/internal/store/assembly"
 	elasticsearchstore "linkd/internal/store/elasticsearch"
+	"linkd/internal/suppressioncleanup"
 	"linkd/internal/taskdispatch"
 	"linkd/internal/telemetry"
 )
@@ -94,8 +104,19 @@ func Run(
 		repositoryRuntime.Repository = batched
 	}
 	observedRepository := telemetryRuntime.ObserveRepository(repositoryRuntime.Repository)
+	cleanupDocs, err := policystore.Open(startupCtx, *storageConfig, cfg.Dispatch.WithDefaults().Deployment)
+	if err != nil {
+		return err
+	}
+	defer func() { runErr = errors.Join(runErr, cleanupDocs.Close()) }()
+	cleanupJournal, err := suppressioncleanup.NewJournal(cleanupDocs, time.Now)
+	if err != nil {
+		return err
+	}
 
-	lockClient, err := redisclient.New(storageConfig.Redis.ClientOptions())
+	redisOptions := storageConfig.Redis.ClientOptions()
+	redisOptions.ContextTimeoutEnabled = true
+	lockClient, err := redisclient.New(redisOptions)
 	if err != nil {
 		return fmt.Errorf("initialize lifecycle redis: %w", err)
 	}
@@ -107,6 +128,11 @@ func Run(
 	if err := lockClient.Ping(startupCtx).Err(); err != nil {
 		return fmt.Errorf("connect lifecycle redis: %w", err)
 	}
+	actionRecorder, closeActionTasks, err := openActionRecorder(startupCtx, *storageConfig, cfg.Dispatch.WithDefaults().Deployment, lockClient)
+	if err != nil {
+		return fmt.Errorf("initialize lifecycle action recorder: %w", err)
+	}
+	defer func() { runErr = errors.Join(runErr, closeActionTasks()) }()
 	recentAlerts := lifecycle.RecentAlertCache(lifecycle.NoopRecentAlertCache{})
 	recentAlertCacheEnabled := false
 	recentAlertCacheTTL := time.Duration(0)
@@ -122,6 +148,19 @@ func Run(
 		recentAlertCacheEnabled = true
 		recentAlertCacheTTL = cacheConfig.TTL()
 	}
+
+	policyState, err := redisstate.New(lockClient, cfg.Dispatch.WithDefaults().Deployment)
+	if err != nil {
+		return err
+	}
+	observations := policyruntime.NewObservations(policyState, telemetryRuntime)
+	defer observations.Close()
+	policyState.SetObserver(telemetryRuntime)
+	policyResources, err := policyruntime.Open(cfg.Resources, cfg.Blueking)
+	if err != nil {
+		return err
+	}
+	defer func() { runErr = errors.Join(runErr, policyResources.Close()) }()
 
 	severityState := taskdispatch.SeverityState(ctx, cfg.Severity)
 	return taskdispatch.ServeWithSeverity(ctx, cfg, "lifecycle", func(taskCtx context.Context, task taskdispatch.Task, source config.EventSource) (taskErr error) {
@@ -146,6 +185,39 @@ func Run(
 		if err != nil {
 			return fmt.Errorf("initialize lifecycle source enricher: %w", err)
 		}
+		source.Version = task.Version
+		versionedEnricher := &releaseEnricher{current: source, engine: enricher, slots: make(chan struct{}, min(4, lifecycleConfig.Concurrency)),
+			read: func(ctx context.Context, id string, version int64) (config.EventSource, error) {
+				client := taskdispatch.Client{URL: cfg.Dispatch.WithDefaults().URL, Token: cfg.Dispatch.WorkerToken, WorkerID: task.Worker}
+				var release eventsource.Release
+				err := client.Call(ctx, http.MethodGet, "/internal/releases/"+url.PathEscape(id)+"/"+strconv.FormatInt(version, 10)+"?purpose=enrich&task="+url.QueryEscape(task.ID), nil, &release)
+				if err != nil {
+					return config.EventSource{}, err
+				}
+				if release.Deleted {
+					return config.EventSource{}, fmt.Errorf("enrich release is deleted")
+				}
+				release.Spec.Version = release.Version
+				return release.Spec, nil
+			},
+			open: func(ctx context.Context, spec config.EventSource) (lifecycle.EventEnricher, func() error, error) {
+				runtime, err := assembly.Open(ctx, spec, cfg.Resources, 1, time.Duration(lifecycleConfig.ProcessTimeoutSeconds)*time.Second, telemetryRuntime)
+				if err != nil {
+					return nil, nil, err
+				}
+				router, err := runtime.Router(spec, telemetryRuntime)
+				if err != nil {
+					_ = runtime.Close()
+					return nil, nil, err
+				}
+				return router, runtime.Close, nil
+			},
+		}
+		// 全局插件覆盖所有来源及租户，来源发布不再提供出口配置。
+		targets := map[string]bool{}
+		if cfg.Plugins.KACEnabled() {
+			targets["kac"] = true
+		}
 		stage = "hooks"
 		hooks, closeHooks, err := openHooksWithSeverity(source.Hooks, telemetryRuntime, severityState)
 		if err != nil {
@@ -157,16 +229,33 @@ func Run(
 			}
 		}()
 		stage = "processor"
+		policyReader := policyruntime.WorkerReader{Client: taskdispatch.Client{URL: cfg.Dispatch.WithDefaults().URL, Token: cfg.Dispatch.WorkerToken, WorkerID: task.Worker}, TaskID: task.ID}
+		policyCatalog := policy.NewCatalog(policyReader)
+		suppressor := &policyruntime.Suppressor{Releases: policyReader, Catalog: policyCatalog, Targets: policyResources.Targets, State: policyState, Aggregation: policyState,
+			CleanupRecorder: cleanupJournal,
+			CurrentAlert: func(ctx context.Context, tenant, id string) (store.StoredAlert, error) {
+				if current, ok := observedRepository.(store.LifecycleAlertStore); ok {
+					return current.GetAlertCurrent(ctx, tenant, id)
+				}
+				return observedRepository.GetAlert(ctx, tenant, id)
+			},
+			NewAlertID: lifecycle.DeterministicAlertIDGenerator{}.Generate, Observations: observations, Observer: telemetryRuntime, Logger: logger}
 		processor, err := lifecycle.NewProcessor(
 			observedRepository,
 			recentAlerts,
 			lifecycle.DeterministicAlertIDGenerator{},
-			enricher,
+			versionedEnricher,
 			hooks,
 			severityState,
 			lifecycle.SystemClock{},
 			logger,
 			lifecycle.WithEnrichObserver(telemetryRuntime.EnrichObserver()),
+			lifecycle.WithActionRecorder(actionRecorder),
+			lifecycle.WithInitialProjectionTargets(targets),
+			lifecycle.WithPolicySnapshotter(policyruntime.Snapshotter{Catalog: policyCatalog}),
+			lifecycle.WithNewAlertSuppressor(suppressor),
+			lifecycle.WithMergeEvaluator(&policyruntime.Merger{Loader: suppressor, State: policyState, Logger: logger, Observer: telemetryRuntime}),
+			lifecycle.WithShieldEvaluator(&policyruntime.Shielder{Loader: suppressor, Events: observedRepository.GetEvent, Candidates: observedRepository.(store.ActiveAlertReader), CurrentAlert: suppressor.CurrentAlert, Dependency: policyState, Hints: policyState, Relations: policyResources.Relations, Logger: logger, Observer: telemetryRuntime}),
 			lifecycle.WithSeverityUpgradePolicy(lifecycleConfig.SeverityUpgradePolicy),
 			lifecycle.WithAlertContentBuilder(enricher),
 		)

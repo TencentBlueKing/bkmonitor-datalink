@@ -23,14 +23,10 @@ func TestEventSourceUsesEventSourceIDForLookupAndSourceEventIDForMeta(t *testing
 	t.Parallel()
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	reader := &recordingAlarmSourceReader{id: "kac-alarm-source-1", name: "自定义告警源"}
-	scope, err := enrich.NewScope(domain.Alert{
-		EventSourceVersion: 1,
-		AlertID:            "alert-1", BKTenantID: "tenant-a", EventSourceID: "alarm-source-1", Fingerprint: "fp",
-		Title: "alarm", Severity: "warning", Status: domain.AlertStatusActive,
-		Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{},
-		SourceEventID: "source-event-1", LatestEventID: "event-1", TriggerEventID: "event-1",
-		LastOccurredAt: now, UpdateAt: now, BeginAt: now, CreateAt: now,
-		EnrichStatus: domain.EnrichStatusPending, Enrich: domain.JSONObject{},
+	scope, err := enrich.NewScope(domain.Event{
+		EventSourceVersion: 1, EventID: "alert-1", BKTenantID: "tenant-a", EventSourceID: "alarm-source-1", Fingerprint: "fp",
+		Title: "alarm", Evaluations: []domain.EventEvaluation{{Severity: "warning", Action: domain.EventActionTriggered}}, Dimensions: domain.DimensionMap{}, Labels: domain.DimensionMap{}, ExtraData: domain.JSONObject{},
+		SourceEventID: "source-event-1", OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, EventEnrichment: domain.EventEnrichment{EnrichStatus: domain.EnrichStatusPending}, Values: domain.EventValues{}, SourceRawData: domain.JSONObject{},
 	}, enrich.Sources{AlarmSource: reader})
 	if err != nil {
 		t.Fatal(err)

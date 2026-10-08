@@ -56,17 +56,17 @@ func (i Instance) Document() map[string]any {
 
 // Search 在后端筛选并复核完整结果；超过上限、部分失败或重复身份均返回错误。
 func (c *Client) Search(ctx context.Context, tenant string, q Query) ([]Instance, error) {
-	if ctx == nil || tenant == "" || q.ModelID == "" {
-		return nil, fmt.Errorf("tenant and model_id are required")
-	}
-	if err := validateOneModelIdentity("model code", q.ModelID, 128); err != nil {
-		return nil, err
+	if ctx == nil {
+		return nil, fmt.Errorf("%w: context is required", ErrInvalidQuery)
 	}
 	if q.Limit == 0 {
 		q.Limit = 1024
 	}
-	if q.Limit < 1 || q.Limit > 1024 {
-		return nil, fmt.Errorf("query limit must be 1..1024")
+	if err := ValidateQuery(tenant, q); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	filters := []any{term("bk_tenant_id", tenant), term("model_id", q.ModelID)}
 	if !q.Where.Empty() {
@@ -102,21 +102,33 @@ func (c *Client) Search(ctx context.Context, tenant string, q Query) ([]Instance
 
 // Related 按显式关系和方向展开实例，集合有界并在每一步复核租户和 canonical 身份。
 func (c *Client) Related(ctx context.Context, tenant string, roots []Instance, relation, direction string, q Query) ([]Instance, error) {
-	if relation == "" || len(roots) == 0 || len(roots) > 1024 {
-		return nil, fmt.Errorf("relation and 1..1024 roots are required")
+	if ctx == nil {
+		return nil, fmt.Errorf("%w: context is required", ErrInvalidQuery)
+	}
+	if q.Limit == 0 {
+		q.Limit = 1024
+	}
+	if err := ValidateQuery(tenant, q); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !selectionText(relation, 256) || len(roots) == 0 || len(roots) > 1024 {
+		return nil, fmt.Errorf("%w: relation and 1..1024 roots are required", ErrInvalidQuery)
 	}
 	if direction != "out" && direction != "in" && direction != "both" {
-		return nil, fmt.Errorf("relation direction must be out, in or both")
+		return nil, fmt.Errorf("%w: relation direction must be out, in or both", ErrInvalidQuery)
 	}
 	uids := make([]string, 0, len(roots))
-	rootSet := map[string]bool{}
+	rootSet := map[string]string{}
 	for _, root := range roots {
-		if root.TenantID != tenant {
-			return nil, fmt.Errorf("relation root tenant mismatch")
+		if root.TenantID != tenant || !selectionText(root.ModelCode, 128) || strings.Contains(root.ModelCode, "|") || !selectionText(root.InstanceID, 1024) {
+			return nil, fmt.Errorf("%w: invalid relation root identity", ErrInvalidQuery)
 		}
 		uid := root.ModelCode + "|" + root.InstanceID
 		uids = append(uids, uid)
-		rootSet[uid] = true
+		rootSet[uid] = root.ModelCode
 	}
 	ids := map[string]bool{}
 	for _, dir := range []string{"out", "in"} {
@@ -138,7 +150,7 @@ func (c *Client) Related(ctx context.Context, tenant string, roots []Instance, r
 			fromUID, _ := row[from+"_entity_uid"].(string)
 			toUID, _ := row[to+"_entity_uid"].(string)
 			prefix := q.ModelID + "|"
-			if row["bk_tenant_id"] != tenant || row["producer"] != "cmdb_fact" || !rootSet[fromUID] || row[to+"_model_id"] != q.ModelID || row["relation_identity"] != relation || !strings.HasPrefix(toUID, prefix) || len(toUID) == len(prefix) {
+			if row["bk_tenant_id"] != tenant || row["producer"] != "cmdb_fact" || rootSet[fromUID] == "" || row[from+"_model_id"] != rootSet[fromUID] || row[to+"_model_id"] != q.ModelID || row["relation_identity"] != relation || !strings.HasPrefix(toUID, prefix) || !selectionText(strings.TrimPrefix(toUID, prefix), 1024) {
 				return nil, fmt.Errorf("%w: relation identity mismatch", ErrInvalidDataSourceResponse)
 			}
 			ids[strings.TrimPrefix(toUID, prefix)] = true
@@ -161,7 +173,17 @@ func (c *Client) Related(ctx context.Context, tenant string, roots []Instance, r
 	} else {
 		q.Where = Filter{All: []Filter{idFilter, q.Where}}
 	}
-	return c.Search(ctx, tenant, q)
+	rows, err := c.Search(ctx, tenant, q)
+	if err != nil {
+		return nil, err
+	}
+	// 实例过滤不能代替作用域复核；后端返回无关身份时，不得把它当作关系成员。
+	for _, row := range rows {
+		if !ids[row.InstanceID] {
+			return nil, fmt.Errorf("%w: instance outside relation edge set", ErrInvalidDataSourceResponse)
+		}
+	}
+	return rows, nil
 }
 
 // Empty 判断是否没有附加过滤。

@@ -1,0 +1,434 @@
+[
+  {
+    "id": "time-before",
+    "kind": "time_shield",
+    "mains": [],
+    "child": {},
+    "evaluate_at": -1,
+    "expected_kac": {
+      "shielded": false,
+      "parent": ""
+    },
+    "expected_linkd": {
+      "shielded": false,
+      "parent": ""
+    }
+  },
+  {
+    "id": "time-start",
+    "kind": "time_shield",
+    "mains": [],
+    "child": {},
+    "evaluate_at": 0,
+    "expected_kac": {
+      "shielded": true,
+      "parent": ""
+    },
+    "expected_linkd": {
+      "shielded": true,
+      "parent": ""
+    }
+  },
+  {
+    "id": "time-end",
+    "kind": "time_shield",
+    "mains": [],
+    "child": {},
+    "evaluate_at": 10,
+    "expected_kac": {
+      "shielded": true,
+      "parent": ""
+    },
+    "expected_linkd": {
+      "shielded": true,
+      "parent": ""
+    }
+  },
+  {
+    "id": "time-after",
+    "kind": "time_shield",
+    "mains": [],
+    "child": {},
+    "evaluate_at": 11,
+    "expected_kac": {
+      "shielded": false,
+      "parent": ""
+    },
+    "expected_linkd": {
+      "shielded": false,
+      "parent": ""
+    }
+  },
+  {
+    "id": "time-disabled",
+    "kind": "time_shield",
+    "mains": [],
+    "child": {},
+    "enabled": false,
+    "expected_kac": {
+      "shielded": false,
+      "parent": ""
+    },
+    "expected_linkd": {
+      "shielded": false,
+      "parent": ""
+    }
+  },
+  {
+    "id": "no-main",
+    "kind": "rely_shield",
+    "mains": [],
+    "child": {},
+    "expected_kac": {
+      "parent": "",
+      "shielded": false
+    },
+    "expected_linkd": {
+      "parent": "",
+      "shielded": false
+    }
+  },
+  {
+    "id": "active-main",
+    "kind": "rely_shield",
+    "mains": [
+      {
+        "id": "main",
+        "at": 0,
+        "status": "active"
+      }
+    ],
+    "child": {},
+    "expected_kac": {
+      "parent": "main",
+      "shielded": true
+    },
+    "expected_linkd": {
+      "parent": "main",
+      "shielded": true
+    }
+  },
+  {
+    "id": "newest-active",
+    "kind": "rely_shield",
+    "mains": [
+      {
+        "id": "old",
+        "at": -60,
+        "status": "active"
+      },
+      {
+        "id": "new",
+        "at": 0,
+        "status": "active"
+      }
+    ],
+    "child": {},
+    "expected_kac": {
+      "parent": "new",
+      "shielded": true
+    },
+    "expected_linkd": {
+      "parent": "new",
+      "shielded": true
+    }
+  },
+  {
+    "id": "dependency-before",
+    "kind": "rely_shield",
+    "mains": [
+      {
+        "id": "main",
+        "at": 0,
+        "status": "active"
+      }
+    ],
+    "child": {
+      "at": -301
+    },
+    "expected_kac": {
+      "parent": "",
+      "shielded": false
+    },
+    "expected_linkd": {
+      "parent": "",
+      "shielded": false
+    }
+  },
+  {
+    "id": "dependency-left-edge",
+    "kind": "rely_shield",
+    "mains": [
+      {
+        "id": "main",
+        "at": 0,
+        "status": "active"
+      }
+    ],
+    "child": {
+      "at": -300
+    },
+    "expected_kac": {
+      "parent": "main",
+      "shielded": true
+    },
+    "expected_linkd": {
+      "parent": "main",
+      "shielded": true
+    }
+  },
+  {
+    "id": "dependency-right-edge",
+    "kind": "rely_shield",
+    "mains": [
+      {
+        "id": "main",
+        "at": 0,
+        "status": "active"
+      }
+    ],
+    "child": {
+      "at": 600
+    },
+    "expected_kac": {
+      "parent": "main",
+      "shielded": true
+    },
+    "expected_linkd": {
+      "parent": "main",
+      "shielded": true
+    }
+  },
+  {
+    "id": "dependency-after",
+    "kind": "rely_shield",
+    "mains": [
+      {
+        "id": "main",
+        "at": 0,
+        "status": "active"
+      }
+    ],
+    "child": {
+      "at": 601
+    },
+    "expected_kac": {
+      "parent": "",
+      "shielded": false
+    },
+    "expected_linkd": {
+      "parent": "",
+      "shielded": false
+    }
+  },
+  {
+    "id": "no-older-fallback",
+    "kind": "rely_shield",
+    "mains": [
+      {
+        "id": "old",
+        "at": 0,
+        "status": "active"
+      },
+      {
+        "id": "new",
+        "at": 900,
+        "status": "active"
+      }
+    ],
+    "child": {
+      "at": 0
+    },
+    "expected_kac": {
+      "parent": "",
+      "shielded": false
+    },
+    "expected_linkd": {
+      "parent": "",
+      "shielded": false
+    }
+  },
+  {
+    "id": "pending-main",
+    "kind": "rely_shield",
+    "mains": [
+      {
+        "id": "pending",
+        "at": 0,
+        "status": "received"
+      }
+    ],
+    "child": {},
+    "expected_kac": {
+      "parent": "pending",
+      "shielded": true
+    },
+    "expected_linkd": {
+      "parent": "pending",
+      "shielded": true
+    }
+  },
+  {
+    "id": "active-over-pending",
+    "kind": "rely_shield",
+    "mains": [
+      {
+        "id": "active",
+        "at": -30,
+        "status": "active"
+      },
+      {
+        "id": "pending",
+        "at": 0,
+        "status": "received"
+      }
+    ],
+    "child": {},
+    "expected_kac": {
+      "parent": "active",
+      "shielded": true
+    },
+    "expected_linkd": {
+      "parent": "active",
+      "shielded": true
+    }
+  },
+  {
+    "id": "registration-over-batch-oldest",
+    "kind": "rely_shield",
+    "mains": [
+      {
+        "id": "first",
+        "at": 60,
+        "status": "received"
+      },
+      {
+        "id": "oldest",
+        "at": 0,
+        "status": "received"
+      }
+    ],
+    "child": {},
+    "difference": "first_atomic_registration",
+    "expected_kac": {
+      "parent": "oldest",
+      "shielded": true
+    },
+    "expected_linkd": {
+      "shielded": true,
+      "parent": "first"
+    },
+    "decision": "confirmed"
+  },
+  {
+    "id": "child-condition-miss",
+    "kind": "rely_shield",
+    "mains": [
+      {
+        "id": "main",
+        "at": 0,
+        "status": "active"
+      }
+    ],
+    "child": {
+      "title": "unmatched"
+    },
+    "expected_kac": {
+      "parent": "",
+      "shielded": false
+    },
+    "expected_linkd": {
+      "parent": "",
+      "shielded": false
+    }
+  },
+  {
+    "id": "child-target-outside",
+    "kind": "rely_shield",
+    "mains": [
+      {
+        "id": "main",
+        "at": 0,
+        "status": "active"
+      }
+    ],
+    "child": {
+      "instance": "102"
+    },
+    "difference": "main_target_scope",
+    "decision": "confirmed",
+    "expected_kac": {
+      "parent": "",
+      "shielded": false
+    },
+    "expected_linkd": {
+      "shielded": true,
+      "parent": "main"
+    }
+  },
+  {
+    "id": "cmdb-switch-main-host-child",
+    "kind": "rely_shield",
+    "mode": "cmdb_shield",
+    "model": "cw-Switch",
+    "instance": "sw1",
+    "mains": [
+      {
+        "id": "main",
+        "at": 0,
+        "status": "active"
+      }
+    ],
+    "child": {
+      "model": "cw-Host",
+      "instance": "101"
+    },
+    "difference": "main_target_scope",
+    "decision": "confirmed",
+    "expected_kac": {
+      "shielded": false,
+      "parent": ""
+    },
+    "expected_linkd": {
+      "shielded": true,
+      "parent": "main"
+    }
+  },
+  {
+    "id": "self-main",
+    "kind": "rely_shield",
+    "mains": [],
+    "child": {
+      "title": "main"
+    },
+    "expected_kac": {
+      "shielded": false,
+      "parent": ""
+    },
+    "expected_linkd": {
+      "shielded": false,
+      "parent": ""
+    }
+  },
+  {
+    "id": "dependency-disabled",
+    "kind": "rely_shield",
+    "mains": [
+      {
+        "id": "main",
+        "at": 0,
+        "status": "active"
+      }
+    ],
+    "child": {},
+    "enabled": false,
+    "expected_kac": {
+      "shielded": false,
+      "parent": ""
+    },
+    "expected_linkd": {
+      "shielded": false,
+      "parent": ""
+    }
+  }
+]

@@ -62,12 +62,12 @@ func TestSimulatedEnrichUsesObservedDataSource(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			alert := storetest.Alert("private-tenant", "private-alert", "event", "fp", "warning")
-			result, err := router.Enrich(t.Context(), enrich.Input{Alert: alert})
+			alert := storetest.Event("private-tenant", "private-event", "fp", "warning")
+			result, err := router.Enrich(t.Context(), enrich.Input{Event: alert})
 			if err != nil || result.Status != tc.status {
 				t.Fatalf("status=%v error=%v", result.Status, err)
 			}
-			payload, err := enrich.DecodePayload(result.Data)
+			payload, err := enrich.DecodePayload(result.Data.Evaluations[0].Data)
 			if err != nil {
 				t.Fatal(err)
 			}

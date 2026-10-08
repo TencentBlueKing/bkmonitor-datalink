@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-// Package preview 执行不保存的丰富模拟，只依赖来源、告警和外部资源的读取端口。
+// Package preview 执行不保存的丰富模拟，只依赖来源、事件和外部资源的读取端口。
 package preview
 
 import (
@@ -40,7 +40,7 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Message }
 
-// Request 支持已有告警身份、临时 Alert 或 opening Event；三种输入必须互斥。
+// Request 支持已有 Event、临时 Event JSON 或创建内容的 opening Event，三种输入互斥。
 type Request struct {
 	BKTenantID    string               `json:"bk_tenant_id"`
 	EventSourceID string               `json:"event_source_id"`
@@ -48,14 +48,13 @@ type Request struct {
 	Enrich        *config.EnrichConfig `json:"enrich,omitempty"`
 }
 
-// Input 的 Alert 为原始 JSON，避免把省略和零值混淆。
+// Input 的 Event 为原始 JSON，避免把省略和零值混淆。
 type Input struct {
-	AlertID string          `json:"alert_id,omitempty"`
-	Alert   json.RawMessage `json:"alert,omitempty"`
-	// Event 必须是已规范化的领域 Event，来源 content 保留用于候选结果对照。
-	Event json.RawMessage `json:"event,omitempty"`
-	// Severity 在 Event 有多个 triggered 判定时明确选择待创建 Alert 的级别。
-	Severity string `json:"severity,omitempty"`
+	// OpeningEvent 显式请求创建内容预览；完整身份和已发布来源版本必须匹配。
+	OpeningEvent json.RawMessage `json:"opening_event,omitempty"`
+	Severity     string          `json:"severity,omitempty"`
+	EventID      string          `json:"event_id,omitempty"`
+	Event        json.RawMessage `json:"event,omitempty"`
 }
 
 // Change 明确标识缺失和 null 的差异。
@@ -69,17 +68,25 @@ type Change struct {
 
 // Response 包含一次模拟的配置身份、步骤输出及按需合成视图。
 type Response struct {
-	// CandidateContent 仅在 opening Event 输入时提供，不修改任何已存 Alert。
-	CandidateContent *string             `json:"candidate_content,omitempty"`
-	Version          int64               `json:"event_source_version"`
-	ConfigDigest     string              `json:"config_digest"`
-	Original         map[string]any      `json:"original"`
-	EnrichStatus     domain.EnrichStatus `json:"enrich_status"`
-	Enrich           domain.JSONObject   `json:"enrich"`
-	EffectiveAlert   map[string]any      `json:"effective_alert"`
-	Changes          []Change            `json:"changes"`
-	PreviousChanges  []Change            `json:"previous_changes"`
-	Trace            []ProcessorTrace    `json:"trace"`
+	CandidateContent *string                `json:"candidate_content,omitempty"`
+	EffectiveAlert   map[string]any         `json:"effective_alert,omitempty"`
+	Changes          []Change               `json:"changes,omitempty"`
+	Version          int64                  `json:"event_source_version"`
+	ConfigDigest     string                 `json:"config_digest"`
+	Original         map[string]any         `json:"original"`
+	EnrichStatus     domain.EnrichStatus    `json:"enrich_status"`
+	Enrich           domain.EventEnrichData `json:"enrich"`
+	Evaluations      []EvaluationPreview    `json:"evaluations"`
+}
+
+// EvaluationPreview 分开返回各等级的有效结果、差异和轨迹，禁止隐式选择某个等级。
+type EvaluationPreview struct {
+	Severity        string             `json:"severity"`
+	Action          domain.EventAction `json:"action"`
+	EffectiveEvent  map[string]any     `json:"effective_event"`
+	Changes         []Change           `json:"changes"`
+	PreviousChanges []Change           `json:"previous_changes"`
+	Trace           []ProcessorTrace   `json:"trace"`
 }
 
 // ProcessorTrace 保留处理器与规则执行记录，不包含完整外部响应。
@@ -96,8 +103,8 @@ type SourceReader interface {
 	GetRelease(context.Context, string, int64) (eventsource.Release, error)
 }
 
-// AlertReader 只能按明确租户与告警身份读取一条告警。
-type AlertReader func(context.Context, string, string) (domain.Alert, error)
+// EventReader 只能按明确租户与事件身份读取一条事件。
+type EventReader func(context.Context, string, string) (domain.Event, error)
 
 // OpenEnricher 装配与正式执行相同的引擎，并返回调用结束时的资源释放函数。
 // Enricher 是预览消费的只读执行端口，由控制面装配实现。
@@ -110,13 +117,13 @@ type OpenEnricher func(context.Context, config.EventSource) (Enricher, func() er
 // Service 的并发预算与正式 Lifecycle 隔离，防止调试占满正式工作池。
 type Service struct {
 	sources SourceReader
-	read    AlertReader
+	read    EventReader
 	open    OpenEnricher
 	slots   chan struct{}
 }
 
 // New 注入窄读取端口；服务可并发调用。
-func New(sources SourceReader, read AlertReader, open OpenEnricher) *Service {
+func New(sources SourceReader, read EventReader, open OpenEnricher) *Service {
 	return &Service{sources: sources, read: read, open: open, slots: make(chan struct{}, 4)}
 }
 
@@ -133,22 +140,22 @@ func (s *Service) Preview(ctx context.Context, request Request) (Response, error
 	if domain.ValidateIdentityPart("bk_tenant_id", request.BKTenantID, 64) != nil || domain.ValidateIdentityPart("event_source_id", request.EventSourceID, 32) != nil {
 		return Response{}, &Error{400, "bk_tenant_id and event_source_id are required"}
 	}
-	hasJSON := len(request.Input.Alert) > 0
-	hasEvent := len(request.Input.Event) > 0
+	hasJSON := len(request.Input.Event) > 0
+	hasOpening := len(request.Input.OpeningEvent) > 0
 	choices := 0
-	for _, present := range []bool{hasJSON, hasEvent, request.Input.AlertID != ""} {
+	for _, present := range []bool{request.Input.EventID != "", hasJSON, hasOpening} {
 		if present {
 			choices++
 		}
 	}
 	if choices != 1 {
-		return Response{}, &Error{400, "choose exactly one of input.alert_id, input.alert and input.event"}
+		return Response{}, &Error{400, "choose exactly one of input.event_id, input.event and input.opening_event"}
 	}
-	if !hasEvent && request.Input.Severity != "" {
-		return Response{}, &Error{400, "input.severity requires input.event"}
+	if !hasOpening && request.Input.Severity != "" {
+		return Response{}, &Error{400, "input.severity requires input.opening_event"}
 	}
-	if len(request.Input.AlertID) > 256 {
-		return Response{}, &Error{400, "alert_id too long"}
+	if len(request.Input.EventID) > 256 {
+		return Response{}, &Error{400, "event_id too long"}
 	}
 	record, err := s.sources.Get(ctx, request.EventSourceID)
 	if err != nil {
@@ -176,108 +183,143 @@ func (s *Service) Preview(ctx context.Context, request Request) (Response, error
 		return Response{}, &Error{422, "invalid enrich configuration: " + safeConfigError(source.Enrich, err)}
 	}
 	var raw []byte
-	var openingEvent *domain.Event
+	var opening domain.Alert
 	var openingEvaluation domain.EventEvaluation
-	if hasEvent {
-		event, evaluation, opening, err := openingPreview(request.Input, request.BKTenantID, source)
+	if hasOpening {
+		candidate, evaluation, alert, err := openingPreview(request.Input, request.BKTenantID, source)
 		if err != nil {
 			return Response{}, err
 		}
-		openingEvent, openingEvaluation = &event, evaluation
-		raw, err = json.Marshal(opening)
+		opening, openingEvaluation = alert, evaluation
+		raw, err = json.Marshal(candidate)
 		if err != nil {
 			return Response{}, &Error{400, "invalid opening event"}
 		}
 	} else if hasJSON {
-		raw = request.Input.Alert
+		raw = request.Input.Event
 	} else {
 		if s.read == nil {
-			return Response{}, &Error{503, "alert reader unavailable"}
+			return Response{}, &Error{503, "event reader unavailable"}
 		}
-		alert, err := s.read(ctx, request.BKTenantID, request.Input.AlertID)
+		alert, err := s.read(ctx, request.BKTenantID, request.Input.EventID)
 		if err != nil {
 			return Response{}, readError(ctx, err)
 		}
-		if alert.AlertID != request.Input.AlertID {
-			return Response{}, &Error{502, "alert identity mismatch"}
+		if alert.EventID != request.Input.EventID {
+			return Response{}, &Error{502, "event identity mismatch"}
 		}
 		raw, err = json.Marshal(alert)
 		if err != nil {
-			return Response{}, &Error{400, "invalid stored alert"}
+			return Response{}, &Error{400, "invalid stored event"}
 		}
 	}
 	var original map[string]any
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	if err := decoder.Decode(&original); err != nil || original == nil {
-		return Response{}, &Error{400, "alert must be an object"}
+		return Response{}, &Error{400, "event must be an object"}
 	}
 	if err := jsonpath.ValidateTree(original); err != nil {
-		return Response{}, &Error{400, "alert exceeds input limits"}
+		return Response{}, &Error{400, "event exceeds input limits"}
 	}
 	for key, want := range map[string]string{"bk_tenant_id": request.BKTenantID, "event_source_id": request.EventSourceID} {
 		if got, ok := original[key]; ok && got != want {
-			return Response{}, &Error{400, "alert tenant or event source does not match request"}
+			return Response{}, &Error{400, "event tenant or event source does not match request"}
 		}
 		original[key] = want
 	}
-	var alert domain.Alert
+	var alert domain.Event
 	if err := json.Unmarshal(raw, &alert); err != nil {
-		return Response{}, &Error{400, "invalid alert field type"}
+		return Response{}, &Error{400, "invalid event field type"}
 	}
 	alert.BKTenantID = request.BKTenantID
 	alert.EventSourceID = request.EventSourceID
 	if err := alert.Labels.Validate(); err != nil {
-		return Response{}, &Error{400, "invalid alert labels"}
+		return Response{}, &Error{400, "invalid event labels"}
 	}
 	previous := alert.Clone()
 	delete(original, "enrich")
 	delete(original, "enrich_status")
-	alert.Enrich = domain.JSONObject{}
-	alert.EnrichStatus = domain.EnrichStatusPending
+	alert.EventEnrichment = domain.EventEnrichment{EnrichStatus: domain.EnrichStatusPending}
+	if err := domain.ValidateEvaluations(alert.Evaluations); err != nil {
+		return Response{}, &Error{400, "event requires valid evaluations"}
+	}
 	engine, closeRuntime, err := s.open(ctx, source)
 	if err != nil {
 		return Response{}, readError(ctx, err)
 	}
 	defer func() { _ = closeRuntime() }()
-	var candidate *string
-	if openingEvent != nil {
+	result, err := engine.Enrich(ctx, enrich.Input{Event: alert, Preview: true})
+	if err != nil {
+		return Response{}, readError(ctx, err)
+	}
+	rows := make([]EvaluationPreview, 0, len(alert.Evaluations))
+	for _, evaluation := range alert.Evaluations {
+		var current *domain.EvaluationEnrich
+		for i := range result.Data.Evaluations {
+			if result.Data.Evaluations[i].Severity == evaluation.Severity {
+				current = &result.Data.Evaluations[i]
+			}
+		}
+		if current == nil {
+			return Response{}, &Error{500, "incomplete enrich result"}
+		}
+		base, err := domain.EventDocument(alert, evaluation)
+		if err != nil {
+			return Response{}, &Error{400, "invalid event"}
+		}
+		effective, trace, err := compose(base, current.Data)
+		if err != nil {
+			return Response{}, &Error{500, "invalid enrich result"}
+		}
+		previousResult, _ := previous.ForSeverity(evaluation.Severity)
+		previousEffective, _, err := compose(base, previousResult.Data)
+		if err != nil {
+			return Response{}, &Error{400, "invalid previous enrichment"}
+		}
+		rows = append(rows, EvaluationPreview{Severity: evaluation.Severity, Action: evaluation.Action, EffectiveEvent: effective, Changes: Diff(base, effective), PreviousChanges: Diff(previousEffective, effective), Trace: trace})
+	}
+
+	var candidateContent *string
+	var candidateAlert map[string]any
+	var changes []Change
+	if hasOpening {
 		builder, ok := engine.(interface {
 			BuildContent(context.Context, domain.Event, domain.EventEvaluation, domain.Alert) (string, error)
 		})
 		if !ok {
 			return Response{}, &Error{503, "content preview builder unavailable"}
 		}
-		content, contentErr := builder.BuildContent(ctx, *openingEvent, openingEvaluation, alert.Clone())
-		if contentErr != nil {
+		for _, row := range result.Data.Evaluations {
+			if row.Severity == openingEvaluation.Severity {
+				opening.EnrichStatus, opening.Enrich = row.Status, row.Data.Clone()
+			}
+		}
+		content, err := builder.BuildContent(ctx, previous, openingEvaluation, opening.Clone())
+		if err != nil {
 			var permanent interface{ PermanentContentFailure() string }
-			if errors.As(contentErr, &permanent) {
+			if errors.As(err, &permanent) {
 				return Response{}, &Error{422, "content facts invalid: " + permanent.PermanentContentFailure()}
 			}
-			return Response{}, readError(ctx, contentErr)
+			return Response{}, readError(ctx, err)
 		}
-		candidate = &content
-		alert.Content = content
-	}
-	result, err := engine.Enrich(ctx, enrich.Input{Alert: alert, Preview: true})
-	if err != nil {
-		return Response{}, readError(ctx, err)
-	}
-	inputView := jsonpath.Clone(original).(map[string]any)
-	if candidate != nil {
-		inputView["content"] = *candidate
-	}
-	effective, trace, err := compose(inputView, result.Data)
-	if err != nil {
-		return Response{}, &Error{500, "invalid enrich result"}
-	}
-	previousEffective, _, err := compose(original, previous.Enrich)
-	if err != nil {
-		return Response{}, &Error{400, "invalid previous enrichment"}
+		candidateContent = &content
+		base, err := domain.AlertDocument(opening)
+		if err != nil {
+			return Response{}, &Error{400, "invalid opening event"}
+		}
+		inputView := jsonpath.Clone(base).(map[string]any)
+		inputView["content"] = content
+		candidateAlert, _, err = compose(inputView, opening.Enrich)
+		if err != nil {
+			return Response{}, &Error{500, "invalid enrich result"}
+		}
+		changes = Diff(base, candidateAlert)
 	}
 	encoded, _ := json.Marshal(source.Redacted().Enrich)
 	digest := sha256.Sum256(encoded)
-	return Response{CandidateContent: candidate, Version: release.Version, ConfigDigest: hex.EncodeToString(digest[:]), Original: original, EnrichStatus: result.Status, Enrich: result.Data, EffectiveAlert: effective, Changes: Diff(original, effective), PreviousChanges: Diff(previousEffective, effective), Trace: trace}, nil
+	return Response{CandidateContent: candidateContent, EffectiveAlert: candidateAlert, Changes: changes, Version: release.Version, ConfigDigest: hex.EncodeToString(digest[:]), Original: original, EnrichStatus: result.Status, Enrich: result.Data, Evaluations: rows}, nil
+
 }
 
 func readError(ctx context.Context, err error) error {
@@ -285,7 +327,7 @@ func readError(ctx context.Context, err error) error {
 		return &Error{504, "preview timed out or cancelled"}
 	}
 	if errors.Is(err, eventsource.ErrNotFound) || errors.Is(err, store.ErrNotFound) {
-		return &Error{404, "alert or event source not found"}
+		return &Error{404, "event or event source not found"}
 	}
 	return &Error{502, "preview read dependency unavailable"}
 }

@@ -13,15 +13,17 @@
 
 ## 当前链路与目标链路
 
-基线 `internal/lifecycle/plan.go` 的 `planNewAlert` 直接赋 `Content: event.Content`。当前实施改动已在构造后、`enrichNewAlert` 与 `planMutation` 前调用可注入的内容构建器；来源进程已注入内容 Router，默认 source 模式仍复制来源内容。`internal/lifecycle/enrich.go` 只写 `EnrichStatus/Enrich`；已持久化的计划在重试时复用同一内容。
+当前与 Event 前置丰富统一后的实现先冻结 Event 丰富，再进行策略准入；只有实际新建的 Alert 才在
+`planNewAlert` 中复制 opening Event 的选中等级结果并调用内容构建器，之后保存 EventPlan。
+`releaseEnricher` 为丰富和内容构建读取同一 EventSourceVersion，不用当前发布覆盖历史积压。
 
 ```text
-opening Event + 选中的 EventEvaluation
-    → Enrich 内容事实收集（只读、按租户及触发时版本）
-    → 纯函数渲染 bk-monitor description
+Event → 前置 Processor Chain → 持久化 Event.enrich
+    → 抑制与生命周期选择 opening Event / EventEvaluation
+    → 复制选中等级的丰富快照到新 Alert
+    → 只读内容事实收集与 bk-monitor description 渲染
     → 初始化新 Alert.content 一次
-    → 现有 Enrich Processor Chain → 仅写 Alert.enrich_status / Alert.enrich
-    → 持久化 EventPlan → 执行 Alert CAS、日志和 Hook
+    → 后续策略与持久化 EventPlan → Alert CAS、日志和 Hook
 ```
 
 同级别连续触发和 `update_current` 级别升级不重新生成内容，因为仍是同一个 Alert；`close_and_create` 升级会创建新 Alert，应以该新 Alert 的 opening Event 和选中级别重新生成。所有输出端读取持久化 `Alert.content`，不能把 `display.content` 的临时补丁误当成核心字段已更新。
@@ -36,7 +38,7 @@ type AlertContentBuilder interface {
 }
 ```
 
-接口参数中的 Alert 是尚未持久化的副本，仅供读取租户、来源、级别和标题等上下文；返回值是唯一允许写入新 `Alert.content` 的结果。`planNewAlert` 构造其余字段后调用 `BuildContent`，校验结果，再调用现有 `enrichNewAlert`。不要扩展 `enrich.Input/Result` 来返回核心字段，也不要让普通 Processor 获得修改 Alert 的能力。构造函数增加必需依赖或等价的显式装配校验，避免静默使用 `event.Content` 作为 bk-monitor 来源的回退。
+接口参数中的 Alert 是尚未持久化的副本，仅供读取租户、来源、级别和标题等上下文；返回值是唯一允许写入新 `Alert.content` 的结果。`planNewAlert` 构造其余字段并复制已冻结的 Event 丰富后调用 `BuildContent`，校验结果后冻结计划，不再重复执行 Enrich。不要扩展 `enrich.Input/Result` 来返回核心字段，也不要让普通 Processor 获得修改 Alert 的能力。构造函数增加必需依赖或等价的显式装配校验，避免静默使用 `event.Content` 作为 bk-monitor 来源的回退。
 
 内容路由按 EventSource 发布配置选择 `source` 或 `bkmonitor_description`。可在 `EnrichConfig` 下增加明确的 `content_mode`，并纳入配置校验、克隆、发布摘要、动态配置和预览；已启用来源逐一配置，避免凭 `strategy_id` 或来源名称猜测。`source` 仅复制来源内容；`bkmonitor_description` 使用下述事实收集与渲染模块。配置上线前须确认 EventSource 版本与既有未处理 Event 的关系：若处理时配置可能变化，应让事件记录或路由能复用其 `EventSourceVersion`，否则禁止在同一 backlog 中直接切换模式。
 
@@ -179,7 +181,7 @@ Kingeye `e34c323d` 代码中有两条版本生成路径：
 - Scheduler 将带永久内容错误标记的错误分类为 `consume.Block`，暂时失败继续 Retry；局部测试验证 mailbox head 保留和修复后原序消费。生产来源诊断、运维恢复入口还需完成。
 - EventSource `enrich.content_mode` 接受 source/bkmonitor_description；新模式在没有普通 processors 时仍要求 MySQL。Router 要求已发布版本与 Resolver，拒绝跨租户及来源版本不符；Lifecycle 测试证明入库的是生成文本，Event.content 保持原值且计划重放不再构建。真实配置 Reader 先通过四条 current 发布记录验证，后续 11 条真实 Kafka 样本的本地入库对照见下节。
 - 新模式下 Display 保留生成的 content，避免再次裁剪日志、拼接对象、转换单位或映射枚举。创建后仍只通过 enrich payload 提供展示字段；核心不可变约束未调整。
-- 预览支持 `input.event` 和 `input.severity`，与 Alert ID/JSON 输入互斥；多触发级别要求显式选择。只读构造临时 Alert 并返回 `candidate_content`，不读取已存 Alert、不写仓库；旧 Alert 预览不重新生成 content。Console 支持该输入并保留已发布 content_mode。预览与生产共用 Runtime.Router 装配真实 Resolver；最新 20 条真实输入的本地 Service 预览已与入库和源码 oracle 对照，线上 HTTP/Console 链路尚未验收。
+- 创建内容预览使用 `input.opening_event` 和 `input.severity`，与 Event ID/JSON 丰富预览输入互斥；多触发级别要求显式选择。只读构造临时 Alert 并返回 `candidate_content`，不读取已存 Alert、不写仓库；普通 Event 丰富预览不生成 Alert.content。Console 支持该输入并保留已发布 content_mode。预览与生产共用 Runtime.Router 装配真实 Resolver；最新 20 条真实输入的本地 Service 预览已与入库和源码 oracle 对照，线上 HTTP/Console 链路尚未验收。
 - 补充验证 `go test -race ./internal/enrich/... ./internal/lifecycle ./internal/lifecycle/scheduler`、同范围 `go vet` 和 `golangci-lint run` 通过，lint 为 0 issues。完整 `make check` 的既有阻断尚未解除；未完成真实 content 入库链路验收。
 
 本轮 `go test -race ./internal/config ./internal/enrich/... ./internal/lifecycle ./internal/lifecycle/process ./internal/lifecycle/scheduler` 通过（19 个包，2858 个测试，含单位 fixture 子用例；新增 Display 专项另行通过）；同范围 go vet 及 golangci-lint 通过，lint 为 0 issues。安装 Console 锁定依赖后，`make check` 已通过 fmt-check，普通测试仍停在原有 KAC identity/source 断言，后续全仓 vet/race/lint 尚未由该门禁执行。Console typecheck 通过；来源配置与预览两个受影响测试文件共 8 个用例通过。全量 Console 测试有 5 个未改动 App 测试因当前 Node 的 localStorage 不可用失败。文档 59 个本地链接/锚点检查通过。所有结果均不代表跨系统描述一致性已经验收。
@@ -322,7 +324,7 @@ Cloud 的源码补查确认 `TargetExecutor` 按对象模型进入 is_cloud 分�
 - 在 `bkmonitor_description` 模式，事实缺失、版本不符、未知算法、输出超限或模板不支持均不得复制 `event.Content` 冒充成功。返回带有限定错误码的失败，且必须发生在 `EventPlan` 持久化之前；不得先创建不可修复的错误 Alert。
 - 暂时性依赖失败使用现有 Lifecycle 消息重试与有界退避。确定性缺失不得无限重试：在 Lifecycle scheduler 对内容错误分类，复用 `consume.Block` 保留消息和 mailbox 顺序，并提供来源、事件 ID、规则/依赖错误码、恢复步骤的告警与人工处理入口；不记录完整 payload。需要在实施时验证 Block 的队列所有权和恢复操作，不能仅靠日志。
 - 一旦 `EventPlan` 已保存，重试只能执行原计划，不能重新读取策略并改写内容。计划保存前的 CAS 冲突重算必须读取同版本事实并产生相同文本。按租户隔离所有读取和缓存；结果、模板及源事实有硬上限。
-- 内容生成成功而普通 Enrich 失败时，沿用当前 Enrich 降级语义；核心内容已确定，`enrich_status/enrich` 表示普通丰富状态。内容构建失败与普通 Enrich 失败要有不同指标和诊断。
+- 前置 Event Enrich 失败时，按既有规则保存失败结果；若候选仍获准新建且内容构建成功，Alert 复制该丰富状态并保存生成的核心内容。内容构建失败与普通 Enrich 失败要有不同指标和诊断。
 - 预览入口应能用未持久化 Event + Alert 展示候选内容及缺失事实，不执行核心字段写入；正式流程与预览共用 Resolver/Renderer。旧 Alert 不做后台回填。
 
 ## 与现有 Display 和读取视图的关系
@@ -348,3 +350,15 @@ Cloud 的源码补查确认 `TargetExecutor` 按对象模型进入 is_cloud 分�
 3. 对 bk-monitor 自身格式化异常而输出空串的样本，产品要逐字保留空串还是按明确的新规则处理。该选择须写入黄金样本，不能隐式回退来源 `content`。
 
 上述事实未确认前，本方案给出可实现的代码边界和推进顺序，但不能承诺所有场景已具备逐字一致的数据条件。
+
+### 与 Event 前置丰富和策略链整合（2026-10-08）
+
+内容构建失败时 Event 已完成的丰富结果继续保留，不保存业务计划或错误 Alert；恢复时复用丰富快照。
+Display 在 `bkmonitor_description` 模式不生成 `$.content` 覆盖补丁，防止 opening Event 的来源文案
+通过复制的丰富快照覆盖新 Alert 的生成内容；其余展示字段正常丰富。候选内容预览明确使用
+`input.opening_event`，普通 `input.event_id/input.event` 保持多等级 Event 丰富语义，响应额外返回
+`candidate_content/effective_alert/changes`，不改写 Event 有效视图或生产数据。
+
+本次整合验收：完整 `make check` 通过（含 Go/vet/race、静态检查、Console和Helm），
+真实 Redis 内容失败阻断与修复恢复用例通过；策略运行时、模拟及历史来源版本读取的相关race通过。
+Console Event丰富与策略诊断浏览器回归通过。历史线上样本未重新采集，既有日期记录不代表本次线上联调。

@@ -60,6 +60,9 @@ type EventFactory struct {
 
 // NewDynamicEventFactory 让来源长期运行时读取最新等级，保留已删除的来源映射以便落库后拒绝。
 func NewDynamicEventFactory(source config.EventSource, state *runtimeconfig.Severity) (*EventFactory, error) {
+	if source.Storage.Type == config.StorageTypeInternalMerge {
+		return nil, fmt.Errorf("internal merge source has no cleaner")
+	}
 	if state == nil {
 		return nil, fmt.Errorf("severity state is required")
 	}
@@ -89,6 +92,9 @@ func NewEventFactoryWithResolvers(
 	fingerprintResolver FingerprintResolver,
 ) (*EventFactory, error) {
 	source = source.WithDefaults()
+	if source.Storage.Type == config.StorageTypeInternalMerge {
+		return nil, fmt.Errorf("internal merge source has no cleaner")
+	}
 	severity = severity.WithDefaults()
 	if err := config.ValidateEventSources([]config.EventSource{source}, severity); err != nil {
 		return nil, fmt.Errorf("create event factory: %w", err)

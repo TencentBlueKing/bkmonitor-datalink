@@ -36,9 +36,9 @@ func TestAppendAdditionalDisplayDimensions(t *testing.T) {
 func TestCombinedDimensions(t *testing.T) {
 	t.Parallel()
 	host, _ := domain.NewNumberScalar(101)
-	alert := domain.Alert{
+	alert := domain.Event{
 		Dimensions: domain.DimensionMap{"bk_target_ip": domain.NewStringScalar("10.0.0.1")},
-		ExtraData:  domain.JSONObject{"additional_dimensions": json.RawMessage(`{"bk_host_id":101}`)},
+		ExtraData:  domain.JSONObject{"additional_dimensions": json.RawMessage(`{"bk_host_id":101}`)}, SourceRawData: domain.JSONObject{}, Evaluations: []domain.EventEvaluation{{Severity: "warning", Action: domain.EventActionTriggered}}, EventEnrichment: domain.EventEnrichment{EnrichStatus: domain.EnrichStatusPending}, Values: domain.EventValues{},
 	}
 	combined, err := combinedDimensions(alert)
 	if err != nil {

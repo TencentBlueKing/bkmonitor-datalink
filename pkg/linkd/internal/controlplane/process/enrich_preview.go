@@ -21,16 +21,16 @@ import (
 	storeassembly "linkd/internal/store/assembly"
 )
 
-// newEnrichPreview 使用无 schema 初始化的告警读取与共享丰富运行时。
+// newEnrichPreview 使用无 schema 初始化的事件读取与共享丰富运行时。
 func newEnrichPreview(sources *eventsource.Service, storage config.StorageConfig, resources config.ResourcesConfig) *preview.Service {
-	return preview.New(sources, func(ctx context.Context, tenant, id string) (domain.Alert, error) {
+	return preview.New(sources, func(ctx context.Context, tenant, id string) (domain.Event, error) {
 		r, err := storeassembly.OpenReadOnly(ctx, storage, 4)
 		if err != nil {
-			return domain.Alert{}, err
+			return domain.Event{}, err
 		}
 		defer func() { _ = r.Close() }()
-		a, err := r.Repository.GetAlert(ctx, tenant, id)
-		return a.Alert, err
+		a, err := r.Repository.GetEvent(ctx, tenant, id)
+		return a.Event, err
 	}, func(ctx context.Context, source config.EventSource) (preview.Enricher, func() error, error) {
 		r, err := enrichruntime.Open(ctx, source, resources, 4, 5*time.Second, nil)
 		if err != nil {

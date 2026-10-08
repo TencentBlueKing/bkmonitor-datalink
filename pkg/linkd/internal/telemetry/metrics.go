@@ -17,6 +17,16 @@ import (
 )
 
 type instruments struct {
+	policyMatchDuration     metric.Float64Histogram
+	policyCheckDelay        metric.Float64Histogram
+	policySamples           metric.Int64Counter
+	policyStateInit         metric.Int64Counter
+	projection              *projectionInstruments
+	actionDelivery          *actionInstruments
+	shieldHints             metric.Int64Counter
+	shieldDecisions         metric.Int64Counter
+	mergeDecisions          metric.Int64Counter
+	suppressionDecisions    metric.Int64Counter
 	writeBatch              *WriteBatchObserver
 	dispatch                *dispatchInstruments
 	pipelineAttempts        metric.Int64Counter
@@ -375,15 +385,40 @@ func newRegisteredInstruments(meter *instrumentRegistry) (*instruments, error) {
 	); err != nil {
 		return nil, err
 	}
+	if result.policyMatchDuration, err = meter.Float64Histogram("linkd.policy.match.duration", describeMetric("策略匹配耗时", "policy", "latency", "linkd.policy.kind", "linkd.outcome"), metric.WithUnit("s"), metric.WithDescription("一次条件与目标求值墙钟耗时，包含只读资源查询；不含Redis执行和统计采样"), metric.WithExplicitBucketBoundaries(.001, .01, .05, .1, .5, 1, 3, 10)); err != nil {
+		return nil, err
+	}
+	if result.policyCheckDelay, err = meter.Float64Histogram("linkd.policy.check.delay", describeMetric("策略到期检查延迟", "policy", "latency", "linkd.policy.kind"), metric.WithUnit("s"), metric.WithDescription("合并窗口截止或屏蔽计划检查时间到实际检查的延迟，重试重复观察，不代表解除完成"), metric.WithExplicitBucketBoundaries(0, 1, 5, 10, 30, 60, 300, 3600)); err != nil {
+		return nil, err
+	}
+	if result.policySamples, err = meter.Int64Counter("linkd.policy.statistics.samples", describeMetric("逐策略统计采样结果", "policy", "reliability", "linkd.outcome"), metric.WithUnit("{sample}"), metric.WithDescription("Redis逐策略观察采样的recorded、failed、dropped结果")); err != nil {
+		return nil, err
+	}
+	if result.policyStateInit, err = meter.Int64Counter("linkd.policy.state.initializations", describeMetric("策略缓存状态初始化", "policy", "reliability", "linkd.scheme", "linkd.outcome"), metric.WithUnit("{state}"), metric.WithDescription("防抖计数、聚合和合并窗口的初次创建或可确认的残缺修复；完整丢失无法与首次创建区分")); err != nil {
+		return nil, err
+	}
+
+	if result.mergeDecisions, err = meter.Int64Counter("linkd.policy.merge.decisions", describeMetric("合并策略入窗结果", "policy", "throughput", "linkd.outcome", "linkd.reason"), metric.WithUnit("{operation}"), metric.WithDescription("合并匹配、窗口加入与真实成员确认；按调用统计含重试")); err != nil {
+		return nil, err
+	}
+	if result.shieldHints, err = meter.Int64Counter("linkd.policy.shield.hints", describeMetric("屏蔽事件提示观察", "policy", "reliability", "linkd.outcome"), metric.WithUnit("{operation}"), metric.WithDescription("尽力而为的提示发布、订阅、排队与分页检查结果；不是唯一事件或解除数")); err != nil {
+		return nil, err
+	}
+	if result.shieldDecisions, err = meter.Int64Counter("linkd.policy.shield.decisions", describeMetric("屏蔽策略裁决结果", "policy", "throughput", "linkd.outcome", "linkd.reason"), metric.WithUnit("{operation}"), metric.WithDescription("屏蔽新匹配与已有关系重查结果；按调用统计，包含重试")); err != nil {
+		return nil, err
+	}
+	if result.suppressionDecisions, err = meter.Int64Counter("linkd.policy.suppression.decisions", describeMetric("抑制策略裁决结果", "policy", "throughput", "linkd.scheme", "linkd.outcome", "linkd.reason"), metric.WithUnit("{operation}"), metric.WithDescription("抑制策略求值、计数及 owner 清理结果；按调用计数，包含重试")); err != nil {
+		return nil, err
+	}
 	if result.enrichAttempts, err = meter.Int64Counter(
-		"linkd.enrich.attempts", describeMetric("告警丰富尝试结果", "enrich", "throughput", "linkd.event_source_id", "linkd.status", "linkd.outcome", "linkd.chain_kind"), metric.WithUnit("{attempt}"),
-		metric.WithDescription("新 Alert 同步丰富尝试结果"),
+		"linkd.enrich.attempts", describeMetric("事件丰富尝试结果", "enrich", "throughput", "linkd.event_source_id", "linkd.status", "linkd.outcome", "linkd.chain_kind"), metric.WithUnit("{attempt}"),
+		metric.WithDescription("Event 同步丰富尝试结果"),
 	); err != nil {
 		return nil, err
 	}
 	if result.enrichAttemptDuration, err = meter.Float64Histogram(
-		"linkd.enrich.attempt.duration", describeMetric("告警丰富总耗时", "enrich", "latency", "linkd.event_source_id", "linkd.status", "linkd.outcome", "linkd.chain_kind"), metric.WithUnit("s"),
-		metric.WithDescription("新 Alert 同步丰富总耗时"),
+		"linkd.enrich.attempt.duration", describeMetric("事件丰富总耗时", "enrich", "latency", "linkd.event_source_id", "linkd.status", "linkd.outcome", "linkd.chain_kind"), metric.WithUnit("s"),
+		metric.WithDescription("Event 同步丰富总耗时"),
 	); err != nil {
 		return nil, err
 	}
@@ -395,7 +430,7 @@ func newRegisteredInstruments(meter *instrumentRegistry) (*instruments, error) {
 	}
 	if result.enrichPayloadSize, err = meter.Int64Histogram(
 		"linkd.enrich.payload.size", describeMetric("丰富结果载荷大小", "enrich", "capacity", "linkd.event_source_id", "linkd.status"), metric.WithUnit("By"),
-		metric.WithDescription("最终 Alert enrich payload 字节数"),
+		metric.WithDescription("最终 Event enrich payload 字节数"),
 	); err != nil {
 		return nil, err
 	}
@@ -646,6 +681,12 @@ func newRegisteredInstruments(meter *instrumentRegistry) (*instruments, error) {
 		metric.WithUnit("{conflict}"),
 		metric.WithDescription("存储 CAS 冲突次数"),
 	); err != nil {
+		return nil, err
+	}
+	if result.actionDelivery, err = newActionInstruments(meter); err != nil {
+		return nil, err
+	}
+	if result.projection, err = newProjectionInstruments(meter); err != nil {
 		return nil, err
 	}
 	if result.dispatch, err = newDispatchInstruments(meter); err != nil {

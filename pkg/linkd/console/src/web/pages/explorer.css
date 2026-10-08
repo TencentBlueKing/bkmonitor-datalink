@@ -772,3 +772,26 @@
     flex-wrap: wrap;
   }
 }
+
+.alert-policy-state {
+  border-top: 1px solid var(--line);
+  margin-top: 20px;
+}
+.alert-policy-state h3 {
+  font-size: 14px;
+}
+.alert-policy-state h4 {
+  font-size: 13px;
+  margin: 20px 0 12px;
+}
+.alert-policy-state details {
+  margin: 12px 0;
+  font-size: 12px;
+}
+.alert-policy-state summary {
+  cursor: pointer;
+  margin-bottom: 10px;
+}
+.alert-policy-table {
+  overflow-x: auto;
+}

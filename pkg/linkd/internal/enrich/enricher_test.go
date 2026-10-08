@@ -51,7 +51,7 @@ func TestChainOrderIsolationAndFailureContinuation(t *testing.T) {
 	alert := testAlert()
 	original := alert.Clone()
 	first := &testProcessor{name: "first", fn: func(_ context.Context, scope *Scope) (ProcessorResult, error) {
-		copy := scope.Alert()
+		copy := scope.Event()
 		copy.Labels["strategy_id"] = domain.NewBoolScalar(false)
 		copy.Dimensions["host"] = domain.NewStringScalar("changed")
 		copy.ExtraData["nested"] = json.RawMessage(`{"changed":true}`)
@@ -61,7 +61,7 @@ func TestChainOrderIsolationAndFailureContinuation(t *testing.T) {
 		return ProcessorResult{}, errors.New("sensitive dependency detail")
 	}}
 	last := &testProcessor{name: "last", fn: func(_ context.Context, scope *Scope) (ProcessorResult, error) {
-		if !reflect.DeepEqual(scope.Alert(), original) {
+		if !reflect.DeepEqual(scope.Event(), original) {
 			t.Fatal("scope alert changed across processors")
 		}
 		return ProcessorResult{Status: domain.EnrichStatusSucceeded, Value: domain.JSONObject{"ok": json.RawMessage(`true`)}}, nil
@@ -70,14 +70,14 @@ func TestChainOrderIsolationAndFailureContinuation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := chain.Enrich(context.Background(), Input{Alert: alert})
+	result, err := chain.Enrich(context.Background(), Input{Event: alert})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.Status != domain.EnrichStatusPartial || !reflect.DeepEqual(alert, original) {
 		t.Fatalf("result=%#v alert changed=%v", result, !reflect.DeepEqual(alert, original))
 	}
-	payload, err := DecodePayload(result.Data)
+	payload, err := DecodePayload(result.Data.Evaluations[0].Data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestChainObserverClassifiesProcessorOutcomes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := chain.Enrich(context.Background(), Input{Alert: testAlert()}); err != nil {
+	if _, err := chain.Enrich(context.Background(), Input{Event: testAlert()}); err != nil {
 		t.Fatal(err)
 	}
 	got := make([]string, len(observer.values))
@@ -145,7 +145,7 @@ func TestChainCancellationStopsFollowingProcessor(t *testing.T) {
 		return ProcessorResult{Status: domain.EnrichStatusSucceeded, Value: domain.JSONObject{}}, nil
 	}}
 	chain, _ := NewChain([]Processor{first, last}, Sources{})
-	if _, err := chain.Enrich(cancelled, Input{Alert: testAlert()}); !errors.Is(err, context.Canceled) {
+	if _, err := chain.Enrich(cancelled, Input{Event: testAlert()}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("Enrich() error=%v", err)
 	}
 	if calls != 1 {
@@ -169,12 +169,12 @@ func TestValidateRequiredIDs(t *testing.T) {
 }
 
 func TestNoopPayload(t *testing.T) {
-	result, err := (NoopEnricher{}).Enrich(context.Background(), Input{Alert: testAlert()})
+	result, err := (NoopEnricher{}).Enrich(context.Background(), Input{Event: testAlert()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := DecodePayload(result.Data)
-	if err != nil || len(payload.Processors) != 0 || len(result.Data) != 1 {
+	payload, err := DecodePayload(result.Data.Evaluations[0].Data)
+	if err != nil || len(payload.Processors) != 0 || len(result.Data.Evaluations[0].Data) != 1 {
 		t.Fatalf("payload=%#v error=%v", payload, err)
 	}
 }
@@ -194,19 +194,16 @@ func (p *testProcessor) Process(ctx context.Context, scope *Scope) (ProcessorRes
 	return p.fn(ctx, scope)
 }
 
-func testAlert() domain.Alert {
+func testAlert() domain.Event {
 	now := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	strategyID, _ := domain.NewNumberScalar(123)
 	strategyVersion, _ := domain.NewNumberScalar(1)
 	bizID, _ := domain.NewNumberScalar(2)
-	return domain.Alert{
-		EventSourceVersion: 1,
-		AlertID:            "alert-1", BKTenantID: "tenant-1", EventSourceID: "built_in_bk", Fingerprint: "fp",
-		Title: "CPU high", Content: "usage is high", Severity: "warning", Dimensions: domain.DimensionMap{"host": domain.NewStringScalar("host-1")},
-		Labels:    domain.DimensionMap{labelStrategyID: strategyID, labelStrategyVersion: strategyVersion, labelBizID: bizID},
-		ExtraData: domain.JSONObject{"nested": json.RawMessage(`{"value":1}`)}, Status: domain.AlertStatusActive,
-		LatestEventID: "event-1", TriggerEventID: "event-1", SourceEventID: "source-event-1",
-		LastOccurredAt: now, UpdateAt: now, BeginAt: now, CreateAt: now,
-		EnrichStatus: domain.EnrichStatusPending, Enrich: domain.JSONObject{},
+	return domain.Event{
+		EventSourceVersion: 1, EventID: "alert-1", BKTenantID: "tenant-1", EventSourceID: "built_in_bk", Fingerprint: "fp",
+		Title: "CPU high", Content: "usage is high", Evaluations: []domain.EventEvaluation{{Severity: "warning", Action: domain.EventActionTriggered}}, Dimensions: domain.DimensionMap{"host": domain.NewStringScalar("host-1")},
+		Labels:        domain.DimensionMap{labelStrategyID: strategyID, labelStrategyVersion: strategyVersion, labelBizID: bizID},
+		ExtraData:     domain.JSONObject{"nested": json.RawMessage(`{"value":1}`)},
+		SourceEventID: "source-event-1", OccurredAt: now, ProducedAt: now, ReceivedAt: now, CreateAt: now, SourceRawData: domain.JSONObject{}, EventEnrichment: domain.EventEnrichment{EnrichStatus: domain.EnrichStatusPending}, Values: domain.EventValues{},
 	}
 }

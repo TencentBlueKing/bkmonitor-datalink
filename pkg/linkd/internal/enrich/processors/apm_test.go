@@ -346,7 +346,7 @@ func (r apmTestReader) FindAPMApplications(context.Context, string, int64, strin
 	return []models.APMApplication{{TenantID: "tenant-a", ID: 17, Name: "demo", Alias: "Demo", BKBizID: 2}}, nil
 }
 
-func (r apmTestReader) GetByBKStrategyID(context.Context, string, int64) (models.CWStrategy, bool, error) {
+func (r apmTestReader) GetByStrategyID(context.Context, models.StrategyQuery) (models.CWStrategy, bool, error) {
 	biz := r.strategyBizID
 	if biz == 0 {
 		biz = 2

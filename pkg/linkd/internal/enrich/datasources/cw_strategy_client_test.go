@@ -10,93 +10,152 @@
 package datasources
 
 import (
-	"os"
+	"context"
+	"database/sql/driver"
+	"errors"
+	"strings"
 	"testing"
 
-	"gorm.io/datatypes"
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
+	"linkd/internal/enrich"
+	"linkd/internal/enrich/models"
 )
 
-func TestCWStrategyClientIntegration(t *testing.T) {
-	dsn := os.Getenv("LINKD_TEST_KINGEYE_MYSQL_DSN")
-	if dsn == "" {
-		t.Skip("LINKD_TEST_KINGEYE_MYSQL_DSN is not set")
-	}
-	database, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	client, err := NewCWStrategyClient(CWStrategyClientConfig{DB: database})
-	if err != nil {
-		t.Fatal(err)
-	}
-	strategy, found, err := client.GetByBKStrategyID(t.Context(), "system", 123)
-	if err != nil || !found {
-		t.Fatalf("strategy found=%t error=%v", found, err)
-	}
-	projection, err := strategy.StrategyItemProjection()
-	if err != nil || projection.BKBizID != 2 || len(projection.QueryConfigs) == 0 {
-		t.Fatalf("projection=%#v error=%v", projection, err)
-	}
-	if _, found, err := client.GetByBKStrategyID(t.Context(), "tenant-does-not-exist", 123); err != nil || found {
-		t.Fatalf("cross-tenant lookup found=%t error=%v", found, err)
-	}
-}
-
-func TestCWStrategyClientReadsMonitorTemplateName(t *testing.T) {
-	dsn := os.Getenv("LINKD_TEST_KINGEYE_MYSQL_DSN")
-	if dsn == "" {
-		t.Skip("LINKD_TEST_KINGEYE_MYSQL_DSN is not set")
-	}
-	database, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	client, err := NewCWStrategyClient(CWStrategyClientConfig{DB: database})
-	if err != nil {
-		t.Fatal(err)
-	}
-	strategy, found, err := client.GetByBKStrategyID(t.Context(), "system", 472)
-	if err != nil || !found {
-		t.Fatalf("strategy found=%t error=%v", found, err)
-	}
-	if strategy.MonitorTemplateID == nil || *strategy.MonitorTemplateID != 95 || strategy.MonitorTemplateName != "日志高级" {
-		t.Fatalf("monitor template id=%v name=%q", strategy.MonitorTemplateID, strategy.MonitorTemplateName)
-	}
-}
-
-func TestCWStrategyFromRowDecodesStrategyItemQueryProjection(t *testing.T) {
+func TestCWStrategyClientReadsPublication(t *testing.T) {
 	t.Parallel()
-	tenantID := "tenant-1"
-	bizID := int64(2)
-	row := cwStrategyRow{
-		Kind: "Strategy", Name: "CPU 使用率", UID: "strategy-1",
-		Annotations: datatypes.JSON(`{}`), BKTenantID: &tenantID, BKBizID: &bizID,
-		Spec: datatypes.JSON(`{
-			"name":"CPU 使用率","item_name":"system.cpu.usage","data_source":"system",
-			"strategy_item":{"agg_method":"avg","agg_interval":60,"expression":"A","functions":[],
-			"query_configs":[{"unit":"percent","alias":"A","agg_method":"avg","agg_interval":60,
-			"metric_field":"usage","agg_condition":[],"agg_dimension":["bk_inst_id"],
-			"result_table_id":"system.cpu","data_source_label":"bk_monitor","data_type_label":"time_series"}]}
-		}`),
-		Status: datatypes.JSON(`{"bk_strategy_id":123}`),
+	for _, tc := range []struct {
+		name            string
+		businesses      []int64
+		override, cloud bool
+	}{
+		{name: "default without old tables", businesses: []int64{2}},
+		{name: "data multiple businesses", businesses: []int64{2, 4}},
+		{name: "override uses child identity", businesses: []int64{2}, override: true},
+		{name: "cloud fields in publication", businesses: []int64{2}, cloud: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			db := openReaderTestDB(t, func(ctx context.Context, statement string, args []driver.NamedValue) (driver.Rows, error) {
+				calls++
+				if strings.Contains(statement, "home_application_monitortemplate") {
+					if args[0].Value != int64(7) || args[1].Value != "tenant" {
+						t.Fatal("template not tenant scoped")
+					}
+					return &readerTestRows{columns: []string{"id", "bk_tenant_id", "name"}, values: [][]driver.Value{{int64(7), "tenant", "CPU template"}}}, nil
+				}
+				assertSplitQuery(t, ctx, statement, args)
+				payload := splitTestPublication(t, tc.businesses...)
+				if tc.cloud {
+					payload["resolved_strategies"].([]any)[0].(map[string]any)["spec"].(map[string]any)["cloud_type"] = "aws"
+				}
+				if tc.override {
+					splitTestLabels(payload)["is_default"] = false
+					splitTestLabels(payload)["bk_object_inst_id"] = 101
+					delete(payload, "strategy_set")
+					delete(payload, "strategy_config")
+					delete(payload, "runtime_query_configs")
+				}
+				rows := splitTestRows(t, payload)
+				if tc.override {
+					rows.values[0][1] = int64(9)
+				}
+				return rows, nil
+			})
+			client, err := NewCWStrategyClient(CWStrategyClientConfig{DB: db})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, found, err := client.GetByStrategyID(t.Context(), models.StrategyQuery{TenantID: "tenant", ID: 1, Version: splitTestVersion})
+			if err != nil || !found || result.Status.BKStrategyID != 1 || result.MonitorTemplateName != "CPU template" || result.Spec.Name != "CPU" || calls != 2 {
+				t.Fatalf("found=%t err=%v result=%+v calls=%d", found, err, result, calls)
+			}
+			if *result.IsDefault == tc.override {
+				t.Fatal("default/override identity lost")
+			}
+			if tc.override && (result.BKObjectInstID == nil || *result.BKObjectInstID != "101") {
+				t.Fatal("numeric override instance identity lost")
+			}
+			if tc.cloud && result.Kind != models.CWStrategyKindCloud {
+				t.Fatal("cloud kind lost")
+			}
+			projection, err := result.StrategyItemProjection()
+			if err != nil || projection.QueryConfigs[0].MetricField != "usage" {
+				t.Fatalf("projection=%+v err=%v", projection, err)
+			}
+		})
 	}
+}
 
-	strategy, err := cwStrategyFromRow(row)
+func TestCWStrategyClientMissingInvalidFailureAndCancellation(t *testing.T) {
+	t.Parallel()
+	dependency := errors.New("database unavailable")
+	for _, tc := range []struct {
+		name        string
+		failure     error
+		change      func(*readerTestRows)
+		wantInvalid bool
+	}{
+		{name: "missing"},
+		{name: "dependency", failure: dependency},
+		{name: "version mismatch", wantInvalid: true, change: func(r *readerTestRows) { r.values[0][6] = splitTestVersion + 1 }},
+		{name: "malformed publication", wantInvalid: true, change: func(r *readerTestRows) { r.values[0][11] = "{" }},
+		{name: "oversized publication excluded by SQL", wantInvalid: true, change: func(r *readerTestRows) { r.values[0][11] = nil }},
+		{name: "duplicate rows", wantInvalid: true, change: func(r *readerTestRows) { r.values = append(r.values, r.values[0]) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openReaderTestDB(t, func(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+				if tc.failure != nil {
+					return nil, tc.failure
+				}
+				if tc.change == nil {
+					return &readerTestRows{columns: []string{"id"}}, nil
+				}
+				rows := splitTestRows(t, splitTestPublication(t, 2))
+				tc.change(rows)
+				return rows, nil
+			})
+			client, err := NewCWStrategyClient(CWStrategyClientConfig{DB: db})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, found, err := client.GetByStrategyID(t.Context(), models.StrategyQuery{TenantID: "tenant", ID: 1, Version: splitTestVersion})
+			if found {
+				t.Fatal("unexpected strategy")
+			}
+			if tc.failure != nil {
+				if !errors.Is(err, dependency) {
+					t.Fatal(err)
+				}
+			} else if tc.wantInvalid {
+				if !errors.Is(err, enrich.ErrInvalidDataSourceResponse) {
+					t.Fatal(err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	if _, err := NewCWStrategyClient(CWStrategyClientConfig{}); err == nil {
+		t.Fatal("nil DB accepted")
+	}
+	db := openReaderTestDB(t, func(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+		t.Fatal("invalid request reached SQL")
+		return nil, nil
+	})
+	client, err := NewCWStrategyClient(CWStrategyClientConfig{DB: db})
 	if err != nil {
 		t.Fatal(err)
 	}
-	projection, err := strategy.StrategyItemProjection()
-	if err != nil {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	identity := models.StrategyQuery{TenantID: "tenant", ID: 1, Version: splitTestVersion}
+	if _, _, err := client.GetByStrategyID(ctx, identity); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
-	if projection.BKBizID != 2 || projection.Name != "system.cpu.usage" || projection.Expression != "A" || len(projection.QueryConfigs) != 1 {
-		t.Fatalf("projection=%#v", projection)
+	if _, _, err := client.GetByStrategyID(nil, identity); err == nil { //nolint:staticcheck // SA1012: 验证调用方误传 nil Context 时明确拒绝，且不执行 SQL。
+		t.Fatal("nil context accepted")
 	}
-	query := projection.QueryConfigs[0]
-	if query.MetricField != "usage" || query.ResultTableID != "system.cpu" || query.AggregatePeriod != 60 ||
-		len(query.AggregateBy) != 1 || query.AggregateBy[0] != "bk_inst_id" || len(query.Raw) == 0 {
-		t.Fatalf("query=%#v", query)
+	identity.Version = 0
+	if _, _, err := client.GetByStrategyID(t.Context(), identity); err == nil {
+		t.Fatal("missing version accepted")
 	}
 }

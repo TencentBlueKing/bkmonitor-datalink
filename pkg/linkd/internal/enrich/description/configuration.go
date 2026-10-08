@@ -35,8 +35,8 @@ type RuntimeAlgorithm struct {
 }
 
 // Configuration 保存同一次版本绑定读取冻结的内容依赖。
-// Spec 与 SetConfig 来自当前 Set/Config，Reader 必须证明它们的渲染依赖
-// 与指定发布版本一致；Queries/Algorithms 保留该版本实际下发的单位和算法参数。
+// Spec、SetConfig、Queries 和 Algorithms 均来自同一 SplitRecord 发布材料；
+// Reader 必须校验租户、拆分主键、事件版本和载荷内绑定，不能回查旧配置表。
 type Configuration struct {
 	Identity   ConfigurationQuery
 	Spec       models.CWStrategySpec

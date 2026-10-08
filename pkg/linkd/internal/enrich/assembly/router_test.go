@@ -424,12 +424,11 @@ func (discardLogger) WarnContext(context.Context, string, ...any) {}
 
 type baseCollectCWStrategy struct{}
 
-func (baseCollectCWStrategy) GetByBKStrategyID(
+func (baseCollectCWStrategy) GetByStrategyID(
 	ctx context.Context,
-	tenantID string,
-	strategyID int64,
+	query models.StrategyQuery,
 ) (models.CWStrategy, bool, error) {
-	strategy, found, err := (&datasources.MockCWStrategyClient{}).GetByBKStrategyID(ctx, tenantID, strategyID)
+	strategy, found, err := (&datasources.MockCWStrategyClient{}).GetByStrategyID(ctx, query)
 	if err != nil || !found {
 		return strategy, found, err
 	}
@@ -591,7 +590,7 @@ func (panicSources) IsGlobalBusiness(context.Context, string, int64) (bool, bool
 	panic("data source called")
 }
 
-func (panicSources) GetByBKStrategyID(context.Context, string, int64) (models.CWStrategy, bool, error) {
+func (panicSources) GetByStrategyID(context.Context, models.StrategyQuery) (models.CWStrategy, bool, error) {
 	panic("data source called")
 }
 

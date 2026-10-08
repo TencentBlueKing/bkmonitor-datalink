@@ -1,8 +1,16 @@
+// Tencent is pleased to support the open source community by making
+// 蓝鲸智云 - 监控平台 (BlueKing - Monitor) available.
+// Copyright (C) 2026 Tencent. All rights reserved.
+// Licensed under the MIT License (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at http://opensource.org/licenses/MIT
+// Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
+// an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
+// specific language governing permissions and limitations under the License.
+
 package datasources
 
 import (
 	"context"
-	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
@@ -13,17 +21,288 @@ import (
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-
 	"linkd/internal/enrich/description"
+	"linkd/internal/enrich/models"
 )
 
-type descriptionTxConnector struct {
-	readerTestConnector
-	t                     *testing.T
-	committed, rolledBack *int
+const splitTestSetUID = "aabbccdd00112233445566778899aabb"
+
+const splitTestConfigUID = "d98eb9bc9c704d9a820d2c7cb8c51eab"
+
+const splitTestVersion int64 = 1790758008036099
+
+func splitTestPublication(t *testing.T, businesses ...int64) map[string]any {
+	t.Helper()
+	resolved, runtime := []any{}, []any{}
+	for _, business := range businesses {
+		resolved = append(resolved, map[string]any{
+			"metadata": map[string]any{"uid": "00112233-4455-6677-8899-aabbccddeeff", "name": "7|config|2", "namespace": "default", "labels": map[string]any{
+				"bk_tenant_id": "tenant", "bk_biz_id": business, "monitor_template_id": 7, "config_id": splitTestConfigUID, "is_default": true, "object_model_code": "cw-Host",
+			}},
+			"spec": map[string]any{"enable": true, "name": "CPU", "config_type": "data", "strategy_item": map[string]any{"agg_method": "AVG", "query_configs": []any{map[string]any{"unit": "percent", "metric_field": "usage", "result_table_id": "system.cpu", "agg_interval": 60}}}},
+		})
+		runtime = append(runtime, map[string]any{"query_configs": []any{map[string]any{"unit": "percent", "metric_id": "bk_monitor.system.cpu.usage"}}, "algorithms": []any{map[string]any{"type": "Threshold", "level": 2, "unit_prefix": "%", "config": []any{[]any{map[string]any{"method": "gt", "threshold": 80}}}}}})
+	}
+	return map[string]any{
+		"schema_version":      1,
+		"strategy_set":        map[string]any{"uid": splitTestSetUID, "monitor_template_id": 7, "config_type": "data", "template_bk_biz_id": 5},
+		"strategy_config":     map[string]any{"id": splitTestConfigUID, "enable": true, "inner_strategy_config": map[string]any{"name": "CPU"}},
+		"resolved_strategies": resolved, "runtime_query_configs": runtime,
+	}
 }
 
-// 仅显式注入连接时执行；不发布配置、不消费 Kafka、不写业务数据。
+func splitTestRows(t *testing.T, payload map[string]any) *readerTestRows {
+	t.Helper()
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	businesses := []int64{}
+	for _, entry := range payload["resolved_strategies"].([]any) {
+		labels := entry.(map[string]any)["metadata"].(map[string]any)["labels"].(map[string]any)
+		businesses = append(businesses, labels["bk_biz_id"].(int64))
+	}
+	bizJSON, err := json.Marshal(businesses)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &readerTestRows{columns: []string{"id", "parent_id", "bk_tenant_id", "strategy_set_uid", "monitor_template_id", "config_uid", "source_resource_version", "state", "publish_status", "enabled", "bk_biz_ids", "payload"}, values: [][]driver.Value{{int64(1), nil, "tenant", splitTestSetUID, int64(7), splitTestConfigUID, splitTestVersion, "active", "published", true, string(bizJSON), string(raw)}}}
+}
+
+func assertSplitQuery(t *testing.T, ctx context.Context, statement string, args []driver.NamedValue) {
+	t.Helper()
+	if !strings.Contains(statement, "FROM `alarm_strategy_set_split_record`") || !strings.Contains(statement, "bk_tenant_id = ? AND id = ?") || !strings.Contains(statement, "OCTET_LENGTH(payload)") || len(args) != 4 || args[0].Value != int64(maxStrategyPublicationBytes) || args[1].Value != "tenant" || args[2].Value != int64(1) || args[3].Value != int64(2) {
+		t.Fatalf("unexpected or unbounded strategy query: %s", statement)
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		t.Fatal("strategy read has no deadline")
+	}
+}
+
+func TestDescriptionConfigurationReadsOnlySplitRecord(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, code string
+		businesses []int64
+		change     func(map[string]any, *readerTestRows)
+	}{
+		{name: "default without legacy tables", businesses: []int64{2}},
+		{name: "same spec across businesses", businesses: []int64{2, 4}},
+		{name: "target multiple businesses one item", businesses: []int64{2}, change: func(p map[string]any, r *readerTestRows) {
+			p["strategy_set"].(map[string]any)["config_type"] = "target"
+			p["resolved_strategies"].([]any)[0].(map[string]any)["spec"].(map[string]any)["config_type"] = "target"
+			r.values[0][10] = "[2,4]"
+		}},
+		{name: "version mismatch", code: "publication_version_mismatch", businesses: []int64{2}, change: func(_ map[string]any, r *readerTestRows) { r.values[0][6] = splitTestVersion + 1 }},
+		{name: "tenant mismatch", code: "publication_version_mismatch", businesses: []int64{2}, change: func(_ map[string]any, r *readerTestRows) { r.values[0][2] = "other" }},
+		{name: "wrong split identity", code: "publication_version_mismatch", businesses: []int64{2}, change: func(_ map[string]any, r *readerTestRows) { r.values[0][0] = int64(9) }},
+		{name: "override revision unproven", code: "publication_override_revision_missing", businesses: []int64{2}, change: func(_ map[string]any, r *readerTestRows) { r.values[0][1] = int64(9) }},
+		{name: "not published", code: "publication_not_active", businesses: []int64{2}, change: func(_ map[string]any, r *readerTestRows) { r.values[0][8] = "pending" }},
+		{name: "disabled row", code: "publication_not_active", businesses: []int64{2}, change: func(_ map[string]any, r *readerTestRows) { r.values[0][9] = false }},
+		{name: "deleted row", code: "publication_not_active", businesses: []int64{2}, change: func(_ map[string]any, r *readerTestRows) { r.values[0][7] = "deleted" }},
+		{name: "set identity", code: "publication_binding_invalid", businesses: []int64{2}, change: func(p map[string]any, _ *readerTestRows) {
+			p["strategy_set"].(map[string]any)["uid"] = splitTestConfigUID
+		}},
+		{name: "config identity", code: "publication_binding_invalid", businesses: []int64{2}, change: func(p map[string]any, _ *readerTestRows) {
+			p["strategy_config"].(map[string]any)["id"] = splitTestSetUID
+		}},
+		{name: "resolved tenant", code: "publication_binding_invalid", businesses: []int64{2}, change: func(p map[string]any, _ *readerTestRows) { splitTestLabels(p)["bk_tenant_id"] = "other" }},
+		{name: "compiled error", code: "publication_payload_invalid", businesses: []int64{2}, change: func(p map[string]any, _ *readerTestRows) { p["compile_error"] = "rejected" }},
+		{name: "waiting metric binding", code: "publication_payload_invalid", businesses: []int64{2}, change: func(p map[string]any, _ *readerTestRows) { p["execution_state"] = "waiting_binding" }},
+		{name: "different business specs", code: "publication_business_specs_differ", businesses: []int64{2, 4}, change: func(p map[string]any, _ *readerTestRows) {
+			p["resolved_strategies"].([]any)[1].(map[string]any)["spec"].(map[string]any)["name"] = "different"
+		}},
+		{name: "missing business projection", code: "publication_business_mismatch", businesses: []int64{2}, change: func(_ map[string]any, r *readerTestRows) { r.values[0][10] = "[2,4]" }},
+		{name: "runtime count mismatch", code: "publication_runtime_invalid", businesses: []int64{2}, change: func(p map[string]any, _ *readerTestRows) { p["runtime_query_configs"] = []any{} }},
+		{name: "runtime error", code: "publication_runtime_invalid", businesses: []int64{2}, change: func(p map[string]any, _ *readerTestRows) {
+			p["runtime_query_configs"].([]any)[0].(map[string]any)["error"] = "invalid"
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			db := openReaderTestDB(t, func(ctx context.Context, statement string, args []driver.NamedValue) (driver.Rows, error) {
+				calls++
+				assertSplitQuery(t, ctx, statement, args)
+				payload := splitTestPublication(t, tc.businesses...)
+				rows := splitTestRows(t, payload)
+				if tc.change != nil {
+					tc.change(payload, rows)
+				}
+				raw, err := json.Marshal(payload)
+				if err != nil {
+					t.Fatal(err)
+				}
+				rows.values[0][11] = string(raw)
+				return rows, nil
+			})
+			client, err := NewDescriptionConfigurationClient(db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			identity := description.ConfigurationQuery{TenantID: "tenant", StrategyID: 1, StrategyVersion: splitTestVersion, BusinessID: 524}
+			result, err := client.ReadConfiguration(t.Context(), identity)
+			if calls != 1 {
+				t.Fatalf("publication required %d SQL reads", calls)
+			}
+			if tc.code != "" {
+				var failure *description.Error
+				if !errors.As(err, &failure) || failure.Code != tc.code {
+					t.Fatalf("got %v want %s", err, tc.code)
+				}
+				return
+			}
+			if err != nil || result.Identity != identity || result.Spec.Name != "CPU" || len(result.Algorithms) != 1 || result.Queries[0].Unit != "percent" {
+				t.Fatalf("result=%+v err=%v", result, err)
+			}
+		})
+	}
+}
+
+func splitTestLabels(p map[string]any) map[string]any {
+	return p["resolved_strategies"].([]any)[0].(map[string]any)["metadata"].(map[string]any)["labels"].(map[string]any)
+}
+
+func TestStrategyPublicationBudgets(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, code     string
+		count          int
+		runtimeQueries int
+	}{
+		{"maximum resolved configs", "", 32, 1},
+		{"resolved configs exceed budget", "publication_runtime_invalid", 33, 1},
+		{"queries exceed budget", "publication_runtime_invalid", 1, 33},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openReaderTestDB(t, func(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+				businesses := make([]int64, tc.count)
+				for i := range businesses {
+					businesses[i] = int64(i + 1)
+				}
+				payload := splitTestPublication(t, businesses...)
+				runtime := payload["runtime_query_configs"].([]any)[0].(map[string]any)
+				queries := make([]any, tc.runtimeQueries)
+				for i := range queries {
+					queries[i] = map[string]any{"unit": "percent"}
+				}
+				runtime["query_configs"] = queries
+				return splitTestRows(t, payload), nil
+			})
+			client, err := NewDescriptionConfigurationClient(db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.ReadConfiguration(t.Context(), description.ConfigurationQuery{TenantID: "tenant", StrategyID: 1, StrategyVersion: splitTestVersion, BusinessID: 2})
+			if tc.code == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			var failure *description.Error
+			if !errors.As(err, &failure) || failure.Code != tc.code {
+				t.Fatalf("got %v want %s", err, tc.code)
+			}
+		})
+	}
+}
+
+func TestStrategyReadsCancelInFlightSQL(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"enrich", "description"} {
+		t.Run(name, func(t *testing.T) {
+			started := make(chan struct{})
+			db := openReaderTestDB(t, func(ctx context.Context, _ string, _ []driver.NamedValue) (driver.Rows, error) {
+				close(started)
+				<-ctx.Done()
+				return nil, ctx.Err()
+			})
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			result := make(chan error, 1)
+			go func() {
+				if name == "description" {
+					client, err := NewDescriptionConfigurationClient(db)
+					if err != nil {
+						result <- err
+						return
+					}
+					_, err = client.ReadConfiguration(ctx, description.ConfigurationQuery{TenantID: "tenant", StrategyID: 1, StrategyVersion: 1, BusinessID: 2})
+					result <- err
+					return
+				}
+				client, err := NewCWStrategyClient(CWStrategyClientConfig{DB: db})
+				if err != nil {
+					result <- err
+					return
+				}
+				_, _, err = client.GetByStrategyID(ctx, models.StrategyQuery{TenantID: "tenant", ID: 1, Version: 1})
+				result <- err
+			}()
+			<-started
+			cancel()
+			if err := <-result; !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancellation lost: %v", err)
+			}
+		})
+	}
+}
+
+func TestDescriptionConfigurationMissingDependencyAndCancellation(t *testing.T) {
+	t.Parallel()
+	dependency := errors.New("database unavailable")
+	for _, tc := range []struct {
+		name    string
+		failure error
+	}{{"missing", nil}, {"dependency", dependency}} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openReaderTestDB(t, func(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+				return &readerTestRows{columns: []string{"id"}}, tc.failure
+			})
+			client, err := NewDescriptionConfigurationClient(db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = client.ReadConfiguration(t.Context(), description.ConfigurationQuery{TenantID: "tenant", StrategyID: 1, StrategyVersion: 1, BusinessID: 2})
+			if tc.failure != nil {
+				if !errors.Is(err, dependency) {
+					t.Fatal(err)
+				}
+			} else {
+				var failure *description.Error
+				if !errors.As(err, &failure) || failure.Code != "publication_missing_or_ambiguous" {
+					t.Fatal(err)
+				}
+			}
+		})
+	}
+	db := openReaderTestDB(t, func(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+		t.Fatal("invalid input queried database")
+		return nil, nil
+	})
+	client, err := NewDescriptionConfigurationClient(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	identity := description.ConfigurationQuery{TenantID: "tenant", StrategyID: 1, StrategyVersion: 1, BusinessID: 2}
+	if _, err := client.ReadConfiguration(ctx, identity); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if _, err := client.ReadConfiguration(nil, identity); err == nil { //nolint:staticcheck // SA1012: 验证调用方误传 nil Context 时明确拒绝，且不执行 SQL。
+		t.Fatal("nil context accepted")
+	}
+	identity.TenantID = " tenant"
+	if _, err := client.ReadConfiguration(t.Context(), identity); err == nil {
+		t.Fatal("invalid tenant accepted")
+	}
+	if _, err := NewDescriptionConfigurationClient(nil); err == nil {
+		t.Fatal("nil database accepted")
+	}
+}
+
+// TestDescriptionConfigurationLiveIntegration 仅显式注入连接时读取，不写配置或业务数据。
 func TestDescriptionConfigurationLiveIntegration(t *testing.T) {
 	dsn := os.Getenv("LINKD_CONTENT_TEST_MYSQL_DSN")
 	if dsn == "" {
@@ -35,285 +314,39 @@ func TestDescriptionConfigurationLiveIntegration(t *testing.T) {
 	}
 	sqlDB, err := db.DB()
 	if err != nil {
-		t.Fatal("integration database unavailable")
+		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		if err := sqlDB.Close(); err != nil {
 			t.Error("close integration database failed")
 		}
 	})
+	var rows []strategyPublicationRow
+	err = db.WithContext(t.Context()).Table("alarm_strategy_set_split_record").Select("id,bk_tenant_id,source_resource_version,bk_biz_ids").Where("bk_tenant_id = ? AND state = ? AND publish_status = ? AND parent_id IS NULL", os.Getenv("LINKD_CONTENT_TEST_TENANT"), "active", "published").Order("id").Limit(4).Find(&rows).Error
+	if err != nil || len(rows) == 0 {
+		t.Fatal("read integration publication identities failed")
+	}
 	client, err := NewDescriptionConfigurationClient(db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var rows []descriptionPublicationRow
-	err = db.WithContext(t.Context()).Table("alarm_strategy_set_split_record").Select("id,bk_tenant_id,source_resource_version,bk_biz_ids,CASE WHEN OCTET_LENGTH(payload) <= ? THEN payload ELSE NULL END AS payload", maxDescriptionPublicationBytes).Where("bk_tenant_id = ? AND state = ? AND publish_status = ? AND parent_id IS NULL", os.Getenv("LINKD_CONTENT_TEST_TENANT"), "active", "published").Order("id").Limit(4).Find(&rows).Error
-	if err != nil || len(rows) != 4 {
-		t.Fatal("read four integration publication identities failed")
-	}
-	for _, row := range rows {
-		var payload descriptionPublication
-		var businesses []int64
-		if err := json.Unmarshal(row.Payload, &payload); err != nil {
-			var typeError *json.UnmarshalTypeError
-			if errors.As(err, &typeError) {
-				t.Fatalf("split=%d invalid publication field=%s expected=%s", row.ID, typeError.Field, typeError.Type)
-			}
-			t.Fatalf("split=%d invalid publication JSON", row.ID)
-		}
-		if json.Unmarshal(row.BusinessIDs, &businesses) != nil || len(businesses) == 0 {
-			t.Fatal("invalid integration publication identity")
-		}
-		home := businesses[0]
-		if payload.Set.ConfigType == "data" && len(businesses) > 1 && payload.Set.TemplateBusinessID != 0 {
-			home = payload.Set.TemplateBusinessID
-		}
-		identity := description.ConfigurationQuery{TenantID: row.TenantID, StrategyID: row.ID, StrategyVersion: row.Version, BusinessID: home}
-		configuration, err := client.ReadConfiguration(t.Context(), identity)
-		if err != nil {
-			var failure *description.Error
-			if errors.As(err, &failure) {
-				t.Fatalf("split=%d code=%s", row.ID, failure.Code)
-			}
-			t.Fatalf("split=%d dependency read failed", row.ID)
-		}
-		if configuration.Identity != identity || len(configuration.Queries) == 0 || len(configuration.Algorithms) == 0 {
-			t.Fatalf("split=%d configuration facts incomplete", row.ID)
-		}
-		t.Logf("split=%d version=%d business=%d queries=%d algorithms=%d binding verified", row.ID, row.Version, home, len(configuration.Queries), len(configuration.Algorithms))
-	}
-}
-
-func (c descriptionTxConnector) Connect(context.Context) (driver.Conn, error) {
-	return descriptionTxConn{readerTestConn: readerTestConn(c.readerTestConnector), connector: c}, nil
-}
-func (c descriptionTxConnector) Driver() driver.Driver { return c }
-func (c descriptionTxConnector) Open(string) (driver.Conn, error) {
-	return c.Connect(context.Background())
-}
-
-type descriptionTxConn struct {
-	readerTestConn
-	connector descriptionTxConnector
-}
-
-func (c descriptionTxConn) BeginTx(ctx context.Context, options driver.TxOptions) (driver.Tx, error) {
-	if !options.ReadOnly || options.Isolation != driver.IsolationLevel(sql.LevelRepeatableRead) {
-		c.connector.t.Fatal("transaction must be read only repeatable read")
-	}
-	if _, ok := ctx.Deadline(); !ok {
-		c.connector.t.Fatal("read deadline missing")
-	}
-	return descriptionTestTx{c.connector.committed, c.connector.rolledBack}, nil
-}
-
-type descriptionTestTx struct{ committed, rolledBack *int }
-
-func (tx descriptionTestTx) Commit() error   { *tx.committed++; return nil }
-func (tx descriptionTestTx) Rollback() error { *tx.rolledBack++; return nil }
-
-const descriptionTestSetUID = "aabbccdd00112233445566778899aabb"
-const descriptionTestConfigUID = "d98eb9bc9c704d9a820d2c7cb8c51eab"
-const descriptionTestConfig = `{"id":"d98eb9bc-9c70-4d9a-820d-2c7cb8c51eab","enable":true,"inner_strategy_config":{"name":"CPU"}}`
-const descriptionTestSpec = `{"enable":true,"name":"CPU","config_type":"data","strategy_item":{"agg_method":"AVG","query_configs":[{"unit":"percent"}]},"targets":[]}`
-const descriptionTestCloudSpec = `{"enable":true,"name":"CPU","config_type":"data","cloud_id":42,"cloud_type":"aws","cloud_resource_type":"ec2","strategy_item":{"agg_method":"AVG","query_configs":[{"unit":"percent"}]},"targets":[]}`
-
-func descriptionPublicationFixture(t *testing.T, businesses []int64, home int64) string {
-	t.Helper()
-	resolved := []any{}
-	runtime := []any{}
-	for _, business := range businesses {
-		resolved = append(resolved, map[string]any{"metadata": map[string]any{"labels": map[string]any{"bk_tenant_id": "tenant", "bk_biz_id": business, "monitor_template_id": int64(7), "config_id": descriptionTestConfigUID, "is_default": true}}, "spec": json.RawMessage(descriptionTestSpec)})
-		runtime = append(runtime, map[string]any{"query_configs": []any{map[string]any{"unit": "percent"}}, "algorithms": []any{map[string]any{"type": "Threshold", "level": 2, "unit_prefix": "%", "config": []any{[]any{map[string]any{"method": "gt", "threshold": 80}}}}}})
-	}
-	payload, err := json.Marshal(map[string]any{"schema_version": 1, "strategy_set": map[string]any{"uid": descriptionTestSetUID, "monitor_template_id": 7, "config_type": "data", "template_bk_biz_id": home}, "strategy_config": json.RawMessage(descriptionTestConfig), "resolved_strategies": resolved, "runtime_query_configs": runtime})
+	strategyClient, err := NewCWStrategyClient(CWStrategyClientConfig{DB: db})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return string(payload)
-}
-
-func TestDescriptionConfigurationTransactionAndBindings(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name, code string
-		businesses []int64
-		home       int64
-		change     string
-	}{
-		{"default", "", []int64{2}, 2, ""},
-		{"cloud configuration exact frozen dependencies", "", []int64{2}, 2, "cloud"},
-		{"cloud identity dependency changed", "configuration_config_changed", []int64{2}, 2, "cloud changed"},
-		{"unknown configuration kind", "configuration_config_invalid", []int64{2}, 2, "unknown kind"},
-		{"global data", "", []int64{2, 4}, 5, ""},
-		{"target across businesses uses one resolved config", "", []int64{2, 4}, 5, "target"},
-		{"target with multiple monitored items rejected", "publication_target_items_unverified", []int64{2, 4}, 5, "target multiple"},
-		{"resolved tenant mismatch", "publication_binding_invalid", []int64{2}, 2, "resolved tenant"},
-		{"observation business differs from template", "", []int64{524}, 524, "observed business"},
-		{"config resource business differs from projection", "", []int64{524}, 524, "resource business"},
-		{"duplicate default configs", "configuration_config_missing_or_ambiguous", []int64{2}, 2, "duplicate default"},
-		{"equivalent defaults across businesses", "", []int64{2}, 2, "equivalent defaults"},
-		{"different defaults across businesses", "configuration_config_changed", []int64{2}, 2, "different defaults"},
-		{"default candidates exceed bound", "configuration_config_missing_or_ambiguous", []int64{2}, 2, "too many defaults"},
-		{"version changed", "publication_version_mismatch", []int64{2}, 2, "version"},
-		{"tenant mismatch", "publication_version_mismatch", []int64{2}, 2, "tenant"},
-		{"override without immutable revision", "publication_override_revision_missing", []int64{2}, 2, "override"},
-		{"set changed", "configuration_set_changed", []int64{2}, 2, "set"},
-		{"config changed", "configuration_config_changed", []int64{2}, 2, "config"},
-		{"targets do not render", "", []int64{2}, 2, "targets"},
-		{"log theme query context does not render", "", []int64{2}, 2, "log theme"},
-		{"dependency", "", []int64{2}, 2, "dependency"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			committed, rolledBack, queries := 0, 0, 0
-			dependency := errors.New("database unavailable")
-			query := func(ctx context.Context, statement string, args []driver.NamedValue) (driver.Rows, error) {
-				queries++
-				limit := int64(2)
-				if strings.Contains(statement, "core_v1alpha1_strategy`") {
-					limit = maxDescriptionResolvedConfigs + 1
-				}
-				if strings.Contains(statement, "history") || strings.Contains(statement, "revision") || !strings.Contains(statement, "bk_tenant_id") || !strings.Contains(statement, "OCTET_LENGTH") || args[1].Value != "tenant" || args[len(args)-1].Value != limit {
-					t.Fatalf("unsafe query: %s", statement)
-				}
-				if tc.change == "dependency" {
-					return nil, dependency
-				}
-				switch {
-				case strings.Contains(statement, "alarm_strategy_set_split_record"):
-					version, tenant := int64(1790758008036099), "tenant"
-					var parent driver.Value
-					if tc.change == "version" {
-						version++
-					}
-					if tc.change == "tenant" {
-						tenant = "other"
-					}
-					if tc.change == "override" {
-						parent = int64(9)
-					}
-					businesses, _ := json.Marshal(tc.businesses)
-					publication := descriptionPublicationFixture(t, tc.businesses, tc.home)
-					if tc.change == "cloud" || tc.change == "cloud changed" {
-						publication = strings.ReplaceAll(publication, descriptionTestSpec, descriptionTestCloudSpec)
-					}
-					if tc.change == "target" || tc.change == "target multiple" {
-						publication = strings.ReplaceAll(publication, `"config_type":"data"`, `"config_type":"target"`)
-						if tc.change == "target" {
-							var payload map[string]any
-							if err := json.Unmarshal([]byte(publication), &payload); err != nil {
-								t.Fatal(err)
-							}
-							payload["resolved_strategies"] = payload["resolved_strategies"].([]any)[:1]
-							payload["runtime_query_configs"] = payload["runtime_query_configs"].([]any)[:1]
-							encoded, err := json.Marshal(payload)
-							if err != nil {
-								t.Fatal(err)
-							}
-							publication = string(encoded)
-						}
-					}
-					if tc.change == "resolved tenant" {
-						publication = strings.Replace(publication, `"bk_tenant_id":"tenant"`, `"bk_tenant_id":"other"`, 1)
-					}
-					return &readerTestRows{columns: []string{"id", "parent_id", "bk_tenant_id", "strategy_set_uid", "monitor_template_id", "config_uid", "source_resource_version", "state", "publish_status", "enabled", "bk_biz_ids", "payload"}, values: [][]driver.Value{{int64(1), parent, tenant, descriptionTestSetUID, int64(7), descriptionTestConfigUID, version, "active", "published", true, string(businesses), publication}}}, nil
-				case strings.Contains(statement, "core_v1alpha1_strategyset"):
-					config := descriptionTestConfig
-					if tc.change == "set" {
-						config = strings.Replace(config, "CPU", "changed", 1)
-					}
-					return &readerTestRows{columns: []string{"uid", "bk_tenant_id", "monitor_template_id", "kind", "api_version", "spec"}, values: [][]driver.Value{{descriptionTestSetUID, "tenant", int64(7), "StrategySet", "v1alpha1", `{"monitor_template_id":7,"strategy_configs":[` + config + `]}`}}}, nil
-				case strings.Contains(statement, "core_v1alpha1_strategy"):
-					if !strings.Contains(statement, "is_default") || strings.Contains(statement, "AND bk_biz_id") || args[3].Value != strings.ReplaceAll(descriptionTestConfigUID, "-", "") {
-						t.Fatal("not bound to exact default configuration UUID")
-					}
-					spec := descriptionTestSpec
-					kind := "Strategy"
-					if tc.change == "cloud" || tc.change == "cloud changed" {
-						spec, kind = descriptionTestCloudSpec, "StrategyCloud"
-						if tc.change == "cloud changed" {
-							spec = strings.Replace(spec, `"cloud_id":42`, `"cloud_id":43`, 1)
-						}
-					}
-					if tc.change == "unknown kind" {
-						kind = "Unknown"
-					}
-					if tc.change == "target" {
-						spec = strings.ReplaceAll(spec, `"config_type":"data"`, `"config_type":"target"`)
-					}
-					if tc.change == "config" {
-						spec = strings.Replace(spec, "AVG", "MAX", 1)
-					}
-					if tc.change == "targets" {
-						spec = strings.Replace(spec, `"targets":[]`, `"targets":[{"enable":true}]`, 1)
-					}
-					if tc.change == "log theme" {
-						spec = strings.Replace(spec, `"unit":"percent"`, `"unit":"percent","log_theme_list":[{"id":1}]`, 1)
-					}
-					business := tc.businesses[0]
-					if tc.change == "resource business" {
-						business = 3
-					}
-					values := [][]driver.Value{{"tenant", int64(7), descriptionTestConfigUID, business, kind, "v1alpha1", spec}}
-					if tc.change == "duplicate default" {
-						values = append(values, values[0])
-					}
-					if tc.change == "equivalent defaults" || tc.change == "different defaults" {
-						other := append([]driver.Value(nil), values[0]...)
-						other[3] = business + 1
-						if tc.change == "different defaults" {
-							other[6] = strings.Replace(spec, "CPU", "changed", 1)
-						}
-						values = append(values, other)
-					}
-					if tc.change == "too many defaults" {
-						for len(values) <= maxDescriptionResolvedConfigs {
-							other := append([]driver.Value(nil), values[0]...)
-							other[3] = int64(len(values)) + business
-							values = append(values, other)
-						}
-					}
-					return &readerTestRows{columns: []string{"bk_tenant_id", "monitor_template_id", "config_id", "bk_biz_id", "kind", "api_version", "spec"}, values: values}, nil
-				default:
-					t.Fatalf("unexpected table: %s", statement)
-					return nil, nil
-				}
-			}
-			db := sql.OpenDB(descriptionTxConnector{readerTestConnector: readerTestConnector{query: query}, t: t, committed: &committed, rolledBack: &rolledBack})
-			t.Cleanup(func() {
-				if err := db.Close(); err != nil {
-					t.Error(err)
-				}
-			})
-			gormDB, err := gorm.Open(mysql.New(mysql.Config{Conn: db, SkipInitializeWithVersion: true}), &gorm.Config{DisableAutomaticPing: true, Logger: logger.Default.LogMode(logger.Silent)})
-			if err != nil {
-				t.Fatal(err)
-			}
-			client, err := NewDescriptionConfigurationClient(gormDB)
-			if err != nil {
-				t.Fatal(err)
-			}
-			identity := description.ConfigurationQuery{TenantID: "tenant", StrategyID: 1, StrategyVersion: 1790758008036099, BusinessID: tc.home}
-			if tc.change == "observed business" {
-				identity.BusinessID = 5
-			}
-			result, err := client.ReadConfiguration(t.Context(), identity)
-			if tc.change == "dependency" {
-				if !errors.Is(err, dependency) || rolledBack != 1 {
-					t.Fatalf("err=%v rollback=%d", err, rolledBack)
-				}
-				return
-			}
-			if tc.code != "" {
-				var failure *description.Error
-				if !errors.As(err, &failure) || failure.Code != tc.code || rolledBack != 1 || committed != 0 {
-					t.Fatalf("err=%v rollback=%d commit=%d", err, rolledBack, committed)
-				}
-				return
-			}
-			if err != nil || result.Identity != identity || result.Spec.Name != "CPU" || len(result.Algorithms) != 1 || queries != 3 || committed != 1 || rolledBack != 0 {
-				t.Fatalf("err=%v queries=%d commit=%d rollback=%d", err, queries, committed, rolledBack)
-			}
-		})
+	for _, row := range rows {
+		var businesses []int64
+		if json.Unmarshal(row.BusinessIDs, &businesses) != nil || len(businesses) == 0 {
+			t.Fatal("invalid integration business identity")
+		}
+		query := description.ConfigurationQuery{TenantID: row.TenantID, StrategyID: row.ID, StrategyVersion: row.Version, BusinessID: businesses[0]}
+		result, err := client.ReadConfiguration(t.Context(), query)
+		if err != nil {
+			t.Fatalf("split=%d configuration failed: %v", row.ID, err)
+		}
+		strategy, found, err := strategyClient.GetByStrategyID(t.Context(), models.StrategyQuery{TenantID: row.TenantID, ID: row.ID, Version: row.Version})
+		if err != nil || !found || result.Spec.Name != strategy.Spec.Name {
+			t.Fatalf("split=%d readers disagree: %v", row.ID, err)
+		}
 	}
 }

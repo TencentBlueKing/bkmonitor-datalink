@@ -350,8 +350,9 @@ strategy_id      = 123
 strategy_version = 1
 ```
 
-平台策略适配器使用 `strategy_id + strategy_version` 定位对应版本的策略快照。底层存储可将
-`strategy_version` 映射为历史表主键、版本号或其他稳定版本身份，该映射属于适配器职责。历史内容中的业务必须匹配：
+策略适配器按租户和 `strategy_id` 查询 `alarm_strategy_set_split_record.id`，
+要求 `source_resource_version == strategy_version` 且记录启用、active、published。
+配置内容来自该行 payload，旧配置表和历史表均不读取。发布业务与来源业务需通过丰富处理器的业务边界校验：
 
 ```text
 bk_biz_id = 2
@@ -378,8 +379,9 @@ bk_biz_id = 2
 
 ### 6.2 鲸眼策略
 
-鲸眼策略通过 Kafka `labels.strategy_id=123` 关联。鲸眼存储当前使用 `status.bk_strategy_id`
-保存该关联值，存储字段名只存在于数据源边界。
+鲸眼策略通过 Kafka `labels.strategy_id=123` 对应拆分记录主键。
+下面是从 `payload.resolved_strategies` 转换出的内部丰富视图，不能将其当作旧配置表行。
+默认与覆盖各用自身的拆分主键；`status.bk_strategy_id` 由适配器设为该主键。
 
 关键数据：
 
@@ -596,7 +598,7 @@ Strategy 输出沿用 Kafka labels 中的策略身份字段名：
 | 条件 | 结果 |
 | --- | --- |
 | `strategy_id`、`strategy_version` 或 `bk_biz_id` 缺失或非法 | 相关 Processor 返回 failed，并携带 `missing_field` 或 `invalid_field` |
-| 对应版本的平台策略快照未命中或内容非法 | strategy/display/metric 产生 `dependency_invalid=platform_strategy_snapshot` |
+| 对应版本的平台策略快照未命中或内容非法 | 相关策略处理器产生 `dependency_invalid=kingeye_strategy`；文案模式使用明确的发布身份/版本错误 |
 | CW Strategy 未命中 | 相关 Processor 产生 `dependency_invalid=kingeye_strategy` |
 | OneModel 查询失败 | resource 产生 `dependency_invalid=onemodel` |
 | MetricLibrary 查询失败 | display/metric 产生 `dependency_invalid=metric_library` |

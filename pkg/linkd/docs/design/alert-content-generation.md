@@ -2,6 +2,20 @@
 
 > 状态：本轮可用事实范围的实现与验证已完成；全类型线上验收和来源切换尚未完成。配置 Reader、FactsResolver、创建前入口、content_mode、Display 内容保留、opening Event 预览以及确定性失败暂停/恢复已接入。Threshold/Ping 已完成源码模板对照；先后两次共 32 条真实 Threshold 消息通过版本绑定、描述对照、本地 Alert 入库/重投及只读预览检查，含 target、data、日志关键字、K8s 配置上下文及明确的 APM 样本。真实 Redis 上的失败暂停、管理恢复和队列继续处理验证通过。缺少稳定检测事实或真实样本的组合按用户要求记录并跳过。KAC 固定来源名的实现偏差已修复，完整 `make check` 通过；默认 source 模式继续复制来源内容。调研日期：2026-09-30；Linkd 工作树基线 `ac1331de`，alarmd 二阶段补充核对 `origin/master@8b4c5622`（含 `8c3c859f`），Kingeye `e34c323d`，bk-monitor `51c834dc6`。未切换工作树或修改 alarmd。源码证据及现状见[调研记录](../research/2026-09-30-alert-content-generation.md)。以下历史执行记录保留当时结果，以最新验证小节判断当前状态。
 
+## 当前策略读取边界（2026-10-08）
+
+按本次确认，配置事实仅来自 `alarm_strategy_set_split_record` 的同版本发布材料。
+单条有界 SELECT 原子读取租户、拆分主键、版本、启用/发布状态和 payload；文案使用其中的
+`strategy_config`、`resolved_strategies` 与 `runtime_query_configs`，不查询当前 Set/Config、历史表或 Redis。
+租户、Set UID、模板、Config UID、default 标记、业务名册均在材料内部校验；DATA 多业务 spec 不同则拒绝。
+此后编辑上游声明或旧写旁路失败不影响已发布材料的读取；当前记录版本变化仍返回 `publication_version_mismatch`。
+覆盖缺少独立修订仍明确拒绝。普通丰富的读取边界见[策略依赖](enrich-kingeye-strategy-dependencies.md)。
+
+本次改造验证：`make check` 全部通过（格式、普通测试、vet、race、静态分析、Console、Helm 与发布脚本）；43 个受影响本地链接和锚点检查通过。未配置 `LINKD_CONTENT_TEST_MYSQL_DSN`，真实 MySQL 集成测试未执行；自包含 SQL 边界及文案创建/计划重投测试通过。未进行线上来源切换。
+
+下文 2026-09-30 的 Set/Config 读取与对比、事务和真实数据记录属于当时实现的历史证据，
+不再描述当前读取路径，也不能替代本次改造后的实际环境验证。
+
 ## 目标、边界与验收定义
 
 - 对已配置启用的 bk-monitor/KAC 来源，**新建** Alert 的 `content` 由 Linkd 在 Enrich 准备阶段按 bk-monitor 检测事件 `description` 规则生成。以同一触发事实和同一策略版本下的 bk-monitor `Event.description` 为对照；不把通知阶段添加的“新告警”“已持续”等文字计入对照。
@@ -58,7 +72,7 @@ type AlertContentBuilder interface {
 | 租户、来源、opening Event、级别 | Linkd Event/Alert 已有 | 校验三者身份一致；多级别只用当前新 Alert 对应的 `EventEvaluation`。 |
 | 当前观测值 | Linkd Event `values`、alarmd `observed.values` 有部分值 | 明确指标键、数值类型、空值和单位；禁止把缺失当 0。 |
 | 算法与命中信息 | KAC 策略 `spec.strategy_detect_algorithms` 有配置；alarmd 检测证据只有部分命中 ordinal | 建立检测算法与 bk-monitor 模板的显式映射，确认各级别、各组组合和命中顺序可还原。 |
-| 触发时策略 | `labels.strategy_version` 来自 alarmd `StrategyRefV2.SnapshotRevision`，不是 `plan_ref.strategy_revision`；现有 `CWStrategyReader` 只按租户和 ID 取最新记录 | 区分旧策略修订和 Set 拆分投影版本，核对策略 ID 的身份空间；内容仍沿 Set/Config 读取，取得可验证的触发时绑定。版本不符不能使用最新配置替代。 |
+| 触发时策略 | `labels.strategy_version` 来自 alarmd `StrategyRefV2.SnapshotRevision`，不是 `plan_ref.strategy_revision`；当前 `CWStrategyReader` 按租户、拆分主键与事件版本取发布材料 | 区分旧策略修订和 Set 拆分投影版本，核对策略 ID 的身份空间；内容仍沿 Set/Config 读取，取得可验证的触发时绑定。版本不符不能使用最新配置替代。 |
 | 历史、预测、无数据、日志检测事实 | 当前 `TriggerEventV1` 与标准 Event 未完整携带 | 查找既有持久事实源，必须可由租户 + 稳定记录/计划身份定位并覆盖消费重试期；若不存在，需先在 Linkd 可读的上游持久化/转换环节补事实，保持 alarmd 输出不变。 |
 | 指标名称、单位、映射、精度 | Enrich 有策略和指标资料读取能力 | 逐项确定是否依赖触发时配置；会变化的资料要快照化或有版本校验。 |
 
@@ -96,36 +110,19 @@ Kingeye `e34c323d` 代码中有两条版本生成路径：
 
 因此小整数和长整数都存在合法的代码来源。上述代码解释了两种版本形态，但没有单凭数字大小证明某条线上消息使用哪条路径；仍需对应发布文档或冻结计划作证。正常样本的 `strategy_version=4` 与 Config 的 `strategy_config_version=1` 不构成错误证明；长整数也不应被判作坏消息。当前 Kingeye 发布器 `runtime_cache_publisher.py:164-189` 已沿拆分记录发布，不能把旧修订投影当成它的当前主路径。
 
-对实施方案的具体修正：
+对当前实现的约束：
 
-1. 内容读取继续用 StrategySet 与 StrategyConfig，禁止读取废弃 `alarm_strategy_history`；不新增 `core_strategy_config_revision` 回退。
-2. 新投影 `labels.strategy_id` 是拆分记录主键，不能仅凭数值相同沿用 `status.bk_strategy_id` 查询。需要按租户校验投影身份绑定到 Set UID、模板 ID、Config UID；`StrategySetSplitRecord` 模型已有这些绑定字段。该映射是待验证的辅助身份端口，不把拆分记录作为新的文案配置权威。
-3. Set 路径校验的是整数版本对应的发布记录及其精确 ConfigID，不校验 Config status 版本等于 labels。`source_resource_version` 对应发布时读取的 Set，不要求当前 Set 更新时间仍等于它。若核对原始时间转版本，需复制 Python 的浮点乘微秒计算语义，不能未经对照直接替换成 Go `UnixMicro()`。override 必须按其真实来源绑定核对。
-4. 在一次有界一致性读取中冻结渲染依赖，比较当前 Set/Config 与该版本发布材料中的完整渲染依赖。更新时间变化不能单独证明文案变化；渲染依赖变化或无法证明相等时停止旧事件生成。若要回放其他版本，需有选定的事实保留方案，不能自动切换到其他历史表。
-
-只读补查六个样本对应 Set 的当前更新时间为 2026-09-30 UTC，与旧样本触发时间不同；仅有当前关联不能证明触发时内容相同。
+1. `labels.strategy_id` 使用拆分记录主键，`strategy_version` 校验 `source_resource_version`；不以数字大小猜测旧身份，也不使用 Config status 版本。
+2. 同一 SELECT 固定完整 payload。缺失、停用、未发布、过期版本、编译拒绝和绑定错误返回明确失败；连接和超时错误保留错误链。
+3. 默认记录从 payload 中读取完整配置、单位和算法。覆盖仍因缺少独立修订拒绝文案生成；不选择默认配置代替覆盖。
+4. 已保存 EventPlan 继续固定生成结果；当前态不提供历史保留，不能宣称所有旧事件可回放。
 
 ### 发布身份读取的落地步骤
 
-以下步骤中的只读事务、default 发布身份绑定、当前 Set/Config 比较已实现；override、历史事实读取和所有检测语义验证尚未完成。输入为 opening Event 的租户、`labels.strategy_id/strategy_version/bk_biz_id`，输出为已校验的渲染快照；不将 Config 的 status 版本用于比对。
-
-1. 使用只读、repeatable-read 事务，按 `alarm_strategy_set_split_record.bk_tenant_id + id` 读取至多一行；校验 `source_resource_version == labels.strategy_version`、发布状态和身份。SQL 必须同时带租户，不能查询全租户后由业务层筛选。记录缺失时返回明确缺失，不按数值猜测旧 Strategy ID。
-2. 校验记录的 `strategy_set_uid/monitor_template_id/config_uid` 与 payload 的身份一致。使用 Set UID、租户、模板精确读取 active StrategySet，按规范化 UUID 精确选择 `strategy_configs[*].id`。对 default 与 override 分别核对绑定；没有实现 override 映射时拒绝该分支，不能选默认配置冒充覆盖配置。
-3. 按发布记录的业务与投影规则选择 `resolved_strategies`，再以租户、模板、ConfigID、default 标记定位 active StrategyConfig 候选。事件业务、resolved 业务和 Config 资源所属业务是三个不同上下文，不要求相等。不得以事件业务反查或替换配置。最新真实样本证明同一 Config UUID 可以有不同业务的多份投影：最多读取 33 行并拒绝超过 32 份；仅当业务身份互异且全部渲染依赖与同一冻结 spec 相等时接受，不挑选最新或任意一份。重复业务、身份不符、依赖变化或超限仍拒绝，细节见最新核验记录。
-4. 对比冻结的 `payload.strategy_config` 与当前 Set 内配置，并对比冻结 resolved spec 与当前 StrategyConfig 的**完整渲染依赖**。先逐算法列出读取字段，再做语义 JSON 比较；保留整数精度、数组顺序、缺省/null 差异及单位。不能简单对整个 spec 做 hash：目标路由字段可能不同且不参与描述；也不能只比较算法类型、名字或一个阈值，遗漏连接符、级别、单位、表达式和特殊规则上下文。
-5. 对运行时编译算法、特殊事件改写和多查询表达式，补充验证冻结 `runtime_query_configs` 的检测语义与声明配置一致。通过以后才返回本次读取内的不可变快照；不得读取一次算法、稍后重新读单位。事务外的历史/预测读取必须另有同事件、同版本的稳定身份和保留约束。
-6. 单次读取设置超时、最多 32 个算法、最多 64 个阈值组/组内条件，JSON 载荷上限与 Reader 并发上限。暂时性连接失败 Retry；身份、版本、歧义和渲染依赖不符使用确定错误码 Block。退出回滚并释放事务，不记录配置或完整事件。
-
-2026-09-30 17:00 左右，使用 `test-bkee5` MySQL 只读一致性快照核验前 4 个 active/published 拆分记录，结果如下。仅输出身份、差异字段路径，没有落盘完整 payload 或凭据。
-
-| split ID | source_resource_version | Set 内配置相等 | 当前 Config 与冻结 resolved spec 的差异 |
-| --- | --- | --- | --- |
-| 1 | 1790758008036099 | 是 | `targets.length` |
-| 2 | 1790758008248395 | 是 | `targets.length` |
-| 3 | 1790758007919376 | 是 | `targets.length` |
-| 4 | 1790758007975535 | 是 | `targets[*].bk_cloud_id/bk_object_inst_id/ip` |
-
-这是当前 4 个 default 记录的关联证明，不是线上 Kafka 事件版本匹配或所有覆盖分支验收。记录版本相较此前读取已经更新；该表是 current 发布材料，不自动提供任意历史版本。旧样本 `395/4` 等尚未获得对应的冻结绑定，不能使用这 4 行代替它们。上述差异是否可排除，须以该算法实际读取依赖和黄金样本作证。
+1. 按显式租户和拆分主键读取至多两行，重复身份拒绝。SQL 在服务端将超过 4 MiB 的 payload 排除，业务名册同样限长；整个调用超时 5 秒。
+2. 验证版本、active、published、enabled，以及 payload 的 schema、Set UID、模板、Config UID、default 和业务绑定；最多 32 个 resolved 项。
+3. target 只接受一个监控项；DATA 多业务配置先确认全部 spec 相同，再沿 Kingeye 的首项折叠规则读取，不按事件业务选择配置。
+4. 同条材料中返回配置、单位及最多 32 个编译算法；取消和依赖错误向上传播。没有跨表事务，也没有旧配置读取器或降级路径。
 
 ### `alarmd_event` 实际输入核验与下一步
 
@@ -163,7 +160,7 @@ Kingeye `e34c323d` 代码中有两条版本生成路径：
 2. 内容算法优先读已匹配的 StrategyConfig `spec.strategy_detect_algorithms/strategy_item`；Set 的 `inner_metric_info` 可提供单位、指标展示信息，必须选择同一个 `config_id`，并核对 Set 尚未派生/下发的新配置不会混入。
 3. 当版本证据缺失、匹配到失效配置或 Set/Config 尚未一致时，停止该来源切换并报告明确错误。不得读取废弃历史表，也不得用当前内容掩盖无法回放的触发时事实。
 
-已增加 [StrategySetClient](../../internal/enrich/datasources/strategy_set_client.go) 和精确 ConfigID 选择模型；租户隔离、重复模板、取消、依赖失败及当前 Set/Config 关联的只读集成验证已完成。该 Reader 本身不保证事件版本匹配，不表示内容生成已经完成。
+历史阶段曾增加 StrategySetClient 和精确 ConfigID 选择模型（2026-10-08 已移除旧读取器，现由 [SplitRecord 读取](../../internal/enrich/datasources/strategy_publication.go) 取代）；租户隔离、重复模板、取消、依赖失败及当前 Set/Config 关联的只读集成验证已完成。该 Reader 本身不保证事件版本匹配，不表示内容生成已经完成。
 
 本次验证记录：
 
@@ -346,7 +343,7 @@ Cloud 的源码补查确认 `TargetExecutor` 按对象模型进入 is_cloud 分�
 ## 当前待确认事项
 
 1. `alarmd_event` 已确认使用 standard payload；仍需其正式 EventSource 发布配置、线上生产者版本，以及“已有支持类型”的真实集合。
-2. 已查明 labels 整数版本与 plan_ref 字符串版本的代码来源，default 发布身份到 Set/Config 的当前版本绑定已通过真实读取与样本验证。override 独立修订、历史版本和比较事实仍缺稳定来源与保留期，按用户确认记录并跳过本轮对应验收。
+2. 已查明 labels 整数版本与 plan_ref 字符串版本的代码来源；当前默认文案只读取同版本 SplitRecord 发布材料，早期 Set/Config 的真实验证仅作历史证据。override 独立修订、历史版本和比较事实仍缺稳定来源与保留期，按用户确认记录并跳过本轮对应验收。
 3. 对 bk-monitor 自身格式化异常而输出空串的样本，产品要逐字保留空串还是按明确的新规则处理。该选择须写入黄金样本，不能隐式回退来源 `content`。
 
 上述事实未确认前，本方案给出可实现的代码边界和推进顺序，但不能承诺所有场景已具备逐字一致的数据条件。

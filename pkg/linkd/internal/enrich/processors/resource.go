@@ -71,7 +71,7 @@ func processResource(ctx context.Context, scope *enrich.Scope) (enrich.Processor
 		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: value, Diagnostics: diagnostics}, nil
 	}
 	dimensions := alert.Dimensions.Clone()
-	strategy, strategyFound, strategyErr := scope.CWStrategyByBKStrategyID(ctx, ids.StrategyID)
+	strategy, strategyFound, strategyErr := scope.CWStrategy(ctx)
 	if ctx.Err() != nil {
 		return enrich.ProcessorResult{}, ctx.Err()
 	}

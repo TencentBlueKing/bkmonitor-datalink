@@ -45,7 +45,7 @@ func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Proce
 	if len(diagnostics) != 0 {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: diagnostics}, nil
 	}
-	strategy, found, err := scope.CWStrategyByBKStrategyID(ctx, ids.StrategyID)
+	strategy, found, err := scope.CWStrategy(ctx)
 	if ctx.Err() != nil {
 		return enrich.ProcessorResult{}, ctx.Err()
 	}

@@ -14,46 +14,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
+	"strconv"
 
-	"gorm.io/datatypes"
 	"gorm.io/gorm"
 	"linkd/internal/enrich"
+	"linkd/internal/enrich/description"
 	"linkd/internal/enrich/models"
 )
 
-var (
-	_                 enrich.CWStrategyReader = (*CWStrategyClient)(nil)
-	cwStrategyColumns                         = []string{
-		"created_at", "created_by", "updated_at", "updated_by", "active", "kind", "api_version", "name", "namespace",
-		"uid", "annotations", "spec", "status", "bk_tenant_id", "bk_biz_id", "is_default", "default_strategy_config_uid",
-		"monitor_template_id", "config_id", "object_model_code", "bk_object_inst_id",
-	}
-)
-
-type cwStrategyRow struct {
-	CreatedAt                time.Time      `gorm:"column:created_at"`
-	CreatedBy                string         `gorm:"column:created_by"`
-	UpdatedAt                time.Time      `gorm:"column:updated_at"`
-	UpdatedBy                string         `gorm:"column:updated_by"`
-	Active                   bool           `gorm:"column:active"`
-	Kind                     string         `gorm:"column:kind"`
-	APIVersion               string         `gorm:"column:api_version"`
-	Name                     string         `gorm:"column:name"`
-	Namespace                string         `gorm:"column:namespace"`
-	UID                      string         `gorm:"column:uid"`
-	Annotations              datatypes.JSON `gorm:"column:annotations"`
-	Spec                     datatypes.JSON `gorm:"column:spec"`
-	Status                   datatypes.JSON `gorm:"column:status"`
-	BKTenantID               *string        `gorm:"column:bk_tenant_id"`
-	BKBizID                  *int64         `gorm:"column:bk_biz_id"`
-	IsDefault                *bool          `gorm:"column:is_default"`
-	DefaultStrategyConfigUID *string        `gorm:"column:default_strategy_config_uid"`
-	MonitorTemplateID        *int64         `gorm:"column:monitor_template_id"`
-	ConfigID                 *string        `gorm:"column:config_id"`
-	ObjectModelCode          *string        `gorm:"column:object_model_code"`
-	BKObjectInstID           *string        `gorm:"column:bk_object_inst_id"`
-}
+var _ enrich.CWStrategyReader = (*CWStrategyClient)(nil)
 
 type monitorTemplateRow struct {
 	ID       int64  `gorm:"column:id"`
@@ -61,103 +30,106 @@ type monitorTemplateRow struct {
 	Name     string `gorm:"column:name"`
 }
 
-// CWStrategyClientConfig 注入已经选择目标 schema 的鲸眼声明式策略数据库连接。
-// 连接池的创建、Ping、容量设置和关闭仍由进程装配层负责。
-type CWStrategyClientConfig struct {
-	DB *gorm.DB
-}
+// CWStrategyClientConfig 注入 Kingeye MySQL 连接，连接池由进程管理。
+type CWStrategyClientConfig struct{ DB *gorm.DB }
 
-// CWStrategyClient 读取鲸眼声明式监控策略及云策略。
-type CWStrategyClient struct {
-	db *gorm.DB
-}
+// CWStrategyClient 只从 SplitRecord 发布材料构造策略视图，不读取旧策略配置表。
+type CWStrategyClient struct{ db *gorm.DB }
 
-// NewCWStrategyClient 创建鲸眼策略 Client；Client 不取得数据库连接所有权。
+// NewCWStrategyClient 不连接或迁移数据库，也不取得连接所有权。
 func NewCWStrategyClient(config CWStrategyClientConfig) (*CWStrategyClient, error) {
 	if config.DB == nil {
-		return nil, fmt.Errorf("create cw strategy client: db must not be nil")
+		return nil, fmt.Errorf("create cw strategy client: database is required")
 	}
 	return &CWStrategyClient{db: config.DB}, nil
 }
 
-// GetByBKStrategyID 按 status.bk_strategy_id 读取全租户唯一的鲸眼声明式策略。
-func (c *CWStrategyClient) GetByBKStrategyID(ctx context.Context, tenantID string, bkStrategyID int64) (models.CWStrategy, bool, error) {
-	if ctx == nil {
-		return models.CWStrategy{}, false, fmt.Errorf("get cw strategy by bk strategy ID: context must not be nil")
+// GetByStrategyID 读取同租户、同事件版本的当前发布态；缺失返回 found=false。
+// 覆盖策略使用子记录自身的 ID。覆盖版本由父记录提供，普通丰富不承诺其历史重现；
+// 精确文案入口仍单独拒绝缺少独立修订的覆盖记录。
+func (c *CWStrategyClient) GetByStrategyID(ctx context.Context, query models.StrategyQuery) (models.CWStrategy, bool, error) {
+	if ctx == nil || !query.Valid() {
+		return models.CWStrategy{}, false, fmt.Errorf("strategy read requires context, tenant, split ID and version")
 	}
-	if tenantID == "" || bkStrategyID <= 0 {
-		return models.CWStrategy{}, false, fmt.Errorf("get cw strategy by bk strategy ID: tenant ID and positive strategy ID are required")
+	if err := ctx.Err(); err != nil {
+		return models.CWStrategy{}, false, err
 	}
-	return c.take(
-		ctx,
-		c.db.WithContext(ctx).
-			Where("bk_tenant_id = ?", tenantID).
-			Where(datatypes.JSONQuery("status").Equals(bkStrategyID, "bk_strategy_id")),
-		tenantID,
-		bkStrategyID,
-		"query cw strategy by bk strategy ID",
-	)
-}
-
-func (c *CWStrategyClient) take(ctx context.Context, query *gorm.DB, tenantID string, strategyID int64, operation string) (models.CWStrategy, bool, error) {
-	var row cwStrategyRow
-	err := query.
-		Table("core_v1alpha1_strategy").
-		Select(cwStrategyColumns).
-		Order("updated_at DESC").
-		Order("uid").
-		Take(&row).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	ctx, cancel := context.WithTimeout(ctx, strategyReadTimeout)
+	defer cancel()
+	row, found, err := readStrategyPublication(ctx, c.db, query)
+	if err != nil {
+		var invalid *description.Error
+		if errors.As(err, &invalid) {
+			return models.CWStrategy{}, false, fmt.Errorf("%w: %w", enrich.ErrInvalidDataSourceResponse, err)
+		}
+		return models.CWStrategy{}, false, err
+	}
+	if !found {
 		return models.CWStrategy{}, false, nil
 	}
-	if err != nil {
-		return models.CWStrategy{}, false, fmt.Errorf("%s: %w", operation, err)
-	}
-	if tenantID != "" && (row.BKTenantID == nil || *row.BKTenantID != tenantID) {
-		return models.CWStrategy{}, false, fmt.Errorf("%w: core_v1alpha1_strategy tenant identity does not match query", enrich.ErrInvalidDataSourceResponse)
-	}
-	result, err := cwStrategyFromRow(row)
+	payload, err := decodeStrategyPublication(row)
 	if err != nil {
 		return models.CWStrategy{}, false, fmt.Errorf("%w: %w", enrich.ErrInvalidDataSourceResponse, err)
 	}
-	if strategyID > 0 && result.Status.BKStrategyID != strategyID {
-		return models.CWStrategy{}, false, fmt.Errorf("%w: core_v1alpha1_strategy strategy identity does not match query", enrich.ErrInvalidDataSourceResponse)
+	strategy, err := cwStrategyFromPublication(row, payload)
+	if err != nil {
+		return models.CWStrategy{}, false, fmt.Errorf("%w: %w", enrich.ErrInvalidDataSourceResponse, err)
 	}
-	if result.MonitorTemplateID != nil && *result.MonitorTemplateID > 0 {
-		var template monitorTemplateRow
-		err = c.db.WithContext(ctx).
-			Table("home_application_monitortemplate").
-			Select("id", "bk_tenant_id", "name").
-			Where("id = ? AND bk_tenant_id = ?", *result.MonitorTemplateID, tenantID).
-			Take(&template).Error
-		if err != nil {
-			return models.CWStrategy{}, false, fmt.Errorf("%w: query monitor template name", enrich.ErrInvalidDataSourceResponse)
-		}
-		if template.ID != *result.MonitorTemplateID || template.TenantID != tenantID || template.Name == "" {
-			return models.CWStrategy{}, false, fmt.Errorf("%w: monitor template identity does not match strategy", enrich.ErrInvalidDataSourceResponse)
-		}
-		result.MonitorTemplateName = template.Name
+	// 模板名称属于展示元数据；不借它反查或替换策略配置。
+	var template monitorTemplateRow
+	err = c.db.WithContext(ctx).Table("home_application_monitortemplate").Select("id,bk_tenant_id,name").Where("id = ? AND bk_tenant_id = ?", row.TemplateID, query.TenantID).Take(&template).Error
+	if err != nil {
+		return models.CWStrategy{}, false, fmt.Errorf("query monitor template name: %w", err)
 	}
-	return result, true, nil
+	if template.ID != row.TemplateID || template.TenantID != query.TenantID || template.Name == "" {
+		return models.CWStrategy{}, false, fmt.Errorf("%w: monitor template identity mismatch", enrich.ErrInvalidDataSourceResponse)
+	}
+	strategy.MonitorTemplateName = template.Name
+	return strategy, true, nil
 }
 
-func cwStrategyFromRow(row cwStrategyRow) (models.CWStrategy, error) {
-	annotations, err := decodeJSONObject("core_v1alpha1_strategy.annotations", row.Annotations)
-	if err != nil {
-		return models.CWStrategy{}, err
+func cwStrategyFromPublication(row strategyPublicationRow, payload strategyPublication) (models.CWStrategy, error) {
+	entry := payload.Resolved[0]
+	labels := entry.Metadata.Labels
+	var spec models.CWStrategySpec
+	if json.Unmarshal(entry.Spec, &spec) != nil || spec.Enable == nil || !*spec.Enable {
+		return models.CWStrategy{}, descriptionFailure("configuration_disabled_or_invalid")
 	}
-	result := models.CWStrategy{
-		CreatedAt: row.CreatedAt, CreatedBy: row.CreatedBy, UpdatedAt: row.UpdatedAt, UpdatedBy: row.UpdatedBy,
-		Active: row.Active, Kind: models.CWStrategyKind(row.Kind), APIVersion: row.APIVersion, Name: row.Name, Namespace: row.Namespace, UID: row.UID,
-		Annotations: annotations, BKTenantID: row.BKTenantID, BKBizID: row.BKBizID, IsDefault: row.IsDefault,
-		DefaultStrategyConfigUID: row.DefaultStrategyConfigUID, MonitorTemplateID: row.MonitorTemplateID, ConfigID: row.ConfigID,
-		ObjectModelCode: row.ObjectModelCode, BKObjectInstID: row.BKObjectInstID,
+	if row.ParentID == nil && spec.ConfigType != payload.Set.ConfigType {
+		return models.CWStrategy{}, descriptionFailure("publication_binding_invalid")
 	}
-	if err := json.Unmarshal(row.Spec, &result.Spec); err != nil {
-		return models.CWStrategy{}, fmt.Errorf("decode core_v1alpha1_strategy.spec: %w", err)
+	// 覆盖记录的实例标签允许整数或字符串，数据库列的字符串形态不再参与转换。
+	var instanceID *string
+	if raw := labels.ObjectInstanceID; len(raw) != 0 && string(raw) != "null" {
+		var value string
+		if json.Unmarshal(raw, &value) != nil {
+			var number int64
+			if json.Unmarshal(raw, &number) != nil || number <= 0 {
+				return models.CWStrategy{}, descriptionFailure("publication_binding_invalid")
+			}
+			value = strconv.FormatInt(number, 10)
+		}
+		if value == "" {
+			return models.CWStrategy{}, descriptionFailure("publication_binding_invalid")
+		}
+		instanceID = &value
 	}
-	if err := json.Unmarshal(row.Status, &result.Status); err != nil {
-		return models.CWStrategy{}, fmt.Errorf("decode core_v1alpha1_strategy.status: %w", err)
+	kind := entry.Kind
+	if kind == "" {
+		kind = models.CWStrategyKindStrategy
+		if spec.CloudID != nil || spec.CloudType != "" || spec.CloudResourceType != "" {
+			kind = models.CWStrategyKindCloud
+		}
 	}
-	return result, nil
+	if kind != models.CWStrategyKindStrategy && kind != models.CWStrategyKindCloud {
+		return models.CWStrategy{}, descriptionFailure("configuration_config_invalid")
+	}
+	return models.CWStrategy{
+		Active: true, Kind: kind, APIVersion: "v1alpha1", UID: entry.Metadata.UID,
+		Name: entry.Metadata.Name, Namespace: entry.Metadata.Namespace, Annotations: entry.Metadata.Annotations,
+		Spec: spec, Status: models.CWStrategyStatus{BKStrategyID: row.ID},
+		BKTenantID: &labels.TenantID, BKBizID: &labels.BusinessID, IsDefault: labels.IsDefault,
+		DefaultStrategyConfigUID: labels.DefaultConfigUID, MonitorTemplateID: &row.TemplateID,
+		ConfigID: &labels.ConfigID, ObjectModelCode: labels.ObjectModelCode, BKObjectInstID: instanceID,
+	}, nil
 }

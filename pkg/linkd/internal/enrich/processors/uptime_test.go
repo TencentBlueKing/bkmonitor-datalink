@@ -189,7 +189,7 @@ func (*processorUptimeReader) FindInstance(context.Context, string, enrich.Insta
 
 type processorUptimeStrategy struct{}
 
-func (processorUptimeStrategy) GetByBKStrategyID(context.Context, string, int64) (models.CWStrategy, bool, error) {
+func (processorUptimeStrategy) GetByStrategyID(context.Context, models.StrategyQuery) (models.CWStrategy, bool, error) {
 	modelCode := rules.UptimeModelCode
 	bizID := int64(2)
 	return models.CWStrategy{

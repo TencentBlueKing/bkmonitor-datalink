@@ -259,7 +259,7 @@ func TestBaseTargetFiveProcessorFailureBoundaries(t *testing.T) {
 
 type processorBaseTargetStrategy struct{ modelCode string }
 
-func (r processorBaseTargetStrategy) GetByBKStrategyID(context.Context, string, int64) (models.CWStrategy, bool, error) {
+func (r processorBaseTargetStrategy) GetByStrategyID(context.Context, models.StrategyQuery) (models.CWStrategy, bool, error) {
 	bizID := int64(2)
 	return models.CWStrategy{ObjectModelCode: &r.modelCode, BKBizID: &bizID, Spec: models.CWStrategySpec{
 		Name: "可用率", TableID: "service.metric", FieldName: "available",

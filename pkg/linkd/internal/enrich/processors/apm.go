@@ -36,7 +36,7 @@ func (APM) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorRe
 	if len(diagnostics) != 0 {
 		return enrich.ProcessorResult{Status: domain.EnrichStatusFailed, Value: domain.JSONObject{}, Diagnostics: diagnostics}, nil
 	}
-	strategy, found, err := scope.CWStrategyByBKStrategyID(ctx, ids.StrategyID)
+	strategy, found, err := scope.CWStrategy(ctx)
 	if err := ctx.Err(); err != nil {
 		return enrich.ProcessorResult{}, err
 	}

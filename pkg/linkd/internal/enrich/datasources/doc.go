@@ -7,23 +7,6 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
+// Package datasources 为 Enrich 提供有界、按租户隔离的外部只读适配。
+// 策略仅从 Kingeye SplitRecord 发布材料读取，连接生命周期由装配层管理。
 package datasources
-
-import (
-	"encoding/json"
-	"fmt"
-
-	"linkd/internal/domain"
-)
-
-func decodeJSONObject(field string, data []byte) (domain.JSONObject, error) {
-	var value domain.JSONObject
-	if err := json.Unmarshal(data, &value); err != nil {
-		return nil, fmt.Errorf("decode %s: %w", field, err)
-	}
-	value, err := value.Normalize()
-	if err != nil {
-		return nil, fmt.Errorf("normalize %s: %w", field, err)
-	}
-	return value, nil
-}

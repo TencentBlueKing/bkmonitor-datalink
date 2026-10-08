@@ -561,7 +561,7 @@ func (r *dataSliceReader) strategyForTest() models.CWStrategy {
 	return models.CWStrategy{BKBizID: &biz, ObjectModelCode: optionalModelCode(r.model), Spec: models.CWStrategySpec{ConfigType: models.CWStrategyConfigTypeData, Name: "CPU", TableID: "system.cpu", FieldName: "usage", StrategyItem: &models.CWStrategyItem{Expression: "A", QueryConfigs: []models.StrategyQueryConfig{{ResultTableID: "system.cpu", MetricField: "usage"}}}}}
 }
 
-func (r *dataSliceReader) GetByBKStrategyID(ctx context.Context, _ string, _ int64) (models.CWStrategy, bool, error) {
+func (r *dataSliceReader) GetByStrategyID(ctx context.Context, _ models.StrategyQuery) (models.CWStrategy, bool, error) {
 	if r.cancelReads {
 		return models.CWStrategy{}, false, ctx.Err()
 	}

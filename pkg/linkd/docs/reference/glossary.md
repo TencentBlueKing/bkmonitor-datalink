@@ -49,12 +49,13 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | source（丰富分组） | 丰富结果中的来源补充信息：按租户和 Event.EventSourceID（KAC 的 linkd_source_id）回查 alarm_collect_alarmsource，source_id 保存该表的 id，source_name 保存名称，meta_info 承载来源事件标识；不替代 Linkd 的 EventSourceID |
 | meta_info（丰富字段） | 迁移后承载 Event.SourceEventID 中的来源事件标识，保存到 enrich.source.meta_info；旧实现使用内部转换对象 ID，本次已确认调整其取值来源 |
 | metric（丰富分组） | 丰富结果中的指标补充信息，包含监控项展示名称、按原分类解释的指标名称、单位及本次告警观测数据的查询参数；指标名称不统一定义为指标 ID，多个丰富分类共用该分组 |
-| 来源策略身份 | Event.Labels 中 `strategy_id` 与 `strategy_version`；前者关联鲸眼声明式策略，后者记录来源声明的策略版本并原样进入 enrich.strategy，不用于运行时回查蓝鲸策略表 |
-| 鲸眼策略配置 | 鲸眼侧与监控平台策略关联的声明式配置；Linkd 按 `bk_tenant_id + status.bk_strategy_id + active = 1` 查询并复核身份，分类、展示和指标查询配置统一读取其 `spec` |
-| StrategySet（声明式策略集合） | Kingeye 的 `core_v1alpha1_strategyset`；按租户与 `monitor_template_id` 关联派生 StrategyConfig，其中 `spec.strategy_configs[*].id` 对应 StrategyConfig 的 `config_id`。本次新增只读 Reader；当前集合不等同于触发时历史配置。 |
-| StrategyConfig（声明式策略配置） | Kingeye `kind=Strategy` 的资源，对应 `core_v1alpha1_strategy`，由现有 `CWStrategyReader` 读取；`status.strategy_config_version` 与来源 `labels.strategy_version` 是独立字段，关系未经核验时不得互换。 |
+| 来源策略身份 | Event.Labels 中 `strategy_id` 与 `strategy_version`；新发布链中前者为 SplitRecord 主键，后者为 `source_resource_version`。两个字段均参与运行时读取校验，不能用旧策略 ID 或 Config status 版本替代。 |
+| 鲸眼策略配置 | Linkd 从 Kingeye MySQL `alarm_strategy_set_split_record` 的同版本发布材料构造的只读丰富视图；分类、展示和指标查询复用 `resolved_strategies[*].spec`，不读取旧配置表。 |
+| StrategySetSplitRecord（策略拆分发布当前态） | Kingeye 表 `alarm_strategy_set_split_record`；默认与覆盖分别使用自身主键作为运行时策略 ID，覆盖通过 `parent_id` 关联默认记录。payload 保存编译后的配置与检测材料；它是当前态，不保证历史版本保留。 |
+| StrategySet（声明式策略集合） | Kingeye 的上游声明输入；Linkd 使用其已编译到 SplitRecord 的材料，不直接查询当前 Set 表。 |
+| StrategyConfig（声明式策略配置） | 旧声明式配置资源及其写入支路；Linkd 不再读取 `core_v1alpha1_strategy`，也不以该支路写入成功作为策略可读条件。 |
 | 全局业务 | `metadata_space` 中租户、`space_type_id = bkcc` 和业务 ID 对应且 `is_global = 1` 的业务空间；该业务下的策略可匹配同租户任意来源业务 |
-| 鲸眼声明式策略查询投影 | `core_v1alpha1_strategy.spec.strategy_item` 中的聚合、表达式和 `query_configs`；供 Strategy、Display 与 Metric 在单次 Enrich 内共享，替代运行时读取 `alarm_strategy_v2` 和 `alarm_strategy_history` |
+| 鲸眼声明式策略查询投影 | SplitRecord 的 `resolved_strategies[*].spec.strategy_item` 中的聚合、表达式和 `query_configs`；供丰富处理器在单 Event 内共享。 |
 | 指标查询参数 | 丰富结果中用于查询本次告警对应观测数据的参数；当前由鲸眼声明式策略 `spec.strategy_item.query_configs` 与 Event.Dimensions 构造，不回查蓝鲸策略当前表或历史表 |
 | 维度条件文本（where_condition） | 按旧过滤和拼接规则从工作维度生成的条件文本，保存到 enrich.metric.where_condition；生成过程不修改 Event 的来源维度 |
 | 首次异常点时间（anomaly_begin_time） | 上游提供的本次告警对应首次异常点时间，从 Event.ExtraData.anomaly_begin_time 读取；仅接受字符串并原样保存到 enrich.metric.anomaly_begin_time，空字符串也保留，缺失时省略 |

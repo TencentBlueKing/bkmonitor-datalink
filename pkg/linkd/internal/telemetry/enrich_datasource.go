@@ -14,11 +14,10 @@ import (
 	"errors"
 	"time"
 
-	"linkd/internal/enrich"
-	"linkd/internal/enrich/models"
-
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	"linkd/internal/enrich"
+	"linkd/internal/enrich/models"
 )
 
 const (
@@ -126,10 +125,10 @@ type observedCWStrategyReader struct {
 	metrics *instruments
 }
 
-func (r *observedCWStrategyReader) GetByBKStrategyID(ctx context.Context, tenantID string, strategyID int64) (models.CWStrategy, bool, error) {
+func (r *observedCWStrategyReader) GetByStrategyID(ctx context.Context, query models.StrategyQuery) (models.CWStrategy, bool, error) {
 	startedAt := time.Now()
-	value, found, err := r.next.GetByBKStrategyID(ctx, tenantID, strategyID)
-	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceCWStrategy, "get_by_bk_strategy_id", startedAt, found, err)
+	value, found, err := r.next.GetByStrategyID(ctx, query)
+	enrichDataSourceRecorder{r.metrics}.record(ctx, enrichDataSourceCWStrategy, "get_by_strategy_id", startedAt, found, err)
 	return value, found, err
 }
 

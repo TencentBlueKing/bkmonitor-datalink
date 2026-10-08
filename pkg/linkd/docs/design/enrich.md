@@ -225,7 +225,7 @@ url
 data_source
 ```
 
-当前策略身份来自 `labels.strategy_id + labels.strategy_version + labels.bk_biz_id`。鲸眼声明式策略从 Kingeye MySQL 读取，并校验租户、策略身份和业务边界。默认策略、云策略与实例策略生成不同 URL。
+当前策略身份来自 `labels.strategy_id + labels.strategy_version + labels.bk_biz_id`。鲸眼策略仅从 Kingeye MySQL `alarm_strategy_set_split_record` 的同版本发布材料读取，并校验租户、拆分主键、发布版本和业务边界；不查询旧 Set/Config 表。默认策略、云策略与实例策略生成不同 URL。
 `strategy_name` 沿用旧 KAC 展示语义：普通策略使用 `monitor_template.name + "-" + spec.alias_name`，PromQL 策略只使用 `monitor_template.name`；没有 `monitor_template_id` 的策略才回退 `spec.name` 或声明式资源名。
 
 ### 6.2 resource
@@ -312,7 +312,7 @@ meta_info
 
 | Reader | 后端 | 状态 |
 | --- | --- | --- |
-| `CWStrategyReader` | Kingeye MySQL | 已实现并装配 |
+| `CWStrategyReader` | Kingeye MySQL SplitRecord 发布材料 | 已实现并装配；事件版本必须匹配 |
 | `BusinessReader` | Kingeye MySQL | 已实现并装配 |
 | `MetricReader` | Kingeye MySQL | 已实现并装配 |
 | `AlarmSourceReader` | Kingeye MySQL | 已实现并装配 |

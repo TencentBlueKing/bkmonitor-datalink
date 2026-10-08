@@ -24,12 +24,12 @@ const sampleMonitorTemplateID int64 = 1
 // MockCWStrategyClient 提供开发期固定鲸眼声明式策略。
 type MockCWStrategyClient struct{}
 
-// GetByBKStrategyID 返回匹配平台策略 ID 的固定鲸眼策略。
-func (*MockCWStrategyClient) GetByBKStrategyID(ctx context.Context, tenantID string, bkStrategyID int64) (models.CWStrategy, bool, error) {
+// GetByStrategyID 返回匹配租户、拆分策略 ID 和版本的固定策略。
+func (*MockCWStrategyClient) GetByStrategyID(ctx context.Context, query models.StrategyQuery) (models.CWStrategy, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return models.CWStrategy{}, false, err
 	}
-	if tenantID != SampleTenantID || bkStrategyID != SampleStrategyID {
+	if query.TenantID != SampleTenantID || query.ID != SampleStrategyID || query.Version != SampleStrategyVersion {
 		return models.CWStrategy{}, false, nil
 	}
 	return sampleCWStrategy(), true, nil

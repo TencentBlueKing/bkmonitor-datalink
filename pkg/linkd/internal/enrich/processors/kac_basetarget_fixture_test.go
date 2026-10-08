@@ -264,9 +264,9 @@ func (f kacFixtureStrategy) value() models.CWStrategy {
 
 type kacFixtureReader struct{ fixture kacBaseTargetFixture }
 
-func (r *kacFixtureReader) GetByBKStrategyID(_ context.Context, tenantID string, strategyID int64) (models.CWStrategy, bool, error) {
-	if tenantID != "tenant-a" || strategyID != r.fixture.Alert.StrategyID {
-		return models.CWStrategy{}, false, fmt.Errorf("unexpected strategy query tenant=%s strategy=%d", tenantID, strategyID)
+func (r *kacFixtureReader) GetByStrategyID(_ context.Context, query models.StrategyQuery) (models.CWStrategy, bool, error) {
+	if query.TenantID != "tenant-a" || query.ID != r.fixture.Alert.StrategyID {
+		return models.CWStrategy{}, false, fmt.Errorf("unexpected strategy query tenant=%s strategy=%d", query.TenantID, query.ID)
 	}
 	return r.fixture.Strategy.value(), true, nil
 }

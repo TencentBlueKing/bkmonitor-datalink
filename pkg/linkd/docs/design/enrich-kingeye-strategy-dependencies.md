@@ -4,7 +4,20 @@
 
 ## 当前读取方式
 
-新 Alert 创建或等级升级时，Lifecycle 同步执行 Enrich。输入 Alert 的 `labels.strategy_id`、`labels.strategy_version`、`labels.bk_biz_id` 均须为正整数。`CWStrategyReader` 按 `bk_tenant_id + status.bk_strategy_id` 从 Kingeye MySQL `core_v1alpha1_strategy` 读取最新 active 策略；单次 Enrich 中各 Processor 复用读取结果。
+Event 在策略裁决前完成 Enrich。`labels.strategy_id`、`labels.strategy_version`、`labels.bk_biz_id` 均须为正整数。
+`CWStrategyReader` 使用显式租户和 `labels.strategy_id` 查询 Kingeye MySQL
+`alarm_strategy_set_split_record.id`，核对 `source_resource_version == labels.strategy_version`，
+并要求记录启用、active、published。默认和覆盖各用自身的拆分主键，不能替换为旧策略 ID 或覆盖的父 ID。
+
+一次有界 SELECT 同时取得版本、状态和 payload；4 MiB 载荷在 SQL 端限长，读取超时 5 秒，
+每条记录最多 32 个 resolved 配置和业务身份。单 Event 的各 Processor、各 evaluation 复用读取结果。
+不读取 `core_v1alpha1_strategy`、`core_v1alpha1_strategyset`、策略历史表或 Redis 策略缓存，也没有兼容回退。
+模板名称仍从按租户隔离的 `home_application_monitortemplate` 读取，仅用于展示。
+
+发布材料的 `resolved_strategies` 是当前编译 DTO，不要求携带旧 Resource 的 kind/api_version；
+普通与云字段在适配边界转换为既有的 `CWStrategy` 丰富视图。
+DATA 多业务材料先验证各份完整 spec 相等，再按 Kingeye 投影规则使用首项；target 仅接受一个 resolved 项。
+配置身份、租户、模板、default 标记和业务名册必须完整一致，不能按事件业务猜选配置。
 
 ## 所需策略数据
 
@@ -21,4 +34,11 @@
 
 ## 版本约束
 
-当前 `strategy_version` 只用于输入校验和结果输出，策略查询仍读取最新 active 记录。延迟消息或历史重放可能使用更新后的策略内容。若要求按事件版本复现丰富结果，需要先确认版本身份、快照保留及读取契约；当前没有策略快照 API。
+版本不匹配明确失败，不使用最新版本替代。SplitRecord 是可更新当前态，不是历史快照存储；
+记录缺失或已更新时，未保存结果的旧 Event 不能保证可重现。已经持久化的 Event 丰富结果和 EventPlan 继续复用。
+
+普通丰富允许读取当前已发布的覆盖子记录；覆盖编辑复用父记录版本，因此不承诺覆盖历史重现。
+`bkmonitor_description` 仍拒绝覆盖并返回 `publication_override_revision_missing`，直到上游提供可区分覆盖修订的稳定身份。
+默认文案直接使用同版本 payload 的 `strategy_config`、`resolved_strategies` 和 `runtime_query_configs`，
+不再比较当前 Set/Config 表；单位和算法来自同一条发布材料。版本读取及文案限制见
+[告警内容生成](alert-content-generation.md)。

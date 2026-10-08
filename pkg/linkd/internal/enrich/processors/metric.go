@@ -61,7 +61,7 @@ func (Metric) Process(ctx context.Context, scope *enrich.Scope) (enrich.Processo
 			Diagnostics: append(diagnostics, idDiagnostics...),
 		}, nil
 	}
-	strategy, strategyFound, strategyErr := scope.CWStrategyByBKStrategyID(ctx, ids.StrategyID)
+	strategy, strategyFound, strategyErr := scope.CWStrategy(ctx)
 	if ctx.Err() != nil {
 		return enrich.ProcessorResult{}, ctx.Err()
 	}

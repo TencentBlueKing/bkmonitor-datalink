@@ -64,7 +64,7 @@ type cloudTestReader struct {
 	tenant, cloudID, resourceType, instanceID string
 }
 
-func (r *cloudTestReader) GetByBKStrategyID(context.Context, string, int64) (models.CWStrategy, bool, error) {
+func (r *cloudTestReader) GetByStrategyID(context.Context, models.StrategyQuery) (models.CWStrategy, bool, error) {
 	kind := models.CWStrategyKindCloud
 	biz := int64(2)
 	return models.CWStrategy{Kind: kind, BKBizID: &biz, Spec: models.CWStrategySpec{ConfigType: models.CWStrategyConfigTypeData, StrategyItem: &models.CWStrategyItem{QueryConfigs: []models.StrategyQueryConfig{{ResultTableID: "cloud.table", MetricField: "usage"}}}}}, true, nil

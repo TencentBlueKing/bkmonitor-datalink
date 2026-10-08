@@ -251,7 +251,7 @@ func strategyForBusiness(bizID int64) models.CWStrategy {
 
 type strategyProcessorReader struct{ strategy models.CWStrategy }
 
-func (r strategyProcessorReader) GetByBKStrategyID(context.Context, string, int64) (models.CWStrategy, bool, error) {
+func (r strategyProcessorReader) GetByStrategyID(context.Context, models.StrategyQuery) (models.CWStrategy, bool, error) {
 	return r.strategy, true, nil
 }
 

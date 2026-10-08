@@ -51,10 +51,9 @@ type Instance = onemodel.Instance
 // Sources 聚合 Enrichment 使用的窄只读数据源。
 type Sources struct {
 	// CMDB 与 Display 为自定义规则提供只读能力。
-	CMDB        onemodel.Reader
-	Display     custom.DisplayReader
-	CWStrategy  CWStrategyReader
-	StrategySet StrategySetReader
+	CMDB       onemodel.Reader
+	Display    custom.DisplayReader
+	CWStrategy CWStrategyReader
 	// DescriptionConfiguration 校验触发时发布绑定，不能替代为只读当前策略的 CWStrategy。
 	DescriptionConfiguration description.ConfigurationReader
 	Business                 BusinessReader
@@ -80,14 +79,9 @@ type DynamicGroupReader interface {
 	GetDynamicGroupIDs(ctx context.Context, tenantID, modelCode, instanceID string) ([]string, error)
 }
 
-// CWStrategyReader 按全租户唯一的关联 ID 读取鲸眼声明式策略。
+// CWStrategyReader 按租户、拆分记录主键和事件版本读取策略发布材料。
 type CWStrategyReader interface {
-	GetByBKStrategyID(ctx context.Context, tenantID string, bkStrategyID int64) (models.CWStrategy, bool, error)
-}
-
-// StrategySetReader 读取同租户监控模板的当前配置集合，供关联 ConfigID 精确选取。
-type StrategySetReader interface {
-	GetStrategySet(ctx context.Context, tenantID string, monitorTemplateID int64) (models.StrategySet, bool, error)
+	GetByStrategyID(ctx context.Context, query models.StrategyQuery) (models.CWStrategy, bool, error)
 }
 
 // BusinessReader 读取租户内 BKCC 业务空间的全局属性。
@@ -361,14 +355,19 @@ func (s *Scope) DynamicGroupIDs(ctx context.Context, modelCode, instanceID strin
 	return s.sources.DynamicGroup.GetDynamicGroupIDs(ctx, s.event.BKTenantID, modelCode, instanceID)
 }
 
-// CWStrategyByBKStrategyID 惰性读取并复用按平台策略 ID 关联的鲸眼声明式策略。
-func (s *Scope) CWStrategyByBKStrategyID(ctx context.Context, strategyID int64) (models.CWStrategy, bool, error) {
+// CWStrategy 惰性读取并复用当前 Event 指定的策略发布材料。
+func (s *Scope) CWStrategy(ctx context.Context) (models.CWStrategy, bool, error) {
 	s.strategyOnce.Do(func() {
 		if s.sources.CWStrategy == nil {
 			s.strategy.err = fmt.Errorf("strategy config reader is unavailable")
 			return
 		}
-		s.strategy.value, s.strategy.found, s.strategy.err = s.sources.CWStrategy.GetByBKStrategyID(ctx, s.event.BKTenantID, strategyID)
+		ids, diagnostics := ValidateRequiredIDs(s.original)
+		if len(diagnostics) != 0 {
+			s.strategy.err = fmt.Errorf("strategy publication identity is invalid")
+			return
+		}
+		s.strategy.value, s.strategy.found, s.strategy.err = s.sources.CWStrategy.GetByStrategyID(ctx, models.StrategyQuery{TenantID: s.original.BKTenantID, ID: ids.StrategyID, Version: ids.StrategyVersion})
 	})
 	return s.strategy.value, s.strategy.found, s.strategy.err
 }

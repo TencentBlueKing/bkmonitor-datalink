@@ -33,7 +33,7 @@ func TestObserveEnrichSourcesPreservesResults(t *testing.T) {
 		OneModel:       testOneModelReader{}, CollectConfig: testCollectConfigReader{},
 		CollectTopology: testCollectTopologyReader{}, Uptime: testUptimeReader{}, UptimeNode: testUptimeNodeReader{},
 	})
-	if _, found, err := sources.CWStrategy.GetByBKStrategyID(context.Background(), "tenant", 1); found || !errors.Is(err, wantErr) {
+	if _, found, err := sources.CWStrategy.GetByStrategyID(context.Background(), models.StrategyQuery{TenantID: "tenant", ID: 1, Version: 1}); found || !errors.Is(err, wantErr) {
 		t.Fatalf("cw strategy found=%t err=%v", found, err)
 	}
 	if isGlobal, found, err := sources.Business.IsGlobalBusiness(context.Background(), "tenant", 1); !isGlobal || !found || err != nil {
@@ -86,7 +86,7 @@ func TestEnrichDataSourceOutcome(t *testing.T) {
 
 type testCWStrategyReader struct{ err error }
 
-func (r testCWStrategyReader) GetByBKStrategyID(context.Context, string, int64) (models.CWStrategy, bool, error) {
+func (r testCWStrategyReader) GetByStrategyID(context.Context, models.StrategyQuery) (models.CWStrategy, bool, error) {
 	return models.CWStrategy{}, false, r.err
 }
 

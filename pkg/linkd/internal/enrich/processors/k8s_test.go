@@ -137,7 +137,7 @@ func TestK8sFullProcessorPayload(t *testing.T) {
 
 type k8sStrategyReader struct{}
 
-func (k8sStrategyReader) GetByBKStrategyID(context.Context, string, int64) (models.CWStrategy, bool, error) {
+func (k8sStrategyReader) GetByStrategyID(context.Context, models.StrategyQuery) (models.CWStrategy, bool, error) {
 	biz := int64(2)
 	return models.CWStrategy{BKBizID: &biz, ObjectModelCode: optionalModelCode(rules.K8sNodeModelCode), Spec: models.CWStrategySpec{ConfigType: models.CWStrategyConfigTypeData, Name: "K8s", StrategyItem: &models.CWStrategyItem{QueryConfigs: []models.StrategyQueryConfig{{ResultTableID: "k8s.metric", MetricField: "usage"}}}}}, true, nil
 }

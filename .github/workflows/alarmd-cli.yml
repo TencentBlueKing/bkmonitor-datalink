@@ -1,0 +1,159 @@
+name: alarmd-cli
+
+on:
+  pull_request:
+    paths:
+      - 'pkg/alarmd-cli/**'
+      - 'pkg/alarmd/**'
+      - '.github/workflows/alarmd-cli.yml'
+  push:
+    paths:
+      - 'pkg/alarmd-cli/**'
+      - 'pkg/alarmd/**'
+      - '.github/workflows/alarmd-cli.yml'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Candidate artifact version
+        required: true
+        default: dev
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022, macos-15]
+        go: ['1.23.12', '1.26.0']
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: pkg/alarmd-cli
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: pkg/alarmd-cli/go.sum
+      - run: go mod verify
+      - run: go vet ./...
+      - run: go test -count=1 -timeout=10m ./...
+      - if: runner.os == 'Linux'
+        run: go test -race -count=1 -timeout=10m ./...
+
+  blackbox:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.0'
+          cache-dependency-path: |
+            pkg/alarmd-cli/go.sum
+            pkg/alarmd-cli/integration/ob-channel/go.sum
+            pkg/alarmd/go.sum
+      - run: sudo apt-get update && sudo apt-get install -y redis-server
+      - run: bash pkg/alarmd-cli/integration/ob-channel/run.sh
+
+  package:
+    if: github.event_name == 'workflow_dispatch'
+    needs: [test, blackbox]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.0'
+          cache-dependency-path: pkg/alarmd-cli/go.sum
+      - run: sudo apt-get update && sudo apt-get install -y zip
+      - name: Build candidate archives
+        working-directory: pkg/alarmd-cli
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          test -z "$(git status --porcelain --untracked-files=normal)"
+          sh scripts/release.sh "$VERSION"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: alarmd-cli-candidate
+          path: pkg/alarmd-cli/dist/
+          if-no-files-found: error
+
+  artifact-smoke:
+    needs: package
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: linux_amd64
+          - os: windows-2022
+            target: windows_amd64
+          - os: macos-15
+            target: darwin_arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: alarmd-cli-candidate
+          path: candidate
+      - name: Verify and execute Unix archive
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -eu
+          cd "candidate/$VERSION"
+          if command -v sha256sum >/dev/null; then sha256sum -c SHA256SUMS; else shasum -a 256 -c SHA256SUMS; fi
+          tar -xzf "alarmd-cli_${VERSION}_${TARGET}.tar.gz"
+          export ALARMD_CLI_CONFIG_DIR="$RUNNER_TEMP/alarmd-cli-unused"
+          ./alarmd-cli --help
+          ./alarmd-cli --version | python3 -c 'import json,os,sys; assert json.load(sys.stdin)["version"] == os.environ["VERSION"]'
+          test ! -e "$ALARMD_CLI_CONFIG_DIR"
+      - name: Verify and execute Windows archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-Location "candidate/$env:VERSION"
+          Get-Content SHA256SUMS | ForEach-Object {
+            $hash, $file = $_ -split '\s+', 2
+            if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $hash) { throw "Hash mismatch: $file" }
+          }
+          Expand-Archive -LiteralPath "alarmd-cli_$($env:VERSION)_windows_amd64.zip" -DestinationPath unpacked
+          $env:ALARMD_CLI_CONFIG_DIR = Join-Path $env:RUNNER_TEMP 'alarmd-cli-unused'
+          & ./unpacked/alarmd-cli.exe --help
+          if ($LASTEXITCODE -ne 0) { throw 'Help failed' }
+          $version = & ./unpacked/alarmd-cli.exe --version | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $version.version -ne $env:VERSION) { throw 'Version mismatch' }
+          if (Test-Path -LiteralPath $env:ALARMD_CLI_CONFIG_DIR) { throw 'Smoke created configuration' }
+      - name: Execute archive with Windows PowerShell 5.1
+        if: runner.os == 'Windows'
+        shell: powershell
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-Location "candidate/$env:VERSION/unpacked"
+          $env:ALARMD_CLI_CONFIG_DIR = Join-Path $env:RUNNER_TEMP 'alarmd-cli-unused'
+          $version = & ./alarmd-cli.exe --version | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $version.version -ne $env:VERSION) { throw 'Version mismatch' }
+          & ./alarmd-cli.exe --help
+          if ($LASTEXITCODE -ne 0) { throw 'Help failed' }
+          if (Test-Path -LiteralPath $env:ALARMD_CLI_CONFIG_DIR) { throw 'Smoke created configuration' }

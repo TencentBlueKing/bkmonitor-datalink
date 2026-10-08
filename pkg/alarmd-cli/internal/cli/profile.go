@@ -48,6 +48,9 @@ type config struct {
 type Store struct{ Dir string }
 
 func secureDir(dir string) error {
+	if err := validateStoragePath(dir); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
@@ -58,7 +61,7 @@ func secureDir(dir string) error {
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("configuration directory must be a real directory")
 	}
-	return os.Chmod(dir, 0700)
+	return protectPath(dir, true)
 }
 
 func regularFile(path string) error {
@@ -72,7 +75,7 @@ func regularFile(path string) error {
 	if !info.Mode().IsRegular() {
 		return errors.New("configuration path must be a regular file")
 	}
-	return os.Chmod(path, 0600)
+	return protectPath(path, false)
 }
 
 func (s Store) locked(fn func(*config) (bool, error)) error {
@@ -88,6 +91,9 @@ func (s Store) locked(fn func(*config) (bool, error)) error {
 		return err
 	}
 	defer f.Close()
+	if err := protectPath(lockPath, false); err != nil {
+		return err
+	}
 	if err := lockFile(f); err != nil {
 		return err
 	}
@@ -118,11 +124,21 @@ func (s Store) locked(fn func(*config) (bool, error)) error {
 }
 
 func atomicWrite(path string, data []byte) error {
+	if err := secureDir(filepath.Dir(path)); err != nil {
+		return err
+	}
+	if err := regularFile(path); err != nil {
+		return err
+	}
 	f, err := os.CreateTemp(filepath.Dir(path), ".alarmd-*")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(f.Name())
+	if err := protectPath(f.Name(), false); err != nil {
+		f.Close()
+		return err
+	}
 	if _, err = f.Write(data); err == nil {
 		err = f.Sync()
 	}
@@ -133,7 +149,7 @@ func atomicWrite(path string, data []byte) error {
 	if closeErr != nil {
 		return closeErr
 	}
-	return os.Rename(f.Name(), path)
+	return commitFile(f.Name(), path)
 }
 
 func (s Store) get(env string) (Profile, error) {

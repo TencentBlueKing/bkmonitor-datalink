@@ -14,12 +14,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
 func TestRealBinaryHelpAndVersionWithoutConfiguration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "alarmd-cli")
+	if runtime.GOOS == "windows" {
+		path += ".exe"
+	}
 	build := exec.Command("go", "build", "-buildvcs=false", "-ldflags", "-X main.version=test-build", "-o", path, ".")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)

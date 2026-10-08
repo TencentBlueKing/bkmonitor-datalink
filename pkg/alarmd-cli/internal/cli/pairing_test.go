@@ -57,6 +57,7 @@ type pairingServer struct {
 	channelRefused string
 	// refreshRefused answers every renewal 401 with this code.
 	refreshRefused string
+	partialInvoke  bool
 }
 
 func (s *pairingServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +137,11 @@ func (s *pairingServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSON(s.t, w, map[string]any{"status": "error", "error": map[string]string{"code": s.channelRefused}})
 			return
 		}
-		writeJSON(s.t, w, envelope(s.p, "ok", map[string]any{}))
+		status := "ok"
+		if s.partialInvoke && body["mode"] == "invoke" {
+			status = "partial"
+		}
+		writeJSON(s.t, w, envelope(s.p, status, map[string]any{}))
 	default:
 		s.t.Errorf("unexpected path %s", r.URL.Path)
 		w.WriteHeader(404)

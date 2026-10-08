@@ -12,7 +12,7 @@ package cli
 import "fmt"
 
 func (a *App) help(_ []string) int {
-	_, err := fmt.Fprintln(a.Out, `alarmd-cli — versioned OB evidence client (Darwin/Linux)
+	_, err := fmt.Fprintln(a.Out, `alarmd-cli — versioned OB evidence client (Darwin/Linux/Windows x64)
 
 Start here, without reading source code:
   alarmd-cli --version
@@ -30,7 +30,7 @@ Commands:
   auth login [--env <id>] [--rebind]        Import code from hidden input or protected stdin (fallback when
                                             the browser and the CLI are on different machines).
   A login pairs this machine: the session renews itself from a rolling renewal credential kept in the
-  0600 profile, until the pairing is unused for 30 days, revoked, or the administrator key is rotated.
+  private profile, until the pairing is unused for 30 days, revoked, or the administrator key is rotated.
   Then every command reports credentials_expired with the login page and the auth login command.
              [--ca-cert </absolute/ca.pem>]  Add a private CA for this environment only.
              [--insecure-tls]             Skip certificate/hostname verification for this environment.
@@ -77,7 +77,9 @@ Agent rules:
 
 Storage and transport:
   OS user configuration directory/alarmd-cli; ALARMD_CLI_CONFIG_DIR can override it.
-  Directory mode 0700, files 0600; profiles contain secrets. Evidence is not deleted by logout.
+  Unix: directory mode 0700, files 0600. Windows: private current-user/SYSTEM DACL on local NTFS.
+  Windows configuration paths cannot traverse junctions/symlinks; use UTF-8 JSON files without BOM.
+  Profiles contain secrets. Evidence is not deleted by logout.
   HTTP or HTTPS follows the deployment entry in the authorization code; no protocol fallback.
   HTTPS certificate/hostname verification is enabled by default.
   Redirects and URL credentials are refused even with --insecure-tls.

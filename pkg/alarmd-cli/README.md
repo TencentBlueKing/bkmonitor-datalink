@@ -4,7 +4,7 @@
 
 ## 安装
 
-首版支持 macOS arm64 和 Linux amd64；运行只需单个二进制。下载对应版本的归档及 `SHA256SUMS` 后先校验，再解压到自己的可执行目录：
+支持 macOS arm64、Linux amd64，以及 Windows 10/11 x64（普通用户、本地 NTFS、PowerShell 5.1/7）；运行只需单个二进制。下载对应版本的归档及 `SHA256SUMS` 后先校验，再解压到自己的可执行目录：
 
 ```sh
 # macOS；Linux 可改用 sha256sum -c SHA256SUMS
@@ -13,6 +13,21 @@ tar -xzf alarmd-cli_<version>_<os>_<arch>.tar.gz
 ./alarmd-cli --version
 ./alarmd-cli --help
 ```
+
+Windows 使用 ZIP，以下命令在归档所在目录执行，将版本替换为实际版本：
+
+```powershell
+$archive = 'alarmd-cli_<version>_windows_amd64.zip'
+$entry = Get-Content .\SHA256SUMS | Where-Object { ($_ -split '\s+', 2)[1] -eq "./$archive" }
+if (@($entry).Count -ne 1) { throw 'Missing or duplicate checksum entry' }
+$expected = ($entry -split '\s+', 2)[0]
+if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $expected) { throw 'Checksum mismatch' }
+Expand-Archive -LiteralPath $archive -DestinationPath .\alarmd-cli
+.\alarmd-cli\alarmd-cli.exe --version
+.\alarmd-cli\alarmd-cli.exe --help
+```
+
+可把解压目录加入用户 PATH，或使用 exe 的完整路径；无需管理员权限、Go 或 Bash。Windows Server、ARM64、共享盘和非 NTFS 配置位置不在当前支持范围。需要企业代码签名的终端策略应由发布方另行配置。
 
 `--help` 与 `--version` 无需配置或网络。制品是否已部署与服务端是否可达需要另行验收。
 
@@ -31,6 +46,18 @@ alarmd-cli invoke <operation> --env <environment_id> --input '{"field":"value"}'
 # 参数也可以读取已有的 JSON 文件
 alarmd-cli invoke <operation> --env <environment_id> --input @input.json
 ```
+
+PowerShell 5.1/7 推荐通过文件传入 JSON，避免内联引号差异：
+
+```powershell
+$json = '{"field":"value"}'
+[System.IO.File]::WriteAllText('C:\work\input.json', $json, [System.Text.UTF8Encoding]::new($false))
+.\alarmd-cli.exe invoke <operation> --env <environment_id> --input '@C:\work\input.json'
+# 私有 CA 使用本机绝对路径；输入授权码时不回显。
+.\alarmd-cli.exe auth login --ca-cert 'C:\work\private CA.pem'
+```
+
+输入 JSON 文件必须使用 UTF-8、无 BOM。PowerShell 5.1 的默认 `Out-File` 编码不能直接用于该文件。stdout 是 UTF-8 JSON；使用 PowerShell 处理中文输出时，可先设置 `[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)`。
 
 登录自动导入授权码中的稳定 `environment_id`、名称和入口；可选 `auth login --env <id>` 用于核对环境。其余远程命令必须显式传 `--env`。`profile use <id>` 仅记录人工偏好，不会给远程命令隐式选择环境。服务端更新操作目录后客户端无需升级；先读 discover 摘要，按需读 describe 中的 schema、limits、parameter_sources 和示例。
 
@@ -183,9 +210,13 @@ HTTPS 默认使用系统信任库。私有 CA 可通过 `auth login --ca-cert /a
 
 业务健康状态保留在 `result`，不与调用成败混淆。完整脱敏通道响应一次原子保存，并在 `meta.result_file` 返回绝对路径。未知可选字段和大整数保留；stdout 最多 20 KiB，必要时省略 result 并标记 `result_omitted=true`，直接读取结果文件即可，不需要重查服务端。客户端删除秘密字段并替换已知 token/grant，服务端仍须执行自己的安全字段投影。
 
-凭据位于平台用户配置目录下的 `alarmd-cli/profiles.json`；`ALARMD_CLI_CONFIG_DIR` 可指定独立目录。目录权限 0700、凭据/锁/结果文件 0600。响应在 `results/` 下保留，客户端不自动删除证据。勿把凭据配置目录上传到工单或公开仓库。
+凭据位于平台用户配置目录下的 `alarmd-cli/profiles.json`；`ALARMD_CLI_CONFIG_DIR` 可指定独立目录。Unix 目录权限 0700、凭据/锁/结果文件 0600。Windows 默认为 `%APPDATA%\alarmd-cli`，使用受保护 DACL，仅允许当前用户与 SYSTEM 访问；这不阻止管理员接管权限。临时文件在私有目录中创建，写入内容前保护权限。响应在 `results/` 下保留，客户端不自动删除证据。勿把凭据配置目录上传到工单或公开仓库。
 
-固定边界：网络期限 30 秒；服务端响应最大 8 MiB，超限拒绝解码；参数 JSON 最大 1 MiB；授权码最大 64 KiB。没有不经服务端校验的任意 endpoint、operation 枚举或业务诊断逻辑。此版本不承诺 Windows。
+Windows 配置路径必须位于本地固定 NTFS 卷，受管理对象须归当前用户所有；拒绝网络路径、路径中的 junction/symlink/reparse point 及硬链接文件。权限设置失败返回配置错误。APPDATA 被重定向时，请通过 `$env:ALARMD_CLI_CONFIG_DIR = 'C:\Users\<user>\alarmd-cli-config'` 指定本地私有目录。不要把覆盖目录指向已有的公共目录。
+
+多进程通过 `.lock` 串行读取、更新和提交配置，续期也在同一锁内完成；进程退出后系统释放锁，不需手动删除 `.lock`。文件写入采用同目录临时文件、Sync、Close 和替换，不先删除旧文件。Windows 替换可能因外部程序占用而失败，此时返回错误并保留旧文件；该流程不承诺断电事务。远端兑换/续期已成功而本地保存失败时，以实际错误和服务端凭据状态处理，不代表远端操作被撤销。
+
+固定边界：网络期限 30 秒；服务端响应最大 8 MiB，超限拒绝解码；参数 JSON 最大 1 MiB；授权码最大 64 KiB。没有不经服务端校验的任意 endpoint、operation 枚举或业务诊断逻辑。
 
 ## 构建与验证
 
@@ -198,4 +229,20 @@ go build -buildvcs=false -trimpath -ldflags '-X main.version=dev' -o alarmd-cli 
 sh scripts/release.sh v0.1.0
 ```
 
-发布脚本在 `dist/<version>/` 生成 darwin-arm64、linux-amd64 归档、版本与源码回执，以及 `SHA256SUMS`。测试覆盖 TLS 兑换、前缀路由、环境/scope、重定向拒绝、过期提示下续期、部分大结果与脱敏、revision 变化不重试、迟到响应/CAS、未知远端撤销，以及真实二进制的零配置 help/version。测试依赖本机随机端口，不连接线上系统。
+Windows 本地构建（运行不需要 CGO）：
+
+```powershell
+go test -count=1 -timeout=10m ./...
+go vet ./...
+$env:CGO_ENABLED = '0'
+go build -buildvcs=false -trimpath -ldflags '-X main.version=dev' -o alarmd-cli.exe .
+.\alarmd-cli.exe --version
+```
+
+`-race` 需要 CGO 及兼容的 C 编译器，不要使用上述 CGO=0 配置运行 race 测试。
+
+发布脚本在 `dist/<version>/` 生成 darwin-arm64、linux-amd64 TAR 归档、windows-amd64 ZIP、版本与源码回执，以及覆盖所有归档的 `SHA256SUMS`。脚本需要 Unix shell、Go、tar 和 zip。测试覆盖 TLS 兑换、前缀路由、环境/scope、重定向拒绝、过期提示下续期、部分大结果与脱敏、revision 变化不重试、迟到响应/CAS、未知远端撤销、跨进程锁与续期，以及真实二进制的零配置 help/version 和 HTTP/私有 CA 命令链。Windows 专项验证实际 DACL、junction/硬链接拒绝、占用导致替换失败时保留旧文件。测试依赖本机随机端口，不连接线上系统。
+
+GitHub 工作流 `.github/workflows/alarmd-cli.yml` 执行三平台测试、Linux race 和独立 OB/Redis 黑盒。人工触发可生成三平台候选归档，并在对应原生 runner 校验和冒烟；不会自动发布 Release。Windows runner 是 Windows Server，仅作为自动化证据，不能替代 Windows 10/11 桌面验收。鲸盾接入暂未配置。
+
+发布前还须完成 [Windows 验收清单](docs/windows-acceptance.md)。真实终端隐藏输入、Ctrl+C 恢复、另一普通用户访问拒绝、浏览器回调和真实服务端兼容性须分别记录，不以编译或 fixture 通过代替。

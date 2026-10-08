@@ -160,16 +160,10 @@ func TestLoginInvokePartialEvidenceAndExpiry(t *testing.T) {
 		}
 	}
 	for _, path := range []string{path, filepath.Join(store.Dir, "profiles.json"), filepath.Join(store.Dir, ".lock")} {
-		info, _ := os.Stat(path)
-		if info.Mode().Perm() != 0600 {
-			t.Errorf("unsafe file mode %v", info.Mode())
-		}
+		assertPrivatePath(t, path, false)
 	}
 	for _, path := range []string{store.Dir, filepath.Join(store.Dir, "results")} {
-		info, _ := os.Stat(path)
-		if info.Mode().Perm() != 0700 {
-			t.Errorf("unsafe dir mode %v", info.Mode())
-		}
+		assertPrivatePath(t, path, true)
 	}
 	current, _ := store.get(p.EnvironmentID)
 	if current.ExpiresAt == p.ExpiresAt {

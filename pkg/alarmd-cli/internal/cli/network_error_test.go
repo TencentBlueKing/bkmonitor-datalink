@@ -43,3 +43,17 @@ func TestConnectionErrorsKeepActionableCausesWithoutSecrets(t *testing.T) {
 		})
 	}
 }
+
+func TestRealConnectionRefusal(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	address := l.Addr().String()
+	_ = l.Close()
+	a := &App{HTTP: &http.Client{}}
+	_, _, err = a.request(fixtureProfile("http://"+address), http.MethodGet, "api/cli/session", nil)
+	if err == nil || !strings.Contains(err.Error(), "connection refused") {
+		t.Fatalf("actual platform connection refusal not classified: %v", err)
+	}
+}

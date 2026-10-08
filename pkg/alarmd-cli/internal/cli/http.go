@@ -22,7 +22,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -150,7 +149,7 @@ func (a *App) request(p Profile, method, endpoint string, body any) (map[string]
 		switch {
 		case errors.As(err, &dns):
 			return nil, 0, errors.New("DNS resolution failed; check the deployment hostname and DNS access")
-		case errors.Is(err, syscall.ECONNREFUSED):
+		case connectionRefused(err):
 			return nil, 0, errors.New("connection refused; check the deployment address, port and listener")
 		case errors.As(err, &hostname):
 			return nil, 0, errors.New("TLS certificate hostname mismatch; check the entry URL or log in with --insecure-tls for this environment")

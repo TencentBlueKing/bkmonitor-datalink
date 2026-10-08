@@ -269,6 +269,12 @@ func (q *TimeGraph) propagateSharedTopology(ctx context.Context, grid TopologyGr
 		if err := ctx.Err(); err != nil {
 			return nil, seedCount, err
 		}
+		if q.shared != nil && q.shared.seedNodeBits != nil {
+			bits = bits.intersect(q.shared.seedNodeBits[node])
+			if bits.empty() {
+				continue
+			}
+		}
 		resourceType, info := q.nodeBuilder.Info(node)
 		if resourceType != query.SourceType {
 			continue

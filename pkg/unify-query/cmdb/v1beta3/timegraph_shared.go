@@ -21,9 +21,12 @@ type sharedTimeGraph struct {
 	grid           TopologyGrid
 	timestampIndex map[int64]int
 	nodeBits       map[uint64]timeBitmap
-	nodeInfos      map[uint64][]sharedNodeInfo
-	edgeBits       map[timeGraphTopologyEdgeKey]timeBitmap
-	edgePairBits   map[timeGraphEdgeKey]timeBitmap
+	// Set by the model after the first-hop read. Later candidate reads must not
+	// make a source eligible in a frame with no first-hop observation.
+	seedNodeBits map[uint64]timeBitmap
+	nodeInfos    map[uint64][]sharedNodeInfo
+	edgeBits     map[timeGraphTopologyEdgeKey]timeBitmap
+	edgePairBits map[timeGraphEdgeKey]timeBitmap
 }
 
 type sharedNodeInfo struct {
@@ -53,6 +56,7 @@ func newSharedTimeGraph(cfg *TimeGraphConfig, grid TopologyGrid) (*TimeGraph, er
 
 func (g *sharedTimeGraph) clear() {
 	clear(g.nodeBits)
+	g.seedNodeBits = nil
 	clear(g.nodeInfos)
 	clear(g.edgeBits)
 	clear(g.edgePairBits)

@@ -312,6 +312,15 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 			}
 			rootObserved = rootObserved || observed
 		}
+		// Freeze the nodes observed by first-hop reads before wider candidate
+		// reads can add the source as an unrelated edge endpoint at other times.
+		tg.shared.seedNodeBits = make(map[uint64]timeBitmap)
+		sourceTypeID := tg.nodeBuilder.resource.id(sourceType)
+		for node, bits := range tg.shared.nodeBits {
+			if uint16(node>>48) == sourceTypeID {
+				tg.shared.seedNodeBits[node] = bits
+			}
+		}
 		if !rootObserved && len(tg.partialTimes) == 0 {
 			return tg, nil
 		}

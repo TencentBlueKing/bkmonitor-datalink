@@ -97,6 +97,55 @@ func TestLegacyTimeGraphFailureWithoutAlternativeHit(t *testing.T) {
 	}
 }
 
+func TestLegacyTimeGraphRangeSelectsOnePathForWholeWindow(t *testing.T) {
+	const firstMS int64 = 1700000040000
+	const secondMS int64 = firstMS + 60000
+	for _, tc := range []struct {
+		name          string
+		direct        pl.Matrix
+		wantPath      []string
+		wantTargets   []cmdb.MatchersWithTimestamp
+		wantQueryList []string
+	}{
+		{
+			name:          "first path wins even when second path hits later",
+			direct:        legacyAlternativeMatrix("source_target_flow", firstMS),
+			wantPath:      []string{"source", "target"},
+			wantTargets:   []cmdb.MatchersWithTimestamp{{Timestamp: firstMS, Matchers: cmdb.Matchers{{"target_id": "direct"}}}},
+			wantQueryList: []string{"source_target_flow"},
+		},
+		{
+			name:          "second path fills window when first is empty",
+			wantPath:      []string{"source", "middle", "target"},
+			wantTargets:   []cmdb.MatchersWithTimestamp{{Timestamp: secondMS, Matchers: cmdb.Matchers{{"target_id": "indirect"}}}},
+			wantQueryList: []string{"source_target_flow", "source_middle_flow", "middle_target_flow"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := legacyRegressionModel(legacyAlternativeProvider(true))
+			var calls []string
+			model.timeGraphVMQuery = func(_ context.Context, q *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, error) {
+				name := q.QueryList[0].FieldName
+				calls = append(calls, name)
+				if name == "source_target_flow" {
+					return tc.direct, nil
+				}
+				return legacyAlternativeMatrix(name, secondMS), nil
+			}
+			_, source, path, target, buckets, err := model.QueryResourceMatcherRange(
+				initTimeGraphQueryTestEnvironment(), "", "space", "1m", "1700000040", "1700000100",
+				"target", "source", cmdb.Matcher{"source_id": "a"}, nil, false, nil,
+			)
+			require.NoError(t, err)
+			require.Equal(t, cmdb.Matcher{"source_id": "a"}, source)
+			require.Equal(t, cmdb.Resource("target"), target)
+			require.Equal(t, tc.wantPath, path)
+			require.Equal(t, tc.wantTargets, buckets)
+			require.Equal(t, tc.wantQueryList, calls)
+		})
+	}
+}
+
 func TestLegacyTimeGraphExplicitSelfLoop(t *testing.T) {
 	for _, mode := range []string{"instant", "range"} {
 		t.Run(mode, func(t *testing.T) {

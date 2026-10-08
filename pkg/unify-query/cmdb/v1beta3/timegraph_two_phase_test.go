@@ -192,10 +192,13 @@ func TestLegacyOptionalTargetInfoFailureKeepsRelationResult(t *testing.T) {
 		}
 	}
 	ctx := withTimeGraphTargetInfoShow(initTimeGraphQueryTestEnvironment(), true)
+	metricLabels := map[string]string{"stage": "target-info", "metric_name": "middle_info_relation", "result": "failed"}
+	failedBefore := readTimeGraphMetric(t, "cmdb_timegraph_load_operations_total", metricLabels, "counter")
 	results, err := model.QueryPathResources(ctx, "5m", "space", "1700000000", "source", []cmdb.Resource{"middle"},
 		[][]cmdb.Resource{{"source", "middle"}}, cmdb.Matcher{"source_id": "a"})
 	require.NoError(t, err)
 	require.True(t, infoQueried)
+	require.Equal(t, failedBefore+1, readTimeGraphMetric(t, "cmdb_timegraph_load_operations_total", metricLabels, "counter"))
 	require.Len(t, results, 1)
 	require.Equal(t, cmdb.Resource("middle"), results[0].TargetType)
 	require.Len(t, results[0].Path, 2)

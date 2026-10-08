@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	goRedis "github.com/go-redis/redis/v8"
 
@@ -29,8 +30,9 @@ import (
 // Otherwise, a single-node Client is returned.
 
 const (
-	storagePath    = "storage"
-	storageChannel = "storage_channel"
+	storagePath             = "storage"
+	storageChannel          = "storage_channel"
+	storageSubscribeTimeout = 5 * time.Second
 )
 
 // Storage 存储配置结构体
@@ -156,7 +158,10 @@ func (s *StorageClient) WatchStorageInfo(ctx context.Context) (<-chan any, error
 
 	channel := s.GetStorageChannel()
 	pubSub := s.client.Subscribe(ctx, channel)
-	if _, err := pubSub.Receive(ctx); err != nil {
+	// Receive 不使用客户端 ReadTimeout；握手必须有界，取消时主动关闭连接以中断读取。
+	stopClose := context.AfterFunc(ctx, func() { _ = pubSub.Close() })
+	defer stopClose()
+	if _, err := pubSub.ReceiveTimeout(ctx, storageSubscribeTimeout); err != nil {
 		_ = pubSub.Close()
 		return nil, fmt.Errorf("failed to subscribe storage channel: %w", err)
 	}
@@ -226,8 +231,10 @@ func (s *StorageClient) SetStorage(ctx context.Context, storageID string, storag
 }
 
 // 全局函数包装，使用全局 Redis 实例
-var globalStorageClient *StorageClient
-var storageClientLock sync.RWMutex
+var (
+	globalStorageClient *StorageClient
+	storageClientLock   sync.RWMutex
+)
 
 // replaceStorageClient 在 Redis 实例或 Base Path 变化时同步替换缓存客户端。
 func replaceStorageClient(client goRedis.UniversalClient, prefix string) {

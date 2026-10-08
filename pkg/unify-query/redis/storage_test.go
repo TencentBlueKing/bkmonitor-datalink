@@ -11,7 +11,10 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"net"
 	"testing"
 	"time"
 
@@ -19,6 +22,70 @@ import (
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/likexian/gokit/assert"
 )
+
+func TestWatchStorageInfoUnresponsiveSubscription(t *testing.T) {
+	for _, cancelHandshake := range []bool{false, true} {
+		name := "timeout"
+		if cancelHandshake {
+			name = "cancel"
+		}
+		t.Run(name, func(t *testing.T) {
+			connection, server := net.Pipe()
+			defer server.Close()
+			subscribed := make(chan struct{})
+			go func() {
+				buffer := make([]byte, 4096)
+				if _, err := server.Read(buffer); err == nil {
+					close(subscribed)
+				}
+				// 接收订阅命令但不返回应答，模拟连接存活却不响应。
+				_, _ = io.Copy(io.Discard, server)
+			}()
+			client := goRedis.NewClient(&goRedis.Options{
+				ReadTimeout: 10 * time.Millisecond,
+				Dialer: func(context.Context, string, string) (net.Conn, error) {
+					return connection, nil
+				},
+			})
+			defer client.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			type watchResult struct {
+				watch <-chan any
+				err   error
+			}
+			done := make(chan watchResult, 1)
+			go func() {
+				watch, err := NewStorageClient(client, "test").WatchStorageInfo(ctx)
+				done <- watchResult{watch: watch, err: err}
+			}()
+			select {
+			case <-subscribed:
+			case <-time.After(time.Second):
+				t.Fatal("subscription command was not received")
+			}
+			wait := storageSubscribeTimeout + time.Second
+			if cancelHandshake {
+				cancel()
+				wait = time.Second
+			}
+			select {
+			case result := <-done:
+				if result.watch != nil || result.err == nil {
+					t.Fatalf("expected subscription handshake to fail, got channel %v, error %v", result.watch, result.err)
+				}
+				if !cancelHandshake {
+					var networkError net.Error
+					if !errors.As(result.err, &networkError) || !networkError.Timeout() {
+						t.Fatalf("expected subscription timeout, got %v", result.err)
+					}
+				}
+			case <-time.After(wait):
+				t.Fatal("subscription handshake did not exit")
+			}
+		})
+	}
+}
 
 // TestGetStoragePath 测试获取存储路径
 func TestGetStoragePath(t *testing.T) {

@@ -491,6 +491,8 @@ type RefreshTaskParams struct {
 	Prefix string `json:"prefix" mapstructure:"prefix"`
 	// redis配置
 	Redis redis.Options `json:"redis" mapstructure:"redis"`
+	// Metadata Schema 所在 Redis；旧任务未传时沿用缓存 Redis。
+	SchemaRedis *redis.Options `json:"schema_redis" mapstructure:"schema_redis"`
 
 	// 事件处理间隔时间(秒)
 	EventHandleInterval int `json:"event_handle_interval" mapstructure:"event_handle_interval"`
@@ -501,6 +503,13 @@ type RefreshTaskParams struct {
 	BizConcurrent int `json:"biz_concurrent" mapstructure:"biz_concurrent"`
 
 	CacheTypes []string `json:"cache_types" mapstructure:"cache_types"`
+}
+
+func (p *RefreshTaskParams) schemaRedisOptions() *redis.Options {
+	if p.SchemaRedis != nil {
+		return p.SchemaRedis
+	}
+	return &p.Redis
 }
 
 // CacheRefreshTask cmdb缓存刷新任务
@@ -560,7 +569,7 @@ func CacheRefreshTask(ctx context.Context, payload []byte) error {
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	redisClient, err := redis.GetClient(&params.Redis)
+	redisClient, err := redis.GetClient(params.schemaRedisOptions())
 	if err != nil {
 		logger.Errorf("[cmdb_relation] failed to get redis client for schema provider: %v", err)
 		return errors.Wrapf(err, "failed to get redis client for schema provider")

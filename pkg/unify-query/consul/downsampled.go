@@ -19,6 +19,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/internal/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/utils"
 )
 
 const (
@@ -212,7 +213,7 @@ func LoadDownsampledInfo() error {
 	}
 	err := c.load()
 
-	newInfoHash := HashIt(*c.Info)
+	newInfoHash := utils.HashIt(*c.Info)
 	if downsampledInfoHash == newInfoHash {
 		return nil
 	}

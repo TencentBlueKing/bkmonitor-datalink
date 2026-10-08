@@ -7,13 +7,13 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package consul
+package redis
 
 import (
 	"encoding/gob"
 )
 
-// init 注册 consul.Storage 类型到 gob，用于 utils.HashIt 函数
+// init 注册 redis.Storage 类型到 gob，用于 utils.HashIt 函数
 func init() {
 	gob.Register(&Storage{})
 }

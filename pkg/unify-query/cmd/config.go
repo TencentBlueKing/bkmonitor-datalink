@@ -20,6 +20,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
 	redisService "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/redis"
 )
@@ -56,7 +57,7 @@ func newSetFeatureFlagsCmd() *cobra.Command {
 				return err
 			}
 
-			if err := loadFeatureFlagConfig(); err != nil {
+			if err := loadFeatureFlagConfig(cmd); err != nil {
 				return err
 			}
 			client := goRedis.NewUniversalClient(redisService.ClientOptions())
@@ -81,7 +82,7 @@ func newResetFeatureFlagsCmd() *cobra.Command {
 		Args:         cobra.NoArgs,
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := loadFeatureFlagConfig(); err != nil {
+			if err := loadFeatureFlagConfig(cmd); err != nil {
 				return err
 			}
 			client := goRedis.NewUniversalClient(redisService.ClientOptions())
@@ -96,9 +97,9 @@ func newResetFeatureFlagsCmd() *cobra.Command {
 	}
 }
 
-func loadFeatureFlagConfig() error {
-	config.InitConfig()
-	if err := viper.ReadInConfig(); err != nil {
+func loadFeatureFlagConfig(cmd *cobra.Command) error {
+	log.SetOutput(cmd.ErrOrStderr())
+	if err := config.InitConfigWithWriter(cmd.ErrOrStderr()); err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
 	if redisService.KVBasePath == "" {
@@ -109,5 +110,6 @@ func loadFeatureFlagConfig() error {
 
 func init() {
 	configCmd.AddCommand(newSetFeatureFlagsCmd(), newResetFeatureFlagsCmd())
+	configCmd.AddCommand(newGetFeatureFlagsCmd(), newMutateFeatureFlagCmd("add"), newMutateFeatureFlagCmd("update"), newMutateFeatureFlagCmd("delete"))
 	rootCmd.AddCommand(configCmd)
 }

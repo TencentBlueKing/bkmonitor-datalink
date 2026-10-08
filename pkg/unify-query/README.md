@@ -28,6 +28,34 @@ unify-query --config /path/to/unify-query.yaml config set-feature-flags --file f
 
 命令复用 `redis` 的连接、认证、数据库和 `kv_base_path` 配置，支持单机和哨兵模式；先校验文件，再写入 `<redis.kv_base_path>:data:feature_flag`，并发布变更通知。写入替换整份配置，不设过期时间；`{}` 可清空开关配置。文件必须是 JSON，仓库中的 `featureFlag.yaml` 仅为格式示例。命令不会输出配置内容或凭据，校验、配置读取或写入失败时返回非零退出码。
 
+### 查询与单项管理 Feature Flag
+
+查询只读取 Redis，不触发 Consul 迁移；标准输出为 JSON，配置加载提示和日志写入标准错误，可直接导出整份快照或单个开关定义：
+
+```bash
+unify-query --config /path/to/unify-query.yaml config get-feature-flags > flags.json
+unify-query --config /path/to/unify-query.yaml config get-feature-flags --name new-query > flag.json
+```
+
+`flags.json` 是供 `set-feature-flags` 使用的整份快照；单项新增、更新使用的 `flag.json` 只包含该开关的完整定义，不带外层开关名称，例如：
+
+```json
+{
+  "variations": {"enabled": true, "disabled": false},
+  "defaultRule": {"variation": "disabled"}
+}
+```
+
+```bash
+unify-query --config /path/to/unify-query.yaml config add-feature-flag --name new-query --file flag.json
+unify-query --config /path/to/unify-query.yaml config update-feature-flag --name new-query --file flag.json
+unify-query --config /path/to/unify-query.yaml config delete-feature-flag --name new-query
+```
+
+单项操作要求 Redis 已有快照；缺失时先等待在线 UQ 从 Consul 自动回填，或使用整份 `set-feature-flags` 明确初始化，避免单项新增抢占迁移并遗漏 Consul 中的其他开关。新增要求名称尚不存在；更新和删除要求名称已存在。更新替换该开关的完整定义，所有单项操作均保留其他开关，使用 SDK 校验更新后的完整快照，不设过期时间，并发布通知供在线 UQ 刷新。删除最后一个开关时写入 `{}`，保留 Redis Key，避免重新从 Consul 回填。Redis 快照或查询名称不存在时，查询命令返回错误。
+
+单项写入通过 `WATCH` 事务检查并发修改；发生冲突时返回错误并提示重试，不自动覆盖其他写入。
+
 ### 重新从 Consul 迁移 Feature Flag
 
 先准备好 Consul 中的配置，再在 UQ 容器内使用运行服务相同的配置文件执行，无需安装 `redis-cli`：

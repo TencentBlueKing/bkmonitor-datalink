@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
 func TestSetFeatureFlagsCommand(t *testing.T) {
@@ -49,6 +50,7 @@ func TestSetFeatureFlagsCommand(t *testing.T) {
 		rootCmd.SetArgs(nil)
 		rootCmd.SetOut(previousOut)
 		rootCmd.SetErr(previousErr)
+		log.SetOutput(nil)
 		viper.Reset()
 	})
 	var output bytes.Buffer
@@ -128,6 +130,7 @@ func TestResetFeatureFlagsCommand(t *testing.T) {
 		rootCmd.SetArgs(nil)
 		rootCmd.SetOut(previousOut)
 		rootCmd.SetErr(previousErr)
+		log.SetOutput(nil)
 		viper.Reset()
 	})
 	var output bytes.Buffer

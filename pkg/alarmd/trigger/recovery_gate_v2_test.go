@@ -109,7 +109,7 @@ func TestARecoveryIsNotHeldOnAnotherLevel(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			plan := compilePlanV2(t, test.levels)
-			result, err := EvaluateV2(requestV2(t, plan, source, test.facts(plan.Levels()), test.histories, activeFactsV2(t, plan, source)))
+			result, err := EvaluateV2(requestV2(t, plan, source, test.facts(plan.Levels().Copy()), test.histories, activeFactsV2(t, plan, source)))
 			if err != nil {
 				t.Fatalf("EvaluateV2() error = %v", err)
 			}
@@ -144,7 +144,7 @@ func TestARecoveryIsNotHeldOnAnotherLevel(t *testing.T) {
 // not consulted.
 func TestRecoveryEnvelopeIsNotHeldOnASuppressedLevel(t *testing.T) {
 	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(1, 20, 1, 1, 1, staticUptimeV2()), levelV2(5, 1, 1, 1, 1, nil)})
-	levels := plan.Levels()
+	levels := plan.Levels().Copy()
 	source := int64(64800)
 	facts := effectiveFactsV2(t, plan, source, func(string) (*time.Location, error) { return time.UTC, nil })
 	result, err := EvaluateV2(requestV2(t, plan, source,
@@ -173,7 +173,7 @@ func TestRecoveryEnvelopeIsNotHeldOnASuppressedLevel(t *testing.T) {
 // as one without, and nothing else would notice.
 func TestEveryLevelOutcomeCarriesItsRecoveryFlag(t *testing.T) {
 	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(1, 20, 1, 1, 1, staticUptimeV2()), levelWithoutRecoveryV2(5, 1, 1, 1)})
-	levels := plan.Levels()
+	levels := plan.Levels().Copy()
 	source := int64(64800)
 	facts := effectiveFactsV2(t, plan, source, func(string) (*time.Location, error) { return time.UTC, nil })
 	result, err := EvaluateV2(requestV2(t, plan, source,
@@ -201,7 +201,7 @@ func TestEveryLevelOutcomeCarriesItsRecoveryFlag(t *testing.T) {
 // envelope is ABNORMAL as before, and the gate says nothing.
 func TestRecoveryGateDoesNotTouchAnAbnormalRecord(t *testing.T) {
 	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(1, 1, 1, 1, 1, nil), levelV2(2, 2, 1, 1, 1, nil)})
-	levels := plan.Levels()
+	levels := plan.Levels().Copy()
 	const source = int64(300)
 	result, err := EvaluateV2(requestV2(t, plan, source,
 		[]DetectionFact{unavailableFactV2(levels[0], contract.ReasonRequiredValueMissing), factV2(levels[1], DetectionAnomalous)},
@@ -225,7 +225,7 @@ func TestRecoveryGateDoesNotTouchAnAbnormalRecord(t *testing.T) {
 func TestARecoveryIsCountedBesideTheLevelThatUsedToHoldIt(t *testing.T) {
 	const source = int64(300)
 	plan := compilePlanV2(t, []contract.LevelIRV2{levelWithoutRecoveryV2(1, 1, 1, 1), levelV2(2, 2, 1, 1, 1, nil), levelV2(3, 3, 1, 1, 1, nil)})
-	levels := plan.Levels()
+	levels := plan.Levels().Copy()
 	result, err := EvaluateV2(requestV2(t, plan, source,
 		[]DetectionFact{factV2(levels[0], DetectionNormal), unavailableFactV2(levels[1], contract.ReasonRequiredValueMissing), factV2(levels[2], DetectionNormal)},
 		[]LevelHistory{

@@ -2,16 +2,26 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-redis/redis/v8"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/absentalerts"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/state"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
 type absentTestControl struct {
@@ -369,6 +379,176 @@ func TestASnapshotThatShrankRefusesTheRoundByName(t *testing.T) {
 	fixture.loop.step(ctx)
 	if len(fixture.writer.batches) != 0 || fixture.loop.Rounds()[absentalerts.RefusalSnapshotShrunk] != 1 {
 		t.Fatalf("a shrunken snapshot was decided on, or the refusal was not named: %+v", fixture.loop.Rounds())
+	}
+}
+
+// The same shrink from a writer that stated, with that snapshot, that it never
+// drops a strategy on failure is a set of deletions: the round decides, and
+// the side says which way the gate went.
+func TestASnapshotThatShrankFromAWriterThatHoldsFailuresIsDecidedOn(t *testing.T) {
+	fixture := newAbsentFixture(t, []openalerts.Alert{nativeAlert("alert-1", "0123456789abcdef0123456789abcdef")})
+	ctx := context.Background()
+	fixture.loop.step(ctx)
+	if fixture.loop.Difference()["writer_holds_last_good"] != 0 {
+		t.Fatalf("a snapshot without the statement was reported as having it: %+v", fixture.loop.Difference())
+	}
+	fixture.now = fixture.now.Add(controlplane.AbsenceGracePeriod + time.Minute)
+	fixture.control.snapshot = liveSnapshot("observation-two", fixture.now, 40)
+	fixture.control.snapshot.HoldsLastGood = true
+	for i := range fixture.link.pages {
+		fixture.link.pages[i].Health.LastSuccess = fixture.now.Add(-time.Minute)
+	}
+	fixture.loop.step(ctx)
+	if fixture.loop.Rounds()[absentalerts.RefusalSnapshotShrunk] != 0 || fixture.loop.Rounds()[absentalerts.RefusalNone] != 2 {
+		t.Fatalf("a shrink the writer stated is deletions was refused: %+v", fixture.loop.Rounds())
+	}
+	if fixture.loop.Difference()["writer_holds_last_good"] != 1 {
+		t.Fatalf("the waived gate was not reported: %+v", fixture.loop.Difference())
+	}
+	if fixture.loop.Stats()[absentalerts.OutcomeClosed] != 1 {
+		t.Fatalf("the absent strategy was not decided after its grace: %+v", fixture.loop.Stats())
+	}
+}
+
+// absentSourceStrategyIDs is the strategy_ids value a writer stores for
+// strategies 1001 up to 1000+n.
+func absentSourceStrategyIDs(n int) string {
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = strconv.Itoa(1001 + i)
+	}
+	return "[" + strings.Join(ids, ",") + "]"
+}
+
+// absentSourceStatement is the writer's statement about those exact bytes,
+// written with the given last_updated.
+func absentSourceStatement(lastUpdated int64, strategyIDs string) string {
+	sum := sha256.Sum256([]byte(strategyIDs))
+	return `{"hold_last_good":true,"last_updated":` + strconv.FormatInt(lastUpdated, 10) +
+		`,"strategy_ids_sha256":"` + hex.EncodeToString(sum[:]) + `","version":1}`
+}
+
+// absentSourceReconciler is the control plane the close loop asks in
+// production: a SourceReconciler reading the Legacy strategy cache on a real
+// Redis, which holds strategies 1001..1100 and nothing else.
+func absentSourceReconciler(t *testing.T, client *redis.Client, now func() time.Time) (*controlplane.SourceReconciler, func()) {
+	t.Helper()
+	ctx := context.Background()
+	for i := 0; i < 100; i++ {
+		id := 1001 + i
+		document := fmt.Sprintf(`{"id":%d,"bk_biz_id":2,"bk_tenant_id":"system","space_uid":"bkcc__2","update_time":1,`+
+			`"items":[{"id":1,"query_md5":"absent-%d","expression":"a","unit":"","query_configs":[{"data_source_label":"bk_monitor",`+
+			`"data_type_label":"time_series","metric_field":"usage","alias":"a","agg_dimension":["host"],"agg_method":"MAX",`+
+			`"agg_interval":60,"result_table_id":"system.cpu"}],"algorithms":[{"level":1,"type":"Threshold","config":[[{"method":"gte","threshold":80}]]}]}],`+
+			`"detects":[{"level":1,"priority":1,"connector":"and","trigger_config":{"count":1,"check_window":1}}]}`, id, id)
+		if err := client.Set(ctx, "bkmonitor.cache.strategy_"+strconv.Itoa(id), document, 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := config.Default()
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:absent-close", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, err := strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), cfg.CompilerLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sm, err := state.RuntimeStateSemantics()
+	if err != nil {
+		t.Fatal(err)
+	}
+	semantics := strategy.StateSemantics{StateSchemaVersion: sm.StateSchemaVersion, CodecSemanticsVersion: sm.CodecSemanticsVersion,
+		IdentitySchemaDigest: sm.IdentitySchemaDigest, SourceTimeSemanticsVersion: sm.SourceTimeSemanticsVersion, HistoryCellSemanticsVersion: sm.HistoryCellSemanticsVersion}
+	accessBKData := true
+	planner, err := controlplane.NewLegacyPrimaryQueryCompiler("uq-primary-v1", "UTC", controlplane.LegacyQueryRuntimeFacts{AccessBKData: &accessBKData,
+		BKDataCMDBLevelTables: []string{}, SystemDiskFilter: controlplane.LegacyRuntimeFilterFact{FieldName: "device_type", Values: []string{"iso9660"}},
+		SystemNetworkFilter: controlplane.LegacyRuntimeFilterFact{FieldName: "device_name", Values: []string{"lo"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := controlplane.NewLegacyRedisStrategySource(client, "bkmonitor.cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciler, err := controlplane.NewSourceReconciler(repository, compiler, semantics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.ConfigureClock(now); err != nil {
+		t.Fatal(err)
+	}
+	refresh := func() {
+		t.Helper()
+		result, err := reconciler.Refresh(ctx, source, planner)
+		if err != nil || result.ReadMode != controlplane.SourceReadFull {
+			t.Fatalf("Refresh() = (%+v, %v), want a full read of the source", result, err)
+		}
+	}
+	return reconciler, refresh
+}
+
+// An older writer, after a rollback, rewrites strategy_ids in place and drops
+// sixty strategies that failed to publish, without moving last_updated. The
+// statement the newer writer left still matches last_updated, and is about the
+// hundred: the round has to judge the forty under the shrink gate. Once a
+// writer that makes the statement publishes about the forty, the same shrink
+// is decided on.
+func TestAStatementAboutAnotherStrategyListDoesNotWaiveTheShrinkGate(t *testing.T) {
+	_, client := startPhaseTwoRedis(t)
+	ctx := context.Background()
+	fixture := newAbsentFixture(t, []openalerts.Alert{nativeAlert("alert-1", "0123456789abcdef0123456789abcdef")})
+	fixture.link.pages[0].Rows[0].StrategyID = "1001"
+	reconciler, refresh := absentSourceReconciler(t, client, func() time.Time { return fixture.now })
+	fixture.loop.control = reconciler
+	publish := func(strategyIDs string, statementIDs string) {
+		t.Helper()
+		lastUpdated := fixture.now.Unix() - 30
+		for key, value := range map[string]string{
+			"bkmonitor.cache.strategy_ids":          strategyIDs,
+			"bkmonitor.cache.last_updated":          strconv.FormatInt(lastUpdated, 10),
+			"bkmonitor.cache.publication_semantics": absentSourceStatement(lastUpdated, statementIDs),
+		} {
+			if err := client.Set(ctx, key, value, 0).Err(); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	later := func() {
+		fixture.now = fixture.now.Add(controlplane.AbsenceGracePeriod + time.Minute)
+		for i := range fixture.link.pages {
+			fixture.link.pages[i].Health.LastSuccess = fixture.now.Add(-time.Minute)
+		}
+	}
+
+	hundred, forty := absentSourceStrategyIDs(100), absentSourceStrategyIDs(40)
+	publish(hundred, hundred)
+	refresh()
+	fixture.loop.step(ctx)
+	if fixture.loop.Rounds()[absentalerts.RefusalNone] != 1 || fixture.loop.Difference()["snapshot_strategies"] != 100 ||
+		fixture.loop.Difference()["writer_holds_last_good"] != 1 {
+		t.Fatalf("the first round did not decide on the hundred under the statement: %+v %+v", fixture.loop.Rounds(), fixture.loop.Difference())
+	}
+
+	later()
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_ids", forty, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	refresh()
+	fixture.loop.step(ctx)
+	if fixture.loop.Rounds()[absentalerts.RefusalSnapshotShrunk] != 1 || fixture.loop.Difference()["snapshot_strategies"] != 40 ||
+		fixture.loop.Difference()["writer_holds_last_good"] != 0 || len(fixture.writer.batches) != 0 {
+		t.Fatalf("a list rewritten in place was judged under the statement about the one before it: %+v %+v",
+			fixture.loop.Rounds(), fixture.loop.Difference())
+	}
+
+	later()
+	publish(forty, forty)
+	refresh()
+	fixture.loop.step(ctx)
+	if fixture.loop.Rounds()[absentalerts.RefusalSnapshotShrunk] != 1 || fixture.loop.Rounds()[absentalerts.RefusalNone] != 2 ||
+		fixture.loop.Difference()["writer_holds_last_good"] != 1 {
+		t.Fatalf("the shrink the writer stated about this list was refused: %+v %+v", fixture.loop.Rounds(), fixture.loop.Difference())
 	}
 }
 

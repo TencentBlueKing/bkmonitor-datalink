@@ -3,6 +3,7 @@ package worker
 import (
 	"testing"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
@@ -53,5 +54,29 @@ func TestMixedBackendAndLocalFailureDoesNotCooldown(t *testing.T) {
 	evidence.observe(binding, physical, false, false)
 	if got := evidence.availability(); got != execution.QueryAvailabilityAvailable {
 		t.Fatalf("healthy sibling availability=%v", got)
+	}
+}
+
+// The reason handed out is the first unavailable primary's own, as its
+// binding attributes it; a dependency's never, and none when the query was
+// not unavailable.
+func TestTheUnavailableReasonIsThePrimarysOwn(t *testing.T) {
+	unavailable := execution.PhysicalQueryCompletion{Completeness: execution.CompletenessUnavailable}
+	var evidence queryAvailabilityEvidence
+	evidence.observe(execution.NamedInputBinding{Role: execution.InputRoleAlgorithmDependency, ReasonCode: contract.ReasonQueryTimeout}, unavailable, false, true)
+	evidence.observe(execution.NamedInputBinding{Role: execution.InputRolePrimary, ReasonCode: contract.ReasonQueryTargetMissing}, unavailable, false, true)
+	evidence.observe(execution.NamedInputBinding{Role: execution.InputRolePrimary, ReasonCode: contract.ReasonQueryUnavailable}, unavailable, false, true)
+	if got := evidence.unavailableReason(); got != contract.ReasonQueryTargetMissing {
+		t.Fatalf("reason = %q, want the first primary's %s", got, contract.ReasonQueryTargetMissing)
+	}
+	var unattributed queryAvailabilityEvidence
+	unattributed.observe(execution.NamedInputBinding{Role: execution.InputRolePrimary, ReasonCode: contract.ReasonQueryUnavailable,
+		UnavailableAttribution: execution.UnavailableNoAttemptReason}, unavailable, false, true)
+	if got := unattributed.unavailableReason(); got != execution.ReasonQueryReasonUnrecorded {
+		t.Fatalf("reason = %q, want %s for a code no attempt named", got, execution.ReasonQueryReasonUnrecorded)
+	}
+	unattributed.observe(execution.NamedInputBinding{Role: execution.InputRolePrimary}, execution.PhysicalQueryCompletion{Completeness: execution.CompletenessFull}, false, true)
+	if got := unattributed.unavailableReason(); got != "" {
+		t.Fatalf("reason = %q for an available query, want none", got)
 	}
 }

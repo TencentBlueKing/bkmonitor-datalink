@@ -9,7 +9,10 @@
 
 package contract
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 const (
 	ExecutionEnvelopeSchemaV2 = "execution-envelope"
@@ -78,6 +81,18 @@ const (
 	ReasonEffectiveTimeCalendarIdentity      = "EFFECTIVE_TIME_CALENDAR_IDENTITY_INVALID"
 	ReasonEffectiveTimeCalendarDuplicate     = "EFFECTIVE_TIME_CALENDAR_DUPLICATE"
 	ReasonEffectiveTimeCalendarItemsMissing  = "EFFECTIVE_TIME_CALENDAR_ITEMS_MISSING"
+	// The ITEM_, TIME_KIND_, TIMEZONE_ and REPEAT_ ones are a calendar item
+	// or the business timezone in the snapshot that does not parse: the
+	// snapshot arrived and is readable, and what it carries is wrong.
+	ReasonEffectiveTimeItemDuplicate      = "EFFECTIVE_TIME_ITEM_DUPLICATE"
+	ReasonEffectiveTimeItemInvalid        = "EFFECTIVE_TIME_ITEM_INVALID"
+	ReasonEffectiveTimeItemTimeInvalid    = "EFFECTIVE_TIME_ITEM_TIME_INVALID"
+	ReasonEffectiveTimeTimeKindInvalid    = "EFFECTIVE_TIME_TIME_KIND_INVALID"
+	ReasonEffectiveTimeTimezoneInvalid    = "EFFECTIVE_TIME_TIMEZONE_INVALID"
+	ReasonEffectiveTimeRepeatInvalid      = "EFFECTIVE_TIME_REPEAT_INVALID"
+	ReasonEffectiveTimeRepeatListInvalid  = "EFFECTIVE_TIME_REPEAT_LIST_INVALID"
+	ReasonEffectiveTimeRepeatEveryInvalid = "EFFECTIVE_TIME_REPEAT_EVERY_INVALID"
+	ReasonEffectiveTimeRepeatUntilInvalid = "EFFECTIVE_TIME_REPEAT_UNTIL_INVALID"
 	// ReasonCompilerTerminalUnclassified files a compiler terminal this build
 	// has no classification for. It is declared here so the tables that walk
 	// the catalogue can see it; the compiler's own code travels beside it.
@@ -107,10 +122,28 @@ const (
 	// ReasonQueryEmpty names a dependency query that completed and returned
 	// no rows at all. The query succeeded, so the binding carries no reason of
 	// its own; this is the one the guard for the Level it starves carries.
-	ReasonQueryEmpty             = "QUERY_EMPTY"
-	ReasonQueryTimeout           = "QUERY_TIMEOUT"
-	ReasonQueryUnavailable       = "QUERY_UNAVAILABLE"
-	ReasonReadinessBudgetInvalid = "READINESS_BUDGET_INVALID"
+	ReasonQueryEmpty       = "QUERY_EMPTY"
+	ReasonQueryTimeout     = "QUERY_TIMEOUT"
+	ReasonQueryUnavailable = "QUERY_UNAVAILABLE"
+	// ReasonQueryTargetMissing names a query the backend answered and
+	// refused because the table or field it names does not route in the
+	// strategy's space: a statement about where the data is, not about
+	// whether the backend answers. It stays until somebody changes the
+	// strategy or the space; the routing it reports takes no time range, so
+	// a replay says it as an on-time query does. An expression with a
+	// fallback (`... or vector(100)`) that still produced series is used
+	// despite it, so such a Query Group can leave the query cooldown on the
+	// rounds its fallback answers and return on the rounds it does not.
+	ReasonQueryTargetMissing = "QUERY_TARGET_MISSING"
+	// ReasonDetectIntervalStorageNotSliding names a query of a Plan detected
+	// more often than it aggregates whose answer came back bucketed on the
+	// aggregation grid rather than from where the request started: the
+	// storage the query service routed the table to does not read unaligned
+	// windows. Its points cover partial buckets at the wrong times, so the
+	// query is not used. Like QUERY_TARGET_MISSING it stays until the
+	// strategy changes - here, until its detect_interval is removed.
+	ReasonDetectIntervalStorageNotSliding = "DETECT_INTERVAL_STORAGE_NOT_SLIDING"
+	ReasonReadinessBudgetInvalid          = "READINESS_BUDGET_INVALID"
 	// ReasonQueryNotReady names a Slot deferred because the window it would
 	// query is not in yet. It is the normal pacing of every Slot, and the
 	// highest-volume observation alarmd makes, so it needs its own name:
@@ -515,6 +548,12 @@ type EvaluationPlanV2 struct {
 	// rather than carrying a guess.
 	SignalType         string `json:"signal_type,omitempty"`
 	TerminalReasonCode string `json:"terminal_reason_code,omitempty"`
+	// GlobalBusiness says the strategy belongs to a global business: it
+	// queries every business of its tenant, and each event it raises names
+	// the business it is about beside the Plan's own (see
+	// TriggerEventV1.AttributedBusinessID). Omitted when false, so every
+	// other Plan keeps its bytes and its revision.
+	GlobalBusiness bool `json:"global_business,omitempty"`
 }
 
 // PublishesCompatibleProtocol reports whether this Plan's events go out as the
@@ -556,12 +595,67 @@ const (
 // other format carries every kind.
 //
 // One rule with two readers: the sink, which leaves such an event without a
-// message, and the evaluation, which does not keep one it knows the sink
-// would drop. Two copies of it could disagree, and the way they would
-// disagree is silent - an event kept that goes nowhere, or dropped that
-// should have gone.
+// message, and the trigger, which does not build one the sink would leave
+// without a message (NoMessageFor). Two copies of it could disagree, and the
+// way they would disagree is silent - an event built that goes nowhere, or
+// not built that should have gone.
 func EventHasMessage(format, eventKind string) bool {
 	return format != WireFormatPythonCompatible || eventKind == TriggerEventAbnormal
+}
+
+// NoMessageFor reports whether an event of this kind, under this resolved
+// wire format, would be taken by the sink and left without a message: a kind
+// the protocol has no message for, on an event carrying the compatibility
+// context the sink converts it by. Without that context the sink refuses the
+// event rather than leaving it, so it is not reported here.
+//
+// The trigger asks it before building an envelope and the sink's answer for
+// a built one (DroppedAtSink) is the same function, so the envelope is not
+// built exactly where it would have been dropped.
+func NoMessageFor(format, eventKind string, compatibilityContext bool) bool {
+	return !EventHasMessage(format, eventKind) && compatibilityContext
+}
+
+// CompatibleOffBoundary reports whether a record of a Plan detected more
+// often than it aggregates is one of the detections between two aggregation
+// boundaries. The record's source time is where its window starts; off the
+// aggregation grid, the window is not one of the buckets the compatible
+// protocol's consumer counts - it counts its windows in aggregation
+// intervals, and would read one window several times over - so the protocol
+// has no message for such a record of any kind. A Plan detected once an
+// aggregation interval has none.
+//
+// The grid is laid in location, the time zone the Plan's query is laid in, as
+// the query service lays an aligned query's buckets: a boundary is a time
+// whose wall clock there is a whole number of aggregation intervals from the
+// epoch, so that a day's boundary is the local midnight. A nil location is
+// UTC.
+func CompatibleOffBoundary(semantics ExecutionSemanticsV2, location *time.Location, sourceTime int64) bool {
+	step, aggregation := int64(semantics.EvaluationInterval), int64(semantics.AggregationInterval)
+	if step <= 0 || aggregation <= 0 || step == aggregation {
+		return false
+	}
+	local := sourceTime
+	if location != nil {
+		_, offset := time.Unix(sourceTime, 0).In(location).Zone()
+		local += int64(offset)
+	}
+	return local%aggregation != 0
+}
+
+// EventHasMessageAt is EventHasMessage for a record that may lie between two
+// aggregation boundaries (CompatibleOffBoundary): under the compatible
+// protocol such a record has no message of any kind; every other protocol
+// carries it.
+func EventHasMessageAt(format, eventKind string, offBoundary bool) bool {
+	return EventHasMessage(format, eventKind) && !(offBoundary && format == WireFormatPythonCompatible)
+}
+
+// NoMessageForAt is NoMessageFor for a record that may lie between two
+// aggregation boundaries, read by the trigger that decides it and by the
+// result contract that checks it, so the two cannot disagree.
+func NoMessageForAt(format, eventKind string, compatibilityContext, offBoundary bool) bool {
+	return !EventHasMessageAt(format, eventKind, offBoundary) && compatibilityContext
 }
 
 // DroppedAtSink reports whether the sink would take this event and leave it
@@ -573,10 +667,8 @@ func DroppedAtSink(event *TriggerEventV1) bool {
 	if event == nil {
 		return false
 	}
-	if EventHasMessage(OutputWireFormatOf(event), event.EventKind) {
-		return false
-	}
-	return event.LegacyOutput != nil && event.LegacyOutput.Configuration != nil
+	return NoMessageFor(OutputWireFormatOf(event), event.EventKind,
+		event.LegacyOutput != nil && event.LegacyOutput.Configuration != nil)
 }
 
 // OutputWireFormatOf is the wire format the sink resolves this event to.
@@ -890,6 +982,13 @@ type TriggerEventV1 struct {
 	DetectPlanFingerprint   string               `json:"detect_plan_fingerprint"`
 	TriggerStateFingerprint string               `json:"trigger_state_fingerprint"`
 	Trace                   TriggerEventTraceV1  `json:"trace"`
+	// AttributedBusinessID is the business a global business Plan's event is
+	// about: the one its target, or else its bk_biz_id dimension, names, and
+	// the Plan's own business when neither does. BusinessID stays the Plan's
+	// business, because it is part of the Plan's identity, the event id and
+	// the state key; this is only where the output files the alert. Empty
+	// on every other Plan's events, so their bytes are what they were.
+	AttributedBusinessID string `json:"attributed_business_id,omitempty"`
 }
 
 type TriggerEventBuildInputV1 struct {

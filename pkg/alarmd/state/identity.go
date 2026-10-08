@@ -10,7 +10,6 @@
 package state
 
 import (
-	"encoding/hex"
 	"fmt"
 	"strconv"
 	"strings"
@@ -116,10 +115,19 @@ func isCanonicalUint64(value string) bool {
 	return err == nil && strconv.FormatUint(parsed, 10) == value
 }
 
+// isSHA256Hex reports whether value is a SHA-256 digest spelled as the state
+// spells one: 64 lowercase hexadecimal characters. It reads the characters in
+// place. Decoding and re-encoding to compare, as it did, allocated two
+// buffers per check, and the window checks every point's record id this way
+// on every record it applies.
 func isSHA256Hex(value string) bool {
 	if len(value) != 64 {
 		return false
 	}
-	decoded, err := hex.DecodeString(value)
-	return err == nil && hex.EncodeToString(decoded) == value
+	for index := 0; index < len(value); index++ {
+		if c := value[index]; (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }

@@ -13,10 +13,12 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/nodata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 // A no-data round that cannot be worked out is that Plan's outcome, not the
@@ -85,6 +87,40 @@ func TestANoDataRoundThatCannotBeDerivedIsThatPlansOutcome(t *testing.T) {
 			t.Fatalf("the failed Plan wrote memory: %+v", mutation)
 		}
 	}
+}
+
+// The contained failure is reported as the Plan's evaluation with the time
+// its no-data round took, measured: untimed, the cost summary counted it as
+// an evaluation whose cost nobody measured, and its window incomplete.
+func TestANoDataRoundThatCannotBeDerivedIsReportedTimed(t *testing.T) {
+	failing := noDataWiredPlan(t)
+	var observed []observability.Observation
+	stream := &streamedExecution{
+		coordinator: &SlotExecutionCoordinator{
+			ports: Ports{NoData: &emptyNoDataStore{}, Hosts: SharedHostBusiness, State: failingStatePort{},
+				Observer: observability.ObserverFunc(func(_ context.Context, o observability.Observation) { observed = append(observed, o) })},
+			budget: ProvisionalBudget{MaxSeries: 100, MaxRetainedBytes: 1 << 20, MaxGapMutations: 10, MaxStateMutations: 8},
+		},
+		header: execution.InternalExecutionHeader{
+			Contract: noDataPreflightContract(t, []execution.DuePlan{failing}), DuePlans: []execution.DuePlan{failing},
+		},
+	}
+	if err := stream.loadNoDataMemory(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	stream.noData = dropNoDataMemory(stream.noData, failing.Identity.StrategyID)
+	began := time.Now()
+	_ = stream.evaluateNoData(context.Background(), nil, 16)
+	round := time.Since(began)
+	for _, o := range observed {
+		if o.Stage == observability.StageEvaluationCompleted && o.EvaluationOwner.StrategyID == failing.Identity.StrategyID {
+			if !o.DurationKnown || o.Duration < 0 || o.Duration > round {
+				t.Fatalf("contained failure = duration %v known %v, want its no-data round timed within %v", o.Duration, o.DurationKnown, round)
+			}
+			return
+		}
+	}
+	t.Fatalf("the contained failure was not reported as the Plan's evaluation: %+v", observed)
 }
 
 // A failure this package did not wrap still reaches the Slot.

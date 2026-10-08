@@ -278,3 +278,30 @@ func TestTheWorkerRegistrationCarriesItsRetainedPool(t *testing.T) {
 		t.Fatalf("load = %+v, want the configured pool beside the capacity", load)
 	}
 }
+
+// The fleet snapshot carries each judged Worker's unread Query Groups beside
+// its sum, and the read peaks the estimate came from; a round that read no
+// peak has no distribution rather than one of zeros.
+func TestTheByteFactsNameEachWorkersUnreadQueryGroupsAndTheReadPeaks(t *testing.T) {
+	plan := scheduler.BytePlan{
+		Sum:          map[string]uint64{"worker-2": 0, "worker-1": 900},
+		UnreadBy:     map[string]int{"worker-2": 7},
+		UnreadSample: map[string][]execution.QueryGroupIdentity{"worker-2": {"query-group-1", "query-group-2"}},
+		ReadPeaks:    scheduler.PeakDistribution{Count: 3, P50: 2, P90: 3, P99: 4, Max: 5},
+	}
+	facts := fleetByteConstraintFacts(plan, rebalanceOutcome{})
+	wantSums := []fleet.ByteSumSample{
+		{WorkerID: "worker-1", PeakSumBytes: 900},
+		{WorkerID: "worker-2", Unread: 7, UnreadSample: []string{"query-group-1", "query-group-2"}},
+	}
+	if !reflect.DeepEqual(facts.Sums, wantSums) {
+		t.Fatalf("sums = %+v, want each Worker's unread count and sample beside its sum", facts.Sums)
+	}
+	if want := (fleet.BytePeakDistribution{Count: 3, P50: 2, P90: 3, P99: 4, Max: 5}); facts.ReadPeaks == nil || *facts.ReadPeaks != want {
+		t.Fatalf("read peaks = %+v, want %+v", facts.ReadPeaks, want)
+	}
+	plan.ReadPeaks = scheduler.PeakDistribution{}
+	if unread := fleetByteConstraintFacts(plan, rebalanceOutcome{}); unread.ReadPeaks != nil {
+		t.Fatalf("no peak read: read peaks = %+v, want none", unread.ReadPeaks)
+	}
+}

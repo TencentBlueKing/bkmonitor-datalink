@@ -96,6 +96,7 @@ func (coordinator *SlotExecutionCoordinator) observeChunk(
 	err error,
 	conflicts *observability.StateVersionConflictFacts,
 	refusalRules []string,
+	refusalText string,
 	legacyRecordIDs int,
 	extensions ...*observability.GapExtensionFacts,
 ) {
@@ -107,7 +108,7 @@ func (coordinator *SlotExecutionCoordinator) observeChunk(
 		StateApplyChunk: &observability.StateApplyChunkFacts{
 			Index: chunk.index, Count: chunk.count, AppliedKeys: totals.keys, AppliedBytes: totals.bytes,
 			ElapsedMillis: time.Since(applyStarted).Milliseconds(), RefusalRules: refusalRules,
-			LegacyRecordIDs: legacyRecordIDs,
+			RefusalText: refusalText, LegacyRecordIDs: legacyRecordIDs,
 		},
 	})
 }

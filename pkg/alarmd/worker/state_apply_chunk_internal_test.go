@@ -311,13 +311,14 @@ func TestAdmitStateChunksAndMeasuresEncodedBytes(t *testing.T) {
 	store := &chunkStore{encodedBytes: 10}
 	fixture := newChunkFixture(store, 8192)
 	mutations := chunkMutations(8193)
-	rejected, encodedBytes, err := fixture.coordinator.admitState(context.Background(), execution.OperationNormal, fixture.contract, chunkRetention, 0, mutations)
+	rejected, encodedBytes, held, err := fixture.coordinator.admitState(context.Background(), execution.OperationNormal, fixture.contract, chunkRetention, 0, mutations)
+	defer held.release()
 	if err != nil || len(rejected) != 0 || store.admitCalls != 2 || len(encodedBytes) != len(mutations) {
 		t.Fatalf("admitState() rejected=%v bytes=%d calls=%d error=%v", rejected, len(encodedBytes), store.admitCalls, err)
 	}
-	for index, size := range encodedBytes {
-		if size != 10 {
-			t.Fatalf("mutation %d encoded bytes = %d, want the store measurement", index, size)
+	for index, admitted := range encodedBytes {
+		if admitted.bytes != 10 {
+			t.Fatalf("mutation %d encoded bytes = %d, want the store measurement", index, admitted.bytes)
 		}
 	}
 	admitted := fixture.chunkObservations(observability.StageStateAdmission)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-redis/redis/v8"
@@ -33,6 +34,19 @@ const (
 	SourceReadFull    SourceReadMode = "full"
 	SourceReadSkipped SourceReadMode = "skipped"
 )
+
+// SourceRefreshBuild says whether a refresh round built its Catalog or stood
+// on the previous round's, unchanged (SourceReconciler.reusableFor).
+type SourceRefreshBuild string
+
+const (
+	SourceRefreshRebuilt SourceRefreshBuild = "rebuilt"
+	SourceRefreshReused  SourceRefreshBuild = "reused"
+)
+
+// SourceRefreshBuilds is every build word, for a reader that pre-creates one
+// series per word.
+var SourceRefreshBuilds = []SourceRefreshBuild{SourceRefreshRebuilt, SourceRefreshReused}
 
 // SourceReadReason says why a round read in the mode it did. A full read
 // names the condition that forced it; a skipped round has only one reason.
@@ -93,6 +107,10 @@ type SourceRefreshResult struct {
 	ReadMode       SourceReadMode
 	ReadReason     SourceReadReason
 	StrategiesRead int
+	// Build says whether the round built its Catalog or reused the previous
+	// round's; see SourceReconciler.reusableFor. Empty on a round that failed
+	// before either.
+	Build SourceRefreshBuild
 	// ChangeSignalPresent says the source offered a change signal this round,
 	// and ChangeSignalAgeSeconds how long ago its publisher moved it, by this
 	// process's clock. A signal that stops moving while strategies keep being
@@ -104,6 +122,10 @@ type SourceRefreshResult struct {
 	// Catalog did not retain because their persisted revision no longer
 	// derives from their facts. See BuildCatalog.
 	RetainedStaleRevisions int
+	// LastGoodIdentityChanged is how many last-good Plans this round's
+	// Catalog did not retain because the source now states another identity
+	// for the strategy (Catalog.LastGoodIdentityChanged).
+	LastGoodIdentityChanged int
 	// Composition is what the Catalog this round built is made of: Query
 	// Groups and Plans by the data sources they query, and source objects by
 	// disposition. Set on every round that got as far as a complete Catalog,
@@ -130,10 +152,59 @@ type sourceRoundMemory struct {
 	signal SourceChangeSignal
 	cycle  observedCycle
 	readAt time.Time
+	// holdsLastGood is the publisher's statement as it applies to this
+	// observation: made for the change signal read with it, and about the
+	// exact active set the cycle read (holdsLastGoodFor).
+	holdsLastGood bool
 	// steady marks that the round which last used this observation ended
 	// UNCHANGED. Only a steady observation is reused: confirmation takes two
 	// independent reads, and a round that failed proves nothing for the next.
 	steady bool
+}
+
+// reusableRound is a round that ended UNCHANGED, kept whole so that the next
+// one can stand on it when nothing it was built from has moved.
+type reusableRound struct {
+	catalog                 Catalog
+	composition             CatalogComposition
+	current                 *PublishedSnapshot
+	roundKey                string
+	retainedStaleRevisions  int
+	lastGoodIdentityChanged int
+	// until is the first moment the Catalog would change with every input
+	// the same: the earliest end of an absence grace (absenceGraceEnd). Zero
+	// when no strategy is serving one.
+	until time.Time
+}
+
+// reusableFor is the previous round, when this round would build exactly its
+// Catalog again, and nil otherwise. A Catalog is a pure function of the inputs
+// BuildCatalog lists; each is held still here by one of these, and the
+// activation head, read by the caller, holds the last:
+//
+//   - the observation: the round did not read the source (SourceReadSkipped)
+//     and so reuses the previous round's documents, which a skip allows only
+//     after that round ended UNCHANGED - which also cleared any pending
+//     candidate and its absences;
+//   - the round key (roundKey): the same four parts the candidate cache is
+//     emptied by;
+//   - the clock: not yet at the first absence grace the Catalog serves;
+//   - LastGood and the previous dispositions: this process is the one writer,
+//     a term that ended forgot the round (StepDown), and the caller requires
+//     the activation still at this Catalog's revision.
+//
+// The periodic full read (sourceFullReadInterval) is not a skipped round, so
+// it always rebuilds: an input missing from this list stays frozen for at
+// most that long, as the candidate cache would already hold it.
+func (reconciler *SourceReconciler) reusableFor(read sourceRead, roundKey string, now time.Time) *reusableRound {
+	reuse := reconciler.reusable
+	switch {
+	case reuse == nil, read.mode != SourceReadSkipped, reuse.roundKey != roundKey:
+		return nil
+	case !reuse.until.IsZero() && !now.Before(reuse.until):
+		return nil
+	}
+	return reuse
 }
 
 type persistedSourceCandidate struct {
@@ -178,6 +249,11 @@ type SourceReconciler struct {
 	// now paces the periodic full read and measures the change signal's age.
 	now    func() time.Time
 	memory *sourceRoundMemory
+	// reusable is the last round that ended UNCHANGED, whole; see
+	// reusableFor. Nil after any round that did not, and after StepDown:
+	// steppedDown says one happened since the last round, which drops it.
+	reusable    *reusableRound
+	steppedDown atomic.Bool
 	// lastGood is the content of the latest publication this process knows,
 	// kept in memory from the catalog it published or assembled once from
 	// the object catalog after a restart; the whole snapshot body is no
@@ -335,30 +411,75 @@ func (reconciler *SourceReconciler) Refresh(
 		source == nil || planner == nil {
 		return SourceRefreshResult{}, errors.New("alarmd controlplane: incomplete source refresh request")
 	}
+	if reconciler.steppedDown.Swap(false) {
+		reconciler.reusable = nil
+	}
 	// Every outcome of a round that built a Catalog reports how it was built
 	// and how its source was read; both are filled at the end rather than
 	// copied into each return. A round that fails leaves its observation
 	// unsettled, so the next round reads the source again.
 	cycle, read, err := reconciler.observe(ctx, source)
-	retainedStaleRevisions := 0
+	retainedStaleRevisions, lastGoodIdentityChanged := 0, 0
 	var composition CatalogComposition
 	var withheld, suspended WithheldReport
+	build := SourceRefreshRebuilt
+	// The round the next one may stand on: set where this one ends
+	// UNCHANGED, and kept only if it does.
+	var reuseNext *reusableRound
 	defer func() {
 		if err != nil {
 			reconciler.unsettle()
+			reconciler.reusable = nil
 			return
 		}
+		result.Build = build
 		result.RetainedStaleRevisions = retainedStaleRevisions
+		result.LastGoodIdentityChanged = lastGoodIdentityChanged
 		result.Composition = composition
 		result.Withheld = withheld
 		result.Suspended = suspended
-		result.CompiledStrategies, result.ReusedStrategies = reconciler.candidates.Stats()
+		if build == SourceRefreshReused {
+			result.CompiledStrategies, result.ReusedStrategies = 0, len(cycle.strategies)
+		} else {
+			result.CompiledStrategies, result.ReusedStrategies = reconciler.candidates.Stats()
+		}
 		result.ReadMode, result.ReadReason, result.StrategiesRead = read.mode, read.reason, read.strategies
 		result.ChangeSignalPresent, result.ChangeSignalAgeSeconds = read.signalPresent, read.signalAgeSeconds
 		reconciler.memory.steady = result.Status == SourceRefreshUnchanged
+		if result.Status == SourceRefreshUnchanged {
+			reconciler.reusable = reuseNext
+		} else {
+			reconciler.reusable = nil
+		}
 	}()
 	if err != nil {
 		return SourceRefreshResult{}, err
+	}
+	policy := reconciler.effectiveNoDataPolicy()
+	roundKey, err := catalogRoundKey(planner, reconciler.outputProtocol, reconciler.targetSources, policy)
+	if err != nil {
+		return SourceRefreshResult{}, exitAt(SourceRefreshExitBuildCatalog, err)
+	}
+	// Nothing this round would build from has moved since the previous round
+	// ended UNCHANGED: publish that round's Catalog again rather than build
+	// the same one. The publication step is the one an UNCHANGED round always
+	// takes - the activation's objects renewed, the audit written - so the
+	// round does everything but rebuild. See reusableFor.
+	if reuse := reconciler.reusableFor(read, roundKey, reconciler.now()); reuse != nil {
+		activation, activationErr := reconciler.repository.LoadActivationHead(ctx)
+		if activationErr == nil && activation.Current.SnapshotRevision == reuse.catalog.SnapshotRevision {
+			build, reuseNext = SourceRefreshReused, reuse
+			// A reused round's identity count is zero: the refusal left the
+			// last-good Plan out of the catalog it published, so the rounds
+			// after it have nothing to refuse again. Carried for symmetry
+			// with the stale count, not because the carry matters.
+			retainedStaleRevisions, lastGoodIdentityChanged, composition = reuse.retainedStaleRevisions, reuse.lastGoodIdentityChanged, reuse.composition
+			withheld = ChangedWithheld(composition.WithheldObjects, reconciler.namedWithheld)
+			reconciler.namedWithheld = RememberNamed(reconciler.namedWithheld, composition.WithheldObjects, withheld.Lines)
+			suspended = ChangedWithheld(composition.SuspendedNoDataObjects, reconciler.namedSuspended)
+			reconciler.namedSuspended = RememberNamed(reconciler.namedSuspended, composition.SuspendedNoDataObjects, suspended.Lines)
+			return reconciler.publish(ctx, reuse.current, reuse.catalog, SourceRefreshUnchanged)
+		}
 	}
 	observationID, err := deriveObservationID(cycle.strategies)
 	if err != nil {
@@ -388,7 +509,7 @@ func (reconciler *SourceReconciler) Refresh(
 		Strategies: cycle.strategies, Planner: planner, LastGood: current, PreviousDispositions: previousDispositions,
 		PendingAbsences: pendingAbsences, Now: reconciler.now(),
 		OutputProtocol: reconciler.outputProtocol, TargetSources: reconciler.targetSources, Cache: reconciler.candidates,
-		NoDataPolicy: reconciler.effectiveNoDataPolicy(),
+		NoDataPolicy: policy,
 	})
 	if err != nil {
 		return SourceRefreshResult{}, exitAt(SourceRefreshExitBuildCatalog, err)
@@ -398,6 +519,9 @@ func (reconciler *SourceReconciler) Refresh(
 	if err != nil {
 		return SourceRefreshResult{}, exitAt(SourceRefreshExitRetainExecutable, err)
 	}
+	// Read after the runtime step: it refuses last-good Plans of another
+	// identity too, and adds its own to the build's.
+	lastGoodIdentityChanged = catalog.LastGoodIdentityChanged
 	if catalog.ObservationID != observationID {
 		return SourceRefreshResult{}, exitAt(SourceRefreshExitObservationChanged,
 			errors.New("alarmd controlplane: source observation changed while building Catalog"))
@@ -438,8 +562,14 @@ func (reconciler *SourceReconciler) Refresh(
 	// at a stranded candidate. Restore its occurrence directly; requiring two
 	// identical source observations here can leave the active Snapshot expired
 	// forever when non-semantic observation details change between refreshes.
+	remember := func() *reusableRound {
+		return &reusableRound{catalog: catalog, composition: composition, current: current, roundKey: roundKey,
+			retainedStaleRevisions: retainedStaleRevisions, lastGoodIdentityChanged: lastGoodIdentityChanged,
+			until: absenceGraceEnd(catalog.Dispositions)}
+	}
 	activation, activationErr := reconciler.repository.LoadActivationHead(ctx)
 	if activationErr == nil && activation.Current.SnapshotRevision == catalog.SnapshotRevision {
+		reuseNext = remember()
 		return reconciler.publish(ctx, current, catalog, SourceRefreshUnchanged)
 	}
 	if activationErr != nil && !errors.Is(activationErr, ErrActivationUnavailable) {
@@ -455,6 +585,7 @@ func (reconciler *SourceReconciler) Refresh(
 			return SourceRefreshResult{}, exitAt(SourceRefreshExitConfirmation, err)
 		}
 		if currentKey == confirmationKey {
+			reuseNext = remember()
 			return reconciler.publish(ctx, current, catalog, SourceRefreshUnchanged)
 		}
 	}
@@ -512,9 +643,23 @@ func (reconciler *SourceReconciler) observe(ctx context.Context, source Strategy
 	if err != nil {
 		return observedCycle{}, sourceRead{}, err
 	}
-	reconciler.memory = &sourceRoundMemory{signal: signal, cycle: cycle, readAt: now}
+	reconciler.memory = &sourceRoundMemory{signal: signal, cycle: cycle, readAt: now,
+		holdsLastGood: holdsLastGoodFor(signal, cycle)}
 	read.mode, read.reason, read.strategies = SourceReadFull, reason, len(cycle.strategies)
 	return cycle, read, nil
+}
+
+// holdsLastGoodFor is whether the publisher's statement, read with this
+// round's change signal, is about the active set this round's cycle read:
+// the digest it names against the digest of the bytes the cycle's own read
+// of the set returned. The statement is read before the cycle, so the two can
+// come from different publications; when they do and the set differs, the
+// digests differ and the statement is not taken. When they do and the set is
+// byte for byte the one the statement names, the statement is true of the
+// list this observation holds, which is all it is used for. A source that
+// cannot name its bytes, or a statement without a digest, never matches.
+func holdsLastGoodFor(signal SourceChangeSignal, cycle observedCycle) bool {
+	return signal.HoldsLastGoodFor != "" && signal.HoldsLastGoodFor == cycle.activeSet
 }
 
 // fullReadReason names the condition that makes this round read every
@@ -689,7 +834,8 @@ func (reconciler *SourceReconciler) rememberLastGood(publication SnapshotPublica
 		reconciler.departed.record(reconciler.lastGood.QueryGroups, groups, reconciler.now())
 	}
 	reconciler.lastGood = &PublishedSnapshot{SchemaVersion: snapshotSchemaVersion, Publication: publication, QueryGroups: groups}
-	reconciler.strategies.replace(buildStrategyIndex(publication, groups, catalog.Dispositions))
+	reconciler.strategies.replace(buildStrategyIndex(publication, groups, catalog.Dispositions).
+		withGlobal(catalog.GlobalStrategies).withObservation(catalog.ObservationID))
 }
 
 // currentSnapshot is the content of the latest publication: from memory

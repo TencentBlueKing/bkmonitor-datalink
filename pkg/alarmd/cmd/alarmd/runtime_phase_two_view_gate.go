@@ -320,6 +320,20 @@ func (catalog *viewGatedCatalog) FreezeSlotContract(ctx context.Context, request
 	return catalog.next.FreezeSlotContract(ctx, request)
 }
 
+// FreezeObservedSlotContract is the freeze a supplement asks for, under the
+// same gate: from the Segment's retained content alone when the catalog
+// offers it, the ordinary freeze otherwise.
+func (catalog *viewGatedCatalog) FreezeObservedSlotContract(ctx context.Context, request execution.FreezeSlotContractRequest) (execution.FrozenSlotContractFact, error) {
+	ctx, err := catalog.gated(ctx)
+	if err != nil {
+		return execution.FrozenSlotContractFact{}, err
+	}
+	if observed, ok := catalog.next.(scheduler.ObservedContractFreezer); ok {
+		return observed.FreezeObservedSlotContract(ctx, request)
+	}
+	return catalog.next.FreezeSlotContract(ctx, request)
+}
+
 // viewGatedExecutor carries the hint into the execution of a Slot the source
 // froze under it: the activation read and a re-freeze inside execution read
 // the same timeline the source did, without the header. A Slot that reaches

@@ -61,12 +61,20 @@ func TestTheProductionLeaderServesItsDesiredSetOverTheViewStream(t *testing.T) {
 		t.Fatalf("control leader = %+v found=%t err=%v, want this replica with a term", leader, found, err)
 	}
 
-	// The fixture serves the control stream once it runs a Slot, so this
-	// replica's own Worker may already hold a session; the manual stream
-	// below replaces it under the same Worker id.
+	// The fixture serves the control stream once it runs a Slot, and this
+	// replica's own Worker holds a session under the Worker id the manual
+	// stream below uses. It is stopped first: replaced by the manual stream,
+	// it came back within a second of jitter and replaced the manual stream
+	// in turn, and the receipt's Send read EOF whenever the test took that
+	// long -- which under a full parallel run it did.
+	bundle.cancelViewClient()
 	stats := bundle.dependencies.ViewStreamStats()
-	if !stats.Leading || stats.ControlEpoch != leader.OwnerEpoch || stats.Revision == 0 || stats.Counts.Expected != 1 || stats.Sessions > 1 {
-		t.Fatalf("stream stats after the first round = %+v, want leading in term %d with a revision and one expected receiver", stats, leader.OwnerEpoch)
+	for deadline := time.Now().Add(5 * time.Second); stats.Sessions != 0 && time.Now().Before(deadline); stats = bundle.dependencies.ViewStreamStats() {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !stats.Leading || stats.ControlEpoch != leader.OwnerEpoch || stats.Revision == 0 || stats.Counts.Expected != 1 || stats.Sessions != 0 {
+		t.Fatalf("stream stats after the first round = %+v, want leading in term %d with a revision, one expected receiver and "+
+			"this replica's own session closed", stats, leader.OwnerEpoch)
 	}
 
 	// The stream served the way the listener serves it: over HTTP/2 in the

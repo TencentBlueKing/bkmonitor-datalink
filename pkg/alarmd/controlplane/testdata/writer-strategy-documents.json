@@ -1,0 +1,2575 @@
+{
+  "samples": [
+    {
+      "case": "test_projector_adds_committed_strategy_ref_and_legacy_query_fields[0]",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "system.cpu",
+                "unit": ""
+              }
+            ],
+            "query_md5": "c5bfe490d60bd80f7e88b97aa08f467e",
+            "target": [
+              []
+            ],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "os",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_adds_committed_strategy_ref_and_legacy_query_fields[1]",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "default",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "system.cpu",
+                "unit": ""
+              }
+            ],
+            "query_md5": "c5bfe490d60bd80f7e88b97aa08f467e",
+            "target": [
+              []
+            ],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "os",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_applies_fake_event_overlays",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a <= 3600",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.os_restart",
+                "result_table_id": "system.cpu",
+                "unit": ""
+              }
+            ],
+            "query_md5": "ed1aab22e3f0310940c7351b49268321",
+            "target": [
+              [
+                {
+                  "field": "cw_object_model_inst",
+                  "method": "eq",
+                  "value": [
+                    {
+                      "cw_object_model_id": "cw-Host",
+                      "cw_object_model_inst_id": "101"
+                    }
+                  ]
+                }
+              ]
+            ],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "os",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_builds_canonical_target_plan",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [
+                  "cw_object_model_id",
+                  "cw_object_model_inst_id"
+                ],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "custom.host_metric",
+                "unit": ""
+              }
+            ],
+            "query_md5": "8ab0b001edf8cdd00ebb1cd68d88bfb1",
+            "target": [
+              [
+                {
+                  "field": "cw_object_model_inst",
+                  "method": "eq",
+                  "value": [
+                    {
+                      "cw_object_model_id": "cw-MySQL",
+                      "cw_object_model_inst_id": "mysql-prod-01"
+                    }
+                  ]
+                }
+              ]
+            ],
+            "target_plan": {
+              "dynamic_groups": [],
+              "dynamic_topologies": [],
+              "failure_policy": "no_match",
+              "model_id": "cw-MySQL",
+              "model_match": {
+                "cw_object_model_id": "23"
+              },
+              "schema_version": 1,
+              "static_targets": [
+                {
+                  "model_id": "cw-MySQL",
+                  "model_inst_id": "mysql-prod-01"
+                }
+              ],
+              "target_rule": "model_inst_id"
+            },
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "database",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_builds_kubernetes_cluster_and_node_matches[0]",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [
+                  "bcs_cluster_id"
+                ],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "custom.kubernetes_metric",
+                "unit": ""
+              }
+            ],
+            "query_md5": "5f8bf343d80cbc05720da52174499118",
+            "target": [
+              [
+                {
+                  "field": "cw_object_model_inst",
+                  "method": "eq",
+                  "value": [
+                    {
+                      "cw_object_model_id": "cw-K8s_Cluster",
+                      "cw_object_model_inst_id": "cluster-a"
+                    }
+                  ]
+                }
+              ]
+            ],
+            "target_plan": {
+              "dynamic_groups": [],
+              "dynamic_topologies": [],
+              "failure_policy": "no_match",
+              "model_id": "cw-K8s_Cluster",
+              "schema_version": 1,
+              "static_targets": [
+                {
+                  "match": {
+                    "bcs_cluster_id": "cluster-a"
+                  },
+                  "model_id": "cw-K8s_Cluster",
+                  "model_inst_id": "cluster-a"
+                }
+              ],
+              "target_rule": "k8s_cluster"
+            },
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "kubernetes",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_builds_kubernetes_cluster_and_node_matches[1]",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [
+                  "bcs_cluster_id",
+                  "node"
+                ],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "custom.kubernetes_metric",
+                "unit": ""
+              }
+            ],
+            "query_md5": "a2227346319447ec6e3e7ddc8ea98371",
+            "target": [
+              [
+                {
+                  "field": "cw_object_model_inst",
+                  "method": "eq",
+                  "value": [
+                    {
+                      "cw_object_model_id": "cw-K8s_Node",
+                      "cw_object_model_inst_id": "cluster-a|node-01"
+                    }
+                  ]
+                }
+              ]
+            ],
+            "target_plan": {
+              "dynamic_groups": [],
+              "dynamic_topologies": [],
+              "failure_policy": "no_match",
+              "model_id": "cw-K8s_Node",
+              "schema_version": 1,
+              "static_targets": [
+                {
+                  "match": {
+                    "bcs_cluster_id": "cluster-a",
+                    "node": "node-01"
+                  },
+                  "model_id": "cw-K8s_Node",
+                  "model_inst_id": "cluster-a|node-01"
+                }
+              ],
+              "target_rule": "k8s_node"
+            },
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "kubernetes",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_builds_kubernetes_workload_match",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [
+                  "bcs_cluster_id",
+                  "namespace",
+                  "workload_kind",
+                  "workload_name"
+                ],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "custom.kubernetes_metric",
+                "unit": ""
+              }
+            ],
+            "query_md5": "9095cafc492950744fe0ead3c93c2b48",
+            "target": [
+              [
+                {
+                  "field": "cw_object_model_inst",
+                  "method": "eq",
+                  "value": [
+                    {
+                      "cw_object_model_id": "cw-K8s_Workload",
+                      "cw_object_model_inst_id": "cluster-a|prod|Deployment|web"
+                    }
+                  ]
+                }
+              ]
+            ],
+            "target_plan": {
+              "dynamic_groups": [],
+              "dynamic_topologies": [],
+              "failure_policy": "no_match",
+              "model_id": "cw-K8s_Workload",
+              "schema_version": 1,
+              "static_targets": [
+                {
+                  "match": {
+                    "bcs_cluster_id": "cluster-a",
+                    "namespace": "prod",
+                    "workload_kind": "Deployment",
+                    "workload_name": "web"
+                  },
+                  "model_id": "cw-K8s_Workload",
+                  "model_inst_id": "cluster-a|prod|Deployment|web"
+                }
+              ],
+              "target_rule": "k8s_workload"
+            },
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "kubernetes",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_does_not_treat_neq_as_eq",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [
+                  "bk_host_id"
+                ],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "system.cpu",
+                "unit": ""
+              }
+            ],
+            "query_md5": "b503a43c6b3f8143ec2a4b7cbf3a3fb6",
+            "target": [
+              [
+                {
+                  "field": "cw_object_model_inst",
+                  "method": "eq",
+                  "value": [
+                    {
+                      "cw_object_model_id": "cw-Host",
+                      "cw_object_model_inst_id": "101"
+                    }
+                  ]
+                }
+              ]
+            ],
+            "target_plan": {
+              "dynamic_groups": [],
+              "dynamic_topologies": [],
+              "failure_policy": "no_match",
+              "model_id": "cw-Host",
+              "schema_version": 1,
+              "static_targets": [
+                {
+                  "bk_host_id": 101
+                }
+              ],
+              "target_rule": "host_id"
+            },
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "os",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_does_not_treat_neq_as_eq",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [
+                  "bk_host_id"
+                ],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "system.cpu",
+                "unit": ""
+              }
+            ],
+            "query_md5": "b503a43c6b3f8143ec2a4b7cbf3a3fb6",
+            "target": [
+              [
+                {
+                  "field": "cw_object_model_inst",
+                  "method": "neq",
+                  "value": [
+                    {
+                      "cw_object_model_id": "cw-Host",
+                      "cw_object_model_inst_id": "101"
+                    }
+                  ]
+                }
+              ]
+            ],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "os",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_normalizes_source_specific_query_contracts[0]",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "prometheus",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "promql": "sum(up)",
+                "result_table_id": "system.cpu",
+                "unit": ""
+              }
+            ],
+            "query_md5": "b0c9b4e401a52f0de97e78f7de78632d",
+            "target": [
+              []
+            ],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "os",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_normalizes_source_specific_query_contracts[1]",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_log_search",
+                "data_type_label": "log",
+                "filter_dict": {},
+                "functions": [],
+                "index_set_id": 10,
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "query_string": "error",
+                "result_table_id": "system.cpu",
+                "time_field": "dtEventTimeStamp",
+                "unit": ""
+              }
+            ],
+            "query_md5": "24504ce1625a1d1812c0b9d8445b3eaf",
+            "target": [
+              []
+            ],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "os",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_normalizes_source_specific_query_contracts[2]",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alert_name": "disk-full",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_fta",
+                "data_type_label": "event",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "system.cpu",
+                "unit": ""
+              }
+            ],
+            "query_md5": "85710f3eb1237ef6d3c00e6ea132db53",
+            "target": [
+              []
+            ],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "os",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_omits_model_inst_plan_when_model_mapping_is_missing",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [
+                  "cw_object_model_id",
+                  "cw_object_model_inst_id"
+                ],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "custom.database_metric",
+                "unit": ""
+              }
+            ],
+            "query_md5": "1c059862d276c4de2b6a6fab51dd6cfa",
+            "target": [
+              [
+                {
+                  "field": "cw_object_model_inst",
+                  "method": "eq",
+                  "value": [
+                    {
+                      "cw_object_model_id": "cw-MySQL",
+                      "cw_object_model_inst_id": "mysql-prod-01"
+                    }
+                  ]
+                }
+              ]
+            ],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "database",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_omits_target_plan_when_conversion_is_not_lossless[0]",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "system.cpu",
+                "unit": ""
+              }
+            ],
+            "query_md5": "c5bfe490d60bd80f7e88b97aa08f467e",
+            "target": [
+              []
+            ],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "os",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_omits_target_plan_when_conversion_is_not_lossless[1]",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "system.cpu",
+                "unit": ""
+              }
+            ],
+            "query_md5": "c5bfe490d60bd80f7e88b97aa08f467e",
+            "target": [],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "uptimecheck",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_omits_target_plan_when_conversion_is_not_lossless[2]",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "system.cpu",
+                "unit": ""
+              }
+            ],
+            "query_md5": "c5bfe490d60bd80f7e88b97aa08f467e",
+            "target": [
+              []
+            ],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "application_check",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_omits_target_plan_when_conversion_is_not_lossless[3]",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "system.cpu",
+                "unit": ""
+              }
+            ],
+            "query_md5": "c5bfe490d60bd80f7e88b97aa08f467e",
+            "target": [],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "kubernetes",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_omits_target_plan_when_conversion_is_not_lossless[4]",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [
+                  "bk_host_id"
+                ],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "system.cpu",
+                "unit": ""
+              }
+            ],
+            "query_md5": "b503a43c6b3f8143ec2a4b7cbf3a3fb6",
+            "target": [
+              [
+                {
+                  "field": "cw_object_model_inst",
+                  "method": "neq",
+                  "value": [
+                    {
+                      "cw_object_model_id": "cw-Host",
+                      "cw_object_model_inst_id": "101"
+                    }
+                  ]
+                }
+              ]
+            ],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "os",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_omits_target_plan_when_conversion_is_not_lossless[5]",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [
+                  "bk_host_id"
+                ],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "system.cpu",
+                "unit": ""
+              }
+            ],
+            "query_md5": "b503a43c6b3f8143ec2a4b7cbf3a3fb6",
+            "target": [
+              [
+                {
+                  "field": "cw_object_model_inst",
+                  "method": "eq",
+                  "value": [
+                    {
+                      "cw_object_model_id": "cw-Host",
+                      "cw_object_model_inst_id": "101"
+                    }
+                  ]
+                },
+                {
+                  "field": "cw_object_model_inst",
+                  "method": "eq",
+                  "value": [
+                    {
+                      "cw_object_model_id": "cw-Host",
+                      "cw_object_model_inst_id": "102"
+                    }
+                  ]
+                }
+              ]
+            ],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "os",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_omits_target_plan_when_conversion_is_not_lossless[6]",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [
+                  "bk_host_id"
+                ],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "system.cpu",
+                "unit": ""
+              }
+            ],
+            "query_md5": "b503a43c6b3f8143ec2a4b7cbf3a3fb6",
+            "target": [
+              [
+                {
+                  "field": "dynamic_group",
+                  "method": "eq",
+                  "value": [
+                    {
+                      "dynamic_group_id": "1001"
+                    }
+                  ]
+                }
+              ]
+            ],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "os",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_omits_target_plan_when_conversion_is_not_lossless[7]",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [
+                  "bk_host_id"
+                ],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "system.cpu",
+                "unit": ""
+              }
+            ],
+            "query_md5": "b503a43c6b3f8143ec2a4b7cbf3a3fb6",
+            "target": [
+              [
+                {
+                  "field": "host_topo_node",
+                  "method": "eq",
+                  "value": [
+                    {
+                      "bk_biz_id": 2,
+                      "bk_inst_id": 12,
+                      "bk_obj_id": "set"
+                    }
+                  ]
+                }
+              ]
+            ],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "os",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_omits_target_plan_when_conversion_is_not_lossless[8]",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [
+                  "bk_target_service_instance_id"
+                ],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "system.cpu",
+                "unit": ""
+              }
+            ],
+            "query_md5": "6d13f31f22b4a105decc33aaf90a61de",
+            "target": [
+              [
+                {
+                  "field": "service_topo_node",
+                  "method": "eq",
+                  "value": [
+                    {
+                      "bk_inst_id": 12
+                    }
+                  ]
+                }
+              ]
+            ],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "service_module",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_omits_target_plan_when_conversion_is_not_lossless[9]",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [
+                  "bk_target_cloud_id",
+                  "bk_target_ip"
+                ],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "pingserver.base",
+                "unit": ""
+              }
+            ],
+            "query_md5": "9b9f0217e6313c3a1d48fc92de0c217b",
+            "target": [
+              [
+                {
+                  "field": "cw_object_model_inst",
+                  "method": "eq",
+                  "value": [
+                    {
+                      "cw_object_model_id": "cw-Host",
+                      "cw_object_model_inst_id": "101"
+                    }
+                  ]
+                }
+              ]
+            ],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "os",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_preserves_legacy_ip_target_without_target_plan",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [
+                  "bk_target_cloud_id",
+                  "bk_target_ip"
+                ],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "system.cpu",
+                "unit": ""
+              }
+            ],
+            "query_md5": "9fb720a73367afec7e419890d1cb75b0",
+            "target": [
+              [
+                {
+                  "field": "bk_target_ip",
+                  "method": "eq",
+                  "value": [
+                    {
+                      "bk_target_ip": "192.0.2.1"
+                    }
+                  ]
+                }
+              ]
+            ],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "os",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_preserves_levels_and_applies_aiops_trigger_override",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          },
+          {
+            "connector": "and",
+            "level": 2,
+            "recovery_config": {
+              "check_window": 3
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": {},
+                "level": 2,
+                "type": "IntelligentDetect",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "system.cpu",
+                "unit": ""
+              }
+            ],
+            "query_md5": "c5bfe490d60bd80f7e88b97aa08f467e",
+            "target": [
+              []
+            ],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "os",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_preserves_mixed_query_identity_without_target_plan",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [
+                  "bk_host_id"
+                ],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "system.cpu",
+                "unit": ""
+              },
+              {
+                "agg_condition": [],
+                "agg_dimension": [
+                  "cw_object_model_id",
+                  "cw_object_model_inst_id"
+                ],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "b",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "custom.host_metric",
+                "unit": ""
+              }
+            ],
+            "query_md5": "ab85923252a70d3528711c1b439bcf2b",
+            "target": [
+              [
+                {
+                  "field": "cw_object_model_inst",
+                  "method": "eq",
+                  "value": [
+                    {
+                      "cw_object_model_id": "cw-Host",
+                      "cw_object_model_inst_id": "101"
+                    }
+                  ]
+                }
+              ]
+            ],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "os",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_preserves_or_between_single_condition_groups",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [
+                  "bk_host_id"
+                ],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "system.cpu",
+                "unit": ""
+              }
+            ],
+            "query_md5": "b503a43c6b3f8143ec2a4b7cbf3a3fb6",
+            "target": [
+              [
+                {
+                  "field": "cw_object_model_inst",
+                  "method": "eq",
+                  "value": [
+                    {
+                      "cw_object_model_id": "cw-Host",
+                      "cw_object_model_inst_id": "101"
+                    }
+                  ]
+                }
+              ],
+              [
+                {
+                  "field": "cw_object_model_inst",
+                  "method": "eq",
+                  "value": [
+                    {
+                      "cw_object_model_id": "cw-Host",
+                      "cw_object_model_inst_id": "102"
+                    }
+                  ]
+                }
+              ]
+            ],
+            "target_plan": {
+              "dynamic_groups": [],
+              "dynamic_topologies": [],
+              "failure_policy": "no_match",
+              "model_id": "cw-Host",
+              "schema_version": 1,
+              "static_targets": [
+                {
+                  "bk_host_id": 101
+                },
+                {
+                  "bk_host_id": 102
+                }
+              ],
+              "target_rule": "host_id"
+            },
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "os",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    },
+    {
+      "case": "test_projector_preserves_template_target_without_target_plan",
+      "document": {
+        "bk_biz_id": 2,
+        "bk_tenant_id": "tenant-a",
+        "create_time": 1788782400,
+        "detects": [
+          {
+            "connector": "and",
+            "level": 1,
+            "recovery_config": {
+              "check_window": 5
+            },
+            "trigger_config": {
+              "check_window": 5,
+              "count": 1,
+              "uptime": {}
+            }
+          }
+        ],
+        "id": 7,
+        "is_enabled": true,
+        "is_invalid": false,
+        "items": [
+          {
+            "algorithms": [
+              {
+                "config": [
+                  {
+                    "method": "gt",
+                    "threshold": 80
+                  }
+                ],
+                "level": 1,
+                "type": "Threshold",
+                "unit_prefix": ""
+              }
+            ],
+            "expression": "a",
+            "functions": [],
+            "id": 70,
+            "no_data_config": null,
+            "query_configs": [
+              {
+                "agg_condition": [],
+                "agg_dimension": [],
+                "agg_interval": 60,
+                "agg_method": "AVG",
+                "alias": "a",
+                "data_label": "",
+                "data_source_label": "bk_monitor",
+                "data_type_label": "time_series",
+                "filter_dict": {},
+                "functions": [],
+                "metric_field": "usage",
+                "metric_id": "bk_monitor.system.cpu.usage",
+                "result_table_id": "system.cpu",
+                "unit": ""
+              }
+            ],
+            "query_md5": "c5bfe490d60bd80f7e88b97aa08f467e",
+            "target": [
+              [
+                {
+                  "field": "host_set_template",
+                  "method": "eq",
+                  "value": [
+                    {
+                      "bk_inst_id": 10
+                    }
+                  ]
+                }
+              ]
+            ],
+            "time_delay": 0,
+            "update_time": 1788868800
+          }
+        ],
+        "labels": [],
+        "name": "cpu",
+        "priority": null,
+        "priority_group_key": "",
+        "scenario": "os",
+        "space_uid": "bkcc__2",
+        "strategy_revision": 3,
+        "update_time": 1788868800
+      }
+    }
+  ],
+  "source": "strategy cache writer: runtime_cache_projector.project_strategy_runtime_cache, run by the writer's own projector tests",
+  "source_commit": "99be8364a6573e7dd433ec3f877a60f807e37825"
+}

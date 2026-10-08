@@ -64,6 +64,31 @@ type FrozenExecutionContractRef struct {
 	ScheduleRevision     ScheduleRevision
 	ScheduleSegmentStart EvaluationTime
 	DuePlanSetDigest     DuePlanSetDigest
+	// ReadHoldMillis is how much later than its schedule says this Slot is
+	// read and due: its Query Group's read hold when the Slot was frozen. It
+	// is an input of the contract like the evaluation time - the due Plans'
+	// deadlines carry it, and so does DuePlanSetDigest - and every freeze of
+	// the same Slot passes it back from here. It changes neither which data
+	// the Slot reads nor its Plans, schedule or Query Group. Omitted when
+	// zero, so a contract without one encodes as it always has.
+	ReadHoldMillis int64 `json:",omitempty"`
+}
+
+// MaxReadHoldMillis bounds a contract's read hold: a day, far past any hold
+// a Query Group is given, and short of any arithmetic on deadlines.
+const MaxReadHoldMillis = int64(24 * time.Hour / time.Millisecond)
+
+// LoweredReadHold is the hold one lowering step tries from hold: half of it,
+// or none once half is less than a step of the group's period -- below a
+// step a hold no longer moves the read past another point, and halving to
+// zero would take a dozen quiet hours. The early read that tries the step and
+// the controller that takes it decide it by this one rule.
+func LoweredReadHold(hold, step time.Duration) time.Duration {
+	half := time.Duration(hold.Milliseconds()/2) * time.Millisecond
+	if half < step {
+		return 0
+	}
+	return half
 }
 
 func (ref FrozenExecutionContractRef) Validate() error {
@@ -82,6 +107,8 @@ func (ref FrozenExecutionContractRef) Validate() error {
 		return errors.New("alarmd execution: valid schedule segment start is required")
 	case ref.DuePlanSetDigest == "":
 		return errors.New("alarmd execution: due plan set digest is required")
+	case ref.ReadHoldMillis < 0 || ref.ReadHoldMillis > MaxReadHoldMillis:
+		return errors.New("alarmd execution: read hold is out of range")
 	default:
 		return nil
 	}
@@ -94,11 +121,15 @@ const (
 	OperationRetry  Operation = "retry"
 	OperationReplay Operation = "replay"
 	OperationProbe  Operation = "probe"
+	// OperationSupplement evaluates, for a Slot already completed, the series
+	// its own read did not have and a later read of the same frozen query
+	// did. See SupplementScope.
+	OperationSupplement Operation = "supplement"
 )
 
 func (operation Operation) Validate() error {
 	switch operation {
-	case OperationNormal, OperationRetry, OperationReplay, OperationProbe:
+	case OperationNormal, OperationRetry, OperationReplay, OperationProbe, OperationSupplement:
 		return nil
 	default:
 		return fmt.Errorf("alarmd execution: unsupported operation %q", operation)
@@ -169,6 +200,9 @@ type SlotExecutionRequest struct {
 	// for a Segment written before Segments named their content, in which
 	// case the fence compares what it always compared and nothing more.
 	ContentScope string
+	// Supplement is set exactly when Operation is OperationSupplement: the
+	// series this execution may evaluate. See SupplementScope.
+	Supplement *SupplementScope
 }
 
 func (request SlotExecutionRequest) Validate() error {
@@ -190,6 +224,17 @@ func (request SlotExecutionRequest) Validate() error {
 	}
 	if err := request.Operation.Validate(); err != nil {
 		return err
+	}
+	if (request.Operation == OperationSupplement) != (request.Supplement != nil) {
+		return errors.New("alarmd execution: a supplement scope goes with the supplement operation and only with it")
+	}
+	if request.Supplement != nil {
+		if err := request.Supplement.Validate(); err != nil {
+			return err
+		}
+		if request.ExpiredRange != nil {
+			return errors.New("alarmd execution: a supplement is of one Slot, not of an expired range")
+		}
 	}
 	if request.AttemptNo == 0 {
 		return errors.New("alarmd execution: positive Slot attempt number is required")
@@ -225,6 +270,26 @@ type QueryExecutionRequest struct {
 	Contract  FrozenExecutionContractRef
 	Operation Operation
 	AttemptNo uint32
+}
+
+type followingSlotKey struct{}
+
+// WithFollowingSlot is ctx carrying the Slot the frozen schedule has after
+// the one executing, to the query layer, for the lookback: when the Query
+// Group reads next. Observation only. It rides on the context and on no
+// execution request: those carry no Slot after the one they execute, and
+// nothing that persists progress may read one.
+func WithFollowingSlot(ctx context.Context, slot EvaluationTime) context.Context {
+	if slot <= 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, followingSlotKey{}, slot)
+}
+
+// FollowingSlotOf is the FollowingSlot ctx carries, zero when none.
+func FollowingSlotOf(ctx context.Context) EvaluationTime {
+	slot, _ := ctx.Value(followingSlotKey{}).(EvaluationTime)
+	return slot
 }
 
 func (request QueryExecutionRequest) Validate() error {
@@ -494,6 +559,12 @@ type NamedInputBinding struct {
 	Terminals       []InputTerminal
 	PartialEvidence *PartialEvidence
 	Provenance      InputProvenance
+	// UnavailableAttribution is where an unavailable binding's ReasonCode
+	// came from (AttributeUnavailable): an attempt that named it, or the
+	// fallback because no attempt named one or none was made. Empty on a
+	// binding that is not unavailable, and on one from a producer that does
+	// not say, whose reason is taken as it is.
+	UnavailableAttribution UnavailableAttribution
 }
 
 type InputProvenance struct {
@@ -553,20 +624,14 @@ func BuildApplyVersion(contractRef FrozenExecutionContractRef, epoch StateApplyE
 	if epoch == 0 {
 		return ApplyVersion{}, errors.New("alarmd execution: positive state apply epoch is required")
 	}
-	digest, err := contract.DeriveCanonicalDigestV2("alarmd-slot-identity-v2", struct {
-		QueryGroup     QueryGroupIdentity `json:"query_group"`
-		EvaluationTime EvaluationTime     `json:"evaluation_time"`
-	}{
-		QueryGroup:     contractRef.Slot.QueryGroup,
-		EvaluationTime: contractRef.Slot.EvaluationTime,
-	})
+	digest, err := slotIdentityDigest(contractRef.Slot)
 	if err != nil {
-		return ApplyVersion{}, fmt.Errorf("alarmd execution: derive Slot identity digest: %w", err)
+		return ApplyVersion{}, err
 	}
 	return ApplyVersion{
 		StateApplyEpoch: epoch,
 		EvaluationTime:  contractRef.Slot.EvaluationTime,
-		SlotDigest:      SlotIdentityDigest(digest),
+		SlotDigest:      digest,
 	}, nil
 }
 
@@ -967,7 +1032,7 @@ func validateOptionalLevel(levelID uint32, hasLevel bool) error {
 }
 
 func compiledPlanHasLevel(plan *strategy.CompiledPlan, levelID uint32) bool {
-	for _, level := range plan.Levels() {
+	for _, level := range plan.Levels().All() {
 		if level.Definition().LevelID == levelID {
 			return true
 		}
@@ -2081,14 +2146,14 @@ func (mutation PlanNoDataMutation) ReplacesWholeRecord() bool {
 type StateEvaluation struct {
 	Mutation StateMutation
 	Events   []contract.TriggerEventV1
-	// WithoutMessage is the events this series decided and did not keep
-	// because the sink would take them and leave them without a message
-	// (contract.DroppedAtSink): under the Python-compatible protocol, every
-	// RECOVERY. Only their identity is kept. The event, with its evidence, was
-	// the largest thing a Slot held for such a Plan - one per healthy series
-	// per round - and it was held until the sink dropped it. What an output
-	// line counts is unchanged: the write adds these back as events the
-	// protocol had no message for, which is what they were.
+	// WithoutMessage is the events this series decided that its protocol has
+	// no message for (contract.NoMessageFor): under the Python-compatible
+	// protocol, every RECOVERY. They are not built; only their identity is
+	// kept. The envelope, with its evidence, was once held until the sink
+	// dropped it and later built and dropped at once - one per healthy
+	// series per round either way. What an output line counts is unchanged:
+	// the write adds these back as events the protocol had no message for,
+	// which is what they are.
 	WithoutMessage []EventWithoutMessage
 }
 
@@ -2327,11 +2392,43 @@ type HistoryCoverage struct {
 	// And without the positions "which minutes" was a question for the logs,
 	// which the page told the reader to go and answer by hand.
 	Windows []WindowCoverage
+	// MissingMinutes is every minute at which some short window of the run
+	// has a position with no point, over all of them and not only the named
+	// ones, oldest first and at most MaxCoverageMissingMinutes long.
+	// MissingMinutesTruncated says the union is not whole: a window held more
+	// missing positions than it lists, or the union ran over the bound.
+	// ShortUnusable is how many short windows held a position whose record
+	// the Level could not use.
+	//
+	// Whose a missing position is -- the data's, or this side's -- is a fact
+	// about the round that evaluated its minute, not about the window, so for
+	// the windows Windows does not name the minutes are what a reader needs.
+	// Without them a Query Group five strategies share, with three hosts that
+	// miss whole minutes, had fifteen short windows, named eight, and was
+	// filed every round as this side's undecided window for want of the rest.
+	MissingMinutes          []int64
+	MissingMinutesTruncated bool
+	ShortUnusable           uint32
 	// End is the newest record source time any window of this run ended at
 	// -- the minute this round evaluated. Carried on every run that
 	// summarised a window, full or short, so the round can be matched to
 	// the minute a later hole names.
 	End int64
+	// WindowStart is the oldest position any window of this run reaches
+	// back to, full or short: no hole of this run's windows is older. A
+	// reader that matches holes to the rounds of their minutes needs the
+	// rounds from here to End and no older ones; zero when no window said.
+	WindowStart int64
+}
+
+// ObserveWindowStart notes where one window reaches back to.
+func (coverage *HistoryCoverage) ObserveWindowStart(start int64) {
+	if coverage == nil || start <= 0 {
+		return
+	}
+	if coverage.WindowStart == 0 || start < coverage.WindowStart {
+		coverage.WindowStart = start
+	}
 }
 
 // MaxCoverageWindows bounds how many short windows a round names, and
@@ -2341,6 +2438,11 @@ type HistoryCoverage struct {
 const (
 	MaxCoverageWindows   = 8
 	MaxWindowHolesListed = 16
+	// MaxCoverageMissingMinutes bounds MissingMinutes. It is the union of
+	// minutes, not of holes: every window of a run ends at the same minute, so
+	// the union is no longer than the longest window, and a round whose
+	// windows reach back further than this says so rather than listing more.
+	MaxCoverageMissingMinutes = 64
 )
 
 // WindowCoverage is one short window of the round, by identity.
@@ -2412,6 +2514,43 @@ func (coverage *HistoryCoverage) ObserveWindow(window WindowCoverage) {
 	if coverage == nil || window.Required == 0 || window.Shortfall() == 0 {
 		return
 	}
+	coverage.noteShortWindow(window)
+	coverage.keepWindow(window)
+}
+
+// noteShortWindow folds one short window into the counts every short window
+// contributes to, named or not: where it is missing points, and whether it
+// holds a point its Level could not use.
+func (coverage *HistoryCoverage) noteShortWindow(window WindowCoverage) {
+	if window.UnusableTotal > 0 {
+		coverage.ShortUnusable++
+	}
+	if uint32(len(window.Missing)) < window.MissingTotal {
+		coverage.MissingMinutesTruncated = true
+	}
+	coverage.addMissingMinutes(window.Missing)
+}
+
+// addMissingMinutes adds minutes to the sorted union, marking it truncated
+// instead of growing past MaxCoverageMissingMinutes.
+func (coverage *HistoryCoverage) addMissingMinutes(minutes []int64) {
+	for _, minute := range minutes {
+		index := sort.Search(len(coverage.MissingMinutes), func(i int) bool { return coverage.MissingMinutes[i] >= minute })
+		if index < len(coverage.MissingMinutes) && coverage.MissingMinutes[index] == minute {
+			continue
+		}
+		if len(coverage.MissingMinutes) >= MaxCoverageMissingMinutes {
+			coverage.MissingMinutesTruncated = true
+			continue
+		}
+		coverage.MissingMinutes = append(coverage.MissingMinutes, 0)
+		copy(coverage.MissingMinutes[index+1:], coverage.MissingMinutes[index:])
+		coverage.MissingMinutes[index] = minute
+	}
+}
+
+// keepWindow places one short window among the MaxCoverageWindows named ones.
+func (coverage *HistoryCoverage) keepWindow(window WindowCoverage) {
 	for index, kept := range coverage.Windows {
 		if kept.Plan != window.Plan || kept.Series != window.Series || kept.LevelID != window.LevelID {
 			continue
@@ -2537,12 +2676,20 @@ func (coverage *HistoryCoverage) Merge(other HistoryCoverage) {
 	if other.Short > 0 && other.WorstRequired-other.WorstValid > coverage.WorstRequired-coverage.WorstValid {
 		coverage.WorstValid, coverage.WorstRequired = other.WorstValid, other.WorstRequired
 	}
+	// The other side's counts already hold every window it saw, the named
+	// ones included, so its names are only placed here, not counted again.
+	coverage.ShortUnusable += other.ShortUnusable
+	coverage.MissingMinutesTruncated = coverage.MissingMinutesTruncated || other.MissingMinutesTruncated
+	coverage.addMissingMinutes(other.MissingMinutes)
 	for _, window := range other.Windows {
-		coverage.ObserveWindow(window)
+		if window.Required != 0 && window.Shortfall() != 0 {
+			coverage.keepWindow(window)
+		}
 	}
 	if other.End > coverage.End {
 		coverage.End = other.End
 	}
+	coverage.ObserveWindowStart(other.WindowStart)
 }
 
 type EvaluationResult struct {
@@ -2585,12 +2732,12 @@ func buildEvaluationInternalExecution(request EvaluationRequest) (InternalExecut
 	if err != nil {
 		return InternalExecution{}, err
 	}
-	if len(request.Inputs) != len(due.CompiledPlan.Levels()) {
+	if len(request.Inputs) != due.CompiledPlan.Levels().Len() {
 		return InternalExecution{}, errors.New("alarmd execution: evaluation inputs do not exactly cover one due Plan")
 	}
 	input := InternalExecution{Contract: request.Header.Contract, DuePlans: []DuePlan{due},
 		FullPlans: map[PlanIdentity]*strategy.CompiledPlan{due.Identity: full}}
-	for index, level := range due.CompiledPlan.Levels() {
+	for index, level := range due.CompiledPlan.Levels().All() {
 		current := request.Inputs[index]
 		if current.Contract != request.Header.Contract || current.Consumer.Plan != due.Identity || !current.Consumer.HasLevel ||
 			current.Consumer.LevelID != level.Definition().LevelID || current.SeriesIdentity != first.SeriesIdentity ||
@@ -3323,6 +3470,34 @@ func (result SideEffectAdmissionResult) Validate() error {
 type GapGuardApplyRequest struct {
 	Contract FrozenExecutionContractRef
 	Items    []PlanGapMutation
+	// Retention is what the written markers live for; see GenerationRetention.
+	Retention GenerationRetention
+}
+
+// GenerationRetention is what a write of generation-scoped keys -- a Plan's
+// gap marker, its no-data memory -- lives for: each Plan's own state
+// retention, from which the store derives the key's lifetime by the formula
+// the load renews it by (state.GenerationScopedTTL).
+//
+// The write needs it as much as the load does. A key written at a fixed day
+// outlived the round that wrote it only when the Plan ran at least daily: a
+// Plan on a sixty-hour interval lost its marker and its memory before its
+// next round could load them, every round, and one on a daily interval lost
+// them whenever the next round ran late.
+type GenerationRetention struct {
+	// ByPlan is each item's Plan's own retention. Every item's Plan must be in
+	// it unless Unknown is set; a write that has neither is refused rather
+	// than written at a guess.
+	ByPlan map[PlanIdentity][]StateRetentionRequirement
+	// Unknown says the writer has no compiled Plan to read the retention from
+	// -- a round that ran no query writes an activated Plan's marker from its
+	// activation record alone -- and the key is written at the store's
+	// ceiling, which no Plan's own lifetime exceeds. The next round that
+	// evaluates the Plan writes the marker again for the Plan's own lifetime,
+	// so only a marker no round evaluates after keeps the longer life. Said,
+	// rather than being what an empty map means, so a writer that forgot the
+	// retention is refused instead.
+	Unknown bool
 }
 
 type GapGuardApplyStatus string
@@ -3381,6 +3556,25 @@ type StateApplyRequest struct {
 	// that stops appearing leaves no state behind for longer than H. Zero
 	// leaves the retention's own lifetime uncapped.
 	HorizonSeconds int64
+	// Frames, when present, are aligned with Items: the frame the store
+	// encoded for that item when it admitted it, or nil. The store writes a
+	// frame only where it is the one it would encode now -- the same
+	// mutation, the same revision -- and encodes the item itself otherwise,
+	// so a frame that is missing, stale or misaligned costs an encode and
+	// nothing else.
+	Frames []*EncodedStateFrame
+}
+
+// EncodedStateFrame is a mutation as the store encodes it for writing, kept
+// from its admission so the write need not encode it again. It names what it
+// was encoded from, which is what the store checks before writing it.
+type EncodedStateFrame struct {
+	MutationDigest MutationDigest
+	// Revision is the stored record's revision the frame carries: the one it
+	// was encoded for.
+	Revision        uint64
+	Bytes           []byte
+	LegacyRecordIDs int
 }
 
 type StateAdmissionStatus string
@@ -3403,9 +3597,20 @@ type StateAdmissionItemResult struct {
 	// rules share STATE_CORRUPT, and a line that carries only the reason sends
 	// a reader to read every producer.
 	RefusalRule string
+	// RefusalText is the store's own sentence for that refusal, with the
+	// numbers the rule does not carry: the lifetime required against the
+	// ceiling, the bytes encoded against the limit. Empty for every other
+	// status. A Plan refused as STATE_BUDGET_EXCEEDED every round carried
+	// only the reason, and which of two limits it was past, and by how much,
+	// was in no line.
+	RefusalText string
 	// LegacyRecordIDs is how many of the mutation's points carried an id the
 	// derivation could not rebuild, so the id had to be stored.
 	LegacyRecordIDs int
+	// Frame is what the store encoded to measure an admitted mutation, for a
+	// caller that can hold it until the write (StateApplyRequest.Frames);
+	// nil for every other status, and from a store that does not keep one.
+	Frame *EncodedStateFrame
 }
 
 type StateAdmissionResult struct {
@@ -3543,6 +3748,11 @@ const (
 type PrimaryInputFact struct {
 	Completeness Completeness
 	DataState    DataState
+	// EmptiedByTarget says a FULL, EMPTY primary was empty because every
+	// series its queries returned was withheld as outside the monitoring
+	// target: the data was there, the target selected none of it. Set by
+	// the worker from the query completions; never part of a durable record.
+	EmptiedByTarget bool
 }
 
 func DerivePrimaryInputFact(input InternalExecution) (PrimaryInputFact, error) {
@@ -3631,6 +3841,12 @@ const (
 	// CauseLevelOutcomeUnknown is a Level whose outcome could not be determined
 	// even though its Plan was.
 	CauseLevelOutcomeUnknown CompletionCause = "LEVEL_OUTCOME_UNKNOWN"
+	// CauseGapGuardWarming is a Slot that answered whole and still left a Level
+	// UNKNOWN, only because a guard an earlier round's gap raised is warming
+	// towards its requirement (SlotInputWholeness.UnknownIsGuardTail). The reason beside it is
+	// the guard's - why the gap was opened, not what happened this round - and
+	// nothing needs doing: the guard clears once enough whole rounds pass.
+	CauseGapGuardWarming CompletionCause = "GAP_GUARD_WARMING"
 	// CausePrimaryInputPartial is the provider answering the primary input's
 	// query with a stretch of the window missing. The Slot completes as
 	// COMPLETED_WITH_PARTIAL_GAP, and the missing stretch is the data link's or
@@ -3698,6 +3914,21 @@ type CompletionAttribution struct {
 	// Zero when the Slot did not summarise any window, which is not the same
 	// as a Slot whose windows were all complete.
 	Coverage HistoryCoverage
+	// Scope is where the cause was found: the Plan, and the Level for a
+	// Level's outcome or the physical query for the primary input. The cause
+	// and its reason say what kind of thing went wrong; the scope says which
+	// one, so a round that did not answer whole names the Level or the query
+	// that did not.
+	Scope CompletionScope
+}
+
+// CompletionScope is the part of a Slot a completion cause was found in.
+type CompletionScope struct {
+	Plan          PlanIdentity
+	HasPlan       bool
+	LevelID       uint32
+	HasLevel      bool
+	PhysicalQuery PhysicalQueryDigest
 }
 
 // DeriveCompletionDetail adds the reason that belongs to the reported cause.
@@ -3710,14 +3941,25 @@ func DeriveCompletionDetail(input InternalExecution, result EvaluationResult) (
 	return deriveCompletionDetail(input, result)
 }
 
+// DeriveCompletionAttribution is DeriveCompletionDetail with the scope the
+// cause was found in, from the same traversal.
+func DeriveCompletionAttribution(input InternalExecution, result EvaluationResult) (CompletionKind, CompletionAttribution, error) {
+	return deriveCompletionAttribution(input, result)
+}
+
 func deriveCompletionDetail(input InternalExecution, result EvaluationResult) (
 	CompletionKind, CompletionCause, ReasonCode, error) {
+	kind, attribution, err := deriveCompletionAttribution(input, result)
+	return kind, attribution.Cause, attribution.Reason, err
+}
+
+func deriveCompletionAttribution(input InternalExecution, result EvaluationResult) (CompletionKind, CompletionAttribution, error) {
 	if len(result.Plans) == 0 {
-		return "", "", "", errors.New("alarmd execution: no Plan results to complete")
+		return "", CompletionAttribution{}, errors.New("alarmd execution: no Plan results to complete")
 	}
 	primary, err := DerivePrimaryInputFact(input)
 	if err != nil {
-		return "", "", "", err
+		return "", CompletionAttribution{}, err
 	}
 	// A Slot can hit several of these at once. The cause reported is the most
 	// actionable one rather than the first or the commonest: a readiness gap
@@ -3736,33 +3978,48 @@ func deriveCompletionDetail(input InternalExecution, result EvaluationResult) (
 	// 61 of 62 objects sharing a single label that could not say whose problem
 	// they were.
 	reason := ReasonCode("")
-	note := func(candidate CompletionCause, candidateReason ReasonCode) {
+	var scope CompletionScope
+	note := func(candidate CompletionCause, candidateReason ReasonCode, candidateScope CompletionScope) {
 		if causeRank(candidate) > causeRank(cause) {
-			cause, reason = candidate, candidateReason
+			cause, reason, scope = candidate, candidateReason, candidateScope
 		}
 	}
 	hasPartial := primary.Completeness == CompletenessPartial
 	hasUnavailable := primary.Completeness == CompletenessUnavailable
+	// A primary input short or missing names the binding that was, with the
+	// reason access gave it: the query and why, not only that one was.
+	primaryAt := func(completeness Completeness) (ReasonCode, CompletionScope) {
+		for _, binding := range input.Inputs {
+			if binding.Role == InputRolePrimary && binding.Completeness == completeness {
+				return AttributedReason(binding.ReasonCode, binding.UnavailableAttribution), CompletionScope{Plan: binding.Consumer.Plan, HasPlan: true,
+					LevelID: binding.Consumer.LevelID, HasLevel: binding.Consumer.HasLevel, PhysicalQuery: binding.Provenance.PhysicalQuery}
+			}
+		}
+		return "", CompletionScope{}
+	}
 	if hasUnavailable {
-		note(CausePrimaryInputUnavailable, "")
+		bindingReason, bindingScope := primaryAt(CompletenessUnavailable)
+		note(CausePrimaryInputUnavailable, bindingReason, bindingScope)
 	}
 	if hasPartial {
-		note(CausePrimaryInputPartial, "")
+		bindingReason, bindingScope := primaryAt(CompletenessPartial)
+		note(CausePrimaryInputPartial, bindingReason, bindingScope)
 	}
 	allFullEmpty := primary.Completeness == CompletenessFull && primary.DataState == DataStateEmpty
 	hasTerminal := false
+	wholeness := NewSlotInputWholeness(input.Inputs)
 	for _, plan := range result.Plans {
 		switch plan.Disposition {
 		case PlanTerminal:
 			hasTerminal = true
 		case PlanUnavailable:
 			hasUnavailable = true
-			note(CausePlanUnavailable, plan.ReasonCode)
+			note(CausePlanUnavailable, plan.ReasonCode, CompletionScope{Plan: plan.Plan, HasPlan: true})
 		case PlanReadinessGap:
 			hasUnavailable = true
-			note(CauseDataNotReady, plan.ReasonCode)
+			note(CauseDataNotReady, plan.ReasonCode, CompletionScope{Plan: plan.Plan, HasPlan: true})
 		case PlanRetryPending:
-			return "", "", "", errors.New("alarmd execution: retry-pending Plan cannot derive a completed Slot")
+			return "", CompletionAttribution{}, errors.New("alarmd execution: retry-pending Plan cannot derive a completed Slot")
 		case PlanDecided, PlanDecidedDegraded:
 			if plan.Disposition == PlanDecidedDegraded {
 				// A Plan degraded beside a FULL primary input would complete
@@ -3781,24 +4038,30 @@ func deriveCompletionDetail(input InternalExecution, result EvaluationResult) (
 					hasTerminal = true
 				case LevelOutcomeUnknown:
 					hasUnavailable = true
-					note(CauseLevelOutcomeUnknown, outcome.ReasonCode)
+					levelScope := CompletionScope{Plan: outcome.Plan, HasPlan: true, LevelID: outcome.LevelID, HasLevel: true}
+					if wholeness.UnknownIsGuardTail(outcome) {
+						note(CauseGapGuardWarming, outcome.ReasonCode, levelScope)
+					} else {
+						note(CauseLevelOutcomeUnknown, outcome.ReasonCode, levelScope)
+					}
 				}
 			}
 		default:
-			return "", "", "", errors.New("alarmd execution: invalid Plan disposition for completion")
+			return "", CompletionAttribution{}, errors.New("alarmd execution: invalid Plan disposition for completion")
 		}
 	}
+	attributed := CompletionAttribution{Cause: cause, Reason: reason, Scope: scope}
 	switch {
 	case hasTerminal:
-		return CompletionTerminal, "", "", nil
+		return CompletionTerminal, CompletionAttribution{}, nil
 	case hasUnavailable:
-		return CompletionUnavailable, cause, reason, nil
+		return CompletionUnavailable, attributed, nil
 	case hasPartial:
-		return CompletionPartialGap, cause, reason, nil
+		return CompletionPartialGap, attributed, nil
 	case allFullEmpty:
-		return CompletionFullEmpty, "", "", nil
+		return CompletionFullEmpty, CompletionAttribution{}, nil
 	default:
-		return CompletionFull, "", "", nil
+		return CompletionFull, CompletionAttribution{}, nil
 	}
 }
 
@@ -3825,12 +4088,14 @@ func deriveCompletionDetail(input InternalExecution, result EvaluationResult) (
 func causeRank(cause CompletionCause) int {
 	switch cause {
 	case CausePrimaryInputUnavailable:
-		return 6
+		return 7
 	case CausePlanUnavailable:
-		return 5
+		return 6
 	case CauseLevelOutcomeUnknown:
-		return 4
+		return 5
 	case CauseDataNotReady:
+		return 4
+	case CauseGapGuardWarming:
 		return 3
 	case CausePrimaryInputPartial:
 		return 2
@@ -4028,6 +4293,8 @@ type TargetResolutionSummary struct {
 	NodesMissing    []string                `json:"nodes_missing,omitempty"`
 	NodesForeign    []string                `json:"nodes_foreign,omitempty"`
 	StaleAgeSeconds int64                   `json:"stale_age_seconds,omitempty"`
+	// ExcludedAbsent counts normal no-op exclusions, outside the failure list.
+	ExcludedAbsent int `json:"excluded_absent,omitempty"`
 }
 
 // TargetSelectorFailure names one selector that did not answer whole.
@@ -4494,6 +4761,11 @@ const (
 type SlotExecutionResult struct {
 	// Set only after successful Progress commit for the unchanged configuration.
 	QueryAvailability QueryAvailability
+	// QueryUnavailableReason is, with QueryAvailabilityUnavailable, why the
+	// primary query was unavailable, as its binding states it
+	// (AttributedReason): what the query cooldown that this result feeds
+	// reports its entries and exits under.
+	QueryUnavailableReason ReasonCode
 	// Set only after a successful Progress commit, not inferred from Result.
 	CompletionKind CompletionKind
 	Completed      bool
@@ -4522,6 +4794,9 @@ type SlotExecutionResult struct {
 	// person to add a field would find an invariant that no longer holds
 	// without being told which field broke it.
 	Timing SlotTiming
+	// Supplement is what a supplement execution did with each series it was
+	// given; nil for every other operation.
+	Supplement *SupplementFacts
 }
 
 // SlotTiming is where one Slot's wall clock went, in milliseconds.

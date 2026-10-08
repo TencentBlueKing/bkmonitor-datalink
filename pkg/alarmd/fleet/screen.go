@@ -48,12 +48,7 @@ func Decide(view *View, now time.Time, stallAfter time.Duration) {
 // decided here, once, beside the lines.
 func Report(view *View, now time.Time) Screen {
 	columns := viewColumns(view)
-	truncated := map[string]bool{
-		ColumnAnomalies:   view.AnomaliesTotal > len(view.Anomalies),
-		ColumnDemoted:     view.DemotedTotal > len(view.Demoted),
-		ColumnUndecidable: view.UndecidableTotal > len(view.Undecidable),
-		ColumnByDesign:    view.ByDesignTotal > len(view.ByDesign),
-	}
+	truncated := columnsTruncated(view)
 	checks := ReportChecks(columns, truncated, view, now)
 	return Screen{Columns: columns, Truncated: truncated, Checks: checks,
 		Todo: SummarizeTodo(checks, columns, view, now)}
@@ -87,4 +82,15 @@ func (report CheckReport) LineCount() int {
 		}
 	}
 	return len(replicas)
+}
+
+// columnsTruncated is which columns the replicas published short of their
+// totals, by column name.
+func columnsTruncated(view *View) map[string]bool {
+	return map[string]bool{
+		ColumnAnomalies:   view.AnomaliesTotal > len(view.Anomalies),
+		ColumnDemoted:     view.DemotedTotal > len(view.Demoted),
+		ColumnUndecidable: view.UndecidableTotal > len(view.Undecidable),
+		ColumnByDesign:    view.ByDesignTotal > len(view.ByDesign),
+	}
 }

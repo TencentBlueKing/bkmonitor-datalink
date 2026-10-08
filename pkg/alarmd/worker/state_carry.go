@@ -82,7 +82,7 @@ func carryHistory(due execution.DuePlan, view execution.RuntimeStateView) (execu
 		return view, SeriesCarrySkippedActiveGuard
 	}
 	fingerprints := make(map[uint32]string)
-	for _, level := range due.CompiledPlan.Levels() {
+	for _, level := range due.CompiledPlan.Levels().All() {
 		id := level.Definition().LevelID
 		for _, carriedLevel := range due.StateCarry.Levels {
 			if carriedLevel == id {

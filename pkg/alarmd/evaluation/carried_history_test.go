@@ -23,7 +23,7 @@ import (
 // record at a time the carried history already holds adds nothing.
 func TestCarriedHistoryEvaluatesAsIfTheNewContractHadWrittenIt(t *testing.T) {
 	plan := compiledWindow(t, 3, 2)
-	fingerprint := plan.Levels()[0].Fingerprints().Detect
+	fingerprint := plan.Levels().At(0).Fingerprints().Detect
 	record := func(sourceTime int64, value string) []contract.CanonicalRecordV2 {
 		return []contract.CanonicalRecordV2{{RecordID: strings.Repeat("b", 64), SourceTime: sourceTime, BusinessID: "2",
 			DimensionIdentity: contract.DimensionIdentityV2{Digest: strings.Repeat("c", 64)},

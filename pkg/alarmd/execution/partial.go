@@ -35,10 +35,10 @@ type LevelPartialCapability struct {
 
 func validatePartialCapabilities(plan DuePlan) error {
 	levels := plan.CompiledPlan.Levels()
-	if len(plan.PartialCapabilities) != len(levels) {
+	if len(plan.PartialCapabilities) != levels.Len() {
 		return errors.New("alarmd execution: every compiled Level requires one PARTIAL capability closure")
 	}
-	seen := make(map[uint32]struct{}, len(levels))
+	seen := make(map[uint32]struct{}, levels.Len())
 	for _, capability := range plan.PartialCapabilities {
 		if capability.LevelID == 0 || !compiledPlanHasLevel(plan.CompiledPlan, capability.LevelID) {
 			return errors.New("alarmd execution: PARTIAL capability references an unknown Level")

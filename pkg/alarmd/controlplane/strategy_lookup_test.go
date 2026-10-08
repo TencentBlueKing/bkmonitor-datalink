@@ -69,6 +69,10 @@ func TestLookupStrategyAnswersAcceptedAndWithheldStrategiesFromTheLastPublicatio
 				groups = append(groups, group)
 			}
 			catalog.QueryGroups = groups
+			// The round's global records reach the lookup through the
+			// published Catalog: 1001 stands for a strategy the source marks
+			// global, withheld here, and must be answered as one.
+			catalog.GlobalStrategies = append(catalog.GlobalStrategies, controlplane.GlobalStrategy{SourceID: "1001"})
 			return catalog, nil
 		})
 	if err != nil {
@@ -118,6 +122,9 @@ func TestLookupStrategyAnswersAcceptedAndWithheldStrategiesFromTheLastPublicatio
 	withheld := reconciler.LookupStrategy("1001")
 	if !withheld.Available || !withheld.Found || withheld.Retained || len(withheld.Plans) != 0 {
 		t.Fatalf("withheld strategy = %+v, want found with no Plan", withheld)
+	}
+	if !withheld.Global || accepted.Global {
+		t.Fatalf("global: withheld 1001 = %t, accepted 1002 = %t; want only 1001, the one the round recorded", withheld.Global, accepted.Global)
 	}
 	var named bool
 	for _, disposition := range withheld.Dispositions {

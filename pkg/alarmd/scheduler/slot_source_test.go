@@ -213,6 +213,33 @@ func TestProductionSlotSourceRejectsCandidateOutsideSnapshotRetention(t *testing
 	}
 }
 
+// A Plan evaluated every sixty hours needs its Snapshot for about sixty hours
+// past the Slot. At exactly what its recovery contract asks the Slot is
+// served; a second less and it is refused. The source checks the same sum the
+// admission serves the Plan under, so the two can only agree on this boundary.
+func TestProductionSlotSourceServesASixtyHourSlotAtItsRequiredRetention(t *testing.T) {
+	const interval = 216000
+	schedule := schedulerSchedule(t, interval, interval, nil, "snapshot-1", 1)
+	catalog := &fakeSlotCatalog{t: t, schedules: []execution.FrozenQueryGroupSchedule{schedule}}
+	limits := testRecoveryLimits()
+	allowance := time.Minute
+	// The query deadline is the completion offset less the reserve, and the
+	// terminal delay is the one the test source is built with.
+	required := allowance + interval*time.Second - 5*time.Second + limits.MaxReplayAge + time.Minute
+	for _, tc := range []struct {
+		retention time.Duration
+		refused   bool
+	}{{required, false}, {required - time.Second, true}} {
+		source := newProductionSlotSourceWithRecoveryForTest(t, catalog, missingProgress(), time.Unix(interval+56, 0), limits)
+		source.snapshotRetention = tc.retention
+		source.publicationDelayAllowance = allowance
+		_, _, _, err := source.Next(context.Background(), "query-group-1")
+		if refused := errors.Is(err, ErrSnapshotRetentionInsufficient); refused != tc.refused {
+			t.Fatalf("retention %s (required %s): refused=%t err=%v, want refused=%t", tc.retention, required, refused, err, tc.refused)
+		}
+	}
+}
+
 func TestProductionSlotSourceColdStartSkipsClosedZeroSlotSegment(t *testing.T) {
 	boundary := execution.EvaluationTime(90)
 	oldSchedule := schedulerSchedule(t, 60, 83, &boundary, "snapshot-old", 7)
@@ -964,7 +991,10 @@ func frozenSlotContractFact(
 				break
 			}
 		}
-		deadline := (int64(request.EvaluationTime) + spec.EvaluationIntervalSeconds) * 1000
+		deadline, ok := spec.HeldCompletionDeadlineUnixMilli(request.EvaluationTime, request.ReadHoldMillis)
+		if !ok {
+			t.Fatal("invalid held fixture deadline")
+		}
 		plans[index] = execution.DuePlan{
 			Identity: ref.Identity, CompiledPlan: compiled, StateGeneration: "state-v1", StateApplyEpoch: 1,
 			ScheduleRevision: ref.ScheduleRevision, ScheduleSpec: spec, CompletionDeadlineUnixMilli: deadline,
@@ -991,7 +1021,7 @@ func frozenSlotContractFact(
 			Slot:             execution.SlotIdentity{QueryGroup: request.QueryGroup, EvaluationTime: request.EvaluationTime},
 			SnapshotRevision: schedule.Segment.Publication.SnapshotRevision, QueryRevision: schedule.Segment.QueryRevision,
 			ScheduleRevision: request.ScheduleRevision, ScheduleSegmentStart: request.ScheduleSegmentStart,
-			DuePlanSetDigest: digest,
+			DuePlanSetDigest: digest, ReadHoldMillis: request.ReadHoldMillis,
 		},
 		DuePlans: plans, Requirements: requirements,
 	}

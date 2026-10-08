@@ -11,10 +11,7 @@ package detect
 
 import (
 	"context"
-	"errors"
 	"time"
-
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 )
 
 const (
@@ -59,44 +56,4 @@ func observeDetect(ctx context.Context, observer Observer, observation Observati
 		_ = recover()
 	}()
 	observer.ObserveDetect(ctx, observation)
-}
-
-func finishDetectObservation(
-	ctx context.Context,
-	observer Observer,
-	completeness string,
-	counts DetectionCounts,
-	returnErr error,
-	duration time.Duration,
-) {
-	observation := Observation{
-		Stage: StageDetectCompleted, Result: ObservationSuccess, Completeness: observedCompleteness(completeness),
-		Counts: counts, Duration: duration,
-	}
-	if returnErr != nil {
-		var budget *BudgetError
-		if errors.As(returnErr, &budget) {
-			observation.Result = ObservationTerminal
-			observation.ReasonCode = budget.ReasonCode
-		} else {
-			observation.Result = ObservationFailed
-		}
-	} else {
-		switch completeness {
-		case contract.QueryCompletenessPartial:
-			observation.ReasonCode = contract.ReasonQueryPartial
-		case contract.QueryCompletenessUnavailable:
-			observation.ReasonCode = contract.ReasonQueryUnavailable
-		}
-	}
-	observeDetect(ctx, observer, observation)
-}
-
-func observedCompleteness(completeness string) string {
-	switch completeness {
-	case contract.QueryCompletenessFull, contract.QueryCompletenessPartial, contract.QueryCompletenessUnavailable:
-		return completeness
-	default:
-		return ""
-	}
 }

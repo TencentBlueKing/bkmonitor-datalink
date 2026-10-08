@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
 	"math/big"
 	"sort"
 	"strings"
@@ -80,12 +81,27 @@ type CompileRequest struct {
 	Plan            contract.EvaluationPlanV2
 	DatasetContract contract.DatasetContractV2
 	StateSemantics  StateSemantics
+	// ContentKey, when set, names the content Plan and DatasetContract were
+	// built from, such that the same key always means the same Plan and the
+	// same DatasetContract: the caller says so, and the compiler takes its
+	// word for it. The cache key is then derived from the Plan the first time
+	// a key is seen and remembered for it after. Empty derives the cache key
+	// from the Plan every time, as a caller with nothing to name does.
+	ContentKey string
 }
 
 type Terminal struct {
 	LevelID    uint32
 	ReasonCode string
 	FieldPath  string
+	// Detail is what the check that refused said, when the refusal came from
+	// an error: which key a strict decode met, which value a parse could not
+	// read. The code and the path say where; this says what, and without it a
+	// level refused as LEVEL_INVALID at level.trigger_plan had to be compiled
+	// again offline to learn a key was one the decoder does not know. Empty
+	// for a refusal decided without an error. Unbounded here; the catalog
+	// bounds it where it becomes a disposition.
+	Detail string
 }
 
 type CompileResult struct {
@@ -487,7 +503,45 @@ func (l CompiledLevel) Detectors() []DetectorSpec {
 	return append([]DetectorSpec(nil), l.detectors...)
 }
 
-func (l CompiledLevel) Algorithms() []CompiledAlgorithmPlan {
+func (l CompiledLevel) Algorithms() AlgorithmList {
+	return AlgorithmList{algorithms: l.algorithms}
+}
+
+// AlgorithmList is a Level's compiled algorithms, read-only, as LevelList is
+// a Plan's Levels: each can be read, none replaced, reordered or appended to,
+// and a caller that needs a slice of its own asks for one with Copy.
+//
+// Algorithms copied the whole slice on every call, from every stage that
+// walks a Level's algorithms for every series of every Slot -- 1.1% of a
+// replica's allocation -- for seven callers that all only read it.
+type AlgorithmList struct {
+	algorithms []CompiledAlgorithmPlan
+}
+
+// Len is the number of algorithms.
+func (l AlgorithmList) Len() int { return len(l.algorithms) }
+
+// At is the algorithm at index, as a value: changing it does not change the
+// Level.
+func (l AlgorithmList) At(index int) CompiledAlgorithmPlan { return l.algorithms[index] }
+
+// All yields each algorithm with its index, in order, as range does over a
+// slice.
+func (l AlgorithmList) All() iter.Seq2[int, CompiledAlgorithmPlan] {
+	return func(yield func(int, CompiledAlgorithmPlan) bool) {
+		for index := range l.algorithms {
+			if !yield(index, l.algorithms[index]) {
+				return
+			}
+		}
+	}
+}
+
+// Copy is a slice of the algorithms the caller owns.
+func (l AlgorithmList) Copy() []CompiledAlgorithmPlan {
+	if l.algorithms == nil {
+		return nil
+	}
 	return append([]CompiledAlgorithmPlan(nil), l.algorithms...)
 }
 
@@ -532,15 +586,19 @@ type CompiledPlan struct {
 	legacyOutput        *contract.FrozenLegacyOutput
 	projection          contract.InputProjectionV2
 	evaluationSemantics contract.ExecutionSemanticsV2
-	levels              []CompiledLevel
-	normalizers         map[string]NumericNormalizerSpec
-	fingerprints        PlanFingerprints
-	resourceEstimate    ResourceEstimate
-	datasetDigest       string
-	targetScope         *contract.TargetScopeV2
-	targetPlan          *contract.TargetPlanV1
-	noData              *contract.NoDataConfigV1
-	noDataLevel         *CompiledLevel
+	// boundaryLocation is the compiler's (WithBoundaryLocation); nil lays the
+	// aggregation grid in UTC.
+	boundaryLocation *time.Location
+	levels           []CompiledLevel
+	normalizers      map[string]NumericNormalizerSpec
+	fingerprints     PlanFingerprints
+	resourceEstimate ResourceEstimate
+	datasetDigest    string
+	targetScope      *contract.TargetScopeV2
+	targetPlan       *contract.TargetPlanV1
+	noData           *contract.NoDataConfigV1
+	noDataLevel      *CompiledLevel
+	globalBusiness   bool
 }
 
 // NoData is the strategy's no-data configuration, frozen with the Plan. Nil
@@ -621,6 +679,12 @@ func (p *CompiledPlan) TargetPlan() *contract.TargetPlanV1 {
 	return p.targetPlan
 }
 
+// GlobalBusiness reports whether the Plan belongs to a global business,
+// whose events name the business each one is about beside the Plan's own.
+func (p *CompiledPlan) GlobalBusiness() bool {
+	return p != nil && p.globalBusiness
+}
+
 func (p *CompiledPlan) StrategyRef() contract.StrategyRefV2 {
 	if p == nil {
 		return contract.StrategyRefV2{}
@@ -633,6 +697,16 @@ func (p *CompiledPlan) OutputIdentity() *contract.MonitorOutputIdentity {
 		return nil
 	}
 	return &contract.MonitorOutputIdentity{DimensionFields: append([]string{}, p.outputIdentity.DimensionFields...), DynamicDimensions: p.outputIdentity.DynamicDimensions}
+}
+
+// CompatibleOffBoundary reports whether a record at sourceTime is one of the
+// detections between two aggregation boundaries of a Plan detected more often
+// than it aggregates (contract.CompatibleOffBoundary).
+func (p *CompiledPlan) CompatibleOffBoundary(sourceTime int64) bool {
+	if p == nil {
+		return false
+	}
+	return contract.CompatibleOffBoundary(p.evaluationSemantics, p.boundaryLocation, sourceTime)
 }
 
 // PublishesCompatibleProtocol reports whether this Plan's events go out as the
@@ -713,15 +787,54 @@ func (p *CompiledPlan) EvaluationSemantics() contract.ExecutionSemanticsV2 {
 	return p.evaluationSemantics
 }
 
-func (p *CompiledPlan) Levels() []CompiledLevel {
-	if p == nil {
+// LevelList is a Plan's compiled Levels, read-only. Its slice is unexported,
+// so code outside this package can read each Level but cannot replace,
+// reorder or append to the Plan's own: code that tries does not compile, and
+// code that needs a slice of its own asks for one with Copy.
+//
+// It is what Levels returns because Levels was called from every stage of
+// every Slot, a few dozen times per series per round, and copied the whole
+// slice each time -- 336 bytes a Level -- for callers that, all but four,
+// only read it.
+type LevelList struct {
+	levels []CompiledLevel
+}
+
+// Len is the number of Levels.
+func (l LevelList) Len() int { return len(l.levels) }
+
+// At is the Level at index, as a value: changing it does not change the Plan.
+func (l LevelList) At(index int) CompiledLevel { return l.levels[index] }
+
+// All yields each Level with its index, in order, as range does over a slice.
+func (l LevelList) All() iter.Seq2[int, CompiledLevel] {
+	return func(yield func(int, CompiledLevel) bool) {
+		for index := range l.levels {
+			if !yield(index, l.levels[index]) {
+				return
+			}
+		}
+	}
+}
+
+// Copy is a slice of the Levels the caller owns: for a caller that appends to
+// it, reorders it or keeps it.
+func (l LevelList) Copy() []CompiledLevel {
+	if l.levels == nil {
 		return nil
 	}
-	return append([]CompiledLevel(nil), p.levels...)
+	return append([]CompiledLevel(nil), l.levels...)
+}
+
+func (p *CompiledPlan) Levels() LevelList {
+	if p == nil {
+		return LevelList{}
+	}
+	return LevelList{levels: p.levels}
 }
 
 func (p *CompiledPlan) LevelsByPriority() []CompiledLevel {
-	levels := p.Levels()
+	levels := p.Levels().Copy()
 	sort.Slice(levels, func(left, right int) bool {
 		if levels[left].definition.Priority == levels[right].definition.Priority {
 			return levels[left].definition.LevelID < levels[right].definition.LevelID

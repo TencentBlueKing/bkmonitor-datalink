@@ -35,6 +35,8 @@ type canonicalEncodingCollector struct {
 	shadow   *prometheus.Desc
 	findings *prometheus.Desc
 	coverage *prometheus.Desc
+	records  *prometheus.Desc
+	identity *prometheus.Desc
 }
 
 func newCanonicalEncodingCollector() *canonicalEncodingCollector {
@@ -65,6 +67,18 @@ func newCanonicalEncodingCollector() *canonicalEncodingCollector {
 			"Distinct Go types that have actually been compared. A comparison total says how much was "+
 				"checked; only this says how widely. A million comparisons from one caller prove one caller.",
 			nil, nil),
+		records: prometheus.NewDesc(name("records_shadow_total"),
+			"Series delivery digests assembled from a series' shared parts that were checked against the "+
+				"generic canonical digest, by result: agreed, or differed. A difference returns the generic "+
+				"digest, so it is a finding and not a wrong answer; one in 4096 assemblies is checked.",
+			[]string{"outcome"}, nil),
+		identity: prometheus.NewDesc(name("identity_part_total"),
+			"Series delivery digests assembled from a series' shared parts, by where the canonical encoding of "+
+				"the series' dimension identity came from: the identity's own encoding, made once when the "+
+				"identity digest was derived (identity_encoding), or encoded again for the delivery digest "+
+				"(encoded). The provider hands every series its identity's encoding, so encoded rising there "+
+				"means the encoding is being made twice.",
+			[]string{"source"}, nil),
 	}
 }
 
@@ -75,6 +89,8 @@ func (c *canonicalEncodingCollector) Describe(out chan<- *prometheus.Desc) {
 	out <- c.shadow
 	out <- c.findings
 	out <- c.coverage
+	out <- c.records
+	out <- c.identity
 }
 
 func (c *canonicalEncodingCollector) Collect(out chan<- prometheus.Metric) {
@@ -100,4 +116,10 @@ func (c *canonicalEncodingCollector) Collect(out chan<- prometheus.Metric) {
 	out <- prometheus.MustNewConstMetric(c.findings, prometheus.GaugeValue,
 		float64(len(contract.ReadCanonicalShadowSamples())))
 	out <- prometheus.MustNewConstMetric(c.coverage, prometheus.GaugeValue, float64(counts.CoveredCallSites))
+	compared, differed := contract.ReadRecordsDigestShadowCounts()
+	out <- prometheus.MustNewConstMetric(c.records, prometheus.CounterValue, float64(compared-differed), "agreed")
+	out <- prometheus.MustNewConstMetric(c.records, prometheus.CounterValue, float64(differed), "differed")
+	reused, encoded := contract.ReadIdentityPartCounts()
+	out <- prometheus.MustNewConstMetric(c.identity, prometheus.CounterValue, float64(reused), "identity_encoding")
+	out <- prometheus.MustNewConstMetric(c.identity, prometheus.CounterValue, float64(encoded), "encoded")
 }

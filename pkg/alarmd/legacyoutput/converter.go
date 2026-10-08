@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -52,6 +53,13 @@ type strategyConfig struct {
 		} `json:"query_configs"`
 	} `json:"items"`
 }
+
+// FrozenStrategySources are what the converter decodes the frozen strategy
+// document into. The operator evidence walks them for the keys alarmd reads.
+func FrozenStrategySources() []reflect.Type {
+	return []reflect.Type{reflect.TypeOf(strategyConfig{}), reflect.TypeOf(targetStrategy{})}
+}
+
 type preparedStrategy struct {
 	config   strategyConfig
 	raw      json.RawMessage

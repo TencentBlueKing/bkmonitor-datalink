@@ -189,7 +189,13 @@ func TestDiagnosticEmptyUnavailableAndMalformedResponsesStayDistinct(t *testing.
 				t.Fatalf("wrong completion: %+v", result)
 			}
 			raw, _ := json.Marshal(result)
-			if bytes.Contains(raw, []byte("fixture-secret")) || err != nil && strings.Contains(err.Error(), "fixture-secret") {
+			if tc.name == "http_error" {
+				// An answer that was not 200 is the one body a diagnostic read
+				// keeps the start of, sanitized, for the operator who asked.
+				if result.Completion == nil || result.Completion.ErrorExcerpt != "fixture-secret" {
+					t.Fatalf("completion %+v, want the error body's excerpt", result.Completion)
+				}
+			} else if bytes.Contains(raw, []byte("fixture-secret")) || err != nil && strings.Contains(err.Error(), "fixture-secret") {
 				t.Fatal("upstream error text leaked")
 			}
 			if tc.name == "empty" && (len(result.Series) != 0 || result.Completion.DataState != execution.DataStateEmpty || !result.Scan.Complete) {

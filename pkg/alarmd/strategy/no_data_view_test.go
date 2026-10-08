@@ -32,7 +32,7 @@ func TestTheNoDataViewIsTheSamePlanWithOneLevel(t *testing.T) {
 		t.Fatal("a Plan that detects no-data has no view of it")
 	}
 
-	levels := view.Levels()
+	levels := view.Levels().Copy()
 	if len(levels) != 1 {
 		t.Fatalf("view levels = %+v, want only the no-data level", levels)
 	}
@@ -40,7 +40,7 @@ func TestTheNoDataViewIsTheSamePlanWithOneLevel(t *testing.T) {
 		t.Fatalf("view level = %d, want the no-data level %d",
 			levels[0].Definition().LevelID, plan.NoDataLevel().Definition().LevelID)
 	}
-	for _, declared := range plan.Levels() {
+	for _, declared := range plan.Levels().All() {
 		for _, seen := range levels {
 			if seen.Definition().LevelID == declared.Definition().LevelID {
 				t.Fatalf("the view carries declared level %d, so a synthetic series would be asked "+
@@ -70,7 +70,7 @@ func TestTheNoDataViewIsTheSamePlanWithOneLevel(t *testing.T) {
 
 	// The Plan it came from is untouched: the view is a reading of it, not a
 	// change to it.
-	if len(plan.Levels()) == 0 {
+	if plan.Levels().Len() == 0 {
 		t.Fatal("building a view emptied the Plan's own levels")
 	}
 }
@@ -80,7 +80,7 @@ func TestTheNoDataViewIsTheSamePlanWithOneLevel(t *testing.T) {
 // downstream would treat as "nothing to evaluate" and report as success.
 func TestAPlanWithoutNoDataHasNoView(t *testing.T) {
 	if view := noDataPlan(t, nil).NoDataView(); view != nil {
-		t.Fatalf("a Plan that detects no no-data produced a view with %d levels", len(view.Levels()))
+		t.Fatalf("a Plan that detects no no-data produced a view with %d levels", view.Levels().Len())
 	}
 	var absent *CompiledPlan
 	if view := absent.NoDataView(); view != nil {

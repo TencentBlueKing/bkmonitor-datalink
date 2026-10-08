@@ -82,6 +82,7 @@ func (cache *Cache) noteOpened(m member, now time.Time) {
 	}
 	if len(cache.index.opened) >= cache.index.options.MaxLocalEntries {
 		cache.evictions++
+		cache.openRefusals++
 		return
 	}
 	cache.index.opened[m] = now
@@ -173,7 +174,7 @@ func (cache *Cache) SetTracked(keys []StrategyKey) error {
 	}
 	for m := range cache.added {
 		if _, exists := unique[m.key]; !exists {
-			delete(cache.added, m)
+			cache.leaveSent(m, DepartureUntracked)
 		}
 	}
 	for m := range cache.removed {
@@ -183,7 +184,7 @@ func (cache *Cache) SetTracked(keys []StrategyKey) error {
 	}
 	for m := range cache.index.opened {
 		if _, exists := unique[m.key]; !exists {
-			delete(cache.index.opened, m)
+			cache.leaveOpen(m, DepartureUntracked)
 		}
 	}
 	cache.index.order = cache.index.order[:0]
@@ -269,7 +270,7 @@ func (cache *Cache) Untrack(keys ...StrategyKey) {
 		}
 		for m := range cache.added {
 			if m.key == key {
-				delete(cache.added, m)
+				cache.leaveSent(m, DepartureUntracked)
 			}
 		}
 		for m := range cache.removed {
@@ -280,7 +281,7 @@ func (cache *Cache) Untrack(keys ...StrategyKey) {
 		if cache.index != nil {
 			for m := range cache.index.opened {
 				if m.key == key {
-					delete(cache.index.opened, m)
+					cache.leaveOpen(m, DepartureUntracked)
 				}
 			}
 		}
@@ -642,7 +643,7 @@ func (cache *Cache) applyCalibration(job indexJob, started time.Time, result Rec
 	// not permanently suppress an alert the consumer still holds active.
 	for m, s := range cache.added {
 		if m.key == job.key && s.at.Before(started) && cache.now().Sub(s.at) > cache.index.options.LocalRetention {
-			delete(cache.added, m)
+			cache.leaveSent(m, DepartureNotResent)
 		}
 	}
 	for m, s := range cache.removed {
@@ -683,17 +684,8 @@ func (cache *Cache) indexContains(m member, now time.Time, count bool) bool {
 		present = true
 		answer = AnswerRecentlySent
 	}
-	if removed, ok := cache.removed[m]; ok {
-		observed := time.Time{}
-		if entry != nil {
-			observed = entry.calibratedStarted
-			if !cache.calibrated(entry, now) {
-				observed = entry.indexReadAt
-			}
-		}
-		if now.Sub(removed.at) <= cache.index.options.LocalRetention || !removed.at.Before(observed) {
-			present = false
-		}
+	if removed, ok := cache.removed[m]; ok && cache.removalHides(entry, removed, now) {
+		present = false
 	}
 	if count && (entry == nil || !cache.calibrated(entry, now)) && cache.policy == PolicyPassThrough {
 		present = true
@@ -703,6 +695,53 @@ func (cache *Cache) indexContains(m member, now time.Time, count bool) bool {
 		cache.countLookup(answer)
 	}
 	return present
+}
+
+// removalHides says whether a RECOVERY this process sent still hides its
+// alert: until the retention has passed and something has read the
+// consumer's state since, the set cannot yet reflect the recovery, and an
+// alert still in it is the recovery not yet processed rather than one the
+// consumer kept open. Once it has, the set answers again, and an alert still
+// in it gets the recovery once more. Called with the lock held.
+//
+// Which read counts is the choice here:
+//
+//   - A first recovery, while the sets are authoritative: the first read of
+//     the set taken once the retention has passed. A read from inside the
+//     retention does not count, however recent: it may have been taken
+//     before the consumer processed the recovery, and a consumer that is
+//     keeping up would be sent it again on the strength of it. A consumer
+//     that took the RECOVERY and failed to process it keeps the alert open;
+//     waiting for the next calibration left it open for up to a calibration
+//     interval before it was asked again. A calibration past the retention
+//     releases it too, by pruning the entry (applyCalibration).
+//   - A recovery already sent again (resent): a calibration that began after
+//     it, and with no current calibration, as long as one would take. A
+//     consumer that is behind by more than the retention has both copies
+//     queued; sending on every read would add one more per read for as long
+//     as it stays behind. This is the calibration path that backs the resend.
+//   - While the sets are disjoint from what this process sent, the rule this
+//     ledger had before resends: a calibration that began after it, or with
+//     none current, the next read. What the sets say about this process's
+//     alerts is not trusted then, and the gate answers from its own record.
+func (cache *Cache) removalHides(entry *indexEntry, removed stamped, now time.Time) bool {
+	retention := cache.index.options.LocalRetention
+	if entry == nil || now.Sub(removed.at) <= retention {
+		return true
+	}
+	calibrated := cache.calibrated(entry, now)
+	switch {
+	case cache.index.disjoint && calibrated:
+		return !removed.at.Before(entry.calibratedStarted)
+	case cache.index.disjoint:
+		return !removed.at.Before(entry.indexReadAt)
+	case !removed.resent:
+		return !removed.at.Add(retention).Before(entry.indexReadAt)
+	case calibrated:
+		return !removed.at.Before(entry.calibratedStarted)
+	default:
+		return now.Sub(removed.at) <= cache.index.options.ReconcileInterval || !removed.at.Before(entry.indexReadAt)
+	}
 }
 
 func (cache *Cache) Snapshot(key StrategyKey) StrategySnapshot {
@@ -856,7 +895,7 @@ func (cache *Cache) ActiveAlerts(key StrategyKey) []Alert {
 func (cache *Cache) indexStats() Stats {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	stats := Stats{Mode: ModeSelfMaintained, IndexProtocol: true, CalibrationConfigured: cache.index.options.Reconciler != nil, Tracked: len(cache.index.entries), Added: len(cache.added), Removed: len(cache.removed), Evictions: cache.evictions,
+	stats := Stats{Mode: ModeSelfMaintained, IndexProtocol: true, CalibrationConfigured: cache.index.options.Reconciler != nil, Tracked: len(cache.index.entries), Added: len(cache.added), Removed: len(cache.removed), Evictions: cache.evictions, RecoveriesResent: cache.recoveriesResent,
 		Refreshes: map[string]uint64{}, Unavailable: map[UnavailableReason]uint64{}, Lookups: map[Answer]uint64{}}
 	all := len(cache.index.entries) > 0
 	for _, entry := range cache.index.entries {

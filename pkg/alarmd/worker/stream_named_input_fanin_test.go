@@ -502,7 +502,7 @@ func workerG4CompiledPlan(t *testing.T, kind string) (*strategy.CompiledPlan, []
 	if !ok {
 		t.Fatalf("compile %s terminal=%+v levels=%+v", kind, result.PlanTerminal(), result.LevelTerminals())
 	}
-	algorithmRequirements := compiled.Levels()[0].Algorithms()[0].InputRequirements()
+	algorithmRequirements := compiled.Levels().At(0).Algorithms().At(0).InputRequirements()
 	executionRequirements := make([]execution.DataRequirement, 0, len(algorithmRequirements))
 	for _, requirement := range algorithmRequirements {
 		points := make([]execution.NamedInputPoint, len(requirement.NamedPoints))
@@ -553,9 +553,9 @@ func workerG4MultiLevelStreamFixture(
 	compiled := compileWorkerG4MultiLevelPlan(t, simpleConfig, thresholdConfig)
 
 	var algorithmRequirements []strategy.AlgorithmInputRequirement
-	for _, level := range compiled.Levels() {
+	for _, level := range compiled.Levels().All() {
 		if level.Definition().LevelID == 5 {
-			algorithmRequirements = append(algorithmRequirements, level.Algorithms()[0].InputRequirements()...)
+			algorithmRequirements = append(algorithmRequirements, level.Algorithms().At(0).InputRequirements()...)
 		}
 	}
 	algorithmRequirements = append(algorithmRequirements,

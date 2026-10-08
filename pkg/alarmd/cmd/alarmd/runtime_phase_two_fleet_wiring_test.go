@@ -122,6 +122,15 @@ func TestProductionBundleReportsFleetSnapshotPublishOutcome(t *testing.T) {
 	if len(published) != 1 || published[0].Build == nil || *published[0].Build != want {
 		t.Fatalf("published snapshot build = %+v, want %+v: the page must name the same build as build_info", published, want)
 	}
+	// The retention lengths the page reads are the runtime profile's, from
+	// the same configuration.
+	retention := phaseTwoRuntimeRetention(cfg)
+	if retention.CatalogSeconds <= 0 || retention.ObjectLimitSeconds <= 0 {
+		t.Fatalf("setup: the configuration derives no retention (%+v)", retention)
+	}
+	if published[0].Retention == nil || *published[0].Retention != retention {
+		t.Fatalf("published snapshot retention = %+v, want the runtime profile's %+v", published[0].Retention, retention)
+	}
 
 	// A steady state reports nothing: an outage lasting an hour is one fact,
 	// not one per reconcile tick.
@@ -130,6 +139,67 @@ func TestProductionBundleReportsFleetSnapshotPublishOutcome(t *testing.T) {
 	if after := fleetPublishObservations(&mu, &observations); len(after) != len(before) {
 		t.Fatalf("a second healthy publish reported %d observations, want none", len(after)-len(before))
 	}
+
+	// The round memory the scrape reads is this bundle's tracker's: a round
+	// observed through the bundle's stream is the one round counted.
+	roundCtx := observability.ContextWithTraceFields(ctx, observability.TraceFields{QueryGroupKey: "qg-round-memory"})
+	bundle.dependencies.Observer.Observe(roundCtx, observability.Observation{
+		ProgressCompletionKind: "FULL_COMPLETED",
+		Trace:                  observability.TraceFields{StrategyID: "4101", BusinessID: "7", EvaluationTime: 600},
+	})
+	if got := recorderGauge(t, recorder, "bkmonitor_alarmd_fleet_round_memory_rounds"); got != 1 {
+		t.Fatalf("round memory rounds = %v, want the one round observed through the bundle", got)
+	}
+	// Past the fixed sixteen an object's rounds grow under the observation
+	// memory line, asked for as its own consumer: the seventeenth round of an
+	// object whose windows reach further asks for the eight more it grows by.
+	windowCtx := observability.ContextWithTraceFields(ctx, observability.TraceFields{QueryGroupKey: "qg-round-memory-window"})
+	for i := int64(0); i < 17; i++ {
+		end := 6000 + i*60
+		bundle.dependencies.Observer.Observe(windowCtx, observability.Observation{
+			ProgressCompletionKind: "FULL_COMPLETED",
+			Trace:                  observability.TraceFields{StrategyID: "4102", BusinessID: "7", EvaluationTime: end + 60},
+			HistoryCoverage:        &observability.HistoryCoverageFacts{Levels: 1, End: end, WindowStart: 1},
+		})
+	}
+	if got := consumerCounter(t, recorder, "bkmonitor_alarmd_observation_memory_admitted_bytes_total", "fleet_rounds"); got != 128 {
+		t.Fatalf("fleet_rounds admitted bytes = %v, want the 128 the seventeenth round grew by", got)
+	}
+}
+
+func consumerCounter(t *testing.T, recorder *metric.Recorder, name, consumer string) float64 {
+	t.Helper()
+	families, err := recorder.Gatherer().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		for _, series := range family.GetMetric() {
+			for _, label := range series.GetLabel() {
+				if label.GetName() == "consumer" && label.GetValue() == consumer {
+					return series.GetCounter().GetValue()
+				}
+			}
+		}
+	}
+	return -1
+}
+
+func recorderGauge(t *testing.T, recorder *metric.Recorder, name string) float64 {
+	t.Helper()
+	families, err := recorder.Gatherer().Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() == name && len(family.GetMetric()) == 1 {
+			return family.GetMetric()[0].GetGauge().GetValue()
+		}
+	}
+	return -1
 }
 
 // A window is only worth anything if opening it changes what the replica

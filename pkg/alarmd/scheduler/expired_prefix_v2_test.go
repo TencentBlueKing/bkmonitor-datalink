@@ -18,7 +18,7 @@ func TestRecoveryAgeClassificationMatchesQueryFreeBoundary(t *testing.T) {
 		want   ReplayDisposition
 	}{{1794999, ReplayEligible}, {1795000, ReplayExpired}, {1795001, ReplayExpired}} {
 		// Real 600-second schedule deadline: 600 + 600 - 5 seconds.
-		_, facts, err := source.classifyRecovery(context.Background(), 600, 1195000, time.UnixMilli(tc.millis))
+		_, facts, err := source.classifyRecovery(context.Background(), 600, 1195000, 0, time.UnixMilli(tc.millis), execution.OwnerFence{})
 		if err != nil || facts.Disposition != tc.want {
 			t.Fatalf("at %d: %+v err=%v want=%s", tc.millis, facts, err, tc.want)
 		}

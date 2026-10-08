@@ -24,9 +24,8 @@ type resolvedTarget struct {
 	members map[string]struct{}
 	facts   execution.TargetResolutionSummary
 	// unresolved is true when nothing resolved the plan at all - no resolver
-	// on this worker - as opposed to a resolution one of whose selectors
-	// could not answer. Only the first admits nothing; the second admits the
-	// members that did resolve.
+	// on this worker. Failed inclusion selectors keep the known members;
+	// unresolved plans and failed exclusions admit nothing.
 	unresolved bool
 	// definitive is the resolution's own account of whether its members are
 	// the whole target; see Definitive.
@@ -62,6 +61,13 @@ func (target *resolvedTarget) Definitive() bool {
 	return target.definitive
 }
 
+// Unavailable says a selector of the resolution could not answer this Slot,
+// nothing resolving it included: a key outside the members is then not known
+// to be outside the target, and the admission filter says so.
+func (target *resolvedTarget) Unavailable() bool {
+	return target != nil && target.absence.State == nodata.TargetResolutionUnavailable
+}
+
 // absenceView is what the no-data round reads; nil when nothing resolved.
 func (target *resolvedTarget) absenceView() *nodata.TargetResolution {
 	if target == nil {
@@ -81,6 +87,7 @@ func (target *resolvedTarget) absenceView() *nodata.TargetResolution {
 // static hosts beside it from being detected. Only a Plan nothing resolved
 // at all is left out; its filter then admits nothing, under the name that
 // says so.
+// An unavailable exclusion keeps its resolution but admits no members.
 func (stream *streamedExecution) ResolvedTargets() execution.TargetMemberships {
 	if len(stream.targetResolutions) == 0 {
 		return nil
@@ -160,6 +167,11 @@ func newResolvedTarget(resolution *targetplan.Resolution) *resolvedTarget {
 		State: string(resolution.State), NodesMissing: append([]string(nil), resolution.NodesMissing...),
 		NodesForeign: append([]string(nil), resolution.NodesForeign...), StaleAgeSeconds: int64(resolution.StaleAge.Seconds()),
 	}
+	for _, selector := range resolution.Selectors {
+		if selector.Kind == targetplan.SelectorKindExclude && selector.Reason == targetplan.ReasonExcludedAbsent {
+			target.facts.ExcludedAbsent += selector.Dropped
+		}
+	}
 	for _, failure := range resolution.Failures {
 		target.facts.Failures = append(target.facts.Failures, execution.TargetSelectorFailure{
 			Kind: failure.Kind, ID: failure.ID, Reason: failure.Reason, Dropped: failure.Dropped, Kept: failure.Kept,
@@ -168,7 +180,7 @@ func newResolvedTarget(resolution *targetplan.Resolution) *resolvedTarget {
 	return target
 }
 
-// observeTargetResolution writes the one line and the two counters a
+// observeTargetResolution writes the line and counters a
 // resolution leaves: the composed state, the stale age when a selector ate
 // old grain, and each selector by name.
 func (stream *streamedExecution) observeTargetResolution(ctx context.Context, due execution.DuePlan, resolution *targetplan.Resolution) {

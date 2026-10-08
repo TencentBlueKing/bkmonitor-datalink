@@ -48,6 +48,19 @@ type OverdueWake struct {
 	IntervalSeconds int64
 }
 
+// LateAt says whether the wake is a whole evaluation period late at now, or
+// late at all when it states no period: the wakes OverdueAnomalies keeps.
+func (wake OverdueWake) LateAt(now time.Time) bool {
+	if wake.WakeAt.IsZero() {
+		return false
+	}
+	late := now.Sub(wake.WakeAt)
+	if period := time.Duration(wake.IntervalSeconds) * time.Second; period > 0 {
+		return late > period
+	}
+	return late > 0
+}
+
 // OverdueWakeSource is what a scheduler's due index has to be able to answer.
 //
 // It returns entries rather than a count because this reaches the object list,
@@ -115,21 +128,13 @@ func OverdueAnomalies(
 	anomalies := make([]Anomaly, 0, len(wakes))
 	facts := OverdueFacts{Truncated: total > len(wakes)}
 	for _, wake := range wakes {
-		if wake.QueryGroup == "" || wake.WakeAt.IsZero() {
+		if wake.QueryGroup == "" || !wake.LateAt(now) {
 			continue
 		}
-		late := now.Sub(wake.WakeAt)
-		if late <= 0 {
-			continue
-		}
-		if period := time.Duration(wake.IntervalSeconds) * time.Second; period > 0 {
-			if late <= period {
-				continue
-			}
-		} else {
+		if wake.IntervalSeconds <= 0 {
 			facts.MissingPeriod++
 		}
-		if late.Seconds() > facts.OldestSeconds {
+		if late := now.Sub(wake.WakeAt); late.Seconds() > facts.OldestSeconds {
 			facts.OldestSeconds = late.Seconds()
 		}
 		anomaly := Anomaly{

@@ -140,7 +140,7 @@ func TestTheEvaluationLineNamesTheResolvedWireFormat(t *testing.T) {
 				func(_ context.Context, observation observability.Observation) {
 					recorded = append(recorded, observation)
 				})
-			stream.observeCompletionOnlyPlan(context.Background(), testCase.due, execution.EvaluationResult{Result: observability.ResultSuccess})
+			stream.observeCompletionOnlyPlan(context.Background(), time.Now(), testCase.due, execution.EvaluationResult{Result: observability.ResultSuccess})
 			stream.observeEvaluationCompleted(context.Background(), time.Now(), testCase.due, "series-1", nil,
 				execution.EvaluationResult{Result: observability.ResultSuccess})
 			if len(recorded) != 2 {
@@ -177,7 +177,7 @@ func TestTheEvaluationLineSaysHowManySeriesThePlanWasBoundTo(t *testing.T) {
 	}
 	stream.observeEvaluationCompleted(context.Background(), time.Now(), plan, "series-1", nil,
 		execution.EvaluationResult{Result: observability.ResultSuccess})
-	stream.observeCompletionOnlyPlan(context.Background(), other, execution.EvaluationResult{Result: observability.ResultSuccess})
+	stream.observeCompletionOnlyPlan(context.Background(), time.Now(), other, execution.EvaluationResult{Result: observability.ResultSuccess})
 	if len(recorded) != 2 {
 		t.Fatalf("recorded %d observations, want two evaluation lines", len(recorded))
 	}

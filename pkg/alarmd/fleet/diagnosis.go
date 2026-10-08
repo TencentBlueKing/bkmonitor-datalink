@@ -113,10 +113,20 @@ type DiagnosisRow struct {
 	// window is full -- from the deciding row's named windows and the
 	// object's evaluation interval -- or why that cannot be computed. It is
 	// not when the result can be taken; see WindowClearing.
-	WindowClears *WindowClearing        `json:"window_clears,omitempty"`
-	Dispositions []DiagnosisDisposition `json:"dispositions,omitempty"`
-	Plans        []DiagnosisPlan        `json:"plans"`
-	UnknownParts []DiagnosisPart        `json:"unknown_parts,omitempty"`
+	WindowClears *WindowClearing `json:"window_clears,omitempty"`
+	// TimeDelayAdvice is the time_delay that would read the strategy's data
+	// whole, whatever check decides the row; absent when no object of it is
+	// read early.
+	TimeDelayAdvice *TimeDelayAdvice       `json:"time_delay_advice,omitempty"`
+	Dispositions    []DiagnosisDisposition `json:"dispositions,omitempty"`
+	Plans           []DiagnosisPlan        `json:"plans"`
+	UnknownParts    []DiagnosisPart        `json:"unknown_parts,omitempty"`
+
+	// Global marks a strategy the source marks global, so one pass over
+	// the rows lists every global strategy with its verdict - the first
+	// thing asked after global strategies reach a deployment. Omitted for
+	// the rest.
+	Global bool `json:"global,omitempty"`
 }
 
 // ProgressFacts is one object's persisted progress, as the runtime reads it.
@@ -127,25 +137,32 @@ type ProgressFacts struct {
 
 // ProgressReader reads the persisted progress of the given objects in
 // bounded reads. An object with no record is absent from both maps; an object
-// whose own read failed is in failed; a read that failed as a whole is the
-// error, and every object's progress is then unknown.
-type ProgressReader func(ctx context.Context, queryGroups []string) (found map[string]ProgressFacts, failed map[string]bool, err error)
+// whose progress is unknown for a reason of its own is in unread under that
+// reason -- its own read failed (ProgressReadFailed), or it was not read this
+// time (ProgressDeferred); a read that failed as a whole is the error, and
+// every object's progress is then unknown.
+type ProgressReader func(ctx context.Context, queryGroups []string) (found map[string]ProgressFacts, unread map[string]string, err error)
 
 // The reasons a Plan's progress is unknown, closed.
 const (
 	ProgressUnreadable = "PROGRESS_UNREADABLE"
 	ProgressReadFailed = "PROGRESS_READ_FAILED"
 	ProgressNotFound   = "PROGRESS_NOT_FOUND"
+	// ProgressDeferred is an object whose record was not read for this page:
+	// the observation memory line had no room for it. Asked again, it may be.
+	ProgressDeferred = "PROGRESS_DEFERRED"
 )
 
 // diagnosisContext is what every row of one page is decided against.
 type diagnosisContext struct {
-	view    *View
-	lines   map[string][]StrategyLine
-	stale   map[string]bool
-	unread  map[string]bool
-	replica string
-	now     time.Time
+	view   *View
+	lines  map[string][]StrategyLine
+	stale  map[string]bool
+	unread map[string]bool
+	// unreadAll says why no replica's snapshot was read, when none was.
+	unreadAll string
+	replica   string
+	now       time.Time
 }
 
 func newDiagnosisContext(view *View, replica string, now time.Time) diagnosisContext {
@@ -159,7 +176,14 @@ func newDiagnosisContext(view *View, replica string, now time.Time) diagnosisCon
 		case GapSnapshotStale:
 			ctx.stale[gap.Replica] = true
 		case GapSnapshotsUnreadable:
-			ctx.unread[""] = true
+			if gap.Replica != "" {
+				// One replica's snapshot unread; the others stand.
+				ctx.unread[gap.Replica] = true
+				continue
+			}
+			ctx.unread[""], ctx.unreadAll = true, "fleet snapshots unreadable"
+		case GapSnapshotsDeferred:
+			ctx.unread[""], ctx.unreadAll = true, "fleet snapshots deferred: no room under the observation memory line"
 		default:
 			if gap.Replica != "" {
 				ctx.unread[gap.Replica] = true
@@ -176,6 +200,7 @@ func diagnoseStrategy(id string, facts StrategyLookupFacts, ctx diagnosisContext
 		row.Verdict, row.Reason = DiagnosisUnknown, UnknownLookupUnavailable
 		return row
 	}
+	row.Global = facts.Global
 	standing := StrategyStandingOf(id, "", "", ctx.replica, facts, ctx.view, ctx.now)
 	row.Catalog = standing.Standing
 	for _, disposition := range standing.Dispositions {
@@ -183,7 +208,7 @@ func diagnoseStrategy(id string, facts StrategyLookupFacts, ctx diagnosisContext
 			continue
 		}
 		row.Dispositions = append(row.Dispositions, DiagnosisDisposition{StrategyDisposition: disposition,
-			Attribution: dispositionAttribution(withheldWords(disposition.Disposition).Action)})
+			Attribution: withheldAttribution(disposition.Disposition, disposition.Reason)})
 	}
 	observed := 0
 	for _, plan := range standing.Plans {
@@ -193,7 +218,7 @@ func diagnoseStrategy(id string, facts StrategyLookupFacts, ctx diagnosisContext
 		}
 		switch {
 		case ctx.unread[""]:
-			row.UnknownParts = append(row.UnknownParts, DiagnosisPart{What: plan.QueryGroup, Reason: UnknownReplicaUnreadable, Detail: "fleet snapshots unreadable"})
+			row.UnknownParts = append(row.UnknownParts, DiagnosisPart{What: plan.QueryGroup, Reason: UnknownReplicaUnreadable, Detail: ctx.unreadAll})
 		case plan.Replica != "" && ctx.unread[plan.Replica]:
 			row.UnknownParts = append(row.UnknownParts, DiagnosisPart{What: plan.QueryGroup, Reason: UnknownReplicaUnreadable, Detail: plan.Replica})
 		case plan.Replica != "" && ctx.stale[plan.Replica]:
@@ -214,9 +239,10 @@ func diagnoseStrategy(id string, facts StrategyLookupFacts, ctx diagnosisContext
 	case standing.Standing == StandingWithheld:
 		// No Plan: the words are the first withheld item's check's pair.
 		if len(row.Dispositions) > 0 {
-			words := withheldWords(row.Dispositions[0].Disposition)
+			words := withheldWords(row.Dispositions[0].Disposition, row.Dispositions[0].Reason)
 			row.Verdict, row.Action = words.State, words.Action
-			row.Check, row.Reason = sourceChecks[row.Dispositions[0].Disposition], row.Dispositions[0].Reason
+			row.Check, _ = sourceCheckOf(row.Dispositions[0].Disposition, row.Dispositions[0].Reason)
+			row.Reason = row.Dispositions[0].Reason
 			return row
 		}
 		row.Verdict, row.Reason = DiagnosisUnknown, UnknownLookupUnavailable
@@ -228,8 +254,13 @@ func diagnoseStrategy(id string, facts StrategyLookupFacts, ctx diagnosisContext
 	// row speaks for several.
 	best, bestRank, found := Anomaly{}, unranked, false
 	var bestWords Standing
+	var advice *TimeDelayAdvice
 	for _, plan := range standing.Plans {
+		// A hold says it holds whether or not it has a row: one that rests on
+		// no measurement has none, and is still the owner's to know of.
+		advice = advice.withHold(plan.QueryGroup, plan.ReadHold)
 		for _, anomaly := range plan.Rows {
+			advice = advice.with(anomaly)
 			words, given := standingForStrategy(anomaly, StrategyRef{StrategyID: id, BusinessID: plan.Business})
 			if !given {
 				if anomaly.Standing == nil {
@@ -237,11 +268,12 @@ func diagnoseStrategy(id string, facts StrategyLookupFacts, ctx diagnosisContext
 				}
 				words = *anomaly.Standing
 			}
-			if rank := foldRank(anomaly.Finding.Check, anomaly.Loss); !found || rank < bestRank {
+			if rank := foldRank(anomaly.Finding.Check, anomaly.Loss); !found || decidesBefore(rank, anomaly, bestRank, best) {
 				best, bestRank, bestWords, found = anomaly, rank, words, true
 			}
 		}
 	}
+	row.TimeDelayAdvice = advice
 	if found {
 		row.Verdict, row.Action, row.Check = bestWords.State, bestWords.Action, bestWords.Check
 		row.Reason, row.DecidingObject = string(bestWords.Check), best.QueryGroup
@@ -298,7 +330,7 @@ func WindowClearsOf(anomaly Anomaly, words Standing) *WindowClearing {
 // leaves every Plan's progress unknown with the read's reason; an object
 // the read did not find is unknown on its own. Progress never changes a
 // verdict: it says when, not whether.
-func applyProgress(rows []DiagnosisRow, progress map[string]ProgressFacts, failed map[string]bool, unknown string) {
+func applyProgress(rows []DiagnosisRow, progress map[string]ProgressFacts, unread map[string]string, unknown string) {
 	for i := range rows {
 		for j := range rows[i].Plans {
 			plan := &rows[i].Plans[j]
@@ -306,8 +338,8 @@ func applyProgress(rows []DiagnosisRow, progress map[string]ProgressFacts, faile
 				rows[i].UnknownParts = append(rows[i].UnknownParts, DiagnosisPart{What: plan.QueryGroup + " progress", Reason: unknown})
 				continue
 			}
-			if failed[plan.QueryGroup] {
-				rows[i].UnknownParts = append(rows[i].UnknownParts, DiagnosisPart{What: plan.QueryGroup + " progress", Reason: ProgressReadFailed})
+			if reason, known := unread[plan.QueryGroup]; known {
+				rows[i].UnknownParts = append(rows[i].UnknownParts, DiagnosisPart{What: plan.QueryGroup + " progress", Reason: reason})
 				continue
 			}
 			facts, found := progress[plan.QueryGroup]
@@ -339,8 +371,8 @@ func pageQueryGroups(rows []DiagnosisRow) []string {
 
 // withheldWords is the pair the disposition's check already carries; a
 // disposition with no check folds the way an unpaired check does.
-func withheldWords(disposition string) wordPair {
-	if check, ok := sourceChecks[disposition]; ok {
+func withheldWords(disposition, reason string) wordPair {
+	if check, ok := sourceCheckOf(disposition, reason); ok {
 		if words, ok := checkWords[check]; ok {
 			return words
 		}
@@ -349,6 +381,16 @@ func withheldWords(disposition string) wordPair {
 }
 
 // dispositionAttribution says whose a withheld item is to fix, from the action word.
+// withheldAttribution is who a withheld item is for: the capability owner for
+// a reason the build declares as a capability it lacks, otherwise whoever the
+// line's action sends the reader to.
+func withheldAttribution(disposition, reason string) string {
+	if check, ok := sourceCheckOf(disposition, reason); ok && checkAnswers[check].Owner == OwnerCapability {
+		return "capability"
+	}
+	return dispositionAttribution(withheldWords(disposition, reason).Action)
+}
+
 func dispositionAttribution(action ActionWord) string {
 	switch action {
 	case ActionCacheWriterFill:

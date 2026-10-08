@@ -107,6 +107,9 @@ func TestDetailReturnsTheObjectWhenTheViewIsComplete(t *testing.T) {
 	if body["view_complete"] != true {
 		t.Fatalf("view_complete = %v, want true", body["view_complete"])
 	}
+	if _, moved := body["deployment_health"]; moved || body["health"] == nil {
+		t.Fatalf("a found object's health moved: health %v deployment_health %v", body["health"], body["deployment_health"])
+	}
 }
 
 // Absent from an incomplete view is not the same as healthy, and the response
@@ -121,8 +124,13 @@ func TestDetailSaysWhetherNotFoundCanBeTrusted(t *testing.T) {
 	if status != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", status)
 	}
-	if body["view_complete"] != true || body["health"] != string(HealthDegraded) {
+	if body["view_complete"] != true || body["deployment_health"] != string(HealthDegraded) {
 		t.Fatalf("body = %+v, want a trustworthy not-found", body)
+	}
+	// The verdict is the deployment's: beside existence "absent" it is not
+	// carried as the object's health.
+	if _, present := body["health"]; present || body["existence"] != "absent" {
+		t.Fatalf("an absent object carries health %v (existence %v), want it only as deployment_health", body["health"], body["existence"])
 	}
 
 	service := mustService(t,
@@ -263,7 +271,7 @@ func handlerWithStrategies(t *testing.T) http.Handler {
 	t.Helper()
 	snapshots := healthySnapshots()
 	snapshots[1].Anomalies = []Anomaly{
-		strategyAnomaly("qg-a", "2864", "7"),
+		strategyAnomaly("qg-a", "850", "7"),
 		strategyAnomaly("qg-b", "8904", "47"),
 		strategyAnomaly("qg-c", "1449", "7"),
 	}
@@ -274,9 +282,9 @@ func handlerWithStrategies(t *testing.T) http.Handler {
 func TestObjectsCanBeNarrowedByStrategyAndBusiness(t *testing.T) {
 	handler := handlerWithStrategies(t)
 	for target, want := range map[string]int{
-		"/api/objects?strategy=2864": 1,
-		"/api/objects?business=7":    2,
-		"/api/objects":               3,
+		"/api/objects?strategy=850": 1,
+		"/api/objects?business=7":   2,
+		"/api/objects":              3,
 	} {
 		_, body := get(t, handler, target)
 		anomalies, _ := body["anomalies"].([]any)
@@ -451,9 +459,9 @@ func TestTheStalledTotalSurvivesAFilter(t *testing.T) {
 	budget := 10 * time.Minute
 	snapshots := healthySnapshots()
 	stuck := agedAnomaly("stuck", "error", 2*time.Hour)
-	stuck.Strategies = []StrategyRef{{StrategyID: "8568", BusinessID: "7"}}
+	stuck.Strategies = []StrategyRef{{StrategyID: "851", BusinessID: "7"}}
 	other := agedAnomaly("also-stuck", "error", 2*time.Hour)
-	other.Strategies = []StrategyRef{{StrategyID: "2849", BusinessID: "7"}}
+	other.Strategies = []StrategyRef{{StrategyID: "849", BusinessID: "7"}}
 	snapshots[1].Anomalies = []Anomaly{stuck, other}
 	snapshots[1].TotalAnomalies = 2
 	handler := handlerWithStallBudget(t, snapshots, budget)
@@ -463,7 +471,7 @@ func TestTheStalledTotalSurvivesAFilter(t *testing.T) {
 		t.Fatalf("unfiltered stalled_total = %v, want 2", body["stalled_total"])
 	}
 
-	_, body = get(t, handler, "/api/objects?strategy=8568")
+	_, body = get(t, handler, "/api/objects?strategy=851")
 	if body["page"].(map[string]any)["total"].(float64) != 1 {
 		t.Fatalf("the filter did not narrow the table: %v", body["page"])
 	}
@@ -500,13 +508,13 @@ func TestHealthResponseCarriesCapacityWhenReplicasReportIt(t *testing.T) {
 	}
 	// The numbers the panel actually shows. A capacity block present but empty
 	// would still leave a heading over nothing.
-	for _, field := range []string{"replicas", "permits_held", "permit_budget", "memory_limit_bytes"} {
+	for _, field := range []string{"replicas", "permits_held_total", "permit_budget_per_replica", "memory_limit_bytes_per_replica"} {
 		if capacity[field] == nil {
 			t.Fatalf("capacity is missing %q, which the panel renders: %v", field, capacity)
 		}
 	}
-	if capacity["permit_budget"].(float64) != 32 {
-		t.Fatalf("a per-replica ceiling was summed: %v", capacity["permit_budget"])
+	if capacity["permit_budget_per_replica"].(float64) != 32 {
+		t.Fatalf("a per-replica ceiling was summed: %v", capacity["permit_budget_per_replica"])
 	}
 }
 
@@ -1097,5 +1105,86 @@ func TestTheVerdictRouteCarriesEachReplicasReadiness(t *testing.T) {
 	}
 	if reasons, _ := bits["pod-b"]["reasons"].([]any); len(reasons) != 1 || reasons[0] != "KAFKA_UNAVAILABLE" {
 		t.Errorf("pod-b reasons = %v, want the process's one reason", bits["pod-b"]["reasons"])
+	}
+}
+
+// An object two replicas hold during a handover is on the health route's
+// lists once, the later entry, as the view keeps one record of it; each
+// holder's part counts it, so the totals run high for that moment, and the
+// route says so beside them. The same rows on the new holder alone are
+// counted once and carry no note.
+func TestHealthListsAnObjectTwoReplicasHoldOnceAndMarksTheHandover(t *testing.T) {
+	for name, held := range map[string]bool{"held by both": true, "held by one": false} {
+		snapshots := healthySnapshots()
+		snapshots[0].OwnedObjects = []string{"qg-a1"}
+		snapshots[1].OwnedObjects = []string{"qg-b1", "qg-handed-over"}
+		first := 1
+		if held {
+			snapshots[0].OwnedObjects, first = append(snapshots[0].OwnedObjects, "qg-handed-over"), 0
+		}
+		for index := first; index < len(snapshots); index++ {
+			at := []time.Time{now.Add(-time.Hour), now.Add(-time.Minute)}[index]
+			snapshots[index].Owned, snapshots[index].Determined = len(snapshots[index].OwnedObjects), len(snapshots[index].OwnedObjects)
+			snapshots[index].RetainedShare = []Anomaly{{QueryGroup: "qg-handed-over", Replica: snapshots[index].Replica,
+				RetainedShare: &RetainedShareFacts{PercentOfShare: uint64(90 - 20*index), Since: at}}}
+			snapshots[index].ReadEarly = []Anomaly{{QueryGroup: "qg-handed-over", Replica: snapshots[index].Replica,
+				ReadEarly: &ReadEarlyFacts{SuggestedDelaySeconds: int64(90 - 20*index), Since: at}}}
+		}
+		snapshots[0].Owned, snapshots[0].Determined = len(snapshots[0].OwnedObjects), len(snapshots[0].OwnedObjects)
+		// And one object nobody holds, which is no handover and no part of
+		// the note's number.
+		handler := handlerWith(t, snapshots, Expectation{QueryGroups: 4, Known: true,
+			IDs: []string{"qg-a1", "qg-b1", "qg-handed-over", "qg-nobody"}}, []string{"pod-a", "pod-b"})
+		body := requestJSON(t, handler, "/api/health")
+		holders := 1
+		if held {
+			holders = 2
+		}
+		for _, list := range []string{"retained_share", "read_early"} {
+			listed, _ := body[list].([]any)
+			if len(listed) != 1 || body[list+"_total"] != float64(holders) {
+				t.Errorf("%s: %s carried %v with total %v, want the object once, counted by each of its %d holders",
+					name, list, listed, body[list+"_total"], holders)
+				continue
+			}
+			if kept, _ := listed[0].(map[string]any); kept["replica"] != snapshots[1].Replica {
+				t.Errorf("%s: %s kept %v, want the later entry, %s's", name, list, kept, snapshots[1].Replica)
+			}
+		}
+		marker, marked := body["handover"].(map[string]any)
+		if marked != held || (held && marker["objects"] != float64(1)) {
+			t.Errorf("%s: handover %v, want a note naming one object only while two replicas hold it", name, body["handover"])
+		}
+	}
+}
+
+// Past FirstScreenListBound the health route carries the first few of each
+// object list in its order and says how many there are: counted before the
+// cut, or the page reads eight where there are twelve.
+func TestHealthCarriesTheFirstOfEachObjectListAndHowManyThereAre(t *testing.T) {
+	snapshots := healthySnapshots()
+	snapshots[0].PrunedSkips = map[string]PrunedSkip{}
+	for index := 0; index < 12; index++ {
+		queryGroup := fmt.Sprintf("qg-%02d", index)
+		snapshots[0].PrunedSkips[queryGroup] = PrunedSkip{From: 0, To: int64(60 * (index + 1)), At: now.Add(-time.Hour)}
+		snapshots[index%2].RetainedShare = append(snapshots[index%2].RetainedShare, Anomaly{QueryGroup: queryGroup,
+			Replica: snapshots[index%2].Replica, RetainedShare: &RetainedShareFacts{PercentOfShare: uint64(60 + index)}})
+		snapshots[index%2].ReadEarly = append(snapshots[index%2].ReadEarly, Anomaly{QueryGroup: queryGroup,
+			Replica: snapshots[index%2].Replica, ReadEarly: &ReadEarlyFacts{SuggestedDelaySeconds: int64(15 * (index + 1))}})
+	}
+	handler := handlerWith(t, snapshots, Expectation{QueryGroups: 2, Known: true}, []string{"pod-a", "pod-b"})
+	body := requestJSON(t, handler, "/api/health")
+	for _, list := range []string{"pruned_skips", "retained_share", "read_early"} {
+		listed, _ := body[list].([]any)
+		if len(listed) != FirstScreenListBound || body[list+"_total"] != float64(12) {
+			t.Errorf("%s carried %d with total %v, want the first %d and 12", list, len(listed), body[list+"_total"], FirstScreenListBound)
+			continue
+		}
+		// The first is the one the order ranks first across both replicas:
+		// the eleventh object has the longest span, the fullest share and the
+		// furthest suggestion.
+		if first, _ := listed[0].(map[string]any); first["query_group"] != "qg-11" {
+			t.Errorf("%s starts with %v, want qg-11", list, first["query_group"])
+		}
 	}
 }

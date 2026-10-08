@@ -47,6 +47,11 @@ func (m phaseTwoMetrics) observeSlotTiming(o observability.Observation) {
 	if (o.Component != observability.ComponentScheduler && o.Component != observability.ComponentState) || o.Duration < 0 {
 		return
 	}
+	// A Slot's own timings; a supplement's hold is its own histogram
+	// (lookback_supplement_hold_total).
+	if o.Operation == observability.OperationSupplement {
+		return
+	}
 	var stage string
 	switch o.Stage {
 	case observability.StageRunnerCompleted:

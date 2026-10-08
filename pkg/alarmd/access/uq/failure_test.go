@@ -17,20 +17,26 @@ import (
 // detail instead of returning a Go error that makes the Slot retry the same
 // query until it ages out.
 func TestDeterministicQueryStatusCompletesAsUnavailableWithBoundedDetail(t *testing.T) {
-	for _, tc := range []struct{ name, payload, detail string }{
-		{"backend", `{"series":[],"status":{"code":"SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS"},"is_partial":false}`, "response=status_space_table_id_field_is_not_exists"},
-		{"backend_new_bounded_code", `{"series":[],"status":{"code":"QUERY_TS_STORAGE_TIMEOUT"},"is_partial":false}`, "response=status_query_ts_storage_timeout"},
-		{"backend_unknown", `{"series":[],"status":{"code":"https://user:secret@example.test/?token=secret"},"is_partial":false}`, "response=status_other"},
-		{"backend_lowercase", `{"series":[],"status":{"code":"table missing"},"is_partial":false}`, "response=status_other"},
-		{"backend_without_is_partial", `{"series":[],"status":{"code":"SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS"}}`, "response=status_space_table_id_field_is_not_exists"},
+	// A table or field that does not route in the space is named for what it
+	// is; every other status code stays the backend's word.
+	missing, unavailable := execution.ReasonCode(contract.ReasonQueryTargetMissing), execution.ReasonCode(contract.ReasonQueryUnavailable)
+	for _, tc := range []struct {
+		name, payload, detail string
+		reason                execution.ReasonCode
+	}{
+		{"backend", `{"series":[],"status":{"code":"SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS"},"is_partial":false}`, "response=status_space_table_id_field_is_not_exists", missing},
+		{"backend_new_bounded_code", `{"series":[],"status":{"code":"QUERY_TS_STORAGE_TIMEOUT"},"is_partial":false}`, "response=status_query_ts_storage_timeout", unavailable},
+		{"backend_unknown", `{"series":[],"status":{"code":"https://user:secret@example.test/?token=secret"},"is_partial":false}`, "response=status_other", unavailable},
+		{"backend_lowercase", `{"series":[],"status":{"code":"table missing"},"is_partial":false}`, "response=status_other", unavailable},
+		{"backend_without_is_partial", `{"series":[],"status":{"code":"SPACE_TABLE_ID_FIELD_IS_NOT_EXISTS"}}`, "response=status_space_table_id_field_is_not_exists", missing},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := &Client{limits: DefaultLimits(), now: time.Now}
 			sink := &collectingSink{}
 			completion, err := c.decode(context.Background(), strings.NewReader(tc.payload), validAttempt(t), sink)
 			attempt := failedAttempt(t, completion, err)
-			if attempt.ReasonCode != execution.ReasonCode(contract.ReasonQueryUnavailable) || attempt.Detail != tc.detail {
-				t.Fatalf("attempt=%+v, want QUERY_UNAVAILABLE with detail %q", attempt, tc.detail)
+			if attempt.ReasonCode != tc.reason || attempt.Detail != tc.detail {
+				t.Fatalf("attempt=%+v, want %s with detail %q", attempt, tc.reason, tc.detail)
 			}
 			if execution.RouteDetailKind(attempt.Detail) != execution.RouteDetailKindResponse {
 				t.Fatalf("detail %q is not a response detail", attempt.Detail)

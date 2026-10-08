@@ -19,7 +19,9 @@ func shortPeriodCompletionContext(ctx context.Context, operation execution.Opera
 		if spec.Validate() != nil || (spec.EvaluationIntervalSeconds != 10 && spec.EvaluationIntervalSeconds != 15) || spec.CompletionDeadlineOffsetSeconds != 30 {
 			return ctx, noop
 		}
-		resolved, ok := spec.CompletionDeadlineUnixMilli(header.Contract.Slot.EvaluationTime)
+		// The contract's read hold moves its deadline that much later: the
+		// due Plan carries the held deadline, and so is it resolved here.
+		resolved, ok := spec.HeldCompletionDeadlineUnixMilli(header.Contract.Slot.EvaluationTime, header.Contract.ReadHoldMillis)
 		if !ok || resolved != due.CompletionDeadlineUnixMilli || (deadline != 0 && deadline != resolved) {
 			return ctx, noop
 		}

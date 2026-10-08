@@ -115,7 +115,7 @@ func prepareAlwaysEffectiveTimeFactsWithProvider(
 // levelsNeedingEffectiveTime is every level a Plan could be judged on in one
 // Slot: the declared ones, plus the no-data level when it has one.
 func levelsNeedingEffectiveTime(due execution.DuePlan) []strategy.CompiledLevel {
-	levels := due.CompiledPlan.Levels()
+	levels := due.CompiledPlan.Levels().Copy()
 	if noData := due.CompiledPlan.NoDataLevel(); noData != nil {
 		levels = append(levels, *noData)
 	}
@@ -153,7 +153,7 @@ func bindAlwaysEffectiveTimeFacts(
 		if err != nil {
 			return execution.InternalExecutionHeader{}, err
 		}
-		for _, level := range due.CompiledPlan.Levels() {
+		for _, level := range due.CompiledPlan.Levels().All() {
 			target := alwaysEffectiveTimeTarget{
 				consumer: execution.ConsumerRef{Plan: due.Identity, LevelID: level.Definition().LevelID, HasLevel: true},
 				series:   item.Identity.SeriesIdentityDigest,

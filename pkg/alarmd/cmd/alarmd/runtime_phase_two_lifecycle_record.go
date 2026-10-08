@@ -11,6 +11,7 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 )
 
 // A process's exit leaves no trace a reader can reach once its Pod is gone:
@@ -55,6 +56,8 @@ type lifecycleRecord struct {
 	replica string
 	build   string
 	now     func() time.Time
+	// failed, when set, hears the reason of a write the store did not take.
+	failed func(reason string)
 }
 
 func lifecycleRecordKey(cfg config.Config) string {
@@ -103,12 +106,18 @@ func (record *lifecycleRecord) write(entry lifecycleEntry) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), lifecycleWriteTimeout)
 	defer cancel()
-	_, _ = record.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+	_, err = record.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		pipe.LPush(ctx, record.key, encoded)
 		pipe.LTrim(ctx, record.key, 0, lifecycleRecordEntries-1)
 		pipe.Expire(ctx, record.key, lifecycleRecordTTL)
 		return nil
 	})
+	// The write still costs the process nothing when it fails -- a start or
+	// stop goes on regardless -- but it is counted by why, since a record the
+	// store never took reads later as an unclean restart.
+	if err != nil && record.failed != nil {
+		record.failed(redisfailure.Reason(err))
+	}
 }
 
 func (record *lifecycleRecord) close() {

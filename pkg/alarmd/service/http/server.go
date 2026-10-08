@@ -62,6 +62,9 @@ type Server struct {
 	source          lifecycle.Source
 	healthSource    observability.HealthSource
 	liveness        atomic.Pointer[livenessHolder]
+	// adminKeySecret is what the login page says about where the
+	// administrator key is kept: names only.
+	adminKeySecret ui.AdminKeySecret
 }
 
 // Stall is one reason the process is not making progress: a named loop that
@@ -111,6 +114,13 @@ func WithInternalAddress(address string) Option {
 // coordinate is public before the CLI is known to be there or not.
 func WithRestrictedPublicSurface() Option {
 	return func(server *Server) { server.restricted.Store(true) }
+}
+
+// WithAdminKeySecret tells the login page where the CLI administrator key is
+// kept -- its namespace, Secret and key -- so the page can show the command
+// that reads it. The key itself is never passed here.
+func WithAdminKeySecret(secret ui.AdminKeySecret) Option {
+	return func(server *Server) { server.adminKeySecret = secret }
 }
 
 // SetPublicSurfaceRestricted settles whether the query surface is restricted.
@@ -273,7 +283,7 @@ func newServer(recorder *metric.Recorder, source lifecycle.Source, options ...Op
 	// says which channel cannot answer, which is the degradation it was designed
 	// for. "/" is the least specific pattern, so it cannot shadow the routes
 	// above.
-	mux.Handle("/", ui.Handler())
+	mux.Handle("/", ui.Handler(ui.WithAdminKeySecret(server.adminKeySecret)))
 	server.handler = mux
 
 	// Allocation and CPU attribution has no in-process answer today: the

@@ -17,7 +17,6 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
-	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -31,7 +30,7 @@ func TestProductionPollingSources(t *testing.T) {
 	for _, source := range []struct{ label, kind string }{
 		{"custom", "time_series"}, {"prometheus", "time_series"}, {"bk_data", "time_series"},
 		{"bk_log_search", "time_series"}, {"bk_log_search", "log"},
-		{"bk_monitor", "log"}, {"custom", "event"}, {"bk_fta", "event"},
+		{"bk_monitor", "log"}, {"custom", "event"},
 	} {
 		for _, second := range []string{"normal", "unavailable", "partial"} {
 			t.Run(source.label+"/"+source.kind+"/"+second, func(t *testing.T) {
@@ -62,12 +61,6 @@ func TestProductionPollingSources(t *testing.T) {
 					query["custom_event_name"], query["result_table_id"] = "synthetic-event", "system_event"
 				}
 				dimension := "host"
-				if source.label == "bk_fta" {
-					dimension = "tags.host"
-					query["agg_dimension"] = []string{dimension}
-					delete(query, "metric_field")
-					query["alert_name"] = "__ALL_EVENT_PLUGIN__"
-				}
 				body, err := json.Marshal(document)
 				if err != nil {
 					t.Fatal(err)
@@ -97,26 +90,6 @@ func TestProductionPollingSources(t *testing.T) {
 						clauses, ok := payload["query_list"].([]any)
 						if !ok || len(clauses) != 1 || clauses[0].(map[string]any)["table_id"] != "bklog_index_set_71" {
 							return nil, fmt.Errorf("log query did not use index_set_id: %v", payload)
-						}
-					}
-					if source.label == "bk_fta" {
-						clauses, ok := payload["query_list"].([]any)
-						if !ok || len(clauses) != 1 || clauses[0].(map[string]any)["field_semantics"] != "fta_event_tags/v1" || payload["tsdb_map"] == nil {
-							return nil, fmt.Errorf("FTA missing ES route or keyed tag semantics: %v", payload)
-						}
-						sourceFilter, ok := clauses[0].(map[string]any)["source_conditions"].(map[string]any)
-						if !ok {
-							return nil, fmt.Errorf("FTA missing independent source filter")
-						}
-						pluginFilter := false
-						for _, raw := range sourceFilter["field_list"].([]any) {
-							field := raw.(map[string]any)
-							if field["field_name"] == "plugin_id" && field["op"] == "ne" && fmt.Sprint(field["value"]) == "[bkmonitor]" {
-								pluginFilter = true
-							}
-						}
-						if !pluginFilter {
-							return nil, fmt.Errorf("FTA alert_name did not filter event plugins: %v", sourceFilter)
 						}
 					}
 					if source.label == "prometheus" {
@@ -149,12 +122,6 @@ func TestProductionPollingSources(t *testing.T) {
 					return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(&buf), Request: request}, nil
 				})}
 				cfg := controlledG4RuntimeConfig(address, "http://controlled-uq", "alarmd-polling-controlled")
-				if source.label == "bk_fta" {
-					cfg.PhaseTwo.Control.LegacyQueryRuntime.FTAEventStorage = &execution.QueryStorage{
-						TableID: "fta.event", StorageID: "1", StorageType: "elasticsearch", DB: "bkfta_event_*_read", Measurement: "__default__",
-						TimeField: execution.QueryTimeField{Name: "time", Type: "date", Unit: "millisecond"},
-					}
-				}
 				events := &recordingPhaseTwoEventSink{}
 				bundle, err := openProductionPhaseTwoBundleWithDependencies(ctx, cfg, metric.NewRecorder(metric.BuildInfo{}), observability.Discard(observability.ComponentRuntime), newPhaseTwoApplicationHealth(),
 					func(client redis.Cmdable, prefix string) (controlplane.StrategySource, error) {

@@ -33,7 +33,7 @@ func TestPollingHistoryDefaultRequiresCompleteQueries(t *testing.T) {
 			for _, defaultZero := range []bool{false, true} {
 				tc.config["missing_history_as_zero"] = defaultZero
 				plan := compileNamedInputPlan(t, tc.kind, tc.config, strategy.AlgorithmInputProjection{ValueFields: []string{"value"}, IdentityFields: []string{"host"}})
-				algorithm := plan.Levels()[0].Algorithms()[0]
+				algorithm := plan.Levels().At(0).Algorithms().At(0)
 				if !defaultZero {
 					baseline = algorithm.AlgorithmPlanID()
 				} else if baseline == algorithm.AlgorithmPlanID() {

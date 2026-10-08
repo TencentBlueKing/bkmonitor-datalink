@@ -66,8 +66,8 @@ func TestEvaluatorGatesARecoveryEnvelopeOnTheOpenAlertSet(t *testing.T) {
 		t.Run(arm.name, func(t *testing.T) {
 			plan := compiledTwoLevelsShaped(t, "50", "50", arm.shape)
 			history := []execution.StateHistoryPoint{{RecordID: strings.Repeat("a", 64), SourceTime: 40, Levels: []execution.StateLevelFact{
-				{LevelID: 5, DetectFingerprint: plan.Levels()[0].Fingerprints().Detect, Result: execution.LevelFactAnomalous},
-				{LevelID: 6, DetectFingerprint: plan.Levels()[1].Fingerprints().Detect, Result: execution.LevelFactAnomalous},
+				{LevelID: 5, DetectFingerprint: plan.Levels().At(0).Fingerprints().Detect, Result: execution.LevelFactAnomalous},
+				{LevelID: 6, DetectFingerprint: plan.Levels().At(1).Fingerprints().Detect, Result: execution.LevelFactAnomalous},
 			}}}
 			req := requestFixtureTwoLevels(t, plan, json.RawMessage(`10`), history)
 			req.OpenAlerts = arm.set

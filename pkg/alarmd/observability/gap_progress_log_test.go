@@ -27,7 +27,7 @@ func TestGapScopeProgressLineCarriesBothNumbers(t *testing.T) {
 	observer := NewLoggingObserver(New("alarmd", &output), policy)
 	observer.Observe(context.Background(), Observation{
 		Component: ComponentState, Stage: StageGapGuardProgress, Result: ResultSuccess,
-		Trace: TraceFields{StrategyID: "1074"},
+		Trace: TraceFields{StrategyID: "846"},
 		GapProgress: &GapProgressFacts{
 			Scope: "plan", Status: "GAPPED", Reason: "CONFIG_DRIFT", Required: 5, Observed: 0,
 			Progress: "none",
@@ -55,7 +55,7 @@ func TestGapScopeProgressLineCarriesBothNumbers(t *testing.T) {
 		// The same word the metric label carries, so a reader moving between
 		// the chart and the line is reading one vocabulary rather than two.
 		"gap_progress": "none",
-		"strategy_id":  "1074",
+		"strategy_id":  "846",
 	} {
 		if line[field] != want {
 			t.Fatalf("line[%q] = %#v, want %#v; line=%#v", field, line[field], want, line)

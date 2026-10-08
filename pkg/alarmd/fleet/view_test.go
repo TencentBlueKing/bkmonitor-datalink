@@ -39,7 +39,7 @@ func anomaly(queryGroup string) Anomaly {
 		Since:      now.Add(-3 * time.Hour),
 		SinceFrom:  SinceBusinessState,
 		Replica:    "pod-b",
-		Strategies: []StrategyRef{{StrategyID: "8930", BusinessID: "2"}},
+		Strategies: []StrategyRef{{StrategyID: "854", BusinessID: "2"}},
 	}
 }
 

@@ -114,10 +114,17 @@ func comparisonNumber(value string) *json.Number { n := json.Number(value); retu
 
 func traditionalCompileFixture(t *testing.T, kind string, params TraditionalComparisonParameters) (AlgorithmCompileContext, contract.AlgorithmIRV2) {
 	t.Helper()
+	return traditionalCompileFixtureStepped(t, kind, params, 60)
+}
+
+// traditionalCompileFixtureStepped is the fixture of an item detected every
+// step over one-minute windows: its history points are steps apart.
+func traditionalCompileFixtureStepped(t *testing.T, kind string, params TraditionalComparisonParameters, step int64) (AlgorithmCompileContext, contract.AlgorithmIRV2) {
+	t.Helper()
 	projection := AlgorithmInputProjection{ValueFields: []string{"value"}, IdentityFields: []string{"host"}}
 	primary := AlgorithmInputRequirement{RequirementID: strings.Repeat("0", 64), DatasetName: "primary", Role: AlgorithmInputPrimary, ConsumerLevelID: 1, LogicalQueryRef: "query", RelativeWindow: AlgorithmRelativeWindow{-60, 0, true}, StepMillis: 60000, AlignmentMillis: 60000, ReadinessClass: AlgorithmReadinessEager, InputProjection: projection}
 	requirements := []AlgorithmInputRequirement{primary}
-	offsets, err := TraditionalHistoryOffsets(kind, params, 60)
+	offsets, err := TraditionalHistoryOffsets(kind, params, step)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +150,7 @@ func traditionalCompileFixture(t *testing.T, kind string, params TraditionalComp
 	config["input_projection"] = projection
 	config["requirements"] = requirements
 	payload, _ = json.Marshal(config)
-	ctx := AlgorithmCompileContext{Projection: contract.InputProjectionV2{ValueFields: projection.ValueFields}, IdentityFields: projection.IdentityFields, ExecutionSemantics: contract.ExecutionSemanticsV2{AggregationInterval: 60}, Limits: Limits{MaxRequiredHistoryPoints: 4096}}
+	ctx := AlgorithmCompileContext{Projection: contract.InputProjectionV2{ValueFields: projection.ValueFields}, IdentityFields: projection.IdentityFields, ExecutionSemantics: contract.ExecutionSemanticsV2{AggregationInterval: 60, EvaluationInterval: uint32(step)}, Limits: Limits{MaxRequiredHistoryPoints: 4096}}
 	return ctx, contract.AlgorithmIRV2{Type: kind, Version: 1, Config: payload}
 }
 
@@ -159,5 +166,20 @@ func TestTraditionalComparisonHistoryBounds(t *testing.T) {
 	offsets, err := TraditionalHistoryOffsets(DetectorKindAdvancedRingRatio, TraditionalComparisonParameters{Ceil: comparisonNumber("1"), CeilInterval: 4096}, 60)
 	if err != nil || len(offsets) != 4096 {
 		t.Fatalf("bounded maximum %d, %v", len(offsets), err)
+	}
+}
+
+// An item detected every fifteen seconds over one-minute windows compares
+// with the previous detection, fifteen seconds back: the history points it
+// keys are steps apart, and its windows an aggregation interval long.
+func TestATraditionalComparisonKeysItsHistoryByTheEvaluationStep(t *testing.T) {
+	params := TraditionalComparisonParameters{Ratio: comparisonNumber("-1"), Shock: comparisonNumber("-2"), Threshold: comparisonNumber("-3")}
+	ctx, raw := traditionalCompileFixtureStepped(t, DetectorKindRingRatioAmplitude, params, 15)
+	compiled, err := traditionalComparisonCompiler{DetectorKindRingRatioAmplitude}.Compile(context.Background(), ctx, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config := compiled.Config.TraditionalComparison; config == nil || config.AggregationInterval != 15 {
+		t.Fatalf("compiled %+v, want its history keyed fifteen seconds apart", compiled.Config.TraditionalComparison)
 	}
 }

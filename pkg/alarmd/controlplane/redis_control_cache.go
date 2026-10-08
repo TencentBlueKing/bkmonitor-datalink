@@ -135,6 +135,10 @@ type controlReadCache struct {
 	evictions  uint64
 	maxEntries int
 	maxBytes   int
+	// working is what the timeline cache is about to hold
+	// (cacheWorkingSet), charged like bytes. A version change that drops
+	// every timeline leaves it as it is: the readers are still reading.
+	working cacheWorkingSet
 }
 
 func newControlReadCache(maxEntries, maxBytes int) *controlReadCache {
@@ -350,10 +354,44 @@ func (cache *controlReadCache) lookupTimelineAtRevision(
 	return element.Value.(*cachedTimeline).timeline, true
 }
 
+// peekTimelineAtRevision is lookupTimelineAtRevision for a reader that is
+// not executing: it leaves the eviction order as the executing reads made
+// it, so an observation pass over every owned Query Group cannot keep an
+// entry alive that execution no longer uses.
+func (cache *controlReadCache) peekTimelineAtRevision(
+	queryGroup execution.QueryGroupIdentity, revision uint64,
+) (persistedScheduleTimeline, bool) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	element, ok := cache.timelines[queryGroup]
+	if !ok || element.Value.(*cachedTimeline).timeline.RecordRevision != revision {
+		return persistedScheduleTimeline{}, false
+	}
+	return element.Value.(*cachedTimeline).timeline, true
+}
+
+// announceTimelines is timelines a reader is about to read from Redis and
+// store here (cacheWorkingSet); the reader defers settle on what it
+// returns.
+func (cache *controlReadCache) announceTimelines(entries int) *cacheReading {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	return cache.working.announceLocked(&cache.mu, entries)
+}
+
+// timelineBudget is the timeline cache as a detection budget: its working
+// set and what it holds.
+func (cache *controlReadCache) timelineBudget() (size, held uint64) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	return uint64(cache.working.sizeLocked(cache.bytes, cache.maxBytes)), uint64(max(cache.bytes, 0))
+}
+
 // storeTimelineAtCurrentVersion stores a body a hinted read fetched, under
 // whatever version the cache is on, without entering a new one: the hinted
 // read learned nothing about the header.
 func (cache *controlReadCache) storeTimelineAtCurrentVersion(
+	reading *cacheReading,
 	queryGroup execution.QueryGroupIdentity,
 	timeline persistedScheduleTimeline,
 	payloadLen int,
@@ -361,10 +399,13 @@ func (cache *controlReadCache) storeTimelineAtCurrentVersion(
 	cache.mu.Lock()
 	version := cache.version
 	cache.mu.Unlock()
-	cache.storeTimeline(version, queryGroup, timeline, payloadLen)
+	cache.storeTimeline(reading, version, queryGroup, timeline, payloadLen)
 }
 
+// storeTimeline keeps a timeline under version, struck from reading, the
+// announcement it was read under.
 func (cache *controlReadCache) storeTimeline(
+	reading *cacheReading,
 	version string,
 	queryGroup execution.QueryGroupIdentity,
 	timeline persistedScheduleTimeline,
@@ -376,6 +417,7 @@ func (cache *controlReadCache) storeTimeline(
 	}
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
+	cache.working.storedLocked(reading, entryBytes)
 	cache.enterLocked(version)
 	if element, ok := cache.timelines[queryGroup]; ok {
 		cache.bytes -= element.Value.(*cachedTimeline).bytes
@@ -416,6 +458,13 @@ func (cache *controlReadCache) configureTimelineBounds(maxEntries, maxBytes int)
 		delete(cache.timelines, evicted.queryGroup)
 		cache.evictions++
 	}
+}
+
+// timelineByteBound is the bytes the timeline cache may hold.
+func (cache *controlReadCache) timelineByteBound() int {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	return cache.maxBytes
 }
 
 func (cache *controlReadCache) timelineOccupancy() ControlTimelineCacheOccupancy {
@@ -781,11 +830,14 @@ func (repository *RedisCatalogRepository) loadScheduleTimelineAt(
 	counters := &repository.controlReads.timeline
 	superseded := version.known && repository.controlCache.supersedes(version.header)
 	repository.adoptControlVersion(ctx, version)
+	var reading *cacheReading
 	if version.known {
 		if timeline, ok := repository.controlCache.lookupTimeline(version.header, queryGroup); ok {
 			counters.hits.Add(1)
 			return timeline, nil
 		}
+		reading = repository.controlCache.announceTimelines(1)
+		defer reading.settle()
 	}
 	timeline, payload, err := repository.readScheduleTimeline(ctx, queryGroup)
 	if err != nil {
@@ -797,7 +849,7 @@ func (repository *RedisCatalogRepository) loadScheduleTimelineAt(
 		} else {
 			counters.misses.Add(1)
 		}
-		repository.controlCache.storeTimeline(version.header, queryGroup, timeline, len(payload))
+		repository.controlCache.storeTimeline(reading, version.header, queryGroup, timeline, len(payload))
 	} else {
 		counters.misses.Add(1)
 	}

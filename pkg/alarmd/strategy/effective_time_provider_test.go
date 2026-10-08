@@ -87,7 +87,7 @@ func TestBusinessLocalTimezoneResolverDoesNotMarkLocalErrorsRetryable(t *testing
 func TestCalendarScheduleProviderResolvesAlwaysWithoutDependencies(t *testing.T) {
 	t.Parallel()
 
-	requirement := mustCompilePlan(t, newTestCompiler(t), validPlan()).Levels()[0].EffectiveTimeRequirement()
+	requirement := mustCompilePlan(t, newTestCompiler(t), validPlan()).Levels().At(0).EffectiveTimeRequirement()
 	evaluationTime := time.Date(2026, 8, 26, 10, 0, 0, 0, time.UTC).Unix()
 	provider := NewCalendarScheduleProvider(nil, nil)
 	facts, err := provider.Resolve(context.Background(), []EffectiveTimeRequest{{
@@ -228,7 +228,7 @@ func calendarRequirement(t testing.TB, active, inactive []int64) EffectiveTimeRe
 		"active_calendars": active,
 		"calendars":        inactive,
 	})
-	return mustCompilePlan(t, newTestCompiler(t), plan).Levels()[0].EffectiveTimeRequirement()
+	return mustCompilePlan(t, newTestCompiler(t), plan).Levels().At(0).EffectiveTimeRequirement()
 }
 
 func fixedTimezoneResolver(location *time.Location) TimezoneResolver {

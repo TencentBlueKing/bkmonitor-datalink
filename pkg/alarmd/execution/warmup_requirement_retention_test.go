@@ -36,7 +36,7 @@ func TestTheWarmupReferenceDoesNotReadHowMuchTheLevelRetains(t *testing.T) {
 	// A window long enough that the recovery slack is not zero: the span gate
 	// only waives it for windows that fit inside the hole tolerance.
 	plan := compiledPlanWithTriggerConfig(t, json.RawMessage(`{"window_size":30,"required_anomalies":5,"step_seconds":60}`))
-	requirement := plan.Levels()[0].StateRequirement()
+	requirement := plan.Levels().At(0).StateRequirement()
 	if requirement.RetentionPoints <= requirement.RequiredDetectHistoryPoints {
 		t.Fatalf("the fixture Level retains %d of %d required positions, so it takes no slack and cannot "+
 			"tell the two derivations apart", requirement.RetentionPoints, requirement.RequiredDetectHistoryPoints)
@@ -45,7 +45,7 @@ func TestTheWarmupReferenceDoesNotReadHowMuchTheLevelRetains(t *testing.T) {
 	if err != nil {
 		t.Fatalf("derive Level contract refs: %v", err)
 	}
-	levelID := plan.Levels()[0].Definition().LevelID
+	levelID := plan.Levels().At(0).Definition().LevelID
 	derive := func(value strategy.StateRequirement) string {
 		digest, err := contract.DeriveCanonicalDigestV2("alarmd-level-warmup-requirement-v1", struct {
 			LevelID          uint32                    `json:"level_id"`

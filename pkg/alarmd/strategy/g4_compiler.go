@@ -47,8 +47,8 @@ func (simpleRingRatioAlgorithmCompiler) Compile(_ context.Context, compileContex
 		return AlgorithmCompileResult{}, configErrorf("SimpleRingRatio config: %v", err)
 	}
 	if len(requirements) != 2 || requirements[1].Role != AlgorithmInputDependency ||
-		!equalAlgorithmOffsets(requirements[1].PointOffsetsSeconds, []int64{int64(compileContext.ExecutionSemantics.AggregationInterval)}) ||
-		!equalNamedPoints(requirements[1].NamedPoints, []AlgorithmNamedInputPoint{{Name: "previous", OffsetSeconds: int64(compileContext.ExecutionSemantics.AggregationInterval)}}) {
+		!equalAlgorithmOffsets(requirements[1].PointOffsetsSeconds, []int64{int64(compileContext.ExecutionSemantics.EvaluationInterval)}) ||
+		!equalNamedPoints(requirements[1].NamedPoints, []AlgorithmNamedInputPoint{{Name: "previous", OffsetSeconds: int64(compileContext.ExecutionSemantics.EvaluationInterval)}}) {
 		return AlgorithmCompileResult{}, configErrorf("SimpleRingRatio config: previous input is required")
 	}
 	floor, floorConfigured, floorEnabled, err := normalizeOptionalNonNegative(config.Floor)
@@ -94,7 +94,9 @@ func (osRestartAlgorithmCompiler) Compile(_ context.Context, compileContext Algo
 	if err != nil {
 		return AlgorithmCompileResult{}, configErrorf("OsRestart config: %v", err)
 	}
-	offsets := []int64{int64(compileContext.ExecutionSemantics.AggregationInterval), 600, 1500}
+	// The previous point is the previous detection, an evaluation step back;
+	// with no detect_interval that is the aggregation interval.
+	offsets := []int64{int64(compileContext.ExecutionSemantics.EvaluationInterval), 600, 1500}
 	if len(requirements) != 2 || requirements[1].Role != AlgorithmInputDependency ||
 		!equalAlgorithmOffsets(requirements[1].PointOffsetsSeconds, offsets) ||
 		!equalNamedPoints(requirements[1].NamedPoints, []AlgorithmNamedInputPoint{

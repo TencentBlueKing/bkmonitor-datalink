@@ -536,7 +536,7 @@ func TestPhaseTwoWorkerBundleRunsRetiredBacklogWhenCapacityIsReleased(t *testing
 		select {
 		case queryGroup := <-started:
 			firstTwo[queryGroup] = struct{}{}
-		case <-time.After(time.Second):
+		case <-time.After(signalWaitBound):
 			t.Fatal("timed out waiting for the initial runner fanout")
 		}
 	}
@@ -552,7 +552,7 @@ func TestPhaseTwoWorkerBundleRunsRetiredBacklogWhenCapacityIsReleased(t *testing
 		if queryGroup != "query-group-3-retired-backlog" {
 			t.Fatalf("runner after query-group-2 released = %s, want retired backlog", queryGroup)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(signalWaitBound):
 		t.Fatal("timed out waiting for the retired backlog Query Group")
 	}
 	releaseFirst()
@@ -756,7 +756,7 @@ func TestPhaseTwoWorkerBundleNextTickReentersNormalQueryGroupBeforeSlowSweepComp
 			if !errors.Is(err, context.Canceled) {
 				t.Errorf("runScheduler(cancel) error = %v, want context canceled", err)
 			}
-		case <-time.After(time.Second):
+		case <-time.After(signalWaitBound):
 			t.Error("persistent dispatcher did not drain after cancellation")
 		}
 	}()
@@ -765,11 +765,15 @@ func TestPhaseTwoWorkerBundleNextTickReentersNormalQueryGroupBeforeSlowSweepComp
 	waitSignal(t, blockingStarted, "blocking Query Group")
 	wake <- struct{}{}
 	// This is a 500-QG ordering test, not a one-second throughput contract.
-	// Keep a short stalled-work watchdog and a separate total test bound;
-	// backlog progress alone must never substitute for normal reentry.
-	stalled := time.NewTimer(time.Second)
+	// Keep a stalled-work watchdog and a separate total test bound; backlog
+	// progress alone must never substitute for normal reentry. The watchdog
+	// is a few seconds, not one: with the module testing beside it a run went
+	// a second without a backlog Query Group and failed as stalled while
+	// nothing was.
+	const stallBound = 5 * time.Second
+	stalled := time.NewTimer(stallBound)
 	defer stalled.Stop()
-	deadline := time.NewTimer(10 * time.Second)
+	deadline := time.NewTimer(2 * signalWaitBound)
 	defer deadline.Stop()
 	for {
 		select {
@@ -782,7 +786,7 @@ func TestPhaseTwoWorkerBundleNextTickReentersNormalQueryGroupBeforeSlowSweepComp
 				default:
 				}
 			}
-			stalled.Reset(time.Second)
+			stalled.Reset(stallBound)
 		case <-stalled.C:
 			t.Fatal("normal reentry and backlog processing both stalled")
 		case <-deadline.C:
@@ -850,7 +854,7 @@ func TestPhaseTwoWorkerBundleNormalQueueRotatesPastFastPrefixAcrossTicks(t *test
 			}
 			wake <- struct{}{}
 			release <- struct{}{}
-		case <-time.After(time.Second):
+		case <-time.After(signalWaitBound):
 			cancel()
 			t.Fatal("normal dispatcher stopped making progress")
 		}
@@ -867,7 +871,7 @@ func TestPhaseTwoWorkerBundleNormalQueueRotatesPastFastPrefixAcrossTicks(t *test
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("runScheduler(cancel) error = %v, want context canceled", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(signalWaitBound):
 		t.Fatal("normal dispatcher did not drain after cancellation")
 	}
 }
@@ -929,7 +933,7 @@ func TestPhaseTwoWorkerBundleDelayedQueueKeepsEarliestReadyQueryGroups(t *testin
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("runScheduler(cancel) error = %v, want context canceled", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(signalWaitBound):
 		t.Fatal("delayed dispatcher did not stop after cancellation")
 	}
 }
@@ -1049,7 +1053,7 @@ func TestPhaseTwoWorkerBundleDispatcherDoesNotHoldQueryRecoveryAllowanceAcrossRu
 	for index := 0; index < 2; index++ {
 		select {
 		case <-recoveryRan:
-		case <-time.After(time.Second):
+		case <-time.After(signalWaitBound):
 			cancel()
 			t.Fatal("recovery Runner was blocked by another Runner holding query recovery allowance")
 		}
@@ -1066,7 +1070,7 @@ func TestPhaseTwoWorkerBundleDispatcherDoesNotHoldQueryRecoveryAllowanceAcrossRu
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("dispatcher(cancel) error = %v, want context canceled", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(signalWaitBound):
 		t.Fatal("dispatcher did not drain recovery after cancellation")
 	}
 	dispatcher.stop()
@@ -1110,7 +1114,7 @@ func TestPhaseTwoWorkerBundleSchedulerCancellationStopsAdmissionAndDrainsInfligh
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("runScheduledOnce(cancel) error = %v, want context canceled", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(signalWaitBound):
 		t.Fatal("dispatcher did not drain canceled inflight Query Groups")
 	}
 	if got := queuedCalls.Load(); got != 0 {
@@ -1244,7 +1248,7 @@ func TestPhaseTwoWorkerBundleRunKeepsControlTicksActiveWhileSchedulerIsBusy(t *t
 				if err != nil {
 					t.Fatalf("Run(cancel) error = %v", err)
 				}
-			case <-time.After(time.Second):
+			case <-time.After(signalWaitBound):
 				t.Fatal("Run did not stop after scheduler and control cancellation")
 			}
 		})
@@ -2643,11 +2647,23 @@ func waitForRunnerCalls(t *testing.T, runner *fakePhaseTwoQueryGroup, count int)
 	t.Fatalf("timed out waiting for %d runner calls; got %d", count, runner.runCount())
 }
 
+// waitSignal waits for a signal the case knows is coming. The bound only
+// decides how long a broken case takes to fail, so it is the ten seconds
+// waitFor uses rather than one: under the race detector with the whole
+// module testing beside it, a goroutine can take more than a second to
+// reach the point it signals from, and the case failed there on a run
+// that was otherwise correct.
+// signalWaitBound bounds a wait for a signal a case knows is coming. It only
+// decides how long a broken case takes to fail, and no case relies on it
+// being short, so it is long enough for a run with the whole module testing
+// beside it: one second was not.
+const signalWaitBound = 10 * time.Second
+
 func waitSignal(t *testing.T, signal <-chan struct{}, name string) {
 	t.Helper()
 	select {
 	case <-signal:
-	case <-time.After(time.Second):
+	case <-time.After(signalWaitBound):
 		t.Fatalf("timed out waiting for %s", name)
 	}
 }

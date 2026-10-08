@@ -2,7 +2,15 @@ package config
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 )
+
+// LegacyTopicPrefix is what the compatibility topic has to start with. The
+// output checks the same when it opens (kafka.TriggerEventSink
+// .ConfigureLegacyOutput); checked here too, a topic without it fails
+// --check-config instead of a replica that never becomes ready.
+const LegacyTopicPrefix = "alarmd_"
 
 // LegacyAdapterConfig carries the environment coordinates the built-in
 // Python-compatible protocol needs. It is not an enable switch: the protocol is
@@ -41,6 +49,9 @@ func (c KafkaConfig) validateCompatibilityOutput() error {
 	}
 	if err := validatePhaseTwoTopic("legacy_adapter.topic", adapter.Topic); err != nil {
 		return err
+	}
+	if !strings.HasPrefix(adapter.Topic, LegacyTopicPrefix) {
+		return fmt.Errorf("legacy_adapter.topic must start with %q: the output refuses any other when it opens, so the replica would never be ready", LegacyTopicPrefix)
 	}
 	if adapter.SnapshotPrefix == "" {
 		return errors.New("legacy_adapter.snapshot_prefix is required: it names the keys every converted event writes to the service Redis")

@@ -145,11 +145,12 @@ func TestImpactCutsEveryColumnByWhoActs(t *testing.T) {
 	}
 	// The timed-out object is undetermined too: a client-side timeout does
 	// not establish a fault on the data side.
-	if impact.Undetermined.Objects != 3 || impact.Undetermined.Strategies != 3 {
-		t.Errorf("undetermined = %+v, want the bare refusal, the timeout and the overdue object's undecided window: 3 objects, strategies 1, 2 and 3", impact.Undetermined)
+	if impact.Undetermined.Objects != 2 || impact.Undetermined.Strategies != 2 {
+		t.Errorf("undetermined = %+v, want the timeout and the overdue object's undecided window: 2 objects, strategies 1 and 2", impact.Undetermined)
 	}
-	if impact.Strategy.Objects != 1 || impact.Strategy.Strategies != 1 || impact.Strategy.Businesses != 1 {
-		t.Errorf("strategy = %+v, want the object whose target is missing: strategy 4, business 8", impact.Strategy)
+	// A refused query is the strategy's, beside one whose target is missing.
+	if impact.Strategy.Objects != 2 || impact.Strategy.Strategies != 2 || impact.Strategy.Businesses != 1 {
+		t.Errorf("strategy = %+v, want the refused object and the one whose target is missing: strategies 3 and 4, business 8", impact.Strategy)
 	}
 	if impact.Data.Objects != 1 || impact.Data.Strategies != 1 {
 		t.Errorf("data = %+v, want the object whose data stopped: strategy 7", impact.Data)

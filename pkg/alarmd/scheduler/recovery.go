@@ -347,6 +347,8 @@ func (coordinator *FlightCoordinator) acquireProcessQueryPermit(
 	coordinator.permitAcquires++
 	if queued {
 		coordinator.permitQueued++
+		// A formal query waits: no lookback read may be why.
+		coordinator.yieldLookbackLocked()
 	}
 	snapshot := coordinator.queryPermitSnapshotLocked()
 	coordinator.mu.Unlock()

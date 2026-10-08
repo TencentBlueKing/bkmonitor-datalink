@@ -24,6 +24,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/fleet"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/metric"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
 // buildPlatformSettings assembles the process copy of the platform's
@@ -54,9 +55,8 @@ func buildPlatformSettings(ctx context.Context, cfg config.Config, client redis.
 }
 
 // legacyQueryRuntimeFacts is what the legacy query compiler compiles by:
-// the platform settings as the copy answers them now, and the FTA event
-// storage the deployment states. The two device filters' field names are
-// the platform's constants.
+// the platform settings as the copy answers them now. The two device
+// filters' field names are the platform's constants.
 func legacyQueryRuntimeFacts(cfg config.Config, settings platformsettings.Settings) controlplane.LegacyQueryRuntimeFacts {
 	accessBKData := settings.IsAccessBKData
 	facts := controlplane.LegacyQueryRuntimeFacts{
@@ -69,11 +69,19 @@ func legacyQueryRuntimeFacts(cfg config.Config, settings platformsettings.Settin
 			FieldName: config.SystemNetworkFilterField, Values: config.SystemNetworkFilterValues(),
 		},
 	}
-	if storage := cfg.PhaseTwo.Control.LegacyQueryRuntime.FTAEventStorage; storage != nil {
-		copied := *storage
-		facts.FTAEventStorage = &copied
-	}
 	return facts
+}
+
+// newPlanCompiler is the strategy compiler a process evaluates Plans with. It
+// lays the aggregation boundaries of a Plan detected more often than it
+// aggregates in the zone newPlatformBoundPlanner lays every query in, so a
+// boundary is where the query service starts an aligned query's bucket.
+func newPlanCompiler(cfg config.Config) (*strategy.PlanCompiler, error) {
+	location, err := time.LoadLocation(cfg.PhaseTwo.Control.Timezone)
+	if err != nil {
+		return nil, errors.New("alarmd: the control timezone is no time zone")
+	}
+	return strategy.NewCompiler(strategy.NewDefaultAlgorithmCompilerRegistry(), cfg.CompilerLimits(), strategy.WithBoundaryLocation(location))
 }
 
 // newPlatformBoundPlanner is the legacy query compiler over the platform

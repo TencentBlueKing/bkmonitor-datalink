@@ -76,7 +76,7 @@ func TestTheFirstWriteAfterReadingAWholeMemoryRecordMigratesIt(t *testing.T) {
 			"out the groups that did not change, and they are not in the new record at all: %+v",
 			len(mutation.Set), mutation.Set)
 	}
-	applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{
+	applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(), Items: []execution.PlanNoDataMutation{mutation},
 	})
 	if err != nil {
@@ -165,7 +165,7 @@ func TestAWriteDerivedFromTheOldRecordReplacesTheNewOne(t *testing.T) {
 		PresentAsOf: snapshot.PresentAsOf, Memory: snapshot.Groups,
 		Loaded: snapshot.Groups, LoadedPresentAsOf: snapshot.PresentAsOf,
 	})
-	applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{
+	applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(), Items: []execution.PlanNoDataMutation{mutation},
 	})
 	if err != nil {
@@ -214,7 +214,7 @@ func TestAPerGroupStatementStillHasToMatchTheRecordsRevision(t *testing.T) {
 		ScheduleRevision: "plan-r1", RosterVersion: "TARGET_STATIC/1", PresentAsOf: 1000,
 		Memory: []execution.NoDataGroupMemory{{GroupKey: "kept", LastSeen: 1000}},
 	})
-	applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{
+	applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(), Items: []execution.PlanNoDataMutation{mutation},
 	})
 	if err != nil {
@@ -284,7 +284,7 @@ func TestAPlanWithNoRecordReadsNoneAndWritesItsFirstMemory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the first memory of a new Plan does not derive: %v", err)
 	}
-	applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{
+	applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(), Items: []execution.PlanNoDataMutation{mutation},
 	})
 	if err != nil {
@@ -326,7 +326,7 @@ func TestAReplacingStatementThatLosesARaceReportsTheRecordMoved(t *testing.T) {
 	// Somebody wrote the per-group record between this writer's read of it and
 	// its write, which is the only way a replacing statement can be refused.
 	backend.conflict = true
-	applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{
+	applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 		Contract: frozenRef(), Items: []execution.PlanNoDataMutation{mutation},
 	})
 	if err != nil {
@@ -374,7 +374,7 @@ func TestAReplacingStatementExpectsTheVersionItRead(t *testing.T) {
 		})
 		// Written by an older Slot after this one read nothing.
 		backend.hashes = newRecord(coexistenceApplyVersion(2))
-		applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{
+		applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 			Contract: frozenRef(), Items: []execution.PlanNoDataMutation{mutation},
 		})
 		if err != nil {
@@ -409,7 +409,7 @@ func TestAReplacingStatementExpectsTheVersionItRead(t *testing.T) {
 			Loaded: snapshot.Groups, LoadedPresentAsOf: snapshot.PresentAsOf,
 		})
 		backend.hashes = newRecord(coexistenceApplyVersion(2))
-		applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{
+		applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 			Contract: frozenRef(), Items: []execution.PlanNoDataMutation{mutation},
 		})
 		if err != nil {
@@ -441,7 +441,7 @@ func TestAReplacingStatementExpectsTheVersionItRead(t *testing.T) {
 			PresentAsOf: snapshot.PresentAsOf, Memory: snapshot.Groups,
 			Loaded: snapshot.Groups, LoadedPresentAsOf: snapshot.PresentAsOf,
 		})
-		applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{
+		applied, err := store.ApplyNoData(context.Background(), execution.NoDataApplyRequest{Retention: execution.GenerationRetention{Unknown: true},
 			Contract: frozenRef(), Items: []execution.PlanNoDataMutation{mutation},
 		})
 		if err != nil {

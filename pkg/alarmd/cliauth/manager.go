@@ -22,6 +22,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-redis/redis/v8"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 )
 
 const (
@@ -51,6 +53,11 @@ type Options struct {
 	PublicBaseURL   string
 	AdminKey        string
 	Now             func() time.Time
+	// OnStoreFailure, when set, hears the reason of each store call that
+	// was not answered, or answered in a shape no script returns, and the
+	// error's own bounded text. The text never reaches an answer: this
+	// route is public, and the text can name an address.
+	OnStoreFailure func(reason, detail string)
 }
 
 type Session struct {
@@ -66,8 +73,12 @@ type Session struct {
 // Error contains a safe public message, never an underlying Redis error or a
 // credential. HTTPStatus is also available to the channel handler.
 type Error struct {
-	Code       string `json:"code"`
-	Message    string `json:"message"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	// Reason is why the store did not answer, for auth_store_unavailable: a
+	// reason of redisfailure's, so an idle connection the network cut reads
+	// apart from a server that refused.
+	Reason     string `json:"reason,omitempty"`
 	HTTPStatus int    `json:"-"`
 }
 
@@ -92,8 +103,18 @@ func expired() *Error {
 	return failure("auth_expired_or_revoked", "The CLI session has expired or was revoked; authorize again from the authorization page.", 401)
 }
 
-func storeUnavailable() *Error {
-	return failure("auth_store_unavailable", "The authorization store is unavailable; exchange outcomes may be unknown. Obtain a new code instead of retrying an exchange.", 503)
+func storeUnavailable(reason string) *Error {
+	unavailable := failure("auth_store_unavailable", "The authorization store is unavailable; exchange outcomes may be unknown. Obtain a new code instead of retrying an exchange.", 503)
+	unavailable.Reason = reason
+	return unavailable
+}
+
+// storeFailed is the store not answering, reported by its reason and text.
+func (m *Manager) storeFailed(reason, detail string) *Error {
+	if m.onStoreFailure != nil {
+		m.onStoreFailure(reason, detail)
+	}
+	return storeUnavailable(reason)
 }
 
 type Manager struct {
@@ -112,6 +133,7 @@ type Manager struct {
 	exchangeWindow  rateWindow
 	refreshWindow   rateWindow
 	counts          counters
+	onStoreFailure  func(reason, detail string)
 }
 
 // New validates deployment coordinates without contacting Redis. An empty
@@ -155,9 +177,10 @@ func New(o Options) (*Manager, error) {
 	u.Path = strings.TrimRight(u.Path, "/") + "/"
 	u.RawPath = ""
 	return &Manager{
-		client:        o.Redis,
-		prefix:        o.Prefix + ".cli:{" + digest(o.EnvironmentID) + "}:",
-		environmentID: o.EnvironmentID, environmentName: o.EnvironmentName,
+		onStoreFailure: o.OnStoreFailure,
+		client:         o.Redis,
+		prefix:         o.Prefix + ".cli:{" + digest(o.EnvironmentID) + "}:",
+		environmentID:  o.EnvironmentID, environmentName: o.EnvironmentName,
 		publicBaseURL: u.String(), origin: u.Scheme + "://" + u.Host,
 		adminHash: sha256.Sum256([]byte(o.AdminKey)), adminConfigured: o.AdminKey != "",
 		now: o.Now, httpSlots: make(chan struct{}, 4),
@@ -227,30 +250,30 @@ func (m *Manager) run(ctx context.Context, script string, keys []string, args ..
 	// trip. The injected client must disable automatic retries for auth writes.
 	result, err := m.client.Eval(ctx, script, keys, args...).Slice()
 	if err != nil {
-		return nil, storeUnavailable()
+		return nil, m.storeFailed(redisfailure.Reason(err), redisfailure.Detail(err))
 	}
 	return result, nil
 }
 
-func resultRecord(result []interface{}) (storedRecord, bool, error) {
+func (m *Manager) resultRecord(result []interface{}) (storedRecord, bool, error) {
 	if len(result) < 1 {
-		return storedRecord{}, false, storeUnavailable()
+		return storedRecord{}, false, m.storeFailed(redisfailure.MalformedReply, "the store answered in a shape no script returns")
 	}
 	status, ok := result[0].(int64)
 	if !ok {
-		return storedRecord{}, false, storeUnavailable()
+		return storedRecord{}, false, m.storeFailed(redisfailure.MalformedReply, "the store answered in a shape no script returns")
 	}
 	if status == 0 {
 		return storedRecord{}, false, expired()
 	}
 	if len(result) < 3 || status != 1 {
-		return storedRecord{}, false, storeUnavailable()
+		return storedRecord{}, false, m.storeFailed(redisfailure.MalformedReply, "the store answered in a shape no script returns")
 	}
 	raw, ok := result[1].(string)
 	renewed, renewOK := result[2].(int64)
 	var record storedRecord
 	if !ok || !renewOK || json.Unmarshal([]byte(raw), &record) != nil {
-		return storedRecord{}, false, storeUnavailable()
+		return storedRecord{}, false, m.storeFailed(redisfailure.MalformedReply, "the store answered in a shape no script returns")
 	}
 	return record, renewed == 1, nil
 }
@@ -286,7 +309,7 @@ func (m *Manager) sessionOperation(ctx context.Context, hash, expectedID, action
 	if err != nil {
 		return Session{}, err
 	}
-	record, renewed, err := resultRecord(result)
+	record, renewed, err := m.resultRecord(result)
 	if err != nil {
 		return Session{}, err
 	}

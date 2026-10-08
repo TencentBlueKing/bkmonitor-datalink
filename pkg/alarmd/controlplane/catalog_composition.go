@@ -37,7 +37,6 @@ var SupportedSourceSemantics = []string{
 	"custom/time_series",
 	"custom/event",
 	"prometheus/time_series",
-	"bk_fta/event",
 }
 
 // SourceSemanticsOther is the label for semantics outside the supported list.
@@ -193,6 +192,45 @@ type CatalogComposition struct {
 	// compiled Levels are in hand; recomputing it here from the frozen
 	// strategy documents would be the same relation derived twice.
 	Retention CatalogRetention
+
+	// GlobalStrategies counts the strategies the source marks global by what
+	// the round did with them (GlobalOutcomes), every outcome present at
+	// zero: a partition of Catalog.GlobalStrategies, so the three add up to
+	// the global strategies the source listed this round. A zero here is
+	// what a deployment reads to say no global strategy was refused, and a
+	// zero that reads the same as "this build does not count them" is not a
+	// reading.
+	GlobalStrategies map[string]int
+	// GlobalUnsupported splits the global_unsupported outcome by the word it
+	// was refused for and the source its query reads, and adds up to it. It
+	// is what decides which query source alarmd learns to run globally next,
+	// which is why it is by source and not by word alone. Only the pairs a
+	// round produced are present: both labels are closed sets (the four
+	// words, GlobalQuerySource), and most of their product cannot happen.
+	GlobalUnsupported map[GlobalUnsupportedKey]int
+}
+
+// What a round did with a strategy the source marks global.
+const (
+	// GlobalOutcomeAccepted: runs as a global strategy - its ACCEPTED
+	// disposition survived to the Catalog as published.
+	GlobalOutcomeAccepted = "accepted"
+	// GlobalOutcomeUnsupported: refused as GLOBAL_STRATEGY_UNSUPPORTED - a
+	// strategy this build cannot yet run across businesses. It stopped
+	// detecting unless a last good Plan was retained for it.
+	GlobalOutcomeUnsupported = "global_unsupported"
+	// GlobalOutcomeWithheld: withheld for any other reason, which
+	// catalog_withheld_objects names like any other strategy's.
+	GlobalOutcomeWithheld = "withheld"
+)
+
+// GlobalOutcomes is every outcome, for the partition to pre-create.
+var GlobalOutcomes = []string{GlobalOutcomeAccepted, GlobalOutcomeUnsupported, GlobalOutcomeWithheld}
+
+// GlobalUnsupportedKey is one pair GlobalUnsupported counts under.
+type GlobalUnsupportedKey struct {
+	Reason      string
+	QuerySource string
 }
 
 // SourceSemanticsLabel is the partition key for one Query Group's query: the
@@ -343,6 +381,41 @@ func ComposeCatalog(catalog Catalog) CatalogComposition {
 	// for each of its Plans or levels.
 	sort.Strings(composition.ListedStrategies)
 	composition.ListedStrategies = slices.Compact(composition.ListedStrategies)
+	composition.GlobalStrategies = make(map[string]int, len(GlobalOutcomes))
+	for _, outcome := range GlobalOutcomes {
+		composition.GlobalStrategies[outcome] = 0
+	}
+	composition.GlobalUnsupported = make(map[GlobalUnsupportedKey]int)
+	// Accepted is read off the Catalog as published, not off the record: a
+	// strategy this build compiled can still be withheld by the runtime check
+	// or the deployment's admission, and each replaces its ACCEPTED with the
+	// reason it withheld it. Counted from the record it would read accepted
+	// while it stopped running.
+	accepted := make(map[string]bool, len(catalog.GlobalStrategies))
+	for _, disposition := range catalog.Dispositions {
+		if disposition.Scope == "PLAN" && disposition.Disposition == DispositionAccepted {
+			accepted[disposition.SourceID] = true
+		}
+	}
+	// Once per strategy: the same one listed twice is one strategy, as it
+	// is one object in catalog_objects, and its first record is the one
+	// that compiled.
+	counted := make(map[string]bool, len(catalog.GlobalStrategies))
+	for _, global := range catalog.GlobalStrategies {
+		if counted[global.SourceID] {
+			continue
+		}
+		counted[global.SourceID] = true
+		switch {
+		case global.Refusal != "":
+			composition.GlobalStrategies[GlobalOutcomeUnsupported]++
+			composition.GlobalUnsupported[GlobalUnsupportedKey{Reason: global.Refusal, QuerySource: global.QuerySource}]++
+		case accepted[global.SourceID]:
+			composition.GlobalStrategies[GlobalOutcomeAccepted]++
+		default:
+			composition.GlobalStrategies[GlobalOutcomeWithheld]++
+		}
+	}
 	return composition
 }
 
@@ -412,6 +485,8 @@ var AlwaysReportedWithheld = []WithheldKey{
 	{Disposition: DispositionConfigNormalized, Reason: ReasonPriorityIgnored},
 	// "No strategy here runs a level on another level's trigger."
 	{Disposition: DispositionConfigNormalized, Reason: ReasonLevelTriggerBorrowed},
+	// "No strategy here runs on a period it did not write."
+	{Disposition: DispositionConfigNormalized, Reason: ReasonAggIntervalDefaulted},
 }
 
 // NoDataReasons is the set of reasons that withhold a Plan from no-data

@@ -358,33 +358,58 @@ func isCanonicalScalarJSONV2(payload []byte) bool {
 }
 
 func DeriveDimensionIdentityDigestV2(tenantID, businessID string, fields []DimensionFieldV2) (string, error) {
+	identity, err := EncodeDimensionIdentityV2(tenantID, businessID, fields)
+	return identity.Digest, err
+}
+
+// DimensionIdentityEncodingV2 is a series' dimension identity as it is
+// derived: the digest, and the canonical encoding of the fields the digest
+// was derived from. A record of the series carries those fields again inside
+// its own canonical form, and DeriveSeriesRecordsDigestV2 takes them from
+// here rather than encoding them a second time. The zero value is no
+// encoding.
+type DimensionIdentityEncodingV2 struct {
+	Digest string
+	// fields is the list the encoding is of, by identity: the encoding
+	// answers only for records that point at this very list.
+	fields    []DimensionFieldV2
+	canonical []byte
+}
+
+// EncodeDimensionIdentityV2 is DeriveDimensionIdentityDigestV2, keeping the
+// canonical encoding of the fields it derived the digest from.
+func EncodeDimensionIdentityV2(tenantID, businessID string, fields []DimensionFieldV2) (DimensionIdentityEncodingV2, error) {
 	if tenantID == "" || !utf8.ValidString(tenantID) {
-		return "", invalid("dimension_identity.tenant_id", "must be non-empty valid UTF-8")
+		return DimensionIdentityEncodingV2{}, invalid("dimension_identity.tenant_id", "must be non-empty valid UTF-8")
 	}
 	if !canonicalSignedDecimalPattern.MatchString(businessID) {
-		return "", invalid("dimension_identity.business_id", "must use canonical signed decimal form")
+		return DimensionIdentityEncodingV2{}, invalid("dimension_identity.business_id", "must use canonical signed decimal form")
 	}
 	if fields == nil {
-		return "", invalid("dimension_identity.fields", "must be an array")
+		return DimensionIdentityEncodingV2{}, invalid("dimension_identity.fields", "must be an array")
 	}
 	previous := ""
 	for index, dimension := range fields {
 		if dimension.Name == "" || !utf8.ValidString(dimension.Name) || (index > 0 && dimension.Name <= previous) {
-			return "", invalid("dimension_identity.fields", "names must be non-empty, sorted and unique")
+			return DimensionIdentityEncodingV2{}, invalid("dimension_identity.fields", "names must be non-empty, sorted and unique")
 		}
 		if !isCanonicalScalarJSONV2(dimension.Value) {
-			return "", invalid("dimension_identity.fields.value", "must be a scalar or null JSON value")
+			return DimensionIdentityEncodingV2{}, invalid("dimension_identity.fields.value", "must be a scalar or null JSON value")
 		}
 		previous = dimension.Name
 	}
 	canonicalFields, err := CanonicalJSONV2(fields)
 	if err != nil {
-		return "", invalid("dimension_identity.fields", err.Error())
+		return DimensionIdentityEncodingV2{}, invalid("dimension_identity.fields", err.Error())
 	}
-	return deriveLengthPrefixedSHA256(
+	digest, err := deriveLengthPrefixedSHA256(
 		"dimension_identity.digest", "dimension-identity-v1",
 		[]byte(tenantID), []byte(businessID), canonicalFields,
 	)
+	if err != nil {
+		return DimensionIdentityEncodingV2{}, err
+	}
+	return DimensionIdentityEncodingV2{Digest: digest, fields: fields, canonical: canonicalFields}, nil
 }
 
 func DeriveRecordIDV2(dimensionIdentityDigest string, sourceTime int64) (string, error) {

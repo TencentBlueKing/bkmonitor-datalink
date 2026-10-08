@@ -162,6 +162,10 @@ type SeriesSampler struct {
 	now                                                                     func() time.Time
 	process                                                                 string
 	selectedCount, recorded, budgetDropped, queueDropped, oversize, expired atomic.Uint64
+	// admit, set by NewAdmittedSeriesSampler, is asked for the buffers of
+	// the windows a selection adds; allocated is how many buffers exist.
+	admit     func(bytes uint64) bool
+	allocated int
 }
 
 // SeriesSampleBufferBytes includes the fixed payload, owned schema storage and
@@ -181,7 +185,20 @@ func NewSeriesSampler(limits SeriesSampleLimits) (*SeriesSampler, error) {
 	for i := 0; i < limits.QueueCapacity; i++ {
 		s.pool <- &SeriesSampleReservation{sampler: s}
 	}
+	s.allocated = limits.QueueCapacity
 	return s, nil
+}
+
+// NewAdmittedSeriesSampler is a sampler sized by the windows open on it
+// rather than by a budget: one encode buffer per selected window, allocated
+// when a selection adds the window and admitted by admit first. A window
+// whose buffer is refused is selected and records nothing, counted as a
+// queue drop. There is no rate of its own: a window pins one series and
+// records at most once a Slot, and the windows are bounded where they are
+// opened (TargetFlowMaxGroups).
+func NewAdmittedSeriesSampler(admit func(bytes uint64) bool) *SeriesSampler {
+	return &SeriesSampler{pool: make(chan *SeriesSampleReservation, TargetFlowMaxGroups),
+		queue: make(chan *SeriesSampleReservation, TargetFlowMaxGroups), now: time.Now, process: newProcessIdentity(), admit: admit}
 }
 
 // Select replaces the control snapshot. A failed control read need not call
@@ -206,6 +223,13 @@ func (s *SeriesSampler) Select(selections []SeriesSampleSelection) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if more := len(next) - s.allocated; s.admit != nil && more > 0 && s.admit(uint64(more*SeriesSampleBufferBytes())) {
+		for range more {
+			s.pool <- &SeriesSampleReservation{sampler: s}
+		}
+		s.allocated += more
+		s.limits.QueueCapacity = s.allocated
+	}
 	if previous := s.selected.Load(); previous != nil {
 		for q, v := range next {
 			if old := (*previous)[q]; old != nil && old.SeriesSampleSelection == v.SeriesSampleSelection {
@@ -250,7 +274,7 @@ func (s *SeriesSampler) TryReserve(ctx context.Context, c SeriesSampleCandidate)
 		s.records = 0
 		s.bytes = 0
 	}
-	if s.records >= s.limits.RecordsPerMinute || s.bytes > s.limits.BytesPerMinute-SeriesSampleMaxBytes {
+	if s.admit == nil && (s.records >= s.limits.RecordsPerMinute || s.bytes > s.limits.BytesPerMinute-SeriesSampleMaxBytes) {
 		s.budgetDropped.Add(1)
 		s.mu.Unlock()
 		return nil
@@ -414,6 +438,8 @@ func (s *SeriesSampler) Limits() SeriesSampleLimits {
 	if s == nil {
 		return SeriesSampleLimits{}
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.limits
 }
 func (s *SeriesSampler) Health() SeriesSampleHealth {

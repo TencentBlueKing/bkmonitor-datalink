@@ -31,6 +31,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisfailure"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scopeclose"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/targetplan"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/viewstream"
@@ -228,6 +229,9 @@ func TestCustomMetricFamilySeriesDevelopmentLimits(t *testing.T) {
 		"bkmonitor_alarmd_redis_command_total": (len(redisCommandNames) + 1) * 2 * (len(redisClientNames) + 1),
 		"bkmonitor_alarmd_redis_command_failure_total": (len(redisCommandNames) + 1) * 2 *
 			(len(redisClientNames) + 1),
+		// Reasons are a closed word set and the family does not carry the
+		// command, so it stays one client by nine words.
+		"bkmonitor_alarmd_redis_failure_reason_total": (len(redisClientNames) + 1) * len(redisfailure.Reasons),
 		"bkmonitor_alarmd_redis_command_duration_seconds": (len(redisCommandNames) + 1) * 2 *
 			(len(redisClientNames) + 1) * (12 + 1 + 2),
 	} {
@@ -273,6 +277,7 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_source_refresh_total":                         "variableLabels: {status}",
 		"bkmonitor_alarmd_source_compile_total":                         "variableLabels: {result}",
 		"bkmonitor_alarmd_source_read_total":                            "variableLabels: {mode,reason}",
+		"bkmonitor_alarmd_source_refresh_build_total":                   "variableLabels: {build}",
 		"bkmonitor_alarmd_source_strategies_read_total":                 "variableLabels: {}",
 		"bkmonitor_alarmd_source_change_signal_age_seconds":             "variableLabels: {}",
 		"bkmonitor_alarmd_activation_failure_total":                     "variableLabels: {activation_failure_stage,activation_failure_class}",
@@ -292,9 +297,16 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_unmapped_severity_total":                      "variableLabels: {level}",
 		"bkmonitor_alarmd_cmdb_host_index_hosts":                        "variableLabels: {}",
 		"bkmonitor_alarmd_cmdb_service_instance_index_instances":        "variableLabels: {}",
+		"bkmonitor_alarmd_cmdb_index_business_mappings":                 "variableLabels: {mapping,state}",
+		"bkmonitor_alarmd_cmdb_index_records_refused":                   "variableLabels: {record}",
 		"bkmonitor_alarmd_fleet_snapshot_bytes":                         "variableLabels: {}",
 		"bkmonitor_alarmd_fleet_view_snapshot_loads_total":              "variableLabels: {}",
 		"bkmonitor_alarmd_fleet_view_snapshot_bytes_total":              "variableLabels: {}",
+		"bkmonitor_alarmd_fleet_summary_bytes":                          "variableLabels: {}",
+		"bkmonitor_alarmd_fleet_view_summary_loads_total":               "variableLabels: {}",
+		"bkmonitor_alarmd_fleet_view_summary_bytes_total":               "variableLabels: {}",
+		"bkmonitor_alarmd_fleet_view_owned_loads_total":                 "variableLabels: {}",
+		"bkmonitor_alarmd_fleet_view_owned_bytes_total":                 "variableLabels: {}",
 		"bkmonitor_alarmd_retained_peak_census_groups":                  "variableLabels: {}",
 		"bkmonitor_alarmd_retained_peak_census_overflow":                "variableLabels: {}",
 		"bkmonitor_alarmd_host_disable_monitor_states":                  "variableLabels: {}",
@@ -313,6 +325,9 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_redis_pool_waits_total":                       "variableLabels: {client,result}",
 		"bkmonitor_alarmd_redis_command_total":                          "variableLabels: {client,command,pipelined}",
 		"bkmonitor_alarmd_redis_command_failure_total":                  "variableLabels: {client,command,pipelined}",
+		"bkmonitor_alarmd_redis_failure_reason_total":                   "variableLabels: {client,reason}",
+		"bkmonitor_alarmd_redis_caller_operation_total":                 "variableLabels: {client,caller}",
+		"bkmonitor_alarmd_redis_caller_failure_reason_total":            "variableLabels: {client,caller,reason}",
 		"bkmonitor_alarmd_redis_command_duration_seconds":               "variableLabels: {client,command,pipelined}",
 		"bkmonitor_alarmd_short_period_slot_completions_total":          "variableLabels: {cohort,operation,completion_kind}",
 		"bkmonitor_alarmd_query_cooldown_events_total":                  "variableLabels: {event}",
@@ -327,6 +342,7 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_expired_slots_finalized_total":                "variableLabels: {reason}",
 		"bkmonitor_alarmd_execute_return_total":                         "variableLabels: {outcome}",
 		"bkmonitor_alarmd_progress_completed_total":                     "variableLabels: {kind}",
+		"bkmonitor_alarmd_progress_completion_causes_total":             "variableLabels: {completion_kind,cause,reason}",
 		"bkmonitor_alarmd_run_one_attempted_total":                      "variableLabels: {}",
 		"bkmonitor_alarmd_scheduler_active_executions":                  "variableLabels: {}",
 		"bkmonitor_alarmd_scheduler_ready_runners":                      "variableLabels: {}",
@@ -371,6 +387,8 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_due_index_audit_overshoot_seconds":            "variableLabels: {cooldown}",
 		"bkmonitor_alarmd_schedule_prune_skipped_total":                 "variableLabels: {reason}",
 		"bkmonitor_alarmd_schedule_cutover_query_groups_total":          "variableLabels: {decision}",
+		"bkmonitor_alarmd_schedule_cutover_read_hold_links_total":       "variableLabels: {decision}",
+		"bkmonitor_alarmd_fleet_overdue_episodes_total":                 "variableLabels: {hold}",
 		"bkmonitor_alarmd_schedule_cutover_timelines_read":              "variableLabels: {}",
 		"bkmonitor_alarmd_schedule_cutover_last_duration_seconds":       "variableLabels: {}",
 		"bkmonitor_alarmd_schedule_cutover_first_duration_seconds":      "variableLabels: {}",
@@ -384,6 +402,8 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_canonical_encoding_shadow_sample_stride":      "variableLabels: {}",
 		"bkmonitor_alarmd_canonical_encoding_calls_total":               "variableLabels: {outcome}",
 		"bkmonitor_alarmd_canonical_encoding_shadow_total":              "variableLabels: {outcome}",
+		"bkmonitor_alarmd_canonical_encoding_records_shadow_total":      "variableLabels: {outcome}",
+		"bkmonitor_alarmd_canonical_encoding_identity_part_total":       "variableLabels: {source}",
 		"bkmonitor_alarmd_canonical_encoding_distinct_findings":         "variableLabels: {}",
 		"bkmonitor_alarmd_canonical_encoding_covered_call_sites":        "variableLabels: {}",
 		"bkmonitor_alarmd_object_catalog_redis_duration_seconds":        "variableLabels: {operation,result}",
@@ -425,6 +445,16 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 		"bkmonitor_alarmd_activation_blocked_set_total":                 "variableLabels: {accounting}",
 		"bkmonitor_alarmd_activation_timeline_reopened_total":           "variableLabels: {}",
 		"bkmonitor_alarmd_activation_body_bytes":                        "variableLabels: {}",
+		"bkmonitor_alarmd_fleet_round_memory_objects":                   "variableLabels: {rounds}",
+		"bkmonitor_alarmd_fleet_round_memory_rounds":                    "variableLabels: {}",
+		"bkmonitor_alarmd_fleet_round_memory_bytes":                     "variableLabels: {}",
+		"bkmonitor_alarmd_fleet_round_memory_max_rounds":                "variableLabels: {}",
+		"bkmonitor_alarmd_fleet_round_memory_window_sized_objects":      "variableLabels: {}",
+		"bkmonitor_alarmd_fleet_round_memory_line_held_objects":         "variableLabels: {}",
+		"bkmonitor_alarmd_target_group_groups":                          "variableLabels: {state}",
+		"bkmonitor_alarmd_target_group_refresh_failed":                  "variableLabels: {}",
+		"bkmonitor_alarmd_target_group_unanswered_reads_total":          "variableLabels: {}",
+		"bkmonitor_alarmd_target_group_oldest_failing_seconds":          "variableLabels: {}",
 		"bkmonitor_alarmd_loop_turn_age_seconds":                        "variableLabels: {loop}",
 		"bkmonitor_alarmd_loop_turn_duration_seconds":                   "variableLabels: {loop}",
 		"bkmonitor_alarmd_executions_past_deadline":                     "variableLabels: {}",
@@ -452,6 +482,7 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 	expected["bkmonitor_alarmd_open_alert_set_refresh_total"] = "variableLabels: {result}"
 	expected["bkmonitor_alarmd_open_alert_set_lookup_total"] = "variableLabels: {answer}"
 	expected["bkmonitor_alarmd_effective_close_total"] = "variableLabels: {outcome}"
+	expected["bkmonitor_alarmd_log_lines_total"] = "variableLabels: {stage,admission}"
 	expected["bkmonitor_alarmd_absent_strategy_close_total"] = "variableLabels: {outcome}"
 	expected["bkmonitor_alarmd_target_scope_close_total"] = "variableLabels: {outcome}"
 	expected["bkmonitor_alarmd_absent_strategy_difference"] = "variableLabels: {side}"
@@ -460,8 +491,11 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 	expected["bkmonitor_alarmd_open_alert_set_tracked_strategies"] = "variableLabels: {}"
 	expected["bkmonitor_alarmd_open_alert_set_evictions_total"] = "variableLabels: {}"
 	expected["bkmonitor_alarmd_activation_rebuild_total"] = "variableLabels: {outcome}"
+	expected["bkmonitor_alarmd_activation_header_rebuild_total"] = "variableLabels: {outcome}"
+	expected["bkmonitor_alarmd_activation_renewal_conflict_total"] = "variableLabels: {reason}"
 	expected["bkmonitor_alarmd_open_alert_set_sent_alerts"] = "variableLabels: {in_set}"
 	expected["bkmonitor_alarmd_open_alert_set_disjoint"] = "variableLabels: {}"
+	expected["bkmonitor_alarmd_open_alert_set_recovery_resent_total"] = "variableLabels: {}"
 	expected["bkmonitor_alarmd_control_source_refresh_total"] = "variableLabels: {outcome,exit}"
 	expected["bkmonitor_alarmd_catalog_strategy_returned_after_removal_total"] = "variableLabels: {}"
 	expected["bkmonitor_alarmd_leader_forward_duration_seconds"] = "variableLabels: {route,result}"
@@ -470,10 +504,63 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 	expected["bkmonitor_alarmd_source_pending_confirmation_age_seconds"] = "variableLabels: {}"
 	expected["bkmonitor_alarmd_leader_rounds_total"] = "variableLabels: {result}"
 	expected["bkmonitor_alarmd_query_cooldown_saves_total"] = "variableLabels: {result}"
+	expected["bkmonitor_alarmd_event_business_attribution_total"] = "variableLabels: {source}"
+	expected["bkmonitor_alarmd_diagnostic_redis_failures_total"] = "variableLabels: {client,reason}"
+	expected["bkmonitor_alarmd_diagnostic_redis_dial_retries_total"] = "variableLabels: {client,reason}"
 	expected["bkmonitor_alarmd_leader_round_stage_seconds_total"] = "variableLabels: {stage}"
+	expected["bkmonitor_alarmd_lookback_first_reads_total"] = "variableLabels: {source}"
+	expected["bkmonitor_alarmd_lookback_samples_total"] = "variableLabels: {source,outcome}"
+	expected["bkmonitor_alarmd_lookback_rechecks_total"] = "variableLabels: {source,rung,outcome}"
+	expected["bkmonitor_alarmd_lookback_changed_windows_total"] = "variableLabels: {source,rung}"
+	expected["bkmonitor_alarmd_lookback_changes_total"] = "variableLabels: {source,rung,class}"
+	expected["bkmonitor_alarmd_lookback_completion_total"] = "variableLabels: {source,age}"
+	expected["bkmonitor_alarmd_lookback_probes_total"] = "variableLabels: {source,outcome}"
+	expected["bkmonitor_alarmd_lookback_sample_classes_total"] = "variableLabels: {source,class}"
+	expected["bkmonitor_alarmd_lookback_read_early_groups"] = "variableLabels: {source}"
+	expected["bkmonitor_alarmd_lookback_series_late_groups"] = "variableLabels: {source}"
+	expected["bkmonitor_alarmd_lookback_supplement_windows_total"] = "variableLabels: {source,outcome}"
+	expected["bkmonitor_alarmd_lookback_supplement_unobserved_total"] = "variableLabels: {source,reason}"
+	expected["bkmonitor_alarmd_lookback_supplement_series_total"] = "variableLabels: {source,outcome}"
+	expected["bkmonitor_alarmd_lookback_supplement_points_total"] = "variableLabels: {source}"
+	expected["bkmonitor_alarmd_lookback_directed_read_bytes_total"] = "variableLabels: {source}"
+	expected["bkmonitor_alarmd_lookback_supplement_hold_total"] = "variableLabels: {source,bucket}"
+	expected["bkmonitor_alarmd_lookback_supplement_hold_max_seconds"] = "variableLabels: {source}"
+	expected["bkmonitor_alarmd_lookback_directed_early_total"] = "variableLabels: {source,outcome}"
+	expected["bkmonitor_alarmd_lookback_directed_early_undecided_total"] = "variableLabels: {source}"
+	expected["bkmonitor_alarmd_lookback_directed_early_read_bytes_total"] = "variableLabels: {source}"
+	expected["bkmonitor_alarmd_lookback_earlier_reads_total"] = "variableLabels: {source,outcome}"
+	expected["bkmonitor_alarmd_lookback_earlier_read_bytes_total"] = "variableLabels: {source}"
+	expected["bkmonitor_alarmd_lookback_read_hold_ignored_total"] = "variableLabels: {source,reason}"
+	expected["bkmonitor_alarmd_read_hold_transition_total"] = "variableLabels: {}"
+	expected["bkmonitor_alarmd_read_hold_transition_overtaken_total"] = "variableLabels: {}"
+	expected["bkmonitor_alarmd_read_hold_predecessor_total"] = "variableLabels: {reason}"
+	expected["bkmonitor_alarmd_read_hold_transition_clamped_total"] = "variableLabels: {source}"
+	expected["bkmonitor_alarmd_read_hold_record_corrupt_total"] = "variableLabels: {}"
+	expected["bkmonitor_alarmd_read_hold_retire_close_failed_total"] = "variableLabels: {}"
+	expected["bkmonitor_alarmd_read_hold_close_previous_skipped_total"] = "variableLabels: {}"
+	expected["bkmonitor_alarmd_read_hold_degraded_total"] = "variableLabels: {reason}"
+	expected["bkmonitor_alarmd_read_hold_groups"] = "variableLabels: {source,kind}"
+	expected["bkmonitor_alarmd_read_hold_max_seconds"] = "variableLabels: {source}"
+	expected["bkmonitor_alarmd_lookback_empty_first_reads_total"] = "variableLabels: {source,outcome}"
+	expected["bkmonitor_alarmd_lookback_empty_first_read_completion_total"] = "variableLabels: {source,age}"
+	expected["bkmonitor_alarmd_lookback_completion_max_seconds"] = "variableLabels: {source}"
+	expected["bkmonitor_alarmd_lookback_groups"] = "variableLabels: {source,depth}"
+	expected["bkmonitor_alarmd_lookback_rest_seconds"] = "variableLabels: {source}"
+	expected["bkmonitor_alarmd_lookback_first_read_bytes_total"] = "variableLabels: {source}"
+	expected["bkmonitor_alarmd_lookback_recheck_bytes_total"] = "variableLabels: {source}"
+	expected["bkmonitor_alarmd_lookback_unknown_lookback_total"] = "variableLabels: {source}"
+	expected["bkmonitor_alarmd_lookback_coverage"] = "variableLabels: {what}"
+	expected["bkmonitor_alarmd_lookback_pending"] = "variableLabels: {what}"
+	expected["bkmonitor_alarmd_lookback_preemptions_total"] = "variableLabels: {source,rung}"
+	expected["bkmonitor_alarmd_lookback_yield_releases_total"] = "variableLabels: {source}"
+	expected["bkmonitor_alarmd_lookback_yield_release_seconds_total"] = "variableLabels: {source}"
+	expected["bkmonitor_alarmd_lookback_yield_release_max_seconds"] = "variableLabels: {source}"
+	expected["bkmonitor_alarmd_lookback_permit_refusals_total"] = "variableLabels: {reason}"
+	expected["bkmonitor_alarmd_lookback_faults_total"] = "variableLabels: {reason}"
 	expected["bkmonitor_alarmd_linkd_console_state"] = "variableLabels: {state}"
 	expected["bkmonitor_alarmd_linkd_console_calls_total"] = "variableLabels: {op,result}"
 	expected["bkmonitor_alarmd_control_source_retained_stale_revisions_total"] = "variableLabels: {}"
+	expected["bkmonitor_alarmd_control_source_last_good_identity_changed_total"] = "variableLabels: {}"
 	expected["bkmonitor_alarmd_catalog_query_groups"] = "variableLabels: {source_semantics}"
 	expected["bkmonitor_alarmd_catalog_plans"] = "variableLabels: {source_semantics}"
 	expected["bkmonitor_alarmd_catalog_objects"] = "variableLabels: {disposition}"
@@ -491,6 +578,7 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 	expected["bkmonitor_alarmd_worker_no_data_absences_total"] = "variableLabels: {outcome}"
 	expected["bkmonitor_alarmd_target_plan_resolution_total"] = "variableLabels: {state}"
 	expected["bkmonitor_alarmd_target_selector_resolutions_total"] = "variableLabels: {kind,state,reason}"
+	expected["bkmonitor_alarmd_target_excluded_absent_members_total"] = "variableLabels: {}"
 	expected["bkmonitor_alarmd_worker_no_data_persistent_skips_total"] = "variableLabels: {outcome}"
 	expected["bkmonitor_alarmd_worker_no_data_memory_refusals_total"] = "variableLabels: {reason,record}"
 	expected["bkmonitor_alarmd_worker_no_data_memory_writes_total"] = "variableLabels: {outcome}"
@@ -506,8 +594,10 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 	expected["bkmonitor_alarmd_segment_content_freshness_total"] = "variableLabels: {state}"
 	expected["bkmonitor_alarmd_schedule_cutover_total"] = "variableLabels: {result,reason}"
 	expected["bkmonitor_alarmd_replay_expired_total"] = "variableLabels: {reason}"
+	expected["bkmonitor_alarmd_replay_takeover_slots_total"] = "variableLabels: {outcome}"
 	expected["bkmonitor_alarmd_range_gate_total"] = "variableLabels: {outcome}"
 	expected["bkmonitor_alarmd_state_preflight_total"] = "variableLabels: {result,reason}"
+	expected["bkmonitor_alarmd_state_admission_total"] = "variableLabels: {result,reason}"
 	expected["bkmonitor_alarmd_slot_wait_duration_seconds"] = "variableLabels: {wait}"
 	expected["bkmonitor_alarmd_control_source_withheld_lines_total"] = "variableLabels: {result}"
 	expected["bkmonitor_alarmd_state_renewal_gate_resets_total"] = "variableLabels: {}"
@@ -515,12 +605,17 @@ func TestCustomMetricDescriptorsAreExplicitlyApproved(t *testing.T) {
 	expected["bkmonitor_alarmd_catalog_required_history_points"] = "variableLabels: {}"
 	expected["bkmonitor_alarmd_catalog_retained_history_points"] = "variableLabels: {}"
 	expected["bkmonitor_alarmd_catalog_levels_with_retention_slack"] = "variableLabels: {dominant}"
+	expected["bkmonitor_alarmd_catalog_global_strategies"] = "variableLabels: {outcome}"
+	expected["bkmonitor_alarmd_catalog_global_strategies_unsupported"] = "variableLabels: {reason,source_semantics}"
 	expected["bkmonitor_alarmd_level_abnormal_total"] = "variableLabels: {window}"
 	expected["bkmonitor_alarmd_platform_settings_mode"] = "variableLabels: {mode}"
 	expected["bkmonitor_alarmd_platform_settings_authoritative_age_seconds"] = "variableLabels: {}"
 	expected["bkmonitor_alarmd_platform_settings_refresh_total"] = "variableLabels: {result}"
 	expected["bkmonitor_alarmd_platform_settings_unavailable_total"] = "variableLabels: {reason}"
 	expected["bkmonitor_alarmd_platform_settings_change_total"] = "variableLabels: {field}"
+	expected["bkmonitor_alarmd_platform_setting_source"] = "variableLabels: {field,source}"
+	expected["bkmonitor_alarmd_platform_setting_enabled"] = "variableLabels: {field}"
+	expected["bkmonitor_alarmd_platform_setting_entries"] = "variableLabels: {field}"
 
 	descriptions := make(chan string)
 	go func() {
@@ -584,6 +679,9 @@ func bindBudgetHealthAndResources(t *testing.T, recorder *Recorder) {
 	}
 	if err := recorder.BindCapacityLoad(func() CapacityLoad { return fullCapacityLoad() }); err != nil {
 		t.Fatalf("BindCapacityLoad() error = %v", err)
+	}
+	if err := recorder.BindRetainedReservation(func() uint64 { return 1 }); err != nil {
+		t.Fatalf("BindRetainedReservation() error = %v", err)
 	}
 	if err := recorder.BindQueryPermits(func() QueryPermitOccupancy {
 		return QueryPermitOccupancy{
@@ -762,6 +860,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("source_refresh_total"):                         len(observability.AllSourceRefreshStatuses()),
 		fqName("source_compile_total"):                         len(sourceCompileResults),
 		fqName("source_read_total"):                            len(observability.AllSourceReadOutcomes()),
+		fqName("source_refresh_build_total"):                   len(observability.SourceRefreshBuilds),
 		fqName("source_strategies_read_total"):                 1,
 		fqName("source_change_signal_age_seconds"):             1,
 		fqName("activation_failure_total"):                     len(observability.AllActivationFailureStages()) * len(observability.AllActivationFailureClasses()),
@@ -769,6 +868,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("ownership_transition_total"):                   len(phaseTwoOwnershipTransitions) * metricReasonSets(observability.ComponentOwnership),
 		fqName("ownership_refusals_total"):                     len(ownershipRefusalSites) * len(ownership.RefusalReasons),
 		fqName("capacity_budget"):                              len(phaseTwoBudgets) - 1,
+		fqName("capacity_reserved"):                            1,
 		fqName("container_memory_limit_bytes"):                 len(capacitySources) + 1,
 		fqName("container_cpu_cores"):                          len(capacitySources) + 1,
 		fqName("container_memory_used_bytes"):                  1,
@@ -801,9 +901,16 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("unmapped_severity_total"):               65,
 		fqName("cmdb_host_index_hosts"):                 1,
 		fqName("cmdb_service_instance_index_instances"): 1,
+		fqName("cmdb_index_business_mappings"):          len(CMDBBusinessMappings) * len(CMDBBusinessMappingStates),
+		fqName("cmdb_index_records_refused"):            len(CMDBRefusedRecords),
 		fqName("fleet_snapshot_bytes"):                  1,
 		fqName("fleet_view_snapshot_loads_total"):       1,
 		fqName("fleet_view_snapshot_bytes_total"):       1,
+		fqName("fleet_summary_bytes"):                   1,
+		fqName("fleet_view_summary_loads_total"):        1,
+		fqName("fleet_view_summary_bytes_total"):        1,
+		fqName("fleet_view_owned_loads_total"):          1,
+		fqName("fleet_view_owned_bytes_total"):          1,
 		fqName("retained_peak_census_groups"):           1,
 		fqName("retained_peak_census_overflow"):         1,
 		fqName("host_disable_monitor_states"):           1,
@@ -828,6 +935,9 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("redis_pool_waits_total"):              6,
 		fqName("redis_command_total"):                 redisCommandSeries,
 		fqName("redis_command_failure_total"):         redisCommandSeries,
+		fqName("redis_failure_reason_total"):          (len(redisClientNames) + 1) * len(redisfailure.Reasons),
+		fqName("redis_caller_operation_total"):        (len(redisClientNames) + 1) * (len(redisfailure.Callers) + 1),
+		fqName("redis_caller_failure_reason_total"):   (len(redisClientNames) + 1) * (len(redisfailure.Callers) + 1) * len(redisfailure.Reasons),
 		fqName("redis_command_duration_seconds"):      histogramSeries(redisCommandSeries, 12),
 		fqName("short_period_slot_completions_total"): 56,
 		// 11 codes UQ declares plus OTHER, times allowed/unavailable/other.
@@ -847,6 +957,7 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("expired_slots_finalized_total"):                2,
 		fqName("execute_return_total"):                         6,
 		fqName("progress_completed_total"):                     7,
+		fqName("progress_completion_causes_total"):             2 * (len(observability.ProgressCompletionCauses) + 2) * observability.NormalizedReasonCount(),
 		fqName("run_one_attempted_total"):                      1,
 		fqName("scheduler_active_executions"):                  1,
 		fqName("scheduler_ready_runners"):                      1,
@@ -906,6 +1017,8 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("due_index_audit_overshoot_seconds"):       histogramSeries(2, len(dueIndexAuditOvershootBuckets)),
 		fqName("schedule_prune_skipped_total"):            len(observability.SchedulePruneSkipReasons),
 		fqName("schedule_cutover_query_groups_total"):     len(observability.ScheduleCutoverDecisions),
+		fqName("schedule_cutover_read_hold_links_total"):  len(observability.ScheduleCutoverReadHoldLinks),
+		fqName("fleet_overdue_episodes_total"):            len(fleet.OverdueHoldClasses),
 		fqName("schedule_cutover_timelines_read"):         1,
 		fqName("schedule_cutover_last_duration_seconds"):  1,
 		fqName("schedule_cutover_first_duration_seconds"): 1,
@@ -924,6 +1037,8 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("canonical_encoding_shadow_sample_stride"): 1,
 		fqName("canonical_encoding_calls_total"):          2,
 		fqName("canonical_encoding_shadow_total"):         5,
+		fqName("canonical_encoding_records_shadow_total"): 2,
+		fqName("canonical_encoding_identity_part_total"):  2,
 		fqName("canonical_encoding_distinct_findings"):    1,
 		fqName("canonical_encoding_covered_call_sites"):   1,
 		fqName("object_catalog_redis_duration_seconds"):   histogramSeries(2*2, len(activeQGSetDurationBuckets)),
@@ -960,22 +1075,32 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 		fqName("assignment_index_write_total"):                2,
 		// Closed label sets, every series created at construction; see
 		// control_facts.go.
-		fqName("control_facts_read_total"):           len(controlFactNames),
-		fqName("control_facts_unavailable_total"):    len(controlFactNames) * len(controlFactUnavailableReasons),
-		fqName("control_facts_rebuilt_total"):        len(controlFactNames),
-		fqName("control_health_facts_total"):         len(controlHealthStatuses),
-		fqName("control_health_invalid_total"):       len(controlHealthInvalidFields),
-		fqName("startup_dependency_wait_total"):      len(StartupDependencies),
-		fqName("activation_blocked_query_groups"):    len(ActivationBlockedReasons),
-		fqName("activation_blocked_set_total"):       len(controlplane.BlockedSetAccountings),
-		fqName("activation_timeline_reopened_total"): 1,
-		fqName("activation_body_bytes"):              1,
-		fqName("loop_turn_age_seconds"):              len(LivenessLoops),
-		fqName("loop_turn_duration_seconds"):         histogramSeries(len(LivenessLoops), len(loopTurnDurationBuckets)),
-		fqName("executions_past_deadline"):           1,
-		fqName("assignment_index_read_total"):        4,
-		fqName("assignment_index_confirm_total"):     4,
-		fqName("assignment_record_read_total"):       2,
+		fqName("control_facts_read_total"):                len(controlFactNames),
+		fqName("control_facts_unavailable_total"):         len(controlFactNames) * len(controlFactUnavailableReasons),
+		fqName("control_facts_rebuilt_total"):             len(controlFactNames),
+		fqName("control_health_facts_total"):              len(controlHealthStatuses),
+		fqName("control_health_invalid_total"):            len(controlHealthInvalidFields),
+		fqName("startup_dependency_wait_total"):           len(StartupDependencies),
+		fqName("activation_blocked_query_groups"):         len(ActivationBlockedReasons),
+		fqName("activation_blocked_set_total"):            len(controlplane.BlockedSetAccountings),
+		fqName("activation_timeline_reopened_total"):      1,
+		fqName("activation_body_bytes"):                   1,
+		fqName("fleet_round_memory_objects"):              len(fleet.RoundMemoryBuckets),
+		fqName("fleet_round_memory_rounds"):               1,
+		fqName("fleet_round_memory_bytes"):                1,
+		fqName("fleet_round_memory_max_rounds"):           1,
+		fqName("fleet_round_memory_window_sized_objects"): 1,
+		fqName("fleet_round_memory_line_held_objects"):    1,
+		fqName("target_group_groups"):                     len(TargetGroupStates),
+		fqName("target_group_refresh_failed"):             1,
+		fqName("target_group_unanswered_reads_total"):     1,
+		fqName("target_group_oldest_failing_seconds"):     1,
+		fqName("loop_turn_age_seconds"):                   len(LivenessLoops),
+		fqName("loop_turn_duration_seconds"):              histogramSeries(len(LivenessLoops), len(loopTurnDurationBuckets)),
+		fqName("executions_past_deadline"):                1,
+		fqName("assignment_index_read_total"):             4,
+		fqName("assignment_index_confirm_total"):          4,
+		fqName("assignment_record_read_total"):            2,
 		// Four outcomes without a refusal, plus a conflict for each refusal
 		// OTHER included, all created at construction.
 		fqName("schedule_cursor_advance_total"):   len(observability.CursorAdvanceStatuses) - 1 + len(observability.CursorRefusals),
@@ -1010,6 +1135,8 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	bounds[fqName("open_alert_set_refresh_total")] = 3
 	bounds[fqName("open_alert_set_lookup_total")] = len(openalerts.Answers)
 	bounds[fqName("effective_close_total")] = len(observability.EffectiveCloseOutcomes)
+	// Every stage of the closed list, _other among them, written and limited.
+	bounds[fqName("log_lines_total")] = 2 * len(observability.AllStages())
 	bounds[fqName("absent_strategy_close_total")] = len(absentalerts.Outcomes)
 	bounds[fqName("target_scope_close_total")] = len(scopeclose.Outcomes)
 	bounds[fqName("absent_strategy_round_total")] = len(absentalerts.Refusals)
@@ -1018,8 +1145,11 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	bounds[fqName("open_alert_set_tracked_strategies")] = 1
 	bounds[fqName("open_alert_set_evictions_total")] = 1
 	bounds[fqName("activation_rebuild_total")] = len(controlplane.ActivationRebuildOutcomes)
+	bounds[fqName("activation_header_rebuild_total")] = len(controlplane.ActivationHeaderRebuildOutcomes)
+	bounds[fqName("activation_renewal_conflict_total")] = len(controlplane.ActivationRenewalConflicts)
 	bounds[fqName("open_alert_set_sent_alerts")] = 2
 	bounds[fqName("open_alert_set_disjoint")] = 1
+	bounds[fqName("open_alert_set_recovery_resent_total")] = 1
 	bounds[fqName("control_source_refresh_total")] = len(controlplane.SourceRefreshExits)
 	bounds[fqName("catalog_strategy_returned_after_removal_total")] = 1
 	bounds[fqName("leader_forward_duration_seconds")] = histogramSeries(len(LeaderForwardRoutes)*len(LeaderForwardResults), len(leaderForwardBuckets))
@@ -1028,11 +1158,18 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	bounds[fqName("source_pending_confirmation_age_seconds")] = 1
 	bounds[fqName("leader_rounds_total")] = 2
 	bounds[fqName("query_cooldown_saves_total")] = len(QueryCooldownSaveResults)
+	bounds[fqName("event_business_attribution_total")] = len(contract.BusinessAttributionSources)
+	bounds[fqName("diagnostic_redis_failures_total")] = len(DiagnosticRedisClients) * len(redisfailure.Reasons)
+	bounds[fqName("diagnostic_redis_dial_retries_total")] = len(DiagnosticRedisClients) * len(redisfailure.Reasons)
 	bounds[fqName("leader_round_stage_seconds_total")] = len(fleet.LeaderRoundStages) + 1
+	for name, n := range lookbackSeriesUpperBounds() {
+		bounds[fqName(name)] = n
+	}
 	// Five states; three operations by two results.
 	bounds[fqName("linkd_console_state")] = 5
 	bounds[fqName("linkd_console_calls_total")] = 6
 	bounds[fqName("control_source_retained_stale_revisions_total")] = 1
+	bounds[fqName("control_source_last_good_identity_changed_total")] = 1
 	// The supported data sources, plus other for one the compiler started
 	// accepting without being named, plus mixed for a Query Group that reads
 	// several. Bounded by that list and not by any strategy document, which
@@ -1071,9 +1208,10 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	bounds[fqName("worker_no_data_slot_plans_total")] = len(nodata.SlotOutcomes)
 	bounds[fqName("worker_no_data_absences_total")] = len(observability.NoDataAbsenceOutcomes)
 	bounds[fqName("target_plan_resolution_total")] = len(targetplan.ResolutionStates)
-	// Three kinds by four states by the closed reasons; cells are created on
+	// Four kinds by four states by the closed reasons; cells are created on
 	// observation because most triples cannot happen.
-	bounds[fqName("target_selector_resolutions_total")] = 3 * len(targetplan.SelectorStates) * len(targetplan.SelectorReasons)
+	bounds[fqName("target_selector_resolutions_total")] = 4 * len(targetplan.SelectorStates) * len(targetplan.SelectorReasons)
+	bounds[fqName("target_excluded_absent_members_total")] = 1
 	// Every outcome but EVALUATED: a Plan that evaluated has not stalled, so
 	// that pair cannot happen and a label for it would be a zero that means
 	// nothing rather than one that means "nothing has stopped".
@@ -1128,11 +1266,13 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	// written only from the list observability publishes, and the scheduler's
 	// typed constants are held to that list by a test of its own.
 	bounds[fqName("replay_expired_total")] = len(observability.ReplayExpiryReasons)
+	bounds[fqName("replay_takeover_slots_total")] = len(observability.ReplayTakeoverOutcomes)
 	// One per word the range gate can put on a round, applied included, and
 	// no more: the label is written from the facts after normalization, which
 	// folds any other word to unexplained.
 	bounds[fqName("range_gate_total")] = len(observability.RangeGateOutcomes)
 	bounds[fqName("state_preflight_total")] = len(observability.StatePreflightResults) * len(observability.StatePreflightReasons)
+	bounds[fqName("state_admission_total")] = len(observability.StateAdmissionResults) * len(observability.StateAdmissionReasons)
 	// One series per blocking wait a Slot attempt can be in, and no more: the
 	// label is written only from the list observability publishes, and the
 	// three call sites pass those constants.
@@ -1154,12 +1294,20 @@ func customMetricFamilySeriesUpperBounds() map[string]int {
 	bounds[fqName("catalog_retained_history_points")] = 1
 	// window and recovery: the two ways a paying Level can be shaped.
 	bounds[fqName("catalog_levels_with_retention_slack")] = 2
+	bounds[fqName("catalog_global_strategies")] = len(controlplane.GlobalOutcomes)
+	// Every refusal word against every label GlobalQuerySource can return:
+	// the supported source semantics, other, mixed and promql.
+	bounds[fqName("catalog_global_strategies_unsupported")] = len(controlplane.GlobalBusinessRefusalWords) *
+		(len(controlplane.SupportedSourceSemantics) + 3)
 	bounds[fqName("level_abnormal_total")] = 2
 	bounds[fqName("platform_settings_mode")] = len(platformsettings.Modes)
 	bounds[fqName("platform_settings_authoritative_age_seconds")] = 1
 	bounds[fqName("platform_settings_refresh_total")] = 2
 	bounds[fqName("platform_settings_unavailable_total")] = len(platformsettings.UnavailableReasons)
 	bounds[fqName("platform_settings_change_total")] = len(platformsettings.Fields)
+	bounds[fqName("platform_setting_source")] = len(platformsettings.Fields) * len(platformsettings.HorizonSources)
+	bounds[fqName("platform_setting_enabled")] = 1
+	bounds[fqName("platform_setting_entries")] = len(platformsettings.Fields)
 	for _, name := range []string{
 		"messages", "records", "plans", "levels", "events", "bytes", "keys", "state_bytes",
 	} {
@@ -1222,7 +1370,7 @@ func countCustomSeriesByFamily(t *testing.T, recorder *Recorder) map[string]int 
 // cardinality bound. It is the same number controlplane's own scan holds its
 // source to, repeated here rather than exported because exporting a test's
 // constant would make it look like a value the package promises.
-const catalogReasonHeadroom = 120
+const catalogReasonHeadroom = 140
 
 // Every route and result pair exists at zero from construction, so "no
 // timeout since the release" reads as zero and not as a missing series; a
@@ -1280,6 +1428,129 @@ func TestQueryCooldownSaveResultsArePreCreated(t *testing.T) {
 	for _, result := range QueryCooldownSaveResults {
 		if !seen[result] {
 			t.Fatalf("result %q not pre-created: %v", result, seen)
+		}
+	}
+}
+
+// The attribution sources are pre-created, so a zero under global is a
+// count; a source outside the list creates no series.
+func TestEventBusinessAttributionSourcesArePreCreated(t *testing.T) {
+	r := NewRecorder(BuildInfo{})
+	r.ObserveEventBusinessAttribution(contract.BusinessAttributionTarget)
+	r.ObserveEventBusinessAttribution("guessed")
+	counts := map[string]float64{}
+	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_event_business_attribution_total") {
+		counts[m.GetLabel()[0].GetValue()] = m.GetCounter().GetValue()
+	}
+	if len(counts) != len(contract.BusinessAttributionSources) || counts["target"] != 1 || counts["dimension"] != 0 || counts["global"] != 0 {
+		t.Fatalf("attribution counts = %v, want the three sources with target counted once", counts)
+	}
+}
+
+// Diagnostic Redis failures are counted by client and reason, every cell
+// from startup; a reason outside the set folds to other and a client outside
+// it is not counted.
+func TestDiagnosticRedisFailuresAreCountedByReason(t *testing.T) {
+	r := NewRecorder(BuildInfo{})
+	if cells := gatherFamily(t, r, "bkmonitor_alarmd_diagnostic_redis_failures_total"); len(cells) != len(DiagnosticRedisClients)*len(redisfailure.Reasons) {
+		t.Fatalf("%d cells before any failure, want every client and reason", len(cells))
+	}
+	r.ObserveDiagnosticRedisFailure("auth", redisfailure.ConnectionClosed)
+	r.ObserveDiagnosticRedisFailure("auth", "not_a_reason")
+	r.ObserveDiagnosticRedisFailure("nobody", redisfailure.Timeout)
+	counts := map[string]float64{}
+	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_diagnostic_redis_failures_total") {
+		labels := map[string]string{}
+		for _, label := range m.GetLabel() {
+			labels[label.GetName()] = label.GetValue()
+		}
+		counts[labels["client"]+"/"+labels["reason"]] = m.GetCounter().GetValue()
+	}
+	if counts["auth/connection_closed"] != 1 || counts["auth/other"] != 1 || len(counts) != len(DiagnosticRedisClients)*len(redisfailure.Reasons) {
+		t.Fatalf("counts %v", counts)
+	}
+}
+
+// A second dial is counted by client and by why the first failed, from
+// startup; a client outside the closed set is not counted at all.
+func TestDiagnosticRedisDialRetriesAreCountedByReason(t *testing.T) {
+	r := NewRecorder(BuildInfo{})
+	name := "bkmonitor_alarmd_diagnostic_redis_dial_retries_total"
+	if cells := gatherFamily(t, r, name); len(cells) != len(DiagnosticRedisClients)*len(redisfailure.Reasons) {
+		t.Fatalf("%d cells before any retry, want every client and reason", len(cells))
+	}
+	r.ObserveDiagnosticRedisDialRetry("auth", redisfailure.Timeout)
+	r.ObserveDiagnosticRedisDialRetry("evidence", "not_a_reason")
+	r.ObserveDiagnosticRedisDialRetry("nobody", redisfailure.Timeout)
+	counts := map[string]float64{}
+	for _, m := range gatherFamily(t, r, name) {
+		labels := map[string]string{}
+		for _, label := range m.GetLabel() {
+			labels[label.GetName()] = label.GetValue()
+		}
+		counts[labels["client"]+"/"+labels["reason"]] = m.GetCounter().GetValue()
+	}
+	total := 0.0
+	for _, count := range counts {
+		total += count
+	}
+	if counts["auth/timeout"] != 1 || counts["evidence/other"] != 1 || total != 2 {
+		t.Fatalf("counts %v", counts)
+	}
+}
+
+// The three refused-record cells exist from startup, so a zero is a load
+// that refused nothing and not a series nobody registered; each kind sets
+// its own cell, and a kind outside the list creates none.
+func TestTheRefusedRecordsGaugeHasEveryKindFromStartup(t *testing.T) {
+	r := NewRecorder(BuildInfo{})
+	r.SetCMDBRecordsRefused("host", 2)
+	r.SetCMDBRecordsRefused("topo_node", 3)
+	r.SetCMDBRecordsRefused("guessed", 9)
+	values := map[string]float64{}
+	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_cmdb_index_records_refused") {
+		for _, label := range m.GetLabel() {
+			values[label.GetValue()] = m.GetGauge().GetValue()
+		}
+	}
+	want := map[string]float64{"host": 2, "service_instance": 0, "topo_node": 3}
+	if len(values) != len(want) {
+		t.Fatalf("gauge = %v, want exactly %v", values, want)
+	}
+	for record, value := range want {
+		if values[record] != value {
+			t.Fatalf("gauge = %v, want %v", values, want)
+		}
+	}
+}
+
+// The cluster mapping's three states exist from startup, so a zero held is
+// a count of clusters and not a series nobody registered.
+func TestTheBusinessMappingGaugeHasEveryCellFromStartup(t *testing.T) {
+	r := NewRecorder(BuildInfo{})
+	r.SetCMDBBusinessMapping("bcs_cluster", 3, 1, 0, true, false)
+	r.SetCMDBBusinessMapping("bcs_namespace", 5, 0, 2, false, true)
+	r.SetCMDBBusinessMapping("guessed", 9, 9, 9, true, true)
+	values := map[string]float64{}
+	for _, m := range gatherFamily(t, r, "bkmonitor_alarmd_cmdb_index_business_mappings") {
+		labels := map[string]string{}
+		for _, label := range m.GetLabel() {
+			labels[label.GetName()] = label.GetValue()
+		}
+		values[labels["mapping"]+"/"+labels["state"]] = m.GetGauge().GetValue()
+	}
+	want := map[string]float64{
+		"bcs_cluster/held": 3, "bcs_cluster/refused": 1, "bcs_cluster/truncated": 0, "bcs_cluster/read_failed": 1,
+		"bcs_cluster/emptied": 0,
+		"bcs_namespace/held":  5, "bcs_namespace/refused": 0, "bcs_namespace/truncated": 2, "bcs_namespace/read_failed": 0,
+		"bcs_namespace/emptied": 1,
+	}
+	if len(values) != len(want) {
+		t.Fatalf("gauge = %v, want exactly %v", values, want)
+	}
+	for cell, value := range want {
+		if values[cell] != value {
+			t.Fatalf("gauge = %v, want %v", values, want)
 		}
 	}
 }

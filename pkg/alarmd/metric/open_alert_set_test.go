@@ -99,3 +99,18 @@ func TestOpenAlertSetCollectorReportsModeAndEmitsAgeOnlyOnceLoaded(t *testing.T)
 		t.Fatalf("modes after a load = %v", modes)
 	}
 }
+
+// The resend count is one series from the start, zero until a recovery is
+// sent again.
+func TestOpenAlertSetCollectorReportsRecoveriesResentFromZero(t *testing.T) {
+	r := NewRecorder(BuildInfo{})
+	stats := openalerts.Stats{Mode: openalerts.ModeAuthoritative}
+	r.SetOpenAlertSetSource(func() openalerts.Stats { return stats })
+	for _, want := range []float64{0, 2} {
+		stats.RecoveriesResent = uint64(want)
+		series := gatherFamily(t, r, "bkmonitor_alarmd_open_alert_set_recovery_resent_total")
+		if len(series) != 1 || series[0].GetCounter().GetValue() != want {
+			t.Fatalf("recovery resent series = %v, want one at %v", series, want)
+		}
+	}
+}

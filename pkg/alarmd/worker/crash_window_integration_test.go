@@ -24,6 +24,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 	enginekafka "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/kafka"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
@@ -736,14 +737,9 @@ func g3aEventsAtBroker(t *testing.T, broker *sarama.MockBroker) int {
 
 func startG3ARedis(t *testing.T) string {
 	t.Helper()
-	// Skipped rather than failed when redis-server is missing, which is how
-	// every other real-Redis case in this tree behaves: the machine either
-	// has it and the windows run, or it does not and nothing here can be
-	// decided. A failure would only teach people to set a flag again.
-	redisServer, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server is not installed")
-	}
+	// Which redis-server runs, and whether a missing one skips or fails, is
+	// redistest.Server's to decide, as for every real-Redis case in this tree.
+	redisServer := redistest.Server(t)
 	address := reserveG3AAddress(t)
 	_, port, err := net.SplitHostPort(address)
 	if err != nil {

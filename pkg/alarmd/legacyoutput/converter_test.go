@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 	"github.com/go-redis/redis/v8"
 	"os"
 	"os/exec"
@@ -147,10 +148,7 @@ func TestServiceSnapshotWritesEveryStrategyWithPythonTTL(t *testing.T) {
 
 func startSnapshotRedis(t *testing.T) *redis.Client {
 	t.Helper()
-	binary, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server unavailable")
-	}
+	binary := redistest.Server(t)
 	dir, err := os.MkdirTemp("/tmp", "als-")
 	if err != nil {
 		t.Fatal(err)

@@ -59,6 +59,12 @@ func censusCandidate(peakBytes, shareBytes uint64) (bool, uint64) {
 // decision has somewhere to be tested. The gate used to be fed a second
 // derivation of the share, and no test could reach the line that fed it.
 func (stream *streamedExecution) openCensusGate(queryGroup execution.QueryGroupIdentity) {
+	if stream.supplement != nil {
+		// A supplement is not a round of the Query Group: its series are a
+		// few late ones, and a census of them would be a census of nothing
+		// the Query Group has. The gate stays shut.
+		return
+	}
 	stream.censusPeakBytes = stream.coordinator.censusPeaks.read(queryGroup)
 	stream.censusCandidate, stream.censusShareBytes = censusCandidate(
 		stream.censusPeakBytes, stream.coordinator.qgShareBytes(),

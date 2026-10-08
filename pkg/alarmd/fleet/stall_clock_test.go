@@ -53,7 +53,7 @@ func TestAStallIsJudgedFromWhenRoundsStoppedFinishingNotFromWhenTheObjectDegrade
 
 	// Degraded for three budgets: every round ended, badly.
 	for round := 0; round < DefaultDegradedRounds; round++ {
-		tracker.Observe(ctx, completion("qg-1", "COMPLETED_WITH_UNAVAILABLE", "8930"))
+		tracker.Observe(ctx, completion("qg-1", "COMPLETED_WITH_UNAVAILABLE", "854"))
 		at.at = at.at.Add(budget)
 	}
 	if stalled("degraded only") {
@@ -74,7 +74,7 @@ func TestAStallIsJudgedFromWhenRoundsStoppedFinishingNotFromWhenTheObjectDegrade
 	}
 
 	// A degraded completion ends the failing stretch, though not the anomaly.
-	tracker.Observe(ctx, completion("qg-1", "COMPLETED_WITH_UNAVAILABLE", "8930"))
+	tracker.Observe(ctx, completion("qg-1", "COMPLETED_WITH_UNAVAILABLE", "854"))
 	if stalled("degraded completion after the stall") {
 		t.Fatal("a round that ended, even degraded, left the object flagged as never ending")
 	}
@@ -107,7 +107,7 @@ func TestAnomaliesCarryWhenTheirRoundsStoppedFinishing(t *testing.T) {
 	tracker := newTracker(t, at)
 	ctx := context.Background()
 	for round := 0; round < DefaultDegradedRounds; round++ {
-		tracker.Observe(ctx, completion("qg-1", "COMPLETED_WITH_UNAVAILABLE", "8930"))
+		tracker.Observe(ctx, completion("qg-1", "COMPLETED_WITH_UNAVAILABLE", "854"))
 	}
 	if got := tracker.Anomalies()[0].FailingSince; !got.IsZero() {
 		t.Fatalf("failing since = %v after completed rounds, want none", got)
@@ -137,7 +137,7 @@ func TestAnomaliesCarryWhenTheirRoundsStoppedFinishing(t *testing.T) {
 	if !strings.Contains(string(encoded), `"failing_since":"`) {
 		t.Fatalf("wire = %s, want failing_since carried while the rounds are not finishing", encoded)
 	}
-	tracker.Observe(ctx, completion("qg-1", "COMPLETED_WITH_UNAVAILABLE", "8930"))
+	tracker.Observe(ctx, completion("qg-1", "COMPLETED_WITH_UNAVAILABLE", "854"))
 	ended := tracker.Anomalies()[0]
 	if !ended.FailingSince.IsZero() {
 		t.Fatalf("failing since = %v after a round ended, want none", ended.FailingSince)

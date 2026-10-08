@@ -32,7 +32,7 @@ const (
 )
 
 func TestAServiceInstanceRecordDecodesToItsHostAndModuleChain(t *testing.T) {
-	facts, err := decodeServiceInstance(instanceOnSpareHost)
+	facts, _, err := decodeServiceInstance(instanceOnSpareHost)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestAServiceInstanceRecordDecodesToItsHostAndModuleChain(t *testing.T) {
 	}
 	// A record without a cloud is in the direct area, as a host without one
 	// is.
-	bare, err := decodeServiceInstance(`{"service_instance_id":9,"bk_host_id":1,"ip":"10.0.0.9"}`)
+	bare, _, err := decodeServiceInstance(`{"service_instance_id":9,"bk_host_id":1,"ip":"192.0.2.9"}`)
 	if err != nil || bare.CloudID != "0" {
 		t.Fatalf("bare instance = %+v, %v", bare, err)
 	}
@@ -120,7 +120,9 @@ func TestLoadReadsHostsAndServiceInstancesIntoOneSnapshot(t *testing.T) {
 	if index.Hosts() != 1 || index.ServiceInstances() != 1 {
 		t.Fatalf("index holds %d hosts and %d instances", index.Hosts(), index.ServiceInstances())
 	}
-	if !reflect.DeepEqual(client.scans, []string{"bk_monitorv3.ce.cache.cmdb.host", "bk_monitorv3.ce.cache.cmdb.service_instance", "bk_monitorv3.ce.cache.cmdb.topo"}) {
+	if !reflect.DeepEqual(client.scans, []string{"bk_monitorv3.ce.cache.cmdb.host", "bk_monitorv3.ce.cache.cmdb.service_instance",
+		"bk_monitorv3.ce.cache.cmdb.topo", "bk_monitorv3.ce.cache.cmdb.bcs_cluster_business",
+		"bk_monitorv3.ce.cache.cmdb.bcs_namespace_business"}) {
 		t.Fatalf("scanned %v", client.scans)
 	}
 	if index.TopologyNodes() != 1 {

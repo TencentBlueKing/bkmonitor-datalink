@@ -93,6 +93,12 @@ type Round struct {
 	SnapshotUsable      bool
 	SnapshotObservation string
 	SnapshotAgeSeconds  int64
+	// WriterHoldsLastGood is the writer's statement, made about this very
+	// list, that a strategy leaves it only for a fact about the strategy
+	// itself and never because publishing it failed. Then a smaller list is
+	// strategies that are gone, and the shrink gate - which exists because a
+	// writer could drop strategies that failed to publish - does not apply.
+	WriterHoldsLastGood bool
 	// PreviousSnapshotStrategies is how large the snapshot was when this
 	// loop last decided on one. Zero means there is no round to compare
 	// against, which is the first round of a leader term.
@@ -241,6 +247,9 @@ type Counts struct {
 	RosterUnreadable           int
 	SnapshotStrategies         int
 	PreviousSnapshotStrategies int
+	// WriterHoldsLastGood is the round's WriterHoldsLastGood: whether the
+	// shrink gate was in force or waived by the writer's statement.
+	WriterHoldsLastGood bool
 	// Candidates is the difference this round acts on: listed by the link,
 	// not listed by the snapshot.
 	Candidates  int
@@ -293,7 +302,8 @@ type Result struct {
 func Candidates(round Round, bounds Bounds) ([]Key, Counts, string) {
 	counts := Counts{Roster: len(round.Roster), RosterUnreadable: round.RosterUnreadable,
 		SnapshotStrategies:         len(round.SnapshotStrategies),
-		PreviousSnapshotStrategies: round.PreviousSnapshotStrategies}
+		PreviousSnapshotStrategies: round.PreviousSnapshotStrategies,
+		WriterHoldsLastGood:        round.WriterHoldsLastGood}
 	if !round.LinkRead {
 		return nil, counts, RefusalLinkUnavailable
 	}
@@ -309,7 +319,12 @@ func Candidates(round Round, bounds Bounds) ([]Key, Counts, string) {
 	if bounds.MaxSnapshotAge > 0 && time.Duration(round.SnapshotAgeSeconds)*time.Second > bounds.MaxSnapshotAge {
 		return nil, counts, RefusalSnapshotStale
 	}
-	if shrunk(counts, bounds) {
+	// The shrink gate guesses: it cannot tell a writer that dropped strategies
+	// from one whose owners deleted many, and once a large deletion is
+	// refused it compares every later round against the size before it.
+	// A writer that states it never drops a strategy on failure removes the
+	// reason to guess.
+	if !round.WriterHoldsLastGood && shrunk(counts, bounds) {
 		return nil, counts, RefusalSnapshotShrunk
 	}
 	// Presence is decided by the strategy id alone. The snapshot lists a

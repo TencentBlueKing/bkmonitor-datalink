@@ -18,7 +18,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 )
 
-// pipelineMemoryBackend mirrors compareAndSetByDigestScript in memory so the
+// pipelineMemoryBackend mirrors fencedBatchWriteScript in memory so the
 // store's batching, classification and fallback logic is testable without
 // Redis. Counters record how many storage round trips each path costs.
 type pipelineMemoryBackend struct {

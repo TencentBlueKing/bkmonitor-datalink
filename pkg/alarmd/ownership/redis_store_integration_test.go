@@ -16,7 +16,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-redis/redis/v8"
+
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 )
 
 func TestRedisStorePublishesAssignmentOnlyWithLiveControlLeader(t *testing.T) {
@@ -354,10 +357,7 @@ func TestRedisStoreCheckFenceCarriesTheAssignmentItAlreadyRead(t *testing.T) {
 
 func newIntegrationStore(t *testing.T) *RedisStore {
 	t.Helper()
-	executable, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server is not installed")
-	}
+	executable := redistest.Server(t)
 	address := reserveAddress(t)
 	server := startRedis(t, executable, address)
 	store, err := NewRedisStore(RedisStoreOptions{
@@ -596,4 +596,116 @@ func TestRedisStoreOverlappingOwnersOldWriteIsRefused(t *testing.T) {
 			}
 		})
 	}
+}
+
+// pipelineCounter records how many commands each pipeline a client sends
+// carries, and which.
+type pipelineCounter struct{ pipelines [][]string }
+
+func (counter *pipelineCounter) BeforeProcess(ctx context.Context, _ redis.Cmder) (context.Context, error) {
+	return ctx, nil
+}
+func (counter *pipelineCounter) AfterProcess(context.Context, redis.Cmder) error { return nil }
+func (counter *pipelineCounter) BeforeProcessPipeline(ctx context.Context, cmds []redis.Cmder) (context.Context, error) {
+	names := make([]string, 0, len(cmds))
+	for _, cmd := range cmds {
+		names = append(names, cmd.Name())
+	}
+	counter.pipelines = append(counter.pipelines, names)
+	return ctx, nil
+}
+func (counter *pipelineCounter) AfterProcessPipeline(context.Context, []redis.Cmder) error {
+	return nil
+}
+
+// A read within what is admitted takes at most one pipeline of lengths and
+// one of values, of at most ControlReadBatch keys each: admit is asked each
+// value's length in order, the values it accepted are read and the rest left,
+// and a key Redis answers with an error is that entry's error while the
+// others of the pipeline read.
+func TestRedisStoreReadControlWithinReadsOnePipelineOfWhatIsAdmitted(t *testing.T) {
+	store := newIntegrationStore(t)
+	ctx := context.Background()
+	namespace := "progress"
+	var queryGroups []execution.QueryGroupIdentity
+	lengths := map[execution.QueryGroupIdentity]int{}
+	for index := 0; index < ControlReadBatch+88; index++ {
+		queryGroup := execution.QueryGroupIdentity(fmt.Sprintf("query-group-%03d", index))
+		queryGroups = append(queryGroups, queryGroup)
+		switch {
+		case index == 3:
+			// Not a string: Redis answers this key with an error.
+			if err := store.client.HSet(ctx, store.controlKey(queryGroup, namespace), "field", "value").Err(); err != nil {
+				t.Fatal(err)
+			}
+		case index%5 == 4:
+			// Missing.
+		default:
+			value := bytes.Repeat([]byte("x"), 100+index)
+			if err := store.client.Set(ctx, store.controlKey(queryGroup, namespace), value, 0).Err(); err != nil {
+				t.Fatal(err)
+			}
+			lengths[queryGroup] = len(value)
+		}
+	}
+	counter := &pipelineCounter{}
+	store.client.AddHook(counter)
+	asked, spent := []uint64{}, uint64(0)
+	const budget = 20_000
+	reads, read, err := store.ReadControlWithin(ctx, queryGroups, namespace, func(size uint64) bool {
+		asked = append(asked, size)
+		if spent+size > budget {
+			return false
+		}
+		spent += size
+		return true
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(counter.pipelines) != 2 || len(counter.pipelines[0]) != ControlReadBatch || counter.pipelines[0][0] != "strlen" ||
+		len(counter.pipelines[1]) != read || counter.pipelines[1][0] != "get" {
+		t.Fatalf("pipelines %d of sizes %v, want one of %d lengths and one of the %d values admitted", len(counter.pipelines),
+			pipelineSizes(counter.pipelines), ControlReadBatch, read)
+	}
+	if read == 0 || read >= ControlReadBatch || len(reads) != read || len(asked) != read+1 {
+		t.Fatalf("read %d of %d with %d lengths asked, want a prefix the budget cut, asked up to the first refused", read,
+			ControlReadBatch, len(asked))
+	}
+	for index, size := range asked {
+		if want := uint64(lengths[queryGroups[index]]); size != want {
+			t.Fatalf("admit asked %d for %s, whose value is %d bytes", size, queryGroups[index], want)
+		}
+	}
+	for index := 0; index < read; index++ {
+		entry := reads[index]
+		switch {
+		case index == 3:
+			if entry.Err == nil {
+				t.Fatalf("the key Redis refused read as %+v, want its own error", entry)
+			}
+		case index%5 == 4:
+			if !entry.Missing || entry.Err != nil {
+				t.Fatalf("missing key read as %+v", entry)
+			}
+		default:
+			if entry.Err != nil || len(entry.Raw) != lengths[queryGroups[index]] {
+				t.Fatalf("%s read as %d bytes and %v, want %d", queryGroups[index], len(entry.Raw), entry.Err, lengths[queryGroups[index]])
+			}
+		}
+	}
+	// A refusal of the first reads nothing and sends no values.
+	counter.pipelines = nil
+	if reads, read, err := store.ReadControlWithin(ctx, queryGroups, namespace, func(uint64) bool { return false }); err != nil ||
+		read != 0 || len(reads) != 0 || len(counter.pipelines) != 1 {
+		t.Fatalf("refused read %d, %d pipelines, error %v; want nothing read and only the lengths asked", read, len(counter.pipelines), err)
+	}
+}
+
+func pipelineSizes(pipelines [][]string) []int {
+	sizes := make([]int, 0, len(pipelines))
+	for _, pipeline := range pipelines {
+		sizes = append(sizes, len(pipeline))
+	}
+	return sizes
 }

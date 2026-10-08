@@ -75,6 +75,33 @@ func TestAnObjectWithNoStatedPeriodIsStillReportedAndCounted(t *testing.T) {
 	}
 }
 
+// A wake is late past a whole period of its own, or, with none stated, once
+// it has passed at all; a wake not written is not late, and neither is one
+// with no period still ahead. Both the wake list and an object asked after
+// alone are judged by this.
+func TestAWakeIsLateByItsOwnPeriodOrOnceItHasPassed(t *testing.T) {
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	for name, want := range map[string]struct {
+		wake OverdueWake
+		late bool
+	}{
+		"within its period":  {OverdueWake{WakeAt: now.Add(-30 * time.Second), IntervalSeconds: 60}, false},
+		"past its period":    {OverdueWake{WakeAt: now.Add(-61 * time.Second), IntervalSeconds: 60}, true},
+		"no period, passed":  {OverdueWake{WakeAt: now.Add(-time.Second)}, true},
+		"no period, ahead":   {OverdueWake{WakeAt: now.Add(time.Second)}, false},
+		"no wake written":    {OverdueWake{IntervalSeconds: 60}, false},
+		"no wake, no period": {OverdueWake{}, false},
+	} {
+		if got := want.wake.LateAt(now); got != want.late {
+			t.Errorf("%s: late %t, want %t", name, got, want.late)
+		}
+	}
+	anomalies, _ := OverdueAnomalies([]OverdueWake{{QueryGroup: "unwritten", IntervalSeconds: 60}}, 1, now, "pod-a", nil)
+	if len(anomalies) != 0 {
+		t.Fatalf("anomalies = %+v, want a wake never written left out", anomalies)
+	}
+}
+
 // A truncated list is a floor, not a count. Reporting it as a count would
 // understate the incident by exactly the amount that made it worth reporting --
 // the same reason the anomaly list carries anomalies_total.

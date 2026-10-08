@@ -10,6 +10,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -40,7 +41,7 @@ func strategyLookupSource(reconciler *controlplane.SourceReconciler) fleet.Strat
 
 func strategyLookupFactsOf(lookup controlplane.StrategyLookup) fleet.StrategyLookupFacts {
 	facts := fleet.StrategyLookupFacts{
-		Available: lookup.Available, Found: lookup.Found, Retained: lookup.Retained,
+		Available: lookup.Available, Found: lookup.Found, Retained: lookup.Retained, Global: lookup.Global,
 		Publication: fleet.StrategyPublication{SnapshotRevision: string(lookup.Publication.SnapshotRevision), Epoch: lookup.Publication.PublicationEpoch},
 	}
 	for _, plan := range lookup.Plans {
@@ -53,7 +54,7 @@ func strategyLookupFactsOf(lookup controlplane.StrategyLookup) fleet.StrategyLoo
 	for _, disposition := range lookup.Dispositions {
 		facts.Dispositions = append(facts.Dispositions, fleet.StrategyDisposition{
 			Scope: disposition.Scope, LevelID: disposition.LevelID, Disposition: string(disposition.Disposition),
-			Reason: disposition.Reason, FieldPath: disposition.FieldPath,
+			Reason: disposition.Reason, FieldPath: disposition.FieldPath, Detail: disposition.Detail,
 		})
 	}
 	return facts
@@ -62,8 +63,7 @@ func strategyLookupFactsOf(lookup controlplane.StrategyLookup) fleet.StrategyLoo
 // catalogAbsenceSource reads why this process holds no published catalog,
 // live, from the same state the first screen's control source facts are
 // built from. The fleet decides the word from these facts; this only hands
-// them over, plus whether the strategy directory -- the other route that
-// answers the same question, from the store -- is mounted on this process.
+// them over.
 //
 // Read live rather than from the fleet snapshot on purpose: the snapshot is
 // a published copy up to a publication interval old, and the two states this
@@ -88,7 +88,7 @@ func strategyLookupFactsOf(lookup controlplane.StrategyLookup) fleet.StrategyLoo
 // fact that settles it is two files away. The nil branch below is not
 // standing in for that ordering -- it is for the readers wired before the
 // bundle exists at all, which is the truth rather than a role invented here.
-func catalogAbsenceSource(bundleOf func() *phaseTwoWorkerBundle, directoryMounted bool) fleet.CatalogAbsenceFunc {
+func catalogAbsenceSource(bundleOf func() *phaseTwoWorkerBundle) fleet.CatalogAbsenceFunc {
 	if bundleOf == nil {
 		return nil
 	}
@@ -97,12 +97,11 @@ func catalogAbsenceSource(bundleOf func() *phaseTwoWorkerBundle, directoryMounte
 		if bundle == nil {
 			// Wired, and with nothing to report yet: the word for that is
 			// the one for "could not be read", not a role invented here.
-			return fleet.CatalogAbsenceFacts{DirectoryMounted: directoryMounted}
+			return fleet.CatalogAbsenceFacts{}
 		}
 		view := bundle.controlSourceView()
 		facts := fleet.CatalogAbsenceFacts{
 			Known: view.known, Role: string(view.role), Exit: view.lastFailureExit, Text: view.lastFailure,
-			DirectoryMounted: directoryMounted,
 		}
 		if !view.degradedSince.IsZero() {
 			seconds := view.now.Sub(view.degradedSince).Seconds()
@@ -137,7 +136,23 @@ type leaderDiscovery interface {
 // the reader is told that rather than kept waiting.
 const strategyStandingForwardTimeout = 2 * time.Second
 
-// leaderForwarder hands a request to the Leader's HTTP listener once. It
+// directoryReadTimeout bounds the reads one directory request makes on the
+// Leader: the activation header, a carried publication's content when the
+// activation round has not already read it, and the objects of the rows
+// the page returns. directoryForwardTimeout bounds a follower's hop to it,
+// above the Leader's own bound so the Leader's answer, not the hop's, is
+// what a slow read comes back as.
+const (
+	directoryReadTimeout    = 2 * time.Second
+	directoryForwardTimeout = 2500 * time.Millisecond
+)
+
+// forwardBodyBytes bounds the body a hop carries: the one request that has
+// one, a sample window's open, is itself read within the same bound.
+const forwardBodyBytes = 64 << 10
+
+// leaderForwarder hands a request to the Leader's HTTP listener once, with
+// its method and, for a write, its body. It
 // marks the request so the Leader answers or refuses it and never hands it
 // on; it copies the Leader's status and body back as they are. No Leader
 // -- no lease, a lease holder without a registration, a registration
@@ -181,12 +196,24 @@ func leaderForwarderWithin(discovery leaderDiscovery, replica string, client *ht
 			observe(route, "no_leader", time.Since(started))
 			return false, viewstream.MissLeaderNoEndpoint
 		}
+		var body io.Reader
+		if request.Method != http.MethodGet && request.Body != nil {
+			payload, readErr := io.ReadAll(io.LimitReader(request.Body, forwardBodyBytes+1))
+			if readErr != nil || len(payload) > forwardBodyBytes {
+				observe(route, "error", time.Since(started))
+				return false, fleet.ForwardFailed
+			}
+			body = bytes.NewReader(payload)
+		}
 		ctx, cancel := context.WithTimeout(request.Context(), timeout)
 		defer cancel()
-		forwarded, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+leader.Endpoint+request.URL.RequestURI(), nil)
+		forwarded, err := http.NewRequestWithContext(ctx, request.Method, "http://"+leader.Endpoint+request.URL.RequestURI(), body)
 		if err != nil {
 			observe(route, "error", time.Since(started))
 			return false, fleet.ForwardFailed
+		}
+		if contentType := request.Header.Get("Content-Type"); contentType != "" && body != nil {
+			forwarded.Header.Set("Content-Type", contentType)
 		}
 		forwarded.Header.Set(fleet.ForwardedHeader(), replica)
 		reply, err := client.Do(forwarded)

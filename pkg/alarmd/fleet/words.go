@@ -69,7 +69,12 @@ var ActionWords = []ActionWord{ActionServiceFix, ActionStrategyEdit, ActionDataC
 // out. GUARD_MOVING: a guard's count moved within the last StalledRounds
 // rounds. NEXT_ROUND: the round that will say is the next one -- the
 // configuration just changed, or the cause did not survive a restart -- for
-// at most StalledRounds rounds, after which the row is this side's.
+// at most StalledRounds rounds, after which the row is this side's. A window
+// undecided only for minutes before the first round this process remembers
+// for the object (BEFORE_THIS_PROCESS) waits under it too, bounded by the
+// window rather than by a count: the window moves one position a round, and
+// once it has moved past that first round no such minute is left and the
+// row is decided the usual way (awaitingThisProcess).
 //
 // A wait is an assertion about the future: one more round and this will
 // clear. So every reason here is evidence that something is moving, and
@@ -124,10 +129,13 @@ func ProductWords() Words {
 			HoleAnsweredWithoutSeries: "查询正常返回，这条序列不在结果里", HoleAnsweredEmpty: "查询正常返回，整个对象没有数据",
 			HoleInputIncomplete: "本侧那一轮没查全", HolePointUnusable: "记录到了，检测用不了",
 			HolePrimaryUnrecorded: "那一轮查询答了什么没记下来", HoleNotInMemory: "超出本进程记忆",
+			HoleBeforeThisProcess: "早于本副本接手这个对象，窗口滑过后再判",
+			HoleHeldByLine:        "观测内存安全线没给空间，本进程放掉了那一轮",
 		},
 		Verdict: map[WindowVerdict]string{
 			VerdictDataAbsentWhenQueried: "查询时数据不在", VerdictInputIncomplete: "本侧没查全",
 			VerdictPointsUnusable: "记录检测用不了", VerdictUnknown: "说不出是谁的",
+			VerdictQueryAnsweredEmpty: "查询正常返回但一行都没有",
 		},
 		SinceBasis: map[SinceBasis]string{
 			SinceExact: "起点确切", SinceAtLeast: "只会更久", SinceAtMost: "只会更短", SinceRefused: "时间异常，请上报",
@@ -157,13 +165,15 @@ func ProductWords() Words {
 			StateDetecting: "在检测", StateResultUntrusted: "检测结果不能采信", StateNotDetecting: "没在检测",
 			StateDataAbsent: "数据没到", StateStrategyInvalid: "策略定义有问题", StateDependencyUnanswered: "依赖没应答",
 			StateDefect: "程序缺陷", StateRecovered: "已恢复",
+			// The one word a diagnosis adds: no standing could be read.
+			DiagnosisUnknown: "状态未知",
 		},
 		Action: map[ActionWord]string{
 			ActionServiceFix: "本服务处理", ActionStrategyEdit: "策略负责人改", ActionDataCheck: "数据负责人查",
 			ActionCacheWriterFill: "缓存写入方补", ActionWatch: "等着看", ActionNone: "不用处理",
 		},
 		Watch: map[WatchReason]string{
-			WatchWindowFilling: "窗口在补", WatchGuardMoving: "保护在解除", WatchNextRound: "等下一轮",
+			WatchWindowFilling: "窗口在补", WatchGuardMoving: "保护在解除", WatchNextRound: "等后续轮次",
 		},
 	}
 }
@@ -178,9 +188,12 @@ type wordPair struct {
 // to one pair. Held to checkOrder by a test, so a check added without a pair
 // is red before it ships rather than folded at runtime.
 var checkWords = map[Check]wordPair{
-	CheckSourceIncomplete:      {StateNotDetecting, ActionCacheWriterFill},
-	CheckSourceSetFlapping:     {StateNotDetecting, ActionCacheWriterFill},
-	CheckCapabilityUnsupported: {StateNotDetecting, ActionServiceFix},
+	CheckSourceIncomplete:  {StateNotDetecting, ActionCacheWriterFill},
+	CheckSourceSetFlapping: {StateNotDetecting, ActionCacheWriterFill},
+	// Not detecting, and nobody's to act on: the build that has the
+	// capability is the whole of the remedy.
+	CheckCapabilityUnsupported: {StateNotDetecting, ActionNone},
+	CheckCapabilityUnlisted:    {StateNotDetecting, ActionServiceFix},
 	CheckConfigRejected:        {StateNotDetecting, ActionStrategyEdit},
 	// Detecting, because the Plan runs. The action here is the line's when a
 	// reason asks for an edit; a line whose reasons ask nothing is nobody's
@@ -205,14 +218,29 @@ var checkWords = map[Check]wordPair{
 	CheckConfigUnresolved:       {StateResultUntrusted, ActionWatch},
 	CheckBackendNotAnswering:    {StateDependencyUnanswered, ActionServiceFix},
 	CheckSeriesDataMissing:      {StateResultUntrusted, ActionServiceFix},
+	CheckSeriesSparse:           {StateDataAbsent, ActionDataCheck},
 	CheckNoDataPersistent:       {StateDataAbsent, ActionDataCheck},
 	CheckEmptyEveryRound:        {StateDataAbsent, ActionStrategyEdit},
-	CheckSeriesChurning:         {StateResultUntrusted, ActionStrategyEdit},
-	CheckPlanUnevaluable:        {StateStrategyInvalid, ActionStrategyEdit},
-	CheckQueryTargetMissing:     {StateStrategyInvalid, ActionStrategyEdit},
+	// Not "data absent": the data arrived, outside the target.
+	CheckEmptyAfterTarget:   {StateNotDetecting, ActionStrategyEdit},
+	CheckSeriesChurning:     {StateResultUntrusted, ActionStrategyEdit},
+	CheckPlanUnevaluable:    {StateStrategyInvalid, ActionStrategyEdit},
+	CheckQueryTargetMissing: {StateStrategyInvalid, ActionStrategyEdit},
 	// Detecting: every round completes. The strategy's to act on before the
 	// share refuses it whole.
 	CheckRetainedShareApproaching: {StateDetecting, ActionStrategyEdit},
+	// Detecting, from data read before it was all there: its results cannot
+	// be taken as they stand, and the strategy's owner moves the read.
+	CheckReadBeforeComplete: {StateResultUntrusted, ActionStrategyEdit},
+	// Detecting, and from data read whole: alarmd holds the read for the
+	// strategy until its owner moves the time_delay.
+	CheckReadHeld: {StateDetecting, ActionStrategyEdit},
+	// The same pair for data later still: decided without it, and the read
+	// moved by the strategy's owner.
+	CheckLatePastRound: {StateResultUntrusted, ActionStrategyEdit},
+	// Detecting, and for these series at these Slots decided without data
+	// that came later than a supplement reaches: the data's to look at.
+	CheckLateSeriesMissed: {StateResultUntrusted, ActionDataCheck},
 }
 
 // unpairedWords is where a code word the table does not know folds: this
@@ -299,6 +327,14 @@ func standingOf(row Anomaly) Standing {
 		// carried on the object's own words so a card can say whose the
 		// object's trouble is, and copied onto each strategy's words.
 		standing.About = implicatedStrategies(row, row.Finding.Check)
+		// Read before stalled: a window short only at minutes this process
+		// never saw is flat for as long as they stay in it, which is what
+		// stalled reads as nobody moving -- and every release starts one for
+		// every sparse object, a window long, filed under this side's fix.
+		if awaitingThisProcess(row) {
+			standing.Action, standing.Watch, standing.RefinedBy = ActionWatch, WatchNextRound, RuleWatch
+			return standing
+		}
 		if stalled(&row) {
 			standing.RefinedBy = RuleStalled
 			if verdict, decided := windowVerdictWords(row); decided {
@@ -404,6 +440,36 @@ func watchReasonOf(row Anomaly) (WatchReason, bool) {
 		return WatchNextRound, true
 	}
 	return "", false
+}
+
+// awaitingThisProcess reports a row whose short windows are undecided only
+// because this process has not seen all their minutes yet: every hole of
+// every named window is either a minute whose round answered whole or one
+// before the first round this process remembers for the object, at least
+// one is the second, and no point is unusable; and every short window is
+// named, or the unnamed ones read the same (UnlistedHolesAnswered or
+// UnlistedHolesBeforeThisProcess). Any hole this side did not see whole,
+// did not record, or forgot leaves it false: those do not end by waiting.
+func awaitingThisProcess(row Anomaly) bool {
+	coverage := row.Coverage
+	if coverage == nil || coverage.Short == 0 || len(coverage.Windows) == 0 || uint32(len(coverage.Windows)) > coverage.Short {
+		return false
+	}
+	before := false
+	for _, window := range coverage.Windows {
+		counts := window.HolesBy
+		if counts.Unusable > 0 || counts.AnsweredWithoutSeries+counts.AnsweredEmpty+counts.BeforeThisProcess != window.MissingTotal {
+			return false
+		}
+		before = before || counts.BeforeThisProcess > 0
+	}
+	if uint32(len(coverage.Windows)) < coverage.Short {
+		if !coverage.UnlistedHolesAnswered && !coverage.UnlistedHolesBeforeThisProcess {
+			return false
+		}
+		before = before || coverage.UnlistedHolesBeforeThisProcess
+	}
+	return before
 }
 
 // SinceBasis is the direction of a duration: what the since source says

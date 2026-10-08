@@ -3,6 +3,8 @@ package obevidence
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net"
 	"os/exec"
@@ -14,6 +16,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/platformsettings"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
@@ -53,7 +56,7 @@ func (log *commandLog) assertBounded(t *testing.T) {
 	}
 	for _, cmd := range log.commands {
 		switch cmd {
-		case "multi", "exec", "type", "pttl", "getrange":
+		case "multi", "exec", "type", "pttl", "getrange", "strlen", "hlen", "hget":
 		default:
 			t.Fatalf("unbounded/unexpected command %s", cmd)
 		}
@@ -62,10 +65,7 @@ func (log *commandLog) assertBounded(t *testing.T) {
 
 func redisForTest(t *testing.T) *redis.Client {
 	t.Helper()
-	executable, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server unavailable")
-	}
+	executable := redistest.Server(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -134,6 +134,16 @@ func TestSourceEvidencePreservesValuesAndWithheldDocuments(t *testing.T) {
 	}
 	if len(r.Omitted) < 4 {
 		t.Fatalf("missing omissions: %+v", r.Omitted)
+	}
+	// A key the source view does not list is shown by its shape - the key, its
+	// nested keys, each string as its length - and one named like a credential
+	// not at all.
+	value, _ := r.Value.(map[string]any)
+	if extension, _ := value["unknown_extension"].(map[string]any); extension["safe_looking"] != "<string of 10 bytes>" {
+		t.Fatalf("unknown_extension = %v, want its shape", value["unknown_extension"])
+	}
+	if _, present := value["password"]; present {
+		t.Fatalf("a credential-named key is in the view: %v", value["password"])
 	}
 	log.assertBounded(t)
 	// A source key proves its own content, not membership in an active list.
@@ -229,8 +239,11 @@ func TestTargetGroupAndDynamicConfigUseConfiguredKeys(t *testing.T) {
 	_ = client.Set(ctx, platformsettings.RevisionKey(prefix), "r5", 0).Err()
 	for _, field := range platformsettings.Fields {
 		value := `["ignore"]`
-		if field == platformsettings.FieldIsAccessBKData {
+		switch field {
+		case platformsettings.FieldIsAccessBKData:
 			value = "false"
+		case platformsettings.FieldNoDataTrackingHorizonSeconds:
+			value = "86400"
 		}
 		_ = client.Set(ctx, platformsettings.ConfigKey(prefix, platformsettings.Tenant, field.DBKey()), value, 0).Err()
 	}
@@ -241,8 +254,19 @@ func TestTargetGroupAndDynamicConfigUseConfiguredKeys(t *testing.T) {
 	}
 	log.assertBounded(t)
 	text = encoded(t, r)
-	if !strings.Contains(text, `"publication_present":true`) || !strings.Contains(text, `"value":false`) {
+	if !strings.Contains(text, `"publication_present":true`) || !strings.Contains(text, `"value":false`) || !strings.Contains(text, `"value":86400`) {
 		t.Fatal(text)
+	}
+	// A field is shown invalid exactly when the runtime refuses it: the
+	// horizon as a positive whole number or null, never a list.
+	horizon := platformsettings.FieldNoDataTrackingHorizonSeconds
+	for raw, want := range map[string]string{"86400": "ok", "null": "ok", "0": "invalid_document", "1.5": "invalid_document", `["ignore"]`: "invalid_document"} {
+		_ = client.Set(ctx, platformsettings.ConfigKey(prefix, platformsettings.Tenant, horizon.DBKey()), raw, 0).Err()
+		r := service.Store(ctx, StoreRequest{Family: FamilyDynamicConfig, Fields: []platformsettings.Field{horizon}})
+		entries := r.Value.(map[string]any)["fields"].(map[platformsettings.Field]Result)
+		if entries[horizon].Status != want {
+			t.Fatalf("horizon %s read as %s, want %s", raw, entries[horizon].Status, want)
+		}
 	}
 	field := platformsettings.FieldFileSystemTypeIgnore
 	_ = client.Set(ctx, platformsettings.ConfigKey(prefix, platformsettings.Tenant, field.DBKey()), "null", 0).Err()
@@ -345,6 +369,17 @@ func TestProgressUsesProductionKeyAndDecoder(t *testing.T) {
 	}
 	if !strings.Contains(encoded(t, r), `"NextSlot":120`) {
 		t.Fatal(encoded(t, r))
+	}
+	// The key names its Query Group only by a digest: the result says which
+	// one, the digest is the one between the key's braces, and it is the
+	// SHA-256 of the identity asked for -- computed here, not by the code
+	// under test.
+	digest := sha256.Sum256([]byte("group"))
+	want := hex.EncodeToString(digest[:])
+	open, closing := strings.Index(r.Location.Key, "{"), strings.Index(r.Location.Key, "}")
+	if r.KeyIdentity == nil || r.KeyIdentity.QueryGroup != "group" || r.KeyIdentity.HashTag != want ||
+		open < 0 || closing < open || r.Location.Key[open+1:closing] != want || !strings.Contains(r.KeyIdentity.Rule, "SHA-256") {
+		t.Fatalf("key %s identity %+v, want the braces to hold sha256(group) = %s and the result to say so", r.Location.Key, r.KeyIdentity, want)
 	}
 	_ = client.Set(ctx, key, `{"schema":"unknown","progress":{}}`, 0).Err()
 	if r := service.Store(ctx, StoreRequest{Family: FamilyQueryProgress, QueryGroup: "group"}); r.Status != "invalid_document" {

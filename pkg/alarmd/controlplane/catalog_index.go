@@ -135,29 +135,56 @@ type PublishedContent struct {
 // a cold load of the index.
 const catalogIndexBatch = 500
 
-// publishedContentMemo remembers the content of the publication read last:
-// an activation asks for the same publication many times in one round (the
-// reconcile, the cutover, every schedule it materializes), and a
-// publication's content never changes once written.
+// publishedContentMemo remembers the content of the two publications read
+// last: an activation asks for the same publication many times in one round
+// (the reconcile, the cutover, every schedule it materializes), and a
+// publication's content never changes once written. Two, because while a
+// Query Group drains after its query changed the activation carries Plans on
+// the current publication and the one before it, and a round reads both:
+// with one remembered, each read put out the other and every round read
+// both manifests again.
 type publishedContentMemo struct {
-	mu          sync.Mutex
-	publication SnapshotPublicationRef
-	content     PublishedContent
+	mu sync.Mutex
+	// held is newest first; an empty publication is an empty slot.
+	held [2]PublishedContent
 }
 
 func (memo *publishedContentMemo) lookup(publication SnapshotPublicationRef) (PublishedContent, bool) {
 	memo.mu.Lock()
 	defer memo.mu.Unlock()
-	if memo.publication != publication || memo.publication == (SnapshotPublicationRef{}) {
+	if publication == (SnapshotPublicationRef{}) {
 		return PublishedContent{}, false
 	}
-	return memo.content, true
+	for _, content := range memo.held {
+		if content.Publication == publication {
+			return content, true
+		}
+	}
+	return PublishedContent{}, false
 }
 
 func (memo *publishedContentMemo) store(content PublishedContent) {
 	memo.mu.Lock()
 	defer memo.mu.Unlock()
-	memo.publication, memo.content = content.Publication, content
+	if memo.held[0].Publication == content.Publication {
+		memo.held[0] = content
+		return
+	}
+	// The newest moves second, over the older one or over this same
+	// publication's earlier copy.
+	memo.held[1], memo.held[0] = memo.held[0], content
+}
+
+// release puts out the older content when nothing the activation carries
+// names it any more. The second slot is for a drain; past it, what it holds
+// is a whole publication's index kept for nothing until the next publication
+// happens to push it out. The newest read stays whatever it is.
+func (memo *publishedContentMemo) release(carried func(SnapshotPublicationRef) bool) {
+	memo.mu.Lock()
+	defer memo.mu.Unlock()
+	if older := memo.held[1].Publication; older != (SnapshotPublicationRef{}) && !carried(older) {
+		memo.held[1] = PublishedContent{}
+	}
 }
 
 // LoadPublishedContent describes a publication from its manifest and the
@@ -351,6 +378,8 @@ func (repository *RedisCatalogRepository) loadQueryGroupObjects(
 	ctx context.Context,
 	batch []ManifestQueryGroup,
 ) (map[execution.ObjectDigest]QueryGroupObject, error) {
+	reading := repository.objects().announce(len(batch))
+	defer reading.settle()
 	replies := make([]*redis.StringCmd, len(batch))
 	if _, err := repository.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
 		for index, entry := range batch {
@@ -394,7 +423,7 @@ func (repository *RedisCatalogRepository) loadQueryGroupObjects(
 		// write this key. Storing a bare object here and a decorated one there
 		// made the cache hold two types under one key, which the reader only
 		// finds out about by panicking on whichever it did not expect.
-		repository.objects().store(repository.queryGroupObjectKey(entry.ObjectDigest), storedQueryGroupObject{
+		repository.objects().store(reading, repository.queryGroupObjectKey(entry.ObjectDigest), storedQueryGroupObject{
 			object: object, noDataOccurrences: noDataOccurrencesIn(payload),
 		}, len(payload))
 		objects[entry.ObjectDigest] = object

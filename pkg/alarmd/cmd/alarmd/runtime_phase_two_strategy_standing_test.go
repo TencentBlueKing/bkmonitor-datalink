@@ -12,6 +12,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -29,25 +30,31 @@ import (
 
 // The control plane's answer maps onto the fleet's facts field for field:
 // the publication, the Plans with their revisions and digests, every
-// disposition with its scope, level, reason and field -- and the three
-// booleans that tell the standings apart.
+// disposition with its scope, level, reason, field and the compiler's words
+// -- the three booleans that tell the standings apart, and whether the
+// source marks the strategy global.
 func TestTheStrategyLookupReachesTheFleetFieldForField(t *testing.T) {
 	lookup := controlplane.StrategyLookup{
-		Available: true, Found: true, Retained: true,
+		Available: true, Found: true, Retained: true, Global: true,
 		Publication: controlplane.SnapshotPublicationRef{SnapshotRevision: "s1", PublicationEpoch: 7},
 		Plans: []controlplane.StrategyPlanRef{{
 			Plan:       execution.PlanIdentity{TenantID: "default", BusinessID: "2", StrategyID: "4101"},
 			QueryGroup: "qg-a", ObjectDigest: "d-a", SnapshotRevision: "s1", QueryRevision: "q1", ScheduleRevision: "r1"}},
 		Dispositions: []controlplane.ObjectDisposition{
-			{SourceID: "4101", Scope: "PLAN", Disposition: controlplane.DispositionStaleConfig, Reason: "QUERY_CONFIG_INVALID", FieldPath: "items[0].query_configs[0]"},
+			{SourceID: "4101", Scope: "PLAN", Disposition: controlplane.DispositionStaleConfig, Reason: "QUERY_CONFIG_INVALID", FieldPath: "items[0].query_configs[0]",
+				Detail: "query interval is invalid"},
+			{SourceID: "4101", Scope: "PLAN", Disposition: controlplane.DispositionUnsupported, Reason: "UNSUPPORTED_TARGET_SCOPE", FieldPath: "items[0].target",
+				Detail: `TARGET_SCOPE_UNSUPPORTED: target field "host_set_template"`},
 			{SourceID: "4101", Scope: "LEVEL", LevelID: 2, Disposition: controlplane.DispositionAccepted}},
 	}
 	want := fleet.StrategyLookupFacts{
-		Available: true, Found: true, Retained: true, Publication: fleet.StrategyPublication{SnapshotRevision: "s1", Epoch: 7},
+		Available: true, Found: true, Retained: true, Global: true, Publication: fleet.StrategyPublication{SnapshotRevision: "s1", Epoch: 7},
 		Plans: []fleet.StrategyPlanRef{{Tenant: "default", Business: "2", QueryGroup: "qg-a", ObjectDigest: "d-a",
 			SnapshotRevision: "s1", QueryRevision: "q1", ScheduleRevision: "r1"}},
 		Dispositions: []fleet.StrategyDisposition{
-			{Scope: "PLAN", Disposition: "STALE_CONFIG", Reason: "QUERY_CONFIG_INVALID", FieldPath: "items[0].query_configs[0]"},
+			{Scope: "PLAN", Disposition: "STALE_CONFIG", Reason: "QUERY_CONFIG_INVALID", FieldPath: "items[0].query_configs[0]", Detail: "query interval is invalid"},
+			{Scope: "PLAN", Disposition: string(controlplane.DispositionUnsupported), Reason: "UNSUPPORTED_TARGET_SCOPE", FieldPath: "items[0].target",
+				Detail: `TARGET_SCOPE_UNSUPPORTED: target field "host_set_template"`},
 			{Scope: "LEVEL", LevelID: 2, Disposition: "ACCEPTED"}},
 	}
 	if got := strategyLookupFactsOf(lookup); !reflect.DeepEqual(got, want) {
@@ -129,6 +136,41 @@ func TestTheForwarderHandsTheRequestToTheLeaderOnceWithItsMark(t *testing.T) {
 	}
 	if leaderForwarder(nil, "pod-follower", nil, nil) != nil {
 		t.Fatal("a forwarder without discovery forwards")
+	}
+}
+
+// A write a follower cannot answer - a sample window's open, which only the
+// Leader's directory resolves - reaches the Leader as it came: its method,
+// its body and the body's type. A read carries no body. A body past the
+// bound the open itself is read within is not sent at all.
+func TestTheForwarderCarriesAWritesMethodAndBody(t *testing.T) {
+	type seenRequest struct {
+		method, contentType, body string
+	}
+	var seen []seenRequest
+	leader := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		payload, _ := io.ReadAll(request.Body)
+		seen = append(seen, seenRequest{request.Method, request.Header.Get("Content-Type"), string(payload)})
+		response.WriteHeader(http.StatusOK)
+	}))
+	defer leader.Close()
+	forward := leaderForwarderWithin(scriptedLeaderDiscovery{endpoint: viewstream.LeaderEndpoint{WorkerID: "pod-leader",
+		Endpoint: strings.TrimPrefix(leader.URL, "http://")}}, "pod-follower", nil, time.Second, "directory", nil)
+	open := `{"mode":"sample","strategy":"4101"}`
+	request := httptest.NewRequest(http.MethodPost, "/api/windows", strings.NewReader(open))
+	request.Header.Set("Content-Type", "application/json")
+	if forwarded, refusal := forward(httptest.NewRecorder(), request); !forwarded || refusal != "" {
+		t.Fatalf("forward = (%v, %q), want forwarded", forwarded, refusal)
+	}
+	if forwarded, _ := forward(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/objects?scope=strategies", nil)); !forwarded {
+		t.Fatal("a read was not forwarded")
+	}
+	if len(seen) != 2 || seen[0] != (seenRequest{http.MethodPost, "application/json", open}) || seen[1].method != http.MethodGet || seen[1].body != "" {
+		t.Fatalf("the Leader saw %+v, want the POST with its type and body, then a GET with none", seen)
+	}
+	oversized := httptest.NewRequest(http.MethodPost, "/api/windows", strings.NewReader(strings.Repeat("x", forwardBodyBytes+1)))
+	if forwarded, refusal := forward(httptest.NewRecorder(), oversized); forwarded || refusal != fleet.ForwardFailed || len(seen) != 2 {
+		t.Fatalf("an oversized body = (%v, %q) with %d requests seen, want a failed forward and nothing sent", forwarded, refusal, len(seen))
 	}
 }
 

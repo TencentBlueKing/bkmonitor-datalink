@@ -222,9 +222,10 @@ func TestRunnerNamesAnExecutionTheViewDoesNotAllowWithoutCountingAnAttempt(t *te
 		t.Fatal(err)
 	}
 	var outcomes []string
+	var refusals []error
 	flights.observer = observability.ObserverFunc(func(_ context.Context, o observability.Observation) {
 		if o.Stage == observability.StageRunnerReturned {
-			outcomes = append(outcomes, o.RunOutcome)
+			outcomes, refusals = append(outcomes, o.RunOutcome), append(refusals, o.Err)
 		}
 	})
 	runner, err := NewRunner("query-group-1", &fakeSession{fence: slot.Dispatch.OwnerFence}, source, executor, flights, clock.Now)
@@ -241,6 +242,9 @@ func TestRunnerNamesAnExecutionTheViewDoesNotAllowWithoutCountingAnAttempt(t *te
 	}
 	if len(outcomes) != 1 || outcomes[0] != "view_not_executable" {
 		t.Fatalf("runner outcomes = %v, want view_not_executable", outcomes)
+	}
+	if refused := executor.err; refusals[0] == nil || refusals[0].Error() != refused.Error() {
+		t.Fatalf("runner refusal = %v, want the executor's %v", refusals[0], refused)
 	}
 	if _, attempted, err = runner.RunOne(context.Background()); err != nil || attempted || executor.calls != 1 {
 		t.Fatalf("RunOne(within backoff) attempted=%t calls=%d err=%v, want no second execution inside the backoff", attempted, executor.calls, err)

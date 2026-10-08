@@ -103,7 +103,7 @@ func stopDeadlineDispatcher(t *testing.T, cancel context.CancelFunc, done <-chan
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("runScheduler(cancel) error = %v, want context canceled", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(signalWaitBound):
 		t.Fatal("dispatcher did not stop after cancellation")
 	}
 }

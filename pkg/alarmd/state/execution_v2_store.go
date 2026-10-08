@@ -87,6 +87,9 @@ type ExecutionStoreOptions struct {
 	MinTTL        time.Duration
 	MaxTTL        time.Duration
 	RestartMargin time.Duration
+	// Bound on the scheduler's read hold. A reporting series must survive
+	// an immediate jump to this bound, even if the current Slot has no hold.
+	ReadHoldBound time.Duration
 	// FenceKeys locates the ownership lease that fenced Runtime State writes
 	// verify inside storage. It is optional: without it ApplyRuntimeFenced
 	// applies unfenced and the admission-time fence check stands alone.
@@ -150,7 +153,8 @@ const DefaultMaxNoDataGroups = 100000
 func NewExecutionStore(options ExecutionStoreOptions) (*ExecutionStore, error) {
 	if options.Prefix == "" || options.Router == nil || options.MaxValueBytes <= 0 ||
 		options.MaxItemsPerCall <= 0 || options.MinTTL <= 0 || options.MaxTTL < options.MinTTL ||
-		options.RestartMargin < 0 || options.MaxNoDataGroups < 0 {
+		options.RestartMargin < 0 || options.MaxNoDataGroups < 0 || options.ReadHoldBound < 0 ||
+		options.ReadHoldBound.Milliseconds() > execution.MaxReadHoldMillis {
 		return nil, fmt.Errorf("state: invalid execution store options")
 	}
 	if options.MaxNoDataGroups == 0 {
@@ -176,6 +180,15 @@ func NewExecutionStore(options ExecutionStoreOptions) (*ExecutionStore, error) {
 // series that never went away. Lowering H therefore shortens lifetimes from
 // the next write on, and raising it lengthens them from the next write on:
 // a key that already expired is gone, so nothing reclaimed comes back.
+//
+// The ceiling bounds the lifetime a key is given, so under a horizon it is
+// held against the capped lifetime, not the retention span. A retention whose
+// span is past the ceiling - fourteen points of a sixty-hour interval are 840
+// hours against a 720-hour ceiling - is written for its horizon cap all the
+// same, which is sixty hours and change. Holding the span against the ceiling
+// first refused every round of such a Plan as STATE_BUDGET_EXCEEDED, for a
+// lifetime it was never going to be given: the strategy stopped detecting and
+// nothing about it changed from one round to the next.
 func (store *ExecutionStore) runtimeTTL(retention []execution.StateRetentionRequirement, horizonSeconds int64) (time.Duration, error) {
 	requirements := make([]LevelRequirement, len(retention))
 	for index, level := range retention {
@@ -183,29 +196,42 @@ func (store *ExecutionStore) runtimeTTL(retention []execution.StateRetentionRequ
 		// and it must read exactly the retention the window was built from.
 		requirements[index] = NewLevelRequirement(level, "", 0)
 	}
-	ttl, err := StateTTL(requirements, store.options.RestartMargin, store.options.MinTTL, store.options.MaxTTL)
-	if err != nil || horizonSeconds <= 0 {
+	ttl, err := StateTTL(requirements, store.options.RestartMargin, store.options.MinTTL, store.options.MaxTTL, store.options.ReadHoldBound)
+	if horizonSeconds <= 0 {
 		return ttl, err
 	}
-	return capByHorizon(ttl, requirements, store.options.RestartMargin, store.options.MinTTL,
-		time.Duration(horizonSeconds)*time.Second), nil
+	limit := horizonLimit(requirements, store.options.RestartMargin, store.options.MinTTL, time.Duration(horizonSeconds)*time.Second, store.options.ReadHoldBound)
+	if err != nil {
+		if !errors.Is(err, ErrStateBudget) {
+			return 0, err
+		}
+		// The span is past the ceiling, so it is past the cap too: the
+		// lifetime written is the cap, and the cap is what has to fit.
+		if limit > store.options.MaxTTL {
+			return 0, fmt.Errorf("%w: lifetime capped at the horizon %s exceeds maximum %s", ErrStateBudget, limit, store.options.MaxTTL)
+		}
+		return limit, nil
+	}
+	return min(ttl, limit), nil
 }
 
-// capByHorizon is the retention's lifetime capped at the horizon, and the
-// horizon floored at what a reporting series needs between two writes.
-func capByHorizon(ttl time.Duration, requirements []LevelRequirement, restartMargin, minimum, horizon time.Duration) time.Duration {
-	limit := max(horizon, StateLifetimeFloor(requirements, restartMargin), minimum)
-	return min(ttl, limit)
+// horizonLimit is the longest a series' runtime state lives under a horizon:
+// the horizon, floored at what a reporting series needs between two writes.
+func horizonLimit(requirements []LevelRequirement, restartMargin, minimum, horizon time.Duration, readHoldBound ...time.Duration) time.Duration {
+	return max(horizon, StateLifetimeFloor(requirements, restartMargin, readHoldBound...), minimum)
 }
 
 // StateLifetimeFloor is the shortest lifetime a series' runtime state can
 // have and still survive from one write to the next while the series keeps
 // reporting: the longest evaluation interval plus its lateness, and the
 // restart margin.
-func StateLifetimeFloor(requirements []LevelRequirement, restartMargin time.Duration) time.Duration {
+func StateLifetimeFloor(requirements []LevelRequirement, restartMargin time.Duration, readHoldBound ...time.Duration) time.Duration {
 	var floor time.Duration
 	for _, requirement := range requirements {
 		floor = max(floor, requirement.EvaluationInterval+requirement.LatenessTolerance)
+	}
+	if len(readHoldBound) > 0 {
+		floor += readHoldBound[0]
 	}
 	return floor + restartMargin
 }
@@ -218,8 +244,9 @@ func rejectRuntimeBudget(items []execution.StateMutation) []execution.StateApply
 	results := make([]execution.StateApplyItemResult, len(items))
 	for index, mutation := range items {
 		results[index] = execution.StateApplyItemResult{Identity: mutation.Identity,
-			Status:     execution.StateApplyDeterministicInvalid,
-			ReasonCode: execution.ReasonCode(contract.ReasonStateBudgetExceeded)}
+			Status:      execution.StateApplyDeterministicInvalid,
+			ReasonCode:  execution.ReasonCode(contract.ReasonStateBudgetExceeded),
+			RefusalRule: RuntimeRuleLifetimePastCeiling}
 	}
 	return results
 }
@@ -377,11 +404,14 @@ func (store *ExecutionStore) AdmitRuntime(_ context.Context, request execution.S
 		if !errors.Is(err, ErrStateBudget) {
 			return execution.StateAdmissionResult{}, fmt.Errorf("state: invalid runtime admission request: %w", err)
 		}
+		// Every mutation of the Plan, under the rule and with the sentence,
+		// which names the lifetime required and the ceiling.
 		result := execution.StateAdmissionResult{Items: make([]execution.StateAdmissionItemResult, len(request.Items))}
 		for index, mutation := range request.Items {
 			result.Items[index] = execution.StateAdmissionItemResult{Identity: mutation.Identity,
-				Status:     execution.StateAdmissionDeterministicInvalid,
-				ReasonCode: execution.ReasonCode(contract.ReasonStateBudgetExceeded)}
+				Status:      execution.StateAdmissionDeterministicInvalid,
+				ReasonCode:  execution.ReasonCode(contract.ReasonStateBudgetExceeded),
+				RefusalRule: RuntimeRuleLifetimePastCeiling, RefusalText: err.Error()}
 		}
 		return result, result.Validate()
 	}
@@ -396,16 +426,35 @@ func (store *ExecutionStore) AdmitRuntime(_ context.Context, request execution.S
 		}
 		// Sized in the representation the write stores. The revision only
 		// widens one varint in the header, so any revision measures the same.
-		encoded, refusal, rule, legacyIDs := store.encodeForWrite(mutation, mutation.ExpectedBlobRevision+1)
-		if refusal != "" {
-			item.Status, item.ReasonCode = execution.StateAdmissionDeterministicInvalid, execution.ReasonCode(refusal)
-			item.RefusalRule = rule
+		encoded, refusal, legacyIDs := store.encodeForWrite(mutation, mutation.ExpectedBlobRevision+1)
+		if refusal.reason != "" {
+			item.Status, item.ReasonCode = execution.StateAdmissionDeterministicInvalid, execution.ReasonCode(refusal.reason)
+			item.RefusalRule, item.RefusalText = refusal.rule, refusal.text
 		} else {
 			item.EncodedBytes, item.LegacyRecordIDs = len(encoded), legacyIDs
+			// The frame measured is the frame the write stores when the key's
+			// revision is still the one the mutation expects; handed back so
+			// a caller that holds it spares the write the same encode.
+			item.Frame = &execution.EncodedStateFrame{MutationDigest: mutation.MutationDigest,
+				Revision: mutation.ExpectedBlobRevision + 1, Bytes: encoded, LegacyRecordIDs: legacyIDs}
 		}
 		result.Items[index] = item
 	}
 	return result, result.Validate()
+}
+
+// frameForWrite is the frame the write stores for one item: the one admission
+// encoded, when it was encoded from this mutation for this revision, and a
+// fresh encode otherwise. The two are the same bytes where the first is used
+// -- one encoder, one mutation, one revision -- so which one is written is a
+// matter of cost only.
+func (store *ExecutionStore) frameForWrite(request execution.StateApplyRequest, index int, mutation execution.StateMutation, revision uint64) ([]byte, writeRefusal, int) {
+	if index < len(request.Frames) {
+		if frame := request.Frames[index]; frame != nil && frame.Revision == revision && frame.MutationDigest == mutation.MutationDigest {
+			return frame.Bytes, writeRefusal{}, frame.LegacyRecordIDs
+		}
+	}
+	return store.encodeForWrite(mutation, revision)
 }
 
 // ApplyRuntime applies without an owner fence. Items whose key was witnessed by
@@ -542,7 +591,7 @@ func (store *ExecutionStore) readOneRenewing(
 		return nil, nil
 	}
 	if err := RenewGenerationKey(ctx, target, resolved, retention,
-		store.options.RestartMargin, store.options.MinTTL, store.options.MaxTTL, store.renewals); err != nil {
+		store.options.RestartMargin, store.options.MinTTL, store.options.MaxTTL, store.renewals, store.options.ReadHoldBound); err != nil {
 		return nil, err
 	}
 	return values[0], nil
@@ -605,6 +654,17 @@ func (store *ExecutionStore) LoadGapsInto(ctx context.Context, request execution
 func (store *ExecutionStore) ApplyGap(ctx context.Context, request execution.GapGuardApplyRequest) (execution.GapGuardApplyResult, error) {
 	if err := request.Contract.Validate(); err != nil || len(request.Items) == 0 || len(request.Items) > store.options.MaxItemsPerCall {
 		return execution.GapGuardApplyResult{}, fmt.Errorf("state: invalid gap apply request")
+	}
+	// Every marker's lifetime before any is written: a request that does not
+	// say what one of its Plans needs is refused whole, not written in part.
+	lifetimes := make([]time.Duration, len(request.Items))
+	for index, mutation := range request.Items {
+		ttl, err := generationWriteTTL(request.Retention, mutation.Identity.Plan,
+			store.options.RestartMargin, store.options.MinTTL, store.options.MaxTTL, store.options.ReadHoldBound)
+		if err != nil {
+			return execution.GapGuardApplyResult{}, fmt.Errorf("state: invalid gap apply request: %w", err)
+		}
+		lifetimes[index] = ttl
 	}
 	result := execution.GapGuardApplyResult{Items: make([]execution.GapGuardApplyItemResult, len(request.Items))}
 	for index, mutation := range request.Items {
@@ -706,14 +766,12 @@ func (store *ExecutionStore) ApplyGap(ctx context.Context, request execution.Gap
 			result.Items[index] = item
 			continue
 		}
-		// Written at the floor, not at the Plan's own derived lifetime and not
-		// without one. The load that runs at the start of every Slot renews it
-		// to whatever this Plan actually needs, so the write only has to make
-		// sure the key is never born immortal - which is what a Plan whose last
-		// act was creating this key used to leave behind. Carrying the Plan's
-		// retention here as well would be a third copy of one fact for a value
-		// the next Slot overwrites anyway.
-		applied, applyErr := backend.CompareAndSet(ctx, key, raw, raw == nil, encoded, GenerationScopedFloor)
+		// Written for the Plan's own lifetime, the one the load renews it to.
+		// It used to be written at the floor on the reasoning that the next
+		// load renews it anyway, and that load comes a whole interval later:
+		// for a Plan whose interval is past a day, the marker this round wrote
+		// was gone before the round that had to read it, every round.
+		applied, applyErr := backend.CompareAndSet(ctx, key, raw, raw == nil, encoded, lifetimes[index])
 		if applyErr != nil {
 			item.Status, item.ReasonCode = execution.GapGuardRetryable, execution.ReasonCode(contract.ReasonStateWriteRetryable)
 		} else if !applied {

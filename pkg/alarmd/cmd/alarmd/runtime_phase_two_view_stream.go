@@ -396,9 +396,9 @@ func newViewStreamIncarnation() (string, error) {
 
 // runViewClient keeps the Worker's stream to the Leader up for the life of
 // the bundle. Its failures are its own: nothing in execution waits on it.
-func (bundle *phaseTwoWorkerBundle) runViewClient() {
+func (bundle *phaseTwoWorkerBundle) runViewClient(ctx context.Context) {
 	defer bundle.maintenanceWG.Done()
-	_ = bundle.dependencies.ViewClient.Run(bundle.maintenanceCtx)
+	_ = bundle.dependencies.ViewClient.Run(ctx)
 }
 
 // activeQueryGroupSetSource is the view source's reader of the activation's

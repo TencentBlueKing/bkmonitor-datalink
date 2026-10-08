@@ -59,7 +59,7 @@ func TestTheResolverAnswersEachSelectorByTheRulingsTable(t *testing.T) {
 		"cw:dynamic_group:alldrop":  `{"model_id":"cw-Host","model_inst_ids":["7"],"member_list":[{"model_id":"cw-Host","model_inst_id":"7"}]}`,
 	}}
 	reader, _ := NewGroupReader(client, "cw:")
-	groups, err := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, Now: clock})
+	groups, err := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, ReadBound: testGroupReadBound, Now: clock})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestTheResolverNeverReadsUnavailableAsEmpty(t *testing.T) {
 	clock := func() time.Time { return now }
 	client := &groupClient{values: map[string]string{"cw:dynamic_group:ok": hostGroup}}
 	reader, _ := NewGroupReader(client, "cw:")
-	groups, _ := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, Now: clock})
+	groups, _ := NewGroupStore(reader, GroupStoreOptions{RefreshInterval: time.Minute, MaxAge: 10 * time.Minute, ReadBound: testGroupReadBound, Now: clock})
 	hosts := hostStore(t, clock, []string{"501", hostUnderSet}, []string{"set|12"})
 	resolver := NewTargetResolver(groups, hosts, clock)
 	set12 := contract.TargetPlanTopologyV1{BusinessID: "2", ObjectID: "set", InstanceID: "12"}

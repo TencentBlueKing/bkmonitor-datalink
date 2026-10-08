@@ -61,8 +61,11 @@ func (p ExpiredRangeProjectionV1) validateEligibility(s UnfinishedSlotProjection
 		if e.MaxReplaySlots == 0 || deadline > p.JudgedAtMillis || deadline+p.ReplayAgeMillis <= p.JudgedAtMillis {
 			return bad
 		}
+		// The head is counted on the clock the first Slot's read hold shifts:
+		// its grid points are read that much later.
 		head := int64(e.DistanceHead)
-		if head <= 0 || head > math.MaxInt64/1000 || head*1000 > p.JudgedAtMillis || !p.Schedule.Segment.Contains(e.DistanceHead) {
+		if head <= 0 || head > math.MaxInt64/1000 || head*1000 > p.JudgedAtMillis-p.First.Contract.ReadHoldMillis ||
+			!p.Schedule.Segment.Contains(e.DistanceHead) {
 			return bad
 		}
 		spec := p.Schedule.Plans[0].Spec

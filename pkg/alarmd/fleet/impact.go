@@ -89,103 +89,17 @@ type Impact struct {
 	NoStrategies int `json:"no_strategies"`
 }
 
-// impactOf counts one or more lists as a single population.
-//
-// It takes lists rather than one list so that two columns can be counted
-// together without adding their answers: a strategy with objects in both is one
-// strategy, and adding overstates the number a reader acts on -- by most when
-// the deployment is worst.
-func impactOf(total int, lists ...[]Anomaly) (ColumnImpact, int) {
-	strategies := map[StrategyRef]struct{}{}
-	businesses := map[string]struct{}{}
-	unnamed, listed := 0, 0
-	for _, anomalies := range lists {
-		listed += len(anomalies)
-		for _, anomaly := range anomalies {
-			if len(anomaly.Strategies) == 0 {
-				unnamed++
-				continue
-			}
-			for _, strategy := range anomaly.Strategies {
-				strategies[strategy] = struct{}{}
-				if strategy.BusinessID != "" {
-					businesses[strategy.BusinessID] = struct{}{}
-				}
-			}
-		}
-	}
-	return ColumnImpact{
-		Objects:    total,
-		Strategies: len(strategies),
-		Businesses: len(businesses),
-		Partial:    total > listed,
-	}, unnamed
-}
-
 // ImpactOf expresses the whole view in strategies and businesses.
 //
 // Counted from the lists the replicas published rather than from the totals,
 // because a strategy count has no other source -- and the difference between
 // the two is reported as Partial rather than hidden, since the deployment bad
-// enough to truncate is the one being read during an incident.
+// enough to truncate is the one being read during an incident. Two columns are
+// counted together as one population, not added: a strategy with objects in
+// both is one strategy, and adding overstates the number a reader acts on --
+// by most when the deployment is worst (ImpactTally).
 func ImpactOf(view View, now time.Time) Impact {
-	impact := Impact{}
-	var unnamed int
-	impact.Anomalies, unnamed = impactOf(view.AnomaliesTotal, view.Anomalies)
-	impact.NoStrategies += unnamed
-	impact.Demoted, unnamed = impactOf(view.DemotedTotal, view.Demoted)
-	impact.NoStrategies += unnamed
-	impact.Undecidable, unnamed = impactOf(view.UndecidableTotal, view.Undecidable)
-	impact.NoStrategies += unnamed
-	impact.ByDesign, unnamed = impactOf(view.ByDesignTotal, view.ByDesign)
-	impact.NoStrategies += unnamed
-	// The union, not the sum. The objects count does add -- an object is in one
-	// column only -- and the strategies do not.
-	impact.Blind, _ = impactOf(view.AnomaliesTotal+view.DemotedTotal, view.Anomalies, view.Demoted)
-
-	// The verdict's own subset. Counted from the same list in the same pass so
-	// it cannot disagree with the column it is part of.
-	ours := make([]Anomaly, 0, len(view.Anomalies))
-	for _, anomaly := range view.Anomalies {
-		if anomaly.Attribution == AttributionOurs {
-			ours = append(ours, anomaly)
-		}
-	}
-	impact.Ours, _ = impactOf(len(ours), ours)
-	// Ours is counted off the published list, so it is a lower bound whenever
-	// that list was cut -- the same limit as the column it sits in, and it has
-	// to say so for the same reason.
-	impact.Ours.Partial = impact.Anomalies.Partial
-
-	// By who acts, over every column from each object's line, and the
-	// objects losing rounds now from the records. Every part is a lower
-	// bound when any column was cut: a line draws from all four.
-	byOwner := map[Owner][]Anomaly{}
-	for _, column := range [][]Anomaly{view.Anomalies, view.Demoted, view.Undecidable, view.ByDesign, view.NoData} {
-		for _, anomaly := range column {
-			if anomaly.Finding.Check == "" {
-				continue
-			}
-			owner := checkAnswers[anomaly.Finding.Check].Owner
-			byOwner[owner] = append(byOwner[owner], anomaly)
-		}
-	}
-	rows, _ := skippedRows(&view, map[string]struct{}{}, now)
-	for _, row := range rows {
-		if row.Loss == LossOngoing || row.Loss == LossAfterRestart {
-			byOwner[OwnerAlarmd] = append(byOwner[OwnerAlarmd], row)
-		}
-	}
-	partial := impact.Anomalies.Partial || impact.Demoted.Partial || impact.Undecidable.Partial || impact.ByDesign.Partial
-	part := func(owner Owner) ColumnImpact {
-		list := byOwner[owner]
-		column, _ := impactOf(len(distinctObjects(list)), list)
-		column.Partial = partial
-		return column
-	}
-	impact.Alarmd, impact.Undetermined = part(OwnerAlarmd), part(OwnerUndetermined)
-	impact.Strategy, impact.Data = part(OwnerStrategy), part(OwnerData)
-	return impact
+	return ImpactTallyOf(view, now).Impact()
 }
 
 // distinctObjects is the set of objects in a list: an object under two

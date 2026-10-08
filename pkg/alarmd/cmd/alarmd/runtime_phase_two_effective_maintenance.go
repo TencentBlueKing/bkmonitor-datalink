@@ -7,13 +7,16 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/obchannel"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/openalerts"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/scheduler"
@@ -102,6 +105,7 @@ const (
 	closeOutcomeUnavailable          = string(observability.EffectiveCloseUnavailable)
 	closeOutcomeUnsupportedRunner    = string(observability.EffectiveCloseUnsupportedRunner)
 	closeOutcomeViewNotExecutable    = string(observability.EffectiveCloseViewNotExecutable)
+	closeOutcomeDeletionUnsettled    = string(observability.EffectiveCloseCalendarDeletionUnsettled)
 )
 
 // maintenanceGroup is what the loop knows about one owned Query Group from
@@ -118,6 +122,10 @@ type maintenanceGroup struct {
 	// Level is inactive: on the standard wire, with a schedule, and compiled
 	// in full.
 	closable []controlplane.MaintenancePlan
+	// calendars are the calendars the read Plans' effective-time snapshots
+	// name, each true when at least one snapshot holds it present. See
+	// settleCalendarDeletions.
+	calendars map[int64]bool
 }
 
 type effectiveMaintenance struct {
@@ -146,6 +154,119 @@ type effectiveMaintenance struct {
 	legacyCursor map[execution.QueryGroupIdentity]int
 	countsMu     sync.Mutex
 	counts       map[string]uint64
+	// recent is the latest outcomes of every word but close_acked, at most
+	// maintenanceRecentKept of each, newest last: which Query Group, when
+	// and what it said, which the counts cannot say and the log lines, kept
+	// minutes on a busy Pod, no longer can.
+	recent map[string][]maintenanceOutcome
+
+	// deletedSince is when each calendar the owned Plans name started to
+	// read deleted in every snapshot that names it, and sourceLossAt the
+	// last step at which every one of them read deleted. See
+	// settleCalendarDeletions.
+	deletedSince map[int64]time.Time
+	sourceLossAt time.Time
+}
+
+// maintenanceRecentKept bounds the Query Groups kept of each outcome word,
+// and maintenanceErrorBytes the text kept of each one's error.
+const (
+	maintenanceRecentKept = 32
+	maintenanceErrorBytes = 256
+)
+
+// maintenanceOutcome is one Query Group, and strategy when the outcome was
+// about one, that the loop did not complete, kept by outcome word: when it
+// was first and last seen in this process, how many times, and the latest
+// error's text, cut to maintenanceErrorBytes. The loop ticks every second
+// and repeats a close it holds back or a read that failed on every tick, so
+// each one is kept once and counted rather than listed per tick: one Query
+// Group repeating would otherwise push every other one out within a minute,
+// and "held since" is what the one-by-one list could not say.
+type maintenanceOutcome struct {
+	QueryGroup string    `json:"query_group"`
+	StrategyID string    `json:"strategy_id,omitempty"`
+	BusinessID string    `json:"business_id,omitempty"`
+	FirstAt    time.Time `json:"first_at"`
+	LastAt     time.Time `json:"last_at"`
+	Count      uint64    `json:"count"`
+	Error      string    `json:"error,omitempty"`
+}
+
+// maintenanceReading is the loop's counts and the Query Groups it did not
+// complete, by every word but close_acked, the most recently seen first,
+// each list present, empty when none was seen.
+type maintenanceReading struct {
+	Counts map[string]uint64               `json:"counts"`
+	Recent map[string][]maintenanceOutcome `json:"recent"`
+}
+
+// Reading is the counts and the outcomes kept, copied.
+func (m *effectiveMaintenance) Reading() maintenanceReading {
+	reading := maintenanceReading{Counts: m.Stats(), Recent: map[string][]maintenanceOutcome{}}
+	m.countsMu.Lock()
+	defer m.countsMu.Unlock()
+	for _, outcome := range observability.EffectiveCloseOutcomes {
+		if string(outcome) == closeOutcomeAcked {
+			continue
+		}
+		kept := append([]maintenanceOutcome{}, m.recent[string(outcome)]...)
+		sort.SliceStable(kept, func(i, j int) bool { return kept[i].LastAt.After(kept[j].LastAt) })
+		reading.Recent[string(outcome)] = kept
+	}
+	return reading
+}
+
+// remember keeps an outcome that was not an acknowledged close, once per
+// Query Group and strategy: a repeat moves its last time and count, and a
+// new one past the bound takes the place of the one seen longest ago.
+func (m *effectiveMaintenance) remember(trace observability.TraceFields, outcome string, err error) {
+	if outcome == closeOutcomeAcked {
+		return
+	}
+	at := m.bundle.dependencies.Now().UTC()
+	text := ""
+	if err != nil {
+		// Redacted as every error this process serves is: a Redis or alert
+		// link failure can carry an address or a URL with its credentials.
+		text = cutAtRune(observability.SanitizeErrorText(err.Error()), maintenanceErrorBytes)
+	}
+	m.countsMu.Lock()
+	defer m.countsMu.Unlock()
+	if m.recent == nil {
+		m.recent = make(map[string][]maintenanceOutcome, len(observability.EffectiveCloseOutcomes))
+	}
+	list := m.recent[outcome]
+	oldest := -1
+	for index := range list {
+		kept := &list[index]
+		if kept.QueryGroup == trace.QueryGroupKey && kept.StrategyID == trace.StrategyID && kept.BusinessID == trace.BusinessID {
+			kept.LastAt, kept.Count, kept.Error = at, kept.Count+1, text
+			return
+		}
+		if oldest < 0 || kept.LastAt.Before(list[oldest].LastAt) {
+			oldest = index
+		}
+	}
+	entry := maintenanceOutcome{QueryGroup: trace.QueryGroupKey, StrategyID: trace.StrategyID, BusinessID: trace.BusinessID,
+		FirstAt: at, LastAt: at, Count: 1, Error: text}
+	if len(list) < maintenanceRecentKept {
+		m.recent[outcome] = append(list, entry)
+		return
+	}
+	list[oldest] = entry
+}
+
+// cutAtRune is text cut to at most limit bytes on a rune boundary.
+func cutAtRune(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(text[cut]) {
+		cut--
+	}
+	return text[:cut]
 }
 
 // Stats is the outcome counts, for the metric that reports every cell.
@@ -295,6 +416,7 @@ func (m *effectiveMaintenance) step(ctx context.Context) {
 		}
 	}
 
+	deletions := m.settleCalendarDeletions(calendarReads(readUnderCurrentLease(m.groups, runners)), now)
 	for _, qg := range groups {
 		if ctx.Err() != nil {
 			return
@@ -305,7 +427,151 @@ func (m *effectiveMaintenance) step(ctx context.Context) {
 			continue
 		}
 		m.refreshLegacy(ctx, qg, known.legacy)
-		m.closeInactive(ctx, qg, runner, known.closable)
+		m.closeInactive(ctx, qg, runner, known.closable, deletions)
+	}
+}
+
+// readUnderCurrentLease is the groups whose Plans were read under the lease
+// their owner holds now. A group whose lease moved holds Plans from before
+// the change: in the minute a source-wide loss arrives, the groups not read
+// again yet would still name the calendars present and let the groups
+// already read close.
+func readUnderCurrentLease(groups map[execution.QueryGroupIdentity]*maintenanceGroup,
+	runners map[execution.QueryGroupIdentity]maintenanceRunner) map[execution.QueryGroupIdentity]*maintenanceGroup {
+	current := make(map[execution.QueryGroupIdentity]*maintenanceGroup, len(groups))
+	for qg, known := range groups {
+		if runner := runners[qg]; runner != nil {
+			if scope, revision, accepting := runner.maintenanceLease(); accepting &&
+				known.contentScope == scope && known.timelineRevision == revision {
+				current[qg] = known
+			}
+		}
+	}
+	return current
+}
+
+// calendarDeletionSettle is how long a calendar has to read deleted, in
+// every snapshot that names it, and how long since every calendar last read
+// deleted at once, before a deletion closes an alert.
+//
+// The writer rebuilds the strategies' snapshots page by page once a minute
+// and reads the calendars again for each page. A calendar source lost or
+// restored in the middle of a round publishes the pages before it one way
+// and the pages after it the other, in one publication: a calendar read
+// deleted beside ones still present, or the same calendar read both ways.
+// The next round reads every page the same way. The settle time is ten of
+// those rounds. Python keeps a calendar for as long as its cache entry
+// lives, up to a day after the calendar stops being refreshed, so a
+// deletion closing ten minutes late still closes sooner than in Python.
+const calendarDeletionSettle = 10 * time.Minute
+
+var errCalendarDeletionUnsettled = errors.New("inactive close held: calendar deletion not settled")
+
+// calendarDeletions is which of the calendars the owned Plans read deleted
+// may close an alert in this step. See settleCalendarDeletions.
+type calendarDeletions struct {
+	settled    map[int64]struct{}
+	sourceLoss bool
+}
+
+// calendarReads is what the groups' snapshots say of each calendar they
+// name: true when at least one of them holds it present.
+func calendarReads(groups map[execution.QueryGroupIdentity]*maintenanceGroup) map[int64]bool {
+	reads := make(map[int64]bool)
+	for _, group := range groups {
+		for id, present := range group.calendars {
+			reads[id] = reads[id] || present
+		}
+	}
+	return reads
+}
+
+// settleCalendarDeletions records, from this step's reads, since when each
+// calendar has read deleted everywhere and whether every calendar reads
+// deleted, and answers which deletions may close.
+//
+// One calendar deleted is a deletion, and the Plans that named it as their
+// only alert days are inactive and closed, as Python closes them - once it
+// has read deleted in every snapshot that names it for
+// calendarDeletionSettle. Every calendar deleted at once is the writer's
+// calendar source gone: the writer marks each calendar it cannot find as
+// deleted and keeps the snapshot READY, so a calendar table that answered
+// nothing arrives as every calendar deleted, and read as deletions it would
+// close the alerts of every strategy that alerts on calendar days. No
+// deletion settles while that holds or within calendarDeletionSettle of it
+// last holding, the same way an empty strategy list is held back from
+// removing strategies. Detection still reads the calendars as empty, as
+// Python does: reading them as unknown would freeze the strategies whose
+// calendars are rest days, which is missed alerts.
+//
+// The reads are this replica's owned Plans, from memory, and not the whole
+// deployment's: each strategy carries its own effective-time snapshot,
+// naming only the calendars that strategy names, so there is no calendar
+// table for the deployment on the read path, and this loop reads only the
+// Segments and objects of the Query Groups it owns. In a source-wide loss
+// every replica's share reads the same way.
+//
+// Known boundary: a replica whose owned Plans name only calendars that were
+// really deleted reads every calendar deleted and holds their closes for as
+// long as that lasts. It does not heal by itself; the alerts stay open
+// until it is assigned a Plan that names a present calendar or the
+// strategies change, and each held strategy is named, with its calendar, on
+// the degraded line for an operator to close by hand. A strategy that names
+// a deleted calendar is misconfigured, and leaving its alerts open is the
+// side this loop takes when it cannot tell a deletion from a loss.
+func (m *effectiveMaintenance) settleCalendarDeletions(reads map[int64]bool, now time.Time) calendarDeletions {
+	if m.deletedSince == nil {
+		m.deletedSince = make(map[int64]time.Time)
+	}
+	sourceLoss := len(reads) > 0
+	for id, present := range reads {
+		if present {
+			sourceLoss = false
+			delete(m.deletedSince, id)
+		} else if _, known := m.deletedSince[id]; !known {
+			m.deletedSince[id] = now
+		}
+	}
+	for id := range m.deletedSince {
+		if _, named := reads[id]; !named {
+			delete(m.deletedSince, id)
+		}
+	}
+	if sourceLoss {
+		m.sourceLossAt = now
+	}
+	deletions := calendarDeletions{settled: make(map[int64]struct{})}
+	if !m.sourceLossAt.IsZero() && now.Sub(m.sourceLossAt) < calendarDeletionSettle {
+		deletions.sourceLoss = true
+		return deletions
+	}
+	for id, since := range m.deletedSince {
+		if now.Sub(since) >= calendarDeletionSettle {
+			deletions.settled[id] = struct{}{}
+		}
+	}
+	return deletions
+}
+
+// held names why the Plan's alerts are not closed for a calendar it reads
+// deleted, or is nil when none holds it. A Plan that reads no calendar
+// deleted closes as before, whatever the other Plans read.
+func (deletions calendarDeletions) held(plan *strategy.CompiledPlan) error {
+	var unsettled int64
+	plan.EffectiveTimeCalendars(func(id int64, deleted bool) {
+		if _, settled := deletions.settled[id]; deleted && !settled && (unsettled == 0 || id < unsettled) {
+			unsettled = id
+		}
+	})
+	switch {
+	case unsettled == 0:
+		return nil
+	case deletions.sourceLoss:
+		return fmt.Errorf("%w: every calendar the owned strategies name read deleted within %s, calendar %d among them",
+			errCalendarDeletionUnsettled, calendarDeletionSettle, unsettled)
+	default:
+		return fmt.Errorf("%w: calendar %d has not read deleted in every snapshot that names it for %s",
+			errCalendarDeletionUnsettled, unsettled, calendarDeletionSettle)
 	}
 }
 
@@ -332,6 +598,12 @@ func (m *effectiveMaintenance) readGroup(ctx context.Context, qg execution.Query
 	}
 	known := &maintenanceGroup{contentScope: scope, timelineRevision: revision}
 	for _, plan := range read.Plans {
+		plan.Compiled.EffectiveTimeCalendars(func(id int64, deleted bool) {
+			if known.calendars == nil {
+				known.calendars = make(map[int64]bool)
+			}
+			known.calendars[id] = known.calendars[id] || !deleted
+		})
 		if !planHasSchedule(plan.Compiled) {
 			continue
 		}
@@ -351,7 +623,7 @@ func (m *effectiveMaintenance) readGroup(ctx context.Context, qg execution.Query
 // nothing from this loop: no entry to keep warm, no inactive state to close
 // on.
 func planHasSchedule(plan *strategy.CompiledPlan) bool {
-	levels := plan.Levels()
+	levels := plan.Levels().Copy()
 	if level := plan.NoDataLevel(); level != nil {
 		levels = append(levels, *level)
 	}
@@ -366,8 +638,9 @@ func planHasSchedule(plan *strategy.CompiledPlan) bool {
 // closeInactive closes the current alerts of every Plan whose Levels are all
 // inactive now. The judgement is from memory; the store is touched only
 // when a batch is ready to send, for the owner check before the send and
-// the send itself.
-func (m *effectiveMaintenance) closeInactive(ctx context.Context, qg execution.QueryGroupIdentity, runner maintenanceRunner, plans []controlplane.MaintenancePlan) {
+// the send itself. A Plan that reads a calendar deleted is not closed until
+// the deletion settles (settleCalendarDeletions).
+func (m *effectiveMaintenance) closeInactive(ctx context.Context, qg execution.QueryGroupIdentity, runner maintenanceRunner, plans []controlplane.MaintenancePlan, deletions calendarDeletions) {
 	if len(plans) == 0 {
 		return
 	}
@@ -410,6 +683,11 @@ func (m *effectiveMaintenance) closeInactive(ctx context.Context, qg execution.Q
 			}
 		}
 		if len(alerts) == 0 {
+			continue
+		}
+		if err := deletions.held(plan.Compiled); err != nil {
+			m.observeTrace(ctx, observability.TraceFields{QueryGroupKey: string(qg), StrategyID: plan.Identity.StrategyID},
+				closeOutcomeDeletionUnsettled, err, 0)
 			continue
 		}
 		business, err := strconv.ParseInt(plan.Identity.BusinessID, 10, 64)
@@ -535,7 +813,7 @@ func (m *effectiveMaintenance) refreshLegacy(ctx context.Context, qg execution.Q
 			m.legacyCursor[qg] = i
 			return
 		}
-		levels := plan.Compiled.Levels()
+		levels := plan.Compiled.Levels().Copy()
 		if level := plan.Compiled.NoDataLevel(); level != nil {
 			levels = append(levels, *level)
 		}
@@ -646,11 +924,70 @@ func (m *effectiveMaintenance) requestCalibration(key openalerts.StrategyKey, at
 // is measured in - alerts for close_acked - and
 // one for the outcomes that are events in their own right.
 func (m *effectiveMaintenance) observe(ctx context.Context, qg execution.QueryGroupIdentity, outcome string, err error, count int) {
+	m.observeTrace(ctx, observability.TraceFields{QueryGroupKey: string(qg)}, outcome, err, count)
+}
+
+// observeTrace is observe with the line's identity given in full, for an
+// outcome that is about one strategy rather than the whole Query Group.
+func (m *effectiveMaintenance) observeTrace(ctx context.Context, trace observability.TraceFields, outcome string, err error, count int) {
 	result := observability.ResultSuccess
 	if err != nil {
 		result = observability.ResultDegraded
 	}
 	m.count(outcome, max(count, 1))
+	m.remember(trace, outcome, err)
 	m.bundle.dependencies.Observer.Observe(ctx, observability.Observation{Component: observability.ComponentRuntime, Stage: observability.StageEffectiveTimeMaintenance, Result: observability.Result(result),
-		ReasonCode: observability.ReasonCode(outcome), Trace: observability.TraceFields{QueryGroupKey: string(qg)}, Counts: observability.Counts{Events: int64(count)}, Err: err})
+		ReasonCode: observability.ReasonCode(outcome), Trace: trace, Counts: observability.Counts{Events: int64(count)}, Err: err})
+}
+
+// maintenanceSource is the effective-time maintenance as the CLI reads it,
+// bound once the loop is built: the CLI is built before it.
+type maintenanceSource struct {
+	loop atomic.Pointer[effectiveMaintenance]
+}
+
+func (source *maintenanceSource) bind(loop *effectiveMaintenance) {
+	if source != nil {
+		source.loop.Store(loop)
+	}
+}
+
+// cliMaintenanceReading is maintenance.get's answer: the answering process's
+// effective-time maintenance, by outcome, and the latest of every outcome
+// that was not an acknowledged close.
+type cliMaintenanceReading struct {
+	Scope   string                          `json:"scope"`
+	ReadAt  time.Time                       `json:"read_at"`
+	Running bool                            `json:"running"`
+	Counts  map[string]uint64               `json:"counts"`
+	Recent  map[string][]maintenanceOutcome `json:"recent"`
+}
+
+// cliMaintenanceOperation reads this process's effective-time maintenance.
+// The counts are effective_close_total's; the recent outcomes are what the
+// counts cannot say - which Query Group, which strategy, when, and why - and
+// what the log lines, rotated out within minutes on a busy Pod, no longer
+// can by the time someone asks.
+func cliMaintenanceOperation(source *maintenanceSource) obchannel.Operation {
+	return obchannel.Operation{ID: "maintenance.get",
+		Summary:       "读取实际回答进程的生效时间维护：按结局的计数（与 effective_close_total 同源），以及除 close_acked 外每种结局最近 32 条（查询组、策略、时间、错误原文，截到 256 字节），用来一步读出 unavailable 等是哪个查询组、什么原因；可指定实例。",
+		EvidenceScope: "process", Targetable: true, Fields: map[string]obchannel.Field{},
+		OutputSchema: obchannel.SchemaOf(cliMaintenanceReading{}),
+		Limits: map[string]any{"redis_commands": 0, "scope": "answering_replica", "recent": maintenanceRecentKept,
+			"error_bytes": maintenanceErrorBytes},
+		Run: func(context.Context, obchannel.Params) obchannel.Outcome {
+			reading := cliMaintenanceReading{Scope: "answering_replica", ReadAt: time.Now().UTC(),
+				Counts: map[string]uint64{}, Recent: map[string][]maintenanceOutcome{}}
+			var loop *effectiveMaintenance
+			if source != nil {
+				loop = source.loop.Load()
+			}
+			if loop != nil {
+				kept := loop.Reading()
+				reading.Running, reading.Counts, reading.Recent = true, kept.Counts, kept.Recent
+			}
+			return obchannel.Outcome{Value: reading, Complete: reading.Running,
+				Limitations: []string{"Use meta.answered_by to identify this process: each replica maintains the Query Groups it owns, and another replica's outcomes are read by targeting it.",
+					"Counts and outcomes are this process's since it started: first_at is when this process first saw the Query Group under the word, not when the condition began. At most 32 Query Groups are kept per word, the one seen longest ago giving way; each error's text is cut to 256 bytes."}}
+		}}
 }

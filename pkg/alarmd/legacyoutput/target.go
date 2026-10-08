@@ -181,15 +181,18 @@ func projectK8S(ctx context.Context, scope TargetScope, p TargetProjection, pods
 	return p, nil
 }
 
+// targetStrategy is what PrepareTarget reads from a frozen strategy.
+type targetStrategy struct {
+	Labels []string `json:"labels"`
+	Items  []struct {
+		QueryConfigs []struct {
+			ResultTableID string `json:"result_table_id"`
+		} `json:"query_configs"`
+	} `json:"items"`
+}
+
 func PrepareTarget(strategy json.RawMessage) (*PreparedTarget, error) {
-	var config struct {
-		Labels []string `json:"labels"`
-		Items  []struct {
-			QueryConfigs []struct {
-				ResultTableID string `json:"result_table_id"`
-			} `json:"query_configs"`
-		} `json:"items"`
-	}
+	var config targetStrategy
 	if err := json.Unmarshal(strategy, &config); err != nil {
 		return nil, err
 	}

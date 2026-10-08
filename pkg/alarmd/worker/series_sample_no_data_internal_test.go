@@ -153,7 +153,7 @@ func runNoDataSampleRounds(t *testing.T, due execution.DuePlan, store *state.Exe
 				}
 			}
 		}
-		if err := stream.coordinator.applyNoDataMemory(ctx, stream.request, stream.noDataMutations); err != nil {
+		if err := stream.coordinator.applyNoDataMemory(ctx, stream.request, stream.header.DuePlans, stream.noDataMutations); err != nil {
 			t.Fatal(err)
 		}
 		if len(stream.stateItems) > 0 {

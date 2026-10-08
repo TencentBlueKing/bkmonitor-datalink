@@ -88,7 +88,8 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 					Failures: []fleet.RestoredSelectorFailure{
 						{Kind: "static", ID: "members", Reason: "model_representation_unresolved"},
 						{Kind: "dynamic_group", ID: "17", Reason: "members_dropped", Dropped: 3, Kept: 40}},
-					NodesMissing: []string{"module:88"}, NodesForeign: []string{"set:9"}, StaleAgeSeconds: 200}}}
+					NodesMissing: []string{"module:88"}, NodesForeign: []string{"set:9"}, StaleAgeSeconds: 200},
+					{StrategyID: "101", State: "Complete", ExcludedAbsent: 3}}}
 			item.Wake = &fleet.WakeFacts{Known: true, DueAt: at.Add(3 * time.Minute), IntervalSeconds: 60}
 		}),
 		anomaly("qg-preexisting", func(item *fleet.Anomaly) {
@@ -425,7 +426,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 					SentShapes: map[string]int{"hex32": 4}, MemberShapes: map[string]int{"hex64": 147},
 					AlertSources:     map[string]int{"src-own": 2, "src-other": 140, "other": 7},
 					SentInCalibrated: 4, SentMatchingAlertID: 0, SentMatchingFingerprint: 0,
-					Strategies: []fleet.OpenAlertComparisonStrategy{{TenantID: "system", StrategyID: "8709", Sent: 1, Members: 3,
+					Strategies: []fleet.OpenAlertComparisonStrategy{{TenantID: "system", StrategyID: "852", Sent: 1, Members: 3,
 						Alerts: 3, Calibrated: true, SentSample: []string{"5f3a9c1e"}, MemberSample: []string{"c0ffee42"},
 						AlertSample: []fleet.OpenAlertComparisonAlert{{AlertID: "d00dfeed", Fingerprint: "c0ffee42", EventSourceID: "src-other"}}}}},
 				// The target-scope close, unarmed: its samples stay in the API.
@@ -483,7 +484,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			"qg-losing-now": {
 				FirstSlot: at.Add(-4 * time.Minute).Unix(), LastSlot: at.Add(-3 * time.Minute).Unix(),
 				Slots: 6, At: at.Add(-3 * time.Minute), Replica: "bk-monitor-alarmd-trigger-5bdb679ddf-abcde",
-				Strategies: []fleet.StrategyRef{{StrategyID: "8709", BusinessID: "9"}}, IntervalSeconds: 10,
+				Strategies: []fleet.StrategyRef{{StrategyID: "852", BusinessID: "9"}}, IntervalSeconds: 10,
 				Reason: "QUERY_PERMIT_DEADLINE", ReasonCategory: "admission"},
 			"qg-demoted-rejected": {
 				FirstSlot: at.Add(-5 * time.Minute).Unix(), LastSlot: at.Add(-2 * time.Minute).Unix(),
@@ -603,10 +604,23 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 			UptimeSeconds: 300, StartedAt: at.Add(-5 * time.Minute), Ours: 5, External: 26, Truncated: true},
 	}
 	lastExit := at.Add(-2 * time.Minute)
+	// The first screen's count of strategies as /api/diagnose?summary=1 sends
+	// it: eleven strategies made up into six Query Groups, and the same
+	// response with its universe unreadable.
+	six := 6
+	strategyCount := fleet.DiagnosisSummaryResponse{Universe: fleet.DiagnosisUniverse{Status: "ok", Count: 11},
+		Summary: fleet.DiagnosisSummary{Strategies: 11, QueryGroups: &six, ByVerdict: map[fleet.StateWord]int{
+			fleet.StateResultUntrusted: 6, fleet.StateDetecting: 4, fleet.StateDataAbsent: 1}},
+		Verdicts: fleet.DiagnosisVerdicts(), Words: fleet.ProductWords()}
+	strategyCountUnread := strategyCount
+	strategyCountUnread.Universe = fleet.DiagnosisUniverse{Status: "unreadable", Reason: "SOURCE_UNREADABLE"}
+	strategyCountUnread.Summary = fleet.DiagnosisSummary{ByVerdict: map[fleet.StateWord]int{}}
 	fixture := map[string]any{
-		"anomalies": rows,
-		"checks":    checks,
-		"todo":      todo,
+		"strategy_count":        strategyCount,
+		"strategy_count_unread": strategyCountUnread,
+		"anomalies":             rows,
+		"checks":                checks,
+		"todo":                  todo,
 		"summary": fleet.Summary{
 			ByKind:   fleet.Distribution{Top: []fleet.Count{{Value: "DEGRADED_RUN", Count: 7}}, Distinct: 1},
 			ByReason: fleet.Distribution{Top: []fleet.Count{{Value: "COMPLETED_WITH_UNAVAILABLE", Count: 7}}, Distinct: 1},
@@ -637,11 +651,11 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		// link without it lands on an error page.
 		"strategy_link_cases": []map[string]any{
 			{"name": "configured", "base": "https://monitor.example",
-				"strategy": fleet.StrategyRef{StrategyID: "1854", BusinessID: "7"}},
+				"strategy": fleet.StrategyRef{StrategyID: "847", BusinessID: "7"}},
 			{"name": "nobiz", "base": "https://monitor.example",
-				"strategy": fleet.StrategyRef{StrategyID: "1854"}},
+				"strategy": fleet.StrategyRef{StrategyID: "847"}},
 			{"name": "unconfigured", "base": "",
-				"strategy": fleet.StrategyRef{StrategyID: "1854", BusinessID: "7"}},
+				"strategy": fleet.StrategyRef{StrategyID: "847", BusinessID: "7"}},
 		},
 		// A 24-hour window and a 15-minute one. The first ends at the same
 		// wall-clock time it started, which is what made it render empty.
@@ -693,6 +707,8 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 					DiscardedSlot: at.Add(-90 * time.Minute).Unix()},
 				{QueryGroup: "qg-pruned-short", SpanSeconds: 180, At: at.Add(-time.Hour)},
 			},
+			// More spans than the list carries: the count is the total.
+			PrunedSkipsTotal: 12,
 			// Nothing overdue, with the dispatch suppression that makes that zero
 			// mean something. This is the branch a healthy deployment renders and
 			// the one nobody had ever executed.
@@ -790,6 +806,17 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	command.Env = append(os.Environ(), "TZ=Asia/Shanghai", "LANG=en_GB.UTF-8", "LC_ALL=en_GB.UTF-8")
 	output, err := command.CombinedOutput()
 	text := strings.TrimSpace(string(output))
+	// Output that stops before the harness's last line is one fact -- the
+	// process ended with writes still queued -- and read line by line it
+	// came out as thirty separate complaints about missing sentences.
+	if !strings.HasSuffix(text, smokeEnd) {
+		last := text
+		if cut := strings.LastIndexByte(text, '\n'); cut >= 0 {
+			last = text[cut+1:]
+		}
+		t.Fatalf("the harness's output stopped before its last line (%d bytes, exit %v): the page's findings cannot be read from it; last line: %q",
+			len(output), err, last)
+	}
 	if dump := os.Getenv("FLEET_SMOKE_DUMP"); dump != "" {
 		// The whole rendering, for reading the sentences a change produced
 		// before pinning them; never part of the verdict.
@@ -810,6 +837,22 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	// The one line on the page that answers "what is affected". A reader who
 	// gets no answer here has to assemble it out of five object counts, which is
 	// what they were doing.
+	// Two denominators, each in its own unit, and the strategies by the
+	// words the server sent in its order: never the grid's groups as the
+	// strategies' count, read or unread.
+	if line := lineStarting(text, "STRATEGIES ::"); !strings.Contains(line, "11 条策略，合成 6 个查询组") {
+		t.Errorf("strategy count = %q, want eleven strategies made up into six Query Groups", line)
+	}
+	if line := lineStarting(text, "STRATEGY STATES ::"); !strings.Contains(line, "按策略的状态：在检测 4 · 检测结果不能采信 6 · 数据没到 1") ||
+		strings.Contains(line, "状态未知") {
+		t.Errorf("strategy states = %q, want the three non-zero words in the server's order and nothing else", line)
+	}
+	for _, prefix := range []string{"STRATEGIES UNREAD ::", "STRATEGIES REFUSED ::"} {
+		line := lineStarting(text, prefix)
+		if !strings.Contains(line, "策略条数读不到") || !strings.Contains(line, "不是策略数") || strings.ContainsAny(line, "0123456789") {
+			t.Errorf("%s %q, want the count said unreadable with no number in its place", prefix, line)
+		}
+	}
 	impactLine := lineStarting(text, "IMPACT ::")
 	if impactLine == "" {
 		t.Error("the impact line rendered nothing: the page answers how many objects and never " +
@@ -864,6 +907,20 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	// five objects nobody can speak for: three the view holds undetermined and
 	// two restored without their cause, under three folds with the stale
 	// replica.
+	// The handover note, in full, in both places it is said; and in neither
+	// when there is none.
+	consequence := "本时刻计数可能偏多、在途损失可能误判为进行中"
+	for name, want := range map[string]string{
+		"3":       "交接中：3 个对象被多个副本同时持有，" + consequence,
+		"unknown": "交接中：无法判断有多少对象被多个副本同时持有，" + consequence,
+	} {
+		if line := lineStarting(text, "HANDOVER "+name+" ::"); strings.Count(line, want) != 2 {
+			t.Errorf("handover %s: %q, want %q beside the counts and on the load block", name, line, want)
+		}
+	}
+	if line := lineStarting(text, "HANDOVER none ::"); strings.Count(line, "(hidden)") != 2 {
+		t.Errorf("no handover: %q, want the note hidden in both places", line)
+	}
 	todoLine := lineStarting(text, "CHECKS ::")
 	for _, want := range []string{"1 个对象的轮次不再结束", "alarmd",
 		// Two current: the object whose round ended skipping, and the one
@@ -905,7 +962,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	// Not confirmed as this deployment's is its own part, not on the list
 	// above and not handed over: the bare refusal and the undecided windows.
 	pendingLine := lineStarting(text, "PENDING ::")
-	for _, want := range []string{"后端拒绝了 1 个对象的查询", "待确认", "个对象的窗口填不满，还分不出是谁的"} {
+	for _, want := range []string{"待确认", "个对象的窗口填不满，还分不出是谁的"} {
 		if !strings.Contains(pendingLine, want) {
 			t.Errorf("the undetermined part does not say %q:\n%s", want, pendingLine)
 		}
@@ -949,6 +1006,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		// over, so the reason is not taken for a live one.
 		{"RESTORED qg-restored-with-cause ::", "最近一次检测未完整完成：COMPLETED_WITH_UNAVAILABLE（QUERY_TIMEOUT）。结果来自本进程接手前的 17:55:00 轮次（提交于 17:56:00）；下一轮预计 18:03:00"},
 		{"RESTORED qg-restored-with-cause ::", "目标解析（策略 1234）：目标不可用——有 selector 解析不出，这一轮不做无数据判定；static members：按模型实例（model_inst_id）给出的静态成员，主机缓存里查不到对应主机身份——不是主机模型，或缓存没带规范身份字段；dynamic_group 17：成员逐条校验有丢弃（模型、实例、汇总列出、host_id 规则）（丢弃 3，保留 40）；索引里不存在的节点：module:88；只属于别的业务的节点：set:9；用的快照已过期 3 分 20 秒"},
+		{"RESTORED qg-restored-with-cause ::", "排除成员已不存在：3（excluded_absent，正常跳过）"},
 		{"BLOCKED qg-stale-error ::", "卡在哪一步：数据查询（依赖待定位）：超时 QUERY_TIMEOUT；影响：结果待确认（这一轮结束了但结果不能采信）；本进程没见过它成功完成"},
 		{"BLOCKED qg-losing-now ::", "卡在哪一步：调度接管（alarmd 自身（预算、截止、定义），由原因码判定）：容量不足 GAP_SKIPPED；影响：确认漏检（跳过记录已持久化，那段不补）"},
 		{"BLOCKED qg-rejected ::", "卡在哪一步：数据查询（查询后端，由原因码判定）：被拒绝 "},
@@ -959,14 +1017,17 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		{"CHECKS ::", "alarmd 自己的依赖没答，1 个对象受影响（1 种）——配置获取 · 依赖待定位 · 不可用（source_blocked 1）：1 个，仍然受阻，最近失败 17:59:30"},
 		{"CHECKS ::", "；GAP_SCOPE_REASON_CONFLICT（内部错误，第二事实）：1 个，仍然受阻"},
 		{"GOV ::", "2 个对象的查询被后端回\"表或字段不存在\""},
-		{"PENDING ::", "证据：分组的后端回答只有状态码/状态词（非 200 的响应正文当前不保留，\"最近一次错误\"是结束这一轮的 alarmd 错误，不是后端原文）"},
+		// A refused query is the strategy's too: governance, not 待确认.
+		{"GOV ::", "后端拒绝了 1 个对象的查询"},
+		{"GOV ::", "证据：分组的后端回答只有状态码/状态词（非 200 的响应正文当前不保留，\"最近一次错误\"是结束这一轮的 alarmd 错误，不是后端原文）"},
+		{"GOV ::", "若平台检测器对同一条策略的查询能过，就是 alarmd 构造的问题，回 alarmd"},
 		// The timeout and the short old-series window are not the data side's
 		// until the query path and the fetch are ruled out: both are here, not
 		// under governance.
 		{"PENDING ::", "查询没有得到应答，5 个对象受影响（2 种症状，1 条策略）——客户端超时或 5xx，查询预算、网络、后端耗时哪一环还分不出"},
 		{"PENDING ::", "下一步：先查查询链路：超时看查询预算、网络、后端耗时哪一环超了"},
 		{"PENDING ::", "恢复所需的老序列数据不完整（1 条策略），恢复判不了——是数据没到还是 alarmd 没取到还分不出"},
-		{"PENDING ::", "恢复标准：分出归属后转到对应行（策略侧或 alarmd）；不是等它消失"},
+		{"GOV ::", "恢复标准：策略改好后冷却到期自动重试成功，对象离开降级池；核出是 alarmd 构造的转到 alarmd"},
 		{"HISTORY COUNT ::", "漏检记录 2 个对象，其中 1 个最近 1 小时内还发生过，最后一次 "},
 		{"HISTORY COUNT ::", "；记账被打断（检测做过了）：当前可观测副本自各自启动以来累计 9 个 Slot（3 个对象），最近 17:30:00"},
 		// The two records: every Slot executed whole, said so with no Blocked
@@ -1003,9 +1064,9 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		// and -- the verdict here is UNKNOWN for a coverage gap -- that the
 		// verdict is about the second clause. Same words whichever response
 		// rendered last.
-		{"BLOCKED SENTENCE ::", "受阻：环节待定位 · 依赖待定位 · 类型待定位（COMPLETED_WITH_UNAVAILABLE 3、error 1） 4 个，仍然受阻；数据查询 · 依赖待定位 · 超时（QUERY_TIMEOUT 4） 4 个，正在恢复；配置获取 · 依赖待定位 · 不可用（source_blocked 1） 1 个，仍然受阻；另 4 组共 4 个，见各行"},
+		{"BLOCKED SENTENCE ::", "受阻：环节待定位 · 依赖待定位 · 类型待定位（COMPLETED_WITH_UNAVAILABLE 3、error 1） 4 个，仍然受阻；数据查询 · 依赖待定位 · 超时（QUERY_TIMEOUT 4） 4 个，正在恢复；配置获取 · 依赖待定位 · 不可用（source_blocked 1） 1 个，仍然受阻；另 3 组共 3 个，见各行"},
 		{"BLOCKED SENTENCE ::", "；待确认：8 个对象说不出结论（没留下成因，各自再跑完一轮就补上）；判定停在 UNKNOWN 说的是这一句，不抵消前一句"},
-		{"BLOCKED SENTENCE BEFORE HEALTH ::", "另 4 组共 4 个，见各行"},
+		{"BLOCKED SENTENCE BEFORE HEALTH ::", "另 3 组共 3 个，见各行"},
 		{"BLOCKED SENTENCE AFTER HEALTH ::", "受阻：环节待定位 · 依赖待定位 · 类型待定位（COMPLETED_WITH_UNAVAILABLE 3、error 1） 4 个，仍然受阻；数据查询 · 依赖待定位 · 超时（QUERY_TIMEOUT 4） 4 个，正在恢复；"},
 		{"BLOCKED SENTENCE AFTER HEALTH ::", "；待确认：8 个对象说不出结论"},
 		// The problems that recovered within the hour, on the history side:
@@ -1022,7 +1083,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		{"GOV ::", "2 个对象的查询被后端回\"表或字段不存在\"（1 种回答，1 条策略，1 个业务）——按策略引用核，未逐个核过实际请求与元数据前不认定是策略写错；其中 1 个已降级，不再反复查；其中 1 个在被拒期间还跳过了检测（最近 10 分钟内 1 个）——冷却让旧轮次超出重放范围，首要原因是查询不可用，扩容无用"},
 		{"GOV ::", "策略侧"},
 		{"ACTION ::", "现在要做的：找策略缓存的写入方（bk-monitor 后台的 cache 进程，或替代它的模块）：缺身份字段的要写方按合同补 bk_tenant_id / space_uid"},
-		{"ACTION ::", "（策略缓存里 60 条策略的文档不满足合同，没有进入检测（2 种原因）——是写入方写的内容缺东西，不是策略配置错）；之后还有 10 类，按顺序在下面；待归因 5 类另看，别交出去"},
+		{"ACTION ::", "（策略缓存里 60 条策略的文档不满足合同，没有进入检测（2 种原因）——是写入方写的内容缺东西，不是策略配置错）；之后还有 10 类，按顺序在下面；待归因 4 类另看，别交出去"},
 		// A record line's folds name what each loss is; the refusal's object
 		// row says what it lost while under its line.
 		// Every fold with object rows carries the problem's state and its
@@ -1193,7 +1254,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		// none), and one retained record made an hour ago.
 		// Three parts from the server's arithmetic, then what is being lost
 		// now and what the refused objects lost, apart from the record.
-		"需要处理：现在要处理 11 类（18 个对象，去重；其中平台写入方 1 类（60 条策略），按策略计不按对象计）；待归因 5 类（17 个对象）；业务侧已确认 4 类（4 个对象）在运营治理。正在漏检 1 个对象（最近 10 分钟内跳过，最近一次 ",
+		"需要处理：现在要处理 11 类（18 个对象，去重；其中平台写入方 1 类（60 条策略），按策略计不按对象计）；待归因 4 类（16 个对象）；业务侧已确认 5 类（5 个对象）在运营治理。正在漏检 1 个对象（最近 10 分钟内跳过，最近一次 ",
 		"另有 1 个是滚动后的追赶漏检（副本启动或首次接手 5 分钟内），看它还有没有新增",
 		"被拒的对象里 1 个在冷却期间跳过了检测（最近 10 分钟内 1 个），首要原因是查询不可用；已停止的漏检记录 2 个对象另列",
 		// On time, and on a stale publication: both true at once, and the
@@ -1304,7 +1365,7 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 	// the reference carries everything that console needs. A wrong link sends a
 	// reader to an error page and costs more than no link at all.
 	for _, want := range []struct{ name, says, mustNotSay string }{
-		{"configured", "https://monitor.example?bizId=7#/strategy-config/detail/1854", ""},
+		{"configured", "https://monitor.example?bizId=7#/strategy-config/detail/847", ""},
 		{"nobiz", "(none)", "http"},
 		{"unconfigured", "(none)", "http"},
 	} {
@@ -1382,6 +1443,8 @@ func TestTheRenderFunctionsRunWithoutThrowing(t *testing.T) {
 		// column, so it needed a line of its own or it could not be said at all.
 		{"PRUNED ::", "从来没有被检测过", "",
 			"这一段的时间点没有被评估过也不会补跑，页面上必须说得出来"},
+		{"PRUNED ::", "有 12 个对象", "",
+			"列表只带最长的几条，个数要读总数，不是列表长度"},
 		{"PRUNED ::", "1 小时 30 分", "",
 			"最长的那一段要给出跨度，它是唯一能排序的量"},
 		{"PRUNED ::", "无法得知", "",
@@ -1517,6 +1580,9 @@ func lineStarting(text, prefix string) string {
 	return ""
 }
 
+// smokeEnd is the harness's last line; its absence means the output was cut.
+const smokeEnd = "SMOKE END"
+
 // smokeHarness stubs just enough DOM for the render functions and calls them.
 // It is deliberately small: a fuller emulator would be a second implementation
 // to maintain, and the failure being caught here needs nothing more than a real
@@ -1593,6 +1659,7 @@ try {
 const calls = [
   ['objectRow (every row shape)', () => data.anomalies.forEach(r => ctx.objectRow(r))],
   ['renderDeployment', () => ctx.renderDeployment(data.health)],
+  ['renderStrategyCount', () => ctx.renderStrategyCount(data.strategy_count, '')],
   ['renderChecks', () => { ctx.latestTodo = data.todo; ctx.renderChecks(data.checks); }],
   ['renderReplicas', () => ctx.renderReplicas(data.per_replica)],
   ['renderCoverage', () => ctx.renderCoverage(data.coverage)],
@@ -1616,6 +1683,15 @@ console.log('UNATTR gap :: ' + (store['unattributedHint'] ? store['unattributedH
 console.log('WHY gap :: ' + (store['why'] ? store['why'].textContent : '(not rendered)'));
 console.log('PARKED :: ' + (store['overdueHint'] ? store['overdueHint'].textContent : '(not rendered)'));
 console.log('PRUNED :: ' + (store['prunedSkips'] ? store['prunedSkips'].textContent : '(not rendered)'));
+
+// The two denominators and the strategies by state, then the same line with
+// the count unreadable: it says so and borrows nothing from the grid.
+console.log('STRATEGIES :: ' + textOf(store['strategyCount']));
+console.log('STRATEGY STATES :: ' + textOf(store['strategyVerdicts']));
+ctx.renderStrategyCount(data.strategy_count_unread, '');
+console.log('STRATEGIES UNREAD :: ' + textOf(store['strategyCount']) + ' | ' + textOf(store['strategyVerdicts']));
+ctx.renderStrategyCount(null, 'LEADER_UNAVAILABLE');
+console.log('STRATEGIES REFUSED :: ' + textOf(store['strategyCount']));
 
 // The first screen and the fold under it, as rendered.
 console.log('CHECKS :: ' + textOf(store['checkRows']));
@@ -1656,6 +1732,14 @@ for (const [name, extra] of Object.entries({
 console.log('BUILD :: ' + textOf(store['buildLine']));
 // The operating judgment at the top of the capacity panel, with its limits.
 console.log('LOAD :: ' + textOf(store['loadLines']) + ' ｜ ' + textOf(store['loadLimits']));
+// The handover note beside the counts and on the load block: with a count,
+// with none, and absent.
+for (const [name, marker] of Object.entries({'3': {objects: 3}, 'unknown': {objects: null}, 'none': undefined})) {
+  ctx.renderDeployment(Object.assign({}, data.health, {handover: marker}));
+  const shown = id => store[id] && !store[id].hidden ? textOf(store[id]) : '(hidden)';
+  console.log('HANDOVER ' + name + ' :: ' + shown('handoverNote') + ' ｜ ' + shown('loadHandover'));
+}
+ctx.renderDeployment(data.health);
 // The same judgment in the states a deployment is actually in: behind on
 // permits, behind with nothing pointing anywhere, a budget rejection while
 // keeping up, and nothing to read from.
@@ -1985,5 +2069,11 @@ for (const c of data.page_tail_cases || []) {
   console.log('TAIL ' + c.name + ' :: ' + tail);
 }
 
-process.exit(failed ? 1 : 0);
+// The last line, and an exit node takes on its own once everything above has
+// been written. process.exit() does not wait for a pipe: on macOS stdout to a
+// pipe is written asynchronously, and on a busy machine the process ended with
+// lines still queued, which read as thirty findings about sentences the page
+// had rendered.
+console.log('` + smokeEnd + `');
+process.exitCode = failed ? 1 : 0;
 `

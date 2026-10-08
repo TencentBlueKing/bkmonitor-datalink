@@ -40,6 +40,9 @@ type catalogCompositionCollector struct {
 	retentionPoints   *prometheus.Desc
 	requiredPoints    *prometheus.Desc
 	slackLevels       *prometheus.Desc
+
+	globalStrategies  *prometheus.Desc
+	globalUnsupported *prometheus.Desc
 }
 
 func newCatalogCompositionCollector() *catalogCompositionCollector {
@@ -140,6 +143,22 @@ func newCatalogCompositionCollector() *catalogCompositionCollector {
 				"Read it against sum(catalog_plans): a family whose expected value is zero cannot tell "+
 				"'no Plan is inert' from 'nothing checked', and that sum is what says the check ran, "+
 				"because the same loop over the same Plans produces both. Reported by the leader only."),
+		globalStrategies: descriptor("catalog_global_strategies",
+			"Strategies the source marks global (is_global_strategy) in the Catalog the leader last built, by "+
+				"what the round did with them: accepted runs as a global strategy, global_unsupported was refused "+
+				"as GLOBAL_STRATEGY_UNSUPPORTED - a strategy this build cannot yet run across businesses, which "+
+				"stopped detecting unless its last good Plan was retained - and withheld was withheld for any "+
+				"other reason, named in catalog_withheld_objects. A partition: the three add up to the global "+
+				"strategies the source listed, each counted once whatever number of records it has, and all "+
+				"three are published at zero, because 'no global strategy was refused' is a reading somebody acts "+
+				"on. Reported by the leader only.", "outcome"),
+		globalUnsupported: descriptor("catalog_global_strategies_unsupported",
+			"The global_unsupported strategies of catalog_global_strategies by the word they were refused for "+
+				"(query_kind, query_table, legacy_target, output_protocol) and the source their query reads "+
+				"(the catalog_plans source_semantics label, or promql); the pairs add up to that outcome. "+
+				"This is what decides which query source alarmd learns to run globally next. Both labels are "+
+				"closed sets, and only the pairs a round produced are published. Reported by the leader only.",
+			"reason", "source_semantics"),
 	}
 }
 
@@ -154,6 +173,8 @@ func (c *catalogCompositionCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.requiredPoints
 	ch <- c.retentionPoints
 	ch <- c.slackLevels
+	ch <- c.globalStrategies
+	ch <- c.globalUnsupported
 }
 
 func (c *catalogCompositionCollector) Collect(ch chan<- prometheus.Metric) {
@@ -192,6 +213,12 @@ func (c *catalogCompositionCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(c.retentionPoints, prometheus.GaugeValue, float64(composition.Retention.RetentionPoints))
 	ch <- prometheus.MustNewConstMetric(c.slackLevels, prometheus.GaugeValue, float64(composition.Retention.LevelsWithSlackWindowDominant), "window")
 	ch <- prometheus.MustNewConstMetric(c.slackLevels, prometheus.GaugeValue, float64(composition.Retention.LevelsWithSlackRecoveryDominant), "recovery")
+	for outcome, count := range composition.GlobalStrategies {
+		ch <- prometheus.MustNewConstMetric(c.globalStrategies, prometheus.GaugeValue, float64(count), outcome)
+	}
+	for key, count := range composition.GlobalUnsupported {
+		ch <- prometheus.MustNewConstMetric(c.globalUnsupported, prometheus.GaugeValue, float64(count), key.Reason, key.QuerySource)
+	}
 }
 
 // SetCatalogCompositionSource binds the process's last built Catalog

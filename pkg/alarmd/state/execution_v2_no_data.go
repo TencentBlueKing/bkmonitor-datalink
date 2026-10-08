@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -244,7 +245,7 @@ func (store *ExecutionStore) renewNoDataHash(
 	ctx context.Context, target StorageTarget, item execution.PlanNoDataLoadItem, key string,
 ) *execution.NoDataMemoryRenewal {
 	attempt, err := RenewGenerationKeyReporting(ctx, target, key, item.Retention,
-		store.options.RestartMargin, store.options.MinTTL, store.options.MaxTTL, store.renewals)
+		store.options.RestartMargin, store.options.MinTTL, store.options.MaxTTL, store.renewals, store.options.ReadHoldBound)
 	if !attempt.Asked && err == nil {
 		// The gate answered from what this process already knows. Reporting it
 		// would bury the attempts that reached the store under the ones that
@@ -363,18 +364,28 @@ func (store *ExecutionStore) ApplyNoData(
 		len(request.Items) > store.options.MaxItemsPerCall {
 		return execution.NoDataApplyResult{}, fmt.Errorf("state: invalid no-data apply request")
 	}
+	// Every memory's lifetime before any is written, as for gap markers.
+	lifetimes := make([]time.Duration, len(request.Items))
+	for index, mutation := range request.Items {
+		ttl, err := generationWriteTTL(request.Retention, mutation.Identity.Plan,
+			store.options.RestartMargin, store.options.MinTTL, store.options.MaxTTL, store.options.ReadHoldBound)
+		if err != nil {
+			return execution.NoDataApplyResult{}, fmt.Errorf("state: invalid no-data apply request: %w", err)
+		}
+		lifetimes[index] = ttl
+	}
 	result := execution.NoDataApplyResult{Items: make([]execution.NoDataApplyItemResult, len(request.Items))}
 	for index, mutation := range request.Items {
 		if err := ctx.Err(); err != nil {
 			return execution.NoDataApplyResult{}, err
 		}
-		result.Items[index] = store.applyOneNoData(ctx, mutation)
+		result.Items[index] = store.applyOneNoData(ctx, mutation, lifetimes[index])
 	}
 	return result, nil
 }
 
 func (store *ExecutionStore) applyOneNoData(
-	ctx context.Context, mutation execution.PlanNoDataMutation,
+	ctx context.Context, mutation execution.PlanNoDataMutation, lifetime time.Duration,
 ) execution.NoDataApplyItemResult {
 	item := execution.NoDataApplyItemResult{Identity: mutation.Identity}
 	reject := func(reason string) execution.NoDataApplyItemResult {
@@ -524,10 +535,10 @@ func (store *ExecutionStore) applyOneNoData(
 		// other record has since dropped, and no reader could tell the mixture
 		// from a memory somebody wrote.
 		Replace: mutation.ReplacesWholeRecord(),
-		// The floor, for the same reason a gap marker takes it: the load renews
-		// to whatever this Plan needs, and this only has to keep the key from
-		// being born without a lifetime at all.
-		TTL: GenerationScopedFloor,
+		// The Plan's own lifetime, the one the load renews it to, for the same
+		// reason a gap marker takes it: written at the floor, the memory of a
+		// Plan whose interval is past a day was gone before its next round.
+		TTL: lifetime,
 	}
 	if expectedHeader != nil {
 		write.ExpectedDigest = HeaderDigest(expectedHeader)

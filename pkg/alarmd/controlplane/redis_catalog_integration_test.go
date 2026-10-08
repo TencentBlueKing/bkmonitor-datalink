@@ -22,6 +22,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
@@ -105,6 +106,53 @@ func (*serialActivationCASHook) BeforeProcessPipeline(ctx context.Context, _ []r
 func (*serialActivationCASHook) AfterProcessPipeline(context.Context, []redis.Cmder) error {
 	return nil
 }
+
+// activationReadBarrier holds the first Lua call until want reads of the
+// activation record have been sent. Every reconciler it waits for has then
+// read the state it will compete to replace, so each reaches its own CAS:
+// without it, a reconciler scheduled after the first CAS committed reads the
+// migrated state and has nothing to replace, and a test that counts the CAS
+// calls counts one.
+type activationReadBarrier struct {
+	key   string
+	want  int64
+	reads atomic.Int64
+	evals atomic.Int64
+	ready chan struct{}
+}
+
+func newActivationReadBarrier(key string, want int64) *activationReadBarrier {
+	return &activationReadBarrier{key: key, want: want, ready: make(chan struct{})}
+}
+
+func (barrier *activationReadBarrier) BeforeProcess(ctx context.Context, cmd redis.Cmder) (context.Context, error) {
+	switch cmd.Name() {
+	case "get":
+		if args := cmd.Args(); len(args) > 1 && args[1] == barrier.key && barrier.reads.Add(1) == barrier.want {
+			close(barrier.ready)
+		}
+	case "eval", "evalsha":
+		if barrier.evals.Add(1) != 1 {
+			return ctx, nil
+		}
+		select {
+		case <-barrier.ready:
+		case <-ctx.Done():
+			return ctx, ctx.Err()
+		case <-time.After(10 * time.Second):
+			return ctx, fmt.Errorf("activation read barrier: %d of %d reads before the first CAS", barrier.reads.Load(), barrier.want)
+		}
+	}
+	return ctx, nil
+}
+
+func (*activationReadBarrier) AfterProcess(context.Context, redis.Cmder) error { return nil }
+
+func (*activationReadBarrier) BeforeProcessPipeline(ctx context.Context, _ []redis.Cmder) (context.Context, error) {
+	return ctx, nil
+}
+
+func (*activationReadBarrier) AfterProcessPipeline(context.Context, []redis.Cmder) error { return nil }
 
 type beforeEvalHook struct {
 	once sync.Once
@@ -2312,6 +2360,9 @@ func TestScheduleActivationReconcilerConcurrentLegacyMigrationReadsSingleWinner(
 	casHook := &serialActivationCASHook{firstDone: make(chan struct{}), afterFirst: func() error {
 		return auxiliary.PExpire(ctx, activeSetKey, 2*time.Second).Err()
 	}}
+	// Both reconcilers read the legacy record before either CAS runs; the
+	// migration allocates no boundary, so the clock cannot be the barrier.
+	client.AddHook(newActivationReadBarrier(prefix+":activation", 2))
 	client.AddHook(casHook)
 	first, _ := controlplane.NewScheduleActivationReconciler(repository, compiler, semantics, func() time.Time {
 		t.Fatal("legacy migration must not allocate a cutover boundary")
@@ -3320,6 +3371,115 @@ func TestSourceReconcilerRemovesAbsentStrategyAfterTheGracePeriod(t *testing.T) 
 				t.Fatalf("cycle 4 strategy dispositions=%+v, want none", dispositions)
 			}
 		})
+	}
+}
+
+// The call site of the empty-set rule: the writer's active set is read whole
+// and empty from Redis after both strategies were published. However long it
+// stays empty, the reconciler publishes no removal - the snapshot keeps both
+// Plans and the audit names every one ACTIVE_SET_EMPTY - and once the set
+// lists them again nothing is pending.
+func TestSourceReconcilerKeepsEveryStrategyWhileTheActiveSetIsEmpty(t *testing.T) {
+	ctx := context.Background()
+	client := newControlplaneRedis(t)
+	documents := realThresholdDocuments(t)
+	setStrategyIDs := func(ids string) {
+		t.Helper()
+		if err := client.Set(ctx, "bkmonitor.cache.strategy_ids", ids, 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setStrategyIDs(`[1001,1002]`)
+	for index, id := range []string{"1001", "1002"} {
+		if err := client.Set(ctx, "bkmonitor.cache.strategy_"+id, string(documents[index]), 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source := newRedisStrategySource(t, client)
+	planner, err := controlplane.NewLegacyPrimaryQueryCompiler("uq-primary-v1", "UTC", testLegacyQueryRuntimeFacts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository, err := controlplane.NewRedisCatalogRepository(client, "alarmd:control:empty-active-set", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler, semantics := runtimePlanCompiler(t)
+	reconciler, err := controlplane.NewSourceReconciler(repository, compiler, semantics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceNow := time.Unix(1_700_000_000, 0)
+	if err := reconciler.ConfigureClock(func() time.Time { return sourceNow }); err != nil {
+		t.Fatal(err)
+	}
+	settle := func() controlplane.SourceRefreshResult {
+		t.Helper()
+		result, err := reconciler.Refresh(ctx, source, planner)
+		if err == nil && result.Status == controlplane.SourceRefreshPendingConfirmation {
+			result, err = reconciler.Refresh(ctx, source, planner)
+		}
+		if err != nil || result.Status == controlplane.SourceRefreshPendingConfirmation {
+			t.Fatalf("source refresh did not settle: (%+v, %v)", result, err)
+		}
+		return result
+	}
+	publishedPlans := func(publication controlplane.SnapshotPublicationRef) []string {
+		t.Helper()
+		snapshot, err := loadPublishedSnapshot(ctx, repository, publication)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids := make([]string, 0)
+		for _, group := range snapshot.QueryGroups {
+			for _, plan := range group.Plans {
+				ids = append(ids, plan.Identity.StrategyID)
+			}
+		}
+		sort.Strings(ids)
+		return ids
+	}
+	strategyReasons := func() map[string]string {
+		t.Helper()
+		audit, err := repository.LoadLatestAudit(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reasons := map[string]string{}
+		for _, disposition := range audit.Dispositions {
+			if disposition.Scope == "STRATEGY" {
+				reasons[disposition.SourceID] = string(disposition.Disposition) + "/" + disposition.Reason
+			}
+		}
+		return reasons
+	}
+
+	first := settle()
+	if first.Status != controlplane.SourceRefreshPublished || !reflect.DeepEqual(publishedPlans(first.Publication), []string{"1001", "1002"}) {
+		t.Fatalf("cycle 1 = %+v, want both strategies published", first)
+	}
+
+	setStrategyIDs(`[]`)
+	for round, elapsed := range []time.Duration{0, controlplane.AbsenceGracePeriod, 10 * controlplane.AbsenceGracePeriod} {
+		sourceNow = time.Unix(1_700_000_000, 0).Add(time.Minute + elapsed)
+		result := settle()
+		if plans := publishedPlans(result.Publication); !reflect.DeepEqual(plans, []string{"1001", "1002"}) {
+			t.Fatalf("empty round %d (%s in) published %v, want both strategies kept", round, elapsed, plans)
+		}
+		want := map[string]string{"1001": "PENDING_REMOVAL/ACTIVE_SET_EMPTY", "1002": "PENDING_REMOVAL/ACTIVE_SET_EMPTY"}
+		if got := strategyReasons(); !reflect.DeepEqual(got, want) {
+			t.Fatalf("empty round %d audit = %v, want %v", round, got, want)
+		}
+	}
+
+	setStrategyIDs(`[1001,1002]`)
+	sourceNow = sourceNow.Add(time.Minute)
+	back := settle()
+	if plans := publishedPlans(back.Publication); !reflect.DeepEqual(plans, []string{"1001", "1002"}) {
+		t.Fatalf("listed again published %v, want both", plans)
+	}
+	if got := strategyReasons(); len(got) != 0 {
+		t.Fatalf("listed again audit = %v, want nothing pending", got)
 	}
 }
 
@@ -4869,10 +5029,7 @@ func assertNoAuditDisposition(
 
 func newControlplaneRedis(t *testing.T) *redis.Client {
 	t.Helper()
-	executable, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server is not installed")
-	}
+	executable := redistest.Server(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

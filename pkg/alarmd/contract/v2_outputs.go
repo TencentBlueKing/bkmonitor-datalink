@@ -169,6 +169,11 @@ func ValidateTriggerEventV1(event *TriggerEventV1) error {
 	if event.RecordRef.Dimensions == nil || event.Observed.Values == nil {
 		return invalid("trigger_event", "dimensions and observed values must be objects")
 	}
+	// The same spelling as business_id: the attribution falls back to the
+	// Plan's own business, so whatever business_id admits this admits.
+	if event.AttributedBusinessID != "" && (!canonicalSignedDecimalPattern.MatchString(event.AttributedBusinessID) || event.AttributedBusinessID == "0") {
+		return invalid("trigger_event.attributed_business_id", "must be a canonical non-zero decimal when present")
+	}
 	if err := validateSuccessfulLevelResultsV1(event.LevelResults); err != nil {
 		return err
 	}
@@ -247,9 +252,15 @@ func DecodeTriggerEventV1WithLimits(payload []byte, limits TriggerEventReaderLim
 	if header.Schema.Minor == 2 {
 		required = append(required, "dedupe_md5")
 	}
-	object, err := validateOutputHeaderV1(payload, "trigger_event", TriggerEventSchemaV1, required)
+	// attributed_business_id is optional in every minor: a global business
+	// Plan's events carry it and no other Plan's do, and a reader must take
+	// both. Present, it is never null.
+	object, err := validateOutputHeaderV1(payload, "trigger_event", TriggerEventSchemaV1, required, "attributed_business_id")
 	if err != nil {
 		return nil, err
+	}
+	if raw, present := object["attributed_business_id"]; present && bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return nil, invalid("trigger_event.attributed_business_id", "must be omitted instead of null")
 	}
 	if header.Schema.Minor >= 1 {
 		if _, err := validateJSONObjectFields(object["strategy_ref"], "trigger_event.strategy_ref", []string{"bk_tenant_id", "strategy_bk_biz_id", "strategy_id", "strategy_revision"}, nil, false); err != nil {
@@ -586,8 +597,8 @@ func DecodeExecutionSummaryV1(payload []byte) (*ExecutionSummaryV1, error) {
 	return &summary, nil
 }
 
-func validateOutputHeaderV1(payload []byte, field, schemaName string, required []string) (map[string]json.RawMessage, error) {
-	object, err := validateJSONObjectFields(payload, field, required, nil, false)
+func validateOutputHeaderV1(payload []byte, field, schemaName string, required []string, optional ...string) (map[string]json.RawMessage, error) {
+	object, err := validateJSONObjectFields(payload, field, required, optional, false)
 	if err != nil {
 		return nil, err
 	}

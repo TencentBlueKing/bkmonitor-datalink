@@ -65,6 +65,8 @@ const (
 type NoDataApplyRequest struct {
 	Contract FrozenExecutionContractRef
 	Items    []PlanNoDataMutation
+	// Retention is what the written memory lives for; see GenerationRetention.
+	Retention GenerationRetention
 }
 
 type NoDataApplyItemResult struct {

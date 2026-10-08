@@ -43,14 +43,14 @@ func TestTraditionalComparisonPythonOracle(t *testing.T) {
 		t.Run(tc.ID, func(t *testing.T) {
 			tc.Config["data_unit"], tc.Config["algorithm_unit"], tc.Config["precision"] = tc.DataUnit, tc.AlgorithmUnit, 6
 			plan := compileNamedInputPlan(t, tc.Kind, tc.Config, strategy.AlgorithmInputProjection{ValueFields: []string{"value"}, IdentityFields: []string{"host"}})
-			config, ok := plan.Levels()[0].Algorithms()[0].TraditionalComparisonConfig()
+			config, ok := plan.Levels().At(0).Algorithms().At(0).TraditionalComparisonConfig()
 			if !ok {
 				t.Fatal("missing config")
 			}
 			config.Precision = tc.Precision
 			config.AggregationInterval = tc.AggregationInterval
 			if tc.QueryState != "FULL" {
-				algorithm := plan.Levels()[0].Algorithms()[0]
+				algorithm := plan.Levels().At(0).Algorithms().At(0)
 				const sourceTime = int64(864000)
 				records := map[string][]contract.CanonicalRecordV2{
 					"primary": {namedRecord(t, sourceTime, strconv.FormatFloat(tc.Current, 'g', -1, 64), nil)},
@@ -106,7 +106,7 @@ func TestTraditionalComparisonPythonOracle(t *testing.T) {
 func TestTraditionalNamedHistoryQualityAndBindingIdentity(t *testing.T) {
 	config := map[string]any{"ceil": 20, "ceil_interval": 2, "fetch_type": "avg", "data_unit": "short", "algorithm_unit": "", "precision": 6}
 	plan := compileNamedInputPlan(t, strategy.DetectorKindAdvancedYearRound, config, strategy.AlgorithmInputProjection{ValueFields: []string{"value"}, IdentityFields: []string{"host"}})
-	algorithm := plan.Levels()[0].Algorithms()[0]
+	algorithm := plan.Levels().At(0).Algorithms().At(0)
 	for _, test := range []struct {
 		name, value           string
 		partial, wrongBinding bool

@@ -103,7 +103,7 @@ func TestEffectiveTimeMultipleLevelsKeepTheirOwnUptime(t *testing.T) {
 	}
 	group := catalog.QueryGroups[0]
 	compiled := compileWithEvaluationCore(t, group.Plans[0].Plan, group.QueryPlan.Normalization.DatasetContract)
-	levels := compiled.Levels()
+	levels := compiled.Levels().Copy()
 	if len(levels) != 2 || levels[0].EffectiveTimeRequirement().Kind() != strategy.EffectiveTimeAlways || levels[1].EffectiveTimeRequirement().Kind() != strategy.EffectiveTimeStaticSchedule {
 		t.Fatalf("lost level requirements: %+v", levels)
 	}
@@ -147,7 +147,7 @@ func TestAMalformedTimeRangeIsAcceptedAndNamed(t *testing.T) {
 		t.Fatalf("the widening was not named: %+v", malformed.Dispositions)
 	}
 	compiled := compileWithEvaluationCore(t, malformed.QueryGroups[0].Plans[0].Plan, malformed.QueryGroups[0].QueryPlan.Normalization.DatasetContract)
-	ranges := compiled.Levels()[0].EffectiveTimeRequirement().TimeRanges()
+	ranges := compiled.Levels().At(0).EffectiveTimeRequirement().TimeRanges()
 	if len(ranges) != 1 || ranges[0].StartMinute() != 0 || ranges[0].EndMinute() != 17*60 {
 		t.Fatalf("the Level runs on %+v, want 00:00..17:00 as Python reads a start that does not parse", ranges)
 	}

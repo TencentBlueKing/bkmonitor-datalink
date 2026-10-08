@@ -29,7 +29,11 @@ var admissionReasons = map[string]struct{}{
 	// querying side, a record outside the resolved members is the filter
 	// working, and a target nobody resolved is this process not filtering -
 	// the third is structurally unreachable and alertable if it ever counts.
+	// A record outside the members of a resolution one of whose selectors
+	// could not answer is neither: target_selector_unavailable, refused as
+	// the contract says, and not known to be outside the target.
 	"in_target": {}, "target_key_missing": {}, "out_of_target": {}, "target_plan_unresolved": {},
+	"target_selector_unavailable": {},
 	// Host status: the reasons matter separately because they call for
 	// different actions - a disabled host is the filter working, an unknown
 	// host is a CMDB gap, and unavailable facts mean it is not filtering.
@@ -103,6 +107,52 @@ func (r *Recorder) SetCMDBServiceInstanceIndex(instances int) {
 	r.phaseTwo.cmdbIndexServiceInstances.Set(float64(instances))
 }
 
+// CMDBBusinessMappings are the published business mappings the CMDB index
+// reads, and CMDBBusinessMappingStates the states of their gauge.
+var (
+	CMDBBusinessMappings      = []string{"bcs_cluster", "bcs_namespace"}
+	CMDBBusinessMappingStates = []string{"held", "refused", "truncated", "read_failed", "emptied"}
+)
+
+// SetCMDBBusinessMapping publishes one business mapping the index holds,
+// what its load left out, and whether the latest load could not read it at
+// all (read_failed 1) or read it empty after one that held entries (emptied
+// 1) - the held counts are then an earlier read's. A mapping outside
+// CMDBBusinessMappings is dropped rather than creating a series.
+func (r *Recorder) SetCMDBBusinessMapping(mapping string, held, refused, truncated int, readFailed, emptied bool) {
+	if r == nil || r.phaseTwo.cmdbIndexBusinessMappings == nil || !knownLabel(CMDBBusinessMappings, mapping) {
+		return
+	}
+	gauge := r.phaseTwo.cmdbIndexBusinessMappings
+	gauge.WithLabelValues(mapping, "held").Set(float64(held))
+	gauge.WithLabelValues(mapping, "refused").Set(float64(refused))
+	gauge.WithLabelValues(mapping, "truncated").Set(float64(truncated))
+	failed := 0.0
+	if readFailed {
+		failed = 1
+	}
+	gauge.WithLabelValues(mapping, "read_failed").Set(failed)
+	carried := 0.0
+	if emptied {
+		carried = 1
+	}
+	gauge.WithLabelValues(mapping, "emptied").Set(carried)
+}
+
+// CMDBRefusedRecords are the kinds of record a CMDB index load counts as
+// refused.
+var CMDBRefusedRecords = []string{"host", "service_instance", "topo_node"}
+
+// SetCMDBRecordsRefused publishes how many records of one kind the latest
+// CMDB index load refused. A kind outside CMDBRefusedRecords is dropped
+// rather than creating a series.
+func (r *Recorder) SetCMDBRecordsRefused(record string, refused int) {
+	if r == nil || r.phaseTwo.cmdbIndexRecordsRefused == nil || !knownLabel(CMDBRefusedRecords, record) {
+		return
+	}
+	r.phaseTwo.cmdbIndexRecordsRefused.WithLabelValues(record).Set(float64(refused))
+}
+
 // SnapshotPublished records the size of the fleet snapshot this replica just
 // published; SnapshotsLoaded records one fleet view read and the bytes it
 // pulled. Together they make the fleet store's Redis traffic readable on
@@ -120,6 +170,33 @@ func (r *Recorder) SnapshotsLoaded(loaded int, bytes int) {
 	}
 	r.phaseTwo.fleetViewSnapshotLoads.Inc()
 	r.phaseTwo.fleetViewSnapshotBytes.Add(float64(bytes))
+}
+
+// SummaryPublished records the size of the fleet summary this replica just
+// published beside its snapshot; SummariesLoaded and OwnedLoaded record one
+// summarized view's reads, of the summaries and of the owned lists it read
+// when the digests disagreed.
+func (r *Recorder) SummaryPublished(bytes int) {
+	if r == nil {
+		return
+	}
+	r.phaseTwo.fleetSummaryBytes.Set(float64(bytes))
+}
+
+func (r *Recorder) SummariesLoaded(loaded int, bytes int) {
+	if r == nil {
+		return
+	}
+	r.phaseTwo.fleetViewSummaryLoads.Inc()
+	r.phaseTwo.fleetViewSummaryBytes.Add(float64(bytes))
+}
+
+func (r *Recorder) OwnedLoaded(loaded int, bytes int) {
+	if r == nil {
+		return
+	}
+	r.phaseTwo.fleetViewOwnedLoads.Inc()
+	r.phaseTwo.fleetViewOwnedBytes.Add(float64(bytes))
 }
 
 // SetRetainedPeakCensus publishes the heartbeat census's size and how many

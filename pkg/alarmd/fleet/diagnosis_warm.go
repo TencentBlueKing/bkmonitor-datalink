@@ -95,7 +95,11 @@ func (warmer *DiagnosisWarmer) Tick() func(context.Context) {
 // its timing.
 func (warmer *DiagnosisWarmer) Warm(ctx context.Context) DiagnosisWarm {
 	at := warmer.now()
-	readCtx, cancel := context.WithTimeout(ctx, DiagnosisReadTimeout)
+	// Held until the warm-up is done, as a page's read is: it keeps only its
+	// timing.
+	pageCtx, release := withPageHolds(ctx)
+	defer release()
+	readCtx, cancel := context.WithTimeout(pageCtx, DiagnosisReadTimeout)
 	defer cancel()
 	entry := readDiagnosisEntry(readCtx, warmer.service, warmer.universe, at, warmer.stallAfter)
 	warm := DiagnosisWarm{At: at, Timing: entry.timing(), Error: entry.readError}

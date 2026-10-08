@@ -236,6 +236,36 @@ func TestTheShrinkGateIsABoundaryOnBothSides(t *testing.T) {
 	}
 }
 
+// The writer's statement waives the shrink gate and nothing else: the same
+// shrink decides, while an empty or stale snapshot is refused as before.
+func TestTheWritersStatementWaivesOnlyTheShrinkGate(t *testing.T) {
+	k := key("10")
+	shrunk := roundFor(set(k), ripe(k))
+	shrunk.SnapshotStrategies = filled(40)
+	shrunk.PreviousSnapshotStrategies = 100
+	shrunk.WriterHoldsLastGood = true
+	result := Compute(shrunk, testBounds())
+	if result.Refusal != RefusalNone || len(result.Close) != 1 || !result.Counts.WriterHoldsLastGood {
+		t.Fatalf("a shrink the writer stated is deletions was not decided on: %+v", result)
+	}
+	shrunk.WriterHoldsLastGood = false
+	if result := Compute(shrunk, testBounds()); result.Refusal != RefusalSnapshotShrunk || result.Counts.WriterHoldsLastGood {
+		t.Fatalf("without the statement the gate has to hold: %+v", result)
+	}
+	empty := roundFor(set(k), ripe(k))
+	empty.SnapshotStrategies = map[Key]struct{}{}
+	empty.WriterHoldsLastGood = true
+	if result := Compute(empty, testBounds()); result.Refusal != RefusalSnapshotEmpty {
+		t.Fatalf("the statement waived the empty-snapshot refusal: %+v", result)
+	}
+	stale := roundFor(set(k), ripe(k))
+	stale.WriterHoldsLastGood = true
+	stale.SnapshotAgeSeconds = int64((testBounds().MaxSnapshotAge + time.Minute) / time.Second)
+	if result := Compute(stale, testBounds()); result.Refusal != RefusalSnapshotStale {
+		t.Fatalf("the statement waived the stale-snapshot refusal: %+v", result)
+	}
+}
+
 // A deployment whose unrecovered alerts are mostly, or all, on deleted
 // strategies is the case this capability exists for - and on its first run
 // against a backlog, the difference can be a large share of everything.

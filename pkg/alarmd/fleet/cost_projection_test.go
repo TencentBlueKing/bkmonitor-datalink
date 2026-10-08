@@ -212,3 +212,89 @@ func TestCostProjectionConcurrentPublicationAndRead(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// A snapshot the cost summary built, its coverage filled in - the per-result
+// counts of due Plans not evaluated and a named miss - is admitted, written
+// and read back whole. The tests above publish bare snapshots, which the
+// size admission walked by type and let through; this one walks a filled
+// coverage, which is what a replica publishes every refresh.
+func TestCostProjectionCarriesAFilledCoverage(t *testing.T) {
+	now := time.Unix(800, 0)
+	summary := observability.NewCostSummary(observability.CostSummaryOptions{ProcessID: "process", Window: 5 * time.Minute, GroupCapacity: 8,
+		PlanCapacity: 8, MetadataBytes: 4096, TopN: 2, Now: func() time.Time { return now }})
+	plan := func(id string) observability.CostPlanIdentity {
+		return observability.CostPlanIdentity{TenantID: "t", BusinessID: "b", StrategyID: id}
+	}
+	group := func(key, id string) observability.CostGroup {
+		return observability.CostGroup{QueryGroupKey: key, QueryRevision: "q", SnapshotRevision: "s", ScheduleRevision: "r",
+			Members: []observability.CostPlanIdentity{plan(id)}, Schedules: []observability.CostSchedule{{Plan: plan(id), IntervalSeconds: 60, CompletionOffsetSeconds: 60}}}
+	}
+	summary.Reconcile([]observability.CostGroup{group("refused", "1"), group("silent", "2")}, true)
+	now = time.Unix(1400, 0)
+	summary.Reconcile([]observability.CostGroup{group("refused", "1"), group("silent", "2"), group("late", "3")}, true)
+	now = time.Unix(1440, 0)
+	summary.Observe(context.Background(), observability.Observation{Stage: observability.StageProgressCommitted, Result: observability.ResultSuccess,
+		ProgressCompletionKind: "COMPLETED_WITH_UNAVAILABLE",
+		Trace:                  observability.TraceFields{QueryGroupKey: "refused", QueryRevision: "q", SnapshotRevision: "s", ScheduleRevision: "r", EvaluationTime: 1320}})
+	summary.Publish(now)
+	snapshot := summary.Snapshot()
+	if len(snapshot.Coverage.UnevaluatedDuePlans) == 0 || len(snapshot.Coverage.UnobservedDueSample) == 0 || len(snapshot.Coverage.PartialWindowSample) == 0 {
+		t.Fatalf("setup: coverage = %+v, want per-result counts, a named miss and a group tracked mid-window", snapshot.Coverage)
+	}
+
+	s, _, _ := projectionFixture(t, 4)
+	at := snapshot.GeneratedAt
+	if result, err := s.Publish(context.Background(), "a", at, snapshot); err != nil || result.MarkerWritten || result.WrittenBytes == 0 {
+		t.Fatalf("publish of a filled coverage = %+v %v, want it written", result, err)
+	}
+	view := s.Load(context.Background(), []string{"a"}, true, at)
+	if !view.Complete || len(view.Snapshots) != 1 {
+		t.Fatalf("view = %+v, want the one replica read", view)
+	}
+	var read observability.CostSnapshot
+	if err := json.Unmarshal(view.Snapshots[0].Cost, &read); err != nil {
+		t.Fatal(err)
+	}
+	partial, readPartial := snapshot.Coverage.PartialWindowSample, read.Coverage.PartialWindowSample
+	if len(readPartial) != len(partial) || readPartial[0].QueryGroupKey != partial[0].QueryGroupKey || !readPartial[0].TrackedSince.Equal(partial[0].TrackedSince) {
+		t.Fatalf("partial-window sample read back %+v, want %+v", readPartial, partial)
+	}
+	if !reflect.DeepEqual(read.Coverage.UnevaluatedDuePlans, snapshot.Coverage.UnevaluatedDuePlans) ||
+		!reflect.DeepEqual(read.Coverage.UnobservedDueSample, snapshot.Coverage.UnobservedDueSample) {
+		t.Fatalf("read back %+v / %+v, want %+v / %+v", read.Coverage.UnevaluatedDuePlans, read.Coverage.UnobservedDueSample,
+			snapshot.Coverage.UnevaluatedDuePlans, snapshot.Coverage.UnobservedDueSample)
+	}
+}
+
+// Sized by the replicas it reads (zero read bounds), a refresh reads each
+// replica's projection once, within its publish bound, after asking the
+// memory line for all of them; refused, it reads nothing and defers every
+// replica under MEMORY_REFUSED.
+func TestAProjectionReadIsSizedByItsReplicasAndAdmittedFirst(t *testing.T) {
+	r := &costProjectionRedis{values: make(map[string]string)}
+	s, err := NewCostProjectionStore(r, "test:diagnostics", CostProjectionLimits{PublishBytes: 16 << 10, Timeout: time.Second, TTL: time.Minute, FreshFor: 30 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Unix(600, 0)
+	replicas := []string{"a", "b", "c"}
+	for _, replica := range replicas {
+		if _, err := s.Publish(context.Background(), replica, at, projectionSnapshot(at)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var asks []uint64
+	admit := true
+	s.AdmitReads(func(bytes uint64) bool { asks = append(asks, bytes); return admit })
+	view := s.Load(context.Background(), replicas, true, at)
+	if !view.Complete || len(view.Snapshots) != 3 || view.ReadCommands != 3 || len(asks) != 1 || asks[0] != uint64(3*(16<<10+1)) {
+		t.Fatalf("view %+v asks %v, want the three read after one ask for three projections", view, asks)
+	}
+	admit = false
+	reads := len(r.readKeys)
+	refused := s.Load(context.Background(), replicas, true, at)
+	if refused.Complete || refused.Deferred != 3 || len(refused.Snapshots) != 0 || len(r.readKeys) != reads ||
+		len(refused.Gaps) != 1 || refused.Gaps[0].Reason != "MEMORY_REFUSED" || refused.Gaps[0].Count != 3 {
+		t.Fatalf("refused view %+v after %d reads, want nothing read and every replica deferred as MEMORY_REFUSED", refused, len(r.readKeys)-reads)
+	}
+}

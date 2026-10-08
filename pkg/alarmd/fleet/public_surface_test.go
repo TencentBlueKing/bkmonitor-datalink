@@ -35,12 +35,13 @@ var publicHealthFields = map[string]bool{
 	"DemotedDue": true, "DemotedDueOldestSeconds": true, "DemotionEntries": true, "DemotionExtensions": true,
 	"DemotionExits": true, "LastDemotionExit": true, "PublishedVersion": true, "ReplicasNotReady": true,
 	"DependenciesReplicas": true, "Cohorts": true,
-	"DemotionRestored": true, "DemotionHandovers": true, "DemotionReentries": true,
+	"DemotionRestored": true, "DemotionHandovers": true, "DemotionReentries": true, "Handover": true,
 }
 
 var redactedHealthFields = map[string]bool{
-	"Impact": true, "StrategyLinkBase": true, "PrunedSkips": true, "RetainedShare": true, "Workers": true,
-	"Builds": true, "OutputProtocols": true, "OutputPath": true, "Cooling": true, "Degradations": true,
+	"Impact": true, "StrategyLinkBase": true, "PrunedSkips": true, "RetainedShare": true, "ReadEarly": true, "Workers": true,
+	"PrunedSkipsTotal": true, "RetainedShareTotal": true, "ReadEarlyTotal": true,
+	"Builds": true, "OutputProtocols": true, "Retentions": true, "OutputPath": true, "Cooling": true, "Degradations": true,
 	"Activation": true, "NoDataHorizon": true, "Load": true, "ActivationReplica": true, "Rebalance": true,
 	"RebalanceReplica": true, "AssignmentScope": true, "AssignmentScopeReplica": true, "AssignmentSweep": true,
 	"AssignmentSweepReplica": true, "ViewStream": true, "ViewStreamReplica": true, "Source": true,

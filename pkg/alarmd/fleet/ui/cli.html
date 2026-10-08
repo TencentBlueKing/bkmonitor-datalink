@@ -6,43 +6,65 @@
 <meta name="referrer" content="no-referrer">
 <title>alarmd CLI 授权</title>
 <style>
-body{font:16px/1.65 system-ui,sans-serif;color:#243247;background:#f4f6fa;margin:0;padding:32px}main{max-width:720px;margin:auto;background:#fff;padding:28px;border:1px solid #dce3ed;border-radius:10px}h1{margin-top:0;font-size:24px}h2{font-size:18px;margin:24px 0 8px}p{margin:16px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f6fa;padding:12px}button{font:inherit;padding:8px 16px;cursor:pointer}button:disabled{cursor:default}textarea{box-sizing:border-box;width:100%;height:140px;font:13px monospace}#status{white-space:pre-wrap}.error{color:#a32525}label{display:block}a{color:#1769c2}
+body{font:16px/1.6 system-ui,sans-serif;color:#243247;background:#f4f6fa;margin:0;padding:32px 16px}main{max-width:720px;margin:auto;background:#fff;padding:28px;border:1px solid #dce3ed;border-radius:10px;box-sizing:border-box}h1{margin:0 0 4px;font-size:22px}h2{font-size:17px;margin:0 0 8px}p{margin:8px 0}.lead{margin:0 0 20px}.muted{color:#5b6b80;font-size:14px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f4f6fa;padding:10px 12px;margin:8px 0;border-radius:6px;font-size:14px}pre:empty{display:none}code{font-size:14px}button{font:inherit;font-size:15px;padding:6px 16px;cursor:pointer;border:1px solid #b8c4d4;border-radius:6px;background:#fff;color:#243247}button:disabled{cursor:default;color:#9aa6b6;border-color:#e1e6ee;background:#f7f9fb}input{font:inherit;padding:6px 10px;border:1px solid #b8c4d4;border-radius:6px;width:min(100%,360px);box-sizing:border-box;margin:0 8px 8px 0}textarea{box-sizing:border-box;width:100%;height:140px;font:13px monospace}label{display:block}a{color:#1769c2}.error{color:#a32525}[role=status]{font-size:14px;white-space:pre-wrap}[role=status]:empty,#authorize-hint:empty{display:none}span[role=status]{margin-left:8px}
+ol.steps{list-style:none;margin:0;padding:0;counter-reset:step}ol.steps>li{counter-increment:step;position:relative;margin:0 0 12px;padding:16px 16px 12px 56px;border:1px solid #dce3ed;border-radius:8px}ol.steps>li::before{content:counter(step);position:absolute;left:16px;top:16px;width:26px;height:26px;border-radius:50%;background:#e6ebf2;font-size:14px;line-height:26px;text-align:center}
+ol.steps>li.current{border-color:#1769c2;box-shadow:0 0 0 1px #1769c2}ol.steps>li.current::before{background:#1769c2;color:#fff}ol.steps>li.current .primary:enabled{background:#1769c2;border-color:#1769c2;color:#fff}ol.steps>li.later{opacity:.6}ol.steps>li.done::before{background:#e3f1e5;color:#2e7d32}ol.steps>li.done h2::after{content:"已完成";margin-left:8px;padding:0 6px;font-size:12px;font-weight:normal;color:#2e7d32;border:1px solid #9ccaa1;border-radius:4px}
+details{margin:8px 0}summary{cursor:pointer;color:#1769c2;font-size:14px}details[open]>summary{margin-bottom:4px}.aside{margin:0;padding:10px 0;border-top:1px solid #e6ebf2}.aside>summary{color:#5b6b80}.back{margin-top:16px}
+@media (max-width:560px){body{padding:16px}main{padding:18px}ol.steps>li{padding:14px 12px 10px 46px}ol.steps>li::before{left:12px;top:14px}}
 </style>
 </head>
 <body><main>
 <h1>授权 alarmd CLI 读取此环境</h1>
-<p>授权范围为本部署的运维只读取证，包括策略配置、运行证据和受限的 Redis 数据。管理凭据只在首次配对时输入一次：之后 CLI 自动续期，闲置 30 天或被撤销后才需要重新配对。</p>
-<label for="admin-key">部署管理凭据</label>
-<input id="admin-key" type="password" autocomplete="off" spellcheck="false" maxlength="256">
-<button id="inspect">核对环境</button>
-<pre id="preview" aria-live="polite">输入管理凭据后核对环境。</pre>
-<details id="admin-key-help"><summary>管理凭据从哪里拿？</summary>
-<p>就是部署时存进 Secret 的那个值。Secret 与 alarmd 在同一个命名空间，名字是 values 里 <code>cli.adminKeySecret.existingSecret</code> 的值，键名是同一处的 <code>key</code>（不写时为 <code>admin-key</code>）。有该命名空间 Secret 读权限的人可以这样取出：</p>
-<pre>kubectl -n 命名空间 get secret Secret名 -o jsonpath='{.data.键名}' | base64 -d</pre>
-<p>取出后只粘贴到本页，不要发进聊天或工单。</p>
-</details>
-<section id="listen">
-<h2>本机 CLI 登录</h2>
-<p>在浏览器所在的这台机器上执行下面的命令，CLI 会在本机等待这个页面把授权交给它：</p>
+<p class="lead muted">让本机的 alarmd-cli 读取本部署的运维只读取证（策略配置、运行证据和受限的 Redis 数据）。只需配对一次，之后 CLI 自动续期。</p>
+<ol class="steps">
+<li id="step-command" class="current">
+<h2>在本机终端运行命令</h2>
+<p class="muted">在浏览器所在的这台机器上执行，CLI 会在本机等待这个页面把授权交给它。</p>
 <pre id="listen-command"></pre>
-<button id="copy-command">复制命令</button>
-<p id="probe" aria-live="polite">CLI 未就绪：请先在终端执行上面的命令。</p>
-<button id="authorize" disabled>授权本机 CLI</button>
-</section>
-<p><button id="fallback" type="button">浏览器和 CLI 不在同一台机器？改用复制授权码</button></p>
-<section id="manual" hidden>
-<button id="issue" disabled>生成授权码</button>
+<button id="copy-command" type="button" class="primary">复制命令</button><span id="command-status" role="status"></span>
+<p id="probe" class="muted" aria-live="polite">等待本机 CLI 响应…</p>
+<button id="check-cli" type="button" hidden>检查本机 CLI 连接</button>
+</li>
+<li id="step-inspect" class="later">
+<h2>输入部署管理凭据，核对环境</h2>
+<label for="admin-key" class="muted">部署管理凭据（只在首次配对时需要）</label>
+<input id="admin-key" type="password" autocomplete="off" spellcheck="false" maxlength="256"><button id="inspect" type="button" class="primary">核对环境</button>
+<details id="admin-key-help"><summary>管理凭据从哪里拿？</summary>
+<p class="muted">就是部署时存进 Secret 的那个值。有 alarmd 所在命名空间 Secret 读权限的人执行下面的命令即可取出：</p>
+<pre id="admin-key-command">{{adminKeyCommand}}</pre>
+{{adminKeyUnknown}}
+<button id="copy-admin-key-command" type="button">复制命令</button><span id="admin-key-status" role="status"></span>
+<p class="muted">取出后只粘贴到本页，不要发进聊天或工单。</p>
+</details>
+<pre id="preview" aria-live="polite"></pre>
+<p id="inspect-status" role="status"></p>
+</li>
+<li id="step-authorize" class="later">
+<h2>授权本机 CLI</h2>
+<button id="authorize" type="button" class="primary" disabled>授权本机 CLI</button>
+<p id="authorize-hint" class="muted"></p>
+<p id="authorize-status" role="status"></p>
+</li>
+</ol>
+<details id="manual" class="aside"><summary id="fallback">浏览器和 CLI 不在同一台机器？改用复制授权码</summary>
+<p class="muted">先完成上面第 2 步核对环境，再生成授权码。</p>
+<button id="issue" type="button">生成授权码</button>
 <section id="grant" hidden>
-<p>在终端运行 <code>alarmd-cli auth login</code>，按提示粘贴下方授权码。授权码 5 分钟内有效且仅能兑换一次；不要放入聊天记录、工单或命令参数。</p>
+<p>在 CLI 所在机器的终端运行 <code>alarmd-cli auth login</code>，按提示粘贴下方授权码。授权码 5 分钟内有效且仅能兑换一次；不要放入聊天记录、工单或命令参数。</p>
 <label for="code">一次性授权码</label><textarea id="code" readonly autocomplete="off" spellcheck="false"></textarea>
-<button id="copy">复制授权码</button>
-<p id="expiry"></p>
+<button id="copy" type="button">复制授权码</button>
+<p id="expiry" class="muted"></p>
 </section>
-</section>
-<p>会话有效期 1 小时，到期由 CLI 用续期凭据自动换新；续期凭据每用一次换一个。使用 <code>alarmd-cli auth logout --env 环境ID</code> 撤销本机的配对。</p>
-<p><button id="revoke" disabled>撤销本环境全部 CLI 授权</button> 所有已配对的 CLI 都要重新配对；管理凭据轮换后，旧的配对也会自动失效。</p>
-<p id="status" role="status"></p>
-<p><a id="back" href="./v2">返回可观测页面</a></p>
+<p id="issue-status" role="status"></p>
+</details>
+<details id="session-help" class="aside"><summary>会话有效期与撤销授权</summary>
+<p class="muted">会话有效期 1 小时，到期由 CLI 用续期凭据自动换新；续期凭据每用一次换一个。闲置 30 天或被撤销后才需要重新配对。</p>
+<p class="muted">撤销本机的配对：在终端执行 <code>alarmd-cli auth logout --env 环境ID</code>。</p>
+<p class="muted">撤销本环境全部 CLI 授权：所有已配对的 CLI 都要重新配对；管理凭据轮换后，旧的配对也会自动失效。需要先完成上面第 2 步核对环境。</p>
+<button id="revoke" type="button">撤销本环境全部 CLI 授权</button>
+<p id="revoke-status" role="status"></p>
+</details>
+<p class="back muted"><a id="back" href="./">返回可观测页面</a></p>
 </main>
 <script>
 'use strict';
@@ -50,9 +72,8 @@ const base = new URL(location.href);
 base.pathname = base.pathname.replace(/\/cli(?:\.html)?\/?$/, '/');
 base.search = ''; base.hash = '';
 const api = path => new URL('api/cli/auth/' + path, base);
-document.getElementById('back').href = new URL('v2', base).href;
+document.getElementById('back').href = base.href;
 const $ = id => document.getElementById(id);
-const status = $('status');
 const issue = $('issue');
 const authorize = $('authorize');
 const revoke = $('revoke');
@@ -61,6 +82,7 @@ const adminKey = $('admin-key');
 const inspect = $('inspect');
 const preview = $('preview');
 const probe = $('probe');
+const checkCLI = $('check-cli');
 let revision = 0;
 let expiryTimer;
 let configuredEntry = '';
@@ -68,7 +90,29 @@ let previewed = false;
 let ready = null;
 let done = false;
 let misses = 0;
-function message(text, error) { status.textContent = text; status.className = error ? 'error' : ''; }
+// pending is the fallback button pressed before the environment was checked:
+// issue or revoke. The page sends the operator to the check and back.
+let pending = null;
+let blockedEntry = false;
+let issuing = false;
+let revoking = false;
+// Every message sits beside the control it is about, and only one is shown
+// at a time: a new one clears the rest, as the single status line did.
+const NOTES = ['command-status', 'admin-key-status', 'inspect-status', 'authorize-status', 'issue-status', 'revoke-status'];
+function message(at, text, error) {
+  for (const id of NOTES) { $(id).textContent = ''; $(id).className = ''; }
+  $(at).textContent = text; $(at).className = error ? 'error' : '';
+}
+// One step is current: the first one not yet done. Steps stay usable in any
+// order; this only says where to look.
+function steps() {
+  const finished = [done || !!ready, done || previewed, done];
+  // Sent to the check from the fallback: the command is not needed there.
+  const current = pending && !previewed ? 1 : finished.indexOf(false);
+  ['step-command', 'step-inspect', 'step-authorize'].forEach((id, index) => {
+    $(id).className = finished[index] ? 'done' : index === current ? 'current' : 'later';
+  });
+}
 // The loopback login: a port and a state made here, once per page. The CLI
 // listens on 127.0.0.1 only; this page asks it for the state back before
 // offering the button, and hands it the code with the state. The binding
@@ -112,8 +156,14 @@ function hint(code, fallback) {
 function clearCode() { code.value = ''; $('grant').hidden = true; clearTimeout(expiryTimer); }
 function offer() {
   authorize.disabled = done || !previewed || !ready;
-  issue.disabled = !previewed;
-  revoke.disabled = !previewed;
+  // Pressable before the check: pressing one then leads to the check.
+  issue.disabled = issuing;
+  revoke.disabled = revoking;
+  // A button that cannot be pressed yet says what it waits for.
+  $('authorize-hint').textContent = done || !authorize.disabled ? ''
+    : !ready && !previewed ? '完成第 1、2 步后才能授权。'
+    : !ready ? '等第 1 步的 CLI 就绪后才能授权。' : '完成第 2 步核对环境后才能授权。';
+  steps();
 }
 async function request(method, path, key, body) {
   let response, value;
@@ -130,6 +180,10 @@ async function request(method, path, key, body) {
 }
 // The probe only says whether to offer the button; the CLI checks the state
 // again on the callback and the server checks the verifier on the exchange.
+// It runs every two seconds and only ever says ready or waiting: a command
+// that is slow to start looks the same as a browser refusing this page's
+// requests to the local address, so the page says which it may be only when
+// asked, through the check button.
 async function probeCLI() {
   if (done) return;
   try {
@@ -138,19 +192,49 @@ async function probeCLI() {
     ready = response.ok && value.state === state && /^[A-Za-z0-9_-]{43}$/.test(value.code_challenge || '') ? value.code_challenge : null;
   } catch (_) { ready = null; }
   misses = ready ? 0 : misses + 1;
-  // Five probes in a row with no answer: the command may be running and the
-  // browser refusing this page's requests to the local address, which looks
-  // exactly like a CLI that was never started.
-  probe.textContent = ready ? 'CLI 已就绪。' : misses >= 5
-    ? 'CLI 未就绪：已连续 5 次（约 10 秒）连不上本机 CLI。如果命令已经在运行，可能是浏览器拦截了网页访问本机（127.0.0.1）的请求；请改用下面的"复制授权码"。'
-    : 'CLI 未就绪：请先在终端执行上面的命令。';
-  if (misses >= 5) $('manual').hidden = false;
+  if (ready) { probe.textContent = 'CLI 已就绪。'; probe.className = 'muted'; checkCLI.hidden = true; }
+  else if (probe.className !== 'error') probe.textContent = '等待本机 CLI 响应…';
+  // A command typed by hand is never copied: after half a minute unanswered
+  // the check is offered anyway, still without saying anything is wrong.
+  if (misses >= 15) offerCheck();
   offer();
 }
-adminKey.addEventListener('input', () => { revision++; previewed = false; offer(); preview.textContent = '请重新核对环境。'; clearCode(); });
+// The check button appears once the command was copied, or after half a
+// minute without an answer: asked, the page probes at once and, with no
+// answer, says what that may mean and opens the copy-code fallback.
+function offerCheck() { if (!ready && !done) checkCLI.hidden = false; }
+checkCLI.addEventListener('click', async () => {
+  checkCLI.disabled = true;
+  await probeCLI();
+  checkCLI.disabled = false;
+  if (ready || done) return;
+  probe.textContent = `已连续 ${misses} 次（约 ${misses * 2} 秒）连不上本机 CLI。如果命令已经在运行，可能是浏览器拦截了网页访问本机（127.0.0.1）的请求；请改用下方已展开的「复制授权码」。`;
+  probe.className = 'error';
+  $('manual').open = true;
+});
+// A fallback button pressed before the environment is checked sends the
+// operator to the check - to the key, or to the button when the key is typed
+// - and, once checked, back to the button pressed.
+function toCheck(action) {
+  pending = action; offer();
+  const target = adminKey.value ? inspect : adminKey;
+  $('step-inspect').scrollIntoView?.({block:'center'});
+  target.focus();
+  message('inspect-status', blockedEntry ? wrongEntry(configuredEntry)
+    : action === 'issue' ? '生成授权码前先核对环境：输入部署管理凭据后点「核对环境」。'
+    : '撤销前先核对环境：输入部署管理凭据后点「核对环境」。', blockedEntry);
+}
+function backFromCheck() {
+  const action = pending;
+  pending = null; offer();
+  if (action === 'issue') { issue.focus(); message('issue-status', '环境已核对（见第 2 步）：确认环境无误后生成授权码。', false); }
+  if (action === 'revoke') { revoke.focus(); message('revoke-status', '环境已核对（见第 2 步）：确认环境无误后再撤销。', false); }
+  return action !== null;
+}
+adminKey.addEventListener('input', () => { revision++; previewed = false; offer(); preview.textContent = ''; clearCode(); });
 inspect.addEventListener('click', async () => {
   const currentRevision = revision;
-  if (!adminKey.value) { message('请输入部署管理凭据。', true); return; }
+  if (!adminKey.value) { message('inspect-status', '请输入部署管理凭据。', true); return; }
   inspect.disabled = true; previewed = false; offer(); clearCode();
   try {
     const value = await request('GET', 'grants', adminKey.value);
@@ -159,65 +243,97 @@ inspect.addEventListener('click', async () => {
     configuredEntry = new URL(value.public_base_url).origin + new URL(value.public_base_url).pathname;
     // Generation checks that this page's origin is the configured entry's.
     // Said here, before the button, rather than as a refusal after it.
-    if (new URL(value.public_base_url).origin !== location.origin) {
-      message(wrongEntry(configuredEntry), true); return;
+    blockedEntry = new URL(value.public_base_url).origin !== location.origin;
+    if (blockedEntry) {
+      message('inspect-status', wrongEntry(configuredEntry), true); return;
     }
-    previewed = true; offer(); message('请确认上述环境，再授权本机 CLI 或生成授权码。', false);
+    previewed = true; offer();
+    if (!backFromCheck()) message('inspect-status', '请确认上面的环境无误。', false);
   } catch (error) {
     if (currentRevision !== revision) return;
-    adminKey.value = ''; preview.textContent = '尚未获得授权环境信息。'; message(error.message, true);
+    adminKey.value = ''; preview.textContent = ''; message('inspect-status', error.message, true);
   } finally { inspect.disabled = false; }
 });
 authorize.addEventListener('click', async () => {
   const challenge = ready;
-  authorize.disabled = true; message('正在授权本机 CLI…', false);
+  authorize.disabled = true; message('authorize-status', '正在授权本机 CLI…', false);
   let grant;
   try {
     grant = await request('POST', 'grants', adminKey.value, {confirm:true, code_challenge:challenge, code_challenge_method:'S256'});
-  } catch (error) { message(error.message, true); offer(); return; }
+  } catch (error) { message('authorize-status', error.message, true); offer(); return; }
   let response, value;
   try {
     response = await fetch(loopback('/callback'), {method:'POST', cache:'no-store', credentials:'omit', headers:{'Content-Type':'application/json'}, body:JSON.stringify({state, code:grant.authorization_code})});
     value = await response.json();
-  } catch (_) { message(hint('cli_unreachable'), true); offer(); return; }
-  if (!response.ok) { message(hint(value.error?.code, value.error?.message), true); offer(); return; }
+  } catch (_) { message('authorize-status', hint('cli_unreachable'), true); offer(); return; }
+  if (!response.ok) { message('authorize-status', hint(value.error?.code, value.error?.message), true); offer(); return; }
   done = true; adminKey.value = ''; previewed = false; offer();
-  probe.textContent = 'CLI 已登录。';
-  message(`CLI 已登录：环境 ${value.environment_id}，可以回到终端。`, false);
+  probe.textContent = 'CLI 已登录。'; probe.className = 'muted';
+  message('authorize-status', `CLI 已登录：环境 ${value.environment_id}，可以回到终端。`, false);
 });
-$('fallback').addEventListener('click', () => { $('manual').hidden = false; });
 issue.addEventListener('click', async () => {
+  if (!previewed) { toCheck('issue'); return; }
   const currentRevision = revision;
-  issue.disabled = true; inspect.disabled = true; adminKey.disabled = true; clearCode(); message('正在生成…', false);
+  issuing = true; issue.disabled = true; inspect.disabled = true; adminKey.disabled = true; clearCode(); message('issue-status', '正在生成…', false);
   try {
     const value = await request('POST', 'grants', adminKey.value, {confirm:true});
     if (currentRevision !== revision) return;
     code.value = value.authorization_code;
     $('grant').hidden = false;
     $('expiry').textContent = `兑换截止时间：${new Date(value.grant_expires_at).toLocaleString()}；环境：${value.environment_id}`;
-    expiryTimer = setTimeout(() => { clearCode(); message('授权码已到期，可以重新生成。', false); }, Math.max(0, new Date(value.grant_expires_at).getTime()-Date.now()));
-    message('授权码已生成。', false);
-  } catch (error) { if (currentRevision === revision) message(error.message, true); }
-  finally { adminKey.value = ''; adminKey.disabled = false; inspect.disabled = false; previewed = false; offer(); }
+    expiryTimer = setTimeout(() => { clearCode(); message('issue-status', '授权码已到期，可以重新生成。', false); }, Math.max(0, new Date(value.grant_expires_at).getTime()-Date.now()));
+    message('issue-status', '授权码已生成。', false);
+  } catch (error) { if (currentRevision === revision) message('issue-status', error.message, true); }
+  finally { issuing = false; adminKey.value = ''; adminKey.disabled = false; inspect.disabled = false; previewed = false; offer(); }
 });
 revoke.addEventListener('click', async () => {
+  if (!previewed) { toCheck('revoke'); return; }
   if (!confirm('撤销后，本环境所有已配对的 CLI 都要重新配对。确定撤销？')) return;
-  revoke.disabled = true;
+  revoking = true; revoke.disabled = true;
   try {
     const value = await request('POST', 'revoke-all', adminKey.value, {confirm:true});
-    message(`已撤销本环境全部 CLI 授权（配对 ${value.revoked_pairings} 个，所有会话同时失效）。`, false);
-  } catch (error) { message(error.message, true); }
-  finally { offer(); }
+    message('revoke-status', `已撤销本环境全部 CLI 授权（配对 ${value.revoked_pairings} 个，所有会话同时失效）。`, false);
+  } catch (error) { message('revoke-status', error.message, true); }
+  finally { revoking = false; offer(); }
 });
+// Copies what an element shows: through the clipboard where the page is a
+// secure context, through the copy command where it is not - a page over
+// plain http has no clipboard - and, when neither is allowed, by selecting
+// the text itself so one key press copies it.
+async function copyFrom(element, text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (_) {}
+  const scratch = document.createElement('textarea');
+  scratch.value = text; scratch.setAttribute('readonly', ''); scratch.style.position = 'fixed'; scratch.style.opacity = '0';
+  document.body.appendChild(scratch);
+  scratch.select();
+  let copied = false;
+  try { copied = document.execCommand('copy'); } catch (_) {}
+  scratch.remove();
+  if (copied) return true;
+  if (typeof element.select === 'function') { element.focus(); element.select(); return false; }
+  const range = document.createRange(); range.selectNodeContents(element);
+  const selection = getSelection(); selection.removeAllRanges(); selection.addRange(range);
+  return false;
+}
+const SELECTED = '浏览器不允许网页直接复制，已替你选中，按 Ctrl+C（Mac 上 ⌘C）复制。';
 $('copy').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText(code.value); message('已复制，请粘贴到 CLI 登录提示中。', false); }
-  catch (_) { code.focus(); code.select(); message('浏览器无法直接复制，已选中授权码，请手动复制。', false); }
+  message('issue-status', await copyFrom(code, code.value) ? '已复制，请粘贴到 CLI 登录提示中。' : SELECTED, false);
 });
 $('copy-command').addEventListener('click', async () => {
-  try { await navigator.clipboard.writeText($('listen-command').textContent); message('命令已复制。', false); }
-  catch (_) { message('浏览器无法直接复制，请手动选中命令。', false); }
+  const command = $('listen-command');
+  message('command-status', await copyFrom(command, command.textContent) ? '命令已复制，请在本机终端运行。' : SELECTED, false);
+  offerCheck();
+});
+// Copied by hand, the command offers the check the same way. A copy event
+// goes to the focused element or the body, not to the <pre>: the selection
+// says what was copied.
+document.addEventListener('copy', () => { if (getSelection()?.containsNode($('listen-command'), true)) offerCheck(); });
+$('copy-admin-key-command').addEventListener('click', async () => {
+  const command = $('admin-key-command');
+  message('admin-key-status', await copyFrom(command, command.textContent) ? '命令已复制。' : SELECTED, false);
 });
 addEventListener('pagehide', () => { revision++; adminKey.value = ''; previewed = false; done = true; offer(); clearCode(); });
+offer();
 probeCLI();
 setInterval(probeCLI, 2000);
 </script></body></html>

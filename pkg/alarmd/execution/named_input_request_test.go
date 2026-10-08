@@ -391,11 +391,11 @@ func compiledG4Requirements(t *testing.T, kind string) (*strategy.CompiledPlan, 
 	config["input_projection"] = projection
 	config["requirements"] = algorithmRequirements
 	compiled := compileG4Plan(t, kind, config)
-	algorithms := compiled.Levels()[0].Algorithms()
-	if len(algorithms) != 1 || algorithms[0].Kind() != kind {
+	algorithms := compiled.Levels().At(0).Algorithms()
+	if algorithms.Len() != 1 || algorithms.At(0).Kind() != kind {
 		t.Fatalf("compiled algorithms = %+v", algorithms)
 	}
-	compiledRequirements := algorithms[0].InputRequirements()
+	compiledRequirements := algorithms.At(0).InputRequirements()
 	if len(compiledRequirements) != len(algorithmRequirements) {
 		t.Fatalf("compiled InputRequirements = %+v", compiledRequirements)
 	}

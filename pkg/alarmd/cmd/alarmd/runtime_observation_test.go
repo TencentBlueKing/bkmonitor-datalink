@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,21 +15,111 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/ownership"
 )
 
-func TestObservationRegistrationUsesOwnedCurrentGroupsAndRealVersions(t *testing.T) {
-	s := controlplane.StrategyDirectorySnapshot{Complete: true}
-	for _, qg := range []execution.QueryGroupIdentity{"ours", "others"} {
-		s.Rows = append(s.Rows, controlplane.StrategyDirectoryRow{Identity: execution.PlanIdentity{TenantID: "t", BusinessID: "b", StrategyID: string(qg)}, QueryGroup: qg, Role: string(execution.ActivationCurrent), QueryRevision: "query", ScheduleRevision: "schedule", Publication: controlplane.SnapshotPublicationRef{SnapshotRevision: "snapshot", PublicationEpoch: 1}})
+// The cost roster is what each owned Query Group executes: the Segment its
+// Slots are frozen from, with that Segment's Plans. An event carrying its
+// Slot's revisions is counted against the group; one carrying the latest
+// publication's revisions - which a roster read from the directory's
+// PUBLISHED rows would have held - is not the group's. A Query Group whose
+// owner is not accepting, or whose identity is not in memory, is left out and
+// the roster says it is incomplete.
+func TestTheCostRosterIsWhatEachOwnedGroupExecutes(t *testing.T) {
+	plan := execution.PlanIdentity{TenantID: "t", BusinessID: "b", StrategyID: "858"}
+	running := controlplane.ExecutionIdentity{SnapshotRevision: "snapshot-running", QueryRevision: "query-running",
+		ScheduleRevision: "schedule-running", Plans: []execution.PlanIdentity{plan},
+		Schedules: []execution.FrozenPlanSchedule{{Identity: plan,
+			Spec: execution.ScheduleSpec{EvaluationIntervalSeconds: 10, Alignment: 5, Timezone: "UTC", CompletionDeadlineOffsetSeconds: 30}}}}
+	identity := func(qg execution.QueryGroupIdentity, revision uint64, at execution.EvaluationTime) (controlplane.ExecutionIdentity, bool) {
+		// The idle group has an identity in memory too: only its lease not
+		// accepting keeps it out.
+		if (qg == "ours" && revision == 3 || qg == "idle" && revision == 4) && at == 600 {
+			return running, true
+		}
+		return controlplane.ExecutionIdentity{}, false
 	}
-	g, complete := observationCostGroups(s, []execution.QueryGroupIdentity{"ours"})
-	if !complete || len(g) != 1 || g[0].QueryGroupKey != "ours" || g[0].QueryRevision != "query" || g[0].ScheduleRevision != "schedule" || g[0].SnapshotRevision != "snapshot" || g[0].Members[0].StrategyID != "ours" {
-		t.Fatalf("registration %+v complete=%v", g, complete)
+	owned := []ownedLease{{queryGroup: "ours", revision: 3, accepting: true}, {queryGroup: "idle", revision: 4},
+		{queryGroup: "cold", revision: 5, accepting: true}}
+	groups, complete := executionCostGroups(owned, identity, 600)
+	if complete || len(groups) != 1 {
+		t.Fatalf("roster = %+v complete=%v, want only the group that answered, incomplete", groups, complete)
 	}
-	if _, complete = observationCostGroups(s, []execution.QueryGroupIdentity{"ours", "unknown"}); complete {
-		t.Fatal("unmapped owner claimed complete")
+	g := groups[0]
+	if g.QueryGroupKey != "ours" || g.SnapshotRevision != "snapshot-running" || g.QueryRevision != "query-running" ||
+		g.ScheduleRevision != "schedule-running" || len(g.Members) != 1 || g.Members[0].StrategyID != "858" {
+		t.Fatalf("roster group = %+v, want the running Segment's revisions and its Plan", g)
 	}
-	s.Rows[0].Role = "PUBLISHED"
-	if g, complete = observationCostGroups(s, []execution.QueryGroupIdentity{"ours"}); complete || len(g) != 0 {
-		t.Fatalf("published plan charged %+v", g)
+	// When the Plan is due, as the Segment froze it: its interval, alignment
+	// and completion offset, which the coverage reads a window against.
+	if len(g.Schedules) != 1 || g.Schedules[0] != (observability.CostSchedule{Plan: g.Members[0], IntervalSeconds: 10, AlignmentSeconds: 5, CompletionOffsetSeconds: 30}) {
+		t.Fatalf("roster schedules = %+v, want the Plan's frozen schedule", g.Schedules)
+	}
+	if groups, complete = executionCostGroups([]ownedLease{owned[0], owned[2]}, identity, 600); complete || len(groups) != 1 {
+		t.Fatalf("an accepting group with no identity in memory: roster %+v complete=%v, want it left out and incomplete", groups, complete)
+	}
+	if groups, complete = executionCostGroups(owned[:1], identity, 600); !complete || len(groups) != 1 {
+		t.Fatalf("every owned group answered: roster %+v complete=%v, want complete", groups, complete)
+	}
+	if groups, complete = executionCostGroups(owned[:1], nil, 600); complete || len(groups) != 0 {
+		t.Fatalf("no identity source: roster %+v complete=%v, want empty and incomplete", groups, complete)
+	}
+
+	now := time.Unix(600, 0)
+	cost := observability.NewCostSummary(observability.CostSummaryOptions{ProcessID: "p", Window: time.Minute, GroupCapacity: 4,
+		PlanCapacity: 8, MetadataBytes: 4096, TopN: 2, Now: func() time.Time { return now }})
+	groups, complete = executionCostGroups(owned[:1], identity, 600)
+	cost.Reconcile(groups, complete)
+	slot := func(snapshot string) observability.Observation {
+		return observability.Observation{Stage: observability.StageSlotCompleted, Result: observability.ResultSuccess, Duration: time.Millisecond,
+			Trace: observability.TraceFields{QueryGroupKey: "ours", SnapshotRevision: snapshot, QueryRevision: "query-running",
+				ScheduleRevision: "schedule-running", EvaluationTime: 590}}
+	}
+	cost.Observe(context.Background(), slot("snapshot-running"))
+	cost.Observe(context.Background(), slot("snapshot-latest"))
+	cost.Publish(now)
+	coverage := cost.Snapshot().Coverage
+	if !coverage.CatalogComplete || coverage.TrackedGroups != 1 || coverage.TrackedPlans != 1 || coverage.ObservedGroups != 1 ||
+		coverage.UntrackedObservations != 1 {
+		t.Fatalf("coverage = %+v, want the running Slot counted against its group and the latest publication's not", coverage)
+	}
+}
+
+// A refresh builds the roster at its own clock's second from the owned leases
+// and reconciles it into the summary, whether or not this replica keeps a
+// strategy directory: the roster no longer reads one.
+func TestARefreshReconcilesTheExecutingRosterAtItsOwnTime(t *testing.T) {
+	now := time.Unix(600, 0)
+	cost := observability.NewCostSummary(observability.CostSummaryOptions{ProcessID: "p", Window: time.Minute, GroupCapacity: 4,
+		PlanCapacity: 8, MetadataBytes: 4096, TopN: 2, Now: func() time.Time { return now }})
+	refresh := &observationRefresh{cost: cost, now: func() time.Time { return now }, interval: time.Minute,
+		owned: func() []ownedLease { return []ownedLease{{queryGroup: "ours", revision: 3, accepting: true}} },
+		identity: func(qg execution.QueryGroupIdentity, revision uint64, at execution.EvaluationTime) (controlplane.ExecutionIdentity, bool) {
+			if qg != "ours" || revision != 3 || at != execution.EvaluationTime(now.Unix()) {
+				return controlplane.ExecutionIdentity{}, false
+			}
+			return controlplane.ExecutionIdentity{SnapshotRevision: "s", QueryRevision: "q", ScheduleRevision: "r",
+				Plans: []execution.PlanIdentity{{TenantID: "t", BusinessID: "b", StrategyID: "1"}}}, true
+		}}
+	refresh.publish(context.Background())
+	if coverage := cost.Snapshot().Coverage; !coverage.CatalogComplete || coverage.TrackedGroups != 1 || coverage.TrackedPlans != 1 {
+		t.Fatalf("coverage after a refresh = %+v, want the owned group tracked at the refresh's second", coverage)
+	}
+}
+
+// The owned leases are read from each Runner's lease in memory: its timeline
+// revision and whether its owner accepts on it. A Runner with no lease to
+// read is owned and not accepting, so the roster leaves it out rather than
+// charging it under a revision it may not run.
+func TestOwnedLeasesAreEachRunnersLeaseFromMemory(t *testing.T) {
+	bundle := &phaseTwoWorkerBundle{runners: map[execution.QueryGroupIdentity]*phaseTwoQueryGroupLifecycle{
+		"leased":   {runner: &maintenanceTestRunner{scope: "obj", revision: 7}},
+		"unleased": {runner: &fakePhaseTwoQueryGroup{}},
+	}}
+	got := map[execution.QueryGroupIdentity]ownedLease{}
+	for _, lease := range bundle.ownedLeases() {
+		got[lease.queryGroup] = lease
+	}
+	if len(got) != 2 || got["leased"] != (ownedLease{queryGroup: "leased", revision: 7, accepting: true}) ||
+		got["unleased"] != (ownedLease{queryGroup: "unleased"}) {
+		t.Fatalf("owned leases = %+v, want the leased Runner at revision 7 accepting and the other not accepting", got)
 	}
 }
 
@@ -70,28 +162,6 @@ func TestObservationRegistryAndCostPaginationCannotStarveReplicas(t *testing.T) 
 	}
 }
 
-func TestObservationCapacityCannotBlockExecutionAtSmallOrLargeResources(t *testing.T) {
-	for _, resources := range []config.CapacityInputs{{}, {CPUBudget: 1, MemoryLimitBytes: 2 << 20, MemorySource: "cgroup"}, {CPUBudget: 1, MemoryLimitBytes: 1 << 30, MemorySource: "cgroup"}, {CPUBudget: 64, MemoryLimitBytes: 64 << 30, MemorySource: "cgroup"}} {
-		capacity := config.DeriveObservationCapacity(resources, config.PhaseTwoObservationConfig{MemoryPercent: 3})
-		limits, enabled := observationSampleLimits(capacity)
-		if enabled {
-			if _, err := observability.NewSeriesSampler(limits); err != nil {
-				t.Fatalf("resource-derived sample rejected %+v: %v", resources, err)
-			}
-		}
-		o := observationCostOptions(capacity, "process", time.Now)
-		if got := observability.CostSummaryCapacityBytes(o); got > int64(capacity.CostBytes/2) {
-			t.Fatalf("collector reservation %d > half budget %d", got, capacity.CostBytes/2)
-		}
-		if resources.MemoryLimitBytes == 1<<30 {
-			t.Logf("1GiB/1CPU: capacity=%+v directory_entry_reservation=%d cost_groups=%d cost_plans=%d cost_top_n=%d cost_reservation=%d sample=%+v projection=%+v", capacity, controlplane.DirectoryEntryReservationBytes(), o.GroupCapacity, o.PlanCapacity, o.TopN, observability.CostSummaryCapacityBytes(o), limits, observationProjectionLimits(capacity, 30*time.Second))
-		}
-		if resources.MemoryLimitBytes <= 2<<20 && enabled {
-			t.Fatalf("enabled without one complete buffer %+v", limits)
-		}
-	}
-}
-
 func TestObservationRedisHasIndependentPoolAndNoHiddenRetries(t *testing.T) {
 	o := observationRedisOptions(config.RedisConnectionConfig{PoolSize: 100, ReadTimeout: config.Duration(5 * time.Second), WriteTimeout: config.Duration(5 * time.Second)})
 	if o.MaxRetries != -1 || o.PoolSize != phaseTwoDiagnosticsPoolSize || o.ReadTimeout > time.Second || o.WriteTimeout > time.Second || o.PoolTimeout > time.Second {
@@ -99,24 +169,36 @@ func TestObservationRedisHasIndependentPoolAndNoHiddenRetries(t *testing.T) {
 	}
 }
 
-// TopN is derived from the rankings the summary publishes -- two scopes
-// times its dimensions -- not from a count of the dimensions it once had:
-// at a budget where the literal for six dimensions gave one row more than
-// the eight the summary has, the derived TopN follows the list.
-func TestCostTopNFollowsTheSummarysDimensionCount(t *testing.T) {
+// A replica's projection is sized by what it publishes: every ranking - two
+// scopes times the summary's dimensions, not a count of the dimensions it
+// once had - at the rows each keeps. A refresh's read is sized by the
+// replicas it reads (zero read bounds), and the store takes those limits.
+func TestTheProjectionIsSizedByTheRankingsItPublishes(t *testing.T) {
+	limits := observationProjectionLimits(30 * time.Second)
 	rankings := 2 * len(observability.CostDimensions())
-	// A CostBytes chosen so that CostBytes/16 is exactly 20 rows of the true
-	// ranking count: fewer rows under any larger ranking count, more under
-	// the old literal of twelve rankings.
-	costBytes := 16 * rankings * 4096 * 20
-	capacity := config.ObservationCapacity{CostBytes: costBytes, DirectoryCommands: 64, SampleRecordsPerMinute: 60, SampleBytesPerMinute: 1 << 20, SampleBufferBytes: 1 << 20}
-	o := observationCostOptions(capacity, "process-a", time.Now)
-	if o.TopN != 20 {
-		t.Fatalf("TopN=%d at a budget of exactly 20 rows per ranking (%d rankings), want 20", o.TopN, rankings)
+	if limits.PublishBytes != rankings*observationCostTopN*observationProjectionRowBytes || limits.ReadBytes != 0 || limits.ReadCommands != 0 {
+		t.Fatalf("limits = %+v, want %d rankings of %d rows of %d bytes and reads sized by the replicas", limits, rankings, observationCostTopN, observationProjectionRowBytes)
 	}
-	smaller := capacity
-	smaller.CostBytes = costBytes - 16*rankings*4096
-	if o := observationCostOptions(smaller, "process-a", time.Now); o.TopN != 19 {
-		t.Fatalf("TopN=%d one ranking-row short of 20, want 19: the derivation does not follow the dimension count", o.TopN)
+	if _, err := fleet.NewCostProjectionStore(windowRedis(t), "test:ob:cost", limits); err != nil {
+		t.Fatalf("the store refuses the derived limits: %v", err)
+	}
+	if o := observationCostOptions("process", time.Now, func(uint64) bool { return true }); o.TopN != observationCostTopN || o.Admit == nil ||
+		o.GroupCapacity != 0 || o.PlanCapacity != 0 || o.MetadataBytes != 0 {
+		t.Fatalf("cost options = %+v, want sized by the roster through admission", o)
+	}
+}
+
+// A memory_percent older values still carry is read, said once at startup
+// to be unused, and changes nothing; none set says nothing.
+func TestAMemoryPercentStillSetIsLoggedAsUnused(t *testing.T) {
+	var logged bytes.Buffer
+	warnObservationMemoryPercent(observability.New(observability.ComponentRuntime, &logged), config.PhaseTwoObservationConfig{MemoryPercent: 5})
+	if !strings.Contains(logged.String(), "OBSERVATION_MEMORY_PERCENT_IGNORED") || !strings.Contains(logged.String(), `"memory_percent":5`) {
+		t.Fatalf("logged %q, want the key named as unused with its value", logged.String())
+	}
+	logged.Reset()
+	warnObservationMemoryPercent(observability.New(observability.ComponentRuntime, &logged), config.PhaseTwoObservationConfig{})
+	if logged.Len() != 0 {
+		t.Fatalf("logged %q with no memory_percent set, want nothing", logged.String())
 	}
 }

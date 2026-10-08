@@ -17,6 +17,7 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 	alarmdprogress "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/progress"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/redisbatch"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/strategy"
 )
 
@@ -306,7 +307,7 @@ func (repository *RedisCatalogRepository) persistActivationRefUpgrade(ctx contex
 	if changed != 1 {
 		return ErrActivationConflict
 	}
-	repository.written.remember(payload, next)
+	repository.rememberWritten(payload, next)
 	return nil
 }
 
@@ -432,6 +433,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	updates := make([]scheduleTimelineUpdate, 0, len(oldGroups)+len(newGroups))
 	candidates := make([]pruneCandidate, 0, len(oldGroups))
 	plans := make([]PlanActivationRecord, 0, len(candidate.Plans))
+	readHoldPrevious := make(map[execution.PlanKey]readHoldOrigin)
 	oldIdentities := make([]execution.QueryGroupIdentity, 0, len(oldGroups))
 	for identity := range oldGroups {
 		oldIdentities = append(oldIdentities, identity)
@@ -494,7 +496,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	}
 	// keptWithoutRead is the Query Groups the manifest shows unchanged, whose
 	// open Segment is left as it is without a read. Every other one is read,
-	// and all of those are fetched before the walk, in pipelined batches: a
+	// in pipelined batches a window ahead of the walk (cutoverTimelines): a
 	// process's first cutover reads every open Segment, and one round trip
 	// each is what made it tens of seconds on a few thousand Query Groups.
 	keptWithoutRead := func(queryGroup execution.QueryGroupIdentity) bool {
@@ -512,10 +514,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 			toRead = append(toRead, queryGroup)
 		}
 	}
-	prefetched, err := repository.prefetchTimelinesForUpdate(ctx, toRead)
-	if err != nil {
-		return err
-	}
+	timelines := repository.cutoverTimelines(toRead)
 	for _, queryGroup := range oldIdentities {
 		// Recorded before anything can fail on it: the cutover returns at its
 		// first failure, so this names the one that stopped it.
@@ -546,7 +545,7 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 			cutover.decided(cutoverKept)
 			continue
 		}
-		timeline, raw, err := prefetched.timeline(queryGroup)
+		timeline, raw, err := timelines.timeline(ctx, queryGroup)
 		if errors.Is(err, ErrScheduleUnavailable) {
 			// The key is gone: evicted, or expired. This used to fail the whole
 			// cutover as a dependency that did not answer, on every publication,
@@ -704,6 +703,34 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		if err := closed.Validate(); err != nil {
 			return err
 		}
+		closedRecords := make(map[execution.PlanKey]PlanActivationRecord, len(open.Plans))
+		for _, record := range open.Plans {
+			closedRecords[record.Fact.Key()] = record
+		}
+		for _, plan := range closed.Plans {
+			record := closedRecords[plan.Key()]
+			origin := readHoldOrigin{generation: record.Fact.Selected.StateGeneration}
+			last := int64(boundary) - 1
+			last -= (last - int64(plan.Spec.Alignment)) % plan.Spec.EvaluationIntervalSeconds
+			// The same last legal Slot readhold's closeRecord fixes.
+			if last < int64(closed.Segment.Start) || !plan.Spec.IsAligned(execution.EvaluationTime(last)) {
+				// An intermediate segment that never ran a Slot adds no new
+				// deadline. Keep the previous real segment's bridge directly.
+				if previous := record.PreviousReadHold; previous != nil {
+					origin.ref = *previous
+					readHoldPrevious[plan.Key()] = origin
+					continue
+				}
+				if len(timeline.Segments) == 1 {
+					continue
+				}
+				origin.ref = ReadHoldPredecessorRef{QueryGroup: queryGroup, ClosedAt: boundary}
+			} else {
+				origin.ref = ReadHoldPredecessorRef{QueryGroup: queryGroup, ClosedAt: boundary, PreviousSlot: execution.EvaluationTime(last),
+					CompletionOffsetMillis: plan.Spec.CompletionOffsetSeconds() * 1000}
+			}
+			readHoldPrevious[plan.Key()] = origin
+		}
 		timeline.Segments[last].Schedule = closed
 		timeline.RecordRevision++
 		if remains {
@@ -762,6 +789,29 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 		updates = append(updates, opened.update)
 		plans = append(plans, opened.records...)
 	}
+	// The link is written in the existing timeline/activation CAS. A new
+	// owner can find the previous QG without scanning state or relying on the
+	// shorter-lived draining projection. Kept links survive content changes
+	// until their lifetime.
+	linker := readHoldLinker{origins: readHoldPrevious, carried: carried, facts: cutover,
+		expiredBefore: boundary - execution.EvaluationTime(ReadHoldLinkLifetime/time.Second)}
+	for i := range updates {
+		for j := range updates[i].next.Segments {
+			segment := &updates[i].next.Segments[j]
+			if segment.Schedule.Segment.Start == boundary && segment.Schedule.Segment.End == nil {
+				linker.carry(segment.Plans, segment.Schedule.Segment.QueryGroup, true)
+			}
+		}
+	}
+	groupsByPlan := make(map[execution.PlanKey]execution.QueryGroupIdentity)
+	for group := range activeGroups {
+		for _, key := range published.content.Groups[group].Plans {
+			groupsByPlan[key] = group
+		}
+	}
+	for i := range plans {
+		linker.carry(plans[i:i+1], groupsByPlan[plans[i].Fact.Key()], false)
+	}
 	// Coverage is owed by everyone the cutover did not hold back. A blocked
 	// Query Group's carried records name what it ran, which may not be the
 	// Plans the publication gives it now; a carried record for a Plan another
@@ -816,57 +866,73 @@ func (repository *RedisCatalogRepository) CompareAndSetPublicationScheduleActiva
 	return nil
 }
 
-// prefetchedTimelines is the stored bytes of the timelines a cutover reads,
-// fetched together before it walks them. The walk decodes each as the one
-// read it used to make would have: absent is ErrScheduleUnavailable, bytes
-// that do not decode are a DeterministicScheduleError, and the bytes are
-// the expectation the write is fenced on.
-type prefetchedTimelines struct {
-	payloads map[execution.QueryGroupIdentity][]byte
+// cutoverTimelines is the stored bytes of the timelines a cutover reads, in
+// the order its walk reads them, a window at a time (redisbatch.Windows):
+// the timelines after the last whose lengths add up to at most the cutover's
+// read bound, or the one timeline larger than it, one pipeline of values,
+// with each timeline's length read once in pipelines of redisbatch.Batch.
+// The walk asks for the next timeline, and the next window is read when it
+// passes the last. A window is let go when the walk moves past it; the
+// bytes the walk keeps are the fences of the timelines it writes. Reading
+// them all before the walk held every open Segment of a process's first
+// cutover at once.
+//
+// Each is decoded as the one read the cutover used to make would have:
+// absent is ErrScheduleUnavailable, bytes that do not decode are a
+// DeterministicScheduleError, and the bytes are the expectation the write
+// is fenced on. A read that fails fails the cutover, as the single read it
+// replaces did, and so does a window Redis answered any key of with an
+// error (LOADING, BUSY, a key of another type; redisbatch.UnansweredError):
+// that says nothing about the timeline, and the cutover writes nothing.
+type cutoverTimelines struct {
+	identities []execution.QueryGroupIdentity
+	windows    *redisbatch.Windows
+	// window holds the values of identities[start:start+len(window)];
+	// next is the index of the one the walk asks for next.
+	window      []redisbatch.Value
+	start, next int
 }
 
-func (prefetched prefetchedTimelines) timeline(queryGroup execution.QueryGroupIdentity) (persistedScheduleTimeline, []byte, error) {
-	payload, ok := prefetched.payloads[queryGroup]
-	if !ok {
+func (repository *RedisCatalogRepository) cutoverTimelines(identities []execution.QueryGroupIdentity) *cutoverTimelines {
+	keys := make([]string, len(identities))
+	for index, identity := range identities {
+		keys[index] = repository.scheduleTimelineKey(identity)
+	}
+	return &cutoverTimelines{identities: identities,
+		windows: redisbatch.NewWindows(repository.client, keys, repository.cutoverReadBound())}
+}
+
+// timeline is the next Query Group's timeline; the walk asks for them in
+// the order it was given them.
+func (timelines *cutoverTimelines) timeline(ctx context.Context, queryGroup execution.QueryGroupIdentity) (
+	persistedScheduleTimeline, []byte, error,
+) {
+	if timelines.next >= len(timelines.identities) || timelines.identities[timelines.next] != queryGroup {
+		return persistedScheduleTimeline{}, nil, fmt.Errorf("alarmd controlplane: cutover read %s out of order", queryGroup)
+	}
+	if timelines.next >= timelines.start+len(timelines.window) {
+		// The window before is dropped before the next is read: only one is
+		// held at a time.
+		timelines.window = nil
+		start, window, err := timelines.windows.Next(ctx)
+		if err != nil {
+			return persistedScheduleTimeline{}, nil, activationDependencyIO(err)
+		}
+		if start != timelines.next || len(window) == 0 {
+			return persistedScheduleTimeline{}, nil, errors.New("alarmd controlplane: a cutover read returned the wrong shape")
+		}
+		timelines.window, timelines.start = window, start
+	}
+	value := timelines.window[timelines.next-timelines.start]
+	timelines.next++
+	if value.Missing {
 		return persistedScheduleTimeline{}, nil, ErrScheduleUnavailable
 	}
-	timeline, err := decodeScheduleTimeline(queryGroup, payload)
+	timeline, err := decodeScheduleTimeline(queryGroup, value.Raw)
 	if err != nil {
 		return persistedScheduleTimeline{}, nil, err
 	}
-	return timeline, payload, nil
-}
-
-// prefetchTimelinesForUpdate reads the timelines of the given Query Groups
-// live, in pipelined batches. A read that fails fails the cutover, as the
-// single read it replaces did; a key that is not there is left out.
-func (repository *RedisCatalogRepository) prefetchTimelinesForUpdate(
-	ctx context.Context, identities []execution.QueryGroupIdentity,
-) (prefetchedTimelines, error) {
-	result := prefetchedTimelines{payloads: make(map[execution.QueryGroupIdentity][]byte, len(identities))}
-	for start := 0; start < len(identities); start += openSegmentReadBatch {
-		batch := identities[start:min(start+openSegmentReadBatch, len(identities))]
-		replies := make([]*redis.StringCmd, len(batch))
-		if _, err := repository.client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
-			for index, identity := range batch {
-				replies[index] = pipe.Get(ctx, repository.scheduleTimelineKey(identity))
-			}
-			return nil
-		}); err != nil && !errors.Is(err, redis.Nil) {
-			return prefetchedTimelines{}, activationDependencyIO(err)
-		}
-		for index, identity := range batch {
-			payload, err := replies[index].Bytes()
-			if errors.Is(err, redis.Nil) {
-				continue
-			}
-			if err != nil {
-				return prefetchedTimelines{}, activationDependencyIO(err)
-			}
-			result.payloads[identity] = payload
-		}
-	}
-	return result, nil
+	return timeline, value.Raw, nil
 }
 
 // CompareAndSetInitialScheduleActivation establishes zero or more first
@@ -1357,7 +1423,7 @@ func (repository *RedisCatalogRepository) persistInitialActivation(
 	if changed != 1 {
 		return ErrActivationConflict
 	}
-	repository.written.remember(activationPayload, next)
+	repository.rememberWritten(activationPayload, next)
 	return nil
 }
 
@@ -1453,7 +1519,7 @@ func (repository *RedisCatalogRepository) persistCutoverActivation(
 	if changed != 1 {
 		return ErrActivationConflict
 	}
-	repository.written.remember(activationPayload, next)
+	repository.rememberWritten(activationPayload, next)
 	return nil
 }
 
@@ -2355,13 +2421,18 @@ func (runtime *RedisCatalogRuntime) freezeSlotContract(ctx context.Context, requ
 	publication := SnapshotPublicationRef{SnapshotRevision: schedule.Segment.Publication.SnapshotRevision,
 		PublicationEpoch: uint64(schedule.Segment.Publication.PublicationEpoch)}
 	var group QueryGroup
+	// Whether the group came from the content the Segment names, which is
+	// what lets a Plan's compile be keyed by that content.
+	var byContent bool
 	if observed {
 		group, err = runtime.repository.LoadObservedSegmentQueryGroup(ctx, schedule.Segment, request.EvaluationTime)
+		byContent = err == nil
 	} else {
-		group, err = runtime.repository.LoadSegmentQueryGroup(ctx, schedule.Segment, request.EvaluationTime, func(ctx context.Context) (QueryGroup, error) {
+		group, byContent, err = runtime.repository.LoadSegmentQueryGroupContent(ctx, schedule.Segment, request.EvaluationTime, func(ctx context.Context) (QueryGroup, error) {
 			return runtime.repository.loadPublishedQueryGroup(ctx, publication, request.QueryGroup)
 		})
 	}
+	contentSegment := schedule.Segment.At(request.EvaluationTime)
 	if err != nil {
 		if errors.Is(err, ErrCatalogObjectUnavailable) {
 			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize, err)
@@ -2400,7 +2471,8 @@ func (runtime *RedisCatalogRuntime) freezeSlotContract(ctx context.Context, requ
 				errors.New("alarmd controlplane: due Plan is absent from frozen Catalog or activation"))
 		}
 		compiledResult, err := runtime.compiler.Compile(ctx, strategy.CompileRequest{Plan: plan.Plan,
-			DatasetContract: group.QueryPlan.Normalization.DatasetContract, StateSemantics: runtime.stateSemantics})
+			DatasetContract: group.QueryPlan.Normalization.DatasetContract, StateSemantics: runtime.stateSemantics,
+			ContentKey: compileContentKey(byContent, contentSegment, plan)})
 		if err != nil {
 			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize, err)
 		}
@@ -2414,12 +2486,12 @@ func (runtime *RedisCatalogRuntime) freezeSlotContract(ctx context.Context, requ
 		if err != nil {
 			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailurePlanMaterialize, err)
 		}
-		deadline, err := completionDeadline(request.EvaluationTime, plan.ScheduleSpec)
+		deadline, err := completionDeadline(request.EvaluationTime, request.ReadHoldMillis, plan.ScheduleSpec)
 		if err != nil {
 			return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailureContractValidation, err)
 		}
-		capabilities := make([]execution.LevelPartialCapability, 0, len(compiled.Levels()))
-		for _, level := range compiled.Levels() {
+		capabilities := make([]execution.LevelPartialCapability, 0, compiled.Levels().Len())
+		for _, level := range compiled.Levels().All() {
 			capabilities = append(capabilities, execution.LevelPartialCapability{LevelID: level.Definition().LevelID, Policy: execution.PartialRequiresFull})
 		}
 		if compiled.NoData() != nil {
@@ -2462,17 +2534,13 @@ func (runtime *RedisCatalogRuntime) freezeSlotContract(ctx context.Context, requ
 	if err != nil {
 		return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailureInputClosure, err)
 	}
-	digest, err := execution.DeriveDuePlanSetDigest(duePlans, requirements)
-	if err != nil {
-		return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailureContractValidation, err)
-	}
-	fact := execution.FrozenSlotContractFact{Contract: execution.FrozenExecutionContractRef{
+	fact, err := execution.SealFrozenSlotContractFact(execution.FrozenSlotContractFact{Contract: execution.FrozenExecutionContractRef{
 		Slot:             execution.SlotIdentity{QueryGroup: request.QueryGroup, EvaluationTime: request.EvaluationTime},
 		SnapshotRevision: schedule.Segment.Publication.SnapshotRevision, QueryRevision: schedule.Segment.QueryRevision,
 		ScheduleRevision: request.ScheduleRevision, ScheduleSegmentStart: request.ScheduleSegmentStart,
-		DuePlanSetDigest: digest,
-	}, DuePlans: duePlans, Requirements: requirements}
-	if err := fact.Validate(request); err != nil {
+		ReadHoldMillis: request.ReadHoldMillis,
+	}, DuePlans: duePlans, Requirements: requirements}, request)
+	if err != nil {
 		return execution.FrozenSlotContractFact{}, freezeSlotContractError(FreezeSlotFailureContractValidation, err)
 	}
 	return fact, nil
@@ -2612,9 +2680,9 @@ func (runtime *RedisCatalogRuntime) slotRequirements(
 
 		expected := make(map[execution.RequirementID]uint32)
 		explicitPrimary := make(map[uint32]map[execution.RequirementID]struct{})
-		for _, level := range due.CompiledPlan.Levels() {
+		for _, level := range due.CompiledPlan.Levels().All() {
 			levelID := level.Definition().LevelID
-			for _, algorithm := range level.Algorithms() {
+			for _, algorithm := range level.Algorithms().All() {
 				algorithmRequirements := algorithm.InputRequirements()
 				if len(algorithmRequirements) == 0 {
 					continue
@@ -2640,7 +2708,7 @@ func (runtime *RedisCatalogRuntime) slotRequirements(
 				}
 			}
 		}
-		for _, level := range due.CompiledPlan.Levels() {
+		for _, level := range due.CompiledPlan.Levels().All() {
 			levelID := level.Definition().LevelID
 			switch len(explicitPrimary[levelID]) {
 			case 0:
@@ -2754,7 +2822,7 @@ func validateExactlyOnePrimaryPerLevel(duePlans []execution.DuePlan, requirement
 		}
 	}
 	for _, due := range duePlans {
-		for _, level := range due.CompiledPlan.Levels() {
+		for _, level := range due.CompiledPlan.Levels().All() {
 			consumer := execution.ConsumerRef{Plan: due.Identity, LevelID: level.Definition().LevelID, HasLevel: true}
 			if primary[consumer] != 1 {
 				return errors.New("alarmd controlplane: compiled Level must have exactly one PRIMARY input requirement")
@@ -2852,8 +2920,10 @@ func (runtime *RedisCatalogRuntime) primaryRequirements(
 	return result, nil
 }
 
-func completionDeadline(at execution.EvaluationTime, spec execution.ScheduleSpec) (int64, error) {
-	deadline, ok := spec.CompletionDeadlineUnixMilli(at)
+// completionDeadline is a due Plan's deadline in a contract frozen with the
+// read hold readHoldMillis: its schedule's, that much later.
+func completionDeadline(at execution.EvaluationTime, readHoldMillis int64, spec execution.ScheduleSpec) (int64, error) {
+	deadline, ok := spec.HeldCompletionDeadlineUnixMilli(at, readHoldMillis)
 	if !ok {
 		return 0, errors.New("alarmd controlplane: invalid frozen Plan deadline")
 	}
@@ -2908,4 +2978,22 @@ func candidatePublication(candidate ActivationState, group QueryGroup) (Snapshot
 		named = publication
 	}
 	return named, len(group.Plans) > 0
+}
+
+// rememberWritten keeps the activation this process just wrote, and lets the
+// content memo put out an older publication it no longer carries a Plan on:
+// the drain that needed it has ended with this write.
+func (repository *RedisCatalogRepository) rememberWritten(payload []byte, next ActivationState) {
+	repository.written.remember(payload, next)
+	repository.contentMemo.release(func(publication SnapshotPublicationRef) bool {
+		if publication == next.Current || next.Pending != nil && publication == *next.Pending {
+			return true
+		}
+		for _, record := range next.Plans {
+			if record.Publication == publication {
+				return true
+			}
+		}
+		return false
+	})
 }

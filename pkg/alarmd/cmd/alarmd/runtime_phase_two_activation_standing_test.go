@@ -237,9 +237,9 @@ func TestFleetPublisherNamesTheStrategiesOnRetainedRecords(t *testing.T) {
 	clock := &dueIndexClock{at: time.Unix(20_000, 0)}
 	tracker := fleet.NewTracker(nil, "replica-1", clock.now)
 	ctx := observability.ContextWithTraceFields(context.Background(),
-		observability.TraceFields{QueryGroupKey: "qg-skip", EvaluationTime: 100, StrategyID: "1854", BusinessID: "7"})
+		observability.TraceFields{QueryGroupKey: "qg-skip", EvaluationTime: 100, StrategyID: "847", BusinessID: "7"})
 	tracker.Observe(ctx, observability.Observation{ProgressCompletionKind: "GAP_SKIPPED",
-		Trace: observability.TraceFields{QueryGroupKey: "qg-skip", StrategyID: "1854", BusinessID: "7"}})
+		Trace: observability.TraceFields{QueryGroupKey: "qg-skip", StrategyID: "847", BusinessID: "7"}})
 	publisher := fleetPublisher{
 		tracker: tracker, replica: "replica-1", now: clock.now,
 		owned:      func() []execution.QueryGroupIdentity { return []execution.QueryGroupIdentity{"qg-skip"} },
@@ -250,8 +250,8 @@ func TestFleetPublisherNamesTheStrategiesOnRetainedRecords(t *testing.T) {
 	if !retained {
 		t.Fatalf("snapshot gap skips = %+v, want qg-skip retained", snapshot.GapSkips)
 	}
-	if len(skip.Strategies) != 1 || skip.Strategies[0].StrategyID != "1854" || skip.Strategies[0].BusinessID != "7" {
-		t.Fatalf("retained record strategies = %+v, want strategy 1854 of business 7", skip.Strategies)
+	if len(skip.Strategies) != 1 || skip.Strategies[0].StrategyID != "847" || skip.Strategies[0].BusinessID != "7" {
+		t.Fatalf("retained record strategies = %+v, want strategy 847 of business 7", skip.Strategies)
 	}
 }
 

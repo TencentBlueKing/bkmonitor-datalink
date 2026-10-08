@@ -136,7 +136,7 @@ func TestRecoveryEnvelopeGoesOnlyToAnOpenAlert(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			plan := test.plan(t)
-			levels := plan.Levels()
+			levels := plan.Levels().Copy()
 			request := requestV2(t, plan, source,
 				[]DetectionFact{factV2(levels[0], DetectionNormal), factV2(levels[1], DetectionNormal)},
 				[]LevelHistory{
@@ -178,7 +178,7 @@ func TestOpenAlertSetIsAskedBesideAnUnavailableLevel(t *testing.T) {
 	const source = int64(300)
 	identity := &contract.MonitorOutputIdentity{DimensionFields: []string{"host"}}
 	plan := nativePlanV2(t, []contract.LevelIRV2{levelV2(1, 1, 1, 1, 1, nil), levelV2(2, 2, 1, 1, 1, nil)}, identity)
-	levels := plan.Levels()
+	levels := plan.Levels().Copy()
 	set := &openAlertSetFixture{}
 	request := requestV2(t, plan, source,
 		[]DetectionFact{unavailableFactV2(levels[0], contract.ReasonRequiredValueMissing), factV2(levels[1], DetectionNormal)},
@@ -208,7 +208,7 @@ func TestOpenAlertSetDoesNotTouchAnAbnormalRecord(t *testing.T) {
 	identity := &contract.MonitorOutputIdentity{DimensionFields: []string{"host"}}
 	plan := nativePlanV2(t, []contract.LevelIRV2{levelV2(1, 1, 1, 1, 1, nil)}, identity)
 	set := &openAlertSetFixture{}
-	request := requestV2(t, plan, source, []DetectionFact{factV2(plan.Levels()[0], DetectionAnomalous)},
+	request := requestV2(t, plan, source, []DetectionFact{factV2(plan.Levels().At(0), DetectionAnomalous)},
 		[]LevelHistory{{LevelID: 1, View: pointHistory{step: 60, points: map[int64]bool{source: true}}}}, activeFactsV2(t, plan, source))
 	request.OpenAlerts = set
 	result, err := EvaluateV2(request)

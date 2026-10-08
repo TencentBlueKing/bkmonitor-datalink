@@ -33,17 +33,55 @@ import (
 //
 // The constraint is judged only where the numbers are known: a Worker that
 // registered no pool is not judged and is listed as such, and a Query
-// Group with no reported peak counts nothing and is counted as unread. An
-// unknown is reported, never read as "no pressure" - on either side of a
-// move. A Worker with an unread Query Group has a sum that is a lower
-// bound: enough to say it is overloaded when its known part already is,
-// not enough to say it has room, so it is not a destination this round.
-// Unread is a passing state - a Worker reports a Query Group's first
-// reading on its next heartbeat, unconditionally - and the ledger carries
-// a moved Query Group's last reading over to its new holder as provisional
-// in the meantime, so the Worker a move just landed on is not the emptiest
-// Worker in the fleet by the next round.
+// Group with no reported peak counts nothing toward its Worker's sum and is
+// counted as unread. An unknown is reported, never read as "no pressure" -
+// on either side of a move. A Worker with an unread Query Group has a sum
+// that is a lower bound: enough to say it is overloaded when its known part
+// already is, and as a destination each of its unread Query Groups is
+// counted at the ninetieth percentile of the peaks read this round.
+//
+// Unread is not a passing state. A Query Group has a peak only after it
+// has run a Slot in the process that reports it, so after a restart every
+// Query Group on an hourly to sixty-hour cadence stays unread until its
+// first round, and the Leader that restarted with it holds no earlier
+// reading. Refusing any Worker with one unread Query Group as a
+// destination refused every Worker for as long as the longest cadence, and
+// an overloaded Worker was never relieved - the state the constraint
+// exists for. The long unread tail is drawn from the same Query Groups the
+// read peaks describe, and a destination the estimate undercounts goes past
+// the share by at most what that Query Group exceeds it, is judged
+// overloaded on its next reading and moves its largest Query Group on;
+// the retained-byte budget still refuses at the pool. With no peak read at
+// all there is nothing to estimate from, and such a Worker is not a
+// destination. The ledger still carries a moved Query Group's last reading
+// over to its new holder as provisional, so the Worker a move just landed
+// on is not the emptiest Worker in the fleet by the next round.
 const byteConstraintPercent = 80
+
+// unreadEstimatePercentile is the percentile of the round's read peaks an
+// unread Query Group is counted at on a destination; see above.
+const unreadEstimatePercentile = 90
+
+// unreadSampleLimit bounds the unread Query Groups named per Worker.
+const unreadSampleLimit = 5
+
+// PeakDistribution is the read peaks of one round: how many, and the median,
+// the ninetieth and ninety-ninth percentiles and the largest, by the same
+// nearest-rank rule as the estimate.
+type PeakDistribution struct {
+	Count, P50, P90, P99, Max uint64
+}
+
+// peakDistribution is the distribution of peaks; zero when there are none.
+func peakDistribution(peaks []uint64) PeakDistribution {
+	if len(peaks) == 0 {
+		return PeakDistribution{}
+	}
+	sorted := append([]uint64(nil), peaks...)
+	sort.Slice(sorted, func(left, right int) bool { return sorted[left] < sorted[right] })
+	rank := func(percentile int) uint64 { return sorted[(len(sorted)*percentile+99)/100-1] }
+	return PeakDistribution{Count: uint64(len(sorted)), P50: rank(50), P90: rank(90), P99: rank(99), Max: sorted[len(sorted)-1]}
+}
 
 // ByteConstraintPercent is the share above, for a reader that reports a
 // plan.
@@ -115,6 +153,20 @@ type BytePlan struct {
 	// and they are not destinations this round.
 	Unread    int
 	Unsettled []string
+	// UnreadEstimate is what each unread Query Group on a destination was
+	// counted at: the ninetieth percentile of the peaks read this round.
+	// Zero when no peak was read, and then a Worker holding an unread Query
+	// Group is not a destination.
+	UnreadEstimate uint64
+	// UnreadBy is Unread per judged Worker, and UnreadSample up to
+	// unreadSampleLimit of each Worker's unread Query Groups, lowest first.
+	// The total alone said every Worker was unsettled and not which Query
+	// Groups kept it so -- whether they were ones that had not run since a
+	// restart or ones that never report -- and that was what decided the fix.
+	UnreadBy     map[string]int
+	UnreadSample map[string][]execution.QueryGroupIdentity
+	// ReadPeaks is the distribution the estimate was taken from.
+	ReadPeaks PeakDistribution
 	Sum       map[string]uint64
 	// Overloaded names the judged Workers over the constraint before the
 	// moves; Unplaceable the ones among them the round found no move for -
@@ -165,6 +217,8 @@ func (router *Router) PlanByteMoves(
 	plan.Judged = len(judged)
 	owned := make(map[string][]execution.QueryGroupIdentity, len(judged))
 	unreadBy := make(map[string]int, len(judged))
+	unreadGroups := make(map[string][]execution.QueryGroupIdentity, len(judged))
+	readPeaks := make([]uint64, 0, len(owners))
 	for queryGroup, owner := range owners {
 		if _, isJudged := plan.Sum[owner]; !isJudged {
 			continue
@@ -173,10 +227,20 @@ func (router *Router) PlanByteMoves(
 		if !read {
 			plan.Unread++
 			unreadBy[owner]++
+			unreadGroups[owner] = append(unreadGroups[owner], queryGroup)
 			continue
 		}
 		plan.Sum[owner] += peak
 		owned[owner] = append(owned[owner], queryGroup)
+		readPeaks = append(readPeaks, peak)
+	}
+	plan.UnreadEstimate = unreadEstimate(readPeaks)
+	plan.ReadPeaks = peakDistribution(readPeaks)
+	plan.UnreadBy = unreadBy
+	plan.UnreadSample = make(map[string][]execution.QueryGroupIdentity, len(unreadGroups))
+	for workerID, groups := range unreadGroups {
+		sort.Slice(groups, func(left, right int) bool { return groups[left] < groups[right] })
+		plan.UnreadSample[workerID] = groups[:min(len(groups), unreadSampleLimit)]
 	}
 	for _, workerID := range judged {
 		if unreadBy[workerID] > 0 {
@@ -216,7 +280,7 @@ func (router *Router) PlanByteMoves(
 			if peak == 0 {
 				break
 			}
-			destination := router.byteDestination(queryGroup, workerID, judged, ready, readings, sum, unreadBy, peak, at)
+			destination := router.byteDestination(queryGroup, workerID, judged, ready, readings, sum, unreadBy, plan.UnreadEstimate, peak, at)
 			if destination == "" {
 				continue
 			}
@@ -245,23 +309,31 @@ func (router *Router) byteDestination(
 	readings ByteReadings,
 	sum map[string]uint64,
 	unreadBy map[string]int,
+	unreadEstimate uint64,
 	peak uint64,
 	at time.Time,
 ) string {
 	destination, headroom := "", uint64(0)
 	for _, workerID := range judged {
-		if workerID == from || unreadBy[workerID] > 0 {
+		if workerID == from {
 			continue
+		}
+		projected := sum[workerID]
+		if unread := unreadBy[workerID]; unread > 0 {
+			if unreadEstimate == 0 {
+				continue
+			}
+			projected += uint64(unread) * unreadEstimate
 		}
 		pool, _ := readings.pool(workerID)
 		limit := byteLimit(pool)
-		if sum[workerID]+peak > limit {
+		if projected > limit || peak > limit-projected {
 			continue
 		}
 		if router.additionalEligibility != nil && !router.additionalEligibility.Eligible(queryGroup, ready[workerID], at) {
 			continue
 		}
-		left := limit - sum[workerID]
+		left := limit - projected
 		if destination == "" || left > headroom || (left == headroom && workerID < destination) {
 			destination, headroom = workerID, left
 		}
@@ -281,4 +353,16 @@ func (reconciler *Reconciler) PlanByteMoves(
 		return BytePlan{Sum: map[string]uint64{}}
 	}
 	return reconciler.router.PlanByteMoves(owners, workers, readings, at)
+}
+
+// unreadEstimate is the nearest-rank ninetieth percentile of the peaks read
+// this round, or zero when none was read.
+func unreadEstimate(peaks []uint64) uint64 {
+	if len(peaks) == 0 {
+		return 0
+	}
+	sorted := append([]uint64(nil), peaks...)
+	sort.Slice(sorted, func(left, right int) bool { return sorted[left] < sorted[right] })
+	rank := (len(sorted)*unreadEstimatePercentile + 99) / 100
+	return sorted[rank-1]
 }

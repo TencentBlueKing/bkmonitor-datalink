@@ -37,7 +37,7 @@ func TestCompilerCompilesDynamicLevelsInDeterministicOrders(t *testing.T) {
 	if !ok {
 		t.Fatalf("Compile() plan terminal = %+v", result.PlanTerminal())
 	}
-	levels := compiled.Levels()
+	levels := compiled.Levels().Copy()
 	if got := []uint32{levels[0].Definition().LevelID, levels[1].Definition().LevelID}; got[0] != 1 || got[1] != 5 {
 		t.Fatalf("Levels() IDs = %v, want [1 5]", got)
 	}
@@ -62,8 +62,8 @@ func TestCompilerIsolatesInvalidSiblingLevel(t *testing.T) {
 		t.Fatalf("Compile() error = %v", err)
 	}
 	compiled, ok := result.Plan()
-	if !ok || len(compiled.Levels()) != 1 {
-		t.Fatalf("Compile() valid levels = %d, terminal = %+v", len(compiled.Levels()), result.PlanTerminal())
+	if !ok || compiled.Levels().Len() != 1 {
+		t.Fatalf("Compile() valid levels = %d, terminal = %+v", compiled.Levels().Len(), result.PlanTerminal())
 	}
 	terminals := result.LevelTerminals()
 	if len(terminals) != 1 || terminals[0].LevelID != 5 || terminals[0].ReasonCode != contract.ReasonAlgorithmUnsupported {
@@ -108,7 +108,7 @@ func TestCompilerThresholdNormalizerAndPredicate(t *testing.T) {
 	if !ok {
 		t.Fatalf("Compile() terminal = %+v", result.PlanTerminal())
 	}
-	detector := compiled.Levels()[0].Detectors()[0]
+	detector := compiled.Levels().At(0).Detectors()[0]
 	normalizer, ok := compiled.Normalizer(detector.NormalizerRef())
 	if !ok {
 		t.Fatalf("Normalizer(%q) not found", detector.NormalizerRef())
@@ -167,7 +167,7 @@ func TestCompilerCalculatesTriggerRecoveryAndFingerprints(t *testing.T) {
 	base.StrategyIR.Levels[0].RecoveryPlan.Config = json.RawMessage(`{"enabled":true,"consecutive_windows":4}`)
 
 	first := mustCompilePlan(t, compiler, base)
-	level := first.Levels()[0]
+	level := first.Levels().At(0)
 	if got := level.RequiredDetectHistoryPoints(); got != 8 {
 		t.Fatalf("RequiredDetectHistoryPoints() = %d, want 8", got)
 	}
@@ -187,7 +187,7 @@ func TestCompilerCalculatesTriggerRecoveryAndFingerprints(t *testing.T) {
 	thresholdChanged.StrategyIR.Levels = cloneLevels(base.StrategyIR.Levels)
 	thresholdChanged.StrategyIR.Levels[0].DetectPlan.Algorithms[0].Config = mustJSON(thresholdConfig("60"))
 	second := mustCompilePlan(t, compiler, thresholdChanged)
-	secondFingerprints := second.Levels()[0].Fingerprints()
+	secondFingerprints := second.Levels().At(0).Fingerprints()
 	if firstFingerprints.Detect == secondFingerprints.Detect || firstFingerprints.Trigger == secondFingerprints.Trigger {
 		t.Fatalf("threshold change did not change both fingerprints: before=%+v after=%+v", firstFingerprints, secondFingerprints)
 	}
@@ -199,7 +199,7 @@ func TestCompilerCalculatesTriggerRecoveryAndFingerprints(t *testing.T) {
 	triggerChanged.StrategyIR.Levels = cloneLevels(base.StrategyIR.Levels)
 	triggerChanged.StrategyIR.Levels[0].TriggerPlan.Config = json.RawMessage(`{"window_size":6,"required_anomalies":3,"step_seconds":60}`)
 	third := mustCompilePlan(t, compiler, triggerChanged)
-	thirdFingerprints := third.Levels()[0].Fingerprints()
+	thirdFingerprints := third.Levels().At(0).Fingerprints()
 	if firstFingerprints.Detect != thirdFingerprints.Detect || firstFingerprints.Trigger == thirdFingerprints.Trigger {
 		t.Fatalf("trigger change fingerprints: before=%+v after=%+v", firstFingerprints, thirdFingerprints)
 	}
@@ -212,7 +212,7 @@ func TestCompilerUsesTriggerWindowAsRetentionWhenRecoveryDisabled(t *testing.T) 
 	plan.StrategyIR.Levels[0].RecoveryPlan.Config = json.RawMessage(`{"enabled":false,"consecutive_windows":99}`)
 
 	compiled := mustCompilePlan(t, compiler, plan)
-	level := compiled.Levels()[0]
+	level := compiled.Levels().At(0)
 	requirement := level.StateRequirement()
 	if requirement.RetentionPoints != 5 || requirement.RequiredDetectHistoryPoints != 5 {
 		t.Fatalf("StateRequirement() = %+v, want trigger window size 5", requirement)
@@ -275,12 +275,12 @@ func TestCompilerIsolatesTriggerRecoveryDeploymentBudgets(t *testing.T) {
 			terminals := result.LevelTerminals()
 			compiled, ok := result.Plan()
 			if !test.terminal {
-				if !ok || len(compiled.Levels()) != 1 || len(terminals) != 0 {
+				if !ok || compiled.Levels().Len() != 1 || len(terminals) != 0 {
 					t.Fatalf("Compile() plan=%#v terminals=%#v, want admitted Level", compiled, terminals)
 				}
 				return
 			}
-			if !ok || len(compiled.Levels()) != 0 || len(terminals) != 1 ||
+			if !ok || compiled.Levels().Len() != 0 || len(terminals) != 1 ||
 				terminals[0].ReasonCode != contract.ReasonLevelBudgetExceeded || terminals[0].FieldPath != test.fieldPath {
 				t.Fatalf("Compile() plan=%#v terminals=%#v, want isolated Level", compiled, terminals)
 			}
@@ -313,16 +313,16 @@ func TestCompilerReturnsImmutableViews(t *testing.T) {
 	plan := validPlan()
 	compiled := mustCompilePlan(t, compiler, plan)
 
-	levels := compiled.Levels()
+	levels := compiled.Levels().Copy()
 	levels[0] = CompiledLevel{}
-	detectors := compiled.Levels()[0].Detectors()
+	detectors := compiled.Levels().At(0).Detectors()
 	detectors[0] = DetectorSpec{}
-	if compiled.Levels()[0].Definition().LevelID != 1 || compiled.Levels()[0].Detectors()[0].Kind() != "Threshold" {
+	if compiled.Levels().At(0).Definition().LevelID != 1 || compiled.Levels().At(0).Detectors()[0].Kind() != "Threshold" {
 		t.Fatal("caller mutation changed immutable compiled plan")
 	}
 
 	plan.StrategyIR.Levels[0].Definition.LevelID = 99
-	if compiled.Levels()[0].Definition().LevelID != 1 {
+	if compiled.Levels().At(0).Definition().LevelID != 1 {
 		t.Fatal("source mutation changed compiled plan")
 	}
 }
@@ -343,7 +343,7 @@ func TestCompiledPlanReadOnlyViewsDoNotClonePredicateAST(t *testing.T) {
 	compiled := mustCompilePlan(t, newTestCompiler(t), plan)
 
 	allocations := testing.AllocsPerRun(1000, func() {
-		readOnlyLevelsSink = compiled.Levels()
+		readOnlyLevelsSink = compiled.Levels().Copy()
 		readOnlyDetectorsSink = readOnlyLevelsSink[0].Detectors()
 		readOnlyPredicateSink = readOnlyDetectorsSink[0].Predicate()
 	})
@@ -439,7 +439,7 @@ func TestCompilerCanonicalizesDeclaredExecutorErrors(t *testing.T) {
 	plan := validPlan()
 	plan.StrategyIR.Levels[0].DetectPlan.Algorithms[0].Type = "DeclaredErrors"
 	compiled := mustCompilePlan(t, compiler, plan)
-	reasons := compiled.Levels()[0].Detectors()[0].DeclaredExecutorErrors()
+	reasons := compiled.Levels().At(0).Detectors()[0].DeclaredExecutorErrors()
 	if len(reasons) != 2 || reasons[0] != contract.ReasonRecordInvalid || reasons[1] != contract.ReasonRequiredValueTypeMismatch {
 		t.Fatalf("DeclaredExecutorErrors() = %v", reasons)
 	}
@@ -615,7 +615,7 @@ func TestCompilerKeepsMultipleAlgorithmsAndRejectsUnknownUnit(t *testing.T) {
 	second.Config = mustJSON(thresholdConfig("90"))
 	plan.StrategyIR.Levels[0].DetectPlan.Algorithms = append(plan.StrategyIR.Levels[0].DetectPlan.Algorithms, second)
 	compiled := mustCompilePlan(t, compiler, plan)
-	if level := compiled.Levels()[0]; level.Connector() != contract.LevelConnectorAND || len(level.Detectors()) != 2 {
+	if level := compiled.Levels().At(0); level.Connector() != contract.LevelConnectorAND || len(level.Detectors()) != 2 {
 		t.Fatalf("compiled Level = connector %q, detectors %d", level.Connector(), len(level.Detectors()))
 	}
 
@@ -644,7 +644,7 @@ func TestCompilerFingerprintIgnoresRevisionPriorityAndLevelCode(t *testing.T) {
 	changed.StrategyIR.Levels[0].Definition.LevelCode = "critical"
 	compiled := mustCompilePlan(t, compiler, changed)
 	if base.StateCompatibilityHash() != compiled.StateCompatibilityHash() || base.Fingerprints() != compiled.Fingerprints() ||
-		base.Levels()[0].Fingerprints() != compiled.Levels()[0].Fingerprints() {
+		base.Levels().At(0).Fingerprints() != compiled.Levels().At(0).Fingerprints() {
 		t.Fatalf("non-state semantic change altered fingerprints: base=%+v changed=%+v", base.Fingerprints(), compiled.Fingerprints())
 	}
 }
@@ -774,7 +774,7 @@ func compileThresholdForTest(t testing.TB, config map[string]any) (Predicate, Nu
 	plan.StrategyIR.InputProjection.DataUnit = dataUnit
 	plan.StrategyIR.Levels[0].DetectPlan.Algorithms[0].Config = mustJSON(config)
 	compiled := mustCompilePlan(t, newTestCompiler(t), plan)
-	detector := compiled.Levels()[0].Detectors()[0]
+	detector := compiled.Levels().At(0).Detectors()[0]
 	normalizer, ok := compiled.Normalizer(detector.NormalizerRef())
 	if !ok {
 		t.Fatalf("Normalizer(%q) not found", detector.NormalizerRef())

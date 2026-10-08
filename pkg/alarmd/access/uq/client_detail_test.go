@@ -99,6 +99,82 @@ func TestClientRecordsTimeoutDetail(t *testing.T) {
 	}
 }
 
+// A Slot query that does not come back splits its budget where its window
+// could be read and where its request went out: the settling wait, how late
+// after it the query began, what it had left to its deadline, and what it
+// used - the first three adding up to the whole budget to the millisecond.
+// Begun two seconds late with a few hundred milliseconds left, the timeout
+// used what it was given; begun past its deadline, it had less than nothing,
+// and says so rather than zero. A backend that refused at once used almost
+// nothing of the attempt's budget, measured to the attempt's deadline and
+// not a caller's; a recovery that arrives after its window was readable had
+// no settling wait. A read that is not a Slot's reports no timing.
+func TestAFailedSlotQuerySplitsItsBudgetAtItsStart(t *testing.T) {
+	whole := func(timing *execution.AttemptTiming, attempt execution.QueryAttempt) bool {
+		return timing.SettleMillis+timing.StartLateMillis+timing.BudgetMillis == attempt.DeadlineUnixMilli-attempt.BudgetStartUnixMilli
+	}
+	server := stalledResponseServer(t)
+	client, err := NewClient(server.URL, "alarmd-shadow", server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt := validAttempt(t)
+	now := time.Now()
+	attempt.BudgetStartUnixMilli = now.Add(-3 * time.Second).UnixMilli()
+	attempt.ReadyAtUnixMilli = attempt.BudgetStartUnixMilli + 1_000
+	attempt.DeadlineUnixMilli = now.Add(300 * time.Millisecond).UnixMilli()
+	completion, err := client.Execute(context.Background(), attempt, &collectingSink{})
+	fact := failedAttempt(t, completion, err)
+	timing := fact.Timing
+	if fact.Detail != "transport=timeout" || timing == nil {
+		t.Fatalf("attempt=%+v, want a timeout with its timing", fact)
+	}
+	if !whole(timing, attempt) || timing.SettleMillis != 1_000 || timing.StartLateMillis < 2_000 || timing.StartLateMillis > 3_500 ||
+		timing.BudgetMillis <= 0 || timing.BudgetMillis > 300 ||
+		timing.ElapsedMillis < timing.BudgetMillis-50 || timing.ElapsedMillis > timing.BudgetMillis+1000 {
+		t.Fatalf("timing = %+v, want 1 s settling, about 2 s late, at most 300 ms given and all of it used, adding up to the budget", *timing)
+	}
+
+	late := attempt
+	late.BudgetStartUnixMilli = time.Now().Add(-10 * time.Second).UnixMilli()
+	late.ReadyAtUnixMilli = late.BudgetStartUnixMilli
+	late.DeadlineUnixMilli = time.Now().Add(-2 * time.Second).UnixMilli()
+	completion, err = client.Execute(context.Background(), late, &collectingSink{})
+	fact = failedAttempt(t, completion, err)
+	if fact.Detail != "transport=timeout" || fact.Timing == nil || !whole(fact.Timing, late) || fact.Timing.BudgetMillis > -2_000 {
+		t.Fatalf("a query begun past its deadline = %+v timing %+v, want a budget below zero adding up to the whole", fact, fact.Timing)
+	}
+
+	refused := fixtureClient(t, http.StatusServiceUnavailable, "", DefaultLimits())
+	caller, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	attempt.BudgetStartUnixMilli = time.Now().Add(-time.Second).UnixMilli()
+	attempt.ReadyAtUnixMilli = attempt.BudgetStartUnixMilli
+	attempt.DeadlineUnixMilli = time.Now().Add(time.Minute).UnixMilli()
+	completion, err = refused.Execute(caller, attempt, &collectingSink{})
+	fact = failedAttempt(t, completion, err)
+	if fact.Detail != "http_status=503" || fact.Timing == nil || !whole(fact.Timing, attempt) || fact.Timing.BudgetMillis < 50_000 || fact.Timing.ElapsedMillis > 5_000 {
+		t.Fatalf("an immediate refusal = %+v timing %+v, want the attempt's large budget barely used", fact, fact.Timing)
+	}
+
+	recovery := attempt
+	recovery.ReadyAtUnixMilli = recovery.BudgetStartUnixMilli - 30_000
+	completion, err = refused.Execute(context.Background(), recovery, &collectingSink{})
+	fact = failedAttempt(t, completion, err)
+	if fact.Timing == nil || !whole(fact.Timing, recovery) || fact.Timing.SettleMillis != 0 || fact.Timing.StartLateMillis < 1_000 {
+		t.Fatalf("a recovery arriving after its window was readable = %+v, want no settling wait", fact.Timing)
+	}
+
+	// A diagnostic or recheck read runs under a deadline of its own, and
+	// with no Slot there is no budget to time it against.
+	bounded, cancelBounded := context.WithTimeout(context.Background(), time.Minute)
+	defer cancelBounded()
+	completion, err = refused.execute(bounded, bounded, queryIdentity{Spec: attempt.Spec, AttemptNo: 1}, &collectingSink{}, nil)
+	if fact := failedAttempt(t, completion, err); fact.Timing != nil {
+		t.Fatalf("a read that is not a Slot's reported timing %+v", *fact.Timing)
+	}
+}
+
 func TestClientRecordsResponseContractDetailForMissingIsPartial(t *testing.T) {
 	body := `{"series":[{"name":"_result0","columns":["_time","_result"],"types":["int64","float64"],"group_keys":["bk_target_ip"],"group_values":["127.0.0.1"],"values":[[1700123456789,12.5]]}]}`
 	client := fixtureClient(t, http.StatusOK, body, DefaultLimits())

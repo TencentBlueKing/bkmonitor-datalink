@@ -35,6 +35,9 @@ type platformSettingsCollector struct {
 	refreshes   *prometheus.Desc
 	unavailable *prometheus.Desc
 	changes     *prometheus.Desc
+	sourceLayer *prometheus.Desc
+	enabled     *prometheus.Desc
+	entries     *prometheus.Desc
 }
 
 func newPlatformSettingsCollector() *platformSettingsCollector {
@@ -70,6 +73,16 @@ func newPlatformSettingsCollector() *platformSettingsCollector {
 				"page produces exactly once on every replica. The effective value is the publication resolved "+
 				"through the deployment's own layer and the code defaults, so a publication that repeats what "+
 				"was already in effect counts nothing.", "field"),
+		sourceLayer: descriptor("platform_setting_source",
+			"Which layer each field's effective value came from, 1 on it and 0 on the others: DYNAMIC (the "+
+				"platform's publication), VALUES (this deployment's own layer), DEFAULT (the platform's code "+
+				"default). A layer stating the code default falls through to the one below it, as the platform's "+
+				"own consumers resolve it.", "field", "source"),
+		enabled: descriptor("platform_setting_enabled",
+			"The effective value of a boolean field, 1 true and 0 false: is_access_bk_data decides whether a "+
+				"CMDB-level query reads the base table.", "field"),
+		entries: descriptor("platform_setting_entries",
+			"How many entries the effective value of a list field has.", "field"),
 	}
 }
 
@@ -79,6 +92,9 @@ func (c *platformSettingsCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.refreshes
 	ch <- c.unavailable
 	ch <- c.changes
+	ch <- c.sourceLayer
+	ch <- c.enabled
+	ch <- c.entries
 }
 
 func (c *platformSettingsCollector) Collect(ch chan<- prometheus.Metric) {
@@ -111,6 +127,25 @@ func (c *platformSettingsCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 	for _, field := range platformsettings.Fields {
 		ch <- prometheus.MustNewConstMetric(c.changes, prometheus.CounterValue, float64(stats.Changes[field]), string(field))
+		for _, source := range platformsettings.HorizonSources {
+			value := 0.0
+			if stats.Sources[field] == source {
+				value = 1
+			}
+			ch <- prometheus.MustNewConstMetric(c.sourceLayer, prometheus.GaugeValue, value, string(field), string(source))
+		}
+	}
+	enabled := 0.0
+	if stats.Settings.IsAccessBKData {
+		enabled = 1
+	}
+	ch <- prometheus.MustNewConstMetric(c.enabled, prometheus.GaugeValue, enabled, string(platformsettings.FieldIsAccessBKData))
+	for field, entries := range map[platformsettings.Field]int{
+		platformsettings.FieldHostDisableMonitorStates: len(stats.Settings.HostDisableMonitorStates),
+		platformsettings.FieldBKDataCMDBLevelTables:    len(stats.Settings.BKDataCMDBLevelTables),
+		platformsettings.FieldFileSystemTypeIgnore:     len(stats.Settings.FileSystemTypeIgnore),
+	} {
+		ch <- prometheus.MustNewConstMetric(c.entries, prometheus.GaugeValue, float64(entries), string(field))
 	}
 }
 

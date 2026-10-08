@@ -20,7 +20,7 @@ import (
 
 // objectCatalogTwoGroupsWithTargetPlan is objectCatalogTwoGroups with a
 // target_plan on the business-3 strategy.
-func objectCatalogTwoGroupsWithTargetPlan(t *testing.T) controlplane.Catalog {
+func objectCatalogTwoGroupsWithTargetPlan(t *testing.T, target ...json.RawMessage) controlplane.Catalog {
 	t.Helper()
 	documents := realThresholdDocuments(t)
 	var decoded map[string]json.RawMessage
@@ -34,6 +34,9 @@ func objectCatalogTwoGroupsWithTargetPlan(t *testing.T) controlplane.Catalog {
 	}
 	items[0]["target_plan"] = json.RawMessage(`{"schema_version":1,"model_id":"cw-Host","target_rule":"host_id","failure_policy":"no_match",
 		"static_targets":[{"bk_host_id":101}],"dynamic_groups":[{"dynamic_group_id":"1001"}],"dynamic_topologies":[]}`)
+	if len(target) > 0 {
+		items[0]["target_plan"] = target[0]
+	}
 	decoded["items"], _ = json.Marshal(items)
 	documentB, err := json.Marshal(decoded)
 	if err != nil {

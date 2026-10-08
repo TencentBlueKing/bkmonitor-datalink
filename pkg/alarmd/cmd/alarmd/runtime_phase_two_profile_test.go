@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/config"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
@@ -256,5 +257,76 @@ func TestRuntimeProfileNamesTheCanonicalEncoder(t *testing.T) {
 	}
 	if established.Digest == facts.Digest {
 		t.Fatal("two deployments running different encoders share a runtime config digest")
+	}
+}
+
+// The alert link's switches are on the profile, the Console as configured or
+// not and never its address: whether the absent-strategy close sends is
+// otherwise readable only from the file the process started with.
+func TestThePhaseTwoRuntimeProfileSaysWhetherTheAbsentCloseSends(t *testing.T) {
+	cfg := config.Default()
+	off, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if off.Linkd != (observability.RuntimeLinkdFacts{}) {
+		t.Fatalf("default linkd facts = %+v, want nothing configured and the close not sending", off.Linkd)
+	}
+	cfg.PhaseTwo.Linkd.ConsoleURL = "http://DO_NOT_LOG_CONSOLE:8080"
+	cfg.PhaseTwo.Linkd.EventSourceID, cfg.PhaseTwo.Linkd.HookName = "alarmd", "hook-a"
+	cfg.PhaseTwo.Linkd.AbsentCloseSend = true
+	on, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := observability.RuntimeLinkdFacts{ConsoleConfigured: true, EventSourceID: "alarmd", HookName: "hook-a", AbsentCloseSend: true}
+	encoded, _ := json.Marshal(on)
+	if on.Linkd != want || strings.Contains(string(encoded), "DO_NOT_LOG") || on.Digest == off.Digest {
+		t.Fatalf("linkd facts = %+v (want %+v), digest moved %v: %s", on.Linkd, want, on.Digest != off.Digest, encoded)
+	}
+}
+
+// The runtime facts name the retention the deployment runs on, beside every
+// input, and the lengths agree with their inputs as reported: a reader checks
+// them from the facts alone, without the configuration file or the functions.
+// Both sides of each larger-of: the catalog TTL over and under what the
+// recovery contract needs, and the state store's maximum TTL over and under
+// the catalog retention.
+func TestTheRuntimeProfileNamesTheRetentionAndItsInputs(t *testing.T) {
+	for _, arm := range []struct {
+		name               string
+		catalogTTL, maxTTL time.Duration
+		catalogIsTTL       bool
+		limitIsMaxTTL      bool
+	}{
+		{name: "the catalog TTL and the state ceiling decide", catalogTTL: 96 * time.Hour, maxTTL: 720 * time.Hour, catalogIsTTL: true, limitIsMaxTTL: true},
+		{name: "the recovery contract and the catalog decide", catalogTTL: time.Hour, maxTTL: 2 * time.Hour},
+	} {
+		t.Run(arm.name, func(t *testing.T) {
+			cfg := config.Default()
+			cfg.PhaseTwo.Control.CatalogTTL = config.Duration(arm.catalogTTL)
+			cfg.Redis.MaxTTL = config.Duration(arm.maxTTL)
+			facts, err := phaseTwoRuntimeProfile(cfg, "cpu_quota", 8)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r := facts.Retention
+			if r.CatalogTTLSeconds != int64(arm.catalogTTL/time.Second) || r.RedisMaxTTLSeconds != int64(arm.maxTTL/time.Second) ||
+				r.CatalogKeyCadenceSeconds != 24*3600 || r.DownstreamExecutionReserveSeconds <= 0 || r.MaxReplayAgeSeconds <= 0 ||
+				r.PublicationDelayAllowanceSeconds <= 0 || r.PostRecoveryTerminalDelaySeconds <= 0 || r.RedisRestartMarginSeconds <= 0 {
+				t.Fatalf("inputs = %+v, want the configured and derived values", r)
+			}
+			minimum := r.PublicationDelayAllowanceSeconds + r.CatalogKeyCadenceSeconds - r.DownstreamExecutionReserveSeconds +
+				r.MaxReplayAgeSeconds + r.PostRecoveryTerminalDelaySeconds
+			if r.SnapshotMinimumSeconds != minimum {
+				t.Fatalf("snapshot minimum = %d, want %d from the inputs as reported", r.SnapshotMinimumSeconds, minimum)
+			}
+			if wantCatalog := max(r.CatalogTTLSeconds, minimum); r.CatalogSeconds != wantCatalog || (r.CatalogSeconds == r.CatalogTTLSeconds) != arm.catalogIsTTL {
+				t.Fatalf("catalog = %d, want %d (the TTL deciding: %v)", r.CatalogSeconds, wantCatalog, arm.catalogIsTTL)
+			}
+			if wantLimit := max(r.RedisMaxTTLSeconds, r.CatalogSeconds); r.ObjectLimitSeconds != wantLimit || (r.ObjectLimitSeconds == r.RedisMaxTTLSeconds) != arm.limitIsMaxTTL {
+				t.Fatalf("object limit = %d, want %d (the state ceiling deciding: %v)", r.ObjectLimitSeconds, wantLimit, arm.limitIsMaxTTL)
+			}
+		})
 	}
 }

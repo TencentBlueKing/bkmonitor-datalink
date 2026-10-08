@@ -171,8 +171,55 @@ type WriterEvidence struct {
 	// State is the reader's own reading of the copy, in the reader's closed
 	// words, when it keeps one: never_loaded, index_stale, index_empty for the
 	// host cache; not_configured, authoritative and the like for the settings
-	// copy. Empty where the reader keeps no such state.
+	// copy; no_groups_referenced, loaded, emptied_held and refresh_failed for
+	// the target groups. Empty where the reader keeps no such state.
 	State string `json:"state,omitempty"`
+	// Refused is what the reader read of the writer's records and could not
+	// use, where it counts that: the host cache's. Absent elsewhere, and
+	// before the first load.
+	Refused *RefusedRecords `json:"refused,omitempty"`
+	// Failing is the copies the reader has served past failed reads of them
+	// longest, at most MaxFailingCopiesListed, where it keeps copies by name:
+	// the target group store's groups. FailingTotal is how many there are,
+	// and FailingReasons how many of them each reason covers. Absent with
+	// none.
+	Failing        []FailingCopy  `json:"failing,omitempty"`
+	FailingTotal   int            `json:"failing_total,omitempty"`
+	FailingReasons map[string]int `json:"failing_reasons,omitempty"`
+}
+
+// MaxFailingCopiesListed is how many failing copies a replica's evidence
+// names. The evidence rides in every replica's published head, and every
+// copy fails at once when Redis loads: three hundred groups named were
+// about 29 KB a replica, where the head is about 13 KB. The count and the
+// reasons cover the rest.
+const MaxFailingCopiesListed = 8
+
+// FailingCopy is one copy served past reads of it that failed: its name,
+// how long ago the first failed read after its last read was, and why the
+// latest failed, in closed words: the code Redis answered its key with
+// (LOADING, BUSY, WRONGTYPE), timed_out or transport.
+type FailingCopy struct {
+	ID              string  `json:"id"`
+	SinceAgeSeconds float64 `json:"since_age_seconds"`
+	Reason          string  `json:"reason"`
+}
+
+// RefusedRecords is what the latest load of the CMDB caches read and could
+// not use, each taken as absent: fields of the host and service instance
+// hashes whose record does not decode, and topology nodes of decoded records
+// that do not decode to an object and a numeric instance. Host counts fields,
+// not hosts: the writer publishes every host under two fields. The First
+// fields name the first of each by the hash field it was read under, so the
+// record can be read back from the cache; FirstTopoNode is
+// "host:<field>" or "service_instance:<field>", the record the node was in.
+type RefusedRecords struct {
+	Host                 int    `json:"host"`
+	ServiceInstance      int    `json:"service_instance"`
+	TopoNode             int    `json:"topo_node"`
+	FirstHost            string `json:"first_host,omitempty"`
+	FirstServiceInstance string `json:"first_service_instance,omitempty"`
+	FirstTopoNode        string `json:"first_topo_node,omitempty"`
 }
 
 // The endpoint roles, closed. The page's wording table is held to this list.

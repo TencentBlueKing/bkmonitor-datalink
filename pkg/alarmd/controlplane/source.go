@@ -27,17 +27,43 @@ type StrategySource interface {
 // from one round to the next. WrittenAt is what the marker says about when
 // the publisher wrote it, for reporting its age, and is zero when it says
 // nothing. Present false means the source had no marker to read this round.
+//
+// HoldsLastGoodFor is the publisher's own statement, made for this very
+// signal, that a strategy leaves the active set only for a fact about the
+// strategy itself - disabled, deleted, nothing left of it to run - and never
+// because publishing it failed: one that fails to publish keeps its last good
+// document. With it, a strategy missing from the set is gone for its own
+// reasons. Without it - an older publisher, or one that says nothing - a
+// missing strategy may be one the publisher dropped by mistake. The statement
+// is about one active set, and names it: HoldsLastGoodFor is the SHA-256, in
+// lowercase hex, of the exact bytes the publisher stored as that set, and
+// empty when there is no statement. It holds for an observation only when
+// the active set that observation read is those very bytes
+// (ActiveSetDigestSource); a set rewritten since, by anyone, is a set the
+// statement does not cover.
 type SourceChangeSignal struct {
-	Present   bool
-	Value     string
-	WrittenAt time.Time
+	Present          bool
+	Value            string
+	WrittenAt        time.Time
+	HoldsLastGoodFor string
 }
 
 // ChangeSignalSource is a StrategySource whose publisher leaves a
 // SourceChangeSignal. A reconciler uses it to decide whether a round has to
-// read the strategy documents at all; the signal never enters an observation.
+// read the strategy documents at all; the signal never enters an observation
+// identity.
 type ChangeSignalSource interface {
 	ChangeSignal(context.Context) (SourceChangeSignal, error)
+}
+
+// ActiveSetDigestSource is a StrategySource that can name the exact bytes its
+// publisher stored as the active set. ActiveStrategyIDsWithDigest returns
+// what ActiveStrategyIDs returns and, from the same read, the SHA-256 of the
+// stored value exactly as the store returned it, in lowercase hex. A source
+// that cannot name them reads as one whose publisher made no statement about
+// the set (SourceChangeSignal.HoldsLastGoodFor).
+type ActiveSetDigestSource interface {
+	ActiveStrategyIDsWithDigest(context.Context) ([]string, string, error)
 }
 
 type StableObservation struct {
@@ -84,13 +110,18 @@ func deriveObservationID(strategies []SourceStrategy) (string, error) {
 	return contract.DeriveCanonicalDigestV2("alarmd-source-observation-v1", items)
 }
 
+// observedCycle is one read of the source. activeSet is the digest of the
+// stored active set exactly as the read that built the cycle returned it -
+// the first of its two reads, whose ids the documents were asked for - and
+// empty when the source cannot name those bytes (ActiveSetDigestSource).
 type observedCycle struct {
 	ids, digests []string
 	strategies   []SourceStrategy
+	activeSet    string
 }
 
 func observeCycle(ctx context.Context, source StrategySource) (observedCycle, error) {
-	before, err := readActiveSet(ctx, source)
+	before, activeSet, err := readNamedActiveSet(ctx, source)
 	if err != nil {
 		return observedCycle{}, err
 	}
@@ -130,13 +161,33 @@ func observeCycle(ctx context.Context, source StrategySource) (observedCycle, er
 		ordered = append(ordered, strategy)
 		digests = append(digests, digest)
 	}
-	return observedCycle{ids: before, digests: digests, strategies: ordered}, nil
+	return observedCycle{ids: before, digests: digests, strategies: ordered, activeSet: activeSet}, nil
 }
 
 // readActiveSet reads the active set and makes it canonical, claiming the
 // exit for whichever of the two refused it.
 func readActiveSet(ctx context.Context, source StrategySource) ([]string, error) {
-	ids, err := source.ActiveStrategyIDs(ctx)
+	return canonicalActiveSetRead(source.ActiveStrategyIDs(ctx))
+}
+
+// readNamedActiveSet is readActiveSet that also returns the digest of the
+// bytes the read returned, when the source can name them, and empty
+// otherwise. Only the read a cycle is built from needs it.
+func readNamedActiveSet(ctx context.Context, source StrategySource) ([]string, string, error) {
+	named, ok := source.(ActiveSetDigestSource)
+	if !ok {
+		ids, err := readActiveSet(ctx, source)
+		return ids, "", err
+	}
+	ids, digest, err := named.ActiveStrategyIDsWithDigest(ctx)
+	ids, err = canonicalActiveSetRead(ids, err)
+	if err != nil {
+		return nil, "", err
+	}
+	return ids, digest, nil
+}
+
+func canonicalActiveSetRead(ids []string, err error) ([]string, error) {
 	if err != nil {
 		return nil, exitAt(activeSetExit(err), err)
 	}

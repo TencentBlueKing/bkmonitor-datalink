@@ -154,3 +154,26 @@ func TestAggregateNamesQueryGroupsTheCutoverHeldBack(t *testing.T) {
 		t.Fatalf("nothing held back, degradations = %+v", view.Degradations)
 	}
 }
+
+// A missing activation header the leader has not written back degrades the
+// verdict by name, with how long and how the last attempt ended. Absent
+// facts, no degradation.
+func TestAggregateNamesAnActivationHeaderTheLeaderCouldNotWriteBack(t *testing.T) {
+	snapshots := []Snapshot{
+		{Replica: "pod-a", TakenAt: now, Owned: 1, Determined: 1,
+			ActivationHeader: &ActivationHeaderFacts{MissingSeconds: 90, LastRebuild: "body_pending"}},
+		{Replica: "pod-b", TakenAt: now, Owned: 1, Determined: 1},
+	}
+	view := Aggregate(Expectation{Known: true, QueryGroups: 2}, snapshots, []string{"pod-a", "pod-b"}, now, freshness)
+	if len(view.Degradations) != 1 || view.Degradations[0].Kind != DegradationActivationHeaderMissing || view.Degradations[0].Replica != "pod-a" ||
+		!strings.Contains(view.Degradations[0].Text, "body_pending") || view.Degradations[0].AgeSeconds == nil || *view.Degradations[0].AgeSeconds != 90 {
+		t.Fatalf("degradations = %+v, want ACTIVATION_HEADER_MISSING for 90s after body_pending", view.Degradations)
+	}
+	if view.Health != HealthDegraded {
+		t.Fatalf("health = %s, want DEGRADED", view.Health)
+	}
+	snapshots[0].ActivationHeader = nil
+	if view := Aggregate(Expectation{Known: true, QueryGroups: 2}, snapshots, []string{"pod-a", "pod-b"}, now, freshness); len(view.Degradations) != 0 {
+		t.Fatalf("header present, degradations = %+v", view.Degradations)
+	}
+}

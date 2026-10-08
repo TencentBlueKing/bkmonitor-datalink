@@ -214,6 +214,47 @@ type Layer struct {
 	Origin                       HorizonSource
 }
 
+// ResolveSources is Resolve and, for every field, the layer whose value is
+// the effective one: the highest layer that states exactly that value, or
+// the code default when none does. A layer stating the default falls
+// through under the protocol's rule, and the source then says which layer
+// below it the value came from - a platform publishing false beside a
+// deployment stating true reads VALUES, not DYNAMIC.
+func ResolveSources(defaults Settings, layers ...Layer) (Settings, map[Field]HorizonSource) {
+	resolved := Resolve(defaults, layers...)
+	sources := make(map[Field]HorizonSource, len(Fields))
+	for _, field := range Fields {
+		sources[field] = HorizonSourceDefault
+		for _, layer := range layers {
+			if layer.states(field, resolved) {
+				sources[field] = layer.Origin
+				break
+			}
+		}
+	}
+	sources[FieldNoDataTrackingHorizonSeconds] = resolved.NoDataTrackingHorizonSource
+	return resolved, sources
+}
+
+// states reports whether the layer states field with the value it has in
+// resolved.
+func (layer Layer) states(field Field, resolved Settings) bool {
+	switch field {
+	case FieldHostDisableMonitorStates:
+		return layer.HostDisableMonitorStates != nil && equalStrings(*layer.HostDisableMonitorStates, resolved.HostDisableMonitorStates)
+	case FieldIsAccessBKData:
+		return layer.IsAccessBKData != nil && *layer.IsAccessBKData == resolved.IsAccessBKData
+	case FieldBKDataCMDBLevelTables:
+		return layer.BKDataCMDBLevelTables != nil && equalStrings(*layer.BKDataCMDBLevelTables, resolved.BKDataCMDBLevelTables)
+	case FieldFileSystemTypeIgnore:
+		return layer.FileSystemTypeIgnore != nil && equalStrings(*layer.FileSystemTypeIgnore, resolved.FileSystemTypeIgnore)
+	case FieldNoDataTrackingHorizonSeconds:
+		return layer.NoDataTrackingHorizonSeconds != nil && *layer.NoDataTrackingHorizonSeconds == resolved.NoDataTrackingHorizonSeconds
+	default:
+		return false
+	}
+}
+
 // Resolve applies the protocol's fallback rule to the layers, highest
 // precedence first. A layer's value is taken while the resolved value is
 // still the code default; a value equal to the default therefore leaves

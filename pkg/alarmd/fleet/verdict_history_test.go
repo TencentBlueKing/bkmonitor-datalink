@@ -24,9 +24,9 @@ func TestTheVerdictRecordKeepsEachChangeAndWhatDecidedIt(t *testing.T) {
 	degraded := &View{Health: HealthDegraded, Covered: 51, Determined: 51,
 		Degradations: []Degradation{{Kind: DegradationOpenAlertSetStale, Replica: "a"}, {Kind: DegradationOpenAlertSetStale, Replica: "b"}, {Kind: DegradationControlSourceStale, Replica: "a"}},
 		Gaps:         []Gap{{Kind: GapReplicaMissing, Replica: "c"}}}
-	service.RecordVerdict(healthy, at)
-	service.RecordVerdict(healthy, at.Add(time.Minute))
-	service.RecordVerdict(degraded, at.Add(2*time.Minute))
+	service.RecordSummarizedVerdict(healthy, ReplicaPart{}, at)
+	service.RecordSummarizedVerdict(healthy, ReplicaPart{}, at.Add(time.Minute))
+	service.RecordSummarizedVerdict(degraded, ReplicaPart{}, at.Add(2*time.Minute))
 	changes, since := service.VerdictHistory()
 	if !since.Equal(at) || len(changes) != 2 {
 		t.Fatalf("since %v changes %+v, want the first verdict and one change", since, changes)
@@ -42,7 +42,7 @@ func TestTheVerdictRecordKeepsEachChangeAndWhatDecidedIt(t *testing.T) {
 	}
 	// A decision that started before the last recorded one is dropped, not
 	// recorded out of order.
-	service.RecordVerdict(healthy, at.Add(time.Minute))
+	service.RecordSummarizedVerdict(healthy, ReplicaPart{}, at.Add(time.Minute))
 	if again, _ := service.VerdictHistory(); len(again) != 2 {
 		t.Fatalf("a late decision was recorded: %+v", again)
 	}
@@ -51,7 +51,7 @@ func TestTheVerdictRecordKeepsEachChangeAndWhatDecidedIt(t *testing.T) {
 		if i%2 == 0 {
 			view = degraded
 		}
-		service.RecordVerdict(view, at.Add(time.Duration(10+i)*time.Minute))
+		service.RecordSummarizedVerdict(view, ReplicaPart{}, at.Add(time.Duration(10+i)*time.Minute))
 	}
 	changes, _ = service.VerdictHistory()
 	if len(changes) != MaxVerdictChanges {

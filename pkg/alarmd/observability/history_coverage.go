@@ -112,18 +112,36 @@ type HistoryCoverageFacts struct {
 	// window; these are the ones a reader would ask about next. Short above
 	// their number says the rest were counted and not named.
 	Windows []HistoryWindowFact `json:"windows,omitempty"`
+	// MissingMinutes is every minute at which some short window of the run
+	// has a position with no point -- the named windows and the rest --
+	// oldest first, at most MaxHistoryMissingMinutes of them.
+	// MissingMinutesTruncated says the list is not the whole union, and
+	// ShortUnusable how many short windows held a record their Level could
+	// not use. Whose a missing position is follows from the round that
+	// evaluated its minute, so these are what a reader needs to judge the
+	// short windows Windows does not name.
+	MissingMinutes          []int64 `json:"missing_minutes,omitempty"`
+	MissingMinutesTruncated bool    `json:"missing_minutes_truncated,omitempty"`
+	ShortUnusable           uint32  `json:"short_unusable,omitempty"`
 	// End is the newest record source time any window of this run ended at:
 	// the minute this round evaluated, on every run that summarised a
 	// window. It is what lets a later hole at that minute be matched to
 	// this round.
 	End int64 `json:"end,omitempty"`
+	// WindowStart is the oldest position any window of the run reaches back
+	// to: a reader matching holes to rounds needs the rounds from here to End
+	// and no older. Carried when it is a minute no later than End; dropped
+	// otherwise, never the reason a set is refused.
+	WindowStart int64 `json:"window_start,omitempty"`
 }
 
 // MaxHistoryWindows and MaxHistoryWindowHoles are the bounds the evaluator
 // names windows and holes under; facts beyond them did not come from it.
+// MaxHistoryMissingMinutes bounds the union of missing minutes the same way.
 const (
-	MaxHistoryWindows     = 8
-	MaxHistoryWindowHoles = 16
+	MaxHistoryWindows        = 8
+	MaxHistoryWindowHoles    = 16
+	MaxHistoryMissingMinutes = 64
 )
 
 // HistoryWindowFact is one short window by identity: the series digest and
@@ -230,7 +248,8 @@ func (f HistoryCoverageFacts) reportsNothing() bool {
 		f.Guarded == 0 && f.Fresh == 0 && f.ShortFresh == 0 &&
 		f.Abnormal == 0 && f.AbnormalOnIncomplete == 0 &&
 		f.Unusable == 0 && f.UnusableReason == "" &&
-		len(f.Windows) == 0 && f.End == 0 &&
+		len(f.Windows) == 0 && f.End == 0 && f.WindowStart == 0 &&
+		len(f.MissingMinutes) == 0 && !f.MissingMinutesTruncated && f.ShortUnusable == 0 &&
 		f.Resumed == 0 && f.Constrained == 0
 }
 
@@ -246,7 +265,8 @@ func (f HistoryCoverageFacts) summarisedNothing() bool {
 		f.Guarded == 0 && f.Fresh == 0 && f.ShortFresh == 0 &&
 		f.Abnormal == 0 && f.AbnormalOnIncomplete == 0 &&
 		f.Unusable == 0 && f.UnusableReason == "" &&
-		len(f.Windows) == 0 && f.End == 0
+		len(f.Windows) == 0 && f.End == 0 && f.WindowStart == 0 &&
+		len(f.MissingMinutes) == 0 && !f.MissingMinutesTruncated && f.ShortUnusable == 0
 }
 
 func rejectCoverage(rule CoverageRejectionRule) (*HistoryCoverageFacts, *CoverageRejection) {
@@ -322,6 +342,7 @@ func normalizeHistoryCoverageFacts(facts *HistoryCoverageFacts) (*HistoryCoverag
 	if copied.Short == 0 {
 		copied.WorstValid, copied.WorstRequired, copied.Empty = 0, 0, 0
 	}
+	copied.normalizeMissingMinutes()
 	// An empty window is one whose worst valid count is zero by construction.
 	// A pair saying otherwise did not come from counting the same windows, so
 	// the count is not describing this run.
@@ -371,4 +392,38 @@ func normalizeHistoryCoverageFacts(facts *HistoryCoverageFacts) (*HistoryCoverag
 		copied.Windows = nil
 	}
 	return &copied, nil
+}
+
+// normalizeMissingMinutes keeps the missing-minute union only when it can be
+// what the evaluator built: sorted, unique, within the bound, no later than
+// the round's own minute, and no more unusable short windows than short ones.
+// A union that is not is dropped and marked truncated rather than refusing
+// the set: the union is only ever read to say more about windows the set does
+// not name, and marked truncated it says nothing, which is the reading it had
+// before it existed. With nothing short there is nothing for it to describe.
+func (f *HistoryCoverageFacts) normalizeMissingMinutes() {
+	// A window start the round could not have had is not carried; the reader
+	// then keeps rounds as it would for a worker that sends none.
+	if f.WindowStart < 0 || (f.WindowStart > 0 && (f.End <= 0 || f.WindowStart > f.End)) {
+		f.WindowStart = 0
+	}
+	if f.Short == 0 {
+		f.MissingMinutes, f.MissingMinutesTruncated, f.ShortUnusable = nil, false, 0
+		return
+	}
+	valid := len(f.MissingMinutes) <= MaxHistoryMissingMinutes && f.ShortUnusable <= f.Short
+	for i, minute := range f.MissingMinutes {
+		if minute <= 0 || (f.End > 0 && minute > f.End) || (i > 0 && minute <= f.MissingMinutes[i-1]) {
+			valid = false
+			break
+		}
+	}
+	if !valid {
+		f.MissingMinutes, f.MissingMinutesTruncated = nil, true
+		return
+	}
+	f.MissingMinutes = append([]int64(nil), f.MissingMinutes...)
+	if len(f.MissingMinutes) == 0 {
+		f.MissingMinutes = nil
+	}
 }

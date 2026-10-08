@@ -11,9 +11,10 @@ package state
 
 import (
 	"context"
-	"os/exec"
 	"testing"
 	"time"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/internal/redistest"
 )
 
 // What the script does with a replacing write, executed by Redis rather than
@@ -26,10 +27,7 @@ import (
 // is the only test that can tell, and it is the same reason the renewal script
 // has one.
 func TestApplyHashDeltaReplacesTheWholeRecordWhenAsked(t *testing.T) {
-	executable, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server is not installed")
-	}
+	executable := redistest.Server(t)
 	address := reserveTCPAddress(t)
 	startRedisServer(t, executable, address)
 	backend, err := NewRedisBackend(RedisBackendOptions{
@@ -108,10 +106,7 @@ func TestApplyHashDeltaReplacesTheWholeRecordWhenAsked(t *testing.T) {
 // must not relax the race guard: two writers replacing the same record would
 // otherwise each overwrite the other, and the loser would never know.
 func TestAReplacingWriteStillLosesToAConcurrentOne(t *testing.T) {
-	executable, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server is not installed")
-	}
+	executable := redistest.Server(t)
 	address := reserveTCPAddress(t)
 	startRedisServer(t, executable, address)
 	backend, err := NewRedisBackend(RedisBackendOptions{

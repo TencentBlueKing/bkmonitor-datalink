@@ -54,6 +54,9 @@ type StrategyLookupFacts struct {
 	// Dispositions is every disposition the round recorded for the
 	// strategy, accepted and withheld, one per item.
 	Dispositions []StrategyDisposition
+	// Global says the source marks the strategy global, whatever the round
+	// did with it (controlplane.StrategyLookup.Global).
+	Global bool
 }
 
 // StrategyPublication is the catalog a standing was answered from.
@@ -77,12 +80,16 @@ type StrategyPlanRef struct {
 // StrategyDisposition is what the round decided about one item of the
 // strategy: ACCEPTED, or a disposition with the reason and the field it
 // refused on. The same words the first screen's source facts count by.
+// Detail is the refusal in the compiler's words, bounded, when a word and a
+// path are not enough to act on - which target field, which condition
+// method - and empty for every refusal that carries none.
 type StrategyDisposition struct {
 	Scope       string `json:"scope,omitempty"`
 	LevelID     uint32 `json:"level_id,omitempty"`
 	Disposition string `json:"disposition"`
 	Reason      string `json:"reason,omitempty"`
 	FieldPath   string `json:"field_path,omitempty"`
+	Detail      string `json:"detail,omitempty"`
 }
 
 // StrategyLookupFunc answers the standing of one strategy from the
@@ -115,11 +122,6 @@ type CatalogAbsenceFacts struct {
 	// recorded anywhere; the age is what exists, and deriving the count from
 	// it would be arithmetic presented as a measurement.
 	FailingSeconds *float64
-	// DirectoryMounted says this process also serves the strategy directory,
-	// which answers the same question from the store rather than from the
-	// published catalog. It is the way out while the catalog is absent, and
-	// it is only offered when the route is actually mounted here.
-	DirectoryMounted bool
 }
 
 // CatalogAbsenceFunc reads that state. Nil leaves the refusal saying it does
@@ -168,15 +170,7 @@ type CatalogAbsence struct {
 	Exit           string   `json:"exit,omitempty"`
 	Text           string   `json:"text,omitempty"`
 	FailingSeconds *float64 `json:"failing_seconds,omitempty"`
-	// Next names the route that answers the same question while this one
-	// cannot, and is absent when this process does not serve it. Absent is
-	// the honest answer: a way out that is not mounted is not a way out.
-	Next string `json:"next,omitempty"`
 }
-
-// strategyDirectoryRoute is where the same question is answered from the
-// store rather than from the published catalog.
-const strategyDirectoryRoute = "/api/objects?scope=strategies"
 
 // controlRoleLeader and controlExitNone are the control plane's words as
 // they arrive here. Spelled out rather than imported: this package does not
@@ -196,9 +190,6 @@ const (
 // which gets its own word rather than the nearest one.
 func catalogAbsenceOf(facts CatalogAbsenceFacts, replica string, wired bool) CatalogAbsence {
 	absence := CatalogAbsence{Error: "NOT_PUBLISHED", Replica: replica, Role: facts.Role}
-	if facts.DirectoryMounted {
-		absence.Next = strategyDirectoryRoute
-	}
 	switch {
 	case !wired || facts.Role == "":
 		absence.Reason, absence.Role = CatalogAbsenceUnknown, ""
@@ -217,9 +208,6 @@ func catalogAbsenceOf(facts CatalogAbsenceFacts, replica string, wired bool) Cat
 	default:
 		absence.Reason = CatalogAbsenceIndexMissing
 		absence.Detail = "这个副本是 leader，最近一轮目录刷新没有失败，手上却没有目录——这是程序缺陷，不是部署状态。"
-	}
-	if absence.Next != "" {
-		absence.Detail += "同一个问题可以用 " + strategyDirectoryRoute + " 从存储直接查。"
 	}
 	return absence
 }
@@ -301,7 +289,8 @@ type StrategyPlanStanding struct {
 	// Config is the Plan's key configuration, redacted, read from the
 	// frozen object on request (include=config) and absent otherwise. See
 	// StrategyPlanConfigs for what it carries and what it refuses.
-	Config *StrategyPlanConfigs `json:"config,omitempty"`
+	Config   *StrategyPlanConfigs `json:"config,omitempty"`
+	ReadHold *ReadHoldFacts       `json:"read_hold,omitempty"`
 }
 
 // StrategyStandingOf composes the answer from the lookup and the fleet's
@@ -318,6 +307,7 @@ func StrategyStandingOf(strategyID, tenant, business, replica string, facts Stra
 		if view != nil {
 			entry.Existence = objectExistence(plan.QueryGroup, view.expectation)
 			entry.Replica = view.ownerOf[plan.QueryGroup]
+			entry.ReadHold = view.readHoldOf(plan.QueryGroup)
 			walkObjectRows("", "", plan.QueryGroup, view, now, func(row Anomaly) {
 				if len(entry.Rows) < MaxPageSize {
 					entry.Rows = append(entry.Rows, row)
@@ -575,8 +565,12 @@ func WithStrategyStanding(next http.Handler, service *Service, lookup StrategyLo
 			return
 		}
 		var view *View
+		// Held on the memory line until this page's answer is written: the
+		// snapshots and the view built of them are garbage then.
+		pageCtx, release := withPageHolds(request.Context())
+		defer release()
 		if service != nil {
-			current := service.View(request.Context())
+			current := service.View(pageCtx)
 			Decide(&current, now(), stallAfter)
 			view = &current
 		}
@@ -649,7 +643,11 @@ func serveStrategyList(response http.ResponseWriter, request *http.Request, serv
 			limit = parsed
 		}
 	}
-	current := service.View(request.Context())
+	// Held on the memory line until this page's answer is written: the
+	// snapshots and the view built of them are garbage then.
+	pageCtx, release := withPageHolds(request.Context())
+	defer release()
+	current := service.View(pageCtx)
 	Decide(&current, now(), stallAfter)
 	all := StrategyLines(&current, now())
 	lines := FilterStrategyLines(all, state, action)

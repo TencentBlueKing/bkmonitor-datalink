@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
@@ -204,7 +205,7 @@ func (stream *streamedExecution) noDataCompletedSeries(
 	if err != nil {
 		return completedSeries{}, fmt.Errorf("alarmd worker: derive no-data record id: %w", err)
 	}
-	level := view.CompiledPlan.Levels()[0]
+	level := view.CompiledPlan.Levels().At(0)
 	consumer := execution.ConsumerRef{
 		Plan: view.Identity, LevelID: level.Definition().LevelID, HasLevel: true,
 	}
@@ -279,6 +280,7 @@ func (stream *streamedExecution) evaluateNoData(
 		// cannot disagree about which Plans this Slot had. A Plan seen here and
 		// missing from the outcomes was dropped between the two.
 		stream.noDataPlansSeen++
+		started := time.Now()
 		round, err := stream.noDataRoundFor(due, seriesDimensionsFor(prepared, due.Identity),
 			stream.noDataCompleteness(due))
 		if err != nil {
@@ -297,7 +299,7 @@ func (stream *streamedExecution) evaluateNoData(
 			// said must not record that it said them: the next round would
 			// count the absence from a checkpoint no alert was ever raised
 			// against.
-			stream.observeNoDataLocalFailure(ctx, due, outcome, err)
+			stream.observeNoDataLocalFailure(ctx, started, due, outcome, err)
 			stream.recordNoDataOutcome(ctx, due, outcome)
 			continue
 		}
@@ -359,14 +361,33 @@ func (stream *streamedExecution) noDataCompleteness(due execution.DuePlan) execu
 // that could not store it reports from the memory it had, which is the previous
 // round's, and the round after that stores again. Failing the Slot over it
 // would throw away evaluations that were already correct and already sent.
+//
+// A memory for a Plan this round does not have, or one whose retention cannot
+// be derived, is not a refusal: nothing was asked of the store, the wiring
+// handed it a write it cannot place, and that does fail the Slot.
 func (coordinator *SlotExecutionCoordinator) applyNoDataMemory(
-	ctx context.Context, request execution.SlotExecutionRequest, mutations []execution.PlanNoDataMutation,
+	ctx context.Context, request execution.SlotExecutionRequest, duePlans []execution.DuePlan,
+	mutations []execution.PlanNoDataMutation,
 ) error {
 	if len(mutations) == 0 {
 		return nil
 	}
+	// What each memory lives for: its own Plan's retention, the one the load
+	// renews it to.
+	written := make([]execution.DuePlan, 0, len(mutations))
+	for _, mutation := range mutations {
+		due, ok := duePlan(duePlans, mutation.Identity.Plan)
+		if !ok {
+			return fmt.Errorf("alarmd worker: no-data memory for a Plan that is not due")
+		}
+		written = append(written, due)
+	}
+	retention, err := generationRetentionOf(written...)
+	if err != nil {
+		return err
+	}
 	result, err := coordinator.ports.NoData.ApplyNoData(ctx, execution.NoDataApplyRequest{
-		Contract: request.Contract, Items: mutations,
+		Contract: request.Contract, Items: mutations, Retention: retention,
 	})
 	if err != nil {
 		return fmt.Errorf("alarmd worker: store no-data memory: %w", err)

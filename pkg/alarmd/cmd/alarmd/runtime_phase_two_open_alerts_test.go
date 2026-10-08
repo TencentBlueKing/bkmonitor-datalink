@@ -11,7 +11,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -194,5 +196,48 @@ func TestTheGatesOwnHeldLookupsReachTheFacts(t *testing.T) {
 	if len(facts.GateRecentOwnHeld) != 1 || facts.GateRecentOwnHeld[0].Fingerprint != "1f018838" || facts.GateRecentOwnHeld[0].InOtherSets[0] != "370" ||
 		!facts.GateRecentOwnHeld[0].Own || facts.GateRecentOwnHeld[0].Answer != "index_absent" || len(facts.GateRecent) != 1 {
 		t.Fatalf("kept lookups %+v %+v", facts.GateRecentOwnHeld, facts.GateRecent)
+	}
+}
+
+// The departures reach the facts with every path word, and own_open is
+// carried as a number when the copy knows it -- zero included, which is an
+// answer -- and absent when it does not read the index.
+func TestTheDeparturesAndOwnOpenReachTheFacts(t *testing.T) {
+	at := time.Date(2026, 9, 28, 4, 0, 0, 0, time.UTC)
+	facts := openAlertSetFacts(openalerts.Stats{SentDepartures: map[string]uint64{openalerts.DepartureNotResent: 3},
+		OwnOpenKnown: true, OwnOpen: 0, OwnOpenDepartures: map[string]uint64{openalerts.DepartureRecoveryAcked: 1}, OwnOpenRefusals: 2}, false, at)
+	if facts.SentDepartures["not_resent"] != 3 || len(facts.SentDepartures) != len(openalerts.SentDepartures) {
+		t.Fatalf("sent departures %v", facts.SentDepartures)
+	}
+	if facts.OwnOpen == nil || *facts.OwnOpen != 0 || facts.OwnOpenRefusals != 2 ||
+		facts.OwnOpenDepartures["recovery_acked"] != 1 || len(facts.OwnOpenDepartures) != len(openalerts.OwnOpenDepartures) {
+		t.Fatalf("own open %v departures %v refused %d", facts.OwnOpen, facts.OwnOpenDepartures, facts.OwnOpenRefusals)
+	}
+	encoded, err := json.Marshal(facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"own_open":0`) {
+		t.Fatalf("a known zero own_open was dropped: %s", encoded)
+	}
+	unknown := openAlertSetFacts(openalerts.Stats{SentDepartures: map[string]uint64{}}, false, at)
+	if unknown.OwnOpen != nil || unknown.OwnOpenDepartures != nil || len(unknown.SentDepartures) != len(openalerts.SentDepartures) {
+		t.Fatalf("a copy without the index claims own_open: %+v", unknown)
+	}
+}
+
+// The resend count reaches the facts, and a zero is written: a copy that
+// sent nothing again says so.
+func TestTheRecoveriesResentReachTheFacts(t *testing.T) {
+	at := time.Date(2026, 9, 28, 4, 0, 0, 0, time.UTC)
+	if facts := openAlertSetFacts(openalerts.Stats{RecoveriesResent: 3}, false, at); facts.RecoveriesResent != 3 {
+		t.Fatalf("recoveries resent = %d, want 3", facts.RecoveriesResent)
+	}
+	encoded, err := json.Marshal(openAlertSetFacts(openalerts.Stats{}, false, at))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"recoveries_resent":0`) {
+		t.Fatalf("a zero resend count was dropped: %s", encoded)
 	}
 }

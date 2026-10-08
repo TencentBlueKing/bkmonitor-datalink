@@ -34,11 +34,11 @@ func cohortSnapshots() []Snapshot {
 		Failure:       &FailureRef{Code: "QUERY_UNAVAILABLE", Detail: "response=status_space_table_id_field_is_not_exists"},
 		QueryCooldown: &observability.QueryCooldownFacts{Event: "extended", Failures: 18, Until: now.Add(4 * time.Minute)},
 		Wake:          &WakeFacts{Known: true, IntervalSeconds: 15, Cooling: true},
-		Strategies:    []StrategyRef{{StrategyID: "11785", BusinessID: "7"}}}
+		Strategies:    []StrategyRef{{StrategyID: "861", BusinessID: "7"}}}
 	skipped := Anomaly{QueryGroup: "qg-skipped", Kind: KindDegradedRun, CauseReason: "GAP_SKIPPED", ReasonCode: "GAP_SKIPPED", Replica: "pod-b",
 		Since: now.Add(-20 * time.Minute), SinceFrom: SinceBusinessState,
 		Skip:       &SkippedSpan{FirstSlot: 100, LastSlot: 190, Slots: 7, IntervalSeconds: 15},
-		Strategies: []StrategyRef{{StrategyID: "11781", BusinessID: "7"}}}
+		Strategies: []StrategyRef{{StrategyID: "860", BusinessID: "7"}}}
 	defect := Anomaly{QueryGroup: "qg-defect", Kind: KindBlockedRun, ReasonCode: "panic", Replica: "pod-a",
 		Since: now.Add(-5 * time.Minute), SinceFrom: SinceBusinessState,
 		Wake:       &WakeFacts{Known: true, IntervalSeconds: 60},

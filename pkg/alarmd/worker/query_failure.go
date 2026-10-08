@@ -119,6 +119,12 @@ func (coordinator *SlotExecutionCoordinator) observeQueryFailure(ctx context.Con
 		}
 	} else if errors.As(err, &diagnostic) {
 		facts.Category, facts.Code = diagnostic.QueryFailure()
+		// A provider that stopped answering partway is the provider's
+		// timeout or unavailability, the reason the same failure before its
+		// answer began completes with - not an internal error of alarmd's.
+		if facts.Category == observability.QueryFailureCategoryProviderTransport {
+			reason = observability.ReasonCode(facts.Code)
+		}
 	}
 	// A failure that can say more than its code, in the bounded detail
 	// grammar, does so here: the detail is what the rate-limited line keeps
@@ -126,6 +132,13 @@ func (coordinator *SlotExecutionCoordinator) observeQueryFailure(ctx context.Con
 	var detailed interface{ QueryFailureDetail() string }
 	if errors.As(err, &detailed) {
 		facts.Detail = detailed.QueryFailureDetail()
+	}
+	// And one that timed itself against its budget says so beside it.
+	var timed interface {
+		QueryFailureTiming() *execution.AttemptTiming
+	}
+	if errors.As(err, &timed) {
+		facts.Timing = queryTimingOf(timed.QueryFailureTiming())
 	}
 	observation := observability.Observation{Component: observability.ComponentAccess, Stage: observability.StageQueryCompleted, Result: observability.ResultFailed, Operation: observability.Operation(operation), Direction: observability.DirectionInternal, ReasonCode: reason, Duration: time.Since(started), Err: err, QueryFailure: &facts}
 	defer func() { _ = recover() }()
@@ -225,10 +238,13 @@ func providerFailureFacts(completion execution.QueryExecutionCompletion) *observ
 		if item.Completeness != execution.CompletenessUnavailable {
 			continue
 		}
+		// The completion's reason and this failure name the same word, so a
+		// query that was never sent is not filed under the backend by either.
+		code, from := physicalFailureReason(item.RouteFacts)
 		facts := &observability.QueryFailureFacts{
 			Stage:    observability.QueryFailureStageProvider,
 			Category: physicalFailureCategory(item.RouteFacts),
-			Code:     string(physicalFailureReason(item.RouteFacts)),
+			Code:     string(execution.AttributedReason(code, from)),
 		}
 		for index := len(item.RouteFacts.Attempts) - 1; index >= 0; index-- {
 			attempt := item.RouteFacts.Attempts[index]
@@ -236,11 +252,22 @@ func providerFailureFacts(completion execution.QueryExecutionCompletion) *observ
 				continue
 			}
 			facts.Detail = attempt.Detail
+			facts.Timing = queryTimingOf(attempt.Timing)
 			break
 		}
 		return facts
 	}
 	return nil
+}
+
+// queryTimingOf is a failed attempt's timing as its failure reports it; nil
+// for an attempt that did not measure it.
+func queryTimingOf(timing *execution.AttemptTiming) *observability.QueryTiming {
+	if timing == nil {
+		return nil
+	}
+	return &observability.QueryTiming{SettleMillis: timing.SettleMillis, StartLateMillis: timing.StartLateMillis,
+		BudgetMillis: timing.BudgetMillis, ElapsedMillis: timing.ElapsedMillis, LocalMillis: timing.LocalMillis}
 }
 
 // physicalFailureCategory shares the existing log classification with query

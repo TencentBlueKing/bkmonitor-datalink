@@ -203,6 +203,13 @@ func TestLegacyRedisStrategySourceDistinguishesEmptyAndIncompleteActiveSet(t *te
 	if _, err := source.ActiveStrategyIDs(ctx); !errors.Is(err, controlplane.ErrLegacySourceIncomplete) {
 		t.Fatalf("missing active set error=%v", err)
 	}
+	// A key holding nothing is a set not yet written, not an empty one.
+	if err := client.Set(ctx, "bkmonitor.cache.strategy_ids", "", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := source.ActiveStrategyIDs(ctx); !errors.Is(err, controlplane.ErrLegacySourceIncomplete) {
+		t.Fatalf("an active set of no bytes error=%v", err)
+	}
 	if err := client.Set(ctx, "bkmonitor.cache.strategy_ids", `[]`, 0).Err(); err != nil {
 		t.Fatal(err)
 	}

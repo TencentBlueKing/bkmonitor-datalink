@@ -62,6 +62,67 @@ func TestQueryGroupScheduleRevisionIgnoresPlanOrder(t *testing.T) {
 }
 
 func TestFrozenSlotContractBindsExactDueRefs(t *testing.T) {
+	fact, request := exactDueRefsFact(t)
+	if err := fact.Validate(request); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+	drifted := request
+	drifted.DuePlans = []execution.FrozenPlanScheduleRef{{Identity: schedulePlan("other"), ScheduleRevision: fact.DuePlans[0].ScheduleRevision}}
+	if err := fact.Validate(drifted); err == nil {
+		t.Fatal("Validate() accepted different exact due Plan refs")
+	}
+}
+
+// A fact sealed by the freeze that built it carries the digest deriving it
+// again gives, byte for byte, so Validate -- what a fact from anywhere else
+// is held to -- accepts it; and the seal refuses what Validate refuses for
+// every rule but the digest, which it derived itself.
+func TestASealedFrozenFactCarriesTheDigestItsOwnPlansGive(t *testing.T) {
+	built, request := exactDueRefsFact(t)
+	want := built.Contract.DuePlanSetDigest
+	built.Contract.DuePlanSetDigest = ""
+	sealed, err := execution.SealFrozenSlotContractFact(built, request)
+	if err != nil {
+		t.Fatalf("SealFrozenSlotContractFact() error = %v", err)
+	}
+	if sealed.Contract.DuePlanSetDigest != want {
+		t.Fatalf("sealed digest = %s, want %s derived from the same Plans", sealed.Contract.DuePlanSetDigest, want)
+	}
+	if err := sealed.Validate(request); err != nil {
+		t.Fatalf("a sealed fact fails the independent check: %v", err)
+	}
+	// And the independent check is still a check: the same fact carrying the
+	// digest of another due Plan set -- one epoch on -- is refused, though
+	// every other rule it is held to passes.
+	moved := append([]execution.DuePlan(nil), built.DuePlans...)
+	moved[0].StateApplyEpoch++
+	otherDigest, err := execution.DeriveDuePlanSetDigest(moved, built.Requirements)
+	if err != nil || otherDigest == want {
+		t.Fatalf("setup: another due Plan set's digest = %s, %v", otherDigest, err)
+	}
+	carried := sealed
+	carried.Contract.DuePlanSetDigest = otherDigest
+	if err := carried.Validate(request); err == nil {
+		t.Fatal("Validate() accepted a fact carrying another due Plan set's digest")
+	}
+
+	drifted := request
+	drifted.DuePlans = []execution.FrozenPlanScheduleRef{{Identity: schedulePlan("other"), ScheduleRevision: built.DuePlans[0].ScheduleRevision}}
+	if _, err := execution.SealFrozenSlotContractFact(built, drifted); err == nil {
+		t.Fatal("sealed a fact whose due Plans differ from the exact request")
+	}
+	late := built
+	late.DuePlans = append([]execution.DuePlan(nil), built.DuePlans...)
+	late.DuePlans[0].CompletionDeadlineUnixMilli++
+	if _, err := execution.SealFrozenSlotContractFact(late, request); err == nil {
+		t.Fatal("sealed a fact whose due Plan deadline does not follow its ScheduleSpec")
+	}
+}
+
+// exactDueRefsFact is a valid frozen fact for one due Plan and the request
+// it answers.
+func exactDueRefsFact(t *testing.T) (execution.FrozenSlotContractFact, execution.FreezeSlotContractRequest) {
+	t.Helper()
 	plans, requirements := baseDuePlanAndRequirements()
 	spec := execution.ScheduleSpec{EvaluationIntervalSeconds: 60, Alignment: 0, Timezone: "UTC"}
 	plans[0].ScheduleSpec = spec
@@ -91,21 +152,16 @@ func TestFrozenSlotContractBindsExactDueRefs(t *testing.T) {
 		},
 		DuePlans: plans, Requirements: requirements,
 	}
-	if err := fact.Validate(request); err != nil {
-		t.Fatalf("Validate() error = %v", err)
-	}
-	drifted := request
-	drifted.DuePlans = []execution.FrozenPlanScheduleRef{{Identity: schedulePlan("other"), ScheduleRevision: plans[0].ScheduleRevision}}
-	if err := fact.Validate(drifted); err == nil {
-		t.Fatal("Validate() accepted different exact due Plan refs")
-	}
+	return fact, request
 }
 
 func TestScheduleContractsExcludeRuntimeSelectorsAndOwnership(t *testing.T) {
 	assertScheduleFields(t, reflect.TypeOf(execution.InitialScheduleActivationFact{}), []string{"Segment"})
 	assertScheduleFields(t, reflect.TypeOf(execution.ScheduleCutoverFact{}), []string{"OldSegment", "NewSegment"})
+	// ReadHoldMillis is the frozen hold the contract carries, not a runtime
+	// selector of which Plans run or who runs them.
 	assertScheduleFields(t, reflect.TypeOf(execution.FreezeSlotContractRequest{}),
-		[]string{"QueryGroup", "ScheduleRevision", "ScheduleSegmentStart", "EvaluationTime", "DuePlans"})
+		[]string{"QueryGroup", "ScheduleRevision", "ScheduleSegmentStart", "EvaluationTime", "DuePlans", "ReadHoldMillis"})
 }
 
 func assertScheduleFields(t *testing.T, contractType reflect.Type, want []string) {

@@ -61,6 +61,7 @@ func TestSourceProjectsPartialAndUnavailableCompletions(t *testing.T) {
 		bindingDataState execution.DataState
 		disposition      execution.AccessDisposition
 		reason           execution.ReasonCode
+		attribution      execution.UnavailableAttribution
 		batches          int
 		bindings         int
 	}{
@@ -79,7 +80,16 @@ func TestSourceProjectsPartialAndUnavailableCompletions(t *testing.T) {
 		{
 			name: "unavailable", provider: &fakeProvider{completeness: execution.CompletenessUnavailable, empty: true, reason: execution.ReasonCode(contract.ReasonQueryTimeout)},
 			completeness: execution.CompletenessUnavailable, dataState: execution.DataStateUnknown, bindingDataState: execution.DataStateUnknown,
-			disposition: execution.AccessUnavailable, reason: execution.ReasonCode(contract.ReasonQueryTimeout), bindings: 1,
+			disposition: execution.AccessUnavailable, reason: execution.ReasonCode(contract.ReasonQueryTimeout),
+			attribution: execution.UnavailableFromAttempt, bindings: 1,
+		},
+		{
+			// The attempt failed without a word: the binding carries the
+			// fallback, and says it is the fallback.
+			name: "unavailable without a reason", provider: &fakeProvider{completeness: execution.CompletenessUnavailable, empty: true},
+			completeness: execution.CompletenessUnavailable, dataState: execution.DataStateUnknown, bindingDataState: execution.DataStateUnknown,
+			disposition: execution.AccessUnavailable, reason: execution.ReasonCode(contract.ReasonQueryUnavailable),
+			attribution: execution.UnavailableNoAttemptReason, bindings: 1,
 		},
 	}
 	for _, test := range tests {
@@ -106,7 +116,8 @@ func TestSourceProjectsPartialAndUnavailableCompletions(t *testing.T) {
 			if test.bindings == 1 {
 				binding := completion.CompletionBindings[0]
 				if binding.Completeness != test.completeness || binding.DataState != test.bindingDataState ||
-					binding.Disposition != test.disposition || binding.ReasonCode != test.reason {
+					binding.Disposition != test.disposition || binding.ReasonCode != test.reason ||
+					binding.UnavailableAttribution != test.attribution {
 					t.Fatalf("binding=%+v", binding)
 				}
 				if err := execution.ValidateNamedInputCompletion(binding, completion.PhysicalQueries[0]); err != nil {

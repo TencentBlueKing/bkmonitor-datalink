@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"errors"
+	"math"
 	"slices"
 	"testing"
 	"time"
@@ -31,6 +32,25 @@ import (
 // So the round reports round trips beside keys, per read, and the reading is
 // one sample wide: keys far above round trips is a batched read, keys equal to
 // round trips is the shape this change removed.
+// nanoseconds turns a duration reported in seconds back into the whole
+// nanoseconds it was measured in. A time.Duration's Seconds round-trips
+// exactly through this for any round shorter than a hundred days.
+func nanoseconds(seconds float64) int64 {
+	return int64(math.Round(seconds * 1e9))
+}
+
+// Why the round's stages are summed in nanoseconds: two stages of 1ns and
+// 2ns inside a 3ns round sum, as float seconds, to more than the round.
+func TestStageSecondsSummedAsFloatsCanExceedTheirRound(t *testing.T) {
+	first, second, round := time.Nanosecond, 2*time.Nanosecond, 3*time.Nanosecond
+	if first.Seconds()+second.Seconds() <= round.Seconds() {
+		t.Fatal("the float sum stayed within the round; the nanosecond comparison has no reason to exist")
+	}
+	if nanoseconds(first.Seconds())+nanoseconds(second.Seconds()) != nanoseconds(round.Seconds()) {
+		t.Fatal("the nanosecond sum is not the round")
+	}
+}
+
 func TestAReconcileRoundReportsWhatItsControlReadsSpent(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	worker := func(id string) ownership.WorkerRegistration {
@@ -138,14 +158,20 @@ func TestAReconcileRoundReportsWhatItsControlReadsSpent(t *testing.T) {
 		if round == nil || round.Result != fleet.LeaderRoundCompleted || round.FailedStage != "" || !round.At.Equal(now) {
 			t.Fatalf("round = %+v, want a completed round at the round's time", round)
 		}
+		// Compared in whole nanoseconds, the unit the round was timed in.
+		// The stages are consecutive intervals of one monotonic clock and
+		// the total is read after the last of them, so their sum is within
+		// the total exactly; summed as float seconds, each stage converted
+		// on its own, the sum can come out a rounding step above it.
 		stages := make([]string, 0, len(round.Stages))
-		sum := 0.0
+		var sum int64
 		for _, stage := range round.Stages {
 			stages = append(stages, stage.Stage)
-			sum += stage.Seconds
+			sum += nanoseconds(stage.Seconds)
 		}
-		if !slices.Equal(stages, fleet.LeaderRoundStages) || sum > round.TotalSeconds || round.TotalSeconds <= 0 {
-			t.Fatalf("stages %v summing to %v of %v, want every stage in order within the total", stages, sum, round.TotalSeconds)
+		total := nanoseconds(round.TotalSeconds)
+		if !slices.Equal(stages, fleet.LeaderRoundStages) || sum > total || total <= 0 {
+			t.Fatalf("stages %v summing to %dns of %dns, want every stage in order within the total", stages, sum, total)
 		}
 		stats := production.LeaderRoundStats()
 		if !stats.Leading || stats.Rounds[fleet.LeaderRoundCompleted] != 2 || stats.Rounds[fleet.LeaderRoundFailed] != 0 ||

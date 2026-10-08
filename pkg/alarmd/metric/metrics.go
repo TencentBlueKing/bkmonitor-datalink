@@ -48,6 +48,8 @@ type Recorder struct {
 	queryPermitBound  bool
 	capacityLoadMu    sync.Mutex
 	capacityLoadBound bool
+	retainedMu        sync.Mutex
+	retainedBound     bool
 	resourceMu        sync.Mutex
 	resourceBound     bool
 	observations      observationMetrics

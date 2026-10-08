@@ -206,6 +206,13 @@ func TestCacheWithoutASourceIsNotConfigured(t *testing.T) {
 	if !cache.Current().IsAccessBKData {
 		t.Fatal("the deployment layer is not in effect")
 	}
+	// Both readings name the layer the value came from, the CLI's and the
+	// scrape's: the deployment's, and the code default for what it left out.
+	observed := cache.Observe()
+	if observed.Sources[FieldIsAccessBKData] != HorizonSourceValues || stats.Sources[FieldIsAccessBKData] != HorizonSourceValues ||
+		observed.Sources[FieldFileSystemTypeIgnore] != HorizonSourceDefault {
+		t.Fatalf("sources observed %v, stats %v; want is_access_bk_data from VALUES and the rest from DEFAULT", observed.Sources, stats.Sources)
+	}
 	if _, err := New(Options{StalenessBound: -time.Second}); err == nil {
 		t.Fatal("a negative bound was accepted")
 	}

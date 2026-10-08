@@ -1,13 +1,18 @@
 package fleet
 
 import (
+	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-redis/redis/v8"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/controlplane"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
@@ -42,7 +47,7 @@ func TestObservationCostHTTPReadsOnlyCachedPayloadAndRejectsStale(t *testing.T) 
 func TestObservationSampleAPIPreservesLegacyAndExposesExtraBudget(t *testing.T) {
 	s, _ := fleetSampleFixture(t)
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(202) })
-	h := WithSeriesSamples(next, nil, nil, nil, s, time.Now)
+	h := WithSeriesSamples(next, nil, nil, nil, nil, s, time.Now)
 	for _, path := range []string{"/api/objects/group?records=2", "/api/objects/group?check=COMPLETENESS&group=source"} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
@@ -80,10 +85,67 @@ func TestObservationSampleAPIPreservesLegacyAndExposesExtraBudget(t *testing.T) 
 }
 
 func TestObservationUnavailableDirectoryDoesNotDelegateToAnomalyList(t *testing.T) {
-	h := WithStrategyDirectory(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Fatal("strategy request became anomaly list") }), nil, time.Now)
+	h := WithStrategyDirectory(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Fatal("strategy request became anomaly list") }), nil, nil, nil, "", time.Now)
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest("GET", "/api/objects?scope=strategies", nil))
 	if w.Code != 503 {
 		t.Fatalf("missing directory=%d", w.Code)
+	}
+}
+
+// unreadyDirectory is a process holding no publication of its own.
+type unreadyDirectory struct{}
+
+func (unreadyDirectory) Available() bool { return false }
+func (unreadyDirectory) Page(context.Context, time.Time, string, string, string, int, int) controlplane.StrategyDirectorySnapshot {
+	return controlplane.StrategyDirectorySnapshot{Reason: "LEADER_CATALOG_NOT_READY", Rows: []controlplane.StrategyDirectoryRow{}}
+}
+func (unreadyDirectory) ResolveCurrent(context.Context, time.Time, string, string, string, string, ...string) (controlplane.StrategyDirectoryRow, error) {
+	return controlplane.StrategyDirectoryRow{}, controlplane.ErrSnapshotUnavailable
+}
+func (unreadyDirectory) EffectivePlan(context.Context, controlplane.StrategyDirectoryRow) (controlplane.QueryGroupPlanObject, error) {
+	return controlplane.QueryGroupPlanObject{}, controlplane.ErrSnapshotUnavailable
+}
+func (unreadyDirectory) EffectiveOutput(context.Context, controlplane.StrategyDirectoryRow) controlplane.OutputFormatFacts {
+	return controlplane.OutputFormatFacts{}
+}
+
+// A sample window names a strategy's current row, which only the Leader's
+// directory resolves: a follower hands the open to the Leader with its
+// method and its body as they came, and one already handed on is answered
+// where it lands.
+func TestAFollowerHandsASampleWindowOpenToTheLeaderWithItsBody(t *testing.T) {
+	s, _ := fleetSampleFixture(t)
+	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1"})
+	t.Cleanup(func() { _ = client.Close() })
+	windows, err := NewWindowStore(client, "alarmd:test:windows")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewDiagnosticStore(client, "alarmd:test:fleet")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var methods, bodies []string
+	forward := func(w http.ResponseWriter, r *http.Request) (bool, string) {
+		payload, _ := io.ReadAll(r.Body)
+		methods, bodies = append(methods, r.Method), append(bodies, string(payload))
+		writeJSON(w, http.StatusOK, map[string]string{"answered_by": "leader"})
+		return true, ""
+	}
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Fatal("a sample open reached the plain window route") })
+	h := WithSeriesSamples(next, unreadyDirectory{}, forward, windows, store, s, time.Now)
+	open := `{"mode":"sample","strategy":"1001","series_digest":"series","ttl_seconds":60,"opened_by":"test"}`
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("POST", "/api/windows", strings.NewReader(open)))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "leader") || len(methods) != 1 || methods[0] != "POST" || bodies[0] != open {
+		t.Fatalf("follower open = %d %s, hops %v %q; want the Leader's answer to the same POST and body", w.Code, w.Body.String(), methods, bodies)
+	}
+	w = httptest.NewRecorder()
+	handedOn := httptest.NewRequest("POST", "/api/windows", strings.NewReader(open))
+	handedOn.Header.Set(ForwardedHeader(), "another")
+	h.ServeHTTP(w, handedOn)
+	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "STRATEGY_SELECTION_UNKNOWN") || len(methods) != 1 {
+		t.Fatalf("handed-on open on a follower = %d %s after %d hops, want refused where it landed", w.Code, w.Body.String(), len(methods))
 	}
 }

@@ -112,6 +112,9 @@ func (m *Model) prepareTimeGraphVMQuery(ctx context.Context, queryTs *structured
 	if err != nil {
 		return "", nil, errors.WithMessage(err, "to query reference")
 	}
+	if metadata.IsExactTimeGrid(ctx) && timeGraphQueryStage(ctx) == "relation-edge" && queryRef.Count() == 0 {
+		return "", nil, errors.New("required relation has no physical query route")
+	}
 	metadata.SetExpand(ctx, query.ToVmExpand(ctx, queryRef))
 
 	expr, err := queryTs.ToPromExpr(ctx, nil)
@@ -236,7 +239,7 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	queryStep := step
 	loader.lookBack = lookBack
 
-	if len(sourceExpandInfo) > 0 || len(relations) == 0 || timeGraphForceSourceInfo(ctx) {
+	if len(sourceExpandInfo) > 0 || (topologyGrid == nil && (len(relations) == 0 || timeGraphForceSourceInfo(ctx))) {
 		sourceInfoQueryCount, err = loader.addSourceInfo(ctx, spaceUID, sourceType, sourceInfo, sourceExpandInfo)
 		if err != nil {
 			return nil, err
@@ -248,32 +251,22 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 	// 关系中的节点才能补充属性，避免凭空创建孤立节点。
 	targetMatchersByType := make(map[cmdb.Resource]map[string]cmdb.Matcher)
 	targetIDsByTimestamp := make(map[int64]map[cmdb.Resource]map[string]struct{})
-	for _, relation := range relations {
+	loadRelation := func(relation cmdb.Relation, relationSourceInfo cmdb.Matcher, rootRelation bool) (queried, observed bool, loadErr error) {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return false, false, err
 		}
 		if len(relation.V) != 2 {
-			continue
+			return false, false, nil
 		}
 
 		relationCtx := newTimeGraphSubqueryContext(ctx)
 		metadata.GetQueryParams(relationCtx).SetIsSkipK8s(true)
-		relationSourceInfo := sourceInfo
-		// 仅候选路径的首跳关系下推 source matcher；非首跳关系先查询候选边，
-		// 再由内存图遍历限定可达节点。
-		isRootRelation := len(relation.V) == 2 && relation.V[0] == sourceType
-		if rootRelations != nil {
-			_, isRootRelation = rootRelations[timeGraphRelationKeyFor(relation)]
-		}
-		if !isRootRelation {
-			relationSourceInfo = nil
-		}
 		relationQueryCtx, relationQuerySpan := trace.NewSpan(relationCtx, "timegraph-build-relation-query")
 		relationQuerySpan.Set("source-type", relation.V[0])
 		relationQuerySpan.Set("target-type", relation.V[1])
 		relationQuerySpan.Set("relation-type", relation.RelationType)
 		relationQuerySpan.Set("metric-name", relation.MetricName)
-		relationQuerySpan.Set("root-relation", isRootRelation)
+		relationQuerySpan.Set("root-relation", rootRelation)
 		queryTs, queryErr := tg.MakeQueryTsWithWindow(relationQueryCtx, spaceUID, relationSourceInfo, start, end, queryStep, lookBack, relation)
 		relationQuerySpan.Set("query-generated", queryTs != nil)
 		if queryTs != nil {
@@ -281,24 +274,87 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 		}
 		relationQuerySpan.End(&queryErr)
 		if queryErr != nil {
-			return nil, errors.WithMessagef(queryErr, "make query ts error for relation %v", relation)
+			return false, false, errors.WithMessagef(queryErr, "make query ts error for relation %v", relation)
 		}
 		if queryTs == nil {
-			continue
+			return false, false, nil
 		}
 
 		relationEdgeQueryCount++
-		if err = loader.queryAndApply(withTimeGraphQueryStage(relationCtx, "relation-edge"), queryTs, func(shardCtx context.Context, matrix pl.Matrix) error {
+		loadErr = loader.queryAndApply(withTimeGraphQueryStage(relationCtx, "relation-edge"), queryTs, func(shardCtx context.Context, matrix pl.Matrix) error {
+			for _, series := range matrix {
+				if len(series.Points) > 0 {
+					observed = true
+					break
+				}
+			}
 			return tg.applyRelationMatrix(shardCtx, matrix, relation, targetMatchersByType, targetIDsByTimestamp)
-		}); err != nil {
-			return nil, err
+		})
+		return true, observed, loadErr
+	}
+
+	// The first phase asks every legal first-hop relation for this source. A
+	// complete empty result proves that the requested relation neighborhood is
+	// empty, so no wider candidate query is needed.
+	queriedRoots := make(map[timeGraphRelationKey]struct{})
+	if topologyGrid != nil {
+		rootObserved := false
+		for _, relation := range relations {
+			if len(relation.V) != 2 || relation.V[0] != sourceType {
+				continue
+			}
+			queried, observed, loadErr := loadRelation(relation, sourceInfo, true)
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			if queried {
+				queriedRoots[timeGraphRelationKeyFor(relation)] = struct{}{}
+			}
+			rootObserved = rootObserved || observed
+		}
+		if !rootObserved && len(tg.partialTimes) == 0 {
+			return tg, nil
 		}
 	}
 
-	if timeGraphTargetInfoShow(ctx) {
-		targetInfoQueryCount, err = loader.addTargetInfo(ctx, spaceUID, targetMatchersByType, targetIDsByTimestamp)
-		if err != nil {
-			return nil, err
+	for _, relation := range relations {
+		if len(relation.V) != 2 {
+			continue
+		}
+		key := timeGraphRelationKeyFor(relation)
+		if topologyGrid != nil {
+			if _, queried := queriedRoots[key]; queried {
+				// A type cycle may reach a different instance of the source
+				// type. Its edges need one unfiltered candidate read.
+				if _, safe := rootRelations[key]; safe || len(sourceInfo) == 0 {
+					continue
+				}
+			}
+		}
+		relationSourceInfo := sourceInfo
+		isRootRelation := relation.V[0] == sourceType
+		if rootRelations != nil {
+			_, isRootRelation = rootRelations[key]
+		}
+		if !isRootRelation || topologyGrid != nil {
+			relationSourceInfo = nil
+		}
+		if _, _, loadErr := loadRelation(relation, relationSourceInfo, isRootRelation && topologyGrid == nil); loadErr != nil {
+			return nil, loadErr
+		}
+	}
+
+	if topologyGrid == nil && timeGraphTargetInfoShow(ctx) {
+		var infoErr error
+		targetInfoQueryCount, infoErr = loader.addTargetInfo(ctx, spaceUID, targetMatchersByType, targetIDsByTimestamp)
+		if infoErr != nil {
+			var limitErr *ResultLimitError
+			if ctx.Err() != nil || errors.Is(infoErr, context.Canceled) || errors.Is(infoErr, context.DeadlineExceeded) || errors.As(infoErr, &limitErr) {
+				return nil, infoErr
+			}
+			// Attribute display is optional. The target-info stage already
+			// records its failure; keep the relation topology available.
+			span.Set("optional-target-info-failed", true)
 		}
 	}
 

@@ -86,7 +86,7 @@ func TestSharedTopologyMetricsCases(t *testing.T) {
 			if tt.graphLimit {
 				matrixOutcome = "success"
 			}
-			matrixCalls := readTimeGraphMetric(t, "cmdb_timegraph_stage_seconds", map[string]string{"stage": "source-info", "result": matrixOutcome}, "count")
+			matrixCalls := readTimeGraphMetric(t, "cmdb_timegraph_stage_seconds", map[string]string{"stage": "relation-edge", "result": matrixOutcome}, "count")
 			countsBefore := map[string]float64{}
 			for _, kind := range []string{"points", "nodes", "edges", "partial_snapshots"} {
 				countsBefore[kind] = readTimeGraphMetric(t, "cmdb_topology_size", map[string]string{"query_mode": "range", "kind": kind}, "sum")
@@ -119,7 +119,11 @@ func TestSharedTopologyMetricsCases(t *testing.T) {
 				require.Equal(t, builds+1, readTimeGraphMetric(t, "cmdb_timegraph_stage_seconds", map[string]string{"stage": "build", "result": tt.outcome}, "count"))
 			}
 			if !tt.invalid && !tt.gridLimit && !tt.cancel && !tt.expired {
-				require.Equal(t, matrixCalls+1, readTimeGraphMetric(t, "cmdb_timegraph_stage_seconds", map[string]string{"stage": "source-info", "result": matrixOutcome}, "count"))
+				wantCalls := 1.0
+				if tt.partial {
+					wantCalls = 2
+				}
+				require.Equal(t, matrixCalls+wantCalls, readTimeGraphMetric(t, "cmdb_timegraph_stage_seconds", map[string]string{"stage": "relation-edge", "result": matrixOutcome}, "count"))
 			}
 		})
 	}

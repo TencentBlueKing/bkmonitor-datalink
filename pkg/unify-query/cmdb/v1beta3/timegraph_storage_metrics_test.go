@@ -106,7 +106,7 @@ func TestSharedTopologyStorageObservability(t *testing.T) {
 			require.GreaterOrEqual(t, attrs["local-build-duration-seconds"].(float64), 0.0)
 			if test.outcome != "success" {
 				require.Equal(t, codes.Error, build.Status().Code)
-				require.GreaterOrEqual(t, attrs["graph-attribute-version-count"].(int64), int64(1))
+				require.GreaterOrEqual(t, attrs["graph-attribute-version-count"].(int64), int64(0))
 			}
 			if test.reason != "" {
 				var limit *ResultLimitError
@@ -126,7 +126,7 @@ func TestSharedTopologyStorageObservability(t *testing.T) {
 				require.GreaterOrEqual(t, matching, 2)
 			}
 			if test.outcome == "success" {
-				for _, name := range []string{"timegraph-admission", "timegraph-release-admission", "timegraph-clean", "timegraph-create-storage", "timegraph-plan-topology-fetch", "timegraph-validate-matrix", "timegraph-apply-source-info-matrix", "timegraph-apply-relation-matrix", "timegraph-propagate-topology"} {
+				for _, name := range []string{"timegraph-admission", "timegraph-release-admission", "timegraph-clean", "timegraph-create-storage", "timegraph-plan-topology-fetch", "timegraph-validate-matrix", "timegraph-apply-relation-matrix", "timegraph-propagate-topology"} {
 					require.NotNil(t, spans[name], name)
 				}
 				require.NotNil(t, spans["timegraph-materialize-topology"])

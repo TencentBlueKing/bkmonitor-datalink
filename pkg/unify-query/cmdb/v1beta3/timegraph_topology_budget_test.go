@@ -51,7 +51,14 @@ func TestSharedTopologyResourceRejections(t *testing.T) {
 				MaxSharedTopologyOutputBytes = test.bytes
 			}
 			stamp := int64(1700000000000)
-			model := sharedTopologyQueryModel(map[string]pl.Matrix{"source_info_relation": contractMatrix(map[string]string{"source_id": "a"}, stamp), "source_middle_flow": contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, stamp), "middle_target_flow": {}})
+			relationStamps := []int64{stamp}
+			request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, Timestamp: stamp / 1000, MaxHops: 1}
+			if test.points > 0 {
+				relationStamps = append(relationStamps, stamp+1000)
+				request.Timestamp = 0
+				request.StartTime, request.EndTime, request.Step = stamp/1000, stamp/1000+1, "1s"
+			}
+			model := sharedTopologyQueryModel(map[string]pl.Matrix{"source_middle_flow": contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, relationStamps...), "middle_target_flow": {}})
 			if test.backendLimit {
 				model.timeGraphVMQueryWithPartial = func(ctx context.Context, _ *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, bool, error) {
 					require.Equal(t, int64(16*1024*1024), metadata.BackendResponseLimit(ctx))
@@ -59,7 +66,7 @@ func TestSharedTopologyResourceRejections(t *testing.T) {
 					return nil, true, nil
 				}
 			}
-			result, err := model.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, Timestamp: stamp / 1000, MaxHops: 1})
+			result, err := model.QuerySharedTopology(ctx, request)
 			var limit *ResultLimitError
 			require.ErrorAs(t, err, &limit)
 			require.Equal(t, test.reason, limit.Reason)
@@ -96,7 +103,7 @@ func TestSharedTopologyConcurrentLoadingAndRecovery(t *testing.T) {
 				backendErr := errors.New("backend unavailable")
 				model := sharedTopologyQueryModel(nil)
 				model.timeGraphVMQuery = func(ctx context.Context, query *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, error) {
-					if query.QueryList[0].FieldName == "source_info_relation" {
+					if query.QueryList[0].FieldName == "source_middle_flow" {
 						entered <- struct{}{}
 						select {
 						case <-ctx.Done():

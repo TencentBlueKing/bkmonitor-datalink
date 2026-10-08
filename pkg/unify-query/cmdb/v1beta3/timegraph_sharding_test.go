@@ -46,11 +46,10 @@ func TestSharedTopologyYoloSplitsOversizedVMResponses(t *testing.T) {
 		start = int64(1700000000)
 		count = 8
 	)
-	fields := []string{"source_info_relation", "source_middle_flow", "middle_target_flow"}
+	fields := []string{"source_middle_flow", "middle_target_flow"}
 	labels := map[string]map[string]string{
-		"source_info_relation": {"source_id": "a"},
-		"source_middle_flow":   {"source_id": "a", "middle_id": "b"},
-		"middle_target_flow":   {"middle_id": "b", "target_id": "c"},
+		"source_middle_flow": {"source_id": "a", "middle_id": "b"},
+		"middle_target_flow": {"middle_id": "b", "target_id": "c"},
 	}
 	request := cmdb.SharedTopologyQuery{
 		SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"},
@@ -75,7 +74,7 @@ func TestSharedTopologyYoloSplitsOversizedVMResponses(t *testing.T) {
 				timestamps = append(timestamps, ts.UnixMilli())
 				coverage[field][ts.Unix()]++
 			}
-			partial := field == "source_info_relation" && shardStart.Unix() >= start+4
+			partial := field == "source_middle_flow" && shardStart.Unix() >= start+4
 			return contractMatrix(labels[field], timestamps...), partial, nil
 		}
 		return model

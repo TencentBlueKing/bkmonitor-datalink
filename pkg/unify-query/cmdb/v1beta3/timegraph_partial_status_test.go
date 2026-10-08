@@ -42,17 +42,15 @@ func TestSharedTopologyPartialStatusCases(t *testing.T) {
 		}{
 			{name: "完整非空", wantResult: "success"},
 			{name: "完整空图", empty: true, wantResult: "empty"},
-			{name: "源信息部分成功", partialStage: "source-info", statusCode: metadata.QueryTsPartial, wantPartial: true, wantResult: "partial"},
 			{name: "关系部分成功", partialStage: "relation-edge", statusCode: metadata.QueryTsPartial, wantPartial: true, wantResult: "partial"},
-			{name: "目标信息部分成功", partialStage: "target-info", statusCode: metadata.QueryTsPartial, wantPartial: true, wantResult: "partial"},
-			{name: "成功路由为空但仍不完整", partialStage: "source-info", statusCode: metadata.QueryTsPartial, empty: true, wantPartial: true, wantResult: "partial"},
+			{name: "成功路由为空但仍不完整", partialStage: "relation-edge", statusCode: metadata.QueryTsPartial, empty: true, wantPartial: true, wantResult: "partial"},
 			{name: "父请求状态不污染子查询", parentPartial: true, wantResult: "success"},
-			{name: "其他状态不误判部分成功", partialStage: "source-info", statusCode: metadata.SpaceTableIDFieldMissingFallback, wantResult: "success"},
-			{name: "后端布尔位仍然有效", partialStage: "source-info", backendBit: true, wantPartial: true, wantResult: "partial"},
-			{name: "错误优先于部分成功", partialStage: "source-info", statusCode: metadata.QueryTsPartial, queryError: true, wantResult: "failed"},
+			{name: "其他状态不误判部分成功", partialStage: "relation-edge", statusCode: metadata.SpaceTableIDFieldMissingFallback, wantResult: "success"},
+			{name: "后端布尔位仍然有效", partialStage: "relation-edge", backendBit: true, wantPartial: true, wantResult: "partial"},
+			{name: "错误优先于部分成功", partialStage: "relation-edge", statusCode: metadata.QueryTsPartial, queryError: true, wantResult: "failed"},
 		} {
 			t.Run(mode+"/"+tt.name, func(t *testing.T) {
-				ctx := withTimeGraphTargetInfoShow(initTimeGraphQueryTestEnvironment(), true)
+				ctx := initTimeGraphQueryTestEnvironment()
 				if tt.parentPartial {
 					metadata.SetStatus(ctx, metadata.QueryTsPartial, "父请求的状态")
 				}
@@ -99,9 +97,7 @@ func TestSharedTopologyPartialStatusCases(t *testing.T) {
 								return storage.EmptySeriesSet()
 							}
 							labelSet := map[string][]prompb.Label{
-								"source_info_relation": {{Name: "source_id", Value: "a"}},
-								"source_middle_flow":   {{Name: "source_id", Value: "a"}, {Name: "middle_id", Value: "b"}},
-								"middle_info_relation": {{Name: "middle_id", Value: "b"}},
+								"source_middle_flow": {{Name: "source_id", Value: "a"}, {Name: "middle_id", Value: "b"}},
 							}[q.QueryList[0].FieldName]
 							require.NotEmpty(t, labelSet)
 							series := &prompb.TimeSeries{Labels: labelSet}
@@ -134,16 +130,6 @@ func TestSharedTopologyPartialStatusCases(t *testing.T) {
 				operationLabels := map[string]string{"scope": "query", "query_mode": mode, "result": tt.wantResult}
 				beforeOperations := readTimeGraphMetric(t, "cmdb_topology_operations_total", operationLabels, "counter")
 				result, err := model.QuerySharedTopology(ctx, request)
-				if !tt.queryError && !tt.empty {
-					found := false
-					for _, span := range recorder.Ended() {
-						if span.Name() == "timegraph-apply-target-info-matrix" {
-							found = true
-						}
-					}
-					require.True(t, found, "target-info Matrix writes must have their own span")
-				}
-
 				require.Equal(t, parentStatus, metadata.GetStatus(ctx), "子查询不能反向修改父请求状态")
 				if tt.queryError {
 					require.ErrorContains(t, err, "查询执行失败")
@@ -167,13 +153,7 @@ func TestSharedTopologyPartialStatusCases(t *testing.T) {
 						}
 					}
 				}
-				wantStages := 3
-				if tt.empty {
-					wantStages = 2
-				}
-				if tt.queryError {
-					wantStages = 1
-				}
+				wantStages := 1
 				require.Len(t, stages, wantStages)
 				require.Equal(t, beforeOperations+1, readTimeGraphMetric(t, "cmdb_topology_operations_total", operationLabels, "counter"))
 				for stage, outcome := range stages {

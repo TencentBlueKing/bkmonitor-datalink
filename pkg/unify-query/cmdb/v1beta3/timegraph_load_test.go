@@ -82,9 +82,8 @@ func TestTimeGraphLoadAttributionAcrossSourceAndRelationQueries(t *testing.T) {
 		t.Run(fmt.Sprintf("partial=%t", partial), func(t *testing.T) {
 			ctx := initTimeGraphQueryTestEnvironment()
 			responses := map[string]pl.Matrix{
-				"source_info_relation": contractMatrix(map[string]string{"source_id": "a"}, 1700000000000),
-				"source_middle_flow":   contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, 1700000000000),
-				"middle_target_flow":   {},
+				"source_middle_flow": contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, 1700000000000),
+				"middle_target_flow": {},
 			}
 			model := sharedTopologyQueryModel(responses)
 			model.timeGraphVMQueryWithPartial = func(_ context.Context, q *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, bool, error) {
@@ -94,7 +93,7 @@ func TestTimeGraphLoadAttributionAcrossSourceAndRelationQueries(t *testing.T) {
 			if partial {
 				outcome = "partial"
 			}
-			names := map[string]string{"source_info_relation": "source-info", "source_middle_flow": "relation-edge"}
+			names := map[string]string{"source_middle_flow": "relation-edge"}
 			beforePoints, beforeCalls := map[string]float64{}, map[string]float64{}
 			for name, stage := range names {
 				beforePoints[name] = readTimeGraphMetric(t, "cmdb_timegraph_load_size_total", map[string]string{"stage": stage, "metric_name": name, "kind": "points"}, "counter")

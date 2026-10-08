@@ -54,7 +54,7 @@ var (
 	MaxSharedTopologyRequestBytes    = 1024 * 1024
 	MaxSharedTopologyQueries         = 16
 	SharedTopologyReuseMatrix        = true
-	SharedTopologyPlanCandidates     = false
+	SharedTopologyPlanCandidates     = true
 	MaxSharedTopologyConcurrent      = 8
 	MaxSharedTopologyReservedBytes   = 4 * 1024 * 1024 * 1024
 	SharedTopologyRequestMemoryBytes = 512 * 1024 * 1024

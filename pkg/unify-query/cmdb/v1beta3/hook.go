@@ -36,7 +36,7 @@ func setDefaultConfig() {
 	viper.SetDefault(MaxSharedTopologyQueriesConfigPath, 16)
 	viper.SetDefault(YoloModeConfigPath, false)
 	viper.SetDefault(SharedTopologyReuseMatrixConfigPath, true)
-	viper.SetDefault(SharedTopologyPlanCandidatesConfigPath, false)
+	viper.SetDefault(SharedTopologyPlanCandidatesConfigPath, true)
 	viper.SetDefault(MaxSharedTopologyConcurrentConfigPath, 8)
 	viper.SetDefault(MaxSharedTopologyReservedBytesConfigPath, 4*1024*1024*1024)
 	viper.SetDefault(SharedTopologyRequestMemoryBytesConfigPath, 512*1024*1024)

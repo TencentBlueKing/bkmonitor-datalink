@@ -131,7 +131,6 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 	queryCtx, cancel := context.WithTimeout(ctx, timeGraphQueryTimeout)
 	defer cancel()
 	validated = true
-	queryCtx = withTimeGraphForceSourceInfo(queryCtx)
 	queryCtx = metadata.WithExactTimeGrid(queryCtx)
 	queryCtx, release, err := AcquireSharedTopology(queryCtx)
 	if err != nil {
@@ -156,7 +155,7 @@ func (m *Model) QuerySharedTopology(ctx context.Context, request cmdb.SharedTopo
 		step,
 		request.SourceType,
 		request.SourceInfo,
-		// 共享拓扑必须保留没有关系边的种子，因此强制查询源节点信息。
+		// 默认拓扑仅由关系端点建立节点；没有关系的帧返回空邻域。
 		nil,
 		rootRelations,
 		relations,

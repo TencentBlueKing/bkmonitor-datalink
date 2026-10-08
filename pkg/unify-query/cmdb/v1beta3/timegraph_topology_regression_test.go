@@ -42,7 +42,7 @@ func TestSharedTopologyBackendGridCases(t *testing.T) {
 		{name: "偏移样本不能成为完整空图", start: 1700000001, end: 1700000121, step: "1m", shift: true, wantErr: "does not match topology time grid"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := withTimeGraphTargetInfoShow(initTimeGraphQueryTestEnvironment(), true)
+			ctx := initTimeGraphQueryTestEnvironment()
 			model := &Model{schemaProvider: sharedTopologyQueryProvider(), timeGraphQueryReference: timeGraphTestQueryReference}
 			request := cmdb.SharedTopologyQuery{SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"}, MaxHops: 2, Step: tt.step}
 			if tt.end == 0 {
@@ -91,7 +91,7 @@ func TestSharedTopologyBackendGridCases(t *testing.T) {
 				return
 			}
 			require.NoError(t, err)
-			require.Len(t, calls, 5, "源信息、关系边、目标信息都使用相同网格")
+			require.Len(t, calls, 2, "关系边使用相同网格，默认不查询独立 info")
 			wantStart, err := normalizeTopologyTimestamp(tt.start)
 			require.NoError(t, err)
 			require.Equal(t, wantStart, result.StartTime)
@@ -208,13 +208,11 @@ func TestSharedTopologyInstantPartialCases(t *testing.T) {
 		empty               bool
 	}{
 		{name: "完整响应"},
-		{name: "源节点 partial", partialMetric: "source_info_relation"},
 		{name: "关系 partial", partialMetric: "source_middle_flow"},
-		{name: "目标信息 partial", partialMetric: "middle_info_relation"},
-		{name: "空且 partial", partialMetric: "source_info_relation", empty: true},
+		{name: "空且 partial", partialMetric: "source_middle_flow", empty: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := withTimeGraphTargetInfoShow(initTimeGraphQueryTestEnvironment(), true)
+			ctx := initTimeGraphQueryTestEnvironment()
 			model := &Model{schemaProvider: sharedTopologyQueryProvider(), timeGraphQueryReference: timeGraphTestQueryReference}
 			model.timeGraphVMQueryWithPartial = func(_ context.Context, q *structured.QueryTs, _ string, _ bool, _, end time.Time, _ time.Duration) (pl.Matrix, bool, error) {
 				field := q.QueryList[0].FieldName
@@ -223,9 +221,7 @@ func TestSharedTopologyInstantPartialCases(t *testing.T) {
 					return nil, partial, nil
 				}
 				labels := map[string]map[string]string{
-					"source_info_relation": {"source_id": "a"},
-					"source_middle_flow":   {"source_id": "a", "middle_id": "b"},
-					"middle_info_relation": {"middle_id": "b"},
+					"source_middle_flow": {"source_id": "a", "middle_id": "b"},
 				}
 				if value, ok := labels[field]; ok {
 					return contractMatrix(value, end.UnixMilli()), partial, nil

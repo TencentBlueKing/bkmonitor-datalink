@@ -166,6 +166,8 @@ func (c *Controller) Snapshot(ctx context.Context) (State, error) {
 
 // Report 描述本次会话观察的确切执行代次。
 type Report struct {
+	// Blocked 在确切代次停止或排空时持久化，禁止自动重试同来源角色。
+	Blocked    bool     `json:"blocked,omitempty"`
 	ID         string   `json:"id"`
 	Epoch      int64    `json:"epoch"`
 	Phase      string   `json:"phase"`
@@ -231,6 +233,10 @@ func (c *Controller) Beat(ctx context.Context, h Heartbeat) (_ []Task, runErr er
 			t, ok := s.Tasks[r.ID]
 			if !ok || t.Worker != w.ID || t.Epoch != r.Epoch {
 				continue
+			}
+			// 清理尚未完成时也保留修复要求；授权到期接管不能丢失永久失败。
+			if r.Blocked && (r.Phase == "stopping" || r.Phase == "stopped") {
+				t.Blocked = true
 			}
 			if r.Phase == "stopped" && t.Phase != "stopped" {
 				t.Phase = "stopped"

@@ -1,0 +1,7125 @@
+{
+  "commit": "51c834dc6623e09366c77ea8c3d808001a6f5536",
+  "cases": [
+    {
+      "name": "empty/-1/gt",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/-1/gte",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/-1/lt",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) < 10.0, 当前值-1"
+    },
+    {
+      "name": "empty/-1/lte",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0, 当前值-1"
+    },
+    {
+      "name": "empty/-1/eq",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/-1/neq",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值-1"
+    },
+    {
+      "name": "empty/0/gt",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/0/gte",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/0/lt",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) < 10.0, 当前值0"
+    },
+    {
+      "name": "empty/0/lte",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0, 当前值0"
+    },
+    {
+      "name": "empty/0/eq",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/0/neq",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值0"
+    },
+    {
+      "name": "empty/0.5/gt",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/0.5/gte",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/0.5/lt",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) < 10.0, 当前值0.5"
+    },
+    {
+      "name": "empty/0.5/lte",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0, 当前值0.5"
+    },
+    {
+      "name": "empty/0.5/eq",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/0.5/neq",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值0.5"
+    },
+    {
+      "name": "empty/1/gt",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/1/gte",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/1/lt",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) < 10.0, 当前值1"
+    },
+    {
+      "name": "empty/1/lte",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0, 当前值1"
+    },
+    {
+      "name": "empty/1/eq",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/1/neq",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值1"
+    },
+    {
+      "name": "empty/10/gt",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/10/gte",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0, 当前值10"
+    },
+    {
+      "name": "empty/10/lt",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/10/lte",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0, 当前值10"
+    },
+    {
+      "name": "empty/10/eq",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) = 10.0, 当前值10"
+    },
+    {
+      "name": "empty/10/neq",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/10.0/gt",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/10.0/gte",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0, 当前值10.0"
+    },
+    {
+      "name": "empty/10.0/lt",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/10.0/lte",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0, 当前值10.0"
+    },
+    {
+      "name": "empty/10.0/eq",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) = 10.0, 当前值10.0"
+    },
+    {
+      "name": "empty/10.0/neq",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/1024/gt",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 10.0, 当前值1024"
+    },
+    {
+      "name": "empty/1024/gte",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0, 当前值1024"
+    },
+    {
+      "name": "empty/1024/lt",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/1024/lte",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/1024/eq",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/1024/neq",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值1024"
+    },
+    {
+      "name": "empty/1234567.8912345/gt",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 10.0, 当前值1234567.891235"
+    },
+    {
+      "name": "empty/1234567.8912345/gte",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0, 当前值1234567.891235"
+    },
+    {
+      "name": "empty/1234567.8912345/lt",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/1234567.8912345/lte",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/1234567.8912345/eq",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "empty/1234567.8912345/neq",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值1234567.891235"
+    },
+    {
+      "name": "percent/-1/gt",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/-1/gte",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/-1/lt",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) < 10.0, 当前值-1%"
+    },
+    {
+      "name": "percent/-1/lte",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0, 当前值-1%"
+    },
+    {
+      "name": "percent/-1/eq",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/-1/neq",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值-1%"
+    },
+    {
+      "name": "percent/0/gt",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/0/gte",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/0/lt",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) < 10.0, 当前值0%"
+    },
+    {
+      "name": "percent/0/lte",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0, 当前值0%"
+    },
+    {
+      "name": "percent/0/eq",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/0/neq",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值0%"
+    },
+    {
+      "name": "percent/0.5/gt",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/0.5/gte",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/0.5/lt",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) < 10.0, 当前值0.5%"
+    },
+    {
+      "name": "percent/0.5/lte",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0, 当前值0.5%"
+    },
+    {
+      "name": "percent/0.5/eq",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/0.5/neq",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值0.5%"
+    },
+    {
+      "name": "percent/1/gt",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/1/gte",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/1/lt",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) < 10.0, 当前值1%"
+    },
+    {
+      "name": "percent/1/lte",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0, 当前值1%"
+    },
+    {
+      "name": "percent/1/eq",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/1/neq",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值1%"
+    },
+    {
+      "name": "percent/10/gt",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/10/gte",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0, 当前值10%"
+    },
+    {
+      "name": "percent/10/lt",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/10/lte",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0, 当前值10%"
+    },
+    {
+      "name": "percent/10/eq",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) = 10.0, 当前值10%"
+    },
+    {
+      "name": "percent/10/neq",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/10.0/gt",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/10.0/gte",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0, 当前值10.0%"
+    },
+    {
+      "name": "percent/10.0/lt",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/10.0/lte",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0, 当前值10.0%"
+    },
+    {
+      "name": "percent/10.0/eq",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) = 10.0, 当前值10.0%"
+    },
+    {
+      "name": "percent/10.0/neq",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/1024/gt",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 10.0, 当前值1024%"
+    },
+    {
+      "name": "percent/1024/gte",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0, 当前值1024%"
+    },
+    {
+      "name": "percent/1024/lt",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/1024/lte",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/1024/eq",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/1024/neq",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值1024%"
+    },
+    {
+      "name": "percent/1234567.8912345/gt",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 10.0, 当前值1234567.891235%"
+    },
+    {
+      "name": "percent/1234567.8912345/gte",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0, 当前值1234567.891235%"
+    },
+    {
+      "name": "percent/1234567.8912345/lt",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/1234567.8912345/lte",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/1234567.8912345/eq",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percent/1234567.8912345/neq",
+      "item_name": "AVG(metric)",
+      "unit": "percent",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值1234567.891235%"
+    },
+    {
+      "name": "percentunit/-1/gt",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/-1/gte",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/-1/lt",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) < 10.0, 当前值-100%"
+    },
+    {
+      "name": "percentunit/-1/lte",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0, 当前值-100%"
+    },
+    {
+      "name": "percentunit/-1/eq",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/-1/neq",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值-100%"
+    },
+    {
+      "name": "percentunit/0/gt",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/0/gte",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/0/lt",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) < 10.0, 当前值0%"
+    },
+    {
+      "name": "percentunit/0/lte",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0, 当前值0%"
+    },
+    {
+      "name": "percentunit/0/eq",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/0/neq",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值0%"
+    },
+    {
+      "name": "percentunit/0.5/gt",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 10.0, 当前值50.0%"
+    },
+    {
+      "name": "percentunit/0.5/gte",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0, 当前值50.0%"
+    },
+    {
+      "name": "percentunit/0.5/lt",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/0.5/lte",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/0.5/eq",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/0.5/neq",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值50.0%"
+    },
+    {
+      "name": "percentunit/1/gt",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 10.0, 当前值100%"
+    },
+    {
+      "name": "percentunit/1/gte",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0, 当前值100%"
+    },
+    {
+      "name": "percentunit/1/lt",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/1/lte",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/1/eq",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/1/neq",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值100%"
+    },
+    {
+      "name": "percentunit/10/gt",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 10.0, 当前值1000%"
+    },
+    {
+      "name": "percentunit/10/gte",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0, 当前值1000%"
+    },
+    {
+      "name": "percentunit/10/lt",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/10/lte",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/10/eq",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/10/neq",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值1000%"
+    },
+    {
+      "name": "percentunit/10.0/gt",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 10.0, 当前值1000.0%"
+    },
+    {
+      "name": "percentunit/10.0/gte",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0, 当前值1000.0%"
+    },
+    {
+      "name": "percentunit/10.0/lt",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/10.0/lte",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/10.0/eq",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/10.0/neq",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值1000.0%"
+    },
+    {
+      "name": "percentunit/1024/gt",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 10.0, 当前值102400%"
+    },
+    {
+      "name": "percentunit/1024/gte",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0, 当前值102400%"
+    },
+    {
+      "name": "percentunit/1024/lt",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/1024/lte",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/1024/eq",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/1024/neq",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值102400%"
+    },
+    {
+      "name": "percentunit/1234567.8912345/gt",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 10.0, 当前值123456789.12345%"
+    },
+    {
+      "name": "percentunit/1234567.8912345/gte",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0, 当前值123456789.12345%"
+    },
+    {
+      "name": "percentunit/1234567.8912345/lt",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/1234567.8912345/lte",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/1234567.8912345/eq",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "percentunit/1234567.8912345/neq",
+      "item_name": "AVG(metric)",
+      "unit": "percentunit",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值123456789.12345%"
+    },
+    {
+      "name": "bytes/-1/gt",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/-1/gte",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/-1/lt",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) < 10.0B, 当前值-1B"
+    },
+    {
+      "name": "bytes/-1/lte",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0B, 当前值-1B"
+    },
+    {
+      "name": "bytes/-1/eq",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/-1/neq",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0B, 当前值-1B"
+    },
+    {
+      "name": "bytes/0/gt",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/0/gte",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/0/lt",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) < 10.0B, 当前值0B"
+    },
+    {
+      "name": "bytes/0/lte",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0B, 当前值0B"
+    },
+    {
+      "name": "bytes/0/eq",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/0/neq",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0B, 当前值0B"
+    },
+    {
+      "name": "bytes/0.5/gt",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/0.5/gte",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/0.5/lt",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) < 10.0B, 当前值0.5B"
+    },
+    {
+      "name": "bytes/0.5/lte",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0B, 当前值0.5B"
+    },
+    {
+      "name": "bytes/0.5/eq",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/0.5/neq",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0B, 当前值0.5B"
+    },
+    {
+      "name": "bytes/1/gt",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/1/gte",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/1/lt",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) < 10.0B, 当前值1B"
+    },
+    {
+      "name": "bytes/1/lte",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0B, 当前值1B"
+    },
+    {
+      "name": "bytes/1/eq",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/1/neq",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0B, 当前值1B"
+    },
+    {
+      "name": "bytes/10/gt",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/10/gte",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0B, 当前值10B"
+    },
+    {
+      "name": "bytes/10/lt",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/10/lte",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0B, 当前值10B"
+    },
+    {
+      "name": "bytes/10/eq",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) = 10.0B, 当前值10B"
+    },
+    {
+      "name": "bytes/10/neq",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/10.0/gt",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/10.0/gte",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0B, 当前值10.0B"
+    },
+    {
+      "name": "bytes/10.0/lt",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/10.0/lte",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0B, 当前值10.0B"
+    },
+    {
+      "name": "bytes/10.0/eq",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) = 10.0B, 当前值10.0B"
+    },
+    {
+      "name": "bytes/10.0/neq",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/1024/gt",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 10.0B, 当前值1.0KiB"
+    },
+    {
+      "name": "bytes/1024/gte",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0B, 当前值1.0KiB"
+    },
+    {
+      "name": "bytes/1024/lt",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/1024/lte",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/1024/eq",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/1024/neq",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0B, 当前值1.0KiB"
+    },
+    {
+      "name": "bytes/1234567.8912345/gt",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 10.0B, 当前值1.177376MiB"
+    },
+    {
+      "name": "bytes/1234567.8912345/gte",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0B, 当前值1.177376MiB"
+    },
+    {
+      "name": "bytes/1234567.8912345/lt",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/1234567.8912345/lte",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/1234567.8912345/eq",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "bytes/1234567.8912345/neq",
+      "item_name": "AVG(metric)",
+      "unit": "bytes",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0B, 当前值1.177376MiB"
+    },
+    {
+      "name": "s/-1/gt",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/-1/gte",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/-1/lt",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) < 10.0, 当前值-1s"
+    },
+    {
+      "name": "s/-1/lte",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0, 当前值-1s"
+    },
+    {
+      "name": "s/-1/eq",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/-1/neq",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值-1s"
+    },
+    {
+      "name": "s/0/gt",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/0/gte",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/0/lt",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) < 10.0, 当前值0ns"
+    },
+    {
+      "name": "s/0/lte",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0, 当前值0ns"
+    },
+    {
+      "name": "s/0/eq",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/0/neq",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值0ns"
+    },
+    {
+      "name": "s/0.5/gt",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 10.0, 当前值500.0ms"
+    },
+    {
+      "name": "s/0.5/gte",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0, 当前值500.0ms"
+    },
+    {
+      "name": "s/0.5/lt",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/0.5/lte",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/0.5/eq",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/0.5/neq",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值500.0ms"
+    },
+    {
+      "name": "s/1/gt",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 10.0, 当前值1s"
+    },
+    {
+      "name": "s/1/gte",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0, 当前值1s"
+    },
+    {
+      "name": "s/1/lt",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/1/lte",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/1/eq",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/1/neq",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值1s"
+    },
+    {
+      "name": "s/10/gt",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 10.0, 当前值10s"
+    },
+    {
+      "name": "s/10/gte",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0, 当前值10s"
+    },
+    {
+      "name": "s/10/lt",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/10/lte",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/10/eq",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/10/neq",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值10s"
+    },
+    {
+      "name": "s/10.0/gt",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 10.0, 当前值10.0s"
+    },
+    {
+      "name": "s/10.0/gte",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0, 当前值10.0s"
+    },
+    {
+      "name": "s/10.0/lt",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/10.0/lte",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/10.0/eq",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/10.0/neq",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值10.0s"
+    },
+    {
+      "name": "s/1024/gt",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 10.0, 当前值17.066667m"
+    },
+    {
+      "name": "s/1024/gte",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0, 当前值17.066667m"
+    },
+    {
+      "name": "s/1024/lt",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/1024/lte",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/1024/eq",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/1024/neq",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值17.066667m"
+    },
+    {
+      "name": "s/1234567.8912345/gt",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 10.0, 当前值14.28898d"
+    },
+    {
+      "name": "s/1234567.8912345/gte",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0, 当前值14.28898d"
+    },
+    {
+      "name": "s/1234567.8912345/lt",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/1234567.8912345/lte",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/1234567.8912345/eq",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "s/1234567.8912345/neq",
+      "item_name": "AVG(metric)",
+      "unit": "s",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值14.28898d"
+    },
+    {
+      "name": "custom-unit/-1/gt",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/-1/gte",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/-1/lt",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) < 10.0custom-unit, 当前值-1custom-unit"
+    },
+    {
+      "name": "custom-unit/-1/lte",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0custom-unit, 当前值-1custom-unit"
+    },
+    {
+      "name": "custom-unit/-1/eq",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/-1/neq",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": -1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0custom-unit, 当前值-1custom-unit"
+    },
+    {
+      "name": "custom-unit/0/gt",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/0/gte",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/0/lt",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) < 10.0custom-unit, 当前值0custom-unit"
+    },
+    {
+      "name": "custom-unit/0/lte",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0custom-unit, 当前值0custom-unit"
+    },
+    {
+      "name": "custom-unit/0/eq",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/0/neq",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0custom-unit, 当前值0custom-unit"
+    },
+    {
+      "name": "custom-unit/0.5/gt",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/0.5/gte",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/0.5/lt",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) < 10.0custom-unit, 当前值0.5custom-unit"
+    },
+    {
+      "name": "custom-unit/0.5/lte",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0custom-unit, 当前值0.5custom-unit"
+    },
+    {
+      "name": "custom-unit/0.5/eq",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/0.5/neq",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0custom-unit, 当前值0.5custom-unit"
+    },
+    {
+      "name": "custom-unit/1/gt",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/1/gte",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/1/lt",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) < 10.0custom-unit, 当前值1custom-unit"
+    },
+    {
+      "name": "custom-unit/1/lte",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0custom-unit, 当前值1custom-unit"
+    },
+    {
+      "name": "custom-unit/1/eq",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/1/neq",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0custom-unit, 当前值1custom-unit"
+    },
+    {
+      "name": "custom-unit/10/gt",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/10/gte",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0custom-unit, 当前值10custom-unit"
+    },
+    {
+      "name": "custom-unit/10/lt",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/10/lte",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0custom-unit, 当前值10custom-unit"
+    },
+    {
+      "name": "custom-unit/10/eq",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) = 10.0custom-unit, 当前值10custom-unit"
+    },
+    {
+      "name": "custom-unit/10/neq",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/10.0/gt",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/10.0/gte",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0custom-unit, 当前值10.0custom-unit"
+    },
+    {
+      "name": "custom-unit/10.0/lt",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/10.0/lte",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) <= 10.0custom-unit, 当前值10.0custom-unit"
+    },
+    {
+      "name": "custom-unit/10.0/eq",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) = 10.0custom-unit, 当前值10.0custom-unit"
+    },
+    {
+      "name": "custom-unit/10.0/neq",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 10.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/1024/gt",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 10.0custom-unit, 当前值1024custom-unit"
+    },
+    {
+      "name": "custom-unit/1024/gte",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0custom-unit, 当前值1024custom-unit"
+    },
+    {
+      "name": "custom-unit/1024/lt",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/1024/lte",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/1024/eq",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/1024/neq",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 1024,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0custom-unit, 当前值1024custom-unit"
+    },
+    {
+      "name": "custom-unit/1234567.8912345/gt",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 10.0custom-unit, 当前值1234567.891235custom-unit"
+    },
+    {
+      "name": "custom-unit/1234567.8912345/gte",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0custom-unit, 当前值1234567.891235custom-unit"
+    },
+    {
+      "name": "custom-unit/1234567.8912345/lt",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lt",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/1234567.8912345/lte",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "lte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/1234567.8912345/eq",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "eq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "custom-unit/1234567.8912345/neq",
+      "item_name": "AVG(metric)",
+      "unit": "custom-unit",
+      "value": 1234567.8912345,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "",
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": "10"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0custom-unit, 当前值1234567.891235custom-unit"
+    },
+    {
+      "name": "prefix/bytes",
+      "item_name": "MAX(metric)",
+      "unit": "bytes",
+      "value": 2048,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "Ki",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "1"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "MAX(metric) >= 1.0KiB, 当前值2.0KiB"
+    },
+    {
+      "name": "prefix/percentunit",
+      "item_name": "MAX(metric)",
+      "unit": "percentunit",
+      "value": 0.9,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "%",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "80"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "MAX(metric) >= 80.0%, 当前值90.0%"
+    },
+    {
+      "name": "prefix/s",
+      "item_name": "MAX(metric)",
+      "unit": "s",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "unit_prefix": "ms",
+          "config": [
+            [
+              {
+                "method": "gte",
+                "threshold": "500"
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "MAX(metric) >= 500.0ms, 当前值1s"
+    },
+    {
+      "name": "combined/and/9",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 9,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "20"
+              },
+              {
+                "method": "lt",
+                "threshold": "100"
+              }
+            ],
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "Threshold",
+          "level": 2,
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": 10
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "combined/and/10",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 10,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "20"
+              },
+              {
+                "method": "lt",
+                "threshold": "100"
+              }
+            ],
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "Threshold",
+          "level": 2,
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": 10
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "combined/and/21",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 21,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "20"
+              },
+              {
+                "method": "lt",
+                "threshold": "100"
+              }
+            ],
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "Threshold",
+          "level": 2,
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": 10
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 20.0且 < 100.0且 != 10.0, 当前值21"
+    },
+    {
+      "name": "combined/and/101",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 101,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "20"
+              },
+              {
+                "method": "lt",
+                "threshold": "100"
+              }
+            ],
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "Threshold",
+          "level": 2,
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": 10
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0且 != 10.0, 当前值101"
+    },
+    {
+      "name": "combined/or/9",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 9,
+      "connector": "or",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "20"
+              },
+              {
+                "method": "lt",
+                "threshold": "100"
+              }
+            ],
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "Threshold",
+          "level": 2,
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": 10
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) != 10.0, 当前值9"
+    },
+    {
+      "name": "combined/or/10",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 10,
+      "connector": "or",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "20"
+              },
+              {
+                "method": "lt",
+                "threshold": "100"
+              }
+            ],
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "Threshold",
+          "level": 2,
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": 10
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0, 当前值10"
+    },
+    {
+      "name": "combined/or/21",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 21,
+      "connector": "or",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "20"
+              },
+              {
+                "method": "lt",
+                "threshold": "100"
+              }
+            ],
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "Threshold",
+          "level": 2,
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": 10
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) > 20.0且 < 100.0且 != 10.0, 当前值21"
+    },
+    {
+      "name": "combined/or/101",
+      "item_name": "AVG(metric)",
+      "unit": "",
+      "value": 101,
+      "connector": "or",
+      "algorithms": [
+        {
+          "type": "Threshold",
+          "level": 2,
+          "config": [
+            [
+              {
+                "method": "gt",
+                "threshold": "20"
+              },
+              {
+                "method": "lt",
+                "threshold": "100"
+              }
+            ],
+            [
+              {
+                "method": "gte",
+                "threshold": "10"
+              }
+            ]
+          ]
+        },
+        {
+          "type": "Threshold",
+          "level": 2,
+          "config": [
+            [
+              {
+                "method": "neq",
+                "threshold": 10
+              }
+            ]
+          ]
+        }
+      ],
+      "expected": "AVG(metric) >= 10.0且 != 10.0, 当前值101"
+    },
+    {
+      "name": "ping/0",
+      "item_name": "Ping",
+      "unit": "percentunit",
+      "value": 0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "PingUnreachable",
+          "level": 2,
+          "config": []
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "ping/0.5",
+      "item_name": "Ping",
+      "unit": "percentunit",
+      "value": 0.5,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "PingUnreachable",
+          "level": 2,
+          "config": []
+        }
+      ],
+      "expected": null
+    },
+    {
+      "name": "ping/1",
+      "item_name": "Ping",
+      "unit": "percentunit",
+      "value": 1,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "PingUnreachable",
+          "level": 2,
+          "config": []
+        }
+      ],
+      "expected": "Ping不可达"
+    },
+    {
+      "name": "ping/1.0",
+      "item_name": "Ping",
+      "unit": "percentunit",
+      "value": 1.0,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "PingUnreachable",
+          "level": 2,
+          "config": []
+        }
+      ],
+      "expected": "Ping不可达"
+    },
+    {
+      "name": "ping/2",
+      "item_name": "Ping",
+      "unit": "percentunit",
+      "value": 2,
+      "connector": "and",
+      "algorithms": [
+        {
+          "type": "PingUnreachable",
+          "level": 2,
+          "config": []
+        }
+      ],
+      "expected": "Ping不可达"
+    }
+  ]
+}

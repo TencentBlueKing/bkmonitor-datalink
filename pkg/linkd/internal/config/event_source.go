@@ -49,7 +49,25 @@ type EventSource struct {
 
 // EnrichConfig 定义该来源创建新 Alert 时按顺序执行的丰富处理链；资源由部署配置注入。
 type EnrichConfig struct {
-	Processors []EnrichProcessorConfig `yaml:"processors,omitempty" json:"processors,omitempty"`
+	// ContentMode 决定新 Alert 的初始内容来源；空值等价于 source。
+	// bkmonitor_description 必须显式启用，不以策略标签推断。
+	ContentMode string                  `yaml:"content_mode,omitempty" json:"content_mode,omitempty"`
+	Processors  []EnrichProcessorConfig `yaml:"processors,omitempty" json:"processors,omitempty"`
+}
+
+const (
+	// ContentModeSource 保留来源 content。
+	ContentModeSource = "source"
+	// ContentModeBKMonitorDescription 在创建前按冻结事实生成 bk-monitor description。
+	ContentModeBKMonitorDescription = "bkmonitor_description"
+)
+
+// EffectiveContentMode 返回显式模式或来源内容默认模式。
+func (c EnrichConfig) EffectiveContentMode() string {
+	if c.ContentMode == "" {
+		return ContentModeSource
+	}
+	return c.ContentMode
 }
 
 func (c EnrichConfig) clone() EnrichConfig {
@@ -62,6 +80,9 @@ func (c EnrichConfig) clone() EnrichConfig {
 }
 
 func (c EnrichConfig) validate() error {
+	if mode := c.EffectiveContentMode(); mode != ContentModeSource && mode != ContentModeBKMonitorDescription {
+		return fmt.Errorf("enrich.content_mode must be source or bkmonitor_description")
+	}
 	seenProcessors := make(map[string]int, len(c.Processors))
 	for index, processor := range c.Processors {
 		if strings.TrimSpace(processor.Type) == "" {
@@ -96,6 +117,15 @@ func (c EnrichConfig) validate() error {
 // 全部 Processor 共享一个 MySQL 连接池；Strategy 和 Resource 额外共享 Elasticsearch Transport。
 func (c EnrichConfig) SelectResources(configured ResourcesConfig) (ResourcesConfig, error) {
 	selected := ResourcesConfig{}
+	if err := c.validate(); err != nil {
+		return selected, err
+	}
+	if c.EffectiveContentMode() == ContentModeBKMonitorDescription {
+		if configured.MySQL == nil {
+			return selected, fmt.Errorf("resources.mysql is required by bkmonitor_description")
+		}
+		selected.MySQL = configured.MySQL
+	}
 	for _, processor := range c.Processors {
 		switch processor.Type {
 		case "cmdb", "fields":

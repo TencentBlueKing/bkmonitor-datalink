@@ -19,6 +19,7 @@ import (
 
 	"linkd/internal/domain"
 	"linkd/internal/enrich/custom"
+	"linkd/internal/enrich/description"
 	"linkd/internal/enrich/models"
 	"linkd/internal/onemodel"
 )
@@ -50,23 +51,26 @@ type Instance = onemodel.Instance
 // Sources 聚合 Enrichment 使用的窄只读数据源。
 type Sources struct {
 	// CMDB 与 Display 为自定义规则提供只读能力。
-	CMDB            onemodel.Reader
-	Display         custom.DisplayReader
-	CWStrategy      CWStrategyReader
-	Business        BusinessReader
-	Metric          MetricReader
-	Model           ModelReader
-	OneModel        OneModelReader
-	AlarmSource     AlarmSourceReader
-	LogTheme        LogThemeReader
-	CloudResource   CloudResourceReader
-	K8s             K8sReader
-	APMApplication  APMApplicationReader
-	CollectConfig   CollectConfigReader
-	CollectTopology CollectTopologyReader
-	DynamicGroup    DynamicGroupReader
-	Uptime          UptimeReader
-	UptimeNode      UptimeNodeReader
+	CMDB        onemodel.Reader
+	Display     custom.DisplayReader
+	CWStrategy  CWStrategyReader
+	StrategySet StrategySetReader
+	// DescriptionConfiguration 校验触发时发布绑定，不能替代为只读当前策略的 CWStrategy。
+	DescriptionConfiguration description.ConfigurationReader
+	Business                 BusinessReader
+	Metric                   MetricReader
+	Model                    ModelReader
+	OneModel                 OneModelReader
+	AlarmSource              AlarmSourceReader
+	LogTheme                 LogThemeReader
+	CloudResource            CloudResourceReader
+	K8s                      K8sReader
+	APMApplication           APMApplicationReader
+	CollectConfig            CollectConfigReader
+	CollectTopology          CollectTopologyReader
+	DynamicGroup             DynamicGroupReader
+	Uptime                   UptimeReader
+	UptimeNode               UptimeNodeReader
 	// Test 仅用于显式启用的测试处理器。
 	Test TestSource
 }
@@ -79,6 +83,11 @@ type DynamicGroupReader interface {
 // CWStrategyReader 按全租户唯一的关联 ID 读取鲸眼声明式策略。
 type CWStrategyReader interface {
 	GetByBKStrategyID(ctx context.Context, tenantID string, bkStrategyID int64) (models.CWStrategy, bool, error)
+}
+
+// StrategySetReader 读取同租户监控模板的当前配置集合，供关联 ConfigID 精确选取。
+type StrategySetReader interface {
+	GetStrategySet(ctx context.Context, tenantID string, monitorTemplateID int64) (models.StrategySet, bool, error)
 }
 
 // BusinessReader 读取租户内 BKCC 业务空间的全局属性。

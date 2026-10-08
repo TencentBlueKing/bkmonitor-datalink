@@ -109,7 +109,8 @@ Alert 是一次异常的当前生命周期快照。它从 opening Event 创建�
 | -------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | 身份     | `alert_id`                                                                                     | UTC 秒、租户、来源和 opening Event 摘要组成的可解析身份 |
 | 关联     | `bk_tenant_id`、`event_source_id`、`fingerprint`                                               | active Alert 的唯一关联范围                           |
-| 继承事实 | `title`、`content`、dimensions、subject、source IDs、labels、extra_data | 从 opening Event 复制，创建后不可修改                 |
+| 继承事实 | `title`、dimensions、subject、source IDs、labels、extra_data | 从 opening Event 复制，创建后不可修改                 |
+| 初始内容 | `content` | 创建前按 EventSource 的 content_mode 复制来源内容或生成 bk-monitor description，创建后不可修改 |
 | 当前级别 | `severity` | 初始取 opening Event 中最高触发级别，update_current 升级时可修改；历史级别见 Event/AlertLog |
 | 当前状态 | `status`                                                                                       | `active/recovered/closed`；后两者为不可重新打开的终态 |
 | 当前进度 | `latest_event_id`、`last_occurred_at`、`update_at`                                             | 最近被接受 Event 及严格单调的服务端快照时间           |
@@ -129,7 +130,7 @@ enrich 为空对象。
 ### 5.2 不变量
 
 - 同一 `(bk_tenant_id, event_source_id, fingerprint)` 同时最多一个 active Alert；
-- 继承字段和创建锚点在 CAS 更新中必须保持不变；
+- 继承字段、初始内容和创建锚点在 CAS 更新中必须保持不变；
 - `update_at` 必须严格大于旧快照，同一 Event 幂等重投不得推进它；
 - active Alert 不得包含 end 字段；终态 Alert 必须包含合法 end_at/end_type；
 - recovered/closed 不可再修改或重新打开；同一问题再次发生时创建新的 Alert；

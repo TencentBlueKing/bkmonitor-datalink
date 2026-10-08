@@ -55,6 +55,8 @@ type Worker struct {
 
 // Task 的稳定 slot 可迁移，代次不能复用；Stopping 仍占用 worker/source/role。
 type Task struct {
+	// Blocked 保留需要人工修复的失败；重启中心、扩容和发布配置都不能自动解除。
+	Blocked bool `json:"blocked,omitempty"`
 	// StoppingAt 是中心提交停止请求的时间，用于跨中心重启测量停止确认耗时。
 	StoppingAt      time.Time `json:"stopping_at,omitempty"`
 	Concurrency     int       `json:"concurrency"`

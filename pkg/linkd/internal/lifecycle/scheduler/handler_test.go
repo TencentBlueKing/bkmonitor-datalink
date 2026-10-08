@@ -12,6 +12,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
@@ -19,6 +20,7 @@ import (
 
 	"linkd/internal/consume"
 	"linkd/internal/domain"
+	"linkd/internal/enrich/description"
 	"linkd/internal/lifecycle"
 	"linkd/internal/store"
 )
@@ -26,6 +28,30 @@ import (
 type fakeEventReader struct {
 	events map[string]store.StoredEvent
 	reads  int
+}
+
+func TestContentFailureBlocksAndPreservesMailboxHead(t *testing.T) {
+	for _, permanent := range []bool{true, false} {
+		mailbox := &fakeMailbox{ids: []string{"event-1", "event-2"}}
+		failure := error(errors.New("dependency unavailable"))
+		want := consume.OutcomeRetry
+		if permanent {
+			failure = fmt.Errorf("wrapped: %w", &description.Error{Code: "history_value_missing"})
+			want = consume.OutcomeBlock
+		}
+		processor := &fakeProcessor{err: failure}
+		handler := newMailboxHandler(t, mailbox, processor, &fakeLocker{}, 512)
+		outcome := handler.Handle(context.Background(), signalMessage(t, testEvent("event-1")))
+		if outcome.Kind != want || len(mailbox.ids) != 2 || mailbox.ids[0] != "event-1" || len(processor.ids) != 1 {
+			t.Fatalf("permanent %t outcome %v mailbox %v processed %v", permanent, outcome.Kind, mailbox.ids, processor.ids)
+		}
+		// 配置或事实修复后，用同一 Signal 恢复；两个 Event 仍按原顺序处理。
+		processor.err = nil
+		outcome = handler.Handle(context.Background(), signalMessage(t, testEvent("event-1")))
+		if outcome.Kind != consume.OutcomeComplete || len(mailbox.ids) != 0 {
+			t.Fatalf("repaired outcome %v mailbox %v", outcome.Kind, mailbox.ids)
+		}
+	}
 }
 
 func (r *fakeEventReader) GetEvent(_ context.Context, _, eventID string) (store.StoredEvent, error) {

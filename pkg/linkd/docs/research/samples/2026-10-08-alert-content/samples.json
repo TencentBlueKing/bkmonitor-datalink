@@ -1,0 +1,1646 @@
+{
+  "environment": "test-bkee5",
+  "captured_at_utc": "2026-10-08T03:46:55.873359+00:00",
+  "linkd_head": "ac1331dec50c08b53c76241e5f00b8b518e3d58d",
+  "bkmonitor_head": "51c834dc6623e09366c77ea8c3d808001a6f5536",
+  "scope": "真实 alarmd_event + 线上只读 MySQL，standard Cleaner/生产 Reader/Resolver/Router/Lifecycle/Preview；Alert 仅入本地 MemoryRepository，来源配置为本地 fixture。未部署或切换线上 EventSource，未执行普通资源 processors/Hook，未写线上 ES，未提交 Kafka offset。",
+  "inventory_count": 73,
+  "inventory": [
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 1,
+      "strategy_version": 1791429887926548,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 2,
+      "strategy_version": 1791429888571820,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 3,
+      "strategy_version": 1791429887550023,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 4,
+      "strategy_version": 1791429887741685,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 5,
+      "strategy_version": 1791429888037493,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 6,
+      "strategy_version": 1791429888266988,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 7,
+      "strategy_version": 1791429888677439,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 8,
+      "strategy_version": 1791429887814230,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 9,
+      "strategy_version": 1791429888345994,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 10,
+      "strategy_version": 1791429887659321,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 11,
+      "strategy_version": 1791429888447047,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 12,
+      "strategy_version": 1790758898926161,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 13,
+      "strategy_version": 1790758899328398,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "data",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 14,
+      "strategy_version": 1790758899543429,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 16,
+      "strategy_version": 1790758899400975,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "data",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "",
+      "strategy_id": 17,
+      "strategy_version": 1790758899150423,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "",
+      "object_model_code": "cw-Host",
+      "strategy_id": 18,
+      "strategy_version": 1790740300905777,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 22,
+      "strategy_version": 1790758899708949,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-MySQL",
+      "strategy_id": 23,
+      "strategy_version": 1790758899437498,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "data",
+      "monitor_item_type": "log_keyword",
+      "metric_source": "klc",
+      "object_model_code": "",
+      "strategy_id": 24,
+      "strategy_version": 1790758899253020,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "event",
+      "metric_source": "",
+      "object_model_code": "cw-Host",
+      "strategy_id": 25,
+      "strategy_version": 1790758899669791,
+      "algorithm_types": [
+        ""
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 26,
+      "strategy_version": 1791429887490117,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 27,
+      "strategy_version": 1790758899573486,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "event",
+      "metric_source": "",
+      "object_model_code": "cw-Host",
+      "strategy_id": 29,
+      "strategy_version": 1790758900035447,
+      "algorithm_types": [
+        ""
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "event",
+      "metric_source": "",
+      "object_model_code": "cw-Host",
+      "strategy_id": 30,
+      "strategy_version": 1790758900488461,
+      "algorithm_types": [
+        ""
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "event",
+      "metric_source": "",
+      "object_model_code": "cw-Host",
+      "strategy_id": 31,
+      "strategy_version": 1790758900064799,
+      "algorithm_types": [
+        ""
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 33,
+      "strategy_version": 1790758900423177,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 35,
+      "strategy_version": 1790758900458208,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "event",
+      "metric_source": "",
+      "object_model_code": "cw-Host",
+      "strategy_id": 36,
+      "strategy_version": 1790758900311793,
+      "algorithm_types": [
+        ""
+      ]
+    },
+    {
+      "config_type": "data",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "",
+      "strategy_id": 37,
+      "strategy_version": 1790758899995225,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-MySQL",
+      "strategy_id": 38,
+      "strategy_version": 1790758900132498,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "data",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "",
+      "strategy_id": 39,
+      "strategy_version": 1790758900231853,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "data",
+      "monitor_item_type": "log_keyword",
+      "metric_source": "klc",
+      "object_model_code": "",
+      "strategy_id": 40,
+      "strategy_version": 1790758900273852,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-MySQL",
+      "strategy_id": 41,
+      "strategy_version": 1790758900178114,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "event",
+      "metric_source": "",
+      "object_model_code": "cw-Host",
+      "strategy_id": 42,
+      "strategy_version": 1790758900095715,
+      "algorithm_types": [
+        ""
+      ]
+    },
+    {
+      "config_type": "data",
+      "monitor_item_type": "log_keyword",
+      "metric_source": "klc",
+      "object_model_code": "cw-K8s_Workload",
+      "strategy_id": 43,
+      "strategy_version": 1790758899947305,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "data",
+      "monitor_item_type": "log_keyword",
+      "metric_source": "klc",
+      "object_model_code": "",
+      "strategy_id": 44,
+      "strategy_version": 1790758900592853,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 45,
+      "strategy_version": 1790758900517969,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 46,
+      "strategy_version": 1790758900517969,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "data",
+      "monitor_item_type": "metric",
+      "metric_source": "kapm",
+      "object_model_code": "",
+      "strategy_id": 47,
+      "strategy_version": 1790758901024762,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "data",
+      "monitor_item_type": "metric",
+      "metric_source": "kapm",
+      "object_model_code": "",
+      "strategy_id": 48,
+      "strategy_version": 1790758901024762,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "event",
+      "metric_source": "",
+      "object_model_code": "cw-Host",
+      "strategy_id": 49,
+      "strategy_version": 1790758900747542,
+      "algorithm_types": [
+        ""
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 50,
+      "strategy_version": 1791429888173003,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 52,
+      "strategy_version": 1790758900975543,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 53,
+      "strategy_version": 1790758900975543,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 54,
+      "strategy_version": 1790758900975543,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 55,
+      "strategy_version": 1790758900975543,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "event",
+      "metric_source": "",
+      "object_model_code": "cw-Host",
+      "strategy_id": 56,
+      "strategy_version": 1790758900975543,
+      "algorithm_types": [
+        ""
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "event",
+      "metric_source": "",
+      "object_model_code": "cw-Host",
+      "strategy_id": 57,
+      "strategy_version": 1790758900975543,
+      "algorithm_types": [
+        ""
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "event",
+      "metric_source": "",
+      "object_model_code": "cw-Host",
+      "strategy_id": 58,
+      "strategy_version": 1790758900975543,
+      "algorithm_types": [
+        ""
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "event",
+      "metric_source": "",
+      "object_model_code": "cw-Host",
+      "strategy_id": 59,
+      "strategy_version": 1790758900975543,
+      "algorithm_types": [
+        "PingUnreachable"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "event",
+      "metric_source": "",
+      "object_model_code": "cw-Host",
+      "strategy_id": 60,
+      "strategy_version": 1790758900975543,
+      "algorithm_types": [
+        ""
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "event",
+      "metric_source": "",
+      "object_model_code": "cw-Host",
+      "strategy_id": 61,
+      "strategy_version": 1790758900975543,
+      "algorithm_types": [
+        "OsRestart"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-MySQL",
+      "strategy_id": 62,
+      "strategy_version": 1790758900925185,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-MySQL",
+      "strategy_id": 63,
+      "strategy_version": 1790758901146821,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-MySQL",
+      "strategy_id": 64,
+      "strategy_version": 1790758900631074,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "event",
+      "metric_source": "",
+      "object_model_code": "cw-Host",
+      "strategy_id": 65,
+      "strategy_version": 1790758901115036,
+      "algorithm_types": [
+        ""
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "event",
+      "metric_source": "",
+      "object_model_code": "cw-Host",
+      "strategy_id": 66,
+      "strategy_version": 1790758901068099,
+      "algorithm_types": [
+        ""
+      ]
+    },
+    {
+      "config_type": "data",
+      "monitor_item_type": "log_keyword",
+      "metric_source": "klc",
+      "object_model_code": "",
+      "strategy_id": 67,
+      "strategy_version": 1790758901187095,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-MySQL",
+      "strategy_id": 68,
+      "strategy_version": 1790758901585161,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-MySQL",
+      "strategy_id": 69,
+      "strategy_version": 1790758901551413,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-MySQL",
+      "strategy_id": 70,
+      "strategy_version": 1790758901447764,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "event",
+      "metric_source": "",
+      "object_model_code": "cw-Host",
+      "strategy_id": 71,
+      "strategy_version": 1790758901614690,
+      "algorithm_types": [
+        ""
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-MySQL",
+      "strategy_id": 72,
+      "strategy_version": 1790758901523305,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "",
+      "object_model_code": "cw-Host",
+      "strategy_id": 73,
+      "strategy_version": 1790740323957111,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-K8s_Node",
+      "strategy_id": 75,
+      "strategy_version": 1790758901821402,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 76,
+      "strategy_version": 1790758901483956,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-MySQL",
+      "strategy_id": 78,
+      "strategy_version": 1790758901641669,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "event",
+      "metric_source": "",
+      "object_model_code": "cw-Host",
+      "strategy_id": 79,
+      "strategy_version": 1790758901231038,
+      "algorithm_types": [
+        ""
+      ]
+    },
+    {
+      "config_type": "data",
+      "monitor_item_type": "log_keyword",
+      "metric_source": "klc",
+      "object_model_code": "",
+      "strategy_id": 80,
+      "strategy_version": 1790758901760836,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "data",
+      "monitor_item_type": "metric",
+      "metric_source": "klc",
+      "object_model_code": "",
+      "strategy_id": 82,
+      "strategy_version": 1790758901702513,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-Host",
+      "strategy_id": 83,
+      "strategy_version": 1790758901789120,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    },
+    {
+      "config_type": "target",
+      "monitor_item_type": "metric",
+      "metric_source": "kmc",
+      "object_model_code": "cw-MySQL",
+      "strategy_id": 84,
+      "strategy_version": 1790758901891061,
+      "algorithm_types": [
+        "Threshold"
+      ]
+    }
+  ],
+  "capture": {
+    "counts": {
+      "examined": 169399,
+      "payload_bytes": 184590261,
+      "duplicate_identity_class": 168274,
+      "no_triggered_evaluation": 1107
+    },
+    "watermarks": [
+      {
+        "partition": 0,
+        "low": 1484421,
+        "high": 1653820
+      }
+    ],
+    "windows": [
+      {
+        "partition": 0,
+        "start": 1484421,
+        "end_exclusive": 1653820,
+        "last_seen": 1653819
+      }
+    ],
+    "seen_scene_counts": [
+      {
+        "scene": [
+          "target",
+          "metric",
+          "kmc",
+          "cw-Host"
+        ],
+        "count": 151082
+      },
+      {
+        "scene": [
+          "target",
+          "metric",
+          "",
+          "cw-Host"
+        ],
+        "count": 1817
+      },
+      {
+        "scene": [
+          "data",
+          "metric",
+          "kapm",
+          ""
+        ],
+        "count": 15956
+      },
+      {
+        "scene": [
+          "target",
+          "metric",
+          "kmc",
+          "cw-K8s_Node"
+        ],
+        "count": 544
+      }
+    ],
+    "candidate_count": 18,
+    "selected_count": 18
+  },
+  "go_test_exit": 0,
+  "status_counts": {
+    "generated": 13,
+    "blocked": 5
+  },
+  "redacted_text_fields": 0,
+  "samples": [
+    {
+      "partition": 0,
+      "offset": 1484499,
+      "context": {
+        "config_type": "data",
+        "monitor_item_type": "metric",
+        "metric_source": "kapm",
+        "object_model_code": "",
+        "strategy_id": 48,
+        "strategy_version": 1790758901024762,
+        "publication_version": 1790758901024762,
+        "observed_value": 10,
+        "unit": "",
+        "item_name": "AVG_WITHOUT_TIME(分钟请求数)",
+        "algorithm_types": [
+          "Threshold"
+        ],
+        "triggered_severities": [
+          "critical",
+          "warning"
+        ],
+        "oracle_input_errors": [],
+        "received_kafka_at": "2026-10-06T16:39:30.150000+00:00"
+      },
+      "status": "generated",
+      "source_content": "value=10 at 2026-10-06T16:38:00Z; 5 of 5 points in the window were anomalous",
+      "bkmonitor_expected_content": "AVG_WITHOUT_TIME(分钟请求数) >= 5.0, 当前值10",
+      "alert": {
+        "alert_id": "20261008000000.system.built_in_bk.04fff2efcac2e233",
+        "begin_at": "2026-10-06T16:38:00Z",
+        "bk_tenant_id": "system",
+        "content": "AVG_WITHOUT_TIME(分钟请求数) >= 5.0, 当前值10",
+        "enrich_status": "succeeded",
+        "event_source_id": "built_in_bk",
+        "event_source_version": 7,
+        "severity": "critical",
+        "status": "active",
+        "title": "Strategy 48 level 1 triggered",
+        "trigger_event_id": "20261008000000.system.built_in_bk.c19d8436f3a5dae1"
+      },
+      "oracle_matched": true,
+      "preview_matched": true,
+      "replay_preserved": true,
+      "event_preserved": true,
+      "review_id": "S01"
+    },
+    {
+      "partition": 0,
+      "offset": 1484468,
+      "context": {
+        "config_type": "target",
+        "monitor_item_type": "metric",
+        "metric_source": "",
+        "object_model_code": "cw-Host",
+        "strategy_id": 18,
+        "strategy_version": 1790740300905777,
+        "publication_version": 1790740300905777,
+        "observed_value": 27.7126099706,
+        "unit": "percent",
+        "item_name": "AVG(CPU使用率)",
+        "algorithm_types": [
+          "Threshold"
+        ],
+        "triggered_severities": [
+          "critical"
+        ],
+        "oracle_input_errors": [],
+        "received_kafka_at": "2026-10-06T16:38:30.388000+00:00"
+      },
+      "status": "generated",
+      "source_content": "value=27.7126099706 at 2026-10-06T16:37:00Z; 4 of 5 points in the window were anomalous",
+      "bkmonitor_expected_content": "AVG(CPU使用率) >= 1.0, 当前值27.71261%",
+      "alert": {
+        "alert_id": "20261008000000.system.built_in_bk.0355a4685d2a5e6b",
+        "begin_at": "2026-10-06T16:37:00Z",
+        "bk_tenant_id": "system",
+        "content": "AVG(CPU使用率) >= 1.0, 当前值27.71261%",
+        "enrich_status": "succeeded",
+        "event_source_id": "built_in_bk",
+        "event_source_version": 7,
+        "severity": "critical",
+        "status": "active",
+        "title": "Strategy 18 level 1 triggered",
+        "trigger_event_id": "20261008000000.system.built_in_bk.832b78e3d25a377c"
+      },
+      "oracle_matched": true,
+      "preview_matched": true,
+      "replay_preserved": true,
+      "event_preserved": true,
+      "review_id": "S02"
+    },
+    {
+      "partition": 0,
+      "offset": 1484446,
+      "context": {
+        "config_type": "target",
+        "monitor_item_type": "metric",
+        "metric_source": "kmc",
+        "object_model_code": "cw-Host",
+        "strategy_id": 3,
+        "strategy_version": 1791223569846858,
+        "publication_version": 1791429887550023,
+        "observed_value": 33458397184,
+        "unit": "bytes",
+        "item_name": "AVG(磁盘总空间大小)",
+        "algorithm_types": [
+          "Threshold"
+        ],
+        "triggered_severities": [
+          "info"
+        ],
+        "oracle_input_errors": [],
+        "received_kafka_at": "2026-10-06T16:38:30.388000+00:00"
+      },
+      "status": "blocked",
+      "reason_code": "publication_version_mismatch",
+      "source_content": "value=33458397184 at 2026-10-06T16:37:00Z; 3 of 3 points in the window were anomalous",
+      "oracle_matched": false,
+      "preview_matched": false,
+      "replay_preserved": false,
+      "event_preserved": true,
+      "no_plan_on_failure": true,
+      "bkmonitor_expected_content": "",
+      "review_id": "S03"
+    },
+    {
+      "partition": 0,
+      "offset": 1484421,
+      "context": {
+        "config_type": "target",
+        "monitor_item_type": "metric",
+        "metric_source": "kmc",
+        "object_model_code": "cw-Host",
+        "strategy_id": 35,
+        "strategy_version": 1790758900458208,
+        "publication_version": 1790758900458208,
+        "observed_value": 83.5792420435,
+        "unit": "percent",
+        "item_name": "AVG(磁盘空间使用率)",
+        "algorithm_types": [
+          "Threshold"
+        ],
+        "triggered_severities": [
+          "critical"
+        ],
+        "oracle_input_errors": [],
+        "received_kafka_at": "2026-10-06T16:38:30.373000+00:00"
+      },
+      "status": "generated",
+      "source_content": "value=83.5792420435 at 2026-10-06T16:37:00Z; 4 of 5 points in the window were anomalous",
+      "bkmonitor_expected_content": "AVG(磁盘空间使用率) >= 10.0%, 当前值83.579242%",
+      "alert": {
+        "alert_id": "20261008000000.system.built_in_bk.12835117aff4775a",
+        "begin_at": "2026-10-06T16:37:00Z",
+        "bk_tenant_id": "system",
+        "content": "AVG(磁盘空间使用率) >= 10.0%, 当前值83.579242%",
+        "enrich_status": "succeeded",
+        "event_source_id": "built_in_bk",
+        "event_source_version": 7,
+        "severity": "critical",
+        "status": "active",
+        "title": "Strategy 35 level 1 triggered",
+        "trigger_event_id": "20261008000000.system.built_in_bk.bbb95d244caadf8d"
+      },
+      "oracle_matched": true,
+      "preview_matched": true,
+      "replay_preserved": true,
+      "event_preserved": true,
+      "review_id": "S04"
+    },
+    {
+      "partition": 0,
+      "offset": 1485266,
+      "context": {
+        "config_type": "target",
+        "monitor_item_type": "metric",
+        "metric_source": "kmc",
+        "object_model_code": "cw-K8s_Node",
+        "strategy_id": 75,
+        "strategy_version": 1790758901821402,
+        "publication_version": 1790758901821402,
+        "observed_value": 9.19,
+        "unit": "",
+        "item_name": "AVG(节点15分钟CPU负载)",
+        "algorithm_types": [
+          "Threshold"
+        ],
+        "triggered_severities": [
+          "critical"
+        ],
+        "oracle_input_errors": [],
+        "received_kafka_at": "2026-10-06T16:48:30.316000+00:00"
+      },
+      "status": "generated",
+      "source_content": "value=9.19 at 2026-10-06T16:47:00Z; 1 of 5 points in the window were anomalous",
+      "bkmonitor_expected_content": "AVG(节点15分钟CPU负载) != 12321321.0, 当前值9.19",
+      "alert": {
+        "alert_id": "20261008000000.system.built_in_bk.e6bceafecdf416cb",
+        "begin_at": "2026-10-06T16:47:00Z",
+        "bk_tenant_id": "system",
+        "content": "AVG(节点15分钟CPU负载) != 12321321.0, 当前值9.19",
+        "enrich_status": "succeeded",
+        "event_source_id": "built_in_bk",
+        "event_source_version": 7,
+        "severity": "critical",
+        "status": "active",
+        "title": "Strategy 75 level 1 triggered",
+        "trigger_event_id": "20261008000000.system.built_in_bk.ed9d3b10a856e884"
+      },
+      "oracle_matched": true,
+      "preview_matched": true,
+      "replay_preserved": true,
+      "event_preserved": true,
+      "review_id": "S05"
+    },
+    {
+      "partition": 0,
+      "offset": 1484672,
+      "context": {
+        "config_type": "data",
+        "monitor_item_type": "metric",
+        "metric_source": "kapm",
+        "object_model_code": "",
+        "strategy_id": 48,
+        "strategy_version": 1790758901024762,
+        "publication_version": 1790758901024762,
+        "observed_value": 9.833333333333334,
+        "unit": "",
+        "item_name": "AVG_WITHOUT_TIME(分钟请求数)",
+        "algorithm_types": [
+          "Threshold"
+        ],
+        "triggered_severities": [
+          "critical"
+        ],
+        "oracle_input_errors": [],
+        "received_kafka_at": "2026-10-06T16:41:30.225000+00:00"
+      },
+      "status": "generated",
+      "source_content": "value=9.833333333333334 at 2026-10-06T16:40:00Z; 5 of 5 points in the window were anomalous",
+      "bkmonitor_expected_content": "AVG_WITHOUT_TIME(分钟请求数) >= 5.0, 当前值9.833333",
+      "alert": {
+        "alert_id": "20261008000000.system.built_in_bk.f60882b28c1a6a1e",
+        "begin_at": "2026-10-06T16:40:00Z",
+        "bk_tenant_id": "system",
+        "content": "AVG_WITHOUT_TIME(分钟请求数) >= 5.0, 当前值9.833333",
+        "enrich_status": "succeeded",
+        "event_source_id": "built_in_bk",
+        "event_source_version": 7,
+        "severity": "critical",
+        "status": "active",
+        "title": "Strategy 48 level 1 triggered",
+        "trigger_event_id": "20261008000000.system.built_in_bk.67bef416c9d21823"
+      },
+      "oracle_matched": true,
+      "preview_matched": true,
+      "replay_preserved": true,
+      "event_preserved": true,
+      "review_id": "S06"
+    },
+    {
+      "partition": 0,
+      "offset": 1484502,
+      "context": {
+        "config_type": "target",
+        "monitor_item_type": "metric",
+        "metric_source": "",
+        "object_model_code": "cw-Host",
+        "strategy_id": 73,
+        "strategy_version": 1790740323957111,
+        "publication_version": 1790740323957111,
+        "observed_value": 27.785919082042,
+        "unit": "percent",
+        "item_name": "AVG(CPU使用率)",
+        "algorithm_types": [
+          "Threshold"
+        ],
+        "triggered_severities": [
+          "critical"
+        ],
+        "oracle_input_errors": [],
+        "received_kafka_at": "2026-10-06T16:39:30.222000+00:00"
+      },
+      "status": "generated",
+      "source_content": "value=27.785919082042 at 2026-10-06T16:38:00Z; 5 of 5 points in the window were anomalous",
+      "bkmonitor_expected_content": "AVG(CPU使用率) >= 1.0, 当前值27.785919%",
+      "alert": {
+        "alert_id": "20261008000000.system.built_in_bk.1431b4ee63b6a97b",
+        "begin_at": "2026-10-06T16:38:00Z",
+        "bk_tenant_id": "system",
+        "content": "AVG(CPU使用率) >= 1.0, 当前值27.785919%",
+        "enrich_status": "succeeded",
+        "event_source_id": "built_in_bk",
+        "event_source_version": 7,
+        "severity": "critical",
+        "status": "active",
+        "title": "Strategy 73 level 1 triggered",
+        "trigger_event_id": "20261008000000.system.built_in_bk.310d99fd63d07446"
+      },
+      "oracle_matched": true,
+      "preview_matched": true,
+      "replay_preserved": true,
+      "event_preserved": true,
+      "review_id": "S07"
+    },
+    {
+      "partition": 0,
+      "offset": 1484447,
+      "context": {
+        "config_type": "target",
+        "monitor_item_type": "metric",
+        "metric_source": "kmc",
+        "object_model_code": "cw-Host",
+        "strategy_id": 3,
+        "strategy_version": 1791223569846858,
+        "publication_version": 1791429887550023,
+        "observed_value": 154704982016,
+        "unit": "bytes",
+        "item_name": "AVG(磁盘总空间大小)",
+        "algorithm_types": [
+          "Threshold"
+        ],
+        "triggered_severities": [
+          "warning",
+          "info"
+        ],
+        "oracle_input_errors": [],
+        "received_kafka_at": "2026-10-06T16:38:30.388000+00:00"
+      },
+      "status": "blocked",
+      "reason_code": "publication_version_mismatch",
+      "source_content": "value=154704982016 at 2026-10-06T16:37:00Z; 2 of 3 points in the window were anomalous",
+      "oracle_matched": false,
+      "preview_matched": false,
+      "replay_preserved": false,
+      "event_preserved": true,
+      "no_plan_on_failure": true,
+      "bkmonitor_expected_content": "",
+      "review_id": "S08"
+    },
+    {
+      "partition": 0,
+      "offset": 1484481,
+      "context": {
+        "config_type": "target",
+        "monitor_item_type": "metric",
+        "metric_source": "kmc",
+        "object_model_code": "cw-Host",
+        "strategy_id": 16,
+        "strategy_version": 1790758899400975,
+        "publication_version": 1790758899400975,
+        "observed_value": 50.0125250459,
+        "unit": "percent",
+        "item_name": "AVG(CPU使用率)",
+        "algorithm_types": [
+          "Threshold"
+        ],
+        "triggered_severities": [
+          "info"
+        ],
+        "oracle_input_errors": [],
+        "received_kafka_at": "2026-10-06T16:38:30.440000+00:00"
+      },
+      "status": "generated",
+      "source_content": "value=50.0125250459 at 2026-10-06T16:37:00Z; 4 of 5 points in the window were anomalous",
+      "bkmonitor_expected_content": "AVG(CPU使用率) >= 1.0%, 当前值50.012525%",
+      "alert": {
+        "alert_id": "20261008000000.system.built_in_bk.3bb2cd616cb421a7",
+        "begin_at": "2026-10-06T16:37:00Z",
+        "bk_tenant_id": "system",
+        "content": "AVG(CPU使用率) >= 1.0%, 当前值50.012525%",
+        "enrich_status": "succeeded",
+        "event_source_id": "built_in_bk",
+        "event_source_version": 7,
+        "severity": "info",
+        "status": "active",
+        "title": "Strategy 16 level 3 triggered",
+        "trigger_event_id": "20261008000000.system.built_in_bk.192942898e0f7b9e"
+      },
+      "oracle_matched": true,
+      "preview_matched": true,
+      "replay_preserved": true,
+      "event_preserved": true,
+      "review_id": "S09"
+    },
+    {
+      "partition": 0,
+      "offset": 1485545,
+      "context": {
+        "config_type": "data",
+        "monitor_item_type": "metric",
+        "metric_source": "kapm",
+        "object_model_code": "",
+        "strategy_id": 47,
+        "strategy_version": 1790758901024762,
+        "publication_version": 1790758901024762,
+        "observed_value": 36,
+        "unit": "",
+        "item_name": "AVG(分钟请求数)",
+        "algorithm_types": [
+          "Threshold"
+        ],
+        "triggered_severities": [
+          "critical",
+          "warning",
+          "info"
+        ],
+        "oracle_input_errors": [],
+        "received_kafka_at": "2026-10-06T16:52:30.202000+00:00"
+      },
+      "status": "generated",
+      "source_content": "value=36 at 2026-10-06T16:51:00Z; 1 of 5 points in the window were anomalous",
+      "bkmonitor_expected_content": "AVG(分钟请求数) >= 3.0, 当前值36",
+      "alert": {
+        "alert_id": "20261008000000.system.built_in_bk.9ee8da961c2b3a3f",
+        "begin_at": "2026-10-06T16:51:00Z",
+        "bk_tenant_id": "system",
+        "content": "AVG(分钟请求数) >= 3.0, 当前值36",
+        "enrich_status": "succeeded",
+        "event_source_id": "built_in_bk",
+        "event_source_version": 7,
+        "severity": "critical",
+        "status": "active",
+        "title": "Strategy 47 level 1 triggered",
+        "trigger_event_id": "20261008000000.system.built_in_bk.9c455aa5d761ff0e"
+      },
+      "oracle_matched": true,
+      "preview_matched": true,
+      "replay_preserved": true,
+      "event_preserved": true,
+      "review_id": "S10"
+    },
+    {
+      "partition": 0,
+      "offset": 1484469,
+      "context": {
+        "config_type": "target",
+        "monitor_item_type": "metric",
+        "metric_source": "kmc",
+        "object_model_code": "cw-Host",
+        "strategy_id": 11,
+        "strategy_version": 1791223571555808,
+        "publication_version": 1791429888447047,
+        "observed_value": 40.2747942174,
+        "unit": "percent",
+        "item_name": "AVG(CPU使用率)",
+        "algorithm_types": [
+          "Threshold"
+        ],
+        "triggered_severities": [
+          "critical"
+        ],
+        "oracle_input_errors": [],
+        "received_kafka_at": "2026-10-06T16:38:30.430000+00:00"
+      },
+      "status": "blocked",
+      "reason_code": "publication_version_mismatch",
+      "source_content": "value=40.2747942174 at 2026-10-06T16:37:00Z; 2 of 5 points in the window were anomalous",
+      "oracle_matched": false,
+      "preview_matched": false,
+      "replay_preserved": false,
+      "event_preserved": true,
+      "no_plan_on_failure": true,
+      "bkmonitor_expected_content": "",
+      "review_id": "S11"
+    },
+    {
+      "partition": 0,
+      "offset": 1484494,
+      "context": {
+        "config_type": "target",
+        "monitor_item_type": "metric",
+        "metric_source": "kmc",
+        "object_model_code": "cw-Host",
+        "strategy_id": 27,
+        "strategy_version": 1790758899573486,
+        "publication_version": 1790758899573486,
+        "observed_value": 40.2747942174,
+        "unit": "percent",
+        "item_name": "AVG(CPU使用率)",
+        "algorithm_types": [
+          "Threshold"
+        ],
+        "triggered_severities": [
+          "critical"
+        ],
+        "oracle_input_errors": [],
+        "received_kafka_at": "2026-10-06T16:38:30.466000+00:00"
+      },
+      "status": "generated",
+      "source_content": "value=40.2747942174 at 2026-10-06T16:37:00Z; 1 of 5 points in the window were anomalous",
+      "bkmonitor_expected_content": "AVG(CPU使用率) >= 40.0%, 当前值40.274794%",
+      "alert": {
+        "alert_id": "20261008000000.system.built_in_bk.6078eb76ea1e2f2b",
+        "begin_at": "2026-10-06T16:37:00Z",
+        "bk_tenant_id": "system",
+        "content": "AVG(CPU使用率) >= 40.0%, 当前值40.274794%",
+        "enrich_status": "succeeded",
+        "event_source_id": "built_in_bk",
+        "event_source_version": 7,
+        "severity": "critical",
+        "status": "active",
+        "title": "Strategy 27 level 1 triggered",
+        "trigger_event_id": "20261008000000.system.built_in_bk.23859a27a1cc429f"
+      },
+      "oracle_matched": true,
+      "preview_matched": true,
+      "replay_preserved": true,
+      "event_preserved": true,
+      "review_id": "S12"
+    },
+    {
+      "partition": 0,
+      "offset": 1485604,
+      "context": {
+        "config_type": "data",
+        "monitor_item_type": "metric",
+        "metric_source": "kapm",
+        "object_model_code": "",
+        "strategy_id": 48,
+        "strategy_version": 1790758901024762,
+        "publication_version": 1790758901024762,
+        "observed_value": 36,
+        "unit": "",
+        "item_name": "AVG_WITHOUT_TIME(分钟请求数)",
+        "algorithm_types": [
+          "Threshold"
+        ],
+        "triggered_severities": [
+          "critical",
+          "warning",
+          "info"
+        ],
+        "oracle_input_errors": [],
+        "received_kafka_at": "2026-10-06T16:53:30.163000+00:00"
+      },
+      "status": "generated",
+      "source_content": "value=36 at 2026-10-06T16:52:00Z; 1 of 5 points in the window were anomalous",
+      "bkmonitor_expected_content": "AVG_WITHOUT_TIME(分钟请求数) >= 5.0, 当前值36",
+      "alert": {
+        "alert_id": "20261008000000.system.built_in_bk.b4f04b03db6c108e",
+        "begin_at": "2026-10-06T16:52:00Z",
+        "bk_tenant_id": "system",
+        "content": "AVG_WITHOUT_TIME(分钟请求数) >= 5.0, 当前值36",
+        "enrich_status": "succeeded",
+        "event_source_id": "built_in_bk",
+        "event_source_version": 7,
+        "severity": "critical",
+        "status": "active",
+        "title": "Strategy 48 level 1 triggered",
+        "trigger_event_id": "20261008000000.system.built_in_bk.2c6f114a23132cf0"
+      },
+      "oracle_matched": true,
+      "preview_matched": true,
+      "replay_preserved": true,
+      "event_preserved": true,
+      "review_id": "S13"
+    },
+    {
+      "partition": 0,
+      "offset": 1484482,
+      "context": {
+        "config_type": "target",
+        "monitor_item_type": "metric",
+        "metric_source": "kmc",
+        "object_model_code": "cw-Host",
+        "strategy_id": 2,
+        "strategy_version": 1791223571659731,
+        "publication_version": 1791429888571820,
+        "observed_value": 40.2747942174,
+        "unit": "percent",
+        "item_name": "AVG(CPU使用率)",
+        "algorithm_types": [
+          "Threshold"
+        ],
+        "triggered_severities": [
+          "critical"
+        ],
+        "oracle_input_errors": [],
+        "received_kafka_at": "2026-10-06T16:38:30.449000+00:00"
+      },
+      "status": "blocked",
+      "reason_code": "publication_version_mismatch",
+      "source_content": "value=40.2747942174 at 2026-10-06T16:37:00Z; 2 of 5 points in the window were anomalous",
+      "oracle_matched": false,
+      "preview_matched": false,
+      "replay_preserved": false,
+      "event_preserved": true,
+      "no_plan_on_failure": true,
+      "bkmonitor_expected_content": "",
+      "review_id": "S14"
+    },
+    {
+      "partition": 0,
+      "offset": 1484501,
+      "context": {
+        "config_type": "target",
+        "monitor_item_type": "metric",
+        "metric_source": "kmc",
+        "object_model_code": "cw-Host",
+        "strategy_id": 22,
+        "strategy_version": 1790758899708949,
+        "publication_version": 1790758899708949,
+        "observed_value": 37.3771243036,
+        "unit": "percent",
+        "item_name": "AVG(CPU使用率)",
+        "algorithm_types": [
+          "Threshold"
+        ],
+        "triggered_severities": [
+          "critical"
+        ],
+        "oracle_input_errors": [],
+        "received_kafka_at": "2026-10-06T16:39:30.179000+00:00"
+      },
+      "status": "generated",
+      "source_content": "value=37.3771243036 at 2026-10-06T16:38:00Z; 5 of 5 points in the window were anomalous",
+      "bkmonitor_expected_content": "AVG(CPU使用率) >= 2.0%, 当前值37.377124%",
+      "alert": {
+        "alert_id": "20261008000000.system.built_in_bk.87142033d7c2e0f9",
+        "begin_at": "2026-10-06T16:38:00Z",
+        "bk_tenant_id": "system",
+        "content": "AVG(CPU使用率) >= 2.0%, 当前值37.377124%",
+        "enrich_status": "succeeded",
+        "event_source_id": "built_in_bk",
+        "event_source_version": 7,
+        "severity": "critical",
+        "status": "active",
+        "title": "Strategy 22 level 1 triggered",
+        "trigger_event_id": "20261008000000.system.built_in_bk.ad1f3850c568d900"
+      },
+      "oracle_matched": true,
+      "preview_matched": true,
+      "replay_preserved": true,
+      "event_preserved": true,
+      "review_id": "S15"
+    },
+    {
+      "partition": 0,
+      "offset": 1487170,
+      "context": {
+        "config_type": "data",
+        "monitor_item_type": "metric",
+        "metric_source": "kapm",
+        "object_model_code": "",
+        "strategy_id": 47,
+        "strategy_version": 1790758901024762,
+        "publication_version": 1790758901024762,
+        "observed_value": 7,
+        "unit": "",
+        "item_name": "AVG(分钟请求数)",
+        "algorithm_types": [
+          "Threshold"
+        ],
+        "triggered_severities": [
+          "critical",
+          "warning"
+        ],
+        "oracle_input_errors": [],
+        "received_kafka_at": "2026-10-06T17:12:30.261000+00:00"
+      },
+      "status": "generated",
+      "source_content": "value=7 at 2026-10-06T17:11:00Z; 3 of 5 points in the window were anomalous",
+      "bkmonitor_expected_content": "AVG(分钟请求数) >= 3.0, 当前值7",
+      "alert": {
+        "alert_id": "20261008000000.system.built_in_bk.956f7cbe7e68b0a3",
+        "begin_at": "2026-10-06T17:11:00Z",
+        "bk_tenant_id": "system",
+        "content": "AVG(分钟请求数) >= 3.0, 当前值7",
+        "enrich_status": "succeeded",
+        "event_source_id": "built_in_bk",
+        "event_source_version": 7,
+        "severity": "critical",
+        "status": "active",
+        "title": "Strategy 47 level 1 triggered",
+        "trigger_event_id": "20261008000000.system.built_in_bk.1a9fc3a2ddcaa6c7"
+      },
+      "oracle_matched": true,
+      "preview_matched": true,
+      "replay_preserved": true,
+      "event_preserved": true,
+      "review_id": "S16"
+    },
+    {
+      "partition": 0,
+      "offset": 1484503,
+      "context": {
+        "config_type": "target",
+        "monitor_item_type": "metric",
+        "metric_source": "kmc",
+        "object_model_code": "cw-Host",
+        "strategy_id": 7,
+        "strategy_version": 1791223571748751,
+        "publication_version": 1791429888677439,
+        "observed_value": 0.853175695597,
+        "unit": "percentunit",
+        "item_name": "AVG(CPU空闲率)",
+        "algorithm_types": [
+          "Threshold"
+        ],
+        "triggered_severities": [
+          "info"
+        ],
+        "oracle_input_errors": [],
+        "received_kafka_at": "2026-10-06T16:39:30.238000+00:00"
+      },
+      "status": "blocked",
+      "reason_code": "publication_version_mismatch",
+      "source_content": "value=0.853175695597 at 2026-10-06T16:38:00Z; 5 of 5 points in the window were anomalous",
+      "oracle_matched": false,
+      "preview_matched": false,
+      "replay_preserved": false,
+      "event_preserved": true,
+      "no_plan_on_failure": true,
+      "bkmonitor_expected_content": "",
+      "review_id": "S17"
+    },
+    {
+      "partition": 0,
+      "offset": 1491933,
+      "context": {
+        "config_type": "data",
+        "monitor_item_type": "metric",
+        "metric_source": "kapm",
+        "object_model_code": "",
+        "strategy_id": 47,
+        "strategy_version": 1790758901024762,
+        "publication_version": 1790758901024762,
+        "observed_value": 4,
+        "unit": "",
+        "item_name": "AVG(分钟请求数)",
+        "algorithm_types": [
+          "Threshold"
+        ],
+        "triggered_severities": [
+          "critical"
+        ],
+        "oracle_input_errors": [],
+        "received_kafka_at": "2026-10-06T18:10:30.216000+00:00"
+      },
+      "status": "generated",
+      "source_content": "value=4 at 2026-10-06T18:09:00Z; 5 of 5 points in the window were anomalous",
+      "bkmonitor_expected_content": "AVG(分钟请求数) >= 3.0, 当前值4",
+      "alert": {
+        "alert_id": "20261008000000.system.built_in_bk.2e7a58663ccd5c3f",
+        "begin_at": "2026-10-06T18:09:00Z",
+        "bk_tenant_id": "system",
+        "content": "AVG(分钟请求数) >= 3.0, 当前值4",
+        "enrich_status": "succeeded",
+        "event_source_id": "built_in_bk",
+        "event_source_version": 7,
+        "severity": "critical",
+        "status": "active",
+        "title": "Strategy 47 level 1 triggered",
+        "trigger_event_id": "20261008000000.system.built_in_bk.f37f393ca43e5c78"
+      },
+      "oracle_matched": true,
+      "preview_matched": true,
+      "replay_preserved": true,
+      "event_preserved": true,
+      "review_id": "S18"
+    }
+  ]
+}

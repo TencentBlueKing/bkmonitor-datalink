@@ -103,6 +103,7 @@ type Processor struct {
 	recentAlerts   RecentAlertCache
 	idGenerator    AlertIDGenerator
 	enricher       AlertEnricher
+	contentBuilder AlertContentBuilder
 	enrichObserver EnrichObserver
 	finalHooks     []NamedFinalHook
 	severity       SeverityTable
@@ -139,7 +140,8 @@ func NewProcessor(
 		seen[hook.Name] = true
 	}
 	processor := &Processor{
-		upgradePolicy: "close_and_create", repository: repository, recentAlerts: recentAlerts, idGenerator: idGenerator, enricher: enricher,
+		contentBuilder: SourceContentBuilder{},
+		upgradePolicy:  "close_and_create", repository: repository, recentAlerts: recentAlerts, idGenerator: idGenerator, enricher: enricher,
 		enrichObserver: noopEnrichObserver{}, finalHooks: append([]NamedFinalHook(nil), finalHooks...), severity: severity, clock: clock, logger: logger,
 	}
 	for _, option := range options {
@@ -149,6 +151,9 @@ func NewProcessor(
 	}
 	if processor.upgradePolicy != "update_current" && processor.upgradePolicy != "close_and_create" {
 		return nil, fmt.Errorf("invalid severity upgrade policy")
+	}
+	if processor.contentBuilder == nil {
+		return nil, fmt.Errorf("lifecycle content builder must not be nil")
 	}
 	return processor, nil
 }

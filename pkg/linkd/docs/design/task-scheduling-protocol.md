@@ -39,6 +39,11 @@ Kafka ownership 回调在空 topic 时也即时上报 partition，并在 Runtime
 - 中心按最后已提交的授权到期时间加 10 秒余量强切，拒绝旧代次报告/续租。未确认的旧 assignment 始终占位，直到停止或合法强切。
 - 异常恢复有 15 秒稳定窗口，强切节点有 60 秒冷却，单任务失败按有上限的退避重试，避免持续重建。
 
+内容构建的确定性失败另行报告 `blocked=true`，暂停同来源 Lifecycle 角色，保留未确认 Signal 和 mailbox 队首。
+标记持久化到协调快照；中心重启、扩容、配置发布和授权到期不能触发自动重试。修复后须等角色的全部任务停止，
+再通过[任务恢复管理接口](../reference/contracts/task-resume.md)按 source/version/epoch 显式解除。新任务使用新 epoch
+及退休 consumer 列表接管 PEL，已保存内容不重新生成。停止未完成时先保留标记并等待停止握手或合法强切。
+
 这是已确认的有界自停模型：覆盖正常取消、控制网络故障、崩溃和容器发布。
 不承诺冻结整个 VM/OS 或无限延迟外部请求下的绝对互斥；控制 epoch 不等于资源端原子 fencing。
 现有业务幂等、CAS、Kafka group generation 与 fingerprint lease 继续生效，但不将它们宣称为完整跨系统事务。

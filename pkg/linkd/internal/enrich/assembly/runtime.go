@@ -19,6 +19,7 @@ import (
 	"linkd/internal/config"
 	"linkd/internal/enrich"
 	"linkd/internal/enrich/datasources"
+	"linkd/internal/enrich/description"
 	onemodelassembly "linkd/internal/onemodel/assembly"
 	"linkd/internal/redisclient"
 	elasticsearchstore "linkd/internal/store/elasticsearch"
@@ -148,10 +149,18 @@ func Open(
 
 // Router 为当前来源 Release 构建固定的 Processor Chain。
 func (r *Runtime) Router(source config.EventSource, telemetryRuntime *telemetry.Runtime) (*Router, error) {
-	if telemetryRuntime == nil {
-		return NewRouter([]config.EventSource{source}, r.sources)
+	options := []RouterOption{}
+	if source.Enrich.EffectiveContentMode() == config.ContentModeBKMonitorDescription {
+		resolver, err := description.NewResolver(r.sources.DescriptionConfiguration)
+		if err != nil {
+			return nil, err
+		}
+		options = append(options, WithDescriptionFacts(resolver))
 	}
-	return NewRouter([]config.EventSource{source}, r.sources, WithEnrichObserver(telemetryRuntime.EnrichProcessorObserver()))
+	if telemetryRuntime != nil {
+		options = append(options, WithEnrichObserver(telemetryRuntime.EnrichProcessorObserver()))
+	}
+	return NewRouter([]config.EventSource{source}, r.sources, options...)
 }
 
 func mysqlDataSourceConfig(value *config.MySQLResource) *datasources.MySQLConfig {

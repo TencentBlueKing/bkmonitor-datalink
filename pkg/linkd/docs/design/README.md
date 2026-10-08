@@ -14,6 +14,7 @@
 | [task-scheduling-observability.md](task-scheduling-observability.md) | 中心与 worker 调度指标、语义和验证入口 |
 | [observability.md](observability.md)                             | 日志、指标和诊断约束                                   |
 | [enrich.md](enrich.md) | 内置丰富场景、Observation 和 KAC 迁移状态 |
+| [alert-content-generation.md](alert-content-generation.md) | 新 Alert 内容生成迁移的实施草案、数据前置条件和验收范围 |
 | [custom-enrichment.md](custom-enrichment.md) | 自定义 CMDB/字段规则、补丁、SDK、预览和转换 |
 | [event-source-dynamic-configuration.md](event-source-dynamic-configuration.md) | EventSource 管理、发布、多副本与分片上限 |
 | [active-alert-index.md](active-alert-index.md) | 控制面统一维护策略缓存、原子发布与故障恢复 |

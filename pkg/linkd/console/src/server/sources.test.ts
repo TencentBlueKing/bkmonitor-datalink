@@ -4,6 +4,48 @@ import { registerSourceRoutes } from "./sources.js";
 import type { ConsoleConfig } from "./config.js";
 
 afterEach(() => vi.unstubAllGlobals());
+
+it("preserves the content mode when loading the published enrichment configuration", async () => {
+  const fetcher = vi.fn(
+    async (url: string) =>
+      new Response(
+        JSON.stringify(
+          url.includes("/releases/")
+            ? {
+                spec: {
+                  enrich: {
+                    content_mode: "bkmonitor_description",
+                    processors: [],
+                  },
+                },
+              }
+            : { published: 7, deleted: false },
+        ),
+      ),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  const app = Fastify();
+  registerSourceRoutes(app, {
+    dispatch: {
+      url: "http://control-plane",
+      jwt: { secretKey: "private-token", username: "admin" },
+      deployment: "test",
+    },
+    query: { timeoutMilliseconds: 1000 },
+  } as ConsoleConfig);
+  try {
+    const response = await app.inject("/local-api/enrich/config/host");
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      enrich: { content_mode: "bkmonitor_description", processors: [] },
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(response.body).not.toContain("private-token");
+  } finally {
+    await app.close();
+  }
+});
+
 it("serves the metric catalog through a fixed read-only destination with server authentication", async () => {
   const fetcher = vi.fn(
     async () =>

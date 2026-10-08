@@ -30,6 +30,25 @@ type taskError struct {
 	err   error
 }
 
+type repairRequired struct{ err error }
+
+func (e *repairRequired) Error() string { return "task requires repair: " + e.err.Error() }
+func (e *repairRequired) Unwrap() error { return e.err }
+
+// RequireTaskRepair 保留失败并禁止调度器自动重启；修复后须显式恢复原来源版本。
+// 该标记只用于确定性失败，暂时性依赖错误继续使用既有退避。
+func RequireTaskRepair(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &repairRequired{err: err}
+}
+
+func requiresTaskRepair(err error) bool {
+	var failure *repairRequired
+	return errors.As(err, &failure)
+}
+
 func (e *taskError) Error() string { return e.stage + ": " + e.err.Error() }
 
 func (e *taskError) Unwrap() error { return e.err }
@@ -144,6 +163,9 @@ func (a *Agent) logTaskFailure(ctx context.Context, task Task, err error) {
 	var systemErr syscall.Errno
 	if errors.As(err, &systemErr) {
 		attrs = append(attrs, "system_error_code", int(systemErr))
+	}
+	if requiresTaskRepair(err) {
+		reason = "task_requires_repair"
 	}
 	attrs = append(attrs, "reason_code", reason)
 	a.Logger.ErrorContext(context.WithoutCancel(ctx), "source task failed", attrs...)

@@ -84,3 +84,49 @@ it("shows malformed JSON locally", async () => {
   expect(await screen.findByRole("alert")).toBeInTheDocument();
   expect(fetcher).not.toHaveBeenCalled();
 });
+
+it("previews an opening event at the selected severity and displays candidate content", async () => {
+  const fetcher = vi.fn<
+    (path: string, init?: RequestInit) => Promise<Response>
+  >(
+    async () =>
+      new Response(
+        JSON.stringify({
+          event_source_version: 7,
+          config_digest: "abcdef",
+          enrich_status: "skipped",
+          original: { content: "source" },
+          effective_alert: { content: "generated" },
+          candidate_content: "generated",
+          enrich: { processors: [] },
+          changes: [],
+          previous_changes: [],
+          trace: [],
+        }),
+      ),
+  );
+  vi.stubGlobal("fetch", fetcher);
+  render(
+    <MemoryRouter initialEntries={["/?bk_tenant_id=t&event_source_id=host"]}>
+      <EnrichPreviewPage />
+    </MemoryRouter>,
+  );
+  fireEvent.change(screen.getByLabelText("输入方式"), {
+    target: { value: "event" },
+  });
+  fireEvent.change(screen.getByLabelText("Opening Event JSON"), {
+    target: { value: '{"event_source_version":7,"content":"source"}' },
+  });
+  fireEvent.change(screen.getByLabelText("触发级别"), {
+    target: { value: "critical" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "执行预览" }));
+  await screen.findByText("候选告警内容");
+  expect(screen.getAllByText("generated").length).toBeGreaterThan(0);
+  expect(fetcher).toHaveBeenCalledOnce();
+  const init = fetcher.mock.calls[0]?.[1] as RequestInit | undefined;
+  expect(JSON.parse(String(init?.body)).input).toEqual({
+    event: { event_source_version: 7, content: "source" },
+    severity: "critical",
+  });
+});

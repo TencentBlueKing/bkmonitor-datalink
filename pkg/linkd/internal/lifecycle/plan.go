@@ -325,6 +325,12 @@ func (p *Processor) planNewAlert(ctx context.Context, plan *store.EventPlan, eve
 		return domain.Alert{}, err
 	}
 	alert := domain.Alert{AlertID: id, BKTenantID: event.BKTenantID, EventSourceID: event.EventSourceID, EventSourceVersion: event.EventSourceVersion, Fingerprint: event.Fingerprint, Title: event.Title, Content: event.Content, Severity: evaluation.Severity, Dimensions: event.Dimensions.Clone(), SubjectSystem: event.SubjectSystem, SubjectType: event.SubjectType, SubjectID: event.SubjectID, SubjectName: event.SubjectName, SourceEventID: event.SourceEventID, SourceAlertID: event.SourceAlertID, Labels: event.Labels.Clone(), ExtraData: event.ExtraData.Clone(), Status: domain.AlertStatusActive, LatestEventID: event.EventID, LastOccurredAt: event.OccurredAt, UpdateAt: now, TriggerEventID: event.EventID, BeginAt: event.OccurredAt, CreateAt: event.CreateAt, EnrichStatus: domain.EnrichStatusPending}
+	// 内容是新 Alert 的核心事实，必须在普通 Enrich 和持久化计划之前生成。
+	// 失败不能沿用普通 Enrich 的降级路径，否则会保存不可修复的错误内容。
+	alert.Content, err = p.buildNewAlertContent(ctx, event, evaluation, alert)
+	if err != nil {
+		return domain.Alert{}, err
+	}
 	alert, err = p.enrichNewAlert(ctx, alert)
 	if err != nil {
 		return domain.Alert{}, err

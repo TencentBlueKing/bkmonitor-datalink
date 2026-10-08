@@ -77,6 +77,13 @@ func Reconcile(st *State, releases []eventsource.Release, now time.Time) {
 			}
 			status := Status{Source: rel.ID, Role: role, Matching: len(eligible), Target: target}
 			allowNew := true
+			blocked := false
+			for _, task := range st.Tasks {
+				if task.Source == rel.ID && task.Role == role && task.Blocked {
+					blocked = true
+					break
+				}
+			}
 			subscriptionConflict := false
 			if role == "cleaner" {
 				m := st.Metadata[rel.ID]
@@ -106,6 +113,13 @@ func Reconcile(st *State, releases []eventsource.Release, now time.Time) {
 				status.Reason = "subscription is owned by another source"
 			}
 			status.Target = target
+			if blocked {
+				// 一个永久失败会暂停整个来源角色，避免新 slot 或另一 worker
+				// 重新接管同一 PEL 消息。诊断保留期望副本数，实际目标为零。
+				allowNew = false
+				status.Reason = "task requires repair and explicit resume"
+				target = 0
+			}
 			active := []string{}
 			for id, t := range st.Tasks {
 				if t.Source == rel.ID && t.Role == role && t.Phase != "stopped" {
@@ -134,7 +148,7 @@ func Reconcile(st *State, releases []eventsource.Release, now time.Time) {
 					valid = false
 				}
 				revoke := !valid || retained >= target
-				if !allowNew && !subscriptionConflict && placement(s, role).Replicas.Limit(1) > 0 && s.Enabled && !rel.Deleted && matches(w, s, role) && !w.Draining && now.Sub(w.Seen) < 10*time.Second && retained < target {
+				if !allowNew && !blocked && !subscriptionConflict && placement(s, role).Replicas.Limit(1) > 0 && s.Enabled && !rel.Deleted && matches(w, s, role) && !w.Draining && now.Sub(w.Seen) < 10*time.Second && retained < target {
 					revoke = false
 				}
 				if delayStop {

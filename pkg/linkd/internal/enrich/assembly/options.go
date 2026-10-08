@@ -9,9 +9,21 @@
 
 package assembly
 
-import "linkd/internal/enrich"
+import (
+	"linkd/internal/enrich"
+	"linkd/internal/enrich/description"
+)
 
-type routerOptions struct{ observer enrich.Observer }
+type routerOptions struct {
+	observer enrich.Observer
+	facts    description.FactsResolver
+}
+
+// WithDescriptionFacts 注入内容创建与预览共用的冻结事实解析器。
+// 缺少解析器时 bkmonitor_description 来源不能装配，不回退来源文案。
+func WithDescriptionFacts(resolver description.FactsResolver) RouterOption {
+	return func(options *routerOptions) { options.facts = resolver }
+}
 
 // RouterOption 配置 Router 创建的 Processor Chain。
 type RouterOption func(*routerOptions)

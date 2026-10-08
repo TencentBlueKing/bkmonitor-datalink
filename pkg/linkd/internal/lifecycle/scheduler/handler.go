@@ -173,6 +173,14 @@ func (h *Handler) drain(
 		h.observer.EventProcessed(ctx, stored.Event.EventSourceID, eventAction(stored.Event.Evaluations), result, processErr)
 		if processErr != nil {
 			h.observer.MailboxOperation(ctx, stored.Event.EventSourceID, "process", "failed")
+			var contentFailure interface{ PermanentContentFailure() string }
+			if errors.As(processErr, &contentFailure) {
+				// 内容不可在创建后补算。保留 mailbox 队首和 Signal，不 Ack 或丢弃。
+				// 依赖超时等无此标记的错误继续走有界重试。
+				h.logger.WarnContext(ctx, "alert content blocks mailbox", "bk_tenant_id", stored.Event.BKTenantID,
+					"event_source_id", stored.Event.EventSourceID, "event_id", eventID, "reason_code", contentFailure.PermanentContentFailure())
+				return processed, last, false, processErr, nil
+			}
 			return processed, last, false, nil, processErr
 		}
 		h.observer.MailboxOperation(ctx, stored.Event.EventSourceID, "process", "succeeded")

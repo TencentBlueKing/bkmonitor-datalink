@@ -97,19 +97,9 @@ Lifecycle 构造并 Normalize 新 Alert
 
 ## 4. 配置与装配
 
-公共连接属于顶层 `resources` 启动配置；以下 `enrich` 片段属于 EventSource Release：
+以下 `enrich` 片段属于 EventSource Release：
 
 ```yaml
-resources:
-  mysql:
-    address: mysql.example.com:3306
-    database: kingeye
-    username: reader
-    password: "..."
-  onemodel:
-    addresses:
-      - http://onemodel.example.com:9200
-    api_key: "..."
 enrich:
   processors:
     - type: strategy
@@ -126,10 +116,9 @@ enrich:
 - Processor 出现即启用，列表顺序决定执行和输出顺序。
 - 同一类型最多出现一次。
 - 空列表使用 Noop，结果为 succeeded 且 `processors` 为空。
-- 未注册 Processor、缺少必需物理连接或非法配置使 Release 校验失败。
+- 未注册 Processor 或非法配置使 Release 校验失败。
 - `strategy`、`resource` 当前要求 MySQL 与 Elasticsearch；`display`、`metric`、`source` 要求 MySQL。
-- 凭据只进入顶层 resources，展示时脱敏，不进入新发布的 Record/Release。
-- `configs/linkd.pm2.yaml` 当前示例使用空链；生产启用需要在 EventSource Release 中配置处理器，并在启动 YAML 中配置公共资源。
+- `configs/linkd.pm2.yaml` 当前示例使用空链；生产启用需要在 EventSource Release 中配置处理器。
 
 当前 Router 注册：
 
@@ -273,6 +262,8 @@ dimension_text
 
 结构化 dimensions 保留场景生成顺序；`dimension_text` 使用副本排序和格式化。当前大部分场景的 content 直接继承 `Alert.Content`。
 
+EventSource 的 `enrich.content_mode=bkmonitor_description` 已在创建准备阶段调用内容构建器，生成尚未持久化的 `Alert.content`；普通 Processor 的 Result 仍只保存 Status/Data。该模式的 Display 保留已生成内容，不再裁剪日志、拼接对象名或重复转换单位。`source` 模式维持既有来源文本处理。实现、事实缺口和验收范围集中见[告警内容生成方案](alert-content-generation.md)，后续 Enrich 不覆盖已有核心字段。
+
 ### 6.4 metric
 
 适用场景：DATA、日志和其他带指标查询的链路。Metric 读取策略和 MetricLibrary 投影；Cloud/K8s/APM 的专用指标仍以真实契约为准。
@@ -332,7 +323,7 @@ meta_info
 
 | 能力 | 当前事实 | 影响 |
 | --- | --- | --- |
-| DynamicGroup Redis | Reader 与生产装配已实现，本地测试已覆盖；目标环境未验证 | 需配置每租户 Redis keyspace；未配置或未命中时为空数组，读取失败使 Resource 部分成功 |
+| DynamicGroup Redis | Reader 与生产装配已实现，本地测试已覆盖；目标环境未验证 | 未命中时为空数组，读取失败使 Resource 部分成功 |
 | LogTheme 生产 Reader | 已装配 | MySQL Reader 查询 `log_theme_logtheme`，使用调用方传入的 `bk_tenant_id`，只投影 `bk_tenant_id`、`log_theme_id`、`log_theme_name`；生产装配接入 `enrich.Sources.LogTheme` | |
 | CloudResource | 已装配 | MySQL Reader 已接入 `enrich.Sources.CloudResource`，按接口入参租户和 `cloud_id + type + instanceid` 查询并关联云平台名称；当前 CloudResource 表为空 |
 | CloudPlugin / SysSetting | 已移出当前 Cloud 主链 | 当前 Cloud/VMWARE 契约不依赖 CloudPlugin、SysSetting，不阻塞资源丰富 |
@@ -443,7 +434,7 @@ Resource 与 Display 共享同一个场景解析结果。MonitorSource、NoData�
 | `DATA` | 90%～95% | Standard Kafka → Lifecycle → Strategy/Resource/Display/Metric/Source 主流程、`basic_data` KAC 对照、system 主机与 uptimecheck、普通／hardware_／多模型 canonical OneModel 身份、枚举／衍生／多指标／PromQL／函数指标、特殊查询翻译、内容算法和派生失败矩阵 | 真实普通及多模型 KAC 样例、双租户与真实外部失败样本 |
 | `LOG_METRIC` | 75%～85% | 分类、标题、`log` Processor、`log_theme_logtheme` Reader、接口入参租户查询、主题/查询字段、空资源、日志标签、Router 注册、内容裁剪和 KAC 样例字段对照 | 真实数据库记录命中、专用查询参数细节和完整 JSON fixture |
 | `LOG_KEYWORD` | 75%～85% | 分类、标题、`log` Processor、`log_theme_logtheme` Reader、接口入参租户查询、查询语句、关联信息、空资源、日志标签、命中/无数据裁剪和 KAC 样例字段对照 | 真实数据库记录命中、专用 URL/查询细节和完整 JSON fixture |
-| `VMWARE/Cloud` | 65%～75% | Cloud 类型、期望 Kafka 输入、旧 KAC 表结构与读取字段、策略读取、CloudResource MySQL Reader、复合身份、资源投影、业务标签、响应身份校验、Router 注册和主流程验证；已用 Navicat 转发连接验证空数据查询 | 真实 CloudResource 记录和完整 fixture | |
+| `VMWARE/Cloud` | 65%～75% | Cloud 类型、期望 Kafka 输入、旧 KAC 表结构与读取字段、策略读取、CloudResource MySQL Reader、复合身份、资源投影、业务标签、响应身份校验、Router 注册和主流程验证；已验证空数据查询 | 真实 CloudResource 记录和完整 fixture | |
 | K8s 横切能力 | 75%～85% | 输出模型、Processor、Router/配置注册、`OneModelK8sReader` 生产装配、`kingeye_all_instance` 实际数据核验、Cluster/Namespace/Service/Workload/Pod/Container/Node 身份映射、Workload-Pod 特殊映射、实例/业务/集群名称和 `cw_labels` 投影、响应身份校验、Context 输出和完整 Processor 链测试 | 真实 Kafka Event 回放、Cluster/Namespace 多业务优先级、PV/PVC 接入和完整 JSON fixture |
 | APM 横切能力 | 75%～85% | 输出模型、APM 表判断、`apm` Processor、真实 `additional_dimensions.app_name` 输入、`kapm_namespace` ApplicationReader、精确匹配、租户/业务校验、别名、application/service/service-instance 身份、Resource 联动、维度、业务/应用标签、请求内缓存、KAC 映射、Reader 错误/重复匹配矩阵和完整链路测试 | 真实数据库命中、重复应用最终产品决策和完整 JSON fixture |
 
@@ -484,7 +475,7 @@ Alert.Dimensions.bk_collect_config_id
 生产限制：
 
 - 云区域名称全部来自 OneModel 资源实例或执行主机实例；不引入 CMDB API。身份不完整、主机未命中、查询错误或区域 ID 冲突时保持空名称；
-- 动态分组需要按租户配置 Redis keyspace 并用目标环境真实键验证；
+- 动态分组需要用目标环境真实成员样本验证；
 - CollectConfig namespace 和前导零身份规则保留真实样本确认；
 - 服务实例 `cw_biz_id` 属性槽保留真实样本确认。
 
@@ -646,7 +637,7 @@ K8s 已完成 OneModel Reader 主流程接入，复用统一实例索引 `kingey
 当前缺口分为“代码边界已存在、生产适配待补”和“契约尚未确认”两类。派生 fixture 与 Reader 契约测试用于固定确定性行为，不代表真实环境验证。
 
 1. **真实协议验证**：BaseTarget 的 ModelReader、OneModel 实例、投影边和 CMDB 拓扑已完成真实环境第一轮核验；K8s `kingeye_all_instance` 已完成 system 租户模型分布和代表性 Cluster 文档核验；服务实例、双租户和更多反向关系样本保留后续验证。
-2. **动态分组**：Redis Reader、租户连接、key 查询、类型与失败语义已有本地实现和测试；目标环境的写入键、租户 keyspace 隔离及真实成员样本仍需验证。
+2. **动态分组**：Redis Reader、租户隔离、key 查询、类型与失败语义已有本地实现和测试；目标环境的写入键、隔离边界及真实成员样本仍需验证。
 3. **`cw_labels`**：BaseTarget 六个分支和 APM 已覆盖业务与确定资源身份；日志已输出业务/主题标签，Cloud 已输出确定资源标签；K8s Reader 已获得真实业务字段，完整标签投影和优先级仍待 Kafka 回放确认。
 4. **Display 内容**：BaseTarget/DATA 已覆盖主要阈值、枚举、算法和日志内容分支；其他专用场景仍需要真实模板或产品规则确认。
 5. **fixture**：BaseTarget、Collect、Uptime、DATA 已有 KAC 脱敏或派生 fixture；日志、Cloud、K8s、APM 已有 Processor 级和链路级派生测试，完整 JSON fixture 与真实外部样例继续补充。所有派生 fixture 均标记为迁移推导依据。

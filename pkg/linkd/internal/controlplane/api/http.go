@@ -68,6 +68,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/v1/event-sources/{id}", a.put)
 	mux.HandleFunc("DELETE /api/v1/event-sources/{id}", a.delete)
 	mux.HandleFunc("GET /api/v1/event-sources/{id}/releases/{version}", a.release)
+	mux.HandleFunc("POST /api/v1/event-sources/{id}/tasks/{task}/resume", a.resumeTask)
 	mux.HandleFunc("GET /api/v1/runtime", a.status)
 	mux.HandleFunc("GET /api/v1/dynamic-config", a.dynamicStatus)
 	mux.HandleFunc("GET /internal/settings/severity", a.workerSeverity)

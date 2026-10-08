@@ -48,6 +48,8 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | metric（丰富分组） | 丰富结果中的指标补充信息，包含监控项展示名称、按原分类解释的指标名称、单位及本次告警观测数据的查询参数；指标名称不统一定义为指标 ID，多个丰富分类共用该分组 |
 | 来源策略身份 | Event.Labels 中 `strategy_id` 与 `strategy_version`；前者关联鲸眼声明式策略，后者记录来源声明的策略版本并原样进入 enrich.strategy，不用于运行时回查蓝鲸策略表 |
 | 鲸眼策略配置 | 鲸眼侧与监控平台策略关联的声明式配置；Linkd 按 `bk_tenant_id + status.bk_strategy_id + active = 1` 查询并复核身份，分类、展示和指标查询配置统一读取其 `spec` |
+| StrategySet（声明式策略集合） | Kingeye 的 `core_v1alpha1_strategyset`；按租户与 `monitor_template_id` 关联派生 StrategyConfig，其中 `spec.strategy_configs[*].id` 对应 StrategyConfig 的 `config_id`。本次新增只读 Reader；当前集合不等同于触发时历史配置。 |
+| StrategyConfig（声明式策略配置） | Kingeye `kind=Strategy` 的资源，对应 `core_v1alpha1_strategy`，由现有 `CWStrategyReader` 读取；`status.strategy_config_version` 与来源 `labels.strategy_version` 是独立字段，关系未经核验时不得互换。 |
 | 全局业务 | `metadata_space` 中租户、`space_type_id = bkcc` 和业务 ID 对应且 `is_global = 1` 的业务空间；该业务下的策略可匹配同租户任意来源业务 |
 | 鲸眼声明式策略查询投影 | `core_v1alpha1_strategy.spec.strategy_item` 中的聚合、表达式和 `query_configs`；供 Strategy、Display 与 Metric 在单次 Enrich 内共享，替代运行时读取 `alarm_strategy_v2` 和 `alarm_strategy_history` |
 | 指标查询参数 | 丰富结果中用于查询本次告警对应观测数据的参数；当前由鲸眼声明式策略 `spec.strategy_item.query_configs` 与 Event.Dimensions 构造，不回查蓝鲸策略当前表或历史表 |
@@ -109,6 +111,6 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 
 - **具名 hook**：`EventSource.hooks` 中按顺序执行的插件实例，`name` 是该来源内唯一的稳定实例身份，`type` 是内置注册名，`config` 是该插件的参数。当前内置 `kafka` 与 `active-alert-by-strategy`。
 - **活跃告警策略索引**：由控制面统一将已落库 Active Alert 的 fingerprint 并集投影到 Redis Set，按租户和 `labels.strategy_id` 分组；Hook 仅提交刷新提示，周期校准恢复遗漏。它是可重建、允许传播延迟的查询缓存，不是 Alert 权威状态。
-- **策略索引变更通知**：集合成员实际新增或移除时，自动向 `<key_prefix>:changes` 发布的 Redis Pub/Sub 提示，只携带 `bk_tenant_id` 和 `strategy_id`；消费者使用约定的连接、DB 和前缀重新读取集合，不作为心跳或历史事件日志。
+- **策略索引变更通知**：集合成员实际新增或移除时，自动向 `<key_prefix>:changes` 发布的 Redis Pub/Sub 提示，只携带 `bk_tenant_id` 和 `strategy_id`；消费者收到提示后重新读取策略索引集合，不作为心跳或历史事件日志。
 
 动态配置的最后有效快照用于上游异常和进程重启恢复，不是事件历史配置版本。

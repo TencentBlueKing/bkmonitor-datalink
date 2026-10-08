@@ -27,7 +27,10 @@ import (
 )
 
 // Display 丰富告警的展示信息。
-type Display struct{}
+type Display struct {
+	// PreserveContent 保留创建阶段已生成的核心描述，避免二次单位换算或日志裁剪。
+	PreserveContent bool
+}
 
 // Name 返回稳定的 Processor 名称。
 func (Display) Name() string { return rules.DisplayProcessor }
@@ -36,7 +39,7 @@ func (Display) Name() string { return rules.DisplayProcessor }
 func (Display) Match(context.Context, *enrich.Scope) (bool, error) { return true, nil }
 
 // Process 生成告警展示字段。
-func (Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
+func (p Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.ProcessorResult, error) {
 	alert := scope.Alert()
 	ids, diagnostics := enrich.ValidateRequiredIDs(alert)
 	if len(diagnostics) != 0 {
@@ -152,13 +155,13 @@ func (Display) Process(ctx context.Context, scope *enrich.Scope) (enrich.Process
 		additional,
 	)
 	content := alert.Content
-	if rules.IsLogDisplay(classification.Main) {
+	if !p.PreserveContent && rules.IsLogDisplay(classification.Main) {
 		subjectName := logDisplaySubject(alert.SubjectName, sourceConfigString(strategy.Spec.SourceConfig, rules.FieldLogThemeName))
 		content = subjectName + logDisplayContent(content, classification.Main, sourceConfigString(strategy.Spec.SourceConfig, rules.FieldQueryString))
-	} else {
+	} else if !p.PreserveContent {
 		content = applyDataContentAlgorithm(content, strategy, metricMetadata, alert.Severity)
 	}
-	if classification.Main == rules.MainData {
+	if !p.PreserveContent && classification.Main == rules.MainData {
 		content = enrichDataAlgorithmContent(content, metricMetadata.ValueMapping)
 	}
 	values := models.DisplayValues{

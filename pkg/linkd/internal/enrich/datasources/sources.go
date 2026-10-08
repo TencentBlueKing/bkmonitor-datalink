@@ -82,6 +82,12 @@ func newMySQLSources(database *gorm.DB) (enrich.Sources, error) {
 	if sources.CWStrategy, err = NewCWStrategyClient(CWStrategyClientConfig{DB: database}); err != nil {
 		return enrich.Sources{}, fmt.Errorf("initialize cw strategy datasource: %w", err)
 	}
+	if sources.StrategySet, err = NewStrategySetClient(database); err != nil {
+		return enrich.Sources{}, fmt.Errorf("initialize strategy set datasource: %w", err)
+	}
+	if sources.DescriptionConfiguration, err = NewDescriptionConfigurationClient(database); err != nil {
+		return enrich.Sources{}, fmt.Errorf("initialize description configuration datasource: %w", err)
+	}
 	if sources.Business, err = NewBusinessClient(BusinessClientConfig{DB: database}); err != nil {
 		return enrich.Sources{}, fmt.Errorf("initialize business datasource: %w", err)
 	}

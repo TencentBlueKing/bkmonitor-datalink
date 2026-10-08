@@ -168,6 +168,7 @@ func Run(
 			logger,
 			lifecycle.WithEnrichObserver(telemetryRuntime.EnrichObserver()),
 			lifecycle.WithSeverityUpgradePolicy(lifecycleConfig.SeverityUpgradePolicy),
+			lifecycle.WithAlertContentBuilder(enricher),
 		)
 		if err != nil {
 			return fmt.Errorf("initialize lifecycle processor: %w", err)
@@ -204,7 +205,12 @@ func Run(
 		rc.ShutdownDrainTimeout = taskdispatch.DrainTimeout
 		logger.InfoContext(taskCtx, "lifecycle source started", "event_source_id", source.EventSourceID, "stream", lc.Signal.Stream, "consumer", sc.Consumer, "recent_alert_cache_enabled", recentAlertCacheEnabled, "recent_alert_cache_ttl_seconds", recentAlertCacheTTL.Seconds())
 		stage = "consume"
-		return consume.New(rc, session, handler, consume.WithObserver(labels, telemetryRuntime.ConsumeObserver(labels))).Run(taskCtx)
+		err = consume.New(rc, session, handler, consume.WithObserver(labels, telemetryRuntime.ConsumeObserver(labels))).Run(taskCtx)
+		var contentFailure interface{ PermanentContentFailure() string }
+		if errors.As(err, &contentFailure) {
+			return taskdispatch.RequireTaskRepair(err)
+		}
+		return err
 	}, logger, severityState, telemetryRuntime.DispatchObserver())
 
 }

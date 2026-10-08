@@ -48,6 +48,7 @@ type Agent struct {
 }
 
 type localTask struct {
+	blocked    bool
 	partitions atomic.Value
 	admission  atomic.Bool
 	budget     TaskBudget
@@ -193,7 +194,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		reports := make([]Report, 0, len(locals))
 		remaining := 0
 		for _, t := range locals {
-			r := Report{ID: t.task.ID, Epoch: t.task.Epoch, Phase: t.phase, Error: t.err}
+			r := Report{ID: t.task.ID, Epoch: t.task.Epoch, Phase: t.phase, Error: t.err, Blocked: t.blocked}
 			if a.ObservePartitions != nil {
 				r.Partitions = a.ObservePartitions(t.task.ID)
 			}
@@ -303,6 +304,7 @@ func (a *Agent) Run(ctx context.Context) error {
 						}
 						if err != nil && !expectedTaskCancellation(work, err) {
 							local.err = "task failed; inspect worker logs"
+							local.blocked = requiresTaskRepair(err)
 						}
 						duration := time.Duration(0)
 						if !local.stopAt.IsZero() {

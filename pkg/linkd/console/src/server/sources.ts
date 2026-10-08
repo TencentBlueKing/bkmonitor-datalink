@@ -110,14 +110,26 @@ export function registerSourceRoutes(
         .object({
           spec: z.object({
             enrich: z
-              .object({ processors: z.array(z.unknown()).optional() })
+              .object({
+                content_mode: z
+                  .enum(["source", "bkmonitor_description"])
+                  .optional(),
+                processors: z.array(z.unknown()).optional(),
+              })
               .optional(),
           }),
         })
         .parse(
           await get(`/api/v1/event-sources/${id}/releases/${record.published}`),
         );
-      return { enrich: { processors: release.spec.enrich?.processors ?? [] } };
+      return {
+        enrich: {
+          ...(release.spec.enrich?.content_mode === undefined
+            ? {}
+            : { content_mode: release.spec.enrich.content_mode }),
+          processors: release.spec.enrich?.processors ?? [],
+        },
+      };
     } catch {
       return reply.code(502).send({ error: { message: "加载已发布配置失败" } });
     }

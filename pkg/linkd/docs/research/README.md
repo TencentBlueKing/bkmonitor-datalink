@@ -24,4 +24,6 @@
 | [profiles/2026-09-07-lifecycle-gc/README.md](profiles/2026-09-07-lifecycle-gc/README.md) | Lifecycle/Cleaner 正常段、降速段和优化后的 pprof SVG 与 top 摘要 |
 | [data-pipeline-observability.md](data-pipeline-observability.md) | OpenTelemetry、Kafka、Flink 与 CloudEvents 的数据流指标和 Trace 划分方案 |
 | [kingeye-alarm-callback-data-dependencies.md](kingeye-alarm-callback-data-dependencies.md) | Kingeye `callback_utils` 告警数据生成的外部依赖、字段来源、调用时机及对 Linkd 丰富设计的输入 |
+| [2026-09-30-alert-content-generation.md](2026-09-30-alert-content-generation.md) | bk-monitor 告警描述生成到 Linkd `Alert.content` 的源码证据、可行性与数据缺口 |
+| [2026-10-08 告警内容真实样本](samples/2026-10-08-alert-content/README.md) | test-bkee5 保留区间只读重放：13 条实际 Alert 内容、5 条版本拒绝样本、源码对照与未覆盖类型 |
 | [alarm-callback-input-field-inventory.md](alarm-callback-input-field-inventory.md) | 指定 `kac/alarm_callback` 的历史回调字段与旧测试样本取证；现行契约见 [Alert Enrich 设计](../design/enrich.md) |

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { consoleURL } from "../base-path";
 
 const previewSchema = z.object({
+  candidate_content: z.string().optional(),
   event_source_version: z.number(),
   config_digest: z.string(),
   enrich_status: z.string(),
@@ -52,7 +53,9 @@ export function EnrichPreviewPage() {
   const [tenant, setTenant] = useState(params.get("bk_tenant_id") ?? "");
   const [source, setSource] = useState(params.get("event_source_id") ?? "");
   const [id, setID] = useState(params.get("alert_id") ?? "");
-  const [mode, setMode] = useState<"id" | "json">(id ? "id" : "json");
+  const [mode, setMode] = useState<"id" | "json" | "event">(id ? "id" : "json");
+  const [event, setEvent] = useState("{}");
+  const [severity, setSeverity] = useState("");
   const [alert, setAlert] = useState(
     '{\n  "title": "CPU 告警",\n  "content": "IP=10.0.0.8",\n  "labels": {}\n}',
   );
@@ -77,7 +80,12 @@ export function EnrichPreviewPage() {
       const input =
         mode === "id"
           ? { alert_id: id }
-          : { alert: JSON.parse(alert) as unknown };
+          : mode === "event"
+            ? {
+                event: JSON.parse(event) as unknown,
+                ...(severity ? { severity } : {}),
+              }
+            : { alert: JSON.parse(alert) as unknown };
       const enrich: unknown = custom
         ? parse(config, { maxAliasCount: 0 })
         : undefined;
@@ -126,7 +134,7 @@ export function EnrichPreviewPage() {
           <p className="eyebrow">ENRICH PREVIEW</p>
           <h1>丰富调试</h1>
           <p>
-            使用当前 CMDB 数据重新模拟丰富。结果仅供预览，不保存告警或配置。
+            按已发布配置模拟告警丰富或创建时内容。结果仅供预览，不保存告警或配置。
           </p>
         </div>
       </header>
@@ -153,10 +161,13 @@ export function EnrichPreviewPage() {
             <select
               aria-label="输入方式"
               value={mode}
-              onChange={(e) => setMode(e.target.value as "id" | "json")}
+              onChange={(e) =>
+                setMode(e.target.value as "id" | "json" | "event")
+              }
             >
               <option value="id">Alert ID</option>
               <option value="json">Alert JSON</option>
+              <option value="event">Opening Event JSON</option>
             </select>
           </label>
         </div>
@@ -169,6 +180,31 @@ export function EnrichPreviewPage() {
               onChange={(e) => setID(e.target.value)}
             />
           </label>
+        ) : mode === "event" ? (
+          <>
+            <label>
+              Opening Event JSON
+              <textarea
+                aria-label="Opening Event JSON"
+                rows={12}
+                value={event}
+                onChange={(e) => setEvent(e.target.value)}
+                spellCheck={false}
+              />
+            </label>
+            <label>
+              触发级别（多个触发判定时必填）
+              <input
+                aria-label="触发级别"
+                value={severity}
+                onChange={(e) => setSeverity(e.target.value)}
+              />
+            </label>
+            <p>
+              使用已规范化的
+              Event，来源版本须匹配已发布配置；此输入只预览新建告警的内容。
+            </p>
+          </>
         ) : (
           <label>
             Alert JSON
@@ -219,6 +255,12 @@ export function EnrichPreviewPage() {
       {result && (
         <section className="runtime-config-panel">
           <h2>执行结果 · {result.enrich_status}</h2>
+          {result.candidate_content !== undefined && (
+            <div>
+              <h3>候选告警内容</h3>
+              <pre aria-label="候选告警内容">{result.candidate_content}</pre>
+            </div>
+          )}
           <p>
             来源版本 {result.event_source_version} · 配置摘要{" "}
             {result.config_digest.slice(0, 12)}

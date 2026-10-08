@@ -40,7 +40,7 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Message }
 
-// Request 同时支持已有告警身份和临时 JSON，两种输入必须互斥。
+// Request 支持已有告警身份、临时 Alert 或 opening Event；三种输入必须互斥。
 type Request struct {
 	BKTenantID    string               `json:"bk_tenant_id"`
 	EventSourceID string               `json:"event_source_id"`
@@ -52,6 +52,10 @@ type Request struct {
 type Input struct {
 	AlertID string          `json:"alert_id,omitempty"`
 	Alert   json.RawMessage `json:"alert,omitempty"`
+	// Event 必须是已规范化的领域 Event，来源 content 保留用于候选结果对照。
+	Event json.RawMessage `json:"event,omitempty"`
+	// Severity 在 Event 有多个 triggered 判定时明确选择待创建 Alert 的级别。
+	Severity string `json:"severity,omitempty"`
 }
 
 // Change 明确标识缺失和 null 的差异。
@@ -65,15 +69,17 @@ type Change struct {
 
 // Response 包含一次模拟的配置身份、步骤输出及按需合成视图。
 type Response struct {
-	Version         int64               `json:"event_source_version"`
-	ConfigDigest    string              `json:"config_digest"`
-	Original        map[string]any      `json:"original"`
-	EnrichStatus    domain.EnrichStatus `json:"enrich_status"`
-	Enrich          domain.JSONObject   `json:"enrich"`
-	EffectiveAlert  map[string]any      `json:"effective_alert"`
-	Changes         []Change            `json:"changes"`
-	PreviousChanges []Change            `json:"previous_changes"`
-	Trace           []ProcessorTrace    `json:"trace"`
+	// CandidateContent 仅在 opening Event 输入时提供，不修改任何已存 Alert。
+	CandidateContent *string             `json:"candidate_content,omitempty"`
+	Version          int64               `json:"event_source_version"`
+	ConfigDigest     string              `json:"config_digest"`
+	Original         map[string]any      `json:"original"`
+	EnrichStatus     domain.EnrichStatus `json:"enrich_status"`
+	Enrich           domain.JSONObject   `json:"enrich"`
+	EffectiveAlert   map[string]any      `json:"effective_alert"`
+	Changes          []Change            `json:"changes"`
+	PreviousChanges  []Change            `json:"previous_changes"`
+	Trace            []ProcessorTrace    `json:"trace"`
 }
 
 // ProcessorTrace 保留处理器与规则执行记录，不包含完整外部响应。
@@ -128,8 +134,18 @@ func (s *Service) Preview(ctx context.Context, request Request) (Response, error
 		return Response{}, &Error{400, "bk_tenant_id and event_source_id are required"}
 	}
 	hasJSON := len(request.Input.Alert) > 0
-	if (request.Input.AlertID != "") == hasJSON {
-		return Response{}, &Error{400, "choose exactly one of input.alert_id and input.alert"}
+	hasEvent := len(request.Input.Event) > 0
+	choices := 0
+	for _, present := range []bool{hasJSON, hasEvent, request.Input.AlertID != ""} {
+		if present {
+			choices++
+		}
+	}
+	if choices != 1 {
+		return Response{}, &Error{400, "choose exactly one of input.alert_id, input.alert and input.event"}
+	}
+	if !hasEvent && request.Input.Severity != "" {
+		return Response{}, &Error{400, "input.severity requires input.event"}
 	}
 	if len(request.Input.AlertID) > 256 {
 		return Response{}, &Error{400, "alert_id too long"}
@@ -149,6 +165,7 @@ func (s *Service) Preview(ctx context.Context, request Request) (Response, error
 		return Response{}, &Error{404, "published event source not found"}
 	}
 	source := release.Spec
+	source.Version = release.Version
 	if source.RelatedTenantID != "" && source.RelatedTenantID != request.BKTenantID {
 		return Response{}, &Error{400, "tenant does not match event source"}
 	}
@@ -159,7 +176,19 @@ func (s *Service) Preview(ctx context.Context, request Request) (Response, error
 		return Response{}, &Error{422, "invalid enrich configuration: " + safeConfigError(source.Enrich, err)}
 	}
 	var raw []byte
-	if hasJSON {
+	var openingEvent *domain.Event
+	var openingEvaluation domain.EventEvaluation
+	if hasEvent {
+		event, evaluation, opening, err := openingPreview(request.Input, request.BKTenantID, source)
+		if err != nil {
+			return Response{}, err
+		}
+		openingEvent, openingEvaluation = &event, evaluation
+		raw, err = json.Marshal(opening)
+		if err != nil {
+			return Response{}, &Error{400, "invalid opening event"}
+		}
+	} else if hasJSON {
 		raw = request.Input.Alert
 	} else {
 		if s.read == nil {
@@ -211,11 +240,34 @@ func (s *Service) Preview(ctx context.Context, request Request) (Response, error
 		return Response{}, readError(ctx, err)
 	}
 	defer func() { _ = closeRuntime() }()
+	var candidate *string
+	if openingEvent != nil {
+		builder, ok := engine.(interface {
+			BuildContent(context.Context, domain.Event, domain.EventEvaluation, domain.Alert) (string, error)
+		})
+		if !ok {
+			return Response{}, &Error{503, "content preview builder unavailable"}
+		}
+		content, contentErr := builder.BuildContent(ctx, *openingEvent, openingEvaluation, alert.Clone())
+		if contentErr != nil {
+			var permanent interface{ PermanentContentFailure() string }
+			if errors.As(contentErr, &permanent) {
+				return Response{}, &Error{422, "content facts invalid: " + permanent.PermanentContentFailure()}
+			}
+			return Response{}, readError(ctx, contentErr)
+		}
+		candidate = &content
+		alert.Content = content
+	}
 	result, err := engine.Enrich(ctx, enrich.Input{Alert: alert, Preview: true})
 	if err != nil {
 		return Response{}, readError(ctx, err)
 	}
-	effective, trace, err := compose(original, result.Data)
+	inputView := jsonpath.Clone(original).(map[string]any)
+	if candidate != nil {
+		inputView["content"] = *candidate
+	}
+	effective, trace, err := compose(inputView, result.Data)
 	if err != nil {
 		return Response{}, &Error{500, "invalid enrich result"}
 	}
@@ -225,7 +277,7 @@ func (s *Service) Preview(ctx context.Context, request Request) (Response, error
 	}
 	encoded, _ := json.Marshal(source.Redacted().Enrich)
 	digest := sha256.Sum256(encoded)
-	return Response{Version: release.Version, ConfigDigest: hex.EncodeToString(digest[:]), Original: original, EnrichStatus: result.Status, Enrich: result.Data, EffectiveAlert: effective, Changes: Diff(original, effective), PreviousChanges: Diff(previousEffective, effective), Trace: trace}, nil
+	return Response{CandidateContent: candidate, Version: release.Version, ConfigDigest: hex.EncodeToString(digest[:]), Original: original, EnrichStatus: result.Status, Enrich: result.Data, EffectiveAlert: effective, Changes: Diff(original, effective), PreviousChanges: Diff(previousEffective, effective), Trace: trace}, nil
 }
 
 func readError(ctx context.Context, err error) error {
@@ -239,6 +291,9 @@ func readError(ctx context.Context, err error) error {
 }
 
 func safeConfigError(c config.EnrichConfig, _ error) string {
+	if mode := c.EffectiveContentMode(); mode != config.ContentModeSource && mode != config.ContentModeBKMonitorDescription {
+		return "content_mode must be source or bkmonitor_description"
+	}
 	for i, processor := range c.Processors {
 		if processor.Type == "cmdb" || processor.Type == "fields" {
 			if _, err := custom.Compile(processor.Type, processor.Config); err != nil {

@@ -160,6 +160,9 @@ func (c *Client) targetMemberships(ctx context.Context, tenant string, biz int64
 }
 
 func (c *Client) targetRequest(ctx context.Context, method, path string, body, result any) error {
+	if c.transport == nil {
+		return fmt.Errorf("%w: CMDB mainline topology ES is not configured", ErrDataSourceUnavailable)
+	}
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return err

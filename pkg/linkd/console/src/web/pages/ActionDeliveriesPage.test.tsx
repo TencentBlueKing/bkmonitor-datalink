@@ -84,7 +84,7 @@ it("keeps uncertain retry command across remount and never calls accepted work c
     bk_tenant_id: actionTenant,
   });
   expect(
-    screen.queryByText("接收端已受理", { selector: "strong" }),
+    screen.queryByText("已投递 Celery", { selector: "strong" }),
   ).not.toBeInTheDocument();
   await waitFor(() => expect(sessionStorage.length).toBe(0));
   expect(screen.getByText("最近一次人工恢复")).toBeVisible();
@@ -104,7 +104,9 @@ it("separates receiver acceptance from execution and loads frozen request only o
     );
   vi.stubGlobal("fetch", fetcher);
   view();
-  await screen.findByText("接收端已持久受理 · r2 · active");
+  await screen.findByText(
+    "已投递 Celery；KAC 使用处理时的 ES 数据匹配和通知。",
+  );
   expect(screen.getByText("这不是处置执行完成的确认。")).toBeVisible();
   expect(
     screen.queryByRole("button", { name: "恢复原任务" }),
@@ -140,7 +142,7 @@ it("shows previous uncertainty on local skip and links the earlier failed orderi
   await screen.findByRole("link", { name: "查看队首任务" });
   expect(screen.getByText(/本次依据较新终态投影在本地跳过/)).toBeVisible();
   expect(
-    screen.queryByRole("heading", { name: "动作受理确认" }),
+    screen.queryByRole("heading", { name: "Celery 投递确认" }),
   ).not.toBeInTheDocument();
   expect(
     screen.queryByRole("button", { name: "恢复原任务" }),

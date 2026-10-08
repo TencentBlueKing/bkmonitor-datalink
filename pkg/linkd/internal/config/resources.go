@@ -55,12 +55,15 @@ type MySQLResource struct {
 	Password string `yaml:"password" json:"password"`
 }
 
-// OneModelResource 定义公共资源使用的 Elasticsearch 只读连接。
+// OneModelResource 定义通用实例读取后端及可选的 CMDB 主线拓扑 ES 连接。
 type OneModelResource struct {
-	Addresses   []string           `yaml:"addresses" json:"addresses"`
-	IndexPrefix string             `yaml:"index_prefix,omitempty" json:"index_prefix,omitempty"`
-	APIKey      string             `yaml:"api_key,omitempty" json:"api_key,omitempty"`
-	BasicAuth   *ResourceBasicAuth `yaml:"basic_auth,omitempty" json:"basic_auth,omitempty"`
+	// Backend 只选择通用实例和关系边存储；CMDB 主线拓扑仍使用下方 ES 连接。
+	Backend     string                 `yaml:"backend,omitempty" json:"backend,omitempty"`
+	Doris       *OneModelDorisResource `yaml:"doris,omitempty" json:"doris,omitempty"`
+	Addresses   []string               `yaml:"addresses" json:"addresses"`
+	IndexPrefix string                 `yaml:"index_prefix,omitempty" json:"index_prefix,omitempty"`
+	APIKey      string                 `yaml:"api_key,omitempty" json:"api_key,omitempty"`
+	BasicAuth   *ResourceBasicAuth     `yaml:"basic_auth,omitempty" json:"basic_auth,omitempty"`
 }
 
 // ResourceBasicAuth 定义 OneModel Elasticsearch 的 Basic Auth 凭据。
@@ -95,6 +98,10 @@ func (c ResourcesConfig) Clone() ResourcesConfig {
 	}
 	if c.OneModel != nil {
 		value := *c.OneModel
+		if c.OneModel.Doris != nil {
+			d := *c.OneModel.Doris
+			value.Doris = &d
+		}
 		value.Addresses = append([]string(nil), c.OneModel.Addresses...)
 		if c.OneModel.BasicAuth != nil {
 			basicAuth := *c.OneModel.BasicAuth
@@ -122,6 +129,9 @@ func (c ResourcesConfig) Redacted() ResourcesConfig {
 		redacted.MySQL.Password = redactedSecret
 	}
 	if redacted.OneModel != nil {
+		if redacted.OneModel.Doris != nil && redacted.OneModel.Doris.Password != "" {
+			redacted.OneModel.Doris.Password = redactedSecret
+		}
 		if redacted.OneModel.APIKey != "" {
 			redacted.OneModel.APIKey = redactedSecret
 		}
@@ -137,6 +147,28 @@ func (c MySQLResource) validate() error {
 }
 
 func (c OneModelResource) validate() error {
+	switch c.Backend {
+	case "", "elasticsearch":
+		if c.Doris != nil {
+			return fmt.Errorf("doris requires backend=doris")
+		}
+	case "doris":
+		if c.Doris == nil {
+			return fmt.Errorf("doris connection is required")
+		}
+		if err := c.Doris.Validate(); err != nil {
+			return err
+		}
+		if len(c.Addresses) == 0 {
+			if c.APIKey != "" || c.BasicAuth != nil {
+				return fmt.Errorf("topology ES credentials require addresses")
+			}
+			return nil
+		}
+	default:
+		return fmt.Errorf("unsupported onemodel backend")
+	}
+
 	var basicAuth *BasicAuthConfig
 	if c.BasicAuth != nil {
 		basicAuth = &BasicAuthConfig{Username: c.BasicAuth.Username, Password: c.BasicAuth.Password}

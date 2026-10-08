@@ -229,6 +229,9 @@ func (s *Shielder) retain(ctx context.Context, tenant string, alert domain.Alert
 }
 
 func (s *Shielder) keepBinding(ctx context.Context, tenant string, alert domain.Alert, b domain.ShieldBinding, snapshot *store.PolicyContext, level func(string) (string, error)) (bool, string, error) {
+	if b.Origin == "manual" {
+		return s.keepManualBinding(ctx, tenant, b, snapshot.EvaluatedAt)
+	}
 	if snapshot.ReasonCode != "" {
 		return true, "policy_load_failed", nil
 	}
@@ -313,6 +316,14 @@ func (s *Shielder) Recheck(ctx context.Context, alert domain.Alert, at time.Time
 
 	if len(alert.Shield.Bindings) == 0 {
 		return lifecycle.ShieldEvaluation{Shield: alert.Shield.Clone()}, nil
+	}
+	if s.Loader != nil && slices.ContainsFunc(alert.Shield.Bindings, func(b domain.ShieldBinding) bool { return b.Origin == "manual" }) {
+		snapshot, err := (Snapshotter{Catalog: s.Loader.Catalog}).Snapshot(ctx, domain.Event{BKTenantID: alert.BKTenantID}, at)
+		if err != nil {
+			return lifecycle.ShieldEvaluation{}, err
+		}
+		retained, steps, err := s.retain(ctx, alert.BKTenantID, alert, snapshot, level)
+		return lifecycle.ShieldEvaluation{Shield: retained, Decision: &store.ShieldDecision{Severity: alert.Severity, Steps: steps}}, err
 	}
 	if s.Events == nil || s.Loader == nil {
 		return lifecycle.ShieldEvaluation{}, policy.ErrUnavailable

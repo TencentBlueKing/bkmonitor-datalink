@@ -185,7 +185,7 @@ func TestActionRunnerOutcomesIncludeWaitingRetryBlockedAndSuperseded(t *testing.
 		return confirmed(q), nil
 	})
 	svc, tasks, now := serviceFixture(t, gate, sender)
-	for _, tenant := range []string{"accepted", "waiting", "skip", "retry", "failed", "blocked", "future"} {
+	for _, tenant := range []string{"queued", "waiting", "skip", "retry", "failed", "blocked", "future"} {
 		a := actionAlert(tenant, 1)
 		if tenant == "blocked" {
 			a.Revision = 2
@@ -218,7 +218,7 @@ func TestActionRunnerOutcomesIncludeWaitingRetryBlockedAndSuperseded(t *testing.
 	if next != "" || result.Scanned != 7 || result.Visited != 7 || sends.Load() != 3 {
 		t.Fatal(next, result, sends.Load())
 	}
-	for _, o := range []WorkOutcome{OutcomeAccepted, OutcomeWaitingProjection, OutcomeSkipped, OutcomeRetrying, OutcomeFailed, OutcomeBlocked, OutcomeDeferred} {
+	for _, o := range []WorkOutcome{OutcomeQueued, OutcomeWaitingProjection, OutcomeSkipped, OutcomeRetrying, OutcomeFailed, OutcomeBlocked, OutcomeDeferred} {
 		if result.Outcomes[o] != 1 {
 			t.Fatal("wrong outcome", o, result)
 		}

@@ -85,7 +85,7 @@ export function DeliveryMetricsPanel({ kind }: { kind: DeliveryMetricKind }) {
         最近页最多 16
         项，不代表全局积压；页面年龄与观察距今需要一起查看。工作观察可重复统计同一任务。
         {kind === "action"
-          ? "accepted 只表示已有受理确认。"
+          ? "queued 只表示已投递 Celery。"
           : "advanced 在生产阶段表示建或复用任务，在投递阶段表示完成本地 ACK；扫描成功不等于已同步。"}
         没有时序不等于零，也不证明任务已完成。
       </p>

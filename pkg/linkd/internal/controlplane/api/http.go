@@ -53,6 +53,7 @@ type API struct {
 	ShieldRuntime       *ShieldRuntime
 	ShieldDiagnostics   ShieldDiagnostics
 	ShieldRequests      ShieldRequests
+	ManualShieldBinder  ManualShieldBinder
 	SuppressionRuntime  *SuppressionRuntime
 	SuppressionCleanups *SuppressionCleanups
 	SuppressionChecks   *SuppressionChecks
@@ -124,6 +125,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/policy-runtime/shield/alerts/{id}/requests", a.shieldRequestHistory)
 	mux.HandleFunc("GET /api/v1/policy-runtime/shield/alerts/{id}/requests/{request}", a.shieldRequestDetail)
 	mux.HandleFunc("POST /api/v1/policy-runtime/shield/alerts/{id}/reconcile", a.requestShieldCheck)
+	mux.HandleFunc("POST /api/v1/alerts/{id}/shield", a.bindManualShield)
 	mux.HandleFunc("GET /api/v1/policy-runtime/merge/{resource}/{id}", a.getMergeRuntime)
 	mux.HandleFunc("GET /api/v1/policy-runtime/merge/{resource}/{id}/members", a.mergeRuntimeMembers)
 	mux.HandleFunc("GET /api/v1/policy-runtime/merge/{resource}/{id}/members/{alert}", a.mergeRuntimeSnapshot)

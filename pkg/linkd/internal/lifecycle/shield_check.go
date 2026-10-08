@@ -211,7 +211,11 @@ func (p *Processor) finishPendingChanges(ctx context.Context, current store.Stor
 		if err != nil {
 			return store.StoredAlert{}, err
 		}
-		logs = append(logs, domain.AlertLog{LogID: digestStrings("shield-change-log", intent.OperationID, string(item.kind)), BKTenantID: current.Alert.BKTenantID, AlertID: current.Alert.AlertID, OperatorKind: domain.OperatorKindSystem, OperationKind: item.kind, CreatedTime: intent.EffectiveAt, Params: domain.JSONObject{"operation_id": operation, "bindings": bindings, "before_bindings": before, "after_bindings": after}})
+		actor := domain.OperatorKindSystem
+		if item.kind == domain.OperationKindShield && len(item.bindings) == 1 && item.bindings[0].Origin == "manual" {
+			actor = domain.OperatorKindUser
+		}
+		logs = append(logs, domain.AlertLog{LogID: digestStrings("shield-change-log", intent.OperationID, string(item.kind)), BKTenantID: current.Alert.BKTenantID, AlertID: current.Alert.AlertID, OperatorKind: actor, OperationKind: item.kind, CreatedTime: intent.EffectiveAt, Params: domain.JSONObject{"operation_id": operation, "bindings": bindings, "before_bindings": before, "after_bindings": after}})
 	}
 	hookLogs, err := p.runHooks(ctx, AlertChangeCause{Type: AlertChangeCauseSystemOperation, ID: intent.OperationID}, current.Alert, OutcomeAlertShieldChanged, false)
 	if err != nil {

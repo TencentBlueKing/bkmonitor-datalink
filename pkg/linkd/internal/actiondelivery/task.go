@@ -66,7 +66,7 @@ type Progress struct {
 	ErrorCode string `json:"error_code,omitempty"`
 	// Projection 是该次尝试真实取得的可见性证明，不是 ActionReceipt。
 	Projection *projection.Receipt `json:"projection,omitempty"`
-	// Receipt 是接收端对同一个动作的持久幂等受理结果。
+	// Receipt 是接收端对原动作最近一次成功的 Celery 投递结果。
 	Receipt *Receipt `json:"receipt,omitempty"`
 	// PreviousUnconfirmed 保留早先发送结果不确定的事实，之后本地跳过不能解释成从未处置。
 	PreviousUnconfirmed bool `json:"previous_unconfirmed"`
@@ -207,18 +207,14 @@ func (t Task) Validate() error {
 			return ErrInvalid
 		}
 	case "succeeded":
-		if p.Attempts < 1 || p.DueAt != nil || p.LeaseUntil != nil || p.Projection == nil || p.Receipt == nil || p.Receipt.Outcome != "accepted" || p.ErrorCode != "" {
+		if p.Attempts < 1 || p.DueAt != nil || p.LeaseUntil != nil || p.Projection == nil || p.Receipt == nil || p.Receipt.Outcome != "queued" || p.ErrorCode != "" {
 			return ErrInvalid
 		}
 	case "skipped":
 		if p.DueAt != nil || p.LeaseUntil != nil || p.ErrorCode != "superseded_by_terminal" {
 			return ErrInvalid
 		}
-		if p.Receipt != nil {
-			if p.Attempts < 1 || p.Projection == nil || p.Receipt.Outcome != "skipped" {
-				return ErrInvalid
-			}
-		} else if p.Projection == nil || !stale(q, *p.Projection) {
+		if p.Receipt != nil || p.Projection == nil || !stale(q, *p.Projection) {
 			return ErrInvalid
 		}
 	default:

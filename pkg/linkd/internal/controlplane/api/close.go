@@ -32,18 +32,23 @@ func (a *API) closeAlert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		TenantID    string    `json:"bk_tenant_id"`
-		OperationID string    `json:"operation_id"`
-		OperatorID  string    `json:"operator_id"`
-		Reason      string    `json:"reason"`
-		EffectiveAt time.Time `json:"effective_at"`
+		TenantID        string              `json:"bk_tenant_id"`
+		OperationID     string              `json:"operation_id"`
+		OperatorKind    domain.OperatorKind `json:"operator_kind"`
+		OperationSource string              `json:"operation_source"`
+		OperatorID      string              `json:"operator_id"`
+		Reason          string              `json:"reason"`
+		EffectiveAt     time.Time           `json:"effective_at"`
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := decode(r, &input); err != nil {
 		http.Error(w, "invalid close command", http.StatusBadRequest)
 		return
 	}
-	result, err := a.AlertCloser.CloseAlert(r.Context(), lifecycle.CloseAlertCommand{BKTenantID: input.TenantID, AlertID: r.PathValue("id"), OperationID: input.OperationID, OperatorID: input.OperatorID, OperatorKind: domain.OperatorKindUser, Reason: input.Reason, EffectiveAt: input.EffectiveAt})
+	if input.OperatorKind == "" {
+		input.OperatorKind = domain.OperatorKindUser
+	}
+	result, err := a.AlertCloser.CloseAlert(r.Context(), lifecycle.CloseAlertCommand{BKTenantID: input.TenantID, AlertID: r.PathValue("id"), OperationID: input.OperationID, OperatorID: input.OperatorID, OperatorKind: input.OperatorKind, OperationSource: input.OperationSource, Reason: input.Reason, EffectiveAt: input.EffectiveAt})
 	if err != nil {
 		var classified *lifecycleprocess.CloseError
 		if errors.As(err, &classified) {

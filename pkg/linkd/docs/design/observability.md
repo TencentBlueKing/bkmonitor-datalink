@@ -262,14 +262,14 @@ Prometheus endpoint 暴露以下 Redis Stream 指标：
 
 补扫年龄以 Alert.update_at 为起点，任务年龄以首次 created_at 为起点，均不因人工恢复而重新计算。
 页面样本按实例抓取；多个进程的最近页面不是同一个全局快照，不能相加得到全局队列长度。
-正常等待、锁忙、退避和预算满不伪装成已处置。accepted 表示返回任务已有持久受理确认，
+正常等待、锁忙、退避和预算满不伪装成已处置。queued 表示返回任务已有 Celery 投递确认，
 不保证该确认在本轮首次产生；同一失败屏障也可被不同后序工作项重复观察。
 
 每次失败页最多一条概况日志和四条业务定位样本，原因由固定集合归一化，不输出依赖错误正文、
 endpoint、token 或原请求。业务 ID 只用于日志定位；取消退出不写失败告警日志。非法观察值不记录
-计数，但仍清除已结束页的执行中水位。执行与游标约束见[动作运行器契约](../reference/contracts/kac-action-delivery-v1.md#自动补扫与发送运行器)。
+计数，但仍清除已结束页的执行中水位。执行与游标约束见[动作运行器契约](../reference/contracts/kac-action-delivery-v2.md#自动补扫与发送运行器)。
 Console 动作页已提供按需进程指标面板、任务日志定位字段和业务流水入口，查询预算与缺失数据语义见
-[Console 运行观测](../reference/contracts/kac-action-delivery-v1.md#console-运行观测)。浏览器筛选不把租户或
+[Console 运行观测](../reference/contracts/kac-action-delivery-v2.md#console-运行观测)。浏览器筛选不把租户或
 Alert ID 传给 Prometheus，进程日志尚无 Console 搜索后端。正式进程的本地真实时序与任务状态已通过
 ES/MySQL、临时 Prometheus 和 Chrome 联合验收；模拟接收端不代表真实 KAC，观察指标不能替代处置结果。
 

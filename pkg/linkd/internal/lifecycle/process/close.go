@@ -45,7 +45,7 @@ type closeSourceReader interface {
 	GetRelease(context.Context, string, int64) (eventsource.Release, error)
 }
 
-// AlertCloser 为人工关闭装配当前已发布来源的 Hook，复用正式 Lifecycle 的 CAS 和流水逻辑。
+// AlertCloser 为用户或系统关闭装配当前已发布来源的 Hook，复用正式 Lifecycle 的 CAS 和流水逻辑。
 // 最多四个并发请求；重试必须携带相同命令，终态部分成功不等同于未执行。
 type AlertCloser struct {
 	slots chan struct{}
@@ -147,12 +147,12 @@ func withAlertProcessor(ctx context.Context, cfg config.Config, sources closeSou
 	return withAlertLease(ctx, locker, key, func() error { return run(processor) })
 }
 
-// CloseAlert 在固定预算内执行一次显式用户命令；失败可能发生在 CAS 已成功之后。
+// CloseAlert 在固定预算内执行一次显式关闭命令；失败可能发生在 CAS 已成功之后。
 func (s *AlertCloser) CloseAlert(ctx context.Context, command lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
 	if ctx == nil {
 		return lifecycle.CloseAlertResult{}, &CloseError{400, "context is required"}
 	}
-	if command.Validate() != nil || command.OperatorKind != domain.OperatorKindUser || domain.ValidateIdentityPart("bk_tenant_id", command.BKTenantID, 64) != nil || len(command.AlertID) > domain.EntityIDMaxBytes || len(command.OperationID) > 128 || len(command.OperatorID) > 256 || command.EffectiveAt.After(time.Now().Add(5*time.Minute)) {
+	if command.Validate() != nil || domain.ValidateIdentityPart("bk_tenant_id", command.BKTenantID, 64) != nil || len(command.AlertID) > domain.EntityIDMaxBytes || len(command.OperationID) > 128 || len(command.OperatorID) > 256 || command.EffectiveAt.After(time.Now().Add(5*time.Minute)) {
 		return lifecycle.CloseAlertResult{}, &CloseError{400, "invalid close command"}
 	}
 	select {

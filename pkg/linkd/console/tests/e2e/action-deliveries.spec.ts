@@ -69,7 +69,7 @@ test("action retry keeps original command and separates visibility, local skip a
   await expect(page.getByText(/冻结时的标题/)).toBeVisible();
   await expect(
     page.locator(".projection-snapshot .json-viewer pre"),
-  ).toContainText("linkd.kac-action.v1");
+  ).toContainText("linkd.kac-action.v2");
   const audit = row.progress.last_retry;
   row = {
     ...actionFixture("waiting_projection"),
@@ -103,9 +103,9 @@ test("action retry keeps original command and separates visibility, local skip a
   await page.getByRole("button", { name: "刷新", exact: true }).click();
   await expect(page.getByText(/此前尝试结果未确认/)).toBeVisible();
   await expect(page.getByText(/本次依据较新终态投影在本地跳过/)).toBeVisible();
-  await expect(page.getByRole("heading", { name: "动作受理确认" })).toHaveCount(
-    0,
-  );
+  await expect(
+    page.getByRole("heading", { name: "Celery 投递确认" }),
+  ).toHaveCount(0);
   await page
     .getByRole("button", { name: "切换为浅色模式", exact: true })
     .click();

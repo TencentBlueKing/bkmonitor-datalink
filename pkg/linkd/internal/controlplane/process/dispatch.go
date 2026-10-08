@@ -124,7 +124,7 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 		if err != nil {
 			return err
 		}
-		defer transport.Close()
+		defer func() { _ = transport.Close() }()
 		pager, err := onemodel.NewPager(client)
 		if err != nil {
 			return err
@@ -189,6 +189,7 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	}
 	api.ShieldRuntime = controlapi.NewShieldRuntime(shieldReader)
 	api.AlertCloser = lifecycleprocess.NewAlertCloser(cfg, sources, severity, logger, metrics)
+	api.ManualShieldBinder = lifecycleprocess.NewManualShieldBinder(cfg, sources, policies, severity, logger, metrics)
 	shieldObservations := policyruntime.NewObservations(queryWindows, metrics)
 	defer shieldObservations.Close()
 	shieldChecks := lifecycleprocess.NewShieldChecker(cfg, sources, policies, policyResources, severity, logger, metrics, shieldJournal, shieldObservations)

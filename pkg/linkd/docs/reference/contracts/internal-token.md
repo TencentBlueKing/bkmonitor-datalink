@@ -15,7 +15,9 @@ Internal-Token: Bearer <JWT>
 
 Kingeye 当前生成器只签入 `username`，Linkd 接受此类无 `exp` 的 Token。若存在 `exp`、`nbf` 或 `iat`，必须是有效的数值时间声明，并校验到期或未来时间，不额外增加时钟宽限。Linkd 与 Console 每次请求重新签发 `username`、`iat`、`exp`，有效期固定为 300 秒。部署节点应保持时钟同步。
 
-业务租户仍按各接口已有请求体或来源配置校验。调用 Kingeye 时按目标接口需要独立传递 `X-Bk-Tenant-Id`；该头不在当前 JWT 签名载荷中，也不会自动改变 Linkd 接口的租户作用域。共享密钥代表部署内的管理互信，不提供租户授权。
+业务租户按各接口的请求参数或来源配置校验。Kingeye 内部调用通过请求体或 query 参数传递 bk_tenant_id，
+不要求也不发送 X-Bk-Tenant-Id。该请求头仅用于蓝鲸 APIGW 调用，不属于内部 JWT 协议。
+共享密钥代表部署内的管理互信，不提供租户授权。
 
 ## 配置与升级
 
@@ -83,7 +85,9 @@ if err != nil {
     return err
 }
 request.Header.Set(internaltoken.HeaderName, value)
-request.Header.Set("X-Bk-Tenant-Id", tenantID)
+query := request.URL.Query()
+query.Set("bk_tenant_id", tenantID)
+request.URL.RawQuery = query.Encode()
 client := &http.Client{
     Timeout: 10 * time.Second,
     CheckRedirect: func(*http.Request, []*http.Request) error {

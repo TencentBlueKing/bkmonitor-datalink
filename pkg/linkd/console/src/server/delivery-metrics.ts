@@ -41,7 +41,7 @@ const families: Family[] = [
       "failed",
       "cancelled",
       "enqueued",
-      "accepted",
+      "queued",
       "skipped",
       "waiting_projection",
       "blocked",

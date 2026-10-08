@@ -148,6 +148,7 @@ func (p *Processor) CloseAlert(ctx context.Context, command CloseAlertCommand) (
 		return CloseAlertResult{}, err
 	}
 	command.EffectiveAt = command.EffectiveAt.Round(0).UTC()
+	operation := command.endOperation()
 	for attempt := 0; attempt < maxCASAttempts; attempt++ {
 		stored, err := p.getAlertCurrent(ctx, command.BKTenantID, command.AlertID)
 		if err != nil {
@@ -165,7 +166,7 @@ func (p *Processor) CloseAlert(ctx context.Context, command CloseAlertCommand) (
 		}
 		if stored.Alert.Status.Terminal() {
 			if stored.Alert.Status != domain.AlertStatusClosed || stored.Alert.EndType != endType || stored.Alert.EndReason != command.Reason ||
-				stored.Alert.EndAt == nil || !stored.Alert.EndAt.Equal(command.EffectiveAt) {
+				stored.Alert.EndAt == nil || !stored.Alert.EndAt.Equal(command.EffectiveAt) || stored.Alert.EndOperation == nil || *stored.Alert.EndOperation != operation {
 				return CloseAlertResult{}, fmt.Errorf("%w: alert is already terminal", store.ErrInvalidTransition)
 			}
 			// 首次关闭可能在 CAS 成功后写缓存失败；重试必须修复可见性窗口，
@@ -208,6 +209,7 @@ func (p *Processor) CloseAlert(ctx context.Context, command CloseAlertCommand) (
 		replacement.EndAt = &endAt
 		replacement.EndType = endType
 		replacement.EndReason = command.Reason
+		replacement.EndOperation = &operation
 		if err := freezeAction(&replacement, stored.Alert.Revision+1, AlertChangeCause{Type: causeType, ID: command.OperationID}, replacement.Admission.AdmittedAt != nil); err != nil {
 			return CloseAlertResult{}, err
 		}

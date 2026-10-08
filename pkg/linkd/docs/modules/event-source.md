@@ -69,7 +69,7 @@ Lifecycle 创建 Alert 时绑定固定插件目标 `kac`，同时启用状态同
 
 配置见[全局 KAC 插件](../guides/configuration.md#kac-全局插件配置)，可靠性见
 [兼容存储 V1](../reference/contracts/kac-alert-projection-v1.md)及
-[动作投递 V1](../reference/contracts/kac-action-delivery-v1.md)。
+[动作投递 V2](../reference/contracts/kac-action-delivery-v2.md)。
 
 ### 内部合并来源
 

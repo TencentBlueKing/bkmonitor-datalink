@@ -188,10 +188,6 @@ func (s *Service) deliver(ctx context.Context, current StoredTask) (StoredTask, 
 	next.Progress.Receipt = &receipt
 	next.Progress.LeaseUntil = nil
 	next.Progress.UpdatedAt = s.timeAfter(next.Progress.UpdatedAt)
-	if receipt.Outcome == "skipped" {
-		next.Progress.State = "skipped"
-		next.Progress.ErrorCode = "superseded_by_terminal"
-	}
 	return s.tasks.Put(ctx, next, claimed.Version)
 }
 

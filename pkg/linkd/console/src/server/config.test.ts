@@ -639,3 +639,34 @@ it.each([
     }
   },
 );
+
+it("loads Doris OneModel without instance ES and redacts the separate credentials", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "linkd-doris-"));
+  try {
+    const file = path.join(directory, "linkd.yaml");
+    const base =
+      "storage:\n  repository: mysql\n  mysql: {address: 'localhost:3306', database: linkd, username: reader}\nresources:\n  onemodel:\n    backend: doris\n    doris: {address: 'doris:9030', database: kingeye, username: reader, password: doris-private}\n";
+    await writeFile(file, base);
+    const config = await loadConfig(file);
+    expect(config.resources?.onemodel?.backend).toBe("doris");
+    expect(JSON.stringify(redactedConfig(config))).not.toContain(
+      "doris-private",
+    );
+    expect(config.resources?.onemodel?.doris?.password).toBe("doris-private");
+    await writeFile(
+      file,
+      base.replace("backend: doris", "backend: elasticsearch"),
+    );
+    await expect(loadConfig(file)).rejects.toThrow();
+    await writeFile(
+      file,
+      base.replace(
+        "username: reader, password: doris-private",
+        "username: reader, instance_table: 'table;drop'",
+      ),
+    );
+    await expect(loadConfig(file)).rejects.toThrow();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

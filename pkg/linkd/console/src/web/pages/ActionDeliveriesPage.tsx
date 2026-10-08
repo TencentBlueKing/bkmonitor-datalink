@@ -26,7 +26,7 @@ const states = {
   waiting_projection: "等待投影可见",
   sending: "尝试中",
   retry: "等待自动重试",
-  succeeded: "接收端已受理",
+  succeeded: "已投递 Celery",
   skipped: "已跳过旧触发",
   failed: "失败，保留顺序屏障",
 };
@@ -112,7 +112,7 @@ export function ActionDeliveriesPage() {
       <header className="page-header">
         <div>
           <h1>告警动作投递</h1>
-          <p>查看获准动作、冻结请求、投影等待和受理结果。</p>
+          <p>查看获准动作、冻结请求、投影等待和Celery 投递结果。</p>
         </div>
         <button
           disabled={
@@ -148,7 +148,7 @@ export function ActionDeliveriesPage() {
       </header>
       <p className="merge-note">
         恢复操作保存为待执行，由运行中的投递任务继续推进；可在控制面任务页确认是否启动。它不代表
-        接收端已受理，更不代表处置已执行完成。现有 KAC Kafka Hook
+        已投递 Celery，更不代表处置已执行完成。现有 KAC Kafka Hook
         的发送不在此列表中。
       </p>
       <button
@@ -400,12 +400,13 @@ function ActionDetail({ row }: { row: ActionDelivery }) {
         </p>
       )}
       <p>
-        请求固定于原获准版本；当前 Alert
-        可能已有更新。受理确认只证明可靠排入处置待办，通知、工单或自动处置的完成情况应在接收端查看。
+        请求固定于原获准版本；当前 Alert 可能已有更新。投递确认只证明 KAC 已向
+        Celery 投递，通知、工单或自动处置的完成情况应在接收端查看。
       </p>
       {p.previous_unconfirmed && (
         <p className="merge-note">
-          此前尝试结果未确认。当前跳过不代表此前从未受理；请结合受理记录核对。
+          此前尝试结果未确认。当前跳过不代表此前从未投递；请结合 KAC
+          任务日志核对。
         </p>
       )}
       <ActionOrder row={row} />
@@ -424,22 +425,16 @@ function ActionDetail({ row }: { row: ActionDelivery }) {
       )}
       {receipt && (
         <section className="projection-receipt">
-          <h3>动作受理确认</h3>
+          <h3>Celery 投递确认</h3>
+          <p>已投递 Celery；KAC 使用处理时的 ES 数据匹配和通知。</p>
           <p>
-            {receipt.outcome === "accepted"
-              ? "接收端已持久受理"
-              : "接收端已确认跳过"}{" "}
-            · r{receipt.applied_revision} · {receipt.applied_status}
+            Celery 任务 ID：<code>{receipt.task_id}</code>
           </p>
-          <p>
-            受理引用：<code>{receipt.acceptance_id}</code>
-          </p>
-          {receipt.reason && <code>{receipt.reason}</code>}
           <p>这不是处置执行完成的确认。</p>
         </section>
       )}
       {p.state === "skipped" && !receipt && (
-        <p>本次依据较新终态投影在本地跳过，未取得新的动作受理确认。</p>
+        <p>本次依据较新终态投影在本地跳过，未取得新的Celery 投递确认。</p>
       )}
       {p.last_retry && (
         <section className="projection-receipt">
@@ -523,7 +518,7 @@ function ActionLogLocator({ row }: { row: ActionDelivery }) {
       <Link to={logs}>查看 Alert 操作流水（任务更新时间前 1 小时）</Link>
       <p>
         操作流水记录生命周期和 Hook
-        等业务事实，不替代动作任务的受理记录或进程错误日志。
+        等业务事实，不替代动作任务的投递记录或进程错误日志。
       </p>
     </section>
   );
@@ -623,7 +618,8 @@ function ActionRetryPanel({ row }: { row: ActionDelivery }) {
       </p>
       {accepted && (
         <p role="status">
-          恢复操作已被接受。当前任务进度见上方，接受不代表动作已受理或处置已完成。
+          恢复操作已被接受。当前任务进度见上方，接受不代表动作已投递
+          Celery或处置已完成。
         </p>
       )}
       {row.progress.state === "failed" || command ? (

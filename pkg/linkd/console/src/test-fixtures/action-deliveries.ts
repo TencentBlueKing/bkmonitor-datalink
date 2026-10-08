@@ -55,18 +55,15 @@ export function actionFixture(
   if (state === "skipped") p.error_code = "superseded_by_terminal";
   if (state === "succeeded")
     p.receipt = {
-      schema_version: "linkd.kac-action.v1",
+      schema_version: "linkd.kac-action.v2",
       bk_tenant_id: actionTenant,
       target_id: row.target_id,
       linkd_alert_id: row.alert_id,
       alarm_id: row.alarm_id,
       action_id: row.action_id,
       request_hash: row.request_hash,
-      outcome: "accepted",
-      applied_revision: row.revision,
-      applied_status: row.alert_status,
-      search_visible: true,
-      acceptance_id: "accepted-action-1",
+      outcome: "queued",
+      task_id: "celery-action-1",
     };
   return row;
 }
@@ -96,7 +93,7 @@ export function actionSnapshotFixture(row = actionFixture()) {
     revision: row.revision,
     request_hash: row.request_hash,
     request: {
-      schema_version: "linkd.kac-action.v1",
+      schema_version: "linkd.kac-action.v2",
       action_id: row.action_id,
       bk_tenant_id: row.bk_tenant_id,
       target_id: row.target_id,

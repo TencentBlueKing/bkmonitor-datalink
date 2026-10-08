@@ -41,6 +41,10 @@ func actionTask(t *testing.T, tenant string, revision int64) Task {
 }
 
 func confirmed(q Request) Receipt {
+	return Receipt{SchemaVersion: SchemaVersion, TenantID: q.TenantID, TargetID: q.TargetID, AlertID: q.AlertID, AlarmID: q.AlarmID, ActionID: q.ActionID, RequestHash: q.Hash(), Outcome: "queued", TaskID: "celery-" + q.ActionID}
+}
+
+func visible(q Request) projection.Receipt {
 	status := domain.AlertStatusActive
 	if q.Action == "resolved" {
 		status = domain.AlertStatusRecovered
@@ -48,11 +52,6 @@ func confirmed(q Request) Receipt {
 	if q.Action == "close" {
 		status = domain.AlertStatusClosed
 	}
-	return Receipt{SchemaVersion: SchemaVersion, TenantID: q.TenantID, TargetID: q.TargetID, AlertID: q.AlertID, AlarmID: q.AlarmID, ActionID: q.ActionID, RequestHash: q.Hash(), Outcome: "accepted", AppliedRevision: q.Revision, AppliedStatus: status, SearchVisible: true, AcceptanceID: "accepted-" + q.ActionID}
-}
-
-func visible(q Request) projection.Receipt {
-	status := confirmed(q).AppliedStatus
 	return projection.Receipt{SchemaVersion: projection.SchemaVersion, TenantID: q.TenantID, TargetID: q.TargetID, AlertID: q.AlertID, AlarmID: q.AlarmID, AppliedRevision: q.Revision, ContentHash: q.ContentHash, AppliedStatus: status, SearchVisible: true, DocumentRef: "owned-index/document"}
 }
 
@@ -101,16 +100,15 @@ func TestActionRequestPreservesFrozenAdmissionAndStableIdentity(t *testing.T) {
 	if r.ValidateFor(first) != nil {
 		t.Fatal("valid receipt rejected")
 	}
-	r.AppliedRevision++
-	r.AppliedStatus = domain.AlertStatusClosed
-	if r.ValidateFor(first) == nil {
-		t.Fatal("new terminal accepted old firing")
-	}
-	r.Outcome = "skipped"
-	r.Reason = "superseded_by_terminal"
+	r.TaskID = "another-celery-task"
 	if r.ValidateFor(first) != nil {
-		t.Fatal("stale skip rejected")
+		t.Fatal("retry task reference rejected")
 	}
+	r.TaskID = ""
+	if r.ValidateFor(first) == nil {
+		t.Fatal("missing task reference accepted")
+	}
+	r = confirmed(first)
 	r.RequestHash = q.Hash()
 	if r.ValidateFor(first) == nil {
 		t.Fatal("different payload receipt accepted")

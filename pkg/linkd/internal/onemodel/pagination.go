@@ -49,7 +49,7 @@ type Page struct {
 }
 
 // Pager 持有进程级游标签名密钥，不缓存查询数据；可以并发调用。
-// 重启使已有签名失效；遗留 PIT 由 ES 的一分钟 keep_alive 回收。
+// 重启使已有签名失效；ES PIT 一分钟后回收，Doris 使用当前态 keyset，不创建快照。
 type Pager struct {
 	client *Client
 	key    [32]byte
@@ -99,7 +99,7 @@ func ValidateQuery(tenant string, q Query) error {
 	return nil
 }
 
-// Search 使用固定租户与模型过滤分页，PIT 保证翻页期间视图一致。
+// Search 使用固定租户与模型过滤分页；ES 使用 PIT，Doris 沿用 KAC 当前态 keyset。
 // 失败和末页主动关闭 PIT；放弃查询的调用方应调用 Close。
 func (p *Pager) Search(ctx context.Context, tenant string, q PageQuery) (page Page, err error) {
 	if ctx == nil {
@@ -122,13 +122,16 @@ func (p *Pager) Search(ctx context.Context, tenant string, q PageQuery) (page Pa
 	}
 	sum := sha256.Sum256(raw)
 	digest := base64.RawURLEncoding.EncodeToString(sum[:])
+	if p.client.doris != nil {
+		return p.searchDoris(ctx, tenant, q, digest)
+	}
 	cursor := pageCursor{Version: 1, Tenant: tenant, QueryHash: digest}
 	if q.Cursor != "" {
 		cursor, err = p.decode(q.Cursor)
 		if err != nil {
 			return Page{}, err
 		}
-		if cursor.Tenant != tenant || cursor.QueryHash != digest {
+		if cursor.Version != 1 || cursor.Tenant != tenant || cursor.QueryHash != digest {
 			return Page{}, ErrInvalidCursor
 		}
 	} else {
@@ -261,6 +264,15 @@ func (p *Pager) Close(ctx context.Context, tenant, encoded string) error {
 	if tenant == "" || cursor.Tenant != tenant {
 		return ErrInvalidCursor
 	}
+	if p.client.doris != nil {
+		if cursor.Version != 2 {
+			return ErrInvalidCursor
+		}
+		return ctx.Err()
+	}
+	if cursor.Version != 1 {
+		return ErrInvalidCursor
+	}
 	p.closePIT(ctx, cursor.PIT)
 	return nil
 }
@@ -301,7 +313,7 @@ func (p *Pager) decode(encoded string) (pageCursor, error) {
 		return pageCursor{}, ErrInvalidCursor
 	}
 	var cursor pageCursor
-	if json.Unmarshal(raw, &cursor) != nil || cursor.Version != 1 || cursor.PIT == "" || cursor.Tenant == "" || len(cursor.After) != 2 {
+	if json.Unmarshal(raw, &cursor) != nil || cursor.Tenant == "" || (cursor.Version != 1 && cursor.Version != 2) || (cursor.Version == 1 && (cursor.PIT == "" || len(cursor.After) != 2)) || (cursor.Version == 2 && (cursor.PIT != "doris" || len(cursor.After) != 1)) {
 		return pageCursor{}, ErrInvalidCursor
 	}
 	if p.now().Unix() >= cursor.Expires {
@@ -358,4 +370,52 @@ func (p *Pager) request(ctx context.Context, method, path string, body, result a
 		return fmt.Errorf("%w: invalid backend response", ErrInvalidDataSourceResponse)
 	}
 	return nil
+}
+
+// searchDoris 复用 KAC 的当前态 keyset 分页；不伪造 ES PIT 或跨页一致快照。
+func (p *Pager) searchDoris(ctx context.Context, tenant string, q PageQuery, digest string) (Page, error) {
+	cursor := pageCursor{Version: 2, Tenant: tenant, QueryHash: digest, PIT: "doris"}
+	after := ""
+	if q.Cursor != "" {
+		var err error
+		cursor, err = p.decode(q.Cursor)
+		if err != nil {
+			return Page{}, err
+		}
+		if cursor.Version != 2 || cursor.Tenant != tenant || cursor.QueryHash != digest || json.Unmarshal(cursor.After[0], &after) != nil || !selectionText(after, 1024) {
+			return Page{}, ErrInvalidCursor
+		}
+	}
+	rows, err := p.client.doris.instancesPage(ctx, tenant, q.ModelID, q.Where, q.Limit+1, after)
+	if err != nil {
+		return Page{}, err
+	}
+	page := Page{Instances: make([]Instance, 0, min(len(rows), q.Limit))}
+	previous := after
+	for i, row := range rows {
+		instance, _, err := parseInstanceSource(row, tenant, InstanceQuery{ModelCode: q.ModelID})
+		if err != nil {
+			return Page{}, err
+		}
+		if instance.InstanceID <= previous {
+			return Page{}, ErrInvalidDataSourceResponse
+		}
+		previous = instance.InstanceID
+		if i < q.Limit {
+			page.Instances = append(page.Instances, instance)
+		}
+	}
+	if len(rows) > q.Limit {
+		position, _ := json.Marshal(page.Instances[len(page.Instances)-1].InstanceID)
+		cursor.After = []json.RawMessage{position}
+		cursor.Expires = p.now().Add(time.Minute).Unix()
+		page.NextCursor, err = p.encode(cursor)
+		if err != nil {
+			return Page{}, err
+		}
+	}
+	if ctx.Err() != nil {
+		return Page{}, ctx.Err()
+	}
+	return page, nil
 }

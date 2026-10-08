@@ -76,7 +76,13 @@ func (c *Client) Search(ctx context.Context, tenant string, q Query) ([]Instance
 		}
 		filters = append(filters, clause)
 	}
-	rows, err := c.searchAll(ctx, oneModelInstanceIndex, filters, q.Limit+1)
+	var rows []map[string]any
+	var err error
+	if c.doris != nil {
+		rows, err = c.doris.instancesPage(ctx, tenant, q.ModelID, q.Where, q.Limit+1, "")
+	} else {
+		rows, err = c.searchAll(ctx, oneModelInstanceIndex, filters, q.Limit+1)
+	}
 	if err != nil {
 		return nil, err
 	}

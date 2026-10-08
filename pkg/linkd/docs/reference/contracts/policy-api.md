@@ -234,3 +234,36 @@ Event 必须属于请求租户且已有完成的丰富结果；读取已有 Even
 读取最多 4 路、3 秒、24个桶及8个策略，后端错误不返回零。没有观察的零值不证明从未执行。
 采样失败/丢弃必须结合 `linkd.policy.statistics.samples` 判断，细粒度指标见
 [策略观测](../../design/observability.md#策略匹配窗口与统计采样)。
+
+## 指定 Alert 快捷屏蔽
+
+`POST /api/v1/alerts/{alert_id}/shield` 使用管理 JWT，worker token 无权调用。请求体上限 4096 字节：
+
+```json
+{
+  "bk_tenant_id": "tenant-a",
+  "operation_id": "quick-shield-1",
+  "operator_id": "admin",
+  "expected_revision": 3,
+  "policy": {"id": "maintenance", "version": 1, "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+  "effective_at": "2026-10-08T08:00:00Z"
+}
+```
+
+策略必须属于同一租户，且为当前已发布、启用并处于有效时间内的 time_shield。policy 引用使用发布
+结果的 id/version/digest，不接受草稿或任意覆盖 Alert 字段。指定活动告警立即建立 origin=manual 的绑定，
+不重跑普通策略条件/目标，不创建 Event、不刷新丰富、不修改生命周期或合并关系、不生成 firing。
+绑定保存 operation_id/operator_id、冻结策略版本和有效期身份；保留其他已有关系，总数仍至多 16。
+
+执行复用 fingerprint lease 与 Alert CAS，四个并发名额、十秒总预算。成功返回
+`{"alert": <当前 Alert>, "already_applied": false}`；相同最近命令重试返回 already_applied=true，
+即使关系后来已到期也不重新绑定。LastShieldOperation 仅保留最近命令摘要；更早命令以原
+expected_revision 拒绝再次应用。原操作 ID 对应内容变化、目标终态或版本变化返回 409。
+
+Alert.shield、last_shield_operation 与 policy_change 输出意图同次保存；失败可能发生在 CAS 后，调用方
+必须重试原命令以补齐流水/输出。定时检查无需原 Event，按冻结有效期、当前策略停用/删除解除手动绑定；
+依赖失败保留。普通编辑不替换既有冻结版本，解除不补发动作，等待下一条触发 Event。快捷屏蔽不能撤回
+已执行的外部副作用，已排入 Celery 的任务按处理时状态判断。
+
+HTTP 400/401/403/404/409/429/503 分别表示参数、鉴权、租户、对象缺失、冲突、繁忙和未配置；
+超时或依赖异常按接口错误返回，状态可能已保存，不能按失败响应推断操作未生效。

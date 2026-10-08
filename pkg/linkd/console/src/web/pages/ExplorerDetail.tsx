@@ -386,6 +386,9 @@ function RecordOverview({
       {entity === "alerts" && Boolean(p.end_type || p.end_reason) && (
         <p>
           结束方式：{display(p.end_type)} · {display(p.end_reason)}
+          {Boolean(p.end_operation) && (
+            <span> · 结束操作：{display(p.end_operation)}</span>
+          )}
         </p>
       )}
       {p.content ? (

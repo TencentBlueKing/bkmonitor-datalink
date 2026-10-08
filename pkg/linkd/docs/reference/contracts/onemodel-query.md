@@ -30,10 +30,11 @@ Console 通过 `/local-api/onemodel/*` 代理以下接口，管理 JWT 只保留
 实例文档包含 `bk_tenant_id/model_id/model_inst_id/entity_uid/attributes` 及可用的展示字段。
 
 下一页保持租户、模型、条件和页大小不变，并传入上页 `next_cursor` 到 `cursor`。
-排序为字符串实例 ID、物理索引升序；PIT 固定查询视图，采用 `search_after`，支持 ES 7.10 起的现有兼容范围。
-签名游标绑定全部查询条件，不能修改或跨租户复用。快照每次访问保活一分钟；
+ES 排序为字符串实例 ID、物理索引升序，PIT 固定查询视图并采用 search_after。
+Doris 按 model_inst_id 字节序进行当前态 keyset 分页，沿用 KAC，不提供跨页 PIT 一致快照。
+签名游标绑定后端、租户和全部查询条件，不能修改或跨租户复用。快照每次访问保活一分钟；
 控制面重启后原游标失效，需重新查询。没有 `next_cursor` 表示已结束，并已尝试释放快照。
-单次 ES 响应最多 1 MiB；大属性对象导致响应超限时应减小页大小。
+单次后端响应最多 1 MiB；大属性对象导致响应超限时应减小页大小。
 
 ## 关联查询
 
@@ -61,7 +62,7 @@ SDK 每个查询方向最多读取 1024 条边，合并后的目标实例最多 
 
 `POST /api/v1/onemodel/close` 接收 `{"bk_tenant_id":"system","cursor":"<next_cursor>"}`，返回 `{"closed":true}`。
 页面改变条件、重新查询或离开时释放未读完的快照；结束、失败和取消也会尝试释放。
-释放失败不覆盖原查询结果，ES 在一分钟保活期后回收遗留快照。
+释放失败不覆盖原查询结果，ES 在一分钟保活期后回收遗留快照；Doris close 只校验游标，无服务端 PIT 可释放。
 
 ## 预算与错误
 
@@ -93,3 +94,23 @@ go test -count=1 -run TestElasticsearchOneModelPagination ./internal/onemodel
 
 可通过 `LINKD_TEST_ELASTICSEARCH_API_KEY` 提供认证。测试只读取现有实例，不创建或删除业务数据，
 最多读取两页并关闭 PIT。未配置环境变量时跳过；只有一个实例的模型只能验证首个终止页。
+
+## Doris 读取范围
+
+Doris 连接配置见[配置指南](../../guides/configuration.md#onemodel-doris-读取)。请求字段、实例身份、租户、
+关系方向及结果上限不变。对齐 KAC 的类型化 JSON_EXTRACT_STRING/BIGINT/DOUBLE/BOOL、ARRAY_CONTAINS、
+LIKE/REGEXP 与缺失值否定语义，不增加类型或条件。大整数和 false/0 保留原值；SQL 参数、表名和响应
+分别受校验与预算限制。驱动错误、部分读取和格式错误不转成未找到，错误正文不泄漏连接或参数。
+
+KAC 源码基线为本地 Kingeye develop/5.3.0（06f8da31a3）的 base/infras/instance_storage/{doris.py,doris_schema.py,runtime.py}；
+此适配仅覆盖其已有通用实例和投影边，主线拓扑边界保持不变。
+
+真实 Doris 只读验证使用 LINKD_TEST_DORIS_DSN、LINKD_TEST_ONEMODEL_TENANT_ID、
+LINKD_TEST_ONEMODEL_MODEL_ID、LINKD_TEST_ONEMODEL_INSTANCE_ID，可选
+LINKD_TEST_DORIS_INSTANCE_TABLE/LINKD_TEST_DORIS_EDGE_TABLE 后执行：
+
+```bash
+go test -count=1 -run TestDorisOneModelContract ./internal/onemodel
+```
+
+没有显式环境时跳过。该用例不创建或修改业务表，只验证身份、租户隔离和当前态分页。

@@ -33,7 +33,7 @@ export const actionDefinitions: Definition[] = [
     title: "工作观察结果速率",
     unit: "观察项/s",
     description:
-      "每页互斥分类，允许重复观察同一任务。accepted 表示已有持久受理确认，不是唯一动作数、HTTP 次数或处置完成数。",
+      "每页互斥分类，允许重复观察同一任务。queued 表示已投递 Celery，不是唯一动作数、HTTP 次数或处置完成数。",
     query: (s, w) =>
       `sum by (${by}, linkd_outcome) (rate(linkd_action_work_observations_total${s}[${w}]))`,
   },
@@ -75,7 +75,7 @@ export const actionDefinitions: Definition[] = [
 ];
 export const actionOutcomeNames: Record<string, string> = {
   enqueued: "已确认入队",
-  accepted: "已有受理确认",
+  queued: "已投递 Celery",
   skipped: "旧触发已跳过",
   waiting_projection: "等待投影",
   blocked: "前序失败阻塞",

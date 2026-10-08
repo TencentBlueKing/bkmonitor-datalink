@@ -26,7 +26,6 @@ import (
 	onemodelassembly "linkd/internal/onemodel/assembly"
 	"linkd/internal/onemodel/metadatastore"
 	"linkd/internal/policy"
-	es "linkd/internal/store/elasticsearch"
 )
 
 // Runtime 在一个控制面/来源任务内复用有界连接池，缺少资源按本次策略不可求值处理。
@@ -34,7 +33,7 @@ type Runtime struct {
 	Targets   *onemodel.TargetResolver
 	Relations policy.RelationLookup
 	db        *sql.DB
-	transport *es.HTTPTransport
+	transport *onemodelassembly.Connections
 	apigw     *blueking.Client
 	closeOnce sync.Once
 	closeErr  error
@@ -129,7 +128,7 @@ func (r *Runtime) Close() error {
 			r.closeErr = errors.Join(r.closeErr, r.db.Close())
 		}
 		if r.transport != nil {
-			r.transport.Close()
+			r.closeErr = errors.Join(r.closeErr, r.transport.Close())
 		}
 	})
 	return r.closeErr

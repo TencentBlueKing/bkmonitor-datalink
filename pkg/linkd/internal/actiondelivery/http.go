@@ -22,7 +22,7 @@ import (
 
 // Destination 是从全局部署插件解析出的连接信息，仅在执行时保留于内存。
 type Destination struct {
-	// Endpoint 是完整动作受理接口 URL，不跟随重定向，不允许 userinfo/query/fragment。
+	// Endpoint 是完整动作投递接口 URL，不跟随重定向，不允许 userinfo/query/fragment。
 	Endpoint string
 	// InternalToken 是接收端内部认证凭据；不写入任务、错误或日志。
 	InternalToken string
@@ -55,7 +55,7 @@ func NewHTTPSender() (*HTTPSender, error) {
 // Close 关闭空闲连接；在调用者停止使用 Sender 后调用。
 func (s *HTTPSender) Close() { s.transport.CloseIdleConnections() }
 
-// Send 只在持久受理身份、原请求摘要和可见性满足契约时返回，不回显远端 body 或凭据。
+// Send 只在动作身份、原请求摘要和 Celery 任务引用满足契约时返回，不回显远端 body 或凭据。
 func (s *HTTPSender) Send(ctx context.Context, d Destination, q Request) (Receipt, error) {
 	if err := ctx.Err(); err != nil {
 		return Receipt{}, err
@@ -77,7 +77,7 @@ func (s *HTTPSender) Send(ctx context.Context, d Destination, q Request) (Receip
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Internal-Token", "Bearer "+d.InternalToken)
-	req.Header.Set("X-Bk-Tenant-Id", q.TenantID)
+	// Kingeye 内部协议从请求体 bk_tenant_id 取租户；APIGW 租户头不用于此接口。
 	response, err := s.client.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {

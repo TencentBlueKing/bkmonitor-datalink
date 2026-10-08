@@ -82,7 +82,7 @@ func TestAlertCloserCommandValidationAndErrors(t *testing.T) {
 				c.Reason += "中"
 			}
 		}},
-		{"system actor", func(c *lifecycle.CloseAlertCommand) { c.OperatorKind = domain.OperatorKindSystem }},
+		{"invalid actor", func(c *lifecycle.CloseAlertCommand) { c.OperatorKind = domain.OperatorKindSource }},
 		{"future clock", func(c *lifecycle.CloseAlertCommand) { c.EffectiveAt = time.Now().Add(time.Hour) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

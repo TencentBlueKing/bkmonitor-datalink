@@ -102,7 +102,7 @@ func actionUntil(t *testing.T, label string, check func() bool) {
 }
 
 // 使用真实业务仓储、Redis 指纹租约和两个运行器；接收端与来源目标解析仍是固定测试夹具。
-// 接收端受理账本只存于本测试进程，不能据此声称已完成 KAC 生产接入。
+// 接收端仅模拟 Celery 投递确认，不能据此声称已完成 KAC 生产接入。
 func runActionAutomaticLoops(t *testing.T, s *Store, reopen func() *Store, cfg config.StorageConfig, deployment string) {
 	t.Helper()
 	address := os.Getenv("LINKD_TEST_REDIS_ADDRESS")
@@ -398,7 +398,7 @@ func runActionAutomaticLoops(t *testing.T, s *Store, reopen func() *Store, cfg c
 	if strings.Contains(text, event.BKTenantID) || strings.Contains(text, alertID) || strings.Contains(text, originalTask.ID) {
 		t.Fatal("identity leaked into metrics")
 	}
-	for _, outcome := range []string{"enqueued", "waiting_projection", "accepted", "skipped", "failed"} {
+	for _, outcome := range []string{"enqueued", "waiting_projection", "queued", "skipped", "failed"} {
 		if !strings.Contains(text, `linkd_outcome="`+outcome+`"`) {
 			t.Fatal("missing actual outcome metric", outcome)
 		}

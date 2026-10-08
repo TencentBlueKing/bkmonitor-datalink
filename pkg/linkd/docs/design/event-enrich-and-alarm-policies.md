@@ -1241,7 +1241,7 @@ ES 合并文档写入不等待搜索刷新，逐步推进使用实时 GET/CAS；
 `POST /api/v1/projection-tasks/{id}/retry` 恢复失败任务；动作任务使用 `/api/v1/action-deliveries`。
 重试沿用原身份，不创建新的 Alert 或 KAC 文档。完整路径、请求字段及版本要求分别见
 [策略 API](../reference/contracts/policy-api.md)、[运行态 API](../reference/contracts/policy-runtime-api.md)、
-[兼容存储](../reference/contracts/kac-alert-projection-v1.md)和[动作投递](../reference/contracts/kac-action-delivery-v1.md)。
+[兼容存储](../reference/contracts/kac-alert-projection-v1.md)和[动作投递](../reference/contracts/kac-action-delivery-v2.md)。
 
 所有请求显式提供租户并复核对象归属；管理 API 使用 `Internal-Token: Bearer <JWT>`，认证见
 [内部 HTTP JWT 契约](../reference/contracts/internal-token.md)；Worker 内部配置读取使用独立 Worker Token。
@@ -1343,13 +1343,13 @@ KAC 处置依赖对应 alarm_event 已经入库并可查询。ActionDelivery 必
 同一告警的状态与动作按版本/操作顺序协调；若较新终态已经应用，不能再执行会重新激活它的旧触发动作，
 应记录过期动作跳过原因。单个目标失败不会阻塞其他告警的投递。
 
-已实现独立的 [KAC 动作投递 V1](../reference/contracts/kac-action-delivery-v1.md)：冻结获准动作、
+已实现独立的 [KAC 动作投递 V1](../reference/contracts/kac-action-delivery-v2.md)：冻结获准动作、
 ES/MySQL 持久任务、与投影共用目标租约、按业务版本执行、投影可见性门槛、HTTP 受理确认和有界重试。
 前序失败保留顺序屏障，较新终态可见后旧 firing 可以跳过；结果不确定时保存标记并重投相同动作身份。
 Lifecycle 已接入与 Alert 业务 CAS 同时持久的 action_pending 及独立 ActionRecorder 端口；全部目标入队
 并确认排序可见前保留原意图，阻止下一业务版本覆盖原动作快照。投影 ACK 仍可更新；清除意图不改变
 revision/update_at。不能将 Record 注册成普通失败后仅记流水的 Hook。详细字段、重试、扫描与归档约束见
-[Lifecycle 原子动作意图](../reference/contracts/kac-action-delivery-v1.md#lifecycle-原子动作意图)。
+[Lifecycle 原子动作意图](../reference/contracts/kac-action-delivery-v2.md#lifecycle-原子动作意图)。
 动作查询、冻结请求、顺序观察、失败恢复 API 及 Console 页面已接入正式管理入口。
 独立动作补扫/发送、持久投影确认 Gate 与 Console 按需指标、日志定位已实现；
 控制面启动、业务入口即时动作入队和 Lifecycle 全局目标自动绑定均已装配。
@@ -2080,7 +2080,7 @@ Console 构建、Helm 与发布脚本检查。25 份受影响文档的 273 个�
 当前仍待完整 CMDB 目标、可靠投影正式装配、ActionDelivery 和剩余观测页面，不能将本阶段完成等同于整项目标完成。
 
 第三十三阶段（2026-10-06）完成独立 ActionDelivery 基础，协议以
-[KAC 动作投递 V1](../reference/contracts/kac-action-delivery-v1.md)为权威位置。动作由原获准 Alert、
+[KAC 动作投递 V1](../reference/contracts/kac-action-delivery-v2.md)为权威位置。动作由原获准 Alert、
 cause、目标和业务 revision 确定，冻结首次请求与来源 Release；同目标/版本的不同内容不能另建任务。
 firing 还须证明本次 admission 与 update_at/cause 一致，防止把已处置后的普通活动快照当成新动作。
 父人工关闭后的解联保留子真实生命周期和 admission，不产生新 action，仍等下一条触发 Event 再判断。
@@ -2142,7 +2142,7 @@ TestAllInOneEnabledPoliciesE2E 通过真实 Kafka/Redis/ES/MySQL 和正式后台
 26 份受影响文档的 286 个本地链接/锚点和 20 个 JSON 示例校验通过，git diff --check 无错误。
 
 第三十五阶段（2026-10-06）完成 ActionDelivery 管理查询、失败恢复的正式控制面装配和 Console 页面。
-权威协议见[动作投递管理契约](../reference/contracts/kac-action-delivery-v1.md#管理查询与人工恢复)。
+权威协议见[动作投递管理契约](../reference/contracts/kac-action-delivery-v2.md#管理查询与人工恢复)。
 列表按租户、Alert、目标、来源、动作和阶段筛选，最多四条扫描结果，空筛选页保留绑定条件的游标。
 摘要不含完整快照、endpoint 或凭据；原请求单独加载。恢复仅使用原 CAS/操作身份/操作者/原因，
 不能改写请求、来源发布或累计尝试，不能重启 succeeded/skipped，API 不执行 HTTP 动作投递。
@@ -2177,7 +2177,7 @@ Console 构建、Helm 与发布脚本检查。动作出口正式配置/生产/�
 首次立即执行；每页最多 16 项，两循环共享四个执行名额。同租户入队、同 Alert/目标发送在页内串行。
 扫描失败保留游标，单项失败继续扫描其他记录；取消仅推进已尝试的连续前缀。锁内实时重读只补齐原
 action_pending，不重跑丰富或策略，也不读取最新 Release 改写原目标。完整行为和预算以
-[动作运行器契约](../reference/contracts/kac-action-delivery-v1.md#自动补扫与发送运行器)为准。
+[动作运行器契约](../reference/contracts/kac-action-delivery-v2.md#自动补扫与发送运行器)为准。
 
 动作模块新增本地指标和有界失败日志。指标分开显示运行器实例、页面耗时、工作观察结果、最近页
 年龄/观察时间及此前未确认次数；重复观察不当作唯一动作或 HTTP 请求。实际 Prometheus 抓取验证
@@ -2778,8 +2778,8 @@ Linkd 子进程为普通构建，竞态检测只代表对应 Go 测试范围。�
 | 编号 | 剩余工作 | 当前基础 | 完成条件 |
 | --- | --- | --- | --- |
 | K1 | KAC 策略配置可靠同步 | Linkd 配置发布/版本/操作身份及发布恢复已有实现；KAC 编辑入口保留 | KAC 创建、编辑、启停和删除后可靠同步；失败可重试，旧请求不能覆盖新配置，能区分保存与发布状态 |
-| K2 | 真实 KAC 动作接收端 | Linkd 已发送动作 V1；本地接收端为协议模拟 | 持久动作去重与可靠处置入队，使用原动作快照，复核较新终态；仅执行获准后续快照/处置，不再跑三类策略 |
-| K3 | KAC 生命周期命令转交 | Linkd 已有人工关闭 API；兼容 ES 状态由 Linkd 维护 | KAC 人工关闭按稳定操作身份调用 Linkd，处理失败/未知结果并展示最终状态；其他尚无正式命令的操作不得靠直接改 ES 实现 |
+| K2 | 真实 KAC 动作接收端 | Linkd 当前发送动作 V2；本地接收端为协议模拟 | 投递 Celery 后确认原动作身份、摘要和 task_id；按处理时 ES 数据执行后续处置，复核当前状态，不再跑三类策略 |
+| K3 | KAC 生命周期命令转交 | Linkd 支持人工/系统关闭和指定 Alert 快捷屏蔽；兼容 ES 状态由 Linkd 维护 | KAC 按稳定操作身份调用 Linkd，保留来源和操作者，处理失败/未知结果；不直接改 ES 生命周期 |
 | K4 | KAC 退出旧告警事实写入及索引维护 | Linkd 已维护原 alias/mapping/模板/ILM 和告警状态；KAC 原链路仍存在 | 接管链路退出旧输入处理、策略任务、生命周期更新及索引维护；保留查询和处置字段写入，联调验证并发字段不丢失 |
 
 K1—K4 属于跨仓接入，不能以 Linkd 单仓代码或模拟接收端测试标记完成。
@@ -2896,7 +2896,7 @@ EventSource 管理配置和输出。细节以第 8.3 节为唯一权威位置，
 
 KAC 的当前接入工作、完成条件和真实环境验证统一见
 [第 11.2 节 K1—K4](#112-当前能力与剩余差距2026-10-08)。
-动作受理遵守[动作 V1](../reference/contracts/kac-action-delivery-v1.md)，字段所有权遵守
+动作受理遵守[动作 V1](../reference/contracts/kac-action-delivery-v2.md)，字段所有权遵守
 [兼容存储 V1](../reference/contracts/kac-alert-projection-v1.md)；KAC 不再承担状态投影接收与 ACK。
 本版不做首次启用回填或历史状态迁移；真实 KAC 接入尚未完成，不能以本地协议模拟替代。
 
@@ -2958,3 +2958,27 @@ KAC 详情使用可选的全局 Console 模板，不配置时隐藏入口；与�
 
 浏览器接收端为协议夹具；真实双存储进程用例验证后端模拟/统计链路。两者不代替 KAC 部署地址、
 登录租户、页面权限或后续处置联调。
+
+## KAC 接入需求调整（2026-10-08，L1–L4、L6）
+
+本节覆盖前文历史阶段的动作 V1 持久受理和接收端冻结快照约束；历史测试记录保留其当时语义。
+当前权威协议为[动作 V2](../reference/contracts/kac-action-delivery-v2.md)、
+[关闭命令](../reference/contracts/alert-close.md)、[快捷屏蔽](../reference/contracts/policy-api.md#指定-alert-快捷屏蔽)。
+
+L1/L2 保留 Linkd 原动作、持久任务、投影门槛与有界重试，回执改为 queued/task_id；不要求 KAC 账本，
+允许处理时 ES 匹配/通知，接受未知响应后的重复入队。Kingeye 内部请求只用参数 bk_tenant_id，
+不发送 APIGW 的 X-Bk-Tenant-Id；蓝鲸 APIGW 请求继续保留该头。Console 和 queued 观测分类同步调整。
+L3 增加操作来源、end_operation，严格核对结束命令身份，沿用关闭清理/投影/动作链路。
+L4 增加快捷绑定命令、绑定 origin/operation_id/operator_id、last_shield_operation；状态与输出意图同次 CAS。
+原有抑制、合并、目标绑定及 Event/Alert 丰富快照语义保持不变，L5 本轮不处理。
+L6 对齐 KAC Doris 通用实例和关系表，新增读取配置和参数化查询；主线拓扑保持参考 KAC 的 ES 边界，
+不回退旧实例数据、不迁移业务数据、不扩展目标或条件类型。详见[OneModel Doris 配置](../guides/configuration.md#onemodel-doris-读取)。
+
+字段新增在 Linkd Alert 业务 JSON 和 ES 存储映射中，不修改 KAC alarm_event 的原索引定义。
+KAC/Celery 和真实 Doris 部署联调必须单独记录，协议模拟与 SQL 驱动测试不能替代真实环境结论。
+
+本次专项验证：真实 ES 7.17.7 / MySQL 9.5.0、Redis 和 Kafka 的
+TestAllInOneKACDeliveryE2E 双后端通过，覆盖非匹配告警的快捷绑定、幂等重试、无新 Event 定时解除、
+系统自愈关闭及后续投递。KAC 端是 HTTP/Celery 回执协议模拟。Chrome 动作投递/指标/屏蔽页面 4 个
+用例通过。Doris 已验证 SQL 编译、类型值、租户/游标隔离、关系读取、错误/超时/取消和连接关闭；
+没有配置真实 Doris，TestDorisOneModelContract 跳过，不宣称真实 Doris 或 KAC/Celery 联调完成。

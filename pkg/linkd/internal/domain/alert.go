@@ -44,6 +44,9 @@ type Alert struct {
 	Labels             DimensionMap `json:"labels"`
 	ExtraData          JSONObject   `json:"extra_data,omitempty"`
 
+	// LastShieldOperation 保留快捷屏蔽命令身份，不因解除绑定而清除。
+	LastShieldOperation *AlertShieldOperation `json:"last_shield_operation,omitempty"`
+
 	// Shield 只表示当前屏蔽关系，不替代 active/recovered/closed。
 	Shield AlertShield `json:"shield"`
 	// Merge 保存独立的合并角色、窗口等待和关系摘要；nil 表示原始告警未参与合并。
@@ -67,6 +70,9 @@ type Alert struct {
 	EndType        AlertEndType `json:"end_type,omitempty"`
 	EndReason      string       `json:"end_reason,omitempty"`
 
+	// EndOperation 保存主动关闭身份，供重试和跨系统操作追踪。
+	EndOperation *AlertEndOperation `json:"end_operation,omitempty"`
+
 	EnrichStatus EnrichStatus `json:"enrich_status"`
 	Enrich       JSONObject   `json:"enrich,omitempty"`
 }
@@ -78,6 +84,7 @@ func (a Alert) Normalize() (Alert, error) {
 	a.PolicyChange = a.PolicyChange.Clone()
 	a.MergeChange = a.MergeChange.Clone()
 	a.Shield = a.Shield.Clone()
+	a.LastShieldOperation = a.LastShieldOperation.clone()
 	a.Merge = a.Merge.Clone()
 	a.Admission = a.Admission.Clone()
 	a.PolicyTags = slices.Clone(a.PolicyTags)
@@ -99,6 +106,7 @@ func (a Alert) Normalize() (Alert, error) {
 	a.BeginAt = normalizeTime(a.BeginAt)
 	a.CreateAt = normalizeTime(a.CreateAt)
 	a.EndAt = normalizeOptionalTime(a.EndAt)
+	a.EndOperation = a.EndOperation.clone()
 	if err := a.validate(false); err != nil {
 		return Alert{}, err
 	}
@@ -112,6 +120,7 @@ func (a Alert) Clone() Alert {
 	a.PolicyChange = a.PolicyChange.Clone()
 	a.MergeChange = a.MergeChange.Clone()
 	a.Shield = a.Shield.Clone()
+	a.LastShieldOperation = a.LastShieldOperation.clone()
 	a.Merge = a.Merge.Clone()
 	a.Admission = a.Admission.Clone()
 	a.PolicyTags = slices.Clone(a.PolicyTags)
@@ -120,6 +129,7 @@ func (a Alert) Clone() Alert {
 	a.ExtraData = a.ExtraData.Clone()
 	a.Enrich = a.Enrich.Clone()
 	a.EndAt = normalizeOptionalTime(a.EndAt)
+	a.EndOperation = a.EndOperation.clone()
 	return a
 }
 
@@ -130,6 +140,12 @@ func (a Alert) Validate() error {
 
 // Normalize 已校验并深拷贝动态 JSON；公共 Validate 不得走此跳过路径。
 func (a Alert) validate(validateJSON bool) error {
+	if o := a.LastShieldOperation; o != nil {
+		if o.validate() != nil {
+			return fmt.Errorf("invalid shield operation")
+		}
+	}
+
 	if err := a.Projection.Validate(a.Revision); err != nil {
 		return err
 	}
@@ -242,7 +258,7 @@ func (a Alert) validate(validateJSON bool) error {
 		}
 	}
 	if a.Status == AlertStatusActive {
-		if a.EndAt != nil || a.EndType != "" || a.EndReason != "" {
+		if a.EndAt != nil || a.EndType != "" || a.EndReason != "" || a.EndOperation != nil {
 			return fmt.Errorf("active alert must not contain end fields")
 		}
 		return nil
@@ -252,6 +268,18 @@ func (a Alert) validate(validateJSON bool) error {
 	}
 	if !a.EndType.Valid() {
 		return fmt.Errorf("terminal alert end_type is invalid: %q", a.EndType)
+	}
+	if a.EndOperation != nil {
+		if err := a.EndOperation.Validate(); err != nil {
+			return err
+		}
+		expected := AlertEndTypeUser
+		if a.EndOperation.OperatorKind == OperatorKindSystem {
+			expected = AlertEndTypeSystem
+		}
+		if a.Status != AlertStatusClosed || a.EndType != expected {
+			return fmt.Errorf("end operation does not match terminal state")
+		}
 	}
 	// 内部合并父没有外部恢复 Event；全部成员终结由控制面恢复，必须保留明确的系统原因。
 	mergeRecovery := a.EventSourceID == BuiltinMergeEventSourceID && a.Merge != nil && a.Merge.Role == "aggregate" && a.EndType == AlertEndTypeSystem && a.EndReason == "merge_members_ended"
@@ -372,6 +400,7 @@ func ValidateAlertReplacement(current, replacement Alert) error {
 		alert.PolicyChange = nil
 		alert.MergeChange = nil
 		alert.Shield = AlertShield{}
+		alert.LastShieldOperation = nil
 		alert.Merge = nil
 		alert.Admission = AlertAdmission{}
 		alert.PolicyTags = nil
@@ -383,6 +412,7 @@ func ValidateAlertReplacement(current, replacement Alert) error {
 		alert.EndAt = nil
 		alert.EndType = ""
 		alert.EndReason = ""
+		alert.EndOperation = nil
 	}
 	clearLifecycle(&left)
 	clearLifecycle(&right)

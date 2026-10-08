@@ -22,7 +22,6 @@ import (
 	"linkd/internal/enrich/description"
 	onemodelassembly "linkd/internal/onemodel/assembly"
 	"linkd/internal/redisclient"
-	elasticsearchstore "linkd/internal/store/elasticsearch"
 	"linkd/internal/telemetry"
 )
 
@@ -31,7 +30,7 @@ type Runtime struct {
 	display       *redis.Client
 	dynamicGroups map[string]*redis.Client
 	dataSources   *datasources.Runtime
-	transport     *elasticsearchstore.HTTPTransport
+	transport     *onemodelassembly.Connections
 	sources       enrich.Sources
 }
 
@@ -51,7 +50,7 @@ func (r *Runtime) Close() error {
 		result = errors.Join(result, r.dataSources.Close())
 	}
 	if r.transport != nil {
-		r.transport.Close()
+		result = errors.Join(result, r.transport.Close())
 	}
 	return result
 }

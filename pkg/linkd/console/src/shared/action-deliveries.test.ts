@@ -31,14 +31,12 @@ it("accepts every actual progress state and distinguishes local skip from receiv
   const remote = actionFixture("succeeded");
   remote.progress.state = "skipped";
   remote.progress.error_code = "superseded_by_terminal";
-  remote.progress.receipt = {
-    ...remote.progress.receipt!,
-    outcome: "skipped",
-    reason: "superseded_by_terminal",
-    applied_revision: 3,
-    applied_status: "closed",
-  };
-  expect(actionDelivery.safeParse(remote).success).toBe(true);
+  expect(actionDelivery.safeParse(remote).success).toBe(false);
+  const queued = actionFixture("succeeded");
+  queued.progress.receipt!.task_id = "second-celery-task";
+  expect(actionDelivery.safeParse(queued).success).toBe(true);
+  queued.progress.receipt!.task_id = "";
+  expect(actionDelivery.safeParse(queued).success).toBe(false);
 });
 it("rejects false success, wrong proof/action identity and illegal ordering state", () => {
   const good = actionFixture("succeeded");

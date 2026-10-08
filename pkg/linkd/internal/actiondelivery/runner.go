@@ -39,8 +39,8 @@ type WorkOutcome string
 const (
 	// OutcomeEnqueued 表示当前意图已确认全部入队，也可包含已由其他执行者完成的项。
 	OutcomeEnqueued WorkOutcome = "enqueued"
-	// OutcomeAccepted 表示返回任务已有持久受理确认，不表示本轮新增受理或处置执行完成。
-	OutcomeAccepted WorkOutcome = "accepted"
+	// OutcomeQueued 表示返回任务已有 Celery 投递确认，不表示本轮新增受理或处置执行完成。
+	OutcomeQueued WorkOutcome = "queued"
 	// OutcomeSkipped 表示返回任务已按较新终态跳过。
 	OutcomeSkipped WorkOutcome = "skipped"
 	// OutcomeWaitingProjection 表示任务仍等待投影可见。
@@ -62,7 +62,7 @@ const (
 // Valid 拒绝把任意依赖错误或业务身份用作结果标签。
 func (o WorkOutcome) Valid() bool {
 	switch o {
-	case OutcomeEnqueued, OutcomeAccepted, OutcomeSkipped, OutcomeWaitingProjection, OutcomeBlocked, OutcomeRetrying, OutcomeDeferred, OutcomeCapacity, OutcomeFailed, OutcomeUnstarted:
+	case OutcomeEnqueued, OutcomeQueued, OutcomeSkipped, OutcomeWaitingProjection, OutcomeBlocked, OutcomeRetrying, OutcomeDeferred, OutcomeCapacity, OutcomeFailed, OutcomeUnstarted:
 		return true
 	}
 	return false
@@ -310,7 +310,7 @@ func (r *Runner) deliverPage(ctx context.Context, after string) (string, RoundRe
 		}
 		switch t.Progress.State {
 		case "succeeded":
-			result.outcome = OutcomeAccepted
+			result.outcome = OutcomeQueued
 		case "skipped":
 			result.outcome = OutcomeSkipped
 		case "retry":

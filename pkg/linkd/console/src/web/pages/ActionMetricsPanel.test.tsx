@@ -71,7 +71,7 @@ it("opens metrics on demand without tenant scope and keeps query controls indepe
     return Response.json(actionMetricsFixture(u.searchParams));
   });
   view();
-  await screen.findByText("动作受理确认");
+  await screen.findByText("Celery 投递确认");
   expect(calls).toHaveLength(0);
   fireEvent.click(screen.getByRole("button", { name: "查看动作运行观测" }));
   await screen.findByText("最近页观察距今");
@@ -148,7 +148,7 @@ it("retains no-data meaning, rejects a foreign range, and hides old charts on fa
   await waitFor(() =>
     expect(screen.getByRole("alert")).toHaveTextContent("网络不可用"),
   );
-  expect(screen.getByText("动作受理确认")).toBeVisible();
+  expect(screen.getByText("Celery 投递确认")).toBeVisible();
 });
 it("cancels in-flight metric reads when collapsed", async () => {
   let signal: AbortSignal | undefined;

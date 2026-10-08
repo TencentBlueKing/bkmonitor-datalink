@@ -234,13 +234,42 @@ enrich:
 `dynamic_group` 供 Resource 从 Kingeye 已物化的 Redis hash 读取分组归属。
 KAC 兼容存储与处置凭据使用下节的 `plugins.kac`，不参与丰富查询。
 所有 EventSource、丰富预览及 OneModel 查询复用同一套资源定义；连接仍按实际依赖初始化，来源任务退出时关闭。
-OneModel 实例固定读取 `kingeye_all_instance`，关联边固定读取 `kingeye_topo`；业务拓扑读取
+OneModel 默认使用 Elasticsearch，实例读取 `kingeye_all_instance`，关联边固定读取 `kingeye_topo`；业务拓扑读取
 `<index_prefix>cmdb_biz_topo_node` 和 `<index_prefix>cmdb_biz_topo_host_membership`，前缀默认 `bk_monitor_base_`。
 
 资源是静态启动配置，更新后同步重启控制面和 Lifecycle。Helm 使用 `configuration.resources` 为各角色提供一致配置。
 来源导入文件只需包含处理规则，无需复制资源凭据；控制面发布和运行时装配检查实际所需资源。
 旧 `event_sources[].enrich.datasources` 输入已移除；历史 Release 不改写，读取后也不再使用其内嵌连接。
-配置展示隐藏 MySQL、Redis、Elasticsearch API Key、Basic Auth 密码、蓝鲸应用密钥和 KAC 投递 Token；新发布的 Record/Release 不包含公共资源。
+配置展示隐藏 MySQL、Doris、Redis、Elasticsearch API Key、Basic Auth 密码、蓝鲸应用密钥和 KAC 投递 Token；新发布的 Record/Release 不包含公共资源。
+
+### OneModel Doris 读取
+
+按 KAC `base/infras/instance_storage/doris.py` 与 `doris_schema.py` 的现行表结构读取，仅增加后端适配：
+
+```yaml
+resources:
+  onemodel:
+    backend: doris
+    doris:
+      address: doris-fe.example.com:9030
+      database: kingeye
+      username: linkd_reader
+      password: your-password
+      instance_table: kingeye_instance
+      edge_table: kingeye_projection_edge
+    # 可选：仅供 KAC 现有 CMDB 主线拓扑专用索引读取，不回退实例或通用边。
+    addresses: [http://topology-es.example.com:9200]
+    index_prefix: bk_monitor_base_
+```
+
+backend 省略为 elasticsearch，既有 ES 配置无需修改。Doris 使用 MySQL 查询协议，默认表名与 KAC 相同，
+也允许 database.table；仅做参数化 SELECT，不迁移或创建业务表。连接池沿用消费方预算，单查询至多一分钟
+且服从上层更短超时，支持取消及进程关闭。Doris 密码与其他资源一样脱敏，不进入来源发布。
+
+通用实例、关联边、动态分组的实例展开、丰富和调试查询使用同一 Doris 后端，失败不回退旧 ES。
+CMDB 主线拓扑在参考 KAC 中仍使用 ES node/membership 数据面；不改造其语义、不从 Doris 通用关系边
+推导替代。未配置可选 ES 时，要求该拓扑能力的请求明确返回依赖错误，不返回伪造的空成员集合。
+MySQL 模型定义、CMDB APIGW、动态分组 Redis 的职责不变。KAC alarm_event 兼容存储仍为 ES。
 
 ### 动态分组 Redis 投影
 
@@ -289,7 +318,7 @@ resources:
 ```
 
 `enable_multi_tenant_mode` 缺省为 false：单租户直接使用 `admin`，不调用用户管理 API。
-多租户根据当前请求的租户查询并缓存 `bk_admin`。两种模式均保留调用者显式提供的 `X-Bk-Tenant-Id`，
+多租户根据当前请求的租户查询并缓存 `bk_admin`。两种模式均将调用者显式租户写入 APIGW 的 `X-Bk-Tenant-Id` 请求头，
 不会把 Event/Alert、管理 API、Redis 或存储中的租户改为默认租户。全租户应用只需一份凭据，无租户名单。
 
 只支持 APIGW。CMDB 默认地址为 `<blueking.api_url>/api/bk-cmdb/prod/`；需要独立地址时使用
@@ -354,7 +383,7 @@ ES 认证可选 `api_key` 或 `basic_auth`，不能同时配置。
 | elasticsearch.number_of_replicas | 首次创建模板时默认 2，范围 0..10，可显式设为 0 |
 | elasticsearch.max_result_window | 首次创建模板时默认 50000，范围 1..1000000 |
 | elasticsearch.total_fields_limit | 首次创建模板时默认 5000，范围 1..100000 |
-| action_endpoint | 完整 HTTP(S) 动作 V1 接口，不接受 userinfo、query、fragment，不使用旧 KAC pipeline |
+| action_endpoint | 完整 HTTP(S) 动作 V2 接口，不接受 userinfo、query、fragment，不使用旧 KAC pipeline |
 | internal_token | 公共 Internal-Token Bearer 凭据，1..16384 个非空白可打印 ASCII 字符；拒绝脱敏占位值 |
 
 控制面需要 ES 的模板、ILM、alias、mapping、索引创建、读写与 refresh 权限。新建索引沿用 KAC
@@ -369,7 +398,7 @@ mapping、分析器和 30gb/60d 的 hot rollover；已有物理索引不重建�
 `resources.kac_delivery`、`event_sources[].kac_targets`、`projection_endpoint` 均已移除，旧字段明确拒绝。
 连接和凭据只保存在部署配置及运行时内存，Go/Console 展示均脱敏。
 Helm 仅允许公共 `configuration.plugins.kac`，不接受角色、Worker 组或 migrate 覆盖；独立配置文件需保持一致，
-变更后重启相关进程。KAC 侧仍须接入动作 V1 并停止旧告警状态写入，不能用协议模拟代替实际应用联调。
+变更后重启相关进程。KAC 侧仍须接入动作 V2 并停止旧告警状态写入，不能用协议模拟代替实际应用联调。
 
 设计见[KAC 全局兼容插件](../design/kac-compatibility-plugin.md)。
 
@@ -537,7 +566,7 @@ linkd run all-in-one --config /etc/linkd/linkd.yaml
 `alarm_collect_alarmsource.name`。
 
 `resources.onemodel` 配置 Strategy/Resource Processor 使用的 OneModel
-Elasticsearch 读连接。OneModel Client 固定读取 `kingeye_all_instance` alias 和 `kingeye_topo` 投影边；
+只读后端；默认 Elasticsearch，Doris 配置见上文。ES 模式读取 `kingeye_all_instance` alias 和 `kingeye_topo` 投影边；
 `index_prefix` 默认 `bk_monitor_base_`，用于读取 `<prefix>cmdb_biz_topo_node` 与
 `<prefix>cmdb_biz_topo_host_membership`。实例查询使用根字段
 `bk_tenant_id/model_id/model_inst_id` 定位实例；来源属性查询通过 nested `attribute_values` 类型槽表达，

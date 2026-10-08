@@ -286,12 +286,45 @@ const resourcesSchema = z
       .optional(),
     onemodel: z
       .object({
-        addresses: z.array(z.string()),
+        backend: z.enum(["elasticsearch", "doris"]).default("elasticsearch"),
+        doris: z
+          .object({
+            address: z.string().min(1),
+            database: z.string().min(1),
+            username: z.string().min(1),
+            password: z.string().optional(),
+            instance_table: z
+              .string()
+              .max(256)
+              .regex(/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$/)
+              .optional(),
+            edge_table: z
+              .string()
+              .max(256)
+              .regex(/^[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)?$/)
+              .optional(),
+          })
+          .strict()
+          .optional(),
+        addresses: z.array(z.string()).default([]),
         index_prefix: z.string().optional(),
         api_key: z.string().optional(),
         basic_auth: z
           .object({ username: z.string(), password: z.string().optional() })
           .optional(),
+      })
+      .superRefine((r, c) => {
+        if (
+          r.backend === "doris"
+            ? !r.doris
+            : Boolean(r.doris) || r.addresses.length === 0
+        )
+          c.addIssue({
+            code: "custom",
+            message: "OneModel 读取后端配置不完整",
+          });
+        if (!r.addresses.length && (r.api_key || r.basic_auth))
+          c.addIssue({ code: "custom", message: "拓扑 ES 凭据需要 addresses" });
       })
       .optional(),
     kingeye_display: z
@@ -1277,6 +1310,8 @@ export function redactedConfig(config: ConsoleConfig) {
       plugins.kac.elasticsearch.basic_auth.password = "******";
   }
   if (resources?.mysql?.password) resources.mysql.password = "******";
+  if (resources?.onemodel?.doris?.password)
+    resources.onemodel.doris.password = "******";
   if (resources?.onemodel?.api_key) resources.onemodel.api_key = "******";
   if (resources?.onemodel?.basic_auth?.password)
     resources.onemodel.basic_auth.password = "******";

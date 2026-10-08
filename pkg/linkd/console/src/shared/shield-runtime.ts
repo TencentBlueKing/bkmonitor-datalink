@@ -6,6 +6,12 @@ const hash = z.string().regex(/^[a-f0-9]{64}$/);
 export const shieldBinding = z
   .object({
     binding_id: hash,
+    origin: z.literal("manual").optional(),
+    operation_id: z
+      .string()
+      .regex(/^[a-zA-Z0-9_-]{1,128}$/)
+      .optional(),
+    operator_id: z.string().min(1).max(256).optional(),
     policy: z.object({
       id: z.string().min(1).max(80),
       version: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
@@ -30,6 +36,12 @@ export const shieldBinding = z
     reason: z.string().max(4096).optional(),
   })
   .superRefine((b, ctx) => {
+    if (
+      b.origin === "manual"
+        ? b.type !== "time_shield" || !b.operation_id || !b.operator_id
+        : Boolean(b.operation_id || b.operator_id)
+    )
+      ctx.addIssue({ code: "custom", message: "手动屏蔽操作身份不一致" });
     if (
       b.type === "time_shield"
         ? !b.activation_id || Boolean(b.mode) || Boolean(b.main_alert_id)

@@ -296,7 +296,7 @@ Alert、目标、来源、动作类型和进度筛选，每页最多四条，筛
 页面同时展示原 action/cause、来源发布、业务 revision、任务 CAS、请求摘要及最近一次人工恢复。
 
 - pending 表示已入队，waiting_projection 表示等待所需投影可搜索；正常等待不是可强行重试的失败。
-- succeeded 表示接收端持久受理，通知、工单和自动处置完成情况应到接收端查看。
+- succeeded 表示已投递 Celery，通知、工单和自动处置完成情况应到接收端查看。
 - skipped 分为本地依据较新终态停止发送和接收端明确确认跳过；此前结果未确认标记仍保留，不能据此认定此前从未受理。
 - 同目标顺序区显示可见的最早未结清动作，可跳到前序任务。failed 会阻塞后续同 Alert/目标动作；
   队首位置或暂时为空都不等于可以立即发送。
@@ -311,18 +311,18 @@ Alert 详情另行展示 action_pending 和逐目标动作开关，并提供当�
 Prometheus instance 筛选；上方租户、Alert、来源和任务条件不影响这些跨业务指标。刷新只读取，收起取消请求。
 
 最近页最多 16 项，不是全局积压，页面年龄必须结合观察距今；多个进程的页面不能相加成队列总量。
-工作观察可重复统计同一任务，accepted 不等于本轮新增受理或处置完成。查询失败隐藏旧图；没有时序、
+工作观察可重复统计同一任务，queued 不等于本轮新增投递或处置完成。查询失败隐藏旧图；没有时序、
 非有限样本不补零。未接入或尚未启动运行器时正常显示无数据，不据此认定任务完成。
 
 详情的“日志定位”列出发送阶段、租户、Alert 与 action_task_id，并说明补扫日志只按租户/Alert 定位。
 这些是用于检索进程日志的字段，Console 尚无进程日志采集/搜索后端，也不宣称已找到对应日志。
 每个失败页只有最多四条样本；队首阻塞时可沿前序任务继续定位。“Alert 操作流水”入口携带租户、Alert
 和任务更新时间之前一小时的窗口，展示业务事实，不替代动作受理记录。
-指标接口与预算见[动作运行观测契约](../reference/contracts/kac-action-delivery-v1.md#console-运行观测)。
+指标接口与预算见[动作运行观测契约](../reference/contracts/kac-action-delivery-v2.md#console-运行观测)。
 
 控制面配置 Lifecycle 并启用全局 `plugins.kac` 后启动 action-enqueue/action-delivery；任务页
 区分未启用、空闲、运行和失败。管理 API 已能查询和恢复已有任务，旧 KAC Kafka Hook
-不在此列表中。完整接口与预算见[动作投递管理契约](../reference/contracts/kac-action-delivery-v1.md#管理查询与人工恢复)。
+不在此列表中。完整接口与预算见[动作投递管理契约](../reference/contracts/kac-action-delivery-v2.md#管理查询与人工恢复)。
 
 ## 实体查询与关联排障
 

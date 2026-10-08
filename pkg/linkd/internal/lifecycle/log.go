@@ -38,7 +38,7 @@ func eventAlertLog(event domain.Event, alert domain.Alert, operation domain.Oper
 func operationCloseLog(command CloseAlertCommand, alert domain.Alert) (domain.AlertLog, error) {
 	params, err := encodeLogParams(map[string]string{
 		"operation_id": command.OperationID, "operator_id": command.OperatorID, "reason": command.Reason,
-		"severity": alert.Severity, "config_digest": command.ConfigDigest,
+		"severity": alert.Severity, "config_digest": command.ConfigDigest, "operation_source": command.endOperation().Source,
 	})
 	if err != nil {
 		return domain.AlertLog{}, err

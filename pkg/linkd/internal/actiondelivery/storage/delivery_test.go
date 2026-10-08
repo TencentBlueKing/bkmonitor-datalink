@@ -171,27 +171,11 @@ func (r *simulatedActionReceiver) ServeHTTP(w http.ResponseWriter, req *http.Req
 		return
 	}
 	r.actionCalls++
-	if receipt, ok := r.actions[q.ActionID]; ok {
-		if receipt.RequestHash != q.Hash() {
-			w.WriteHeader(409)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(receipt)
-		return
-	}
 	if !r.visible || r.latest == nil || r.latest.Revision < q.Revision {
 		w.WriteHeader(503)
 		return
 	}
-	var a struct {
-		Status domain.AlertStatus `json:"status"`
-	}
-	_ = json.Unmarshal(r.latest.Alert, &a)
-	receipt := actiondelivery.Receipt{SchemaVersion: actiondelivery.SchemaVersion, TenantID: q.TenantID, TargetID: q.TargetID, AlertID: q.AlertID, AlarmID: q.AlarmID, ActionID: q.ActionID, RequestHash: q.Hash(), Outcome: "accepted", AppliedRevision: r.latest.Revision, AppliedStatus: a.Status, SearchVisible: true, AcceptanceID: "accepted-" + q.ActionID}
-	if q.Action == "firing" && a.Status.Terminal() && r.latest.Revision > q.Revision {
-		receipt.Outcome = "skipped"
-		receipt.Reason = "superseded_by_terminal"
-	}
+	receipt := actiondelivery.Receipt{SchemaVersion: actiondelivery.SchemaVersion, TenantID: q.TenantID, TargetID: q.TargetID, AlertID: q.AlertID, AlarmID: q.AlarmID, ActionID: q.ActionID, RequestHash: q.Hash(), Outcome: "queued", TaskID: fmt.Sprintf("celery-%d", r.actionCalls)}
 	if receipt.ValidateFor(q) != nil {
 		w.WriteHeader(409)
 		return
@@ -315,7 +299,7 @@ func runCombinedActionDelivery(t *testing.T, s *Store, reopen func() *Store, cfg
 	}
 	receiver.mu.Lock()
 	if receiver.actionCalls != 2 || len(receiver.actions) != 1 {
-		t.Error("retry duplicated receiver acceptance", receiver.actionCalls, len(receiver.actions))
+		t.Error("retry changed action identity", receiver.actionCalls, len(receiver.actions))
 	}
 	receiver.mu.Unlock()
 	current, e := business.GetAlertCurrent(t.Context(), a.BKTenantID, a.AlertID)
@@ -371,7 +355,7 @@ func runCombinedActionDelivery(t *testing.T, s *Store, reopen func() *Store, cfg
 	if receiver.actionCalls != 3 || len(receiver.actions) != 2 {
 		t.Fatal("unexpected receiver side effects", receiver.actionCalls, len(receiver.actions))
 	}
-	t.Logf("verified 3 action HTTP calls, 2 unique acceptances, and 1 stale trigger skipped; projection HTTP calls=%d", receiver.projectionCalls)
+	t.Logf("verified 3 action HTTP calls, 2 unique action identities, and 1 stale trigger skipped; projection HTTP calls=%d", receiver.projectionCalls)
 }
 
 func TestElasticsearchCombinedActionDelivery(t *testing.T) {

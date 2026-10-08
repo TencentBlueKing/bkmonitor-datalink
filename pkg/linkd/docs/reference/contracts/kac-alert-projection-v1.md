@@ -103,7 +103,7 @@ pending → sending → delivered → succeeded；临时失败进入 retry，永
 
 内部 Receipt 保存身份、应用版本、快照哈希、Linkd 生命周期、搜索可见性及真实物理文档引用。
 应用版本可高于原请求，但只确认本任务请求版本；同版本的哈希和生命周期必须相同。
-同步 ACK 不推进 Alert 业务 revision/update_at，不替代[动作受理确认](kac-action-delivery-v1.md)。
+同步 ACK 不推进 Alert 业务 revision/update_at，不替代[动作受理确认](kac-action-delivery-v2.md)。
 
 ## 自动运行器
 

@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"strings"
 
 	"linkd/internal/domain"
 	"linkd/internal/projection"
@@ -27,7 +26,7 @@ import (
 
 const (
 	// SchemaVersion 明确区分可靠动作协议、状态投影与旧 KAC Kafka 输入。
-	SchemaVersion = "linkd.kac-action.v1"
+	SchemaVersion = "linkd.kac-action.v2"
 	// MaxRequestBytes 包含一个固定业务快照及有界动作信封。
 	MaxRequestBytes = projection.MaxSnapshotBytes + 4096
 )
@@ -43,7 +42,7 @@ var (
 	ErrCapacity = errors.New("action delivery capacity reached")
 	// ErrBusy 表示投影尚不可见、退避/租约未到期或前序动作尚未完成。
 	ErrBusy = errors.New("action delivery not ready")
-	// ErrInvalidReceipt 表示未取得符合协议的持久受理证明。
+	// ErrInvalidReceipt 表示未取得符合协议的 Celery 投递确认。
 	ErrInvalidReceipt = errors.New("invalid action receipt")
 )
 
@@ -72,7 +71,7 @@ func (c Cause) Validate() error {
 type Request struct {
 	// SchemaVersion 仅允许新动作协议。
 	SchemaVersion string `json:"schema_version"`
-	// ActionID 包含稳定原因与版本，用于接收端的持久幂等受理。
+	// ActionID 包含稳定原因与版本，用于发送端幂等和跨系统追踪。
 	ActionID string `json:"action_id"`
 	// TenantID 隔离文档和处置身份。
 	TenantID string `json:"bk_tenant_id"`
@@ -90,7 +89,7 @@ type Request struct {
 	Cause Cause `json:"cause"`
 	// ContentHash 是 Alert 规范业务 JSON 的摘要。
 	ContentHash string `json:"content_hash"`
-	// Alert 保存原动作时的业务快照，之后状态变化不刷新它。
+	// Alert 保存原动作时的业务快照，之后状态变化不刷新它；KAC 处置读取处理时的 ES 文档。
 	Alert json.RawMessage `json:"alert"`
 }
 
@@ -187,61 +186,32 @@ func (q Request) Hash() string {
 	return hex.EncodeToString(h[:])
 }
 
-// Receipt 证明接收端已幂等持久受理或明确跳过过期动作，不代表通知/工单已经执行。
+// Receipt 只证明本次 HTTP 调用已向 Celery 投递；不证明去重受理或业务执行完成。
+// 相同动作重试可能产生不同 TaskID；请求身份和摘要必须始终相同。
 type Receipt struct {
-	// SchemaVersion 必须与动作协议一致。
+	// SchemaVersion 固定为 linkd.kac-action.v2。
 	SchemaVersion string `json:"schema_version"`
-	// TenantID 必须与原请求租户一致。
+	// TenantID 与原请求租户一致。
 	TenantID string `json:"bk_tenant_id"`
-	// TargetID 必须与目标投影的目的端一致。
+	// TargetID 与原请求目的端一致。
 	TargetID string `json:"target_id"`
-	// AlertID 必须与原生命周期一致。
+	// AlertID 与原 Linkd 生命周期一致。
 	AlertID string `json:"linkd_alert_id"`
-	// AlarmID 必须与原稳定投影身份一致。
+	// AlarmID 与原 KAC 兼容身份一致。
 	AlarmID string `json:"alarm_id"`
-	// ActionID 必须与原动作身份一致。
+	// ActionID 回显原动作身份。
 	ActionID string `json:"action_id"`
-	// RequestHash 必须是包括原原因和动作的完整摘要。
+	// RequestHash 绑定完整原请求字节摘要。
 	RequestHash string `json:"request_hash"`
-	// Outcome 为 accepted 或 skipped；重复受理返回原持久结果。
+	// Outcome 仅允许 queued，不表示任务已执行。
 	Outcome string `json:"outcome"`
-	// Reason 仅 skipped 时为 superseded_by_terminal。
-	Reason string `json:"reason,omitempty"`
-	// AppliedRevision 是接收端作出原持久决定时的可见投影版本。
-	AppliedRevision int64 `json:"applied_revision"`
-	// AppliedStatus 是该决定时的 Linkd 生命周期，不是 KAC 本地处置状态。
-	AppliedStatus domain.AlertStatus `json:"applied_status"`
-	// SearchVisible 必须明确为 true。
-	SearchVisible bool `json:"search_visible"`
-	// AcceptanceID 是接收端持久受理引用，重复返回相同值；不是任意可访问 URL。
-	AcceptanceID string `json:"acceptance_id"`
+	// TaskID 是 KAC 返回的 Celery 任务引用，不作为动作幂等身份。
+	TaskID string `json:"task_id"`
 }
 
-// ValidateFor 拒绝假成功和旧 firing 重新激活较新终态；终态动作也必须观察到同种真实终态。
+// ValidateFor 校验原动作与本次投递引用，不要求接收端保存受理账本或返回投影证明。
 func (r Receipt) ValidateFor(q Request) error {
-	if q.Validate() != nil || r.SchemaVersion != SchemaVersion || r.TenantID != q.TenantID || r.TargetID != q.TargetID || r.AlertID != q.AlertID || r.AlarmID != q.AlarmID || r.ActionID != q.ActionID || r.RequestHash != q.Hash() || r.AppliedRevision < q.Revision || r.AppliedRevision >= 1<<53 || !r.SearchVisible || strings.TrimSpace(r.AcceptanceID) == "" || len(r.AcceptanceID) > 256 {
-		return ErrInvalidReceipt
-	}
-	if r.AppliedStatus != domain.AlertStatusActive && !r.AppliedStatus.Terminal() {
-		return ErrInvalidReceipt
-	}
-	if r.Outcome == "skipped" {
-		if r.Reason != "superseded_by_terminal" || q.Action != "firing" || r.AppliedRevision <= q.Revision || !r.AppliedStatus.Terminal() {
-			return ErrInvalidReceipt
-		}
-		return nil
-	}
-	if r.Outcome != "accepted" || r.Reason != "" {
-		return ErrInvalidReceipt
-	}
-	expected := domain.AlertStatusActive
-	if q.Action == "resolved" {
-		expected = domain.AlertStatusRecovered
-	}
-	if q.Action == "close" {
-		expected = domain.AlertStatusClosed
-	}
-	if r.AppliedStatus != expected {
+	if q.Validate() != nil || r.SchemaVersion != SchemaVersion || r.TenantID != q.TenantID || r.TargetID != q.TargetID || r.AlertID != q.AlertID || r.AlarmID != q.AlarmID || r.ActionID != q.ActionID || r.RequestHash != q.Hash() || r.Outcome != "queued" || domain.ValidateIdentityPart("task_id", r.TaskID, 256) != nil {
 		return ErrInvalidReceipt
 	}
 	return nil
@@ -266,7 +236,7 @@ func stale(q Request, r projection.Receipt) bool {
 	return q.Action == "firing" && r.AppliedRevision > q.Revision && r.AppliedStatus.Terminal()
 }
 
-// DecodeReceipt 严格读取有界接收端确认，不能以 HTTP 200 代替持久受理与搜索可见性。
+// DecodeReceipt 严格读取有界接收端确认，不能以裸 HTTP 200 代替 Celery 投递确认。
 func DecodeReceipt(raw []byte, q Request) (Receipt, error) {
 	if len(raw) > 64<<10 {
 		return Receipt{}, Failure{Code: "response_too_large"}
@@ -281,13 +251,8 @@ func DecodeReceipt(raw []byte, q Request) (Receipt, error) {
 	if !errors.Is(d.Decode(&extra), io.EOF) {
 		return Receipt{}, Failure{Code: "response_invalid"}
 	}
-	visible := r.SearchVisible
-	r.SearchVisible = true
 	if r.ValidateFor(q) != nil {
 		return Receipt{}, Failure{Code: "response_invalid"}
-	}
-	if !visible {
-		return Receipt{}, Failure{Code: "visibility_pending", Retryable: true}
 	}
 	return r, nil
 }

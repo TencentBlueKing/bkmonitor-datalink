@@ -117,3 +117,26 @@ func TestDynamicGroupResourceTenantLimit(t *testing.T) {
 		t.Fatalf("tenant limit accepted: %v", err)
 	}
 }
+
+func TestOneModelDorisConfigurationAndRedaction(t *testing.T) {
+	good := ResourcesConfig{OneModel: &OneModelResource{Backend: "doris", Doris: &OneModelDorisResource{Address: "doris:9030", Database: "kingeye", Username: "reader", Password: "doris-private"}}}
+	if err := good.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	redacted := good.Redacted()
+	if redacted.OneModel.Doris.Password != redactedSecret || good.OneModel.Doris.Password != "doris-private" {
+		t.Fatal("Doris redaction mutated source")
+	}
+	for _, change := range []func(*OneModelResource){func(r *OneModelResource) { r.Doris = nil }, func(r *OneModelResource) { r.Backend = "unknown" }, func(r *OneModelResource) { r.Backend = "elasticsearch" }, func(r *OneModelResource) { r.Doris.InstanceTable = "table; drop" }, func(r *OneModelResource) { r.Doris.Address = "host" }, func(r *OneModelResource) { r.Doris.Database = "" }, func(r *OneModelResource) { r.APIKey = "unused-secret" }} {
+		invalid := good.Clone()
+		change(invalid.OneModel)
+		if invalid.Validate() == nil {
+			t.Fatal("invalid Doris configuration accepted")
+		}
+	}
+	hybrid := good.Clone()
+	hybrid.OneModel.Addresses = []string{"http://topology:9200"}
+	if err := hybrid.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}

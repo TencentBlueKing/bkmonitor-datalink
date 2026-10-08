@@ -20,11 +20,11 @@ import (
 	"testing"
 )
 
-func TestActionHTTPSenderRequiresDurableMatchingAcceptance(t *testing.T) {
+func TestActionHTTPSenderRequiresMatchingCeleryReceipt(t *testing.T) {
 	q := actionTask(t, "tenant", 1).Request
 	ok, _ := json.Marshal(confirmed(q))
 	invisible := confirmed(q)
-	invisible.SearchVisible = false
+	invisible.TaskID = ""
 	notVisible, _ := json.Marshal(invisible)
 	foreign := confirmed(q)
 	foreign.TenantID = "foreign"
@@ -35,7 +35,7 @@ func TestActionHTTPSenderRequiresDurableMatchingAcceptance(t *testing.T) {
 		body, code string
 		retry      bool
 	}{
-		{"accepted", 200, string(ok), "", false}, {"not visible", 200, string(notVisible), "visibility_pending", true},
+		{"queued", 200, string(ok), "", false}, {"missing task", 200, string(notVisible), "response_invalid", false},
 		{"foreign receipt", 200, string(foreignJSON), "response_invalid", false}, {"empty", 200, `{}`, "response_invalid", false},
 		{"extra JSON", 200, string(ok) + `{}`, "response_invalid", false}, {"large", 200, strings.Repeat("x", 65537), "response_too_large", false},
 		{"unauthorized", 401, "private-token", "remote_unauthorized", false}, {"identity conflict", 409, "private", "identity_conflict", false},
@@ -43,7 +43,7 @@ func TestActionHTTPSenderRequiresDurableMatchingAcceptance(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != "POST" || r.Header.Get("Internal-Token") != "Bearer secret" {
+				if r.Method != "POST" || r.Header.Get("Internal-Token") != "Bearer secret" || len(r.Header.Values("X-Bk-Tenant-Id")) != 0 {
 					t.Error("protocol or authentication mismatch")
 				}
 				var got Request

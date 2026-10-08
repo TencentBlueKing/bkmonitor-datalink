@@ -230,6 +230,17 @@ func (c *Client) searchUnique(ctx context.Context, index string, filters []any) 
 }
 
 func (c *Client) searchAll(ctx context.Context, index string, filters []any, size int) ([]map[string]any, error) {
+	if c.doris != nil {
+		if index == oneModelEdgeIndex {
+			return c.doris.edgeRows(ctx, filters, size)
+		}
+		if index == oneModelInstanceIndex {
+			return nil, ErrInvalidQuery
+		}
+	}
+	if c.transport == nil {
+		return nil, fmt.Errorf("%w: CMDB mainline topology ES is not configured", ErrDataSourceUnavailable)
+	}
 	body, err := json.Marshal(map[string]any{
 		"size": size, "track_total_hits": false,
 		"query": map[string]any{"bool": map[string]any{"filter": filters}},

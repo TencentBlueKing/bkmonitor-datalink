@@ -335,6 +335,11 @@ function ShieldDetail({ row }: { row: ShieldRecord }) {
                 >
                   {b.source_event_id}
                 </Link>
+                {b.origin === "manual" && (
+                  <p>
+                    快捷屏蔽 · {b.operator_id} · 操作 {b.operation_id}
+                  </p>
+                )}
               </dd>
               {b.main_alert_id && (
                 <>

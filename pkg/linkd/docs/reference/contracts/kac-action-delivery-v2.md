@@ -1,12 +1,13 @@
-# KAC 动作投递 V1
+# KAC 动作投递 V2
 
-2026-10-08：全局 `plugins.kac` 同时启用兼容 ES 写入和可靠动作投递。
+2026-10-08：V2 将回执收敛为 Celery 投递确认，替代原 V1 持久受理要求；不接受 V1 回执。
+全局 `plugins.kac` 同时启用兼容 ES 写入和可靠动作投递。
 已实现内部请求、持久任务、投影 Gate、按序入队、有界重试、管理 API 与 Console 运维入口。
 KAC 动作接收端仍须在实际应用中接入，本地协议模拟不等于真实 KAC 联调。
 
 全局连接和鉴权见[配置指南](../../guides/configuration.md#kac-全局插件配置)。
 本契约与[稳定 Alert 投影 V1](kac-alert-projection-v1.md)配合使用，旧 [KAC Alarm 输出](kac-alarm-output.md)
-仍保持自己的协议。动作请求只发送到显式实现 `linkd.kac-action.v1` 的独立 HTTP 入口，不能投递到旧 pipeline。
+仍保持自己的协议。动作请求只发送到显式实现 `linkd.kac-action.v2` 的独立 HTTP 入口，不能投递到旧 pipeline。
 Alert 已保存任一可靠动作绑定时，旧 KAC Hook 在运行时跳过输出；来源后来重新配置旧 Hook、
 可靠投递失败均不触发旧通道回退。普通状态 Hook 继续输出。
 全局插件对所有来源及租户启用同一目标 kac，不再提供逐来源的仅投影配置。
@@ -23,8 +24,10 @@ Alert 已保存任一可靠动作绑定时，旧 KAC Hook 在运行时跳过输�
 | close | closed，且本生命周期曾获准处置 |
 
 因此 active、定时解除屏蔽、父关闭后的解联本身都不是新触发资格。此前已放行告警的终态仍独立投递。
-动作冻结原 Alert 业务快照，延迟发送、重试或后来升级都不刷新它；接收端处理该动作时使用原快照，
-不能用最新 Alert 替代原动作内容。投影用于文档身份、可见性和过期终态判定，动作不能把原快照写回投影。
+动作在 Linkd 内冻结原 Alert 业务快照，延迟发送和重试不刷新它，以保持原因、身份和请求摘要稳定。
+KAC 按 alarm_id 读取处理时的 ES 数据进行匹配、快照和通知，不要求逐版本重放原快照；例如 warning 动作
+排队期间升级为 critical，处理时可以使用 critical 数据。原请求只用于动作语义和追踪，不得写回并覆盖当前投影。
+KAC 处理 firing 时仍检查当前结束、屏蔽和合并状态，不让延迟任务重新激活终态；不再执行 Linkd 已承担的三类策略。
 
 `alert` 与投影 V1 共用规范业务 JSON，排除 projection、policy_change、merge_change、action_pending 和 shield.next_check_at。
 单个业务快照最多 1 MiB，动作信封最多 1 MiB + 4096 字节。原请求必须由构造器形成；不接受保存往返会改变
@@ -33,12 +36,12 @@ Alert 已保存任一可靠动作绑定时，旧 KAC Hook 在运行时跳过输�
 ## 请求身份与确认
 
 使用 POST、JSON Content-Type 和 `Internal-Token: Bearer <token>`。URL 来自部署级 plugins.kac.action_endpoint，
-`X-Bk-Tenant-Id` 显式传递任务租户；
+租户通过请求体 `bk_tenant_id` 显式传递，不发送 APIGW 专用的 `X-Bk-Tenant-Id`；
 只接受 HTTP/HTTPS，不允许 userinfo/query/fragment，不跟随重定向。凭据仅在执行时解析，不写入任务。
 
 | 请求字段 | 约束 |
 | --- | --- |
-| schema_version | 固定 linkd.kac-action.v1 |
+| schema_version | 固定 linkd.kac-action.v2 |
 | action_id | 下述稳定动作摘要，64 位小写十六进制 |
 | bk_tenant_id / target_id | 明确租户和目的端，各为 1..64 位字母、数字、下划线或连字符 |
 | linkd_alert_id / alarm_id | 原生命周期及投影 V1 生成的固定兼容身份，不能按动作创建另一条 alarm_event |
@@ -64,19 +67,18 @@ HTTP 200 还必须返回以下明确确认，响应最多 64 KiB，拒绝未知�
 | --- | --- |
 | schema_version、bk_tenant_id、target_id、linkd_alert_id、alarm_id、action_id | 与原请求完全一致 |
 | request_hash | 原完整动作请求摘要，不只是 Alert 的 content_hash |
-| outcome | accepted 或 skipped |
-| reason | accepted 时为空；skipped 时只能为 superseded_by_terminal |
-| applied_revision / applied_status | 接收端作出原持久决定时可见的 Linkd 版本/生命周期；版本不低于请求且小于 2^53 |
-| search_visible | 必须明确为 true，不能把普通 HTTP 200 或 ES bulk 200 当作证明 |
-| acceptance_id | 非空白、最多 256 字节的持久受理引用；不是任意可访问 URL |
+| outcome | 固定 queued，表示本次调用已投递 Celery |
+| task_id | 非空、1..256 位字母/数字/下划线/连字符；本次 Celery 任务 ID |
 
-accepted 必须看到与动作一致的生命周期：firing 对应 active，resolved 对应 recovered，close 对应 closed。
-skipped 只允许旧 firing 遇到更高版本 recovered/closed。搜索尚不可见则重试；身份、摘要或状态矛盾为永久失败。
-已重复受理的相同 action_id/请求摘要返回原 receipt，不因后来的终态把原 accepted 改写成 skipped。
+KAC 必须在实际投递成功后返回确认；投递失败返回非成功响应，不把仅构造 task_id 当作完成投递。
+不要求持久受理中间表、固定 acceptance_id 或重复返回原 receipt；同一 action_id 和 request_hash
+重试可以得到不同 task_id。回执不再包含 applied_revision/applied_status/search_visible，这些证明由
+Linkd 自身的投影 Gate 管理。不能用动作回执推进投影水位。
 
-接收端必须以动作身份和请求摘要持久去重，并将“记录受理结果”和“可靠排入处置待办”组成可恢复的边界。
-只调用 Celery 后返回一个临时任务 ID，不足以满足该契约。**accepted 只证明持久受理，不证明通知、工单
-或自动处置执行完成。** 该确认不用于修改 Linkd Alert，也不能替代 ProjectionReceipt 推进投影水位。
+**queued 只证明已向 Celery 投递，不证明通知、工单或自动处置完成，也不保证业务副作用恰好一次。**
+投递后响应丢失、本地保存确认失败，都可能引发相同动作重复入队。Linkd 保存最近一次确认的 task_id；
+不会查询 Celery 执行结果或据此补发。收到确认之后的执行失败、任务重试和日志归 KAC 管理。
+
 
 ## 投影门槛与原版本顺序
 
@@ -104,11 +106,11 @@ Gate 使用同一租户/Alert/全局目标的持久确认，校验业务溯源�
 
 Gate 不更新绑定、ACK 或动作，不读取来源配置，也不请求 KAC 状态接收端。
 控制面使用部署级全局出口；来源发布不再影响路由。共享 ES 位置应与 KAC 一致，公共插件配置变更后重启进程。
-两次读取与业务 CAS 之间并非强事务，KAC 仍须在幂等受理时拒绝旧触发复活较新终态。
+两次读取与业务 CAS 之间并非强事务，KAC 仍须在任务处理时拒绝旧触发复活较新终态。
 尚有动作依赖的投影确认记录必须可读取，不能只因任务进入 succeeded 就删除证明；目前任务仓储保留这些记录。
 
 投影与动作共用 `projection.TargetLockKey` 和相同部署的 Redis Locker，单目标串行，其他告警独立推进。
-这不替代接收端的原子版本检查：投影可能在请求途中被另一合法写入更新，因此接收端仍须在持久受理时
+投影可能在请求途中或 Celery 排队期间更新，因此 KAC 任务处理时仍须
 复核当前文档，拒绝旧 firing 重新激活较新终态，不再次执行 Linkd 已经承担的抑制/屏蔽/合并。
 
 任务查询的排序依据是业务 revision，不是哈希 ID 或创建时间。failed 保留 unsettled=true：前序故障不能
@@ -117,6 +119,8 @@ Gate 不更新绑定、ACK 或动作，不读取来源配置，也不请求 KAC 
 
 此顺序只覆盖已经持久化的动作。Lifecycle 已通过下述原子意图补齐生产边界；独立调用 Record 的其他
 生产者仍必须持久保留原动作并按版本入队，任务库不能修复根本没有保存过的业务意图。
+
+同 Alert 的顺序只约束 Linkd HTTP 投递，不保证 Celery 的实际执行/完成顺序；KAC 处理时读取当前 ES 状态。
 
 ## Lifecycle 原子动作意图
 
@@ -175,7 +179,7 @@ required_revision 必须等于该快照 revision；创建动作不要求同步�
 | waiting_projection | 等待必需投影可见，保留原动作 |
 | sending | 已持久预留一次尝试及 30 秒期限，不证明 HTTP 已实际发出 |
 | retry | 临时失败后的有界退避 |
-| succeeded | 动作已持久受理，后续不再发送；不等于业务处置完成 |
+| succeeded | 已取得 Celery 投递确认，后续不再发送；不等于业务处置完成 |
 | skipped | 本次因更高终态停止发送，保留原因及证明 |
 | failed | 永久失败或自动预算耗尽，保留历史和顺序屏障 |
 
@@ -183,8 +187,8 @@ required_revision 必须等于该快照 revision；创建动作不要求同步�
 每周期最多八次发送/失败尝试，退避为 1、2、4、8、16、32、60 秒。普通等待投影不消耗次数。
 任务 attempt 与 total_attempts 分别记录本周期和累计次数；generation 初始为 1，只在人工恢复时递增。
 
-网络响应未知、接收端已受理但本地结果保存失败或 sending 中途退出时，等待原期限后重投相同动作身份
-和请求内容。接收端幂等账本负责去重，不能仅靠 Redis 锁承诺 exactly-once。
+网络响应未知、KAC 已投递但本地结果保存失败或 sending 中途退出时，等待原期限后重投相同动作身份
+和请求内容。相同动作可能重复投递；不再要求接收端持久去重账本，也不承诺 exactly-once。
 previous_unconfirmed 保留早先发送结果不确定；随后旧动作变为 skipped，只说明本次不再发送，不能据此
 认定此前从未产生处置。已知目标解析失败和明确未授权不会伪造成已受理；其他不符合确认契约的响应保守记录不确定性。
 
@@ -215,10 +219,10 @@ Service 返回 nil error 也可能表示已保存 retry/failed/skipped，调用�
 `Lifecycle.ForSource` / `CorrelationKey(tenant, source, fingerprint)` Redis 租约并重读。
 租约至少三十秒；十秒预算含排队、读取和入队，释放使用独立两秒上下文并保留释放错误。
 锁内核对来源、指纹、租户和业务版本，只补齐原意图，不重新丰富、匹配策略或读取最新 Release。
-意图已被其他实例清除时返回当前事实；成功只保证任务入队，不证明接收端已受理。
+意图已被其他实例清除时返回当前事实；成功只保证任务入队，不证明KAC 已投递。
 装配方负责提供正确的 RecentAlertCache、ActionRecorder 及客户端生命周期。
 
-两阶段分别报告 enqueued、accepted、skipped、waiting_projection、blocked、retrying、deferred、
+两阶段分别报告 enqueued、queued、skipped、waiting_projection、blocked、retrying、deferred、
 capacity、failed、unstarted。这些是每页互斥的**观察结果**，同一任务可被重复观察，不是唯一动作数、
 HTTP 请求数或处置执行数。日志仅保留固定阶段/原因和最多四条经过验证的业务定位样本，
 不记录请求快照、URL、凭据或依赖错误正文。指标口径见[动作运行器观测](../../design/observability.md#动作运行器观测)。
@@ -275,7 +279,7 @@ succeeded/skipped 不可恢复，不允许借重试更换目标、cause、action
 Console 的同源代理固定上述路径，校验作用域、原摘要和状态关系，两个执行名额加最多 16 个排队请求。
 操作者取服务端认证身份，浏览器不提交 operator_id。请求未知时保留同一租户/任务的原 CAS、UUID
 和原因到 sessionStorage，刷新后重试同一命令；成功核对最近恢复记录后清除。页面分开显示动作入队、
-投影可见依据、接收端持久受理、当前排序障碍与此前结果未确认，不能把本地跳过解释为此前从未处置。
+投影可见依据、Celery 投递确认、当前排序障碍与此前结果未确认，不能把本地跳过解释为此前从未处置。
 
 ## 存储、可见性与预算
 
@@ -325,7 +329,7 @@ Console 进程日志搜索后端。发送日志在返回已验证的前序任务
   结果保存失败后重投、不确定历史与旧触发跳过、千级待办限额、原命令在满额时复用。
 - 真实 ES/MySQL 契约验证重开、CAS、版本排序、失败屏障、队列可见性及租户隔离；只使用测试专属资源。
 - 真实业务仓储、真实投影任务/ACK、Redis 租约和模拟 HTTP 接收端组合验证：投影未可见不发送；受理后
-  本地保存失败，重启重投仍只有一份受理；较新终态同步后旧触发不再发送。接收端为测试夹具，未部署 KAC。
+  本地保存失败，重启按原动作重投，允许新的 Celery task_id；较新终态同步后旧触发不再发送。接收端为测试夹具，未部署 KAC。
 
 - 实际 Lifecycle 与真实 ES/MySQL 动作任务、Redis 租约验证触发/人工关闭入队响应丢失后按原意图恢复；
   单元覆盖多目标部分入队、升级/轮转/来源恢复/关闭、合并父就绪/恢复/解联、ACK 竞争和超预算预检。
@@ -337,8 +341,8 @@ Console 进程日志搜索后端。发送日志在返回已验证的前序任务
   由测试在隔离集合中创建，不代表正式来源生产器已装配。验证未额外产生原 KAC Kafka action。
 
 - 自动循环的真实双后端测试运行两个动作实例和一个投影实例：无新 Event 补扫、不可见投影等待、
-  管理 API 恢复后自动发送、远端受理但本地保存中断后的重开去重、旧触发跳过及人工关闭投递。
-  每后端四次动作 HTTP 请求、两份唯一受理；其中一次请求为明确未授权，另一次为相同动作重投。
+  管理 API 恢复后自动发送、远端受理但本地保存中断后的重开后按原动作重投、旧触发跳过及人工关闭投递。
+  每后端四次动作 HTTP 请求、两个唯一动作身份；其中一次请求为明确未授权，另一次为相同动作重投。
   测试在停止旧动作循环后推进注入时钟，越过发送预留期限；没有改变真实 Redis TTL。
 - 上述单步组合和自动循环已使用正式 ProjectionGate，不再使用测试专属投影确认算法；来源目标解析
   与 HTTP 接收端仍是模拟。单元/race 另覆盖确认缺失、错来源发布/作用域、同版本内容冲突、二次读取

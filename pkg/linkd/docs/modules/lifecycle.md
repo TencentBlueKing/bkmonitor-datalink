@@ -4,7 +4,7 @@
 FinalHook 分开：入队失败保留原意图并向调用者返回错误，全部目标任务可被排序发现后才清除，随后
 允许下一业务版本。投影 ACK 不受此屏障阻塞；仅解联或定时解除屏蔽不生成新动作。Worker 与共享的
 人工关闭/屏蔽/合并控制入口已注入仅入队 Recorder，控制面后台投递与 Worker 自动目标绑定已接入。
-目标固定于 opening Release，来源修改不重绑已有 Alert，空绑定不补绑。详见 [Lifecycle 原子动作意图](../reference/contracts/kac-action-delivery-v1.md#lifecycle-原子动作意图)。
+目标固定于 opening Release，来源修改不重绑已有 Alert，空绑定不补绑。详见 [Lifecycle 原子动作意图](../reference/contracts/kac-action-delivery-v2.md#lifecycle-原子动作意图)。
 
 Elasticsearch runtime 默认使用进程内共享合批器，将不同 Mailbox 已就绪的 Event result CAS、Alert
 CAS/create 和 AlertLog create 合并发送。现有校验、缓存修复和错误映射由 Repository 继续负责；

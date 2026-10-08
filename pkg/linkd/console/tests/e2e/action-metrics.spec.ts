@@ -47,7 +47,10 @@ test("action runtime charts keep process scope, missing-data meaning and safe lo
     `/action-deliveries?bk_tenant_id=${actionTenant}&id=${actionID}`,
   );
   await expect(
-    page.getByRole("heading", { name: "动作受理确认" }),
+    page.getByRole("heading", { name: "Celery 投递确认" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("celery-action-1", { exact: true }),
   ).toBeVisible();
   expect(calls).toHaveLength(0);
   await page.getByRole("button", { name: "查看动作运行观测" }).click();

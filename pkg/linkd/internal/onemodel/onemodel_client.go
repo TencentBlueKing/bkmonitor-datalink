@@ -39,6 +39,7 @@ type ElasticsearchTransport interface {
 
 // Client 按 OneModel 统一实例契约读取 kingeye_all_instance。
 type Client struct {
+	doris                   *dorisReader
 	transport               ElasticsearchTransport
 	topologyNodeIndex       string
 	topologyMembershipIndex string
@@ -85,6 +86,30 @@ func (c *Client) FindInstance(
 	}
 	if query.InstanceID == "" && len(query.AttributeFilters) == 0 {
 		return Instance{}, false, fmt.Errorf("find onemodel instance: instance ID or attribute filters are required")
+	}
+	if c.doris != nil {
+		filters := []Filter{}
+		if query.InstanceID != "" {
+			filters = append(filters, Filter{Field: "model_inst_id", Type: InstanceAttributeKeyword, Operator: "eq", Value: query.InstanceID})
+		}
+		for _, f := range query.AttributeFilters {
+			filters = append(filters, Filter{Field: "attributes." + f.Field, Type: f.Type, Operator: "eq", Value: f.Value})
+		}
+		where := Filter{All: filters}
+		if err := ValidateQuery(tenantID, Query{ModelID: query.ModelCode, Where: where, Limit: 2}); err != nil {
+			return Instance{}, false, err
+		}
+		rows, err := c.doris.instancesPage(ctx, tenantID, query.ModelCode, where, 2, "")
+		if err != nil {
+			return Instance{}, false, err
+		}
+		if len(rows) == 0 {
+			return Instance{}, false, nil
+		}
+		if len(rows) != 1 {
+			return Instance{}, false, ErrInvalidDataSourceResponse
+		}
+		return parseInstanceSource(rows[0], tenantID, query)
 	}
 	request, err := c.buildFindInstanceRequest(ctx, tenantID, query)
 	if err != nil {

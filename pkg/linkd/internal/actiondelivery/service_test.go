@@ -656,3 +656,33 @@ func TestRecordActionConfirmsEveryTargetBeforeCompletingIntent(t *testing.T) {
 		t.Fatal("cancel ignored", err)
 	}
 }
+
+func TestCeleryRetryMayReturnDifferentTaskID(t *testing.T) {
+	calls := 0
+	hash := ""
+	s, m, now := serviceFixture(t, nil, sendFunc(func(_ context.Context, _ Destination, q Request) (Receipt, error) {
+		calls++
+		if hash != "" && hash != q.Hash() {
+			t.Fatal("retry changed request")
+		}
+		hash = q.Hash()
+		ack := confirmed(q)
+		if calls == 1 {
+			ack.TaskID = "first-task"
+		} else {
+			ack.TaskID = "second-task"
+		}
+		return ack, nil
+	}))
+	a := actionAlert("tenant", 1)
+	task := recordAction(t, s, a, Cause{Type: "source_event", ID: a.LatestEventID})
+	m.failState = "succeeded"
+	if _, err := s.Deliver(t.Context(), "tenant", task.Task.ID); err == nil {
+		t.Fatal("local save fault hidden")
+	}
+	*now = now.Add(31 * time.Second)
+	done, err := s.Deliver(t.Context(), "tenant", task.Task.ID)
+	if err != nil || done.Task.Progress.State != "succeeded" || done.Task.Progress.Receipt.TaskID != "second-task" || !done.Task.Progress.PreviousUnconfirmed || calls != 2 {
+		t.Fatal("fresh Celery reference rejected", done, err)
+	}
+}

@@ -187,16 +187,35 @@ func NewProcessor(
 type CloseAlertCommand struct {
 	// ConfigDigest 在配置变更触发的系统关闭中提供诊断上下文。
 	ConfigDigest string
-	OperationID  string
-	BKTenantID   string
-	AlertID      string
-	OperatorKind domain.OperatorKind
-	OperatorID   string
-	Reason       string
-	EffectiveAt  time.Time
+	// OperationSource 标记 manual/auto_policy/work_order/self_heal/strategy_change/system；空值按操作者类别确定。
+	OperationSource string
+	OperationID     string
+	BKTenantID      string
+	AlertID         string
+	OperatorKind    domain.OperatorKind
+	OperatorID      string
+	Reason          string
+	EffectiveAt     time.Time
+}
+
+func (c CloseAlertCommand) endOperation() domain.AlertEndOperation {
+	source := c.OperationSource
+	if source == "" {
+		source = "manual"
+		if c.OperatorKind == domain.OperatorKindSystem {
+			source = "system"
+			if c.ConfigDigest != "" {
+				source = "strategy_change"
+			}
+		}
+	}
+	return domain.AlertEndOperation{ID: c.OperationID, Source: source, OperatorKind: c.OperatorKind, OperatorID: c.OperatorID, ConfigDigest: c.ConfigDigest}
 }
 
 func (c CloseAlertCommand) Validate() error {
+	if err := c.endOperation().Validate(); err != nil {
+		return err
+	}
 	if c.OperationID == "" || c.BKTenantID == "" || c.AlertID == "" {
 		return fmt.Errorf("close alert operation, tenant and alert id are required")
 	}

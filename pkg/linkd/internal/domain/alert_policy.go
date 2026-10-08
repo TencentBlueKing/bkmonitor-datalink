@@ -47,6 +47,10 @@ type AlertAdmission struct {
 // ShieldBinding 是 Alert 内有界的活动关系摘要；历史关系通过业务流水保留。
 // SourceEventID/Severity 指向建立关系时已经冻结的事件视图，不使用后续 Event 刷新。
 type ShieldBinding struct {
+	// Origin 为空表示 Event 匹配；manual 表示指定告警快捷绑定，不按普通条件解除。
+	Origin      string `json:"origin,omitempty"`
+	OperationID string `json:"operation_id,omitempty"`
+	OperatorID  string `json:"operator_id,omitempty"`
 	// MainCandidate 保存待处理主的冻结 Event 引用；nil 表示使用主 Alert 的 opening 快照。
 	MainCandidate *DependencyMain `json:"main_candidate,omitempty"`
 	ActivationID  string          `json:"activation_id,omitempty"`
@@ -122,6 +126,18 @@ func (s AlertShield) Validate(alertID string, status AlertStatus) error {
 		raw, err := hex.DecodeString(b.BindingID)
 		if err != nil || len(raw) != 32 || seen[b.BindingID] || b.BoundAt.IsZero() || b.SourceEventID == "" || len(b.SourceEventID) > EntityIDMaxBytes || b.Severity == "" || len(b.Severity) > 32 || len(b.Reason) > 4096 {
 			return fmt.Errorf("invalid shield binding")
+		}
+		switch b.Origin {
+		case "":
+			if b.OperationID != "" || b.OperatorID != "" {
+				return fmt.Errorf("matched binding cannot carry manual operation")
+			}
+		case "manual":
+			if b.Type != "time_shield" || ValidateIdentityPart("operation", b.OperationID, 128) != nil || b.OperatorID == "" || len(b.OperatorID) > 256 {
+				return fmt.Errorf("invalid manual shield operation")
+			}
+		default:
+			return fmt.Errorf("invalid shield origin")
 		}
 		seen[b.BindingID] = true
 		if err := b.Policy.Validate(); err != nil {
@@ -237,11 +253,15 @@ func (c *AlertPolicyChange) Validate(a Alert) error {
 		return nil
 	}
 	err := ValidateIdentityPart("policy operation", c.OperationID, 128)
-	if err != nil || c.EffectiveAt.IsZero() || len(c.Before) == 0 || len(c.Before) > 16 || len(c.After) > 16 || !reflect.DeepEqual(c.After, a.Shield.Bindings) {
+	if err != nil || c.EffectiveAt.IsZero() || (len(c.Before) == 0 && len(c.After) == 0) || len(c.Before) > 16 || len(c.After) > 16 || !reflect.DeepEqual(c.After, a.Shield.Bindings) {
 		return fmt.Errorf("invalid pending policy change")
 	}
 	next := c.EffectiveAt
-	if err := (AlertShield{Active: true, Bindings: c.Before, NextCheckAt: &next}).Validate(a.AlertID, AlertStatusActive); err != nil {
+	var checkAt *time.Time
+	if len(c.Before) > 0 {
+		checkAt = &next
+	}
+	if err := (AlertShield{Active: len(c.Before) > 0, Bindings: c.Before, NextCheckAt: checkAt}).Validate(a.AlertID, AlertStatusActive); err != nil {
 		return err
 	}
 	return nil
@@ -297,6 +317,28 @@ func (m DependencyMain) Validate() error {
 	}
 	if m.AlertID == "" || len(m.AlertID) > EntityIDMaxBytes || m.EventID == "" || len(m.EventID) > EntityIDMaxBytes || m.Fingerprint == "" || len(m.Fingerprint) > 128 || m.Severity == "" || len(m.Severity) > 32 {
 		return fmt.Errorf("invalid dependency main")
+	}
+	return nil
+}
+
+// AlertShieldOperation 保留最近一次显式命令结果；更早命令由原 expected_revision 阻止再次应用。
+type AlertShieldOperation struct {
+	ID          string `json:"id"`
+	RequestHash string `json:"request_hash"`
+}
+
+func (o *AlertShieldOperation) clone() *AlertShieldOperation {
+	if o == nil {
+		return nil
+	}
+	v := *o
+	return &v
+}
+
+func (o AlertShieldOperation) validate() error {
+	raw, err := hex.DecodeString(o.RequestHash)
+	if ValidateIdentityPart("shield operation", o.ID, 128) != nil || err != nil || len(raw) != 32 || hex.EncodeToString(raw) != o.RequestHash {
+		return fmt.Errorf("invalid shield operation")
 	}
 	return nil
 }

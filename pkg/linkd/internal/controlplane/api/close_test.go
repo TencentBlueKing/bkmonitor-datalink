@@ -74,3 +74,19 @@ func TestCloseAlertManagementBoundary(t *testing.T) {
 		t.Fatalf("unknown failure = %d %s", w.Code, w.Body.String())
 	}
 }
+
+func TestSystemCloseManagementCommand(t *testing.T) {
+	api := &API{Config: config.DispatchConfig{JWT: config.JWTConfig{SecretKey: "management"}}, AlertCloser: closeFunc(func(_ context.Context, c lifecycle.CloseAlertCommand) (lifecycle.CloseAlertResult, error) {
+		if c.OperatorKind != domain.OperatorKindSystem || c.OperationSource != "self_heal" || c.OperatorID != "kac-worker" {
+			t.Fatal("system origin lost", c)
+		}
+		return lifecycle.CloseAlertResult{}, nil
+	})}
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/api/v1/alerts/alert/close", strings.NewReader(`{"bk_tenant_id":"tenant","operation_id":"op","operator_id":"kac-worker","operator_kind":"system","operation_source":"self_heal","reason":"completed","effective_at":"2026-10-08T00:00:00Z"}`))
+	r.Header.Set("Internal-Token", testJWT(t, "management"))
+	w := httptest.NewRecorder()
+	api.Handler().ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+}

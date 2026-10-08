@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -35,6 +36,7 @@ import (
 	"linkd/internal/enrich"
 	"linkd/internal/eventsource"
 	"linkd/internal/lifecycle"
+	"linkd/internal/policy"
 	"linkd/internal/projection"
 	"linkd/internal/runtimeconfig"
 	"linkd/internal/store"
@@ -72,7 +74,7 @@ func (s *kacDeliveryReceiver) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 	case "/original/action":
 		s.actionAttempts.Add(1)
 		var q actiondelivery.Request
-		if json.NewDecoder(r.Body).Decode(&q) != nil || q.Validate() != nil || r.Header.Get("X-Bk-Tenant-Id") != q.TenantID {
+		if json.NewDecoder(r.Body).Decode(&q) != nil || q.Validate() != nil || len(r.Header.Values("X-Bk-Tenant-Id")) != 0 {
 			s.t.Error("invalid action request")
 			w.WriteHeader(400)
 			return
@@ -89,15 +91,13 @@ func (s *kacDeliveryReceiver) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 			w.WriteHeader(401)
 			return
 		}
-		ack, exists := s.actions[q.ActionID]
-		if !exists {
-			ack = actiondelivery.Receipt{SchemaVersion: actiondelivery.SchemaVersion, TenantID: q.TenantID, TargetID: q.TargetID, AlertID: q.AlertID, AlarmID: q.AlarmID, ActionID: q.ActionID, RequestHash: q.Hash(), Outcome: "accepted", AppliedRevision: proof.AppliedRevision, AppliedStatus: proof.AppliedStatus, SearchVisible: true, AcceptanceID: "accepted-" + q.ActionID}
-			s.actions[q.ActionID] = ack
-		} else if ack.RequestHash != q.Hash() {
-			s.t.Error("same action changed frozen payload")
+		ack := actiondelivery.Receipt{SchemaVersion: actiondelivery.SchemaVersion, TenantID: q.TenantID, TargetID: q.TargetID, AlertID: q.AlertID, AlarmID: q.AlarmID, ActionID: q.ActionID, RequestHash: q.Hash(), Outcome: "queued", TaskID: fmt.Sprintf("celery-%d", s.actionAttempts.Load())}
+		if old, ok := s.actions[q.ActionID]; ok && old.RequestHash != q.Hash() {
+			s.t.Error("same action changed payload")
 			w.WriteHeader(409)
 			return
 		}
+		s.actions[q.ActionID] = ack
 		_ = json.NewEncoder(w).Encode(ack)
 	default:
 		s.wrongRoute.Add(1)
@@ -107,7 +107,7 @@ func (s *kacDeliveryReceiver) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 
 // TestAllInOneKACDeliveryE2E 使用真实生产进程、存储、Redis、来源 API 和 HTTP 发送。
 // 初始目标绑定由显式测试 Processor 提供；不替代尚待确认的来源迁移/Worker 自动绑定。
-// 接收端为进程内协议模拟，幂等账本不代表实际 KAC 受理实现。
+// 接收端为进程内协议模拟，仅模拟 Celery 投递确认，不代表真实 KAC/Celery 联调。
 func TestAllInOneKACDeliveryE2E(t *testing.T) {
 	if os.Getenv(e2eEnabledEnv) != "1" {
 		t.Skipf("set %s=1", e2eEnabledEnv)
@@ -241,13 +241,52 @@ func TestAllInOneKACDeliveryE2E(t *testing.T) {
 			if first.Task.Request.Hash() != originalHash || first.Task.Progress.Generation != 2 || first.Task.Progress.LastRetry == nil {
 				t.Fatal("manual retry changed action snapshot/audit")
 			}
+			beforeShield, err := current(h.ctx, "delivery", alertID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.publishID("delivery", policy.Shield, "quick", map[string]any{"shield_type": "time_shield", "reason": "quick maintenance", "model_id": "cmdb.host", "target_descriptor": map[string]any{"schema_version": 1, "model_id": "cmdb.host", "selectors": []any{map[string]any{"type": "instances", "instances": []any{map[string]any{"model_id": "cmdb.host", "model_inst_id": "nonmatching", "entity_uid": "cmdb.host|nonmatching"}}}}}, "policy": map[string]any{"expression": "A", "A": map[string]any{"condition": "term", "target_key": "name", "target_value": "does-not-match-opening"}}}, time.Now().Add(15*time.Second))
+			var quick policy.Release
+			h.call(http.MethodGet, "/api/v1/policies/shield/quick/releases/1?bk_tenant_id=delivery", nil, &quick)
+			bindCommand := map[string]any{"bk_tenant_id": "delivery", "operation_id": "quick-binding", "operator_id": "e2e", "expected_revision": beforeShield.Alert.Revision, "policy": domain.PolicyVersion{ID: quick.ID, Version: quick.Version, Digest: quick.Compiled.Digest}, "effective_at": time.Now().UTC()}
+			var bound lifecycle.ShieldCommandResult
+			h.call(http.MethodPost, "/api/v1/alerts/"+alertID+"/shield", bindCommand, &bound)
+			if !bound.Alert.Shield.Active || len(bound.Alert.Shield.Bindings) != 1 || bound.Alert.Shield.Bindings[0].Origin != "manual" {
+				t.Fatal("manual binding was not immediate")
+			}
+			h.call(http.MethodPost, "/api/v1/alerts/"+alertID+"/shield", bindCommand, &bound)
+			if !bound.AlreadyApplied {
+				t.Fatal("binding retry was not idempotent")
+			}
+			h.until("manual shield projection is visible", func() bool {
+				receiver.mu.Lock()
+				defer receiver.mu.Unlock()
+				return receiver.projections[alertID].AppliedRevision >= bound.Alert.Revision
+			})
+			var released store.StoredAlert
+			h.until("manual shield expires without another Event", func() bool {
+				released, err = current(h.ctx, "delivery", alertID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return !released.Alert.Shield.Active && released.Alert.PolicyChange == nil
+			})
+			h.call(http.MethodPost, "/api/v1/alerts/"+alertID+"/shield", bindCommand, &bound)
+			if !bound.AlreadyApplied || bound.Alert.Shield.Active {
+				t.Fatal("old command rebound expired shield")
+			}
+			noNewAction, err := actions.List(h.ctx, actiondelivery.Query{TenantID: "delivery", Limit: 4})
+			if err != nil || len(noNewAction) != 1 {
+				t.Fatal("manual shield or expiry emitted an action", err)
+			}
+			closingRevision := released.Alert.Revision + 1
 			var closed struct {
 				Alert         domain.Alert `json:"alert"`
 				AlreadyClosed bool         `json:"already_closed"`
 			}
-			closeCommand := map[string]any{"bk_tenant_id": "delivery", "operation_id": "delivery-close", "operator_id": "e2e", "reason": "验证正式关闭立即入队", "effective_at": time.Now().UTC()}
+			closeCommand := map[string]any{"bk_tenant_id": "delivery", "operation_id": "delivery-close", "operator_id": "e2e", "operator_kind": "system", "operation_source": "self_heal", "reason": "验证正式关闭立即入队", "effective_at": time.Now().UTC()}
 			h.call(http.MethodPost, "/api/v1/alerts/"+alertID+"/close", closeCommand, &closed)
-			if closed.Alert.Status != domain.AlertStatusClosed || closed.Alert.ActionPending != nil || closed.Alert.Revision != 2 {
+			if closed.Alert.Status != domain.AlertStatusClosed || closed.Alert.ActionPending != nil || closed.Alert.Revision != closingRevision || closed.Alert.EndType != domain.AlertEndTypeSystem || closed.Alert.EndOperation == nil || closed.Alert.EndOperation.Source != "self_heal" {
 				t.Fatal("close returned before durable action enqueue")
 			}
 			// API 返回时立即读取任务和排序可见性，不用后续后台补扫替代关闭调用本身的入队保证。
@@ -256,7 +295,7 @@ func TestAllInOneKACDeliveryE2E(t *testing.T) {
 				t.Fatal("terminal action not visible when close returned", err)
 			}
 			h.call(http.MethodPost, "/api/v1/alerts/"+alertID+"/close", closeCommand, &closed)
-			if !closed.AlreadyClosed || closed.Alert.Revision != 2 {
+			if !closed.AlreadyClosed || closed.Alert.Revision != closingRevision {
 				t.Fatal("same close command was not idempotent")
 			}
 			h.until("terminal projection and action automatically accepted", func() bool {
@@ -276,7 +315,7 @@ func TestAllInOneKACDeliveryE2E(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				return row.Alert.ActionPending == nil && row.Alert.Projection.Targets["kac"].SyncedRevision == 2
+				return row.Alert.ActionPending == nil && row.Alert.Projection.Targets["kac"].SyncedRevision == closingRevision
 			})
 			h.until("production loop task observations", func() bool {
 				var snapshot taskstate.Snapshot

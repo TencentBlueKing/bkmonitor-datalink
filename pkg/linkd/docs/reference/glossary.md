@@ -44,7 +44,7 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | apm（丰富分组） | 丰富结果中的 APM 专用信息，包含应用标识、名称、别名，以及服务、实例、接口和对端名称；派生模型与实例标识仍属于资源分组 |
 | k8s（丰富分组） | 丰富结果中的 K8s 专用信息，包含集群、命名空间、服务、工作负载、Pod、容器和节点上下文；集群标识保留 bcs_cluster_id 命名，资源所属业务与派生模型实例标识仍属于资源分组 |
 | 公共资源配置 | Linkd 顶层 `resources` 中的第三方连接与凭据；丰富/调试使用只读连接，可靠投递使用独立租户凭据；启动时加载，不进入 EventSource 发布快照 |
-| OneModel 实例存储 | Kingeye 当前统一实例来源；Elasticsearch 逻辑入口固定为 `kingeye_all_instance` alias，实例根身份为 `bk_tenant_id/model_id/model_inst_id/entity_uid`，来源原始属性位于 `attributes`，可检索动态属性位于 nested `attribute_values` |
+| OneModel 实例存储 | Kingeye 当前统一实例来源；可选 Doris 通用实例/关系表；Elasticsearch 逻辑入口为 `kingeye_all_instance` alias，实例根身份为 `bk_tenant_id/model_id/model_inst_id/entity_uid`，来源原始属性位于 `attributes`，可检索动态属性位于 nested `attribute_values` |
 | strategy（丰富分组） | 丰富结果中的策略补充信息，包含 bk_strategy_id、monitor_template_id、strategy_config_id 三种独立身份，以及展示名称、跳转链接和鲸眼配置数据源；monitor_template_id 沿用旧 clean_strategy_id 的模板名称/策略名称回退行为 |
 | source（丰富分组） | 丰富结果中的来源补充信息：按租户和 Event.EventSourceID（KAC 的 linkd_source_id）回查 alarm_collect_alarmsource，source_id 保存该表的 id，source_name 保存名称，meta_info 承载来源事件标识；不替代 Linkd 的 EventSourceID |
 | meta_info（丰富字段） | 迁移后承载 Event.SourceEventID 中的来源事件标识，保存到 enrich.source.meta_info；旧实现使用内部转换对象 ID，本次已确认调整其取值来源 |
@@ -155,7 +155,7 @@ Event 丰富模型、冻结 CAS、逐等级主流程和预览已落地；策略�
 | 关联聚合抑制（aggregation） | 仅对尚无活动 Alert 的候选，按策略配置字段将 Event 关联到主告警；未选来源字段时可以跨 EventSource |
 | 终态抑制清理记录（SuppressionCleanup） | 按终态 Alert 版本或未生成 Alert 的终态 Event 固定身份，独立保存清理意图及两类确认结果；Lua 原子返回被删窗口/代次，元信息丢失显式标记；计数为登记引用数，Redis 失败不伪装为零 |
 | 抑制受控对账（SuppressionCheck） | 固定窗口 ID、owner、代次与操作意图，在正式 owner fingerprint lease 内复核真实资格；保留未绑定计数和有效候选，条件删除失效登记，不重建窗口或触发处置；请求与结果独立持久化 |
-| 屏蔽关系（ShieldBinding） | 告警由于有效时间或依赖条件暂不进入后续处理的关联；固定建立时的策略和主告警，独立于 Alert.status |
+| 屏蔽关系（ShieldBinding） | 告警由于有效时间或依赖条件暂不进入后续处理的关联；固定建立时的策略和主告警，独立于 Alert.status；origin=manual 为指定告警快捷绑定，定时检查不重跑普通匹配条件 |
 | DependencyMain | Redis 原子登记的跨来源待处理主引用；保存 Alert 身份和冻结 Event/等级，Alert CAS 成功后才能绑定，但不代表处置已经放行 |
 | 解除屏蔽 | 结束有效屏蔽关系并同步状态；本次已确认不主动触发处置，等待下一条触发 Event |
 | 合并窗口（MergeWindow） | Redis 中按租户、策略版本与分组收集成员的固定半开窗口；成员以 Alert 去重，实际落库后才确认，冻结仅代表待持久化裁决 |
@@ -196,3 +196,6 @@ Event 丰富模型、冻结 CAS、逐等级主流程和预览已落地；策略�
 `BluekingConfig` 是 Linkd 部署级蓝鲸应用与 APIGW 配置。其多租户开关只控制调用用户解析：单租户
 使用 admin，多租户查询当前租户的 bk_admin；请求租户仍来自现有业务上下文，不改变数据隔离。
 租户管理员成功缓存由控制面/Lifecycle 运行时持有，来源发布与 Event/Alert 不保存调用凭据。
+
+- Celery 投递确认：KAC 返回原动作身份、请求摘要及本次 task_id，只确认任务已投递；重试可能重复投递，不代表持久去重受理或处置完成。
+- 结束操作（AlertEndOperation）：主动关闭时保存的操作 ID、来源及操作者；与结束原因/时间共同约束幂等重试。

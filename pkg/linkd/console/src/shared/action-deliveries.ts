@@ -43,23 +43,15 @@ const retryAudit = z.object({
   requested_at: at,
 });
 const actionReceipt = z.object({
-  schema_version: z.literal("linkd.kac-action.v1"),
+  schema_version: z.literal("linkd.kac-action.v2"),
   bk_tenant_id: tenant,
   target_id: tenant,
   linkd_alert_id: id,
   alarm_id: z.string().min(1).max(64),
   action_id: hash,
   request_hash: hash,
-  outcome: z.enum(["accepted", "skipped"]),
-  reason: z.literal("superseded_by_terminal").optional(),
-  applied_revision: integer.min(1),
-  applied_status: z.enum(["active", "recovered", "closed"]),
-  search_visible: z.literal(true),
-  acceptance_id: z
-    .string()
-    .min(1)
-    .max(256)
-    .refine((v) => v.trim().length > 0),
+  outcome: z.literal("queued"),
+  task_id: z.string().regex(/^[a-zA-Z0-9_-]{1,256}$/),
 });
 export const actionDelivery = z
   .object({
@@ -164,18 +156,7 @@ export const actionDelivery = z
         r.linkd_alert_id !== v.alert_id ||
         r.alarm_id !== v.alarm_id ||
         r.action_id !== v.action_id ||
-        r.request_hash !== v.request_hash ||
-        r.applied_revision < v.revision)
-    )
-      return fail();
-    if (
-      r &&
-      (r.outcome === "accepted"
-        ? r.reason !== undefined || r.applied_status !== expected
-        : r.reason !== "superseded_by_terminal" ||
-          v.action !== "firing" ||
-          r.applied_revision <= v.revision ||
-          r.applied_status === "active")
+        r.request_hash !== v.request_hash)
     )
       return fail();
     switch (p.state) {
@@ -246,7 +227,7 @@ export const actionDelivery = z
           p.error_code ||
           !g ||
           !r ||
-          r.outcome !== "accepted"
+          r.outcome !== "queued"
         )
           return fail();
         break;
@@ -256,11 +237,10 @@ export const actionDelivery = z
           p.lease_until ||
           p.error_code !== "superseded_by_terminal" ||
           !g ||
-          (r
-            ? p.attempts < 1 || r.outcome !== "skipped"
-            : v.action !== "firing" ||
-              g.applied_revision <= v.revision ||
-              g.applied_status === "active")
+          r ||
+          v.action !== "firing" ||
+          g.applied_revision <= v.revision ||
+          g.applied_status === "active"
         )
           return fail();
         break;
@@ -293,7 +273,7 @@ export const actionSnapshot = z
     revision: integer.min(1),
     request_hash: hash,
     request: z.object({
-      schema_version: z.literal("linkd.kac-action.v1"),
+      schema_version: z.literal("linkd.kac-action.v2"),
       action_id: hash,
       bk_tenant_id: tenant,
       target_id: tenant,

@@ -81,7 +81,7 @@ func TestActionRunnerMetricsAggregationScopeAndShutdown(t *testing.T) {
 	assertSample(body, "linkd_action_runner_active", labels, "2")
 	assertSample(body, "linkd_action_runner_inflight", labels, "2")
 	at := time.Unix(1791200000, 0)
-	one.RoundFinished(ctx, phase, actiondelivery.RoundResult{Scanned: 2, Visited: 2, Outcomes: map[actiondelivery.WorkOutcome]int{actiondelivery.OutcomeAccepted: 1, actiondelivery.OutcomeFailed: 1}, ObservedAt: at, OldestObservedAge: time.Minute, Unconfirmed: 1, ErrorCode: "item_failed", Duration: time.Second, Failures: []actiondelivery.WorkFailure{{TenantID: "private-tenant", AlertID: "private-alert", TaskID: "private-task", Code: "secret-error"}}})
+	one.RoundFinished(ctx, phase, actiondelivery.RoundResult{Scanned: 2, Visited: 2, Outcomes: map[actiondelivery.WorkOutcome]int{actiondelivery.OutcomeQueued: 1, actiondelivery.OutcomeFailed: 1}, ObservedAt: at, OldestObservedAge: time.Minute, Unconfirmed: 1, ErrorCode: "item_failed", Duration: time.Second, Failures: []actiondelivery.WorkFailure{{TenantID: "private-tenant", AlertID: "private-alert", TaskID: "private-task", Code: "secret-error"}}})
 	// 失败扫描不覆盖最后成功页的观察时间与数量。
 	one.RoundStarted(ctx, phase)
 	one.RoundFinished(ctx, phase, actiondelivery.RoundResult{ErrorCode: "scan_failed"})
@@ -94,7 +94,7 @@ func TestActionRunnerMetricsAggregationScopeAndShutdown(t *testing.T) {
 	assertSample(body, "linkd_action_last_page_oldest_age_seconds", labels, "60")
 	assertSample(body, "linkd_action_last_page_observed_at_seconds", labels, "1.7912e+09")
 	assertSample(body, "linkd_action_work_unconfirmed_total", labels, "1")
-	assertSample(body, "linkd_action_work_observations_total", `linkd_outcome="accepted"`, "1")
+	assertSample(body, "linkd_action_work_observations_total", `linkd_outcome="queued"`, "1")
 	// 非法观察值不污染标签，也不能把已经结束的页留在执行中。
 	two.RoundFinished(ctx, phase, actiondelivery.RoundResult{ErrorCode: "secret-error"})
 	two.SetRunning(ctx, phase, false)

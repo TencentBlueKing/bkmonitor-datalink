@@ -288,7 +288,7 @@ ES 写入等待刷新；响应未知后的重复 Record 即使实时 GET 命中�
 发送前 CAS 保存 sending 和尝试期限。HTTP 受理确认先验证后保存 succeeded/skipped；不修改 Alert
 投影水位。结果保存失败后仍保留 sending，后续按同一 action_id/request_hash 重投，由接收端持久去重。
 较新终态可见允许旧 firing 跳过，但保留此前结果未知标记，不倒推此前从未受理。完整请求、状态转换、
-人工恢复及验证范围见 [KAC 动作投递 V1](../reference/contracts/kac-action-delivery-v1.md)。
+人工恢复及验证范围见 [KAC 动作投递 V2](../reference/contracts/kac-action-delivery-v2.md)。
 
 ## Alert 动作入队待办
 
@@ -306,5 +306,5 @@ ES `action_work` 和 MySQL 同名列/组合索引与 payload 原子写入，新�
 ES 扫描 Active 索引，终态意图未清除时自动归档候选和直接归档均拒绝搬迁；确认入队后恢复归档，
 独立 ActionDelivery 继续保存冻结快照和失败记录。独立动作运行器已利用该端口在正式 fingerprint lease
 内补扫，双后端验证无新 Event 时的入队和重开恢复；不从扫描快照直接构造动作。
-循环预算与游标规则见[动作自动运行器](../reference/contracts/kac-action-delivery-v1.md#自动补扫与发送运行器)。
+循环预算与游标规则见[动作自动运行器](../reference/contracts/kac-action-delivery-v2.md#自动补扫与发送运行器)。
 正式来源绑定和生产进程的周期任务装配仍待完成。

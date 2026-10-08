@@ -31,7 +31,7 @@ Alert 快照中的 `event_source_version` 为正整数，记录创建时继承�
 这两个字段不改变 V1 的 message_id/partition key 规则；新的可靠 KAC 投影协议与任务独立实现，正式生产装配仍在开发，
 不能把收到此 Kafka 消息当作 KAC 已同步或已可搜索的确认。
 
-[KAC 动作投递 V1](kac-action-delivery-v1.md)另行定义冻结动作、持久重试、投影可见性与接收端受理确认。
+[KAC 动作投递 V2](kac-action-delivery-v2.md)另行定义冻结动作、持久重试、投影可见性与接收端受理确认。
 Lifecycle 已提供原子动作意图与独立入队端口，正式进程和调度尚未装配。本 Kafka Hook 仍使用原普通失败语义，
 不继承新协议的可靠保证；配置装配须避免对同一处置目的端同时启用旧 action Hook 和新可靠出口。
 

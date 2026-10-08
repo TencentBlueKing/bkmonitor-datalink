@@ -454,11 +454,19 @@ func (r *model) queryResourceMatcherAll(ctx context.Context, opt QueryResourceOp
 	var errorMessage []string
 
 	for _, path := range paths {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			err = ctxErr
+			break
+		}
 		reqTs, reqErr := r.doRequest(ctx, path, opt)
 		if reqErr != nil {
 			pathErrorCount++
 			metric.CMDBRelationPathResultInc(ctx, "vm_legacy", queryMode, metric.CMDBRelationResultFailed)
 			errorMessage = append(errorMessage, fmt.Sprintf("path [%v] do request error: %s", path, reqErr))
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				err = ctxErr
+				break
+			}
 			continue
 		}
 
@@ -478,8 +486,17 @@ func (r *model) queryResourceMatcherAll(ctx context.Context, opt QueryResourceOp
 			break
 		}
 	}
-	if pathErrorCount > 0 && len(results) == 0 {
-		err = fmt.Errorf("all relation paths failed: %v", errorMessage)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		err = ctxErr
+	}
+	if err == nil && pathErrorCount > 0 {
+		if len(results) == 0 {
+			err = fmt.Errorf("all relation paths failed: %v", errorMessage)
+		} else if collectAll {
+			// The all-paths response cannot represent a failed candidate path.
+			// Fail the query instead of returning an incomplete paths list as success.
+			err = fmt.Errorf("some relation paths failed: %v", errorMessage)
+		}
 	}
 
 	for _, result := range results {
@@ -571,6 +588,7 @@ func (r *model) QueryResourceMatcher(ctx context.Context, lookBackDelta, spaceUi
 
 // QueryResourceMatcherAll 返回所有可执行的静态路径。
 // 这是 legacy VM 查询的可选扩展，默认旧接口仍然只返回首条有效路径。
+// 任一候选路径执行失败时返回错误，避免把不完整的路径集合当作成功结果。
 func (r *model) QueryResourceMatcherAll(ctx context.Context, lookBackDelta, spaceUid string, timestamp string, target, source cmdb.Resource, indexMatcher, expandMatcher cmdb.Matcher, expandShow bool, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []cmdb.RelationMultiResourcePathData, cmdb.Resource, error) {
 	opt := QueryResourceOptions{
 		LookBackDelta: lookBackDelta,
@@ -624,6 +642,7 @@ func (r *model) QueryResourceMatcherRange(ctx context.Context, lookBackDelta, sp
 }
 
 // QueryResourceMatcherRangeAll 返回所有可执行的静态路径及其范围结果。
+// 任一候选路径执行失败时返回错误，避免把不完整的路径集合当作成功结果。
 func (r *model) QueryResourceMatcherRangeAll(ctx context.Context, lookBackDelta, spaceUid string, step string, start, end string, target, source cmdb.Resource, indexMatcher, expandMatcher cmdb.Matcher, expandShow bool, pathResource []cmdb.Resource) (cmdb.Resource, cmdb.Matcher, []cmdb.RelationMultiResourceRangePathData, cmdb.Resource, error) {
 	opt := QueryResourceOptions{
 		LookBackDelta: lookBackDelta,

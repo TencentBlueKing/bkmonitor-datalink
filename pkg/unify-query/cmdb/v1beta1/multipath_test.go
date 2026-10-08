@@ -23,8 +23,9 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/tsdb/victoriaMetrics"
 )
 
-func TestModel_QueryResourceMatcherAll(t *testing.T) {
+func TestModel_QueryResourceMatcherAllRejectsPartialPathFailure(t *testing.T) {
 	mock.Init()
+	mock.Vm.Clear()
 	ctx := metadata.InitHashID(context.Background())
 	influxdb.MockSpaceRouter(ctx)
 	metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid, SkipSpace: "skip"})
@@ -55,22 +56,75 @@ func TestModel_QueryResourceMatcherAll(t *testing.T) {
 		nil,
 	)
 
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "some relation paths failed")
 	assert.Equal(t, cmdb.Resource("node"), source)
 	assert.Equal(t, cmdb.Matcher{
 		"bcs_cluster_id": "BCS-K8S-00000",
 		"node":           "node-127-0-0-1",
 	}, sourceInfo)
 	assert.Equal(t, cmdb.Resource("system"), target)
-	require.NotEmpty(t, paths)
-	assert.Equal(t, []string{"node", "system"}, paths[0].Path)
-	assert.Equal(t, cmdb.Matchers{{"bk_target_ip": "127.0.0.1"}}, paths[0].TargetList)
+	assert.Nil(t, paths)
 
-	// 未命中的候选路径也被保留，调用方可以观察到完整的静态路径集合。
-	assert.GreaterOrEqual(t, len(paths), 2)
-	for _, path := range paths {
-		assert.NotNil(t, path.TargetList)
-	}
+	// 默认接口仍在第一条有效路径命中后返回，不受其他候选路径失败影响。
+	_, _, path, _, targets, err := testModel.QueryResourceMatcher(
+		ctx, "", influxdb.SpaceUid, "1693973987", "system", "node",
+		cmdb.Matcher{"bcs_cluster_id": "BCS-K8S-00000", "node": "node-127-0-0-1"},
+		nil, false, nil,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"node", "system"}, path)
+	assert.Equal(t, cmdb.Matchers{{"bk_target_ip": "127.0.0.1"}}, targets)
+
+	_, _, completePaths, _, err := testModel.QueryResourceMatcherAll(
+		ctx, "", influxdb.SpaceUid, "1693973987", "system", "node",
+		cmdb.Matcher{"bcs_cluster_id": "BCS-K8S-00000", "node": "node-127-0-0-1"},
+		nil, false, []cmdb.Resource{"node", "system"},
+	)
+	require.NoError(t, err)
+	require.Len(t, completePaths, 1)
+	assert.Equal(t, cmdb.Matchers{{"bk_target_ip": "127.0.0.1"}}, completePaths[0].TargetList)
+}
+
+func TestModel_QueryResourceMatcherRangeAllRejectsPartialPathFailure(t *testing.T) {
+	mock.Init()
+	mock.Vm.Clear()
+	ctx := metadata.InitHashID(context.Background())
+	influxdb.MockSpaceRouter(ctx)
+	metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid, SkipSpace: "skip"})
+
+	mock.Vm.Set(map[string]any{
+		"query_range:1693973987169397404760count by (bk_target_ip) (count_over_time(a[1m]))": victoriaMetrics.Data{
+			ResultType: victoriaMetrics.MatrixType,
+			Result: []victoriaMetrics.Series{{
+				Metric: map[string]string{"bk_target_ip": "127.0.0.1"},
+				Values: []victoriaMetrics.Value{{1693973987, "1"}},
+			}},
+		},
+	})
+
+	_, _, paths, _, err := testModel.QueryResourceMatcherRangeAll(
+		ctx, "", influxdb.SpaceUid, "1m", "1693973987", "1693974047", "system", "node",
+		cmdb.Matcher{"bcs_cluster_id": "BCS-K8S-00000", "node": "node-127-0-0-1"},
+		nil, false, nil,
+	)
+	require.ErrorContains(t, err, "some relation paths failed")
+	assert.Nil(t, paths)
+}
+
+func TestModel_QueryResourceMatcherAllReturnsCancellation(t *testing.T) {
+	mock.Init()
+	ctx, cancel := context.WithCancel(metadata.InitHashID(context.Background()))
+	influxdb.MockSpaceRouter(ctx)
+	metadata.SetUser(ctx, &metadata.User{SpaceUID: influxdb.SpaceUid, SkipSpace: "skip"})
+	cancel()
+
+	_, _, paths, _, err := testModel.QueryResourceMatcherAll(
+		ctx, "", influxdb.SpaceUid, "1693973987", "system", "node",
+		cmdb.Matcher{"bcs_cluster_id": "BCS-K8S-00000", "node": "node-127-0-0-1"},
+		nil, false, nil,
+	)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Nil(t, paths)
 }
 
 func TestModel_QueryResourceMatcherAllReturnsErrorWhenAllPathsFail(t *testing.T) {

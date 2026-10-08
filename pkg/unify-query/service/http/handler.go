@@ -187,7 +187,7 @@ func HandlerQueryExemplar(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryExemplar,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, string(queryStr),
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), string(queryStr),
 	).Info(ctx)
 
 	if err = validateQueryTsDataSource(query); err != nil {
@@ -475,7 +475,7 @@ func HandlerQueryTs(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryTs,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, string(queryStr),
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), string(queryStr),
 	).Info(ctx)
 
 	settings := getNamedOutputSettings()
@@ -574,7 +574,7 @@ func HandlerQueryPromQL(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgParserPromQL,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, string(queryStr),
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), string(queryStr),
 	).Info(ctx)
 
 	if queryPromQL.PromQL == "" {
@@ -668,7 +668,7 @@ func HandlerQueryReference(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryReference,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, string(queryStr),
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), string(queryStr),
 	).Info(ctx)
 
 	if err = validateQueryTsDataSource(query); err != nil {
@@ -731,7 +731,7 @@ func HandlerQueryTsClusterMetrics(c *gin.Context) {
 	metadata.NewMessage(
 		metadata.MsgQueryClusterMetrics,
 		"%s, header: %+v, data: %+v",
-		c.Request.URL.String(), c.Request.Header, string(queryStr),
+		c.Request.URL.String(), trace.RedactHeaders(c.Request.Header), string(queryStr),
 	).Info(ctx)
 
 	span.Set("query-body", string(queryStr))

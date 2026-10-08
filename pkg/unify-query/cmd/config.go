@@ -56,12 +56,8 @@ func newSetFeatureFlagsCmd() *cobra.Command {
 				return err
 			}
 
-			config.InitConfig()
-			if err := viper.ReadInConfig(); err != nil {
-				return fmt.Errorf("load config: %w", err)
-			}
-			if redisService.KVBasePath == "" {
-				return fmt.Errorf("redis.kv_base_path must not be empty")
+			if err := loadFeatureFlagConfig(); err != nil {
+				return err
 			}
 			client := goRedis.NewUniversalClient(redisService.ClientOptions())
 			defer client.Close()
@@ -78,7 +74,40 @@ func newSetFeatureFlagsCmd() *cobra.Command {
 	return cmd
 }
 
+func newResetFeatureFlagsCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:          "reset-feature-flags",
+		Short:        "delete the Redis feature flag snapshot and notify running UQ to migrate from Consul again",
+		Args:         cobra.NoArgs,
+		SilenceUsage: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := loadFeatureFlagConfig(); err != nil {
+				return err
+			}
+			client := goRedis.NewUniversalClient(redisService.ClientOptions())
+			defer client.Close()
+			flags := redis.NewFeatureFlagClient(client, redisService.KVBasePath)
+			if err := flags.ResetFeatureFlags(cmd.Context()); err != nil {
+				return err
+			}
+			cmd.Printf("Redis feature flag snapshot deleted: %s; running UQ will retry migration from Consul\n", flags.GetFeatureFlagsPath())
+			return nil
+		},
+	}
+}
+
+func loadFeatureFlagConfig() error {
+	config.InitConfig()
+	if err := viper.ReadInConfig(); err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	if redisService.KVBasePath == "" {
+		return fmt.Errorf("redis.kv_base_path must not be empty")
+	}
+	return nil
+}
+
 func init() {
-	configCmd.AddCommand(newSetFeatureFlagsCmd())
+	configCmd.AddCommand(newSetFeatureFlagsCmd(), newResetFeatureFlagsCmd())
 	rootCmd.AddCommand(configCmd)
 }

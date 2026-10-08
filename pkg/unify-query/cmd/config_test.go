@@ -86,7 +86,8 @@ func TestSetFeatureFlagsCommand(t *testing.T) {
 		name, data, configPath, configData, wantError string
 	}{
 		{name: "invalid JSON", data: "{broken", configPath: configFile, wantError: "invalid feature flag JSON"},
-		{name: "invalid flag", data: `{"new-query":{}}`, configPath: configFile, wantError: "must define variations"},
+		{name: "invalid flag", data: `{"new-query":{}}`, configPath: configFile, wantError: "invalid feature flag"},
+		{name: "missing default rule", data: `{"new-query":{"variations":{"enabled":true}}}`, configPath: configFile, wantError: "invalid feature flag"},
 		{name: "missing config", data: "{}", configPath: filepath.Join(tempDir, "missing.yaml"), wantError: "load config"},
 		{name: "invalid config", data: "{}", configPath: configFile, configData: "redis: [", wantError: "load config"},
 		{name: "empty prefix", data: "{}", configPath: configFile, configData: "redis:\n  kv_base_path: ''\n", wantError: "redis.kv_base_path"},
@@ -108,5 +109,59 @@ func TestSetFeatureFlagsCommand(t *testing.T) {
 				t.Fatalf("failed command changed the existing snapshot: %q, error: %v", actual, err)
 			}
 		})
+	}
+}
+
+func TestResetFeatureFlagsCommand(t *testing.T) {
+	mr := miniredis.RunT(t)
+	mr.RequireAuth("test-secret")
+	configFile := filepath.Join(t.TempDir(), "unify-query.yaml")
+	configData := fmt.Sprintf("redis:\n  host: %s\n  port: %s\n  password: test-secret\n  database: 3\n  kv_base_path: test:unify-query\n", mr.Host(), mr.Port())
+	if err := os.WriteFile(configFile, []byte(configData), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	previousConfig := config.CustomConfigFilePath
+	previousOut := rootCmd.OutOrStdout()
+	previousErr := rootCmd.ErrOrStderr()
+	t.Cleanup(func() {
+		config.CustomConfigFilePath = previousConfig
+		rootCmd.SetArgs(nil)
+		rootCmd.SetOut(previousOut)
+		rootCmd.SetErr(previousErr)
+		viper.Reset()
+	})
+	var output bytes.Buffer
+	rootCmd.SetOut(&output)
+	rootCmd.SetErr(&output)
+
+	const key = "test:unify-query:data:feature_flag"
+	mr.DB(3).Set(key, "old snapshot")
+	mr.DB(0).Set(key, "other database")
+	mr.DB(3).Set("test:unify-query:data:storage:1", "other config")
+	client := goRedis.NewClient(&goRedis.Options{Addr: mr.Addr(), Password: "test-secret"})
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	subscription := client.Subscribe(ctx, key+":feature_flag_channel")
+	defer subscription.Close()
+	if _, err := subscription.Receive(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	rootCmd.SetArgs([]string{"--config", configFile, "config", "reset-feature-flags"})
+	if err := rootCmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if mr.DB(3).Exists(key) {
+		t.Fatal("reset must delete the configured Redis snapshot")
+	}
+	if !mr.DB(0).Exists(key) || !mr.DB(3).Exists("test:unify-query:data:storage:1") {
+		t.Fatal("reset must not delete other databases or storage config")
+	}
+	if _, err := subscription.ReceiveMessage(ctx); err != nil {
+		t.Fatalf("missing refresh notification: %v", err)
+	}
+	if !strings.Contains(output.String(), "snapshot deleted") || strings.Contains(output.String(), "test-secret") {
+		t.Fatalf("unexpected command output: %q", output.String())
 	}
 }

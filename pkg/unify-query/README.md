@@ -28,6 +28,16 @@ unify-query --config /path/to/unify-query.yaml config set-feature-flags --file f
 
 命令复用 `redis` 的连接、认证、数据库和 `kv_base_path` 配置，支持单机和哨兵模式；先校验文件，再写入 `<redis.kv_base_path>:data:feature_flag`，并发布变更通知。写入替换整份配置，不设过期时间；`{}` 可清空开关配置。文件必须是 JSON，仓库中的 `featureFlag.yaml` 仅为格式示例。命令不会输出配置内容或凭据，校验、配置读取或写入失败时返回非零退出码。
 
+### 重新从 Consul 迁移 Feature Flag
+
+先准备好 Consul 中的配置，再在 UQ 容器内使用运行服务相同的配置文件执行，无需安装 `redis-cli`：
+
+```bash
+unify-query --config /path/to/unify-query.yaml config reset-feature-flags
+```
+
+命令仅删除 `<redis.kv_base_path>:data:feature_flag` 并发布刷新通知。在线 UQ 收到通知后重新读取 Consul，校验后通过 `SET NX` 回填 Redis，仍不设过期时间；通知丢失时由每分钟调和重试。命令成功表示 Redis 快照已删除，不表示回填已完成；没有在线实例时会在下次启动迁移。不要用 `set-feature-flags --file` 写入 `{}` 代替重置，已有空快照不会触发 Consul 回填。
+
 ## 快速部署
 
 在docker desktop上安装consul，redis，influxdb

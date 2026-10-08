@@ -285,6 +285,34 @@ func TestReplaceStorageClient(t *testing.T) {
 	assert.Equal(t, "second:data:storage", GetStoragePath())
 }
 
+func TestGetTsDBStorageInfoKeepsSurrealDB(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := goRedis.NewClient(&goRedis.Options{Addr: mr.Addr()})
+	defer client.Close()
+
+	previous := getStorageClient()
+	t.Cleanup(func() {
+		storageClientLock.Lock()
+		globalStorageClient = previous
+		storageClientLock.Unlock()
+	})
+	replaceStorageClient(client, "test")
+	mr.Set("test:data:storage:7", `{"address":"http://localhost:8000","username":"root","password":"test-password","type":"surrealdb"}`)
+	mr.Set("test:data:storage:8", `{"address":"http://localhost:9092","type":"kafka"}`)
+
+	storages, err := GetTsDBStorageInfo(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	storage := storages["7"]
+	if storage == nil || storage.Type != "surrealdb" || storage.Address != "http://localhost:8000" {
+		t.Fatalf("SurrealDB storage must remain available: %+v", storage)
+	}
+	if len(storages) != 1 {
+		t.Fatalf("expected only TSDB storage records, got %d", len(storages))
+	}
+}
+
 // TestGetStorageInfo 测试从 Redis 获取存储配置信息
 func TestGetStorageInfo(t *testing.T) {
 	ctx := context.Background()

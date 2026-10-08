@@ -63,18 +63,6 @@ func ValidateFeatureFlagSnapshot(data []byte) error {
 	if err := stdjson.Unmarshal(data, &flags); err != nil || flags == nil {
 		return fmt.Errorf("feature flag snapshot must be a JSON object")
 	}
-	for name, rawFlag := range flags {
-		var flag struct {
-			Variations map[string]stdjson.RawMessage `json:"variations"`
-		}
-		if err := stdjson.Unmarshal(rawFlag, &flag); err != nil {
-			return fmt.Errorf("invalid feature flag %q: %w", name, err)
-		}
-		if len(flag.Variations) == 0 {
-			return fmt.Errorf("feature flag %q must define variations", name)
-		}
-	}
-
 	client, err := ffclient.New(ffclient.Config{
 		Context:         context.Background(),
 		PollingInterval: time.Hour,
@@ -84,7 +72,17 @@ func ValidateFeatureFlagSnapshot(data []byte) error {
 	if err != nil {
 		return fmt.Errorf("invalid feature flag snapshot: %w", err)
 	}
-	client.Close()
+	defer client.Close()
+	cachedFlags, err := client.GetFlagsFromCache()
+	if err != nil {
+		return fmt.Errorf("invalid feature flag snapshot: %w", err)
+	}
+	// SDK 同时支持新旧格式，但会静默跳过无效开关；所有输入都必须成功载入。
+	for name := range flags {
+		if _, ok := cachedFlags[name]; !ok {
+			return fmt.Errorf("invalid feature flag %q: SDK rejected configuration", name)
+		}
+	}
 	return nil
 }
 

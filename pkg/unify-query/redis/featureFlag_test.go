@@ -11,11 +11,15 @@ package redis
 
 import (
 	"context"
+	"errors"
+	"io"
+	"net"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/alicebob/miniredis/v2/server"
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/likexian/gokit/assert"
 
@@ -60,6 +64,76 @@ func TestInitializeFeatureFlagsNotifiesAndPreservesExistingSnapshot(t *testing.T
 	persisted, err := mr.Get(flags.GetFeatureFlagsPath())
 	if err != nil || persisted != "{}" || mr.TTL(flags.GetFeatureFlagsPath()) != 0 {
 		t.Fatalf("unexpected persisted snapshot %q, error: %v", persisted, err)
+	}
+}
+
+func TestResetFeatureFlags(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := NewFeatureFlagClient(nil, "test").ResetFeatureFlags(ctx); err == nil {
+		t.Fatal("expected an uninitialized client to fail")
+	}
+	mr := miniredis.RunT(t)
+	client := goRedis.NewClient(&goRedis.Options{Addr: mr.Addr()})
+	defer client.Close()
+	flags := NewFeatureFlagClient(client, "test")
+	key := flags.GetFeatureFlagsPath()
+	if err := mr.Set(key, "{}"); err != nil {
+		t.Fatal(err)
+	}
+	otherKey := key + ":other"
+	if err := mr.Set(otherKey, "preserved"); err != nil {
+		t.Fatal(err)
+	}
+	watch, err := flags.WatchFeatureFlags(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		cancel()
+		for range watch {
+		}
+	}()
+	for i := 0; i < 2; i++ {
+		if err := flags.ResetFeatureFlags(ctx); err != nil {
+			t.Fatalf("reset attempt %d: %v", i, err)
+		}
+		if mr.Exists(key) {
+			t.Fatal("feature flag snapshot was not deleted")
+		}
+		if value, err := mr.Get(otherKey); err != nil || value != "preserved" {
+			t.Fatalf("reset changed another key: value %q, error %v", value, err)
+		}
+		select {
+		case message := <-watch:
+			if notification, ok := message.(*goRedis.Message); !ok || notification.Payload != "" {
+				t.Fatalf("expected an empty reset notification, got %#v", message)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("expected reset to notify online readers")
+		}
+	}
+	if err := mr.Set(key, "{}"); err != nil {
+		t.Fatal(err)
+	}
+	publishAttempted := make(chan struct{}, 1)
+	mr.Server().SetPreHook(func(peer *server.Peer, command string, _ ...string) bool {
+		if command == "DEL" {
+			peer.WriteError("ERR delete failed")
+			return true
+		}
+		if command == "PUBLISH" {
+			publishAttempted <- struct{}{}
+		}
+		return false
+	})
+	if err := flags.ResetFeatureFlags(ctx); err == nil || !mr.Exists(key) {
+		t.Fatalf("failed deletion must preserve the snapshot, error %v", err)
+	}
+	select {
+	case <-publishAttempted:
+		t.Fatal("failed deletion must not publish a reset notification")
+	default:
 	}
 }
 
@@ -266,6 +340,70 @@ func TestWatchFeatureFlags(t *testing.T) {
 		cancelFunc()
 		time.Sleep(100 * time.Millisecond)
 	})
+}
+
+func TestWatchFeatureFlagsUnresponsiveSubscription(t *testing.T) {
+	for _, cancelHandshake := range []bool{false, true} {
+		name := "timeout"
+		if cancelHandshake {
+			name = "cancel"
+		}
+		t.Run(name, func(t *testing.T) {
+			connection, server := net.Pipe()
+			defer server.Close()
+			subscribed := make(chan struct{})
+			go func() {
+				buffer := make([]byte, 4096)
+				if _, err := server.Read(buffer); err == nil {
+					close(subscribed)
+				}
+				// 接收订阅命令但始终不返回应答，模拟 Redis 连接存活却不响应。
+				_, _ = io.Copy(io.Discard, server)
+			}()
+			client := goRedis.NewClient(&goRedis.Options{
+				ReadTimeout: 10 * time.Millisecond,
+				Dialer: func(context.Context, string, string) (net.Conn, error) {
+					return connection, nil
+				},
+			})
+			defer client.Close()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			type watchResult struct {
+				watch <-chan any
+				err   error
+			}
+			done := make(chan watchResult, 1)
+			go func() {
+				watch, err := NewFeatureFlagClient(client, "test").WatchFeatureFlags(ctx)
+				done <- watchResult{watch: watch, err: err}
+			}()
+			select {
+			case <-subscribed:
+			case <-time.After(time.Second):
+				t.Fatal("subscription command was not received")
+			}
+			wait := featureFlagSubscribeTimeout + time.Second
+			if cancelHandshake {
+				cancel()
+				wait = time.Second
+			}
+			select {
+			case result := <-done:
+				if result.watch != nil || result.err == nil {
+					t.Fatalf("expected subscription handshake to fail, got channel %v, error %v", result.watch, result.err)
+				}
+				if !cancelHandshake {
+					var networkError net.Error
+					if !errors.As(result.err, &networkError) || !networkError.Timeout() {
+						t.Fatalf("expected subscription timeout, got %v", result.err)
+					}
+				}
+			case <-time.After(wait):
+				t.Fatal("subscription handshake did not exit")
+			}
+		})
+	}
 }
 
 // TestSetFeatureFlags 测试设置特性开关配置

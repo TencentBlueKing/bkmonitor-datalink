@@ -107,26 +107,29 @@ func TestReconcileFeatureFlagsRefreshesInitializedClientOnChange(t *testing.T) {
 		t.Fatal("expected malformed refresh to preserve the last valid Feature Flag value")
 	}
 
-	provider.data = []byte(`{"test-flag": {}}`)
-	if err := RefreshFeatureFlags(ctx); err == nil {
-		t.Fatal("expected invalid Feature Flag schema to be rejected")
-	}
-	if value := inner.BoolVariation(ctx, user, "test-flag", false); !value {
-		t.Fatal("expected invalid schema refresh to preserve the last valid Feature Flag value")
+	for _, data := range []string{`{"test-flag": {}}`, `{"test-flag":{"variations":{"enabled":true}}}`} {
+		provider.data = []byte(data)
+		if err := RefreshFeatureFlags(ctx); err == nil {
+			t.Fatal("expected invalid Feature Flag schema to be rejected")
+		}
+		if value := inner.BoolVariation(ctx, user, "test-flag", false); !value {
+			t.Fatal("expected invalid schema refresh to preserve the last valid Feature Flag value")
+		}
 	}
 }
 
-func TestFallbackFeatureFlagProviderMigratesConsulAndUsesRedisUpdates(t *testing.T) {
+func TestFallbackFeatureFlagProviderMigratesLegacyConsulAndUsesRedisUpdates(t *testing.T) {
 	ctx := context.Background()
 	mr := miniredis.RunT(t)
 	client := goRedis.NewClient(&goRedis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 	redisProvider := redisStorage.NewFeatureFlagClient(client, "test")
+	legacySnapshot := []byte(`{"test-flag":{"rule":"key eq \"test-user\"","percentage":100,"true":false,"false":false,"default":false}}`)
 	var calls []string
 	consulProvider := &featureFlagProviderStub{
 		name:  "consul",
 		calls: &calls,
-		data:  featureFlagConfig(false),
+		data:  legacySnapshot,
 	}
 	provider := newFallbackFeatureFlagProvider(redisProvider, consulProvider, redisProvider.InitializeFeatureFlags)
 	service := &Service{provider: provider}
@@ -136,7 +139,7 @@ func TestFallbackFeatureFlagProviderMigratesConsulAndUsesRedisUpdates(t *testing
 		t.Fatalf("migrate feature flags failed: %v", err)
 	}
 	persisted, err := mr.Get(redisProvider.GetFeatureFlagsPath())
-	if err != nil || persisted != string(featureFlagConfig(false)) {
+	if err != nil || persisted != string(legacySnapshot) {
 		t.Fatalf("expected Consul snapshot to be persisted, got %q, error: %v", persisted, err)
 	}
 	if ttl := mr.TTL(redisProvider.GetFeatureFlagsPath()); ttl != 0 {
@@ -161,6 +164,23 @@ func TestFallbackFeatureFlagProviderMigratesConsulAndUsesRedisUpdates(t *testing
 	}
 	if !inner.BoolVariation(ctx, user, "test-flag", false) {
 		t.Fatal("expected Redis update to change the runtime flag value")
+	}
+
+	consulProvider.data = featureFlagConfig(false)
+	if err := redisProvider.ResetFeatureFlags(ctx); err != nil {
+		t.Fatalf("reset migrated flags: %v", err)
+	}
+	if err := service.reconcileFeatureFlags(ctx); err != nil {
+		t.Fatalf("migrate flags again: %v", err)
+	}
+	if len(calls) != 2 || inner.BoolVariation(ctx, user, "test-flag", true) {
+		t.Fatal("reset must migrate the current Consul snapshot and apply it")
+	}
+	if persisted, err := mr.Get(redisProvider.GetFeatureFlagsPath()); err != nil || persisted != string(consulProvider.data) {
+		t.Fatalf("expected current Consul snapshot to be persisted again, got %q, error: %v", persisted, err)
+	}
+	if ttl := mr.TTL(redisProvider.GetFeatureFlagsPath()); ttl != 0 {
+		t.Fatalf("re-migrated snapshot must not expire, got TTL %v", ttl)
 	}
 }
 
@@ -231,7 +251,7 @@ func TestFallbackFeatureFlagProviderOnlyWatchesRedis(t *testing.T) {
 }
 
 func TestFallbackFeatureFlagProviderRejectsInvalidConsulBeforeBackfill(t *testing.T) {
-	for _, snapshot := range []string{"{", "null", `{"test-flag":{}}`} {
+	for _, snapshot := range []string{"{", "null", `{"test-flag":{}}`, `{"test-flag":{"variations":{"enabled":true}}}`} {
 		t.Run(snapshot, func(t *testing.T) {
 			provider := newFallbackFeatureFlagProvider(&featureFlagProviderStub{}, &featureFlagProviderStub{data: []byte(snapshot)}, func(context.Context, []byte) (bool, error) {
 				t.Fatal("invalid Consul snapshot must not be persisted")

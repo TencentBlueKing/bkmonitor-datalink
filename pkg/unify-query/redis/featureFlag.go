@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	goRedis "github.com/go-redis/redis/v8"
 
@@ -20,8 +21,9 @@ import (
 )
 
 const (
-	featureFlagPath    = "feature_flag"
-	featureFlagChannel = "feature_flag_channel"
+	featureFlagPath             = "feature_flag"
+	featureFlagChannel          = "feature_flag_channel"
+	featureFlagSubscribeTimeout = 5 * time.Second
 )
 
 // FeatureFlagClient 处理特性开关相关的 Redis 操作
@@ -77,7 +79,10 @@ func (f *FeatureFlagClient) WatchFeatureFlags(ctx context.Context) (<-chan any, 
 
 	channel := f.GetFeatureFlagsChannel()
 	pubSub := f.client.Subscribe(ctx, channel)
-	if _, err := pubSub.Receive(ctx); err != nil {
+	// Receive 不使用客户端 ReadTimeout；握手必须有界，取消时主动关闭连接以中断读取。
+	stopClose := context.AfterFunc(ctx, func() { _ = pubSub.Close() })
+	defer stopClose()
+	if _, err := pubSub.ReceiveTimeout(ctx, featureFlagSubscribeTimeout); err != nil {
 		_ = pubSub.Close()
 		return nil, fmt.Errorf("failed to subscribe feature flags channel: %w", err)
 	}
@@ -149,11 +154,23 @@ func (f *FeatureFlagClient) SetFeatureFlags(ctx context.Context, data []byte) er
 	return nil
 }
 
+// ResetFeatureFlags 删除 Redis 快照并通知在线实例重新读取，由实例完成 Consul 回填。
+func (f *FeatureFlagClient) ResetFeatureFlags(ctx context.Context) error {
+	if f.client == nil {
+		return fmt.Errorf("redis client is not initialized")
+	}
+	if err := f.client.Del(ctx, f.GetFeatureFlagsPath()).Err(); err != nil {
+		return fmt.Errorf("failed to reset feature flags in redis: %w", err)
+	}
+	f.publishFeatureFlags(ctx, nil)
+	return nil
+}
+
 func (f *FeatureFlagClient) publishFeatureFlags(ctx context.Context, data []byte) {
 	channel := f.GetFeatureFlagsChannel()
 	err := f.client.Publish(ctx, channel, string(data)).Err()
 	if err != nil {
 		log.Errorf(ctx, "[redis] failed to publish feature flags change notification: %s", err)
-		// 不返回错误，因为数据已经设置成功
+		// 不返回错误，因为数据变更已经成功
 	}
 }

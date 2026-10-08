@@ -69,7 +69,6 @@ func initConfig() {
 	InfluxDBQueryRawAccept = viper.GetString(InfluxDBQueryRawAcceptConfigPath)
 	InfluxDBQueryRawAcceptEncoding = viper.GetString(InfluxDBQueryRawAcceptEncodingConfigPath)
 
-	InfluxDBQueryReadRateLimit = viper.GetFloat64(InfluxDBQueryReadRateLimitConfigPath)
 	InfluxDBMaxLimit = viper.GetInt(InfluxDBMaxLimitConfigPath)
 	InfluxDBMaxSLimit = viper.GetInt(InfluxDBMaxSLimitConfigPath)
 	InfluxDBTolerance = viper.GetInt(InfluxDBToleranceConfigPath)

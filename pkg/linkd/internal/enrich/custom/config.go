@@ -100,6 +100,18 @@ type Lookup struct {
 	Where   *Predicate `json:"where,omitempty"`
 }
 
+// Identity 保留 KAC CMDB 的对象匹配、已有实例优先和分阶段身份绑定语义。
+// Fields 显式映射业务字段目标；省略项使用 labels，同名旧输入可从 extra_data/dimensions 读取。
+type Identity struct {
+	// BKObjID 是当前租户目录确认的 CMDB 对象身份。
+	BKObjID string `json:"bk_obj_id"`
+	// ModelName 是绑定对象时补充的模型展示名称。
+	ModelName string `json:"model_name"`
+	// Fields 配置五个身份业务字段的可写目标，不能指向受保护的事件身份。
+	Fields  map[string]string `json:"fields,omitempty"`
+	targets map[string]jsonpath.Target
+}
+
 // Relation 是规则内有序的模型关系链节点。
 type Relation struct {
 	ID        string     `json:"id"`
@@ -117,6 +129,7 @@ type Rule struct {
 	When        *Condition   `json:"when,omitempty"`
 	Operations  []Operation  `json:"operations,omitempty"`
 	Lookup      *Lookup      `json:"lookup,omitempty"`
+	Identity    *Identity    `json:"identity,omitempty"`
 	Relations   []Relation   `json:"relations,omitempty"`
 	Topology    bool         `json:"topology,omitempty"`
 	Assignments []Assignment `json:"assignments,omitempty"`
@@ -124,7 +137,9 @@ type Rule struct {
 
 // Config 对应一个 Processor 的多条配置。
 type Config struct {
-	Rules []Rule `json:"rules"`
+	// RollbackUnmatched 对齐旧 KAC 整轮没有字段丰富成功时回滚中间身份的收尾行为。
+	RollbackUnmatched bool   `json:"rollback_unmatched,omitempty"`
+	Rules             []Rule `json:"rules"`
 }
 
 // Program 是与某次来源发布绑定、可并发只读复用的编译结果。
@@ -161,9 +176,15 @@ func Compile(kind string, raw map[string]any) (*Program, error) {
 	if len(p.config.Rules) > 128 {
 		return nil, fmt.Errorf("at most 128 rules are allowed")
 	}
+	if p.config.RollbackUnmatched && kind != "cmdb" {
+		return nil, fmt.Errorf("rollback_unmatched only supports cmdb")
+	}
 	seen := map[string]bool{}
 	for i := range p.config.Rules {
 		r := &p.config.Rules[i]
+		if p.config.RollbackUnmatched && r.Identity == nil {
+			return nil, fmt.Errorf("rollback_unmatched requires identity on every rule")
+		}
 		if err := checkID(r.ID, seen); err != nil {
 			return nil, fmt.Errorf("rules[%d]: %w", i, err)
 		}
@@ -192,11 +213,25 @@ func (p *Program) compileRule(r *Rule) error {
 		if r.Lookup == nil || len(r.Operations) > 0 {
 			return fmt.Errorf("cmdb rule requires lookup and no operations")
 		}
-		if err := p.compileLookup(r.Lookup); err != nil {
+		if r.Identity != nil {
+			if err := compileIdentity(r.Identity); err != nil {
+				return err
+			}
+		}
+		lookup := *r.Lookup
+		if r.Identity != nil && lookup.Where == nil {
+			// 实际执行仍要求已有实例 ID；这里只校验查询形状，不允许无条件扫描。
+			lookup.Where = &Predicate{Field: "model_inst_id", Type: onemodel.InstanceAttributeKeyword, Operator: "exists"}
+		}
+		if err := p.compileLookup(&lookup); err != nil {
 			return err
 		}
-		if r.Topology && (r.Lookup.ModelID != "cw-Host" || r.Lookup.Expect != "one") {
-			return fmt.Errorf("topology requires expect one on cw-Host")
+		r.Lookup.Expect = lookup.Expect
+		if r.Identity != nil && r.Lookup.Expect != "first" {
+			return fmt.Errorf("identity requires expect first")
+		}
+		if r.Topology && (r.Lookup.ModelID != "cw-Host" || r.Lookup.Expect == "many") {
+			return fmt.Errorf("topology requires expect one or first on cw-Host")
 		}
 		if len(r.Relations) > 8 {
 			return fmt.Errorf("at most 8 relation steps")
@@ -230,9 +265,21 @@ func (p *Program) compileRule(r *Rule) error {
 			rel.Expect = lookup.Expect
 			expects[rel.ID] = rel.Expect
 		}
+		if r.Identity != nil {
+			if len(r.Assignments) > 64 {
+				return fmt.Errorf("at most 64 assignments")
+			}
+			// 旧字段列表允许后项覆盖前项；每一项仍单独校验目标和取值边界。
+			for index := range r.Assignments {
+				if err := p.compileAssignments(r.Assignments[index : index+1]); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
 		return p.compileAssignments(r.Assignments)
 	}
-	if r.Lookup != nil || len(r.Relations) > 0 || len(r.Assignments) > 0 || r.Topology {
+	if r.Lookup != nil || r.Identity != nil || len(r.Relations) > 0 || len(r.Assignments) > 0 || r.Topology {
 		return fmt.Errorf("fields rule only supports operations")
 	}
 	if len(r.Operations) == 0 || len(r.Operations) > 64 {
@@ -373,7 +420,7 @@ func (p *Program) compileValue(v *Value, depth int) error {
 	for i := range v.Transforms {
 		t := &v.Transforms[i]
 		switch t.Type {
-		case "string", "number", "bool", "join", "map":
+		case "string", "kingeye_string", "number", "bool", "join", "map":
 		case "regex_extract":
 			if len(t.Pattern) > 2048 {
 				return fmt.Errorf("pattern too long")
@@ -478,8 +525,8 @@ func (p *Program) compileLookup(l *Lookup) error {
 	if l.Expect == "" {
 		l.Expect = "one"
 	}
-	if l.Expect != "one" && l.Expect != "many" {
-		return fmt.Errorf("expect must be one or many")
+	if l.Expect != "one" && l.Expect != "many" && l.Expect != "first" {
+		return fmt.Errorf("expect must be one, first or many")
 	}
 	if l.Where == nil {
 		return fmt.Errorf("bounded lookup requires where")

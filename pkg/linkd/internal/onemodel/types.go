@@ -57,10 +57,15 @@ type Instance struct {
 
 // ResourceTopology 是关联主机解析得到的业务、集群和模块投影。
 type ResourceTopology struct {
-	BKBizID      int64
-	BKBizName    string
-	BKSetID      int64
-	BKSetName    string
-	BKModuleID   int64
-	BKModuleName string
+	// 下列集合仅由 FindCMDBTopology 返回，保留旧 CMDB 丰富的多路径结果。
+	BKSetIDs      []int64
+	BKSetNames    []string
+	BKModuleIDs   []int64
+	BKModuleNames []string
+	BKBizID       int64
+	BKBizName     string
+	BKSetID       int64
+	BKSetName     string
+	BKModuleID    int64
+	BKModuleName  string
 }

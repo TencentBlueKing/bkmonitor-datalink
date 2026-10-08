@@ -156,6 +156,8 @@ func (r *Router) Enrich(ctx context.Context, input enrich.Input) (enrich.Result,
 
 func newProcessor(config config.EnrichProcessorConfig) (enrich.Processor, error) {
 	switch config.Type {
+	case "cmdb-access":
+		return processors.CMDBAccess{}, nil
 	case "cmdb", "fields":
 		return processors.NewRules(config.Type, config.Config)
 	case rules.TestProcessor:

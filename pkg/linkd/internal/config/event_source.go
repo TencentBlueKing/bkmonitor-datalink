@@ -103,7 +103,7 @@ func (c EnrichConfig) validate() error {
 			}
 		}
 		switch processor.Type {
-		case "cmdb", "fields", "test", "strategy", "resource", "display", "metric", "source", "log", "cloud_resource", "k8s", "apm":
+		case "cmdb-access", "cmdb", "fields", "test", "strategy", "resource", "display", "metric", "source", "log", "cloud_resource", "k8s", "apm":
 		default:
 			return fmt.Errorf("enrich processor type is not registered: %q", processor.Type)
 		}
@@ -152,6 +152,8 @@ func (c EnrichConfig) SelectResources(configured ResourcesConfig) (ResourcesConf
 				}
 				selected.KingeyeDisplay = configured.KingeyeDisplay
 			}
+		case "cmdb-access":
+			selected.DynamicGroup = configured.DynamicGroup
 		case "test":
 			// 测试处理器只生成固定字段和等待，不需要外部连接。
 		case "strategy", "resource":

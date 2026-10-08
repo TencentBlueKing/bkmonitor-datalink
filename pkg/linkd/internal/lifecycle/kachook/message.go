@@ -129,6 +129,22 @@ func convertFieldsWithLevel(input lifecycle.FinalHookInput, resolve func(string)
 	if requireContent && message.Content == "" {
 		return kingeye.AlarmMessage{}, fmt.Errorf("KAC alarm content is required")
 	}
+	// CMDB 集合保留原 JSON 类型，普通资源分支仍使用现有标量投影。
+	document, e := domain.AlertDocument(effective)
+	if e != nil {
+		return kingeye.AlarmMessage{}, e
+	}
+	for field, target := range map[string]*any{"bk_set_id": &message.BKSetID, "bk_set_name": &message.BKSetName, "bk_module_id": &message.BKModuleID, "bk_module_name": &message.BKModuleName} {
+		for _, root := range []string{"labels", "extra_data"} {
+			object, _ := document[root].(map[string]any)
+			if value, found := object[field]; found {
+				if _, list := value.([]any); list {
+					*target = value
+				}
+				break
+			}
+		}
+	}
 	return message, nil
 }
 
@@ -294,6 +310,12 @@ func decodeEffectiveEnrich(alert domain.Alert) (enrichValues, error) {
 			return enrichValues{}, err
 		}
 		flat[key] = data
+	}
+	// 多路径 CMDB 名称保存为列表；资源 DTO 的标量仅供原有展示逻辑使用。
+	for _, field := range []string{"bk_set_name", "bk_module_name"} {
+		if raw := flat[field]; len(raw) > 0 && raw[0] == '[' {
+			flat[field] = json.RawMessage(`""`)
+		}
 	}
 	var values enrichValues
 	for _, target := range []any{&values.strategy, &values.resource, &values.display, &values.metric, &values.log, &values.apm, &values.source} {

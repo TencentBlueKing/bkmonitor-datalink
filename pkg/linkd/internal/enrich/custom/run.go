@@ -61,12 +61,14 @@ type Result struct {
 }
 
 type run struct {
-	tenant   string
-	original map[string]any
-	current  map[string]any
-	sources  Sources
-	calls    int
-	cache    map[string][]onemodel.Instance
+	tenant         string
+	original       map[string]any
+	initial        map[string]any
+	current        map[string]any
+	sources        Sources
+	calls          int
+	fieldSucceeded bool
+	cache          map[string][]onemodel.Instance
 }
 
 // Execute 对输入副本顺序执行规则；失败操作原子回滚，父取消返回 error。
@@ -80,7 +82,7 @@ func (p *Program) Execute(ctx context.Context, original, current map[string]any,
 	if err := jsonpath.ValidateTree(current); err != nil {
 		return Result{}, err
 	}
-	r := &run{tenant: tenant, original: jsonpath.Clone(original).(map[string]any), current: jsonpath.Clone(current).(map[string]any), sources: sources, cache: map[string][]onemodel.Instance{}}
+	r := &run{tenant: tenant, original: jsonpath.Clone(original).(map[string]any), initial: jsonpath.Clone(current).(map[string]any), current: jsonpath.Clone(current).(map[string]any), sources: sources, cache: map[string][]onemodel.Instance{}}
 	result := Result{Patches: []domain.EnrichPatch{}, Trace: []Trace{}}
 	ruleStates := []domain.EnrichStatus{}
 	for _, rule := range p.config.Rules {
@@ -92,8 +94,7 @@ func (p *Program) Execute(ctx context.Context, original, current map[string]any,
 		failed := false
 		skipped := false
 		code := ""
-		env := r.environment(nil)
-		matches, err := r.condition(ctx, rule.When, env)
+		matches, err := r.matchRule(ctx, rule, &result)
 		if err == nil && !matches {
 			skipped = true
 		} else if err != nil {
@@ -125,11 +126,38 @@ func (p *Program) Execute(ctx context.Context, original, current map[string]any,
 		} else {
 			lookup, n, err := r.lookup(ctx, rule)
 			if err == nil {
-				env = r.environment(map[string]any{"lookup": lookup})
-				patches, assignErr := r.assign(ctx, rule.Assignments, env)
-				err = assignErr
-				if err == nil {
-					err = r.commit(rule.ID, "", patches, &result)
+				if rule.Identity != nil {
+					err = r.bindInstance(ctx, rule, lookup.(map[string]any), &result)
+					if err != nil && ctx.Err() == nil {
+						// 旧 builtin_cmdb_enrich 失败不阻止已命中实例的显式属性丰富。
+						failed = true
+						code = errorCode(err)
+						result.Trace = append(result.Trace, Trace{RuleID: rule.ID, OperationID: "topology", Status: stateFor(err), Code: errorCode(err)})
+						err = nil
+					}
+				}
+			}
+			if err == nil {
+				env := r.environment(map[string]any{"lookup": lookup})
+				if rule.Identity != nil {
+					// 旧 KAC 逐字段赋值；某个展示字段失败时，前面完成的字段仍有效。
+					for _, assignment := range rule.Assignments {
+						patches, e := r.assign(ctx, []Assignment{assignment}, env)
+						if e == nil {
+							e = r.commit(rule.ID, "", patches, &result)
+						}
+						if e != nil {
+							err = e
+							break
+						}
+						r.fieldSucceeded = true
+					}
+				} else {
+					patches, assignErr := r.assign(ctx, rule.Assignments, env)
+					err = assignErr
+					if err == nil {
+						err = r.commit(rule.ID, "", patches, &result)
+					}
 				}
 			}
 			if err != nil {
@@ -154,6 +182,32 @@ func (p *Program) Execute(ctx context.Context, original, current map[string]any,
 		}
 		ruleStates = append(ruleStates, state)
 		result.Trace = append(result.Trace, Trace{RuleID: rule.ID, Status: state, Code: code, DurationMilliseconds: time.Since(start).Milliseconds()})
+	}
+	if p.config.RollbackUnmatched && !r.fieldSucceeded {
+		result.Patches = []domain.EnrichPatch{}
+		// 失败和查空仍在 trace 中可见；中间身份不能进入后续 fields 与策略。
+		for index := range ruleStates {
+			if ruleStates[index] != domain.EnrichStatusPartial {
+				continue
+			}
+			ruleStates[index] = domain.EnrichStatusSkipped
+			for _, trace := range result.Trace {
+				if trace.RuleID == p.config.Rules[index].ID && trace.Status == domain.EnrichStatusFailed {
+					ruleStates[index] = domain.EnrichStatusFailed
+				}
+			}
+		}
+		err := r.fallbackTopology(ctx, p.config.Rules, &result)
+		if ctx.Err() != nil {
+			return Result{}, ctx.Err()
+		}
+		if err != nil {
+			ruleStates = append(ruleStates, domain.EnrichStatusFailed)
+		} else if len(result.Patches) > 0 {
+			ruleStates = append(ruleStates, domain.EnrichStatusSucceeded)
+		}
+		result.Trace = append(result.Trace, Trace{RuleID: "cmdb", OperationID: "fallback_topology", Status: stateFor(err), Code: errorCode(err)})
+		result.Trace = append(result.Trace, Trace{RuleID: "cmdb", OperationID: "rollback", Status: domain.EnrichStatusSkipped, Code: "no_cmdb_fields_enriched"})
 	}
 	result.Status = Aggregate(ruleStates)
 	return result, nil
@@ -412,6 +466,8 @@ func scalarText(v any) (string, error) {
 
 func (r *run) transform(ctx context.Context, t Transform, v any) (any, error) {
 	switch t.Type {
+	case "kingeye_string":
+		return kingeyeText(v), nil
 	case "string":
 		return scalarText(v)
 	case "number":
@@ -652,14 +708,31 @@ func (r *run) externalCall() error {
 }
 
 func (r *run) lookup(ctx context.Context, rule Rule) (any, int, error) {
+	if rule.Identity != nil && rule.Lookup.Where == nil && !identityProvided(rule.Identity.read(r.current, "bk_inst_id")) {
+		return nil, 0, ErrMissing
+	}
 	if r.sources.Instances == nil {
 		return nil, 0, fmt.Errorf("onemodel datasource unavailable")
 	}
-	where, err := r.predicate(ctx, rule.Lookup.Where, r.environment(nil))
+	var where onemodel.Filter
+	var err error
+	if rule.Identity != nil && identityProvided(rule.Identity.read(r.current, "bk_inst_id")) {
+		text, e := scalarText(rule.Identity.read(r.current, "bk_inst_id"))
+		if e != nil {
+			return nil, 0, e
+		}
+		where = onemodel.Filter{Field: "model_inst_id", Type: onemodel.InstanceAttributeKeyword, Operator: "eq", Value: text}
+	} else {
+		where, err = r.predicate(ctx, rule.Lookup.Where, r.environment(nil))
+	}
 	if err != nil {
 		return nil, 0, err
 	}
 	q := onemodel.Query{ModelID: rule.Lookup.ModelID, Where: where, Limit: 1024}
+	q.First = rule.Lookup.Expect == "first"
+	if q.First {
+		q.Limit = 1
+	}
 	if rule.Lookup.Expect == "one" {
 		q.Limit = 2
 	}
@@ -692,6 +765,10 @@ func (r *run) lookup(ctx context.Context, rule Rule) (any, int, error) {
 			return nil, len(items), err
 		}
 		q := onemodel.Query{ModelID: rel.ModelID, Where: filter, Limit: 1024}
+		q.First = rel.Expect == "first"
+		if q.First {
+			q.Limit = 1
+		}
 		if rel.Expect == "one" {
 			q.Limit = 2
 		}
@@ -737,8 +814,8 @@ func lookupValue(items []onemodel.Instance, expect string) (any, error) {
 	if len(items) == 0 {
 		return nil, ErrMissing
 	}
-	if expect == "one" {
-		if len(items) != 1 {
+	if expect == "one" || expect == "first" {
+		if expect == "one" && len(items) != 1 {
 			return nil, fmt.Errorf("lookup matched multiple instances")
 		}
 		return jsonpath.Clone(items[0].Document()), nil

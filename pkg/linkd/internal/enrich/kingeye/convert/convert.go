@@ -49,7 +49,7 @@ type Item struct {
 	RuleID   string          `json:"rule_id,omitempty"`
 }
 
-// Result 最多产生两个处理器，绝不自动发布。
+// Result 产生 CMDB、字段与受控身份收尾处理器，绝不自动发布。
 type Result struct {
 	Enrich config.EnrichConfig `json:"enrich"`
 	Report []Item              `json:"report"`
@@ -116,13 +116,9 @@ func Convert(input Input) (Result, error) {
 				rule, err = c.normal(raw, item.RuleID)
 			} else {
 				rule, err = c.cmdb(raw, item.RuleID)
-				if err == nil {
-					item.Status = "needs_review"
-					item.Message = "核对已有实例身份分支、模型匹配顺序与多命中；Linkd 不自动选择首条实例。展示转换需配置 mysql/kingeye_display。"
-				}
 			}
 			if err == nil {
-				data, _ := json.Marshal(custom.Config{Rules: []custom.Rule{rule}})
+				data, _ := json.Marshal(custom.Config{Rules: []custom.Rule{rule}, RollbackUnmatched: kind == "cmdb"})
 				var config map[string]any
 				err = json.Unmarshal(data, &config)
 				if err == nil {
@@ -139,7 +135,7 @@ func Convert(input Input) (Result, error) {
 			out.Report = append(out.Report, item)
 		}
 		if len(rules) > 0 {
-			data, _ := json.Marshal(custom.Config{Rules: rules})
+			data, _ := json.Marshal(custom.Config{Rules: rules, RollbackUnmatched: kind == "cmdb"})
 			var cfg map[string]any
 			if err := json.Unmarshal(data, &cfg); err != nil {
 				return Result{}, err
@@ -149,6 +145,9 @@ func Convert(input Input) (Result, error) {
 			}
 			out.Enrich.Processors = append(out.Enrich.Processors, config.EnrichProcessorConfig{Type: kind, Config: cfg})
 		}
+	}
+	if len(out.Enrich.Processors) > 0 && out.Enrich.Processors[0].Type == "cmdb" {
+		out.Enrich.Processors = append(out.Enrich.Processors, config.EnrichProcessorConfig{Type: "cmdb-access"})
 	}
 	return out, nil
 }
@@ -161,6 +160,8 @@ func (c converter) path(field string) (string, error) {
 		return path, nil
 	}
 	switch field {
+	case "bk_obj_id", "model_id", "model_name", "bk_inst_id", "model_inst_id":
+		return "$.labels." + field, nil
 	case "name":
 		return "$.title", nil
 	case "content":
@@ -182,7 +183,12 @@ func (c converter) source(field string) (custom.Value, error) {
 	if err != nil {
 		return custom.Value{}, err
 	}
-	return custom.Value{JSONPath: "$.event" + strings.TrimPrefix(path, "$")}, nil
+	value := custom.Value{JSONPath: "$.event" + strings.TrimPrefix(path, "$")}
+	switch field {
+	case "bk_obj_id", "model_id", "model_name", "bk_inst_id", "model_inst_id":
+		value.Default = &custom.Value{JSONPath: "$.event.extra_data[" + strconv.Quote(field) + "]"}
+	}
+	return value, nil
 }
 
 var variables = regexp.MustCompile(`\$\{([^}]+)\}|\$([0-9]+)`)
@@ -323,7 +329,11 @@ func (c converter) conditions(old map[string]json.RawMessage) (*custom.Condition
 			return custom.Condition{}, err
 		}
 		empty := literal("")
-		value.Default = &empty
+		fallback := &value
+		for fallback.Default != nil {
+			fallback = fallback.Default
+		}
+		fallback.Default = &empty
 		value.Transforms = []custom.Transform{{Type: "string"}}
 		op, err := operator(leaf.Condition)
 		if err != nil {
@@ -374,7 +384,7 @@ func (c converter) cmdb(raw json.RawMessage, id string) (custom.Rule, error) {
 		return rule, err
 	}
 	model, ok := c.input.Models[fmt.Sprint(modelKey)]
-	if !ok || model.ModelID == "" {
+	if !ok || model.ModelID == "" || model.BKObjID == "" {
 		return rule, fmt.Errorf("alarm_object_id requires model directory")
 	}
 	if len(old.Multi) > 0 {
@@ -394,6 +404,13 @@ func (c converter) cmdb(raw json.RawMessage, id string) (custom.Rule, error) {
 		if err != nil {
 			return custom.Condition{}, err
 		}
+		fallback := &v
+		for fallback.Default != nil {
+			fallback = fallback.Default
+		}
+		empty := literal("")
+		fallback.Default = &empty
+		v.Transforms = []custom.Transform{{Type: "string"}}
 		op, err := operator(leaf.Condition)
 		if err != nil {
 			return custom.Condition{}, err
@@ -407,7 +424,7 @@ func (c converter) cmdb(raw json.RawMessage, id string) (custom.Rule, error) {
 			if pattern.NumSubexp() > 0 {
 				group = 1
 			}
-			v.Transforms = []custom.Transform{{Type: "regex_extract", Pattern: leaf.Expression, Group: group}}
+			v.Transforms = append(v.Transforms, custom.Transform{Type: "regex_extract", Pattern: leaf.Expression, Group: group})
 		}
 		field := literal(leaf.Value)
 		return custom.Condition{Left: &field, Operator: op, Right: &v}, nil
@@ -448,6 +465,12 @@ func (c converter) cmdb(raw json.RawMessage, id string) (custom.Rule, error) {
 			if !ok {
 				return nil, fmt.Errorf("model attribute %q needs explicit type", attr)
 			}
+			if typ == onemodel.InstanceAttributeLong || typ == onemodel.InstanceAttributeDouble {
+				n.Right.Transforms = append(n.Right.Transforms, custom.Transform{Type: "number"})
+			}
+			if typ == onemodel.InstanceAttributeBoolean {
+				n.Right.Transforms = append(n.Right.Transforms, custom.Transform{Type: "bool"})
+			}
 			p.Field = "attributes." + attr
 			p.Type = typ
 			p.Operator = n.Operator
@@ -455,14 +478,22 @@ func (c converter) cmdb(raw json.RawMessage, id string) (custom.Rule, error) {
 		}
 		return p, nil
 	}
-	if condition == nil {
-		return rule, fmt.Errorf("instance rule expression required; configure explicit identity lookup")
+	var where *custom.Predicate
+	if condition != nil {
+		where, err = predicate(condition)
+		if err != nil {
+			return rule, err
+		}
 	}
-	where, err := predicate(condition)
-	if err != nil {
-		return rule, err
+	rule.Lookup = &custom.Lookup{ModelID: model.ModelID, Expect: "first", Where: where}
+	rule.Identity = &custom.Identity{BKObjID: model.BKObjID, ModelName: model.Name, Fields: map[string]string{}}
+	for _, field := range []string{"bk_obj_id", "model_id", "model_name", "bk_inst_id", "model_inst_id"} {
+		path, err := c.path(field)
+		if err != nil {
+			return rule, err
+		}
+		rule.Identity.Fields[field] = path
 	}
-	rule.Lookup = &custom.Lookup{ModelID: model.ModelID, Expect: "one", Where: where}
 	for _, f := range old.Fields {
 		if len(f.ModelAssociation) > 0 {
 			return rule, fmt.Errorf("association field requires reviewed relations mapping")
@@ -472,7 +503,7 @@ func (c converter) cmdb(raw json.RawMessage, id string) (custom.Rule, error) {
 			return rule, err
 		}
 		path, _ := jsonpath.ParseTarget("$[" + strconv.Quote(f.Value) + "]")
-		rule.Assignments = append(rule.Assignments, custom.Assignment{Target: target, Value: custom.Value{JSONPath: "$.lookup.attributes" + strings.TrimPrefix(path.String(), "$"), Transforms: []custom.Transform{{Type: "display", ModelID: model.ModelID, Field: f.Value}}}})
+		rule.Assignments = append(rule.Assignments, custom.Assignment{Target: target, Value: custom.Value{JSONPath: "$.lookup.attributes" + strings.TrimPrefix(path.String(), "$"), Default: &custom.Value{Literal: json.RawMessage(`""`)}, Transforms: []custom.Transform{{Type: "kingeye_string"}, {Type: "display", ModelID: model.ModelID, Field: f.Value}}}})
 	}
 	return rule, nil
 }

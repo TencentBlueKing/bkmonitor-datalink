@@ -171,6 +171,11 @@ func TestClientFindHostTopologySelectsStablePath(t *testing.T) {
 			if err != nil || !found || topology.BKBizName != "订单业务" || topology.BKSetID != 3 || topology.BKModuleID != 7 {
 				t.Fatalf("FindHostTopology()=%#v,%t,%v", topology, found, err)
 			}
+			complete, found, err := client.FindCMDBTopology(t.Context(), "tenant-a", "101")
+			if err != nil || !found || !slices.Equal(complete.BKSetIDs, []int64{3, 4}) || !slices.Equal(complete.BKModuleIDs, []int64{7, 8}) {
+				t.Fatal(complete, found, err)
+			}
+
 		})
 	}
 }

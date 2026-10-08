@@ -12,6 +12,7 @@ package assembly
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"linkd/internal/config"
@@ -19,6 +20,7 @@ import (
 	"linkd/internal/enrich"
 	"linkd/internal/enrich/view"
 	"linkd/internal/onemodel"
+	"linkd/internal/policy"
 )
 
 type cmdbReader struct{}
@@ -68,6 +70,55 @@ func TestCMDBThenFieldsShareEffectiveView(t *testing.T) {
 			if _, ok := envelope["patches"]; !ok {
 				t.Fatal("missing patches")
 			}
+		}
+	}
+}
+
+type cmdbGroups struct{ calls int }
+
+func (g *cmdbGroups) GetDynamicGroupIDs(_ context.Context, tenant, model, inst string) ([]string, error) {
+	g.calls++
+	if tenant != "t" || model != "cw-Host" || inst != "202" {
+		return nil, fmt.Errorf("wrong effective identity")
+	}
+	return []string{"g1"}, nil
+}
+
+func TestCMDBBindingFieldsAccessAndPolicyShareEffectiveIdentity(t *testing.T) {
+	var source config.EventSource
+	raw := `{"event_source_id":"host","enrich":{"processors":[{"type":"cmdb","config":{"rules":[{"id":"host","identity":{"bk_obj_id":"host","model_name":"主机"},"lookup":{"model_id":"cw-Host","expect":"first"}}]}},{"type":"fields","config":{"rules":[{"id":"change","operations":[{"id":"instance","type":"assign","assignments":[{"target":"$.labels.model_inst_id","value":{"literal":"202"}}]}]}]}},{"type":"cmdb-access"}]}}`
+	if err := json.Unmarshal([]byte(raw), &source); err != nil {
+		t.Fatal(err)
+	}
+	for _, preview := range []bool{false, true} {
+		groups := &cmdbGroups{}
+		router, err := NewRouter([]config.EventSource{source}, enrich.Sources{CMDB: cmdbReader{}, DynamicGroup: groups})
+		if err != nil {
+			t.Fatal(err)
+		}
+		event := baseCollectAlert("host")
+		event.BKTenantID = "t"
+		event.ExtraData = domain.JSONObject{"bk_obj_id": json.RawMessage(`"host"`), "bk_inst_id": json.RawMessage(`"101"`)}
+		event.Labels = domain.DimensionMap{"model_id": domain.NewStringScalar("cw-Host")}
+		result, err := router.Enrich(t.Context(), enrich.Input{Event: event, Preview: preview})
+		if err != nil {
+			t.Fatal(err)
+		}
+		event.Enrich = result.Data
+		effective, err := view.EnrichedEvent(event, "warning")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(effective.ExtraData["dynamic_group_id"]) != `["g1"]` || groups.calls != 1 {
+			t.Fatal(effective, groups)
+		}
+		facts, err := policy.EventView(event, "warning", nil, func(v string) (string, error) { return v, nil }, policy.RelationContext{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ref, found, err := facts.CanonicalInstance(t.Context())
+		if err != nil || !found || ref.InstanceID != "202" {
+			t.Fatal(ref, found, err)
 		}
 	}
 }

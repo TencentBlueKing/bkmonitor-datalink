@@ -92,3 +92,14 @@ func (r ruleDisplayReader) Format(ctx context.Context, tenant, model, field stri
 	}
 	return jsonpath.Clone(value), nil
 }
+
+// FindCMDBTopology 保留 SDK 的完整拓扑能力；查询缓存仍局限于本次事件和租户。
+func (r ruleInstanceReader) FindCMDBTopology(ctx context.Context, tenant, host string) (onemodel.ResourceTopology, bool, error) {
+	reader, ok := r.next.(interface {
+		FindCMDBTopology(context.Context, string, string) (onemodel.ResourceTopology, bool, error)
+	})
+	if !ok {
+		return onemodel.ResourceTopology{}, false, fmt.Errorf("CMDB topology datasource unavailable")
+	}
+	return reader.FindCMDBTopology(ctx, tenant, host)
+}

@@ -175,14 +175,14 @@ transforms 包括类型转换、join、字典映射、正则提取和展示值�
 
 ### 4.3 CMDB 丰富
 
-lookup 描述 model_id、expect（one/many）、where；where 的 field/type/operator/value 不包含物理 ES DSL。
+lookup 描述 model_id、expect（one/first/many）、where；where 的 field/type/operator/value 不包含物理 ES DSL。
 查询值复用 Value，可先正则提取再查询。租户来自运行上下文，配置不能覆盖。
-one 的零命中为 skipped，多命中为冲突；many 返回有界列表，超限失败，不静默取首条或截断。
-已有身份和附加条件都明确表达，不隐式忽略条件。
+one 的零命中为 skipped，多命中为冲突；first 在后端按模型/实例 ID 排序只读取首条；many 返回有界列表，超限失败。
+普通规则的已有身份和附加条件都明确表达；显式 identity 绑定按第 8.1 节执行旧 KAC 的已有身份优先分支。
 
 relations 描述有序关联读取，每项含 id/from/relation/direction/model_id/expect/where；from 只能引用主实例或
-之前结果，不允许前向引用。关联结果放入 $.lookup.relations.<id>，中间节点要求唯一，末节点可以多实例。
-主实例为 cw-Host 且 expect: one 时可配置 `topology: true`，结果位于 `$.lookup.topology`。
+之前结果，不允许前向引用。关联结果放入 $.lookup.relations.<id>，中间节点要求选择单个实例，末节点可以多实例。
+主实例为 cw-Host 且 expect 为 one 或 first 时可配置 `topology: true`，结果位于 `$.lookup.topology`。
 业务、集群、模块赋值仍须在 assignments 中显式声明；用 `$.event.labels.bk_biz_id` 加
 `default: {jsonpath: $.lookup.topology.bk_biz_id}` 只补缺失值，不隐式改写已有值。
 展示转换覆盖枚举、单位、时间、用户、组织、云区域。
@@ -262,7 +262,24 @@ name→title、content→content、object→subject_name；普通自定义字段
 每条规则报告 converted/needs_review/unsupported，带源 JSON 路径及原因。非法正则/目标、缺失映射不得静默丢规则。
 多命中、空值和失败回退差异明确记录，不承诺任意旧配置无损迁移。
 
-### 8.1 离线转换命令
+### 8.1 CMDB 旧行为对齐（2026-10-08）
+
+旧 CMDB 转换使用显式 `identity`（`bk_obj_id`、`model_name` 和业务字段目标映射）及 `lookup.expect: first`。
+无有效对象身份时才按 `when` 判断对象；已有对象限定模型，已有实例 ID 覆盖实例条件。
+模型匹配成功先保存中间模型补丁，供后续规则继续匹配；整轮没有任何 CMDB 字段成功时由 `rollback_unmatched: true` 回滚中间身份，按入口身份补内置拓扑。已有字段成功时保留后续规则的部分结果。
+同一次 cmdb 执行固定入口身份分组，未绑定实例的无对象告警可继续按后续规则匹配模型。
+`cw_object_model_code/cw_object_model_inst_id` 通过同租户模型目录归一化，原始 Event 主体和指纹不变。
+
+`first` 在后端按 canonical 实例 ID 升序只取一条，对齐当前 KAC OneModel 的稳定排序；
+普通 `one`/`many` 继续检测歧义和超限。拓扑只补缺失业务字段，随后执行显式属性赋值。
+字段丰富结束后的 `cmdb-access` 处理器使用有效身份补权限标签与动态分组；非空现有值保留。
+身份、拓扑和属性结果均通过补丁进入策略有效视图和 KAC 输出，预览复用正式链路且不写业务存储。
+
+单模型配置在行为对照通过后可发布；多模型链仍要求明确关系元数据，未提供时按配置位置拒绝发布。
+展示转换保留现有完整组织 ID 修正，不复制旧实现只取组织 ID 首字符的缺陷。
+验证覆盖身份分支、首条选择、部分失败、规则顺序、展示空值、租户隔离及下游投影；真实环境联调单列。
+
+### 8.2 离线转换命令
 
 ```bash
 go run ./cmd/linkd enrich convert-kingeye --file kingeye-enrich.json > converted-enrich.json
@@ -280,10 +297,10 @@ go run ./cmd/linkd enrich convert-kingeye --file kingeye-enrich.json > converted
 ```
 
 输出 enrich 和 report；无有效规则时保留空 processors。报告中每条输入都有对应项，unsupported 项不产生
-半条规则。CMDB 候选规则始终标 needs_review，复核已有实例身份分支、模型匹配先后、多命中及展示连接。
+半条规则。单模型 CMDB 规则保留身份分支与首条查询，标 converted；缺失模型身份或关联关系时标 unsupported。展示转换仍需配置相应连接。
 常规转换保留字段调整的逐字段依赖；提取操作内依赖其他告警字段时要求手工拆分，避免误改旧顺序。
 
-### 8.2 展示转换与 KAC 输出连接示例
+### 8.3 展示转换与 KAC 输出连接示例
 
 ```yaml
 resources:
@@ -348,3 +365,22 @@ SDK：租户、唯一/多命中、关系方向、超限、部分 ES 失败、取
 | Console 页面 | [EnrichPreviewPage.tsx](../../console/src/web/pages/EnrichPreviewPage.tsx) |
 | 离线转换 | [enrich/kingeye/convert/convert.go](../../internal/enrich/kingeye/convert/convert.go) |
 
+### 9.3 旧 CMDB 单模型行为验证（2026-10-08）
+
+本次实现身份分支、已有实例精确查询、后端首条选择、逐字段部分成功、无字段成功时的整轮回滚，
+并接通完整主机集群/模块集合、权限与动态分组及策略/KAC 消费。默认业务身份输出到 labels；原始字段仍只读。
+
+固定 KAC 源码对照使用真实 `EnrichRuleHandler` 的分组、查询、字段赋值和最终回滚函数，
+比较 8 组单模型身份与属性结果；合成查询门面不访问外部系统。拓扑、展示缓存、目标匹配和 KAC JSON 类型另由对应回归覆盖。
+对照入口及边界见 [测试说明](../../tests/kac_behavior_comparison/README.md#cmdb-丰富行为对照)。
+
+KAC 配置转换的隔离测试可通过仓库 `dev-test-contract-isolated` 运行；完整 Django 测试需要测试 MySQL 等应用依赖。
+真实 Kingeye/OneModel/Redis 联调以及多模型旧链自动转换仍未完成，不以这些单测代替上线验证。
+
+本次验证结果：
+
+- `make check` 通过：Go 普通测试、vet、race、golangci-lint（0 issues）、Console 检查/构建、Helm 和发布脚本；Console 420 passed、7 skipped。
+- `LINKD_KAC_SOURCE_DIR=<kingeye> go test -race -count=1 ./internal/enrich/kingeye/convert -run TestKACCMDBBehaviorComparison` 通过：8 组旧 KAC 结果同时对照 Python 发布转换和 Go 离线转换。
+- 新增身份、逐字段失败和最终回滚用例通过竞态检查；正式执行/预览共享链、策略身份和 KAC 集合类型回归通过。
+- KAC `task dev-test-contract-isolated -- -c /dev/null -p no:django -o addopts= kingeye/kac/tests/linkd/test_cmdb_enrich.py`：12 passed；Ruff 检查通过。
+- KAC 完整 `task dev-test` 在 Django 初始化时被 `Unknown MySQL server host 'unittest-mysql'` 阻断，未执行应用级断言；未运行真实 Kingeye/OneModel/Redis 联调。

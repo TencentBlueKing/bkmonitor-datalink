@@ -71,16 +71,16 @@ func TestCaptureNumberingAndUnsupportedAreReported(t *testing.T) {
 	}
 }
 
-func TestCMDBRequiresMetadataAndReportsReview(t *testing.T) {
+func TestCMDBRequiresMetadataAndBindsIdentity(t *testing.T) {
 	raw := json.RawMessage(`{"alarm_object_id":1,"inst_rules":{"expression":"A","A":{"field":"ip","value":"bk_host_innerip","condition":"term"}},"enrich_fields":[{"key":"owner","value":"operator"}]}`)
 	input := Input{CMDBRules: []json.RawMessage{raw}, FieldMappings: map[string]string{"ip": "$.labels.ip", "owner": "$.labels.owner"}}
 	r, err := Convert(input)
 	if err != nil || r.Report[0].Status != "unsupported" {
 		t.Fatalf("%+v %v", r, err)
 	}
-	input.Models = map[string]Model{"1": {ModelID: "cw-Host", Attributes: map[string]onemodel.InstanceAttributeType{"bk_host_innerip": onemodel.InstanceAttributeKeyword}}}
+	input.Models = map[string]Model{"1": {ModelID: "cw-Host", BKObjID: "host", Name: "主机", Attributes: map[string]onemodel.InstanceAttributeType{"bk_host_innerip": onemodel.InstanceAttributeKeyword}}}
 	r, err = Convert(input)
-	if err != nil || r.Report[0].Status != "needs_review" || len(r.Enrich.Processors) != 1 {
+	if err != nil || r.Report[0].Status != "converted" || len(r.Enrich.Processors) != 2 {
 		t.Fatalf("%+v %v", r, err)
 	}
 }

@@ -82,6 +82,15 @@ func (c *Client) FindHostTopology(
 	ctx context.Context,
 	tenantID, hostID string,
 ) (ResourceTopology, bool, error) {
+	return c.findHostTopology(ctx, tenantID, hostID, false)
+}
+
+// FindCMDBTopology 返回同一业务下全部集群和模块，供旧 CMDB 丰富补全缺失字段。
+func (c *Client) FindCMDBTopology(ctx context.Context, tenantID, hostID string) (ResourceTopology, bool, error) {
+	return c.findHostTopology(ctx, tenantID, hostID, true)
+}
+
+func (c *Client) findHostTopology(ctx context.Context, tenantID, hostID string, all bool) (ResourceTopology, bool, error) {
 	if ctx == nil {
 		return ResourceTopology{}, false, fmt.Errorf("find host topology: context must not be nil")
 	}
@@ -186,6 +195,34 @@ func (c *Client) FindHostTopology(
 			}
 		}
 	}
+	if all {
+		sets, modules := map[int64]bool{}, map[int64]bool{}
+		for _, membership := range memberships {
+			ids, _ := stringSlice(membership["topology_ancestor_unique_ids"])
+			for _, id := range ids {
+				node := nodes[id]
+				inst, valid := positiveInt64(node["model_inst_id"])
+				if !valid {
+					continue
+				}
+				name, _ := node["bk_inst_name"].(string)
+				switch node["model_id"] {
+				case "cw-Set":
+					if !sets[inst] {
+						sets[inst] = true
+						result.BKSetIDs = append(result.BKSetIDs, inst)
+						result.BKSetNames = append(result.BKSetNames, name)
+					}
+				case "cw-Module":
+					if !modules[inst] {
+						modules[inst] = true
+						result.BKModuleIDs = append(result.BKModuleIDs, inst)
+						result.BKModuleNames = append(result.BKModuleNames, name)
+					}
+				}
+			}
+		}
+	}
 	return result, true, nil
 }
 
@@ -229,7 +266,7 @@ func (c *Client) searchUnique(ctx context.Context, index string, filters []any) 
 	return items[0], true, nil
 }
 
-func (c *Client) searchAll(ctx context.Context, index string, filters []any, size int) ([]map[string]any, error) {
+func (c *Client) searchAll(ctx context.Context, index string, filters []any, size int, sortFields ...string) ([]map[string]any, error) {
 	if c.doris != nil {
 		if index == oneModelEdgeIndex {
 			return c.doris.edgeRows(ctx, filters, size)
@@ -241,10 +278,18 @@ func (c *Client) searchAll(ctx context.Context, index string, filters []any, siz
 	if c.transport == nil {
 		return nil, fmt.Errorf("%w: CMDB mainline topology ES is not configured", ErrDataSourceUnavailable)
 	}
-	body, err := json.Marshal(map[string]any{
+	query := map[string]any{
 		"size": size, "track_total_hits": false,
 		"query": map[string]any{"bool": map[string]any{"filter": filters}},
-	})
+	}
+	if len(sortFields) > 0 {
+		order := make([]any, 0, len(sortFields))
+		for _, field := range sortFields {
+			order = append(order, map[string]string{field: "asc"})
+		}
+		query["sort"] = order
+	}
+	body, err := json.Marshal(query)
 	if err != nil {
 		return nil, fmt.Errorf("encode query: %w", err)
 	}

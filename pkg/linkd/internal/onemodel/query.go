@@ -35,6 +35,8 @@ type Query struct {
 	ModelID string `json:"model_id"`
 	Where   Filter `json:"where"`
 	Limit   int    `json:"limit"`
+	// First 仅返回稳定排序后的首条；不声明结果集完整，也不执行多命中检查。
+	First bool `json:"first,omitempty"`
 }
 
 // Reader 是普通查询与关联读取共用的 SDK 端口。
@@ -54,7 +56,8 @@ func (i Instance) Document() map[string]any {
 	return out
 }
 
-// Search 在后端筛选并复核完整结果；超过上限、部分失败或重复身份均返回错误。
+// Search 在后端筛选并复核结果；普通查询超过上限、部分失败或重复身份均返回错误。
+// First 显式只读取稳定首条，不把多命中视为超限；仍复核租户、模型和响应完整性。
 func (c *Client) Search(ctx context.Context, tenant string, q Query) ([]Instance, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("%w: context is required", ErrInvalidQuery)
@@ -78,10 +81,18 @@ func (c *Client) Search(ctx context.Context, tenant string, q Query) ([]Instance
 	}
 	var rows []map[string]any
 	var err error
+	size := q.Limit + 1
+	if q.First {
+		size = 1
+	}
 	if c.doris != nil {
-		rows, err = c.doris.instancesPage(ctx, tenant, q.ModelID, q.Where, q.Limit+1, "")
+		rows, err = c.doris.instancesPage(ctx, tenant, q.ModelID, q.Where, size, "")
+	} else if q.First {
+		// KAC InstanceQueryService 默认以 model_id/model_inst_id 作为排序键。
+		// 排序和 size=1 必须一起下推，否则先截断再排序会选中不同实例。
+		rows, err = c.searchAll(ctx, oneModelInstanceIndex, filters, size, "model_id", "model_inst_id")
 	} else {
-		rows, err = c.searchAll(ctx, oneModelInstanceIndex, filters, q.Limit+1)
+		rows, err = c.searchAll(ctx, oneModelInstanceIndex, filters, size)
 	}
 	if err != nil {
 		return nil, err

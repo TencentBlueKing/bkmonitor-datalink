@@ -299,3 +299,16 @@ func TestDorisTimeoutAndRelatedUseSameBackend(t *testing.T) {
 		}
 	})
 }
+
+func TestDorisFirstUsesLimitOneWithoutOverflowProbe(t *testing.T) {
+	c := dorisTestClient(t, func(_ context.Context, q string, args []driver.NamedValue) (driver.Rows, error) {
+		if !strings.Contains(q, "ORDER BY `model_inst_id` ASC") || !strings.HasSuffix(q, "LIMIT ?") || args[len(args)-1].Value != int64(1) {
+			t.Fatal(q, args)
+		}
+		return &dorisTestRows{columns: instanceColumns, items: [][]driver.Value{dorisInstanceRow("t", "cw-Host", "101")}, closed: new(atomic.Int32)}, nil
+	})
+	rows, err := c.Search(t.Context(), "t", Query{ModelID: "cw-Host", Limit: 1, First: true})
+	if err != nil || len(rows) != 1 {
+		t.Fatal(rows, err)
+	}
+}

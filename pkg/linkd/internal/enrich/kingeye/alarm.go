@@ -35,10 +35,10 @@ type AlarmMessage struct {
 	BKTenantID        string         `json:"bk_tenant_id"`
 	BKBizID           string         `json:"bk_biz_id"`
 	BKBizName         string         `json:"bk_biz_name"`
-	BKSetID           string         `json:"bk_set_id"`
-	BKSetName         string         `json:"bk_set_name"`
-	BKModuleID        string         `json:"bk_module_id"`
-	BKModuleName      string         `json:"bk_module_name"`
+	BKSetID           any            `json:"bk_set_id"`
+	BKSetName         any            `json:"bk_set_name"`
+	BKModuleID        any            `json:"bk_module_id"`
+	BKModuleName      any            `json:"bk_module_name"`
 	BKCloudID         string         `json:"bk_cloud_id"`
 	BKCloudName       string         `json:"bk_cloud_name"`
 	BKObjID           string         `json:"bk_obj_id"`

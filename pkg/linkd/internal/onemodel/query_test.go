@@ -201,3 +201,27 @@ func TestRelationDirectionAndIdentityValidation(t *testing.T) {
 		t.Fatalf("rows=%v err=%v calls=%d", rows, err, calls)
 	}
 }
+
+func TestSearchFirstPushesStableOrderAndLimitToBackend(t *testing.T) {
+	c, err := NewClient(ClientConfig{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		var q map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&q); err != nil {
+			t.Fatal(err)
+		}
+		if q["size"] != float64(1) {
+			t.Fatal(q)
+		}
+		raw, _ := json.Marshal(q["sort"])
+		if string(raw) != `[{"model_id":"asc"},{"model_inst_id":"asc"}]` {
+			t.Fatal(q)
+		}
+		return topologySearchResponse(map[string]any{"bk_tenant_id": "t", "model_id": "cw-Host", "model_inst_id": "101", "entity_uid": "cw-Host|101", "attributes": map[string]any{}}), nil
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := c.Search(t.Context(), "t", Query{ModelID: "cw-Host", Limit: 1, First: true})
+	if err != nil || len(rows) != 1 || rows[0].InstanceID != "101" {
+		t.Fatal(rows, err)
+	}
+}

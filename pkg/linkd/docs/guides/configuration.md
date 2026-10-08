@@ -182,7 +182,9 @@ Processor 自行校验字段和类型；每项最多 64 KiB，禁止空 key。�
 `strategy.url` 输出完整 URL，省略时继续输出站内相对路径。`test` 支持下述负载模拟参数；其余 Processor 当前只接受空 config。
 
 `event_sources[].enrich.processors` 是每条 Event 在策略前执行的有序丰富链。当前注册名为
-`strategy/resource/display/metric/source/test`；空列表输出 `{"processors":[]}`。
+`strategy/resource/display/metric/source/log/cloud_resource/k8s/apm/test/cmdb/fields/cmdb-access`；空列表输出 `{"processors":[]}`。
+
+旧 KAC 单模型 CMDB 配置转换生成 `cmdb → fields → cmdb-access`；身份绑定、首条选择、无匹配回滚和展示连接配置见 [自定义丰富](../design/custom-enrichment.md#81-cmdb-旧行为对齐2026-10-08)。`cmdb-access` 应放在字段规则之后，按有效身份补权限标签和动态分组。
 重复类型、空 type、未知处理器或缺少 Processor 所需的数据源会在来源发布时被拒绝。路由按任务
 固定的 Release 创建，来源发布后通过停止确认与重新调度生效。停用来源按调度协议停止任务，积压保留。
 
@@ -231,7 +233,7 @@ enrich:
 
 第三方只读资源统一由顶层 `resources` 配置：`mysql` 供 Kingeye 元数据 Reader 使用，
 `onemodel` 供统一实例、关联和业务拓扑查询使用，`kingeye_display` 供展示缓存转换使用，
-`dynamic_group` 供 Resource 从 Kingeye 已物化的 Redis hash 读取分组归属。
+`dynamic_group` 供 resource 和 cmdb-access 从 Kingeye 已物化的 Redis hash 读取分组归属。
 KAC 兼容存储与处置凭据使用下节的 `plugins.kac`，不参与丰富查询。
 所有 EventSource、丰富预览及 OneModel 查询复用同一套资源定义；连接仍按实际依赖初始化，来源任务退出时关闭。
 OneModel 默认使用 Elasticsearch，实例读取 `kingeye_all_instance`，关联边固定读取 `kingeye_topo`；业务拓扑读取
@@ -273,7 +275,7 @@ MySQL 模型定义、CMDB APIGW、动态分组 Redis 的职责不变。KAC alarm
 
 ### 动态分组 Redis 投影
 
-启用 `resource` Processor 时可选配置 `resources.dynamic_group`。当前读端对齐 Kingeye
+启用 `resource` 或 `cmdb-access` Processor 时可选配置 `resources.dynamic_group`。当前读端对齐 Kingeye
 `get_dynamic_inst_group_cache_key` 写入格式：Redis hash key 为
 `<key_prefix>dynamic_inst_group:<model_id>`，field 为 canonical `model_inst_id`，
 value 为 `{"group_ids":[整数分组 ID...]}`。Linkd 只读取该投影，不计算成员关系。

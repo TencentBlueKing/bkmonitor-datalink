@@ -327,3 +327,23 @@ func TestCustomPatchesAndExplicitKACMappings(t *testing.T) {
 		t.Fatal("overrode protocol tenant")
 	}
 }
+
+func TestCMDBIdentityAndTopologyCollectionsReachKACOutput(t *testing.T) {
+	alert := testAlert()
+	alert.Enrich = jsonObject(`{"processors":[{"cmdb":{"status":"succeeded","patches":[{"op":"set","path":"$.labels.model_id","value":"cw-Host"},{"op":"set","path":"$.labels.model_inst_id","value":"202"},{"op":"set","path":"$.labels.bk_obj_id","value":"host"},{"op":"set","path":"$.labels.bk_inst_id","value":202},{"op":"set","path":"$.extra_data.bk_set_id","value":[3,4]},{"op":"set","path":"$.extra_data.bk_set_name","value":["A","B"]},{"op":"set","path":"$.extra_data.bk_module_id","value":[7,8]},{"op":"set","path":"$.extra_data.bk_module_name","value":["C","D"]}]}}]}`)
+	message, err := CompatibilityMessage(alert, kacLevel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(message)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document map[string]any
+	if err = json.Unmarshal(raw, &document); err != nil {
+		t.Fatal(err)
+	}
+	if document["model_inst_id"] != "202" || document["bk_inst_id"] != "202" || len(document["bk_set_id"].([]any)) != 2 || len(document["bk_module_name"].([]any)) != 2 {
+		t.Fatal(document)
+	}
+}

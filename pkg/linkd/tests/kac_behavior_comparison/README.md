@@ -114,3 +114,19 @@ LINKD_TEST_KAC_SOURCE_ROOT=/path/to/kingeye \
 LINKD_TEST_KAC_PYTHON=/path/to/python3 \
 go test -race -count=1 -v ./internal/cmdb -run '^TestKACCMDBSourceBehaviorComparison$'
 ```
+
+## CMDB 丰富行为对照
+
+[`kac_enrich_behavior_comparison.py`](kac_enrich_behavior_comparison.py) 固定两个旧 KAC 源文件摘要，
+执行实际 EnrichRuleHandler 的身份分组、实例查询、字段赋值和最终回滚函数。输入为 8 组合成告警与实例，
+覆盖 IP 多命中首条、已有 ID 优先、对象已有、未命中、查询失败、对象不符、canonical 身份及无丰富字段。
+同一输入由 KAC 发布端 Python 转换器生成配置，再交给真实 Linkd cmdb 执行器比较结果。
+模型目录、查询、展示及拓扑外部端口被合成数据替代；不导入 KAC 应用，不访问数据库或中间件。
+
+```bash
+LINKD_KAC_SOURCE_DIR=/path/to/kingeye \
+LINKD_KAC_PYTHON=/path/to/python3 \
+go test -race -count=1 -v ./internal/enrich/kingeye/convert -run '^TestKACCMDBBehaviorComparison$'
+```
+
+未提供源码目录时跳过；源码摘要漂移直接失败。此对照验证身份与字段行为，真实拓扑/Redis/处置联调单独进行。

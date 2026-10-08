@@ -24,6 +24,8 @@ import (
 const (
 	identityPrefix = "linkd-"
 	kacTimeLayout  = "2006-01-02 15:04:05"
+	// KAC 输出契约固定此名称，不能随来源丰富结果改变。
+	kacSourceName = "鲸眼监控"
 )
 
 var kacTimeZone = time.FixedZone("Asia/Shanghai", 8*60*60)
@@ -77,7 +79,7 @@ func convertMessageWithLevel(input lifecycle.FinalHookInput, resolve func(string
 	eventIdentity := identityPrefix + input.Alert.AlertID
 	message := kingeye.AlarmMessage{
 		AlarmID: kacAlarmID(input), EventID: eventIdentity,
-		SourceID: values.source.SourceID, SourceName: values.source.SourceName,
+		SourceID: values.source.SourceID, SourceName: kacSourceName,
 		Item: firstNonEmpty(values.metric.DisplayName, values.strategy.StrategyName), MetricName: values.metric.MetricName,
 		Name: input.Alert.Title, Content: input.Alert.Content,
 		AlarmTime: input.Alert.BeginAt.In(kacTimeZone).Format(kacTimeLayout), Action: action, Level: level,

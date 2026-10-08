@@ -603,6 +603,36 @@ type expectedMetric struct {
 	labels map[string]string // 标签
 }
 
+func TestBizSetRelationConfigMetric(t *testing.T) {
+	builder := newRelationMetricsBuilder()
+	builder.WithSchemaProvider(newMockSchemaProviderFromConfig(2, mockSchemaConfig{
+		resources: map[string]*relation.ResourceDefinition{
+			Biz: {Name: Biz, Fields: []relation.FieldDefinition{{Name: BizID, Required: true}}},
+			Set: {Name: Set, Fields: []relation.FieldDefinition{{Name: SetID, Required: true}}},
+		},
+		relations: map[string]*relation.RelationDefinition{
+			"biz_with_set": {FromResource: Biz, ToResource: Set},
+		},
+	}))
+	builder.resources[2] = map[string]*ResourceInfo{
+		Set: {
+			Name: Set,
+			Data: map[string]*Info{
+				"42": {
+					ID:       "42",
+					Resource: Set,
+					Label:    map[string]string{SetID: "42"},
+					RelationConfig: map[string]map[string]any{
+						Biz: {SetID: "42"},
+					},
+				},
+			},
+		},
+	}
+
+	assert.Equal(t, "biz_with_set_relation{bk_biz_id=\"2\",bk_set_id=\"42\"} 1\n", builder.String())
+}
+
 // newMockSchemaProviderFromConfig 从配置创建 Mock SchemaProvider
 func newMockSchemaProviderFromConfig(bizID int, config mockSchemaConfig) *MockSchemaProvider {
 	provider := NewMockSchemaProvider()

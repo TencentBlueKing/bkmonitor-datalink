@@ -238,6 +238,11 @@ func (m *SetCacheManager) SetToRelationInfos(result []map[string]any) []*relatio
 			},
 			Expands: relation.TransformExpands(expands),
 		}
+		if cast.ToInt(r[relation.BizID]) > 0 {
+			info.RelationConfig = map[string]map[string]any{
+				relation.Biz: {relation.SetID: id},
+			}
+		}
 
 		// 如果存在 set_info 数据，则需要注入 set_name 等扩展维度
 		if info.Expands[relation.Set] != nil {

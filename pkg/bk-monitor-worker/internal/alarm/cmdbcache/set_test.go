@@ -18,8 +18,23 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/alarm/redis"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/relation"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/internal/tenant"
 )
+
+func TestSetToRelationInfosIncludesBizRelationConfig(t *testing.T) {
+	manager := &SetCacheManager{}
+	infos := manager.SetToRelationInfos([]map[string]any{
+		{"bk_biz_id": float64(2), "bk_set_id": float64(42)},
+		{"bk_set_id": float64(43)},
+	})
+
+	assert.Len(t, infos, 2)
+	assert.Equal(t, map[string]map[string]any{
+		relation.Biz: {relation.SetID: "42"},
+	}, infos[0].RelationConfig)
+	assert.Empty(t, infos[1].RelationConfig)
+}
 
 var demoSetStr = `
 [

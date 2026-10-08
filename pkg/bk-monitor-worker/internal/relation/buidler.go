@@ -27,11 +27,12 @@ import (
 )
 
 const (
-	Set    = "set"
-	Module = "module"
-	Host   = "host"
-	System = "system"
-	Biz    = "biz"
+	Set      = "set"
+	Module   = "module"
+	Host     = "host"
+	System   = "system"
+	Biz      = "biz"
+	Business = "business"
 
 	AppVersion = "app_version"
 	GitCommit  = "git_commit"

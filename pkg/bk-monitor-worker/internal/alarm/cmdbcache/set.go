@@ -240,7 +240,8 @@ func (m *SetCacheManager) SetToRelationInfos(result []map[string]any) []*relatio
 		}
 		if cast.ToInt(r[relation.BizID]) > 0 {
 			info.RelationConfig = map[string]map[string]any{
-				relation.Biz: {relation.SetID: id},
+				relation.Biz:      {relation.SetID: id},
+				relation.Business: {relation.SetID: id},
 			}
 		}
 

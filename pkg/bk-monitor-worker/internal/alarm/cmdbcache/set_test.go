@@ -31,7 +31,8 @@ func TestSetToRelationInfosIncludesBizRelationConfig(t *testing.T) {
 
 	assert.Len(t, infos, 2)
 	assert.Equal(t, map[string]map[string]any{
-		relation.Biz: {relation.SetID: "42"},
+		relation.Biz:      {relation.SetID: "42"},
+		relation.Business: {relation.SetID: "42"},
 	}, infos[0].RelationConfig)
 	assert.Empty(t, infos[1].RelationConfig)
 }

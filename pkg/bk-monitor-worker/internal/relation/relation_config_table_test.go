@@ -607,11 +607,13 @@ func TestBizSetRelationConfigMetric(t *testing.T) {
 	builder := newRelationMetricsBuilder()
 	builder.WithSchemaProvider(newMockSchemaProviderFromConfig(2, mockSchemaConfig{
 		resources: map[string]*relation.ResourceDefinition{
-			Biz: {Name: Biz, Fields: []relation.FieldDefinition{{Name: BizID, Required: true}}},
-			Set: {Name: Set, Fields: []relation.FieldDefinition{{Name: SetID, Required: true}}},
+			Biz:      {Name: Biz, Fields: []relation.FieldDefinition{{Name: BizID, Required: true}}},
+			Business: {Name: Business, Fields: []relation.FieldDefinition{{Name: BizID, Required: true}}},
+			Set:      {Name: Set, Fields: []relation.FieldDefinition{{Name: SetID, Required: true}}},
 		},
 		relations: map[string]*relation.RelationDefinition{
 			"biz_with_set": {FromResource: Biz, ToResource: Set},
+			"business_set": {Name: "business_set", FromResource: Business, ToResource: Set},
 		},
 	}))
 	builder.resources[2] = map[string]*ResourceInfo{
@@ -623,14 +625,19 @@ func TestBizSetRelationConfigMetric(t *testing.T) {
 					Resource: Set,
 					Label:    map[string]string{SetID: "42"},
 					RelationConfig: map[string]map[string]any{
-						Biz: {SetID: "42"},
+						Biz:      {SetID: "42"},
+						Business: {SetID: "42"},
 					},
 				},
 			},
 		},
 	}
 
-	assert.Equal(t, "biz_with_set_relation{bk_biz_id=\"2\",bk_set_id=\"42\"} 1\n", builder.String())
+	actual := builder.String()
+	assert.ElementsMatch(t, []string{
+		"biz_with_set_relation{bk_biz_id=\"2\",bk_set_id=\"42\"} 1",
+		"business_with_set_relation{bk_biz_id=\"2\",bk_set_id=\"42\"} 1",
+	}, strings.Split(strings.TrimSpace(actual), "\n"))
 }
 
 // newMockSchemaProviderFromConfig 从配置创建 Mock SchemaProvider

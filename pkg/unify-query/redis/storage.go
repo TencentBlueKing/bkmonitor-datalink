@@ -88,10 +88,13 @@ func (s *StorageClient) FormatStorageInfo(keys []string, getValue func(string) (
 
 		value, err := getValue(key)
 		if err != nil {
+			if errors.Is(err, goRedis.Nil) {
+				continue
+			}
 			return nil, fmt.Errorf("failed to get storage config for key %s: %w", key, err)
 		}
 		if value == "" {
-			continue
+			return nil, fmt.Errorf("storage config for key %s must not be empty", key)
 		}
 
 		var data *Storage
@@ -107,6 +110,35 @@ func (s *StorageClient) FormatStorageInfo(keys []string, getValue func(string) (
 	return result, nil
 }
 
+func (s *StorageClient) scanStorageKeys(ctx context.Context, pattern string) ([]string, error) {
+	scan := func(ctx context.Context, client goRedis.Cmdable) ([]string, error) {
+		iter := client.Scan(ctx, 0, pattern, 100).Iterator()
+		var keys []string
+		for iter.Next(ctx) {
+			keys = append(keys, iter.Val())
+		}
+		return keys, iter.Err()
+	}
+	cluster, ok := s.client.(*goRedis.ClusterClient)
+	if !ok {
+		return scan(ctx, s.client)
+	}
+
+	var keys []string
+	var keysMu sync.Mutex
+	err := cluster.ForEachMaster(ctx, func(ctx context.Context, master *goRedis.Client) error {
+		masterKeys, err := scan(ctx, master)
+		if err != nil {
+			return err
+		}
+		keysMu.Lock()
+		keys = append(keys, masterKeys...)
+		keysMu.Unlock()
+		return nil
+	})
+	return keys, err
+}
+
 // GetStorageInfo 从 Redis 获取存储配置信息
 // 使用独立的 key 结构，与 Consul 保持一致
 func (s *StorageClient) GetStorageInfo(ctx context.Context) (map[string]*Storage, error) {
@@ -117,19 +149,9 @@ func (s *StorageClient) GetStorageInfo(ctx context.Context) (map[string]*Storage
 	storageKey := s.GetStoragePath()
 	pattern := fmt.Sprintf("%s:*", storageKey)
 
-	keys := make([]string, 0)
-	var cursor uint64
-	for {
-		var batch []string
-		var err error
-		batch, cursor, err = s.client.Scan(ctx, cursor, pattern, 100).Result()
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan storage keys from redis: %w", err)
-		}
-		keys = append(keys, batch...)
-		if cursor == 0 {
-			break
-		}
+	keys, err := s.scanStorageKeys(ctx, pattern)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan storage keys from redis: %w", err)
 	}
 
 	if len(keys) == 0 {
@@ -140,9 +162,6 @@ func (s *StorageClient) GetStorageInfo(ctx context.Context) (map[string]*Storage
 	return s.FormatStorageInfo(keys, func(key string) (string, error) {
 		data, err := s.client.Get(ctx, key).Result()
 		if err != nil {
-			if errors.Is(err, goRedis.Nil) {
-				return "", nil
-			}
 			return "", fmt.Errorf("failed to get storage value for key %s: %w", key, err)
 		}
 		return data, nil
@@ -184,7 +203,7 @@ func (s *StorageClient) WatchStorageInfo(ctx context.Context) (<-chan any, error
 					return
 				}
 				// 当收到消息时，通知配置变更
-				log.Debugf(ctx, "[redis] received storage change notification: %s", msg.Payload)
+				log.Debugf(ctx, "[redis] received storage change notification")
 				// 非阻塞合并通知；缓冲区已有信号时无需再入队，因为消费者会全量读取。
 				select {
 				case resultChan <- msg:

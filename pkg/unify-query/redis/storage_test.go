@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/alicebob/miniredis/v2/server"
 	goRedis "github.com/go-redis/redis/v8"
 	"github.com/likexian/gokit/assert"
 )
@@ -291,6 +292,28 @@ func TestFormatStorageInfo(t *testing.T) {
 		assert.Contains(t, err.Error(), "redis timeout")
 	})
 
+	t.Run("跳过扫描后已删除的Key", func(t *testing.T) {
+		storageClient := NewStorageClient(nil, "test")
+		key := storageClient.GetStoragePath() + ":1"
+		result, err := storageClient.FormatStorageInfo([]string{key}, func(string) (string, error) {
+			return "", goRedis.Nil
+		})
+		if err != nil || len(result) != 0 {
+			t.Fatalf("deleted key must be skipped, got %#v, error: %v", result, err)
+		}
+	})
+
+	t.Run("拒绝空存储配置", func(t *testing.T) {
+		storageClient := NewStorageClient(nil, "test")
+		key := storageClient.GetStoragePath() + ":1"
+		result, err := storageClient.FormatStorageInfo([]string{key}, func(string) (string, error) {
+			return "", nil
+		})
+		if err == nil || result != nil {
+			t.Fatalf("empty storage must reject the snapshot, got %#v, error: %v", result, err)
+		}
+	})
+
 	t.Run("忽略不匹配前缀的key", func(t *testing.T) {
 		mr, err := miniredis.Run()
 		if err != nil {
@@ -324,6 +347,70 @@ func TestFormatStorageInfo(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Equal(t, 1, len(result))
 		assert.NotNil(t, result["influxdb-1"])
+	})
+}
+
+func TestGetStorageInfoSkipsKeyDeletedAfterScan(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := goRedis.NewClient(&goRedis.Options{Addr: mr.Addr()})
+	defer client.Close()
+	const deletedKey = "test:data:storage:1"
+	const preservedKey = "test:data:storage:2"
+	const config = `{"address":"http://localhost:8086","type":"influxdb"}`
+	mr.Set(deletedKey, config)
+	mr.Set(preservedKey, config)
+	mr.Server().SetPreHook(func(_ *server.Peer, command string, args ...string) bool {
+		if command == "GET" && args[0] == deletedKey {
+			mr.Del(deletedKey)
+		}
+		return false
+	})
+	result, err := NewStorageClient(client, "test").GetStorageInfo(context.Background())
+	if err != nil || len(result) != 1 || result["2"] == nil || result["1"] != nil {
+		t.Fatalf("only the deleted key must be skipped, got %#v, error: %v", result, err)
+	}
+}
+
+func TestGetStorageInfoAcrossClusterMasters(t *testing.T) {
+	first, second := miniredis.RunT(t), miniredis.RunT(t)
+	client := goRedis.NewClusterClient(&goRedis.ClusterOptions{
+		Addrs: []string{first.Addr(), second.Addr()},
+		ClusterSlots: func(context.Context) ([]goRedis.ClusterSlot, error) {
+			return []goRedis.ClusterSlot{
+				{Start: 0, End: 8191, Nodes: []goRedis.ClusterNode{{Addr: first.Addr()}}},
+				{Start: 8192, End: 16383, Nodes: []goRedis.ClusterNode{{Addr: second.Addr()}}},
+			}, nil
+		},
+	})
+	defer client.Close()
+	// Hash tags "2" and "1" map to slots 5649 and 9842, respectively.
+	for i := 0; i < 101; i++ {
+		first.Set(fmt.Sprintf("test:data:storage:{2}:%d", i), `{"address":"http://first:8086","type":"influxdb"}`)
+	}
+	second.Set("test:data:storage:{1}:0", `{"address":"http://second:9200","type":"elasticsearch"}`)
+	storageClient := NewStorageClient(client, "test")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	t.Run("all masters and cursor pages", func(t *testing.T) {
+		result, err := storageClient.GetStorageInfo(ctx)
+		if err != nil || len(result) != 102 || result["{2}:100"] == nil || result["{1}:0"] == nil {
+			t.Fatalf("expected complete storage from both masters, got %d records, error: %v", len(result), err)
+		}
+	})
+
+	t.Run("master scan failure rejects the complete snapshot", func(t *testing.T) {
+		second.Server().SetPreHook(func(peer *server.Peer, command string, _ ...string) bool {
+			if command == "SCAN" {
+				peer.WriteError("ERR master scan failed")
+				return true
+			}
+			return false
+		})
+		result, err := storageClient.GetStorageInfo(ctx)
+		if err == nil || result != nil {
+			t.Fatalf("a failed master scan must return nil, got %d records (nil=%v), error: %v", len(result), result == nil, err)
+		}
 	})
 }
 

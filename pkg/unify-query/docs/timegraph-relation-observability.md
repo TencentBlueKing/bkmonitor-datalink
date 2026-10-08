@@ -171,7 +171,7 @@ BKOP 容量仪表盘配置为 [timegraph-capacity-dashboard.json](timegraph-capa
 - `timegraph-materialize-topology`：快照生成与排序；记录 `output-budget-elements-used/limit`、`output-budget-bytes-used/limit`（保守估计，不是实际编码字节）；
 - `timegraph-convert-topology`：目标过滤与公共结果转换；`timegraph-encode-topology-item`：子项 JSON 编码及 `encoded-item-bytes`；
 - `http-curl`：已有响应头、body 读取、JSON 解码耗时和 body 字节；新增 `response-body-byte-limit`，保留失败前已读取字节；
-- VM `query_sync` 遇到 `http2: client connection force closed via ClientConn.Close` 且查询 context 仍有效时，只重试一次。两次 `http-curl` span 用 `outbound.request.attempt=1/2` 区分，父 VM span 记录 `query-sync-retry.reason`、首次读取字节、实际尝试次数和最终结果；首次失败的子 span 即使重试成功也仍保留。`unify_query_vm_query_sync_http2_retry_events_total{event="attempted|recovered|failed|canceled"}` 记录实际重试及结果，不以错误原文、URL 或请求参数做标签。重试沿用原截止时间和响应大小上限；HTTP 状态、业务错误、JSON 错误和响应超限不重试。
+- VM `query_sync` 只读查询遇到已识别的 HTTP/2 `ClientConn.Close`、`GOAWAY NO_ERROR` 或有类型信息的网络 `write EPIPE`，且查询 context 仍有效时，最多重试一次。两次 `http-curl` span 用 `outbound.request.attempt=1/2` 区分，父 VM span 记录 `query-sync-retry.reason`、首次读取字节、实际尝试次数和最终结果；首次失败的子 span 即使重试成功也仍保留。已有 `unify_query_vm_query_sync_http2_retry_events_total{event,reason}` 统计 HTTP/2 错误；`unify_query_vm_query_sync_write_retry_events_total{event}` 统计 `write EPIPE`，事件仅为 `attempted|recovered|failed|canceled`。不以错误原文、URL 或请求参数做标签。重试沿用原请求体、认证信息、截止时间和响应大小上限；HTTP 状态、业务错误、JSON 错误和响应超限不重试。写入失败不证明原请求未到达后端，重发仅适用于只读查询。
 - `timegraph-clean`：真实图清理，记录清理前规模及父 context 是否取消；构图失败而未返回图对象时仍交由 Go 回收，不伪造一次 Clean；
 - `http-response-encode-write`：直接/代理最终 JSON 编码与 ResponseWriter 写出，记录状态、writer 报告的 body 字节和写出错误。这个字节数不是客户端实际收包确认，也不包含网络栈排空时间；
 - 预算拒绝所在的模型、构图、Matrix、物化和 HTTP span 记录 `limit-reason/count/maximum`。HTTP 根记录 `request-body-bytes` 和 `response-budget-bytes-used/limit`，后者含保守 envelope 预留，不是实际完整响应长度。

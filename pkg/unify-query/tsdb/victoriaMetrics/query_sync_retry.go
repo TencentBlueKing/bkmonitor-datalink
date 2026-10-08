@@ -6,19 +6,26 @@
 package victoriaMetrics
 
 import (
+	"errors"
+	"net"
 	"regexp"
 	"strings"
+	"syscall"
 )
 
 const http2ClientConnCloseError = "http2: client connection force closed via ClientConn.Close"
 
 var http2GoAwayNoError = regexp.MustCompile("http2: server sent GOAWAY and closed the connection; LastStreamID=[0-9]+, ErrCode=NO_ERROR, debug=")
 
-// vmQuerySyncHTTP2RetryReason 仅识别已复现的连接关闭错误。query_sync 是只读查询，
+// vmQuerySyncRetryReason 仅识别已复现的连接关闭或请求写入错误。query_sync 是只读查询，
 // 但 HTTP 状态、业务错误、JSON 解析错误及响应上限错误不能重复请求。
-func vmQuerySyncHTTP2RetryReason(err error) string {
+func vmQuerySyncRetryReason(err error) string {
 	if err == nil {
 		return ""
+	}
+	var netErr *net.OpError
+	if errors.Is(err, syscall.EPIPE) && errors.As(err, &netErr) && netErr.Op == "write" {
+		return "write_broken_pipe"
 	}
 	message := err.Error()
 	if strings.Contains(message, http2ClientConnCloseError) {

@@ -146,10 +146,7 @@ func TestSharedTopologyTypeCycleReadsReachedSourceInstances(t *testing.T) {
 					seedFiltered = true
 				}
 			}
-			require.Equal(t, sourceQueries == 1, seedFiltered)
-			if sourceQueries == 1 {
-				return contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, 1700000000000), nil
-			}
+			require.False(t, seedFiltered, "incoming roots require an unfiltered candidate read")
 			return append(
 				contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, 1700000000000),
 				contractMatrix(map[string]string{"source_id": "c", "middle_id": "d"}, 1700000000000)...,
@@ -168,7 +165,7 @@ func TestSharedTopologyTypeCycleReadsReachedSourceInstances(t *testing.T) {
 		Timestamp: 1700000000, MaxHops: 3,
 	})
 	require.NoError(t, err)
-	require.Equal(t, 2, sourceQueries, "the reached source type needs an unfiltered candidate read")
+	require.Equal(t, 1, sourceQueries, "the candidate read also covers reached source instances")
 	require.Len(t, result.Snapshots[0].Nodes, 4)
 	require.Len(t, result.Snapshots[0].Edges, 3)
 }

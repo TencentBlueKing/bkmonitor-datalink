@@ -293,11 +293,11 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 		return true, observed, loadErr
 	}
 
-	// The first phase asks every legal first-hop relation for this source. A
-	// complete empty result proves that the requested relation neighborhood is
-	// empty, so no wider candidate query is needed.
+	// Probe first hops only when they cover every relation endpoint that can
+	// observe the root. Otherwise a directed incoming edge can observe the
+	// root even though it cannot be traversed from the root.
 	queriedRoots := make(map[timeGraphRelationKey]struct{})
-	if topologyGrid != nil {
+	if topologyGrid != nil && topologyRootProbeCoversEndpoints(sourceType, relations) {
 		rootObserved := false
 		for _, relation := range relations {
 			if len(relation.V) != 2 || relation.V[0] != sourceType {
@@ -311,15 +311,6 @@ func (m *Model) buildTimeGraph(ctx context.Context, spaceUID string, start, end 
 				queriedRoots[timeGraphRelationKeyFor(relation)] = struct{}{}
 			}
 			rootObserved = rootObserved || observed
-		}
-		// Freeze the nodes observed by first-hop reads before wider candidate
-		// reads can add the source as an unrelated edge endpoint at other times.
-		tg.shared.seedNodeBits = make(map[uint64]timeBitmap)
-		sourceTypeID := tg.nodeBuilder.resource.id(sourceType)
-		for node, bits := range tg.shared.nodeBits {
-			if uint16(node>>48) == sourceTypeID {
-				tg.shared.seedNodeBits[node] = bits
-			}
 		}
 		if !rootObserved && len(tg.partialTimes) == 0 {
 			return tg, nil

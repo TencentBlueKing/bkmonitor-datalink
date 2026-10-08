@@ -340,6 +340,31 @@ func sharedTopologyRootRelationKeys(source cmdb.Resource, maxHops int, relations
 	return result
 }
 
+// topologyRootProbeCoversEndpoints reports whether filtering the outgoing
+// relations by the root identity also observes every incoming root endpoint.
+// The reverse relation must read the same metric with the opposite direction.
+func topologyRootProbeCoversEndpoints(source cmdb.Resource, relations []cmdb.Relation) bool {
+	for _, incoming := range relations {
+		if len(incoming.V) != 2 || incoming.V[1] != source {
+			continue
+		}
+		covered := false
+		for _, outgoing := range relations {
+			if len(outgoing.V) != 2 || outgoing.V[0] != source || outgoing.V[1] != incoming.V[0] {
+				continue
+			}
+			if outgoing.RelationType == incoming.RelationType && outgoing.MetricName == incoming.MetricName && outgoing.Category == incoming.Category && outgoing.Direction != incoming.Direction {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			return false
+		}
+	}
+	return true
+}
+
 func normalizeSharedTopologyLookBack(value string) (string, error) {
 	if value == "" {
 		return fmt.Sprintf("%dms", DefaultLookBackDelta), nil

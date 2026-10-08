@@ -19,9 +19,9 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 )
 
-// A later candidate can contain the source as an edge target even when that
-// frame has no matching first hop. That frame still has an empty neighborhood.
-func TestSharedTopologyEmptyFrameDoesNotGainCandidateOnlyRoot(t *testing.T) {
+// A relation endpoint observes the root even when traversal cannot follow
+// that edge in the requested direction.
+func TestSharedTopologyInboundEndpointKeepsRoot(t *testing.T) {
 	provider := sharedTopologyQueryProvider().(contractSchemaProvider)
 	provider.schemas = []RelationSchema{
 		{RelationType: "forward", Category: RelationCategoryStatic, FromType: "source", ToType: "middle", IsDirectional: true, MetricName: "forward_flow"},
@@ -48,7 +48,8 @@ func TestSharedTopologyEmptyFrameDoesNotGainCandidateOnlyRoot(t *testing.T) {
 	require.Len(t, result.Snapshots, 2)
 	require.Len(t, result.Snapshots[0].Nodes, 2)
 	require.Len(t, result.Snapshots[0].Edges, 1)
-	require.Empty(t, result.Snapshots[1].Nodes)
+	require.Len(t, result.Snapshots[1].Nodes, 1)
+	require.Equal(t, "a", result.Snapshots[1].Nodes[0].Dimensions["source_id"])
 	require.Empty(t, result.Snapshots[1].Edges)
 	require.False(t, result.Snapshots[1].Partial)
 	request := cmdb.SharedTopologyQuery{
@@ -59,6 +60,20 @@ func TestSharedTopologyEmptyFrameDoesNotGainCandidateOnlyRoot(t *testing.T) {
 	compact, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
 	require.NoError(t, err)
 	require.Equal(t, result.Snapshots, decodeCompactForTest(t, compact.Compact))
+
+	// With only the incoming relation in scope there is no outgoing first hop.
+	request.AllowedRelationTypes = []string{"back"}
+	request.ResponseFormat = ""
+	incoming, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
+	require.NoError(t, err)
+	require.Empty(t, incoming.Snapshots[0].Nodes)
+	require.Len(t, incoming.Snapshots[1].Nodes, 1)
+	require.Equal(t, "a", incoming.Snapshots[1].Nodes[0].Dimensions["source_id"])
+	require.Empty(t, incoming.Snapshots[1].Edges)
+	request.ResponseFormat = cmdb.CompactTopologyFormat
+	incomingCompact, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
+	require.NoError(t, err)
+	require.Equal(t, incoming.Snapshots, decodeCompactForTest(t, incomingCompact.Compact))
 }
 
 type topologyOracleEdge struct {
@@ -164,7 +179,7 @@ func independentTopologyFrame(edges []topologyOracleEdge, frame, hops int, relat
 	nodes := make(map[string]bool)
 	resultEdges := make(map[string]bool)
 	for _, edge := range active {
-		if edge.from == "0" {
+		if edge.from == "0" || edge.to == "0" {
 			nodes["0"] = true
 			break
 		}

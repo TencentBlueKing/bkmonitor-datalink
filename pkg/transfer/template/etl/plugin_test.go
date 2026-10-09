@@ -196,7 +196,7 @@ func (s *PrepareByResultTablePluginSuite) TestDefaultGetSeparatorFieldByOption()
 	})
 
 	for i, c := range cases {
-		f, err := template.GetSeparatorFieldByOption(c)
+		f, err := template.GetSeparatorFieldByOption(nil, c)
 		s.Nil(f, i)
 		s.NoError(err, i)
 	}
@@ -231,7 +231,7 @@ func (s *PrepareByResultTablePluginSuite) TestPrepareByResultTablePlugin() {
 		c.Option[config.ResultTableOptSeparatorNodeSource] = source
 		c.Option[config.ResultTableOptSeparatorNode] = target
 
-		f, err := template.GetSeparatorFieldByOption(c)
+		f, err := template.GetSeparatorFieldByOption(nil, c)
 		s.NotNil(f, i)
 		s.NoError(err, i)
 

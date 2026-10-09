@@ -7,7 +7,7 @@
 // an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
 // specific language governing permissions and limitations under the License.
 
-package qcloudmonitor
+package processmonitor
 
 import (
 	"time"
@@ -19,20 +19,20 @@ import (
 )
 
 var (
-	reconcileQCloudMonitorSuccess = promauto.NewCounterVec(
+	reconcileProcessMonitorSuccess = promauto.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: define.MonitorNamespace,
-			Name:      "reconcile_qcloudmonitor_success_total",
-			Help:      "reconcile qcloudmonitor success counter",
+			Name:      "reconcile_processmonitor_success_total",
+			Help:      "reconcile processmonitor success counter",
 		},
 		[]string{"name"},
 	)
 
-	reconcileQCloudMonitorDuration = promauto.NewHistogramVec(
+	reconcileProcessMonitorDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: define.MonitorNamespace,
-			Name:      "reconcile_qcloudmonitor_duration_seconds",
-			Help:      "reconcile qcloudmonitor duration in seconds",
+			Name:      "reconcile_processmonitor_duration_seconds",
+			Help:      "reconcile processmonitor duration in seconds",
 			Buckets:   define.DefObserveDuration,
 		},
 		[]string{"name"},
@@ -47,10 +47,10 @@ var defaultMetricMonitor = newMetricMonitor()
 
 type metricMonitor struct{}
 
-func (m *metricMonitor) IncReconcileQCloudMonitorSuccessCounter(name string) {
-	reconcileQCloudMonitorSuccess.WithLabelValues(name).Inc()
+func (m *metricMonitor) IncReconcileProcessMonitorSuccessCounter(name string) {
+	reconcileProcessMonitorSuccess.WithLabelValues(name).Inc()
 }
 
-func (m *metricMonitor) ObserveReconcileQCloudMonitorDuration(name string, duration time.Duration) {
-	reconcileQCloudMonitorDuration.WithLabelValues(name).Observe(duration.Seconds())
+func (m *metricMonitor) ObserveReconcileProcessMonitorDuration(name string, duration time.Duration) {
+	reconcileProcessMonitorDuration.WithLabelValues(name).Observe(duration.Seconds())
 }

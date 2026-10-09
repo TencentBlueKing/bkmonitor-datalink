@@ -119,10 +119,8 @@ func TestSharedTopologyMetricsCases(t *testing.T) {
 				require.Equal(t, builds+1, readTimeGraphMetric(t, "cmdb_timegraph_stage_seconds", map[string]string{"stage": "build", "result": tt.outcome}, "count"))
 			}
 			if !tt.invalid && !tt.gridLimit && !tt.cancel && !tt.expired {
+				// At H=1, middle-to-target is outside the induced topology.
 				wantCalls := 1.0
-				if tt.partial {
-					wantCalls = 2
-				}
 				require.Equal(t, matrixCalls+wantCalls, readTimeGraphMetric(t, "cmdb_timegraph_stage_seconds", map[string]string{"stage": "relation-edge", "result": matrixOutcome}, "count"))
 			}
 		})

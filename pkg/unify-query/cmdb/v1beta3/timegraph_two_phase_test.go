@@ -129,6 +129,36 @@ func TestSharedTopologyRequiredRelationWithoutRouteFails(t *testing.T) {
 	require.Empty(t, result.Snapshots)
 }
 
+func TestSharedTopologyBoundaryRelationWithoutRouteIsNotRequired(t *testing.T) {
+	model := sharedTopologyQueryModel(map[string]pl.Matrix{
+		"source_middle_flow": contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, 1700000000000),
+	})
+	model.timeGraphQueryReference = func(ctx context.Context, queryTs *structured.QueryTs) (metadata.QueryReference, error) {
+		if queryTs.QueryList[0].FieldName == "middle_target_flow" {
+			return metadata.QueryReference{}, nil
+		}
+		return timeGraphTestQueryReference(ctx, queryTs)
+	}
+	request := cmdb.SharedTopologyQuery{
+		SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"},
+		Timestamp: 1700000000, MaxHops: 1,
+	}
+	result, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
+	require.NoError(t, err)
+	require.Len(t, result.Snapshots, 1)
+	require.Len(t, result.Snapshots[0].Nodes, 2)
+	require.Len(t, result.Snapshots[0].Edges, 1)
+	request.ResponseFormat = cmdb.CompactTopologyFormat
+	compact, err := model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
+	require.NoError(t, err)
+	require.Equal(t, result.Snapshots, decodeCompactForTest(t, compact.Compact))
+
+	request.ResponseFormat = ""
+	request.MaxHops = 2
+	_, err = model.QuerySharedTopology(initTimeGraphQueryTestEnvironment(), request)
+	require.ErrorContains(t, err, "required relation has no physical query route: middle_target_flow")
+}
+
 func TestSharedTopologyTypeCycleReadsReachedSourceInstances(t *testing.T) {
 	provider := sharedTopologyQueryProvider().(contractSchemaProvider)
 	provider.schemas = append(provider.schemas, RelationSchema{

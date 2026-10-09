@@ -5,8 +5,9 @@ package v1beta3
 
 import "github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/cmdb"
 
-// Keep every incident relation, not just BFS tree edges or edges within the
-// reachable types. Boundary relations can contribute induced edges.
+// Keep induced edges between types reachable within H hops, including edges
+// outside the BFS tree. Incoming root edges are also needed to discover root
+// instances when no outgoing edge exists for them.
 // Input order is preserved, but removing unrelated nodes can renumber IDs;
 // callers must compare topology by identity rather than numeric node ID.
 func planSharedTopologyCandidates(source cmdb.Resource, hops int, relations []cmdb.Relation) []cmdb.Relation {
@@ -33,7 +34,7 @@ func planSharedTopologyCandidates(source cmdb.Resource, hops int, relations []cm
 	}
 	result := make([]cmdb.Relation, 0, len(relations))
 	for _, relation := range relations {
-		if reachable[relation.V[0]] || reachable[relation.V[1]] {
+		if (reachable[relation.V[0]] && reachable[relation.V[1]]) || relation.V[1] == source {
 			result = append(result, relation)
 		}
 	}

@@ -15,9 +15,8 @@ func TestCandidatePlannerKeepsInducedAndAttributeEdges(t *testing.T) {
 	for _, pair := range [][2]cmdb.Resource{{"A", "B"}, {"A", "C"}, {"B", "C"}, {"B", "B"}, {"X", "A"}, {"C", "D"}, {"X", "Y"}, {"D", "E"}} {
 		relations = append(relations, cmdb.Relation{V: []cmdb.Resource{pair[0], pair[1]}})
 	}
-	require.Equal(t, relations[:6], planSharedTopologyCandidates("A", 1, relations))
-	want := append(append([]cmdb.Relation{}, relations[:6]...), relations[7])
-	require.Equal(t, want, planSharedTopologyCandidates("A", 2, relations))
+	require.Equal(t, relations[:5], planSharedTopologyCandidates("A", 1, relations))
+	require.Equal(t, relations[:6], planSharedTopologyCandidates("A", 2, relations))
 	require.Equal(t, relations[:0], planSharedTopologyCandidates("unknown", 1, relations))
 	malformed := append(relations, cmdb.Relation{})
 	require.Equal(t, malformed, planSharedTopologyCandidates("A", 1, malformed))

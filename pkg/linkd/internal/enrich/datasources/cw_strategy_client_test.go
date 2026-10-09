@@ -23,14 +23,19 @@ import (
 func TestCWStrategyClientReadsPublication(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		name            string
-		businesses      []int64
-		override, cloud bool
+		name              string
+		businesses        []int64
+		override, cloud   bool
+		deleted, disabled bool
+		unusedRuntime     bool
 	}{
 		{name: "default without old tables", businesses: []int64{2}},
 		{name: "data multiple businesses", businesses: []int64{2, 4}},
 		{name: "override uses child identity", businesses: []int64{2}, override: true},
 		{name: "cloud fields in publication", businesses: []int64{2}, cloud: true},
+		{name: "deleted publication remains matchable", businesses: []int64{2}, deleted: true},
+		{name: "disabled publication and config remain matchable", businesses: []int64{2}, disabled: true},
+		{name: "unused runtime DTO does not block enrichment", businesses: []int64{2}, unusedRuntime: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
@@ -54,7 +59,20 @@ func TestCWStrategyClientReadsPublication(t *testing.T) {
 					delete(payload, "strategy_config")
 					delete(payload, "runtime_query_configs")
 				}
+				if tc.unusedRuntime {
+					payload["runtime_query_configs"].([]any)[0].(map[string]any)["query_configs"].([]any)[0].(map[string]any)["index_set_id"] = ""
+				}
+				if tc.disabled {
+					payload["strategy_config"].(map[string]any)["enable"] = false
+					payload["resolved_strategies"].([]any)[0].(map[string]any)["spec"].(map[string]any)["enable"] = false
+				}
 				rows := splitTestRows(t, payload)
+				if tc.deleted {
+					rows.values[0][7] = "deleted"
+				}
+				if tc.disabled {
+					rows.values[0][9] = false
+				}
 				if tc.override {
 					rows.values[0][1] = int64(9)
 				}
@@ -67,6 +85,13 @@ func TestCWStrategyClientReadsPublication(t *testing.T) {
 			result, found, err := client.GetByStrategyID(t.Context(), models.StrategyQuery{TenantID: "tenant", ID: 1, Version: splitTestVersion})
 			if err != nil || !found || result.Status.BKStrategyID != 1 || result.MonitorTemplateName != "CPU template" || result.Spec.Name != "CPU" || calls != 2 {
 				t.Fatalf("found=%t err=%v result=%+v calls=%d", found, err, result, calls)
+			}
+			wantBusiness := tc.businesses[0]
+			if len(tc.businesses) > 1 {
+				wantBusiness = 5
+			}
+			if result.BKBizID == nil || *result.BKBizID != wantBusiness {
+				t.Fatalf("strategy business=%v want=%d", result.BKBizID, wantBusiness)
 			}
 			if *result.IsDefault == tc.override {
 				t.Fatal("default/override identity lost")

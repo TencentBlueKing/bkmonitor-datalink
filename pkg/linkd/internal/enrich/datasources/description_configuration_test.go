@@ -71,7 +71,7 @@ func splitTestRows(t *testing.T, payload map[string]any) *readerTestRows {
 
 func assertSplitQuery(t *testing.T, ctx context.Context, statement string, args []driver.NamedValue) {
 	t.Helper()
-	if !strings.Contains(statement, "FROM `alarm_strategy_set_split_record`") || !strings.Contains(statement, "bk_tenant_id = ? AND id = ?") || !strings.Contains(statement, "OCTET_LENGTH(payload)") || len(args) != 4 || args[0].Value != int64(maxStrategyPublicationBytes) || args[1].Value != "tenant" || args[2].Value != int64(1) || args[3].Value != int64(2) {
+	if !strings.Contains(statement, "FROM `alarm_strategy_set_split_record`") || !strings.Contains(statement, "bk_tenant_id = ? AND id = ? AND source_resource_version = ?") || !strings.Contains(statement, "OCTET_LENGTH(payload)") || len(args) != 5 || args[0].Value != int64(maxStrategyPublicationBytes) || args[1].Value != "tenant" || args[2].Value != int64(1) || args[3].Value != splitTestVersion || args[4].Value != int64(2) {
 		t.Fatalf("unexpected or unbounded strategy query: %s", statement)
 	}
 	if _, ok := ctx.Deadline(); !ok {
@@ -114,6 +114,15 @@ func TestDescriptionConfigurationReadsOnlySplitRecord(t *testing.T) {
 		}},
 		{name: "missing business projection", code: "publication_business_mismatch", businesses: []int64{2}, change: func(_ map[string]any, r *readerTestRows) { r.values[0][10] = "[2,4]" }},
 		{name: "runtime count mismatch", code: "publication_runtime_invalid", businesses: []int64{2}, change: func(p map[string]any, _ *readerTestRows) { p["runtime_query_configs"] = []any{} }},
+		{name: "runtime query DTO invalid", code: "publication_runtime_invalid", businesses: []int64{2}, change: func(p map[string]any, _ *readerTestRows) {
+			p["runtime_query_configs"].([]any)[0].(map[string]any)["query_configs"].([]any)[0].(map[string]any)["index_set_id"] = ""
+		}},
+		{name: "disabled frozen config remains rejected for content", code: "configuration_disabled_or_invalid", businesses: []int64{2}, change: func(p map[string]any, _ *readerTestRows) {
+			p["strategy_config"].(map[string]any)["enable"] = false
+		}},
+		{name: "disabled frozen spec remains rejected for content", code: "configuration_disabled_or_invalid", businesses: []int64{2}, change: func(p map[string]any, _ *readerTestRows) {
+			p["resolved_strategies"].([]any)[0].(map[string]any)["spec"].(map[string]any)["enable"] = false
+		}},
 		{name: "runtime error", code: "publication_runtime_invalid", businesses: []int64{2}, change: func(p map[string]any, _ *readerTestRows) {
 			p["runtime_query_configs"].([]any)[0].(map[string]any)["error"] = "invalid"
 		}},

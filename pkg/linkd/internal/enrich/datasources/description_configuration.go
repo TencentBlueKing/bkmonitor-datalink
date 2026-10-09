@@ -47,6 +47,10 @@ func (c *DescriptionConfigurationClient) ReadConfiguration(ctx context.Context, 
 	if !found {
 		return description.Configuration{}, descriptionFailure("publication_missing_or_ambiguous")
 	}
+	// 文案入口保留既有严格状态要求；普通 Enrich 可匹配删除或禁用策略。
+	if row.State != "active" || !row.Enabled {
+		return description.Configuration{}, descriptionFailure("publication_not_active")
+	}
 	if row.ParentID != nil {
 		// 覆盖编辑复用父记录版本，整数标签不能证明触发时覆盖内容，不能用当前覆盖冒充。
 		return description.Configuration{}, descriptionFailure("publication_override_revision_missing")
@@ -62,6 +66,9 @@ func (c *DescriptionConfigurationClient) ReadConfiguration(ctx context.Context, 
 	if err != nil {
 		return description.Configuration{}, err
 	}
+	if strategy.Spec.Enable == nil || !*strategy.Spec.Enable {
+		return description.Configuration{}, descriptionFailure("configuration_disabled_or_invalid")
+	}
 	var config models.StrategySetConfig
 	if json.Unmarshal(payload.Config, &config) != nil || !sameStrategyUUID(config.ID, row.ConfigUID) {
 		return description.Configuration{}, descriptionFailure("publication_binding_invalid")
@@ -69,7 +76,14 @@ func (c *DescriptionConfigurationClient) ReadConfiguration(ctx context.Context, 
 	if !config.Enable {
 		return description.Configuration{}, descriptionFailure("configuration_disabled_or_invalid")
 	}
-	runtime := payload.Runtime[0]
+	var runtime struct {
+		Error      json.RawMessage                `json:"error"`
+		Queries    []models.StrategyQueryConfig   `json:"query_configs"`
+		Algorithms []description.RuntimeAlgorithm `json:"algorithms"`
+	}
+	if json.Unmarshal(payload.Runtime[0], &runtime) != nil {
+		return description.Configuration{}, descriptionFailure("publication_runtime_invalid")
+	}
 	if len(runtime.Error) > 0 || len(runtime.Queries) == 0 || len(runtime.Queries) > 32 || len(runtime.Algorithms) > 32 {
 		return description.Configuration{}, descriptionFailure("publication_runtime_invalid")
 	}

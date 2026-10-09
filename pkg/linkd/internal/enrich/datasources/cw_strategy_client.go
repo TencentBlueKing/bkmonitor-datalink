@@ -92,7 +92,7 @@ func cwStrategyFromPublication(row strategyPublicationRow, payload strategyPubli
 	entry := payload.Resolved[0]
 	labels := entry.Metadata.Labels
 	var spec models.CWStrategySpec
-	if json.Unmarshal(entry.Spec, &spec) != nil || spec.Enable == nil || !*spec.Enable {
+	if json.Unmarshal(entry.Spec, &spec) != nil {
 		return models.CWStrategy{}, descriptionFailure("configuration_disabled_or_invalid")
 	}
 	if row.ParentID == nil && spec.ConfigType != payload.Set.ConfigType {
@@ -124,11 +124,17 @@ func cwStrategyFromPublication(row strategyPublicationRow, payload strategyPubli
 	if kind != models.CWStrategyKindStrategy && kind != models.CWStrategyKindCloud {
 		return models.CWStrategy{}, descriptionFailure("configuration_config_invalid")
 	}
+	businessID := labels.BusinessID
+	// Kingeye 将多业务 DATA 等价投影折叠为模板业务下的全局策略；
+	// 来源业务不能用于选择发布配置，仍由 Processor 校验全局业务关系。
+	if row.ParentID == nil && payload.Set.ConfigType == "data" && len(payload.Resolved) > 1 && payload.Set.TemplateBusinessID != 0 {
+		businessID = payload.Set.TemplateBusinessID
+	}
 	return models.CWStrategy{
 		Active: true, Kind: kind, APIVersion: "v1alpha1", UID: entry.Metadata.UID,
 		Name: entry.Metadata.Name, Namespace: entry.Metadata.Namespace, Annotations: entry.Metadata.Annotations,
 		Spec: spec, Status: models.CWStrategyStatus{BKStrategyID: row.ID},
-		BKTenantID: &labels.TenantID, BKBizID: &labels.BusinessID, IsDefault: labels.IsDefault,
+		BKTenantID: &labels.TenantID, BKBizID: &businessID, IsDefault: labels.IsDefault,
 		DefaultStrategyConfigUID: labels.DefaultConfigUID, MonitorTemplateID: &row.TemplateID,
 		ConfigID: &labels.ConfigID, ObjectModelCode: labels.ObjectModelCode, BKObjectInstID: instanceID,
 	}, nil

@@ -79,11 +79,9 @@ type strategyPublication struct {
 	} `json:"strategy_set"`
 	Config   json.RawMessage    `json:"strategy_config"`
 	Resolved []resolvedStrategy `json:"resolved_strategies"`
-	Runtime  []struct {
-		Error      json.RawMessage                `json:"error"`
-		Queries    []models.StrategyQueryConfig   `json:"query_configs"`
-		Algorithms []description.RuntimeAlgorithm `json:"algorithms"`
-	} `json:"runtime_query_configs"`
+	// Runtime 只供文案入口读取；普通 Enrich 不解码不使用的运行时字段，
+	// 避免运行时 DTO 的字段形态阻断已验证的 resolved 策略投影。
+	Runtime []json.RawMessage `json:"runtime_query_configs"`
 }
 
 // 单条 SELECT 同时读取版本、状态和完整发布材料，避免跨查询混入不同调和轮次。
@@ -92,7 +90,7 @@ func readStrategyPublication(ctx context.Context, db *gorm.DB, query models.Stra
 	var rows []strategyPublicationRow
 	err := db.WithContext(ctx).Table("alarm_strategy_set_split_record").
 		Select("id,parent_id,bk_tenant_id,strategy_set_uid,monitor_template_id,config_uid,source_resource_version,state,publish_status,enabled,CASE WHEN OCTET_LENGTH(bk_biz_ids) <= 1024 THEN bk_biz_ids ELSE NULL END AS bk_biz_ids,CASE WHEN OCTET_LENGTH(payload) <= ? THEN payload ELSE NULL END AS payload", maxStrategyPublicationBytes).
-		Where("bk_tenant_id = ? AND id = ?", query.TenantID, query.ID).Limit(2).Find(&rows).Error
+		Where("bk_tenant_id = ? AND id = ? AND source_resource_version = ?", query.TenantID, query.ID, query.Version).Limit(2).Find(&rows).Error
 	if err != nil {
 		return strategyPublicationRow{}, false, fmt.Errorf("read strategy publication: %w", err)
 	}
@@ -106,7 +104,8 @@ func readStrategyPublication(ctx context.Context, db *gorm.DB, query models.Stra
 	if row.ID != query.ID || row.TenantID != query.TenantID || row.Version != query.Version {
 		return strategyPublicationRow{}, false, descriptionFailure("publication_version_mismatch")
 	}
-	if row.State != "active" || row.PublishStatus != "published" || !row.Enabled {
+	// 删除或禁用不抹去已触发事件的发布身份；普通丰富只校验发布完成与版本绑定。
+	if row.PublishStatus != "published" {
 		return strategyPublicationRow{}, false, descriptionFailure("publication_not_active")
 	}
 	if len(row.Payload) == 0 || len(row.Payload) > maxStrategyPublicationBytes {
@@ -132,9 +131,6 @@ func decodeStrategyPublication(row strategyPublicationRow) (strategyPublication,
 		var config models.StrategySetConfig
 		if json.Unmarshal(payload.Config, &config) != nil || !sameStrategyUUID(config.ID, row.ConfigUID) {
 			return payload, descriptionFailure("publication_binding_invalid")
-		}
-		if !config.Enable {
-			return payload, descriptionFailure("configuration_disabled_or_invalid")
 		}
 	} else if *row.ParentID <= 0 || *row.ParentID == row.ID {
 		return payload, descriptionFailure("publication_binding_invalid")

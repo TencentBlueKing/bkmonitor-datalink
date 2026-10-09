@@ -19,6 +19,7 @@ import (
 	"linkd/internal/config"
 	"linkd/internal/domain"
 	"linkd/internal/eventsource"
+	"linkd/internal/jsonpath"
 	"linkd/internal/policy"
 	"linkd/internal/runtimeconfig"
 )
@@ -122,6 +123,30 @@ func renderParent(ctx context.Context, decision Decision, members []Snapshot, so
 	event.MergeOrigin = &domain.MergeOrigin{OperationID: decision.ID, WindowID: decision.WindowID, Policy: domain.PolicyVersion{ID: decision.Policy.ID, Version: decision.Policy.Version, Digest: decision.Policy.Compiled.Digest}, MembersDigest: MembersDigest(decision.MemberIDs), MemberCount: len(decision.MemberIDs), AlarmTags: tags}
 	if event.ExtraData == nil {
 		event.ExtraData = domain.JSONObject{}
+	}
+	// 父事件不继承任意成员扩展；仅为显式模板输出保留已声明的同名 KAC 自定义字段。
+	// KAC 发布的自定义映射固定为 extra_data 同名键，目录随 prepared Event 冻结。
+	customFields := []string{}
+	for _, field := range compiled.Merge.Template {
+		mapping, ok := compiled.Common.FieldMappings[field.Key]
+		if !ok {
+			continue
+		}
+		target, err := jsonpath.ParseTarget(mapping.Path)
+		if err != nil {
+			return domain.Event{}, err
+		}
+		parts := target.Parts()
+		if len(parts) == 2 && parts[0] == "extra_data" && parts[1] == field.Key {
+			customFields = append(customFields, field.Key)
+		}
+	}
+	if len(customFields) > 0 {
+		slices.Sort(customFields)
+		event.ExtraData["__kac_custom_fields"], err = json.Marshal(customFields)
+		if err != nil {
+			return domain.Event{}, err
+		}
 	}
 	event.ExtraData["source_id"] = json.RawMessage(`"builtin_alarm_merge"`)
 	event.ExtraData["source_name"] = json.RawMessage(`"告警合并"`)

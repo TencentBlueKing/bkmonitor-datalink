@@ -106,6 +106,7 @@ func (p *Previewer) Preview(ctx context.Context, request PreviewRequest) (Previe
 		level = p.level()
 	}
 	relation := RelationContext{Lookup: p.relations}
+	var originView *FactView
 	if request.OriginAlertID != "" {
 		if !request.Rely || p.facts == nil {
 			return PreviewResponse{}, ErrInvalid
@@ -117,18 +118,20 @@ func (p *Previewer) Preview(ctx context.Context, request PreviewRequest) (Previe
 		if origin.BKTenantID != request.TenantID || origin.AlertID != request.OriginAlertID {
 			return PreviewResponse{}, ErrInvalid
 		}
-		view, err := AlertView(origin, compiled.Common.FieldMappings, level, RelationContext{})
+		originView, err = AlertView(origin, compiled.Common.FieldMappings, level, RelationContext{})
 		if err != nil {
 			return PreviewResponse{}, err
 		}
-		ref, found, err := view.CanonicalInstance(ctx)
-		if err != nil {
-			return PreviewResponse{}, err
+		if compiled.Shield != nil && compiled.Shield.ShieldMode == "cmdb_shield" {
+			ref, found, err := originView.CanonicalInstance(ctx)
+			if err != nil {
+				return PreviewResponse{}, err
+			}
+			if !found {
+				return PreviewResponse{}, ErrUnavailable
+			}
+			relation.Origin = ref
 		}
-		if !found {
-			return PreviewResponse{}, ErrUnavailable
-		}
-		relation.Origin = ref
 	}
 	at := time.Now().UTC()
 	if request.At != nil {
@@ -139,6 +142,12 @@ func (p *Previewer) Preview(ctx context.Context, request PreviewRequest) (Previe
 	}
 	response := PreviewResponse{ID: release.ID, Version: release.Version, Compiled: compiled.Summary, Mode: "matching_only", At: at, Evaluations: []PreviewVerdict{}}
 	evaluate := func(severity string, view *FactView) error {
+		if originView != nil {
+			view, err = view.WithOrigin(originView)
+			if err != nil {
+				return err
+			}
+		}
 		verdict, err := Evaluate(ctx, release, compiled, view, p.targets, at, request.Rely)
 		if err == nil {
 			response.Evaluations = append(response.Evaluations, PreviewVerdict{Severity: severity, Verdict: verdict})

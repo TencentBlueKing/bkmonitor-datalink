@@ -113,7 +113,12 @@ API 成功表示配置已发布，不表示全部 Worker 已加载或相关运�
 ```
 
 省略 severity 时逐项返回 Event 的全部 evaluation；输入 Alert 只返回当前等级。省略 at 使用当前时间。
-依赖屏蔽可通过 `rely=true` 选择被屏蔽条件，`origin_alert_id` 提供同租户主实例作为关系查询起点。
+依赖屏蔽可通过 `rely=true` 选择被屏蔽条件，`origin_alert_id` 提供同租户主告警的有效字段和关系查询起点。
+只有 `rely_policy` 可以设置 `is_alarm_field_referenced: true`，其 `target_value` 必须是包含
+`${字段key}` 的字符串。字段必须在内置目录或 `field_mappings` 中；未提供的值替换为空字符串，
+不可用的丰富字段仍使条件不可求值。每次匹配独立解析，不修改编译模板；`terms/must_not_terms`
+将替换结果包装为单元素数组，不拆分字符串或展开字段数组。未启用标记的模板文本保持字面值。
+需要具体模型的 CMDB 关系条件不能使用引用。引用预览需提供 `origin_alert_id`；普通字段引用不要求主实例身份。
 业务范围仍受策略 space_code 约束；主目标 descriptor 不被误用于约束另一模型的依赖候选。
 
 响应包含策略 ID/版本、编译摘要、at、`mode=matching_only` 和 `evaluations[]`。每项含 evaluated、matched、
@@ -124,7 +129,9 @@ reason、groups（逐条件结果）及可用的 group_key。`evaluated=false` �
 
 ## 有效字段读取
 
-`name/content/object` 来自保存补丁合成的 title/content/subject_name；object 的明确空展示回退 subject_id。
+`name/content` 来自保存补丁合成的 title/content。旧清洗同名 `extra_data.object/item/meta_info/strategy_id/dimension_info`
+优先使用有效视图中的值；显式空值、0、false 不触发回退。没有旧字段时，object 使用 subject_name/subject_id，
+meta_info 使用有效同名丰富值或 source_event_id。
 其他内置字段优先读取有效 labels，再读取有效 extra_data；`bk_biz_id` 在不存在丰富覆盖时可使用来源
 `dimensions.bk_biz_id`。`source_id/source_name` 不回退到 Linkd EventSourceID。
 `strategy` 对应 strategy_name，`strategy_id` 对应 monitor_template_id，`dimension_info` 对应 dimension_text，

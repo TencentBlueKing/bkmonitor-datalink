@@ -51,7 +51,7 @@ Linkd Console 是独立构建的运行与管理控制台，代码位于 `console
 | OneModel 实例存储 | Kingeye 当前统一实例来源；可选 Doris 通用实例/关系表；Elasticsearch 逻辑入口为 `kingeye_all_instance` alias，实例根身份为 `bk_tenant_id/model_id/model_inst_id/entity_uid`，来源原始属性位于 `attributes`，可检索动态属性位于 nested `attribute_values` |
 | strategy（丰富分组） | 丰富结果中的策略补充信息，包含 bk_strategy_id、monitor_template_id、strategy_config_id 三种独立身份，以及展示名称、跳转链接和鲸眼配置数据源；monitor_template_id 沿用旧 clean_strategy_id 的模板名称/策略名称回退行为 |
 | source（丰富分组） | 丰富结果中的来源补充信息：按租户和 Event.EventSourceID（KAC 的 linkd_source_id）回查 alarm_collect_alarmsource，source_id 保存该表的 id，source_name 保存名称，meta_info 承载来源事件标识；不替代 Linkd 的 EventSourceID |
-| meta_info（丰富字段） | 迁移后承载 Event.SourceEventID 中的来源事件标识，保存到 enrich.source.meta_info；旧实现使用内部转换对象 ID，本次已确认调整其取值来源 |
+| meta_info（丰富字段） | 优先保留旧清洗的同名 extra_data 值；未提供时使用来源丰富值或 Event.SourceEventID，不替代来源原始身份 |
 | metric（丰富分组） | 丰富结果中的指标补充信息，包含监控项展示名称、按原分类解释的指标名称、单位及本次告警观测数据的查询参数；指标名称不统一定义为指标 ID，多个丰富分类共用该分组 |
 | 来源策略身份 | Event.Labels 中 `strategy_id` 与 `strategy_version`；新发布链中前者为 SplitRecord 主键，后者为 `source_resource_version`。两个字段均参与运行时读取校验，不能用旧策略 ID 或 Config status 版本替代。 |
 | 鲸眼策略配置 | Linkd 从 Kingeye MySQL `alarm_strategy_set_split_record` 的同版本发布材料构造的只读丰富视图；分类、展示和指标查询复用 `resolved_strategies[*].spec`，不读取旧配置表。 |
@@ -152,6 +152,8 @@ Event 丰富模型、冻结 CAS、逐等级主流程和预览已落地；策略�
 | PolicyContext | EventProcessing 中已 CAS 保存的首次策略时间、发布版本引用与配置读取跳过原因；临时 Plan 撤销或完成后仍保留 |
 | PolicyOperation | 策略同步操作的持久化摘要、目标版本和首次时间锚点，供幂等发布重试 |
 | Event Enrich | 在事件策略裁决前丰富 Event，保存结果和诊断；不覆盖来源事实 |
+| 触发告警字段引用 | 依赖屏蔽 rely_policy 中显式启用的 `${字段key}` 模板，每次读取选定主告警的有效字段，不能改变租户、目标或选主规则 |
+| KAC 自定义字段目录快照 | 来源 fields 配置声明 `extra_data.__kac_custom_fields` 名称列表，兼容投影只展开已登记且不受保护的有效字段 |
 | 有效事件视图 | Event 来源字段按有序丰富补丁计算出的读取视图，供条件匹配和后续投影使用 |
 | 事件抑制 | 阻止本次触发 Event 形成新的有效触发动作；结果属于 Event，不是 Alert 的生命周期状态 |
 | 策略状态模拟 | 在请求私有内存中，以多条已丰富 Event 和虚拟时间执行单个策略的计数、生命周期及合并窗口裁决；不读取生产运行状态，不创建实际父告警或执行输出 |

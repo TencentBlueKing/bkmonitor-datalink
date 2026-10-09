@@ -232,6 +232,56 @@ func TestDependencySelectsNewestBeforeChildTimeAndKeepsBinding(t *testing.T) {
 	}
 }
 
+func TestDependencyReferenceBindsAndRechecksFrozenMain(t *testing.T) {
+	repo, clock, s, state, action := dependencyFixture(t, "custom_shield")
+	r := dependencyRelease(t, "custom_shield")
+	var spec policy.ShieldSpec
+	if err := json.Unmarshal(r.Spec, &spec); err != nil {
+		t.Fatal(err)
+	}
+	spec.RelyPolicy = json.RawMessage(`{"expression":"A","A":{"condition":"term","target_key":"object","target_value":"${model_inst_id}","is_alarm_field_referenced":true}}`)
+	raw, _ := json.Marshal(spec)
+	compiled, err := policy.Compile(policy.Shield, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Spec, r.Compiled = compiled.Canonical, compiled.Summary
+	directory := &shieldDirectory{releases: []policy.Release{r}}
+	s.Loader.Catalog = policy.NewCatalog(directory)
+	s.Loader.Releases = directory
+	p := dependencyProcessor(t, repo, clock, s, state, action)
+	main := admittedMainFixture(t, repo, clock, "main")
+	e := dependencyEvent("child", "child-source", "child", clock)
+	e.ExtraData["object"] = json.RawMessage(`"101"`)
+	child := mustProcessAggregation(t, repo, p, e)
+	id := child.Event.RelatedAlertIDs[0]
+	current, _ := repo.GetAlert(t.Context(), "tenant", id)
+	if !current.Alert.Shield.Active || current.Alert.Shield.Bindings[0].MainAlertID != main.AlertID || len(action.calls) != 0 {
+		t.Fatal("reference did not establish shield", current.Alert.Shield)
+	}
+	binding := current.Alert.Shield.Bindings[0].BindingID
+	clock.at = clock.at.Add(time.Minute)
+	if changed, err := p.CheckShield(t.Context(), "tenant", id); err != nil || changed {
+		t.Fatal("reference recheck changed binding", err)
+	}
+	// 主告警读取成功但其字段不可用时保持关系，不把故障替换为空字符串后解除。
+	s.CurrentAlert = func(ctx context.Context, tenant, alertID string) (store.StoredAlert, error) {
+		row, err := repo.GetAlert(ctx, tenant, alertID)
+		if alertID == main.AlertID {
+			row.Alert.Enrich = domain.JSONObject{"processors": json.RawMessage(`[{"resource":{"status":"failed","patches":[]}}]`)}
+		}
+		return row, err
+	}
+	clock.at = clock.at.Add(time.Minute)
+	if changed, err := p.CheckShield(t.Context(), "tenant", id); err != nil || changed {
+		t.Fatal("unavailable origin released shield", err)
+	}
+	current, _ = repo.GetAlert(t.Context(), "tenant", id)
+	if !current.Alert.Shield.Active || current.Alert.Shield.Bindings[0].BindingID != binding {
+		t.Fatal("fixed binding lost on reference failure")
+	}
+}
+
 func TestDependencyTimeBoundsAndStableTieBreak(t *testing.T) {
 	for _, offset := range []time.Duration{-5 * time.Minute, -5*time.Minute - time.Nanosecond, 10 * time.Minute, 10*time.Minute + time.Nanosecond} {
 		t.Run(offset.String(), func(t *testing.T) {

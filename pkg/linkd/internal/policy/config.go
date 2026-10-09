@@ -310,7 +310,7 @@ func Compile(kind Kind, raw json.RawMessage) (*Compiled, error) {
 			if spec.ShieldMode != "custom_shield" && spec.ShieldMode != "cmdb_shield" {
 				return nil, fmt.Errorf("invalid shield_mode")
 			}
-			result.Rely, err = CompileExpression(spec.RelyPolicy, fields)
+			result.Rely, err = compileExpression(spec.RelyPolicy, fields, true)
 			if err != nil {
 				return nil, fmt.Errorf("rely_policy: %w", err)
 			}

@@ -302,6 +302,11 @@ func (s *Shielder) dependencyChild(ctx context.Context, event domain.Event, seve
 	if err != nil {
 		return false, err
 	}
+	// 初次绑定和固定关系复查都从本次选定的主视图取值，不能将替换结果写回缓存 Release。
+	view, err = view.WithOrigin(main.view)
+	if err != nil {
+		return false, err
+	}
 	return s.dependencyMatch(ctx, f, view, targets, at, true)
 }
 

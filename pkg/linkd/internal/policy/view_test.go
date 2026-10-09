@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -20,6 +21,34 @@ import (
 	"linkd/internal/onemodel"
 	"linkd/internal/store/storetest"
 )
+
+func TestLegacyCleanedFieldsUsePresenceAndEffectivePatches(t *testing.T) {
+	e := policyEvent(`[{"fields":{"status":"succeeded","patches":[{"op":"set","path":"$.extra_data.item","value":"effective item"}]}}]`, domain.EnrichStatusSucceeded)
+	e.ExtraData = domain.JSONObject{"object": json.RawMessage(`""`), "item": json.RawMessage(`"old"`), "strategy_id": json.RawMessage(`0`), "dimension_info": json.RawMessage(`false`), "meta_info": json.RawMessage(`"legacy meta"`), "owner": json.RawMessage(`["alice",false,0]`)}
+	e.Labels["display_name"] = domain.NewStringScalar("metric default")
+	e.Labels["monitor_template_id"] = domain.NewStringScalar("7")
+	e.Labels["meta_info"] = domain.NewStringScalar("native meta")
+	view := mustEventView(t, e, map[string]FieldMapping{"owner": {Path: "$.extra_data.owner", Kind: FieldText}})
+	for field, want := range map[string]any{"object": "", "item": "effective item", "strategy_id": json.Number("0"), "dimension_info": false, "meta_info": "legacy meta", "owner": []any{"alice", false, json.Number("0")}} {
+		value, err := view.Field(t.Context(), field)
+		if err != nil || !value.Present || !reflect.DeepEqual(value.Data, want) {
+			t.Fatalf("%s: %+v %v want=%+v", field, value, err, want)
+		}
+	}
+	e.ExtraData = domain.JSONObject{}
+	e.Enrich.Evaluations[0].Data = domain.JSONObject{"processors": json.RawMessage(`[]`)}
+	view = mustEventView(t, e, nil)
+	value, err := view.Field(t.Context(), "item")
+	if err != nil || value.Data != "metric default" {
+		t.Fatal("missing item did not fall back", value, err)
+	}
+	delete(e.Labels, "meta_info")
+	e.SourceEventID = "original-id"
+	value, err = mustEventView(t, e, nil).Field(t.Context(), "meta_info")
+	if err != nil || value.Data != "original-id" {
+		t.Fatal("missing meta did not fall back", value, err)
+	}
+}
 
 func policyEvent(raw string, status domain.EnrichStatus) domain.Event {
 	e := storetest.Event("tenant", "e1", "f1", "warning")

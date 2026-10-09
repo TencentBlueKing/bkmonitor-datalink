@@ -61,6 +61,8 @@ type Condition struct {
 	IsEmpty   bool            `json:"isEmpty,omitempty"`
 	ShowAdd   bool            `json:"show_add,omitempty"`
 	IsMonitor bool            `json:"is_monitor,omitempty"`
+	// Referenced 仅用于依赖屏蔽子条件，Value 是读取选定主告警字段的字符串模板。
+	Referenced bool `json:"is_alarm_field_referenced,omitempty"`
 }
 
 // Value 区分字段确实缺失和查询失败；不可评估必须由 Reader 返回错误。
@@ -127,6 +129,10 @@ type Expression struct {
 
 // CompileExpression 校验 KAC 的条件对象并解析 AND 优先于 OR 的有界表达式。
 func CompileExpression(raw json.RawMessage, fields FieldCatalog) (*Expression, error) {
+	return compileExpression(raw, fields, false)
+}
+
+func compileExpression(raw json.RawMessage, fields FieldCatalog, references bool) (*Expression, error) {
 	if len(raw) == 0 || len(raw) > 65536 {
 		return nil, fmt.Errorf("policy: expression object must be 1..65536 bytes")
 	}
@@ -159,7 +165,15 @@ func CompileExpression(raw json.RawMessage, fields FieldCatalog) (*Expression, e
 		if err := strictDecode(value, &condition); err != nil {
 			return nil, fmt.Errorf("policy.%s: %w", id, err)
 		}
-		clause, err := compileCondition(condition, fields)
+		var clause compiledCondition
+		if condition.Referenced {
+			if !references {
+				return nil, fmt.Errorf("policy.%s: field references require dependency rely_policy", id)
+			}
+			clause, err = compileReference(condition, fields)
+		} else {
+			clause, err = compileCondition(condition, fields)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("policy.%s: %w", id, err)
 		}
@@ -181,6 +195,10 @@ func CompileExpression(raw json.RawMessage, fields FieldCatalog) (*Expression, e
 
 // Match 全量评估条件以保留调试证据；外部错误不伪装为 false，也不能经 must_not 放大范围。
 func (e *Expression) Match(ctx context.Context, reader Reader) (MatchResult, error) {
+	return e.match(ctx, reader, nil)
+}
+
+func (e *Expression) match(ctx context.Context, reader Reader, origin Reader) (MatchResult, error) {
 	result := MatchResult{Evaluated: true, Conditions: make([]ConditionResult, 0, len(e.order))}
 	values := map[string]bool{}
 	var failure bool
@@ -188,7 +206,11 @@ func (e *Expression) Match(ctx context.Context, reader Reader) (MatchResult, err
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		matched, err := e.clauses[id].match(ctx, reader)
+		clause, err := e.clauses[id].resolveReference(ctx, origin)
+		var matched bool
+		if err == nil {
+			matched, err = clause.match(ctx, reader)
+		}
 		// 明确的租户/授权错误不得降级为普通不可求值，避免策略跳过掩盖错误作用域。
 		if errors.Is(err, ErrAccess) {
 			return result, err

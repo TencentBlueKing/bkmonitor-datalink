@@ -146,7 +146,11 @@ func EvaluateConditions(ctx context.Context, release Release, compiled *Compiled
 		expressions = []*Expression{compiled.Rely}
 	}
 	for i, expression := range expressions {
-		match, err := expression.Match(ctx, view)
+		var origin Reader
+		if rely && view.origin != nil {
+			origin = view.origin
+		}
+		match, err := expression.match(ctx, view, origin)
 		result.Groups = append(result.Groups, GroupMatch{Index: i, MatchResult: match})
 		if err != nil {
 			if !errors.Is(err, ErrUnavailable) {

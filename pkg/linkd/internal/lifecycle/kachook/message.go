@@ -109,7 +109,7 @@ func convertFieldsWithLevel(input lifecycle.FinalHookInput, resolve func(string)
 		ResultTableID: values.metric.ResultTableID, TimeInterval: scalarText(values.metric.TimeInterval),
 		AggregateFunc: values.metric.AggregateFunc, WhereCondition: values.metric.WhereCondition,
 		Unit: values.metric.Unit, DataSource: values.strategy.DataSource,
-		FieldExtraInfo:    kingeye.FieldExtraInfo{StrategyName: kingeye.StrategyExtraInfo{URL: values.strategy.URL}},
+		FieldExtraInfo:    map[string]any{"strategy_name": map[string]any{"url": values.strategy.URL}},
 		MetricQueryParams: query, DynamicGroupID: nonNilStrings(values.resource.DynamicGroupID), CWLabels: preferredLabels(values.log.CWLabels, values.apm.CWLabels, values.resource.CWLabels),
 		LogThemeID: scalarInt64(values.log.LogThemeID), LogThemeName: values.log.LogThemeName,
 		LogQueryString: values.log.LogQueryString, LogRelateInfo: values.log.LogRelateInfo,
@@ -133,6 +133,25 @@ func convertFieldsWithLevel(input lifecycle.FinalHookInput, resolve func(string)
 	document, e := domain.AlertDocument(effective)
 	if e != nil {
 		return kingeye.AlarmMessage{}, e
+	}
+	extra, _ := document["extra_data"].(map[string]any)
+	for field, target := range map[string]*string{"object": &message.Object, "item": &message.Item, "meta_info": &message.MetaInfo, "strategy_id": &message.StrategyID, "dimension_info": &message.DimensionInfo} {
+		if value, found := extra[field]; found {
+			// 固定 KAC 文本字段保持协议类型，显式 0/false/空字符串都不能触发默认值回退。
+			switch value.(type) {
+			case nil, string, bool, json.Number:
+				*target = scalarText(value)
+			default:
+				return kingeye.AlarmMessage{}, fmt.Errorf("KAC legacy field %s requires scalar value", field)
+			}
+		}
+	}
+	if value, found := extra["field_extra_info"]; found && value != nil {
+		fields, ok := value.(map[string]any)
+		if !ok {
+			return kingeye.AlarmMessage{}, fmt.Errorf("KAC field_extra_info requires object")
+		}
+		message.FieldExtraInfo = mergeExtraInfo(message.FieldExtraInfo, fields)
 	}
 	for field, target := range map[string]*any{"bk_set_id": &message.BKSetID, "bk_set_name": &message.BKSetName, "bk_module_id": &message.BKModuleID, "bk_module_name": &message.BKModuleName} {
 		for _, root := range []string{"labels", "extra_data"} {
@@ -303,6 +322,11 @@ func decodeEffectiveEnrich(alert domain.Alert) (enrichValues, error) {
 	flat := alert.ExtraData.Clone()
 	if flat == nil {
 		flat = domain.JSONObject{}
+	}
+	// 旧字段与内置 DTO 存在同名异义（如任意字符串 strategy_id 对比数值策略主键）。
+	// 旧值稍后按存在性直接投影，不能先让内置 DTO 的类型校验吞掉合法来源值。
+	for _, field := range []string{"object", "item", "meta_info", "strategy_id", "dimension_info"} {
+		delete(flat, field)
 	}
 	for key, value := range alert.Labels {
 		data, err := json.Marshal(value)

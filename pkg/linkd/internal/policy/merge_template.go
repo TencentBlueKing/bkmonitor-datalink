@@ -107,7 +107,7 @@ func compileMergeTemplate(spec MergeSpec, catalog FieldCatalog) (*MergeTemplate,
 // 系统字段由内部生产者写入；显式映射也不能覆盖其 labels/extra_data 别名。
 func protectedMergeField(key string) bool {
 	switch key {
-	case "alarm_id", "event_id", "alarm_time", "action", "source_alarm_status", "source_id", "source_name", "bk_tenant_id", "entity_uid", "tag_info":
+	case "alarm_id", "event_id", "alarm_time", "action", "source_alarm_status", "source_id", "source_name", "bk_tenant_id", "entity_uid", "tag_info", "__kac_custom_fields":
 		return true
 	default:
 		return false

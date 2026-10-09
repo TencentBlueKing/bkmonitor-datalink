@@ -13,9 +13,46 @@ import (
 
 	"github.com/google/uuid"
 	"linkd/internal/domain"
+	"linkd/internal/enrich/custom"
 	"linkd/internal/enrich/kingeye"
 	"linkd/internal/lifecycle"
 )
+
+func TestKACCustomCatalogRuleExecutesAndOverridesSourceDirectory(t *testing.T) {
+	program, err := custom.Compile("fields", map[string]any{"rules": []any{map[string]any{
+		"id": "kac_custom_catalog", "operations": []any{map[string]any{
+			"id": "freeze_catalog", "type": "assign", "assignments": []any{map[string]any{
+				"target": "$.extra_data.__kac_custom_fields", "value": map[string]any{"literal": []any{"owner"}},
+			}},
+		}},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alert := testAlert()
+	alert.ExtraData = jsonObject(`{"owner":{"names":["alice"],"active":false},"__kac_custom_fields":["status"]}`)
+	document, err := domain.AlertDocument(alert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := program.Execute(t.Context(), document, document, alert.BKTenantID, custom.Sources{})
+	if err != nil || result.Status != domain.EnrichStatusSucceeded {
+		t.Fatal("catalog rule failed", result, err)
+	}
+	patches, _ := json.Marshal(result.Patches)
+	alert.Enrich = domain.JSONObject{"processors": json.RawMessage(`[{"fields":{"status":"succeeded","patches":` + string(patches) + `}}]`)}
+	payload, err := CompatibilityPayload(alert, kacLevel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if json.Unmarshal(payload, &fields) != nil || fields["owner"].(map[string]any)["active"] != false {
+		t.Fatal("catalog or custom JSON output lost", string(payload))
+	}
+	if _, found := fields["status"]; found {
+		t.Fatal("source directory overrode published catalog")
+	}
+}
 
 func TestConvertMessageMapsAlertAndEnrichToKACAlarm(t *testing.T) {
 	input := lifecycle.FinalHookInput{

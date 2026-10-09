@@ -11,6 +11,7 @@ package policy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -18,6 +19,42 @@ import (
 	"linkd/internal/domain"
 	"linkd/internal/store/storetest"
 )
+
+func TestDependencyReferencePreviewUsesMainEffectiveFieldsWithoutInstance(t *testing.T) {
+	spec := policySpecMap(t, Shield)
+	spec["shield_type"], spec["shield_mode"] = "rely_shield", "custom_shield"
+	spec["rely_policy"] = map[string]any{"expression": "A", "A": map[string]any{"condition": "term", "target_key": "object", "target_value": "${object}", "is_alarm_field_referenced": true}}
+	origin := storetest.Alert("tenant", "main", "opening", "main", "warning")
+	origin.SubjectID = ""
+	origin.SubjectType = ""
+	origin.SubjectSystem = ""
+	origin.Enrich = domain.JSONObject{"processors": json.RawMessage(`[{"fields":{"status":"succeeded","patches":[{"op":"set","path":"$.extra_data.object","value":"host-1"}]}}]`)}
+	event := policyEvent(`[]`, domain.EnrichStatusSucceeded)
+	event.ExtraData["object"] = json.RawMessage(`"host-1"`)
+	facts := &previewFacts{alert: origin}
+	p := NewPreviewer(nil, facts, policyTargets{}, nil, nil)
+	at := event.OccurredAt
+	r := PreviewRequest{Scope: Scope{TenantID: "tenant", Kind: Shield}, Spec: encodeSpec(t, spec), Event: &event, Rely: true, OriginAlertID: origin.AlertID, At: &at}
+	result, err := p.Preview(t.Context(), r)
+	if err != nil || !result.Evaluations[0].Matched {
+		t.Fatal("custom field preview required canonical main instance", result, err)
+	}
+	r.OriginAlertID = ""
+	result, err = p.Preview(t.Context(), r)
+	if err != nil || result.Evaluations[0].Evaluated || result.Evaluations[0].Matched {
+		t.Fatal("missing main became ordinary mismatch", result, err)
+	}
+	r.OriginAlertID = origin.AlertID
+	facts.alert.Enrich = domain.JSONObject{"processors": json.RawMessage(`[{"fields":{"status":"failed","patches":[]}}]`)}
+	result, err = p.Preview(t.Context(), r)
+	if err != nil || result.Evaluations[0].Evaluated {
+		t.Fatal("failed main enrichment became missing string", result, err)
+	}
+	facts.alert.BKTenantID = "other"
+	if _, err := p.Preview(t.Context(), r); !errors.Is(err, ErrInvalid) {
+		t.Fatal("cross tenant preview origin accepted", err)
+	}
+}
 
 type previewFacts struct {
 	event domain.Event

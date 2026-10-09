@@ -60,6 +60,15 @@ Linkd Alert 是告警事实的权威来源，KAC 使用兼容文档完成查询�
 
 ## 3. 写入和处置流程
 
+旧清洗 `extra_data.object/item/meta_info/strategy_id/dimension_info` 在有效视图中优先于默认展示值；
+按字段存在性判断回退，不用真假值判断。`field_extra_info` 与内置策略链接合并，并继续保留 KAC 已写的工单/快照链接。
+KAC 来源发布器将当前租户的非内置字段目录写入 fields 处理器的 `extra_data.__kac_custom_fields` 补丁，
+每个 Alert 冻结目录和已求值字段；兼容文档只展开这些同名有效字段，保留 JSON 类型。
+该目录不是任意 payload 展开入口：固定协议字段、租户、稳定身份、生命周期、关联及处置字段均禁止覆盖，
+目录最多 128 个字段。缺失字段不输出；不新增 Event/Alert schema 或 KAC 数据库字段。
+合并父事件只为模板中显式输出、且映射为 extra_data 同名键的自定义字段生成目录，不继承成员的任意扩展。
+
+
 ```text
 Event → Enrich → Lifecycle / 策略控制任务
   → 持久化 Alert 业务变化及待完成意图

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"strings"
 
 	"linkd/internal/jsonpath"
 )
@@ -62,7 +63,7 @@ type AlarmMessage struct {
 	WhereCondition    string         `json:"where_condition"`
 	Unit              string         `json:"unit"`
 	DataSource        string         `json:"data_source"`
-	FieldExtraInfo    FieldExtraInfo `json:"field_extra_info"`
+	FieldExtraInfo    map[string]any `json:"field_extra_info"`
 	MetricQueryParams string         `json:"metric_query_params"`
 	DynamicGroupID    []string       `json:"dynamic_group_id"`
 	CWLabels          []string       `json:"cw_labels"`
@@ -88,17 +89,7 @@ type AlarmMessage struct {
 	CloudPlatformID   string         `json:"cloud_plat_id,omitempty"`
 }
 
-// FieldExtraInfo 保存 KAC 固定字段的附加展示信息。
-type FieldExtraInfo struct {
-	StrategyName StrategyExtraInfo `json:"strategy_name"`
-}
-
-// StrategyExtraInfo 保存策略跳转信息。
-type StrategyExtraInfo struct {
-	URL string `json:"url"`
-}
-
-var customName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]{0,63}$`)
+var customName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_-]{0,127}$`)
 
 // ValidateFieldMappings 只允许额外顶层业务字段，禁止覆盖 KAC 固定协议字段。
 func ValidateFieldMappings(fields map[string]string) error {
@@ -106,6 +97,10 @@ func ValidateFieldMappings(fields map[string]string) error {
 		return fmt.Errorf("KAC custom field limit exceeded")
 	}
 	reserved := map[string]bool{}
+	// 这些字段由 Lifecycle、投影协议或 KAC 处置维护，不属于来源自定义字段。
+	for _, name := range strings.Fields("status storage_time source_alarm_status tag_info associate_alarm_id associate_count conductor notify_status converge_reason duration strategy strategy_config_uid strategy_config_version source_event_id source_alert_id linkd_alert_id __kac_custom_fields") {
+		reserved[name] = true
+	}
 	typ := reflect.TypeFor[AlarmMessage]()
 	for i := 0; i < typ.NumField(); i++ {
 		name := typ.Field(i).Tag.Get("json")

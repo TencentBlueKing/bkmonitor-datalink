@@ -26,6 +26,7 @@ import (
 	"linkd/internal/enrich"
 	"linkd/internal/eventsource"
 	"linkd/internal/lifecycle"
+	"linkd/internal/lifecycle/kachook"
 	"linkd/internal/policy"
 	"linkd/internal/runtimeconfig"
 	"linkd/internal/store/memory"
@@ -107,6 +108,40 @@ func TestRenderParentUsesFrozenFactsAndExplicitSource(t *testing.T) {
 	d.Progress.ParentEvent.MergeOrigin.AlarmTags = []int64{3}
 	if err := d.Validate(); err == nil {
 		t.Fatal("policy tag mismatch accepted")
+	}
+}
+
+func TestRenderParentKeepsDeclaredCustomOutputForKACProjection(t *testing.T) {
+	d, members, source, severity := renderFixture(t)
+	var spec policy.MergeSpec
+	if err := json.Unmarshal(d.Policy.Spec, &spec); err != nil {
+		t.Fatal(err)
+	}
+	spec.FieldMappings = map[string]policy.FieldMapping{"owner": {Path: "$.extra_data.owner", Kind: policy.FieldText}}
+	spec.Template = append(spec.Template, policy.TemplateField{Key: "owner", Value: "alice"})
+	raw, _ := json.Marshal(spec)
+	compiled, err := policy.Compile(policy.Merge, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Policy.Spec, d.Policy.Compiled = compiled.Canonical, compiled.Summary
+	event, err := renderParent(t.Context(), d, members, source, severity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(event.ExtraData["__kac_custom_fields"]) != `["owner"]` {
+		t.Fatal("parent custom output directory missing", event.ExtraData)
+	}
+	alert := storetest.Alert(d.TenantID, "parent", event.EventID, event.Fingerprint, "warning")
+	alert.Content = "parent content"
+	alert.ExtraData = event.ExtraData.Clone()
+	payload, err := kachook.CompatibilityPayload(alert, severity.KACLevel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if json.Unmarshal(payload, &fields) != nil || fields["owner"] != "alice" {
+		t.Fatal("parent custom output lost in projection", string(payload))
 	}
 }
 

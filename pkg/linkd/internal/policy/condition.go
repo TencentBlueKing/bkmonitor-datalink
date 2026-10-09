@@ -30,6 +30,7 @@ type compiledCondition struct {
 	negative  bool
 	values    []string
 	pattern   *regexp.Regexp
+	reference []referencePart
 }
 
 func compileCondition(condition Condition, fields FieldCatalog) (compiledCondition, error) {

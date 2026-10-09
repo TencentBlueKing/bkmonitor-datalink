@@ -289,13 +289,9 @@ func (c *Client) fields(ctx context.Context, q projection.Request) (map[string]a
 	if json.Unmarshal(q.Alert, &a) != nil {
 		return nil, "", projection.ErrInvalid
 	}
-	message, err := kachook.CompatibilityMessage(a, c.level)
+	raw, err := kachook.CompatibilityPayload(a, c.level)
 	if err != nil {
 		return nil, "", projection.Failure{Code: "response_invalid"}
-	}
-	raw, err := json.Marshal(message)
-	if err != nil {
-		return nil, "", projection.ErrInvalid
 	}
 	fields := map[string]any{}
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -316,7 +312,7 @@ func (c *Client) fields(ctx context.Context, q projection.Request) (map[string]a
 		}
 		fields[key] = n
 	}
-	fields["source_alarm_status"] = message.Action
+	fields["source_alarm_status"] = fields["action"]
 	parents := map[string]bool{}
 	members := map[string]bool{}
 	if a.Merge != nil && len(a.Merge.RelationIDs) > 0 {

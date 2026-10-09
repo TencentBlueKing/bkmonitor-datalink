@@ -75,6 +75,17 @@ type FactView struct {
 	uncertain  []uncertainPath
 	certain    []certainPath
 	relation   RelationContext
+	origin     *FactView
+}
+
+// WithOrigin 返回携带同租户主告警字段的独立视图；双方已经冻结的事实和映射保持只读。
+func (v *FactView) WithOrigin(origin *FactView) (*FactView, error) {
+	if origin == nil || v.TenantID != origin.TenantID {
+		return nil, ErrAccess
+	}
+	copy := *v
+	copy.origin = origin
+	return &copy, nil
 }
 
 // EventView 读取指定等级已经冻结的丰富结果；不会重新运行 Enrich。
@@ -323,6 +334,15 @@ func (v *FactView) Field(ctx context.Context, name string) (Value, error) {
 	if KACFields()[name] == "" {
 		return Value{}, fmt.Errorf("unknown policy field")
 	}
+	// 同名旧清洗字段是显式来源事实；仅缺失时才用新模型展示默认值。
+	// 通过 readPath 保留补丁覆盖和不可用语义，不能用真假值跳过空字符串、0 或 false。
+	switch name {
+	case "object", "item", "meta_info", "strategy_id", "dimension_info":
+		value, err := v.readPath(pathFor("extra_data", name))
+		if err != nil || value.Present {
+			return value, err
+		}
+	}
 	switch name {
 	case "name":
 		return v.readPath(pathFor("title"))
@@ -352,6 +372,12 @@ func (v *FactView) Field(ctx context.Context, name string) (Value, error) {
 		return v.flat("monitor_template_id")
 	case "dimension_info":
 		return v.flat("dimension_text")
+	case "meta_info":
+		value, err := v.flat(name)
+		if err != nil || value.Present {
+			return value, err
+		}
+		return v.readPath(pathFor("source_event_id"))
 	case "bk_biz_id":
 		value, err := v.flat(name)
 		if err != nil || value.Present {

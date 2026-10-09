@@ -167,7 +167,7 @@ func (c converter) path(field string) (string, error) {
 	case "content":
 		return "$.content", nil
 	case "object":
-		return "$.subject_name", nil
+		return "$.extra_data.object", nil
 	default:
 		return "", fmt.Errorf("field %q requires explicit field_mappings", field)
 	}

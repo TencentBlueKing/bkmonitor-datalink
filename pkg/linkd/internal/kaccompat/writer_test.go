@@ -179,6 +179,69 @@ func project(t *testing.T, c *Client, a domain.Alert) projection.Receipt {
 
 func advance(a *domain.Alert) { a.Revision++; a.UpdateAt = a.UpdateAt.Add(time.Second) }
 
+func TestWriterProjectsLegacyCleanedFieldsAndFrozenCustomCatalog(t *testing.T) {
+	c, es, a := fixture(t)
+	a.ExtraData = domain.JSONObject{
+		"object": json.RawMessage(`"legacy object without identity"`), "item": json.RawMessage(`false`),
+		"meta_info": json.RawMessage(`""`), "strategy_id": json.RawMessage(`"third-party-strategy"`),
+		"dimension_info": json.RawMessage(`0`), "owner": json.RawMessage(`"old"`),
+		"details":         json.RawMessage(`{"count":9007199254740993,"enabled":false,"items":["a",0]}`),
+		"private_payload": json.RawMessage(`"do not expand"`), "status": json.RawMessage(`"executing"`),
+		"field_extra_info": json.RawMessage(`{"item":{"url":"/metric"},"strategy_name":{"url":"/legacy"}}`),
+	}
+	a.Enrich = domain.JSONObject{"processors": json.RawMessage(`[
+		{"metric":{"status":"succeeded","patches":[{"op":"set","path":"$.labels.display_name","value":"default metric"}]}},
+		{"fields":{"status":"succeeded","patches":[
+			{"op":"set","path":"$.extra_data.owner","value":"alice"},
+			{"op":"set","path":"$.extra_data.__kac_custom_fields","value":["owner","details","missing"]}
+		]}}
+	]`)}
+	first := project(t, c, a)
+	row := es.alarm(first.AlarmID)
+	for field, want := range map[string]any{"object": "legacy object without identity", "item": "false", "meta_info": "", "strategy_id": "third-party-strategy", "dimension_info": "0", "owner": "alice", "status": "received", "bk_tenant_id": "tenant-a"} {
+		if row[field] != want {
+			t.Fatalf("%s=%+v want=%+v", field, row[field], want)
+		}
+	}
+	for _, field := range []string{"private_payload", "missing", "__kac_custom_fields"} {
+		if _, found := row[field]; found {
+			t.Fatalf("expanded unregistered or missing field %s", field)
+		}
+	}
+	details := row["details"].(map[string]any)
+	if details["count"] != json.Number("9007199254740993") || details["enabled"] != false {
+		t.Fatal("custom JSON types or precision lost", details)
+	}
+	extra := row["field_extra_info"].(map[string]any)
+	if extra["item"].(map[string]any)["url"] != "/metric" {
+		t.Fatal("cleaned metric link lost", extra)
+	}
+	es.disposition(first.AlarmID)
+	advance(&a)
+	project(t, c, a)
+	extra = es.alarm(first.AlarmID)["field_extra_info"].(map[string]any)
+	if extra["strategy_name"].(map[string]any)["snapshot_id"] != "kac-snapshot" {
+		t.Fatal("KAC snapshot link lost on legacy projection", extra)
+	}
+}
+
+func TestWriterRejectsProtectedAndInvalidCustomCatalog(t *testing.T) {
+	for _, field := range []string{"alarm_id", "event_id", "bk_tenant_id", "status", "conductor", "notify_status", "associate_count", "strategy_config_uid", "__kac_custom_fields"} {
+		t.Run(field, func(t *testing.T) {
+			c, es, a := fixture(t)
+			raw, _ := json.Marshal([]string{field})
+			a.ExtraData["__kac_custom_fields"] = raw
+			q, err := projection.BuildRequest(a, "kac")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.Send(t.Context(), projection.Destination{TargetID: "kac"}, q); err == nil || len(es.docs) != 0 {
+				t.Fatal("protected custom field reached storage", err)
+			}
+		})
+	}
+}
+
 func TestWriterRolloverAndKACDisposalFields(t *testing.T) {
 	c, es, a := fixture(t)
 	first := project(t, c, a)

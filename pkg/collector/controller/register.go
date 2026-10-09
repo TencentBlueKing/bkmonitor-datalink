@@ -25,6 +25,7 @@ import (
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/resourcefilter"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/sampler"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/servicediscover"
+	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/spanprocessor"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/textspliter"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/tokenchecker"
 	_ "github.com/TencentBlueKing/bkmonitor-datalink/pkg/collector/processor/tracesderiver"

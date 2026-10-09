@@ -341,7 +341,17 @@ func normalizeRelationName(name relation.RelationName) RelationType {
 	if _, bareName, ok := strings.Cut(relationName, ":"); ok {
 		relationName = bareName
 	}
-	return RelationType(relationName)
+	return RelationType(canonicalRelationType(relationName))
+}
+
+// Metadata already publishes this business/set relation under its semantic
+// name, while the built-in schema exposes business_set. Keep the public query
+// and response contract stable when the provider changes from static to Redis.
+func canonicalRelationType(name string) string {
+	if name == "business_with_set" {
+		return "business_set"
+	}
+	return name
 }
 
 // NewSchemaProviderFromRelation 创建 v1beta3 SchemaProvider from relation.SchemaProvider

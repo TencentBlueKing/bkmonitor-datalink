@@ -153,3 +153,55 @@ func TestTimeGraphRedisSchemaIsolationAndReload(t *testing.T) {
 		require.NoError(t, err)
 	}
 }
+
+func TestTimeGraphRedisBusinessSetAliasMatchesStaticTopology(t *testing.T) {
+	ctx := initTimeGraphQueryTestEnvironment()
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	write := func(kind string, definitions any) {
+		t.Helper()
+		data, err := json.Marshal(definitions)
+		require.NoError(t, err)
+		require.NoError(t, client.HSet(ctx, relation.RedisKeyPrefix+":"+kind, relation.NamespaceAll, data).Err())
+	}
+	write(relation.KindResourceDefinition, map[string]*relation.ResourceDefinition{
+		"business": {Namespace: relation.NamespaceAll, Name: "business", Fields: []relation.FieldDefinition{{Name: "bk_biz_id", Required: true, Type: relation.FieldTypeInteger}}},
+		"set":      {Namespace: relation.NamespaceAll, Name: "set", Fields: []relation.FieldDefinition{{Name: "bk_set_id", Required: true, Type: relation.FieldTypeInteger}}},
+	})
+	write(relation.KindRelationDefinition, map[string]*relation.RelationDefinition{
+		"business_with_set": {Namespace: relation.NamespaceAll, Name: "business_with_set", FromResource: "business", ToResource: "set"},
+	})
+	provider, err := relation.NewRedisProvider(ctx, client)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, provider.Close()) })
+
+	staticModel := &Model{schemaProvider: NewStaticSchemaProvider()}
+	for _, alias := range []string{"business_set", "business_with_set"} {
+		t.Run(alias, func(t *testing.T) {
+			redisModel := &Model{schemaProvider: NewSchemaProviderFromRelation(provider)}
+			want := staticModel.sharedTopologyRelations("bkcc__2", nil, []string{"business_set"}, DirectionBoth)
+			got := redisModel.sharedTopologyRelations("bkcc__2", nil, []string{alias}, DirectionBoth)
+			require.NotEmpty(t, want)
+			require.Equal(t, want, got)
+
+			redisModel.timeGraphQueryReference = timeGraphTestQueryReference
+			redisModel.timeGraphVMQuery = func(_ context.Context, q *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, error) {
+				require.Equal(t, "business_with_set_relation", q.QueryList[0].FieldName)
+				matrix := contractMatrix(map[string]string{"bk_biz_id": "2", "bk_set_id": "3"}, 1700000000000)
+				return filteredTimeGraphMatrix(t, matrix, q.QueryList[0].Conditions), nil
+			}
+			result, err := redisModel.QuerySharedTopology(ctx, cmdb.SharedTopologyQuery{
+				SpaceUID: "bkcc__2", Timestamp: 1700000000, SourceType: "business",
+				SourceInfo: cmdb.Matcher{"bk_biz_id": "2"}, MaxHops: 1,
+				AllowedRelationTypes: []string{alias},
+			})
+			require.NoError(t, err)
+			require.Len(t, result.Snapshots, 1)
+			require.Len(t, result.Snapshots[0].Edges, 2)
+			for _, edge := range result.Snapshots[0].Edges {
+				require.Equal(t, "business_set", edge.RelationType)
+			}
+		})
+	}
+}

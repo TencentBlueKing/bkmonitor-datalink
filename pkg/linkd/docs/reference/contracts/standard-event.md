@@ -47,8 +47,8 @@ Kafka key 使用 Value 中的 `alert_id`，header 提供当前租户的 `bk_tena
 }
 ```
 
-`event_id` 是**本次来源事件**身份，新的判定使用新值，重投保持原值；`alert_id` 是**同一来源告警**
-的稳定关联身份，后续触发、恢复、关闭保持一致。Linkd 分别存为 `Event.source_event_id` 和
+`event_id` 原样保存**来源事件编号**；来源若用同一编号表示触发、持续异常和恢复，可以重复使用该值。
+`alert_id` 是**同一来源告警**的稳定关联身份，后续触发、恢复、关闭保持一致。Linkd 分别存为 `Event.source_event_id` 和
 `Event.source_alert_id`；Linkd 内部 Event ID、Alert ID 和 fingerprint 另行生成。本例的
 EventSource 使用 `fingerprint_mode: field`、`fingerprint_field: source_alert_id`，所以该来源
 必须提供非空 `alert_id`。Linkd 通用 `standard` 契约容许空 `event_id` / `alert_id` 并有其他身份策略，
@@ -65,7 +65,7 @@ Event 的已知字段，只保留在完整的 `Event.source_raw_data` 快照中�
 | 字段 | Linkd 通用规则 |
 | --- | --- |
 | `bk_tenant_id` | Value 与 header 可只提供一处；两处非空时须一致，且最终租户不能为空。EventSource 的 `related_tenant_id` 非空时由该配置覆盖。 |
-| `event_id`、`alert_id` | 分别映射到 `Event.source_event_id`、`Event.source_alert_id`，通用 Cleaner 允许为空；`event_id` 为空时，EventFactory 使用稳定 `RecordID` 参与内部 Event ID 摘要。具体来源若按 `source_alert_id` 关联，仍须提供稳定且非空的 `alert_id`。 |
+| `event_id`、`alert_id` | 分别映射到 `Event.source_event_id`、`Event.source_alert_id`，通用 Cleaner 允许为空；EventFactory 使用稳定 `RecordID` 和 Kafka record timestamp 生成内部 Event ID；来源 ID 不承担消息唯一性。具体来源若按 `source_alert_id` 关联，仍须提供稳定且非空的 `alert_id`。 |
 | `title`、`content` | `title` 是事件标题，`content` 是可选的来源内容；缺失 `content` 不从标题推导。 |
 | `evaluations` | 必填，1–32 项；每项 `action` 只能是 `triggered`、`resolved`、`closed`，`severity` 为来源等级标识。来源等级映射后不得重复；数组顺序不决定裁决顺序，未出现的等级不隐含恢复或关闭。 |
 | `values` | 可选的扁平数值对象，最多 256 项；key 为 1–256 bytes，value 必须是有限数字，不接受字符串、布尔值、null 或嵌套值。缺失、显式 null 和 `{}` 都形成空对象，不给缺失的数值项补零。 |
@@ -212,3 +212,11 @@ KAC 新拉取型告警源已支持 `BaseClientV2` 的校验、过滤和 Kafka �
 - [Cleaner 模块](../../modules/cleaner.md)
 - [EventSource 模块](../../modules/event-source.md)
 - [KAC Alarm Hook 输出契约](kac-alarm-output.md)：这是 Linkd **输出到 KAC** 的另一方向，字段不可与本页输入混用。
+
+### 来源恢复查询
+
+KAC 保留来源接口轮询，但候选告警读取 Linkd 的 `GET /api/v1/alerts`，不依赖 KAC 兼容文档中的来源身份。
+请求必须包含 `bk_tenant_id` 和 `event_source_id`，`status=active` 包含仍活动的屏蔽及合并阻塞告警。
+返回原始 Alert 字段及 `extra_data`，不以丰富结果覆盖来源事实。接口使用管理 JWT；`limit` 为 1–32，
+默认 32，`after` 是绑定租户、来源和状态的分页游标。省略 `status` 查询该来源的保留历史；
+每页返回 `items` 和 `next`。查询不承诺跨页事务快照，终态仍通过正常来源消息进入 Lifecycle。

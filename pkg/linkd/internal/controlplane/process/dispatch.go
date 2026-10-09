@@ -187,6 +187,11 @@ func runDispatch(ctx context.Context, cfg config.Config, logger *slog.Logger, me
 	if !ok {
 		return fmt.Errorf("repository does not support shield runtime queries")
 	}
+	sourceReader, ok := queryRepository.Repository.(store.SourceAlertReader)
+	if !ok {
+		return fmt.Errorf("repository does not support source alert queries")
+	}
+	api.SourceAlerts = controlapi.NewSourceAlerts(sourceReader)
 	api.ShieldRuntime = controlapi.NewShieldRuntime(shieldReader)
 	api.AlertCloser = lifecycleprocess.NewAlertCloser(cfg, sources, severity, logger, metrics)
 	api.ManualShieldBinder = lifecycleprocess.NewManualShieldBinder(cfg, sources, policies, severity, logger, metrics)

@@ -111,3 +111,34 @@ func TestEventFactoryRequiresResolvers(t *testing.T) {
 		t.Fatal("nil fingerprint resolver accepted")
 	}
 }
+
+func TestSourceIDIsPreservedWhileRecordIdentitySeparatesEvents(t *testing.T) {
+	t.Parallel()
+	factory, err := NewEventFactoryWithResolvers(testSource(), config.SeverityConfig{}, &recordingSeverityResolver{value: "warning"}, &recordingFingerprintResolver{value: "same-alarm"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := RawEventMessage{RecordID: "topic/0/1", BKTenantID: "tenant-1", ReceivedAt: time.Date(2026, 10, 9, 0, 0, 0, 0, time.UTC), Payload: []byte(`{"event_id":"A123"}`)}
+	draft := EventDraft{BKTenantID: "tenant-1", SourceEventID: "A123", SourceAlertID: "A123", Title: "CPU", Evaluations: []domain.EventEvaluation{{Severity: "warning", Action: domain.EventActionTriggered}}}
+	firing, err := factory.Build(message, draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := factory.Build(message, draft)
+	if err != nil || replay.EventID != firing.EventID {
+		t.Fatal("record replay changed identity", err)
+	}
+	message.RecordID = "topic/0/2"
+	draft.Evaluations[0].Action = domain.EventActionResolved
+	resolved, err := factory.Build(message, draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.EventID == firing.EventID || resolved.SourceEventID != "A123" || firing.SourceEventID != "A123" || resolved.Fingerprint != firing.Fingerprint {
+		t.Fatalf("same original ID/timestamp must retain correlation and distinguish records: firing=%+v resolved=%+v", firing, resolved)
+	}
+	message.RecordID = ""
+	if _, err := factory.Build(message, draft); err == nil {
+		t.Fatal("missing stable record identity accepted")
+	}
+}

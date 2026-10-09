@@ -36,10 +36,11 @@ import (
 // API 提供 JWT 管理接口和使用独立 Worker Token 的调度协议。
 type API struct {
 	// Tasks 提供当前进程的只读任务目录及执行快照。
-	Tasks       interface{ Snapshot() taskstate.Snapshot }
-	OneModel    *queryservice.Service
-	AlertCloser AlertCloser
-	Previewer   interface {
+	Tasks        interface{ Snapshot() taskstate.Snapshot }
+	OneModel     *queryservice.Service
+	AlertCloser  AlertCloser
+	SourceAlerts *SourceAlerts
+	Previewer    interface {
 		Preview(context.Context, preview.Request) (preview.Response, error)
 	}
 	DynamicConfig       *dynamicconfig.Manager
@@ -88,6 +89,7 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/onemodel/{operation}", a.queryOneModel)
 	mux.Handle("GET /api/v1/metrics/catalog", metricCatalogHandler())
 	mux.HandleFunc("POST /api/v1/enrich/preview", a.previewEnrich)
+	mux.HandleFunc("GET /api/v1/alerts", a.listSourceAlerts)
 	mux.HandleFunc("POST /api/v1/alerts/{id}/close", a.closeAlert)
 	mux.HandleFunc("GET /api/v1/event-sources", a.list)
 	mux.HandleFunc("GET /api/v1/event-sources/{id}", a.get)

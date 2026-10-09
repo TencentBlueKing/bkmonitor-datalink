@@ -66,7 +66,7 @@ Event 的 `event_source_version` 是正整数，记录实际使用的来源 Rele
 | `produced_at`                      | 非零 UTC 时间                  | 来源产生时间；来源缺失时使用稳定 received_at                              |
 | `received_at`                      | 非零 UTC 时间                  | MQ 适配器提供的稳定接收时间                                               |
 | `create_at`                        | 非零 UTC 时间                  | 当前 EventFactory 使用 received_at，保证重投确定性                        |
-| `source_event_id`                  | 0–256 bytes                    | 来源事件身份；为空时 record ID 参与 Event ID 计算                         |
+| `source_event_id`                  | 0–256 bytes                    | 原始来源事件编号；内部 Event ID 独立按稳定 record ID 计算                         |
 | `source_alert_id`                  | 0–256 bytes                    | 来源告警身份；只有被 fingerprint 配置引用时参与关联                       |
 | `source_raw_data`                  | JSON object                    | 完整来源 payload，不在 Elasticsearch 建索引                               |
 | `labels`                           | 扁平 `DimensionMap`            | 来源或接入侧标签                                                          |

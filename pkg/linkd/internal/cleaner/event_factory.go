@@ -179,11 +179,9 @@ func (f *EventFactory) Build(message RawEventMessage, draft EventDraft) (domain.
 	if occurredAt.IsZero() {
 		occurredAt = receivedAt
 	}
-	stableSourceID := draft.SourceEventID
-	if stableSourceID == "" {
-		stableSourceID = message.RecordID
-	}
-	eventID, err := domain.GenerateEventID(tenantID, f.source.EventSourceID, stableSourceID, receivedAt)
+	// 来源可能用同一编号表示触发和恢复，Kafka 同毫秒也可能有多条记录。
+	// 使用稳定 RecordID 区分输入，保留来源编号供回查；重放同一记录不会另造业务身份。
+	eventID, err := domain.GenerateEventID(tenantID, f.source.EventSourceID, message.RecordID, receivedAt)
 	if err != nil {
 		return domain.Event{}, err
 	}

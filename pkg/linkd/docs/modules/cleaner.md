@@ -46,7 +46,7 @@ fingerprint、标准 severity、received_at 或完整原始快照。EventFactory
 - EventSource 租户覆盖，以及 payload/header 租户一致性校验；
 - 通过 SeverityResolver 执行 mapping、全局同名和 default 规则；
 - occurred_at、produced_at 的稳定时间回退；
-- 确定性 Event ID；
+- 以稳定 `record_id`、租户、来源和 record timestamp 生成内部 Event ID；来源编号保存在 `source_event_id`，允许跨触发/恢复复用；
 - 通过 FingerprintResolver 执行 EventSource fingerprint 规则；
 - 完整 source_raw_data 快照；
 - 动态对象深拷贝、UTC 规范化和完整 Event 校验。

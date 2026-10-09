@@ -18,6 +18,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { useReportPageQueryFailure } from "../navigation";
 
 const entityLabels: Record<EntityKind, string> = {
+  "kac-alarms": "KAC 告警",
   events: "Event",
   alerts: "Alert",
   "alert-logs": "AlertLog",

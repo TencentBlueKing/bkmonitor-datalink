@@ -317,6 +317,17 @@ function ProjectionDetail({ row }: { row: ProjectionTask }) {
           任务快照 r{row.revision} · {row.alert_status}
         </span>
         <Link to={alertLink(row)}>查看当前 Alert</Link>
+        <Link
+          to={
+            "/explore/kac-alarms?" +
+            new URLSearchParams({
+              bk_tenant_id: row.bk_tenant_id,
+              id: row.alarm_id,
+            })
+          }
+        >
+          查询 KAC 实际文档
+        </Link>
         <KACAlertLink tenant={row.bk_tenant_id} alarmID={row.alarm_id} />
       </div>
       <dl className="projection-facts">

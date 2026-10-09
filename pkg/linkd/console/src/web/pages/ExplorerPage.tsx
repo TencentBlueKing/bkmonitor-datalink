@@ -51,19 +51,24 @@ export function ExplorerPage({ entity }: { entity: EntityKind }) {
     delete next.order;
     return next;
   }, [values]);
+  const kacConfigured = Boolean(capabilities.data?.entities["kac-alarms"]);
+  const queryReady =
+    capabilities.isSuccess &&
+    (entity !== "kac-alarms" ||
+      (kacConfigured && Boolean(values.bk_tenant_id?.trim())));
   const result = useQuery({
     queryKey: ["entities", entity, values, generation],
     queryFn: ({ signal }) => searchEntities(entity, values, signal),
     // 前页复用本轮缓存；ES 末页会关闭 PIT，不能重新使用该游标读取前页。
     staleTime: Infinity,
     refetchOnWindowFocus: false,
-    enabled: capabilities.isSuccess,
+    enabled: queryReady,
   });
   const stats = useQuery({
     queryKey: ["entity-stats", entity, statsValues, generation],
     queryFn: ({ signal }) => getEntityStats(entity, statsValues, signal),
     staleTime: Infinity,
-    enabled: capabilities.isSuccess,
+    enabled: queryReady,
   });
   useReportPageQueryFailure(result.isError || capabilities.isError);
   const meta = explorerMeta[entity];
@@ -79,6 +84,9 @@ export function ExplorerPage({ entity }: { entity: EntityKind }) {
         item.id,
         item.tenantId,
         item.payload.title,
+        item.payload.name,
+        item.payload.object,
+        item.payload.source_id,
         item.payload.content,
         item.payload.subject_name,
         item.payload.subject_id,
@@ -196,6 +204,13 @@ export function ExplorerPage({ entity }: { entity: EntityKind }) {
           过滤与排序；更新不代表新建。每条告警同时展示首次发生、创建和最近更新时间。
         </p>
       )}
+      {entity === "kac-alarms" && (
+        <p className="explorer-context">
+          {capabilities.isSuccess && !kacConfigured
+            ? "KAC Elasticsearch 未配置，请设置 plugins.kac.elasticsearch 和 alarm_event_index。"
+            : "填写租户后执行查询。按 alarm_time 过滤和排序；该时间表示告警发生时间，不代表最近投影或处置更新时间。KAC 原始时间按 Asia/Shanghai 解释。"}
+        </p>
+      )}
       <ExplorerQuery
         key={`${entity}:${params.toString()}:${limits?.defaultRangeSeconds}`}
         entity={entity}
@@ -238,7 +253,11 @@ export function ExplorerPage({ entity }: { entity: EntityKind }) {
               <span>×</span>
             </button>
           ))}
-        {!values.bk_tenant_id && <span className="muted">全部租户</span>}
+        {!values.bk_tenant_id && (
+          <span className="muted">
+            {entity === "kac-alarms" ? "请填写租户" : "全部租户"}
+          </span>
+        )}
         <span className="muted">
           {meta.time} ·{" "}
           {values.from
@@ -340,9 +359,18 @@ export function ExplorerPage({ entity }: { entity: EntityKind }) {
           </p>
         )}
         <p className="explorer-result-note">
-          本页搜索仅过滤已加载记录；上方条件查询整个存储范围。标题、正文尚未建立全文索引。
+          本页搜索仅过滤已加载记录；上方条件查询整个存储范围。
+          {entity === "kac-alarms"
+            ? "当前提供字段精确匹配。"
+            : "标题、正文尚未建立全文索引。"}
         </p>
-        {result.isPending ? (
+        {entity === "kac-alarms" && capabilities.isSuccess && !queryReady ? (
+          <div className="explorer-empty">
+            {kacConfigured
+              ? "请填写租户并执行查询。"
+              : "请先配置 KAC 查询连接。"}
+          </div>
+        ) : result.isPending ? (
           <div className="explorer-empty" role="status">
             正在读取{meta.name}…
           </div>

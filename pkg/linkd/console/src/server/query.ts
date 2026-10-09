@@ -5,6 +5,10 @@ import type { EntityKind, SearchParams } from "../shared/contracts.js";
 import { cursorTimeRange } from "./cursor.js";
 
 const rawQuerySchema = z.object({
+  source_id: z.string().max(1024).optional(),
+  level: z.string().max(255).optional(),
+  action: z.string().max(64).optional(),
+  event_id: z.string().max(1024).optional(),
   bk_tenant_id: z.string().min(1).max(1024).optional(),
   id: z.string().min(1).max(1024).optional(),
   from: z.string().datetime().optional(),
@@ -32,10 +36,15 @@ const rawQuerySchema = z.object({
 
 export function parseSearchQuery(
   raw: unknown,
-  _entity: EntityKind,
+  entity: EntityKind,
   config: ConsoleConfig,
 ): SearchParams {
   const parsed = rawQuerySchema.parse(raw);
+  if (entity === "kac-alarms")
+    z.string()
+      .trim()
+      .min(1, "查询 KAC 告警必须填写 bk_tenant_id")
+      .parse(parsed.bk_tenant_id);
   const now = new Date();
   const cursorRange = parsed.cursor
     ? cursorTimeRange(parsed.cursor)
@@ -63,6 +72,10 @@ export function parseSearchQuery(
   if (limit > config.query.maxLimit)
     throw new Error(`limit must not exceed ${config.query.maxLimit}`);
   return {
+    sourceId: parsed.source_id,
+    level: parsed.level,
+    action: parsed.action,
+    eventId: parsed.event_id,
     tenantId: parsed.bk_tenant_id,
     id: parsed.id,
     from: from?.toISOString(),

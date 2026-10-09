@@ -10,19 +10,21 @@ export const explorerCapabilities: Capabilities = {
   version: "test",
   metrics: { configured: false, source: "prometheus" },
   entities: Object.fromEntries(
-    (["events", "alerts", "alert-logs"] as EntityKind[]).map((entity) => [
-      entity,
-      {
-        source: "elasticsearch",
-        filters: [
-          "tenantId",
-          "id",
-          "from",
-          "to",
-          ...explorerFilters[entity].map((f) => f.capability),
-        ],
-      },
-    ]),
+    (["events", "alerts", "alert-logs", "kac-alarms"] as EntityKind[]).map(
+      (entity) => [
+        entity,
+        {
+          source: "elasticsearch",
+          filters: [
+            "tenantId",
+            "id",
+            "from",
+            "to",
+            ...explorerFilters[entity].map((f) => f.capability),
+          ],
+        },
+      ],
+    ),
   ) as Capabilities["entities"],
   storage: { elasticsearch: { configured: true } },
   limits: {
@@ -129,43 +131,45 @@ export function explorerStats(entity: EntityKind): EntityStats {
     total: 128,
     warnings: [],
     facets:
-      entity === "alerts"
-        ? [
-            {
-              name: "status",
-              values: [
-                { value: "active", count: 96 },
-                { value: "recovered", count: 24 },
-                { value: "closed", count: 8 },
-              ],
-            },
-            {
-              name: "severity",
-              values: [
-                { value: "critical", count: 100 },
-                { value: "warning", count: 28 },
-              ],
-            },
-          ]
-        : entity === "events"
+      entity === "kac-alarms"
+        ? [{ name: "status", values: [{ value: "executing", count: 1 }] }]
+        : entity === "alerts"
           ? [
               {
-                name: "processing_state",
+                name: "status",
                 values: [
-                  { value: "accepted", count: 120 },
-                  { value: "rejected", count: 8 },
+                  { value: "active", count: 96 },
+                  { value: "recovered", count: 24 },
+                  { value: "closed", count: 8 },
+                ],
+              },
+              {
+                name: "severity",
+                values: [
+                  { value: "critical", count: 100 },
+                  { value: "warning", count: 28 },
                 ],
               },
             ]
-          : [
-              {
-                name: "operation_kind",
-                values: [
-                  { value: "trigger", count: 88 },
-                  { value: "push", count: 40 },
-                ],
-              },
-            ],
+          : entity === "events"
+            ? [
+                {
+                  name: "processing_state",
+                  values: [
+                    { value: "accepted", count: 120 },
+                    { value: "rejected", count: 8 },
+                  ],
+                },
+              ]
+            : [
+                {
+                  name: "operation_kind",
+                  values: [
+                    { value: "trigger", count: 88 },
+                    { value: "push", count: 40 },
+                  ],
+                },
+              ],
     timeline: Array.from({ length: 40 }, (_, i) => ({
       timestamp: new Date(
         Date.parse("2026-09-23T03:30:00Z") + i * 60000,
@@ -174,3 +178,28 @@ export function explorerStats(entity: EntityKind): EntityStats {
     })),
   };
 }
+
+export const kacAlarmFixture: EntityItem = {
+  tenantId: "tenant-a",
+  id: "legacy-alarm-001",
+  timestamp: "2026-10-09T01:00:00.000Z",
+  summary: { status: "executing", level: "critical", name: "KAC CPU 告警" },
+  payload: {
+    bk_tenant_id: "tenant-a",
+    alarm_id: "legacy-alarm-001",
+    name: "KAC CPU 告警",
+    event_id: "legacy-event-001",
+    alarm_time: "2026-10-09 09:00:00",
+    storage_time: "2026-10-09 09:00:02",
+    source_id: "legacy-source",
+    source_name: "主机监控",
+    status: "executing",
+    level: "critical",
+    action: "firing",
+    object: "host-101",
+    content: "CPU 超过阈值",
+    notify_status: "sent",
+    conductor: ["operator"],
+    field_extra_info: { display_name: { snapshot_id: "snapshot-001" } },
+  },
+};

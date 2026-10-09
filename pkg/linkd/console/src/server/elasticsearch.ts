@@ -8,6 +8,10 @@ import type {
   SearchParams,
 } from "../shared/contracts.js";
 import type { ConsoleConfig } from "./config.js";
+import {
+  kacTimeOffsetMilliseconds,
+  kacTimeToISO,
+} from "../shared/kac-alarm.js";
 import { decodeCursor, encodeCursor, queryHash } from "./cursor.js";
 import {
   effectiveStrategyRow,
@@ -105,11 +109,38 @@ interface TemplateResponse {
   }>;
 }
 
+// 查询连接只复用 KAC 的固定 alias 和独立凭据；只读查询不受投影/动作开关限制。
+export function createKACAlarmConnector(
+  config: ConsoleConfig,
+): ElasticsearchConnector | undefined {
+  const kac = config.plugins?.kac;
+  const es = kac?.elasticsearch;
+  if (!es || !kac.alarm_event_index) return undefined;
+  return new ElasticsearchConnector({
+    ...config,
+    elasticsearch: {
+      baseUrl: es.addresses[0].replace(/\/$/, ""),
+      auth: {
+        apiKey:
+          process.env.LINKD_CONSOLE_KAC_ELASTICSEARCH_API_KEY ?? es.api_key,
+        username: es.basic_auth?.username,
+        password:
+          process.env.LINKD_CONSOLE_KAC_ELASTICSEARCH_PASSWORD ??
+          es.basic_auth?.password,
+      },
+      eventTargets: [],
+      alertTargets: [],
+      alertLogTargets: [],
+      kacAlarmTargets: [kac.alarm_event_index],
+    },
+  });
+}
+
 export class ElasticsearchConnector {
   private readonly baseUrl: string;
   private readonly timeoutMilliseconds: number;
   private readonly headers: Record<string, string>;
-  private readonly targets: Record<EntityKind, string[]>;
+  private readonly targets: Partial<Record<EntityKind, string[]>>;
   private readonly indexPrefix?: string;
   private readonly resolvedTargets = new Map<string, ResolveResponse>();
 
@@ -123,6 +154,9 @@ export class ElasticsearchConnector {
       events: config.elasticsearch.eventTargets,
       alerts: config.elasticsearch.alertTargets,
       "alert-logs": config.elasticsearch.alertLogTargets,
+      ...(config.elasticsearch.kacAlarmTargets
+        ? { "kac-alarms": config.elasticsearch.kacAlarmTargets }
+        : {}),
     };
     this.indexPrefix = config.elasticsearch.indexPrefix;
   }
@@ -260,7 +294,9 @@ export class ElasticsearchConnector {
   }
 
   async search(entity: EntityKind, params: SearchParams): Promise<EntityPage> {
-    const targets = this.targets[entity];
+    if (entity === "kac-alarms" && !params.tenantId?.trim())
+      throw new Error("查询 KAC 告警必须填写 bk_tenant_id");
+    const targets = this.targets[entity] ?? [];
     await this.validateTargets(targets);
     // 排序协议改变后拒绝旧游标，避免把 _shard_doc 数值当成索引名继续翻页。
     const queryIdentity = { ...params, cursor: undefined, sortVersion: 2 };
@@ -343,7 +379,9 @@ export class ElasticsearchConnector {
     tenantId: string,
     id: string,
   ): Promise<EntityItem | undefined> {
-    const targets = this.targets[entity];
+    if (entity === "kac-alarms" && !tenantId.trim())
+      throw new Error("查询 KAC 告警必须填写 bk_tenant_id");
+    const targets = this.targets[entity] ?? [];
     await this.validateTargets(targets);
     const fields = entityFields(entity);
     const body = {
@@ -375,7 +413,9 @@ export class ElasticsearchConnector {
   }
 
   async stats(entity: EntityKind, params: SearchParams) {
-    const targets = this.targets[entity];
+    if (entity === "kac-alarms" && !params.tenantId?.trim())
+      throw new Error("查询 KAC 告警必须填写 bk_tenant_id");
+    const targets = this.targets[entity] ?? [];
     await this.validateTargets(targets);
     const fields = entityFields(entity);
     const bucketSeconds = statsBucketSeconds(params);
@@ -390,7 +430,10 @@ export class ElasticsearchConnector {
               name: field,
               field,
             }))
-          : ["operation_kind", "operator_kind"].map((field) => ({
+          : (entity === "kac-alarms"
+              ? ["status", "source_id", "level", "action"]
+              : ["operation_kind", "operator_kind"]
+            ).map((field) => ({
               name: field,
               field,
             }));
@@ -398,10 +441,16 @@ export class ElasticsearchConnector {
       timeline: {
         date_histogram: {
           field: fields.time,
+          ...(entity === "kac-alarms" ? { format: "epoch_millis" } : {}),
           fixed_interval: `${bucketSeconds}s`,
           min_doc_count: 0,
           ...(params.from && params.to
-            ? { extended_bounds: { min: params.from, max: params.to } }
+            ? {
+                extended_bounds: {
+                  min: queryTime(entity, params.from),
+                  max: queryTime(entity, params.to),
+                },
+              }
             : {}),
         },
       },
@@ -434,8 +483,12 @@ export class ElasticsearchConnector {
       timeline: (response.aggregations?.timeline?.buckets ?? []).map(
         (bucket) => ({
           timestamp:
-            bucket.key_as_string ??
-            new Date(Number(bucket.key ?? 0)).toISOString(),
+            entity === "kac-alarms"
+              ? new Date(
+                  Number(bucket.key) - kacTimeOffsetMilliseconds,
+                ).toISOString()
+              : (bucket.key_as_string ??
+                new Date(Number(bucket.key ?? 0)).toISOString()),
           count: bucket.doc_count,
         }),
       ),
@@ -701,6 +754,8 @@ export class ElasticsearchConnector {
   }
 
   private async validateTargets(targets: string[]): Promise<void> {
+    if (!targets.length)
+      throw new Error("Elasticsearch entity is not configured");
     const resolved = await this.resolveTargets(targets);
     const physical = physicalIndices(resolved);
     if (physical.length === 0) {
@@ -776,6 +831,7 @@ export class ElasticsearchConnector {
 }
 
 function entityFields(entity: EntityKind) {
+  if (entity === "kac-alarms") return { id: "alarm_id", time: "alarm_time" };
   if (entity === "events") return { id: "event_id", time: "received_at" };
   if (entity === "alerts") return { id: "alert_id", time: "update_at" };
   return { id: "log_id", time: "created_time" };
@@ -804,8 +860,9 @@ function buildFilters(
     filters.push({
       range: {
         [fields.time]: {
-          ...(params.from ? { gte: params.from } : {}),
-          ...(params.to ? { lte: params.to } : {}),
+          ...(entity === "kac-alarms" ? { format: "epoch_millis" } : {}),
+          ...(params.from ? { gte: queryTime(entity, params.from) } : {}),
+          ...(params.to ? { lte: queryTime(entity, params.to) } : {}),
         },
       },
     });
@@ -824,6 +881,16 @@ function buildFilters(
     if (params.relatedAlertId)
       filters.push({ term: { related_alert_ids: params.relatedAlertId } });
   }
+  if (entity === "kac-alarms") {
+    for (const [field, value] of [
+      ["source_id", params.sourceId],
+      ["status", params.status],
+      ["level", params.level],
+      ["action", params.action],
+      ["event_id", params.eventId],
+    ])
+      if (value) filters.push({ term: { [field!]: value } });
+  }
   if (entity === "alerts") {
     if (params.enrichStatus)
       filters.push({ term: { enrich_status: params.enrichStatus } });
@@ -841,7 +908,7 @@ function buildFilters(
     if (params.operatorKind)
       filters.push({ term: { operator_kind: params.operatorKind } });
   }
-  if (entity !== "alert-logs") {
+  if (entity === "events" || entity === "alerts") {
     for (const [field, value] of [
       ["subject_id", params.subjectId],
       ["source_event_id", params.sourceEventId],
@@ -860,6 +927,12 @@ function statsBucketSeconds(params: SearchParams): number {
   return Math.max(60, Math.ceil((to - from) / 1000 / 240));
 }
 
+function queryTime(entity: EntityKind, value: string): string | number {
+  return entity === "kac-alarms"
+    ? Date.parse(value) + kacTimeOffsetMilliseconds
+    : value;
+}
+
 function hitToItem(entity: EntityKind, hit: SearchHit): EntityItem {
   const source = hit._source;
   const fields = entityFields(entity);
@@ -870,7 +943,7 @@ function hitToItem(entity: EntityKind, hit: SearchHit): EntityItem {
   return {
     tenantId: source.bk_tenant_id,
     id,
-    timestamp,
+    timestamp: entity === "kac-alarms" ? kacTimeToISO(timestamp) : timestamp,
     summary:
       entity === "events"
         ? {
@@ -894,7 +967,17 @@ function hitToItem(entity: EntityKind, hit: SearchHit): EntityItem {
               "title",
               "latest_event_id",
             ])
-          : pick(source, ["alert_id", "operation_kind", "operator_kind"]),
+          : entity === "kac-alarms"
+            ? pick(source, [
+                "name",
+                "status",
+                "source_id",
+                "source_name",
+                "level",
+                "action",
+                "event_id",
+              ])
+            : pick(source, ["alert_id", "operation_kind", "operator_kind"]),
     payload:
       entity === "events" && source.processing
         ? { ...withoutProcessing(source), _processing: source.processing }

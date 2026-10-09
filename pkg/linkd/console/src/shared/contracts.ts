@@ -36,11 +36,22 @@ export const dynamicConfigResponseSchema = z.object({
 });
 export type DynamicConfigResponse = z.infer<typeof dynamicConfigResponseSchema>;
 
-export const entityKindSchema = z.enum(["events", "alerts", "alert-logs"]);
+export const entityKindSchema = z.enum([
+  "events",
+  "alerts",
+  "alert-logs",
+  "kac-alarms",
+]);
 export type EntityKind = z.infer<typeof entityKindSchema>;
+export type LinkdEntityKind = Exclude<EntityKind, "kac-alarms">;
 
 export const sourceKindSchema = z.enum(["mysql", "elasticsearch"]);
 export type SourceKind = z.infer<typeof sourceKindSchema>;
+
+const entityCapabilitySchema = z.object({
+  source: sourceKindSchema,
+  filters: z.array(z.string()),
+});
 
 export const capabilitySchema = z.object({
   version: z.string(),
@@ -48,13 +59,12 @@ export const capabilitySchema = z.object({
     configured: z.boolean(),
     source: z.literal("prometheus"),
   }),
-  entities: z.record(
-    entityKindSchema,
-    z.object({
-      source: sourceKindSchema,
-      filters: z.array(z.string()),
-    }),
-  ),
+  entities: z.object({
+    events: entityCapabilitySchema,
+    alerts: entityCapabilitySchema,
+    "alert-logs": entityCapabilitySchema,
+    "kac-alarms": entityCapabilitySchema.optional(),
+  }),
   storage: z.object({
     elasticsearch: z.object({ configured: z.boolean() }),
   }),
@@ -561,6 +571,10 @@ export const errorResponseSchema = z.object({
 });
 
 export interface SearchParams {
+  sourceId?: string;
+  level?: string;
+  action?: string;
+  eventId?: string;
   tenantId?: string;
   id?: string;
   from?: string;

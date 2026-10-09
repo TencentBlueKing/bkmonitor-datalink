@@ -67,6 +67,7 @@ describe("sidebar navigation", () => {
           "/explore/events",
           "/explore/alerts",
           "/explore/alert-logs",
+          "/explore/kac-alarms",
           "/strategy-index",
           "/policies",
           "/suppression-cleanups",

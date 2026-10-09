@@ -22,7 +22,7 @@ import { z } from "zod";
 import {
   controlPlaneCatalogSchema,
   entityKindSchema,
-  type EntityKind,
+  type LinkdEntityKind as EntityKind,
   type EntityPage,
 } from "../shared/contracts.js";
 import {
@@ -31,7 +31,10 @@ import {
   redactedConfig,
   type ConsoleConfig,
 } from "./config.js";
-import { ElasticsearchConnector } from "./elasticsearch.js";
+import {
+  ElasticsearchConnector,
+  createKACAlarmConnector,
+} from "./elasticsearch.js";
 import { KafkaConnector } from "./kafka.js";
 import { MysqlConnector } from "./mysql.js";
 import { PrometheusConnector } from "./prometheus.js";
@@ -50,7 +53,7 @@ import {
 } from "../shared/strategy-index.js";
 
 const detailQuerySchema = z.object({
-  bk_tenant_id: z.string().min(1).max(1024),
+  bk_tenant_id: z.string().trim().min(1).max(1024),
 });
 const metricQuerySchema = z.object({
   from: z.string().datetime(),
@@ -132,6 +135,7 @@ async function registerConsoleRoutes(
     ? new ElasticsearchConnector(config)
     : undefined;
   const prometheusConnector = new PrometheusConnector(config);
+  const kacAlarmConnector = createKACAlarmConnector(config);
   const kafkaConnector = new KafkaConnector(config);
   const redisConnector = new RedisConnector(config);
   const strategyIndex = new StrategyIndexConnector(
@@ -412,6 +416,10 @@ async function registerConsoleRoutes(
   for (const entity of entityKindSchema.options) {
     app.get(`/local-api/${entity}`, async (request): Promise<EntityPage> => {
       const params = parseSearchQuery(request.query, entity, config);
+      if (entity === "kac-alarms") {
+        if (!kacAlarmConnector) throw new Error("KAC Elasticsearch 未配置");
+        return kacAlarmConnector.search(entity, params);
+      }
       return searchEntity(
         entity,
         params,
@@ -422,6 +430,10 @@ async function registerConsoleRoutes(
     });
     app.get(`/local-api/${entity}/stats`, async (request) => {
       const params = parseSearchQuery(request.query, entity, config);
+      if (entity === "kac-alarms") {
+        if (!kacAlarmConnector) throw new Error("KAC Elasticsearch 未配置");
+        return kacAlarmConnector.stats(entity, params);
+      }
       const source = entitySource(config, entity);
       if (source === "mysql") {
         if (!mysqlConnector) throw new Error("mysql source is unavailable");
@@ -436,14 +448,19 @@ async function registerConsoleRoutes(
         .object({ id: z.string().min(1).max(1024) })
         .parse(request.params);
       const { bk_tenant_id: tenantId } = detailQuerySchema.parse(request.query);
-      const item = await detailEntity(
-        entity,
-        tenantId,
-        id,
-        config,
-        mysqlConnector,
-        elasticsearchConnector,
-      );
+      if (entity === "kac-alarms" && !kacAlarmConnector)
+        throw new Error("KAC Elasticsearch 未配置");
+      const item =
+        entity === "kac-alarms"
+          ? await kacAlarmConnector!.detail(entity, tenantId, id)
+          : await detailEntity(
+              entity,
+              tenantId,
+              id,
+              config,
+              mysqlConnector,
+              elasticsearchConnector,
+            );
       if (!item)
         return reply.status(404).send({
           error: {

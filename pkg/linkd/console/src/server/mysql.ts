@@ -2,7 +2,7 @@ import mysql, { type Pool, type RowDataPacket } from "mysql2/promise";
 
 import type {
   EntityItem,
-  EntityKind,
+  LinkdEntityKind as EntityKind,
   EntityPage,
   SearchParams,
 } from "../shared/contracts.js";

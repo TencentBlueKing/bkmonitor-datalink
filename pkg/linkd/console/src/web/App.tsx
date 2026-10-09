@@ -141,6 +141,7 @@ const navigationGroups: Array<{
       { to: "/explore/events", label: "Events", glyph: "E" },
       { to: "/explore/alerts", label: "Alerts", glyph: "A" },
       { to: "/explore/alert-logs", label: "Alert Logs", glyph: "L" },
+      { to: "/explore/kac-alarms", label: "KAC 告警", glyph: "K" },
       { to: "/strategy-index", label: "策略活跃索引", glyph: "I" },
       { to: "/policies", label: "告警策略", glyph: "P" },
       { to: "/suppression-cleanups", label: "抑制清理历史", glyph: "H" },
@@ -391,6 +392,10 @@ function PageRoutes() {
         <Route
           path="/explore/alert-logs"
           element={<ExplorerPage key="alert-logs" entity="alert-logs" />}
+        />
+        <Route
+          path="/explore/kac-alarms"
+          element={<ExplorerPage key="kac-alarms" entity="kac-alarms" />}
         />
         <Route
           path="/storage/elasticsearch"

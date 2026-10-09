@@ -23,6 +23,13 @@ export const explorerMeta = {
     time: "记录时间",
     description: "按时间还原状态操作与 Hook 输出记录。",
   },
+  "kac-alarms": {
+    title: "KAC Alarm Explorer",
+    name: "KAC 告警",
+    singular: "alarm_id",
+    time: "告警发生时间",
+    description: "只读查询 KAC alarm_event 中的实际告警文档与处置状态。",
+  },
 } satisfies Record<EntityKind, unknown>;
 
 export type FilterSpec = {
@@ -59,6 +66,23 @@ const identityFields: FilterSpec[] = [
   },
 ];
 export const explorerFilters: Record<EntityKind, FilterSpec[]> = {
+  "kac-alarms": [
+    { key: "source_id", capability: "sourceId", label: "KAC 来源 ID" },
+    { key: "status", capability: "status", label: "KAC 状态" },
+    { key: "level", capability: "level", label: "KAC 级别" },
+    {
+      key: "action",
+      capability: "action",
+      label: "来源动作",
+      options: ["firing", "resolved", "close"],
+    },
+    {
+      key: "event_id",
+      capability: "eventId",
+      label: "KAC Event ID",
+      advanced: true,
+    },
+  ],
   events: [
     {
       key: "enrich_status",
@@ -308,7 +332,7 @@ export function relationLinks(
         label: "模拟首次事件丰富",
         to: `/enrich-preview?${new URLSearchParams({ bk_tenant_id: item.tenantId, event_id: p.trigger_event_id, event_source_id: String(p.event_source_id ?? "") })}`,
       });
-  } else {
+  } else if (entity === "alert-logs") {
     exact("alerts", p.alert_id, "所属告警");
     const params = record(p.params);
     exact(

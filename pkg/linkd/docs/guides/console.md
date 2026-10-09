@@ -344,6 +344,39 @@ MySQL Alert 统计现在也应用 JSON `update_at` 时间条件，但不提供�
 - 关联查询默认覆盖最近更新前的最大允许窗口（默认七天），不是完整历史保证。Event 按接收时间、AlertLog 按记录时间；生命周期更长时明确提示窗口截断，可自行查询更早窗口。首次和最近事件仍可按精确 ID 独立查看。
 - AlertLog 默认使用时间线，可切换表格，展示操作、操作方、父告警、原因及 Hook 摘要；支持按时间正序或倒序查看。
 
+### KAC alarm_event 查询
+
+“核心数据 → KAC 告警”（`/explore/kac-alarms`）只读查询 KAC ES 中实际保存的 `alarm_event` 文档。
+复用 `plugins.kac.elasticsearch` 与 `plugins.kac.alarm_event_index`，连接独立于 Linkd Repository；
+浏览器不能指定其他集群或索引。只要连接和 alias 已配置即可查询，不要求启用投影/动作插件。
+
+仅用于只读查询的最小配置如下；已有完整 KAC 插件配置时直接复用，不修改 `enabled`：
+
+```yaml
+plugins:
+  kac:
+    enabled: false
+    alarm_event_index: cw_kac_saas_3.0_alarm_event
+    elasticsearch:
+      addresses: [http://127.0.0.1:9200]
+```
+
+必须填写 `bk_tenant_id` 后查询，列表、统计、详情与游标都限定同一租户。
+支持精确 `alarm_id`（可不限时间）、`source_id`、`status`、`level`、`action` 与 `event_id` 筛选，
+分页及时间预算沿用实体查询工作区。支持原 KAC 的告警 ID，不限于 `linkd-` 格式。
+状态、来源、级别和动作分布可点击筛选；详情提供结构化字段、扩展数据与完整原始 JSON，
+不提供修改或关闭 KAC 告警的操作。投影任务详情可通过“查询 KAC 实际文档”携带租户和 `alarm_id` 跳转。
+
+时间筛选和排序使用 `alarm_time`，表示告警发生时间，不代表最近投影或处置更新时间。
+原协议时间字符串按 `Asia/Shanghai` 解释；范围、分布和 UTC/本地展示使用对应的实际时刻，
+完整 JSON 保留原始无时区字符串。该转换依赖现有 KAC `yyyy-MM-dd HH:mm:ss` mapping。
+列表与统计分别读取快照；查询结果不等同于 Linkd 的任务确认状态，也不代表 KAC 后续处置已完成。
+
+可使用独立只读账号覆盖 KAC ES 凭据：`LINKD_CONSOLE_KAC_ELASTICSEARCH_API_KEY`，
+或 `LINKD_CONSOLE_KAC_ELASTICSEARCH_PASSWORD`（用户名沿用 KAC 配置）。
+账号需具备固定 alias 的 `read` 与 `view_index_metadata` 权限；凭据仅保存在 Node 连接层。
+连接缺失时页面提示配置，服务不可用时显示查询失败，不回退查询 Linkd 存储。
+
 ### 主动关闭告警
 
 Alert 详情中的“主动关闭”要求填写原因并确认当前租户和 Alert；仅 active 告警可发起新关闭。

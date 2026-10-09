@@ -35,6 +35,8 @@ export function EntityTable({
   onInspect: (item: EntityItem) => void;
 }) {
   const mode = useTimeMode();
+  if (entity === "kac-alarms")
+    return <KACAlarmTable items={items} onInspect={onInspect} />;
   return (
     <div className="table-scroll">
       <table className="explorer-table">
@@ -184,6 +186,72 @@ export function EntityTable({
                       {formatTime(item.timestamp, mode)}
                     </span>
                   )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function KACAlarmTable({
+  items,
+  onInspect,
+}: {
+  items: EntityItem[];
+  onInspect: (item: EntityItem) => void;
+}) {
+  const mode = useTimeMode();
+  return (
+    <div className="table-scroll">
+      <table className="explorer-table">
+        <thead>
+          <tr>
+            <th>名称 / alarm_id</th>
+            <th>租户 / KAC 来源</th>
+            <th>状态 / 级别</th>
+            <th>对象 / 来源动作</th>
+            <th>告警发生时间</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => {
+            const p = item.payload;
+            return (
+              <tr key={`${item.tenantId}:${item.id}`}>
+                <td>
+                  <button
+                    className="explorer-title-button"
+                    onClick={() => onInspect(item)}
+                  >
+                    {display(p.name)}
+                  </button>
+                  <span className="explorer-secondary mono">{item.id}</span>
+                </td>
+                <td>
+                  <span className="tenant-chip">{item.tenantId}</span>
+                  <span className="explorer-secondary">
+                    {display(p.source_name)} · {display(p.source_id)}
+                  </span>
+                </td>
+                <td>
+                  <EntityState value={p.status} />
+                  <span className="explorer-secondary">
+                    级别 {display(p.level)}
+                  </span>
+                </td>
+                <td>
+                  {display(p.object)}
+                  <span className="explorer-secondary">
+                    {display(p.action)}
+                  </span>
+                </td>
+                <td>
+                  <span className="mono">
+                    {formatTime(item.timestamp, mode)}
+                  </span>
                 </td>
               </tr>
             );

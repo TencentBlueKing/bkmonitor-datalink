@@ -702,6 +702,7 @@ export interface ConsoleConfig {
     eventTargets: string[];
     alertTargets: string[];
     alertLogTargets: string[];
+    kacAlarmTargets?: string[];
     indexPrefix?: string;
     timePartition?: {
       eventBucketDays: number;
@@ -1234,6 +1235,25 @@ export function publicConfig(config: ConsoleConfig) {
       source: "prometheus" as const,
     },
     entities: {
+      ...(config.plugins?.kac?.elasticsearch &&
+      config.plugins.kac.alarm_event_index
+        ? {
+            "kac-alarms": {
+              source: "elasticsearch" as const,
+              filters: [
+                "tenantId",
+                "id",
+                "from",
+                "to",
+                "sourceId",
+                "status",
+                "level",
+                "action",
+                "eventId",
+              ],
+            },
+          }
+        : {}),
       events: {
         source,
         filters: [

@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 
 import { z } from "zod";
+import { entityKindSchema } from "../shared/contracts.js";
 
 const cursorSchema = z.object({
   version: z.literal(1),
   kind: z.enum(["mysql", "elasticsearch"]),
-  entity: z.enum(["events", "alerts", "alert-logs"]),
+  entity: entityKindSchema,
   queryHash: z.string(),
   values: z.array(z.union([z.string(), z.number()])),
   pitId: z.string().optional(),

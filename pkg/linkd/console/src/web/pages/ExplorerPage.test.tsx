@@ -16,6 +16,7 @@ import {
   explorerCapabilities,
   explorerStats,
   logFixture,
+  kacAlarmFixture,
 } from "../../../tests/fixtures/explorer";
 import { TimeContext } from "../time";
 import { ExplorerPage } from "./ExplorerPage";
@@ -42,11 +43,13 @@ function setup(entity: EntityKind, query = "") {
     if (url.pathname.endsWith("stats"))
       return Response.json(explorerStats(kind));
     const item =
-      kind === "alerts"
-        ? alertFixture
-        : kind === "events"
-          ? eventFixture
-          : logFixture;
+      kind === "kac-alarms"
+        ? kacAlarmFixture
+        : kind === "alerts"
+          ? alertFixture
+          : kind === "events"
+            ? eventFixture
+            : logFixture;
     if (url.pathname.split("/").length > 3) return Response.json(item);
     return Response.json({
       source: "elasticsearch",
@@ -71,6 +74,57 @@ function setup(entity: EntityKind, query = "") {
   );
   return fetcher;
 }
+it("queries tenant-scoped KAC documents with dedicated fields and keeps raw JSON in details", async () => {
+  const fetcher = setup(
+    "kac-alarms",
+    "?bk_tenant_id=tenant-a&id=legacy-alarm-001",
+  );
+  await screen.findByRole("button", { name: "KAC CPU 告警" });
+  expect(
+    screen.getByRole("columnheader", { name: "状态 / 级别" }),
+  ).toBeInTheDocument();
+  expect(screen.getByText("2026-10-09 01:00:00.000 UTC")).toBeInTheDocument();
+  expect(screen.getByLabelText("KAC 来源 ID")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("KAC 级别"), {
+    target: { value: "critical" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "执行查询" }));
+  await waitFor(() =>
+    expect(
+      fetcher.mock.calls.some(([url]) => url.includes("level=critical")),
+    ).toBe(true),
+  );
+  fireEvent.click(await screen.findByRole("button", { name: "KAC CPU 告警" }));
+  const dialog = await screen.findByRole("dialog");
+  expect(
+    await within(dialog).findByText("2026-10-09 01:00:02.000 UTC"),
+  ).toBeInTheDocument();
+  expect(
+    within(dialog).queryByRole("button", { name: "主动关闭" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(within(dialog).getByRole("tab", { name: "完整 JSON" }));
+  expect(within(dialog).getByText(/2026-10-09 09:00:00/)).toBeInTheDocument();
+  const urls = fetcher.mock.calls
+    .map(([url]) => new URL(url, "http://local"))
+    .filter((url) => url.pathname.includes("kac-alarms"));
+  expect(
+    urls.every((url) => url.searchParams.get("bk_tenant_id") === "tenant-a"),
+  ).toBe(true);
+  expect(
+    fetcher.mock.calls.some(
+      ([url]) =>
+        url.includes("/local-api/events") || url.includes("/local-api/alerts"),
+    ),
+  ).toBe(false);
+});
+
+it("waits for an explicit tenant before querying KAC", async () => {
+  const fetcher = setup("kac-alarms");
+  await screen.findByText("请填写租户并执行查询。");
+  expect(fetcher.mock.calls.every(([url]) => !url.includes("kac-alarms"))).toBe(
+    true,
+  );
+});
 it("shows creation separately from updates and loads both tenant-scoped related lists inside Alert details", async () => {
   const fetcher = setup("alerts", "?bk_tenant_id=tenant-a&id=alert-cpu-001");
   await screen.findByRole("button", {

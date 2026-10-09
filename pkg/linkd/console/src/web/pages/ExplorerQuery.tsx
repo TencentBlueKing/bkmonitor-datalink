@@ -45,6 +45,8 @@ export function ExplorerQuery({
       if (value && key !== "from" && key !== "to") next.set(key, value);
     }
     try {
+      if (entity === "kac-alarms" && !next.get("bk_tenant_id"))
+        throw new Error("查询 KAC 告警必须填写租户。");
       if (selectedRange === "exact") {
         if (!next.get("id"))
           throw new Error("不限时间查询需要填写精确实体 ID。");
@@ -89,7 +91,11 @@ export function ExplorerQuery({
       <div className="explorer-filter-grid">
         <label>
           租户
-          <input name="bk_tenant_id" defaultValue={values.bk_tenant_id ?? ""} />
+          <input
+            name="bk_tenant_id"
+            required={entity === "kac-alarms"}
+            defaultValue={values.bk_tenant_id ?? ""}
+          />
         </label>
         <label>
           {explorerMeta[entity].singular} ID

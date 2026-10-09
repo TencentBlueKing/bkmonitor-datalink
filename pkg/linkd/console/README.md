@@ -30,6 +30,7 @@ Console 不再维护第二份基础设施 YAML。以下环境变量只覆盖 Con
 - `LINKD_CONSOLE_PROMETHEUS_USERNAME`、`LINKD_CONSOLE_PROMETHEUS_PASSWORD`
 - `LINKD_CONSOLE_MYSQL_PASSWORD`
 - `LINKD_CONSOLE_ELASTICSEARCH_API_KEY`、`LINKD_CONSOLE_ELASTICSEARCH_PASSWORD`
+- `LINKD_CONSOLE_KAC_ELASTICSEARCH_API_KEY`、`LINKD_CONSOLE_KAC_ELASTICSEARCH_PASSWORD`：KAC 告警查询的独立只读凭据。
 - `LINKD_CONSOLE_REDIS_PASSWORD`
 - `LINKD_CONSOLE_REDIS_SENTINEL_PASSWORD`
 - `LINKD_CONSOLE_TIMEOUT_MILLISECONDS`、`LINKD_CONSOLE_MAX_RANGE_SECONDS`
@@ -123,6 +124,7 @@ Alert 详情分开展示入队意图及动作开关。动作页可按需查看�
 - Lifecycle：Event 处理与 Signal 调度分离；独立 Enrich 区域展示同步丰富总体状态、在途调用、平均/P95/P99、Processor 状态与 P99、诊断、DataSource 调用与 P99、payload 大小；独立 ES 合批区展示范围执行次数、提交/成功/失败操作数、每批大小、字节数、排队与执行耗时，并显示配置推导值。
 - Control Plane：控制面注册的全量任务、运行状态、有限子流程结果、历史计数与生效配置。
 - Events、Alerts、AlertLogs：分对象查询、结构化详情、关联列表与流水、当前 schema 能力内的统计；Alert 详情支持通过控制面主动关闭。
+- KAC 告警：通过独立 KAC ES 连接只读查询 `alarm_event`，支持租户、告警 ID、来源、状态、级别、动作、时间筛选与原始文档详情；见 [KAC 查询](../docs/guides/console.md#kac-alarm_event-查询)。
 - Kafka、Redis、Elasticsearch：实时只读基础设施状态；ES 节点快照单独显示 CPU、heap、write active/queue、累计 rejected、当前 merge 和未提交 translog，不把累计量解释为待处理队列。
 - Configuration：Linkd YAML 的脱敏有效摘要。
 

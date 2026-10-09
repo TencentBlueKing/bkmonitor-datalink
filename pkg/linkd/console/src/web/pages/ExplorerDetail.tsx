@@ -19,6 +19,7 @@ import { EntityState, EntityTable, LogTimeline } from "./ExplorerRecords";
 import { AlertPolicyState } from "./AlertPolicyState";
 import { EventSuppressionState } from "./EventSuppressionState";
 import { CloseAlertPanel } from "./CloseAlertPanel";
+import { kacTimeToISO } from "../../shared/kac-alarm";
 
 export function ExplorerDetail({
   entity,
@@ -66,9 +67,17 @@ export function ExplorerDetail({
             {explorerMeta[entity].singular.toUpperCase()} DETAIL
           </p>
           <h2 id="explorer-detail-title">
-            {display(item?.payload.title) === "—"
+            {display(
+              entity === "kac-alarms"
+                ? item?.payload.name
+                : item?.payload.title,
+            ) === "—"
               ? id
-              : display(item?.payload.title)}
+              : display(
+                  entity === "kac-alarms"
+                    ? item?.payload.name
+                    : item?.payload.title,
+                )}
           </h2>
           <p className="mono">
             {tenant} / {id}
@@ -150,7 +159,11 @@ export function ExplorerDetail({
           >
             {tab === "overview" && (
               <>
-                <RecordOverview entity={entity} item={item} />
+                {entity === "kac-alarms" ? (
+                  <KACAlarmOverview item={item} />
+                ) : (
+                  <RecordOverview entity={entity} item={item} />
+                )}
                 {entity === "alerts" && (
                   <AlertPolicyState payload={item.payload} />
                 )}
@@ -249,18 +262,20 @@ export function ExplorerDetail({
             )}
             {tab === "fields" && (
               <>
-                {(entity === "events"
-                  ? [
-                      "dimensions",
-                      "labels",
-                      "values",
-                      "enrich",
-                      "source_raw_data",
-                      "extra_data",
-                    ]
-                  : entity === "alerts"
-                    ? ["dimensions", "labels", "enrich", "extra_data"]
-                    : ["params"]
+                {(entity === "kac-alarms"
+                  ? Object.keys(item.payload).sort()
+                  : entity === "events"
+                    ? [
+                        "dimensions",
+                        "labels",
+                        "values",
+                        "enrich",
+                        "source_raw_data",
+                        "extra_data",
+                      ]
+                    : entity === "alerts"
+                      ? ["dimensions", "labels", "enrich", "extra_data"]
+                      : ["params"]
                 ).map((key) => (
                   <section className="explorer-field-section" key={key}>
                     <h3>{key}</h3>
@@ -274,6 +289,61 @@ export function ExplorerDetail({
         </>
       )}
     </dialog>
+  );
+}
+
+function KACAlarmOverview({ item }: { item: EntityItem }) {
+  const mode = useTimeMode();
+  const p = item.payload;
+  const fields = [
+    "alarm_id",
+    "event_id",
+    "source_id",
+    "source_name",
+    "object",
+    "item",
+    "bk_biz_id",
+    "bk_biz_name",
+    "strategy_id",
+    "conductor",
+    "notify_status",
+    "source_alarm_status",
+    "associate_alarm_id",
+    "associate_count",
+  ];
+  return (
+    <section className="explorer-overview">
+      <div className="explorer-state-line">
+        <EntityState value={p.status} />
+        <span>
+          级别 <strong>{display(p.level)}</strong>
+        </span>
+        <span>来源动作 {display(p.action)}</span>
+      </div>
+      <div className="explorer-milestones">
+        {[
+          ["alarm_time", "告警发生"],
+          ["storage_time", "入库时间"],
+          ["close_time", "关闭时间"],
+        ].map(([key, label]) => (
+          <div key={key}>
+            <span>{label}</span>
+            <strong>{formatTime(kacTimeToISO(display(p[key])), mode)}</strong>
+          </div>
+        ))}
+      </div>
+      {Boolean(p.content) && (
+        <p className="explorer-content">{display(p.content)}</p>
+      )}
+      <dl className="explorer-facts">
+        {fields.map((key) => (
+          <div key={key}>
+            <dt>{key}</dt>
+            <dd>{display(p[key])}</dd>
+          </div>
+        ))}
+      </dl>
+    </section>
   );
 }
 

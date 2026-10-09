@@ -125,6 +125,7 @@ func TestSharedTopologyRequiredRelationWithoutRouteFails(t *testing.T) {
 		Timestamp: 1700000000, MaxHops: 2,
 	})
 	require.ErrorContains(t, err, "required relation has no physical query route")
+	require.ErrorContains(t, err, "source_middle_flow")
 	require.Empty(t, result.Snapshots)
 }
 

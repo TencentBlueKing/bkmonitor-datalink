@@ -113,7 +113,7 @@ func (m *Model) prepareTimeGraphVMQuery(ctx context.Context, queryTs *structured
 		return "", nil, errors.WithMessage(err, "to query reference")
 	}
 	if metadata.IsExactTimeGrid(ctx) && timeGraphQueryStage(ctx) == "relation-edge" && queryRef.Count() == 0 {
-		return "", nil, errors.New("required relation has no physical query route")
+		return "", nil, errors.Errorf("required relation has no physical query route: %s", timeGraphLoadMetricName(queryTs))
 	}
 	metadata.SetExpand(ctx, query.ToVmExpand(ctx, queryRef))
 

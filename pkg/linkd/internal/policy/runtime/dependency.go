@@ -128,11 +128,20 @@ func (s *Shielder) admittedMain(ctx context.Context, f policy.FrozenPolicy, targ
 			if err != nil {
 				return chosen, false, err
 			}
-			matched, err := s.dependencyMatch(ctx, f, view, targets, at, false)
+			verdict, err := s.Loader.evaluate(ctx, f.Release, f.Compiled, view, targets, at, false, false)
 			if err != nil {
 				return chosen, false, err
 			}
-			if matched && (chosen.alert.AlertID == "" || a.BeginAt.After(chosen.at) || (a.BeginAt.Equal(chosen.at) && a.AlertID < chosen.alert.AlertID)) {
+			if !verdict.Evaluated {
+				// 单条候选的未知字段只影响其新主资格；共享目标/业务依赖失败仍禁止从部分结果选主。
+				switch verdict.Reason {
+				case "business_field_unavailable", "business_field_invalid", "instance_field_unavailable", "condition_unavailable":
+					continue
+				default:
+					return chosen, false, policy.ErrUnavailable
+				}
+			}
+			if verdict.Matched && (chosen.alert.AlertID == "" || a.BeginAt.After(chosen.at) || (a.BeginAt.Equal(chosen.at) && a.AlertID < chosen.alert.AlertID)) {
 				chosen = dependencyMain{alert: a, view: view, at: a.BeginAt}
 			}
 		}

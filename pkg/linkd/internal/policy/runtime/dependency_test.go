@@ -232,6 +232,64 @@ func TestDependencySelectsNewestBeforeChildTimeAndKeepsBinding(t *testing.T) {
 	}
 }
 
+func TestDependencyIgnoresUnevaluableCandidateWhenSelectingNewMain(t *testing.T) {
+	for _, status := range []domain.EnrichStatus{domain.EnrichStatusPartial, domain.EnrichStatusFailed} {
+		t.Run(string(status), func(t *testing.T) {
+			repo, clock, s, state, action := dependencyFixture(t, "custom_shield")
+			valid := admittedMainFixture(t, repo, clock, "a-valid")
+			unknown := valid.Clone()
+			unknown.AlertID, unknown.Fingerprint = "z-unknown", "fp-unknown"
+			unknown.BeginAt = clock.at.Add(time.Minute)
+			unknown.EnrichStatus = status
+			unknown.Enrich = domain.JSONObject{"processors": json.RawMessage(`[{"cmdb":{"status":"` + string(status) + `","patches":[]}}]`)}
+			if _, err := repo.CreateAlert(t.Context(), unknown); err != nil {
+				t.Fatal(err)
+			}
+			clock.at = clock.at.Add(2 * time.Minute)
+			p := dependencyProcessor(t, repo, clock, s, state, action)
+			child := mustProcessAggregation(t, repo, p, dependencyEvent("child-known-main", "other-source", "child", clock))
+			current, err := repo.GetAlert(t.Context(), "tenant", child.Event.RelatedAlertIDs[0])
+			if err != nil || !current.Alert.Shield.Active || current.Alert.Shield.Bindings[0].MainAlertID != valid.AlertID {
+				t.Fatalf("unrelated unevaluable candidate blocked valid main: shield=%+v err=%v", current.Alert.Shield, err)
+			}
+		})
+	}
+}
+
+type unavailableDependencyTargets struct {
+	shieldTargets
+	failScope bool
+}
+
+func (s unavailableDependencyTargets) ResolveScope(ctx context.Context, tenant, space string) (onemodel.TargetScope, error) {
+	if s.failScope {
+		return onemodel.TargetScope{}, policy.ErrUnavailable
+	}
+	return s.shieldTargets.ResolveScope(ctx, tenant, space)
+}
+
+func (s unavailableDependencyTargets) Resolve(context.Context, string, string, onemodel.TargetDescriptor) (onemodel.TargetResult, error) {
+	return onemodel.TargetResult{}, policy.ErrUnavailable
+}
+
+func TestDependencyCandidateFieldCompatibilityDoesNotHideTargetFailure(t *testing.T) {
+	for _, failScope := range []bool{false, true} {
+		t.Run(fmt.Sprint("scope=", failScope), func(t *testing.T) {
+			repo, clock, s, _, _ := dependencyFixture(t, "custom_shield")
+			admittedMainFixture(t, repo, clock, "known")
+			release := dependencyRelease(t, "custom_shield")
+			compiled, err := policy.Compile(policy.Shield, release.Spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, found, err := s.admittedMain(t.Context(), policy.FrozenPolicy{Release: release, Compiled: compiled}, unavailableDependencyTargets{failScope: failScope}, clock.at, func(string) (string, error) { return "2", nil })
+			if found || !errors.Is(err, policy.ErrUnavailable) {
+				t.Fatal("target failure became candidate exclusion", found, err)
+			}
+		})
+	}
+}
+
 func TestDependencyReferenceBindsAndRechecksFrozenMain(t *testing.T) {
 	repo, clock, s, state, action := dependencyFixture(t, "custom_shield")
 	r := dependencyRelease(t, "custom_shield")

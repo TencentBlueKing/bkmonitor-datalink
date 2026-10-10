@@ -122,3 +122,84 @@ func TestMatrixReuseDirectionsKeepAnswerAndInput(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, before, after, "apply must not mutate a reused Matrix")
 }
+
+func TestMatrixReuseExceptionalTopologyParity(t *testing.T) {
+	previous := SharedTopologyReuseMatrix
+	t.Cleanup(func() { SharedTopologyReuseMatrix = previous })
+	for _, tt := range []struct {
+		name        string
+		matrix      pl.Matrix
+		partial     bool
+		failure     error
+		wantPartial bool
+	}{
+		{name: "complete empty"},
+		{name: "partial empty", partial: true, wantPartial: true},
+		{name: "partial with relation", matrix: contractMatrix(map[string]string{"source_id": "a", "middle_id": "b"}, 1700000000000, 1700000060000), partial: true, wantPartial: true},
+		{name: "fetch failure", failure: errors.New("backend unavailable")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var baseline []string
+			var calls []int
+			for _, enabled := range []bool{false, true} {
+				SharedTopologyReuseMatrix = enabled
+				ctx := initTimeGraphQueryTestEnvironment()
+				model := sharedTopologyQueryModel(nil)
+				provider := sharedTopologyQueryProvider().(contractSchemaProvider)
+				provider.schemas[0].IsDirectional = false
+				model.schemaProvider = provider
+				model.timeGraphQueryReference = func(ctx context.Context, query *structured.QueryTs) (metadata.QueryReference, error) {
+					ref, err := timeGraphTestQueryReference(ctx, query)
+					metadata.GetQueryParams(ctx).SetStorageType(metadata.VictoriaMetricsStorageType)
+					return ref, err
+				}
+				count := 0
+				model.timeGraphVMQueryWithPartial = func(_ context.Context, query *structured.QueryTs, _ string, _ bool, _, _ time.Time, _ time.Duration) (pl.Matrix, bool, error) {
+					count++
+					if query.QueryList[0].FieldName == "source_middle_flow" {
+						return tt.matrix, tt.partial, tt.failure
+					}
+					return nil, false, nil
+				}
+				request := cmdb.SharedTopologyQuery{
+					SpaceUID: "space", SourceType: "source", SourceInfo: cmdb.Matcher{"source_id": "a"},
+					StartTime: 1700000000, EndTime: 1700000060, Step: "60s", MaxHops: 2,
+				}
+				result, err := model.QuerySharedTopology(ctx, request)
+				calls = append(calls, count)
+				if tt.failure != nil {
+					require.ErrorContains(t, err, tt.failure.Error())
+					require.Empty(t, result.Snapshots)
+					continue
+				}
+				require.NoError(t, err)
+				require.Len(t, result.Snapshots, 2)
+				for _, snapshot := range result.Snapshots {
+					require.Equal(t, tt.wantPartial, snapshot.Partial)
+					if tt.wantPartial {
+						require.Equal(t, "backend_partial", snapshot.PartialReason)
+					} else {
+						require.Empty(t, snapshot.PartialReason)
+					}
+				}
+				canonical := canonicalTopologyForTest(t, result.Snapshots)
+				if baseline == nil {
+					baseline = canonical
+				} else {
+					require.Equal(t, baseline, canonical)
+				}
+				request.ResponseFormat = cmdb.CompactTopologyFormat
+				compact, err := model.QuerySharedTopology(ctx, request)
+				require.NoError(t, err)
+				require.Equal(t, result.Snapshots, decodeCompactForTest(t, compact.Compact))
+			}
+			require.Len(t, calls, 2)
+			t.Logf("physical fetches with reuse disabled/enabled: %d/%d", calls[0], calls[1])
+			if tt.partial {
+				require.Less(t, calls[1], calls[0], "reuse must reduce physical fetches without hiding partial")
+			} else {
+				require.Equal(t, calls[0], calls[1], "complete empty and failed fetches stop before repeated relation reads")
+			}
+		})
+	}
+}

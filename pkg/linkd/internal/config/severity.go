@@ -9,7 +9,11 @@
 
 package config
 
-import "fmt"
+import (
+	"fmt"
+
+	"linkd/internal/domain"
+)
 
 const defaultSeverityName = "warning"
 
@@ -64,6 +68,9 @@ func (c SeverityConfig) Validate() error {
 	for index, level := range c.Levels {
 		if err := validateBoundedText("severity.levels.name", level.Name, 1, 32); err != nil {
 			return fmt.Errorf("severity.levels[%d]: %w", index, err)
+		}
+		if level.Name == domain.SeverityAll {
+			return fmt.Errorf("severity level name %q is reserved for closed evaluations", level.Name)
 		}
 		if _, exists := names[level.Name]; exists {
 			return fmt.Errorf("severity level name is duplicated: %q", level.Name)

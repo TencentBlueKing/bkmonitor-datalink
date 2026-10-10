@@ -149,6 +149,12 @@ func (f *EventFactory) Build(message RawEventMessage, draft EventDraft) (domain.
 		dynamic = snapshot.Enabled
 	}
 	for index, evaluation := range draft.Evaluations {
+		// __ALL__ 表达关闭范围，不能经过来源映射或回退为默认等级；
+		// 后续领域校验确保该保留标记只用于 closed。
+		if evaluation.Severity == domain.SeverityAll {
+			evaluations[index] = evaluation
+			continue
+		}
 		severity, err := f.severityResolver.Resolve(f.source, severityConfig, evaluation.Severity)
 		// 动态等级模式保留无法识别的标准等级，交由 Lifecycle 落 rejected；
 		// 不能在删除等级时把旧事件悄悄降为全局默认等级。

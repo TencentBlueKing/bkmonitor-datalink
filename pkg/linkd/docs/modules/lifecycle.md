@@ -264,6 +264,13 @@ Processor 必须幂等。最后一次 `LPOP` 前发生的新入队会由当前 H
 同一 `(bk_tenant_id, event_source_id, fingerprint)` 仍最多一个 active Alert；Event 的多个判定共享
 一个 Mailbox。先验证所有级别，再从 triggered 判定选最高级别，不按数组顺序逐项执行。
 
+`severity: __ALL__` 是 alarmd 的关闭专用标记，只允许 `closed`，不参与级别排序。
+它优先匹配当前活动 Alert，保留原级别并按来源时间、原因关闭；即使该 Alert 的级别已从动态
+配置删除，也按此次来源关闭处理。不存在活动 Alert 时为 orphaned。若同时有普通 triggered，
+先关闭旧生命周期，再创建最高触发级别的新 Alert，不应用旧生命周期的升级策略。
+
+其余普通级别遵循以下规则：
+
 1. 最高 triggered 高于当前 active 级别时，优先应用全局 `lifecycle.severity_upgrade_policy`；
    同一事件中旧级别的 resolved/closed 被升级替代，记录 suppressed/evaluation_superseded。
 2. 没有更高级别触发时，只允许与 active 同级的 resolved/closed 结束它。
@@ -278,6 +285,8 @@ Processor 必须幂等。最后一次 `LPOP` 前发生的新入队会由当前 H
 | critical | critical resolved + warning triggered | 恢复 critical，创建 warning |
 | critical | critical triggered + warning resolved | 更新 critical，warning 恢复为 orphaned |
 | critical | 只有 warning triggered | 抑制 warning，critical 继续活动 |
+| 任意级别 | __ALL__ closed | 关闭当前 Alert，保留原级别 |
+| warning | __ALL__ closed + critical triggered | 来源关闭 warning，再创建 critical，与升级策略无关 |
 
 策略只有两个取值，默认 `close_and_create`：
 
@@ -397,6 +406,7 @@ rejected 等结果不一定生成日志，不能单独作为“Event 已处理�
 ## 动态等级变更
 
 等级来源、恢复与分发由[动态配置](../design/dynamic-configuration.md)管理，Lifecycle 只读取进程内快照。
-未知等级的活动 Alert 在处理到同一 fingerprint 时作为 system 操作关闭；对应清理意图保存在 EventPlan，
+未知等级的活动 Alert 在处理到同一 fingerprint 时作为 system 操作关闭（显式 `__ALL__/closed` 按来源关闭）；对应清理意图保存在 EventPlan，
 用于关闭后日志/Hook 失败时幂等补齐。Event 包含任何未知等级则整条标记 `rejected/unknown_severity`，
 不执行其余 evaluation 的业务操作，持久化完成后正常确认 Mailbox，不修改已经终态的 Event 或 Alert。
+`__ALL__/closed` 不属于未知等级，无需动态等级表包含该标记。

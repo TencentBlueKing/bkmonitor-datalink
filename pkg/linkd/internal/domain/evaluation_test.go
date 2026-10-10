@@ -98,3 +98,16 @@ func TestEvaluationsCanonicalizeOrderAndRejectDuplicates(t *testing.T) {
 		})
 	}
 }
+
+func TestAllSeverityRequiresClose(t *testing.T) {
+	for _, action := range []domain.EventAction{domain.EventActionClosed, domain.EventActionTriggered, domain.EventActionResolved} {
+		t.Run(string(action), func(t *testing.T) {
+			event := validEvent()
+			event.Evaluations = []domain.EventEvaluation{{Severity: "__ALL__", Action: action}}
+			err := event.Validate()
+			if (err == nil) != (action == domain.EventActionClosed) {
+				t.Fatalf("Validate() = %v for __ALL__/%s", err, action)
+			}
+		})
+	}
+}

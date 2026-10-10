@@ -22,6 +22,127 @@ import (
 	"linkd/internal/store/memory"
 )
 
+func TestAllSeverityClose(t *testing.T) {
+	for _, tc := range []struct{ severity, reason string }{
+		{"critical", "strategy_inactive"},
+		{"warning", "strategy_absent"},
+		{"info", "target_out_of_scope"},
+		{"custom", "strategy_inactive"},
+		{"removed", "strategy_absent"},
+	} {
+		severity := tc.severity
+		t.Run(severity, func(t *testing.T) {
+			ctx := context.Background()
+			repo := memory.New()
+			hook := &recordingHook{}
+			p := newTestProcessor(t, repo, hook)
+			if severity == "custom" || severity == "removed" {
+				p.severity = liveSeverityTable{severity: 1}
+			}
+			opening := testEvent("opening", severity)
+			first := persistAndProcess(t, repo, p, opening)
+			if severity == "removed" {
+				p.severity = &changingSeverity{values: liveSeverityTable{"warning": 1}, digest: "new"}
+			}
+			event := testEvent("close-all", "__ALL__")
+			event.Evaluations[0].Action = domain.EventActionClosed
+			event.Evaluations[0].ActionReason = tc.reason
+			event.OccurredAt = event.OccurredAt.Add(time.Minute)
+			result := persistAndProcess(t, repo, p, event)
+			if result.Outcome != OutcomeAlertClosed || result.EventState != domain.EventProcessStateAccepted || !slices.Equal(result.AlertIDs, first.AlertIDs) {
+				t.Fatalf("result=%+v", result)
+			}
+			closed, err := repo.GetAlert(ctx, event.BKTenantID, first.AlertIDs[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if closed.Alert.Status != domain.AlertStatusClosed || closed.Alert.Severity != severity || closed.Alert.EndType != domain.AlertEndTypeSource || closed.Alert.EndReason != tc.reason || !closed.Alert.EndAt.Equal(event.OccurredAt) || closed.Alert.LatestEventID != event.EventID {
+				t.Fatalf("closed=%+v", closed.Alert)
+			}
+			stored := mustGetStoredEvent(t, repo, event)
+			if stored.Event.Evaluations[0].Severity != "__ALL__" || stored.Processing.Evaluations[0].Severity != "__ALL__" || stored.Processing.Evaluations[0].State != domain.EventProcessStateAccepted || !slices.Equal(stored.Processing.Evaluations[0].RelatedAlertIDs, first.AlertIDs) {
+				t.Fatalf("stored=%+v", stored)
+			}
+			if len(hook.inputs) != 2 || hook.inputs[1].Alert.Severity != severity || hook.inputs[1].Alert.Status != domain.AlertStatusClosed {
+				t.Fatalf("hooks=%+v", hook.inputs)
+			}
+			if _, err := p.ProcessEvent(ctx, stored); err != nil {
+				t.Fatal(err)
+			}
+			if len(hook.inputs) != 2 {
+				t.Fatal("terminal replay repeated close hook")
+			}
+			event.EventID = "close-again"
+			result = persistAndProcess(t, repo, p, event)
+			if result.EventState != domain.EventProcessStateOrphaned || len(result.AlertIDs) != 0 || len(hook.inputs) != 2 {
+				t.Fatalf("closed alert modified: %+v", result)
+			}
+		})
+	}
+}
+
+func TestAllSeverityCloseScope(t *testing.T) {
+	ctx := context.Background()
+	repo := memory.New()
+	p := newTestProcessor(t, repo, NoopFinalHook{})
+	for _, scope := range []string{"tenant", "source", "fingerprint"} {
+		event := testEvent(scope, "critical")
+		switch scope {
+		case "tenant":
+			event.BKTenantID = "other-tenant"
+		case "source":
+			event.EventSourceID = "other-source"
+		case "fingerprint":
+			event.Fingerprint = "other-fingerprint"
+		}
+		persistAndProcess(t, repo, p, event)
+	}
+	closeEvent := testEvent("close-all", "__ALL__")
+	closeEvent.Evaluations[0].Action = domain.EventActionClosed
+	result := persistAndProcess(t, repo, p, closeEvent)
+	if result.EventState != domain.EventProcessStateOrphaned || len(result.AlertIDs) != 0 {
+		t.Fatalf("result=%+v", result)
+	}
+	for _, key := range []store.ActiveAlertKey{
+		{BKTenantID: "other-tenant", EventSourceID: closeEvent.EventSourceID, Fingerprint: closeEvent.Fingerprint},
+		{BKTenantID: closeEvent.BKTenantID, EventSourceID: "other-source", Fingerprint: closeEvent.Fingerprint},
+		{BKTenantID: closeEvent.BKTenantID, EventSourceID: closeEvent.EventSourceID, Fingerprint: "other-fingerprint"},
+	} {
+		if active, err := repo.FindActiveAlert(ctx, key); err != nil || active.Alert.Status != domain.AlertStatusActive {
+			t.Fatalf("other scope modified: %+v %v", active, err)
+		}
+	}
+}
+
+func TestAllSeverityCloseResumesAfterLogFailure(t *testing.T) {
+	ctx := context.Background()
+	repo := &failCloseLogs{Repository: memory.New()}
+	p := newTestProcessor(t, repo, NoopFinalHook{})
+	first := persistAndProcess(t, repo, p, testEvent("opening", "critical"))
+	event := testEvent("close-all", "__ALL__")
+	event.Evaluations[0].Action = domain.EventActionClosed
+	created, err := repo.CreateEvent(ctx, event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo.fail = true
+	if _, err := p.ProcessEvent(ctx, created.StoredEvent); err == nil {
+		t.Fatal("expected log failure after close")
+	}
+	closed, err := repo.GetAlert(ctx, event.BKTenantID, first.AlertIDs[0])
+	if err != nil || closed.Alert.Status != domain.AlertStatusClosed {
+		t.Fatalf("close not applied: %+v %v", closed, err)
+	}
+	result, err := p.ProcessEvent(ctx, mustGetStoredEvent(t, repo, event))
+	if err != nil || result.Outcome != OutcomeAlertClosed || result.EventState != domain.EventProcessStateAccepted {
+		t.Fatalf("retry=%+v err=%v", result, err)
+	}
+	after, err := repo.GetAlert(ctx, event.BKTenantID, first.AlertIDs[0])
+	if err != nil || after.Alert.Revision != closed.Alert.Revision {
+		t.Fatal("retry mutated closed alert")
+	}
+}
+
 func TestMultipleEvaluationsAndUpgradePolicies(t *testing.T) {
 	trigger := func(level string) domain.EventEvaluation {
 		return domain.EventEvaluation{Severity: level, Action: domain.EventActionTriggered}
@@ -47,6 +168,10 @@ func TestMultipleEvaluationsAndUpgradePolicies(t *testing.T) {
 		{name: "recover and create lower", opening: "critical", policy: "update_current", evaluations: []domain.EventEvaluation{recoverLevel("critical"), trigger("warning")}, wantLevel: "warning", oldStatus: domain.AlertStatusRecovered, hooks: 2, linked: 2},
 		{name: "wrong level recovery", opening: "critical", policy: "update_current", evaluations: []domain.EventEvaluation{recoverLevel("warning"), trigger("critical")}, wantLevel: "critical", sameID: true, hooks: 1, linked: 1},
 		{name: "missing high level", opening: "critical", policy: "update_current", evaluations: []domain.EventEvaluation{trigger("warning"), trigger("info")}, wantLevel: "critical", sameID: true, hooks: 0, linked: 1},
+		{name: "all close before upgrade in place", opening: "warning", policy: "update_current", evaluations: []domain.EventEvaluation{closeLevel("__ALL__"), trigger("critical")}, wantLevel: "critical", oldStatus: domain.AlertStatusClosed, hooks: 2, linked: 2},
+		{name: "all close before rotation", opening: "warning", policy: "close_and_create", evaluations: []domain.EventEvaluation{closeLevel("__ALL__"), trigger("critical")}, wantLevel: "critical", oldStatus: domain.AlertStatusClosed, hooks: 2, linked: 2},
+		{name: "all close before same level trigger", opening: "warning", policy: "update_current", evaluations: []domain.EventEvaluation{closeLevel("__ALL__"), trigger("warning")}, wantLevel: "warning", oldStatus: domain.AlertStatusClosed, hooks: 2, linked: 2},
+		{name: "all close before same level recovery", opening: "critical", policy: "update_current", evaluations: []domain.EventEvaluation{closeLevel("__ALL__"), recoverLevel("critical"), trigger("warning")}, wantLevel: "warning", oldStatus: domain.AlertStatusClosed, hooks: 2, linked: 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

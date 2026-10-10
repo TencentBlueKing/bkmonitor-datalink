@@ -67,7 +67,7 @@ Event 的已知字段，只保留在完整的 `Event.source_raw_data` 快照中�
 | `bk_tenant_id` | Value 与 header 可只提供一处；两处非空时须一致，且最终租户不能为空。EventSource 的 `related_tenant_id` 非空时由该配置覆盖。 |
 | `event_id`、`alert_id` | 分别映射到 `Event.source_event_id`、`Event.source_alert_id`，通用 Cleaner 允许为空；EventFactory 使用稳定 `RecordID` 和 Kafka record timestamp 生成内部 Event ID；来源 ID 不承担消息唯一性。具体来源若按 `source_alert_id` 关联，仍须提供稳定且非空的 `alert_id`。 |
 | `title`、`content` | `title` 是事件标题，`content` 是可选的来源内容；缺失 `content` 不从标题推导。 |
-| `evaluations` | 必填，1–32 项；每项 `action` 只能是 `triggered`、`resolved`、`closed`，`severity` 为来源等级标识。来源等级映射后不得重复；数组顺序不决定裁决顺序，未出现的等级不隐含恢复或关闭。 |
+| `evaluations` | 必填，1–32 项；每项 `action` 只能是 `triggered`、`resolved`、`closed`，`severity` 为来源等级标识或关闭专用标记 `__ALL__`。来源等级映射后不得重复；数组顺序不决定裁决顺序，未出现的等级不隐含恢复或关闭。 |
 | `values` | 可选的扁平数值对象，最多 256 项；key 为 1–256 bytes，value 必须是有限数字，不接受字符串、布尔值、null 或嵌套值。缺失、显式 null 和 `{}` 都形成空对象，不给缺失的数值项补零。 |
 | `dimensions`、`labels` | 扁平标量对象，value 只接受字符串、有限数字或布尔值；通用 Cleaner 对缺失或显式 null 规范为空对象。维度与标签各自的业务完整性由来源负责。 |
 | `subject` | 可选的来源对象声明，子字段为 `system`、`type`、`id`、`name`；缺失时不推断对象身份。 |
@@ -76,6 +76,25 @@ Event 的已知字段，只保留在完整的 `Event.source_raw_data` 快照中�
 
 每项 `evaluations[].severity` 保留来源原值；默认 SeverityResolver 依次使用
 `severity_mapping`、全局同名 Severity、来源 `default_severity` 和全局 `default_severity`。
+`__ALL__` 是 alarmd 全级别关闭使用的保留标记，原样进入 Event，不经过上述映射或默认值回退，
+也不需要配置到全局等级表；全局等级表禁止使用该名称。它只允许与 `action: closed` 一起使用，
+用于关闭同一 `(bk_tenant_id, event_source_id, fingerprint)` 下任意级别的当前活动 Alert：
+
+```json
+{
+  "alert_id": "source-alert-1",
+  "evaluations": [
+    { "severity": "__ALL__", "action": "closed", "action_reason": "strategy_inactive" }
+  ]
+}
+```
+
+该片段省略租户，实际投递仍须由 Value、header 或来源配置提供租户。关闭保留 Alert 原级别，
+以该 Event 的 `occurred_at` 和 `action_reason` 保存来源结束时间和原因；alarmd 的
+`strategy_inactive`、`strategy_absent`、`target_out_of_scope` 等原因原样保留。找不到活动 Alert 时
+结果为 `orphaned`，不会新建或改写历史终态告警。若同一事件还有普通 `triggered`，先完成
+全级别关闭，再由最高触发级别创建新 Alert；该关闭不会被级别升级策略替代。
+
 同一事件的所有判定共享本次的 `values`、`dimensions` 和 `occurred_at`；`values` 不参与 fingerprint。
 `event_source_id`、`event_source_version`、`related_alert_ids`、`fingerprint`、`received_at`、
 `create_at` 和 `source_raw_data` 即使出现在 Value 中，也不能覆盖 EventFactory 的结果。

@@ -31,7 +31,7 @@ MQ delivery
 
 - Event 使用 evaluations 记录多个级别的 `triggered | resolved | closed` 判定，values 记录本次数值。
 - Alert status 仅 `active | recovered | closed`，后两者不可重新打开。
-- 同一 fingerprint 最多一个活动 Alert；更高级别触发优先，可全局配置原地升级或关闭后新建；恢复/关闭只匹配当前级别。
+- 同一 fingerprint 最多一个活动 Alert；更高级别触发优先，可全局配置原地升级或关闭后新建；普通恢复/关闭只匹配当前级别，`__ALL__/closed` 可关闭任意当前级别。
 - Event 保存逐 evaluation 结果；防抖未达阈值时可为 suppressed 且没有关联 Alert，诊断仍可查询。
 - 每条不同 Event 在策略裁决前执行并冻结 Enrich，重投复用已保存结果；Alert 固定复制 opening Event
   的丰富与展示快照。未配置规则视为 succeeded 空结果，错误降级为 failed。

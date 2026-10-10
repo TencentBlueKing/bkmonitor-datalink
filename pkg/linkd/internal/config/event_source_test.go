@@ -33,6 +33,7 @@ func TestSeverityConfig(t *testing.T) {
 		{DefaultSeverity: "missing", Levels: []SeverityLevel{{Name: "warning", Priority: 2}}},
 		{DefaultSeverity: "warning", Levels: []SeverityLevel{{Name: "warning", Priority: 2}, {Name: "warning", Priority: 3}}},
 		{DefaultSeverity: "warning", Levels: []SeverityLevel{{Name: "warning", Priority: 2}, {Name: "info", Priority: 2}}},
+		{DefaultSeverity: "__ALL__", Levels: []SeverityLevel{{Name: "__ALL__", Priority: 1}}},
 	} {
 		if err := test.Validate(); err == nil {
 			t.Fatalf("Validate(%#v) unexpectedly succeeded", test)

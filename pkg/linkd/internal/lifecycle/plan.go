@@ -143,7 +143,10 @@ func (p *Processor) preparePlan(ctx context.Context, event domain.Event, snapsho
 	if err != nil {
 		return nil, err
 	}
-	if hasActive {
+	closeAll := slices.ContainsFunc(event.Evaluations, func(e domain.EventEvaluation) bool { return e.Severity == domain.SeverityAll })
+	// 显式全级别关闭直接匹配当前活动告警，即使该告警的等级已从动态配置删除，
+	// 也保留来源给出的关闭时间和原因，不改写成 unknown_severity 系统关闭。
+	if hasActive && !closeAll {
 		if _, ok := p.severity.Priority(active.Alert.Severity); !ok {
 			closed := terminalAlert(active.Alert, event, domain.AlertStatusClosed, domain.AlertEndTypeSystem, "unknown_severity", now)
 			closed.EndAt = &now
@@ -154,6 +157,9 @@ func (p *Processor) preparePlan(ctx context.Context, event domain.Event, snapsho
 	}
 	unknown := []string{}
 	for _, evaluation := range event.Evaluations {
+		if evaluation.Severity == domain.SeverityAll {
+			continue
+		}
 		if _, ok := p.severity.Priority(evaluation.Severity); !ok {
 			unknown = append(unknown, evaluation.Severity)
 		}
@@ -170,9 +176,6 @@ func (p *Processor) preparePlan(ctx context.Context, event domain.Event, snapsho
 	}
 	highest := -1
 	for i, evaluation := range event.Evaluations {
-		if _, ok := p.severity.Priority(evaluation.Severity); !ok {
-			return nil, fmt.Errorf("unknown evaluation severity %q", evaluation.Severity)
-		}
 		if evaluation.Action == domain.EventActionTriggered {
 			if highest < 0 {
 				highest = i
@@ -194,17 +197,21 @@ func (p *Processor) preparePlan(ctx context.Context, event domain.Event, snapsho
 	}
 	terminal := -1
 	if hasActive {
-		if _, ok := p.severity.Priority(active.Alert.Severity); !ok {
-			return nil, fmt.Errorf("unknown active alert severity")
-		}
 		for i, evaluation := range event.Evaluations {
+			// __ALL__ 优先于同级终结判定，结果不依赖 evaluations 的数组顺序。
+			if evaluation.Severity == domain.SeverityAll {
+				terminal = i
+				break
+			}
 			if evaluation.Severity == active.Alert.Severity && evaluation.Action != domain.EventActionTriggered {
 				terminal = i
 			}
 		}
 	}
 	upgrade := false
-	if hasActive && highest >= 0 {
+	// 全级别关闭先结束旧生命周期；同一事件若仍有 triggered，再创建新告警，
+	// 避免升级策略把明确的来源关闭吞掉。
+	if hasActive && highest >= 0 && !closeAll {
 		comparison, compareErr := p.compareSeverity(event.Evaluations[highest].Severity, active.Alert.Severity)
 		if compareErr != nil {
 			return nil, compareErr

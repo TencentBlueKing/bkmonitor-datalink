@@ -16,6 +16,8 @@ import (
 
 	"linkd/internal/config"
 	"linkd/internal/consume"
+	"linkd/internal/domain"
+	"linkd/internal/runtimeconfig"
 )
 
 func TestCleanerValuesAndMappedEvaluationCollision(t *testing.T) {
@@ -36,5 +38,45 @@ func TestCleanerValuesAndMappedEvaluationCollision(t *testing.T) {
 	message.Body = []byte(`{"alert_id":"source-alert","evaluations":[{"severity":"P2","action":"triggered"},{"severity":"P3","action":"resolved"}]}`)
 	if _, err := mapper.MapMessage(context.Background(), message); err == nil {
 		t.Fatal("mapped severity collision accepted")
+	}
+}
+
+func TestCleanerPreservesAllSeverityClose(t *testing.T) {
+	for _, mode := range []string{"static", "dynamic", "dynamic disabled"} {
+		t.Run(mode, func(t *testing.T) {
+			source := testSource()
+			// 关闭标记不能被来源映射或默认等级覆盖。
+			source.SeverityMapping["__ALL__"] = "info"
+			mapper, err := NewMapper(source, config.DefaultSeverityConfig())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mode != "static" {
+				state := runtimeconfig.NewSeverity(config.DefaultSeverityConfig())
+				if err := state.Install(runtimeconfig.Snapshot{Enabled: mode == "dynamic", Severity: config.DefaultSeverityConfig()}); err != nil {
+					t.Fatal(err)
+				}
+				mapper.factory, err = NewDynamicEventFactory(source, state)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, action := range []domain.EventAction{domain.EventActionClosed, domain.EventActionTriggered, domain.EventActionResolved} {
+				message := consume.Message{ID: "record", TenantID: "tenant-1", EnqueuedAt: time.Now().UTC(), Body: []byte(`{"alert_id":"source-alert","evaluations":[{"severity":"__ALL__","action":"` + string(action) + `","action_reason":"strategy_inactive"}]}`)}
+				event, err := mapper.MapMessage(context.Background(), message)
+				if action != domain.EventActionClosed {
+					if err == nil {
+						t.Fatalf("__ALL__ accepted action %q", action)
+					}
+					continue
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if event.Evaluations[0].Severity != "__ALL__" || event.Evaluations[0].ActionReason != "strategy_inactive" {
+					t.Fatalf("close marker changed: %+v", event.Evaluations)
+				}
+			}
+		})
 	}
 }

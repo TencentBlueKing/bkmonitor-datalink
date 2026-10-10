@@ -83,6 +83,8 @@ func TestRequiredConsumersAndInputGuards(t *testing.T) {
 		"redis:\n  password: fake-secret\n",
 		"bk_api:\n  address: http://user:fake-secret@localhost\n",
 		"bk_data:\n  address: http://localhost?access_token=fake-secret\n",
+		"bk_data:\n  address: http://localhost?auth=fake-secret\n",
+		"bk_data:\n  address: http://localhost?key=fake-secret\n",
 	} {
 		t.Run(extra, func(t *testing.T) {
 			raw, runtime := configFor(t, minimalPayload, extra)
@@ -141,7 +143,7 @@ func TestFileAndDecryptFailures(t *testing.T) {
 }
 
 func TestRedactionDoesNotMutateCredentials(t *testing.T) {
-	settings := map[string]any{"redis": map[string]any{"password": "fake-secret"}, "headers": map[string]string{"custom": "fake-secret"}, "url": "https://user:fake-secret@localhost/query?token=fake-secret&route=keep", "nested": []any{map[string]any{"private_key_file": "fake-secret"}}}
+	settings := map[string]any{"redis": map[string]any{"password": "fake-secret"}, "consul": map[string]any{"username": "fake-secret"}, "headers": map[string]string{"custom": "fake-secret"}, "url": "https://user:fake-secret@localhost/query?token=fake-secret&auth=fake-secret&key=fake-secret&route=keep", "nested": []any{map[string]any{"private_key_file": "fake-secret"}}}
 	out := RedactSettings(settings)
 	var encoded bytes.Buffer
 	require.NoError(t, json.NewEncoder(&encoded).Encode(out))

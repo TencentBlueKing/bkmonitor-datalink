@@ -15,7 +15,12 @@ func sensitiveKey(key string) bool {
 			return true
 		}
 	}
-	return k == "headers" || k == "keyfile"
+	return k == "headers" || k == "keyfile" || k == "username"
+}
+
+func sensitiveQueryKey(key string) bool {
+	k := strings.ToLower(key)
+	return sensitiveKey(key) || k == "auth" || k == "key"
 }
 
 func parsedURL(value string) (*url.URL, error) {
@@ -34,7 +39,7 @@ func HasURLCredentials(value string) bool {
 		return true
 	}
 	for key := range u.Query() {
-		if sensitiveKey(key) {
+		if sensitiveQueryKey(key) {
 			return true
 		}
 	}
@@ -53,7 +58,7 @@ func RedactURL(value string) string {
 	u.User = nil
 	query := u.Query()
 	for key := range query {
-		if sensitiveKey(key) {
+		if sensitiveQueryKey(key) {
 			query.Set(key, "[redacted]")
 		}
 	}

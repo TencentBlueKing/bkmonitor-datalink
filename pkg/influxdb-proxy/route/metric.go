@@ -23,7 +23,39 @@ var (
 		},
 		[]string{"cluster", "action", "status", "db"},
 	)
+	routeLookup = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "influxdb_proxy_route_lookup",
+			Help: "route lookup outcomes without high-cardinality route labels",
+		},
+		[]string{"result", "match"},
+	)
+	routeRefresh = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "influxdb_proxy_route_refresh",
+			Help: "route refresh outcomes",
+		},
+		[]string{"result", "reason"},
+	)
 )
+
+func RouteLookupCountInc(result, match string) error {
+	metric, err := routeLookup.GetMetricWithLabelValues(result, match)
+	if err != nil {
+		return err
+	}
+	metric.Inc()
+	return nil
+}
+
+func RouteRefreshCountInc(result, reason string) error {
+	metric, err := routeRefresh.GetMetricWithLabelValues(result, reason)
+	if err != nil {
+		return err
+	}
+	metric.Inc()
+	return nil
+}
 
 // QueryClusterFailedCountInc Query Metric
 func QueryClusterFailedCountInc(cluster string, db string) error {
@@ -124,5 +156,5 @@ func metricError(name string, err error, flowLog *logging.Entry) {
 
 func init() {
 	// register the metrics
-	prometheus.MustRegister(handledCluster)
+	prometheus.MustRegister(handledCluster, routeLookup, routeRefresh)
 }

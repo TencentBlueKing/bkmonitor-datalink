@@ -218,6 +218,9 @@ func (r *SpaceTsDbRouter) Delete(ctx context.Context, stoPrefix string, stoKey s
 
 // Get a space data from db
 func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey string, cached bool, ignoreKeyNotFound bool) influxdb.GenericValue {
+	r.rwLock.RLock()
+	defer r.rwLock.RUnlock()
+
 	stoKey = fmt.Sprintf("%s:%s", stoPrefix, stoKey)
 	stoVal, err := influxdb.NewGenericValue(stoPrefix)
 	if err != nil {
@@ -233,10 +236,12 @@ func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey stri
 		if exist {
 			// 存入缓存的数据可能有 nil 情况，需要兼容
 			if data == nil {
+				metric.SpaceRouterLookupInc(ctx, stoPrefix, metric.SpaceRouterLookupResultMiss)
 				return nil
 			}
 			value, ok := data.(influxdb.GenericValue)
 			if ok {
+				metric.SpaceRouterLookupInc(ctx, stoPrefix, metric.SpaceRouterLookupResultHit)
 				return value
 			}
 			metadata.NewMessage(
@@ -249,10 +254,12 @@ func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey stri
 	v, err := r.kvClient.Get(kvstore.String2byte(stoKey))
 	if err != nil {
 		if err.Error() == "keyNotFound" {
+			metric.SpaceRouterLookupInc(ctx, stoPrefix, metric.SpaceRouterLookupResultMiss)
 			if !ignoreKeyNotFound {
 				log.Debugf(ctx, "Key(%s) not found in KVBolt", stoKey)
 			}
 		} else {
+			metric.SpaceRouterLookupInc(ctx, stoPrefix, metric.SpaceRouterLookupResultError)
 			metadata.NewMessage(
 				metadata.MsgQueryRouter,
 				"KVBolt %s 获取值失败",
@@ -262,12 +269,15 @@ func (r *SpaceTsDbRouter) Get(ctx context.Context, stoPrefix string, stoKey stri
 		stoVal = nil
 	} else {
 		if _, err := stoVal.Unmarshal(v); err != nil {
+			metric.SpaceRouterLookupInc(ctx, stoPrefix, metric.SpaceRouterLookupResultError)
 			_ = metadata.NewMessage(
 				metadata.MsgQueryRouter,
 				"序列化实体数据失败 %v",
 				v,
 			).Error(ctx, err)
 			stoVal = nil
+		} else {
+			metric.SpaceRouterLookupInc(ctx, stoPrefix, metric.SpaceRouterLookupResultHit)
 		}
 	}
 	// 添加缓存
@@ -382,15 +392,16 @@ func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes
 	r.rwLock.Lock()
 	defer r.rwLock.Unlock()
 	start := time.Now()
+	loadResult := metric.RedisRouterLoadResultFailure
 	defer func() {
 		log.Debugf(ctx, "[SpaceTSDB] Load key(%s), time cost: %s", key, time.Since(start))
+		if influxdb.IsSpaceAllRouterKey(key) {
+			metric.RedisRouterLoadResultInc(ctx, key, loadResult)
+			metric.RedisRouterLoadSecond(ctx, time.Since(start), key)
+		}
 	}()
 	var (
-		err      error
-		ok       bool
-		val      influxdb.GenericKV
-		recvErr  bool // genericCh 曾收到带 Err 的项（如 HScan 失败、JSON 解析失败）
-		batchErr bool // 任一批 BatchAdd 写本地 KV 失败
+		recvErr error // genericCh 曾收到带 Err 的项（如 HScan 失败、JSON 解析失败）
 	)
 	batchSize := int64(r.batchSize)
 	entities := make([]influxdb.GenericKV, 0)
@@ -398,53 +409,40 @@ func (r *SpaceTsDbRouter) LoadRouter(ctx context.Context, key string, printBytes
 	genericCh := make(chan influxdb.GenericKV, batchSize)
 	go r.router.IterGenericKeyResult(ctx, key, batchSize, genericCh)
 
-	count := int64(0)
-
-	for {
-		select {
-		case val, ok = <-genericCh:
-			if ok {
-				if val.Err != nil {
-					recvErr = true
-					metadata.NewMessage(
-						metadata.MsgQueryRouter,
-						"空间TSDB路由加载异常 %v",
-						val.Err,
-					).Warn(ctx)
-					continue
-				}
-				entities = append(entities, val)
-				count += 1
+	for val := range genericCh {
+		if val.Err != nil {
+			if recvErr == nil {
+				recvErr = val.Err
 			}
-			if !ok || count%batchSize == 0 {
-				log.Debugf(ctx, "Read %v entities from key(%s) channel", len(entities), key)
-				err = r.BatchAdd(ctx, key, entities, false, printBytes)
-				if err != nil {
-					batchErr = true
-					metadata.NewMessage(
-						metadata.MsgQueryRouter,
-						"空间TSDB路由 %s 添加异常 %v",
-						key, err,
-					).Warn(ctx)
-				}
-				// 清空缓存
-				count = 0
-				entities = entities[:0]
-			}
-			if !ok {
-				// 仅 SpaceAllKey 打点，避免非法 key 造成 Prometheus 高基数
-				if influxdb.IsSpaceAllRouterKey(key) {
-					// ctx 被取消时，HScan 可能提前结束但不会显式透传 GenericKV.Err，记为 failure
-					if recvErr || batchErr || ctx.Err() != nil {
-						metric.RedisRouterLoadResultInc(ctx, key, metric.RedisRouterLoadResultFailure)
-					} else {
-						metric.RedisRouterLoadResultInc(ctx, key, metric.RedisRouterLoadResultSuccess)
-					}
-				}
-				return nil
-			}
+			metadata.NewMessage(
+				metadata.MsgQueryRouter,
+				"空间TSDB路由加载异常 %v",
+				val.Err,
+			).Warn(ctx)
+			continue
 		}
+		entities = append(entities, val)
 	}
+
+	// 必须先完整读取 Redis，再写入本地 KV，避免 HScan 中断时留下半份路由。
+	if recvErr != nil {
+		return fmt.Errorf("load key(%s) from redis failed: %w", key, recvErr)
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("load key(%s) canceled: %w", key, err)
+	}
+
+	log.Debugf(ctx, "Read %v entities from key(%s) channel", len(entities), key)
+	if err := r.BatchAdd(ctx, key, entities, true, printBytes); err != nil {
+		metadata.NewMessage(
+			metadata.MsgQueryRouter,
+			"空间TSDB路由 %s 添加异常 %v",
+			key, err,
+		).Warn(ctx)
+		return fmt.Errorf("write key(%s) to local router failed: %w", key, err)
+	}
+	loadResult = metric.RedisRouterLoadResultSuccess
+	return nil
 }
 
 func (r *SpaceTsDbRouter) Stop() error {

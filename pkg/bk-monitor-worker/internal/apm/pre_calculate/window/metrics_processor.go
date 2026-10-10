@@ -48,6 +48,7 @@ type MetricProcessor struct {
 	dataId   string
 
 	enabledLayer4Report               bool
+	dynamicRelationFlowReportEnabled  bool
 	podInstanceErrorFlowReportEnabled bool
 	podApmErrorFlowReportEnabled      bool
 	podSystemErrorFlowReportEnabled   bool
@@ -162,6 +163,8 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 ) {
 	metricRecordMapping := make(map[string]*storage.FlowMetricRecordStats)
 	metricCount := make(map[string]int)
+	relationLabels := make([]string, 0)
+	relationMetricCount := make(map[string]int)
 
 	parentChildPairs, aloneNodes := fullTreeGraph.FindDirectParentChildParisAndAloneNodes(CallerKinds, CalleeKinds)
 	for _, pairs := range parentChildPairs {
@@ -185,6 +188,9 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 
 		cStatusCode := pairs[0].StatusCode
 		sStatusCode := pairs[1].StatusCode
+
+		parentIp := pairs[0].GetFieldValue(core.NetHostIpField, core.HostIpField)
+		childIp := pairs[1].GetFieldValue(core.NetHostIpField, core.HostIpField)
 
 		// unit: μs
 		var duration int
@@ -224,6 +230,22 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 			)
 			m.addToStats(labelKey, duration, metricRecordMapping)
 			metricCount[storage.ApmServiceFlow]++
+		}
+
+		if m.dynamicRelationFlowReportEnabled {
+			m.addDynamicRelationFlowMetrics(
+				&relationLabels,
+				relationMetricCount,
+				pairs,
+				cService,
+				sService,
+				cBcsClusterId,
+				sBcsClusterId,
+				cPodName,
+				sPodName,
+				parentIp,
+				childIp,
+			)
 		}
 
 		// Only traffic of error needs to consider the caller and callee of the pod.
@@ -319,8 +341,6 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 		if !m.enabledLayer4Report {
 			continue
 		}
-		parentIp := pairs[0].GetFieldValue(core.NetHostIpField, core.HostIpField)
-		childIp := pairs[1].GetFieldValue(core.NetHostIpField, core.HostIpField)
 
 		parentHostName := pairs[0].GetFieldValue(core.NetHostnameField, core.HostIpField, core.NetHostIpField)
 		childHostName := pairs[1].GetFieldValue(core.NetHostnameField, core.HostIpField, core.NetHostIpField)
@@ -505,6 +525,97 @@ func (m *MetricProcessor) findParentChildAndAloneFlowMetric(
 
 	if len(metricRecordMapping) > 0 {
 		m.sendToSave(storage.PrometheusStorageData{Kind: storage.PromFlowMetric, Value: metricRecordMapping}, metricCount, receiver)
+	}
+	if len(relationLabels) > 0 {
+		m.sendToSave(storage.PrometheusStorageData{Kind: storage.PromRelationMetric, Value: relationLabels}, relationMetricCount, receiver)
+	}
+}
+
+func (m *MetricProcessor) addDynamicRelationFlowMetrics(
+	relationLabels *[]string,
+	metricCount map[string]int,
+	pairs [2]Node,
+	cService string,
+	sService string,
+	cBcsClusterId string,
+	sBcsClusterId string,
+	cPodName string,
+	sPodName string,
+	parentIp string,
+	childIp string,
+) {
+	if cService != "" && sService != "" && m.baseInfo.AppName != "" {
+		addRelationMetric(
+			relationLabels,
+			metricCount,
+			storage.ApmServiceFlow,
+			pair("from_apm_service_name", cService),
+			pair("from_apm_application_name", m.baseInfo.AppName),
+			pair("to_apm_service_name", sService),
+			pair("to_apm_application_name", m.baseInfo.AppName),
+		)
+	}
+
+	cNamespace := pairs[0].GetFieldValue(core.K8sNamespace)
+	sNamespace := pairs[1].GetFieldValue(core.K8sNamespace)
+	callerHasPodMarker := cBcsClusterId != "" && cPodName != ""
+	calleeHasPodMarker := sBcsClusterId != "" && sPodName != ""
+	callerIsPod := callerHasPodMarker && cNamespace != ""
+	calleeIsPod := calleeHasPodMarker && sNamespace != ""
+	if callerIsPod && calleeIsPod {
+		addRelationMetric(
+			relationLabels,
+			metricCount,
+			storage.PodToPodFlow,
+			pair("from_bcs_cluster_id", cBcsClusterId),
+			pair("from_namespace", cNamespace),
+			pair("from_pod", cPodName),
+			pair("to_bcs_cluster_id", sBcsClusterId),
+			pair("to_namespace", sNamespace),
+			pair("to_pod", sPodName),
+		)
+	}
+
+	if callerIsPod && !calleeHasPodMarker && childIp != "" {
+		addRelationMetric(
+			relationLabels,
+			metricCount,
+			storage.PodToSystemFlow,
+			pair("from_bcs_cluster_id", cBcsClusterId),
+			pair("from_namespace", cNamespace),
+			pair("from_pod", cPodName),
+			pair("to_bk_target_ip", childIp),
+		)
+	}
+
+	if !callerHasPodMarker && parentIp != "" && calleeIsPod {
+		addRelationMetric(
+			relationLabels,
+			metricCount,
+			storage.SystemToPodFlow,
+			pair("from_bk_target_ip", parentIp),
+			pair("to_bcs_cluster_id", sBcsClusterId),
+			pair("to_namespace", sNamespace),
+			pair("to_pod", sPodName),
+		)
+	}
+
+	if !callerHasPodMarker && !calleeHasPodMarker && parentIp != "" && childIp != "" {
+		addRelationMetric(
+			relationLabels,
+			metricCount,
+			storage.SystemFlow,
+			pair("from_bk_target_ip", parentIp),
+			pair("to_bk_target_ip", childIp),
+		)
+	}
+}
+
+func addRelationMetric(labels *[]string, metricCount map[string]int, metricName string, labelPairs ...string) {
+	labelKey := strings.Join(append([]string{pair("__name__", metricName)}, labelPairs...), ",")
+	if !slices.Contains(*labels, labelKey) {
+		*labels = append(*labels, labelKey)
+		metricCount[metricName]++
 	}
 }
 
@@ -833,6 +944,7 @@ func newMetricProcessor(ctx context.Context, dataId string, baseInfo core.BaseIn
 		dataId:                            dataId,
 		baseInfo:                          baseInfo,
 		enabledLayer4Report:               processorOpts.metricLayer4ReportEnabled,
+		dynamicRelationFlowReportEnabled:  processorOpts.dynamicRelationFlowReportEnabled,
 		podInstanceErrorFlowReportEnabled: processorOpts.podInstanceErrorFlowReportEnabled,
 		podApmErrorFlowReportEnabled:      processorOpts.podApmErrorFlowReportEnabled,
 		podSystemErrorFlowReportEnabled:   processorOpts.podSystemErrorFlowReportEnabled,

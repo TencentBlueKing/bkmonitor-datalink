@@ -52,7 +52,9 @@ AlertLog 不添加独立顶层版本，Alert 输出快照自然携带版本。
 
 不保存 offset→Release 区间。未落库消息按当前任务配置处理；已落库相同身份、相同原始来源事实的跨版本重投复用原 Event，包括其版本和处理状态。
 原始事实不一致仍是身份冲突。版本不参与 Event ID/fingerprint，不重写旧 Event。
-已发布来源的租户、指纹和 Kafka 订阅身份变化拒绝普通更新，需要独立迁移方案。
+已发布来源默认禁止修改 Kafka brokers、topic 和 consumer_group。仅在本次管理 PUT 请求顶层显式填写 `allow_subscription_change: true` 时允许维护变更；CAS 发布新 Release，历史 Release、Event 和 Alert 不改写。该参数不写入 Record/Release，也不会授权后续更新。provider/import 和 KAC 日常发布默认不带该参数；Console 常用表单继续保持订阅只读。调度器重新探测新订阅，按现有执行版本交接流程撤销旧任务并分配新任务；同一 worker 的同来源同角色须确认旧代次停止或授权到期后才能启动新代次，多个 worker 之间仍可能滚动交接。新 topic 不可达时不会把旧分片元数据当成新 topic 的可用证明。
+
+此更新不复制、重置或迁移 Kafka offset。仍使用同一集群/topic/group 时沿用 Kafka 已提交位点；更换 topic 或 group 时按其已有有效位点消费；没有提交位点，或首次读取时提交位点已超出 Kafka 保留范围，则从当前尾部等待新消息，不主动补读历史。该默认值适用于所有 Linkd Kafka 来源；不会跳过有效位点后的积压。来源 ID、关联租户、Cleaner 类型、fingerprint 规则和 storage.type 仍不可通过更新改变。不同 EventSource 间的历史告警关联不随订阅配置迁移；换到独立 Kafka 集群时，同名 topic/partition/offset 也不应被当作新的可靠身份空间。
 
 ## 按来源运行 Lifecycle
 
@@ -67,7 +69,7 @@ Stream 管理器按来源清单有界遍历，只裁剪已确认前缀。
 
 - `GET /api/v1/event-sources?after=&limit=100`：有界来源列表。
 - `GET /api/v1/event-sources/{id}`：编辑记录与发布指针，默认凭据脱敏。
-- `PUT /api/v1/event-sources/{id}`：`{"expected_revision":0,"spec":{...}}`，0 创建，后续带当前 revision。
+- `PUT /api/v1/event-sources/{id}`：`{"expected_revision":0,"spec":{...}}`，0 创建，后续带当前 revision。例外维护可在顶层添加 `"allow_subscription_change":true`，仅允许本次 Kafka 订阅变更，不放开租户、Cleaner 或 fingerprint 等业务身份。
 - `DELETE /api/v1/event-sources/{id}`：`{"expected_revision":...}`，发布停用 tombstone，不清理业务数据。
 - `GET /api/v1/event-sources/{id}/releases/{version}`：脱敏历史配置。
 - `GET /api/v1/runtime`：worker、任务、调度目标、分片探测及来源队列路由。

@@ -116,6 +116,20 @@ func testPartitionTail(t *testing.T, brokers []string, wait time.Duration) {
 	if err := result.FirstErr(); err != nil {
 		t.Fatal(err)
 	}
+	// 显式保存有效位点，验证尾部默认值不会覆盖已有消费进度；这里仍从 0 读有限输入。
+	commit := kmsg.NewPtrOffsetCommitRequest()
+	commit.Group = topic
+	partition := kmsg.NewOffsetCommitRequestTopicPartition()
+	partition.Partition = 1
+	partition.Offset = 0
+	commit.Topics = []kmsg.OffsetCommitRequestTopic{{Topic: topic, Partitions: []kmsg.OffsetCommitRequestTopicPartition{partition}}}
+	committed, err := commit.RequestWith(ctx, admin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(committed.Topics) != 1 || len(committed.Topics[0].Partitions) != 1 || committed.Topics[0].Partitions[0].ErrorCode != 0 {
+		t.Fatalf("seed committed offset: %+v", committed.Topics)
+	}
 	s, err := NewSession(Config{Brokers: brokers, Topic: topic, ConsumerGroup: topic, FetchMaxWait: wait})
 	if err != nil {
 		t.Fatal(err)

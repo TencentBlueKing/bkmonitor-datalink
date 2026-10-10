@@ -126,6 +126,7 @@ func catalog() []operation {
 		o.BodyParams = []parameter{integerParam("expected_revision", true, 0, 9223372036854775807, "必须来自已核对的当前版本；创建为 0，冲突不能自动重试覆盖")}
 		if op.method == "PUT" {
 			o.BodyParams = append(o.BodyParams, objectParam("spec", true, "完整 EventSource 对象，嵌套领域字段由服务端验证；省略凭据遵循服务端保留规则"))
+			o.BodyParams = append(o.BodyParams, parameter{Name: "allow_subscription_change", Type: "boolean", Description: "默认 false；仅本次维护允许修改 Kafka brokers/topic/consumer_group，不迁移位点或业务身份；有有效位点续读，无位点从尾部开始"})
 		}
 		o.Example = map[string]any{"path": map[string]string{"id": "source-a"}, "body": map[string]any{"expected_revision": 1}}
 		if op.method == "PUT" {

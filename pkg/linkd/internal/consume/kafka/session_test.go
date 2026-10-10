@@ -12,6 +12,7 @@ package kafka
 import (
 	"context"
 	"errors"
+	"net"
 	"slices"
 	"sync"
 	"testing"
@@ -20,6 +21,34 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 	"linkd/internal/consume"
 )
+
+func TestSessionDefaultsToTailWithoutCommittedOffset(t *testing.T) {
+	t.Parallel()
+	options, err := sessionClientOptions(testConfig(), newOwnershipBridge())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 检查实际生效的客户端配置；拦截所有连接，测试不访问 Kafka 或本机网络。
+	options = append(options, kgo.Dialer(func(context.Context, string, string) (net.Conn, error) {
+		return nil, errors.New("network disabled in unit test")
+	}))
+	client, err := kgo.NewClient(options...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	for _, option := range []any{kgo.ConsumeStartOffset, kgo.ConsumeResetOffset} {
+		if got := client.OptValue(option); got != kgo.NewOffset().AtEnd() {
+			t.Fatalf("fallback offset = %v, want tail", got)
+		}
+	}
+	if got := client.OptValue(kgo.ConsumerGroup); got != testConfig().ConsumerGroup {
+		t.Fatalf("consumer group = %v", got)
+	}
+	if got := client.OptValue(kgo.DisableAutoCommit); got != true {
+		t.Fatalf("auto commit disabled = %v, want true", got)
+	}
+}
 
 func TestSessionReceiveAndConfirmContinuousPrefix(t *testing.T) {
 	t.Parallel()

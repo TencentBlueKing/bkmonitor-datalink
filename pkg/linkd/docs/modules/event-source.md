@@ -51,6 +51,8 @@ consumer_group 的 subscription 不允许在两个 EventSource 中重复，避�
 Lifecycle 为当前 Chain 按需建立连接，任务退出时关闭。处理规则变化继续触发来源任务换代；
 公共资源变化需要重启控制面和 Lifecycle。旧 `enrich.datasources` 配置入口已移除。
 
+Kafka brokers/topic/consumer_group 默认不可修改；维护请求必须同时携带 expected_revision 和顶层 allow_subscription_change=true 才能发布新版本，旧 Release 保留，授权不持久化；任务由调度器按执行版本交接。不会搬迁消费位点；所有 Kafka 来源优先沿用有效提交位点，没有位点或首次读取时位点越界则从尾部等待新消息，不主动补读历史。来源 ID、租户和 fingerprint 等业务身份保持不变。详见[动态配置](../design/event-source-dynamic-configuration.md#执行版本与重投)。
+
 完整 YAML 示例和 Cleaner 默认预算见[配置指南](../guides/configuration.md)。
 
 ### KAC 全局插件

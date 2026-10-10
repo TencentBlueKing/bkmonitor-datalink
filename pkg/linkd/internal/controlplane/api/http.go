@@ -274,8 +274,9 @@ func (a *API) get(w http.ResponseWriter, r *http.Request) {
 
 // Mutation 省略 security 时保持原凭据，显式提交则整体替换认证材料。
 type Mutation struct {
-	Expected int64              `json:"expected_revision"`
-	Spec     config.EventSource `json:"spec"`
+	Expected                int64              `json:"expected_revision"`
+	Spec                    config.EventSource `json:"spec"`
+	AllowSubscriptionChange bool               `json:"allow_subscription_change,omitempty"`
 }
 
 func (a *API) put(w http.ResponseWriter, r *http.Request) {
@@ -294,7 +295,7 @@ func (a *API) put(w http.ResponseWriter, r *http.Request) {
 		}
 		m.Spec = m.Spec.WithPreservedHookSecrets(old.Spec)
 	}
-	record, e := a.Sources.Apply(r.Context(), m.Spec, m.Expected, false, "api")
+	record, e := a.Sources.Apply(r.Context(), m.Spec, m.Expected, false, "api", eventsource.ApplyOptions{AllowSubscriptionChange: m.AllowSubscriptionChange})
 	if e != nil {
 		failure(w, e)
 		return

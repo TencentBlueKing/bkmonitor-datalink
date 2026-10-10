@@ -76,22 +76,11 @@ func NewSession(config Config) (*Session, error) {
 		return nil, fmt.Errorf("create kafka session: %w", err)
 	}
 
-	options, err := kafkaclient.ClientOptions(config.Brokers, config.ClientID, config.Security)
+	ownership := newOwnershipBridge()
+	options, err := sessionClientOptions(config, ownership)
 	if err != nil {
 		return nil, fmt.Errorf("create kafka session options: %w", err)
 	}
-	ownership := newOwnershipBridge()
-	options = append(options,
-		kgo.ConsumeTopics(config.Topic),
-		kgo.ConsumerGroup(config.ConsumerGroup),
-		kgo.DisableAutoCommit(),
-		kgo.BlockRebalanceOnPoll(),
-		kgo.FetchMaxBytes(config.MaxFetchBytes),
-		kgo.FetchMaxWait(config.FetchMaxWait),
-		kgo.OnPartitionsAssigned(ownership.assigned),
-		kgo.OnPartitionsRevoked(ownership.revoked),
-		kgo.OnPartitionsLost(ownership.lost),
-	)
 	client, err := kgo.NewClient(options...)
 	if err != nil {
 		return nil, fmt.Errorf("create kafka client: %w", err)
@@ -99,6 +88,27 @@ func NewSession(config Config) (*Session, error) {
 	session := newSession(config, client)
 	session.ownership = ownership
 	return session, nil
+}
+
+func sessionClientOptions(config Config, ownership *ownershipBridge) ([]kgo.Opt, error) {
+	options, err := kafkaclient.ClientOptions(config.Brokers, config.ClientID, config.Security)
+	if err != nil {
+		return nil, err
+	}
+	return append(options,
+		kgo.ConsumeTopics(config.Topic),
+		kgo.ConsumerGroup(config.ConsumerGroup),
+		// 有效提交位点优先；新分区无位点或首次读取时位点越界，都从尾部等待新消息。
+		kgo.ConsumeStartOffset(kgo.NewOffset().AtEnd()),
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtEnd()),
+		kgo.DisableAutoCommit(),
+		kgo.BlockRebalanceOnPoll(),
+		kgo.FetchMaxBytes(config.MaxFetchBytes),
+		kgo.FetchMaxWait(config.FetchMaxWait),
+		kgo.OnPartitionsAssigned(ownership.assigned),
+		kgo.OnPartitionsRevoked(ownership.revoked),
+		kgo.OnPartitionsLost(ownership.lost),
+	), nil
 }
 
 func newSession(config Config, client kafkaClient) *Session {

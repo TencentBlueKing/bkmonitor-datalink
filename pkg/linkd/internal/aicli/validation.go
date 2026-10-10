@@ -167,6 +167,10 @@ func validateParameter(value any, field parameter) error {
 		return problem("invalid_argument", fmt.Sprintf("%s 的类型、格式或取值范围无效；请使用 api describe", field.Name))
 	}
 	switch field.Type {
+	case "boolean":
+		if _, ok := value.(bool); !ok {
+			return invalid()
+		}
 	case "string":
 		s, ok := value.(string)
 		if !ok || !utf8.ValidString(s) || strings.ContainsAny(s, "\x00\r\n") || (field.Required && strings.TrimSpace(s) == "") || (field.Max > 0 && int64(len(s)) > field.Max) {

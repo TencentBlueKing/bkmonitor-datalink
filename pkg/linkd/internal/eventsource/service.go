@@ -75,6 +75,12 @@ type Options struct {
 	Resources config.ResourcesConfig
 }
 
+// ApplyOptions 仅授权本次发布的维护操作，不保存到 Record 或 Release。
+type ApplyOptions struct {
+	// AllowSubscriptionChange 允许本次修改 Kafka 订阅；不迁移消费位点或业务身份。
+	AllowSubscriptionChange bool
+}
+
 // New 创建来源服务，不隐式导入配置。
 func New(d Documents, severity config.SeverityConfig, options ...Options) *Service {
 	var settings Options
@@ -132,7 +138,7 @@ func (s *Service) GetRelease(ctx context.Context, id string, v int64) (Release, 
 func releaseKey(id string, v int64) string { return id + ":" + strconv.FormatInt(v, 10) }
 
 // Apply 预留版本后完成发布；发生部分成功时后续 Recover 可继续，不能撤销已写事实。
-func (s *Service) Apply(ctx context.Context, spec config.EventSource, expected int64, deleted bool, actor string) (Record, error) {
+func (s *Service) Apply(ctx context.Context, spec config.EventSource, expected int64, deleted bool, actor string, options ...ApplyOptions) (Record, error) {
 	spec = spec.WithDefaults()
 	if err := spec.Cleaner.RuntimeConfig(s.cleaner).Validate(); err != nil {
 		return Record{}, err
@@ -168,10 +174,16 @@ func (s *Service) Apply(ctx context.Context, spec config.EventSource, expected i
 		return r, ErrConflict
 	}
 	if r.Revision > 0 {
-		// 身份/订阅/关联键迁移不是普通配置更新，避免重投生成另一业务身份。
+		// Kafka 订阅变更必须逐次授权，不能因曾经执行过维护就放开后续普通更新。
+		// 租户和关联规则仍不能改变，避免已有告警的恢复事件落到另一业务身份。
 		a, b := r.Spec, spec
-		if a.RelatedTenantID != b.RelatedTenantID || a.Cleaner.Type != b.Cleaner.Type || a.FingerprintMode != b.FingerprintMode || a.FingerprintField != b.FingerprintField || !reflect.DeepEqual(a.FingerprintFields, b.FingerprintFields) || a.Storage.Type != b.Storage.Type || !reflect.DeepEqual(a.Storage.Kafka.Brokers, b.Storage.Kafka.Brokers) || a.Storage.Kafka.Topic != b.Storage.Kafka.Topic || a.Storage.Kafka.ConsumerGroup != b.Storage.Kafka.ConsumerGroup {
-			return r, fmt.Errorf("source identity, fingerprint and subscription migration is not supported")
+		if a.RelatedTenantID != b.RelatedTenantID || a.Cleaner.Type != b.Cleaner.Type || a.FingerprintMode != b.FingerprintMode || a.FingerprintField != b.FingerprintField || !reflect.DeepEqual(a.FingerprintFields, b.FingerprintFields) || a.Storage.Type != b.Storage.Type {
+			return r, fmt.Errorf("source identity, fingerprint and storage type migration is not supported")
+		}
+		if !reflect.DeepEqual(a.Storage.Kafka.Brokers, b.Storage.Kafka.Brokers) || a.Storage.Kafka.Topic != b.Storage.Kafka.Topic || a.Storage.Kafka.ConsumerGroup != b.Storage.Kafka.ConsumerGroup {
+			if len(options) != 1 || !options[0].AllowSubscriptionChange {
+				return r, fmt.Errorf("kafka subscription change requires allow_subscription_change=true")
+			}
 		}
 	}
 	if deleted {

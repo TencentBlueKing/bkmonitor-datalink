@@ -158,3 +158,7 @@ make check
 
 维护 CLI 时，新增接口必须登记明确读写属性、参数及影响并补充相应契约测试；同步检查 skill 的诊断路径。
 仅格式化本次 CLI 文件可使用 `make fmt GO_FILES="..." FORMAT_CONSOLE=0`，完整格式门禁仍由 `make check` 执行。
+
+### 例外变更 Kafka 订阅
+
+来源的 broker/topic/consumer_group 默认不能修改。仅在维护请求 JSON 顶层加入 `"allow_subscription_change": true`，并保留核对过的 `expected_revision` 与完整 `spec`，通过 `event-sources.apply` 执行一次性变更。此参数不替代 `--allow-write`，不会自动复制或重置 Kafka 位点，也不授权修改来源 ID、租户或 fingerprint；后续请求仍默认拒绝订阅变更。同一 Kafka 集群/topic/group 有有效提交位点则继续，没有位点或首次读取时位点越界则从当前尾部等待新消息，不主动补读历史。此默认值适用于所有 Linkd Kafka 来源。

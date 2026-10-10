@@ -28,7 +28,6 @@ const (
 	QueryMaxRoutingConfigPath              = "http.query.max_routing"
 	QueryContentTypeConfigPath             = "http.query.content_type"
 	QueryContentEncodingConfigPath         = "http.query.content_encoding"
-	SharedSchemaV1EnabledConfigPath        = "http.query.shared_schema_v1_enabled"
 	NamedOutputsMaxOutputsConfigPath       = "http.query.named_outputs.max_outputs"
 	NamedOutputsTimeoutConfigPath          = "http.query.named_outputs.timeout"
 	NamedOutputsMaxSeriesConfigPath        = "http.query.named_outputs.max_series"
@@ -137,7 +136,6 @@ var (
 
 	queryRawESBatchSettingsSnapshot atomic.Pointer[queryRawESBatchSettings]
 	namedOutputSettingsSnapshot     atomic.Pointer[namedOutputSettings]
-	sharedSchemaV1Enabled           atomic.Bool
 )
 
 func defaultQueryRawESBatchSettings() *queryRawESBatchSettings {

@@ -28,7 +28,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/render"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
@@ -54,30 +53,27 @@ func sharedTestData(count int) *PromData {
 func TestSharedSchemaAccept(t *testing.T) {
 	for _, test := range []struct {
 		name, accept string
-		enabled      bool
 		want         sharedSchemaNegotiation
 	}{
-		{"absent", "", true, sharedSchemaNegotiation{}},
-		{"old", "application/json", true, sharedSchemaNegotiation{}},
-		{"wildcard", "*/*", true, sharedSchemaNegotiation{}},
-		{"application wildcard", "application/*", true, sharedSchemaNegotiation{}},
-		{"future", "application/vnd.bkmonitor.uq.shared-schema.v2+ndjson, application/json", true, sharedSchemaNegotiation{}},
-		{"disabled", sharedSchemaV1MediaType + ", application/json", false, sharedSchemaNegotiation{explicit: true}},
-		{"equal prefers v1", sharedSchemaV1MediaType + ", application/json", true, sharedSchemaNegotiation{explicit: true, selected: true}},
-		{"opt in", sharedSchemaV1MediaType + ", application/json;q=0.9", true, sharedSchemaNegotiation{explicit: true, selected: true}},
-		{"legacy preferred", sharedSchemaV1MediaType + ";q=0.5, application/json", true, sharedSchemaNegotiation{explicit: true}},
-		{"v1 unacceptable", sharedSchemaV1MediaType + ";q=0, application/json", true, sharedSchemaNegotiation{explicit: true}},
-		{"strict rejected", sharedSchemaV1MediaType, true, sharedSchemaNegotiation{explicit: true, reject: true}},
-		{"strict disabled", sharedSchemaV1MediaType, false, sharedSchemaNegotiation{explicit: true, reject: true}},
-		{"json zero overrides wildcard", sharedSchemaV1MediaType + ", application/json;q=0, */*;q=1", true, sharedSchemaNegotiation{explicit: true, reject: true}},
-		{"json wildcard permitted", sharedSchemaV1MediaType + ", */*;q=0.9", true, sharedSchemaNegotiation{explicit: true, selected: true}},
-		{"params case quotes", strings.ToUpper(sharedSchemaV1MediaType) + ";ext=\"a,b\";q=1, application/json;q=0.8", true, sharedSchemaNegotiation{explicit: true, selected: true}},
-		{"invalid q", sharedSchemaV1MediaType + ";q=NaN, application/json", true, sharedSchemaNegotiation{}},
-		{"invalid range", sharedSchemaV1MediaType + ";q=1.1, application/json", true, sharedSchemaNegotiation{}},
-		{"invalid media", sharedSchemaV1MediaType + ";q, application/json", true, sharedSchemaNegotiation{}},
+		{"absent", "", sharedSchemaNegotiation{}},
+		{"old", "application/json", sharedSchemaNegotiation{}},
+		{"wildcard", "*/*", sharedSchemaNegotiation{}},
+		{"application wildcard", "application/*", sharedSchemaNegotiation{}},
+		{"future", "application/vnd.bkmonitor.uq.shared-schema.v2+ndjson, application/json", sharedSchemaNegotiation{}},
+		{"equal prefers v1", sharedSchemaV1MediaType + ", application/json", sharedSchemaNegotiation{explicit: true, selected: true}},
+		{"opt in", sharedSchemaV1MediaType + ", application/json;q=0.9", sharedSchemaNegotiation{explicit: true, selected: true}},
+		{"legacy preferred", sharedSchemaV1MediaType + ";q=0.5, application/json", sharedSchemaNegotiation{explicit: true}},
+		{"v1 unacceptable", sharedSchemaV1MediaType + ";q=0, application/json", sharedSchemaNegotiation{explicit: true}},
+		{"strict rejected", sharedSchemaV1MediaType, sharedSchemaNegotiation{explicit: true, reject: true}},
+		{"json zero overrides wildcard", sharedSchemaV1MediaType + ", application/json;q=0, */*;q=1", sharedSchemaNegotiation{explicit: true, reject: true}},
+		{"json wildcard permitted", sharedSchemaV1MediaType + ", */*;q=0.9", sharedSchemaNegotiation{explicit: true, selected: true}},
+		{"params case quotes", strings.ToUpper(sharedSchemaV1MediaType) + ";ext=\"a,b\";q=1, application/json;q=0.8", sharedSchemaNegotiation{explicit: true, selected: true}},
+		{"invalid q", sharedSchemaV1MediaType + ";q=NaN, application/json", sharedSchemaNegotiation{}},
+		{"invalid range", sharedSchemaV1MediaType + ";q=1.1, application/json", sharedSchemaNegotiation{}},
+		{"invalid media", sharedSchemaV1MediaType + ";q, application/json", sharedSchemaNegotiation{}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			require.Equal(t, test.want, negotiateSharedSchema(test.accept, test.enabled))
+			require.Equal(t, test.want, negotiateSharedSchema(test.accept))
 		})
 	}
 	header := http.Header{"Vary": []string{"Origin"}}
@@ -86,25 +82,7 @@ func TestSharedSchemaAccept(t *testing.T) {
 	require.Equal(t, []string{"Origin", "Accept"}, header.Values("Vary"))
 }
 
-func TestSharedSchemaConfigDefaultsAndReload(t *testing.T) {
-	previous := sharedSchemaV1Enabled.Load()
-	t.Cleanup(func() { viper.Set(SharedSchemaV1EnabledConfigPath, nil); sharedSchemaV1Enabled.Store(previous) })
-	viper.Set(SharedSchemaV1EnabledConfigPath, nil)
-	setDefaultConfig()
-	LoadConfig()
-	require.False(t, sharedSchemaV1Enabled.Load())
-	viper.Set(SharedSchemaV1EnabledConfigPath, true)
-	LoadConfig()
-	require.True(t, sharedSchemaV1Enabled.Load())
-	viper.Set(SharedSchemaV1EnabledConfigPath, false)
-	LoadConfig()
-	require.False(t, sharedSchemaV1Enabled.Load())
-}
-
 func TestSharedSchemaQueryTsNegotiationScopeAndMultipleHeaders(t *testing.T) {
-	previous := sharedSchemaV1Enabled.Load()
-	sharedSchemaV1Enabled.Store(true)
-	t.Cleanup(func() { sharedSchemaV1Enabled.Store(previous) })
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/query/ts", nil)
 	c.Request.Header.Add("Accept", sharedSchemaV1MediaType)

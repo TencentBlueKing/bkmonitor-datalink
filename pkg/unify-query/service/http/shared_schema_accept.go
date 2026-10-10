@@ -26,7 +26,7 @@ type sharedSchemaNegotiation struct {
 
 // Only an explicit, acceptable v1 range opts in. Legacy must also be
 // acceptable because preflight can select the same result's JSON outlet.
-func negotiateSharedSchema(accept string, enabled bool) sharedSchemaNegotiation {
+func negotiateSharedSchema(accept string) sharedSchemaNegotiation {
 	var result sharedSchemaNegotiation
 	v1Quality, jsonQuality, jsonSpecificity := -1.0, -1.0, -1
 	for _, part := range splitAccept(accept) {
@@ -61,7 +61,7 @@ func negotiateSharedSchema(accept string, enabled bool) sharedSchemaNegotiation 
 		}
 	}
 	result.reject = v1Quality > 0 && jsonQuality <= 0
-	result.selected = enabled && v1Quality > 0 && jsonQuality > 0 && v1Quality >= jsonQuality
+	result.selected = v1Quality > 0 && jsonQuality > 0 && v1Quality >= jsonQuality
 	return result
 }
 

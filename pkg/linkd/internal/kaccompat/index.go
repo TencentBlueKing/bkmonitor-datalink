@@ -9,6 +9,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -43,7 +44,7 @@ func (c *Client) settings() map[string]any {
 }
 
 // Maintain 幂等维护 KAC 模板、ILM、引导 alias 和独立同步元数据索引。
-// 已有物理索引不重建，不重置分片/副本，不删除历史；不兼容 mapping 会明确失败。
+// 已有物理索引仅补齐缺失字段，不重建或回填历史；已有字段冲突仍明确失败。
 func (c *Client) Maintain(ctx context.Context) (err error) {
 	defer func() {
 		if err != nil {
@@ -106,9 +107,21 @@ func (c *Client) Maintain(ctx context.Context) (err error) {
 	if len(indices) == 0 || len(indices) > 512 {
 		return projection.Failure{Code: "response_invalid"}
 	}
+	// 先检查全部索引，避免已知字段冲突时仍修改其他历史索引。
+	patches := make(map[string]map[string]any)
 	for name, index := range indices {
-		if !c.physicalIndex(name) || !compatibleMapping(index.Mappings) {
+		fields, ok := missingMappingFields(index.Mappings)
+		if !c.physicalIndex(name) || !ok {
 			return projection.Failure{Code: "response_invalid"}
+		}
+		if len(fields) > 0 {
+			patches[name] = fields
+		}
+	}
+	for name, fields := range patches {
+		// 显式追加定义，避免更新历史文档时动态映射猜错字段类型；不回填文档。
+		if err = c.request(call, http.MethodPut, "/"+url.PathEscape(name)+"/_mapping", nil, map[string]any{"properties": fields}, nil); err != nil {
+			return classify(err)
 		}
 	}
 	var state any
@@ -126,6 +139,25 @@ func (c *Client) Maintain(ctx context.Context) (err error) {
 	}
 	c.ready.Store(true)
 	return nil
+}
+
+// missingMappingFields 只允许缺字段；已有类型、分析器和动态规则必须保持兼容。
+func missingMappingFields(actual map[string]any) (map[string]any, bool) {
+	props, ok := actual["properties"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	candidate := maps.Clone(actual)
+	complete := maps.Clone(props)
+	missing := make(map[string]any)
+	for name, definition := range alarmMapping()["properties"].(map[string]any) {
+		if _, exists := props[name]; !exists {
+			missing[name] = definition
+			complete[name] = definition
+		}
+	}
+	candidate["properties"] = complete
+	return missing, compatibleMapping(candidate)
 }
 
 // KAC 原字段必须保持类型及分析器一致；额外业务动态字段不算冲突。

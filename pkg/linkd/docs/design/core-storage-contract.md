@@ -51,6 +51,13 @@ MySQL related_alert_ids 使用 JSON 数组，查询通过 JSON_CONTAINS 判断�
 
 ## Alert
 
+Elasticsearch 存量 Alert JSON 完全缺少 `revision`，且没有投影目标、待执行动作、
+策略或合并变更意图及对应工作标记时，读取按业务初始版本 `1` 兼容。该版本只描述升级后
+的快照基线，不推断历史变更次数，不自动绑定投影目标或补发动作。读取不改 ES 文档；
+后续正常 CAS/归档写入保存版本，仍使用原 `_seq_no/_primary_term` 保护并发。
+显式 `revision: 0/null`、负数、越界值或带新版版本状态但缺版本的损坏文档仍拒绝读取。
+兼容限定在 ES 存储解码边界，不放宽领域对象和外部投影协议的版本校验。
+
 - 同一 `(bk_tenant_id, event_source_id, fingerprint)` 同时最多一个 active Alert。MySQL 用唯一键约束；
   Elasticsearch 依赖 lifecycle lease、active 查询和覆盖 refresh 窗口的 Redis Recent Alert 缓存保证正常处理路径中的
   唯一性，不额外维护全局 fingerprint 唯一索引。

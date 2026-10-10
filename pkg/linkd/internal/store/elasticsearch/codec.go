@@ -197,6 +197,19 @@ func decodeAlertHit(hit searchHit) (store.StoredAlert, error) {
 	if document.ActionWork != (document.ActionPending != nil) {
 		return store.StoredAlert{}, fmt.Errorf("alert action work index differs from durable intent")
 	}
+	// 旧版 ES Alert 没有业务版本，只有完全缺字段且没有新版版本状态时可取初始基线。
+	// 不把显式 0/null 或损坏的投影/动作状态解释成旧数据，也不在读取时写回。
+	var storedVersion struct {
+		Revision json.RawMessage `json:"revision"`
+	}
+	if err := json.Unmarshal(hit.Source, &storedVersion); err != nil {
+		return store.StoredAlert{}, err
+	}
+	if len(storedVersion.Revision) == 0 && len(document.Projection.Targets) == 0 &&
+		document.ActionPending == nil && document.PolicyChange == nil && document.MergeChange == nil &&
+		!document.ProjectionWork && !document.ActionWork && !document.MergeWork {
+		document.Revision = 1
+	}
 	normalized, err := document.Normalize()
 	if err != nil {
 		return store.StoredAlert{}, err

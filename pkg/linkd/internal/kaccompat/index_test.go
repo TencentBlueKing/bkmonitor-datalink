@@ -11,6 +11,7 @@ package kaccompat
 
 import (
 	"encoding/json"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -70,3 +71,99 @@ func TestMetadataIndexCannotMatchKACTemplate(t *testing.T) {
 		}
 	}
 }
+
+// 历史代际缺字段可追加，已有字段冲突仍不可用；追加失败不得宣称目标就绪。
+func TestMaintainHistoricalMappings(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		missing  []string
+		conflict bool
+		denied   bool
+	}{
+		{name: "complete"},
+		{name: "oldest", missing: []string{"strategy_id", "metric_unique_id", "bk_tenant_id", "strategy_config_uid", "strategy_config_version"}},
+		{name: "v1", missing: []string{"metric_unique_id", "bk_tenant_id", "strategy_config_uid", "strategy_config_version"}},
+		{name: "v2_v3", missing: []string{"strategy_config_uid", "strategy_config_version"}},
+		{name: "conflict", missing: []string{"strategy_id"}, conflict: true},
+		{name: "denied", missing: []string{"strategy_config_uid"}, denied: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			historical := alarmMapping()
+			props := historical["properties"].(map[string]any)
+			for _, name := range tc.missing {
+				delete(props, name)
+			}
+			if tc.conflict {
+				props["status"] = map[string]any{"type": "text"}
+			}
+			f := newFakeES()
+			c := newClient(config.KACPluginConfig{AlarmEventIndex: f.alias}, nil, nil, nil)
+			c.ready.Store(true)
+			puts := 0
+			c.transport = mappingTransport(func(req *http.Request) (*http.Response, error) {
+				switch {
+				case req.Method == http.MethodPut && strings.HasPrefix(req.URL.Path, "/_ilm/"):
+					return jsonResponse(200, map[string]any{"acknowledged": true}), nil
+				case req.URL.Path == "/_template/"+f.alias:
+					return jsonResponse(200, map[string]any{f.alias: map[string]any{"mappings": alarmMapping(), "settings": map[string]any{"index": c.settings()}, "index_patterns": []string{f.alias + "*"}}}), nil
+				case req.URL.Path == "/_alias/"+f.alias:
+					return jsonResponse(200, map[string]any{f.index: map[string]any{"aliases": map[string]any{f.alias: map[string]any{"is_write_index": true}}}}), nil
+				case req.URL.Path == "/"+f.alias+"/_mapping":
+					return jsonResponse(200, map[string]any{f.index: map[string]any{"mappings": alarmMapping()}, f.alias + "_v1-000001": map[string]any{"mappings": historical}}), nil
+				case req.URL.Path == "/"+f.alias+"_v1-000001/_mapping" && req.Method == http.MethodPut:
+					puts++
+					if tc.denied {
+						return jsonResponse(403, nil), nil
+					}
+					var body map[string]map[string]any
+					if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+						t.Fatal(err)
+					}
+					patch := body["properties"]
+					if len(body) != 1 || len(patch) != len(tc.missing) {
+						t.Fatalf("unexpected patch: %#v", body)
+					}
+					for _, name := range tc.missing {
+						if !reflect.DeepEqual(patch[name], alarmMapping()["properties"].(map[string]any)[name]) {
+							t.Fatalf("wrong definition: %s", name)
+						}
+						props[name] = patch[name]
+					}
+					return jsonResponse(200, map[string]any{"acknowledged": true}), nil
+				case req.URL.Path == "/"+c.stateIndex+"/_mapping":
+					return jsonResponse(200, map[string]any{}), nil
+				default:
+					t.Fatalf("unexpected request: %s %s", req.Method, req.URL.Path)
+					return nil, nil
+				}
+			})
+			err := c.Maintain(t.Context())
+			if tc.conflict || tc.denied {
+				if err == nil || c.ready.Load() {
+					t.Fatal("invalid mapping reported ready")
+				}
+				if tc.conflict && puts != 0 {
+					t.Fatal("conflicting schema was modified")
+				}
+				return
+			}
+			if err != nil || !c.ready.Load() {
+				t.Fatalf("maintain: %v", err)
+			}
+			want := 0
+			if len(tc.missing) > 0 {
+				want = 1
+			}
+			if puts != want {
+				t.Fatalf("puts=%d want=%d", puts, want)
+			}
+			if err = c.Maintain(t.Context()); err != nil || puts != want {
+				t.Fatalf("non-idempotent maintenance: %v puts=%d", err, puts)
+			}
+		})
+	}
+}
+
+type mappingTransport func(*http.Request) (*http.Response, error)
+
+func (f mappingTransport) Perform(r *http.Request) (*http.Response, error) { return f(r) }

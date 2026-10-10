@@ -242,7 +242,7 @@ OneModel 默认使用 Elasticsearch，实例读取 `kingeye_all_instance`，关�
 资源是静态启动配置，更新后同步重启控制面和 Lifecycle。Helm 使用 `configuration.resources` 为各角色提供一致配置。
 来源导入文件只需包含处理规则，无需复制资源凭据；控制面发布和运行时装配检查实际所需资源。
 旧 `event_sources[].enrich.datasources` 输入已移除；历史 Release 不改写，读取后也不再使用其内嵌连接。
-配置展示隐藏 MySQL、Doris、Redis、Elasticsearch API Key、Basic Auth 密码、蓝鲸应用密钥和 KAC 投递 Token；新发布的 Record/Release 不包含公共资源。
+配置展示隐藏 MySQL、Doris、Redis、Elasticsearch API Key、Basic Auth 密码、蓝鲸应用密钥和 KAC JWT 签名密钥；新发布的 Record/Release 不包含公共资源。
 
 ### OneModel Doris 读取
 
@@ -369,7 +369,9 @@ plugins:
         username: linkd
         password: replace-with-es-secret
     action_endpoint: https://kac.example.com/internal/linkd/action
-    internal_token: replace-with-deployment-secret
+    jwt:
+      secret_key: replace-with-kac-jwt-secret-key
+      username: admin
 ```
 
 `alarm_event_index` 必须填写目标 KAC 原 alias，不能从蓝鲸应用凭据或 Linkd Repository 索引前缀推导。
@@ -386,7 +388,12 @@ ES 认证可选 `api_key` 或 `basic_auth`，不能同时配置。
 | elasticsearch.max_result_window | 首次创建模板时默认 50000，范围 1..1000000 |
 | elasticsearch.total_fields_limit | 首次创建模板时默认 5000，范围 1..100000 |
 | action_endpoint | 完整 HTTP(S) 动作 V2 接口，不接受 userinfo、query、fragment，不使用旧 KAC pipeline |
-| internal_token | 公共 Internal-Token Bearer 凭据，1..16384 个非空白可打印 ASCII 字符；拒绝脱敏占位值 |
+| jwt.secret_key | 必填，与 KAC 的 `BKAPP_JWT_SECRET_KEY` 相同，非空白且最多 16384 字节；拒绝脱敏占位值；填写签名密钥，不填写 JWT 或 Bearer 前缀 |
+| jwt.username | 签发的内部调用身份，默认 `admin`，非空白且最多 256 字节；不替代动作租户或业务操作人 |
+
+每次动作请求及重试均通过公共签发器生成 HS256 JWT，包含 `username`、`iat` 和五分钟后的 `exp`，
+使用 `Internal-Token: Bearer <JWT>` 发送。JWT 不进入持久任务，签名不改变动作身份、请求摘要或业务重试规则。
+同一秒的签发结果可能相同；每次签发不代表防重放。密钥更新后需重启使用该配置的进程。
 
 控制面需要 ES 的模板、ILM、alias、mapping、索引创建、读写与 refresh 权限。新建索引沿用 KAC
 mapping、分析器和 30gb/60d 的 hot rollover；已有物理索引不重建，不重置其分片/副本；已有模板的运维参数不会被插件缺省值覆盖。
@@ -397,7 +404,7 @@ mapping、分析器和 30gb/60d 的 hot rollover；已有物理索引不重建�
 兼容索引未就绪时维护任务独立重试，不因 KAC ES 依赖失败停止告警主流程。
 生产按正常启用设计，不增加首次启用的历史补齐、旧目标迁移和启停切换流程。
 
-`resources.kac_delivery`、`event_sources[].kac_targets`、`projection_endpoint` 均已移除，旧字段明确拒绝。
+`resources.kac_delivery`、`event_sources[].kac_targets`、`projection_endpoint` 及 `plugins.kac.internal_token` 均已移除，旧字段明确拒绝。
 连接和凭据只保存在部署配置及运行时内存，Go/Console 展示均脱敏。
 Helm 仅允许公共 `configuration.plugins.kac`，不接受角色、Worker 组或 migrate 覆盖；独立配置文件需保持一致，
 变更后重启相关进程。KAC 侧仍须接入动作 V2 并停止旧告警状态写入，不能用协议模拟代替实际应用联调。

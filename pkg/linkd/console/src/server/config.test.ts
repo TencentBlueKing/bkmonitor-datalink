@@ -36,7 +36,8 @@ plugins:
         username: linkd
         password: private-kac-es
     action_endpoint: https://kac.example/action
-    internal_token: private-delivery-token
+    jwt:
+      secret_key: private-delivery-key
 `,
       );
       const config = await loadConfig(configPath);
@@ -44,15 +45,14 @@ plugins:
       expect(shown.blueking?.app_secret).toBe("******");
       expect(JSON.stringify(shown)).not.toContain("private-cmdb-secret");
       expect(config.blueking?.app_secret).toBe("private-cmdb-secret");
-      expect(shown.plugins?.kac?.internal_token).toBe("******");
+      expect(shown.plugins?.kac?.jwt?.secret_key).toBe("******");
+      expect(config.plugins?.kac?.jwt?.username).toBe("admin");
       expect(shown.plugins?.kac?.elasticsearch?.basic_auth?.password).toBe(
         "******",
       );
-      expect(JSON.stringify(shown)).not.toContain("private-delivery-token");
+      expect(JSON.stringify(shown)).not.toContain("private-delivery-key");
       expect(JSON.stringify(shown)).not.toContain("private-kac-es");
-      expect(config.plugins?.kac?.internal_token).toBe(
-        "private-delivery-token",
-      );
+      expect(config.plugins?.kac?.jwt?.secret_key).toBe("private-delivery-key");
       shown.plugins!.kac!.elasticsearch!.addresses[0] =
         "https://changed.example";
       expect(config.plugins?.kac?.elasticsearch?.addresses).toEqual([
@@ -615,6 +615,10 @@ it.each([
   "plugins:\n  kac:\n    enabled: true\n",
   "plugins:\n  kac:\n    projection_endpoint: https://kac.example/projection\n",
   "plugins:\n  kac:\n    identities: []\n",
+  "plugins:\n  kac:\n    internal_token: old-static-jwt\n",
+  "plugins:\n  kac:\n    jwt:\n      secret_key: '   '\n",
+  "plugins:\n  kac:\n    jwt:\n      secret_key: '******'\n",
+  "plugins:\n  kac:\n    jwt:\n      secret_key: valid-key\n      username: '   '\n",
   "resources:\n  cmdb:\n    mode: apigw\n",
   "resources:\n  cmdb:\n    identities: []\n",
   "resources:\n  cmdb: {}\n",

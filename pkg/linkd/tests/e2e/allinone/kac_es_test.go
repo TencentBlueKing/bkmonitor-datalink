@@ -131,5 +131,5 @@ func kacESPlugin(t *testing.T, receiver *kacDeliveryReceiver, endpoint string) c
 	})
 	zero := 0
 	//nolint:gosec // G101: 仅用于本测试临时处置接收端的合成凭据。
-	return config.PluginsConfig{KAC: &config.KACPluginConfig{Enabled: true, AlarmEventIndex: alias, Elasticsearch: config.KACElasticsearchConfig{Addresses: []string{server.URL}, NumberOfShards: 1, NumberOfReplicas: &zero}, ActionEndpoint: endpoint + "/original/action", InternalToken: "e2e-delivery-secret"}}
+	return config.PluginsConfig{KAC: &config.KACPluginConfig{Enabled: true, AlarmEventIndex: alias, Elasticsearch: config.KACElasticsearchConfig{Addresses: []string{server.URL}, NumberOfShards: 1, NumberOfReplicas: &zero}, ActionEndpoint: endpoint + "/original/action", JWT: config.JWTConfig{SecretKey: "e2e-delivery-secret"}}}
 }

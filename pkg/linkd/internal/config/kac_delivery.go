@@ -34,10 +34,10 @@ type KACPluginConfig struct {
 	Elasticsearch KACElasticsearchConfig `yaml:"elasticsearch" json:"elasticsearch"`
 	// AlarmEventIndex 是 KAC 原查询/写入 alias，不能使用 Linkd Repository 的索引前缀替代。
 	AlarmEventIndex string `yaml:"alarm_event_index" json:"alarm_event_index"`
-	// ActionEndpoint 必须实现动作 V1 的持久幂等受理，不得指向旧告警 pipeline。
+	// ActionEndpoint 必须实现动作 V2 的持久幂等受理，不得指向旧告警 pipeline。
 	ActionEndpoint string `yaml:"action_endpoint" json:"action_endpoint"`
-	// InternalToken 是公共处置入口的 Bearer 凭据，只能保存在部署配置和内存。
-	InternalToken string `yaml:"internal_token" json:"internal_token"`
+	// JWT 保存 KAC 的签名密钥与调用身份；每次投递重新签发，不保存已签发 Token。
+	JWT JWTConfig `yaml:"jwt" json:"jwt"`
 }
 
 // KACElasticsearchConfig 保存兼容索引连接和与 KAC 对齐的新建索引参数。
@@ -66,6 +66,9 @@ func (c PluginsConfig) KACEnabled() bool { return c.KAC != nil && c.KAC.Enabled 
 
 // WithDefaults 使用 KAC 源码的索引默认参数；连接和 alias 必须由部署显式提供。
 func (c KACPluginConfig) WithDefaults() KACPluginConfig {
+	if c.JWT.Username == "" {
+		c.JWT.Username = "admin"
+	}
 	c.Elasticsearch.Addresses = append([]string(nil), c.Elasticsearch.Addresses...)
 	if c.Elasticsearch.BasicAuth != nil {
 		a := *c.Elasticsearch.BasicAuth
@@ -110,13 +113,11 @@ func (c PluginsConfig) Validate() error {
 	if _, err := kacEndpointOrigin(v.ActionEndpoint, false); err != nil {
 		return fmt.Errorf("plugins.kac.action_endpoint is invalid")
 	}
-	if len(v.InternalToken) == 0 || len(v.InternalToken) > 16<<10 || v.InternalToken == redactedSecret {
-		return fmt.Errorf("plugins.kac.internal_token is invalid")
+	if strings.TrimSpace(v.JWT.SecretKey) == "" || len(v.JWT.SecretKey) > 16<<10 || v.JWT.SecretKey == redactedSecret {
+		return fmt.Errorf("plugins.kac.jwt.secret_key is invalid")
 	}
-	for _, b := range []byte(v.InternalToken) {
-		if b <= 32 || b >= 127 {
-			return fmt.Errorf("plugins.kac.internal_token is invalid")
-		}
+	if strings.TrimSpace(v.JWT.Username) == "" || len(v.JWT.Username) > 256 {
+		return fmt.Errorf("plugins.kac.jwt.username is invalid")
 	}
 	return nil
 }
@@ -127,8 +128,8 @@ func (c PluginsConfig) Redacted() PluginsConfig {
 		return c
 	}
 	v := c.KAC.WithDefaults()
-	if v.InternalToken != "" {
-		v.InternalToken = redactedSecret
+	if v.JWT.SecretKey != "" {
+		v.JWT.SecretKey = redactedSecret
 	}
 	if v.Elasticsearch.APIKey != "" {
 		v.Elasticsearch.APIKey = redactedSecret

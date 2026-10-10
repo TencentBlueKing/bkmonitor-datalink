@@ -16,16 +16,19 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
+
+	"linkd/internal/internaltoken"
 )
 
 // Destination 是从全局部署插件解析出的连接信息，仅在执行时保留于内存。
 type Destination struct {
 	// Endpoint 是完整动作投递接口 URL，不跟随重定向，不允许 userinfo/query/fragment。
 	Endpoint string
-	// InternalToken 是接收端内部认证凭据；不写入任务、错误或日志。
-	InternalToken string
+	// JWTSecretKey 是接收端共享签名密钥；不写入任务、错误或日志。
+	JWTSecretKey string
+	// JWTUsername 是签发的调用身份，空值默认 admin，不替代动作租户与操作人。
+	JWTUsername string
 }
 
 // Sender 负责一次有界外部调用；重试策略属于持久任务，不能在 HTTP 内隐藏无限重试。
@@ -37,6 +40,7 @@ type Sender interface {
 type HTTPSender struct {
 	client    *http.Client
 	transport *http.Transport
+	now       func() time.Time
 }
 
 // NewHTTPSender 创建独立且禁止重定向的 HTTP 投递器。
@@ -64,7 +68,21 @@ func (s *HTTPSender) Send(ctx context.Context, d Destination, q Request) (Receip
 		return Receipt{}, ErrInvalid
 	}
 	parsed, err := url.Parse(d.Endpoint)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || d.InternalToken == "" || len(d.InternalToken) > 16<<10 || strings.ContainsAny(d.InternalToken, string([]byte{13, 10})) {
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || len(d.JWTSecretKey) > 16<<10 || len(d.JWTUsername) > 256 {
+		return Receipt{}, Failure{"target_unavailable", false}
+	}
+	signer, err := internaltoken.New(d.JWTSecretKey, s.now)
+	if err != nil {
+		return Receipt{}, Failure{"target_unavailable", false}
+	}
+	username := d.JWTUsername
+	if username == "" {
+		username = "admin"
+	}
+	// JWT 不属于冻结的业务请求；包括重试在内的每次投递都重算有效期，
+	// 避免持久任务等待后继续使用过期凭据，同时保持动作身份和摘要不变。
+	token, err := signer.Sign(username)
+	if err != nil {
 		return Receipt{}, Failure{"target_unavailable", false}
 	}
 	body, err := json.Marshal(q)
@@ -76,7 +94,7 @@ func (s *HTTPSender) Send(ctx context.Context, d Destination, q Request) (Receip
 		return Receipt{}, Failure{"target_unavailable", false}
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Internal-Token", "Bearer "+d.InternalToken)
+	req.Header.Set(internaltoken.HeaderName, token)
 	// Kingeye 内部协议从请求体 bk_tenant_id 取租户；APIGW 租户头不用于此接口。
 	response, err := s.client.Do(req)
 	if err != nil {

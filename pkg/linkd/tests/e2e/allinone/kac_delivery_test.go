@@ -35,6 +35,7 @@ import (
 	"linkd/internal/domain"
 	"linkd/internal/enrich"
 	"linkd/internal/eventsource"
+	"linkd/internal/internaltoken"
 	"linkd/internal/lifecycle"
 	"linkd/internal/policy"
 	"linkd/internal/projection"
@@ -64,7 +65,14 @@ type kacDeliveryReceiver struct {
 }
 
 func (s *kacDeliveryReceiver) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost || r.Header.Get("Internal-Token") != "Bearer e2e-delivery-secret" {
+	verifier, err := internaltoken.New("e2e-delivery-secret", nil)
+	if err != nil {
+		s.t.Error(err)
+		w.WriteHeader(500)
+		return
+	}
+	username, err := verifier.VerifyHeader(r.Header)
+	if r.Method != http.MethodPost || err != nil || username != "admin" {
 		s.t.Error("invalid receiver request/auth")
 		w.WriteHeader(401)
 		return

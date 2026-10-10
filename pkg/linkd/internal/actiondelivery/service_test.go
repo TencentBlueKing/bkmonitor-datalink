@@ -205,7 +205,7 @@ func serviceFixture(t *testing.T, gate Gate, sender Sender) (*Service, *taskMemo
 		if source != "source" || version != 4 || target != "kac" {
 			return Destination{}, ErrInvalid
 		}
-		return Destination{Endpoint: "http://receiver/action", InternalToken: "secret"}, nil
+		return Destination{Endpoint: "http://receiver/action", JWTSecretKey: "secret"}, nil
 	})
 	s, e := New(m, gate, resolver, sender, &targetLocker{held: map[string]bool{}}, func() time.Time { return now })
 	if e != nil {

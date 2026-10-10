@@ -30,7 +30,7 @@ func TestKACCompatibilityElasticsearch(t *testing.T) {
 	}
 	zero := 0
 	alias := fmt.Sprintf("linkd-kac-it-%d", time.Now().UnixNano())
-	cfg := config.KACPluginConfig{Enabled: true, AlarmEventIndex: alias, ActionEndpoint: "http://unused.example/action", InternalToken: "test-token", Elasticsearch: config.KACElasticsearchConfig{Addresses: []string{address}, NumberOfShards: 1, NumberOfReplicas: &zero}}
+	cfg := config.KACPluginConfig{Enabled: true, AlarmEventIndex: alias, ActionEndpoint: "http://unused.example/action", JWT: config.JWTConfig{SecretKey: "test-token"}, Elasticsearch: config.KACElasticsearchConfig{Addresses: []string{address}, NumberOfShards: 1, NumberOfReplicas: &zero}}
 	level := func(s string) (string, error) { return s, nil }
 	c, err := Open(cfg, level, nil)
 	if err != nil {

@@ -361,12 +361,24 @@ const kacPluginSchema = z
       .refine((v) => !v.includes(".."))
       .optional(),
     action_endpoint: kacEndpointSchema.optional(),
-    internal_token: z
-      .string()
-      .min(1)
-      .max(16384)
-      .regex(/^[!-~]+$/)
-      .refine((v) => v !== "******")
+    jwt: z
+      .object({
+        secret_key: z
+          .string()
+          .max(16384)
+          .refine(
+            (v) =>
+              v.trim() !== "" &&
+              v !== "******" &&
+              Buffer.byteLength(v, "utf8") <= 16384,
+          ),
+        username: z
+          .string()
+          .max(256)
+          .refine((v) => v.trim() !== "" && Buffer.byteLength(v, "utf8") <= 256)
+          .default("admin"),
+      })
+      .strict()
       .optional(),
     elasticsearch: z
       .object({
@@ -394,12 +406,12 @@ const kacPluginSchema = z
       (!value.alarm_event_index ||
         !value.elasticsearch ||
         !value.action_endpoint ||
-        !value.internal_token)
+        !value.jwt?.secret_key)
     )
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message:
-          "enabled KAC plugin requires Elasticsearch, alarm_event_index, action_endpoint and internal_token",
+          "enabled KAC plugin requires Elasticsearch, alarm_event_index, action_endpoint and jwt.secret_key",
       });
     if (value.elasticsearch?.api_key && value.elasticsearch.basic_auth)
       ctx.addIssue({
@@ -1323,7 +1335,7 @@ export function redactedConfig(config: ConsoleConfig) {
     : undefined;
   const plugins = structuredClone(config.plugins);
   if (plugins?.kac) {
-    if (plugins.kac.internal_token) plugins.kac.internal_token = "******";
+    if (plugins.kac.jwt?.secret_key) plugins.kac.jwt.secret_key = "******";
     if (plugins.kac.elasticsearch?.api_key)
       plugins.kac.elasticsearch.api_key = "******";
     if (plugins.kac.elasticsearch?.basic_auth?.password)

@@ -479,7 +479,7 @@ test("JWT secret is injected only into management consumers", () => {
 
 test("global KAC plugin reaches every role and cannot be overridden",()=>{
  const values=structuredClone(base);
- values.configuration.plugins={kac:{enabled:true,alarm_event_index:"cw_kac_saas_3.0_alarm_event",elasticsearch:{addresses:["http://kac-es:9200"]},action_endpoint:"https://kac.example/action",internal_token:"synthetic-kac-token"}};
+ values.configuration.plugins={kac:{enabled:true,alarm_event_index:"cw_kac_saas_3.0_alarm_event",elasticsearch:{addresses:["http://kac-es:9200"]},action_endpoint:"https://kac.example/action",jwt:{secret_key:"synthetic-kac-key",username:"linkd"}}};
  values.controlPlane={...values.controlPlane,configuration:{plugins:null}};
  const docs=render(values);
  for(const deploy of deployments(docs)) assert.deepEqual(parse(configFor(docs,deploy)).plugins,values.configuration.plugins);

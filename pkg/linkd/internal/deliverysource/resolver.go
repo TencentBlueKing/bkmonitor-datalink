@@ -60,5 +60,5 @@ func (r *Resolver) ResolveAction(ctx context.Context, tenant, source string, ver
 	if err := validScope(ctx, tenant, source, version, target); err != nil {
 		return actiondelivery.Destination{}, err
 	}
-	return actiondelivery.Destination{Endpoint: r.config.ActionEndpoint, InternalToken: r.config.InternalToken}, nil
+	return actiondelivery.Destination{Endpoint: r.config.ActionEndpoint, JWTSecretKey: r.config.JWT.SecretKey, JWTUsername: r.config.JWT.Username}, nil
 }

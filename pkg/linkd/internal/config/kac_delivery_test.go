@@ -15,10 +15,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v3"
 )
 
 func kacPluginFixture() PluginsConfig {
-	return PluginsConfig{KAC: &KACPluginConfig{Enabled: true, AlarmEventIndex: "cw_kac_saas_3.0_alarm_event", Elasticsearch: KACElasticsearchConfig{Addresses: []string{"http://localhost:9200"}, BasicAuth: &ResourceBasicAuth{Username: "linkd", Password: "private-es"}}, ActionEndpoint: "https://kac.example/internal/linkd/action", InternalToken: "private-kac"}}
+	return PluginsConfig{KAC: &KACPluginConfig{Enabled: true, AlarmEventIndex: "cw_kac_saas_3.0_alarm_event", Elasticsearch: KACElasticsearchConfig{Addresses: []string{"http://localhost:9200"}, BasicAuth: &ResourceBasicAuth{Username: "linkd", Password: "private-es"}}, ActionEndpoint: "https://kac.example/internal/linkd/action", JWT: JWTConfig{SecretKey: "private-kac"}}}
 }
 
 func TestKACPluginValidationAndRedaction(t *testing.T) {
@@ -30,24 +32,31 @@ func TestKACPluginValidationAndRedaction(t *testing.T) {
 		t.Fatal("complete plugin rejected")
 	}
 	defaults := cfg.KAC.WithDefaults()
-	if defaults.Elasticsearch.NumberOfShards != 3 || *defaults.Elasticsearch.NumberOfReplicas != 2 || defaults.Elasticsearch.TotalFieldsLimit != 5000 {
+	if defaults.Elasticsearch.NumberOfShards != 3 || *defaults.Elasticsearch.NumberOfReplicas != 2 || defaults.Elasticsearch.TotalFieldsLimit != 5000 || defaults.JWT.Username != "admin" {
 		t.Fatal("KAC defaults differ")
 	}
 	public := Config{Plugins: cfg}.Redacted()
 	raw, _ := json.Marshal(public.Plugins)
-	if strings.Contains(string(raw), "private-") || cfg.KAC.InternalToken != "private-kac" || cfg.KAC.Elasticsearch.BasicAuth.Password != "private-es" {
+	yamlRaw, err := yaml.Marshal(public.Plugins)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if public.Plugins.KAC.JWT.SecretKey != redactedSecret || strings.Contains(string(raw)+string(yamlRaw), "private-") || cfg.KAC.JWT.SecretKey != "private-kac" || cfg.KAC.Elasticsearch.BasicAuth.Password != "private-es" {
 		t.Fatal("redaction leaked or mutated credentials")
 	}
 	for name, change := range map[string]func(*KACPluginConfig){
-		"missing index":        func(c *KACPluginConfig) { c.AlarmEventIndex = "" },
-		"wildcard index":       func(c *KACPluginConfig) { c.AlarmEventIndex = "alarm*" },
-		"missing ES":           func(c *KACPluginConfig) { c.Elasticsearch.Addresses = nil },
-		"unsafe action URL":    func(c *KACPluginConfig) { c.ActionEndpoint = "https://private:secret@kac.example/action" },
-		"missing action":       func(c *KACPluginConfig) { c.ActionEndpoint = "" },
-		"missing token":        func(c *KACPluginConfig) { c.InternalToken = "" },
-		"header injection":     func(c *KACPluginConfig) { c.InternalToken = "private\nsecret" },
-		"redacted token":       func(c *KACPluginConfig) { c.InternalToken = redactedSecret },
-		"invalid shard budget": func(c *KACPluginConfig) { c.Elasticsearch.NumberOfShards = 1025 },
+		"missing index":         func(c *KACPluginConfig) { c.AlarmEventIndex = "" },
+		"wildcard index":        func(c *KACPluginConfig) { c.AlarmEventIndex = "alarm*" },
+		"missing ES":            func(c *KACPluginConfig) { c.Elasticsearch.Addresses = nil },
+		"unsafe action URL":     func(c *KACPluginConfig) { c.ActionEndpoint = "https://private:secret@kac.example/action" },
+		"missing action":        func(c *KACPluginConfig) { c.ActionEndpoint = "" },
+		"missing signing key":   func(c *KACPluginConfig) { c.JWT.SecretKey = "" },
+		"blank signing key":     func(c *KACPluginConfig) { c.JWT.SecretKey = " \n\t" },
+		"oversized signing key": func(c *KACPluginConfig) { c.JWT.SecretKey = strings.Repeat("x", 16<<10+1) },
+		"redacted signing key":  func(c *KACPluginConfig) { c.JWT.SecretKey = redactedSecret },
+		"blank username":        func(c *KACPluginConfig) { c.JWT.Username = " \n\t" },
+		"oversized username":    func(c *KACPluginConfig) { c.JWT.Username = strings.Repeat("x", 257) },
+		"invalid shard budget":  func(c *KACPluginConfig) { c.Elasticsearch.NumberOfShards = 1025 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			v := kacPluginFixture()
@@ -67,6 +76,7 @@ func TestKACOldConfigurationRejected(t *testing.T) {
 		"source targets":      "event_sources:\n  - event_source_id: source\n    kac_targets: []\n",
 		"projection endpoint": "plugins:\n  kac:\n    projection_endpoint: https://kac.example/projection\n",
 		"tenant override":     "plugins:\n  kac:\n    bk_tenant_id: tenant\n",
+		"static JWT":          "plugins:\n  kac:\n    internal_token: old-static-jwt\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := filepath.Join(t.TempDir(), "config.yaml")
@@ -82,7 +92,7 @@ func TestKACOldConfigurationRejected(t *testing.T) {
 
 func TestKACGlobalConfigurationLoads(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "config.yaml")
-	raw := []byte("plugins:\n  kac:\n    enabled: true\n    alarm_event_index: cw_kac_saas_3.0_alarm_event\n    elasticsearch:\n      addresses: [http://localhost:9200]\n      number_of_replicas: 0\n    action_endpoint: https://kac.example/action\n    internal_token: private-kac\n")
+	raw := []byte("plugins:\n  kac:\n    enabled: true\n    alarm_event_index: cw_kac_saas_3.0_alarm_event\n    elasticsearch:\n      addresses: [http://localhost:9200]\n      number_of_replicas: 0\n    action_endpoint: https://kac.example/action\n    jwt:\n      secret_key: private-kac\n      username: linkd\n")
 	if err := os.WriteFile(p, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +100,18 @@ func TestKACGlobalConfigurationLoads(t *testing.T) {
 	if err != nil || !cfg.Plugins.KACEnabled() {
 		t.Fatal(err)
 	}
-	if *cfg.Plugins.KAC.WithDefaults().Elasticsearch.NumberOfReplicas != 0 {
-		t.Fatal("zero replicas lost")
+	if *cfg.Plugins.KAC.WithDefaults().Elasticsearch.NumberOfReplicas != 0 || cfg.Plugins.KAC.JWT.SecretKey != "private-kac" || cfg.Plugins.KAC.JWT.Username != "linkd" {
+		t.Fatal("explicit plugin settings lost")
+	}
+}
+
+func TestKACJWTSigningKeyAndUsernameBudgets(t *testing.T) {
+	for _, key := range []string{"private\nsecret", "密钥", strings.Repeat("x", 16<<10)} {
+		cfg := kacPluginFixture()
+		cfg.KAC.JWT.SecretKey = key
+		cfg.KAC.JWT.Username = strings.Repeat("x", 256)
+		if err := cfg.Validate(); err != nil {
+			t.Fatal("valid signing key or username boundary rejected", err)
+		}
 	}
 }

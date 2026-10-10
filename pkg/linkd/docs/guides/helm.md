@@ -485,6 +485,21 @@ Chart 向各角色注入同一声明，禁止 Control Plane、workerDefaults、c
 外部 `existingSecret` 的内容无法由模板验证，需由部署方保证控制面和 Lifecycle 使用同一配置。
 插件连接到原 KAC ES，并维护原 alias 与索引定义；不在各 EventSource 上配置目标。
 
+动作鉴权直接配置 KAC 的 JWT 签名密钥，无需手工生成 Token：
+
+```yaml
+configuration:
+  plugins:
+    kac:
+      jwt:
+        secret_key: replace-with-kac-jwt-secret-key
+        username: admin
+```
+
+该片段合入完整插件配置；`secret_key` 与 KAC 的 `BKAPP_JWT_SECRET_KEY` 相同。
+控制面每次请求及重试重新签发五分钟有效的 JWT。旧 `plugins.kac.internal_token` 明确拒绝，
+升级时须用 `jwt.secret_key` 替换，不能直接复制旧 JWT。已有配置 Secret 也需同步更新并重启相关进程。
+
 ### 可选 KAC 告警跳转
 
 `console.kacAlertUrlTemplate` 默认空，仅向 Console 注入 `LINKD_CONSOLE_KAC_ALERT_URL_TEMPLATE`。

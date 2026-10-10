@@ -35,9 +35,14 @@ KAC 处理 firing 时仍检查当前结束、屏蔽和合并状态，不让延�
 
 ## 请求身份与确认
 
-使用 POST、JSON Content-Type 和 `Internal-Token: Bearer <token>`。URL 来自部署级 plugins.kac.action_endpoint，
+使用 POST、JSON Content-Type 和 `Internal-Token: Bearer <JWT>`。URL 来自部署级 plugins.kac.action_endpoint，
 租户通过请求体 `bk_tenant_id` 显式传递，不发送 APIGW 专用的 `X-Bk-Tenant-Id`；
 只接受 HTTP/HTTPS，不允许 userinfo/query/fragment，不跟随重定向。凭据仅在执行时解析，不写入任务。
+
+鉴权配置为 `plugins.kac.jwt.secret_key` 与可选 `username`（默认 `admin`）；密钥与 KAC 的
+`BKAPP_JWT_SECRET_KEY` 一致，不保存预生成的 JWT。每次发送及重试重新签发 HS256 JWT，携带
+`username`、`iat` 和五分钟后的 `exp`；JWT 不参与请求摘要、动作身份或业务幂等。
+同一秒签发可能得到相同 Token，不提供防重放保证。旧 `plugins.kac.internal_token` 已移除。
 
 | 请求字段 | 约束 |
 | --- | --- |

@@ -23,7 +23,7 @@ import (
 )
 
 func deliveryConfigFixture() config.Config {
-	return config.Config{Lifecycle: &config.LifecycleConfig{}, Plugins: config.PluginsConfig{KAC: &config.KACPluginConfig{Enabled: true, ActionEndpoint: "https://kac.example/action", InternalToken: "private-token"}}}
+	return config.Config{Lifecycle: &config.LifecycleConfig{}, Plugins: config.PluginsConfig{KAC: &config.KACPluginConfig{Enabled: true, ActionEndpoint: "https://kac.example/action", JWT: config.JWTConfig{SecretKey: "private-token"}}}}
 }
 
 func deliveryTask(t *testing.T, r *taskstate.Registry, id string) taskstate.Task {

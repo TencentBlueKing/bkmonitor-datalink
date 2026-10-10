@@ -19,7 +19,7 @@ import (
 )
 
 func globalPlugin() config.PluginsConfig {
-	return config.PluginsConfig{KAC: &config.KACPluginConfig{Enabled: true, AlarmEventIndex: "kac_alarm_event", Elasticsearch: config.KACElasticsearchConfig{Addresses: []string{"http://localhost:9200"}}, ActionEndpoint: "https://kac.example/action", InternalToken: "private-token"}}
+	return config.PluginsConfig{KAC: &config.KACPluginConfig{Enabled: true, AlarmEventIndex: "kac_alarm_event", Elasticsearch: config.KACElasticsearchConfig{Addresses: []string{"http://localhost:9200"}}, ActionEndpoint: "https://kac.example/action", JWT: config.JWTConfig{SecretKey: "private-token"}}}
 }
 
 func TestGlobalResolverAllSourcesAndTenants(t *testing.T) {
@@ -28,7 +28,7 @@ func TestGlobalResolverAllSourcesAndTenants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.KAC.InternalToken = "changed"
+	cfg.KAC.JWT.SecretKey = "changed"
 	var wg sync.WaitGroup
 	for _, tenant := range []string{"a", "b"} {
 		for _, source := range []string{"source-a", "source-b", "builtin_alarm_merge"} {
@@ -38,7 +38,7 @@ func TestGlobalResolverAllSourcesAndTenants(t *testing.T) {
 					t.Error("global projection", e)
 				}
 				a, e := r.ResolveAction(t.Context(), tenant, source, 7, TargetID)
-				if e != nil || a.InternalToken != "private-token" || a.Endpoint != "https://kac.example/action" {
+				if e != nil || a.JWTSecretKey != "private-token" || a.JWTUsername != "admin" || a.Endpoint != "https://kac.example/action" {
 					t.Error("global action", e)
 				}
 			})

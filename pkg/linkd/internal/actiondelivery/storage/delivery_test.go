@@ -26,6 +26,7 @@ import (
 	"linkd/internal/actiondelivery"
 	"linkd/internal/config"
 	"linkd/internal/domain"
+	"linkd/internal/internaltoken"
 	"linkd/internal/projection"
 	"linkd/internal/projection/redislock"
 	projectionstore "linkd/internal/projection/storage"
@@ -99,7 +100,7 @@ func (r actionResolver) ResolveAction(_ context.Context, _, source string, versi
 	if source != "source" || version != 4 || target != "kac" {
 		return actiondelivery.Destination{}, actiondelivery.ErrInvalid
 	}
-	return actiondelivery.Destination{Endpoint: r.endpoint + "/action", InternalToken: "fixture-token"}, nil
+	return actiondelivery.Destination{Endpoint: r.endpoint + "/action", JWTSecretKey: "fixture-token"}, nil
 }
 
 func (r actionResolver) ResolveProjection(_ context.Context, _, source string, version int64, target string) (projection.Destination, error) {
@@ -131,7 +132,18 @@ type simulatedActionReceiver struct {
 }
 
 func (r *simulatedActionReceiver) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	if req.Method != "POST" || req.Header.Get("Internal-Token") != "Bearer fixture-token" {
+	// 投影夹具保留原 HTTP 协议；正式动作投递必须验证动态签发的 JWT。
+	authenticated := req.Header.Get("Internal-Token") == "Bearer fixture-token"
+	if req.URL.Path != "/projection" {
+		verifier, err := internaltoken.New("fixture-token", nil)
+		if err != nil {
+			w.WriteHeader(500)
+			return
+		}
+		username, err := verifier.VerifyHeader(req.Header)
+		authenticated = err == nil && username == "admin"
+	}
+	if req.Method != "POST" || !authenticated {
 		w.WriteHeader(401)
 		return
 	}

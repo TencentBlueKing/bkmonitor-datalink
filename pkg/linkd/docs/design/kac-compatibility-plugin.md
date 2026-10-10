@@ -103,6 +103,11 @@ KAC 侧的命令转发、旧状态写入退出和处置接收端适配属于后�
 配置应只保留一份公共插件声明，包含全局启用开关、KAC ES 连接/索引信息和处置通知的地址及鉴权。
 使用 `plugins.kac`；完整可加载片段和参数约束见[配置指南](../guides/configuration.md#kac-全局插件配置)。
 
+2026-10-10 确认动作调用配置直接保存 KAC 的 JWT 签名密钥与调用用户名（`plugins.kac.jwt`），
+不保存预生成的 JWT。HTTP Sender 复用 `internal/internaltoken`，每次请求及重试重新签发五分钟
+有效的 HS256 JWT；请求头沿用 KAC 的 `Internal-Token: Bearer <JWT>`。认证凭据不参与稳定动作身份
+或请求摘要，业务重试保持原动作。旧 `plugins.kac.internal_token` 明确拒绝。
+
 | 原位置或职责 | 本轮实现 |
 | --- | --- |
 | EventSource.kac_targets | 移除，不再参与来源发布、Worker 读取或 Console 来源编辑 |

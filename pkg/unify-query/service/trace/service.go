@@ -107,6 +107,8 @@ func (s *Service) Start(ctx context.Context) {
 
 	exporter, err = otlptrace.New(ctx, client)
 	if err != nil {
+		// Exporter errors may contain request headers; report the failed stage only.
+		log.Errorf(ctx, "trace exporter initialization failed (protocol=%s)", OtlpType)
 		return
 	}
 

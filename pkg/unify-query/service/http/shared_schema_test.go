@@ -419,6 +419,37 @@ func TestSharedSchemaResponseFallbackAndHTTPObservation(t *testing.T) {
 	require.Contains(t, recorder.Body.String(), `"error":`)
 }
 
+type sharedFailHTTPWriter struct {
+	*httptest.ResponseRecorder
+	calls int
+}
+
+func (w *sharedFailHTTPWriter) Write(body []byte) (int, error) {
+	w.calls++
+	if w.calls == 3 {
+		return 0, io.ErrClosedPipe
+	}
+	return w.ResponseRecorder.Write(body)
+}
+
+func TestSharedSchemaResponseWriteFailureCountsOnce(t *testing.T) {
+	writer := &sharedFailHTTPWriter{ResponseRecorder: httptest.NewRecorder()}
+	c, _ := gin.CreateTestContext(writer)
+	c.Request = httptest.NewRequest(http.MethodPost, "/query/ts", nil)
+	labels := map[string]string{"api": "/query/ts", "space_uid": "", "source_type": "", "status": "failed"}
+	beforeFailure := sharedMetricCounter(t, "unify_query_api_request_total", labels)
+	labels["status"] = "success"
+	beforeSuccess := sharedMetricCounter(t, "unify_query_api_request_total", labels)
+	err := (&response{c: c}).sharedSchemaSuccess(context.Background(), sharedTestData(2))
+	require.ErrorIs(t, err, io.ErrClosedPipe)
+	require.Equal(t, 3, writer.calls)
+	require.NotContains(t, writer.Body.String(), `"end":`)
+	require.NotContains(t, writer.Body.String(), `"error":`)
+	require.Equal(t, beforeSuccess, sharedMetricCounter(t, "unify_query_api_request_total", labels))
+	labels["status"] = "failed"
+	require.Equal(t, 1.0, sharedMetricCounter(t, "unify_query_api_request_total", labels)-beforeFailure)
+}
+
 func sharedMetricCounter(t *testing.T, name string, labels map[string]string) float64 {
 	t.Helper()
 	families, err := prometheus.DefaultGatherer.Gather()

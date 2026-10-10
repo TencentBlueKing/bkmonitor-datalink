@@ -35,6 +35,7 @@ const (
 	sharedFallbackFrame      = "frame_limit"
 	sharedFallbackSchemas    = "schema_limit"
 	sharedFallbackDictionary = "dictionary_limit"
+	sharedFailureEncode      = "encode"
 )
 
 type sharedSchema struct {
@@ -236,12 +237,12 @@ func writeSharedSchema(ctx context.Context, writer io.Writer, flush func() error
 		body, err := json.Marshal(frame)
 		stats.EncodeDuration += time.Since(started)
 		if err != nil {
-			stats.FailureStage = "encode"
+			stats.FailureStage = sharedFailureEncode
 			return err
 		}
 		// A mismatch is an encoder bug, not a reason to fall back mid-stream.
 		if len(body)+1 > sharedSchemaMaxFrameBytes {
-			stats.FailureStage = "encode"
+			stats.FailureStage = sharedFailureEncode
 			return errors.New("shared schema frame exceeded preflight size")
 		}
 		body = append(body, '\n')
@@ -285,7 +286,7 @@ func writeSharedSchema(ctx context.Context, writer io.Writer, flush func() error
 		counter.series(series, len(table.Columns))
 		stats.EncodeDuration += time.Since(started)
 		if reason, err := counter.result(); reason != "" || err != nil {
-			stats.FailureStage = "encode"
+			stats.FailureStage = sharedFailureEncode
 			if err != nil {
 				return stats, err
 			}

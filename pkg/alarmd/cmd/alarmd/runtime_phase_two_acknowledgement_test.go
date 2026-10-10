@@ -79,7 +79,7 @@ func TestProductionPhaseTwoWorkerAcknowledgesTheActivationItExecutesBy(t *testin
 	}
 	defer func() { _ = bundle.Shutdown(ctx) }()
 	control := bundle.dependencies.Control.(*productionPhaseTwoControl)
-	activation, err := control.dependencies.Repository.LoadActivation(ctx)
+	activation, err := control.dependencies.Repository.LoadActivationHead(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestProductionPhaseTwoWorkerAcknowledgesTheActivationItExecutesBy(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	workers, err := store.ListReadyWorkers(ctx, now())
+	workers, _, err := store.ListReadyWorkers(ctx, now())
 	if err != nil || len(workers) != 1 {
 		t.Fatalf("ListReadyWorkers() = %+v, %v; want this worker", workers, err)
 	}

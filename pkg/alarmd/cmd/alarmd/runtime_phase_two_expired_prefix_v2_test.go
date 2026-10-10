@@ -19,7 +19,7 @@ func TestExpiredRangeV2ProductionRestoresReplayAfterBothPrefixes(t *testing.T) {
 	ctx := context.Background()
 	f.clock.Store((f.base + 1800) * 1000)
 	for _, qg := range f.bundle.queryGroups {
-		runner := f.bundle.runners[qg].runner
+		runner := settledRunner(f.bundle, qg)
 		var kinds []execution.CompletionKind
 		for i := 0; i < 4; i++ {
 			result, attempted, err := runner.RunOne(ctx)

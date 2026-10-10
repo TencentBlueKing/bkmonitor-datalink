@@ -246,14 +246,13 @@ func (store *fakeLeaseStore) Renew(
 	return store.renewed, nil
 }
 
-func (store *fakeLeaseStore) CheckFence(context.Context, execution.OwnerFence, time.Time) error {
+func (store *fakeLeaseStore) CheckFence(context.Context, execution.OwnerFence) error {
 	return store.checkErr
 }
 
 func (store *fakeLeaseStore) CheckFenceWithAssignment(
 	context.Context,
 	execution.OwnerFence,
-	time.Time,
 ) (AssignmentRecord, error) {
 	if store.checkErr != nil {
 		return AssignmentRecord{}, store.checkErr

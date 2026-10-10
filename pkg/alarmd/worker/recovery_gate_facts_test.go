@@ -17,16 +17,16 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
-// The counts the evaluator keeps of held and passed RECOVERY envelopes reach
-// the observer as one fact per cause, zero counts left out, and only for the
-// Plan the observation is about.
+// The counts the evaluator keeps of RECOVERY records, by the Level each was
+// decided beside, reach the observer as one fact per state, zero counts left
+// out, and only for the Plan the observation is about.
 func TestRecoveryGateFactsCarryEveryNonZeroCause(t *testing.T) {
 	identity := execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}
 	due := execution.DuePlan{Identity: identity}
 	evaluated := execution.EvaluationResult{Plans: []execution.PlanEvaluationResult{{
 		Plan: identity,
 		RecoveryGate: execution.RecoveryGateCounts{
-			HeldLevelUnavailable: 2, HeldLevelRecovering: 1, SentPastLevelWithoutRecovery: 3,
+			BesideLevelUnavailable: 2, BesideLevelRecovering: 1, BesideLevelWithoutRecovery: 3,
 		},
 	}}}
 	want := []observability.RecoveryGateFact{
@@ -38,7 +38,7 @@ func TestRecoveryGateFactsCarryEveryNonZeroCause(t *testing.T) {
 		t.Fatalf("facts = %+v, want %+v", got, want)
 	}
 
-	evaluated.Plans[0].RecoveryGate = execution.RecoveryGateCounts{HeldLevelRecovering: 4}
+	evaluated.Plans[0].RecoveryGate = execution.RecoveryGateCounts{BesideLevelRecovering: 4}
 	if got := recoveryGateFacts(due, evaluated); !reflect.DeepEqual(got, []observability.RecoveryGateFact{{Cause: observability.RecoveryGateLevelRecovering, Records: 4}}) {
 		t.Fatalf("facts with one cause = %+v, want only that cause", got)
 	}
@@ -49,7 +49,7 @@ func TestRecoveryGateFactsCarryEveryNonZeroCause(t *testing.T) {
 	}
 
 	other := execution.DuePlan{Identity: execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "8"}}
-	evaluated.Plans[0].RecoveryGate = execution.RecoveryGateCounts{HeldLevelUnavailable: 1}
+	evaluated.Plans[0].RecoveryGate = execution.RecoveryGateCounts{BesideLevelUnavailable: 1}
 	if got := recoveryGateFacts(other, evaluated); got != nil {
 		t.Fatalf("facts for another Plan = %+v, want none", got)
 	}

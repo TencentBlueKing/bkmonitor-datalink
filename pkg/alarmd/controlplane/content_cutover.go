@@ -129,6 +129,10 @@ type activatedContent struct {
 	contexts map[execution.PlanIdentity]execution.OutputContextDigest
 	complete bool
 	source   string
+	// blocked is the set of Query Groups an earlier cutover held back, and
+	// accounting how it compared with the activation body.
+	blocked    []BlockedQueryGroup
+	accounting BlockedSetAccounting
 }
 
 func (content activatedContent) refsFor(group QueryGroup) ([]execution.OutputContextRef, bool) {
@@ -150,13 +154,33 @@ func (content activatedContent) refsFor(group QueryGroup) ([]execution.OutputCon
 // activated, so it is not an old Query Group for the next cutover to keep or
 // cut, and it is not part of the coverage the activation owes.
 func (repository *RedisCatalogRepository) loadActivatedContent(ctx context.Context, activation ActivationState) (activatedContent, error) {
-	content, err := repository.loadPublicationContent(ctx, activation)
+	load := repository.loadPublicationContent
+	if activation.CutoverProgress != nil {
+		// The manifest of the current publication names content the Query
+		// Groups past the cutover's cursor are not running yet; taken for
+		// theirs, it would pass them off as unchanged and they would never be
+		// cut. What each runs is on its open Segment.
+		load = repository.activatedContentFromOpenSegments
+	}
+	content, err := load(ctx, activation)
 	if err != nil {
 		return activatedContent{}, err
 	}
 	for _, projection := range activation.Draining {
 		delete(content.groups, projection.QueryGroup)
 		delete(content.digests, projection.QueryGroup)
+	}
+	blocked, accounting, err := repository.loadAccountedBlockedSet(ctx, activation)
+	if err != nil {
+		return activatedContent{}, err
+	}
+	applyBlockedToActivatedContent(&content, blocked)
+	content.blocked, content.accounting = blocked, accounting
+	if accounting != BlockedSetConsistent {
+		// A set that does not agree with the body may be missing entries, and
+		// a missing entry is a Query Group the manifest would pass off as
+		// unchanged. Every timeline is read instead.
+		content.complete = false
 	}
 	return content, nil
 }
@@ -226,29 +250,40 @@ const (
 	cutoverLegacyCut contentCutoverDecision = "legacy_cut"
 	cutoverRetired   contentCutoverDecision = "retired"
 	cutoverAdded     contentCutoverDecision = "added"
+	// cutoverBlocked: a precondition only a write outside the cutover could
+	// break failed on this Query Group; it keeps its records and is judged
+	// again at the next cutover.
+	cutoverBlocked contentCutoverDecision = "blocked"
+	// cutoverReopened: the Query Group's timeline key was gone; a new
+	// timeline was opened for it as for a new Query Group.
+	cutoverReopened contentCutoverDecision = "reopened"
+	// cutoverRetiredUnwritten: a Query Group leaving the publication whose
+	// timeline failed a precondition; it leaves the activation, and its
+	// timeline is left as it is.
+	cutoverRetiredUnwritten contentCutoverDecision = "retired_unwritten"
 )
 
 // validateContentCoverage checks that the assembled activation names every
 // Plan of the new publication exactly once, and no other.
 func validateContentCoverage(plans []PlanActivationRecord, groups map[execution.QueryGroupIdentity]QueryGroup) error {
-	wanted := make(map[execution.PlanIdentity]struct{})
+	wanted := make(map[execution.PlanKey]struct{})
 	for _, group := range groups {
 		for _, plan := range group.Plans {
-			if _, duplicate := wanted[plan.Identity]; duplicate {
+			if _, duplicate := wanted[plan.Key()]; duplicate {
 				return errors.New("alarmd controlplane: publication names a Plan in two Query Groups")
 			}
-			wanted[plan.Identity] = struct{}{}
+			wanted[plan.Key()] = struct{}{}
 		}
 	}
-	covered := make(map[execution.PlanIdentity]struct{}, len(plans))
+	covered := make(map[execution.PlanKey]struct{}, len(plans))
 	for _, record := range plans {
-		if _, duplicate := covered[record.Fact.Plan]; duplicate {
+		if _, duplicate := covered[record.Fact.Key()]; duplicate {
 			return errors.New("alarmd controlplane: content cutover activated a Plan twice")
 		}
-		if _, ok := wanted[record.Fact.Plan]; !ok {
+		if _, ok := wanted[record.Fact.Key()]; !ok {
 			return errors.New("alarmd controlplane: content cutover activated a Plan outside the publication")
 		}
-		covered[record.Fact.Plan] = struct{}{}
+		covered[record.Fact.Key()] = struct{}{}
 	}
 	if len(covered) != len(wanted) {
 		return errors.New("alarmd controlplane: content cutover must activate every Plan of the publication")

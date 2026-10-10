@@ -134,9 +134,24 @@ func evaluate(t *testing.T, input AbsenceInput) AbsenceResult {
 	}
 	if len(input.Roster.Groups) > 0 {
 		for key := range input.Roster.Groups {
-			if _, judged := result.Verdicts[key]; !judged {
-				t.Fatalf("Evaluate() gave no verdict to roster group %q", key)
+			if _, judged := result.Verdicts[key]; judged {
+				continue
 			}
+			// The horizon adds a third answer to "present" and "absent":
+			// stopped, on purpose, and stated by giving no verdict at all. The
+			// property still holds - an expected group is never left without an
+			// answer - but the answer is now in the memory rather than in the
+			// verdicts, so it is read from there. A history group is forgotten
+			// as it expires and an expected one is marked; anything else is the
+			// silent gap this check exists to catch.
+			entry, remembered := result.Memory[key]
+			if remembered && entry.SuppressedAt != 0 {
+				continue
+			}
+			if !remembered && input.Roster.Source == RosterHistory && input.TrackingHorizonSeconds > 0 {
+				continue
+			}
+			t.Fatalf("Evaluate() gave no verdict to roster group %q and did not record it as stopped", key)
 		}
 	}
 	if entry, ok := result.Memory[whole]; ok && entry.LastSeen != 0 {
@@ -154,9 +169,24 @@ func evaluate(t *testing.T, input AbsenceInput) AbsenceResult {
 			t.Fatalf("Evaluate() produced verdict %q, which the contract does not name", verdict)
 		}
 	}
+	// Expired and Suppressed cannot be derived from the verdicts: a group the
+	// horizon stopped gets no verdict at all, which is the whole point of it.
+	// They are carried through here and asserted by name in the horizon tests.
+	// What is checkable from here is the one direction that must hold whatever
+	// the rules say: with no horizon configured, nothing can expire this round.
+	if input.TrackingHorizonSeconds == 0 && result.Facts.Expired != 0 {
+		t.Fatalf("Evaluate() expired %d absences with no horizon configured", result.Facts.Expired)
+	}
+	// The ages are counted where Absent is, so their sum is Absent on every
+	// path; which bucket each absence lands in is asserted by name in the
+	// age tests.
+	if total := result.Facts.AbsentAges.Total(); total != absent {
+		t.Fatalf("Evaluate() filed %d absences by age for %d absent: %+v", total, absent, result.Facts.AbsentAges)
+	}
 	wantFacts := AbsenceFacts{
 		Present: uint64(len(input.Present)), Expected: uint64(len(input.Roster.Groups)), Absent: absent, Unavailable: unavailable,
 		Dropped: input.Dropped, RosterSource: input.Roster.Source, RosterVersion: input.Roster.Version,
+		Expired: result.Facts.Expired, Suppressed: result.Facts.Suppressed, AbsentAges: result.Facts.AbsentAges,
 	}
 	if result.Facts != wantFacts {
 		t.Fatalf("Facts = %+v, want %+v", result.Facts, wantFacts)

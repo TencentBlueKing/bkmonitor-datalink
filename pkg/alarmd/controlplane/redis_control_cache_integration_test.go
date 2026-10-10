@@ -244,7 +244,7 @@ func (fixture controlReadCacheFixture) coldRepository(t *testing.T) (*controlpla
 func (fixture controlReadCacheFixture) activationRequest() execution.PlanActivationRequest {
 	return execution.PlanActivationRequest{
 		Contract: fixture.contract.Contract,
-		Plans:    []execution.PlanIdentity{fixture.contract.DuePlans[0].Identity},
+		Plans:    []execution.PlanKey{fixture.contract.DuePlans[0].Key()},
 	}
 }
 
@@ -322,8 +322,16 @@ func TestControlReadCacheReadsActivationAndTimelineOncePerHeader(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := hook.bodyReads("activation") + hook.bodyReads("timeline"); got != 0 {
-		t.Fatalf("warm Leader and Schedule reads transferred %d bodies, want 0", got)
+	// The body is a head this repository did not write (N15): its records
+	// are read back from the open Segment once for the header, live - a
+	// timeline can be rewritten under an unchanged header, and those records
+	// decide the next activation - and kept for the rest of the header.
+	// Nothing else is read again.
+	if got := hook.bodyReads("activation"); got != 0 {
+		t.Fatalf("warm Leader and Schedule reads transferred %d activation bodies, want 0", got)
+	}
+	if got := hook.bodyReads("timeline"); got != 1 {
+		t.Fatalf("warm Leader and Schedule reads transferred %d timelines, want the 1 the head's records are read from", got)
 	}
 	if got := hook.count("get", "header"); got != 12 {
 		t.Fatalf("header probes=%d, want one per read (12)", got)
@@ -374,11 +382,14 @@ func TestControlReadCacheRefreshesAfterCutoverAndKeepsHistoricalSemantics(t *tes
 		t.Fatalf("timeline body reads across the header change=%d, want 1", got)
 	}
 	// The activation read observed the new header first and replaced the
-	// cached version, so the timeline read that followed is a cold miss.
+	// cached version. The body is a head (N15), so reading the activation
+	// with its records reads the open Segment through the same cache: that
+	// is the miss on each side of the header change, and the Schedule and
+	// authorization reads that follow hit what it stored.
 	stats := repository.ControlReadCacheStats()
 	if stats.Activation != (controlplane.ControlReadCacheObjectStats{Hits: 1, Misses: 1, Refreshes: 1}) ||
-		stats.Timeline != (controlplane.ControlReadCacheObjectStats{Hits: 1, Misses: 2}) {
-		t.Fatalf("cache stats=%+v, want activation {1,1,1} and timeline {1,2,0}", stats)
+		stats.Timeline != (controlplane.ControlReadCacheObjectStats{Hits: 3, Misses: 2}) {
+		t.Fatalf("cache stats=%+v, want activation {1,1,1} and timeline {3,2,0}", stats)
 	}
 }
 

@@ -17,8 +17,12 @@ func legacyEventForTest(t *testing.T) contract.TriggerEventV1 {
 
 type legacyConverterFunc func(context.Context, []contract.TriggerEventV1) ([]LegacyConvertedEvent, error)
 
-func (f legacyConverterFunc) ConvertBatch(ctx context.Context, events []contract.TriggerEventV1) ([]LegacyConvertedEvent, error) {
-	return f(ctx, events)
+func (f legacyConverterFunc) ConvertEach(ctx context.Context, events []contract.TriggerEventV1) ([]LegacyConvertedEvent, []error, error) {
+	converted, err := f(ctx, events)
+	if err != nil {
+		return nil, nil, err
+	}
+	return converted, make([]error, len(converted)), nil
 }
 
 func TestLegacyConversionFailureNeverPublishesOrFallsBack(t *testing.T) {

@@ -166,7 +166,7 @@ func TestTheAdmissionChainAgreesWithTheRunningPython(t *testing.T) {
 				"case %d strategy %s: alarmd=%t python=%t (in_target=%t ignore_monitoring=%t) dimensions=%v topo=%v",
 				index, testCase.StrategyID, admitted, want,
 				testCase.PythonInTarget, testCase.PythonIgnoreMonitored,
-				testCase.RawDimensions, facts.TopoNodes))
+				testCase.RawDimensions, facts.TopoNodes()))
 		}
 	}
 	t.Logf("corpus %s revision %s: compared %d cases, %d without a compiled scope",

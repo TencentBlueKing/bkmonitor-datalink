@@ -78,6 +78,8 @@ type FieldOption struct {
 	IsAgg           bool   `json:"is_agg"`
 	IsAnalyzed      bool   `json:"is_analyzed"`
 	IsCaseSensitive bool   `json:"is_case_sensitive"`
+	// HasMixedTypes 表示跨索引同名字段的类型不一致，不能按单一类型优化查询。
+	HasMixedTypes bool `json:"has_mixed_types,omitempty"`
 	// IsCaseInsensitive 只在 mapping 明确证明 keyword/text 会 lowercase 时置 true。
 	// 不能只用 IsCaseSensitive 的 false 值，因为历史/手写 FieldsMap 里的 keyword 零值仍应按大小写敏感处理。
 	IsCaseInsensitive bool `json:"is_case_insensitive,omitempty"`
@@ -148,12 +150,8 @@ type QueryCostProfile struct {
 
 // Query 查询扩展信息，为后面查询提供定位
 type Query struct {
-	FieldSemanticsExecution *FieldSemanticsExecution `json:"-"`
-	RoutingConditions       AllConditions            `json:"routing_conditions,omitempty"`
-	FieldSemantics          string                   `json:"field_semantics,omitempty"`
-	SourceConditions        AllConditions            `json:"source_conditions,omitempty"`
-	SourceType              string                   `json:"source_type,omitempty"`
-	Password                string                   `json:"password,omitempty"` // 查询鉴权
+	SourceType string `json:"source_type,omitempty"`
+	Password   string `json:"password,omitempty"` // 查询鉴权
 
 	ClusterID string `json:"cluster_id,omitempty"` // 存储 ID
 

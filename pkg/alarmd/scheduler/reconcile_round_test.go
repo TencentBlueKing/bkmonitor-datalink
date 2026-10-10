@@ -16,27 +16,59 @@ import (
 )
 
 type countingAssignmentStore struct {
-	workers   []ownership.WorkerRegistration
-	listCalls int
-	listErr   error
-	records   map[execution.QueryGroupIdentity]ownership.AssignmentRecord
-	published int
+	workers    []ownership.WorkerRegistration
+	listCalls  int
+	listErr    error
+	readCalls  int
+	batchCalls int
+	batchErr   error
+	records    map[execution.QueryGroupIdentity]ownership.AssignmentRecord
+	published  int
+	// observeDecision sees each publication's decision, so a case can
+	// assert what the round conditioned the write on rather than only
+	// that it wrote.
+	observeDecision func(ownership.AssignmentDecision)
 }
 
-func (store *countingAssignmentStore) ListReadyWorkers(context.Context, time.Time) ([]ownership.WorkerRegistration, error) {
+func (store *countingAssignmentStore) ListReadyWorkers(
+	context.Context, time.Time,
+) ([]ownership.WorkerRegistration, ownership.ControlReadStats, error) {
 	store.listCalls++
 	if store.listErr != nil {
-		return nil, store.listErr
+		return nil, ownership.ControlReadStats{}, store.listErr
 	}
-	return append([]ownership.WorkerRegistration(nil), store.workers...), nil
+	return append([]ownership.WorkerRegistration(nil), store.workers...),
+		ownership.ControlReadStats{Keys: len(store.workers), RoundTrips: 1}, nil
 }
 
 func (store *countingAssignmentStore) ReadAssignment(_ context.Context, queryGroup execution.QueryGroupIdentity) (ownership.AssignmentRecord, error) {
+	store.readCalls++
 	record, ok := store.records[queryGroup]
 	if !ok {
 		return ownership.AssignmentRecord{}, ownership.ErrAssignmentAbsent
 	}
 	return record, nil
+}
+
+// The batched read counts one call however many Query Groups it is given,
+// which is what the round is supposed to buy. readCalls is what the round's
+// cost is asserted on, so a batch that quietly fell back to reading one at a
+// time shows up as the count it used to have rather than as a pass.
+func (store *countingAssignmentStore) ReadAssignments(
+	_ context.Context,
+	queryGroups []execution.QueryGroupIdentity,
+) (map[execution.QueryGroupIdentity]ownership.AssignmentRecord, ownership.ControlReadStats, error) {
+	store.batchCalls++
+	if store.batchErr != nil {
+		return nil, ownership.ControlReadStats{}, store.batchErr
+	}
+	found := make(map[execution.QueryGroupIdentity]ownership.AssignmentRecord, len(queryGroups))
+	for _, queryGroup := range queryGroups {
+		if record, ok := store.records[queryGroup]; ok {
+			found[queryGroup] = record
+		}
+	}
+	return found, ownership.ControlReadStats{Keys: len(queryGroups), RoundTrips: 1}, nil
 }
 
 func (store *countingAssignmentStore) PublishAssignment(
@@ -45,6 +77,9 @@ func (store *countingAssignmentStore) PublishAssignment(
 	decision ownership.AssignmentDecision,
 ) (ownership.AssignmentRecord, error) {
 	store.published++
+	if store.observeDecision != nil {
+		store.observeDecision(decision)
+	}
 	record := ownership.AssignmentRecord{
 		QueryGroup: decision.QueryGroup, DesiredWorkerID: decision.DesiredWorkerID, AssignmentGeneration: 1,
 		RecordRevision: 1, ControlEpoch: 1, PlacementReason: decision.PlacementReason, AssignedAt: decision.DecidedAt,
@@ -72,7 +107,7 @@ func TestReconcilerRoundListsTheReadySetOnceAndDecidesOverIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, authority := context.Background(), ownership.PublicationAuthority{}
-	workers, err := reconciler.ListReadyWorkers(ctx, now)
+	workers, _, err := reconciler.ListReadyWorkers(ctx, now)
 	if err != nil || len(workers) != 2 || store.listCalls != 1 {
 		t.Fatalf("ListReadyWorkers() = %d workers, error %v, %d listings", len(workers), err, store.listCalls)
 	}
@@ -100,14 +135,14 @@ func TestReconcilerRoundListsTheReadySetOnceAndDecidesOverIt(t *testing.T) {
 	}
 	store.listErr = errors.New("registry unavailable")
 	published := store.published
-	if _, err := reconciler.ListReadyWorkers(ctx, now); !errors.Is(err, store.listErr) {
+	if _, _, err := reconciler.ListReadyWorkers(ctx, now); !errors.Is(err, store.listErr) {
 		t.Fatalf("ListReadyWorkers() error = %v, want the registry failure", err)
 	}
 	if _, err := reconciler.Reconcile(ctx, authority, "query-group-7", now); !errors.Is(err, store.listErr) || store.published != published {
 		t.Fatalf("Reconcile() after a failed listing error = %v, published %d; want the failure and no publication", err, store.published-published)
 	}
 	var nilReconciler *Reconciler
-	if _, err := nilReconciler.ListReadyWorkers(ctx, now); err == nil {
+	if _, _, err := nilReconciler.ListReadyWorkers(ctx, now); err == nil {
 		t.Fatal("nil reconciler listed workers")
 	}
 	if _, err := nilReconciler.ReconcileWith(ctx, authority, "query-group-8", workers, now); err == nil {

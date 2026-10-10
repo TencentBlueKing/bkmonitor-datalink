@@ -96,7 +96,7 @@ func TestSlotExecutionCoordinatorReusesSufficientQueryFreeGapWithoutRewrite(t *t
 	}
 }
 
-func TestSlotExecutionCoordinatorDoesNotReuseInsufficientSameSlotGap(t *testing.T) {
+func TestSlotExecutionCoordinatorReusesOnlySameSlotGapStatements(t *testing.T) {
 	activation := activePlanResult("state-v2", 2)
 	selected := activation.Facts[0].Selected
 	version := currentQueryFreeApplyVersion(t)
@@ -118,36 +118,15 @@ func TestSlotExecutionCoordinatorDoesNotReuseInsufficientSameSlotGap(t *testing.
 			},
 		},
 		{
-			name: "plan scope warming",
+			name: "plan scope warming with smaller requirement",
 			marker: func(t *testing.T) execution.GapGuardSnapshot {
-				return queryFreeGapMarker(t, selected, version, selected.ScheduleRevision, planWide(execution.GapStatusWarming, 3, 1))
-			},
-		},
-		{
-			name: "observed full slot",
-			marker: func(t *testing.T) execution.GapGuardSnapshot {
-				return queryFreeGapMarker(t, selected, version, selected.ScheduleRevision, planWide(execution.GapStatusGapped, 3, 1))
+				return queryFreeGapMarker(t, selected, version, selected.ScheduleRevision, planWide(execution.GapStatusWarming, 2, 1))
 			},
 		},
 		{
 			name: "lower required full slots",
 			marker: func(t *testing.T) execution.GapGuardSnapshot {
 				return queryFreeGapMarker(t, selected, version, selected.ScheduleRevision, planWide(execution.GapStatusGapped, 2, 0))
-			},
-		},
-		{
-			name: "higher required full slots",
-			marker: func(t *testing.T) execution.GapGuardSnapshot {
-				return queryFreeGapMarker(t, selected, version, selected.ScheduleRevision, planWide(execution.GapStatusGapped, 4, 0))
-			},
-		},
-		{
-			name: "level scope only",
-			marker: func(t *testing.T) execution.GapGuardSnapshot {
-				return queryFreeGapMarker(t, selected, version, selected.ScheduleRevision, []execution.GapScopeState{{
-					Scope: execution.GapScope{LevelID: 5, HasLevel: true}, Status: execution.GapStatusGapped,
-					ReasonCode: execution.ReasonCode(contract.ReasonConfigDrift), RequiredFullSlots: 3,
-				}})
 			},
 		},
 		{
@@ -174,12 +153,16 @@ func TestSlotExecutionCoordinatorDoesNotReuseInsufficientSameSlotGap(t *testing.
 			marker := test.marker(t)
 			fixture.ports.markers[marker.Identity] = marker
 			result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
-			if err == nil || result.Completed {
-				t.Fatalf("Execute() result=%+v error=%v", result, err)
+			wantCommitted := test.name != "different schedule revision" && test.name != "newer slot digest"
+			if wantCommitted {
+				if err != nil || !result.Completed || fixture.ports.progressCalls != 1 || !reflect.DeepEqual(marker, fixture.ports.markers[marker.Identity]) {
+					t.Fatalf("committed marker was not preserved: result=%+v error=%v", result, err)
+				}
+			} else if err == nil || result.Completed || fixture.ports.progressCalls != 0 {
+				t.Fatalf("cross-version marker reused: result=%+v error=%v", result, err)
 			}
-			if fixture.ports.applyCalls != 0 || len(fixture.ports.mutations) != 0 || fixture.ports.progressCalls != 0 {
-				t.Fatalf("insufficient Guard apply=%d mutations=%d progress=%d",
-					fixture.ports.applyCalls, len(fixture.ports.mutations), fixture.ports.progressCalls)
+			if fixture.ports.applyCalls != 0 || len(fixture.ports.mutations) != 0 {
+				t.Fatal("same-Slot statement was rewritten")
 			}
 		})
 	}
@@ -249,25 +232,10 @@ func TestSlotExecutionCoordinatorKeepsExistingGapWritePaths(t *testing.T) {
 	}
 }
 
-// Reuse of an existing gap marker is decided by whether it already protects
-// the Slot, not by which query-free mode is asking.
-//
-// It used to be decided by the mode, and that made a Slot unfinishable. A
-// streaming attempt writes a marker for grid point T -- say QUERY_UNAVAILABLE,
-// because its query came back empty. The owner changes. The next owner reaches
-// T past its replay window and finalizes it query-free as GAP_SKIPPED. Same
-// Slot, same ApplyVersion, and legitimately different content: the two paths
-// record different reasons for the same protection. The idempotence check
-// compares the digests, finds them different, and refuses -- and refuses again
-// on every round after, because the marker does not go away and neither does
-// the Slot.
-//
-// The invariant that check enforces ("same ApplyVersion implies same
-// MutationDigest") holds inside one write path. Across two it is simply not
-// true, and the question worth asking is the other one: is the protection
-// already sufficient. queryFreeGapAlreadyProtects answers exactly that, and it
-// is unchanged here -- what moves is the gate in front of it.
-func TestQueryFreeGapReuseFollowsSufficiencyAndNotTheMode(t *testing.T) {
+// A committed statement belongs to its Slot even if a retry reaches a
+// different query-free mode. Reuse is fenced by identity and version, not
+// by whether the new attempt proposes stronger protection or another reason.
+func TestQueryFreeGapReuseFollowsCommittedVersionAndNotTheMode(t *testing.T) {
 	for _, mode := range []struct {
 		name         string
 		finalization execution.FinalizationMode
@@ -299,19 +267,19 @@ func TestQueryFreeGapReuseFollowsSufficiencyAndNotTheMode(t *testing.T) {
 				}
 			})
 
-			// Insufficient: the same shape, protecting fewer Slots than this
-			// Plan now requires. The predicate is what refuses it, and it is
-			// deliberately not relaxed.
-			t.Run("a marker that protects less than the Plan requires is still refused", func(t *testing.T) {
+			// A statement from another schedule is not this Slot's committed conclusion.
+			t.Run("a marker from another schedule is still refused", func(t *testing.T) {
 				fixture, selected := queryFreeFixtureWithMode(t, mode.finalization, mode.reason)
 				seedQueryFreeMarker(t, fixture, selected, execution.ReasonCode(contract.ReasonQueryUnavailable),
 					selected.RequiredFullSlots-1)
+				for identity, marker := range fixture.ports.markers {
+					marker.LastScheduleRevision = "different-schedule"
+					fixture.ports.markers[identity] = marker
+				}
 
 				result, err := fixture.coordinator.Execute(context.Background(), slotRequest(execution.OperationReplay))
 				if err == nil || result.Completed || fixture.ports.progressCalls != 0 {
-					t.Fatalf("Execute() result=%+v error=%v progress=%d, want the Slot refused: the marker "+
-						"protects %d full Slots and the Plan requires %d", result, err,
-						fixture.ports.progressCalls, selected.RequiredFullSlots-1, selected.RequiredFullSlots)
+					t.Fatalf("Execute() result=%+v error=%v progress=%d, want the different schedule refused", result, err, fixture.ports.progressCalls)
 				}
 
 				// And the refusal says what it compared.
@@ -437,11 +405,11 @@ func TestSlotExecutionCoordinatorHandlesMixedAndFullyReusedQueryFreePlans(t *tes
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			fixture := newQueryFreeFixture(t, []execution.PlanActivationResult{activation})
-			plans := []execution.PlanIdentity{first, second}
-			fixture.ports.expectedTargets.Plans = append([]execution.PlanIdentity(nil), plans...)
-			fixture.ports.finalization.Targets.Plans = append([]execution.PlanIdentity(nil), plans...)
+			plans := []execution.PlanKey{{PlanIdentity: first}, {PlanIdentity: second}}
+			fixture.ports.expectedTargets.Plans = append([]execution.PlanKey(nil), plans...)
+			fixture.ports.finalization.Targets.Plans = append([]execution.PlanKey(nil), plans...)
 			request := slotRequest(execution.OperationReplay)
-			request.DuePlanTargets.Plans = append([]execution.PlanIdentity(nil), plans...)
+			request.DuePlanTargets.Plans = append([]execution.PlanKey(nil), plans...)
 			for index, fact := range activation.Facts {
 				if index == 1 && !test.reuseSecond {
 					continue
@@ -670,12 +638,10 @@ func TestSlotExecutionCoordinatorReprotectsChangedActivationBeforeProgress(t *te
 	if err != nil || !result.Completed {
 		t.Fatalf("redo Execute() result=%+v error=%v", result, err)
 	}
-	if len(fixture.ports.mutations) != 3 || fixture.ports.mutations[2].Identity.StateGeneration != "state-v3" ||
-		fixture.ports.mutations[1].MutationDigest != fixture.ports.mutations[2].MutationDigest ||
-		!reflect.DeepEqual(fixture.ports.applyStatuses, []execution.GapGuardApplyStatus{
-			execution.GapGuardApplied, execution.GapGuardApplied, execution.GapGuardAlreadyApplied,
-		}) {
-		t.Fatalf("activation switch mutations=%+v", fixture.ports.mutations)
+	if len(fixture.ports.mutations) != 2 || !reflect.DeepEqual(fixture.ports.applyStatuses, []execution.GapGuardApplyStatus{
+		execution.GapGuardApplied, execution.GapGuardApplied,
+	}) {
+		t.Fatalf("redo rewrote an already committed gap: mutations=%+v statuses=%v", fixture.ports.mutations, fixture.ports.applyStatuses)
 	}
 	if fixture.ports.progressCalls != 1 || fixture.ports.activationCalls != 4 {
 		t.Fatalf("activation calls=%d progress calls=%d", fixture.ports.activationCalls, fixture.ports.progressCalls)
@@ -711,11 +677,11 @@ func TestSlotExecutionCoordinatorOnlyReprotectsChangedPlanBeforeProgress(t *test
 		activation("stable-v1", "changed-v1", 2),
 		activation("stable-v1", "changed-v2", 3),
 	})
-	fixture.ports.expectedTargets.Plans = []execution.PlanIdentity{stablePlan, changedPlan}
-	fixture.ports.finalization.Targets.Plans = append([]execution.PlanIdentity(nil), fixture.ports.expectedTargets.Plans...)
+	fixture.ports.expectedTargets.Plans = []execution.PlanKey{{PlanIdentity: stablePlan}, {PlanIdentity: changedPlan}}
+	fixture.ports.finalization.Targets.Plans = append([]execution.PlanKey(nil), fixture.ports.expectedTargets.Plans...)
 
 	request := slotRequest(execution.OperationReplay)
-	request.DuePlanTargets.Plans = []execution.PlanIdentity{stablePlan, changedPlan}
+	request.DuePlanTargets.Plans = []execution.PlanKey{{PlanIdentity: stablePlan}, {PlanIdentity: changedPlan}}
 	result, err := fixture.coordinator.Execute(context.Background(), request)
 	if err != nil || result.Completed || result.Result != observability.ResultRetrying ||
 		result.ReasonCode != execution.ReasonCode(contract.ReasonConfigDrift) {
@@ -782,18 +748,8 @@ func TestSlotExecutionCoordinatorSnapshotUnavailableRedoUsesCanonicalEnsureGappe
 	if err != nil || !result.Completed {
 		t.Fatalf("redo Execute() result=%+v error=%v", result, err)
 	}
-	if len(fixture.ports.mutations) != 2 || len(fixture.ports.applyStatuses) != 2 {
-		t.Fatalf("redo mutations=%+v statuses=%v", fixture.ports.mutations, fixture.ports.applyStatuses)
-	}
-	first, redo := fixture.ports.mutations[0], fixture.ports.mutations[1]
-	if first.Scopes[0].Kind != execution.GapOpen || redo.Scopes[0].Kind != execution.GapStrengthen ||
-		first.MutationDigest != redo.MutationDigest {
-		t.Fatalf("redo did not preserve ENSURE_GAPPED digest: first=%+v redo=%+v", first, redo)
-	}
-	if !reflect.DeepEqual(fixture.ports.applyStatuses, []execution.GapGuardApplyStatus{
-		execution.GapGuardApplied, execution.GapGuardAlreadyApplied,
-	}) {
-		t.Fatalf("apply statuses=%v", fixture.ports.applyStatuses)
+	if len(fixture.ports.mutations) != 1 || !reflect.DeepEqual(fixture.ports.applyStatuses, []execution.GapGuardApplyStatus{execution.GapGuardApplied}) {
+		t.Fatalf("redo rewrote an already committed gap: mutations=%+v statuses=%v", fixture.ports.mutations, fixture.ports.applyStatuses)
 	}
 }
 
@@ -847,7 +803,7 @@ func newQueryFreeFixture(t *testing.T, activations []execution.PlanActivationRes
 	base := &recordingPorts{trace: &trace}
 	expectedTargets := execution.FrozenDuePlanTargets{
 		DuePlanSetDigest: frozenContract().DuePlanSetDigest,
-		Plans:            []execution.PlanIdentity{planIdentity()},
+		Plans:            []execution.PlanKey{{PlanIdentity: planIdentity()}},
 	}
 	ports := &queryFreePorts{
 		recordingPorts: base,
@@ -856,7 +812,7 @@ func newQueryFreeFixture(t *testing.T, activations []execution.PlanActivationRes
 			ReasonCode: execution.ReasonCode(contract.ReasonSnapshotUnavailable),
 			Targets: execution.FrozenDuePlanTargets{
 				DuePlanSetDigest: expectedTargets.DuePlanSetDigest,
-				Plans:            append([]execution.PlanIdentity(nil), expectedTargets.Plans...),
+				Plans:            append([]execution.PlanKey(nil), expectedTargets.Plans...),
 			},
 		},
 		expectedTargets: expectedTargets,

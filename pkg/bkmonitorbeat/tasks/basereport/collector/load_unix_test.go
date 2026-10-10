@@ -22,6 +22,8 @@ func TestGetLoadInfo(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NotNil(t, actualLoad.LoadAvg)
 	assert.NotEqual(t, actualLoad.PerCpuLoad, 0)
+	assert.NotEqual(t, actualLoad.CpuCores, 0)
+	assert.InDelta(t, actualLoad.PerCpuLoad*float64(actualLoad.CpuCores), actualLoad.LoadAvg.Load1, 0.000001)
 }
 
 func TestGetCpuCores(t *testing.T) {

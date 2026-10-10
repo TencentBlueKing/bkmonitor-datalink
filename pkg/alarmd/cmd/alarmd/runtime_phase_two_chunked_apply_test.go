@@ -161,13 +161,13 @@ func TestProductionPhaseTwoBundleReRunsChunkedSlotIdempotently(t *testing.T) {
 	}
 	queryGroup := bundle.queryGroups[0]
 	productionOwnership := bundle.dependencies.Ownership.(*productionPhaseTwoOwnership)
-	keyPattern := cfg.Redis.StatePrefix + ":runtime:v2:*"
+	keyPattern := cfg.Redis.StatePrefix + ":runtime3:v2:*"
 
 	// Attempt 1: chunk 1 written, chunk 2 refused, Progress not committed.
 	failSecondChunk.Store(true)
 	clock.Store(base + 1)
 	firstStarted := time.Now()
-	if err := bundle.runScheduledOnce(ctx); err != nil {
+	if err := runScheduledOnceSettled(ctx, bundle); err != nil {
 		t.Fatalf("runScheduledOnce(first attempt) error = %v", err)
 	}
 	firstElapsed := time.Since(firstStarted)
@@ -203,7 +203,7 @@ func TestProductionPhaseTwoBundleReRunsChunkedSlotIdempotently(t *testing.T) {
 	// on wall time.
 	clock.Store(base + 1 + int64(cfg.PhaseTwo.Scheduler.RetryMinDelay.Duration()/time.Second))
 	secondStarted := time.Now()
-	if err := bundle.runScheduledOnce(ctx); err != nil {
+	if err := runScheduledOnceSettled(ctx, bundle); err != nil {
 		t.Fatalf("runScheduledOnce(retry) error = %v", err)
 	}
 	secondElapsed := time.Since(secondStarted)

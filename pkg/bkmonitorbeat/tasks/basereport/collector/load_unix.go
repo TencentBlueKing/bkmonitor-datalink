@@ -35,6 +35,7 @@ func GetLoadInfo() (*LoadReport, error) {
 	if cores == 0 || err != nil {
 		return &report, fmt.Errorf("ger cpu cores err:%s", err)
 	}
+	report.CpuCores = cores
 	report.PerCpuLoad = report.LoadAvg.Load1 / float64(cores)
 
 	return &report, nil

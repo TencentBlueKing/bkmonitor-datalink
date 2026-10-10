@@ -183,6 +183,16 @@ type FrozenPlanSchedule struct {
 	Identity         PlanIdentity
 	ScheduleRevision PlanScheduleRevision
 	Spec             ScheduleSpec
+	// Shard is the piece of a split strategy this entry schedules, nil for a
+	// Plan that is not split. Persisted inside the Schedule timeline, so a
+	// pointer omitted when nil: no timeline of an unsplit Plan changes bytes.
+	Shard *ShardRef `json:",omitempty"`
+}
+
+// Key is this entry's Plan key: the strategy and the piece. Activation
+// records are matched to Schedule entries by it across every Query Group.
+func (schedule FrozenPlanSchedule) Key() PlanKey {
+	return PlanKeyOf(schedule.Identity, ShardOf(schedule.Shard))
 }
 
 func (schedule FrozenPlanSchedule) Validate() error {
@@ -202,7 +212,14 @@ func (schedule FrozenPlanSchedule) Validate() error {
 type FrozenPlanScheduleRef struct {
 	Identity         PlanIdentity
 	ScheduleRevision PlanScheduleRevision
+	// Shard is the piece this ref schedules, nil for a Plan that is not
+	// split. The ref is in the due-Plan-set digest domain, so it is omitted
+	// when nil and no digest of an unsplit Plan moves.
+	Shard *ShardRef `json:",omitempty"`
 }
+
+// Key is this ref's Plan key: the strategy and the piece.
+func (ref FrozenPlanScheduleRef) Key() PlanKey { return PlanKeyOf(ref.Identity, ShardOf(ref.Shard)) }
 
 func (ref FrozenPlanScheduleRef) Validate() error {
 	if err := ref.Identity.Validate(); err != nil {
@@ -425,7 +442,7 @@ func (schedule FrozenQueryGroupSchedule) DuePlanRefs(at EvaluationTime) []Frozen
 	due := make([]FrozenPlanScheduleRef, 0, len(schedule.Plans))
 	for _, plan := range schedule.Plans {
 		if plan.Spec.IsAligned(at) {
-			due = append(due, FrozenPlanScheduleRef{Identity: plan.Identity, ScheduleRevision: plan.ScheduleRevision})
+			due = append(due, FrozenPlanScheduleRef{Identity: plan.Identity, ScheduleRevision: plan.ScheduleRevision, Shard: plan.Shard})
 		}
 	}
 	sort.Slice(due, func(left, right int) bool {

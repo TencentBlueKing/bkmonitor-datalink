@@ -99,14 +99,14 @@ func TestCatalogIndexReadsOnlyWhatItDoesNotKnow(t *testing.T) {
 			t.Fatal(err)
 		}
 		wantRefs := make([]execution.OutputContextRef, 0, len(group.Plans))
-		wantPlans := make([]execution.PlanIdentity, 0, len(group.Plans))
+		wantPlans := make([]execution.PlanKey, 0, len(group.Plans))
 		for _, plan := range group.Plans {
 			contextDigest, err := controlplane.DeriveOutputContextDigest(plan)
 			if err != nil {
 				t.Fatal(err)
 			}
 			wantRefs = append(wantRefs, execution.OutputContextRef{Plan: plan.Identity, Digest: contextDigest})
-			wantPlans = append(wantPlans, plan.Identity)
+			wantPlans = append(wantPlans, plan.Key())
 		}
 		if entry.Digest != digest || !reflect.DeepEqual(entry.Plans, wantPlans) || !reflect.DeepEqual(entry.Refs, wantRefs) {
 			t.Fatalf("content of %s = %+v, want digest %s plans %v refs %v", group.Identity, entry, digest, wantPlans, wantRefs)

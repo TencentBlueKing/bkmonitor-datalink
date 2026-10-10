@@ -32,6 +32,29 @@ func (store *fakePhaseTwoOwnershipStore) ReadAssignedSet(context.Context, string
 	return ownership.AssignedSet{}, ownership.ErrAssignedSetAbsent
 }
 
+// SweepAssignments records the keep set each sweep was asked to respect and
+// sweeps nothing: the fakes hold one record and no retired ones.
+func (store *fakePhaseTwoOwnershipStore) SweepAssignments(_ context.Context, _ ownership.PublicationAuthority, keep map[execution.QueryGroupIdentity]struct{}) (ownership.AssignmentSweep, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	copied := make(map[execution.QueryGroupIdentity]struct{}, len(keep))
+	for queryGroup := range keep {
+		copied[queryGroup] = struct{}{}
+	}
+	store.sweeps = append(store.sweeps, copied)
+	if store.sweepErr != nil {
+		return store.sweep, store.sweepErr
+	}
+	if store.sweep == (ownership.AssignmentSweep{}) {
+		return ownership.AssignmentSweep{Scanned: 1}, nil
+	}
+	return store.sweep, nil
+}
+
+func (store *rebalanceOwnershipStore) SweepAssignments(context.Context, ownership.PublicationAuthority, map[execution.QueryGroupIdentity]struct{}) (ownership.AssignmentSweep, error) {
+	return ownership.AssignmentSweep{}, nil
+}
+
 func (store *rebalanceOwnershipStore) PublishAssignmentIndex(_ context.Context, _ ownership.PublicationAuthority, _ time.Time, sets []ownership.AssignedSetWrite) (ownership.AssignmentIndexPublication, error) {
 	if store.indexErr != nil {
 		return ownership.AssignmentIndexPublication{}, store.indexErr
@@ -84,7 +107,7 @@ func newIndexOwnershipHarness(t *testing.T, now time.Time, store *rebalanceOwner
 		ControlLeaderTTL: time.Minute, Observer: observability.ObserverFunc(func(_ context.Context, observation observability.Observation) {
 			*observations = append(*observations, observation)
 		}), Reconcile: reconciler, Flights: flights, RecoveryLimits: limits, PostRecoveryTerminalDelay: time.Minute,
-		QueryDeadlineReserve: 5 * time.Second, SnapshotRetention: time.Hour, PublicationDelayAllowance: time.Minute, SettlingWait: 30 * time.Second, LeaseTTL: 30 * time.Second, ReconcileInterval: 5 * time.Second,
+		QueryDeadlineReserve: 5 * time.Second, SnapshotRetention: time.Hour, PublicationDelayAllowance: time.Minute, SettlingWait: 30 * time.Second, LeaseTTL: 30 * time.Second, ReconcileInterval: 5 * time.Second, ContentScopes: noContentScopes,
 	})
 	if err != nil {
 		t.Fatal(err)

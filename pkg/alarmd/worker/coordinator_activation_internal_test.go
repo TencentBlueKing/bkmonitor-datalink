@@ -97,6 +97,10 @@ type activationSiblingPorts struct {
 	// Retention as it reached the store, per admission and per apply call.
 	admittedRetention [][]execution.StateRetentionRequirement
 	appliedRetention  [][]execution.StateRetentionRequirement
+	// frozenRenewals is what the Slot asked the store to keep alive, in the
+	// order it asked. Recorded rather than discarded because the candidate
+	// set is the one thing about this mechanism that fails silently.
+	frozenRenewals []execution.FrozenStateRenewalRequest
 }
 
 func (*activationSiblingPorts) Sequence(ctx context.Context, _ execution.SequencingScope, run func(context.Context) error) error {
@@ -105,7 +109,8 @@ func (*activationSiblingPorts) Sequence(ctx context.Context, _ execution.Sequenc
 
 func (ports *activationSiblingPorts) LoadActivations(_ context.Context, request execution.PlanActivationRequest) (execution.PlanActivationResult, error) {
 	result := execution.PlanActivationResult{Contract: request.Contract}
-	for _, plan := range request.Plans {
+	for _, key := range request.Plans {
+		plan := key.PlanIdentity
 		selected := execution.ActivatedPlan{Identity: plan, StateApplyEpoch: 1, RequiredFullSlots: 1}
 		switch plan {
 		case ports.changedPlan:
@@ -120,7 +125,7 @@ func (ports *activationSiblingPorts) LoadActivations(_ context.Context, request 
 }
 
 func (ports *activationSiblingPorts) Check(_ context.Context, request execution.SideEffectAdmissionRequest) (execution.SideEffectAdmissionResult, error) {
-	ports.admitted = append(ports.admitted, request.Plan)
+	ports.admitted = append(ports.admitted, request.Plan.PlanIdentity)
 	return execution.SideEffectAdmissionResult{Admitted: true}, nil
 }
 
@@ -193,4 +198,11 @@ func (*activationSiblingPorts) BeginSlot(context.Context, execution.ProgressBegi
 func (ports *activationSiblingPorts) CommitProgress(context.Context, execution.ProgressCommitRequest) (execution.ProgressCommitResult, error) {
 	ports.progressCommits++
 	return execution.ProgressCommitResult{}, errors.New("unexpected Progress commit")
+}
+
+func (ports *activationSiblingPorts) RenewFrozenRuntime(
+	_ context.Context, request execution.FrozenStateRenewalRequest,
+) (execution.FrozenStateRenewalResult, error) {
+	ports.frozenRenewals = append(ports.frozenRenewals, request)
+	return freshFrozenRenewals(request), nil
 }

@@ -210,10 +210,10 @@ func TestTheViewCanShowThatObjectsDoLeaveThePool(t *testing.T) {
 	at := time.Date(2026, 9, 11, 14, 0, 0, 0, time.UTC)
 	tracker := partitionTracker(t, at, 10, 0, 3)
 
-	if _, _, exits, _ := tracker.DemotionFlow(); exits != 0 {
+	if exits := tracker.DemotionFlow().Exits; exits != 0 {
 		t.Fatalf("exits = %d before anything left the pool", exits)
 	}
-	entries, _, _, _ := tracker.DemotionFlow()
+	entries := tracker.DemotionFlow().Entries
 	if entries != 3 {
 		t.Fatalf("entries = %d, want 3", entries)
 	}
@@ -223,7 +223,8 @@ func TestTheViewCanShowThatObjectsDoLeaveThePool(t *testing.T) {
 		QueryCooldown: &observability.QueryCooldownFacts{Event: "recovered"},
 	})
 
-	entries, _, exits, lastExit := tracker.DemotionFlow()
+	flow := tracker.DemotionFlow()
+	entries, exits, lastExit := flow.Entries, flow.Exits, flow.LastExit
 	if exits != 1 {
 		t.Errorf("exits = %d after one object left the pool, want 1", exits)
 	}

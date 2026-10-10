@@ -185,7 +185,7 @@ func (ports *planFailurePorts) LoadActivations(_ context.Context, request execut
 	result := execution.PlanActivationResult{Contract: request.Contract}
 	for _, plan := range request.Plans {
 		result.Facts = append(result.Facts, execution.PlanActivationFact{
-			Plan: plan, Selection: execution.ActivationCurrent, Selected: ports.activations[plan],
+			Plan: plan.PlanIdentity, Selection: execution.ActivationCurrent, Selected: ports.activations[plan.PlanIdentity],
 		})
 	}
 	return result, nil

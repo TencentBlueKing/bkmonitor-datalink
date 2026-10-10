@@ -137,6 +137,45 @@ func TestWindowDistinguishesWarmingGapAndUnavailableLevel(t *testing.T) {
 	}
 }
 
+// A point exists for a source time without that source time having been
+// observed for every Level: a round can leave one Level's fact unavailable and
+// record the others. CountObserved answers per Level and has to read the valid
+// bit, not the point's presence.
+//
+// It matters because of who reads it. The recovery walk decides that a window
+// "did not trigger" when its anomalies plus its holes stay under the threshold,
+// and CountAnomalies does not count an unavailable fact as an anomaly. A point
+// counted as observed but never counted as anomalous is therefore read as a
+// quiet position on both sides at once - and a window of them reads as an
+// answered miss, which is a recovery built on facts nobody ever judged.
+//
+// The two Levels here share the same two points and must disagree about them,
+// so presence alone cannot produce both answers.
+func TestWindowCountsObservedPerLevelNotPerPoint(t *testing.T) {
+	one := requirement(1, "1", 3, 4)
+	five := requirement(5, "5", 3, 4)
+	window, err := NewWindow([]LevelRequirement{one, five})
+	if err != nil {
+		t.Fatalf("NewWindow() error = %v", err)
+	}
+	mustApply(t, window, []StatePoint{
+		point(100, "a", fact(one, LevelFactNormal), fact(five, LevelFactUnavailable)),
+		point(220, "c", fact(one, LevelFactNormal), fact(five, LevelFactNormal)),
+	})
+	oneHistory, _ := window.History(1)
+	if got := oneHistory.CountObserved(100, 220); got != 2 {
+		t.Fatalf("level 1 CountObserved(100, 220) = %d, want 2: both points carry a fact for it", got)
+	}
+	fiveHistory, _ := window.History(5)
+	if got := fiveHistory.CountObserved(100, 220); got != 1 {
+		t.Fatalf("level 5 CountObserved(100, 220) = %d, want 1: the point at 100 exists but its fact for "+
+			"this Level was unavailable, so nothing was observed there", got)
+	}
+	if got := fiveHistory.CountAnomalies(100, 220); got != 0 {
+		t.Fatalf("level 5 CountAnomalies(100, 220) = %d, want 0", got)
+	}
+}
+
 func TestWindowAcceptsBoundedLatePointAndRejectsExpiredPoint(t *testing.T) {
 	one := requirement(1, "1", 2, 3)
 	window, err := NewWindow([]LevelRequirement{one})

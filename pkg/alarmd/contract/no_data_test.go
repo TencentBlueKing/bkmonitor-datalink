@@ -67,12 +67,63 @@ func TestNoDataConfigRejectsSettingsThatCannotDecide(t *testing.T) {
 		"dimension names the tag": {
 			Continuous: 1, Level: 2, AggDimension: []string{NoDataDimensionTag},
 		},
+		"horizon source is not a word of the contract": {
+			Continuous: 1, Level: 2, TrackingHorizonSeconds: 600, TrackingHorizonSource: "DEFAULT",
+		},
+		"horizon source beside no horizon": {
+			Continuous: 1, Level: 2, TrackingHorizonSeconds: 0, TrackingHorizonSource: NoDataHorizonSourcePlatform,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := config.Validate(); err == nil {
 				t.Fatalf("Validate() accepted %+v", config)
 			}
 		})
+	}
+}
+
+// The horizon's source is one of two words beside a positive horizon, and a
+// positive horizon without one is a Plan compiled before the source was
+// frozen: accepted, because refusing it would refuse every published Plan
+// at the rollout that introduces the field, and the next compilation
+// replaces it anyway. The refusals for the other shapes are in the case
+// above; this one pins the accepted shapes so that tightening the empty
+// case later is a deliberate change and not a side effect.
+func TestNoDataConfigAcceptsEachHorizonSourceAndAHorizonNotYetTold(t *testing.T) {
+	for name, config := range map[string]*NoDataConfigV1{
+		"the platform's":       {Continuous: 1, Level: 2, TrackingHorizonSeconds: 600, TrackingHorizonSource: NoDataHorizonSourcePlatform},
+		"the strategy's own":   {Continuous: 1, Level: 2, TrackingHorizonSeconds: 600, TrackingHorizonSource: NoDataHorizonSourceStrategy},
+		"not told, positive":   {Continuous: 1, Level: 2, TrackingHorizonSeconds: 600},
+		"not told, no horizon": {Continuous: 1, Level: 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := config.Validate(); err != nil {
+				t.Fatalf("Validate() refused %+v: %v", config, err)
+			}
+		})
+	}
+}
+
+// A Plan whose horizon source changed with its value unchanged is a
+// different Plan: it will follow a different value next. So the source is
+// in the same digest domain as the horizon, and a Plan recompiled from
+// PLATFORM to STRATEGY at the same number gets a new revision rather than
+// reading as unchanged and keeping the old word in every reader.
+func TestTheHorizonSourceIsInThePlanDigestDomain(t *testing.T) {
+	revisionOf := func(source NoDataHorizonSource) string {
+		t.Helper()
+		plan := EvaluationPlanV2{PlanID: "1001", NoData: &NoDataConfigV1{
+			Continuous: 5, Level: 2, TrackingHorizonSeconds: 600, TrackingHorizonSource: source,
+		}}
+		revision, err := DeriveCanonicalDigestV2("alarmd-plan-semantics-v1", plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return revision
+	}
+	if revisionOf(NoDataHorizonSourcePlatform) == revisionOf(NoDataHorizonSourceStrategy) {
+		t.Fatal("two Plans at the same horizon from different sources digest alike, so a strategy that " +
+			"states the platform's exact value never becomes a new Plan when it does")
 	}
 }
 

@@ -23,15 +23,23 @@ type fencedStatePorts struct {
 	*recordingPorts
 	fences     []execution.StateApplyFence
 	staleFence bool
+	// refusal, when set, is the store's typed refusal every apply answers
+	// with, wrapped the way the state package wraps it; staleFence is the
+	// older spelling of refusal = ErrStaleFence.
+	refusal error
 }
 
 func (ports *fencedStatePorts) ApplyRuntimeFenced(
 	ctx context.Context, request execution.StateApplyRequest, fence execution.StateApplyFence,
 ) (execution.StateApplyResult, error) {
 	ports.fences = append(ports.fences, fence)
-	if ports.staleFence {
+	refusal := ports.refusal
+	if ports.staleFence && refusal == nil {
+		refusal = ownership.ErrStaleFence
+	}
+	if refusal != nil {
 		ports.record("state_apply")
-		return execution.StateApplyResult{}, fmt.Errorf("state: runtime state apply: %w", ownership.ErrStaleFence)
+		return execution.StateApplyResult{}, fmt.Errorf("state: runtime state apply: %w", refusal)
 	}
 	return ports.recordingPorts.ApplyRuntime(ctx, request)
 }
@@ -65,8 +73,8 @@ func TestSlotExecutionCoordinatorAppliesStateThroughFencedStoreWithSlotFence(t *
 		t.Fatalf("Execute() result=%+v error=%v", result, err)
 	}
 	assertTrace(t, fixture.trace, fullTrace)
-	if len(fenced.fences) != 1 || fenced.fences[0].Fence != request.OwnerFence || fenced.fences[0].At.IsZero() {
-		t.Fatalf("fenced apply received %+v, want the Slot owner fence %+v with a comparison instant", fenced.fences, request.OwnerFence)
+	if len(fenced.fences) != 1 || fenced.fences[0].Fence != request.OwnerFence {
+		t.Fatalf("fenced apply received %+v, want the Slot owner fence %+v", fenced.fences, request.OwnerFence)
 	}
 	if fenced.fences[0].Validate(request.Contract) != nil {
 		t.Fatalf("coordinator handed over an invalid apply fence: %+v", fenced.fences[0])

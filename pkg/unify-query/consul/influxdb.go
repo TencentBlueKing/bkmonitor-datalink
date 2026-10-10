@@ -83,3 +83,19 @@ func GetInfluxdbStorageInfo() (map[string]*Storage, error) {
 	}
 	return influxdbInfos, nil
 }
+
+// GetInfluxdbStorageInfoContext 获取 InfluxDB 存储实例，并传递生命周期 Context。
+func GetInfluxdbStorageInfoContext(ctx context.Context) (map[string]*Storage, error) {
+	infos, err := GetStorageInfoContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	influxdbInfos := make(map[string]*Storage)
+	for key, info := range infos {
+		if info.Type != influxdbStorage {
+			continue
+		}
+		influxdbInfos[key] = info
+	}
+	return influxdbInfos, nil
+}

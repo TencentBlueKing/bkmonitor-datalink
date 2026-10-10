@@ -255,6 +255,8 @@ func (session scopeTestSession) ValidateCurrent(context.Context, time.Time) (exe
 	return session.fence, nil
 }
 
+func (session scopeTestSession) Deadline() time.Time { return time.Time{} }
+
 func (session scopeTestSession) ValidateCurrentWithAssignment(
 	context.Context,
 	time.Time,
@@ -303,6 +305,8 @@ func (group *schedulerRunnerQueryGroup) DueBound() scheduler.RunnerDueBound {
 	return group.runner.DueBound()
 }
 
+func (group *schedulerRunnerQueryGroup) NextDeadline() time.Time { return group.runner.NextDeadline() }
+
 func (*schedulerRunnerQueryGroup) MaintainLease(ctx context.Context, _, _ time.Duration) error {
 	<-ctx.Done()
 	return ctx.Err()
@@ -328,7 +332,7 @@ func scopeTestFrozenSlot(queryGroup execution.QueryGroupIdentity) scheduler.Froz
 		},
 		DuePlanTargets: execution.FrozenDuePlanTargets{
 			DuePlanSetDigest: contractRef.DuePlanSetDigest,
-			Plans:            []execution.PlanIdentity{{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}},
+			Plans:            []execution.PlanKey{{PlanIdentity: execution.PlanIdentity{TenantID: "tenant", BusinessID: "2", StrategyID: "7"}}},
 		},
 		EarliestQueryDeadlineUnixMilli: 101_000, RecoveryUntilUnixMilli: 701_000, KeepUntilUnixMilli: 777_000,
 		ExpectedNextSlot: contractRef.Slot.EvaluationTime,

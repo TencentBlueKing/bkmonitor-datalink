@@ -135,10 +135,16 @@ func TestEvaluatorV2KeepsWarmingAndLevelIsolationExplicit(t *testing.T) {
 		t.Fatalf("inactive outcome = %#v", result.LevelOutcomes[0])
 	}
 
-	warming := requestV2(t, compilePlanV2(t, []contract.LevelIRV2{levelV2(5, 1, 3, 2, 1, nil)}), 300,
+	// Two consecutive windows required and one observed position to offer, so
+	// the recovery this Level would need is not there. The fixture asked for
+	// one window and had two positions until decision-022, which was enough
+	// for recovery once an incomplete window stopped forbidding it - and this
+	// case is about warming reporting itself, not about recovery, so it says
+	// so by not satisfying it.
+	warming := requestV2(t, compilePlanV2(t, []contract.LevelIRV2{levelV2(5, 1, 3, 2, 2, nil)}), 300,
 		[]DetectionFact{}, nil, nil)
 	warming.Record.LevelFacts = []DetectionFact{factV2(warming.Plan.Levels()[0], DetectionNormal)}
-	warming.Histories = []LevelHistory{{LevelID: 5, View: pointHistory{step: 60, points: map[int64]bool{240: false, 300: false}}}}
+	warming.Histories = []LevelHistory{{LevelID: 5, View: pointHistory{step: 60, points: map[int64]bool{300: false}}}}
 	warming.EffectiveTimeFacts = activeFactsV2(t, warming.Plan, 300)
 	warmingResult, err := EvaluateV2(warming)
 	if err != nil {
@@ -393,8 +399,32 @@ func TestEvaluatorV2AggregatesDynamicLevelsByResultThenPriority(t *testing.T) {
 	}
 }
 
-func TestEvaluatorV2WarmingAllowsOnlyMonotonicAbnormal(t *testing.T) {
-	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(5, 1, 3, 2, 1, nil)})
+// An incomplete window may escalate and may close what it opened, but may not
+// call the Level normal, and may not claim a recovery it has no evidence for.
+//
+// This case used to be named for the rule it pins and pinned a narrower one:
+// WARMING and GAPPED permitted ABNORMAL alone. decision-022 section 9.1
+// overturned that half deliberately, on numbers the original trade did not
+// have - 35 of 3305 strategies have a window longer than the interval between
+// releases and so never reach FULL, so "wait for the window to fill" is not a
+// wait for them, it is never. The other half stands: an incomplete window
+// still cannot say a Level is fine.
+//
+// The two recovery branches differ by one position, because that is the whole
+// question. Evidence one short must be refused, or the rule reads as "any
+// incomplete window may claim recovery".
+//
+// What counts as evidence is a window, not a position. Recovery asks for N
+// consecutive windows that did not trigger, and a window did not trigger only
+// when its anomalies plus its holes stay under the threshold - if every hole
+// could have been the anomaly that fired it, the window has not answered. So
+// this Level, at window 3 and threshold 2, needs a third observed position to
+// reach two answered windows: with two it can answer the newest window (one
+// hole, under the threshold) and not the one behind it (two holes, at it).
+// The first draft of this test asked for two positions and called them two
+// windows, which is the same conflation the walk itself made.
+func TestEvaluatorV2IncompleteWindowAllowsAbnormalAndEvidencedRecovery(t *testing.T) {
+	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(5, 1, 3, 2, 2, nil)})
 	level := plan.Levels()[0]
 	request := requestV2(t, plan, 300, []DetectionFact{factV2(level, DetectionAnomalous)},
 		[]LevelHistory{{LevelID: 5, View: pointHistory{step: 60, points: map[int64]bool{240: true, 300: true}}}},
@@ -408,14 +438,130 @@ func TestEvaluatorV2WarmingAllowsOnlyMonotonicAbnormal(t *testing.T) {
 		t.Fatalf("warming abnormal = %#v", result)
 	}
 
+	// Three observed, non-anomalous positions, which answer the two windows
+	// this Level requires. The history is still short of FULL, and that no
+	// longer stands in the way.
 	request.Record.LevelFacts[0] = factV2(level, DetectionNormal)
-	request.Histories[0].View = pointHistory{step: 60, points: map[int64]bool{180: false, 300: false}}
+	request.Histories[0].View = pointHistory{step: 60, points: map[int64]bool{180: false, 240: false, 300: false}}
 	result, err = EvaluateV2(request)
 	if err != nil {
-		t.Fatalf("EvaluateV2(gapped) error = %v", err)
+		t.Fatalf("EvaluateV2(evidenced recovery) error = %v", err)
 	}
-	if result.Completion != CompletionUnavailable || result.LevelOutcomes[0].UnavailableReason != contract.ReasonHistoryGapped || result.TriggerEvent != nil {
-		t.Fatalf("gapped normal = %#v", result)
+	if result.RecordResult != contract.LevelResultRecovery || result.TriggerEvent == nil ||
+		result.LevelOutcomes[0].HistoryCompleteness == HistoryFull {
+		t.Fatalf("evidenced recovery on an incomplete window = %#v", result)
+	}
+
+	// One position short of it, and nothing else changed, so the evidence is
+	// the only thing that can decide this. Two observed positions answer the
+	// newest window and leave the one behind it at the threshold in holes,
+	// which is one answered window against the two required.
+	request.Histories[0].View = pointHistory{step: 60, points: map[int64]bool{240: false, 300: false}}
+	result, err = EvaluateV2(request)
+	if err != nil {
+		t.Fatalf("EvaluateV2(recovery one short) error = %v", err)
+	}
+	if result.Completion != CompletionUnavailable || result.TriggerEvent != nil {
+		t.Fatalf("recovery one position short still produced %#v; an incomplete window may not claim a "+
+			"recovery it has not observed", result)
+	}
+}
+
+// The walk keeps going past a window it could not answer, and it may reach as
+// far back as the history is retained to do it.
+//
+// Both halves need a run whose last answered window lies *behind* a skipped
+// one. Every other case in this file has its answered windows before the first
+// skip, where stepping over a window and stopping at it are the same thing and
+// a walk bounded at the required number of windows reaches just as far.
+//
+// Window 3, threshold 2, two consecutive windows required, so the history is
+// retained for 3+2-1 = 4 window offsets. Positions 360 and 300 are observed,
+// 240 and 180 are not, 120 and 60 are:
+//
+//	offset 0  {240,300,360}  2 observed, 1 hole   answered, miss 1
+//	offset 1  {180,240,300}  1 observed, 2 holes  cannot answer, stepped over
+//	offset 2  {120,180,240}  1 observed, 2 holes  cannot answer, stepped over
+//	offset 3  { 60,120,180}  2 observed, 1 hole   answered, miss 2 -> RECOVERY
+//
+// Stopping at offset 1 leaves one miss, and so does a walk that only looks at
+// two offsets. Either way the answer changes, which is what makes this case
+// worth its fixture.
+func TestEvaluatorV2RecoveryWalkPassesSkippedWindowsToReachTheRetainedOnes(t *testing.T) {
+	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(5, 1, 3, 2, 2, nil)})
+	level := plan.Levels()[0]
+	history := pointHistory{step: 60, points: map[int64]bool{60: false, 120: false, 300: false, 360: false}}
+	request := requestV2(t, plan, 360, []DetectionFact{factV2(level, DetectionNormal)},
+		[]LevelHistory{{LevelID: 5, View: history}}, activeFactsV2(t, plan, 360))
+	result, err := EvaluateV2(request)
+	if err != nil {
+		t.Fatalf("EvaluateV2() error = %v", err)
+	}
+	if result.RecordResult != contract.LevelResultRecovery {
+		t.Fatalf("record result = %q, want RECOVERY: the walk stopped at the first window it could not "+
+			"answer, or would not look past the windows it strictly needed", result.RecordResult)
+	}
+	recovery := result.LevelOutcomes[0].DecisionWindow.Recovery
+	if recovery.ObservedConsecutiveMisses != 2 || recovery.SkippedWindows != 2 {
+		t.Fatalf("recovery evidence = %+v, want two answered windows and two stepped over", recovery)
+	}
+	// The oldest window reached is offset 3's, which only exists because the
+	// history is retained for the trigger window as well as the recovery run.
+	if want := int64(180 - 3*60 + 1); recovery.OldestWindowStart != want {
+		t.Fatalf("oldest window start = %d, want %d: the walk did not reach the last retained window",
+			recovery.OldestWindowStart, want)
+	}
+}
+
+// The walk reads the positions the record is retained for past the ones its
+// window requires, and a recovery reachable only from those positions is the
+// only thing that says so.
+//
+// Window 5, threshold 1, twenty consecutive windows required, on a one minute
+// step: the window requires 5+19 = 24 positions and the compiler retains 38.
+// Every position on the grid is observed and normal except the eighth back,
+// which is missing:
+//
+//	offsets 0..3    whole windows                       answered, misses 1..4
+//	offsets 4..8    the hole lies inside each of them   stepped over, 5 skipped
+//	offsets 9..24   whole windows again                 answered, misses 5..20
+//
+// The twentieth answered window is reached at offset 24, past the 24 positions
+// the window requires and inside the 38 retained. A walk bounded at the
+// required size stops at offset 23 holding nineteen - one short - and the Level
+// reports its incomplete history instead of the recovery.
+//
+// The hole is what separates the two bounds. Without it the twentieth answered
+// window falls on offset 19 and either bound reaches it, which is why no case
+// written before the retention grew a slack can tell them apart.
+func TestEvaluatorV2RecoveryWalkReadsThePositionsRetainedPastTheWindow(t *testing.T) {
+	plan := compilePlanV2(t, []contract.LevelIRV2{levelV2(5, 1, 5, 1, 20, nil)})
+	level := plan.Levels()[0]
+	requirement := level.StateRequirement()
+	if requirement.RequiredDetectHistoryPoints != 24 || requirement.RetentionPoints != 38 {
+		t.Fatalf("StateRequirement() = %+v, want 24 required and 38 retained: the distance between the "+
+			"two is what this case walks into", requirement)
+	}
+	const source, step = int64(3600), int64(60)
+	points := make(map[int64]bool, requirement.RetentionPoints)
+	for offset := uint32(0); offset < requirement.RetentionPoints; offset++ {
+		points[source-int64(offset)*step] = false
+	}
+	delete(points, source-8*step)
+
+	request := requestV2(t, plan, source, []DetectionFact{factV2(level, DetectionNormal)},
+		[]LevelHistory{{LevelID: 5, View: pointHistory{step: step, points: points}}}, activeFactsV2(t, plan, source))
+	result, err := EvaluateV2(request)
+	if err != nil {
+		t.Fatalf("EvaluateV2() error = %v", err)
+	}
+	if result.RecordResult != contract.LevelResultRecovery {
+		t.Fatalf("record result = %q, completion = %v, want RECOVERY: the walk stopped at the required "+
+			"window instead of reading the positions retained past it", result.RecordResult, result.Completion)
+	}
+	recovery := result.LevelOutcomes[0].DecisionWindow.Recovery
+	if recovery.ObservedConsecutiveMisses != 20 || recovery.SkippedWindows != 5 {
+		t.Fatalf("recovery evidence = %+v, want twenty answered windows and five stepped over", recovery)
 	}
 }
 
@@ -558,6 +704,24 @@ func activeFactsBenchmark(b *testing.B, plan *strategy.CompiledPlan, evaluationT
 type pointHistory struct {
 	step   int64
 	points map[int64]bool
+}
+
+// CountObserved mirrors the real view: a position is observed when the history
+// holds a point for it, whatever that point said.
+//
+// Counted over the range, the way CountAnomalies just above is, not by
+// stepping the grid from fromTime. The window start the walk passes in is
+// windowEnd - WindowSize*step + 1, which is one second after a grid position
+// rather than on one, so a grid walk from there lands between the points and
+// reports an entirely observed window as empty.
+func (h pointHistory) CountObserved(fromTime, untilTime int64) uint32 {
+	var count uint32
+	for timestamp := range h.points {
+		if timestamp >= fromTime && timestamp <= untilTime {
+			count++
+		}
+	}
+	return count
 }
 
 func (h pointHistory) Summarize(endTime int64, requiredPositions uint32) HistorySummary {

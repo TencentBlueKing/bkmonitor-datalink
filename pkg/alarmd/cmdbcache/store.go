@@ -122,8 +122,14 @@ func (store *Store) Refresh(ctx context.Context) error {
 
 // Health describes what the filter is currently deciding on.
 type Health struct {
-	Loaded            bool
-	Hosts             int
+	Loaded bool
+	Hosts  int
+	// ServiceInstances is how many service instances the held index knows.
+	// Zero is not a degradation of the store - a fleet without service
+	// instances is a real state - but it is what a series naming an instance
+	// will be admitted-unavailable against, so it is published beside the
+	// host count for that reading.
+	ServiceInstances  int
 	Age               time.Duration
 	SourceAge         time.Duration
 	Degraded          bool
@@ -147,6 +153,7 @@ func (store *Store) Health() Health {
 	now := store.now()
 	health.Loaded = true
 	health.Hosts = store.index.Hosts()
+	health.ServiceInstances = store.index.ServiceInstances()
 	health.Age = now.Sub(store.index.BuiltAt())
 	if source := store.index.SourceRefreshedAt(); !source.IsZero() {
 		health.SourceAge = now.Sub(source)

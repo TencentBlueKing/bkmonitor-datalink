@@ -203,8 +203,9 @@ func TestEverySinceSourceTheTrackerProducesIsInTheClosedList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read package directory: %v", err)
 	}
-	// sinceFrom is only ever set from one of these constants.
-	assignment := regexp.MustCompile(`sinceFrom\s*=\s*(Since[A-Za-z0-9_]+)`)
+	// sinceFrom, and the empty run's own emptySinceFrom / emptySlotFrom, are
+	// only ever set from one of these constants.
+	assignment := regexp.MustCompile(`[sS](?:ince|lot)From\s*=\s*(Since[A-Za-z0-9_]+)`)
 	produced := map[string]bool{}
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
@@ -230,6 +231,7 @@ func TestEverySinceSourceTheTrackerProducesIsInTheClosedList(t *testing.T) {
 		"SinceProcessStart":       SinceProcessStart,
 		"SinceRestoredLastFull":   SinceRestoredLastFull,
 		"SinceRestoredAtRestart":  SinceRestoredAtRestart,
+		"SinceRestoredEmptyRun":   SinceRestoredEmptyRun,
 		"SinceRefusedFuture":      SinceRefusedFuture,
 	}
 	for name := range produced {

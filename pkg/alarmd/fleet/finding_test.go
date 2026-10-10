@@ -485,3 +485,50 @@ func TestAReasonHeldByAGuardIsAWindowQuestionNotAConfigOne(t *testing.T) {
 		t.Fatalf("a guard under HISTORY_GAPPED with a full window = %q, want no line (held, as before)", windowWord[0].Finding.Check)
 	}
 }
+
+// The reading of a guard-held round is the window's, like its line. The
+// object whose 249 Levels a plan-scope guard held for eighty rounds after
+// one skipped Slot read WINDOW_UNDECIDED on the line and SCHEDULE / capacity
+// / GAP_SKIPPED in the reading beside it -- the code table read the guard's
+// trigger word as this round's event -- so the line said "wait for the
+// window" and the reading sent the reader to the scheduler. A round that
+// failed keeps its own reading, and so does a round under a code the table
+// files as this deployment's defect.
+func TestAGuardHeldRoundReadsAsTheWindowsNotAsItsTriggerWord(t *testing.T) {
+	held := Anomaly{Kind: KindDegradedRun, ReasonCode: "COMPLETED_WITH_UNAVAILABLE", Cause: "LEVEL_OUTCOME_UNKNOWN", CauseReason: "GAP_SKIPPED",
+		Consecutive: 47, RoundSlot: 1789992300,
+		Coverage: &HistoryCoverage{Levels: 249, Short: 249, Guarded: 249, WorstValid: 1413, WorstRequired: 1469, ShortRounds: 47},
+		Guards: []GapGuard{{Plan: StrategyRef{StrategyID: "4101", BusinessID: "7"}, Scope: "plan", Status: "WARMING", Reason: "GAP_SKIPPED",
+			Required: 1469, Observed: 1353, Progress: "partial", Rounds: 48}}, GuardsTotal: 1,
+		Strategies: []StrategyRef{{StrategyID: "4101", BusinessID: "7"}}}
+	list := []Anomaly{held}
+	Attribute(list, now)
+	if list[0].Finding.Check != CheckWindowUndecided {
+		t.Fatalf("check = %q, want WINDOW_UNDECIDED", list[0].Finding.Check)
+	}
+	if b := list[0].Blocked; b == nil || b.Stage != StageEvaluate || b.Class != ClassUnlocated || b.Dependency != DependencyNone || b.Code != "GAP_SKIPPED" {
+		t.Fatalf("reading = %+v, want EVALUATE / unlocated / no dependency, with the trigger as the code", list[0].Blocked)
+	}
+	if list[0].Blocked.Effect != EffectUnconfirmed {
+		t.Fatalf("effect = %s, want UNCONFIRMED: the round ended without a usable result", list[0].Blocked.Effect)
+	}
+	// The same shape with no guard: the code table's own reading of the
+	// skip, as before.
+	skipped := held
+	skipped.Coverage, skipped.Guards, skipped.GuardsTotal = &HistoryCoverage{Levels: 249}, nil, 0
+	list = []Anomaly{skipped}
+	Attribute(list, now)
+	if b := list[0].Blocked; b == nil || b.Stage != StageSchedule || b.Class != ClassCapacity {
+		t.Fatalf("unguarded reading = %+v, want the skip's own SCHEDULE / CAPACITY", list[0].Blocked)
+	}
+	// A cause the table files as this deployment's defect keeps the defect's
+	// line and reading whatever the guard says, as checkOf reads it first.
+	defect := held
+	defect.CauseReason = "STATE_READ_TIMEOUT"
+	list = []Anomaly{defect}
+	Attribute(list, now)
+	if list[0].Finding.Check != CheckDefect || list[0].Blocked == nil || list[0].Blocked.Code != "STATE_READ_TIMEOUT" ||
+		list[0].Blocked.Class == ClassUnlocated {
+		t.Fatalf("defect under a guard: check %q reading %+v, want DEFECT with the defect's own reading", list[0].Finding.Check, list[0].Blocked)
+	}
+}

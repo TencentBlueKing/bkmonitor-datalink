@@ -11,6 +11,7 @@ package strategy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 	"strconv"
@@ -203,6 +204,21 @@ func newEffectiveTimeFact(status, requirementDigest, factRevision string, validF
 }
 
 func compileEffectiveTimeRequirement(uptime *uptimeConfigV1, timezoneRef string) (EffectiveTimeRequirement, error) {
+	// Python short-circuits before looking at calendar IDs for an empty range.
+	if uptime != nil && uptime.TimeRanges != nil && len(*uptime.TimeRanges) == 0 {
+		uptime, timezoneRef = nil, ""
+	}
+	// An uptime with nothing in it is no uptime: Python's in_alarm_time
+	// returns "always in effect" on `not uptime` before it reads a field
+	// (alarm_backends/core/control/strategy.py), and so it does for an
+	// explicit null time_ranges. A writer that defaults every detect's uptime
+	// to {} states no schedule; refusing it withheld every such strategy.
+	// An uptime that names calendars but no time_ranges is still refused:
+	// Python fails on it (KeyError on time_ranges), so there is no semantics
+	// to follow.
+	if uptime != nil && uptime.TimeRanges == nil && uptime.ActiveCalendars == nil && uptime.Calendars == nil {
+		uptime, timezoneRef = nil, ""
+	}
 	requirement := EffectiveTimeRequirement{kind: EffectiveTimeAlways, version: 1}
 	if uptime == nil && timezoneRef != "" {
 		return EffectiveTimeRequirement{}, errors.New("effective time: timezone_ref requires uptime")
@@ -214,17 +230,9 @@ func compileEffectiveTimeRequirement(uptime *uptimeConfigV1, timezoneRef string)
 		ranges := make([]TimeRange, 0, len(*uptime.TimeRanges))
 		seenRanges := make(map[TimeRange]struct{}, len(*uptime.TimeRanges))
 		for _, raw := range *uptime.TimeRanges {
-			start, ok := parseClockMinute(raw.Start)
-			if !ok {
-				return EffectiveTimeRequirement{}, errors.New("effective time: invalid start")
-			}
-			end, ok := parseClockMinute(raw.End)
-			if !ok {
-				return EffectiveTimeRequirement{}, errors.New("effective time: invalid end")
-			}
-			timeRange := TimeRange{startMinute: start, endMinute: end}
+			timeRange := timeRangeOf(raw)
 			if _, duplicate := seenRanges[timeRange]; duplicate {
-				return EffectiveTimeRequirement{}, errors.New("effective time: duplicate range")
+				continue
 			}
 			seenRanges[timeRange] = struct{}{}
 			ranges = append(ranges, timeRange)
@@ -269,8 +277,63 @@ func compileEffectiveTimeRequirement(uptime *uptimeConfigV1, timezoneRef string)
 	return requirement, nil
 }
 
+// timeRangeOf reads one configured range the way Python's in_alarm_time
+// reads it: a start that does not parse is 00:00 and an end that does not
+// parse is 23:59, each on its own, and the range is used as it comes out
+// (alarm_backends/core/control/strategy.py, the two try/except around
+// arrow.get). Refusing the Plan instead, as this did, turned a malformed
+// range into a strategy that never detected, when Python had it detect all
+// day; the Control Leader names each range it read this way
+// (EFFECTIVE_TIME_RANGE_INVALID), so the widening is not silent.
+func timeRangeOf(raw uptimeTimeRangeV1) TimeRange {
+	start, ok := parseClockMinute(raw.Start)
+	if !ok {
+		start = 0
+	}
+	end, ok := parseClockMinute(raw.End)
+	if !ok {
+		end = 24*60 - 1
+	}
+	return TimeRange{startMinute: start, endMinute: end}
+}
+
+// UptimeTimeRangesNormalized reports whether any configured range of the
+// uptime has a start or end that does not parse and so is read as 00:00 or
+// 23:59: what timeRangeOf did to it, for the Leader to name. False for an
+// absent uptime and for one every range of which parses.
+func UptimeTimeRangesNormalized(raw json.RawMessage) bool {
+	if len(raw) == 0 || string(raw) == "null" {
+		return false
+	}
+	var value uptimeConfigV1
+	if json.Unmarshal(raw, &value) != nil || value.TimeRanges == nil {
+		return false
+	}
+	for _, timeRange := range *value.TimeRanges {
+		if _, ok := parseClockMinute(timeRange.Start); !ok {
+			return true
+		}
+		if _, ok := parseClockMinute(timeRange.End); !ok {
+			return true
+		}
+	}
+	return false
+}
+
 func parseClockMinute(value string) (uint16, bool) {
+	for _, character := range value {
+		if character != ':' && (character < '0' || character > '9') {
+			return 0, false
+		}
+	}
 	parts := strings.Split(value, ":")
+	if len(parts) == 3 {
+		second, err := strconv.Atoi(parts[2])
+		if len(parts[2]) != 2 || err != nil || second < 0 || second > 59 {
+			return 0, false
+		}
+		parts = parts[:2]
+	}
 	if len(parts) != 2 || len(parts[0]) != 2 || len(parts[1]) != 2 {
 		return 0, false
 	}
@@ -285,15 +348,31 @@ func parseClockMinute(value string) (uint16, bool) {
 	return uint16(hour*60 + minute), true
 }
 
+// CompileUptime normalizes the Python uptime shape without resolving dependencies.
+func CompileUptime(raw json.RawMessage) (EffectiveTimeRequirement, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return compileEffectiveTimeRequirement(nil, "")
+	}
+	var value uptimeConfigV1
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return EffectiveTimeRequirement{}, err
+	}
+	return compileEffectiveTimeRequirement(&value, businessLocalTimezoneRef)
+}
+
 func normalizeCalendarIDs(ids []int64) ([]int64, error) {
 	result := append([]int64(nil), ids...)
 	sort.Slice(result, func(left, right int) bool { return result[left] < result[right] })
-	for index, id := range result {
-		if id <= 0 || (index > 0 && result[index-1] == id) {
-			return nil, errors.New("effective time: invalid or duplicate calendar ID")
+	unique := result[:0]
+	for _, id := range result {
+		if id <= 0 {
+			return nil, errors.New("effective time: invalid calendar ID")
+		}
+		if len(unique) == 0 || unique[len(unique)-1] != id {
+			unique = append(unique, id)
 		}
 	}
-	return result, nil
+	return unique, nil
 }
 
 func matchesTimeRanges(minute int, ranges []TimeRange) bool {

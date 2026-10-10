@@ -23,7 +23,7 @@ import (
 func TestStoreLoadsMissingValidCorruptAndUnsupportedIndependently(t *testing.T) {
 	codec := mustCodec(t)
 	backend := newFakeBackend()
-	router := &fakeRouter{target: StorageTarget{Name: "monitor-01", Backend: backend}}
+	router := &fakeRouter{target: StorageTarget{Name: "state-01", Backend: backend}}
 	observations := make([]Observation, 0, 2)
 	store := mustStoreWithObserver(t, codec, router, ObserverFunc(func(_ context.Context, observation Observation) {
 		observations = append(observations, observation)
@@ -109,7 +109,7 @@ func TestStoreLoadsMissingValidCorruptAndUnsupportedIndependently(t *testing.T) 
 func TestStoreWritesOnlyChangedWindowsWithTTLAndRetriesFailedBatch(t *testing.T) {
 	codec := mustCodec(t)
 	backend := newFakeBackend()
-	store := mustStore(t, codec, &fakeRouter{target: StorageTarget{Name: "monitor-01", Backend: backend}})
+	store := mustStore(t, codec, &fakeRouter{target: StorageTarget{Name: "state-01", Backend: backend}})
 	requirement := requirement(5, "5", 2, 4)
 	request := LoadWindowsRequest{Items: loadSpecs([]RuntimeIdentity{storeIdentity("11", "a"), storeIdentity("12", "b")}, requirement)}
 	loaded, err := store.LoadWindows(context.Background(), request)
@@ -128,8 +128,8 @@ func TestStoreWritesOnlyChangedWindowsWithTTLAndRetriesFailedBatch(t *testing.T)
 	if len(backend.setBatches) != 1 || len(backend.setBatches[0]) != 1 {
 		t.Fatalf("SET batches = %+v, want one changed key", backend.setBatches)
 	}
-	if backend.setBatches[0][0].TTL != 5*time.Minute {
-		t.Fatalf("TTL = %v, want retention 4m + restart margin 1m", backend.setBatches[0][0].TTL)
+	if backend.setBatches[0][0].TTL != 5*time.Minute+30*time.Second {
+		t.Fatalf("TTL = %v, want retention 4m + restart margin 1m + half a step", backend.setBatches[0][0].TTL)
 	}
 	if loaded.Items[0].Window.Changed() {
 		t.Fatal("successful write did not mark window persisted")
@@ -141,7 +141,7 @@ func TestStoreWritesOnlyChangedWindowsWithTTLAndRetriesFailedBatch(t *testing.T)
 		t.Fatal("WriteWindows() error = nil, want retryable backend error")
 	} else {
 		var dependency *DependencyError
-		if !errors.As(err, &dependency) || dependency.Operation != DependencyOperationWrite || dependency.Target != "monitor-01" || !errors.Is(err, backend.writeErr) {
+		if !errors.As(err, &dependency) || dependency.Operation != DependencyOperationWrite || dependency.Target != "state-01" || !errors.Is(err, backend.writeErr) {
 			t.Fatalf("WriteWindows() error = %#v, want typed write dependency error", err)
 		}
 	}
@@ -160,7 +160,7 @@ func TestStoreWritesOnlyChangedWindowsWithTTLAndRetriesFailedBatch(t *testing.T)
 func TestStoreDoesNotOverwriteUnsupportedState(t *testing.T) {
 	codec := mustCodec(t)
 	backend := newFakeBackend()
-	store := mustStore(t, codec, &fakeRouter{target: StorageTarget{Name: "monitor-01", Backend: backend}})
+	store := mustStore(t, codec, &fakeRouter{target: StorageTarget{Name: "state-01", Backend: backend}})
 	requirement := requirement(1, "1", 1, 2)
 	identity := storeIdentity("11", "a")
 	window, _ := NewWindow([]LevelRequirement{requirement})
@@ -192,7 +192,7 @@ func TestStoreExposesPostAdmissionBudgetAsInvariantViolation(t *testing.T) {
 	}
 	backend := newFakeBackend()
 	observations := make([]Observation, 0, 1)
-	store := mustStoreWithObserver(t, codec, &fakeRouter{target: StorageTarget{Name: "monitor-01", Backend: backend}},
+	store := mustStoreWithObserver(t, codec, &fakeRouter{target: StorageTarget{Name: "state-01", Backend: backend}},
 		ObserverFunc(func(_ context.Context, observation Observation) {
 			observations = append(observations, observation)
 		}))
@@ -246,7 +246,7 @@ func TestStoreAdmitWindowsUsesWriteBudget(t *testing.T) {
 		t.Helper()
 		store, storeErr := NewStore(StoreOptions{
 			Prefix: "alarmd", Codec: codec,
-			Router: &fakeRouter{target: StorageTarget{Name: "monitor-01", Backend: backend}},
+			Router: &fakeRouter{target: StorageTarget{Name: "state-01", Backend: backend}},
 			Limits: StoreLimits{
 				MaxKeysPerBatch: 2, MaxKeyBytesPerBatch: 1024,
 				MaxLoadedBytes: 512, MaxWrittenBytes: maxWrittenBytes,
@@ -330,7 +330,7 @@ func TestStoreAdmitWindowsRejectsRemainingDeterministicWriteBudgets(t *testing.T
 			}
 			store, storeErr := NewStore(StoreOptions{
 				Prefix: "alarmd", Codec: codec,
-				Router: &fakeRouter{target: StorageTarget{Name: "monitor-01", Backend: newFakeBackend()}},
+				Router: &fakeRouter{target: StorageTarget{Name: "state-01", Backend: newFakeBackend()}},
 				Limits: limits, MinTTL: time.Minute, MaxTTL: maxTTL, RestartMargin: time.Minute,
 			})
 			if storeErr != nil {
@@ -346,7 +346,7 @@ func TestStoreAdmitWindowsRejectsRemainingDeterministicWriteBudgets(t *testing.T
 func TestStoreRejectsMutatedPhysicalKey(t *testing.T) {
 	codec := mustCodec(t)
 	backend := newFakeBackend()
-	store := mustStore(t, codec, &fakeRouter{target: StorageTarget{Name: "monitor-01", Backend: backend}})
+	store := mustStore(t, codec, &fakeRouter{target: StorageTarget{Name: "state-01", Backend: backend}})
 	requirement := requirement(1, "1", 1, 2)
 	loaded, err := store.LoadWindows(context.Background(), LoadWindowsRequest{
 		Items: loadSpecs([]RuntimeIdentity{storeIdentity("11", "a")}, requirement),
@@ -367,7 +367,7 @@ func TestStoreRejectsMutatedPhysicalKey(t *testing.T) {
 func TestStoreRejectsDuplicateRuntimeKey(t *testing.T) {
 	codec := mustCodec(t)
 	backend := newFakeBackend()
-	store := mustStore(t, codec, &fakeRouter{target: StorageTarget{Name: "monitor-01", Backend: backend}})
+	store := mustStore(t, codec, &fakeRouter{target: StorageTarget{Name: "state-01", Backend: backend}})
 	requirement := requirement(1, "1", 1, 2)
 	identity := storeIdentity("11", "a")
 	if _, err := store.LoadWindows(context.Background(), LoadWindowsRequest{
@@ -383,7 +383,7 @@ func TestStoreRejectsDuplicateRuntimeKey(t *testing.T) {
 func TestStoreIsolatesInvalidRuntimeIdentity(t *testing.T) {
 	codec := mustCodec(t)
 	backend := newFakeBackend()
-	store := mustStore(t, codec, &fakeRouter{target: StorageTarget{Name: "monitor-01", Backend: backend}})
+	store := mustStore(t, codec, &fakeRouter{target: StorageTarget{Name: "state-01", Backend: backend}})
 	requirement := requirement(1, "1", 1, 2)
 	invalid := storeIdentity("11", "a")
 	invalid.StateCompatibilityHash = "invalid"
@@ -409,7 +409,7 @@ func TestStoreBoundsMGetByWorstCaseResponseBeforeRequest(t *testing.T) {
 	backend := newFakeBackend()
 	store, err := NewStore(StoreOptions{
 		Prefix: "alarmd", Codec: codec,
-		Router: &fakeRouter{target: StorageTarget{Name: "monitor-01", Backend: backend}},
+		Router: &fakeRouter{target: StorageTarget{Name: "state-01", Backend: backend}},
 		Limits: StoreLimits{
 			MaxKeysPerBatch: 10, MaxKeyBytesPerBatch: 4096, MaxLoadedBytes: 512, MaxWrittenBytes: 4096,
 		},
@@ -431,7 +431,7 @@ func TestStoreBoundsMGetByWorstCaseResponseBeforeRequest(t *testing.T) {
 
 	_, err = NewStore(StoreOptions{
 		Prefix: "alarmd", Codec: codec,
-		Router: &fakeRouter{target: StorageTarget{Name: "monitor-01", Backend: backend}},
+		Router: &fakeRouter{target: StorageTarget{Name: "state-01", Backend: backend}},
 		Limits: StoreLimits{
 			MaxKeysPerBatch: 1, MaxKeyBytesPerBatch: 1024, MaxLoadedBytes: 255, MaxWrittenBytes: 1024,
 		},
@@ -455,7 +455,7 @@ func TestStoreReportsBoundedBackendOperationsToObserver(t *testing.T) {
 	observations := make([]Observation, 0, 2)
 	store, err := NewStore(StoreOptions{
 		Prefix: "alarmd", Codec: codec,
-		Router: &fakeRouter{target: StorageTarget{Name: "monitor-01", Backend: backend}},
+		Router: &fakeRouter{target: StorageTarget{Name: "state-01", Backend: backend}},
 		Limits: StoreLimits{MaxKeysPerBatch: 2, MaxKeyBytesPerBatch: 1024, MaxLoadedBytes: 16 << 10, MaxWrittenBytes: 16 << 10},
 		MinTTL: time.Minute, MaxTTL: time.Hour, RestartMargin: time.Minute,
 		Observer: ObserverFunc(func(_ context.Context, observation Observation) {
@@ -483,7 +483,7 @@ func TestStoreReportsBoundedBackendOperationsToObserver(t *testing.T) {
 		observations[4].Operation != OperationWrite || observations[5].Operation != OperationSample {
 		t.Fatalf("observations = %+v, want load/decode/transition/encode/write/sample", observations)
 	}
-	if observations[0].Result != OperationSucceeded || observations[0].Target != "monitor-01" ||
+	if observations[0].Result != OperationSucceeded || observations[0].Target != "state-01" ||
 		observations[0].TouchedKeys != 1 || observations[0].BackendCalls != 1 ||
 		observations[0].RequestBytes <= 0 || observations[0].Duration < 0 || observations[0].Codec != CodecNoneV1 {
 		t.Fatalf("load observation = %+v", observations[0])
@@ -495,7 +495,7 @@ func TestStoreReportsBoundedBackendOperationsToObserver(t *testing.T) {
 		t.Fatalf("apply observation = %+v", observations[2])
 	}
 	if observations[3].EncodeBytes <= 0 || observations[3].BackendCalls != 0 ||
-		observations[4].PersistedKeys != 1 || observations[4].BackendCalls != 1 || observations[4].Target != "monitor-01" {
+		observations[4].PersistedKeys != 1 || observations[4].BackendCalls != 1 || observations[4].Target != "state-01" {
 		t.Fatalf("encode/write observations = %+v / %+v", observations[3], observations[4])
 	}
 	if observations[5].FullSummaries != 1 {
@@ -509,7 +509,7 @@ func TestStoreReportsBoundedBackendOperationsToObserver(t *testing.T) {
 		t.Fatal("LoadWindows() error = nil, want dependency error")
 	} else {
 		var dependency *DependencyError
-		if !errors.As(err, &dependency) || dependency.Operation != DependencyOperationLoad || dependency.Target != "monitor-01" || !errors.Is(err, backend.readErr) {
+		if !errors.As(err, &dependency) || dependency.Operation != DependencyOperationLoad || dependency.Target != "state-01" || !errors.Is(err, backend.readErr) {
 			t.Fatalf("LoadWindows() error = %#v, want typed load dependency error", err)
 		}
 	}
@@ -571,6 +571,10 @@ type fakeRouter struct {
 func (router *fakeRouter) Route(_ string, strategyID string) (StorageTarget, error) {
 	router.strategies = append(router.strategies, strategyID)
 	return router.target, router.err
+}
+
+func (router *fakeRouter) Targets() []StorageTarget {
+	return []StorageTarget{router.target}
 }
 
 type fakeBackend struct {

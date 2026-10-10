@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
 )
 
@@ -46,6 +47,42 @@ func TestEvaluationAcceptsAHeldRecoveryRecordWithoutItsEnvelope(t *testing.T) {
 		result.Plans[0].LevelOutcomes[0].EnvelopeHeld = true
 		if err := result.Validate(request); err == nil || !strings.Contains(err.Error(), "TriggerEvent kind does not match Level outcomes") {
 			t.Fatalf("an envelope on a held record must be refused as a kind mismatch, got %v", err)
+		}
+	})
+
+	// A record whose envelope the protocol has no message for keeps its
+	// identity in the envelope's place. It stands for the envelope exactly:
+	// accepted alone, refused beside the envelope it replaced, and refused
+	// when the protocol does have a message for it - that would be an event
+	// the consumer never receives.
+	withoutMessage := func(t *testing.T, format, kind string) (execution.EvaluationResult, execution.EvaluationRequest) {
+		result, request := loadedSeriesWarmingCompletion(t, execution.LevelOutcomeRecovery)
+		state := &result.Plans[0].StateResults[0]
+		event := state.Events[0]
+		state.WithoutMessage = []execution.EventWithoutMessage{{
+			Record:    execution.RecordAnchor{RecordID: event.RecordRef.RecordID, SourceTime: event.RecordRef.SourceTime},
+			EventKind: kind, Format: format,
+		}}
+		return result, request
+	}
+	t.Run("a RECOVERY its protocol has no message for is accepted as its identity", func(t *testing.T) {
+		result, request := withoutMessage(t, contract.WireFormatPythonCompatible, contract.TriggerEventRecovery)
+		result.Plans[0].StateResults[0].Events = nil
+		if err := result.Validate(request); err != nil {
+			t.Fatalf("a RECOVERY kept as its identity under the protocol that has no message for it was refused: %v", err)
+		}
+	})
+	t.Run("the identity beside the envelope it replaced is a duplicate", func(t *testing.T) {
+		result, request := withoutMessage(t, contract.WireFormatPythonCompatible, contract.TriggerEventRecovery)
+		if err := result.Validate(request); err == nil || !strings.Contains(err.Error(), "duplicate TriggerEvent") {
+			t.Fatalf("an identity kept beside its envelope must be refused as a duplicate, got %v", err)
+		}
+	})
+	t.Run("an event the protocol has a message for cannot be kept as an identity", func(t *testing.T) {
+		result, request := withoutMessage(t, contract.WireFormatStandardRawEvent, contract.TriggerEventRecovery)
+		result.Plans[0].StateResults[0].Events = nil
+		if err := result.Validate(request); err == nil || !strings.Contains(err.Error(), "its protocol has a message for was not kept") {
+			t.Fatalf("a standard RECOVERY kept as an identity must be refused, got %v", err)
 		}
 	})
 

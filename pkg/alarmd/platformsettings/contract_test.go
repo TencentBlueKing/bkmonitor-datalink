@@ -16,13 +16,13 @@ import (
 
 // The keys are the protocol's formulas verbatim: prefix as given, the
 // tenant percent-encoded the way Python's quote(safe="") does it, the DB
-// key under the strategy domain.
+// key under the field's owning domain.
 func TestKeysFollowTheProtocolFormulas(t *testing.T) {
 	if got := RevisionKey(DefaultKeyPrefix); got != "bk_monitor_base:dynamic_config:revision" {
 		t.Fatalf("revision key = %s", got)
 	}
 	if got := ConfigKey(DefaultKeyPrefix, Tenant, FieldHostDisableMonitorStates.DBKey()); got !=
-		"bk_monitor_base:dynamic_config:{system}:base_config.domains.strategy.host_disable_monitor_states" {
+		"bk_monitor_base:dynamic_config:{system}:base_config.metadata.host_disable_monitor_states" {
 		t.Fatalf("config key = %s", got)
 	}
 	for tenant, want := range map[string]string{"tenant/a": "tenant%2Fa", "a b": "a%20b", "ok-._~": "ok-._~", "租户": "%E7%A7%9F%E6%88%B7"} {
@@ -85,8 +85,12 @@ func TestResolveAppliesTheProtocolFallbackRule(t *testing.T) {
 	} {
 		t.Run(arm.name, func(t *testing.T) {
 			got := Resolve(defaults, arm.platform, arm.deployment)
-			if !reflect.DeepEqual(got, arm.want) {
-				t.Fatalf("Resolve() = %+v, want %+v", got, arm.want)
+			// No arm of this table states a horizon, so each resolves the
+			// contract's default; the horizon's own rule is tested apart.
+			want := arm.want
+			want.NoDataTrackingHorizonSeconds, want.NoDataTrackingHorizonSource = DefaultNoDataTrackingHorizonSeconds, HorizonSourceDefault
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("Resolve() = %+v, want %+v", got, want)
 			}
 		})
 	}

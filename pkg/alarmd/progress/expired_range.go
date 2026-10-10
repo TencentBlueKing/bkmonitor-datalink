@@ -104,7 +104,7 @@ func (store *Store) changeRange(ctx context.Context, request execution.ExpiredRa
 		return execution.ExpiredRangeResult{}, err
 	}
 	status, err := store.options.Control.FencedCompareAndSet(ctx, ownership.FencedCASRequest{
-		Fence: request.OwnerFence, At: store.options.Now(), Namespace: name,
+		Fence: request.OwnerFence, Namespace: name, ContentScope: request.ContentScope,
 		Expected: raw, Value: value, TTL: 0,
 	})
 	if err != nil {

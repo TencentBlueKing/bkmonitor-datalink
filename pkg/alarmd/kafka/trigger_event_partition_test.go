@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/linkdoutput"
 )
 
 func TestTriggerEventBatchUsesStableDedupePartitionKey(t *testing.T) {
@@ -27,6 +28,7 @@ func TestTriggerEventBatchUsesStableDedupePartitionKey(t *testing.T) {
 		}
 		return *event
 	}
+	input.DedupeMD5 = "0260bae09d2ae3f75683bd06a76e9479"
 	oldSnapshot := build()
 	input.DedupeMD5 = "0260bae09d2ae3f75683bd06a76e9479"
 	abnormal := build()
@@ -68,19 +70,16 @@ func TestTriggerEventBatchUsesStableDedupePartitionKey(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		wantPayload, err := contract.EncodeTriggerEventV1(&events[i])
+		converter, _ := linkdoutput.NewConverter(nil)
+		wantEvent, err := converter.Convert(&events[i])
+		wantPayload := wantEvent.Payload
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !bytes.Equal(payload, wantPayload) {
 			t.Fatal("partition key changed payload")
 		}
-		if i < 2 {
-			if message.Key != nil {
-				t.Fatal("legacy must keep nil key")
-			}
-			continue
-		}
+
 		key, err := message.Key.Encode()
 		if err != nil {
 			t.Fatal(err)
@@ -92,7 +91,7 @@ func TestTriggerEventBatchUsesStableDedupePartitionKey(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if i == 2 {
+		if i == 0 {
 			expectedPartition = partition
 		} else if partition != expectedPartition {
 			t.Fatal("same series changed partition across kind/revision/event ID")

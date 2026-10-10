@@ -90,17 +90,17 @@ func TestEnrichmentResolvesTopologyAndTheOtherIdentity(t *testing.T) {
 		"bk_target_ip":       json.RawMessage(`"10.0.0.1"`),
 		"bk_target_cloud_id": json.RawMessage(`0`),
 	})
-	if !facts.HostResolved || len(facts.TopoNodes) != 5 {
+	if !facts.HostResolved || len(facts.TopoNodes()) != 5 {
 		t.Fatalf("facts = %+v", facts)
 	}
 	found := false
-	for _, key := range facts.HostKeys {
+	for _, key := range facts.HostKeys() {
 		if key == "183016" {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("resolving by address did not teach the record its host id: %v", facts.HostKeys)
+		t.Errorf("resolving by address did not teach the record its host id: %v", facts.HostKeys())
 	}
 	if facts.HostState == "" || facts.HostBusinessID != "999" {
 		t.Errorf("host attributes were not carried: %+v", facts)
@@ -115,7 +115,7 @@ func TestAnUnknownHostStaysUnresolved(t *testing.T) {
 	store := &Store{index: builder.index, now: time.Now, maxAge: time.Hour, interval: time.Minute}
 	chain := admission.NewChain([]admission.Fuller{admission.IdentityFuller{}, NewHostTopologyFuller(store)}, nil)
 	facts := chain.Enrich(map[string]json.RawMessage{"bk_target_ip": json.RawMessage(`"10.9.9.9"`)})
-	if facts.HostResolved || len(facts.TopoNodes) != 0 {
+	if facts.HostResolved || len(facts.TopoNodes()) != 0 {
 		t.Fatalf("facts = %+v", facts)
 	}
 }
@@ -269,7 +269,7 @@ func TestHostAttributesFollowTheIdentityPythonWouldLookUp(t *testing.T) {
 	// Both identities still resolve, because a monitoring target may name
 	// either one.
 	address, id := false, false
-	for _, key := range facts.HostKeys {
+	for _, key := range facts.HostKeys() {
 		if key == "10.0.0.7|0" {
 			address = true
 		}
@@ -278,7 +278,7 @@ func TestHostAttributesFollowTheIdentityPythonWouldLookUp(t *testing.T) {
 		}
 	}
 	if !address || !id {
-		t.Fatalf("host keys = %v, want both identities kept for target matching", facts.HostKeys)
+		t.Fatalf("host keys = %v, want both identities kept for target matching", facts.HostKeys())
 	}
 }
 
@@ -341,17 +341,17 @@ func TestAnUnknownHostIDIsNotRescuedByTheAddress(t *testing.T) {
 	// Python's own enrichment falls back here - TopoNodeFuller branches on the
 	// host it found rather than on the dimension - so the address's topology
 	// and its key have to survive the id that resolved to nothing.
-	if len(facts.TopoNodes) == 0 {
-		t.Fatalf("topo nodes = %v, want the address's topology kept for target matching", facts.TopoNodes)
+	if len(facts.TopoNodes()) == 0 {
+		t.Fatalf("topo nodes = %v, want the address's topology kept for target matching", facts.TopoNodes())
 	}
 	address := false
-	for _, key := range facts.HostKeys {
+	for _, key := range facts.HostKeys() {
 		if key == "10.0.0.7|0" {
 			address = true
 		}
 	}
 	if !address {
-		t.Fatalf("host keys = %v, want the address kept for target matching", facts.HostKeys)
+		t.Fatalf("host keys = %v, want the address kept for target matching", facts.HostKeys())
 	}
 }
 

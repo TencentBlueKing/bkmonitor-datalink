@@ -123,10 +123,10 @@ func compilePublishedActivation(
 				return nil, nil, errors.New("alarmd controlplane: activation Plan has no recovery window")
 			}
 			plans[index] = execution.FrozenPlanSchedule{
-				Identity: plan.Identity, ScheduleRevision: plan.ScheduleRevision, Spec: plan.ScheduleSpec,
+				Identity: plan.Identity, ScheduleRevision: plan.ScheduleRevision, Spec: plan.ScheduleSpec, Shard: plan.Shard,
 			}
 			fact := execution.PlanActivationFact{Plan: plan.Identity, Selection: execution.ActivationCurrent,
-				Selected: execution.ActivatedPlan{Identity: plan.Identity,
+				Selected: execution.ActivatedPlan{Identity: plan.Identity, Shard: plan.Shard,
 					StateGeneration:  compiledGeneration,
 					StateApplyEpoch:  execution.StateApplyEpoch(snapshot.Publication.PublicationEpoch),
 					ScheduleRevision: plan.ScheduleRevision, RequiredFullSlots: requiredFullSlots}}

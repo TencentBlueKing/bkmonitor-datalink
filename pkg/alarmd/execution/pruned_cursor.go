@@ -97,13 +97,43 @@ func PrunedSkipGap(cursor, resumeAt EvaluationTime) *ProgressGapSummary {
 	}
 }
 
-// SkippedPrunedRange reports whether the Progress currently sits on a
-// pruned skip: its last completion is the skip itself and no Slot has been
-// completed since.
+// PlanNotActiveSkipGap is the same forward skip for Slots no Plan was due at.
+//
+// Same shape as the pruned skip and deliberately so: both move the cursor past
+// Slots that were never evaluated and carry no completion to navigate from.
+// Only the reason differs, and it has to, because a reader asking "where did
+// these rounds go" gets sent to retention by one and to the active set by the
+// other.
+func PlanNotActiveSkipGap(cursor, resumeAt EvaluationTime) *ProgressGapSummary {
+	if resumeAt < cursor {
+		resumeAt = cursor
+	}
+	return &ProgressGapSummary{
+		Kind: CompletionGapSkipped, ReasonCode: ReasonCode(contract.ReasonPlanNotActive),
+		FirstSlot: cursor, LastSlot: cursor, ResumedAt: resumeAt, Uncounted: true,
+	}
+}
+
+// SkippedPrunedRange reports whether the Progress currently sits on a forward
+// skip: its last completion is the skip itself and no Slot has been completed
+// since.
+//
+// Both skips count. The question this answers is navigational - is there a
+// completion to anchor the next Slot on - and a skip carries none whichever
+// reason it holds. Reading only the pruned reason here would have the
+// plan-not-active skip anchor on a Slot that was never evaluated, and
+// navigation would resume inside the stretch it just moved past.
 func (progress ScheduleProgress) SkippedPrunedRange() bool {
-	return progress.LastCompletionKind == CompletionGapSkipped && progress.CurrentOrRecentGap != nil &&
-		progress.CurrentOrRecentGap.Kind == CompletionGapSkipped &&
-		progress.CurrentOrRecentGap.ReasonCode == ReasonCode(contract.ReasonSchedulePruned)
+	if progress.LastCompletionKind != CompletionGapSkipped || progress.CurrentOrRecentGap == nil ||
+		progress.CurrentOrRecentGap.Kind != CompletionGapSkipped {
+		return false
+	}
+	switch progress.CurrentOrRecentGap.ReasonCode {
+	case ReasonCode(contract.ReasonSchedulePruned), ReasonCode(contract.ReasonPlanNotActive):
+		return true
+	default:
+		return false
+	}
 }
 
 // ContinuityAnchor is the last Slot whose completion the Progress carries,

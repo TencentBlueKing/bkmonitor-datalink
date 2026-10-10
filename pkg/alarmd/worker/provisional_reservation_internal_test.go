@@ -75,7 +75,7 @@ func TestStreamedExecutionReleaseProvisionalIsIdempotentAndReusable(t *testing.T
 	if err := stream.reserveProvisional(context.Background(), 1, 100); err != nil {
 		t.Fatal(err)
 	}
-	stream.series, stream.retained = 1, 100
+	stream.series, stream.retainedByPhase = 1, retainedSeed(100)
 	stream.releaseProvisional()
 	stream.releaseProvisional()
 
@@ -97,7 +97,7 @@ func TestStreamedExecutionReleasesAcceptedReservationAfterLaterBudgetRejection(t
 	if err := stream.reserveProvisional(context.Background(), 1, 600); err != nil {
 		t.Fatal(err)
 	}
-	stream.series, stream.retained = 1, 600
+	stream.series, stream.retainedByPhase = 1, retainedSeed(600)
 	if err := stream.reserveProvisional(context.Background(), 1, 600); err == nil {
 		t.Fatal("second reservation unexpectedly fit the retained-byte budget")
 	}

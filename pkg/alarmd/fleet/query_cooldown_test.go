@@ -9,7 +9,7 @@ import (
 )
 
 func TestQueryCooldownPreservesFailureUntilRealRecovery(t *testing.T) {
-	for _, exit := range []string{"recovered", "config_changed", "disabled"} {
+	for _, exit := range []string{"recovered", "query_revision_changed", "disabled"} {
 		t.Run(exit, func(t *testing.T) {
 			at := time.Unix(1000, 0)
 			tracker := NewTracker(nil, "replica", func() time.Time { return at })
@@ -54,7 +54,7 @@ func TestQueryCooldownPreservesFailureUntilRealRecovery(t *testing.T) {
 
 func TestQueryCooldownMetadataDoesNotDetermineHealth(t *testing.T) {
 	tracker := NewTracker(nil, "replica", nil)
-	for _, event := range []string{"entered", "extended", "config_changed", "disabled", "recovered"} {
+	for _, event := range []string{"entered", "extended", "query_revision_changed", "disabled", "recovered"} {
 		tracker.Observe(context.Background(), observability.Observation{Trace: observability.TraceFields{QueryGroupKey: "qg"}, QueryCooldown: &observability.QueryCooldownFacts{Event: event}})
 		if tracker.Determined() != 0 || tracker.HasConclusion("qg") {
 			t.Fatalf("%s invented a conclusion", event)
@@ -119,5 +119,46 @@ func TestAPooledRowSaysWhenItEnteredThePool(t *testing.T) {
 	observe(observability.Observation{QueryCooldown: &observability.QueryCooldownFacts{Event: "recovered"}})
 	if rows := tracker.Anomalies(); len(rows) != 1 || !rows[0].DemotedSince.IsZero() {
 		t.Fatalf("out of the pool the row still carries demoted_since: %+v", rows)
+	}
+}
+
+// The pool's arithmetic closes on one replica across restarts and owners: an
+// object restored from its record is in the pool since it first entered,
+// and is not an entry; an object handed to another replica while in the
+// pool is not an exit; and a return within the window of an exit is counted
+// as a re-entry. Entries plus restored equal exits plus handovers plus the
+// objects in the pool.
+func TestThePoolFlowClosesAcrossRestoresHandoversAndReentries(t *testing.T) {
+	at := time.Unix(10_000, 0)
+	tracker := NewTracker(nil, "replica", func() time.Time { return at })
+	event := func(queryGroup string, facts observability.QueryCooldownFacts) {
+		tracker.Observe(context.Background(), observability.Observation{
+			Trace: observability.TraceFields{QueryGroupKey: queryGroup}, QueryCooldown: &facts})
+	}
+	firstEntered := at.Add(-3 * time.Hour)
+	event("restored", observability.QueryCooldownFacts{Event: "restored", EnteredAt: firstEntered, Until: at.Add(time.Minute), Source: "restored"})
+	event("entered", observability.QueryCooldownFacts{Event: "entered", Until: at.Add(time.Minute), Source: "probe"})
+	event("handed", observability.QueryCooldownFacts{Event: "entered", Until: at.Add(time.Minute), Source: "probe"})
+	event("flapping", observability.QueryCooldownFacts{Event: "reentered", Until: at.Add(time.Minute), Reentries: 1, LastExitReason: "recovered"})
+	event("entered", observability.QueryCooldownFacts{Event: "recovered"})
+
+	var restored *Anomaly
+	for _, row := range tracker.Demoted() {
+		if row.QueryGroup == "restored" {
+			copy := row
+			restored = &copy
+		}
+	}
+	if restored == nil || !restored.DemotedSince.Equal(firstEntered) || restored.QueryCooldown.Source != "restored" {
+		t.Fatalf("restored row = %+v, want in the pool since it first entered", restored)
+	}
+	tracker.Forget(map[string]struct{}{"restored": {}, "entered": {}, "flapping": {}})
+
+	flow := tracker.DemotionFlow()
+	if flow.Entries != 3 || flow.Restored != 1 || flow.Exits != 1 || flow.Handovers != 1 || flow.Reentries != 1 {
+		t.Fatalf("flow = %+v, want 3 entries, 1 restored, 1 exit, 1 handover, 1 re-entry", flow)
+	}
+	if pooled := len(tracker.Demoted()); flow.Entries+flow.Restored != flow.Exits+flow.Handovers+pooled {
+		t.Fatalf("flow %+v with %d pooled does not close", flow, pooled)
 	}
 }

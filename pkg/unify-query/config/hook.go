@@ -11,6 +11,7 @@ package config
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -22,6 +23,11 @@ import (
 
 // InitConfig 初始化配置
 func InitConfig() {
+	_ = InitConfigWithWriter(os.Stdout)
+}
+
+// InitConfigWithWriter 初始化配置，并将加载提示写入指定输出，供 CLI 保持 stdout 为数据。
+func InitConfigWithWriter(output io.Writer) error {
 	if CustomConfigFilePath != "" {
 		// Use config file from the flag.
 		viper.SetConfigFile(CustomConfigFilePath)
@@ -29,7 +35,7 @@ func InitConfig() {
 		// Find home directory.
 		home, err := homedir.Dir()
 		if err != nil {
-			fmt.Println(err)
+			fmt.Fprintln(output, err)
 			os.Exit(1)
 		}
 
@@ -47,10 +53,11 @@ func InitConfig() {
 	eventbus.EventBus.Publish(eventbus.EventSignalConfigPreParse)
 	err := viper.ReadInConfig()
 	if err != nil {
-		fmt.Printf("loading config file:%s failed,error:%s\n", viper.ConfigFileUsed(), err)
+		fmt.Fprintf(output, "loading config file:%s failed,error:%s\n", viper.ConfigFileUsed(), err)
 	} else {
-		fmt.Println("Using config file:", viper.ConfigFileUsed())
+		fmt.Fprintln(output, "Using config file:", viper.ConfigFileUsed())
 	}
 	// 配置读取后，通知全世界reload读取新的配置
 	eventbus.EventBus.Publish(eventbus.EventSignalConfigPostParse)
+	return err
 }

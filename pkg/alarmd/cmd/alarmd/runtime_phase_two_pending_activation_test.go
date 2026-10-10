@@ -93,7 +93,7 @@ func TestProductionPhaseTwoRefreshActivatesTheStrandedLatestWhileTheSourceKeepsC
 	defer func() { _ = bundle.Shutdown(ctx) }()
 	control := bundle.dependencies.Control.(*productionPhaseTwoControl)
 	repository := control.dependencies.Repository
-	initial, err := repository.LoadActivation(ctx)
+	initial, err := repository.LoadActivationHead(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +130,7 @@ func TestProductionPhaseTwoRefreshActivatesTheStrandedLatestWhileTheSourceKeepsC
 	if stranded.Status != controlplane.SourceRefreshPublished || stranded.Publication == initial.Current {
 		t.Fatalf("confirmed refresh = %+v, want a new publication", stranded)
 	}
-	if activation, err := repository.LoadActivation(ctx); err != nil || activation.Current != initial.Current {
+	if activation, err := repository.LoadActivationHead(ctx); err != nil || activation.Current != initial.Current {
 		t.Fatalf("the source refresh alone must not activate: activation=%+v err=%v", activation, err)
 	}
 	nowUnix.Add(2)
@@ -148,7 +148,7 @@ func TestProductionPhaseTwoRefreshActivatesTheStrandedLatestWhileTheSourceKeepsC
 	if refreshErr != nil || result.Status != phaseTwoControlHealthy || len(result.QueryGroups) != 1 {
 		t.Fatalf("Refresh() with a pending candidate = (%+v, %v), want the stranded publication activated and healthy", result, refreshErr)
 	}
-	activation, err := repository.LoadActivation(ctx)
+	activation, err := repository.LoadActivationHead(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestProductionPhaseTwoRefreshActivatesTheStrandedLatestWhileTheSourceKeepsC
 			t.Fatalf("round %d must be an ordinary pending round: %+v", round+1, last)
 		}
 	}
-	if activation, err := repository.LoadActivation(ctx); err != nil || activation.Current != stranded.Publication {
+	if activation, err := repository.LoadActivationHead(ctx); err != nil || activation.Current != stranded.Publication {
 		t.Fatalf("activation after further pending rounds = %+v err=%v, want %+v", activation, err, stranded.Publication)
 	}
 }

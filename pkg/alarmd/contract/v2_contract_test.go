@@ -1103,8 +1103,9 @@ func TestReasonCatalogV2IsFrozenAndDomainAware(t *testing.T) {
 	}
 	executionBudget, ok := LookupReasonV2(ReasonExecutionBudgetExhausted)
 	if !ok || executionBudget.Class != ReasonClassCoverage ||
-		executionBudget.Domains != ReasonDomainQueryResult|ReasonDomainObservation ||
-		!ReasonAllowedForV2(ReasonExecutionBudgetExhausted, ReasonDomainQueryResult) {
+		executionBudget.Domains != ReasonDomainQueryResult|ReasonDomainReceipt|ReasonDomainObservation ||
+		!ReasonAllowedForV2(ReasonExecutionBudgetExhausted, ReasonDomainQueryResult) ||
+		!LevelUnavailableReasonV2(ReasonExecutionBudgetExhausted) {
 		t.Fatalf("execution budget reason definition = (%#v, %t)", executionBudget, ok)
 	}
 	for _, reason := range []string{
@@ -1352,9 +1353,29 @@ func TestLevelResultV1RequiresConsistentWindowDecision(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name: "gapped rejects recovery",
+			// decision-022 section 9.1: an incomplete window may close what it
+			// opened. It used to refuse this outright, which left an alert
+			// opened on a short window open until the window filled - never,
+			// for a strategy whose window outlasts the interval between
+			// releases.
+			name: "gapped permits recovery with the evidence for it",
 			mutate: func(result *LevelResultV1) {
 				result.Result = LevelResultRecovery
+				result.DecisionWindow.Recovery.Enabled = true
+				result.DecisionWindow.Recovery.RequiredConsecutiveWindows = 2
+				result.DecisionWindow.Recovery.ObservedConsecutiveMisses = 2
+				result.DecisionWindow.HistoryCompleteness = "GAPPED"
+			},
+			wantErr: false,
+		},
+		{
+			// One short of it, and nothing else different. Without this the
+			// rule above reads as "any incomplete window may claim recovery".
+			name: "gapped rejects recovery one window short of its evidence",
+			mutate: func(result *LevelResultV1) {
+				result.Result = LevelResultRecovery
+				result.DecisionWindow.Recovery.Enabled = true
+				result.DecisionWindow.Recovery.RequiredConsecutiveWindows = 2
 				result.DecisionWindow.Recovery.ObservedConsecutiveMisses = 1
 				result.DecisionWindow.HistoryCompleteness = "GAPPED"
 			},

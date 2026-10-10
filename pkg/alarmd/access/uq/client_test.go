@@ -368,8 +368,7 @@ func TestClientReportsUnavailableForTransportProtocolAndDeadlineFailures(t *test
 		}
 	})
 	t.Run("timeout", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { time.Sleep(100 * time.Millisecond) }))
-		defer server.Close()
+		server := stalledResponseServer(t)
 		client, _ := NewClient(server.URL, "alarmd-shadow", server.Client())
 		attempt := validAttempt(t)
 		attempt.DeadlineUnixMilli = time.Now().Add(10 * time.Millisecond).UnixMilli()
@@ -381,9 +380,31 @@ func TestClientReportsUnavailableForTransportProtocolAndDeadlineFailures(t *test
 	})
 }
 
+// The response stays blocked until the client has returned. Explicit release
+// also works when an unread POST body prevents the server from noticing that
+// the client disconnected, and cleanup runs even after a failed assertion.
+func stalledResponseServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		// A broken attempt deadline must fail the assertions, not leave
+		// Execute blocked forever before cleanup can release the handler.
+		timer := time.NewTimer(2 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-release:
+		case <-timer.C:
+		}
+	}))
+	t.Cleanup(func() {
+		close(release)
+		server.Close()
+	})
+	return server
+}
+
 func TestClientPropagatesCallerCancellation(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { time.Sleep(100 * time.Millisecond) }))
-	defer server.Close()
+	server := stalledResponseServer(t)
 	client, _ := NewClient(server.URL, "alarmd-shadow", server.Client())
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

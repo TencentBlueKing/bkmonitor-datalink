@@ -741,6 +741,84 @@ func TestFormatFactory_Query(t *testing.T) {
 			},
 			expected: `{"query":{"range":{"dtEventTimeNanoStamp":{"format":"strict_date_optional_time_nanos","from":null,"include_lower":true,"include_upper":true,"to":"2025-08-06T07:49:29.000000000Z"}}}}`,
 		},
+		"keyword trace IDs use one terms query": {
+			conditions: metadata.AllConditions{{{
+				DimensionName: "trace_id",
+				Operator:      structured.ConditionEqual,
+				Value:         []string{"trace-a", "trace-b"},
+			}}},
+			expected: `{"query":{"terms":{"trace_id":["trace-a","trace-b"]}}}`,
+		},
+		"keyword multi-value eq with empty value keeps match_phrase": {
+			conditions: metadata.AllConditions{{{
+				DimensionName: "keyword",
+				Operator:      structured.ConditionEqual,
+				Value:         []string{"val-1", ""},
+			}}},
+			expected: `{"query":{"bool":{"should":[{"match_phrase":{"keyword":{"query":"val-1"}}},{"match_phrase":{"keyword":{"query":""}}}]}}}`,
+		},
+		"keyword multi-value prefix keeps match_phrase_prefix": {
+			conditions: metadata.AllConditions{{{
+				DimensionName: "keyword",
+				Operator:      structured.ConditionEqual,
+				Value:         []string{"val-1", "val-2"},
+				IsPrefix:      true,
+			}}},
+			expected: `{"query":{"bool":{"should":[{"match_phrase_prefix":{"keyword":{"query":"val-1"}}},{"match_phrase_prefix":{"keyword":{"query":"val-2"}}}]}}}`,
+		},
+		"keyword multi-value suffix keeps match_phrase": {
+			conditions: metadata.AllConditions{{{
+				DimensionName: "keyword",
+				Operator:      structured.ConditionEqual,
+				Value:         []string{"val-1", "val-2"},
+				IsSuffix:      true,
+			}}},
+			expected: `{"query":{"bool":{"should":[{"match_phrase":{"keyword":{"query":"val-1"}}},{"match_phrase":{"keyword":{"query":"val-2"}}}]}}}`,
+		},
+		"keyword multi-value wildcard flag keeps match_phrase": {
+			conditions: metadata.AllConditions{{{
+				DimensionName: "keyword",
+				Operator:      structured.ConditionEqual,
+				Value:         []string{"val-1", "val-2"},
+				IsWildcard:    true,
+			}}},
+			expected: `{"query":{"bool":{"should":[{"match_phrase":{"keyword":{"query":"val-1"}}},{"match_phrase":{"keyword":{"query":"val-2"}}}]}}}`,
+		},
+		"keyword multi-value ne keeps match_phrase": {
+			conditions: metadata.AllConditions{{{
+				DimensionName: "keyword",
+				Operator:      structured.ConditionNotEqual,
+				Value:         []string{"val-1", "val-2"},
+			}}},
+			expected: `{"query":{"bool":{"must_not":[{"match_phrase":{"keyword":{"query":"val-1"}}},{"match_phrase":{"keyword":{"query":"val-2"}}}]}}}`,
+		},
+		"text multi-value eq keeps match_phrase": {
+			conditions: metadata.AllConditions{{{
+				DimensionName: "text",
+				Operator:      structured.ConditionEqual,
+				Value:         []string{"val-1", "val-2"},
+			}}},
+			expected: `{"query":{"bool":{"should":[{"match_phrase":{"text":{"query":"val-1"}}},{"match_phrase":{"text":{"query":"val-2"}}}]}}}`,
+		},
+		"keyword mixed with numeric mapping keeps match_phrase": {
+			conditions: metadata.AllConditions{{{
+				DimensionName: "mixed_keyword",
+				Operator:      structured.ConditionEqual,
+				Value:         []string{"1", "2"},
+			}}},
+			expected: `{"query":{"bool":{"should":[{"match_phrase":{"mixed_keyword":{"query":"1"}}},{"match_phrase":{"mixed_keyword":{"query":"2"}}}]}}}`,
+		},
+		"keyword terms preserve nested and AND OR groups": {
+			conditions: metadata.AllConditions{
+				{
+					{DimensionName: "keyword", Operator: structured.ConditionEqual, Value: []string{"val-1", "val-2"}},
+					{DimensionName: "nested1.key", Operator: structured.ConditionEqual, Value: []string{"A", "B"}},
+					{DimensionName: "nested1.name", Operator: structured.ConditionEqual, Value: []string{"test-user"}},
+				},
+				{{DimensionName: "keyword", Operator: structured.ConditionEqual, Value: []string{"val-3", "val-4"}}},
+			},
+			expected: `{"query":{"bool":{"should":[{"bool":{"must":[{"terms":{"keyword":["val-1","val-2"]}},{"nested":{"path":"nested1","query":{"bool":{"must":[{"terms":{"nested1.key":["A","B"]}},{"match_phrase":{"nested1.name":{"query":"test-user"}}}]}}}}]}},{"terms":{"keyword":["val-3","val-4"]}}]}}}`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx := metadata.InitHashID(context.Background())
@@ -800,12 +878,28 @@ func TestFormatFactory_Query(t *testing.T) {
 								},
 							},
 						},
+						"trace_id": map[string]any{
+							"type": "keyword",
+						},
+						"mixed_keyword": map[string]any{
+							"type": "keyword",
+						},
 						"keyword": map[string]any{
 							"type": "keyword",
 						},
 						"text": map[string]any{
 							"type": "text",
 						},
+					},
+				},
+				{
+					"properties": map[string]any{
+						"mixed_keyword": map[string]any{"type": "long"},
+					},
+				},
+				{
+					"properties": map[string]any{
+						"mixed_keyword": map[string]any{"type": "keyword"},
 					},
 				},
 			}
@@ -957,7 +1051,7 @@ func TestFormatFactory_WithMapping(t *testing.T) {
 					},
 				},
 			},
-			expected: `{"event":{"alias_name":"","field_name":"event","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"event","tokenize_on_chars":[]},"event.name":{"alias_name":"","field_name":"event.name","field_type":"text","is_agg":true,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"event","tokenize_on_chars":["-"]},"log_message":{"alias_name":"","field_name":"log_message","field_type":"text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"log_message","tokenize_on_chars":["-","\n"," "]},"value":{"alias_name":"","field_name":"value","field_type":"double","is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"value","tokenize_on_chars":[]}}`,
+			expected: `{"event":{"alias_name":"","field_name":"event","field_type":"nested","is_agg":false,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"event","tokenize_on_chars":[]},"event.name":{"alias_name":"","field_name":"event.name","field_type":"text","is_agg":true,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"event","tokenize_on_chars":["-"]},"log_message":{"alias_name":"","field_name":"log_message","field_type":"text","is_agg":false,"is_analyzed":true,"is_case_sensitive":false,"origin_field":"log_message","tokenize_on_chars":["-","\n"," "]},"value":{"alias_name":"","field_name":"value","field_type":"double","has_mixed_types":true,"is_agg":true,"is_analyzed":false,"is_case_sensitive":false,"origin_field":"value","tokenize_on_chars":[]}}`,
 		},
 	}
 

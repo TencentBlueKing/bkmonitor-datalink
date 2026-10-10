@@ -138,13 +138,24 @@ func (client *Client) Execute(ctx context.Context, attempt execution.QueryAttemp
 		ctx, cancel = context.WithDeadline(ctx, deadline)
 		defer cancel()
 	}
-	body, err := buildRequest(attempt.Spec)
+	return client.execute(callerCtx, ctx, queryIdentity{Spec: attempt.Spec, AttemptNo: attempt.AttemptNo}, sink, nil)
+}
+
+// queryIdentity carries provider-local accounting only. Diagnostic reads do
+// not invent a Slot operation or a production recovery permit.
+type queryIdentity struct {
+	Spec      execution.PhysicalQuerySpec
+	AttemptNo uint32
+}
+
+func buildWireRequest(spec execution.PhysicalQuerySpec) (string, []byte, error) {
+	body, err := buildRequest(spec)
 	if err != nil {
-		return execution.ProviderCompletion{}, err
+		return "", nil, err
 	}
 	var payload any = body
 	path := "/query/ts"
-	if query := attempt.Spec.PlanFacts.PromQL; query != nil {
+	if query := spec.PlanFacts.PromQL; query != nil {
 		path += "/promql"
 		// No bk_biz_ids in the body. The scope travels in the space header,
 		// which is the only thing the provider resolves it from; bk_biz_ids in
@@ -159,7 +170,15 @@ func (client *Client) Execute(ctx context.Context, attempt execution.QueryAttemp
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
-		return execution.ProviderCompletion{}, fmt.Errorf("alarmd access uq: encode request: %w", err)
+		return "", nil, fmt.Errorf("alarmd access uq: encode request: %w", err)
+	}
+	return path, encoded, nil
+}
+
+func (client *Client) execute(callerCtx, ctx context.Context, attempt queryIdentity, sink execution.ProviderSeriesSink, scanned *DiagnosticScan) (execution.ProviderCompletion, error) {
+	path, encoded, err := buildWireRequest(attempt.Spec)
+	if err != nil {
+		return execution.ProviderCompletion{}, err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.endpoint+path, bytes.NewReader(encoded))
 	if err != nil {
@@ -189,13 +208,20 @@ func (client *Client) Execute(ctx context.Context, attempt execution.QueryAttemp
 		// the request (table ids, conditions, dimension values) and must not be
 		// parsed for business state or copied into logs. The status code alone
 		// is the bounded diagnostic detail.
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		discarded, _ := io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		if scanned != nil {
+			scanned.Bytes = uint64(discarded)
+		}
 		completion := client.unavailableCompletion(attempt, execution.ReasonCode(contract.ReasonQueryUnavailable), execution.HTTPStatusRouteDetail(response.StatusCode))
 		completion.Stats.QueryMillis = uint64(client.now().Sub(started).Milliseconds())
 		return completion, nil
 	}
-	counted := &countingReader{reader: &boundedReader{reader: response.Body, maximum: client.limits.MaxBodyBytes}}
-	completion, err := client.decode(ctx, counted, attempt, sink)
+	counted := &countingReader{reader: response.Body}
+	completion, err := client.decodeQuery(ctx, &boundedReader{reader: counted, maximum: client.limits.MaxBodyBytes}, attempt, sink, scanned)
+	if scanned != nil {
+		scanned.Bytes = counted.bytes
+		scanned.Complete = err == nil
+	}
 	if err != nil {
 		return execution.ProviderCompletion{}, err
 	}
@@ -204,7 +230,7 @@ func (client *Client) Execute(ctx context.Context, attempt execution.QueryAttemp
 	return completion, nil
 }
 
-func (client *Client) unavailableCompletion(attempt execution.QueryAttempt, reason execution.ReasonCode, detail string) execution.ProviderCompletion {
+func (client *Client) unavailableCompletion(attempt queryIdentity, reason execution.ReasonCode, detail string) execution.ProviderCompletion {
 	return execution.ProviderCompletion{
 		Ref:           providerResultRef(attempt),
 		PhysicalQuery: attempt.Spec.Digest,
@@ -268,7 +294,7 @@ func isTLSFailure(err error) bool {
 		errors.As(err, &unknownAuthority) || errors.As(err, &hostname) || errors.As(err, &certificateInvalid)
 }
 
-func providerResultRef(attempt execution.QueryAttempt) execution.ProviderResultRef {
+func providerResultRef(attempt queryIdentity) execution.ProviderResultRef {
 	return execution.ProviderResultRef(string(attempt.Spec.Digest) + ":" + strconv.FormatUint(uint64(attempt.AttemptNo), 10))
 }
 
@@ -468,6 +494,10 @@ func durationString(milliseconds int64) string {
 }
 
 func (client *Client) decode(ctx context.Context, reader io.Reader, attempt execution.QueryAttempt, sink execution.ProviderSeriesSink) (execution.ProviderCompletion, error) {
+	return client.decodeQuery(ctx, reader, queryIdentity{Spec: attempt.Spec, AttemptNo: attempt.AttemptNo}, sink, nil)
+}
+
+func (client *Client) decodeQuery(ctx context.Context, reader io.Reader, attempt queryIdentity, sink execution.ProviderSeriesSink, scanned *DiagnosticScan) (execution.ProviderCompletion, error) {
 	decoder := json.NewDecoder(reader)
 	decoder.UseNumber()
 	decodeStarted := client.now()
@@ -516,6 +546,10 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 					return execution.ProviderCompletion{}, fmt.Errorf("alarmd access uq: decode series: %w", err)
 				}
 				totalSeries++
+				if scanned != nil {
+					scanned.Series = totalSeries
+					scanned.Records += uint64(len(series.Values))
+				}
 				if totalSeries > client.limits.MaxSeries {
 					return execution.ProviderCompletion{}, ErrTotalSeriesExceeded
 				}
@@ -546,6 +580,9 @@ func (client *Client) decode(ctx context.Context, reader io.Reader, attempt exec
 		case "status":
 			if err := decoder.Decode(&status); err != nil {
 				return execution.ProviderCompletion{}, err
+			}
+			if scanned != nil && status != nil {
+				scanned.statusCode = status.Code
 			}
 		case "is_partial":
 			var value bool
@@ -662,7 +699,7 @@ func usableDespiteStatus(code string, delivery execution.SeriesDelivery) bool {
 // status as UNAVAILABLE with a bounded detail. DataState and Delivery describe
 // series already streamed to the sink so the completion conserves them.
 func (client *Client) responseContractUnavailable(
-	attempt execution.QueryAttempt,
+	attempt queryIdentity,
 	detail string,
 	dataState execution.DataState,
 	delivery execution.SeriesDelivery,

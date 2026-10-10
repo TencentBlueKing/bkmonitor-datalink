@@ -36,6 +36,25 @@ func (s *Service) Start(ctx context.Context) {
 	s.Reload(ctx)
 }
 
+// ClientOptions 返回运行服务与配置命令共用的 Redis 连接配置。
+func ClientOptions() *goRedis.UniversalOptions {
+	options := &goRedis.UniversalOptions{
+		MasterName:       MasterName,
+		DB:               DataBase,
+		Password:         Password,
+		SentinelPassword: SentinelPassword,
+		DialTimeout:      DialTimeout,
+		ReadTimeout:      ReadTimeout,
+	}
+	if Mode == "sentinel" {
+		options.Addrs = SentinelAddress
+	} else {
+		options.Addrs = []string{fmt.Sprintf("%s:%d", Host, Port)}
+		options.MasterName = ""
+	}
+	return options
+}
+
 func (s *Service) Reload(ctx context.Context) {
 	// 关闭上一次的redis instance
 	s.Close()
@@ -48,24 +67,7 @@ func (s *Service) Reload(ctx context.Context) {
 	s.ctx, s.cancelFunc = context.WithCancel(ctx)
 	log.Debugf(context.TODO(), "redis service context update success.")
 
-	options := &goRedis.UniversalOptions{
-		MasterName:       MasterName,
-		DB:               DataBase,
-		Password:         Password,
-		SentinelPassword: SentinelPassword,
-		DialTimeout:      DialTimeout,
-		ReadTimeout:      ReadTimeout,
-	}
-
-	// 兼容哨兵模式
-	if Mode == "sentinel" {
-		options.Addrs = SentinelAddress
-	} else {
-		options.Addrs = []string{fmt.Sprintf("%s:%d", Host, Port)}
-		options.MasterName = ""
-	}
-
-	err := redis.SetInstance(s.ctx, ServiceName, options)
+	err := redis.SetInstance(s.ctx, KVBasePath, ServiceName, ClientOptions())
 	if err != nil {
 		log.Errorf(context.TODO(), "redis service start failed, err: %v", err)
 		return

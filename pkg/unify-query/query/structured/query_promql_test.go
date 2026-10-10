@@ -24,6 +24,65 @@ import (
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/mock"
 )
 
+func TestQueryPromQLValidateNamedOutputs(t *testing.T) {
+	base := QueryPromQL{
+		PromQL:           "vector(1) + vector(2)",
+		ResponseContract: NamedOutputsV1,
+		LegacyOutputRef:  "C",
+		OutputList: []QueryOutput{
+			{ReferenceName: "A", Expression: "vector(1)"},
+			{ReferenceName: "B", Expression: "vector(2)"},
+			{ReferenceName: "C", Expression: "vector(1)+vector(2)"},
+		},
+	}
+	if err := base.ValidateNamedOutputs(4); err != nil {
+		t.Fatal(err)
+	}
+	for _, mutate := range []func(*QueryPromQL){
+		func(q *QueryPromQL) { q.ResponseContract = "" },
+		func(q *QueryPromQL) { q.OutputList[1].ReferenceName = "A" },
+		func(q *QueryPromQL) { q.OutputList[1].Expression = "bad[" },
+		func(q *QueryPromQL) { q.OutputList[2].Expression = "vector(3)" },
+		func(q *QueryPromQL) { q.OutputList = q.OutputList[:1] },
+	} {
+		q := base
+		q.OutputList = append([]QueryOutput(nil), base.OutputList...)
+		mutate(&q)
+		if err := q.ValidateNamedOutputs(4); err == nil {
+			t.Fatalf("expected validation error: %+v", q)
+		}
+	}
+	legacy := QueryPromQL{PromQL: "vector(1)"}
+	if err := legacy.ValidateNamedOutputs(4); err != nil {
+		t.Fatal(err)
+	}
+	now := QueryPromQL{
+		PromQL:           "vector(now())",
+		ResponseContract: NamedOutputsV1,
+		LegacyOutputRef:  "C",
+		OutputList:       []QueryOutput{{ReferenceName: "C", Expression: "vector(now())"}},
+	}
+	if err := now.ValidateNamedOutputs(4); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestQueryPromQLValidateNamedOutputsRejectsNowLiteralCollision(t *testing.T) {
+	for _, expressions := range [][2]string{
+		{"vector(now())", "vector(0)"},
+		{"vector(0)", "vector(now())"},
+		{"vector(now()) + vector(0)", "vector(0) + vector(0)"},
+	} {
+		query := QueryPromQL{
+			PromQL:           expressions[0],
+			ResponseContract: NamedOutputsV1,
+			LegacyOutputRef:  "C",
+			OutputList:       []QueryOutput{{ReferenceName: "C", Expression: expressions[1]}},
+		}
+		require.ErrorContains(t, query.ValidateNamedOutputs(4), "legacy output expression must be equivalent to promql")
+	}
+}
+
 func TestQueryPromQLExpr(t *testing.T) {
 	log.InitTestLogger()
 

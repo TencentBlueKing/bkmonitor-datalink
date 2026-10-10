@@ -194,9 +194,19 @@ func timelineCacheFixture(t *testing.T, queryGroups []execution.QueryGroupIdenti
 		t.Fatal(err)
 	}
 	client.values[repository.activationHeaderKey()] = "header-1"
+	// All groups carry the same Plan set. Derive and validate it once during
+	// setup; each load below still decodes and validates its own payload through
+	// the production reader. Keep all 300 independently decoded cache entries:
+	// sharing those would stop testing the working-set budget regression.
+	timeline := productionShapedTimeline(t, "qg-template", plans)
 	for _, queryGroup := range queryGroups {
-		client.values[repository.scheduleTimelineKey(queryGroup)] =
-			string(productionShapedTimelinePayload(t, queryGroup, plans))
+		timeline.QueryGroup = queryGroup
+		timeline.Segments[0].Schedule.Segment.QueryGroup = queryGroup
+		payload, err := json.Marshal(timeline)
+		if err != nil {
+			t.Fatal(err)
+		}
+		client.values[repository.scheduleTimelineKey(queryGroup)] = string(payload)
 	}
 	return repository, client
 }

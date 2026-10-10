@@ -29,7 +29,7 @@ func TestRedisStorePublishesAssignmentOnlyWithLiveControlLeader(t *testing.T) {
 	if err := store.RegisterWorker(context.Background(), worker); err != nil {
 		t.Fatalf("RegisterWorker() error = %v", err)
 	}
-	ready, err := store.ListReadyWorkers(context.Background(), now)
+	ready, _, err := store.ListReadyWorkers(context.Background(), now)
 	if err != nil || len(ready) != 1 || ready[0].WorkerID != worker.WorkerID ||
 		ready[0].Compatibility() != worker.Compatibility() || ready[0].DependencyStatus != worker.DependencyStatus {
 		t.Fatalf("ListReadyWorkers() = (%+v, %v)", ready, err)
@@ -66,10 +66,13 @@ func TestRedisStorePublishesAssignmentOnlyWithLiveControlLeader(t *testing.T) {
 		t.Fatalf("unchanged assignment advanced versions: before=%+v after=%+v", record, unchanged)
 	}
 
+	// The leader's lease runs out on the server; its next decision is refused
+	// whatever instant the leader itself puts on it.
+	elapseOnRedis(t, store, ControlLeaderIdentity, time.Minute+time.Second)
 	_, err = store.PublishAssignment(
 		context.Background(), authority, AssignmentDecision{
 			QueryGroup: "query-group-2", DesiredWorkerID: worker.WorkerID,
-			ExpectedRecordRevision: 0, PlacementReason: PlacementRendezvous, DecidedAt: now.Add(2 * time.Minute),
+			ExpectedRecordRevision: 0, PlacementReason: PlacementRendezvous, DecidedAt: now.Add(2 * time.Second),
 		},
 	)
 	if !errors.Is(err, ErrStaleFence) {
@@ -124,12 +127,12 @@ func TestRedisStoreWorkerRegistryExpiresPhysicalEntries(t *testing.T) {
 	if err := store.RegisterWorker(context.Background(), worker); err != nil {
 		t.Fatalf("RegisterWorker() error = %v", err)
 	}
-	ready, err := store.ListReadyWorkers(context.Background(), now)
+	ready, _, err := store.ListReadyWorkers(context.Background(), now)
 	if err != nil || len(ready) != 1 {
 		t.Fatalf("ListReadyWorkers(immediate) = (%+v, %v)", ready, err)
 	}
 	time.Sleep(250 * time.Millisecond)
-	ready, err = store.ListReadyWorkers(context.Background(), time.Now())
+	ready, _, err = store.ListReadyWorkers(context.Background(), time.Now())
 	if err != nil || len(ready) != 0 {
 		t.Fatalf("ListReadyWorkers(expired) = (%+v, %v)", ready, err)
 	}
@@ -169,14 +172,16 @@ func TestRedisStoreLeaseFenceIsMonotonicAndAssignmentBound(t *testing.T) {
 	if first.Fence.OwnerEpoch != 1 || first.Fence.LeaseToken == "" {
 		t.Fatalf("first lease = %+v", first)
 	}
-	if err := store.CheckFence(context.Background(), first.Fence, now.Add(30*time.Second)); err != nil {
+	if err := store.CheckFence(context.Background(), first.Fence); err != nil {
 		t.Fatalf("CheckFence(first) error = %v", err)
 	}
 	renewed, err := store.Renew(context.Background(), first.Fence, now.Add(30*time.Second), time.Minute)
 	if err != nil || !renewed.Deadline.Equal(now.Add(90*time.Second)) {
 		t.Fatalf("Renew() = (%+v, %v)", renewed, err)
 	}
-	if err := store.CheckFence(context.Background(), renewed.Fence, now.Add(91*time.Second)); !errors.Is(err, ErrStaleFence) {
+	// The renewed minute passes on the server.
+	elapseOnRedis(t, store, "query-group-1", time.Minute+time.Second)
+	if err := store.CheckFence(context.Background(), renewed.Fence); !errors.Is(err, ErrStaleFence) {
 		t.Fatalf("CheckFence(expired) error = %v, want ErrStaleFence", err)
 	}
 
@@ -187,13 +192,13 @@ func TestRedisStoreLeaseFenceIsMonotonicAndAssignmentBound(t *testing.T) {
 	if second.Fence.OwnerEpoch != first.Fence.OwnerEpoch+1 || second.Fence.LeaseToken == first.Fence.LeaseToken {
 		t.Fatalf("second lease = %+v, first = %+v", second, first)
 	}
-	if err := store.CheckFence(context.Background(), first.Fence, now.Add(92*time.Second)); !errors.Is(err, ErrStaleFence) {
+	if err := store.CheckFence(context.Background(), first.Fence); !errors.Is(err, ErrStaleFence) {
 		t.Fatalf("CheckFence(old fence) error = %v, want ErrStaleFence", err)
 	}
 	if err := store.Release(context.Background(), second.Fence); err != nil {
 		t.Fatalf("Release() error = %v", err)
 	}
-	if err := store.CheckFence(context.Background(), second.Fence, now.Add(92*time.Second)); !errors.Is(err, ErrStaleFence) {
+	if err := store.CheckFence(context.Background(), second.Fence); !errors.Is(err, ErrStaleFence) {
 		t.Fatalf("CheckFence(released) error = %v, want ErrStaleFence", err)
 	}
 }
@@ -206,13 +211,14 @@ func TestRedisStoreFencedCASRejectsExpiredSnapshotPublisher(t *testing.T) {
 		t.Fatalf("AcquireControlLeader() error = %v", err)
 	}
 	result, err := store.FencedCompareAndSet(context.Background(), FencedCASRequest{
-		Fence: authority.Fence, At: now, Namespace: "snapshot-active", ExpectedMissing: true, Value: []byte("snapshot-1"),
+		Fence: authority.Fence, Namespace: "snapshot-active", ExpectedMissing: true, Value: []byte("snapshot-1"),
 	})
 	if err != nil || result != FencedCASApplied {
 		t.Fatalf("FencedCompareAndSet(first) = (%s, %v)", result, err)
 	}
+	elapseOnRedis(t, store, ControlLeaderIdentity, time.Minute+time.Second)
 	result, err = store.FencedCompareAndSet(context.Background(), FencedCASRequest{
-		Fence: authority.Fence, At: now.Add(2 * time.Minute), Namespace: "snapshot-active",
+		Fence: authority.Fence, Namespace: "snapshot-active",
 		Expected: []byte("snapshot-1"), Value: []byte("snapshot-2"),
 	})
 	if !errors.Is(err, ErrStaleFence) || result != FencedCASStaleOwner {
@@ -252,7 +258,7 @@ func TestRedisStoreReadControlComposesWithFencedCompareAndSet(t *testing.T) {
 	}
 	want := []byte("progress-v1")
 	status, err := store.FencedCompareAndSet(ctx, FencedCASRequest{
-		Fence: lease.Fence, At: now, Namespace: namespace, ExpectedMissing: true, Value: want,
+		Fence: lease.Fence, Namespace: namespace, ExpectedMissing: true, Value: want,
 	})
 	if err != nil || status != FencedCASApplied {
 		t.Fatalf("FencedCompareAndSet() = (%s, %v), want (%s, nil)", status, err, FencedCASApplied)
@@ -264,7 +270,7 @@ func TestRedisStoreReadControlComposesWithFencedCompareAndSet(t *testing.T) {
 	}
 	wantNext := []byte("progress-v2")
 	status, err = store.FencedCompareAndSet(ctx, FencedCASRequest{
-		Fence: lease.Fence, At: now, Namespace: namespace, Expected: value, Value: wantNext,
+		Fence: lease.Fence, Namespace: namespace, Expected: value, Value: wantNext,
 	})
 	if err != nil || status != FencedCASApplied {
 		t.Fatalf("FencedCompareAndSet(read expected) = (%s, %v), want (%s, nil)", status, err, FencedCASApplied)
@@ -296,10 +302,10 @@ func TestRedisStoreCheckFenceCarriesTheAssignmentItAlreadyRead(t *testing.T) {
 	// The control leader identity has no Assignment hash at all. It is the
 	// branch that breaks first if the record fields are returned unguarded,
 	// because a Lua reply stops at its first nil.
-	if err := store.CheckFence(ctx, authority.Fence, now.Add(time.Second)); err != nil {
+	if err := store.CheckFence(ctx, authority.Fence); err != nil {
 		t.Fatalf("CheckFence(control leader) error = %v", err)
 	}
-	if _, err := store.CheckFenceWithAssignment(ctx, authority.Fence, now.Add(time.Second)); err == nil {
+	if _, err := store.CheckFenceWithAssignment(ctx, authority.Fence); err == nil {
 		t.Fatal("CheckFenceWithAssignment(control leader) returned a record, want a refusal")
 	}
 
@@ -317,7 +323,7 @@ func TestRedisStoreCheckFenceCarriesTheAssignmentItAlreadyRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadAssignment() error = %v", err)
 	}
-	merged, err := store.CheckFenceWithAssignment(ctx, lease.Fence, now.Add(time.Second))
+	merged, err := store.CheckFenceWithAssignment(ctx, lease.Fence)
 	if err != nil {
 		t.Fatalf("CheckFenceWithAssignment() error = %v", err)
 	}
@@ -333,14 +339,14 @@ func TestRedisStoreCheckFenceCarriesTheAssignmentItAlreadyRead(t *testing.T) {
 	foreign := execution.OwnerFence{
 		QueryGroup: "query-group-1", OwnerID: "worker-2", OwnerEpoch: 1, LeaseToken: "lease-token",
 	}
-	if record, err := store.CheckFenceWithAssignment(ctx, foreign, now.Add(time.Second)); !errors.Is(err, ErrNotDesired) ||
+	if record, err := store.CheckFenceWithAssignment(ctx, foreign); !errors.Is(err, ErrNotDesired) ||
 		record != (AssignmentRecord{}) {
 		t.Fatalf("CheckFenceWithAssignment(other worker) = (%+v, %v), want (zero, ErrNotDesired)", record, err)
 	}
 	if err := store.Release(ctx, lease.Fence); err != nil {
 		t.Fatalf("Release() error = %v", err)
 	}
-	if record, err := store.CheckFenceWithAssignment(ctx, lease.Fence, now.Add(2*time.Second)); !errors.Is(err, ErrStaleFence) ||
+	if record, err := store.CheckFenceWithAssignment(ctx, lease.Fence); !errors.Is(err, ErrStaleFence) ||
 		record != (AssignmentRecord{}) {
 		t.Fatalf("CheckFenceWithAssignment(released) = (%+v, %v), want (zero, ErrStaleFence)", record, err)
 	}
@@ -454,7 +460,7 @@ func TestRedisStoreReadControlBatchMatchesReadControl(t *testing.T) {
 		}
 		value := []byte("progress-" + string(queryGroup))
 		if status, err := store.FencedCompareAndSet(ctx, FencedCASRequest{
-			Fence: lease.Fence, At: now, Namespace: namespace, ExpectedMissing: true, Value: value,
+			Fence: lease.Fence, Namespace: namespace, ExpectedMissing: true, Value: value,
 		}); err != nil || status != FencedCASApplied {
 			t.Fatalf("FencedCompareAndSet(%s) = (%s, %v)", queryGroup, status, err)
 		}
@@ -502,7 +508,9 @@ func TestRedisStoreOverlappingOwnersOldWriteIsRefused(t *testing.T) {
 			}
 			return now.Add(11 * time.Second)
 		}},
-		{name: "old worker vanishes and its lease expires", takeover: func(_ *testing.T, _ *RedisStore, _ Lease, now time.Time) time.Time {
+		{name: "old worker vanishes and its lease expires", takeover: func(t *testing.T, store *RedisStore, old Lease, now time.Time) time.Time {
+			t.Helper()
+			elapseOnRedis(t, store, old.Fence.QueryGroup, 61*time.Second)
 			return now.Add(61 * time.Second)
 		}},
 	} {
@@ -527,7 +535,7 @@ func TestRedisStoreOverlappingOwnersOldWriteIsRefused(t *testing.T) {
 				t.Fatalf("Acquire(old) = (%+v, %v)", old, err)
 			}
 			if result, err := store.FencedCompareAndSet(ctx, FencedCASRequest{
-				Fence: old.Fence, At: now, Namespace: "progress", ExpectedMissing: true, Value: []byte("cursor-1"),
+				Fence: old.Fence, Namespace: "progress", ExpectedMissing: true, Value: []byte("cursor-1"),
 			}); err != nil || result != FencedCASApplied {
 				t.Fatalf("FencedCompareAndSet(old, first write) = (%s, %v)", result, err)
 			}
@@ -551,13 +559,13 @@ func TestRedisStoreOverlappingOwnersOldWriteIsRefused(t *testing.T) {
 			// longer the one the Assignment names: the old worker's writes
 			// are refused from the move on, before anyone else can write.
 			if result, err := store.FencedCompareAndSet(ctx, FencedCASRequest{
-				Fence: old.Fence, At: moved, Namespace: "progress", Expected: []byte("cursor-1"), Value: []byte("cursor-old-2"),
+				Fence: old.Fence, Namespace: "progress", Expected: []byte("cursor-1"), Value: []byte("cursor-old-2"),
 			}); !errors.Is(err, ErrStaleFence) || result != FencedCASStaleOwner {
 				t.Fatalf("FencedCompareAndSet(old during the handover window) = (%s, %v), want stale owner", result, err)
 			}
 			// The fence check answers the same way, and says why: the
 			// Assignment names another worker.
-			if err := store.CheckFence(ctx, old.Fence, moved); !errors.Is(err, ErrNotDesired) {
+			if err := store.CheckFence(ctx, old.Fence); !errors.Is(err, ErrNotDesired) {
 				t.Fatalf("CheckFence(old during the handover window) error = %v, want ErrNotDesired", err)
 			}
 
@@ -569,12 +577,12 @@ func TestRedisStoreOverlappingOwnersOldWriteIsRefused(t *testing.T) {
 			// The old worker still believes it owns the Query Group and
 			// writes under its fence: refused, and the value stands.
 			result, err := store.FencedCompareAndSet(ctx, FencedCASRequest{
-				Fence: old.Fence, At: at, Namespace: "progress", Expected: []byte("cursor-1"), Value: []byte("cursor-old-3"),
+				Fence: old.Fence, Namespace: "progress", Expected: []byte("cursor-1"), Value: []byte("cursor-old-3"),
 			})
 			if !errors.Is(err, ErrStaleFence) || result != FencedCASStaleOwner {
 				t.Fatalf("FencedCompareAndSet(old after takeover) = (%s, %v), want stale owner", result, err)
 			}
-			if err := store.CheckFence(ctx, old.Fence, at); !errors.Is(err, ErrNotDesired) {
+			if err := store.CheckFence(ctx, old.Fence); !errors.Is(err, ErrNotDesired) {
 				t.Fatalf("CheckFence(old after takeover) error = %v, want ErrNotDesired", err)
 			}
 			value, missing, err := store.ReadControl(ctx, queryGroup, "progress")
@@ -582,7 +590,7 @@ func TestRedisStoreOverlappingOwnersOldWriteIsRefused(t *testing.T) {
 				t.Fatalf("ReadControl(after the refused writes) = (%q, %t, %v), want cursor-1 untouched", value, missing, err)
 			}
 			if result, err := store.FencedCompareAndSet(ctx, FencedCASRequest{
-				Fence: replacement.Fence, At: at, Namespace: "progress", Expected: []byte("cursor-1"), Value: []byte("cursor-2"),
+				Fence: replacement.Fence, Namespace: "progress", Expected: []byte("cursor-1"), Value: []byte("cursor-2"),
 			}); err != nil || result != FencedCASApplied {
 				t.Fatalf("FencedCompareAndSet(new) = (%s, %v), want applied", result, err)
 			}

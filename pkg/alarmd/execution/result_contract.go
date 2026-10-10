@@ -6,8 +6,9 @@
 package execution
 
 import (
-	"reflect"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
@@ -48,12 +49,11 @@ type LevelOutcome struct {
 	ReasonCode           ReasonCode
 	PartialProofs        []PartialDecisionProof
 	// EnvelopeHeld marks a RECOVERY outcome whose record's RECOVERY envelope
-	// the trigger held back, because a sibling Level had not agreed: its
-	// state was unknown, or its recovery span still held a triggering
-	// window. The outcome is a fact about this Level and still reaches the
-	// state; the envelope is a statement about the whole series' alert and
-	// waits for a later round. The result contract expects no TriggerEvent
-	// for such a record, and only for such a record.
+	// the open alert gate held back: the consumer holds no open alert on the
+	// series, or the identity it keys alerts by could not be built. The
+	// outcome is a fact about this Level and still reaches the state. The
+	// result contract expects no TriggerEvent for such a record, and only for
+	// such a record.
 	EnvelopeHeld bool
 }
 
@@ -120,6 +120,13 @@ func validateLevelOutcomes(
 	if err := validateStateHistoryReplacements(plan, result.StateResults, states); err != nil {
 		return err
 	}
+	// The markers this round ends with, built the way the exact-guard rule
+	// builds them, so an outcome's reason is judged against the guard that
+	// will actually be covering it rather than against a second derivation of
+	// what that guard ought to say.
+	finalMarkers := cloneGapScopes(loadedGapScopes(gaps, result.Plan))
+	applyGapMutations(finalMarkers, result.GuardBeforeEvents)
+	applyGapMutations(finalMarkers, result.GuardAfterState)
 	seen := make(map[levelOutcomeIdentity]LevelOutcome, len(result.LevelOutcomes))
 	for _, outcome := range result.LevelOutcomes {
 		identity := levelOutcomeIdentity{
@@ -131,7 +138,7 @@ func validateLevelOutcomes(
 		if _, duplicate := seen[identity]; duplicate {
 			return resultContractViolation(codeOutcomeDuplicate, "duplicate Level outcome")
 		}
-		if err := validateLevelOutcome(input, plan, result.Disposition, outcome, result.StateResults, states, gaps); err != nil {
+		if err := validateLevelOutcome(input, plan, result.Disposition, outcome, result.StateResults, states, gaps, finalMarkers); err != nil {
 			return err
 		}
 		seen[identity] = outcome
@@ -153,6 +160,7 @@ func validateLevelOutcome(
 	stateResults []StateEvaluation,
 	states StatePreflightResult,
 	gaps GapLoadResult,
+	finalMarkers map[GapScope]GapScopeState,
 ) error {
 	if outcome.Plan != plan.Identity || !compiledPlanHasLevel(plan.CompiledPlan, outcome.LevelID) ||
 		outcome.SeriesIdentityDigest == "" {
@@ -198,13 +206,49 @@ func validateLevelOutcome(
 	guardReasons := loadedGuardReasons(plan.Identity, outcome.LevelID, stateIdentity, states, gaps)
 	if len(guardReasons) != 0 {
 		switch outcome.Outcome {
-		case LevelOutcomeNormal, LevelOutcomeRecovery:
+		case LevelOutcomeNormal:
 			if !loadedSeriesWarmingCompleted(outcome, plan, stateResults, states, gaps) {
-				return resultContractViolation(codeOutcomeBusinessUnderActiveGuard, "active Runtime State or Plan gap guard forbids NORMAL and RECOVERY")
+				return resultContractViolation(codeOutcomeBusinessUnderActiveGuard, "active Runtime State or Plan gap guard forbids NORMAL")
 			}
+		case LevelOutcomeRecovery:
+			// A guard forbids calling the Level normal. It does not forbid
+			// closing what was opened, and it used to: a Level under a guard
+			// could not recover until its window was FULL again, which for a
+			// strategy whose window outlasts the interval between releases is
+			// never (decision-022).
+			//
+			// Nothing is checked here in its place, deliberately. The evidence
+			// for a recovery is counted where it is observed -- the trigger
+			// walks the positions it actually saw -- and checked again on the
+			// event contract, which refuses a RECOVERY whose own window
+			// evidence does not carry it. A third reading here would have to
+			// re-derive the same relation from the loaded state, and the one
+			// it used to derive was "the mutation writes the Level FULL",
+			// which is the very condition a hole in the window makes
+			// unreachable. Removing it takes away a check that was reading the
+			// wrong quantity, not a check of this.
 		case LevelOutcomeUnknown:
 			if !loadedSeriesWarmingCompleted(outcome, plan, stateResults, states, gaps) {
-				if _, ok := guardReasons[outcome.ReasonCode]; !ok && disposition != PlanRetryPending {
+				// Either the reason the guard is already up for, or the
+				// reason the marker this round ends with carries. Both are
+				// exact -- two named values, not "any reason" -- and the
+				// second has to be admitted because it is the guard that will
+				// actually be covering this outcome.
+				//
+				// Read off the final marker through the same function the
+				// exact-guard rule uses, not worked out again from the inputs.
+				// Recomputing it here would put the fold in two places with
+				// nothing comparing them, which is the shape this whole change
+				// exists to remove.
+				//
+				// Only the first used to be, and a round that brought a new
+				// incomplete input to an already guarded Level could then
+				// satisfy neither rule: this one wanted the stored reason and
+				// the exact-guard rule wanted the final marker's, which is the
+				// new one. The Plan failed to evaluate on every Slot for as
+				// long as the input stayed incomplete.
+				if _, ok := guardReasons[outcome.ReasonCode]; !ok && disposition != PlanRetryPending &&
+					!finalGapGuardsOutcome(finalMarkers, outcome) {
 					return resultContractViolation(codeOutcomeUnknownDropsGuardReason, "UNKNOWN Level outcome does not preserve its active guard reason")
 				}
 				constrained = true
@@ -586,64 +630,98 @@ func stateRetentionPoints(plan DuePlan) uint32 {
 	return retention
 }
 
-// validateStateHistoryReplacement proves that Points is the complete bounded
-// replacement snapshot obtained from the loaded history plus this batch's
-// affected anchors. Retention may evict only the oldest points.
+// validateStateHistoryReplacement proves that Points is this round's addition
+// to the loaded record and nothing else: every point anchored in this batch,
+// ordered and unique, and where it lands on a position the loaded history
+// already holds, the same record carrying at least the facts that were stored.
+// BaseHistory must be the history that was loaded, and the retention bound the
+// one the compiled Plan asks for.
+//
+// It used to prove that Points was the whole bounded window. The window is
+// still what gets written; it is now assembled at serialization from these two
+// fields, so what has to be proved here is that the pair describes it.
 func validateStateHistoryReplacement(loaded []StateHistoryPoint, mutation StateMutation, retention uint32) error {
 	if retention == 0 {
 		return resultContractViolation(codeHistoryRetentionBoundMissing, "State history replacement lacks a retention bound")
 	}
-	affected := make(map[RecordAnchor]struct{}, len(mutation.AffectedRecords))
-	for _, anchor := range mutation.AffectedRecords {
-		affected[anchor] = struct{}{}
+	// Derived by the producer, derived again here from the compiled Plan, and
+	// compared. One derivation would let the bound the write uses drift from
+	// the bound the Plan asks for with nothing to notice.
+	if mutation.RetentionPoints != retention {
+		return resultContractViolation(codeHistoryRetentionBoundMissing, "State mutation carries a retention bound the Plan does not ask for")
 	}
-	loadedPoints := make(map[RecordAnchor]StateHistoryPoint, len(loaded))
-	allAnchors := make(map[RecordAnchor]struct{}, len(loaded)+len(affected))
-	for _, point := range loaded {
-		anchor := RecordAnchor{RecordID: point.RecordID, SourceTime: point.SourceTime}
-		loadedPoints[anchor] = point
-		allAnchors[anchor] = struct{}{}
+	if !isLoadedHistoryItself(mutation.BaseHistory, loaded) {
+		return resultContractViolation(codeHistoryLoadedPointChanged, "State mutation base is not the loaded history")
 	}
-	if len(mutation.Points) != 0 {
-		for anchor := range affected {
-			allAnchors[anchor] = struct{}{}
+	// Both lookups are over the addition, which is one point in an ordinary
+	// round, so neither indexes the loaded record: a map keyed by every stored
+	// point would cost per retained point, in time and in memory, which is the
+	// per-round window cost this shape removed. The addition's anchors are
+	// found by scanning the anchors this batch names, and the loaded position a
+	// point lands on by binary search over a record the loader keeps ordered.
+	for index, point := range mutation.Points {
+		if index > 0 && StateHistoryOrder(mutation.Points[index-1], point) >= 0 {
+			return resultContractViolation(codeHistorySnapshotIncomplete, "State history addition is not ordered and unique")
 		}
-	}
-	for _, point := range mutation.Points {
 		anchor := RecordAnchor{RecordID: point.RecordID, SourceTime: point.SourceTime}
-		if loadedPoint, ok := loadedPoints[anchor]; ok {
-			if !reflect.DeepEqual(loadedPoint, point) {
-				return resultContractViolation(codeHistoryLoadedPointChanged, "State history replacement changes a loaded point")
+		current := false
+		for _, candidate := range mutation.AffectedRecords {
+			if candidate == anchor {
+				current = true
+				break
 			}
+		}
+		if !current {
+			return resultContractViolation(codeHistoryLoadedPointInvented, "State history addition carries a point this batch did not evaluate")
+		}
+		position := sort.Search(len(loaded), func(index int) bool { return loaded[index].SourceTime >= point.SourceTime })
+		if position == len(loaded) || loaded[position].SourceTime != point.SourceTime ||
+			loaded[position].RecordID != point.RecordID {
 			continue
 		}
-		if _, current := affected[anchor]; !current {
-			return resultContractViolation(codeHistoryLoadedPointInvented, "State history replacement changes or invents a loaded point")
-		}
-	}
-	expectedAnchors := make([]RecordAnchor, 0, len(allAnchors))
-	for anchor := range allAnchors {
-		expectedAnchors = append(expectedAnchors, anchor)
-	}
-	sort.Slice(expectedAnchors, func(left, right int) bool {
-		if expectedAnchors[left].SourceTime != expectedAnchors[right].SourceTime {
-			return expectedAnchors[left].SourceTime < expectedAnchors[right].SourceTime
-		}
-		return expectedAnchors[left].RecordID < expectedAnchors[right].RecordID
-	})
-	if len(expectedAnchors) > int(retention) {
-		expectedAnchors = expectedAnchors[len(expectedAnchors)-int(retention):]
-	}
-	if len(expectedAnchors) != len(mutation.Points) {
-		return resultContractViolation(codeHistorySnapshotIncomplete, "State history replacement is not the complete bounded snapshot")
-	}
-	for index, point := range mutation.Points {
-		anchor := RecordAnchor{RecordID: point.RecordID, SourceTime: point.SourceTime}
-		if anchor != expectedAnchors[index] {
-			return resultContractViolation(codeHistorySnapshotIncomplete, "State history replacement is not the complete bounded snapshot")
+		stored := loaded[position]
+		// The addition replaces the stored point at that position, so it has to
+		// carry what was stored there. A fact that disappears this way is a
+		// silent history rewrite: the point stays, the Level's past does not.
+		for _, fact := range stored.Levels {
+			if !containsStateLevelFact(point.Levels, fact) {
+				return resultContractViolation(codeHistoryLoadedPointChanged, "State history addition drops a stored Level fact")
+			}
 		}
 	}
 	return nil
+}
+
+// isLoadedHistoryItself reports whether base is the loaded history, not a copy
+// of it: the same length and the same backing array.
+//
+// Identity rather than equality, for two reasons. The property the mutation
+// claims is that it references the record the Slot loaded - the whole point of
+// carrying a base instead of a rebuilt window - and a copy with equal content
+// is precisely the thing this shape exists to remove, so accepting one would
+// leave the cost in place and the check reporting success. And comparing the
+// content costs what the copy cost: over a 1469 point window a per-point deep
+// comparison measured 310 us, 155 KB and 3085 allocations for one series in one
+// round, which is the window allocation again under another name, moved from
+// the producer into the contract check where the benchmark on the producer
+// cannot see it.
+func isLoadedHistoryItself(base, loaded []StateHistoryPoint) bool {
+	if len(base) != len(loaded) {
+		return false
+	}
+	if len(loaded) == 0 {
+		return true
+	}
+	return &base[0] == &loaded[0]
+}
+
+func containsStateLevelFact(facts []StateLevelFact, fact StateLevelFact) bool {
+	for _, candidate := range facts {
+		if candidate == fact {
+			return true
+		}
+	}
+	return false
 }
 
 func stateUnknownMayAdvance(input InternalExecution, mutation StateMutation, outcome LevelOutcome) bool {
@@ -779,10 +857,23 @@ func validateDegradedGuardCoverage(
 			}
 			continue
 		}
+		if loadedStateGuardsTerminalOutcome(states, outcome) || loadedGapGuardsTerminalOutcome(gaps, outcome) {
+			// The blob this round read is itself the guard. A series whose
+			// stored state cannot be decoded produces a TERMINAL outcome
+			// naming that, and there is no marker to point at: the record is
+			// the persistent fact, read again identically on every round, and
+			// more durable than anything a writer could put beside it.
+			// Without this the contract refused the Level every round for as
+			// long as the bad record sat there, and the refusal named nothing
+			// anybody could clear.
+			continue
+		}
 		if finalStateGuardsOutcome(finalStates, outcome) || finalGapGuardsOutcome(finalMarkers, outcome) {
 			continue
 		}
-		return resultContractViolation(codeGuardMissingForDegradedOutcome, "degraded Level outcome lacks an exact durable guard")
+		return resultContractViolation(codeGuardMissingForDegradedOutcome,
+			"degraded Level outcome lacks an exact durable guard"+
+				describeMissingGuard(input, result, loadedMarkers, finalMarkers, finalStates, outcome))
 	}
 	if obligations == 0 &&
 		(result.Disposition == PlanUnavailable || result.Disposition == PlanReadinessGap || result.Disposition == PlanTerminal) &&
@@ -790,6 +881,121 @@ func validateDegradedGuardCoverage(
 		return resultContractViolation(codeGuardMissingPreEvent, "degraded plan completion requires a durable pre-event gap guard")
 	}
 	return nil
+}
+
+// describeMissingGuard renders what the two comparisons saw when neither
+// guarded a degraded outcome. The refusal used to say only that it refused,
+// and a residue of it on two objects could not be attributed: whether the
+// outcome carried this round's fold, the stored marker's reason or a local
+// one, and whether the State guard or the marker was the one that did not
+// match, were not in the line. Each value is a closed vocabulary, a bounded
+// integer or yes/no; who it happened to is on the observation already.
+func describeMissingGuard(
+	input InternalExecution, result PlanEvaluationResult,
+	loadedMarkers, finalMarkers map[GapScope]GapScopeState,
+	finalStates map[StateKeyIdentity]RuntimeStateView, outcome LevelOutcome,
+) string {
+	seriesGuard, levelGuard, stateWritten := "none", "none", false
+	for identity, state := range finalStates {
+		if identity.Plan != outcome.Plan || identity.SeriesIdentityDigest != outcome.SeriesIdentityDigest {
+			continue
+		}
+		if state.SeriesGuard != nil {
+			seriesGuard = string(state.SeriesGuard.ReasonCode)
+		}
+		for _, level := range state.Levels {
+			if level.LevelID == outcome.LevelID {
+				levelGuard = string(level.HistoryCompleteness) + "/" + contractReasonOrNone(level.GapReasonCode)
+			}
+		}
+	}
+	for _, state := range result.StateResults {
+		if state.Mutation.Identity.Plan == outcome.Plan && state.Mutation.Identity.SeriesIdentityDigest == outcome.SeriesIdentityDigest {
+			stateWritten = true
+		}
+	}
+	// Empty when this round proposes no guard for the Level.
+	fold, _ := RoundGuardReasonForLevel(input.Inputs, outcome.Plan, outcome.LevelID)
+	outcomesForLevel := 0
+	for _, other := range result.LevelOutcomes {
+		if other.Plan == outcome.Plan && other.LevelID == outcome.LevelID && other.SeriesIdentityDigest == outcome.SeriesIdentityDigest {
+			outcomesForLevel++
+		}
+	}
+	return " (outcome " + string(outcome.Outcome) +
+		", reason " + contractReasonOrNone(outcome.ReasonCode) +
+		", level " + strconv.FormatUint(uint64(outcome.LevelID), 10) +
+		", outcomes for level " + strconv.Itoa(outcomesForLevel) +
+		", input full " + formatContractBool(stateInputAllowsAdvance(input, outcome)) +
+		", inputs " + describeAffectedInputs(input.Inputs, outcome) +
+		", round fold " + contractReasonOrNone(fold) +
+		", state series guard " + seriesGuard +
+		", state level guard " + levelGuard +
+		", state written " + formatContractBool(stateWritten) +
+		", marker plan loaded " + markerReasonOrNone(loadedMarkers, GapScope{}) +
+		", marker level loaded " + markerReasonOrNone(loadedMarkers, GapScope{HasLevel: true, LevelID: outcome.LevelID}) +
+		", marker plan final " + markerReasonOrNone(finalMarkers, GapScope{}) +
+		", marker level final " + markerReasonOrNone(finalMarkers, GapScope{HasLevel: true, LevelID: outcome.LevelID}) +
+		", guard proposed " + formatContractBool(len(result.GuardBeforeEvents) != 0 || len(result.GuardAfterState) != 0) + ")"
+}
+
+// maxDescribedInputs bounds how many of the Level's bindings the refusal
+// spells out; the rest are counted. A Level rarely has more than a handful.
+const maxDescribedInputs = 6
+
+// describeAffectedInputs renders the bindings "input full" was decided over,
+// one term per binding, as scope:role:completeness/data/disposition, and
+// whether a quality or terminal fact localized the outcome to this record.
+// "input full no" alone could not say which of its four conjuncts failed;
+// the round fold reads only completeness, so a binding that is FULL yet
+// EMPTY, or degraded without being partial, is invisible to it and visible
+// here. Every value is a closed vocabulary.
+func describeAffectedInputs(all []NamedInputBinding, outcome LevelOutcome) string {
+	bindings := affectedBindingsOf(all, outcome.Plan, outcome.LevelID)
+	if len(bindings) == 0 {
+		return "none"
+	}
+	terms := make([]string, 0, len(bindings)+1)
+	for index, binding := range bindings {
+		if index == maxDescribedInputs {
+			terms = append(terms, "+"+strconv.Itoa(len(bindings)-index))
+			break
+		}
+		scope := "plan"
+		if binding.Consumer.HasLevel {
+			scope = "level"
+		}
+		terms = append(terms, scope+":"+string(binding.Role)+":"+string(binding.Completeness)+"/"+
+			inputDataStateOrUnknown(binding.DataState)+"/"+string(binding.Disposition))
+	}
+	localized, err := localizedInputOutcome(all, outcome.Plan, outcome)
+	localizedText := formatContractBool(err == nil && localized)
+	if err != nil {
+		localizedText = "error"
+	}
+	return "[" + strings.Join(terms, " ") + "] localized " + localizedText
+}
+
+func inputDataStateOrUnknown(state DataState) string {
+	if state == DataStateUnknown {
+		return "UNKNOWN"
+	}
+	return string(state)
+}
+
+func contractReasonOrNone(reason ReasonCode) string {
+	if reason == "" {
+		return "none"
+	}
+	return string(reason)
+}
+
+func markerReasonOrNone(markers map[GapScope]GapScopeState, scope GapScope) string {
+	marker, found := markers[scope]
+	if !found {
+		return "none"
+	}
+	return string(marker.Status) + "/" + contractReasonOrNone(marker.ReasonCode)
 }
 
 func loadedGapScopes(gaps GapLoadResult, plan PlanIdentity) map[GapScope]GapScopeState {
@@ -919,6 +1125,63 @@ func finalStateGuardsOutcome(states map[StateKeyIdentity]RuntimeStateView, outco
 				level.GapReasonCode == outcome.ReasonCode {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// loadedGapGuardsTerminalOutcome reports whether a TERMINAL outcome is covered
+// by the gap marker that caused it. A marker that loaded terminal is the
+// persistent fact behind every Level of the Plan being terminal, and there is
+// no marker to point at because the marker is the thing that is broken.
+//
+// Three conditions, and each is load-bearing -- see
+// loadedStateGuardsTerminalOutcome, which is the same rule for the other
+// record.
+func loadedGapGuardsTerminalOutcome(gaps GapLoadResult, outcome LevelOutcome) bool {
+	if outcome.Outcome != LevelOutcomeTerminal {
+		return false
+	}
+	for _, marker := range gaps.Items {
+		if marker.Identity.Plan != outcome.Plan {
+			continue
+		}
+		if marker.Status == GapTerminal && marker.ReasonCode == outcome.ReasonCode {
+			return true
+		}
+	}
+	return false
+}
+
+// loadedStateGuardsTerminalOutcome reports whether a TERMINAL outcome is
+// covered by the loaded record that caused it.
+//
+// Only TERMINAL, and only when the loaded view of that series says the record
+// could not be read and says it with the outcome's own reason. All three
+// matter. Widening it to any outcome would let a business UNKNOWN pass with no
+// guard at all; dropping the reason comparison would let a Level terminal for
+// one cause be covered by a record broken for another.
+//
+// The outcome-kind half cannot be reached through Validate today -- a
+// non-TERMINAL outcome beside a DeterministicInvalid series is already refused
+// by codeOutcomeInvalidSeriesNotTerminal above -- so all three are pinned at
+// the predicate in result_contract_internal_test.go. That rule is a separate
+// rule, and this line is what holds if it is ever relaxed.
+//
+// It reads the loaded views rather than the final ones on purpose: a series
+// whose record could not be decoded produces no mutation, so the two are the
+// same here -- and the loaded set is where the fact is, which is what this
+// rule is about.
+func loadedStateGuardsTerminalOutcome(states StatePreflightResult, outcome LevelOutcome) bool {
+	if outcome.Outcome != LevelOutcomeTerminal {
+		return false
+	}
+	for _, view := range states.Items {
+		if view.Identity.Plan != outcome.Plan || view.Identity.SeriesIdentityDigest != outcome.SeriesIdentityDigest {
+			continue
+		}
+		if view.Status == StateDeterministicInvalid && view.ReasonCode == outcome.ReasonCode {
+			return true
 		}
 	}
 	return false
@@ -1061,6 +1324,27 @@ func validateEventOutcomes(input InternalExecution, result PlanEvaluationResult,
 					}
 				}
 			}
+		}
+	}
+	// An event decided and not kept, because its protocol has no message for
+	// its kind, stands for the record's envelope as an event would: the same
+	// record identity, the same kind, never both. It carries no content to
+	// check - that is what not keeping it means - so what is checked is that
+	// the protocol really has no message for it: a kept identity in place of
+	// an event the consumer would have received is a lost event.
+	for _, state := range result.StateResults {
+		for _, dropped := range state.WithoutMessage {
+			if contract.EventHasMessage(dropped.Format, dropped.EventKind) {
+				return resultContractViolation(codeEventKindMismatch, "an event its protocol has a message for was not kept")
+			}
+			record := recordIdentity{Series: state.Mutation.Identity.SeriesIdentityDigest, Record: dropped.Record}
+			if _, duplicate := actualEvents[record]; duplicate {
+				return resultContractViolation(codeEventDuplicate, "duplicate TriggerEvent for one Plan series record")
+			}
+			if expectedEvents[record] == "" || dropped.EventKind != expectedEvents[record] {
+				return resultContractViolation(codeEventKindMismatch, "TriggerEvent kind does not match Level outcomes")
+			}
+			actualEvents[record] = struct{}{}
 		}
 	}
 	if len(actualEvents) != len(expectedEvents) {

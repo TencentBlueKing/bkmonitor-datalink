@@ -15,6 +15,7 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/contract"
 	resultcontract "github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/execution"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/alarmd/observability"
 )
 
 // Every code in the catalogue has to be on one side or the other, decided here
@@ -87,6 +88,24 @@ func TestEveryReasonCodeIsAttributedToOneSideOrTheOther(t *testing.T) {
 	for _, vocabulary := range [][]string{HealthyCompletions, BlockedOutcomes, FailedExecutions, ResultContractRefusals} {
 		for _, word := range vocabulary {
 			known[word] = true
+		}
+	}
+	// The third vocabulary: the words a query failure carries when a
+	// capacity budget rejected the round, one per budget and one for a
+	// budget the code does not know. They are the failure's code on the
+	// row, read before the round's outcome, and a word here that the table
+	// does not map falls the row through to the fault line -- which is how
+	// a rejection this deployment decided marked it degraded.
+	for _, budget := range append(observability.CapacityBudgets(), observability.CapacityBudgetOther) {
+		word := observability.CapacityBudgetFailureCode(budget)
+		known[word] = true
+		verdict, decided := codeChecks[word]
+		if !decided || verdict.check != CheckDetectionAbandoned {
+			t.Errorf("budget %s rejects under %q, which maps to %q, want %s: the deployment's own limit, the same line as RESOURCE_HARD_STOP",
+				budget, word, verdict.check, CheckDetectionAbandoned)
+		}
+		if facet, present := failureFacets[word]; !present || facet.class != ClassCapacity || facet.dependency != DependencyNone {
+			t.Errorf("budget %s rejects under %q, whose facets are %+v, want capacity decided by nobody but this deployment", budget, word, facet)
 		}
 	}
 	for code := range codeChecks {
@@ -718,5 +737,33 @@ func TestASkippedWindowIsNotFiledAsRequiringNoAction(t *testing.T) {
 			t.Errorf("%q is %s's; it would go to whoever owns the strategy, who cannot "+
 				"make this deployment keep up", reason, got)
 		}
+	}
+}
+
+// The live shape of a capacity rejection on a row: the round's outcome word
+// is "error", the failure names the budget. It is the deployment's own limit
+// -- the same line as RESOURCE_HARD_STOP, folded on the budget's word, read
+// as capacity decided by nobody but this deployment -- and not the fault
+// line, where it sat as "EVALUATE/UNLOCATED/UNLOCATED", unclassified. It
+// still counts against the deployment: capacity is what this deployment
+// could have prevented, and the verdict says so from the right line.
+func TestABudgetRejectionIsCapacityNotAFault(t *testing.T) {
+	at := now.Add(-2 * time.Minute)
+	rows := []Anomaly{{QueryGroup: "qg-budget", Kind: KindDegradedRun, ReasonCode: "error", Since: at, ReasonSince: at,
+		Failure: &FailureRef{Stage: "stream_complete", Category: "budget", Code: "BUDGET_STATE_MUTATIONS", At: &at},
+		LastError: &LastError{Text: "alarmd worker: invalid query result: alarmd worker: provisional state_mutations budget exceeded",
+			Type: "*fmt.wrapError", At: at, Attempts: 1, Operation: "normal"}}}
+	Attribute(rows, now)
+	row := rows[0]
+	if row.Finding.Check != CheckDetectionAbandoned || row.Finding.Owner != OwnerAlarmd ||
+		row.Finding.Group != "BUDGET_STATE_MUTATIONS" {
+		t.Fatalf("finding = %+v, want %s owned by %s, folded on the budget's word", row.Finding, CheckDetectionAbandoned, OwnerAlarmd)
+	}
+	if row.Blocked == nil || row.Blocked.Code != "BUDGET_STATE_MUTATIONS" || row.Blocked.Stage != StageEvaluate ||
+		row.Blocked.Class != ClassCapacity || row.Blocked.Dependency != DependencyNone {
+		t.Fatalf("blocked = %+v, want EVALUATE / CAPACITY / NONE under the budget's word", row.Blocked)
+	}
+	if row.Attribution != AttributionOurs || row.Unclassified {
+		t.Fatalf("attribution = %q unclassified = %v: capacity counts against the deployment, and the row is classified", row.Attribution, row.Unclassified)
 	}
 }

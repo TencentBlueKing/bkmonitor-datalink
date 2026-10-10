@@ -39,14 +39,13 @@ func (backend *readOnlyBackend) MGet(_ context.Context, keys []string) ([][]byte
 
 func (backend *readOnlyBackend) SetMany(context.Context, []BackendWrite) error { return nil }
 
+// capabilityStore opens a store whose router lists a capable backend and
+// routes to the given one, so a test can reach the point-of-use assertion
+// behind the probe at open.
 func capabilityStore(t *testing.T, backend Backend) *ExecutionStore {
 	t.Helper()
-	router, err := NewFixedRouter("target", backend)
-	if err != nil {
-		t.Fatal(err)
-	}
 	store, err := NewExecutionStore(ExecutionStoreOptions{
-		Prefix: "alarmd", Router: router, MaxValueBytes: 4096, MaxItemsPerCall: 4,
+		Prefix: "alarmd", Router: listedCapableRouter{routed: backend}, MaxValueBytes: 4096, MaxItemsPerCall: 4,
 		MinTTL: time.Minute, MaxTTL: 30 * 24 * time.Hour, RestartMargin: time.Minute,
 	})
 	if err != nil {
@@ -102,7 +101,7 @@ func TestAMissingBackendCapabilityIsNotReportedAsTheStoreBeingDown(t *testing.T)
 // wiring defect as the store being down - which is what it did, and what it
 // would go back to doing with one line changed.
 func TestAMissingBackendCapabilityIsNotTheStoreBeingDownForRuntimeState(t *testing.T) {
-	store := newBatchStore(t, &readOnlyBackend{values: map[string][]byte{}}, nil)
+	store := capabilityStore(t, &readOnlyBackend{values: map[string][]byte{}})
 	result, err := store.ApplyRuntime(context.Background(), execution.StateApplyRequest{
 		Contract:  frozenRef(),
 		Retention: ttlTestRetention(5, time.Minute, 0),
@@ -187,4 +186,28 @@ type refusingRouter struct{}
 
 func (refusingRouter) Route(string, string) (StorageTarget, error) {
 	return StorageTarget{}, context.DeadlineExceeded
+}
+
+// It lists a target it can never route to: the store opens, and every route
+// fails the way an unreachable Redis does.
+func (refusingRouter) Targets() []StorageTarget {
+	return []StorageTarget{{Name: "unreachable", Backend: &casMemoryBackend{values: map[string][]byte{}}}}
+}
+
+// listedCapableRouter lists one backend and routes to another. It is how the
+// tests below reach the assertions at the points of use: the probe at open
+// sees a capable target, the write or read then meets an incapable one. That
+// is the defense path -- a router routing to something other than what it
+// listed -- and it has to keep answering with the named, deterministic reason
+// rather than with "the store is down".
+type listedCapableRouter struct {
+	routed Backend
+}
+
+func (router listedCapableRouter) Route(string, string) (StorageTarget, error) {
+	return StorageTarget{Name: "target", Backend: router.routed}, nil
+}
+
+func (listedCapableRouter) Targets() []StorageTarget {
+	return []StorageTarget{{Name: "target", Backend: &casMemoryBackend{values: map[string][]byte{}}}}
 }

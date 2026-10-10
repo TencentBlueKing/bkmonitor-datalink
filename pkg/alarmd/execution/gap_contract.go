@@ -124,3 +124,55 @@ func planGapMutationIsCanonical(mutation PlanGapMutation) bool {
 	}
 	return true
 }
+
+// ExtendSameSlotGap adds protection without replaying an already recorded Slot.
+// Existing observations and reasons belong to the first committed attempt.
+// In particular this operation never warms, clears, or resets those facts.
+// Callers validate the inputs and fence identity, ApplyVersion and schedule;
+// persistence must still compare the marker revision and the stored value.
+func ExtendSameSlotGap(previous []GapScopeState, mutations []GapScopeMutation) ([]GapScopeState, bool) {
+	if len(previous) == 0 || len(mutations) == 0 {
+		return nil, false
+	}
+	next := append([]GapScopeState(nil), previous...)
+	changed := false
+	for _, mutation := range mutations {
+		if mutation.Kind != GapOpen && mutation.Kind != GapStrengthen {
+			return nil, false
+		}
+		index := -1
+		for i := range next {
+			if next[i].Scope == mutation.Scope {
+				index = i
+				break
+			}
+		}
+		if index < 0 {
+			next = append(next, GapScopeState{Scope: mutation.Scope, Status: GapStatusGapped, ReasonCode: mutation.ReasonCode, RequiredFullSlots: mutation.RequiredFullSlots})
+			changed = true
+			continue
+		}
+		current := &next[index]
+		if mutation.RequiredFullSlots < current.RequiredFullSlots || mutation.ReasonCode != current.ReasonCode {
+			return nil, false
+		}
+		if current.Status != GapStatusGapped || mutation.RequiredFullSlots > current.RequiredFullSlots {
+			changed = true
+		}
+		// A same-Slot retry preserves the first commit's observations, so
+		// GAPPED may retain a positive count. It does not count a new Slot;
+		// a new-Slot gap is applied separately and resets that count.
+		current.Status = GapStatusGapped
+		current.RequiredFullSlots = mutation.RequiredFullSlots
+	}
+	if !changed {
+		return nil, false
+	}
+	sort.Slice(next, func(i, j int) bool {
+		if next[i].Scope.HasLevel != next[j].Scope.HasLevel {
+			return !next[i].Scope.HasLevel
+		}
+		return next[i].Scope.LevelID < next[j].Scope.LevelID
+	})
+	return next, true
+}

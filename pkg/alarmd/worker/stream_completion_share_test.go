@@ -44,9 +44,16 @@ func TestSlotExecutionCoordinatorCompletesFullEmptyWhenPrimaryIsEmptyAndDependen
 	if err != nil || !result.Completed || result.Result != observability.ResultSuccess {
 		t.Fatalf("Execute() result=%+v error=%v, want FULL EMPTY completion without error", result, err)
 	}
-	if len(evaluator.results) != 0 || ports.eventCount != 0 || ports.stateApplyCalls != 0 || ports.stateLoadCalls != 0 || len(ports.gapMutations) != 0 {
-		t.Fatalf("no-series Plan produced business effects: evaluations=%d events=%d state_apply=%d state_load=%d gaps=%d",
-			len(evaluator.results), ports.eventCount, ports.stateApplyCalls, ports.stateLoadCalls, len(ports.gapMutations))
+	if len(evaluator.results) != 0 || ports.eventCount != 0 || ports.stateApplyCalls != 0 || ports.stateLoadCalls != 0 {
+		t.Fatalf("no-series Plan produced business effects: evaluations=%d events=%d state_apply=%d state_load=%d",
+			len(evaluator.results), ports.eventCount, ports.stateApplyCalls, ports.stateLoadCalls)
+	}
+	// The dependency delivered data and no PRIMARY record consumed it, so
+	// every binding this Plan is judged on was whole: the round is evidence
+	// the input is whole, and the Plan scope recovers on it.
+	assertOnlyPlanScopeRecoveries(t, ports.gapMutations)
+	if len(ports.gapMutations) != 1 {
+		t.Fatalf("gap mutations=%+v, want the Plan scope recovered once", ports.gapMutations)
 	}
 	progress := ports.lastProgress
 	if progress.Completion.Kind != execution.CompletionFullEmpty || progress.Completion.Primary == nil ||
@@ -116,6 +123,11 @@ func TestSlotExecutionCoordinatorCompletesFullEmptyWhenPrimaryIsEmptyAndDependen
 			if err != nil || !result.Completed || result.Result != observability.ResultSuccess {
 				t.Fatalf("Execute() result=%+v error=%v, want FULL EMPTY completion without error", result, err)
 			}
+			// The zero gap mutations are the second half of this case: the
+			// round completes FULL EMPTY, and it is still not evidence that
+			// the dependency is answering again, so it does not advance the
+			// Plan scope's warmup. A round that never asked the question the
+			// guard is waiting on cannot count towards lifting it.
 			if len(evaluator.results) != 0 || ports.eventCount != 0 || ports.stateApplyCalls != 0 || ports.stateLoadCalls != 0 || len(ports.gapMutations) != 0 {
 				t.Fatalf("no-series Plan produced business effects: evaluations=%d events=%d state_apply=%d state_load=%d gaps=%d",
 					len(evaluator.results), ports.eventCount, ports.stateApplyCalls, ports.stateLoadCalls, len(ports.gapMutations))

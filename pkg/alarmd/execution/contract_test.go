@@ -12,6 +12,7 @@ package execution_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -160,9 +161,29 @@ func TestStateMutationPreflightClassifiesStableReplay(t *testing.T) {
 	if got := execution.ClassifyStateMutation(view, mutation); got != execution.StateAlreadyApplied {
 		t.Fatalf("same version/digest=%q", got)
 	}
+	if got := execution.ClassifyStateMutationDetail(view, mutation); got.AlreadyApplied != execution.StateAlreadyAppliedStable || got.VersionConflict != "" {
+		t.Fatalf("same version/digest at the expected revision = %+v, want kind stable and no conflict kind", got)
+	}
+	// The same statement one revision up is the write that landed while its
+	// reply was lost, re-sent unchanged. It is on disk; it is applied. Before
+	// this it was a conflict, and the Slot retried against post-Slot state
+	// and conflicted on every attempt.
+	skewed := view
+	skewed.BlobRevision = mutation.ExpectedBlobRevision + 1
+	if got := execution.ClassifyStateMutationDetail(skewed, mutation); got.Disposition != execution.StateAlreadyApplied || got.AlreadyApplied != execution.StateAlreadyAppliedRevisionSkew {
+		t.Fatalf("same version/digest one revision up = %+v, want ALREADY_APPLIED/revision_skew", got)
+	}
+	// Same version, different digest, one revision up is still somebody else's
+	// statement: the digest is what says whose it is, not the revision.
+	skewed.PersistedMutationDigest = execution.MutationDigest("different")
+	if got := execution.ClassifyStateMutationDetail(skewed, mutation); got.Disposition != execution.StateVersionConflict ||
+		got.VersionConflict != execution.StateVersionConflictRevisionMoved || got.AlreadyApplied != "" {
+		t.Fatalf("same version/different digest one revision up = %+v, want STATE_VERSION_CONFLICT/revision_moved", got)
+	}
 	view.PersistedMutationDigest = execution.MutationDigest("different")
-	if got := execution.ClassifyStateMutation(view, mutation); got != execution.StateVersionConflict {
-		t.Fatalf("same version/different digest=%q", got)
+	if got := execution.ClassifyStateMutationDetail(view, mutation); got.Disposition != execution.StateVersionConflict ||
+		got.VersionConflict != execution.StateVersionConflictSameVersionOtherStatement {
+		t.Fatalf("same version/different digest at the expected revision = %+v, want STATE_VERSION_CONFLICT/same_version_other_statement", got)
 	}
 	view.PersistedApplyVersion.EvaluationTime++
 	view.VersionComparison = execution.ApplyVersionPersistedNewer
@@ -781,6 +802,55 @@ func TestEvaluationAcceptsLoadedGappedWithExclusiveFinalFullProof(t *testing.T) 
 	}
 }
 
+// A guard forbids calling a Level normal. It does not forbid closing what was
+// opened, and this layer no longer pretends to decide that: decision-022
+// section 9.3 moved the recovery evidence check to the event contract, which
+// is the only layer that holds the evidence.
+//
+// That move is deliberate and has to stay readable, because the shape here is
+// the one that hides a missing check: this layer cannot reject an unevidenced
+// RECOVERY, and nothing in this package says why. The quantities the event
+// contract weighs - ObservedConsecutiveMisses, SkippedWindows,
+// OldestWindowStart - live on contract.RecoveryWindowEvidenceV1 and appear
+// nowhere in execution outside test fixtures, so a check written here could
+// only re-derive the relation from the loaded state, and the one it used to
+// derive ("the mutation writes the Level FULL") is exactly what a hole in the
+// window makes unreachable. The NORMAL cases above are the guard this layer
+// does own.
+func TestEvaluationAcceptsRecoveryUnderALoadedGuard(t *testing.T) {
+	t.Run("mutation remains warming", func(t *testing.T) {
+		result, request := loadedSeriesWarmingCompletion(t, execution.LevelOutcomeRecovery)
+		mutation := result.Plans[0].StateResults[0].Mutation
+		mutation.Levels = append([]execution.RuntimeLevelStateMutation(nil), mutation.Levels...)
+		mutation.Levels[0].HistoryCompleteness = execution.HistoryWarming
+		mutation.Levels[0].GapReasonCode = execution.ReasonCode(contract.ReasonHistoryWarming)
+		mutation.MutationDigest = ""
+		result.Plans[0].StateResults[0].Mutation = mustStateMutation(mutation)
+		if err := result.Validate(request); err != nil {
+			t.Fatalf("a Level still WARMING may close what is open, got %v", err)
+		}
+	})
+
+	for _, scope := range []execution.GapScope{{}, {HasLevel: true, LevelID: 5}} {
+		name := "plan gap"
+		if scope.HasLevel {
+			name = "level gap"
+		}
+		t.Run(name, func(t *testing.T) {
+			result, request := loadedSeriesWarmingCompletion(t, execution.LevelOutcomeRecovery)
+			request.Gaps.Items[0].Status = execution.GapFound
+			request.Gaps.Items[0].MarkerRevision = 1
+			request.Gaps.Items[0].Scopes = []execution.GapScopeState{{
+				Scope: scope, Status: execution.GapStatusGapped,
+				ReasonCode: execution.ReasonCode(contract.ReasonHistoryGapped), RequiredFullSlots: 1,
+			}}
+			if err := result.Validate(request); err != nil {
+				t.Fatalf("a loaded %s may not hold an open alert open, got %v", name, err)
+			}
+		})
+	}
+}
+
 func TestEvaluationRejectsLoadedSeriesWarmingWithoutExclusiveFinalFullProof(t *testing.T) {
 	t.Run("no final mutation", func(t *testing.T) {
 		result, request := loadedSeriesWarmingCompletion(t, execution.LevelOutcomeNormal)
@@ -791,7 +861,7 @@ func TestEvaluationRejectsLoadedSeriesWarmingWithoutExclusiveFinalFullProof(t *t
 	})
 
 	t.Run("mutation remains warming", func(t *testing.T) {
-		result, request := loadedSeriesWarmingCompletion(t, execution.LevelOutcomeRecovery)
+		result, request := loadedSeriesWarmingCompletion(t, execution.LevelOutcomeNormal)
 		mutation := result.Plans[0].StateResults[0].Mutation
 		mutation.Levels = append([]execution.RuntimeLevelStateMutation(nil), mutation.Levels...)
 		mutation.Levels[0].HistoryCompleteness = execution.HistoryWarming
@@ -799,7 +869,7 @@ func TestEvaluationRejectsLoadedSeriesWarmingWithoutExclusiveFinalFullProof(t *t
 		mutation.MutationDigest = ""
 		result.Plans[0].StateResults[0].Mutation = mustStateMutation(mutation)
 		if err := result.Validate(request); err == nil || !strings.Contains(err.Error(), "active Runtime State or Plan gap guard") {
-			t.Fatalf("a WARMING final mutation must not clear loaded WARMING for RECOVERY, got %v", err)
+			t.Fatalf("a WARMING final mutation must not clear loaded WARMING for NORMAL, got %v", err)
 		}
 	})
 
@@ -836,7 +906,7 @@ func TestEvaluationRejectsLoadedSeriesWarmingWithoutExclusiveFinalFullProof(t *t
 			name = "level gap"
 		}
 		t.Run(name, func(t *testing.T) {
-			result, request := loadedSeriesWarmingCompletion(t, execution.LevelOutcomeRecovery)
+			result, request := loadedSeriesWarmingCompletion(t, execution.LevelOutcomeNormal)
 			request.Gaps.Items[0].Status = execution.GapFound
 			request.Gaps.Items[0].MarkerRevision = 1
 			request.Gaps.Items[0].Scopes = []execution.GapScopeState{{
@@ -844,7 +914,7 @@ func TestEvaluationRejectsLoadedSeriesWarmingWithoutExclusiveFinalFullProof(t *t
 				ReasonCode: execution.ReasonCode(contract.ReasonHistoryGapped), RequiredFullSlots: 1,
 			}}
 			if err := result.Validate(request); err == nil || !strings.Contains(err.Error(), "active Runtime State or Plan gap guard") {
-				t.Fatalf("loaded %s must continue to reject RECOVERY at the guard, got %v", name, err)
+				t.Fatalf("loaded %s must continue to reject NORMAL at the guard, got %v", name, err)
 			}
 		})
 	}
@@ -988,6 +1058,7 @@ func TestLocalizedTerminalRequiresAndAcceptsExactSeriesGuard(t *testing.T) {
 			LevelID: 5, LevelStateCompatibility: levelRefs[0].LevelStateCompatibility, HistoryCompleteness: execution.HistoryGapped,
 			GapReasonCode: reason, WarmupRequirementRef: levelRefs[0].WarmupRequirementRef,
 		}},
+		RetentionPoints: testPlanRetentionPoints,
 	})
 	if err != nil {
 		t.Fatalf("BuildStateMutation() error=%v", err)
@@ -1055,6 +1126,7 @@ func TestLocalizedBadSeriesOutsideDatasetCanProduceExactGuard(t *testing.T) {
 			HistoryCompleteness: execution.HistoryGapped, GapReasonCode: reason,
 			WarmupRequirementRef: levelRefs[0].WarmupRequirementRef,
 		}},
+		RetentionPoints: testPlanRetentionPoints,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1117,8 +1189,29 @@ func TestDegradedOutcomeCannotClearItsOnlyFinalGuard(t *testing.T) {
 			GuardAfterState: []execution.PlanGapMutation{clear},
 		}},
 	}
-	if err := result.Validate(request); err == nil {
+	err := result.Validate(request)
+	if err == nil {
 		t.Fatal("clearing the only exact guard before Progress must fail")
+	}
+	// The refusal says what the two comparisons saw. A residue of this line
+	// on two production objects could not be attributed because it said
+	// only that it refused; each value here is what a reader needs to tell
+	// "the outcome carried this round's fold" from "the stored marker's
+	// reason" from "a local one", and the State guard from the marker.
+	for _, want := range []string{
+		"outcome TERMINAL", "reason " + string(reason), "level 5", "outcomes for level 1",
+		"input full yes", "round fold none",
+		"state series guard none", "state level guard none", "state written no",
+		"marker plan loaded GAPPED/" + string(reason), "marker level loaded none",
+		"marker plan final none", "marker level final none", "guard proposed yes",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("refusal %q does not say %q", err.Error(), want)
+		}
+	}
+	var refusal *execution.ResultContractError
+	if !errors.As(err, &refusal) || refusal.Code() != "GUARD_MISSING_FOR_DEGRADED_OUTCOME" {
+		t.Fatalf("refusal code = %v, want GUARD_MISSING_FOR_DEGRADED_OUTCOME with the description in the text only", err)
 	}
 }
 
@@ -1200,6 +1293,27 @@ func TestInternalExecutionDataStateMatchesDatasetCardinality(t *testing.T) {
 	input = validInternalExecution()
 	if err := input.Validate(frozenContract()); err != nil {
 		t.Fatalf("DATA binding with one record error=%v", err)
+	}
+}
+
+// The gap preflight of a piece of a split strategy is the piece's own. A
+// preflight that names the Plan and the generation but another piece - or no
+// piece - loaded another marker, and the execution would judge this piece's
+// warming against it.
+func TestGapPreflightMustNameTheDuePlansOwnPiece(t *testing.T) {
+	piece := execution.ShardRef{Dimension: "bk_target_ip", Index: 1, Count: 2, MatcherDigest: strings.Repeat("d", 64)}
+	input := validInternalExecution()
+	input.DuePlans[0].Shard = piece
+	if err := input.Validate(frozenContract()); err == nil {
+		t.Fatal("a piece's execution accepted the unsplit Plan's gap preflight")
+	}
+	input.GapPreflight[0].Identity.Shard = execution.ShardRef{Dimension: "bk_target_ip", Index: 0, Count: 2, MatcherDigest: strings.Repeat("e", 64)}
+	if err := input.Validate(frozenContract()); err == nil {
+		t.Fatal("a piece's execution accepted a sibling piece's gap preflight")
+	}
+	input.GapPreflight[0].Identity = input.DuePlans[0].GapIdentity()
+	if err := input.Validate(frozenContract()); err != nil {
+		t.Fatalf("a piece's execution refused its own gap preflight: %v", err)
 	}
 }
 
@@ -1530,12 +1644,19 @@ func normalStateEvaluation() execution.StateEvaluation {
 				LevelID: 5, DetectFingerprint: refs[0].DetectFingerprint, Result: execution.LevelFactNormal,
 			}},
 		}},
+		RetentionPoints: testPlanRetentionPoints,
 	})
 	if err != nil {
 		panic(err)
 	}
 	return execution.StateEvaluation{Mutation: mutation}
 }
+
+// testPlanRetentionPoints is what compiledPlanForTest asks to retain: one
+// window of one point, with the recovery slack the span gate zeroes at this
+// interval. Named once so a fixture cannot answer the contract's retention
+// comparison with a number nobody derived.
+const testPlanRetentionPoints = 1
 
 func loadedSeriesWarmingCompletion(
 	t testing.TB,
@@ -1546,7 +1667,6 @@ func loadedSeriesWarmingCompletion(
 	state := normalStateEvaluation()
 	state.Mutation.ExpectedBlobRevision = 1
 	state.Mutation.MutationDigest = ""
-	state.Mutation = mustStateMutation(state.Mutation)
 	refs, err := execution.DeriveRuntimeLevelContractRefs(input.DuePlans[0].CompiledPlan)
 	if err != nil {
 		t.Fatal(err)
@@ -1557,6 +1677,14 @@ func loadedSeriesWarmingCompletion(
 			LevelID: 5, DetectFingerprint: refs[0].DetectFingerprint, Result: execution.LevelFactNormal,
 		}},
 	}
+	// One slice, shared by the loaded view and the mutation's base, because
+	// that is what the producer does: it references the history it read. The
+	// contract compares identity, not content, so a fixture that built two
+	// equal slices would be refused - and rightly, a copy is the thing this
+	// mutation shape exists to remove.
+	loadedHistory := []execution.StateHistoryPoint{loadedPoint}
+	state.Mutation.BaseHistory = loadedHistory
+	state.Mutation = mustStateMutation(state.Mutation)
 	request := evaluationRequest(input, execution.StatePreflightResult{Items: []execution.RuntimeStateView{{
 		Identity: input.StatePreflight[0].Identity, BlobRevision: 1,
 		PersistedApplyVersion:   olderApplyVersion(input.StatePreflight[0].ApplyVersion),
@@ -1567,7 +1695,7 @@ func loadedSeriesWarmingCompletion(
 			GapReasonCode:        execution.ReasonCode(contract.ReasonHistoryWarming),
 			WarmupRequirementRef: refs[0].WarmupRequirementRef,
 		}},
-		History: []execution.StateHistoryPoint{loadedPoint},
+		History: loadedHistory,
 	}}}, execution.GapLoadResult{Items: []execution.GapGuardSnapshot{{
 		Identity: input.GapPreflight[0].Identity, Status: execution.GapMissing,
 	}}})
@@ -1720,6 +1848,16 @@ func compiledPlanForTest(t testing.TB) *strategy.CompiledPlan {
 }
 
 func compiledPlanWithTriggerConfig(t testing.TB, triggerConfig json.RawMessage) *strategy.CompiledPlan {
+	return compiledPlanWith(t, triggerConfig, "50")
+}
+
+// compiledPlanWithDetectThreshold is the test Plan with another threshold:
+// the same state requirement and trigger, another detect fingerprint.
+func compiledPlanWithDetectThreshold(t testing.TB, threshold string) *strategy.CompiledPlan {
+	return compiledPlanWith(t, json.RawMessage(`{"window_size":30,"required_anomalies":5,"step_seconds":60}`), threshold)
+}
+
+func compiledPlanWith(t testing.TB, triggerConfig json.RawMessage, threshold string) *strategy.CompiledPlan {
 	if t != nil {
 		t.Helper()
 	}
@@ -1751,7 +1889,7 @@ func compiledPlanWithTriggerConfig(t testing.TB, triggerConfig json.RawMessage) 
 				Definition: contract.LevelDefinitionV2{LevelID: 5, Priority: 1}, Connector: contract.LevelConnectorAND,
 				DetectPlan: contract.DetectPlanV2{Algorithms: []contract.AlgorithmIRV2{{
 					Type: "Threshold", Version: 1,
-					Config: json.RawMessage(`{"value_field":"value","data_unit":"percent","threshold_unit_prefix":"","precision":{"decimal_places":6,"rounding":"HALF_EVEN"},"groups":[{"conditions":[{"operator":"GTE","threshold_decimal":"50"}]}]}`),
+					Config: json.RawMessage(`{"value_field":"value","data_unit":"percent","threshold_unit_prefix":"","precision":{"decimal_places":6,"rounding":"HALF_EVEN"},"groups":[{"conditions":[{"operator":"GTE","threshold_decimal":"` + threshold + `"}]}]}`),
 				}}},
 				TriggerPlan:  contract.TypedPlanV1{Type: "N_OF_M", Version: 1, Config: triggerConfig},
 				RecoveryPlan: contract.TypedPlanV1{Type: "CONTINUOUS_TRIGGER_MISS", Version: 1, Config: json.RawMessage(`{"enabled":true,"consecutive_windows":1}`)},
@@ -1800,4 +1938,66 @@ func frozenApplyVersion() execution.ApplyVersion {
 		panic(err)
 	}
 	return version
+}
+
+// Every STATE_VERSION_CONFLICT names the comparison that refused it, and the
+// name follows the branch, not the caller: the stored revision against the
+// expected one first (behind is reset, ahead is moved, whatever the
+// ApplyVersion says), then at the expected revision the ApplyVersion and the
+// digest. A conflict with no kind would read the same as the one the reader
+// is looking for.
+func TestStateMutationConflictKindsFollowTheComparisonThatRefused(t *testing.T) {
+	mutation := validStateMutation()
+	mutation.ExpectedBlobRevision = 5
+	base := execution.RuntimeStateView{Identity: mutation.Identity, BlobRevision: 5, Status: execution.StateFoundReady,
+		PersistedApplyVersion: mutation.ApplyVersion, PersistedMutationDigest: execution.MutationDigest("somebody-else"),
+		VersionComparison: execution.ApplyVersionEqual}
+	for _, test := range []struct {
+		name       string
+		revision   uint64
+		comparison execution.ApplyVersionComparison
+		want       execution.StateVersionConflictKind
+	}{
+		{"stored ahead, persisted older", 6, execution.ApplyVersionPersistedOlder, execution.StateVersionConflictRevisionMoved},
+		{"stored ahead, persisted equal", 6, execution.ApplyVersionEqual, execution.StateVersionConflictRevisionMoved},
+		{"stored ahead, persisted newer", 9, execution.ApplyVersionPersistedNewer, execution.StateVersionConflictRevisionMoved},
+		{"stored behind, persisted older", 1, execution.ApplyVersionPersistedOlder, execution.StateVersionConflictRevisionReset},
+		{"stored behind, persisted newer", 4, execution.ApplyVersionPersistedNewer, execution.StateVersionConflictRevisionReset},
+		{"expected revision, same version, other digest", 5, execution.ApplyVersionEqual, execution.StateVersionConflictSameVersionOtherStatement},
+		{"expected revision, no ordering", 5, "", execution.StateVersionConflictVersionIncomparable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			view := base
+			view.BlobRevision, view.VersionComparison = test.revision, test.comparison
+			got := execution.ClassifyStateMutationDetail(view, mutation)
+			if got.Disposition != execution.StateVersionConflict || got.VersionConflict != test.want || got.AlreadyApplied != "" {
+				t.Fatalf("classification = %+v, want STATE_VERSION_CONFLICT kind %s", got, test.want)
+			}
+		})
+	}
+	// The dispositions that are not conflicts carry no conflict kind.
+	for _, test := range []struct {
+		name       string
+		revision   uint64
+		comparison execution.ApplyVersionComparison
+		digest     execution.MutationDigest
+		want       execution.StatePreflightDisposition
+	}{
+		{"proceed", 5, execution.ApplyVersionPersistedOlder, "somebody-else", execution.StateProceed},
+		{"stale", 5, execution.ApplyVersionPersistedNewer, "somebody-else", execution.StateStaleVersion},
+		{"already applied", 5, execution.ApplyVersionEqual, mutation.MutationDigest, execution.StateAlreadyApplied},
+		{"already applied one up", 6, execution.ApplyVersionEqual, mutation.MutationDigest, execution.StateAlreadyApplied},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			view := base
+			view.BlobRevision, view.VersionComparison, view.PersistedMutationDigest = test.revision, test.comparison, test.digest
+			got := execution.ClassifyStateMutationDetail(view, mutation)
+			if got.Disposition != test.want || got.VersionConflict != "" {
+				t.Fatalf("classification = %+v, want %s with no conflict kind", got, test.want)
+			}
+		})
+	}
+	if kinds := execution.AllStateVersionConflictKinds(); len(kinds) != 5 {
+		t.Fatalf("named conflict kinds = %v, want the missing key plus the four conflict branches of the classifier", kinds)
+	}
 }

@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 )
 
 var (
@@ -115,6 +116,83 @@ func PackedEncodedUpperBoundV1(levelCount, pointCount int) (int, error) {
 		return 0, ErrStateBudget
 	}
 	return base + pointCount*perPoint, nil
+}
+
+// RuntimeEnvelopeUpperBoundV2 is the shape-only upper bound for the persisted
+// Runtime State record, the JSON envelope execution v2 actually writes.
+//
+// It exists beside PackedEncodedUpperBoundV1 because the two representations
+// are not within a constant factor of each other and only one of them is what
+// the store holds. The packed blob spends 19 bytes on a point; the JSON record
+// spends about 234 for one Level and 353 for two, because it repeats per point
+// what the packed form hoists: a 64-character record id whose first 16 bytes
+// are all anyone reads, and a 64-character detect fingerprint that is compared
+// for equality against the Level's own and then discarded - a value that is
+// identical for every point of a Level by construction, since a point whose
+// fingerprint differs is an invariant violation.
+//
+// That difference has a consequence nobody wrote down. MaxValueBytes is the
+// codec's byte budget, sized for the packed form, and it is applied unchanged
+// to the record that costs 12 to 18 times more per point. So the point ceiling
+// the configuration states - 4096, in both the compiler and the codec - cannot
+// be reached in the representation in use: the real one is about 2200 points
+// for one Level and about 1480 for two. A strategy configured between those
+// compiles cleanly and then has every state write refused as budget exceeded,
+// per series, silently, for as long as it exists.
+//
+// Deriving the compile-time ceiling from this function is what keeps the two
+// in step. When the record becomes the packed form the arithmetic changes here
+// and the stated 4096 becomes reachable again, with nothing else to revisit.
+func RuntimeEnvelopeUpperBoundV2(levelCount, pointCount int) (int, error) {
+	if levelCount < 0 || pointCount < 0 {
+		return 0, fmt.Errorf("state: encoded shape must be non-negative")
+	}
+	// Per point: the object keys and punctuation, a 64-character record id, and
+	// a source time at its widest. Per Level fact inside a point: the keys, a
+	// Level id at its widest, a 64-character fingerprint and a result.
+	const (
+		// The envelope around the history: identity, apply version, digests, the
+		// series guard and the keys naming them, each at its widest.
+		envelopeOverhead = 4 << 10
+		// One Level entry outside the points: three 64-character refs and a time.
+		perLevelState    = 512
+		perPointFixed    = 126
+		perPointPerLevel = 123
+	)
+	base := envelopeOverhead
+	if levelCount > (math.MaxInt-base)/perLevelState {
+		return 0, ErrStateBudget
+	}
+	base += levelCount * perLevelState
+	perPoint := perPointFixed
+	if levelCount > (math.MaxInt-perPoint)/perPointPerLevel {
+		return 0, ErrStateBudget
+	}
+	perPoint += levelCount * perPointPerLevel
+	if pointCount > (math.MaxInt-base)/perPoint {
+		return 0, ErrStateBudget
+	}
+	return base + pointCount*perPoint, nil
+}
+
+// MaxRuntimeEnvelopePoints is the most retained points a Plan with this many
+// Levels can store before the record crosses valueBytes. It is the compile-time
+// ceiling, derived from the representation rather than stated beside it.
+func MaxRuntimeEnvelopePoints(levelCount, valueBytes int) (int, error) {
+	if levelCount <= 0 || valueBytes <= 0 {
+		return 0, fmt.Errorf("state: level count and value budget must be positive")
+	}
+	low, high := 0, valueBytes
+	for low < high {
+		mid := (low + high + 1) / 2
+		size, err := RuntimeEnvelopeUpperBoundV2(levelCount, mid)
+		if err != nil || size > valueBytes {
+			high = mid - 1
+			continue
+		}
+		low = mid
+	}
+	return low, nil
 }
 
 func (codec *Codec) Encode(window *Window) ([]byte, error) {
@@ -305,4 +383,109 @@ func validPointBitmaps(valid, anomalous []byte, levelCount int) bool {
 	}
 	unused := byte(0xff << uint(levelCount%8))
 	return valid[len(valid)-1]&unused == 0 && anomalous[len(anomalous)-1]&unused == 0
+}
+
+// ALD2 is the framed record: the envelope's scalar fields stay JSON and only
+// the history is packed.
+//
+// The history is the one part that grows with the window, and it is where the
+// JSON record spends 234 bytes a point for one Level and 1068 for eight. The
+// scalar fields are O(1) plus O(Levels) and are left exactly as they were,
+// with their existing encoding and their existing validation: inventing a
+// binary encoding for them would buy nothing measurable and would put every
+// one of those checks through a second implementation.
+const (
+	packedFrameMagic         = "ALD2"
+	packedFrameSchemaV1 byte = 1
+	// packedFrameSchemaV2 marks a frame whose header carries record ids the
+	// derivation cannot rebuild. Only records that need the table are written
+	// at v2, so a build that knows only v1 goes on reading every other record
+	// and refuses these few by name rather than the whole population.
+	packedFrameSchemaV2  byte = 2
+	packedFrameCodecNone byte = 0
+	packedFrameHeaderLen      = 6
+)
+
+// PackedFrameUpperBoundV2 is the shape-only upper bound for the framed record.
+//
+// Per point: a uvarint source-time delta and three bitmaps of one bit per
+// Level. Three rather than the packed window's two, because the window records
+// only whether a Level had a usable value and this record has to give back the
+// fact it was handed - UNAVAILABLE and ERROR are different facts, and a point
+// no Level found usable is still a point the result contract reads.
+//
+// Every point is costed as if its id had to be stored. Most do not - within one
+// key the id derives from the series digest and the source time, and a derived
+// id is not stored at all - but state written before that derivation existed
+// carries ids the decode cannot rebuild, and those go in the header table.
+//
+// Counted at the worst case rather than at the common one because this is what
+// the compile time ceiling is taken from, and a ceiling that admits a Plan the
+// write then refuses is the failure the ceiling exists to prevent. Measured:
+// one entry costs 90 bytes plus the index digits, and a 4096 point record whose
+// history is entirely such ids reaches 76.5% of a 512 KiB budget while this
+// function, before counting them, reported a seventh of that.
+func PackedFrameUpperBoundV2(levelCount, pointCount int) (int, error) {
+	if levelCount < 0 || pointCount < 0 {
+		return 0, fmt.Errorf("state: encoded shape must be non-negative")
+	}
+	// The JSON header, at the widths RuntimeEnvelopeUpperBoundV2 measured it
+	// at, plus one 64-character detect fingerprint per Level that the envelope
+	// used to repeat on every point.
+	const (
+		frameOverhead    = 4 + 2 + binary.MaxVarintLen64
+		envelopeOverhead = 4 << 10
+		perLevelState    = 512 + 80
+		// {"index":N,"record_id":"<id>"}, without the index digits. The id
+		// width is MaxLegacyRecordIDLength, which the encoder refuses beyond,
+		// so this is a bound rather than an assumption about the data.
+		perLegacyRecordID = 1 + 8 + 1 + 13 + 1 + MaxLegacyRecordIDLength + 1 + 1
+		// The field name and its brackets, once.
+		legacyTableOverhead = len(`"legacy_record_ids":[],`)
+	)
+	bitmapBytes := (levelCount + 7) / 8
+	base := frameOverhead + envelopeOverhead + legacyTableOverhead
+	if levelCount > (math.MaxInt-base)/perLevelState {
+		return 0, ErrStateBudget
+	}
+	base += levelCount * perLevelState
+	perPoint := binary.MaxVarintLen64
+	if bitmapBytes > (math.MaxInt-perPoint)/3 {
+		return 0, ErrStateBudget
+	}
+	perPoint += 3 * bitmapBytes
+	// The index is at most as wide as the point count it indexes, which is
+	// exact rather than a generous constant: a wider allowance would lower the
+	// ceiling for every record to pay for digits no record can reach.
+	perPoint += perLegacyRecordID + len(strconv.Itoa(max(pointCount, 1)))
+	if pointCount > (math.MaxInt-base)/perPoint {
+		return 0, ErrStateBudget
+	}
+	return base + pointCount*perPoint, nil
+}
+
+// MaxPackedFramePoints is the most retained points a Plan with this many Levels
+// can store before the framed record crosses valueBytes.
+//
+// The counterpart of MaxRuntimeEnvelopePoints, and the function the compile
+// time ceiling reads once the store writes this representation. It must not be
+// read before then: it admits windows the JSON record cannot hold, and a Plan
+// admitted on this bound while the store still writes the other one compiles
+// cleanly and has every state write refused, per series, silently - which is
+// the defect decision-019 exists to have removed.
+func MaxPackedFramePoints(levelCount, valueBytes int) (int, error) {
+	if levelCount <= 0 || valueBytes <= 0 {
+		return 0, fmt.Errorf("state: level count and value budget must be positive")
+	}
+	low, high := 0, valueBytes
+	for low < high {
+		mid := (low + high + 1) / 2
+		size, err := PackedFrameUpperBoundV2(levelCount, mid)
+		if err != nil || size > valueBytes {
+			high = mid - 1
+			continue
+		}
+		low = mid
+	}
+	return low, nil
 }

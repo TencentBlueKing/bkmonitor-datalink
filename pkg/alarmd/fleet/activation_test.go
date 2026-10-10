@@ -10,6 +10,7 @@
 package fleet
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -125,5 +126,31 @@ func TestTheStaleSourceFoldCarriesTheFailureBehindIt(t *testing.T) {
 	group := reports[0].Groups[0]
 	if group.Stage != "validate_catalog" || group.Text != "plan retention exceeds catalog retention" || len(group.Replicas) != 2 {
 		t.Fatalf("fold = %+v, want both replicas and the failure the first one carries", group)
+	}
+}
+
+// Query Groups the last cutover held back degrade the verdict by name - with
+// how many, why and which - while the rest of the publication is active.
+// None held back, no degradation.
+func TestAggregateNamesQueryGroupsTheCutoverHeldBack(t *testing.T) {
+	held := &ActivationFacts{Applied: "e7a1b2c3", Published: "e7a1b2c3", BlockedQueryGroups: 2,
+		BlockedReasons: "open_digest_mismatch=1,open_segment_closed_or_ahead=1", BlockedSamples: "qg-a:open_digest_mismatch,qg-b:open_segment_closed_or_ahead"}
+	snapshots := []Snapshot{
+		{Replica: "pod-a", TakenAt: now, Owned: 1, Determined: 1, Activation: held},
+		{Replica: "pod-b", TakenAt: now, Owned: 1, Determined: 1},
+	}
+	view := Aggregate(Expectation{Known: true, QueryGroups: 2}, snapshots, []string{"pod-a", "pod-b"}, now, freshness)
+	if len(view.Degradations) != 1 || view.Degradations[0].Kind != DegradationActivationBlocked || view.Degradations[0].Replica != "pod-a" ||
+		!strings.Contains(view.Degradations[0].Text, "2 held back") || !strings.Contains(view.Degradations[0].Text, "qg-a:open_digest_mismatch") {
+		t.Fatalf("degradations = %+v, want ACTIVATION_BLOCKED naming the two", view.Degradations)
+	}
+	if view.Health != HealthDegraded {
+		t.Fatalf("health = %s, want DEGRADED", view.Health)
+	}
+	clear := *held
+	clear.BlockedQueryGroups, clear.BlockedReasons, clear.BlockedSamples = 0, "", ""
+	snapshots[0].Activation = &clear
+	if view := Aggregate(Expectation{Known: true, QueryGroups: 2}, snapshots, []string{"pod-a", "pod-b"}, now, freshness); len(view.Degradations) != 0 {
+		t.Fatalf("nothing held back, degradations = %+v", view.Degradations)
 	}
 }

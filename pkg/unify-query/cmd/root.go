@@ -38,14 +38,14 @@ var rootCmd = &cobra.Command{
 	Short: "start unify-query module for bk-monitor",
 	Long:  `start unify-query module for bk-monitor`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := config.InitConfigWithWriter(cmd.ErrOrStderr()); err != nil {
+			return err
+		}
 		var (
 			serviceList     []define.Service
 			ctx, cancelFunc = context.WithCancel(context.Background())
 			sc              = make(chan os.Signal, 1)
 		)
-		if err := config.InitConfigWithWriter(cmd.ErrOrStderr()); err != nil {
-			return err
-		}
 
 		ctx = metadata.InitHashID(ctx)
 

@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"testing"
@@ -34,6 +35,20 @@ func TestTypedFilterNegationAndInvalidValues(t *testing.T) {
 	for _, f := range []Filter{{Field: "attributes.x", Type: InstanceAttributeLong, Operator: "eq", Value: 1.5}, {Field: "bk_tenant_id", Type: InstanceAttributeKeyword, Operator: "eq", Value: "other"}, {Field: "attributes.x", Type: InstanceAttributeDouble, Operator: "eq", Value: "NaN"}} {
 		if _, err := f.Compile(); err == nil {
 			t.Fatalf("accepted %+v", f)
+		}
+	}
+}
+
+func TestLongFilterAcceptsIntegralFloatWithoutScientificNotation(t *testing.T) {
+	for _, value := range []float64{999999999, -999999999, 1e6, 0} {
+		got, err := typedFilterValue(InstanceAttributeLong, value)
+		if err != nil || got != int64(value) {
+			t.Fatalf("integral value %v: got=%v err=%v", value, got, err)
+		}
+	}
+	for _, value := range []float64{1.5, 1e20, math.Inf(1), math.NaN()} {
+		if _, err := typedFilterValue(InstanceAttributeLong, value); err == nil {
+			t.Fatalf("invalid integer accepted: %v", value)
 		}
 	}
 }

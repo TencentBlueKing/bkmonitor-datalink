@@ -366,6 +366,13 @@ func typedFilterValue(t InstanceAttributeType, v any) (any, error) {
 	case InstanceAttributeLong, InstanceAttributeDouble:
 		s := fmt.Sprint(v)
 		if t == InstanceAttributeLong {
+			// 丰富的 number 转换返回浮点数；大整数的默认文本会采用科学计数法，不能据此拒绝合法 long。
+			switch n := v.(type) {
+			case float64:
+				s = strconv.FormatFloat(n, 'f', -1, 64)
+			case float32:
+				s = strconv.FormatFloat(float64(n), 'f', -1, 32)
+			}
 			i, err := strconv.ParseInt(s, 10, 64)
 			if err != nil {
 				return nil, fmt.Errorf("integer query value required")

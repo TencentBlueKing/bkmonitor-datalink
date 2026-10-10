@@ -19,6 +19,7 @@ import (
 	yaml "gopkg.in/yaml.v3"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/config"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/credential"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/featureFlag"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/redis"
@@ -29,15 +30,17 @@ import (
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "show current config",
-	Run: func(cmd *cobra.Command, args []string) {
-		config.InitConfig()
-
-		output, err := yaml.Marshal(viper.AllSettings())
-		if err != nil {
-			fmt.Printf("failed to marshal config for->[%s]", err)
-			return
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := config.InitConfigWithWriter(cmd.ErrOrStderr()); err != nil {
+			return err
 		}
-		fmt.Printf("%s", output)
+
+		output, err := yaml.Marshal(credential.RedactSettings(viper.AllSettings()))
+		if err != nil {
+			return fmt.Errorf("marshal config failed")
+		}
+		cmd.Printf("%s", output)
+		return nil
 	},
 }
 

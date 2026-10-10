@@ -20,7 +20,9 @@ import (
 	"github.com/spf13/viper"
 	"golang.org/x/exp/slices"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/bk-monitor-worker/credential"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/logger"
+	consulUtils "github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/consul"
 )
 
 var (
@@ -121,6 +123,8 @@ var (
 	StorageConsulTag []string
 	// StorageConsulTll consul ttl
 	StorageConsulTll string
+	// StorageConsulClientOptions is nil in legacy mode and explicit in KMS mode.
+	StorageConsulClientOptions *consulUtils.ClientOptions
 
 	// StorageMysqlHost mysql host
 	StorageMysqlHost string
@@ -462,16 +466,38 @@ func GetFloatSlice(key string) []float64 {
 // and should only be called once in the project.
 // The purpose of this method is not private is that it can be called in the test file.
 func InitConfig() {
+	if err := loadConfig(); err != nil {
+		logger.Fatalf("initialize configuration failed: %s", err)
+	}
+}
+
+func loadConfig() error {
 	viper.SetConfigFile(FilePath)
 
 	if err := viper.ReadInConfig(); err != nil {
 		pwd, _ := os.Getwd()
-		logger.Fatalf("read config file: %s in %s error: %s", FilePath, pwd, err)
+		return fmt.Errorf("read config file: %s in %s error: %s", FilePath, pwd, err)
 	}
 	viper.AutomaticEnv()
 	viper.SetEnvPrefix(EnvKeyPrefix)
 	replacer := strings.NewReplacer(".", "_")
 	viper.SetEnvKeyReplacer(replacer)
+	// Control and plaintext checks use the original file, before env overrides.
+	raw := viper.New()
+	raw.SetConfigFile(FilePath)
+	if err := raw.ReadInConfig(); err != nil {
+		return fmt.Errorf("read original configuration failed")
+	}
+	snapshot, err := credential.Prepare(viper.GetViper(), raw, EnvKeyPrefix)
+	if err != nil {
+		return err
+	}
+	StorageConsulClientOptions = nil
+	if snapshot != nil {
+		snapshot.Apply(viper.GetViper())
+		StorageConsulClientOptions = snapshot.ConsulOptions
+		logger.Info("deployment credentials initialized: kms enabled, schema_version=1")
+	}
 	keys = viper.AllKeys()
 
 	initVariables()
@@ -479,4 +505,5 @@ func InitConfig() {
 	initClusterMetricVariables()
 	initApmVariables()
 	initAlarmConfig()
+	return nil
 }

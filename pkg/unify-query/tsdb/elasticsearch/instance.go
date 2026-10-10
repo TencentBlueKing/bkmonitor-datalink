@@ -438,7 +438,7 @@ func (i *Instance) executeESQuery(
 	qbString, _ := json.Marshal(qb)
 	span.Set("metadata-query", qbString)
 	span.Set("query-connect", qo.conn.String())
-	span.Set("query-headers", i.headers)
+	span.Set("query-header-count", len(i.headers))
 	span.Set("query-indexes", qo.indexes)
 	span.Set("query-body", bodyString)
 

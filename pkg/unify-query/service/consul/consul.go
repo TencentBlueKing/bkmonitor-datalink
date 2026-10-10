@@ -11,8 +11,10 @@ package consul
 
 import (
 	"context"
+	"github.com/spf13/viper"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/consul/base"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
 
@@ -47,9 +49,17 @@ func (s *Service) Reload(ctx context.Context) {
 	s.ctx, s.cancelFunc = context.WithCancel(ctx)
 	log.Debugf(context.TODO(), "consul service context update success.")
 
-	err := consul.SetInstance(
+	var auth *base.AuthConfig
+	if viper.GetBool("kms.enabled") {
+		auth = &base.AuthConfig{
+			Token:    viper.GetString("consul.token"),
+			Username: viper.GetString("consul.username"), Password: viper.GetString("consul.password"),
+			KeyPEM: []byte(viper.GetString("consul.tls.key_pem")), CertPEM: []byte(viper.GetString("consul.tls.cert_pem")),
+		}
+	}
+	err := consul.SetInstanceWithAuth(
 		s.ctx, KVBasePath, ServiceName, Address, []string{"unify-query"},
-		HTTPAddress, Port, TTL, CaFilePath, KeyFilePath, CertFilePath,
+		HTTPAddress, Port, TTL, CaFilePath, KeyFilePath, CertFilePath, auth,
 	)
 	if err != nil {
 		log.Errorf(context.TODO(), "consul service init failed for->[%s]", err)

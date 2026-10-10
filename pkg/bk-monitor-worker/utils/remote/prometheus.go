@@ -110,7 +110,7 @@ func (p *PrometheusWriter) WriteBatch(ctx context.Context, token string, writeRe
 		return fmt.Errorf("[PromRemoteWrite] remote write returned HTTP status %v; err = %w: %s", resp.Status, err, body)
 	}
 
-	p.logger.Infof("[RemoteWrite] push %d series to host: %s (Headers: %+v))", len(writeReq.Timeseries), p.url, p.headers)
+	p.logger.Infof("[RemoteWrite] pushed %d series", len(writeReq.Timeseries))
 
 	return nil
 }

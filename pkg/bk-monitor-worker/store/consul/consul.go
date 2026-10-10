@@ -43,9 +43,7 @@ func NewInstance(ctx context.Context, opt consulUtils.InstanceOptions) (*Instanc
 			return
 		}
 		// new a kv client
-		conf := api.DefaultConfig()
-		conf.Address = opt.Addr
-		apiClient, err := api.NewClient(conf)
+		apiClient, err := consulUtils.NewAPIClient(opt.Addr, opt.ClientOptions)
 		if err != nil {
 			logger.Errorf("new consul api client error, %v", err)
 			e = err
@@ -65,12 +63,13 @@ func GetInstance() (*Instance, error) {
 		return instance, nil
 	}
 	opt := consulUtils.InstanceOptions{
-		SrvName:    config.StorageConsulSrvName,
-		Addr:       config.StorageConsulAddress,
-		Port:       config.StorageConsulPort,
-		ConsulAddr: config.StorageConsulAddr,
-		Tags:       config.StorageConsulTag,
-		TTL:        config.StorageConsulTll,
+		SrvName:       config.StorageConsulSrvName,
+		Addr:          config.StorageConsulAddress,
+		Port:          config.StorageConsulPort,
+		ConsulAddr:    config.StorageConsulAddr,
+		Tags:          config.StorageConsulTag,
+		TTL:           config.StorageConsulTll,
+		ClientOptions: config.StorageConsulClientOptions,
 	}
 	return NewInstance(context.TODO(), opt)
 }

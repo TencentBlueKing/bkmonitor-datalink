@@ -10,17 +10,22 @@
 package base
 
 import (
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/api/watch"
+	"github.com/hashicorp/go-hclog"
 )
 
 // Client 标准consul读写
 type Client struct {
-	KV      *api.KV
-	Agent   *api.Agent
-	Session *api.Session
+	KV        *api.KV
+	Agent     *api.Agent
+	Session   *api.Session
+	apiClient *api.Client
+	auth      *AuthConfig
 
 	watchPlanMap       map[string]*watch.Plan
 	watchPrefixPlanMap map[string]*watch.Plan
@@ -35,6 +40,16 @@ type Client struct {
 
 // NewClient 传入的address应符合IP:Port的结构，例如: 127.0.0.1:8080
 func NewClient(address, caFile, keyFile, certFile string) (*Client, error) {
+	return NewClientWithAuth(address, caFile, keyFile, certFile, nil)
+}
+
+// AuthConfig supplies explicit deployment credentials without changing legacy callers.
+type AuthConfig struct {
+	Token, Username, Password string
+	KeyPEM, CertPEM           []byte
+}
+
+func NewClientWithAuth(address, caFile, keyFile, certFile string, auth *AuthConfig) (*Client, error) {
 	var (
 		err    error
 		client = &Client{
@@ -42,6 +57,7 @@ func NewClient(address, caFile, keyFile, certFile string) (*Client, error) {
 			caFilePath:         caFile,
 			keyFilePath:        keyFile,
 			certFilePath:       certFile,
+			auth:               auth,
 			watchPlanMap:       make(map[string]*watch.Plan),
 			watchPrefixPlanMap: make(map[string]*watch.Plan),
 		}
@@ -57,6 +73,13 @@ func NewClient(address, caFile, keyFile, certFile string) (*Client, error) {
 
 // GetAPI 获取api包中的对象
 var GetAPI = func(client *Client) error {
+	if client.auth != nil {
+		for _, env := range []string{"CONSUL_HTTP_TOKEN", "CONSUL_HTTP_TOKEN_FILE", "CONSUL_HTTP_AUTH", "CONSUL_CLIENT_KEY"} {
+			if os.Getenv(env) != "" {
+				return fmt.Errorf("explicit Consul credentials conflict with environment: %s", env)
+			}
+		}
+	}
 	conf := api.DefaultConfig()
 
 	// 添加链接配置信息
@@ -64,6 +87,25 @@ var GetAPI = func(client *Client) error {
 	conf.TLSConfig.CAFile = client.caFilePath
 	conf.TLSConfig.KeyFile = client.keyFilePath
 	conf.TLSConfig.CertFile = client.certFilePath
+	if client.auth != nil {
+		conf.Token = client.auth.Token
+		conf.TokenFile = ""
+		conf.HttpAuth = nil
+		if client.auth.Username != "" || client.auth.Password != "" {
+			conf.HttpAuth = &api.HttpBasicAuth{Username: client.auth.Username, Password: client.auth.Password}
+		}
+		conf.TLSConfig.KeyFile = ""
+		conf.TLSConfig.CertFile = ""
+		conf.TLSConfig.KeyPEM = client.auth.KeyPEM
+		conf.TLSConfig.CertPEM = client.auth.CertPEM
+		// NewClient fills empty TLS file fields from DefaultConfig again.
+		// Build the transport first so the connection uses only this memory pair.
+		var err error
+		conf.HttpClient, err = api.NewHttpClient(conf.Transport, conf.TLSConfig)
+		if err != nil {
+			return fmt.Errorf("explicit Consul TLS configuration is invalid")
+		}
+	}
 
 	// 这里的client是api接口的，不是本地的Client，不要搞混了
 	apiClient, err := api.NewClient(conf)
@@ -73,6 +115,7 @@ var GetAPI = func(client *Client) error {
 	client.Session = apiClient.Session()
 	client.KV = apiClient.KV()
 	client.Agent = apiClient.Agent()
+	client.apiClient = apiClient
 
 	return nil
 }
@@ -324,7 +367,7 @@ func (bc *Client) Watch(path string, separator string) (<-chan any, error) {
 		defer func() {
 			close(outChan)
 		}()
-		err1 := plan.Run(bc.address)
+		err1 := plan.RunWithClientAndHclog(bc.apiClient, hclog.NewNullLogger())
 		if err1 != nil {
 			if !plan.IsStopped() {
 				plan.Stop()

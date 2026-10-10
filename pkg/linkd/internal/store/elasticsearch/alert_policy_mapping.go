@@ -20,6 +20,8 @@ import (
 func alertPolicyProperties() map[string]map[string]any {
 	return map[string]map[string]any{
 		"shield_main_alert_ids": keywordProperty(),
+		"end_operation":         opaqueObjectProperty(),
+		"last_shield_operation": opaqueObjectProperty(),
 		"action_work":           {"type": "boolean"},
 		"action_pending":        opaqueObjectProperty(),
 		"projection_work":       {"type": "boolean"},

@@ -15,6 +15,45 @@ import (
 	"time"
 )
 
+func TestManagerUpgradesExistingActiveOperationFields(t *testing.T) {
+	t.Parallel()
+	transport := newManagerTransport()
+	router, err := NewBucketRouter("linkd-close-upgrade", BucketConfig{EventBucketDays: 7, AlertHistoryBucketDays: 7, AlertLogBucketDays: 7, ActiveAlertRefreshInterval: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo, err := New(transport, router, DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(repo, router, ManagerConfig{PrecreatePastBuckets: 1, PrecreateFutureBuckets: 1, MaxBucketsPerEntity: 512})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ReconcileSchemaAndActive(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	index := router.activeAlertIndex()
+	properties := alertProperties()
+	delete(properties, "end_operation")
+	delete(properties, "last_shield_operation")
+	transport.properties[index] = properties
+	for range 2 {
+		if err := manager.ReconcileSchemaAndActive(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"end_operation", "last_shield_operation"} {
+		mapping, _ := transport.properties[index][name].(map[string]any)
+		if mapping["type"] != "object" || mapping["enabled"] != false {
+			t.Fatalf("existing active mapping lacks operation field %s: %v", name, mapping)
+		}
+	}
+	if len(transport.mappingUpdates) != 1 || transport.mappingUpdates[0] != index {
+		t.Fatalf("upgrade is not additive and idempotent: %v", transport.mappingUpdates)
+	}
+}
+
 func TestManagerUpgradesExistingHistoryOutsidePrecreateWindow(t *testing.T) {
 	t.Parallel()
 	for _, failure := range []string{"", "foreign_metadata", "field_type_conflict", "invalid_bucket_name", "bucket_limit"} {

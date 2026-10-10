@@ -176,6 +176,10 @@ func TestMatrixReuseExceptionalTopologyParity(t *testing.T) {
 				require.Len(t, result.Snapshots, 2)
 				for _, snapshot := range result.Snapshots {
 					require.Equal(t, tt.wantPartial, snapshot.Partial)
+					if len(tt.matrix) == 0 {
+						require.Empty(t, snapshot.Nodes)
+						require.Empty(t, snapshot.Edges)
+					}
 					if tt.wantPartial {
 						require.Equal(t, "backend_partial", snapshot.PartialReason)
 					} else {

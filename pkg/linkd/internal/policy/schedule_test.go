@@ -61,6 +61,31 @@ func TestScheduleRejectsInvalidAndAmbiguousTime(t *testing.T) {
 	}
 }
 
+func TestScheduleAcceptsKACInactivePeriodFields(t *testing.T) {
+	t.Parallel()
+	at := time.Date(2026, 10, 10, 8, 0, 0, 0, time.UTC)
+	for _, period := range []string{"once", "everyday", "every_week", "every_month"} {
+		t.Run(period, func(t *testing.T) {
+			rule := ActiveTime{Period: period, OpenOnce: "2000-01-01 08:00:00", CloseOnce: "9999-99-99 08:00:00", OpenClock: "00:00:00", CloseClock: "23:59:59", DaysOfWeek: "*", DaysOfMonth: "*"}
+			if period == "once" {
+				rule.OpenOnce, rule.CloseOnce = "2026-10-10 07:00:00", "2026-10-10 09:00:00"
+			}
+			schedule, err := CompileSchedule("UTC", []ActiveTime{rule})
+			if err != nil || !schedule.Active(at) {
+				t.Fatalf("KAC %s schedule rejected or inactive: %v", period, err)
+			}
+			if period == "once" {
+				rule.CloseOnce = "9999-99-99 08:00:00"
+			} else {
+				rule.OpenClock = "invalid"
+			}
+			if _, err := CompileSchedule("UTC", []ActiveTime{rule}); err == nil {
+				t.Fatal("invalid active period field accepted")
+			}
+		})
+	}
+}
+
 func TestScheduleOccurrenceUsesConfiguredRecurrence(t *testing.T) {
 	schedule, err := CompileSchedule("America/New_York", []ActiveTime{{Period: "everyday", OpenClock: "01:00:00", CloseClock: "01:45:00"}})
 	if err != nil {

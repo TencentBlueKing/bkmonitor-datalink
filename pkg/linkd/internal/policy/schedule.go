@@ -70,10 +70,8 @@ func CompileSchedule(zone string, rules []ActiveTime) (*Schedule, error) {
 func compileInterval(zone *time.Location, rule ActiveTime) (activeInterval, error) {
 	result := activeInterval{period: rule.Period}
 	var err error
+	// KAC 持久化所有周期的字段；只读取当前周期的字段，忽略其他周期的占位或旧值。
 	if rule.Period == "once" {
-		if rule.OpenClock != "" || rule.CloseClock != "" || rule.DaysOfWeek != "" || rule.DaysOfMonth != "" {
-			return result, fmt.Errorf("once cannot include repeating fields")
-		}
 		result.start, err = parsePolicyTime(zone, rule.OpenOnce)
 		if err != nil {
 			return result, err
@@ -86,9 +84,6 @@ func compileInterval(zone *time.Location, rule ActiveTime) (activeInterval, erro
 			return result, fmt.Errorf("once close precedes open")
 		}
 		return result, nil
-	}
-	if rule.OpenOnce != "" || rule.CloseOnce != "" {
-		return result, fmt.Errorf("repeating interval cannot include once fields")
 	}
 	result.open, err = parseClock(rule.OpenClock)
 	if err != nil {
@@ -103,18 +98,9 @@ func compileInterval(zone *time.Location, rule ActiveTime) (activeInterval, erro
 	}
 	switch rule.Period {
 	case "everyday":
-		if rule.DaysOfWeek != "" || rule.DaysOfMonth != "" {
-			return result, fmt.Errorf("everyday cannot include day selector")
-		}
 	case "every_week":
-		if rule.DaysOfMonth != "" {
-			return result, fmt.Errorf("weekly interval cannot include month days")
-		}
 		result.days, err = parseDays(rule.DaysOfWeek, 7)
 	case "every_month":
-		if rule.DaysOfWeek != "" {
-			return result, fmt.Errorf("monthly interval cannot include weekdays")
-		}
 		result.days, err = parseDays(rule.DaysOfMonth, 31)
 	default:
 		return result, fmt.Errorf("unsupported period")

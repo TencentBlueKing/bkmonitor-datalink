@@ -104,7 +104,7 @@ func TestPayloadRejectsInvalidSchemaWithoutPublishing(t *testing.T) {
 
 func TestOptionalGroupsAndSentinelRequirement(t *testing.T) {
 	p := testPayload(t)
-	for _, key := range []string{"bkapp_id_secret", "report_tokens", "prometheus", "rabbitmq", "redis_sentinel"} {
+	for _, key := range []string{"report_tokens", "prometheus", "rabbitmq", "redis_sentinel"} {
 		delete(p, key)
 	}
 	s, err := prepareTestPayload(t, viper.New(), p)
@@ -120,7 +120,7 @@ func TestOptionalGroupsAndSentinelRequirement(t *testing.T) {
 		key   string
 		value any
 	}{
-		{"taskConfig.common.bkapi.enabled", true}, {"taskConfig.logSearch.metric.reportUrl", "http://localhost"},
+		{"taskConfig.logSearch.metric.reportUrl", "http://localhost"},
 		{"taskConfig.metadata.slo.sloPushGatewayEndpoint", "http://localhost"}, {"taskConfig.apmPreCalculate.metrics.profile.enabled", true},
 		{"taskConfig.apmPreCalculate.metrics.report.prometheus.url", "http://localhost"},
 	} {
@@ -129,6 +129,45 @@ func TestOptionalGroupsAndSentinelRequirement(t *testing.T) {
 		_, err := prepareTestPayload(t, v, p)
 		require.Error(t, err, item.key)
 	}
+}
+
+func TestAppIdentityRequiredWithMissingOrFalseLegacyEnabled(t *testing.T) {
+	for _, explicitFalse := range []bool{false, true} {
+		v := viper.New()
+		if explicitFalse {
+			v.Set("taskConfig.common.bkapi.enabled", false)
+		}
+		for _, field := range []string{"group", "app_code", "app_secret"} {
+			p := testPayload(t)
+			if field == "group" {
+				delete(p, "bkapp_id_secret")
+			} else {
+				delete(p["bkapp_id_secret"].(map[string]any)["default"].(map[string]any), field)
+			}
+			_, err := prepareTestPayload(t, v, p)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "taskConfig.common.bkapi")
+		}
+		s, err := prepareTestPayload(t, v, testPayload(t))
+		require.NoError(t, err)
+		s.Apply(v)
+		require.Equal(t, "test-app", v.GetString("taskConfig.common.bkapi.appCode"))
+		require.Equal(t, "test-api-secret", v.GetString("taskConfig.common.bkapi.appSecret"))
+	}
+}
+
+func TestHashSecretRequiresExplicitValueWithoutAPMConfiguration(t *testing.T) {
+	p := testPayload(t)
+	delete(p["encryption"].(map[string]any), "apm_hash_secret")
+	_, err := prepareTestPayload(t, viper.New(), p)
+	require.ErrorContains(t, err, "taskConfig.apmPreCalculate.hashSecret")
+	p["encryption"].(map[string]any)["apm_hash_secret"] = ""
+	s, err := prepareTestPayload(t, viper.New(), p)
+	require.NoError(t, err)
+	v := viper.New()
+	s.Apply(v)
+	require.True(t, v.IsSet("taskConfig.apmPreCalculate.hashSecret"))
+	require.Empty(t, v.GetString("taskConfig.apmPreCalculate.hashSecret"))
 }
 
 func rabbitConfig(t *testing.T, instances string) *viper.Viper {

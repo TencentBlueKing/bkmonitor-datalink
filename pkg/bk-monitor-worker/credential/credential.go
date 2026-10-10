@@ -280,11 +280,12 @@ func preparePayload(v *viper.Viper, plaintext string) (*Snapshot, error) {
 		required bool
 	}{
 		{"store.mysql.user", my.Username, true}, {"store.mysql.password", my.Password, true},
-		{"taskConfig.common.bkapi.appCode", a.Code, v.GetBool("taskConfig.common.bkapi.enabled")},
-		{"taskConfig.common.bkapi.appSecret", a.Secret, v.GetBool("taskConfig.common.bkapi.enabled")},
+		// API consumers use this identity regardless of the legacy enabled key.
+		{"taskConfig.common.bkapi.appCode", a.Code, true},
+		{"taskConfig.common.bkapi.appSecret", a.Secret, true},
 		{"aes.key", p.Encryption.AESKey, true}, {"aes.bkdataAESKey", p.Encryption.BkdataAESKey, true},
 		{"aes.bkdataAESIv", p.Encryption.BkdataAESIV, true}, {"aes.bkdataToken", p.Encryption.BkdataToken, true},
-		{"taskConfig.apmPreCalculate.hashSecret", p.Encryption.APMHashSecret, v.IsSet("taskConfig.apmPreCalculate")},
+		{"taskConfig.apmPreCalculate.hashSecret", p.Encryption.APMHashSecret, true},
 		{"taskConfig.logSearch.metric.reportAccessToken", p.Reports.LogSearch, v.GetString("taskConfig.logSearch.metric.reportUrl") != ""},
 		{"taskConfig.metadata.slo.sloPushGatewayToken", p.Reports.SLO, v.GetString("taskConfig.metadata.slo.sloPushGatewayEndpoint") != ""},
 		{"taskConfig.apmPreCalculate.metrics.profile.token", p.Reports.Profile, v.GetBool("taskConfig.apmPreCalculate.metrics.profile.enabled")},

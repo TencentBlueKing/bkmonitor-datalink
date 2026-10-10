@@ -399,7 +399,7 @@ func TestSharedSchemaResponseFallbackAndHTTPObservation(t *testing.T) {
 		if fallback {
 			data.TraceID = strings.Repeat("x", sharedSchemaMaxFrameBytes)
 		}
-		recorder := httptest.NewRecorder()
+		recorder := &sharedErrorAwareRecorder{ResponseRecorder: httptest.NewRecorder()}
 		c, _ := gin.CreateTestContext(recorder)
 		c.Request = httptest.NewRequest(http.MethodPost, "/query/ts", nil)
 		codec := "shared-schema-v1"
@@ -437,7 +437,7 @@ func TestSharedSchemaResponseFallbackAndHTTPObservation(t *testing.T) {
 }
 
 type sharedFailHTTPWriter struct {
-	*httptest.ResponseRecorder
+	*sharedErrorAwareRecorder
 	calls int
 }
 
@@ -450,7 +450,7 @@ func (w *sharedFailHTTPWriter) Write(body []byte) (int, error) {
 }
 
 func TestSharedSchemaResponseWriteFailureCountsOnce(t *testing.T) {
-	writer := &sharedFailHTTPWriter{ResponseRecorder: httptest.NewRecorder()}
+	writer := &sharedFailHTTPWriter{sharedErrorAwareRecorder: &sharedErrorAwareRecorder{ResponseRecorder: httptest.NewRecorder()}}
 	c, _ := gin.CreateTestContext(writer)
 	c.Request = httptest.NewRequest(http.MethodPost, "/query/ts", nil)
 	labels := map[string]string{"api": "/query/ts", "space_uid": "", "source_type": "", "status": "failed"}

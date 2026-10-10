@@ -12,8 +12,11 @@ package http
 import (
 	"context"
 	"net/http"
+	"reflect"
 	"strings"
 	"time"
+
+	"github.com/gin-gonic/gin"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
@@ -35,6 +38,14 @@ func (r *response) sharedSchemaSuccess(ctx context.Context, data *PromData) (err
 	defer span.End(&err)
 	plan, reason, err := preflightSharedSchema(ctx, data)
 	preflightDuration := time.Since(started)
+	var flush func() error
+	if err == nil && reason == "" {
+		var supported bool
+		flush, supported = newSharedSchemaFlusher(r.c.Writer)
+		if !supported {
+			reason = "writer_unsupported"
+		}
+	}
 	var stats sharedSchemaWriteStats
 	result, codec, schemaCount := "fallback", "legacy-json", 0
 	defer func() {
@@ -62,7 +73,7 @@ func (r *response) sharedSchemaSuccess(ctx context.Context, data *PromData) (err
 		schemaCount = len(plan.schemas)
 		r.c.Header("Content-Type", sharedSchemaV1MediaType)
 		r.c.Status(http.StatusOK)
-		stats, err = writeSharedSchema(ctx, r.c.Writer, http.NewResponseController(r.c.Writer).Flush, data, plan)
+		stats, err = writeSharedSchema(ctx, r.c.Writer, flush, data, plan)
 	}
 	if err != nil {
 		result, reason = "failure", stats.FailureStage
@@ -77,6 +88,56 @@ func (r *response) sharedSchemaSuccess(ctx context.Context, data *PromData) (err
 	result, reason = "success", ""
 	metric.APIRequestInc(ctx, r.c.Request.URL.Path, metric.StatusSuccess, user.SpaceUID, user.Source)
 	return nil
+}
+
+// Gin's built-in writer has Unwrap, but its void Flush takes precedence over
+// Unwrap in ResponseController and discards the underlying FlushError. Keep
+// all writes and header accounting on Gin, and bypass that one flush layer.
+// An outer error-aware wrapper owns its flush semantics and is kept intact;
+// opaque void-only wrappers retain their legacy outlet before any bytes.
+func newSharedSchemaFlusher(writer gin.ResponseWriter) (func() error, bool) {
+	var target http.ResponseWriter = writer
+	if _, ok := writer.(interface{ FlushError() error }); !ok {
+		// Only Gin's pinned built-in layer is known to have no buffering
+		// semantics beyond WriteHeaderNow. Never skip a custom wrapper's
+		// void Flush merely because it also exposes Unwrap.
+		typeOfWriter := reflect.TypeOf(writer)
+		if typeOfWriter.Kind() != reflect.Pointer || typeOfWriter.Elem().PkgPath() != "github.com/gin-gonic/gin" || typeOfWriter.Elem().Name() != "responseWriter" {
+			return nil, false
+		}
+		unwrapper, ok := writer.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return nil, false
+		}
+		target = unwrapper.Unwrap()
+	}
+	if !supportsSharedSchemaFlushError(target) {
+		return nil, false
+	}
+	controller := http.NewResponseController(target)
+	return func() error {
+		writer.WriteHeaderNow()
+		return controller.Flush()
+	}, true
+}
+
+// Match ResponseController's dispatch order without executing a flush. A
+// void-only flusher is an opaque boundary even when it also has Unwrap: its
+// own flush can be meaningful (for example, compression) and cannot report
+// errors. Only transparent layers without a flush method may be traversed.
+func supportsSharedSchemaFlushError(writer http.ResponseWriter) bool {
+	for {
+		switch target := writer.(type) {
+		case interface{ FlushError() error }:
+			return true
+		case http.Flusher:
+			return false
+		case interface{ Unwrap() http.ResponseWriter }:
+			writer = target.Unwrap()
+		default:
+			return false
+		}
+	}
 }
 
 func (r *response) sharedSchemaNotAcceptable(ctx context.Context) {

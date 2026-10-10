@@ -545,3 +545,10 @@ Helm 对应 `console.kacAlertUrlTemplate`，仅注入 Console；未配置时不�
 对应 `input.opening_event`，必须提供完整领域 Event 和匹配当前发布的来源版本；多个 triggered
 等级时填写 `input.severity`。响应分别展示来源 Event 的丰富结果和候选告警内容，不修改来源事实。
 普通 `input.event_id/input.event` 不调用内容构建器；三类输入不能混用。
+
+### 内部合并来源的诊断边界
+
+Console 接受 `storage.type=internal_merge` 的内部来源；它没有 Kafka 输入和 Cleaner 任务，
+不会出现在 Cleaner 来源列表或创建 Kafka Admin 输入连接。它的输出 Hook 与策略活跃索引 Hook
+仍参与对应诊断，不能为了展示 Cleaner 而丢弃整个内部来源。未知存储类型和损坏的 Kafka
+输入配置仍明确失败，不用空列表伪装正常。

@@ -619,18 +619,24 @@ const linkdConfigSchema = z
                 runtime: cleanerRuntimeSchema.optional(),
               })
               .default({ type: "standard" }),
-            storage: z.object({
-              type: z.literal("kafka"),
-              kafka: kafkaConfigSchema.extend({
-                consumer_group: z.string().min(1),
-                fetch_max_wait_milliseconds: z
-                  .number()
-                  .int()
-                  .min(10)
-                  .max(5000)
-                  .default(100),
+            storage: z.discriminatedUnion("type", [
+              z.object({
+                type: z.literal("kafka"),
+                kafka: kafkaConfigSchema.extend({
+                  consumer_group: z.string().min(1),
+                  fetch_max_wait_milliseconds: z
+                    .number()
+                    .int()
+                    .min(10)
+                    .max(5000)
+                    .default(100),
+                }),
               }),
-            }),
+              z.object({
+                type: z.literal("internal_merge"),
+                kafka: z.never().optional(),
+              }),
+            ]),
           })
           .passthrough(),
       )
@@ -667,7 +673,7 @@ export interface EventSourceConfig {
     redis: NonNullable<ConsoleConfig["redis"]>;
   }>;
   runtime: CleanerRuntime;
-  kafka: KafkaConnection & {
+  kafka?: KafkaConnection & {
     consumerGroup: string;
     fetchMaxWaitMilliseconds?: number;
   };
@@ -1139,12 +1145,15 @@ export function normalizeEventSources(
         connection: normalizeKafka(h.config, configDir),
       })),
     runtime: withCleanerDefaults(defaults, source.cleaner.runtime ?? {}),
-    kafka: {
-      ...normalizeKafka(source.storage.kafka, configDir),
-      consumerGroup: source.storage.kafka.consumer_group,
-      fetchMaxWaitMilliseconds:
-        source.storage.kafka.fetch_max_wait_milliseconds,
-    },
+    kafka:
+      source.storage.type === "kafka"
+        ? {
+            ...normalizeKafka(source.storage.kafka, configDir),
+            consumerGroup: source.storage.kafka.consumer_group,
+            fetchMaxWaitMilliseconds:
+              source.storage.kafka.fetch_max_wait_milliseconds,
+          }
+        : undefined,
   }));
 }
 
@@ -1418,13 +1427,15 @@ export function redactedConfig(config: ConsoleConfig) {
           security: h.connection.security.protocol,
         })),
         runtime: source.runtime,
-        kafka: {
-          brokers: source.kafka.brokers,
-          topic: source.kafka.topic,
-          consumerGroup: source.kafka.consumerGroup,
-          fetchMaxWaitMilliseconds: source.kafka.fetchMaxWaitMilliseconds,
-          security: source.kafka.security.protocol,
-        },
+        kafka: source.kafka
+          ? {
+              brokers: source.kafka.brokers,
+              topic: source.kafka.topic,
+              consumerGroup: source.kafka.consumerGroup,
+              fetchMaxWaitMilliseconds: source.kafka.fetchMaxWaitMilliseconds,
+              security: source.kafka.security.protocol,
+            }
+          : undefined,
       })) ?? [],
     lifecycle: config.lifecycle
       ? {

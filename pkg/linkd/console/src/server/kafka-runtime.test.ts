@@ -311,3 +311,43 @@ it("isolates failed sources and releases the refresh after configuration errors"
     "available",
   ]);
 });
+
+it("skips internal Kafka input while retaining output hook inspection", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify([
+            source,
+            {
+              id: "builtin_alarm_merge",
+              deleted: false,
+              spec: {
+                enabled: true,
+                storage: { type: "internal_merge" },
+                hooks: [
+                  {
+                    name: "output",
+                    type: "kafka",
+                    config: {
+                      brokers: source.spec.storage.kafka.brokers,
+                      topic: "raw",
+                      security,
+                    },
+                  },
+                ],
+              },
+            },
+          ]),
+        ),
+    ),
+  );
+  const result = await new KafkaConnector(config).inspectRuntime();
+  expect(mock.clients).toHaveLength(2);
+  expect(result.eventSources.map((s) => s.eventSourceId)).toEqual(["test"]);
+  expect(result.kafka.resources.map((r) => [r.kind, r.eventSourceId])).toEqual([
+    ["input", "test"],
+    ["output", "builtin_alarm_merge"],
+  ]);
+});

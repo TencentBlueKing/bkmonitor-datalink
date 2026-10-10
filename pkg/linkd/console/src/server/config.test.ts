@@ -284,7 +284,9 @@ telemetry:
       });
       expect(config.elasticsearch?.eventTargets).toEqual(["demo-events"]);
       expect(config.eventSources?.[0].runtime.worker_count).toBe(4);
-      expect(config.eventSources?.[0].kafka.fetchMaxWaitMilliseconds).toBe(100);
+      expect(config.eventSources?.[0].kafka?.fetchMaxWaitMilliseconds).toBe(
+        100,
+      );
       expect(config.eventSources?.[0].runtime.max_batch_messages).toBe(32);
       expect(config.telemetry?.listenAddress).toBe("127.0.0.1:9464");
       expect(config.redisStreamManager).toEqual({

@@ -63,7 +63,7 @@ it("loads complete input and output credentials only on the server", async () =>
   const fetcher = vi.fn(async () => new Response(JSON.stringify(records)));
   vi.stubGlobal("fetch", fetcher);
   const sources = await loadRuntimeSources(config);
-  expect(sources[0].kafka.security.sasl?.password).toBe(
+  expect(sources[0].kafka?.security.sasl?.password).toBe(
     "private-kafka-password",
   );
   expect(sources[0].kafkaHooks?.[0].connection.security.sasl?.password).toBe(
@@ -227,4 +227,37 @@ it("keeps tombstones and excludes unpublished sources for projection diagnostics
     expect.stringContaining("published=true"),
     expect.anything(),
   );
+});
+
+it("retains internal merge sources and strategy hooks without inventing Kafka input", async () => {
+  const internal = {
+    id: "builtin_alarm_merge",
+    deleted: false,
+    published: 1,
+    spec: {
+      enabled: true,
+      storage: { type: "internal_merge" },
+      hooks: [
+        {
+          name: "strategy-index",
+          type: "active-alert-by-strategy",
+          config: { key_prefix: "index", redis: { address: "redis:6379" } },
+        },
+      ],
+    },
+  };
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(JSON.stringify([records[0], internal]))),
+  );
+  const sources = await loadRuntimeSources(config);
+  expect(sources.map((s) => s.eventSourceId)).toEqual([
+    "test",
+    "builtin_alarm_merge",
+  ]);
+  expect(sources[1].kafka).toBeUndefined();
+  expect(sources[1].strategyHooks?.[0].name).toBe("strategy-index");
+  expect(
+    redactedConfig({ ...config, eventSources: sources }).eventSources[1].kafka,
+  ).toBeUndefined();
 });

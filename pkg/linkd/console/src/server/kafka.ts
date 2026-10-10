@@ -17,11 +17,7 @@ import type {
   KafkaResource,
 } from "../shared/contracts.js";
 import { redactedConfig } from "./config.js";
-import type {
-  ConsoleConfig,
-  EventSourceConfig,
-  KafkaConnection,
-} from "./config.js";
+import type { ConsoleConfig, KafkaConnection } from "./config.js";
 
 // KafkaConnector 只创建 Admin client，并且只调用 metadata/group/offset 查询接口。
 export class KafkaConnector {
@@ -48,13 +44,23 @@ export class KafkaConnector {
     const sources = this.config.dispatch?.jwt.secretKey
       ? await loadRuntimeSources(this.config)
       : (this.config.eventSources ?? []);
-    const queries = sources.flatMap((source) => [
-      () => this.inspectInput(source),
-      ...(source.kafkaHooks ?? []).map(
-        (hook) => () =>
-          this.inspectOutput(hook.connection, source.eventSourceId, hook.name),
-      ),
-    ]);
+    const queries = sources.flatMap((source) => {
+      // 内部合并来源没有 Kafka 输入，但其输出 Hook 仍需独立诊断。
+      const input = source.kafka;
+      return [
+        ...(input
+          ? [() => this.inspectResource("input", input, source.eventSourceId)]
+          : []),
+        ...(source.kafkaHooks ?? []).map(
+          (hook) => () =>
+            this.inspectOutput(
+              hook.connection,
+              source.eventSourceId,
+              hook.name,
+            ),
+        ),
+      ];
+    });
     // 每次刷新最多四个 Admin 连接；每项结果独立，不让一个来源失败遮住其余来源。
     const resources: KafkaResource[] = new Array(queries.length);
     let next = 0;
@@ -68,15 +74,11 @@ export class KafkaConnector {
     );
     return {
       kafka: { status: kafkaInspectionStatus(resources), resources },
-      eventSources: redactedConfig({ ...this.config, eventSources: sources })
-        .eventSources,
+      eventSources: redactedConfig({
+        ...this.config,
+        eventSources: sources,
+      }).eventSources.filter((source) => source.kafka !== undefined),
     };
-  }
-
-  private async inspectInput(
-    source: EventSourceConfig,
-  ): Promise<KafkaResource> {
-    return this.inspectResource("input", source.kafka, source.eventSourceId);
   }
 
   private async inspectOutput(

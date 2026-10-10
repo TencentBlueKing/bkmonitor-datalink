@@ -81,17 +81,11 @@ spec:
               value: {{ printf "http://%s-control-plane:%v" (include "linkd.fullname" $) $.Values.service.port | quote }}
             {{- if or $console (eq $w.component "control-plane") }}
             - name: LINKD_JWT_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $.Values.auth.existingSecret }}
-                  key: {{ $.Values.auth.jwtSecretKey }}
+              {{- include "linkd.credential" (dict "secret" $.Values.auth.existingSecret "key" $.Values.auth.jwtSecretKey "value" $.Values.auth.jwtSecret) | nindent 14 }}
             {{- end }}
             {{- if not $console }}
             - name: LINKD_WORKER_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $.Values.auth.existingSecret }}
-                  key: {{ $.Values.auth.workerTokenKey }}
+              {{- include "linkd.credential" (dict "secret" $.Values.auth.existingSecret "key" $.Values.auth.workerTokenKey "value" $.Values.auth.workerToken) | nindent 14 }}
             {{- end }}
             {{- if $w.group }}
             - name: LINKD_WORKER_LABELS
@@ -111,15 +105,9 @@ spec:
             - name: LINKD_CONSOLE_BASIC_AUTH_ENABLED
               value: "true"
             - name: LINKD_CONSOLE_BASIC_AUTH_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $.Values.console.basicAuth.existingSecret }}
-                  key: {{ $.Values.console.basicAuth.usernameKey }}
+              {{- include "linkd.credential" (dict "secret" $.Values.console.basicAuth.existingSecret "key" $.Values.console.basicAuth.usernameKey "value" $.Values.console.basicAuth.username) | nindent 14 }}
             - name: LINKD_CONSOLE_BASIC_AUTH_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: {{ $.Values.console.basicAuth.existingSecret }}
-                  key: {{ $.Values.console.basicAuth.passwordKey }}
+              {{- include "linkd.credential" (dict "secret" $.Values.console.basicAuth.existingSecret "key" $.Values.console.basicAuth.passwordKey "value" $.Values.console.basicAuth.password) | nindent 14 }}
             {{- with $.Values.console.prometheusUrl }}
             - name: LINKD_CONSOLE_PROMETHEUS_URL
               value: {{ . | quote }}

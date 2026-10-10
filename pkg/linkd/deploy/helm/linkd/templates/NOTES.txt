@@ -18,7 +18,7 @@ kubectl -n {{ .Release.Namespace }} logs job/{{ include "linkd.migrateName" . }}
 {{ end -}}
 
 {{ if .Values.console.enabled -}}
-Console 使用 Basic Auth，凭据引用 {{ .Values.console.basicAuth.existingSecret }}。
+Console 使用 Basic Auth，凭据来自 {{ if .Values.console.basicAuth.existingSecret }}已有 Secret {{ .Values.console.basicAuth.existingSecret }}{{ else }}直接配置的 values{{ end }}。
 {{ if .Values.console.ingress.enabled -}}
 Console 地址：{{ if .Values.console.ingress.tls }}https{{ else }}http{{ end }}://{{ .Values.console.ingress.hostname }}{{ .Values.console.basePath }}；部署方须配置 DNS 和 Ingress Controller，保留完整路径转发。
 {{ else -}}

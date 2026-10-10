@@ -42,7 +42,29 @@ GitHub Actions 支持单独打包 Chart 并下载 `.tgz`，见[手动构建与�
 填写镜像和实际外部服务地址；来源与 Kafka 输出规则通过正式来源 API 配置。
 不把含凭据的 values 提交到仓库。Helm 管理的配置会同时存入 Kubernetes Secret 和 Helm release 记录。
 
-预先创建 namespace 和认证 Secret。下面的文件路径指向部署者准备的无末尾换行凭据文件，命令不会把明文凭据放入参数：
+## 认证凭据：直接配置或已有 Secret
+
+Chart 支持直接在 values 填写认证凭据，无需提前创建认证 Secret：
+
+```yaml
+auth:
+  jwtSecret: replace-with-shared-kingeye-jwt-secret
+  workerToken: replace-with-independent-worker-token
+console:
+  enabled: true
+  basicAuth:
+    username: operator
+    password: replace-with-console-password
+```
+
+`auth.existingSecret` 非空时优先使用该 Secret，忽略 `auth.jwtSecret` 和 `auth.workerToken`；
+否则两项必须非空且不同。`auth.jwtSecretKey` / `workerTokenKey` 仍表示 Secret 中的 key 名。
+Console 启用时，`console.basicAuth.existingSecret` 同样优先；未配置时 username/password 必须非空。
+直接配置通过环境变量注入对应角色及初始化 Job，Helm 升级修改值会触发相关 Deployment 更新。
+values 中的认证凭据会进入 Helm release 记录和 Pod manifest；配置文件中的存储凭据仍由配置 Secret 挂载。
+完整无外部认证 Secret 示例见 [直接认证配置](../../deploy/helm/linkd/examples/direct-auth.yaml)。
+
+也可预先创建 namespace 和认证 Secret。下面的文件路径指向部署者准备的无末尾换行凭据文件，命令不会把明文凭据放入参数：
 
 ```bash
 kubectl create namespace linkd
@@ -51,7 +73,7 @@ kubectl -n linkd create secret generic linkd-auth \
   --from-file=worker-token=/secure/linkd-worker-token
 ```
 
-JWT 共享密钥与 Worker Token 必须非空且不同。Chart 引用已有 Secret，不自动生成或轮换这些凭据。
+JWT 共享密钥与 Worker Token 必须非空且不同。已有 Secret 模式下 Chart 只引用，不自动生成或轮换这些凭据。
 
 ## Worker 分组
 
@@ -203,7 +225,7 @@ TLS Secret、DNS 和 Controller 由部署方准备，HTTPS 和跳转策略按所
 Basic Auth 不提供传输加密，远程访问应使用 HTTPS。
 
 Console Service 是 ClusterIP，Basic Auth 在 Node 服务执行，直连 Service 也需要认证。
-所有页面、静态资源和 local-api 都受保护。凭据来自 Secret，只配置单个运维账户，
+所有页面、静态资源和 local-api 都受保护。凭据可直接填写或来自已有 Secret，只配置单个运维账户，
 该账户具有 Console 现有管理权限，不代表提供按用户划分的租户权限。
 
 Console 以 server 模式监听 `0.0.0.0:4399`，该模式强制 Basic Auth。
@@ -351,7 +373,7 @@ kubectl -n linkd get service -l 'linkd/metrics=true'
 
 ## 初始化 Job 与等待方式
 
-Chart 默认在创建、更新时运行 `linkd storage migrate`，使用 Control Plane 的配置、镜像和认证 Secret。
+Chart 默认在创建、更新时运行 `linkd storage migrate`，使用 Control Plane 的配置、镜像和认证凭据。
 这个一次性命令完成配置与认证前提校验、Redis PING、Repository schema 初始化及 EventSource
 Record/Release 集合初始化。Elasticsearch 复用控制面的 Schema/Active 资源与时间桶对账；MySQL
 复用 Repository 的 EnsureSchema。成功后退出，失败返回非零退出码。
@@ -374,7 +396,7 @@ Job 失败则本次 Helm 操作失败。初次安装所需的迁移配置 Secret
 Hook 创建，不依赖尚未创建的普通资源；成功后清理这些 Hook。失败 Job 保留到 TTL 或下次执行前，
 失败的 Hook Secret/ServiceAccount 保留用于排障，可在确认 Job 已结束后手工删除。
 
-认证 Secret、引用的已有配置 Secret、已有 ServiceAccount、imagePullSecrets，以及 extraVolumes 中
+使用已有 Secret 模式时的认证 Secret、引用的已有配置 Secret、已有 ServiceAccount、imagePullSecrets，以及 extraVolumes 中
 引用的证书等资源，必须在 Hook 执行前存在。迁移可覆盖 resources、调度、安全上下文和扩展环境/卷参数，
 未覆盖时继承 Control Plane 和通用 Pod 参数；不能通过 migrate 覆盖控制面配置或保留的认证变量。
 
@@ -467,7 +489,7 @@ Helm 测试检查渲染、配置加载、组隔离和错误参数，不连接真
 不探测 Kingeye 上游。数据库故障时可从快照恢复；关闭开关后不读取这些快照，也不会删除它们。
 来源示例见[配置指南](configuration.md#动态配置)。
 
-管理认证 Secret 使用 `jwt-secret-key`（可通过 `auth.jwtSecretKey` 指定已有 key），其值与 Kingeye 的 `BKAPP_JWT_SECRET_KEY` 相同。Chart 仅向控制面、Console 和迁移 Job 注入 `LINKD_JWT_SECRET_KEY`；Worker 继续独立使用 `worker-token`。`configuration.dispatch.jwt.username` 可设置签发用户名，默认 `admin`。升级时同步更新 Secret、Chart、控制面、Console 和来源导入 CLI；旧 `auth.apiTokenKey` 已移除，不支持混用旧管理 Token。修改 Secret 后需重启消费它的进程。
+管理认证可直接配置 `auth.jwtSecret`；已有 Secret 模式使用 `jwt-secret-key`（可通过 `auth.jwtSecretKey` 指定已有 key），其值与 Kingeye 的 `BKAPP_JWT_SECRET_KEY` 相同。Chart 仅向控制面、Console 和迁移 Job 注入 `LINKD_JWT_SECRET_KEY`；Worker 继续独立使用 `worker-token`。`configuration.dispatch.jwt.username` 可设置签发用户名，默认 `admin`。升级时同步更新 Secret、Chart、控制面、Console 和来源导入 CLI；旧 `auth.apiTokenKey` 已移除，不支持混用旧管理 Token。修改 Secret 后需重启消费它的进程。
 
 ## 蓝鲸全局调用配置
 

@@ -104,6 +104,18 @@ linkd/eventgen-instance: {{ .workload.eventgenInstance | quote }}
 {{- $config | toYaml -}}
 {{- end -}}
 
+{{/* 认证来源统一用于常驻角色和初始化 Job；已有 Secret 优先。 */}}
+{{- define "linkd.credential" -}}
+{{- if .secret -}}
+valueFrom:
+  secretKeyRef:
+    name: {{ .secret | quote }}
+    key: {{ .key | quote }}
+{{- else -}}
+value: {{ .value | quote }}
+{{- end -}}
+{{- end -}}
+
 {{- define "linkd.validate" -}}
 {{/* 多租户开关只能在公共 blueking 定义，避免各角色使用不同的用户解析模式。 */}}
 {{- range $group, $cluster := .Values.clusters -}}
@@ -124,9 +136,16 @@ linkd/eventgen-instance: {{ .workload.eventgenInstance | quote }}
 {{- $_ := set $seen $env.name true -}}
 {{- end -}}
 {{- end -}}
-{{- $_ := required "auth.existingSecret 必须配置" .Values.auth.existingSecret -}}
+{{- if not .Values.auth.existingSecret -}}
+{{- $_ := required "auth.jwtSecret 必须配置（或设置 auth.existingSecret）" .Values.auth.jwtSecret -}}
+{{- $_ := required "auth.workerToken 必须配置（或设置 auth.existingSecret）" .Values.auth.workerToken -}}
+{{- if eq .Values.auth.jwtSecret .Values.auth.workerToken }}{{ fail "auth.jwtSecret 与 auth.workerToken 必须不同" }}{{ end -}}
+{{- end -}}
 {{- if .Values.console.enabled -}}
-{{- $_ := required "console.basicAuth.existingSecret 必须配置" .Values.console.basicAuth.existingSecret -}}
+{{- if not .Values.console.basicAuth.existingSecret -}}
+{{- $_ := required "console.basicAuth.username 必须配置（或设置 console.basicAuth.existingSecret）" .Values.console.basicAuth.username -}}
+{{- $_ := required "console.basicAuth.password 必须配置（或设置 console.basicAuth.existingSecret）" .Values.console.basicAuth.password -}}
+{{- end -}}
 {{- end -}}
 
 {{- if .Values.console.ingress.enabled -}}

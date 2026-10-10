@@ -21,6 +21,9 @@ image:
 dispatch:
   deployment: ""
 auth:
+  ## 直接配置；existingSecret 非空时优先使用 Secret，忽略这两个值。
+  jwtSecret: ""
+  workerToken: ""
   existingSecret: ""
   jwtSecretKey: jwt-secret-key
   workerTokenKey: worker-token
@@ -179,7 +182,7 @@ metrics:
     sampleLimit: 0
     targetLimit: 0
 
-## @section Console：仅 server 模式，必须提供 Basic Auth Secret
+## @section Console：仅 server 模式，Basic Auth 支持直接填写或已有 Secret
 console:
   enabled: false
   ## 根路径为 /；子路径须由字母、数字、下划线、连字符组成，且不以 / 结尾。
@@ -205,6 +208,9 @@ console:
   # 可选全局告警详情URL模板；为空时Console不显示KAC跳转。
   kacAlertUrlTemplate: ""
   basicAuth:
+    ## existingSecret 非空时优先使用 Secret，忽略 username/password。
+    username: ""
+    password: ""
     existingSecret: ""
     usernameKey: username
     passwordKey: password

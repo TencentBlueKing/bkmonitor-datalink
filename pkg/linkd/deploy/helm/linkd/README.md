@@ -6,7 +6,7 @@ Console、Event Generator、Ingress 和 ServiceMonitor 可选，所有中间件�
 外部 Elasticsearch 最低要求 **7.10**；Redis 建议使用 **7.2 系列**（单节点或 Sentinel）。
 完整版本边界与实测范围见 [中间件版本要求](../../../docs/guides/configuration.md#中间件版本要求)。
 
-Chart 版本为 `0.1.11`。Linkd 与 Console 的默认镜像分别为 `ghcr.io/tencentblueking/bkmonitor-datalink/linkd:0.1.11`
+Chart 版本为 `0.1.12`。Linkd 与 Console 的默认镜像分别为 `ghcr.io/tencentblueking/bkmonitor-datalink/linkd:0.1.11`
 和 `ghcr.io/tencentblueking/bkmonitor-datalink/linkd-console:0.1.11`；可选模拟器使用独立的 `linkd-eventgen:0.1.2`。
 镜像仓库与版本均可通过 values 覆盖。
 手动打包与 GitHub Actions Artifacts 下载见[发布指南](../../../docs/guides/image-release.md#helm-chart-打包)。
@@ -14,6 +14,7 @@ Chart 版本为 `0.1.11`。Linkd 与 Console 的默认镜像分别为 `ghcr.io/t
 完整操作说明见 [Helm 部署指南](../../../docs/guides/helm.md)。
 参数说明见 [values.yaml](values.yaml)，示例见：
 
+- [直接填写 JWT、Worker Token 和 Console Basic Auth](examples/direct-auth.yaml)；已有 Secret 配置优先于直接值。
 - [外部服务](examples/external-services.yaml)
 - [default / alarmd worker 组](examples/clusters.yaml)
 - [共享已有 Secret 的不同 key](examples/existing-secrets.yaml)

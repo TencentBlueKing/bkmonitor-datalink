@@ -100,15 +100,9 @@ spec:
             {{- toYaml ($s.containerSecurityContext | default .Values.containerSecurityContext) | nindent 12 }}
           env:
             - name: LINKD_JWT_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.auth.existingSecret }}
-                  key: {{ .Values.auth.jwtSecretKey }}
+              {{- include "linkd.credential" (dict "secret" .Values.auth.existingSecret "key" .Values.auth.jwtSecretKey "value" .Values.auth.jwtSecret) | nindent 14 }}
             - name: LINKD_WORKER_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.auth.existingSecret }}
-                  key: {{ .Values.auth.workerTokenKey }}
+              {{- include "linkd.credential" (dict "secret" .Values.auth.existingSecret "key" .Values.auth.workerTokenKey "value" .Values.auth.workerToken) | nindent 14 }}
             - name: LINKD_CONTROL_PLANE_URL
               value: {{ printf "http://%s-control-plane:%v" (include "linkd.fullname" .) .Values.service.port | quote }}
             {{- with concat .Values.extraEnvVars ($s.extraEnvVars | default list) }}

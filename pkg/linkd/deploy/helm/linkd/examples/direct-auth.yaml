@@ -1,0 +1,17 @@
+# 无需预先创建认证 Secret；示例凭据必须替换，JWT 与 Kingeye 的签名密钥一致。
+auth:
+  jwtSecret: replace-with-shared-kingeye-jwt-secret
+  workerToken: replace-with-independent-worker-token
+configuration:
+  storage:
+    repository: elasticsearch
+    elasticsearch:
+      addresses: [http://elasticsearch:9200]
+      index_prefix: linkd
+    redis:
+      address: redis:6379
+console:
+  enabled: true
+  basicAuth:
+    username: operator
+    password: replace-with-console-password

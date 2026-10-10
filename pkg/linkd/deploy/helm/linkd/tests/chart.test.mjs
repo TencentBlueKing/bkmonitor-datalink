@@ -506,3 +506,63 @@ test("optional global KAC alert navigation is only injected into Console", () =>
     }
   }
 });
+
+test("direct authentication values reach roles and both migration modes without an auth Secret", () => {
+  const values = structuredClone(base);
+  values.auth = {jwtSecret: "synthetic-jwt-key", workerToken: "synthetic-worker-token"};
+  values.console = {enabled: true, basicAuth: {username: "operator", password: 'test: "quoted" $value # password'}};
+  for (const watch of [true, false]) {
+    values.migrate = {watch};
+    const docs = render(values);
+    for (const doc of docs.filter(d => d.kind === "Deployment" || d.kind === "Job")) {
+      const role = doc.metadata.labels["app.kubernetes.io/component"];
+      const env = Object.fromEntries(doc.spec.template.spec.containers[0].env.map(e => [e.name, e]));
+      if (["control-plane", "console", "migrate"].includes(role)) {
+        assert.deepEqual(env.LINKD_JWT_SECRET_KEY, {name: "LINKD_JWT_SECRET_KEY", value: "synthetic-jwt-key"});
+      }
+      if (role !== "console") {
+        assert.deepEqual(env.LINKD_WORKER_TOKEN, {name: "LINKD_WORKER_TOKEN", value: "synthetic-worker-token"});
+      } else {
+        assert.equal(env.LINKD_CONSOLE_BASIC_AUTH_USERNAME.value, "operator");
+        assert.equal(env.LINKD_CONSOLE_BASIC_AUTH_PASSWORD.value, values.console.basicAuth.password);
+      }
+    }
+    validateConfigs(docs);
+  }
+});
+
+test("existing authentication Secrets override direct values and retain custom keys", () => {
+  const values = structuredClone(base);
+  values.auth = {...values.auth, jwtSecret: "unused-direct", workerToken: "unused-direct", jwtSecretKey: "jwt", workerTokenKey: "worker"};
+  values.console = {enabled: true, basicAuth: {existingSecret: "console-auth", usernameKey: "user", passwordKey: "pass", username: "unused-user", password: "unused-password"}};
+  const docs = render(values);
+  assert.equal(JSON.stringify(docs).includes("unused-"), false);
+  for (const doc of docs.filter(d => d.kind === "Deployment" || d.kind === "Job")) {
+    const env = Object.fromEntries(doc.spec.template.spec.containers[0].env.map(e => [e.name, e]));
+    if (env.LINKD_JWT_SECRET_KEY) assert.deepEqual(env.LINKD_JWT_SECRET_KEY.valueFrom.secretKeyRef, {name: values.auth.existingSecret, key: "jwt"});
+    if (env.LINKD_WORKER_TOKEN) assert.deepEqual(env.LINKD_WORKER_TOKEN.valueFrom.secretKeyRef, {name: values.auth.existingSecret, key: "worker"});
+    if (env.LINKD_CONSOLE_BASIC_AUTH_USERNAME) {
+      assert.deepEqual(env.LINKD_CONSOLE_BASIC_AUTH_USERNAME.valueFrom.secretKeyRef, {name: "console-auth", key: "user"});
+      assert.deepEqual(env.LINKD_CONSOLE_BASIC_AUTH_PASSWORD.valueFrom.secretKeyRef, {name: "console-auth", key: "pass"});
+    }
+  }
+});
+
+test("direct authentication rejects missing fields, matching tokens and invalid types", () => {
+  const auth = {jwtSecret: "synthetic-jwt", workerToken: "synthetic-worker"};
+  for (const [credentials, basicAuth, expected] of [
+    [{workerToken: "worker"}, undefined, /auth.jwtSecret/],
+    [{jwtSecret: "jwt"}, undefined, /auth.workerToken/],
+    [{jwtSecret: "same", workerToken: "same"}, undefined, /必须不同/],
+    [{jwtSecret: 123, workerToken: "worker"}, undefined, /jwtSecret/],
+    [auth, {password: "password"}, /basicAuth.username/],
+    [auth, {username: "operator"}, /basicAuth.password/],
+    [auth, {username: "operator", password: 123}, /password/],
+  ]) {
+    const values = {...base, auth: credentials};
+    if (basicAuth) values.console = {enabled: true, basicAuth};
+    const result = spawnSync("helm", ["template", "test", chart, "-f", "-"], {input: stringify(values), encoding: "utf8"});
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, expected);
+  }
+});

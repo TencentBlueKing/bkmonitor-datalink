@@ -96,6 +96,8 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "jwtSecret": {"type": "string"},
+        "workerToken": {"type": "string"},
         "existingSecret": {
           "type": "string"
         },
@@ -1188,6 +1190,8 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "username": {"type": "string"},
+            "password": {"type": "string"},
             "existingSecret": {
               "type": "string"
             },

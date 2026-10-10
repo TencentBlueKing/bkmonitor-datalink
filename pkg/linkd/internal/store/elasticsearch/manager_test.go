@@ -26,18 +26,21 @@ import (
 )
 
 type managerTransport struct {
-	mu         sync.Mutex
-	indices    map[string]schemaMetadata
-	aliases    map[string]map[string]bool
-	searches   int
-	searchBody string
-	lastSearch string
-	settings   map[string]map[string]string
+	mu             sync.Mutex
+	indices        map[string]schemaMetadata
+	aliases        map[string]map[string]bool
+	searches       int
+	searchBody     string
+	lastSearch     string
+	settings       map[string]map[string]string
+	properties     map[string]map[string]any
+	mappingUpdates []string
 }
 
 func newManagerTransport() *managerTransport {
 	return &managerTransport{
 		indices: map[string]schemaMetadata{}, aliases: map[string]map[string]bool{}, settings: map[string]map[string]string{},
+		properties: map[string]map[string]any{},
 	}
 }
 
@@ -73,8 +76,24 @@ func (t *managerTransport) Perform(request *http.Request) (*http.Response, error
 		if metadata.Entity == entityAlert || metadata.Entity == entityAlertHistory {
 			properties = alertProperties()
 		}
+		if existing, ok := t.properties[index]; ok {
+			properties = existing
+		}
 		data, _ := json.Marshal(map[string]any{index: map[string]any{"mappings": map[string]any{"_meta": metadata, "properties": properties}}})
 		return managerBytesResponse(http.StatusOK, data), nil
+	case request.Method == http.MethodPut && strings.HasSuffix(path, "/_mapping"):
+		index := strings.TrimSuffix(strings.TrimPrefix(path, "/"), "/_mapping")
+		var body struct {
+			Properties map[string]any `json:"properties"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			return nil, err
+		}
+		for name, property := range body.Properties {
+			t.properties[index][name] = property
+		}
+		t.mappingUpdates = append(t.mappingUpdates, index)
+		return managerJSONResponse(http.StatusOK, `{"acknowledged":true}`), nil
 	case request.Method == http.MethodPut && strings.HasSuffix(path, "/_settings"):
 		index := strings.TrimSuffix(strings.TrimPrefix(path, "/"), "/_settings")
 		var body struct {

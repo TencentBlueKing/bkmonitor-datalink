@@ -104,6 +104,7 @@ Elasticsearch 存量 Alert JSON 完全缺少 `revision`，且没有投影目标�
 - ES mapping 为 strict；dimensions/labels 使用 flattened。`source_raw_data`、`extra_data`、`enrich` 和
   AlertLog `params` 显式存在但 `enabled=false`，展示文本显式存在但不建立倒排索引或 doc values。
 - Event Enrich 的四个新增 mapping 字段由索引对账在核对归属与 schema 后增量补齐，不删除现有数据，已有字段类型冲突仍报错。
+- Bucket Manager 同时核对读 alias 下已存在的历史桶，按物理名称、桶边界与 managed metadata 验证归属，再增量补齐字段；不受近期预创建窗口限制，也不为升级创建中间历史空桶。历史桶数量仍受每类硬上限约束。
 - 当前 ES schema version 为 3；索引 mapping `_meta` 记录实体、role、桶周期与起止时间。配置不匹配时
   对账任务失败，不自动迁移或删除已有数据。
 - Alert 与 AlertHistory 的 `_source` 和 mapping 完全一致。Lifecycle 的终态 CAS 只更新 Active，成功后

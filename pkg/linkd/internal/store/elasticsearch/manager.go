@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -79,15 +80,46 @@ func (m *Manager) ReconcileSchemaAndActive(ctx context.Context) error {
 	return nil
 }
 
-// ReconcileBuckets 幂等维护当前预创建窗口内的时间桶及其 alias。
+// ReconcileBuckets 核对已有历史桶的字段，并幂等维护当前预创建窗口内的时间桶及其 alias。
 // 模板必须先由 ReconcileSchemaAndActive 准备；控制面启动时按该顺序完成首次对账。
 func (m *Manager) ReconcileBuckets(ctx context.Context) error {
 	if ctx == nil {
 		return fmt.Errorf("reconcile elasticsearch buckets: context must not be nil")
 	}
+	if err := m.reconcileExistingBuckets(ctx); err != nil {
+		return err
+	}
 	now := m.now().Round(0).UTC()
 	if err := m.ensureWindow(ctx, now); err != nil {
 		return err
+	}
+	return nil
+}
+
+// 历史告警仍会写入原创建时间桶；只升级已有读 alias 成员，不扩大预创建范围。
+// 物理名称和 managed metadata 都必须与当前部署一致，不能把异主索引当作可修复的旧版本。
+func (m *Manager) reconcileExistingBuckets(ctx context.Context) error {
+	for _, family := range m.bucketFamilies() {
+		indices, err := m.aliasIndices(ctx, family.readAlias)
+		if err != nil {
+			return err
+		}
+		if len(indices) > m.config.MaxBucketsPerEntity {
+			return fmt.Errorf("elasticsearch alias %q exceeds max bucket count %d", family.readAlias, m.config.MaxBucketsPerEntity)
+		}
+		for _, index := range indices {
+			_, date, found := strings.Cut(index, family.readAlias+"-")
+			start, err := time.Parse(bucketDateLayout, date)
+			if !found || err != nil || family.index(start) != index {
+				return fmt.Errorf("elasticsearch alias %q contains incompatible bucket %q", family.readAlias, index)
+			}
+			expected := schemaMetadata{ManagedBy: managedByLinkd, Entity: family.entity, Role: family.role,
+				SchemaVersion: currentSchemaVersion, BucketDays: family.days,
+				BucketStart: start.Format(time.RFC3339), BucketEnd: start.AddDate(0, 0, family.days).Format(time.RFC3339)}
+			if err := m.verifyManagedIndex(ctx, index, expected); err != nil {
+				return fmt.Errorf("reconcile existing %s bucket %q: %w", family.entity, index, err)
+			}
+		}
 	}
 	return nil
 }

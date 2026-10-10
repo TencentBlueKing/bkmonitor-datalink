@@ -12,12 +12,22 @@ package http
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metric"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/trace"
 )
+
+func (r *response) queryTsSharedSchemaNegotiation(query *structured.QueryTs) sharedSchemaNegotiation {
+	if query.ResponseContract == structured.NamedOutputsV1 || r.isConfigUnifyRespProcess(r.c) {
+		return sharedSchemaNegotiation{}
+	}
+	// Multiple Accept header lines have the same meaning as one joined list.
+	return negotiateSharedSchema(strings.Join(r.c.Request.Header.Values("Accept"), ","), sharedSchemaV1Enabled.Load())
+}
 
 func (r *response) sharedSchemaSuccess(ctx context.Context, data *PromData) (err error) {
 	started := time.Now()

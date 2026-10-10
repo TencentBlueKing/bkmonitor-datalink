@@ -508,17 +508,14 @@ func HandlerQueryTs(c *gin.Context) {
 		return
 	}
 
-	var negotiation sharedSchemaNegotiation
-	if query.ResponseContract != structured.NamedOutputsV1 && !resp.isConfigUnifyRespProcess(c) {
-		negotiation = negotiateSharedSchema(c.GetHeader("Accept"), sharedSchemaV1Enabled.Load())
-		if negotiation.explicit {
-			varyAccept(c.Writer.Header())
-		}
-		if negotiation.reject {
-			err = fmt.Errorf("shared schema v1 requires application/json fallback in Accept")
-			resp.sharedSchemaNotAcceptable(ctx)
-			return
-		}
+	negotiation := resp.queryTsSharedSchemaNegotiation(query)
+	if negotiation.explicit {
+		varyAccept(c.Writer.Header())
+	}
+	if negotiation.reject {
+		err = fmt.Errorf("shared schema v1 requires application/json fallback in Accept")
+		resp.sharedSchemaNotAcceptable(ctx)
+		return
 	}
 
 	var res any

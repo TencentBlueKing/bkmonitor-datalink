@@ -33,6 +33,8 @@ import (
 
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/query/structured"
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/service/http/proxy"
 )
 
 func sharedTestData(count int) *PromData {
@@ -97,6 +99,21 @@ func TestSharedSchemaConfigDefaultsAndReload(t *testing.T) {
 	viper.Set(SharedSchemaV1EnabledConfigPath, false)
 	LoadConfig()
 	require.False(t, sharedSchemaV1Enabled.Load())
+}
+
+func TestSharedSchemaQueryTsNegotiationScopeAndMultipleHeaders(t *testing.T) {
+	previous := sharedSchemaV1Enabled.Load()
+	sharedSchemaV1Enabled.Store(true)
+	t.Cleanup(func() { sharedSchemaV1Enabled.Store(previous) })
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/query/ts", nil)
+	c.Request.Header.Add("Accept", sharedSchemaV1MediaType)
+	c.Request.Header.Add("Accept", "application/json;q=0.9")
+	resp := &response{c: c}
+	require.Equal(t, sharedSchemaNegotiation{explicit: true, selected: true}, resp.queryTsSharedSchemaNegotiation(&structured.QueryTs{}))
+	require.Equal(t, sharedSchemaNegotiation{}, resp.queryTsSharedSchemaNegotiation(&structured.QueryTs{ResponseContract: structured.NamedOutputsV1}))
+	c.Set(proxy.ContextConfigUnifyResponseProcess, true)
+	require.Equal(t, sharedSchemaNegotiation{}, resp.queryTsSharedSchemaNegotiation(&structured.QueryTs{}))
 }
 
 func sharedEncode(t *testing.T, data *PromData) ([]sharedFrame, []byte) {

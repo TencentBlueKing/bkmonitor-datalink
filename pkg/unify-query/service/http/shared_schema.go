@@ -36,6 +36,7 @@ const (
 	sharedFallbackSchemas    = "schema_limit"
 	sharedFallbackDictionary = "dictionary_limit"
 	sharedFailureEncode      = "encode"
+	sharedFailureCancel      = "stream_cancel"
 )
 
 type sharedSchema struct {
@@ -229,7 +230,7 @@ func writeSharedSchema(ctx context.Context, writer io.Writer, flush func() error
 	seq := 0
 	writeFrame := func(frame sharedFrame) error {
 		if err := ctx.Err(); err != nil {
-			stats.FailureStage = "stream_cancel"
+			stats.FailureStage = sharedFailureCancel
 			return err
 		}
 		frame.Seq = seq
@@ -244,6 +245,10 @@ func writeSharedSchema(ctx context.Context, writer io.Writer, flush func() error
 		if len(body)+1 > sharedSchemaMaxFrameBytes {
 			stats.FailureStage = sharedFailureEncode
 			return errors.New("shared schema frame exceeded preflight size")
+		}
+		if err := ctx.Err(); err != nil {
+			stats.FailureStage = sharedFailureCancel
+			return err
 		}
 		body = append(body, '\n')
 		started = time.Now()
@@ -276,7 +281,7 @@ func writeSharedSchema(ctx context.Context, writer io.Writer, flush func() error
 	batchSize := 0
 	for _, table := range data.Tables {
 		if err := ctx.Err(); err != nil {
-			stats.FailureStage = "stream_cancel"
+			stats.FailureStage = sharedFailureCancel
 			return stats, err
 		}
 		started := time.Now()
@@ -288,6 +293,7 @@ func writeSharedSchema(ctx context.Context, writer io.Writer, flush func() error
 		if reason, err := counter.result(); reason != "" || err != nil {
 			stats.FailureStage = sharedFailureEncode
 			if err != nil {
+				stats.FailureStage = sharedFailureCancel
 				return stats, err
 			}
 			return stats, errors.New("shared schema result changed after preflight")

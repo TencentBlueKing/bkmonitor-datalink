@@ -581,11 +581,9 @@ func (m *HostAndTopoCacheManager) refreshHostAgentIDCache(ctx context.Context, b
 func getHostAndTopoByBiz(ctx context.Context, bkTenantId string, bkBizID int) ([]*AlarmHostInfo, *cmdb.SearchBizInstTopoData, error) {
 	cmdbApi := getCmdbApi(bkTenantId)
 
-	// 设置超时时间
-	_ = cmdbApi.AddOperationOptions()
-
 	// 批量拉取业务下的主机信息
-	results, err := api.BatchApiRequest(
+	results, err := BatchApiRequest(
+		ctx,
 		cmdbApiPageSize,
 		func(resp any) (int, error) {
 			var res cmdb.ListBizHostsTopoResp
@@ -619,7 +617,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkTenantId string, bkBizID int) ([
 
 	// 拉取云区域信息
 	var cloudAreaResp cmdb.SearchCloudAreaResp
-	_, err = cmdbApi.SearchCloudArea().SetContext(ctx).SetBody(map[string]any{"page": map[string]int{"start": 0, "limit": 1000}}).SetResult(&cloudAreaResp).Request()
+	err = DoRequest(ctx, cmdbApi.SearchCloudArea().SetContext(ctx).SetBody(map[string]any{"page": map[string]int{"start": 0, "limit": 1000}}), &cloudAreaResp)
 	err = api.HandleApiResultError(cloudAreaResp.ApiCommonRespMeta, err, "search cloud area failed")
 	if err != nil {
 		return nil, nil, err
@@ -640,7 +638,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkTenantId string, bkBizID int) ([
 
 	// 查询业务下的拓扑信息
 	var bizInstTopoResp cmdb.SearchBizInstTopoResp
-	_, err = cmdbApi.SearchBizInstTopo().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bkBizID)}).SetBody(map[string]any{"bk_biz_id": bkBizID}).SetResult(&bizInstTopoResp).Request()
+	err = DoRequest(ctx, cmdbApi.SearchBizInstTopo().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bkBizID)}).SetBody(map[string]any{"bk_biz_id": bkBizID}), &bizInstTopoResp)
 	err = api.HandleApiResultError(bizInstTopoResp.ApiCommonRespMeta, err, "search biz inst topo failed")
 	if err != nil {
 		logger.Errorf("search biz inst topo failed, bk_biz_id: %d, err: %v", bkBizID, err)
@@ -653,7 +651,7 @@ func getHostAndTopoByBiz(ctx context.Context, bkTenantId string, bkBizID int) ([
 
 	// 查询业务下的内置节点
 	var bizInternalModuleResp cmdb.GetBizInternalModuleResp
-	_, err = cmdbApi.GetBizInternalModule().SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bkBizID)}).SetBody(map[string]any{"bk_biz_id": bkBizID}).SetResult(&bizInternalModuleResp).Request()
+	err = DoRequest(ctx, cmdbApi.GetBizInternalModule().SetContext(ctx).SetPathParams(map[string]string{"bk_biz_id": strconv.Itoa(bkBizID)}).SetBody(map[string]any{"bk_biz_id": bkBizID}), &bizInternalModuleResp)
 	err = api.HandleApiResultError(bizInternalModuleResp.ApiCommonRespMeta, err, "get biz internal module failed")
 	if err != nil {
 		logger.Errorf("get biz internal module failed, bk_biz_id: %d, err: %v", bkBizID, err)

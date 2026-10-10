@@ -245,6 +245,9 @@ func (a *v1beta3SchemaProviderAdapter) ListRelationSchemas(namespace string) []R
 	schemas := make([]relation.RelationSchema, 0, len(definitions))
 	for _, definition := range definitions {
 		schema := relation.ToRelationSchema(definition)
+		if schema.MetricName == "" && schema.IsDirectional {
+			schema.MetricName = definition.GetRelationName()
+		}
 		schemas = append(schemas, schema)
 	}
 	result := make([]RelationSchema, len(schemas))
@@ -256,6 +259,7 @@ func (a *v1beta3SchemaProviderAdapter) ListRelationSchemas(namespace string) []R
 			ToType:        ResourceType(schema.ToType),
 			IsDirectional: schema.IsDirectional,
 			IsBelongsTo:   schema.IsBelongsTo,
+			MetricName:    schema.MetricName,
 		}
 	}
 	sort.SliceStable(result, func(i, j int) bool {
@@ -328,6 +332,7 @@ func (a *v1beta3SchemaProviderAdapter) GetRelationSchema(relationType RelationTy
 		ToType:        ResourceType(schema.ToType),
 		IsDirectional: schema.IsDirectional,
 		IsBelongsTo:   schema.IsBelongsTo,
+		MetricName:    schema.MetricName,
 	}, nil
 }
 
@@ -336,7 +341,17 @@ func normalizeRelationName(name relation.RelationName) RelationType {
 	if _, bareName, ok := strings.Cut(relationName, ":"); ok {
 		relationName = bareName
 	}
-	return RelationType(relationName)
+	return RelationType(canonicalRelationType(relationName))
+}
+
+// Metadata already publishes this business/set relation under its semantic
+// name, while the built-in schema exposes business_set. Keep the public query
+// and response contract stable when the provider changes from static to Redis.
+func canonicalRelationType(name string) string {
+	if name == "business_with_set" {
+		return "business_set"
+	}
+	return name
 }
 
 // NewSchemaProviderFromRelation 创建 v1beta3 SchemaProvider from relation.SchemaProvider

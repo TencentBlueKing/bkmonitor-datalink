@@ -110,64 +110,6 @@ const (
 	DirectionBoth     TraversalDirection = "both"
 )
 
-const (
-	FieldPeriodStart = "period_start"
-	FieldPeriodEnd   = "period_end"
-	FieldReferenceID = "reference_id"
-)
-
-const (
-	ResponseFieldResult = "result"
-	ResponseFieldRoot   = "root"
-	ResponseFieldTarget = "target"
-
-	ResponseFieldHopPrefix = "hop"
-
-	ResponseFieldEntityID   = "entity_id"
-	ResponseFieldEntityType = "entity_type"
-	ResponseFieldEntityData = "entity_data"
-	ResponseFieldLiveness   = "liveness"
-
-	ResponseFieldRelationID       = "relation_id"
-	ResponseFieldRelationType     = "relation_type"
-	ResponseFieldRelationCategory = "relation_category"
-	ResponseFieldRelationLiveness = "relation_liveness"
-	ResponseFieldDirection        = "direction"
-)
-
-// LivenessRecord 资源存活记录
-type LivenessRecord struct {
-	ID          string `json:"id"`
-	ResourceID  string `json:"resource_id"`
-	PeriodStart int64  `json:"period_start"`
-	PeriodEnd   int64  `json:"period_end"`
-	IsActive    bool   `json:"is_active"`
-	CreatedAt   int64  `json:"created_at"`
-	UpdatedAt   int64  `json:"updated_at"`
-}
-
-// VisiblePeriod 可见时间段
-type VisiblePeriod struct {
-	Start int64 `json:"start"`
-	End   int64 `json:"end"`
-}
-
-// Overlap 计算两个 VisiblePeriod 的交集
-func (p *VisiblePeriod) Overlap(other *VisiblePeriod) *VisiblePeriod {
-	start := p.Start
-	if other.Start > start {
-		start = other.Start
-	}
-	end := p.End
-	if other.End < end {
-		end = other.End
-	}
-	if start > end {
-		return nil
-	}
-	return &VisiblePeriod{Start: start, End: end}
-}
-
 // GenerateResourceID 生成资源ID，格式: {resource_type}:⟨key1=value1,key2=value2,...⟩
 func GenerateResourceID(resourceType ResourceType, labels map[string]string) string {
 	if len(labels) == 0 {
@@ -188,14 +130,22 @@ func GenerateResourceID(resourceType ResourceType, labels map[string]string) str
 	return fmt.Sprintf("%s:⟨%s⟩", resourceType, strings.Join(pairs, ","))
 }
 
-func GetLivenessRecordTableName(resourceType ResourceType) string {
-	return string(resourceType) + "_liveness_record"
-}
+// generateResourceIdentityKey 按 schema 声明的主键字段生成资源身份。
+// 资源类型使用普通前缀，字段名和值使用长度前缀，避免值中包含分隔符时产生
+// 歧义；主键字段缺失时返回空字符串，未声明主键时回退到 GenerateResourceID。
+func generateResourceIdentityKey(resourceType ResourceType, fields []string, labels map[string]string) string {
+	if len(fields) == 0 {
+		return GenerateResourceID(resourceType, labels)
+	}
 
-func GetRelationLivenessRecordTableName(relationType RelationType) string {
-	return string(relationType) + "_liveness_record"
-}
-
-func GetLivenessIDField(resourceType ResourceType) string {
-	return FieldReferenceID
+	var builder strings.Builder
+	builder.WriteString(string(resourceType))
+	for _, field := range fields {
+		value, ok := labels[field]
+		if !ok {
+			return ""
+		}
+		fmt.Fprintf(&builder, ":%d:%s=%d:%s", len(field), field, len(value), value)
+	}
+	return builder.String()
 }

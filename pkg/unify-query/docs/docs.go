@@ -112,6 +112,194 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/relation/v1beta3/multi_resource": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "query relation multi resource (v1beta3, TimeGraph)",
+                "operationId": "relation_multi_resource_query_v1beta3",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "TraceID",
+                        "name": "traceparent",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "bkcc__2",
+                        "description": "空间UID",
+                        "name": "X-Bk-Scope-Space-Uid",
+                        "in": "header"
+                    },
+                    {
+                        "description": "json data",
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.RelationMultiResourceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.RelationMultiResourceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/relation/v1beta3/multi_resource_range": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "query relation multi resource range (v1beta3, TimeGraph)",
+                "operationId": "relation_multi_resource_query_range_v1beta3",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "TraceID",
+                        "name": "traceparent",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "bkcc__2",
+                        "description": "空间UID",
+                        "name": "X-Bk-Scope-Space-Uid",
+                        "in": "header"
+                    },
+                    {
+                        "description": "json data",
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.RelationMultiResourceRangeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.RelationMultiResourceRangeResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/relation/v1beta3/topology": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "query relation shared topology",
+                "operationId": "relation_shared_topology_query_v1beta3",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "TraceID",
+                        "name": "traceparent",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "bkcc__2",
+                        "description": "空间UID",
+                        "name": "X-Bk-Scope-Space-Uid",
+                        "in": "header"
+                    },
+                    {
+                        "description": "json data",
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.SharedTopologyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.SharedTopologyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/relation/v1beta3/topology_range": {
+            "post": {
+                "produces": [
+                    "application/json"
+                ],
+                "summary": "query relation shared topology range",
+                "operationId": "relation_shared_topology_query_range_v1beta3",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "TraceID",
+                        "name": "traceparent",
+                        "in": "header"
+                    },
+                    {
+                        "type": "string",
+                        "default": "bkcc__2",
+                        "description": "空间UID",
+                        "name": "X-Bk-Scope-Space-Uid",
+                        "in": "header"
+                    },
+                    {
+                        "description": "json data",
+                        "name": "data",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.SharedTopologyRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/cmdb.SharedTopologyResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/check/query/ts": {
             "post": {
                 "produces": [
@@ -1195,6 +1383,40 @@ const docTemplate = `{
                 }
             }
         },
+        "cmdb.RelationMultiResourcePathData": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "target_list": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.Matcher"
+                    }
+                }
+            }
+        },
+        "cmdb.RelationMultiResourceRangePathData": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "target_list": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.MatchersWithTimestamp"
+                    }
+                }
+            }
+        },
         "cmdb.RelationMultiResourceRangeRequest": {
             "type": "object",
             "properties": {
@@ -1214,6 +1436,9 @@ const docTemplate = `{
                                 "items": {
                                     "type": "string"
                                 }
+                            },
+                            "return_all_paths": {
+                                "type": "boolean"
                             },
                             "source_expand_info": {
                                 "$ref": "#/definitions/cmdb.Matcher"
@@ -1270,6 +1495,12 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "paths": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.RelationMultiResourceRangePathData"
+                    }
+                },
                 "source_info": {
                     "$ref": "#/definitions/cmdb.Matcher"
                 },
@@ -1283,6 +1514,14 @@ const docTemplate = `{
                     }
                 },
                 "target_type": {
+                    "type": "string"
+                },
+                "truncated": {
+                    "description": "Truncated 表示响应是否因服务端安全上限而被截断。",
+                    "type": "boolean"
+                },
+                "truncated_reason": {
+                    "description": "TruncatedReason 标识触发截断的具体上限，便于调用方区分处理。",
                     "type": "string"
                 }
             }
@@ -1303,6 +1542,10 @@ const docTemplate = `{
                                 "items": {
                                     "type": "string"
                                 }
+                            },
+                            "return_all_paths": {
+                                "description": "ReturnAllPaths 开启后，legacy 接口会额外返回所有可执行的静态路径。\n未开启时保持原有的首条有效路径语义。",
+                                "type": "boolean"
                             },
                             "source_expand_info": {
                                 "$ref": "#/definitions/cmdb.Matcher"
@@ -1356,6 +1599,12 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "paths": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.RelationMultiResourcePathData"
+                    }
+                },
                 "source_info": {
                     "$ref": "#/definitions/cmdb.Matcher"
                 },
@@ -1370,6 +1619,181 @@ const docTemplate = `{
                 },
                 "target_type": {
                     "type": "string"
+                },
+                "truncated": {
+                    "description": "Truncated 表示响应是否因服务端安全上限而被截断。",
+                    "type": "boolean"
+                },
+                "truncated_reason": {
+                    "description": "TruncatedReason 标识触发截断的具体上限，便于调用方区分处理。",
+                    "type": "string"
+                }
+            }
+        },
+        "cmdb.SharedTopologyEdge": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string"
+                },
+                "direction": {
+                    "type": "string"
+                },
+                "metric_name": {
+                    "type": "string"
+                },
+                "relation_type": {
+                    "type": "string"
+                },
+                "source": {
+                    "type": "integer"
+                },
+                "target": {
+                    "type": "integer"
+                }
+            }
+        },
+        "cmdb.SharedTopologyNode": {
+            "type": "object",
+            "properties": {
+                "dimensions": {
+                    "$ref": "#/definitions/cmdb.Matcher"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "resource_type": {
+                    "type": "string"
+                }
+            }
+        },
+        "cmdb.SharedTopologyQuery": {
+            "type": "object",
+            "properties": {
+                "allowed_categories": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "allowed_relation_types": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "dynamic_relation_direction": {
+                    "type": "string"
+                },
+                "end_time": {
+                    "type": "integer"
+                },
+                "look_back_delta": {
+                    "type": "string"
+                },
+                "max_hops": {
+                    "type": "integer"
+                },
+                "source_info": {
+                    "$ref": "#/definitions/cmdb.Matcher"
+                },
+                "source_type": {
+                    "type": "string"
+                },
+                "start_time": {
+                    "type": "integer"
+                },
+                "step": {
+                    "type": "string"
+                },
+                "target_types": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "timestamp": {
+                    "type": "integer"
+                }
+            }
+        },
+        "cmdb.SharedTopologyRequest": {
+            "type": "object",
+            "properties": {
+                "query_list": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.SharedTopologyQuery"
+                    }
+                }
+            }
+        },
+        "cmdb.SharedTopologyResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.SharedTopologyResponseData"
+                    }
+                },
+                "trace_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "cmdb.SharedTopologyResponseData": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "integer"
+                },
+                "end_time": {
+                    "type": "integer"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "point_count": {
+                    "type": "integer"
+                },
+                "snapshots": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.SharedTopologySnapshot"
+                    }
+                },
+                "start_time": {
+                    "type": "integer"
+                },
+                "step": {
+                    "type": "string"
+                }
+            }
+        },
+        "cmdb.SharedTopologySnapshot": {
+            "type": "object",
+            "properties": {
+                "edges": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.SharedTopologyEdge"
+                    }
+                },
+                "nodes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/cmdb.SharedTopologyNode"
+                    }
+                },
+                "partial": {
+                    "type": "boolean"
+                },
+                "partial_reason": {
+                    "type": "string"
+                },
+                "timestamp": {
+                    "type": "integer"
                 }
             }
         },
@@ -2141,6 +2565,10 @@ const docTemplate = `{
                     "type": "string",
                     "example": "usage"
                 },
+                "field_semantics": {
+                    "description": "FieldSemantics selects a versioned physical field schema.",
+                    "type": "string"
+                },
                 "from": {
                     "description": "From 翻页开启数字",
                     "type": "integer",
@@ -2194,6 +2622,14 @@ const docTemplate = `{
                     "description": "Slimit 维度限制数量",
                     "type": "integer",
                     "example": 0
+                },
+                "source_conditions": {
+                    "description": "SourceConditions keeps intrinsic source filters outside the user's bool group.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/structured.Conditions"
+                        }
+                    ]
                 },
                 "sql": {
                     "description": "SQL doris sql 解析",
@@ -2357,7 +2793,7 @@ const docTemplate = `{
                     "example": "1657851600"
                 },
                 "from": {
-                    "description": "From 翻页起始位置；Doris SearchAfter 缺少稳定游标字段时会降级为 offset 分页",
+                    "description": "From 翻页起始位置。Doris SearchAfter 在缺少稳定游标字段时会降级为 offset 分页。",
                     "type": "integer",
                     "example": 0
                 },
@@ -2528,6 +2964,12 @@ const docTemplate = `{
                 1000000,
                 1000000000,
                 60000000000,
+                3600000000000,
+                1,
+                1000,
+                1000000,
+                1000000000,
+                60000000000,
                 3600000000000
             ],
             "x-enum-varnames": [
@@ -2541,6 +2983,12 @@ const docTemplate = `{
                 "Hour",
                 "minDuration",
                 "maxDuration",
+                "Nanosecond",
+                "Microsecond",
+                "Millisecond",
+                "Second",
+                "Minute",
+                "Hour",
                 "Nanosecond",
                 "Microsecond",
                 "Millisecond",

@@ -11,7 +11,6 @@ package query
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"strings"
 
@@ -50,7 +49,9 @@ func ToVmExpand(ctx context.Context, qr metadata.QueryReference) *metadata.VmExp
 
 			filterCondition := ""
 			if vmConditions.Size() > 0 {
-				filterCondition = fmt.Sprintf(`%s`, strings.Join(vmConditions.ToArray(), ` or `))
+				conditions := vmConditions.ToArray()
+				sort.Strings(conditions)
+				filterCondition = strings.Join(conditions, ` or `)
 			}
 
 			metricFilterCondition[referenceName] = filterCondition

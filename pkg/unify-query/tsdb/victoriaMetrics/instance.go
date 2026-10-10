@@ -50,6 +50,9 @@ const (
 
 	VectorType = "vector"
 	MatrixType = "matrix"
+
+	// VM query_sync 的只读查询遇到已知连接错误时最多重试一次。
+	vmConnectionRetryDelay = 25 * time.Millisecond
 )
 
 type Options struct {
@@ -251,7 +254,10 @@ func spanSetVmQueryClusterIfPresent(span *trace.Span, prefix string, v *metadata
 	span.Set(key, string(b))
 }
 
-func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Vector, error) {
+func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (result promql.Vector, err error) {
+	_, formatSpan := trace.NewSpan(ctx, "victoria-metrics-vectorFormat")
+	defer formatSpan.End(&err)
+	defer func() { formatSpan.Set("output-series-count", len(result)) }()
 	if !resp.Result || resp.Code != OK {
 		return nil, metadata.NewMessage(
 			metadata.MsgQueryVictoriaMetrics,
@@ -317,13 +323,20 @@ func (i *Instance) vectorFormat(ctx context.Context, resp *VmResponse, span *tra
 	return nil, nil
 }
 
-func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (promql.Matrix, bool, error) {
+func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *trace.Span) (result promql.Matrix, partial bool, err error) {
+	_, formatSpan := trace.NewSpan(ctx, "victoria-metrics-matrixFormat")
+	defer formatSpan.End(&err)
+	defer func() { formatSpan.Set("output-series-count", len(result)) }()
 	if !resp.Result || resp.Code != OK {
+		cause := errors.New(resp.Errors.Error)
+		if isResponseBodyTooLarge(resp.Message) || isResponseBodyTooLarge(resp.Errors.Error) {
+			cause = &metadata.BackendResponseTooLargeError{Message: resp.Message}
+		}
 		return nil, false, metadata.NewMessage(
 			metadata.MsgQueryVictoriaMetrics,
 			"查询异常 %s",
 			resp.Message,
-		).Error(ctx, errors.New(resp.Errors.Error))
+		).Error(ctx, cause)
 	}
 
 	prefix := "vm-data"
@@ -332,6 +345,7 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 	span.Set(fmt.Sprintf("%s-sql", prefix), resp.Data.SQL)
 	span.Set(fmt.Sprintf("%s-device", prefix), resp.Data.Device)
 	span.Set(fmt.Sprintf("%s-elapsed-time", prefix), resp.Data.BksqlCallElapsedTime)
+	span.Set(fmt.Sprintf("%s-timetaken", prefix), resp.Data.Timetaken)
 	span.Set(fmt.Sprintf("%s-total-records", prefix), resp.Data.TotalRecords)
 	span.Set(fmt.Sprintf("%s-result-table", prefix), resp.Data.ResultTableIds)
 	span.Set(fmt.Sprintf("%s-bk-biz-ids", prefix), resp.Data.BkBizIDs)
@@ -400,6 +414,10 @@ func (i *Instance) matrixFormat(ctx context.Context, resp *VmResponse, span *tra
 	}
 
 	return nil, false, nil
+}
+
+func isResponseBodyTooLarge(message string) bool {
+	return strings.Contains(strings.ToLower(message), "response body size exceeds")
 }
 
 func (i *Instance) labelFormat(ctx context.Context, resp *VmLableValuesResponse, span *trace.Span) ([]string, error) {
@@ -476,6 +494,13 @@ func (i *Instance) InstanceType() string {
 // This behaviour can be disabled by passing -search.disableCache command-line flag to VictoriaMetrics. Another option is to pass nocache=1 query arg to /api/v1/query_range.
 // 在一些场景下，如果 step 不能被 start 整除，会导致返回的数据跟我们的开始时间无法对其，所以需要增肌 no-cache=1 参数，避免性能消耗过大，只处理 1m 以上的
 func (i *Instance) noCache(ctx context.Context, start, step int64) int {
+	// 精确网格查询不能使用会调整采样点的缓存，即使步长不足一分钟。
+	if metadata.IsExactTimeGrid(ctx) {
+		return 1
+	}
+	if step <= 0 {
+		return 0
+	}
 	if start%step > 0 && step > 60 {
 		return 1
 	}
@@ -521,15 +546,56 @@ func (i *Instance) vmQuery(
 
 	headers := metadata.Headers(ctx, i.headers)
 
-	size, err := i.curl.Request(
-		ctx, curl.Post,
-		curl.Options{
-			UrlPath: i.url,
-			Body:    body,
-			Headers: headers,
-		},
-		data,
-	)
+	requestOptions := curl.Options{
+		UrlPath:          i.url,
+		Body:             body,
+		Headers:          headers,
+		MaxResponseBytes: metadata.BackendResponseLimit(ctx),
+		Attempt:          1,
+	}
+	size, err := i.curl.Request(ctx, curl.Post, requestOptions, data)
+	retryReason := vmQuerySyncRetryReason(err)
+	if retryReason != "" && ctx.Err() != nil {
+		err = ctx.Err()
+	}
+	if retryReason != "" && ctx.Err() == nil {
+		span.Set("query-sync-retry.reason", retryReason)
+		span.Set("query-sync-retry.first-response-bytes", size)
+
+		// 仍使用同一查询截止时间；等待可被取消，避免超时后额外发起请求。
+		timer := time.NewTimer(vmConnectionRetryDelay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			span.Set("query-sync-retry.outcome", "canceled")
+			metric.VMQuerySyncRetryInc(ctx, "canceled", retryReason)
+			return metadata.NewMessage(metadata.MsgQueryVictoriaMetrics, "查询异常").Error(ctx, ctx.Err())
+		case <-timer.C:
+		}
+		if ctx.Err() != nil {
+			span.Set("query-sync-retry.outcome", "canceled")
+			metric.VMQuerySyncRetryInc(ctx, "canceled", retryReason)
+			return metadata.NewMessage(metadata.MsgQueryVictoriaMetrics, "查询异常").Error(ctx, ctx.Err())
+		}
+
+		metric.VMQuerySyncRetryInc(ctx, "attempted", retryReason)
+		requestOptions.Attempt = 2
+		span.Set("query-sync-retry.attempts", 2)
+		size, err = i.curl.Request(ctx, curl.Post, requestOptions, data)
+		if err != nil && ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		if err == nil {
+			span.Set("query-sync-retry.outcome", "recovered")
+			metric.VMQuerySyncRetryInc(ctx, "recovered", retryReason)
+		} else if ctx.Err() != nil {
+			span.Set("query-sync-retry.outcome", "canceled")
+			metric.VMQuerySyncRetryInc(ctx, "canceled", retryReason)
+		} else {
+			span.Set("query-sync-retry.outcome", "failed")
+			metric.VMQuerySyncRetryInc(ctx, "failed", retryReason)
+		}
+	}
 	if err != nil {
 		return metadata.NewMessage(
 			metadata.MsgQueryVictoriaMetrics,
@@ -563,6 +629,7 @@ func (i *Instance) DirectQueryRange(
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-query-range")
 	defer span.End(&err)
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
 
 	vmExpand = metadata.GetExpand(ctx)
 
@@ -654,6 +721,7 @@ func (i *Instance) DirectQueryWithPartial(
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-query")
 	defer span.End(&err)
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
 
 	vmExpand = metadata.GetExpand(ctx)
 
@@ -715,6 +783,7 @@ func (i *Instance) QuerySeries(ctx context.Context, query *metadata.Query, start
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-query-series")
 	defer span.End(&err)
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
 
 	span.Set("query-info", query)
 	span.Set("query-start", start)
@@ -770,6 +839,7 @@ func (i *Instance) QueryLabelNames(ctx context.Context, query *metadata.Query, s
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-query")
 	defer span.End(&err)
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
 
 	span.Set("query-info", query)
 	span.Set("query-start", start)
@@ -820,6 +890,7 @@ func (i *Instance) QueryLabelValues(ctx context.Context, query *metadata.Query, 
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-label-values")
 	defer span.End(&err)
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
 
 	span.Set("query-info", query)
 	span.Set("query-name", name)
@@ -923,6 +994,7 @@ func (i *Instance) DirectLabelValues(ctx context.Context, name string, start, en
 
 	ctx, span := trace.NewSpan(ctx, "victoria-metrics-instance-direct-label-values")
 	defer span.End(&err)
+	span.Set("query-bk-biz-id", metadata.GetBkBizID(ctx))
 
 	vmExpand = metadata.GetExpand(ctx)
 	if vmExpand == nil {

@@ -139,9 +139,9 @@ func NewMetricDimensionHandler(
 ) *MetricDimensionsHandler {
 	monitorLogger.Infof(
 		"[MetricDimension] \ncreate metric handler\n====\n"+
-			"prometheus host: %s \nconfigHeaders: %s \ndataId(%s) appKey(%+v) -> token: %s \n"+
+			"dataId(%s) appKey(%+v) \n"+
 			"flowMetricDuration: %s \nflowMetricBucket: %v \nrelationMetricDuration: %s \n====\n",
-		config.Url, config.Headers, dataId, baseInfo.AppKey(), baseInfo.Token,
+		dataId, baseInfo.AppKey(),
 		metricsConfig.flowMetricMemDuration, metricsConfig.flowMetricBuckets, metricsConfig.relationMetricMemDuration,
 	)
 

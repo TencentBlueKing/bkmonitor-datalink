@@ -48,6 +48,29 @@ func encodeSpec(t *testing.T, v any) json.RawMessage {
 	return raw
 }
 
+func TestTimeShieldAcceptsEmptyKACDependencyCondition(t *testing.T) {
+	t.Parallel()
+	spec := policySpecMap(t, Shield)
+	without, err := Compile(Shield, encodeSpec(t, spec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, raw := range []json.RawMessage{json.RawMessage(`{}`), json.RawMessage(` { } `)} {
+		spec["rely_policy"] = raw
+		compiled, err := Compile(Shield, encodeSpec(t, spec))
+		if err != nil {
+			t.Fatalf("KAC empty dependency condition rejected: %v", err)
+		}
+		if compiled.Rely != nil || compiled.Summary.Digest != without.Summary.Digest {
+			t.Fatalf("empty condition changes time shield semantics: %+v", compiled.Summary)
+		}
+	}
+	spec["rely_policy"] = spec["policy"]
+	if _, err := Compile(Shield, encodeSpec(t, spec)); err == nil {
+		t.Fatal("nonempty dependency condition accepted for time shield")
+	}
+}
+
 func TestPolicyConfigurationCompilation(t *testing.T) {
 	at := time.Date(2026, 9, 30, 1, 0, 0, 0, time.UTC)
 	for _, kind := range []Kind{Suppression, Shield, Merge} {

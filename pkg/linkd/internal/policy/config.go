@@ -303,6 +303,10 @@ func Compile(kind Kind, raw json.RawMessage) (*Compiled, error) {
 		}
 		switch spec.ShieldType {
 		case "time_shield":
+			// KAC 的时间屏蔽发布空对象占位；规范 JSON 的空对象与省略依赖条件等价。
+			if string(spec.RelyPolicy) == "{}" {
+				spec.RelyPolicy = nil
+			}
 			if spec.ShieldMode != "" || len(spec.RelyPolicy) != 0 || spec.Before != 0 || spec.After != 0 {
 				return nil, fmt.Errorf("time shield cannot include dependency fields")
 			}

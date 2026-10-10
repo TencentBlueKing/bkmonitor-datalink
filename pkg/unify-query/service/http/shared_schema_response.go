@@ -29,7 +29,7 @@ func (r *response) queryTsSharedSchemaNegotiation(query *structured.QueryTs) sha
 		return sharedSchemaNegotiation{}
 	}
 	// Multiple Accept header lines have the same meaning as one joined list.
-	return negotiateSharedSchema(strings.Join(r.c.Request.Header.Values("Accept"), ","), sharedSchemaV1Enabled.Load())
+	return negotiateSharedSchema(strings.Join(r.c.Request.Header.Values("Accept"), ","))
 }
 
 func (r *response) sharedSchemaSuccess(ctx context.Context, data *PromData) (err error) {

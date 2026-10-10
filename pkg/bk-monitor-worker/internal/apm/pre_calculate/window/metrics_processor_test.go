@@ -11,6 +11,7 @@ package window
 
 import (
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -61,6 +62,53 @@ func TestMetricsHandleResult(t *testing.T) {
 		}
 		assert.Equal(t, expected, actual)
 	})
+}
+
+func TestServiceInstanceSystemRelationHostIP(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		resourceIP any
+		hostIP     any
+		attrIP     any
+		wantIP     string
+	}{
+		{name: "attribute only", attrIP: "192.0.2.1", wantIP: "192.0.2.1"},
+		{name: "resource wins", resourceIP: "192.0.2.2", attrIP: "192.0.2.1", wantIP: "192.0.2.2"},
+		{name: "empty resource falls back", resourceIP: "", hostIP: "192.0.2.3", attrIP: "192.0.2.1", wantIP: "192.0.2.3"},
+		{name: "empty resource fields fall back to attribute", resourceIP: "", hostIP: "", attrIP: "192.0.2.1", wantIP: "192.0.2.1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resource := map[string]any{"service.name": "service", "bk.instance.id": "instance"}
+			if tc.resourceIP != nil {
+				resource["net.host.ip"] = tc.resourceIP
+			}
+			if tc.hostIP != nil {
+				resource["host.ip"] = tc.hostIP
+			}
+			attributes := map[string]any{}
+			if tc.attrIP != nil {
+				attributes["net.host.ip"] = tc.attrIP
+			}
+			graph := NewDiGraph()
+			graph.AddNode(Node{StandardSpan: ToStandardSpan(Span{
+				TraceId: "trace", SpanId: "span", SpanName: "operation",
+				Resource: resource, Attributes: attributes,
+			})})
+			receiver := make(chan storage.SaveRequest, 1)
+			processor := MetricProcessor{baseInfo: core.BaseInfo{BkBizId: "2", AppName: "app"}}
+			processor.findSpanMetric(receiver, graph)
+			request := <-receiver
+			labels := request.Data.(storage.PrometheusStorageData).Value.([]string)
+			var systemRelation string
+			for _, label := range labels {
+				if strings.HasPrefix(label, "__name__="+storage.ApmServiceSystemRelation+",") {
+					systemRelation = label
+					break
+				}
+			}
+			assert.Contains(t, systemRelation, "bk_target_ip="+tc.wantIP)
+		})
+	}
 }
 
 func runMetricCase(p Processor, traceFileName string) []storage.SaveRequest {

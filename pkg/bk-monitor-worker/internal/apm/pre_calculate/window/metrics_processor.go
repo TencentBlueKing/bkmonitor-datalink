@@ -120,7 +120,7 @@ func (m *MetricProcessor) findSpanMetric(
 						pair("apm_service_name", span.GetFieldValue(core.ServiceNameField)),
 						pair("apm_application_name", m.baseInfo.AppName),
 						pair("apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField)),
-						pair("bk_target_ip", span.GetFieldValue(core.NetHostIpField, core.HostIpField)),
+						pair("bk_target_ip", span.GetFieldValue(core.NetHostIpField, core.HostIpField, core.NetHostIpAttributeField)),
 					},
 					",",
 				)

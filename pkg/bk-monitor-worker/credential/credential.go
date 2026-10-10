@@ -340,12 +340,12 @@ func (s *Snapshot) bindRabbitMQ(v *viper.Viper, accounts map[string]account, tok
 		if hasValue(instance["username"]) || hasValue(instance["password"]) {
 			return fmt.Errorf("kms plaintext conflict: %s[%d]", key, i)
 		}
+		if !enabled {
+			continue
+		}
 		ref, _ := instance["credentialsref"].(string)
 		if ref == "" {
-			if enabled {
-				return fmt.Errorf("kms rabbitmq: missing credentialsRef at instance %d", i)
-			}
-			continue
+			return fmt.Errorf("kms rabbitmq: missing credentialsRef at instance %d", i)
 		}
 		cred, ok := accounts[ref]
 		if !ok || cred.Username == nil || cred.Password == nil {
@@ -366,7 +366,7 @@ func (s *Snapshot) bindRabbitMQ(v *viper.Viper, accounts map[string]account, tok
 }
 
 func prepareConsul(v *viper.Viper, auth consulAuth) (*consul.ClientOptions, error) {
-	if auth.Token == nil && auth.Username == nil {
+	if auth.Token == nil && auth.Username == nil && auth.TLSPrivateKey == nil {
 		return nil, fmt.Errorf("kms payload: missing consul.default authentication")
 	}
 	if (auth.Username == nil) != (auth.Password == nil) {

@@ -7,14 +7,28 @@ package credential
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
+	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/require"
+
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/utils/register/consul"
 )
 
 func testPayload(t *testing.T) map[string]any {
@@ -232,6 +246,101 @@ func TestRabbitMQRejectsReferencesAndPlaintext(t *testing.T) {
 	v.Set("taskConfig.rabbitmqMetric.instances", []any{})
 	_, err = prepareTestPayload(t, v, p)
 	require.NoError(t, err)
+}
+
+func TestRabbitMQDisabledPreservesInstancesWithoutAccounts(t *testing.T) {
+	v := rabbitConfig(t, `[{"name":"unused","credentialsRef":"alias-a","domainName":"localhost","vhosts":["/"],"bkTenantId":"tenant-a"},{"name":"unknown","credentialsRef":"unknown"},{"name":"missing-ref","username":"","password":""}]`)
+	v.Set("taskConfig.rabbitmqMetric.enabled", false)
+	var original []map[string]any
+	require.NoError(t, v.UnmarshalKey("taskConfig.rabbitmqMetric.instances", &original))
+	p := testPayload(t)
+	delete(p, "rabbitmq")
+	delete(p["report_tokens"].(map[string]any), "rabbitmq")
+	s, err := prepareTestPayload(t, v, p)
+	require.NoError(t, err)
+	s.Apply(v)
+	var instances []map[string]any
+	require.NoError(t, v.UnmarshalKey("taskConfig.rabbitmqMetric.instances", &instances))
+	require.Equal(t, original, instances)
+	require.False(t, v.GetBool("taskConfig.rabbitmqMetric.enabled"))
+	for _, field := range []string{"username", "password"} {
+		t.Run(field, func(t *testing.T) {
+			v := rabbitConfig(t, `[{"credentialsRef":"unknown","`+field+`":"SECRET_MARKER"}]`)
+			v.Set("taskConfig.rabbitmqMetric.enabled", false)
+			s, err := prepareTestPayload(t, v, p)
+			require.Nil(t, s)
+			require.ErrorContains(t, err, "kms plaintext conflict")
+			require.NotContains(t, err.Error(), "SECRET_MARKER")
+		})
+	}
+}
+
+func TestConsulMTLSOnlyPayloadAuthenticatesBothClients(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "test-client"},
+		NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour),
+		KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign, IsCA: true,
+		BasicConstraintsValid: true, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	clientCAs := x509.NewCertPool()
+	require.True(t, clientCAs.AppendCertsFromPEM(certPEM))
+	var requests int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Len(t, r.TLS.PeerCertificates, 1)
+		require.Equal(t, "test-client", r.TLS.PeerCertificates[0].Subject.CommonName)
+		require.Empty(t, r.Header.Get("Authorization"))
+		require.Empty(t, r.Header.Get("X-Consul-Token"))
+		atomic.AddInt32(&requests, 1)
+		if r.URL.Path == "/v1/kv/key" {
+			_, _ = w.Write([]byte(`[]`))
+		} else {
+			_, _ = w.Write([]byte(`true`))
+		}
+	}))
+	server.TLS = &tls.Config{ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: clientCAs, MinVersion: tls.VersionTLS12}
+	server.StartTLS()
+	defer server.Close()
+	certFile, caFile := filepath.Join(t.TempDir(), "client-cert"), filepath.Join(t.TempDir(), "server-ca")
+	require.NoError(t, os.WriteFile(certFile, certPEM, 0600))
+	require.NoError(t, os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0600))
+	v := viper.New()
+	v.Set("store.consul.tls.cert_file", certFile)
+	v.Set("store.consul.tls.ca_file", caFile)
+	p := testPayload(t)
+	p["consul"] = map[string]any{"default": map[string]any{"tls_private_key_base64": base64.StdEncoding.EncodeToString(keyPEM)}}
+	s, err := prepareTestPayload(t, v, p)
+	require.NoError(t, err)
+	require.Empty(t, s.ConsulOptions.Token)
+	require.Empty(t, s.ConsulOptions.Username)
+	require.Empty(t, s.ConsulOptions.Password)
+	require.Empty(t, s.ConsulOptions.TLSConfig.KeyFile)
+	require.Empty(t, s.ConsulOptions.TLSConfig.CertFile)
+	require.Equal(t, keyPEM, s.ConsulOptions.TLSConfig.KeyPEM)
+	registration, err := consul.NewClientWithOptions(server.URL, s.ConsulOptions)
+	require.NoError(t, err)
+	require.NoError(t, registration.CheckRegister("service", "check", "10s"))
+	kv, err := consul.NewAPIClient(server.URL, s.ConsulOptions)
+	require.NoError(t, err)
+	_, _, err = kv.KV().Get("key", nil)
+	require.NoError(t, err)
+	require.Equal(t, int32(2), atomic.LoadInt32(&requests))
+	for _, invalid := range []string{"", "invalid-base64", base64.StdEncoding.EncodeToString([]byte("invalid-key"))} {
+		p["consul"].(map[string]any)["default"].(map[string]any)["tls_private_key_base64"] = invalid
+		_, err := prepareTestPayload(t, v, p)
+		require.Error(t, err)
+	}
+	p["consul"] = map[string]any{"default": map[string]any{}}
+	_, err = prepareTestPayload(t, v, p)
+	require.ErrorContains(t, err, "missing consul.default authentication")
+	delete(p, "consul")
+	_, err = prepareTestPayload(t, v, p)
+	require.ErrorContains(t, err, "missing consul.default authentication")
 }
 
 func sdkConfig(t *testing.T) (*viper.Viper, *viper.Viper) {

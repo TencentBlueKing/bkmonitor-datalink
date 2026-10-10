@@ -255,6 +255,8 @@ Redis Signal
 11. 最终释放 lease；释放失败只记录警告，不能误删新 owner 的锁。
 
 默认单次最多排空 128 条。ProcessEvent 失败或进程崩溃时队首尚未移除，后续 owner 会重新执行；
+动作入队遇到纯准入锁忙、租户容量背压或搜索尚不可见时，释放 lease 后按 `lock_retry_delay`
+延后原 Signal，不消耗短重试次数，也不确认队首。混合存储/锁释放异常、取消及非法动作仍进入原有有界重试。
 Processor 必须幂等。最后一次 `LPOP` 前发生的新入队会由当前 Handler 继续读取；`LPOP` 后的空到非空
 入队会创建新的 Stream ID，确认旧 Signal 不会删除新 Signal。处理期间已创建的新 Signal 可能成为冗余
 空唤醒，可以安全完成。

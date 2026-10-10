@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"time"
 
+	"linkd/internal/actiondelivery"
 	"linkd/internal/consume"
 	"linkd/internal/domain"
 	"linkd/internal/lifecycle"
@@ -128,6 +129,11 @@ func (h *Handler) Handle(ctx context.Context, message consume.Message) consume.O
 		return consume.Block(blockErr)
 	}
 	if processErr != nil {
+		// 动作准入锁、租户预算和 ES 搜索可见性属于背压；保留队首延后，
+		// 不能耗尽短重试预算而重启整个来源。混合基础设施错误仍按原策略重试。
+		if actiondelivery.CanDefer(processErr) {
+			return consume.Defer(h.config.LockRetryDelay)
+		}
 		return consume.Retry(processErr, 0)
 	}
 	if complete {

@@ -18,10 +18,12 @@ import (
 	"testing"
 	"time"
 
+	"linkd/internal/actiondelivery"
 	"linkd/internal/consume"
 	"linkd/internal/domain"
 	"linkd/internal/enrich/description"
 	"linkd/internal/lifecycle"
+	"linkd/internal/projection"
 	"linkd/internal/store"
 )
 
@@ -139,6 +141,40 @@ func TestHandlerDefersBusyLeaseWithoutRetry(t *testing.T) {
 	outcome := handler.Handle(context.Background(), signalMessage(t, testEvent("event-1")))
 	if outcome.Kind != consume.OutcomeDefer || outcome.RetryAfter != DefaultConfig().LockRetryDelay {
 		t.Fatalf("outcome=%#v", outcome)
+	}
+}
+
+func TestHandlerDefersActionBackpressureAndPreservesMailbox(t *testing.T) {
+	backendErr := errors.New("lease release failed")
+	for _, tc := range []struct {
+		name string
+		err  error
+		want consume.OutcomeKind
+	}{
+		{"action visibility", actiondelivery.ErrBusy, consume.OutcomeDefer},
+		{"action capacity", actiondelivery.ErrCapacity, consume.OutcomeDefer},
+		{"admission lock", fmt.Errorf("record action: %w", projection.ErrBusy), consume.OutcomeDefer},
+		{"joined waits", errors.Join(actiondelivery.ErrBusy, projection.ErrBusy), consume.OutcomeDefer},
+		{"mixed infrastructure", errors.Join(actiondelivery.ErrBusy, backendErr), consume.OutcomeRetry},
+		{"cancelled", errors.Join(actiondelivery.ErrBusy, context.Canceled), consume.OutcomeRetry},
+		{"invalid action", actiondelivery.ErrInvalid, consume.OutcomeRetry},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mailbox := &fakeMailbox{ids: []string{"event-1", "event-2"}}
+			processor := &fakeProcessor{err: tc.err}
+			handler := newMailboxHandler(t, mailbox, processor, &fakeLocker{}, 512)
+			outcome := handler.Handle(t.Context(), signalMessage(t, testEvent("event-1")))
+			if outcome.Kind != tc.want || len(mailbox.ids) != 2 || mailbox.ids[0] != "event-1" {
+				t.Fatalf("outcome=%v mailbox=%v", outcome, mailbox.ids)
+			}
+			if tc.want == consume.OutcomeDefer && outcome.RetryAfter != DefaultConfig().LockRetryDelay {
+				t.Fatalf("unbounded hot retry: %v", outcome.RetryAfter)
+			}
+			processor.err = nil
+			if next := handler.Handle(t.Context(), signalMessage(t, testEvent("event-1"))); next.Kind != consume.OutcomeComplete || len(mailbox.ids) != 0 {
+				t.Fatalf("recovery outcome=%v mailbox=%v", next, mailbox.ids)
+			}
+		})
 	}
 }
 

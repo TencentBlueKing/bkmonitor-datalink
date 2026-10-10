@@ -70,12 +70,16 @@ func TestServiceInstanceSystemRelationHostIP(t *testing.T) {
 		resourceIP any
 		hostIP     any
 		attrIP     any
+		kind       core.SpanKind
 		wantIP     string
 	}{
-		{name: "attribute only", attrIP: "192.0.2.1", wantIP: "192.0.2.1"},
-		{name: "resource wins", resourceIP: "192.0.2.2", attrIP: "192.0.2.1", wantIP: "192.0.2.2"},
-		{name: "empty resource falls back", resourceIP: "", hostIP: "192.0.2.3", attrIP: "192.0.2.1", wantIP: "192.0.2.3"},
-		{name: "empty resource fields fall back to attribute", resourceIP: "", hostIP: "", attrIP: "192.0.2.1", wantIP: "192.0.2.1"},
+		{name: "server attribute only", kind: core.KindServer, attrIP: "192.0.2.1", wantIP: "192.0.2.1"},
+		{name: "client attribute alone is not local host", kind: core.KindClient, attrIP: "192.0.2.1"},
+		{name: "resource wins", kind: core.KindServer, resourceIP: "192.0.2.2", attrIP: "192.0.2.1", wantIP: "192.0.2.2"},
+		{name: "client resource IP remains valid", kind: core.KindClient, resourceIP: "192.0.2.2", wantIP: "192.0.2.2"},
+		{name: "empty resource falls back", kind: core.KindServer, resourceIP: "", hostIP: "192.0.2.3", attrIP: "192.0.2.1", wantIP: "192.0.2.3"},
+		{name: "empty resource fields fall back to server attribute", kind: core.KindServer, resourceIP: "", hostIP: "", attrIP: "192.0.2.1", wantIP: "192.0.2.1"},
+		{name: "missing IP produces no system relation", kind: core.KindServer},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resource := map[string]any{"service.name": "service", "bk.instance.id": "instance"}
@@ -92,7 +96,7 @@ func TestServiceInstanceSystemRelationHostIP(t *testing.T) {
 			graph := NewDiGraph()
 			graph.AddNode(Node{StandardSpan: ToStandardSpan(Span{
 				TraceId: "trace", SpanId: "span", SpanName: "operation",
-				Resource: resource, Attributes: attributes,
+				Resource: resource, Attributes: attributes, Kind: int(tc.kind),
 			})})
 			receiver := make(chan storage.SaveRequest, 1)
 			processor := MetricProcessor{baseInfo: core.BaseInfo{BkBizId: "2", AppName: "app"}}
@@ -106,7 +110,11 @@ func TestServiceInstanceSystemRelationHostIP(t *testing.T) {
 					break
 				}
 			}
-			assert.Contains(t, systemRelation, "bk_target_ip="+tc.wantIP)
+			if tc.wantIP == "" {
+				assert.Empty(t, systemRelation)
+			} else {
+				assert.Contains(t, systemRelation, "bk_target_ip="+tc.wantIP)
+			}
 		})
 	}
 }

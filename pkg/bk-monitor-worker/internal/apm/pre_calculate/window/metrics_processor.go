@@ -114,19 +114,26 @@ func (m *MetricProcessor) findSpanMetric(
 				}
 			} else {
 				// RELATION: apm_service_instance_with_system_relation
-				serviceSystemRelationLabelKey := strings.Join(
-					[]string{
-						pair("__name__", storage.ApmServiceSystemRelation),
-						pair("apm_service_name", span.GetFieldValue(core.ServiceNameField)),
-						pair("apm_application_name", m.baseInfo.AppName),
-						pair("apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField)),
-						pair("bk_target_ip", span.GetFieldValue(core.NetHostIpField, core.HostIpField, core.NetHostIpAttributeField)),
-					},
-					",",
-				)
-				if !slices.Contains(labels, serviceSystemRelationLabelKey) {
-					labels = append(labels, serviceSystemRelationLabelKey)
-					metricCount[storage.ApmServiceSystemRelation]++
+				hostIP := span.GetFieldValue(core.NetHostIpField, core.HostIpField)
+				if hostIP == "" && span.Kind == int(core.KindServer) {
+					// net.host.ip on a server span identifies its local host.
+					hostIP = span.GetFieldValue(core.NetHostIpAttributeField)
+				}
+				if hostIP != "" {
+					serviceSystemRelationLabelKey := strings.Join(
+						[]string{
+							pair("__name__", storage.ApmServiceSystemRelation),
+							pair("apm_service_name", span.GetFieldValue(core.ServiceNameField)),
+							pair("apm_application_name", m.baseInfo.AppName),
+							pair("apm_service_instance_name", span.GetFieldValue(core.BkInstanceIdField)),
+							pair("bk_target_ip", hostIP),
+						},
+						",",
+					)
+					if !slices.Contains(labels, serviceSystemRelationLabelKey) {
+						labels = append(labels, serviceSystemRelationLabelKey)
+						metricCount[storage.ApmServiceSystemRelation]++
+					}
 				}
 			}
 		}

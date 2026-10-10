@@ -1,0 +1,5 @@
+{"seq":0,"v":1}
+{"seq":1,"schemas":[{"id":0,"columns":["_time","_value"],"types":["float","float"],"group_keys":["device"]}]}
+{"seq":2,"schemas":[{"id":1,"columns":["_time","_value"],"types":["float","float"],"group_keys":["other_device"]}]}
+{"seq":3,"series":[{"s":0,"g":["dev0"],"r":[[1700000000000,0],[1700000060000,null]]},{"s":1,"g":["dev1"],"r":[[1700000000000,9007199254740993],[1700000060000,false]]}]}
+{"seq":4,"end":{"series":2,"points":4,"is_partial":true,"status":{"code":"OK","message":"example"},"result_table_id":["example.result"],"trace_id":"example-trace"}}

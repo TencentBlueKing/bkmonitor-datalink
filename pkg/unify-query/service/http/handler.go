@@ -508,6 +508,16 @@ func HandlerQueryTs(c *gin.Context) {
 		return
 	}
 
+	negotiation := resp.queryTsSharedSchemaNegotiation(query)
+	if negotiation.explicit {
+		varyAccept(c.Writer.Header())
+	}
+	if negotiation.reject {
+		err = fmt.Errorf("shared schema v1 requires application/json fallback in Accept")
+		resp.sharedSchemaNotAcceptable(ctx)
+		return
+	}
+
 	var res any
 	if query.ResponseContract == structured.NamedOutputsV1 {
 		res, err = queryTsNamedOutputs(ctx, query)
@@ -521,6 +531,12 @@ func HandlerQueryTs(c *gin.Context) {
 
 	span.Set("resp-size", fmt.Sprint(unsafe.Sizeof(res)))
 
+	if negotiation.selected {
+		if data, ok := res.(*PromData); ok {
+			err = resp.sharedSchemaSuccess(ctx, data)
+			return
+		}
+	}
 	resp.success(ctx, res)
 }
 

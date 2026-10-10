@@ -95,6 +95,7 @@ func setDefaultConfig() {
 	viper.SetDefault(SegmentedMinInterval, "5m")
 
 	viper.SetDefault(QueryMaxRoutingConfigPath, 4)
+	viper.SetDefault(SharedSchemaV1EnabledConfigPath, false)
 	viper.SetDefault(NamedOutputsMaxOutputsConfigPath, 4)
 	viper.SetDefault(NamedOutputsTimeoutConfigPath, "30s")
 	viper.SetDefault(NamedOutputsMaxSeriesConfigPath, 10000)
@@ -245,6 +246,7 @@ func LoadConfig() {
 
 	loadQueryRawESBatchSettings()
 	loadNamedOutputSettings()
+	sharedSchemaV1Enabled.Store(viper.GetBool(SharedSchemaV1EnabledConfigPath))
 }
 
 // init

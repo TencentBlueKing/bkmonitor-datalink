@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/viper"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/credential"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/eventbus"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/log"
 )
@@ -46,7 +47,7 @@ func LoadConfig() {
 
 	log.Debugf(context.TODO(),
 		"reload success new config target service name:%s,consul address:%s,address:%s,port:%d,ttl:%s",
-		ServiceName, Address, HTTPAddress, Port, TTL,
+		ServiceName, credential.RedactURL(Address), credential.RedactURL(HTTPAddress), Port, TTL,
 	)
 }
 

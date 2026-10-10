@@ -45,6 +45,13 @@ func NewConsulInstance(
 	ctx context.Context, serviceName, consulAddress string, tags []string,
 	address string, port int, ttl string, caFile, keyFile, certFile string,
 ) (*Instance, error) {
+	return NewConsulInstanceWithAuth(ctx, serviceName, consulAddress, tags, address, port, ttl, caFile, keyFile, certFile, nil)
+}
+
+func NewConsulInstanceWithAuth(
+	ctx context.Context, serviceName, consulAddress string, tags []string,
+	address string, port int, ttl string, caFile, keyFile, certFile string, auth *base.AuthConfig,
+) (*Instance, error) {
 	hash := fnv.New32a()
 	_, err := hash.Write([]byte(fmt.Sprintf("%s:%d", address, port)))
 	if err != nil {
@@ -52,7 +59,7 @@ func NewConsulInstance(
 	}
 	serviceID := fmt.Sprintf("%s-unify-query-%d", serviceName, hash.Sum32())
 	checkID := fmt.Sprintf("%s:%d", address, port)
-	client, err := base.NewClient(consulAddress, caFile, keyFile, certFile)
+	client, err := base.NewClientWithAuth(consulAddress, caFile, keyFile, certFile, auth)
 	if err != nil {
 		return nil, err
 	}

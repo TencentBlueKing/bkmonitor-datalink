@@ -11,26 +11,34 @@ package curl
 
 import (
 	"context"
+	"net/url"
 
 	"github.com/pkg/errors"
 
+	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/credential"
 	"github.com/TencentBlueKing/bkmonitor-datalink/pkg/unify-query/metadata"
 )
 
-func HandleClientError(ctx context.Context, id, url string, err error) error {
+func HandleClientError(ctx context.Context, id, address string, err error) error {
 	if err == nil {
 		return nil
+	}
+	address = credential.RedactURL(address)
+	// The HTTP transport includes the request URL in *url.Error.Error().
+	var requestErr *url.Error
+	if errors.As(err, &requestErr) {
+		err = &url.Error{Op: requestErr.Op, URL: credential.RedactURL(requestErr.URL), Err: requestErr.Err}
 	}
 
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return metadata.NewMessage(id,
 			"查询 %s 超时",
-			url,
+			address,
 		).Error(ctx, err)
 	}
 
 	return metadata.NewMessage(id,
 		"查询 %s 报错",
-		url,
+		address,
 	).Error(ctx, err)
 }

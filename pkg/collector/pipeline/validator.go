@@ -51,6 +51,11 @@ func validatePreCheckProcessors(r *define.Record, getter Getter) (define.StatusC
 				return define.StatusCodeTooManyRequests, define.ProcessorRateLimiter, err
 			}
 
+		case define.ProcessorTrafficLimiter:
+			if _, err := inst.Process(r); err != nil {
+				return define.StatusCodeTooManyRequests, define.ProcessorTrafficLimiter, err
+			}
+
 		case define.ProcessorProxyValidator:
 			if _, err := inst.Process(r); err != nil {
 				return define.StatusBadRequest, define.ProcessorProxyValidator, err

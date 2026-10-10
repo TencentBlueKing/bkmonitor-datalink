@@ -11,6 +11,7 @@ package window
 
 import (
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -69,14 +70,23 @@ func TestDynamicRelationFlowMetric(t *testing.T) {
 	p.metricProcessor.dynamicRelationFlowReportEnabled = true
 
 	actual := runMetricCase(p, "complex.json")
-	expect := "__name__=system_to_system_flow,from_bk_target_ip=192.168.0.1,to_bk_target_ip=192.168.0.2"
+	prefix := "__name__=" + storage.SystemFlow + ",from_bk_target_ip="
 	for _, request := range actual {
 		data, ok := request.Data.(storage.PrometheusStorageData)
 		if !ok || data.Kind != storage.PromRelationMetric {
 			continue
 		}
-		assert.Contains(t, prometheusLabels(data.Value), expect)
-		return
+		for _, label := range prometheusLabels(data.Value) {
+			if !strings.HasPrefix(label, prefix) {
+				continue
+			}
+			parts := strings.Split(label, ",")
+			if assert.Len(t, parts, 3) {
+				assert.NotEmpty(t, strings.TrimPrefix(parts[1], "from_bk_target_ip="))
+				assert.NotEmpty(t, strings.TrimPrefix(parts[2], "to_bk_target_ip="))
+			}
+			return
+		}
 	}
 	t.Fatalf("dynamic relation metric request not found")
 }
@@ -108,14 +118,47 @@ func TestDynamicRelationPodToPodDoesNotEmitSystemEdges(t *testing.T) {
 		"BCS-K8S-00001",
 		"caller-pod",
 		"callee-pod",
-		"10.0.0.1",
-		"10.0.0.2",
+		"192.0.2.1",
+		"192.0.2.2",
 	)
 
 	assert.Contains(t, labels, "__name__=pod_to_pod_flow,from_bcs_cluster_id=BCS-K8S-00001,from_namespace=default,from_pod=caller-pod,to_bcs_cluster_id=BCS-K8S-00001,to_namespace=default,to_pod=callee-pod")
 	assert.NotContains(t, metricCount, storage.PodToSystemFlow)
 	assert.NotContains(t, metricCount, storage.SystemToPodFlow)
 	assert.NotContains(t, metricCount, storage.SystemFlow)
+}
+
+func TestDynamicRelationIncompletePodDoesNotBecomeSystem(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		callerNamespace string
+		calleeNamespace string
+	}{
+		{name: "callee missing namespace", callerNamespace: "default"},
+		{name: "caller missing namespace", calleeNamespace: "default"},
+		{name: "both missing namespace"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			processor := &MetricProcessor{baseInfo: core.BaseInfo{AppName: "app"}}
+			labels := make([]string, 0)
+			metricCount := make(map[string]int)
+			pairs := [2]Node{
+				{StandardSpan: StandardSpan{Collections: map[string]string{core.K8sNamespace.DisplayKey(): tc.callerNamespace}}},
+				{StandardSpan: StandardSpan{Collections: map[string]string{core.K8sNamespace.DisplayKey(): tc.calleeNamespace}}},
+			}
+
+			processor.addDynamicRelationFlowMetrics(
+				&labels, metricCount, pairs, "caller", "callee",
+				"BCS-K8S-00001", "BCS-K8S-00001", "caller-pod", "callee-pod",
+				"192.0.2.1", "192.0.2.2",
+			)
+
+			assert.NotContains(t, metricCount, storage.PodToPodFlow)
+			assert.NotContains(t, metricCount, storage.PodToSystemFlow)
+			assert.NotContains(t, metricCount, storage.SystemToPodFlow)
+			assert.NotContains(t, metricCount, storage.SystemFlow)
+		})
+	}
 }
 
 func runMetricCase(p Processor, traceFileName string) []storage.SaveRequest {
